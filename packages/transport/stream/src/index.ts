@@ -338,20 +338,40 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	 */
 
 	async attachOutboundStream(stream: Stream) {
-		// If an outbound stream already exists and is active, ignore the new one; if a raw stream exists, close it to avoid leaks
+		// Replacement logic: if existing outbound differs, replace it with the new one
 		if (
 			this.outboundStream != null &&
-			stream.id !== this.rawOutboundStream?.id
+			this.rawOutboundStream &&
+			stream.id !== this.rawOutboundStream.id
 		) {
-			logger.info(
-				`Outbound stream already exists for ${this.peerId.toString()}, ignoring additional stream`,
+			logger.debug(
+				`Replacing stale outbound stream ${this.rawOutboundStream.id} -> ${stream.id} for peer ${this.peerId.toString()}`,
 			);
 			try {
-				await stream.abort?.(
-					new AbortError("Superseded outbound stream" as any),
+				await this.outboundStream.return?.();
+			} catch {
+				logger.error(
+					`Error closing old outbound stream for peer ${this.peerId.toString()}`,
 				);
-			} catch {}
-			return;
+			}
+			try {
+				await this.rawOutboundStream.close?.();
+			} catch {
+				logger.error(
+					`Error closing raw outbound stream for peer ${this.peerId.toString()}`,
+				);
+			}
+			try {
+				await this.rawOutboundStream.abort?.(
+					new AbortError("Replaced outbound stream" as any),
+				);
+			} catch {
+				logger.error(
+					`Error aborting raw outbound stream for peer ${this.peerId.toString()}`,
+				);
+			}
+			this.rawOutboundStream = undefined;
+			this.outboundStream = undefined;
 		}
 
 		this.rawOutboundStream = stream;
@@ -369,7 +389,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			this.rawOutboundStream,
 		).catch(logError);
 
-		// Emit if the connection is new
+		// Emit if the connection is new or replaced
 		this.dispatchEvent(new CustomEvent("stream:outbound"));
 	}
 

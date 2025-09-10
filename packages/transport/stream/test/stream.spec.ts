@@ -3371,6 +3371,53 @@ describe("start/stop", () => {
 			await waitForNeighbour(stream(session, 0), stream(session, 1)); */
 	});
 
+	it("replaces stale outbound stream direct attach", async () => {
+		// Focused test: directly invoke attachOutboundStream twice on an existing PeerStreams instance.
+		session = await connected(2, {
+			transports: [tcp(), webSockets({ filter: filters.all })],
+			services: { directstream: (c) => new TestDirectStream(c) },
+		});
+		await waitForNeighbour(stream(session, 0), stream(session, 1));
+		const peerHash = stream(session, 1).publicKeyHash;
+		const peerStreams = stream(session, 0).peers.get(peerHash)!;
+		// Sanity check first outbound exists
+		expect(peerStreams.rawOutboundStream?.id).to.be.a("string");
+		const firstId = peerStreams.rawOutboundStream!.id;
+
+		// Create a minimal fake libp2p stream with a different id
+		const events: { aborted?: boolean; closed?: boolean } = {};
+		const fakeStream: any = {
+			id: firstId + "-new",
+			source: (async function* () {})(),
+			sink: async (_src: any) => {},
+			abort: (_e?: any) => {
+				events.aborted = true; // should NOT be set for the new stream
+			},
+			close: async () => {
+				events.closed = true;
+			},
+			protocol: peerStreams.rawOutboundStream?.protocol,
+		};
+
+		// Track abort on the OLD stream
+		let oldAbortCalled = false;
+		const old = peerStreams.rawOutboundStream!;
+		const oldAbort = old.abort?.bind(old);
+		old.abort = (err?: any) => {
+			oldAbortCalled = true;
+			return oldAbort?.(err);
+		};
+
+		await peerStreams.attachOutboundStream(fakeStream);
+
+		expect(oldAbortCalled).to.equal(true, "old stream should be aborted");
+		expect(events.aborted).to.equal(
+			undefined,
+			"new stream must not be aborted",
+		);
+		expect(peerStreams.rawOutboundStream?.id).to.equal(fakeStream.id);
+	});
+
 	describe("waitFor", () => {
 		it("wait only for reachable", async () => {
 			session = await disconnected(3, {
