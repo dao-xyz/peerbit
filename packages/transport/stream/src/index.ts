@@ -60,7 +60,6 @@ import type {
 } from "@peerbit/stream-interface";
 import { AbortError, TimeoutError, delay } from "@peerbit/time";
 import { abortableSource } from "abortable-iterator";
-import { log } from "console";
 import * as lp from "it-length-prefixed";
 import { pipe } from "it-pipe";
 import { type Pushable, pushable } from "it-pushable";
