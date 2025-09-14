@@ -109,17 +109,17 @@ export const waitForConverged = async (
 		delta: number;
 		debug?: boolean;
 	} = {
-			tests: 3,
-			delta: 1,
-			timeout: 30 * 1000,
-			interval: 1000,
-			debug: false,
-		},
+		tests: 3,
+		delta: 1,
+		timeout: 30 * 1000,
+		interval: 1000,
+		debug: false,
+	},
 ) => {
 	let lastResult = undefined;
 	let c = 0;
 	let ok = 0;
-	for (; ;) {
+	for (;;) {
 		const current = await fn();
 		if (options.debug) {
 			console.log("Waiting for convergence: " + current);
@@ -195,9 +195,9 @@ export const checkBounded = async (
 			await dbgLogs(dbs.map((x) => x.log));
 			throw new Error(
 				"Log did not reach lower bound length of " +
-				entryCount * lower +
-				" got " +
-				db.log.log.length,
+					entryCount * lower +
+					" got " +
+					db.log.log.length,
 			);
 		}
 
@@ -209,9 +209,9 @@ export const checkBounded = async (
 			await dbgLogs(dbs.map((x) => x.log));
 			throw new Error(
 				"Log did not conform to upper bound length of " +
-				entryCount * higher +
-				" got " +
-				db.log.log.length,
+					entryCount * higher +
+					" got " +
+					db.log.log.length,
 			);
 		}
 	}
@@ -246,34 +246,34 @@ export const checkReplicas = async (
 					);
 					throw new Error(
 						"Did not fulfill min replicas level for " +
-						entry.hash +
-						" coordinates" +
-						JSON.stringify(coordinates.map((x) => x.toString())) +
-						" of: " +
-						minReplicas +
-						" got " +
-						v +
-						". Gid to peer history? " +
-						JSON.stringify(
-							dbs.map(
-								(x) =>
-									[...(x.log._gidPeersHistory.get(gid) || [])].filter(
-										(id) => id !== x.log.node.identity.publicKey.hashcode(),
-									).length || 0,
-							) +
-							". Has? " +
+							entry.hash +
+							" coordinates" +
+							JSON.stringify(coordinates.map((x) => x.toString())) +
+							" of: " +
+							minReplicas +
+							" got " +
+							v +
+							". Gid to peer history? " +
 							JSON.stringify(
-								await Promise.all(
-									dbs.map((x) => x.log.log.has(entry.hash)),
-								),
-							) +
-							", sync in flight ? " +
-							JSON.stringify(
-								dbs.map((x) =>
-									x.log.syncronizer.syncInFlight.has(entry.hash),
-								),
+								dbs.map(
+									(x) =>
+										[...(x.log._gidPeersHistory.get(gid) || [])].filter(
+											(id) => id !== x.log.node.identity.publicKey.hashcode(),
+										).length || 0,
+								) +
+									". Has? " +
+									JSON.stringify(
+										await Promise.all(
+											dbs.map((x) => x.log.log.has(entry.hash)),
+										),
+									) +
+									", sync in flight ? " +
+									JSON.stringify(
+										dbs.map((x) =>
+											x.log.syncronizer.syncInFlight.has(entry.hash),
+										),
+									),
 							),
-						),
 					);
 				}
 				expect(v).lessThanOrEqual(dbs.length);
