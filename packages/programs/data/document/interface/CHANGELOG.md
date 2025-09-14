@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.14](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.13...document-interface-v2.2.14) (2025-09-14)
+
+
+### Bug Fixes
+
+* add NotFoundError class and update error handling in Documents class for deleting non existing documents ([9d9c80b](https://github.com/dao-xyz/peerbit/commit/9d9c80b179596d37bf3a19fe2acab65154e4de77))
+
 ## [2.2.13](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.12...document-interface-v2.2.13) (2025-09-10)
 
 

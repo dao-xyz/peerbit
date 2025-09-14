@@ -456,6 +456,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.12.12](https://github.com/dao-xyz/peerbit/compare/document-v9.12.11...document-v9.12.12) (2025-09-14)
+
+
+### Bug Fixes
+
+* add NotFoundError class and update error handling in Documents class for deleting non existing documents ([9d9c80b](https://github.com/dao-xyz/peerbit/commit/9d9c80b179596d37bf3a19fe2acab65154e4de77))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document-interface bumped from ^2.2.13 to ^2.2.14
+
 ## [9.12.11](https://github.com/dao-xyz/peerbit/compare/document-v9.12.10...document-v9.12.11) (2025-09-10)
 
 
