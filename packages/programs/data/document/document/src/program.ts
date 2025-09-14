@@ -6,7 +6,7 @@ import {
 	variant,
 } from "@dao-xyz/borsh";
 import { AccessError, SignatureWithKey } from "@peerbit/crypto";
-import { ResultIndexedValue } from "@peerbit/document-interface";
+import { NotFoundError, ResultIndexedValue } from "@peerbit/document-interface";
 import type { QueryCacheOptions } from "@peerbit/indexer-cache";
 import * as indexerTypes from "@peerbit/indexer-interface";
 import {
@@ -602,7 +602,9 @@ export class Documents<
 		)?.[0]?.results[0];
 
 		if (!existing) {
-			throw new Error(`No entry with key '${key.primitive}' in the database`);
+			throw new NotFoundError(
+				`No entry with key '${key.primitive}' in the database`,
+			);
 		}
 
 		this.keepCache?.delete(existing.value.__context.head);

@@ -22,6 +22,7 @@ import {
 	CollectNextRequest,
 	Context,
 	NoAccess,
+	NotFoundError,
 	PredictedSearchRequest,
 	Results,
 	SearchRequest,
@@ -267,6 +268,24 @@ describe("index", () => {
 				await store.docs.put(doc);
 				await store.docs.del(doc.id);
 				await store.docs.log.reset();
+			});
+
+			it("deleting non-exising throws error", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>({
+						immutable: false,
+					}),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: {
+							factor: 1,
+						},
+					},
+				});
+
+				const promise = store.docs.del(uuid());
+				await expect(promise).to.be.rejectedWith(NotFoundError);
 			});
 
 			it("rejects on max message size", async () => {
