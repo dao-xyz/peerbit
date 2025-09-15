@@ -1,10 +1,7 @@
 /* eslint-disable no-console */
 import { waitFor } from "@peerbit/time";
 
-const isNode =
-	typeof process !== "undefined" &&
-	process.versions != null &&
-	process.versions.node != null;
+const isNode = typeof process !== "undefined" && process.versions?.node != null;
 
 const validateEmail = (email: any) => {
 	return String(email)
