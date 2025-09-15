@@ -313,6 +313,13 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.1.49](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.48...peerbit-v4.1.49) (2025-09-15)
+
+
+### Bug Fixes
+
+* replace TextEncoder with Uint8Array for SELF_IDENTITY_KEY_ID initialization ([1189d78](https://github.com/dao-xyz/peerbit/commit/1189d78950443b5b7f885bc52bd10b2f9c4298d4))
+
 ## [4.1.48](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.47...peerbit-v4.1.48) (2025-09-10)
 
 
