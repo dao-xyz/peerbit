@@ -275,7 +275,7 @@ export const launchNodes = async (properties: {
 			const allHaveIp = instanceIds.every((id) => ips.has(id));
 			if (allPresent && allHaveIp) {
 				// reorder to original order
-				var publicIps = instanceIds.map((id) => ips.get(id)!);
+				let publicIps = instanceIds.map((id) => ips.get(id)!);
 				if (publicIps.length > 0) {
 					// success
 					return publicIps.map((v, ix) => {
