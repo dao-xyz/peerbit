@@ -75,7 +75,9 @@ const createCache = async (
 	return cache;
 };
 
-const SELF_IDENTITY_KEY_ID = new TextEncoder().encode("__self__");
+const SELF_IDENTITY_KEY_ID = new Uint8Array([
+	95, 95, 115, 101, 108, 102, 95, 95,
+]); // new TextEncoder().encode("__self__");
 
 export class Peerbit implements ProgramClient {
 	_libp2p: Libp2pExtended;
