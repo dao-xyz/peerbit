@@ -3,6 +3,7 @@ import {
 	circuitRelayTransport,
 } from "@libp2p/circuit-relay-v2";
 import { tcp } from "@libp2p/tcp";
+import { webRTCDirect } from "@libp2p/webrtc";
 import { webSockets } from "@libp2p/websockets";
 import { all } from "@libp2p/websockets/filters";
 
@@ -11,6 +12,7 @@ export const transports = () => [
 	circuitRelayTransport({
 		reservationCompletionTimeout: 5000,
 	}),
+	webRTCDirect({}),
 	tcp(),
 ];
 export const relay = () =>
@@ -22,5 +24,6 @@ export const relay = () =>
 export const listen: () => string[] | undefined = () => [
 	"/ip4/127.0.0.1/tcp/0",
 	"/ip4/127.0.0.1/tcp/0/ws",
+	"/ip4/127.0.0.1/udp/0/webrtc-direct",
 	"/p2p-circuit",
 ];

@@ -6,6 +6,7 @@ import { peerIdFromString } from "@libp2p/peer-id";
 import { toBase64 } from "@peerbit/crypto";
 import chalk from "chalk";
 import fs from "fs";
+import sodium from "libsodium-wrappers";
 import path from "path";
 import { exit } from "process";
 import readline from "readline";
@@ -34,6 +35,8 @@ import { DEFAULT_REMOTE_GROUP, type RemoteObject, Remotes } from "./remotes.js";
 import { LOCAL_API_PORT } from "./routes.js";
 import { startServerWithNode } from "./server.js";
 import type { InstallDependency, StartProgram } from "./types.js";
+
+await sodium.ready;
 
 const colors = [
 	"#00FF00",

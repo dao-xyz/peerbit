@@ -33,6 +33,7 @@ export const create = (properties: {
 					? [
 							`/dns4/${properties.domain}/tcp/4002`,
 							`/dns4/${properties.domain}/tcp/4003/wss`,
+							`/dns4/${properties.domain}/tcp/4004/webrtc-direct`,
 						]
 					: undefined,
 				listen: [
@@ -40,6 +41,7 @@ export const create = (properties: {
 					`/ip4/127.0.0.1/tcp/${
 						listenPort !== 0 ? listenPort + 1 : listenPort
 					}/ws`,
+					`/ip4/127.0.0.1/udp/${listenPort !== 0 ? listenPort + 2 : listenPort}/webrtc-direct`,
 				],
 			},
 			connectionMonitor: {

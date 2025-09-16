@@ -125,6 +125,7 @@ export const createClient = async (
 					return (
 						throwIfNot200(
 							await axiosInstance.get(endpoint + ADDRESS_PATH, {
+								timeout: 5000,
 								validateStatus,
 							}),
 						).data as string[]
