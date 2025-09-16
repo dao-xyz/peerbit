@@ -400,6 +400,20 @@
   * dependencies
     * peerbit bumped from 4.0.6 to 4.0.7
 
+## [2.2.0](https://github.com/dao-xyz/peerbit/compare/test-utils-v2.1.60...test-utils-v2.2.0) (2025-09-16)
+
+
+### Features
+
+* make keychain libp2p compatible ([00aecf1](https://github.com/dao-xyz/peerbit/commit/00aecf1be807368b11800948cbc92ca03f8eb5c4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 4.1.49 to 4.2.0
+
 ## [2.1.60](https://github.com/dao-xyz/peerbit/compare/test-utils-v2.1.59...test-utils-v2.1.60) (2025-09-15)
 
 

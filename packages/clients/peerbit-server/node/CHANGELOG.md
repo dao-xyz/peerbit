@@ -452,6 +452,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.7.0](https://github.com/dao-xyz/peerbit/compare/server-v5.6.4...server-v5.7.0) (2025-09-16)
+
+
+### Features
+
+* add webrtc direct support ([ec49bca](https://github.com/dao-xyz/peerbit/commit/ec49bca97650b46c6ab412544c7c1af44b4914c5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 4.1.49 to 4.2.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.60 to 2.2.0
+
 ## [5.6.4](https://github.com/dao-xyz/peerbit/compare/server-v5.6.3...server-v5.6.4) (2025-09-15)
 
 

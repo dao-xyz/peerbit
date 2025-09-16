@@ -202,6 +202,20 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.3.0](https://github.com/dao-xyz/peerbit/compare/program-v5.2.17...program-v5.3.0) (2025-09-16)
+
+
+### Features
+
+* make keychain libp2p compatible ([00aecf1](https://github.com/dao-xyz/peerbit/commit/00aecf1be807368b11800948cbc92ca03f8eb5c4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/keychain bumped from ^1.0.32 to ^1.1.0
+
 ## [5.2.17](https://github.com/dao-xyz/peerbit/compare/program-v5.2.16...program-v5.2.17) (2025-09-09)
 
 

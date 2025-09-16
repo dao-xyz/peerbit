@@ -389,6 +389,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [11.4.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.3.8...shared-log-v11.4.0) (2025-09-16)
+
+
+### Features
+
+* make keychain libp2p compatible ([00aecf1](https://github.com/dao-xyz/peerbit/commit/00aecf1be807368b11800948cbc92ca03f8eb5c4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.2.17 to 5.3.0
+    * @peerbit/log bumped from 4.0.72 to 4.1.0
+    * @peerbit/rpc bumped from 5.3.17 to 5.3.18
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.60 to ^2.2.0
+
 ## [11.3.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.3.7...shared-log-v11.3.8) (2025-09-15)
 
 
