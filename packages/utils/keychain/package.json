@@ -58,6 +58,7 @@
 	"license": "MIT",
 	"dependencies": {
 		"@peerbit/crypto": "^2.3.11",
-		"@peerbit/any-store": "^2.1.14"
+		"@peerbit/any-store": "^2.1.14",
+		"@libp2p/keychain": "^5.2.9"
 	}
 }

@@ -1,7 +1,7 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { type Blocks } from "@peerbit/blocks-interface";
 import type { PublicSignKey, SignatureWithKey } from "@peerbit/crypto";
-import type { Keychain } from "@peerbit/keychain";
+import type { CryptoKeychain } from "@peerbit/keychain";
 import { LamportClock as Clock } from "./clock.js";
 import type { Encoding } from "./encoding.js";
 import type { ShallowEntry } from "./entry-shallow.js";
@@ -34,7 +34,7 @@ export abstract class Entry<T> {
 	abstract init(
 		props:
 			| {
-					keychain?: Keychain;
+					keychain?: CryptoKeychain;
 					encoding: Encoding<T>;
 			  }
 			| Entry<T>,

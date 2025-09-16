@@ -21,7 +21,7 @@ import {
 import { sha256Base64 } from "@peerbit/crypto";
 import type { Indices } from "@peerbit/indexer-interface";
 import { HashmapIndices } from "@peerbit/indexer-simple";
-import type { Keychain, KeypairFromPublicKey } from "@peerbit/keychain";
+import type { IPeerbitKeychain, KeypairFromPublicKey } from "@peerbit/keychain";
 import {
 	type Address,
 	type ExtractArgs,
@@ -122,7 +122,11 @@ export class PeerbitProxyClient implements ProgramClient {
 	identity: Identity<Ed25519PublicKey>;
 
 	private _multiaddr: Multiaddr[];
-	private _services: { pubsub: PubSub; blocks: Blocks; keychain: Keychain };
+	private _services: {
+		pubsub: PubSub;
+		blocks: Blocks;
+		keychain: IPeerbitKeychain;
+	};
 	private _storage: AnyStore;
 	private _indexer: Indices;
 	private _handler: ProgramHandler;
@@ -326,6 +330,36 @@ export class PeerbitProxyClient implements ProgramClient {
 						new keychain.REQ_ImportKey(properties.keypair, properties.id),
 					);
 				},
+				start: async () => {
+					throw new Error("Not implemented");
+				},
+				stop: async () => {
+					throw new Error("Not implemented");
+				},
+				findKeyByName: async (name) => {
+					throw new Error("Not implemented");
+				},
+				findKeyById: async (id) => {
+					throw new Error("Not implemented");
+				},
+				exportKey: async (id) => {
+					throw new Error("Not implemented");
+				},
+				importKey: async (...args: any[]) => {
+					throw new Error("Not implemented");
+				},
+				listKeys: async () => {
+					throw new Error("Not implemented");
+				},
+				removeKey: async (_id) => {
+					throw new Error("Not implemented");
+				},
+				renameKey: async (_oldName, _newName) => {
+					throw new Error("Not implemented");
+				},
+				rotateKeychainPass: async () => {
+					throw new Error("Not implemented");
+				},
 			},
 		};
 		const levelMap: Map<string, AnyStore> = new Map();
@@ -451,7 +485,11 @@ export class PeerbitProxyClient implements ProgramClient {
 		throw new Error("Not implemented");
 	}
 
-	get services(): { pubsub: PubSub; blocks: Blocks; keychain: Keychain } {
+	get services(): {
+		pubsub: PubSub;
+		blocks: Blocks;
+		keychain: IPeerbitKeychain;
+	} {
 		return this._services;
 	}
 

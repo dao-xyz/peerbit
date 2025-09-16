@@ -1,6 +1,6 @@
 import { yamux } from "@chainsafe/libp2p-yamux";
 import { DirectBlock } from "@peerbit/blocks";
-import { DefaultKeychain } from "@peerbit/keychain";
+import { keychain } from "@peerbit/keychain";
 import { TestSession as SSession } from "@peerbit/libp2p-test-utils";
 import { type ProgramClient } from "@peerbit/program";
 import { DirectSub } from "@peerbit/pubsub";
@@ -70,7 +70,7 @@ export class TestSession {
 							directory: blocksDirectory,
 						}),
 					pubsub: (c: any) => new DirectSub(c, { canRelayMessage: true }),
-					keychain: () => new DefaultKeychain(),
+					keychain: keychain(),
 					...o?.libp2p?.services,
 				} as any, /// TODO types
 				streamMuxers: [yamux()],

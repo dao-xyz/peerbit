@@ -1,6 +1,7 @@
 import { LevelDatastore } from "@dao-xyz/datastore-level";
 import { privateKeyFromRaw } from "@libp2p/crypto/keys";
 import type { PeerId } from "@libp2p/interface";
+import type { KeychainComponents } from "@libp2p/keychain";
 import {
 	type Multiaddr,
 	isMultiaddr,
@@ -17,7 +18,7 @@ import {
 } from "@peerbit/crypto";
 import type { Indices } from "@peerbit/indexer-interface";
 import { create as createSQLiteIndexer } from "@peerbit/indexer-sqlite3";
-import { DefaultKeychain } from "@peerbit/keychain";
+import { DefaultCryptoKeychain, keychain } from "@peerbit/keychain";
 import { logger as loggerFn } from "@peerbit/logger";
 import {
 	type Address,
@@ -161,12 +162,12 @@ export class Peerbit implements ProgramClient {
 			const store = createStore(keychainDirectory);
 			await store.open();
 
-			const keychain = new DefaultKeychain({
+			const cryptoKeychain = new DefaultCryptoKeychain({
 				store,
 			});
 			let privateKey = extendedOptions?.privateKey;
 			if (!privateKey) {
-				const exported = await keychain.exportById(
+				const exported = await cryptoKeychain.exportById(
 					SELF_IDENTITY_KEY_ID,
 					Ed25519Keypair,
 				);
@@ -181,7 +182,8 @@ export class Peerbit implements ProgramClient {
 			}
 
 			const services: any = {
-				keychain: (c: any) => keychain,
+				keychain: (components: KeychainComponents) =>
+					keychain({ libp2p: {}, crypto: cryptoKeychain })(components),
 				blocks: (c: any) =>
 					new DirectBlock(c, {
 						canRelayMessage: asRelay,

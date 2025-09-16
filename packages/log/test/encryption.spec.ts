@@ -3,7 +3,7 @@ import { AnyBlockStore, type BlockStore } from "@peerbit/blocks";
 import { Ed25519Keypair, X25519Keypair } from "@peerbit/crypto";
 import type { Indices } from "@peerbit/indexer-interface";
 import { create } from "@peerbit/indexer-sqlite3";
-import { DefaultKeychain } from "@peerbit/keychain";
+import { DefaultCryptoKeychain } from "@peerbit/keychain";
 import { expect } from "chai";
 import path from "path";
 import type { EntryV0 } from "../src/entry-v0.js";
@@ -15,8 +15,10 @@ const last = <T>(arr: T[]): T => {
 	return arr[arr.length - 1];
 };
 
-const createKeychain = async (...keys: (Ed25519Keypair | X25519Keypair)[]) => {
-	const keychain = new DefaultKeychain();
+const createCryptoKeychain = async (
+	...keys: (Ed25519Keypair | X25519Keypair)[]
+) => {
+	const keychain = new DefaultCryptoKeychain();
 	for (const key of keys) {
 		await keychain.import({ keypair: key });
 	}
@@ -42,7 +44,7 @@ describe("encryption", function () {
 			receiverKey = await X25519Keypair.create();
 			const logOptions = {
 				encoding: JSON_ENCODING,
-				keychain: await createKeychain(signKey, senderKey, receiverKey),
+				keychain: await createCryptoKeychain(signKey, senderKey, receiverKey),
 			};
 
 			log1 = new Log();
@@ -184,7 +186,7 @@ describe("encryption", function () {
 			indices = await create(path.resolve(rootDir, "indices"));
 
 			const logOptions = {
-				keychain: await createKeychain(signingKey, encryptioKey),
+				keychain: await createCryptoKeychain(signingKey, encryptioKey),
 				storage: blocks,
 				encoding: JSON_ENCODING,
 				indexer: indices,

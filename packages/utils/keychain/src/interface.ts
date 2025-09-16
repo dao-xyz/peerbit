@@ -1,4 +1,5 @@
 import { type AbstractType } from "@dao-xyz/borsh";
+import { type Keychain as ILibp2pKeychain } from "@libp2p/keychain";
 import type {
 	ByteKey,
 	Ed25519Keypair,
@@ -27,7 +28,7 @@ export type KeypairParameters = {
 };
 export type KeyParameters = { key: ByteKey };
 
-export interface Keychain {
+export interface CryptoKeychain {
 	// Add a key to the keychain.
 	import(
 		parameters: (KeypairParameters | KeyParameters) & { id: Uint8Array },
@@ -55,4 +56,9 @@ export interface Keychain {
 		id: Uint8Array,
 		type: AbstractType<T>,
 	): Promise<T | undefined>;
+
+	start(): Promise<void>;
+	stop(): Promise<void>;
 }
+
+export type IPeerbitKeychain = CryptoKeychain & ILibp2pKeychain;

@@ -5,7 +5,7 @@ import { type AnyStore } from "@peerbit/any-store-interface";
 import { type Blocks } from "@peerbit/blocks-interface";
 import { Ed25519Keypair, type PublicSignKey } from "@peerbit/crypto";
 import type { Indices } from "@peerbit/indexer-interface";
-import { type Keychain } from "@peerbit/keychain";
+import { type IPeerbitKeychain } from "@peerbit/keychain";
 import { type ProgramClient } from "@peerbit/program";
 import {
 	DataEvent,
@@ -89,7 +89,11 @@ export class PeerbitProxyHost implements ProgramClient {
 		return this.hostClient.hangUp(address);
 	}
 
-	get services(): { pubsub: PubSub; blocks: Blocks; keychain: Keychain } {
+	get services(): {
+		pubsub: PubSub;
+		blocks: Blocks;
+		keychain: IPeerbitKeychain;
+	} {
 		return this.hostClient.services;
 	}
 	get storage(): AnyStore {

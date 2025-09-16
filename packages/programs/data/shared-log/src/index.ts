@@ -915,7 +915,7 @@ export class SharedLog<
 	}
 
 	async unreplicate(rangeOrEntry?: Entry<T> | { id: Uint8Array }[]) {
-		let segmentIds: Uint8Array<ArrayBufferLike>[];
+		let segmentIds: Uint8Array[];
 		if (rangeOrEntry instanceof Entry) {
 			let range: FixedReplicationOptions = {
 				factor: 1,

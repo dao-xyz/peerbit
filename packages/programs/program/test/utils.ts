@@ -7,7 +7,10 @@ import {
 	getKeypairFromPrivateKey,
 	randomBytes,
 } from "@peerbit/crypto";
-import { DefaultKeychain } from "@peerbit/keychain";
+import {
+	DefaultCryptoKeychain,
+	type IPeerbitKeychain,
+} from "@peerbit/keychain";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import { DirectSub } from "@peerbit/pubsub";
 import {
@@ -186,13 +189,14 @@ export const createLibp2pPeer = async (): Promise<ProgramClient> => {
 			{
 				pubsub: DirectSub;
 				blocks: DirectBlock;
-				keychain: DefaultKeychain;
+				keychain: IPeerbitKeychain;
 			} & any
 		>(1, {
 			services: {
 				pubsub: (c) => new DirectSub(c),
 				blocks: (c) => new DirectBlock(c),
-				keychain: (c) => new DefaultKeychain(),
+				keychain: () =>
+					new DefaultCryptoKeychain() as unknown as IPeerbitKeychain,
 			},
 		})
 	).peers[0];

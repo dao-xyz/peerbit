@@ -10,7 +10,7 @@ import {
 } from "@peerbit/crypto";
 import { type Indices } from "@peerbit/indexer-interface";
 import { create } from "@peerbit/indexer-sqlite3";
-import { type Keychain } from "@peerbit/keychain";
+import { type CryptoKeychain } from "@peerbit/keychain";
 import { type Change } from "./change.js";
 import {
 	LamportClock as Clock,
@@ -49,7 +49,7 @@ export type MemoryProperties = {
 };
 
 export type LogProperties<T> = {
-	keychain?: Keychain;
+	keychain?: CryptoKeychain;
 	encoding?: Encoding<T>;
 	clock?: LamportClock;
 	sortFn?: Sorting.SortFn;
@@ -128,7 +128,7 @@ export class Log<T> {
 	 */
 	// Index of all next pointers in this log
 	/* private _nextsIndex!: Map<string, Set<string>>; */
-	private _keychain?: Keychain;
+	private _keychain?: CryptoKeychain;
 	private _encoding!: Encoding<T>;
 	private _trim!: Trim<T>;
 	private _canAppend?: CanAppend<T>;

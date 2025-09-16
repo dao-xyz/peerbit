@@ -8,7 +8,7 @@ import type {
 	PublicSignKey,
 } from "@peerbit/crypto";
 import type { Indices } from "@peerbit/indexer-interface";
-import { type Keychain } from "@peerbit/keychain";
+import { type IPeerbitKeychain } from "@peerbit/keychain";
 import { type PubSub } from "@peerbit/pubsub-interface";
 import type { Address } from "./address.js";
 import type {
@@ -27,7 +27,7 @@ export interface Client<T extends Manageable<ExtractArgs<T>>> {
 	services: {
 		pubsub: PubSub;
 		blocks: Blocks;
-		keychain: Keychain;
+		keychain: IPeerbitKeychain;
 	};
 	storage: AnyStore;
 	indexer: Indices;

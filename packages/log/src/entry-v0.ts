@@ -22,7 +22,7 @@ import {
 	toBase64,
 } from "@peerbit/crypto";
 import { verify } from "@peerbit/crypto";
-import { type Keychain } from "@peerbit/keychain";
+import { type CryptoKeychain } from "@peerbit/keychain";
 import { compare } from "uint8arrays";
 import { LamportClock as Clock, HLC, Timestamp } from "./clock.js";
 import { type Encoding, NO_ENCODING } from "./encoding.js";
@@ -173,7 +173,7 @@ export class EntryV0<T>
 
 	createdLocally?: boolean;
 
-	private _keychain?: Keychain;
+	private _keychain?: CryptoKeychain;
 	private _encoding?: Encoding<T>;
 
 	constructor(obj: {
@@ -195,7 +195,7 @@ export class EntryV0<T>
 	init(
 		props:
 			| {
-					keychain?: Keychain;
+					keychain?: CryptoKeychain;
 					encoding: Encoding<T>;
 			  }
 			| EntryV0<T>,

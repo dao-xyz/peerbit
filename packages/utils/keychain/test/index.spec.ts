@@ -1,12 +1,12 @@
 import { Ed25519Keypair, X25519Keypair } from "@peerbit/crypto";
 import { expect } from "chai";
-import { DefaultKeychain } from "../src/index.js";
+import { DefaultCryptoKeychain } from "../src/crypto.js";
 
 describe("keychain", () => {
-	let keychains: DefaultKeychain[];
+	let keychains: DefaultCryptoKeychain[];
 
 	beforeEach(() => {
-		keychains = [new DefaultKeychain(), new DefaultKeychain()];
+		keychains = [new DefaultCryptoKeychain(), new DefaultCryptoKeychain()];
 	});
 
 	describe("ed25519", () => {

@@ -9,7 +9,21 @@ it("starts", async () => {
 	// if node we expect 2 addresse if browser 0
 
 	if (typeof window === "undefined") {
-		expect(node.getMultiaddrs()).to.have.length(2);
+		const addresses = node.getMultiaddrs().map((x) => x.toString());
+		// check existance of ws, webrtc-direct, and tcp
+		expect(addresses).to.have.length(3);
+		expect(
+			addresses.find((a) => a.includes("/ws")),
+			"ws",
+		).to.exist;
+		expect(
+			addresses.find((a) => a.includes("/webrtc-direct")),
+			"webrtc-direct",
+		).to.exist;
+		expect(
+			addresses.find((a) => a.includes("/tcp")),
+			"tcp",
+		).to.exist;
 	} else {
 		expect(node.getMultiaddrs()).to.have.length(0);
 	}
