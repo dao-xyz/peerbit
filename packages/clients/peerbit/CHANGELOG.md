@@ -313,6 +313,21 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.2.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.49...peerbit-v4.2.0) (2025-09-16)
+
+
+### Features
+
+* add webrtc direct support ([ec49bca](https://github.com/dao-xyz/peerbit/commit/ec49bca97650b46c6ab412544c7c1af44b4914c5))
+* make keychain libp2p compatible ([00aecf1](https://github.com/dao-xyz/peerbit/commit/00aecf1be807368b11800948cbc92ca03f8eb5c4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.2.17 to 5.3.0
+
 ## [4.1.49](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.48...peerbit-v4.1.49) (2025-09-15)
 
 

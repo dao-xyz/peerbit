@@ -308,6 +308,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [5.3.0](https://github.com/dao-xyz/peerbit/compare/proxy-v5.2.26...proxy-v5.3.0) (2025-09-16)
+
+
+### Features
+
+* make keychain libp2p compatible ([00aecf1](https://github.com/dao-xyz/peerbit/commit/00aecf1be807368b11800948cbc92ca03f8eb5c4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from ^5.2.17 to ^5.3.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.60 to 2.2.0
+
 ## [5.2.26](https://github.com/dao-xyz/peerbit/compare/proxy-v5.2.25...proxy-v5.2.26) (2025-09-15)
 
 
