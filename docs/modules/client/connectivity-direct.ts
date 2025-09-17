@@ -23,7 +23,9 @@ await peerA.dial(multaddrs);
 // Connected!
 
 // We can dial an address directly from a string. This one below is malformed and will fail
-await expect(peerA.dial("/ip4/123.4.5...")).rejectedWith("invalid ip address");
+await expect(peerA.dial("/ip4/123.4.5...")).rejectedWith(
+	"Invalid IPv4 address",
+);
 
 await peerA.stop();
 await peerB.stop();
