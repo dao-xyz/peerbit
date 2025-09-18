@@ -452,6 +452,15 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.8.2](https://github.com/dao-xyz/peerbit/compare/server-v5.8.1...server-v5.8.2) (2025-09-18)
+
+
+### Bug Fixes
+
+* rm unused imports ([f9823a0](https://github.com/dao-xyz/peerbit/commit/f9823a05fb0a071ee439d9feb605d5a3796eee54))
+* test teardown ([44aa57d](https://github.com/dao-xyz/peerbit/commit/44aa57d8c7ad34c386b9c72ce8308081006d25f0))
+* type casting ([8f8f903](https://github.com/dao-xyz/peerbit/commit/8f8f903514ca196389f6087df1ea8e4a242ba691))
+
 ## [5.8.1](https://github.com/dao-xyz/peerbit/compare/server-v5.8.0...server-v5.8.1) (2025-09-18)
 
 
