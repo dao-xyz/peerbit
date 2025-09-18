@@ -34,11 +34,11 @@ describe("ssl", () => {
 	before(() => {
 		dotenv.config();
 	});
-	let session: TestSession, peer: ProgramClient, server: http.Server;
+	let peer: Peerbit, server: http.Server;
 
 	before(async () => {
 		const directory = "./tmp/peerbit/" + +new Date();
-		const peer = await Peerbit.create({
+		peer = await Peerbit.create({
 			directory: path.join(directory, "node"),
 		});
 		server = await startApiServer(peer, {
@@ -49,7 +49,6 @@ describe("ssl", () => {
 
 	after(async () => {
 		await peer.stop();
-		await session.stop();
 		await server.close();
 	});
 
