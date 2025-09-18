@@ -7,7 +7,7 @@ import {
 	type Identity,
 	toBase64,
 } from "@peerbit/crypto";
-import type { Address, Program, ProgramClient } from "@peerbit/program";
+import type { Address, Program } from "@peerbit/program";
 import { PermissionedString } from "@peerbit/test-lib";
 import { TestSession } from "@peerbit/test-utils";
 import { expect } from "chai";
@@ -51,7 +51,7 @@ describe("libp2p only", () => {
 			uuid(),
 		);
 		fs.mkdirSync(configDirectory, { recursive: true });
-		server = await startApiServer(session.peers[0], {
+		server = await startApiServer(session.peers[0] as Peerbit, {
 			trust: new Trust(getTrustPath(configDirectory)),
 			port: 7676,
 		});
@@ -95,7 +95,7 @@ describe("server", () => {
 		});
 	});
 	describe("api", () => {
-		let session: TestSession, serverPeer: ProgramClient, server: http.Server;
+		let session: TestSession, serverPeer: Peerbit, server: http.Server;
 		let db: PermissionedString;
 		before(async () => {});
 
@@ -111,7 +111,7 @@ describe("server", () => {
 			session = await TestSession.connected(1, {
 				libp2p: { transports: [tcp(), webSockets()] },
 			});
-			serverPeer = session.peers[0];
+			serverPeer = session.peers[0] as Peerbit;
 			db = await serverPeer.open(new PermissionedString({ trusted: [] }));
 			fs.mkdirSync(directory, { recursive: true });
 			server = await startApiServer(serverPeer, {
