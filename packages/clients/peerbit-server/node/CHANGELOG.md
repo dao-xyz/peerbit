@@ -452,6 +452,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.8.5](https://github.com/dao-xyz/peerbit/compare/server-v5.8.4...server-v5.8.5) (2025-09-18)
+
+
+### Bug Fixes
+
+* clean up formatting and add stats command to CLI ([2f6fc7f](https://github.com/dao-xyz/peerbit/commit/2f6fc7f1e88b88b0f4bf754a500e186344a6b6b5))
+
 ## [5.8.4](https://github.com/dao-xyz/peerbit/compare/server-v5.8.3...server-v5.8.4) (2025-09-18)
 
 
