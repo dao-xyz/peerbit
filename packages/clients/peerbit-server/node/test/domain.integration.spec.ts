@@ -4,6 +4,7 @@ import { expect } from "chai";
 import dotenv from "dotenv";
 import type http from "http";
 import path from "path";
+import { Peerbit } from "peerbit";
 import { getTrustPath } from "../src/config.js";
 import { getDomainFromConfig } from "../src/domain.js";
 import { startApiServer } from "../src/server.js";
@@ -37,10 +38,9 @@ describe("ssl", () => {
 
 	before(async () => {
 		const directory = "./tmp/peerbit/" + +new Date();
-		session = await TestSession.connected(1, {
+		const peer = await Peerbit.create({
 			directory: path.join(directory, "node"),
 		});
-		peer = session.peers[0];
 		server = await startApiServer(peer, {
 			trust: new Trust(getTrustPath(directory)),
 			port: 12345,

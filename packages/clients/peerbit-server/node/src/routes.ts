@@ -14,6 +14,7 @@ export const LOCAL_API_PORT = 8082;
 export const TRUST_PATH = "/trust";
 export const PEER_ID_PATH = "/peer/id";
 export const ADDRESS_PATH = "/peer/address";
+export const STATS_PATH = "/peer/stats";
 export const PROGRAM_PATH = "/program";
 export const PROGRAMS_PATH = "/programs";
 export const PROGRAM_VARIANTS_PATH = "/program/variants";

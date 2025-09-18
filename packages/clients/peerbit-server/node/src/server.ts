@@ -4,7 +4,6 @@ import { peerIdFromString } from "@libp2p/peer-id";
 import { fromBase64, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import {
 	Program,
-	type ProgramClient,
 	getProgramFromVariant,
 	getProgramFromVariants,
 } from "@peerbit/program";
@@ -36,6 +35,7 @@ import {
 	PROGRAM_VARIANTS_PATH,
 	RESTART_PATH,
 	SELF_UPDATE_PATH,
+	STATS_PATH,
 	STOP_PATH,
 	TRUST_PATH,
 	VERSIONS_PATH,
@@ -268,7 +268,7 @@ function findPeerbitProgramFolder(inputDirectory: string): string | null {
 }
 
 export const startApiServer = async (
-	client: ProgramClient,
+	client: Peerbit,
 	properties: {
 		trust: Trust;
 		session?: Session;
@@ -332,7 +332,7 @@ export const startApiServer = async (
 
 	const e404 = "404";
 
-	const endpoints = (client: ProgramClient): http.RequestListener => {
+	const endpoints = (client: Peerbit): http.RequestListener => {
 		return async (req, res) => {
 			res.setHeader("Access-Control-Allow-Origin", "*");
 			res.setHeader("Access-Control-Request-Method", "*");
@@ -887,12 +887,45 @@ export const startApiServer = async (
 								r404();
 								break;
 						}
-					}  */ else if (req.url.startsWith(PEER_ID_PATH)) {
+					}  */ else if (req.url.startsWith(STATS_PATH)) {
+						if (req.method === "GET") {
+							try {
+								const connections = client.libp2p.getConnections();
+								const inbound = connections.filter(
+									(c) => c.direction === "inbound",
+								).length;
+								const outbound = connections.filter(
+									(c) => c.direction === "outbound",
+								).length;
+								const dialQueue = client.libp2p.getDialQueue();
+
+								const payload = {
+									connections: {
+										total: connections.length,
+										inbound,
+										outbound,
+									},
+									dialQueue: {
+										pending: dialQueue.length,
+									},
+								};
+								res.setHeader("Content-Type", "application/json");
+								res.writeHead(200);
+								res.end(JSON.stringify(payload));
+							} catch (error: any) {
+								res.writeHead(500);
+								res.end(error?.message || "Failed to compute stats");
+							}
+						} else {
+							r404();
+						}
+					} else if (req.url.startsWith(PEER_ID_PATH)) {
 						res.writeHead(200);
 						res.end(client.peerId.toString());
 					} else if (req.url.startsWith(ADDRESS_PATH)) {
 						res.setHeader("Content-Type", "application/json");
 						res.writeHead(200);
+
 						const addresses = client.getMultiaddrs().map((x) => x.toString());
 						res.end(JSON.stringify(addresses));
 					} else {

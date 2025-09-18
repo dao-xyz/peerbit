@@ -23,6 +23,7 @@ import {
 	REMOTE_API_PORT,
 	RESTART_PATH,
 	SELF_UPDATE_PATH,
+	STATS_PATH,
 	STOP_PATH,
 	TRUST_PATH,
 	VERSIONS_PATH,
@@ -130,6 +131,22 @@ export const createClient = async (
 							}),
 						).data as string[]
 					).map((x) => multiaddr(x));
+				},
+			},
+			stats: {
+				get: async (): Promise<{
+					connections: { total: number; inbound: number; outbound: number };
+					dialQueue: { pending: number };
+				}> => {
+					const resp = throwIfNot200(
+						await axiosInstance.get(endpoint + STATS_PATH, {
+							validateStatus,
+						}),
+					);
+					return resp.data as {
+						connections: { total: number; inbound: number; outbound: number };
+						dialQueue: { pending: number };
+					};
 				},
 			},
 		},
