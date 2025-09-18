@@ -452,6 +452,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.8.1](https://github.com/dao-xyz/peerbit/compare/server-v5.8.0...server-v5.8.1) (2025-09-18)
+
+
+### Bug Fixes
+
+* remove dev dep ([633b9ba](https://github.com/dao-xyz/peerbit/commit/633b9bad18c991e50e078bc9213fe1d3ab89ae3e))
+
 ## [5.8.0](https://github.com/dao-xyz/peerbit/compare/server-v5.7.0...server-v5.8.0) (2025-09-18)
 
 
