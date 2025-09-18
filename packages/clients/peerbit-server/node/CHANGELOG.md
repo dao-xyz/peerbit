@@ -452,6 +452,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.8.3](https://github.com/dao-xyz/peerbit/compare/server-v5.8.2...server-v5.8.3) (2025-09-18)
+
+
+### Bug Fixes
+
+* revert email change ([c30b40f](https://github.com/dao-xyz/peerbit/commit/c30b40fede167e75cf600ca5aa0a088a9c1e71b7))
+
 ## [5.8.2](https://github.com/dao-xyz/peerbit/compare/server-v5.8.1...server-v5.8.2) (2025-09-18)
 
 
