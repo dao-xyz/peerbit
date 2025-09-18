@@ -1,4 +1,4 @@
-import { type ProgramClient } from "@peerbit/program";
+import type { ProgramClient } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import { expect } from "chai";
 import dotenv from "dotenv";

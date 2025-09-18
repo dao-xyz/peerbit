@@ -218,11 +218,6 @@ export const cli = async (args?: string[]) => {
 						describe:
 							"Setup a testing domain with SSL (no guarantess on how long the domain will be available)",
 						builder: {
-							email: {
-								describe: "Email for Lets encrypt autorenewal messages",
-								type: "string",
-								demandOption: true,
-							},
 							outdir: {
 								describe: "Output path for Nginx config",
 								type: "string",
@@ -237,7 +232,7 @@ export const cli = async (args?: string[]) => {
 						},
 						handler: async (args) => {
 							const domain = await createTestDomain();
-							await startCertbot(domain, args.email, args.wait);
+							await startCertbot(domain, args.wait);
 							exit();
 						},
 					})
@@ -273,11 +268,6 @@ export const cli = async (args?: string[]) => {
 								alias: "sk",
 								type: "string",
 							},
-							email: {
-								describe: "Email for Lets encrypt auto-renewal messages",
-								type: "string",
-								demandOption: true,
-							},
 							outdir: {
 								describe: "Output path for Nginx config",
 								type: "string",
@@ -310,12 +300,7 @@ export const cli = async (args?: string[]) => {
 										}
 									: undefined,
 							});
-							await startCertbot(
-								args.domain,
-								args.email,
-								args.outdir,
-								args.wait,
-							);
+							await startCertbot(args.domain, args.wait);
 							exit();
 						},
 					})
@@ -386,24 +371,33 @@ export const cli = async (args?: string[]) => {
 									alias: "d",
 									default: getHomeConfigDir(),
 								});
+								awsArgs.option("server-version", {
+									describe:
+										"@peerbit/server version or tag to install on the instance (e.g. 5.7.0-58d3d09)",
+									type: "string",
+									alias: ["sv"],
+								});
 								return awsArgs;
 							},
 							handler: async (args) => {
 								const accessGrant: PeerId[] =
-									args.access?.length > 0
-										? args.access.map((x: any) => peerIdFromString(x))
+									args["grant-access"]?.length > 0
+										? (args["grant-access"] as string[]).map((x) =>
+												peerIdFromString(x),
+											)
 										: [
 												await (
 													await getKeypair(args.directory)
 												).publicKey.toPeerId(),
 											];
 								const nodes = await launchNodes({
-									email: "marcus@dao.xyz",
 									count: args.count,
 									namePrefix: args.name,
 									region: args.region,
 									grantAccess: accessGrant,
 									size: args.size,
+									serverVersion:
+										(args["server-version"] as string) || undefined,
 								});
 
 								console.log(
