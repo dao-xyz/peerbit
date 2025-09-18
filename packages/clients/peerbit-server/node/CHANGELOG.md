@@ -452,6 +452,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.8.4](https://github.com/dao-xyz/peerbit/compare/server-v5.8.3...server-v5.8.4) (2025-09-18)
+
+
+### Bug Fixes
+
+* requeire email on remote domain spawn and always trust self ([9b0640c](https://github.com/dao-xyz/peerbit/commit/9b0640c670eaff598667db71a5f5a7eb0a4dd6fa))
+
 ## [5.8.3](https://github.com/dao-xyz/peerbit/compare/server-v5.8.2...server-v5.8.3) (2025-09-18)
 
 
