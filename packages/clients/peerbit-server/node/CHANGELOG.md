@@ -452,6 +452,29 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.8.0](https://github.com/dao-xyz/peerbit/compare/server-v5.7.0...server-v5.8.0) (2025-09-18)
+
+
+### Features
+
+* add stats endpoint to retrieve connection and dial queue information ([5d4e53c](https://github.com/dao-xyz/peerbit/commit/5d4e53c2f4ed68975b260a1792112522b4e26f70))
+* support to launch server with specific version ([4135175](https://github.com/dao-xyz/peerbit/commit/4135175b68b9096a9dcbcbe63c005a32728d1afa))
+
+
+### Bug Fixes
+
+* remove stream block from nginx config and update announce/listen addresses for libp2p ([58d3d09](https://github.com/dao-xyz/peerbit/commit/58d3d094c41618537995c24d11cfc72dd8a6f49e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 4.2.0 to 4.3.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.2.0 to 2.2.1
+    * peerbit bumped from ^4.2.0 to ^4.3.0
+
 ## [5.7.0](https://github.com/dao-xyz/peerbit/compare/server-v5.6.4...server-v5.7.0) (2025-09-16)
 
 

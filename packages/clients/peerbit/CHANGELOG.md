@@ -313,6 +313,13 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.3.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.2.0...peerbit-v4.3.0) (2025-09-18)
+
+
+### Features
+
+* add stats endpoint to retrieve connection and dial queue information ([5d4e53c](https://github.com/dao-xyz/peerbit/commit/5d4e53c2f4ed68975b260a1792112522b4e26f70))
+
 ## [4.2.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.49...peerbit-v4.2.0) (2025-09-16)
 
 
