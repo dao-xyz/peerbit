@@ -23,7 +23,7 @@ npm install -g @peerbit/server
 Initiate the spawn command:
 This will create a new node in your default region.
 ```sh
-peerbit remote spawn aws --count 1
+peerbit remote spawn aws --count 1 --email <your-email>
 ```
 Please note that this process might require several minutes.
 

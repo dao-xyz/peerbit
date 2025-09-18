@@ -38,7 +38,7 @@ npm install -g @peerbit/server
 Setup a test domain (so can access the node). The command below might take a while to run.
 
 ```sh
-sudo peerbit domain test
+sudo peerbit domain test --email <your-email>
 ```
 
 (``sudo`` is needed because docker will be installed if it is not available)

@@ -376,6 +376,12 @@ export const cli = async (args?: string[]) => {
 									alias: "d",
 									default: getHomeConfigDir(),
 								});
+								awsArgs.option("email", {
+									describe: "Email for Let's security messages",
+									type: "string",
+									alias: "e",
+									demandOption: true,
+								});
 								awsArgs.option("server-version", {
 									describe:
 										"@peerbit/server version or tag to install on the instance (e.g. 5.7.0-58d3d09)",
@@ -385,17 +391,18 @@ export const cli = async (args?: string[]) => {
 								return awsArgs;
 							},
 							handler: async (args) => {
+								const self = (
+									await getKeypair(args.directory)
+								).publicKey.toPeerId();
 								const accessGrant: PeerId[] =
 									args["grant-access"]?.length > 0
 										? (args["grant-access"] as string[]).map((x) =>
 												peerIdFromString(x),
 											)
-										: [
-												await (
-													await getKeypair(args.directory)
-												).publicKey.toPeerId(),
-											];
+										: [];
+								accessGrant.push(self);
 								const nodes = await launchNodes({
+									email: args.email as string,
 									count: args.count,
 									namePrefix: args.name,
 									region: args.region,

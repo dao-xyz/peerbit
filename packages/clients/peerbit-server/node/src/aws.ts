@@ -52,7 +52,11 @@ export const createRecord = async (options: {
 	await client.send(cmd);
 };
 
-const setupUserData = (grantAccess: PeerId[] = [], serverVersion?: string) => {
+const setupUserData = (
+	email: string,
+	grantAccess: PeerId[] = [],
+	serverVersion?: string,
+) => {
 	const peerIdStrings = grantAccess.map((x) => x.toString());
 
 	// better-sqlite3 force use to install build-essentials for `make` command, TOOD dont bundle better-sqlite3 by default?
@@ -63,7 +67,7 @@ curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - &&\
 sudo apt-get install -y nodejs
 sudo apt-get install -y build-essential
 npm install -g @peerbit/server${versionSpec}
-sudo peerbit domain test
+sudo peerbit domain test --email ${email}
 peerbit start ${peerIdStrings.map((key) => `--ga ${key}`)} > log.txt 2>&1 &
 `;
 };
@@ -106,6 +110,7 @@ export const AWS_LINUX_ARM_AMIs: Record<string, string> = {
 };
 export const launchNodes = async (properties: {
 	region?: string;
+	email: string;
 	count?: number;
 	size?: "micro" | "small" | "medium" | "large" | "xlarge" | "2xlarge";
 	namePrefix?: string;
@@ -219,7 +224,11 @@ export const launchNodes = async (properties: {
 			SecurityGroupIds: [securityGroupOut.GroupId!],
 			InstanceType: ("t4g." + (properties.size || "micro")) as any, // TODO types
 			UserData: Buffer.from(
-				setupUserData(properties.grantAccess, properties.serverVersion),
+				setupUserData(
+					properties.email,
+					properties.grantAccess,
+					properties.serverVersion,
+				),
 			).toString("base64"),
 			MinCount: count,
 			MaxCount: count,
