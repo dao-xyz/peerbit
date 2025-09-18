@@ -798,6 +798,18 @@ export const cli = async (args?: string[]) => {
 												},
 											})
 											.command({
+												command: "stats",
+												describe: "Get connection and dial queue stats",
+												handler: async () => {
+													for (const api of apis) {
+														const s = await api.api.peer.stats.get();
+														api.log(
+															`connections total=${s.connections.total} inbound=${s.connections.inbound} outbound=${s.connections.outbound} | dialQueue pending=${s.dialQueue.pending}`,
+														);
+													}
+												},
+											})
+											.command({
 												command: "address",
 												describe: "Get addresses",
 												handler: async (args) => {
