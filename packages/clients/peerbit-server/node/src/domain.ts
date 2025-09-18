@@ -121,11 +121,23 @@ export const createTestDomain = async () => {
 	return domain;
 };
 
+const validateEmail = (email: any) => {
+	return String(email)
+		.toLowerCase()
+		.match(
+			/^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/,
+		);
+};
+
 export const startCertbot = async (
 	domain: string,
+	email: string,
 	waitForUp = false,
 	dockerProcessName = "nginx-certbot",
 ): Promise<void> => {
+	if (!validateEmail(email)) {
+		throw new Error("Email for SSL renenewal is invalid");
+	}
 	const { installDocker, startContainer } = await import("./docker.js");
 
 	const nginxConfigPath = await getNginxFolderPath();
@@ -141,7 +153,7 @@ export const startCertbot = async (
 	// copy ui from node_modules to home for permission reasons (volume will not work otherwise)
 	const certbotDockerCommand = `cp -r ${uiPath} $(pwd)/ui && docker pull jonasal/nginx-certbot:latest && docker run -d --net=host \
 	--restart unless-stopped \
-	${isTest ? "--env STAGING=1" : ""}\
+	--env CERTBOT_EMAIL=${email} ${isTest ? "--env STAGING=1" : ""}\
     -v $(pwd)/nginx_secrets:/etc/letsencrypt \
     -v ${nginxConfigPath}:/etc/nginx/user_conf.d:ro \
     -v $(pwd)/ui:/usr/share/nginx/html:ro \

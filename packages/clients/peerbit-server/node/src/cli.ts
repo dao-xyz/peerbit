@@ -218,6 +218,11 @@ export const cli = async (args?: string[]) => {
 						describe:
 							"Setup a testing domain with SSL (no guarantess on how long the domain will be available)",
 						builder: {
+							email: {
+								describe: "Email for Lets security messages",
+								type: "string",
+								demandOption: true,
+							},
 							outdir: {
 								describe: "Output path for Nginx config",
 								type: "string",
@@ -232,7 +237,7 @@ export const cli = async (args?: string[]) => {
 						},
 						handler: async (args) => {
 							const domain = await createTestDomain();
-							await startCertbot(domain, args.wait);
+							await startCertbot(domain, args.email, args.wait);
 							exit();
 						},
 					})
@@ -300,7 +305,7 @@ export const cli = async (args?: string[]) => {
 										}
 									: undefined,
 							});
-							await startCertbot(args.domain, args.wait);
+							await startCertbot(args.domain, args.email, args.wait);
 							exit();
 						},
 					})
