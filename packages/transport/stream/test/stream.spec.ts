@@ -1,3 +1,4 @@
+import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
 import { type YamuxStream } from "@chainsafe/libp2p-yamux/stream";
 import { deserialize, serialize } from "@dao-xyz/borsh";
@@ -31,7 +32,7 @@ import {
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import crypto from "crypto";
-import { type Libp2pOptions } from "libp2p";
+import { type Libp2pOptions, createLibp2p } from "libp2p";
 import sinon from "sinon";
 import { equals } from "uint8arrays";
 import {
@@ -3762,6 +3763,107 @@ describe("start/stop", () => {
 		await waitForResolved(() =>
 			expect(session.peers[0].services.directstream.peers.size).to.equal(0),
 		);
+	});
+});
+describe("directstream outbound pump", () => {
+	let server: Awaited<ReturnType<typeof createLibp2p>>;
+	let client: any;
+
+	afterEach(async () => {
+		await client?.stop();
+		await server?.stop();
+	});
+
+	it("keeps consuming after one UnexpectedEOFError", async () => {
+		// Start server with your service under test
+		server = await createLibp2p({
+			addresses: { listen: ["/ip4/127.0.0.1/tcp/0"] },
+			transports: [tcp()],
+			streamMuxers: [yamux()],
+			connectionEncrypters: [noise()],
+			connectionManager: {
+				inboundConnectionThreshold: 1024,
+				reconnectRetries: 0,
+			},
+			services: {
+				directstream: (c: any) =>
+					new TestDirectStream(c, {
+						// your options here if needed
+						connectionManager: { dialer: false, pruner: false },
+					}),
+			},
+		});
+
+		client = await createLibp2p({
+			transports: [tcp()],
+			streamMuxers: [yamux()],
+			connectionEncrypters: [noise()],
+			connectionMonitor: { enabled: false },
+			connectionManager: { reconnectRetries: 0 },
+			services: {
+				directstream: (c: any) =>
+					new TestDirectStream(c, {
+						// your options here if needed
+						connectionManager: { dialer: false, pruner: false },
+					}),
+			},
+		});
+
+		// Connect (gives server an inbound Connection)
+		await client.dial(server.getMultiaddrs());
+		await waitForResolved(() => {
+			const [conn] = server.getConnections();
+			expect(conn).to.exist;
+		});
+
+		const ds = server.services.directstream as DirectStream;
+		await waitForResolved(() => expect(ds).to.exist);
+		await waitForResolved(
+			() => expect((ds as any)["outboundInflightQueue"]).to.exist,
+		);
+
+		// Monkey-patch: first call throws UnexpectedEOFError, others succeed
+		const originalCreateOutbound = (ds as any)["createOutboundStream"].bind(ds);
+		let thrownOnce = false;
+		(ds as any).createOutboundStream = async (
+			peerId: any,
+			connection: any,
+			opts?: any,
+		) => {
+			if (!thrownOnce) {
+				thrownOnce = true;
+				const err = new Error("UnexpectedEOFError: unexpected end of input");
+				// mimic typical err.code shapes if your code checks them
+				(err as any).code = "ERR_UNEXPECTED_EOF";
+				throw err;
+			}
+			return originalCreateOutbound(peerId, connection, opts);
+		};
+
+		// Push TWO items. If the pump dies on the first error, the second will never be handled.
+		const [conn] = server.getConnections();
+		(ds as any).outboundInflightQueue.push({
+			peerId: conn.remotePeer,
+			connection: conn,
+		});
+		(ds as any).outboundInflightQueue.push({
+			peerId: conn.remotePeer,
+			connection: conn,
+		});
+
+		// The service should eventually add the peer or some visible success state.
+		// Adjust the success condition to what your service does when a stream is ready:
+		await waitForResolved(() => expect(ds.peers.size).to.equal(1));
+
+		// Also make sure the queue is still alive by pushing a third item now:
+		(ds as any).outboundInflightQueue.push({
+			peerId: conn.remotePeer,
+			connection: conn,
+		});
+		await delay(50); // give it a moment
+
+		// Optional: assert the pump didn’t crash by checking more state if you have it
+		// e.g., ds._outboundPump still defined, or a counter incremented, etc.
 	});
 });
 

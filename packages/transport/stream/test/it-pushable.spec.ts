@@ -1,3 +1,4 @@
+import { delay } from "@peerbit/time";
 import { expect } from "chai";
 import all from "it-all";
 import { pipe } from "it-pipe";
@@ -407,5 +408,197 @@ describe("it-pushable", () => {
 			expect(source.readableLength).equal(0);
 			expect(source.getReadableLength(2)).equal(0);
 		});
+	});
+
+	it("does not starve any lane under sustained lane-0 pressure (2 lanes, WRR default)", async () => {
+		const p = pushableLanes<Uint8Array>({ lanes: 2 }); // fairness defaults to 'wrr'
+		const seen: number[] = [];
+
+		(async () => {
+			for await (const v of p) seen.push(v[0]);
+		})();
+
+		// Start hammering lane 0
+		const feeder = setInterval(() => {
+			for (let i = 0; i < 16; i++) p.push(new Uint8Array([0]), 0);
+		}, 0);
+
+		// Inject lane-1 signal after flood begins
+		setTimeout(() => p.push(new Uint8Array([1]), 1), 20);
+
+		await delay(250);
+		clearInterval(feeder);
+
+		expect(seen).to.include(1);
+	});
+
+	it("respects weights roughly (lane 0 ~4x lane 1)", async () => {
+		const p = pushableLanes<Uint8Array>({
+			lanes: 2,
+			fairness: "wrr",
+			weights: [4, 1],
+		});
+		const seen: number[] = [];
+
+		(async () => {
+			for await (const v of p) {
+				seen.push(v[0]);
+				// tiny delay -> ensures backlog/competition between lanes
+				await new Promise((r) => setTimeout(r, 1));
+			}
+		})();
+
+		const feed0 = setInterval(() => p.push(new Uint8Array([0]), 0), 0);
+		const feed1 = setInterval(() => p.push(new Uint8Array([1]), 1), 0);
+
+		await new Promise((r) => setTimeout(r, 200));
+		clearInterval(feed0);
+		clearInterval(feed1);
+		p.end();
+
+		const zeros = seen.filter((x) => x === 0).length;
+		const ones = seen.filter((x) => x === 1).length;
+		expect(zeros).to.be.greaterThan(ones * 2.2); // 4:1 target with tolerance
+	});
+
+	it("distributes roughly as [8,4,2,1] when lanes=4 and fairness is default", async () => {
+		const L = 4;
+		const p = pushableLanes<Uint8Array>({ lanes: L }); // defaults: fairness='wrr', bias=2, weights auto
+		const counts = Array<number>(L).fill(0);
+
+		// consumer: small processing delay to create contention
+		const consumer = (async () => {
+			for await (const v of p) {
+				const lane = v[0]; // we encode lane index in first byte
+				counts[lane] += 1;
+				await delay(1); // keep a backlog so WRR can arbitrate
+			}
+		})();
+
+		// producers: equal push rate on all lanes (bursting to deepen the backlog)
+		const feeders = Array.from({ length: L }, (_, i) =>
+			setInterval(() => {
+				for (let k = 0; k < 6; k++) p.push(new Uint8Array([i]), i);
+			}, 0),
+		);
+
+		// run for a short while
+		await delay(300);
+
+		// stop producers and end stream
+		feeders.forEach(clearInterval);
+		p.end();
+		await consumer;
+
+		// sanity: we must have seen items from all lanes
+		counts.forEach((c, i) =>
+			expect(c, `lane ${i} had zero`).to.be.greaterThan(0),
+		);
+
+		// default bias=2 ⇒ expected weights [8,4,2,1]
+		const expected = [8, 4, 2, 1];
+		const expectedFrac = expected.map(
+			(w) => w / expected.reduce((a, b) => a + b, 0),
+		);
+
+		const total = counts.reduce((a, b) => a + b, 0);
+		const actualFrac = counts.map((c) => c / total);
+
+		// 1) monotonicity (lane0 > lane1 > lane2 > lane3)
+		for (let i = 0; i < L - 1; i++) {
+			expect(actualFrac[i], `lane ${i} vs ${i + 1}`).to.be.greaterThan(
+				actualFrac[i + 1],
+			);
+		}
+
+		// 2) rough proportionality to [8,4,2,1]
+		// allow generous tolerance because of timer jitter & scheduling
+		const ABS_TOL = 0.2; // ±20 percentage points
+		for (let i = 0; i < L; i++) {
+			const diff = Math.abs(actualFrac[i] - expectedFrac[i]);
+			expect(diff, `lane ${i} fraction off too far`).to.be.lessThan(ABS_TOL);
+		}
+
+		// 3) adjacent ratios are meaningfully separated (extra guard)
+		// expected adjacent ratios: 8/4=2, 4/2=2, 2/1=2 → require at least ~1.5x
+		for (let i = 0; i < L - 1; i++) {
+			const ratio = counts[i] / counts[i + 1];
+			expect(ratio, `adjacent ratio lane${i}/lane${i + 1}`).to.be.greaterThan(
+				1.5,
+			);
+		}
+	});
+
+	it("scales to many lanes and remains starvation-free", async () => {
+		const L = 5;
+		const p = pushableLanes<Uint8Array>({ lanes: L, fairness: "wrr", bias: 2 });
+		const seen = new Set<number>();
+
+		(async () => {
+			for await (const v of p) seen.add(v[0]);
+		})();
+
+		// hammer lane 0, trickle others once
+		const feeder = setInterval(() => {
+			for (let i = 0; i < 8; i++) p.push(new Uint8Array([0]), 0);
+		}, 0);
+		for (let i = 1; i < L; i++)
+			setTimeout(() => p.push(new Uint8Array([i]), i), 10 * i);
+
+		await delay(400);
+		clearInterval(feeder);
+		p.end();
+
+		for (let i = 1; i < L; i++) {
+			expect(seen.has(i), `lane ${i} was starved`).to.equal(true);
+		}
+	});
+
+	it("drains single active lane at full speed (no fairness penalty)", async () => {
+		const p = pushableLanes<Uint8Array>({ lanes: 3, fairness: "wrr" });
+		const out: number[] = [];
+
+		(async () => {
+			for await (const v of p) out.push(v[0]);
+		})();
+
+		for (let i = 0; i < 100; i++) p.push(new Uint8Array([2]), 2);
+		await delay(50);
+		p.end();
+
+		expect(out.filter((x) => x === 2).length).to.be.greaterThan(90);
+	});
+
+	it("strict priority starves lane 1 when lane 0 never empties (slow consumer)", async () => {
+		const p = pushableLanes<Uint8Array>({ lanes: 2, fairness: "priority" });
+		const seen: number[] = [];
+
+		// 1) Put the lane-1 sentinel in BEFORE the consumer starts.
+		p.push(new Uint8Array([1]), 1);
+
+		// 2) Prefill lane 0 so it’s non-empty from the first read.
+		for (let i = 0; i < 5000; i++) p.push(new Uint8Array([0]), 0);
+
+		// 3) Slow consumer (process ~1 item per few ms)
+		let running = true;
+		const consumer = (async () => {
+			for await (const v of p) {
+				seen.push(v[0]);
+				await delay(2); // slow down processing
+				if (!running) break; // allow exit
+			}
+		})();
+
+		// Let it run a bit
+		await delay(250);
+		running = false;
+		p.end();
+		await consumer;
+
+		// With strict priority and lane 0 never empty, lane 1 should be starved
+		expect(seen.includes(1)).to.equal(false);
+
+		// Optional sanity: lane 0 should still have been non-empty the whole time
+		// (You can also instrument getReadableLength(0) over time if you want)
 	});
 });

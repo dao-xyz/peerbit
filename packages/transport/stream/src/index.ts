@@ -60,6 +60,7 @@ import type {
 } from "@peerbit/stream-interface";
 import { AbortError, TimeoutError, delay } from "@peerbit/time";
 import { abortableSource } from "abortable-iterator";
+import { anySignal } from "any-signal";
 import * as lp from "it-length-prefixed";
 import { pipe } from "it-pipe";
 import { type Pushable, pushable } from "it-pushable";
@@ -129,6 +130,8 @@ const DEFAULT_MAX_CONNECTIONS = 300;
 const DEFAULT_PRUNED_CONNNECTIONS_TIMEOUT = 30 * 1000;
 
 const ROUTE_UPDATE_DELAY_FACTOR = 3e4;
+
+const DEFAULT_CREATE_OUTBOUND_STREAM_TIMEOUT = 30_000;
 
 const getLaneFromPriority = (priority: number) => {
 	if (priority > 0) {
@@ -262,14 +265,31 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			raw,
 		).catch((e: any) => {
 			candidate.aborted = true;
+			try {
+				pushableInst.end(e);
+			} catch {}
 			logError(e as { message: string } as any);
 		});
 		this.outboundStreams.push(candidate);
 		const origAbort = raw.abort?.bind(raw);
 		raw.abort = (err?: any) => {
 			candidate.aborted = true;
+			try {
+				pushableInst.end(err);
+			} catch {}
 			return origAbort?.(err);
 		};
+
+		const origClose = raw.close?.bind(raw);
+		if (origClose) {
+			raw.close = (...args: any[]) => {
+				candidate.aborted = true;
+				try {
+					pushableInst.end();
+				} catch {}
+				return origClose(...args);
+			};
+		}
 		return candidate;
 	}
 
@@ -310,7 +330,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	 * Do we have a connection to write on?
 	 */
 	get isWritable() {
-		return this.outboundStreams.length > 0;
+		return this.outboundStreams.some((c) => !c.aborted);
 	}
 
 	get usedBandwidth() {
@@ -342,6 +362,12 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		let failures: any[] = [];
 		const failed: OutboundCandidate[] = [];
 		for (const c of this.outboundStreams) {
+			if (c.aborted) {
+				failures.push(new Error("aborted"));
+				failed.push(c);
+				continue;
+			}
+
 			try {
 				c.pushable.push(
 					payload,
@@ -373,6 +399,9 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 					(c) => !failed.includes(c),
 				);
 				for (const f of failed) {
+					try {
+						f.pushable.end(new AbortError("Failed write" as any));
+					} catch {}
 					try {
 						f.raw.abort?.(new AbortError("Failed write" as any));
 					} catch {}
@@ -812,7 +841,7 @@ export abstract class DirectStream<
 	private routeMaxRetentionPeriod: number;
 
 	// for sequential creation of outbound streams
-	private outboundInflightQueue: Pushable<{
+	public outboundInflightQueue: Pushable<{
 		connection: Connection;
 		peerId: PeerId;
 	}>;
@@ -821,6 +850,7 @@ export abstract class DirectStream<
 	seekTimeout: number;
 	closeController: AbortController;
 	session: number;
+	_outboundPump: ReturnType<typeof pipe> | undefined;
 
 	private _ackCallbacks: Map<
 		string,
@@ -937,16 +967,76 @@ export abstract class DirectStream<
 		this.closeController = new AbortController();
 
 		this.outboundInflightQueue = pushable({ objectMode: true });
-		pipe(this.outboundInflightQueue, async (source) => {
+
+		const drainOutbound = async (
+			source: AsyncIterable<{ peerId: PeerId; connection: Connection }>,
+		) => {
 			for await (const { peerId, connection } of source) {
-				if (this.stopping || this.started === false) {
-					return;
+				if (this.stopping || !this.started) break; // do not 'return' – finish loop cleanly
+
+				// Skip closed/closing connections
+				if (connection?.timeline?.close != null) {
+					logger.debug(
+						"skip outbound stream on closed connection %s",
+						connection.remoteAddr?.toString(),
+					);
+					continue;
 				}
-				await this.createOutboundStream(peerId, connection);
+
+				try {
+					// Pass an abort + timeout into your stream open so it cannot hang forever
+					const attemptSignal = anySignal([
+						this.closeController.signal,
+						AbortSignal.timeout(DEFAULT_CREATE_OUTBOUND_STREAM_TIMEOUT), // pick a sensible per-attempt cap
+					]);
+					try {
+						await this.createOutboundStream(peerId, connection, {
+							signal: attemptSignal,
+						});
+					} finally {
+						attemptSignal.clear?.();
+					}
+				} catch (e: any) {
+					// Treat common shutdowny errors as transient – do NOT crash the pump
+					const msg = String(e?.message ?? e);
+					if (
+						e?.code === "ERR_STREAM_RESET" ||
+						/unexpected end of input|ECONNRESET|EPIPE|Muxer closed|Premature close/i.test(
+							msg,
+						)
+					) {
+						logger.debug(
+							"createOutboundStream transient failure (%s): %s",
+							connection?.remoteAddr,
+							msg,
+						);
+					} else {
+						logger.warn(
+							"createOutboundStream failed (%s): %o",
+							connection?.remoteAddr,
+							e,
+						);
+					}
+					// continue to next item
+				}
 			}
-		}).catch((e) => {
-			logger.error("outbound inflight queue error: " + e?.toString());
-		});
+		};
+
+		this._outboundPump = pipe(this.outboundInflightQueue, drainOutbound).catch(
+			(e) => {
+				// Only log if we didn't intentionally abort
+				if (!this.closeController.signal.aborted) {
+					logger.error("outbound inflight pipeline crashed: %o", e);
+					// Optional: restart the pump to self-heal
+					this._outboundPump = pipe(
+						this.outboundInflightQueue,
+						drainOutbound,
+					).catch((err) =>
+						logger.error("outbound pump crashed again: %o", err),
+					);
+				}
+			},
+		);
 
 		this.closeController.signal.addEventListener("abort", () => {
 			this.outboundInflightQueue.return();
@@ -1123,7 +1213,11 @@ export abstract class DirectStream<
 		await this.outboundInflightQueue.push({ peerId, connection });
 	}
 
-	protected async createOutboundStream(peerId: PeerId, connection: Connection) {
+	protected async createOutboundStream(
+		peerId: PeerId,
+		connection: Connection,
+		opts?: { signal?: AbortSignal },
+	) {
 		for (const existingStreams of connection.streams) {
 			if (
 				existingStreams.protocol &&
@@ -1150,7 +1244,10 @@ export abstract class DirectStream<
 					// research whether we can do without this so we can push data without beeing able to send
 					// more info here https://github.com/libp2p/js-libp2p/issues/2321
 					negotiateFully: true,
-					signal: this.closeController.signal,
+					signal: anySignal([
+						this.closeController.signal,
+						...(opts?.signal ? [opts.signal] : []),
+					]),
 				});
 
 				if (stream.protocol == null) {
