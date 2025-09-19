@@ -313,6 +313,13 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.3.2](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.3.1...peerbit-v4.3.2) (2025-09-19)
+
+
+### Bug Fixes
+
+* disable reconnections by default ([4a6b62b](https://github.com/dao-xyz/peerbit/commit/4a6b62b92d72713ff37db390f3c78afd28ecdff3))
+
 ## [4.3.1](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.3.0...peerbit-v4.3.1) (2025-09-19)
 
 
