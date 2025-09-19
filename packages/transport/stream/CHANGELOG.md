@@ -43,6 +43,13 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.4.1](https://github.com/dao-xyz/peerbit/compare/stream-v4.4.0...stream-v4.4.1) (2025-09-19)
+
+
+### Bug Fixes
+
+* Allow new outbound streams to be created even if previously failed half way. Allow fairness in the priority queue to not starve slow lanes ([780f7ce](https://github.com/dao-xyz/peerbit/commit/780f7cef4b1eb3422e59ec43c839369d78e7e32d))
+
 ## [4.4.0](https://github.com/dao-xyz/peerbit/compare/stream-v4.3.10...stream-v4.4.0) (2025-09-10)
 
 
