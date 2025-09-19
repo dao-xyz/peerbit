@@ -64,6 +64,7 @@ export const create = (properties: {
 				outboundStreamProtocolNegotiationTimeout: 1e4,
 				outboundUpgradeTimeout: 1e4,
 				maxConnections: Infinity,
+				reconnectRetries: 0, // https://github.com/libp2p/js-libp2p/issues/3289
 			},
 
 			services: {
