@@ -452,6 +452,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.8.7](https://github.com/dao-xyz/peerbit/compare/server-v5.8.6...server-v5.8.7) (2025-09-19)
+
+
+### Bug Fixes
+
+* disable reconnections by default ([4a6b62b](https://github.com/dao-xyz/peerbit/commit/4a6b62b92d72713ff37db390f3c78afd28ecdff3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 4.3.1 to 4.3.2
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.2.2 to 2.2.3
+
 ## [5.8.6](https://github.com/dao-xyz/peerbit/compare/server-v5.8.5...server-v5.8.6) (2025-09-19)
 
 
