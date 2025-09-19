@@ -444,14 +444,14 @@ describe("it-pushable", () => {
 			for await (const v of p) {
 				seen.push(v[0]);
 				// tiny delay -> ensures backlog/competition between lanes
-				await new Promise((r) => setTimeout(r, 1));
+				await new Promise((resolve) => setTimeout(resolve, 1));
 			}
 		})();
 
 		const feed0 = setInterval(() => p.push(new Uint8Array([0]), 0), 0);
 		const feed1 = setInterval(() => p.push(new Uint8Array([1]), 1), 0);
 
-		await new Promise((r) => setTimeout(r, 200));
+		await delay(200);
 		clearInterval(feed0);
 		clearInterval(feed1);
 		p.end();

@@ -1,4 +1,3 @@
-// pushable-lanes.ts
 // A multi-lane async pushable with starvation-free scheduling.
 // Inspired by it-pushable (MIT) and extended for multi-lane fairness.
 //
@@ -20,23 +19,9 @@
 // Notes:
 // - T must have a .byteLength number property (e.g. Uint8Array).
 // - Lane indices are 0..(lanes-1). Defaults to lane 0.
+import { AbortError } from "@peerbit/time";
 import GenericFIFO from "fast-fifo";
 import defer from "p-defer";
-
-// -----------------------------
-// Errors & shared option types
-// -----------------------------
-
-export class AbortError extends Error {
-	type: string;
-	code: string;
-
-	constructor(message?: string, code?: string) {
-		super(message ?? "The operation was aborted");
-		this.type = "aborted";
-		this.code = code ?? "ABORT_ERR";
-	}
-}
 
 export interface AbortOptions {
 	signal?: AbortSignal;
@@ -107,8 +92,8 @@ export interface Options {
 
 	/**
 	 * Fairness mode:
-	 *  - 'priority': strict priority (original behavior).
-	 *  - 'wrr': weighted round-robin (starvation-free).
+	 * - 'priority': strict priority (original behavior).
+	 * - 'wrr': weighted round-robin (starvation-free).
 	 * Default: 'wrr'
 	 */
 	fairness?: FairnessMode;
@@ -130,8 +115,8 @@ export interface Options {
 	/**
 	 * Optional high-water mark in **bytes** across all lanes.
 	 * If a `push` would exceed this many buffered bytes:
-	 *  - overflow: 'throw'       -> throw an Error (default policy)
-	 *  - overflow: 'drop-newest' -> silently drop this pushed item
+	 * - overflow: 'throw'       -> throw an Error (default policy)
+	 * - overflow: 'drop-newest' -> silently drop this pushed item
 	 */
 	maxBufferedBytes?: number;
 
@@ -491,7 +476,7 @@ function _pushable<PushType extends Uint8Array, ValueType, ReturnType>(
 			let listener: (() => void) | undefined;
 
 			if (signal != null) {
-				cancel = new Promise<void>((_, reject) => {
+				cancel = new Promise<void>((_resolve, reject) => {
 					listener = () => reject(new AbortError());
 					signal.addEventListener("abort", listener!);
 				});
