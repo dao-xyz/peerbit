@@ -349,13 +349,13 @@ export class Peerbit implements ProgramClient {
 		}
 	}
 
-	async bootstrap() {
-		const addresses = await resolveBootstrapAddresses();
-		if (addresses.length === 0) {
+	async bootstrap(addresses?: string[] | Multiaddr[]) {
+		const _addresses = addresses ?? (await resolveBootstrapAddresses());
+		if (_addresses.length === 0) {
 			throw new Error("Failed to find any addresses to dial");
 		}
 		const settled = await Promise.allSettled(
-			addresses.map((x) => this.dial(x)),
+			_addresses.map((x) => this.dial(x)),
 		);
 		let once = false;
 		for (const [i, result] of settled.entries()) {
@@ -364,7 +364,7 @@ export class Peerbit implements ProgramClient {
 			} else {
 				logger.warn(
 					"Failed to dial bootstrap address(s): " +
-						JSON.stringify(addresses[i]) +
+						JSON.stringify(_addresses[i]) +
 						". Reason: " +
 						result.reason,
 				);
