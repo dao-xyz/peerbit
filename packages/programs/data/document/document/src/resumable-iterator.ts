@@ -62,6 +62,10 @@ export class ResumableIterators<T extends Record<string, any>> {
 		this.queues.del(id);
 	}
 
+	has(id: string) {
+		return this.queues.has(id);
+	}
+
 	async getPending(id: string) {
 		let iterator = this.queues.get(id);
 		if (!iterator) {

@@ -61,13 +61,12 @@ export type UpdateMergeStrategy<
 	Resolve extends boolean | undefined,
 	RT = ValueTypeFromRequest<Resolve, T, I>,
 > =
-	| "none" // ignore changes
-	| "sorted" // keep current sort; use updateResults(...) internally
 	| boolean
-	| "append" // push added items at the end
-	| "prepend" // unshift added items at the start
-	| ((prev: RT[], change: DocumentsChange<T, I>) => MaybePromise<RT[]>);
-
+	| {
+			filter?: (
+				evt: DocumentsChange<T, I>,
+			) => MaybePromise<DocumentsChange<T, I> | void>;
+	  };
 export type UpdateCallbacks<
 	T,
 	I,
@@ -97,7 +96,7 @@ export type UpdateCallbacks<
 export type UpdateOptions<T, I, Resolve extends boolean | undefined> =
 	| boolean
 	| ({
-			/** Strategy for folding live changes into the result array. */
+			/** Live update behavior. Only sorted merging is supported; optional filter can mutate/ignore events. */
 			merge?: UpdateMergeStrategy<T, I, Resolve>;
 	  } & UpdateCallbacks<T, I, Resolve>);
 
@@ -142,7 +141,7 @@ export type WaitBehavior =
 export type WaitPolicy = {
 	timeout: number; // max time to wait
 	until?: "any" | "all" | number; // readiness condition
-	onTimeout?: "proceed" | "error"; // proceed = continue with whoever’s ready
+	onTimeout?: "proceed" | "error"; // proceed = continue with whoever's ready
 	behavior?: WaitBehavior; // default: "keep-open"
 };
 
@@ -181,6 +180,12 @@ export type QueryOptions<T, I, D, Resolve extends boolean | undefined> = {
 	resolve?: Resolve;
 	signal?: AbortSignal;
 	updates?: UpdateOptions<T, I, Resolve>;
+	/**
+	 * Controls iterator liveness after batches are consumed.
+	 * - 'onEmpty' (default): close when no more results
+	 * - 'manual': keep open until iterator.close() or program close; good for live updates
+	 */
+	closePolicy?: "onEmpty" | "manual";
 };
 
 export type GetOptions<T, I, D, Resolve extends boolean | undefined> = {
@@ -1909,6 +1914,7 @@ export class DocumentIndex<
 		const visited = new Set<string | number | bigint>();
 
 		let done = false;
+		let drain = false; // if true, close on empty once (overrides manual)
 		let first = false;
 
 		// TODO handle join/leave while iterating
@@ -1950,38 +1956,36 @@ export class DocumentIndex<
 		if (typeof options?.remote === "object") {
 			let waitForTime: number | undefined = undefined;
 			if (options.remote.wait) {
-				{
-					let t0 = +new Date();
+				let t0 = +new Date();
 
-					waitForTime =
-						typeof options.remote.wait === "boolean"
-							? DEFAULT_TIMEOUT
-							: (options.remote.wait.timeout ?? DEFAULT_TIMEOUT);
-					let setDoneIfTimeout = false;
-					maybeSetDone = () => {
-						if (t0 + waitForTime! < +new Date()) {
-							cleanup();
-							done = true;
-						} else {
-							setDoneIfTimeout = true;
-						}
-					};
-					unsetDone = () => {
-						setDoneIfTimeout = false;
-						done = false;
-					};
-					let timeout = setTimeout(() => {
-						if (setDoneIfTimeout) {
-							cleanup();
-							done = true;
-						}
-					}, waitForTime);
+				waitForTime =
+					typeof options.remote.wait === "boolean"
+						? DEFAULT_TIMEOUT
+						: (options.remote.wait.timeout ?? DEFAULT_TIMEOUT);
+				let setDoneIfTimeout = false;
+				maybeSetDone = () => {
+					if (t0 + waitForTime! < +new Date()) {
+						cleanup();
+						done = true;
+					} else {
+						setDoneIfTimeout = true;
+					}
+				};
+				unsetDone = () => {
+					setDoneIfTimeout = false;
+					done = false;
+				};
+				let timeout = setTimeout(() => {
+					if (setDoneIfTimeout) {
+						cleanup();
+						done = true;
+					}
+				}, waitForTime);
 
-					cleanup = () => {
-						this.clearResultsQueue(queryRequestCoerced);
-						clearTimeout(timeout);
-					};
-				}
+				cleanup = () => {
+					this.clearResultsQueue(queryRequestCoerced);
+					clearTimeout(timeout);
+				};
 			}
 
 			if (options.remote.scope?.discover) {
@@ -2135,7 +2139,10 @@ export class DocumentIndex<
 						amount: n - buffer.buffer.length,
 					});
 					// Fetch locally?
-					if (peer === this.node.identity.publicKey.hashcode()) {
+					if (
+						peer === this.node.identity.publicKey.hashcode() &&
+						this._resumableIterators.has(queryRequestCoerced.idString)
+					) {
 						promises.push(
 							this.processQuery(
 								collectRequest,
@@ -2349,11 +2356,10 @@ export class DocumentIndex<
 				),
 			);
 
-			const pendingMoreResults = n < results.length;
-
 			lastValueInOrder = results[0] || lastValueInOrder;
-
+			const pendingMoreResults = n < results.length; // check if there are more results to fetch, before splicing
 			const batch = results.splice(0, n);
+			const hasMore = !fetchedAll || pendingMoreResults;
 
 			for (const result of batch) {
 				const arr = peerBufferMap.get(result.from.hashcode());
@@ -2367,7 +2373,6 @@ export class DocumentIndex<
 				}
 			}
 
-			const hasMore = !fetchedAll || pendingMoreResults;
 			if (hasMore) {
 				unsetDone();
 			} else {
@@ -2400,6 +2405,8 @@ export class DocumentIndex<
 					coerceWithContext(coerceWithIndexed(x.value, x.indexed), x.context),
 				) as ValueTypeFromRequest<Resolve, T, I>[];
 			}
+
+			// no extra queued-first/last in simplified API
 
 			return dedup(coercedBatch, this.indexByResolver);
 		};
@@ -2453,6 +2460,120 @@ export class DocumentIndex<
 		const signalUpdate = () => updateDeferred?.resolve();
 		const _waitForUpdate = () =>
 			updateDeferred ? updateDeferred.promise : Promise.resolve();
+
+		// ---------------- Live updates wiring (sorted-only with optional filter) ----------------
+		const normalizeUpdatesOption = (
+			u?: UpdateOptions<T, I, Resolve>,
+		):
+			| {
+					merge?:
+						| {
+								filter?: (
+									evt: DocumentsChange<T, I>,
+								) => MaybePromise<DocumentsChange<T, I> | void>;
+						  }
+						| undefined;
+			  }
+			| undefined => {
+			if (u == null || u === false) return undefined;
+			if (u === true)
+				return {
+					merge: {
+						filter: (evt) => evt,
+					},
+				};
+			if (typeof u === "object") {
+				return {
+					merge: u.merge
+						? {
+								filter:
+									typeof u.merge === "object" ? u.merge.filter : (evt) => evt,
+							}
+						: {},
+				};
+			}
+			return undefined;
+		};
+
+		const mergePolicy = normalizeUpdatesOption(options?.updates);
+		const hasLiveUpdates = mergePolicy !== undefined;
+
+		// sorted-only mode: no per-queue handling
+
+		// If live updates enabled, ensure deferred exists so awaiting paths can block until changes
+		if (hasLiveUpdates && !updateDeferred) {
+			updateDeferred = pDefer<void>();
+		}
+
+		let updatesCleanup: (() => void) | undefined;
+		if (hasLiveUpdates) {
+			const localHash = this.node.identity.publicKey.hashcode();
+			if (mergePolicy?.merge) {
+				// Ensure local buffer exists for sorted merging
+				if (!peerBufferMap.has(localHash)) {
+					peerBufferMap.set(localHash, { kept: 0, buffer: [] });
+				}
+			}
+
+			const onChange = async (evt: CustomEvent<DocumentsChange<T, I>>) => {
+				// Optional filter to mutate/suppress change events
+				let filtered: DocumentsChange<T, I> | void = evt.detail;
+				if (mergePolicy?.merge?.filter) {
+					filtered = await mergePolicy.merge?.filter(evt.detail);
+				}
+				if (filtered) {
+					// Remove entries that were deleted from all pending structures
+					if (filtered.removed && filtered.removed.length) {
+						// Remove from peer buffers
+						for (const [_peer, entry] of peerBufferMap) {
+							entry.buffer = entry.buffer.filter((x) => {
+								const id = indexerTypes.toId(
+									this.indexByResolver(x.indexed),
+								).primitive;
+								return !filtered!.removed!.some(
+									(r) =>
+										indexerTypes.toId(this.indexByResolver(r.__indexed))
+											.primitive === id,
+								);
+							});
+						}
+						// no non-sorted queues in simplified mode
+					}
+
+					// Add new entries per strategy (sorted-only)
+					if (filtered.added && filtered.added.length) {
+						const buf = peerBufferMap.get(localHash)!;
+						for (const added of filtered.added) {
+							const id = indexerTypes.toId(
+								this.indexByResolver(added.__indexed),
+							).primitive;
+							if (visited.has(id)) continue; // already presented
+							visited.add(id);
+							buf.buffer.push({
+								value: (resolve ? added : added.__indexed) as any,
+								context: added.__context,
+								from: this.node.identity.publicKey,
+								indexed: coerceWithContext(added.__indexed, added.__context),
+							});
+						}
+						buf.kept = buf.buffer.length;
+					}
+				}
+				typeof options?.updates === "object" &&
+					options?.updates?.onChange?.(evt.detail);
+				signalUpdate();
+			};
+
+			this.documentEvents.addEventListener("change", onChange);
+			updatesCleanup = () => {
+				this.documentEvents.removeEventListener("change", onChange);
+			};
+			const cleanupDefaultUpdates = cleanup;
+			cleanup = () => {
+				updatesCleanup?.();
+				return cleanupDefaultUpdates();
+			};
+		}
 
 		if (typeof options?.remote === "object" && options?.remote.wait) {
 			// was used to account for missed results when a peer joins; omitted in this minimal handler
@@ -2528,13 +2649,26 @@ export class DocumentIndex<
 			};
 		}
 
-		const waitForUpdateAndResetDeferred = async () => {
-			// wait until: join fetch adds results, cleanup runs, or the join-wait times out
-			await _waitForUpdate();
+		if (options?.closePolicy === "manual") {
+			let prevMaybeSetDone = maybeSetDone;
+			maybeSetDone = () => {
+				if (drain) {
+					prevMaybeSetDone();
+				}
+			};
+		}
+		const remoteWaitActive =
+			typeof options?.remote === "object" && !!options.remote.wait;
 
-			// re-arm the deferred for the next cycle (only if joining is enabled and we’re not done)
-			if (updateDeferred && !doneFn()) {
-				updateDeferred = pDefer<void>();
+		const waitForUpdateAndResetDeferred = async () => {
+			if (remoteWaitActive) {
+				// wait until: join fetch adds results, cleanup runs, or the join-wait times out
+				await _waitForUpdate();
+
+				// re-arm the deferred for the next cycle (only if joining is enabled and we're not done)
+				if (updateDeferred && !doneFn()) {
+					updateDeferred = pDefer<void>();
+				}
 			}
 		};
 
@@ -2550,6 +2684,7 @@ export class DocumentIndex<
 				return kept; // TODO this should be more accurate
 			},
 			all: async () => {
+				drain = true;
 				let result: ValueTypeFromRequest<Resolve, T, I>[] = [];
 				let c = 0;
 				while (doneFn() !== true) {
@@ -2580,6 +2715,7 @@ export class DocumentIndex<
 				return batch[0];
 			},
 			[Symbol.asyncIterator]: async function* () {
+				drain = true;
 				let c = 0;
 				while (doneFn() !== true) {
 					const batch = await next(100);
@@ -2596,6 +2732,7 @@ export class DocumentIndex<
 					}
 					await waitForUpdateAndResetDeferred();
 				}
+				cleanupAndDone();
 			},
 		};
 	}

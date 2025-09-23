@@ -3608,176 +3608,151 @@ describe("index", () => {
 				expect(entries[1].id).to.equal("2");
 			});
 
-			describe("updates", () => {
-				it("append", async () => {
+			describe("closePolicy", () => {
+				it("is manual keeps open", async () => {
 					session = await TestSession.connected(1);
 
-					const store = new TestStore({
-						docs: new Documents<Document>(),
+					const store = new TestStore({ docs: new Documents<Document>() });
+					await session.peers[0].open(store, {
+						args: { replicate: { factor: 1 } },
 					});
 
-					await session.peers[0].open(store, {
-						args: {
-							replicate: {
-								factor: 1,
-							},
-						},
-					});
-					await store.docs.put(new Document({ id: "1" }));
-					// make iterator not close by waiting for joining
 					const iterator = store.docs.index.iterate(
 						{},
-						{
-							updates: { merge: "append" },
-							remote: { wait: { timeout: 5e3 } },
-						}, // use wait to keep the iterator open
+						{ closePolicy: "manual" },
 					);
-					let c = 0;
-					for await (const entry of iterator) {
-						if (c === 0) {
-							expect(entry.id).to.equal("1");
-							// insert another document
-							await store.docs.put(new Document({ id: "2" }));
-							c++;
-						} else if (c === 1) {
-							expect(entry.id).to.equal("2");
-							c++;
-							break;
-						} else {
-							throw new Error("Unexpected entry");
-						}
-					}
+					expect(iterator.done()).to.be.false;
+					const next = await iterator.next(1);
+					expect(next).to.have.length(0);
+					expect(iterator.done()).to.be.false;
+
 					await iterator.close();
-					expect(c).to.equal(2);
+					expect(iterator.done()).to.be.true;
 				});
 
-				it("sorted by default", async () => {
+				it("onEmpty closes iterator when drained", async () => {
 					session = await TestSession.connected(1);
 
-					const store = new TestStore({
-						docs: new Documents<Document>(),
-					});
-
+					const store = new TestStore({ docs: new Documents<Document>() });
 					await session.peers[0].open(store, {
-						args: {
-							replicate: {
-								factor: 1,
-							},
-						},
+						args: { replicate: { factor: 1 } },
 					});
-					await store.docs.put(new Document({ id: "1" }));
-					await store.docs.put(new Document({ id: "3" }));
 
-					// make iterator not close by waiting for joining
+					await store.docs.put(new Document({ id: "1" }));
+
 					const iterator = store.docs.index.iterate(
 						{ sort: { key: "id", direction: SortDirection.ASC } },
-						{ updates: { merge: true } }, // use true to use the default merge strategy (sorted)
+						{ local: true, remote: false /* , closePolicy: "onEmpty" */ }, // onEmpty is default
 					);
-					let entries: Document[] = [];
-					for await (const entry of iterator) {
-						entries.push(entry);
-						if (entries.length === 1) {
-							await store.docs.put(new Document({ id: "2" }));
-						}
 
-						if (entries.length === 3) {
-							break;
-						}
-					}
-					await iterator.close();
-					expect(entries).to.have.length(3);
-					expect(entries[0].id).to.equal("1");
-					expect(entries[1].id).to.equal("2");
-					expect(entries[2].id).to.equal("3");
+					const first = await iterator.next(1);
+					expect(first.map((d) => d.id)).to.deep.equal(["1"]);
+					expect(iterator.done()).to.be.true;
 				});
+			});
+		});
 
-				it("prepend", async () => {
-					session = await TestSession.connected(1);
+		describe("updates", () => {
+			it("sorted only: mid-insert yields sorted order", async () => {
+				session = await TestSession.connected(1);
 
-					const store = new TestStore({
-						docs: new Documents<Document>(),
-					});
+				const store = new TestStore({ docs: new Documents<Document>() });
 
-					await session.peers[0].open(store, {
-						args: {
-							replicate: {
-								factor: 1,
-							},
-						},
-					});
-					await store.docs.put(new Document({ id: "1" }));
-					await store.docs.put(new Document({ id: "2" }));
-
-					// make iterator not close by waiting for joining
-					const iterator = store.docs.index.iterate(
-						{ sort: { key: "id", direction: SortDirection.ASC } },
-						{ updates: { merge: "prepend" } }, // use true to use the default merge strategy (sorted)
-					);
-					let entries: Document[] = [];
-					for await (const entry of iterator) {
-						entries.push(entry);
-						if (entries.length === 1) {
-							await store.docs.put(new Document({ id: "3" }));
-						}
-
-						if (entries.length === 3) {
-							break;
-						}
-					}
-					await iterator.close();
-					expect(entries).to.have.length(3);
-					expect(entries[0].id).to.equal("1");
-					expect(entries[1].id).to.equal("3");
-					expect(entries[2].id).to.equal("2");
+				await session.peers[0].open(store, {
+					args: { replicate: { factor: 1 } },
 				});
+				await store.docs.put(new Document({ id: "1" }));
+				await store.docs.put(new Document({ id: "3" }));
 
-				it("custom merge strategy", async () => {
-					session = await TestSession.connected(1);
+				const iterator = store.docs.index.iterate(
+					{ sort: { key: "id", direction: SortDirection.ASC } },
+					{ updates: { merge: true }, closePolicy: "manual" },
+				);
+				const head = await iterator.next(1);
+				expect(head).to.have.length(1);
+				expect(head[0].id).to.equal("1");
+				await store.docs.put(new Document({ id: "2" }));
 
-					const store = new TestStore({
-						docs: new Documents<Document>(),
-					});
+				const rest = await iterator.all();
 
-					await session.peers[0].open(store, {
-						args: {
-							replicate: {
-								factor: 1,
-							},
-						},
-					});
-					await store.docs.put(new Document({ id: "1" }));
-					await store.docs.put(new Document({ id: "3" }));
+				const all = [...head, ...rest];
+				expect(all.map((d) => d.id)).to.deep.equal(["1", "2", "3"]);
+			});
 
-					// make iterator not close by waiting for joining
-					const iterator = store.docs.index.iterate(
-						{ sort: { key: "id", direction: SortDirection.ASC } },
-						{
-							updates: {
-								merge: (prev, change) => {
-									return prev
-										.concat(change.added)
-										.sort((a, b) => a.id.localeCompare(b.id));
+			it("filter: drop removals and exclude a specific id", async () => {
+				session = await TestSession.connected(1);
+
+				const store = new TestStore({ docs: new Documents<Document>() });
+
+				await session.peers[0].open(store, {
+					args: { replicate: { factor: 1 } },
+				});
+				await store.docs.put(new Document({ id: "1" }));
+				await store.docs.put(new Document({ id: "2" }));
+
+				let filterCalls = 0;
+				let evtCalls = 0;
+				const iterator = store.docs.index.iterate(
+					{ sort: { key: "id", direction: SortDirection.ASC } },
+					{
+						closePolicy: "manual",
+						updates: {
+							merge: {
+								filter: (evt) => {
+									// ignore removals and drop any added with id === '2'
+									filterCalls++;
+									return {
+										added: evt.added.filter((x) => x.id !== "2"),
+										removed: [],
+									};
 								},
 							},
+							onChange: (evt) => {
+								evtCalls++;
+							},
 						},
-					);
-					let entries: Document[] = [];
-					for await (const entry of iterator) {
-						entries.push(entry);
-						if (entries.length === 1) {
-							await store.docs.put(new Document({ id: "2" }));
-						}
+					},
+				);
 
-						if (entries.length === 3) {
-							break;
-						}
-					}
-					await iterator.close();
-					expect(entries).to.have.length(3);
-					expect(entries[0].id).to.equal("1");
-					expect(entries[1].id).to.equal("3");
-					expect(entries[2].id).to.equal("2");
+				const firstTwo = await iterator.next(2);
+				expect(firstTwo.map((d) => d.id)).to.deep.equal(["1", "2"]);
+				expect(iterator.done()).to.be.false;
+
+				await store.docs.del("1");
+				await store.docs.put(new Document({ id: "3" }));
+				await store.docs.put(new Document({ id: "2" })); // filtered out by id
+
+				await waitForResolved(() => expect(filterCalls).to.equal(3));
+				await waitForResolved(() => expect(evtCalls).to.equal(3));
+				const rest = await iterator.all();
+				expect(rest).to.have.length(1);
+				expect(rest[0].id).to.equal("3");
+			});
+
+			it("removals are reflected in iterators (sorted)", async () => {
+				session = await TestSession.connected(1);
+				const store = new TestStore({ docs: new Documents<Document>() });
+				await session.peers[0].open(store, {
+					args: { replicate: { factor: 1 } },
 				});
+
+				await store.docs.put(new Document({ id: "1" }));
+				await store.docs.put(new Document({ id: "2" }));
+
+				const iterator = store.docs.index.iterate(
+					{ sort: { key: "id", direction: SortDirection.ASC } },
+					{ closePolicy: "manual", updates: { merge: true } },
+				);
+
+				const firstTwo = await iterator.next(2);
+				expect(firstTwo.map((d) => d.id)).to.deep.equal(["1", "2"]);
+
+				// Remove first and add a third
+				await store.docs.del("1"); // assumes test helpers accept this
+				await store.docs.put(new Document({ id: "3" }));
+
+				const rest = await iterator.all();
+				expect(rest.map((x) => x.id)).to.deep.equal(["3"]);
 			});
 
 			it("iterator all terminates when batches are empty but still waiting for joining", async () => {
@@ -3803,72 +3778,68 @@ describe("index", () => {
 				const spyFn = sinon.spy(observer.docs.index.processQuery);
 				observer.docs.index.processQuery = spyFn as any;
 				let t0 = +new Date();
-				await observer.docs.index
-					.iterate({}, { remote: { wait: { timeout: waitForMax } } })
-					.all();
+				await observer.docs.index.iterate({}, { closePolicy: "manual" }).all();
 				let t1 = +new Date();
 				expect(t1 - t0).to.lessThan(waitForMax + 500); // +some delta
 				expect(spyFn.callCount).to.equal(1); // should only call next once
 			});
+		});
 
-			it("get first entry", async () => {
-				session = await TestSession.connected(1);
+		it("get first entry", async () => {
+			session = await TestSession.connected(1);
 
-				const store = new TestStore({
-					docs: new Documents<Document>(),
-				});
-
-				await session.peers[0].open(store, {
-					args: {
-						replicate: {
-							factor: 1,
-						},
-					},
-				});
-
-				const doc = new Document({ id: "1" });
-				const doc2 = new Document({ id: "2" });
-				const doc3 = new Document({ id: "3" });
-
-				await store.docs.put(doc);
-				await store.docs.put(doc2);
-				await store.docs.put(doc3);
-
-				const first = await store.docs.index
-					.iterate({ sort: { key: "id", direction: SortDirection.DESC } })
-					.first();
-				expect(first!.id).to.deep.equal(doc3.id);
-
-				// expect cleanup
-				expect(store.docs.index.hasPending).to.be.false;
+			const store = new TestStore({
+				docs: new Documents<Document>(),
 			});
 
-			it("local only", async () => {
-				session = await TestSession.connected(2);
-				const store = new TestStore({
-					docs: new Documents<Document>(),
-				});
-				await session.peers[0].open(store);
-				const store2 = await session.peers[1].open(store.clone(), {
-					args: {
-						replicate: false,
+			await session.peers[0].open(store, {
+				args: {
+					replicate: {
+						factor: 1,
 					},
-				});
-				const doc = new Document({ id: "1" });
-				await store.docs.put(doc);
-				await store2.docs.index.waitFor(store.node.identity.publicKey);
-				const localOnly = await store2.docs.index
-					.iterate({}, { local: true, remote: false })
-					.first();
-				expect(localOnly).to.be.undefined;
-
-				const localAndRemote = await store2.docs.index
-					.iterate({}, { local: true, remote: true })
-					.first();
-				expect(localAndRemote?.id).to.equal(doc.id);
+				},
 			});
 
-			describe("live", () => {});
+			const doc = new Document({ id: "1" });
+			const doc2 = new Document({ id: "2" });
+			const doc3 = new Document({ id: "3" });
+
+			await store.docs.put(doc);
+			await store.docs.put(doc2);
+			await store.docs.put(doc3);
+
+			const first = await store.docs.index
+				.iterate({ sort: { key: "id", direction: SortDirection.DESC } })
+				.first();
+			expect(first!.id).to.deep.equal(doc3.id);
+
+			// expect cleanup
+			expect(store.docs.index.hasPending).to.be.false;
+		});
+
+		it("local only", async () => {
+			session = await TestSession.connected(2);
+			const store = new TestStore({
+				docs: new Documents<Document>(),
+			});
+			await session.peers[0].open(store);
+			const store2 = await session.peers[1].open(store.clone(), {
+				args: {
+					replicate: false,
+				},
+			});
+			const doc = new Document({ id: "1" });
+			await store.docs.put(doc);
+			await store2.docs.index.waitFor(store.node.identity.publicKey);
+			const localOnly = await store2.docs.index
+				.iterate({}, { local: true, remote: false })
+				.first();
+			expect(localOnly).to.be.undefined;
+
+			const localAndRemote = await store2.docs.index
+				.iterate({}, { local: true, remote: true })
+				.first();
+			expect(localAndRemote?.id).to.equal(doc.id);
 		});
 	});
 
@@ -5953,9 +5924,9 @@ describe("index", () => {
 			}
 			expect(count).to.equal(3);
 			await db1.docs.log.reload();
-		
+	
 			expect(await db1.docs.index.getSize()).equal(0);
-		
+	
 			count = 0;
 			for await (const f of db1.docs.log.log.blocks.iterator()) {
 				count++;
