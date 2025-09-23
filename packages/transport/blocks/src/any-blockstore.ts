@@ -1,4 +1,3 @@
-import { type PeerId } from "@libp2p/interface";
 import { createStore } from "@peerbit/any-store";
 import { type AnyStore } from "@peerbit/any-store-interface";
 import {
@@ -8,7 +7,11 @@ import {
 	codecCodes,
 	defaultHasher,
 } from "@peerbit/blocks-interface";
-import { type PublicSignKey } from "@peerbit/crypto";
+import type {
+	WaitForAnyOpts,
+	WaitForPresentOpts,
+} from "@peerbit/stream-interface";
+import type { PeerRefs } from "@peerbit/stream-interface";
 import { waitFor } from "@peerbit/time";
 import { type Block, decode } from "multiformats/block";
 
@@ -108,8 +111,12 @@ export class AnyBlockStore implements Blocks {
 	status() {
 		return this._store.status();
 	}
-	async waitFor(peer: PeerId | PublicSignKey): Promise<void> {
+	async waitFor(
+		peer: PeerRefs,
+		options?: WaitForPresentOpts | WaitForAnyOpts,
+	): Promise<string[]> {
 		// Offline storage // TODO this feels off resolving
+		return [];
 	}
 
 	async size() {

@@ -1,6 +1,8 @@
-import type { PeerId } from "@libp2p/interface";
 import type { PublicSignKey } from "@peerbit/crypto";
+import type { PeerRefs } from "./keys.js";
 import type { DataMessage, Message } from "./messages.js";
+
+export * from "./keys.js";
 
 export interface PeerEvents {
 	"peer:session": CustomEvent<PublicSignKey>;
@@ -17,11 +19,38 @@ export interface StreamEvents extends PeerEvents, MessageEvents {
 
 export * from "./messages.js";
 
+// ---------- wait for peer types ----------
+export type Target = "neighbor" | "reachable";
+export type Settle = "any" | "all";
+
+export interface WaitForBaseOpts {
+	settle?: Settle; // default: "any"
+	timeout?: number; // ms
+	signal?: AbortSignal;
+	allowSelf?: boolean; // default: false
+}
+
+// Special-case overload: seek="present" => target is implicitly "neighbor"
+export interface WaitForPresentOpts extends WaitForBaseOpts {
+	seek: "present";
+	target?: "neighbor";
+	// target is intentionally omitted here (always "neighbor")
+}
+
+// General-case overload: seek omitted or "any" => target must be explicit (defaults to "reachable")
+export interface WaitForAnyOpts extends WaitForBaseOpts {
+	seek?: "any";
+	target?: Target; // default: "reachable"
+}
+export type WaitForPeersFn = (
+	peer: PeerRefs,
+	options?: WaitForPresentOpts | WaitForAnyOpts,
+) => Promise<string[]>;
 export interface WaitForPeer {
 	waitFor(
-		peer: PeerId | PublicSignKey | string,
-		options?: { signal?: AbortSignal },
-	): Promise<void>;
+		peer: PeerRefs,
+		options?: WaitForPresentOpts | WaitForAnyOpts,
+	): Promise<string[]>;
 }
 
 export interface PublicKeyFromHashResolver {

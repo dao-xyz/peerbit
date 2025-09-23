@@ -1,5 +1,4 @@
 import { field, variant } from "@dao-xyz/borsh";
-import type { PeerId } from "@libp2p/interface";
 import { TypedEventEmitter } from "@libp2p/interface";
 import {
 	type GetOptions,
@@ -13,7 +12,14 @@ import { Cache } from "@peerbit/cache";
 import { PublicSignKey } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 import type { PublishOptions } from "@peerbit/stream";
-import { AnyWhere, SilentDelivery } from "@peerbit/stream-interface";
+import {
+	AnyWhere,
+	type PeerRefs,
+	SilentDelivery,
+	type WaitForAnyOpts,
+	type WaitForPeersFn,
+	type WaitForPresentOpts,
+} from "@peerbit/stream-interface";
 import { AbortError } from "@peerbit/time";
 import { CID } from "multiformats";
 import { type Block } from "multiformats/block";
@@ -80,14 +86,7 @@ export class RemoteBlocks implements IBlocks {
 				data: BlockRequest | BlockResponse,
 				options: PublishOptions,
 			) => Promise<Uint8Array | undefined | void>;
-			waitFor: (
-				peer: PeerId | PublicSignKey | string,
-				options?: {
-					timeout?: number;
-					signal?: AbortSignal;
-					neighbour?: boolean;
-				},
-			) => Promise<void>;
+			waitFor: WaitForPeersFn;
 		},
 	) {
 		const localTimeout = options?.localTimeout || 1000;
@@ -332,8 +331,11 @@ export class RemoteBlocks implements IBlocks {
 		// we dont cleanup subscription because we dont know if someone else is sbuscribing also
 	}
 
-	waitFor(peer: PeerId | PublicSignKey): Promise<void> {
-		return this.options.waitFor(peer);
+	waitFor(
+		peer: PeerRefs,
+		options?: WaitForPresentOpts | WaitForAnyOpts,
+	): Promise<string[]> {
+		return this.options.waitFor(peer, options);
 	}
 
 	async size() {

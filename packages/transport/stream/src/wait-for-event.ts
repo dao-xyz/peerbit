@@ -1,4 +1,5 @@
 import type { TypedEventEmitter } from "@libp2p/interface";
+import { AbortError, TimeoutError } from "@peerbit/time";
 import pDefer, { type DeferredPromise } from "p-defer";
 
 export function waitForEvent<
@@ -19,12 +20,13 @@ export function waitForEvent<
 	},
 ): Promise<void> {
 	const deferred = pDefer<void>();
-	const abortFn = () =>
+	const abortFn = (e: any) =>
 		deferred.reject(
-			new Error(
-				"Aborted waiting for event: " +
-					String(events.length > 1 ? events.join(", ") : events[0]),
-			),
+			e ??
+				new AbortError(
+					"Aborted waiting for event: " +
+						String(events.length > 1 ? events.join(", ") : events[0]),
+				),
 		);
 
 	const checkIsReady = (...args: any[]) => resolver(deferred);
@@ -40,9 +42,14 @@ export function waitForEvent<
 	});
 
 	for (const event of events) {
-		emitter.addEventListener(event as any, checkIsReady);
+		emitter.addEventListener(event as any, (evt) => {
+			checkIsReady(event);
+		});
 	}
-	let timeout = setTimeout(abortFn, options?.timeout ?? 10 * 1000);
+	let timeout = setTimeout(
+		() => abortFn(new TimeoutError("Timeout waiting for event")),
+		options?.timeout ?? 10 * 1000,
+	);
 	options?.signals?.forEach((signal) =>
 		signal.addEventListener("abort", abortFn),
 	);

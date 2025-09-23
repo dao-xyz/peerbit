@@ -1,16 +1,13 @@
 import { type Constructor, getSchema, variant } from "@dao-xyz/borsh";
 import { deserialize, serialize } from "@dao-xyz/borsh";
-import {
-	type PeerId as Libp2pPeerId,
-	TypedEventEmitter,
-	type TypedEventTarget,
-} from "@libp2p/interface";
+import { TypedEventEmitter, type TypedEventTarget } from "@libp2p/interface";
 import { type Blocks, calculateRawCid } from "@peerbit/blocks-interface";
-import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
+import { PublicSignKey } from "@peerbit/crypto";
 import {
 	SubscriptionEvent,
 	UnsubcriptionEvent,
 } from "@peerbit/pubsub-interface";
+import type { PeerRefs } from "@peerbit/stream-interface";
 import { TimeoutError } from "@peerbit/time";
 import { type Block } from "multiformats/block";
 import { type Address } from "./address.js";
@@ -454,34 +451,21 @@ export abstract class Program<
 	 * @throws TimeoutError if the timeout is reached
 	 */
 	async waitFor(
-		other:
-			| PublicSignKey
-			| Libp2pPeerId
-			| string
-			| (PublicSignKey | string | Libp2pPeerId)[],
-		options?: { signal?: AbortSignal; timeout?: number },
-	): Promise<void> {
-		const expectedHashes = new Set(
-			(Array.isArray(other) ? other : [other])
-				.map((x) =>
-					typeof x === "string"
-						? x
-						: x instanceof PublicSignKey
-							? x.hashcode()
-							: getPublicKeyFromPeerId(x).hashcode(),
-				)
-				.filter((x) => x !== this.node.identity.publicKey.hashcode()),
-		);
-
+		other: PeerRefs,
+		options?: {
+			seek?: "any" | "present";
+			signal?: AbortSignal;
+			timeout?: number;
+		},
+	): Promise<string[]> {
 		// make sure nodes are reachable
-		await Promise.all(
-			[...expectedHashes].map((x) =>
-				this.node.services.pubsub.waitFor(x, { signal: options?.signal }),
-			),
-		);
+		let expectedHashes = await this.node.services.pubsub.waitFor(other, {
+			seek: options?.seek,
+			signal: options?.signal,
+		});
 
 		// wait for subscribing to topics
-		return new Promise<void>((resolve, reject) => {
+		return new Promise<string[]>((resolve, reject) => {
 			const timeout = setTimeout(
 				() => {
 					this.node.services.pubsub.removeEventListener("subscribe", listener);
@@ -516,7 +500,7 @@ export abstract class Program<
 						);
 						clearTimeout(timeout);
 						options?.signal?.removeEventListener("abort", abortListener);
-						resolve();
+						resolve(expectedHashes);
 					}
 				} catch (error) {
 					reject(error);

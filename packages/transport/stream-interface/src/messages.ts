@@ -11,12 +11,12 @@ import type { PeerId } from "@libp2p/interface";
 import {
 	PublicSignKey,
 	SignatureWithKey,
-	getPublicKeyFromPeerId,
 	randomBytes,
 	sha256Base64,
 	verify,
 } from "@peerbit/crypto";
 import { Uint8ArrayList } from "uint8arraylist";
+import { type PeerRefs, coercePeerRefsToHashes } from "./keys";
 
 export const ID_LENGTH = 32;
 
@@ -32,28 +32,6 @@ export const getMsgId = async (msg: Uint8ArrayList | Uint8Array) => {
 	// first bytes fis discriminator,
 	// next 32 bytes should be an id
 	return sha256Base64(msg.subarray(0, 33)); // base64EncArr(msg, 0, ID_LENGTH + 1);
-};
-
-const coerceTo = (
-	tos:
-		| (string | PublicSignKey | PeerId)[]
-		| Set<string>
-		| IterableIterator<string>,
-) => {
-	const toHashes: string[] = [];
-	let i = 0;
-
-	for (const to of tos) {
-		const hash =
-			to instanceof PublicSignKey
-				? to.hashcode()
-				: typeof to === "string"
-					? to
-					: getPublicKeyFromPeerId(to).hashcode();
-
-		toHashes[i++] = hash;
-	}
-	return toHashes;
 };
 
 export const deliveryModeHasReceiver = (
@@ -73,11 +51,6 @@ export const deliveryModeHasReceiver = (
 
 export abstract class DeliveryMode {}
 
-type PeerIds =
-	| (string | PublicSignKey | PeerId)[]
-	| Set<string>
-	| IterableIterator<string>;
-
 /**
  * when you just want to deliver at paths, but does not expect acknowledgement
  */
@@ -89,9 +62,9 @@ export class SilentDelivery extends DeliveryMode {
 	@field({ type: "u8" })
 	redundancy: number;
 
-	constructor(properties: { to: PeerIds; redundancy: number }) {
+	constructor(properties: { to: PeerRefs; redundancy: number }) {
 		super();
-		this.to = coerceTo(properties.to);
+		this.to = coercePeerRefsToHashes(properties.to);
 		this.redundancy = properties.redundancy;
 	}
 }
@@ -107,14 +80,14 @@ export class AcknowledgeDelivery extends DeliveryMode {
 	@field({ type: "u8" })
 	redundancy: number;
 
-	constructor(properties: { to: PeerIds; redundancy: number }) {
+	constructor(properties: { to: PeerRefs; redundancy: number }) {
 		super();
 		if (this.to?.length === 0) {
 			throw new Error(
 				"Invalud value of property 'to', expecting either undefined or an array with more than one element",
 			);
 		}
-		this.to = coerceTo(properties.to);
+		this.to = coercePeerRefsToHashes(properties.to);
 		this.redundancy = properties.redundancy;
 	}
 }
@@ -131,14 +104,14 @@ export class SeekDelivery extends DeliveryMode {
 	@field({ type: "u8" })
 	redundancy: number;
 
-	constructor(properties: { to?: PeerIds; redundancy: number }) {
+	constructor(properties: { to?: PeerRefs; redundancy: number }) {
 		super();
 		if (this.to?.length === 0) {
 			throw new Error(
 				"Invalud value of property 'to', expecting either undefined or an array with more than one element",
 			);
 		}
-		this.to = properties.to ? coerceTo(properties.to) : undefined;
+		this.to = properties.to ? coercePeerRefsToHashes(properties.to) : undefined;
 		this.redundancy = properties.redundancy;
 	}
 }

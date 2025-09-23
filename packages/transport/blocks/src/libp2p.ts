@@ -4,7 +4,10 @@ import type { GetOptions, Blocks as IBlocks } from "@peerbit/blocks-interface";
 import { type PublicSignKey } from "@peerbit/crypto";
 import { DirectStream } from "@peerbit/stream";
 import { type DirectStreamComponents } from "@peerbit/stream";
-import { type DataMessage } from "@peerbit/stream-interface";
+import {
+	type DataMessage,
+	type WaitForPeersFn,
+} from "@peerbit/stream-interface";
 import { AnyBlockStore } from "./any-blockstore.js";
 import { BlockMessage, RemoteBlocks } from "./remote.js";
 
@@ -38,7 +41,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			publish: (message, options) => this.publish(serialize(message), options),
 			localTimeout: options?.localTimeout || 1000,
 			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
-			waitFor: this.waitFor.bind(this),
+			waitFor: this.waitFor.bind(this) as WaitForPeersFn,
 			publicKey: this.publicKey,
 			eagerBlocks: options?.eagerBlocks,
 		});

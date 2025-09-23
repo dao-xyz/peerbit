@@ -29,10 +29,11 @@ import {
 	SilentDelivery,
 	getMsgId,
 } from "@peerbit/stream-interface";
-import { delay, waitFor, waitForResolved } from "@peerbit/time";
+import { TimeoutError, delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import crypto from "crypto";
 import { type Libp2pOptions, createLibp2p } from "libp2p";
+import pDefer from "p-defer";
 import sinon from "sinon";
 import { equals } from "uint8arrays";
 import {
@@ -293,6 +294,7 @@ describe("streams", function () {
 					[session.peers[1], session.peers[2]],
 					[session.peers[2], session.peers[3]],
 				]);
+				//await delay(5e3);
 
 				await waitForNeighbour(streams[0].stream, streams[1].stream);
 				await waitForNeighbour(streams[1].stream, streams[2].stream);
@@ -3668,6 +3670,20 @@ describe("start/stop", () => {
 	});
 
 	describe("waitFor", () => {
+		describe("target", () => {
+			it("neighbor", async () => {
+				session = await disconnected(2, {
+					transports: [tcp()],
+					services: { directstream: (c) => new TestDirectStream(c) },
+				});
+
+				let promise = stream(session, 0).waitFor(stream(session, 1).publicKey, {
+					target: "neighbor",
+				});
+				await session.connect();
+				expect(await promise).to.deep.equal([stream(session, 1).publicKeyHash]);
+			});
+		});
 		it("wait only for reachable", async () => {
 			session = await disconnected(3, {
 				transports: [tcp()],
@@ -3706,7 +3722,7 @@ describe("start/stop", () => {
 				session.peers[0].services.directstream.waitFor(
 					session.peers[2].peerId,
 					{
-						neighbour: true,
+						target: "neighbor",
 						timeout: 1000,
 					},
 				),
@@ -3716,7 +3732,7 @@ describe("start/stop", () => {
 				session.peers[0].services.directstream.waitFor(
 					session.peers[1].peerId,
 					{
-						neighbour: true,
+						target: "neighbor",
 						timeout: 1000,
 					},
 				),
@@ -3735,6 +3751,167 @@ describe("start/stop", () => {
 			});
 
 			await stream(session, 0).waitFor(stream(session, 0).publicKey);
+		});
+
+		describe("settle", () => {
+			describe("all", () => {
+				it("settles by default when all are present", async () => {
+					session = await disconnected(3, {
+						transports: [tcp()],
+						services: { directstream: (c) => new TestDirectStream(c) },
+					});
+
+					let promise = stream(session, 0).waitFor([
+						stream(session, 1).publicKey,
+						stream(session, 2).publicKey,
+					]);
+
+					await session.connect();
+					expect(await promise).to.deep.equal([
+						stream(session, 1).publicKeyHash,
+						stream(session, 2).publicKeyHash,
+					]);
+				});
+
+				it("throws by default when all are not present", async () => {
+					session = await disconnected(2, {
+						transports: [tcp()],
+						services: { directstream: (c) => new TestDirectStream(c) },
+					});
+
+					let promise = stream(session, 0).waitFor(
+						[
+							stream(session, 1).publicKey,
+							(await Ed25519Keypair.create()).publicKey,
+						],
+						{ timeout: 1e3 },
+					);
+
+					await session.connect();
+					let error: Error | undefined = undefined;
+					try {
+						await promise;
+					} catch (e) {
+						error = e as Error;
+					}
+					expect(error).to.exist;
+					expect(error).to.be.instanceOf(TimeoutError);
+				});
+			});
+
+			describe("any", () => {
+				it("resolves when one is present", async () => {
+					session = await disconnected(2, {
+						transports: [tcp()],
+						services: { directstream: (c) => new TestDirectStream(c) },
+					});
+
+					let promise = stream(session, 0).waitFor(
+						[
+							stream(session, 1).publicKey,
+							(await Ed25519Keypair.create()).publicKey,
+						],
+						{
+							settle: "any",
+						},
+					);
+					await session.connect();
+					expect(await promise).to.deep.equal([
+						stream(session, 1).publicKeyHash,
+					]);
+				});
+
+				it("throws when none are present", async () => {
+					session = await disconnected(2, {
+						transports: [tcp()],
+						services: { directstream: (c) => new TestDirectStream(c) },
+					});
+
+					let promise = stream(session, 0).waitFor(
+						[
+							(await Ed25519Keypair.create()).publicKey,
+							(await Ed25519Keypair.create()).publicKey,
+						],
+						{ settle: "any", timeout: 1e3 },
+					);
+					await session.connect();
+					let error: Error | undefined = undefined;
+					try {
+						await promise;
+					} catch (e) {
+						error = e as Error;
+					}
+					expect(error).to.exist;
+					expect(error).to.be.instanceOf(TimeoutError);
+				});
+			});
+		});
+
+		describe("seek", () => {
+			const slowDownSetup = (stream: DirectStream, promise: Promise<void>) => {
+				const createOutbound = stream["createOutboundStream"].bind(stream);
+				stream["createOutboundStream"] = async (peerId, connection, opts) => {
+					await promise;
+					return createOutbound(peerId, connection, opts);
+				};
+			};
+
+			describe("present", () => {
+				it("resolves immediately if no connections exist", async () => {
+					session = await disconnected(1, {
+						transports: [tcp()],
+						services: {
+							directstream: (c) =>
+								new TestDirectStream(c, {
+									connectionManager: { dialer: false, pruner: false },
+								}),
+						},
+					});
+					let t0 = Date.now();
+					await stream(session, 0).waitFor(
+						(await Ed25519Keypair.create()).publicKey,
+						{ seek: "present" },
+					);
+					let t1 = Date.now();
+					expect(t1 - t0).to.be.lessThan(100);
+				});
+
+				it("waits for inflight streams", async () => {
+					session = await disconnected(2, {
+						transports: [tcp()],
+						services: {
+							directstream: (c) =>
+								new TestDirectStream(c, {
+									connectionManager: { dialer: false, pruner: false },
+								}),
+						},
+					});
+
+					// now we need to make protocol negotiation artificially slow
+					let deferred = pDefer<void>();
+					let timeout = setTimeout(() => {
+						deferred.reject(new Error("timeout"));
+					}, 1e4);
+					slowDownSetup(stream(session, 0), deferred.promise);
+					slowDownSetup(stream(session, 1), deferred.promise);
+
+					await session.connect();
+					let t0 = Date.now();
+					let t1 = Number.MAX_SAFE_INTEGER;
+					const waitForPromise = stream(session, 0).waitFor(
+						stream(session, 1).publicKey,
+						{ seek: "present" },
+					);
+					waitForPromise.finally(() => {
+						t1 = Date.now();
+					});
+					await delay(3e3);
+					deferred.resolve();
+					await waitForPromise;
+					clearTimeout(timeout);
+					expect(t1 - t0).to.be.greaterThan(3e3); // it should have waited for the slow down
+				});
+			});
 		});
 	});
 

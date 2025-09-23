@@ -1,4 +1,4 @@
-import { delay } from "@peerbit/time";
+import { AbortError, delay } from "@peerbit/time";
 import { expect } from "chai";
 import all from "it-all";
 import { pipe } from "it-pipe";
@@ -374,10 +374,13 @@ describe("it-pushable", () => {
 
 		controller.abort();
 
-		await expect(p).to.be.rejected.eventually.have.property(
-			"code",
-			"ABORT_ERR",
-		);
+		let error: Error | undefined = undefined;
+		try {
+			await p;
+		} catch (e) {
+			error = e as Error;
+		}
+		expect(error).to.be.instanceOf(AbortError);
 	});
 
 	describe("lanes", () => {

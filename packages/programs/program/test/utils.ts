@@ -79,7 +79,7 @@ export const creatMockPeer = async (
 				rm: (c) => {
 					blocks.delete(c);
 				},
-				waitFor: () => Promise.resolve(),
+				waitFor: () => Promise.resolve([]),
 				iterator: () => {
 					return undefined as any; // TODO
 				},
@@ -161,7 +161,7 @@ export const creatMockPeer = async (
 						}
 					}
 				},
-				waitFor: () => Promise.resolve(),
+				waitFor: () => Promise.resolve([]),
 				getPublicKey: (_hash: string) => keypair.publicKey, // TODO
 			},
 			keychain: undefined as any, // TODO

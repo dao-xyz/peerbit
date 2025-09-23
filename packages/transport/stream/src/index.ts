@@ -45,15 +45,20 @@ import {
 	SeekDelivery,
 	SilentDelivery,
 	TracedDelivery,
+	coercePeerRefsToHashes,
 	deliveryModeHasReceiver,
 	getMsgId,
 } from "@peerbit/stream-interface";
 import type {
 	IdOptions,
+	PeerRefs,
 	PriorityOptions,
 	PublicKeyFromHashResolver,
 	StreamEvents,
+	WaitForAnyOpts,
+	WaitForBaseOpts,
 	WaitForPeer,
+	WaitForPresentOpts,
 	WithExtraSigners,
 	WithMode,
 	WithTo,
@@ -112,8 +117,6 @@ export interface PeerStreamEvents {
 	"stream:inbound": CustomEvent<never>;
 	"stream:outbound": CustomEvent<never>;
 	close: CustomEvent<never>;
-	"peer:reachable": CustomEvent<PublicSignKey>;
-	"peer:unreachable": CustomEvent<PublicSignKey>;
 }
 
 const SEEK_DELIVERY_TIMEOUT = 10e3;
@@ -1483,9 +1486,25 @@ export abstract class DirectStream<
 		this.peers.set(publicKeyHash, peerStreams);
 		this.updateSession(publicKey, -1);
 
+		// Propagate per-peer stream readiness events to the parent emitter
+		const forwardOutbound = () =>
+			this.dispatchEvent(new CustomEvent("stream:outbound"));
+		const forwardInbound = () =>
+			this.dispatchEvent(new CustomEvent("stream:inbound"));
+		peerStreams.addEventListener("stream:outbound", forwardOutbound);
+		peerStreams.addEventListener("stream:inbound", forwardInbound);
+
 		peerStreams.addEventListener("close", () => this._removePeer(publicKey), {
 			once: true,
 		});
+		peerStreams.addEventListener(
+			"close",
+			() => {
+				peerStreams.removeEventListener("stream:outbound", forwardOutbound);
+				peerStreams.removeEventListener("stream:inbound", forwardInbound);
+			},
+			{ once: true },
+		);
 
 		this.addRouteConnection(
 			this.publicKeyHash,
@@ -2523,19 +2542,156 @@ export abstract class DirectStream<
 		}
 	}
 
-	async waitFor(
+	public async waitFor(
+		peers: PeerRefs,
+		opts: WaitForPresentOpts,
+	): Promise<string[]>;
+	public async waitFor(
+		peers: PeerRefs,
+		opts?: WaitForAnyOpts,
+	): Promise<string[]>;
+	public async waitFor(
+		peerOrPeers: PeerRefs,
+		opts: WaitForPresentOpts | WaitForAnyOpts = {},
+	): Promise<string[]> {
+		const {
+			settle = "all",
+			timeout,
+			signal,
+			allowSelf = false,
+		} = opts as WaitForBaseOpts;
+
+		const seek: "present" | "any" =
+			(opts as WaitForPresentOpts).seek === "present" ? "present" : "any";
+		type Target = "neighbor" | "reachable";
+		const target =
+			seek === "present"
+				? "neighbor"
+				: ((opts as WaitForAnyOpts).target ?? "reachable");
+
+		const isInDialQueue = (h: string) =>
+			this.components.connectionManager
+				.getDialQueue()
+				.some(
+					(x) => x.peerId && getPublicKeyFromPeerId(x.peerId).hashcode() === h,
+				);
+
+		const hasConnection = (h: string) =>
+			this.components.connectionManager
+				.getConnections()
+				.some((x) => getPublicKeyFromPeerId(x.remotePeer).hashcode() === h);
+
+		const isPresent = (h: string) => isInDialQueue(h) || hasConnection(h);
+
+		const isReachable = (h: string) =>
+			this.routes.isReachable(this.publicKeyHash, h, 0);
+
+		const isNeighbor = (h: string) => {
+			const s = this.peers.get(h);
+			return !!s && s.isReadable && s.isWritable;
+		};
+
+		const eventsFor = (t: Target) =>
+			t === "neighbor"
+				? ["peer:reachable", "stream:outbound", "stream:inbound"]
+				: ["peer:reachable"];
+
+		const reached = (h: string, t: Target) =>
+			t === "neighbor" ? isNeighbor(h) : isReachable(h);
+
+		let hashes = coercePeerRefsToHashes(peerOrPeers);
+
+		if (!allowSelf) {
+			// filter out self
+			hashes = hashes.filter((h) => h !== this.publicKeyHash);
+		} else {
+			throw new Error("Unallowed to wait for self");
+		}
+
+		// Admission snapshot
+		const admitted: string[] =
+			seek === "present" ? hashes.filter(isPresent) : hashes.slice();
+
+		if (admitted.length === 0) return [];
+
+		// Seed successes
+		const wins = new Set<string>();
+		for (const h of admitted) if (reached(h, target)) wins.add(h);
+
+		if (settle === "any" && wins.size > 0) return [...wins];
+		if (settle === "all" && wins.size === admitted.length) return [...wins];
+
+		// Abort/timeout
+		const abortSignals = [this.closeController.signal];
+		if (signal) {
+			abortSignals.push(signal);
+		}
+
+		const check = (defer: DeferredPromise<void>) => {
+			for (const h of admitted)
+				if (!wins.has(h) && reached(h, target)) wins.add(h);
+			if (settle === "any" && wins.size > 0) return defer.resolve();
+			if (settle === "all" && wins.size === admitted.length)
+				return defer.resolve();
+		};
+
+		try {
+			await waitForEvent(this, eventsFor(target), check, {
+				signals: abortSignals,
+				timeout,
+			});
+			return [...wins];
+		} catch (e) {
+			const abortSignal = abortSignals.find((s) => s.aborted);
+			if (abortSignal) {
+				if (abortSignal.reason instanceof Error) {
+					throw abortSignal.reason;
+				}
+				throw new AbortError(
+					"Aborted waiting for peers: " + abortSignal.reason,
+				);
+			}
+			if (e instanceof Error) {
+				throw e;
+			}
+			if (settle === "all") throw new TimeoutError("Timeout waiting for peers");
+			return [...wins]; // settle:any: return whatever successes we got
+		}
+	}
+
+	/* async waitFor(
 		peer: PeerId | PublicSignKey | string,
-		options?: { timeout?: number; signal?: AbortSignal; neighbour?: boolean },
+		options?: {
+			timeout?: number;
+			signal?: AbortSignal;
+			neighbour?: boolean;
+			inflight?: boolean;
+		},
 	) {
 		const hash =
 			typeof peer === "string"
 				? peer
 				: (peer instanceof PublicSignKey
-						? peer
-						: getPublicKeyFromPeerId(peer)
-					).hashcode();
+					? peer
+					: getPublicKeyFromPeerId(peer)
+				).hashcode();
 		if (hash === this.publicKeyHash) {
 			return; // TODO throw error instead?
+		}
+
+		if (options?.inflight) {
+			// if peer is not in active connections or dialQueue, return silenty
+			if (
+				!this.peers.has(hash) &&
+				!this.components.connectionManager
+					.getDialQueue()
+					.some((x) => getPublicKeyFromPeerId(x.peerId).hashcode() === hash) &&
+				!this.components.connectionManager
+					.getConnections()
+					.some((x) => getPublicKeyFromPeerId(x.remotePeer).hashcode() === hash)
+			) {
+				return;
+			}
 		}
 
 		const checkIsReachable = (deferred: DeferredPromise<void>) => {
@@ -2562,13 +2718,13 @@ export abstract class DirectStream<
 		} catch (error) {
 			throw new Error(
 				"Stream to " +
-					hash +
-					" from " +
-					this.publicKeyHash +
-					" does not exist. Connection exist: " +
-					this.peers.has(hash) +
-					". Route exist: " +
-					this.routes.isReachable(this.publicKeyHash, hash, 0),
+				hash +
+				" from " +
+				this.publicKeyHash +
+				" does not exist. Connection exist: " +
+				this.peers.has(hash) +
+				". Route exist: " +
+				this.routes.isReachable(this.publicKeyHash, hash, 0),
 			);
 		}
 
@@ -2592,15 +2748,15 @@ export abstract class DirectStream<
 			} catch (error) {
 				throw new Error(
 					"Stream to " +
-						stream.publicKey.hashcode() +
-						" not ready. Readable: " +
-						stream.isReadable +
-						". Writable " +
-						stream.isWritable,
+					stream.publicKey.hashcode() +
+					" not ready. Readable: " +
+					stream.isReadable +
+					". Writable " +
+					stream.isWritable,
 				);
 			}
 		}
-	}
+	} */
 
 	getPublicKey(hash: string): PublicSignKey | undefined {
 		return this.peerKeyHashToPublicKey.get(hash);
@@ -2686,9 +2842,9 @@ export const waitForReachable = async (
 export const waitForNeighbour = async (
 	...libs: {
 		waitFor: (
-			peer: PeerId | PublicSignKey,
-			options?: { neighbour?: boolean },
-		) => Promise<void>;
+			peer: PeerRefs,
+			options?: { target?: "neighbor" },
+		) => Promise<string[]>;
 		peerId: PeerId;
 	}[]
 ) => {
@@ -2700,8 +2856,8 @@ export const waitForNeighbour = async (
 			if (libs[i].peerId.equals(libs[j].peerId)) {
 				throw new Error("Unexpected waiting for self");
 			}
-			await libs[i].waitFor(libs[j].peerId, { neighbour: true });
-			await libs[j].waitFor(libs[i].peerId, { neighbour: true });
+			await libs[i].waitFor(libs[j].peerId, { target: "neighbor" });
+			await libs[j].waitFor(libs[i].peerId, { target: "neighbor" });
 		}
 	}
 };
