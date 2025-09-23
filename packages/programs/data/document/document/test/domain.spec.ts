@@ -126,7 +126,9 @@ describe("domain", () => {
 								to: 3n,
 							},
 						},
-						eager: true,
+						scope: {
+							eager: true,
+						},
 					},
 				},
 			);
@@ -165,7 +167,9 @@ describe("domain", () => {
 								to: 5n,
 							},
 						},
-						eager: true,
+						scope: {
+							eager: true,
+						},
 						replicate: true,
 					},
 				},
@@ -199,7 +203,9 @@ describe("domain", () => {
 								to: 5n,
 							},
 						},
-						eager: true,
+						scope: {
+							eager: true,
+						},
 						replicate: true,
 					},
 				},

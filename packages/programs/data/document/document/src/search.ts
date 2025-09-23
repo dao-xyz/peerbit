@@ -1,10 +1,10 @@
 import { type AbstractType, field, serialize, variant } from "@dao-xyz/borsh";
 import type { PeerId, TypedEventTarget } from "@libp2p/interface";
+import type { Multiaddr } from "@multiformats/multiaddr";
 import { Cache } from "@peerbit/cache";
 import {
 	type MaybePromise,
 	PublicSignKey,
-	getPublicKeyFromPeerId,
 	sha256Base64Sync,
 } from "@peerbit/crypto";
 import * as types from "@peerbit/document-interface";
@@ -26,7 +26,11 @@ import {
 	type ReplicationDomain,
 	SharedLog,
 } from "@peerbit/shared-log";
-import { DataMessage, SilentDelivery } from "@peerbit/stream-interface";
+import {
+	DataMessage,
+	type PeerRefs,
+	SilentDelivery,
+} from "@peerbit/stream-interface";
 import { AbortError, waitFor } from "@peerbit/time";
 import pDefer, { type DeferredPromise } from "p-defer";
 import { concat, fromString } from "uint8arrays";
@@ -40,6 +44,8 @@ import { Prefetch } from "./prefetch.js";
 import type { ExtractArgs } from "./program.js";
 import { ResumableIterators } from "./resumable-iterator.js";
 
+const WARNING_WHEN_ITERATING_FOR_MORE_THAN = 1e5;
+
 const logger = loggerFn({ module: "document-index" });
 
 type BufferedResult<T, I extends Record<string, any>> = {
@@ -47,6 +53,103 @@ type BufferedResult<T, I extends Record<string, any>> = {
 	indexed: WithContext<I>;
 	context: types.Context;
 	from: PublicSignKey;
+};
+
+export type UpdateMergeStrategy<
+	T,
+	I,
+	Resolve extends boolean | undefined,
+	RT = ValueTypeFromRequest<Resolve, T, I>,
+> =
+	| "none" // ignore changes
+	| "sorted" // keep current sort; use updateResults(...) internally
+	| boolean
+	| "append" // push added items at the end
+	| "prepend" // unshift added items at the start
+	| ((prev: RT[], change: DocumentsChange<T, I>) => MaybePromise<RT[]>);
+
+export type UpdateCallbacks<
+	T,
+	I,
+	Resolve extends boolean | undefined,
+	RT = ValueTypeFromRequest<Resolve, T, I>,
+> = {
+	/**
+	 * Fires on raw DB change events (added/removed/updated).
+	 * Use if you want low-level inspection of change streams.
+	 */
+	onChange?: (change: DocumentsChange<T, I>) => void | Promise<void>;
+
+	/**
+	 * Fires whenever the iterator yields a batch to the consumer.
+	 * Good for external sync (e.g. React state).
+	 */
+	onResults?: (
+		batch: RT[],
+		meta: { reason: "initial" | "next" | "join" | "change" },
+	) => void | Promise<void>;
+};
+
+/**
+ * Unified update options for iterate()/search()/get() and hooks.
+ * If you pass `true`, defaults to `{ merge: "sorted" }`.
+ */
+export type UpdateOptions<T, I, Resolve extends boolean | undefined> =
+	| boolean
+	| ({
+			/** Strategy for folding live changes into the result array. */
+			merge?: UpdateMergeStrategy<T, I, Resolve>;
+	  } & UpdateCallbacks<T, I, Resolve>);
+
+export type JoiningTargets = {
+	/** Specific peers you care about */
+	peers?: Array<PublicSignKey | PeerId | string>; // string = hash or peer id
+
+	/** Multiaddrs you care about */
+	multiaddrs?: (string | Multiaddr)[];
+
+	/**
+	 * From the previous cover set (what you "knew" about earlier).
+	 * - "any": wait until at least 1 of the known peers is ready
+	 * - "all": wait until all known peers are ready
+	 * - number: wait until N known peers are ready
+	 */
+	known?: "any" | "all" | number;
+};
+
+export type JoiningTimeoutPolicy = "proceed" | "error";
+
+export type JoiningOnMissedResults = (evt: {
+	/** How many items should have preceded the current frontier. */
+	amount: number;
+
+	/** The peer whose arrival triggered the gap calculation. */
+	peer: PublicSignKey;
+}) => void | Promise<void>;
+
+export type LateResultsEvent = {
+	/** Count of items that should have appeared earlier than the current frontier */
+	amount: number;
+
+	/** If attributable, the peer that produced the late items */
+	peer?: PublicSignKey;
+};
+
+export type WaitBehavior =
+	| "block" // hold the *first* fetch until readiness condition is met or timeout
+	| "keep-open"; // return immediately; iterator stays open listening for late peers
+
+export type WaitPolicy = {
+	timeout: number; // max time to wait
+	until?: "any" | "all" | number; // readiness condition
+	onTimeout?: "proceed" | "error"; // proceed = continue with whoever’s ready
+	behavior?: WaitBehavior; // default: "keep-open"
+};
+
+export type ReachScope = {
+	/** who to consider for readiness */
+	eager?: boolean; // not yet matured
+	discover?: PublicSignKey[]; // wait for these peers to be ready, assumes they are already in the dialqueue or connected, but not actively subscribing yet
 };
 
 export type RemoteQueryOptions<Q, R, D> = RPCRequestAllOptions<Q, R> & {
@@ -61,12 +164,12 @@ export type RemoteQueryOptions<Q, R, D> = RPCRequestAllOptions<Q, R> & {
 		| {
 				range: CoverRange<number | bigint>;
 		  };
-	eager?: boolean; // whether to query newly joined peers before they have matured
-	joining?:
-		| boolean
-		| { waitFor?: number; onMissedResults?: (evt: { amount: number }) => void }; // whether to query peers that are joining the network
+	scope?: ReachScope;
+	wait?: WaitPolicy;
+	onLateResults?: (evt: LateResultsEvent) => void | Promise<void>;
 };
-export type QueryOptions<R, D, Resolve extends boolean | undefined> = {
+
+export type QueryOptions<T, I, D, Resolve extends boolean | undefined> = {
 	remote?:
 		| boolean
 		| RemoteQueryOptions<
@@ -77,9 +180,10 @@ export type QueryOptions<R, D, Resolve extends boolean | undefined> = {
 	local?: boolean;
 	resolve?: Resolve;
 	signal?: AbortSignal;
+	updates?: UpdateOptions<T, I, Resolve>;
 };
 
-export type GetOptions<R, D, Resolve extends boolean | undefined> = {
+export type GetOptions<T, I, D, Resolve extends boolean | undefined> = {
 	remote?:
 		| boolean
 		| RemoteQueryOptions<
@@ -94,10 +198,11 @@ export type GetOptions<R, D, Resolve extends boolean | undefined> = {
 };
 
 export type SearchOptions<
-	R,
+	T,
+	I,
 	D,
 	Resolve extends boolean | undefined,
-> = QueryOptions<R, D, Resolve>;
+> = QueryOptions<T, I, D, Resolve>;
 
 type Transformer<T, I> = (obj: T, context: types.Context) => MaybePromise<I>;
 
@@ -108,13 +213,15 @@ export type ResultsIterator<T> = {
 	all: () => Promise<T[]>;
 	pending: () => number | undefined;
 	first: () => Promise<T | undefined>;
+	[Symbol.asyncIterator]: () => AsyncIterator<T>;
 };
 
 type QueryDetailedOptions<
 	T,
+	I,
 	D,
 	Resolve extends boolean | undefined,
-> = QueryOptions<T, D, Resolve> & {
+> = QueryOptions<T, I, D, Resolve> & {
 	onResponse?: (
 		response: types.AbstractSearchResult,
 		from: PublicSignKey,
@@ -130,7 +237,7 @@ type QueryLike = {
 };
 
 type ExtractResolveFromOptions<O> =
-	O extends QueryOptions<any, any, infer X>
+	O extends QueryOptions<any, any, any, infer X>
 		? X extends boolean // if X is a boolean (true or false)
 			? X
 			: true // else default to true
@@ -138,7 +245,7 @@ type ExtractResolveFromOptions<O> =
 
 const coerceQuery = <Resolve extends boolean | undefined>(
 	query: types.SearchRequest | types.SearchRequestIndexed | QueryLike,
-	options?: QueryOptions<any, any, Resolve>,
+	options?: QueryOptions<any, any, any, Resolve>,
 ) => {
 	let replicate =
 		typeof options?.remote !== "boolean" ? options?.remote?.replicate : false;
@@ -180,7 +287,7 @@ const introduceEntries = async <
 	documentType: AbstractType<T>,
 	indexedType: AbstractType<I>,
 	sync: (request: R, response: types.Results<any>) => Promise<void>,
-	options?: QueryDetailedOptions<T, D, any>,
+	options?: QueryDetailedOptions<T, I, D, any>,
 ): Promise<
 	RPCResponse<types.Results<types.ResultTypeFromRequest<R, T, I>>>[]
 > => {
@@ -815,18 +922,18 @@ export class DocumentIndex<
 		return dropped;
 	}
 
-	public async get<Options extends GetOptions<T, D, true | undefined>>(
+	public async get<Options extends GetOptions<T, I, D, true | undefined>>(
 		key: indexerTypes.Ideable | indexerTypes.IdKey,
 		options?: Options,
 	): Promise<WithIndexedContext<T, I>>;
 
-	public async get<Options extends GetOptions<T, D, false>>(
+	public async get<Options extends GetOptions<T, I, D, false>>(
 		key: indexerTypes.Ideable | indexerTypes.IdKey,
 		options?: Options,
 	): Promise<WithContext<I>>;
 
 	public async get<
-		Options extends GetOptions<T, D, Resolve>,
+		Options extends GetOptions<T, I, D, Resolve>,
 		Resolve extends boolean | undefined = ExtractResolveFromOptions<Options>,
 	>(key: indexerTypes.Ideable | indexerTypes.IdKey, options?: Options) {
 		let deferred:
@@ -879,16 +986,15 @@ export class DocumentIndex<
 						? { ...options.remote }
 						: {};
 			if (baseRemote) {
-				const prevJoining = baseRemote.joining;
+				const waitPolicy = baseRemote.wait;
 				if (
-					!prevJoining ||
-					prevJoining === true ||
-					(typeof prevJoining === "object" &&
-						(prevJoining.waitFor || 0) < options.waitFor)
+					!waitPolicy ||
+					(typeof waitPolicy === "object" &&
+						(waitPolicy.timeout || 0) < options.waitFor)
 				) {
-					baseRemote.joining = {
-						...(typeof prevJoining === "object" ? prevJoining : {}),
-						waitFor: options.waitFor,
+					baseRemote.wait = {
+						...(typeof waitPolicy === "object" ? waitPolicy : {}),
+						timeout: options.waitFor,
 					};
 				}
 			}
@@ -900,7 +1006,7 @@ export class DocumentIndex<
 					onPeer: async (pk) => {
 						if (cleanedUp) return;
 						const hash = pk.hashcode();
-						const requeryOptions: QueryOptions<T, D, Resolve> = {
+						const requeryOptions: QueryOptions<T, I, D, Resolve> = {
 							...(options as any),
 							remote: {
 								...(baseRemote || {}),
@@ -1005,14 +1111,14 @@ export class DocumentIndex<
 	}
 
 	public async getDetailed<
-		Options extends QueryOptions<T, D, Resolve>,
+		Options extends QueryOptions<T, I, D, Resolve>,
 		Resolve extends boolean | undefined = ExtractResolveFromOptions<Options>,
 		RT extends types.Result = Resolve extends true
 			? types.ResultValue<WithIndexedContext<T, I>>
 			: types.ResultIndexedValue<WithContext<I>>,
 	>(
 		key: indexerTypes.IdKey | indexerTypes.IdPrimitive,
-		options?: QueryOptions<T, D, Resolve>,
+		options?: QueryOptions<T, I, D, Resolve>,
 	): Promise<types.Results<RT>[] | undefined> {
 		let coercedOptions = options;
 		if (options?.remote && typeof options.remote !== "boolean") {
@@ -1049,7 +1155,7 @@ export class DocumentIndex<
 						new indexerTypes.ByteMatchQuery({ key: this.indexBy, value: key }),
 					],
 				}),
-				coercedOptions,
+				coercedOptions as QueryDetailedOptions<T, I, D, boolean | undefined>,
 			);
 		} else {
 			const indexableKey = indexerTypes.toIdeable(key);
@@ -1068,7 +1174,7 @@ export class DocumentIndex<
 							}),
 						],
 					}),
-					coercedOptions,
+					coercedOptions as QueryDetailedOptions<T, I, D, boolean | undefined>,
 				);
 			} else if (typeof indexableKey === "string") {
 				results = await this.queryCommence(
@@ -1080,7 +1186,7 @@ export class DocumentIndex<
 							}),
 						],
 					}),
-					coercedOptions,
+					coercedOptions as QueryDetailedOptions<T, I, D, boolean | undefined>,
 				);
 			} else if (indexableKey instanceof Uint8Array) {
 				results = await this.queryCommence(
@@ -1092,7 +1198,7 @@ export class DocumentIndex<
 							}),
 						],
 					}),
-					coercedOptions,
+					coercedOptions as QueryDetailedOptions<T, I, D, boolean | undefined>,
 				);
 			}
 		}
@@ -1419,7 +1525,7 @@ export class DocumentIndex<
 		RT extends types.Result = types.ResultTypeFromRequest<R, T, I>,
 	>(
 		queryRequest: R,
-		options?: QueryDetailedOptions<T, D, boolean | undefined>,
+		options?: QueryDetailedOptions<T, I, D, boolean | undefined>,
 	): Promise<types.Results<RT>[]> {
 		const local = typeof options?.local === "boolean" ? options?.local : true;
 		let remote:
@@ -1477,8 +1583,8 @@ export class DocumentIndex<
 				? options?.remote?.from
 				: await this._log.getCover(remote.domain ?? { args: undefined }, {
 						roleAge: remote.minAge,
-						eager: remote.eager,
-						reachableOnly: !!remote.joining, // when we want to merge joining we can ignore pending to be online peers and instead consider them once they become online
+						eager: remote.scope?.eager,
+						reachableOnly: !!remote.wait, // when we want to merge joining we can ignore pending to be online peers and instead consider them once they become online
 					});
 
 			if (replicatorGroups) {
@@ -1637,11 +1743,11 @@ export class DocumentIndex<
 
 	public search(
 		queryRequest: QueryLike,
-		options?: SearchOptions<T, D, true>,
+		options?: SearchOptions<T, I, D, true>,
 	): Promise<ValueTypeFromRequest<true, T, I>[]>;
 	public search(
 		queryRequest: QueryLike,
-		options?: SearchOptions<T, D, false>,
+		options?: SearchOptions<T, I, D, false>,
 	): Promise<ValueTypeFromRequest<false, T, I>[]>;
 
 	/**
@@ -1652,11 +1758,11 @@ export class DocumentIndex<
 	 */
 	public async search<
 		R extends types.SearchRequest | types.SearchRequestIndexed | QueryLike,
-		O extends SearchOptions<T, D, Resolve>,
-		Resolve extends boolean | undefined = ExtractResolveFromOptions<O>,
+		O extends SearchOptions<T, I, D, Resolve>,
+		Resolve extends boolean = ExtractResolveFromOptions<O>,
 	>(
 		queryRequest: R,
-		options?: SearchOptions<T, D, Resolve>,
+		options?: O,
 	): Promise<ValueTypeFromRequest<Resolve, T, I>[]> {
 		// Set fetch to search size, or max value (default to max u32 (4294967295))
 		const coercedRequest: types.SearchRequest | types.SearchRequestIndexed =
@@ -1664,7 +1770,7 @@ export class DocumentIndex<
 		coercedRequest.fetch = coercedRequest.fetch ?? 0xffffffff;
 
 		// So that the iterator is pre-fetching the right amount of entries
-		const iterator = this.iterate(coercedRequest, options);
+		const iterator = this.iterate<Resolve>(coercedRequest, options);
 
 		// So that this call will not do any remote requests
 		const allResults: ValueTypeFromRequest<Resolve, T, I>[] = [];
@@ -1729,11 +1835,11 @@ export class DocumentIndex<
 
 	public iterate(
 		query?: QueryLike,
-		options?: QueryOptions<T, D, undefined>,
+		options?: QueryOptions<T, I, D, undefined>,
 	): ResultsIterator<ValueTypeFromRequest<true, T, I>>;
 	public iterate<Resolve extends boolean>(
 		query?: QueryLike,
-		options?: QueryOptions<T, D, Resolve>,
+		options?: QueryOptions<T, I, D, Resolve>,
 	): ResultsIterator<ValueTypeFromRequest<Resolve, T, I>>;
 
 	/**
@@ -1744,11 +1850,11 @@ export class DocumentIndex<
 	 */
 	public iterate<
 		R extends types.SearchRequest | types.SearchRequestIndexed | QueryLike,
-		O extends SearchOptions<T, D, Resolve>,
+		O extends SearchOptions<T, I, D, Resolve>,
 		Resolve extends boolean | undefined = ExtractResolveFromOptions<O>,
 	>(
 		queryRequest?: R,
-		options?: QueryOptions<T, D, Resolve>,
+		options?: QueryOptions<T, I, D, Resolve>,
 	): ResultsIterator<ValueTypeFromRequest<Resolve, T, I>> {
 		if (
 			queryRequest instanceof types.SearchRequest &&
@@ -1827,58 +1933,72 @@ export class DocumentIndex<
 			return [...peerBufferMap.values()].map((x) => x.buffer).flat();
 		};
 
-		let maybeSetDone: () => void;
-		let unsetDone: () => void;
-		let cleanup = () => {};
+		let maybeSetDone = () => {
+			cleanup();
+			done = true;
+		};
+		let unsetDone = () => {
+			cleanup();
+			done = false;
+		};
+		let cleanup = () => {
+			this.clearResultsQueue(queryRequestCoerced);
+		};
 
-		if (typeof options?.remote === "object" && options.remote.joining) {
-			let t0 = +new Date();
-			let waitForTime =
-				typeof options.remote.joining === "boolean"
-					? DEFAULT_TIMEOUT
-					: (options.remote.joining.waitFor ?? DEFAULT_TIMEOUT);
-			let setDoneIfTimeout = false;
-			maybeSetDone = () => {
-				if (t0 + waitForTime < +new Date()) {
-					cleanup();
-					done = true;
-				} else {
-					setDoneIfTimeout = true;
-				}
-			};
-			unsetDone = () => {
-				setDoneIfTimeout = false;
-				done = false;
-			};
-			let timeout = setTimeout(() => {
-				if (setDoneIfTimeout) {
-					cleanup();
-					done = true;
-				}
-			}, waitForTime);
+		let warmupPromise: Promise<any> | undefined = undefined;
 
-			cleanup = () => {
-				this.clearResultsQueue(queryRequestCoerced);
-				clearTimeout(timeout);
-			};
-		} else {
-			maybeSetDone = () => {
-				cleanup();
-				done = true;
-			};
-			unsetDone = () => {
-				cleanup();
-				done = false;
-			};
-			cleanup = () => {
-				this.clearResultsQueue(queryRequestCoerced);
-			};
+		if (typeof options?.remote === "object") {
+			let waitForTime: number | undefined = undefined;
+			if (options.remote.wait) {
+				{
+					let t0 = +new Date();
+
+					waitForTime =
+						typeof options.remote.wait === "boolean"
+							? DEFAULT_TIMEOUT
+							: (options.remote.wait.timeout ?? DEFAULT_TIMEOUT);
+					let setDoneIfTimeout = false;
+					maybeSetDone = () => {
+						if (t0 + waitForTime! < +new Date()) {
+							cleanup();
+							done = true;
+						} else {
+							setDoneIfTimeout = true;
+						}
+					};
+					unsetDone = () => {
+						setDoneIfTimeout = false;
+						done = false;
+					};
+					let timeout = setTimeout(() => {
+						if (setDoneIfTimeout) {
+							cleanup();
+							done = true;
+						}
+					}, waitForTime);
+
+					cleanup = () => {
+						this.clearResultsQueue(queryRequestCoerced);
+						clearTimeout(timeout);
+					};
+				}
+			}
+
+			if (options.remote.scope?.discover) {
+				warmupPromise = this.waitFor(options.remote.scope.discover, {
+					signal: controller.signal,
+					seek: "present",
+					timeout: waitForTime ?? DEFAULT_TIMEOUT,
+				});
+				options.remote.scope.eager = true; // include the results from the discovered peer even if it is not mature
+			}
 		}
 
 		const fetchFirst = async (
 			n: number,
 			fetchOptions?: { from?: string[] },
 		): Promise<boolean> => {
+			await warmupPromise;
 			let hasMore = false;
 
 			queryRequestCoerced.fetch = n;
@@ -2116,7 +2236,7 @@ export class DocumentIndex<
 										this.documentType,
 										this.indexedType,
 										this._sync,
-										options,
+										options as QueryDetailedOptions<T, I, D, any>,
 									)
 										.then(async (responses) => {
 											return Promise.all(
@@ -2331,24 +2451,23 @@ export class DocumentIndex<
 
 		let updateDeferred: ReturnType<typeof pDefer> | undefined;
 		const signalUpdate = () => updateDeferred?.resolve();
-		const waitForUpdate = () =>
+		const _waitForUpdate = () =>
 			updateDeferred ? updateDeferred.promise : Promise.resolve();
 
-		if (typeof options?.remote === "object" && options?.remote.joining) {
+		if (typeof options?.remote === "object" && options?.remote.wait) {
 			// was used to account for missed results when a peer joins; omitted in this minimal handler
 
 			updateDeferred = pDefer<void>();
 
 			// derive optional onMissedResults callback if provided
 			let onMissedResults =
-				typeof options?.remote?.joining === "object" &&
-				typeof options?.remote.joining.onMissedResults === "function"
-					? options.remote.joining.onMissedResults
+				typeof options?.remote?.wait === "object" &&
+				typeof options?.remote.onLateResults === "function"
+					? options.remote.onLateResults
 					: undefined;
 
 			const waitForTime =
-				typeof options.remote.joining === "object" &&
-				options.remote.joining.waitFor;
+				typeof options.remote.wait === "object" && options.remote.wait.timeout;
 
 			const prevMaybeSetDone = maybeSetDone;
 			maybeSetDone = () => {
@@ -2409,6 +2528,16 @@ export class DocumentIndex<
 			};
 		}
 
+		const waitForUpdateAndResetDeferred = async () => {
+			// wait until: join fetch adds results, cleanup runs, or the join-wait times out
+			await _waitForUpdate();
+
+			// re-arm the deferred for the next cycle (only if joining is enabled and we’re not done)
+			if (updateDeferred && !doneFn()) {
+				updateDeferred = pDefer<void>();
+			}
+		};
+
 		return {
 			close,
 			next,
@@ -2424,23 +2553,20 @@ export class DocumentIndex<
 				let result: ValueTypeFromRequest<Resolve, T, I>[] = [];
 				let c = 0;
 				while (doneFn() !== true) {
-					c++;
 					let batch = await next(100);
-					if (c > 100) {
-						break;
+					c += batch.length;
+					if (c > WARNING_WHEN_ITERATING_FOR_MORE_THAN) {
+						logger.warn(
+							"Iterating for more than " +
+								WARNING_WHEN_ITERATING_FOR_MORE_THAN +
+								" results",
+						);
 					}
 					if (batch.length > 0) {
 						result.push(...batch);
 						continue;
 					}
-
-					// wait until: join fetch adds results, cleanup runs, or the join-wait times out
-					await waitForUpdate();
-
-					// re-arm the deferred for the next cycle (only if joining is enabled and we’re not done)
-					if (updateDeferred && !doneFn()) {
-						updateDeferred = pDefer<void>();
-					}
+					await waitForUpdateAndResetDeferred();
 				}
 				cleanupAndDone();
 				return result;
@@ -2452,6 +2578,24 @@ export class DocumentIndex<
 				let batch = await next(1);
 				cleanupAndDone();
 				return batch[0];
+			},
+			[Symbol.asyncIterator]: async function* () {
+				let c = 0;
+				while (doneFn() !== true) {
+					const batch = await next(100);
+					c += batch.length;
+					if (c > WARNING_WHEN_ITERATING_FOR_MORE_THAN) {
+						logger.warn(
+							"Iterating for more than " +
+								WARNING_WHEN_ITERATING_FOR_MORE_THAN +
+								" results",
+						);
+					}
+					for (const entry of batch) {
+						yield entry;
+					}
+					await waitForUpdateAndResetDeferred();
+				}
 			},
 		};
 	}
@@ -2568,26 +2712,15 @@ export class DocumentIndex<
 	}
 
 	public async waitFor(
-		other:
-			| PublicSignKey
-			| PeerId
-			| string
-			| (PublicSignKey | string | PeerId)[],
-		options?: { signal?: AbortSignal; timeout?: number },
-	): Promise<void> {
-		await super.waitFor(other, options);
-		const ids = Array.isArray(other) ? other : [other];
-		const expectedHashes = new Set(
-			ids.map((x) =>
-				typeof x === "string"
-					? x
-					: x instanceof PublicSignKey
-						? x.hashcode()
-						: getPublicKeyFromPeerId(x).hashcode(),
-			),
-		);
-
-		for (const key of expectedHashes) {
+		other: PeerRefs,
+		options?: {
+			seek?: "any" | "present";
+			signal?: AbortSignal;
+			timeout?: number;
+		},
+	): Promise<string[]> {
+		const hashes = await super.waitFor(other, options);
+		for (const key of hashes) {
 			await waitFor(
 				async () =>
 					(await this._log.replicationIndex.count({ query: { hash: key } })) >
@@ -2595,5 +2728,6 @@ export class DocumentIndex<
 				options,
 			);
 		}
+		return hashes;
 	}
 }

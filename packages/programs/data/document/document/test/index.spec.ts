@@ -9,6 +9,7 @@ import {
 } from "@dao-xyz/borsh";
 import {
 	AccessError,
+	Ed25519Keypair,
 	Ed25519PublicKey,
 	type PublicSignKey,
 	equals,
@@ -2404,61 +2405,6 @@ describe("index", () => {
 				});
 			});
 
-			describe("eager", () => {
-				let peersCount = 2;
-				before(async () => {
-					session = await TestSession.disconnected(peersCount);
-				});
-
-				after(async () => {
-					await session.stop();
-				});
-
-				it("will query newly joined peer when eager", async () => {
-					const store = new TestStore({
-						docs: new Documents<Document>(),
-					});
-					await session.peers[0].open(store, {
-						args: {
-							replicate: {
-								factor: 1,
-							},
-						},
-					});
-
-					const store2 = await session.peers[1].open<TestStore>(store.clone(), {
-						args: {
-							replicate: {
-								factor: 1,
-							},
-						},
-					});
-
-					await store2.docs.put(new Document({ id: "1" }));
-
-					let joined = false;
-					store.docs.log.events.addEventListener(
-						"replicator:join",
-						async () => {
-							expect(
-								await store.docs.index.search(new SearchRequest()),
-							).to.have.length(0);
-							expect(
-								(
-									await store.docs.index.search(new SearchRequest(), {
-										remote: { eager: true },
-									})
-								).length,
-							).to.equal(1);
-							joined = true;
-						},
-					);
-
-					await session.connect();
-					await waitForResolved(() => expect(joined).to.be.true);
-				});
-			});
-
 			describe("keep", () => {
 				let peersCount = 2;
 				before(async () => {
@@ -3092,292 +3038,509 @@ describe("index", () => {
 				// TODO session timeouts?
 			});
 
-			describe("joining", () => {
-				let session: TestSession;
+			describe("remote", () => {
+				describe("wait", () => {
+					let session: TestSession;
 
-				afterEach(async () => {
-					await session.stop();
-				});
-
-				it("keeps iterator open until waitFor", async () => {
-					session = await TestSession.disconnected(1);
-
-					const store = new TestStore({
-						docs: new Documents<Document>(),
+					afterEach(async () => {
+						await session.stop();
 					});
 
-					const observer = await session.peers[0].open(store, {
-						args: {
-							replicate: false,
-						},
-					});
+					const writerObserverSetup = async () => {
+						session = await TestSession.disconnected(2);
 
-					let waitFor = 3e3;
-					const iterator = observer.docs.index.iterate(
-						{},
-						{
-							remote: {
-								joining: {
-									waitFor,
+						const store = new TestStore({
+							docs: new Documents<Document>(),
+						});
+
+						const observer = await session.peers[0].open(store, {
+							args: {
+								replicate: false,
+							},
+						});
+
+						// in this test we test if we can query joining peers while we are already iterating
+						const writer = await session.peers[1].open(store.clone(), {
+							args: {
+								replicate: {
+									factor: 1,
 								},
 							},
-						},
-					);
-					expect(iterator.done()).to.be.false;
-					await iterator.next(1);
-					expect(iterator.done()).to.be.false;
-					await delay(waitFor + 1000);
-					expect(iterator.done()).to.be.true;
+						});
 
-					expect(store.docs.index.hasPending).to.be.false;
-				});
+						return { observer, writer };
+					};
 
-				it("can query joining first replicator", async () => {
-					session = await TestSession.disconnected(2);
+					it("keeps iterator open until timeout", async () => {
+						session = await TestSession.disconnected(1);
 
-					const store = new TestStore({
-						docs: new Documents<Document>(),
-					});
+						const store = new TestStore({
+							docs: new Documents<Document>(),
+						});
 
-					const observer = await session.peers[0].open(store, {
-						args: {
-							replicate: false,
-						},
-					});
-
-					// in this test we test if we can query joining peers while we are already iterating
-					const writer = await session.peers[1].open(store.clone(), {
-						args: {
-							replicate: {
-								factor: 1,
+						const observer = await session.peers[0].open(store, {
+							args: {
+								replicate: false,
 							},
-						},
+						});
+
+						let waitFor = 3e3;
+						const iterator = observer.docs.index.iterate(
+							{},
+							{
+								remote: {
+									wait: {
+										timeout: waitFor,
+										behavior: "keep-open",
+									},
+								},
+							},
+						);
+						expect(iterator.done()).to.be.false;
+						await iterator.next(1);
+						expect(iterator.done()).to.be.false;
+						await delay(waitFor + 1000);
+						expect(iterator.done()).to.be.true;
+
+						expect(store.docs.index.hasPending).to.be.false;
 					});
 
-					await writer.docs.put(new Document({ id: "1" }));
-					let onMissedResults: number[] = [];
+					it("can wait for peer blocking", async () => {});
 
-					const iterator = observer.docs.index.iterate(
-						{},
-						{
-							remote: {
-								joining: {
-									waitFor: 5e3,
-									onMissedResults: ({ amount }) => {
+					it("can wait for joining blocking", async () => {});
+
+					it("can query joining first replicator", async () => {
+						const { observer, writer } = await writerObserverSetup();
+
+						await writer.docs.put(new Document({ id: "1" }));
+						let onMissedResults: number[] = [];
+
+						const iterator = observer.docs.index.iterate(
+							{},
+							{
+								remote: {
+									wait: {
+										timeout: 5e3,
+									},
+									onLateResults: ({ amount }) => {
 										onMissedResults.push(amount);
 									},
 								},
 							},
-						},
-					);
-					const first = await iterator.next(1);
-					expect(first).to.have.length(0);
-					expect(iterator.done()).to.be.false;
+						);
+						const first = await iterator.next(1);
+						expect(first).to.have.length(0);
+						expect(iterator.done()).to.be.false;
 
-					await session.connect(); // connect the nodes!
+						await session.connect(); // connect the nodes!
 
-					await observer.docs.index.waitFor(writer.node.identity.publicKey);
-					expect(iterator.done()).to.be.false;
-					const second = await iterator.next(1);
-					expect(second).to.have.length(1);
+						await observer.docs.index.waitFor(writer.node.identity.publicKey);
+						expect(iterator.done()).to.be.false;
+						const second = await iterator.next(1);
+						expect(second).to.have.length(1);
 
-					expect(onMissedResults).to.deep.equal([1]); // we should have missed one result
+						expect(onMissedResults).to.deep.equal([1]); // we should have missed one result
 
-					expect(observer.docs.index.hasPending).to.be.false;
-					expect(writer.docs.index.hasPending).to.be.false;
-				});
-
-				it("late join will not re-open iterator", async () => {
-					session = await TestSession.disconnected(2);
-
-					const store = new TestStore({
-						docs: new Documents<Document>(),
+						expect(observer.docs.index.hasPending).to.be.false;
+						expect(writer.docs.index.hasPending).to.be.false;
 					});
 
-					const observer = await session.peers[0].open(store, {
-						args: {
-							replicate: false,
-						},
-					});
+					it("late join will not re-open iterator", async () => {
+						session = await TestSession.disconnected(2);
 
-					// in this test we test if we can query joining peers while we are already iterating
-					const writer = await session.peers[1].open(store.clone(), {
-						args: {
-							replicate: {
-								factor: 1,
+						const store = new TestStore({
+							docs: new Documents<Document>(),
+						});
+
+						const observer = await session.peers[0].open(store, {
+							args: {
+								replicate: false,
 							},
-						},
-					});
+						});
 
-					await writer.docs.put(new Document({ id: "1" }));
-
-					let waitFor = 1e2;
-					const iterator = observer.docs.index.iterate(
-						{},
-						{
-							remote: {
-								joining: {
-									waitFor,
+						// in this test we test if we can query joining peers while we are already iterating
+						const writer = await session.peers[1].open(store.clone(), {
+							args: {
+								replicate: {
+									factor: 1,
 								},
 							},
-						},
-					);
+						});
 
-					const first = await iterator.next(1);
-					expect(first).to.have.length(0);
-					expect(iterator.done()).to.be.false;
+						await writer.docs.put(new Document({ id: "1" }));
 
-					await delay(waitFor);
-					let queryCommenceCalls = 0;
-					const queryCommenceFn = observer.docs.index["queryCommence"].bind(
-						observer.docs.index,
-					);
-
-					observer.docs.index["queryCommence"] = (a, b) => {
-						queryCommenceCalls++;
-						return queryCommenceFn(a, b);
-					};
-
-					await session.connect(); // connect the nodes!
-
-					await observer.docs.index.waitFor(writer.node.identity.publicKey);
-					expect(iterator.done()).to.be.true;
-					const second = await iterator.next(0);
-					expect(queryCommenceCalls).to.equal(0); // we should not have re-commenced the query
-					expect(second).to.have.length(0);
-
-					expect(observer.docs.index.hasPending).to.be.false;
-					expect(writer.docs.index.hasPending).to.be.false;
-				});
-
-				it("onMissedResults respects already emitted results", async () => {
-					// test that we will get missed results accuruately
-					session = await TestSession.disconnected(3);
-
-					const store = new TestStore({
-						docs: new Documents<Document>(),
-					});
-
-					const observer = await session.peers[0].open(store, {
-						args: {
-							replicate: false,
-						},
-					});
-
-					// in this test we test if we can query joining peers while we are already iterating
-					const writer1 = await session.peers[1].open(store.clone(), {
-						args: {
-							replicate: {
-								factor: 1,
+						let waitFor = 1e2;
+						const iterator = observer.docs.index.iterate(
+							{},
+							{
+								remote: {
+									wait: {
+										timeout: waitFor,
+									},
+								},
 							},
-						},
+						);
+
+						const first = await iterator.next(1);
+						expect(first).to.have.length(0);
+						expect(iterator.done()).to.be.false;
+
+						await delay(waitFor);
+						let queryCommenceCalls = 0;
+						const queryCommenceFn = observer.docs.index["queryCommence"].bind(
+							observer.docs.index,
+						);
+
+						observer.docs.index["queryCommence"] = (a, b) => {
+							queryCommenceCalls++;
+							return queryCommenceFn(a, b);
+						};
+
+						await session.connect(); // connect the nodes!
+
+						await observer.docs.index.waitFor(writer.node.identity.publicKey);
+						expect(iterator.done()).to.be.true;
+						const second = await iterator.next(0);
+						expect(queryCommenceCalls).to.equal(0); // we should not have re-commenced the query
+						expect(second).to.have.length(0);
+
+						expect(observer.docs.index.hasPending).to.be.false;
+						expect(writer.docs.index.hasPending).to.be.false;
 					});
 
-					const writer2 = await session.peers[2].open(store.clone(), {
-						args: {
-							replicate: {
-								factor: 1,
+					it("onMissedResults respects already emitted results", async () => {
+						// test that we will get missed results accuruately
+						session = await TestSession.disconnected(3);
+
+						const store = new TestStore({
+							docs: new Documents<Document>(),
+						});
+
+						const observer = await session.peers[0].open(store, {
+							args: {
+								replicate: false,
 							},
-						},
-					});
+						});
 
-					await writer1.docs.put(new Document({ id: "1" }));
-					await writer1.docs.put(new Document({ id: "4" }));
+						// in this test we test if we can query joining peers while we are already iterating
+						const writer1 = await session.peers[1].open(store.clone(), {
+							args: {
+								replicate: {
+									factor: 1,
+								},
+							},
+						});
 
-					await writer2.docs.put(new Document({ id: "2" }));
-					await writer2.docs.put(new Document({ id: "3" }));
+						const writer2 = await session.peers[2].open(store.clone(), {
+							args: {
+								replicate: {
+									factor: 1,
+								},
+							},
+						});
 
-					let missedResults: number[] = [];
+						await writer1.docs.put(new Document({ id: "1" }));
+						await writer1.docs.put(new Document({ id: "4" }));
 
-					await session.connect([[session.peers[0], session.peers[2]]]); // connect the nodes!
+						await writer2.docs.put(new Document({ id: "2" }));
+						await writer2.docs.put(new Document({ id: "3" }));
 
-					await observer.docs.index.waitFor(writer2.node.identity.publicKey);
+						let missedResults: number[] = [];
 
-					const iterator = observer.docs.index.iterate(
-						{ sort: new Sort({ key: "id", direction: SortDirection.DESC }) }, // 4, 3, 2, 1
-						{
-							remote: {
-								joining: {
-									waitFor: 1e4,
-									onMissedResults: ({ amount }) => {
+						await session.connect([[session.peers[0], session.peers[2]]]); // connect the nodes!
+
+						await observer.docs.index.waitFor(writer2.node.identity.publicKey);
+
+						const iterator = observer.docs.index.iterate(
+							{ sort: new Sort({ key: "id", direction: SortDirection.DESC }) }, // 4, 3, 2, 1
+							{
+								remote: {
+									wait: {
+										timeout: 1e4,
+									},
+									onLateResults: ({ amount }) => {
 										missedResults.push(amount);
 									},
 								},
 							},
-						},
-					);
+						);
 
-					const first = await iterator.next(1);
-					const second = await iterator.next(1);
-					expect(first.map((x) => x.id)).to.deep.equal(["3"]);
-					expect(second.map((x) => x.id)).to.deep.equal(["2"]);
+						const first = await iterator.next(1);
+						const second = await iterator.next(1);
+						expect(first.map((x) => x.id)).to.deep.equal(["3"]);
+						expect(second.map((x) => x.id)).to.deep.equal(["2"]);
 
-					await session.connect([[session.peers[0], session.peers[1]]]); // connect the nodes!
-					await observer.docs.index.waitFor(writer1.node.identity.publicKey);
+						await session.connect([[session.peers[0], session.peers[1]]]); // connect the nodes!
+						await observer.docs.index.waitFor(writer1.node.identity.publicKey);
 
-					await waitForResolved(() => expect(missedResults).to.deep.equal([1]));
-					const third = await iterator.next(1);
-					const fourth = await iterator.next(1);
+						await waitForResolved(() =>
+							expect(missedResults).to.deep.equal([1]),
+						);
+						const third = await iterator.next(1);
+						const fourth = await iterator.next(1);
 
-					expect(third.map((x) => x.id)).to.deep.equal(["4"]); // because we sort DESC
-					expect(fourth.map((x) => x.id)).to.deep.equal(["1"]);
+						expect(third.map((x) => x.id)).to.deep.equal(["4"]); // because we sort DESC
+						expect(fourth.map((x) => x.id)).to.deep.equal(["1"]);
+					});
+
+					it("it will not wait for previous replicator if it can handle joining", async () => {
+						let directory = "./tmp/test-iterate-joining/" + new Date();
+						session = await TestSession.connected(2, [
+							{ directory },
+							{ directory: undefined },
+						]);
+
+						const store = new TestStore({
+							docs: new Documents<Document>(),
+						});
+
+						const observer = await session.peers[0].open(store, {
+							args: {
+								replicate: false,
+							},
+						});
+
+						// in this test we test if we can query joining peers while we are already iterating
+						const replicator = await session.peers[1].open(store.clone(), {
+							args: {
+								replicate: {
+									factor: 1,
+								},
+							},
+						});
+
+						await waitForResolved(async () =>
+							expect([
+								...(await observer.docs.log.getReplicators()),
+							]).to.deep.eq([replicator.node.identity.publicKey.hashcode()]),
+						);
+
+						await session.peers[0].stop();
+						await session.peers[1].stop();
+						session = await TestSession.connected(1, { directory });
+						const observerAgain = await session.peers[0].open(store.clone(), {
+							args: {
+								replicate: false,
+							},
+						});
+						let waitForMax = 3e3;
+						const iterator = observerAgain.docs.index.iterate(
+							{},
+							{ remote: { wait: { timeout: waitForMax } } },
+						);
+						let t0 = +new Date();
+						await iterator.next(1);
+						let t1 = +new Date();
+						let delta = 500; // 500ms delta
+						expect(t1 - t0).to.lessThan(delta); // +some delta
+						expect(iterator.done()).to.be.false;
+						await iterator.all();
+						let t2 = +new Date();
+						expect(t2 - t0).to.lessThan(waitForMax + delta); // +some delta
+						expect(t2 - t0).to.be.greaterThanOrEqual(waitForMax - delta); // -some delta
+					});
+
+					describe("policy", () => {
+						it("blocking wait for any", async () => {
+							// Test that "wait: 'any'" policy returns as soon as any result is available, not waiting for all
+							session = await TestSession.disconnected(2);
+
+							const store = new TestStore({
+								docs: new Documents<Document>(),
+							});
+
+							await session.peers[0].open(store, {
+								args: {
+									replicate: false,
+								},
+							});
+
+							const replicator = await session.peers[1].open(store.clone(), {
+								args: {
+									replicate: {
+										factor: 1,
+									},
+								},
+							});
+
+							// Add a document on peer 1
+							await replicator.docs.put(new Document({ id: "1" }));
+
+							// Now, test the "wait: 'any'" policy
+							const iterator = store.docs.index.iterate(
+								{},
+								{
+									remote: {
+										wait: {
+											timeout: 5e3,
+											until: "any",
+											behavior: "block",
+										},
+									},
+								},
+							);
+
+							const resultPromise = iterator.first(); // because of block, we can invoke first before connecting
+							await session.connect(); // connect the nodes!
+
+							const t0 = +new Date();
+							const result = await resultPromise;
+							const t1 = +new Date();
+
+							expect(result?.id).to.equal("1");
+							expect(t1 - t0).to.be.lessThan(500); // Should return quickly, not wait for timeout
+						});
+					});
 				});
 
-				it("it will not wait for previous replicator if it can handle joining", async () => {
-					let directory = "./tmp/test-iterate-joining/" + new Date();
-					session = await TestSession.connected(2, [
-						{ directory },
-						{ directory: undefined },
-					]);
+				describe("scope", () => {
+					describe("eager", () => {
+						let peersCount = 2;
 
-					const store = new TestStore({
-						docs: new Documents<Document>(),
+						beforeEach(async () => {
+							session = await TestSession.disconnected(peersCount);
+						});
+
+						afterEach(async () => {
+							await session.stop();
+						});
+
+						it("will query newly joined peer when eager", async () => {
+							const store = new TestStore({
+								docs: new Documents<Document>(),
+							});
+							await session.peers[0].open(store, {
+								args: {
+									replicate: {
+										factor: 1,
+									},
+								},
+							});
+
+							const store2 = await session.peers[1].open<TestStore>(
+								store.clone(),
+								{
+									args: {
+										replicate: {
+											factor: 1,
+										},
+									},
+								},
+							);
+
+							await store2.docs.put(new Document({ id: "1" }));
+
+							let joined = false;
+							store.docs.log.events.addEventListener(
+								"replicator:join",
+								async () => {
+									expect(await store.docs.index.iterate().all()).to.have.length(
+										0,
+									);
+									expect(
+										await store.docs.index
+											.iterate(
+												{},
+												{
+													remote: { scope: { eager: true } },
+												},
+											)
+											.all(),
+									).to.equal(1);
+									joined = true;
+								},
+							);
+
+							await session.connect();
+							await waitForResolved(() => expect(joined).to.be.true);
+						});
 					});
 
-					const observer = await session.peers[0].open(store, {
-						args: {
-							replicate: false,
-						},
-					});
+					describe("discover", () => {
+						let peersCount = 2;
 
-					// in this test we test if we can query joining peers while we are already iterating
-					const replicator = await session.peers[1].open(store.clone(), {
-						args: {
-							replicate: {
-								factor: 1,
-							},
-						},
-					});
+						beforeEach(async () => {
+							session = await TestSession.disconnected(peersCount);
+						});
 
-					await waitForResolved(async () =>
-						expect([...(await observer.docs.log.getReplicators())]).to.deep.eq([
-							replicator.node.identity.publicKey.hashcode(),
-						]),
-					);
+						afterEach(async () => {
+							await session.stop();
+						});
 
-					await session.peers[0].stop();
-					await session.peers[1].stop();
-					session = await TestSession.connected(1, { directory });
-					const observerAgain = await session.peers[0].open(store.clone(), {
-						args: {
-							replicate: false,
-						},
+						it("will wait for inflight", async () => {
+							await session.connect();
+
+							const store = new TestStore({
+								docs: new Documents<Document>(),
+							});
+
+							const store2 = await session.peers[1].open<TestStore>(
+								store.clone(),
+								{
+									args: {
+										replicate: {
+											factor: 1,
+										},
+									},
+								},
+							);
+
+							await store2.docs.put(new Document({ id: "1" }));
+
+							const reader = await session.peers[0].open(store, {
+								args: {
+									replicate: {
+										factor: 1,
+									},
+								},
+							});
+
+							const allResults = await reader.docs.index
+								.iterate(
+									{},
+									{
+										remote: {
+											scope: { discover: [store2.node.identity.publicKey] },
+										},
+									},
+								)
+								.all();
+							expect(allResults.length).to.equal(1);
+						});
+
+						it("will resolve immediately if not inflight", async () => {
+							await session.connect();
+
+							const reader = await session.peers[0].open(
+								new TestStore({
+									docs: new Documents<Document>(),
+								}),
+								{
+									args: {
+										replicate: {
+											factor: 1,
+										},
+									},
+								},
+							);
+							let t0 = +new Date();
+							const allResults = await reader.docs.index
+								.iterate(
+									{},
+									{
+										remote: {
+											scope: {
+												discover: [(await Ed25519Keypair.create()).publicKey],
+											},
+										},
+									},
+								)
+								.all();
+							let t1 = +new Date();
+							expect(t1 - t0).to.be.lessThan(500);
+							expect(allResults.length).to.equal(0);
+						});
 					});
-					let waitForMax = 3e3;
-					const iterator = observerAgain.docs.index.iterate(
-						{},
-						{ remote: { joining: { waitFor: waitForMax } } },
-					);
-					let t0 = +new Date();
-					await iterator.next(1);
-					let t1 = +new Date();
-					let delta = 500; // 500ms delta
-					expect(t1 - t0).to.lessThan(delta); // +some delta
-					expect(iterator.done()).to.be.false;
-					await iterator.all();
-					let t2 = +new Date();
-					expect(t2 - t0).to.lessThan(waitForMax + delta); // +some delta
-					expect(t2 - t0).to.be.greaterThanOrEqual(waitForMax - delta); // -some delta
 				});
 			});
 
@@ -3412,6 +3575,211 @@ describe("index", () => {
 				});
 			});
 
+			it("can consume as async iterator", async () => {
+				session = await TestSession.connected(1);
+
+				const store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+
+				await session.peers[0].open(store, {
+					args: {
+						replicate: {
+							factor: 1,
+						},
+					},
+				});
+				await store.docs.put(new Document({ id: "1" }));
+				await store.docs.put(new Document({ id: "2" }));
+
+				// make iterator not close by waiting for joining
+				const iterator = store.docs.index.iterate(
+					{},
+					{ remote: { wait: { timeout: 5e3 } } },
+				);
+
+				let entries: Document[] = [];
+				for await (const entry of iterator) {
+					entries.push(entry);
+				}
+				await iterator.close();
+				expect(entries).to.have.length(2);
+				expect(entries[0].id).to.equal("1");
+				expect(entries[1].id).to.equal("2");
+			});
+
+			describe("updates", () => {
+				it("append", async () => {
+					session = await TestSession.connected(1);
+
+					const store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+
+					await session.peers[0].open(store, {
+						args: {
+							replicate: {
+								factor: 1,
+							},
+						},
+					});
+					await store.docs.put(new Document({ id: "1" }));
+					// make iterator not close by waiting for joining
+					const iterator = store.docs.index.iterate(
+						{},
+						{
+							updates: { merge: "append" },
+							remote: { wait: { timeout: 5e3 } },
+						}, // use wait to keep the iterator open
+					);
+					let c = 0;
+					for await (const entry of iterator) {
+						if (c === 0) {
+							expect(entry.id).to.equal("1");
+							// insert another document
+							await store.docs.put(new Document({ id: "2" }));
+							c++;
+						} else if (c === 1) {
+							expect(entry.id).to.equal("2");
+							c++;
+							break;
+						} else {
+							throw new Error("Unexpected entry");
+						}
+					}
+					await iterator.close();
+					expect(c).to.equal(2);
+				});
+
+				it("sorted by default", async () => {
+					session = await TestSession.connected(1);
+
+					const store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+
+					await session.peers[0].open(store, {
+						args: {
+							replicate: {
+								factor: 1,
+							},
+						},
+					});
+					await store.docs.put(new Document({ id: "1" }));
+					await store.docs.put(new Document({ id: "3" }));
+
+					// make iterator not close by waiting for joining
+					const iterator = store.docs.index.iterate(
+						{ sort: { key: "id", direction: SortDirection.ASC } },
+						{ updates: { merge: true } }, // use true to use the default merge strategy (sorted)
+					);
+					let entries: Document[] = [];
+					for await (const entry of iterator) {
+						entries.push(entry);
+						if (entries.length === 1) {
+							await store.docs.put(new Document({ id: "2" }));
+						}
+
+						if (entries.length === 3) {
+							break;
+						}
+					}
+					await iterator.close();
+					expect(entries).to.have.length(3);
+					expect(entries[0].id).to.equal("1");
+					expect(entries[1].id).to.equal("2");
+					expect(entries[2].id).to.equal("3");
+				});
+
+				it("prepend", async () => {
+					session = await TestSession.connected(1);
+
+					const store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+
+					await session.peers[0].open(store, {
+						args: {
+							replicate: {
+								factor: 1,
+							},
+						},
+					});
+					await store.docs.put(new Document({ id: "1" }));
+					await store.docs.put(new Document({ id: "2" }));
+
+					// make iterator not close by waiting for joining
+					const iterator = store.docs.index.iterate(
+						{ sort: { key: "id", direction: SortDirection.ASC } },
+						{ updates: { merge: "prepend" } }, // use true to use the default merge strategy (sorted)
+					);
+					let entries: Document[] = [];
+					for await (const entry of iterator) {
+						entries.push(entry);
+						if (entries.length === 1) {
+							await store.docs.put(new Document({ id: "3" }));
+						}
+
+						if (entries.length === 3) {
+							break;
+						}
+					}
+					await iterator.close();
+					expect(entries).to.have.length(3);
+					expect(entries[0].id).to.equal("1");
+					expect(entries[1].id).to.equal("3");
+					expect(entries[2].id).to.equal("2");
+				});
+
+				it("custom merge strategy", async () => {
+					session = await TestSession.connected(1);
+
+					const store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+
+					await session.peers[0].open(store, {
+						args: {
+							replicate: {
+								factor: 1,
+							},
+						},
+					});
+					await store.docs.put(new Document({ id: "1" }));
+					await store.docs.put(new Document({ id: "3" }));
+
+					// make iterator not close by waiting for joining
+					const iterator = store.docs.index.iterate(
+						{ sort: { key: "id", direction: SortDirection.ASC } },
+						{
+							updates: {
+								merge: (prev, change) => {
+									return prev
+										.concat(change.added)
+										.sort((a, b) => a.id.localeCompare(b.id));
+								},
+							},
+						},
+					);
+					let entries: Document[] = [];
+					for await (const entry of iterator) {
+						entries.push(entry);
+						if (entries.length === 1) {
+							await store.docs.put(new Document({ id: "2" }));
+						}
+
+						if (entries.length === 3) {
+							break;
+						}
+					}
+					await iterator.close();
+					expect(entries).to.have.length(3);
+					expect(entries[0].id).to.equal("1");
+					expect(entries[1].id).to.equal("3");
+					expect(entries[2].id).to.equal("2");
+				});
+			});
+
 			it("iterator all terminates when batches are empty but still waiting for joining", async () => {
 				let directory = "./tmp/iterator-all-terminates/" + new Date();
 				session = await TestSession.connected(2, [
@@ -3436,7 +3804,7 @@ describe("index", () => {
 				observer.docs.index.processQuery = spyFn as any;
 				let t0 = +new Date();
 				await observer.docs.index
-					.iterate({}, { remote: { joining: { waitFor: waitForMax } } })
+					.iterate({}, { remote: { wait: { timeout: waitForMax } } })
 					.all();
 				let t1 = +new Date();
 				expect(t1 - t0).to.lessThan(waitForMax + 500); // +some delta
@@ -3499,6 +3867,8 @@ describe("index", () => {
 					.first();
 				expect(localAndRemote?.id).to.equal(doc.id);
 			});
+
+			describe("live", () => {});
 		});
 	});
 

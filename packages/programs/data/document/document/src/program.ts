@@ -43,6 +43,7 @@ import {
 	type CanSearch,
 	DocumentIndex,
 	type PrefetchOptions,
+	type ReachScope,
 	type TransformOptions,
 	type WithIndexedContext,
 	coerceWithContext,
@@ -797,7 +798,7 @@ export class Documents<
 	// approximate the amount of documents that exists globally
 	async count(options?: {
 		query?: indexerTypes.Query | indexerTypes.QueryLike;
-		approximate: true | { eager?: boolean };
+		approximate: true | { scope?: ReachScope };
 	}): Promise<number> {
 		let isReplicating = await this.log.isReplicating();
 		if (!isReplicating) {
@@ -806,10 +807,10 @@ export class Documents<
 				{ query: options?.query },
 				{
 					remote: {
-						eager:
-							(typeof options?.approximate === "object" &&
-								options?.approximate.eager) ||
-							false,
+						scope:
+							typeof options?.approximate === "object"
+								? options?.approximate.scope
+								: undefined,
 					},
 					resolve: false,
 				},
