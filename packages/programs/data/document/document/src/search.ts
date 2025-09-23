@@ -140,7 +140,7 @@ export type WaitBehavior =
 
 export type WaitPolicy = {
 	timeout: number; // max time to wait
-	until?: "any" | "all" | number; // readiness condition
+	until?: "any"; // readiness condition, TODO more options
 	onTimeout?: "proceed" | "error"; // proceed = continue with whoever's ready
 	behavior?: WaitBehavior; // default: "keep-open"
 };
@@ -163,8 +163,11 @@ export type RemoteQueryOptions<Q, R, D> = RPCRequestAllOptions<Q, R> & {
 		| {
 				range: CoverRange<number | bigint>;
 		  };
-	scope?: ReachScope;
+	/** WHO can answer? How do we grow the candidate set? */
+	reach?: ReachScope;
+	/** WHEN are we allowed to proceed? Quorum semantics over a chosen group. */
 	wait?: WaitPolicy;
+
 	onLateResults?: (evt: LateResultsEvent) => void | Promise<void>;
 };
 
@@ -1588,7 +1591,7 @@ export class DocumentIndex<
 				? options?.remote?.from
 				: await this._log.getCover(remote.domain ?? { args: undefined }, {
 						roleAge: remote.minAge,
-						eager: remote.scope?.eager,
+						eager: remote.reach?.eager,
 						reachableOnly: !!remote.wait, // when we want to merge joining we can ignore pending to be online peers and instead consider them once they become online
 					});
 
@@ -1988,13 +1991,14 @@ export class DocumentIndex<
 				};
 			}
 
-			if (options.remote.scope?.discover) {
-				warmupPromise = this.waitFor(options.remote.scope.discover, {
+			if (options.remote.reach?.discover) {
+				warmupPromise = this.waitFor(options.remote.reach.discover, {
 					signal: controller.signal,
 					seek: "present",
 					timeout: waitForTime ?? DEFAULT_TIMEOUT,
 				});
-				options.remote.scope.eager = true; // include the results from the discovered peer even if it is not mature
+				options.remote.reach.eager = true; // include the results from the discovered peer even if it is not mature
+				t;
 			}
 		}
 

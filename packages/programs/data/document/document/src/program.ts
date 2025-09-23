@@ -807,7 +807,7 @@ export class Documents<
 				{ query: options?.query },
 				{
 					remote: {
-						scope:
+						reach:
 							typeof options?.approximate === "object"
 								? options?.approximate.scope
 								: undefined,

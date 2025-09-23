@@ -3442,7 +3442,7 @@ describe("index", () => {
 											.iterate(
 												{},
 												{
-													remote: { scope: { eager: true } },
+													remote: { reach: { eager: true } },
 												},
 											)
 											.all(),
@@ -3500,7 +3500,7 @@ describe("index", () => {
 									{},
 									{
 										remote: {
-											scope: { discover: [store2.node.identity.publicKey] },
+											reach: { discover: [store2.node.identity.publicKey] },
 										},
 									},
 								)
@@ -3529,7 +3529,7 @@ describe("index", () => {
 									{},
 									{
 										remote: {
-											scope: {
+											reach: {
 												discover: [(await Ed25519Keypair.create()).publicKey],
 											},
 										},
