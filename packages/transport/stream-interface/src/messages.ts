@@ -16,7 +16,7 @@ import {
 	verify,
 } from "@peerbit/crypto";
 import { Uint8ArrayList } from "uint8arraylist";
-import { type PeerRefs, coercePeerRefsToHashes } from "./keys";
+import { type PeerRefs, coercePeerRefsToHashes } from "./keys.js";
 
 export const ID_LENGTH = 32;
 
