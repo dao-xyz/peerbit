@@ -301,7 +301,7 @@ export class Peerbit implements ProgramClient {
 		// TODO, do this as a promise instead using the onPeerConnected vents in pubsub and blocks
 		try {
 			await this.libp2p.services.pubsub.waitFor(publicKey.hashcode(), {
-				neighbour: true,
+				target: "neighbor",
 			});
 		} catch (error) {
 			throw new Error(`Failed to dial peer. Not available on Pubsub`);
@@ -309,7 +309,7 @@ export class Peerbit implements ProgramClient {
 
 		try {
 			await this.libp2p.services.blocks.waitFor(publicKey.hashcode(), {
-				neighbour: true,
+				target: "neighbor",
 			});
 		} catch (error) {
 			throw new Error(`Failed to dial peer. Not available on Blocks`);
