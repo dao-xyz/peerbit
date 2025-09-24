@@ -2679,6 +2679,40 @@ export class DocumentIndex<
 				}
 			}
 
+			const queryFiltersForUpdates = indexerTypes.toQuery(
+				queryRequestCoerced.query,
+			);
+			const hasQueryFiltersForUpdates = queryFiltersForUpdates.length > 0;
+
+			const createUpdateFilterIndex = async () => {
+				const index = new HashmapIndex<WithContext<I>>();
+				await index.init({
+					schema: this.wrappedIndexedType,
+					indexBy: this.indexBy,
+					nested: this.nestedProperties,
+				});
+				return index;
+			};
+
+			const toIndexedWithContext = async (
+				value: WithContext<T> | WithContext<I>,
+			): Promise<WithContext<I>> => {
+				const candidate = value as WithContext<I> & Partial<WithIndexed<T, I>>;
+				if ("__indexed" in candidate && candidate.__indexed) {
+					return coerceWithContext(candidate.__indexed, candidate.__context);
+				}
+
+				if (value instanceof this.documentType) {
+					const transformed = await this.transformer(
+						value as T,
+						value.__context,
+					);
+					return coerceWithContext(transformed, value.__context);
+				}
+
+				return value as WithContext<I>;
+			};
+
 			const onChange = async (evt: CustomEvent<DocumentsChange<T, I>>) => {
 				// Optional filter to mutate/suppress change events
 				let filtered: DocumentsChange<T, I> | void = evt.detail;
@@ -2707,17 +2741,45 @@ export class DocumentIndex<
 					// Add new entries per strategy (sorted-only)
 					if (filtered.added?.length) {
 						const buf = peerBufferMap.get(localHash)!;
+						const filterIndex = hasQueryFiltersForUpdates
+							? await createUpdateFilterIndex()
+							: undefined;
 						for (const added of filtered.added) {
+							const addedValue = added as WithContext<T> &
+								Partial<WithIndexed<T, I>>;
+							const indexedCandidate = await toIndexedWithContext(addedValue);
+							if (filterIndex) {
+								filterIndex.drop();
+								filterIndex.put(indexedCandidate);
+								const matches =
+									(
+										await filterIndex
+											.iterate(
+												{
+													query: queryFiltersForUpdates,
+													sort: queryRequestCoerced.sort,
+												},
+												{ reference: true, shape: undefined },
+											)
+											.next(1)
+									).length > 0;
+								if (!matches) {
+									continue;
+								}
+							}
 							const id = indexerTypes.toId(
-								this.indexByResolver(added.__indexed),
+								this.indexByResolver(indexedCandidate),
 							).primitive;
 							if (visited.has(id)) continue; // already presented
 							visited.add(id);
+							const valueForBuffer = resolve
+								? (added as any)
+								: indexedCandidate;
 							buf.buffer.push({
-								value: (resolve ? added : added.__indexed) as any,
+								value: valueForBuffer,
 								context: added.__context,
 								from: this.node.identity.publicKey,
-								indexed: coerceWithContext(added.__indexed, added.__context),
+								indexed: indexedCandidate,
 							});
 						}
 						buf.kept = buf.buffer.length;

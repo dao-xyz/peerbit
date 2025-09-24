@@ -3793,6 +3793,37 @@ describe("index", () => {
 				expect(t1 - t0).to.lessThan(waitForMax + 500); // +some delta
 				expect(spyFn.callCount).to.equal(1); // should only call next once
 			});
+
+			it("respects the query when merging updates by default", async () => {
+				session = await TestSession.connected(1);
+
+				const store = new TestStore({ docs: new Documents<Document>() });
+
+				await session.peers[0].open(store, {
+					args: { replicate: { factor: 1 } },
+				});
+				await store.docs.put(new Document({ id: "1", name: "match" }));
+				await store.docs.put(new Document({ id: "2", name: "dontmatch" }));
+
+				const iterator = store.docs.index.iterate(
+					{
+						query: [new StringMatch({ key: "name", value: "match" })],
+						sort: { key: "id", direction: SortDirection.ASC },
+					},
+					{ updates: { merge: true }, closePolicy: "manual" },
+				);
+				const head = await iterator.next(1);
+				expect(head).to.have.length(1);
+				expect(head[0].id).to.equal("1");
+				await store.docs.put(new Document({ id: "5", name: "match" }));
+				await store.docs.put(new Document({ id: "4", name: "dontmatch" }));
+				await store.docs.put(new Document({ id: "3", name: "match" }));
+
+				const rest = await iterator.all();
+
+				const all = [...head, ...rest];
+				expect(all.map((d) => d.id)).to.deep.equal(["1", "3", "5"]);
+			});
 		});
 
 		it("get first entry", async () => {
