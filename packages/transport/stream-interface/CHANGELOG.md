@@ -66,6 +66,13 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [5.2.8](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.2.7...stream-interface-v5.2.8) (2025-09-24)
+
+
+### Bug Fixes
+
+* import esm ([d0a8570](https://github.com/dao-xyz/peerbit/commit/d0a8570567234fc2459bbc8512837df2fe2bfae7))
+
 ## [5.2.7](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.2.6...stream-interface-v5.2.7) (2025-09-24)
 
 
