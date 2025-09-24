@@ -269,7 +269,7 @@ describe("events", () => {
 				}),
 			).to.be.eventually.rejectedWith("Timeout");
 			let t1 = Date.now();
-			expect(t1 - t0).to.be.greaterThan(timeout);
+			expect(t1 - t0).to.be.greaterThanOrEqual(timeout);
 		});
 
 		it("will wait for role age", async () => {

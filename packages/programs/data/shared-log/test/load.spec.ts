@@ -119,9 +119,10 @@ describe("load", function () {
 
 		await waitForConverged(() => db1.log.log.length); // pruning done
 
-		const lengthBeforeClose = db1.log.log.length;
 		await waitForConverged(() => db2.log.log.length);
 		await session.peers[1].stop();
+		await waitForConverged(() => db1.log.log.length);
+		const lengthBeforeClose = db1.log.log.length;
 		await db1.close();
 		db1 = await EventStore.open<EventStore<string, any>>(
 			db1.address!,
