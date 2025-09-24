@@ -2687,7 +2687,7 @@ export class DocumentIndex<
 				}
 				if (filtered) {
 					// Remove entries that were deleted from all pending structures
-					if (filtered.removed && filtered.removed.length) {
+					if (filtered.removed?.length) {
 						// Remove from peer buffers
 						for (const [_peer, entry] of peerBufferMap) {
 							entry.buffer = entry.buffer.filter((x) => {
@@ -2705,7 +2705,7 @@ export class DocumentIndex<
 					}
 
 					// Add new entries per strategy (sorted-only)
-					if (filtered.added && filtered.added.length) {
+					if (filtered.added?.length) {
 						const buf = peerBufferMap.get(localHash)!;
 						for (const added of filtered.added) {
 							const id = indexerTypes.toId(

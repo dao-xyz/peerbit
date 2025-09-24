@@ -8,10 +8,10 @@ import {
 	defaultHasher,
 } from "@peerbit/blocks-interface";
 import type {
+	PeerRefs,
 	WaitForAnyOpts,
 	WaitForPresentOpts,
 } from "@peerbit/stream-interface";
-import type { PeerRefs } from "@peerbit/stream-interface";
 import { waitFor } from "@peerbit/time";
 import { type Block, decode } from "multiformats/block";
 
