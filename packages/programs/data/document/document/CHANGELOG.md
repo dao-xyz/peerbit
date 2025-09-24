@@ -456,6 +456,18 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.13.7](https://github.com/dao-xyz/peerbit/compare/document-v9.13.6...document-v9.13.7) (2025-09-24)
+
+
+### Bug Fixes
+
+* make it possible to drain the iterator on change ([459ef03](https://github.com/dao-xyz/peerbit/commit/459ef031261b74ec42706da06f5e6a5df942183e))
+
+
+### Documentation
+
+* add comment ([fd84d12](https://github.com/dao-xyz/peerbit/commit/fd84d12360ebf4aace0e275b47d45fb2e362e1cc))
+
 ## [9.13.6](https://github.com/dao-xyz/peerbit/compare/document-v9.13.5...document-v9.13.6) (2025-09-24)
 
 
