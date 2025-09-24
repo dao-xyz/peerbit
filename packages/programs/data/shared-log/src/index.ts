@@ -2964,57 +2964,90 @@ export class SharedLog<
 
 	async waitForReplicator(
 		key: PublicSignKey,
-		options?: { signal?: AbortSignal },
+		options?: {
+			signal?: AbortSignal;
+			eager?: boolean;
+			roleAge?: number;
+			timeout?: number;
+		},
 	) {
-		let deferred = pDefer<void>();
+		const deferred = pDefer<void>();
+		const timeoutMs = options?.timeout ?? this.waitForReplicatorTimeout;
+		const resolvedRoleAge = options?.eager
+			? undefined
+			: (options?.roleAge ?? (await this.getDefaultMinRoleAge()));
 
-		let timeout = setTimeout(() => {
-			clear();
-			deferred.reject(
-				new TimeoutError(`Timeout waiting for replicator ${key.hashcode()}`),
-			);
-		}, this.waitForReplicatorTimeout);
-
-		if (options?.signal) {
-			options.signal.addEventListener("abort", () => {
-				clear();
-				deferred.reject(new AbortError());
-			});
-		}
+		let settled = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
 
 		const clear = () => {
 			this.events.removeEventListener("replicator:mature", check);
 			this.events.removeEventListener("replication:change", check);
-			if (options?.signal) {
-				options.signal.removeEventListener("abort", clear);
+			options?.signal?.removeEventListener("abort", onAbort);
+			if (timer != null) {
+				clearTimeout(timer);
+				timer = undefined;
 			}
-			clearTimeout(timeout);
 		};
 
-		deferred.promise.finally(() => {
+		const resolve = () => {
+			if (settled) {
+				return;
+			}
+			settled = true;
 			clear();
-		});
+			deferred.resolve();
+		};
+
+		const reject = (error: Error) => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			clear();
+			deferred.reject(error);
+		};
+
+		const onAbort = () => reject(new AbortError());
+		if (options?.signal) {
+			options.signal.addEventListener("abort", onAbort);
+		}
+
+		timer = setTimeout(() => {
+			reject(
+				new TimeoutError(`Timeout waiting for replicator ${key.hashcode()}`),
+			);
+		}, timeoutMs);
 
 		const check = async () => {
 			const iterator = this.replicationIndex?.iterate(
 				{ query: new StringMatch({ key: "hash", value: key.hashcode() }) },
 				{ reference: true },
 			);
-			const rects = await iterator?.next(1);
-			await iterator.close();
-			const rect = rects[0]?.value;
-			if (
-				!rect ||
-				!isMatured(rect, +new Date(), await this.getDefaultMinRoleAge())
-			) {
-				return;
+			try {
+				const rects = await iterator?.next(1);
+				const rect = rects?.[0]?.value;
+				if (!rect) {
+					return;
+				}
+				if (!options?.eager && resolvedRoleAge != null) {
+					if (!isMatured(rect, +new Date(), resolvedRoleAge)) {
+						return;
+					}
+				}
+				resolve();
+			} catch (error) {
+				reject(error instanceof Error ? error : new Error(String(error)));
+			} finally {
+				await iterator?.close();
 			}
-			return deferred.resolve();
 		};
+
 		check();
 		this.events.addEventListener("replicator:mature", check);
 		this.events.addEventListener("replication:change", check);
-		return deferred.promise;
+
+		return deferred.promise.finally(clear);
 	}
 
 	async waitForReplicators(options?: {

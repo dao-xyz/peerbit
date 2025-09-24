@@ -353,6 +353,41 @@ describe(`replicate`, () => {
 				(await db2.log.getDefaultMinRoleAge()) - 100,
 			); // - 100 for handle timer inaccuracy
 		});
+
+		it("waitForReplicator eager resolves before maturity", async () => {
+			const store = new EventStore<string, any>();
+
+			const db1 = await session.peers[0].open(store.clone(), {
+				args: {
+					replicate: {
+						factor: 1,
+					},
+					timeUntilRoleMaturity: 5e3,
+				},
+			});
+			const db2 = await session.peers[1].open(store.clone(), {
+				args: {
+					replicate: {
+						factor: 1,
+					},
+					timeUntilRoleMaturity: 5e3,
+				},
+			});
+
+			// Simulate a large maturity requirement for the waiter.
+			const stub = sinon.stub(db2.log, "getDefaultMinRoleAge").resolves(4e3);
+			try {
+				const t0 = +new Date();
+				await db2.log.waitForReplicator(db1.node.identity.publicKey, {
+					eager: true,
+				});
+				const t1 = +new Date();
+
+				expect(t1 - t0).to.be.lessThan(1e3);
+			} finally {
+				stub.restore();
+			}
+		});
 		describe("getDefaultMinRoleAge", () => {
 			it("if not replicating, min role age is 0", async () => {
 				const store = new EventStore<string, any>();
