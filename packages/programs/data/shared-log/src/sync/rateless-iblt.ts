@@ -420,8 +420,6 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				}, 2e4); // TODO arg
 			};
 
-			let count = 0;
-			/* let t0 = +new Date(); */
 			let messageQueue: {
 				seqNo: bigint;
 				symbols: (SSymbol | SymbolSerialized)[];
@@ -452,47 +450,13 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 					if (messageQueue[0].seqNo !== lastSeqNo + 1n) {
 						return;
 					}
-					lastSeqNo++;
 
-					const symbolMessage = messageQueue.shift();
-					if (!symbolMessage) {
-						return;
-					}
-
-					for (const symbol of symbolMessage.symbols) {
-						decoder.add_coded_symbol(symbol);
-					}
-					try {
-						decoder.try_decode();
-					} catch (error: any) {
-						if (
-							error?.message === "Invalid degree" ||
-							error === "Invalid degree"
-						) {
-							// TODO in some way test this code path
-							logger.error(error?.message ?? error);
-							obj.free();
-							await this.simple.rpc.send(
-								new RequestAll({
-									syncId: message.syncId,
-								}),
-								{
-									mode: new SilentDelivery({
-										to: [context.from!],
-										redundancy: 1,
-									}),
-									priority: 1,
-								},
-							);
-							return true;
-						} else {
-							throw error;
+					const finalizeIfDecoded = (): boolean => {
+						if (!decoder.decoded()) {
+							return false;
 						}
-					}
-					count += symbolMessage.symbols.length;
 
-					if (decoder.decoded()) {
-						let allMissingSymbolsInRemote: bigint[] = [];
+						const allMissingSymbolsInRemote: bigint[] = [];
 						for (const missingSymbol of decoder.get_remote_symbols()) {
 							allMissingSymbolsInRemote.push(missingSymbol);
 						}
@@ -502,6 +466,48 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 						});
 						obj.free();
 						return true;
+					};
+
+					while (
+						messageQueue.length > 0 &&
+						messageQueue[0].seqNo === lastSeqNo + 1n
+					) {
+						const symbolMessage = messageQueue.shift();
+						if (!symbolMessage) {
+							break;
+						}
+
+						lastSeqNo = symbolMessage.seqNo;
+
+						for (const symbol of symbolMessage.symbols) {
+							const normalizedSymbol =
+								symbol instanceof SymbolSerialized
+									? symbol
+									: new SymbolSerialized({
+											count: symbol.count,
+											hash: symbol.hash,
+											symbol: symbol.symbol,
+										});
+
+							decoder.add_coded_symbol(normalizedSymbol);
+							try {
+								decoder.try_decode();
+								if (finalizeIfDecoded()) {
+									return true;
+								}
+							} catch (error: any) {
+								if (
+									error?.message === "Invalid degree" ||
+									error === "Invalid degree"
+								) {
+									logger.debug(
+										"Decoder reported invalid degree; waiting for more symbols",
+									);
+									continue;
+								}
+								throw error;
+							}
+						}
 					}
 					return false;
 				},
