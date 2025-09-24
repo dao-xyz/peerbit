@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.13.5](https://github.com/dao-xyz/peerbit/compare/document-v9.13.4...document-v9.13.5) (2025-09-24)
+
+
+### Bug Fixes
+
+* ensure merge entries are matched against the query into the iterator ([40ccb58](https://github.com/dao-xyz/peerbit/commit/40ccb58228814f9574e5777becd9325210d40ca1))
+
 ## [9.13.4](https://github.com/dao-xyz/peerbit/compare/document-v9.13.3...document-v9.13.4) (2025-09-24)
 
 
