@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.13.4](https://github.com/dao-xyz/peerbit/compare/document-v9.13.3...document-v9.13.4) (2025-09-24)
+
+
+### Bug Fixes
+
+* add missing types to index export in document module ([bf3a27c](https://github.com/dao-xyz/peerbit/commit/bf3a27cb7e6be530fa18f2d51ca97c1989890b7c))
+
 ## [9.13.3](https://github.com/dao-xyz/peerbit/compare/document-v9.13.2...document-v9.13.3) (2025-09-24)
 
 
