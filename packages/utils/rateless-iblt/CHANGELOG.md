@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.7](https://github.com/dao-xyz/peerbit/compare/riblt-v1.0.6...riblt-v1.0.7) (2025-09-24)
+
+
+### Bug Fixes
+
+* update deps ([6d9be00](https://github.com/dao-xyz/peerbit/commit/6d9be00c82fdb2bc0d4477cbfa49b40213c86e17))
+
 ## [1.0.6](https://github.com/dao-xyz/peerbit/compare/riblt-v1.0.5...riblt-v1.0.6) (2025-02-20)
 
 
