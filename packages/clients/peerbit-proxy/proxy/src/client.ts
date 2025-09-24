@@ -31,6 +31,7 @@ import {
 	ProgramHandler,
 } from "@peerbit/program";
 import { type PubSub, type PubSubEvents } from "@peerbit/pubsub-interface";
+import type { PeerRefs } from "@peerbit/stream-interface";
 import { v4 as uuid } from "uuid";
 import * as blocks from "./blocks.js";
 import type * as connection from "./connection.js";
@@ -227,10 +228,11 @@ export class PeerbitProxyClient implements ProgramClient {
 					);
 					return resp.value;
 				},
-				waitFor: async (publicKey: PeerId | PublicSignKey | string) => {
-					await this.request<pubsub.RESP_PubsubWaitFor>(
+				waitFor: async (publicKey: PeerRefs) => {
+					const resp = await this.request<pubsub.RESP_PubsubWaitFor>(
 						new pubsub.REQ_PubsubWaitFor(publicKey),
 					);
+					return resp.hashes;
 				},
 
 				getPublicKey: async (hash) => {
@@ -278,9 +280,10 @@ export class PeerbitProxyClient implements ProgramClient {
 				iterator: () => blocksIterator(this),
 
 				waitFor: async (publicKey) => {
-					await this.request<blocks.RESP_BlockWaitFor>(
+					const resp = await this.request<blocks.RESP_BlockWaitFor>(
 						new blocks.REQ_BlockWaitFor(publicKey),
 					);
+					return resp.hashes;
 				},
 				size: async () => {
 					return (

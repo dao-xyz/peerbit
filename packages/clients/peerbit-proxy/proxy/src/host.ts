@@ -330,8 +330,13 @@ export class PeerbitProxyHost implements ProgramClient {
 					);
 				}
 			} else if (message instanceof blocks.REQ_BlockWaitFor) {
-				await this.services.blocks.waitFor(message.hash);
-				await this.respond(message, new blocks.RESP_BlockWaitFor(), from);
+				await this.respond(
+					message,
+					new blocks.RESP_BlockWaitFor(
+						await this.services.blocks.waitFor(message.hashes),
+					),
+					from,
+				);
 			} else if (message instanceof blocks.REQ_BlockSize) {
 				await this.respond(
 					message,
@@ -492,8 +497,13 @@ export class PeerbitProxyHost implements ProgramClient {
 					from,
 				); // TODO types));
 			} else if (message instanceof pubsub.REQ_PubsubWaitFor) {
-				await this.services.pubsub.waitFor(message.hash);
-				await this.respond(message, new pubsub.RESP_PubsubWaitFor(), from);
+				await this.respond(
+					message,
+					new pubsub.RESP_PubsubWaitFor(
+						await this.services.pubsub.waitFor(message.hashes),
+					),
+					from,
+				);
 			} else if (message instanceof pubsub.REQ_RequestSubscribers) {
 				await this.services.pubsub.requestSubscribers(message.topic);
 				await this.respond(message, new pubsub.RESP_RequestSubscribers(), from);

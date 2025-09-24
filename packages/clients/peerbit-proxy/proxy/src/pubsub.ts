@@ -1,6 +1,5 @@
 import { deserialize, field, option, variant, vec } from "@dao-xyz/borsh";
-import { type PeerId } from "@libp2p/interface";
-import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
+import { PublicSignKey } from "@peerbit/crypto";
 import {
 	DataEvent,
 	type PubSubEvents,
@@ -11,7 +10,9 @@ import {
 } from "@peerbit/pubsub-interface";
 import {
 	DeliveryMode,
+	type PeerRefs,
 	Message as StreamMessage,
+	coercePeerRefsToHashes,
 } from "@peerbit/stream-interface";
 import { Message } from "./message.js";
 
@@ -132,22 +133,25 @@ export class RESP_Unsubscribe extends PubSubMessage {
 
 @variant(10)
 export class REQ_PubsubWaitFor extends PubSubMessage {
-	@field({ type: "string" })
-	hash: string;
+	@field({ type: vec("string") })
+	hashes: string[];
 
-	constructor(publicKey: PeerId | PublicSignKey | string) {
+	constructor(publicKey: PeerRefs) {
 		super();
-		this.hash =
-			typeof publicKey === "string"
-				? publicKey
-				: publicKey instanceof PublicSignKey
-					? publicKey.hashcode()
-					: getPublicKeyFromPeerId(publicKey).hashcode();
+		this.hashes = coercePeerRefsToHashes(publicKey);
 	}
 }
 
 @variant(11)
-export class RESP_PubsubWaitFor extends PubSubMessage {}
+export class RESP_PubsubWaitFor extends PubSubMessage {
+	@field({ type: vec("string") })
+	hashes: string[];
+
+	constructor(hashes: string[]) {
+		super();
+		this.hashes = hashes;
+	}
+}
 
 @variant(12)
 export class REQ_AddEventListener extends PubSubMessage {
