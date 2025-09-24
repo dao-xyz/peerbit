@@ -2825,7 +2825,7 @@ export class DocumentIndex<
 						}
 					}
 				}
-				updateCallbacks?.onChange?.(evt.detail);
+				updateCallbacks?.onChange?.(evt.detail); // TODO only emit if changes were relevant?
 				signalUpdate();
 			};
 
