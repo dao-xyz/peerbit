@@ -3105,10 +3105,6 @@ describe("index", () => {
 						expect(store.docs.index.hasPending).to.be.false;
 					});
 
-					it("can wait for peer blocking", async () => {});
-
-					it("can wait for joining blocking", async () => {});
-
 					it("can query joining first replicator", async () => {
 						const { observer, writer } = await writerObserverSetup();
 
@@ -3120,7 +3116,7 @@ describe("index", () => {
 							{
 								remote: {
 									wait: {
-										timeout: 5e3,
+										timeout: 1e4,
 									},
 									onLateResults: ({ amount }) => {
 										onMissedResults.push(amount);
@@ -3380,6 +3376,17 @@ describe("index", () => {
 								},
 							);
 
+							// verify that we only fetch results ONCE from the remote
+
+							let queryCount = 0;
+							const _request = store.docs.index._query.request.bind(
+								store.docs.index._query,
+							);
+							store.docs.index._query.request = function (req, options) {
+								queryCount++;
+								return _request(req, options);
+							};
+
 							const resultPromise = iterator.first(); // because of block, we can invoke first before connecting
 							await session.connect(); // connect the nodes!
 
@@ -3387,6 +3394,7 @@ describe("index", () => {
 							const result = await resultPromise;
 							const t1 = +new Date();
 
+							expect(queryCount).to.equal(1); // should only query once
 							expect(result?.id).to.equal("1");
 							expect(t1 - t0).to.be.lessThan(500); // Should return quickly, not wait for timeout
 						});
@@ -3438,14 +3446,16 @@ describe("index", () => {
 										0,
 									);
 									expect(
-										await store.docs.index
-											.iterate(
-												{},
-												{
-													remote: { reach: { eager: true } },
-												},
-											)
-											.all(),
+										(
+											await store.docs.index
+												.iterate(
+													{},
+													{
+														remote: { reach: { eager: true } },
+													},
+												)
+												.all()
+										).length,
 									).to.equal(1);
 									joined = true;
 								},

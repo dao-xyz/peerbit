@@ -31,7 +31,7 @@ import {
 	type PeerRefs,
 	SilentDelivery,
 } from "@peerbit/stream-interface";
-import { AbortError, waitFor } from "@peerbit/time";
+import { AbortError, TimeoutError, waitFor } from "@peerbit/time";
 import pDefer, { type DeferredPromise } from "p-defer";
 import { concat, fromString } from "uint8arrays";
 import { copySerialization } from "./borsh.js";
@@ -140,7 +140,7 @@ export type WaitBehavior =
 
 export type WaitPolicy = {
 	timeout: number; // max time to wait
-	until?: "any"; // readiness condition, TODO more options
+	until?: "any"; // readiness condition, TODO more options like "cover" (to wait for this.log.watiForReplicators)
 	onTimeout?: "proceed" | "error"; // proceed = continue with whoever's ready
 	behavior?: WaitBehavior; // default: "keep-open"
 };
@@ -237,6 +237,7 @@ type QueryDetailedOptions<
 	remote?: {
 		from?: string[]; // if specified, only query these peers
 	};
+	fetchFirstForRemote?: Set<string>;
 };
 
 type QueryLike = {
@@ -1011,6 +1012,7 @@ export class DocumentIndex<
 			let joinListener: (() => void) | undefined;
 			if (baseRemote) {
 				joinListener = this.attachJoinListener({
+					eager: baseRemote.reach?.eager,
 					onPeer: async (pk) => {
 						if (cleanedUp) return;
 						const hash = pk.hashcode();
@@ -1478,10 +1480,131 @@ export class DocumentIndex<
 		}
 	}
 
+	private async waitForCoverReady(params: {
+		domain?: { args?: ExtractArgs<D> } | { range: CoverRange<number | bigint> };
+		eager?: boolean;
+		settle: "any";
+		timeout: number;
+		signal?: AbortSignal;
+		onTimeout?: "proceed" | "error";
+	}) {
+		const {
+			domain,
+			eager,
+			settle,
+			timeout,
+			signal,
+			onTimeout = "proceed",
+		} = params;
+
+		if (settle !== "any") {
+			return;
+		}
+
+		const properties =
+			domain && "range" in domain
+				? { range: domain.range }
+				: { args: domain?.args };
+		const selfHash = this.node.identity.publicKey.hashcode();
+
+		const ready = async () => {
+			const cover = await this._log.getCover(properties, { eager });
+			return cover.some((hash) => hash !== selfHash);
+		};
+
+		if (await ready()) {
+			return;
+		}
+
+		const deferred = pDefer<void>();
+		let settled = false;
+		let cleaned = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let checking = false;
+
+		const cleanup = () => {
+			if (cleaned) {
+				return;
+			}
+			cleaned = true;
+			this._log.events.removeEventListener("replicator:join", onEvent);
+			this._log.events.removeEventListener("replication:change", onEvent);
+			this._log.events.removeEventListener("replicator:mature", onEvent);
+			signal?.removeEventListener("abort", onAbort);
+			if (timer != null) {
+				clearTimeout(timer);
+				timer = undefined;
+			}
+		};
+
+		const resolve = () => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			cleanup();
+			deferred.resolve();
+		};
+
+		const reject = (error: Error) => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			cleanup();
+			deferred.reject(error);
+		};
+
+		const onAbort = () => reject(new AbortError());
+
+		const onEvent = async () => {
+			if (checking) {
+				return;
+			}
+			checking = true;
+			try {
+				if (await ready()) {
+					resolve();
+				}
+			} catch (error) {
+				reject(error instanceof Error ? error : new Error(String(error)));
+			} finally {
+				checking = false;
+			}
+		};
+
+		if (signal) {
+			signal.addEventListener("abort", onAbort);
+		}
+
+		if (timeout > 0) {
+			timer = setTimeout(() => {
+				if (onTimeout === "error") {
+					reject(
+						new TimeoutError("Timeout waiting for participating replicator"),
+					);
+				} else {
+					resolve();
+				}
+			}, timeout);
+		}
+
+		this._log.events.addEventListener("replicator:join", onEvent);
+		this._log.events.addEventListener("replication:change", onEvent);
+		this._log.events.addEventListener("replicator:mature", onEvent);
+
+		try {
+			await deferred.promise;
+		} finally {
+			cleanup();
+		}
+	}
+
 	// Utility: attach a join listener that waits until a peer is a replicator,
 	// then invokes the provided callback. Returns a detach function.
 	private attachJoinListener(params: {
 		signal?: AbortSignal;
+		eager?: boolean;
 		onPeer: (pk: PublicSignKey) => Promise<void> | void;
 	}): () => void {
 		const active = new Set<string>();
@@ -1496,6 +1619,7 @@ export class DocumentIndex<
 				await this._log
 					.waitForReplicator(pk, {
 						signal: params.signal,
+						eager: params.eager,
 					})
 					.catch(() => undefined);
 				if (params.signal?.aborted) return;
@@ -1534,6 +1658,7 @@ export class DocumentIndex<
 	>(
 		queryRequest: R,
 		options?: QueryDetailedOptions<T, I, D, boolean | undefined>,
+		fetchFirstForRemote?: Set<string>,
 	): Promise<types.Results<RT>[]> {
 		const local = typeof options?.local === "boolean" ? options?.local : true;
 		let remote:
@@ -1622,6 +1747,13 @@ export class DocumentIndex<
 						if (hash === this.node.identity.publicKey.hashcode()) {
 							return false;
 						}
+
+						if (fetchFirstForRemote?.has(hash)) {
+							// we already fetched this one for remote, no need to do it again
+							return false;
+						}
+						fetchFirstForRemote?.add(hash);
+
 						const resultAlready = this._prefetch?.accumulator.consume(
 							queryRequest,
 							hash,
@@ -1998,104 +2130,130 @@ export class DocumentIndex<
 					timeout: waitForTime ?? DEFAULT_TIMEOUT,
 				});
 				options.remote.reach.eager = true; // include the results from the discovered peer even if it is not mature
-				t;
+			}
+
+			const waitPolicy =
+				typeof options.remote.wait === "object"
+					? options.remote.wait
+					: undefined;
+			if (
+				waitPolicy?.behavior === "block" &&
+				(waitPolicy.until ?? "any") === "any"
+			) {
+				const blockPromise = this.waitForCoverReady({
+					domain: options.remote.domain,
+					eager: options.remote.reach?.eager,
+					settle: "any",
+					timeout: waitPolicy.timeout ?? DEFAULT_TIMEOUT,
+					signal: controller.signal,
+					onTimeout: waitPolicy.onTimeout,
+				});
+				warmupPromise = warmupPromise
+					? Promise.all([warmupPromise, blockPromise]).then(() => undefined)
+					: blockPromise;
 			}
 		}
 
 		const fetchFirst = async (
 			n: number,
-			fetchOptions?: { from?: string[] },
+			fetchOptions?: { from?: string[]; fetchedFirstForRemote?: Set<string> },
 		): Promise<boolean> => {
 			await warmupPromise;
 			let hasMore = false;
 
 			queryRequestCoerced.fetch = n;
-			await this.queryCommence(queryRequestCoerced, {
-				local: fetchOptions?.from != null ? false : options?.local,
-				remote:
-					options?.remote !== false
-						? {
-								...(typeof options?.remote === "object" ? options.remote : {}),
-								from: fetchOptions?.from,
-							}
-						: false,
-				resolve,
-				onResponse: async (response, from) => {
-					if (!from) {
-						logger.error("Missing response from");
-						return;
-					}
-					if (response instanceof types.NoAccess) {
-						logger.error("Dont have access");
-						return;
-					} else if (response instanceof types.Results) {
-						const results = response as types.Results<
-							types.ResultTypeFromRequest<R, T, I>
-						>;
-
-						if (results.kept === 0n && results.results.length === 0) {
+			await this.queryCommence(
+				queryRequestCoerced,
+				{
+					local: fetchOptions?.from != null ? false : options?.local,
+					remote:
+						options?.remote !== false
+							? {
+									...(typeof options?.remote === "object"
+										? options.remote
+										: {}),
+									from: fetchOptions?.from,
+								}
+							: false,
+					resolve,
+					onResponse: async (response, from) => {
+						if (!from) {
+							logger.error("Missing response from");
 							return;
 						}
+						if (response instanceof types.NoAccess) {
+							logger.error("Dont have access");
+							return;
+						} else if (response instanceof types.Results) {
+							const results = response as types.Results<
+								types.ResultTypeFromRequest<R, T, I>
+							>;
 
-						if (results.kept > 0n) {
-							hasMore = true;
-						}
-						const buffer: BufferedResult<
-							types.ResultTypeFromRequest<R, T, I> | I,
-							I
-						>[] = [];
-
-						for (const result of results.results) {
-							if (result instanceof types.ResultValue) {
-								const indexKey = indexerTypes.toId(
-									this.indexByResolver(result.value),
-								).primitive;
-								if (visited.has(indexKey)) {
-									continue;
-								}
-								visited.add(indexKey);
-
-								buffer.push({
-									value: result.value as types.ResultTypeFromRequest<R, T, I>,
-									context: result.context,
-									from,
-									indexed: await this.resolveIndexed<R>(
-										result,
-										results.results,
-									),
-								});
-							} else {
-								const indexKey = indexerTypes.toId(
-									this.indexByResolver(result.value),
-								).primitive;
-
-								if (visited.has(indexKey)) {
-									continue;
-								}
-								visited.add(indexKey);
-								buffer.push({
-									value: result.value,
-									context: result.context,
-									from,
-									indexed: coerceWithContext(
-										result.indexed || result.value,
-										result.context,
-									),
-								});
+							if (results.kept === 0n && results.results.length === 0) {
+								return;
 							}
-						}
 
-						peerBufferMap.set(from.hashcode(), {
-							buffer,
-							kept: Number(response.kept),
-						});
-					} else {
-						throw new Error(
-							"Unsupported result type: " + response?.constructor?.name,
-						);
-					}
+							if (results.kept > 0n) {
+								hasMore = true;
+							}
+							const buffer: BufferedResult<
+								types.ResultTypeFromRequest<R, T, I> | I,
+								I
+							>[] = [];
+
+							for (const result of results.results) {
+								if (result instanceof types.ResultValue) {
+									const indexKey = indexerTypes.toId(
+										this.indexByResolver(result.value),
+									).primitive;
+									if (visited.has(indexKey)) {
+										continue;
+									}
+									visited.add(indexKey);
+
+									buffer.push({
+										value: result.value as types.ResultTypeFromRequest<R, T, I>,
+										context: result.context,
+										from,
+										indexed: await this.resolveIndexed<R>(
+											result,
+											results.results,
+										),
+									});
+								} else {
+									const indexKey = indexerTypes.toId(
+										this.indexByResolver(result.value),
+									).primitive;
+
+									if (visited.has(indexKey)) {
+										continue;
+									}
+									visited.add(indexKey);
+									buffer.push({
+										value: result.value,
+										context: result.context,
+										from,
+										indexed: coerceWithContext(
+											result.indexed || result.value,
+											result.context,
+										),
+									});
+								}
+							}
+
+							peerBufferMap.set(from.hashcode(), {
+								buffer,
+								kept: Number(response.kept),
+							});
+						} else {
+							throw new Error(
+								"Unsupported result type: " + response?.constructor?.name,
+							);
+						}
+					},
 				},
-			});
+				fetchOptions?.fetchedFirstForRemote,
+			);
 
 			if (!hasMore) {
 				maybeSetDone();
@@ -2460,6 +2618,8 @@ export class DocumentIndex<
 
 		let joinListener: (() => void) | undefined;
 
+		let fetchedFirstForRemote: Set<string> | undefined = undefined;
+
 		let updateDeferred: ReturnType<typeof pDefer> | undefined;
 		const signalUpdate = () => updateDeferred?.resolve();
 		const _waitForUpdate = () =>
@@ -2606,15 +2766,22 @@ export class DocumentIndex<
 					signalUpdate();
 				}, waitForTime);
 			controller.signal.addEventListener("abort", () => signalUpdate());
-
+			fetchedFirstForRemote = new Set<string>();
 			joinListener = this.attachJoinListener({
 				signal: controller.signal,
+				eager: options.remote.reach?.eager,
 				onPeer: async (pk) => {
 					if (done) return;
 					const hash = pk.hashcode();
+					await fetchPromise; // ensure fetches in flight are done
 					if (peerBufferMap.has(hash)) return;
+					if (fetchedFirstForRemote!.has(hash)) return;
 					if (totalFetchedCounter > 0) {
-						await fetchFirst(totalFetchedCounter, { from: [hash] });
+						fetchPromise = fetchFirst(totalFetchedCounter, {
+							from: [hash],
+							fetchedFirstForRemote,
+						});
+						await fetchPromise;
 						if (onMissedResults) {
 							const pending = peerBufferMap.get(hash)?.buffer;
 							if (pending && pending.length > 0) {
