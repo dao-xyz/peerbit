@@ -2394,6 +2394,15 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 				? properties.numbers.min(startForNext, endLocation)
 				: startForNext
 			: properties.numbers.min(startForNext, endLocation);
+
+		if (
+			(typeof nextLocation === "bigint" &&
+				nextLocation === (endLocation as bigint)) ||
+			(typeof nextLocation === "number" &&
+				nextLocation === (endLocation as number))
+		) {
+			break;
+		}
 	}
 
 	start instanceof PublicSignKey && ret.add(start.hashcode());
