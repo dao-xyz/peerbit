@@ -67,6 +67,8 @@ export type UpdateMergeStrategy<
 				evt: DocumentsChange<T, I>,
 			) => MaybePromise<DocumentsChange<T, I> | void>;
 	  };
+export type ResultBatchReason = "initial" | "next" | "join" | "change";
+
 export type UpdateCallbacks<
 	T,
 	I,
@@ -85,7 +87,7 @@ export type UpdateCallbacks<
 	 */
 	onResults?: (
 		batch: RT[],
-		meta: { reason: "initial" | "next" | "join" | "change" },
+		meta: { reason: ResultBatchReason },
 	) => void | Promise<void>;
 };
 
@@ -2570,7 +2572,10 @@ export class DocumentIndex<
 
 			// no extra queued-first/last in simplified API
 
-			return dedup(coercedBatch, this.indexByResolver);
+			const deduped = dedup(coercedBatch, this.indexByResolver);
+			const fallbackReason = hasDeliveredResults ? "next" : "initial";
+			await emitOnResults(deduped, fallbackReason);
+			return deduped;
 		};
 
 		let cleanupAndDone = () => {
@@ -2659,8 +2664,34 @@ export class DocumentIndex<
 			return undefined;
 		};
 
+		const updateCallbacks =
+			typeof options?.updates === "object" ? options.updates : undefined;
 		const mergePolicy = normalizeUpdatesOption(options?.updates);
 		const hasLiveUpdates = mergePolicy !== undefined;
+		let pendingResultsReason:
+			| Extract<ResultBatchReason, "join" | "change">
+			| undefined;
+		let hasDeliveredResults = false;
+
+		const emitOnResults = async (
+			batch: ValueTypeFromRequest<Resolve, T, I>[],
+			defaultReason: Extract<ResultBatchReason, "initial" | "next">,
+		) => {
+			if (!updateCallbacks?.onResults || batch.length === 0) {
+				return;
+			}
+			let reason: ResultBatchReason;
+			if (pendingResultsReason) {
+				reason = pendingResultsReason;
+			} else if (!hasDeliveredResults) {
+				reason = "initial";
+			} else {
+				reason = defaultReason;
+			}
+			pendingResultsReason = undefined;
+			hasDeliveredResults = true;
+			await updateCallbacks.onResults(batch, { reason });
+		};
 
 		// sorted-only mode: no per-queue handling
 
@@ -2784,9 +2815,17 @@ export class DocumentIndex<
 						}
 						buf.kept = buf.buffer.length;
 					}
+
+					if (
+						(filtered.added?.length ?? 0) > 0 ||
+						(filtered.removed?.length ?? 0) > 0
+					) {
+						if (!pendingResultsReason) {
+							pendingResultsReason = "change";
+						}
+					}
 				}
-				typeof options?.updates === "object" &&
-					options?.updates?.onChange?.(evt.detail);
+				updateCallbacks?.onChange?.(evt.detail);
 				signalUpdate();
 			};
 
@@ -2868,6 +2907,9 @@ export class DocumentIndex<
 								}
 							}
 						}
+					}
+					if (!pendingResultsReason) {
+						pendingResultsReason = "join";
 					}
 					signalUpdate();
 				},

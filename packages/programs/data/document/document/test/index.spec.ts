@@ -3824,6 +3824,63 @@ describe("index", () => {
 				const all = [...head, ...rest];
 				expect(all.map((d) => d.id)).to.deep.equal(["1", "3", "5"]);
 			});
+
+			it("fires onResults for initial and live update batches", async () => {
+				session = await TestSession.connected(1);
+
+				const store = new TestStore({ docs: new Documents<Document>() });
+
+				await session.peers[0].open(store, {
+					args: { replicate: { factor: 1 } },
+				});
+				await store.docs.put(new Document({ id: "1", name: "match" }));
+				await store.docs.put(new Document({ id: "2", name: "skip" }));
+
+				const reasons: Array<"initial" | "next" | "join" | "change"> = [];
+				const batches: string[][] = [];
+
+				const iterator = store.docs.index.iterate(
+					{
+						query: [new StringMatch({ key: "name", value: "match" })],
+						sort: { key: "id", direction: SortDirection.ASC },
+					},
+					{
+						updates: {
+							merge: true,
+							onResults: (batch, meta) => {
+								reasons.push(meta.reason);
+								batches.push(batch.map((d) => d.id));
+							},
+						},
+						closePolicy: "manual",
+					},
+				);
+
+				const initial = await iterator.next(1);
+				expect(initial.map((d) => d.id)).to.deep.equal(["1"]);
+				expect(reasons).to.deep.equal(["initial"]);
+				expect(batches).to.deep.equal([["1"]]);
+
+				let changeCount = 0;
+				const onChange = () => {
+					changeCount++;
+				};
+				store.docs.events.addEventListener("change", onChange as EventListener);
+
+				await store.docs.put(new Document({ id: "3", name: "match" }));
+				await waitForResolved(() => expect(changeCount).to.equal(1));
+
+				const updateBatch = await iterator.next(1);
+				expect(updateBatch.map((d) => d.id)).to.deep.equal(["3"]);
+				expect(reasons).to.deep.equal(["initial", "change"]);
+				expect(batches).to.deep.equal([["1"], ["3"]]);
+
+				await iterator.close();
+				store.docs.events.removeEventListener(
+					"change",
+					onChange as EventListener,
+				);
+			});
 		});
 
 		it("get first entry", async () => {
