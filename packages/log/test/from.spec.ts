@@ -1,11 +1,11 @@
-import { type PeerId } from "@libp2p/interface";
 import {
 	AnyBlockStore,
 	type BlockStore,
 	type StoreStatus,
 } from "@peerbit/blocks";
 import { type Blocks, type GetOptions } from "@peerbit/blocks-interface";
-import { Ed25519Keypair, type PublicSignKey } from "@peerbit/crypto";
+import { Ed25519Keypair } from "@peerbit/crypto";
+import type { PeerRefs } from "@peerbit/stream-interface";
 import { delay } from "@peerbit/time";
 import assert from "assert";
 import { expect } from "chai";
@@ -69,7 +69,7 @@ class SlowBlockStore implements Blocks {
 		}
 	}
 
-	async waitFor(peer: PeerId | PublicSignKey): Promise<void> {
+	async waitFor(peer: PeerRefs): Promise<string[]> {
 		return this._store.waitFor(peer);
 	}
 
