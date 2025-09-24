@@ -66,6 +66,13 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [5.2.7](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.2.6...stream-interface-v5.2.7) (2025-09-24)
+
+
+### Bug Fixes
+
+* rename coercePeerRefToIterable to coercePeerRefToHash for clarity ([4703b22](https://github.com/dao-xyz/peerbit/commit/4703b2254165055d09537f0fe0af33cd9b9c023f))
+
 ## [5.2.6](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.2.5...stream-interface-v5.2.6) (2025-09-24)
 
 

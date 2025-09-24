@@ -308,6 +308,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [5.3.5](https://github.com/dao-xyz/peerbit/compare/proxy-v5.3.4...proxy-v5.3.5) (2025-09-24)
+
+
+### Bug Fixes
+
+* handle waitFor api correctly ([5da22a7](https://github.com/dao-xyz/peerbit/commit/5da22a71223b882c217c52f5789dbfef0846c505))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from ^5.3.1 to ^5.3.2
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.2.4 to 2.2.5
+
 ## [5.3.4](https://github.com/dao-xyz/peerbit/compare/proxy-v5.3.3...proxy-v5.3.4) (2025-09-24)
 
 
