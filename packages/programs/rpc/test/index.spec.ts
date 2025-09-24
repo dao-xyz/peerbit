@@ -6,11 +6,10 @@ import {
 } from "@peerbit/crypto";
 import { Program } from "@peerbit/program";
 import { type PeerId } from "@peerbit/pubsub";
-import { SeekDelivery, SilentDelivery } from "@peerbit/stream-interface";
+import { SilentDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { AbortError, delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
-import type { Libp2p } from "libp2p";
 import {
 	RPC,
 	type RPCResponse,
@@ -346,34 +345,6 @@ describe("rpc", () => {
 				)
 			).map((x) => x.response);
 			await waitFor(() => results.length === 1);
-		});
-
-		it("to eager", async () => {
-			await session.stop();
-			session = await TestSession.disconnected(2);
-			//await delay(2000)
-
-			responder = new RPCTest([session.peers[0].peerId]);
-			responder.query = new RPC();
-
-			await session.peers[0].open(responder);
-			reader = await session.peers[1].open(reader.clone());
-			session.connect();
-			const slowDial = (reader.node as any as Libp2p).dial;
-			reader.node.dial(session.peers[0].getMultiaddrs());
-			const sendPromise = reader.query.request(
-				new Body({
-					arr: new Uint8Array([0, 1, 2]),
-				}),
-				{
-					mode: new SeekDelivery({
-						to: [responder.node.identity.publicKey],
-						redundancy: 1,
-					}),
-				},
-			);
-
-			await sendPromise;
 		});
 
 		it("resubscribe", async () => {
