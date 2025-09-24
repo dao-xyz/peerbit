@@ -66,6 +66,13 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [5.2.6](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.2.5...stream-interface-v5.2.6) (2025-09-24)
+
+
+### Bug Fixes
+
+* improved waitFor api to handle ([967dd46](https://github.com/dao-xyz/peerbit/commit/967dd46c77f18f2830b0e50813ad974da044b985))
+
 ## [5.2.5](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.2.4...stream-interface-v5.2.5) (2025-08-19)
 
 

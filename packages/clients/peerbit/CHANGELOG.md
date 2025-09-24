@@ -313,6 +313,24 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.3.3](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.3.2...peerbit-v4.3.3) (2025-09-24)
+
+
+### Bug Fixes
+
+* tmp disable webrtc direct ([d25431a](https://github.com/dao-xyz/peerbit/commit/d25431a71d35fa55c51b00194248d329f3edaa70))
+* update bootstrap method to accept optional addresses ([94a82ff](https://github.com/dao-xyz/peerbit/commit/94a82ffb057c634053da38cf450a8b15b72aeb4b))
+* update for new waitFor behaviour ([9781c65](https://github.com/dao-xyz/peerbit/commit/9781c65cd68700f19dbddf7ae25cc88933ab8c10))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.3.0 to 5.3.1
+    * @peerbit/pubsub bumped from ^4.0.12 to ^4.0.13
+    * @peerbit/blocks bumped from ^3.0.9 to ^3.0.10
+
 ## [4.3.2](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.3.1...peerbit-v4.3.2) (2025-09-19)
 
 
