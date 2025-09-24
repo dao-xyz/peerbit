@@ -389,6 +389,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [11.5.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.5.1...shared-log-v11.5.2) (2025-09-24)
+
+
+### Bug Fixes
+
+* correctly handle end condition ([363f6a8](https://github.com/dao-xyz/peerbit/commit/363f6a883b866c1cc0397445d1ca58cb3c17f993))
+
+
+### Refactors
+
+* streamline message processing in RatelessIBLTSynchronizer and better handling for InvalidDegree error ([0fddff8](https://github.com/dao-xyz/peerbit/commit/0fddff89119fe8f826b1831ed7e358ef7c257b4b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/riblt bumped from 1.0.6 to 1.0.7
+
 ## [11.5.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.5.0...shared-log-v11.5.1) (2025-09-24)
 
 
