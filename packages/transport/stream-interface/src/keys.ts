@@ -8,7 +8,7 @@ export type PeerRefs =
 	| Set<string>
 	| IterableIterator<PeerRef>;
 
-export const coercePeerRefToIterable = (to: PeerRef) => {
+export const coercePeerRefToHash = (to: PeerRef) => {
 	return to instanceof PublicSignKey
 		? to.hashcode()
 		: typeof to === "string"
@@ -22,18 +22,18 @@ export const coercePeerRefsToHashes = (tos: PeerRefs) => {
 		tos instanceof PublicSignKey ||
 		typeof tos === "string"
 	) {
-		return [coercePeerRefToIterable(tos)];
+		return [coercePeerRefToHash(tos)];
 	}
 	if (tos instanceof Set) {
-		return Array.from(tos).map(coercePeerRefToIterable);
+		return Array.from(tos).map(coercePeerRefToHash);
 	}
 	if (tos instanceof Array) {
-		return tos.map(coercePeerRefToIterable);
+		return tos.map(coercePeerRefToHash);
 	}
 
 	const toHashes: string[] = [];
 	for (const to of tos) {
-		const hash = coercePeerRefToIterable(to);
+		const hash = coercePeerRefToHash(to);
 		toHashes.push(hash);
 	}
 	return toHashes;
