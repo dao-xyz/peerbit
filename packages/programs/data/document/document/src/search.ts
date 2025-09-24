@@ -2201,7 +2201,7 @@ export class DocumentIndex<
 							const buffer: BufferedResult<
 								types.ResultTypeFromRequest<R, T, I> | I,
 								I
-							>[] = [];
+							>[] = peerBufferMap.get(from.hashcode())?.buffer || [];
 
 							for (const result of results.results) {
 								if (result instanceof types.ResultValue) {
@@ -2303,10 +2303,10 @@ export class DocumentIndex<
 						amount: n - buffer.buffer.length,
 					});
 					// Fetch locally?
-					if (
-						peer === this.node.identity.publicKey.hashcode() &&
-						this._resumableIterators.has(queryRequestCoerced.idString)
-					) {
+					if (peer === this.node.identity.publicKey.hashcode()) {
+						if (!this._resumableIterators.has(queryRequestCoerced.idString)) {
+							continue; // no more results
+						}
 						promises.push(
 							this.processQuery(
 								collectRequest,
@@ -3121,6 +3121,29 @@ export class DocumentIndex<
 			).filter((x) => !!x) as WithContext<RT>[];
 		}
 		return all.map((x) => x.value) as any as WithContext<RT>[];
+	}
+
+	/**
+	 * Resolve the primary key for a document or indexed representation using the configured indexBy fields.
+	 * Useful when consumers need a stable id without assuming a specific property name exists.
+	 */
+	public resolveId(
+		value:
+			| ValueTypeFromRequest<any, T, I>
+			| WithContext<I>
+			| WithIndexedContext<T, I>
+			| WithIndexed<T, I>
+			| I,
+	): indexerTypes.IdKey {
+		let candidate: any = value;
+		if (candidate && typeof candidate === "object") {
+			if ("__indexed" in candidate && candidate.__indexed) {
+				candidate = candidate.__indexed;
+			}
+		}
+
+		const resolved = this.indexByResolver(candidate);
+		return indexerTypes.toId(resolved);
 	}
 
 	public async waitFor(
