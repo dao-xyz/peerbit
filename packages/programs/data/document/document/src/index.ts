@@ -7,6 +7,7 @@ export type {
 	DocumentIndex,
 	WithContext,
 	WithIndexedContext,
+	WithIndexed,
 	OpenOptions,
 	QueryOptions,
 	RemoteQueryOptions,
@@ -16,6 +17,17 @@ export type {
 	TransformerAsConstructor,
 	TransformerAsFunction,
 	ValueTypeFromRequest,
+	UpdateCallbacks,
+	UpdateMergeStrategy,
+	UpdateOptions,
+	WaitBehavior,
+	WaitPolicy,
+	ReachScope,
+	PrefetchOptions,
+	LateResultsEvent,
+	JoiningOnMissedResults,
+	JoiningTargets,
+	JoiningTimeoutPolicy,
 } from "./search.js";
 export { coerceWithContext, coerceWithIndexed } from "./search.js";
 export * from "./operation.js";
