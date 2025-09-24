@@ -417,6 +417,17 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [5.3.24](https://github.com/dao-xyz/peerbit/compare/rpc-v5.3.23...rpc-v5.3.24) (2025-09-24)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.3.2 to 5.3.3
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.2.5 to ^2.2.6
+
 ## [5.3.23](https://github.com/dao-xyz/peerbit/compare/rpc-v5.3.22...rpc-v5.3.23) (2025-09-24)
 
 
