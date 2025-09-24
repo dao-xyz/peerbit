@@ -456,6 +456,32 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.13.0](https://github.com/dao-xyz/peerbit/compare/document-v9.12.17...document-v9.13.0) (2025-09-24)
+
+
+### Features
+
+* add discovery options for iterators to wait for inflight nodes ([2a9473e](https://github.com/dao-xyz/peerbit/commit/2a9473e5b1d0ccac6f46152b6828bb7bf514247e))
+* support merging updates into iterators (locally) ([e9379c8](https://github.com/dao-xyz/peerbit/commit/e9379c85e18b8c11bc15804fcb934b55dfca5431))
+
+
+### Bug Fixes
+
+* remote wait with blocking behaviour ([4f37fd2](https://github.com/dao-xyz/peerbit/commit/4f37fd2551c1b18de8ddbce8b5d0f85d180ff858))
+* scope/reach simplfy api ([37206ea](https://github.com/dao-xyz/peerbit/commit/37206ea512338f7b913fee9482a7250ccee03ec9))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.3.0 to 5.3.1
+    * @peerbit/rpc bumped from 5.3.21 to 5.3.22
+    * @peerbit/shared-log bumped from 11.4.3 to 11.5.0
+    * @peerbit/document-interface bumped from ^2.2.19 to ^2.2.20
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.2.3 to 2.2.4
+
 ## [9.12.17](https://github.com/dao-xyz/peerbit/compare/document-v9.12.16...document-v9.12.17) (2025-09-19)
 
 

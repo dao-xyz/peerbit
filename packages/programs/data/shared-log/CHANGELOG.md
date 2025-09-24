@@ -389,6 +389,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [11.5.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.4.3...shared-log-v11.5.0) (2025-09-24)
+
+
+### Features
+
+* improve waitForReplicator functionality to support eager options ([b17572b](https://github.com/dao-xyz/peerbit/commit/b17572bae447104d60b47dc19dde356f168bb9f3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.3.0 to 5.3.1
+    * @peerbit/log bumped from 4.1.3 to 4.1.4
+    * @peerbit/rpc bumped from 5.3.21 to 5.3.22
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.2.3 to ^2.2.4
+
 ## [11.4.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.4.2...shared-log-v11.4.3) (2025-09-19)
 
 

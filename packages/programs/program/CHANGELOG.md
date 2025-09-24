@@ -202,6 +202,21 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.3.1](https://github.com/dao-xyz/peerbit/compare/program-v5.3.0...program-v5.3.1) (2025-09-24)
+
+
+### Bug Fixes
+
+* improved waitFor api to handle ([967dd46](https://github.com/dao-xyz/peerbit/commit/967dd46c77f18f2830b0e50813ad974da044b985))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from ^1.4.9 to ^1.4.10
+    * @peerbit/pubsub-interface bumped from ^4.0.4 to ^4.0.5
+
 ## [5.3.0](https://github.com/dao-xyz/peerbit/compare/program-v5.2.17...program-v5.3.0) (2025-09-16)
 
 

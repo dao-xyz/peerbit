@@ -452,6 +452,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.8.8](https://github.com/dao-xyz/peerbit/compare/server-v5.8.7...server-v5.8.8) (2025-09-24)
+
+
+### Bug Fixes
+
+* tmp disable webrtc direct ([d25431a](https://github.com/dao-xyz/peerbit/commit/d25431a71d35fa55c51b00194248d329f3edaa70))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 4.3.2 to 4.3.3
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.2.3 to 2.2.4
+
 ## [5.8.7](https://github.com/dao-xyz/peerbit/compare/server-v5.8.6...server-v5.8.7) (2025-09-19)
 
 

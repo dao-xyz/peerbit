@@ -279,6 +279,21 @@
     * @peerbit/blocks-interface bumped from 1.2.18 to 1.2.19
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [3.0.10](https://github.com/dao-xyz/peerbit/compare/blocks-v3.0.9...blocks-v3.0.10) (2025-09-24)
+
+
+### Bug Fixes
+
+* improved waitFor api to handle ([967dd46](https://github.com/dao-xyz/peerbit/commit/967dd46c77f18f2830b0e50813ad974da044b985))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 4.4.1 to 4.4.2
+    * @peerbit/blocks-interface bumped from 1.4.9 to 1.4.10
+
 ## [3.0.9](https://github.com/dao-xyz/peerbit/compare/blocks-v3.0.8...blocks-v3.0.9) (2025-09-19)
 
 

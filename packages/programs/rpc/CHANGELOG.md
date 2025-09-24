@@ -417,6 +417,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [5.3.22](https://github.com/dao-xyz/peerbit/compare/rpc-v5.3.21...rpc-v5.3.22) (2025-09-24)
+
+
+### Bug Fixes
+
+* improved waitFor api to handle ([967dd46](https://github.com/dao-xyz/peerbit/commit/967dd46c77f18f2830b0e50813ad974da044b985))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.3.0 to 5.3.1
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.2.3 to ^2.2.4
+
 ## [5.3.21](https://github.com/dao-xyz/peerbit/compare/rpc-v5.3.20...rpc-v5.3.21) (2025-09-19)
 
 
