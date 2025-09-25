@@ -903,7 +903,7 @@ export class DocumentIndex<
 			return queue.queue.length + queue.keptInIndex;
 		}
 
-		return this._resumableIterators.getPending(cursorId)
+		return this._resumableIterators.getPending(cursorId);
 	}
 
 	get hasPending() {
@@ -2049,6 +2049,10 @@ export class DocumentIndex<
 			}
 		> = new Map();
 		const visited = new Set<string | number | bigint>();
+		const indexedPlaceholders = new Map<
+			string | number | bigint,
+			BufferedResult<types.ResultTypeFromRequest<R, T, I> | I, I>
+		>();
 
 		let done = false;
 		let drain = false; // if true, close on empty once (overrides manual)
@@ -2203,10 +2207,23 @@ export class DocumentIndex<
 							>[] = peerBufferMap.get(from.hashcode())?.buffer || [];
 
 							for (const result of results.results) {
+								const indexKey = indexerTypes.toId(
+									this.indexByResolver(result.value),
+								).primitive;
 								if (result instanceof types.ResultValue) {
-									const indexKey = indexerTypes.toId(
-										this.indexByResolver(result.value),
-									).primitive;
+									const existingIndexed = indexedPlaceholders.get(indexKey);
+									if (existingIndexed) {
+										existingIndexed.value =
+											result.value as types.ResultTypeFromRequest<R, T, I>;
+										existingIndexed.context = result.context;
+										existingIndexed.from = from!;
+										existingIndexed.indexed = await this.resolveIndexed<R>(
+											result,
+											results.results,
+										);
+										indexedPlaceholders.delete(indexKey);
+										continue;
+									}
 									if (visited.has(indexKey)) {
 										continue;
 									}
@@ -2222,23 +2239,25 @@ export class DocumentIndex<
 										),
 									});
 								} else {
-									const indexKey = indexerTypes.toId(
-										this.indexByResolver(result.value),
-									).primitive;
-
-									if (visited.has(indexKey)) {
+									if (
+										visited.has(indexKey) &&
+										!indexedPlaceholders.has(indexKey)
+									) {
 										continue;
 									}
 									visited.add(indexKey);
-									buffer.push({
+									const indexed = coerceWithContext(
+										result.indexed || result.value,
+										result.context,
+									);
+									const placeholder = {
 										value: result.value,
 										context: result.context,
 										from,
-										indexed: coerceWithContext(
-											result.indexed || result.value,
-											result.context,
-										),
-									});
+										indexed,
+									};
+									buffer.push(placeholder);
+									indexedPlaceholders.set(indexKey, placeholder);
 								}
 							}
 
@@ -2327,21 +2346,38 @@ export class DocumentIndex<
 										peerBuffer.kept = Number(results.kept);
 
 										for (const result of results.results) {
-											if (
-												visited.has(
-													indexerTypes.toId(this.indexByResolver(result.value))
-														.primitive,
-												)
-											) {
-												continue;
-											}
-											visited.add(
-												indexerTypes.toId(this.indexByResolver(result.value))
-													.primitive,
-											);
-											let indexed: WithContext<I>;
+											const keyPrimitive = indexerTypes.toId(
+												this.indexByResolver(result.value),
+											).primitive;
 											if (result instanceof types.ResultValue) {
-												indexed = await this.resolveIndexed<R>(
+												const existingIndexed =
+													indexedPlaceholders.get(keyPrimitive);
+												if (existingIndexed) {
+													existingIndexed.value =
+														result.value as types.ResultTypeFromRequest<
+															R,
+															T,
+															I
+														>;
+													existingIndexed.context = result.context;
+													existingIndexed.from = this.node.identity.publicKey;
+													existingIndexed.indexed =
+														await this.resolveIndexed<R>(
+															result,
+															results.results as types.ResultTypeFromRequest<
+																R,
+																T,
+																I
+															>[],
+														);
+													indexedPlaceholders.delete(keyPrimitive);
+													continue;
+												}
+												if (visited.has(keyPrimitive)) {
+													continue;
+												}
+												visited.add(keyPrimitive);
+												const indexed = await this.resolveIndexed<R>(
 													result,
 													results.results as types.ResultTypeFromRequest<
 														R,
@@ -2349,22 +2385,37 @@ export class DocumentIndex<
 														I
 													>[],
 												);
+												peerBuffer.buffer.push({
+													value: result.value as types.ResultTypeFromRequest<
+														R,
+														T,
+														I
+													>,
+													context: result.context,
+													from: this.node.identity.publicKey,
+													indexed,
+												});
 											} else {
-												indexed = coerceWithContext(
+												if (
+													visited.has(keyPrimitive) &&
+													!indexedPlaceholders.has(keyPrimitive)
+												) {
+													continue;
+												}
+												visited.add(keyPrimitive);
+												const indexed = coerceWithContext(
 													result.indexed || result.value,
 													result.context,
 												);
+												const placeholder = {
+													value: result.value,
+													context: result.context,
+													from: this.node.identity.publicKey,
+													indexed,
+												};
+												peerBuffer.buffer.push(placeholder);
+												indexedPlaceholders.set(keyPrimitive, placeholder);
 											}
-											peerBuffer.buffer.push({
-												value: result.value as types.ResultTypeFromRequest<
-													R,
-													T,
-													I
-												>,
-												context: result.context,
-												from: this.node.identity.publicKey,
-												indexed: indexed,
-											});
 										}
 									}
 								})
@@ -2435,17 +2486,40 @@ export class DocumentIndex<
 																>
 															>
 														).response.results) {
-															const idPrimitive = indexerTypes.toId(
+															const indexKey = indexerTypes.toId(
 																this.indexByResolver(result.value),
 															).primitive;
-															if (visited.has(idPrimitive)) {
-																continue;
-															}
-															visited.add(idPrimitive);
-
-															let indexed: WithContext<I>;
 															if (result instanceof types.ResultValue) {
-																indexed = await this.resolveIndexed(
+																const existingIndexed =
+																	indexedPlaceholders.get(indexKey);
+																if (existingIndexed) {
+																	existingIndexed.value =
+																		result.value as types.ResultTypeFromRequest<
+																			R,
+																			T,
+																			I
+																		>;
+																	existingIndexed.context = result.context;
+																	existingIndexed.from = from!;
+																	existingIndexed.indexed =
+																		await this.resolveIndexed(
+																			result,
+																			response.response
+																				.results as types.ResultTypeFromRequest<
+																				R,
+																				T,
+																				I
+																			>[],
+																		);
+																	indexedPlaceholders.delete(indexKey);
+																	continue;
+																}
+																if (visited.has(indexKey)) {
+																	continue;
+																}
+																visited.add(indexKey);
+
+																const indexed = await this.resolveIndexed(
 																	result,
 																	response.response
 																		.results as types.ResultTypeFromRequest<
@@ -2454,23 +2528,38 @@ export class DocumentIndex<
 																		I
 																	>[],
 																);
+																peerBuffer.buffer.push({
+																	value:
+																		result.value as types.ResultTypeFromRequest<
+																			R,
+																			T,
+																			I
+																		>,
+																	context: result.context,
+																	from: from!,
+																	indexed,
+																});
 															} else {
-																indexed = coerceWithContext(
+																if (
+																	visited.has(indexKey) &&
+																	!indexedPlaceholders.has(indexKey)
+																) {
+																	continue;
+																}
+																visited.add(indexKey);
+																const indexed = coerceWithContext(
 																	result.value,
 																	result.context,
 																);
+																const placeholder = {
+																	value: result.value,
+																	context: result.context,
+																	from: from!,
+																	indexed,
+																};
+																peerBuffer.buffer.push(placeholder);
+																indexedPlaceholders.set(indexKey, placeholder);
 															}
-															peerBuffer.buffer.push({
-																value:
-																	result.value as types.ResultTypeFromRequest<
-																		R,
-																		T,
-																		I
-																	>,
-																context: result.context,
-																from: from!,
-																indexed,
-															});
 														}
 													}
 												}),
@@ -2533,6 +2622,10 @@ export class DocumentIndex<
 				const idx = arr.buffer.findIndex((x) => x.value === result.value);
 				if (idx >= 0) {
 					arr.buffer.splice(idx, 1);
+					const consumedId = indexerTypes.toId(
+						this.indexByResolver(result.indexed),
+					).primitive;
+					indexedPlaceholders.delete(consumedId);
 				}
 			}
 
@@ -2744,7 +2837,6 @@ export class DocumentIndex<
 			};
 
 			const onChange = async (evt: CustomEvent<DocumentsChange<T, I>>) => {
-	
 				// Optional filter to mutate/suppress change events
 				let filtered: DocumentsChange<T, I> | void = evt.detail;
 				if (mergePolicy?.merge?.filter) {
@@ -2777,6 +2869,7 @@ export class DocumentIndex<
 								).primitive;
 								if (removedIds.has(id)) {
 									matchedRemovedIds.add(id);
+									indexedPlaceholders.delete(id);
 									return false;
 								}
 								return true;
@@ -2838,22 +2931,36 @@ export class DocumentIndex<
 							const id = indexerTypes.toId(
 								this.indexByResolver(indexedCandidate),
 							).primitive;
+							const existingIndexed = indexedPlaceholders.get(id);
+							if (existingIndexed) {
+								if (resolve) {
+									existingIndexed.value = added as any;
+									existingIndexed.context = added.__context;
+									existingIndexed.from = this.node.identity.publicKey;
+									existingIndexed.indexed = indexedCandidate;
+									indexedPlaceholders.delete(id);
+								}
+								continue;
+							}
 							if (visited.has(id)) continue; // already presented
 							visited.add(id);
 							const valueForBuffer = resolve
 								? (added as any)
 								: indexedCandidate;
-							buf.buffer.push({
+							const placeholder = {
 								value: valueForBuffer,
 								context: added.__context,
 								from: this.node.identity.publicKey,
 								indexed: indexedCandidate,
-							});
+							};
+							buf.buffer.push(placeholder);
+							if (!resolve) {
+								indexedPlaceholders.set(id, placeholder);
+							}
 							hasRelevantChange = true;
 							changeForCallback.added.push(added);
 						}
 					}
-
 
 					if (hasRelevantChange) {
 						if (!pendingResultsReason) {

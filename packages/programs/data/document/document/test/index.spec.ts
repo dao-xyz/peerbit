@@ -25,6 +25,7 @@ import {
 	NoAccess,
 	NotFoundError,
 	PredictedSearchRequest,
+	ResultIndexedValue,
 	Results,
 	SearchRequest,
 	SearchRequestIndexed,
@@ -3886,7 +3887,10 @@ describe("index", () => {
 
 					iterator = store.docs.index.iterate(
 						{ sort: { key: "id", direction: SortDirection.ASC } },
-						{ closePolicy: "manual", updates: { merge: true, onChange: changeListener } },
+						{
+							closePolicy: "manual",
+							updates: { merge: true, onChange: changeListener },
+						},
 					);
 					if (!iterator) {
 						throw new Error("Failed to create iterator");
@@ -3933,6 +3937,20 @@ describe("index", () => {
 			});
 
 			describe("onResults", () => {
+				class Indexable {
+					@field({ type: "string" })
+					id: string;
+
+					@field({ type: "string" })
+					nameTransformed: string;
+
+					constructor(from: Document) {
+						this.id = from.id;
+						this.nameTransformed =
+							from.name?.toLocaleUpperCase() ?? "_MISSING_";
+					}
+				}
+
 				it("can drain results onChange", async () => {
 					session = await TestSession.disconnected(1);
 
@@ -4058,6 +4076,166 @@ describe("index", () => {
 						"change",
 						onChange as EventListener,
 					);
+				});
+
+				it("emits indexed results to onResults when resolve is false", async () => {
+					session = await TestSession.connected(1);
+
+					const store = new TestStore<Indexable>({
+						docs: new Documents<Document, Indexable>(),
+					});
+
+					await session.peers[0].open(store, {
+						args: {
+							replicate: { factor: 1 },
+							index: {
+								type: Indexable,
+								transform: (doc) => new Indexable(doc),
+							},
+						},
+					});
+
+					await store.docs.put(new Document({ id: "1", name: "alpha" }));
+
+					const onResultsBatches: Indexable[][] = [];
+					const iterator = store.docs.index.iterate(
+						{},
+						{
+							resolve: false,
+							updates: {
+								onResults: (batch) => {
+									onResultsBatches.push(batch as Indexable[]);
+								},
+							},
+						},
+					);
+
+					const next = await iterator.next(1);
+					expect(next).to.have.length(1);
+					expect(next[0]).to.be.instanceOf(Indexable);
+					expect(next[0].nameTransformed).to.equal("ALPHA");
+					expect((next[0] as any).name).to.be.undefined;
+					expect(onResultsBatches).to.have.length(1);
+					expect(onResultsBatches[0][0]).to.equal(next[0]);
+				});
+
+				it("emits resolved documents to onResults when resolve is true", async () => {
+					session = await TestSession.connected(1);
+
+					const store = new TestStore<Indexable>({
+						docs: new Documents<Document, Indexable>(),
+					});
+
+					await session.peers[0].open(store, {
+						args: {
+							replicate: { factor: 1 },
+							index: {
+								type: Indexable,
+								transform: (doc) => new Indexable(doc),
+							},
+						},
+					});
+
+					await store.docs.put(new Document({ id: "1", name: "beta" }));
+
+					const onResultsBatches: Document[][] = [];
+					const iterator = store.docs.index.iterate(
+						{},
+						{
+							resolve: true,
+							updates: {
+								onResults: (batch) => {
+									onResultsBatches.push(batch);
+								},
+							},
+						},
+					);
+
+					const next = await iterator.next(1);
+					expect(next).to.have.length(1);
+					expect(next[0]).to.be.instanceOf(Document);
+					expect(next[0].name).to.equal("beta");
+					const indexed = (next[0] as any).__indexed as Indexable;
+					expect(indexed).to.be.instanceOf(Indexable);
+					expect(indexed.nameTransformed).to.equal("BETA");
+					expect(onResultsBatches).to.have.length(1);
+					expect(onResultsBatches[0][0]).to.equal(next[0]);
+					const onResultsIndexed = (onResultsBatches[0][0] as any).__indexed;
+					expect(onResultsIndexed).to.equal(indexed);
+				});
+
+				it("returns documents even if indexed representation arrives first", async () => {
+					session = await TestSession.connected(1);
+
+					const store = new TestStore<Indexable>({
+						docs: new Documents<Document, Indexable>(),
+					});
+
+					await session.peers[0].open(store, {
+						args: {
+							replicate: { factor: 1 },
+							index: {
+								type: Indexable,
+								transform: (doc) => new Indexable(doc),
+								includeIndexed: true,
+							},
+						},
+					});
+
+					const originalProcessQuery = store.docs.index.processQuery.bind(
+						store.docs.index,
+					) as (...args: any[]) => Promise<any>;
+					const processQueryStub = sinon
+						.stub(store.docs.index as any, "processQuery")
+						.callsFake(async (...args: any[]) => {
+							const response = await originalProcessQuery(...args);
+							if (response.results.length > 0) {
+								const docResult = response.results[0];
+								response.results.push(
+									new ResultIndexedValue({
+										context: docResult.context,
+										source: serialize(docResult.indexed),
+										indexed: docResult.indexed,
+										entries: [],
+									}),
+								);
+							}
+							response.results.sort((a: any, b: any) => {
+								const aIndexed = a instanceof ResultIndexedValue;
+								const bIndexed = b instanceof ResultIndexedValue;
+								if (aIndexed === bIndexed) {
+									return 0;
+								}
+								return aIndexed ? -1 : 1;
+							});
+							return response;
+						});
+
+					let iterator: ReturnType<typeof store.docs.index.iterate> | undefined;
+					try {
+						await store.docs.put(new Document({ id: "mix", name: "gamma" }));
+
+						let observed: any[] | undefined;
+						iterator = store.docs.index.iterate(
+							{},
+							{
+								updates: {
+									onResults: (batch) => {
+										observed = batch;
+									},
+								},
+							},
+						);
+
+						await iterator.next(1);
+						expect(observed).to.exist;
+						expect(observed!.every((entry) => entry instanceof Document)).to.be
+							.true;
+					} finally {
+						processQueryStub.restore();
+						await iterator?.close();
+						await session.stop();
+					}
 				});
 			});
 		});
