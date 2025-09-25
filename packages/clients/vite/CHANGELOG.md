@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.36](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.35...vite-v1.0.36) (2025-09-25)
+
+
+### Bug Fixes
+
+* update vite ([7a5df57](https://github.com/dao-xyz/peerbit/commit/7a5df5757a21f29c1cd7f8bf4d4a8387c3393b0d))
+
 ## [1.0.35](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.34...vite-v1.0.35) (2025-09-25)
 
 
