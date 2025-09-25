@@ -456,6 +456,14 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.13.9](https://github.com/dao-xyz/peerbit/compare/document-v9.13.8...document-v9.13.9) (2025-09-25)
+
+
+### Bug Fixes
+
+* correctly handle includeIndexed ([e84bbf7](https://github.com/dao-xyz/peerbit/commit/e84bbf708168755852be1a0bd4a9ee311e18ac76))
+* lazy init of abort controllers and index cache in iterator ([1e77ff4](https://github.com/dao-xyz/peerbit/commit/1e77ff400b179f4728f406e4d8ea1ed6b8bb61a8))
+
 ## [9.13.8](https://github.com/dao-xyz/peerbit/compare/document-v9.13.7...document-v9.13.8) (2025-09-25)
 
 

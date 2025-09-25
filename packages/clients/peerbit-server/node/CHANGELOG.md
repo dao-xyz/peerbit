@@ -452,6 +452,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.8.12](https://github.com/dao-xyz/peerbit/compare/server-v5.8.11...server-v5.8.12) (2025-09-25)
+
+
+### Bug Fixes
+
+* bump axios ([40eedc0](https://github.com/dao-xyz/peerbit/commit/40eedc0f5c9784a05a95bf2ca1ef1997961eed2e))
+
 ## [5.8.11](https://github.com/dao-xyz/peerbit/compare/server-v5.8.10...server-v5.8.11) (2025-09-25)
 
 
