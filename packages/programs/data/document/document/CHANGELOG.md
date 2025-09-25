@@ -456,6 +456,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.13.10](https://github.com/dao-xyz/peerbit/compare/document-v9.13.9...document-v9.13.10) (2025-09-25)
+
+
+### Bug Fixes
+
+* update resolve handling in DocumentIndex and add tests for onResults behavior ([70f50dc](https://github.com/dao-xyz/peerbit/commit/70f50dcc6e74567d63072aa20e016b8a8647253b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/rpc bumped from 5.3.25 to 5.3.26
+    * @peerbit/shared-log bumped from 11.5.4 to 11.5.5
+    * @peerbit/document-interface bumped from ^2.2.23 to ^2.2.24
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.2.7 to 2.2.8
+
 ## [9.13.9](https://github.com/dao-xyz/peerbit/compare/document-v9.13.8...document-v9.13.9) (2025-09-25)
 
 
