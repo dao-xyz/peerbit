@@ -20,7 +20,7 @@
 		"@types/react-dom": "^18.2.5",
 		"@vitejs/plugin-react": "^4.2.1",
 		"@peerbit/vite": "*",
-		"vite": "^6.0.6"
+		"vite": "^7.1.7"
 	},
 	"browserslist": {
 		"production": [
