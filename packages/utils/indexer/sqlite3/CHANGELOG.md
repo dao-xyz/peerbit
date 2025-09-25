@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.28](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.27...indexer-sqlite3-v1.2.28) (2025-09-25)
+
+
+### Bug Fixes
+
+* update better-sqlite3 ([fe122f7](https://github.com/dao-xyz/peerbit/commit/fe122f7026d41cb9f6cd0208c772cdd0d4a729c1))
+
 ## [1.2.27](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.26...indexer-sqlite3-v1.2.27) (2025-08-26)
 
 
