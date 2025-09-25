@@ -2048,19 +2048,35 @@ export class DocumentIndex<
 				buffer: BufferedResult<types.ResultTypeFromRequest<R, T, I> | I, I>[];
 			}
 		> = new Map();
-		const visited = new Set<string | number | bigint>();
-		const indexedPlaceholders = new Map<
-			string | number | bigint,
-			BufferedResult<types.ResultTypeFromRequest<R, T, I> | I, I>
-		>();
+		const visited = new Set<indexerTypes.IdPrimitive>();
+		let indexedPlaceholders:
+			| Map<
+					indexerTypes.IdPrimitive,
+					BufferedResult<types.ResultTypeFromRequest<R, T, I> | I, I>
+			  >
+			| undefined;
+		const ensureIndexedPlaceholders = () => {
+			if (!indexedPlaceholders) {
+				indexedPlaceholders = new Map<
+					string | number | bigint,
+					BufferedResult<types.ResultTypeFromRequest<R, T, I> | I, I>
+				>();
+			}
+			return indexedPlaceholders;
+		};
 
 		let done = false;
 		let drain = false; // if true, close on empty once (overrides manual)
 		let first = false;
 
 		// TODO handle join/leave while iterating
-		const controller = new AbortController();
-
+		const controller: AbortController | undefined = undefined;
+		const ensureController = () => {
+			if (!controller) {
+				return new AbortController();
+			}
+			return controller;
+		};
 		let totalFetchedCounter = 0;
 		let lastValueInOrder:
 			| {
@@ -2130,7 +2146,7 @@ export class DocumentIndex<
 
 			if (options.remote.reach?.discover) {
 				warmupPromise = this.waitFor(options.remote.reach.discover, {
-					signal: controller.signal,
+					signal: ensureController().signal,
 					seek: "present",
 					timeout: waitForTime ?? DEFAULT_TIMEOUT,
 				});
@@ -2150,7 +2166,7 @@ export class DocumentIndex<
 					eager: options.remote.reach?.eager,
 					settle: "any",
 					timeout: waitPolicy.timeout ?? DEFAULT_TIMEOUT,
-					signal: controller.signal,
+					signal: ensureController().signal,
 					onTimeout: waitPolicy.onTimeout,
 				});
 				warmupPromise = warmupPromise
@@ -2211,7 +2227,7 @@ export class DocumentIndex<
 									this.indexByResolver(result.value),
 								).primitive;
 								if (result instanceof types.ResultValue) {
-									const existingIndexed = indexedPlaceholders.get(indexKey);
+									const existingIndexed = indexedPlaceholders?.get(indexKey);
 									if (existingIndexed) {
 										existingIndexed.value =
 											result.value as types.ResultTypeFromRequest<R, T, I>;
@@ -2221,7 +2237,7 @@ export class DocumentIndex<
 											result,
 											results.results,
 										);
-										indexedPlaceholders.delete(indexKey);
+										indexedPlaceholders?.delete(indexKey);
 										continue;
 									}
 									if (visited.has(indexKey)) {
@@ -2241,7 +2257,7 @@ export class DocumentIndex<
 								} else {
 									if (
 										visited.has(indexKey) &&
-										!indexedPlaceholders.has(indexKey)
+										!indexedPlaceholders?.has(indexKey)
 									) {
 										continue;
 									}
@@ -2257,7 +2273,7 @@ export class DocumentIndex<
 										indexed,
 									};
 									buffer.push(placeholder);
-									indexedPlaceholders.set(indexKey, placeholder);
+									ensureIndexedPlaceholders().set(indexKey, placeholder);
 								}
 							}
 
@@ -2351,7 +2367,7 @@ export class DocumentIndex<
 											).primitive;
 											if (result instanceof types.ResultValue) {
 												const existingIndexed =
-													indexedPlaceholders.get(keyPrimitive);
+													indexedPlaceholders?.get(keyPrimitive);
 												if (existingIndexed) {
 													existingIndexed.value =
 														result.value as types.ResultTypeFromRequest<
@@ -2370,7 +2386,7 @@ export class DocumentIndex<
 																I
 															>[],
 														);
-													indexedPlaceholders.delete(keyPrimitive);
+													indexedPlaceholders?.delete(keyPrimitive);
 													continue;
 												}
 												if (visited.has(keyPrimitive)) {
@@ -2398,7 +2414,7 @@ export class DocumentIndex<
 											} else {
 												if (
 													visited.has(keyPrimitive) &&
-													!indexedPlaceholders.has(keyPrimitive)
+													!indexedPlaceholders?.has(keyPrimitive)
 												) {
 													continue;
 												}
@@ -2414,7 +2430,10 @@ export class DocumentIndex<
 													indexed,
 												};
 												peerBuffer.buffer.push(placeholder);
-												indexedPlaceholders.set(keyPrimitive, placeholder);
+												ensureIndexedPlaceholders().set(
+													keyPrimitive,
+													placeholder,
+												);
 											}
 										}
 									}
@@ -2445,8 +2464,11 @@ export class DocumentIndex<
 								.request(remoteCollectRequest, {
 									...options,
 									signal: options?.signal
-										? AbortSignal.any([options.signal, controller.signal])
-										: controller.signal,
+										? AbortSignal.any([
+												options.signal,
+												ensureController().signal,
+											])
+										: ensureController().signal,
 									priority: 1,
 									mode: new SilentDelivery({ to: [peer], redundancy: 1 }),
 								})
@@ -2491,7 +2513,7 @@ export class DocumentIndex<
 															).primitive;
 															if (result instanceof types.ResultValue) {
 																const existingIndexed =
-																	indexedPlaceholders.get(indexKey);
+																	indexedPlaceholders?.get(indexKey);
 																if (existingIndexed) {
 																	existingIndexed.value =
 																		result.value as types.ResultTypeFromRequest<
@@ -2511,7 +2533,7 @@ export class DocumentIndex<
 																				I
 																			>[],
 																		);
-																	indexedPlaceholders.delete(indexKey);
+																	indexedPlaceholders?.delete(indexKey);
 																	continue;
 																}
 																if (visited.has(indexKey)) {
@@ -2542,7 +2564,7 @@ export class DocumentIndex<
 															} else {
 																if (
 																	visited.has(indexKey) &&
-																	!indexedPlaceholders.has(indexKey)
+																	!indexedPlaceholders?.has(indexKey)
 																) {
 																	continue;
 																}
@@ -2558,7 +2580,10 @@ export class DocumentIndex<
 																	indexed,
 																};
 																peerBuffer.buffer.push(placeholder);
-																indexedPlaceholders.set(indexKey, placeholder);
+																ensureIndexedPlaceholders().set(
+																	indexKey,
+																	placeholder,
+																);
 															}
 														}
 													}
@@ -2625,7 +2650,7 @@ export class DocumentIndex<
 					const consumedId = indexerTypes.toId(
 						this.indexByResolver(result.indexed),
 					).primitive;
-					indexedPlaceholders.delete(consumedId);
+					indexedPlaceholders?.delete(consumedId);
 				}
 			}
 
@@ -2672,7 +2697,9 @@ export class DocumentIndex<
 
 		let cleanupAndDone = () => {
 			cleanup();
-			controller.abort(new AbortError("Iterator closed"));
+			(controller as AbortController | undefined)?.abort(
+				new AbortError("Iterator closed"),
+			);
 			this.prefetch?.accumulator.clear(queryRequestCoerced);
 			this.processCloseIteratorRequest(
 				queryRequestCoerced,
@@ -2869,7 +2896,7 @@ export class DocumentIndex<
 								).primitive;
 								if (removedIds.has(id)) {
 									matchedRemovedIds.add(id);
-									indexedPlaceholders.delete(id);
+									indexedPlaceholders?.delete(id);
 									return false;
 								}
 								return true;
@@ -2931,14 +2958,14 @@ export class DocumentIndex<
 							const id = indexerTypes.toId(
 								this.indexByResolver(indexedCandidate),
 							).primitive;
-							const existingIndexed = indexedPlaceholders.get(id);
+							const existingIndexed = indexedPlaceholders?.get(id);
 							if (existingIndexed) {
 								if (resolve) {
 									existingIndexed.value = added as any;
 									existingIndexed.context = added.__context;
 									existingIndexed.from = this.node.identity.publicKey;
 									existingIndexed.indexed = indexedCandidate;
-									indexedPlaceholders.delete(id);
+									indexedPlaceholders?.delete(id);
 								}
 								continue;
 							}
@@ -2955,7 +2982,7 @@ export class DocumentIndex<
 							};
 							buf.buffer.push(placeholder);
 							if (!resolve) {
-								indexedPlaceholders.set(id, placeholder);
+								ensureIndexedPlaceholders().set(id, placeholder);
 							}
 							hasRelevantChange = true;
 							changeForCallback.added.push(added);
@@ -3014,10 +3041,10 @@ export class DocumentIndex<
 				setTimeout(() => {
 					signalUpdate();
 				}, waitForTime);
-			controller.signal.addEventListener("abort", () => signalUpdate());
+			ensureController().signal.addEventListener("abort", () => signalUpdate());
 			fetchedFirstForRemote = new Set<string>();
 			joinListener = this.attachJoinListener({
-				signal: controller.signal,
+				signal: ensureController().signal,
 				eager: options.remote.reach?.eager,
 				onPeer: async (pk) => {
 					if (done) return;
