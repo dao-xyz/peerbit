@@ -903,7 +903,7 @@ export class DocumentIndex<
 			return queue.queue.length + queue.keptInIndex;
 		}
 
-		return this._resumableIterators.getPending(cursorId);
+		return this._resumableIterators.getPending(cursorId)
 	}
 
 	get hasPending() {
@@ -2081,7 +2081,6 @@ export class DocumentIndex<
 			done = true;
 		};
 		let unsetDone = () => {
-			cleanup();
 			done = false;
 		};
 		let cleanup = () => {
@@ -2745,33 +2744,71 @@ export class DocumentIndex<
 			};
 
 			const onChange = async (evt: CustomEvent<DocumentsChange<T, I>>) => {
+	
 				// Optional filter to mutate/suppress change events
 				let filtered: DocumentsChange<T, I> | void = evt.detail;
 				if (mergePolicy?.merge?.filter) {
 					filtered = await mergePolicy.merge?.filter(evt.detail);
 				}
 				if (filtered) {
+					const changeForCallback: DocumentsChange<T, I> = {
+						added: [],
+						removed: [],
+					};
+					let hasRelevantChange = false;
+
 					// Remove entries that were deleted from all pending structures
 					if (filtered.removed?.length) {
-						// Remove from peer buffers
+						const removedIds = new Set<string | number | bigint>();
+						for (const removed of filtered.removed) {
+							const id = indexerTypes.toId(
+								this.indexByResolver(removed.__indexed),
+							).primitive;
+							removedIds.add(id);
+						}
+						const matchedRemovedIds = new Set<string | number | bigint>();
 						for (const [_peer, entry] of peerBufferMap) {
+							if (entry.buffer.length === 0) {
+								continue;
+							}
 							entry.buffer = entry.buffer.filter((x) => {
 								const id = indexerTypes.toId(
 									this.indexByResolver(x.indexed),
 								).primitive;
-								return !filtered!.removed!.some(
-									(r) =>
-										indexerTypes.toId(this.indexByResolver(r.__indexed))
-											.primitive === id,
-								);
+								if (removedIds.has(id)) {
+									matchedRemovedIds.add(id);
+									return false;
+								}
+								return true;
 							});
 						}
-						// no non-sorted queues in simplified mode
+						if (matchedRemovedIds.size > 0) {
+							hasRelevantChange = true;
+							for (const removed of filtered.removed) {
+								const id = indexerTypes.toId(
+									this.indexByResolver(removed.__indexed),
+								).primitive;
+								if (matchedRemovedIds.has(id)) {
+									changeForCallback.removed.push(removed);
+								}
+							}
+						}
 					}
 
 					// Add new entries per strategy (sorted-only)
 					if (filtered.added?.length) {
-						const buf = peerBufferMap.get(localHash)!;
+						let buf = peerBufferMap.get(localHash);
+						if (!buf) {
+							const created: {
+								kept: number;
+								buffer: BufferedResult<
+									types.ResultTypeFromRequest<R, T, I> | I,
+									I
+								>[];
+							} = { kept: 0, buffer: [] };
+							peerBufferMap.set(localHash, created);
+							buf = created;
+						}
 						const filterIndex = hasQueryFiltersForUpdates
 							? await createUpdateFilterIndex()
 							: undefined;
@@ -2812,20 +2849,24 @@ export class DocumentIndex<
 								from: this.node.identity.publicKey,
 								indexed: indexedCandidate,
 							});
+							hasRelevantChange = true;
+							changeForCallback.added.push(added);
 						}
-						buf.kept = buf.buffer.length;
 					}
 
-					if (
-						(filtered.added?.length ?? 0) > 0 ||
-						(filtered.removed?.length ?? 0) > 0
-					) {
+
+					if (hasRelevantChange) {
 						if (!pendingResultsReason) {
 							pendingResultsReason = "change";
 						}
+						if (
+							changeForCallback.added.length > 0 ||
+							changeForCallback.removed.length > 0
+						) {
+							updateCallbacks?.onChange?.(changeForCallback);
+						}
 					}
 				}
-				updateCallbacks?.onChange?.(evt.detail); // TODO only emit if changes were relevant?
 				signalUpdate();
 			};
 
@@ -2952,11 +2993,11 @@ export class DocumentIndex<
 			next,
 			done: doneFn,
 			pending: () => {
-				let kept = 0;
-				for (const [_, buffer] of peerBufferMap) {
-					kept += buffer.kept;
+				let pendingCount = 0;
+				for (const buffer of peerBufferMap.values()) {
+					pendingCount += buffer.kept + buffer.buffer.length;
 				}
-				return kept; // TODO this should be more accurate
+				return pendingCount;
 			},
 			all: async () => {
 				drain = true;

@@ -3733,7 +3733,7 @@ describe("index", () => {
 				await store.docs.put(new Document({ id: "2" })); // filtered out by id
 
 				await waitForResolved(() => expect(filterCalls).to.equal(3));
-				await waitForResolved(() => expect(evtCalls).to.equal(3));
+				await waitForResolved(() => expect(evtCalls).to.equal(1)); // only one event, because we filtered out the removal
 				const rest = await iterator.all();
 				expect(rest).to.have.length(1);
 				expect(rest[0].id).to.equal("3");
@@ -3825,6 +3825,113 @@ describe("index", () => {
 				expect(all.map((d) => d.id)).to.deep.equal(["1", "3", "5"]);
 			});
 
+			describe("pending", () => {
+				it("kept reflects the total amount of remaining document", async () => {
+					session = await TestSession.connected(1);
+
+					const store = new TestStore({ docs: new Documents<Document>() });
+					await session.peers[0].open(store, {
+						args: { replicate: { factor: 1 } },
+					});
+
+					let iterator:
+						| Awaited<ReturnType<typeof store.docs.index.iterate>>
+						| undefined;
+					try {
+						const total = 20;
+						for (let i = 0; i < total; i++) {
+							await store.docs.put(new Document({ id: `doc-${i}` }));
+						}
+
+						iterator = store.docs.index.iterate(
+							{ sort: { key: "id", direction: SortDirection.ASC } },
+							{ closePolicy: "manual" },
+						);
+						if (!iterator) {
+							throw new Error("Failed to create iterator");
+						}
+
+						const firstBatch = await iterator.next(5);
+						expect(firstBatch).to.have.length(5);
+
+						expect(iterator.pending()).to.equal(total - firstBatch.length);
+					} finally {
+						await iterator?.close();
+						await store.close();
+						await session.stop();
+					}
+				});
+
+				it("kepts are updated correctly onChange", async () => {
+					session = await TestSession.connected(1);
+
+					const store = new TestStore({ docs: new Documents<Document>() });
+					await session.peers[0].open(store, {
+						args: { replicate: { factor: 1 } },
+					});
+
+					let iterator:
+						| Awaited<ReturnType<typeof store.docs.index.iterate>>
+						| undefined;
+					const changeEvents: DocumentsChange<Document, Document>[] = [];
+					const changeListener = (
+						change: DocumentsChange<Document, Document>,
+					) => {
+						changeEvents.push(change);
+					};
+					const total = 12;
+					for (let i = 0; i < total; i++) {
+						await store.docs.put(new Document({ id: `doc-${i}` }));
+					}
+
+					iterator = store.docs.index.iterate(
+						{ sort: { key: "id", direction: SortDirection.ASC } },
+						{ closePolicy: "manual", updates: { merge: true, onChange: changeListener } },
+					);
+					if (!iterator) {
+						throw new Error("Failed to create iterator");
+					}
+
+					const initialBatch = await iterator.next(5);
+					expect(initialBatch).to.have.length(5);
+
+					const baselinePendingMaybe = iterator.pending();
+					if (baselinePendingMaybe == null) {
+						throw new Error("iterator.pending() returned undefined");
+					}
+					const baselinePending = baselinePendingMaybe;
+					expect(baselinePending).to.equal(total - initialBatch.length);
+
+					const newDocId = `doc-${total}`;
+					await store.docs.put(new Document({ id: newDocId }));
+
+					await waitForResolved(
+						() =>
+							expect(
+								changeEvents.some((evt) =>
+									evt.added?.some((doc) => doc.id === newDocId),
+								),
+							).to.be.true,
+					);
+					const addedIds = changeEvents
+						.flatMap((evt) => evt.added || [])
+						.map((doc) => doc.id);
+					expect(addedIds).to.include(newDocId);
+
+					await waitForResolved(() =>
+						expect(iterator!.pending()).to.equal(baselinePending + 1),
+					);
+
+					const update = await iterator.next(1);
+					expect(update).to.have.length(1);
+					expect(update[0].id).to.equal(newDocId);
+
+					await waitForResolved(() =>
+						expect(iterator!.pending()).to.equal(baselinePending),
+					);
+				});
+			});
+
 			describe("onResults", () => {
 				it("can drain results onChange", async () => {
 					session = await TestSession.disconnected(1);
@@ -3857,6 +3964,7 @@ describe("index", () => {
 								const out = await iterator.next(100);
 								outCountersOnDrain.push(out);
 							} catch (e) {
+								// eslint-disable-next-line no-console
 								console.error("Error draining iterator", e);
 							} finally {
 								draining = false;
