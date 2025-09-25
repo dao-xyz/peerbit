@@ -76,7 +76,7 @@
 		"shx": "^0.3.4"
 	},
 	"dependencies": {
-		"axios": "^1.4.0",
+		"axios": "^1.12.2",
 		"chalk": "^5.3.0",
 		"peerbit": "4.3.6",
 		"yargs": "^17.7.2",
