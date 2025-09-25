@@ -2008,7 +2008,7 @@ export class DocumentIndex<
 		let queryRequestCoerced: types.SearchRequest | types.SearchRequestIndexed =
 			coerceQuery(queryRequest ?? {}, options);
 
-		let resolve = false;
+		let resolve = options?.resolve !== false;
 		if (
 			options?.remote &&
 			typeof options.remote !== "boolean" &&

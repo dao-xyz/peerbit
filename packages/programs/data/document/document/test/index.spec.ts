@@ -4078,6 +4078,49 @@ describe("index", () => {
 					);
 				});
 
+				const check = async <R extends boolean>(
+					store: TestStore<Indexable>,
+					resolve: boolean | undefined,
+					shouldResolve: R,
+				) => {
+					await store.docs.put(new Document({ id: "1", name: "alpha" }));
+
+					const onResultsBatches: any[][] = [];
+					const iterator = store.docs.index.iterate<R>(
+						{},
+						{
+							resolve: resolve as any,
+							updates: {
+								onResults: (batch) => {
+									onResultsBatches.push(batch);
+								},
+							},
+						},
+					);
+
+					const next = await iterator.next(1);
+					expect(next).to.have.length(1);
+					if (shouldResolve) {
+						let first = next[0] as Document;
+						expect(first).to.be.instanceOf(Document);
+						expect(first.name).to.equal("alpha");
+						const indexed = (next[0] as any).__indexed as Indexable;
+						expect(indexed).to.be.instanceOf(Indexable);
+						expect(indexed.nameTransformed).to.equal("ALPHA");
+						expect(onResultsBatches).to.have.length(1);
+						expect(onResultsBatches[0][0]).to.equal(next[0]);
+						const onResultsIndexed = (onResultsBatches[0][0] as any).__indexed;
+						expect(onResultsIndexed).to.equal(indexed);
+					} else {
+						let first = next[0] as Indexable;
+						expect(first).to.be.instanceOf(Indexable);
+						expect(first.nameTransformed).to.equal("ALPHA");
+						expect((first as any).name).to.be.undefined;
+						expect(onResultsBatches).to.have.length(1);
+						expect(onResultsBatches[0][0]).to.equal(first);
+					}
+				};
+
 				it("emits indexed results to onResults when resolve is false", async () => {
 					session = await TestSession.connected(1);
 
@@ -4095,28 +4138,7 @@ describe("index", () => {
 						},
 					});
 
-					await store.docs.put(new Document({ id: "1", name: "alpha" }));
-
-					const onResultsBatches: Indexable[][] = [];
-					const iterator = store.docs.index.iterate(
-						{},
-						{
-							resolve: false,
-							updates: {
-								onResults: (batch) => {
-									onResultsBatches.push(batch as Indexable[]);
-								},
-							},
-						},
-					);
-
-					const next = await iterator.next(1);
-					expect(next).to.have.length(1);
-					expect(next[0]).to.be.instanceOf(Indexable);
-					expect(next[0].nameTransformed).to.equal("ALPHA");
-					expect((next[0] as any).name).to.be.undefined;
-					expect(onResultsBatches).to.have.length(1);
-					expect(onResultsBatches[0][0]).to.equal(next[0]);
+					await check(store, false, false);
 				});
 
 				it("emits resolved documents to onResults when resolve is true", async () => {
@@ -4136,32 +4158,28 @@ describe("index", () => {
 						},
 					});
 
-					await store.docs.put(new Document({ id: "1", name: "beta" }));
+					await check(store, true, true);
+				});
 
-					const onResultsBatches: Document[][] = [];
-					const iterator = store.docs.index.iterate(
-						{},
-						{
-							resolve: true,
-							updates: {
-								onResults: (batch) => {
-									onResultsBatches.push(batch);
-								},
+				it("emits resolved documents to onResults when resolve is undefined", async () => {
+					// this behaviour is inline with that the iterator also returns resolved documents when resolve is undefined
+					session = await TestSession.connected(1);
+
+					const store = new TestStore<Indexable>({
+						docs: new Documents<Document, Indexable>(),
+					});
+
+					await session.peers[0].open(store, {
+						args: {
+							replicate: { factor: 1 },
+							index: {
+								type: Indexable,
+								transform: (doc) => new Indexable(doc),
 							},
 						},
-					);
+					});
 
-					const next = await iterator.next(1);
-					expect(next).to.have.length(1);
-					expect(next[0]).to.be.instanceOf(Document);
-					expect(next[0].name).to.equal("beta");
-					const indexed = (next[0] as any).__indexed as Indexable;
-					expect(indexed).to.be.instanceOf(Indexable);
-					expect(indexed.nameTransformed).to.equal("BETA");
-					expect(onResultsBatches).to.have.length(1);
-					expect(onResultsBatches[0][0]).to.equal(next[0]);
-					const onResultsIndexed = (onResultsBatches[0][0] as any).__indexed;
-					expect(onResultsIndexed).to.equal(indexed);
+					await check(store, undefined, true);
 				});
 
 				it("returns documents even if indexed representation arrives first", async () => {
