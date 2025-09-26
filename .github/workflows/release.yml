@@ -36,17 +36,20 @@ jobs:
         with:
           node-version: lts/*
           registry-url: 'https://registry.npmjs.org'
+      - uses: pnpm/action-setup@v4
+        if: ${{ steps.release.outputs.releases_created }}
+        with:
+          run_install: false
 
       - name: Install deps
+        if: ${{ steps.release.outputs.releases_created }}
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-          yarn
+          pnpm install --frozen-lockfile=false
 
       - name: Build Packages
         if: ${{ steps.release.outputs.releases_created }}
-        run: |
-          yarn
-          yarn build
+        run: pnpm run build
 
     # Release Please has already incremented versions and published tags, so we just
     # need to publish all unpublished versions to NPM here

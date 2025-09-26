@@ -48,7 +48,9 @@ import { ResumableIterators } from "./resumable-iterator.js";
 
 const WARNING_WHEN_ITERATING_FOR_MORE_THAN = 1e5;
 
-const logger = loggerFn({ module: "document-index" });
+const logger: ReturnType<typeof loggerFn> = loggerFn({
+	module: "document-index",
+});
 
 type BufferedResult<T, I extends Record<string, any>> = {
 	value: T;

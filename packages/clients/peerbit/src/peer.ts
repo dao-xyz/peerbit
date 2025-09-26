@@ -41,7 +41,9 @@ import {
 	createLibp2pExtended,
 } from "./libp2p.js";
 
-export const logger = loggerFn({ module: "client" });
+export const logger: ReturnType<typeof loggerFn> = loggerFn({
+	module: "client",
+});
 
 export type OptionalCreateOptions = {
 	libp2pExternal?: boolean;

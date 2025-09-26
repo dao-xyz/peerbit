@@ -160,7 +160,9 @@ export {
 	NoPeersError,
 };
 export { MAX_U32, MAX_U64, type NumberFromType };
-export const logger = loggerFn({ module: "shared-log" });
+export const logger: ReturnType<typeof loggerFn> = loggerFn({
+	module: "shared-log",
+});
 
 const getLatestEntry = (
 	entries: (ShallowOrFullEntry<any> | EntryWithRefs<any>)[],

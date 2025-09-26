@@ -7,7 +7,9 @@ import { RPC, type RPCResponse } from "@peerbit/rpc";
 import { type ReplicationOptions } from "@peerbit/shared-log";
 import { TrustedNetwork } from "@peerbit/trusted-network";
 
-const logger = loggerFn({ module: "clock-signer" });
+const logger: ReturnType<typeof loggerFn> = loggerFn({
+	module: "clock-signer",
+});
 const abs = (n: number | bigint) => (n < 0n ? -n : n);
 
 export abstract class Result {}

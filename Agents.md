@@ -2,12 +2,12 @@
 
 ## Building
 ```bash 
-yarn build 
+pnpm run build 
 ```
 
 ## Testing 
 ```bash
-yarn test
+pnpm run test
 ```
 
 Run specific test file
@@ -16,5 +16,4 @@ node ./node_modules/aegir/src/index.js run test \
   --roots ./packages/programs/data/shared-log -- -t node \
   --grep "will prune on put 300 joining on insertion concurrently"
 ```
-
 

@@ -12,7 +12,7 @@ import type {
 	WithMode,
 } from "@peerbit/stream-interface";
 
-export const logger = loggerFn({ module: "rpc" });
+export const logger: ReturnType<typeof loggerFn> = loggerFn({ module: "rpc" });
 export type RPCRequestResponseOptions<R> = {
 	amount?: number;
 	timeout?: number;

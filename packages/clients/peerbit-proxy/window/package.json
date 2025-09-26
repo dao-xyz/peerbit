@@ -67,7 +67,7 @@
 	"scripts": {
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
-		"test": "yarn --cwd ./e2e/browser test"
+		"test": "pnpm --dir ./e2e/browser test"
 	},
 	"localMaintainers": [
 		"dao.xyz"

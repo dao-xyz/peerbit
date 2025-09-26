@@ -19,6 +19,7 @@
 		]
 	},
 	"scripts": {
-		"test": "playwright test"
+		"test": "playwright test",
+		"build": "echo 'No build step for proxy-test-post-message'"
 	}
 }
