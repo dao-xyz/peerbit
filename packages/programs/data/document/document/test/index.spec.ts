@@ -1619,9 +1619,9 @@ describe("index", () => {
 					canSearch: (
 						| undefined
 						| ((
-								query: AbstractSearchRequest,
-								publicKey: PublicSignKey,
-						  ) => Promise<boolean>)
+							query: AbstractSearchRequest,
+							publicKey: PublicSignKey,
+						) => Promise<boolean>)
 					)[] = [];
 				before(async () => {
 					session = await TestSession.connected(peersCount);
@@ -1638,12 +1638,12 @@ describe("index", () => {
 						const store =
 							i > 0
 								? (await TestStore.load<TestStore>(
-										stores[0].address!,
-										session.peers[i].services.blocks,
-									))!
+									stores[0].address!,
+									session.peers[i].services.blocks,
+								))!
 								: new TestStore({
-										docs: new Documents<Document>(),
-									});
+									docs: new Documents<Document>(),
+								});
 						await session.peers[i].open(store, {
 							args: {
 								replicate: i === 0 ? { factor: 1 } : false,
@@ -1651,16 +1651,16 @@ describe("index", () => {
 									canRead:
 										i === 0
 											? (obj: any, key: any) => {
-													return canRead[i] ? canRead[i]!(obj, key) : true;
-												}
+												return canRead[i] ? canRead[i]!(obj, key) : true;
+											}
 											: undefined,
 									canSearch:
 										i === 0
 											? (query: any, key: any) => {
-													return canSearch[i]
-														? canSearch[i]!(query, key)
-														: true;
-												}
+												return canSearch[i]
+													? canSearch[i]!(query, key)
+													: true;
+											}
 											: undefined,
 								},
 							},
@@ -2217,7 +2217,7 @@ describe("index", () => {
 			});
 
 			describe("concurrency", () => {
-				before(() => {});
+				before(() => { });
 
 				/* let abortController: AbortController,
 					interval: ReturnType<typeof setInterval>;
@@ -2602,12 +2602,12 @@ describe("index", () => {
 						const store =
 							i > 0
 								? (await TestStore.load<TestStore>(
-										stores[0].address!,
-										session.peers[i].services.blocks,
-									))!
+									stores[0].address!,
+									session.peers[i].services.blocks,
+								))!
 								: new TestStore({
-										docs: new Documents<Document>(),
-									});
+									docs: new Documents<Document>(),
+								});
 
 						await session.peers[i].open(store, {
 							args: {
@@ -2824,7 +2824,7 @@ describe("index", () => {
 						@field({ type: "u64" })
 						[KEY]: bigint;
 
-						constructor(properties: { id: string; [KEY]: bigint }) {
+						constructor(properties: { id: string;[KEY]: bigint }) {
 							this.id = properties.id;
 							this[KEY] = properties[KEY];
 						}
@@ -4687,12 +4687,12 @@ describe("index", () => {
 				const store =
 					i > 0
 						? (await TestStoreSubPrograms.load<TestStoreSubPrograms>(
-								stores[0].store.address!,
-								session.peers[i].services.blocks,
-							))!
+							stores[0].store.address!,
+							session.peers[i].services.blocks,
+						))!
 						: new TestStoreSubPrograms({
-								docs: new Documents<SubProgram, SubProgramIndexable>(),
-							});
+							docs: new Documents<SubProgram, SubProgramIndexable>(),
+						});
 
 				await session.peers[i].open(store, {
 					args: {
@@ -5263,12 +5263,12 @@ describe("index", () => {
 				const store =
 					i > 0
 						? (await TestStore.load<TestStore<Indexable>>(
-								stores[0].address!,
-								session.peers[i].services.blocks,
-							))!
+							stores[0].address!,
+							session.peers[i].services.blocks,
+						))!
 						: new TestStore<Indexable>({
-								docs: new Documents<Document, Indexable>(),
-							});
+							docs: new Documents<Document, Indexable>(),
+						});
 				await session.peers[i].open(store, {
 					args: {
 						replicate: i === 0,
@@ -5378,16 +5378,22 @@ describe("index", () => {
 				for (const iterator of [
 					stores[0].docs.index.iterate({
 						sort: "id",
-					}),
+					}, {}),
+					stores[0].docs.index.iterate({
+						sort: "id",
+					}, { resolve: undefined }),
 					stores[1].docs.index.iterate({
 						sort: "id",
 					}),
+					stores[1].docs.index.iterate({
+						sort: "id",
+					}, { resolve: undefined }),
 				]) {
 					const first = await iterator.next(1);
-
 					const second = await iterator.next(2);
+
 					expect(first[0].name).to.eq("name1");
-					expect(first[0] instanceof Document).to.be.true;
+					expect(first[0] instanceof Document).to.be.true; // iterate without resolve property will resolve to true
 					expect(first[0].__indexed).to.be.instanceOf(Indexable);
 
 					expect(second[0].name).to.eq("name2");
@@ -5568,12 +5574,12 @@ describe("index", () => {
 					const store =
 						i > 0
 							? (await TestStore.load<TestStore>(
-									stores[0].address!,
-									session.peers[i].services.blocks,
-								))!
+								stores[0].address!,
+								session.peers[i].services.blocks,
+							))!
 							: new TestStore({
-									docs: new Documents<Document>(),
-								});
+								docs: new Documents<Document>(),
+							});
 					await session.peers[i].open(store);
 					stores.push(store);
 				}
@@ -6035,10 +6041,10 @@ describe("index", () => {
 			beforePrefetch?: Promise<void>;
 			data?: Uint8Array;
 			prefetch?:
-				| false
-				| {
-						strict?: boolean;
-				  };
+			| false
+			| {
+				strict?: boolean;
+			};
 		}) => {
 			const store = new TestStore({
 				docs: new Documents<Document>(),
@@ -6053,12 +6059,12 @@ describe("index", () => {
 							options?.prefetch === false
 								? false
 								: {
-										predictor: new MostCommonQueryPredictor(
-											mostCommonQueryPredictorThreshold,
-										),
-										strict: true,
-										...options?.prefetch,
-									},
+									predictor: new MostCommonQueryPredictor(
+										mostCommonQueryPredictorThreshold,
+									),
+									strict: true,
+									...options?.prefetch,
+								},
 					},
 				},
 			});
@@ -6097,9 +6103,9 @@ describe("index", () => {
 							options?.prefetch === false
 								? false
 								: {
-										strict: true,
-										...options?.prefetch,
-									},
+									strict: true,
+									...options?.prefetch,
+								},
 					},
 				},
 			});
@@ -6120,9 +6126,9 @@ describe("index", () => {
 							options?.prefetch === false
 								? false
 								: {
-										strict: true,
-										...options?.prefetch,
-									},
+									strict: true,
+									...options?.prefetch,
+								},
 					},
 				},
 			});

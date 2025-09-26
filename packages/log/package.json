@@ -74,8 +74,13 @@
 		"@peerbit/indexer-simple": "^1.1.19"
 	},
 	"devDependencies": {
+<<<<<<< Updated upstream
 		"@peerbit/test-utils": "2.2.8",
 		"@types/yallist": "^4.0.4",
+=======
+		"@peerbit/test-utils": "2.2.5",
+		"@types/yallist": "^5.0.4",
+>>>>>>> Stashed changes
 		"assert": "^2.0.0",
 		"json-stringify-deterministic": "^1.0.7"
 	},
