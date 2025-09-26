@@ -4,7 +4,9 @@ import { logger as loggerFn } from "@peerbit/logger";
 import PQueue from "p-queue";
 import type { Address } from "./address.js";
 
-export const logger = loggerFn({ module: "program-handler" });
+export const logger: ReturnType<typeof loggerFn> = loggerFn({
+	module: "program-handler",
+});
 
 type ProgramMergeStrategy = "replace" | "reject" | "reuse";
 export type ExtractArgs<T> = T extends CanOpen<infer Args> ? Args : never;

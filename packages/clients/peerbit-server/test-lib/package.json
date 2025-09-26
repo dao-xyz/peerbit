@@ -59,7 +59,7 @@
 	},
 	"scripts": {
 		"clean": "shx rm -rf dist/*",
-		"build": "yarn clean && tsc -p tsconfig.json; tsc -p tsconfig.json",
+		"build": "pnpm run clean && tsc -p tsconfig.json && tsc -p tsconfig.json",
 		"test": "aegir test -t node"
 	},
 	"devDependencies": {

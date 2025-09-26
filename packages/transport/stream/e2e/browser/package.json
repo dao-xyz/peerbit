@@ -19,7 +19,8 @@
 	},
 	"scripts": {
 		"test": "playwright test",
-		"lint": "aegir lint"
+		"lint": "aegir lint",
+		"build": "echo 'No build step for stream-browser-test'"
 	},
 	"dependencies": {
 		"@peerbit/stream": "*"

@@ -27,7 +27,9 @@ import PQueue from "p-queue";
 import { AnyBlockStore } from "./any-blockstore.js";
 import type { BlockStore } from "./interface.js";
 
-export const logger = loggerFn({ module: "blocks-remote" });
+export const logger: ReturnType<typeof loggerFn> = loggerFn({
+	module: "blocks-remote",
+});
 
 export class BlockMessage {}
 

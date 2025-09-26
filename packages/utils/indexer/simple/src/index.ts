@@ -3,7 +3,9 @@ import * as types from "@peerbit/indexer-interface";
 import { logger as loggerFn } from "@peerbit/logger";
 import { equals } from "uint8arrays";
 
-const logger = loggerFn({ module: "simple-index-engine" });
+const logger: ReturnType<typeof loggerFn> = loggerFn({
+	module: "simple-index-engine",
+});
 
 const getBatchFromResults = <T extends Record<string, any>>(
 	results: types.IndexedValue<T>[],

@@ -58,9 +58,9 @@
 	},
 	"scripts": {
 		"clean": "shx rm -rf lib/*",
-		"build": "yarn clean && yarn build-lib && yarn build-ui",
+		"build": "pnpm run clean && pnpm run build-lib && pnpm run build-ui",
 		"build-lib": "tsc -p tsconfig.json",
-		"build-ui": "cd ../frontend && yarn build && cd ../node",
+		"build-ui": "pnpm --dir ../frontend build",
 		"postbuild": "cp src/nginx-template.conf dist/src/ && cp -r ../frontend/dist/. dist/ui",
 		"test": "aegir test --t node",
 		"lint": "aegir lint"

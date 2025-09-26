@@ -18,7 +18,9 @@ import {
 } from "../ranges.js";
 import { SimpleSyncronizer } from "./simple.js";
 
-export const logger = loggerFn({ module: "shared-log" });
+export const logger: ReturnType<typeof loggerFn> = loggerFn({
+	module: "shared-log",
+});
 
 type NumberOrBigint = number | bigint;
 
