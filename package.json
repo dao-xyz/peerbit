@@ -80,7 +80,20 @@
 		"deploy": "pnpm run deploy:docs && pnpm run deploy:example",
 		"deploy:docs": "pnpm run docs && gh-pages --dist docs --dotfiles",
 		"fmt": "prettier --write '{*,**/*}.{js,ts,jsx,tsx,json,vue}'",
-		"postinstall": "mkdir -p node_modules/chai-extend && cp chai-global.js node_modules/chai-extend/chai-global.js && echo '{\"type\": \"module\"}' > node_modules/chai-extend/package.json && patch-package"
+		"postinstall": "mkdir -p node_modules/chai-extend && cp chai-global.js node_modules/chai-extend/chai-global.js && echo '{\"type\": \"module\"}' > node_modules/chai-extend/package.json"
+	},
+	"pnpm": {
+		"patchedDependencies": {
+			"cpy@11.1.0": "patches/cpy@11.1.0.patch"
+		},
+		"onlyBuiltDependencies": [
+			"@ipshipyard/node-datachannel",
+			"aws-sdk",
+			"better-sqlite3",
+			"classic-level",
+			"esbuild",
+			"protobufjs"
+		]
 	},
 	"devDependencies": {
 		"@playwright/test": "^1.47.0",
@@ -97,7 +110,6 @@
 		"eslint-plugin-n": "^17.10.2",
 		"gh-pages": "^5.0.0",
 		"mocha": "^10.7.3",
-		"patch-package": "^8.0.0",
 		"prettier": "^3.3.3",
 		"sinon": "^18.0.1",
 		"tinybench": "^3",

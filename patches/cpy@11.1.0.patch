@@ -1,7 +1,7 @@
-diff --git a/node_modules/cpy/index.js b/node_modules/cpy/index.js
-index bcfc09c..f2eeb0a 100644
---- a/node_modules/cpy/index.js
-+++ b/node_modules/cpy/index.js
+diff --git a/index.js b/index.js
+index bcfc09cf41aa0aa7db698b417bd4eee979121544..e0148ca8e229b7fd7466c49996a48c13af013a73 100644
+--- a/index.js
++++ b/index.js
 @@ -3,9 +3,9 @@ import EventEmitter from 'node:events';
  import path from 'node:path';
  import os from 'node:os';
@@ -28,7 +28,7 @@ index bcfc09c..f2eeb0a 100644
  	source,
  	destination,
 -	{concurrency = os.availableParallelism(), ...options} = {}, // eslint-disable-line n/no-unsupported-features/node-builtins
-+	{ concurrency = os.availableParallelism?.() || os.cpus().length, ...options } = {}, // eslint-disable-line n/no-unsupported-features/node-builtins
++	{ concurrency = os.availableParallelism?.() ?? os.cpus().length, ...options } = {}, // eslint-disable-line n/no-unsupported-features/node-builtins
  ) {
  	const copyStatus = new Map();
  
