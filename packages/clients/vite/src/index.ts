@@ -51,19 +51,19 @@ function copyToPublicPlugin(
 ) {
 	return {
 		name: "copy-to-public",
-        enforce: "pre" as const,
+		enforce: "pre" as const,
 		buildStart() {
-            // Ensure worker exists in public/ as a last-resort (CI safety), even if assets disabled
-            try {
-                // Copy the entire dist/peerbit directory from @peerbit/indexer-sqlite3
-                const peerbitDistDir = findLibraryInNodeModules(
-                    "@peerbit/indexer-sqlite3/dist/peerbit",
-                );
-                const destDir = path.resolve(resolveStaticPath(), "peerbit");
-                copyAssets(peerbitDistDir, destDir, "/");
-            } catch (_err) {
-                // ignore; optional best-effort
-            }
+			// Ensure worker exists in public/ as a last-resort (CI safety), even if assets disabled
+			try {
+				// Copy the entire dist/peerbit directory from @peerbit/indexer-sqlite3
+				const peerbitDistDir = findLibraryInNodeModules(
+					"@peerbit/indexer-sqlite3/dist/peerbit",
+				);
+				const destDir = path.resolve(resolveStaticPath(), "peerbit");
+				copyAssets(peerbitDistDir, destDir, "/");
+			} catch (_err) {
+				// ignore; optional best-effort
+			}
 			if (options?.assets) {
 				options.assets.forEach(({ src, dest }) => {
 					const sourcePath = path.resolve(src);
