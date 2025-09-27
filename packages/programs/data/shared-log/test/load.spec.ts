@@ -1,5 +1,5 @@
 // Include test utilities
-import { privateKeyFromRaw } from "@libp2p/crypto/keys";
+import { keys } from "@libp2p/crypto";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -58,7 +58,7 @@ describe("load", function () {
 			{
 				directory: "./tmp/shared-log/load-after-prune/" + uuid(),
 				libp2p: {
-					privateKey: privateKeyFromRaw(
+					privateKey: keys.privateKeyFromRaw(
 						new Uint8Array([
 							204, 234, 187, 172, 226, 232, 70, 175, 62, 211, 147, 91, 229, 157,
 							168, 15, 45, 242, 144, 98, 75, 58, 208, 9, 223, 143, 251, 52, 252,
@@ -72,7 +72,7 @@ describe("load", function () {
 			{
 				directory: "./tmp/shared-log/load-after-prune/" + uuid(),
 				libp2p: {
-					privateKey: privateKeyFromRaw(
+					privateKey: keys.privateKeyFromRaw(
 						new Uint8Array([
 							237, 55, 205, 86, 40, 44, 73, 169, 196, 118, 36, 69, 214, 122, 28,
 							157, 208, 163, 15, 215, 104, 193, 151, 177, 62, 231, 253, 120,

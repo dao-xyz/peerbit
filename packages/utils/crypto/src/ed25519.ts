@@ -1,5 +1,5 @@
 import { field, fixedArray, variant } from "@dao-xyz/borsh";
-import { publicKeyFromRaw } from "@libp2p/crypto/keys";
+import { keys } from "@libp2p/crypto";
 import type { PeerId } from "@libp2p/interface";
 import { peerIdFromPublicKey } from "@libp2p/peer-id";
 import sodium from "libsodium-wrappers";
@@ -37,7 +37,7 @@ export class Ed25519PublicKey extends PublicSignKey {
 	}
 
 	toPeerId(): PeerId {
-		return peerIdFromPublicKey(publicKeyFromRaw(this.publicKey));
+		return peerIdFromPublicKey(keys.publicKeyFromRaw(this.publicKey));
 	}
 
 	/* Don't use keyobject for publicKeys becuse it takes longer time to derive it compare to verifying with sodium
@@ -161,6 +161,6 @@ export class Ed25519Keypair extends Keypair implements Identity {
 	}
 
 	toPeerId(): PeerId {
-		return peerIdFromPublicKey(publicKeyFromRaw(this.publicKey.publicKey));
+		return peerIdFromPublicKey(keys.publicKeyFromRaw(this.publicKey.publicKey));
 	}
 }

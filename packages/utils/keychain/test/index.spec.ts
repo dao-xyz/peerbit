@@ -16,7 +16,10 @@ describe("keychain", () => {
 				await keychain.import({ keypair: kp, id: new Uint8Array([1, 2, 3]) });
 				expect(
 					(
-						await keychain.exportById(new Uint8Array([1, 2, 3]), Ed25519Keypair)
+						await keychain.exportById<Ed25519Keypair>(
+							new Uint8Array([1, 2, 3]),
+							Ed25519Keypair,
+						)
 					)?.equals(kp),
 				).to.be.true;
 				expect((await keychain.exportByKey(kp.publicKey))?.equals(kp)).to.be
@@ -33,7 +36,10 @@ describe("keychain", () => {
 				await keychain.import({ keypair: kp, id: new Uint8Array([1, 2, 3]) });
 				expect(
 					(
-						await keychain.exportById(new Uint8Array([1, 2, 3]), X25519Keypair)
+						await keychain.exportById<X25519Keypair>(
+							new Uint8Array([1, 2, 3]),
+							X25519Keypair,
+						)
 					)?.equals(xkp),
 				).to.be.true;
 				expect((await keychain.exportByKey(xkp.publicKey))?.equals(xkp)).to.be

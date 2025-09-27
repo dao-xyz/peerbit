@@ -2,10 +2,9 @@ import { field, fixedArray, variant, vec } from "@dao-xyz/borsh";
 import { Entry, EntryType, type ShallowEntry } from "@peerbit/log";
 import { Log } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
-import type { Logger } from "pino";
 import { TransportMessage } from "./message.js";
 
-const logger: Logger = loggerFn({ module: "exchange-heads" });
+const logger = loggerFn({ module: "exchange-heads" });
 
 /**
  * This thing allows use to faster sync since we can provide

@@ -59,14 +59,34 @@
 	"license": "MIT",
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
-		"@peerbit/logger": "1.0.4",
-		"@peerbit/program": "5.3.3",
-		"@peerbit/log": "4.1.8",
-		"@peerbit/rpc": "5.3.26",
-		"@peerbit/time": "2.2.0",
-		"@peerbit/riblt": "1.0.7"
+		"@libp2p/crypto": "^5.1.5",
+		"@peerbit/log": "workspace:*",
+		"@peerbit/logger": "workspace:*",
+		"@peerbit/program": "workspace:*",
+		"@peerbit/riblt": "workspace:*",
+		"@peerbit/rpc": "workspace:*",
+		"@peerbit/any-store": "workspace:*",
+		"@peerbit/blocks": "workspace:*",
+		"@peerbit/blocks-interface": "workspace:*",
+		"@peerbit/cache": "workspace:*",
+		"@peerbit/crypto": "workspace:*",
+		"@peerbit/indexer-interface": "workspace:*",
+		"@peerbit/indexer-sqlite3": "workspace:*",
+		"@peerbit/pubsub": "workspace:*",
+		"@peerbit/pubsub-interface": "workspace:*",
+		"@peerbit/stream-interface": "workspace:*",
+		"@peerbit/time": "workspace:*",
+		"json-stringify-deterministic": "^1.0.7",
+		"p-each-series": "^3.0.0",
+		"p-defer": "^4.0.0",
+		"p-queue": "^8.0.1",
+		"pidusage": "^3.0.2",
+		"pino": "^9.4.0",
+		"uint8arrays": "^5.1.0"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "^2.2.8"
+		"@peerbit/test-utils": "workspace:*",
+		"@types/libsodium-wrappers": "^0.7.14",
+		"@types/pidusage": "^2.0.5"
 	}
 }

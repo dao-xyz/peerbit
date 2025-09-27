@@ -1,7 +1,17 @@
 import fs from "fs";
+import { createRequire } from "module";
 import path from "path";
 import { type PluginOption } from "vite";
 import { viteStaticCopy } from "vite-plugin-static-copy";
+
+const requireFromPlugin = createRequire(import.meta.url);
+type Resolver = NodeRequire;
+let requireFromCwd: Resolver | undefined;
+try {
+	requireFromCwd = createRequire(path.join(process.cwd(), "package.json"));
+} catch (err) {
+	// ignore if no package.json – fall back to plugin resolver
+}
 
 function dontMinimizeCertainPackagesPlugin(
 	options: { packages?: string[] } = {},
@@ -58,7 +68,43 @@ const resolveStaticPath = () => {
 	}
 };
 const findLibraryInNodeModules = (library: string) => {
-	// scan upwards until we find the node_modules folder
+	const [packageName, distSuffix] = library.split("/dist/");
+	const resolvers: Resolver[] = [requireFromCwd, requireFromPlugin].filter(
+		(resolver): resolver is Resolver => resolver !== undefined,
+	);
+
+	for (const resolver of resolvers) {
+		// Try resolving the exact file first (works if it is exported)
+		try {
+			const resolved = resolver.resolve(library);
+			if (fs.existsSync(resolved)) {
+				return fs.realpathSync(resolved);
+			}
+		} catch (_err) {
+			// Ignore and fall back to package root resolution
+		}
+
+		try {
+			const packageJsonPath = resolver.resolve(`${packageName}/package.json`);
+			const packageRoot = path.dirname(packageJsonPath);
+			const candidatePaths = distSuffix
+				? [
+						path.join(packageRoot, "dist", distSuffix),
+						path.join(packageRoot, distSuffix),
+					]
+				: [packageRoot];
+
+			for (const candidate of candidatePaths) {
+				if (fs.existsSync(candidate)) {
+					return fs.realpathSync(candidate);
+				}
+			}
+		} catch (_err) {
+			// Try next resolver
+		}
+	}
+
+	// Legacy fallback: scan upwards for node_modules
 	let maxSearchDepth = 10;
 	let currentDir = process.cwd();
 	let nodeModulesDir = path.join(currentDir, "node_modules");
@@ -67,8 +113,6 @@ const findLibraryInNodeModules = (library: string) => {
 		currentDir = path.resolve(currentDir, "..");
 		nodeModulesDir = path.join(currentDir, "node_modules");
 
-		// we have found a .git folder, so we are at the root
-		// then stop
 		if (fs.existsSync(path.join(currentDir, ".git"))) {
 			break;
 		}
@@ -83,30 +127,38 @@ const findLibraryInNodeModules = (library: string) => {
 		throw new Error(`Library ${library} not found in node_modules`);
 	}
 
-	return libraryPath;
+	return fs.realpathSync(libraryPath);
 };
 
-let pathsToCopy = [
+const defaultAssetSources = [
 	"@peerbit/any-store-opfs/dist/peerbit",
 	"@peerbit/indexer-sqlite3/dist/peerbit",
 	"@peerbit/riblt/dist/rateless_iblt_bg.wasm",
 ];
+
+function resolveAssetLocations(sources: string[]) {
+	return sources.map((source) => ({
+		src: findLibraryInNodeModules(source),
+		dest: "peerbit/",
+	}));
+}
+
 export default (
 	options: {
 		packages?: string[];
-		assets?: { src: string; dest: string }[];
+		assets?: { src: string; dest: string }[] | null;
 	} = {},
 ): PluginOption[] => {
-	let defaultAssets = pathsToCopy.map((path) => {
-		return {
-			src: findLibraryInNodeModules(path),
-			dest: "peerbit/",
-		};
-	});
+	const includeDefaultAssets = options.assets === undefined;
+	const userAssets = Array.isArray(options.assets) ? options.assets : [];
+	const assetsToCopy = includeDefaultAssets
+		? [...resolveAssetLocations(defaultAssetSources), ...userAssets]
+		: userAssets;
+
 	return [
 		dontMinimizeCertainPackagesPlugin({ packages: options.packages }),
 		copyToPublicPlugin({
-			assets: [...defaultAssets, ...(options.assets || [])],
+			assets: assetsToCopy,
 		}),
 		viteStaticCopy({
 			targets: [

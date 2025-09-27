@@ -1,4 +1,4 @@
-import { privateKeyFromRaw } from "@libp2p/crypto/keys";
+import { keys } from "@libp2p/crypto";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -11,7 +11,7 @@ import { EventStore } from "../test/utils/stores/event-store.js";
 let session: TestSession = await TestSession.connected(3, [
 	{
 		libp2p: {
-			privateKey: await privateKeyFromRaw(
+			privateKey: await keys.privateKeyFromRaw(
 				new Uint8Array([
 					204, 234, 187, 172, 226, 232, 70, 175, 62, 211, 147, 91, 229, 157,
 					168, 15, 45, 242, 144, 98, 75, 58, 208, 9, 223, 143, 251, 52, 252,
@@ -24,7 +24,7 @@ let session: TestSession = await TestSession.connected(3, [
 	},
 	{
 		libp2p: {
-			privateKey: await privateKeyFromRaw(
+			privateKey: await keys.privateKeyFromRaw(
 				new Uint8Array([
 					237, 55, 205, 86, 40, 44, 73, 169, 196, 118, 36, 69, 214, 122, 28,
 					157, 208, 163, 15, 215, 104, 193, 151, 177, 62, 231, 253, 120, 122,
@@ -38,7 +38,7 @@ let session: TestSession = await TestSession.connected(3, [
 
 	{
 		libp2p: {
-			privateKey: await privateKeyFromRaw(
+			privateKey: await keys.privateKeyFromRaw(
 				new Uint8Array([
 					27, 246, 37, 180, 13, 75, 242, 124, 185, 205, 207, 9, 16, 54, 162,
 					197, 247, 25, 211, 196, 127, 198, 82, 19, 68, 143, 197, 8, 203, 18,

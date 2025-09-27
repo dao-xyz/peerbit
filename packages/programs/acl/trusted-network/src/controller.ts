@@ -21,9 +21,9 @@ import {
 	createIdentityGraphStore,
 	getFromByTo,
 	getPathGenerator,
-	getRelation,
 	getToByFrom,
 	hasPath,
+	getRelation as resolveRelation,
 } from "./identity-graph.js";
 
 const coercePublicKey = (publicKey: PublicSignKey | PeerId) => {
@@ -133,15 +133,22 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 	rootTrust: PublicSignKey;
 
 	@field({ type: Documents })
-	trustGraph: Documents<IdentityRelation, FromTo>;
+	trustGraph: Documents<IdentityRelation, FromTo> | undefined;
 
 	constructor(props: { id?: Uint8Array; rootTrust: PublicSignKey | PeerId }) {
 		super();
-		this.trustGraph = createIdentityGraphStore(props.id);
 		this.rootTrust = coercePublicKey(props.rootTrust);
 	}
 
+	ensureTrustGraph() {
+		if (!this.trustGraph) {
+			throw new Error("trustGraph is not initialized");
+		}
+		return this.trustGraph;
+	}
+
 	async open(options?: TrustedNetworkArgs) {
+		this.trustGraph = this.trustGraph || createIdentityGraphStore();
 		await this.trustGraph.open({
 			type: IdentityRelation,
 			canPerform: this.canPerform.bind(this),
@@ -167,7 +174,8 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 
 	async add(
 		trustee: PublicSignKey | PeerId,
-	): Promise<IdentityRelation | undefined> {
+		options?: AppendOptions<Operation>,
+	) {
 		const key =
 			trustee instanceof PublicSignKey
 				? trustee
@@ -182,7 +190,7 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 				to: key,
 				from: this.node.identity.publicKey,
 			});
-			await this.trustGraph.put(relation);
+			await this.ensureTrustGraph().put(relation);
 			return relation;
 		}
 		return existingRelation;
@@ -198,10 +206,10 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 		trustee: PublicSignKey | PeerId,
 		truster: PublicSignKey | PeerId = this.rootTrust,
 	) {
-		return getRelation(
-			coercePublicKey(truster),
+		return resolveRelation(
 			coercePublicKey(trustee),
-			this.trustGraph,
+			coercePublicKey(truster),
+			this.trustGraph!,
 		);
 	}
 

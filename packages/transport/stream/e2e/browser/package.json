@@ -23,6 +23,6 @@
 		"build": "echo 'No build step for stream-browser-test'"
 	},
 	"dependencies": {
-		"@peerbit/stream": "*"
+		"@peerbit/stream": "workspace:*"
 	}
 }

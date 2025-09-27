@@ -1,5 +1,5 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
-import { privateKeyFromRaw } from "@libp2p/crypto/keys";
+import { keys } from "@libp2p/crypto";
 import {
 	BlockRequest,
 	BlockResponse,
@@ -89,7 +89,7 @@ testSetups.forEach((setup) => {
 				session = await TestSession.connected(2, [
 					{
 						libp2p: {
-							privateKey: privateKeyFromRaw(
+							privateKey: keys.privateKeyFromRaw(
 								new Uint8Array([
 									204, 234, 187, 172, 226, 232, 70, 175, 62, 211, 147, 91, 229,
 									157, 168, 15, 45, 242, 144, 98, 75, 58, 208, 9, 223, 143, 251,
@@ -105,7 +105,7 @@ testSetups.forEach((setup) => {
 					},
 					{
 						libp2p: {
-							privateKey: privateKeyFromRaw(
+							privateKey: keys.privateKeyFromRaw(
 								new Uint8Array([
 									237, 55, 205, 86, 40, 44, 73, 169, 196, 118, 36, 69, 214, 122,
 									28, 157, 208, 163, 15, 215, 104, 193, 151, 177, 62, 231, 253,
@@ -1608,7 +1608,7 @@ testSetups.forEach((setup) => {
 				session = await TestSession.connected(3, [
 					{
 						libp2p: {
-							privateKey: await privateKeyFromRaw(
+							privateKey: await keys.privateKeyFromRaw(
 								new Uint8Array([
 									237, 55, 205, 86, 40, 44, 73, 169, 196, 118, 36, 69, 214, 122,
 									28, 157, 208, 163, 15, 215, 104, 193, 151, 177, 62, 231, 253,
@@ -1621,7 +1621,7 @@ testSetups.forEach((setup) => {
 					},
 					{
 						libp2p: {
-							privateKey: privateKeyFromRaw(
+							privateKey: keys.privateKeyFromRaw(
 								new Uint8Array([
 									27, 246, 37, 180, 13, 75, 242, 124, 185, 205, 207, 9, 16, 54,
 									162, 197, 247, 25, 211, 196, 127, 198, 82, 19, 68, 143, 197,
@@ -1635,7 +1635,7 @@ testSetups.forEach((setup) => {
 
 					{
 						libp2p: {
-							privateKey: privateKeyFromRaw(
+							privateKey: keys.privateKeyFromRaw(
 								new Uint8Array([
 									204, 234, 187, 172, 226, 232, 70, 175, 62, 211, 147, 91, 229,
 									157, 168, 15, 45, 242, 144, 98, 75, 58, 208, 9, 223, 143, 251,
@@ -1940,7 +1940,7 @@ testSetups.forEach((setup) => {
 				session = await TestSession.disconnected(3, [
 					{
 						libp2p: {
-							privateKey: privateKeyFromRaw(
+							privateKey: keys.privateKeyFromRaw(
 								new Uint8Array([
 									48, 245, 17, 66, 32, 106, 72, 98, 203, 253, 86, 138, 133, 155,
 									243, 214, 8, 11, 14, 230, 18, 126, 173, 3, 62, 252, 92, 46,
@@ -1953,7 +1953,7 @@ testSetups.forEach((setup) => {
 					},
 					{
 						libp2p: {
-							privateKey: privateKeyFromRaw(
+							privateKey: keys.privateKeyFromRaw(
 								new Uint8Array([
 									113, 203, 231, 235, 7, 120, 3, 194, 138, 113, 131, 40, 251,
 									158, 121, 38, 190, 114, 116, 252, 100, 202, 107, 97, 119, 184,
@@ -1966,7 +1966,7 @@ testSetups.forEach((setup) => {
 					},
 					{
 						libp2p: {
-							privateKey: privateKeyFromRaw(
+							privateKey: keys.privateKeyFromRaw(
 								new Uint8Array([
 									27, 246, 37, 180, 13, 75, 242, 124, 185, 205, 207, 9, 16, 54,
 									162, 197, 247, 25, 211, 196, 127, 198, 82, 19, 68, 143, 197,

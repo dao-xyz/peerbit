@@ -1,5 +1,5 @@
 import { LevelDatastore } from "@dao-xyz/datastore-level";
-import { privateKeyFromRaw } from "@libp2p/crypto/keys";
+import { keys } from "@libp2p/crypto";
 import type { PeerId } from "@libp2p/interface";
 import type { KeychainComponents } from "@libp2p/keychain";
 import {
@@ -174,7 +174,7 @@ export class Peerbit implements ProgramClient {
 					Ed25519Keypair,
 				);
 				privateKey = exported
-					? privateKeyFromRaw(
+					? keys.privateKeyFromRaw(
 							concat([
 								exported.privateKey.privateKey,
 								exported.publicKey.publicKey,
