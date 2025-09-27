@@ -51,6 +51,34 @@ function copyToPublicPlugin(
 ) {
 	return {
 		name: "copy-to-public",
+        resolveId(id: string) {
+            // CI safety: map worker path references commonly used by sqlite3.browser.js
+            // so the bundler can resolve them even if apps don't pre-copy to public/
+            const known = new Map<string, string>([
+                [
+                    "public/peerbit/sqlite3.worker.min.js",
+                    "@peerbit/indexer-sqlite3/dist/peerbit/sqlite3.worker.min.js",
+                ],
+                [
+                    "/public/peerbit/sqlite3.worker.min.js",
+                    "@peerbit/indexer-sqlite3/dist/peerbit/sqlite3.worker.min.js",
+                ],
+                [
+                    "peerbit/sqlite3.worker.min.js",
+                    "@peerbit/indexer-sqlite3/dist/peerbit/sqlite3.worker.min.js",
+                ],
+            ]);
+            const target = known.get(id);
+            if (target) {
+                try {
+                    const resolved = findLibraryInNodeModules(target);
+                    return resolved;
+                } catch (_err) {
+                    // fall through to default resolver
+                }
+            }
+            return null;
+        },
 		buildStart() {
 			if (options?.assets) {
 				options.assets.forEach(({ src, dest }) => {
