@@ -1,9 +1,9 @@
 import { expect } from "chai";
-import { __test__ } from "../src/index.js";
+import { TEST_EXPORTS } from "../src/index.js";
 
 describe("assets toggle", () => {
 	it("exports defaultAssetSources for composing assets externally", () => {
-		expect(__test__.defaultAssetSources).to.be.an("array");
-		expect(__test__.defaultAssetSources.length).greaterThan(0);
+		expect(TEST_EXPORTS.defaultAssetSources).to.be.an("array");
+		expect(TEST_EXPORTS.defaultAssetSources.length).greaterThan(0);
 	});
 });

@@ -3,7 +3,7 @@ import path from "path";
 import {
 	type FileSystemLike,
 	type ModuleResolver,
-	__test__,
+	TEST_EXPORTS,
 } from "../src/index.js";
 
 describe("findLibraryInNodeModules", () => {
@@ -13,8 +13,8 @@ describe("findLibraryInNodeModules", () => {
 			isDirectory: () => existingPaths.has(path.resolve(p) + "/"),
 		}),
 		readdirSync: (_p: string) => [],
-		mkdirSync: () => void 0,
-		copyFileSync: () => void 0,
+		mkdirSync: () => undefined,
+		copyFileSync: () => undefined,
 		realpathSync: (p: string) => path.resolve(p),
 	});
 
@@ -30,7 +30,7 @@ describe("findLibraryInNodeModules", () => {
 				throw new Error("not found");
 			},
 		} as any;
-		const got = __test__.findLibraryInNodeModules(
+		const got = TEST_EXPORTS.findLibraryInNodeModules(
 			"@peerbit/indexer-sqlite3/dist/peerbit/sqlite3.worker.min.js",
 			{ fs: fsMock(new Set([path.resolve(asset)])), resolvers: [resolver] },
 		);
@@ -48,7 +48,7 @@ describe("findLibraryInNodeModules", () => {
 			},
 		} as any;
 		const candidate = path.join(pkgRoot, "dist/peerbit");
-		const got = __test__.findLibraryInNodeModules(
+		const got = TEST_EXPORTS.findLibraryInNodeModules(
 			"@peerbit/indexer-sqlite3/dist/peerbit",
 			{ fs: fsMock(new Set([candidate])), resolvers: [resolver] },
 		);
@@ -61,7 +61,7 @@ describe("findLibraryInNodeModules", () => {
 			"node_modules/@peerbit/any-store-opfs/dist/peerbit",
 		);
 		const existing = new Set([nm]);
-		const got = __test__.findLibraryInNodeModules(
+		const got = TEST_EXPORTS.findLibraryInNodeModules(
 			"@peerbit/any-store-opfs/dist/peerbit",
 			{
 				fs: fsMock(existing),

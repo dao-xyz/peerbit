@@ -5,7 +5,7 @@ import path from "path";
 import {
 	type FileSystemLike,
 	type ModuleResolver,
-	__test__,
+	TEST_EXPORTS,
 } from "../src/index.js";
 
 // Simulate a pnpm-like path resolution where resolver returns a .pnpm store path
@@ -42,7 +42,7 @@ describe("pnpm-style symlink resolution", () => {
 			realpathSync: (p: string) => fs.realpathSync(p),
 		};
 
-		const resolvedDir = __test__.findLibraryInNodeModules(
+		const resolvedDir = TEST_EXPORTS.findLibraryInNodeModules(
 			"@peerbit/indexer-sqlite3/dist/peerbit",
 			{
 				fs: fsLike,
