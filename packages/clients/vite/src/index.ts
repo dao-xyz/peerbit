@@ -51,6 +51,7 @@ function copyToPublicPlugin(
 ) {
 	return {
 		name: "copy-to-public",
+        enforce: "pre",
         config(config: any) {
             const alias: any[] = (config?.resolve?.alias || []).slice();
             const pushAlias = (find: string, target: string) => {
@@ -104,6 +105,22 @@ function copyToPublicPlugin(
             return null;
         },
 		buildStart() {
+            // Ensure worker exists in public/ as a last-resort (CI safety), even if assets disabled
+            try {
+                const workerSrc = findLibraryInNodeModules(
+                    "@peerbit/indexer-sqlite3/dist/peerbit/sqlite3.worker.min.js",
+                );
+                const workerDest = path.resolve(
+                    resolveStaticPath(),
+                    "peerbit/sqlite3.worker.min.js",
+                );
+                if (!fs.existsSync(workerDest)) {
+                    fs.mkdirSync(path.dirname(workerDest), { recursive: true });
+                    fs.copyFileSync(workerSrc, workerDest);
+                }
+            } catch (_err) {
+                // ignore; optional best-effort
+            }
 			if (options?.assets) {
 				options.assets.forEach(({ src, dest }) => {
 					const sourcePath = path.resolve(src);
