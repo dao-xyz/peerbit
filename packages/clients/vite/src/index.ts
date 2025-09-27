@@ -107,17 +107,12 @@ function copyToPublicPlugin(
 		buildStart() {
             // Ensure worker exists in public/ as a last-resort (CI safety), even if assets disabled
             try {
-                const workerSrc = findLibraryInNodeModules(
-                    "@peerbit/indexer-sqlite3/dist/peerbit/sqlite3.worker.min.js",
+                // Copy the entire dist/peerbit directory from @peerbit/indexer-sqlite3
+                const peerbitDistDir = findLibraryInNodeModules(
+                    "@peerbit/indexer-sqlite3/dist/peerbit",
                 );
-                const workerDest = path.resolve(
-                    resolveStaticPath(),
-                    "peerbit/sqlite3.worker.min.js",
-                );
-                if (!fs.existsSync(workerDest)) {
-                    fs.mkdirSync(path.dirname(workerDest), { recursive: true });
-                    fs.copyFileSync(workerSrc, workerDest);
-                }
+                const destDir = path.resolve(resolveStaticPath(), "peerbit");
+                copyAssets(peerbitDistDir, destDir, "/");
             } catch (_err) {
                 // ignore; optional best-effort
             }
