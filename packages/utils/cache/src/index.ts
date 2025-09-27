@@ -1,5 +1,5 @@
 // Fifo
-import yallist from "yallist";
+import { Yallist } from "yallist";
 
 export interface CacheData<T> {
 	value?: T | null;
@@ -10,7 +10,7 @@ type Key = string | bigint | number;
 export class Cache<T = undefined> {
 	private _map: Map<Key, CacheData<T>>;
 	private deleted: Set<Key>;
-	private list: yallist<Key>;
+	private list: Yallist<Key>;
 	currentSize: number;
 	deletedSize: number;
 
@@ -92,7 +92,7 @@ export class Cache<T = undefined> {
 	}
 
 	clear() {
-		this.list = yallist.create();
+		this.list = Yallist.create();
 		this._map = new Map();
 		this.deleted = new Set();
 		this.currentSize = 0;

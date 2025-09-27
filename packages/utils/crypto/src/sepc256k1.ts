@@ -6,7 +6,7 @@ import {
 	splitSignature,
 } from "@ethersproject/bytes";
 import { Wallet } from "@ethersproject/wallet";
-import { generateKeyPair, publicKeyFromRaw } from "@libp2p/crypto/keys";
+import { keys } from "@libp2p/crypto";
 import { type PeerId } from "@libp2p/interface";
 import { peerIdFromPublicKey } from "@libp2p/peer-id";
 import utf8 from "@protobufjs/utf8";
@@ -62,7 +62,7 @@ export class Secp256k1PublicKey extends PublicSignKey {
 	}
 
 	toPeerId(): PeerId {
-		return peerIdFromPublicKey(publicKeyFromRaw(this.publicKey));
+		return peerIdFromPublicKey(keys.publicKeyFromRaw(this.publicKey));
 	}
 
 	static fromPeerId(id: PeerId) {
@@ -123,7 +123,7 @@ export class Secp256k1Keypair extends Keypair implements Identity {
 	}
 
 	static async create(): Promise<Secp256k1Keypair> {
-		const generated = await generateKeyPair("secp256k1");
+		const generated = await keys.generateKeyPair("secp256k1");
 		const kp = new Secp256k1Keypair({
 			publicKey: new Secp256k1PublicKey({
 				publicKey: generated.publicKey.raw,
@@ -168,7 +168,7 @@ export class Secp256k1Keypair extends Keypair implements Identity {
 	}
 
 	toPeerId(): PeerId {
-		return peerIdFromPublicKey(publicKeyFromRaw(this.publicKey.publicKey));
+		return peerIdFromPublicKey(keys.publicKeyFromRaw(this.publicKey.publicKey));
 	}
 }
 

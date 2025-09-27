@@ -10,6 +10,7 @@ import {
 import type { Address, Program } from "@peerbit/program";
 import { PermissionedString } from "@peerbit/test-lib";
 import { TestSession } from "@peerbit/test-utils";
+import type { AbstractLevel } from "abstract-level";
 import { expect } from "chai";
 import fs from "fs";
 import type http from "http";
@@ -117,7 +118,14 @@ describe("server", () => {
 			server = await startApiServer(serverPeer, {
 				trust: new Trust(getTrustPath(directory)),
 				session: new Session(
-					new MemoryLevel({ valueEncoding: "view", keyEncoding: "utf-8" }),
+					new MemoryLevel<string, Uint8Array>({
+						valueEncoding: "view",
+						keyEncoding: "utf-8",
+					}) as unknown as AbstractLevel<
+						string | Buffer | Uint8Array,
+						string,
+						Uint8Array
+					>,
 				),
 			});
 		});

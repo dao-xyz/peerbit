@@ -69,9 +69,9 @@
 		"vite": "^7.1.7"
 	},
 	"devDependencies": {
-		"@peerbit/indexer-sqlite3": "1.2.28",
-		"@peerbit/any-store": "2.1.14",
-		"@peerbit/any-store-opfs": "1.0.13"
+		"@peerbit/indexer-sqlite3": "workspace:*",
+		"@peerbit/any-store": "workspace:*",
+		"@peerbit/any-store-opfs": "workspace:*"
 	},
 	"localMaintainers": [
 		"dao.xyz"

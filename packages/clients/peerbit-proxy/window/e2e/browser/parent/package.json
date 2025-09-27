@@ -10,16 +10,22 @@
 		"preview": "vite preview"
 	},
 	"dependencies": {
+		"@libp2p/crypto": "^5.1.10",
+		"@peerbit/any-store": "workspace:*",
+		"@peerbit/any-store-opfs": "workspace:*",
+		"@peerbit/indexer-sqlite3": "workspace:*",
+		"@peerbit/riblt": "workspace:*",
+		"@peerbit/proxy-window": "workspace:*",
+		"peerbit": "workspace:*",
 		"react": "^18.2.0",
-		"react-dom": "^18.2.0",
-		"peerbit": "*",
-		"@peerbit/proxy-window": "*"
+		"react-dom": "^18.2.0"
 	},
 	"devDependencies": {
+		"@types/libsodium-wrappers": "^0.7.14",
 		"@types/react": "^18.2.12",
 		"@types/react-dom": "^18.2.5",
 		"@vitejs/plugin-react": "^4.2.1",
-		"@peerbit/vite": "*",
+		"@peerbit/vite": "workspace:*",
 		"vite": "^7.1.7"
 	},
 	"browserslist": {

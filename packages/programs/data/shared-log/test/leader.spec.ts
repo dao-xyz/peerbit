@@ -1,4 +1,4 @@
-import { privateKeyFromRaw } from "@libp2p/crypto/keys";
+import { keys } from "@libp2p/crypto";
 import { calculateRawCid } from "@peerbit/blocks-interface";
 import { randomBytes } from "@peerbit/crypto";
 import {
@@ -55,7 +55,7 @@ describe(`isLeader`, function () {
 		session = await TestSession.connected(3, [
 			{
 				libp2p: {
-					privateKey: privateKeyFromRaw(
+					privateKey: keys.privateKeyFromRaw(
 						new Uint8Array([
 							27, 246, 37, 180, 13, 75, 242, 124, 185, 205, 207, 9, 16, 54, 162,
 							197, 247, 25, 211, 196, 127, 198, 82, 19, 68, 143, 197, 8, 203,
@@ -68,7 +68,7 @@ describe(`isLeader`, function () {
 			},
 			{
 				libp2p: {
-					privateKey: privateKeyFromRaw(
+					privateKey: keys.privateKeyFromRaw(
 						new Uint8Array([
 							113, 203, 231, 235, 7, 120, 3, 194, 138, 113, 131, 40, 251, 158,
 							121, 38, 190, 114, 116, 252, 100, 202, 107, 97, 119, 184, 24, 56,
@@ -82,7 +82,7 @@ describe(`isLeader`, function () {
 
 			{
 				libp2p: {
-					privateKey: privateKeyFromRaw(
+					privateKey: keys.privateKeyFromRaw(
 						new Uint8Array([
 							215, 31, 167, 188, 121, 226, 67, 218, 96, 8, 55, 233, 34, 68, 9,
 							147, 11, 157, 187, 43, 39, 43, 25, 95, 184, 227, 137, 56, 4, 69,

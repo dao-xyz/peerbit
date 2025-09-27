@@ -61,8 +61,13 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@peerbit/indexer-interface": "^2.0.12",
-		"@types/uuid": "^9.0.8",
-		"benchmark": "^2.1.4"
+		"@peerbit/indexer-interface": "workspace:*",
+		"@peerbit/crypto": "workspace:*",
+		"@peerbit/time": "workspace:*",
+		"@dao-xyz/borsh": "^5.2.3",
+		"libsodium-wrappers": "^0.7.15",
+		"uint8arrays": "^5.1.0",
+		"benchmark": "^2.1.4",
+		"uuid": "^10.0.0"
 	}
 }
