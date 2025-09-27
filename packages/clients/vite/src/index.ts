@@ -51,59 +51,7 @@ function copyToPublicPlugin(
 ) {
 	return {
 		name: "copy-to-public",
-        enforce: "pre",
-        config(config: any) {
-            const alias: any[] = (config?.resolve?.alias || []).slice();
-            const pushAlias = (find: string, target: string) => {
-                try {
-                    const replacement = findLibraryInNodeModules(target);
-                    alias.push({ find, replacement });
-                } catch (_err) {}
-            };
-            // Make worker path resolvable even if not copied to public/
-            pushAlias(
-                "public/peerbit/sqlite3.worker.min.js",
-                "@peerbit/indexer-sqlite3/dist/peerbit/sqlite3.worker.min.js",
-            );
-            pushAlias(
-                "/public/peerbit/sqlite3.worker.min.js",
-                "@peerbit/indexer-sqlite3/dist/peerbit/sqlite3.worker.min.js",
-            );
-            pushAlias(
-                "peerbit/sqlite3.worker.min.js",
-                "@peerbit/indexer-sqlite3/dist/peerbit/sqlite3.worker.min.js",
-            );
-            if (!config.resolve) config.resolve = {};
-            config.resolve.alias = alias;
-        },
-        resolveId(id: string) {
-            // CI safety: map worker path references commonly used by sqlite3.browser.js
-            // so the bundler can resolve them even if apps don't pre-copy to public/
-            const known = new Map<string, string>([
-                [
-                    "public/peerbit/sqlite3.worker.min.js",
-                    "@peerbit/indexer-sqlite3/dist/peerbit/sqlite3.worker.min.js",
-                ],
-                [
-                    "/public/peerbit/sqlite3.worker.min.js",
-                    "@peerbit/indexer-sqlite3/dist/peerbit/sqlite3.worker.min.js",
-                ],
-                [
-                    "peerbit/sqlite3.worker.min.js",
-                    "@peerbit/indexer-sqlite3/dist/peerbit/sqlite3.worker.min.js",
-                ],
-            ]);
-            const target = known.get(id);
-            if (target) {
-                try {
-                    const resolved = findLibraryInNodeModules(target);
-                    return resolved;
-                } catch (_err) {
-                    // fall through to default resolver
-                }
-            }
-            return null;
-        },
+        enforce: "pre" as const,
 		buildStart() {
             // Ensure worker exists in public/ as a last-resort (CI safety), even if assets disabled
             try {
@@ -278,7 +226,7 @@ function copyAssets(srcPath: string, destPath: string, base: string) {
 }
 
 // Expose internals for testing
-export const __test__ = {
+export const TEST_EXPORTS = {
 	findLibraryInNodeModules,
 	defaultAssetSources,
 	resolveAssetLocations,

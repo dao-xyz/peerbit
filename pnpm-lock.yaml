@@ -1519,6 +1519,13 @@ importers:
       '@peerbit/stream':
         specifier: workspace:*
         version: link:../..
+    devDependencies:
+      '@libp2p/circuit-relay-v2':
+        specifier: ^3.2.9
+        version: 3.2.24
+      '@libp2p/identify':
+        specifier: ^3.0.28
+        version: 3.0.39
 
   packages/transport/stream/e2e/browser/browser-node:
     dependencies:
