@@ -51,6 +51,30 @@ function copyToPublicPlugin(
 ) {
 	return {
 		name: "copy-to-public",
+        config(config: any) {
+            const alias: any[] = (config?.resolve?.alias || []).slice();
+            const pushAlias = (find: string, target: string) => {
+                try {
+                    const replacement = findLibraryInNodeModules(target);
+                    alias.push({ find, replacement });
+                } catch (_err) {}
+            };
+            // Make worker path resolvable even if not copied to public/
+            pushAlias(
+                "public/peerbit/sqlite3.worker.min.js",
+                "@peerbit/indexer-sqlite3/dist/peerbit/sqlite3.worker.min.js",
+            );
+            pushAlias(
+                "/public/peerbit/sqlite3.worker.min.js",
+                "@peerbit/indexer-sqlite3/dist/peerbit/sqlite3.worker.min.js",
+            );
+            pushAlias(
+                "peerbit/sqlite3.worker.min.js",
+                "@peerbit/indexer-sqlite3/dist/peerbit/sqlite3.worker.min.js",
+            );
+            if (!config.resolve) config.resolve = {};
+            config.resolve.alias = alias;
+        },
         resolveId(id: string) {
             // CI safety: map worker path references commonly used by sqlite3.browser.js
             // so the bundler can resolve them even if apps don't pre-copy to public/
