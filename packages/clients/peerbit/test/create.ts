@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-expressions */
-import { generateKeyPair } from "@libp2p/crypto/keys";
+import { keys } from "@libp2p/crypto";
 import { expect } from "chai";
 import path from "path";
 import { v4 as uuid } from "uuid";
@@ -35,7 +35,7 @@ describe("Create", function () {
 	});
 
 	it("can create with peerId", async () => {
-		const privateKey = await generateKeyPair("Ed25519");
+		const privateKey = await keys.generateKeyPair("Ed25519");
 		const client = await Peerbit.create({
 			libp2p: { privateKey },
 		});

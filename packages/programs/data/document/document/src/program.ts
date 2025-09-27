@@ -50,7 +50,7 @@ import {
 	coerceWithIndexed,
 } from "./search.js";
 
-const logger = loggerFn({ module: "document" });
+const logger: ReturnType<typeof loggerFn> = loggerFn({ module: "document" });
 
 export class OperationError extends Error {
 	constructor(message?: string) {

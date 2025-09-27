@@ -1,6 +1,6 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { Wallet } from "@ethersproject/wallet";
-import { generateKeyPair } from "@libp2p/crypto/keys";
+import { keys } from "@libp2p/crypto";
 import { expect } from "chai";
 import sodium from "libsodium-wrappers";
 import {
@@ -211,7 +211,7 @@ describe("Sepck2561k1", () => {
 		expect(isNotVerified).to.be.false;
 	});
 	it("keypair sign", async () => {
-		const privateKeyGenerated = await generateKeyPair("secp256k1");
+		const privateKeyGenerated = await keys.generateKeyPair("secp256k1");
 		const keypair = getKeypairFromPrivateKey(privateKeyGenerated);
 		const signature = await keypair.sign(data, PreHash.ETH_KECCAK_256);
 		expect(await verifySignatureSecp256k1(signature, data)).to.be.true;

@@ -58,9 +58,12 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@peerbit/indexer-interface": "^2.0.12"
+		"@dao-xyz/borsh": "^5.2.3",
+		"@peerbit/indexer-interface": "workspace:*",
+		"@peerbit/logger": "workspace:*",
+		"uint8arrays": "^5.1.0"
 	},
 	"devDependencies": {
-		"@peerbit/indexer-tests": "^1.1.18"
+		"@peerbit/indexer-tests": "workspace:*"
 	}
 }

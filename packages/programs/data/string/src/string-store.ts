@@ -22,7 +22,7 @@ import {
 import { Range } from "./range.js";
 import { StringIndex, StringOperation, encoding } from "./string-index.js";
 
-const logger = loggerFn({ module: "string" });
+const logger: ReturnType<typeof loggerFn> = loggerFn({ module: "string" });
 
 export const STRING_STORE_TYPE = "string_store";
 const findAllOccurrences = (str: string, substr: string): number[] => {

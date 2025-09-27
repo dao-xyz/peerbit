@@ -2,7 +2,7 @@ import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
 import { type YamuxStream } from "@chainsafe/libp2p-yamux/stream";
 import { deserialize, serialize } from "@dao-xyz/borsh";
-import { privateKeyFromRaw } from "@libp2p/crypto/keys";
+import { keys } from "@libp2p/crypto";
 import { type PeerId } from "@libp2p/interface";
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
@@ -2670,7 +2670,7 @@ describe("join/leave", () => {
 		beforeEach(async () => {
 			session = await disconnected(4, [
 				{
-					privateKey: await privateKeyFromRaw(
+					privateKey: await keys.privateKeyFromRaw(
 						new Uint8Array([
 							204, 234, 187, 172, 226, 232, 70, 175, 62, 211, 147, 91, 229, 157,
 							168, 15, 45, 242, 144, 98, 75, 58, 208, 9, 223, 143, 251, 52, 252,
@@ -2688,7 +2688,7 @@ describe("join/leave", () => {
 					},
 				},
 				{
-					privateKey: await privateKeyFromRaw(
+					privateKey: await keys.privateKeyFromRaw(
 						new Uint8Array([
 							237, 55, 205, 86, 40, 44, 73, 169, 196, 118, 36, 69, 214, 122, 28,
 							157, 208, 163, 15, 215, 104, 193, 151, 177, 62, 231, 253, 120,
@@ -2706,7 +2706,7 @@ describe("join/leave", () => {
 					},
 				},
 				{
-					privateKey: privateKeyFromRaw(
+					privateKey: keys.privateKeyFromRaw(
 						new Uint8Array([
 							27, 246, 37, 180, 13, 75, 242, 124, 185, 205, 207, 9, 16, 54, 162,
 							197, 247, 25, 211, 196, 127, 198, 82, 19, 68, 143, 197, 8, 203,
@@ -2724,7 +2724,7 @@ describe("join/leave", () => {
 					},
 				},
 				{
-					privateKey: privateKeyFromRaw(
+					privateKey: keys.privateKeyFromRaw(
 						new Uint8Array([
 							176, 30, 32, 212, 227, 61, 222, 213, 141, 55, 56, 33, 95, 29, 21,
 							143, 15, 130, 94, 221, 124, 176, 12, 225, 198, 214, 83, 46, 114,
@@ -4039,7 +4039,7 @@ describe("directstream outbound pump", () => {
 		});
 		await delay(50); // give it a moment
 
-		// Optional: assert the pump didn’t crash by checking more state if you have it
+		// Optional: assert the pump didn't crash by checking more state if you have it
 		// e.g., ds._outboundPump still defined, or a counter incremented, etc.
 	});
 });

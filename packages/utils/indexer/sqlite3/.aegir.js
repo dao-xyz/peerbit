@@ -1,7 +1,7 @@
-import findUp from "find-up";
-import path, { dirname } from "path";
+import * as findUp from "find-up";
+import path from "path";
 
-const root = path.dirname(findUp.sync(".git", { type: "directory" }));
+const root = path.dirname(await findUp.findUp(".git", { type: "directory" }));
 
 export default {
 	// test cmd options

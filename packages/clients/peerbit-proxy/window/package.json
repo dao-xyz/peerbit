@@ -59,15 +59,16 @@
 		"node": ">=16.15.1"
 	},
 	"dependencies": {
-		"@peerbit/proxy": "^5.3.8"
+		"@peerbit/proxy": "workspace:*",
+		"peerbit": "workspace:*"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "2.2.8"
+		"@peerbit/test-utils": "workspace:*"
 	},
 	"scripts": {
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
-		"test": "yarn --cwd ./e2e/browser test"
+		"test": "pnpm --dir ./e2e/browser test"
 	},
 	"localMaintainers": [
 		"dao.xyz"

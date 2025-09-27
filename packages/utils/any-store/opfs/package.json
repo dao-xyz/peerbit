@@ -66,11 +66,13 @@
 	},
 	"license": "MIT",
 	"dependencies": {
-		"@peerbit/crypto": "^2.3.11",
-		"@peerbit/logger": "1.0.4",
-		"@peerbit/time": "2.2.0",
-		"@peerbit/any-store-interface": "^1.0.0",
-		"uuid": "^10.0.0"
+		"@dao-xyz/borsh": "^5.2.3",
+		"@peerbit/crypto": "workspace:*",
+		"@peerbit/logger": "workspace:*",
+		"@peerbit/time": "workspace:*",
+		"@peerbit/any-store-interface": "workspace:*",
+		"uuid": "^10.0.0",
+		"elliptic": "^6.6.1"
 	},
 	"devDependencies": {
 		"@types/uuid": "^9.0.8"

@@ -70,12 +70,12 @@ Peerbit is performant, so performant in fact you can use it for [streaming video
 
 Peerbit is an open-source project, and we welcome contributions from developers like you! Feel free to contribute code, report issues, and submit feature requests. Together, let's shape the future of Peerbit.
 
-IMPORTANT: Peerbit uses yarn.
+IMPORTANT: Peerbit uses pnpm.
 
-1. Check yarn version: `yarn -v` should print something
-2. Install: `yarn`
-3. Build: `yarn build`
-4. Run tests: `yarn test` in root in a specifc subpackage
+1. Check pnpm version: `pnpm -v` should print something
+2. Install: `pnpm install`
+3. Build: `pnpm run build`
+4. Run tests: `pnpm run test` in root or in a specific subpackage
 
 You might possibly need to CMD + Shift + P and then enter to restart the typescript server after the build step.
 
@@ -86,8 +86,8 @@ To create a new package, follow the following steps:
 3. Possibly add other depencencies to the package.json `dependencies` field (like `@peerbit/crypto`)
 4. Delete contents in CHANGELOG.md
 5. Update the root package.json `workspaces` field
-6. Update root lerna.json `workspaces` field
-7. run yarn once in root
+6. Update the root pnpm-workspace.yaml packages list
+7. Run `pnpm install` once in the root
 
 We recommend running tests with the VS Code integration though: https://github.com/CoderLine/mocha-vscode
 

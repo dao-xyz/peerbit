@@ -1,6 +1,6 @@
 import { type PeerId as Libp2pPeerId } from "@libp2p/interface";
 import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
-import { logger as logFn } from "@peerbit/logger";
+import { logger as loggerFn } from "@peerbit/logger";
 import {
 	DataEvent,
 	GetSubscribers,
@@ -45,7 +45,10 @@ import {
 export const toUint8Array = (arr: Uint8ArrayList | Uint8Array) =>
 	arr instanceof Uint8ArrayList ? arr.subarray() : arr;
 
-export const logger = logFn({ module: "lazysub", level: "warn" });
+export const logger: ReturnType<typeof loggerFn> = loggerFn({
+	module: "lazysub",
+	level: "warn",
+});
 const logError = (e?: { message: string }) => {
 	logger.error(e?.message);
 };
