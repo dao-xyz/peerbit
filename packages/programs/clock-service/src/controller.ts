@@ -80,8 +80,10 @@ export class ClockService extends Program<Args> {
 
 		this.maxError = BigInt((properties?.maxTimeError || 10e3) * 1e6);
 		await this._trustedNetwork.open({ replicate: properties?.replicate });
+		const topicBase =
+			this._trustedNetwork!.trustGraph!.log.log.idString ?? "clock";
 		await this._remoteSigner.open({
-			topic: this._trustedNetwork.trustGraph.log.log.idString + "/clock", // TODO do better
+			topic: topicBase + "/clock", // TODO do better
 			queryType: Uint8Array,
 			responseType: Result,
 			responseHandler:

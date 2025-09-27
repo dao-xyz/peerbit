@@ -80,13 +80,14 @@
 		"p-each-series": "^3.0.0",
 		"p-defer": "^4.0.0",
 		"p-queue": "^8.0.1",
-		"pidusage": "^3.0.2",
+		"pidusage": "^4.0.1",
 		"pino": "^9.4.0",
 		"uint8arrays": "^5.1.0"
 	},
 	"devDependencies": {
 		"@peerbit/test-utils": "workspace:*",
 		"@types/libsodium-wrappers": "^0.7.14",
-		"@types/pidusage": "^2.0.5"
+		"@types/pidusage": "^2.0.5",
+		"uuid": "^10.0.0"
 	}
 }

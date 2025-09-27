@@ -133,7 +133,7 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 	rootTrust: PublicSignKey;
 
 	@field({ type: Documents })
-	trustGraph: Documents<IdentityRelation, FromTo> | undefined;
+	trustGraph: Documents<IdentityRelation, FromTo>;
 
 	constructor(props: { id?: Uint8Array; rootTrust: PublicSignKey | PeerId }) {
 		super();
