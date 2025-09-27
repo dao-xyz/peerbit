@@ -138,13 +138,7 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 	constructor(props: { id?: Uint8Array; rootTrust: PublicSignKey | PeerId }) {
 		super();
 		this.rootTrust = coercePublicKey(props.rootTrust);
-	}
-
-	ensureTrustGraph() {
-		if (!this.trustGraph) {
-			throw new Error("trustGraph is not initialized");
-		}
-		return this.trustGraph;
+		this.trustGraph = createIdentityGraphStore();
 	}
 
 	async open(options?: TrustedNetworkArgs) {
@@ -190,7 +184,7 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 				to: key,
 				from: this.node.identity.publicKey,
 			});
-			await this.ensureTrustGraph().put(relation);
+			await this.trustGraph!.put(relation);
 			return relation;
 		}
 		return existingRelation;
