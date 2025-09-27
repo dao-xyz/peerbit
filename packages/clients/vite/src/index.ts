@@ -5,8 +5,19 @@ import { type PluginOption } from "vite";
 import { viteStaticCopy } from "vite-plugin-static-copy";
 
 const requireFromPlugin = createRequire(import.meta.url);
-type Resolver = NodeRequire;
-let requireFromCwd: Resolver | undefined;
+export interface ModuleResolver {
+	resolve(id: string): string;
+}
+export interface FileSystemLike {
+	existsSync(path: string): boolean;
+	statSync(path: string): { isDirectory(): boolean };
+	readdirSync(path: string): string[];
+	mkdirSync(path: string, options: { recursive: boolean }): void;
+	copyFileSync(src: string, dest: string): void;
+	realpathSync(path: string): string;
+}
+
+let requireFromCwd: ModuleResolver | undefined;
 try {
 	requireFromCwd = createRequire(path.join(process.cwd(), "package.json"));
 } catch (err) {
@@ -28,7 +39,8 @@ function dontMinimizeCertainPackagesPlugin(
 			if (command === "build") {
 				config.optimizeDeps = config.optimizeDeps || {};
 				config.optimizeDeps.exclude = config.optimizeDeps.exclude || [];
-				config.optimizeDeps.exclude.push(...options.packages);
+				const pkgs: string[] = options.packages ?? [];
+				config.optimizeDeps.exclude.push(...pkgs);
 			}
 		},
 	};
@@ -67,18 +79,22 @@ const resolveStaticPath = () => {
 		throw new Error("Could not find public or static folder");
 	}
 };
-const findLibraryInNodeModules = (library: string) => {
+const findLibraryInNodeModules = (
+	library: string,
+	deps?: { fs?: FileSystemLike; resolvers?: ModuleResolver[] },
+) => {
+	const fsLike: FileSystemLike = deps?.fs || fs;
 	const [packageName, distSuffix] = library.split("/dist/");
-	const resolvers: Resolver[] = [requireFromCwd, requireFromPlugin].filter(
-		(resolver): resolver is Resolver => resolver !== undefined,
-	);
+	const resolvers: ModuleResolver[] = (
+		deps?.resolvers || [requireFromCwd, requireFromPlugin]
+	).filter((resolver): resolver is ModuleResolver => resolver !== undefined);
 
 	for (const resolver of resolvers) {
 		// Try resolving the exact file first (works if it is exported)
 		try {
 			const resolved = resolver.resolve(library);
-			if (fs.existsSync(resolved)) {
-				return fs.realpathSync(resolved);
+			if (fsLike.existsSync(resolved)) {
+				return fsLike.realpathSync(resolved);
 			}
 		} catch (_err) {
 			// Ignore and fall back to package root resolution
@@ -95,8 +111,8 @@ const findLibraryInNodeModules = (library: string) => {
 				: [packageRoot];
 
 			for (const candidate of candidatePaths) {
-				if (fs.existsSync(candidate)) {
-					return fs.realpathSync(candidate);
+				if (fsLike.existsSync(candidate)) {
+					return fsLike.realpathSync(candidate);
 				}
 			}
 		} catch (_err) {
@@ -109,11 +125,11 @@ const findLibraryInNodeModules = (library: string) => {
 	let currentDir = process.cwd();
 	let nodeModulesDir = path.join(currentDir, "node_modules");
 
-	while (!fs.existsSync(path.join(nodeModulesDir, library))) {
+	while (!fsLike.existsSync(path.join(nodeModulesDir, library))) {
 		currentDir = path.resolve(currentDir, "..");
 		nodeModulesDir = path.join(currentDir, "node_modules");
 
-		if (fs.existsSync(path.join(currentDir, ".git"))) {
+		if (fsLike.existsSync(path.join(currentDir, ".git"))) {
 			break;
 		}
 
@@ -123,11 +139,11 @@ const findLibraryInNodeModules = (library: string) => {
 		}
 	}
 	const libraryPath = path.join(nodeModulesDir, library);
-	if (!fs.existsSync(libraryPath)) {
+	if (!fsLike.existsSync(libraryPath)) {
 		throw new Error(`Library ${library} not found in node_modules`);
 	}
 
-	return fs.realpathSync(libraryPath);
+	return fsLike.realpathSync(libraryPath);
 };
 
 const defaultAssetSources = [
@@ -196,3 +212,10 @@ function copyAssets(srcPath: string, destPath: string, base: string) {
 		fs.copyFileSync(srcPath, destPathAsFile);
 	}
 }
+
+// Expose internals for testing
+export const __test__ = {
+	findLibraryInNodeModules,
+	defaultAssetSources,
+	resolveAssetLocations,
+};

@@ -629,6 +629,12 @@ importers:
       '@peerbit/indexer-sqlite3':
         specifier: workspace:*
         version: link:../../utils/indexer/sqlite3
+      '@types/chai':
+        specifier: ^4.3.16
+        version: 4.3.20
+      chai:
+        specifier: ^4.3.10
+        version: 4.5.0
 
   packages/clients/vite/e2e:
     dependencies:
