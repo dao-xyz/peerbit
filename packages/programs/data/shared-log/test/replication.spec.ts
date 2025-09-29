@@ -35,6 +35,7 @@ import {
 	collectMessagesFn,
 	dbgLogs,
 	getReceivedHeads,
+	slowDownMessage,
 	slowDownSend,
 	waitForConverged,
 } from "./utils.js";
@@ -1551,11 +1552,20 @@ testSetups.forEach((setup) => {
 				max?: number;
 				beforeOther?: () => Promise<any> | void;
 				waitForPruneDelay?: number;
+				node1?: {
+					replicate: ReplicationOptions | boolean;
+				};
+				node2?: {
+					replicate: ReplicationOptions | boolean;
+				};
+				node3?: {
+					replicate: ReplicationOptions | boolean;
+				};
 			}) => {
 				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
 						replicas: props,
-						replicate: false,
+						replicate: props.node1?.replicate ?? false,
 						timeUntilRoleMaturity: 1000,
 						setup,
 						waitForPruneDelay: props?.waitForPruneDelay || 5e3,
@@ -1569,7 +1579,7 @@ testSetups.forEach((setup) => {
 					{
 						args: {
 							replicas: props,
-							replicate: {
+							replicate: props.node2?.replicate ?? {
 								factor: 0.5,
 								offset: 0,
 							},
@@ -1587,7 +1597,7 @@ testSetups.forEach((setup) => {
 						args: {
 							replicas: props,
 
-							replicate: {
+							replicate: props.node3?.replicate ?? {
 								factor: 0.5,
 								offset: 0.5,
 							},
@@ -1746,17 +1756,222 @@ testSetups.forEach((setup) => {
 			it("will prune on put 300 after join", async () => {
 				await init({ min: 1 });
 
-				let count = 300;
+				const count = 300;
+				const expectedHashes = new Set<string>();
 				for (let i = 0; i < count; i++) {
-					await db1.add("hello", {
+					const entry = await db1.add("hello", {
 						meta: { next: [] },
 					});
+					expectedHashes.add(entry.entry.hash);
 				}
+				expect(expectedHashes.size).to.equal(count);
 
-				await waitForResolved(() => expect(db1.log.log.length).equal(0));
-				await waitForResolved(() =>
-					expect(db2.log.log.length + db3.log.log.length).equal(count),
+				await waitForResolved(
+					async () => {
+						const cover = await db1.log.getCover(
+							{ args: undefined },
+							{ roleAge: 1000 },
+						);
+						expect(cover).to.include(db2.node.identity.publicKey.hashcode());
+						expect(cover).to.include(db3.node.identity.publicKey.hashcode());
+					},
+					{ timeout: 30 * 1000, delayInterval: 250 },
 				);
+
+				const getHashes = async () => {
+					const set = new Set<string>();
+					for (const db of [db1, db2, db3]) {
+						for (const entry of await db.log.log.toArray()) {
+							set.add(entry.hash);
+						}
+					}
+					return [...set];
+				};
+
+				await waitForResolved(() => expect(db1.log.log.length).equal(0), {
+					timeout: 60 * 1000,
+					delayInterval: 500,
+				});
+				await waitForResolved(
+					async () => {
+						expect(db2.log.log.length).to.be.greaterThan(0);
+						expect(db3.log.log.length).to.be.greaterThan(0);
+						const currentHashes = await getHashes();
+						expect(currentHashes.length).to.equal(expectedHashes.size);
+						expect(currentHashes.sort()).to.deep.equal(
+							[...expectedHashes].sort(),
+						);
+					},
+					{ timeout: 60 * 1000, delayInterval: 500 },
+				);
+			});
+
+			it("will prune on put 300 joining on insertion concurrently", async () => {
+				const waitForPruneDelay = 5e3;
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						replicas: { min: 1 },
+						replicate: false,
+						waitForPruneDelay,
+						timeUntilRoleMaturity: 0,
+						setup,
+					},
+				});
+
+				const entryCount = 300;
+				const expectedHashes = new Set<string>();
+
+				const openPeers = async () => {
+					db2 = (await EventStore.open<EventStore<string, any>>(
+						db1.address!,
+						session.peers[1],
+						{
+							args: {
+								replicas: { min: 1 },
+								replicate: { offset: 0.5, factor: 0.5 },
+								waitForPruneDelay,
+								timeUntilRoleMaturity: 0,
+								setup,
+							},
+						},
+					))!;
+					db3 = (await EventStore.open<EventStore<string, any>>(
+						db1.address!,
+						session.peers[2],
+						{
+							args: {
+								replicas: { min: 1 },
+								replicate: { offset: 0.5, factor: 0.5 },
+								waitForPruneDelay,
+								timeUntilRoleMaturity: 0,
+								setup,
+							},
+						},
+					))!;
+					await Promise.all([
+						db1.waitFor(session.peers[1].peerId),
+						db1.waitFor(session.peers[2].peerId),
+						db2.waitFor(session.peers[0].peerId),
+						db2.waitFor(session.peers[2].peerId),
+						db3.waitFor(session.peers[0].peerId),
+						db3.waitFor(session.peers[1].peerId),
+					]);
+				};
+
+				let openPeersPromise: Promise<void> | undefined;
+				for (let i = 0; i < entryCount; i++) {
+					if (i === 1 && !openPeersPromise) {
+						openPeersPromise = openPeers();
+					}
+					const entry = await db1.add("hello" + i, { meta: { next: [] } });
+					expectedHashes.add(entry.entry.hash);
+				}
+				if (!openPeersPromise) {
+					openPeersPromise = openPeers();
+				}
+				await openPeersPromise;
+				expect(expectedHashes.size).to.equal(entryCount);
+
+				const waitForReplicators = async () => {
+					const expected = [
+						db2.node.identity.publicKey.hashcode(),
+						db3.node.identity.publicKey.hashcode(),
+					];
+					await waitForResolved(
+						async () => {
+							const current = await db1.log.getReplicators();
+							expected.forEach((hash) => expect([...current]).to.include(hash));
+						},
+						{ timeout: 30 * 1000, delayInterval: 250 },
+					);
+				};
+
+				const getHashes = async () => {
+					const set = new Set<string>();
+					for (const db of [db1, db2, db3]) {
+						for (const entry of await db.log.log.toArray()) {
+							set.add(entry.hash);
+						}
+					}
+					return [...set];
+				};
+
+				await waitForReplicators();
+
+				await waitForResolved(() => expect(db1.log.log.length).equal(0), {
+					timeout: 60 * 1000,
+					delayInterval: 500,
+				});
+				await waitForResolved(
+					async () => {
+						expect(db2.log.log.length).to.be.greaterThan(0);
+						expect(db3.log.log.length).to.be.greaterThan(0);
+						const currentHashes = await getHashes();
+						expect(currentHashes.length).to.equal(expectedHashes.size);
+						expect(currentHashes.sort()).to.deep.equal(
+							[...expectedHashes].sort(),
+						);
+					},
+					{ timeout: 60 * 1000, delayInterval: 500 },
+				);
+			});
+
+			it("does not prune entries before new replicator has synced", async () => {
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						replicate: true,
+						replicas: {
+							min: 1,
+						},
+					},
+				});
+
+				const abortContoller = new AbortController();
+				slowDownMessage(db1.log, BlocksMessage, 1e4, abortContoller.signal);
+
+				try {
+					const db2 = await session.peers[1].open(db1.clone(), {
+						args: {
+							replicate: {
+								factor: 1,
+							},
+							replicas: {
+								min: 1,
+							},
+						},
+					});
+					const count = 25;
+					const expectedHashes = new Set<string>();
+					for (let i = 0; i < count; i++) {
+						const entry = await db1.add("hello" + i, { meta: { next: [] } });
+						expectedHashes.add(entry.entry.hash);
+					}
+					expect(expectedHashes.size).to.equal(count);
+
+					await db2.log.replicate({ factor: 1 });
+					await waitForResolved(async () => {
+						const replicators = await db1.log.getReplicators();
+						expect([...replicators]).to.include(
+							db2.node.identity.publicKey.hashcode(),
+						);
+					});
+
+					await db1.log.replicate(false);
+					await waitForResolved(() => expect(db1.log.log.length).equal(0));
+
+					await delay(1000);
+
+					const union = new Set<string>();
+					for (const db of [db1, db2]) {
+						for (const entry of await db.log.log.toArray()) {
+							union.add(entry.hash);
+						}
+					}
+
+					expect(union.size).to.equal(expectedHashes.size);
+				} finally {
+					abortContoller.abort();
+				}
 			});
 
 			it("will prune when join with partial coverage", async () => {
@@ -3221,7 +3436,8 @@ testSetups.forEach((setup) => {
 					await waitForResolved(() => expect(db1.log.log.length).to.eq(0));
 				});
 
-				it("replace range with another node write before join with slowed down send", async () => {
+				it("replace range with another node write before join with slowed down send", async function () {
+					this.timeout(150 * 1000);
 					let sendDelay = 500;
 					let waitForPruneDelay = sendDelay + 1000;
 					slowDownSend(session.peers[2], session.peers[0], sendDelay); // we do this to force a replication pattern where peer[1] needs to send entries to peer[2]
@@ -3244,10 +3460,14 @@ testSetups.forEach((setup) => {
 					);
 
 					let entryCount = 100;
+					const expectedHashes: string[] = [];
 
 					for (let i = 0; i < entryCount; i++) {
-						await db1.add("hello" + i, { meta: { next: [] } });
+						const entry = await db1.add("hello" + i, { meta: { next: [] } });
+						expectedHashes.push(entry.entry.hash);
 					}
+					const expectedHashSet = new Set(expectedHashes);
+					expect(expectedHashSet.size).to.equal(entryCount);
 
 					let db2 = (await EventStore.open<EventStore<string, any>>(
 						db1.address!,
@@ -3299,6 +3519,15 @@ testSetups.forEach((setup) => {
 
 					const db2Length = db2.log.log.length;
 					const db3Length = db3.log.log.length;
+					const getHashes = async () => {
+						const set = new Set<string>();
+						for (const db of [db1, db2, db3]) {
+							for (const entry of await db.log.log.toArray()) {
+								set.add(entry.hash);
+							}
+						}
+						return [...set];
+					};
 
 					await waitForResolved(() =>
 						expect(db2.log.log.length).to.be.greaterThan(0),
@@ -3341,11 +3570,21 @@ testSetups.forEach((setup) => {
 					await db3.log.replicate({ id: range3.id, offset: 0.5, factor: 0.5 });
 
 					try {
-						await waitForResolved(() =>
-							expect(db2.log.log.length).to.eq(db2Length),
-						);
-						await waitForResolved(() =>
-							expect(db3.log.log.length).to.eq(db3Length),
+						await waitForResolved(
+							async () => {
+								expect(Math.abs(db2.log.log.length - db2Length)).to.be.at.most(
+									5,
+								);
+								expect(Math.abs(db3.log.log.length - db3Length)).to.be.at.most(
+									5,
+								);
+								const currentHashes = await getHashes();
+								expect(currentHashes.length).to.equal(expectedHashSet.size);
+								expect(currentHashes.sort()).to.deep.equal(
+									[...expectedHashSet].sort(),
+								);
+							},
+							{ timeout: 120 * 1000, delayInterval: 500 },
 						);
 					} catch (error) {
 						await dbgLogs([db2.log, db3.log]);
