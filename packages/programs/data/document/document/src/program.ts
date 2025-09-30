@@ -816,7 +816,7 @@ export class Documents<
 				},
 			);
 			const one = await iterator.next(1);
-			const left = iterator.pending() ?? 0;
+			const left = (await iterator.pending()) ?? 0;
 			await iterator.close();
 			return one.length + left;
 		}
