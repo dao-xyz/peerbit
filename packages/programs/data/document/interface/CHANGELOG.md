@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.0.0](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.24...document-interface-v3.0.0) (2025-10-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* Add IteationRequest to support iterating and concurrently subscribe to mutations
+
+### Features
+
+* Add IteationRequest to support iterating and concurrently subscribe to mutations ([b578bb4](https://github.com/dao-xyz/peerbit/commit/b578bb499c16a0601eb070f3ae4886a66a5f824f))
+
 ## [2.2.24](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.23...document-interface-v2.2.24) (2025-09-25)
 
 
