@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/document-interface",
-	"version": "2.2.24",
+	"version": "3.0.0",
 	"description": "Document store interface",
 	"sideEffects": false,
 	"type": "module",

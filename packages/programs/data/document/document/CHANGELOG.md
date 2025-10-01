@@ -456,6 +456,29 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [10.0.0](https://github.com/dao-xyz/peerbit/compare/document-v9.13.10...document-v10.0.0) (2025-10-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* Add IteationRequest to support iterating and concurrently subscribe to mutations
+
+### Features
+
+* Add IteationRequest to support iterating and concurrently subscribe to mutations ([b578bb4](https://github.com/dao-xyz/peerbit/commit/b578bb499c16a0601eb070f3ae4886a66a5f824f))
+
+
+### Bug Fixes
+
+* handle undefined count ([d97a88b](https://github.com/dao-xyz/peerbit/commit/d97a88b1a4a9090a8ad36dc5bdcb05bfa0b84131))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document-interface bumped from ^2.2.24 to ^3.0.0
+
 ## [9.13.10](https://github.com/dao-xyz/peerbit/compare/document-v9.13.9...document-v9.13.10) (2025-09-25)
 
 
