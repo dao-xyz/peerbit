@@ -2222,7 +2222,7 @@ export class DocumentIndex<
 	/**
 	 * Query and retrieve documents in a iterator
 	 * @param queryRequest
-	 * @param options
+	 * @param optionsArg
 	 * @returns
 	 */
 	public iterate<

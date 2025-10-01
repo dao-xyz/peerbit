@@ -1,9 +1,9 @@
 import { Cache } from "@peerbit/cache";
 import {
 	CollectNextRequest,
-	IterationRequest,
-	SearchRequest,
-	SearchRequestIndexed,
+	type IterationRequest,
+	type SearchRequest,
+	type SearchRequestIndexed,
 } from "@peerbit/document-interface";
 import type * as indexerTypes from "@peerbit/indexer-interface";
 
