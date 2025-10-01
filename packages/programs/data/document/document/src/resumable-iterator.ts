@@ -1,6 +1,7 @@
 import { Cache } from "@peerbit/cache";
 import {
-	type CollectNextRequest,
+	CollectNextRequest,
+	IterationRequest,
 	SearchRequest,
 	SearchRequestIndexed,
 } from "@peerbit/document-interface";
@@ -11,44 +12,68 @@ export class ResumableIterators<T extends Record<string, any>> {
 		readonly index: indexerTypes.Index<T>,
 		readonly queues = new Cache<{
 			iterator: indexerTypes.IndexIterator<T, undefined>;
-			request: SearchRequest | SearchRequestIndexed;
+			request: SearchRequest | SearchRequestIndexed | IterationRequest;
+			keepAlive: boolean;
 		}>({ max: 1e4 }),
 	) {
 		// TODO choose upper limit better
 	}
 
-	async iterateAndFetch(request: SearchRequest | SearchRequestIndexed) {
+	async iterateAndFetch(
+		request: SearchRequest | SearchRequestIndexed | IterationRequest,
+		options?: { keepAlive?: boolean },
+	) {
 		const iterator = this.index.iterate(request);
 		const firstResult = await iterator.next(request.fetch);
-		if (iterator.done() === true) {
-			return firstResult;
+		const keepAlive = options?.keepAlive === true;
+		if (keepAlive || iterator.done() !== true) {
+			const cachedIterator = {
+				iterator,
+				request,
+				keepAlive,
+			};
+			this.queues.add(request.idString, cachedIterator);
 		}
-		const cachedIterator = {
-			iterator,
-			request,
-		};
-		this.queues.add(request.idString, cachedIterator);
+		/* console.debug(
+			"[ResumableIterators] iterateAndFetch",
+			request.idString,
+			{ keepAlive },
+		); */
 		return firstResult;
 	}
 
 	async next(
-		request: SearchRequest | SearchRequestIndexed | CollectNextRequest,
-		iterator = this.queues.get(request.idString),
+		request:
+			| SearchRequest
+			| SearchRequestIndexed
+			| IterationRequest
+			| CollectNextRequest,
+		options?: { keepAlive?: boolean },
 	) {
+		const iterator = this.queues.get(request.idString);
 		if (!iterator) {
 			throw new Error(
 				"Missing iterator for request with id: " + request.idString,
 			);
 		}
 
-		const next = await iterator.iterator.next(
-			request instanceof SearchRequest ||
-				request instanceof SearchRequestIndexed
-				? request.fetch
-				: request.amount,
-		);
+		if (options?.keepAlive && !iterator.keepAlive) {
+			iterator.keepAlive = true;
+			this.queues.add(request.idString, iterator);
+		}
 
-		if (iterator.iterator.done() === true) {
+		const fetchAmount =
+			request instanceof CollectNextRequest
+				? request.amount
+				: iterator.request.fetch;
+		const next = await iterator.iterator.next(fetchAmount);
+		/* console.debug(
+			"[ResumableIterators] next",
+			request.idString,
+			{ keepAlive: iterator.keepAlive, resultLength: next.length },
+		); */
+
+		if (!iterator.keepAlive && iterator.iterator.done() === true) {
 			this.clear(request.idString);
 		}
 		return next;
@@ -67,12 +92,12 @@ export class ResumableIterators<T extends Record<string, any>> {
 	}
 
 	async getPending(id: string) {
-		let iterator = this.queues.get(id);
+		const iterator = this.queues.get(id);
 		if (!iterator) {
 			return undefined;
 		}
 		const pending = await iterator.iterator.pending();
-		if (pending === 0 && iterator.iterator.done()) {
+		if (pending === 0 && iterator.iterator.done() && !iterator.keepAlive) {
 			this.clear(id);
 		}
 		return pending;

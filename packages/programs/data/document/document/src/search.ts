@@ -38,7 +38,9 @@ import { copySerialization } from "./borsh.js";
 import { MAX_BATCH_SIZE } from "./constants.js";
 import type { DocumentEvents, DocumentsChange } from "./events.js";
 import type { QueryPredictor } from "./most-common-query-predictor.js";
-import MostCommonQueryPredictor from "./most-common-query-predictor.js";
+import MostCommonQueryPredictor, {
+	idAgnosticQueryKey,
+} from "./most-common-query-predictor.js";
 import { type Operation, isPutOperation } from "./operation.js";
 import { Prefetch } from "./prefetch.js";
 import type { ExtractArgs } from "./program.js";
@@ -95,11 +97,16 @@ export type UpdateCallbacks<
  * Unified update options for iterate()/search()/get() and hooks.
  * If you pass `true`, defaults to `{ merge: "sorted" }`.
  */
+export type UpdateModeShortcut = "local" | "remote" | "all";
+
 export type UpdateOptions<T, I, Resolve extends boolean | undefined> =
 	| boolean
+	| UpdateModeShortcut
 	| ({
 			/** Live update behavior. Only sorted merging is supported; optional filter can mutate/ignore events. */
 			merge?: UpdateMergeStrategy<T, I, Resolve>;
+			/** Request push-style notifications backed by the prefetch channel. */
+			push?: boolean;
 	  } & UpdateCallbacks<T, I, Resolve>);
 
 export type JoiningTargets = {
@@ -221,7 +228,7 @@ export type ResultsIterator<T> = {
 	next: (number: number) => Promise<T[]>;
 	done: () => boolean;
 	all: () => Promise<T[]>;
-	pending: () => number | undefined;
+	pending: () => MaybePromise<number | undefined>;
 	first: () => Promise<T | undefined>;
 	[Symbol.asyncIterator]: () => AsyncIterator<T>;
 };
@@ -255,11 +262,21 @@ type ExtractResolveFromOptions<O> =
 		: true; // if R isn't QueryLike at all, default to true
 
 const coerceQuery = <Resolve extends boolean | undefined>(
-	query: types.SearchRequest | types.SearchRequestIndexed | QueryLike,
+	query:
+		| types.SearchRequest
+		| types.SearchRequestIndexed
+		| types.IterationRequest
+		| QueryLike,
 	options?: QueryOptions<any, any, any, Resolve>,
-) => {
-	let replicate =
+	compatibility?: number,
+):
+	| types.SearchRequest
+	| types.SearchRequestIndexed
+	| types.IterationRequest => {
+	const replicate =
 		typeof options?.remote !== "boolean" ? options?.remote?.replicate : false;
+	const shouldResolve = options?.resolve !== false;
+	const useLegacyRequests = compatibility != null && compatibility <= 9;
 
 	if (
 		query instanceof types.SearchRequestIndexed &&
@@ -269,29 +286,66 @@ const coerceQuery = <Resolve extends boolean | undefined>(
 		query.replicate = true;
 		return query;
 	}
-	if (query instanceof types.SearchRequest) {
+
+	if (
+		query instanceof types.SearchRequest ||
+		query instanceof types.SearchRequestIndexed
+	) {
+		return query;
+	}
+
+	if (query instanceof types.IterationRequest) {
+		if (useLegacyRequests) {
+			if (query.resolve === false) {
+				return new types.SearchRequestIndexed({
+					query: query.query,
+					sort: query.sort,
+					fetch: query.fetch,
+					replicate: query.replicate ?? replicate,
+				});
+			}
+			return new types.SearchRequest({
+				query: query.query,
+				sort: query.sort,
+				fetch: query.fetch,
+			});
+		}
 		return query;
 	}
 
 	const queryObject = query as QueryLike;
 
-	return options?.resolve || options?.resolve == null
-		? new types.SearchRequest({
+	if (useLegacyRequests) {
+		if (shouldResolve) {
+			return new types.SearchRequest({
 				query: indexerTypes.toQuery(queryObject.query),
-				sort: indexerTypes.toSort(query.sort),
-			})
-		: new types.SearchRequestIndexed({
-				query: indexerTypes.toQuery(queryObject.query),
-				sort: indexerTypes.toSort(query.sort),
-				replicate,
+				sort: indexerTypes.toSort(queryObject.sort),
 			});
+		}
+		return new types.SearchRequestIndexed({
+			query: indexerTypes.toQuery(queryObject.query),
+			sort: indexerTypes.toSort(queryObject.sort),
+			replicate,
+		});
+	}
+
+	return new types.IterationRequest({
+		query: indexerTypes.toQuery(queryObject.query),
+		sort: indexerTypes.toSort(queryObject.sort),
+		fetch: 10,
+		resolve: shouldResolve,
+		replicate: shouldResolve ? false : replicate,
+	});
 };
 
 const introduceEntries = async <
 	T,
 	I,
 	D,
-	R extends types.SearchRequest | types.SearchRequestIndexed,
+	R extends
+		| types.SearchRequest
+		| types.SearchRequestIndexed
+		| types.IterationRequest,
 >(
 	queryRequest: R,
 	responses: { response: types.AbstractSearchResult; from?: PublicSignKey }[],
@@ -347,6 +401,37 @@ const dedup = <T>(
 	return dedup;
 };
 
+type AnyIterationRequest =
+	| types.SearchRequest
+	| types.SearchRequestIndexed
+	| types.IterationRequest;
+
+const resolvesDocuments = (req?: AnyIterationRequest) => {
+	if (!req) {
+		return true;
+	}
+	if (req instanceof types.SearchRequestIndexed) {
+		return false;
+	}
+	if (req instanceof types.IterationRequest) {
+		return req.resolve !== false;
+	}
+	return true;
+};
+
+const replicatesIndex = (req?: AnyIterationRequest) => {
+	if (!req) {
+		return false;
+	}
+	if (req instanceof types.SearchRequestIndexed) {
+		return req.replicate === true;
+	}
+	if (req instanceof types.IterationRequest) {
+		return req.replicate === true;
+	}
+	return false;
+};
+
 function isSubclassOf(
 	SubClass: AbstractType<any>,
 	SuperClass: AbstractType<any>,
@@ -365,11 +450,15 @@ function isSubclassOf(
 }
 
 const DEFAULT_TIMEOUT = 1e4;
+const DISCOVER_TIMEOUT_FALLBACK = 500;
 
 const DEFAULT_INDEX_BY = "id";
 
 export type CanSearch = (
-	request: types.SearchRequest | types.CollectNextRequest,
+	request:
+		| types.SearchRequest
+		| types.IterationRequest
+		| types.CollectNextRequest,
 	from: PublicSignKey,
 ) => Promise<boolean> | boolean;
 
@@ -443,10 +532,15 @@ export type OpenOptions<
 	canRead?: CanRead<I>;
 	canSearch?: CanSearch;
 	replicate: (
-		request: types.SearchRequest | types.SearchRequestIndexed,
+		request:
+			| types.SearchRequest
+			| types.SearchRequestIndexed
+			| types.IterationRequest,
 		results: types.Results<
 			types.ResultTypeFromRequest<
-				types.SearchRequest | types.SearchRequestIndexed,
+				| types.SearchRequest
+				| types.SearchRequestIndexed
+				| types.IterationRequest,
 				T,
 				I
 			>
@@ -458,7 +552,7 @@ export type OpenOptions<
 		resolver?: number;
 		query?: QueryCacheOptions;
 	};
-	compatibility: 6 | 7 | 8 | undefined;
+	compatibility: 6 | 7 | 8 | 9 | undefined;
 	maybeOpen: (value: T & Program) => Promise<T & Program>;
 	prefetch?: boolean | Partial<PrefetchOptions>;
 	includeIndexed?: boolean; // if true, indexed representations will always be included in the search results
@@ -518,7 +612,7 @@ export class DocumentIndex<
 	private _prefetch?: PrefetchOptions | undefined;
 	private includeIndexed: boolean | undefined = undefined;
 
-	compatibility: 6 | 7 | 8 | undefined;
+	compatibility: 6 | 7 | 8 | 9 | undefined;
 
 	// Transformation, indexer
 	/* fields: IndexableFields<T, I>; */
@@ -526,7 +620,10 @@ export class DocumentIndex<
 	private _valueEncoding: Encoding<T>;
 
 	private _sync: <V extends types.ResultValue<T> | types.ResultIndexedValue<I>>(
-		request: types.SearchRequest | types.SearchRequestIndexed,
+		request:
+			| types.SearchRequest
+			| types.SearchRequestIndexed
+			| types.IterationRequest,
 		results: types.Results<V>,
 	) => Promise<void>;
 
@@ -550,15 +647,20 @@ export class DocumentIndex<
 			keptInIndex: number;
 			timeout: ReturnType<typeof setTimeout>;
 			queue: indexerTypes.IndexedResult<WithContext<I>>[];
-			fromQuery: types.SearchRequest | types.SearchRequestIndexed;
+			fromQuery:
+				| types.SearchRequest
+				| types.SearchRequestIndexed
+				| types.IterationRequest;
 		}
 	>;
+	private iteratorKeepAliveTimers?: Map<string, ReturnType<typeof setTimeout>>;
 
 	constructor(properties?: {
 		query?: RPC<types.AbstractSearchRequest, types.AbstractSearchResult>;
 	}) {
 		super();
 		this._query = properties?.query || new RPC();
+		this.iteratorKeepAliveTimers = new Map();
 	}
 
 	get valueEncoding() {
@@ -628,10 +730,15 @@ export class DocumentIndex<
 		this.dbType = properties.dbType;
 		this._resultQueue = new Map();
 		this._sync = (request, results) => {
-			let rq: types.SearchRequest | types.SearchRequestIndexed;
+			let rq:
+				| types.SearchRequest
+				| types.SearchRequestIndexed
+				| types.IterationRequest;
 			let rs: types.Results<
 				types.ResultTypeFromRequest<
-					types.SearchRequest | types.SearchRequestIndexed,
+					| types.SearchRequest
+					| types.SearchRequestIndexed
+					| types.IterationRequest,
 					T,
 					I
 				>
@@ -643,7 +750,9 @@ export class DocumentIndex<
 				rq = request;
 				rs = results as types.Results<
 					types.ResultTypeFromRequest<
-						types.SearchRequest | types.SearchRequestIndexed,
+						| types.SearchRequest
+						| types.SearchRequestIndexed
+						| types.IterationRequest,
 						T,
 						I
 					>
@@ -775,7 +884,8 @@ export class DocumentIndex<
 		if (
 			this.prefetch?.predictor &&
 			(query instanceof types.SearchRequest ||
-				query instanceof types.SearchRequestIndexed)
+				query instanceof types.SearchRequestIndexed ||
+				query instanceof types.IterationRequest)
 		) {
 			const { ignore } = this.prefetch.predictor.onRequest(query, {
 				from: ctx.from!,
@@ -792,6 +902,7 @@ export class DocumentIndex<
 			query as
 				| types.SearchRequest
 				| types.SearchRequestIndexed
+				| types.IterationRequest
 				| types.CollectNextRequest,
 			{
 				from: ctx.from!,
@@ -802,15 +913,20 @@ export class DocumentIndex<
 		query:
 			| types.SearchRequest
 			| types.SearchRequestIndexed
+			| types.IterationRequest
 			| types.CollectNextRequest,
 		ctx: { from: PublicSignKey },
 	) {
 		if (
 			this.canSearch &&
 			(query instanceof types.SearchRequest ||
+				query instanceof types.IterationRequest ||
 				query instanceof types.CollectNextRequest) &&
 			!(await this.canSearch(
-				query as types.SearchRequest | types.CollectNextRequest,
+				query as
+					| types.SearchRequest
+					| types.IterationRequest
+					| types.CollectNextRequest,
 				ctx.from,
 			))
 		) {
@@ -820,17 +936,23 @@ export class DocumentIndex<
 		if (query instanceof types.CloseIteratorRequest) {
 			this.processCloseIteratorRequest(query, ctx.from);
 		} else {
+			const fromQueued =
+				query instanceof types.CollectNextRequest
+					? this._resultQueue.get(query.idString)?.fromQuery
+					: undefined;
+			const queryResolvesDocuments =
+				query instanceof types.CollectNextRequest
+					? resolvesDocuments(fromQueued)
+					: resolvesDocuments(query as AnyIterationRequest);
+
 			const shouldIncludedIndexedResults =
-				this.includeIndexed &&
-				(query instanceof types.SearchRequest ||
-					(query instanceof types.CollectNextRequest &&
-						this._resultQueue.get(query.idString)?.fromQuery instanceof
-							types.SearchRequest)); // we do this check here because this._resultQueue might be emptied when this.processQuery is called
+				this.includeIndexed && queryResolvesDocuments;
 
 			const results = await this.processQuery(
 				query as
 					| types.SearchRequest
 					| types.SearchRequestIndexed
+					| types.IterationRequest
 					| types.CollectNextRequest,
 				ctx.from,
 				false,
@@ -1156,19 +1278,29 @@ export class DocumentIndex<
 					| types.ResultIndexedValue<WithContext<I>>
 			  >[]
 			| undefined;
+
+		const runAndClose = async (
+			req: types.SearchRequest | types.SearchRequestIndexed,
+		): Promise<typeof results> => {
+			const response = await this.queryCommence(
+				req,
+				coercedOptions as QueryDetailedOptions<T, I, D, boolean | undefined>,
+			);
+			this._resumableIterators.close({ idString: req.idString });
+			this.cancelIteratorKeepAlive(req.idString);
+			return response as typeof results;
+		};
 		const resolve = coercedOptions?.resolve || coercedOptions?.resolve == null;
 		let requestClazz = resolve
 			? types.SearchRequest
 			: types.SearchRequestIndexed;
 		if (key instanceof Uint8Array) {
-			results = await this.queryCommence(
-				new requestClazz({
-					query: [
-						new indexerTypes.ByteMatchQuery({ key: this.indexBy, value: key }),
-					],
-				}),
-				coercedOptions as QueryDetailedOptions<T, I, D, boolean | undefined>,
-			);
+			const request = new requestClazz({
+				query: [
+					new indexerTypes.ByteMatchQuery({ key: this.indexBy, value: key }),
+				],
+			});
+			results = await runAndClose(request);
 		} else {
 			const indexableKey = indexerTypes.toIdeable(key);
 
@@ -1176,42 +1308,48 @@ export class DocumentIndex<
 				typeof indexableKey === "number" ||
 				typeof indexableKey === "bigint"
 			) {
-				results = await this.queryCommence(
-					new requestClazz({
-						query: [
-							new indexerTypes.IntegerCompare({
-								key: this.indexBy,
-								compare: indexerTypes.Compare.Equal,
-								value: indexableKey,
-							}),
-						],
-					}),
-					coercedOptions as QueryDetailedOptions<T, I, D, boolean | undefined>,
-				);
+				const request = new requestClazz({
+					query: [
+						new indexerTypes.IntegerCompare({
+							key: this.indexBy,
+							compare: indexerTypes.Compare.Equal,
+							value: indexableKey,
+						}),
+					],
+				});
+				results = await runAndClose(request);
 			} else if (typeof indexableKey === "string") {
-				results = await this.queryCommence(
-					new requestClazz({
-						query: [
-							new indexerTypes.StringMatch({
-								key: this.indexBy,
-								value: indexableKey,
-							}),
-						],
-					}),
-					coercedOptions as QueryDetailedOptions<T, I, D, boolean | undefined>,
-				);
+				const request = new requestClazz({
+					query: [
+						new indexerTypes.StringMatch({
+							key: this.indexBy,
+							value: indexableKey,
+						}),
+					],
+				});
+				results = await runAndClose(request);
 			} else if (indexableKey instanceof Uint8Array) {
-				results = await this.queryCommence(
-					new requestClazz({
-						query: [
-							new indexerTypes.ByteMatchQuery({
-								key: this.indexBy,
-								value: indexableKey,
-							}),
-						],
-					}),
-					coercedOptions as QueryDetailedOptions<T, I, D, boolean | undefined>,
-				);
+				const request = new requestClazz({
+					query: [
+						new indexerTypes.ByteMatchQuery({
+							key: this.indexBy,
+							value: indexableKey,
+						}),
+					],
+				});
+				results = await runAndClose(request);
+			} else if ((indexableKey as any) instanceof ArrayBuffer) {
+				const request = new requestClazz({
+					query: [
+						new indexerTypes.ByteMatchQuery({
+							key: this.indexBy,
+							value: new Uint8Array(indexableKey),
+						}),
+					],
+				});
+				results = await runAndClose(request);
+			} else {
+				throw new Error("Unsupported key type");
 			}
 		}
 
@@ -1317,6 +1455,7 @@ export class DocumentIndex<
 		R extends
 			| types.SearchRequest
 			| types.SearchRequestIndexed
+			| types.IterationRequest
 			| types.CollectNextRequest,
 	>(
 		query: R,
@@ -1338,23 +1477,55 @@ export class DocumentIndex<
 		let indexedResult: indexerTypes.IndexedResults<WithContext<I>> | undefined =
 			undefined;
 
-		let fromQuery: types.SearchRequest | types.SearchRequestIndexed | undefined;
+		let fromQuery:
+			| types.SearchRequest
+			| types.SearchRequestIndexed
+			| types.IterationRequest
+			| undefined;
+		let keepAliveRequest: types.IterationRequest | undefined;
 		if (
 			query instanceof types.SearchRequest ||
-			query instanceof types.SearchRequestIndexed
+			query instanceof types.SearchRequestIndexed ||
+			query instanceof types.IterationRequest
 		) {
 			fromQuery = query;
-			indexedResult = await this._resumableIterators.iterateAndFetch(query);
+			if (
+				!isLocal &&
+				query instanceof types.IterationRequest &&
+				query.keepAliveTtl != null
+			) {
+				keepAliveRequest = query;
+			}
+			indexedResult = await this._resumableIterators.iterateAndFetch(query, {
+				keepAlive: keepAliveRequest !== undefined,
+			});
 		} else if (query instanceof types.CollectNextRequest) {
-			fromQuery =
+			const cachedRequest =
 				prevQueued?.fromQuery ||
 				this._resumableIterators.queues.get(query.idString)?.request;
+			fromQuery = cachedRequest;
+			if (
+				!isLocal &&
+				cachedRequest instanceof types.IterationRequest &&
+				cachedRequest.keepAliveTtl != null
+			) {
+				keepAliveRequest = cachedRequest;
+			}
 			indexedResult =
 				prevQueued?.keptInIndex === 0
 					? []
-					: await this._resumableIterators.next(query);
+					: await this._resumableIterators.next(query, {
+							keepAlive: keepAliveRequest !== undefined,
+						});
 		} else {
 			throw new Error("Unsupported");
+		}
+
+		if (!isLocal && keepAliveRequest) {
+			this.scheduleIteratorKeepAlive(
+				query.idString,
+				keepAliveRequest.keepAliveTtl,
+			);
 		}
 
 		let resultSize = 0;
@@ -1381,13 +1552,15 @@ export class DocumentIndex<
 				keptInIndex: kept,
 				fromQuery: (fromQuery || query) as
 					| types.SearchRequest
-					| types.SearchRequestIndexed,
+					| types.SearchRequestIndexed
+					| types.IterationRequest,
 			};
 			this._resultQueue.set(query.idString, prevQueued);
 		}
 
 		const filteredResults: types.Result[] = [];
-
+		const resolveDocumentsFlag = resolvesDocuments(fromQuery);
+		const replicateIndexFlag = replicatesIndex(fromQuery);
 		for (const result of toIterate) {
 			if (!isLocal) {
 				resultSize += result.value.__context.size;
@@ -1407,7 +1580,7 @@ export class DocumentIndex<
 			) {
 				continue;
 			}
-			if (fromQuery instanceof types.SearchRequest) {
+			if (resolveDocumentsFlag) {
 				const value = await this.resolveDocument({
 					indexed: result.value,
 					head: result.value.__context.head,
@@ -1425,11 +1598,11 @@ export class DocumentIndex<
 						indexed: indexedUnwrapped,
 					}),
 				);
-			} else if (fromQuery instanceof types.SearchRequestIndexed) {
+			} else {
 				const context = result.value.__context;
 				const head = await this._log.log.get(context.head);
 				// assume remote peer will start to replicate (TODO is this ideal?)
-				if (fromQuery.replicate) {
+				if (replicateIndexFlag) {
 					this._log.addPeersToGidPeerHistory(context.gid, [from.hashcode()]);
 				}
 
@@ -1448,6 +1621,13 @@ export class DocumentIndex<
 			results: filteredResults,
 			kept: BigInt(kept + (prevQueued?.queue.length || 0)),
 		});
+		/* console.debug("[DocumentIndex] processQuery", {
+			id: query.idString,
+			isLocal,
+			batchLength: filteredResults.length,
+			kept: results.kept,
+			source: from.hashcode(),
+		}); */
 
 		if (!isLocal && results.kept === 0n) {
 			this.clearResultsQueue(query);
@@ -1456,10 +1636,53 @@ export class DocumentIndex<
 		return results;
 	}
 
+	private scheduleIteratorKeepAlive(idString: string, ttl?: bigint) {
+		if (ttl == null) {
+			return;
+		}
+		const ttlNumber = Number(ttl);
+		if (!Number.isFinite(ttlNumber) || ttlNumber <= 0) {
+			return;
+		}
+
+		// Cap max timeout to 1 day	(TODO make configurable?)
+		const delay = Math.max(1, Math.min(ttlNumber, 86400000));
+		this.cancelIteratorKeepAlive(idString);
+		const timers =
+			this.iteratorKeepAliveTimers ??
+			(this.iteratorKeepAliveTimers = new Map<
+				string,
+				ReturnType<typeof setTimeout>
+			>());
+		const timer = setTimeout(() => {
+			timers.delete(idString);
+			const queued = this._resultQueue.get(idString);
+			if (queued) {
+				clearTimeout(queued.timeout);
+				this._resultQueue.delete(idString);
+			}
+			this._resumableIterators.close({ idString });
+		}, delay);
+		timers.set(idString, timer);
+	}
+
+	private cancelIteratorKeepAlive(idString: string) {
+		const timers = this.iteratorKeepAliveTimers;
+		if (!timers) {
+			return;
+		}
+		const timer = timers.get(idString);
+		if (timer) {
+			clearTimeout(timer);
+			timers.delete(idString);
+		}
+	}
+
 	private clearResultsQueue(
 		query:
 			| types.SearchRequest
 			| types.SearchRequestIndexed
+			| types.IterationRequest
 			| types.CollectNextRequest
 			| types.CloseIteratorRequest,
 	) {
@@ -1478,6 +1701,7 @@ export class DocumentIndex<
 		for (const [key, queue] of this._resultQueue) {
 			clearTimeout(queue.timeout);
 			this._resultQueue.delete(key);
+			this.cancelIteratorKeepAlive(key);
 			this._resumableIterators.close({ idString: key });
 		}
 	}
@@ -1644,6 +1868,7 @@ export class DocumentIndex<
 			logger.info("Ignoring close iterator request from different peer");
 			return;
 		}
+		this.cancelIteratorKeepAlive(query.idString);
 		this.clearResultsQueue(query);
 		return this._resumableIterators.close(query);
 	}
@@ -1655,7 +1880,10 @@ export class DocumentIndex<
 	 * @returns
 	 */
 	private async queryCommence<
-		R extends types.SearchRequest | types.SearchRequestIndexed,
+		R extends
+			| types.SearchRequest
+			| types.SearchRequestIndexed
+			| types.IterationRequest,
 		RT extends types.Result = types.ResultTypeFromRequest<R, T, I>,
 	>(
 		queryRequest: R,
@@ -1899,7 +2127,11 @@ export class DocumentIndex<
 	 * @returns
 	 */
 	public async search<
-		R extends types.SearchRequest | types.SearchRequestIndexed | QueryLike,
+		R extends
+			| types.SearchRequest
+			| types.SearchRequestIndexed
+			| types.IterationRequest
+			| QueryLike,
 		O extends SearchOptions<T, I, D, Resolve>,
 		Resolve extends boolean = ExtractResolveFromOptions<O>,
 	>(
@@ -1907,8 +2139,11 @@ export class DocumentIndex<
 		options?: O,
 	): Promise<ValueTypeFromRequest<Resolve, T, I>[]> {
 		// Set fetch to search size, or max value (default to max u32 (4294967295))
-		const coercedRequest: types.SearchRequest | types.SearchRequestIndexed =
-			coerceQuery(queryRequest, options);
+		const coercedRequest = coerceQuery(
+			queryRequest,
+			options,
+			this.compatibility,
+		);
 		coercedRequest.fetch = coercedRequest.fetch ?? 0xffffffff;
 
 		// So that the iterator is pre-fetching the right amount of entries
@@ -1996,8 +2231,9 @@ export class DocumentIndex<
 		Resolve extends boolean | undefined = ExtractResolveFromOptions<O>,
 	>(
 		queryRequest?: R,
-		options?: QueryOptions<T, I, D, Resolve>,
+		optionsArg?: QueryOptions<T, I, D, Resolve>,
 	): ResultsIterator<ValueTypeFromRequest<Resolve, T, I>> {
+		let options = optionsArg;
 		if (
 			queryRequest instanceof types.SearchRequest &&
 			options?.resolve === false
@@ -2005,14 +2241,44 @@ export class DocumentIndex<
 			throw new Error("Cannot use resolve=false with SearchRequest"); // TODO make this work
 		}
 
-		let queryRequestCoerced: types.SearchRequest | types.SearchRequestIndexed =
-			coerceQuery(queryRequest ?? {}, options);
+		let queryRequestCoerced = coerceQuery(
+			queryRequest ?? {},
+			options,
+			this.compatibility,
+		);
+
+		const {
+			mergePolicy,
+			push: pushUpdates,
+			callbacks: updateCallbacksRaw,
+		} = normalizeUpdatesOption(options?.updates);
+		const hasLiveUpdates = mergePolicy !== undefined;
+		const originalRemote = options?.remote;
+		let remoteOptions =
+			typeof originalRemote === "boolean"
+				? originalRemote
+				: originalRemote
+					? { ...originalRemote }
+					: undefined;
+		if (pushUpdates && remoteOptions !== false) {
+			if (typeof remoteOptions === "object") {
+				if (remoteOptions.replicate !== true) {
+					remoteOptions.replicate = true;
+				}
+			} else if (remoteOptions === undefined || remoteOptions === true) {
+				remoteOptions = { replicate: true };
+			}
+		}
+		if (remoteOptions !== originalRemote) {
+			options = Object.assign({}, options, { remote: remoteOptions });
+		}
 
 		let resolve = options?.resolve !== false;
 		if (
+			!(queryRequestCoerced instanceof types.IterationRequest) &&
 			options?.remote &&
 			typeof options.remote !== "boolean" &&
-			options.remote.replicate &&
+			(options.remote.replicate || pushUpdates) &&
 			options?.resolve !== false
 		) {
 			if (
@@ -2032,7 +2298,7 @@ export class DocumentIndex<
 		let replicate =
 			options?.remote &&
 			typeof options.remote !== "boolean" &&
-			options.remote.replicate;
+			(options.remote.replicate || pushUpdates);
 		if (
 			replicate &&
 			queryRequestCoerced instanceof types.SearchRequestIndexed
@@ -2109,6 +2375,8 @@ export class DocumentIndex<
 
 		let warmupPromise: Promise<any> | undefined = undefined;
 
+		let discoveredTargetHashes: string[] | undefined;
+
 		if (typeof options?.remote === "object") {
 			let waitForTime: number | undefined = undefined;
 			if (options.remote.wait) {
@@ -2145,11 +2413,26 @@ export class DocumentIndex<
 			}
 
 			if (options.remote.reach?.discover) {
-				warmupPromise = this.waitFor(options.remote.reach.discover, {
+				const discoverTimeout =
+					waitForTime ??
+					(options.remote.wait ? DEFAULT_TIMEOUT : DISCOVER_TIMEOUT_FALLBACK);
+				const discoverPromise = this.waitFor(options.remote.reach.discover, {
 					signal: ensureController().signal,
 					seek: "present",
-					timeout: waitForTime ?? DEFAULT_TIMEOUT,
-				});
+					timeout: discoverTimeout,
+				})
+					.then((hashes) => {
+						discoveredTargetHashes = hashes;
+					})
+					.catch((error) => {
+						if (error instanceof TimeoutError || error instanceof AbortError) {
+							discoveredTargetHashes = [];
+							return;
+						}
+						throw error;
+					});
+				const prior = warmupPromise ?? Promise.resolve();
+				warmupPromise = prior.then(() => discoverPromise);
 				options.remote.reach.eager = true; // include the results from the discovered peer even if it is not mature
 			}
 
@@ -2181,6 +2464,18 @@ export class DocumentIndex<
 		): Promise<boolean> => {
 			await warmupPromise;
 			let hasMore = false;
+			const discoverTargets =
+				typeof options?.remote === "object"
+					? options.remote.reach?.discover
+					: undefined;
+			const initialRemoteTargets =
+				discoveredTargetHashes !== undefined
+					? discoveredTargetHashes
+					: discoverTargets?.map((pk) => pk.hashcode().toString());
+			const skipRemoteDueToDiscovery =
+				typeof options?.remote === "object" &&
+				options.remote.reach?.discover &&
+				discoveredTargetHashes?.length === 0;
 
 			queryRequestCoerced.fetch = n;
 			await this.queryCommence(
@@ -2188,12 +2483,12 @@ export class DocumentIndex<
 				{
 					local: fetchOptions?.from != null ? false : options?.local,
 					remote:
-						options?.remote !== false
+						options?.remote !== false && !skipRemoteDueToDiscovery
 							? {
 									...(typeof options?.remote === "object"
 										? options.remote
 										: {}),
-									from: fetchOptions?.from,
+									from: fetchOptions?.from ?? initialRemoteTargets,
 								}
 							: false,
 					resolve,
@@ -2210,17 +2505,25 @@ export class DocumentIndex<
 								types.ResultTypeFromRequest<R, T, I>
 							>;
 
+							const existingBuffer = peerBufferMap.get(from.hashcode());
+							const buffer: BufferedResult<
+								types.ResultTypeFromRequest<R, T, I> | I,
+								I
+							>[] = existingBuffer?.buffer || [];
+
 							if (results.kept === 0n && results.results.length === 0) {
+								if (keepRemoteAlive) {
+									peerBufferMap.set(from.hashcode(), {
+										buffer,
+										kept: Number(response.kept),
+									});
+								}
 								return;
 							}
 
 							if (results.kept > 0n) {
 								hasMore = true;
 							}
-							const buffer: BufferedResult<
-								types.ResultTypeFromRequest<R, T, I> | I,
-								I
-							>[] = peerBufferMap.get(from.hashcode())?.buffer || [];
 
 							for (const result of results.results) {
 								const indexKey = indexerTypes.toId(
@@ -2290,6 +2593,15 @@ export class DocumentIndex<
 				},
 				fetchOptions?.fetchedFirstForRemote,
 			);
+			/* console.debug(
+				"[DocumentIndex] fetchFirst",
+				{
+					id: queryRequestCoerced.idString,
+					requestedFrom: fetchOptions?.from,
+					initialRemoteTargets,
+					keepRemoteAlive,
+				},
+			); */
 
 			if (!hasMore) {
 				maybeSetDone();
@@ -2322,7 +2634,8 @@ export class DocumentIndex<
 
 			for (const [peer, buffer] of peerBufferMap) {
 				if (buffer.buffer.length < n) {
-					if (buffer.kept === 0) {
+					const hasExistingRemoteResults = buffer.kept > 0;
+					if (!hasExistingRemoteResults && !keepRemoteAlive) {
 						if (peerBufferMap.get(peer)?.buffer.length === 0) {
 							peerBufferMap.delete(peer); // No more results
 						}
@@ -2332,9 +2645,22 @@ export class DocumentIndex<
 					// TODO buffer more than deleted?
 					// TODO batch to multiple 'to's
 
+					const lacking = n - buffer.buffer.length;
+					const amount = lacking > 0 ? lacking : keepRemoteAlive ? 1 : 0;
+					/* console.debug("[DocumentIndex] fetchAtLeast loop", {
+						peer,
+						bufferLength: buffer.buffer.length,
+						bufferKept: buffer.kept,
+						amount,
+						keepRemoteAlive,
+					}); */
+					if (amount <= 0) {
+						continue;
+					}
+
 					const collectRequest = new types.CollectNextRequest({
 						id: queryRequestCoerced.id,
-						amount: n - buffer.buffer.length,
+						amount,
 					});
 					// Fetch locally?
 					if (peer === this.node.identity.publicKey.hashcode()) {
@@ -2351,7 +2677,10 @@ export class DocumentIndex<
 									resultsLeft += Number(results.kept);
 
 									if (results.results.length === 0) {
-										if (peerBufferMap.get(peer)?.buffer.length === 0) {
+										if (
+											!keepRemoteAlive &&
+											peerBufferMap.get(peer)?.buffer.length === 0
+										) {
 											peerBufferMap.delete(peer); // No more results
 										}
 									} else {
@@ -2492,7 +2821,10 @@ export class DocumentIndex<
 													}
 
 													if (response.response.results.length === 0) {
-														if (peerBufferMap.get(peer)?.buffer.length === 0) {
+														if (
+															!keepRemoteAlive &&
+															peerBufferMap.get(peer)?.buffer.length === 0
+														) {
 															peerBufferMap.delete(peer); // No more results
 														}
 													} else {
@@ -2745,48 +3077,102 @@ export class DocumentIndex<
 		let fetchedFirstForRemote: Set<string> | undefined = undefined;
 
 		let updateDeferred: ReturnType<typeof pDefer> | undefined;
-		const signalUpdate = () => updateDeferred?.resolve();
+		const signalUpdate = (reason?: string) => {
+			if (reason) {
+				/* console.debug("[DocumentIndex] signalUpdate", {
+					id: queryRequestCoerced.idString,
+					reason,
+				}); */
+			}
+			updateDeferred?.resolve();
+		};
 		const _waitForUpdate = () =>
 			updateDeferred ? updateDeferred.promise : Promise.resolve();
 
 		// ---------------- Live updates wiring (sorted-only with optional filter) ----------------
-		const normalizeUpdatesOption = (
-			u?: UpdateOptions<T, I, Resolve>,
-		):
-			| {
-					merge?:
-						| {
-								filter?: (
-									evt: DocumentsChange<T, I>,
-								) => MaybePromise<DocumentsChange<T, I> | void>;
-						  }
-						| undefined;
-			  }
-			| undefined => {
-			if (u == null || u === false) return undefined;
-			if (u === true)
+		function normalizeUpdatesOption(u?: UpdateOptions<T, I, Resolve>): {
+			mergePolicy?: {
+				merge?:
+					| {
+							filter?: (
+								evt: DocumentsChange<T, I>,
+							) => MaybePromise<DocumentsChange<T, I> | void>;
+					  }
+					| undefined;
+			};
+			push: boolean;
+			callbacks?: UpdateCallbacks<T, I, Resolve>;
+		} {
+			const identityFilter = (evt: DocumentsChange<T, I>) => evt;
+			const buildMergePolicy = (
+				merge: UpdateMergeStrategy<T, I, Resolve> | undefined,
+				defaultEnabled: boolean,
+			) => {
+				const effective =
+					merge === undefined ? (defaultEnabled ? true : undefined) : merge;
+				if (effective === undefined || effective === false) {
+					return undefined;
+				}
+				if (effective === true) {
+					return {
+						merge: {
+							filter: identityFilter,
+						},
+					};
+				}
 				return {
 					merge: {
-						filter: (evt) => evt,
+						filter: effective.filter ?? identityFilter,
 					},
 				};
-			if (typeof u === "object") {
+			};
+
+			if (u == null || u === false) {
+				return { push: false };
+			}
+
+			if (u === true) {
 				return {
-					merge: u.merge
-						? {
-								filter:
-									typeof u.merge === "object" ? u.merge.filter : (evt) => evt,
-							}
-						: {},
+					mergePolicy: buildMergePolicy(true, true),
+					push: false,
 				};
 			}
-			return undefined;
-		};
 
-		const updateCallbacks =
-			typeof options?.updates === "object" ? options.updates : undefined;
-		const mergePolicy = normalizeUpdatesOption(options?.updates);
-		const hasLiveUpdates = mergePolicy !== undefined;
+			if (typeof u === "string") {
+				if (u === "remote") {
+					return { push: true };
+				}
+				if (u === "local") {
+					return {
+						mergePolicy: buildMergePolicy(true, true),
+						push: false,
+					};
+				}
+				if (u === "all") {
+					return {
+						mergePolicy: buildMergePolicy(true, true),
+						push: true,
+					};
+				}
+			}
+
+			if (typeof u === "object") {
+				const hasMergeProp = Object.prototype.hasOwnProperty.call(u, "merge");
+				const mergeValue = hasMergeProp ? u.merge : undefined;
+				return {
+					mergePolicy: buildMergePolicy(
+						mergeValue,
+						!hasMergeProp || mergeValue === undefined,
+					),
+					push: Boolean(u.push),
+					callbacks: u,
+				};
+			}
+
+			return { push: false };
+		}
+
+		const updateCallbacks = updateCallbacksRaw;
 		let pendingResultsReason:
 			| Extract<ResultBatchReason, "join" | "change">
 			| undefined;
@@ -2817,6 +3203,180 @@ export class DocumentIndex<
 		// If live updates enabled, ensure deferred exists so awaiting paths can block until changes
 		if (hasLiveUpdates && !updateDeferred) {
 			updateDeferred = pDefer<void>();
+		}
+
+		const keepRemoteAlive =
+			(options?.closePolicy === "manual" || hasLiveUpdates || pushUpdates) &&
+			remoteOptions !== false;
+
+		if (queryRequestCoerced instanceof types.IterationRequest) {
+			queryRequestCoerced.resolve = resolve;
+			queryRequestCoerced.fetch = queryRequestCoerced.fetch ?? 10;
+			const replicateFlag = !resolve && replicate ? true : false;
+			queryRequestCoerced.replicate = replicateFlag;
+			const ttlSource =
+				typeof remoteOptions === "object" &&
+				typeof remoteOptions?.wait === "object"
+					? (remoteOptions.wait.timeout ?? DEFAULT_TIMEOUT)
+					: DEFAULT_TIMEOUT;
+			queryRequestCoerced.keepAliveTtl = keepRemoteAlive
+				? BigInt(ttlSource)
+				: undefined;
+			queryRequestCoerced.pushUpdates = pushUpdates ? true : undefined;
+			queryRequestCoerced.mergeUpdates = mergePolicy?.merge ? true : undefined;
+		}
+
+		if (pushUpdates && this.prefetch?.accumulator) {
+			const targetPrefetchKey = idAgnosticQueryKey(queryRequestCoerced);
+			const mergePrefetchedResults = async (
+				from: PublicSignKey,
+				results: types.Results<types.ResultTypeFromRequest<R, T, I>>,
+			) => {
+				const peerHash = from.hashcode();
+				const existingBuffer = peerBufferMap.get(peerHash);
+				const buffer: BufferedResult<
+					types.ResultTypeFromRequest<R, T, I> | I,
+					I
+				>[] = existingBuffer?.buffer || [];
+
+				if (results.kept === 0n && results.results.length === 0) {
+					peerBufferMap.set(peerHash, {
+						buffer,
+						kept: Number(results.kept),
+					});
+					return;
+				}
+
+				for (const result of results.results) {
+					const indexKey = indexerTypes.toId(
+						this.indexByResolver(result.value),
+					).primitive;
+					if (result instanceof types.ResultValue) {
+						const existingIndexed = indexedPlaceholders?.get(indexKey);
+						if (existingIndexed) {
+							existingIndexed.value =
+								result.value as types.ResultTypeFromRequest<R, T, I>;
+							existingIndexed.context = result.context;
+							existingIndexed.from = from;
+							existingIndexed.indexed = await this.resolveIndexed<R>(
+								result,
+								results.results as types.ResultTypeFromRequest<R, T, I>[],
+							);
+							indexedPlaceholders?.delete(indexKey);
+							continue;
+						}
+						if (visited.has(indexKey)) {
+							continue;
+						}
+						visited.add(indexKey);
+						buffer.push({
+							value: result.value as types.ResultTypeFromRequest<R, T, I>,
+							context: result.context,
+							from,
+							indexed: await this.resolveIndexed<R>(
+								result,
+								results.results as types.ResultTypeFromRequest<R, T, I>[],
+							),
+						});
+					} else {
+						if (visited.has(indexKey) && !indexedPlaceholders?.has(indexKey)) {
+							continue;
+						}
+						visited.add(indexKey);
+						const indexed = coerceWithContext(
+							result.indexed || result.value,
+							result.context,
+						);
+						const placeholder = {
+							value: result.value,
+							context: result.context,
+							from,
+							indexed,
+						};
+						buffer.push(placeholder);
+						ensureIndexedPlaceholders().set(indexKey, placeholder);
+					}
+				}
+
+				peerBufferMap.set(peerHash, {
+					buffer,
+					kept: Number(results.kept),
+				});
+			};
+
+			const consumePrefetch = async (
+				consumable: RPCResponse<types.PredictedSearchRequest<any>>,
+			) => {
+				const request = consumable.response?.request;
+				if (!request) {
+					return;
+				}
+				if (idAgnosticQueryKey(request) !== targetPrefetchKey) {
+					return;
+				}
+
+				/* console.debug("[DocumentIndex] prefetch match", {
+					iterator: queryRequestCoerced.idString,
+					source: consumable.from?.hashcode(),
+				});
+ */
+				try {
+					const prepared = await introduceEntries(
+						queryRequestCoerced,
+						[
+							{
+								response: consumable.response.results,
+								from: consumable.from,
+							},
+						],
+						this.documentType,
+						this.indexedType,
+						this._sync,
+						options as QueryDetailedOptions<T, I, D, any>,
+					);
+
+					for (const response of prepared) {
+						if (!response.from) {
+							continue;
+						}
+						const payload = response.response;
+						if (!(payload instanceof types.Results)) {
+							continue;
+						}
+						await mergePrefetchedResults(
+							response.from,
+							payload as types.Results<types.ResultTypeFromRequest<R, T, I>>,
+						);
+					}
+
+					if (!pendingResultsReason) {
+						pendingResultsReason = "change";
+					}
+					signalUpdate("prefetch-add");
+				} catch (error) {
+					logger.warn("Failed to merge prefetched results", error);
+				}
+			};
+
+			const onPrefetchAdd = (
+				evt: CustomEvent<{
+					consumable: RPCResponse<types.PredictedSearchRequest<any>>;
+				}>,
+			) => {
+				void consumePrefetch(evt.detail.consumable);
+			};
+			this.prefetch.accumulator.addEventListener(
+				"add",
+				onPrefetchAdd as EventListener,
+			);
+			const cleanupDefault = cleanup;
+			cleanup = () => {
+				this.prefetch?.accumulator.removeEventListener(
+					"add",
+					onPrefetchAdd as EventListener,
+				);
+				return cleanupDefault();
+			};
 		}
 
 		let updatesCleanup: (() => void) | undefined;
@@ -2864,6 +3424,11 @@ export class DocumentIndex<
 			};
 
 			const onChange = async (evt: CustomEvent<DocumentsChange<T, I>>) => {
+				/* console.debug("[DocumentIndex] onChange event", {
+					id: queryRequestCoerced.idString,
+					added: evt.detail.added?.length,
+					removed: evt.detail.removed?.length,
+				}); */
 				// Optional filter to mutate/suppress change events
 				let filtered: DocumentsChange<T, I> | void = evt.detail;
 				if (mergePolicy?.merge?.filter) {
@@ -2981,6 +3546,12 @@ export class DocumentIndex<
 								indexed: indexedCandidate,
 							};
 							buf.buffer.push(placeholder);
+							/* console.debug("[DocumentIndex] buffered change", {
+								id: queryRequestCoerced.idString,
+								placeholderId: (valueForBuffer as any)?.id,
+								peer: localHash,
+								bufferSize: buf.buffer.length,
+							}); */
 							if (!resolve) {
 								ensureIndexedPlaceholders().set(id, placeholder);
 							}
@@ -2997,7 +3568,13 @@ export class DocumentIndex<
 							changeForCallback.added.length > 0 ||
 							changeForCallback.removed.length > 0
 						) {
+							/* console.debug("[DocumentIndex] changeForCallback", {
+								id: queryRequestCoerced.idString,
+								added: changeForCallback.added.map((x) => (x as any)?.id),
+								removed: changeForCallback.removed.map((x) => (x as any)?.id),
+							}); */
 							updateCallbacks?.onChange?.(changeForCallback);
+							signalUpdate("change");
 						}
 					}
 				}
@@ -3099,8 +3676,8 @@ export class DocumentIndex<
 			};
 		}
 
-		if (options?.closePolicy === "manual") {
-			let prevMaybeSetDone = maybeSetDone;
+		if (keepRemoteAlive) {
+			const prevMaybeSetDone = maybeSetDone;
 			maybeSetDone = () => {
 				if (drain) {
 					prevMaybeSetDone();
@@ -3126,7 +3703,16 @@ export class DocumentIndex<
 			close,
 			next,
 			done: doneFn,
-			pending: () => {
+			pending: async () => {
+				try {
+					await fetchPromise;
+					if (!done && keepRemoteAlive) {
+						await fetchAtLeast(1);
+					}
+				} catch (error) {
+					logger.warn("Failed to refresh iterator pending state", error);
+				}
+
 				let pendingCount = 0;
 				for (const buffer of peerBufferMap.values()) {
 					pendingCount += buffer.kept + buffer.buffer.length;

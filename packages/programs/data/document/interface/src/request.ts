@@ -1,4 +1,4 @@
-import { field, fixedArray, variant, vec } from "@dao-xyz/borsh";
+import { field, fixedArray, option, variant, vec } from "@dao-xyz/borsh";
 import { randomBytes, sha256Base64Sync } from "@peerbit/crypto";
 import { Query, Sort, toQuery } from "@peerbit/indexer-interface";
 import {
@@ -13,7 +13,9 @@ export type ResultTypeFromRequest<R, T, I> = R extends SearchRequest
 	? ResultValue<T>
 	: R extends SearchRequestIndexed
 		? ResultIndexedValue<I>
-		: ResultValue<T> | ResultIndexedValue<I>;
+		: R extends IterationRequest
+			? ResultValue<T> | ResultIndexedValue<I>
+			: ResultValue<T> | ResultIndexedValue<I>;
 
 /**
  * Search with query and collect with sort conditionss
@@ -146,20 +148,81 @@ export class PredictedSearchRequest<
 	id: Uint8Array; // collect with id
 
 	@field({ type: AbstractSearchRequest })
-	request: SearchRequest | SearchRequestIndexed;
+	request: SearchRequest | SearchRequestIndexed | IterationRequest;
 
 	@field({ type: AbstractSearchResult })
 	results: AbstractSearchResult;
 
 	constructor(properties: {
 		id?: Uint8Array;
-		request: SearchRequest | SearchRequestIndexed;
+		request: SearchRequest | SearchRequestIndexed | IterationRequest;
 		results: AbstractSearchResult;
 	}) {
 		super();
 		this.id = properties.id || randomBytes(32);
 		this.request = properties.request;
 		this.results = properties.results;
+	}
+}
+
+@variant(5)
+export class IterationRequest extends AbstractSearchRequest {
+	@field({ type: fixedArray("u8", 32) })
+	id: Uint8Array;
+
+	@field({ type: vec(Query) })
+	query: Query[];
+
+	@field({ type: vec(Sort) })
+	sort: Sort[];
+
+	@field({ type: "u32" })
+	fetch: number;
+
+	@field({ type: "bool" })
+	resolve: boolean;
+
+	@field({ type: "bool" })
+	replicate: boolean;
+
+	@field({ type: option("u64") })
+	keepAliveTtl?: bigint;
+
+	@field({ type: option("bool") })
+	pushUpdates?: boolean;
+
+	@field({ type: option("bool") })
+	mergeUpdates?: boolean;
+
+	constructor(properties?: {
+		query?:
+			| Query[]
+			| Query
+			| Record<
+					string,
+					string | number | bigint | Uint8Array | boolean | null | undefined
+			  >;
+		sort?: Sort[] | Sort;
+		fetch?: number;
+		resolve?: boolean;
+		replicate?: boolean;
+		keepAliveTtl?: number | bigint;
+		pushUpdates?: boolean;
+		mergeUpdates?: boolean;
+	}) {
+		super();
+		this.id = randomBytes(32);
+		this.query = properties?.query ? toQuery(properties.query) : [];
+		this.sort = toArray(properties?.sort);
+		this.fetch = properties?.fetch ?? 10;
+		this.resolve = properties?.resolve ?? true;
+		this.replicate = properties?.replicate ?? false;
+		this.keepAliveTtl =
+			properties?.keepAliveTtl != null
+				? BigInt(properties.keepAliveTtl)
+				: undefined;
+		this.pushUpdates = properties?.pushUpdates;
+		this.mergeUpdates = properties?.mergeUpdates;
 	}
 }
 
