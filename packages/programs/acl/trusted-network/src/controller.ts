@@ -138,7 +138,7 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 	constructor(props: { id?: Uint8Array; rootTrust: PublicSignKey | PeerId }) {
 		super();
 		this.rootTrust = coercePublicKey(props.rootTrust);
-		this.trustGraph = createIdentityGraphStore();
+		this.trustGraph = createIdentityGraphStore(props.id);
 	}
 
 	async open(options?: TrustedNetworkArgs) {

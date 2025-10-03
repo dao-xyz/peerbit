@@ -7,6 +7,7 @@ import { Program } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import { equals } from "uint8arrays";
 import {
 	FromTo,
 	IdentityGraph,
@@ -195,7 +196,7 @@ describe("index", () => {
 			const t1 = new TrustedNetwork({ id: key.publicKey, rootTrust: key });
 			const t2 = new TrustedNetwork({ id: key.publicKey, rootTrust: key });
 
-			expect(serialize(t1)).to.deep.equal(serialize(t2));
+			expect(equals(serialize(t1), serialize(t2))).to.be.true;
 		});
 
 		it("replicates by default", async () => {
@@ -321,10 +322,10 @@ describe("index", () => {
 
 			await l0a.add(session.peers[1].peerId);
 			expect(
-				await l0a.hasRelation(session.peers[0].peerId, session.peers[1].peerId),
+				await l0a.hasRelation(session.peers[1].peerId, session.peers[0].peerId),
 			).to.be.false;
 			expect(
-				await l0a.hasRelation(session.peers[1].peerId, session.peers[0].peerId),
+				await l0a.hasRelation(session.peers[0].peerId, session.peers[1].peerId),
 			).to.be.true;
 		});
 
