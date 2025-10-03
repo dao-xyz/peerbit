@@ -1,0 +1,51 @@
+diff --git a/src/release-rc.js b/src/release-rc.js
+index 0b34c2c..6f3c2a9 100644
+--- a/src/release-rc.js
++++ b/src/release-rc.js
+@@
+-import path from 'path'
+-import { execa } from 'execa'
+-import fs from 'fs-extra'
+-import Listr from 'listr'
+-import retry from 'p-retry'
+-import { isMonorepoParent, pkg, everyMonorepoProject, pipeOutput } from './utils.js'
++import path from 'path'
++import { execa } from 'execa'
++import fs from 'fs-extra'
++import Listr from 'listr'
++import retry from 'p-retry'
++import { isMonorepoParent, pkg, everyMonorepoProject, pipeOutput } from './utils.js'
++
++const packageManager = process.env.AEGIR_PACKAGE_MANAGER ?? process.env.NPM ?? 'npm'
+@@
+-    await retry(async () => {
+-      console.info(`npm publish --tag ${ctx.tag} --dry-run ${!process.env.CI}`)
++    await retry(async () => {
++      console.info(`${packageManager} publish --tag ${ctx.tag} --dry-run ${!process.env.CI}`)
+ 
+       try {
+-        const subprocess = execa('npm', ['publish', '--tag', ctx.tag, '--dry-run', `${!process.env.CI}`], {
++        const subprocess = execa(packageManager, ['publish', '--tag', ctx.tag, '--dry-run', `${!process.env.CI}`], {
+           cwd: project.dir
+         })
+@@
+-  console.info(`npm version ${pkg.version}-${commit} --no-git-tag-version`)
+-  await execa('npm', ['version', `${pkg.version}-${commit}`, '--no-git-tag-version'], {
++  console.info(`${packageManager} version ${pkg.version}-${commit} --no-git-tag-version`)
++  await execa(packageManager, ['version', `${pkg.version}-${commit}`, '--no-git-tag-version'], {
+     stdout: 'inherit',
+     stderr: 'inherit'
+   })
+ 
+   await retry(async () => {
+-    console.info(`npm publish --tag ${ctx.tag} --dry-run ${!process.env.CI}`)
++    console.info(`${packageManager} publish --tag ${ctx.tag} --dry-run ${!process.env.CI}`)
+ 
+     try {
+-      await execa('npm', ['publish', '--tag', ctx.tag, '--dry-run', `${!process.env.CI}`], {
++      await execa(packageManager, ['publish', '--tag', ctx.tag, '--dry-run', `${!process.env.CI}`], {
+         stdout: 'inherit',
+         stderr: 'inherit',
+         all: true
+       })
+*** End Patch

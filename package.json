@@ -76,8 +76,8 @@
 		"docsify": "docsify serve ./docs",
 		"dep-check": "aegir run dep-check",
 		"doc-check": "aegir run doc-check",
-		"release": "aegir exec --bail false npm -- publish",
-		"release:rc": "aegir release-rc",
+		"release": "aegir exec --bail false pnpm -- publish",
+		"release:rc": "AEGIR_PACKAGE_MANAGER=pnpm aegir release-rc",
 		"deploy": "pnpm run deploy:docs && pnpm run deploy:example",
 		"deploy:docs": "pnpm run docs && gh-pages --dist docs --dotfiles",
 		"fmt": "prettier --write '{*,**/*}.{js,ts,jsx,tsx,json,vue}'",
@@ -85,7 +85,8 @@
 	},
 	"pnpm": {
 		"patchedDependencies": {
-			"cpy@11.1.0": "patches/cpy@11.1.0.patch"
+			"cpy@11.1.0": "patches/cpy@11.1.0.patch",
+			"aegir@44.0.1": "patches/aegir@44.0.1.patch"
 		},
 		"onlyBuiltDependencies": [
 			"@ipshipyard/node-datachannel",
