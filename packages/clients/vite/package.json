@@ -67,14 +67,14 @@
 	"dependencies": {
 		"vite-plugin-static-copy": "^3.1.2",
 		"vite": "^7.1.7",
-		"@peerbit/build-assets": "1.0.0"
+		"@peerbit/build-assets": "workspace:*"
 	},
 	"devDependencies": {
 		"chai": "^4.3.10",
 		"@types/chai": "^4.3.16",
-		"@peerbit/indexer-sqlite3": "1.2.29",
-		"@peerbit/any-store": "2.1.15",
-		"@peerbit/any-store-opfs": "1.0.14"
+		"@peerbit/indexer-sqlite3": "workspace:*",
+		"@peerbit/any-store": "workspace:*",
+		"@peerbit/any-store-opfs": "workspace:*"
 	},
 	"localMaintainers": [
 		"dao.xyz"

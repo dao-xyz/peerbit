@@ -74,7 +74,7 @@
 		"dao.xyz"
 	],
 	"devDependencies": {
-		"@peerbit/libp2p-test-utils": "2.1.21"
+		"@peerbit/libp2p-test-utils": "workspace:*"
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
@@ -85,13 +85,13 @@
 		"@libp2p/websockets": "^10.0.3",
 		"@libp2p/identify": "^4.0.2",
 		"@multiformats/multiaddr": "^13.0.1",
-		"@peerbit/crypto": "2.3.12",
+		"@peerbit/crypto": "workspace:*",
 		"@peerbit/logger": "workspace:*",
-		"@peerbit/pubsub-interface": "4.0.8",
-		"@peerbit/stream": "4.4.6",
-		"@peerbit/stream-interface": "5.2.9",
+		"@peerbit/pubsub-interface": "workspace:*",
+		"@peerbit/stream": "workspace:*",
+		"@peerbit/stream-interface": "workspace:*",
 		"@peerbit/time": "workspace:*",
-		"@peerbit/any-store-interface": "1.0.1",
+		"@peerbit/any-store-interface": "workspace:*",
 		"any-signal": "^4.1.0",
 		"it-length-prefixed": "^10.0.1",
 		"it-pipe": "^3.0.1",

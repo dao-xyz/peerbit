@@ -1,0 +1,51 @@
+name: Restore Workspace Dependencies
+
+on:
+  workflow_run:
+    workflows:
+      - Run Release Please
+    types:
+      - completed
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  restore:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && vars.ENABLE_WORKSPACE_RESTORE == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Restore workspace dependency protocol
+        run: node tools/restore-workspace-deps.mjs
+
+      - name: Create workspace restore pull request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: restore workspace dependency protocol"
+          title: "chore: restore workspace dependency protocol"
+          body: |
+            ## Summary
+
+            * reset internal workspace dependencies back to `workspace:*`
+            * generated automatically after a successful release run
+
+            ---
+
+            _This PR was opened by the **Restore Workspace Dependencies** workflow._
+          branch: chore/restore-workspace-deps
+          labels: chore
+          add-paths: |
+            **/package.json
+            tools/restore-workspace-deps.mjs

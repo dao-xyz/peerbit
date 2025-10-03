@@ -76,7 +76,7 @@
 		"dao.xyz"
 	],
 	"devDependencies": {
-		"@peerbit/libp2p-test-utils": "2.1.21",
+		"@peerbit/libp2p-test-utils": "workspace:*",
 		"@types/fast-fifo": "^1.0.2",
 		"@types/sinon": "^10.0.20",
 		"sinon": "^21.0.0",
@@ -105,10 +105,10 @@
 		"uint8arraylist": "^2.4.8",
 		"uint8arrays": "^5.1.0",
 		"yallist": "^5.0.0",
-		"@peerbit/cache": "2.1.5",
-		"@peerbit/crypto": "2.3.12",
+		"@peerbit/cache": "workspace:*",
+		"@peerbit/crypto": "workspace:*",
 		"@peerbit/logger": "workspace:*",
-		"@peerbit/stream-interface": "5.2.9",
+		"@peerbit/stream-interface": "workspace:*",
 		"@peerbit/time": "workspace:*"
 	}
 }

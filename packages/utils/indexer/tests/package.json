@@ -61,8 +61,8 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@peerbit/indexer-interface": "2.0.13",
-		"@peerbit/crypto": "2.3.12",
+		"@peerbit/indexer-interface": "workspace:*",
+		"@peerbit/crypto": "workspace:*",
 		"@peerbit/time": "workspace:*",
 		"@dao-xyz/borsh": "^5.2.3",
 		"libsodium-wrappers": "^0.7.15",

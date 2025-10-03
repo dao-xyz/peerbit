@@ -59,8 +59,8 @@
 	"license": "MIT",
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
-		"@peerbit/crypto": "2.3.12",
-		"@peerbit/indexer-interface": "2.0.13",
-		"@peerbit/log": "4.1.9"
+		"@peerbit/crypto": "workspace:*",
+		"@peerbit/indexer-interface": "workspace:*",
+		"@peerbit/log": "workspace:*"
 	}
 }
