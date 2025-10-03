@@ -10,7 +10,7 @@
 		"strictNullChecks": false,
 		"allowUnusedLabels": true,
 		"noUnusedLocals": false,
-		"outDir": "dist"
+		"outDir": "dist/test"
 	},
 	"include": ["modules", "topics", "examples"]
 }
