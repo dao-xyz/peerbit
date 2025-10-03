@@ -9,13 +9,13 @@ import type {
 	Libp2pEvents,
 	PeerId,
 	PeerStore,
+	PrivateKey,
 	Stream,
 	TypedEventTarget,
 } from "@libp2p/interface";
 import type {
 	AddressManager,
 	ConnectionManager,
-	IncomingStreamData,
 	Registrar,
 } from "@libp2p/interface-internal";
 import { multiaddr } from "@multiformats/multiaddr";
@@ -69,7 +69,6 @@ import { anySignal } from "any-signal";
 import * as lp from "it-length-prefixed";
 import { pipe } from "it-pipe";
 import { type Pushable, pushable } from "it-pushable";
-import type { Components } from "libp2p/components";
 import pDefer, { type DeferredPromise } from "p-defer";
 import Queue from "p-queue";
 import { Uint8ArrayList } from "uint8arraylist";
@@ -101,6 +100,42 @@ const logError = (e?: any) => {
 	return logger.error(e?.message);
 };
 
+const waitForDrain = async (
+	stream: Stream,
+	signal?: AbortSignal,
+): Promise<void> => {
+	if (signal?.aborted) {
+		throw signal.reason ?? new AbortError("Drain wait aborted");
+	}
+	return new Promise<void>((resolve, reject) => {
+		let done = false;
+		const cleanup = () => {
+			if (done) return;
+			done = true;
+			stream.removeEventListener("drain", onDrain);
+			stream.removeEventListener("close", onClose);
+			signal?.removeEventListener("abort", onAbort);
+		};
+		const onDrain = () => {
+			cleanup();
+			resolve();
+		};
+		const onAbort = () => {
+			cleanup();
+			reject(signal?.reason ?? new AbortError("Drain wait aborted"));
+		};
+		const onClose = (event: Event) => {
+			cleanup();
+			const detail = (event as any)?.detail;
+			const err = detail?.error ?? (event as any)?.error;
+			reject(err ?? new Error("Stream closed"));
+		};
+		stream.addEventListener("drain", onDrain, { once: true });
+		stream.addEventListener("close", onClose, { once: true });
+		signal?.addEventListener("abort", onAbort, { once: true });
+	});
+};
+
 export interface PeerStreamsInit {
 	peerId: PeerId;
 	publicKey: PublicSignKey;
@@ -111,7 +146,9 @@ const DEFAULT_SEEK_MESSAGE_REDUDANCY = 2;
 const DEFAULT_SILENT_MESSAGE_REDUDANCY = 1;
 
 const isWebsocketConnection = (c: Connection) =>
-	c.remoteAddr.protoNames().find((x) => x === "ws" || x === "wss");
+	c.remoteAddr
+		.getComponents()
+		.some((component) => component.name === "ws" || component.name === "wss");
 
 export interface PeerStreamEvents {
 	"stream:inbound": CustomEvent<never>;
@@ -262,15 +299,36 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			aborted: false,
 			existing: false,
 		};
-		pipe(
-			pushableInst,
-			(source) => lp.encode(source, { maxDataLength: MAX_DATA_LENGTH_OUT }),
-			raw,
-		).catch((e: any) => {
-			candidate.aborted = true;
+		const pump = (async () => {
 			try {
-				pushableInst.end(e);
-			} catch {}
+				const encodedSource = lp.encode(
+					pushableInst as AsyncIterable<Uint8Array | Uint8ArrayList>,
+					{ maxDataLength: MAX_DATA_LENGTH_OUT },
+				) as AsyncIterable<Uint8Array | Uint8ArrayList>;
+				for await (const chunk of encodedSource) {
+					if (this.outboundAbortController.signal.aborted) {
+						throw (
+							this.outboundAbortController.signal.reason ??
+							new AbortError("Outbound stream aborted")
+						);
+					}
+					const bytes =
+						chunk instanceof Uint8ArrayList ? chunk.subarray() : chunk;
+					if (!raw.send(bytes)) {
+						await waitForDrain(raw, this.outboundAbortController.signal);
+					}
+				}
+				raw.close?.();
+			} catch (err) {
+				candidate.aborted = true;
+				try {
+					pushableInst.end(err as Error);
+				} catch {}
+				throw err;
+			}
+		})();
+		pump.catch((e: any) => {
+			candidate.aborted = true;
 			logError(e as { message: string } as any);
 		});
 		this.outboundStreams.push(candidate);
@@ -613,10 +671,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			);
 			let chosen: OutboundCandidate | undefined;
 			if (healthy.length === 0) {
-				chosen = candidates.reduce(
-					(a: OutboundCandidate, b: OutboundCandidate) =>
-						b.created > a.created ? b : a,
-				);
+				chosen = candidates.reduce((a, b) => (b.created > a.created ? b : a));
 			} else {
 				let bestScore = -Infinity;
 				for (const c of healthy) {
@@ -790,13 +845,14 @@ export type DirectStreamOptions = {
 	routeMaxRetentionPeriod?: number;
 };
 
-export interface DirectStreamComponents extends Components {
+export interface DirectStreamComponents {
 	peerId: PeerId;
 	addressManager: AddressManager;
 	registrar: Registrar;
 	connectionManager: ConnectionManager;
 	peerStore: PeerStore;
 	events: TypedEventTarget<Libp2pEvents>;
+	privateKey: PrivateKey;
 }
 
 export type PublishOptions = (WithMode | WithTo) &
@@ -1181,12 +1237,10 @@ export abstract class DirectStream<
 	 * On an inbound stream opened
 	 */
 
-	protected async _onIncomingStream(data: IncomingStreamData) {
+	protected async _onIncomingStream(stream: Stream, connection: Connection) {
 		if (!this.isStarted()) {
 			return;
 		}
-
-		const { stream, connection } = data;
 		const peerId = connection.remotePeer;
 		if (stream.protocol == null) {
 			stream.abort(new Error("Stream was not multiplexed"));
@@ -1627,7 +1681,21 @@ export abstract class DirectStream<
 		}
 
 		// Ensure the message is valid before processing it
-		const message: Message | undefined = Message.from(msg);
+		let message: Message | undefined;
+		try {
+			message = Message.from(msg);
+		} catch (error) {
+			logger.warn(
+				error,
+				"Failed to decode message frame from",
+				from.hashcode(),
+			);
+			return;
+		}
+		if (!message) {
+			logger.debug("Ignoring empty message frame from", from.hashcode());
+			return;
+		}
 		this.dispatchEvent(
 			new CustomEvent("message", {
 				detail: message,

@@ -3,7 +3,6 @@ import { yamux } from "@chainsafe/libp2p-yamux";
 import { circuitRelayServer } from "@libp2p/circuit-relay-v2";
 import { identify } from "@libp2p/identify";
 import { webSockets } from "@libp2p/websockets";
-import { all } from "@libp2p/websockets/filters";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect, test } from "@playwright/test";
 import { createLibp2p } from "libp2p";
@@ -28,7 +27,7 @@ test.describe("stream", () => {
 				identify: identify(),
 				stream: (c) => new TestDirectStream(c),
 			},
-			transports: [webSockets({ filter: all })],
+			transports: [webSockets()],
 			streamMuxers: [yamux()],
 			connectionEncrypters: [noise()],
 		});

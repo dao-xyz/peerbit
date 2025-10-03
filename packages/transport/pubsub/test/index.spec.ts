@@ -1,7 +1,6 @@
 import { deserialize } from "@dao-xyz/borsh";
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
-import * as filters from "@libp2p/websockets/filters";
 import {
 	Ed25519Keypair,
 	type PublicSignKey,
@@ -1232,7 +1231,7 @@ describe("pubsub", function () {
 		beforeEach(async () => {
 			// 0 and 2 not connected
 			session = await TestSession.disconnected(3, {
-				transports: [tcp(), webSockets({ filter: filters.all })],
+				transports: [tcp(), webSockets()],
 				services: {
 					pubsub: (c) =>
 						new DirectSub(c, {

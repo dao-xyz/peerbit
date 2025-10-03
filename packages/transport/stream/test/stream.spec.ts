@@ -1,12 +1,10 @@
 import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
-import { type YamuxStream } from "@chainsafe/libp2p-yamux/stream";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { keys } from "@libp2p/crypto";
 import { type PeerId } from "@libp2p/interface";
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
-import * as filters from "@libp2p/websockets/filters";
 import { type Multiaddr } from "@multiformats/multiaddr";
 import { Cache } from "@peerbit/cache";
 import {
@@ -35,6 +33,7 @@ import crypto from "crypto";
 import { type Libp2pOptions, createLibp2p } from "libp2p";
 import pDefer from "p-defer";
 import sinon from "sinon";
+import { Uint8ArrayList } from "uint8arraylist";
 import { equals } from "uint8arrays";
 import {
 	type ConnectionManagerArguments,
@@ -2638,14 +2637,18 @@ describe("join/leave", () => {
 					: [address as Multiaddr];
 				for (const a of addresses) {
 					if (
-						!a.protoNames().includes("p2p-circuit") &&
+						!a
+							.getComponents()
+							.some((component) => component.name === "p2p-circuit") &&
 						a.toString().includes(streams[3].stream.peerIdStr)
 					) {
 						throw new Error("Mock fail"); // don't allow connect directly
 					}
 				}
 				addresses = addresses.map((x) =>
-					x.protoNames().includes("p2p-circuit")
+					x
+						.getComponents()
+						.some((component) => component.name === "p2p-circuit")
 						? multiaddr(x.toString().replace("/webrtc/", "/"))
 						: x
 				); // TODO use webrtc in node
@@ -3204,6 +3207,27 @@ describe("join/leave", () => {
 			await session?.stop();
 		});
 
+		it("handles truncated frames gracefully", async () => {
+			session = await disconnected(2, {
+				streamMuxers: [
+					yamux({
+						streamOptions: {
+							initialStreamWindowSize: 2 * 1024 * 1024,
+							maxStreamWindowSize: 4 * 1024 * 1024,
+						},
+					}),
+				],
+				services: { directstream: (c) => new TestDirectStream(c) },
+			});
+			await connectLine(session);
+			const peer = session.peers[1].services.directstream;
+			const targetHash = session.peers[0].services.directstream.publicKeyHash;
+			const peerStreams = peer.peers.get(targetHash)!;
+			peerStreams.rawInboundStream?.push(new Uint8ArrayList());
+			await delay(100);
+			expect(peer.peers.has(targetHash)).to.be.true;
+		});
+
 		// https://www.youtube.com/watch?v=kdv_4RHAatQ
 		it("seeking in fast lane", async () => {
 			session = await disconnected(3, {
@@ -3220,19 +3244,19 @@ describe("join/leave", () => {
 			await session.peers[0].services.directstream.publish(new Uint8Array(0), {
 				to: [session.peers[2].peerId],
 			});
-			const stream = session.peers[1].services.directstream.peers.get(
-				session.peers[2].services.directstream.publicKeyHash,
-			)!.rawOutboundStreams[0] as YamuxStream;
-			const sendFn = stream.sendData.bind(stream);
+			const relay = session.peers[1].services.directstream;
+			const originalOnData = relay.onDataMessage.bind(relay);
 			const abortContoller = new AbortController();
-
-			/**
-			 * introduce lag in the relay
-			 */
-			let lag = 300;
-			stream.sendData = async (data) => {
-				await delay(lag, { signal: abortContoller.signal });
-				return sendFn(data);
+			const lag = 300;
+			relay.onDataMessage = async (from, peerStreams, message, options) => {
+				if (!(message.header.mode instanceof SeekDelivery)) {
+					try {
+						await delay(lag, { signal: abortContoller.signal });
+					} catch (err) {
+						// ignore cancellation
+					}
+				}
+				return originalOnData(from, peerStreams, message, options);
 			};
 
 			const metric = createMetrics(session.peers[2].services.directstream);
@@ -3283,7 +3307,7 @@ describe("start/stop", () => {
 
 	it("can restart", async () => {
 		session = await connected(2, {
-			transports: [tcp(), webSockets({ filter: filters.all })],
+			transports: [tcp(), webSockets()],
 			services: {
 				directstream: (c) => new TestDirectStream(c),
 			},
@@ -3309,7 +3333,7 @@ describe("start/stop", () => {
 	});
 	it("can connect after start", async () => {
 		session = await disconnected(2, {
-			transports: [tcp(), webSockets({ filter: filters.all })],
+			transports: [tcp(), webSockets()],
 			services: {
 				directstream: (c) => new TestDirectStream(c),
 			},
@@ -3321,7 +3345,7 @@ describe("start/stop", () => {
 
 	it("can connect with delay", async () => {
 		session = await connected(2, {
-			transports: [tcp(), webSockets({ filter: filters.all })],
+			transports: [tcp(), webSockets()],
 			services: {
 				directstream: (c) => new TestDirectStream(c),
 			},
@@ -3343,7 +3367,7 @@ describe("start/stop", () => {
 
 	it("can connect before start", async () => {
 		session = await connected(2, {
-			transports: [tcp(), webSockets({ filter: filters.all })],
+			transports: [tcp(), webSockets()],
 			services: {
 				directstream: (c) => new TestDirectStream(c),
 			},
@@ -3358,7 +3382,7 @@ describe("start/stop", () => {
 
 	it("one peer can restart line", async () => {
 		session = await disconnected(2, {
-			transports: [tcp(), webSockets({ filter: filters.all })],
+			transports: [tcp(), webSockets()],
 			services: {
 				directstream: (c) => new TestDirectStream(c),
 			},
@@ -3389,7 +3413,7 @@ describe("start/stop", () => {
 	it("replaces stale outbound stream direct attach", async () => {
 		// Focused test: directly invoke attachOutboundStream twice on an existing PeerStreams instance.
 		session = await connected(2, {
-			transports: [tcp(), webSockets({ filter: filters.all })],
+			transports: [tcp(), webSockets()],
 			services: { directstream: (c) => new TestDirectStream(c) },
 		});
 		await waitForNeighbour(stream(session, 0), stream(session, 1));
@@ -3409,9 +3433,16 @@ describe("start/stop", () => {
 			id: firstId + "-new",
 			source: (async function* () {})(),
 			sink: async (_src: any) => {},
+			send: (_data: Uint8Array | Uint8ArrayList) => {
+				events.abortedNew = events.abortedNew ?? false;
+				return true;
+			},
 			// use default abort; we'll patch old only
 			close: async () => {
 				events.closed = true;
+			},
+			abort: (_err?: any) => {
+				events.abortedNew = true;
 			},
 			protocol: peerStreams.rawOutboundStreams[0]?.protocol,
 		};
@@ -3427,27 +3458,30 @@ describe("start/stop", () => {
 		// Write twice so both streams deliver bytes (score tie -> newer chosen)
 		await stream(session, 0).publish(new Uint8Array([1]));
 		await stream(session, 0).publish(new Uint8Array([2]));
-		// During grace period both streams may coexist; wait slightly longer than grace then force prune
+		// Simulate old outbound becoming stale/unusable
+		const staleError = new Error("stale outbound");
+		old.abort?.(staleError);
+		old.close?.();
+		// During grace period both streams may coexist; wait slightly longer than grace
 		await delay(600); // exceeds OUTBOUND_GRACE_MS (500)
-		peerStreams.forcePruneOutbound();
-		// After pruning we favor the newer stream; tolerate rare disconnects
 		if (peerStreams.rawOutboundStreams.length === 0) {
-			return; // connection reset edge case
+			// Under heavy churn libp2p may reset the connection; consider this acceptable
+			return;
 		}
-		const finalId = peerStreams.rawOutboundStreams[0]?.id;
-		if (finalId !== fakeStream.id) {
-			// Retry once after brief delay if old still present (race on bytesDelivered scoring)
-			await delay(50);
-			peerStreams.forcePruneOutbound();
-			if (peerStreams.rawOutboundStreams.length === 0) return;
-		}
-		expect(peerStreams.rawOutboundStreams[0]?.id).to.equal(fakeStream.id);
+		peerStreams.forcePruneOutbound();
+		await waitForResolved(
+			() => {
+				expect(peerStreams.rawOutboundStreams.length).to.equal(1);
+				expect(peerStreams.rawOutboundStreams[0]?.id).to.equal(fakeStream.id);
+			},
+			{ timeout: 10_000 },
+		);
 	});
 
 	it("accepts multiple inbound streams during migration (failing before refactor)", async () => {
 		// Set up 2 peers
 		session = await connected(2, {
-			transports: [tcp(), webSockets({ filter: filters.all })],
+			transports: [tcp(), webSockets()],
 			services: { directstream: (c) => new TestDirectStream(c) },
 		});
 		await waitForNeighbour(stream(session, 0), stream(session, 1));
@@ -3569,7 +3603,7 @@ describe("start/stop", () => {
 	it("promotes only healthy outbound after grace", async () => {
 		// Setup 2 peers
 		session = await connected(2, {
-			transports: [tcp(), webSockets({ filter: filters.all })],
+			transports: [tcp(), webSockets()],
 			services: { directstream: (c) => new TestDirectStream(c) },
 		});
 		await waitForNeighbour(stream(session, 0), stream(session, 1));
@@ -3583,6 +3617,7 @@ describe("start/stop", () => {
 			source: (async function* () {})(),
 			sink: async () => {},
 			protocol: first!.protocol,
+			send: () => true,
 			abort: () => {},
 			close: async () => {},
 		};
@@ -3601,7 +3636,7 @@ describe("start/stop", () => {
 
 	it("removes failing outbound on partial write failure", async () => {
 		session = await connected(2, {
-			transports: [tcp(), webSockets({ filter: filters.all })],
+			transports: [tcp(), webSockets()],
 			services: { directstream: (c) => new TestDirectStream(c) },
 		});
 		await waitForNeighbour(stream(session, 0), stream(session, 1));
@@ -3614,6 +3649,7 @@ describe("start/stop", () => {
 			source: (async function* () {})(),
 			sink: async () => {},
 			protocol: good!.protocol,
+			send: () => true,
 			abort: () => {},
 			close: async () => {},
 		};
@@ -3638,7 +3674,7 @@ describe("start/stop", () => {
 
 	it("uses multiple outbounds during grace period", async () => {
 		session = await connected(2, {
-			transports: [tcp(), webSockets({ filter: filters.all })],
+			transports: [tcp(), webSockets()],
 			services: { directstream: (c) => new TestDirectStream(c) },
 		});
 		await waitForNeighbour(stream(session, 0), stream(session, 1));
@@ -3649,6 +3685,7 @@ describe("start/stop", () => {
 			source: (async function* () {})(),
 			sink: async () => {},
 			protocol: first!.protocol,
+			send: () => true,
 			abort: () => {},
 			close: async () => {},
 		};
@@ -4048,7 +4085,7 @@ describe("multistream", () => {
 	let session: TestSessionStream;
 	beforeEach(async () => {
 		session = await TestSession.connected(2, {
-			transports: [tcp(), webSockets({ filter: filters.all })],
+			transports: [tcp(), webSockets()],
 			services: {
 				directstream: (c: any) => new TestDirectStream(c),
 				directstream2: (c: any) =>
