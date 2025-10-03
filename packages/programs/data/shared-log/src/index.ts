@@ -417,7 +417,7 @@ export interface SharedLogEvents extends ProgramEvents {
 @variant("shared_log")
 export class SharedLog<
 	T,
-	D extends ReplicationDomain<any, T, R>,
+	D extends ReplicationDomain<any, T, R> = any,
 	R extends "u32" | "u64" = D extends ReplicationDomain<any, T, infer I>
 		? I
 		: "u32",
