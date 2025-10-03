@@ -7,6 +7,7 @@ import { type ReplicationOptions, SharedLog } from "@peerbit/shared-log";
 import { TestSession } from "@peerbit/test-utils";
 import { waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import { equals } from "uint8arrays";
 import { Access, AccessType } from "../src/access.js";
 import { IdentityAccessController } from "../src/acl-db.js";
 import {
@@ -76,7 +77,9 @@ describe("index", () => {
 			id: key.publicKey,
 			rootTrust: key,
 		});
-		expect(serialize(t1)).to.deep.equal(serialize(t2));
+		const a = serialize(t1);
+		const b = serialize(t2);
+		expect(equals(a, b)).to.be.true;
 	});
 
 	it("replicates by default", async () => {
