@@ -1623,13 +1623,6 @@ export class DocumentIndex<
 			results: filteredResults,
 			kept: BigInt(kept + (prevQueued?.queue.length || 0)),
 		});
-		/* console.debug("[DocumentIndex] processQuery", {
-			id: query.idString,
-			isLocal,
-			batchLength: filteredResults.length,
-			kept: results.kept,
-			source: from.hashcode(),
-		}); */
 
 		if (!isLocal && results.kept === 0n) {
 			this.clearResultsQueue(query);
@@ -2595,15 +2588,6 @@ export class DocumentIndex<
 				},
 				fetchOptions?.fetchedFirstForRemote,
 			);
-			/* console.debug(
-				"[DocumentIndex] fetchFirst",
-				{
-					id: queryRequestCoerced.idString,
-					requestedFrom: fetchOptions?.from,
-					initialRemoteTargets,
-					keepRemoteAlive,
-				},
-			); */
 
 			if (!hasMore) {
 				maybeSetDone();
@@ -2649,13 +2633,7 @@ export class DocumentIndex<
 
 					const lacking = n - buffer.buffer.length;
 					const amount = lacking > 0 ? lacking : keepRemoteAlive ? 1 : 0;
-					/* console.debug("[DocumentIndex] fetchAtLeast loop", {
-						peer,
-						bufferLength: buffer.buffer.length,
-						bufferKept: buffer.kept,
-						amount,
-						keepRemoteAlive,
-					}); */
+
 					if (amount <= 0) {
 						continue;
 					}
@@ -3080,12 +3058,6 @@ export class DocumentIndex<
 
 		let updateDeferred: ReturnType<typeof pDefer> | undefined;
 		const signalUpdate = (reason?: string) => {
-			if (reason) {
-				/* console.debug("[DocumentIndex] signalUpdate", {
-					id: queryRequestCoerced.idString,
-					reason,
-				}); */
-			}
 			updateDeferred?.resolve();
 		};
 		const _waitForUpdate = () =>
@@ -3316,12 +3288,6 @@ export class DocumentIndex<
 				if (idAgnosticQueryKey(request) !== targetPrefetchKey) {
 					return;
 				}
-
-				/* console.debug("[DocumentIndex] prefetch match", {
-					iterator: queryRequestCoerced.idString,
-					source: consumable.from?.hashcode(),
-				});
- */
 				try {
 					const prepared = await introduceEntries(
 						queryRequestCoerced,
@@ -3426,11 +3392,6 @@ export class DocumentIndex<
 			};
 
 			const onChange = async (evt: CustomEvent<DocumentsChange<T, I>>) => {
-				/* console.debug("[DocumentIndex] onChange event", {
-					id: queryRequestCoerced.idString,
-					added: evt.detail.added?.length,
-					removed: evt.detail.removed?.length,
-				}); */
 				// Optional filter to mutate/suppress change events
 				let filtered: DocumentsChange<T, I> | void = evt.detail;
 				if (mergePolicy?.merge?.filter) {
@@ -3548,12 +3509,6 @@ export class DocumentIndex<
 								indexed: indexedCandidate,
 							};
 							buf.buffer.push(placeholder);
-							/* console.debug("[DocumentIndex] buffered change", {
-								id: queryRequestCoerced.idString,
-								placeholderId: (valueForBuffer as any)?.id,
-								peer: localHash,
-								bufferSize: buf.buffer.length,
-							}); */
 							if (!resolve) {
 								ensureIndexedPlaceholders().set(id, placeholder);
 							}
@@ -3570,11 +3525,6 @@ export class DocumentIndex<
 							changeForCallback.added.length > 0 ||
 							changeForCallback.removed.length > 0
 						) {
-							/* console.debug("[DocumentIndex] changeForCallback", {
-								id: queryRequestCoerced.idString,
-								added: changeForCallback.added.map((x) => (x as any)?.id),
-								removed: changeForCallback.removed.map((x) => (x as any)?.id),
-							}); */
 							updateCallbacks?.onChange?.(changeForCallback);
 							signalUpdate("change");
 						}
