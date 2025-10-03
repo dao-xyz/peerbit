@@ -85,8 +85,7 @@
 	},
 	"pnpm": {
 		"patchedDependencies": {
-			"cpy@11.1.0": "patches/cpy@11.1.0.patch",
-			"aegir@44.0.1": "patches/aegir@44.0.1.patch"
+			"cpy@11.1.0": "patches/cpy@11.1.0.patch"
 		},
 		"onlyBuiltDependencies": [
 			"@ipshipyard/node-datachannel",
