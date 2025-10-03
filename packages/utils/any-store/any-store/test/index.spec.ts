@@ -8,10 +8,7 @@ import { createStore as createStoreFn } from "../src/store.js";
 
 const isNode = typeof process !== "undefined" && !!process.versions?.node;
 // eslint-disable-next-line @typescript-eslint/naming-convention
-const __dirname =
-	isNode
-		? dirname(fileURLToPath(import.meta.url))
-		: "/tmp";
+const __dirname = isNode ? dirname(fileURLToPath(import.meta.url)) : "/tmp";
 
 (globalThis as any)["__playwright_test__"] = isNode;
 
