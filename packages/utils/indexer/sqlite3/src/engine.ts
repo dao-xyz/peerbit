@@ -310,12 +310,20 @@ export class SQLLiteIndex<T extends Record<string, any>>
 	}
 
 	async drop(): Promise<void> {
-		if (this.closed) {
-			throw new Error(`Already closed index ${this.id}, can not drop`);
+		if (!this.closed) {
+			this.closed = true;
 		}
 
-		this.closed = true;
-		clearInterval(this.cursorPruner!);
+		if (this.cursorPruner != null) {
+			clearInterval(this.cursorPruner);
+			this.cursorPruner = undefined;
+		}
+
+		const status = await this.properties.db.status?.();
+		if (status === "closed") {
+			this._tables.clear();
+			return;
+		}
 
 		await this.clearStatements();
 
@@ -761,6 +769,7 @@ export class SQLiteIndices implements types.Indices {
 			scope?: string[];
 			db: Database;
 			parent?: SQLiteIndices;
+			directory?: string;
 		},
 	) {
 		this._scope = properties.scope || [];
@@ -796,6 +805,7 @@ export class SQLiteIndices implements types.Indices {
 				scope: [...this._scope, name],
 				db: this.properties.db,
 				parent: this,
+				directory: this.properties.directory,
 			});
 
 			if (!this.closed) {
@@ -829,10 +839,10 @@ export class SQLiteIndices implements types.Indices {
 		}
 	}
 
-	async stop(): Promise<void> {
+	async stop(options?: { preserveDbFile?: boolean }): Promise<void> {
 		this.closed = true;
 		for (const scope of this.scopes.values()) {
-			await scope.stop();
+			await scope.stop(options);
 		}
 
 		for (const index of this.indices) {
@@ -840,7 +850,11 @@ export class SQLiteIndices implements types.Indices {
 		}
 
 		if (!this.properties.parent) {
-			await this.properties.db.close();
+			const preserve =
+				options?.preserveDbFile ?? Boolean(this.properties.directory);
+			await this.properties.db.close(
+				preserve ? { preserveDbFile: true } : undefined,
+			);
 		}
 	}
 

@@ -11,6 +11,6 @@ export const encodeName = (name: string): string => {
 
 const create = async (directory?: string): Promise<SQLiteIndices> => {
 	const db = await sqlite3(directory);
-	return new SQLiteIndices({ db });
+	return new SQLiteIndices({ db, directory });
 };
 export { create, SQLiteIndices, SQLLiteIndex };

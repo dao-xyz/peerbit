@@ -124,7 +124,6 @@ export const iteratorInSeries = <
 	let current = iterators[i];
 	const next = async (count: number) => {
 		let acc: IndexedResults<ReturnTypeFromShape<T, S>> = [];
-
 		while (!current.done() && i < iterators.length) {
 			const next = await current.next(count);
 			acc.push(...next);
@@ -170,13 +169,17 @@ export const iteratorInSeries = <
 	};
 };
 
+export type IndicesStopOptions = {
+	preserveDbFile?: boolean;
+};
+
 export interface Indices {
 	init<T extends Record<string, any>, NestedType>(
 		properties: IndexEngineInitProperties<T, NestedType>,
 	): MaybePromise<Index<T, NestedType>>;
 	scope(name: string): MaybePromise<Indices>;
 	start(): MaybePromise<void>;
-	stop(): MaybePromise<void>;
+	stop(options?: IndicesStopOptions): MaybePromise<void>;
 	drop(): MaybePromise<void>;
 }
 

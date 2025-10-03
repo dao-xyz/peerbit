@@ -571,10 +571,14 @@ export class HashmapIndices implements types.Indices {
 		}
 	}
 
-	async stop(): Promise<void> {
+	async stop(options?: { preserveDbFile?: boolean }): Promise<void> {
 		this.closed = true;
 		for (const scope of this.scopes.values()) {
-			await scope.stop();
+			await (
+				scope as {
+					stop: (options?: { preserveDbFile?: boolean }) => Promise<void>;
+				}
+			).stop(options);
 		}
 
 		for (const index of this.indices) {

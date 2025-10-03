@@ -158,11 +158,12 @@ class ProxyDatabase implements IDatabase {
 		return this.send({ type: "open", id: uuid(), databaseId: this.databaseId });
 	}
 
-	async close() {
+	async close(options?: { preserveDbFile?: boolean }) {
 		return this.send({
 			type: "close",
 			id: uuid(),
 			databaseId: this.databaseId,
+			preserveDbFile: options?.preserveDbFile,
 		});
 	}
 

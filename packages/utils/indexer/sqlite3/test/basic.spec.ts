@@ -15,7 +15,6 @@ import {
 	ByteMatchQuery,
 	Compare,
 	type Index,
-	type IndexEngineInitProperties,
 	type IndexIterator,
 	type Indices,
 	IntegerCompare,
@@ -31,7 +30,6 @@ import {
 	StringMatch,
 	StringMatchMethod,
 	extractFieldValue,
-	getIdProperty,
 	id,
 	toId,
 } from "@peerbit/indexer-interface";
@@ -44,7 +42,7 @@ import { expect } from "chai";
 import sodium from "libsodium-wrappers";
 import { equals } from "uint8arrays";
 import { v4 as uuid } from "uuid";
-import { create } from "../src/index.js";
+import { setup } from "./utils.js";
 
 @variant("nested_object")
 class NestedValue {
@@ -127,8 +125,13 @@ describe("basic", () => {
 	let defaultDocs: Document[] = [];
 
 	const setupDefault = async () => {
-		// Create store
-		const result = await setup({ schema: Base });
+		await sodium.ready;
+		const result = await setup<Base>({
+			schema: Base,
+			iterator: { batch: { maxSize: 5e6, sizeProperty: ["__size"] } },
+		});
+		indices = result.indices;
+		store = result.store;
 
 		const doc = new Document({
 			id: "1",
@@ -220,36 +223,6 @@ describe("basic", () => {
 
 		// expect(document).to.deep.equal(match);
 		expect(document).to.be.instanceOf(matchAny[0].constructor);
-	};
-
-	const setup = async <T>(
-		properties: Partial<IndexEngineInitProperties<T, any>> & { schema: any },
-		directory?: string,
-	): Promise<{
-		indices: Indices;
-		store: Index<any, any>;
-	}> => {
-		//	store && await store.stop()
-		indices && (await indices.stop());
-
-		await sodium.ready;
-
-		indices = await create(directory); // TODO add directory testsc
-		await indices.start();
-		const indexProps: IndexEngineInitProperties<T, any> = {
-			...{
-				indexBy: getIdProperty(properties.schema) || ["id"],
-				iterator: { batch: { maxSize: 5e6, sizeProperty: ["__size"] } },
-				/* nested: {
-                    match: (obj: any): obj is IndexWrapper => obj instanceof IndexWrapper,
-                    query: (nested: any, query: any) => nested.search(query)
-                } */
-			},
-			...properties,
-		};
-		store = await indices.init(indexProps); // TODO add directory tests
-		return { indices, store };
-		/* return new IndexWrapper(index, indexProps.indexBy, directory); */
 	};
 
 	it("all", async () => {
