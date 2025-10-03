@@ -1,0 +1,26 @@
+{
+	"name": "@peerbit/build-assets",
+	"version": "0.0.0",
+	"type": "module",
+	"publishConfig": {
+		"access": "public"
+	},
+	"exports": {
+		".": {
+			"import": "./dist/src/index.js",
+			"types": "./dist/src/index.d.ts"
+		}
+	},
+	"types": "./dist/src/index.d.ts",
+	"files": [
+		"dist",
+		"src"
+	],
+	"scripts": {
+		"clean": "aegir clean",
+		"build": "aegir build  --no-bundle",
+		"test": "echo 'No tests configured'",
+		"lint": "echo 'No linting configured'"
+	},
+	"dependencies": {}
+}
