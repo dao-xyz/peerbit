@@ -5,7 +5,7 @@ import { Secp256k1PublicKey } from "@peerbit/crypto";
 import { Documents, SearchRequest } from "@peerbit/document";
 import { Program } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
-import { delay, waitForResolved } from "@peerbit/time";
+import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { equals } from "uint8arrays";
 import {
@@ -26,6 +26,8 @@ const createIdentity = async () => {
 		sign: (data: any) => ed.sign(data),
 	};
 };
+
+const REPLICATOR_WAIT_TIMEOUT = 30_000;
 
 @variant("any_identity_graph")
 class AnyCanAppendIdentityGraph extends IdentityGraph {
@@ -266,15 +268,22 @@ describe("index", () => {
 
 			await l0c.trustGraph.log.waitForReplicator(
 				session.peers[0].identity.publicKey,
+				{ timeout: REPLICATOR_WAIT_TIMEOUT },
 			);
 			await l0c.trustGraph.log.waitForReplicator(
 				session.peers[1].identity.publicKey,
+				{ timeout: REPLICATOR_WAIT_TIMEOUT },
 			);
 			await l0c.trustGraph.log.waitForReplicator(
 				session.peers[3].identity.publicKey,
+				{ timeout: REPLICATOR_WAIT_TIMEOUT },
 			);
 
-			await delay(1000); // TODO fix test flakeness
+			await waitForResolved(
+				async () =>
+					expect(await l0c.trustGraph.index.getSize()).equal(2),
+				{ timeout: REPLICATOR_WAIT_TIMEOUT },
+			);
 
 			// Try query with trusted
 			let responses: IdentityRelation[] = await l0c.trustGraph.index.search(
