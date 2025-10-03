@@ -84,9 +84,6 @@
 		"postinstall": "mkdir -p node_modules/chai-extend && cp chai-global.js node_modules/chai-extend/chai-global.js && echo '{\"type\": \"module\"}' > node_modules/chai-extend/package.json"
 	},
 	"pnpm": {
-		"patchedDependencies": {
-			"cpy@11.1.0": "patches/cpy@11.1.0.patch"
-		},
 		"onlyBuiltDependencies": [
 			"@ipshipyard/node-datachannel",
 			"node-datachannel",
