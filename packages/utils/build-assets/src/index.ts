@@ -73,9 +73,9 @@ export const findLibraryInNodeModules = (
 				const packageRoot = path.dirname(packageJsonPath);
 				const candidatePaths = distSuffix
 					? [
-						path.join(packageRoot, "dist", distSuffix),
-						path.join(packageRoot, distSuffix),
-					]
+							path.join(packageRoot, "dist", distSuffix),
+							path.join(packageRoot, distSuffix),
+						]
 					: [packageRoot];
 
 				for (const candidate of candidatePaths) {
@@ -115,9 +115,9 @@ export const findLibraryInNodeModules = (
 			const packageRoot = path.dirname(packageJsonCandidate);
 			const candidatePaths = distSuffix
 				? [
-					path.join(packageRoot, "dist", distSuffix),
-					path.join(packageRoot, distSuffix),
-				]
+						path.join(packageRoot, "dist", distSuffix),
+						path.join(packageRoot, distSuffix),
+					]
 				: [packageRoot];
 			for (const candidate of candidatePaths) {
 				if (fsLike.existsSync(candidate)) {
