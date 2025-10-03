@@ -25,7 +25,7 @@ export const App = () => {
 						data-testid={"pb" + i}
 						key={i}
 						id={"pb" + i}
-						src={"http://localhost:5201/"}
+						src={`http://localhost:5201/?frames=${frames}`}
 					></iframe>
 				);
 			})}
