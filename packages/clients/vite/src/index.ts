@@ -1,13 +1,18 @@
+import {
+	type FindLibraryOptions,
+	type ModuleResolver,
+	findLibraryInNodeModules as baseFindLibraryInNodeModules,
+	resolveAssetLocations as baseResolveAssetLocations,
+	defaultAssetSources,
+} from "@peerbit/build-assets";
 import fs from "fs";
 import { createRequire } from "module";
 import path from "path";
 import { type PluginOption } from "vite";
 import { viteStaticCopy } from "vite-plugin-static-copy";
 
-const requireFromPlugin = createRequire(import.meta.url);
-export interface ModuleResolver {
-	resolve(id: string): string;
-}
+export type { ModuleResolver } from "@peerbit/build-assets";
+
 export interface FileSystemLike {
 	existsSync(path: string): boolean;
 	statSync(path: string): { isDirectory(): boolean };
@@ -17,12 +22,52 @@ export interface FileSystemLike {
 	realpathSync(path: string): string;
 }
 
+const requireFromPlugin = createRequire(import.meta.url);
+
 let requireFromCwd: ModuleResolver | undefined;
 try {
 	requireFromCwd = createRequire(path.join(process.cwd(), "package.json"));
 } catch (err) {
 	// ignore if no package.json – fall back to plugin resolver
 }
+
+const createFindLibraryOptions = (deps?: {
+	fs?: FileSystemLike;
+	resolvers?: ModuleResolver[];
+}): FindLibraryOptions => {
+	const resolverCandidates: (ModuleResolver | undefined)[] =
+		deps?.resolvers && deps.resolvers.length > 0
+			? deps.resolvers
+			: [requireFromCwd, requireFromPlugin];
+
+	const mergedResolvers = resolverCandidates.filter(
+		(resolver): resolver is ModuleResolver => resolver != null,
+	);
+
+	const options: FindLibraryOptions = {
+		resolvers: mergedResolvers,
+	};
+
+	if (deps?.fs) {
+		options.fs = deps.fs as unknown as FindLibraryOptions["fs"];
+	}
+
+	return options;
+};
+
+const findLibraryInNodeModules = (
+	library: string,
+	deps?: { fs?: FileSystemLike; resolvers?: ModuleResolver[] },
+) => {
+	return baseFindLibraryInNodeModules(library, createFindLibraryOptions(deps));
+};
+
+const resolveAssetLocations = (
+	sources: string[],
+	deps?: { fs?: FileSystemLike; resolvers?: ModuleResolver[] },
+) => {
+	return baseResolveAssetLocations(sources, createFindLibraryOptions(deps));
+};
 
 function dontMinimizeCertainPackagesPlugin(
 	options: { packages?: string[] } = {},
@@ -91,85 +136,6 @@ const resolveStaticPath = () => {
 		throw new Error("Could not find public or static folder");
 	}
 };
-const findLibraryInNodeModules = (
-	library: string,
-	deps?: { fs?: FileSystemLike; resolvers?: ModuleResolver[] },
-) => {
-	const fsLike: FileSystemLike = deps?.fs || fs;
-	const [packageName, distSuffix] = library.split("/dist/");
-	const resolvers: ModuleResolver[] = (
-		deps?.resolvers || [requireFromCwd, requireFromPlugin]
-	).filter((resolver): resolver is ModuleResolver => resolver !== undefined);
-
-	for (const resolver of resolvers) {
-		// Try resolving the exact file first (works if it is exported)
-		try {
-			const resolved = resolver.resolve(library);
-			if (fsLike.existsSync(resolved)) {
-				return fsLike.realpathSync(resolved);
-			}
-		} catch (_err) {
-			// Ignore and fall back to package root resolution
-		}
-
-		try {
-			const packageJsonPath = resolver.resolve(`${packageName}/package.json`);
-			const packageRoot = path.dirname(packageJsonPath);
-			const candidatePaths = distSuffix
-				? [
-						path.join(packageRoot, "dist", distSuffix),
-						path.join(packageRoot, distSuffix),
-					]
-				: [packageRoot];
-
-			for (const candidate of candidatePaths) {
-				if (fsLike.existsSync(candidate)) {
-					return fsLike.realpathSync(candidate);
-				}
-			}
-		} catch (_err) {
-			// Try next resolver
-		}
-	}
-
-	// Legacy fallback: scan upwards for node_modules
-	let maxSearchDepth = 10;
-	let currentDir = process.cwd();
-	let nodeModulesDir = path.join(currentDir, "node_modules");
-
-	while (!fsLike.existsSync(path.join(nodeModulesDir, library))) {
-		currentDir = path.resolve(currentDir, "..");
-		nodeModulesDir = path.join(currentDir, "node_modules");
-
-		if (fsLike.existsSync(path.join(currentDir, ".git"))) {
-			break;
-		}
-
-		maxSearchDepth--;
-		if (maxSearchDepth <= 0) {
-			throw new Error(`Could not find ${library} node_modules folder`);
-		}
-	}
-	const libraryPath = path.join(nodeModulesDir, library);
-	if (!fsLike.existsSync(libraryPath)) {
-		throw new Error(`Library ${library} not found in node_modules`);
-	}
-
-	return fsLike.realpathSync(libraryPath);
-};
-
-const defaultAssetSources = [
-	"@peerbit/any-store-opfs/dist/peerbit",
-	"@peerbit/indexer-sqlite3/dist/peerbit",
-	"@peerbit/riblt/dist/rateless_iblt_bg.wasm",
-];
-
-function resolveAssetLocations(sources: string[]) {
-	return sources.map((source) => ({
-		src: findLibraryInNodeModules(source),
-		dest: "peerbit/",
-	}));
-}
 
 export default (
 	options: {
