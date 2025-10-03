@@ -1,5 +1,21 @@
 # Changelog
 
+## [3.0.2](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.0.1...document-interface-v3.0.2) (2025-10-03)
+
+
+### Bug Fixes
+
+* restore deps versions ([5d6b35a](https://github.com/dao-xyz/peerbit/commit/5d6b35a01a08f87bd17ad63eacb70b4b8a44b1db))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 2.3.13
+    * @peerbit/indexer-interface bumped to 2.0.14
+    * @peerbit/log bumped to 4.1.10
+
 ## [3.0.1](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.0.0...document-interface-v3.0.1) (2025-10-03)
 
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.1.20](https://github.com/dao-xyz/peerbit/compare/indexer-tests-v1.1.19...indexer-tests-v1.1.20) (2025-10-03)
+
+
+### Bug Fixes
+
+* restore deps versions ([5d6b35a](https://github.com/dao-xyz/peerbit/commit/5d6b35a01a08f87bd17ad63eacb70b4b8a44b1db))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-interface bumped to 2.0.14
+    * @peerbit/crypto bumped to 2.3.13
+
 ## [1.1.19](https://github.com/dao-xyz/peerbit/compare/indexer-tests-v1.1.18...indexer-tests-v1.1.19) (2025-10-03)
 
 

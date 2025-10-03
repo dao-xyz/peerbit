@@ -43,6 +43,21 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.4.7](https://github.com/dao-xyz/peerbit/compare/stream-v4.4.6...stream-v4.4.7) (2025-10-03)
+
+
+### Bug Fixes
+
+* restore deps versions ([5d6b35a](https://github.com/dao-xyz/peerbit/commit/5d6b35a01a08f87bd17ad63eacb70b4b8a44b1db))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 2.3.13
+    * @peerbit/stream-interface bumped to 5.2.10
+
 ## [4.4.6](https://github.com/dao-xyz/peerbit/compare/stream-v4.4.5...stream-v4.4.6) (2025-10-03)
 
 

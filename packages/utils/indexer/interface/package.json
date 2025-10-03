@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/indexer-interface",
-	"version": "2.0.13",
+	"version": "2.0.14",
 	"description": "Indexer store interface",
 	"sideEffects": false,
 	"type": "module",

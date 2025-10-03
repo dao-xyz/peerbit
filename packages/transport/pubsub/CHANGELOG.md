@@ -188,6 +188,23 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [4.0.18](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.17...pubsub-v4.0.18) (2025-10-03)
+
+
+### Bug Fixes
+
+* restore deps versions ([5d6b35a](https://github.com/dao-xyz/peerbit/commit/5d6b35a01a08f87bd17ad63eacb70b4b8a44b1db))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 2.3.13
+    * @peerbit/pubsub-interface bumped to 4.0.9
+    * @peerbit/stream bumped to 4.4.7
+    * @peerbit/stream-interface bumped to 5.2.10
+
 ## [4.0.17](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.16...pubsub-v4.0.17) (2025-10-03)
 
 

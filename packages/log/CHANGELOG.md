@@ -368,6 +368,31 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [4.1.10](https://github.com/dao-xyz/peerbit/compare/log-v4.1.9...log-v4.1.10) (2025-10-03)
+
+
+### Bug Fixes
+
+* restore deps versions ([5d6b35a](https://github.com/dao-xyz/peerbit/commit/5d6b35a01a08f87bd17ad63eacb70b4b8a44b1db))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped to 2.1.16
+    * @peerbit/blocks bumped to 3.0.15
+    * @peerbit/blocks-interface bumped to 1.4.14
+    * @peerbit/crypto bumped to 2.3.13
+    * @peerbit/indexer-sqlite3 bumped to 1.2.30
+    * @peerbit/indexer-interface bumped to 2.0.14
+    * @peerbit/indexer-simple bumped to 1.1.21
+    * @peerbit/keychain bumped to 1.1.2
+    * @peerbit/pubsub-interface bumped to 4.0.9
+    * @peerbit/stream-interface bumped to 5.2.10
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.2.10
+
 ## [4.1.9](https://github.com/dao-xyz/peerbit/compare/log-v4.1.8...log-v4.1.9) (2025-10-03)
 
 
