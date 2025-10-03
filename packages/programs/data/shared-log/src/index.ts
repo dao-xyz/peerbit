@@ -3085,8 +3085,14 @@ export class SharedLog<
 			}
 			return false;
 		};
-		this.events.addEventListener("replicator:mature", checkCoverage);
-		this.events.addEventListener("replication:change", checkCoverage);
+		const onReplicatorMature = () => {
+			checkCoverage();
+		};
+		const onReplicationChange = () => {
+			checkCoverage();
+		};
+		this.events.addEventListener("replicator:mature", onReplicatorMature);
+		this.events.addEventListener("replication:change", onReplicationChange);
 		await checkCoverage();
 
 		let interval = providedCustomRoleAge
@@ -3113,8 +3119,11 @@ export class SharedLog<
 		}
 		const clear = () => {
 			interval && clearInterval(interval);
-			this.events.removeEventListener("join", checkCoverage);
-			this.events.removeEventListener("leave", checkCoverage);
+			this.events.removeEventListener("replicator:mature", onReplicatorMature);
+			this.events.removeEventListener(
+				"replication:change",
+				onReplicationChange,
+			);
 			clearTimeout(timer);
 			if (options?.signal) {
 				options.signal.removeEventListener("abort", abortListener);
