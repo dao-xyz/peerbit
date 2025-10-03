@@ -280,8 +280,7 @@ describe("index", () => {
 			);
 
 			await waitForResolved(
-				async () =>
-					expect(await l0c.trustGraph.index.getSize()).equal(2),
+				async () => expect(await l0c.trustGraph.index.getSize()).equal(2),
 				{ timeout: REPLICATOR_WAIT_TIMEOUT },
 			);
 

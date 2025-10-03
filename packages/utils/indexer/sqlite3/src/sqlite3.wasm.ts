@@ -134,10 +134,7 @@ const create = async (directory?: string) => {
 	};
 	let dbFileName: string;
 
-	const cleanupPool = async (
-		_label: string,
-		preserveDbFile: boolean,
-	) => {
+	const cleanupPool = async (_label: string, preserveDbFile: boolean) => {
 		if (!poolUtil || dbFileName == null) {
 			return;
 		}
