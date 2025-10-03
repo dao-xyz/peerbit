@@ -1,5 +1,5 @@
 packages:
-  - packages/docs
+  - docs
   - packages/transport/blocks
   - packages/transport/blocks-interface
   - packages/transport/stream
@@ -32,6 +32,7 @@ packages:
   - packages/programs/data/*
   - packages/utils/crypto
   - packages/utils/any-store/*
+  - packages/utils/build-assets
   - packages/utils/time
   - packages/utils/cache
   - packages/utils/logger

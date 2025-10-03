@@ -10,7 +10,7 @@
 	"type": "module",
 	"packageManager": "pnpm@10.17.1",
 	"workspaces": [
-		"packages/docs",
+		"docs",
 		"packages/transport/blocks",
 		"packages/transport/blocks-interface",
 		"packages/transport/stream",
@@ -43,6 +43,7 @@
 		"packages/programs/data/*",
 		"packages/utils/crypto",
 		"packages/utils/any-store/*",
+		"packages/utils/build-assets",
 		"packages/utils/time",
 		"packages/utils/cache",
 		"packages/utils/logger",
@@ -88,6 +89,7 @@
 		},
 		"onlyBuiltDependencies": [
 			"@ipshipyard/node-datachannel",
+			"node-datachannel",
 			"aws-sdk",
 			"better-sqlite3",
 			"classic-level",
@@ -123,6 +125,5 @@
 		"ts-node": "^10.9.2",
 		"typescript": "^5.6.3"
 	},
-	"version": "0.0.0",
-	"packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+	"version": "0.0.0"
 }

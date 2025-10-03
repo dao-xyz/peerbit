@@ -59,10 +59,10 @@
 	"license": "MIT",
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
-		"@chainsafe/libp2p-yamux": "^7.0.1",
-		"@libp2p/interface": "^2.11.0",
-		"@libp2p/tcp": "^10.1.9",
-		"@multiformats/multiaddr": "^12.5.1",
+		"@chainsafe/libp2p-yamux": "^8.0.0",
+		"@libp2p/interface": "^3.0.0",
+		"@libp2p/tcp": "^11.0.2",
+		"@multiformats/multiaddr": "^13.0.1",
 		"@peerbit/cache": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/logger": "workspace:*",
@@ -85,6 +85,7 @@
 		"@peerbit/test-utils": "workspace:*",
 		"@peerbit/time": "workspace:*",
 		"@types/pidusage": "^2.0.5",
-		"pidusage": "^3.0.2"
+		"pidusage": "^4.0.1",
+		"uuid": "^10.0.0"
 	}
 }

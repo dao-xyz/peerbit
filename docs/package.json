@@ -15,9 +15,28 @@
 	],
 	"scripts": {
 		"clean": "#not used",
-		"build": "#not used",
+		"build": "tsc -p tsconfig.json",
 		"test": "aegir test -t node",
 		"lint": "aegir lint"
+	},
+	"dependencies": {
+		"@dao-xyz/borsh": "^5.2.3",
+		"@ethersproject/wallet": "^5.8.0",
+		"@multiformats/multiaddr": "^13.0.1",
+		"@peerbit/crypto": "workspace:*",
+		"@peerbit/document": "workspace:*",
+		"@peerbit/indexer-interface": "workspace:*",
+		"@peerbit/program": "workspace:*",
+		"@peerbit/rpc": "workspace:*",
+		"@peerbit/shared-log": "workspace:*",
+		"@peerbit/string": "workspace:*",
+		"@peerbit/time": "workspace:*",
+		"peerbit": "workspace:*",
+		"uuid": "^10.0.0"
+	},
+	"devDependencies": {
+		"chai": "^6.0.1",
+		"@types/chai": "^5.2.2"
 	},
 	"license": "MIT",
 	"localMaintainers": [
