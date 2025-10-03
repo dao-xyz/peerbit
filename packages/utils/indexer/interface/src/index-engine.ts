@@ -169,17 +169,13 @@ export const iteratorInSeries = <
 	};
 };
 
-export type IndicesStopOptions = {
-	preserveDbFile?: boolean;
-};
-
 export interface Indices {
 	init<T extends Record<string, any>, NestedType>(
 		properties: IndexEngineInitProperties<T, NestedType>,
 	): MaybePromise<Index<T, NestedType>>;
 	scope(name: string): MaybePromise<Indices>;
 	start(): MaybePromise<void>;
-	stop(options?: IndicesStopOptions): MaybePromise<void>;
+	stop(): MaybePromise<void>;
 	drop(): MaybePromise<void>;
 }
 

@@ -22,7 +22,6 @@ interface Status extends Message {
 
 interface Close extends Message {
 	type: "close";
-	preserveDbFile?: boolean;
 }
 
 interface Drop extends Message {

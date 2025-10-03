@@ -839,10 +839,10 @@ export class SQLiteIndices implements types.Indices {
 		}
 	}
 
-	async stop(options?: { preserveDbFile?: boolean }): Promise<void> {
+	async stop(): Promise<void> {
 		this.closed = true;
 		for (const scope of this.scopes.values()) {
-			await scope.stop(options);
+			await scope.stop();
 		}
 
 		for (const index of this.indices) {
@@ -850,11 +850,7 @@ export class SQLiteIndices implements types.Indices {
 		}
 
 		if (!this.properties.parent) {
-			const preserve =
-				options?.preserveDbFile ?? Boolean(this.properties.directory);
-			await this.properties.db.close(
-				preserve ? { preserveDbFile: true } : undefined,
-			);
+			await this.properties.db.close();
 		}
 	}
 

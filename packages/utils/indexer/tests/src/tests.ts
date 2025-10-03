@@ -255,7 +255,7 @@ export const tests = (
 		const setup = async <T>(
 			properties: Partial<IndexEngineInitProperties<T, any>> & { schema: any },
 			directory?: string,
-			options?: { preserveDbFile?: boolean },
+			options?: { preserve?: boolean },
 		): Promise<{
 			indices: Indices;
 			store: Index<T, any>;
@@ -263,9 +263,11 @@ export const tests = (
 		}> => {
 			if (directory != null) {
 				await store?.stop?.();
-				await indices?.stop?.({
-					preserveDbFile: options?.preserveDbFile ?? false,
-				});
+				if (options?.preserve) {
+					await indices?.stop?.();
+				} else {
+					await indices?.drop?.();
+				}
 			} else {
 				await indices?.drop?.();
 			}
@@ -4311,9 +4313,9 @@ export const tests = (
 						directory,
 					} = await setupDefault();
 					expect(await documentStore.getSize()).equal(4);
-					await indices.stop({ preserveDbFile: true });
+					await indices.stop();
 					const { store } = await setup({ schema: Document }, directory, {
-						preserveDbFile: true,
+						preserve: true,
 					});
 					expect(await store.getSize()).equal(4);
 				});
@@ -4351,7 +4353,7 @@ export const tests = (
 				await store.drop();
 				await store.start();
 				expect(await store.getSize()).equal(0);
-				await indices.stop({ preserveDbFile: false });
+				await indices.drop();
 				store = (await setup({ schema: Document }, directory)).store;
 				expect(await store.getSize()).equal(0);
 			});
@@ -4390,7 +4392,7 @@ export const tests = (
 				expect(await store.getSize()).equal(0);
 
 				await store.stop(); /// TODO why do w
-				await indices.stop({ preserveDbFile: false });
+				await indices.drop();
 
 				store = (await setup({ schema: Document }, directory)).store;
 
@@ -4404,7 +4406,7 @@ export const tests = (
 				expect(await store.getSize()).equal(4);
 				let subindex = await indices.scope("x");
 				store = await subindex.init({ indexBy: ["id"], schema: Document });
-				await indices.stop({ preserveDbFile: false });
+				await indices.drop();
 				store = (await setup({ schema: Document })).store;
 				await store.stop();
 			});
@@ -4484,7 +4486,7 @@ export const tests = (
 			it("can restart", async () => {
 				const scope = await createIndicies();
 				await scope.start();
-				await scope.stop({ preserveDbFile: false });
+				await scope.stop();
 				await scope.start();
 				const subIndex = await scope.init({
 					indexBy: ["id"],

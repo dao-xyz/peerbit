@@ -10,7 +10,7 @@ let create = async (directory?: string) => {
 	let statements: Map<string, IStatement> = new Map();
 	let dbFileName: string;
 
-	let close = (_options?: { preserveDbFile?: boolean }) => {
+	let close = () => {
 		for (const stmt of statements.values()) {
 			stmt.finalize?.();
 		}

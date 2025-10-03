@@ -45,7 +45,7 @@ class SqliteWorkerHandler {
 				// db.statements.get(statementId) -> statement, because sqlite3.wasm stores the statement in a map like this
 				return statementId;
 			} else if (message.type === "close") {
-				await db.close({ preserveDbFile: message.preserveDbFile });
+				await db.close();
 				this.databases.delete(message.databaseId);
 			} else if (message.type === "drop") {
 				await db.drop();

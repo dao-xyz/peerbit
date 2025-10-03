@@ -136,13 +136,11 @@ const create = async (directory?: string) => {
 
 	const cleanupPool = async (
 		_label: string,
-		options: { preserveDbFile?: boolean } = {},
+		preserveDbFile: boolean,
 	) => {
 		if (!poolUtil || dbFileName == null) {
 			return;
 		}
-
-		const { preserveDbFile = false } = options;
 
 		const relatedFiles = new Set([
 			dbFileName,
@@ -204,17 +202,15 @@ const create = async (directory?: string) => {
 		await wipePool();
 	};
 
-	let close:
-		| ((options?: { preserveDbFile?: boolean }) => Promise<any> | any)
-		| undefined = async (options?: { preserveDbFile?: boolean }) => {
+	let close: (() => Promise<any> | any) | undefined = async () => {
 		await closeInternal();
-		const preserve = options?.preserveDbFile ?? Boolean(directory);
-		await cleanupPool("close", preserve ? { preserveDbFile: true } : undefined);
+		const preserve = Boolean(directory);
+		await cleanupPool("close", preserve);
 	};
 
 	let drop = async () => {
 		await closeInternal();
-		await cleanupPool("drop");
+		await cleanupPool("drop", false);
 	};
 	let open = async () => {
 		if (sqliteDb) {
