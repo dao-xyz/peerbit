@@ -61,11 +61,10 @@
 	},
 	"license": "MIT",
 	"devDependencies": {
-		"@peerbit/time": "2.2.0",
-		"@types/yallist": "^4.0.4"
+		"@peerbit/time": "workspace:*"
 	},
 	"dependencies": {
-		"yallist": "^4.0.0"
+		"yallist": "^5.0.0"
 	},
 	"localMaintainers": [
 		"dao.xyz"

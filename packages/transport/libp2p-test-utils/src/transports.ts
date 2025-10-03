@@ -5,15 +5,14 @@ import {
 import type { Transport } from "@libp2p/interface";
 import { webRTC } from "@libp2p/webrtc";
 import { webSockets } from "@libp2p/websockets";
-import * as filters from "@libp2p/websockets/filters";
-import type { Components } from "libp2p/components";
 
-export const transports = (): Array<(components: Components) => Transport> => [
+export const transports = (): Array<(components: any) => Transport> => [
+	// todo: add types
 	circuitRelayTransport({
 		reservationCompletionTimeout: 5000,
 	}),
 	webRTC({}),
-	webSockets({ filter: filters.all }),
+	webSockets(),
 ];
 
 // applyDefaultLimit: false because of https://github.com/libp2p/js-libp2p/issues/2622

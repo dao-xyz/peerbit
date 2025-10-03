@@ -124,7 +124,6 @@ export const iteratorInSeries = <
 	let current = iterators[i];
 	const next = async (count: number) => {
 		let acc: IndexedResults<ReturnTypeFromShape<T, S>> = [];
-
 		while (!current.done() && i < iterators.length) {
 			const next = await current.next(count);
 			acc.push(...next);

@@ -58,12 +58,12 @@ export class PeerbitKeychain implements CryptoKeychain, ILibp2pKeychain {
 			| PublicKeyEncryptionKey,
 		Q = KeypairFromPublicKey<T>,
 	>(publicKey: T): Promise<Q | undefined> {
-		return this.crypto.exportByKey(publicKey);
+		return this.crypto.exportByKey<T, Q>(publicKey);
 	}
 	exportById<
 		T extends Ed25519Keypair | Secp256k1Keypair | X25519Keypair | ByteKey,
 	>(id: Uint8Array, type: Constructor<T>): Promise<T | undefined> {
-		return this.crypto.exportById(id, type);
+		return this.crypto.exportById<T>(id, type);
 	}
 	findKeyByName(name: string): Promise<KeyInfo> {
 		return this.libp2p.findKeyByName(name);

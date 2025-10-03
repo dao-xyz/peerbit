@@ -19,9 +19,14 @@
 	},
 	"scripts": {
 		"test": "playwright test",
-		"lint": "aegir lint"
+		"lint": "aegir lint",
+		"build": "echo 'No build step for stream-browser-test'"
 	},
 	"dependencies": {
-		"@peerbit/stream": "*"
+		"@peerbit/stream": "workspace:*"
+	},
+	"devDependencies": {
+		"@libp2p/circuit-relay-v2": "^4.0.2",
+		"@libp2p/identify": "^4.0.2"
 	}
 }

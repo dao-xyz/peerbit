@@ -7,7 +7,9 @@ import { RPC, type RPCResponse } from "@peerbit/rpc";
 import { type ReplicationOptions } from "@peerbit/shared-log";
 import { TrustedNetwork } from "@peerbit/trusted-network";
 
-const logger = loggerFn({ module: "clock-signer" });
+const logger: ReturnType<typeof loggerFn> = loggerFn({
+	module: "clock-signer",
+});
 const abs = (n: number | bigint) => (n < 0n ? -n : n);
 
 export abstract class Result {}
@@ -78,8 +80,10 @@ export class ClockService extends Program<Args> {
 
 		this.maxError = BigInt((properties?.maxTimeError || 10e3) * 1e6);
 		await this._trustedNetwork.open({ replicate: properties?.replicate });
+		const topicBase =
+			this._trustedNetwork!.trustGraph!.log.log.idString ?? "clock";
 		await this._remoteSigner.open({
-			topic: this._trustedNetwork.trustGraph.log.log.idString + "/clock", // TODO do better
+			topic: topicBase + "/clock", // TODO do better
 			queryType: Uint8Array,
 			responseType: Result,
 			responseHandler:

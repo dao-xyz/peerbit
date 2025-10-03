@@ -1,4 +1,4 @@
-import { privateKeyFromRaw } from "@libp2p/crypto/keys";
+import { keys } from "@libp2p/crypto";
 import { DirectBlock } from "@peerbit/blocks";
 import type { Ed25519Keypair } from "@peerbit/crypto";
 import { DirectSub } from "@peerbit/pubsub";
@@ -18,7 +18,7 @@ export const create = (properties: {
 		properties.directory != null
 			? path.join(properties.directory, "/blocks").toString()
 			: undefined;
-	const privateKey = privateKeyFromRaw(
+	const privateKey = keys.privateKeyFromRaw(
 		concat([
 			properties.keypair.privateKey.privateKey,
 			properties.keypair.publicKey.publicKey,
@@ -62,7 +62,6 @@ export const create = (properties: {
 				inboundStreamProtocolNegotiationTimeout: 1e4,
 				inboundUpgradeTimeout: 1e4,
 				outboundStreamProtocolNegotiationTimeout: 1e4,
-				outboundUpgradeTimeout: 1e4,
 				maxConnections: Infinity,
 				reconnectRetries: 0, // https://github.com/libp2p/js-libp2p/issues/3289
 			},

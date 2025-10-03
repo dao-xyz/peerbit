@@ -1,5 +1,5 @@
 import { variant } from "@dao-xyz/borsh";
-import { generateKeyPair } from "@libp2p/crypto/keys";
+import { keys } from "@libp2p/crypto";
 import { Program } from "@peerbit/program";
 import { expect } from "chai";
 import { Peerbit } from "../src/peer.js";
@@ -17,7 +17,7 @@ describe("start-stop", () => {
 		await client.stop();
 	});
 	it("can create with peerId", async () => {
-		const privateKey = await generateKeyPair("Ed25519");
+		const privateKey = await keys.generateKeyPair("Ed25519");
 		client = await Peerbit.create({
 			libp2p: { privateKey },
 		});

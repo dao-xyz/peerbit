@@ -379,7 +379,17 @@ export const waitForDomain = async (
 	const result = await waitForResolved(
 		async () => {
 			const addresses = await c.peer.addresses.get();
-			const domain = multiaddr(addresses[0]).nodeAddress().address;
+			const first = addresses[0];
+			const ma = typeof first === "string" ? multiaddr(first) : first;
+			const hostComponent = ma
+				.getComponents()
+				.find(
+					(component) =>
+						component.value &&
+						(component.name.startsWith("dns") ||
+							component.name.startsWith("ip")),
+				);
+			const domain = hostComponent?.value;
 			if (!domain) {
 				throw new Error("Not ready");
 			}

@@ -58,11 +58,17 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@peerbit/logger": "1.0.4",
-		"@peerbit/rpc": "5.3.26",
-		"@peerbit/trusted-network": "4.1.142"
+		"@dao-xyz/borsh": "^5.2.3",
+		"@peerbit/crypto": "workspace:*",
+		"@peerbit/log": "workspace:*",
+		"@peerbit/program": "workspace:*",
+		"@peerbit/shared-log": "workspace:*",
+		"@peerbit/logger": "workspace:*",
+		"@peerbit/rpc": "workspace:*",
+		"@peerbit/trusted-network": "workspace:*"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "^2.2.8"
+		"@peerbit/test-utils": "workspace:*",
+		"@peerbit/time": "workspace:*"
 	}
 }

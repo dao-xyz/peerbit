@@ -1,7 +1,73 @@
+import {
+	type FindLibraryOptions,
+	type ModuleResolver,
+	findLibraryInNodeModules as baseFindLibraryInNodeModules,
+	resolveAssetLocations as baseResolveAssetLocations,
+	defaultAssetSources,
+} from "@peerbit/build-assets";
 import fs from "fs";
+import { createRequire } from "module";
 import path from "path";
 import { type PluginOption } from "vite";
 import { viteStaticCopy } from "vite-plugin-static-copy";
+
+export type { ModuleResolver } from "@peerbit/build-assets";
+
+export interface FileSystemLike {
+	existsSync(path: string): boolean;
+	statSync(path: string): { isDirectory(): boolean };
+	readdirSync(path: string): string[];
+	mkdirSync(path: string, options: { recursive: boolean }): void;
+	copyFileSync(src: string, dest: string): void;
+	realpathSync(path: string): string;
+}
+
+const requireFromPlugin = createRequire(import.meta.url);
+
+let requireFromCwd: ModuleResolver | undefined;
+try {
+	requireFromCwd = createRequire(path.join(process.cwd(), "package.json"));
+} catch (err) {
+	// ignore if no package.json – fall back to plugin resolver
+}
+
+const createFindLibraryOptions = (deps?: {
+	fs?: FileSystemLike;
+	resolvers?: ModuleResolver[];
+}): FindLibraryOptions => {
+	const resolverCandidates: (ModuleResolver | undefined)[] =
+		deps?.resolvers && deps.resolvers.length > 0
+			? deps.resolvers
+			: [requireFromCwd, requireFromPlugin];
+
+	const mergedResolvers = resolverCandidates.filter(
+		(resolver): resolver is ModuleResolver => resolver != null,
+	);
+
+	const options: FindLibraryOptions = {
+		resolvers: mergedResolvers,
+	};
+
+	if (deps?.fs) {
+		options.fs = deps.fs as unknown as FindLibraryOptions["fs"];
+	}
+
+	return options;
+};
+
+const findLibraryInNodeModules = (
+	library: string,
+	deps?: { fs?: FileSystemLike; resolvers?: ModuleResolver[] },
+) => {
+	return baseFindLibraryInNodeModules(library, createFindLibraryOptions(deps));
+};
+
+const resolveAssetLocations = (
+	sources: string[],
+	deps?: { fs?: FileSystemLike; resolvers?: ModuleResolver[] },
+) => {
+	return baseResolveAssetLocations(sources, createFindLibraryOptions(deps));
+};
 
 function dontMinimizeCertainPackagesPlugin(
 	options: { packages?: string[] } = {},
@@ -18,7 +84,8 @@ function dontMinimizeCertainPackagesPlugin(
 			if (command === "build") {
 				config.optimizeDeps = config.optimizeDeps || {};
 				config.optimizeDeps.exclude = config.optimizeDeps.exclude || [];
-				config.optimizeDeps.exclude.push(...options.packages);
+				const pkgs: string[] = options.packages ?? [];
+				config.optimizeDeps.exclude.push(...pkgs);
 			}
 		},
 	};
@@ -29,7 +96,19 @@ function copyToPublicPlugin(
 ) {
 	return {
 		name: "copy-to-public",
+		enforce: "pre" as const,
 		buildStart() {
+			// Ensure worker exists in public/ as a last-resort (CI safety), even if assets disabled
+			try {
+				// Copy the entire dist/peerbit directory from @peerbit/indexer-sqlite3
+				const peerbitDistDir = findLibraryInNodeModules(
+					"@peerbit/indexer-sqlite3/dist/peerbit",
+				);
+				const destDir = path.resolve(resolveStaticPath(), "peerbit");
+				copyAssets(peerbitDistDir, destDir, "/");
+			} catch (_err) {
+				// ignore; optional best-effort
+			}
 			if (options?.assets) {
 				options.assets.forEach(({ src, dest }) => {
 					const sourcePath = path.resolve(src);
@@ -57,56 +136,23 @@ const resolveStaticPath = () => {
 		throw new Error("Could not find public or static folder");
 	}
 };
-const findLibraryInNodeModules = (library: string) => {
-	// scan upwards until we find the node_modules folder
-	let maxSearchDepth = 10;
-	let currentDir = process.cwd();
-	let nodeModulesDir = path.join(currentDir, "node_modules");
 
-	while (!fs.existsSync(path.join(nodeModulesDir, library))) {
-		currentDir = path.resolve(currentDir, "..");
-		nodeModulesDir = path.join(currentDir, "node_modules");
-
-		// we have found a .git folder, so we are at the root
-		// then stop
-		if (fs.existsSync(path.join(currentDir, ".git"))) {
-			break;
-		}
-
-		maxSearchDepth--;
-		if (maxSearchDepth <= 0) {
-			throw new Error(`Could not find ${library} node_modules folder`);
-		}
-	}
-	const libraryPath = path.join(nodeModulesDir, library);
-	if (!fs.existsSync(libraryPath)) {
-		throw new Error(`Library ${library} not found in node_modules`);
-	}
-
-	return libraryPath;
-};
-
-let pathsToCopy = [
-	"@peerbit/any-store-opfs/dist/peerbit",
-	"@peerbit/indexer-sqlite3/dist/peerbit",
-	"@peerbit/riblt/dist/rateless_iblt_bg.wasm",
-];
 export default (
 	options: {
 		packages?: string[];
-		assets?: { src: string; dest: string }[];
+		assets?: { src: string; dest: string }[] | null;
 	} = {},
 ): PluginOption[] => {
-	let defaultAssets = pathsToCopy.map((path) => {
-		return {
-			src: findLibraryInNodeModules(path),
-			dest: "peerbit/",
-		};
-	});
+	const includeDefaultAssets = options.assets === undefined;
+	const userAssets = Array.isArray(options.assets) ? options.assets : [];
+	const assetsToCopy = includeDefaultAssets
+		? [...resolveAssetLocations(defaultAssetSources), ...userAssets]
+		: userAssets;
+
 	return [
 		dontMinimizeCertainPackagesPlugin({ packages: options.packages }),
 		copyToPublicPlugin({
-			assets: [...defaultAssets, ...(options.assets || [])],
+			assets: assetsToCopy,
 		}),
 		viteStaticCopy({
 			targets: [
@@ -144,3 +190,10 @@ function copyAssets(srcPath: string, destPath: string, base: string) {
 		fs.copyFileSync(srcPath, destPathAsFile);
 	}
 }
+
+// Expose internals for testing
+export const TEST_EXPORTS = {
+	findLibraryInNodeModules,
+	defaultAssetSources,
+	resolveAssetLocations,
+};

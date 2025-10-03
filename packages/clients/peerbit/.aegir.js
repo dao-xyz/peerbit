@@ -1,7 +1,24 @@
-import findUp from "find-up";
+import { findLibraryInNodeModules } from "@peerbit/build-assets";
+import * as findUp from "find-up";
+import { createRequire } from "module";
 import path from "path";
 
-const root = path.dirname(findUp.sync(".git", { type: "directory" }));
+const root = path.dirname(await findUp.findUp(".git", { type: "directory" }));
+const resolverFromRoot = createRequire(path.join(root, "package.json"));
+const resolverFromLocal = createRequire(import.meta.url);
+
+const resolveAsset = (library) =>
+	findLibraryInNodeModules(library, {
+		resolvers: [resolverFromRoot, resolverFromLocal],
+	});
+
+const assets = [
+	resolveAsset("@peerbit/any-store-opfs/dist"),
+	resolveAsset("@peerbit/indexer-sqlite3/dist"),
+	resolveAsset("@sqlite.org/sqlite-wasm/sqlite-wasm/jswasm"),
+	"./dist",
+];
+
 export default {
 	// test cmd options
 	build: {
@@ -27,12 +44,7 @@ export default {
 			debug: true,
 			config: {
 				debug: true,
-				assets: [
-					"../../../node_modules/@peerbit/any-store-opfs/dist",
-					"../../../node_modules/@peerbit/indexer-sqlite3/dist",
-					"../../../node_modules/@sqlite.org/sqlite-wasm/sqlite-wasm/jswasm",
-					"./dist",
-				],
+				assets,
 				buildConfig: {
 					conditions: ["production"],
 				},

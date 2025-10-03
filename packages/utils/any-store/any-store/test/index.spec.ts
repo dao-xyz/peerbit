@@ -6,13 +6,11 @@ import { fileURLToPath } from "url";
 import { v4 as uuid } from "uuid";
 import { createStore as createStoreFn } from "../src/store.js";
 
+const isNode = typeof process !== "undefined" && !!process.versions?.node;
 // eslint-disable-next-line @typescript-eslint/naming-convention
-const __dirname =
-	typeof window === undefined
-		? dirname(fileURLToPath(import.meta.url))
-		: "/tmp";
+const __dirname = isNode ? dirname(fileURLToPath(import.meta.url)) : "/tmp";
 
-(globalThis as any)["__playwright_test__"] = typeof window === undefined;
+(globalThis as any)["__playwright_test__"] = isNode;
 
 describe(`index`, function () {
 	const testType = ["disc", "memory"];

@@ -18,25 +18,27 @@ jobs:
         os: [ ubuntu-22.04 ]
         node-version: [22.x]
         test_cmd: 
-          - yarn test:part-1
-          - yarn test:part-2
-          - yarn test:part-3
+          - pnpm run test:part-1
+          - pnpm run test:part-2
+          - pnpm run test:part-3
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: yarn
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
       - name: Install deps
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-          yarn 
-          npx playwright install-deps
+          pnpm install --frozen-lockfile=false
+          pnpm exec playwright install-deps
       - name: Build
         run: |
-          yarn build
+          pnpm run build
       - name: Lint
-        run: yarn lint
+        run: pnpm run lint
       - name: Tests
         run: ${{matrix.test_cmd}}
 
@@ -49,25 +51,27 @@ jobs:
         os: [ ubuntu-22.04 ]
         node-version: [22.x]
         test_cmd: 
-          - yarn test:part-1
-          - yarn test:part-2
-          - yarn test:part-3
+          - pnpm run test:part-1
+          - pnpm run test:part-2
+          - pnpm run test:part-3
 
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: yarn
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
       - name: Install deps
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-          yarn
-          npx playwright install-deps
+          pnpm install --frozen-lockfile=false
+          pnpm exec playwright install-deps
       - name: Build
         run: |
-          yarn build
+          pnpm run build
       - name: Lint
-        run: yarn lint
+        run: pnpm run lint
       - name: Tests
         run: ${{matrix.test_cmd}}

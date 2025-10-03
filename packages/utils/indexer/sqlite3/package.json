@@ -58,8 +58,8 @@
 	},
 	"scripts": {
 		"clean": "aegir clean",
-		"copy-sqlite-wasm": "mkdir -p ./dist/peerbit/ && cp -r ../../../../node_modules/@sqlite.org/sqlite-wasm/sqlite-wasm/jswasm/. ./dist/peerbit/",
-		"build-worker": "node ../../../../node_modules/esbuild/bin/esbuild --bundle ./src/sqlite3.worker.ts --format=esm  --outfile=./dist/peerbit/sqlite3.worker.min.js",
+		"copy-sqlite-wasm": "mkdir -p ./dist/peerbit/ && cp -r ../../../../node_modules/.pnpm/@sqlite.org+sqlite-wasm@3.50.4-build1/node_modules/@sqlite.org/sqlite-wasm/sqlite-wasm/jswasm/. ./dist/peerbit/",
+		"build-worker": "../../../../node_modules/.pnpm/esbuild@0.25.10/node_modules/esbuild/bin/esbuild --bundle ./src/sqlite3.worker.ts --format=esm  --outfile=./dist/peerbit/sqlite3.worker.min.js",
 		"build": "aegir build && npm run build-worker && npm run copy-sqlite-wasm",
 		"test": "aegir test",
 		"test:browser": "aegir clean && aegir test -t browser",
@@ -70,11 +70,20 @@
 	"license": "MIT",
 	"dependencies": {
 		"better-sqlite3": "^12.4.1",
-		"@peerbit/indexer-interface": "^2.0.12",
-		"@sqlite.org/sqlite-wasm": "^3.50.4-build1"
+		"@dao-xyz/borsh": "^5.2.3",
+		"@peerbit/indexer-interface": "workspace:*",
+		"@peerbit/crypto": "workspace:*",
+		"@peerbit/time": "workspace:*",
+		"@sqlite.org/sqlite-wasm": "^3.50.4-build1",
+		"p-defer": "^4.0.0",
+		"uint8arrays": "^5.1.0",
+		"uuid": "^10.0.0",
+		"libsodium-wrappers": "^0.7.15"
 	},
 	"devDependencies": {
 		"@types/better-sqlite3": "^7.6.13",
-		"@peerbit/indexer-tests": "^1.1.18"
+		"@peerbit/indexer-tests": "workspace:*",
+		"@peerbit/build-assets": "workspace:*",
+		"esbuild": "^0.25.10"
 	}
 }

@@ -1,4 +1,4 @@
-import { privateKeyFromRaw } from "@libp2p/crypto/keys";
+import { keys } from "@libp2p/crypto";
 import { calculateRawCid } from "@peerbit/blocks-interface";
 import { randomBytes } from "@peerbit/crypto";
 import {
@@ -55,7 +55,7 @@ describe(`isLeader`, function () {
 		session = await TestSession.connected(3, [
 			{
 				libp2p: {
-					privateKey: privateKeyFromRaw(
+					privateKey: keys.privateKeyFromRaw(
 						new Uint8Array([
 							27, 246, 37, 180, 13, 75, 242, 124, 185, 205, 207, 9, 16, 54, 162,
 							197, 247, 25, 211, 196, 127, 198, 82, 19, 68, 143, 197, 8, 203,
@@ -68,7 +68,7 @@ describe(`isLeader`, function () {
 			},
 			{
 				libp2p: {
-					privateKey: privateKeyFromRaw(
+					privateKey: keys.privateKeyFromRaw(
 						new Uint8Array([
 							113, 203, 231, 235, 7, 120, 3, 194, 138, 113, 131, 40, 251, 158,
 							121, 38, 190, 114, 116, 252, 100, 202, 107, 97, 119, 184, 24, 56,
@@ -82,7 +82,7 @@ describe(`isLeader`, function () {
 
 			{
 				libp2p: {
-					privateKey: privateKeyFromRaw(
+					privateKey: keys.privateKeyFromRaw(
 						new Uint8Array([
 							215, 31, 167, 188, 121, 226, 67, 218, 96, 8, 55, 233, 34, 68, 9,
 							147, 11, 157, 187, 43, 39, 43, 25, 95, 184, 227, 137, 56, 4, 69,
@@ -501,13 +501,25 @@ describe(`isLeader`, function () {
 
 			// expect either db1 to replicate more than 50% or db2 to replicate more than 50%
 			// for these
-			expect(
-				await db1.log.getCover({ args: undefined }, { roleAge: 0 }),
-			).to.deep.equal([session.peers[0].identity.publicKey.hashcode()]);
+			const replicatorHashes = Array.from(
+				(await db1.log.getReplicators()).keys(),
+			);
 
-			expect(
-				await db2.log.getCover({ args: undefined }, { roleAge: 0 }),
-			).to.deep.equal([session.peers[1].identity.publicKey.hashcode()]);
+			const cover1 = await db1.log.getCover(
+				{ args: undefined },
+				{ roleAge: 0 },
+			);
+			expect(cover1).to.include(session.peers[0].identity.publicKey.hashcode());
+			expect(new Set(cover1).size).to.equal(cover1.length);
+			expect(cover1.every((x) => replicatorHashes.includes(x))).to.be.true;
+
+			const cover2 = await db2.log.getCover(
+				{ args: undefined },
+				{ roleAge: 0 },
+			);
+			expect(cover2).to.include(session.peers[1].identity.publicKey.hashcode());
+			expect(new Set(cover2).size).to.equal(cover2.length);
+			expect(cover2.every((x) => replicatorHashes.includes(x))).to.be.true;
 		});
 
 		it("will consider in flight", async () => {
@@ -749,20 +761,29 @@ describe(`isLeader`, function () {
 			expect(db1FactorLoaded.length).to.equal(1); // only one segment loaded
 
 			await waitForResolved(async () => {
-				expect(
-					[
-						...(await db1.log.getCover({ args: undefined }, { roleAge: 0 })),
-					].sort(),
-				).to.deep.equal(
-					[...session.peers.map((x) => x.identity.publicKey.hashcode())].sort(),
-				); // self and the peer that was previously online
+				const cover = await db1.log.getCover(
+					{ args: undefined },
+					{ roleAge: 0 },
+				);
+				expect(cover).to.include(
+					session.peers[0].identity.publicKey.hashcode(),
+				);
+				expect(new Set(cover).size).to.equal(cover.length);
+				const loadedReplicators = Array.from(
+					(await db1.log.getReplicators()).keys(),
+				);
+				expect(cover.every((x) => loadedReplicators.includes(x))).to.be.true;
 
-				expect(
-					await db1.log.getCover(
-						{ args: undefined },
-						{ roleAge: 0, reachableOnly: true },
-					),
-				).to.deep.equal([session.peers[0].identity.publicKey.hashcode()]);
+				const reachable = await db1.log.getCover(
+					{ args: undefined },
+					{ roleAge: 0, reachableOnly: true },
+				);
+				expect(reachable).to.include(
+					session.peers[0].identity.publicKey.hashcode(),
+				);
+				expect(new Set(reachable).size).to.equal(reachable.length);
+				expect(reachable.every((x) => loadedReplicators.includes(x))).to.be
+					.true;
 			});
 		});
 

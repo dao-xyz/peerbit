@@ -4,7 +4,6 @@ import { circuitRelayTransport } from "@libp2p/circuit-relay-v2";
 import { identify } from "@libp2p/identify";
 import { webRTC } from "@libp2p/webrtc";
 import { webSockets } from "@libp2p/websockets";
-import { all } from "@libp2p/websockets/filters";
 import { multiaddr } from "@multiformats/multiaddr";
 import { ready } from "@peerbit/crypto";
 import { createLibp2p } from "libp2p";
@@ -26,7 +25,7 @@ const client = await createLibp2p<{ stream: TestDirectStream; identify: any }>({
 			reservationCompletionTimeout: 5000,
 		}),
 		webRTC(),
-		webSockets({ filter: all }),
+		webSockets(),
 	],
 	addresses: {
 		listen: ["/webrtc", "/p2p-circuit"],

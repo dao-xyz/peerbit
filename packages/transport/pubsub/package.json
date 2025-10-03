@@ -74,11 +74,30 @@
 		"dao.xyz"
 	],
 	"devDependencies": {
-		"@peerbit/libp2p-test-utils": "2.1.20"
+		"@peerbit/libp2p-test-utils": "workspace:*"
 	},
 	"dependencies": {
-		"@peerbit/stream": "4.4.5",
-		"@peerbit/logger": "1.0.4",
-		"@peerbit/pubsub-interface": "^4.0.7"
+		"@dao-xyz/borsh": "^5.2.3",
+		"@libp2p/circuit-relay-v2": "^4.0.2",
+		"@libp2p/crypto": "^5.1.10",
+		"@libp2p/interface": "^3.0.0",
+		"@libp2p/tcp": "^11.0.2",
+		"@libp2p/websockets": "^10.0.3",
+		"@libp2p/identify": "^4.0.2",
+		"@multiformats/multiaddr": "^13.0.1",
+		"@peerbit/crypto": "workspace:*",
+		"@peerbit/logger": "workspace:*",
+		"@peerbit/pubsub-interface": "workspace:*",
+		"@peerbit/stream": "workspace:*",
+		"@peerbit/stream-interface": "workspace:*",
+		"@peerbit/time": "workspace:*",
+		"@peerbit/any-store-interface": "workspace:*",
+		"any-signal": "^4.1.0",
+		"it-length-prefixed": "^10.0.1",
+		"it-pipe": "^3.0.1",
+		"it-pushable": "^3.1.4",
+		"p-defer": "^4.0.0",
+		"uint8arraylist": "^2.4.8",
+		"uint8arrays": "^5.1.0"
 	}
 }

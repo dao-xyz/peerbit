@@ -59,11 +59,16 @@
 	"license": "MIT",
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
-		"@peerbit/document": "10.0.0",
-		"@peerbit/trusted-network": "4.1.142"
+		"@libp2p/interface": "^3.0.0",
+		"@peerbit/crypto": "workspace:*",
+		"@peerbit/document": "workspace:*",
+		"@peerbit/program": "workspace:*",
+		"@peerbit/shared-log": "workspace:*",
+		"@peerbit/trusted-network": "workspace:*"
 	},
 	"devDependencies": {
-		"@peerbit/time": "^2.2.0",
-		"@peerbit/test-utils": "^2.2.8"
+		"@peerbit/time": "workspace:*",
+		"@peerbit/test-utils": "workspace:*",
+		"uint8arrays": "^5.1.0"
 	}
 }

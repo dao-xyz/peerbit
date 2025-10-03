@@ -160,7 +160,9 @@ export {
 	NoPeersError,
 };
 export { MAX_U32, MAX_U64, type NumberFromType };
-export const logger = loggerFn({ module: "shared-log" });
+export const logger: ReturnType<typeof loggerFn> = loggerFn({
+	module: "shared-log",
+});
 
 const getLatestEntry = (
 	entries: (ShallowOrFullEntry<any> | EntryWithRefs<any>)[],
@@ -415,7 +417,7 @@ export interface SharedLogEvents extends ProgramEvents {
 @variant("shared_log")
 export class SharedLog<
 	T,
-	D extends ReplicationDomain<any, T, R>,
+	D extends ReplicationDomain<any, T, R> = any,
 	R extends "u32" | "u64" = D extends ReplicationDomain<any, T, infer I>
 		? I
 		: "u32",
@@ -3083,8 +3085,14 @@ export class SharedLog<
 			}
 			return false;
 		};
-		this.events.addEventListener("replicator:mature", checkCoverage);
-		this.events.addEventListener("replication:change", checkCoverage);
+		const onReplicatorMature = () => {
+			checkCoverage();
+		};
+		const onReplicationChange = () => {
+			checkCoverage();
+		};
+		this.events.addEventListener("replicator:mature", onReplicatorMature);
+		this.events.addEventListener("replication:change", onReplicationChange);
 		await checkCoverage();
 
 		let interval = providedCustomRoleAge
@@ -3111,8 +3119,11 @@ export class SharedLog<
 		}
 		const clear = () => {
 			interval && clearInterval(interval);
-			this.events.removeEventListener("join", checkCoverage);
-			this.events.removeEventListener("leave", checkCoverage);
+			this.events.removeEventListener("replicator:mature", onReplicatorMature);
+			this.events.removeEventListener(
+				"replication:change",
+				onReplicationChange,
+			);
 			clearTimeout(timer);
 			if (options?.signal) {
 				options.signal.removeEventListener("abort", abortListener);

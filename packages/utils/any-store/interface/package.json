@@ -68,5 +68,12 @@
 	"license": "MIT",
 	"localMaintainers": [
 		"dao.xyz"
-	]
+	],
+	"dependencies": {
+		"@dao-xyz/borsh": "^5.2.4",
+		"uuid": "^10.0.0"
+	},
+	"devDependencies": {
+		"@types/uuid": "^10.0.0"
+	}
 }

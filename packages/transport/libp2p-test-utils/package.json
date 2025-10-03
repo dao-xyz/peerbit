@@ -58,12 +58,16 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@libp2p/tcp": "^10.1.9",
-		"@libp2p/webrtc": "^5.2.10",
-		"@libp2p/websockets": "^9.2.18",
-		"@libp2p/identify": "^3.0.28",
-		"@libp2p/circuit-relay-v2": "^3.2.9",
-		"libp2p": "^2.10.0"
+		"@multiformats/multiaddr": "^13.0.1",
+		"@libp2p/interface": "^3.0.0",
+		"@libp2p/tcp": "^11.0.2",
+		"@libp2p/webrtc": "^6.0.3",
+		"@libp2p/websockets": "^10.0.3",
+		"@libp2p/identify": "^4.0.2",
+		"@libp2p/circuit-relay-v2": "^4.0.2",
+		"@chainsafe/libp2p-noise": "^17.0.0",
+		"@chainsafe/libp2p-yamux": "^8.0.0",
+		"libp2p": "^3.0.3"
 	},
 	"scripts": {
 		"clean": "aegir clean",
@@ -72,7 +76,7 @@
 		"lint": "aegir lint"
 	},
 	"devDependencies": {
-		"@peerbit/time": "2.2.0"
+		"@peerbit/time": "workspace:*"
 	},
 	"localMaintainers": [
 		"dao.xyz"

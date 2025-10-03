@@ -125,7 +125,7 @@ const create = async (directory?: string) => {
 	sqlite3 =
 		sqlite3 || (await sqlite3InitModule({ print: log, printErr: error }));
 	let sqliteDb: OpfsSAHPoolDatabase | SQLDatabase | undefined = undefined;
-	let close: (() => Promise<any> | any) | undefined = async () => {
+	let closeInternal = async () => {
 		await Promise.all([...statements.values()].map((x) => x.finalize?.()));
 		statements.clear();
 
@@ -134,12 +134,80 @@ const create = async (directory?: string) => {
 	};
 	let dbFileName: string;
 
-	let drop = async () => {
-		if (poolUtil && dbFileName != null) {
-			poolUtil.unlink(dbFileName);
+	const cleanupPool = async (_label: string, preserveDbFile: boolean) => {
+		if (!poolUtil || dbFileName == null) {
+			return;
 		}
 
-		return close();
+		const relatedFiles = new Set([
+			dbFileName,
+			`${dbFileName}-journal`,
+			`${dbFileName}-wal`,
+			`${dbFileName}-shm`,
+		]);
+
+		for (const fileName of relatedFiles) {
+			if (preserveDbFile && fileName === dbFileName) {
+				continue;
+			}
+			try {
+				poolUtil.unlink(fileName);
+			} catch {
+				// ignore unlink failures
+			}
+		}
+
+		const wipePool = async () => {
+			if (preserveDbFile || !poolUtil?.wipeFiles) {
+				return;
+			}
+			try {
+				await poolUtil.wipeFiles();
+			} catch {
+				// ignore wipe failures
+			}
+		};
+
+		const directoryPrefix = directory
+			? `${directory.replace(/\/$/, "")}/`
+			: undefined;
+		if (!directoryPrefix) {
+			await wipePool();
+			return;
+		}
+		let poolFiles: string[] = [];
+		try {
+			poolFiles = poolUtil.getFileNames?.() ?? [];
+		} catch {
+			poolFiles = [];
+		}
+		for (const name of poolFiles) {
+			if (preserveDbFile && name === dbFileName) {
+				continue;
+			}
+			if (relatedFiles.has(name)) {
+				continue;
+			}
+			if (name.startsWith(directoryPrefix)) {
+				try {
+					poolUtil.unlink(name);
+				} catch {
+					// ignore unlink failures
+				}
+			}
+		}
+		await wipePool();
+	};
+
+	let close: (() => Promise<any> | any) | undefined = async () => {
+		await closeInternal();
+		const preserve = Boolean(directory);
+		await cleanupPool("close", preserve);
+	};
+
+	let drop = async () => {
+		await closeInternal();
+		await cleanupPool("drop", false);
 	};
 	let open = async () => {
 		if (sqliteDb) {

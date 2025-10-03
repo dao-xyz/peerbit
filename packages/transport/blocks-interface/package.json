@@ -75,11 +75,13 @@
 		"dao.xyz"
 	],
 	"devDependencies": {
-		"@peerbit/libp2p-test-utils": "2.1.20"
+		"@peerbit/libp2p-test-utils": "workspace:*"
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
-		"@peerbit/crypto": "2.3.11",
-		"@peerbit/stream-interface": "^5.2.8"
+		"@peerbit/crypto": "workspace:*",
+		"@peerbit/stream-interface": "workspace:*",
+		"@ipld/dag-cbor": "^9.2.1",
+		"multiformats": "^13.4.1"
 	}
 }

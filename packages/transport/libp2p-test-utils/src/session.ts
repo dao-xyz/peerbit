@@ -34,7 +34,10 @@ export class TestSession<T> {
 				for (let j = i + 1; j < group.length; j++) {
 					const toDial = group[j]
 						.getMultiaddrs()
-						.filter((x) => !x.protoCodes().includes(290));
+						.filter(
+							(x) =>
+								!x.getComponents().some((component) => component.code === 290),
+						);
 					connectPromises.push(group[i].dial(toDial)); // By default don't connect to relayed (p2p-circuit) peers
 				}
 			}
@@ -58,7 +61,10 @@ export class TestSession<T> {
 			for (let i = 0; i < group.length - 1; i++) {
 				const toDial = group[i + 1]
 					.getMultiaddrs()
-					.filter((x) => !x.protoCodes().includes(290));
+					.filter(
+						(x) =>
+							!x.getComponents().some((component) => component.code === 290),
+					);
 				connectPromises.push(group[i].dial(toDial)); // By default don't connect to relayed (p2p-circuit) peers
 			}
 		}

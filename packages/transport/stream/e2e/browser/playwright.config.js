@@ -70,7 +70,7 @@ export default defineConfig({
 	/* Run your local dev server before starting the tests */
 	webServer: [
 		{
-			command: "yarn --cwd ./browser-node start",
+			command: "pnpm --dir ./browser-node start",
 			url: "http://localhost:5211",
 			reuseExistingServer: !process.env.CI,
 		},

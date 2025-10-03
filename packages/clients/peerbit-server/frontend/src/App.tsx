@@ -65,18 +65,24 @@ export const App = () => {
 				c.peer.addresses
 					.get()
 					.then((addresses) => {
-						const tcpAddress = addresses.find(
-							(x) =>
-								x.protoNames().includes("tcp") &&
-								!x.protoNames().includes("ws") &&
-								!x.protoNames().includes("wss"),
-						);
+						const tcpAddress = addresses.find((x) => {
+							const components = x.getComponents();
+							return (
+								components.some((component) => component.name === "tcp") &&
+								!components.some((component) => component.name === "ws") &&
+								!components.some((component) => component.name === "wss")
+							);
+						});
 						if (tcpAddress) {
 							setTCPAddress(tcpAddress.toString());
 						}
-						const wsAddress = addresses.find(
-							(x) =>
-								x.protoNames().includes("ws") || x.protoNames().includes("wss"),
+						const wsAddress = addresses.find((x) =>
+							x
+								.getComponents()
+								.some(
+									(component) =>
+										component.name === "ws" || component.name === "wss",
+								),
 						);
 						if (wsAddress) {
 							setWebsocketAddress(wsAddress.toString());

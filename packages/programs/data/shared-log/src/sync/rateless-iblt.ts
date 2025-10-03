@@ -18,7 +18,9 @@ import {
 } from "../ranges.js";
 import { SimpleSyncronizer } from "./simple.js";
 
-export const logger = loggerFn({ module: "shared-log" });
+export const logger: ReturnType<typeof loggerFn> = loggerFn({
+	module: "shared-log",
+});
 
 type NumberOrBigint = number | bigint;
 
@@ -226,44 +228,51 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		entries: Map<string, EntryReplicated<D>>;
 		targets: string[];
 	}): Promise<void> {
-		// calculate the smallest range that covers all the entries
-		// calculate the largest gap and the smallest range  will be the one that starts at the end of it
-
-		// assume sorted, and find the largest gap
-		let largestGap = 0n;
-		let largestGapIndex = 0;
+		// Strategy:
+		// - For small sets, prefer the simple synchronizer to reduce complexity and avoid
+		//   IBLT overhead on tiny batches.
+		// - For large sets, use IBLT, but still allow simple sync for special-case entries
+		//   such as those assigned to range boundaries.
 
 		let entriesToSyncNaively: Map<string, EntryReplicated<D>> = new Map();
-
 		let allCoordinatesToSyncWithIblt: bigint[] = [];
-		let minSyncIbltSize = 333; // TODO arg
+		let minSyncIbltSize = 333; // TODO: make configurable
 		let maxSyncWithSimpleMethod = 1e3;
 
+		// Small batch => use simple synchronizer entirely
+		if (properties.entries.size <= minSyncIbltSize) {
+			await this.simple.onMaybeMissingEntries({
+				entries: properties.entries,
+				targets: properties.targets,
+			});
+			return;
+		}
+
+		// Mixed strategy for larger batches
 		for (const entry of properties.entries.values()) {
-			if (
-				entry.assignedToRangeBoundary ||
-				properties.entries.size < minSyncIbltSize
-			) {
+			if (entry.assignedToRangeBoundary) {
 				entriesToSyncNaively.set(entry.hash, entry);
 			} else {
 				allCoordinatesToSyncWithIblt.push(coerceBigInt(entry.hashNumber));
 			}
 		}
 
-		if (
-			allCoordinatesToSyncWithIblt.length === 0 ||
-			entriesToSyncNaively.size > maxSyncWithSimpleMethod
-		) {
-			// add all coordinates to sync with iblt
-			allCoordinatesToSyncWithIblt = Array.from(
-				properties.entries.values(),
-			).map((x) => coerceBigInt(x.hashNumber));
-		} else {
-			// TODO what happens if too many
+		if (entriesToSyncNaively.size > 0) {
+			// If there are special-case entries, sync them simply in parallel
 			await this.simple.onMaybeMissingEntries({
 				entries: entriesToSyncNaively,
 				targets: properties.targets,
 			});
+		}
+
+		if (
+			allCoordinatesToSyncWithIblt.length === 0 ||
+			entriesToSyncNaively.size > maxSyncWithSimpleMethod
+		) {
+			// Fallback: if nothing left for IBLT (or simple set is too large), include all in IBLT
+			allCoordinatesToSyncWithIblt = Array.from(
+				properties.entries.values(),
+			).map((x) => coerceBigInt(x.hashNumber));
 		}
 
 		if (allCoordinatesToSyncWithIblt.length === 0) {
@@ -280,6 +289,9 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			}
 		});
 
+		// assume sorted, and find the largest gap
+		let largestGap = 0n;
+		let largestGapIndex = 0;
 		for (let i = 0; i < sortedEntries.length - 1; i++) {
 			const current = sortedEntries[i];
 			const next = sortedEntries[i + 1];

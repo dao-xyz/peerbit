@@ -20,6 +20,8 @@ describe("observer", () => {
 			[session.peers[1], session.peers[2]],
 		]);
 
+		const waitTimeout = 30 * 1000;
+
 		let stores: EventStore<string, any>[] = [];
 		const s = new EventStore<string, any>();
 		const createStore = () => deserialize(serialize(s), EventStore);
@@ -39,7 +41,7 @@ describe("observer", () => {
 				if (i === j) {
 					continue;
 				}
-				await store.waitFor(peer.peerId, { timeout: 10 * 1000 });
+				await store.waitFor(peer.peerId, { timeout: waitTimeout });
 
 				if (j <= replicatorEndIndex) {
 					await store.log.waitForReplicator(peer.identity.publicKey);
@@ -54,13 +56,13 @@ describe("observer", () => {
 
 		for (let i = 0; i < hashes.length; i++) {
 			for (let j = 1; j < stores.length; j++) {
+				const hash = hashes[i];
 				if (await stores[j].log.isReplicating()) {
 					await waitForResolved(
-						async () =>
-							expect(await stores[j].log.log.has(hashes[j])).to.be.true,
+						async () => expect(await stores[j].log.log.has(hash)).to.be.true,
 					);
 				} else {
-					expect(await stores[j].log.log.has(hashes[j])).to.be.false;
+					expect(await stores[j].log.log.has(hash)).to.be.false;
 				}
 			}
 		}

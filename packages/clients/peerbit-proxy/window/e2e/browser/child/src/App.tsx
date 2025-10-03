@@ -2,14 +2,16 @@ import { randomBytes } from "@peerbit/crypto";
 import { Change } from "@peerbit/log";
 import { createClient } from "@peerbit/proxy-window";
 import { SharedLog } from "@peerbit/shared-log";
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 
 const client = await createClient("*");
+console.log("client", client);
 
 export const App = () => {
 	const mounted = useRef<boolean>(false);
 	const dbRef = useRef<SharedLog<any, any>>();
 	const [_, forceUpdate] = useReducer((x) => x + 1, 0);
+	const [peers, setPeers] = useState<Set<string>>(new Set());
 	useEffect(() => {
 		const queryParameters = new URLSearchParams(window.location.search);
 
@@ -22,6 +24,9 @@ export const App = () => {
 				new SharedLog({ id: new Uint8Array(32) }),
 				{
 					args: {
+						replicate: {
+							factor: 1,
+						},
 						onChange: (change: Change<Uint8Array>) => {
 							forceUpdate();
 							setTimeout(() => {
@@ -35,6 +40,7 @@ export const App = () => {
 				},
 			)
 			.then((x: any) => {
+				console.log("open db", x.address);
 				dbRef.current = x;
 				if (queryParameters.get("read") !== "true") {
 					setTimeout(() => {
@@ -43,10 +49,21 @@ export const App = () => {
 					}, 1000);
 				}
 			});
+		client.services.pubsub.addEventListener("peer:reachable", () => {
+			setPeers((prev) => new Set(prev.add(client.peerId.toString())));
+		});
+		client.services.pubsub.addEventListener("peer:unreachable", () => {
+			setPeers((prev) => {
+				const newSet = new Set(prev);
+				newSet.delete(client.peerId.toString());
+				return newSet;
+			});
+		});
 	}, []);
 	return (
 		<>
 			<div data-testid="counter">{dbRef.current?.log.length}</div>
+			<div data-testid="peers">{peers.size}</div>
 			<button onClick={() => dbRef.current?.log.load({ reset: true })}>
 				Reload
 			</button>

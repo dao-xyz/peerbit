@@ -1,5 +1,5 @@
 import { LevelDatastore } from "@dao-xyz/datastore-level";
-import { privateKeyFromRaw } from "@libp2p/crypto/keys";
+import { keys } from "@libp2p/crypto";
 import type { PeerId } from "@libp2p/interface";
 import type { KeychainComponents } from "@libp2p/keychain";
 import {
@@ -41,7 +41,9 @@ import {
 	createLibp2pExtended,
 } from "./libp2p.js";
 
-export const logger = loggerFn({ module: "client" });
+export const logger: ReturnType<typeof loggerFn> = loggerFn({
+	module: "client",
+});
 
 export type OptionalCreateOptions = {
 	libp2pExternal?: boolean;
@@ -172,7 +174,7 @@ export class Peerbit implements ProgramClient {
 					Ed25519Keypair,
 				);
 				privateKey = exported
-					? privateKeyFromRaw(
+					? keys.privateKeyFromRaw(
 							concat([
 								exported.privateKey.privateKey,
 								exported.publicKey.publicKey,

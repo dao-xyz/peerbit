@@ -57,8 +57,10 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@peerbit/crypto": "^2.3.11",
-		"@peerbit/any-store": "^2.1.14",
-		"@libp2p/keychain": "^5.2.9"
+		"@dao-xyz/borsh": "^5.2.3",
+		"@libp2p/interface": "^3.0.0",
+		"@peerbit/crypto": "workspace:*",
+		"@peerbit/any-store": "workspace:*",
+		"@libp2p/keychain": "^6.0.2"
 	}
 }

@@ -148,8 +148,8 @@ export const tests = (
 	},
 ) => {
 	return describe("index", () => {
-		let store: Index<any, any>;
-		let indices: Indices;
+		let store!: Index<any, any>;
+		let indices!: Indices;
 		let defaultDocs: Document[] = [];
 
 		const setupDefault = async () => {
@@ -255,13 +255,22 @@ export const tests = (
 		const setup = async <T>(
 			properties: Partial<IndexEngineInitProperties<T, any>> & { schema: any },
 			directory?: string,
+			options?: { preserve?: boolean },
 		): Promise<{
 			indices: Indices;
 			store: Index<T, any>;
 			directory: string;
 		}> => {
-			//	store && await store.stop()
-			indices && (await indices.stop());
+			if (directory != null) {
+				await store?.stop?.();
+				if (options?.preserve) {
+					await indices?.stop?.();
+				} else {
+					await indices?.drop?.();
+				}
+			} else {
+				await indices?.drop?.();
+			}
 
 			await sodium.ready;
 			directory = directory
@@ -4305,7 +4314,9 @@ export const tests = (
 					} = await setupDefault();
 					expect(await documentStore.getSize()).equal(4);
 					await indices.stop();
-					const { store } = await setup({ schema: Document }, directory);
+					const { store } = await setup({ schema: Document }, directory, {
+						preserve: true,
+					});
 					expect(await store.getSize()).equal(4);
 				});
 			} else {
@@ -4342,7 +4353,7 @@ export const tests = (
 				await store.drop();
 				await store.start();
 				expect(await store.getSize()).equal(0);
-				await indices.stop();
+				await indices.drop();
 				store = (await setup({ schema: Document }, directory)).store;
 				expect(await store.getSize()).equal(0);
 			});
@@ -4381,7 +4392,7 @@ export const tests = (
 				expect(await store.getSize()).equal(0);
 
 				await store.stop(); /// TODO why do w
-				await indices.stop();
+				await indices.drop();
 
 				store = (await setup({ schema: Document }, directory)).store;
 
@@ -4395,7 +4406,7 @@ export const tests = (
 				expect(await store.getSize()).equal(4);
 				let subindex = await indices.scope("x");
 				store = await subindex.init({ indexBy: ["id"], schema: Document });
-				await indices.stop();
+				await indices.drop();
 				store = (await setup({ schema: Document })).store;
 				await store.stop();
 			});

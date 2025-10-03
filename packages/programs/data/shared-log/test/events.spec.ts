@@ -244,6 +244,58 @@ describe("events", () => {
 			expect(t1 - t0).to.be.greaterThan(3e3); // should wait for maturity
 		});
 
+		it("resolves when replication starts after wait is pending", async () => {
+			session = await TestSession.connected(1);
+			const store = new EventStore();
+			const store1 = await session.peers[0].open(store, {
+				args: {
+					replicate: false,
+					timeUntilRoleMaturity: 1e3,
+				},
+			});
+
+			const waitPromise = store1.log.waitForReplicators({
+				timeout: 10e3,
+				waitForNewPeers: true,
+			});
+
+			await delay(100);
+			await store1.log.replicate({ factor: 1 });
+
+			await waitPromise;
+		});
+
+		it("times out if maturity signal never fires", async () => {
+			session = await TestSession.connected(1);
+			const store = new EventStore();
+			const timeUntilRoleMaturity = 3e3;
+			const store1 = await session.peers[0].open(store, {
+				args: {
+					replicate: {
+						factor: 1,
+					},
+					timeUntilRoleMaturity,
+				},
+			});
+
+			const hash = session.peers[0].identity.publicKey.hashcode();
+			// @ts-ignore accessing internal state for test purposes
+			const pending = store1.log.pendingMaturity.get(hash);
+			expect(pending, "expected pending maturity timers").to.exist;
+			if (pending) {
+				for (const [_key, value] of pending) {
+					clearTimeout(value.timeout);
+				}
+				pending.clear();
+			}
+
+			await expect(
+				store1.log.waitForReplicators({
+					timeout: 500,
+				}),
+			).to.be.eventually.rejectedWith("Timeout");
+		});
+
 		it("times out after timeout if online", async () => {
 			session = await TestSession.connected(2);
 			const store = new EventStore();

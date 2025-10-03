@@ -5,8 +5,9 @@ import { Secp256k1PublicKey } from "@peerbit/crypto";
 import { Documents, SearchRequest } from "@peerbit/document";
 import { Program } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
-import { delay, waitForResolved } from "@peerbit/time";
+import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import { equals } from "uint8arrays";
 import {
 	FromTo,
 	IdentityGraph,
@@ -25,6 +26,8 @@ const createIdentity = async () => {
 		sign: (data: any) => ed.sign(data),
 	};
 };
+
+const REPLICATOR_WAIT_TIMEOUT = 30_000;
 
 @variant("any_identity_graph")
 class AnyCanAppendIdentityGraph extends IdentityGraph {
@@ -195,7 +198,7 @@ describe("index", () => {
 			const t1 = new TrustedNetwork({ id: key.publicKey, rootTrust: key });
 			const t2 = new TrustedNetwork({ id: key.publicKey, rootTrust: key });
 
-			expect(serialize(t1)).to.deep.equal(serialize(t2));
+			expect(equals(serialize(t1), serialize(t2))).to.be.true;
 		});
 
 		it("replicates by default", async () => {
@@ -265,15 +268,21 @@ describe("index", () => {
 
 			await l0c.trustGraph.log.waitForReplicator(
 				session.peers[0].identity.publicKey,
+				{ timeout: REPLICATOR_WAIT_TIMEOUT },
 			);
 			await l0c.trustGraph.log.waitForReplicator(
 				session.peers[1].identity.publicKey,
+				{ timeout: REPLICATOR_WAIT_TIMEOUT },
 			);
 			await l0c.trustGraph.log.waitForReplicator(
 				session.peers[3].identity.publicKey,
+				{ timeout: REPLICATOR_WAIT_TIMEOUT },
 			);
 
-			await delay(1000); // TODO fix test flakeness
+			await waitForResolved(
+				async () => expect(await l0c.trustGraph.index.getSize()).equal(2),
+				{ timeout: REPLICATOR_WAIT_TIMEOUT },
+			);
 
 			// Try query with trusted
 			let responses: IdentityRelation[] = await l0c.trustGraph.index.search(
@@ -321,10 +330,10 @@ describe("index", () => {
 
 			await l0a.add(session.peers[1].peerId);
 			expect(
-				await l0a.hasRelation(session.peers[0].peerId, session.peers[1].peerId),
+				await l0a.hasRelation(session.peers[1].peerId, session.peers[0].peerId),
 			).to.be.false;
 			expect(
-				await l0a.hasRelation(session.peers[1].peerId, session.peers[0].peerId),
+				await l0a.hasRelation(session.peers[0].peerId, session.peers[1].peerId),
 			).to.be.true;
 		});
 

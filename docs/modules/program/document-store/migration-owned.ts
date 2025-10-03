@@ -69,34 +69,31 @@ class PostStore extends Program {
 
 		// Migration loop. This code will be included in everyone's code bases once the code/project owners want everyone to migrate
 		// Peers can reject not doing migrations by simply not downloading updates
-		for (const results of await this.posts.index.queryDetailed(
-			new SearchRequest(),
-			{ local: true, remote: false },
-		)) {
-			for (const result of results.results) {
-				const latestCommit = await this.posts.log.log.get(result.context.head);
+		for (const result of await this.posts.index
+			.iterate({}, { local: true, remote: false })
+			.all()) {
+			const latestCommit = await this.posts.log.log.get(result.__context.head);
 
-				// Is Post of type V0 && Am I the signer of the post (i.e. creator?)
-				if (
-					result.value instanceof PostV0 &&
-					latestCommit &&
-					latestCommit.publicKeys.find((x) =>
-						x.equals(this.node.identity.publicKey),
-					)
-				) {
-					// Then migrate
-					await this.posts.put(
-						new PostV1({
-							id: result.value.id,
-							message: result.value.message,
-							title: "Migrated post",
-						}),
-					);
+			// Is Post of type V0 && Am I the signer of the post (i.e. creator?)
+			if (
+				result instanceof PostV0 &&
+				latestCommit &&
+				latestCommit.publicKeys.find((x) =>
+					x.equals(this.node.identity.publicKey),
+				)
+			) {
+				// Then migrate
+				await this.posts.put(
+					new PostV1({
+						id: result.id,
+						message: result.message,
+						title: "Migrated post",
+					}),
+				);
 
-					// Since the same id is used, the old document will be replaced with a new document.
-					// if you want to use a different id you can delete the old document with
-					// await this.posts.del(result.value.id)
-				}
+				// Since the same id is used, the old document will be replaced with a new document.
+				// if you want to use a different id you can delete the old document with
+				// await this.posts.del(result.value.id)
 			}
 		}
 	}

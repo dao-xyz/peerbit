@@ -19,6 +19,7 @@
 		]
 	},
 	"scripts": {
-		"test": "playwright test"
+		"test": "pnpm --dir ./child build & pnpm --dir ./parent build & playwright test",
+		"build": "echo 'No build step for proxy-test-post-message'"
 	}
 }

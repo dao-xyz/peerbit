@@ -3,6 +3,8 @@ import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { Peerbit } from "../src/index.js";
 
+const isNode = typeof process !== "undefined" && !!process.versions?.node;
+
 describe(`dial`, function () {
 	let clients: [Peerbit, Peerbit];
 
@@ -14,7 +16,7 @@ describe(`dial`, function () {
 		await Promise.all(clients.map((c) => c.stop()));
 	});
 
-	if (typeof window === "undefined") {
+	if (isNode) {
 		it("waits for blocks", async () => {
 			const cid = await clients[0].services.blocks.put(new Uint8Array([1]));
 			await clients[0].dial(clients[1].getMultiaddrs()[0]);
@@ -85,7 +87,7 @@ describe(`hangup`, function () {
 		let topic = "topic";
 		await clients[0].services.pubsub.subscribe(topic);
 
-		if (typeof window === "undefined") {
+		if (isNode) {
 			await clients[1].services.pubsub.subscribe(topic);
 			await clients[0].dial(clients[1].getMultiaddrs()[0]);
 			await waitForResolved(() =>

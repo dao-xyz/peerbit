@@ -89,8 +89,6 @@ export class EventStore<
 	_index!: EventIndex<T>;
 	_canAppend?: CanAppend<Operation<T>>;
 
-	static staticArgs: Args<any, any, any> | undefined;
-
 	constructor(properties?: { id: Uint8Array }) {
 		super();
 		this.id = properties?.id || randomBytes(32);
@@ -133,10 +131,10 @@ export class EventStore<
 			keep: properties?.keep,
 			respondToIHaveTimeout: properties?.respondToIHaveTimeout,
 			distributionDebounceTime: 50, // to make tests fast
-			domain: properties?.domain ?? properties?.setup?.domain,
+			domain: (properties?.domain ?? (properties?.setup as any)?.domain) as any,
 			syncronizer: properties?.setup?.syncronizer as SynchronizerConstructor<R>,
 
-			...(((this.constructor as typeof EventStore).staticArgs ?? {}) as any),
+			// staticArgs was unused; keep open args explicit in tests
 		});
 	}
 

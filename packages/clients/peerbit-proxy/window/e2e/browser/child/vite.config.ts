@@ -4,7 +4,7 @@ import { defineConfig } from "vite";
 
 // https://vitejs.dev/config/
 export default defineConfig({
-	plugins: [react(), peerbit()],
+	plugins: [react(), peerbit({ assets: null })],
 	optimizeDeps: {
 		esbuildOptions: {
 			target: "esnext",

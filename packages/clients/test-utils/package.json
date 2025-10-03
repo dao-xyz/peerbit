@@ -69,11 +69,19 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@peerbit/libp2p-test-utils": "2.1.20",
-		"peerbit": "4.3.7"
+		"@peerbit/libp2p-test-utils": "workspace:*",
+		"peerbit": "workspace:*",
+		"@chainsafe/libp2p-yamux": "^8.0.0",
+		"@peerbit/blocks": "workspace:*",
+		"@peerbit/keychain": "workspace:*",
+		"@peerbit/program": "workspace:*",
+		"@peerbit/pubsub": "workspace:*",
+		"@peerbit/stream": "workspace:*",
+		"libp2p": "^3.0.3",
+		"tty-table": "^4.2.1"
 	},
 	"devDependencies": {
-		"@peerbit/time": "2.2.0"
+		"@peerbit/time": "workspace:*"
 	},
 	"localMaintainers": [
 		"dao.xyz"
