@@ -16,11 +16,7 @@
 		"experimentalDecorators": true,
 		"noEmit": true,
 		"jsx": "react-jsx",
-		"baseUrl": ".",
-		"paths": {
-			"@peerbit/*": ["../../../../../*/dist/src"],
-			"peerbit": ["../../../../../../clients/peerbit/dist/src"]
-		}
+		"baseUrl": "."
 	},
 	"include": ["src"],
 	"references": [
