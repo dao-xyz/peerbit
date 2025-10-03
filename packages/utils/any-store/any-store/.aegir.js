@@ -1,7 +1,15 @@
+import { findLibraryInNodeModules } from "@peerbit/build-assets";
 import * as findUp from "find-up";
+import { createRequire } from "module";
 import path from "path";
 
 const root = path.dirname(await findUp.findUp(".git", { type: "directory" }));
+const resolverFromRoot = createRequire(path.join(root, "package.json"));
+const resolverFromLocal = createRequire(import.meta.url);
+
+const opfsAssetsDir = findLibraryInNodeModules("@peerbit/any-store-opfs/dist", {
+	resolvers: [resolverFromRoot, resolverFromLocal],
+});
 
 export default {
 	test: {
@@ -20,7 +28,7 @@ export default {
 		covTimeout: 60000,
 		browser: {
 			config: {
-				assets: "../../../../node_modules/@peerbit/any-store-opfs/dist",
+				assets: opfsAssetsDir,
 				buildConfig: {
 					conditions: ["production"],
 				},
