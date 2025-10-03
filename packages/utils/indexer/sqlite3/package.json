@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/indexer-sqlite3",
-	"version": "1.2.28",
+	"version": "1.2.29",
 	"description": "SQLite index for document store",
 	"type": "module",
 	"sideEffects": false,
@@ -71,8 +71,8 @@
 	"dependencies": {
 		"better-sqlite3": "^12.4.1",
 		"@dao-xyz/borsh": "^5.2.3",
-		"@peerbit/indexer-interface": "workspace:*",
-		"@peerbit/crypto": "workspace:*",
+		"@peerbit/indexer-interface": "2.0.13",
+		"@peerbit/crypto": "2.3.12",
 		"@peerbit/time": "workspace:*",
 		"@sqlite.org/sqlite-wasm": "^3.50.4-build1",
 		"p-defer": "^4.0.0",
@@ -82,8 +82,8 @@
 	},
 	"devDependencies": {
 		"@types/better-sqlite3": "^7.6.13",
-		"@peerbit/indexer-tests": "workspace:*",
-		"@peerbit/build-assets": "workspace:*",
+		"@peerbit/indexer-tests": "1.1.19",
+		"@peerbit/build-assets": "1.0.0",
 		"esbuild": "^0.25.10"
 	}
 }

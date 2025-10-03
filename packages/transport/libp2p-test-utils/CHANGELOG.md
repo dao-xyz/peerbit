@@ -54,6 +54,16 @@
   * devDependencies
     * @peerbit/time bumped from 2.0.5 to 2.0.6
 
+## [2.1.21](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.20...libp2p-test-utils-v2.1.21) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+* handle missing deps ([1249ff6](https://github.com/dao-xyz/peerbit/commit/1249ff601602d274c3c4bd81ed811667288d3985))
+* migrate to libp2p v3 ([6f8f7b0](https://github.com/dao-xyz/peerbit/commit/6f8f7b0b286d43c4363e02b7e4ca88d22c04c2b3))
+* migrate to libp2p v3 ([9a8bbf9](https://github.com/dao-xyz/peerbit/commit/9a8bbf9d494064908194e8ee17643089c8273a80))
+
 ## [2.1.20](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.19...libp2p-test-utils-v2.1.20) (2025-09-09)
 
 

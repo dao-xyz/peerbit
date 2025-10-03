@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/dao-xyz/peerbit/compare/any-store-interface-v1.0.0...any-store-interface-v1.0.1) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+
 ## 1.0.0 (2024-07-20)
 
 

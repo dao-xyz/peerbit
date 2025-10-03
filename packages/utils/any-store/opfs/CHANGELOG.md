@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.0.14](https://github.com/dao-xyz/peerbit/compare/any-store-opfs-v1.0.13...any-store-opfs-v1.0.14) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 2.3.12
+    * @peerbit/any-store-interface bumped to 1.0.1
+
 ## [1.0.13](https://github.com/dao-xyz/peerbit/compare/any-store-opfs-v1.0.12...any-store-opfs-v1.0.13) (2025-09-04)
 
 

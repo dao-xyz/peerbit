@@ -632,6 +632,28 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [5.0.118](https://github.com/dao-xyz/peerbit/compare/string-v5.0.117...string-v5.0.118) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+* handle missing deps ([1249ff6](https://github.com/dao-xyz/peerbit/commit/1249ff601602d274c3c4bd81ed811667288d3985))
+* pnpm package manager ([a6e95de](https://github.com/dao-xyz/peerbit/commit/a6e95de9a4fb418acd73f68639bec66fe6747856))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 2.3.12
+    * @peerbit/program bumped to 5.3.4
+    * @peerbit/shared-log bumped to 11.5.6
+    * @peerbit/rpc bumped to 5.3.27
+    * @peerbit/log bumped to 4.1.9
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.2.9
+
 ## [5.0.117](https://github.com/dao-xyz/peerbit/compare/string-v5.0.116...string-v5.0.117) (2025-09-25)
 
 

@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/identity-access-controller",
-	"version": "5.0.125",
+	"version": "5.0.126",
 	"description": "Access controller that operates on a DB",
 	"sideEffects": false,
 	"type": "module",
@@ -60,15 +60,15 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
 		"@libp2p/interface": "^3.0.0",
-		"@peerbit/crypto": "workspace:*",
-		"@peerbit/document": "workspace:*",
-		"@peerbit/program": "workspace:*",
-		"@peerbit/shared-log": "workspace:*",
-		"@peerbit/trusted-network": "workspace:*"
+		"@peerbit/crypto": "2.3.12",
+		"@peerbit/document": "10.0.1",
+		"@peerbit/program": "5.3.4",
+		"@peerbit/shared-log": "11.5.6",
+		"@peerbit/trusted-network": "4.1.143"
 	},
 	"devDependencies": {
 		"@peerbit/time": "workspace:*",
-		"@peerbit/test-utils": "workspace:*",
+		"@peerbit/test-utils": "2.2.9",
 		"uint8arrays": "^5.1.0"
 	}
 }

@@ -456,6 +456,36 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [10.0.1](https://github.com/dao-xyz/peerbit/compare/document-v10.0.0...document-v10.0.1) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([38c7cb2](https://github.com/dao-xyz/peerbit/commit/38c7cb28183835a49ffe648d55e25a3951534143))
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+* pnpm package manager ([a6e95de](https://github.com/dao-xyz/peerbit/commit/a6e95de9a4fb418acd73f68639bec66fe6747856))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped to 2.1.5
+    * @peerbit/crypto bumped to 2.3.12
+    * @peerbit/log bumped to 4.1.9
+    * @peerbit/pubsub bumped to 4.0.17
+    * @peerbit/program bumped to 5.3.4
+    * @peerbit/rpc bumped to 5.3.27
+    * @peerbit/shared-log bumped to 11.5.6
+    * @peerbit/indexer-interface bumped to 2.0.13
+    * @peerbit/indexer-simple bumped to 1.1.20
+    * @peerbit/indexer-sqlite3 bumped to 1.2.29
+    * @peerbit/document-interface bumped to 3.0.1
+    * @peerbit/stream-interface bumped to 5.2.9
+    * peerbit bumped to 4.3.8
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.2.9
+
 ## [10.0.0](https://github.com/dao-xyz/peerbit/compare/document-v9.13.10...document-v10.0.0) (2025-10-01)
 
 

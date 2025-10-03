@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.0.37](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.36...vite-v1.0.37) (2025-10-03)
+
+
+### Bug Fixes
+
+* add alias configuration for worker paths in copy-to-public plugin ([5f70b5b](https://github.com/dao-xyz/peerbit/commit/5f70b5b179cb361113d3e2b06f78bcbb2eae2f77))
+* add missing deps ([38c7cb2](https://github.com/dao-xyz/peerbit/commit/38c7cb28183835a49ffe648d55e25a3951534143))
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+* add tests and abstraction for lib resolvment ([f693e0d](https://github.com/dao-xyz/peerbit/commit/f693e0d86b6492b583315a917b706015e8eb56a0))
+* enforce pre-processing in copy-to-public plugin and ensure worker file exists in public directory ([e21353e](https://github.com/dao-xyz/peerbit/commit/e21353ee32d0dd9636cfc39724f695cd6c7039f7))
+* enhance resolveId function in copy-to-public plugin for better worker path handling ([fc46c0e](https://github.com/dao-xyz/peerbit/commit/fc46c0ecf31263b53ddc5f61f2516b387fe20ba6))
+* init ([42c2b6b](https://github.com/dao-xyz/peerbit/commit/42c2b6b041621c0c9f4e81aff88c9a4d8ca710ec))
+* pnpm package manager ([a6e95de](https://github.com/dao-xyz/peerbit/commit/a6e95de9a4fb418acd73f68639bec66fe6747856))
+* update copy-to-public plugin to copy entire peerbit directory from @peerbit/indexer-sqlite3 ([d9a254f](https://github.com/dao-xyz/peerbit/commit/d9a254f7caf7a8599edd9b0b9d4f592564e20d1c))
+* update devDependencies and include test directory in tsconfig ([c159a45](https://github.com/dao-xyz/peerbit/commit/c159a457eab7d419c64696512eaacab6fcb1ab87))
+* use build-assets for asset resolution ([e060e16](https://github.com/dao-xyz/peerbit/commit/e060e16981a14ffb00004b9f50ace0d5e45c9cfe))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/build-assets bumped to 1.0.0
+  * devDependencies
+    * @peerbit/indexer-sqlite3 bumped to 1.2.29
+    * @peerbit/any-store bumped to 2.1.15
+    * @peerbit/any-store-opfs bumped to 1.0.14
+
 ## [1.0.36](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.35...vite-v1.0.36) (2025-09-25)
 
 

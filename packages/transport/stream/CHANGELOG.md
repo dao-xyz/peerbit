@@ -43,6 +43,29 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.4.6](https://github.com/dao-xyz/peerbit/compare/stream-v4.4.5...stream-v4.4.6) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+* handle missing deps ([1249ff6](https://github.com/dao-xyz/peerbit/commit/1249ff601602d274c3c4bd81ed811667288d3985))
+* migrate to libp2p v3 ([6f8f7b0](https://github.com/dao-xyz/peerbit/commit/6f8f7b0b286d43c4363e02b7e4ca88d22c04c2b3))
+* migrate to libp2p v3 ([9a8bbf9](https://github.com/dao-xyz/peerbit/commit/9a8bbf9d494064908194e8ee17643089c8273a80))
+* pnpm package manager ([a6e95de](https://github.com/dao-xyz/peerbit/commit/a6e95de9a4fb418acd73f68639bec66fe6747856))
+* update devDependencies and include test directory in tsconfig ([c159a45](https://github.com/dao-xyz/peerbit/commit/c159a457eab7d419c64696512eaacab6fcb1ab87))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped to 2.1.5
+    * @peerbit/crypto bumped to 2.3.12
+    * @peerbit/stream-interface bumped to 5.2.9
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped to 2.1.21
+
 ## [4.4.5](https://github.com/dao-xyz/peerbit/compare/stream-v4.4.4...stream-v4.4.5) (2025-09-25)
 
 

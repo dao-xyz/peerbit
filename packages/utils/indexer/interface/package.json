@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/indexer-interface",
-	"version": "2.0.12",
+	"version": "2.0.13",
 	"description": "Indexer store interface",
 	"sideEffects": false,
 	"type": "module",
@@ -60,7 +60,7 @@
 	"dependencies": {
 		"uuid": "^10.0.0",
 		"@dao-xyz/borsh": "^5.2.3",
-		"@peerbit/crypto": "workspace:*",
+		"@peerbit/crypto": "2.3.12",
 		"uint8-varint": "^2.0.4"
 	}
 }

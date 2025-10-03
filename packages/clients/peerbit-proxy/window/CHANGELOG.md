@@ -374,6 +374,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [3.0.116](https://github.com/dao-xyz/peerbit/compare/proxy-window-v3.0.115...proxy-window-v3.0.116) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([38c7cb2](https://github.com/dao-xyz/peerbit/commit/38c7cb28183835a49ffe648d55e25a3951534143))
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+* pnpm package manager ([a6e95de](https://github.com/dao-xyz/peerbit/commit/a6e95de9a4fb418acd73f68639bec66fe6747856))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/proxy bumped to 5.3.9
+    * peerbit bumped to 4.3.8
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.2.9
+
 ## [3.0.115](https://github.com/dao-xyz/peerbit/compare/proxy-window-v3.0.114...proxy-window-v3.0.115) (2025-09-25)
 
 

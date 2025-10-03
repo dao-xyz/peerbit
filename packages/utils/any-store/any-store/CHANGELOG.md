@@ -33,6 +33,23 @@
   * dependencies
     * @peerbit/crypto bumped from ^2.1.7 to ^2.2.0
 
+## [2.1.15](https://github.com/dao-xyz/peerbit/compare/any-store-v2.1.14...any-store-v2.1.15) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 2.3.12
+    * @peerbit/any-store-opfs bumped to 1.0.14
+    * @peerbit/any-store-interface bumped to 1.0.1
+    * @peerbit/build-assets bumped to 1.0.0
+
 ## [2.1.14](https://github.com/dao-xyz/peerbit/compare/any-store-v2.1.13...any-store-v2.1.14) (2025-09-04)
 
 

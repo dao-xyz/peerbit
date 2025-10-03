@@ -452,6 +452,29 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.8.14](https://github.com/dao-xyz/peerbit/compare/server-v5.8.13...server-v5.8.14) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([38c7cb2](https://github.com/dao-xyz/peerbit/commit/38c7cb28183835a49ffe648d55e25a3951534143))
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+* migrate to libp2p v3 ([9a8bbf9](https://github.com/dao-xyz/peerbit/commit/9a8bbf9d494064908194e8ee17643089c8273a80))
+* pnpm package manager ([a6e95de](https://github.com/dao-xyz/peerbit/commit/a6e95de9a4fb418acd73f68639bec66fe6747856))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped to 4.3.8
+    * @peerbit/blocks bumped to 3.0.14
+    * @peerbit/crypto bumped to 2.3.12
+    * @peerbit/program bumped to 5.3.4
+    * @peerbit/pubsub bumped to 4.0.17
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.2.9
+
 ## [5.8.13](https://github.com/dao-xyz/peerbit/compare/server-v5.8.12...server-v5.8.13) (2025-09-25)
 
 

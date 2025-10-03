@@ -308,6 +308,36 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [5.3.9](https://github.com/dao-xyz/peerbit/compare/proxy-v5.3.8...proxy-v5.3.9) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([38c7cb2](https://github.com/dao-xyz/peerbit/commit/38c7cb28183835a49ffe648d55e25a3951534143))
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped to 2.1.15
+    * @peerbit/any-store-interface bumped to 1.0.1
+    * @peerbit/blocks bumped to 3.0.14
+    * @peerbit/blocks-interface bumped to 1.4.13
+    * @peerbit/crypto bumped to 2.3.12
+    * @peerbit/indexer-simple bumped to 1.1.20
+    * @peerbit/indexer-interface bumped to 2.0.13
+    * @peerbit/keychain bumped to 1.1.1
+    * @peerbit/pubsub bumped to 4.0.17
+    * @peerbit/pubsub-interface bumped to 4.0.8
+    * @peerbit/stream bumped to 4.4.6
+    * @peerbit/stream-interface bumped to 5.2.9
+    * @peerbit/program bumped to 5.3.4
+    * peerbit bumped to 4.3.8
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.2.9
+
 ## [5.3.8](https://github.com/dao-xyz/peerbit/compare/proxy-v5.3.7...proxy-v5.3.8) (2025-09-25)
 
 
