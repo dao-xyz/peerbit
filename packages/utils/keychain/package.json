@@ -58,9 +58,9 @@
 	"license": "MIT",
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
-		"@libp2p/interface": "^2.11.0",
+		"@libp2p/interface": "^3.0.0",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/any-store": "workspace:*",
-		"@libp2p/keychain": "^5.2.9"
+		"@libp2p/keychain": "^6.0.2"
 	}
 }

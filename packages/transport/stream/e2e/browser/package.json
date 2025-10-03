@@ -26,7 +26,7 @@
 		"@peerbit/stream": "workspace:*"
 	},
 	"devDependencies": {
-		"@libp2p/circuit-relay-v2": "^3.2.9",
-		"@libp2p/identify": "^3.0.28"
+		"@libp2p/circuit-relay-v2": "^4.0.2",
+		"@libp2p/identify": "^4.0.2"
 	}
 }

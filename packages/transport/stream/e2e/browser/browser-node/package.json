@@ -12,11 +12,11 @@
 	"dependencies": {
 		"react": "^18.2.0",
 		"react-dom": "^18.2.0",
-		"@libp2p/circuit-relay-v2": "^3.2.9",
-		"@libp2p/identify": "^3.0.39",
-		"@libp2p/webrtc": "^5.2.24",
+		"@libp2p/circuit-relay-v2": "^4.0.2",
+		"@libp2p/identify": "^4.0.2",
+		"@libp2p/webrtc": "^6.0.3",
 		"@peerbit/stream": "workspace:*",
-		"libp2p": "^2.10.0"
+		"libp2p": "^3.0.3"
 	},
 	"devDependencies": {
 		"@types/react": "^18.2.12",

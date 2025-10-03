@@ -82,6 +82,6 @@
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/stream-interface": "workspace:*",
 		"@ipld/dag-cbor": "^9.2.1",
-		"multiformats": "^13.3.6"
+		"multiformats": "^13.4.1"
 	}
 }

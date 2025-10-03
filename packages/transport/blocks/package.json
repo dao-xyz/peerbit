@@ -78,9 +78,9 @@
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
-		"@libp2p/interface": "^2.11.0",
-		"@libp2p/tcp": "^10.1.19",
-		"@libp2p/websockets": "^9.2.18",
+		"@libp2p/interface": "^3.0.0",
+		"@libp2p/tcp": "^11.0.2",
+		"@libp2p/websockets": "^10.0.3",
 		"@peerbit/any-store": "workspace:*",
 		"@peerbit/any-store-interface": "workspace:*",
 		"@peerbit/cache": "workspace:*",
@@ -91,7 +91,7 @@
 		"@peerbit/blocks-interface": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
 		"@ipld/dag-cbor": "^9.2.1",
-		"multiformats": "^13.0.1",
+		"multiformats": "^13.4.1",
 		"p-defer": "^4.0.0",
 		"p-queue": "^8.0.1",
 		"uint8arrays": "^5.1.0"

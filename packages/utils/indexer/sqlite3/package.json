@@ -83,6 +83,7 @@
 	"devDependencies": {
 		"@types/better-sqlite3": "^7.6.13",
 		"@peerbit/indexer-tests": "workspace:*",
+		"@peerbit/build-assets": "workspace:*",
 		"esbuild": "^0.25.10"
 	}
 }

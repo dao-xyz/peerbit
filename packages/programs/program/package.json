@@ -71,9 +71,9 @@
 		"@peerbit/logger": "workspace:*",
 		"@peerbit/blocks": "workspace:*",
 		"@peerbit/pubsub": "workspace:*",
-		"@libp2p/interface": "^2.11.0",
-		"@multiformats/multiaddr": "^12.5.1",
-		"multiformats": "^13.3.6",
+		"@libp2p/interface": "^3.0.0",
+		"@multiformats/multiaddr": "^13.0.1",
+		"multiformats": "^13.4.1",
 		"p-queue": "^8.0.1"
 	}
 }

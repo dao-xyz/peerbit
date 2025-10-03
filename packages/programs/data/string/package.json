@@ -69,6 +69,7 @@
 		"uint8arrays": "^5.1.0"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "workspace:*"
+		"@peerbit/test-utils": "workspace:*",
+		"uuid": "^10.0.0"
 	}
 }
