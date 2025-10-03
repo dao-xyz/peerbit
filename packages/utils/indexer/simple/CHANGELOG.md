@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.1.20](https://github.com/dao-xyz/peerbit/compare/indexer-simple-v1.1.19...indexer-simple-v1.1.20) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+* clearup vfs pool on drop ([e5a07a4](https://github.com/dao-xyz/peerbit/commit/e5a07a403330656ab1210b460dbf04596eff5257))
+* pnpm package manager ([a6e95de](https://github.com/dao-xyz/peerbit/commit/a6e95de9a4fb418acd73f68639bec66fe6747856))
+* rever preserveDbFile flag ([4dac27a](https://github.com/dao-xyz/peerbit/commit/4dac27ad0d31fba0b31a0f53d734ad1d38ad5e3b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-interface bumped to 2.0.13
+  * devDependencies
+    * @peerbit/indexer-tests bumped to 1.1.19
+
 ## [1.1.19](https://github.com/dao-xyz/peerbit/compare/indexer-simple-v1.1.18...indexer-simple-v1.1.19) (2025-08-26)
 
 

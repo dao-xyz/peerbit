@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.0.13](https://github.com/dao-xyz/peerbit/compare/indexer-interface-v2.0.12...indexer-interface-v2.0.13) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+* clearup vfs pool on drop ([e5a07a4](https://github.com/dao-xyz/peerbit/commit/e5a07a403330656ab1210b460dbf04596eff5257))
+* rever preserveDbFile flag ([4dac27a](https://github.com/dao-xyz/peerbit/commit/4dac27ad0d31fba0b31a0f53d734ad1d38ad5e3b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 2.3.12
+
 ## [2.0.12](https://github.com/dao-xyz/peerbit/compare/indexer-interface-v2.0.11...indexer-interface-v2.0.12) (2025-08-19)
 
 

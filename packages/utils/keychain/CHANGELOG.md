@@ -111,6 +111,22 @@
     * @peerbit/crypto bumped from ^2.1.7 to ^2.2.0
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [1.1.1](https://github.com/dao-xyz/peerbit/compare/keychain-v1.1.0...keychain-v1.1.1) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+* handle missing deps ([1249ff6](https://github.com/dao-xyz/peerbit/commit/1249ff601602d274c3c4bd81ed811667288d3985))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 2.3.12
+    * @peerbit/any-store bumped to 2.1.15
+
 ## [1.1.0](https://github.com/dao-xyz/peerbit/compare/keychain-v1.0.32...keychain-v1.1.0) (2025-09-16)
 
 

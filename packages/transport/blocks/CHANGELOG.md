@@ -279,6 +279,30 @@
     * @peerbit/blocks-interface bumped from 1.2.18 to 1.2.19
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [3.0.14](https://github.com/dao-xyz/peerbit/compare/blocks-v3.0.13...blocks-v3.0.14) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+* handle missing deps ([1249ff6](https://github.com/dao-xyz/peerbit/commit/1249ff601602d274c3c4bd81ed811667288d3985))
+* pnpm package manager ([a6e95de](https://github.com/dao-xyz/peerbit/commit/a6e95de9a4fb418acd73f68639bec66fe6747856))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped to 2.1.15
+    * @peerbit/any-store-interface bumped to 1.0.1
+    * @peerbit/cache bumped to 2.1.5
+    * @peerbit/stream bumped to 4.4.6
+    * @peerbit/stream-interface bumped to 5.2.9
+    * @peerbit/blocks-interface bumped to 1.4.13
+    * @peerbit/crypto bumped to 2.3.12
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped to 2.1.21
+
 ## [3.0.13](https://github.com/dao-xyz/peerbit/compare/blocks-v3.0.12...blocks-v3.0.13) (2025-09-25)
 
 

@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/any-store-interface",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "Anystore interface",
 	"sideEffects": false,
 	"type": "module",

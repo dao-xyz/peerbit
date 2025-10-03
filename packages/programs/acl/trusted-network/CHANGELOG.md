@@ -566,6 +566,29 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [4.1.143](https://github.com/dao-xyz/peerbit/compare/trusted-network-v4.1.142...trusted-network-v4.1.143) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+* determinsm in constructor ([95137e7](https://github.com/dao-xyz/peerbit/commit/95137e7166ce7784f3f15f382bc852f1c330eb79))
+* init ([42c2b6b](https://github.com/dao-xyz/peerbit/commit/42c2b6b041621c0c9f4e81aff88c9a4d8ca710ec))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 2.3.12
+    * @peerbit/document bumped to 10.0.1
+    * @peerbit/log bumped to 4.1.9
+    * @peerbit/program bumped to 5.3.4
+    * @peerbit/shared-log bumped to 11.5.6
+    * peerbit bumped to 4.3.8
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.2.9
+
 ## [4.1.142](https://github.com/dao-xyz/peerbit/compare/trusted-network-v4.1.141...trusted-network-v4.1.142) (2025-10-01)
 
 

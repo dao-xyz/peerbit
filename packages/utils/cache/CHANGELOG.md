@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.5](https://github.com/dao-xyz/peerbit/compare/cache-v2.1.4...cache-v2.1.5) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+
 ## [2.1.4](https://github.com/dao-xyz/peerbit/compare/cache-v2.1.3...cache-v2.1.4) (2025-08-08)
 
 

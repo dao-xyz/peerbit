@@ -61,6 +61,21 @@
   * dependencies
     * @peerbit/cache bumped from ^2.0.5 to ^2.0.6
 
+## [2.3.12](https://github.com/dao-xyz/peerbit/compare/crypto-v2.3.11...crypto-v2.3.12) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+* handle missing deps ([1249ff6](https://github.com/dao-xyz/peerbit/commit/1249ff601602d274c3c4bd81ed811667288d3985))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped to 2.1.5
+
 ## [2.3.11](https://github.com/dao-xyz/peerbit/compare/crypto-v2.3.10...crypto-v2.3.11) (2025-08-19)
 
 

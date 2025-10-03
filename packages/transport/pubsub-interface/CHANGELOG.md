@@ -108,6 +108,22 @@
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
     * @peerbit/stream-interface bumped from ^5.0.1 to ^5.0.2
 
+## [4.0.8](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v4.0.7...pubsub-interface-v4.0.8) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+* handle missing deps ([1249ff6](https://github.com/dao-xyz/peerbit/commit/1249ff601602d274c3c4bd81ed811667288d3985))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 2.3.12
+    * @peerbit/stream-interface bumped to 5.2.9
+
 ## [4.0.7](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v4.0.6...pubsub-interface-v4.0.7) (2025-09-24)
 
 

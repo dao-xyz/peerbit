@@ -417,6 +417,27 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [5.3.27](https://github.com/dao-xyz/peerbit/compare/rpc-v5.3.26...rpc-v5.3.27) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+* pnpm package manager ([a6e95de](https://github.com/dao-xyz/peerbit/commit/a6e95de9a4fb418acd73f68639bec66fe6747856))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 2.3.12
+    * @peerbit/program bumped to 5.3.4
+    * @peerbit/pubsub bumped to 4.0.17
+    * @peerbit/pubsub-interface bumped to 4.0.8
+    * @peerbit/stream-interface bumped to 5.2.9
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.2.9
+
 ## [5.3.26](https://github.com/dao-xyz/peerbit/compare/rpc-v5.3.25...rpc-v5.3.26) (2025-09-25)
 
 

@@ -389,6 +389,40 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [11.5.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.5.5...shared-log-v11.5.6) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([38c7cb2](https://github.com/dao-xyz/peerbit/commit/38c7cb28183835a49ffe648d55e25a3951534143))
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+* domain default any ([a5aea70](https://github.com/dao-xyz/peerbit/commit/a5aea702064f5cfd8ba1ce5779130b3a68e43ce8))
+* iblt fallback sync naive ([a6d3538](https://github.com/dao-xyz/peerbit/commit/a6d3538f8b0e80e93bca81acedab2ff29f2d923b))
+* listener leak ([37b3a70](https://github.com/dao-xyz/peerbit/commit/37b3a70f75933d881bcc0875c32983fde033d39d))
+* pnpm package manager ([a6e95de](https://github.com/dao-xyz/peerbit/commit/a6e95de9a4fb418acd73f68639bec66fe6747856))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 4.1.9
+    * @peerbit/program bumped to 5.3.4
+    * @peerbit/riblt bumped to 1.0.8
+    * @peerbit/rpc bumped to 5.3.27
+    * @peerbit/any-store bumped to 2.1.15
+    * @peerbit/blocks bumped to 3.0.14
+    * @peerbit/blocks-interface bumped to 1.4.13
+    * @peerbit/cache bumped to 2.1.5
+    * @peerbit/crypto bumped to 2.3.12
+    * @peerbit/indexer-interface bumped to 2.0.13
+    * @peerbit/indexer-sqlite3 bumped to 1.2.29
+    * @peerbit/pubsub bumped to 4.0.17
+    * @peerbit/pubsub-interface bumped to 4.0.8
+    * @peerbit/stream-interface bumped to 5.2.9
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.2.9
+
 ## [11.5.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.5.4...shared-log-v11.5.5) (2025-09-25)
 
 

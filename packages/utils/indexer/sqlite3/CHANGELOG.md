@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.2.29](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.28...indexer-sqlite3-v1.2.29) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+* clearup vfs pool on drop ([e5a07a4](https://github.com/dao-xyz/peerbit/commit/e5a07a403330656ab1210b460dbf04596eff5257))
+* handle missing deps ([1249ff6](https://github.com/dao-xyz/peerbit/commit/1249ff601602d274c3c4bd81ed811667288d3985))
+* rever preserveDbFile flag ([4dac27a](https://github.com/dao-xyz/peerbit/commit/4dac27ad0d31fba0b31a0f53d734ad1d38ad5e3b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-interface bumped to 2.0.13
+    * @peerbit/crypto bumped to 2.3.12
+  * devDependencies
+    * @peerbit/indexer-tests bumped to 1.1.19
+    * @peerbit/build-assets bumped to 1.0.0
+
 ## [1.2.28](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.27...indexer-sqlite3-v1.2.28) (2025-09-25)
 
 

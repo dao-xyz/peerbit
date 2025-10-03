@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.8](https://github.com/dao-xyz/peerbit/compare/riblt-v1.0.7...riblt-v1.0.8) (2025-10-03)
+
+
+### Bug Fixes
+
+* pnpm package manager ([a6e95de](https://github.com/dao-xyz/peerbit/commit/a6e95de9a4fb418acd73f68639bec66fe6747856))
+
 ## [1.0.7](https://github.com/dao-xyz/peerbit/compare/riblt-v1.0.6...riblt-v1.0.7) (2025-09-24)
 
 

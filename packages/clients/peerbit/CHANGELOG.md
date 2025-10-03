@@ -313,6 +313,34 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.3.8](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.3.7...peerbit-v4.3.8) (2025-10-03)
+
+
+### Bug Fixes
+
+* add missing deps ([38c7cb2](https://github.com/dao-xyz/peerbit/commit/38c7cb28183835a49ffe648d55e25a3951534143))
+* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+* migrate to libp2p v3 ([566e674](https://github.com/dao-xyz/peerbit/commit/566e6740c90c5820c3d48008601d3d792abd3159))
+* pnpm package manager ([a6e95de](https://github.com/dao-xyz/peerbit/commit/a6e95de9a4fb418acd73f68639bec66fe6747856))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped to 2.1.15
+    * @peerbit/any-store-opfs bumped to 1.0.14
+    * @peerbit/crypto bumped to 2.3.12
+    * @peerbit/indexer-interface bumped to 2.0.13
+    * @peerbit/build-assets bumped to 1.0.0
+    * @peerbit/keychain bumped to 1.1.1
+    * @peerbit/indexer-simple bumped to 1.1.20
+    * @peerbit/indexer-sqlite3 bumped to 1.2.29
+    * @peerbit/program bumped to 5.3.4
+    * @peerbit/blocks bumped to 3.0.14
+    * @peerbit/pubsub bumped to 4.0.17
+    * @peerbit/stream-interface bumped to 5.2.9
+
 ## [4.3.7](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.3.6...peerbit-v4.3.7) (2025-09-25)
 
 
