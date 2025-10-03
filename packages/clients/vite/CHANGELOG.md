@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.38](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.37...vite-v1.0.38) (2025-10-03)
+
+
+### Bug Fixes
+
+* restore deps versions ([5d6b35a](https://github.com/dao-xyz/peerbit/commit/5d6b35a01a08f87bd17ad63eacb70b4b8a44b1db))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/indexer-sqlite3 bumped to 1.2.30
+    * @peerbit/any-store bumped to 2.1.16
+    * @peerbit/any-store-opfs bumped to 1.0.15
+
 ## [1.0.37](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.36...vite-v1.0.37) (2025-10-03)
 
 

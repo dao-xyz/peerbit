@@ -61,6 +61,13 @@
   * dependencies
     * @peerbit/cache bumped from ^2.0.5 to ^2.0.6
 
+## [2.3.13](https://github.com/dao-xyz/peerbit/compare/crypto-v2.3.12...crypto-v2.3.13) (2025-10-03)
+
+
+### Bug Fixes
+
+* restore deps versions ([5d6b35a](https://github.com/dao-xyz/peerbit/commit/5d6b35a01a08f87bd17ad63eacb70b4b8a44b1db))
+
 ## [2.3.12](https://github.com/dao-xyz/peerbit/compare/crypto-v2.3.11...crypto-v2.3.12) (2025-10-03)
 
 
