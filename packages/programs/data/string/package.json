@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/string",
-	"version": "5.0.119",
+	"version": "5.0.120",
 	"description": "String store",
 	"sideEffects": false,
 	"type": "module",
