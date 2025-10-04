@@ -6,6 +6,7 @@ import { EventStore } from "./utils/stores/index.js";
 
 describe("observer", () => {
 	let session: TestSession;
+	const waitTimeout = 30 * 1000;
 
 	before(async () => {});
 
@@ -19,8 +20,6 @@ describe("observer", () => {
 			[session.peers[0], session.peers[1]],
 			[session.peers[1], session.peers[2]],
 		]);
-
-		const waitTimeout = 30 * 1000;
 
 		let stores: EventStore<string, any>[] = [];
 		const s = new EventStore<string, any>();
@@ -44,7 +43,9 @@ describe("observer", () => {
 				await store.waitFor(peer.peerId, { timeout: waitTimeout });
 
 				if (j <= replicatorEndIndex) {
-					await store.log.waitForReplicator(peer.identity.publicKey);
+					await store.log.waitForReplicator(peer.identity.publicKey, {
+						timeout: waitTimeout,
+					});
 				}
 			}
 		}
@@ -124,7 +125,9 @@ describe("observer", () => {
 			},
 		});
 
-		await observer.log.waitForReplicator(replicator.node.identity.publicKey);
+		await observer.log.waitForReplicator(replicator.node.identity.publicKey, {
+			timeout: waitTimeout,
+		});
 		expect(await observer.log.replicationIndex?.getSize()).equal(1);
 		expect(await observer.log.isReplicating()).to.be.false;
 	});
