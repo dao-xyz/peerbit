@@ -462,6 +462,7 @@ export abstract class Program<
 		let expectedHashes = await this.node.services.pubsub.waitFor(other, {
 			seek: options?.seek,
 			signal: options?.signal,
+			timeout: options?.timeout,
 		});
 
 		// wait for subscribing to topics
