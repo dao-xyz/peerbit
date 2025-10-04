@@ -202,6 +202,13 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.3.6](https://github.com/dao-xyz/peerbit/compare/program-v5.3.5...program-v5.3.6) (2025-10-04)
+
+
+### Bug Fixes
+
+* handle missing timeout param ([d34d736](https://github.com/dao-xyz/peerbit/commit/d34d7367ba8ffc038c0efe543effacc2382cbb5e))
+
 ## [5.3.5](https://github.com/dao-xyz/peerbit/compare/program-v5.3.4...program-v5.3.5) (2025-10-03)
 
 
