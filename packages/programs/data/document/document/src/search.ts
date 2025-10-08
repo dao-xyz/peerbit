@@ -2331,10 +2331,10 @@ export class DocumentIndex<
 		let first = false;
 
 		// TODO handle join/leave while iterating
-		const controller: AbortController | undefined = undefined;
+		let controller: AbortController | undefined = undefined;
 		const ensureController = () => {
 			if (!controller) {
-				return new AbortController();
+				return (controller = new AbortController());
 			}
 			return controller;
 		};
@@ -3012,6 +3012,7 @@ export class DocumentIndex<
 			(controller as AbortController | undefined)?.abort(
 				new AbortError("Iterator closed"),
 			);
+			controller = undefined;
 			this.prefetch?.accumulator.clear(queryRequestCoerced);
 			this.processCloseIteratorRequest(
 				queryRequestCoerced,
