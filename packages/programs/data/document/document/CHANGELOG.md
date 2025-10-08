@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [10.0.4](https://github.com/dao-xyz/peerbit/compare/document-v10.0.3...document-v10.0.4) (2025-10-08)
+
+
+### Bug Fixes
+
+* dangling controller ([48ac6de](https://github.com/dao-xyz/peerbit/commit/48ac6de0e29c139b1fac7243e3b6f018b261089b))
+
 ## [10.0.3](https://github.com/dao-xyz/peerbit/compare/document-v10.0.2...document-v10.0.3) (2025-10-04)
 
 
