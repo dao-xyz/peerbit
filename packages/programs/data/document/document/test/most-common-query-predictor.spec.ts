@@ -1,10 +1,10 @@
 /* eslint-env mocha */
 import { Ed25519Keypair, type PublicSignKey } from "@peerbit/crypto";
 import * as types from "@peerbit/document-interface";
+import { Compare, IntegerCompare } from "@peerbit/indexer-interface";
 import { expect } from "chai";
 import sinon from "sinon";
-import { Compare, IntegerCompare } from "../src";
-import MostCommonQueryPredictor from "../src/most-common-query-predictor";
+import MostCommonQueryPredictor from "../src/most-common-query-predictor.ts";
 
 /* ───────────────────── helpers ───────────────────── */
 

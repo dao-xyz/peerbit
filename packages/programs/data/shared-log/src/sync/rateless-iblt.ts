@@ -7,7 +7,7 @@ import { logger as loggerFn } from "@peerbit/logger";
 import { DecoderWrapper, EncoderWrapper } from "@peerbit/riblt";
 import type { RPC, RequestContext } from "@peerbit/rpc";
 import { SilentDelivery } from "@peerbit/stream-interface";
-import type { SyncableKey, Syncronizer } from ".";
+import type { SyncableKey, Syncronizer } from "./index.js";
 import { type EntryWithRefs } from "../exchange-heads.js";
 import { type Numbers } from "../integers.js";
 import { TransportMessage } from "../message.js";

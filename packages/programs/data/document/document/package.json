@@ -60,7 +60,7 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
 		"@chainsafe/libp2p-yamux": "^8.0.0",
-		"@libp2p/interface": "^3.0.0",
+		"@libp2p/interface": "^3.1.0",
 		"@libp2p/tcp": "^11.0.2",
 		"@multiformats/multiaddr": "^13.0.1",
 		"@peerbit/cache": "workspace:*",
@@ -86,6 +86,8 @@
 		"@peerbit/time": "workspace:*",
 		"@types/pidusage": "^2.0.5",
 		"pidusage": "^4.0.1",
-		"uuid": "^10.0.0"
+		"uuid": "^10.0.0",
+		"@libp2p/websockets": "^10.1.0",
+		"@chainsafe/libp2p-noise": "^17.0.0"
 	}
 }

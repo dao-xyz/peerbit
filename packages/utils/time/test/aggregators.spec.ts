@@ -4,7 +4,7 @@ import {
 	debounceFixedInterval,
 	delay,
 	waitForResolved,
-} from "../src";
+} from "../src/index.js";
 
 describe("debounceFixedInterval", () => {
 	const checkInterval = (current: number, last: number, interval: number) => {
@@ -55,7 +55,7 @@ describe("debounceFixedInterval", () => {
 		const interval = 100;
 		let errors: any[] = [];
 		let debounced = debounceFixedInterval(fn.fn, interval, {
-			onError: (error) => errors.push(error),
+			onError: (error: any) => errors.push(error),
 		});
 		let count = 10;
 

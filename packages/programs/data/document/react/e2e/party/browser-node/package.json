@@ -1,0 +1,31 @@
+{
+  "name": "document-react-party-app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host"
+  },
+  "dependencies": {
+    "@peerbit/vite": "workspace:*",
+    "@peerbit/document": "workspace:*",
+    "@peerbit/document-react": "workspace:*",
+    "@peerbit/program": "workspace:*",
+    "@peerbit/program-react": "workspace:*",
+    "@peerbit/react": "workspace:*",
+    "@peerbit/indexer-simple": "workspace:*",
+    "peerbit": "workspace:*",
+    "reflect-metadata": "^0.2.2",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^5.1.1",
+    "typescript": "^5.6.3",
+    "vite": "^7.1.7"
+  }
+}

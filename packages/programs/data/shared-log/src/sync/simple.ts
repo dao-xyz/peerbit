@@ -10,7 +10,7 @@ import {
 import { Entry, Log } from "@peerbit/log";
 import type { RPC, RequestContext } from "@peerbit/rpc";
 import { SilentDelivery } from "@peerbit/stream-interface";
-import type { SyncableKey, Syncronizer } from ".";
+import type { SyncableKey, Syncronizer } from "./index.js";
 import {
 	EntryWithRefs,
 	createExchangeHeadsMessages,

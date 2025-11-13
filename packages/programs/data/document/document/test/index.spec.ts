@@ -49,7 +49,7 @@ import { RPCMessage, ResponseV0 } from "@peerbit/rpc";
 import { AbsoluteReplicas, decodeReplicas } from "@peerbit/shared-log";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
-import { delay, waitForResolved } from "@peerbit/time";
+import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import pDefer from "p-defer";
 import sinon from "sinon";
@@ -4000,6 +4000,251 @@ describe("index", () => {
 				expect(all.map((d) => d.id)).to.deep.equal(["1", "3", "5"]);
 			});
 
+			// ───────────────────────────────────────────────────────────────
+			// Regression: prediction/prefetch must seed a keep-alive iterator
+			// ───────────────────────────────────────────────────────────────
+			it("prediction path seeds keep-alive so collect next succeeds (no 'Missing iterator')", async function () {
+				session = await TestSession.disconnected(3);
+				// writer(0) <-> replicator(1) <-> reader(2)
+				await session.connect([
+					[session.peers[0], session.peers[1]],
+					[session.peers[1], session.peers[2]],
+				]);
+
+				const base = new TestStore({ docs: new Documents<Document>() });
+				const replicator = await session.peers[1].open(base, {
+					args: { replicate: { factor: 1 } },
+				});
+				const writer = await session.peers[0].open(base.clone(), {
+					args: { replicate: { factor: 1 } },
+				});
+				const reader = await session.peers[2].open(base.clone(), {
+					args: { replicate: false },
+				});
+
+				// Many installations log this from the replicator's logger, not the global console.
+				// Fall back to stubbing global console.error so the test is still useful.
+				const errStub = sinon.stub(console, "error");
+
+				let iterator:
+					| Awaited<ReturnType<typeof reader.docs.index.iterate>>
+					| undefined;
+
+				try {
+					await reader.docs.index.waitFor(replicator.node.identity.publicKey);
+					await writer.docs.index.waitFor(replicator.node.identity.publicKey);
+
+					// 1) Write BEFORE reader opens iterator to encourage the predictor path.
+					const docId = "predicted-keepalive-regression";
+					await writer.docs.put(new Document({ id: docId }));
+
+					// 2) Reader opens iterator with push updates; replicator will try to satisfy via predicted payload.
+					iterator = reader.docs.index.iterate(
+						{ sort: { key: "id", direction: SortDirection.ASC } },
+						{
+							remote: {
+								wait: { timeout: 5e3, behavior: "keep-open" },
+								reach: {
+									discover: [replicator.node.identity.publicKey],
+									eager: true,
+								},
+							},
+							closePolicy: "manual",
+							updates: { push: true, merge: true }, // push path triggers the prefetch/prediction
+						},
+					);
+
+					// 3) The reader should be told there's 1 pending item via the push pipeline.
+					await waitForResolved(
+						async () => expect(await iterator!.pending()).to.equal(1),
+						{ timeout: 30_000 },
+					);
+
+					// 4) Drain. Without keep-alive on the predicted iterator, server logs "Missing iterator ...".
+					const batch = await iterator.next(1);
+					expect(batch).to.have.length(1);
+					expect(batch[0].id).to.equal(docId);
+
+					// Assert no "Missing iterator..." was logged (will fail until upstream is fixed).
+					const hadMissing = errStub
+						.getCalls()
+						.some((c) =>
+							/Missing iterator for request with id/i.test(
+								c.args.map(String).join(" "),
+							),
+						);
+					expect(hadMissing).to.be.false;
+				} finally {
+					errStub.restore();
+					await iterator?.close();
+					await reader.close();
+					await writer.close();
+					await replicator.close();
+				}
+			});
+
+			// ───────────────────────────────────────────────────────────────
+			// Regression: collect after keep-alive TTL expiry should degrade
+			// gracefully (no error/log spam; empty batch / done=true is OK)
+			// ───────────────────────────────────────────────────────────────
+			it("collect after keep-alive TTL expiry degrades gracefully (no 'Missing iterator' spam)", async function () {
+				session = await TestSession.connected(2);
+
+				const base = new TestStore({ docs: new Documents<Document>() });
+				const left = await session.peers[0].open(base, {
+					args: { replicate: { factor: 1 } },
+				}); // server
+				const right = await session.peers[1].open(base.clone(), {
+					args: { replicate: { factor: 1 } },
+				}); // client
+
+				const errStub = sinon.stub(console, "error");
+				let iterator:
+					| Awaited<ReturnType<typeof right.docs.index.iterate>>
+					| undefined;
+
+				try {
+					await right.docs.index.waitFor(left.node.identity.publicKey);
+					await left.docs.index.waitFor(right.node.identity.publicKey);
+
+					iterator = right.docs.index.iterate(
+						{ sort: { key: "id", direction: SortDirection.ASC } },
+						{
+							closePolicy: "manual",
+							remote: { wait: { timeout: 5e3, behavior: "keep-open" } },
+							updates: { push: true, merge: true },
+						},
+					);
+
+					// Establish the remote iterator on the server
+					const head = await iterator.next(1);
+					expect(head).to.have.length(0);
+
+					// Let the server-side keepAlive TTL elapse (DEFAULT_TIMEOUT ≈ 10_000 ms)
+					await new Promise((r) => setTimeout(r, 11_500));
+
+					// Produce something new after TTL so the client wants to collect more
+					const docId = "after-ttl";
+					await left.docs.put(new Document({ id: docId }));
+
+					await waitForResolved(
+						async () => expect(await iterator!.pending()).to.equal(1),
+						{ timeout: 30_000 },
+					);
+
+					// Collect after TTL. Desired behavior: no error; either returns the item or [] with done=true.
+					let threw = false;
+					let batch: Document[] = [];
+					try {
+						batch = await iterator.next(1);
+					} catch {
+						threw = true;
+					}
+					expect(threw).to.be.false;
+					// Accept either successful delivery or graceful EOF, but never error/log spam.
+					expect(
+						batch.length === 0 || (batch.length === 1 && batch[0].id === docId),
+					).to.be.true;
+
+					const hadMissing = errStub
+						.getCalls()
+						.some((c) =>
+							/Missing iterator for request with id/i.test(
+								c.args.map(String).join(" "),
+							),
+						);
+					expect(hadMissing).to.be.false;
+				} finally {
+					errStub.restore();
+					await iterator?.close();
+					await right.close();
+					await left.close();
+				}
+			});
+
+			/*  KEEP AND TODO LATER
+			describe("iterator live updates re-emit newer head for same id (failing repro)", function () {
+				this.timeout(60_000);
+
+				let session: TestSession | undefined;
+				let left: TestStore | undefined;
+				let right: TestStore | undefined;
+
+				// Silence console.error noise so the failure reason is just the assertion
+				let errStub: sinon.SinonStub;
+
+				beforeEach(async () => {
+					errStub = sinon.stub(console, "error");
+					session = await TestSession.connected(2);
+
+					const base = new TestStore({ docs: new Documents<Document>() });
+					left = await session!.peers[0].open(base, {
+						args: { replicate: { factor: 1 } },
+					}); // server
+					right = await session!.peers[1].open(base.clone(), {
+						args: { replicate: { factor: 1 } },
+					}); // client
+
+					// Ensure each side can reach the other
+					await right!.docs.index.waitFor(left!.node.identity.publicKey);
+					await left!.docs.index.waitFor(right!.node.identity.publicKey);
+				});
+
+				afterEach(async () => {
+					errStub.restore();
+					await right?.close();
+					await left?.close();
+					await session?.stop();
+					session = undefined;
+				});
+
+				it("should yield the updated document when the same id is written again", async () => {
+					// Seed initial doc on the server
+					await left!.docs.put(new Document({ id: "same", name: "v1" }));
+
+					const iterator = right!.docs.index.iterate(
+						{ sort: { key: "id", direction: SortDirection.ASC } },
+						{
+							// Keep the iterator alive to receive live pushes/merges
+							closePolicy: "manual",
+							// Ask remote to keep the iterator open and push-style notify
+							remote: { wait: { timeout: 10_000, behavior: "keep-open" } },
+							// Enable push + merge so updates are routed into the iterator buffers
+							updates: { push: true, merge: true },
+						},
+					);
+
+					try {
+						// First consume the initial version
+						await waitFor(async () => (await iterator.pending()) ?? 0 >= 1, {
+							timeout: 30_000,
+						});
+						const first = await iterator.next(1);
+						expect(first.length).to.equal(1);
+						expect(first[0].__indexed.name).to.equal("v1");
+
+						// Now update the *same id* with a new head on the server
+						await left!.docs.put(new Document({ id: "same", name: "v2" }));
+
+						// If merging works, the client should see one pending item
+						await waitFor(async () => (await iterator.pending()) ?? 0 >= 1, {
+							timeout: 30_000,
+						});
+
+						// EXPECTED (correct behavior after patch):
+						//   next(1) returns the updated document with value "v2".
+						//
+						// ACTUAL (current code): returns [] because the iterator's `visited` set
+						//   permanently suppresses subsequent emissions for the same id.
+						const nextBatch = await iterator.next(1);
+						expect(nextBatch.length).to.equal(1); // <-- This should FAIL today
+						expect(nextBatch[0].__indexed.name).to.equal("v2"); // <-- This should FAIL today
+					} finally {
+						await iterator.close();
+					}
+				});
+			}); */
+
 			describe("pending", () => {
 				it("kept reflects the total amount of remaining document", async () => {
 					session = await TestSession.connected(1);
@@ -6948,145 +7193,3 @@ describe("index", () => {
 		});
 	});
 });
-
-/*  TODO query all if undefined?
-		
-		it("query all if undefined", async () => {
-			stores[0].docs.log["_replication"].replicators = () => undefined;
-			await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
-				remote: { amount: 2 },
-			});
-			expect(counters[0]).equal(1);
-			expect(counters[1]).equal(1);
-			expect(counters[2]).equal(1);
-		}); */
-
-/*  TODO getCover to provide query alternatives
-		
-			it("ignore shard if I am replicator", async () => {
-				stores[0].docs.log.getCover = () => [
-					stores[0].node.identity.publicKey.hashcode(),
-					stores[1].node.identity.publicKey.hashcode()
-				];
-				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
-				expect(counters[0]).equal(1);
-				expect(counters[1]).equal(0);
-				expect(counters[2]).equal(0);
-			}); */
-
-/* TODO getCover to provide query alternatives
-	
-it("ignore myself if I am a new replicator", async () => {
-	// and the other peer has been around for longer
-	await stores[0].docs.replicate(false)
-	await stores[1].docs.updateRole({
-type: 'replicator',
-factor: 1
-})
-	await stores[2].docs.updateRole({type: 'replicator', factor: 1})
-	
-	await delay(2000)
-	await waitForResolved(() => expect(stores[0].docs.log.getReplicatorsSorted()?.toArray().map(x => x.publicKey.hashcode())).to.have.members([session.peers[1].identity.publicKey.hashcode(), session.peers[2].identity.publicKey.hashcode()]));
-	
-	const t1 = +new Date();
-	const minAge = 1000;
-	await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
-		remote: { minAge }
-	});
-	expect(counters[0]).equal(1); // will always query locally
-	expect(counters[1]).equal(1); // but now also remotely since we can not trust local only
-	expect(counters[2]).equal(0);
-	await waitFor(() => +new Date() - t1 > minAge + 100);
-	
-	await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
-		remote: { minAge }
-	});
-	expect(counters[0]).equal(2); // will always query locally
-	expect(counters[1]).equal(1); // we don't have to query remote since local will suffice since minAge time has passed
-	expect(counters[2]).equal(0);
-}); */
-
-/* 	describe("field extractor", () => {
-					let indexedNameField = "xyz";
-	
-					// We can't seem to define this class inside of the test itself (will yield error when running all tests)
-					@variant("filtered_store")
-					class FilteredStore extends Program {
-						@field({ type: Uint8Array })
-						id: Uint8Array;
-	
-						@field({ type: Documents })
-						docs: Documents<Document>;
-	
-						constructor(properties: { docs: Documents<Document> }) {
-							super();
-	
-							this.id = new Uint8Array(32);
-							this.docs = properties.docs;
-						}
-	
-						async open(options?: Partial<SetupOptions<Document>>): Promise<void> {
-							await this.docs.open({
-								...options,
-								type: Document,
-								index: {
-									idProperty: "id",
-									fields: (obj: any) => {
-										return { [indexedNameField]: obj.name };
-									}
-								}
-							});
-						}
-					}
-	
-					it("filters field", async () => {
-						store = new FilteredStore({
-							docs: new Documents<Document>()
-						});
-						store.docs.log.log.id = new Uint8Array(32);
-	
-						await session.peers[0].open(store);
-	
-						let doc = new Document({
-							id: uuid(),
-							name: "Hello world"
-						});
-	
-						await store.docs.put(doc);
-	
-						let indexedValues = [...store.docs.index.engine.iterator()];
-	
-						expect(indexedValues).to.have.length(1);
-	
-						expect(indexedValues[0][1].indexed).to.deep.equal({
-							[indexedNameField]: doc.name
-						});
-						expect(indexedValues[0][1].indexed["value"]).equal(undefined); // Because we dont want to keep it in memory (by default)
-	
-						await session.peers[1].services.blocks.waitFor(
-							session.peers[0].peerId
-						);
-	
-						store2 = (await FilteredStore.load(
-							store.address!,
-							session.peers[1].services.blocks
-						))!;
-	
-						await session.peers[1].open(store2, {
-							args: {
-								replicate: false
-							}
-						});
-	
-						expect(store2.docs.log.role).to.be.instanceOf(Observer);
-	
-						await store2.docs.log.waitForReplicator(
-							session.peers[0].identity.publicKey
-						);
-	
-						let results = await store2.docs.index.search(
-							new SearchRequest({ query: [] })
-						);
-						expect(results).to.have.length(1);
-					});
-				}); */

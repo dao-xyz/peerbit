@@ -5,6 +5,7 @@ import {
 	UnsupportedProtocolError,
 } from "@libp2p/interface";
 import type {
+	AbortOptions,
 	Connection,
 	Libp2pEvents,
 	PeerId,
@@ -15,10 +16,9 @@ import type {
 } from "@libp2p/interface";
 import type {
 	AddressManager,
-	ConnectionManager,
 	Registrar,
 } from "@libp2p/interface-internal";
-import { multiaddr } from "@multiformats/multiaddr";
+import { multiaddr, type Multiaddr } from "@multiformats/multiaddr";
 import { Circuit } from "@multiformats/multiaddr-matcher";
 import { Cache } from "@peerbit/cache";
 import {
@@ -845,11 +845,28 @@ export type DirectStreamOptions = {
 	routeMaxRetentionPeriod?: number;
 };
 
+type ConnectionManagerLike = {
+	getConnections(peerId?: PeerId): Connection[];
+	getConnectionsMap(): {
+		get(peer: PeerId): Connection[] | undefined;
+	};
+	getDialQueue(): Array<{ peerId?: PeerId }>;
+	isDialable(
+		multiaddr: Multiaddr | Multiaddr[],
+		options?: unknown,
+	): Promise<boolean>;
+	openConnection(
+		peer: PeerId | Multiaddr | Multiaddr[],
+		options?: unknown,
+	): Promise<Connection>;
+	closeConnections(peer: PeerId, options?: AbortOptions): Promise<void>;
+};
+
 export interface DirectStreamComponents {
 	peerId: PeerId;
 	addressManager: AddressManager;
 	registrar: Registrar;
-	connectionManager: ConnectionManager;
+	connectionManager: ConnectionManagerLike;
 	peerStore: PeerStore;
 	events: TypedEventTarget<Libp2pEvents>;
 	privateKey: PrivateKey;

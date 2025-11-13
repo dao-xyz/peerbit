@@ -10,6 +10,7 @@ packages:
   - packages/transport/pubsub-interface
   - packages/transport/libp2p-test-utils
   - packages/log
+  - packages/clients/react
   - packages/clients/peerbit
   - packages/clients/peerbit-proxy/proxy
   - packages/clients/peerbit-proxy/window
@@ -25,11 +26,14 @@ packages:
   - packages/programs/rpc
   - packages/programs/acl/identity-access-controller
   - packages/programs/acl/trusted-network
-  - packages/programs/program
+  - packages/programs/program/program
+  - packages/programs/program/react
   - packages/programs/clock-service
   - packages/programs/transport
-  - packages/programs/data/document/*
   - packages/programs/data/*
+  - packages/programs/data/document/*
+  - packages/programs/data/document/react/e2e/party
+  - packages/programs/data/document/react/e2e/party/browser-node
   - packages/utils/crypto
   - packages/utils/any-store/*
   - packages/utils/build-assets

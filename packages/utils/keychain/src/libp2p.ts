@@ -18,7 +18,7 @@ import type {
 	Secp256k1PublicKey,
 	X25519Keypair,
 	X25519PublicKey,
-} from "@peerbit/crypto/dist/src";
+} from "@peerbit/crypto";
 import { DefaultCryptoKeychain } from "./crypto.js";
 import type {
 	CryptoKeychain,

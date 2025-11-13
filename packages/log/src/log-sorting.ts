@@ -5,7 +5,7 @@ import {
 	SortDirection,
 	type StateFieldQuery,
 } from "@peerbit/indexer-interface";
-import type { Timestamp } from "./clock";
+import type { Timestamp } from "./clock.js";
 
 export type SortableEntry = {
 	meta: {

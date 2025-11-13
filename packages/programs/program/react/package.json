@@ -1,0 +1,48 @@
+{
+	"name": "@peerbit/program-react",
+	"version": "0.0.1",
+	"description": "React hooks for Peerbit programs",
+	"sideEffects": false,
+	"type": "module",
+	"types": "./dist/src/index.d.ts",
+	"typesVersions": {
+		"*": {
+			"*": ["*", "dist/*", "dist/src/*", "dist/src/*/index"],
+			"src/*": ["*", "dist/*", "dist/src/*", "dist/src/*/index"]
+		}
+	},
+	"files": [
+		"src",
+		"dist",
+		"!dist/test",
+		"!**/*.tsbuildinfo"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/src/index.d.ts",
+			"import": "./dist/src/index.js"
+		}
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"clean": "aegir clean",
+		"build": "aegir build --no-bundle",
+		"test": "aegir test --target node",
+		"lint": "aegir lint"
+	},
+	"peerDependencies": {
+		"react": "^18.0.0 || ^19.0.0"
+	},
+	"dependencies": {
+		"@peerbit/crypto": "workspace:*",
+		"@peerbit/program": "workspace:*",
+		"@peerbit/react": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/react": "^18.3.11"
+	},
+	"author": "dao.xyz",
+	"license": "MIT"
+}

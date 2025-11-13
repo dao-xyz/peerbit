@@ -8,7 +8,7 @@
 	},
 	"license": "Apache-2.0",
 	"type": "module",
-	"packageManager": "pnpm@10.17.1",
+	"packageManager": "pnpm@10.22.0+sha512.bf049efe995b28f527fd2b41ae0474ce29186f7edcb3bf545087bd61fbbebb2bf75362d1307fda09c2d288e1e499787ac12d4fcb617a974718a6051f2eee741c",
 	"workspaces": [
 		"docs",
 		"packages/transport/blocks",
@@ -21,6 +21,7 @@
 		"packages/transport/pubsub-interface",
 		"packages/transport/libp2p-test-utils",
 		"packages/log",
+		"packages/clients/react",
 		"packages/clients/peerbit",
 		"packages/clients/peerbit-proxy/proxy",
 		"packages/clients/peerbit-proxy/window",
@@ -36,11 +37,14 @@
 		"packages/programs/rpc",
 		"packages/programs/acl/identity-access-controller",
 		"packages/programs/acl/trusted-network",
-		"packages/programs/program",
+		"packages/programs/program/program",
+		"packages/programs/program/react",
 		"packages/programs/clock-service",
 		"packages/programs/transport",
-		"packages/programs/data/document/*",
 		"packages/programs/data/*",
+		"packages/programs/data/document/*",
+		"packages/programs/data/document/react/e2e/party",
+		"packages/programs/data/document/react/e2e/party/browser-node",
 		"packages/utils/crypto",
 		"packages/utils/any-store/*",
 		"packages/utils/build-assets",
@@ -86,23 +90,28 @@
 	"pnpm": {
 		"onlyBuiltDependencies": [
 			"@ipshipyard/node-datachannel",
-			"node-datachannel",
 			"aws-sdk",
 			"better-sqlite3",
 			"classic-level",
 			"esbuild",
-			"protobufjs"
-		]
+			"node-datachannel",
+			"protobufjs",
+			"unrs-resolver"
+		],
+		"overrides": {
+			"@libp2p/peer-collections": "7.0.7",
+			"esbuild": "0.25.10"
+		}
 	},
 	"devDependencies": {
 		"@playwright/test": "^1.47.0",
-		"@trivago/prettier-plugin-sort-imports": "^4.3.0",
+		"@trivago/prettier-plugin-sort-imports": "^6.0.0",
 		"@types/benchmark": "^2.1.5",
 		"@types/chai": "^5.2.2",
 		"@types/chai-as-promised": "^8.0.2",
 		"@types/mocha": "^10.0.8",
 		"@types/node": "^22.5.4",
-		"@types/sinon": "^10.0.20",
+		"@types/sinon": "^20.0.0",
 		"@types/uuid": "^10.0.0",
 		"@types/wicg-file-system-access": "^2023.10.5",
 		"aegir": "github:marcus-pousette/aegir#multiple-assets",
@@ -120,7 +129,9 @@
 		"sinon": "^21.0.0",
 		"tinybench": "^5.0.1",
 		"ts-node": "^10.9.2",
-		"typescript": "^5.6.3"
+		"typescript": "^5.6.3",
+		"esbuild": "0.25.10",
+		 "vitest": "^3.2.4"
 	},
 	"version": "0.0.0"
 }

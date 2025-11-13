@@ -11,7 +11,7 @@ import { logger as loggerFn } from "@peerbit/logger";
 import PQueue from "p-queue";
 import path from "path-browserify";
 import { v4 as uuid } from "uuid";
-import type { Entry } from "./entry";
+import type { Entry } from "./entry.js";
 
 export const logger: ReturnType<typeof loggerFn> = loggerFn({
 	module: "heads-cache",

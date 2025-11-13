@@ -1,0 +1,18 @@
+{
+  "extends": "../../../../../../../../tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "outDir": "dist",
+    "module": "esnext",
+    "moduleResolution": "node",
+    "rootDir": "..",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "baseUrl": ".",
+    "paths": {
+      "@party/shared/*": ["../shared/*"]
+    }
+  },
+  "include": ["src", "../shared"],
+  "exclude": ["dist", "node_modules"]
+}

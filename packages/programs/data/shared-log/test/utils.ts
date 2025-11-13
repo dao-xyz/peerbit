@@ -15,7 +15,7 @@ import {
 	createReplicationDomainHash,
 	maxReplicas,
 } from "../src/index.js";
-import type { TransportMessage } from "../src/message";
+import type { TransportMessage } from "../src/message.js";
 import type { ReplicationDomainConstructor } from "../src/replication-domain.js";
 import type { SynchronizerConstructor } from "../src/sync/index.js";
 import { RatelessIBLTSynchronizer } from "../src/sync/rateless-iblt.js";

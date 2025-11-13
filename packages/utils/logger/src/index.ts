@@ -68,7 +68,7 @@ export const getLogLevel = (): LogLevel | undefined => {
 
 const logger = (options?: { module?: string; level?: LogLevel }) => {
 	// In browsers/workers, pino's browser build logs to console by default.
-	let base = pino();
+	let base = pino.default();
 
 	if (options?.module) {
 		base = base.child({ module: options.module });
