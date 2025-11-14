@@ -78,12 +78,12 @@
 		"@peerbit/indexer-cache": "workspace:*",
 		"@peerbit/stream-interface": "workspace:*",
 		"p-defer": "^4.0.0",
-		"peerbit": "workspace:*",
 		"uint8arrays": "^5.1.0"
 	},
 	"devDependencies": {
 		"@peerbit/test-utils": "workspace:*",
 		"@peerbit/time": "workspace:*",
+		"peerbit": "workspace:*",
 		"@types/pidusage": "^2.0.5",
 		"pidusage": "^4.0.1",
 		"uuid": "^10.0.0",

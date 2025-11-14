@@ -65,7 +65,6 @@
 		"@peerbit/log": "workspace:*",
 		"@peerbit/program": "workspace:*",
 		"@peerbit/shared-log": "workspace:*",
-		"peerbit": "workspace:*",
 		"uint8arrays": "^5.1.0"
 	},
 	"devDependencies": {

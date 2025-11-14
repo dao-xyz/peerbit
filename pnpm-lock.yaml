@@ -378,9 +378,6 @@ importers:
       '@peerbit/shared-log':
         specifier: workspace:*
         version: link:../../../../../../programs/data/shared-log
-      peerbit:
-        specifier: workspace:*
-        version: link:../../../../../peerbit
       react:
         specifier: ^19.2.0
         version: 19.2.0
@@ -626,9 +623,6 @@ importers:
       '@peerbit/string':
         specifier: workspace:*
         version: link:../../../programs/data/string
-      peerbit:
-        specifier: workspace:*
-        version: link:../../peerbit
     devDependencies:
       '@peerbit/test-utils':
         specifier: workspace:*
@@ -978,9 +972,6 @@ importers:
       '@peerbit/shared-log':
         specifier: workspace:*
         version: link:../../data/shared-log
-      peerbit:
-        specifier: workspace:*
-        version: link:../../../clients/peerbit
       uint8arrays:
         specifier: ^5.1.0
         version: 5.1.0
@@ -1091,9 +1082,6 @@ importers:
       p-defer:
         specifier: ^4.0.0
         version: 4.0.1
-      peerbit:
-        specifier: workspace:*
-        version: link:../../../../clients/peerbit
       uint8arrays:
         specifier: ^5.1.0
         version: 5.1.0
@@ -1113,6 +1101,9 @@ importers:
       '@types/pidusage':
         specifier: ^2.0.5
         version: 2.0.5
+      peerbit:
+        specifier: workspace:*
+        version: link:../../../../clients/peerbit
       pidusage:
         specifier: ^4.0.1
         version: 4.0.1
@@ -1256,9 +1247,6 @@ importers:
       '@peerbit/vite':
         specifier: workspace:*
         version: link:../../../../../../../clients/vite
-      peerbit:
-        specifier: workspace:*
-        version: link:../../../../../../../clients/peerbit
       react:
         specifier: ^19.0.0
         version: 19.2.0

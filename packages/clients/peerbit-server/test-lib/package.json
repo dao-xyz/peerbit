@@ -72,7 +72,6 @@
 		"@libp2p/interface": "^3.1.0",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/program": "workspace:*",
-		"@peerbit/string": "workspace:*",
-		"peerbit": "workspace:*"
+		"@peerbit/string": "workspace:*"
 	}
 }

@@ -16,7 +16,6 @@
     "@peerbit/program-react": "workspace:*",
     "@peerbit/react": "workspace:*",
     "@peerbit/indexer-simple": "workspace:*",
-    "peerbit": "workspace:*",
     "reflect-metadata": "^0.2.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
