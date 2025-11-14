@@ -19,7 +19,7 @@ const NODE = defineConfig({
         ...SHARED,
         name: "node",
         environment: "node",
-        include: ["abc123"], // **/vitest/**/*.test.ts?(x)
+        include: ["**/vitest/**/*.test.ts?(x)"],
         exclude: [
             "**/*.dom.test.ts?(x)",
             "node_modules",
