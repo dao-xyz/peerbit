@@ -2,24 +2,11 @@ import { expect } from "chai";
 import { logger } from "../src/index.js";
 
 describe("logger", () => {
-	let reset: string | undefined;
-	beforeEach(() => {
-		reset = process.env.LOG_LEVEL;
-	});
-
-	afterEach(() => {
-		if (reset) {
-			process.env.LOG_LEVEL = reset;
-		} else {
-			delete process.env.LOG_LEVEL;
-		}
-	});
-	it("can get log level", async () => {
-		process.env.LOG_LEVEL = "fatal";
-		expect(logger().level).equal("fatal");
-	});
-
-	it("can handle undefined level", async () => {
-		expect(logger().level).equal("info");
+	it("re-exports libp2p logger api", () => {
+		const log = logger("peerbit:test");
+		expect(log).to.be.a("function");
+		expect(log.error).to.be.a("function");
+		expect(log.trace).to.be.a("function");
+		expect(log.newScope("child")).to.be.a("function");
 	});
 });

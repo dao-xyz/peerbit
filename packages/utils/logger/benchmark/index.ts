@@ -4,11 +4,8 @@ import { logger as pLogger } from "../src/index.js";
 
 //node --loader ts-node/esm ./benchmark/index.ts
 
-let libp2pLogger = lLogger("test");
-libp2pLogger.error("Error works as expected from libp2p");
-let peerbitLogger = pLogger({ module: "test" });
-peerbitLogger.level = "error";
-peerbitLogger.error("Error works as expected Peerbit!");
+const libp2pLogger = lLogger("libp2p:test");
+const peerbitLogger = pLogger("peerbit:test");
 
 const suite = new B.Bench();
 await suite
@@ -16,7 +13,7 @@ await suite
 		libp2pLogger("hello");
 	})
 	.add("peerbit-logger", () => {
-		peerbitLogger.info("hello");
+		peerbitLogger("hello");
 	})
 	.run();
 
