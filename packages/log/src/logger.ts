@@ -1,4 +1,3 @@
-import pino from "pino";
+import { logger as loggerFn } from "@peerbit/logger";
 
-const logger = pino();
-export { logger };
+export const logger = loggerFn("peerbit:log");

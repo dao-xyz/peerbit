@@ -79,6 +79,7 @@ import { BandwidthTracker } from "./stats.js";
 import { waitForEvent } from "./wait-for-event.js";
 
 export { logger };
+const warn = logger.newScope("warn");
 
 export { BandwidthTracker }; // might be useful for others
 
@@ -451,7 +452,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			);
 		}
 		if (failures.length > 0) {
-			logger.warn(
+			warn(
 				`Partial outbound write failure: ${failures.length} failed, ${successes} succeeded`,
 			);
 			// Remove failed streams immediately (best-effort)
@@ -1052,7 +1053,7 @@ export abstract class DirectStream<
 
 				// Skip closed/closing connections
 				if (connection?.timeline?.close != null) {
-					logger.debug(
+					logger.trace(
 						"skip outbound stream on closed connection %s",
 						connection.remoteAddr?.toString(),
 					);
@@ -1081,13 +1082,13 @@ export abstract class DirectStream<
 							msg,
 						)
 					) {
-						logger.debug(
+						logger.trace(
 							"createOutboundStream transient failure (%s): %s",
 							connection?.remoteAddr,
 							msg,
 						);
 					} else {
-						logger.warn(
+						warn(
 							"createOutboundStream failed (%s): %o",
 							connection?.remoteAddr,
 							e,
@@ -1125,7 +1126,7 @@ export abstract class DirectStream<
 
 		this.started = true;
 		this.stopping = false;
-		logger.debug("starting");
+		logger.trace("starting");
 
 		// Incoming streams
 		// Called after a peer dials us
@@ -1220,7 +1221,7 @@ export abstract class DirectStream<
 		this.outboundInflightQueue.end();
 		this.closeController.abort();
 
-		logger.debug("stopping");
+		logger.trace("stopping");
 		for (const peerStreams of this.peers.values()) {
 			await peerStreams.close();
 		}
@@ -1242,7 +1243,7 @@ export abstract class DirectStream<
 		}
 
 		this._ackCallbacks.clear();
-		logger.debug("stopped");
+		logger.trace("stopped");
 		this.stopping = false;
 	}
 
@@ -1442,7 +1443,7 @@ export abstract class DirectStream<
 			this.checkIsAlive([peerKeyHash]);
 		}
 
-		logger.debug("connection ended:" + peerKey.toString());
+		logger.trace("connection ended:" + peerKey.toString());
 	}
 
 	public removePeerFromRoutes(hash: string, deleteIfNeighbour = false) {
@@ -1545,7 +1546,7 @@ export abstract class DirectStream<
 
 		// else create a new peer streams
 		const peerIdStr = peerId.toString();
-		logger.debug("new peer" + peerIdStr);
+		logger.trace("new peer" + peerIdStr);
 
 		const peerStreams: PeerStreams = new PeerStreams({
 			peerId,
@@ -1605,7 +1606,7 @@ export abstract class DirectStream<
 		await peerStreams.close();
 
 		// delete peer streams
-		logger.debug("delete peer" + publicKey.toString());
+		logger.trace("delete peer" + publicKey.toString());
 		this.peers.delete(hash);
 		return peerStreams;
 	}
@@ -1631,14 +1632,14 @@ export abstract class DirectStream<
 		} catch (err: any) {
 			if (err?.code === "ERR_STREAM_RESET") {
 				// only send stream reset messages to info
-				logger.info(
+				logger(
 					"Failed processing messages to id: " +
 						peerStreams.peerId.toString() +
 						". " +
 						err?.message,
 				);
 			} else {
-				logger.warn(
+				warn(
 					"Failed processing messages to id: " +
 						peerStreams.peerId.toString() +
 						". " +
@@ -1657,10 +1658,10 @@ export abstract class DirectStream<
 		peerStreams: PeerStreams,
 		message: Uint8ArrayList,
 	): Promise<boolean> {
-		// logger.debug("rpc from " + from + ", " + this.peerIdStr);
+		// logger.trace("rpc from " + from + ", " + this.peerIdStr);
 
 		if (message.length > 0) {
-			//	logger.debug("messages from " + from);
+			//	logger.trace("messages from " + from);
 			await this.queue
 				.add(async () => {
 					try {
@@ -1702,7 +1703,7 @@ export abstract class DirectStream<
 		try {
 			message = Message.from(msg);
 		} catch (error) {
-			logger.warn(
+			warn(
 				error,
 				"Failed to decode message frame from",
 				from.hashcode(),
@@ -1710,7 +1711,7 @@ export abstract class DirectStream<
 			return;
 		}
 		if (!message) {
-			logger.debug("Ignoring empty message frame from", from.hashcode());
+			logger.trace("Ignoring empty message frame from", from.hashcode());
 			return;
 		}
 		this.dispatchEvent(
@@ -1779,7 +1780,7 @@ export abstract class DirectStream<
 		if (isForMe) {
 			if (!(await this.verifyAndProcess(message))) {
 				// we don't verify messages we don't dispatch because of the performance penalty // TODO add opts for this
-				logger.warn("Recieved message with invalid signature or timestamp");
+				warn("Recieved message with invalid signature or timestamp");
 				return false;
 			}
 
@@ -1922,14 +1923,14 @@ export abstract class DirectStream<
 		);
 
 		if (seenBefore > 0) {
-			logger.debug(
+			logger.trace(
 				"Received message already seen of type: " + message.constructor.name,
 			);
 			return false;
 		}
 
 		if (!(await this.verifyAndProcess(message))) {
-			logger.warn(`Recieved ACK message that did not verify`);
+			warn(`Recieved ACK message that did not verify`);
 			return false;
 		}
 
@@ -1982,14 +1983,14 @@ export abstract class DirectStream<
 		);
 
 		if (seenBefore > 0) {
-			logger.debug(
+			logger.trace(
 				"Received message already seen of type: " + message.constructor.name,
 			);
 			return;
 		}
 
 		if (!(await this.verifyAndProcess(message))) {
-			logger.warn(`Recieved ACK message that did not verify`);
+			warn(`Recieved ACK message that did not verify`);
 			return false;
 		}
 
@@ -2172,7 +2173,7 @@ export abstract class DirectStream<
 				if (stream) {
 					to.push(stream);
 				} else {
-					logger.warn(
+					warn(
 						`Peer ${peer} not found in peers, skipping neighbor selection`,
 					);
 					to = undefined;
@@ -2211,7 +2212,7 @@ export abstract class DirectStream<
 				dontThrowIfDeliveryError,
 			);
 		} else {
-			logger.debug("Received a message to relay but canRelayMessage is false");
+			logger.trace("Received a message to relay but canRelayMessage is false");
 		}
 	}
 
@@ -2548,7 +2549,7 @@ export abstract class DirectStream<
 			(Array.isArray(peers) && peers.length === 0) ||
 			(peers instanceof Map && peers.size === 0)
 		) {
-			logger.debug("No peers to send to");
+			logger.trace("No peers to send to");
 			return delivereyPromise;
 		}
 
@@ -2617,7 +2618,7 @@ export abstract class DirectStream<
 					}
 				}
 			} catch (error: any) {
-				logger.info(
+				logger(
 					"Failed to connect directly to: " +
 						JSON.stringify(addresses.map((x) => x.toString())) +
 						". " +

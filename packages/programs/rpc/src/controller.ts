@@ -147,7 +147,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 		this._subscribing = this.node.services.pubsub.subscribe(this.topic);
 
 		await this._subscribing;
-		logger.debug("subscribing to query topic (responses): " + this.topic);
+		logger.trace("subscribing to query topic (responses): " + this.topic);
 	}
 
 	private async _onMessage(evt: CustomEvent<DataEvent>): Promise<void> {
@@ -232,7 +232,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 				}
 			} catch (error: any) {
 				if (error instanceof AccessError) {
-					logger.debug("Got message I could not decrypt");
+					logger.trace("Got message I could not decrypt");
 					return;
 				}
 
@@ -395,7 +395,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 				}
 
 				if (error instanceof BorshError) {
-					logger.debug("Namespace error");
+					logger.trace("Namespace error");
 					return; // Name space conflict most likely
 				}
 

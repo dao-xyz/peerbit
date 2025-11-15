@@ -18,9 +18,7 @@ import {
 } from "../ranges.js";
 import { SimpleSyncronizer } from "./simple.js";
 
-export const logger: ReturnType<typeof loggerFn> = loggerFn({
-	module: "shared-log",
-});
+export const logger = loggerFn("peerbit:shared-log:rateless");
 
 type NumberOrBigint = number | bigint;
 
@@ -512,7 +510,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 									error?.message === "Invalid degree" ||
 									error === "Invalid degree"
 								) {
-									logger.debug(
+									logger.trace(
 										"Decoder reported invalid degree; waiting for more symbols",
 									);
 									continue;

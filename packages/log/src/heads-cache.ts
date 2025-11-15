@@ -13,9 +13,7 @@ import path from "path-browserify";
 import { v4 as uuid } from "uuid";
 import type { Entry } from "./entry.js";
 
-export const logger: ReturnType<typeof loggerFn> = loggerFn({
-	module: "heads-cache",
-});
+export const logger = loggerFn("peerbit:log:heads-cache");
 export class CachedValue {}
 /* export type AppendOptions<T> = {
 	signers?: ((data: Uint8Array) => Promise<SignatureWithKey>)[];

@@ -41,9 +41,7 @@ import {
 	createLibp2pExtended,
 } from "./libp2p.js";
 
-export const logger: ReturnType<typeof loggerFn> = loggerFn({
-	module: "client",
-});
+export const logger = loggerFn("peerbit:client");
 
 export type OptionalCreateOptions = {
 	libp2pExternal?: boolean;
@@ -364,7 +362,7 @@ export class Peerbit implements ProgramClient {
 			if (result.status === "fulfilled") {
 				once = true;
 			} else {
-				logger.warn(
+				logger.error(
 					"Failed to dial bootstrap address(s): " +
 						JSON.stringify(_addresses[i]) +
 						". Reason: " +

@@ -50,7 +50,8 @@ import {
 	coerceWithIndexed,
 } from "./search.js";
 
-const logger: ReturnType<typeof loggerFn> = loggerFn({ module: "document" });
+const logger = loggerFn("peerbit:program:document");
+const warn = logger.newScope("warn");
 
 export class OperationError extends Error {
 	constructor(message?: string) {
@@ -367,7 +368,7 @@ export class Documents<
 			}
 		} catch (error) {
 			if (error instanceof BorshError) {
-				logger.warn("Received payload that could not be decoded, skipping");
+				warn("Received payload that could not be decoded, skipping");
 				return false;
 			}
 			throw error;
@@ -512,7 +513,7 @@ export class Documents<
 			if (error instanceof AccessError) {
 				return false; // we cant index because we can not decrypt
 			} else if (error instanceof BorshError) {
-				logger.warn("Received payload that could not be decoded, skipping");
+				warn("Received payload that could not be decoded, skipping");
 				return false;
 			}
 			throw error;

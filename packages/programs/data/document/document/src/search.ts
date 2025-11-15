@@ -48,9 +48,8 @@ import { ResumableIterators } from "./resumable-iterator.js";
 
 const WARNING_WHEN_ITERATING_FOR_MORE_THAN = 1e5;
 
-const logger: ReturnType<typeof loggerFn> = loggerFn({
-	module: "document-index",
-});
+const logger = loggerFn("peerbit:program:document:search");
+const warn = logger.newScope("warn");
 
 type BufferedResult<T, I extends Record<string, any>> = {
 	value: T;
@@ -867,7 +866,7 @@ export class DocumentIndex<
 		ctx: { from?: PublicSignKey; message: DataMessage },
 	) {
 		if (!ctx.from) {
-			logger.info("Receieved query without from");
+			logger("Receieved query without from");
 			return;
 		}
 		if (query instanceof types.PredictedSearchRequest) {
@@ -1860,7 +1859,7 @@ export class DocumentIndex<
 	): void {
 		const queueData = this._resultQueue.get(query.idString);
 		if (queueData && !queueData.from.equals(publicKey)) {
-			logger.info("Ignoring close iterator request from different peer");
+			logger("Ignoring close iterator request from different peer");
 			return;
 		}
 		this.cancelIteratorKeepAlive(query.idString);
@@ -2072,7 +2071,7 @@ export class DocumentIndex<
 						));
 				} catch (error) {
 					if (error instanceof MissingResponsesError) {
-						logger.warn("Did not reciveve responses from all shard");
+						warn("Did not reciveve responses from all shard");
 						if (remote?.throwOnMissing) {
 							throw error;
 						}
@@ -3323,7 +3322,7 @@ export class DocumentIndex<
 					}
 					signalUpdate("prefetch-add");
 				} catch (error) {
-					logger.warn("Failed to merge prefetched results", error);
+					warn("Failed to merge prefetched results", error);
 				}
 			};
 
@@ -3663,7 +3662,7 @@ export class DocumentIndex<
 						await fetchAtLeast(1);
 					}
 				} catch (error) {
-					logger.warn("Failed to refresh iterator pending state", error);
+					warn("Failed to refresh iterator pending state", error);
 				}
 
 				let pendingCount = 0;
@@ -3680,7 +3679,7 @@ export class DocumentIndex<
 					let batch = await next(100);
 					c += batch.length;
 					if (c > WARNING_WHEN_ITERATING_FOR_MORE_THAN) {
-						logger.warn(
+						warn(
 							"Iterating for more than " +
 								WARNING_WHEN_ITERATING_FOR_MORE_THAN +
 								" results",
@@ -3710,7 +3709,7 @@ export class DocumentIndex<
 					const batch = await next(100);
 					c += batch.length;
 					if (c > WARNING_WHEN_ITERATING_FOR_MORE_THAN) {
-						logger.warn(
+						warn(
 							"Iterating for more than " +
 								WARNING_WHEN_ITERATING_FOR_MORE_THAN +
 								" results",

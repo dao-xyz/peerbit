@@ -22,7 +22,7 @@ import {
 import { Range } from "./range.js";
 import { StringIndex, StringOperation, encoding } from "./string-index.js";
 
-const logger: ReturnType<typeof loggerFn> = loggerFn({ module: "string" });
+const logger = loggerFn("peerbit:program:string");
 
 export const STRING_STORE_TYPE = "string_store";
 const findAllOccurrences = (str: string, substr: string): number[] => {
@@ -167,9 +167,9 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 		query: SearchRequest,
 		ctx: RequestContext,
 	): Promise<AbstractSearchResult | undefined> {
-		logger.debug("Recieved query");
+		logger.trace("Recieved query");
 		if (query instanceof SearchRequest === false) {
-			logger.debug("Recieved query which is not a StringQueryRequest");
+			logger.trace("Recieved query which is not a StringQueryRequest");
 			return;
 		}
 
@@ -183,7 +183,7 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 			(x) => x instanceof StringMatch,
 		) as StringMatch[];
 		if (relaventQueries.length === 0) {
-			logger.debug("Responding with all");
+			logger.trace("Responding with all");
 			return new StringResult({
 				string: content,
 			});
@@ -204,7 +204,7 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 			.flat(1);
 
 		if (ranges.length === 0) {
-			logger.debug("Could not find any matches");
+			logger.trace("Could not find any matches");
 			return;
 		}
 

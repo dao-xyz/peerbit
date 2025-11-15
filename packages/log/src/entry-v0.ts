@@ -30,9 +30,12 @@ import { ShallowEntry, ShallowMeta } from "./entry-shallow.js";
 import { EntryType } from "./entry-type.js";
 import { type CanAppend, Entry } from "./entry.js";
 import type { SortableEntry } from "./log-sorting.js";
-import { logger } from "./logger.js";
+import { logger as baseLogger } from "./logger.js";
 import { Payload } from "./payload.js";
 import { equals } from "./utils.js";
+
+const log = baseLogger.newScope("entry-v0");
+const traceLogger = log.trace as typeof log & { enabled?: boolean };
 
 export type MaybeEncryptionPublicKey =
 	| X25519PublicKey
@@ -314,10 +317,10 @@ export class EntryV0<T>
 			this._signatures!.signatures.map((x) => x.decrypt(this._keychain)),
 		);
 
-		if (logger.level === "debug" || logger.level === "trace") {
+		if ((traceLogger as any)?.enabled) {
 			for (const [i, result] of results.entries()) {
 				if (result.status === "rejected") {
-					logger.debug("Failed to decrypt signature with index: " + i);
+					traceLogger("Failed to decrypt signature with index: " + i);
 				}
 			}
 		}

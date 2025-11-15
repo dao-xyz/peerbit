@@ -7,9 +7,8 @@ import { RPC, type RPCResponse } from "@peerbit/rpc";
 import { type ReplicationOptions } from "@peerbit/shared-log";
 import { TrustedNetwork } from "@peerbit/trusted-network";
 
-const logger: ReturnType<typeof loggerFn> = loggerFn({
-	module: "clock-signer",
-});
+const logger = loggerFn("peerbit:program:clock-service");
+const warn = logger.newScope("warn");
 const abs = (n: number | bigint) => (n < 0n ? -n : n);
 
 export abstract class Result {}
@@ -91,12 +90,12 @@ export class ClockService extends Program<Args> {
 					? async (arr, context) => {
 							const entry = deserialize(arr, Entry);
 							if (entry.hash) {
-								logger.warn("Recieved entry with hash, unexpected");
+								warn("Recieved entry with hash, unexpected");
 							}
 							const now = this._hlc.now().wallTime;
 							const cmp = (await entry.getClock()).timestamp.wallTime;
 							if (abs(now - cmp) > this.maxError) {
-								logger.info("Recieved an entry with an invalid timestamp");
+								logger("Recieved an entry with an invalid timestamp");
 								return new SignError({
 									message: "Recieved an entry with an invalid timestamp",
 								});
