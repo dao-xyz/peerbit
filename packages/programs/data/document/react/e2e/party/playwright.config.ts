@@ -5,7 +5,7 @@ import path from "node:path";
 const PORT = Number(process.env.PARTY_PORT ?? 5255);
 const BASE_URL = `http://localhost:${PORT}`;
 const DIRNAME = fileURLToPath(new URL(".", import.meta.url));
-const BROWSER_NODE_DIR = path.resolve(DIRNAME, "../browser-node");
+const BROWSER_NODE_DIR = path.resolve(DIRNAME, "./browser-node");
 
 export default defineConfig({
 	testDir: "./tests",

@@ -1,6 +1,6 @@
-import { Peerbit } from "peerbit";
 import { webSockets } from "@libp2p/websockets";
-import { PartyDocumentStore } from "./data.js";
+import { PartyDocumentStore } from "../../shared/dist/data.js";
+import { Peerbit } from "peerbit";
 
 export type RunningReplicator = {
 	addresses: string[];

@@ -1,4 +1,3 @@
-import "reflect-metadata";
 import { field, variant } from "@dao-xyz/borsh";
 import { sha256Sync } from "@peerbit/crypto";
 import { Documents } from "@peerbit/document";

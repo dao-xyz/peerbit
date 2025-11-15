@@ -44,6 +44,7 @@
 		"packages/programs/data/*",
 		"packages/programs/data/document/*",
 		"packages/programs/data/document/react/e2e/party",
+		"packages/programs/data/document/react/e2e/party/shared",
 		"packages/programs/data/document/react/e2e/party/browser-node",
 		"packages/utils/crypto",
 		"packages/utils/any-store/*",

@@ -6,7 +6,7 @@ import {
 	PartyDocumentStore,
 	PartyMessage,
 	PartyMessageIndex,
-} from "@party/shared/data.js";
+} from "../../shared/dist/data.js";
 import { create as createSimpleIndexer } from "@peerbit/indexer-simple";
 import { SortDirection } from "@peerbit/indexer-interface";
 
@@ -53,15 +53,23 @@ const DocumentParty = ({ label, replicate }: DocumentPartyProps) => {
 		keepOpenOnUnmount: true,
 	});
 
-	const query = useQuery<PartyMessage, PartyMessageIndex>(program?.documents, {
-		query: {
-			sort: [{ key: ["timestamp"], direction: SortDirection.ASC }],
-		},
-		resolve: true,
-		prefetch: true,
-		local: true,
-		remote: { reach: { eager: true }, wait: { timeout: 15_000 } },
-	});
+	const queryOptions = useMemo(
+		() => ({
+			query: {
+				sort: [{ key: ["timestamp"], direction: SortDirection.ASC }],
+			},
+			resolve: true as const,
+			prefetch: true,
+			local: true,
+			remote: { reach: { eager: true }, wait: { timeout: 15_000 } },
+		}),
+		[],
+	);
+
+	const query = useQuery<PartyMessage, PartyMessageIndex>(
+		program?.documents,
+		queryOptions,
+	);
 
 	const items = query.items ?? [];
 
@@ -81,7 +89,7 @@ const DocumentParty = ({ label, replicate }: DocumentPartyProps) => {
 					timestamp: now,
 				})
 			)
-			.catch((err) => console.error("Failed to write", err));
+			.catch((err: unknown) => console.error("Failed to write", err));
 	}, [program, peer, label]);
 
 	return (

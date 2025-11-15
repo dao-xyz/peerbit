@@ -1,6 +1,6 @@
-import { expect, test, type Page } from "@playwright/test";
-import { startReplicator } from "../shared/replicator.js";
-import { launchBrowserContext, withSearchParams } from "../shared/utils.js";
+import { expect, test, type BrowserContext, type Page } from "@playwright/test";
+import { startReplicator } from "./support/replicator.js";
+import { launchBrowserContext, withSearchParams } from "./support/browser.js";
 
 const PARTICIPANTS = [
 	{ label: "replica-a", replicate: true },
@@ -45,7 +45,7 @@ test.describe("document react party", () => {
 			"http://localhost:5255";
 
 		const pages = [page];
-		const extraContexts = [] as import("@playwright/test").BrowserContext[];
+		const extraContexts:BrowserContext[] = [];
 
 		for (let i = 0; i < PARTICIPANTS.length; i++) {
 			let currentPage = i === 0 ? page : undefined;

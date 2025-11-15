@@ -6,7 +6,7 @@ import path from "node:path";
 const ROOT = path.resolve(__dirname, "..");
 
 export default defineConfig({
-	plugins: [react(), peerbit({ assets: null })],
+	plugins: [react(), peerbit()],
 	optimizeDeps: {
 		esbuildOptions: {
 			target: "esnext",
@@ -20,11 +20,6 @@ export default defineConfig({
 		port: Number(process.env.PORT ?? 5255),
 		fs: {
 			allow: [__dirname, ROOT],
-		},
-	},
-	resolve: {
-		alias: {
-			"@party/shared": path.resolve(ROOT, "shared"),
 		},
 	},
 });

@@ -100,8 +100,8 @@ importers:
   docs:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@ethersproject/wallet':
         specifier: ^5.8.0
         version: 5.8.0
@@ -155,8 +155,8 @@ importers:
         specifier: ^8.0.0
         version: 8.0.1
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@dao-xyz/datastore-level':
         specifier: ^11.2.0
         version: 11.2.0
@@ -273,8 +273,8 @@ importers:
   packages/clients/peerbit-proxy/proxy:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
@@ -355,8 +355,8 @@ importers:
   packages/clients/peerbit-proxy/window/e2e/browser/child:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@peerbit/any-store-opfs':
         specifier: workspace:*
         version: link:../../../../../../utils/any-store/opfs
@@ -493,8 +493,8 @@ importers:
   packages/clients/peerbit-server/node:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@libp2p/crypto':
         specifier: ^5.1.10
         version: 5.1.13
@@ -609,8 +609,8 @@ importers:
   packages/clients/peerbit-server/test-lib:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
@@ -640,8 +640,8 @@ importers:
         specifier: ^17.0.0
         version: 17.0.0
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
@@ -781,8 +781,8 @@ importers:
   packages/clients/vite/e2e:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../../utils/crypto
@@ -827,8 +827,8 @@ importers:
   packages/log:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@peerbit/any-store':
         specifier: workspace:*
         version: link:../utils/any-store/any-store
@@ -918,8 +918,8 @@ importers:
   packages/programs/acl/identity-access-controller:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
@@ -952,8 +952,8 @@ importers:
   packages/programs/acl/trusted-network:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
@@ -989,8 +989,8 @@ importers:
   packages/programs/clock-service:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../utils/crypto
@@ -1026,8 +1026,8 @@ importers:
         specifier: ^8.0.0
         version: 8.0.1
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
@@ -1114,8 +1114,8 @@ importers:
   packages/programs/data/document/interface:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../../../utils/crypto
@@ -1145,8 +1145,8 @@ importers:
         version: 10.0.0
     devDependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@peerbit/blocks-interface':
         specifier: workspace:*
         version: link:../../../../transport/blocks-interface
@@ -1226,6 +1226,9 @@ importers:
 
   packages/programs/data/document/react/e2e/party/browser-node:
     dependencies:
+      '@peerbit/any-store-opfs':
+        specifier: workspace:*
+        version: link:../../../../../../../utils/any-store/opfs
       '@peerbit/document':
         specifier: workspace:*
         version: link:../../../../document
@@ -1235,6 +1238,9 @@ importers:
       '@peerbit/indexer-simple':
         specifier: workspace:*
         version: link:../../../../../../../utils/indexer/simple
+      '@peerbit/indexer-sqlite3':
+        specifier: workspace:*
+        version: link:../../../../../../../utils/indexer/sqlite3
       '@peerbit/program':
         specifier: workspace:*
         version: link:../../../../../../program/program
@@ -1244,6 +1250,9 @@ importers:
       '@peerbit/react':
         specifier: workspace:*
         version: link:../../../../../../../clients/react
+      '@peerbit/riblt':
+        specifier: workspace:*
+        version: link:../../../../../../../utils/rateless-iblt
       '@peerbit/vite':
         specifier: workspace:*
         version: link:../../../../../../../clients/vite
@@ -1257,6 +1266,12 @@ importers:
         specifier: ^0.2.2
         version: 0.2.2
     devDependencies:
+      '@babel/plugin-proposal-class-properties':
+        specifier: ^7.18.6
+        version: 7.18.6(@babel/core@7.28.5)
+      '@babel/plugin-proposal-decorators':
+        specifier: ^7.28.0
+        version: 7.28.0(@babel/core@7.28.5)
       '@types/react':
         specifier: ^18.3.11
         version: 18.3.26
@@ -1276,8 +1291,8 @@ importers:
   packages/programs/data/shared-log:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@libp2p/crypto':
         specifier: ^5.1.10
         version: 5.1.13
@@ -1367,8 +1382,8 @@ importers:
   packages/programs/data/string:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../../utils/crypto
@@ -1404,8 +1419,8 @@ importers:
   packages/programs/program/program:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
@@ -1477,8 +1492,8 @@ importers:
   packages/programs/rpc:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../utils/crypto
@@ -1511,8 +1526,8 @@ importers:
   packages/transport/blocks:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@ipld/dag-cbor':
         specifier: ^9.2.1
         version: 9.2.5
@@ -1572,8 +1587,8 @@ importers:
   packages/transport/blocks-interface:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@ipld/dag-cbor':
         specifier: ^9.2.1
         version: 9.2.5
@@ -1631,8 +1646,8 @@ importers:
   packages/transport/pubsub:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@libp2p/circuit-relay-v2':
         specifier: ^4.1.0
         version: 4.1.1
@@ -1704,8 +1719,8 @@ importers:
   packages/transport/pubsub-interface:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
@@ -1728,8 +1743,8 @@ importers:
         specifier: ^8.0.0
         version: 8.0.1
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
@@ -1822,8 +1837,8 @@ importers:
   packages/transport/stream-interface:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
@@ -1927,8 +1942,8 @@ importers:
   packages/utils/any-store/interface:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.4
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       uuid:
         specifier: ^10.0.0
         version: 10.0.0
@@ -1940,8 +1955,8 @@ importers:
   packages/utils/any-store/opfs:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@peerbit/any-store-interface':
         specifier: workspace:*
         version: link:../interface
@@ -1980,8 +1995,8 @@ importers:
   packages/utils/crypto:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@ethersproject/bytes':
         specifier: ^5.7.0
         version: 5.8.0
@@ -2035,8 +2050,8 @@ importers:
   packages/utils/indexer/cached-index:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../crypto
@@ -2054,8 +2069,8 @@ importers:
   packages/utils/indexer/interface:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../crypto
@@ -2069,8 +2084,8 @@ importers:
   packages/utils/indexer/simple:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@peerbit/indexer-interface':
         specifier: workspace:*
         version: link:../interface
@@ -2088,8 +2103,8 @@ importers:
   packages/utils/indexer/sqlite3:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../crypto
@@ -2134,8 +2149,8 @@ importers:
   packages/utils/indexer/tests:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../crypto
@@ -2161,8 +2176,8 @@ importers:
   packages/utils/keychain:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^5.2.3
-        version: 5.2.4
+        specifier: ^6.0.0
+        version: 6.0.0
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
@@ -2178,9 +2193,9 @@ importers:
 
   packages/utils/logger:
     dependencies:
-      pino:
-        specifier: ^8.14.1
-        version: 8.21.0
+      '@libp2p/logger':
+        specifier: ^6.2.1
+        version: 6.2.1
 
   packages/utils/rateless-iblt: {}
 
@@ -2447,6 +2462,12 @@ packages:
     peerDependencies:
       '@babel/core': ^7.0.0-0
 
+  '@babel/plugin-proposal-decorators@7.28.0':
+    resolution: {integrity: sha512-zOiZqvANjWDUaUS9xMxbMcK/Zccztbe/6ikvUXaG9nsPH3w6qh5UaPGAnirI/WhIbZ8m3OHU0ReyPrknG+ZKeg==}
+    engines: {node: '>=6.9.0'}
+    peerDependencies:
+      '@babel/core': ^7.0.0-0
+
   '@babel/plugin-proposal-export-default-from@7.27.1':
     resolution: {integrity: sha512-hjlsMBl1aJc5lp8MoCDEZCiYzlgdRAShOjAfRw6X+GlpLpUPU7c3XNLsKFZbQk/1cRzBlJ7CXg3xJAJMrFa1Uw==}
     engines: {node: '>=6.9.0'}
@@ -2498,6 +2519,12 @@ packages:
 
   '@babel/plugin-syntax-class-static-block@7.14.5':
     resolution: {integrity: sha512-b+YyPmr6ldyNnM6sqYeMWE+bgJcJpO6yS4QD7ymxgH34GBPNDM/THBh8iunyvKIZztiwLH4CJZ0RxTk9emgpjw==}
+    engines: {node: '>=6.9.0'}
+    peerDependencies:
+      '@babel/core': ^7.0.0-0
+
+  '@babel/plugin-syntax-decorators@7.27.1':
+    resolution: {integrity: sha512-YMq8Z87Lhl8EGkmb0MwYkt36QnxC+fzCgrl66ereamPlYToRpIk5nUjKUY3QKLWq8mwUB1BgbeXcTJhZOCDg5A==}
     engines: {node: '>=6.9.0'}
     peerDependencies:
       '@babel/core': ^7.0.0-0
@@ -3004,8 +3031,8 @@ packages:
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
     engines: {node: '>=12'}
 
-  '@dao-xyz/borsh@5.2.4':
-    resolution: {integrity: sha512-HKjOMXBQvr2riUIX/g+sLOmgDsk16zuMa0VZKMfj0XLp3MlafMxkwuBJyJk0apqUpKxywXeitgFHGFOGNkn+Kw==}
+  '@dao-xyz/borsh@6.0.0':
+    resolution: {integrity: sha512-ckb2FEeuw6cMbxjizZPpoa9DLlq2tLOa4C3k6JT5i+pN4l3rEDArq6dmA1Pm48GEjL1C8Y/a6BbZwDzxLcjb5g==}
 
   '@dao-xyz/datastore-level@11.2.0':
     resolution: {integrity: sha512-0N/nAbnJdexfczjr+VH2/EQTqO8PJWpAvgmvJrtmJXWD6EXl+vQ5UTnTUw/YSiXCl+LR2LurXYAoPtJS+PRzgg==}
@@ -6411,10 +6438,6 @@ packages:
   fast-levenshtein@2.0.6:
     resolution: {integrity: sha512-DCXu6Ifhqcks7TZKY3Hxp3y6qphY5SJZmrWMDrKcERSOXWQdMhU9Ig/PYrzyw/ul9jOIyh0N4M0tbC5hodg8dw==}
 
-  fast-redact@3.5.0:
-    resolution: {integrity: sha512-dwsoQlS7h9hMeYUq1W++23NDcBLV4KqONnITDV9DjfS3q1SgDGVrBdvvTLUotWtPSD7asWDV9/CmsZPy8Hf70A==}
-    engines: {node: '>=6'}
-
   fast-xml-parser@5.2.5:
     resolution: {integrity: sha512-pfX9uG9Ki0yekDHx2SiuRIyFdyAr1kMIMitPvb0YBo8SUfKvia7w7FIyd/l6av85pFYRhZscS75MwMnbvY+hcQ==}
     hasBin: true
@@ -8733,21 +8756,11 @@ packages:
     resolution: {integrity: sha512-C3FsVNH1udSEX48gGX1xfvwTWfsYWj5U+8/uK15BGzIGrKoUpghX8hWZwa/OFnakBiiVNmBvemTJR5mcy7iPcg==}
     engines: {node: '>=4'}
 
-  pino-abstract-transport@1.2.0:
-    resolution: {integrity: sha512-Guhh8EZfPCfH+PMXAb6rKOjGQEoy0xlAIn+irODG5kgfYV+BQ0rGYYWTIel3P5mmyXqkYkPmdIkywsn6QKUR1Q==}
-
   pino-abstract-transport@2.0.0:
     resolution: {integrity: sha512-F63x5tizV6WCh4R6RHyi2Ml+M70DNRXt/+HANowMflpgGFMAym/VKm6G7ZOQRjqN7XbGxK1Lg9t6ZrtzOaivMw==}
 
-  pino-std-serializers@6.2.2:
-    resolution: {integrity: sha512-cHjPPsE+vhj/tnhCy/wiMh3M3z3h/j15zHQX+S9GkTBgqJuTuJzYJ4gUyACLhDaJ7kk9ba9iRDmbH2tJU03OiA==}
-
   pino-std-serializers@7.0.0:
     resolution: {integrity: sha512-e906FRY0+tV27iq4juKzSYPbUj2do2X2JX4EzSca1631EB2QJQUqGbDuERal7LCtOpxl6x3+nvo9NPZcmjkiFA==}
-
-  pino@8.21.0:
-    resolution: {integrity: sha512-ip4qdzjkAyDDZklUaZkcRFb2iA118H9SgRh8yzTkSQK8HilsOJF7rSY8HoW5+I0M46AZgX/pxbprf2vvzQCE0Q==}
-    hasBin: true
 
   pino@9.14.0:
     resolution: {integrity: sha512-8OEwKp5juEvb/MjpIc4hjqfgCNysrS94RIOMXYvpYCdm/jglrKEiAYmiumbmGhCvs+IcInsphYDFwqrjr7398w==}
@@ -8848,9 +8861,6 @@ packages:
   process-on-spawn@1.1.0:
     resolution: {integrity: sha512-JOnOPQ/8TZgjs1JIH/m9ni7FfimjNa/PRx7y/Wb5qdItsnhO0jE4AT7fC0HjC28DUQWDr50dwSYZLdRMlqDq3Q==}
     engines: {node: '>=8'}
-
-  process-warning@3.0.0:
-    resolution: {integrity: sha512-mqn0kFRl0EoqhnL0GQ0veqFHyIN1yig9RHh/InzORTUiZHFRAur+aMtRkELNwGs9aNwKS6tg/An4NYBPGwvtzQ==}
 
   process-warning@5.0.0:
     resolution: {integrity: sha512-a39t9ApHNx2L4+HBnQKqxxHNs1r7KF+Intd8Q/g1bUh6q0WIp9voPXJ/x0j+ZL45KF1pJd9+q2jLIRMfvEshkA==}
@@ -9063,10 +9073,6 @@ packages:
   readable-stream@3.6.2:
     resolution: {integrity: sha512-9u/sniCrY3D5WdsERHzHE4G2YCXqoG5FTHUiCC4SIbr6XcLZBY05ya9EKjYek9O5xOAwjGq+1JdGBAS7Q9ScoA==}
     engines: {node: '>= 6'}
-
-  readable-stream@4.7.0:
-    resolution: {integrity: sha512-oIGGmcpTLwPga8Bn6/Z75SVaH1z5dUut2ibSyAMVhmUggWpmDn2dapB0n7f8nwaSiRtepAsfJyfXIO5DCVAODg==}
-    engines: {node: ^12.22.0 || ^14.17.0 || >=16.0.0}
 
   readdirp@3.6.0:
     resolution: {integrity: sha512-hOS089on8RduqdbhvQ5Z37A0ESjsqz6qnRcffsMU3495FuTdqSm+7bhJ29JvIOsBDEEnan5DPu9t3To9VRlMzA==}
@@ -9476,9 +9482,6 @@ packages:
     resolution: {integrity: sha512-rInDH6lCNiEyn3+hH8KVGFdbjc099j47+OSgbMrfDYX1CmXLfdKd7qi6IfcWj2wFxvSVkuI46M+wPGYfEOEj6g==}
     engines: {node: '>= 18'}
 
-  sonic-boom@3.8.1:
-    resolution: {integrity: sha512-y4Z8LCDBuum+PBP3lSV7RHrXscqksve/bi0as7mhwVnBW+/wUqKT/2Kb7um8yqcFy0duYbbPxzt89Zy2nOCaxg==}
-
   sonic-boom@4.2.0:
     resolution: {integrity: sha512-INb7TM37/mAcsGmc9hyyI6+QR3rR1zVRu36B0NeGXKnOOLiZOfER5SA+N7X7k3yUYRzLWafduTDvJAfDswwEww==}
 
@@ -9806,9 +9809,6 @@ packages:
 
   thenify@3.3.1:
     resolution: {integrity: sha512-RVZSIV5IG10Hk3enotrhvz0T9em6cyHBLkH/YAZuKqd8hRkKhSfCGIcP2KUY0EPxndzANBmNllzWPwak+bheSw==}
-
-  thread-stream@2.7.0:
-    resolution: {integrity: sha512-qQiRWsU/wvNolI6tbbCKd9iKaTnCXsTwVxhhKM6nctPdujTyztjlbUkUTUymidWcMnZ5pWR0ej4a0tjsW021vw==}
 
   thread-stream@3.1.0:
     resolution: {integrity: sha512-OqyPZ9u96VohAyMfJykzmivOrY2wfMSf3C5TtFJVgN+Hm6aj+voFhlK+kZEIv2FBh1X6Xp3DlnCOfEQ3B2J86A==}
@@ -11201,6 +11201,15 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  '@babel/plugin-proposal-decorators@7.28.0(@babel/core@7.28.5)':
+    dependencies:
+      '@babel/core': 7.28.5
+      '@babel/helper-create-class-features-plugin': 7.28.5(@babel/core@7.28.5)
+      '@babel/helper-plugin-utils': 7.27.1
+      '@babel/plugin-syntax-decorators': 7.27.1(@babel/core@7.28.5)
+    transitivePeerDependencies:
+      - supports-color
+
   '@babel/plugin-proposal-export-default-from@7.27.1(@babel/core@7.28.5)':
     dependencies:
       '@babel/core': 7.28.5
@@ -11252,6 +11261,11 @@ snapshots:
       '@babel/helper-plugin-utils': 7.27.1
 
   '@babel/plugin-syntax-class-static-block@7.14.5(@babel/core@7.28.5)':
+    dependencies:
+      '@babel/core': 7.28.5
+      '@babel/helper-plugin-utils': 7.27.1
+
+  '@babel/plugin-syntax-decorators@7.27.1(@babel/core@7.28.5)':
     dependencies:
       '@babel/core': 7.28.5
       '@babel/helper-plugin-utils': 7.27.1
@@ -11783,7 +11797,7 @@ snapshots:
     dependencies:
       '@jridgewell/trace-mapping': 0.3.9
 
-  '@dao-xyz/borsh@5.2.4':
+  '@dao-xyz/borsh@6.0.0':
     dependencies:
       '@protobufjs/float': 1.0.2
       '@protobufjs/utf8': 1.1.0
@@ -16333,8 +16347,6 @@ snapshots:
 
   fast-levenshtein@2.0.6: {}
 
-  fast-redact@3.5.0: {}
-
   fast-xml-parser@5.2.5:
     dependencies:
       strnum: 2.1.1
@@ -19030,32 +19042,11 @@ snapshots:
 
   pify@3.0.0: {}
 
-  pino-abstract-transport@1.2.0:
-    dependencies:
-      readable-stream: 4.7.0
-      split2: 4.2.0
-
   pino-abstract-transport@2.0.0:
     dependencies:
       split2: 4.2.0
 
-  pino-std-serializers@6.2.2: {}
-
   pino-std-serializers@7.0.0: {}
-
-  pino@8.21.0:
-    dependencies:
-      atomic-sleep: 1.0.0
-      fast-redact: 3.5.0
-      on-exit-leak-free: 2.1.2
-      pino-abstract-transport: 1.2.0
-      pino-std-serializers: 6.2.2
-      process-warning: 3.0.0
-      quick-format-unescaped: 4.0.4
-      real-require: 0.2.0
-      safe-stable-stringify: 2.5.0
-      sonic-boom: 3.8.1
-      thread-stream: 2.7.0
 
   pino@9.14.0:
     dependencies:
@@ -19199,8 +19190,6 @@ snapshots:
   process-on-spawn@1.1.0:
     dependencies:
       fromentries: 1.3.2
-
-  process-warning@3.0.0: {}
 
   process-warning@5.0.0: {}
 
@@ -19496,14 +19485,6 @@ snapshots:
       inherits: 2.0.4
       string_decoder: 1.3.0
       util-deprecate: 1.0.2
-
-  readable-stream@4.7.0:
-    dependencies:
-      abort-controller: 3.0.0
-      buffer: 6.0.3
-      events: 3.3.0
-      process: 0.11.10
-      string_decoder: 1.3.0
 
   readdirp@3.6.0:
     dependencies:
@@ -20003,10 +19984,6 @@ snapshots:
 
   smol-toml@1.4.2: {}
 
-  sonic-boom@3.8.1:
-    dependencies:
-      atomic-sleep: 1.0.0
-
   sonic-boom@4.2.0:
     dependencies:
       atomic-sleep: 1.0.0
@@ -20376,10 +20353,6 @@ snapshots:
   thenify@3.3.1:
     dependencies:
       any-promise: 1.3.0
-
-  thread-stream@2.7.0:
-    dependencies:
-      real-require: 0.2.0
 
   thread-stream@3.1.0:
     dependencies:
