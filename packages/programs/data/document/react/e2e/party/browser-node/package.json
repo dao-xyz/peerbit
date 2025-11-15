@@ -4,19 +4,21 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "dev": "pnpm --dir ../shared build && vite",
+    "build": "pnpm --dir ../shared build && tsc -b && vite build",
     "preview": "vite preview --host"
   },
   "dependencies": {
-    "@peerbit/vite": "workspace:*",
+    "@peerbit/any-store-opfs": "workspace:*",
     "@peerbit/document": "workspace:*",
     "@peerbit/document-react": "workspace:*",
+    "@peerbit/indexer-simple": "workspace:*",
+    "@peerbit/indexer-sqlite3": "workspace:*",
     "@peerbit/program": "workspace:*",
     "@peerbit/program-react": "workspace:*",
     "@peerbit/react": "workspace:*",
-    "@peerbit/indexer-simple": "workspace:*",
-    "reflect-metadata": "^0.2.2",
+    "@peerbit/riblt": "workspace:*",
+    "@peerbit/vite": "workspace:*",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

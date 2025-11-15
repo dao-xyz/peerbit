@@ -60,7 +60,7 @@
 		"clean": "aegir clean",
 		"copy-sqlite-wasm": "node ./scripts/copy-sqlite-wasm.mjs",
 		"build-worker": "esbuild --bundle ./src/sqlite3.worker.ts --format=esm --outfile=./dist/peerbit/sqlite3.worker.min.js",
-		"build": "aegir build && npm run build-worker && npm run copy-sqlite-wasm",
+		"build": "aegir build && npm run copy-sqlite-wasm && npm run build-worker",
 		"test": "aegir test",
 		"test:browser": "aegir clean && aegir test -t browser",
 		"test:node": "aegir clean && aegir test -t node",
@@ -70,7 +70,7 @@
 	"license": "MIT",
 	"dependencies": {
 		"better-sqlite3": "^12.4.1",
-		"@dao-xyz/borsh": "^5.2.3",
+		"@dao-xyz/borsh": "^6.0.0",
 		"@peerbit/indexer-interface": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/time": "workspace:*",

@@ -13,7 +13,7 @@
 		"moduleResolution": "bundler",
 		"resolveJsonModule": true,
 		"isolatedModules": true,
-		"experimentalDecorators": true,
+		
 		"noEmit": true,
 		"jsx": "react-jsx",
 		"baseUrl": "."

@@ -77,7 +77,7 @@
 		"@peerbit/libp2p-test-utils": "workspace:*"
 	},
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.2.3",
+		"@dao-xyz/borsh": "^6.0.0",
 		"@libp2p/interface": "^3.1.0",
 		"@libp2p/tcp": "^11.0.2",
 		"@libp2p/websockets": "^10.1.0",

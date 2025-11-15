@@ -43,7 +43,7 @@
 		"uuid": "^10.0.0"
 	},
 	"devDependencies": {
-		"@dao-xyz/borsh": "^5.2.3",
+		"@dao-xyz/borsh": "^6.0.0",
 		"@peerbit/blocks-interface": "workspace:*",
 		"@peerbit/program": "workspace:*",
 		"@testing-library/dom": "^10.4.0",

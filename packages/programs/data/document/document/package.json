@@ -58,7 +58,7 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.2.3",
+		"@dao-xyz/borsh": "^6.0.0",
 		"@chainsafe/libp2p-yamux": "^8.0.0",
 		"@libp2p/interface": "^3.1.0",
 		"@libp2p/tcp": "^11.0.2",

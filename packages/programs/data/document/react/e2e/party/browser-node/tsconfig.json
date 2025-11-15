@@ -1,18 +1,23 @@
 {
   "extends": "../../../../../../../../tsconfig.json",
   "compilerOptions": {
-    "jsx": "react-jsx",
-    "outDir": "dist",
-    "module": "esnext",
-    "moduleResolution": "node",
-    "rootDir": "..",
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
-    "baseUrl": ".",
-    "paths": {
-      "@party/shared/*": ["../shared/*"]
-    }
+  "target": "es2022",
+		"useDefineForClassFields": true,
+		"lib": ["DOM", "DOM.Iterable", "Es2022"],
+		"allowJs": false,
+		"skipLibCheck": true,
+		"esModuleInterop": false,
+		"allowSyntheticDefaultImports": true,
+		"strict": true,
+		"forceConsistentCasingInFileNames": true,
+		"module": "es2022",
+		"moduleResolution": "node",
+		"resolveJsonModule": true,
+		"isolatedModules": true,
+		"rootDir": "..",
+		"noEmit": true,
+		"jsx": "react-jsx"
   },
-  "include": ["src", "../shared"],
+  "include": ["src"],
   "exclude": ["dist", "node_modules"]
 }

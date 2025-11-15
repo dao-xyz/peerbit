@@ -58,7 +58,7 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.2.3",
+		"@dao-xyz/borsh": "^6.0.0",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/log": "workspace:*",
 		"@peerbit/program": "workspace:*",

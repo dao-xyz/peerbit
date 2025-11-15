@@ -3,8 +3,8 @@
 	"compilerOptions": {
 		"checkJs": false,
 		"strictPropertyInitialization": false,
-		"experimentalDecorators": true,
-		"emitDecoratorMetadata": true,
+		
+		
 		"outDir": "dist"
 	},
 	"include": ["src", "test", "docs"]

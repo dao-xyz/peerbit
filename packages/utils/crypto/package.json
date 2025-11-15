@@ -69,7 +69,7 @@
 	},
 	"dependencies": {
 		"@peerbit/cache": "workspace:*",
-		"@dao-xyz/borsh": "^5.2.3",
+		"@dao-xyz/borsh": "^6.0.0",
 		"@stablelib/sha256": "^2.0.1",
 		"@ethersproject/wallet": "^5.8.0",
 		"@ethersproject/strings": "^5.7.0",

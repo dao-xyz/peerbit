@@ -60,7 +60,7 @@
 		"crdt"
 	],
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.2.3",
+		"@dao-xyz/borsh": "^6.0.0",
 		"@peerbit/any-store": "workspace:*",
 		"@peerbit/blocks": "workspace:*",
 		"@peerbit/blocks-interface": "workspace:*",

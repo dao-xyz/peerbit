@@ -96,7 +96,7 @@
 		"@peerbit/program": "workspace:*",
 		"@peerbit/pubsub": "workspace:*",
 		"@peerbit/time": "workspace:*",
-		"@dao-xyz/borsh": "^5.2.3",
+		"@dao-xyz/borsh": "^6.0.0",
 		"libsodium-wrappers": "^0.7.15",
 		"uint8arrays": "^5.1.0",
 		"level": "^10.0.0",

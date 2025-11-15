@@ -1,12 +1,10 @@
 {
-  "extends": "../../../../../../../tsconfig.json",
-  "compilerOptions": {
-    "outDir": "dist",
-    "module": "esnext",
-    "moduleResolution": "node",
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true
-  },
-  "include": ["tests", "shared", "playwright.config.ts"],
-  "exclude": ["node_modules", "dist"]
+  "extends": "aegir/src/config/tsconfig.aegir.json",
+	"compilerOptions": {
+		
+		
+		"strictNullChecks": false,
+		"outDir": "dist"
+	},
+	"include": ["tests"]
 }

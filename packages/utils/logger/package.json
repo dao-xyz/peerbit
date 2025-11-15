@@ -49,7 +49,7 @@
 		"access": "public"
 	},
 	"dependencies": {
-		"pino": "^8.14.1"
+		"@libp2p/logger": "^6.2.1"
 	},
 	"scripts": {
 		"clean": "aegir clean",

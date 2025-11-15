@@ -5,8 +5,8 @@
 		"allowJs": true,
 		"checkJs": false,
 		"strict": false,
-		"experimentalDecorators": true,
-		/* "emitDecoratorMetadata": true, */
+		
+		/*  */
 		"strictNullChecks": false,
 		"allowUnusedLabels": true,
 		"noUnusedLocals": false,

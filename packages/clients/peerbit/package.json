@@ -63,7 +63,7 @@
 	},
 	"dependencies": {
 		"@chainsafe/libp2p-noise": "^17.0.0",
-		"@dao-xyz/borsh": "^5.2.3",
+		"@dao-xyz/borsh": "^6.0.0",
 		"@libp2p/circuit-relay-v2": "^4.1.0",
 		"@libp2p/crypto": "^5.1.10",
 		"@libp2p/identify": "^4.0.2",

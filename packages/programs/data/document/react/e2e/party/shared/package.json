@@ -1,0 +1,35 @@
+{
+  "name": "@peerbit/document-react-party-shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    "./data": {
+      "types": "./dist/data.d.ts",
+      "import": "./dist/data.js"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "data": [
+        "dist/data.d.ts"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput"
+  },
+  "dependencies": {
+    "@dao-xyz/borsh": "^6.0.0",
+    "@peerbit/crypto": "workspace:*",
+    "@peerbit/document": "workspace:*",
+    "@peerbit/program": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
