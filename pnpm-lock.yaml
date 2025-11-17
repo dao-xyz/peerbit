@@ -639,6 +639,9 @@ importers:
       '@chainsafe/libp2p-noise':
         specifier: ^17.0.0
         version: 17.0.0
+      '@chainsafe/libp2p-yamux':
+        specifier: ^8.0.0
+        version: 8.0.1
       '@dao-xyz/borsh':
         specifier: ^6.0.0
         version: 6.0.0
@@ -663,9 +666,6 @@ importers:
       '@peerbit/proxy-window':
         specifier: workspace:*
         version: link:../peerbit-proxy/window
-      '@testing-library/dom':
-        specifier: ^10.4.0
-        version: 10.4.1
       debug:
         specifier: ^4.3.7
         version: 4.4.3(supports-color@8.1.1)
@@ -688,6 +688,9 @@ importers:
       '@peerbit/time':
         specifier: workspace:*
         version: link:../../utils/time
+      '@testing-library/dom':
+        specifier: ^10.4.0
+        version: 10.4.1
       '@types/debug':
         specifier: ^4.1.12
         version: 4.1.12
@@ -1210,9 +1213,6 @@ importers:
       peerbit:
         specifier: workspace:*
         version: link:../../../../../../clients/peerbit
-      reflect-metadata:
-        specifier: ^0.2.2
-        version: 0.2.2
     devDependencies:
       '@playwright/test':
         specifier: ^1.47.0
@@ -1235,12 +1235,18 @@ importers:
       '@peerbit/document-react':
         specifier: workspace:*
         version: link:../../..
+      '@peerbit/document-react-party-shared':
+        specifier: workspace:*
+        version: link:../shared
       '@peerbit/indexer-simple':
         specifier: workspace:*
         version: link:../../../../../../../utils/indexer/simple
       '@peerbit/indexer-sqlite3':
         specifier: workspace:*
         version: link:../../../../../../../utils/indexer/sqlite3
+      '@peerbit/logger':
+        specifier: workspace:*
+        version: link:../../../../../../../utils/logger
       '@peerbit/program':
         specifier: workspace:*
         version: link:../../../../../../program/program
@@ -1262,16 +1268,7 @@ importers:
       react-dom:
         specifier: ^19.0.0
         version: 19.2.0(react@19.2.0)
-      reflect-metadata:
-        specifier: ^0.2.2
-        version: 0.2.2
     devDependencies:
-      '@babel/plugin-proposal-class-properties':
-        specifier: ^7.18.6
-        version: 7.18.6(@babel/core@7.28.5)
-      '@babel/plugin-proposal-decorators':
-        specifier: ^7.28.0
-        version: 7.28.0(@babel/core@7.28.5)
       '@types/react':
         specifier: ^18.3.11
         version: 18.3.26
@@ -1287,6 +1284,25 @@ importers:
       vite:
         specifier: ^7.1.7
         version: 7.2.2(@types/node@22.19.1)(terser@5.44.1)(yaml@2.8.1)
+
+  packages/programs/data/document/react/e2e/party/shared:
+    dependencies:
+      '@dao-xyz/borsh':
+        specifier: ^6.0.0
+        version: 6.0.0
+      '@peerbit/crypto':
+        specifier: workspace:*
+        version: link:../../../../../../../utils/crypto
+      '@peerbit/document':
+        specifier: workspace:*
+        version: link:../../../../document
+      '@peerbit/program':
+        specifier: workspace:*
+        version: link:../../../../../../program/program
+    devDependencies:
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
 
   packages/programs/data/shared-log:
     dependencies:
@@ -2462,12 +2478,6 @@ packages:
     peerDependencies:
       '@babel/core': ^7.0.0-0
 
-  '@babel/plugin-proposal-decorators@7.28.0':
-    resolution: {integrity: sha512-zOiZqvANjWDUaUS9xMxbMcK/Zccztbe/6ikvUXaG9nsPH3w6qh5UaPGAnirI/WhIbZ8m3OHU0ReyPrknG+ZKeg==}
-    engines: {node: '>=6.9.0'}
-    peerDependencies:
-      '@babel/core': ^7.0.0-0
-
   '@babel/plugin-proposal-export-default-from@7.27.1':
     resolution: {integrity: sha512-hjlsMBl1aJc5lp8MoCDEZCiYzlgdRAShOjAfRw6X+GlpLpUPU7c3XNLsKFZbQk/1cRzBlJ7CXg3xJAJMrFa1Uw==}
     engines: {node: '>=6.9.0'}
@@ -2519,12 +2529,6 @@ packages:
 
   '@babel/plugin-syntax-class-static-block@7.14.5':
     resolution: {integrity: sha512-b+YyPmr6ldyNnM6sqYeMWE+bgJcJpO6yS4QD7ymxgH34GBPNDM/THBh8iunyvKIZztiwLH4CJZ0RxTk9emgpjw==}
-    engines: {node: '>=6.9.0'}
-    peerDependencies:
-      '@babel/core': ^7.0.0-0
-
-  '@babel/plugin-syntax-decorators@7.27.1':
-    resolution: {integrity: sha512-YMq8Z87Lhl8EGkmb0MwYkt36QnxC+fzCgrl66ereamPlYToRpIk5nUjKUY3QKLWq8mwUB1BgbeXcTJhZOCDg5A==}
     engines: {node: '>=6.9.0'}
     peerDependencies:
       '@babel/core': ^7.0.0-0
@@ -11201,15 +11205,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@babel/plugin-proposal-decorators@7.28.0(@babel/core@7.28.5)':
-    dependencies:
-      '@babel/core': 7.28.5
-      '@babel/helper-create-class-features-plugin': 7.28.5(@babel/core@7.28.5)
-      '@babel/helper-plugin-utils': 7.27.1
-      '@babel/plugin-syntax-decorators': 7.27.1(@babel/core@7.28.5)
-    transitivePeerDependencies:
-      - supports-color
-
   '@babel/plugin-proposal-export-default-from@7.27.1(@babel/core@7.28.5)':
     dependencies:
       '@babel/core': 7.28.5
@@ -11261,11 +11256,6 @@ snapshots:
       '@babel/helper-plugin-utils': 7.27.1
 
   '@babel/plugin-syntax-class-static-block@7.14.5(@babel/core@7.28.5)':
-    dependencies:
-      '@babel/core': 7.28.5
-      '@babel/helper-plugin-utils': 7.27.1
-
-  '@babel/plugin-syntax-decorators@7.27.1(@babel/core@7.28.5)':
     dependencies:
       '@babel/core': 7.28.5
       '@babel/helper-plugin-utils': 7.27.1

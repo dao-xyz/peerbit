@@ -9,6 +9,7 @@
     "preview": "vite preview --host"
   },
   "dependencies": {
+    "@peerbit/document-react-party-shared": "workspace:*",
     "@peerbit/any-store-opfs": "workspace:*",
     "@peerbit/document": "workspace:*",
     "@peerbit/document-react": "workspace:*",
@@ -20,7 +21,8 @@
     "@peerbit/riblt": "workspace:*",
     "@peerbit/vite": "workspace:*",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "@peerbit/logger": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^18.3.11",

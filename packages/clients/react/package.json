@@ -40,12 +40,12 @@
 		"@dao-xyz/borsh": "^6.0.0",
 		"@libp2p/interface": "^3.1.0",
 		"@libp2p/websockets": "^10.1.0",
+		"@chainsafe/libp2p-yamux": "^8.0.0",
 		"@multiformats/multiaddr": "^13.0.1",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/proxy-window": "workspace:*",
 		"@peerbit/program": "workspace:*",
 		"@peerbit/indexer-interface": "workspace:*",
-		"@testing-library/dom": "^10.4.0",
 		"debug": "^4.3.7",
 		"detectincognitojs": "^1.6.1",
 		"libsodium-wrappers": "^0.7.14",
@@ -53,6 +53,7 @@
 		"uuid": "^10.0.0"
 	},
 	"devDependencies": {
+		"@testing-library/dom": "^10.4.0",
 		"@types/debug": "^4.1.12",
 		"@types/libsodium-wrappers": "^0.7.14",
 		"@peerbit/time": "workspace:*",

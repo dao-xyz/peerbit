@@ -13,15 +13,15 @@ import { v4 as uuid } from "uuid";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { FastMutex } from "./lockstorage.js";
 import sodium from "libsodium-wrappers";
-
+import { yamux } from "@chainsafe/libp2p-yamux";
 import { useMount } from "./useMount.js";
 import { createClient, createHost } from "@peerbit/proxy-window";
 import type { ProgramClient } from "@peerbit/program";
 import { webSockets } from "@libp2p/websockets";
 import { detectIncognito } from "detectincognitojs";
 import { waitFor } from "@testing-library/dom";
-import type { Libp2p } from "@libp2p/interface";
 import type { Indices } from "@peerbit/indexer-interface";
+
 const isInStandaloneMode = () =>
     window.matchMedia("(display-mode: standalone)").matches ||
     ((window.navigator as unknown as Record<string, unknown>)["standalone"] ??
@@ -287,6 +287,7 @@ export const PeerProvider = (options: PeerOptions) => {
                                 /* "/p2p-circuit" */
                             ],
                         },
+                        streamMuxers: [yamux()],
                         connectionEncrypters: [noise()],
                         peerId,
                         connectionManager: { maxConnections: 100 },
@@ -302,6 +303,7 @@ export const PeerProvider = (options: PeerOptions) => {
                                 ],
                             }
                             : {
+
                                 connectionGater: {
                                     denyDialMultiaddr: () => false, // TODO do right here, dont allow local dials except bootstrap
                                 },
@@ -358,7 +360,7 @@ export const PeerProvider = (options: PeerOptions) => {
                                 );
                             } else {
                                 for (const addr of list) {
-                                    await newPeer.dial(addr as any);
+                                    await newPeer.dial(addr);
                                 }
                             }
                         }
@@ -383,7 +385,7 @@ export const PeerProvider = (options: PeerOptions) => {
                         setConnectionState("connected");
                     } catch (err: any) {
                         console.error(
-                            "Failed to resolve relay addresses. " + err?.message
+                            "Failed to bootstrap:",err
                         );
                         setConnectionState("failed");
                     }
@@ -433,11 +435,11 @@ export const PeerProvider = (options: PeerOptions) => {
                         if (isDone) {
                             return true;
                         }
-                        const libp2p = newPeer as any as Libp2p;
-                        if (libp2p.getDialQueue().length > 0) {
+                        const libp2p = newPeer as Peerbit;
+                        if (libp2p.libp2p.getDialQueue().length > 0) {
                             return true;
                         }
-                        if (libp2p.getConnections().length > 0) {
+                        if (libp2p.libp2p.getConnections().length > 0) {
                             return true;
                         }
                         return false;

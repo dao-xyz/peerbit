@@ -7,7 +7,6 @@
     "dev": "node ./scripts/dev.mjs",
     "build": "pnpm --dir ./shared build && pnpm --dir ./browser-node build",
     "preview": "pnpm --dir ./shared build && pnpm --dir ./browser-node preview",
-    "pretest": "pnpm --dir ./shared build && node ./scripts/copy-peerbit-assets.mjs && tsc -p tsconfig.json",
     "test": "playwright test --config dist/playwright.config.js",
     "test:headed": "PWDEBUG=1 pnpm test -- --headed"
   },

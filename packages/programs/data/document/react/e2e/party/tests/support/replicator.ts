@@ -8,7 +8,7 @@ export type RunningReplicator = {
 };
 
 export async function startReplicator(): Promise<RunningReplicator> {
-	const peer = await Peerbit.create({
+	const peer = await Peerbit.create(/* {
 		libp2p: {
 			addresses: {
 				listen: ["/ip4/127.0.0.1/tcp/0/ws"],
@@ -18,7 +18,7 @@ export async function startReplicator(): Promise<RunningReplicator> {
 				denyDialMultiaddr: () => false,
 			},
 		},
-	});
+	} */);
 
 	await peer.open(PartyDocumentStore.createFixed(), {
 		existing: "reuse",

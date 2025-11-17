@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PeerProvider, usePeer } from "@peerbit/react";
 import { useProgram } from "@peerbit/program-react";
 import { useQuery } from "@peerbit/document-react";
@@ -6,7 +6,7 @@ import {
 	PartyDocumentStore,
 	PartyMessage,
 	PartyMessageIndex,
-} from "../../shared/dist/data.js";
+} from "@peerbit/document-react-party-shared";
 import { create as createSimpleIndexer } from "@peerbit/indexer-simple";
 import { SortDirection } from "@peerbit/indexer-interface";
 
@@ -26,7 +26,7 @@ const label = labelParam && labelParam.length > 0
 const networkOption = bootstrapAddrs.length
 	? ({ type: "explicit", bootstrap: bootstrapAddrs } as const)
 	: ("remote" as const);
-
+console.log("bootstrap options", networkOption);
 export const App = () => {
 	return (
 		<PeerProvider
@@ -47,6 +47,7 @@ type DocumentPartyProps = {
 const DocumentParty = ({ label, replicate }: DocumentPartyProps) => {
 	const { peer, status, error } = usePeer();
 	const store = useMemo(() => PartyDocumentStore.createFixed(), []);
+	const [message, setMessage] = useState("");
 
 	const { program } = useProgram(peer ? store : undefined, {
 		args: { replicate },
@@ -95,10 +96,24 @@ const DocumentParty = ({ label, replicate }: DocumentPartyProps) => {
 	return (
 		<main style={{ fontFamily: "sans-serif", padding: 16 }}>
 			<h1>Document React Party</h1>
+			<p data-testid="bootstrap-addrs">
+				<strong>Bootstrap addrs:</strong>{" "}
+				{bootstrapAddrs.length > 0
+					? bootstrapAddrs.join(", ")
+					: "Using remote peer"}
+			</p>
+			<p data-testid="peer-label">
+				<strong>Label:</strong> {label}
+			</p>
+			<p data-testid="replicate-status">
+				<strong>Replicating:</strong> {replicate ? "yes" : "no"}
+			</p>
+			<hr />
+			<h2>Peer Status</h2>
 			<p data-testid="connection-status">{status}</p>
-			{error ? <p data-testid="peer-error">{error.message}</p> : null}
+			{error ? <p data-testid="peer-error">Bootstrap: {error.message}</p> : null}
 			<p data-testid="peer-id">
-				{peer ? peer.identity.publicKey.hashcode() : "connecting"}
+				{peer ? peer.identity.publicKey.hashcode() : ("connecting")}
 			</p>
 			<p data-testid="message-count">{items.length}</p>
 			<ul data-testid="messages">
@@ -112,6 +127,22 @@ const DocumentParty = ({ label, replicate }: DocumentPartyProps) => {
 					</li>
 				))}
 			</ul>
+
+			<input data-testid="message-input" type="text" value={message} onChange={(e) => setMessage(e.target.value)} />	
+			<button data-testid="send-button" disabled={!program} onClick={async () => {
+				if (!program) {
+					throw new Error("Program not ready");
+				}
+				const now = BigInt(Date.now());
+				await program.documents.put(
+					new PartyMessage({
+						author: label,
+						content: message,
+						timestamp: now,
+					})
+				);
+				setMessage("");
+			}}>Send</button>
 		</main>
 	);
 };

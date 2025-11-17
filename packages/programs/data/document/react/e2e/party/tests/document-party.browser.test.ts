@@ -1,6 +1,7 @@
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import { startReplicator } from "./support/replicator.js";
 import { launchBrowserContext, withSearchParams } from "./support/browser.js";
+import { Peerbit } from "peerbit";
 
 const PARTICIPANTS = [
 	{ label: "replica-a", replicate: true },
@@ -40,12 +41,57 @@ test.describe("document react party", () => {
 		await stopReplicator?.();
 	});
 
+
+	test("it will observe self messages when not replicating", async ({ page }, testInfo) => {
+		const baseURL = (testInfo.project.use.baseURL as string | undefined) ??
+			"http://localhost:5255";
+
+		attachLogging(page, "observer-self");
+
+		const url = withSearchParams(baseURL, {
+			label: "observer-self",
+			replicate: "false",
+			bootstrap: bootstrap.join(","),
+		});
+		await page.goto(url);
+
+		const messageInput = page.getByTestId("message-input");
+		const sendButton = page.getByTestId("send-button");
+		await messageInput.fill("Hello, self!");
+		await sendButton.click();
+
+		await expect(page.getByTestId("message-count")).toHaveText("1", {
+			timeout: 10_000,
+		});
+
+		const messages = await getMessages(page);
+		expect(messages).toHaveLength(1);
+		expect(messages[0].text).toBe("Hello, self!");
+
+		// reload and ensure message gets queried again
+		await page.reload();
+
+		await expect(page.getByTestId("message-count")).toHaveText("1", {
+			timeout: 10_000,
+		});
+
+		const messagesAfterReload = await getMessages(page);
+		expect(messagesAfterReload).toHaveLength(1);
+		expect(messagesAfterReload[0].text).toBe("Hello, self!");
+	});
+	
+
 	test("all peers observe the sorted message log", async ({ page }, testInfo) => {
 		const baseURL = (testInfo.project.use.baseURL as string | undefined) ??
 			"http://localhost:5255";
 
 		const pages = [page];
 		const extraContexts:BrowserContext[] = [];
+
+		const dummyClient = await Peerbit.create();
+		for (const addr of bootstrap) {
+			await dummyClient.dial(addr);
+		}
 
 		for (let i = 0; i < PARTICIPANTS.length; i++) {
 			let currentPage = i === 0 ? page : undefined;
