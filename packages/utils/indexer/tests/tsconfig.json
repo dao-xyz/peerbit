@@ -5,8 +5,7 @@
 		"strict": false,
 		"allowUnusedLabels": true,
 		"noUnusedLocals": false,
-		
-		
+
 		"strictNullChecks": false,
 		"outDir": "dist"
 	},

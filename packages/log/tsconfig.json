@@ -1,8 +1,6 @@
 {
 	"extends": "aegir/src/config/tsconfig.aegir.json",
 	"compilerOptions": {
-		
-		
 		"noUnusedParameters": false,
 		"noUnusedLocals": false,
 		"outDir": "dist",

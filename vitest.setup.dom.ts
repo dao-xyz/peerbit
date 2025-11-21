@@ -1,8 +1,8 @@
 // vitest.setup.dom.ts
 // Runs before each test file in the jsdom project
-
 // 1) TextEncoder/TextDecoder
-import { TextEncoder, TextDecoder } from "node:util";
+import { TextDecoder, TextEncoder } from "node:util";
+
 (globalThis as any).TextEncoder = TextEncoder;
 globalThis.TextDecoder = TextDecoder as typeof globalThis.TextDecoder;
 

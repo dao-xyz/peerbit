@@ -7,8 +7,18 @@
 	"types": "./dist/src/index.d.ts",
 	"typesVersions": {
 		"*": {
-			"*": ["*", "dist/*", "dist/src/*", "dist/src/*/index"],
-			"src/*": ["*", "dist/*", "dist/src/*", "dist/src/*/index"]
+			"*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			],
+			"src/*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			]
 		}
 	},
 	"files": [
@@ -62,7 +72,7 @@
 		"chai": "^5.2.0",
 		"node-localstorage": "^3.0.5",
 		"sinon": "^21.0.0",
-		 "vitest": "^3.2.4"
+		"vitest": "^4.0.12"
 	},
 	"author": "dao.xyz",
 	"license": "MIT"

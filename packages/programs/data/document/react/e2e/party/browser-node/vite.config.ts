@@ -1,7 +1,7 @@
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
 import peerbit from "@peerbit/vite";
+import react from "@vitejs/plugin-react";
 import path from "node:path";
+import { defineConfig } from "vite";
 
 const ROOT = path.resolve(__dirname, "..");
 

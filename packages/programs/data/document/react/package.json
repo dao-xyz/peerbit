@@ -7,8 +7,18 @@
 	"types": "./dist/src/index.d.ts",
 	"typesVersions": {
 		"*": {
-			"*": ["*", "dist/*", "dist/src/*", "dist/src/*/index"],
-			"src/*": ["*", "dist/*", "dist/src/*", "dist/src/*/index"]
+			"*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			],
+			"src/*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			]
 		}
 	},
 	"files": [
@@ -40,6 +50,7 @@
 		"@peerbit/document": "workspace:*",
 		"@peerbit/indexer-interface": "workspace:*",
 		"@peerbit/react": "workspace:*",
+		"@peerbit/logger": "workspace:*",
 		"uuid": "^10.0.0"
 	},
 	"devDependencies": {
@@ -55,7 +66,7 @@
 		"peerbit": "workspace:*",
 		"react-dom": "^19.0.0",
 		"happy-dom": "^20.0.10",
-		"vitest": "^3.2.4"
+		"vitest": "^4.0.12"
 	},
 	"author": "dao.xyz",
 	"license": "MIT"

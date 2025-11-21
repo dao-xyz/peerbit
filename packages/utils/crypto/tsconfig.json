@@ -2,8 +2,7 @@
 	"extends": "aegir/src/config/tsconfig.aegir.json",
 	"compilerOptions": {
 		// allow top level await
-		
-		
+
 		"outDir": "dist"
 	},
 	"include": ["src", "test", "benchmark"]

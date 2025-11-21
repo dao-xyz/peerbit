@@ -1,23 +1,23 @@
 {
-  "extends": "../../../../../../../../tsconfig.json",
-  "compilerOptions": {
-    "target": "es2022",
-    "useDefineForClassFields": true,
-    "lib": ["DOM", "DOM.Iterable", "Es2022"],
-    "allowJs": false,
-    "skipLibCheck": true,
-    "esModuleInterop": false,
-    "allowSyntheticDefaultImports": true,
-    "strict": true,
-    "forceConsistentCasingInFileNames": true,
-    "module": "es2022",
-    "moduleResolution": "bundler",
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "rootDir": "..",
-    "noEmit": true,
-    "jsx": "react-jsx"
-  },
-  "include": ["src"],
-  "exclude": ["dist", "node_modules"]
+	"extends": "../../../../../../../../tsconfig.json",
+	"compilerOptions": {
+		"target": "es2022",
+		"useDefineForClassFields": true,
+		"lib": ["DOM", "DOM.Iterable", "Es2022"],
+		"allowJs": false,
+		"skipLibCheck": true,
+		"esModuleInterop": false,
+		"allowSyntheticDefaultImports": true,
+		"strict": true,
+		"forceConsistentCasingInFileNames": true,
+		"module": "es2022",
+		"moduleResolution": "bundler",
+		"resolveJsonModule": true,
+		"isolatedModules": true,
+		"rootDir": "..",
+		"noEmit": true,
+		"jsx": "react-jsx"
+	},
+	"include": ["src"],
+	"exclude": ["dist", "node_modules"]
 }
