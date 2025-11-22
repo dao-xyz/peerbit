@@ -1,4 +1,8 @@
-import { isMultiaddr, multiaddr, type Multiaddr } from "@multiformats/multiaddr";
+import {
+	type Multiaddr,
+	isMultiaddr,
+	multiaddr,
+} from "@multiformats/multiaddr";
 import { DirectBlock } from "@peerbit/blocks";
 import { calculateRawCid } from "@peerbit/blocks-interface";
 import {

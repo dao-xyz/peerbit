@@ -14,11 +14,8 @@ import type {
 	Stream,
 	TypedEventTarget,
 } from "@libp2p/interface";
-import type {
-	AddressManager,
-	Registrar,
-} from "@libp2p/interface-internal";
-import { multiaddr, type Multiaddr } from "@multiformats/multiaddr";
+import type { AddressManager, Registrar } from "@libp2p/interface-internal";
+import { type Multiaddr, multiaddr } from "@multiformats/multiaddr";
 import { Circuit } from "@multiformats/multiaddr-matcher";
 import { Cache } from "@peerbit/cache";
 import {
@@ -1703,11 +1700,7 @@ export abstract class DirectStream<
 		try {
 			message = Message.from(msg);
 		} catch (error) {
-			warn(
-				error,
-				"Failed to decode message frame from",
-				from.hashcode(),
-			);
+			warn(error, "Failed to decode message frame from", from.hashcode());
 			return;
 		}
 		if (!message) {
@@ -2173,9 +2166,7 @@ export abstract class DirectStream<
 				if (stream) {
 					to.push(stream);
 				} else {
-					warn(
-						`Peer ${peer} not found in peers, skipping neighbor selection`,
-					);
+					warn(`Peer ${peer} not found in peers, skipping neighbor selection`);
 					to = undefined;
 					break;
 				}

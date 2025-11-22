@@ -1,9 +1,6 @@
 import { keys } from "@libp2p/crypto";
 import { TestSession } from "@peerbit/test-utils";
-import {
-	AbortError,
-	/* waitFor */
-} from "@peerbit/time";
+import { AbortError } from /* waitFor */ "@peerbit/time";
 import B from "benchmark";
 import { v4 as uuid } from "uuid";
 import { EventStore } from "../test/utils/stores/event-store.js";

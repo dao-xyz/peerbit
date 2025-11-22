@@ -1,9 +1,9 @@
 import { Cache } from "@peerbit/cache";
+import type { RequestContext } from "@peerbit/rpc";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import sinon from "sinon";
-import type { RequestContext } from "@peerbit/rpc";
 import {
 	type ReplicationDomainHash,
 	createReplicationDomainHash,

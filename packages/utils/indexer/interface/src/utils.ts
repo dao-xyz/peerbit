@@ -92,17 +92,13 @@ const isStage3DecoratorContext = (
 	return !!value && typeof value === "object" && "kind" in value;
 };
 
-const ensureLegacyMetadata = (
-	target: any,
-	name: string | symbol,
-): void => {
+const ensureLegacyMetadata = (target: any, name: string | symbol): void => {
 	target.constructor[INDEXED_ID_META_PROPERY] = name;
 };
 
-const storeMetadataOnContext = (
-	context: Stage3DecoratorContext,
-): void => {
-	context.metadata && (context.metadata[INDEXED_ID_META_PROPERY] = context.name);
+const storeMetadataOnContext = (context: Stage3DecoratorContext): void => {
+	context.metadata &&
+		(context.metadata[INDEXED_ID_META_PROPERY] = context.name);
 	// Best-effort legacy compatibility so classes compiled with stage-3
 	// decorators still expose the legacy static hint.
 	context.addInitializer?.(function () {
@@ -116,7 +112,7 @@ const storeMetadataOnContext = (
 export function id(properties: SimpleField | CustomField<any>) {
 	const innerFn = field(properties);
 	return (targetOrValue: any, nameOrContext: any) => {
-	if (isStage3DecoratorContext(nameOrContext)) {
+		if (isStage3DecoratorContext(nameOrContext)) {
 			const result = (innerFn as unknown as (value: any, context: any) => any)(
 				targetOrValue,
 				nameOrContext,

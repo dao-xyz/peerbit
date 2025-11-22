@@ -2,7 +2,6 @@ import { keys } from "@libp2p/crypto";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
-
 /* import { AbsoluteReplicas } from "../src/replication.js"; */
 import { EventStore } from "../test/utils/stores/event-store.js";
 

@@ -10,13 +10,13 @@ import {
 import { Entry, Log } from "@peerbit/log";
 import type { RPC, RequestContext } from "@peerbit/rpc";
 import { SilentDelivery } from "@peerbit/stream-interface";
-import type { SyncableKey, Syncronizer } from "./index.js";
 import {
 	EntryWithRefs,
 	createExchangeHeadsMessages,
 } from "../exchange-heads.js";
 import { TransportMessage } from "../message.js";
 import type { EntryReplicated } from "../ranges.js";
+import type { SyncableKey, Syncronizer } from "./index.js";
 
 @variant([0, 1])
 export class RequestMaybeSync extends TransportMessage {
