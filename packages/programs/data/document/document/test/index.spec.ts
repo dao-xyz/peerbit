@@ -46,12 +46,16 @@ import { Entry, Log, createEntry } from "@peerbit/log";
 import { ClosedError, Program } from "@peerbit/program";
 import type { DirectSub } from "@peerbit/pubsub";
 import { RPCMessage, ResponseV0 } from "@peerbit/rpc";
-import { AbsoluteReplicas, decodeReplicas } from "@peerbit/shared-log";
+import {
+	AbsoluteReplicas,
+	SharedLog,
+	decodeReplicas,
+} from "@peerbit/shared-log";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
-import pDefer from "p-defer";
+import pDefer, { type DeferredPromise } from "p-defer";
 import sinon from "sinon";
 import { v4 as uuid } from "uuid";
 import type { DocumentsChange } from "../src/events.js";
@@ -62,7 +66,12 @@ import {
 	PutWithKeyOperation,
 } from "../src/operation.js";
 import { Documents, type SetupOptions } from "../src/program.js";
-import { type CanRead } from "../src/search.js";
+import {
+	type CanRead,
+	DocumentIndex,
+	type LateResultsEvent,
+	type UpdateReason,
+} from "../src/search.js";
 import { Document, TestStore } from "./data.js";
 
 describe("index", () => {
@@ -2685,6 +2694,19 @@ describe("index", () => {
 							for (const batch of batches) {
 								expect(iterator.done()).to.be.false;
 								const next = await iterator.next(batch.length);
+								if (
+									(next.map((x) => x.number).join(",") ?? "") !==
+									batch.join(",")
+								) {
+									console.error(
+										"[iterate debug] from=%s expected=%o got=%o pending=%s done=%s",
+										fromStoreIndex,
+										batch,
+										next.map((x) => x.number),
+										await iterator.pending(),
+										iterator.done(),
+									);
+								}
 								expect(next.map((x) => x.number)).to.deep.equal(batch);
 							}
 
@@ -2729,6 +2751,7 @@ describe("index", () => {
 									factor: 1,
 								},
 								timeUntilRoleMaturity: 0,
+								waitForReplicatorTimeout: 30000,
 								replicas: { min: 1 }, // make sure documents only exist once
 							},
 						});
@@ -2767,7 +2790,6 @@ describe("index", () => {
 					}
 				});
 
-				// TODO make sure documents are evenly distrubted before querye
 				it("one peer", async () => {
 					await put(0, 0);
 					await put(0, 1);
@@ -3852,8 +3874,10 @@ describe("index", () => {
 									};
 								},
 							},
-							onChange: () => {
-								evtCalls++;
+							notify: (reason) => {
+								if (reason === "change") {
+									evtCalls++;
+								}
 							},
 						},
 					},
@@ -4083,6 +4107,199 @@ describe("index", () => {
 				}
 			});
 
+			describe("push", () => {
+				const assertPush = async (push: boolean) => {
+					session = await TestSession.disconnected(3);
+					await session.connect([
+						[session.peers[0], session.peers[1]],
+						[session.peers[1], session.peers[2]],
+					]);
+
+					const base = new TestStore({ docs: new Documents<Document>() });
+					const replicator = await session.peers[1].open(base, {
+						args: {
+							replicate: { factor: 1 },
+						},
+					});
+
+					const writer = await session.peers[0].open(base.clone(), {
+						args: { replicate: false },
+					});
+
+					const readerPrototype = base.clone();
+					let reader = await session.peers[2].open(readerPrototype.clone(), {
+						args: {
+							replicate: false,
+						},
+					});
+
+					await reader.docs.index.waitFor(replicator.node.identity.publicKey);
+					await writer.docs.index.waitFor(replicator.node.identity.publicKey);
+
+					let notificationPromise: DeferredPromise<void> | null = null;
+					let notifications: UpdateReason[] = [];
+					const onNotify = (reason: UpdateReason) => {
+						notifications.push(reason);
+						if (notificationPromise) {
+							notificationPromise.resolve();
+						}
+					};
+					let timeout: ReturnType<typeof setTimeout> | null = null;
+					if (push) {
+						notificationPromise = pDefer<void>();
+						// safety timeout to avoid hanging tests
+						timeout = setTimeout(() => {
+							notificationPromise?.resolve();
+						}, 30_000);
+					}
+
+					const iterator = reader.docs.index.iterate(
+						{ sort: { key: "id", direction: SortDirection.ASC } },
+						{
+							closePolicy: "manual",
+							remote: {
+								wait: { timeout: 5e3, behavior: "keep-open" },
+								reach: {
+									discover: [replicator.node.identity.publicKey],
+									eager: true,
+								},
+							},
+							updates: push
+								? {
+										push: true,
+										notify: (reason) => {
+											onNotify(reason);
+										},
+										merge: true,
+									}
+								: {
+										push: false,
+										notify: (reason) => {
+											onNotify(reason);
+										},
+										merge: false,
+									},
+						},
+					);
+
+					try {
+						const out = await iterator.next(1); // establish iterator remotely
+						expect(out).to.have.length(0);
+
+						const docId = `push-nonrep-${Date.now()}`;
+						await writer.docs.put(new Document({ id: docId }));
+
+						if (push) {
+							await notificationPromise!.promise;
+							await waitForResolved(
+								async () => expect(await iterator.pending()).to.equal(1),
+								{ timeout: 30_000 },
+							);
+							const batch = await iterator.next(1);
+							expect(batch).to.have.length(1);
+							expect(batch[0].id).to.equal(docId);
+						} else {
+							await delay(5_000); // ensure we didn't receive a pushed batch
+							expect(await iterator.pending()).to.equal(1);
+							const batch = await iterator.next(1);
+							expect(batch).to.have.length(1);
+							expect(batch[0].id).to.equal(docId);
+							expect(notifications).to.have.length(0); // no notifications should have occurred
+						}
+					} finally {
+						timeout && clearTimeout(timeout);
+						notificationPromise?.resolve();
+						await iterator.close();
+						await reader.close();
+						await writer.close();
+						await replicator.close();
+					}
+				};
+				it("push=false property gates push streams", async () => {
+					await assertPush(false);
+				});
+
+				it("push=true enables push streams", async () => {
+					await assertPush(true);
+				});
+
+				it("push streams drop out-of-order updates and emit onLateResults", async function () {
+					session = await TestSession.disconnected(3);
+					await session.connect([
+						[session.peers[0], session.peers[1]],
+						[session.peers[1], session.peers[2]],
+					]);
+
+					const base = new TestStore({ docs: new Documents<Document>() });
+					const replicator = await session.peers[1].open(base, {
+						args: {
+							replicate: { factor: 1 },
+						},
+					});
+
+					const writer = await session.peers[0].open(base.clone(), {
+						args: { replicate: false },
+					});
+
+					const reader = await session.peers[2].open(base.clone(), {
+						args: { replicate: false },
+					});
+
+					await reader.docs.index.waitFor(replicator.node.identity.publicKey);
+					await writer.docs.index.waitFor(replicator.node.identity.publicKey);
+
+					const latePromise = pDefer<void>();
+					const lateEvents: LateResultsEvent[] = [];
+
+					const iterator = reader.docs.index.iterate(
+						{ sort: { key: "id", direction: SortDirection.ASC } },
+						{
+							closePolicy: "manual",
+							remote: {
+								wait: { timeout: 5e3, behavior: "keep-open" },
+								reach: {
+									discover: [replicator.node.identity.publicKey],
+									eager: true,
+								},
+								onLateResults: (evt) => {
+									lateEvents.push(evt);
+									latePromise.resolve();
+								},
+							},
+							updates: { push: true, merge: true },
+						},
+					);
+
+					try {
+						// Seed ordered results
+						await writer.docs.put(new Document({ id: "2" }));
+						await writer.docs.put(new Document({ id: "3" }));
+
+						const initial = await iterator.next(10);
+						expect(initial.map((x) => x.id)).to.deep.equal(["2", "3"]);
+
+						// Insert an out-of-order doc; it should be dropped from push stream
+						await writer.docs.put(new Document({ id: "1" }));
+
+						await latePromise.promise;
+						expect(lateEvents.some((e) => e.amount >= 1)).to.be.true;
+
+						await waitForResolved(
+							async () => expect(await iterator.pending()).to.equal(0),
+							{ timeout: 10_000 },
+						);
+
+						const next = await iterator.next(1);
+						expect(next).to.have.length(0);
+					} finally {
+						await iterator.close();
+						await reader.close();
+						await writer.close();
+						await replicator.close();
+					}
+				});
+			});
+
 			// ───────────────────────────────────────────────────────────────
 			// Regression: collect after keep-alive TTL expiry should degrade
 			// gracefully (no error/log spam; empty batch / done=true is OK)
@@ -4284,7 +4501,7 @@ describe("index", () => {
 					}
 				});
 
-				it("kepts are updated correctly onChange", async () => {
+				it("kepts are updated correctly on change notifications", async () => {
 					session = await TestSession.connected(1);
 
 					const store = new TestStore({ docs: new Documents<Document>() });
@@ -4295,22 +4512,24 @@ describe("index", () => {
 					let iterator:
 						| Awaited<ReturnType<typeof store.docs.index.iterate>>
 						| undefined;
-					const changeEvents: DocumentsChange<Document, Document>[] = [];
-					const changeListener = (
-						change: DocumentsChange<Document, Document>,
-					) => {
-						changeEvents.push(change);
-					};
+					const notifyReasons: UpdateReason[] = [];
 					const total = 12;
+					const formatId = (n: number) =>
+						`doc-${n.toString().padStart(3, "0")}`;
 					for (let i = 0; i < total; i++) {
-						await store.docs.put(new Document({ id: `doc-${i}` }));
+						await store.docs.put(new Document({ id: formatId(i) }));
 					}
 
 					iterator = store.docs.index.iterate(
 						{ sort: { key: "id", direction: SortDirection.ASC } },
 						{
 							closePolicy: "manual",
-							updates: { merge: true, onChange: changeListener },
+							updates: {
+								merge: true,
+								notify: (reason) => {
+									notifyReasons.push(reason);
+								},
+							},
 						},
 					);
 					if (!iterator) {
@@ -4327,37 +4546,28 @@ describe("index", () => {
 					const baselinePending = baselinePendingMaybe;
 					expect(baselinePending).to.equal(total - initialBatch.length);
 
-					const newDocId = `doc-${total}`;
+					const newDocId = formatId(total);
 					await store.docs.put(new Document({ id: newDocId }));
 
-					await waitForResolved(
-						() =>
-							expect(
-								changeEvents.some((evt) =>
-									evt.added?.some((doc) => doc.id === newDocId),
-								),
-							).to.be.true,
+					await waitForResolved(() =>
+						expect(notifyReasons).to.deep.include("change"),
 					);
-					const addedIds = changeEvents
-						.flatMap((evt) => evt.added || [])
-						.map((doc) => doc.id);
-					expect(addedIds).to.include(newDocId);
 
 					await waitForResolved(async () =>
 						expect(await iterator!.pending()).to.equal(baselinePending + 1),
 					);
 
-					const update = await iterator.next(1);
-					expect(update).to.have.length(1);
-					expect(update[0].id).to.equal(newDocId);
+					const updates = await iterator.next(baselinePending + 1);
+					expect(updates).to.have.length(baselinePending + 1);
+					expect(updates.map((x) => x.id)).to.include(newDocId);
 
 					await waitForResolved(async () =>
-						expect(await iterator!.pending()).to.equal(baselinePending),
+						expect(await iterator!.pending()).to.equal(0),
 					);
 				});
 			});
 
-			describe("onResults", () => {
+			describe("onBatch", () => {
 				class Indexable {
 					@field({ type: "string" })
 					id: string;
@@ -4372,7 +4582,7 @@ describe("index", () => {
 					}
 				}
 
-				it("can drain results onChange", async () => {
+				it("can drain results via change notifications", async () => {
 					session = await TestSession.disconnected(1);
 
 					const store = await session.peers[0].open(
@@ -4417,8 +4627,12 @@ describe("index", () => {
 							closePolicy: "manual",
 							updates: {
 								merge: true,
-								onChange: () => scheduleDrain(),
-								onResults: (batch) => {
+								notify: (reason) => {
+									if (reason === "change") {
+										scheduleDrain();
+									}
+								},
+								onBatch: (batch) => {
 									batches.push(batch.map((x) => x.id));
 								},
 							},
@@ -4437,7 +4651,7 @@ describe("index", () => {
 					await iterator.close();
 				});
 
-				it("fires onResults for initial and live update batches", async () => {
+				it("fires onBatch for initial and live update batches", async () => {
 					session = await TestSession.connected(1);
 
 					const store = new TestStore({ docs: new Documents<Document>() });
@@ -4448,7 +4662,7 @@ describe("index", () => {
 					await store.docs.put(new Document({ id: "1", name: "match" }));
 					await store.docs.put(new Document({ id: "2", name: "skip" }));
 
-					const reasons: Array<"initial" | "next" | "join" | "change"> = [];
+					const reasons: UpdateReason[] = [];
 					const batches: string[][] = [];
 
 					const iterator = store.docs.index.iterate(
@@ -4459,7 +4673,7 @@ describe("index", () => {
 						{
 							updates: {
 								merge: true,
-								onResults: (batch, meta) => {
+								onBatch: (batch, meta) => {
 									reasons.push(meta.reason);
 									batches.push(batch.map((d) => d.id));
 								},
@@ -4600,14 +4814,14 @@ describe("index", () => {
 				) => {
 					await store.docs.put(new Document({ id: "1", name: "alpha" }));
 
-					const onResultsBatches: any[][] = [];
+					const onBatchBatches: any[][] = [];
 					const iterator = store.docs.index.iterate<R>(
 						{},
 						{
 							resolve: resolve as any,
 							updates: {
-								onResults: (batch) => {
-									onResultsBatches.push(batch);
+								onBatch: (batch) => {
+									onBatchBatches.push(batch);
 								},
 							},
 						},
@@ -4622,21 +4836,21 @@ describe("index", () => {
 						const indexed = (next[0] as any).__indexed as Indexable;
 						expect(indexed).to.be.instanceOf(Indexable);
 						expect(indexed.nameTransformed).to.equal("ALPHA");
-						expect(onResultsBatches).to.have.length(1);
-						expect(onResultsBatches[0][0]).to.equal(next[0]);
-						const onResultsIndexed = (onResultsBatches[0][0] as any).__indexed;
+						expect(onBatchBatches).to.have.length(1);
+						expect(onBatchBatches[0][0]).to.equal(next[0]);
+						const onResultsIndexed = (onBatchBatches[0][0] as any).__indexed;
 						expect(onResultsIndexed).to.equal(indexed);
 					} else {
 						let first = next[0] as Indexable;
 						expect(first).to.be.instanceOf(Indexable);
 						expect(first.nameTransformed).to.equal("ALPHA");
 						expect((first as any).name).to.be.undefined;
-						expect(onResultsBatches).to.have.length(1);
-						expect(onResultsBatches[0][0]).to.equal(first);
+						expect(onBatchBatches).to.have.length(1);
+						expect(onBatchBatches[0][0]).to.equal(first);
 					}
 				};
 
-				it("emits indexed results to onResults when resolve is false", async () => {
+				it("emits indexed results to onBatch when resolve is false", async () => {
 					session = await TestSession.connected(1);
 
 					const store = new TestStore<Indexable>({
@@ -4656,7 +4870,7 @@ describe("index", () => {
 					await check(store, false, false);
 				});
 
-				it("emits resolved documents to onResults when resolve is true", async () => {
+				it("emits resolved documents to onBatch when resolve is true", async () => {
 					session = await TestSession.connected(1);
 
 					const store = new TestStore<Indexable>({
@@ -4676,7 +4890,7 @@ describe("index", () => {
 					await check(store, true, true);
 				});
 
-				it("emits resolved documents to onResults when resolve is undefined", async () => {
+				it("emits resolved documents to onBatch when resolve is undefined", async () => {
 					// this behaviour is inline with that the iterator also returns resolved documents when resolve is undefined
 					session = await TestSession.connected(1);
 
@@ -4753,7 +4967,7 @@ describe("index", () => {
 							{},
 							{
 								updates: {
-									onResults: (batch) => {
+									onBatch: (batch) => {
 										observed = batch;
 									},
 								},
@@ -6676,6 +6890,32 @@ describe("index", () => {
 			expect(store2.docs.index.countIteratorsInProgress).to.eq(0); // no iterators in progress
 		});
 
+		it("delivers prefetched batch to push-enabled iterator", async () => {
+			const { store2 } = await setupInitialStoresAndPrefetch();
+
+			const iterator = store2.docs.index.iterate(
+				{ sort: { key: "id", direction: SortDirection.ASC } },
+				{
+					closePolicy: "manual",
+					remote: {
+						wait: { timeout: 5e3, behavior: "keep-open" },
+						reach: { eager: true },
+					},
+					updates: { push: true, merge: true },
+				},
+			);
+
+			await waitForResolved(
+				async () => expect(await iterator.pending()).to.equal(3),
+				{ timeout: 30_000 },
+			);
+
+			const batch = await iterator.next(1);
+			expect(batch).to.have.length(1);
+			expect(batch[0].id).to.equal("1");
+			await iterator.close();
+		});
+
 		it("will intercept outgoing search queries with incoming prefetch results", async () => {
 			const prefetchSendDelay = pDefer<void>();
 
@@ -6771,6 +7011,56 @@ describe("index", () => {
 	
 		});
 	*/
+	});
+
+	describe("createReplicatorJoinListener", () => {
+		it("onPeer is only invoked for replicators", async () => {
+			const index = new DocumentIndex();
+			const identity = await Ed25519Keypair.create();
+			(index as any).node = {
+				identity,
+			};
+			let resolve = false;
+			const mockLog = {
+				waitForReplicator: async (_key: any) => {
+					if (resolve) {
+						return;
+					}
+					throw new Error("Expected throw");
+				},
+			} as unknown as SharedLog<Document>;
+			(index as any)._log = mockLog;
+
+			let peers: PublicSignKey[] = [];
+			index["createReplicatorJoinListener"]({
+				onPeer: (pk) => {
+					peers.push(pk);
+				},
+			});
+			const key1 = (await Ed25519Keypair.create()).publicKey;
+			const key2 = (await Ed25519Keypair.create()).publicKey;
+
+			index._query.events.dispatchEvent(
+				new CustomEvent<PublicSignKey>("join", {
+					detail: key1,
+				}),
+			);
+
+			await delay(100);
+			expect(peers).to.have.length(0);
+
+			resolve = true; // now replicator is ready to be used
+
+			index._query.events.dispatchEvent(
+				new CustomEvent<PublicSignKey>("join", {
+					detail: key2,
+				}),
+			);
+
+			await delay(100);
+			expect(peers).to.have.length(1);
+			expect(peers[0]).to.deep.equal(key2);
+		});
 	});
 
 	describe("migration", () => {

@@ -633,6 +633,7 @@ export class Documents<
 		change: Change<Operation>,
 		reference?: { document: T; operation: PutOperation; unique?: boolean },
 	): Promise<void> {
+		logger.trace("handleChanges called", change);
 		const isAppendOperation =
 			change?.added.length === 1 ? !!change.added[0] : false;
 		const removedSet = new Map<string, ShallowOrFullEntry<Operation>>();

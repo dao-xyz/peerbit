@@ -20,6 +20,7 @@ export type {
 	UpdateCallbacks,
 	UpdateMergeStrategy,
 	UpdateOptions,
+	UpdateReason,
 	WaitBehavior,
 	WaitPolicy,
 	ReachScope,

@@ -50,6 +50,12 @@ const WARNING_WHEN_ITERATING_FOR_MORE_THAN = 1e5;
 
 const logger = loggerFn("peerbit:program:document:search");
 const warn = logger.newScope("warn");
+const documentIndexLogger = loggerFn("peerbit:document:index");
+const indexLifecycleLogger = documentIndexLogger.newScope("lifecycle");
+const indexRpcLogger = documentIndexLogger.newScope("rpc");
+const indexCacheLogger = documentIndexLogger.newScope("cache");
+const indexPrefetchLogger = documentIndexLogger.newScope("prefetch");
+const indexIteratorLogger = documentIndexLogger.newScope("iterate");
 
 type BufferedResult<T, I extends Record<string, any>> = {
 	value: T;
@@ -70,7 +76,7 @@ export type UpdateMergeStrategy<
 				evt: DocumentsChange<T, I>,
 			) => MaybePromise<DocumentsChange<T, I> | void>;
 	  };
-export type ResultBatchReason = "initial" | "next" | "join" | "change";
+export type UpdateReason = "initial" | "manual" | "join" | "change" | "push";
 
 export type UpdateCallbacks<
 	T,
@@ -79,18 +85,18 @@ export type UpdateCallbacks<
 	RT = ValueTypeFromRequest<Resolve, T, I>,
 > = {
 	/**
-	 * Fires on raw DB change events (added/removed/updated).
-	 * Use if you want low-level inspection of change streams.
+	 * Fires whenever the iterator detects new work (e.g. push, join, change).
+	 * Ideal for reactive consumers that need to call `next()` or trigger UI work.
 	 */
-	onChange?: (change: DocumentsChange<T, I>) => void | Promise<void>;
+	notify?: (reason: UpdateReason) => void | Promise<void>;
 
 	/**
 	 * Fires whenever the iterator yields a batch to the consumer.
 	 * Good for external sync (e.g. React state).
 	 */
-	onResults?: (
+	onBatch?: (
 		batch: RT[],
-		meta: { reason: ResultBatchReason },
+		meta: { reason: UpdateReason },
 	) => void | Promise<void>;
 };
 
@@ -107,7 +113,7 @@ export type UpdateOptions<T, I, Resolve extends boolean | undefined> =
 			/** Live update behavior. Only sorted merging is supported; optional filter can mutate/ignore events. */
 			merge?: UpdateMergeStrategy<T, I, Resolve>;
 			/** Request push-style notifications backed by the prefetch channel. */
-			push?: boolean;
+			push?: boolean | types.PushUpdatesMode;
 	  } & UpdateCallbacks<T, I, Resolve>);
 
 export type JoiningTargets = {
@@ -451,6 +457,7 @@ function isSubclassOf(
 }
 
 const DEFAULT_TIMEOUT = 1e4;
+const DEFAULT_KEEP_REMOTE_ITERATOR_TIMEOUT = 3e5;
 const DISCOVER_TIMEOUT_FALLBACK = 500;
 
 const DEFAULT_INDEX_BY = "id";
@@ -652,6 +659,9 @@ export class DocumentIndex<
 				| types.SearchRequest
 				| types.SearchRequestIndexed
 				| types.IterationRequest;
+			resolveResults?: boolean;
+			pushMode?: types.PushUpdatesMode;
+			pushInFlight?: boolean;
 		}
 	>;
 	private iteratorKeepAliveTimers?: Map<string, ReturnType<typeof setTimeout>>;
@@ -668,6 +678,167 @@ export class DocumentIndex<
 		return this._valueEncoding;
 	}
 
+	private ensurePrefetchAccumulator() {
+		if (!this._prefetch) {
+			this._prefetch = {
+				accumulator: new Prefetch(),
+				ttl: 5e3,
+			};
+			return;
+		}
+		if (!this._prefetch.accumulator) {
+			this._prefetch.accumulator = new Prefetch();
+		}
+	}
+
+	private async wrapPushResults(
+		matches: Array<WithContext<T> | WithContext<I>>,
+		resolve: boolean,
+	): Promise<types.Result[]> {
+		if (!matches.length) return [];
+		const results: types.Result[] = [];
+		for (const match of matches) {
+			if (resolve) {
+				const doc = match as WithContext<T>;
+				const indexedValue = await this.transformer(doc as T, doc.__context);
+				const wrappedIndexed = coerceWithContext(indexedValue, doc.__context);
+				results.push(
+					new types.ResultValue({
+						context: doc.__context,
+						value: doc as T,
+						source: serialize(doc as T),
+						indexed: wrappedIndexed,
+					}),
+				);
+			} else {
+				const indexed = match as WithContext<I>;
+				const head = await this._log.log.get(indexed.__context.head);
+				results.push(
+					new types.ResultIndexedValue({
+						context: indexed.__context,
+						source: serialize(indexed as I),
+						indexed: indexed as I,
+						entries: head ? [head] : [],
+					}),
+				);
+			}
+		}
+		return results;
+	}
+
+	private async drainQueuedResults(
+		queueEntries: indexerTypes.IndexedResult<WithContext<I>>[],
+		resolve: boolean,
+	): Promise<types.Result[]> {
+		if (!queueEntries.length) {
+			return [];
+		}
+		const drained = queueEntries.splice(0);
+		const results: types.Result[] = [];
+		for (const entry of drained) {
+			const indexedUnwrapped = Object.assign(
+				Object.create(this.indexedType.prototype),
+				entry.value,
+			);
+			if (resolve) {
+				const value = await this.resolveDocument({
+					indexed: entry.value,
+					head: entry.value.__context.head,
+				});
+				if (!value) continue;
+				results.push(
+					new types.ResultValue({
+						context: entry.value.__context,
+						value: value.value,
+						source: serialize(value.value),
+						indexed: indexedUnwrapped,
+					}),
+				);
+			} else {
+				const head = await this._log.log.get(entry.value.__context.head);
+				results.push(
+					new types.ResultIndexedValue({
+						context: entry.value.__context,
+						source: serialize(indexedUnwrapped),
+						indexed: indexedUnwrapped,
+						entries: head ? [head] : [],
+					}),
+				);
+			}
+		}
+		return results;
+	}
+
+	private handleDocumentChange = async (
+		event: CustomEvent<DocumentsChange<T, I>>,
+	) => {
+		const added = event.detail.added;
+		if (!added.length) {
+			return;
+		}
+
+		for (const [_iteratorId, queue] of this._resultQueue) {
+			if (
+				!queue.pushMode ||
+				queue.pushMode !== types.PushUpdatesMode.stream ||
+				queue.pushInFlight
+			) {
+				continue;
+			}
+			if (!(queue.fromQuery instanceof types.IterationRequest)) {
+				continue;
+			}
+			queue.pushInFlight = true;
+			try {
+				const resolveFlag =
+					queue.resolveResults ??
+					resolvesDocuments(queue.fromQuery as AnyIterationRequest);
+				const batches: types.Result[] = [];
+				const queued = await this.drainQueuedResults(queue.queue, resolveFlag);
+				if (queued.length) {
+					batches.push(...queued);
+				}
+				// TODO drain only up to the changed document instead of flushing the entire queue
+				const matches = await this.updateResults(
+					[],
+					{ added },
+					{
+						query: queue.fromQuery.query,
+						sort: queue.fromQuery.sort,
+					},
+					resolveFlag,
+				);
+				if (matches.length) {
+					const wrapped = await this.wrapPushResults(matches, resolveFlag);
+					if (wrapped.length) {
+						batches.push(...wrapped);
+					}
+				}
+				if (!batches.length) {
+					continue;
+				}
+				const pushMessage = new types.PredictedSearchRequest({
+					id: queue.fromQuery.id,
+					request: queue.fromQuery,
+					results: new types.Results({
+						results: batches,
+						kept: 0n,
+					}),
+				});
+				await this._query.send(pushMessage, {
+					mode: new SilentDelivery({
+						to: [queue.from],
+						redundancy: 1,
+					}),
+				});
+			} catch (error) {
+				logger.error("Failed to push iterator update", error);
+			} finally {
+				queue.pushInFlight = false;
+			}
+		}
+	};
+
 	private get nestedProperties() {
 		return {
 			match: (obj: any): obj is types.IDocumentStore<any> =>
@@ -680,6 +851,15 @@ export class DocumentIndex<
 	}
 	async open(properties: OpenOptions<T, I, D>) {
 		this._log = properties.log;
+		// Allow reopening with partial options (tests override the index transform)
+		const previousEvents = this.documentEvents;
+		this.documentEvents =
+			properties.documentEvents ?? previousEvents ?? (this.events as any);
+		this.compatibility =
+			properties.compatibility !== undefined
+				? properties.compatibility
+				: this.compatibility;
+
 		let prefectOptions =
 			typeof properties.prefetch === "object"
 				? properties.prefetch
@@ -700,8 +880,6 @@ export class DocumentIndex<
 		this.indexedTypeIsDocumentType =
 			!properties.transform?.type ||
 			properties.transform?.type === properties.documentType;
-		this.documentEvents = properties.documentEvents;
-		this.compatibility = properties.compatibility;
 		this.canRead = properties.canRead;
 		this.canSearch = properties.canSearch;
 		this.includeIndexed = properties.includeIndexed;
@@ -730,6 +908,8 @@ export class DocumentIndex<
 		this.isProgramValued = isSubclassOf(this.documentType, Program);
 		this.dbType = properties.dbType;
 		this._resultQueue = new Map();
+		const replicateFn =
+			properties.replicate ?? this._sync ?? (() => Promise.resolve());
 		this._sync = (request, results) => {
 			let rq:
 				| types.SearchRequest
@@ -759,7 +939,7 @@ export class DocumentIndex<
 					>
 				>;
 			}
-			return properties.replicate(rq, rs);
+			return replicateFn(rq, rs);
 		};
 
 		const transformOptions = properties.transform;
@@ -801,6 +981,14 @@ export class DocumentIndex<
 			this.index = new CachedIndex(this.index, properties.cache.query);
 		}
 
+		indexLifecycleLogger("opened document index", {
+			peer: this.node.identity.publicKey.hashcode(),
+			indexBy: this.indexBy,
+			includeIndexed: this.includeIndexed === true,
+			cacheResolver: Boolean(this._resolverCache),
+			prefetch: Boolean(this.prefetch),
+		});
+
 		this._resumableIterators = new ResumableIterators(this.index);
 		this._maybeOpen = properties.maybeOpen;
 		if (this.isProgramValued) {
@@ -808,6 +996,10 @@ export class DocumentIndex<
 		}
 
 		if (this.prefetch?.predictor) {
+			indexPrefetchLogger("prefetch predictor enabled", {
+				peer: this.node.identity.publicKey.hashcode(),
+				strict: Boolean(this.prefetch?.strict),
+			});
 			const predictor = this.prefetch.predictor;
 			this._joinListener = async (e: { detail: PublicSignKey }) => {
 				// on join we emit predicted search results before peers query us (to save latency but for the price of errornous bandwidth usage)
@@ -815,6 +1007,10 @@ export class DocumentIndex<
 				if ((await this._log.isReplicating()) === false) {
 					return;
 				}
+
+				indexPrefetchLogger("peer join triggered predictor", {
+					target: e.detail.hashcode(),
+				});
 
 				// TODO
 				// it only makes sense for use to return predicted results if the peer is to choose us as a replicator
@@ -824,8 +1020,15 @@ export class DocumentIndex<
 				let request = predictor.predictedQuery(e.detail);
 
 				if (!request) {
+					indexPrefetchLogger("predictor had no cached query", {
+						target: e.detail.hashcode(),
+					});
 					return;
 				}
+				indexPrefetchLogger("sending predicted results", {
+					target: e.detail.hashcode(),
+					request: request.idString,
+				});
 				const results = await this.handleSearchRequest(request, {
 					from: e.detail,
 				});
@@ -855,6 +1058,7 @@ export class DocumentIndex<
 			responseType: types.AbstractSearchResult,
 			queryType: types.AbstractSearchRequest,
 		});
+		this.documentEvents.addEventListener("change", this.handleDocumentChange);
 	}
 
 	get prefetch() {
@@ -869,6 +1073,11 @@ export class DocumentIndex<
 			logger("Receieved query without from");
 			return;
 		}
+		indexRpcLogger("received request", {
+			type: query.constructor.name,
+			from: ctx.from.hashcode(),
+			id: (query as { idString?: string }).idString,
+		});
 		if (query instanceof types.PredictedSearchRequest) {
 			// put results in a waiting cache so that we eventually in the future will query a matching thing, we already have results available
 			this._prefetch?.accumulator.add(
@@ -879,6 +1088,10 @@ export class DocumentIndex<
 				},
 				ctx.from!.hashcode(),
 			);
+			indexPrefetchLogger("cached predicted results", {
+				from: ctx.from.hashcode(),
+				request: query.idString,
+			});
 			return;
 		}
 
@@ -893,22 +1106,32 @@ export class DocumentIndex<
 			});
 
 			if (ignore) {
+				indexPrefetchLogger("predictor ignored request", {
+					from: ctx.from!.hashcode(),
+					request: (query as { idString?: string }).idString,
+					strict: Boolean(this.prefetch?.strict),
+				});
 				if (this.prefetch.strict) {
 					return;
 				}
 			}
 		}
 
-		return this.handleSearchRequest(
-			query as
-				| types.SearchRequest
-				| types.SearchRequestIndexed
-				| types.IterationRequest
-				| types.CollectNextRequest,
-			{
-				from: ctx.from!,
-			},
-		);
+		try {
+			const out = await this.handleSearchRequest(
+				query as
+					| types.SearchRequest
+					| types.SearchRequestIndexed
+					| types.IterationRequest
+					| types.CollectNextRequest,
+				{
+					from: ctx.from!,
+				},
+			);
+			return out;
+		} catch (error) {
+			throw error;
+		}
 	}
 	private async handleSearchRequest(
 		query:
@@ -918,6 +1141,11 @@ export class DocumentIndex<
 			| types.CollectNextRequest,
 		ctx: { from: PublicSignKey },
 	) {
+		indexRpcLogger("handling query", {
+			type: query.constructor.name,
+			id: (query as { idString?: string }).idString,
+			from: ctx.from.hashcode(),
+		});
 		if (
 			this.canSearch &&
 			(query instanceof types.SearchRequest ||
@@ -931,6 +1159,10 @@ export class DocumentIndex<
 				ctx.from,
 			))
 		) {
+			indexRpcLogger("denied query", {
+				id: (query as { idString?: string }).idString,
+				from: ctx.from.hashcode(),
+			});
 			return new types.NoAccess();
 		}
 
@@ -961,6 +1193,13 @@ export class DocumentIndex<
 					canRead: this.canRead,
 				},
 			);
+			indexRpcLogger("query results ready", {
+				id: (query as { idString?: string }).idString,
+				from: ctx.from.hashcode(),
+				count: results.results.length,
+				kept: results.kept,
+				includeIndexed: shouldIncludedIndexedResults,
+			});
 
 			if (shouldIncludedIndexedResults) {
 				let resultsWithIndexed: (
@@ -1040,6 +1279,10 @@ export class DocumentIndex<
 		const closed = await super.close(from);
 		if (closed) {
 			this._query.events.removeEventListener("join", this._joinListener);
+			this.documentEvents.removeEventListener(
+				"change",
+				this.handleDocumentChange,
+			);
 			this.clearAllResultQueues();
 			await this.index.stop?.();
 		}
@@ -1049,6 +1292,10 @@ export class DocumentIndex<
 	async drop(from?: Program): Promise<boolean> {
 		const dropped = await super.drop(from);
 		if (dropped) {
+			this.documentEvents.removeEventListener(
+				"change",
+				this.handleDocumentChange,
+			);
 			this.clearAllResultQueues();
 			await this.index.drop?.();
 			await this.index.stop?.();
@@ -1136,7 +1383,7 @@ export class DocumentIndex<
 			// Re-query on peer joins (like iterate), scoped to the joining peer
 			let joinListener: (() => void) | undefined;
 			if (baseRemote) {
-				joinListener = this.attachJoinListener({
+				joinListener = this.createReplicatorJoinListener({
 					eager: baseRemote.reach?.eager,
 					onPeer: async (pk) => {
 						if (cleanedUp) return;
@@ -1217,8 +1464,12 @@ export class DocumentIndex<
 		) {
 			// TODO make last condition more efficient if there are many docs
 			this._resolverProgramCache!.set(idString, value);
+			indexCacheLogger("cache:set:program", { id: idString });
 		} else {
-			this._resolverCache?.add(idString, value);
+			if (this._resolverCache) {
+				this._resolverCache.add(idString, value);
+				indexCacheLogger("cache:set:value", { id: idString });
+			}
 		}
 		const valueToIndex = await this.transformer(value, context);
 		const wrappedValueToIndex = new this.wrappedIndexedType(
@@ -1237,8 +1488,11 @@ export class DocumentIndex<
 	public del(key: indexerTypes.IdKey) {
 		if (this.isProgramValued) {
 			this._resolverProgramCache!.delete(key.primitive);
+			indexCacheLogger("cache:del:program", { id: key.primitive });
 		} else {
-			this._resolverCache?.del(key.primitive);
+			if (this._resolverCache?.del(key.primitive)) {
+				indexCacheLogger("cache:del:value", { id: key.primitive });
+			}
 		}
 		return this.index.del({
 			query: [indexerTypes.getMatcher(this.indexBy, key.key)],
@@ -1512,12 +1766,12 @@ export class DocumentIndex<
 			) {
 				keepAliveRequest = cachedRequest;
 			}
-			indexedResult =
-				prevQueued?.keptInIndex === 0
-					? []
-					: await this._resumableIterators.next(query, {
-							keepAlive: keepAliveRequest !== undefined,
-						});
+			const hasResumable = this._resumableIterators.has(query.idString);
+			indexedResult = hasResumable
+				? await this._resumableIterators.next(query, {
+						keepAlive: keepAliveRequest !== undefined,
+					})
+				: [];
 		} else {
 			throw new Error("Unsupported");
 		}
@@ -1544,6 +1798,9 @@ export class DocumentIndex<
 		let kept = (await this._resumableIterators.getPending(query.idString)) ?? 0;
 
 		if (!isLocal) {
+			const resolveFlag = resolvesDocuments(
+				(fromQuery || query) as AnyIterationRequest,
+			);
 			prevQueued = {
 				from,
 				queue: [],
@@ -1555,7 +1812,14 @@ export class DocumentIndex<
 					| types.SearchRequest
 					| types.SearchRequestIndexed
 					| types.IterationRequest,
+				resolveResults: resolveFlag,
 			};
+			if (
+				fromQuery instanceof types.IterationRequest &&
+				fromQuery.pushUpdates
+			) {
+				prevQueued.pushMode = fromQuery.pushUpdates;
+			}
 			this._resultQueue.set(query.idString, prevQueued);
 		}
 
@@ -1622,8 +1886,12 @@ export class DocumentIndex<
 			results: filteredResults,
 			kept: BigInt(kept + (prevQueued?.queue.length || 0)),
 		});
+		const keepAliveActive = keepAliveRequest !== undefined;
+		const pushActive =
+			fromQuery instanceof types.IterationRequest &&
+			Boolean(fromQuery.pushUpdates);
 
-		if (!isLocal && results.kept === 0n) {
+		if (!isLocal && results.kept === 0n && !keepAliveActive && !pushActive) {
 			this.clearResultsQueue(query);
 		}
 
@@ -1822,7 +2090,7 @@ export class DocumentIndex<
 
 	// Utility: attach a join listener that waits until a peer is a replicator,
 	// then invokes the provided callback. Returns a detach function.
-	private attachJoinListener(params: {
+	private createReplicatorJoinListener(params: {
 		signal?: AbortSignal;
 		eager?: boolean;
 		onPeer: (pk: PublicSignKey) => Promise<void> | void;
@@ -1836,13 +2104,15 @@ export class DocumentIndex<
 			if (active.has(hash)) return;
 			active.add(hash);
 			try {
-				await this._log
+				const isReplicator = await this._log
 					.waitForReplicator(pk, {
 						signal: params.signal,
 						eager: params.eager,
 					})
-					.catch(() => undefined);
-				if (params.signal?.aborted) return;
+					.then(() => true)
+					.catch(() => false);
+				if (!isReplicator || params.signal?.aborted) return;
+				indexIteratorLogger.trace("peer joined as replicator", { peer: hash });
 				await params.onPeer(pk);
 			} finally {
 				active.delete(hash);
@@ -1857,9 +2127,15 @@ export class DocumentIndex<
 		query: types.CloseIteratorRequest,
 		publicKey: PublicSignKey,
 	): void {
+		indexIteratorLogger.trace("close request", {
+			id: query.idString,
+			from: publicKey.hashcode(),
+		});
 		const queueData = this._resultQueue.get(query.idString);
 		if (queueData && !queueData.from.equals(publicKey)) {
-			logger("Ignoring close iterator request from different peer");
+			indexIteratorLogger.trace(
+				"Ignoring close iterator request from different peer",
+			);
 			return;
 		}
 		this.cancelIteratorKeepAlive(query.idString);
@@ -2241,6 +2517,106 @@ export class DocumentIndex<
 			this.compatibility,
 		);
 
+		const self = this;
+		function normalizeUpdatesOption(u?: UpdateOptions<T, I, Resolve>): {
+			mergePolicy?: {
+				merge?:
+					| {
+							filter?: (
+								evt: DocumentsChange<T, I>,
+							) => MaybePromise<DocumentsChange<T, I> | void>;
+					  }
+					| undefined;
+			};
+			push?: types.PushUpdatesMode;
+			callbacks?: UpdateCallbacks<T, I, Resolve>;
+		} {
+			const identityFilter = (evt: DocumentsChange<T, I>) => evt;
+			const buildMergePolicy = (
+				merge: UpdateMergeStrategy<T, I, Resolve> | undefined,
+				defaultEnabled: boolean,
+			) => {
+				const effective =
+					merge === undefined ? (defaultEnabled ? true : undefined) : merge;
+				if (effective === undefined || effective === false) {
+					return undefined;
+				}
+				if (effective === true) {
+					return {
+						merge: {
+							filter: identityFilter,
+						},
+					};
+				}
+				return {
+					merge: {
+						filter: effective.filter ?? identityFilter,
+					},
+				};
+			};
+
+			if (u == null || u === false) {
+				return {};
+			}
+
+			if (u === true) {
+				return {
+					mergePolicy: buildMergePolicy(true, true),
+					push: undefined,
+				};
+			}
+
+			if (typeof u === "string") {
+				if (u === "remote") {
+					self.ensurePrefetchAccumulator();
+					return { push: types.PushUpdatesMode.stream };
+				}
+				if (u === "local") {
+					return {
+						mergePolicy: buildMergePolicy(true, true),
+						push: undefined,
+					};
+				}
+				if (u === "all") {
+					self.ensurePrefetchAccumulator();
+					return {
+						mergePolicy: buildMergePolicy(true, true),
+						push: types.PushUpdatesMode.stream,
+					};
+				}
+			}
+
+			if (typeof u === "object") {
+				const hasMergeProp = Object.prototype.hasOwnProperty.call(u, "merge");
+				const mergeValue = hasMergeProp ? u.merge : undefined;
+				if (u.push) {
+					self.ensurePrefetchAccumulator();
+				}
+				const callbacks =
+					u.notify || u.onBatch
+						? {
+								notify: u.notify,
+								onBatch: u.onBatch,
+							}
+						: undefined;
+				return {
+					mergePolicy: buildMergePolicy(
+						mergeValue,
+						!hasMergeProp || mergeValue === undefined,
+					),
+					push:
+						typeof u.push === "number"
+							? u.push
+							: u.push
+								? types.PushUpdatesMode.stream
+								: undefined,
+					callbacks,
+				};
+			}
+
+			return {};
+		}
+
 		const {
 			mergePolicy,
 			push: pushUpdates,
@@ -2300,6 +2676,11 @@ export class DocumentIndex<
 			queryRequestCoerced.replicate = true;
 		}
 
+		indexIteratorLogger.trace("Iterate with options", {
+			query: queryRequestCoerced,
+			options,
+		});
+
 		let fetchPromise: Promise<any> | undefined = undefined;
 		const peerBufferMap: Map<
 			string,
@@ -2346,6 +2727,7 @@ export class DocumentIndex<
 					context: types.Context;
 			  }
 			| undefined = undefined;
+		let lastDeliveredIndexed: WithContext<I> | undefined;
 
 		const peerBuffers = (): {
 			indexed: WithContext<I>;
@@ -2354,6 +2736,47 @@ export class DocumentIndex<
 			context: types.Context;
 		}[] => {
 			return [...peerBufferMap.values()].map((x) => x.buffer).flat();
+		};
+
+		const toIndexedForOrdering = (
+			value:
+				| ValueTypeFromRequest<Resolve, T, I>
+				| WithContext<I>
+				| WithIndexedContext<T, I>,
+		): WithContext<I> | undefined => {
+			const candidate = value as any;
+			if (candidate && typeof candidate === "object") {
+				if ("__indexed" in candidate && candidate.__indexed) {
+					return coerceWithContext(candidate.__indexed, candidate.__context);
+				}
+				if ("__context" in candidate) {
+					return candidate as WithContext<I>;
+				}
+			}
+			return undefined;
+		};
+
+		const updateLastDelivered = (
+			batch: ValueTypeFromRequest<Resolve, T, I>[],
+		) => {
+			if (!batch.length) {
+				return;
+			}
+			const indexed = toIndexedForOrdering(batch[batch.length - 1]);
+			if (indexed) {
+				lastDeliveredIndexed = indexed;
+			}
+		};
+
+		const compareIndexed = (a: WithContext<I>, b: WithContext<I>): number => {
+			return indexerTypes.extractSortCompare(a, b, queryRequestCoerced.sort);
+		};
+
+		const isLateResult = (indexed: WithContext<I>) => {
+			if (!lastDeliveredIndexed) {
+				return false;
+			}
+			return compareIndexed(indexed, lastDeliveredIndexed) < 0;
 		};
 
 		let maybeSetDone = () => {
@@ -2509,13 +2932,21 @@ export class DocumentIndex<
 								if (keepRemoteAlive) {
 									peerBufferMap.set(from.hashcode(), {
 										buffer,
-										kept: Number(response.kept),
+										kept: 0,
 									});
 								}
 								return;
 							}
 
-							if (results.kept > 0n) {
+							const reqFetch = queryRequestCoerced.fetch ?? 0;
+							const inferredMore =
+								reqFetch > 0 && results.results.length > reqFetch;
+							const effectiveKept = Math.max(
+								Number(results.kept),
+								inferredMore ? 1 : 0,
+							);
+
+							if (effectiveKept > 0) {
 								hasMore = true;
 							}
 
@@ -2576,7 +3007,7 @@ export class DocumentIndex<
 
 							peerBufferMap.set(from.hashcode(), {
 								buffer,
-								kept: Number(response.kept),
+								kept: effectiveKept,
 							});
 						} else {
 							throw new Error(
@@ -3001,8 +3432,9 @@ export class DocumentIndex<
 			// no extra queued-first/last in simplified API
 
 			const deduped = dedup(coercedBatch, this.indexByResolver);
-			const fallbackReason = hasDeliveredResults ? "next" : "initial";
-			await emitOnResults(deduped, fallbackReason);
+			const fallbackReason = hasDeliveredResults ? "manual" : "initial";
+			updateLastDelivered(deduped);
+			await emitOnBatch(deduped, fallbackReason);
 			return deduped;
 		};
 
@@ -3057,119 +3489,53 @@ export class DocumentIndex<
 		let fetchedFirstForRemote: Set<string> | undefined = undefined;
 
 		let updateDeferred: ReturnType<typeof pDefer> | undefined;
-		const signalUpdate = (reason?: string) => {
+		const onLateResults =
+			typeof options?.remote === "object" &&
+			typeof options.remote.onLateResults === "function"
+				? options.remote.onLateResults
+				: undefined;
+		const runNotify = (reason: UpdateReason) => {
+			if (!updateCallbacks?.notify) {
+				return;
+			}
+			Promise.resolve(updateCallbacks.notify(reason)).catch((error) => {
+				warn("Update notify callback failed", error);
+			});
+		};
+		const signalUpdate = (reason?: UpdateReason) => {
+			if (reason) {
+				runNotify(reason);
+			}
 			updateDeferred?.resolve();
 		};
 		const _waitForUpdate = () =>
 			updateDeferred ? updateDeferred.promise : Promise.resolve();
 
 		// ---------------- Live updates wiring (sorted-only with optional filter) ----------------
-		function normalizeUpdatesOption(u?: UpdateOptions<T, I, Resolve>): {
-			mergePolicy?: {
-				merge?:
-					| {
-							filter?: (
-								evt: DocumentsChange<T, I>,
-							) => MaybePromise<DocumentsChange<T, I> | void>;
-					  }
-					| undefined;
-			};
-			push: boolean;
-			callbacks?: UpdateCallbacks<T, I, Resolve>;
-		} {
-			const identityFilter = (evt: DocumentsChange<T, I>) => evt;
-			const buildMergePolicy = (
-				merge: UpdateMergeStrategy<T, I, Resolve> | undefined,
-				defaultEnabled: boolean,
-			) => {
-				const effective =
-					merge === undefined ? (defaultEnabled ? true : undefined) : merge;
-				if (effective === undefined || effective === false) {
-					return undefined;
-				}
-				if (effective === true) {
-					return {
-						merge: {
-							filter: identityFilter,
-						},
-					};
-				}
-				return {
-					merge: {
-						filter: effective.filter ?? identityFilter,
-					},
-				};
-			};
-
-			if (u == null || u === false) {
-				return { push: false };
-			}
-
-			if (u === true) {
-				return {
-					mergePolicy: buildMergePolicy(true, true),
-					push: false,
-				};
-			}
-
-			if (typeof u === "string") {
-				if (u === "remote") {
-					return { push: true };
-				}
-				if (u === "local") {
-					return {
-						mergePolicy: buildMergePolicy(true, true),
-						push: false,
-					};
-				}
-				if (u === "all") {
-					return {
-						mergePolicy: buildMergePolicy(true, true),
-						push: true,
-					};
-				}
-			}
-
-			if (typeof u === "object") {
-				const hasMergeProp = Object.prototype.hasOwnProperty.call(u, "merge");
-				const mergeValue = hasMergeProp ? u.merge : undefined;
-				return {
-					mergePolicy: buildMergePolicy(
-						mergeValue,
-						!hasMergeProp || mergeValue === undefined,
-					),
-					push: Boolean(u.push),
-					callbacks: u,
-				};
-			}
-
-			return { push: false };
-		}
-
 		const updateCallbacks = updateCallbacksRaw;
-		let pendingResultsReason:
-			| Extract<ResultBatchReason, "join" | "change">
+		let pendingBatchReason:
+			| Extract<UpdateReason, "join" | "change" | "push">
 			| undefined;
 		let hasDeliveredResults = false;
 
-		const emitOnResults = async (
+		const emitOnBatch = async (
 			batch: ValueTypeFromRequest<Resolve, T, I>[],
-			defaultReason: Extract<ResultBatchReason, "initial" | "next">,
+			defaultReason: Extract<UpdateReason, "initial" | "manual">,
 		) => {
-			if (!updateCallbacks?.onResults || batch.length === 0) {
+			if (!updateCallbacks?.onBatch || batch.length === 0) {
 				return;
 			}
-			let reason: ResultBatchReason;
-			if (pendingResultsReason) {
-				reason = pendingResultsReason;
+			let reason: UpdateReason;
+			if (pendingBatchReason) {
+				reason = pendingBatchReason;
 			} else if (!hasDeliveredResults) {
 				reason = "initial";
 			} else {
 				reason = defaultReason;
 			}
-			pendingResultsReason = undefined;
+			pendingBatchReason = undefined;
 			hasDeliveredResults = true;
-			await updateCallbacks.onResults(batch, { reason });
+			await updateCallbacks.onBatch(batch, { reason });
 		};
 
 		// sorted-only mode: no per-queue handling
@@ -3190,18 +3556,19 @@ export class DocumentIndex<
 			queryRequestCoerced.replicate = replicateFlag;
 			const ttlSource =
 				typeof remoteOptions === "object" &&
-				typeof remoteOptions?.wait === "object"
-					? (remoteOptions.wait.timeout ?? DEFAULT_TIMEOUT)
-					: DEFAULT_TIMEOUT;
+				typeof remoteOptions?.wait === "object" &&
+				remoteOptions.wait.behavior === "block"
+					? (remoteOptions.wait.timeout ?? DEFAULT_KEEP_REMOTE_ITERATOR_TIMEOUT)
+					: DEFAULT_KEEP_REMOTE_ITERATOR_TIMEOUT;
 			queryRequestCoerced.keepAliveTtl = keepRemoteAlive
 				? BigInt(ttlSource)
 				: undefined;
-			queryRequestCoerced.pushUpdates = pushUpdates ? true : undefined;
+			queryRequestCoerced.pushUpdates = pushUpdates;
 			queryRequestCoerced.mergeUpdates = mergePolicy?.merge ? true : undefined;
 		}
 
 		if (pushUpdates && this.prefetch?.accumulator) {
-			const targetPrefetchKey = idAgnosticQueryKey(queryRequestCoerced);
+			const currentPrefetchKey = () => idAgnosticQueryKey(queryRequestCoerced);
 			const mergePrefetchedResults = async (
 				from: PublicSignKey,
 				results: types.Results<types.ResultTypeFromRequest<R, T, I>>,
@@ -3243,14 +3610,19 @@ export class DocumentIndex<
 							continue;
 						}
 						visited.add(indexKey);
+						const indexed = await this.resolveIndexed<R>(
+							result,
+							results.results as types.ResultTypeFromRequest<R, T, I>[],
+						);
+						if (isLateResult(indexed)) {
+							onLateResults?.({ amount: 1, peer: from });
+							continue;
+						}
 						buffer.push({
 							value: result.value as types.ResultTypeFromRequest<R, T, I>,
 							context: result.context,
 							from,
-							indexed: await this.resolveIndexed<R>(
-								result,
-								results.results as types.ResultTypeFromRequest<R, T, I>[],
-							),
+							indexed,
 						});
 					} else {
 						if (visited.has(indexKey) && !indexedPlaceholders?.has(indexKey)) {
@@ -3261,6 +3633,10 @@ export class DocumentIndex<
 							result.indexed || result.value,
 							result.context,
 						);
+						if (isLateResult(indexed)) {
+							onLateResults?.({ amount: 1, peer: from });
+							continue;
+						}
 						const placeholder = {
 							value: result.value,
 							context: result.context,
@@ -3274,7 +3650,9 @@ export class DocumentIndex<
 
 				peerBufferMap.set(peerHash, {
 					buffer,
-					kept: Number(results.kept),
+					// Prefetched batches should not claim remote pending counts;
+					// we'll collect more explicitly if needed.
+					kept: 0,
 				});
 			};
 
@@ -3285,7 +3663,7 @@ export class DocumentIndex<
 				if (!request) {
 					return;
 				}
-				if (idAgnosticQueryKey(request) !== targetPrefetchKey) {
+				if (idAgnosticQueryKey(request) !== currentPrefetchKey()) {
 					return;
 				}
 				try {
@@ -3317,10 +3695,10 @@ export class DocumentIndex<
 						);
 					}
 
-					if (!pendingResultsReason) {
-						pendingResultsReason = "change";
+					if (!pendingBatchReason) {
+						pendingBatchReason = "push";
 					}
-					signalUpdate("prefetch-add");
+					signalUpdate("push");
 				} catch (error) {
 					warn("Failed to merge prefetched results", error);
 				}
@@ -3393,15 +3771,15 @@ export class DocumentIndex<
 
 			const onChange = async (evt: CustomEvent<DocumentsChange<T, I>>) => {
 				// Optional filter to mutate/suppress change events
+				indexIteratorLogger.trace(
+					"processing live update change event",
+					evt.detail,
+				);
 				let filtered: DocumentsChange<T, I> | void = evt.detail;
 				if (mergePolicy?.merge?.filter) {
 					filtered = await mergePolicy.merge?.filter(evt.detail);
 				}
 				if (filtered) {
-					const changeForCallback: DocumentsChange<T, I> = {
-						added: [],
-						removed: [],
-					};
 					let hasRelevantChange = false;
 
 					// Remove entries that were deleted from all pending structures
@@ -3432,14 +3810,6 @@ export class DocumentIndex<
 						}
 						if (matchedRemovedIds.size > 0) {
 							hasRelevantChange = true;
-							for (const removed of filtered.removed) {
-								const id = indexerTypes.toId(
-									this.indexByResolver(removed.__indexed),
-								).primitive;
-								if (matchedRemovedIds.has(id)) {
-									changeForCallback.removed.push(removed);
-								}
-							}
 						}
 					}
 
@@ -3483,6 +3853,10 @@ export class DocumentIndex<
 									continue;
 								}
 							}
+							if (isLateResult(indexedCandidate)) {
+								onLateResults?.({ amount: 1 });
+								continue;
+							}
 							const id = indexerTypes.toId(
 								this.indexByResolver(indexedCandidate),
 							).primitive;
@@ -3513,21 +3887,15 @@ export class DocumentIndex<
 								ensureIndexedPlaceholders().set(id, placeholder);
 							}
 							hasRelevantChange = true;
-							changeForCallback.added.push(added);
 						}
 					}
 
 					if (hasRelevantChange) {
-						if (!pendingResultsReason) {
-							pendingResultsReason = "change";
+						runNotify("change");
+						if (!pendingBatchReason) {
+							pendingBatchReason = "change";
 						}
-						if (
-							changeForCallback.added.length > 0 ||
-							changeForCallback.removed.length > 0
-						) {
-							updateCallbacks?.onChange?.(changeForCallback);
-							signalUpdate("change");
-						}
+						signalUpdate();
 					}
 				}
 				signalUpdate();
@@ -3549,13 +3917,6 @@ export class DocumentIndex<
 
 			updateDeferred = pDefer<void>();
 
-			// derive optional onMissedResults callback if provided
-			let onMissedResults =
-				typeof options?.remote?.wait === "object" &&
-				typeof options?.remote.onLateResults === "function"
-					? options.remote.onLateResults
-					: undefined;
-
 			const waitForTime =
 				typeof options.remote.wait === "object" && options.remote.wait.timeout;
 
@@ -3572,7 +3933,7 @@ export class DocumentIndex<
 				}, waitForTime);
 			ensureController().signal.addEventListener("abort", () => signalUpdate());
 			fetchedFirstForRemote = new Set<string>();
-			joinListener = this.attachJoinListener({
+			joinListener = this.createReplicatorJoinListener({
 				signal: ensureController().signal,
 				eager: options.remote.reach?.eager,
 				onPeer: async (pk) => {
@@ -3587,7 +3948,7 @@ export class DocumentIndex<
 							fetchedFirstForRemote,
 						});
 						await fetchPromise;
-						if (onMissedResults) {
+						if (onLateResults) {
 							const pending = peerBufferMap.get(hash)?.buffer;
 							if (pending && pending.length > 0) {
 								if (lastValueInOrder) {
@@ -3604,18 +3965,18 @@ export class DocumentIndex<
 										(x) => x === lastValueInOrder,
 									);
 									if (lateResults > 0) {
-										onMissedResults({ amount: lateResults });
+										onLateResults({ amount: lateResults });
 									}
 								} else {
-									onMissedResults({ amount: pending.length });
+									onLateResults({ amount: pending.length });
 								}
 							}
 						}
 					}
-					if (!pendingResultsReason) {
-						pendingResultsReason = "join";
+					if (!pendingBatchReason) {
+						pendingBatchReason = "join";
 					}
-					signalUpdate();
+					signalUpdate("join");
 				},
 			});
 			const cleanupDefault = cleanup;
