@@ -58,6 +58,7 @@ describe("program", () => {
 			});
 
 			it("fails to init without variant", async () => {
+				@variant() // No variant string (expected to fail)
 				class NoVariant extends Program {
 					@field({ type: "u8" })
 					number: number;
