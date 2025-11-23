@@ -24,6 +24,8 @@
 	"files": [
 		"src",
 		"dist",
+		"!vitest",
+		"!dist/vitest",
 		"!dist/test",
 		"!**/*.tsbuildinfo"
 	],
@@ -39,7 +41,7 @@
 	"scripts": {
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
-		"test": "aegir test --target node",
+		"test": "vitest --config vitest.config.ts",
 		"lint": "aegir lint"
 	},
 	"peerDependencies": {
@@ -51,7 +53,10 @@
 		"@peerbit/react": "workspace:*"
 	},
 	"devDependencies": {
-		"@types/react": "^18.3.11"
+		"@types/react": "^18.3.11",
+		"@types/react-test-renderer": "^19.0.0",
+		"@testing-library/react": "^16.1.0",
+		"react-test-renderer": "^19.0.0"
 	},
 	"author": "dao.xyz",
 	"license": "MIT"
