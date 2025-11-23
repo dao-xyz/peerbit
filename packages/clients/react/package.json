@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/react",
-	"version": "0.0.1",
+	"version": "0.0.33",
 	"description": "React bindings for Peerbit clients",
 	"sideEffects": false,
 	"type": "module",
@@ -24,6 +24,7 @@
 	"files": [
 		"src",
 		"dist",
+		"!vitest",
 		"!dist/vitest",
 		"!**/*.tsbuildinfo"
 	],
