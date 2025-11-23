@@ -14,10 +14,7 @@ export default defineConfig({
 	retries: process.env.CI ? 1 : 0,
 	workers: process.env.CI ? 1 : undefined,
 	reporter: process.env.PARTY_HTML_REPORT
-		? [
-				["list"],
-				["html", { open: "never" }],
-			]
+		? [["list"], ["html", { open: "never" }]]
 		: [["list"]],
 
 	use: {

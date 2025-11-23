@@ -70,9 +70,12 @@ test.describe("stream", () => {
 		await anotherPage.evaluate(() => (window as any).sendTestData?.());
 
 		// Verify peers remain connected and traffic can flow
-		await waitForResolved(async () => {
-			await expect(page.getByTestId("peer-counter")).toHaveText("2");
-			await expect(anotherPage.getByTestId("peer-counter")).toHaveText("2");
-		}, { timeout: 10_000, delayInterval: 200 });
+		await waitForResolved(
+			async () => {
+				await expect(page.getByTestId("peer-counter")).toHaveText("2");
+				await expect(anotherPage.getByTestId("peer-counter")).toHaveText("2");
+			},
+			{ timeout: 10_000, delayInterval: 200 },
+		);
 	});
 });

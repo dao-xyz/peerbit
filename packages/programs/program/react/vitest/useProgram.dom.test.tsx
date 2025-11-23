@@ -1,7 +1,7 @@
-import { expect, it, describe } from "vitest";
-import React from "react";
-import { render, waitFor } from "@testing-library/react";
 import { PeerContext } from "@peerbit/react";
+import { render, waitFor } from "@testing-library/react";
+import React from "react";
+import { describe, expect, it } from "vitest";
 import { useProgram } from "../src/useProgram.js";
 
 class FakeProgram {
