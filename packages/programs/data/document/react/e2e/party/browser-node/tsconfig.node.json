@@ -1,8 +1,8 @@
 {
-  "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "composite": true,
-    "types": ["node"]
-  },
-  "include": ["vite.config.ts"]
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"composite": true,
+		"types": ["node"]
+	},
+	"include": ["vite.config.ts"]
 }

@@ -165,6 +165,11 @@ export class PredictedSearchRequest<
 	}
 }
 
+export enum PushUpdatesMode {
+	notify = 0,
+	stream = 1,
+}
+
 @variant(5)
 export class IterationRequest extends AbstractSearchRequest {
 	@field({ type: fixedArray("u8", 32) })
@@ -188,8 +193,8 @@ export class IterationRequest extends AbstractSearchRequest {
 	@field({ type: option("u64") })
 	keepAliveTtl?: bigint;
 
-	@field({ type: option("bool") })
-	pushUpdates?: boolean;
+	@field({ type: option("u8") })
+	pushUpdates?: PushUpdatesMode;
 
 	@field({ type: option("bool") })
 	mergeUpdates?: boolean;
@@ -207,7 +212,7 @@ export class IterationRequest extends AbstractSearchRequest {
 		resolve?: boolean;
 		replicate?: boolean;
 		keepAliveTtl?: number | bigint;
-		pushUpdates?: boolean;
+		pushUpdates?: boolean | PushUpdatesMode;
 		mergeUpdates?: boolean;
 	}) {
 		super();
@@ -221,7 +226,12 @@ export class IterationRequest extends AbstractSearchRequest {
 			properties?.keepAliveTtl != null
 				? BigInt(properties.keepAliveTtl)
 				: undefined;
-		this.pushUpdates = properties?.pushUpdates;
+		this.pushUpdates =
+			typeof properties?.pushUpdates === "number"
+				? properties.pushUpdates
+				: properties?.pushUpdates
+					? PushUpdatesMode.stream
+					: undefined;
 		this.mergeUpdates = properties?.mergeUpdates;
 	}
 }

@@ -1,37 +1,26 @@
-import { webSockets } from "@libp2p/websockets";
-import { PartyDocumentStore } from "../../shared/dist/data.js";
 import { Peerbit } from "peerbit";
+import { PartyDocumentStore } from "../../shared/dist/data.js";
 
-export type RunningReplicator = {
-	addresses: string[];
-	stop: () => Promise<void>;
+export type RunningRelay = {
+	peer: Peerbit;
+	store?: PartyDocumentStore;
 };
 
-export async function startReplicator(): Promise<RunningReplicator> {
-	const peer = await Peerbit.create(/* {
-		libp2p: {
-			addresses: {
-				listen: ["/ip4/127.0.0.1/tcp/0/ws"],
-			},
-			transports: [webSockets()],
-			connectionGater: {
-				denyDialMultiaddr: () => false,
-			},
-		},
-	} */);
+export async function startRelay(
+	options?: { replicate?: boolean } | false,
+): Promise<RunningRelay> {
+	const peer = await Peerbit.create();
 
-	await peer.open(PartyDocumentStore.createFixed(), {
-		existing: "reuse",
-		args: { replicate: true },
-	});
-
-	const addresses = peer
-		.getMultiaddrs()
-		.map((addr) => addr.toString())
-		.filter((addr) => addr.includes("/ws"));
+	const store =
+		options === false
+			? undefined
+			: await peer.open(PartyDocumentStore.createFixed(), {
+					existing: "reuse",
+					args: { replicate: options?.replicate ?? true },
+				});
 
 	return {
-		addresses,
-		stop: () => peer.stop(),
+		peer,
+		store,
 	};
 }

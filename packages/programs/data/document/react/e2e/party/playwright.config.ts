@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const PORT = Number(process.env.PARTY_PORT ?? 5255);
 const BASE_URL = `http://localhost:${PORT}`;
@@ -13,7 +13,13 @@ export default defineConfig({
 	forbidOnly: !!process.env.CI,
 	retries: process.env.CI ? 1 : 0,
 	workers: process.env.CI ? 1 : undefined,
-	reporter: process.env.CI ? "list" : "html",
+	reporter: process.env.PARTY_HTML_REPORT
+		? [
+				["list"],
+				["html", { open: "never" }],
+			]
+		: [["list"]],
+
 	use: {
 		trace: "on-first-retry",
 		baseURL: BASE_URL,

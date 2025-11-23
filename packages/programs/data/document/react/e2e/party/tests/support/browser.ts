@@ -1,4 +1,4 @@
-import { chromium, type BrowserContext, type TestInfo } from "@playwright/test";
+import { type BrowserContext, type TestInfo, chromium } from "@playwright/test";
 import inspector from "inspector";
 
 export type LaunchOptions = {
@@ -10,9 +10,10 @@ export const isDebugging = () => inspector.url() !== undefined;
 
 export async function launchBrowserContext(
 	testInfo: TestInfo,
-	options: LaunchOptions = {}
+	options: LaunchOptions = {},
 ): Promise<BrowserContext> {
-	const { headless = !isDebugging(), viewport = { width: 1280, height: 800 } } = options;
+	const { headless = !isDebugging(), viewport = { width: 1280, height: 800 } } =
+		options;
 	const browser = await chromium.launch({ headless });
 	const context = await browser.newContext({ viewport });
 	context.once("close", () => browser.close().catch(() => {}));
@@ -21,7 +22,7 @@ export async function launchBrowserContext(
 
 export function withSearchParams(
 	url: string,
-	params: Record<string, string | number | boolean | undefined>
+	params: Record<string, string | number | boolean | undefined>,
 ) {
 	const [head, hash = ""] = url.split("#");
 	const u = new URL(head);

@@ -4,20 +4,20 @@ import { defineConfig } from "vitest/config";
 const ROOT = path.resolve(__dirname, "../../../../..");
 const DOM_SETUP = [
 	path.join(ROOT, "vitest.setup.ts"),
-	path.join(ROOT, "vitest.setup.dom.ts")
+	path.join(ROOT, "vitest.setup.dom.ts"),
 ];
 
 export default defineConfig({
 	resolve: {
-		preserveSymlinks: true
+		preserveSymlinks: true,
 	},
 	server: {
 		fs: {
-			allow: [ROOT]
-		}
+			allow: [ROOT],
+		},
 	},
 	esbuild: {
-		target: "es2022"
+		target: "es2022",
 	},
 	test: {
 		name: "dom",
@@ -29,9 +29,9 @@ export default defineConfig({
 		deps: {
 			optimizer: {
 				web: {
-					include: ["@peerbit/document", "@peerbit/program"]
-				}
-			}
-		}
-	}
+					include: ["@peerbit/document", "@peerbit/program"],
+				},
+			},
+		},
+	},
 });

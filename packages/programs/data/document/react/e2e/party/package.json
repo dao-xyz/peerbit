@@ -1,28 +1,29 @@
 {
-  "name": "@peerbit/document-react-party",
-  "version": "0.0.0",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "node ./scripts/dev.mjs",
-    "build": "pnpm --dir ./shared build && pnpm --dir ./browser-node build",
-    "preview": "pnpm --dir ./shared build && pnpm --dir ./browser-node preview",
-    "test": "playwright test --config dist/playwright.config.js",
-    "test:headed": "PWDEBUG=1 pnpm test -- --headed"
-  },
-  "dependencies": {
-    "@libp2p/websockets": "^10.1.0",
-    "@peerbit/crypto": "workspace:*",
-    "@peerbit/document": "workspace:*",
-    "@peerbit/document-react": "workspace:*",
-    "@peerbit/program": "workspace:*",
-    "@peerbit/program-react": "workspace:*",
-    "@peerbit/react": "workspace:*",
-    "peerbit": "workspace:*"
-  },
-  "devDependencies": {
-    "@playwright/test": "^1.47.0",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.6.3"
-  }
+	"name": "@peerbit/document-react-party",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "node ./scripts/dev.mjs",
+		"build": "pnpm --dir ./shared build && pnpm --dir ./browser-node build",
+		"preview": "pnpm --dir ./shared build && pnpm --dir ./browser-node preview",
+		"test": "playwright test --config dist/playwright.config.js",
+		"test:headed": "PWDEBUG=1 pnpm test -- --headed"
+	},
+	"dependencies": {
+		"@libp2p/websockets": "^10.1.0",
+		"@peerbit/crypto": "workspace:*",
+		"@peerbit/document": "workspace:*",
+		"@peerbit/document-react": "workspace:*",
+		"@peerbit/program": "workspace:*",
+		"@peerbit/program-react": "workspace:*",
+		"@peerbit/react": "workspace:*",
+		"peerbit": "workspace:*"
+	},
+	"devDependencies": {
+		"@peerbit/time": "workspace:*",
+		"@playwright/test": "^1.47.0",
+		"ts-node": "^10.9.2",
+		"typescript": "^5.6.3"
+	}
 }

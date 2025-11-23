@@ -63,7 +63,7 @@ export class PartyDocumentStore extends Program<{ replicate?: boolean }> {
 	async open(args?: { replicate?: boolean }): Promise<void> {
 		await this.documents.open({
 			type: PartyMessage,
-			index: { type: PartyMessageIndex },
+			index: { type: PartyMessageIndex, prefetch: true },
 			replicate: args?.replicate ? { factor: 1 } : false,
 		});
 	}

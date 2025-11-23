@@ -1,28 +1,25 @@
-import { useState, useEffect, useRef, useMemo } from "react";
-import {
-    ClosedError,
-    Documents,
-} from "@peerbit/document";
+import { ClosedError, Documents } from "@peerbit/document";
 import type {
-    AbstractSearchRequest,
-    AbstractSearchResult,
-    Context,
-    RemoteQueryOptions,
-    ResultsIterator,
-    WithContext,
+	AbstractSearchRequest,
+	AbstractSearchResult,
+	Context,
+	RemoteQueryOptions,
+	ResultsIterator,
+	WithContext,
 } from "@peerbit/document";
-import type { WithIndexedContext, UpdateOptions } from "@peerbit/document";
+import type { UpdateOptions, WithIndexedContext } from "@peerbit/document";
 import * as indexerTypes from "@peerbit/indexer-interface";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { v4 as uuid } from "uuid";
 
 type QueryOptions = { query: QueryLike; id?: string };
 
 /* ────────────── helper types ────────────── */
 export type QueryLike = {
-    /** Mongo-style selector or array of selectors */
-    query?: indexerTypes.QueryLike | indexerTypes.Query[];
-    /** Sort definition compatible with `@peerbit/indexer-interface` */
-    sort?: indexerTypes.SortLike | indexerTypes.Sort | indexerTypes.Sort[];
+	/** Mongo-style selector or array of selectors */
+	query?: indexerTypes.QueryLike | indexerTypes.Query[];
+	/** Sort definition compatible with `@peerbit/indexer-interface` */
+	sort?: indexerTypes.SortLike | indexerTypes.Sort | indexerTypes.Sort[];
 };
 
 /**
@@ -30,20 +27,20 @@ export type QueryLike = {
  * They stay fully backward-compatible.
  */
 export type UseQuerySharedOptions<
-    T,
-    I,
-    R extends boolean | undefined,
-    RT = R extends false ? WithContext<I> : WithIndexedContext<T, I>,
+	T,
+	I,
+	R extends boolean | undefined,
+	RT = R extends false ? WithContext<I> : WithIndexedContext<T, I>,
 > = {
-    /* original behavioural flags */
-    resolve?: R;
-    transform?: (r: RT) => Promise<RT>;
-    debounce?: number;
-    debug?: boolean | string;
-    reverse?: boolean;
-    batchSize?: number;
-    prefetch?: boolean;
-    /*     onChange?: {
+	/* original behavioural flags */
+	resolve?: R;
+	transform?: (r: RT) => Promise<RT>;
+	debounce?: number;
+	debug?: boolean | string;
+	reverse?: boolean;
+	batchSize?: number;
+	prefetch?: boolean;
+	/*     onChange?: {
             merge?:
                 | boolean
                 | ((
@@ -57,11 +54,11 @@ export type UseQuerySharedOptions<
                 change: DocumentsChange<T, I>
             ) => RT[] | Promise<RT[]>;
         }; */
-    updates?: UpdateOptions<T, I, R>;
-    local?: boolean;
-    remote?:
-    | boolean
-    | RemoteQueryOptions<AbstractSearchRequest, AbstractSearchResult, any>;
+	updates?: UpdateOptions<T, I, R>;
+	local?: boolean;
+	remote?:
+		| boolean
+		| RemoteQueryOptions<AbstractSearchRequest, AbstractSearchResult, any>;
 } & QueryOptions;
 
 /* ────────────────────────── Main Hook ────────────────────────── */
@@ -75,379 +72,394 @@ export type UseQuerySharedOptions<
  * `useMultiQuery` so callers never have to choose between two APIs.
  */
 export const useQuery = <
-    T extends Record<string, any>,
-    I extends Record<string, any>,
-    R extends boolean | undefined = true,
-    RT = R extends false ? WithContext<I> : WithIndexedContext<T, I>,
+	T extends Record<string, any>,
+	I extends Record<string, any>,
+	R extends boolean | undefined = true,
+	RT = R extends false ? WithContext<I> : WithIndexedContext<T, I>,
 >(
-    /** Single DB or list of DBs. 100 % backward-compatible with the old single param. */
-    dbOrDbs: Documents<T, I> | Documents<T, I>[] | undefined,
-    options: UseQuerySharedOptions<T, I, R, RT>
+	/** Single DB or list of DBs. 100 % backward-compatible with the old single param. */
+	dbOrDbs: Documents<T, I> | Documents<T, I>[] | undefined,
+	options: UseQuerySharedOptions<T, I, R, RT>,
 ) => {
-    /* ─────── internal type alias for convenience ─────── */
-    type Item = RT;
-    type IteratorRef = {
-        id: string;
-        db: Documents<T, I>;
-        iterator: ResultsIterator<Item>;
-        itemsConsumed: number;
-    };
+	/* ─────── internal type alias for convenience ─────── */
+	type Item = RT;
+	type IteratorRef = {
+		id: string;
+		db: Documents<T, I>;
+		iterator: ResultsIterator<Item>;
+		itemsConsumed: number;
+	};
 
-    /* ────────────── normalise DBs input ────────────── */
-    const dbs = useMemo<(Documents<T, I> | undefined)[]>(() => {
-        if (Array.isArray(dbOrDbs)) return dbOrDbs;
-        if (dbOrDbs) return [dbOrDbs];
-        return [];
-    }, [dbOrDbs]);
+	/* ────────────── normalise DBs input ────────────── */
+	const dbs = useMemo<(Documents<T, I> | undefined)[]>(() => {
+		if (Array.isArray(dbOrDbs)) return dbOrDbs;
+		if (dbOrDbs) return [dbOrDbs];
+		return [];
+	}, [dbOrDbs]);
 
-    /* ────────────── state & refs ────────────── */
-    const [all, setAll] = useState<Item[]>([]);
-    const allRef = useRef<Item[]>([]);
-    const [isLoading, setIsLoading] = useState(false);
-    const iteratorRefs = useRef<IteratorRef[]>([]);
-    const itemIdRef = useRef(new WeakMap<object, string>());
-    const emptyResultsRef = useRef(false);
-    const closeControllerRef = useRef<AbortController | null>(null);
-    const waitedOnceRef = useRef(false);
+	/* ────────────── state & refs ────────────── */
+	const [all, setAll] = useState<Item[]>([]);
+	const allRef = useRef<Item[]>([]);
+	const [isLoading, setIsLoading] = useState(false);
+	const iteratorRefs = useRef<IteratorRef[]>([]);
+	const itemIdRef = useRef(new WeakMap<object, string>());
+	const emptyResultsRef = useRef(false);
+	const closeControllerRef = useRef<AbortController | null>(null);
+	const waitedOnceRef = useRef(false);
 
-    /* keep an id mostly for debugging – mirrors original behaviour */
-    const [id, setId] = useState<string | undefined>(options.id);
+	/* keep an id mostly for debugging – mirrors original behaviour */
+	const [id, setId] = useState<string | undefined>(options.id);
 
-    const reverseRef = useRef(options.reverse);
-    useEffect(() => {
-        reverseRef.current = options.reverse;
-    }, [options.reverse]);
+	const reverseRef = useRef(options.reverse);
+	useEffect(() => {
+		reverseRef.current = options.reverse;
+	}, [options.reverse]);
 
-    /* ────────────── utilities ────────────── */
-    const log = (...a: any[]) => {
-        if (!options.debug) return;
-        if (typeof options.debug === "boolean") console.log(...a);
-        else console.log(options.debug, ...a);
-    };
+	/* ────────────── utilities ────────────── */
+	const log = (...a: any[]) => {
+		if (!options.debug) return;
+		if (typeof options.debug === "boolean") console.log(...a);
+		else console.log(options.debug, ...a);
+	};
 
-    const updateAll = (combined: Item[]) => {
-        allRef.current = combined;
-        setAll(combined);
-    };
+	const updateAll = (combined: Item[]) => {
+		allRef.current = combined;
+		setAll(combined);
+	};
 
-    const reset = () => {
-        iteratorRefs.current?.forEach(({ iterator }) => iterator.close());
-        iteratorRefs.current = [];
+	const reset = () => {
+		iteratorRefs.current?.forEach(({ iterator }) => iterator.close());
+		iteratorRefs.current = [];
 
-        closeControllerRef.current?.abort(new Error("Reset"));
-        closeControllerRef.current = new AbortController();
-        emptyResultsRef.current = false;
-        waitedOnceRef.current = false;
+		closeControllerRef.current?.abort(new Error("Reset"));
+		closeControllerRef.current = new AbortController();
+		emptyResultsRef.current = false;
+		waitedOnceRef.current = false;
 
-        allRef.current = [];
-        itemIdRef.current = new WeakMap();
-        setAll([]);
-        setIsLoading(false);
-        log("Iterators reset");
-    };
+		allRef.current = [];
+		itemIdRef.current = new WeakMap();
+		setAll([]);
+		setIsLoading(false);
+		log("Iterators reset");
+	};
 
-    /* ────────── rebuild iterators when db list / query etc. change ────────── */
-    useEffect(() => {
-        /* derive canonical list of open DBs */
-        const openDbs = dbs.filter((d): d is Documents<T, I> =>
-            Boolean(d && !d.closed)
-        );
-        const { query, resolve } = options;
+	/* ────────── rebuild iterators when db list / query etc. change ────────── */
+	useEffect(() => {
+		/* derive canonical list of open DBs */
+		const openDbs = dbs.filter((d): d is Documents<T, I> =>
+			Boolean(d && !d.closed),
+		);
+		const { query, resolve } = options;
 
-        if (!openDbs.length || query == null) {
-            reset();
-            return;
-        }
+		if (!openDbs.length || query == null) {
+			reset();
+			return;
+		}
 
-        reset();
-        const abortSignal = closeControllerRef.current?.signal;
-        const onMissedResults = (evt: { amount: number }) => {
-            console.error("Not effective yet: missed results", evt);
-            /* if (allRef.current.length > 0 || typeof options.remote !== "object" || !options.updates) {
+		reset();
+		const abortSignal = closeControllerRef.current?.signal;
+		const onMissedResults = (evt: { amount: number }) => {
+			console.error("Not effective yet: missed results", evt);
+			/* if (allRef.current.length > 0 || typeof options.remote !== "object" || !options.updates) {
                 return;
             }
             console.log("Missed results, loading more", evt.amount);
             loadMore(evt.amount); */
-        };
-        let draining = false;
-        const scheduleDrain = (ref: ResultsIterator<RT>, amount: number) => {
-            log("Schedule drain", draining, ref, amount);
-            if (draining) return;
-            draining = true;
-            loadMore(amount)
-                .catch((e) => {
-                    if (!(e instanceof ClosedError)) throw e;
-                })
-                .finally(() => {
-                    draining = false;
-                });
-        };
+		};
+		let draining = false;
+		const scheduleDrain = (
+			ref: ResultsIterator<RT>,
+			amount: number,
+			opts?: { force?: boolean },
+		) => {
+			log("Schedule drain", draining, ref, amount);
+			if (draining) return;
+			draining = true;
+			loadMore(amount, opts)
+				.catch((e) => {
+					if (!(e instanceof ClosedError)) throw e;
+				})
+				.finally(() => {
+					draining = false;
+				});
+		};
 
-        iteratorRefs.current = openDbs.map((db) => {
-            let currentRef: IteratorRef | undefined;
-            const iterator = db.index.iterate(query ?? {}, {
-                closePolicy: "manual",
-                local: options.local ?? true,
-                remote: options.remote
-                    ? {
-                        ...(typeof options?.remote === "object"
-                            ? {
-                                ...options.remote,
-                                onLateResults: onMissedResults,
-                                wait: {
-                                    ...options?.remote?.wait,
-                                    timeout:
-                                        options?.remote?.wait?.timeout ??
-                                        5000,
-                                },
-                            }
-                            : options?.remote
-                                ? {
-                                    onLateResults: onMissedResults,
-                                }
-                                : undefined),
-                    }
-                    : undefined,
-                resolve,
-                signal: abortSignal,
-                updates: {
-                    push: true,
-                    merge:
-                        typeof options.updates === "boolean" && options.updates
-                            ? true
-                            : typeof options.updates === "object" &&
-                                options.updates.merge
-                                ? true
-                                : false,
-                    onChange: (evt) => {
-                        log("Live update", evt);
-                        if (evt.added.length > 0) {
-                            scheduleDrain(
-                                iterator as ResultsIterator<RT>,
-                                evt.added.length
-                            );
-                        }
-                    },
-                    onResults: (batch, props) => {
-                        log("onResults", { batch, props, currentRef: !!currentRef });
-                        if (
-                            props.reason === "join" ||
-                            props.reason === "change"
-                        ) {
-                            if (!currentRef) return;
-                            handleBatch(iteratorRefs.current, [
-                                { ref: currentRef, items: batch as Item[] },
-                            ]);
-                        }
-                    },
-                },
-            }) as ResultsIterator<Item>;
+		iteratorRefs.current = openDbs.map((db) => {
+			let currentRef: IteratorRef | undefined;
+			const iterator = db.index.iterate(query ?? {}, {
+				closePolicy: "manual",
+				local: options.local ?? true,
+				remote: options.remote
+					? {
+							...(typeof options?.remote === "object"
+								? {
+										...options.remote,
+										onLateResults: onMissedResults,
+										wait: {
+											...options?.remote?.wait,
+											timeout: options?.remote?.wait?.timeout ?? 5000,
+										},
+									}
+								: options?.remote
+									? {
+											onLateResults: onMissedResults,
+										}
+									: undefined),
+						}
+					: undefined,
+				resolve,
+				signal: abortSignal,
+				updates: {
+					push:
+						typeof options.updates === "boolean"
+							? options.updates
+							: typeof options.updates === "object" && options.updates.push
+								? true
+								: false,
+					merge:
+						typeof options.updates === "boolean" && options.updates
+							? true
+							: typeof options.updates === "object" && options.updates.merge
+								? true
+								: false,
+					notify: (reason) => {
+						log("notify", { reason, currentRef: !!currentRef });
+						if (reason === "change" || reason === "push" || reason === "join") {
+							const drainAmount = options.batchSize ?? 10;
+							scheduleDrain(iterator as ResultsIterator<RT>, drainAmount, {
+								force: true,
+							});
+						}
+					},
+					onBatch: (batch, props) => {
+						log("onBatch", { batch, props, currentRef: !!currentRef });
+						if (
+							props.reason === "join" ||
+							props.reason === "change" ||
+							props.reason === "push"
+						) {
+							if (!currentRef) return;
+							handleBatch(iteratorRefs.current, [
+								{ ref: currentRef, items: batch as Item[] },
+							]);
+						}
+					},
+				},
+			}) as ResultsIterator<Item>;
 
-            const ref: IteratorRef = {
-                id: uuid(),
-                db,
-                iterator,
-                itemsConsumed: 0,
-            };
-            currentRef = ref;
-            log("Iterator init", ref.id, "db", db.address);
-            return ref;
-        });
+			const ref: IteratorRef = {
+				id: uuid(),
+				db,
+				iterator,
+				itemsConsumed: 0,
+			};
+			currentRef = ref;
+			log("Iterator init", ref.id, "db", db.address);
+			return ref;
+		});
 
-        /* store a deterministic id (useful for external keys) */
-        setId(uuid());
+		/* store a deterministic id (useful for external keys) */
+		setId(uuid());
 
-        /* prefetch if requested */
-        if (options.prefetch) void loadMore();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [
-        dbs.map((d) => d?.address).join("|"),
-        options.query,
-        options.resolve,
-        options.reverse,
-    ]);
+		/* prefetch if requested */
+		if (options.prefetch) void loadMore();
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [
+		dbs.map((d) => d?.address).join("|"),
+		options.query,
+		options.resolve,
+		options.reverse,
+		options.batchSize,
+	]);
 
-    /* ────────────── loadMore implementation ────────────── */
-    const batchSize = options.batchSize ?? 10;
+	/* ────────────── loadMore implementation ────────────── */
+	const batchSize = options.batchSize ?? 10;
 
-    const shouldWait = (): boolean => {
-        if (waitedOnceRef.current) return false;
-        if (options.remote === false) return false;
-        return true; // mimic original behaviour – wait once if remote allowed
-    };
+	const shouldWait = (): boolean => {
+		if (waitedOnceRef.current) return false;
+		if (options.remote === false) return false;
+		return true; // mimic original behaviour – wait once if remote allowed
+	};
 
-    const markWaited = () => {
-        waitedOnceRef.current = true;
-    };
+	const markWaited = () => {
+		waitedOnceRef.current = true;
+	};
 
-    /* helper to turn primitive ids into stable map keys */
-    const idToKey = (value: indexerTypes.IdPrimitive): string => {
-        switch (typeof value) {
-            case "string":
-                return `s:${value}`;
-            case "number":
-                return `n:${value}`;
-            default:
-                return `b:${value.toString()}`;
-        }
-    };
+	/* helper to turn primitive ids into stable map keys */
+	const idToKey = (value: indexerTypes.IdPrimitive): string => {
+		switch (typeof value) {
+			case "string":
+				return `s:${value}`;
+			case "number":
+				return `n:${value}`;
+			default:
+				return `b:${value.toString()}`;
+		}
+	};
 
-    const handleBatch = async (
-        iterators: IteratorRef[],
-        batches: { ref: IteratorRef; items: Item[] }[]
-    ): Promise<boolean> => {
-        if (!iterators.length) {
-            log("No iterators in handleBatch");
-            return false;
-        }
+	const handleBatch = async (
+		iterators: IteratorRef[],
+		batches: { ref: IteratorRef; items: Item[] }[],
+	): Promise<boolean> => {
+		if (!iterators.length) {
+			log("No iterators in handleBatch");
+			return false;
+		}
 
-        const totalFetched = batches.reduce(
-            (sum, batch) => sum + batch.items.length,
-            0
-        );
-        if (totalFetched === 0) {
-            log("No items fetched");
-            emptyResultsRef.current = iterators.every((i) => i.iterator.done());
-            return !emptyResultsRef.current;
-        }
+		const totalFetched = batches.reduce(
+			(sum, batch) => sum + batch.items.length,
+			0,
+		);
+		if (totalFetched === 0) {
+			log("No items fetched");
+			emptyResultsRef.current = iterators.every((i) => i.iterator.done());
+			return !emptyResultsRef.current;
+		}
 
-        let processed = batches;
-        if (options.transform) {
-            const transform = options.transform;
-            processed = await Promise.all(
-                batches.map(async ({ ref, items }) => ({
-                    ref,
-                    items: await Promise.all(items.map(transform)),
-                }))
-            );
-        }
+		let processed = batches;
+		if (options.transform) {
+			const transform = options.transform;
+			processed = await Promise.all(
+				batches.map(async ({ ref, items }) => ({
+					ref,
+					items: await Promise.all(items.map(transform)),
+				})),
+			);
+		}
 
-        const prev = allRef.current;
-        const next = [...prev];
-        const keyIndex = new Map<string, number>();
-        prev.forEach((item, idx) => {
-            const key = itemIdRef.current.get(item as object);
-            if (key) keyIndex.set(key, idx);
-        });
+		const prev = allRef.current;
+		const next = [...prev];
+		const keyIndex = new Map<string, number>();
+		prev.forEach((item, idx) => {
+			const key = itemIdRef.current.get(item as object);
+			if (key) keyIndex.set(key, idx);
+		});
 
-        const seenHeads = new Set(prev.map((x) => (x as any).__context?.head));
-        const freshItems: Item[] = [];
-        let hasMutations = false;
+		const seenHeads = new Set(prev.map((x) => (x as any).__context?.head));
+		const freshItems: Item[] = [];
+		let hasMutations = false;
 
-        log("Processing batches", { processed, keyIndex });
-        for (const { ref, items } of processed) {
-            const db = ref.db;
-            for (const item of items) {
-                const ctx = (item as WithContext<any>).__context;
-                const head = ctx?.head;
+		log("Processing batches", { processed, keyIndex });
+		for (const { ref, items } of processed) {
+			const db = ref.db;
+			for (const item of items) {
+				const ctx = (item as WithContext<any>).__context;
+				const head = ctx?.head;
 
-                let key: string | null = null;
-                try {
-                    key = idToKey(
-                        db.index.resolveId(
-                            item as WithContext<I> | WithIndexedContext<T, I>
-                        ).primitive
-                    );
-                } catch (error) {
-                    log("useQuery: failed to resolve id", error);
-                }
+				let key: string | null = null;
+				try {
+					key = idToKey(
+						db.index.resolveId(
+							item as WithContext<I> | WithIndexedContext<T, I>,
+						).primitive,
+					);
+				} catch (error) {
+					log("useQuery: failed to resolve id", error);
+				}
 
-                if (key && keyIndex.has(key)) {
-                    const existingIndex = keyIndex.get(key)!;
-                    const current = next[existingIndex];
-                    const currentContext: Context | undefined = (
-                        current as WithContext<any>
-                    )?.__context;
-                    const incomingContext: Context | undefined = ctx;
-                    const shouldReplace =
-                        !currentContext ||
-                        !incomingContext ||
-                        currentContext.modified <= incomingContext.modified;
+				if (key && keyIndex.has(key)) {
+					const existingIndex = keyIndex.get(key)!;
+					const current = next[existingIndex];
+					const currentContext: Context | undefined = (
+						current as WithContext<any>
+					)?.__context;
+					const incomingContext: Context | undefined = ctx;
+					const shouldReplace =
+						!currentContext ||
+						!incomingContext ||
+						currentContext.modified <= incomingContext.modified;
 
-                    if (shouldReplace && current !== item) {
-                        itemIdRef.current.delete(current as object);
-                        next[existingIndex] = item;
-                        hasMutations = true;
-                    }
+					if (shouldReplace && current !== item) {
+						itemIdRef.current.delete(current as object);
+						next[existingIndex] = item;
+						hasMutations = true;
+					}
 
-                    if (key) {
-                        itemIdRef.current.set(item as object, key);
-                        keyIndex.set(key, existingIndex);
-                    }
-                    if (head != null) seenHeads.add(head);
-                    continue;
-                }
+					if (key) {
+						itemIdRef.current.set(item as object, key);
+						keyIndex.set(key, existingIndex);
+					}
+					if (head != null) seenHeads.add(head);
+					continue;
+				}
 
-                if (head != null && seenHeads.has(head)) continue;
-                if (head != null) seenHeads.add(head);
+				if (head != null && seenHeads.has(head)) continue;
+				if (head != null) seenHeads.add(head);
 
-                freshItems.push(item);
-                if (key) {
-                    itemIdRef.current.set(item as object, key);
-                    keyIndex.set(key, prev.length + freshItems.length - 1);
-                }
-            }
-        }
+				freshItems.push(item);
+				if (key) {
+					itemIdRef.current.set(item as object, key);
+					keyIndex.set(key, prev.length + freshItems.length - 1);
+				}
+			}
+		}
 
+		if (!freshItems.length && !hasMutations) {
+			emptyResultsRef.current = iterators.every((i) => i.iterator.done());
+			log("No new items or mutations");
+			return !emptyResultsRef.current;
+		}
 
-        if (!freshItems.length && !hasMutations) {
-            emptyResultsRef.current = iterators.every((i) => i.iterator.done());
-            log("No new items or mutations");
-            return !emptyResultsRef.current;
-        }
+		const combined = reverseRef.current
+			? [...freshItems.reverse(), ...next]
+			: [...next, ...freshItems];
 
+		log("Updating all with", {
+			prevLength: prev.length,
+			freshLength: freshItems.length,
+			combinedLength: combined.length,
+		});
+		updateAll(combined);
 
-        const combined = reverseRef.current
-            ? [...freshItems.reverse(), ...next]
-            : [...next, ...freshItems];
+		emptyResultsRef.current = iterators.every((i) => i.iterator.done());
+		return !emptyResultsRef.current;
+	};
 
-        log("Updating all with", {
-            prevLength: prev.length,
-            freshLength: freshItems.length,
-            combinedLength: combined.length,
-        });
-        updateAll(combined);
+	const drainRoundRobin = async (
+		iterators: IteratorRef[],
+		n: number,
+	): Promise<boolean> => {
+		const batches: { ref: IteratorRef; items: Item[] }[] = [];
+		for (const ref of iterators) {
+			if (ref.iterator.done()) continue;
+			const batch = await ref.iterator.next(n);
+			log("Iterator", ref.id, "fetched", batch.length, "items");
+			if (batch.length) {
+				ref.itemsConsumed += batch.length;
+				batches.push({ ref, items: batch });
+			}
+		}
+		return handleBatch(iterators, batches);
+	};
 
-        emptyResultsRef.current = iterators.every((i) => i.iterator.done());
-        return !emptyResultsRef.current;
-    };
-
-    const drainRoundRobin = async (
-        iterators: IteratorRef[],
-        n: number
-    ): Promise<boolean> => {
-        const batches: { ref: IteratorRef; items: Item[] }[] = [];
-        for (const ref of iterators) {
-            if (ref.iterator.done()) continue;
-            const batch = await ref.iterator.next(n);
-            log("Iterator", ref.id, "fetched", batch.length, "items");
-            if (batch.length) {
-                ref.itemsConsumed += batch.length;
-                batches.push({ ref, items: batch });
-            }
-        }
-        return handleBatch(iterators, batches);
-    };
-
-    /*  maybe make the rule that if results are empty and we get results from joining  
+	/*  maybe make the rule that if results are empty and we get results from joining  
      set the results to the joining results 
      when results are not empty use onMerge option to merge the results ?  */
 
-    const loadMore = async (n: number = batchSize): Promise<boolean> => {
-        const iterators = iteratorRefs.current;
-        if (!iterators.length || emptyResultsRef.current) {
-            log("No iterators or already empty", {
-                length: iterators.length,
-                emptyResultsRef: emptyResultsRef.current,
-            });
-            return false;
-        }
+	const loadMore = async (
+		n: number = batchSize,
+		opts?: { force?: boolean },
+	): Promise<boolean> => {
+		const iterators = iteratorRefs.current;
+		if (!iterators.length) {
+			log("No iterators or already empty", {
+				length: iterators.length,
+				emptyResultsRef: emptyResultsRef.current,
+			});
+			return false;
+		}
+		if (emptyResultsRef.current && !opts?.force) {
+			log("Skipping loadMore due to empty state");
+			return false;
+		} else if (opts?.force) {
+			emptyResultsRef.current = false;
+		}
 
-        setIsLoading(true);
-        try {
-            /* one-time replicator warm-up across all DBs */
-            if (shouldWait()) {
-                /*   if (
+		setIsLoading(true);
+		try {
+			/* one-time replicator warm-up across all DBs */
+			if (shouldWait()) {
+				/*   if (
                      typeof options.remote === "object" &&
                      options.remote.wait
                  ) {
@@ -470,25 +482,25 @@ export const useQuery = <
                          })
                      );
                  }*/
-                markWaited();
-            }
+				markWaited();
+			}
 
-            return drainRoundRobin(iterators, n);
-        } catch (e) {
-            if (!(e instanceof ClosedError)) throw e;
-            return false;
-        } finally {
-            setIsLoading(false);
-        }
-    };
+			return drainRoundRobin(iterators, n);
+		} catch (e) {
+			if (!(e instanceof ClosedError)) throw e;
+			return false;
+		} finally {
+			setIsLoading(false);
+		}
+	};
 
-    /* ────────────── live-merge listeners ────────────── */
-    useEffect(() => {
-        if (!options.updates) {
-            return;
-        }
+	/* ────────────── live-merge listeners ────────────── */
+	useEffect(() => {
+		if (!options.updates) {
+			return;
+		}
 
-        /* const listeners = iteratorRefs.current.map(({ db, id: itId }) => {
+		/* const listeners = iteratorRefs.current.map(({ db, id: itId }) => {
              const mergeFn =
                 typeof options.onChange?.merge === "function"
                     ? options.onChange.merge
@@ -529,21 +541,21 @@ export const useQuery = <
             );
         }; */
 
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [
-        iteratorRefs.current.map((r) => r.db.address).join("|"),
-        options.updates,
-        options.query,
-        options.resolve,
-        options.reverse,
-    ]);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [
+		iteratorRefs.current.map((r) => r.db.address).join("|"),
+		options.updates,
+		options.query,
+		options.resolve,
+		options.reverse,
+	]);
 
-    /* ────────────── public API – unchanged from the caller's perspective ────────────── */
-    return {
-        items: all,
-        loadMore,
-        isLoading,
-        empty: () => emptyResultsRef.current,
-        id,
-    };
+	/* ────────────── public API – unchanged from the caller's perspective ────────────── */
+	return {
+		items: all,
+		loadMore,
+		isLoading,
+		empty: () => emptyResultsRef.current,
+		id,
+	};
 };
