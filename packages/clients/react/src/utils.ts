@@ -1,7 +1,7 @@
-import { serialize, deserialize } from "@dao-xyz/borsh";
-import { Ed25519Keypair, toBase64, fromBase64 } from "@peerbit/crypto";
-import { v4 as uuid } from "uuid";
+import { deserialize, serialize } from "@dao-xyz/borsh";
+import { Ed25519Keypair, fromBase64, toBase64 } from "@peerbit/crypto";
 import sodium from "libsodium-wrappers";
+import { v4 as uuid } from "uuid";
 import { FastMutex } from "./lockstorage.js";
 
 const CLIENT_ID_STORAGE_KEY = "CLIENT_ID";
@@ -40,7 +40,7 @@ export const getFreeKeypair = async (
 	options?: {
 		releaseLockIfSameId?: boolean;
 		releaseFirstLock?: boolean;
-	}
+	},
 ) => {
 	await sodium.ready;
 	const idCounterKey = ID_COUNTER_KEY + id;
@@ -63,7 +63,7 @@ export const getFreeKeypair = async (
 		await lock.lock(key, lockCondition);
 		localStorage.setItem(
 			idCounterKey,
-			JSON.stringify(Math.max(idCounter, i + 1))
+			JSON.stringify(Math.max(idCounter, i + 1)),
 		);
 		await lock.release(idCounterKey);
 		return {

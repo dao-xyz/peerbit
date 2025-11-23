@@ -1,5 +1,4 @@
 /* eslint-disable no-console */
-
 /* eslint-disable @typescript-eslint/naming-convention */
 import type { PeerId } from "@libp2p/interface";
 import { peerIdFromString } from "@libp2p/peer-id";

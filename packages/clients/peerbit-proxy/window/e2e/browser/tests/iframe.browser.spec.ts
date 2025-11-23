@@ -1,7 +1,4 @@
-import {
-	/* expect, */
-	test,
-} from "@playwright/test";
+import { /* expect, */ test } from "@playwright/test";
 
 test.describe("iframe", () => {
 	test("appends cross frames", async ({ page }) => {

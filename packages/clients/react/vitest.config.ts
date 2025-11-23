@@ -11,6 +11,6 @@ export default defineConfig({
 		exclude: ["dist", "node_modules"],
 		setupFiles: [path.join(ROOT, "vitest.setup.ts")],
 		hookTimeout: 120_000,
-		testTimeout: 120_000
-	}
+		testTimeout: 120_000,
+	},
 });
