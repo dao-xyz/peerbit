@@ -67,7 +67,9 @@ const resolveAssetLocations = (
 	deps?: { fs?: FileSystemLike; resolvers?: ModuleResolver[] },
 ) => {
 	const rewritten = sources.map((s) =>
-		s.replace("/dist/peerbit", "/dist/src").replace(/\\dist\\peerbit/g, "\\dist\\src"),
+		s
+			.replace("/dist/peerbit", "/dist/src")
+			.replace(/\\dist\\peerbit/g, "\\dist\\src"),
 	);
 	return baseResolveAssetLocations(rewritten, createFindLibraryOptions(deps));
 };

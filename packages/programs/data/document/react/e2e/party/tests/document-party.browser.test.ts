@@ -285,13 +285,10 @@ test.describe("document react party", () => {
 			},
 		);
 
-		
 		await page.reload();
 		await connect(page, bootstrap);
 		await waitForMessages(page, [message]);
 	});
-
-	
 
 	test.describe("join", () => {
 		test("it does not query observers on join", async ({ page }, testInfo) => {
@@ -354,11 +351,13 @@ test.describe("document react party", () => {
 			const head = await relay.store.documents.log.log.getHeads().all();
 			expect(head.length).toBe(1);
 			try {
-				expect(await relay.store.documents.log.log.blocks.has(head[0].hash)).toBe(
-				true,
-			);
+				expect(
+					await relay.store.documents.log.log.blocks.has(head[0].hash),
+				).toBe(true);
 			} catch (error) {
-				throw new Error(`Relay is missing block ${head[0].hash}`, { cause: error });	
+				throw new Error(`Relay is missing block ${head[0].hash}`, {
+					cause: error,
+				});
 			}
 
 			for (const page of pages) {
