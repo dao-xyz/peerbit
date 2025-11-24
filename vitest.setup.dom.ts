@@ -6,24 +6,6 @@ import { TextDecoder, TextEncoder } from "node:util";
 (globalThis as any).TextEncoder = TextEncoder;
 globalThis.TextDecoder = TextDecoder as typeof globalThis.TextDecoder;
 
-// Guard against libraries registering undefined/null event listeners in happy-dom,
-// which would otherwise surface as "handleEvent" errors during dispatch.
-const originalAddEventListener = EventTarget.prototype.addEventListener;
-EventTarget.prototype.addEventListener = function (
-	type: string,
-	listener: EventListenerOrEventListenerObject | null,
-	options?: boolean | AddEventListenerOptions,
-) {
-	if (listener == null) {
-		// eslint-disable-next-line no-console
-		console.warn(
-			`Ignoring addEventListener('${type}') with falsy listener in test environment`,
-		);
-		return;
-	}
-	return originalAddEventListener.call(this, type, listener, options);
-};
-
 /* // 2) Web Crypto (getRandomValues, subtle, etc.)
 import { webcrypto } from 'node:crypto';
 if (typeof globalThis.crypto === 'undefined') {
