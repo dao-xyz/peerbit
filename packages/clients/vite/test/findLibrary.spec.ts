@@ -20,18 +20,19 @@ describe("findLibraryInNodeModules", () => {
 
 	it("resolves direct asset via resolver", () => {
 		const asset =
-			"/app/node_modules/@peerbit/indexer-sqlite3/dist/peerbit/sqlite3.worker.min.js";
+			"/app/node_modules/@peerbit/indexer-sqlite3/dist/assets/sqlite3/sqlite3.worker.min.js";
 		const resolver: ModuleResolver = {
 			resolve: (id: string) => {
 				if (
-					id === "@peerbit/indexer-sqlite3/dist/peerbit/sqlite3.worker.min.js"
+					id ===
+					"@peerbit/indexer-sqlite3/dist/assets/sqlite3/sqlite3.worker.min.js"
 				)
 					return asset;
 				throw new Error("not found");
 			},
 		} as any;
 		const got = TEST_EXPORTS.findLibraryInNodeModules(
-			"@peerbit/indexer-sqlite3/dist/peerbit/sqlite3.worker.min.js",
+			"@peerbit/indexer-sqlite3/dist/assets/sqlite3/sqlite3.worker.min.js",
 			{ fs: fsMock(new Set([path.resolve(asset)])), resolvers: [resolver] },
 		);
 		expect(got).to.equal(path.resolve(asset));
@@ -47,9 +48,9 @@ describe("findLibraryInNodeModules", () => {
 				throw new Error("not found");
 			},
 		} as any;
-		const candidate = path.join(pkgRoot, "dist/peerbit");
+		const candidate = path.join(pkgRoot, "dist/assets/sqlite3");
 		const got = TEST_EXPORTS.findLibraryInNodeModules(
-			"@peerbit/indexer-sqlite3/dist/peerbit",
+			"@peerbit/indexer-sqlite3/dist/assets/sqlite3",
 			{ fs: fsMock(new Set([candidate])), resolvers: [resolver] },
 		);
 		expect(got).to.equal(candidate);
@@ -58,11 +59,11 @@ describe("findLibraryInNodeModules", () => {
 	it("falls back to walking up node_modules", () => {
 		const nm = path.resolve(
 			process.cwd(),
-			"node_modules/@peerbit/any-store-opfs/dist/peerbit",
+			"node_modules/@peerbit/any-store-opfs/dist/assets/opfs",
 		);
 		const existing = new Set([nm]);
 		const got = TEST_EXPORTS.findLibraryInNodeModules(
-			"@peerbit/any-store-opfs/dist/peerbit",
+			"@peerbit/any-store-opfs/dist/assets/opfs",
 			{
 				fs: fsMock(existing),
 				resolvers: [],

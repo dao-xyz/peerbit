@@ -43,7 +43,7 @@ describe("pnpm-style symlink resolution", () => {
 		};
 
 		const resolvedDir = TEST_EXPORTS.findLibraryInNodeModules(
-			"@peerbit/indexer-sqlite3/dist/peerbit",
+			"@peerbit/indexer-sqlite3/dist/assets/sqlite3",
 			{
 				fs: fsLike,
 				resolvers: [resolver],

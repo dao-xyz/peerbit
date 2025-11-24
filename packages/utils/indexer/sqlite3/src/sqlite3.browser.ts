@@ -203,7 +203,7 @@ const init = async (): Promise<DatabaseCreator> => {
 	}
 
 	let worker = new Worker(
-		new URL("/peerbit/sqlite3.worker.min.js", import.meta.url),
+		new URL("/peerbit/sqlite3/sqlite3.worker.min.js", import.meta.url),
 		{ type: "module" },
 	);
 	let resolvers: {

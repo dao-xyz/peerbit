@@ -5,8 +5,8 @@
 	"type": "module",
 	"scripts": {
 		"dev": "node ./scripts/dev.mjs",
-		"build": "pnpm --filter @peerbit/any-store-opfs build && pnpm --dir ./shared build && pnpm --dir ./browser-node build",
-		"preview": "pnpm --filter @peerbit/any-store-opfs build && pnpm --dir ./shared build && pnpm --dir ./browser-node preview",
+		"build": "pnpm --dir ./shared build && pnpm --dir ./browser-node build",
+		"preview": "pnpm --dir ./shared build && pnpm --dir ./browser-node preview",
 		"test": "playwright test --config dist/playwright.config.js",
 		"test:headed": "PWDEBUG=1 pnpm test -- --headed"
 	},

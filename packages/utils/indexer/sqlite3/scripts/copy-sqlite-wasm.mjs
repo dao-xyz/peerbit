@@ -11,7 +11,7 @@ const SQLITE_PACKAGE_DIR = path.dirname(
 	require.resolve("@sqlite.org/sqlite-wasm/package.json")
 );
 const SOURCE = path.resolve(SQLITE_PACKAGE_DIR, "sqlite-wasm/jswasm");
-const TARGET = path.resolve(__dirname, "../dist/peerbit");
+const TARGET = path.resolve(__dirname, "../dist/assets/sqlite3");
 
 if (!existsSync(SOURCE)) {
 	throw new Error(`Missing sqlite-wasm assets at ${SOURCE}. Did pnpm install?`);

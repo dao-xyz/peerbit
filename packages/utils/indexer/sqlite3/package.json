@@ -34,8 +34,8 @@
 			"import": "./dist/src/index.js"
 		},
 		"./sqlite.org": {
-			"types": "./dist/peerbit/sqlite.org/sqlite3.d.ts",
-			"import": "./dist/peerbit/sqlite.org/sqlite3.js"
+			"types": "./dist/assets/sqlite3/sqlite.org/sqlite3.d.ts",
+			"import": "./dist/assets/sqlite3/sqlite.org/sqlite3.js"
 		}
 	},
 	"browser": {
@@ -59,7 +59,7 @@
 	"scripts": {
 		"clean": "aegir clean",
 		"copy-sqlite-wasm": "node ./scripts/copy-sqlite-wasm.mjs",
-		"build-worker": "esbuild --bundle ./src/sqlite3.worker.ts --format=esm --outfile=./dist/peerbit/sqlite3.worker.min.js",
+		"build-worker": "esbuild --bundle ./src/sqlite3.worker.ts --format=esm --outfile=./dist/assets/sqlite3/sqlite3.worker.min.js",
 		"build": "aegir build && npm run copy-sqlite-wasm && npm run build-worker",
 		"test": "aegir test",
 		"test:browser": "aegir clean && aegir test -t browser",

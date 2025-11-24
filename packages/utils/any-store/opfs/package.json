@@ -60,7 +60,8 @@
 	"bugs": "https://github.com/dao-xyz/peerbit/issues",
 	"scripts": {
 		"clean": "aegir clean",
-		"build": "aegir build",
+		"build": "aegir build && pnpm run copy-assets",
+		"copy-assets": "shx mkdir -p dist/assets/opfs && shx cp dist/src/worker.js dist/assets/opfs/ && shx cp dist/src/worker.js.map dist/assets/opfs/ || true",
 		"test": "",
 		"lint": "aegir lint"
 	},

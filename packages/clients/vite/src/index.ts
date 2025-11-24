@@ -66,7 +66,10 @@ const resolveAssetLocations = (
 	sources: string[],
 	deps?: { fs?: FileSystemLike; resolvers?: ModuleResolver[] },
 ) => {
-	return baseResolveAssetLocations(sources, createFindLibraryOptions(deps));
+	const rewritten = sources.map((s) =>
+		s.replace("/dist/peerbit", "/dist/src").replace(/\\dist\\peerbit/g, "\\dist\\src"),
+	);
+	return baseResolveAssetLocations(rewritten, createFindLibraryOptions(deps));
 };
 
 function dontMinimizeCertainPackagesPlugin(
@@ -94,18 +97,18 @@ function dontMinimizeCertainPackagesPlugin(
 function copyToPublicPlugin(
 	options: { assets?: { src: string; dest: string }[] } = {},
 ) {
+	const [sqlite3Assets] = resolveAssetLocations([
+		"@peerbit/indexer-sqlite3/dist/assets/sqlite3",
+	]);
+
 	return {
 		name: "copy-to-public",
 		enforce: "pre" as const,
 		buildStart() {
 			// Ensure worker exists in public/ as a last-resort (CI safety), even if assets disabled
 			try {
-				// Copy the entire dist/peerbit directory from @peerbit/indexer-sqlite3
-				const peerbitDistDir = findLibraryInNodeModules(
-					"@peerbit/indexer-sqlite3/dist/peerbit",
-				);
-				const destDir = path.resolve(resolveStaticPath(), "peerbit");
-				copyAssets(peerbitDistDir, destDir, "/");
+				const destDir = path.resolve(resolveStaticPath(), sqlite3Assets.dest);
+				copyAssets(sqlite3Assets.src, destDir, "/");
 			} catch (_err) {
 				// ignore; optional best-effort
 			}
@@ -157,7 +160,12 @@ export default (
 		viteStaticCopy({
 			targets: [
 				{
-					src: `${resolveStaticPath()}/peerbit/sqlite3.wasm`,
+					src: path.join(
+						resolveStaticPath(),
+						"peerbit",
+						"sqlite3",
+						"sqlite3.wasm",
+					),
 					dest: "node_modules/.vite/deps",
 				},
 			],

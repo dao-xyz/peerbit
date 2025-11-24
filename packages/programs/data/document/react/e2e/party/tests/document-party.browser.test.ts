@@ -92,6 +92,7 @@ const sendMessage = async (page: Page, string: string) => {
 test.describe("document react party", () => {
 	let bootstrap: string[] = [];
 	let relay: RunningRelay;
+	let spawnedContexts: BrowserContext[] = [];
 
 	const resetRelay = async () => {
 		if (relay) {
@@ -116,7 +117,7 @@ test.describe("document react party", () => {
 		relay = await startRelay(false);
 	};
 
-	test.beforeAll(async () => {
+	test.beforeEach(async () => {
 		relay = await startRelay();
 
 		const addresses = relay.peer
@@ -127,7 +128,15 @@ test.describe("document react party", () => {
 		bootstrap = addresses;
 	});
 
-	test.afterAll(async () => {
+	test.afterEach(async () => {
+		for (const ctx of spawnedContexts) {
+			try {
+				await ctx.close();
+			} catch {
+				// ignore close errors
+			}
+		}
+		spawnedContexts = [];
 		await relay?.peer.stop();
 	});
 
@@ -149,6 +158,7 @@ test.describe("document react party", () => {
 			if (!currentPage) {
 				const ctx = await launchBrowserContext(testInfo, {});
 				contexts.push(ctx);
+				spawnedContexts.push(ctx);
 				currentPage = await ctx.newPage();
 				pages.push(currentPage);
 			}
@@ -267,22 +277,21 @@ test.describe("document react party", () => {
 		await waitForConnected(page, bootstrap);
 
 		// reload and ensure message gets queried again
+		// ensure relay has observed the message before reload to avoid racing stale state
+		await waitForResolved(
+			() => expect(relay.store.documents.log.log).toHaveLength(1),
+			{
+				timeout: 5e3, // should be almost since nodes are already connected
+			},
+		);
+
+		
 		await page.reload();
 		await connect(page, bootstrap);
 		await waitForMessages(page, [message]);
 	});
 
-	test("observers write and join", async ({ page }, testInfo) => {
-		const { pages } = await spawnWithConfig(testInfo, page, [
-			{ label: "observer-a", replicate: false, write: ["a"] },
-			{ label: "observer-b", replicate: false, write: ["b"] },
-		]);
-
-		await page.waitForTimeout(3e4);
-		for (const page of pages) {
-			await waitForMessages(page, ["a", "b"], { ignoreOrder: true });
-		}
-	});
+	
 
 	test.describe("join", () => {
 		test("it does not query observers on join", async ({ page }, testInfo) => {
@@ -307,7 +316,6 @@ test.describe("document react party", () => {
 
 			await sendMessage(pages[0], "a");
 
-			// wait for 23 seconds
 			// assert that the replicator has the message
 			await waitForResolved(
 				() => expect(relay.store.documents.log.log).toHaveLength(1),
@@ -335,7 +343,7 @@ test.describe("document react party", () => {
 
 			// assert that the replicator has the message
 			await waitForResolved(
-				() => expect(relay.store.documents.log.log).toHaveLength(1),
+				() => expect(relay.store.documents.log.log.length).toBe(1),
 				{
 					timeout: 5e3, // should be almost since nodes are already connected
 				},
@@ -345,12 +353,27 @@ test.describe("document react party", () => {
 
 			const head = await relay.store.documents.log.log.getHeads().all();
 			expect(head.length).toBe(1);
-			expect(await relay.store.documents.log.log.blocks.has(head[0].hash)).toBe(
+			try {
+				expect(await relay.store.documents.log.log.blocks.has(head[0].hash)).toBe(
 				true,
 			);
+			} catch (error) {
+				throw new Error(`Relay is missing block ${head[0].hash}`, { cause: error });	
+			}
 
 			for (const page of pages) {
 				await waitForMessages(page, ["a"]);
+			}
+		});
+
+		test("can push in on join", async ({ page }, testInfo) => {
+			const { pages } = await spawnWithConfig(testInfo, page, [
+				{ label: "observer-a", replicate: false, write: ["a"], push: true },
+				{ label: "observer-b", replicate: false, write: ["b"], push: true },
+			]);
+
+			for (const page of pages) {
+				await waitForMessages(page, ["a", "b"], { ignoreOrder: true });
 			}
 		});
 	});

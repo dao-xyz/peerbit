@@ -1,5 +1,5 @@
 import { Peerbit } from "peerbit";
-import { PartyDocumentStore } from "../../shared/dist/data.js";
+import { PartyDocumentStore } from "../../shared/dist/index.js";
 
 export type RunningRelay = {
 	peer: Peerbit;
