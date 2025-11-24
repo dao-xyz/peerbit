@@ -3,6 +3,7 @@
 	"version": "0.0.0",
 	"private": true,
 	"type": "module",
+	"types": "./src/index.ts",
 	"files": [
 		"dist"
 	],
@@ -12,11 +13,6 @@
 			"import": "./dist/index.js",
 			"default": "./dist/index.js"
 		},
-		"./data": {
-			"types": "./dist/data.d.ts",
-			"import": "./dist/data.js",
-			"default": "./dist/data.js"
-		},
 		"./package.json": "./package.json"
 	},
 	"typesVersions": {
@@ -24,9 +20,6 @@
 			"*": [
 				"dist/*",
 				"dist/*/index"
-			],
-			"data": [
-				"dist/data.d.ts"
 			]
 		}
 	},
