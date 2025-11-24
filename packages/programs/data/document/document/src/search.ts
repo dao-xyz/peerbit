@@ -1046,11 +1046,11 @@ export class DocumentIndex<
 				}
 			};
 
-		// we do this before _query.open so that we can receive the join event, even immediate ones
-		if (this._joinListener) {
-			this._query.events.addEventListener("join", this._joinListener);
+			// we do this before _query.open so that we can receive the join event, even immediate ones
+			if (this._joinListener) {
+				this._query.events.addEventListener("join", this._joinListener);
+			}
 		}
-	}
 
 		await this._query.open({
 			topic: sha256Base64Sync(
