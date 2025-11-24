@@ -20,9 +20,9 @@ describe("pnpm-style symlink resolution", () => {
 			"@peerbit",
 			"indexer-sqlite3",
 		);
-		const distPeerbit = path.join(storeRoot, "dist", "peerbit");
-		fs.mkdirSync(distPeerbit, { recursive: true });
-		const asset = path.join(distPeerbit, "sqlite3.worker.min.js");
+		const distAssets = path.join(storeRoot, "dist", "assets", "sqlite3");
+		fs.mkdirSync(distAssets, { recursive: true });
+		const asset = path.join(distAssets, "sqlite3.worker.min.js");
 		fs.writeFileSync(asset, "");
 
 		const resolver: ModuleResolver = {
@@ -51,6 +51,6 @@ describe("pnpm-style symlink resolution", () => {
 		);
 		// Normalize potential /private prefix on macOS temp dirs
 		const normalize = (p: string) => p.replace("/private", "");
-		expect(normalize(resolvedDir)).to.equal(normalize(distPeerbit));
+		expect(normalize(resolvedDir)).to.equal(normalize(distAssets));
 	});
 });
