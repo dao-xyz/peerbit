@@ -780,7 +780,7 @@ export class DocumentIndex<
 		for (const [_iteratorId, queue] of this._resultQueue) {
 			if (
 				!queue.pushMode ||
-				queue.pushMode !== types.PushUpdatesMode.stream ||
+				queue.pushMode !== types.PushUpdatesMode.STREAM ||
 				queue.pushInFlight
 			) {
 				continue;
@@ -2569,7 +2569,7 @@ export class DocumentIndex<
 			if (typeof u === "string") {
 				if (u === "remote") {
 					self.ensurePrefetchAccumulator();
-					return { push: types.PushUpdatesMode.stream };
+					return { push: types.PushUpdatesMode.STREAM };
 				}
 				if (u === "local") {
 					return {
@@ -2581,7 +2581,7 @@ export class DocumentIndex<
 					self.ensurePrefetchAccumulator();
 					return {
 						mergePolicy: buildMergePolicy(true, true),
-						push: types.PushUpdatesMode.stream,
+						push: types.PushUpdatesMode.STREAM,
 					};
 				}
 			}
@@ -2608,7 +2608,7 @@ export class DocumentIndex<
 						typeof u.push === "number"
 							? u.push
 							: u.push
-								? types.PushUpdatesMode.stream
+								? types.PushUpdatesMode.STREAM
 								: undefined,
 					callbacks,
 				};

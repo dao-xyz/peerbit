@@ -687,9 +687,12 @@ export class SharedLog<
 					} as FixedReplicationOptions,
 				];
 			} else {
-				rangeArgs = (
-					Array.isArray(options) ? options : [{ ...options }]
-				) as FixedReplicationOptions[];
+				const fixed = options as
+					| FixedReplicationOptions
+					| FixedReplicationOptions[];
+				rangeArgs = Array.isArray(fixed)
+					? fixed
+					: [{ ...(fixed as FixedReplicationOptions) }];
 			}
 
 			if (rangeArgs.length === 0) {

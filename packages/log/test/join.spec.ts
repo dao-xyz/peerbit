@@ -602,7 +602,7 @@ describe("join", function () {
 
 		it("joins logs two ways", async () => {
 			const { entry: a1 } = await log1.append(new Uint8Array([0, 1]));
-			const { entry: _b1 } = await log2.append(new Uint8Array([1, 0]));
+			const { entry: b1 } = await log2.append(new Uint8Array([1, 0]));
 			const { entry: a2 } = await log1.append(new Uint8Array([0, 2]));
 			const { entry: b2 } = await log2.append(new Uint8Array([1, 1]));
 			await log1.join(await log2.getHeads(true).all());

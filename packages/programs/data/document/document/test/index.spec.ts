@@ -5121,7 +5121,7 @@ describe("index", () => {
 			const processQuery1 = store1.docs.index.processQuery.bind(
 				store1.docs.index,
 			);
-			let _remoteQueries1 = 0;
+			let remoteQueries1 = 0;
 			store1.docs.index.processQuery = async (
 				query: SearchRequest | SearchRequestIndexed | CollectNextRequest,
 				from: PublicSignKey,
@@ -5131,7 +5131,7 @@ describe("index", () => {
 				},
 			) => {
 				if (!isLocal) {
-					_remoteQueries1++;
+					remoteQueries1++;
 				}
 
 				return processQuery1(query, from, isLocal, options) as any;
@@ -5140,7 +5140,7 @@ describe("index", () => {
 			const processQuery2 = store2.docs.index.processQuery.bind(
 				store2.docs.index,
 			);
-			let _remoteQueries2 = 0;
+			let remoteQueries2 = 0;
 			store2.docs.index.processQuery = async (
 				query: SearchRequest | SearchRequestIndexed | CollectNextRequest,
 				from: PublicSignKey,
@@ -5150,7 +5150,7 @@ describe("index", () => {
 				},
 			) => {
 				if (!isLocal) {
-					_remoteQueries2++;
+					remoteQueries2++;
 				}
 
 				return processQuery2(query, from, isLocal, options) as any;

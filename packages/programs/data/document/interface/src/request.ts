@@ -166,8 +166,8 @@ export class PredictedSearchRequest<
 }
 
 export enum PushUpdatesMode {
-	notify = 0,
-	stream = 1,
+	NOTIFY = 0,
+	STREAM = 1,
 }
 
 @variant(5)
@@ -230,7 +230,7 @@ export class IterationRequest extends AbstractSearchRequest {
 			typeof properties?.pushUpdates === "number"
 				? properties.pushUpdates
 				: properties?.pushUpdates
-					? PushUpdatesMode.stream
+					? PushUpdatesMode.STREAM
 					: undefined;
 		this.mergeUpdates = properties?.mergeUpdates;
 	}

@@ -90,11 +90,11 @@ export class TestSession<T> {
 		setMaxListeners(Infinity);
 
 		// create nodes
-		const promises: Promise<Libp2p<T & DefaultServices>>[] = [];
+		const promises: Promise<Libp2pWithServices<T>>[] = [];
 		for (let i = 0; i < n; i++) {
-			const result = async (): Promise<Libp2p<T & DefaultServices>> => {
-				const definedOptions: Libp2pOptions<T> | undefined =
-					(options as any)?.[i] || options;
+			const result = async (): Promise<Libp2pWithServices<T>> => {
+				const definedOptions: Libp2pOptions<T & DefaultServices> | undefined =
+					(options as any)?.[i] || (options as any);
 
 				const services: any = {
 					identify: identify(),
@@ -106,7 +106,7 @@ export class TestSession<T> {
 					delete services.relay;
 				}
 
-				const node = await createLibp2p<T>({
+				const node = await createLibp2p<T & DefaultServices>({
 					addresses: {
 						listen: listen(),
 					},
