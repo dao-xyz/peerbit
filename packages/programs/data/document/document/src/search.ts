@@ -1046,9 +1046,11 @@ export class DocumentIndex<
 				}
 			};
 
-			// we do this before _query.open so that we can receive the join event, even immediate ones
+		// we do this before _query.open so that we can receive the join event, even immediate ones
+		if (this._joinListener) {
 			this._query.events.addEventListener("join", this._joinListener);
 		}
+	}
 
 		await this._query.open({
 			topic: sha256Base64Sync(
@@ -1058,7 +1060,9 @@ export class DocumentIndex<
 			responseType: types.AbstractSearchResult,
 			queryType: types.AbstractSearchRequest,
 		});
-		this.documentEvents.addEventListener("change", this.handleDocumentChange);
+		if (this.handleDocumentChange) {
+			this.documentEvents.addEventListener("change", this.handleDocumentChange);
+		}
 	}
 
 	get prefetch() {
@@ -1278,11 +1282,15 @@ export class DocumentIndex<
 	async close(from?: Program): Promise<boolean> {
 		const closed = await super.close(from);
 		if (closed) {
-			this._query.events.removeEventListener("join", this._joinListener);
-			this.documentEvents.removeEventListener(
-				"change",
-				this.handleDocumentChange,
-			);
+			if (this._joinListener) {
+				this._query.events.removeEventListener("join", this._joinListener);
+			}
+			if (this.handleDocumentChange) {
+				this.documentEvents.removeEventListener(
+					"change",
+					this.handleDocumentChange,
+				);
+			}
 			this.clearAllResultQueues();
 			await this.index.stop?.();
 		}
