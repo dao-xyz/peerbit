@@ -225,7 +225,7 @@ export const isReplicationRangeMessage = (
 	return x instanceof ReplicationRangeMessage;
 };
 
-export abstract class ReplicationRangeMessage<R extends "u32" | "u64"> {}
+export abstract class ReplicationRangeMessage<_R extends "u32" | "u64"> {}
 
 @variant(0)
 export class ReplicationRangeMessageU32 extends ReplicationRangeMessage<"u32"> {

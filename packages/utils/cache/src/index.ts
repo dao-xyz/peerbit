@@ -25,7 +25,7 @@ export class Cache<T = undefined> {
 		this.clear();
 	}
 
-	has(key: Key) {
+	has(key: Key): boolean {
 		this.trim();
 		if (this.deleted.has(key)) {
 			return false;
@@ -45,7 +45,7 @@ export class Cache<T = undefined> {
 		return this._map.get(key)?.value;
 	}
 
-	trim(time = +new Date()) {
+	trim(time = Date.now()): void {
 		for (;;) {
 			const headKey = this.list.head;
 			if (headKey?.value != null) {
@@ -70,7 +70,7 @@ export class Cache<T = undefined> {
 		}
 	}
 
-	del(key: Key) {
+	del(key: Key): CacheData<T> | undefined {
 		const cacheValue = this._map.get(key);
 		if (cacheValue && !this.deleted.has(key)) {
 			this.deleted.add(key);
@@ -80,9 +80,9 @@ export class Cache<T = undefined> {
 		return undefined;
 	}
 
-	add(key: Key, value?: T, size = 1) {
+	add(key: Key, value?: T, size = 1): void {
 		this.deleted.delete(key);
-		const time = +new Date();
+		const time = Date.now();
 		if (!this._map.has(key)) {
 			this.list.push(key);
 			this.currentSize += size;
@@ -91,14 +91,14 @@ export class Cache<T = undefined> {
 		this.trim(time);
 	}
 
-	clear() {
+	clear(): void {
 		this.list = Yallist.create();
 		this._map = new Map();
 		this.deleted = new Set();
 		this.currentSize = 0;
 	}
 
-	get size() {
+	get size(): number {
 		return this.currentSize;
 	}
 }

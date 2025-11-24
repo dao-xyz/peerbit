@@ -18,7 +18,9 @@ import { X25519Keypair, X25519PublicKey, X25519SecretKey } from "./x25519.js";
 export * from "./errors.js";
 
 export const equals = (array1?: Uint8Array, array2?: Uint8Array) => {
-	if (!!array1 !== !!array2) return false;
+	if (!!array1 !== !!array2) {
+		return false;
+	}
 	if (!array1 || !array2) {
 		return false;
 	}

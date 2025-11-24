@@ -477,7 +477,6 @@ export class EntryV0<T>
 		}
 
 		const nextHashes: string[] = [];
-		let maxChainLength = 0n;
 		let gid: string | null = null;
 		if (nexts?.length > 0) {
 			// take min gid as our gid
@@ -503,8 +502,6 @@ export class EntryV0<T>
 				properties.meta?.gid ||
 				(await EntryV0.createGid(properties.meta?.gidSeed));
 		}
-
-		maxChainLength += 1n; // include this
 
 		const metadataEncrypted = await maybeEncrypt(
 			new Meta({

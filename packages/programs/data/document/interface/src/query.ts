@@ -135,7 +135,7 @@ export class ResultIndexedValue<I> extends Result {
 @variant(2)
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 // @ts-ignore
-class ResultValueWithIndexedResultValue<T, I> extends Result {
+class _ResultValueWithIndexedResultValue<T, I> extends Result {
 	// not used yet, but
 	@field({ type: Uint8Array })
 	_sourceValue: Uint8Array;

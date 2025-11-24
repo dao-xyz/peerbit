@@ -1,6 +1,6 @@
 import { PublicSignKey } from "@peerbit/crypto";
 import type { Program, ProgramEvents } from "@peerbit/program";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 const addressOrDefined = <A, B extends ProgramEvents, P extends Program<A, B>>(
 	p?: P,

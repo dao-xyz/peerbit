@@ -1,5 +1,4 @@
 import { ClosedError, Documents } from "@peerbit/document";
-import type { WithContext } from "@peerbit/document";
 import * as indexerTypes from "@peerbit/indexer-interface";
 import { useEffect, useRef, useState } from "react";
 import { debounceLeadingTrailing } from "./utils.js";

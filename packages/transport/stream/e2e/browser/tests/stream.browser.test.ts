@@ -3,7 +3,7 @@ import { yamux } from "@chainsafe/libp2p-yamux";
 import { circuitRelayServer } from "@libp2p/circuit-relay-v2";
 import { identify } from "@libp2p/identify";
 import { webSockets } from "@libp2p/websockets";
-import { delay, waitForResolved } from "@peerbit/time";
+import { waitForResolved } from "@peerbit/time";
 import { expect, test } from "@playwright/test";
 import { createLibp2p } from "libp2p";
 import { TestDirectStream } from "../shared/utils.js";

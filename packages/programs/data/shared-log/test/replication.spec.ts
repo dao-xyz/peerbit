@@ -69,7 +69,7 @@ testSetups.forEach((setup) => {
 		describe(`replication`, function () {
 			let session: TestSession;
 			let db1: EventStore<string, any>, db2: EventStore<string, any>;
-			let fetchEvents: number;
+			let _fetchEvents: number;
 			let fetchHashes: Set<string>;
 			let fromMultihash: any;
 			before(() => {
@@ -77,7 +77,7 @@ testSetups.forEach((setup) => {
 				// TODO monkeypatching might lead to sideeffects in other tests!
 				Entry.fromMultihash = (s, h, o) => {
 					fetchHashes.add(h);
-					fetchEvents += 1;
+					_fetchEvents += 1;
 					return fromMultihash(s, h, o);
 				};
 			});
@@ -86,7 +86,7 @@ testSetups.forEach((setup) => {
 			});
 
 			beforeEach(async () => {
-				fetchEvents = 0;
+				_fetchEvents = 0;
 				fetchHashes = new Set();
 				session = await TestSession.connected(2, [
 					{

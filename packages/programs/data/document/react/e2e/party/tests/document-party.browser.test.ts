@@ -101,7 +101,7 @@ test.describe("document react party", () => {
 		bootstrap = [];
 	};
 
-	const relayAsReplicator = async () => {
+	const _relayAsReplicator = async () => {
 		await resetRelay();
 		relay = await startRelay({ replicate: true });
 	};
@@ -111,7 +111,7 @@ test.describe("document react party", () => {
 		relay = await startRelay({ replicate: false });
 	};
 
-	const relayAsBootstrap = async () => {
+	const _relayAsBootstrap = async () => {
 		await resetRelay();
 		relay = await startRelay(false);
 	};

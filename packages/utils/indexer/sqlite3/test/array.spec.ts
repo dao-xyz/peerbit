@@ -44,7 +44,7 @@ describe("simple array", () => {
  */
 	@variant(1)
 	// @ts-ignore
-	class AnotherArrayDocument extends ArrayDocumentBase {
+	class _AnotherArrayDocument extends ArrayDocumentBase {
 		@id({ type: "u64" })
 		id: bigint;
 

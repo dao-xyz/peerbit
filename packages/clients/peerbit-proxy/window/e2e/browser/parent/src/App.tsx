@@ -3,7 +3,7 @@ import { Peerbit } from "peerbit";
 import { useEffect, useState } from "react";
 
 const hostClient = await Peerbit.create({ directory: "hello" });
-const proxy = await createHost(hostClient, "*");
+await createHost(hostClient, "*");
 
 if (hostClient.services.pubsub.dispatchEventOnSelfPublish !== true) {
 	throw new Error(

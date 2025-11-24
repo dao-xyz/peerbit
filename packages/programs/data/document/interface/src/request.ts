@@ -142,7 +142,7 @@ export class CloseIteratorRequest extends AbstractSearchRequest {
 
 @variant(4)
 export class PredictedSearchRequest<
-	R extends Result,
+	_R extends Result,
 > extends AbstractSearchRequest {
 	@field({ type: fixedArray("u8", 32) })
 	id: Uint8Array; // collect with id

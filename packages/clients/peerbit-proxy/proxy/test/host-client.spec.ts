@@ -149,7 +149,9 @@ describe("index", () => {
 			);
 
 			// eslint-disable-next-line no-unreachable-loop
-			for await (const _iter of client1.storage.iterator()) {
+			for await (const iter of client1.storage.iterator()) {
+				// touch the iterator value so lint doesn't flag it as unused
+				void iter;
 				break;
 			}
 			expect(host1["_memoryIterator"].size).equal(0);

@@ -68,7 +68,7 @@ export type UpdateMergeStrategy<
 	T,
 	I,
 	Resolve extends boolean | undefined,
-	RT = ValueTypeFromRequest<Resolve, T, I>,
+	_RT = ValueTypeFromRequest<Resolve, T, I>,
 > =
 	| boolean
 	| {
@@ -207,7 +207,7 @@ export type QueryOptions<T, I, D, Resolve extends boolean | undefined> = {
 	closePolicy?: "onEmpty" | "manual";
 };
 
-export type GetOptions<T, I, D, Resolve extends boolean | undefined> = {
+export type GetOptions<_T, _I, D, Resolve extends boolean | undefined> = {
 	remote?:
 		| boolean
 		| RemoteQueryOptions<

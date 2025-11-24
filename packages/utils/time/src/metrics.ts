@@ -9,7 +9,7 @@ export class MovingAverageTracker {
 		this.lastTS = hrtime.bigint();
 	}
 
-	add(number: number) {
+	add(number: number): void {
 		const now = hrtime.bigint();
 		let diff = Number(now - this.lastTS);
 		if (diff <= 0) {

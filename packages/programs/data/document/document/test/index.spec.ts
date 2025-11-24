@@ -53,7 +53,7 @@ import {
 } from "@peerbit/shared-log";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
-import { delay, waitFor, waitForResolved } from "@peerbit/time";
+import { waitFor as _waitForFn, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import pDefer, { type DeferredPromise } from "p-defer";
 import sinon from "sinon";
@@ -4433,9 +4433,12 @@ describe("index", () => {
 
 					try {
 						// First consume the initial version
-						await waitFor(async () => (await iterator.pending()) ?? 0 >= 1, {
-							timeout: 30_000,
-						});
+							await _waitForFn(
+								async () => (await iterator.pending()) ?? 0 >= 1,
+								{
+									timeout: 30_000,
+								},
+							);
 						const first = await iterator.next(1);
 						expect(first.length).to.equal(1);
 						expect(first[0].__indexed.name).to.equal("v1");
@@ -4444,9 +4447,12 @@ describe("index", () => {
 						await left!.docs.put(new Document({ id: "same", name: "v2" }));
 
 						// If merging works, the client should see one pending item
-						await waitFor(async () => (await iterator.pending()) ?? 0 >= 1, {
-							timeout: 30_000,
-						});
+							await _waitForFn(
+								async () => (await iterator.pending()) ?? 0 >= 1,
+								{
+									timeout: 30_000,
+								},
+							);
 
 						// EXPECTED (correct behavior after patch):
 						//   next(1) returns the updated document with value "v2".
@@ -5115,7 +5121,7 @@ describe("index", () => {
 			const processQuery1 = store1.docs.index.processQuery.bind(
 				store1.docs.index,
 			);
-			let remoteQueries1 = 0;
+			let _remoteQueries1 = 0;
 			store1.docs.index.processQuery = async (
 				query: SearchRequest | SearchRequestIndexed | CollectNextRequest,
 				from: PublicSignKey,
@@ -5125,7 +5131,7 @@ describe("index", () => {
 				},
 			) => {
 				if (!isLocal) {
-					remoteQueries1++;
+					_remoteQueries1++;
 				}
 
 				return processQuery1(query, from, isLocal, options) as any;
@@ -5134,7 +5140,7 @@ describe("index", () => {
 			const processQuery2 = store2.docs.index.processQuery.bind(
 				store2.docs.index,
 			);
-			let remoteQueries2 = 0;
+			let _remoteQueries2 = 0;
 			store2.docs.index.processQuery = async (
 				query: SearchRequest | SearchRequestIndexed | CollectNextRequest,
 				from: PublicSignKey,
@@ -5144,7 +5150,7 @@ describe("index", () => {
 				},
 			) => {
 				if (!isLocal) {
-					remoteQueries2++;
+					_remoteQueries2++;
 				}
 
 				return processQuery2(query, from, isLocal, options) as any;
@@ -5195,7 +5201,7 @@ describe("index", () => {
 			const processQuery1 = store1.docs.index.processQuery.bind(
 				store1.docs.index,
 			);
-			let remoteQueries1 = 0;
+			let _remoteQueries1 = 0;
 			store1.docs.index.processQuery = async (
 				query: SearchRequest | SearchRequestIndexed | CollectNextRequest,
 				from: PublicSignKey,
@@ -5205,7 +5211,7 @@ describe("index", () => {
 				},
 			) => {
 				if (!isLocal) {
-					remoteQueries1++;
+					_remoteQueries1++;
 				}
 
 				return processQuery1(query, from, isLocal, options) as any;
@@ -5214,7 +5220,7 @@ describe("index", () => {
 			const processQuery2 = store2.docs.index.processQuery.bind(
 				store2.docs.index,
 			);
-			let remoteQueries2 = 0;
+			let _remoteQueries2 = 0;
 			store2.docs.index.processQuery = async (
 				query: SearchRequest | SearchRequestIndexed | CollectNextRequest,
 				from: PublicSignKey,
@@ -5224,7 +5230,7 @@ describe("index", () => {
 				},
 			) => {
 				if (!isLocal) {
-					remoteQueries2++;
+					_remoteQueries2++;
 				}
 
 				return processQuery2(query, from, isLocal, options) as any;

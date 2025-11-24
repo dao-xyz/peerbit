@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type, no-implicit-coercion, @stylistic/indent, no-useless-return, prefer-const, @stylistic/space-before-function-paren, curly */
 import { expect } from "chai";
 import {
 	debounceAccumulator,

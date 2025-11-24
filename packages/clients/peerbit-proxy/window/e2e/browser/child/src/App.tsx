@@ -10,7 +10,7 @@ console.log("client", client);
 export const App = () => {
 	const mounted = useRef<boolean>(false);
 	const dbRef = useRef<SharedLog<any, any> | undefined>(undefined);
-	const [_, forceUpdate] = useReducer((x) => x + 1, 0);
+	const [, forceUpdate] = useReducer((x) => x + 1, 0);
 	const [peers, setPeers] = useState<Set<string>>(new Set());
 	useEffect(() => {
 		const queryParameters = new URLSearchParams(window.location.search);

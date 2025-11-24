@@ -17,14 +17,14 @@ export class Network {
 	rpc: string;
 }
 
-export class AccessCondition<T> {
+export class AccessCondition {
 	async allowed(_key: PublicSignKey): Promise<boolean> {
 		throw new Error("Not implemented");
 	}
 }
 
 @variant([0, 0])
-export class AnyAccessCondition<T> extends AccessCondition<T> {
+export class AnyAccessCondition extends AccessCondition {
 	constructor() {
 		super();
 	}
@@ -34,7 +34,7 @@ export class AnyAccessCondition<T> extends AccessCondition<T> {
 }
 
 @variant([0, 1])
-export class PublicKeyAccessCondition<T> extends AccessCondition<T> {
+export class PublicKeyAccessCondition extends AccessCondition {
 	@field({ type: PublicSignKey })
 	key: PublicSignKey;
 

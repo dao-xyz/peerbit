@@ -76,14 +76,14 @@ describe("getKeypair", () => {
 		let mutex = new FastMutex({ localStorage, timeout });
 		const id = uuid();
 
-		const { key: keypair, path: path1 } = await getFreeKeypair(id, mutex);
+		const { path: path1 } = await getFreeKeypair(id, mutex);
 
-		const { key: keypair2, path: path2 } = await getFreeKeypair(id, mutex);
+		const { path: path2 } = await getFreeKeypair(id, mutex);
 
 		expect(path1).not.to.eq(path2);
 		releaseKey(path1, mutex);
 		expect(mutex.getLockedInfo(path1)).to.be.undefined;
-		const { key: keypair3, path: path3 } = await getFreeKeypair(id, mutex);
+		const { path: path3 } = await getFreeKeypair(id, mutex);
 
 		expect(path1).to.eq(path3); // we can now acquire key at path1 again, since we released it
 	});

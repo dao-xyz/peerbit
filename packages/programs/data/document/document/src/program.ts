@@ -68,13 +68,13 @@ type CanPerformPut<T> = {
 	entry: Entry<PutOperation>;
 };
 
-type CanPerformDelete<T> = {
+type CanPerformDelete = {
 	type: "delete";
 	operation: DeleteOperation;
 	entry: Entry<DeleteOperation>;
 };
 
-export type CanPerformOperations<T> = CanPerformPut<T> | CanPerformDelete<T>;
+export type CanPerformOperations<T> = CanPerformPut<T> | CanPerformDelete;
 export type CanPerform<T> = (
 	properties: CanPerformOperations<T>,
 ) => MaybePromise<boolean>;

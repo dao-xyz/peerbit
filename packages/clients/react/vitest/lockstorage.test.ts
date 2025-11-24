@@ -56,7 +56,7 @@ describe("FastMutex", () => {
 		const fm1 = new FastMutex({ localStorage: localStorage });
 
 		expect(fm1.isLocked("clientId")).to.be.false;
-		const stats = await fm1.lock("clientId");
+		await fm1.lock("clientId");
 		expect(fm1.isLocked("clientId")).to.be.true;
 	});
 

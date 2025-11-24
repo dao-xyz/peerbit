@@ -31,7 +31,7 @@ let theme = createTheme({
 theme = responsiveFontSizes(theme);
 
 export const App = () => {
-	const [client, setClient] = useState<
+	const [, setClient] = useState<
 		Awaited<ReturnType<typeof createClient>> | undefined
 	>();
 	const [id, setId] = useState<string>();

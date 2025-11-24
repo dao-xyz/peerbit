@@ -34,7 +34,7 @@ class SlowBlockStore implements Blocks {
 	constructor(store: BlockStore) {
 		this._store = store;
 	}
-	async get<T>(
+	async get(
 		cid: string,
 		options?: GetOptions | undefined,
 	): Promise<Uint8Array | undefined> {

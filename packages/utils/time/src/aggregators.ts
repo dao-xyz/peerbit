@@ -3,16 +3,16 @@ export const debounceFixedInterval = <
 >(
 	fn: T,
 	delay: number | (() => number),
-	options?: { onError?: (error: Error) => void; leading?: boolean },
+	options?: { onError?(error: Error): void; leading?: boolean },
 ): {
-	call: (...args: Parameters<T>) => Promise<void>;
-	close: () => void;
-	flush: () => Promise<void>;
+	call(...args: Parameters<T>): Promise<void>;
+	close(): void;
+	flush(): Promise<void>;
 } => {
 	const delayFn: () => number = typeof delay === "number" ? () => delay : delay;
 	const onError =
 		options?.onError ??
-		((e: Error) => {
+		((e: Error): void => {
 			throw e;
 		});
 	const leading = options?.leading ?? true;
@@ -20,19 +20,20 @@ export const debounceFixedInterval = <
 	let timeout: ReturnType<typeof setTimeout> | null = null;
 	let lastArgs: any[] | null = null;
 	let lastThis: any;
-	let pendingCall = false; // there is queued work for the *next* run
-	let isRunning = false; // fn is executing right now
-	let waitingResolvers: Array<() => void> = []; // resolve when *a* run completes
+	let pendingCall = false;
+	let isRunning = false;
+	let waitingResolvers: Array<() => void> = [];
 	let lastInvokeTime: number | null = null;
 	let forceNextImmediate = false;
 
-	// Completed run counter + precise run waiters
 	let completedRuns = 0;
-	type RunWaiter = { target: number; resolve: () => void };
+	type RunWaiter = { target: number; resolve(): void };
 	let runWaiters: RunWaiter[] = [];
 
-	const resolveRunWaiters = () => {
-		if (runWaiters.length === 0) return;
+	const resolveRunWaiters = (): void => {
+		if (runWaiters.length === 0) {
+			return;
+		}
 		const remaining: RunWaiter[] = [];
 		for (const w of runWaiters) {
 			if (completedRuns >= w.target) {
@@ -44,20 +45,25 @@ export const debounceFixedInterval = <
 		runWaiters = remaining;
 	};
 
-	const waitForRun = (target: number) =>
+	const waitForRun = (target: number): Promise<void> =>
 		new Promise<void>((resolve) => {
-			if (completedRuns >= target) return resolve();
+			if (completedRuns >= target) {
+				resolve();
+				return;
+			}
 			runWaiters.push({ target, resolve });
 		});
 
-	const invoke = async () => {
+	const invoke = async (): Promise<void> => {
 		timeout = null;
-		if (!lastArgs) return; // nothing to invoke
+		if (!lastArgs) {
+			return;
+		}
 
 		const args = lastArgs;
 		const ctx = lastThis;
-		lastArgs = null; // consume current args
-		pendingCall = false; // this run is for those args
+		lastArgs = null;
+		pendingCall = false;
 		isRunning = true;
 
 		try {
@@ -68,16 +74,15 @@ export const debounceFixedInterval = <
 			isRunning = false;
 			lastInvokeTime = Date.now();
 
-			// Resolve all call() promises queued for this completed run
 			const resolvers = waitingResolvers;
 			waitingResolvers = [];
-			for (const r of resolvers) r();
+			for (const r of resolvers) {
+				r();
+			}
 
-			// Mark completion and resolve any run-target waiters that are due
 			completedRuns++;
 			resolveRunWaiters();
 
-			// If new calls arrived during this run, schedule the next one
 			if (pendingCall) {
 				if (forceNextImmediate) {
 					forceNextImmediate = false;
@@ -91,13 +96,11 @@ export const debounceFixedInterval = <
 		}
 	};
 
-	// Use a normal function to preserve `this` from the call site
 	function debounced(this: any, ...args: Parameters<T>): Promise<void> {
 		lastArgs = args;
 		lastThis = this;
 		pendingCall = true;
 
-		// Resolve after the next completed run
 		const p = new Promise<void>((resolve) => {
 			waitingResolvers.push(resolve);
 		});
@@ -106,7 +109,7 @@ export const debounceFixedInterval = <
 		if (!isRunning && !timeout) {
 			if (leading) {
 				if (lastInvokeTime === null || now - lastInvokeTime >= delayFn()) {
-					invoke();
+					void invoke();
 				} else {
 					const remaining = delayFn() - (now - lastInvokeTime);
 					timeout = setTimeout(invoke, remaining);
@@ -120,41 +123,36 @@ export const debounceFixedInterval = <
 
 	const flush = (): Promise<void> => {
 		if (isRunning) {
-			// If there are pending args, ensure a trailing run and make it immediate
-			const hadPendingArgs = !!lastArgs;
+			const hadPendingArgs = Boolean(lastArgs);
 			if (hadPendingArgs) {
 				pendingCall = true;
 				forceNextImmediate = true;
 			}
-			// Wait for the current run (+1) and, if needed, the immediate trailing run (+1)
 			const target = completedRuns + 1 + (hadPendingArgs ? 1 : 0);
 			return waitForRun(target);
 		}
 
-		// Not running
 		if (timeout) {
 			clearTimeout(timeout);
 			timeout = null;
 		}
 
 		if (lastArgs) {
-			const target = completedRuns + 1; // we'll trigger a run now
-			invoke();
+			const target = completedRuns + 1;
+			void invoke();
 			return waitForRun(target);
-		} else {
-			// nothing to flush
-			return Promise.resolve();
 		}
+
+		return Promise.resolve();
 	};
 
-	const close = () => {
+	const close = (): void => {
 		if (timeout !== null) {
 			clearTimeout(timeout);
 			timeout = null;
 		}
 		isRunning = false;
 		forceNextImmediate = false;
-		// no auto-resolving of pending promises on close()
 	};
 
 	return { call: debounced, close, flush };
@@ -163,18 +161,26 @@ export const debounceFixedInterval = <
 export const debounceAccumulator = <K, T, V>(
 	fn: (args: V) => any,
 	create: () => {
-		delete: (key: K) => void;
-		add: (value: T) => void;
-		size: () => number;
+		delete(key: K): void;
+		add(value: T): void;
+		size(): number;
 		value: V;
-		has: (key: K) => boolean;
+		has(key: K): boolean;
 	},
 	delay: number | (() => number),
 	options?: { leading?: boolean },
-) => {
+): {
+	add(value: T): Promise<void>;
+	delete(key: K): void;
+	size(): number;
+	has(key: K): boolean;
+	invoke(): Promise<void>;
+	close(): void;
+	flush(): Promise<void>;
+} => {
 	let accumulator = create();
 
-	const innerInvoke = async () => {
+	const innerInvoke = async (): Promise<void> => {
 		const toSend = accumulator.value;
 		accumulator = create();
 		await fn(toSend);
@@ -185,28 +191,21 @@ export const debounceAccumulator = <K, T, V>(
 	return {
 		add: (value: T): Promise<void> => {
 			accumulator.add(value);
-			// resolves when the batch (which includes this value) runs
 			return deb.call();
 		},
-		delete: (key: K) => {
+		delete: (key: K): void => {
 			accumulator.delete(key);
 		},
-		size: () => accumulator.size(),
-		has: (key: K) => accumulator.has(key),
-
-		// Run immediately, and **cancel** any pending scheduled run to avoid a trailing empty run.
+		size: (): number => accumulator.size(),
+		has: (key: K): boolean => accumulator.has(key),
 		invoke: async (): Promise<void> => {
-			deb.close(); // cancel any pending timeout
+			deb.close();
 			await innerInvoke();
 		},
-
-		// Cancel pending schedule AND reset accumulator so size() === 0 afterward.
 		close: (): void => {
 			deb.close();
 			accumulator = create();
 		},
-
-		// If you exposed flush() before, keep passing it through:
 		flush: (): Promise<void> => deb.flush?.() ?? Promise.resolve(),
 	};
 };
