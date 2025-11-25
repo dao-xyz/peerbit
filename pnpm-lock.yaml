@@ -1530,9 +1530,6 @@ importers:
       '@peerbit/program':
         specifier: workspace:*
         version: link:../program
-      '@peerbit/react':
-        specifier: workspace:*
-        version: link:../../../clients/peerbit-react
       react:
         specifier: ^18.0.0 || ^19.0.0
         version: 19.2.0
