@@ -751,6 +751,7 @@ describe(`isLeader`, function () {
 						min: 2,
 					},
 					timeUntilRoleMaturity: 10 * 1000,
+					waitForReplicatorTimeout: 60e4, // dont prune offline replicators because the assertion below will check if we can still get it part of the cover set
 				},
 			});
 
