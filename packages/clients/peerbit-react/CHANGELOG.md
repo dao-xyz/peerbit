@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.0.37](https://github.com/dao-xyz/peerbit/compare/react-v0.0.36...react-v0.0.37) (2025-11-25)
+
+
+### Bug Fixes
+
+* re-export @peerbit/program-react in @peerbit/react ([aa152a9](https://github.com/dao-xyz/peerbit/commit/aa152a9d83a3221baec1905bd519ecafd48fd980))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program-react bumped to 0.2.0
+
 ## [0.0.36](https://github.com/dao-xyz/peerbit/compare/react-v0.0.35...react-v0.0.36) (2025-11-25)
 
 

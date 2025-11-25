@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/dao-xyz/peerbit/compare/program-react-v0.1.2...program-react-v0.2.0) (2025-11-25)
+
+
+### Features
+
+* peer as first argument and remove dependency on @peerbit/react package ([9b09214](https://github.com/dao-xyz/peerbit/commit/9b09214a9be599a6d06ffb087440d4703b4f0460))
+
+
+### Bug Fixes
+
+* allow undefiend ProgramClient ([840cc8e](https://github.com/dao-xyz/peerbit/commit/840cc8e7f0a316113bebeb13aa5c597d2a920065))
+
 ## [0.1.2](https://github.com/dao-xyz/peerbit/compare/program-react-v0.1.1...program-react-v0.1.2) (2025-11-25)
 
 
