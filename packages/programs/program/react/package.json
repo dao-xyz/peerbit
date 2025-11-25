@@ -41,7 +41,7 @@
 	"scripts": {
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
-		"test": "vitest --config vitest.config.ts",
+		"test": "vitest run",
 		"lint": "aegir lint"
 	},
 	"peerDependencies": {
