@@ -566,6 +566,33 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [4.2.0](https://github.com/dao-xyz/peerbit/compare/trusted-network-v4.1.146...trusted-network-v4.2.0) (2025-11-25)
+
+
+### Features
+
+* add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
+* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
+
+
+### Bug Fixes
+
+* update deps ([9d4bb63](https://github.com/dao-xyz/peerbit/commit/9d4bb6388339404fad1f1bb39100f096d6d9fbf3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 2.4.0
+    * @peerbit/document bumped to 10.1.0
+    * @peerbit/log bumped to 4.2.0
+    * @peerbit/program bumped to 1.0.0
+    * @peerbit/shared-log bumped to 11.6.0
+  * devDependencies
+    * @peerbit/time bumped to 2.3.0
+    * @peerbit/test-utils bumped to 2.3.0
+
 ## [4.1.146](https://github.com/dao-xyz/peerbit/compare/trusted-network-v4.1.145...trusted-network-v4.1.146) (2025-10-08)
 
 

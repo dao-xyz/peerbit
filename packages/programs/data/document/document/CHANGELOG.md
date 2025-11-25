@@ -456,6 +456,45 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [10.1.0](https://github.com/dao-xyz/peerbit/compare/document-v10.0.4...document-v10.1.0) (2025-11-25)
+
+
+### Features
+
+* add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
+* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
+
+
+### Bug Fixes
+
+* handle null listeners ([9581805](https://github.com/dao-xyz/peerbit/commit/958180504904cef3e657ebf0ca5b2ae97ecb3da2))
+* improve logs and testing ([4e71e9a](https://github.com/dao-xyz/peerbit/commit/4e71e9a98e2bb506d70723f7c2d4aa46638ef42f))
+* update deps ([9d4bb63](https://github.com/dao-xyz/peerbit/commit/9d4bb6388339404fad1f1bb39100f096d6d9fbf3))
+* use libp2p based logger ([5ffd22b](https://github.com/dao-xyz/peerbit/commit/5ffd22b2ddcfcc133fe025fcfb399461ef2fe266))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped to 2.2.0
+    * @peerbit/crypto bumped to 2.4.0
+    * @peerbit/logger bumped to 2.0.0
+    * @peerbit/log bumped to 4.2.0
+    * @peerbit/pubsub bumped to 4.1.0
+    * @peerbit/program bumped to 1.0.0
+    * @peerbit/rpc bumped to 5.4.0
+    * @peerbit/shared-log bumped to 11.6.0
+    * @peerbit/indexer-interface bumped to 2.1.0
+    * @peerbit/indexer-simple bumped to 1.2.0
+    * @peerbit/indexer-sqlite3 bumped to 1.3.0
+    * @peerbit/document-interface bumped to 3.1.0
+    * @peerbit/stream-interface bumped to 5.3.0
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.3.0
+    * @peerbit/time bumped to 2.3.0
+    * peerbit bumped to 4.4.0
+
 ## [10.0.4](https://github.com/dao-xyz/peerbit/compare/document-v10.0.3...document-v10.0.4) (2025-10-08)
 
 

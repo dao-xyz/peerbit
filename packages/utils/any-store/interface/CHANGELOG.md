@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/dao-xyz/peerbit/compare/any-store-interface-v1.0.1...any-store-interface-v1.1.0) (2025-11-25)
+
+
+### Features
+
+* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
+
 ## [1.0.1](https://github.com/dao-xyz/peerbit/compare/any-store-interface-v1.0.0...any-store-interface-v1.0.1) (2025-10-03)
 
 

@@ -630,6 +630,28 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [5.1.0](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v5.0.129...identity-access-controller-v5.1.0) (2025-11-25)
+
+
+### Features
+
+* add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
+* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 2.4.0
+    * @peerbit/document bumped to 10.1.0
+    * @peerbit/program bumped to 1.0.0
+    * @peerbit/shared-log bumped to 11.6.0
+    * @peerbit/trusted-network bumped to 4.2.0
+  * devDependencies
+    * @peerbit/time bumped to 2.3.0
+    * @peerbit/test-utils bumped to 2.3.0
+
 ## [5.0.129](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v5.0.128...identity-access-controller-v5.0.129) (2025-10-08)
 
 
