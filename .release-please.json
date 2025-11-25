@@ -64,6 +64,7 @@
 		"packages/utils/time": {},
 		"packages/utils/logger": {},
 		"packages/utils/keychain": {},
+		"packages/utils/indexer/cached-index": {},
 		"packages/utils/indexer/simple": {},
 		"packages/utils/indexer/sqlite3": {},
 		"packages/utils/indexer/tests": {},
