@@ -1,0 +1,75 @@
+{
+	"name": "@peerbit/document-react",
+	"version": "0.0.33",
+	"description": "React hooks for @peerbit/document",
+	"sideEffects": false,
+	"type": "module",
+	"types": "./dist/src/index.d.ts",
+	"typesVersions": {
+		"*": {
+			"*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			],
+			"src/*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			]
+		}
+	},
+	"files": [
+		"src",
+		"dist",
+		"!vitest",
+		"!dist/vitest",
+		"!**/*.tsbuildinfo"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/src/index.d.ts",
+			"import": "./dist/src/index.js"
+		}
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"clean": "aegir clean",
+		"build": "aegir build --no-bundle",
+		"test": "vitest run --project node && vitest run --project dom",
+		"test:node": "vitest run --project node",
+		"test:dom": "vitest run --project dom",
+		"lint": "aegir lint"
+	},
+	"peerDependencies": {
+		"react": "^18.0.0 || ^19.0.0"
+	},
+	"dependencies": {
+		"@peerbit/document": "workspace:*",
+		"@peerbit/indexer-interface": "workspace:*",
+		"@peerbit/react": "workspace:*",
+		"@peerbit/logger": "workspace:*",
+		"uuid": "^10.0.0"
+	},
+	"devDependencies": {
+		"@dao-xyz/borsh": "^6.0.0",
+		"@peerbit/blocks-interface": "workspace:*",
+		"@peerbit/program": "workspace:*",
+		"@testing-library/dom": "^10.4.0",
+		"@testing-library/react": "^16.1.0",
+		"@types/react": "^19.2.4",
+		"@types/react-dom": "^19.2.3",
+		"@types/libsodium-wrappers": "^0.7.14",
+		"libsodium-wrappers": "^0.7.14",
+		"peerbit": "workspace:*",
+		"react-dom": "^19.0.0",
+		"happy-dom": "^20.0.10",
+		"vitest": "^4.0.12"
+	},
+	"author": "dao.xyz",
+	"license": "MIT"
+}

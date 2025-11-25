@@ -137,17 +137,34 @@ export const findLibraryInNodeModules = (
 };
 
 export const defaultAssetSources = [
-	"@peerbit/any-store-opfs/dist/peerbit",
-	"@peerbit/indexer-sqlite3/dist/peerbit",
-	"@peerbit/riblt/dist/rateless_iblt_bg.wasm",
+	"@peerbit/any-store-opfs/dist/assets/opfs",
+	"@peerbit/indexer-sqlite3/dist/assets/sqlite3",
+	"@peerbit/riblt/dist/assets/riblt/rateless_iblt_bg.wasm",
 ];
 
 export const resolveAssetLocations = (
 	sources: string[],
 	opts?: FindLibraryOptions,
 ): ResolveAssetLocation[] => {
-	return sources.map((source) => ({
-		src: findLibraryInNodeModules(source, opts),
-		dest: "peerbit/",
-	}));
+	const fsLike: FileSystemLike = opts?.fs || fs;
+	return sources.map((source) => {
+		const src = findLibraryInNodeModules(source, opts);
+		const [, distSuffixRaw = ""] = source.split("/dist/");
+		const distSuffix = distSuffixRaw || "";
+		const cleaned = distSuffix.startsWith("assets/")
+			? distSuffix.slice("assets/".length)
+			: distSuffix;
+
+		const stat = fsLike.statSync(src);
+		const packageBase = source.split("/dist/")[0].split("/").pop() ?? "peerbit";
+
+		const destSegment = stat.isDirectory()
+			? cleaned || path.basename(source)
+			: cleaned || packageBase;
+
+		return {
+			src,
+			dest: path.join("peerbit", destSegment),
+		};
+	});
 };

@@ -1,6 +1,6 @@
 import { deserialize, field, serialize } from "@dao-xyz/borsh";
 import { expect } from "chai";
-import { copySerialization } from "../src/borsh";
+import { copySerialization } from "../src/borsh.js";
 
 describe("borsh", () => {
 	it("can append fields to an already defined class", () => {

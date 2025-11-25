@@ -97,7 +97,6 @@ const stringBenchmark = async (
 			});
 		})
 		.add("string count no-matches - " + type, async () => {
-			const out = Math.random() > 0.5 ? true : false;
 			await stringIndexPreFilled.store.count({
 				query: new StringMatch({ key: "string", value: uuid() }),
 			});

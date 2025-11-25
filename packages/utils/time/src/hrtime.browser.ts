@@ -41,7 +41,9 @@ const hrtime = (previousTimestamp?: [number, number]): [number, number] => {
 	}
 	return [seconds, nanoseconds];
 };
+
 const NS_PER_SEC = 1e9;
+
 hrtime.bigint = (time?: [number, number]): bigint => {
 	const diff = hrtime(time);
 	return BigInt(diff[0] * NS_PER_SEC + diff[1]);

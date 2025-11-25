@@ -165,7 +165,6 @@ export class ByteMatchQuery extends StateFieldQuery {
 	value: Uint8Array;
 
 	@field({ type: "u8" })
-	// @ts-expect-error: unused
 	private _reserved: number; // Replicate MemoryCompare query with this?
 
 	constructor(props: { key: string[] | string; value: Uint8Array }) {

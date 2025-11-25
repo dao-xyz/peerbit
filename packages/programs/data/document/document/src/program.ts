@@ -50,7 +50,8 @@ import {
 	coerceWithIndexed,
 } from "./search.js";
 
-const logger: ReturnType<typeof loggerFn> = loggerFn({ module: "document" });
+const logger = loggerFn("peerbit:program:document");
+const warn = logger.newScope("warn");
 
 export class OperationError extends Error {
 	constructor(message?: string) {
@@ -67,13 +68,13 @@ type CanPerformPut<T> = {
 	entry: Entry<PutOperation>;
 };
 
-type CanPerformDelete<T> = {
+type CanPerformDelete = {
 	type: "delete";
 	operation: DeleteOperation;
 	entry: Entry<DeleteOperation>;
 };
 
-export type CanPerformOperations<T> = CanPerformPut<T> | CanPerformDelete<T>;
+export type CanPerformOperations<T> = CanPerformPut<T> | CanPerformDelete;
 export type CanPerform<T> = (
 	properties: CanPerformOperations<T>,
 ) => MaybePromise<boolean>;
@@ -367,7 +368,7 @@ export class Documents<
 			}
 		} catch (error) {
 			if (error instanceof BorshError) {
-				logger.warn("Received payload that could not be decoded, skipping");
+				warn("Received payload that could not be decoded, skipping");
 				return false;
 			}
 			throw error;
@@ -512,7 +513,7 @@ export class Documents<
 			if (error instanceof AccessError) {
 				return false; // we cant index because we can not decrypt
 			} else if (error instanceof BorshError) {
-				logger.warn("Received payload that could not be decoded, skipping");
+				warn("Received payload that could not be decoded, skipping");
 				return false;
 			}
 			throw error;
@@ -632,6 +633,7 @@ export class Documents<
 		change: Change<Operation>,
 		reference?: { document: T; operation: PutOperation; unique?: boolean },
 	): Promise<void> {
+		logger.trace("handleChanges called", change);
 		const isAppendOperation =
 			change?.added.length === 1 ? !!change.added[0] : false;
 		const removedSet = new Map<string, ShallowOrFullEntry<Operation>>();

@@ -1,11 +1,12 @@
 import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
-import { type CircuitRelayService } from "@libp2p/circuit-relay-v2";
+import type { CircuitRelayService } from "@libp2p/circuit-relay-v2";
 import { identify } from "@libp2p/identify";
 import type { Multiaddr } from "@multiformats/multiaddr";
 import { waitFor } from "@peerbit/time";
 import { setMaxListeners } from "events";
-import { type Libp2p, type Libp2pOptions, createLibp2p } from "libp2p";
+import { createLibp2p } from "libp2p";
+import type { Libp2p, Libp2pOptions } from "libp2p";
 import { listen, relay, transports } from "./transports.js";
 
 type DefaultServices = { relay: CircuitRelayService; identify: any };
@@ -20,10 +21,10 @@ export class TestSession<T> {
 
 	async connect(
 		groups?: {
-			getMultiaddrs: () => Multiaddr[];
-			dial: (addres: Multiaddr[]) => Promise<any>;
+			getMultiaddrs(): Multiaddr[];
+			dial(addres: Multiaddr[]): Promise<any>;
 		}[][],
-	) {
+	): Promise<TestSession<T>> {
 		// Connect the nodes
 		const connectPromises: Promise<any>[] = [];
 		if (!groups) {
@@ -49,10 +50,10 @@ export class TestSession<T> {
 
 	async connectLine(
 		groups?: {
-			getMultiaddrs: () => Multiaddr[];
-			dial: (addres: Multiaddr[]) => Promise<any>;
+			getMultiaddrs(): Multiaddr[];
+			dial(addres: Multiaddr[]): Promise<any>;
 		}[][],
-	) {
+	): Promise<TestSession<T>> {
 		const connectPromises: Promise<any>[] = [];
 		if (!groups) {
 			groups = [this.peers];
@@ -76,7 +77,7 @@ export class TestSession<T> {
 	static async connected<T extends Record<string, unknown>>(
 		n: number,
 		options?: Libp2pOptions<T> | Libp2pOptions<T>[],
-	) {
+	): Promise<TestSession<T>> {
 		const libs = (await TestSession.disconnected<T>(n, options)).peers;
 		return new TestSession<T>(libs).connect();
 	}
@@ -84,16 +85,16 @@ export class TestSession<T> {
 	static async disconnected<T extends Record<string, unknown>>(
 		n: number,
 		options?: Libp2pOptions<T> | Libp2pOptions<T>[],
-	) {
+	): Promise<TestSession<T>> {
 		// Allow more than 11 listneers
 		setMaxListeners(Infinity);
 
 		// create nodes
-		const promises: Promise<Libp2p<T>>[] = [];
+		const promises: Promise<Libp2pWithServices<T>>[] = [];
 		for (let i = 0; i < n; i++) {
-			const result = async () => {
-				const definedOptions: Libp2pOptions<T> | undefined =
-					(options as any)?.[i] || options;
+			const result = async (): Promise<Libp2pWithServices<T>> => {
+				const definedOptions: Libp2pOptions<T & DefaultServices> | undefined =
+					(options as any)?.[i] || (options as any);
 
 				const services: any = {
 					identify: identify(),
@@ -105,7 +106,7 @@ export class TestSession<T> {
 					delete services.relay;
 				}
 
-				const node = await createLibp2p<T>({
+				const node = await createLibp2p<T & DefaultServices>({
 					addresses: {
 						listen: listen(),
 					},

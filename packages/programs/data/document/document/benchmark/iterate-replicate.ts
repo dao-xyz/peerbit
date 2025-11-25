@@ -116,7 +116,6 @@ let iterator: ReturnType<typeof client.docs.index.iterate> | undefined =
 	undefined;
 
 const suite = new B.Bench();
-let x = 0;
 let iterateBatchSize = 10;
 suite.add(
 	"iterate",
@@ -126,7 +125,6 @@ suite.add(
 		if (batch.length !== 10 && iterator!.done() !== true) {
 			throw new Error("Missing results");
 		}
-		x += batch.length;
 		if (iterator!.done() === true) {
 			iterator = client.docs.index.iterate(
 				new SearchRequest({ sort: new Sort({ key: "number" }) }),
@@ -145,7 +143,6 @@ suite.add(
 	},
 );
 
-let c = 0;
 suite.add(
 	"iterate-replicate",
 	async () => {
@@ -155,7 +152,6 @@ suite.add(
 			throw new Error("Missing results");
 		}
 
-		c += batch.length;
 		if (iterator!.done() === true) {
 			iterator = client.docs.index.iterate(
 				new SearchRequest({ sort: new Sort({ key: "number" }) }),

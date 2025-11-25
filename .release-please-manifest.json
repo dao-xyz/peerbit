@@ -23,6 +23,7 @@
 	"packages/utils/time": "2.2.0",
 	"packages/programs/acl/trusted-network": "4.1.146",
 	"packages/clients/peerbit": "4.3.10",
+	"packages/clients/react": "0.0.33",
 	"packages/clients/peerbit-proxy/window": "3.0.118",
 	"packages/utils/any-store/any-store": "2.1.16",
 	"packages/utils/keychain": "1.1.2",
@@ -35,5 +36,7 @@
 	"packages/utils/indexer/tests": "1.1.20",
 	"packages/clients/vite": "1.0.38",
 	"packages/utils/rateless-iblt": "1.0.8",
-	"packages/utils/build-assets": "1.0.0"
+	"packages/utils/build-assets": "1.0.0",
+	"packages/programs/data/document/react": "0.0.33",
+	"packages/programs/program/react": "0.0.1"
 }

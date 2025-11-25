@@ -1,7 +1,7 @@
 import { HashmapIndices, create } from "@peerbit/indexer-simple";
 import { SQLiteIndices } from "@peerbit/indexer-sqlite3";
 import { expect } from "chai";
-import { Peerbit } from "../src";
+import { Peerbit } from "../src/index.js";
 
 describe("indexer", () => {
 	let client: Peerbit;

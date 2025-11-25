@@ -17,7 +17,7 @@ export class MissingResponsesError extends Error {
 		super(message);
 	}
 }
-export type RPCRequestAllOptions<Q, R> = RPCRequestResponseOptions<R> &
+export type RPCRequestAllOptions<_Q, R> = RPCRequestResponseOptions<R> &
 	EncryptionOptions & { mode?: Constructor<DeliveryMode> } & PriorityOptions &
 	RequestResponseInterceptor<R>;
 

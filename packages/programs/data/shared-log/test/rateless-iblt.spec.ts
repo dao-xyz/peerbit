@@ -1,4 +1,5 @@
 import { Cache } from "@peerbit/cache";
+import type { RequestContext } from "@peerbit/rpc";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -6,15 +7,15 @@ import sinon from "sinon";
 import {
 	type ReplicationDomainHash,
 	createReplicationDomainHash,
-} from "../src";
-import type { TransportMessage } from "../src/message";
+} from "../src/index.js";
+import type { TransportMessage } from "../src/message.js";
 import {
 	MoreSymbols,
 	RatelessIBLTSynchronizer,
 	RequestAll,
 	StartSync,
 } from "../src/sync/rateless-iblt.js";
-import { EventStore } from "./utils/stores";
+import { EventStore } from "./utils/stores/index.js";
 
 const setup = {
 	domain: createReplicationDomainHash("u64"),
@@ -37,12 +38,18 @@ describe("rateless-iblt-syncronizer", () => {
 		log.log.onMessage = onMessageSpy;
 		return {
 			get calls(): TransportMessage[] {
-				return onMessageSpy.getCalls().map((call) => call.args[0]);
+				const calls = onMessageSpy.getCalls() as Array<
+					sinon.SinonSpyCall<[TransportMessage, RequestContext], Promise<void>>
+				>;
+				return calls.map((call) => call.args[0]);
 			},
 		};
 	};
 
-	const countMessages = (messages: TransportMessage[], type: any) => {
+	const countMessages = (
+		messages: TransportMessage[],
+		type: new (...args: any[]) => TransportMessage,
+	) => {
 		return messages.filter((x) => x instanceof type).length;
 	};
 

@@ -127,8 +127,8 @@ describe("Ed25519", () => {
 	});
 
 	describe("mixed api", () => {
-		let signFns = [signEd25519Browser, signEd25519];
-		let verifyFns = [verifySignatureEd25519Browser, verifySignatureEd25519];
+		const signFns = [signEd25519Browser, signEd25519];
+		const verifyFns = [verifySignatureEd25519Browser, verifySignatureEd25519];
 
 		it("sign", async () => {
 			const keypair = await Ed25519Keypair.create();
@@ -154,7 +154,7 @@ describe("Ed25519", () => {
 		it("sign hashed", async () => {
 			const keypair = await Ed25519Keypair.create();
 			const data = new Uint8Array([1, 2, 3]);
-			let signatures: SignatureWithKey[] = [];
+			const signatures: SignatureWithKey[] = [];
 			for (const fn of signFns) {
 				const signature = await fn(data, keypair, PreHash.SHA_256);
 				signatures.push(signature);
@@ -193,7 +193,7 @@ describe("Sepck2561k1", () => {
 		const pk = await Secp256k1PublicKey.recover(wallet);
 		const signature = await wallet.signMessage(data);
 		const textEncoder = new TextEncoder();
-		let signatureBytes = textEncoder.encode(signature);
+		const signatureBytes = textEncoder.encode(signature);
 
 		const signatureWithKey = new SignatureWithKey({
 			prehash: PreHash.ETH_KECCAK_256,

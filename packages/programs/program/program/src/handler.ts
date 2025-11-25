@@ -4,9 +4,7 @@ import { logger as loggerFn } from "@peerbit/logger";
 import PQueue from "p-queue";
 import type { Address } from "./address.js";
 
-export const logger: ReturnType<typeof loggerFn> = loggerFn({
-	module: "program-handler",
-});
+export const logger = loggerFn("peerbit:program:handler");
 
 type ProgramMergeStrategy = "replace" | "reject" | "reuse";
 export type ExtractArgs<T> = T extends CanOpen<infer Args> ? Args : never;
@@ -231,7 +229,7 @@ export class Handler<T extends Manageable<any>> {
 				}
 			}
 
-			logger.debug(`Open database '${program.constructor.name}`);
+			logger.trace(`Open database '${program.constructor.name}`);
 
 			// todo make this nicer
 			let address = await program.save(this.properties.client.services.blocks, {

@@ -74,8 +74,8 @@
 		"dao.xyz"
 	],
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.2.3",
-		"@libp2p/interface": "^3.0.0",
+		"@dao-xyz/borsh": "^6.0.0",
+		"@libp2p/interface": "^3.1.0",
 		"uint8arraylist": "^2.4.8",
 		"@peerbit/crypto": "workspace:*"
 	}

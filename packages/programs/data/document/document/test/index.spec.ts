@@ -46,12 +46,16 @@ import { Entry, Log, createEntry } from "@peerbit/log";
 import { ClosedError, Program } from "@peerbit/program";
 import type { DirectSub } from "@peerbit/pubsub";
 import { RPCMessage, ResponseV0 } from "@peerbit/rpc";
-import { AbsoluteReplicas, decodeReplicas } from "@peerbit/shared-log";
+import {
+	AbsoluteReplicas,
+	SharedLog,
+	decodeReplicas,
+} from "@peerbit/shared-log";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
-import { delay, waitForResolved } from "@peerbit/time";
+import { waitFor as _waitForFn, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
-import pDefer from "p-defer";
+import pDefer, { type DeferredPromise } from "p-defer";
 import sinon from "sinon";
 import { v4 as uuid } from "uuid";
 import type { DocumentsChange } from "../src/events.js";
@@ -62,7 +66,12 @@ import {
 	PutWithKeyOperation,
 } from "../src/operation.js";
 import { Documents, type SetupOptions } from "../src/program.js";
-import { type CanRead } from "../src/search.js";
+import {
+	type CanRead,
+	DocumentIndex,
+	type LateResultsEvent,
+	type UpdateReason,
+} from "../src/search.js";
 import { Document, TestStore } from "./data.js";
 
 describe("index", () => {
@@ -2685,6 +2694,19 @@ describe("index", () => {
 							for (const batch of batches) {
 								expect(iterator.done()).to.be.false;
 								const next = await iterator.next(batch.length);
+								if (
+									(next.map((x) => x.number).join(",") ?? "") !==
+									batch.join(",")
+								) {
+									console.error(
+										"[iterate debug] from=%s expected=%o got=%o pending=%s done=%s",
+										fromStoreIndex,
+										batch,
+										next.map((x) => x.number),
+										await iterator.pending(),
+										iterator.done(),
+									);
+								}
 								expect(next.map((x) => x.number)).to.deep.equal(batch);
 							}
 
@@ -2729,6 +2751,7 @@ describe("index", () => {
 									factor: 1,
 								},
 								timeUntilRoleMaturity: 0,
+								waitForReplicatorTimeout: 30000,
 								replicas: { min: 1 }, // make sure documents only exist once
 							},
 						});
@@ -2767,7 +2790,6 @@ describe("index", () => {
 					}
 				});
 
-				// TODO make sure documents are evenly distrubted before querye
 				it("one peer", async () => {
 					await put(0, 0);
 					await put(0, 1);
@@ -3852,8 +3874,10 @@ describe("index", () => {
 									};
 								},
 							},
-							onChange: () => {
-								evtCalls++;
+							notify: (reason) => {
+								if (reason === "change") {
+									evtCalls++;
+								}
 							},
 						},
 					},
@@ -4000,6 +4024,450 @@ describe("index", () => {
 				expect(all.map((d) => d.id)).to.deep.equal(["1", "3", "5"]);
 			});
 
+			// ───────────────────────────────────────────────────────────────
+			// Regression: prediction/prefetch must seed a keep-alive iterator
+			// ───────────────────────────────────────────────────────────────
+			it("prediction path seeds keep-alive so collect next succeeds (no 'Missing iterator')", async function () {
+				session = await TestSession.disconnected(3);
+				// writer(0) <-> replicator(1) <-> reader(2)
+				await session.connect([
+					[session.peers[0], session.peers[1]],
+					[session.peers[1], session.peers[2]],
+				]);
+
+				const base = new TestStore({ docs: new Documents<Document>() });
+				const replicator = await session.peers[1].open(base, {
+					args: { replicate: { factor: 1 } },
+				});
+				const writer = await session.peers[0].open(base.clone(), {
+					args: { replicate: { factor: 1 } },
+				});
+				const reader = await session.peers[2].open(base.clone(), {
+					args: { replicate: false },
+				});
+
+				// Many installations log this from the replicator's logger, not the global console.
+				// Fall back to stubbing global console.error so the test is still useful.
+				const errStub = sinon.stub(console, "error");
+
+				let iterator:
+					| Awaited<ReturnType<typeof reader.docs.index.iterate>>
+					| undefined;
+
+				try {
+					await reader.docs.index.waitFor(replicator.node.identity.publicKey);
+					await writer.docs.index.waitFor(replicator.node.identity.publicKey);
+
+					// 1) Write BEFORE reader opens iterator to encourage the predictor path.
+					const docId = "predicted-keepalive-regression";
+					await writer.docs.put(new Document({ id: docId }));
+
+					// 2) Reader opens iterator with push updates; replicator will try to satisfy via predicted payload.
+					iterator = reader.docs.index.iterate(
+						{ sort: { key: "id", direction: SortDirection.ASC } },
+						{
+							remote: {
+								wait: { timeout: 5e3, behavior: "keep-open" },
+								reach: {
+									discover: [replicator.node.identity.publicKey],
+									eager: true,
+								},
+							},
+							closePolicy: "manual",
+							updates: { push: true, merge: true }, // push path triggers the prefetch/prediction
+						},
+					);
+
+					// 3) The reader should be told there's 1 pending item via the push pipeline.
+					await waitForResolved(
+						async () => expect(await iterator!.pending()).to.equal(1),
+						{ timeout: 30_000 },
+					);
+
+					// 4) Drain. Without keep-alive on the predicted iterator, server logs "Missing iterator ...".
+					const batch = await iterator.next(1);
+					expect(batch).to.have.length(1);
+					expect(batch[0].id).to.equal(docId);
+
+					// Assert no "Missing iterator..." was logged (will fail until upstream is fixed).
+					const hadMissing = errStub
+						.getCalls()
+						.some((c) =>
+							/Missing iterator for request with id/i.test(
+								c.args.map(String).join(" "),
+							),
+						);
+					expect(hadMissing).to.be.false;
+				} finally {
+					errStub.restore();
+					await iterator?.close();
+					await reader.close();
+					await writer.close();
+					await replicator.close();
+				}
+			});
+
+			describe("push", () => {
+				const assertPush = async (push: boolean) => {
+					session = await TestSession.disconnected(3);
+					await session.connect([
+						[session.peers[0], session.peers[1]],
+						[session.peers[1], session.peers[2]],
+					]);
+
+					const base = new TestStore({ docs: new Documents<Document>() });
+					const replicator = await session.peers[1].open(base, {
+						args: {
+							replicate: { factor: 1 },
+						},
+					});
+
+					const writer = await session.peers[0].open(base.clone(), {
+						args: { replicate: false },
+					});
+
+					const readerPrototype = base.clone();
+					let reader = await session.peers[2].open(readerPrototype.clone(), {
+						args: {
+							replicate: false,
+						},
+					});
+
+					await reader.docs.index.waitFor(replicator.node.identity.publicKey);
+					await writer.docs.index.waitFor(replicator.node.identity.publicKey);
+
+					let notificationPromise: DeferredPromise<void> | null = null;
+					let notifications: UpdateReason[] = [];
+					const onNotify = (reason: UpdateReason) => {
+						notifications.push(reason);
+						if (notificationPromise) {
+							notificationPromise.resolve();
+						}
+					};
+					let timeout: ReturnType<typeof setTimeout> | null = null;
+					if (push) {
+						notificationPromise = pDefer<void>();
+						// safety timeout to avoid hanging tests
+						timeout = setTimeout(() => {
+							notificationPromise?.resolve();
+						}, 30_000);
+					}
+
+					const iterator = reader.docs.index.iterate(
+						{ sort: { key: "id", direction: SortDirection.ASC } },
+						{
+							closePolicy: "manual",
+							remote: {
+								wait: { timeout: 5e3, behavior: "keep-open" },
+								reach: {
+									discover: [replicator.node.identity.publicKey],
+									eager: true,
+								},
+							},
+							updates: push
+								? {
+										push: true,
+										notify: (reason) => {
+											onNotify(reason);
+										},
+										merge: true,
+									}
+								: {
+										push: false,
+										notify: (reason) => {
+											onNotify(reason);
+										},
+										merge: false,
+									},
+						},
+					);
+
+					try {
+						const out = await iterator.next(1); // establish iterator remotely
+						expect(out).to.have.length(0);
+
+						const docId = `push-nonrep-${Date.now()}`;
+						await writer.docs.put(new Document({ id: docId }));
+
+						if (push) {
+							await notificationPromise!.promise;
+							await waitForResolved(
+								async () => expect(await iterator.pending()).to.equal(1),
+								{ timeout: 30_000 },
+							);
+							const batch = await iterator.next(1);
+							expect(batch).to.have.length(1);
+							expect(batch[0].id).to.equal(docId);
+						} else {
+							await delay(5_000); // ensure we didn't receive a pushed batch
+							expect(await iterator.pending()).to.equal(1);
+							const batch = await iterator.next(1);
+							expect(batch).to.have.length(1);
+							expect(batch[0].id).to.equal(docId);
+							expect(notifications).to.have.length(0); // no notifications should have occurred
+						}
+					} finally {
+						timeout && clearTimeout(timeout);
+						notificationPromise?.resolve();
+						await iterator.close();
+						await reader.close();
+						await writer.close();
+						await replicator.close();
+					}
+				};
+				it("push=false property gates push streams", async () => {
+					await assertPush(false);
+				});
+
+				it("push=true enables push streams", async () => {
+					await assertPush(true);
+				});
+
+				it("push streams drop out-of-order updates and emit onLateResults", async function () {
+					session = await TestSession.disconnected(3);
+					await session.connect([
+						[session.peers[0], session.peers[1]],
+						[session.peers[1], session.peers[2]],
+					]);
+
+					const base = new TestStore({ docs: new Documents<Document>() });
+					const replicator = await session.peers[1].open(base, {
+						args: {
+							replicate: { factor: 1 },
+						},
+					});
+
+					const writer = await session.peers[0].open(base.clone(), {
+						args: { replicate: false },
+					});
+
+					const reader = await session.peers[2].open(base.clone(), {
+						args: { replicate: false },
+					});
+
+					await reader.docs.index.waitFor(replicator.node.identity.publicKey);
+					await writer.docs.index.waitFor(replicator.node.identity.publicKey);
+
+					const latePromise = pDefer<void>();
+					const lateEvents: LateResultsEvent[] = [];
+
+					const iterator = reader.docs.index.iterate(
+						{ sort: { key: "id", direction: SortDirection.ASC } },
+						{
+							closePolicy: "manual",
+							remote: {
+								wait: { timeout: 5e3, behavior: "keep-open" },
+								reach: {
+									discover: [replicator.node.identity.publicKey],
+									eager: true,
+								},
+								onLateResults: (evt) => {
+									lateEvents.push(evt);
+									latePromise.resolve();
+								},
+							},
+							updates: { push: true, merge: true },
+						},
+					);
+
+					try {
+						// Seed ordered results
+						await writer.docs.put(new Document({ id: "2" }));
+						await writer.docs.put(new Document({ id: "3" }));
+
+						const initial = await iterator.next(10);
+						expect(initial.map((x) => x.id)).to.deep.equal(["2", "3"]);
+
+						// Insert an out-of-order doc; it should be dropped from push stream
+						await writer.docs.put(new Document({ id: "1" }));
+
+						await latePromise.promise;
+						expect(lateEvents.some((e) => e.amount >= 1)).to.be.true;
+
+						await waitForResolved(
+							async () => expect(await iterator.pending()).to.equal(0),
+							{ timeout: 10_000 },
+						);
+
+						const next = await iterator.next(1);
+						expect(next).to.have.length(0);
+					} finally {
+						await iterator.close();
+						await reader.close();
+						await writer.close();
+						await replicator.close();
+					}
+				});
+			});
+
+			// ───────────────────────────────────────────────────────────────
+			// Regression: collect after keep-alive TTL expiry should degrade
+			// gracefully (no error/log spam; empty batch / done=true is OK)
+			// ───────────────────────────────────────────────────────────────
+			it("collect after keep-alive TTL expiry degrades gracefully (no 'Missing iterator' spam)", async function () {
+				session = await TestSession.connected(2);
+
+				const base = new TestStore({ docs: new Documents<Document>() });
+				const left = await session.peers[0].open(base, {
+					args: { replicate: { factor: 1 } },
+				}); // server
+				const right = await session.peers[1].open(base.clone(), {
+					args: { replicate: { factor: 1 } },
+				}); // client
+
+				const errStub = sinon.stub(console, "error");
+				let iterator:
+					| Awaited<ReturnType<typeof right.docs.index.iterate>>
+					| undefined;
+
+				try {
+					await right.docs.index.waitFor(left.node.identity.publicKey);
+					await left.docs.index.waitFor(right.node.identity.publicKey);
+
+					iterator = right.docs.index.iterate(
+						{ sort: { key: "id", direction: SortDirection.ASC } },
+						{
+							closePolicy: "manual",
+							remote: { wait: { timeout: 5e3, behavior: "keep-open" } },
+							updates: { push: true, merge: true },
+						},
+					);
+
+					// Establish the remote iterator on the server
+					const head = await iterator.next(1);
+					expect(head).to.have.length(0);
+
+					// Let the server-side keepAlive TTL elapse (DEFAULT_TIMEOUT ≈ 10_000 ms)
+					await new Promise((r) => setTimeout(r, 11_500));
+
+					// Produce something new after TTL so the client wants to collect more
+					const docId = "after-ttl";
+					await left.docs.put(new Document({ id: docId }));
+
+					await waitForResolved(
+						async () => expect(await iterator!.pending()).to.equal(1),
+						{ timeout: 30_000 },
+					);
+
+					// Collect after TTL. Desired behavior: no error; either returns the item or [] with done=true.
+					let threw = false;
+					let batch: Document[] = [];
+					try {
+						batch = await iterator.next(1);
+					} catch {
+						threw = true;
+					}
+					expect(threw).to.be.false;
+					// Accept either successful delivery or graceful EOF, but never error/log spam.
+					expect(
+						batch.length === 0 || (batch.length === 1 && batch[0].id === docId),
+					).to.be.true;
+
+					const hadMissing = errStub
+						.getCalls()
+						.some((c) =>
+							/Missing iterator for request with id/i.test(
+								c.args.map(String).join(" "),
+							),
+						);
+					expect(hadMissing).to.be.false;
+				} finally {
+					errStub.restore();
+					await iterator?.close();
+					await right.close();
+					await left.close();
+				}
+			});
+
+			/*  KEEP AND TODO LATER
+			describe("iterator live updates re-emit newer head for same id (failing repro)", function () {
+				this.timeout(60_000);
+
+				let session: TestSession | undefined;
+				let left: TestStore | undefined;
+				let right: TestStore | undefined;
+
+				// Silence console.error noise so the failure reason is just the assertion
+				let errStub: sinon.SinonStub;
+
+				beforeEach(async () => {
+					errStub = sinon.stub(console, "error");
+					session = await TestSession.connected(2);
+
+					const base = new TestStore({ docs: new Documents<Document>() });
+					left = await session!.peers[0].open(base, {
+						args: { replicate: { factor: 1 } },
+					}); // server
+					right = await session!.peers[1].open(base.clone(), {
+						args: { replicate: { factor: 1 } },
+					}); // client
+
+					// Ensure each side can reach the other
+					await right!.docs.index.waitFor(left!.node.identity.publicKey);
+					await left!.docs.index.waitFor(right!.node.identity.publicKey);
+				});
+
+				afterEach(async () => {
+					errStub.restore();
+					await right?.close();
+					await left?.close();
+					await session?.stop();
+					session = undefined;
+				});
+
+				it("should yield the updated document when the same id is written again", async () => {
+					// Seed initial doc on the server
+					await left!.docs.put(new Document({ id: "same", name: "v1" }));
+
+					const iterator = right!.docs.index.iterate(
+						{ sort: { key: "id", direction: SortDirection.ASC } },
+						{
+							// Keep the iterator alive to receive live pushes/merges
+							closePolicy: "manual",
+							// Ask remote to keep the iterator open and push-style notify
+							remote: { wait: { timeout: 10_000, behavior: "keep-open" } },
+							// Enable push + merge so updates are routed into the iterator buffers
+							updates: { push: true, merge: true },
+						},
+					);
+
+					try {
+						// First consume the initial version
+							await _waitForFn(
+								async () => (await iterator.pending()) ?? 0 >= 1,
+								{
+									timeout: 30_000,
+								},
+							);
+						const first = await iterator.next(1);
+						expect(first.length).to.equal(1);
+						expect(first[0].__indexed.name).to.equal("v1");
+
+						// Now update the *same id* with a new head on the server
+						await left!.docs.put(new Document({ id: "same", name: "v2" }));
+
+						// If merging works, the client should see one pending item
+							await _waitForFn(
+								async () => (await iterator.pending()) ?? 0 >= 1,
+								{
+									timeout: 30_000,
+								},
+							);
+
+						// EXPECTED (correct behavior after patch):
+						//   next(1) returns the updated document with value "v2".
+						//
+						// ACTUAL (current code): returns [] because the iterator's `visited` set
+						//   permanently suppresses subsequent emissions for the same id.
+						const nextBatch = await iterator.next(1);
+						expect(nextBatch.length).to.equal(1); // <-- This should FAIL today
+						expect(nextBatch[0].__indexed.name).to.equal("v2"); // <-- This should FAIL today
+					} finally {
+						await iterator.close();
+					}
+				});
+			}); */
+
 			describe("pending", () => {
 				it("kept reflects the total amount of remaining document", async () => {
 					session = await TestSession.connected(1);
@@ -4039,7 +4507,7 @@ describe("index", () => {
 					}
 				});
 
-				it("kepts are updated correctly onChange", async () => {
+				it("kepts are updated correctly on change notifications", async () => {
 					session = await TestSession.connected(1);
 
 					const store = new TestStore({ docs: new Documents<Document>() });
@@ -4050,22 +4518,24 @@ describe("index", () => {
 					let iterator:
 						| Awaited<ReturnType<typeof store.docs.index.iterate>>
 						| undefined;
-					const changeEvents: DocumentsChange<Document, Document>[] = [];
-					const changeListener = (
-						change: DocumentsChange<Document, Document>,
-					) => {
-						changeEvents.push(change);
-					};
+					const notifyReasons: UpdateReason[] = [];
 					const total = 12;
+					const formatId = (n: number) =>
+						`doc-${n.toString().padStart(3, "0")}`;
 					for (let i = 0; i < total; i++) {
-						await store.docs.put(new Document({ id: `doc-${i}` }));
+						await store.docs.put(new Document({ id: formatId(i) }));
 					}
 
 					iterator = store.docs.index.iterate(
 						{ sort: { key: "id", direction: SortDirection.ASC } },
 						{
 							closePolicy: "manual",
-							updates: { merge: true, onChange: changeListener },
+							updates: {
+								merge: true,
+								notify: (reason) => {
+									notifyReasons.push(reason);
+								},
+							},
 						},
 					);
 					if (!iterator) {
@@ -4082,37 +4552,28 @@ describe("index", () => {
 					const baselinePending = baselinePendingMaybe;
 					expect(baselinePending).to.equal(total - initialBatch.length);
 
-					const newDocId = `doc-${total}`;
+					const newDocId = formatId(total);
 					await store.docs.put(new Document({ id: newDocId }));
 
-					await waitForResolved(
-						() =>
-							expect(
-								changeEvents.some((evt) =>
-									evt.added?.some((doc) => doc.id === newDocId),
-								),
-							).to.be.true,
+					await waitForResolved(() =>
+						expect(notifyReasons).to.deep.include("change"),
 					);
-					const addedIds = changeEvents
-						.flatMap((evt) => evt.added || [])
-						.map((doc) => doc.id);
-					expect(addedIds).to.include(newDocId);
 
 					await waitForResolved(async () =>
 						expect(await iterator!.pending()).to.equal(baselinePending + 1),
 					);
 
-					const update = await iterator.next(1);
-					expect(update).to.have.length(1);
-					expect(update[0].id).to.equal(newDocId);
+					const updates = await iterator.next(baselinePending + 1);
+					expect(updates).to.have.length(baselinePending + 1);
+					expect(updates.map((x) => x.id)).to.include(newDocId);
 
 					await waitForResolved(async () =>
-						expect(await iterator!.pending()).to.equal(baselinePending),
+						expect(await iterator!.pending()).to.equal(0),
 					);
 				});
 			});
 
-			describe("onResults", () => {
+			describe("onBatch", () => {
 				class Indexable {
 					@field({ type: "string" })
 					id: string;
@@ -4127,7 +4588,7 @@ describe("index", () => {
 					}
 				}
 
-				it("can drain results onChange", async () => {
+				it("can drain results via change notifications", async () => {
 					session = await TestSession.disconnected(1);
 
 					const store = await session.peers[0].open(
@@ -4172,8 +4633,12 @@ describe("index", () => {
 							closePolicy: "manual",
 							updates: {
 								merge: true,
-								onChange: () => scheduleDrain(),
-								onResults: (batch) => {
+								notify: (reason) => {
+									if (reason === "change") {
+										scheduleDrain();
+									}
+								},
+								onBatch: (batch) => {
 									batches.push(batch.map((x) => x.id));
 								},
 							},
@@ -4192,7 +4657,7 @@ describe("index", () => {
 					await iterator.close();
 				});
 
-				it("fires onResults for initial and live update batches", async () => {
+				it("fires onBatch for initial and live update batches", async () => {
 					session = await TestSession.connected(1);
 
 					const store = new TestStore({ docs: new Documents<Document>() });
@@ -4203,7 +4668,7 @@ describe("index", () => {
 					await store.docs.put(new Document({ id: "1", name: "match" }));
 					await store.docs.put(new Document({ id: "2", name: "skip" }));
 
-					const reasons: Array<"initial" | "next" | "join" | "change"> = [];
+					const reasons: UpdateReason[] = [];
 					const batches: string[][] = [];
 
 					const iterator = store.docs.index.iterate(
@@ -4214,7 +4679,7 @@ describe("index", () => {
 						{
 							updates: {
 								merge: true,
-								onResults: (batch, meta) => {
+								onBatch: (batch, meta) => {
 									reasons.push(meta.reason);
 									batches.push(batch.map((d) => d.id));
 								},
@@ -4355,14 +4820,14 @@ describe("index", () => {
 				) => {
 					await store.docs.put(new Document({ id: "1", name: "alpha" }));
 
-					const onResultsBatches: any[][] = [];
+					const onBatchBatches: any[][] = [];
 					const iterator = store.docs.index.iterate<R>(
 						{},
 						{
 							resolve: resolve as any,
 							updates: {
-								onResults: (batch) => {
-									onResultsBatches.push(batch);
+								onBatch: (batch) => {
+									onBatchBatches.push(batch);
 								},
 							},
 						},
@@ -4377,21 +4842,21 @@ describe("index", () => {
 						const indexed = (next[0] as any).__indexed as Indexable;
 						expect(indexed).to.be.instanceOf(Indexable);
 						expect(indexed.nameTransformed).to.equal("ALPHA");
-						expect(onResultsBatches).to.have.length(1);
-						expect(onResultsBatches[0][0]).to.equal(next[0]);
-						const onResultsIndexed = (onResultsBatches[0][0] as any).__indexed;
+						expect(onBatchBatches).to.have.length(1);
+						expect(onBatchBatches[0][0]).to.equal(next[0]);
+						const onResultsIndexed = (onBatchBatches[0][0] as any).__indexed;
 						expect(onResultsIndexed).to.equal(indexed);
 					} else {
 						let first = next[0] as Indexable;
 						expect(first).to.be.instanceOf(Indexable);
 						expect(first.nameTransformed).to.equal("ALPHA");
 						expect((first as any).name).to.be.undefined;
-						expect(onResultsBatches).to.have.length(1);
-						expect(onResultsBatches[0][0]).to.equal(first);
+						expect(onBatchBatches).to.have.length(1);
+						expect(onBatchBatches[0][0]).to.equal(first);
 					}
 				};
 
-				it("emits indexed results to onResults when resolve is false", async () => {
+				it("emits indexed results to onBatch when resolve is false", async () => {
 					session = await TestSession.connected(1);
 
 					const store = new TestStore<Indexable>({
@@ -4411,7 +4876,7 @@ describe("index", () => {
 					await check(store, false, false);
 				});
 
-				it("emits resolved documents to onResults when resolve is true", async () => {
+				it("emits resolved documents to onBatch when resolve is true", async () => {
 					session = await TestSession.connected(1);
 
 					const store = new TestStore<Indexable>({
@@ -4431,7 +4896,7 @@ describe("index", () => {
 					await check(store, true, true);
 				});
 
-				it("emits resolved documents to onResults when resolve is undefined", async () => {
+				it("emits resolved documents to onBatch when resolve is undefined", async () => {
 					// this behaviour is inline with that the iterator also returns resolved documents when resolve is undefined
 					session = await TestSession.connected(1);
 
@@ -4508,7 +4973,7 @@ describe("index", () => {
 							{},
 							{
 								updates: {
-									onResults: (batch) => {
+									onBatch: (batch) => {
 										observed = batch;
 									},
 								},
@@ -4736,7 +5201,7 @@ describe("index", () => {
 			const processQuery1 = store1.docs.index.processQuery.bind(
 				store1.docs.index,
 			);
-			let remoteQueries1 = 0;
+			let _remoteQueries1 = 0;
 			store1.docs.index.processQuery = async (
 				query: SearchRequest | SearchRequestIndexed | CollectNextRequest,
 				from: PublicSignKey,
@@ -4746,7 +5211,7 @@ describe("index", () => {
 				},
 			) => {
 				if (!isLocal) {
-					remoteQueries1++;
+					_remoteQueries1++;
 				}
 
 				return processQuery1(query, from, isLocal, options) as any;
@@ -4755,7 +5220,7 @@ describe("index", () => {
 			const processQuery2 = store2.docs.index.processQuery.bind(
 				store2.docs.index,
 			);
-			let remoteQueries2 = 0;
+			let _remoteQueries2 = 0;
 			store2.docs.index.processQuery = async (
 				query: SearchRequest | SearchRequestIndexed | CollectNextRequest,
 				from: PublicSignKey,
@@ -4765,7 +5230,7 @@ describe("index", () => {
 				},
 			) => {
 				if (!isLocal) {
-					remoteQueries2++;
+					_remoteQueries2++;
 				}
 
 				return processQuery2(query, from, isLocal, options) as any;
@@ -6431,6 +6896,32 @@ describe("index", () => {
 			expect(store2.docs.index.countIteratorsInProgress).to.eq(0); // no iterators in progress
 		});
 
+		it("delivers prefetched batch to push-enabled iterator", async () => {
+			const { store2 } = await setupInitialStoresAndPrefetch();
+
+			const iterator = store2.docs.index.iterate(
+				{ sort: { key: "id", direction: SortDirection.ASC } },
+				{
+					closePolicy: "manual",
+					remote: {
+						wait: { timeout: 5e3, behavior: "keep-open" },
+						reach: { eager: true },
+					},
+					updates: { push: true, merge: true },
+				},
+			);
+
+			await waitForResolved(
+				async () => expect(await iterator.pending()).to.equal(3),
+				{ timeout: 30_000 },
+			);
+
+			const batch = await iterator.next(1);
+			expect(batch).to.have.length(1);
+			expect(batch[0].id).to.equal("1");
+			await iterator.close();
+		});
+
 		it("will intercept outgoing search queries with incoming prefetch results", async () => {
 			const prefetchSendDelay = pDefer<void>();
 
@@ -6526,6 +7017,56 @@ describe("index", () => {
 	
 		});
 	*/
+	});
+
+	describe("createReplicatorJoinListener", () => {
+		it("onPeer is only invoked for replicators", async () => {
+			const index = new DocumentIndex();
+			const identity = await Ed25519Keypair.create();
+			(index as any).node = {
+				identity,
+			};
+			let resolve = false;
+			const mockLog = {
+				waitForReplicator: async (_key: any) => {
+					if (resolve) {
+						return;
+					}
+					throw new Error("Expected throw");
+				},
+			} as unknown as SharedLog<Document>;
+			(index as any)._log = mockLog;
+
+			let peers: PublicSignKey[] = [];
+			index["createReplicatorJoinListener"]({
+				onPeer: (pk) => {
+					peers.push(pk);
+				},
+			});
+			const key1 = (await Ed25519Keypair.create()).publicKey;
+			const key2 = (await Ed25519Keypair.create()).publicKey;
+
+			index._query.events.dispatchEvent(
+				new CustomEvent<PublicSignKey>("join", {
+					detail: key1,
+				}),
+			);
+
+			await delay(100);
+			expect(peers).to.have.length(0);
+
+			resolve = true; // now replicator is ready to be used
+
+			index._query.events.dispatchEvent(
+				new CustomEvent<PublicSignKey>("join", {
+					detail: key2,
+				}),
+			);
+
+			await delay(100);
+			expect(peers).to.have.length(1);
+			expect(peers[0]).to.deep.equal(key2);
+		});
 	});
 
 	describe("migration", () => {
@@ -6948,145 +7489,3 @@ describe("index", () => {
 		});
 	});
 });
-
-/*  TODO query all if undefined?
-		
-		it("query all if undefined", async () => {
-			stores[0].docs.log["_replication"].replicators = () => undefined;
-			await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
-				remote: { amount: 2 },
-			});
-			expect(counters[0]).equal(1);
-			expect(counters[1]).equal(1);
-			expect(counters[2]).equal(1);
-		}); */
-
-/*  TODO getCover to provide query alternatives
-		
-			it("ignore shard if I am replicator", async () => {
-				stores[0].docs.log.getCover = () => [
-					stores[0].node.identity.publicKey.hashcode(),
-					stores[1].node.identity.publicKey.hashcode()
-				];
-				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
-				expect(counters[0]).equal(1);
-				expect(counters[1]).equal(0);
-				expect(counters[2]).equal(0);
-			}); */
-
-/* TODO getCover to provide query alternatives
-	
-it("ignore myself if I am a new replicator", async () => {
-	// and the other peer has been around for longer
-	await stores[0].docs.replicate(false)
-	await stores[1].docs.updateRole({
-type: 'replicator',
-factor: 1
-})
-	await stores[2].docs.updateRole({type: 'replicator', factor: 1})
-	
-	await delay(2000)
-	await waitForResolved(() => expect(stores[0].docs.log.getReplicatorsSorted()?.toArray().map(x => x.publicKey.hashcode())).to.have.members([session.peers[1].identity.publicKey.hashcode(), session.peers[2].identity.publicKey.hashcode()]));
-	
-	const t1 = +new Date();
-	const minAge = 1000;
-	await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
-		remote: { minAge }
-	});
-	expect(counters[0]).equal(1); // will always query locally
-	expect(counters[1]).equal(1); // but now also remotely since we can not trust local only
-	expect(counters[2]).equal(0);
-	await waitFor(() => +new Date() - t1 > minAge + 100);
-	
-	await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
-		remote: { minAge }
-	});
-	expect(counters[0]).equal(2); // will always query locally
-	expect(counters[1]).equal(1); // we don't have to query remote since local will suffice since minAge time has passed
-	expect(counters[2]).equal(0);
-}); */
-
-/* 	describe("field extractor", () => {
-					let indexedNameField = "xyz";
-	
-					// We can't seem to define this class inside of the test itself (will yield error when running all tests)
-					@variant("filtered_store")
-					class FilteredStore extends Program {
-						@field({ type: Uint8Array })
-						id: Uint8Array;
-	
-						@field({ type: Documents })
-						docs: Documents<Document>;
-	
-						constructor(properties: { docs: Documents<Document> }) {
-							super();
-	
-							this.id = new Uint8Array(32);
-							this.docs = properties.docs;
-						}
-	
-						async open(options?: Partial<SetupOptions<Document>>): Promise<void> {
-							await this.docs.open({
-								...options,
-								type: Document,
-								index: {
-									idProperty: "id",
-									fields: (obj: any) => {
-										return { [indexedNameField]: obj.name };
-									}
-								}
-							});
-						}
-					}
-	
-					it("filters field", async () => {
-						store = new FilteredStore({
-							docs: new Documents<Document>()
-						});
-						store.docs.log.log.id = new Uint8Array(32);
-	
-						await session.peers[0].open(store);
-	
-						let doc = new Document({
-							id: uuid(),
-							name: "Hello world"
-						});
-	
-						await store.docs.put(doc);
-	
-						let indexedValues = [...store.docs.index.engine.iterator()];
-	
-						expect(indexedValues).to.have.length(1);
-	
-						expect(indexedValues[0][1].indexed).to.deep.equal({
-							[indexedNameField]: doc.name
-						});
-						expect(indexedValues[0][1].indexed["value"]).equal(undefined); // Because we dont want to keep it in memory (by default)
-	
-						await session.peers[1].services.blocks.waitFor(
-							session.peers[0].peerId
-						);
-	
-						store2 = (await FilteredStore.load(
-							store.address!,
-							session.peers[1].services.blocks
-						))!;
-	
-						await session.peers[1].open(store2, {
-							args: {
-								replicate: false
-							}
-						});
-	
-						expect(store2.docs.log.role).to.be.instanceOf(Observer);
-	
-						await store2.docs.log.waitForReplicator(
-							session.peers[0].identity.publicKey
-						);
-	
-						let results = await store2.docs.index.search(
-							new SearchRequest({ query: [] })
-						);
-						expect(results).to.have.length(1);
-					});
-				}); */

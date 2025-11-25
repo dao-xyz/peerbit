@@ -1,3 +1,4 @@
+/* eslint-disable no-empty, @typescript-eslint/no-unused-expressions */
 import { expect } from "chai";
 import { waitForResolved } from "../src/index.js";
 import { MovingAverageTracker } from "../src/metrics.js";

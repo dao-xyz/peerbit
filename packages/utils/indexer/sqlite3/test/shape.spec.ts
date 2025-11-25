@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { field, option, variant, vec } from "@dao-xyz/borsh";
 import {
 	BoolQuery,

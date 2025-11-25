@@ -12,7 +12,9 @@ import { type AnyStore } from "@peerbit/any-store";
 import { type Blocks } from "@peerbit/blocks-interface";
 import { waitFor } from "@peerbit/time";
 import { Entry } from "./entry.js";
-import { logger } from "./logger.js";
+import { logger as baseLogger } from "./logger.js";
+
+const snapshotLogger = baseLogger.newScope("snapshot");
 
 @variant(0)
 export class Snapshot {
@@ -45,17 +47,17 @@ export const save = async <T>(
 	snapshotPath: string,
 	blockstore: Blocks,
 	cache: AnyStore,
-	log: {
+	source: {
 		id: Uint8Array;
 		getHeads: () => Promise<string[]>;
 		getValues: () => Promise<Entry<T>[]> | Entry<T>[];
 	},
 ): Promise<string> => {
-	const values = await log.getValues();
+	const values = await source.getValues();
 	const buf = serialize(
 		new Snapshot({
-			id: log.id,
-			heads: await log.getHeads(),
+			id: source.id,
+			heads: await source.getHeads(),
 			size: BigInt(values.length),
 			values,
 		}),
@@ -71,7 +73,7 @@ export const save = async <T>(
 		timeout: 10 * 1000,
 	});
 
-	logger.debug(`Saved snapshot: ${snapshot}`);
+	snapshotLogger.trace(`Saved snapshot: ${snapshot}`);
 	return snapshot;
 };
 

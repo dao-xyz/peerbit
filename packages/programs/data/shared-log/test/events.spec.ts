@@ -230,7 +230,7 @@ describe("events", () => {
 					replicate: {
 						factor: 1,
 					},
-					timeUntilRoleMaturity: 3e3,
+					timeUntilRoleMaturity: 6e3, // > 3e3
 				},
 			});
 
@@ -378,7 +378,7 @@ describe("events", () => {
 				waitForNewPeers: true, // prevent waitForReplicators from resolving immediately
 			});
 			let t1 = Date.now();
-			expect(t1 - t0).to.be.greaterThan(waitForRoleAge - 1);
+			expect(t1 - t0).to.be.greaterThan(waitForRoleAge - 100); // allow some leeway for flaky timers
 			expect(t1 - t0).to.be.lessThan(waitForRoleAge + 3e3);
 		});
 

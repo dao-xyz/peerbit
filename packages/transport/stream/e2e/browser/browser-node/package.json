@@ -10,18 +10,18 @@
 		"preview": "vite preview"
 	},
 	"dependencies": {
-		"react": "^18.2.0",
-		"react-dom": "^18.2.0",
-		"@libp2p/circuit-relay-v2": "^4.0.2",
+		"react": "^19.2.0",
+		"react-dom": "^19.2.0",
+		"@libp2p/circuit-relay-v2": "^4.1.0",
 		"@libp2p/identify": "^4.0.2",
 		"@libp2p/webrtc": "^6.0.3",
 		"@peerbit/stream": "workspace:*",
-		"libp2p": "^3.0.3"
+		"libp2p": "^3.1.0"
 	},
 	"devDependencies": {
-		"@types/react": "^18.2.12",
-		"@types/react-dom": "^18.2.5",
-		"@vitejs/plugin-react": "^4.2.1",
+		"@types/react": "^19.2.4",
+		"@types/react-dom": "^19.2.3",
+		"@vitejs/plugin-react": "^5.1.1",
 		"vite": "^7.1.7"
 	},
 	"browserslist": {

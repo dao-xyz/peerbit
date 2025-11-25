@@ -262,7 +262,7 @@ describe("head-tails", function () {
 
 				// b2
 				// @ts-ignore unused
-				const b2 = await log1.append(new Uint8Array([1, 1]), {
+				const _b2 = await log1.append(new Uint8Array([1, 1]), {
 					meta: { next: [b1] },
 				});
 

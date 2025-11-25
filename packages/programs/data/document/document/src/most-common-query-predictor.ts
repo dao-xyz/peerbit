@@ -5,30 +5,44 @@ import type * as types from "@peerbit/document-interface";
 /* ───────────────────── helpers ───────────────────── */
 
 const nullifyQuery = (
-	query: types.SearchRequest | types.SearchRequestIndexed,
+	query:
+		| types.SearchRequest
+		| types.SearchRequestIndexed
+		| types.IterationRequest,
 ) => {
 	const cloned = deserialize(serialize(query), query.constructor) as
 		| types.SearchRequest
-		| types.SearchRequestIndexed;
+		| types.SearchRequestIndexed
+		| types.IterationRequest;
 	cloned.id = new Uint8Array(32);
 	return cloned;
 };
 
 export const idAgnosticQueryKey = (
-	query: types.SearchRequest | types.SearchRequestIndexed,
+	query:
+		| types.SearchRequest
+		| types.SearchRequestIndexed
+		| types.IterationRequest,
 ) => toBase64(serialize(nullifyQuery(query)));
 
 /* ───────────────────── predictor ───────────────────── */
 
 export interface QueryPredictor {
 	onRequest: (
-		request: types.SearchRequest | types.SearchRequestIndexed,
+		request:
+			| types.SearchRequest
+			| types.SearchRequestIndexed
+			| types.IterationRequest,
 		ctx: { from: PublicSignKey },
 	) => { ignore: boolean };
 
 	predictedQuery: (
 		from: PublicSignKey,
-	) => types.SearchRequest | types.SearchRequestIndexed | undefined;
+	) =>
+		| types.SearchRequest
+		| types.SearchRequestIndexed
+		| types.IterationRequest
+		| undefined;
 }
 
 interface QueryStats {

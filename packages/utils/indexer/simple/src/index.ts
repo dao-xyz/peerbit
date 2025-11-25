@@ -3,9 +3,8 @@ import * as types from "@peerbit/indexer-interface";
 import { logger as loggerFn } from "@peerbit/logger";
 import { equals } from "uint8arrays";
 
-const logger: ReturnType<typeof loggerFn> = loggerFn({
-	module: "simple-index-engine",
-});
+const logger = loggerFn("peerbit:indexer:simple");
+const warn = logger.newScope("warn");
 
 const getBatchFromResults = <T extends Record<string, any>>(
 	results: types.IndexedValue<T>[],
@@ -392,7 +391,7 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 		} else if (f instanceof types.BoolQuery) {
 			return obj === f.value; // true/false
 		}
-		logger.warn("Unsupported query type: " + f.constructor.name);
+		warn("Unsupported query type: " + f.constructor.name);
 		return false;
 	}
 
@@ -482,7 +481,7 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 			}
 		}
 
-		logger.info("Unsupported query type: " + f.constructor.name);
+		logger("Unsupported query type: " + f.constructor.name);
 		return false;
 	}
 

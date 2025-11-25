@@ -65,14 +65,13 @@
 	"devDependencies": {
 		"tty-table": "^4.2.1",
 		"@peerbit/test-utils": "workspace:*",
-		"libp2p": "^3.0.3"
+		"libp2p": "^3.1.0"
 	},
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.2.3",
-		"@libp2p/interface": "^3.0.0",
+		"@dao-xyz/borsh": "^6.0.0",
+		"@libp2p/interface": "^3.1.0",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/program": "workspace:*",
-		"@peerbit/string": "workspace:*",
-		"peerbit": "workspace:*"
+		"@peerbit/string": "workspace:*"
 	}
 }

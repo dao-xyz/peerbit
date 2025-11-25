@@ -1,0 +1,9 @@
+{
+	"extends": "../../../../../tsconfig.json",
+	"compilerOptions": {
+		"outDir": "dist",
+		"jsx": "react-jsx"
+	},
+	"include": ["src", "vitest"],
+	"exclude": ["dist", "node_modules"]
+}

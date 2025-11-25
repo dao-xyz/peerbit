@@ -2,8 +2,7 @@
 	"extends": "aegir/src/config/tsconfig.aegir.json",
 	"compilerOptions": {
 		"checkJs": false,
-		"experimentalDecorators": true,
-		"emitDecoratorMetadata": true,
+
 		"outDir": "dist"
 	},
 	"include": ["src", "test", "benchmark"]

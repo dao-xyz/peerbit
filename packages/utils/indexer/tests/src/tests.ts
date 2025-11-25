@@ -33,11 +33,7 @@ import {
 	id,
 	toId,
 } from "@peerbit/indexer-interface";
-import {
-	/* delay,  */
-	delay,
-	waitForResolved,
-} from "@peerbit/time";
+import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import sodium from "libsodium-wrappers";
 import { equals } from "uint8arrays";

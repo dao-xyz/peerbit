@@ -34,6 +34,10 @@ const client = await createLibp2p<{ stream: TestDirectStream; identify: any }>({
 	connectionEncrypters: [noise()],
 });
 let receivedData = 0;
+// expose hooks for automated tests
+(globalThis as any).streamClient = client;
+(globalThis as any).sendTestData = () =>
+	client.services.stream.publish(new Uint8Array([1, 2, 3, 4]));
 
 export const App = () => {
 	const queryParameters = new URLSearchParams(window.location.search);

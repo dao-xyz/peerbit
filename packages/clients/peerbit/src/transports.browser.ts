@@ -1,9 +1,6 @@
 import { circuitRelayTransport } from "@libp2p/circuit-relay-v2";
 import { type Transport } from "@libp2p/interface";
-import {
-	webRTC,
-	/* , webRTCDirect */
-} from "@libp2p/webrtc";
+import { webRTC } from /* , webRTCDirect */ "@libp2p/webrtc";
 import { webSockets } from "@libp2p/websockets";
 
 export const transports = (): Array<(components: any) => Transport> => [

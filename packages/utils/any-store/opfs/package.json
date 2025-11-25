@@ -60,13 +60,14 @@
 	"bugs": "https://github.com/dao-xyz/peerbit/issues",
 	"scripts": {
 		"clean": "aegir clean",
-		"build": "aegir build",
+		"build": "aegir build && pnpm run copy-assets",
+		"copy-assets": "shx mkdir -p dist/assets/opfs && shx cp dist/src/worker.js dist/assets/opfs/ && shx cp dist/src/worker.js.map dist/assets/opfs/ || true",
 		"test": "",
 		"lint": "aegir lint"
 	},
 	"license": "MIT",
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.2.3",
+		"@dao-xyz/borsh": "^6.0.0",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/logger": "workspace:*",
 		"@peerbit/time": "workspace:*",

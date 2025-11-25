@@ -6,8 +6,8 @@ import { useEffect, useReducer, useRef } from "react";
 
 export const App = () => {
 	const mounted = useRef<boolean>(false);
-	const dbRef = useRef<SharedLog<any, any>>();
-	const [_, forceUpdate] = useReducer((x) => x + 1, 0);
+	const dbRef = useRef<SharedLog<any, any> | undefined>(undefined);
+	const [, forceUpdate] = useReducer((x) => x + 1, 0);
 	useEffect(() => {
 		if (mounted.current) {
 			return;

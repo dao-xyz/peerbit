@@ -1,4 +1,4 @@
-import type { WithIndexedContext } from "./search";
+import type { WithIndexedContext } from "./search.js";
 
 export interface DocumentsChange<T, I> {
 	added: WithIndexedContext<T, I>[];

@@ -210,22 +210,22 @@ export class EntryReplicatedU64 implements EntryReplicated<"u64"> {
 	}
 }
 
-export interface ReplicationRangeMessage<R extends "u32" | "u64"> {
-	id: Uint8Array;
-	timestamp: bigint;
-	get offset(): NumberFromType<R>;
-	get factor(): NumberFromType<R>;
-	mode: ReplicationIntent;
-	toReplicationRangeIndexable(key: PublicSignKey): ReplicationRangeIndexable<R>;
-}
-
 export const isReplicationRangeMessage = (
 	x: any,
 ): x is ReplicationRangeMessage<any> => {
 	return x instanceof ReplicationRangeMessage;
 };
 
-export abstract class ReplicationRangeMessage<R extends "u32" | "u64"> {}
+export abstract class ReplicationRangeMessage<R extends "u32" | "u64"> {
+	abstract id: Uint8Array;
+	abstract timestamp: bigint;
+	abstract mode: ReplicationIntent;
+	abstract get offset(): NumberFromType<R>;
+	abstract get factor(): NumberFromType<R>;
+	abstract toReplicationRangeIndexable(
+		key: PublicSignKey,
+	): ReplicationRangeIndexable<R>;
+}
 
 @variant(0)
 export class ReplicationRangeMessageU32 extends ReplicationRangeMessage<"u32"> {

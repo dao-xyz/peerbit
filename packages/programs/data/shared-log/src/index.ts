@@ -160,9 +160,8 @@ export {
 	NoPeersError,
 };
 export { MAX_U32, MAX_U64, type NumberFromType };
-export const logger: ReturnType<typeof loggerFn> = loggerFn({
-	module: "shared-log",
-});
+export const logger = loggerFn("peerbit:shared-log");
+const warn = logger.newScope("warn");
 
 const getLatestEntry = (
 	entries: (ShallowOrFullEntry<any> | EntryWithRefs<any>)[],
@@ -688,9 +687,12 @@ export class SharedLog<
 					} as FixedReplicationOptions,
 				];
 			} else {
-				rangeArgs = (
-					Array.isArray(options) ? options : [{ ...options }]
-				) as FixedReplicationOptions[];
+				const fixed = options as
+					| FixedReplicationOptions
+					| FixedReplicationOptions[];
+				rangeArgs = Array.isArray(fixed)
+					? fixed
+					: [{ ...(fixed as FixedReplicationOptions) }];
 			}
 
 			if (rangeArgs.length === 0) {
@@ -932,13 +934,13 @@ export class SharedLog<
 			});
 			segmentIds = (await indexed.all()).map((x) => x.id.key as Uint8Array);
 			if (segmentIds.length === 0) {
-				logger.warn("No segment found to unreplicate");
+				warn("No segment found to unreplicate");
 				return;
 			}
 		} else if (Array.isArray(rangeOrEntry)) {
 			segmentIds = rangeOrEntry.map((x) => x.id);
 			if (segmentIds.length === 0) {
-				logger.warn("No segment found to unreplicate");
+				warn("No segment found to unreplicate");
 				return;
 			}
 		} else {
@@ -1381,7 +1383,7 @@ export class SharedLog<
 		);
 
 		if (!change) {
-			logger.warn("Not allowed to replicate by canReplicate");
+			warn("Not allowed to replicate by canReplicate");
 		}
 
 		if (change) {
@@ -1805,7 +1807,7 @@ export class SharedLog<
 				});
 			} else {
 				if (this.domain.resolution === "u32") {
-					logger.warn(
+					warn(
 						"u32 resolution is not recommended for RatelessIBLTSynchronizer",
 					);
 				}
@@ -2036,7 +2038,7 @@ export class SharedLog<
 	async canAppend(entry: Entry<T>) {
 		try {
 			if (!entry.meta.data) {
-				logger.warn("Received entry without meta data, skipping");
+				warn("Received entry without meta data, skipping");
 				return false;
 			}
 			const replicas = decodeReplicas(entry).getValue(this);
@@ -2053,7 +2055,7 @@ export class SharedLog<
 			return true;
 		} catch (error) {
 			if (error instanceof BorshError || error instanceof ReplicationError) {
-				logger.warn("Received payload that could not be decoded, skipping");
+				warn("Received payload that could not be decoded, skipping");
 				return false;
 			}
 			throw error;
@@ -2218,7 +2220,7 @@ export class SharedLog<
 
 				const { heads } = msg;
 
-				logger.debug(
+				logger.trace(
 					`${this.node.identity.publicKey.hashcode()}: Recieved heads: ${
 						heads.length === 1 ? heads[0].entry.hash : "#" + heads.length
 					}, logId: ${this.log.idString}`,
@@ -2360,7 +2362,7 @@ export class SharedLog<
 									}
 								}
 
-								logger.debug(
+								logger.trace(
 									`${this.node.identity.publicKey.hashcode()}: Dropping heads with gid: ${
 										entry.entry.meta.gid
 									}. Because not leader`,
@@ -4073,7 +4075,7 @@ export class SharedLog<
 				{ reset: false, checkDuplicates: false },
 			);
 			if (!added) {
-				logger.warn("Not allowed to replicate by canReplicate");
+				warn("Not allowed to replicate by canReplicate");
 				return;
 			}
 		}

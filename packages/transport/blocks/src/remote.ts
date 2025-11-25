@@ -27,9 +27,8 @@ import PQueue from "p-queue";
 import { AnyBlockStore } from "./any-blockstore.js";
 import type { BlockStore } from "./interface.js";
 
-export const logger: ReturnType<typeof loggerFn> = loggerFn({
-	module: "blocks-remote",
-});
+export const logger = loggerFn("peerbit:transport:blocks");
+const warn = logger.newScope("warn");
 
 export class BlockMessage {}
 
@@ -199,7 +198,7 @@ export class RemoteBlocks implements IBlocks {
 		from?: string,
 	) {
 		if (!from) {
-			logger.warn("No from in handleFetchRequest");
+			warn("No from in handleFetchRequest");
 			return;
 		}
 		const cid = stringifyCid(request.cid);

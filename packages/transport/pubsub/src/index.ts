@@ -45,10 +45,8 @@ import {
 export const toUint8Array = (arr: Uint8ArrayList | Uint8Array) =>
 	arr instanceof Uint8ArrayList ? arr.subarray() : arr;
 
-export const logger: ReturnType<typeof loggerFn> = loggerFn({
-	module: "lazysub",
-	level: "warn",
-});
+export const logger = loggerFn("peerbit:transport:lazysub");
+const warn = logger.newScope("warn");
 const logError = (e?: { message: string }) => {
 	logger.error(e?.message);
 };
@@ -202,7 +200,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			}
 			const subscriptions = this.subscriptions.get(topic);
 
-			logger.debug(
+			logger.trace(
 				`unsubscribe from ${topic} - am subscribed with subscriptions ${JSON.stringify(subscriptions)}`,
 			);
 
@@ -620,7 +618,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 			if (isForMe) {
 				if ((await this.verifyAndProcess(message)) === false) {
-					logger.warn("Recieved message that did not verify PubSubData");
+					warn("Recieved message that did not verify PubSubData");
 					return false;
 				}
 			}
@@ -663,12 +661,12 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			}
 		} else {
 			if ((await this.verifyAndProcess(message)) === false) {
-				logger.warn("Recieved message that did not verify Unsubscribe");
+				warn("Recieved message that did not verify Unsubscribe");
 				return false;
 			}
 
 			if (message.header.signatures!.signatures.length === 0) {
-				logger.warn("Recieved subscription message with no signers");
+				warn("Recieved subscription message with no signers");
 				return false;
 			}
 

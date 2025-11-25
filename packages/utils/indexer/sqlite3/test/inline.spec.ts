@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { field, variant } from "@dao-xyz/borsh";
 import { id } from "@peerbit/indexer-interface";
 import { expect } from "chai";
@@ -57,7 +58,6 @@ describe("inline", () => {
 			abstract class Base {}
 
 			@variant(0)
-			// @ts-expect-error will be directly used
 			class MultifieldNestedV0 extends Base {
 				@field({ type: "bool" })
 				bool: boolean;
@@ -73,7 +73,6 @@ describe("inline", () => {
 			}
 
 			@variant(1)
-			// @ts-expect-error will be directly used
 			class MultifieldNestedV1 extends Base {
 				@field({ type: "bool" })
 				bool: boolean;

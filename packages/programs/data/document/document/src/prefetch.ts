@@ -10,7 +10,10 @@ type AddEvent = {
 };
 
 const prefetchKey = (
-	request: types.SearchRequest | types.SearchRequestIndexed,
+	request:
+		| types.SearchRequest
+		| types.SearchRequestIndexed
+		| types.IterationRequest,
 	keyHash: string,
 ) => `${idAgnosticQueryKey(request)} - ${keyHash}`;
 
@@ -46,7 +49,10 @@ export class Prefetch extends TypedEventEmitter<{
 	}
 
 	public consume(
-		request: types.SearchRequest | types.SearchRequestIndexed,
+		request:
+			| types.SearchRequest
+			| types.SearchRequestIndexed
+			| types.IterationRequest,
 		keyHash: string,
 	): RPCResponse<types.PredictedSearchRequest<any>> | undefined {
 		const key = prefetchKey(request, keyHash);
@@ -69,7 +75,10 @@ export class Prefetch extends TypedEventEmitter<{
 	}
 
 	getTranslationMap(
-		request: types.SearchRequest | types.SearchRequestIndexed,
+		request:
+			| types.SearchRequest
+			| types.SearchRequestIndexed
+			| types.IterationRequest,
 	): Map<string, Uint8Array> | undefined {
 		return this.searchIdTranslationMap.get(request.idString);
 	}

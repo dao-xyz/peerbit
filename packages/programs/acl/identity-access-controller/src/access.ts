@@ -21,11 +21,11 @@ export class Access extends AccessData {
 	[ACCESS_TYPE_PROPERTY]: AccessType[];
 
 	@field({ type: AccessCondition })
-	accessCondition: AccessCondition<any>;
+	accessCondition: AccessCondition;
 
 	constructor(options?: {
 		accessTypes: AccessType[];
-		accessCondition: AccessCondition<any>;
+		accessCondition: AccessCondition;
 	}) {
 		super();
 		if (options) {

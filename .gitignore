@@ -8,6 +8,7 @@ lib
 **/dist
 /peerbit
 .vscode
+.eslintcache
 /keystore/
 keystore-test
 **/__tests__/**/tmp

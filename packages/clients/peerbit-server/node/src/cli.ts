@@ -1,5 +1,4 @@
 /* eslint-disable no-console */
-
 /* eslint-disable @typescript-eslint/naming-convention */
 import type { PeerId } from "@libp2p/interface";
 import { peerIdFromString } from "@libp2p/peer-id";
@@ -11,7 +10,7 @@ import path from "path";
 import { exit } from "process";
 import readline from "readline";
 import Table from "tty-table";
-import type yargs from "yargs";
+import type { Argv } from "yargs";
 import {
 	AWS_LINUX_ARM_AMIs,
 	createRecord,
@@ -134,7 +133,7 @@ export const cli = async (args?: string[]) => {
 		.command({
 			command: "start",
 			describe: "Start node",
-			builder: (yargs: yargs.Argv) => {
+			builder: (yargs: Argv) => {
 				yargs
 					.option("directory", {
 						describe: "Peerbit directory",
@@ -193,7 +192,7 @@ export const cli = async (args?: string[]) => {
 		.command({
 			command: "id",
 			describe: "Get peer id",
-			builder: (yargs: yargs.Argv) => {
+			builder: (yargs: Argv) => {
 				yargs.option("directory", {
 					describe: "Peerbit directory",
 					defaultDescription: "~.peerbit",
@@ -320,7 +319,7 @@ export const cli = async (args?: string[]) => {
 						.command({
 							command: "aws",
 							describe: "Spawn remote nodes on AWS",
-							builder: (awsArgs: yargs.Argv) => {
+							builder: (awsArgs: Argv) => {
 								awsArgs.option("count", {
 									describe: "Amount of nodes to spawn",
 									defaultDescription: "One node",
@@ -464,7 +463,7 @@ export const cli = async (args?: string[]) => {
 				.command({
 					command: "terminate [name...]",
 					describe: "Terminate remote instances that was previously spawned",
-					builder: (killArgs: yargs.Argv) => {
+					builder: (killArgs: Argv) => {
 						killArgs.option("all", {
 							describe: "Kill all nodes",
 							type: "boolean",
@@ -505,7 +504,7 @@ export const cli = async (args?: string[]) => {
 					command: "list",
 					aliases: "ls",
 					describe: "List remotes",
-					builder: (yargs: yargs.Argv) => {
+					builder: (yargs: Argv) => {
 						yargs.option("directory", {
 							describe: "Peerbit directory",
 							defaultDescription: "~.peerbit",
@@ -561,7 +560,7 @@ export const cli = async (args?: string[]) => {
 				.command({
 					command: "add <name> <address>",
 					describe: "Add remote",
-					builder: (yargs: yargs.Argv) => {
+					builder: (yargs: Argv) => {
 						yargs
 							.positional("name", {
 								type: "string",
@@ -615,7 +614,7 @@ export const cli = async (args?: string[]) => {
 				.command({
 					command: "remove <name>",
 					describe: "Remove a remote",
-					builder: (yargs: yargs.Argv) => {
+					builder: (yargs: Argv) => {
 						yargs
 
 							.positional("name", {
@@ -650,7 +649,7 @@ export const cli = async (args?: string[]) => {
 				.command({
 					command: "connect [name...]",
 					describe: "Connect to remote(s)",
-					builder: (yargs: yargs.Argv) => {
+					builder: (yargs: Argv) => {
 						yargs
 							.positional("name", {
 								type: "string",
@@ -832,7 +831,7 @@ export const cli = async (args?: string[]) => {
 												.command({
 													command: "grant <peer-id>",
 													describe: "Give a peer-id admin capabilities",
-													builder: (yargs: yargs.Argv) => {
+													builder: (yargs: Argv) => {
 														yargs.positional("peer-id", {
 															describe: "Peer id",
 															type: "string",
@@ -852,7 +851,7 @@ export const cli = async (args?: string[]) => {
 												.command({
 													command: "deny <peer-id>",
 													describe: "Remove admin capabilities from peer-id",
-													builder: (yargs: yargs.Argv) => {
+													builder: (yargs: Argv) => {
 														yargs.positional("peer-id", {
 															describe: "Peer id",
 															demandOption: true,

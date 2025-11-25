@@ -3,7 +3,7 @@ import { type ResultsIterator } from "../src/index.js";
 describe("types", () => {
 	it("ResultsIterator", () => {
 		// @ts-expect-error unused
-		const iterator: ResultsIterator<any> = {
+		const _iterator: ResultsIterator<any> = {
 			next: async (count: number) => {
 				return [] as any[];
 			},

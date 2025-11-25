@@ -5,8 +5,7 @@
 		"strict": false,
 		"allowUnusedLabels": true,
 		"noUnusedLocals": false,
-		"experimentalDecorators": true,
-		"emitDecoratorMetadata": true,
+
 		"strictNullChecks": false,
 		"outDir": "dist"
 	},

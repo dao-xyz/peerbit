@@ -42,6 +42,7 @@
 		"ignorePatterns": [
 			"!.aegir.js",
 			"test/ts-use",
+			"test/**",
 			"*.d.ts"
 		]
 	},

@@ -20,7 +20,9 @@ import type { ShallowEntry } from "./entry-shallow.js";
 import { EntryType } from "./entry-type.js";
 import { Entry, type ShallowOrFullEntry } from "./entry.js";
 import type { SortFn } from "./log-sorting.js";
-import { logger } from "./logger.js";
+import { logger as baseLogger } from "./logger.js";
+
+const log = baseLogger.newScope("entry-index");
 
 export type ResultsIterator<T> = {
 	close: () => void | Promise<void>;
@@ -291,11 +293,11 @@ export class EntryIndex<T> {
 				if (entry.hash === undefined) {
 					entry.hash = hash; // can happen if you sync entries that you load directly from ipfs
 				} else if (existingHash !== entry.hash) {
-					logger.error("Head hash didn't match the contents");
+					log.error("Head hash didn't match the contents");
 					throw new Error("Head hash didn't match the contents");
 				}
 			} catch (error) {
-				logger.error(error);
+				log.error(error);
 				throw error;
 			}
 		} else {

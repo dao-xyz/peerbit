@@ -1,5 +1,5 @@
 import { tests } from "@peerbit/indexer-tests";
-import { create } from "../src";
+import { create } from "../src/index.js";
 
 describe("all", () => {
 	tests(create, "transient", {

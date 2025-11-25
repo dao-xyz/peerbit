@@ -77,7 +77,7 @@
 		"@peerbit/program": "workspace:*",
 		"@peerbit/pubsub": "workspace:*",
 		"@peerbit/stream": "workspace:*",
-		"libp2p": "^3.0.3",
+		"libp2p": "^3.1.0",
 		"tty-table": "^4.2.1"
 	},
 	"devDependencies": {

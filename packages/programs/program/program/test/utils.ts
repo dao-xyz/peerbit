@@ -1,4 +1,8 @@
-import { isMultiaddr, multiaddr } from "@multiformats/multiaddr";
+import {
+	type Multiaddr,
+	isMultiaddr,
+	multiaddr,
+} from "@multiformats/multiaddr";
 import { DirectBlock } from "@peerbit/blocks";
 import { calculateRawCid } from "@peerbit/blocks-interface";
 import {
@@ -17,7 +21,10 @@ import {
 	SubscriptionEvent,
 	UnsubcriptionEvent,
 } from "@peerbit/pubsub-interface";
-import { type ProgramClient, ProgramHandler } from "../src/program";
+import { type ProgramClient, ProgramHandler } from "../src/program.js";
+
+type PubsubHandler = (event: CustomEvent<unknown>) => void;
+type StoredBlock = Uint8Array | { cid: string; block: { bytes: Uint8Array } };
 
 export const creatMockPeer = async (
 	state: {
@@ -31,7 +38,10 @@ export const creatMockPeer = async (
 				}
 			>
 		>;
-		pubsubEventHandlers: Map<string, { fn: any; publicKey: PublicSignKey }[]>;
+		pubsubEventHandlers: Map<
+			string,
+			{ fn: PubsubHandler; publicKey: PublicSignKey }[]
+		>;
 		peers: Map<string, ProgramClient>;
 	} = {
 		pubsubEventHandlers: new Map(),
@@ -43,12 +53,15 @@ export const creatMockPeer = async (
 
 	const blocks: Map<string, Uint8Array> = new Map();
 
-	const dispatchEvent = (e: CustomEvent<any>, emitSelf = false) => {
-		const handlers = state.pubsubEventHandlers.get(e.type);
+	const dispatchEvent = (
+		event: CustomEvent<unknown>,
+		emitSelf = false,
+	): boolean => {
+		const handlers = state.pubsubEventHandlers.get(event.type);
 		if (handlers) {
 			handlers.forEach(({ fn, publicKey }) => {
 				if (!publicKey.equals(keypair.publicKey) || emitSelf) {
-					fn(e);
+					fn(event);
 				}
 			});
 			return true;
@@ -65,21 +78,21 @@ export const creatMockPeer = async (
 		hangUp: () => Promise.resolve(),
 		services: {
 			blocks: {
-				get: (c) => blocks.get(c),
-				has: (c) => blocks.has(c),
-				put: async (c) => {
-					if (c instanceof Uint8Array) {
-						const out = await calculateRawCid(c);
-						blocks.set(out.cid, c);
+				get: (cid: string) => blocks.get(cid),
+				has: (cid: string) => blocks.has(cid),
+				put: async (content: StoredBlock) => {
+					if (content instanceof Uint8Array) {
+						const out = await calculateRawCid(content);
+						blocks.set(out.cid, content);
 						return out.cid;
 					}
-					blocks.set(c.cid, c.block.bytes);
-					return c.cid;
+					blocks.set(content.cid, content.block.bytes);
+					return content.cid;
 				},
-				rm: (c) => {
-					blocks.delete(c);
+				rm: (cid: string) => {
+					blocks.delete(cid);
 				},
-				waitFor: () => Promise.resolve([]),
+				waitFor: () => Promise.resolve([] as string[]),
 				iterator: () => {
 					return undefined as any; // TODO
 				},
@@ -87,7 +100,7 @@ export const creatMockPeer = async (
 				persisted: () => Promise.resolve(false),
 			},
 			pubsub: {
-				subscribe: async (topic: any) => {
+				subscribe: async (topic: string) => {
 					let map = state.subsribers.get(topic);
 					if (!map) {
 						map = new Map();
@@ -103,13 +116,13 @@ export const creatMockPeer = async (
 						}),
 					);
 				},
-				getSubscribers: (topic: any) => {
+				getSubscribers: (topic: string) => {
 					return [...(state.subsribers.get(topic)?.values() || [])].map(
 						(x) => x.publicKey,
 					);
 				},
 
-				unsubscribe: async (topic: any) => {
+				unsubscribe: async (topic: string) => {
 					const map = state.subsribers.get(topic);
 					if (!map) {
 						return false;
@@ -125,17 +138,18 @@ export const creatMockPeer = async (
 					return ret;
 				},
 
-				publish: (d: any, o: any) => Promise.resolve(randomBytes(32)),
+				publish: (_data: Uint8Array, _options?: unknown) =>
+					Promise.resolve(randomBytes(32)),
 
-				addEventListener: (type: any, fn: any) => {
+				addEventListener: (type: string, fn: PubsubHandler) => {
 					const arr = state.pubsubEventHandlers.get(type) || [];
 					arr.push({ fn, publicKey: keypair.publicKey });
 					state.pubsubEventHandlers.set(type, arr);
 				},
 
-				removeEventListener: (type: any, e: any) => {
+				removeEventListener: (type: string, handler: PubsubHandler) => {
 					const fns = state.pubsubEventHandlers.get(type);
-					const idx = fns?.findIndex((x) => x.fn === e);
+					const idx = fns?.findIndex((x) => x.fn === handler);
 					if (idx == null || idx < 0) {
 						return; // already removed
 					}
@@ -143,7 +157,7 @@ export const creatMockPeer = async (
 				},
 				dispatchEvent,
 
-				requestSubscribers: async () => {
+				requestSubscribers: async (): Promise<void> => {
 					for (const [topic, data] of state.subsribers) {
 						for (const [hash, _opts] of data) {
 							if (hash !== keypair.publicKey.hashcode()) {
@@ -161,7 +175,7 @@ export const creatMockPeer = async (
 						}
 					}
 				},
-				waitFor: () => Promise.resolve([]),
+				waitFor: () => Promise.resolve([] as string[]),
 				getPublicKey: (_hash: string) => keypair.publicKey, // TODO
 			},
 			keychain: undefined as any, // TODO
@@ -172,11 +186,10 @@ export const creatMockPeer = async (
 		stop: async () => {
 			return handler?.stop();
 		},
-		open: async (p, o) => {
-			return (handler || (handler = new ProgramHandler({ client: peer }))).open(
-				p,
-				o,
-			);
+		open: async (program: any, options?: any) => {
+			const currentHandler =
+				handler || (handler = new ProgramHandler({ client: peer }));
+			return currentHandler.open(program, options);
 		},
 	};
 	state.peers.set(peer.identity.publicKey.hashcode(), peer);
@@ -209,7 +222,7 @@ export const createLibp2pPeer = async (): Promise<ProgramClient> => {
 	const peer: ProgramClient = {
 		peerId: await identity.toPeerId(),
 		services: client.services,
-		hangUp: async (_address) => {
+		hangUp: async (_address: unknown) => {
 			throw new Error("Not implemented");
 		},
 		getMultiaddrs: () => {
@@ -218,11 +231,10 @@ export const createLibp2pPeer = async (): Promise<ProgramClient> => {
 		identity,
 		storage: undefined as any, // TODO
 		indexer: undefined as any, // TODO
-		open: async (p, o) => {
-			return (handler || (handler = new ProgramHandler({ client: peer }))).open(
-				p,
-				o,
-			);
+		open: async (program: any, options?: any) => {
+			const currentHandler =
+				handler || (handler = new ProgramHandler({ client: peer }));
+			return currentHandler.open(program, options);
 		},
 		start: async () => {
 			await client.start();
@@ -233,7 +245,7 @@ export const createLibp2pPeer = async (): Promise<ProgramClient> => {
 			await handler?.stop();
 			await client.stop();
 		},
-		dial: async (address) => {
+		dial: async (address: string | Multiaddr | Multiaddr[]) => {
 			const maddress =
 				typeof address === "string"
 					? multiaddr(address)

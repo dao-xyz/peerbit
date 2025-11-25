@@ -1,7 +1,7 @@
 import { AnyBlockStore } from "@peerbit/blocks";
 import { expect } from "chai";
-import { Log } from "../src";
-import { signKey } from "./fixtures/privateKey";
+import { Log } from "../src/index.js";
+import { signKey } from "./fixtures/privateKey.js";
 
 describe("get-pow-2-refs", function () {
 	let store: AnyBlockStore;

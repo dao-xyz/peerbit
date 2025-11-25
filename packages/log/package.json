@@ -60,7 +60,7 @@
 		"crdt"
 	],
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.2.3",
+		"@dao-xyz/borsh": "^6.0.0",
 		"@peerbit/any-store": "workspace:*",
 		"@peerbit/blocks": "workspace:*",
 		"@peerbit/blocks-interface": "workspace:*",
@@ -75,7 +75,7 @@
 		"@peerbit/logger": "workspace:*",
 		"@peerbit/time": "workspace:*",
 		"libsodium-wrappers": "^0.7.15",
-		"libp2p": "^3.0.3",
+		"libp2p": "^3.1.0",
 		"pidusage": "^4.0.1",
 		"p-queue": "^8.0.1",
 		"path-browserify": "^1.0.1",

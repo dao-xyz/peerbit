@@ -20,7 +20,7 @@
 		"lint": "aegir lint"
 	},
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.2.3",
+		"@dao-xyz/borsh": "^6.0.0",
 		"@ethersproject/wallet": "^5.8.0",
 		"@multiformats/multiaddr": "^13.0.1",
 		"@peerbit/crypto": "workspace:*",

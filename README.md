@@ -91,6 +91,15 @@ To create a new package, follow the following steps:
 
 We recommend running tests with the VS Code integration though: https://github.com/CoderLine/mocha-vscode
 
+### VScode specific
+Add the following to your settings.json file:
+```sh
+{
+      "vitest.experimentalStaticAstCollect": true, // might be helpful
+      "search.followSymlinks": false, // prevents rg hogging CPU
+}
+```
+
 ## Let's Get Coding!
 
 [peerbit.org](https://peerbit.org)

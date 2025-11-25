@@ -12,9 +12,7 @@ import {
 import { type Operation, isPutOperation } from "./operation.js";
 import type { DocumentIndex } from "./search.js";
 
-const logger: ReturnType<typeof loggerFn> = loggerFn({
-	module: "document-domain",
-});
+const logger = loggerFn("peerbit:program:document:domain");
 
 type InferT<D> = D extends Documents<infer T, any, any> ? T : never;
 type InferR<D> =

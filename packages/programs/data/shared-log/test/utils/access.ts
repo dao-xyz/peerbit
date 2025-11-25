@@ -1,6 +1,6 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
-import { EventStore } from "./stores";
+import { EventStore } from "./stores/index.js";
 
 @variant("test_simple")
 export class SimpleStoreContract extends Program {

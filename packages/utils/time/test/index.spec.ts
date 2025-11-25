@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-expressions */
 import { expect, use } from "chai";
 import chaiAsPromised from "chai-as-promised";
 import { AbortError, delay, waitFor, waitForResolved } from "../src/index.js";

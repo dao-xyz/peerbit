@@ -1756,7 +1756,7 @@ resolutions.forEach((resolution) => {
 									offset1 + (typeof offset1 === "number" ? 1 : 1n);
 
 								//@ts-ignore
-								const diff = numbers.abs(offset1 - offset2);
+								const _diff = numbers.abs(offset1 - offset2);
 
 								//@ts-ignore
 								const range1 = createReplicationRange({

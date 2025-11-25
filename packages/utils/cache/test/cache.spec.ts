@@ -1,3 +1,4 @@
+/* eslint-disable */
 import { delay } from "@peerbit/time";
 import { expect } from "chai";
 import { Cache } from "../src/index.js";

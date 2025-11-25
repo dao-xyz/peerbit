@@ -1,4 +1,5 @@
 // @ts-nocheck
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import {
 	deserialize,
 	field,
@@ -33,11 +34,7 @@ import {
 	id,
 	toId,
 } from "@peerbit/indexer-interface";
-import {
-	/* delay,  */
-	delay,
-	waitForResolved,
-} from "@peerbit/time";
+import { /* delay,  */ delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import sodium from "libsodium-wrappers";
 import { equals } from "uint8arrays";

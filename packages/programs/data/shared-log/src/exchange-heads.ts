@@ -4,7 +4,8 @@ import { Log } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import { TransportMessage } from "./message.js";
 
-const logger = loggerFn({ module: "exchange-heads" });
+const logger = loggerFn("peerbit:shared-log:exchange-heads");
+const warn = logger.newScope("warn");
 
 /**
  * This thing allows use to faster sync since we can provide
@@ -91,7 +92,7 @@ export const createExchangeHeadsMessages = async function* (
 		});
 
 		if (refs.length > 1000) {
-			logger.warn("Large refs count: ", refs.length);
+			warn("Large refs count: ", refs.length);
 		}
 		current.push(
 			new EntryWithRefs({
