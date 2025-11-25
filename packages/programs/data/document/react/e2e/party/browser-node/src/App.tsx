@@ -77,7 +77,7 @@ const DocumentParty = ({ label, replicate }: DocumentPartyProps) => {
 	const store = useMemo(() => PartyDocumentStore.createFixed(), []);
 	const [message, setMessage] = useState("");
 
-	const { program } = useProgram(peer ? store : undefined, {
+	const { program } = useProgram(peer, peer ? store : undefined, {
 		args: { replicate },
 		keepOpenOnUnmount: true,
 	});
