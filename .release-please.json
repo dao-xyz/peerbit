@@ -48,7 +48,7 @@
 		"packages/programs/rpc": {},
 		"packages/programs/acl/identity-access-controller": {},
 		"packages/programs/acl/trusted-network": {},
-		"packages/programs/program": {},
+		"packages/programs/program/program": {},
 		"packages/programs/program/react": {},
 		"packages/programs/clock-service": {},
 		"packages/programs/data/document/interface": {},
