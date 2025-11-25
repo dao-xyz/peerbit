@@ -23,7 +23,7 @@ export function useProgram<
 	P extends Program<ExtractArgs<P>, ExtractEvents<P>> &
 		Program<any, ProgramEvents>,
 >(
-	peer: ProgramClient,
+	peer: ProgramClient | undefined,
 	addressOrOpen?: P | string,
 	options?: OpenOptions<P> & {
 		id?: string;
