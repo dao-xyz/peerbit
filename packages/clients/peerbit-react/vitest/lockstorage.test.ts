@@ -26,7 +26,7 @@ import {
 	describe,
 	it,
 } from "vitest";
-import { FastMutex } from "../src/lockstorage.js";
+import { FastMutex } from "../src/lockstorage.ts";
 
 describe("FastMutex", () => {
 	let sandbox: sinon.SinonSandbox;

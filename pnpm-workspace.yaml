@@ -10,7 +10,7 @@ packages:
   - packages/transport/pubsub-interface
   - packages/transport/libp2p-test-utils
   - packages/log
-  - packages/clients/react
+  - packages/clients/peerbit-react
   - packages/clients/peerbit
   - packages/clients/peerbit-proxy/proxy
   - packages/clients/peerbit-proxy/window

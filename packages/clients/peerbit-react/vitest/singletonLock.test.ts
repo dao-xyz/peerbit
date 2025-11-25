@@ -1,7 +1,7 @@
 import nodelocalstorage from "node-localstorage";
 import { expect } from "vitest";
 import { afterEach, beforeAll, beforeEach, describe, it } from "vitest";
-import { FastMutex } from "../src/lockstorage.js";
+import { FastMutex } from "../src/lockstorage.ts";
 
 describe("FastMutex singleton semantics", () => {
 	let localStorage: any;

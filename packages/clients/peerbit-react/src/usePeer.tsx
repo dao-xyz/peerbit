@@ -13,14 +13,14 @@ import { Peerbit } from "peerbit";
 import * as React from "react";
 import type { JSX } from "react";
 import { v4 as uuid } from "uuid";
-import { FastMutex } from "./lockstorage.js";
-import { useMount } from "./useMount.js";
+import { FastMutex } from "./lockstorage.ts";
+import { useMount } from "./useMount.ts";
 import {
 	cookiesWhereClearedJustNow,
 	getClientId,
 	getFreeKeypair,
 	inIframe,
-} from "./utils.js";
+} from "./utils.ts";
 
 const isInStandaloneMode = () =>
 	window.matchMedia("(display-mode: standalone)").matches ||

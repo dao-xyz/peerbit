@@ -4,8 +4,8 @@ import { default as sodium } from "libsodium-wrappers";
 import nodelocalstorage from "node-localstorage";
 import { v4 as uuid } from "uuid";
 import { afterAll, beforeAll, describe, it } from "vitest";
-import { FastMutex } from "../src/lockstorage.js";
-import { getAllKeyPairs, getFreeKeypair, releaseKey } from "../src/utils.js";
+import { FastMutex } from "../src/lockstorage.ts";
+import { getAllKeyPairs, getFreeKeypair, releaseKey } from "../src/utils.ts";
 
 describe("getKeypair", () => {
 	beforeAll(async () => {

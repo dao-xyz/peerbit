@@ -2,7 +2,7 @@ import { deserialize, serialize } from "@dao-xyz/borsh";
 import { Ed25519Keypair, fromBase64, toBase64 } from "@peerbit/crypto";
 import sodium from "libsodium-wrappers";
 import { v4 as uuid } from "uuid";
-import { FastMutex } from "./lockstorage.js";
+import { FastMutex } from "./lockstorage.ts";
 
 const CLIENT_ID_STORAGE_KEY = "CLIENT_ID";
 const ID_COUNTER_KEY = "idc/";
