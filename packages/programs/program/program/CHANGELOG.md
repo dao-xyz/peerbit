@@ -202,6 +202,21 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.4.0](https://github.com/dao-xyz/peerbit/compare/program-v5.3.5...program-v5.4.0) (2025-11-25)
+
+
+### Features
+
+* add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
+* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
+
+
+### Bug Fixes
+
+* fmt ([5c54079](https://github.com/dao-xyz/peerbit/commit/5c54079ced7f315b33b09fd85bbfa44677d0df2b))
+* program version reset ([5543e03](https://github.com/dao-xyz/peerbit/commit/5543e03a819f6034ddfd3713b3a1c95a0f87e4e5))
+* use libp2p based logger ([5ffd22b](https://github.com/dao-xyz/peerbit/commit/5ffd22b2ddcfcc133fe025fcfb399461ef2fe266))
+
 ## [1.1.0](https://github.com/dao-xyz/peerbit/compare/program-v1.0.0...program-v1.1.0) (2025-11-25)
 
 
