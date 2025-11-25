@@ -49,8 +49,7 @@
 	},
 	"dependencies": {
 		"@peerbit/crypto": "workspace:*",
-		"@peerbit/program": "workspace:*",
-		"@peerbit/react": "workspace:*"
+		"@peerbit/program": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/react": "^18.3.11",

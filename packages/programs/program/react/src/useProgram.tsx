@@ -1,6 +1,10 @@
 import { PublicSignKey } from "@peerbit/crypto";
-import type { OpenOptions, Program, ProgramEvents } from "@peerbit/program";
-import { usePeer } from "@peerbit/react";
+import type {
+	OpenOptions,
+	Program,
+	ProgramClient,
+	ProgramEvents,
+} from "@peerbit/program";
 import { useEffect, useReducer, useRef, useState } from "react";
 
 const addressOrDefined = <A, B extends ProgramEvents, P extends Program<A, B>>(
@@ -19,13 +23,13 @@ export function useProgram<
 	P extends Program<ExtractArgs<P>, ExtractEvents<P>> &
 		Program<any, ProgramEvents>,
 >(
+	peer: ProgramClient,
 	addressOrOpen?: P | string,
 	options?: OpenOptions<P> & {
 		id?: string;
 		keepOpenOnUnmount?: boolean;
 	},
 ) {
-	const { peer } = usePeer();
 	let [program, setProgram] = useState<P | undefined>();
 	const [id, setId] = useState<string | undefined>(options?.id);
 	let [loading, setLoading] = useState(true);

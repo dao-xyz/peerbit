@@ -1,4 +1,3 @@
-import { PeerContext } from "@peerbit/react";
 import { render, waitFor } from "@testing-library/react";
 import React from "react";
 import { describe, expect, it } from "vitest";
@@ -31,28 +30,13 @@ describe("useProgram hook", () => {
 			open: async () => program,
 		};
 
-		const ctx = {
-			type: "node" as const,
-			peer: fakePeer as any,
-			promise: undefined,
-			loading: false,
-			status: "connected" as const,
-			persisted: false,
-			tabIndex: 0,
-			error: undefined,
-		};
-
 		let latest: ReturnType<typeof useProgram<any>> | undefined;
 		const Wrapper = () => {
-			latest = useProgram("dummy-address");
+			latest = useProgram(fakePeer as any, "dummy-address");
 			return null;
 		};
 
-		render(
-			<PeerContext.Provider value={ctx as any}>
-				<Wrapper />
-			</PeerContext.Provider>,
-		);
+		render(<Wrapper />);
 
 		await waitFor(() => expect(latest?.program).toBeDefined());
 		expect(latest?.program).toEqual(program);
