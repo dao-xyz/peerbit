@@ -43,6 +43,33 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.5.0](https://github.com/dao-xyz/peerbit/compare/stream-v4.4.7...stream-v4.5.0) (2025-11-25)
+
+
+### Features
+
+* add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
+* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
+
+
+### Bug Fixes
+
+* inline reporter ([ef667d8](https://github.com/dao-xyz/peerbit/commit/ef667d8d3ff4e603efe18fbf09a27e22f0824784))
+* use libp2p based logger ([5ffd22b](https://github.com/dao-xyz/peerbit/commit/5ffd22b2ddcfcc133fe025fcfb399461ef2fe266))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped to 2.2.0
+    * @peerbit/crypto bumped to 2.4.0
+    * @peerbit/logger bumped to 2.0.0
+    * @peerbit/stream-interface bumped to 5.3.0
+    * @peerbit/time bumped to 2.3.0
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped to 2.2.0
+
 ## [4.4.7](https://github.com/dao-xyz/peerbit/compare/stream-v4.4.6...stream-v4.4.7) (2025-10-03)
 
 

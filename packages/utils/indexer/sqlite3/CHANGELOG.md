@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.3.0](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.30...indexer-sqlite3-v1.3.0) (2025-11-25)
+
+
+### Features
+
+* add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
+* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
+* unify asset bundling into dist/assets for asset generating packages ([5d6612c](https://github.com/dao-xyz/peerbit/commit/5d6612c726f5eebbf5e05cc082a1fca16831e9e2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-interface bumped to 2.1.0
+    * @peerbit/crypto bumped to 2.4.0
+    * @peerbit/time bumped to 2.3.0
+  * devDependencies
+    * @peerbit/indexer-tests bumped to 1.2.0
+    * @peerbit/build-assets bumped to 1.1.0
+
 ## [1.2.30](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.29...indexer-sqlite3-v1.2.30) (2025-10-03)
 
 

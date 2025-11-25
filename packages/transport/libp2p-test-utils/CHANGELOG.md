@@ -54,6 +54,21 @@
   * devDependencies
     * @peerbit/time bumped from 2.0.5 to 2.0.6
 
+## [2.2.0](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.21...libp2p-test-utils-v2.2.0) (2025-11-25)
+
+
+### Features
+
+* add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
+* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/time bumped to 2.3.0
+
 ## [2.1.21](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.20...libp2p-test-utils-v2.1.21) (2025-10-03)
 
 

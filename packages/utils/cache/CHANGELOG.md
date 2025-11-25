@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.2.0](https://github.com/dao-xyz/peerbit/compare/cache-v2.1.5...cache-v2.2.0) (2025-11-25)
+
+
+### Features
+
+* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/time bumped to 2.3.0
+
 ## [2.1.5](https://github.com/dao-xyz/peerbit/compare/cache-v2.1.4...cache-v2.1.5) (2025-10-03)
 
 

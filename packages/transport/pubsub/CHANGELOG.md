@@ -188,6 +188,34 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [4.1.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.18...pubsub-v4.1.0) (2025-11-25)
+
+
+### Features
+
+* add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
+* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
+
+
+### Bug Fixes
+
+* use libp2p based logger ([5ffd22b](https://github.com/dao-xyz/peerbit/commit/5ffd22b2ddcfcc133fe025fcfb399461ef2fe266))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 2.4.0
+    * @peerbit/logger bumped to 2.0.0
+    * @peerbit/pubsub-interface bumped to 4.1.0
+    * @peerbit/stream bumped to 4.5.0
+    * @peerbit/stream-interface bumped to 5.3.0
+    * @peerbit/time bumped to 2.3.0
+    * @peerbit/any-store-interface bumped to 1.1.0
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped to 2.2.0
+
 ## [4.0.18](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.17...pubsub-v4.0.18) (2025-10-03)
 
 

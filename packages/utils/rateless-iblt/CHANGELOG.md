@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/dao-xyz/peerbit/compare/riblt-v1.0.8...riblt-v1.1.0) (2025-11-25)
+
+
+### Features
+
+* unify asset bundling into dist/assets for asset generating packages ([5d6612c](https://github.com/dao-xyz/peerbit/commit/5d6612c726f5eebbf5e05cc082a1fca16831e9e2))
+
 ## [1.0.8](https://github.com/dao-xyz/peerbit/compare/riblt-v1.0.7...riblt-v1.0.8) (2025-10-03)
 
 

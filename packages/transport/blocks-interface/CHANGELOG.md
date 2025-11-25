@@ -194,6 +194,23 @@
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
     * @peerbit/stream-interface bumped from ^5.0.1 to ^5.0.2
 
+## [1.5.0](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v1.4.14...blocks-interface-v1.5.0) (2025-11-25)
+
+
+### Features
+
+* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 2.4.0
+    * @peerbit/stream-interface bumped to 5.3.0
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped to 2.2.0
+
 ## [1.4.14](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v1.4.13...blocks-interface-v1.4.14) (2025-10-03)
 
 

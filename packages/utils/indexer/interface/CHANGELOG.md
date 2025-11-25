@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.1.0](https://github.com/dao-xyz/peerbit/compare/indexer-interface-v2.0.14...indexer-interface-v2.1.0) (2025-11-25)
+
+
+### Features
+
+* add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
+* migrate to borsh 6 and Typescript Stage 3 decorators ([bf96e60](https://github.com/dao-xyz/peerbit/commit/bf96e609250ff47d4854e73e7ee252d1495aa736))
+* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 2.4.0
+
 ## [2.0.14](https://github.com/dao-xyz/peerbit/compare/indexer-interface-v2.0.13...indexer-interface-v2.0.14) (2025-10-03)
 
 
