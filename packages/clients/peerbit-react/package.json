@@ -47,6 +47,7 @@
 		"react": "^18.0.0 || ^19.0.0"
 	},
 	"dependencies": {
+		"@peerbit/program-react": "workspace:*",
 		"@chainsafe/libp2p-noise": "^17.0.0",
 		"@dao-xyz/borsh": "^6.0.0",
 		"@libp2p/interface": "^3.1.0",
