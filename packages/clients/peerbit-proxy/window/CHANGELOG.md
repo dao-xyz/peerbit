@@ -374,6 +374,18 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [3.1.1](https://github.com/dao-xyz/peerbit/compare/proxy-window-v3.1.0...proxy-window-v3.1.1) (2025-11-25)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/proxy bumped to 5.4.1
+    * peerbit bumped to 4.4.1
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.3.1
+
 ## [3.1.0](https://github.com/dao-xyz/peerbit/compare/proxy-window-v3.0.118...proxy-window-v3.1.0) (2025-11-25)
 
 
