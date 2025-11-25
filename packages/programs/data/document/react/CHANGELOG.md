@@ -1,5 +1,18 @@
 # @peerbit/document-react
 
+## [0.1.1](https://github.com/dao-xyz/peerbit/compare/document-react-v0.1.0...document-react-v0.1.1) (2025-11-25)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 10.1.1
+    * @peerbit/react bumped to 0.0.35
+  * devDependencies
+    * @peerbit/program bumped to 1.1.0
+    * peerbit bumped to 4.4.1
+
 ## [0.1.0](https://github.com/dao-xyz/peerbit/compare/document-react-v0.0.33...document-react-v0.1.0) (2025-11-25)
 
 
