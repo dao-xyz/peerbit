@@ -417,6 +417,33 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [5.4.0](https://github.com/dao-xyz/peerbit/compare/rpc-v5.3.29...rpc-v5.4.0) (2025-11-25)
+
+
+### Features
+
+* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
+
+
+### Bug Fixes
+
+* use libp2p based logger ([5ffd22b](https://github.com/dao-xyz/peerbit/commit/5ffd22b2ddcfcc133fe025fcfb399461ef2fe266))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 2.4.0
+    * @peerbit/logger bumped to 2.0.0
+    * @peerbit/program bumped to 1.0.0
+    * @peerbit/time bumped to 2.3.0
+    * @peerbit/pubsub bumped to 4.1.0
+    * @peerbit/pubsub-interface bumped to 4.1.0
+    * @peerbit/stream-interface bumped to 5.3.0
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.3.0
+
 ## [5.3.29](https://github.com/dao-xyz/peerbit/compare/rpc-v5.3.28...rpc-v5.3.29) (2025-10-04)
 
 

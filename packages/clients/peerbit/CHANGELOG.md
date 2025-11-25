@@ -313,6 +313,39 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.4.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.3.10...peerbit-v4.4.0) (2025-11-25)
+
+
+### Features
+
+* add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
+* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
+
+
+### Bug Fixes
+
+* use libp2p based logger ([5ffd22b](https://github.com/dao-xyz/peerbit/commit/5ffd22b2ddcfcc133fe025fcfb399461ef2fe266))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped to 2.2.0
+    * @peerbit/any-store-opfs bumped to 1.1.0
+    * @peerbit/crypto bumped to 2.4.0
+    * @peerbit/indexer-interface bumped to 2.1.0
+    * @peerbit/logger bumped to 2.0.0
+    * @peerbit/time bumped to 2.3.0
+    * @peerbit/build-assets bumped to 1.1.0
+    * @peerbit/keychain bumped to 1.2.0
+    * @peerbit/indexer-simple bumped to 1.2.0
+    * @peerbit/indexer-sqlite3 bumped to 1.3.0
+    * @peerbit/program bumped to 1.0.0
+    * @peerbit/blocks bumped to 3.1.0
+    * @peerbit/pubsub bumped to 4.1.0
+    * @peerbit/stream-interface bumped to 5.3.0
+
 ## [4.3.10](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.3.9...peerbit-v4.3.10) (2025-10-04)
 
 

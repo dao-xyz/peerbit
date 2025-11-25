@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.1.0](https://github.com/dao-xyz/peerbit/compare/any-store-opfs-v1.0.15...any-store-opfs-v1.1.0) (2025-11-25)
+
+
+### Features
+
+* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
+* unify asset bundling into dist/assets for asset generating packages ([5d6612c](https://github.com/dao-xyz/peerbit/commit/5d6612c726f5eebbf5e05cc082a1fca16831e9e2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 2.4.0
+    * @peerbit/logger bumped to 2.0.0
+    * @peerbit/time bumped to 2.3.0
+    * @peerbit/any-store-interface bumped to 1.1.0
+
 ## [1.0.15](https://github.com/dao-xyz/peerbit/compare/any-store-opfs-v1.0.14...any-store-opfs-v1.0.15) (2025-10-03)
 
 

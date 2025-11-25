@@ -308,6 +308,37 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [5.4.0](https://github.com/dao-xyz/peerbit/compare/proxy-v5.3.11...proxy-v5.4.0) (2025-11-25)
+
+
+### Features
+
+* add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
+* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped to 2.2.0
+    * @peerbit/any-store-interface bumped to 1.1.0
+    * @peerbit/blocks bumped to 3.1.0
+    * @peerbit/blocks-interface bumped to 1.5.0
+    * @peerbit/crypto bumped to 2.4.0
+    * @peerbit/indexer-simple bumped to 1.2.0
+    * @peerbit/indexer-interface bumped to 2.1.0
+    * @peerbit/keychain bumped to 1.2.0
+    * @peerbit/pubsub bumped to 4.1.0
+    * @peerbit/pubsub-interface bumped to 4.1.0
+    * @peerbit/stream bumped to 4.5.0
+    * @peerbit/stream-interface bumped to 5.3.0
+    * @peerbit/time bumped to 2.3.0
+    * @peerbit/program bumped to 1.0.0
+    * peerbit bumped to 4.4.0
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.3.0
+
 ## [5.3.11](https://github.com/dao-xyz/peerbit/compare/proxy-v5.3.10...proxy-v5.3.11) (2025-10-04)
 
 
