@@ -39,5 +39,5 @@
 	"packages/utils/build-assets": "1.1.0",
 	"packages/programs/data/document/react": "0.1.1",
 	"packages/programs/program/react": "0.1.1",
-	"packages/programs/program/program": "1.1.0"
+	"packages/programs/program/program": "5.3.5"
 }

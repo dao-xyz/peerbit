@@ -1,6 +1,10 @@
 {
 	"name": "@peerbit/program",
+<<<<<<< HEAD
 	"version": "1.1.0",
+=======
+	"version": "5.4.0",
+>>>>>>> c8e122678 (fix: program version reset)
 	"description": "Program interface",
 	"sideEffects": false,
 	"type": "module",
