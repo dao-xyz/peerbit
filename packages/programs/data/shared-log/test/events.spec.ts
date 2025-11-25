@@ -230,7 +230,7 @@ describe("events", () => {
 					replicate: {
 						factor: 1,
 					},
-					timeUntilRoleMaturity: 3e3,
+					timeUntilRoleMaturity: 6e3, // > 3e3
 				},
 			});
 
