@@ -23,6 +23,7 @@ packages:
   - packages/clients/test-utils
   - packages/clients/vite
   - packages/clients/vite/e2e
+  - packages/clients/peerbit-react/e2e/browser
   - packages/programs/rpc
   - packages/programs/acl/identity-access-controller
   - packages/programs/acl/trusted-network
