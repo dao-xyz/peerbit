@@ -1,0 +1,30 @@
+{
+	"name": "@peerbit/react-e2e-browser",
+	"private": true,
+	"version": "0.0.0",
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "tsc && vite build",
+		"preview": "vite preview --host --port 4173",
+		"test:e2e": "pnpm build && playwright test"
+	},
+	"dependencies": {
+		"@peerbit/react": "workspace:*",
+		"@peerbit/any-store-opfs": "workspace:*",
+		"@peerbit/indexer-sqlite3": "workspace:*",
+		"@peerbit/riblt": "workspace:*",
+		"events": "^3.3.0",
+		"react": "^19.2.0",
+		"react-dom": "^19.2.0"
+	},
+	"devDependencies": {
+		"@playwright/test": "^1.47.0",
+		"@types/react": "^19.2.4",
+		"@types/react-dom": "^19.2.3",
+		"@vitejs/plugin-react": "^5.1.1",
+		"@peerbit/vite": "workspace:*",
+		"typescript": "^5.6.3",
+		"vite": "^7.1.7"
+	}
+}

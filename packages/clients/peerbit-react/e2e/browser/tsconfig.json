@@ -1,0 +1,14 @@
+{
+	"extends": "../../../../../tsconfig.json",
+	"compilerOptions": {
+		"moduleResolution": "bundler",
+		"module": "ESNext",
+		"outDir": "dist",
+		"target": "ESNext",
+		"jsx": "react-jsx",
+		"esModuleInterop": true,
+		"skipLibCheck": true,
+		"noEmit": true
+	},
+	"include": ["src", "tests"]
+}
