@@ -8,7 +8,6 @@ import {
 import fs from "fs";
 import { createRequire } from "module";
 import path from "path";
-import { fileURLToPath } from "url";
 import { type PluginOption } from "vite";
 import { viteStaticCopy } from "vite-plugin-static-copy";
 
