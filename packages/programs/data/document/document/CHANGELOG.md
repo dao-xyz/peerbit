@@ -456,6 +456,15 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [10.1.3](https://github.com/dao-xyz/peerbit/compare/document-v10.1.2...document-v10.1.3) (2025-11-25)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-cache bumped to 0.1.0
+
 ## [10.1.2](https://github.com/dao-xyz/peerbit/compare/document-v10.1.1...document-v10.1.2) (2025-11-25)
 
 
