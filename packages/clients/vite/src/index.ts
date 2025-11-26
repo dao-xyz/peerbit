@@ -106,41 +106,59 @@ function copyToPublicPlugin(
 	return {
 		name: "copy-to-public",
 		enforce: "pre" as const,
-		buildStart() {
-			// Ensure worker exists in public/ as a last-resort (CI safety), even if assets disabled
-			try {
-				const destDir = path.resolve(resolveStaticPath(), sqlite3Assets.dest);
-				copyAssets(sqlite3Assets.src, destDir, "/");
-			} catch (_err) {
-				// ignore; optional best-effort
-			}
-			if (options?.assets) {
-				options.assets.forEach(({ src, dest }) => {
-					const sourcePath = path.resolve(src);
+		config(config: any) {
+			const publicDir = resolveOrCreatePublicDir(config?.publicDir);
+			config.publicDir = publicDir;
 
-					let destinationPath = path.resolve(resolveStaticPath(), dest);
-					copyAssets(sourcePath, destinationPath, "/");
-				});
-			}
+			// Ensure worker exists in public/ for dev server.
+			const destDir = path.resolve(publicDir, sqlite3Assets.dest);
+			copyAssets(sqlite3Assets.src, destDir, "/");
+
+			options?.assets?.forEach(({ src, dest }) => {
+				const sourcePath = path.resolve(src);
+				const destinationPath = path.resolve(publicDir, dest);
+				copyAssets(sourcePath, destinationPath, "/");
+			});
 		},
 	};
 }
 
-const resolveStaticPath = () => {
-	// if public folder exist, then put files there (react)
-	// else put in static folder if (svelte)
-	// else throw error
+const resolveOrCreatePublicDir = (configured?: string | false) => {
+	if (configured === false) return undefined;
+	if (configured) return path.resolve(configured);
 
 	const publicPath = path.resolve(process.cwd(), "public");
+	if (fs.existsSync(publicPath)) return publicPath;
+
 	const staticPath = path.resolve(process.cwd(), "static");
-	if (fs.existsSync(publicPath)) {
-		return publicPath;
-	} else if (fs.existsSync(staticPath)) {
-		return staticPath;
-	} else {
-		throw new Error("Could not find public or static folder");
+	if (fs.existsSync(staticPath)) return staticPath;
+
+	// Fallback: create a lightweight public dir so dev server can serve assets.
+	const fallback = path.resolve(process.cwd(), ".peerbit-public");
+	if (!fs.existsSync(fallback)) {
+		fs.mkdirSync(fallback, { recursive: true });
 	}
+	return fallback;
 };
+
+function nodePolyfillsPlugin() {
+	return {
+		name: "peerbit-node-polyfills",
+		config(config: any) {
+			config.resolve = config.resolve || {};
+			config.resolve.alias = config.resolve.alias || {};
+			if (!config.resolve.alias.events) {
+				config.resolve.alias.events = require.resolve("events/");
+			}
+
+			config.optimizeDeps = config.optimizeDeps || {};
+			config.optimizeDeps.include = config.optimizeDeps.include || [];
+			if (!config.optimizeDeps.include.includes("events")) {
+				config.optimizeDeps.include.push("events");
+			}
+		},
+	};
+}
 
 export default (
 	options: {
@@ -154,16 +172,24 @@ export default (
 		? [...resolveAssetLocations(defaultAssetSources), ...userAssets]
 		: userAssets;
 
+	const staticCopyTargets = assetsToCopy.map(({ src, dest }) => ({
+		src,
+		dest: path.dirname(dest),
+		rename: path.basename(dest),
+	}));
+
 	return [
 		dontMinimizeCertainPackagesPlugin({ packages: options.packages }),
 		copyToPublicPlugin({
 			assets: assetsToCopy,
 		}),
+		nodePolyfillsPlugin(),
 		viteStaticCopy({
 			targets: [
+				...staticCopyTargets,
 				{
 					src: path.join(
-						resolveStaticPath(),
+						resolveOrCreatePublicDir(),
 						"peerbit",
 						"sqlite3",
 						"sqlite3.wasm",

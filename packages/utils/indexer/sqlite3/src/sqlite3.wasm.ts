@@ -123,7 +123,12 @@ const create = async (directory?: string) => {
 	let statements: Map<string, Statement> = new Map();
 
 	sqlite3 =
-		sqlite3 || (await sqlite3InitModule({ print: log, printErr: error }));
+		sqlite3 ||
+		(await sqlite3InitModule({
+			print: log,
+			printErr: error,
+			locateFile: (file: string) => `/peerbit/sqlite3/${file}`,
+		}));
 	let sqliteDb: OpfsSAHPoolDatabase | SQLDatabase | undefined = undefined;
 	let closeInternal = async () => {
 		await Promise.all([...statements.values()].map((x) => x.finalize?.()));
