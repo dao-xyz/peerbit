@@ -506,6 +506,9 @@ importers:
       '@peerbit/indexer-interface':
         specifier: workspace:*
         version: link:../../utils/indexer/interface
+      '@peerbit/logger':
+        specifier: workspace:*
+        version: link:../../utils/logger
       '@peerbit/program':
         specifier: workspace:*
         version: link:../../programs/program/program
@@ -564,6 +567,49 @@ importers:
       vitest:
         specifier: ^4.0.12
         version: 4.0.12(@types/debug@4.1.12)(@types/node@22.19.1)(happy-dom@20.0.10)(terser@5.44.1)(yaml@2.8.1)
+
+  packages/clients/peerbit-react/e2e/browser:
+    dependencies:
+      '@peerbit/any-store-opfs':
+        specifier: workspace:*
+        version: link:../../../../utils/any-store/opfs
+      '@peerbit/indexer-sqlite3':
+        specifier: workspace:*
+        version: link:../../../../utils/indexer/sqlite3
+      '@peerbit/react':
+        specifier: workspace:*
+        version: link:../..
+      '@peerbit/riblt':
+        specifier: workspace:*
+        version: link:../../../../utils/rateless-iblt
+      react:
+        specifier: ^19.2.0
+        version: 19.2.0
+      react-dom:
+        specifier: ^19.2.0
+        version: 19.2.0(react@19.2.0)
+    devDependencies:
+      '@peerbit/vite':
+        specifier: workspace:*
+        version: link:../../../vite
+      '@playwright/test':
+        specifier: ^1.47.0
+        version: 1.56.1
+      '@types/react':
+        specifier: ^19.2.4
+        version: 19.2.4
+      '@types/react-dom':
+        specifier: ^19.2.3
+        version: 19.2.3(@types/react@19.2.4)
+      '@vitejs/plugin-react':
+        specifier: ^5.1.1
+        version: 5.1.1(vite@7.2.2(@types/node@22.19.1)(terser@5.44.1)(yaml@2.8.1))
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vite:
+        specifier: ^7.1.7
+        version: 7.2.2(@types/node@22.19.1)(terser@5.44.1)(yaml@2.8.1)
 
   packages/clients/peerbit-server/frontend:
     dependencies:
