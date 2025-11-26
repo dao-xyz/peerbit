@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/dao-xyz/peerbit/compare/any-store-opfs-v1.1.0...any-store-opfs-v1.1.1) (2025-11-26)
+
+
+### Bug Fixes
+
+* module bundling ([3797bbc](https://github.com/dao-xyz/peerbit/commit/3797bbc3782717a85bd26790924a49730f1d1076))
+
 ## [1.1.0](https://github.com/dao-xyz/peerbit/compare/any-store-opfs-v1.0.15...any-store-opfs-v1.1.0) (2025-11-25)
 
 

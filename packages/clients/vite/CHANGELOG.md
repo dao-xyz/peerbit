@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.1.1](https://github.com/dao-xyz/peerbit/compare/vite-v1.1.0...vite-v1.1.1) (2025-11-26)
+
+
+### Bug Fixes
+
+* polyfill events ([637f6e5](https://github.com/dao-xyz/peerbit/commit/637f6e50de5a20a82dacf7ed60a104e7dbefb51a))
+* throw on missing public folder ([8a6c6bc](https://github.com/dao-xyz/peerbit/commit/8a6c6bc643fa93e382b252b442a524d37bf3dc9c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/any-store bumped to 2.2.1
+    * @peerbit/any-store-opfs bumped to 1.1.1
+
 ## [1.1.0](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.38...vite-v1.1.0) (2025-11-25)
 
 
