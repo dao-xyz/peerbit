@@ -8,6 +8,7 @@ import {
 import fs from "fs";
 import { createRequire } from "module";
 import path from "path";
+import { fileURLToPath } from "url";
 import { type PluginOption } from "vite";
 import { viteStaticCopy } from "vite-plugin-static-copy";
 
@@ -142,13 +143,24 @@ const resolveOrCreatePublicDir = (configured?: string | false) => {
 };
 
 function nodePolyfillsPlugin() {
+	const resolveEvents = () => {
+		try {
+			const req = createRequire(import.meta.url);
+			return req.resolve("events/");
+		} catch {
+			// fallback: attempt via cwd
+			const req = createRequire(path.join(process.cwd(), "package.json"));
+			return req.resolve("events/");
+		}
+	};
+
 	return {
 		name: "peerbit-node-polyfills",
 		config(config: any) {
 			config.resolve = config.resolve || {};
 			config.resolve.alias = config.resolve.alias || {};
 			if (!config.resolve.alias.events) {
-				config.resolve.alias.events = require.resolve("events/");
+				config.resolve.alias.events = resolveEvents();
 			}
 
 			config.optimizeDeps = config.optimizeDeps || {};
