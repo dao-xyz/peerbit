@@ -110,6 +110,12 @@ function copyToPublicPlugin(
 			const publicDir = resolveOrCreatePublicDir(config?.publicDir);
 			config.publicDir = publicDir;
 
+			if (!publicDir) {
+				throw new Error(
+					"[peerbit/vite] No public or static directory found. Please create a public/ or static/ directory or configure publicDir explicitly.",
+				);
+			}
+
 			// Ensure worker exists in public/ for dev server.
 			const destDir = path.resolve(publicDir, sqlite3Assets.dest);
 			copyAssets(sqlite3Assets.src, destDir, "/");
@@ -133,12 +139,7 @@ const resolveOrCreatePublicDir = (configured?: string | false) => {
 	const staticPath = path.resolve(process.cwd(), "static");
 	if (fs.existsSync(staticPath)) return staticPath;
 
-	// Fallback: create a lightweight public dir so dev server can serve assets.
-	const fallback = path.resolve(process.cwd(), ".peerbit-public");
-	if (!fs.existsSync(fallback)) {
-		fs.mkdirSync(fallback, { recursive: true });
-	}
-	return fallback;
+	return undefined;
 };
 
 function nodePolyfillsPlugin() {
@@ -189,6 +190,8 @@ export default (
 		rename: path.basename(dest),
 	}));
 
+	const publicDir = resolveOrCreatePublicDir();
+
 	return [
 		dontMinimizeCertainPackagesPlugin({ packages: options.packages }),
 		copyToPublicPlugin({
@@ -198,15 +201,14 @@ export default (
 		viteStaticCopy({
 			targets: [
 				...staticCopyTargets,
-				{
-					src: path.join(
-						resolveOrCreatePublicDir(),
-						"peerbit",
-						"sqlite3",
-						"sqlite3.wasm",
-					),
-					dest: "node_modules/.vite/deps",
-				},
+				...(publicDir
+					? [
+							{
+								src: path.join(publicDir, "peerbit", "sqlite3", "sqlite3.wasm"),
+								dest: "node_modules/.vite/deps",
+							},
+						]
+					: []),
 			],
 		}),
 	];
