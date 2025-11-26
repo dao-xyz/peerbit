@@ -4,6 +4,7 @@ import { webSockets } from "@libp2p/websockets";
 import type { Multiaddr } from "@multiformats/multiaddr";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import type { Indices } from "@peerbit/indexer-interface";
+import { logger as createLogger } from "@peerbit/logger";
 import type { ProgramClient } from "@peerbit/program";
 import { createClient, createHost } from "@peerbit/proxy-window";
 import { waitFor } from "@peerbit/time";
@@ -21,6 +22,13 @@ import {
 	getFreeKeypair,
 	inIframe,
 } from "./utils.ts";
+
+const log = createLogger("peerbit:react:usePeer");
+const singletonLog = log.newScope("singleton");
+const keypairLog = log.newScope("keypair");
+const storageLog = log.newScope("storage");
+const clientLog = log.newScope("client");
+const bootstrapLog = log.newScope("bootstrap");
 
 const isInStandaloneMode = () =>
 	window.matchMedia("(display-mode: standalone)").matches ||
@@ -199,6 +207,7 @@ export const PeerProvider = (options: PeerOptions) => {
 					timeout: 1e3,
 				});
 				if (nodeOptions.singleton) {
+					singletonLog("acquiring lock");
 					const localId = getClientId("local");
 					try {
 						const lockKey = localId + "-singleton";
@@ -226,6 +235,7 @@ export const PeerProvider = (options: PeerOptions) => {
 						await mutex.lock(lockKey, () => keepAliveRef.current, {
 							replaceIfSameClient: true,
 						});
+						singletonLog("lock acquired");
 					} catch (error) {
 						console.error("Failed to lock singleton client", error);
 						throw new ClientBusyError("Failed to lock single client");
@@ -236,6 +246,7 @@ export const PeerProvider = (options: PeerOptions) => {
 				if (nodeOptions.keypair) {
 					nodeId = nodeOptions.keypair;
 				} else {
+					keypairLog("acquiring lock");
 					const kp = await getFreeKeypair(
 						"",
 						mutex,
@@ -245,6 +256,7 @@ export const PeerProvider = (options: PeerOptions) => {
 							releaseLockIfSameId: true,
 						},
 					);
+					keypairLog("lock acquired", { index: kp.index });
 					subscribeToUnload(function () {
 						keepAliveRef.current = false;
 						mutex.release(kp.path);
@@ -259,6 +271,7 @@ export const PeerProvider = (options: PeerOptions) => {
 					!(nodeOptions as TopOptions).inMemory &&
 					!(await detectIncognito()).isPrivate
 				) {
+					storageLog("requesting persist");
 					const persisted = await navigator.storage.persist();
 					setPersisted(persisted);
 					persistedResolved = persisted;
@@ -272,7 +285,7 @@ export const PeerProvider = (options: PeerOptions) => {
 					}
 				}
 
-				console.log("Create client");
+				clientLog("create", { directory });
 				newPeer = await Peerbit.create({
 					libp2p: {
 						addresses: {
@@ -313,7 +326,7 @@ export const PeerProvider = (options: PeerOptions) => {
 					directory,
 					indexer: nodeOptions.indexer,
 				});
-				console.log("Client created", {
+				clientLog("created", {
 					directory,
 					peerHash: newPeer?.identity.publicKey.hashcode(),
 					network: nodeOptions.network === "local" ? "local" : "remote",
@@ -343,7 +356,7 @@ export const PeerProvider = (options: PeerOptions) => {
 							const list = (network as any).bootstrap as (Multiaddr | string)[];
 							if (list.length === 0) {
 								// Explicit offline mode: skip dialing and mark as connected (no relays)
-								console.log("Offline bootstrap: skipping relay dialing");
+								bootstrapLog("offline: skipping relay dialing");
 							} else {
 								for (const addr of list) {
 									await newPeer.dial(addr);
@@ -359,7 +372,7 @@ export const PeerProvider = (options: PeerOptions) => {
 							const localAddress =
 								"/ip4/127.0.0.1/tcp/8002/ws/p2p/" +
 								(await (await fetch("http://localhost:8082/peer/id")).text());
-							console.log("Dialing local address", localAddress);
+							bootstrapLog("dialing local address", localAddress);
 							await newPeer.dial(localAddress);
 						}
 						// 3) Remote default: use bootstrap service (no explicit bootstrap provided)
@@ -386,12 +399,12 @@ export const PeerProvider = (options: PeerOptions) => {
 					marks[label] = performance.now() - t0;
 				};
 
-				console.log("Bootstrap start...");
+				bootstrapLog("start...");
 				const promise = connectFn().then(() => {
 					perfMark("dialComplete");
 				});
 				promise.then(() => {
-					console.log("Bootstrap done");
+					bootstrapLog("done");
 					try {
 						if (perfEnabled) {
 							const payload = { ...marks } as any;
