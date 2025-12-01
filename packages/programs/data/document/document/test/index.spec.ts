@@ -3249,9 +3249,9 @@ describe("index", () => {
 									wait: {
 										timeout: 1e4,
 									},
-									onLateResults: ({ amount }) => {
-										onMissedResults.push(amount);
-									},
+								},
+								onLateResults: ({ amount }) => {
+									onMissedResults.push(amount);
 								},
 							},
 						);
@@ -3385,9 +3385,9 @@ describe("index", () => {
 									wait: {
 										timeout: 1e4,
 									},
-									onLateResults: ({ amount }) => {
-										missedResults.push(amount);
-									},
+								},
+								onLateResults: ({ amount }) => {
+									missedResults.push(amount);
 								},
 							},
 						);
@@ -4261,10 +4261,10 @@ describe("index", () => {
 									discover: [replicator.node.identity.publicKey],
 									eager: true,
 								},
-								onLateResults: (evt) => {
-									lateEvents.push(evt);
-									latePromise.resolve();
-								},
+							},
+							onLateResults: (evt) => {
+								lateEvents.push(evt);
+								latePromise.resolve();
 							},
 							updates: { push: true, merge: true },
 						},

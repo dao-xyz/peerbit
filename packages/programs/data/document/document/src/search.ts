@@ -183,8 +183,6 @@ export type RemoteQueryOptions<Q, R, D> = RPCRequestAllOptions<Q, R> & {
 	reach?: ReachScope;
 	/** WHEN are we allowed to proceed? Quorum semantics over a chosen group. */
 	wait?: WaitPolicy;
-
-	onLateResults?: (evt: LateResultsEvent) => void | Promise<void>;
 };
 
 export type QueryOptions<T, I, D, Resolve extends boolean | undefined> = {
@@ -199,6 +197,7 @@ export type QueryOptions<T, I, D, Resolve extends boolean | undefined> = {
 	resolve?: Resolve;
 	signal?: AbortSignal;
 	updates?: UpdateOptions<T, I, Resolve>;
+	onLateResults?: (evt: LateResultsEvent) => void | Promise<void>;
 	/**
 	 * Controls iterator liveness after batches are consumed.
 	 * - 'onEmpty' (default): close when no more results
@@ -3498,9 +3497,8 @@ export class DocumentIndex<
 
 		let updateDeferred: ReturnType<typeof pDefer> | undefined;
 		const onLateResults =
-			typeof options?.remote === "object" &&
-			typeof options.remote.onLateResults === "function"
-				? options.remote.onLateResults
+			typeof options?.onLateResults === "function"
+				? options.onLateResults
 				: undefined;
 		const runNotify = (reason: UpdateReason) => {
 			if (!updateCallbacks?.notify) {

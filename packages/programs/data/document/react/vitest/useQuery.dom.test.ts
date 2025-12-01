@@ -1,5 +1,9 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { Documents } from "@peerbit/document";
+import {
+	Documents,
+	SortDirection,
+	type WithIndexedContext,
+} from "@peerbit/document";
 import { Program } from "@peerbit/program";
 import { act, render, waitFor } from "@testing-library/react";
 import sodium from "libsodium-wrappers";
@@ -443,6 +447,85 @@ describe("useQuery (integration with Documents)", () => {
 			} finally {
 				await peerReplicator.stop();
 			}
+		},
+	);
+
+	it(
+		"allows pinning items via applyResults and handles late results",
+		{ timeout: 20_000 },
+		async () => {
+			await setupConnected();
+
+			for (let i = 0; i < 30; i++) {
+				await dbWriter.posts.put(
+					new Post({
+						id: `post-${i.toString().padStart(3, "0")}`,
+						message: `seed-${i}`,
+					}),
+				);
+			}
+
+			const pinnedIds = new Set<string>();
+			let pinnedPost: WithIndexedContext<Post, PostIndexed> | undefined;
+			let lateCalled = false;
+
+			const { result } = renderUseQuery(dbReader, {
+				query: {
+					sort: { key: "id", direction: SortDirection.DESC },
+				},
+				resolve: true,
+				local: false,
+				remote: { reach: { eager: true } },
+				updates: { push: true, merge: true },
+				batchSize: 10,
+				applyResults: (_prev, _incoming, { defaultMerge }) => {
+					const merged = defaultMerge();
+					const pinned = merged.filter((p) => pinnedIds.has((p as Post).id));
+					const rest = merged.filter((p) => !pinnedIds.has((p as Post).id));
+					return [...pinned, ...rest];
+				},
+				onLateResults: async (_evt, helpers) => {
+					lateCalled = true;
+					if (pinnedPost) {
+						helpers.inject(pinnedPost, { position: "start" });
+					}
+					await helpers.loadMore(1, { force: true, reason: "late" });
+				},
+			});
+
+			await waitFor(() => {
+				expect(result.current).toBeDefined();
+			});
+
+			await act(async () => {
+				await result.current.loadMore();
+			});
+			await waitFor(() => expect(result.current.items.length).toBe(10));
+
+			const pinnedBase = new Post({ id: "post-999", message: "pinned" });
+			pinnedIds.add(pinnedBase.id);
+			await act(async () => {
+				await dbWriter.posts.put(pinnedBase);
+			});
+			// fabricate a context for injection; we only need stable __context for identity/dedup
+			const sampleCtx = (
+				result.current.items[0] as WithIndexedContext<Post, PostIndexed>
+			).__context;
+			pinnedPost = Object.assign(pinnedBase, {
+				__context: sampleCtx,
+				__indexed: new PostIndexed(pinnedBase),
+			}) as WithIndexedContext<Post, PostIndexed>;
+
+			await waitFor(() => expect(lateCalled).toBe(true), { timeout: 20_000 });
+
+			await waitFor(() =>
+				expect(
+					result.current.items.some(
+						(item) => (item as Post).id === pinnedPost!.id,
+					),
+				).toBe(true),
+			);
+			expect((result.current.items[0] as Post).id).toBe(pinnedPost.id);
 		},
 	);
 

@@ -40,8 +40,7 @@
 	"scripts": {
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
-		"test": "vitest run --project node && vitest run --project dom",
-		"test:node": "vitest run --project node",
+		"test": "pnpm run test:dom",
 		"test:dom": "vitest run --project dom",
 		"lint": "aegir lint"
 	},

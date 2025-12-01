@@ -3,8 +3,10 @@ import type {
 	AbstractSearchRequest,
 	AbstractSearchResult,
 	Context,
+	LateResultsEvent,
 	RemoteQueryOptions,
 	ResultsIterator,
+	UpdateReason,
 	WithContext,
 } from "@peerbit/document";
 import type { UpdateOptions, WithIndexedContext } from "@peerbit/document";
@@ -13,6 +15,31 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { v4 as uuid } from "uuid";
 
 type QueryOptions = { query: QueryLike; id?: string };
+
+type LoadMoreFn = (
+	n?: number,
+	opts?: { force?: boolean; reason?: MergeReason },
+) => Promise<boolean>;
+
+type MergeReason = UpdateReason | "batch" | "late";
+
+type ApplyResultsHandler<Item> = (
+	prev: Item[],
+	change: { items: Item[]; reason: MergeReason },
+	helpers: { defaultMerge: () => Item[]; loadMore: LoadMoreFn },
+) => Item[] | Promise<Item[]>;
+
+type LateResultsHandler<Item> = (
+	evt: LateResultsEvent,
+	helpers: {
+		loadMore: LoadMoreFn;
+		inject: (
+			items: Item | Item[],
+			opts?: { position?: "start" | "end" | number },
+		) => void;
+		items: () => Item[];
+	},
+) => void | Promise<void>;
 
 /* ────────────── helper types ────────────── */
 export type QueryLike = {
@@ -59,6 +86,8 @@ export type UseQuerySharedOptions<
 	remote?:
 		| boolean
 		| RemoteQueryOptions<AbstractSearchRequest, AbstractSearchResult, any>;
+	onLateResults?: LateResultsHandler<RT>;
+	applyResults?: ApplyResultsHandler<RT>;
 } & QueryOptions;
 
 /* ────────────────────────── Main Hook ────────────────────────── */
@@ -106,6 +135,7 @@ export const useQuery = <
 	const emptyResultsRef = useRef(false);
 	const closeControllerRef = useRef<AbortController | null>(null);
 	const waitedOnceRef = useRef(false);
+	const loadMoreRef = useRef<LoadMoreFn | undefined>(undefined);
 
 	/* keep an id mostly for debugging – mirrors original behaviour */
 	const [id, setId] = useState<string | undefined>(options.id);
@@ -127,6 +157,10 @@ export const useQuery = <
 		setAll(combined);
 	};
 
+	const mutateAll = (fn: (prev: Item[]) => Item[]) => {
+		updateAll(fn(allRef.current));
+	};
+
 	const reset = () => {
 		iteratorRefs.current?.forEach(({ iterator }) => iterator.close());
 		iteratorRefs.current = [];
@@ -141,6 +175,64 @@ export const useQuery = <
 		setAll([]);
 		setIsLoading(false);
 		log("Iterators reset");
+	};
+
+	const resolveItemKey = (item: Item): string | null => {
+		const cached = itemIdRef.current.get(item as object);
+		if (cached) return cached;
+		for (const { db } of iteratorRefs.current) {
+			const id = db.index.resolveId(
+				item as WithContext<I> | WithIndexedContext<T, I>,
+			);
+			return idToKey(id.primitive); // return the first result
+		}
+		return null;
+	};
+
+	const injectItems = (
+		incoming: Item | Item[],
+		opts?: { position?: "start" | "end" | number },
+	) => {
+		const arr = (Array.isArray(incoming) ? incoming : [incoming]).filter(
+			Boolean,
+		) as Item[];
+		if (!arr.length) return;
+		mutateAll((prev) => {
+			const working = [...prev];
+			const keyIndex = new Map<string, number>();
+			working.forEach((item, idx) => {
+				const key = resolveItemKey(item);
+				if (key) keyIndex.set(key, idx);
+			});
+
+			for (const item of arr) {
+				const key = resolveItemKey(item);
+				if (key && keyIndex.has(key)) {
+					const idx = keyIndex.get(key)!;
+					working.splice(idx, 1);
+				}
+			}
+
+			let at = 0;
+			if (opts?.position === "end") {
+				at = working.length;
+			} else if (
+				typeof opts?.position === "number" &&
+				Number.isFinite(opts.position)
+			) {
+				at = Math.max(0, Math.min(working.length, opts.position));
+			}
+
+			working.splice(at, 0, ...arr);
+			arr.forEach((item, offset) => {
+				const key = resolveItemKey(item);
+				if (key) {
+					itemIdRef.current.set(item as object, key);
+					keyIndex.set(key, at + offset);
+				}
+			});
+			return working;
+		});
 	};
 
 	/* ────────── rebuild iterators when db list / query etc. change ────────── */
@@ -158,13 +250,34 @@ export const useQuery = <
 
 		reset();
 		const abortSignal = closeControllerRef.current?.signal;
-		const onMissedResults = (evt: { amount: number }) => {
-			console.error("Not effective yet: missed results", evt);
-			/* if (allRef.current.length > 0 || typeof options.remote !== "object" || !options.updates) {
-                return;
-            }
-            console.log("Missed results, loading more", evt.amount);
-            loadMore(evt.amount); */
+		const resolveRemoteOptions = () => {
+			if (!options.remote) return undefined;
+			if (typeof options.remote === "object") {
+				return {
+					...options.remote,
+					wait: {
+						...options.remote.wait,
+						timeout: options.remote.wait?.timeout ?? 5000,
+					},
+				};
+			}
+			return {};
+		};
+		const onMissedResults = (evt: LateResultsEvent) => {
+			log("Late results", evt);
+			const loadMoreHelper: LoadMoreFn = (...args) =>
+				loadMoreRef.current
+					? loadMoreRef.current(...args)
+					: Promise.resolve(false);
+			const maybeUser = options.onLateResults?.(evt, {
+				loadMore: loadMoreHelper,
+				inject: injectItems,
+				items: () => allRef.current,
+			});
+			if (!maybeUser) {
+				console.error("Late results", evt);
+			}
+			return maybeUser;
 		};
 		let draining = false;
 		const scheduleDrain = (
@@ -189,24 +302,8 @@ export const useQuery = <
 			const iterator = db.index.iterate(query ?? {}, {
 				closePolicy: "manual",
 				local: options.local ?? true,
-				remote: options.remote
-					? {
-							...(typeof options?.remote === "object"
-								? {
-										...options.remote,
-										onLateResults: onMissedResults,
-										wait: {
-											...options?.remote?.wait,
-											timeout: options?.remote?.wait?.timeout ?? 5000,
-										},
-									}
-								: options?.remote
-									? {
-											onLateResults: onMissedResults,
-										}
-									: undefined),
-						}
-					: undefined,
+				remote: resolveRemoteOptions(),
+				onLateResults: onMissedResults,
 				resolve,
 				signal: abortSignal,
 				updates: {
@@ -239,9 +336,11 @@ export const useQuery = <
 							props.reason === "push"
 						) {
 							if (!currentRef) return;
-							handleBatch(iteratorRefs.current, [
-								{ ref: currentRef, items: batch as Item[] },
-							]);
+							handleBatch(
+								iteratorRefs.current,
+								[{ ref: currentRef, items: batch as Item[] }],
+								props.reason,
+							);
 						}
 					},
 				},
@@ -300,6 +399,7 @@ export const useQuery = <
 	const handleBatch = async (
 		iterators: IteratorRef[],
 		batches: { ref: IteratorRef; items: Item[] }[],
+		reason: MergeReason = "batch",
 	): Promise<boolean> => {
 		if (!iterators.length) {
 			log("No iterators in handleBatch");
@@ -400,16 +500,42 @@ export const useQuery = <
 			return !emptyResultsRef.current;
 		}
 
-		const combined = reverseRef.current
-			? [...freshItems.reverse(), ...next]
-			: [...next, ...freshItems];
+		let combinedDefault: Item[];
+		if (reverseRef.current) {
+			freshItems.reverse();
+			freshItems.push(...next);
+			combinedDefault = freshItems;
+		} else {
+			next.push(...freshItems);
+			combinedDefault = next;
+		}
+
+		const defaultMerge = () => combinedDefault;
+		const incoming = freshItems.length
+			? freshItems
+			: processed.flatMap((p) => p.items);
+		const loadMoreHelper: LoadMoreFn = (...args) =>
+			loadMoreRef.current
+				? loadMoreRef.current(...args)
+				: Promise.resolve(false);
+		const mergedCandidate = options.applyResults
+			? await options.applyResults(
+					allRef.current,
+					{ items: incoming, reason },
+					{
+						defaultMerge,
+						loadMore: loadMoreHelper,
+					},
+				)
+			: undefined;
+		const merged = mergedCandidate ?? combinedDefault;
 
 		log("Updating all with", {
 			prevLength: prev.length,
 			freshLength: freshItems.length,
-			combinedLength: combined.length,
+			combinedLength: merged.length,
 		});
-		updateAll(combined);
+		updateAll(merged);
 
 		emptyResultsRef.current = iterators.every((i) => i.iterator.done());
 		return !emptyResultsRef.current;
@@ -418,6 +544,7 @@ export const useQuery = <
 	const drainRoundRobin = async (
 		iterators: IteratorRef[],
 		n: number,
+		reason: MergeReason = "batch",
 	): Promise<boolean> => {
 		const batches: { ref: IteratorRef; items: Item[] }[] = [];
 		for (const ref of iterators) {
@@ -429,16 +556,12 @@ export const useQuery = <
 				batches.push({ ref, items: batch });
 			}
 		}
-		return handleBatch(iterators, batches);
+		return handleBatch(iterators, batches, reason);
 	};
-
-	/*  maybe make the rule that if results are empty and we get results from joining  
-     set the results to the joining results 
-     when results are not empty use onMerge option to merge the results ?  */
 
 	const loadMore = async (
 		n: number = batchSize,
-		opts?: { force?: boolean },
+		opts?: { force?: boolean; reason?: MergeReason },
 	): Promise<boolean> => {
 		const iterators = iteratorRefs.current;
 		if (!iterators.length) {
@@ -481,11 +604,11 @@ export const useQuery = <
                              }
                          })
                      );
-                 }*/
+				}*/
 				markWaited();
 			}
 
-			return drainRoundRobin(iterators, n);
+			return drainRoundRobin(iterators, n, opts?.reason ?? "batch");
 		} catch (e) {
 			if (!(e instanceof ClosedError)) throw e;
 			return false;
@@ -494,52 +617,13 @@ export const useQuery = <
 		}
 	};
 
+	loadMoreRef.current = loadMore;
+
 	/* ────────────── live-merge listeners ────────────── */
 	useEffect(() => {
 		if (!options.updates) {
 			return;
 		}
-
-		/* const listeners = iteratorRefs.current.map(({ db, id: itId }) => {
-             const mergeFn =
-                typeof options.onChange?.merge === "function"
-                    ? options.onChange.merge
-                    : (c: DocumentsChange<T, I>) => c; 
-
-            const handler = async (e: CustomEvent<DocumentsChange<T, I>>) => {
-                log("Merge change", e.detail, "it", itId);
-                const filtered = await mergeFn(e.detail);
-                if (
-                    !filtered ||
-                    (!filtered.added.length && !filtered.removed.length)
-                )
-                    return;
-
-                let merged: Item[];
-                if (options.onChange?.update) {
-                    merged = await options.onChange.update(
-                        allRef.current,
-                        filtered
-                    );
-                } else {
-                    merged = await db.index.updateResults(
-                        allRef.current as WithContext<RT>[],
-                        filtered,
-                        options.query || {},
-                        options.resolve ?? true
-                    );
-                }
-                updateAll(options.reverse ? merged.reverse() : merged);
-            };
-            db.events.addEventListener("change", handler); 
-            return { db, handler };
-        });
-
-        return () => {
-            listeners.forEach(({ db, handler }) =>
-                db.events.removeEventListener("change", handler)
-            );
-        }; */
 
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [
