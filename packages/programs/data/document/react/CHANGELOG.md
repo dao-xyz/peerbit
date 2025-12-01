@@ -1,5 +1,28 @@
 # @peerbit/document-react
 
+## [0.3.0](https://github.com/dao-xyz/peerbit/compare/document-react-v0.2.0...document-react-v0.3.0) (2025-12-01)
+
+
+### Features
+
+* applyResults handler for custom ([48f8fda](https://github.com/dao-xyz/peerbit/commit/48f8fdaa718f9721ec08668d03f115808eff70c8))
+
+
+### Bug Fixes
+
+* rm "useDefineForClassFields" property ([298c1bf](https://github.com/dao-xyz/peerbit/commit/298c1bff734804cb8143ab802cb942265cde7db4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 11.1.0
+    * @peerbit/react bumped to 0.0.39
+  * devDependencies
+    * @peerbit/program bumped to 5.4.2
+    * peerbit bumped to 4.4.4
+
 ## [0.2.0](https://github.com/dao-xyz/peerbit/compare/document-react-v0.1.4...document-react-v0.2.0) (2025-11-26)
 
 

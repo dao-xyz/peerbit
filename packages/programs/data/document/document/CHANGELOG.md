@@ -456,6 +456,28 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [11.1.0](https://github.com/dao-xyz/peerbit/compare/document-v11.0.0...document-v11.1.0) (2025-12-01)
+
+
+### Features
+
+* applyResults handler for custom ([48f8fda](https://github.com/dao-xyz/peerbit/commit/48f8fdaa718f9721ec08668d03f115808eff70c8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 4.2.4
+    * @peerbit/pubsub bumped to 4.1.1
+    * @peerbit/program bumped to 5.4.2
+    * @peerbit/rpc bumped to 5.4.4
+    * @peerbit/shared-log bumped to 11.6.4
+    * @peerbit/document-interface bumped to 3.1.4
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.3.4
+    * peerbit bumped to 4.4.4
+
 ## [11.0.0](https://github.com/dao-xyz/peerbit/compare/document-v10.1.3...document-v11.0.0) (2025-11-26)
 
 
