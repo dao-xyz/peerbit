@@ -43,6 +43,13 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.5.1](https://github.com/dao-xyz/peerbit/compare/stream-v4.5.0...stream-v4.5.1) (2025-12-01)
+
+
+### Bug Fixes
+
+* rm "useDefineForClassFields" property ([298c1bf](https://github.com/dao-xyz/peerbit/commit/298c1bff734804cb8143ab802cb942265cde7db4))
+
 ## [4.5.0](https://github.com/dao-xyz/peerbit/compare/stream-v4.4.7...stream-v4.5.0) (2025-11-25)
 
 

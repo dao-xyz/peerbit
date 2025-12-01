@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/identity-access-controller",
-	"version": "5.2.0",
+	"version": "5.2.1",
 	"description": "Access controller that operates on a DB",
 	"sideEffects": false,
 	"type": "module",

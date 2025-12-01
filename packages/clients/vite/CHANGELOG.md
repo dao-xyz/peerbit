@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/dao-xyz/peerbit/compare/vite-v1.1.1...vite-v1.1.2) (2025-12-01)
+
+
+### Bug Fixes
+
+* rm "useDefineForClassFields" property ([298c1bf](https://github.com/dao-xyz/peerbit/commit/298c1bff734804cb8143ab802cb942265cde7db4))
+
 ## [1.1.1](https://github.com/dao-xyz/peerbit/compare/vite-v1.1.0...vite-v1.1.1) (2025-11-26)
 
 

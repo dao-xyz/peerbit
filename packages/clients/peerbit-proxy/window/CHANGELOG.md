@@ -374,6 +374,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [3.1.4](https://github.com/dao-xyz/peerbit/compare/proxy-window-v3.1.3...proxy-window-v3.1.4) (2025-12-01)
+
+
+### Bug Fixes
+
+* rm "useDefineForClassFields" property ([298c1bf](https://github.com/dao-xyz/peerbit/commit/298c1bff734804cb8143ab802cb942265cde7db4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/proxy bumped to 5.4.4
+    * peerbit bumped to 4.4.4
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.3.4
+
 ## [3.1.3](https://github.com/dao-xyz/peerbit/compare/proxy-window-v3.1.2...proxy-window-v3.1.3) (2025-11-26)
 
 
