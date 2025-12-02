@@ -632,6 +632,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [5.1.5](https://github.com/dao-xyz/peerbit/compare/string-v5.1.4...string-v5.1.5) (2025-12-02)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped to 5.4.3
+    * @peerbit/shared-log bumped to 11.6.5
+    * @peerbit/rpc bumped to 5.4.5
+    * @peerbit/log bumped to 4.2.5
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.3.5
+
 ## [5.1.4](https://github.com/dao-xyz/peerbit/compare/string-v5.1.3...string-v5.1.4) (2025-12-01)
 
 

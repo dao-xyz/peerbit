@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/proxy",
-	"version": "5.4.4",
+	"version": "5.4.5",
 	"description": "Peerbit proxy host/server",
 	"author": "dao.xyz",
 	"license": "MIT",

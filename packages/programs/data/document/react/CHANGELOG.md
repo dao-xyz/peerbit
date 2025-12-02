@@ -1,5 +1,23 @@
 # @peerbit/document-react
 
+## [0.3.1](https://github.com/dao-xyz/peerbit/compare/document-react-v0.3.0...document-react-v0.3.1) (2025-12-02)
+
+
+### Bug Fixes
+
+* missing events deps ([f0be11a](https://github.com/dao-xyz/peerbit/commit/f0be11a0ca26a48aa3991f686e1ca36660e6cb09))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 11.1.1
+    * @peerbit/react bumped to 0.0.40
+  * devDependencies
+    * @peerbit/program bumped to 5.4.3
+    * peerbit bumped to 4.4.5
+
 ## [0.3.0](https://github.com/dao-xyz/peerbit/compare/document-react-v0.2.0...document-react-v0.3.0) (2025-12-01)
 
 
