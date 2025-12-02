@@ -60,8 +60,8 @@
 	"bugs": "https://github.com/dao-xyz/peerbit/issues",
 	"scripts": {
 		"clean": "aegir clean",
-		"build": "aegir build && pnpm run copy-assets",
-		"copy-assets": "shx mkdir -p dist/assets/opfs && shx cp dist/src/worker.js dist/assets/opfs/ && shx cp dist/src/worker.js.map dist/assets/opfs/ || true",
+		"build-worker": "esbuild --bundle ./src/worker.ts --format=iife --sourcemap --outfile=./dist/assets/opfs/opfs.worker.min.js",
+		"build": "aegir build && pnpm run build-worker",
 		"test": "",
 		"lint": "aegir lint"
 	},
@@ -76,7 +76,8 @@
 		"elliptic": "^6.6.1"
 	},
 	"devDependencies": {
-		"@types/uuid": "^9.0.8"
+		"@types/uuid": "^9.0.8",
+		"esbuild": "0.27.0"
 	},
 	"localMaintainers": [
 		"dao.xyz"
