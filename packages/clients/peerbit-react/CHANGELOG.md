@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.0.40](https://github.com/dao-xyz/peerbit/compare/react-v0.0.39...react-v0.0.40) (2025-12-02)
+
+
+### Bug Fixes
+
+* missing events deps ([f0be11a](https://github.com/dao-xyz/peerbit/commit/f0be11a0ca26a48aa3991f686e1ca36660e6cb09))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program-react bumped to 0.2.3
+    * @peerbit/proxy-window bumped to 3.1.5
+    * @peerbit/program bumped to 5.4.3
+    * peerbit bumped to 4.4.5
+
 ## [0.0.39](https://github.com/dao-xyz/peerbit/compare/react-v0.0.38...react-v0.0.39) (2025-12-01)
 
 

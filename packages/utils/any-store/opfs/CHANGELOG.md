@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/dao-xyz/peerbit/compare/any-store-opfs-v1.1.1...any-store-opfs-v1.1.2) (2025-12-02)
+
+
+### Bug Fixes
+
+* bundle as classic worker ([20fc6e6](https://github.com/dao-xyz/peerbit/commit/20fc6e6571676defbd0a7a1c18eb14ce423a7ff2))
+
 ## [1.1.1](https://github.com/dao-xyz/peerbit/compare/any-store-opfs-v1.1.0...any-store-opfs-v1.1.1) (2025-11-26)
 
 

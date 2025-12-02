@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.1.3](https://github.com/dao-xyz/peerbit/compare/vite-v1.1.2...vite-v1.1.3) (2025-12-02)
+
+
+### Bug Fixes
+
+* missing events deps ([f0be11a](https://github.com/dao-xyz/peerbit/commit/f0be11a0ca26a48aa3991f686e1ca36660e6cb09))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/any-store bumped to 2.2.2
+    * @peerbit/any-store-opfs bumped to 1.1.2
+
 ## [1.1.2](https://github.com/dao-xyz/peerbit/compare/vite-v1.1.1...vite-v1.1.2) (2025-12-01)
 
 
