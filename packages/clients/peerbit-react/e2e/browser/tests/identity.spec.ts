@@ -55,7 +55,7 @@ let persistentContext: BrowserContext | undefined;
 let baseURL: string;
 
 test.describe("identity", () => {
-	test.beforeEach(async (_testCtx, testInfo) => {
+	test.beforeEach(async ({}, testInfo) => {
 		baseURL =
 			testInfo.project.use.baseURL?.toString() ||
 			process.env.PLAYWRIGHT_BASE_URL ||
@@ -73,7 +73,7 @@ test.describe("identity", () => {
 		await bootstrap?.stop();
 	});
 
-	test("reuses identity across reload", async (_ctx, testInfo) => {
+	test("reuses identity across reload", async ({}, testInfo) => {
 		persistentContext = await launchPersistentBrowserContext(testInfo, baseURL);
 		const page = await persistentContext!.newPage();
 		const target = new URL(
