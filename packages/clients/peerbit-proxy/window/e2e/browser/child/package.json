@@ -19,7 +19,8 @@
 		"@peerbit/log": "workspace:*",
 		"@peerbit/program": "workspace:*",
 		"@peerbit/proxy-window": "workspace:*",
-		"@peerbit/shared-log": "workspace:*"
+		"@peerbit/shared-log": "workspace:*",
+		"events": "^3.3.0"
 	},
 	"devDependencies": {
 		"@types/libsodium-wrappers": "^0.7.14",

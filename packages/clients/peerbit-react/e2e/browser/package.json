@@ -15,7 +15,8 @@
 		"@peerbit/indexer-sqlite3": "workspace:*",
 		"@peerbit/riblt": "workspace:*",
 		"react": "^19.2.0",
-		"react-dom": "^19.2.0"
+		"react-dom": "^19.2.0",
+		"events": "^3.3.0"
 	},
 	"devDependencies": {
 		"@playwright/test": "^1.47.0",

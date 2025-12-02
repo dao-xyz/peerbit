@@ -18,7 +18,8 @@
 		"@peerbit/proxy-window": "workspace:*",
 		"peerbit": "workspace:*",
 		"react": "^19.2.0",
-		"react-dom": "^19.2.0"
+		"react-dom": "^19.2.0",
+		"events": "^3.3.0"
 	},
 	"devDependencies": {
 		"@types/libsodium-wrappers": "^0.7.14",

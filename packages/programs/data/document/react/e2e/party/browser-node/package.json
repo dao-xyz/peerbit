@@ -22,7 +22,8 @@
 		"@peerbit/vite": "workspace:*",
 		"react": "^19.0.0",
 		"react-dom": "^19.0.0",
-		"@peerbit/logger": "workspace:*"
+		"@peerbit/logger": "workspace:*",
+		"events": "^3.3.0"
 	},
 	"devDependencies": {
 		"@types/react": "^18.3.11",
