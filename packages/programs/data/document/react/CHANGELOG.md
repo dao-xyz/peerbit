@@ -1,5 +1,19 @@
 # @peerbit/document-react
 
+## [0.4.0](https://github.com/dao-xyz/peerbit/compare/document-react-v0.3.1...document-react-v0.4.0) (2025-12-03)
+
+
+### Features
+
+* improve later result handling with outOfOrder block ([ca0f6dd](https://github.com/dao-xyz/peerbit/commit/ca0f6dd155ae58a35c375eeebc5f6d0ea40f3165))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 11.2.0
+
 ## [0.3.1](https://github.com/dao-xyz/peerbit/compare/document-react-v0.3.0...document-react-v0.3.1) (2025-12-02)
 
 
