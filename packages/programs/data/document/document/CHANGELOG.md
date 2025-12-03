@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [11.2.0](https://github.com/dao-xyz/peerbit/compare/document-v11.1.1...document-v11.2.0) (2025-12-03)
+
+
+### Features
+
+* improve later result handling with outOfOrder block ([ca0f6dd](https://github.com/dao-xyz/peerbit/commit/ca0f6dd155ae58a35c375eeebc5f6d0ea40f3165))
+
 ## [11.1.1](https://github.com/dao-xyz/peerbit/compare/document-v11.1.0...document-v11.1.1) (2025-12-02)
 
 
