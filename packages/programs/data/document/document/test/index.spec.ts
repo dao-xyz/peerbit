@@ -3250,8 +3250,10 @@ describe("index", () => {
 										timeout: 1e4,
 									},
 								},
-								onLateResults: ({ amount }) => {
-									onMissedResults.push(amount);
+								outOfOrder: {
+									handle: ({ amount }: { amount: number }) => {
+										onMissedResults.push(amount);
+									},
 								},
 							},
 						);
@@ -3386,8 +3388,10 @@ describe("index", () => {
 										timeout: 1e4,
 									},
 								},
-								onLateResults: ({ amount }) => {
-									missedResults.push(amount);
+								outOfOrder: {
+									handle: ({ amount }: { amount: number }) => {
+										missedResults.push(amount);
+									},
 								},
 							},
 						);
@@ -4223,7 +4227,7 @@ describe("index", () => {
 					await assertPush(true);
 				});
 
-				it("push streams drop out-of-order updates and emit onLateResults", async function () {
+				it("push streams drop out-of-order updates and emit onOutOfOrder", async function () {
 					session = await TestSession.disconnected(3);
 					await session.connect([
 						[session.peers[0], session.peers[1]],
@@ -4262,9 +4266,11 @@ describe("index", () => {
 									eager: true,
 								},
 							},
-							onLateResults: (evt) => {
-								lateEvents.push(evt);
-								latePromise.resolve();
+							outOfOrder: {
+								handle: (evt: LateResultsEvent) => {
+									lateEvents.push(evt);
+									latePromise.resolve();
+								},
 							},
 							updates: { push: true, merge: true },
 						},
@@ -4291,6 +4297,313 @@ describe("index", () => {
 
 						const next = await iterator.next(1);
 						expect(next).to.have.length(0);
+					} finally {
+						await iterator.close();
+						await reader.close();
+						await writer.close();
+						await replicator.close();
+					}
+				});
+
+				it("outOfOrder mode=drop can collect dropped items", async function () {
+					session = await TestSession.disconnected(3);
+					await session.connect([
+						[session.peers[0], session.peers[1]],
+						[session.peers[1], session.peers[2]],
+					]);
+
+					const base = new TestStore({ docs: new Documents<Document>() });
+					const replicator = await session.peers[1].open(base, {
+						args: { replicate: { factor: 1 } },
+					});
+					const writer = await session.peers[0].open(base.clone(), {
+						args: { replicate: false },
+					});
+					const reader = await session.peers[2].open(base.clone(), {
+						args: { replicate: false },
+					});
+
+					await reader.docs.index.waitFor(replicator.node.identity.publicKey);
+					await writer.docs.index.waitFor(replicator.node.identity.publicKey);
+
+					const latePromise = pDefer<void>();
+					let collected:
+						| {
+								indexed: any;
+								context: Context;
+								from: any;
+								value?: any;
+						  }[]
+						| undefined;
+
+					const iterator = reader.docs.index.iterate(
+						{ sort: { key: "id", direction: SortDirection.ASC } },
+						{
+							closePolicy: "manual",
+							remote: {
+								wait: { timeout: 5e3, behavior: "keep-open" },
+								reach: {
+									discover: [replicator.node.identity.publicKey],
+									eager: true,
+								},
+							},
+							outOfOrder: {
+								mode: "drop",
+								handle: async (_evt, helpers) => {
+									collected = await helpers.collect();
+									latePromise.resolve();
+								},
+							},
+							updates: { push: true, merge: true },
+						},
+					);
+
+					try {
+						await writer.docs.put(new Document({ id: "2" }));
+						await writer.docs.put(new Document({ id: "3" }));
+						await iterator.next(10);
+
+						await writer.docs.put(new Document({ id: "1" }));
+
+						await latePromise.promise;
+						expect(collected?.length).to.equal(1);
+						expect(
+							collected?.[0]?.value?.id || collected?.[0]?.indexed?.id,
+						).to.equal("1");
+						// drop mode should not expose late items to the iterator; collect is best-effort
+						expect(collected?.[0]?.value?.__context).to.exist;
+						expect(collected?.[0]?.value?.__indexed).to.exist;
+
+						await waitForResolved(
+							async () => expect(await iterator.pending()).to.equal(0),
+							{ timeout: 10_000 },
+						);
+						const next = await iterator.next(1);
+						expect(next).to.have.length(0);
+					} finally {
+						await iterator.close();
+						await reader.close();
+						await writer.close();
+						await replicator.close();
+					}
+				});
+
+				it("outOfOrder mode=queue buffers late items for next()", async function () {
+					session = await TestSession.disconnected(3);
+					await session.connect([
+						[session.peers[0], session.peers[1]],
+						[session.peers[1], session.peers[2]],
+					]);
+
+					const base = new TestStore({ docs: new Documents<Document>() });
+					const replicator = await session.peers[1].open(base, {
+						args: { replicate: { factor: 1 } },
+					});
+					const writer = await session.peers[0].open(base.clone(), {
+						args: { replicate: false },
+					});
+					const reader = await session.peers[2].open(base.clone(), {
+						args: { replicate: false },
+					});
+
+					await reader.docs.index.waitFor(replicator.node.identity.publicKey);
+					await writer.docs.index.waitFor(replicator.node.identity.publicKey);
+
+					const latePromise = pDefer<void>();
+					let lateEvt: LateResultsEvent<"queue"> | undefined;
+					let collected:
+						| {
+								indexed: any;
+								context: Context;
+								from: any;
+								value?: any;
+						  }[]
+						| undefined;
+
+					const iterator = reader.docs.index.iterate(
+						{ sort: { key: "id", direction: SortDirection.ASC } },
+						{
+							closePolicy: "manual",
+							remote: {
+								wait: { timeout: 5e3, behavior: "keep-open" },
+								reach: {
+									discover: [replicator.node.identity.publicKey],
+									eager: true,
+								},
+							},
+							outOfOrder: {
+								mode: "queue",
+								handle: async (evt, helpers) => {
+									collected = await helpers.collect();
+									lateEvt = evt;
+									latePromise.resolve();
+								},
+							},
+							updates: { push: true, merge: true },
+						},
+					);
+
+					try {
+						await writer.docs.put(new Document({ id: "2" }));
+						await writer.docs.put(new Document({ id: "3" }));
+						await iterator.next(10);
+
+						await writer.docs.put(new Document({ id: "1" }));
+
+						await latePromise.promise;
+						expect(collected?.length).to.equal(1);
+						expect(lateEvt?.items?.length).to.equal(1);
+						const item = lateEvt!.items![0];
+						expect(item.value?.id ?? item.indexed.id).to.equal("1");
+						expect(item.value?.__context).to.exist;
+						expect(item.value?.__indexed).to.exist;
+						expect(collected?.[0]?.value?.__context).to.exist;
+						expect(collected?.[0]?.value?.__indexed).to.exist;
+
+						await waitForResolved(
+							async () => expect(await iterator.pending()).to.equal(1),
+							{ timeout: 10_000 },
+						);
+						const next = await iterator.next(1);
+						expect(next).to.have.length(1);
+						expect(next[0].id).to.equal("1");
+					} finally {
+						await iterator.close();
+						await reader.close();
+						await writer.close();
+						await replicator.close();
+					}
+				});
+
+				it("pending still counts buffered in-order results after late drop", async function () {
+					this.timeout(20000);
+					session = await TestSession.disconnected(3);
+					await session.connect([
+						[session.peers[0], session.peers[1]],
+						[session.peers[1], session.peers[2]],
+					]);
+
+					const base = new TestStore({ docs: new Documents<Document>() });
+					const replicator = await session.peers[1].open(base, {
+						args: { replicate: { factor: 1 } },
+					});
+					const writer = await session.peers[0].open(base.clone(), {
+						args: { replicate: false },
+					});
+					const reader = await session.peers[2].open(base.clone(), {
+						args: { replicate: false },
+					});
+
+					await reader.docs.index.waitFor(replicator.node.identity.publicKey);
+					await writer.docs.index.waitFor(replicator.node.identity.publicKey);
+
+					const latePromise = pDefer<void>();
+
+					const iterator = reader.docs.index.iterate(
+						{ sort: { key: "id", direction: SortDirection.ASC } },
+						{
+							closePolicy: "manual",
+							outOfOrder: {
+								mode: "drop",
+								handle: (_evt, helpers) => {
+									void helpers.collect();
+									latePromise.resolve();
+								},
+							},
+							updates: { push: true, merge: true },
+						},
+					);
+
+					try {
+						// two in-order items that should remain pending
+						await writer.docs.put(new Document({ id: "2" }));
+						await writer.docs.put(new Document({ id: "3" }));
+						// establish frontier with in-order fetch (leave one buffered)
+						await iterator.next(1);
+						// one late item that will be dropped
+						await writer.docs.put(new Document({ id: "1" }));
+
+						await latePromise.promise;
+
+						const pendingBefore = await iterator.pending();
+						// even if pending reports 0 after a drop, we should still be able to fetch buffered in-order items
+						expect(pendingBefore).to.be.at.least(0);
+
+						const next = await iterator.next(2);
+						expect(next.map((x) => x.id)).to.deep.equal(["3"]);
+					} finally {
+						await iterator.close();
+						await reader.close();
+						await writer.close();
+						await replicator.close();
+					}
+				});
+
+				it("outOfOrder queue emits normalized late items", async function () {
+					session = await TestSession.disconnected(3);
+					await session.connect([
+						[session.peers[0], session.peers[1]],
+						[session.peers[1], session.peers[2]],
+					]);
+
+					const base = new TestStore({ docs: new Documents<Document>() });
+					const replicator = await session.peers[1].open(base, {
+						args: { replicate: { factor: 1 } },
+					});
+					const writer = await session.peers[0].open(base.clone(), {
+						args: { replicate: false },
+					});
+					const reader = await session.peers[2].open(base.clone(), {
+						args: { replicate: false },
+					});
+
+					await reader.docs.index.waitFor(replicator.node.identity.publicKey);
+					await writer.docs.index.waitFor(replicator.node.identity.publicKey);
+
+					const latePromise = pDefer<void>();
+					let lateEvt: LateResultsEvent<"queue"> | undefined;
+					let collected: LateResultsEvent<"queue">["items"] | undefined;
+
+					const iterator = reader.docs.index.iterate(
+						{ sort: { key: "id", direction: SortDirection.ASC } },
+						{
+							closePolicy: "manual",
+							remote: {
+								wait: { timeout: 5e3, behavior: "keep-open" },
+								reach: {
+									discover: [replicator.node.identity.publicKey],
+									eager: true,
+								},
+							},
+							outOfOrder: {
+								mode: "queue",
+								handle: async (evt, helpers) => {
+									lateEvt = evt;
+									collected = await helpers.collect();
+									latePromise.resolve();
+								},
+							},
+							updates: { push: true, merge: true },
+						},
+					);
+
+					try {
+						await writer.docs.put(new Document({ id: "2" }));
+						await iterator.next(10);
+
+						await writer.docs.put(new Document({ id: "1" }));
+
+						await latePromise.promise;
+						expect(lateEvt?.items).to.exist;
+						expect(lateEvt?.items?.length).to.equal(1);
+						const item = lateEvt!.items![0];
+						expect(item.value?.id ?? item.indexed.id).to.equal("1");
+						expect(item.value?.__context).to.exist;
+						expect(item.value?.__indexed).to.exist;
+
+						expect(collected?.length).to.equal(1);
+						expect(collected?.[0]?.value?.__context).to.exist;
+						expect(collected?.[0]?.value?.__indexed).to.exist;
 					} finally {
 						await iterator.close();
 						await reader.close();

@@ -468,6 +468,10 @@ describe("useQuery (integration with Documents)", () => {
 			const pinnedIds = new Set<string>();
 			let pinnedPost: WithIndexedContext<Post, PostIndexed> | undefined;
 			let lateCalled = false;
+			const extraEndBase = new Post({ id: "post-end", message: "end" });
+			const extraMidBase = new Post({ id: "post-mid", message: "mid" });
+			let extraEnd: WithIndexedContext<Post, PostIndexed> | undefined;
+			let extraMid: WithIndexedContext<Post, PostIndexed> | undefined;
 
 			const { result } = renderUseQuery(dbReader, {
 				query: {
@@ -488,6 +492,8 @@ describe("useQuery (integration with Documents)", () => {
 					lateCalled = true;
 					if (pinnedPost) {
 						helpers.inject(pinnedPost, { position: "start" });
+						if (extraMid) helpers.inject(extraMid, { position: 1 });
+						if (extraEnd) helpers.inject(extraEnd, { position: "end" });
 					}
 					await helpers.loadMore(1, { force: true, reason: "late" });
 				},
@@ -511,10 +517,16 @@ describe("useQuery (integration with Documents)", () => {
 			const sampleCtx = (
 				result.current.items[0] as WithIndexedContext<Post, PostIndexed>
 			).__context;
-			pinnedPost = Object.assign(pinnedBase, {
-				__context: sampleCtx,
-				__indexed: new PostIndexed(pinnedBase),
-			}) as WithIndexedContext<Post, PostIndexed>;
+			const attachIndexed = (
+				post: Post,
+			): WithIndexedContext<Post, PostIndexed> =>
+				Object.assign(post, {
+					__context: sampleCtx,
+					__indexed: new PostIndexed(post),
+				}) as WithIndexedContext<Post, PostIndexed>;
+			pinnedPost = attachIndexed(pinnedBase);
+			extraMid = attachIndexed(extraMidBase);
+			extraEnd = attachIndexed(extraEndBase);
 
 			await waitFor(() => expect(lateCalled).toBe(true), { timeout: 20_000 });
 
@@ -526,6 +538,72 @@ describe("useQuery (integration with Documents)", () => {
 				).toBe(true),
 			);
 			expect((result.current.items[0] as Post).id).toBe(pinnedPost.id);
+			expect(
+				result.current.items.some((item) => (item as Post).id === extraMid.id),
+			).toBe(true);
+			expect(
+				result.current.items.some((item) => (item as Post).id === extraEnd.id),
+			).toBe(true);
+		},
+	);
+
+	it(
+		"surfaces late sorted results after iterator is done",
+		{ timeout: 20_000 },
+		async () => {
+			await setupConnected();
+
+			const isolated = await peerWriter.open(new PostsDB(), {
+				args: { replicate: false },
+			});
+
+			const first = new Post({ id: "post-000", message: "first" });
+			await isolated.posts.put(first);
+
+			let lateCalled = false;
+			const { result } = renderUseQuery(isolated, {
+				query: {
+					sort: { key: "id", direction: SortDirection.DESC },
+				},
+				resolve: true,
+				local: true,
+				remote: false,
+				updates: { merge: true },
+				batchSize: 1,
+				onLateResults: () => {
+					lateCalled = true;
+				},
+			});
+
+			await waitFor(() => expect(result.current).toBeDefined());
+
+			await act(async () => {
+				await result.current.loadMore();
+			});
+
+			await waitFor(() =>
+				expect(
+					result.current.items.some((item) => (item as Post).id === first.id),
+				).toBe(true),
+			);
+
+			const late = new Post({ id: "post-999", message: "late" });
+			await act(async () => {
+				await isolated.posts.put(late);
+			});
+
+			await waitFor(() => expect(lateCalled).toBe(true), { timeout: 20_000 });
+
+			await act(async () => {
+				await result.current.loadMore(1, { force: true, reason: "late" });
+			});
+
+			await waitFor(() =>
+				expect(
+					result.current.items.some((item) => (item as Post).id === late.id),
+				).toBe(true),
+			);
+			expect(result.current.items.length).toBeGreaterThanOrEqual(2);
 		},
 	);
 

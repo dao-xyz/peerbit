@@ -30,7 +30,7 @@ type ApplyResultsHandler<Item> = (
 ) => Item[] | Promise<Item[]>;
 
 type LateResultsHandler<Item> = (
-	evt: LateResultsEvent,
+	evt: LateResultsEvent<"queue">,
 	helpers: {
 		loadMore: LoadMoreFn;
 		inject: (
@@ -40,6 +40,10 @@ type LateResultsHandler<Item> = (
 		items: () => Item[];
 	},
 ) => void | Promise<void>;
+type LateResultsQueueItems = NonNullable<LateResultsEvent<"queue">["items"]>;
+type LateResultsQueueHelpers = {
+	collect?: () => Promise<LateResultsQueueItems>;
+};
 
 /* ────────────── helper types ────────────── */
 export type QueryLike = {
@@ -181,10 +185,14 @@ export const useQuery = <
 		const cached = itemIdRef.current.get(item as object);
 		if (cached) return cached;
 		for (const { db } of iteratorRefs.current) {
-			const id = db.index.resolveId(
-				item as WithContext<I> | WithIndexedContext<T, I>,
-			);
-			return idToKey(id.primitive); // return the first result
+			const candidate =
+				(item as any)?.__indexed ??
+				(item as any)?.__context?.__indexed ??
+				(item as WithContext<I> | WithIndexedContext<T, I>);
+			const id = db.index.resolveId(candidate);
+			const key = idToKey(id.primitive);
+			itemIdRef.current.set(item as object, key);
+			return key; // return the first result
 		}
 		return null;
 	};
@@ -198,6 +206,30 @@ export const useQuery = <
 		) as Item[];
 		if (!arr.length) return;
 		mutateAll((prev) => {
+			// Fast path for front insert to reduce copies
+			if (!opts?.position || opts.position === "start") {
+				const existingKeys = new Set<string>();
+				prev.forEach((item) => {
+					const key = resolveItemKey(item);
+					if (key) existingKeys.add(key);
+				});
+				const deduped = arr.filter((item) => {
+					const key = resolveItemKey(item);
+					return !(key && existingKeys.has(key));
+				});
+				if (deduped.length === 0) return prev;
+				const out = new Array(deduped.length + prev.length);
+				let i = 0;
+				for (const item of deduped) out[i++] = item;
+				for (const item of prev) out[i++] = item;
+				deduped.forEach((item) => {
+					const key = resolveItemKey(item);
+					if (key) itemIdRef.current.set(item as object, key);
+				});
+				return out as Item[];
+			}
+
+			// Fallback: splice semantics
 			const working = [...prev];
 			const keyIndex = new Map<string, number>();
 			working.forEach((item, idx) => {
@@ -263,21 +295,40 @@ export const useQuery = <
 			}
 			return {};
 		};
-		const onMissedResults = (evt: LateResultsEvent) => {
+		const onMissedResults = async (
+			evt: LateResultsEvent<"queue">,
+			lateHelpers?: LateResultsQueueHelpers,
+		) => {
 			log("Late results", evt);
 			const loadMoreHelper: LoadMoreFn = (...args) =>
 				loadMoreRef.current
 					? loadMoreRef.current(...args)
 					: Promise.resolve(false);
-			const maybeUser = options.onLateResults?.(evt, {
+			const helpers = {
 				loadMore: loadMoreHelper,
 				inject: injectItems,
 				items: () => allRef.current,
-			});
-			if (!maybeUser) {
-				console.error("Late results", evt);
+			};
+			const maybeUser = options.onLateResults?.(evt, helpers);
+			if (maybeUser) {
+				await maybeUser;
+				return;
 			}
-			return maybeUser;
+
+			// default handling: if we have concrete items, inject them at the front
+			const items =
+				evt.items ?? (lateHelpers?.collect && (await lateHelpers.collect()));
+			if (items && items.length) {
+				const values = items
+					.map((it: any) => it?.value ?? it?.indexed ?? it)
+					.filter(Boolean) as Item[];
+				if (values.length) {
+					injectItems(values, { position: "start" });
+				}
+				return;
+			}
+			// fallback: force a pull for late items
+			await loadMoreHelper(batchSize, { force: true, reason: "late" });
 		};
 		let draining = false;
 		const scheduleDrain = (
@@ -303,7 +354,7 @@ export const useQuery = <
 				closePolicy: "manual",
 				local: options.local ?? true,
 				remote: resolveRemoteOptions(),
-				onLateResults: onMissedResults,
+				outOfOrder: { mode: "queue", handle: onMissedResults },
 				resolve,
 				signal: abortSignal,
 				updates: {
@@ -328,7 +379,10 @@ export const useQuery = <
 							});
 						}
 					},
-					onBatch: (batch, props) => {
+					onBatch: (
+						batch: (WithContext<I> | WithIndexedContext<T, I>)[],
+						props,
+					) => {
 						log("onBatch", { batch, props, currentRef: !!currentRef });
 						if (
 							props.reason === "join" ||
@@ -429,6 +483,34 @@ export const useQuery = <
 
 		const prev = allRef.current;
 		const next = [...prev];
+		const resolveIndexedForSort = (item: Item) =>
+			(item as any).__indexed ??
+			((item as any).__context && (item as any).__context.__indexed) ??
+			item;
+		const sortSpec = (options.query as any)?.sort;
+		const normalizeSort = (sort: any) => {
+			if (!sort) return undefined;
+			const arr = Array.isArray(sort) ? sort : [sort];
+			return arr.map((s) => ({
+				...s,
+				key: Array.isArray(s.key) ? s.key : [s.key],
+			}));
+		};
+		const normalizedSort = normalizeSort(sortSpec);
+		const sortComparator: ((a: Item, b: Item) => number) | undefined =
+			normalizedSort &&
+			((a: Item, b: Item) => {
+				const aIndexed = resolveIndexedForSort(a);
+				const bIndexed = resolveIndexedForSort(b);
+				if (aIndexed == null || bIndexed == null) {
+					return 0;
+				}
+				return indexerTypes.extractSortCompare(
+					aIndexed as any,
+					bIndexed as any,
+					normalizedSort as any,
+				);
+			});
 		const keyIndex = new Map<string, number>();
 		prev.forEach((item, idx) => {
 			const key = itemIdRef.current.get(item as object);
@@ -501,7 +583,20 @@ export const useQuery = <
 		}
 
 		let combinedDefault: Item[];
-		if (reverseRef.current) {
+		if (reason === "late") {
+			let combined = [...freshItems, ...next];
+			if (sortComparator) {
+				try {
+					combined = [...next, ...freshItems].sort(sortComparator);
+				} catch (error) {
+					console.warn("Failed to sort late results", error);
+				}
+			}
+			if (reverseRef.current) {
+				combined.reverse();
+			}
+			combinedDefault = combined;
+		} else if (reverseRef.current) {
 			freshItems.reverse();
 			freshItems.push(...next);
 			combinedDefault = freshItems;

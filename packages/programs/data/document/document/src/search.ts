@@ -142,12 +142,32 @@ export type JoiningOnMissedResults = (evt: {
 	peer: PublicSignKey;
 }) => void | Promise<void>;
 
-export type LateResultsEvent = {
+export type OutOfOrderMode = "drop" | "queue";
+
+export type LateResultsItem = {
+	indexed: WithContext<any>;
+	context: types.Context;
+	from: PublicSignKey;
+	value?: any;
+};
+
+export type LateResultsEvent<
+	M extends OutOfOrderMode = "drop",
+	Item = LateResultsItem,
+> = {
 	/** Count of items that should have appeared earlier than the current frontier */
 	amount: number;
 
 	/** If attributable, the peer that produced the late items */
 	peer?: PublicSignKey;
+} & (M extends "queue" ? { items: Item[] } : { items?: undefined });
+
+export type LateResultsHelpers<
+	M extends OutOfOrderMode = "drop",
+	Item = LateResultsItem,
+> = {
+	/** Collect concrete late items if available for the chosen mode */
+	collect: () => Promise<M extends "queue" ? Item[] : Item[] | undefined>;
 };
 
 export type WaitBehavior =
@@ -197,7 +217,21 @@ export type QueryOptions<T, I, D, Resolve extends boolean | undefined> = {
 	resolve?: Resolve;
 	signal?: AbortSignal;
 	updates?: UpdateOptions<T, I, Resolve>;
-	onLateResults?: (evt: LateResultsEvent) => void | Promise<void>;
+	outOfOrder?:
+		| {
+				mode?: "drop";
+				handle?: (
+					evt: LateResultsEvent<"drop">,
+					helpers: LateResultsHelpers<"drop">,
+				) => void | Promise<void>;
+		  }
+		| {
+				mode: "queue";
+				handle?: (
+					evt: LateResultsEvent<"queue">,
+					helpers: LateResultsHelpers<"queue">,
+				) => void | Promise<void>;
+		  };
 	/**
 	 * Controls iterator liveness after batches are consumed.
 	 * - 'onEmpty' (default): close when no more results
@@ -2649,6 +2683,7 @@ export class DocumentIndex<
 		if (remoteOptions !== originalRemote) {
 			options = Object.assign({}, options, { remote: remoteOptions });
 		}
+		const outOfOrderMode: OutOfOrderMode = options?.outOfOrder?.mode ?? "drop";
 
 		let resolve = options?.resolve !== false;
 		if (
@@ -3496,9 +3531,107 @@ export class DocumentIndex<
 		let fetchedFirstForRemote: Set<string> | undefined = undefined;
 
 		let updateDeferred: ReturnType<typeof pDefer> | undefined;
-		const onLateResults =
-			typeof options?.onLateResults === "function"
-				? options.onLateResults
+		const onLateResultsQueue =
+			options?.outOfOrder?.mode === "queue" &&
+			typeof options?.outOfOrder?.handle === "function"
+				? (options.outOfOrder.handle as (
+						evt: LateResultsEvent<"queue">,
+						helpers: LateResultsHelpers<"queue">,
+					) => void | Promise<void>)
+				: undefined;
+		const onLateResultsDrop =
+			options?.outOfOrder?.mode === "queue"
+				? undefined
+				: typeof options?.outOfOrder?.handle === "function"
+					? (options.outOfOrder.handle as (
+							evt: LateResultsEvent<"drop">,
+							helpers: LateResultsHelpers<"drop">,
+						) => void | Promise<void>)
+					: undefined;
+		const normalizeLateItems = (
+			items?:
+				| {
+						indexed: WithContext<I>;
+						context: types.Context;
+						from: PublicSignKey;
+						value?: types.ResultTypeFromRequest<R, T, I> | I;
+				  }[]
+				| undefined,
+		): LateResultsItem[] | undefined => {
+			if (!items) return undefined;
+			return items.map((item) => {
+				const ctx = item.context || item.indexed.__context;
+				let value = (item.value ?? item.indexed) as any;
+				if (value && ctx && value.__context == null) {
+					value.__context = ctx;
+				}
+				if (value && item.indexed && value.__indexed == null) {
+					value.__indexed = item.indexed;
+				}
+				return {
+					indexed: item.indexed,
+					context: ctx,
+					from: item.from,
+					value,
+				};
+			});
+		};
+
+		const notifyLateResults =
+			onLateResultsQueue || onLateResultsDrop
+				? (
+						amount: number,
+						peer?: PublicSignKey,
+						items?: {
+							indexed: WithContext<I>;
+							context: types.Context;
+							from: PublicSignKey;
+							value?: types.ResultTypeFromRequest<R, T, I> | I;
+						}[],
+					) => {
+						if (amount <= 0) {
+							return;
+						}
+						unsetDone();
+						const payload = items ? normalizeLateItems(items) : undefined;
+						if (outOfOrderMode === "queue" && onLateResultsQueue) {
+							const normalized =
+								payload ??
+								([] as LateResultsEvent<"queue", LateResultsItem>["items"]);
+							const collector = () =>
+								Promise.resolve(
+									normalized as LateResultsEvent<
+										"queue",
+										LateResultsItem
+									>["items"],
+								);
+							onLateResultsQueue(
+								{
+									amount,
+									peer,
+									items: normalized as LateResultsEvent<
+										"queue",
+										LateResultsItem
+									>["items"],
+								},
+								{ collect: collector },
+							);
+							return;
+						}
+						if (onLateResultsDrop) {
+							const collector = () =>
+								Promise.resolve(
+									payload as LateResultsEvent<"drop", LateResultsItem>["items"],
+								);
+							onLateResultsDrop(
+								{
+									amount,
+									peer,
+								},
+								{ collect: collector },
+							);
+						}
+					}
 				: undefined;
 		const runNotify = (reason: UpdateReason) => {
 			if (!updateCallbacks?.notify) {
@@ -3594,6 +3727,18 @@ export class DocumentIndex<
 					return;
 				}
 
+				const collectLateItems =
+					outOfOrderMode !== "drop" && !!notifyLateResults;
+				const lateResults = collectLateItems
+					? ([] as {
+							indexed: WithContext<I>;
+							context: types.Context;
+							from: PublicSignKey;
+							value?: types.ResultTypeFromRequest<R, T, I> | I;
+						}[])
+					: undefined;
+				let lateCount = 0;
+
 				for (const result of results.results) {
 					const indexKey = indexerTypes.toId(
 						this.indexByResolver(result.value),
@@ -3612,18 +3757,28 @@ export class DocumentIndex<
 							indexedPlaceholders?.delete(indexKey);
 							continue;
 						}
-						if (visited.has(indexKey)) {
-							continue;
-						}
-						visited.add(indexKey);
 						const indexed = await this.resolveIndexed<R>(
 							result,
 							results.results as types.ResultTypeFromRequest<R, T, I>[],
 						);
-						if (isLateResult(indexed)) {
-							onLateResults?.({ amount: 1, peer: from });
+						const late = isLateResult(indexed);
+						if (late) {
+							lateCount++;
+							lateResults?.push({
+								indexed,
+								context: result.context,
+								from: from!,
+								value: result.value as types.ResultTypeFromRequest<R, T, I>,
+							});
+							if (outOfOrderMode === "drop") {
+								visited.add(indexKey);
+								continue; // don't buffer late push results
+							}
+						}
+						if (visited.has(indexKey)) {
 							continue;
 						}
+						visited.add(indexKey);
 						buffer.push({
 							value: result.value as types.ResultTypeFromRequest<R, T, I>,
 							context: result.context,
@@ -3631,18 +3786,28 @@ export class DocumentIndex<
 							indexed,
 						});
 					} else {
-						if (visited.has(indexKey) && !indexedPlaceholders?.has(indexKey)) {
-							continue;
-						}
-						visited.add(indexKey);
 						const indexed = coerceWithContext(
 							result.indexed || result.value,
 							result.context,
 						);
-						if (isLateResult(indexed)) {
-							onLateResults?.({ amount: 1, peer: from });
+						const late = isLateResult(indexed);
+						if (late) {
+							lateCount++;
+							lateResults?.push({
+								indexed,
+								context: result.context,
+								from: from!,
+								value: result.value,
+							});
+							if (outOfOrderMode === "drop") {
+								visited.add(indexKey);
+								continue; // don't buffer late push results
+							}
+						}
+						if (visited.has(indexKey) && !indexedPlaceholders?.has(indexKey)) {
 							continue;
 						}
+						visited.add(indexKey);
 						const placeholder = {
 							value: result.value,
 							context: result.context,
@@ -3652,6 +3817,14 @@ export class DocumentIndex<
 						buffer.push(placeholder);
 						ensureIndexedPlaceholders().set(indexKey, placeholder);
 					}
+				}
+
+				if (lateCount > 0) {
+					notifyLateResults?.(
+						lateCount,
+						from,
+						collectLateItems ? lateResults : undefined,
+					);
 				}
 
 				peerBufferMap.set(peerHash, {
@@ -3859,10 +4032,6 @@ export class DocumentIndex<
 									continue;
 								}
 							}
-							if (isLateResult(indexedCandidate)) {
-								onLateResults?.({ amount: 1 });
-								continue;
-							}
 							const id = indexerTypes.toId(
 								this.indexByResolver(indexedCandidate),
 							).primitive;
@@ -3878,6 +4047,20 @@ export class DocumentIndex<
 								continue;
 							}
 							if (visited.has(id)) continue; // already presented
+							const wasLate = isLateResult(indexedCandidate);
+							if (wasLate) {
+								notifyLateResults?.(1, this.node.identity.publicKey, [
+									{
+										indexed: indexedCandidate,
+										context: added.__context,
+										from: this.node.identity.publicKey,
+										value: resolve ? (added as any) : indexedCandidate,
+									},
+								]);
+								if (outOfOrderMode === "drop") {
+									continue;
+								}
+							}
 							visited.add(id);
 							const valueForBuffer = resolve
 								? (added as any)
@@ -3954,7 +4137,7 @@ export class DocumentIndex<
 							fetchedFirstForRemote,
 						});
 						await fetchPromise;
-						if (onLateResults) {
+						if (onLateResultsQueue || onLateResultsDrop) {
 							const pending = peerBufferMap.get(hash)?.buffer;
 							if (pending && pending.length > 0) {
 								if (lastValueInOrder) {
@@ -3971,10 +4154,21 @@ export class DocumentIndex<
 										(x) => x === lastValueInOrder,
 									);
 									if (lateResults > 0) {
-										onLateResults({ amount: lateResults });
+										const lateItems =
+											outOfOrderMode === "queue"
+												? results.slice(
+														0,
+														Math.min(lateResults, results.length),
+													)
+												: undefined;
+										notifyLateResults?.(lateResults, pk, lateItems);
 									}
 								} else {
-									onLateResults({ amount: pending.length });
+									notifyLateResults?.(
+										pending.length,
+										pk,
+										outOfOrderMode === "queue" ? pending : undefined,
+									);
 								}
 							}
 						}
@@ -4032,11 +4226,11 @@ export class DocumentIndex<
 					warn("Failed to refresh iterator pending state", error);
 				}
 
-				let pendingCount = 0;
+				let total = 0;
 				for (const buffer of peerBufferMap.values()) {
-					pendingCount += buffer.kept + buffer.buffer.length;
+					total += buffer.kept + buffer.buffer.length;
 				}
-				return pendingCount;
+				return total;
 			},
 			all: async () => {
 				drain = true;
