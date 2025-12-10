@@ -1107,7 +1107,7 @@ export class DocumentIndex<
 		ctx: { from?: PublicSignKey; message: DataMessage },
 	) {
 		if (!ctx.from) {
-			logger("Receieved query without from");
+			logger("receieved query without from");
 			return;
 		}
 		indexRpcLogger("received request", {
