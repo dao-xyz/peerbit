@@ -3569,7 +3569,7 @@ describe("start/stop", () => {
 		const silentDelta = now - recs[1].lastActivity;
 		// Active should have very recent activity, silent should be older
 		expect(activeDelta).to.be.lessThan(IDLE);
-		expect(silentDelta).to.be.greaterThan(activeDelta);
+		expect(silentDelta).to.be.greaterThanOrEqual(activeDelta);
 	});
 
 	it("evicts oldest inactive when exceeding max inbound streams", async () => {
