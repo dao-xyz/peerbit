@@ -2686,13 +2686,37 @@ export class DocumentIndex<
 		const outOfOrderMode: OutOfOrderMode = options?.outOfOrder?.mode ?? "drop";
 
 		let resolve = options?.resolve !== false;
-		if (
-			!(queryRequestCoerced instanceof types.IterationRequest) &&
+		const wantsReplication =
 			options?.remote &&
 			typeof options.remote !== "boolean" &&
-			(options.remote.replicate || pushUpdates) &&
+			options.remote.replicate;
+
+		if (
+			!(queryRequestCoerced instanceof types.IterationRequest) &&
+			pushUpdates
+		) {
+			// Push streaming only works on IterationRequest; reject legacy compat and upgrade other callers.
+			if (this.compatibility !== undefined) {
+				throw new Error(
+					"updates.push requires IterationRequest support; not available when compatibility is set",
+				);
+			}
+			queryRequestCoerced = new types.IterationRequest({
+				query: queryRequestCoerced.query,
+				sort: queryRequestCoerced.sort,
+				fetch: queryRequestCoerced.fetch,
+				resolve,
+				pushUpdates,
+				mergeUpdates: mergePolicy?.merge ? true : undefined,
+			});
+			resolve =
+				(queryRequestCoerced as types.IterationRequest).resolve !== false;
+		} else if (
+			!(queryRequestCoerced instanceof types.IterationRequest) &&
+			wantsReplication &&
 			options?.resolve !== false
 		) {
+			// Legacy requests can't carry replicate=true; swap to indexed search so replication intent is preserved.
 			if (
 				(queryRequest instanceof types.SearchRequestIndexed === false &&
 					this.compatibility == null) ||

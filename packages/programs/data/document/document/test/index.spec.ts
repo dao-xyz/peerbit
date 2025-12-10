@@ -4227,6 +4227,75 @@ describe("index", () => {
 					await assertPush(true);
 				});
 
+				it("push streams are honored for explicit SearchRequest", async () => {
+					session = await TestSession.disconnected(3);
+					await session.connect([
+						[session.peers[0], session.peers[1]],
+						[session.peers[1], session.peers[2]],
+					]);
+
+					const base = new TestStore({ docs: new Documents<Document>() });
+					const replicator = await session.peers[1].open(base, {
+						args: {
+							replicate: { factor: 1 },
+						},
+					});
+
+					const writer = await session.peers[0].open(base.clone(), {
+						args: { replicate: false },
+					});
+
+					const reader = await session.peers[2].open(base.clone(), {
+						args: { replicate: false },
+					});
+
+					await reader.docs.index.waitFor(replicator.node.identity.publicKey);
+					await writer.docs.index.waitFor(replicator.node.identity.publicKey);
+
+					let iterator:
+						| Awaited<ReturnType<typeof reader.docs.index.iterate>>
+						| undefined;
+
+					try {
+						iterator = reader.docs.index.iterate(
+							new SearchRequest({
+								sort: new Sort({ key: ["id"], direction: SortDirection.ASC }),
+							}),
+							{
+								closePolicy: "manual",
+								remote: {
+									wait: { timeout: 5e3, behavior: "keep-open" },
+									reach: {
+										discover: [replicator.node.identity.publicKey],
+										eager: true,
+									},
+								},
+								updates: { push: true, merge: true },
+							},
+						);
+
+						const initial = await iterator.next(1);
+						expect(initial).to.have.length(0);
+
+						const docId = `push-search-request-${Date.now()}`;
+						await writer.docs.put(new Document({ id: docId }));
+
+						await waitForResolved(
+							async () => expect(await iterator!.pending()).to.equal(1),
+							{ timeout: 10_000 },
+						);
+
+						const batch = await iterator.next(1);
+						expect(batch).to.have.length(1);
+						expect(batch[0].id).to.equal(docId);
+					} finally {
+						await iterator?.close();
+						await reader?.close();
+						await writer?.close();
+						await replicator?.close();
+					}
+				});
+
 				it("push streams drop out-of-order updates and emit onOutOfOrder", async function () {
 					session = await TestSession.disconnected(3);
 					await session.connect([
