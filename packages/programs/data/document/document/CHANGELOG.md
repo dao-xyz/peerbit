@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [11.2.1](https://github.com/dao-xyz/peerbit/compare/document-v11.2.0...document-v11.2.1) (2025-12-10)
+
+
+### Bug Fixes
+
+* handle SearchRequest with push option ([e14545e](https://github.com/dao-xyz/peerbit/commit/e14545ecd743e08ebd71f95be6f19978d551f1e1))
+
 ## [11.2.0](https://github.com/dao-xyz/peerbit/compare/document-v11.1.1...document-v11.2.0) (2025-12-03)
 
 
