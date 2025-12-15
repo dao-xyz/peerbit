@@ -283,6 +283,7 @@ export const useQuery = <
 		reset();
 		const abortSignal = closeControllerRef.current?.signal;
 		const resolveRemoteOptions = () => {
+			if (options.remote === false) return false;
 			if (!options.remote) return undefined;
 			if (typeof options.remote === "object") {
 				return {
@@ -315,7 +316,7 @@ export const useQuery = <
 				return;
 			}
 
-			// default handling: if we have concrete items, inject them at the front
+			// default handling: if we have concrete items, inject them at the edge
 			const items =
 				evt.items ?? (lateHelpers?.collect && (await lateHelpers.collect()));
 			if (items && items.length) {
@@ -323,7 +324,9 @@ export const useQuery = <
 					.map((it: any) => it?.value ?? it?.indexed ?? it)
 					.filter(Boolean) as Item[];
 				if (values.length) {
-					injectItems(values, { position: "start" });
+					injectItems(values, {
+						position: reverseRef.current ? "end" : "start",
+					});
 				}
 				return;
 			}
@@ -334,7 +337,7 @@ export const useQuery = <
 		const scheduleDrain = (
 			ref: ResultsIterator<RT>,
 			amount: number,
-			opts?: { force?: boolean },
+			opts?: { force?: boolean; reason?: MergeReason },
 		) => {
 			log("Schedule drain", draining, ref, amount);
 			if (draining) return;
@@ -376,6 +379,7 @@ export const useQuery = <
 							const drainAmount = options.batchSize ?? 10;
 							scheduleDrain(iterator as ResultsIterator<RT>, drainAmount, {
 								force: true,
+								reason,
 							});
 						}
 					},
@@ -582,33 +586,38 @@ export const useQuery = <
 			return !emptyResultsRef.current;
 		}
 
+		const incomingItems = freshItems.length
+			? [...freshItems]
+			: processed.flatMap((p) => p.items);
+
 		let combinedDefault: Item[];
-		if (reason === "late") {
-			let combined = [...freshItems, ...next];
-			if (sortComparator) {
-				try {
-					combined = [...next, ...freshItems].sort(sortComparator);
-				} catch (error) {
-					console.warn("Failed to sort late results", error);
-				}
+		if (sortComparator) {
+			let combined = [...next, ...freshItems];
+			try {
+				combined.sort(sortComparator);
+			} catch (error) {
+				console.warn("Failed to sort results", error);
 			}
 			if (reverseRef.current) {
 				combined.reverse();
 			}
 			combinedDefault = combined;
+		} else if (reason === "late") {
+			let combined = [...freshItems, ...next];
+			if (reverseRef.current) {
+				combined.reverse();
+			}
+			combinedDefault = combined;
 		} else if (reverseRef.current) {
-			freshItems.reverse();
-			freshItems.push(...next);
-			combinedDefault = freshItems;
+			const combined = [...freshItems].reverse();
+			combined.push(...next);
+			combinedDefault = combined;
 		} else {
 			next.push(...freshItems);
 			combinedDefault = next;
 		}
 
 		const defaultMerge = () => combinedDefault;
-		const incoming = freshItems.length
-			? freshItems
-			: processed.flatMap((p) => p.items);
 		const loadMoreHelper: LoadMoreFn = (...args) =>
 			loadMoreRef.current
 				? loadMoreRef.current(...args)
@@ -616,7 +625,7 @@ export const useQuery = <
 		const mergedCandidate = options.applyResults
 			? await options.applyResults(
 					allRef.current,
-					{ items: incoming, reason },
+					{ items: incomingItems, reason },
 					{
 						defaultMerge,
 						loadMore: loadMoreHelper,

@@ -736,12 +736,100 @@ describe("useQuery (integration with Documents)", () => {
         );
     });
     */
+
+	it(
+		"reverse=true preserves reversed ordering and appends live updates",
+		{ timeout: 20_000 },
+		async () => {
+			// Local-only setup to avoid remote flakiness; live updates arrive as "change".
+			const db = await peerWriter.open(new PostsDB(), {
+				existing: "reuse",
+				args: { replicate: false },
+			});
+
+			for (let i = 1; i <= 5; i++) {
+				await db.posts.put(
+					new Post({
+						id: `post-${i.toString().padStart(3, "0")}`,
+						message: `seed-${i}`,
+					}),
+				);
+			}
+
+			const { result } = renderUseQuery(db, {
+				query: { sort: { key: "id", direction: SortDirection.DESC } },
+				resolve: true,
+				local: true,
+				remote: false,
+				updates: { merge: true },
+				batchSize: 3,
+				prefetch: true,
+				reverse: true,
+			});
+
+			await waitFor(() =>
+				expect(result.current.items.map((p) => (p as Post).id)).toEqual([
+					"post-003",
+					"post-004",
+					"post-005",
+				]),
+			);
+
+			await act(async () => {
+				await result.current.loadMore();
+			});
+			await waitFor(() =>
+				expect(result.current.items.map((p) => (p as Post).id)).toEqual([
+					"post-001",
+					"post-002",
+					"post-003",
+					"post-004",
+					"post-005",
+				]),
+			);
+
+			await act(async () => {
+				await db.posts.put(
+					new Post({ id: "post-006", message: "live-change" }),
+				);
+			});
+
+			await waitFor(
+				async () => {
+					if (
+						!result.current.items.some((p) => (p as Post).id === "post-006")
+					) {
+						await act(async () => {
+							await result.current.loadMore(1, {
+								force: true,
+								reason: "change",
+							});
+						});
+					}
+					expect(
+						result.current.items.some((p) => (p as Post).id === "post-006"),
+					).toBe(true);
+				},
+				{ timeout: 15_000 },
+			);
+
+			expect(result.current.items.map((p) => (p as Post).id)).toEqual([
+				"post-001",
+				"post-002",
+				"post-003",
+				"post-004",
+				"post-005",
+				"post-006",
+			]);
+		},
+	);
+
 	it("clears results when props change (e.g. reverse toggled)", async () => {
 		await setupConnected();
 		await dbWriter.posts.put(new Post({ message: "one" }));
 		await dbWriter.posts.put(new Post({ message: "two" }));
 
-		const { result, rerender } = renderUseQuery(dbReader, {
+		const { result, rerender } = renderUseQuery(dbWriter, {
 			query: {},
 			resolve: true,
 			local: true,
