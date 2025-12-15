@@ -1,5 +1,19 @@
 # @peerbit/document-react
 
+## [0.4.3](https://github.com/dao-xyz/peerbit/compare/document-react-v0.4.2...document-react-v0.4.3) (2025-12-15)
+
+
+### Bug Fixes
+
+* correct reverse option handling ([740b97d](https://github.com/dao-xyz/peerbit/commit/740b97df72b4a19a891c47a2bb1cade65df3a2c1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 11.2.3
+
 ## [0.4.2](https://github.com/dao-xyz/peerbit/compare/document-react-v0.4.1...document-react-v0.4.2) (2025-12-10)
 
 

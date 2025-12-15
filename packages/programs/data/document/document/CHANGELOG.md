@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [11.2.3](https://github.com/dao-xyz/peerbit/compare/document-v11.2.2...document-v11.2.3) (2025-12-15)
+
+
+### Bug Fixes
+
+* correct keep open logic for non remote querying ([99b03a1](https://github.com/dao-xyz/peerbit/commit/99b03a156c7ba0de42fc49961bde995b586fd94b))
+
 ## [11.2.2](https://github.com/dao-xyz/peerbit/compare/document-v11.2.1...document-v11.2.2) (2025-12-10)
 
 
