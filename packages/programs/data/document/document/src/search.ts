@@ -3708,9 +3708,9 @@ export class DocumentIndex<
 			updateDeferred = pDefer<void>();
 		}
 
-		const keepRemoteAlive =
-			(options?.closePolicy === "manual" || hasLiveUpdates || pushUpdates) &&
-			remoteOptions !== false;
+		const keepOpen =
+			options?.closePolicy === "manual" || hasLiveUpdates || pushUpdates;
+		const keepRemoteAlive = keepOpen && remoteOptions !== false;
 
 		if (queryRequestCoerced instanceof types.IterationRequest) {
 			queryRequestCoerced.resolve = resolve;
@@ -4213,7 +4213,7 @@ export class DocumentIndex<
 			};
 		}
 
-		if (keepRemoteAlive) {
+		if (keepOpen) {
 			const prevMaybeSetDone = maybeSetDone;
 			maybeSetDone = () => {
 				if (drain) {
