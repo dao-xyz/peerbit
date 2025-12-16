@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [11.6.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.6.5...shared-log-v11.6.6) (2025-12-16)
+
+
+### Bug Fixes
+
+* handle lifecycle errors and abort signals in getCover method ([ef15683](https://github.com/dao-xyz/peerbit/commit/ef1568368416615f9fc63942093dcc5ff4540db7))
+
 ## [11.6.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.6.4...shared-log-v11.6.5) (2025-12-02)
 
 
