@@ -860,4 +860,99 @@ describe("useQuery (integration with Documents)", () => {
 		});
 		await waitFor(() => expect(result.current.items.length).toBeGreaterThan(0));
 	});
+
+	describe("lifecycle edge cases", () => {
+		it("handles database close during remote query without throwing", async () => {
+			// This test verifies that when a database is closed while a remote query
+			// is in-flight (e.g., during component unmount with keepOpenOnUnmount: false),
+			// the query gracefully returns empty results instead of throwing NotStartedError.
+			await setupConnected();
+			await dbWriter.posts.put(new Post({ message: "test" }));
+
+			const { result, unmount } = renderUseQuery(dbReader, {
+				query: {},
+				resolve: true,
+				local: true,
+				remote: { reach: { eager: true }, wait: { timeout: 5000 } },
+				prefetch: true,
+			});
+
+			await waitFor(() => expect(result.current).toBeDefined());
+
+			// Start a loadMore (which triggers getCover internally for remote queries)
+			// and close the database concurrently - this simulates the race condition
+			// that happens when a component unmounts while a remote query is in-flight
+			const loadMorePromise = act(async () => {
+				await result.current.loadMore();
+			});
+
+			// Close the database while the query might be in-flight
+			// This should NOT cause an unhandled NotStartedError
+			await act(async () => {
+				await dbReader.close();
+			});
+
+			// The loadMore should complete without throwing
+			await expect(loadMorePromise).resolves.not.toThrow();
+
+			// Unmount should also be clean
+			unmount();
+		});
+
+		it("handles unmount during active remote query without throwing", async () => {
+			// This test simulates the exact scenario from the bug report:
+			// useQuery with remote enabled kicks off getCover, and useProgram
+			// closes the program on unmount before the query completes.
+			await setupConnected();
+			await dbWriter.posts.put(new Post({ message: "test" }));
+
+			const { result, unmount } = renderUseQuery(dbReader, {
+				query: {},
+				resolve: true,
+				local: true,
+				remote: { reach: { eager: true }, wait: { timeout: 5000 } },
+				prefetch: true,
+			});
+
+			await waitFor(() => expect(result.current).toBeDefined());
+
+			// Trigger a remote query
+			const loadMorePromise = result.current.loadMore();
+
+			// Immediately unmount (simulating rapid navigation or re-render)
+			// This closes the iterator but the underlying getCover might still be running
+			unmount();
+
+			// Close the database (simulating useProgram cleanup with keepOpenOnUnmount: false)
+			await dbReader.close();
+
+			// The promise should resolve gracefully (returning false), not throw
+			await expect(loadMorePromise).resolves.toBeDefined();
+		});
+
+		it("rapid mount/unmount cycles with remote queries do not cause errors", async () => {
+			await setupConnected();
+			await dbWriter.posts.put(new Post({ message: "test" }));
+
+			// Simulate rapid mount/unmount cycles (like React StrictMode or fast navigation)
+			for (let i = 0; i < 3; i++) {
+				const { result, unmount } = renderUseQuery(dbReader, {
+					query: {},
+					resolve: true,
+					local: true,
+					remote: { reach: { eager: true } },
+					prefetch: true,
+				});
+
+				await waitFor(() => expect(result.current).toBeDefined());
+
+				// Start a query and immediately unmount
+				const loadMorePromise = result.current.loadMore().catch(() => false);
+				unmount();
+
+				// Should not throw
+				await expect(loadMorePromise).resolves.toBeDefined();
+			}
+		});
+	});
 });

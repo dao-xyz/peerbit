@@ -1,4 +1,4 @@
-import { ClosedError, Documents } from "@peerbit/document";
+import { ClosedError, Documents, NotStartedError } from "@peerbit/document";
 import type {
 	AbstractSearchRequest,
 	AbstractSearchResult,
@@ -13,6 +13,14 @@ import type { UpdateOptions, WithIndexedContext } from "@peerbit/document";
 import * as indexerTypes from "@peerbit/indexer-interface";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { v4 as uuid } from "uuid";
+
+/**
+ * Check if an error is a benign lifecycle error that should be silently ignored.
+ * These errors can occur during component unmount when the database is closing.
+ */
+const isBenignLifecycleError = (e: unknown): boolean => {
+	return e instanceof ClosedError || e instanceof NotStartedError;
+};
 
 type QueryOptions = { query: QueryLike; id?: string };
 
@@ -344,7 +352,7 @@ export const useQuery = <
 			draining = true;
 			loadMore(amount, opts)
 				.catch((e) => {
-					if (!(e instanceof ClosedError)) throw e;
+					if (!isBenignLifecycleError(e)) throw e;
 				})
 				.finally(() => {
 					draining = false;
@@ -714,7 +722,7 @@ export const useQuery = <
 
 			return drainRoundRobin(iterators, n, opts?.reason ?? "batch");
 		} catch (e) {
-			if (!(e instanceof ClosedError)) throw e;
+			if (!isBenignLifecycleError(e)) throw e;
 			return false;
 		} finally {
 			setIsLoading(false);

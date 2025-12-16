@@ -2037,7 +2037,7 @@ export class DocumentIndex<
 		const selfHash = this.node.identity.publicKey.hashcode();
 
 		const ready = async () => {
-			const cover = await this._log.getCover(properties, { eager });
+			const cover = await this._log.getCover(properties, { eager, signal });
 			return cover.some((hash) => hash !== selfHash);
 		};
 
@@ -2259,6 +2259,7 @@ export class DocumentIndex<
 						roleAge: remote.minAge,
 						eager: remote.reach?.eager,
 						reachableOnly: !!remote.wait, // when we want to merge joining we can ignore pending to be online peers and instead consider them once they become online
+						signal: options?.signal,
 					});
 
 			if (replicatorGroups) {
@@ -2975,6 +2976,7 @@ export class DocumentIndex<
 								}
 							: false,
 					resolve,
+					signal: options?.signal,
 					onResponse: async (response, from) => {
 						if (!from) {
 							logger.error("Missing response from");

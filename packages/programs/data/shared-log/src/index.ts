@@ -2074,48 +2074,84 @@ export class SharedLog<
 						unmaturedFetchCoverSize?: number;
 				  }
 				| boolean;
+			signal?: AbortSignal;
 		},
 	) {
-		let roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge());
-		let eager = options?.eager ?? false;
-		let range: CoverRange<NumberFromType<R>>;
-		if (properties && "range" in properties) {
-			range = properties.range;
-		} else {
-			range = await this.domain.fromArgs(properties.args);
+		// Check if aborted before starting
+		if (options?.signal?.aborted) {
+			return [];
 		}
 
-		const width =
-			range.length ??
-			(await minimumWidthToCover<R>(
-				this.replicas.min.getValue(this),
-				this.indexableDomain.numbers,
-			));
-		const set = await getCoverSet<R>({
-			peers: this.replicationIndex,
-			start: range.offset,
-			widthToCoverScaled: width,
-			roleAge,
-			eager,
-			numbers: this.indexableDomain.numbers,
-		});
-
-		// add all in flight
-		for (const [key, _] of this.syncronizer.syncInFlight) {
-			set.add(key);
+		// Return empty array if closed/closing to avoid NotStartedError/ClosedError
+		// This can happen during component unmount while remote queries are in flight
+		if (this.closed || !this._replicationRangeIndex) {
+			return [];
 		}
 
-		if (options?.reachableOnly) {
-			let reachableSet: string[] = [];
-			for (const peer of set) {
-				if (this.uniqueReplicators.has(peer)) {
-					reachableSet.push(peer);
-				}
+		try {
+			let roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge());
+			let eager = options?.eager ?? false;
+			let range: CoverRange<NumberFromType<R>>;
+			if (properties && "range" in properties) {
+				range = properties.range;
+			} else {
+				range = await this.domain.fromArgs(properties.args);
 			}
-			return reachableSet;
-		}
 
-		return [...set];
+			// Check abort signal after async operations
+			if (options?.signal?.aborted) {
+				return [];
+			}
+
+			const width =
+				range.length ??
+				(await minimumWidthToCover<R>(
+					this.replicas.min.getValue(this),
+					this.indexableDomain.numbers,
+				));
+
+			// Check abort signal before expensive getCoverSet
+			if (options?.signal?.aborted) {
+				return [];
+			}
+
+			const set = await getCoverSet<R>({
+				peers: this.replicationIndex,
+				start: range.offset,
+				widthToCoverScaled: width,
+				roleAge,
+				eager,
+				numbers: this.indexableDomain.numbers,
+			});
+
+			// Check abort signal before building result
+			if (options?.signal?.aborted) {
+				return [];
+			}
+
+			// add all in flight
+			for (const [key, _] of this.syncronizer.syncInFlight) {
+				set.add(key);
+			}
+
+			if (options?.reachableOnly) {
+				let reachableSet: string[] = [];
+				for (const peer of set) {
+					if (this.uniqueReplicators.has(peer)) {
+						reachableSet.push(peer);
+					}
+				}
+				return reachableSet;
+			}
+
+			return [...set];
+		} catch (error) {
+			// Handle race conditions where the index gets closed during the operation
+			if (isNotStartedError(error as Error)) {
+				return [];
+			}
+			throw error;
+		}
 	}
 
 	private async _close() {
