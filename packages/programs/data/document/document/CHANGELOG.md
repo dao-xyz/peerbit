@@ -456,6 +456,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [11.2.4](https://github.com/dao-xyz/peerbit/compare/document-v11.2.3...document-v11.2.4) (2025-12-16)
+
+
+### Bug Fixes
+
+* handle lifecycle errors and abort signals in getCover method ([ef15683](https://github.com/dao-xyz/peerbit/commit/ef1568368416615f9fc63942093dcc5ff4540db7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped to 11.6.6
+
 ## [11.2.3](https://github.com/dao-xyz/peerbit/compare/document-v11.2.2...document-v11.2.3) (2025-12-15)
 
 

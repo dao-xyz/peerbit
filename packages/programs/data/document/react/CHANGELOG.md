@@ -1,5 +1,19 @@
 # @peerbit/document-react
 
+## [0.4.4](https://github.com/dao-xyz/peerbit/compare/document-react-v0.4.3...document-react-v0.4.4) (2025-12-16)
+
+
+### Bug Fixes
+
+* handle lifecycle errors and abort signals in getCover method ([ef15683](https://github.com/dao-xyz/peerbit/commit/ef1568368416615f9fc63942093dcc5ff4540db7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 11.2.4
+
 ## [0.4.3](https://github.com/dao-xyz/peerbit/compare/document-react-v0.4.2...document-react-v0.4.3) (2025-12-15)
 
 
