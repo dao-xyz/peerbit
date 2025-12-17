@@ -1,3 +1,4 @@
+import { delay } from "@peerbit/time";
 import { expect, use } from "chai";
 import chaiAsPromised from "chai-as-promised";
 import { type ProgramClient } from "../src/index.js";
@@ -334,4 +335,193 @@ describe(`shared`, () => {
 	// TODO add tests and define behaviour for cross topic programs
 	// TODO add tests for shared subprogams
 	// TODO add tests for subprograms that is also open as root program
+
+	describe("parent option", () => {
+		it("second open should wait for first open to complete", async () => {
+			const parent = new TestProgram(999);
+			await client.open(parent);
+
+			const child = new TestProgram(1);
+
+			let childOpenStarted = false;
+			let childOpenCompleted = false;
+			const originalOpen = child.open.bind(child);
+
+			child.open = async (args) => {
+				childOpenStarted = true;
+				await delay(150);
+				await originalOpen(args);
+				childOpenCompleted = true;
+			};
+
+			const openPromise1 = client.open(child, {
+				parent: parent,
+				existing: "reuse",
+			});
+
+			while (!childOpenStarted) {
+				await delay(5);
+			}
+			expect(childOpenCompleted).to.be.false;
+
+			const openPromise2 = client.open(child, {
+				parent: parent,
+				existing: "reuse",
+			});
+			const result2 = await openPromise2;
+
+			expect(childOpenCompleted).to.be.true;
+
+			const result1 = await openPromise1;
+			expect(result1).to.equal(child);
+			expect(result2).to.equal(child);
+		});
+	});
+
+	describe("stop", () => {
+		it("waits for in-progress parent opens to complete", async () => {
+			const parent = new TestProgram(999);
+			await client.open(parent);
+
+			const child = new TestProgram(1);
+
+			let childOpenStarted = false;
+			let childOpenCompleted = false;
+			const originalOpen = child.open.bind(child);
+
+			child.open = async (args) => {
+				childOpenStarted = true;
+				await delay(100);
+				await originalOpen(args);
+				childOpenCompleted = true;
+			};
+
+			// Start opening but don't await
+			const openPromise = client.open(child, { parent: parent });
+
+			// Wait for open to start
+			while (!childOpenStarted) {
+				await delay(5);
+			}
+			expect(childOpenCompleted).to.be.false;
+
+			// Stop should wait for the in-progress open to complete
+			await client.stop();
+
+			// After stop, the open should have completed
+			expect(childOpenCompleted).to.be.true;
+
+			// The promise should resolve (not reject)
+			const result = await openPromise;
+			expect(result).to.equal(child);
+		});
+
+		it("cleans up state so restart works correctly", async () => {
+			const p1 = new TestProgram(1);
+
+			let openStarted = false;
+			const originalOpen = p1.open.bind(p1);
+
+			p1.open = async (args) => {
+				openStarted = true;
+				await delay(50);
+				await originalOpen(args);
+			};
+
+			// Start opening
+			const openPromise = client.open(p1);
+
+			// Wait for open to start
+			while (!openStarted) {
+				await delay(5);
+			}
+
+			// Stop while open is in progress
+			await client.stop();
+			await openPromise;
+
+			// Create a new client (simulating restart)
+			client = await creatMockPeer();
+
+			// Should be able to open a new program with same structure
+			const p2 = new TestProgram(2);
+			const result = await client.open(p2);
+			expect(result).to.equal(p2);
+			expect(result.closed).to.be.false;
+		});
+
+		it("waits for multiple in-progress opens", async () => {
+			const parent = new TestProgram(999);
+			await client.open(parent);
+
+			const children = [
+				new TestProgram(1),
+				new TestProgram(2),
+				new TestProgram(3),
+			];
+
+			const openStarted = [false, false, false];
+			const openCompleted = [false, false, false];
+
+			children.forEach((child, i) => {
+				const originalOpen = child.open.bind(child);
+				child.open = async (args) => {
+					openStarted[i] = true;
+					await delay(50 + i * 30); // Staggered delays
+					await originalOpen(args);
+					openCompleted[i] = true;
+				};
+			});
+
+			// Start all opens
+			const promises = children.map((child) =>
+				client.open(child, { parent: parent }),
+			);
+
+			// Wait for all to start
+			while (!openStarted.every(Boolean)) {
+				await delay(5);
+			}
+
+			// None should be completed yet
+			expect(openCompleted.some(Boolean)).to.be.false;
+
+			// Stop should wait for all
+			await client.stop();
+
+			// All should be completed after stop
+			expect(openCompleted.every(Boolean)).to.be.true;
+
+			// All promises should resolve
+			await Promise.all(promises);
+		});
+
+		it("handles failing opens gracefully", async () => {
+			const parent = new TestProgram(999);
+			await client.open(parent);
+
+			const child = new TestProgram(1);
+
+			let openStarted = false;
+			child.open = async () => {
+				openStarted = true;
+				await delay(50);
+				throw new Error("Simulated open failure");
+			};
+
+			// Start opening (will fail)
+			const openPromise = client.open(child, { parent: parent });
+
+			// Wait for open to start
+			while (!openStarted) {
+				await delay(5);
+			}
+
+			// Stop should not throw even though open will fail
+			await client.stop();
+
+			// The open promise should reject
+			await expect(openPromise).to.be.rejectedWith("Simulated open failure");
+		});
+	});
 });

@@ -79,6 +79,7 @@ export const addParent = (child: Manageable<any>, parent?: Manageable<any>) => {
 export class Handler<T extends Manageable<any>> {
 	items: Map<string, T>;
 	private _openQueue: Map<string, PQueue>;
+	private _openingPromises: Map<string, Promise<T>>;
 
 	constructor(
 		readonly properties: {
@@ -93,6 +94,7 @@ export class Handler<T extends Manageable<any>> {
 		},
 	) {
 		this._openQueue = new Map();
+		this._openingPromises = new Map();
 		this.items = new Map();
 	}
 
@@ -104,6 +106,13 @@ export class Handler<T extends Manageable<any>> {
 			}),
 		);
 		this._openQueue.clear();
+
+		// Wait for any in-progress opens to complete before closing
+		// This prevents race conditions where a program is being opened while we close
+		if (this._openingPromises.size > 0) {
+			await Promise.allSettled([...this._openingPromises.values()]);
+		}
+		this._openingPromises.clear();
 
 		// Close all open databases
 		await Promise.all(
@@ -273,38 +282,58 @@ export class Handler<T extends Manageable<any>> {
 			return program as S;
 		};
 
-		// Prevent deadlocks when a program is opened by another program
-		// TODO make proper deduplciation behaviour
+		// Helper to resolve address from storeOrAddress
+		const resolveAddress = async (): Promise<string> => {
+			if (typeof storeOrAddress === "string") {
+				return storeOrAddress;
+			}
+			if (!storeOrAddress.closed) {
+				return storeOrAddress.address;
+			}
+			return storeOrAddress.save(this.properties.client.services.blocks, {
+				skipOnAddress: true,
+				condition: (addr) => !this.items.has(addr.toString()),
+			});
+		};
+
+		const address = await resolveAddress();
+
+		// For parent opens, check if already opened or in-progress and return early
+		// This prevents race conditions while avoiding deadlocks
 		if (options?.parent) {
-			return fn();
-		}
-		let address: string;
-		if (typeof storeOrAddress === "string") {
-			address = storeOrAddress;
-		} else {
-			if (storeOrAddress.closed) {
-				address = await storeOrAddress.save(
-					this.properties.client.services.blocks,
-					{
-						skipOnAddress: true,
-						condition: (address) => {
-							return !this.items.has(address.toString());
-						},
-					},
-				);
-			} else {
-				address = storeOrAddress.address;
+			// Check if there's an open in progress FIRST - wait for it
+			// This must be checked before items because beforeOpen() adds to items
+			// before open() completes
+			const existingPromise = this._openingPromises.get(address);
+			if (existingPromise) {
+				const result = await existingPromise;
+				addParent(result, options.parent);
+				return result as S;
+			}
+
+			// Check if already fully opened
+			const existing = this.items.get(address);
+			if (existing) {
+				addParent(existing, options.parent);
+				return existing as S;
+			}
+
+			// Track this open and bypass queue (parent already holds queue)
+			const openPromise = fn();
+			this._openingPromises.set(address, openPromise as Promise<T>);
+			try {
+				return await openPromise;
+			} finally {
+				this._openingPromises.delete(address);
 			}
 		}
 
-		if (address) {
-			let queue = this._openQueue.get(address);
-			if (!queue) {
-				queue = new PQueue({ concurrency: 1 });
-				this._openQueue.set(address, queue);
-			}
-			return queue.add(fn) as any as S; // TODO p-queue seem to return void type ;
+		// Non-parent opens use queue for serialization
+		let queue = this._openQueue.get(address);
+		if (!queue) {
+			queue = new PQueue({ concurrency: 1 });
+			this._openQueue.set(address, queue);
 		}
-		return fn(); // No address lookup,
+		return queue.add(fn) as any as S;
 	}
 }
