@@ -202,6 +202,13 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.4.4](https://github.com/dao-xyz/peerbit/compare/program-v5.4.3...program-v5.4.4) (2025-12-17)
+
+
+### Bug Fixes
+
+* correctly handle concurrent subprogram openings ([a49f37b](https://github.com/dao-xyz/peerbit/commit/a49f37b9f31f62395c4e3ac60dd952b73a649be0))
+
 ## [5.4.3](https://github.com/dao-xyz/peerbit/compare/program-v5.4.2...program-v5.4.3) (2025-12-02)
 
 
