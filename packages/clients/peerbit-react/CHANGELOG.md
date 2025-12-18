@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.0.42](https://github.com/dao-xyz/peerbit/compare/react-v0.0.41...react-v0.0.42) (2025-12-18)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/proxy-window bumped to 3.1.7
+    * peerbit bumped to 4.4.7
+
 ## [0.0.41](https://github.com/dao-xyz/peerbit/compare/react-v0.0.40...react-v0.0.41) (2025-12-17)
 
 
