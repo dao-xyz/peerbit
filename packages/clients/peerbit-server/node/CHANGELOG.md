@@ -452,6 +452,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.10.0](https://github.com/dao-xyz/peerbit/compare/server-v5.9.6...server-v5.10.0) (2025-12-18)
+
+
+### Features
+
+* add hetzner ([3efd4af](https://github.com/dao-xyz/peerbit/commit/3efd4af1a1b4a1b17ca582bd88b8ea052895b42c))
+
 ## [5.9.6](https://github.com/dao-xyz/peerbit/compare/server-v5.9.5...server-v5.9.6) (2025-12-17)
 
 
