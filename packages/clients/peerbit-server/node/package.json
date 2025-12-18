@@ -26,7 +26,8 @@
 		"./remotes.js": "./dist/src/remotes.browser.js",
 		"./dist/src/docker.js": "./dist/src/docker.browser.js",
 		"./docker.js": "./dist/src/docker.browser.js",
-		"./dist/src/aws.js": "./dist/src/aws.browser.js"
+		"./dist/src/aws.js": "./dist/src/aws.browser.js",
+		"./dist/src/hetzner.js": "./dist/src/hetzner.browser.js"
 	},
 	"files": [
 		"dist",

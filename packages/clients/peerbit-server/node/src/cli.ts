@@ -30,6 +30,11 @@ import {
 	loadConfig,
 	startCertbot,
 } from "./domain.js";
+import {
+	HETZNER_SERVER_TYPES,
+	launchNodes as launchHetznerNodes,
+	terminateNode as terminateHetznerNode,
+} from "./hetzner.js";
 import { DEFAULT_REMOTE_GROUP, type RemoteObject, Remotes } from "./remotes.js";
 import { LOCAL_API_PORT } from "./routes.js";
 import { startServerWithNode } from "./server.js";
@@ -457,6 +462,152 @@ export const cli = async (args?: string[]) => {
 								}
 							},
 						})
+						.command({
+							command: "hetzner",
+							describe: "Spawn remote nodes on Hetzner Cloud",
+							builder: (hetznerArgs: Argv) => {
+								hetznerArgs.option("count", {
+									describe: "Amount of nodes to spawn",
+									defaultDescription: "One node",
+									type: "number",
+									alias: "c",
+									default: 1,
+								});
+								hetznerArgs.option("location", {
+									describe: "Location (e.g. fsn1, nbg1, hel1, ash, hil)",
+									type: "string",
+									alias: "l",
+									default: "fsn1",
+								});
+								hetznerArgs.option("group", {
+									describe: "Remote group to launch nodes in",
+									type: "string",
+									alias: "g",
+									default: DEFAULT_REMOTE_GROUP,
+								});
+								hetznerArgs.option("server-type", {
+									describe: "Server type",
+									type: "string",
+									alias: "t",
+									choices: [...HETZNER_SERVER_TYPES],
+									default: "cx11",
+								});
+
+								hetznerArgs.option("name", {
+									describe: "Name prefix for spawned nodes",
+									type: "string",
+									alias: "n",
+									default: "peerbit-node",
+								});
+								hetznerArgs.option("grant-access", {
+									describe: "Grant access to public keys on start",
+									defaultDescription:
+										"The publickey of this device located in 'directory'",
+									type: "string",
+									array: true,
+									alias: "ga",
+								});
+								hetznerArgs.option("directory", {
+									describe: "Peerbit directory",
+									defaultDescription: "~.peerbit",
+									type: "string",
+									alias: "d",
+									default: getHomeConfigDir(),
+								});
+								hetznerArgs.option("email", {
+									describe: "Email for Let's security messages",
+									type: "string",
+									alias: "e",
+									demandOption: true,
+								});
+								hetznerArgs.option("token", {
+									describe: "Hetzner Cloud API token (or set HCLOUD_TOKEN)",
+									type: "string",
+									alias: ["tok"],
+								});
+								hetznerArgs.option("image", {
+									describe: "Image to use (e.g. ubuntu-22.04)",
+									type: "string",
+									default: "ubuntu-22.04",
+								});
+								hetznerArgs.option("server-version", {
+									describe:
+										"@peerbit/server version or tag to install on the instance (e.g. 5.7.0-58d3d09)",
+									type: "string",
+									alias: ["sv"],
+								});
+								return hetznerArgs;
+							},
+							handler: async (args) => {
+								const self = (
+									await getKeypair(args.directory)
+								).publicKey.toPeerId();
+								const accessGrant: PeerId[] =
+									args["grant-access"]?.length > 0
+										? (args["grant-access"] as string[]).map((x) =>
+												peerIdFromString(x),
+											)
+										: [];
+								accessGrant.push(self);
+								const nodes = await launchHetznerNodes({
+									token: (args.token as string) || undefined,
+									email: args.email as string,
+									count: args.count,
+									namePrefix: args.name,
+									location: args.location,
+									serverType: args["server-type"],
+									grantAccess: accessGrant,
+									image: args.image,
+									serverVersion:
+										(args["server-version"] as string) || undefined,
+								});
+
+								console.log(
+									`Waiting for ${args.count} ${
+										args.count > 1 ? "nodes" : "node"
+									} to spawn. This might take a few minutes. You can watch the progress in your Hetzner Cloud console.`,
+								);
+								const twirlTimer = (function () {
+									const P = ["\\", "|", "/", "-"];
+									let x = 0;
+									return setInterval(function () {
+										process.stdout.write(
+											"\r" + "Loading: " + chalk.hex(colors[x])(P[x++]),
+										);
+										x &= 3;
+									}, 250);
+								})();
+								for (const node of nodes) {
+									try {
+										const domain = await waitForDomain(node.publicIp);
+										const remotes = new Remotes(getRemotesPath(args.directory));
+										remotes.add({
+											name: node.name,
+											address: domain,
+											group: args.group,
+											origin: {
+												type: "hetzner",
+												serverId: node.serverId,
+												location: node.location,
+											},
+										});
+									} catch (error: any) {
+										process.stdout.write("\r");
+										console.error(
+											`Error waiting for domain for ip: ${
+												node.publicIp
+											} to be available: ${error?.toString()}`,
+										);
+									}
+								}
+								process.stdout.write("\r");
+								clearInterval(twirlTimer);
+								console.log(`New nodes available (${nodes.length}):`);
+								for (const node of nodes) {
+									console.log(chalk.green(node.name));
+								}
+							},
+						})
 						.strict()
 						.demandCommand();
 				})
@@ -468,6 +619,11 @@ export const cli = async (args?: string[]) => {
 							describe: "Kill all nodes",
 							type: "boolean",
 							default: false,
+						});
+						killArgs.option("token", {
+							describe: "Used for Hetzner Cloud API (or set HCLOUD_TOKEN)",
+							type: "string",
+							alias: ["tok"],
 						});
 						killArgs.positional("name", {
 							type: "string",
@@ -494,6 +650,11 @@ export const cli = async (args?: string[]) => {
 									await terminateNode({
 										instanceId: remote.origin.instanceId,
 										region: remote.origin.region,
+									});
+								} else if (remote.origin?.type === "hetzner") {
+									await terminateHetznerNode({
+										serverId: remote.origin.serverId,
+										token: (args.token as string) || undefined,
 									});
 								}
 							}
@@ -537,7 +698,9 @@ export const cli = async (args?: string[]) => {
 									remote.group || "",
 									remote.origin?.type === "aws"
 										? `aws\n${remote.origin.region}\n${remote.origin.instanceId}`
-										: "",
+										: remote.origin?.type === "hetzner"
+											? `hetzner\n${remote.origin.location}\n${remote.origin.serverId}`
+											: "",
 									resolvedOrRejected[ix].status === "fulfilled"
 										? chalk.green("Y")
 										: chalk.red("N"),

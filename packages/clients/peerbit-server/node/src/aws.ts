@@ -57,6 +57,7 @@ const setupUserData = (
 	serverVersion?: string,
 ) => {
 	const peerIdStrings = grantAccess.map((x) => x.toString());
+	const grantArgs = peerIdStrings.map((key) => `--ga ${key}`).join(" ");
 
 	// better-sqlite3 force use to install build-essentials for `make` command, TOOD dont bundle better-sqlite3 by default?
 	const versionSpec = serverVersion ? `@${serverVersion}` : "";
@@ -67,7 +68,7 @@ sudo apt-get install -y nodejs
 sudo apt-get install -y build-essential
 npm install -g @peerbit/server${versionSpec}
 sudo peerbit domain test --email ${email}
-peerbit start ${peerIdStrings.map((key) => `--ga ${key}`)} > log.txt 2>&1 &
+peerbit start ${grantArgs} > log.txt 2>&1 &
 `;
 };
 const PURPOSE_TAG_NAME = "Purpose";

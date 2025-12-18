@@ -6,7 +6,13 @@ interface AWSOrigin {
 	instanceId: string;
 }
 
-export type RemoteOrigin = AWSOrigin;
+interface HetznerOrigin {
+	type: "hetzner";
+	location: string;
+	serverId: number;
+}
+
+export type RemoteOrigin = AWSOrigin | HetznerOrigin;
 
 export const DEFAULT_REMOTE_GROUP = "default";
 

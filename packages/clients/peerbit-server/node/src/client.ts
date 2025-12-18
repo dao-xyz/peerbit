@@ -358,11 +358,16 @@ export const createClient = async (
 		},
 
 		terminate: async () => {
-			const { terminateNode } = await import("./aws.js");
 			if (remote.origin?.type === "aws") {
+				const { terminateNode } = await import("./aws.js");
 				await terminateNode({
 					instanceId: remote.origin.instanceId,
 					region: remote.origin.region,
+				});
+			} else if (remote.origin?.type === "hetzner") {
+				const { terminateNode } = await import("./hetzner.js");
+				await terminateNode({
+					serverId: remote.origin.serverId,
 				});
 			}
 		},

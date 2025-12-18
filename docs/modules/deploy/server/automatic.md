@@ -1,6 +1,6 @@
 # Spawn nodes with the CLI
 
-The CLI offers the capability to directly spawn nodes within server centers, presently limited to AWS, using a set of commands.
+The CLI offers the capability to directly spawn nodes within server centers, presently limited to AWS and Hetzner Cloud, using a set of commands.
 
 ## AWS
 
@@ -44,6 +44,42 @@ peerbit remote ls
 If you have recently spawned the node and it displays as offline, it's possible that you need to wait a bit longer for the SSL certificates and configurations to finalize. This step typically consumes the most time.
 
 You can also access your AWS console within the region where the deployment was initiated to monitor the progress.
+
+## Hetzner Cloud
+
+1.
+
+Create a Hetzner Cloud API token and export it (recommended):
+```sh
+export HCLOUD_TOKEN="<your-token>"
+```
+
+2.
+
+Install the CLI locally:
+```sh
+npm install -g @peerbit/server
+```
+
+3.
+
+Initiate the spawn command:
+```sh
+peerbit remote spawn hetzner --count 1 --email <your-email>
+```
+Please note that this process might require several minutes.
+
+For additional spawning options, refer to:
+```sh
+peerbit remote spawn hetzner --help
+```
+
+4.
+
+Verify the status of your node:
+```sh
+peerbit remote ls
+```
 
 
 ## Other cloud vendors
