@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/rpc",
-	"version": "5.4.6",
+	"version": "5.4.7",
 	"description": "RPC calls for peers",
 	"sideEffects": false,
 	"type": "module",
