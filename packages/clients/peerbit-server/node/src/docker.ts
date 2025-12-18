@@ -34,7 +34,9 @@ const getSudoPrefix = async (): Promise<string> => {
 	if (await commandExists("sudo")) {
 		return "sudo ";
 	}
-	throw new Error("Docker installation requires elevated privileges (sudo not found)");
+	throw new Error(
+		"Docker installation requires elevated privileges (sudo not found)",
+	);
 };
 
 const dockerCliExists = async (): Promise<boolean> => {
