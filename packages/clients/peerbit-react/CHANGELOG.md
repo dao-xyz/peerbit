@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.0.43](https://github.com/dao-xyz/peerbit/compare/react-v0.0.42...react-v0.0.43) (2025-12-19)
+
+
+### Bug Fixes
+
+* make sure sqlite3 is initialized from /peerbit/sqlite/ ([a230c4a](https://github.com/dao-xyz/peerbit/commit/a230c4a6d5389c358b8abd1edef82ca490fa22a1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/proxy-window bumped to 3.1.8
+    * peerbit bumped to 4.4.8
+
 ## [0.0.42](https://github.com/dao-xyz/peerbit/compare/react-v0.0.41...react-v0.0.42) (2025-12-18)
 
 
