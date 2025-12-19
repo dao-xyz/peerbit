@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.3.1...indexer-sqlite3-v1.3.2) (2025-12-19)
+
+
+### Bug Fixes
+
+* make sure sqlite3 is initialized from /peerbit/sqlite/ ([a230c4a](https://github.com/dao-xyz/peerbit/commit/a230c4a6d5389c358b8abd1edef82ca490fa22a1))
+
 ## [1.3.1](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.3.0...indexer-sqlite3-v1.3.1) (2025-12-18)
 
 
