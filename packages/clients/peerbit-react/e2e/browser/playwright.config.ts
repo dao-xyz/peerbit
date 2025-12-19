@@ -1,6 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const port = 4173;
+const defaultPort = 4173;
+const envPort = Number.parseInt(process.env.PLAYWRIGHT_PORT ?? "", 10);
+const port = Number.isFinite(envPort) && envPort > 0 ? envPort : defaultPort;
+const baseURL = `http://localhost:${port}`;
 
 export default defineConfig({
 	testDir: "./tests",
@@ -12,14 +15,14 @@ export default defineConfig({
 		? [["list"], ["html", { open: "never" }]]
 		: [["list"]],
 	use: {
-		baseURL: `http://localhost:${port}`,
+		baseURL,
 		trace: "on-first-retry",
 		video: "retain-on-failure",
 		screenshot: "only-on-failure",
 	},
 	webServer: {
-		command: "pnpm dev",
-		url: `http://localhost:${port}`,
+		command: `pnpm dev -- --port ${port}`,
+		url: baseURL,
 		reuseExistingServer: !process.env.CI,
 		timeout: 120_000,
 	},

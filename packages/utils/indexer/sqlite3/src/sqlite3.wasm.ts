@@ -5,7 +5,6 @@ import {
 	type SAHPoolUtil,
 	type Database as SQLDatabase,
 	type PreparedStatement as SQLStatement,
-	default as sqlite3InitModule,
 } from "@sqlite.org/sqlite-wasm";
 import { v4 as uuid } from "uuid";
 import type { BindableValue } from "./schema.js";
@@ -115,19 +114,60 @@ const log = (...args: any) => console.log(...args);
 // eslint-disable-next-line no-console
 const error = (...args: any) => console.error(...args);
 
+type Sqlite3InitModule = typeof import("@sqlite.org/sqlite-wasm").default;
+type Sqlite3Module = Awaited<ReturnType<Sqlite3InitModule>>;
+type Sqlite3InitModuleState = {
+	debugModule?: (...args: unknown[]) => void;
+	wasmFilename?: string;
+	sqlite3Dir?: string;
+};
+
+const SQLITE3_ASSET_BASE = "/peerbit/sqlite3";
+const SQLITE3_ASSET_DIR = `${SQLITE3_ASSET_BASE}/`;
+const SQLITE3_WASM_PATH = `${SQLITE3_ASSET_BASE}/sqlite3.wasm`;
+
+let sqlite3InitModulePromise: Promise<Sqlite3InitModule> | undefined;
+
+const ensureSqlite3InitModuleState = () => {
+	const globalWithSqlite = globalThis as typeof globalThis & {
+		sqlite3InitModuleState?: Sqlite3InitModuleState;
+	};
+	const existing = globalWithSqlite.sqlite3InitModuleState ?? {};
+	const debugModule =
+		typeof existing.debugModule === "function"
+			? existing.debugModule
+			: () => {};
+	existing.debugModule = debugModule;
+	existing.wasmFilename = SQLITE3_WASM_PATH;
+	existing.sqlite3Dir = SQLITE3_ASSET_DIR;
+	globalWithSqlite.sqlite3InitModuleState = existing;
+};
+
+const loadSqlite3InitModule = async (): Promise<Sqlite3InitModule> => {
+	if (!sqlite3InitModulePromise) {
+		sqlite3InitModulePromise = import("@sqlite.org/sqlite-wasm").then(
+			(mod) => mod.default,
+		);
+	}
+	const sqlite3InitModule = await sqlite3InitModulePromise;
+	// sqlite-wasm reads sqlite3InitModuleState when sqlite3InitModule() runs.
+	ensureSqlite3InitModuleState();
+	return sqlite3InitModule;
+};
+
 let poolUtil: SAHPoolUtil | undefined = undefined;
-let sqlite3: Awaited<ReturnType<typeof sqlite3InitModule>> | undefined =
-	undefined;
+let sqlite3: Sqlite3Module | undefined = undefined;
 
 const create = async (directory?: string) => {
 	let statements: Map<string, Statement> = new Map();
 
+	const sqlite3InitModule = await loadSqlite3InitModule();
 	sqlite3 =
 		sqlite3 ||
 		(await sqlite3InitModule({
 			print: log,
 			printErr: error,
-			locateFile: (file: string) => `/peerbit/sqlite3/${file}`,
+			locateFile: (file: string) => `${SQLITE3_ASSET_BASE}/${file}`,
 		}));
 	let sqliteDb: OpfsSAHPoolDatabase | SQLDatabase | undefined = undefined;
 	let closeInternal = async () => {
@@ -225,18 +265,22 @@ const create = async (directory?: string) => {
 
 			dbFileName = `${directory}/db.sqlite`;
 			const poolDirectory = `${directory}/peerbit/sqlite-opfs-pool`; // we do a unique directory else we will get problem open a client in multiple tabs
-			poolUtil =
+			const activePoolUtil =
 				poolUtil ||
 				(await sqlite3!.installOpfsSAHPoolVfs({
 					directory: poolDirectory,
 				}));
+			poolUtil = activePoolUtil;
 
-			await poolUtil.reserveMinimumCapacity(100);
-			sqliteDb = new poolUtil.OpfsSAHPoolDb(dbFileName);
+			await activePoolUtil.reserveMinimumCapacity(100);
+			sqliteDb = new activePoolUtil.OpfsSAHPoolDb(dbFileName);
 		} else {
 			sqliteDb = new sqlite3!.oo1.DB(":memory:");
 		}
 
+		if (!sqliteDb) {
+			throw new Error("Failed to open sqlite database");
+		}
 		sqliteDb.exec("PRAGMA journal_mode = WAL");
 		sqliteDb.exec("PRAGMA foreign_keys = on");
 	};

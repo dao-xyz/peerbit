@@ -13,6 +13,46 @@ const getBootstrapAddrs = () => {
 	return fromComma;
 };
 
+const getSqliteEnabled = () =>
+	new URLSearchParams(window.location.search).has("sqlite");
+
+const SqliteStatus = () => {
+	const enabled = React.useMemo(getSqliteEnabled, []);
+	const [status, setStatus] = React.useState("idle");
+
+	React.useEffect(() => {
+		if (!enabled) {
+			return;
+		}
+		let cancelled = false;
+		const run = async () => {
+			setStatus("loading");
+			try {
+				const { create } = await import("@peerbit/indexer-sqlite3");
+				await create();
+				if (!cancelled) {
+					setStatus("ready");
+				}
+			} catch (error) {
+				console.error(error);
+				if (!cancelled) {
+					setStatus("error");
+				}
+			}
+		};
+		void run();
+		return () => {
+			cancelled = true;
+		};
+	}, [enabled]);
+
+	if (!enabled) {
+		return null;
+	}
+
+	return <div data-testid="sqlite-status">{status}</div>;
+};
+
 const PeerInfo = () => {
 	const { peer, loading, status, error } = usePeer();
 	const [peerHash, setPeerHash] = React.useState<string | undefined>(undefined);
@@ -26,6 +66,7 @@ const PeerInfo = () => {
 	return (
 		<div>
 			<h1>Peerbit React E2E</h1>
+			<SqliteStatus />
 			<div data-testid="status">status: {status}</div>
 			<div data-testid="loading">loading: {loading ? "yes" : "no"}</div>
 			<div data-testid="peer-hash">{peerHash ?? "no-peer"}</div>
