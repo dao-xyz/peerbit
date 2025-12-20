@@ -157,18 +157,36 @@ const loadSqlite3InitModule = async (): Promise<Sqlite3InitModule> => {
 
 let poolUtil: SAHPoolUtil | undefined = undefined;
 let sqlite3: Sqlite3Module | undefined = undefined;
+let sqlite3Promise: Promise<Sqlite3Module> | undefined = undefined;
+
+const getSqlite3 = async (): Promise<Sqlite3Module> => {
+	if (sqlite3) {
+		return sqlite3;
+	}
+	if (!sqlite3Promise) {
+		sqlite3Promise = (async () => {
+			const sqlite3InitModule = await loadSqlite3InitModule();
+			// sqlite-wasm deletes sqlite3InitModuleState at the beginning of
+			// sqlite3InitModule(), so ensure the state is set immediately before
+			// initializing (and guard against concurrent initializers).
+			ensureSqlite3InitModuleState();
+			return sqlite3InitModule({
+				print: log,
+				printErr: error,
+				locateFile: (file: string) => `${SQLITE3_ASSET_BASE}/${file}`,
+			});
+		})().then((module) => {
+			sqlite3 = module;
+			return module;
+		});
+	}
+	return sqlite3Promise;
+};
 
 const create = async (directory?: string) => {
 	let statements: Map<string, Statement> = new Map();
 
-	const sqlite3InitModule = await loadSqlite3InitModule();
-	sqlite3 =
-		sqlite3 ||
-		(await sqlite3InitModule({
-			print: log,
-			printErr: error,
-			locateFile: (file: string) => `${SQLITE3_ASSET_BASE}/${file}`,
-		}));
+	const sqlite3 = await getSqlite3();
 	let sqliteDb: OpfsSAHPoolDatabase | SQLDatabase | undefined = undefined;
 	let closeInternal = async () => {
 		await Promise.all([...statements.values()].map((x) => x.finalize?.()));
@@ -267,7 +285,7 @@ const create = async (directory?: string) => {
 			const poolDirectory = `${directory}/peerbit/sqlite-opfs-pool`; // we do a unique directory else we will get problem open a client in multiple tabs
 			const activePoolUtil =
 				poolUtil ||
-				(await sqlite3!.installOpfsSAHPoolVfs({
+				(await sqlite3.installOpfsSAHPoolVfs({
 					directory: poolDirectory,
 				}));
 			poolUtil = activePoolUtil;
@@ -275,7 +293,7 @@ const create = async (directory?: string) => {
 			await activePoolUtil.reserveMinimumCapacity(100);
 			sqliteDb = new activePoolUtil.OpfsSAHPoolDb(dbFileName);
 		} else {
-			sqliteDb = new sqlite3!.oo1.DB(":memory:");
+			sqliteDb = new sqlite3.oo1.DB(":memory:");
 		}
 
 		if (!sqliteDb) {
