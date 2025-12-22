@@ -171,6 +171,7 @@ export const getRelation = async (
 	return db.index.get(new IdentityRelation({ from, to }).id);
 };
 
+@variant(0)
 export class FromTo {
 	@field({ type: fixedArray("u8", 32) })
 	id: Uint8Array;
