@@ -45,7 +45,7 @@ class PostsDB extends Program<Args> {
 }
 
 /// [data]
-@variant("channel-with-nested-postdb")
+@variant("channel")
 class Channel extends Program<Args> {
 	// Name of channel
 	@field({ type: "string" })
@@ -67,6 +67,7 @@ class Channel extends Program<Args> {
 	}
 }
 
+@variant("indexable-channel")
 class IndexableChannel {
 	@field({ type: "string" })
 	name: string;
