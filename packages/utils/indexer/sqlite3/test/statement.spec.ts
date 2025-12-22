@@ -1,4 +1,4 @@
-import { field } from "@dao-xyz/borsh";
+import { field, variant } from "@dao-xyz/borsh";
 import {
 	StringMatch,
 	StringMatchMethod,
@@ -14,6 +14,7 @@ describe("statement", () => {
 	let index: Awaited<ReturnType<typeof setup<any>>>;
 	let store: SQLLiteIndex<DocumentWithFromProperty>;
 
+	@variant("DocumentWithFromProperty")
 	class DocumentWithFromProperty {
 		@id({ type: "string" })
 		id: string;

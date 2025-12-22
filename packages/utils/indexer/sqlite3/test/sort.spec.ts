@@ -1,3 +1,4 @@
+import { variant } from "@dao-xyz/borsh";
 import {
 	Or,
 	Sort,
@@ -22,6 +23,7 @@ describe("sort", () => {
 		await index.store.stop();
 	});
 
+	@variant("Document")
 	class Document {
 		@id({ type: "string" })
 		id: string;

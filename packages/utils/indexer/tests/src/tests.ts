@@ -329,6 +329,7 @@ export const tests = (
 			};
 
 			describe("string", () => {
+				@variant("SimpleDocument")
 				class SimpleDocument {
 					@field({ type: "string" })
 					id: string;
@@ -421,6 +422,7 @@ export const tests = (
 			});
 
 			describe("bytes", () => {
+				@variant("DocumentUint8arrayId")
 				class DocumentUint8arrayId {
 					@field({ type: Uint8Array })
 					id: Uint8Array;
@@ -445,6 +447,7 @@ export const tests = (
 					await testIndex(store, doc);
 				});
 
+				@variant("DocumentFixedUint8arrayId")
 				class DocumentFixedUint8arrayId {
 					@field({ type: fixedArray("u8", 32) })
 					id: Uint8Array;
@@ -471,6 +474,7 @@ export const tests = (
 			});
 
 			describe("number", () => {
+				@variant("DocumentNumberId")
 				class DocumentNumberId {
 					@field({ type: "u32" })
 					id: number;
@@ -498,6 +502,7 @@ export const tests = (
 			});
 
 			describe("bigint", () => {
+				@variant("DocumentBigintId")
 				class DocumentBigintId {
 					@field({ type: "u64" })
 					id: bigint;
@@ -525,6 +530,7 @@ export const tests = (
 			});
 
 			describe("by decorator", () => {
+				@variant("DocumentWithDecoratedId")
 				class DocumentWithDecoratedId {
 					@id({ type: "string" })
 					xyz: string;
@@ -872,6 +878,7 @@ export const tests = (
 
 				describe("array", () => {
 					describe("uint8arrays", () => {
+						@variant("Uint8arraysVec")
 						class Uint8arraysVec {
 							@field({ type: Uint8Array })
 							id: Uint8Array;
@@ -911,6 +918,7 @@ export const tests = (
 					});
 
 					describe("documents", () => {
+						@variant("DocumentsVec")
 						class DocumentsVec {
 							@field({ type: Uint8Array })
 							id: Uint8Array;
@@ -927,6 +935,7 @@ export const tests = (
 							}
 						}
 
+						@variant("DocumentWithProperty")
 						class DocumentWithProperty {
 							@field({ type: "string" })
 							property: string;
@@ -936,6 +945,7 @@ export const tests = (
 							}
 						}
 
+						@variant("DocumentsVecWithPropertyDocument")
 						class DocumentsVecWithPropertyDocument {
 							@field({ type: Uint8Array })
 							id: Uint8Array;
@@ -1376,6 +1386,7 @@ export const tests = (
 					});
 
 					describe("simple value", () => {
+						@variant("ArrayDocument")
 						class ArrayDocument {
 							@field({ type: Uint8Array })
 							id: Uint8Array;
@@ -2006,6 +2017,7 @@ export const tests = (
 
 				describe("nested", () => {
 					describe("one level", () => {
+						@variant("NestedOneLevel")
 						class Nested {
 							@field({ type: "u64" })
 							number: bigint;
@@ -2130,6 +2142,7 @@ export const tests = (
 					});
 
 					describe("one level flat constructor", () => {
+						@variant("NestedOneLevelFlatConstructor")
 						class Nested {
 							@field({ type: "bool" })
 							bool: boolean;
@@ -2197,6 +2210,7 @@ export const tests = (
 					});
 
 					describe("2-level-variants", () => {
+						@variant("L1_2Level")
 						class L1 {
 							@field({ type: option("u64") })
 							number?: bigint;
@@ -2206,6 +2220,7 @@ export const tests = (
 							}
 						}
 
+						@variant("L0_2Level")
 						class L0 {
 							@field({ type: option(L1) })
 							nestedAgain?: L1;
@@ -2267,6 +2282,7 @@ export const tests = (
 					});
 
 					describe("3-level-variants", () => {
+						@variant("L2_3Level")
 						class L2 {
 							@field({ type: option("u64") })
 							number?: bigint;
@@ -2276,6 +2292,7 @@ export const tests = (
 							}
 						}
 
+						@variant("L1_3Level")
 						class L1 {
 							@field({ type: option(L2) })
 							nestedAgainAgain?: L2;
@@ -2285,6 +2302,7 @@ export const tests = (
 							}
 						}
 
+						@variant("L0_3Level")
 						class L0 {
 							@field({ type: option(L1) })
 							nestedAgain?: L1;
@@ -2545,6 +2563,7 @@ export const tests = (
 								}
 							}
 
+							@variant("NestedNonArray")
 							class Nested {
 								@field({ type: option(Base) })
 								nestedAgain?: Base;
@@ -2777,6 +2796,7 @@ export const tests = (
 							});
 
 							describe("nested-string-array", () => {
+								@variant("NestedStringArray")
 								class Nested {
 									@field({ type: vec("string") })
 									arr: string[];
@@ -2840,6 +2860,7 @@ export const tests = (
 							});
 
 							describe("nested multiple fields", () => {
+								@variant("NestedMultipleFieldsDocument")
 								class NestedMultipleFieldsDocument {
 									@field({ type: "string" })
 									a: string;
@@ -3085,6 +3106,7 @@ export const tests = (
 				});
 
 				describe("nested", () => {
+					@variant("MultifieldNested_ShapeNested")
 					class MultifieldNested {
 						@field({ type: "bool" })
 						bool: boolean;
@@ -3102,6 +3124,7 @@ export const tests = (
 						}
 					}
 
+					@variant("NestedBoolQueryDocument_ShapeNested")
 					class NestedBoolQueryDocument {
 						@id({ type: "string" })
 						id: string;
@@ -3254,6 +3277,7 @@ export const tests = (
 						}
 					}
 
+					@variant("NestedBoolQueryDocument_ShapeNestedPoly")
 					class NestedBoolQueryDocument {
 						@id({ type: "string" })
 						id: string;
@@ -3367,6 +3391,7 @@ export const tests = (
 				});
 
 				describe("nested-array", () => {
+					@variant("MultifieldNested_ShapeNestedArray")
 					class MultifieldNested {
 						@field({ type: "bool" })
 						bool: boolean;
@@ -3384,6 +3409,7 @@ export const tests = (
 						}
 					}
 
+					@variant("NestedBoolQueryDocument_ShapeNestedArray")
 					class NestedBoolQueryDocument {
 						@id({ type: "string" })
 						id: string;
@@ -3781,6 +3807,7 @@ export const tests = (
 				});
 
 				describe("nested-nested-invariant", () => {
+					@variant("V0_nested_nested_invariant")
 					class V0 {
 						@field({ type: "u64" })
 						number: bigint;
@@ -3790,6 +3817,7 @@ export const tests = (
 						}
 					}
 
+					@variant("NestedValue_nested_nested_invariant")
 					class NestedValue {
 						@field({ type: V0 })
 						v0?: V0;
@@ -3799,6 +3827,7 @@ export const tests = (
 						}
 					}
 
+					@variant("Document_nested_nested_invariant")
 					class Document {
 						@id({ type: "string" })
 						id: string;
@@ -3838,6 +3867,7 @@ export const tests = (
 				});
 
 				describe("variant-nested-invariant", () => {
+					@variant("V0_variant_nested_invariant")
 					class V0 {
 						@field({ type: "u64" })
 						number: bigint;
@@ -3847,6 +3877,7 @@ export const tests = (
 						}
 					}
 
+					@variant("NestedValue_variant_nested_invariant")
 					class NestedValue {
 						@field({ type: V0 })
 						v0?: V0;
@@ -4080,6 +4111,7 @@ export const tests = (
 		});
 
 		describe("sum", () => {
+			@variant("SummableDocument")
 			class SummableDocument {
 				@field({ type: "string" })
 				id: string;
@@ -4184,6 +4216,7 @@ export const tests = (
 		});
 
 		describe("count", () => {
+			@variant("NumberArrayDocument")
 			class NumberArrayDocument {
 				@field({ type: "string" })
 				id: string;
@@ -4494,6 +4527,7 @@ export const tests = (
 			});
 
 			it("multi-scope insertion", async () => {
+				@variant("AnotherDocument")
 				class AnotherDocument {
 					@id({ type: "string" })
 					id: string;

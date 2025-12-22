@@ -11,9 +11,10 @@ describe("schema", () => {
 	});
 
 	describe("table", () => {
-		it("uses class for table name when no variant", () => {
-			const table = getTableName(["scope"], DocumentNoVariant);
-			expect(table).to.equal("scope__class_DocumentNoVariant");
+		it("throws when no variant", () => {
+			expect(() => getTableName(["scope"], DocumentNoVariant)).to.throw(
+				"has no variant",
+			);
 		});
 
 		it("uses variant for table name", () => {

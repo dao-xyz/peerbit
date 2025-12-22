@@ -44,6 +44,7 @@ class ArrayDocument /*  extends ArrayDocumentBase */ {
 	}
 }
 
+@variant("DocumentWithProperties")
 class DocumentWithProperties {
 	// create some extra fields to make the ndex more complicated
 	@field({ type: "string" })
@@ -117,7 +118,7 @@ describe("shape", () => {
 	let index: Awaited<ReturnType<typeof setup<any>>>;
 
 	afterEach(async () => {
-		await index.store.stop();
+		await index?.store.stop();
 	});
 
 	it("shaped sort with when query is split", async () => {
@@ -326,9 +327,10 @@ describe("shape", () => {
 		let index: Awaited<ReturnType<typeof setup<any>>>;
 
 		afterEach(async () => {
-			await index.store.stop();
+			await index?.store.stop();
 		});
 
+		@variant("Nested_shape_nested_document")
 		class Nested {
 			// create some extra fields to make the ndex more complicated
 			@field({ type: "string" })

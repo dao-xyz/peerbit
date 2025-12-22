@@ -1,4 +1,4 @@
-import { field } from "@dao-xyz/borsh";
+import { field, variant } from "@dao-xyz/borsh";
 import { type IndexedResults, id } from "@peerbit/indexer-interface";
 import { expect, use } from "chai";
 import chaiAsPromised from "chai-as-promised";
@@ -17,6 +17,7 @@ describe("u64", () => {
 		await index.store.stop();
 	});
 
+	@variant("DocumentWithBigint")
 	class DocumentWithBigint {
 		@id({ type: "u64" })
 		id: bigint;

@@ -1,18 +1,8 @@
-import { findLibraryInNodeModules } from "@peerbit/build-assets";
 import * as findUp from "find-up";
-import { createRequire } from "module";
 import path from "path";
+import fs from "fs";
 
 const root = path.dirname(await findUp.findUp(".git", { type: "directory" }));
-const resolverFromRoot = createRequire(path.join(root, "package.json"));
-const resolverFromLocal = createRequire(import.meta.url);
-
-const sqliteWasmAssets = findLibraryInNodeModules(
-	"@sqlite.org/sqlite-wasm/sqlite-wasm/jswasm",
-	{
-		resolvers: [resolverFromRoot, resolverFromLocal],
-	},
-);
 
 export default {
 	// test cmd options
@@ -45,7 +35,7 @@ export default {
 		covTimeout: 60000,
 		browser: {
 			config: {
-				assets: [sqliteWasmAssets, "./dist"],
+				assets: [path.join(root, "tmp", "aegir-assets", "indexer-sqlite3"), "./dist"],
 				/* path.join(dirname(import.meta.url), "../", './xyz') ,*/ /* 
 				headers: {
 					'Cross-Origin-Opener-Policy': 'same-origin',
@@ -56,7 +46,20 @@ export default {
 				},
 			},
 		},
-		before: () => {
+		before: (argv) => {
+			if (argv?.runner === "browser" || argv?.runner === "webworker") {
+				const assetsRoot = path.join(root, "tmp", "aegir-assets", "indexer-sqlite3");
+				const peerbitSqlite3Assets = path.join(assetsRoot, "peerbit", "sqlite3");
+				const src = path.resolve("dist", "assets", "sqlite3");
+				if (!fs.existsSync(src)) {
+					throw new Error(
+						`Missing sqlite3 browser assets at ${src}. Run \"pnpm --filter @peerbit/indexer-sqlite3 build\" before browser tests.`,
+					);
+				}
+				fs.rmSync(peerbitSqlite3Assets, { recursive: true, force: true });
+				fs.mkdirSync(peerbitSqlite3Assets, { recursive: true });
+				fs.cpSync(src, peerbitSqlite3Assets, { recursive: true });
+			}
 			return {
 				env: { TS_NODE_PROJECT: path.join(root, "tsconfig.test.json") },
 			};

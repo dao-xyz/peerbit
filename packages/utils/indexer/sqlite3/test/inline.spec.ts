@@ -30,6 +30,7 @@ describe("inline", () => {
 				}
 			}
 
+			@variant("NestedBoolQueryDocument")
 			class NestedBoolQueryDocument {
 				@id({ type: "string" })
 				id: string;
@@ -87,6 +88,7 @@ describe("inline", () => {
 				}
 			}
 
+			@variant("NestedBoolQueryDocument")
 			class NestedBoolQueryDocument {
 				@id({ type: "string" })
 				id: string;

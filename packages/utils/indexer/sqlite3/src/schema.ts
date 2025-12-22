@@ -252,11 +252,11 @@ const getNameOfClass = (ctor: AbstractType<any>) => {
 		throw new Error("Schema not found for " + ctor.name);
 	}
 	if (schema.variant === undefined) {
-		/* TODO when to display warning? 	
-		console.warn(
-				`Schema associated with ${ctor.name} has no variant.  This will results in SQL table with name generated from the Class name. This is not recommended since changing the class name will result in a new table`
-			); */
-		name = "class_" + ctor.name;
+		const ctorName = ctor.name || "<anonymous>";
+		const variantHint = ctor.name || "your-variant";
+		throw new Error(
+			`Schema associated with ${ctorName} has no variant. Add @variant("${variantHint}") to define a stable table name.`,
+		);
 	} else {
 		name = getNameOfVariant(schema.variant);
 	}

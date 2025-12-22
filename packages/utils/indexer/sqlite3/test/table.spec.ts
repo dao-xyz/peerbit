@@ -1,4 +1,4 @@
-import { field } from "@dao-xyz/borsh";
+import { field, variant } from "@dao-xyz/borsh";
 import { id } from "@peerbit/indexer-interface";
 import { expect } from "chai";
 import { SQLLiteIndex } from "../src/engine.js";
@@ -14,6 +14,7 @@ describe("table", () => {
 
 	// TODO what is expected? if we do this, we can not migrate, on the other hand we get performance benefits
 	it("can use reserved words", async () => {
+		@variant("DocumentWithFromProperty")
 		class DocumentWithFromProperty {
 			@id({ type: "string" })
 			id: string;
