@@ -2,6 +2,7 @@ import { findLibraryInNodeModules } from "@peerbit/build-assets";
 import * as findUp from "find-up";
 import { createRequire } from "module";
 import path from "path";
+import fs from "fs";
 
 const root = path.dirname(await findUp.findUp(".git", { type: "directory" }));
 const resolverFromRoot = createRequire(path.join(root, "package.json"));
@@ -12,12 +13,8 @@ const resolveAsset = (library) =>
 		resolvers: [resolverFromRoot, resolverFromLocal],
 	});
 
-const assets = [
-	resolveAsset("@peerbit/any-store-opfs/dist"),
-	resolveAsset("@peerbit/indexer-sqlite3/dist"),
-	resolveAsset("@sqlite.org/sqlite-wasm/sqlite-wasm/jswasm"),
-	"./dist",
-];
+const assetsRoot = path.join(root, "tmp", "aegir-assets", "peerbit");
+const assets = [assetsRoot, "./dist"];
 
 export default {
 	// test cmd options
@@ -50,7 +47,25 @@ export default {
 				},
 			},
 		},
-		before: () => {
+		before: (argv) => {
+			if (argv?.runner === "browser" || argv?.runner === "webworker") {
+				const opfsSrc = resolveAsset("@peerbit/any-store-opfs/dist/assets/opfs");
+				const sqliteSrc = resolveAsset(
+					"@peerbit/indexer-sqlite3/dist/assets/sqlite3",
+				);
+
+				const opfsDest = path.join(assetsRoot, "peerbit", "opfs");
+				const sqliteDest = path.join(assetsRoot, "peerbit", "sqlite3");
+
+				fs.rmSync(opfsDest, { recursive: true, force: true });
+				fs.rmSync(sqliteDest, { recursive: true, force: true });
+
+				fs.mkdirSync(opfsDest, { recursive: true });
+				fs.mkdirSync(sqliteDest, { recursive: true });
+
+				fs.cpSync(opfsSrc, opfsDest, { recursive: true });
+				fs.cpSync(sqliteSrc, sqliteDest, { recursive: true });
+			}
 			return {
 				env: { TS_NODE_PROJECT: path.join(root, "tsconfig.test.json") },
 			};
