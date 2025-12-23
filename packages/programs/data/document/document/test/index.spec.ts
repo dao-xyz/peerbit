@@ -1598,6 +1598,7 @@ describe("index", () => {
 					}
 				}
 
+				@variant("test_uint8array_indexable")
 				class DocumentUnt8arrayIdIndexable {
 					@field({ type: "string" })
 					id: string;
@@ -2947,6 +2948,8 @@ describe("index", () => {
 
 				it("uses indexed fields", async () => {
 					const KEY = "ABC";
+
+					@variant("IndexClass")
 					class IndexClass {
 						@field({ type: "string" })
 						id: string;
@@ -2995,6 +2998,43 @@ describe("index", () => {
 					const nextValues = await iteratorValues.next(3);
 					expect(nextValues.map((x) => x.name)).to.deep.equal(["2", "1", "0"]);
 					expect(iteratorValues.done()).to.be.true;
+				});
+
+				it("throws for a variant-less anonymous indexed type", async () => {
+					const KEY = "anon";
+					const AnonymousIndex = (() =>
+						class {
+							@field({ type: "string" })
+							id: string;
+
+							@field({ type: "u64" })
+							[KEY]: bigint;
+
+							constructor(properties: { id: string; [KEY]: bigint }) {
+								this.id = properties.id;
+								this[KEY] = properties[KEY];
+							}
+						})();
+
+					expect(AnonymousIndex.name).to.equal("");
+
+					// TODO fix types
+					await expect(
+						(stores[0].docs as any).index.open({
+							transform: {
+								type: AnonymousIndex,
+								transform: async (obj: any) => {
+									return new AnonymousIndex({ id: obj.id, [KEY]: obj.number });
+								},
+							},
+							indexBy: ["id"],
+							dbType: Documents,
+							canSearch: () => true,
+							log: stores[0].docs.log,
+							sync: () => undefined as any,
+							documentType: Document,
+						}),
+					).to.be.rejectedWith("missing @variant");
 				});
 
 				it("will retrieve partial results of not having read access", async () => {
@@ -4956,6 +4996,7 @@ describe("index", () => {
 			});
 
 			describe("onBatch", () => {
+				@variant("Indexable")
 				class Indexable {
 					@field({ type: "string" })
 					id: string;
@@ -5706,6 +5747,7 @@ describe("index", () => {
 	});
 
 	describe("program as value", () => {
+		@variant("subprogram_indexable")
 		class SubProgramIndexable {
 			@field({ type: fixedArray("u8", 32) })
 			id: Uint8Array;
@@ -6020,6 +6062,7 @@ describe("index", () => {
 		});
 
 		describe("index", () => {
+			@variant("test_program_documents_custom_fields_indexable")
 			class Indexable {
 				@field({ type: fixedArray("u8", 32) })
 				id: Uint8Array;
@@ -6055,8 +6098,8 @@ describe("index", () => {
 			let store: TestStoreSubPrograms, store2: TestStoreSubPrograms;
 
 			afterEach(async () => {
-				store?.close();
-				store2?.close();
+				await store?.close();
+				await store2?.close();
 			});
 			it("can index specific fields", async () => {
 				store = await session.peers[0].open(new TestStoreSubPrograms());
@@ -6090,6 +6133,7 @@ describe("index", () => {
 	});
 
 	describe("indexBy", () => {
+		@variant("test_id_annotation_custom_id_document")
 		class CustomIdDocument {
 			@id({ type: "string" })
 			custom: string;
@@ -6231,6 +6275,7 @@ describe("index", () => {
 			}
 		}
 
+		@variant("indexed_value")
 		class Indexed {
 			@field({ type: "string" })
 			id: string;
@@ -6349,6 +6394,7 @@ describe("index", () => {
 		let peersCount = 2,
 			stores: TestStore<Indexable>[] = [];
 
+		@variant("custom_indexable")
 		class Indexable {
 			@field({ type: "string" })
 			id: string;

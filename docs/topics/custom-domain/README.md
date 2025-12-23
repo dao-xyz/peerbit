@@ -76,10 +76,12 @@ Below is an example of how you might create a custom replication domain for a ti
 ```typescript
 import { Program } from "@peerbit/program";
 import { Documents, createDocumentDomain } from "@peerbit/document-store";
-import { field } from "@dao-xyz/borsh";
+import { field, variant} from "@dao-xyz/borsh";
 import { v4 as uuid } from "uuid";
 
+@variant(0)
 class Document {
+  
   @field({ type: "string" })
   id: string;
 

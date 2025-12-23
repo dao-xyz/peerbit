@@ -1,8 +1,8 @@
 import { findLibraryInNodeModules } from "@peerbit/build-assets";
 import * as findUp from "find-up";
+import fs from "fs";
 import { createRequire } from "module";
 import path from "path";
-import fs from "fs";
 
 const root = path.dirname(await findUp.findUp(".git", { type: "directory" }));
 const resolverFromRoot = createRequire(path.join(root, "package.json"));
@@ -49,7 +49,9 @@ export default {
 		},
 		before: (argv) => {
 			if (argv?.runner === "browser" || argv?.runner === "webworker") {
-				const opfsSrc = resolveAsset("@peerbit/any-store-opfs/dist/assets/opfs");
+				const opfsSrc = resolveAsset(
+					"@peerbit/any-store-opfs/dist/assets/opfs",
+				);
 				const sqliteSrc = resolveAsset(
 					"@peerbit/indexer-sqlite3/dist/assets/sqlite3",
 				);

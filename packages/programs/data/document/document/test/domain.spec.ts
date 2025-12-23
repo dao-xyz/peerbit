@@ -14,6 +14,7 @@ import {
 } from "../src/domain.js";
 import { Documents, type SetupOptions } from "../src/program.js";
 
+@variant(0)
 class Document {
 	@field({ type: "string" })
 	id: string;

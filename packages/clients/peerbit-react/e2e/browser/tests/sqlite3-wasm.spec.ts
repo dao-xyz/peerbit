@@ -14,11 +14,14 @@ test("loads sqlite3 wasm from /peerbit/sqlite3", async ({ page }) => {
 
 	await page.goto("/?sqlite=1");
 
-	await expect(page.getByTestId("sqlite-status")).toBeVisible();
+	await expect(page.getByTestId("sqlite-status")).toHaveText("ready", {
+		timeout: 20_000,
+	});
 
 	const response = await responsePromise;
 	expect(new URL(response.url()).pathname).toBe(
 		"/peerbit/sqlite3/sqlite3.wasm",
 	);
 	expect(response.ok()).toBeTruthy();
+	expect(response.headers()["content-type"]).toContain("application/wasm");
 });

@@ -39,30 +39,88 @@ test.describe("stream", () => {
 
 	test("can transmit with webrtc", async ({ page, browser }) => {
 		const relayAddres = relay.getMultiaddrs()[0].toString();
+		const relayPeerId = relayAddres.split("/p2p/").at(-1);
+		if (!relayPeerId) {
+			throw new Error(`Unable to parse relay peer id from ${relayAddres}`);
+		}
 		await page.goto(
 			"http://localhost:5211/?relay=" + encodeURIComponent(relayAddres),
 		);
 
 		const peerIdLocator = await page.getByTestId("peer-id");
+		const peerId = (await peerIdLocator.textContent())?.trim();
+		if (!peerId) {
+			throw new Error("Missing peer id");
+		}
+
+		const dialableAddress = await waitForResolved(
+			async () => {
+				const multiaddrs = await page.evaluate(() => {
+					return (globalThis as any).streamClient
+						?.getMultiaddrs?.()
+						.map((a: any) => a.toString());
+				});
+
+				const addr = multiaddrs?.find(
+					(a: string) =>
+						a.includes("/p2p-circuit") &&
+						a.includes("/webrtc") &&
+						a.includes(relayPeerId) &&
+						a.endsWith(`/p2p/${peerId}`),
+				);
+				if (!addr) {
+					throw new Error(
+						`No dialable address yet. Known: ${(multiaddrs || []).join(", ")}`,
+					);
+				}
+				return addr;
+			},
+			{ timeout: 30_000, delayInterval: 200 },
+		);
 
 		const anotherPage = await browser.newPage();
 		await anotherPage.goto(
-			"http://localhost:5211/?relay=" +
-				encodeURIComponent(
-					relayAddres +
-						"/p2p-circuit/webrtc/p2p/" +
-						(await peerIdLocator.textContent()),
-				),
+			"http://localhost:5211/?relay=" + encodeURIComponent(dialableAddress),
 		);
 
+		const anotherPeerIdLocator = await anotherPage.getByTestId("peer-id");
+		const anotherPeerId = (await anotherPeerIdLocator.textContent())?.trim();
+		if (!anotherPeerId) {
+			throw new Error("Missing peer id for other peer");
+		}
+
 		await waitForResolved(async () => {
-			const counter = await page.getByTestId("peer-counter");
-			await expect(counter).toHaveText(String(2), { timeout: 15e3 });
+			const hasAnotherPeer = await page.evaluate(
+				([targetPeerId]) => {
+					const peers = (globalThis as any).streamClient?.services?.stream
+						?.peers;
+					if (!peers?.values) return false;
+					return Array.from(peers.values()).some(
+						(p: any) =>
+							typeof p?.peerId?.toString === "function" &&
+							p.peerId.toString() === targetPeerId,
+					);
+				},
+				[anotherPeerId],
+			);
+			expect(hasAnotherPeer).toBe(true);
 		});
 
 		await waitForResolved(async () => {
-			const counter = await anotherPage.getByTestId("peer-counter");
-			await expect(counter).toHaveText(String(2), { timeout: 15e3 });
+			const hasPeer = await anotherPage.evaluate(
+				([targetPeerId]) => {
+					const peers = (globalThis as any).streamClient?.services?.stream
+						?.peers;
+					if (!peers?.values) return false;
+					return Array.from(peers.values()).some(
+						(p: any) =>
+							typeof p?.peerId?.toString === "function" &&
+							p.peerId.toString() === targetPeerId,
+					);
+				},
+				[peerId],
+			);
+			expect(hasPeer).toBe(true);
 		});
 
 		// manually trigger some traffic from both peers
@@ -72,8 +130,34 @@ test.describe("stream", () => {
 		// Verify peers remain connected and traffic can flow
 		await waitForResolved(
 			async () => {
-				await expect(page.getByTestId("peer-counter")).toHaveText("2");
-				await expect(anotherPage.getByTestId("peer-counter")).toHaveText("2");
+				const isConnectedA = await page.evaluate(
+					([targetPeerId]) => {
+						const peers = (globalThis as any).streamClient?.services?.stream
+							?.peers;
+						if (!peers?.values) return false;
+						return Array.from(peers.values()).some(
+							(p: any) =>
+								typeof p?.peerId?.toString === "function" &&
+								p.peerId.toString() === targetPeerId,
+						);
+					},
+					[anotherPeerId],
+				);
+				const isConnectedB = await anotherPage.evaluate(
+					([targetPeerId]) => {
+						const peers = (globalThis as any).streamClient?.services?.stream
+							?.peers;
+						if (!peers?.values) return false;
+						return Array.from(peers.values()).some(
+							(p: any) =>
+								typeof p?.peerId?.toString === "function" &&
+								p.peerId.toString() === targetPeerId,
+						);
+					},
+					[peerId],
+				);
+				expect(isConnectedA).toBe(true);
+				expect(isConnectedB).toBe(true);
 			},
 			{ timeout: 10_000, delayInterval: 200 },
 		);

@@ -1,6 +1,6 @@
 import * as findUp from "find-up";
-import path from "path";
 import fs from "fs";
+import path from "path";
 
 const root = path.dirname(await findUp.findUp(".git", { type: "directory" }));
 
@@ -35,7 +35,10 @@ export default {
 		covTimeout: 60000,
 		browser: {
 			config: {
-				assets: [path.join(root, "tmp", "aegir-assets", "indexer-sqlite3"), "./dist"],
+				assets: [
+					path.join(root, "tmp", "aegir-assets", "indexer-sqlite3"),
+					"./dist",
+				],
 				/* path.join(dirname(import.meta.url), "../", './xyz') ,*/ /* 
 				headers: {
 					'Cross-Origin-Opener-Policy': 'same-origin',
@@ -48,8 +51,17 @@ export default {
 		},
 		before: (argv) => {
 			if (argv?.runner === "browser" || argv?.runner === "webworker") {
-				const assetsRoot = path.join(root, "tmp", "aegir-assets", "indexer-sqlite3");
-				const peerbitSqlite3Assets = path.join(assetsRoot, "peerbit", "sqlite3");
+				const assetsRoot = path.join(
+					root,
+					"tmp",
+					"aegir-assets",
+					"indexer-sqlite3",
+				);
+				const peerbitSqlite3Assets = path.join(
+					assetsRoot,
+					"peerbit",
+					"sqlite3",
+				);
 				const src = path.resolve("dist", "assets", "sqlite3");
 				if (!fs.existsSync(src)) {
 					throw new Error(

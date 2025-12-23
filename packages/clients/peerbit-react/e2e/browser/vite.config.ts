@@ -9,6 +9,10 @@ export default defineConfig({
 			target: "esnext",
 		},
 	},
+	resolve: {
+		// Ensure all workspace packages share a single React instance in the bundle.
+		dedupe: ["react", "react-dom"],
+	},
 	server: {
 		port: 4173,
 		host: true,

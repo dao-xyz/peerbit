@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const defaultPort = 4173;
+// Vite preview defaults to 4173; use a non-standard port to avoid collisions.
+const defaultPort = 4183;
 const envPort = Number.parseInt(process.env.PLAYWRIGHT_PORT ?? "", 10);
 const port = Number.isFinite(envPort) && envPort > 0 ? envPort : defaultPort;
 const baseURL = `http://localhost:${port}`;
@@ -21,9 +22,9 @@ export default defineConfig({
 		screenshot: "only-on-failure",
 	},
 	webServer: {
-		command: `pnpm dev -- --port ${port}`,
+		command: `pnpm exec vite preview --host --strictPort --port ${port}`,
 		url: baseURL,
-		reuseExistingServer: !process.env.CI,
+		reuseExistingServer: false,
 		timeout: 120_000,
 	},
 	projects: [

@@ -1,8 +1,8 @@
 import { findLibraryInNodeModules } from "@peerbit/build-assets";
 import * as findUp from "find-up";
+import fs from "fs";
 import { createRequire } from "module";
 import path from "path";
-import fs from "fs";
 
 const root = path.dirname(await findUp.findUp(".git", { type: "directory" }));
 const resolverFromRoot = createRequire(path.join(root, "package.json"));

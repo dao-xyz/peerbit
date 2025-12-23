@@ -9,7 +9,7 @@ describe("bootstrap", () => {
 	});
 
 	afterEach(async () => {
-		await peer.stop();
+		await peer?.stop();
 	});
 
 	it("remote", async () => {
