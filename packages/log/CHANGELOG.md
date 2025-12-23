@@ -368,6 +368,30 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [5.0.0](https://github.com/dao-xyz/peerbit/compare/log-v4.2.8...log-v5.0.0) (2025-12-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* use variants for inline types and and enfore variants for indexed types
+
+### Features
+
+* use variants for inline types and and enfore variants for indexed types ([6d4235f](https://github.com/dao-xyz/peerbit/commit/6d4235fc512eed95cb8cd2f71d72b21eba8ff434))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped to 2.2.3
+    * @peerbit/blocks bumped to 3.1.4
+    * @peerbit/indexer-sqlite3 bumped to 2.0.0
+    * @peerbit/indexer-simple bumped to 1.2.1
+    * @peerbit/keychain bumped to 1.2.3
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.3.9
+
 ## [4.2.8](https://github.com/dao-xyz/peerbit/compare/log-v4.2.7...log-v4.2.8) (2025-12-19)
 
 

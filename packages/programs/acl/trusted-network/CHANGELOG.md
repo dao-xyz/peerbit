@@ -566,6 +566,29 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [5.0.0](https://github.com/dao-xyz/peerbit/compare/trusted-network-v4.3.10...trusted-network-v5.0.0) (2025-12-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* add variant on FromTo
+
+### Features
+
+* add variant on FromTo ([67025bb](https://github.com/dao-xyz/peerbit/commit/67025bb57fb8790796e571cc2e0d5f8eba245ef0))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 12.0.0
+    * @peerbit/log bumped to 5.0.0
+    * @peerbit/program bumped to 5.4.5
+    * @peerbit/shared-log bumped to 12.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.3.9
+
 ## [4.3.10](https://github.com/dao-xyz/peerbit/compare/trusted-network-v4.3.9...trusted-network-v4.3.10) (2025-12-19)
 
 

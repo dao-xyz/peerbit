@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.0.44](https://github.com/dao-xyz/peerbit/compare/react-v0.0.43...react-v0.0.44) (2025-12-23)
+
+
+### Bug Fixes
+
+* refactor sqlite3 module loading to prevent concurrent initializations ([6605c73](https://github.com/dao-xyz/peerbit/commit/6605c73a486768f920fbb54fbf8e80a539d2e4cf))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program-react bumped to 0.2.5
+    * @peerbit/proxy-window bumped to 3.1.9
+    * @peerbit/program bumped to 5.4.5
+    * peerbit bumped to 4.4.9
+
 ## [0.0.43](https://github.com/dao-xyz/peerbit/compare/react-v0.0.42...react-v0.0.43) (2025-12-19)
 
 

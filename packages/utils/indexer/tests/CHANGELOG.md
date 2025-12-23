@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/indexer-tests-v1.2.0...indexer-tests-v2.0.0) (2025-12-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* force variant on classes to prevent undefined behaviour when classnames get minified
+
+### Features
+
+* force variant on classes to prevent undefined behaviour when classnames get minified ([cba3a28](https://github.com/dao-xyz/peerbit/commit/cba3a281ecca2f6be0eec4c76f562659ddb8cd45))
+
 ## [1.2.0](https://github.com/dao-xyz/peerbit/compare/indexer-tests-v1.1.20...indexer-tests-v1.2.0) (2025-11-25)
 
 
