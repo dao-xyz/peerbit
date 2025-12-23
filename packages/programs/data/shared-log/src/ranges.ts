@@ -102,6 +102,7 @@ export const isEntryReplicated = (x: any): x is EntryReplicated<any> => {
 	return x instanceof EntryReplicatedU32 || x instanceof EntryReplicatedU64;
 };
 
+@variant("entry-u32")
 export class EntryReplicatedU32 implements EntryReplicated<"u32"> {
 	@id({ type: "string" })
 	hash: string;
@@ -156,6 +157,7 @@ export class EntryReplicatedU32 implements EntryReplicated<"u32"> {
 	}
 }
 
+@variant("entry-u64")
 export class EntryReplicatedU64 implements EntryReplicated<"u64"> {
 	@id({ type: "string" })
 	hash: string;
@@ -659,6 +661,7 @@ export function symmetricDifferenceRanges<N extends NumericType>(
 	};
 }
 
+@variant("range-u32")
 export class ReplicationRangeIndexableU32
 	implements ReplicationRangeIndexable<"u32">
 {
@@ -834,6 +837,7 @@ export class ReplicationRangeIndexableU32
 	}
 }
 
+@variant("range-u64")
 export class ReplicationRangeIndexableU64
 	implements ReplicationRangeIndexable<"u64">
 {

@@ -1,4 +1,10 @@
-import { type AbstractType, field, serialize, variant } from "@dao-xyz/borsh";
+import {
+	type AbstractType,
+	field,
+	getSchema,
+	serialize,
+	variant,
+} from "@dao-xyz/borsh";
 import type { PeerId, TypedEventTarget } from "@libp2p/interface";
 import type { Multiaddr } from "@multiformats/multiaddr";
 import { Cache } from "@peerbit/cache";
@@ -930,6 +936,13 @@ export class DocumentIndex<
 
 		// copy all prototype values from indexedType to IndexedClassWithContext
 		this.indexedType = (properties.transform?.type || properties.documentType)!;
+		const indexedSchema = getSchema(this.indexedType);
+		if (!indexedSchema || indexedSchema.variant == null) {
+			const indexedName = this.indexedType?.name || "<anonymous>";
+			throw new Error(
+				`Indexed type ${indexedName} is missing @variant(...). This is required for stable local index schemas.`,
+			);
+		}
 		copySerialization(this.indexedType, IndexedClassWithContext);
 
 		this.wrappedIndexedType = IndexedClassWithContext as new (
@@ -1325,7 +1338,7 @@ export class DocumentIndex<
 				);
 			}
 			this.clearAllResultQueues();
-			await this.index.stop?.();
+			await this.index?.stop?.();
 		}
 		return closed;
 	}
@@ -1338,8 +1351,8 @@ export class DocumentIndex<
 				this.handleDocumentChange,
 			);
 			this.clearAllResultQueues();
-			await this.index.drop?.();
-			await this.index.stop?.();
+			await this.index?.drop?.();
+			await this.index?.stop?.();
 		}
 		return dropped;
 	}

@@ -1,8 +1,9 @@
-import { field, option, vec } from "@dao-xyz/borsh";
+import { field, option, variant, vec } from "@dao-xyz/borsh";
 import { id } from "@peerbit/indexer-interface";
 import { LamportClock as Clock } from "./clock.js";
 import type { EntryType } from "./entry-type.js";
 
+@variant(0)
 export class ShallowMeta {
 	@field({ type: Clock })
 	clock: Clock;
@@ -34,6 +35,7 @@ export class ShallowMeta {
 	}
 }
 
+@variant(0)
 export class ShallowEntry {
 	@id({ type: "string" })
 	hash: string;
