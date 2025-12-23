@@ -1,5 +1,28 @@
 # Changelog
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.3.2...indexer-sqlite3-v2.0.0) (2025-12-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* force variant on classes to prevent undefined behaviour when classnames get minified
+
+### Features
+
+* force variant on classes to prevent undefined behaviour when classnames get minified ([cba3a28](https://github.com/dao-xyz/peerbit/commit/cba3a281ecca2f6be0eec4c76f562659ddb8cd45))
+
+
+### Bug Fixes
+
+* refactor sqlite3 module loading to prevent concurrent initializations ([6605c73](https://github.com/dao-xyz/peerbit/commit/6605c73a486768f920fbb54fbf8e80a539d2e4cf))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/indexer-tests bumped to 2.0.0
+
 ## [1.3.2](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.3.1...indexer-sqlite3-v1.3.2) (2025-12-19)
 
 
