@@ -65,7 +65,7 @@ export default {
 				const src = path.resolve("dist", "assets", "sqlite3");
 				if (!fs.existsSync(src)) {
 					throw new Error(
-						`Missing sqlite3 browser assets at ${src}. Run \"pnpm --filter @peerbit/indexer-sqlite3 build\" before browser tests.`,
+						`Missing sqlite3 browser assets at ${src}. Run "pnpm --filter @peerbit/indexer-sqlite3 build" before browser tests.`,
 					);
 				}
 				fs.rmSync(peerbitSqlite3Assets, { recursive: true, force: true });
