@@ -107,12 +107,51 @@ export { ProgramHandler };
 
 type ExtractArgs<T> = T extends Program<infer Args> ? Args : never;
 
+const PROGRAM_INSTANCE_SYMBOL = Symbol.for("@peerbit/program/Program");
+
 @variant(0)
 export abstract class Program<
 	Args = any,
 	Events extends ProgramEvents = ProgramEvents,
 > implements Manageable<Args>
 {
+	static [Symbol.hasInstance](instance: any) {
+		if (!instance || typeof instance !== "object") {
+			return false;
+		}
+
+		// Fast path: instances from any @peerbit/program copy that sets the marker.
+		if ((instance as any)[PROGRAM_INSTANCE_SYMBOL]) {
+			return true;
+		}
+
+		// Fallback: allow cross-package "instanceof Program" when multiple copies of
+		// @peerbit/program end up in node_modules (e.g. after runtime installs).
+		try {
+			const schema = getSchema(instance.constructor);
+			if (!schema || typeof schema.variant !== "string") {
+				return false;
+			}
+		} catch (_e) {
+			return false;
+		}
+
+		return (
+			typeof (instance as any).beforeOpen === "function" &&
+			typeof (instance as any).open === "function" &&
+			typeof (instance as any).afterOpen === "function" &&
+			typeof (instance as any).close === "function" &&
+			typeof (instance as any).drop === "function" &&
+			typeof (instance as any).save === "function" &&
+			typeof (instance as any).delete === "function" &&
+			typeof (instance as any).emitEvent === "function"
+		);
+	}
+
+	constructor() {
+		(this as any)[PROGRAM_INSTANCE_SYMBOL] = true;
+	}
+
 	private _node: ProgramClient;
 	private _allPrograms: Program[] | undefined;
 

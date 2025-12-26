@@ -24,6 +24,92 @@ describe("getValuesWithType", () => {
 	});
 });
 
+describe("instanceof Program", () => {
+	it("matches program-like instances from other module copies", async () => {
+		@variant("foreign-child")
+		class ForeignChild {
+			parents: any[] = [];
+			children: any[] = [];
+			closed = true;
+			address: any = "foreign";
+			node: any;
+
+			beforeOpenInvoked = false;
+			afterOpenInvoked = false;
+
+			async beforeOpen(node: any): Promise<void> {
+				this.beforeOpenInvoked = true;
+				this.node = node;
+				this.closed = false;
+			}
+			async open(): Promise<void> {}
+			async afterOpen(): Promise<void> {
+				this.afterOpenInvoked = true;
+			}
+			async close(): Promise<boolean> {
+				this.closed = true;
+				return true;
+			}
+			async drop(): Promise<boolean> {
+				this.closed = true;
+				return true;
+			}
+			async save(): Promise<any> {
+				return this.address;
+			}
+			async delete(): Promise<void> {}
+			emitEvent(_event: CustomEvent): void {}
+		}
+
+		@variant("parent-with-foreign-child")
+		class ParentWithForeignChild extends Program {
+			@field({ type: ForeignChild })
+			child: ForeignChild;
+
+			constructor() {
+				super();
+				this.child = new ForeignChild();
+			}
+
+			async open(): Promise<void> {}
+		}
+
+		const peer = await creatMockPeer();
+		try {
+			const p = new ParentWithForeignChild();
+			expect(p.child instanceof Program).to.be.true;
+
+			await peer.open(p);
+			expect(p.child.beforeOpenInvoked).to.be.true;
+			expect(p.child.afterOpenInvoked).to.be.true;
+			expect(p.child.node).to.equal(peer);
+		} finally {
+			await peer.stop();
+		}
+	});
+
+	it("does not match objects without the Program lifecycle", () => {
+		@variant("not-a-program")
+		class NotAProgram {
+			async open(): Promise<void> {}
+		}
+
+		expect(new NotAProgram() instanceof Program).to.be.false;
+		expect(
+			({
+				beforeOpen: async () => {},
+				open: async () => {},
+				afterOpen: async () => {},
+				close: async () => true,
+				drop: async () => true,
+				save: async () => "addr",
+				delete: async () => {},
+				emitEvent: () => {},
+			} as any) instanceof Program,
+		).to.be.false;
+	});
+});
+
 describe("program", () => {
 	describe("lifecycle", () => {
 		let peer: ProgramClient;
