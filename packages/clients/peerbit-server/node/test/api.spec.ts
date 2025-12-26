@@ -14,6 +14,7 @@ import type { AbstractLevel } from "abstract-level";
 import { expect } from "chai";
 import fs from "fs";
 import type http from "http";
+import { Level } from "level";
 import { MemoryLevel } from "memory-level";
 import path, { dirname } from "path";
 import type { Peerbit } from "peerbit";
@@ -22,7 +23,7 @@ import { fileURLToPath } from "url";
 import { v4 as uuid } from "uuid";
 import { createClient } from "../src/client.js";
 import { getTrustPath } from "../src/config.js";
-import { startApiServer } from "../src/server.js";
+import { startApiServer, startServerWithNode } from "../src/server.js";
 import { Session } from "../src/session.js";
 import { Trust } from "../src/trust.js";
 
@@ -93,6 +94,51 @@ describe("server", () => {
 				node = result.node;
 				server = result.server;
 				expect(node.libp2p.services.pubsub.peers.size).greaterThan(0); */
+		});
+
+		it("continues startup when a saved dependency is missing", async () => {
+			const dirnameResolved = dirname(fileURLToPath(import.meta.url));
+			const directory = path.join(
+				dirnameResolved,
+				"tmp",
+				"api-test",
+				"server",
+				"missing-import",
+				uuid(),
+			);
+			fs.mkdirSync(directory, { recursive: true });
+
+			// Seed a persisted session import that can't be resolved.
+			const sessionDirectory = path.join(directory, "session");
+			const level = new Level<string, Uint8Array>(sessionDirectory, {
+				valueEncoding: "view",
+				keyEncoding: "utf-8",
+			});
+			const imports = level.sublevel<string, Uint8Array>("imports", {
+				keyEncoding: "utf8",
+				valueEncoding: "view",
+			});
+			await imports.put(
+				"definitely-not-a-real-peerbit-package-123",
+				new Uint8Array(),
+			);
+			await level.close();
+
+			const errorStub = sinon.stub(console, "error");
+			try {
+				const result = await startServerWithNode({
+					directory,
+					ports: { api: 0, node: 0 },
+				});
+				node = result.node;
+				server = result.server;
+			} finally {
+				errorStub.restore();
+			}
+
+			expect(errorStub.calledWithMatch(/Failed to import dependency/)).to.equal(
+				true,
+			);
 		});
 	});
 	describe("api", () => {

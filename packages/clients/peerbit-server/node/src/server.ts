@@ -60,6 +60,56 @@ const getInstallDir = (): string | null => {
 	);
 };
 
+const packageIsInstalledInDir = (installDir: string, packageName: string) => {
+	const packageJsonPath = path.join(
+		installDir,
+		"node_modules",
+		...packageName.split("/"),
+		"package.json",
+	);
+	return fs.existsSync(packageJsonPath);
+};
+
+const reinstallMissingSessionImports = async (
+	session: Session | undefined,
+): Promise<void> => {
+	if (!session) return;
+
+	const installDir = getInstallDir();
+	if (!installDir) return;
+
+	const imports = await session.imports.all();
+	if (imports.length === 0) return;
+
+	let permission = "";
+	try {
+		fs.accessSync(installDir, fs.constants.W_OK);
+	} catch (_e) {
+		permission = "sudo";
+	}
+
+	for (const [packageName] of imports) {
+		// If already present, don't touch it.
+		if (packageIsInstalledInDir(installDir, packageName)) {
+			continue;
+		}
+
+		try {
+			console.log(
+				`Reinstalling dependency from previous session: ${packageName}`,
+			);
+			execSync(
+				`${permission} npm install ${packageName} --prefix ${installDir} --no-save --no-package-lock`,
+			);
+		} catch (e: any) {
+			console.error(
+				`Failed to reinstall dependency from previous session: ${packageName}`,
+				e?.message?.toString?.() || e,
+			);
+		}
+	}
+};
+
 // eslint-disable-next-line @typescript-eslint/naming-convention
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -153,7 +203,14 @@ export const startServerWithNode = async (properties: {
 	);
 	if (!properties.newSession) {
 		for (const [string] of await session.imports.all()) {
-			await import(string);
+			try {
+				await import(string);
+			} catch (error) {
+				console.error(
+					`Failed to import dependency '${string}' from previous session`,
+					error,
+				);
+			}
 		}
 		for (const [address, args] of await session.programs.all()) {
 			// TODO args
@@ -742,7 +799,7 @@ export const startApiServer = async (
 								res.writeHead(200);
 								res.end(JSON.stringify({ version: resolvedVersion }));
 
-								process.nextTick(() => {
+								process.nextTick(async () => {
 									try {
 										const installDir = getInstallDir();
 										let permission = "";
@@ -768,6 +825,14 @@ export const startApiServer = async (
 										}
 									} catch (e) {
 										console.error("Self-update installation failed:", e);
+									}
+									try {
+										await reinstallMissingSessionImports(properties?.session);
+									} catch (e) {
+										console.error(
+											"Failed to reinstall dependencies from previous session:",
+											e,
+										);
 									}
 									restart();
 								});
