@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/react",
-	"version": "0.0.44",
+	"version": "0.0.45",
 	"description": "React bindings for Peerbit clients",
 	"sideEffects": false,
 	"type": "module",

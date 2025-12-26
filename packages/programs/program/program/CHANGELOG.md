@@ -202,6 +202,13 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.5.0](https://github.com/dao-xyz/peerbit/compare/program-v5.4.5...program-v5.5.0) (2025-12-26)
+
+
+### Features
+
+* support for cross package instanceOf Program checks ([9b6bccb](https://github.com/dao-xyz/peerbit/commit/9b6bccbcbcb908eaf8e3434e93c5590236192b72))
+
 ## [5.4.5](https://github.com/dao-xyz/peerbit/compare/program-v5.4.4...program-v5.4.5) (2025-12-23)
 
 
