@@ -62,7 +62,7 @@
 		"@peerbit/indexer-interface": "workspace:*",
 		"debug": "^4.3.7",
 		"detectincognitojs": "^1.6.1",
-		"libsodium-wrappers": "^0.7.14",
+		"libsodium-wrappers": "0.7.15",
 		"peerbit": "workspace:*",
 		"uuid": "^10.0.0"
 	},

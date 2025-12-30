@@ -63,7 +63,7 @@
 		"@types/react": "^19.2.4",
 		"@types/react-dom": "^19.2.3",
 		"@types/libsodium-wrappers": "^0.7.14",
-		"libsodium-wrappers": "^0.7.14",
+		"libsodium-wrappers": "0.7.15",
 		"peerbit": "workspace:*",
 		"react-dom": "^19.0.0",
 		"happy-dom": "^20.0.10",

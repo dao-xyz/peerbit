@@ -80,6 +80,6 @@
 		"@protobufjs/utf8": "^1.1.0",
 		"js-sha3": "^0.9.3",
 		"elliptic": "^6.6.1",
-		"libsodium-wrappers": "^0.7.15"
+		"libsodium-wrappers": "0.7.15"
 	}
 }

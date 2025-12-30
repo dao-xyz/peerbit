@@ -96,7 +96,7 @@
 		"@peerbit/blocks": "workspace:*",
 		"@peerbit/pubsub": "workspace:*",
 		"@peerbit/stream-interface": "workspace:*",
-		"libsodium-wrappers": "^0.7.15"
+		"libsodium-wrappers": "0.7.15"
 	},
 	"devDependencies": {
 		"@types/libsodium-wrappers": "^0.7.14",

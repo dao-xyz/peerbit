@@ -266,7 +266,7 @@ importers:
         specifier: ^3.1.0
         version: 3.1.1
       libsodium-wrappers:
-        specifier: ^0.7.15
+        specifier: 0.7.15
         version: 0.7.15
       memory-level:
         specifier: ^3.1.0
@@ -534,7 +534,7 @@ importers:
         specifier: ^1.6.1
         version: 1.6.2
       libsodium-wrappers:
-        specifier: ^0.7.14
+        specifier: 0.7.15
         version: 0.7.15
       peerbit:
         specifier: workspace:*
@@ -717,7 +717,7 @@ importers:
         specifier: ^10.0.0
         version: 10.0.0
       libsodium-wrappers:
-        specifier: ^0.7.15
+        specifier: 0.7.15
         version: 0.7.15
       memory-level:
         specifier: ^3.1.0
@@ -972,7 +972,7 @@ importers:
         specifier: ^3.1.0
         version: 3.1.1
       libsodium-wrappers:
-        specifier: ^0.7.15
+        specifier: 0.7.15
         version: 0.7.15
       p-queue:
         specifier: ^8.0.1
@@ -1275,7 +1275,7 @@ importers:
         specifier: ^20.0.10
         version: 20.0.10
       libsodium-wrappers:
-        specifier: ^0.7.14
+        specifier: 0.7.15
         version: 0.7.15
       peerbit:
         specifier: workspace:*
@@ -2162,7 +2162,7 @@ importers:
         specifier: ^0.9.3
         version: 0.9.3
       libsodium-wrappers:
-        specifier: ^0.7.15
+        specifier: 0.7.15
         version: 0.7.15
     devDependencies:
       '@types/elliptic':
@@ -2252,7 +2252,7 @@ importers:
         specifier: ^12.5.0
         version: 12.5.0
       libsodium-wrappers:
-        specifier: ^0.7.15
+        specifier: 0.7.15
         version: 0.7.15
       p-defer:
         specifier: ^4.0.0
@@ -2295,7 +2295,7 @@ importers:
         specifier: ^2.1.4
         version: 2.1.4
       libsodium-wrappers:
-        specifier: ^0.7.15
+        specifier: 0.7.15
         version: 0.7.15
       uint8arrays:
         specifier: ^5.1.0

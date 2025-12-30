@@ -78,7 +78,7 @@
 		"p-defer": "^4.0.0",
 		"uint8arrays": "^5.1.0",
 		"uuid": "^10.0.0",
-		"libsodium-wrappers": "^0.7.15"
+		"libsodium-wrappers": "0.7.15"
 	},
 	"devDependencies": {
 		"@types/better-sqlite3": "^7.6.13",
