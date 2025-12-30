@@ -38,7 +38,7 @@
 	"packages/clients/vite": "1.1.6",
 	"packages/utils/rateless-iblt": "1.1.0",
 	"packages/utils/build-assets": "1.1.0",
-	"packages/programs/data/document/react": "0.4.10",
+	"packages/programs/data/document/react": "0.4.11",
 	"packages/programs/program/react": "0.2.6",
 	"packages/programs/program/program": "5.5.0"
 }
