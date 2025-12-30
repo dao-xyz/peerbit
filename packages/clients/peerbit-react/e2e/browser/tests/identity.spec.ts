@@ -55,7 +55,7 @@ let persistentContext: BrowserContext | undefined;
 let baseURL: string;
 
 test.describe("identity", () => {
-	test.beforeEach(async (_obj, testInfo) => {
+	test.beforeEach(async ({}, testInfo) => {
 		baseURL =
 			testInfo.project.use.baseURL?.toString() ||
 			process.env.PLAYWRIGHT_BASE_URL ||
@@ -73,7 +73,7 @@ test.describe("identity", () => {
 		await bootstrap?.stop();
 	});
 
-	test("reuses identity across reload", async (_obj, testInfo) => {
+	test("reuses identity across reload", async ({}, testInfo) => {
 		persistentContext = await launchPersistentBrowserContext(testInfo, baseURL);
 		const page = await persistentContext!.newPage();
 		const target = new URL(
@@ -92,6 +92,38 @@ test.describe("identity", () => {
 
 		const second = await waitForPeerHash(page);
 
+		const secondValue = (await second.jsonValue()) as string | null;
+		expect(secondValue).toBe(firstValue);
+	});
+
+	test("reuses identity across reload without persistence", async ({
+		page,
+	}) => {
+		await page.addInitScript(() => {
+			Object.defineProperty(navigator, "storage", {
+				value: {
+					...navigator.storage,
+					persist: async () => false,
+					persisted: async () => false,
+				},
+				configurable: true,
+			});
+		});
+
+		const target = new URL(
+			`/?bootstrap=${encodeURIComponent(bootstrapAddr)}`,
+			baseURL,
+		).toString();
+
+		await page.goto(target);
+
+		const first = await waitForPeerHash(page);
+		const firstValue = (await first.jsonValue()) as string | null;
+		expect(firstValue && firstValue !== "no-peer").toBeTruthy();
+
+		await page.reload();
+
+		const second = await waitForPeerHash(page);
 		const secondValue = (await second.jsonValue()) as string | null;
 		expect(secondValue).toBe(firstValue);
 	});

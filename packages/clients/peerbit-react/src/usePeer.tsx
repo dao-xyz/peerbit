@@ -1,5 +1,6 @@
 import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
+import { keys } from "@libp2p/crypto";
 import { webSockets } from "@libp2p/websockets";
 import type { Multiaddr } from "@multiformats/multiaddr";
 import { Ed25519Keypair } from "@peerbit/crypto";
@@ -265,6 +266,7 @@ export const PeerProvider = (options: PeerOptions) => {
 					setTabIndex(kp.index);
 				}
 				const peerId = nodeId.toPeerId();
+				const privateKey = keys.privateKeyFromRaw(nodeId.privateKeyPublicKey);
 
 				let directory: string | undefined = undefined;
 				if (
@@ -295,7 +297,7 @@ export const PeerProvider = (options: PeerOptions) => {
 						},
 						streamMuxers: [yamux()],
 						connectionEncrypters: [noise()],
-						peerId,
+						privateKey,
 						connectionManager: { maxConnections: 100 },
 						connectionMonitor: { enabled: false },
 						...(nodeOptions.network === "local"

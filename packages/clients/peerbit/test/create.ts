@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-expressions */
 import { keys } from "@libp2p/crypto";
+import { Ed25519Keypair } from "@peerbit/crypto";
 import { expect } from "chai";
 import path from "path";
 import { v4 as uuid } from "uuid";
@@ -34,13 +35,25 @@ describe("Create", function () {
 		});
 	});
 
-	it("can create with peerId", async () => {
+	it("can create with privateKey", async () => {
 		const privateKey = await keys.generateKeyPair("Ed25519");
 		const client = await Peerbit.create({
 			libp2p: { privateKey },
 		});
 		expect(client.peerId.publicKey!.equals(privateKey.publicKey)).to.be.true;
 		await client.stop();
+	});
+
+	it("throws when peerId is provided in libp2p options", async () => {
+		const peerId = (await Ed25519Keypair.create()).toPeerId();
+		await expect(
+			Peerbit.create({
+				libp2p: { peerId } as any,
+			}),
+		).to.be.rejectedWith(
+			Error,
+			"Invalid libp2p option 'peerId'. libp2p derives the peer id from 'privateKey', so pass 'privateKey' to control identity.",
+		);
 	});
 
 	it("relays by default", async () => {

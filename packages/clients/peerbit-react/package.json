@@ -51,6 +51,7 @@
 		"@peerbit/logger": "workspace:*",
 		"@chainsafe/libp2p-noise": "^17.0.0",
 		"@dao-xyz/borsh": "^6.0.0",
+		"@libp2p/crypto": "^5.1.10",
 		"@libp2p/interface": "^3.1.0",
 		"@libp2p/websockets": "^10.1.0",
 		"@chainsafe/libp2p-yamux": "^8.0.0",

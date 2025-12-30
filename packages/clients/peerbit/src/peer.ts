@@ -52,7 +52,9 @@ export type CreateOptions = {
 	indexer: Indices;
 	identity: Ed25519Keypair;
 } & OptionalCreateOptions;
-type Libp2pOptions = { libp2p?: Libp2pExtended | PartialLibp2pCreateOptions };
+type Libp2pOptions = {
+	libp2p?: Libp2pExtended | (PartialLibp2pCreateOptions & { peerId?: never });
+};
 type SimpleLibp2pOptions = { relay?: boolean };
 export type CreateInstanceOptions = (SimpleLibp2pOptions | Libp2pOptions) & {
 	directory?: string;
@@ -159,6 +161,11 @@ export class Peerbit implements ProgramClient {
 		if (!libp2pExternal) {
 			const extendedOptions: ClientCreateOptions | undefined =
 				libp2pExtended as any as ClientCreateOptions;
+			if (extendedOptions && "peerId" in extendedOptions) {
+				throw new Error(
+					"Invalid libp2p option 'peerId'. libp2p derives the peer id from 'privateKey', so pass 'privateKey' to control identity.",
+				);
+			}
 			const store = createStore(keychainDirectory);
 			await store.open();
 
