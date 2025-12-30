@@ -435,6 +435,8 @@ export const useQuery = <
 		options.resolve,
 		options.reverse,
 		options.batchSize,
+		options.local,
+		options.remote,
 	]);
 
 	/* ────────────── loadMore implementation ────────────── */

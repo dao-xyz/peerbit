@@ -861,6 +861,85 @@ describe("useQuery (integration with Documents)", () => {
 		await waitFor(() => expect(result.current.items.length).toBeGreaterThan(0));
 	});
 
+	it("rebuilds iterators when remote/local toggles", async () => {
+		await setupConnected();
+		await dbWriter.posts.put(new Post({ message: "one" }));
+
+		const stableQuery = {};
+		const remoteOpts = { reach: { eager: true }, wait: { timeout: 10_000 } };
+
+		const { result, rerender } = renderUseQuery(dbReader, {
+			query: stableQuery,
+			resolve: true,
+			local: false,
+			remote: remoteOpts,
+			prefetch: false,
+		});
+
+		await waitFor(() => expect(result.current).toBeDefined());
+
+		await act(async () => {
+			await result.current.loadMore();
+		});
+
+		await waitFor(
+			() =>
+				expect(result.current.items.map((p) => (p as Post).message)).toContain(
+					"one",
+				),
+			{ timeout: 10_000 },
+		);
+
+		await act(async () => {
+			rerender({
+				query: stableQuery,
+				resolve: true,
+				local: true,
+				remote: false,
+				prefetch: false,
+			});
+		});
+
+		await waitFor(() => expect(result.current.items.length).toBe(0));
+
+		await act(async () => {
+			await dbWriter.posts.put(new Post({ message: "two" }));
+		});
+
+		await act(async () => {
+			await result.current.loadMore();
+		});
+
+		await waitFor(() =>
+			expect(
+				result.current.items.map((p) => (p as Post).message),
+			).not.toContain("two"),
+		);
+
+		await act(async () => {
+			rerender({
+				query: stableQuery,
+				resolve: true,
+				local: false,
+				remote: remoteOpts,
+				prefetch: false,
+			});
+		});
+
+		await waitFor(() => expect(result.current.items.length).toBe(0));
+
+		await act(async () => {
+			await result.current.loadMore();
+		});
+		await waitFor(
+			() =>
+				expect(result.current.items.map((p) => (p as Post).message)).toContain(
+					"two",
+				),
+			{ timeout: 10_000 },
+		);
+	});
+
 	describe("lifecycle edge cases", () => {
 		it("handles database close during remote query without throwing", async () => {
 			// This test verifies that when a database is closed while a remote query
