@@ -58,6 +58,7 @@ import { expect } from "chai";
 import pDefer, { type DeferredPromise } from "p-defer";
 import sinon from "sinon";
 import { v4 as uuid } from "uuid";
+import { createDocumentDomain } from "../src/domain.js";
 import type { DocumentsChange } from "../src/events.js";
 import MostCommonQueryPredictor from "../src/most-common-query-predictor.js";
 import {
@@ -6915,7 +6916,69 @@ describe("index", () => {
 				});
 				await session.peers[0].open(store);
 
-				expect(await store.docs.count({ approximate: true })).to.eq(0);
+				const { estimate } = await store.docs.count({ approximate: true });
+				expect(estimate).to.eq(0);
+			});
+
+			it("provides errorMargin for hash domains", async () => {
+				const store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: { offset: 0, factor: 1 },
+						replicas: { min: 1 },
+						timeUntilRoleMaturity: 0,
+					},
+				});
+
+				const count = 10;
+				for (let i = 0; i < count; i++) {
+					await store.docs.put(new Document({ id: i.toString() }));
+				}
+
+				const result = await store.docs.count({ approximate: true });
+				expect(result.estimate).to.eq(count);
+				expect(result.errorMargin).to.eq(0);
+			});
+
+			it("falls back to local count when replication participation is tiny", async () => {
+				const store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+
+				// Use a u64 domain where every entry maps to the same coordinate (0),
+				// then replicate only width=1 at that coordinate. This makes the
+				// participation fraction extremely small while still owning all docs,
+				// which would otherwise cause the scaling estimator to explode.
+				const constantDomain = createDocumentDomain({
+					resolution: "u64",
+					canProjectToOneSegment: () => false,
+					fromEntry: () => 0n,
+				});
+
+				await session.peers[0].open(store, {
+					args: {
+						domain: constantDomain,
+						replicas: { min: 1 },
+						timeUntilRoleMaturity: 0,
+						replicate: {
+							normalized: false,
+							offset: 0n,
+							factor: 1n,
+							strict: true,
+						},
+					},
+				});
+
+				const count = 10;
+				for (let i = 0; i < count; i++) {
+					await store.docs.put(new Document({ id: i.toString() }));
+				}
+
+				const result = await store.docs.count({ approximate: true });
+				expect(result.estimate).to.eq(count);
+				expect(result.errorMargin).to.be.undefined;
 			});
 			const createStores = async () => {
 				const store1 = new TestStore({
@@ -6979,13 +7042,19 @@ describe("index", () => {
 				);
 
 				await waitForResolved(async () => {
-					const approxCount1 = await store1.docs.count({ approximate: true });
-					const approxCount2 = await store2.docs.count({ approximate: true });
+					const { estimate: approxCount1 } = await store1.docs.count({
+						approximate: true,
+					});
+					const { estimate: approxCount2 } = await store2.docs.count({
+						approximate: true,
+					});
 					const approxCount3 = await store3.docs.count({ approximate: true });
+					const localCount3 = await store3.docs.count();
 
 					expect(approxCount1).to.be.within(count * 0.9, count * 1.1);
 					expect(approxCount2).to.be.within(count * 0.9, count * 1.1);
-					expect(approxCount3).to.be.within(count * 0.9, count * 1.1);
+					expect(approxCount3.errorMargin).to.be.undefined;
+					expect(approxCount3.estimate).to.eq(localCount3);
 				});
 			});
 
@@ -7017,11 +7086,11 @@ describe("index", () => {
 				});
 
 				await waitForResolved(async () => {
-					const approxCount1 = await store1.docs.count({
+					const { estimate: approxCount1 } = await store1.docs.count({
 						query,
 						approximate: true,
 					});
-					const approxCount2 = await store2.docs.count({
+					const { estimate: approxCount2 } = await store2.docs.count({
 						query,
 						approximate: true,
 					});
@@ -7029,6 +7098,7 @@ describe("index", () => {
 						query,
 						approximate: true,
 					});
+					const localCount3 = await store3.docs.count({ query });
 
 					let expectedCount = Math.round(count / 2);
 
@@ -7040,10 +7110,8 @@ describe("index", () => {
 						expectedCount * 0.9,
 						expectedCount * 1.1,
 					);
-					expect(approxCount3).to.be.within(
-						expectedCount * 0.9,
-						expectedCount * 1.1,
-					);
+					expect(approxCount3.errorMargin).to.be.undefined;
+					expect(approxCount3.estimate).to.eq(localCount3);
 				});
 			});
 
@@ -7071,9 +7139,14 @@ describe("index", () => {
 				);
 
 				await waitForResolved(async () => {
-					const approxCount1 = await store1.docs.count({ approximate: true });
-					const approxCount2 = await store2.docs.count({ approximate: true });
+					const { estimate: approxCount1 } = await store1.docs.count({
+						approximate: true,
+					});
+					const { estimate: approxCount2 } = await store2.docs.count({
+						approximate: true,
+					});
 					const approxCount3 = await store3.docs.count({ approximate: true });
+					const localCount3 = await store3.docs.count();
 
 					expect(approxCount1).to.be.within(
 						expectedDocCountAfterDelete * 0.9,
@@ -7084,10 +7157,8 @@ describe("index", () => {
 						expectedDocCountAfterDelete * 1.1,
 					);
 
-					expect(approxCount3).to.be.within(
-						expectedDocCountAfterDelete * 0.9,
-						expectedDocCountAfterDelete * 1.1,
-					);
+					expect(approxCount3.errorMargin).to.be.undefined;
+					expect(approxCount3.estimate).to.eq(localCount3);
 				});
 			});
 		});

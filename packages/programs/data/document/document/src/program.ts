@@ -61,6 +61,20 @@ export class OperationError extends Error {
 
 type MaybePromise<T> = Promise<T> | T;
 
+export type CountEstimate = {
+	estimate: number;
+	/**
+	 * Relative error margin (0..1), where e.g. `0.1` means ~±10%.
+	 *
+	 * Only non-`undefined` when the replication domain is expected to be uniformly
+	 * distributed (currently: `domain.type === "hash"`), and when there is
+	 * sufficient local sample information to compute it.
+	 *
+	 * When `undefined`, the caller should treat `estimate` as unreliable.
+	 */
+	errorMargin: number | undefined;
+};
+
 type CanPerformPut<T> = {
 	type: "put";
 	value: T;
@@ -797,47 +811,118 @@ export class Documents<
 		);
 	}
 
-	// approximate the amount of documents that exists globally
+	/**
+	 * Count documents locally (default), or estimate the global count.
+	 *
+	 * - `count()` / `count({ query })`: exact local count from the index.
+	 * - `count({ approximate: true })`: estimated global count from replication metadata (no remote queries) + error margin when available.
+	 */
 	async count(options?: {
 		query?: indexerTypes.Query | indexerTypes.QueryLike;
+		approximate?: false | undefined;
+	}): Promise<number>;
+	async count(options: {
+		query?: indexerTypes.Query | indexerTypes.QueryLike;
 		approximate: true | { scope?: ReachScope };
-	}): Promise<number> {
-		let isReplicating = await this.log.isReplicating();
-		if (!isReplicating) {
-			// fetch a subset of posts
-			const iterator = this.index.iterate(
-				{ query: options?.query },
-				{
-					remote: {
-						reach:
-							typeof options?.approximate === "object"
-								? options?.approximate.scope
-								: undefined,
-					},
-					resolve: false,
-				},
-			);
-			const one = await iterator.next(1);
-			const left = (await iterator.pending()) ?? 0;
-			await iterator.close();
-			return one.length + left;
+	}): Promise<CountEstimate>;
+	async count(options?: {
+		query?: indexerTypes.Query | indexerTypes.QueryLike;
+		approximate?: false | true | { scope?: ReachScope };
+	}): Promise<number | CountEstimate> {
+		// Local/exact count
+		if (!options?.approximate) {
+			return this.index.index.count({ query: options?.query });
 		}
 
-		let totalHeadCount = await this.log.countHeads({ approximate: true }); /* -
-			(this.keepCache?.size || 0); TODO adjust for keep fn */
-		let totalAssignedHeads = await this.log.countAssignedHeads({
+		const indexedDocumentsCount = await this.index.index.count({
+			query: options?.query,
+		});
+
+		const fallbackToLocal = (): CountEstimate => ({
+			estimate: indexedDocumentsCount,
+			errorMargin: undefined,
+		});
+
+		const isReplicating = await this.log.isReplicating();
+		if (!isReplicating) {
+			return fallbackToLocal();
+		}
+
+		const myTotalParticipation = await this.log.calculateMyTotalParticipation();
+		const minReplicasValue = this.log.replicas.min.getValue(this.log);
+		const pRaw = minReplicasValue * myTotalParticipation;
+		const inclusionProbability = Math.min(1, pRaw);
+
+		if (
+			!Number.isFinite(inclusionProbability) ||
+			inclusionProbability <= 0 ||
+			inclusionProbability > 1
+		) {
+			return fallbackToLocal();
+		}
+
+		const scaleFactor =
+			inclusionProbability >= 1 ? 1 : 1 / inclusionProbability; // same saturation as SharedLog.countHeads
+		if (
+			!Number.isFinite(scaleFactor) ||
+			scaleFactor > Number.MAX_SAFE_INTEGER
+		) {
+			return fallbackToLocal();
+		}
+
+		// heads strictly assigned to us (sample size for the head-count estimator)
+		const ownedHeadCount = await this.log.countAssignedHeads({ strict: true });
+
+		// heads we have in our index (includes boundary assignments)
+		const totalAssignedHeads = await this.log.countAssignedHeads({
 			strict: false,
 		});
 
-		let indexedDocumentsCount = await this.index.index.count({
-			query: options?.query,
-		});
-		if (totalAssignedHeads == 0) {
-			return indexedDocumentsCount; // TODO is this really expected?
+		if (totalAssignedHeads === 0) {
+			return fallbackToLocal();
 		}
 
+		const totalHeadCount = Math.round(ownedHeadCount * scaleFactor);
 		const nonDeletedDocumentsRatio = indexedDocumentsCount / totalAssignedHeads; // [0, 1]
-		let expectedAmountOfDocuments = totalHeadCount * nonDeletedDocumentsRatio; // if total heads count is 100 and 80% is actual documents, then 80 pieces of non-deleted documents should exist
-		return Math.round(expectedAmountOfDocuments);
+		const expectedAmountOfDocuments = totalHeadCount * nonDeletedDocumentsRatio;
+
+		if (
+			!Number.isFinite(expectedAmountOfDocuments) ||
+			expectedAmountOfDocuments > Number.MAX_SAFE_INTEGER
+		) {
+			return fallbackToLocal();
+		}
+
+		const estimate = Math.round(expectedAmountOfDocuments);
+		if (!Number.isFinite(estimate) || estimate > Number.MAX_SAFE_INTEGER) {
+			return fallbackToLocal();
+		}
+
+		const domainType = this.log.domain?.type;
+		const canProvideErrorMargin =
+			domainType === "hash" && ownedHeadCount > 0 && indexedDocumentsCount > 0;
+
+		let errorMargin: number | undefined = undefined;
+		if (canProvideErrorMargin) {
+			// 95% relative margin for the scaled head-count estimator
+			const headMargin =
+				1.96 * Math.sqrt((1 - inclusionProbability) / ownedHeadCount);
+
+			// 95% relative margin for the ratio estimator (docs among assigned heads)
+			const rHat = nonDeletedDocumentsRatio;
+			const ratioMargin =
+				rHat > 0 && rHat < 1
+					? 1.96 * Math.sqrt((1 - rHat) / (rHat * totalAssignedHeads))
+					: 0;
+
+			const combined = Math.sqrt(
+				headMargin * headMargin + ratioMargin * ratioMargin,
+			);
+			if (Number.isFinite(combined)) {
+				errorMargin = Math.min(1, Math.max(0, combined));
+			}
+		}
+
+		return { estimate, errorMargin };
 	}
 }

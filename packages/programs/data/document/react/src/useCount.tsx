@@ -24,12 +24,12 @@ export const useCount = <T extends Record<string, any>>(
 
 		const _l = async (args?: any) => {
 			try {
-				const count = await db.count({
+				const { estimate } = await db.count({
 					query: options?.query,
 					approximate: true,
 				});
-				countRef.current = count;
-				setCount(count);
+				countRef.current = estimate;
+				setCount(estimate);
 			} catch (error) {
 				if (error instanceof ClosedError) {
 					return;
