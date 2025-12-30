@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/indexer-cache",
-	"version": "0.2.1",
+	"version": "0.2.2",
 	"description": "Indexer caching utility",
 	"sideEffects": false,
 	"type": "module",

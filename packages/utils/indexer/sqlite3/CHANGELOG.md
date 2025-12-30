@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.0.1](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v2.0.0...indexer-sqlite3-v2.0.1) (2025-12-30)
+
+
+### Bug Fixes
+
+* force libsodium 0.7.15 tmp ([663c997](https://github.com/dao-xyz/peerbit/commit/663c997100237cebcfc28bd782cd4057ab22e8d6))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-interface bumped to 2.1.1
+    * @peerbit/crypto bumped to 2.4.1
+  * devDependencies
+    * @peerbit/indexer-tests bumped to 2.0.1
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.3.2...indexer-sqlite3-v2.0.0) (2025-12-23)
 
 

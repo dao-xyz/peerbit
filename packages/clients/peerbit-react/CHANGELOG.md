@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.0.47](https://github.com/dao-xyz/peerbit/compare/react-v0.0.46...react-v0.0.47) (2025-12-30)
+
+
+### Bug Fixes
+
+* force libsodium 0.7.15 tmp ([663c997](https://github.com/dao-xyz/peerbit/commit/663c997100237cebcfc28bd782cd4057ab22e8d6))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program-react bumped to 0.2.7
+    * @peerbit/crypto bumped to 2.4.1
+    * @peerbit/proxy-window bumped to 3.1.12
+    * @peerbit/program bumped to 5.5.1
+    * @peerbit/indexer-interface bumped to 2.1.1
+    * peerbit bumped to 4.4.12
+
 ## [0.0.46](https://github.com/dao-xyz/peerbit/compare/react-v0.0.45...react-v0.0.46) (2025-12-30)
 
 

@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/indexer-simple",
-	"version": "1.2.1",
+	"version": "1.2.2",
 	"description": "Simple in memory index for document store",
 	"sideEffects": false,
 	"type": "module",

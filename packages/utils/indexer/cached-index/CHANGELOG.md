@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.2](https://github.com/dao-xyz/peerbit/compare/indexer-cache-v0.2.1...indexer-cache-v0.2.2) (2025-12-30)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 2.4.1
+    * @peerbit/indexer-interface bumped to 2.1.1
+  * devDependencies
+    * @peerbit/indexer-simple bumped to 1.2.2
+
 ## [0.2.1](https://github.com/dao-xyz/peerbit/compare/indexer-cache-v0.2.0...indexer-cache-v0.2.1) (2025-12-23)
 
 
