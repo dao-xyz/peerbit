@@ -1553,6 +1553,11 @@ export class SharedLog<
 			let deliveryPromises: Promise<void>[] | undefined;
 			let addDeliveryPromise: ((promise: Promise<void>) => void) | undefined;
 
+			const leadersForDelivery =
+				delivery && (target === "replicators" || !target)
+					? new Set(leaders.keys())
+					: undefined;
+
 			if (delivery) {
 				const deliverySettle = delivery.settle ?? true;
 				const deliveryTimeout = delivery.timeout;
@@ -1691,20 +1696,42 @@ export class SharedLog<
 						continue;
 					}
 
+					let expectedRemoteRecipientsCount = 0;
 					const ackTo: string[] = [];
 					let silentTo: string[] | undefined;
 					const ackLimit =
 						settleMin == null ? Number.POSITIVE_INFINITY : settleMin;
-					for (const peer of set) {
+
+					// Always settle towards the current expected replicators for this entry,
+					// not the entire gid peer history.
+					for (const peer of leadersForDelivery!) {
 						if (peer === selfHash) {
 							continue;
 						}
+						expectedRemoteRecipientsCount++;
 						if (ackTo.length < ackLimit) {
 							ackTo.push(peer);
 						} else {
 							silentTo ||= [];
 							silentTo.push(peer);
 						}
+					}
+
+					// Still deliver to known peers for the gid (best-effort), but don't let them
+					// satisfy the settle requirement.
+					for (const peer of set) {
+						if (peer === selfHash) {
+							continue;
+						}
+						if (leadersForDelivery!.has(peer)) {
+							continue;
+						}
+						silentTo ||= [];
+						silentTo.push(peer);
+					}
+
+					if (requireRecipients && expectedRemoteRecipientsCount === 0) {
+						throw new NoPeersError(this.rpc.topic);
 					}
 
 					if (

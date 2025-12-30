@@ -1,8 +1,9 @@
-import { ACK } from "@peerbit/stream-interface";
+import { ACK, AcknowledgeDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import pDefer from "p-defer";
+import { ExchangeHeadsMessage } from "../src/exchange-heads.js";
 import { NoPeersError } from "../src/index.js";
 import { EventStore } from "./utils/stores/index.js";
 
@@ -77,5 +78,96 @@ describe("append delivery options", () => {
 				delivery: { requireRecipients: true },
 			} as any),
 		).to.be.rejectedWith(NoPeersError);
+	});
+
+	it("settles towards the current replicators, not gid peer history", async () => {
+		session = await TestSession.connected(3);
+
+		const store = new EventStore<string, any>();
+
+		const writer = await session.peers[0].open(store, {
+			args: {
+				replicas: { min: 1 },
+				replicate: false,
+				timeUntilRoleMaturity: 0,
+			},
+		});
+
+		const replicator1 = await session.peers[1].open(writer.clone(), {
+			args: {
+				replicas: { min: 1 },
+				replicate: { offset: 0, factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+
+		const replicator2 = await session.peers[2].open(writer.clone(), {
+			args: {
+				replicas: { min: 1 },
+				replicate: false,
+				timeUntilRoleMaturity: 0,
+			},
+		});
+
+		await writer.log.waitForReplicators({
+			coverageThreshold: 1,
+			roleAge: 0,
+			timeout: 15e3,
+		});
+
+		const getSingleLeader = async (entry: any): Promise<string> => {
+			const leaders = await writer.log.findLeadersFromEntry(entry, 1, {
+				roleAge: 0,
+			});
+			expect(leaders.size).to.equal(1);
+			return [...leaders.keys()][0];
+		};
+
+		const initial = await writer.log.append({ op: "ADD", value: `seed` }, {
+			target: "replicators",
+		} as any);
+		const firstLeader = await getSingleLeader(initial.entry);
+
+		const capturedModes: any[] = [];
+		let capture = false;
+		const rpc: any = writer.log.rpc;
+		const originalSend = rpc.send.bind(rpc);
+		rpc.send = async (...args: any[]) => {
+			const message = args[0];
+			const options = args[1];
+			if (capture && message instanceof ExchangeHeadsMessage) {
+				capturedModes.push(options?.mode);
+			}
+			return originalSend(...args);
+		};
+
+		// Flip the current replicator from peer 1 -> peer 2.
+		const replicator2Hash = session.peers[2].identity.publicKey.hashcode();
+		await replicator2.log.replicate({ offset: 0, factor: 1 }, { reset: true });
+		await replicator1.log.unreplicate();
+
+		await waitForResolved(async () => {
+			const currentLeader = await getSingleLeader(initial.entry);
+			expect(currentLeader).to.equal(replicator2Hash);
+		});
+
+		capturedModes.length = 0;
+		capture = true;
+		const res = await writer.log.append({ op: "ADD", value: `value` }, {
+			target: "replicators",
+			delivery: { settle: { min: 1 }, timeout: 15e3 },
+		} as any);
+		capture = false;
+
+		const leader = await getSingleLeader(res.entry);
+		expect(leader).to.equal(replicator2Hash);
+
+		const ackModes = capturedModes.filter(
+			(mode) => mode instanceof AcknowledgeDelivery,
+		) as AcknowledgeDelivery[];
+
+		expect(ackModes).to.have.length(1);
+		expect(ackModes[0].to).to.deep.equal([leader]);
+		expect(firstLeader).to.not.equal(leader);
 	});
 });
