@@ -395,10 +395,18 @@ export type Args<
 		: "u32",
 > = LogProperties<T> & LogEvents<T> & SharedLogOptions<T, D, R>;
 
+export type DeliveryOptions = {
+	settle?: true | { min: number };
+	requireRecipients?: boolean;
+	timeout?: number;
+	signal?: AbortSignal;
+};
+
 export type SharedAppendOptions<T> = AppendOptions<T> & {
 	replicas?: AbsoluteReplicas | number;
 	replicate?: boolean;
 	target?: "all" | "replicators" | "none";
+	delivery?: false | true | DeliveryOptions;
 };
 
 export type ReplicatorJoinEvent = { publicKey: PublicSignKey };
@@ -1516,21 +1524,129 @@ export class SharedLog<
 			minReplicasValue,
 		);
 
+		const selfHash = this.node.identity.publicKey.hashcode();
 		let isLeader = false;
 		let leaders = await this.findLeaders(coordinates, result.entry, {
 			persist: {},
 			onLeader: (key) => {
-				isLeader = isLeader || this.node.identity.publicKey.hashcode() === key;
+				isLeader = isLeader || selfHash === key;
 			},
 		});
 
-		// --------------
-
 		if (options?.target !== "none") {
+			const target = options?.target;
+			const deliveryArg = options?.delivery;
+			const delivery: DeliveryOptions | undefined =
+				deliveryArg === undefined || deliveryArg === false
+					? undefined
+					: deliveryArg === true
+						? {}
+						: deliveryArg;
+
+			let requireRecipients = false;
+			let settleMin: number | undefined;
+			let guardDelivery:
+				| ((promise: Promise<void>) => Promise<void>)
+				| undefined = undefined;
+
+			let firstDeliveryPromise: Promise<void> | undefined;
+			let deliveryPromises: Promise<void>[] | undefined;
+			let addDeliveryPromise: ((promise: Promise<void>) => void) | undefined;
+
+			if (delivery) {
+				const deliverySettle = delivery.settle ?? true;
+				const deliveryTimeout = delivery.timeout;
+				const deliverySignal = delivery.signal;
+				requireRecipients = delivery.requireRecipients === true;
+				settleMin =
+					typeof deliverySettle === "object" &&
+					Number.isFinite(deliverySettle.min)
+						? Math.max(0, Math.floor(deliverySettle.min))
+						: undefined;
+
+				guardDelivery =
+					deliveryTimeout == null && deliverySignal == null
+						? undefined
+						: (promise: Promise<void>) =>
+								new Promise<void>((resolve, reject) => {
+									let settled = false;
+									let timer: ReturnType<typeof setTimeout> | undefined =
+										undefined;
+									const onAbort = () => {
+										if (settled) {
+											return;
+										}
+										settled = true;
+										promise.catch(() => {});
+										cleanup();
+										reject(new AbortError());
+									};
+
+									const cleanup = () => {
+										if (timer != null) {
+											clearTimeout(timer);
+											timer = undefined;
+										}
+										deliverySignal?.removeEventListener("abort", onAbort);
+									};
+
+									if (deliverySignal) {
+										if (deliverySignal.aborted) {
+											onAbort();
+											return;
+										}
+										deliverySignal.addEventListener("abort", onAbort);
+									}
+
+									if (deliveryTimeout != null) {
+										timer = setTimeout(() => {
+											if (settled) {
+												return;
+											}
+											settled = true;
+											promise.catch(() => {});
+											cleanup();
+											reject(new TimeoutError(`Timeout waiting for delivery`));
+										}, deliveryTimeout);
+									}
+
+									promise
+										.then(() => {
+											if (settled) {
+												return;
+											}
+											settled = true;
+											cleanup();
+											resolve();
+										})
+										.catch((e) => {
+											if (settled) {
+												return;
+											}
+											settled = true;
+											cleanup();
+											reject(e);
+										});
+								});
+
+				addDeliveryPromise = (promise: Promise<void>) => {
+					if (!firstDeliveryPromise) {
+						firstDeliveryPromise = promise;
+						return;
+					}
+					if (!deliveryPromises) {
+						deliveryPromises = [firstDeliveryPromise, promise];
+						firstDeliveryPromise = undefined;
+						return;
+					}
+					deliveryPromises.push(promise);
+				};
+			}
+
 			for await (const message of createExchangeHeadsMessages(this.log, [
 				result.entry,
 			])) {
-				if (options?.target === "replicators" || !options?.target) {
+				if (target === "replicators" || !target) {
 					if (message.heads[0].gidRefrences.length > 0) {
 						for (const ref of message.heads[0].gidRefrences) {
 							const entryFromGid = this.log.entryIndex.getHeads(ref, false);
@@ -1556,22 +1672,123 @@ export class SharedLog<
 						result.entry.meta.gid,
 						leaders.keys(),
 					);
-					let hasRemotePeers = set.has(this.node.identity.publicKey.hashcode())
-						? set.size > 1
-						: set.size > 0;
-					if (hasRemotePeers) {
-						this.rpc.send(message, {
-							mode: isLeader
-								? new SilentDelivery({ redundancy: 1, to: set })
-								: new AcknowledgeDelivery({ redundancy: 1, to: set }),
+					let hasRemotePeers = set.has(selfHash) ? set.size > 1 : set.size > 0;
+					if (!hasRemotePeers) {
+						if (requireRecipients) {
+							throw new NoPeersError(this.rpc.topic);
+						}
+						continue;
+					}
+
+					if (!delivery) {
+						this.rpc
+							.send(message, {
+								mode: isLeader
+									? new SilentDelivery({ redundancy: 1, to: set })
+									: new AcknowledgeDelivery({ redundancy: 1, to: set }),
+							})
+							.catch((e) => logger.error(e));
+						continue;
+					}
+
+					const ackTo: string[] = [];
+					let silentTo: string[] | undefined;
+					const ackLimit =
+						settleMin == null ? Number.POSITIVE_INFINITY : settleMin;
+					for (const peer of set) {
+						if (peer === selfHash) {
+							continue;
+						}
+						if (ackTo.length < ackLimit) {
+							ackTo.push(peer);
+						} else {
+							silentTo ||= [];
+							silentTo.push(peer);
+						}
+					}
+
+					if (
+						requireRecipients &&
+						ackTo.length + (silentTo?.length || 0) === 0
+					) {
+						throw new NoPeersError(this.rpc.topic);
+					}
+
+					if (ackTo.length > 0) {
+						const promise = this.rpc.send(message, {
+							mode: new AcknowledgeDelivery({
+								redundancy: 1,
+								to: ackTo,
+							}),
 						});
-					} else {
-						// no peers to send to
+						addDeliveryPromise!(
+							guardDelivery ? guardDelivery(promise) : promise,
+						);
+					}
+
+					if (silentTo?.length) {
+						this.rpc
+							.send(message, {
+								mode: new SilentDelivery({ redundancy: 1, to: silentTo }),
+							})
+							.catch((e) => logger.error(e));
 					}
 				} else {
-					// TODO add options for waiting ?
-					this.rpc.send(message); // send to all participants
+					if (!delivery) {
+						this.rpc.send(message).catch((e) => logger.error(e));
+						continue;
+					}
+
+					const subscribers = await this.node.services.pubsub.getSubscribers(
+						this.rpc.topic,
+					);
+
+					const ackTo: PublicSignKey[] = [];
+					let silentTo: PublicSignKey[] | undefined;
+					const ackLimit =
+						settleMin == null ? Number.POSITIVE_INFINITY : settleMin;
+					for (const subscriber of subscribers || []) {
+						if (subscriber.hashcode() === selfHash) {
+							continue;
+						}
+						if (ackTo.length < ackLimit) {
+							ackTo.push(subscriber);
+						} else {
+							silentTo ||= [];
+							silentTo.push(subscriber);
+						}
+					}
+
+					if (
+						requireRecipients &&
+						ackTo.length + (silentTo?.length || 0) === 0
+					) {
+						throw new NoPeersError(this.rpc.topic);
+					}
+
+					if (ackTo.length > 0) {
+						const promise = this.rpc.send(message, {
+							mode: new AcknowledgeDelivery({ redundancy: 1, to: ackTo }),
+						});
+						addDeliveryPromise!(
+							guardDelivery ? guardDelivery(promise) : promise,
+						);
+					}
+
+					if (silentTo?.length) {
+						this.rpc
+							.send(message, {
+								mode: new SilentDelivery({ redundancy: 1, to: silentTo }),
+							})
+							.catch((e) => logger.error(e));
+					}
 				}
+			}
+
+			if (deliveryPromises) {
+				await Promise.all(deliveryPromises);
+			} else if (firstDeliveryPromise) {
+				await firstDeliveryPromise;
 			}
 		}
 
