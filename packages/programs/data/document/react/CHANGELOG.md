@@ -1,5 +1,30 @@
 # @peerbit/document-react
 
+## [0.5.0](https://github.com/dao-xyz/peerbit/compare/document-react-v0.4.11...document-react-v0.5.0) (2025-12-30)
+
+
+### Features
+
+* improve count approximation using 95% confidence interval errorMargin ([19db639](https://github.com/dao-xyz/peerbit/commit/19db63946be124dac591524ea5010d64d1a524c6))
+
+
+### Bug Fixes
+
+* force libsodium 0.7.15 tmp ([663c997](https://github.com/dao-xyz/peerbit/commit/663c997100237cebcfc28bd782cd4057ab22e8d6))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 12.1.0
+    * @peerbit/indexer-interface bumped to 2.1.1
+    * @peerbit/react bumped to 0.0.47
+  * devDependencies
+    * @peerbit/blocks-interface bumped to 1.5.1
+    * @peerbit/program bumped to 5.5.1
+    * peerbit bumped to 4.4.12
+
 ## [0.4.11](https://github.com/dao-xyz/peerbit/compare/document-react-v0.4.10...document-react-v0.4.11) (2025-12-30)
 
 

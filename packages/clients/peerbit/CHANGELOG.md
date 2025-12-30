@@ -313,6 +313,30 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.4.12](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.4.11...peerbit-v4.4.12) (2025-12-30)
+
+
+### Bug Fixes
+
+* force libsodium 0.7.15 tmp ([663c997](https://github.com/dao-xyz/peerbit/commit/663c997100237cebcfc28bd782cd4057ab22e8d6))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped to 2.2.4
+    * @peerbit/any-store-opfs bumped to 1.1.3
+    * @peerbit/crypto bumped to 2.4.1
+    * @peerbit/indexer-interface bumped to 2.1.1
+    * @peerbit/keychain bumped to 1.2.4
+    * @peerbit/indexer-simple bumped to 1.2.2
+    * @peerbit/indexer-sqlite3 bumped to 2.0.1
+    * @peerbit/program bumped to 5.5.1
+    * @peerbit/blocks bumped to 3.1.5
+    * @peerbit/pubsub bumped to 4.1.2
+    * @peerbit/stream-interface bumped to 5.3.1
+
 ## [4.4.11](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.4.10...peerbit-v4.4.11) (2025-12-30)
 
 

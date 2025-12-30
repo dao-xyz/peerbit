@@ -452,6 +452,26 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.10.7](https://github.com/dao-xyz/peerbit/compare/server-v5.10.6...server-v5.10.7) (2025-12-30)
+
+
+### Bug Fixes
+
+* force libsodium 0.7.15 tmp ([663c997](https://github.com/dao-xyz/peerbit/commit/663c997100237cebcfc28bd782cd4057ab22e8d6))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped to 4.4.12
+    * @peerbit/blocks bumped to 3.1.5
+    * @peerbit/crypto bumped to 2.4.1
+    * @peerbit/program bumped to 5.5.1
+    * @peerbit/pubsub bumped to 4.1.2
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.3.12
+
 ## [5.10.6](https://github.com/dao-xyz/peerbit/compare/server-v5.10.5...server-v5.10.6) (2025-12-30)
 
 

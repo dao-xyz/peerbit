@@ -61,6 +61,13 @@
   * dependencies
     * @peerbit/cache bumped from ^2.0.5 to ^2.0.6
 
+## [2.4.1](https://github.com/dao-xyz/peerbit/compare/crypto-v2.4.0...crypto-v2.4.1) (2025-12-30)
+
+
+### Bug Fixes
+
+* force libsodium 0.7.15 tmp ([663c997](https://github.com/dao-xyz/peerbit/commit/663c997100237cebcfc28bd782cd4057ab22e8d6))
+
 ## [2.4.0](https://github.com/dao-xyz/peerbit/compare/crypto-v2.3.13...crypto-v2.4.0) (2025-11-25)
 
 
