@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.0.46](https://github.com/dao-xyz/peerbit/compare/react-v0.0.45...react-v0.0.46) (2025-12-30)
+
+
+### Bug Fixes
+
+* prevent users from passing peerId in favor of privateKey on client construction (libp2p v3 compat.) ([19a0baf](https://github.com/dao-xyz/peerbit/commit/19a0baff70271818ce01b03b81f1de1b5f3b5546))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/proxy-window bumped to 3.1.11
+    * peerbit bumped to 4.4.11
+
 ## [0.0.45](https://github.com/dao-xyz/peerbit/compare/react-v0.0.44...react-v0.0.45) (2025-12-26)
 
 

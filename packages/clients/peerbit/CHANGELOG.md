@@ -313,6 +313,13 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.4.11](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.4.10...peerbit-v4.4.11) (2025-12-30)
+
+
+### Bug Fixes
+
+* prevent users from passing peerId in favor of privateKey on client construction (libp2p v3 compat.) ([19a0baf](https://github.com/dao-xyz/peerbit/commit/19a0baff70271818ce01b03b81f1de1b5f3b5546))
+
 ## [4.4.10](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.4.9...peerbit-v4.4.10) (2025-12-26)
 
 
