@@ -1,5 +1,12 @@
 # @peerbit/document-react
 
+## [0.4.11](https://github.com/dao-xyz/peerbit/compare/document-react-v0.4.10...document-react-v0.4.11) (2025-12-30)
+
+
+### Bug Fixes
+
+* effects on local, remote options ([ae6ca41](https://github.com/dao-xyz/peerbit/commit/ae6ca41321b81fc595064eb145ca3faa0e93fa2b))
+
 ## [0.4.10](https://github.com/dao-xyz/peerbit/compare/document-react-v0.4.9...document-react-v0.4.10) (2025-12-30)
 
 
