@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.2](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v2.0.1...indexer-sqlite3-v2.0.2) (2026-01-02)
+
+
+### Bug Fixes
+
+* **indexer-sqlite3:** support nested POJOs; reject ambiguous polymorphism ([530bc4d](https://github.com/dao-xyz/peerbit/commit/530bc4d22711b08d174a726de4059bcd41d61236))
+
 ## [2.0.1](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v2.0.0...indexer-sqlite3-v2.0.1) (2025-12-30)
 
 

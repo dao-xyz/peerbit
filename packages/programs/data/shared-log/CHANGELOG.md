@@ -389,6 +389,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [12.1.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.1.1...shared-log-v12.1.2) (2026-01-02)
+
+
+### Bug Fixes
+
+* settle append delivery to current replicators ([63c6b11](https://github.com/dao-xyz/peerbit/commit/63c6b1195e7116876e1f357a7112b9f1b33d4658))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 5.0.4
+    * @peerbit/rpc bumped to 5.4.13
+    * @peerbit/indexer-sqlite3 bumped to 2.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.3.13
+
 ## [12.1.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.1.0...shared-log-v12.1.1) (2025-12-30)
 
 
