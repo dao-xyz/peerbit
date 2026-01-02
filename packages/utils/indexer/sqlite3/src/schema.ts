@@ -194,7 +194,7 @@ export const getSQLTable = (
 	/* name: string */
 ): Table[] => {
 	let clazzes = getDependencies(ctor, 0) as any as Constructor<any>[];
-	if (!clazzes) {
+	if (!clazzes || clazzes.length === 0) {
 		clazzes = [ctor as Constructor<any>];
 	}
 
@@ -658,23 +658,45 @@ const getTableFromValue = (
 	if (!isNestedType(field.type)) {
 		clazzName = WRAPPED_SIMPLE_VALUE_VARIANT;
 	} else {
-		const testCtors = value?.constructor
-			? [value?.constructor]
-			: ([
-					unwrapNestedType(field.type),
-					...(getDependencies(unwrapNestedType(field.type) as any, 0) || []),
-				] as Constructor<any>[]);
-		for (const ctor of testCtors) {
-			if (!ctor) {
-				continue;
-			}
-			const schema = getSchema(ctor);
-			if (!schema) {
-				continue;
-			}
-			if (ctor) {
-				clazzName = ctor;
-				break;
+		const nestedType = unwrapNestedType(field.type) as Constructor<any>;
+		const dependencies = (getDependencies(nestedType as any, 0) ||
+			[]) as Constructor<any>[];
+		const candidatesFromSchema = [nestedType, ...dependencies].filter(
+			(x): x is Constructor<any> => typeof x === "function",
+		);
+
+		const runtimeCtor = value?.constructor as Constructor<any> | undefined;
+		const runtimeSchema = runtimeCtor ? getSchema(runtimeCtor) : undefined;
+
+		// If the runtime value is a proper borsh-decorated instance, use it.
+		if (runtimeCtor && runtimeSchema?.variant !== undefined) {
+			clazzName = runtimeCtor;
+		} else {
+			// Otherwise fall back to the declared field type, but only if it maps to
+			// a single concrete variant/table. For polymorphic base types, a POJO
+			// does not contain enough information to determine the correct table.
+			const tableCtors = candidatesFromSchema.filter((ctor) => {
+				const schema = getSchema(ctor);
+				return schema?.variant !== undefined;
+			});
+
+			if (tableCtors.length === 1) {
+				clazzName = tableCtors[0];
+			} else if (tableCtors.length > 1) {
+				const declaredName = nestedType.name || "<anonymous>";
+				const variants = tableCtors
+					.map((ctor) => {
+						const schema = getSchema(ctor);
+						return `${ctor.name || "<anonymous>"}(${JSON.stringify(schema?.variant)})`;
+					})
+					.join(", ");
+				const runtimeName =
+					runtimeCtor?.name || (value == null ? "null" : typeof value);
+				throw new Error(
+					`Ambiguous polymorphic nested value for field "${field.key}". ` +
+						`Declared type ${declaredName} has multiple variants: ${variants}. ` +
+						`Received ${runtimeName}. Pass an instance of the desired variant.`,
+				);
 			}
 		}
 	}
