@@ -1393,10 +1393,12 @@ export abstract class DirectStream<
 		// PeerId could be me, if so, it means that I am disconnecting
 		const peerKey = getPublicKeyFromPeerId(peerId);
 		const peerKeyHash = peerKey.hashcode();
-		const connections = this.components.connectionManager
-			.getConnectionsMap()
-			.get(peerId);
-		if (connections && connections.length > 0) {
+		const allConnections =
+			this.components.connectionManager.getConnections?.() ?? [];
+		const connections = allConnections.filter(
+			(connection) => connection.remotePeer.toString() === peerId.toString(),
+		);
+		if (connections.length > 0) {
 			const trackedConnection = conn?.id
 				? connections.find((x) => x.id === conn.id)
 				: null;

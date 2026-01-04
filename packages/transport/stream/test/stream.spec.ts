@@ -105,7 +105,7 @@ const getWritesCount = (writes: Map<string, DataMessage[]>) => {
 
 const createMetrics = (stream: DirectStream) => {
 	const s: {
-		stream: TestDirectStream;
+		stream: DirectStream;
 		messages: Message[];
 		received: DataMessage[];
 		ack: ACK[];
@@ -2388,10 +2388,22 @@ describe("join/leave", () => {
 		it("keeps peer when another connection remains", async () => {
 			const a = session.peers[0];
 			const b = session.peers[3];
-			const streamA = streams[0].stream;
+			const streamA = streams[0].stream as TestDirectStream;
 
+			streams[3].received = [];
+			await streamA.publish(data, {
+				mode: new SeekDelivery({
+					to: [streams[3].stream.components.peerId],
+					redundancy: 1,
+				}),
+			});
 			await waitForResolved(() =>
-				expect(streamA.peers.has(streams[3].stream.publicKeyHash)).to.be.true,
+				expect(streams[3].received).to.have.length(1),
+			);
+
+			await waitForResolved(
+				() =>
+					expect(streamA.peers.has(streams[3].stream.publicKeyHash)).to.be.true,
 			);
 
 			const [primary] = a.getConnections(b.peerId);
@@ -2400,20 +2412,20 @@ describe("join/leave", () => {
 			const secondary = {
 				...primary,
 				id: `${primary.id}-secondary`,
+				remotePeer: primary.remotePeer,
 			} as Connection;
 
-			const connectionManager = streamA.components.connectionManager as {
-				getConnectionsMap: () => Map<PeerId, Connection[]>;
-			};
+			const connectionManager = streamA.components.connectionManager;
 
 			const stub = sinon
-				.stub(connectionManager, "getConnectionsMap")
-				.returns(new Map([[b.peerId, [primary, secondary]]]));
+				.stub(connectionManager, "getConnections")
+				.callsFake(() => [primary, secondary]);
 
 			await streamA.__testOnPeerDisconnected(b.peerId, primary);
 
-			await waitForResolved(() =>
-				expect(streamA.peers.has(streams[3].stream.publicKeyHash)).to.be.true,
+			await waitForResolved(
+				() =>
+					expect(streamA.peers.has(streams[3].stream.publicKeyHash)).to.be.true,
 			);
 
 			stub.restore();
