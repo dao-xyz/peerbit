@@ -2,7 +2,7 @@ import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { keys } from "@libp2p/crypto";
-import { type PeerId } from "@libp2p/interface";
+import { type Connection, type PeerId } from "@libp2p/interface";
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
 import { type Multiaddr } from "@multiformats/multiaddr";
@@ -209,6 +209,10 @@ class TestDirectStream extends DirectStream {
 			maxInboundStreams: options.maxInboundStreams,
 			...options,
 		});
+	}
+
+	public async __testOnPeerDisconnected(peerId: PeerId, conn?: Connection) {
+		return super.onPeerDisconnected(peerId, conn);
 	}
 }
 const connected = async (
@@ -2379,6 +2383,40 @@ describe("join/leave", () => {
 				.true;
 			expect(streams[0].stream.peers.has(streams[1].stream.publicKeyHash)).to.be
 				.true;
+		});
+
+		it("keeps peer when another connection remains", async () => {
+			const a = session.peers[0];
+			const b = session.peers[3];
+			const streamA = streams[0].stream;
+
+			await waitForResolved(() =>
+				expect(streamA.peers.has(streams[3].stream.publicKeyHash)).to.be.true,
+			);
+
+			const [primary] = a.getConnections(b.peerId);
+			expect(primary).to.exist;
+
+			const secondary = {
+				...primary,
+				id: `${primary.id}-secondary`,
+			} as Connection;
+
+			const connectionManager = streamA.components.connectionManager as {
+				getConnectionsMap: () => Map<PeerId, Connection[]>;
+			};
+
+			const stub = sinon
+				.stub(connectionManager, "getConnectionsMap")
+				.returns(new Map([[b.peerId, [primary, secondary]]]));
+
+			await streamA.__testOnPeerDisconnected(b.peerId, primary);
+
+			await waitForResolved(() =>
+				expect(streamA.peers.has(streams[3].stream.publicKeyHash)).to.be.true,
+			);
+
+			stub.restore();
 		});
 
 		it("intermediate routes are eventually updated", async () => {
