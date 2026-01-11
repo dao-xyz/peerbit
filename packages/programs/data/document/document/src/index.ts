@@ -9,6 +9,7 @@ export type {
 	WithIndexedContext,
 	WithIndexed,
 	OpenOptions,
+	GetOptions,
 	QueryOptions,
 	RemoteQueryOptions,
 	ResultsIterator,
@@ -40,3 +41,10 @@ export {
 	createDocumentDomainFromProperty,
 } from "./domain.js";
 export * from "./events.js";
+export type {
+	DocumentsLike,
+	DocumentsLikeCountOptions,
+	DocumentsLikeIndex,
+	DocumentsLikeQuery,
+	DocumentsLikeWaitForOptions,
+} from "./like.js";

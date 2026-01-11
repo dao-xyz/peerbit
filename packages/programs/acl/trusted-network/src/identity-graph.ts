@@ -1,12 +1,17 @@
 import { field, fixedArray, serialize, variant } from "@dao-xyz/borsh";
 import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
-import { Documents, SearchRequest, StringMatch } from "@peerbit/document";
+import {
+	Documents,
+	type DocumentsLike,
+	SearchRequest,
+	StringMatch,
+} from "@peerbit/document";
 import { concat } from "uint8arrays";
 
 export type RelationResolver = {
 	resolve: (
 		key: PublicSignKey,
-		db: Documents<IdentityRelation, FromTo>,
+		db: DocumentsLike<IdentityRelation, FromTo>,
 	) => Promise<IdentityRelation[]>;
 	next: (relation: IdentityRelation) => PublicSignKey;
 };
@@ -14,7 +19,7 @@ export type RelationResolver = {
 export const getFromByTo: RelationResolver = {
 	resolve: async (
 		to: PublicSignKey,
-		db: Documents<IdentityRelation, FromTo>,
+		db: DocumentsLike<IdentityRelation, FromTo>,
 	) => {
 		return Promise.all(
 			await db.index.search(
@@ -35,7 +40,7 @@ export const getFromByTo: RelationResolver = {
 export const getToByFrom: RelationResolver = {
 	resolve: async (
 		from: PublicSignKey,
-		db: Documents<IdentityRelation, FromTo>,
+		db: DocumentsLike<IdentityRelation, FromTo>,
 	) => {
 		return Promise.all(
 			await db.index.search(
@@ -55,7 +60,7 @@ export const getToByFrom: RelationResolver = {
 
 export async function* getPathGenerator(
 	from: PublicSignKey,
-	db: Documents<IdentityRelation, FromTo>,
+	db: DocumentsLike<IdentityRelation, FromTo>,
 	resolver: RelationResolver,
 ) {
 	let iter = [from];
@@ -90,7 +95,7 @@ export async function* getPathGenerator(
 export const hasPathToTarget = async (
 	start: PublicSignKey,
 	target: (key: PublicSignKey) => boolean,
-	db: Documents<IdentityRelation, FromTo>,
+	db: DocumentsLike<IdentityRelation, FromTo>,
 	resolver: RelationResolver,
 ): Promise<boolean> => {
 	if (!db) {
@@ -157,7 +162,7 @@ export class IdentityRelation extends AbstractRelation {
 export const hasPath = async (
 	start: PublicSignKey,
 	end: PublicSignKey,
-	db: Documents<IdentityRelation, FromTo>,
+	db: DocumentsLike<IdentityRelation, FromTo>,
 	resolver: RelationResolver,
 ): Promise<boolean> => {
 	return hasPathToTarget(start, (key) => end.equals(key), db, resolver);
@@ -166,7 +171,7 @@ export const hasPath = async (
 export const getRelation = async (
 	from: PublicSignKey,
 	to: PublicSignKey,
-	db: Documents<IdentityRelation, FromTo>,
+	db: DocumentsLike<IdentityRelation, FromTo>,
 ): Promise<IdentityRelation | undefined> => {
 	return db.index.get(new IdentityRelation({ from, to }).id);
 };

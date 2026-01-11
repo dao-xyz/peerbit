@@ -57,7 +57,7 @@
 		"benchmark": "cargo bench",
 		"clean": "cargo clear",
 		"cp-src-js": "shx cp -r ./src_js/* ./dist",
-		"build": "wasm-pack build --target web --out-dir dist --out-name rateless_iblt && shx rm -rf ./dist/.gitignore && shx rm -rf ./dist/package.json && npm run cp-src-js && shx cp ./dist/rateless_iblt.d.ts ./dist/index.d.ts && shx mkdir -p ./dist/assets/riblt && shx cp ./dist/rateless_iblt_bg.wasm ./dist/assets/riblt/",
+		"build": "wasm-pack build --target web --out-dir dist --out-name rateless_iblt && shx rm -rf ./dist/.gitignore && shx rm -rf ./dist/package.json && npm run cp-src-js && shx mkdir -p ./dist/assets/riblt && shx cp ./dist/rateless_iblt_bg.wasm ./dist/assets/riblt/",
 		"test": "cargo test && aegir test",
 		"lint": "cargo fmt"
 	},

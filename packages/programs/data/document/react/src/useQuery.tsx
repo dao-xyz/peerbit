@@ -1,4 +1,8 @@
-import { ClosedError, Documents, NotStartedError } from "@peerbit/document";
+import {
+	ClosedError,
+	type DocumentsLike,
+	NotStartedError,
+} from "@peerbit/document";
 import type {
 	AbstractSearchRequest,
 	AbstractSearchResult,
@@ -105,8 +109,8 @@ export type UseQuerySharedOptions<
 /* ────────────────────────── Main Hook ────────────────────────── */
 /**
  * `useQuery` – unified hook that accepts **either**
- *   1. a single `Documents` instance
- *   2. an array of `Documents` instances
+ *   1. a single Documents-like instance
+ *   2. an array of Documents-like instances
  *   3. *or* omits the first argument and provides `dbs` inside the `options` object.
  *
  * It supersedes the original single-DB version as well as the experimental
@@ -119,20 +123,25 @@ export const useQuery = <
 	RT = R extends false ? WithContext<I> : WithIndexedContext<T, I>,
 >(
 	/** Single DB or list of DBs. 100 % backward-compatible with the old single param. */
-	dbOrDbs: Documents<T, I> | Documents<T, I>[] | undefined,
+	dbOrDbs: DocumentsLike<T, I> | DocumentsLike<T, I>[] | undefined,
 	options: UseQuerySharedOptions<T, I, R, RT>,
 ) => {
 	/* ─────── internal type alias for convenience ─────── */
 	type Item = RT;
+	type DocsLikeHandle = DocumentsLike<T, I> & {
+		closed?: boolean;
+		address?: string;
+		rootAddress?: string;
+	};
 	type IteratorRef = {
 		id: string;
-		db: Documents<T, I>;
+		db: DocsLikeHandle;
 		iterator: ResultsIterator<Item>;
 		itemsConsumed: number;
 	};
 
 	/* ────────────── normalise DBs input ────────────── */
-	const dbs = useMemo<(Documents<T, I> | undefined)[]>(() => {
+	const dbs = useMemo<(DocsLikeHandle | undefined)[]>(() => {
 		if (Array.isArray(dbOrDbs)) return dbOrDbs;
 		if (dbOrDbs) return [dbOrDbs];
 		return [];
@@ -158,6 +167,10 @@ export const useQuery = <
 	}, [options.reverse]);
 
 	/* ────────────── utilities ────────────── */
+	const getDbKey = (db?: DocsLikeHandle) => db?.rootAddress ?? db?.address;
+
+	const getDbAddress = (db: DocsLikeHandle) => db.address ?? db.rootAddress;
+
 	const log = (...a: any[]) => {
 		if (!options.debug) return;
 		if (typeof options.debug === "boolean") console.log(...a);
@@ -278,8 +291,8 @@ export const useQuery = <
 	/* ────────── rebuild iterators when db list / query etc. change ────────── */
 	useEffect(() => {
 		/* derive canonical list of open DBs */
-		const openDbs = dbs.filter((d): d is Documents<T, I> =>
-			Boolean(d && !d.closed),
+		const openDbs = dbs.filter((d): d is DocsLikeHandle =>
+			Boolean(d && !(d as DocsLikeHandle).closed),
 		);
 		const { query, resolve } = options;
 
@@ -419,7 +432,7 @@ export const useQuery = <
 				itemsConsumed: 0,
 			};
 			currentRef = ref;
-			log("Iterator init", ref.id, "db", db.address);
+			log("Iterator init", ref.id, "db", getDbAddress(db));
 			return ref;
 		});
 
@@ -430,7 +443,7 @@ export const useQuery = <
 		if (options.prefetch) void loadMore();
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [
-		dbs.map((d) => d?.address).join("|"),
+		dbs.map((d, idx) => getDbKey(d) ?? `idx:${idx}`).join("|"),
 		options.query,
 		options.resolve,
 		options.reverse,
@@ -741,7 +754,7 @@ export const useQuery = <
 
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [
-		iteratorRefs.current.map((r) => r.db.address).join("|"),
+		iteratorRefs.current.map((r) => getDbAddress(r.db) ?? "").join("|"),
 		options.updates,
 		options.query,
 		options.resolve,

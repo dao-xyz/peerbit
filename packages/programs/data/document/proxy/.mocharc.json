@@ -1,0 +1,5 @@
+{
+	"spec": [],
+	"extension": ["js"],
+	"ignore": ["**/e2e/**", "**/node_modules/**"]
+}

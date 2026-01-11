@@ -1,4 +1,4 @@
-import { ClosedError, Documents } from "@peerbit/document";
+import { ClosedError, type DocumentsLike } from "@peerbit/document";
 import type { WithContext } from "@peerbit/document";
 import * as indexerTypes from "@peerbit/indexer-interface";
 import { useEffect, useRef, useState } from "react";
@@ -32,7 +32,11 @@ export const useLocal = <
 	R extends boolean | undefined = true,
 	RT = R extends false ? WithContext<I> : WithContext<T>,
 >(
-	db?: Documents<T, I>,
+	db?: DocumentsLike<T, I> & {
+		closed?: boolean;
+		rootAddress?: string;
+		address?: string;
+	},
 	options?: {
 		resolve?: R;
 		transform?: (result: RT) => Promise<RT>;
@@ -53,7 +57,7 @@ export const useLocal = <
 		logWithId(
 			options,
 			"reset local",
-			db?.closed ? undefined : db?.rootAddress,
+			db?.closed ? undefined : (db?.rootAddress ?? db?.address),
 			options?.id,
 			options?.resolve,
 			options?.onChanges,
@@ -109,7 +113,7 @@ export const useLocal = <
 			debounced.cancel();
 		};
 	}, [
-		db?.closed ? undefined : db?.rootAddress,
+		db?.closed ? undefined : (db?.rootAddress ?? db?.address),
 		options?.id,
 		options?.resolve,
 		options?.onChanges,

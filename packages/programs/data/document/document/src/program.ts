@@ -42,6 +42,7 @@ import {
 	type CanRead,
 	type CanSearch,
 	DocumentIndex,
+	type GetOptions,
 	type PrefetchOptions,
 	type ReachScope,
 	type TransformOptions,
@@ -173,6 +174,10 @@ export class Documents<
 
 	get index(): DocumentIndex<T, I, D> {
 		return this._index;
+	}
+
+	get changes() {
+		return this.events;
 	}
 
 	private async maybeSubprogramOpen(value: T & Program): Promise<T & Program> {
@@ -333,7 +338,7 @@ export class Documents<
 			: history;
 	}
 
-	async canAppend(
+	protected async canAppend(
 		entry: Entry<Operation>,
 		reference?: { document: T; operation: PutOperation },
 	): Promise<boolean> {
@@ -391,7 +396,7 @@ export class Documents<
 		return true;
 	}
 
-	async _canAppend(
+	protected async _canAppend(
 		entry: Entry<Operation>,
 		reference?: { document: T; operation: PutOperation },
 	): Promise<PutOperation | DeleteOperation | false> {
@@ -604,11 +609,22 @@ export class Documents<
 		return appended;
 	}
 
+	public async get(
+		id: indexerTypes.Ideable | indexerTypes.IdKey,
+		options?: Omit<GetOptions<T, I, D, true | undefined>, "resolve">,
+	): Promise<T | undefined> {
+		const resolved = await this.index.get(id, {
+			...(options ?? {}),
+			resolve: true,
+		} as GetOptions<T, I, D, true>);
+		return resolved ? (resolved as T) : undefined;
+	}
+
 	async del(
-		id: indexerTypes.Ideable,
+		id: indexerTypes.Ideable | indexerTypes.IdKey,
 		options?: SharedAppendOptions<Operation>,
 	) {
-		const key = indexerTypes.toId(id);
+		const key = id instanceof indexerTypes.IdKey ? id : indexerTypes.toId(id);
 		const existing = (
 			await this._index.getDetailed(key, {
 				resolve: false,

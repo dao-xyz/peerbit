@@ -5,6 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
+  '@dao-xyz/borsh': 6.0.1
   '@libp2p/peer-collections': 7.0.7
   esbuild: 0.25.10
 
@@ -127,20 +128,29 @@ importers:
   docs:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@ethersproject/wallet':
         specifier: ^5.8.0
         version: 5.8.0
       '@multiformats/multiaddr':
         specifier: ^13.0.1
         version: 13.0.1
+      '@peerbit/canonical-client':
+        specifier: workspace:*
+        version: link:../packages/clients/canonical/client
+      '@peerbit/canonical-host':
+        specifier: workspace:*
+        version: link:../packages/clients/canonical/host
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../packages/utils/crypto
       '@peerbit/document':
         specifier: workspace:*
         version: link:../packages/programs/data/document/document
+      '@peerbit/document-proxy':
+        specifier: workspace:*
+        version: link:../packages/programs/data/document/proxy
       '@peerbit/indexer-interface':
         specifier: workspace:*
         version: link:../packages/utils/indexer/interface
@@ -153,6 +163,9 @@ importers:
       '@peerbit/shared-log':
         specifier: workspace:*
         version: link:../packages/programs/data/shared-log
+      '@peerbit/shared-log-proxy':
+        specifier: workspace:*
+        version: link:../packages/programs/data/shared-log/proxy
       '@peerbit/string':
         specifier: workspace:*
         version: link:../packages/programs/data/string
@@ -173,6 +186,58 @@ importers:
         specifier: ^6.0.1
         version: 6.2.1
 
+  packages/clients/canonical/client:
+    dependencies:
+      '@dao-xyz/borsh':
+        specifier: 6.0.1
+        version: 6.0.1
+      '@libp2p/interface':
+        specifier: ^3.1.0
+        version: 3.1.0
+      '@libp2p/peer-id':
+        specifier: ^6.0.1
+        version: 6.0.4
+      '@multiformats/multiaddr':
+        specifier: ^13.0.1
+        version: 13.0.1
+      '@peerbit/canonical-transport':
+        specifier: workspace:*
+        version: link:../transport
+      '@peerbit/crypto':
+        specifier: workspace:*
+        version: link:../../../utils/crypto
+      '@peerbit/program':
+        specifier: workspace:*
+        version: link:../../../programs/program/program
+
+  packages/clients/canonical/host:
+    dependencies:
+      '@dao-xyz/borsh':
+        specifier: 6.0.1
+        version: 6.0.1
+      '@libp2p/peer-id':
+        specifier: ^6.0.1
+        version: 6.0.4
+      '@peerbit/canonical-transport':
+        specifier: workspace:*
+        version: link:../transport
+      '@peerbit/crypto':
+        specifier: workspace:*
+        version: link:../../../utils/crypto
+      peerbit:
+        specifier: workspace:*
+        version: link:../../peerbit
+    devDependencies:
+      '@peerbit/canonical-client':
+        specifier: workspace:*
+        version: link:../client
+
+  packages/clients/canonical/transport:
+    dependencies:
+      '@dao-xyz/borsh':
+        specifier: 6.0.1
+        version: 6.0.1
+
   packages/clients/peerbit:
     dependencies:
       '@chainsafe/libp2p-noise':
@@ -182,8 +247,8 @@ importers:
         specifier: ^8.0.0
         version: 8.0.1
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@dao-xyz/datastore-level':
         specifier: ^11.2.0
         version: 11.2.0
@@ -297,195 +362,6 @@ importers:
         specifier: ^10.0.0
         version: 10.0.0
 
-  packages/clients/peerbit-proxy/proxy:
-    dependencies:
-      '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
-      '@libp2p/interface':
-        specifier: ^3.1.0
-        version: 3.1.0
-      '@multiformats/multiaddr':
-        specifier: ^13.0.1
-        version: 13.0.1
-      '@peerbit/any-store':
-        specifier: workspace:*
-        version: link:../../../utils/any-store/any-store
-      '@peerbit/any-store-interface':
-        specifier: workspace:*
-        version: link:../../../utils/any-store/interface
-      '@peerbit/blocks':
-        specifier: workspace:*
-        version: link:../../../transport/blocks
-      '@peerbit/blocks-interface':
-        specifier: workspace:*
-        version: link:../../../transport/blocks-interface
-      '@peerbit/crypto':
-        specifier: workspace:*
-        version: link:../../../utils/crypto
-      '@peerbit/indexer-interface':
-        specifier: workspace:*
-        version: link:../../../utils/indexer/interface
-      '@peerbit/indexer-simple':
-        specifier: workspace:*
-        version: link:../../../utils/indexer/simple
-      '@peerbit/keychain':
-        specifier: workspace:*
-        version: link:../../../utils/keychain
-      '@peerbit/program':
-        specifier: workspace:*
-        version: link:../../../programs/program/program
-      '@peerbit/pubsub':
-        specifier: workspace:*
-        version: link:../../../transport/pubsub
-      '@peerbit/pubsub-interface':
-        specifier: workspace:*
-        version: link:../../../transport/pubsub-interface
-      '@peerbit/stream':
-        specifier: workspace:*
-        version: link:../../../transport/stream
-      '@peerbit/stream-interface':
-        specifier: workspace:*
-        version: link:../../../transport/stream-interface
-      '@peerbit/time':
-        specifier: workspace:*
-        version: link:../../../utils/time
-      libp2p:
-        specifier: ^3.1.0
-        version: 3.1.1
-      peerbit:
-        specifier: workspace:*
-        version: link:../../peerbit
-      uuid:
-        specifier: ^10.0.0
-        version: 10.0.0
-    devDependencies:
-      '@peerbit/test-utils':
-        specifier: workspace:*
-        version: link:../../test-utils
-
-  packages/clients/peerbit-proxy/window:
-    dependencies:
-      '@peerbit/proxy':
-        specifier: workspace:*
-        version: link:../proxy
-      peerbit:
-        specifier: workspace:*
-        version: link:../../peerbit
-    devDependencies:
-      '@peerbit/test-utils':
-        specifier: workspace:*
-        version: link:../../test-utils
-
-  packages/clients/peerbit-proxy/window/e2e/browser: {}
-
-  packages/clients/peerbit-proxy/window/e2e/browser/child:
-    dependencies:
-      '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
-      '@peerbit/any-store-opfs':
-        specifier: workspace:*
-        version: link:../../../../../../utils/any-store/opfs
-      '@peerbit/crypto':
-        specifier: workspace:*
-        version: link:../../../../../../utils/crypto
-      '@peerbit/indexer-sqlite3':
-        specifier: workspace:*
-        version: link:../../../../../../utils/indexer/sqlite3
-      '@peerbit/log':
-        specifier: workspace:*
-        version: link:../../../../../../log
-      '@peerbit/program':
-        specifier: workspace:*
-        version: link:../../../../../../programs/program/program
-      '@peerbit/proxy-window':
-        specifier: workspace:*
-        version: link:../../..
-      '@peerbit/shared-log':
-        specifier: workspace:*
-        version: link:../../../../../../programs/data/shared-log
-      events:
-        specifier: ^3.3.0
-        version: 3.3.0
-      react:
-        specifier: ^19.2.0
-        version: 19.2.0
-      react-dom:
-        specifier: ^19.2.0
-        version: 19.2.0(react@19.2.0)
-    devDependencies:
-      '@peerbit/vite':
-        specifier: workspace:*
-        version: link:../../../../../vite
-      '@types/libsodium-wrappers':
-        specifier: ^0.7.14
-        version: 0.7.14
-      '@types/react':
-        specifier: ^19.2.4
-        version: 19.2.4
-      '@types/react-dom':
-        specifier: ^19.2.3
-        version: 19.2.3(@types/react@19.2.4)
-      '@vitejs/plugin-react':
-        specifier: ^5.1.1
-        version: 5.1.1(vite@7.2.2(@types/node@22.19.1)(terser@5.44.1)(yaml@2.8.1))
-      vite:
-        specifier: ^7.1.7
-        version: 7.2.2(@types/node@22.19.1)(terser@5.44.1)(yaml@2.8.1)
-
-  packages/clients/peerbit-proxy/window/e2e/browser/parent:
-    dependencies:
-      '@libp2p/crypto':
-        specifier: ^5.1.10
-        version: 5.1.13
-      '@peerbit/any-store':
-        specifier: workspace:*
-        version: link:../../../../../../utils/any-store/any-store
-      '@peerbit/any-store-opfs':
-        specifier: workspace:*
-        version: link:../../../../../../utils/any-store/opfs
-      '@peerbit/indexer-sqlite3':
-        specifier: workspace:*
-        version: link:../../../../../../utils/indexer/sqlite3
-      '@peerbit/proxy-window':
-        specifier: workspace:*
-        version: link:../../..
-      '@peerbit/riblt':
-        specifier: workspace:*
-        version: link:../../../../../../utils/rateless-iblt
-      events:
-        specifier: ^3.3.0
-        version: 3.3.0
-      peerbit:
-        specifier: workspace:*
-        version: link:../../../../../peerbit
-      react:
-        specifier: ^19.2.0
-        version: 19.2.0
-      react-dom:
-        specifier: ^19.2.0
-        version: 19.2.0(react@19.2.0)
-    devDependencies:
-      '@peerbit/vite':
-        specifier: workspace:*
-        version: link:../../../../../vite
-      '@types/libsodium-wrappers':
-        specifier: ^0.7.14
-        version: 0.7.14
-      '@types/react':
-        specifier: ^19.2.4
-        version: 19.2.4
-      '@types/react-dom':
-        specifier: ^19.2.3
-        version: 19.2.3(@types/react@19.2.4)
-      '@vitejs/plugin-react':
-        specifier: ^5.1.1
-        version: 5.1.1(vite@7.2.2(@types/node@22.19.1)(terser@5.44.1)(yaml@2.8.1))
-      vite:
-        specifier: ^7.1.7
-        version: 7.2.2(@types/node@22.19.1)(terser@5.44.1)(yaml@2.8.1)
-
   packages/clients/peerbit-react:
     dependencies:
       '@chainsafe/libp2p-noise':
@@ -495,8 +371,8 @@ importers:
         specifier: ^8.0.0
         version: 8.0.1
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@libp2p/crypto':
         specifier: ^5.1.10
         version: 5.1.13
@@ -509,6 +385,9 @@ importers:
       '@multiformats/multiaddr':
         specifier: ^13.0.1
         version: 13.0.1
+      '@peerbit/canonical-client':
+        specifier: workspace:*
+        version: link:../canonical/client
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../utils/crypto
@@ -524,9 +403,6 @@ importers:
       '@peerbit/program-react':
         specifier: workspace:*
         version: link:../../programs/program/react
-      '@peerbit/proxy-window':
-        specifier: workspace:*
-        version: link:../peerbit-proxy/window
       debug:
         specifier: ^4.3.7
         version: 4.4.3(supports-color@8.1.1)
@@ -579,15 +455,27 @@ importers:
 
   packages/clients/peerbit-react/e2e/browser:
     dependencies:
+      '@libp2p/websockets':
+        specifier: ^10.1.0
+        version: 10.1.1
       '@peerbit/any-store-opfs':
         specifier: workspace:*
         version: link:../../../../utils/any-store/opfs
+      '@peerbit/canonical-host':
+        specifier: workspace:*
+        version: link:../../../canonical/host
       '@peerbit/document':
         specifier: workspace:*
         version: link:../../../../programs/data/document/document
+      '@peerbit/document-proxy':
+        specifier: workspace:*
+        version: link:../../../../programs/data/document/proxy
       '@peerbit/document-react':
         specifier: workspace:*
         version: link:../../../../programs/data/document/react
+      '@peerbit/indexer-simple':
+        specifier: workspace:*
+        version: link:../../../../utils/indexer/simple
       '@peerbit/indexer-sqlite3':
         specifier: workspace:*
         version: link:../../../../utils/indexer/sqlite3
@@ -597,6 +485,9 @@ importers:
       '@peerbit/riblt':
         specifier: workspace:*
         version: link:../../../../utils/rateless-iblt
+      buffer:
+        specifier: ^6.0.3
+        version: 6.0.3
       events:
         specifier: ^3.3.0
         version: 3.3.0
@@ -669,8 +560,8 @@ importers:
   packages/clients/peerbit-server/node:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@libp2p/crypto':
         specifier: ^5.1.10
         version: 5.1.13
@@ -785,8 +676,8 @@ importers:
   packages/clients/peerbit-server/test-lib:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
@@ -878,8 +769,8 @@ importers:
   packages/clients/vite/e2e:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../../utils/crypto
@@ -927,8 +818,8 @@ importers:
   packages/log:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@peerbit/any-store':
         specifier: workspace:*
         version: link:../utils/any-store/any-store
@@ -1018,8 +909,8 @@ importers:
   packages/programs/acl/identity-access-controller:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
@@ -1052,8 +943,8 @@ importers:
   packages/programs/acl/trusted-network:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
@@ -1089,8 +980,8 @@ importers:
   packages/programs/clock-service:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../utils/crypto
@@ -1126,8 +1017,8 @@ importers:
         specifier: ^8.0.0
         version: 8.0.1
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
@@ -1214,8 +1105,8 @@ importers:
   packages/programs/data/document/interface:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../../../utils/crypto
@@ -1225,6 +1116,101 @@ importers:
       '@peerbit/log':
         specifier: workspace:*
         version: link:../../../../log
+
+  packages/programs/data/document/proxy:
+    dependencies:
+      '@dao-xyz/borsh':
+        specifier: 6.0.1
+        version: 6.0.1
+      '@dao-xyz/borsh-rpc':
+        specifier: ^2.0.5
+        version: 2.0.5
+      '@peerbit/canonical-client':
+        specifier: workspace:*
+        version: link:../../../../clients/canonical/client
+      '@peerbit/canonical-host':
+        specifier: workspace:*
+        version: link:../../../../clients/canonical/host
+      '@peerbit/document':
+        specifier: workspace:*
+        version: link:../document
+      '@peerbit/document-interface':
+        specifier: workspace:*
+        version: link:../interface
+      '@peerbit/indexer-interface':
+        specifier: workspace:*
+        version: link:../../../../utils/indexer/interface
+      '@peerbit/program':
+        specifier: workspace:*
+        version: link:../../../program/program
+      '@peerbit/shared-log-proxy':
+        specifier: workspace:*
+        version: link:../../shared-log/proxy
+      '@peerbit/stream-interface':
+        specifier: workspace:*
+        version: link:../../../../transport/stream-interface
+    devDependencies:
+      '@peerbit/crypto':
+        specifier: workspace:*
+        version: link:../../../../utils/crypto
+
+  packages/programs/data/document/proxy/e2e:
+    dependencies:
+      '@dao-xyz/borsh':
+        specifier: 6.0.1
+        version: 6.0.1
+      '@dao-xyz/borsh-rpc':
+        specifier: ^2.0.5
+        version: 2.0.5
+      '@libp2p/websockets':
+        specifier: ^10.1.0
+        version: 10.1.1
+      '@peerbit/canonical-client':
+        specifier: workspace:*
+        version: link:../../../../../clients/canonical/client
+      '@peerbit/canonical-host':
+        specifier: workspace:*
+        version: link:../../../../../clients/canonical/host
+      '@peerbit/canonical-transport':
+        specifier: workspace:*
+        version: link:../../../../../clients/canonical/transport
+      '@peerbit/document':
+        specifier: workspace:*
+        version: link:../../document
+      '@peerbit/document-proxy':
+        specifier: workspace:*
+        version: link:..
+      '@peerbit/indexer-simple':
+        specifier: workspace:*
+        version: link:../../../../../utils/indexer/simple
+      '@peerbit/program':
+        specifier: workspace:*
+        version: link:../../../../program/program
+      buffer:
+        specifier: ^6.0.3
+        version: 6.0.3
+    devDependencies:
+      '@peerbit/any-store-opfs':
+        specifier: workspace:*
+        version: link:../../../../../utils/any-store/opfs
+      '@peerbit/indexer-sqlite3':
+        specifier: workspace:*
+        version: link:../../../../../utils/indexer/sqlite3
+      '@peerbit/riblt':
+        specifier: workspace:*
+        version: link:../../../../../utils/rateless-iblt
+      '@peerbit/vite':
+        specifier: workspace:*
+        version: link:../../../../../clients/vite
+      '@playwright/test':
+        specifier: ^1.47.0
+        version: 1.56.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vite:
+        specifier: ^7.1.7
+        version: 7.2.2(@types/node@22.19.1)(terser@5.44.1)(yaml@2.8.1)
 
   packages/programs/data/document/react:
     dependencies:
@@ -1248,14 +1234,17 @@ importers:
         version: 10.0.0
     devDependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@peerbit/blocks-interface':
         specifier: workspace:*
         version: link:../../../../transport/blocks-interface
       '@peerbit/program':
         specifier: workspace:*
         version: link:../../../program/program
+      '@peerbit/shared-log':
+        specifier: workspace:*
+        version: link:../../shared-log
       '@testing-library/dom':
         specifier: ^10.4.0
         version: 10.4.1
@@ -1286,6 +1275,79 @@ importers:
       vitest:
         specifier: ^4.0.12
         version: 4.0.12(@types/debug@4.1.12)(@types/node@22.19.1)(happy-dom@20.0.10)(terser@5.44.1)(yaml@2.8.1)
+
+  packages/programs/data/document/react/e2e/canonical:
+    dependencies:
+      '@dao-xyz/borsh':
+        specifier: 6.0.1
+        version: 6.0.1
+      '@dao-xyz/borsh-rpc':
+        specifier: ^2.0.5
+        version: 2.0.5
+      '@libp2p/websockets':
+        specifier: ^10.1.0
+        version: 10.1.1
+      '@peerbit/canonical-client':
+        specifier: workspace:*
+        version: link:../../../../../../clients/canonical/client
+      '@peerbit/canonical-host':
+        specifier: workspace:*
+        version: link:../../../../../../clients/canonical/host
+      '@peerbit/canonical-transport':
+        specifier: workspace:*
+        version: link:../../../../../../clients/canonical/transport
+      '@peerbit/document':
+        specifier: workspace:*
+        version: link:../../../document
+      '@peerbit/document-proxy':
+        specifier: workspace:*
+        version: link:../../../proxy
+      '@peerbit/document-react':
+        specifier: workspace:*
+        version: link:../..
+      '@peerbit/indexer-interface':
+        specifier: workspace:*
+        version: link:../../../../../../utils/indexer/interface
+      '@peerbit/indexer-simple':
+        specifier: workspace:*
+        version: link:../../../../../../utils/indexer/simple
+      '@peerbit/program':
+        specifier: workspace:*
+        version: link:../../../../../program/program
+      buffer:
+        specifier: ^6.0.3
+        version: 6.0.3
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: ^18.3.1
+        version: 18.3.1(react@18.3.1)
+    devDependencies:
+      '@peerbit/any-store-opfs':
+        specifier: workspace:*
+        version: link:../../../../../../utils/any-store/opfs
+      '@peerbit/indexer-sqlite3':
+        specifier: workspace:*
+        version: link:../../../../../../utils/indexer/sqlite3
+      '@peerbit/riblt':
+        specifier: workspace:*
+        version: link:../../../../../../utils/rateless-iblt
+      '@peerbit/vite':
+        specifier: workspace:*
+        version: link:../../../../../../clients/vite
+      '@playwright/test':
+        specifier: ^1.47.0
+        version: 1.56.1
+      '@vitejs/plugin-react':
+        specifier: ^5.1.1
+        version: 5.1.1(vite@7.2.2(@types/node@22.19.1)(terser@5.44.1)(yaml@2.8.1))
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vite:
+        specifier: ^7.1.7
+        version: 7.2.2(@types/node@22.19.1)(terser@5.44.1)(yaml@2.8.1)
 
   packages/programs/data/document/react/e2e/party:
     dependencies:
@@ -1394,8 +1456,8 @@ importers:
   packages/programs/data/document/react/e2e/party/shared:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../../../../../../utils/crypto
@@ -1413,8 +1475,8 @@ importers:
   packages/programs/data/shared-log:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@libp2p/crypto':
         specifier: ^5.1.10
         version: 5.1.13
@@ -1501,11 +1563,99 @@ importers:
         specifier: ^10.0.0
         version: 10.0.0
 
+  packages/programs/data/shared-log/proxy:
+    dependencies:
+      '@dao-xyz/borsh':
+        specifier: 6.0.1
+        version: 6.0.1
+      '@dao-xyz/borsh-rpc':
+        specifier: ^2.0.5
+        version: 2.0.5
+      '@peerbit/canonical-client':
+        specifier: workspace:*
+        version: link:../../../../clients/canonical/client
+      '@peerbit/canonical-host':
+        specifier: workspace:*
+        version: link:../../../../clients/canonical/host
+      '@peerbit/crypto':
+        specifier: workspace:*
+        version: link:../../../../utils/crypto
+      '@peerbit/indexer-interface':
+        specifier: workspace:*
+        version: link:../../../../utils/indexer/interface
+      '@peerbit/log':
+        specifier: workspace:*
+        version: link:../../../../log
+      '@peerbit/program':
+        specifier: workspace:*
+        version: link:../../../program/program
+      '@peerbit/shared-log':
+        specifier: workspace:*
+        version: link:..
+
+  packages/programs/data/shared-log/proxy/e2e:
+    dependencies:
+      '@dao-xyz/borsh':
+        specifier: 6.0.1
+        version: 6.0.1
+      '@dao-xyz/borsh-rpc':
+        specifier: ^2.0.5
+        version: 2.0.5
+      '@libp2p/websockets':
+        specifier: ^10.1.0
+        version: 10.1.1
+      '@peerbit/canonical-client':
+        specifier: workspace:*
+        version: link:../../../../../clients/canonical/client
+      '@peerbit/canonical-host':
+        specifier: workspace:*
+        version: link:../../../../../clients/canonical/host
+      '@peerbit/canonical-transport':
+        specifier: workspace:*
+        version: link:../../../../../clients/canonical/transport
+      '@peerbit/indexer-simple':
+        specifier: workspace:*
+        version: link:../../../../../utils/indexer/simple
+      '@peerbit/program':
+        specifier: workspace:*
+        version: link:../../../../program/program
+      '@peerbit/shared-log':
+        specifier: workspace:*
+        version: link:../..
+      '@peerbit/shared-log-proxy':
+        specifier: workspace:*
+        version: link:..
+      buffer:
+        specifier: ^6.0.3
+        version: 6.0.3
+    devDependencies:
+      '@peerbit/any-store-opfs':
+        specifier: workspace:*
+        version: link:../../../../../utils/any-store/opfs
+      '@peerbit/indexer-sqlite3':
+        specifier: workspace:*
+        version: link:../../../../../utils/indexer/sqlite3
+      '@peerbit/riblt':
+        specifier: workspace:*
+        version: link:../../../../../utils/rateless-iblt
+      '@peerbit/vite':
+        specifier: workspace:*
+        version: link:../../../../../clients/vite
+      '@playwright/test':
+        specifier: ^1.47.0
+        version: 1.56.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vite:
+        specifier: ^7.1.7
+        version: 7.2.2(@types/node@22.19.1)(terser@5.44.1)(yaml@2.8.1)
+
   packages/programs/data/string:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../../utils/crypto
@@ -1541,8 +1691,8 @@ importers:
   packages/programs/program/program:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
@@ -1620,8 +1770,8 @@ importers:
   packages/programs/rpc:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../utils/crypto
@@ -1654,8 +1804,8 @@ importers:
   packages/transport/blocks:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@ipld/dag-cbor':
         specifier: ^9.2.1
         version: 9.2.5
@@ -1715,8 +1865,8 @@ importers:
   packages/transport/blocks-interface:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@ipld/dag-cbor':
         specifier: ^9.2.1
         version: 9.2.5
@@ -1774,8 +1924,8 @@ importers:
   packages/transport/pubsub:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@libp2p/circuit-relay-v2':
         specifier: ^4.1.0
         version: 4.1.1
@@ -1847,8 +1997,8 @@ importers:
   packages/transport/pubsub-interface:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
@@ -1871,8 +2021,8 @@ importers:
         specifier: ^8.0.0
         version: 8.0.1
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
@@ -1965,8 +2115,8 @@ importers:
   packages/transport/stream-interface:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
@@ -2070,8 +2220,8 @@ importers:
   packages/utils/any-store/interface:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       uuid:
         specifier: ^10.0.0
         version: 10.0.0
@@ -2083,8 +2233,8 @@ importers:
   packages/utils/any-store/opfs:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@peerbit/any-store-interface':
         specifier: workspace:*
         version: link:../interface
@@ -2111,6 +2261,70 @@ importers:
         specifier: 0.25.10
         version: 0.25.10
 
+  packages/utils/any-store/proxy:
+    dependencies:
+      '@dao-xyz/borsh':
+        specifier: 6.0.1
+        version: 6.0.1
+      '@peerbit/any-store-interface':
+        specifier: workspace:*
+        version: link:../interface
+      '@peerbit/canonical-client':
+        specifier: workspace:*
+        version: link:../../../clients/canonical/client
+      '@peerbit/canonical-host':
+        specifier: workspace:*
+        version: link:../../../clients/canonical/host
+      uuid:
+        specifier: ^10.0.0
+        version: 10.0.0
+
+  packages/utils/any-store/proxy/e2e:
+    dependencies:
+      '@dao-xyz/borsh':
+        specifier: 6.0.1
+        version: 6.0.1
+      '@libp2p/websockets':
+        specifier: ^10.1.0
+        version: 10.1.1
+      '@peerbit/any-store-proxy':
+        specifier: workspace:*
+        version: link:..
+      '@peerbit/canonical-client':
+        specifier: workspace:*
+        version: link:../../../../clients/canonical/client
+      '@peerbit/canonical-host':
+        specifier: workspace:*
+        version: link:../../../../clients/canonical/host
+      '@peerbit/indexer-simple':
+        specifier: workspace:*
+        version: link:../../../indexer/simple
+      buffer:
+        specifier: ^6.0.3
+        version: 6.0.3
+    devDependencies:
+      '@peerbit/any-store-opfs':
+        specifier: workspace:*
+        version: link:../../opfs
+      '@peerbit/indexer-sqlite3':
+        specifier: workspace:*
+        version: link:../../../indexer/sqlite3
+      '@peerbit/riblt':
+        specifier: workspace:*
+        version: link:../../../rateless-iblt
+      '@peerbit/vite':
+        specifier: workspace:*
+        version: link:../../../../clients/vite
+      '@playwright/test':
+        specifier: ^1.47.0
+        version: 1.56.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vite:
+        specifier: ^7.1.7
+        version: 7.2.2(@types/node@22.19.1)(terser@5.44.1)(yaml@2.8.1)
+
   packages/utils/build-assets: {}
 
   packages/utils/cache:
@@ -2126,8 +2340,8 @@ importers:
   packages/utils/crypto:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@ethersproject/bytes':
         specifier: ^5.7.0
         version: 5.8.0
@@ -2181,8 +2395,8 @@ importers:
   packages/utils/indexer/cached-index:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../crypto
@@ -2200,8 +2414,8 @@ importers:
   packages/utils/indexer/interface:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../crypto
@@ -2215,8 +2429,8 @@ importers:
   packages/utils/indexer/simple:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@peerbit/indexer-interface':
         specifier: workspace:*
         version: link:../interface
@@ -2234,8 +2448,8 @@ importers:
   packages/utils/indexer/sqlite3:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../crypto
@@ -2280,8 +2494,8 @@ importers:
   packages/utils/indexer/tests:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../crypto
@@ -2307,8 +2521,8 @@ importers:
   packages/utils/keychain:
     dependencies:
       '@dao-xyz/borsh':
-        specifier: ^6.0.0
-        version: 6.0.0
+        specifier: 6.0.1
+        version: 6.0.1
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
@@ -3150,8 +3364,11 @@ packages:
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
     engines: {node: '>=12'}
 
-  '@dao-xyz/borsh@6.0.0':
-    resolution: {integrity: sha512-ckb2FEeuw6cMbxjizZPpoa9DLlq2tLOa4C3k6JT5i+pN4l3rEDArq6dmA1Pm48GEjL1C8Y/a6BbZwDzxLcjb5g==}
+  '@dao-xyz/borsh-rpc@2.0.5':
+    resolution: {integrity: sha512-BPzKZrH+K6nAt8/ZPeXIzue+rAmsu2lxe1x6cHM4kHemvMdgvcOm/I2CzwDS5KqqLEtf6ojtdBy64796beOfIg==}
+
+  '@dao-xyz/borsh@6.0.1':
+    resolution: {integrity: sha512-6KX7vC2YvE71nKfXIuWaJzh07QIMxFqSwR8hZf804TcH4+MCMJZBlHfxHLBS3BFuh05s8IQzZjwMwbtT6wbOkw==}
 
   '@dao-xyz/datastore-level@11.2.0':
     resolution: {integrity: sha512-0N/nAbnJdexfczjr+VH2/EQTqO8PJWpAvgmvJrtmJXWD6EXl+vQ5UTnTUw/YSiXCl+LR2LurXYAoPtJS+PRzgg==}
@@ -9180,6 +9397,11 @@ packages:
   react-devtools-core@6.1.5:
     resolution: {integrity: sha512-ePrwPfxAnB+7hgnEr8vpKxL9cmnp7F322t8oqcPshbIQQhDKgFDW4tjhF2wjVbdXF9O/nyuy3sQWd9JGpiLPvA==}
 
+  react-dom@18.3.1:
+    resolution: {integrity: sha512-5m4nQKp+rZRb09LNH59GM4BxTh9251/ylbKIbpe7TpGxfJ+9kv6BLkLBXIjjspbgbnIBNqlI23tRnTWT0snUIw==}
+    peerDependencies:
+      react: ^18.3.1
+
   react-dom@19.2.0:
     resolution: {integrity: sha512-UlbRu4cAiGaIewkPyiRGJk0imDN2T3JjieT6spoL2UeSf5od4n5LB/mQ4ejmxhCFT1tYe8IvaFulzynWovsEFQ==}
     peerDependencies:
@@ -9240,6 +9462,10 @@ packages:
     peerDependencies:
       react: '>=16.6.0'
       react-dom: '>=16.6.0'
+
+  react@18.3.1:
+    resolution: {integrity: sha512-wS+hAgJShR0KhEvPJArfuPVN1+Hz1t0Y6n5jLrGQbkb4urgPE/0Rve+1kMB1v/oWgHgm4WIcV+i7F2pTVj+2iQ==}
+    engines: {node: '>=0.10.0'}
 
   react@19.2.0:
     resolution: {integrity: sha512-tmbWg6W31tQLeB5cdIBOicJDJRR2KzXsV7uSK9iNfLWQ5bIZfxuPEHp7M8wiHyHnn0DD1i7w3Zmin0FtkrwoCQ==}
@@ -9483,6 +9709,9 @@ packages:
 
   sax@1.2.1:
     resolution: {integrity: sha512-8I2a3LovHTOpm7NV5yOyO8IHqgVsfK4+UuySrXU8YXkSRX7k6hCV9b3HrkKCr3nMpgj+0bmocaJJWpvp1oc7ZA==}
+
+  scheduler@0.23.2:
+    resolution: {integrity: sha512-UOShsPwz7NrMUqhR6t0hWjFduvOzbtv7toDH1/hIrfRNIDBnnBWd0CwJTGvTpngVlmwGCdP9/Zl/tVrDqcuYzQ==}
 
   scheduler@0.26.0:
     resolution: {integrity: sha512-NlHwttCI/l5gCPR3D1nNXtWABUmBwvZpEQiD4IXSbIDq8BzLIK/7Ir5gTFSGZDUu37K5cMNp0hFtzO38sC7gWA==}
@@ -11986,7 +12215,11 @@ snapshots:
     dependencies:
       '@jridgewell/trace-mapping': 0.3.9
 
-  '@dao-xyz/borsh@6.0.0':
+  '@dao-xyz/borsh-rpc@2.0.5':
+    dependencies:
+      '@dao-xyz/borsh': 6.0.1
+
+  '@dao-xyz/borsh@6.0.1':
     dependencies:
       '@protobufjs/float': 1.0.2
       '@protobufjs/utf8': 1.1.0
@@ -19666,6 +19899,12 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
+  react-dom@18.3.1(react@18.3.1):
+    dependencies:
+      loose-envify: 1.4.0
+      react: 18.3.1
+      scheduler: 0.23.2
+
   react-dom@19.2.0(react@19.2.0):
     dependencies:
       react: 19.2.0
@@ -19784,6 +20023,10 @@ snapshots:
       prop-types: 15.8.1
       react: 19.2.0
       react-dom: 19.2.0(react@19.2.0)
+
+  react@18.3.1:
+    dependencies:
+      loose-envify: 1.4.0
 
   react@19.2.0: {}
 
@@ -20071,6 +20314,10 @@ snapshots:
       truncate-utf8-bytes: 1.0.2
 
   sax@1.2.1: {}
+
+  scheduler@0.23.2:
+    dependencies:
+      loose-envify: 1.4.0
 
   scheduler@0.26.0: {}
 

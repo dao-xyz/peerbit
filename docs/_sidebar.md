@@ -3,9 +3,11 @@ Documentation
 - [Introduction](/)
 - [Getting started](/getting-started.md)
 - [Examples](/examples.md)
+- [Development (borsh-ts)](/development/borsh-ts.md)
 
 Modules
 - [Client](/modules/client/)
+- [Canonical runtime + proxies](/modules/client/canonical.md)
 - [Deploy](/modules/deploy/)
     - [Setup server](/modules/deploy/server/)
         - [Spawn new servers](/modules/deploy/server/automatic.md)
@@ -30,8 +32,6 @@ Topics
 - [Forward Secrecy in Peerbit: Current Implementation, Tradeoffs, and Comparison with Signal](/topics/forward-secrecy/)
 - [Data integrity](/topics/integrity/integrity.md)
 - [Peerbit vs [?]](/topics/difference/difference.md)
-
-
 
 
 

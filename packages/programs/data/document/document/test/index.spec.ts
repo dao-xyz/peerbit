@@ -5509,7 +5509,7 @@ describe("index", () => {
 
 			(store as any)["_canAppend"] = () => true; // ignore internal
 
-			const canAppend = await store.docs.canAppend(
+			const canAppend = await (store.docs as any).canAppend(
 				(await createEntry({
 					data: new PutOperation({ data: randomBytes(32) }),
 					identity: store.node.identity,

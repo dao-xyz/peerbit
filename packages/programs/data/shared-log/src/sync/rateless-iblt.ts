@@ -4,7 +4,11 @@ import { type PublicSignKey, randomBytes, toBase64 } from "@peerbit/crypto";
 import { type Index } from "@peerbit/indexer-interface";
 import type { Entry, Log } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
-import { DecoderWrapper, EncoderWrapper } from "@peerbit/riblt";
+import {
+	DecoderWrapper,
+	EncoderWrapper,
+	ready as ribltReady,
+} from "@peerbit/riblt";
 import type { RPC, RequestContext } from "@peerbit/rpc";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { type EntryWithRefs } from "../exchange-heads.js";
@@ -142,6 +146,7 @@ const buildEncoderOrDecoderFromRange = async <
 	entryIndex: Index<EntryReplicated<D>>,
 	type: T,
 ): Promise<E | false> => {
+	await ribltReady;
 	const encoder =
 		type === "encoder" ? new EncoderWrapper() : new DecoderWrapper();
 
@@ -245,6 +250,8 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			});
 			return;
 		}
+
+		await ribltReady;
 
 		// Mixed strategy for larger batches
 		for (const entry of properties.entries.values()) {

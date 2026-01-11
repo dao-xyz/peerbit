@@ -168,9 +168,9 @@ describe("index", () => {
 				session.peers[1],
 				{ args: { replicate: false } },
 			);
-			await observer.relationGraph.log.waitForReplicator(
-				session.peers[0].identity.publicKey,
-			);
+			await (
+				observer.relationGraph as Documents<IdentityRelation, FromTo>
+			).log.waitForReplicator(session.peers[0].identity.publicKey);
 
 			let pathFrom = await getFromByTo.resolve(ab.to, observer.relationGraph);
 			expect(pathFrom).to.have.length(1);
@@ -206,12 +206,17 @@ describe("index", () => {
 				rootTrust: session.peers[0].peerId,
 			});
 			await session.peers[0].open(l0a);
-			expect(await l0a.trustGraph.log.isReplicating()).to.be.true;
 			expect(
-				(await l0a.trustGraph.log.getMyReplicationSegments()).reduce(
-					(a, b) => a + b.widthNormalized,
-					0,
-				),
+				await (
+					l0a.trustGraph as Documents<IdentityRelation, FromTo>
+				).log.isReplicating(),
+			).to.be.true;
+			expect(
+				(
+					await (
+						l0a.trustGraph as Documents<IdentityRelation, FromTo>
+					).log.getMyReplicationSegments()
+				).reduce((a, b) => a + b.widthNormalized, 0),
 			).to.equal(1);
 		});
 
@@ -245,8 +250,12 @@ describe("index", () => {
 
 			await l0a.add(session.peers[1].peerId);
 
-			await l0b.trustGraph.log.log.join(
-				await l0a.trustGraph.log.log.getHeads().all(),
+			await (
+				l0b.trustGraph as Documents<IdentityRelation, FromTo>
+			).log.log.join(
+				await (l0a.trustGraph as Documents<IdentityRelation, FromTo>).log.log
+					.getHeads()
+					.all(),
 			);
 
 			await waitForResolved(async () =>
@@ -255,8 +264,12 @@ describe("index", () => {
 
 			await l0b.add(session.peers[2].peerId); // Will only work if peer2 is trusted
 
-			await l0a.trustGraph.log.log.join(
-				await l0b.trustGraph.log.log.getHeads().all(),
+			await (
+				l0a.trustGraph as Documents<IdentityRelation, FromTo>
+			).log.log.join(
+				await (l0b.trustGraph as Documents<IdentityRelation, FromTo>).log.log
+					.getHeads()
+					.all(),
 			);
 
 			await waitForResolved(async () =>
@@ -266,18 +279,21 @@ describe("index", () => {
 				expect(await l0a.trustGraph.index.getSize()).equal(2),
 			);
 
-			await l0c.trustGraph.log.waitForReplicator(
-				session.peers[0].identity.publicKey,
-				{ timeout: REPLICATOR_WAIT_TIMEOUT },
-			);
-			await l0c.trustGraph.log.waitForReplicator(
-				session.peers[1].identity.publicKey,
-				{ timeout: REPLICATOR_WAIT_TIMEOUT },
-			);
-			await l0c.trustGraph.log.waitForReplicator(
-				session.peers[3].identity.publicKey,
-				{ timeout: REPLICATOR_WAIT_TIMEOUT },
-			);
+			await (
+				l0c.trustGraph as Documents<IdentityRelation, FromTo>
+			).log.waitForReplicator(session.peers[0].identity.publicKey, {
+				timeout: REPLICATOR_WAIT_TIMEOUT,
+			});
+			await (
+				l0c.trustGraph as Documents<IdentityRelation, FromTo>
+			).log.waitForReplicator(session.peers[1].identity.publicKey, {
+				timeout: REPLICATOR_WAIT_TIMEOUT,
+			});
+			await (
+				l0c.trustGraph as Documents<IdentityRelation, FromTo>
+			).log.waitForReplicator(session.peers[3].identity.publicKey, {
+				timeout: REPLICATOR_WAIT_TIMEOUT,
+			});
 
 			await waitForResolved(
 				async () => expect(await l0c.trustGraph.index.getSize()).equal(2),

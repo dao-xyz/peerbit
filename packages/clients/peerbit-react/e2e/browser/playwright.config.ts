@@ -8,10 +8,14 @@ const baseURL = `http://localhost:${port}`;
 
 export default defineConfig({
 	testDir: "./tests",
+	fullyParallel: false,
+	forbidOnly: !!process.env.CI,
 	timeout: 120_000,
 	expect: {
 		timeout: 10_000,
 	},
+	retries: process.env.CI ? 1 : 0,
+	workers: 1,
 	reporter: process.env.PARTY_HTML_REPORT
 		? [["list"], ["html", { open: "never" }]]
 		: [["list"]],

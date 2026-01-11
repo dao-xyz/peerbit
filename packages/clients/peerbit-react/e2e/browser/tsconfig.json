@@ -10,5 +10,5 @@
 		"skipLibCheck": true,
 		"noEmit": true
 	},
-	"include": ["src", "tests"]
+	"include": ["src", "tests", "service-worker.ts"]
 }

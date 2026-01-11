@@ -90,29 +90,29 @@ describe("plain object inputs", () => {
 		]);
 	});
 
-	abstract class PolyBase {}
+		abstract class PolyBase {}
 
-	@variant("PolyA")
-	class PolyA extends PolyBase {
-		@field({ type: "string" })
-		value: string;
+		@variant("PolyA")
+		class _PolyA extends PolyBase {
+			@field({ type: "string" })
+			value: string;
 
-		constructor(props: PolyA) {
-			super();
-			this.value = props.value;
+			constructor(props: _PolyA) {
+				super();
+				this.value = props.value;
+			}
 		}
-	}
 
-	@variant("PolyB")
-	class PolyB extends PolyBase {
-		@field({ type: "string" })
-		value: string;
+		@variant("PolyB")
+		class _PolyB extends PolyBase {
+			@field({ type: "string" })
+			value: string;
 
-		constructor(props: PolyB) {
-			super();
-			this.value = props.value;
+			constructor(props: _PolyB) {
+				super();
+				this.value = props.value;
+			}
 		}
-	}
 
 	@variant("RootDocPoly")
 	class RootDocPoly {

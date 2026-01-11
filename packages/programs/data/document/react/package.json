@@ -58,6 +58,7 @@
 		"@dao-xyz/borsh": "^6.0.0",
 		"@peerbit/blocks-interface": "workspace:*",
 		"@peerbit/program": "workspace:*",
+		"@peerbit/shared-log": "workspace:*",
 		"@testing-library/dom": "^10.4.0",
 		"@testing-library/react": "^16.1.0",
 		"@types/react": "^19.2.4",

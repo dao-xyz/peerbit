@@ -1,0 +1,100 @@
+{
+	"name": "@peerbit/shared-log-proxy",
+	"version": "0.0.0",
+	"description": "RPC/proxy adapter for @peerbit/shared-log (canonical runtime)",
+	"author": "dao.xyz",
+	"license": "MIT",
+	"sideEffects": false,
+	"type": "module",
+	"types": "./dist/src/index.d.ts",
+	"typesVersions": {
+		"*": {
+			"*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			],
+			"src/*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			]
+		}
+	},
+	"files": [
+		"src",
+		"dist",
+		"!dist/test",
+		"!**/*.tsbuildinfo"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/src/index.d.ts",
+			"import": "./dist/src/index.js"
+		},
+		"./auto": {
+			"types": "./dist/src/auto.d.ts",
+			"import": "./dist/src/auto.js"
+		},
+		"./client": {
+			"types": "./dist/src/client.d.ts",
+			"import": "./dist/src/client.js"
+		},
+		"./host": {
+			"types": "./dist/src/host.d.ts",
+			"import": "./dist/src/host.js"
+		}
+	},
+	"eslintConfig": {
+		"extends": "peerbit",
+		"parserOptions": {
+			"project": true,
+			"sourceType": "module"
+		},
+		"ignorePatterns": [
+			"!.aegir.js",
+			"test/ts-use",
+			"*.d.ts"
+		]
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/dao-xyz/peerbit"
+	},
+	"engines": {
+		"node": ">=18"
+	},
+	"dependencies": {
+		"@dao-xyz/borsh": "^6.0.0",
+		"@dao-xyz/borsh-rpc": "^2.0.5",
+		"@peerbit/canonical-client": "workspace:*",
+		"@peerbit/canonical-host": "workspace:*",
+		"@peerbit/crypto": "workspace:*",
+		"@peerbit/indexer-interface": "workspace:*",
+		"@peerbit/log": "workspace:*",
+		"@peerbit/program": "workspace:*",
+		"@peerbit/shared-log": "workspace:*"
+	},
+	"scripts": {
+		"clean": "aegir clean",
+		"build": "aegir build --no-bundle",
+		"test": "aegir test --target node",
+		"test:e2e": "pnpm --dir ./e2e test",
+		"lint": "aegir lint"
+	},
+	"localMaintainers": [
+		"dao.xyz"
+	],
+	"keywords": [
+		"peerbit",
+		"shared-log",
+		"rpc",
+		"proxy",
+		"canonical"
+	]
+}

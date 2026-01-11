@@ -1,22 +1,22 @@
-import { noise } from "@chainsafe/libp2p-noise";
-import { yamux } from "@chainsafe/libp2p-yamux";
-import { keys } from "@libp2p/crypto";
-import { webSockets } from "@libp2p/websockets";
+import type { PeerId } from "@libp2p/interface";
 import type { Multiaddr } from "@multiformats/multiaddr";
+import type {
+	CanonicalClient,
+	CanonicalOpenAdapter,
+	CanonicalOpenMode,
+	ConnectServiceWorkerOptions,
+	ConnectWindowOptions,
+} from "@peerbit/canonical-client";
+import type { Identity, PublicSignKey } from "@peerbit/crypto";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import type { Indices } from "@peerbit/indexer-interface";
 import { logger as createLogger } from "@peerbit/logger";
-import type { ProgramClient } from "@peerbit/program";
-import { createClient, createHost } from "@peerbit/proxy-window";
+import type { Address, OpenOptions, Program } from "@peerbit/program";
 import { waitFor } from "@peerbit/time";
-import { detectIncognito } from "detectincognitojs";
-import sodium from "libsodium-wrappers";
-import { Peerbit } from "peerbit";
 import * as React from "react";
 import type { JSX } from "react";
 import { v4 as uuid } from "uuid";
 import { FastMutex } from "./lockstorage.ts";
-import { useMount } from "./useMount.ts";
 import {
 	cookiesWhereClearedJustNow,
 	getClientId,
@@ -50,31 +50,84 @@ export type ConnectionStatus =
 	| "connecting"
 	| "failed";
 
-/** Discriminated union for PeerContext */
-export type IPeerContext = (ProxyPeerContext | NodePeerContext) & {
-	error?: Error;
+export type PeerbitLike = {
+	peerId: PeerId;
+	identity: Identity<PublicSignKey>;
+	getMultiaddrs: () => Multiaddr[];
+	dial: (address: string | Multiaddr | Multiaddr[]) => Promise<boolean>;
+	hangUp: (
+		address: PeerId | PublicSignKey | string | Multiaddr,
+	) => Promise<void>;
+	start: () => Promise<void>;
+	stop: () => Promise<void>;
+	bootstrap?: (addresses?: string[] | Multiaddr[]) => Promise<void>;
+	open: <S extends Program<any>>(
+		storeOrAddress: S | Address | string,
+		options?: OpenOptions<S>,
+	) => Promise<S>;
 };
 
-export interface ProxyPeerContext {
-	type: "proxy";
-	peer: ProgramClient | undefined;
-	promise: Promise<void> | undefined;
-	loading: boolean;
-	status: ConnectionStatus;
-	persisted: boolean | undefined;
-	/** Present only in proxy (iframe) mode */
-	targetOrigin: string;
-}
+export type PeerRuntime = "node" | "canonical";
 
-export interface NodePeerContext {
-	type: "node";
-	peer: ProgramClient | undefined;
+export type NodePeerProviderConfig = {
+	runtime: "node";
+	network: "local" | "remote" | NetworkOption;
+	waitForConnected?: boolean | "in-flight";
+	keypair?: Ed25519Keypair;
+	singleton?: boolean;
+	indexer?: (directory?: string) => Promise<Indices> | Indices;
+	inMemory?: boolean;
+};
+
+export type CanonicalPeerProviderConfig = {
+	runtime: "canonical";
+	transport:
+		| { kind: "service-worker"; options: ConnectServiceWorkerOptions }
+		| {
+				kind: "shared-worker";
+				worker:
+					| SharedWorker
+					| (() => SharedWorker)
+					| {
+							url: string | URL;
+							name?: string;
+							type?: WorkerOptions["type"];
+					  };
+		  }
+		| { kind: "window"; options?: ConnectWindowOptions }
+		| {
+				kind: "custom";
+				connect: () => Promise<CanonicalClient>;
+		  };
+	open?: { adapters?: CanonicalOpenAdapter[]; mode?: CanonicalOpenMode };
+	keepAlive?: false | Parameters<CanonicalClient["startKeepAlive"]>[0];
+};
+
+export type PeerProviderEnv = {
+	inIframe: boolean;
+};
+
+export type PeerProviderConfig =
+	| NodePeerProviderConfig
+	| CanonicalPeerProviderConfig;
+
+export type PeerProviderConfigSelector =
+	| PeerProviderConfig
+	| ((env: PeerProviderEnv) => PeerProviderConfig);
+
+export type IPeerContext = {
+	runtime: PeerRuntime;
+	peer: PeerbitLike | undefined;
 	promise: Promise<void> | undefined;
 	loading: boolean;
 	status: ConnectionStatus;
-	persisted: boolean | undefined;
-	tabIndex: number;
-}
+	persisted?: boolean;
+	tabIndex?: number;
+	error?: Error;
+	canonical?: {
+		client: CanonicalClient;
+	};
+};
 
 if (!window.name) {
 	window.name = uuid();
@@ -82,11 +135,6 @@ if (!window.name) {
 
 export const PeerContext = React.createContext<IPeerContext>({} as any);
 export const usePeer = () => React.useContext(PeerContext);
-
-type IFrameOptions = {
-	type: "proxy";
-	targetOrigin: string;
-};
 
 /**
  * Network configuration for the node client.
@@ -99,382 +147,345 @@ export type NetworkOption =
 	| { type: "remote" }
 	| { type?: "explicit"; bootstrap: (Multiaddr | string)[] };
 
-type NodeOptions = {
-	type?: "node";
-	network: "local" | "remote" | NetworkOption;
-	waitForConnnected?: boolean | "in-flight";
-	keypair?: Ed25519Keypair;
-	host?: boolean;
-	singleton?: boolean;
-	indexer?: (directory?: string) => Promise<Indices> | Indices;
-};
-
-type TopOptions = NodeOptions & { inMemory?: boolean };
-type TopAndIframeOptions = {
-	iframe: IFrameOptions | NodeOptions;
-	top: TopOptions;
-};
-type WithChildren = {
-	children: JSX.Element;
-};
-type PeerOptions = (TopAndIframeOptions | TopOptions) & WithChildren;
-
 const subscribeToUnload = (fn: () => any) => {
 	window.addEventListener("pagehide", fn);
 	window.addEventListener("beforeunload", fn);
+	return () => {
+		window.removeEventListener("pagehide", fn);
+		window.removeEventListener("beforeunload", fn);
+	};
 };
 
-export const PeerProvider = (options: PeerOptions) => {
-	const [peer, setPeer] = React.useState<ProgramClient | undefined>(undefined);
+export type PeerProviderProps = {
+	config: PeerProviderConfigSelector;
+	children: JSX.Element;
+};
+
+const resolveConfig = (
+	input: PeerProviderConfigSelector,
+): PeerProviderConfig =>
+	typeof input === "function" ? input({ inIframe: inIframe() }) : input;
+
+export const PeerProvider = ({ config, children }: PeerProviderProps) => {
+	const [runtime, setRuntime] = React.useState<PeerRuntime>("node");
+	const [peer, setPeer] = React.useState<PeerbitLike | undefined>(undefined);
+	const [canonicalClient, setCanonicalClient] = React.useState<
+		CanonicalClient | undefined
+	>(undefined);
 	const [promise, setPromise] = React.useState<Promise<void> | undefined>(
 		undefined,
 	);
-	const [persisted, setPersisted] = React.useState<boolean>(false);
+	const [persisted, setPersisted] = React.useState<boolean | undefined>(
+		undefined,
+	);
 	const [loading, setLoading] = React.useState<boolean>(true);
 	const [connectionState, setConnectionState] =
 		React.useState<ConnectionStatus>("disconnected");
-
-	const [tabIndex, setTabIndex] = React.useState<number>(-1);
-
-	const [error, setError] = React.useState<Error | undefined>(undefined); // <-- error state
-
-	// Decide which options to use based on whether we're in an iframe.
-	// If options.top is defined, assume we have separate settings for iframe vs. host.
-	const nodeOptions: IFrameOptions | TopOptions = (
-		options as TopAndIframeOptions
-	).top
-		? inIframe()
-			? (options as TopAndIframeOptions).iframe
-			: { ...options, ...(options as TopAndIframeOptions).top } // we merge root and top options, TODO should this be made in a different way to prevent confusion about top props?
-		: (options as TopOptions);
-
-	// If running as a proxy (iframe), expect a targetOrigin.
-	const computedTargetOrigin =
-		nodeOptions.type === "proxy"
-			? (nodeOptions as IFrameOptions).targetOrigin
-			: undefined;
+	const [tabIndex, setTabIndex] = React.useState<number | undefined>(undefined);
+	const [error, setError] = React.useState<Error | undefined>(undefined);
 
 	const memo = React.useMemo<IPeerContext>(() => {
-		if (nodeOptions.type === "proxy") {
-			return {
-				type: "proxy",
-				peer,
-				promise,
-				loading,
-				status: connectionState,
-				persisted,
-				targetOrigin: computedTargetOrigin as string,
-				error,
-			};
-		} else {
-			return {
-				type: "node",
-				peer,
-				promise,
-				loading,
-				status: connectionState,
-				persisted,
-				tabIndex,
-				error,
-			};
-		}
+		return {
+			runtime,
+			peer,
+			promise,
+			loading,
+			status: connectionState,
+			persisted,
+			tabIndex,
+			error,
+			canonical: canonicalClient ? { client: canonicalClient } : undefined,
+		};
 	}, [
-		loading,
-		promise,
+		canonicalClient,
 		connectionState,
+		error,
+		loading,
 		peer,
 		persisted,
+		promise,
+		runtime,
 		tabIndex,
-		computedTargetOrigin,
-		error,
 	]);
 
-	useMount(() => {
+	React.useEffect(() => {
+		let unmounted = false;
+		let unloadUnsubscribe: (() => void) | undefined;
+		let stopKeepAlive: (() => void) | undefined;
+		let closePeer: (() => void) | undefined;
+
+		const selected = resolveConfig(config);
+		setRuntime(selected.runtime);
+		setConnectionState("connecting");
 		setLoading(true);
+		setError(undefined);
+
 		const fn = async () => {
-			await sodium.ready;
-			let newPeer: ProgramClient;
-			// Track resolved persistence status during client creation
-			let persistedResolved = false;
-			// Controls how long we keep locks alive; flipped to false on close/hidden
-			const keepAliveRef = { current: true } as { current: boolean };
+			if (selected.runtime === "canonical") {
+				const {
+					connectServiceWorker,
+					connectSharedWorker,
+					connectWindow,
+					PeerbitCanonicalClient,
+				} = await import("@peerbit/canonical-client");
 
-			if (nodeOptions.type !== "proxy") {
-				const releaseFirstLock = cookiesWhereClearedJustNow();
-
-				const sessionId = getClientId("session");
-				const mutex = new FastMutex({
-					clientId: sessionId,
-					timeout: 1e3,
-				});
-				if (nodeOptions.singleton) {
-					singletonLog("acquiring lock");
-					const localId = getClientId("local");
-					try {
-						const lockKey = localId + "-singleton";
-						subscribeToUnload(function () {
-							// Immediate release on page close
-							keepAliveRef.current = false;
-							mutex.release(lockKey);
-						});
-						// Also release when page is hidden to reduce flakiness between sequential tests
-						const onVisibility = () => {
-							if (document.visibilityState === "hidden") {
-								keepAliveRef.current = false;
-								// Mark expired and remove proactively
-								try {
-									mutex.release(lockKey);
-								} catch {}
-							}
-						};
-						document.addEventListener("visibilitychange", onVisibility);
-						if (isInStandaloneMode()) {
-							// PWA issue fix (? TODO is this needed ?
-							keepAliveRef.current = false;
-							mutex.release(lockKey);
-						}
-						await mutex.lock(lockKey, () => keepAliveRef.current, {
-							replaceIfSameClient: true,
-						});
-						singletonLog("lock acquired");
-					} catch (error) {
-						console.error("Failed to lock singleton client", error);
-						throw new ClientBusyError("Failed to lock single client");
-					}
-				}
-
-				let nodeId: Ed25519Keypair;
-				if (nodeOptions.keypair) {
-					nodeId = nodeOptions.keypair;
+				let canonical: CanonicalClient;
+				if (selected.transport.kind === "service-worker") {
+					canonical = await connectServiceWorker(selected.transport.options);
+				} else if (selected.transport.kind === "window") {
+					canonical = await connectWindow(selected.transport.options ?? {});
+				} else if (selected.transport.kind === "shared-worker") {
+					const workerSpec = selected.transport.worker;
+					const worker =
+						typeof workerSpec === "function"
+							? workerSpec()
+							: workerSpec instanceof SharedWorker
+								? workerSpec
+								: new SharedWorker(workerSpec.url, {
+										name: workerSpec.name,
+										type: workerSpec.type,
+									});
+					canonical = await connectSharedWorker(worker);
 				} else {
-					keypairLog("acquiring lock");
-					const kp = await getFreeKeypair(
-						"",
-						mutex,
-						() => keepAliveRef.current,
-						{
-							releaseFirstLock,
-							releaseLockIfSameId: true,
-						},
-					);
-					keypairLog("lock acquired", { index: kp.index });
-					subscribeToUnload(function () {
-						keepAliveRef.current = false;
-						mutex.release(kp.path);
-					});
-					nodeId = kp.key;
-					setTabIndex(kp.index);
-				}
-				const peerId = nodeId.toPeerId();
-				const privateKey = keys.privateKeyFromRaw(nodeId.privateKeyPublicKey);
-
-				let directory: string | undefined = undefined;
-				if (
-					!(nodeOptions as TopOptions).inMemory &&
-					!(await detectIncognito()).isPrivate
-				) {
-					storageLog("requesting persist");
-					const persisted = await navigator.storage.persist();
-					setPersisted(persisted);
-					persistedResolved = persisted;
-					if (!persisted) {
-						setPersisted(false);
-						console.error(
-							"Request persistence but permission was not granted by browser.",
-						);
-					} else {
-						directory = `./repo/${peerId.toString()}/`;
-					}
+					canonical = await selected.transport.connect();
 				}
 
-				clientLog("create", { directory });
-				newPeer = await Peerbit.create({
-					libp2p: {
-						addresses: {
-							listen: [
-								/* "/p2p-circuit" */
-							],
-						},
-						streamMuxers: [yamux()],
-						connectionEncrypters: [noise()],
-						privateKey,
-						connectionManager: { maxConnections: 100 },
-						connectionMonitor: { enabled: false },
-						...(nodeOptions.network === "local"
-							? {
-									connectionGater: {
-										denyDialMultiaddr: () => false,
-									},
-									transports: [
-										webSockets({}) /* ,
-                                    circuitRelayTransport(), */,
-									],
-								}
-							: {
-									connectionGater: {
-										denyDialMultiaddr: () => false, // TODO do right here, dont allow local dials except bootstrap
-									},
-									transports: [
-										webSockets() /* ,
-                                    circuitRelayTransport(), */,
-									],
-								}) /* 
-                        services: {
-                            pubsub: (c) =>
-                                new DirectSub(c, { canRelayMessage: true }),
-                            identify: identify(),
-                        }, */,
-					},
-					directory,
-					indexer: nodeOptions.indexer,
-				});
-				clientLog("created", {
-					directory,
-					peerHash: newPeer?.identity.publicKey.hashcode(),
-					network: nodeOptions.network === "local" ? "local" : "remote",
-				});
+				setCanonicalClient(canonical);
+				stopKeepAlive =
+					selected.keepAlive === false
+						? undefined
+						: canonical.startKeepAlive(selected.keepAlive);
 
-				(window as any).__peerInfo = {
-					peerHash: newPeer?.identity.publicKey.hashcode(),
-					persisted: persistedResolved,
-				};
-				window.dispatchEvent(
-					new CustomEvent("peer:ready", {
-						detail: (window as any).__peerInfo,
-					}),
+				const peer = await PeerbitCanonicalClient.create(
+					canonical,
+					selected.open,
 				);
-
-				setConnectionState("connecting");
-
-				const connectFn = async () => {
+				closePeer = () => {
+					stopKeepAlive?.();
 					try {
-						const network = nodeOptions.network;
-
-						// 1) Explicit bootstrap addresses take precedence
-						if (
-							typeof network !== "string" &&
-							(network as any)?.bootstrap !== undefined
-						) {
-							const list = (network as any).bootstrap as (Multiaddr | string)[];
-							if (list.length === 0) {
-								// Explicit offline mode: skip dialing and mark as connected (no relays)
-								bootstrapLog("offline: skipping relay dialing");
-							} else {
-								for (const addr of list) {
-									await newPeer.dial(addr);
-								}
-							}
-						}
-						// 2) Local development: dial local relay service
-						else if (
-							network === "local" ||
-							(typeof network !== "string" &&
-								(network as any)?.type === "local")
-						) {
-							const localAddress =
-								"/ip4/127.0.0.1/tcp/8002/ws/p2p/" +
-								(await (await fetch("http://localhost:8082/peer/id")).text());
-							bootstrapLog("dialing local address", localAddress);
-							await newPeer.dial(localAddress);
-						}
-						// 3) Remote default: use bootstrap service (no explicit bootstrap provided)
-						else {
-							await (newPeer as Peerbit).bootstrap?.();
-						}
-						setConnectionState("connected");
-					} catch (err: any) {
-						console.error("Failed to bootstrap:", err);
-						setConnectionState("failed");
-					}
-
-					if (nodeOptions.host) {
-						newPeer = await createHost(newPeer as Peerbit);
-					}
-				};
-
-				const perfEnabled = new URLSearchParams(window.location.search).get(
-					"perf",
-				);
-				const t0 = performance.now();
-				const marks: Record<string, number> = {};
-				const perfMark = (label: string) => {
-					marks[label] = performance.now() - t0;
-				};
-
-				bootstrapLog("start...");
-				const promise = connectFn().then(() => {
-					perfMark("dialComplete");
-				});
-				promise.then(() => {
-					bootstrapLog("done");
-					try {
-						if (perfEnabled) {
-							const payload = { ...marks } as any;
-							console.info("[Perf] peer bootstrap", payload);
-							window.dispatchEvent(
-								new CustomEvent("perf:peer", {
-									detail: payload,
-								}),
-							);
-						}
+						peer.close();
 					} catch {}
-				});
-				if (nodeOptions.waitForConnnected === true) {
-					await promise;
-				} else if (nodeOptions.waitForConnnected === "in-flight") {
-					// wait for dialQueue to not be empty or connections to contains the peerId
-					// or done
-					let isDone = false;
-					promise.finally(() => {
-						isDone = true;
-					});
-					await waitFor(() => {
-						if (isDone) {
-							return true;
-						}
-						const libp2p = newPeer as Peerbit;
-						if (libp2p.libp2p.getDialQueue().length > 0) {
-							return true;
-						}
-						if (libp2p.libp2p.getConnections().length > 0) {
-							return true;
-						}
-						return false;
-					});
+				};
+				unloadUnsubscribe = subscribeToUnload(() => closePeer?.());
+				if (unmounted) {
+					closePeer();
+					return;
 				}
-			} else {
-				// When in proxy mode (iframe), use the provided targetOrigin.
-				newPeer = await createClient(
-					(nodeOptions as IFrameOptions).targetOrigin,
-				);
-				try {
-					(window as any).__peerInfo = {
-						peerHash: newPeer?.identity.publicKey.hashcode(),
-						persisted: false,
-					};
-					window.dispatchEvent(
-						new CustomEvent("peer:ready", {
-							detail: (window as any).__peerInfo,
-						}),
-					);
-				} catch {}
+				setPeer(peer as unknown as PeerbitLike);
+				setConnectionState("connected");
+				setLoading(false);
+				return;
 			}
 
+			const nodeOptions = selected as NodePeerProviderConfig;
+
+			const [
+				{ detectIncognito },
+				sodiumModule,
+				{ Peerbit },
+				{ noise },
+				{ yamux },
+				{ webSockets },
+			] = await Promise.all([
+				import("detectincognitojs"),
+				import("libsodium-wrappers"),
+				import("peerbit"),
+				import("@chainsafe/libp2p-noise"),
+				import("@chainsafe/libp2p-yamux"),
+				import("@libp2p/websockets"),
+			]);
+
+			const sodium = (sodiumModule as any).default ?? sodiumModule;
+			await sodium.ready;
+
+			let newPeer: PeerbitLike;
+			let persistedResolved = false;
+			const keepAliveRef = { current: true } as { current: boolean };
+
+			const releaseFirstLock = cookiesWhereClearedJustNow();
+			const sessionId = getClientId("session");
+			const mutex = new FastMutex({ clientId: sessionId, timeout: 1e3 });
+
+			if (nodeOptions.singleton) {
+				singletonLog("acquiring lock");
+				const localId = getClientId("local");
+				try {
+					const lockKey = localId + "-singleton";
+					const unsubscribeUnload = subscribeToUnload(() => {
+						keepAliveRef.current = false;
+						mutex.release(lockKey);
+					});
+					const onVisibility = () => {
+						if (document.visibilityState === "hidden") {
+							keepAliveRef.current = false;
+							try {
+								mutex.release(lockKey);
+							} catch {}
+						}
+					};
+					document.addEventListener("visibilitychange", onVisibility);
+					if (isInStandaloneMode()) {
+						keepAliveRef.current = false;
+						mutex.release(lockKey);
+					}
+					await mutex.lock(lockKey, () => keepAliveRef.current, {
+						replaceIfSameClient: true,
+					});
+					singletonLog("lock acquired");
+					void unsubscribeUnload;
+				} catch (error) {
+					console.error("Failed to lock singleton client", error);
+					throw new ClientBusyError("Failed to lock single client");
+				}
+			}
+
+			let nodeId: Ed25519Keypair;
+			if (nodeOptions.keypair) {
+				nodeId = nodeOptions.keypair;
+			} else {
+				keypairLog("acquiring lock");
+				const kp = await getFreeKeypair("", mutex, () => keepAliveRef.current, {
+					releaseFirstLock,
+					releaseLockIfSameId: true,
+				});
+				keypairLog("lock acquired", { index: kp.index });
+				subscribeToUnload(() => {
+					keepAliveRef.current = false;
+					mutex.release(kp.path);
+				});
+				nodeId = kp.key;
+				setTabIndex(kp.index);
+			}
+
+			const peerId = nodeId.toPeerId();
+
+			let directory: string | undefined;
+			if (!nodeOptions.inMemory && !(await detectIncognito()).isPrivate) {
+				storageLog("requesting persist");
+				const persistedValue = await navigator.storage.persist();
+				setPersisted(persistedValue);
+				persistedResolved = persistedValue;
+				if (!persistedValue) {
+					console.error(
+						"Request persistence but permission was not granted by browser.",
+					);
+				} else {
+					directory = `./repo/${peerId.toString()}/`;
+				}
+			}
+
+			clientLog("create", { directory });
+			const created = await Peerbit.create({
+				libp2p: {
+					addresses: { listen: [] },
+					streamMuxers: [yamux()],
+					connectionEncrypters: [noise()],
+					peerId,
+					connectionManager: { maxConnections: 100 },
+					connectionMonitor: { enabled: false },
+					...(nodeOptions.network === "local"
+						? {
+								connectionGater: { denyDialMultiaddr: () => false },
+								transports: [webSockets({})],
+							}
+						: {
+								connectionGater: { denyDialMultiaddr: () => false },
+								transports: [webSockets()],
+							}),
+				},
+				directory,
+				indexer: nodeOptions.indexer,
+			});
+
+			newPeer = created as unknown as PeerbitLike;
+
+			(window as any).__peerInfo = {
+				peerHash: created?.identity?.publicKey?.hashcode?.(),
+				persisted: persistedResolved,
+			};
+			window.dispatchEvent(
+				new CustomEvent("peer:ready", { detail: (window as any).__peerInfo }),
+			);
+
+			const connectFn = async () => {
+				try {
+					const network = nodeOptions.network;
+					if (
+						typeof network !== "string" &&
+						(network as any)?.bootstrap !== undefined
+					) {
+						const list = (network as any).bootstrap as (Multiaddr | string)[];
+						if (list.length === 0) {
+							bootstrapLog("offline: skipping relay dialing");
+						} else {
+							for (const addr of list) {
+								await created.dial(addr as any);
+							}
+						}
+					} else if (
+						network === "local" ||
+						(typeof network !== "string" && (network as any)?.type === "local")
+					) {
+						const localAddress =
+							"/ip4/127.0.0.1/tcp/8002/ws/p2p/" +
+							(await (await fetch("http://localhost:8082/peer/id")).text());
+						bootstrapLog("dialing local address", localAddress);
+						await created.dial(localAddress);
+					} else {
+						await created.bootstrap?.();
+					}
+					setConnectionState("connected");
+				} catch (err: any) {
+					console.error("Failed to bootstrap:", err);
+					setConnectionState("failed");
+				}
+			};
+
+			const promise = connectFn();
+			if (nodeOptions.waitForConnected === true) {
+				await promise;
+			} else if (nodeOptions.waitForConnected === "in-flight") {
+				let isDone = false;
+				promise.finally(() => {
+					isDone = true;
+				});
+				await waitFor(() => {
+					if (isDone) return true;
+					const libp2p = created as any;
+					if (libp2p.libp2p?.getDialQueue?.()?.length > 0) return true;
+					if (libp2p.libp2p?.getConnections?.()?.length > 0) return true;
+					return false;
+				});
+			}
+
+			if (unmounted) {
+				try {
+					await (created as any)?.stop?.();
+				} catch {}
+				return;
+			}
 			setPeer(newPeer);
 			setLoading(false);
 		};
+
 		const fnWithErrorHandling = async () => {
 			try {
 				await fn();
 			} catch (error: any) {
 				setError(error);
+				setConnectionState("failed");
 				setLoading(false);
 			}
 		};
-		setPromise(fnWithErrorHandling());
-	});
 
-	return (
-		<PeerContext.Provider value={memo}>{options.children}</PeerContext.Provider>
-	);
+		const p = fnWithErrorHandling();
+		setPromise(p);
+		return () => {
+			unmounted = true;
+			unloadUnsubscribe?.();
+			closePeer?.();
+		};
+	}, [config]);
+
+	return <PeerContext.Provider value={memo}>{children}</PeerContext.Provider>;
 };

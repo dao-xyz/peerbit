@@ -149,6 +149,12 @@ export {
 };
 export { type CPUUsage, CPUUsageIntervalLag };
 export * from "./replication.js";
+export type {
+	LogLike,
+	LogResultsIterator,
+	SharedLogLike,
+	SharedLogReplicationIndexLike,
+} from "./like.js";
 export {
 	type ReplicationRangeIndexable,
 	ReplicationRangeIndexableU32,

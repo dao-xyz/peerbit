@@ -9,6 +9,7 @@ import {
 	type CanPerformOperations,
 	type CanRead,
 	Documents,
+	type DocumentsLike,
 	type Operation,
 	SearchRequest,
 } from "@peerbit/document";
@@ -25,6 +26,25 @@ import {
 	hasPath,
 	getRelation as resolveRelation,
 } from "./identity-graph.js";
+
+const openDocumentsLike = async <T, I extends Record<string, any> = any>(
+	owner: Program<any, any>,
+	docs: DocumentsLike<T, I>,
+	args: any,
+): Promise<DocumentsLike<T, I>> => {
+	if (!(docs instanceof Program)) {
+		return docs;
+	}
+	const opened = await owner.node.open(docs as Documents<T, I>, {
+		args,
+		parent: owner as any,
+		existing: "reuse",
+	});
+	if (opened instanceof Documents && !(opened as any)._clazz) {
+		await opened.open(args);
+	}
+	return opened as DocumentsLike<T, I>;
+};
 
 const coercePublicKey = (publicKey: PublicSignKey | PeerId) => {
 	return publicKey instanceof PublicSignKey
@@ -75,11 +95,11 @@ type IdentityGraphArgs = {
 @variant("relations")
 export class IdentityGraph extends Program<IdentityGraphArgs> {
 	@field({ type: Documents })
-	relationGraph: Documents<IdentityRelation, FromTo>;
+	relationGraph: DocumentsLike<IdentityRelation, FromTo>;
 
 	constructor(props?: {
 		id?: Uint8Array;
-		relationGraph?: Documents<IdentityRelation, FromTo>;
+		relationGraph?: DocumentsLike<IdentityRelation, FromTo>;
 	}) {
 		super();
 		if (props) {
@@ -95,7 +115,7 @@ export class IdentityGraph extends Program<IdentityGraphArgs> {
 	}
 
 	async open(options?: IdentityGraphArgs) {
-		await this.relationGraph.open({
+		this.relationGraph = await openDocumentsLike(this, this.relationGraph, {
 			type: IdentityRelation,
 			canPerform: this.canPerform.bind(this),
 			replicate: options?.replicate,
@@ -133,7 +153,7 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 	rootTrust: PublicSignKey;
 
 	@field({ type: Documents })
-	trustGraph: Documents<IdentityRelation, FromTo>;
+	trustGraph: DocumentsLike<IdentityRelation, FromTo>;
 
 	constructor(props: { id?: Uint8Array; rootTrust: PublicSignKey | PeerId }) {
 		super();
@@ -143,7 +163,7 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 
 	async open(options?: TrustedNetworkArgs) {
 		this.trustGraph = this.trustGraph || createIdentityGraphStore();
-		await this.trustGraph.open({
+		this.trustGraph = await openDocumentsLike(this, this.trustGraph, {
 			type: IdentityRelation,
 			canPerform: this.canPerform.bind(this),
 			replicate: options?.replicate || {
@@ -224,7 +244,12 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 		if (trustee.equals(this.rootTrust)) {
 			return true;
 		}
-		if (await this.trustGraph.log.isReplicating()) {
+		const log = (this.trustGraph as any)?.log;
+		const isReplicating =
+			log && typeof log.isReplicating === "function"
+				? await log.isReplicating()
+				: false;
+		if (isReplicating) {
 			return this._isTrustedLocal(trustee, truster);
 		} else {
 			this.trustGraph.index.search(new SearchRequest({ query: [] }), {

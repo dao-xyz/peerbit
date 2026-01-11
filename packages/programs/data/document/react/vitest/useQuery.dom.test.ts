@@ -108,9 +108,8 @@ describe("useQuery (integration with Documents)", () => {
 		db: PostsDB,
 		options: UseQuerySharedOptions<Post, PostIndexed, R>,
 	) {
-		const result: {
-			current: ReturnType<typeof useQuery<Post, PostIndexed, R>>;
-		} = {} as any;
+		type HookResult = ReturnType<typeof useQuery<Post, PostIndexed, R>>;
+		const result: { current: HookResult } = {} as any;
 
 		function HookCmp({
 			opts,
@@ -119,7 +118,7 @@ describe("useQuery (integration with Documents)", () => {
 		}) {
 			const hook = useQuery<Post, PostIndexed, R>(db.posts, opts);
 			React.useEffect(() => {
-				result.current = hook;
+				result.current = hook as HookResult;
 			}, [hook]);
 			return null;
 		}
@@ -155,7 +154,7 @@ describe("useQuery (integration with Documents)", () => {
 
 		await act(async () => {
 			expect(result.current.items.length).toBe(1);
-			expect(result.current.items[0].message).toBe("hello");
+			expect((result.current.items[0] as Post).message).toBe("hello");
 		});
 	});
 
@@ -201,7 +200,7 @@ describe("useQuery (integration with Documents)", () => {
 		});
 
 		expect(result.current.items.length).toBe(1);
-		expect(result.current.items[0].message).toBe("hello");
+		expect((result.current.items[0] as Post).message).toBe("hello");
 
 		await act(async () => {
 			rerender(cfg);
@@ -240,7 +239,7 @@ describe("useQuery (integration with Documents)", () => {
 		});
 
 		await waitFor(() => expect(result.current.items.length).toBe(1));
-		expect(result.current.items[0].message).toBe("late");
+		expect((result.current.items[0] as Post).message).toBe("late");
 	});
 
 	it("pushes remote writes from replicator to non-replicator", async () => {
