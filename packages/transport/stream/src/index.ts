@@ -1393,21 +1393,20 @@ export abstract class DirectStream<
 		// PeerId could be me, if so, it means that I am disconnecting
 		const peerKey = getPublicKeyFromPeerId(peerId);
 		const peerKeyHash = peerKey.hashcode();
-		const connections = this.components.connectionManager
-			.getConnectionsMap()
-			.get(peerId);
-		if (
-			conn?.id &&
-			connections &&
-			connections.length > 0 &&
-			!this.components.connectionManager
-				.getConnectionsMap()
-				.get(peerId)
-				?.find(
-					(x) => x.id === conn.id,
-				) /* TODO this should work but does not? peer?.connId !== conn.id */
-		) {
-			return;
+		const allConnections =
+			this.components.connectionManager.getConnections?.() ?? [];
+		const connections = allConnections.filter(
+			(connection) => connection.remotePeer.toString() === peerId.toString(),
+		);
+		if (connections.length > 0) {
+			const trackedConnection = conn?.id
+				? connections.find((x) => x.id === conn.id)
+				: null;
+			if (!trackedConnection || connections.length > 1) {
+				// Another connection is still alive (or we can't match this disconnect to a tracked connection).
+				// Avoid removing the peer entirely, since replication may still be active.
+				return;
+			}
 		}
 
 		if (!this.peers.has(peerKeyHash)) {
