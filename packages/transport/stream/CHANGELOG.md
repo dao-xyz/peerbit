@@ -43,6 +43,15 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.5.3](https://github.com/dao-xyz/peerbit/compare/stream-v4.5.2...stream-v4.5.3) (2026-01-16)
+
+
+### Bug Fixes
+
+* avoid removing peers on partial disconnect ([0734a85](https://github.com/dao-xyz/peerbit/commit/0734a8572f2ac4670017b1c9e549bdee633d02bf))
+* **stream:** avoid removing peer when other connections remain ([f0943dc](https://github.com/dao-xyz/peerbit/commit/f0943dccf26659bb9e2d7b7709ae2a75da6f4c26))
+* **stream:** avoid removing peer with active connections ([f098901](https://github.com/dao-xyz/peerbit/commit/f098901a444dca8dcef011cbaf549956c9d3f219))
+
 ## [4.5.2](https://github.com/dao-xyz/peerbit/compare/stream-v4.5.1...stream-v4.5.2) (2025-12-30)
 
 

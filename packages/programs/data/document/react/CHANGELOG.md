@@ -1,5 +1,18 @@
 # @peerbit/document-react
 
+## [0.5.2](https://github.com/dao-xyz/peerbit/compare/document-react-v0.5.1...document-react-v0.5.2) (2026-01-16)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 12.1.2
+    * @peerbit/react bumped to 0.0.49
+  * devDependencies
+    * @peerbit/program bumped to 5.5.2
+    * peerbit bumped to 4.4.14
+
 ## [0.5.1](https://github.com/dao-xyz/peerbit/compare/document-react-v0.5.0...document-react-v0.5.1) (2026-01-02)
 
 
