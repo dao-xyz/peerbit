@@ -21,6 +21,7 @@ import type {
 	WithContext,
 	WithIndexedContext,
 } from "./search.js";
+import type { CountEstimate } from "./program.js";
 
 export type DocumentsLikeQuery =
 	| SearchRequest
@@ -37,10 +38,19 @@ export type DocumentsLikeWaitForOptions = {
 	timeout?: number;
 };
 
-export type DocumentsLikeCountOptions = {
+export type DocumentsLikeExactCountOptions = {
 	query?: indexerTypes.Query | indexerTypes.QueryLike;
-	approximate?: boolean | { scope?: ReachScope };
+	approximate?: false | undefined;
 };
+
+export type DocumentsLikeApproximateCountOptions = {
+	query?: indexerTypes.Query | indexerTypes.QueryLike;
+	approximate: true | { scope?: ReachScope };
+};
+
+export type DocumentsLikeCountOptions =
+	| DocumentsLikeExactCountOptions
+	| DocumentsLikeApproximateCountOptions;
 
 export type DocumentsLikeIndex<T, I, D = any> = {
 	get: <Resolve extends boolean | undefined = true>(
@@ -109,7 +119,10 @@ export type DocumentsLike<T, I, D = any> = {
 		id: indexerTypes.Ideable | indexerTypes.IdKey,
 		options?: unknown,
 	): Promise<unknown>;
-	count: (options?: DocumentsLikeCountOptions) => Promise<number>;
+	count: {
+		(options?: DocumentsLikeExactCountOptions): Promise<number>;
+		(options: DocumentsLikeApproximateCountOptions): Promise<CountEstimate>;
+	};
 	waitFor: (
 		peers: PeerRefs,
 		options?: DocumentsLikeWaitForOptions,

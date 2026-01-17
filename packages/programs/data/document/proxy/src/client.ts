@@ -5,6 +5,7 @@ import {
 	createMessagePortTransport,
 } from "@peerbit/canonical-client";
 import type {
+	CountEstimate,
 	DocumentsLike,
 	DocumentsLikeCountOptions,
 	DocumentsLikeIndex,
@@ -12,6 +13,7 @@ import type {
 	DocumentsLikeWaitForOptions,
 	GetOptions,
 	QueryOptions,
+	ReachScope,
 	ResultsIterator,
 	SearchOptions,
 	UpdateOptions,
@@ -816,16 +818,33 @@ export const openDocuments = async <T, I = T>(properties: {
 		return total;
 	};
 
-	const count = async (
+	const toCountEstimate = (estimate: number): CountEstimate => ({
+		estimate,
+		errorMargin: undefined,
+	});
+
+	async function count(options?: {
+		query?: indexerTypes.Query | indexerTypes.QueryLike;
+		approximate?: false | undefined;
+	}): Promise<number>;
+	async function count(options: {
+		query?: indexerTypes.Query | indexerTypes.QueryLike;
+		approximate: true | { scope?: ReachScope };
+	}): Promise<CountEstimate>;
+	async function count(
 		options?: DocumentsProxyCountOptions,
-	): Promise<number> => {
+	): Promise<number | CountEstimate> {
+		const approximate =
+			options?.approximate === true || typeof options?.approximate === "object";
 		if (options?.query) {
-			return countByIterate(options.query as any);
+			const total = await countByIterate(options.query as any);
+			return approximate ? toCountEstimate(total) : total;
 		}
-		const approximate = options?.approximate !== false;
+
 		const total = await raw.count(new DocumentsCountRequest({ approximate }));
-		return toNumber(total);
-	};
+		const estimate = toNumber(total);
+		return approximate ? toCountEstimate(estimate) : estimate;
+	}
 
 	class WrappedIndexedType {
 		__context: Context;

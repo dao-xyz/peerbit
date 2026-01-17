@@ -1,4 +1,4 @@
-import type { DocumentsLike, ResultsIterator } from "@peerbit/document";
+import type { CountEstimate, DocumentsLike, ResultsIterator } from "@peerbit/document";
 import * as indexerTypes from "@peerbit/indexer-interface";
 import type { SharedLogLike } from "@peerbit/shared-log";
 import { act, render, waitFor } from "@testing-library/react";
@@ -60,6 +60,29 @@ const createDocumentsLike = (initial: Doc[]) => {
 	let items = [...initial];
 	const events = new EventTarget();
 	const logEvents = new EventTarget();
+
+	const toCountEstimate = (estimate: number): CountEstimate => ({
+		estimate,
+		errorMargin: undefined,
+	});
+
+	async function count(options?: {
+		query?: unknown;
+		approximate?: false | undefined;
+	}): Promise<number>;
+	async function count(options: {
+		query?: unknown;
+		approximate: true | { scope?: unknown };
+	}): Promise<CountEstimate>;
+	async function count(options?: {
+		query?: unknown;
+		approximate?: boolean | { scope?: unknown };
+	}): Promise<number | CountEstimate> {
+		if (options?.approximate) {
+			return toCountEstimate(items.length);
+		}
+		return items.length;
+	}
 
 	const emitChange = () => {
 		events.dispatchEvent(new CustomEvent("change"));
@@ -135,17 +158,17 @@ const createDocumentsLike = (initial: Doc[]) => {
 			const key = id instanceof indexerTypes.IdKey ? id.primitive : id;
 			return items.find((item) => item.id === String(key));
 		},
-		del: async (id) => {
-			const key = id instanceof indexerTypes.IdKey ? id.primitive : id;
-			items = items.filter((item) => item.id !== String(key));
-			emitChange();
-		},
-		count: async () => items.length,
-		waitFor: async () => [],
-		recover: async () => {},
-		close: async () => {
-			docs.closed = true;
-			return true;
+			del: async (id) => {
+				const key = id instanceof indexerTypes.IdKey ? id.primitive : id;
+				items = items.filter((item) => item.id !== String(key));
+				emitChange();
+			},
+			count,
+			waitFor: async () => [],
+			recover: async () => {},
+			close: async () => {
+				docs.closed = true;
+				return true;
 		},
 	};
 	docs.address = "docs-like-address";

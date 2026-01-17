@@ -389,18 +389,20 @@ export const documentModule: CanonicalModule = {
 					request.context,
 				);
 				await (acquired.program.index as any).index.put(wrapped);
-			},
-			count: async (request: DocumentsCountRequest) => {
-				const approximate = request?.approximate !== false;
-				const count = approximate
-					? await acquired.program.count({ approximate: true })
-					: await acquired.program.index.getSize();
-				return BigInt(count);
-			},
-			indexSize: async () => {
-				const size = await acquired.program.index.getSize();
-				return BigInt(size);
-			},
+				},
+				count: async (request: DocumentsCountRequest) => {
+					const approximate = request?.approximate !== false;
+					if (approximate) {
+						const { estimate } = await acquired.program.count({ approximate: true });
+						return BigInt(estimate);
+					}
+					const count = await acquired.program.index.getSize();
+					return BigInt(count);
+				},
+				indexSize: async () => {
+					const size = await acquired.program.index.getSize();
+					return BigInt(size);
+				},
 			waitFor: async (request: DocumentsWaitForRequest) => {
 				const requestId = request.requestId;
 				const controller = requestId ? new AbortController() : undefined;
