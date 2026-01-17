@@ -57,7 +57,7 @@ const getHashesFromSymbols = async (
 	coordinateToHash: Cache<string>,
 ) => {
 	let queries: IntegerCompare[] = [];
-	let batchSize = 1; // TODO arg
+	let batchSize = 128; // TODO arg
 	let results = new Set<string>();
 	const handleBatch = async (end = false) => {
 		if (queries.length >= batchSize || (end && queries.length > 0)) {
