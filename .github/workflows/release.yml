@@ -63,5 +63,6 @@ jobs:
       - name: Publish RC to NPM
         if: ${{ steps.release.outputs.releases_created != 'true' }}
         env:
+          NPM_CONFIG_GIT_CHECKS: "false"
           NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
         run: npm run --if-present release:rc
