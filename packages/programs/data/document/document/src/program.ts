@@ -305,10 +305,18 @@ export class Documents<
 			trim: options?.log?.trim,
 			replicate: options?.replicate,
 			replicas: options?.replicas,
+			respondToIHaveTimeout: options?.respondToIHaveTimeout,
+			sync: options?.sync,
+			syncronizer: options?.syncronizer,
+			timeUntilRoleMaturity: options?.timeUntilRoleMaturity,
+			waitForReplicatorTimeout: options?.waitForReplicatorTimeout,
+			waitForPruneDelay: options?.waitForPruneDelay,
+			distributionDebounceTime: options?.distributionDebounceTime,
 			domain: (options?.domain
 				? (log: any) => options.domain!(this)
 				: undefined) as any, /// TODO types,
 			compatibility: logCompatiblity,
+			eagerBlocks: options?.eagerBlocks,
 			keep: keepFunction,
 		});
 	}
