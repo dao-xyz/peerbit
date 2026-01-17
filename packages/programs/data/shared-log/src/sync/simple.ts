@@ -16,7 +16,7 @@ import {
 } from "../exchange-heads.js";
 import { TransportMessage } from "../message.js";
 import type { EntryReplicated } from "../ranges.js";
-import type { SyncableKey, Syncronizer } from "./index.js";
+import type { SyncableKey, SyncOptions, Syncronizer } from "./index.js";
 
 @variant([0, 1])
 export class RequestMaybeSync extends TransportMessage {
@@ -109,6 +109,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	log: Log<any>;
 	entryIndex: Index<EntryReplicated<R>, any>;
 	coordinateToHash: Cache<string>;
+	private syncOptions?: SyncOptions<R>;
 
 	// Syncing and dedeplucation work
 	syncMoreInterval?: ReturnType<typeof setTimeout>;
@@ -120,6 +121,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		entryIndex: Index<EntryReplicated<R>, any>;
 		log: Log<any>;
 		coordinateToHash: Cache<string>;
+		sync?: SyncOptions<R>;
 	}) {
 		this.syncInFlightQueue = new Map();
 		this.syncInFlightQueueInverted = new Map();
@@ -128,14 +130,35 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		this.log = properties.log;
 		this.entryIndex = properties.entryIndex;
 		this.coordinateToHash = properties.coordinateToHash;
+		this.syncOptions = properties.sync;
 	}
 
 	onMaybeMissingEntries(properties: {
 		entries: Map<string, EntryReplicated<R>>;
 		targets: string[];
 	}): Promise<void> {
+		let hashes: string[];
+		const priorityFn = this.syncOptions?.priority;
+		if (priorityFn) {
+			let index = 0;
+			const scored: { hash: string; index: number; priority: number }[] = [];
+			for (const [hash, entry] of properties.entries) {
+				const priorityValue = priorityFn(entry);
+				scored.push({
+					hash,
+					index,
+					priority: Number.isFinite(priorityValue) ? priorityValue : 0,
+				});
+				index += 1;
+			}
+			scored.sort((a, b) => b.priority - a.priority || a.index - b.index);
+			hashes = scored.map((x) => x.hash);
+		} else {
+			hashes = [...properties.entries.keys()];
+		}
+
 		return this.rpc.send(
-			new RequestMaybeSync({ hashes: [...properties.entries.keys()] }),
+			new RequestMaybeSync({ hashes }),
 			{
 				priority: 1,
 				mode: new SilentDelivery({ to: properties.targets, redundancy: 1 }),

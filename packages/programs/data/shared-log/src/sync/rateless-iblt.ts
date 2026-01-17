@@ -12,14 +12,16 @@ import {
 import type { RPC, RequestContext } from "@peerbit/rpc";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { type EntryWithRefs } from "../exchange-heads.js";
-import { type Numbers } from "../integers.js";
 import { TransportMessage } from "../message.js";
 import {
 	type EntryReplicated,
-	type ReplicationRangeIndexable,
 	matchEntriesInRangeQuery,
 } from "../ranges.js";
-import type { SyncableKey, Syncronizer } from "./index.js";
+import type {
+	SyncableKey,
+	SynchronizerComponents,
+	Syncronizer,
+} from "./index.js";
 import { SimpleSyncronizer } from "./simple.js";
 
 export const logger = loggerFn("peerbit:shared-log:rateless");
@@ -212,14 +214,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	>;
 
 	constructor(
-		readonly properties: {
-			rpc: RPC<TransportMessage, TransportMessage>;
-			rangeIndex: Index<ReplicationRangeIndexable<D>, any>;
-			entryIndex: Index<EntryReplicated<D>, any>;
-			log: Log<any>;
-			coordinateToHash: Cache<string>;
-			numbers: Numbers<D>;
-		},
+		readonly properties: SynchronizerComponents<D>,
 	) {
 		this.simple = new SimpleSyncronizer(properties);
 		this.outgoingSyncProcesses = new Map();
@@ -238,7 +233,6 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		//   such as those assigned to range boundaries.
 
 		let entriesToSyncNaively: Map<string, EntryReplicated<D>> = new Map();
-		let allCoordinatesToSyncWithIblt: bigint[] = [];
 		let minSyncIbltSize = 333; // TODO: make configurable
 		let maxSyncWithSimpleMethod = 1e3;
 
@@ -251,16 +245,56 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			return;
 		}
 
-		await ribltReady;
-
-		// Mixed strategy for larger batches
+		const nonBoundaryEntries: EntryReplicated<D>[] = [];
 		for (const entry of properties.entries.values()) {
 			if (entry.assignedToRangeBoundary) {
 				entriesToSyncNaively.set(entry.hash, entry);
 			} else {
-				allCoordinatesToSyncWithIblt.push(coerceBigInt(entry.hashNumber));
+				nonBoundaryEntries.push(entry);
 			}
 		}
+
+		const priorityFn = this.properties.sync?.priority;
+		const maxSimpleEntries = this.properties.sync?.maxSimpleEntries;
+		const maxAdditionalNaive =
+			priorityFn &&
+			typeof maxSimpleEntries === "number" &&
+			Number.isFinite(maxSimpleEntries) &&
+			maxSimpleEntries > 0
+				? Math.max(
+						0,
+						Math.min(
+							Math.floor(maxSimpleEntries),
+							maxSyncWithSimpleMethod - entriesToSyncNaively.size,
+						),
+					)
+				: 0;
+
+		if (priorityFn && maxAdditionalNaive > 0 && nonBoundaryEntries.length > 0) {
+			let index = 0;
+			const scored: {
+				entry: EntryReplicated<D>;
+				index: number;
+				priority: number;
+			}[] = [];
+			for (const entry of nonBoundaryEntries) {
+				const priorityValue = priorityFn(entry);
+				scored.push({
+					entry,
+					index,
+					priority: Number.isFinite(priorityValue) ? priorityValue : 0,
+				});
+				index += 1;
+			}
+			scored.sort((a, b) => b.priority - a.priority || a.index - b.index);
+			for (const { entry } of scored.slice(0, maxAdditionalNaive)) {
+				entriesToSyncNaively.set(entry.hash, entry);
+			}
+		}
+
+		let allCoordinatesToSyncWithIblt = nonBoundaryEntries
+			.filter((entry) => !entriesToSyncNaively.has(entry.hash))
+			.map((entry) => coerceBigInt(entry.hashNumber));
 
 		if (entriesToSyncNaively.size > 0) {
 			// If there are special-case entries, sync them simply in parallel
@@ -283,6 +317,8 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		if (allCoordinatesToSyncWithIblt.length === 0) {
 			return;
 		}
+
+		await ribltReady;
 
 		const sortedEntries = allCoordinatesToSyncWithIblt.sort((a, b) => {
 			if (a > b) {
