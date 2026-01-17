@@ -14,4 +14,4 @@ globalThis.fetch = async (url, options) => {
 	return defaultFetch(url, options);
 };
 
-await init();
+export const ready = init();

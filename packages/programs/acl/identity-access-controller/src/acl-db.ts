@@ -1,7 +1,11 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { type PeerId } from "@libp2p/interface";
 import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
-import { type CanPerformOperations, Documents } from "@peerbit/document";
+import {
+	type CanPerformOperations,
+	Documents,
+	type DocumentsLike,
+} from "@peerbit/document";
 import { Compare, IntegerCompare, Or, SearchRequest } from "@peerbit/document";
 import { Program } from "@peerbit/program";
 import { type ReplicationOptions } from "@peerbit/shared-log";
@@ -15,10 +19,29 @@ import {
 import { concat } from "uint8arrays";
 import { ACCESS_TYPE_PROPERTY, Access, AccessType } from "./access.js";
 
+const openDocumentsLike = async <T, I extends Record<string, any> = any>(
+	owner: Program<any, any>,
+	docs: DocumentsLike<T, I>,
+	args: any,
+): Promise<DocumentsLike<T, I>> => {
+	if (!(docs instanceof Program)) {
+		return docs;
+	}
+	const opened = await owner.node.open(docs as Documents<T, I>, {
+		args,
+		parent: owner as any,
+		existing: "reuse",
+	});
+	if (opened instanceof Documents && !(opened as any)._clazz) {
+		await opened.open(args);
+	}
+	return opened as DocumentsLike<T, I>;
+};
+
 @variant("identity_acl")
 export class IdentityAccessController extends Program {
 	@field({ type: Documents })
-	access: Documents<Access>;
+	access: DocumentsLike<Access, Access>;
 
 	@field({ type: IdentityGraph })
 	identityGraphController: IdentityGraph;
@@ -198,7 +221,7 @@ export class IdentityAccessController extends Program {
 			replicate: properties?.replicate || { factor: 1 },
 			canRead: this.canRead.bind(this),
 		});
-		await this.access.open({
+		this.access = await openDocumentsLike(this, this.access, {
 			replicate: properties?.replicate || { factor: 1 },
 			type: Access,
 			canPerform: this.canPerform.bind(this),

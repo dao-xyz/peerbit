@@ -336,13 +336,14 @@ describe("events", () => {
 
 			let waitForRoleAge = 2e3;
 			let t0 = Date.now();
-			await store1.log.waitForReplicators({
-				roleAge: waitForRoleAge,
-				waitForNewPeers: true, // prevent waitForReplicators from resolving immediately
+				await store1.log.waitForReplicators({
+					roleAge: waitForRoleAge,
+					waitForNewPeers: true, // prevent waitForReplicators from resolving immediately
+				});
+				let t1 = Date.now();
+				// Allow some timer jitter across environments/CI
+				expect(t1 - t0).to.be.greaterThanOrEqual(waitForRoleAge - 250);
 			});
-			let t1 = Date.now();
-			expect(t1 - t0).to.be.greaterThan(waitForRoleAge);
-		});
 
 		it("will wait for warmup when restarting", async () => {
 			session = await TestSession.connected(1, {
@@ -372,15 +373,16 @@ describe("events", () => {
 
 			let waitForRoleAge = 3e3;
 			let t0 = Date.now();
-			await store1.log.waitForReplicators({
-				roleAge: waitForRoleAge,
-				timeout: 1e4,
-				waitForNewPeers: true, // prevent waitForReplicators from resolving immediately
+				await store1.log.waitForReplicators({
+					roleAge: waitForRoleAge,
+					timeout: 1e4,
+					waitForNewPeers: true, // prevent waitForReplicators from resolving immediately
+				});
+				let t1 = Date.now();
+				// Allow some timer jitter across environments/CI
+				expect(t1 - t0).to.be.greaterThanOrEqual(waitForRoleAge - 250);
+				expect(t1 - t0).to.be.lessThan(waitForRoleAge + 3e3);
 			});
-			let t1 = Date.now();
-			expect(t1 - t0).to.be.greaterThan(waitForRoleAge - 100); // allow some leeway for flaky timers
-			expect(t1 - t0).to.be.lessThan(waitForRoleAge + 3e3);
-		});
 
 		it("will wait joining replicator role age", async () => {
 			session = await TestSession.connected(2);

@@ -6,6 +6,7 @@ import { decodeReplicas } from "@peerbit/shared-log";
 import { Peerbit } from "peerbit";
 import { v4 as uuid } from "uuid";
 
+@variant("replication_degree_text")
 class Text {
 	@field({ type: "string" })
 	id: string;

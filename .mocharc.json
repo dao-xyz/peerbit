@@ -7,8 +7,8 @@
 	],
 	"extension": ["ts"],
 	"parallel": false,
-	"spec": ["**/*.spec.ts"],
-	"ignore": ["**/node_modules/**", "**/dist/**", "**/vitest/**"],
+	"spec": ["packages/**/*.spec.ts", "docs/**/*.spec.ts"],
+	"ignore": ["**/node_modules/**", "**/vitest/**"],
 	"timeout": "140000",
 	"exit": true
 }

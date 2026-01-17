@@ -45,7 +45,7 @@ class PostsDB extends Program<Args> {
 }
 
 /// [data]
-@variant("channel")
+@variant("composition_channel")
 class Channel extends Program<Args> {
 	// Name of channel
 	@field({ type: "string" })

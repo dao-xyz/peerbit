@@ -12,11 +12,9 @@ packages:
   - packages/log
   - packages/clients/peerbit-react
   - packages/clients/peerbit
-  - packages/clients/peerbit-proxy/proxy
-  - packages/clients/peerbit-proxy/window
-  - packages/clients/peerbit-proxy/window/e2e/browser
-  - packages/clients/peerbit-proxy/window/e2e/browser/parent
-  - packages/clients/peerbit-proxy/window/e2e/browser/child
+  - packages/clients/canonical/transport
+  - packages/clients/canonical/client
+  - packages/clients/canonical/host
   - packages/clients/peerbit-server/frontend
   - packages/clients/peerbit-server/node
   - packages/clients/peerbit-server/test-lib
@@ -36,8 +34,13 @@ packages:
   - packages/programs/data/document/react/e2e/party
   - packages/programs/data/document/react/e2e/party/shared
   - packages/programs/data/document/react/e2e/party/browser-node
+  - packages/programs/data/document/react/e2e/canonical
+  - packages/programs/data/document/proxy/e2e
+  - packages/programs/data/shared-log/proxy
+  - packages/programs/data/shared-log/proxy/e2e
   - packages/utils/crypto
   - packages/utils/any-store/*
+  - packages/utils/any-store/proxy/e2e
   - packages/utils/build-assets
   - packages/utils/time
   - packages/utils/cache

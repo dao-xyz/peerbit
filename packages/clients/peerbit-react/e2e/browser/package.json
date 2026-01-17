@@ -10,12 +10,17 @@
 		"test:e2e": "pnpm build && playwright test"
 	},
 	"dependencies": {
+		"@libp2p/websockets": "^10.1.0",
 		"@peerbit/any-store-opfs": "workspace:*",
+		"@peerbit/canonical-host": "workspace:*",
 		"@peerbit/document": "workspace:*",
+		"@peerbit/document-proxy": "workspace:*",
 		"@peerbit/document-react": "workspace:*",
+		"@peerbit/indexer-simple": "workspace:*",
 		"@peerbit/indexer-sqlite3": "workspace:*",
 		"@peerbit/react": "workspace:*",
 		"@peerbit/riblt": "workspace:*",
+		"buffer": "^6.0.3",
 		"events": "^3.3.0",
 		"react": "^19.2.0",
 		"react-dom": "^19.2.0"

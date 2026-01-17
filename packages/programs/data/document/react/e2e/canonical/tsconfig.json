@@ -1,0 +1,22 @@
+{
+	"extends": "../../../../../../../tsconfig.json",
+	"compilerOptions": {
+		"target": "ESNext",
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"lib": ["ESNext", "DOM", "DOM.Iterable", "WebWorker"],
+		"types": ["vite/client", "@playwright/test"],
+		"strict": true,
+		"skipLibCheck": true,
+		"noEmit": true,
+		"experimentalDecorators": true,
+		"jsx": "react-jsx"
+	},
+	"include": [
+		"src",
+		"tests",
+		"service-worker.ts",
+		"playwright.config.ts",
+		"vite.config.ts"
+	]
+}

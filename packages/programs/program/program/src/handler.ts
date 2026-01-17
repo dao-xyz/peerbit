@@ -19,6 +19,7 @@ export type EventOptions = {
 export type OpenOptions<T extends Manageable<ExtractArgs<T>>> = {
 	timeout?: number;
 	existing?: ProgramMergeStrategy;
+	mode?: "auto" | "local" | "canonical";
 } & ProgramInitializationOptions<ExtractArgs<T>, T>;
 
 export type WithArgs<Args> = { args?: Args };

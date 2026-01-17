@@ -1,6 +1,6 @@
 import { field, fixedArray, option, variant, vec } from "@dao-xyz/borsh";
 import { randomBytes, sha256Base64Sync } from "@peerbit/crypto";
-import { Query, Sort, toQuery } from "@peerbit/indexer-interface";
+import { Query, Sort, toQuery, toSort } from "@peerbit/indexer-interface";
 import {
 	AbstractSearchResult,
 	type Result,
@@ -20,9 +20,6 @@ export type ResultTypeFromRequest<R, T, I> = R extends SearchRequest
 /**
  * Search with query and collect with sort conditionss
  */
-
-const toArray = <T>(arr: T | T[] | undefined) =>
-	(arr ? (Array.isArray(arr) ? arr : [arr]) : undefined) || [];
 
 export abstract class AbstractSearchRequest {
 	abstract set id(id: Uint8Array);
@@ -67,7 +64,7 @@ export class SearchRequest extends AbstractSearchRequest {
 		super();
 		this.id = randomBytes(32);
 		this.query = props?.query ? toQuery(props.query) : [];
-		this.sort = toArray(props?.sort);
+		this.sort = toSort(props?.sort as any);
 		this.fetch = props?.fetch ?? 10; // default fetch 10 documents
 	}
 }
@@ -104,7 +101,7 @@ export class SearchRequestIndexed extends AbstractSearchRequest {
 		super();
 		this.id = randomBytes(32);
 		this.query = props?.query ? toQuery(props.query) : [];
-		this.sort = toArray(props?.sort);
+		this.sort = toSort(props?.sort as any);
 		this.fetch = props?.fetch ?? 10; // default fetch 10 documents
 		this.replicate = props.replicate ?? false;
 	}
@@ -218,7 +215,7 @@ export class IterationRequest extends AbstractSearchRequest {
 		super();
 		this.id = randomBytes(32);
 		this.query = properties?.query ? toQuery(properties.query) : [];
-		this.sort = toArray(properties?.sort);
+		this.sort = toSort(properties?.sort as any);
 		this.fetch = properties?.fetch ?? 10;
 		this.resolve = properties?.resolve ?? true;
 		this.replicate = properties?.replicate ?? false;

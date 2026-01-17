@@ -54,9 +54,12 @@ console.log("App config:", {
 export const App = () => {
 	return (
 		<PeerProvider
-			network={networkOption}
-			waitForConnnected="in-flight"
-			indexer={createSimpleIndexer}
+			config={{
+				runtime: "node",
+				network: networkOption,
+				waitForConnected: "in-flight",
+				indexer: createSimpleIndexer,
+			}}
 		>
 			<DocumentParty label={label} replicate={replicate} />
 		</PeerProvider>

@@ -1,4 +1,4 @@
-import { ClosedError, Documents } from "@peerbit/document";
+import { ClosedError, type DocumentsLike } from "@peerbit/document";
 import * as indexerTypes from "@peerbit/indexer-interface";
 import { useEffect, useRef, useState } from "react";
 import { debounceLeadingTrailing } from "./utils.js";
@@ -8,7 +8,11 @@ type QueryOptons = {
 	id?: string;
 };
 export const useCount = <T extends Record<string, any>>(
-	db?: Documents<T, any, any>,
+	db?: DocumentsLike<T, any> & {
+		closed?: boolean;
+		rootAddress?: string;
+		address?: string;
+	},
 	options?: {
 		debounce?: number;
 		debug?: boolean; // add debug option here
@@ -16,7 +20,6 @@ export const useCount = <T extends Record<string, any>>(
 ) => {
 	const [count, setCount] = useState<number>(0);
 	const countRef = useRef<number>(0);
-
 	useEffect(() => {
 		if (!db || db.closed) {
 			return;
@@ -51,7 +54,10 @@ export const useCount = <T extends Record<string, any>>(
 			db.events.removeEventListener("change", handleChange);
 			debounced.cancel();
 		};
-	}, [db?.closed ? undefined : db?.rootAddress, options?.id ?? options?.query]);
+	}, [
+		db?.closed ? undefined : (db?.rootAddress ?? db?.address),
+		options?.id ?? options?.query,
+	]);
 
 	return count;
 };

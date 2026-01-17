@@ -1,0 +1,90 @@
+{
+	"name": "@peerbit/canonical-client",
+	"version": "0.0.0",
+	"description": "Client helpers for connecting to a Peerbit canonical runtime",
+	"author": "dao.xyz",
+	"license": "MIT",
+	"sideEffects": false,
+	"type": "module",
+	"types": "./dist/src/index.d.ts",
+	"typesVersions": {
+		"*": {
+			"*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			],
+			"src/*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			]
+		}
+	},
+	"files": [
+		"src",
+		"dist",
+		"!dist/test",
+		"!**/*.tsbuildinfo"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/src/index.d.ts",
+			"import": "./dist/src/index.js"
+		},
+		"./window": {
+			"types": "./dist/src/window.d.ts",
+			"import": "./dist/src/window.js"
+		}
+	},
+	"eslintConfig": {
+		"extends": "peerbit",
+		"parserOptions": {
+			"project": true,
+			"sourceType": "module"
+		},
+		"ignorePatterns": [
+			"!.aegir.js",
+			"test/ts-use",
+			"*.d.ts"
+		]
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/dao-xyz/peerbit"
+	},
+	"engines": {
+		"node": ">=18"
+	},
+	"dependencies": {
+		"@dao-xyz/borsh": "^6.0.0",
+		"@libp2p/interface": "^3.1.0",
+		"@libp2p/peer-id": "^6.0.1",
+		"@multiformats/multiaddr": "^13.0.1",
+		"@peerbit/canonical-transport": "workspace:*",
+		"@peerbit/crypto": "workspace:*",
+		"@peerbit/program": "workspace:*"
+	},
+	"devDependencies": {},
+	"scripts": {
+		"clean": "aegir clean",
+		"build": "aegir build --no-bundle",
+		"test": "aegir test --target node",
+		"lint": "aegir lint"
+	},
+	"localMaintainers": [
+		"dao.xyz"
+	],
+	"keywords": [
+		"peerbit",
+		"rpc",
+		"canonical",
+		"worker",
+		"sharedworker"
+	]
+}

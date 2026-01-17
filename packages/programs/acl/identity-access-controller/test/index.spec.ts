@@ -6,6 +6,7 @@ import { Program } from "@peerbit/program";
 import { type ReplicationOptions, SharedLog } from "@peerbit/shared-log";
 import { TestSession } from "@peerbit/test-utils";
 import { waitFor, waitForResolved } from "@peerbit/time";
+import { FromTo, IdentityRelation } from "@peerbit/trusted-network";
 import { expect } from "chai";
 import { equals } from "uint8arrays";
 import { Access, AccessType } from "../src/access.js";
@@ -94,11 +95,23 @@ describe("index", () => {
 				),
 			).to.equal(1);
 		};
-		await checkRole(l0a.accessController.access.log);
+		await checkRole((l0a.accessController.access as Documents<Access>).log);
 		await checkRole(
-			l0a.accessController.identityGraphController.relationGraph.log,
+			(
+				l0a.accessController.identityGraphController.relationGraph as Documents<
+					IdentityRelation,
+					FromTo
+				>
+			).log,
 		);
-		await checkRole(l0a.accessController.trustedNetwork.trustGraph.log);
+		await checkRole(
+			(
+				l0a.accessController.trustedNetwork.trustGraph as Documents<
+					IdentityRelation,
+					FromTo
+				>
+			).log,
+		);
 	});
 
 	it("can write from trust web", async () => {
@@ -123,14 +136,30 @@ describe("index", () => {
 
 		await l0a.accessController.trustedNetwork.add(session.peers[1].peerId);
 
-		await l0b.accessController.trustedNetwork.trustGraph.log.log.join(
-			await l0a.accessController.trustedNetwork.trustGraph.log.log
+		await (
+			l0b.accessController.trustedNetwork.trustGraph as Documents<
+				IdentityRelation,
+				FromTo
+			>
+		).log.log.join(
+			await (
+				l0a.accessController.trustedNetwork.trustGraph as Documents<
+					IdentityRelation,
+					FromTo
+				>
+			).log.log
 				.getHeads()
 				.all(),
 		);
 
 		await waitFor(
-			() => l0b.accessController.trustedNetwork.trustGraph.log.log.length === 1,
+			() =>
+				(
+					l0b.accessController.trustedNetwork.trustGraph as Documents<
+						IdentityRelation,
+						FromTo
+					>
+				).log.log.length === 1,
 		);
 		await l0b.store.put(
 			new Document({
@@ -188,8 +217,10 @@ describe("index", () => {
 				}),
 			);
 
-			await l0b.accessController.access.log.log.join(
-				await l0a.accessController.access.log.log.getHeads().all(),
+			await (l0b.accessController.access as Documents<Access>).log.log.join(
+				await (l0a.accessController.access as Documents<Access>).log.log
+					.getHeads()
+					.all(),
 			);
 			await waitForResolved(async () =>
 				expect(await l0b.store.index.getSize()).equal(1),
@@ -236,11 +267,15 @@ describe("index", () => {
 				}),
 			);
 
-			await l0b.accessController.access.log.log.join(
-				await l0a.accessController.access.log.log.getHeads().all(),
+			await (l0b.accessController.access as Documents<Access>).log.log.join(
+				await (l0a.accessController.access as Documents<Access>).log.log
+					.getHeads()
+					.all(),
 			);
-			await l0c.accessController.access.log.log.join(
-				await l0a.accessController.access.log.log.getHeads().all(),
+			await (l0c.accessController.access as Documents<Access>).log.log.join(
+				await (l0a.accessController.access as Documents<Access>).log.log
+					.getHeads()
+					.all(),
 			);
 
 			await expect(
@@ -258,8 +293,16 @@ describe("index", () => {
 			await l0b.accessController.identityGraphController.addRelation(
 				session.peers[2].peerId,
 			);
-			await l0c.accessController.identityGraphController.relationGraph.log.log.join(
-				await l0b.accessController.identityGraphController.relationGraph.log.log
+			await (
+				l0c.accessController.identityGraphController.relationGraph as Documents<
+					IdentityRelation,
+					FromTo
+				>
+			).log.log.join(
+				await (
+					l0b.accessController.identityGraphController
+						.relationGraph as Documents<IdentityRelation, FromTo>
+				).log.log
 					.getHeads()
 					.all(),
 			);
@@ -306,8 +349,8 @@ describe("index", () => {
 			});
 			expect(access.id).to.exist;
 			await l0a.accessController.access.put(access);
-			await l0b.accessController.access.log.log.join(
-				await l0a.accessController.access.log.log.getHeads().all(),
+			await (l0b.accessController.access as Documents<Access>).log.log.join(
+				await (l0a.accessController.access as Documents<Access>).log.log.getHeads().all(),
 			);
 
 			await waitForResolved(async () =>
@@ -410,9 +453,9 @@ describe("index", () => {
 		});
 
 		// Allow all for easy query
-		await l0b.accessController.access.log.waitForReplicator(
-			session.peers[0].identity.publicKey,
-		);
+		await (
+			l0b.accessController.access as Documents<Access>
+		).log.waitForReplicator(session.peers[0].identity.publicKey);
 
 		await waitForResolved(async () =>
 			expect(await l0a.accessController.access.index.getSize()).equal(1),
@@ -421,9 +464,9 @@ describe("index", () => {
 			expect(await l0b.accessController.access.index.getSize()).equal(1),
 		);
 
-		await l0b.accessController.access.log.waitForReplicator(
-			l0a.node.identity.publicKey,
-		);
+		await (
+			l0b.accessController.access as Documents<Access>
+		).log.waitForReplicator(l0a.node.identity.publicKey);
 
 		// since we are replicator by default of the access index (even though opened the db as observer)
 		// we will be able to query ourselves

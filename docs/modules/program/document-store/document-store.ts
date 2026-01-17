@@ -83,6 +83,7 @@ type ChannelArgs = { replicate?: ReplicationOptions };
 // this is useful when the original format is not suitable for indexing
 // or the indexed format should contain additional information like
 // signer, timestamp etc.
+@variant("indexed_post")
 class IndexedPost {
 	@field({ type: "string" })
 	[POST_ID_PROPERTY]: string;
@@ -108,7 +109,7 @@ class IndexedPost {
 	}
 }
 
-@variant("channel")
+@variant("document_store_channel")
 export class Channel extends Program<ChannelArgs> {
 	// Documents<?> provide document store functionality around posts
 
@@ -205,13 +206,14 @@ export class Channel extends Program<ChannelArgs> {
 			},
 		});
 
-		await this.reactions.open({
-			type: Reaction,
+			await this.reactions.open({
+				type: Reaction,
+				replicate: properties?.replicate,
 
-			// we don't provide an index here, which means we will index all fields of Reaction
-		});
+				// we don't provide an index here, which means we will index all fields of Reaction
+			});
+		}
 	}
-}
 /// [definition]
 
 /// [insert]
@@ -338,25 +340,29 @@ const postsFromClient1: Post[] = await channelFromClient2.posts.index.search(
 	}),
 );
 expect(postsFromClient1).to.have.length(2);
-expect(postsFromClient1.map((x) => x.message)).to.deep.equal([
-	"hello world",
-	"The Shoebill is terrifying",
-]);
+expect(postsFromClient1.map((x) => x.message).sort()).to.deep.equal(
+	["hello world", "The Shoebill is terrifying"].sort(),
+);
 
 /// [search-for-one]
 
 /// [reactions-one]
 
 // Get reactions for a particular post
-const reactions: Reaction[] = await channelFromClient2.reactions.index.search(
-	new SearchRequest({
-		query: [
-			new StringMatch({ key: [REACTION_POST_ID_PROPERTY], value: posts[2].id }),
-		],
-	}),
-);
-
-expect(reactions).to.have.length(1);
+const reactions: Reaction[] = await waitForResolved(async () => {
+	const reactions: Reaction[] = await channelFromClient2.reactions.index.search(
+		new SearchRequest({
+			query: [
+				new StringMatch({
+					key: [REACTION_POST_ID_PROPERTY],
+					value: posts[2].id,
+				}),
+			],
+		}),
+	);
+	expect(reactions).to.have.length(1);
+	return reactions;
+});
 expect(reactions[0][REACTION_TYPE_PROPERTY]).equal(ReactionType.HAHA);
 /// [reactions-one]
 
