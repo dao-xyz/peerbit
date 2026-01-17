@@ -1,5 +1,12 @@
+import { field, variant } from "@dao-xyz/borsh";
+import { id } from "@peerbit/indexer-interface";
 import { expect } from "chai";
-import { fromRowToObj, getTableName } from "../src/schema.js";
+import {
+	fromRowToObj,
+	getInlineTableFieldName,
+	getSQLTable,
+	getTableName,
+} from "../src/schema.js";
 import { DocumentNoVariant, DocumentWithVariant } from "./fixtures.js";
 
 describe("schema", () => {
@@ -20,6 +27,68 @@ describe("schema", () => {
 		it("uses variant for table name", () => {
 			const table = getTableName(["scope"], DocumentWithVariant);
 			expect(table).to.equal("scope__v_0");
+		});
+
+		it("uses declared primary key for child FKs", () => {
+			abstract class ChildBase {}
+
+			@variant(0)
+			class ChildV0 extends ChildBase {
+				@field({ type: "string" })
+				value: string;
+
+				constructor(value: string) {
+					super();
+					this.value = value;
+				}
+			}
+
+			@variant(1)
+			class ChildV1 extends ChildBase {
+				@field({ type: "string" })
+				value: string;
+
+				constructor(value: string) {
+					super();
+					this.value = value;
+				}
+			}
+
+			@variant("Root")
+			class Root {
+				// Intentionally declared before the primary key.
+				@field({ type: ChildBase })
+				child: ChildBase;
+
+				@id({ type: "string" })
+				id: string;
+
+				constructor(id: string, child: ChildBase) {
+					this.id = id;
+					this.child = child;
+				}
+			}
+
+			const primary = getInlineTableFieldName(["id"]);
+			const [rootTable] = getSQLTable(Root, [], primary, false, undefined, false);
+			expect(rootTable).to.exist;
+			expect(rootTable.children.length).to.equal(2);
+
+			for (const childTable of rootTable.children) {
+				expect(childTable.inline).to.equal(false);
+
+				const parentIdField = childTable.fields.find(
+					(f) => f.name === "__parent_id",
+				);
+				expect(parentIdField?.type).to.equal("TEXT");
+
+				const fkConstraint = childTable.constraints.find(
+					(c) => c.name === "__parent_id_fk",
+				);
+				expect(fkConstraint?.definition).to.include(
+					`REFERENCES ${rootTable.name}(${primary})`,
+				);
+			}
 		});
 	});
 });

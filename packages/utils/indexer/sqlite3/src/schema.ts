@@ -162,6 +162,85 @@ type SQLField = {
 	describesExistenceOfAnother?: string;
 };
 type SQLConstraint = { name: string; definition: string };
+type PrimaryFieldInfo = Pick<
+	SQLField,
+	"name" | "type" | "from" | "unwrappedType"
+>;
+
+const createScalarSQLField = (
+	path: string[],
+	field: Field,
+	type: FieldType,
+	primary: string | false,
+	isOptional: boolean,
+): SQLField => {
+	const name = getInlineTableFieldName(path.slice(1), field.key);
+	const isPrimary = primary !== false && name === primary;
+	const sqlType = toSQLType(type, isOptional);
+	return {
+		name,
+		key: field.key,
+		definition: `${escapeColumnName(name)} ${sqlType} ${isPrimary ? "PRIMARY KEY" : ""}`,
+		type: sqlType,
+		isPrimary,
+		from: field,
+		unwrappedType: unwrapNestedType(field.type),
+		path: [...path.slice(1), field.key],
+	};
+};
+
+const resolvePrimaryFieldInfoFromSchema = (
+	ctor: Constructor<any>,
+	path: string[],
+	primary: string,
+): PrimaryFieldInfo | undefined => {
+	const schema = getSchema(ctor);
+	if (!schema) {
+		return undefined;
+	}
+
+	for (const field of schema.fields) {
+		let fieldType: FieldType = field.type;
+
+		// option(T) is stored as T (nullable) in SQL.
+		if (fieldType instanceof OptionKind) {
+			fieldType = fieldType.elementType;
+		}
+
+		fieldType = unwrapNestedType(fieldType);
+
+		// Arrays are always stored in separate tables.
+		if (fieldType instanceof VecKind) {
+			continue;
+		}
+
+		if (typeof fieldType === "string" || isUint8ArrayType(fieldType)) {
+			const sqlField = createScalarSQLField(path, field, fieldType, primary, true);
+			if (sqlField.isPrimary) {
+				return {
+					name: sqlField.name,
+					type: sqlField.type,
+					from: sqlField.from,
+					unwrappedType: sqlField.unwrappedType,
+				};
+			}
+		} else if (
+			typeof fieldType === "function" &&
+			clazzCanBeInlined(fieldType as Constructor<any>)
+		) {
+			const nested = resolvePrimaryFieldInfoFromSchema(
+				fieldType as Constructor<any>,
+				[...path, field.key],
+				primary,
+			);
+			if (nested) {
+				return nested;
+			}
+		}
+	}
+
+	return undefined;
+};
 
 export interface Table {
 	name: string;
@@ -331,21 +410,30 @@ export const getSQLFields = (
 
 	let foundPrimary = false;
 
+	// Resolve the primary field info independent of schema field order. This is
+	// needed because nested table generation can happen before the primary field
+	// has been processed and added to `sqlFields`.
+	const parentPrimaryFieldInfo: PrimaryFieldInfo =
+		primary === false || primary === CHILD_TABLE_ID
+			? {
+					name: CHILD_TABLE_ID,
+					type: "INTEGER",
+					from: undefined,
+					unwrappedType: undefined,
+				}
+			: resolvePrimaryFieldInfoFromSchema(ctor, path, primary) || {
+					// Fallback: nested tables use synthetic integer ids, and we allow that
+					// primary to be unresolved here.
+					name: primary,
+					type: "INTEGER",
+					from: undefined,
+					unwrappedType: undefined,
+				};
+
 	const addJoinFields =
 		primary === false
 			? addJoinFieldFromParent
 			: (fields: SQLField[], contstraints: SQLConstraint[]) => {
-					// we resolve primary field here since it might be unknown until this point
-					const parentPrimaryField =
-						primary != null
-							? sqlFields.find((field) => field.name === primary)
-							: undefined;
-					const parentPrimaryFieldName =
-						parentPrimaryField?.name || CHILD_TABLE_ID;
-					const parentPrimaryFieldType = parentPrimaryField
-						? parentPrimaryField.type
-						: "INTEGER";
-
 					fields.unshift(
 						{
 							name: CHILD_TABLE_ID,
@@ -362,17 +450,17 @@ export const getSQLFields = (
 						{
 							name: PARENT_TABLE_ID,
 							key: PARENT_TABLE_ID,
-							definition: `${PARENT_TABLE_ID} ${parentPrimaryFieldType}`,
-							type: parentPrimaryFieldType,
-							from: parentPrimaryField?.from,
-							unwrappedType: parentPrimaryField?.unwrappedType,
+							definition: `${PARENT_TABLE_ID} ${parentPrimaryFieldInfo.type}`,
+							type: parentPrimaryFieldInfo.type,
+							from: parentPrimaryFieldInfo.from,
+							unwrappedType: parentPrimaryFieldInfo.unwrappedType,
 							isPrimary: false,
 							path: [PARENT_TABLE_ID],
 						},
 					);
 					contstraints.push({
 						name: `${PARENT_TABLE_ID}_fk`,
-						definition: `CONSTRAINT ${PARENT_TABLE_ID}_fk FOREIGN KEY(${PARENT_TABLE_ID}) REFERENCES ${tableName}(${parentPrimaryFieldName}) ON DELETE CASCADE`,
+						definition: `CONSTRAINT ${PARENT_TABLE_ID}_fk FOREIGN KEY(${PARENT_TABLE_ID}) REFERENCES ${tableName}(${parentPrimaryFieldInfo.name}) ON DELETE CASCADE`,
 					});
 				};
 
@@ -446,27 +534,13 @@ export const getSQLFields = (
 	};
 
 	const handleSimpleField = (
-		key: string,
 		field: Field,
 		type: FieldType,
 		isOptional: boolean,
 	) => {
-		let keyString = getInlineTableFieldName(path.slice(1), key);
-
-		const isPrimary = primary != null && keyString === primary;
-		foundPrimary = foundPrimary || isPrimary;
-
-		const fieldType = toSQLType(type, isOptional);
-		sqlFields.push({
-			name: keyString,
-			key,
-			definition: `${escapeColumnName(keyString)} ${fieldType} ${isPrimary ? "PRIMARY KEY" : ""}`,
-			type: fieldType,
-			isPrimary,
-			from: field,
-			unwrappedType: unwrapNestedType(field.type),
-			path: [...path.slice(1), key],
-		});
+		const sqlField = createScalarSQLField(path, field, type, primary, isOptional);
+		foundPrimary = foundPrimary || sqlField.isPrimary;
+		sqlFields.push(sqlField);
 	};
 
 	const handleField = (
@@ -480,7 +554,7 @@ export const getSQLFields = (
 		}
 
 		if (typeof type === "string" || type === Uint8Array) {
-			handleSimpleField(key, field, type, true);
+			handleSimpleField(field, type, true);
 		} else if (
 			typeof type === "function" &&
 			clazzCanBeInlined(type as Constructor<any>)
