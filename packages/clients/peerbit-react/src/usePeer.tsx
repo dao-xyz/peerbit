@@ -286,6 +286,7 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 				{ noise },
 				{ yamux },
 				{ webSockets },
+				{ keys },
 			] = await Promise.all([
 				import("detectincognitojs"),
 				import("libsodium-wrappers"),
@@ -293,6 +294,7 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 				import("@chainsafe/libp2p-noise"),
 				import("@chainsafe/libp2p-yamux"),
 				import("@libp2p/websockets"),
+				import("@libp2p/crypto"),
 			]);
 
 			const sodium = (sodiumModule as any).default ?? sodiumModule;
@@ -358,6 +360,7 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 			}
 
 			const peerId = nodeId.toPeerId();
+			const privateKey = keys.privateKeyFromRaw(nodeId.privateKeyPublicKey);
 
 			let directory: string | undefined;
 			if (!nodeOptions.inMemory && !(await detectIncognito()).isPrivate) {
@@ -377,10 +380,10 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 			clientLog("create", { directory });
 			const created = await Peerbit.create({
 				libp2p: {
+					privateKey,
 					addresses: { listen: [] },
 					streamMuxers: [yamux()],
 					connectionEncrypters: [noise()],
-					peerId,
 					connectionManager: { maxConnections: 100 },
 					connectionMonitor: { enabled: false },
 					...(nodeOptions.network === "local"
