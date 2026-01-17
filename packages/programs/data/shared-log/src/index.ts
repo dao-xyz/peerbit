@@ -135,7 +135,11 @@ import {
 	maxReplicas,
 } from "./replication.js";
 import { Observer, Replicator } from "./role.js";
-import type { SynchronizerConstructor, Syncronizer } from "./sync/index.js";
+import type {
+	SyncOptions,
+	SynchronizerConstructor,
+	Syncronizer,
+} from "./sync/index.js";
 import { RatelessIBLTSynchronizer } from "./sync/rateless-iblt.js";
 import { SimpleSyncronizer } from "./sync/simple.js";
 import { groupByGid } from "./utils.js";
@@ -358,6 +362,7 @@ export type SharedLogOptions<
 	keep?: (
 		entry: ShallowOrFullEntry<T> | EntryReplicated<R>,
 	) => Promise<boolean> | boolean;
+	sync?: SyncOptions<R>;
 	syncronizer?: SynchronizerConstructor<R>;
 	timeUntilRoleMaturity?: number;
 	waitForReplicatorTimeout?: number;
@@ -2043,6 +2048,7 @@ export class SharedLog<
 				rangeIndex: this._replicationRangeIndex,
 				rpc: this.rpc,
 				coordinateToHash: this.coordinateToHash,
+				sync: options?.sync,
 			});
 		} else {
 			if (
@@ -2054,6 +2060,7 @@ export class SharedLog<
 					rpc: this.rpc,
 					entryIndex: this.entryCoordinatesIndex,
 					coordinateToHash: this.coordinateToHash,
+					sync: options?.sync,
 				});
 			} else {
 				if (this.domain.resolution === "u32") {
@@ -2069,6 +2076,7 @@ export class SharedLog<
 					rangeIndex: this._replicationRangeIndex,
 					rpc: this.rpc,
 					coordinateToHash: this.coordinateToHash,
+					sync: options?.sync,
 				}) as Syncronizer<R>;
 			}
 		}

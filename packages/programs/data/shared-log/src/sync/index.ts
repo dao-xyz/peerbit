@@ -8,6 +8,24 @@ import type { Numbers } from "../integers.js";
 import type { TransportMessage } from "../message.js";
 import type { EntryReplicated, ReplicationRangeIndexable } from "../ranges.js";
 
+export type SyncPriorityFn<R extends "u32" | "u64"> = (
+	entry: EntryReplicated<R>,
+) => number;
+
+export type SyncOptions<R extends "u32" | "u64"> = {
+	/**
+	 * Higher numbers are synced first.
+	 * The callback should be fast and side-effect free.
+	 */
+	priority?: SyncPriorityFn<R>;
+
+	/**
+	 * When using rateless IBLT sync, optionally pre-sync up to this many
+	 * high-priority entries using the simple synchronizer.
+	 */
+	maxSimpleEntries?: number;
+};
+
 export type SynchronizerComponents<R extends "u32" | "u64"> = {
 	rpc: RPC<TransportMessage, TransportMessage>;
 	rangeIndex: Index<ReplicationRangeIndexable<R>, any>;
@@ -15,6 +33,7 @@ export type SynchronizerComponents<R extends "u32" | "u64"> = {
 	log: Log<any>;
 	coordinateToHash: Cache<string>;
 	numbers: Numbers<R>;
+	sync?: SyncOptions<R>;
 };
 export type SynchronizerConstructor<R extends "u32" | "u64"> = new (
 	properties: SynchronizerComponents<R>,
