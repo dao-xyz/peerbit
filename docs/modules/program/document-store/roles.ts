@@ -22,7 +22,7 @@ export class Post {
 
 /// [definition]
 type ChannelArgs = { replicate?: ReplicationOptions };
-@variant("channel")
+@variant("document_store_roles_channel")
 export class Channel extends Program<ChannelArgs> {
 	// Documents<?> provide document store functionality around posts
 
