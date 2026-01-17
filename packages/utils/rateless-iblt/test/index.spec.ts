@@ -1,7 +1,11 @@
 import { expect } from "chai";
-import { DecoderWrapper, EncoderWrapper } from "../dist/index.js";
+import { DecoderWrapper, EncoderWrapper, ready } from "../dist/index.js";
 
 describe("riblt", () => {
+	before(async () => {
+		await ready;
+	});
+
 	it("diff", async () => {
 		const aliceSymbols = [1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n].map(
 			(n) => n,
