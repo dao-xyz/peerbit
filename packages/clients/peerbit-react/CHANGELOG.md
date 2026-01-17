@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.1.0](https://github.com/dao-xyz/peerbit/compare/react-v0.0.49...react-v0.1.0) (2026-01-17)
+
+
+### Features
+
+* **canonical:** add proxy packages and e2e suites ([ad5b802](https://github.com/dao-xyz/peerbit/commit/ad5b802fd57546cc1757852d449e7616e32ff097))
+
+
+### Bug Fixes
+
+* **peerbit-react:** create peers with privateKey ([b9df5b3](https://github.com/dao-xyz/peerbit/commit/b9df5b31c36f0537a4ef8bf24042e22a7d575e78))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/canonical-client bumped to 1.0.0
+    * @peerbit/program-react bumped to 0.3.0
+    * @peerbit/program bumped to 5.6.0
+    * peerbit bumped to 4.4.15
+
 ## [0.0.49](https://github.com/dao-xyz/peerbit/compare/react-v0.0.48...react-v0.0.49) (2026-01-16)
 
 

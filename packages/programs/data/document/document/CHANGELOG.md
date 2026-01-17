@@ -456,6 +456,33 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [12.2.0](https://github.com/dao-xyz/peerbit/compare/document-v12.1.2...document-v12.2.0) (2026-01-17)
+
+
+### Features
+
+* **canonical:** add proxy packages and e2e suites ([ad5b802](https://github.com/dao-xyz/peerbit/commit/ad5b802fd57546cc1757852d449e7616e32ff097))
+
+
+### Bug Fixes
+
+* **document:** align DocumentsLike.count return types ([61c6690](https://github.com/dao-xyz/peerbit/commit/61c66907404b9b5402b0fafca58bd0fb69dd61c8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 5.0.6
+    * @peerbit/program bumped to 5.6.0
+    * @peerbit/rpc bumped to 5.4.15
+    * @peerbit/shared-log bumped to 12.2.0
+    * @peerbit/indexer-sqlite3 bumped to 2.1.0
+    * @peerbit/document-interface bumped to 3.2.0
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.3.15
+    * peerbit bumped to 4.4.15
+
 ## [12.1.2](https://github.com/dao-xyz/peerbit/compare/document-v12.1.1...document-v12.1.2) (2026-01-16)
 
 

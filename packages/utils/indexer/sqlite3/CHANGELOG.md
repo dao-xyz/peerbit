@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.0](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v2.0.2...indexer-sqlite3-v2.1.0) (2026-01-17)
+
+
+### Features
+
+* **canonical:** add proxy packages and e2e suites ([ad5b802](https://github.com/dao-xyz/peerbit/commit/ad5b802fd57546cc1757852d449e7616e32ff097))
+
 ## [2.0.2](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v2.0.1...indexer-sqlite3-v2.0.2) (2026-01-02)
 
 

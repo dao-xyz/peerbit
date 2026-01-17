@@ -202,6 +202,13 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.6.0](https://github.com/dao-xyz/peerbit/compare/program-v5.5.2...program-v5.6.0) (2026-01-17)
+
+
+### Features
+
+* **canonical:** add proxy packages and e2e suites ([ad5b802](https://github.com/dao-xyz/peerbit/commit/ad5b802fd57546cc1757852d449e7616e32ff097))
+
 ## [5.5.2](https://github.com/dao-xyz/peerbit/compare/program-v5.5.1...program-v5.5.2) (2026-01-16)
 
 

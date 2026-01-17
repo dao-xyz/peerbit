@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0](https://github.com/dao-xyz/peerbit/compare/program-react-v0.2.8...program-react-v0.3.0) (2026-01-17)
+
+
+### Features
+
+* **canonical:** add proxy packages and e2e suites ([ad5b802](https://github.com/dao-xyz/peerbit/commit/ad5b802fd57546cc1757852d449e7616e32ff097))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped to 5.6.0
+
 ## [0.2.8](https://github.com/dao-xyz/peerbit/compare/program-react-v0.2.7...program-react-v0.2.8) (2026-01-16)
 
 
