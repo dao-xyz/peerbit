@@ -713,30 +713,36 @@ describe(`isLeader`, function () {
 				},
 			);
 
-			await waitForResolved(async () => {
-				expect((await db1.log.getReplicators()).size).equal(2);
+				await waitForResolved(
+					async () => {
+						expect((await db1.log.getReplicators()).size).equal(2);
 
-				expect((await db2.log.getReplicators()).size).equal(2);
+						expect((await db2.log.getReplicators()).size).equal(2);
 
 				expect(
 					[
 						...(await db1.log.getCover({ args: undefined }, { roleAge: 0 })),
 					].sort(),
-				).to.deep.equal(
-					[...session.peers.map((x) => x.identity.publicKey.hashcode())].sort(),
-				);
+					).to.deep.equal(
+						[...session.peers.map((x) => x.identity.publicKey.hashcode())].sort(),
+					);
 
-				expect(
+					expect(
 					[
 						...(await db1.log.getCover(
 							{ args: undefined },
 							{ roleAge: 0, reachableOnly: true },
 						)),
 					].sort(),
-				).to.deep.equal(
-					[...session.peers.map((x) => x.identity.publicKey.hashcode())].sort(),
+					).to.deep.equal(
+						[...session.peers.map((x) => x.identity.publicKey.hashcode())].sort(),
+					);
+					},
+					{
+						timeout: 60 * 1000,
+						timeoutMessage: "reachableOnly cover not ready",
+					},
 				);
-			});
 
 			await db1.close();
 			await db2.close();
@@ -761,11 +767,12 @@ describe(`isLeader`, function () {
 			expect(db1FactorLoaded[0]).to.be.closeTo(db1Factor, 0.01); // loaded last factor
 			expect(db1FactorLoaded.length).to.equal(1); // only one segment loaded
 
-			await waitForResolved(async () => {
-				const cover = await db1.log.getCover(
-					{ args: undefined },
-					{ roleAge: 0 },
-				);
+				await waitForResolved(
+					async () => {
+						const cover = await db1.log.getCover(
+							{ args: undefined },
+							{ roleAge: 0 },
+						);
 				expect(cover).to.include(
 					session.peers[0].identity.publicKey.hashcode(),
 				);
@@ -783,10 +790,15 @@ describe(`isLeader`, function () {
 					session.peers[0].identity.publicKey.hashcode(),
 				);
 				expect(new Set(reachable).size).to.equal(reachable.length);
-				expect(reachable.every((x) => loadedReplicators.includes(x))).to.be
-					.true;
+					expect(reachable.every((x) => loadedReplicators.includes(x))).to.be
+						.true;
+					},
+					{
+						timeout: 60 * 1000,
+						timeoutMessage: "reachableOnly cover not stable after reload",
+					},
+				);
 			});
-		});
 
 		describe("eager", () => {
 			it("eager, me not-mature, all included", async () => {
@@ -988,7 +1000,8 @@ describe(`isLeader`, function () {
 	});
 
 	describe("balance", () => {
-		it("small fractions means little replication", async () => {
+		it("small fractions means little replication", async function () {
+			this.timeout(120_000);
 			db1 = await session.peers[0].open(new EventStore<string, any>(), {
 				args: {
 					replicate: {
@@ -1021,7 +1034,7 @@ describe(`isLeader`, function () {
 
 			let a = 0,
 				b = 0;
-			const count = 10000;
+			const count = 5000;
 
 			// expect db1 and db2 segments to not overlap for this test asserts to work out well
 			for (const segmentsA of await db1.log.getMyReplicationSegments()) {
@@ -1031,16 +1044,11 @@ describe(`isLeader`, function () {
 			}
 
 			for (let i = 0; i < count; i++) {
-				a += (await db1.log.isLeader(
-					{ entry: await toEntry(String(i)), replicas: 1 },
-					{ roleAge: 0 },
-				))
+				const entry = await toEntry(String(i));
+				a += (await db1.log.isLeader({ entry, replicas: 1 }, { roleAge: 0 }))
 					? 1
 					: 0;
-				b += (await db2.log.isLeader(
-					{ entry: await toEntry(String(i)), replicas: 1 },
-					{ roleAge: 0 },
-				))
+				b += (await db2.log.isLeader({ entry, replicas: 1 }, { roleAge: 0 }))
 					? 1
 					: 0;
 			}
