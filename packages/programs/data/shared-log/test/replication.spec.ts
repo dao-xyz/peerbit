@@ -3448,13 +3448,16 @@ testSetups.forEach((setup) => {
 								expect(db2.log.log.length).to.be.greaterThan(0),
 							);
 
-					await waitForResolved(() =>
-						expect(db3.log.log.length).to.be.greaterThan(0),
-					);
+							await waitForResolved(() =>
+								expect(db3.log.log.length).to.be.greaterThan(0),
+							);
 
-					const range2 = (
-						await db2.log.getMyReplicationSegments()
-					)[0].toReplicationRange();
+							const db2Length = db2.log.log.length;
+							const db3Length = db3.log.log.length;
+
+								const range2 = (
+									await db2.log.getMyReplicationSegments()
+								)[0].toReplicationRange();
 
 					await db2.log.replicate({ id: range2.id, offset: 0.1, factor: 0.1 });
 
@@ -3583,9 +3586,9 @@ testSetups.forEach((setup) => {
 							expect(db3.log.log.length).to.be.greaterThan(0),
 						);
 
-						const range2 = (
-							await db2.log.getMyReplicationSegments()
-						)[0].toReplicationRange();
+							const range2 = (
+								await db2.log.getMyReplicationSegments()
+							)[0].toReplicationRange();
 
 						await db2.log.replicate({
 							id: range2.id,
