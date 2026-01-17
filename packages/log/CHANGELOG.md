@@ -368,6 +368,17 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [5.0.6](https://github.com/dao-xyz/peerbit/compare/log-v5.0.5...log-v5.0.6) (2026-01-17)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-sqlite3 bumped to 2.1.0
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.3.15
+
 ## [5.0.5](https://github.com/dao-xyz/peerbit/compare/log-v5.0.4...log-v5.0.5) (2026-01-16)
 
 

@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/any-store-proxy",
-	"version": "0.0.0",
+	"version": "1.0.0",
 	"description": "Canonical module adapters for @peerbit/any-store",
 	"author": "dao.xyz",
 	"license": "MIT",

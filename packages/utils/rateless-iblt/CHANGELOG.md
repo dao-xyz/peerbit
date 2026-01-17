@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/dao-xyz/peerbit/compare/riblt-v1.1.0...riblt-v1.2.0) (2026-01-17)
+
+
+### Features
+
+* **canonical:** add proxy packages and e2e suites ([ad5b802](https://github.com/dao-xyz/peerbit/commit/ad5b802fd57546cc1757852d449e7616e32ff097))
+
 ## [1.1.0](https://github.com/dao-xyz/peerbit/compare/riblt-v1.0.8...riblt-v1.1.0) (2025-11-25)
 
 

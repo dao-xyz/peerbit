@@ -1,5 +1,29 @@
 # @peerbit/document-react
 
+## [0.6.0](https://github.com/dao-xyz/peerbit/compare/document-react-v0.5.2...document-react-v0.6.0) (2026-01-17)
+
+
+### Features
+
+* **canonical:** add proxy packages and e2e suites ([ad5b802](https://github.com/dao-xyz/peerbit/commit/ad5b802fd57546cc1757852d449e7616e32ff097))
+
+
+### Bug Fixes
+
+* **document:** align DocumentsLike.count return types ([61c6690](https://github.com/dao-xyz/peerbit/commit/61c66907404b9b5402b0fafca58bd0fb69dd61c8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 12.2.0
+    * @peerbit/react bumped to 0.1.0
+  * devDependencies
+    * @peerbit/program bumped to 5.6.0
+    * @peerbit/shared-log bumped to 12.2.0
+    * peerbit bumped to 4.4.15
+
 ## [0.5.2](https://github.com/dao-xyz/peerbit/compare/document-react-v0.5.1...document-react-v0.5.2) (2026-01-16)
 
 

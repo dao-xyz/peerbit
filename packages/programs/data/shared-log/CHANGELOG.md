@@ -389,6 +389,26 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [12.2.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.1.3...shared-log-v12.2.0) (2026-01-17)
+
+
+### Features
+
+* **canonical:** add proxy packages and e2e suites ([ad5b802](https://github.com/dao-xyz/peerbit/commit/ad5b802fd57546cc1757852d449e7616e32ff097))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 5.0.6
+    * @peerbit/program bumped to 5.6.0
+    * @peerbit/riblt bumped to 1.2.0
+    * @peerbit/rpc bumped to 5.4.15
+    * @peerbit/indexer-sqlite3 bumped to 2.1.0
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.3.15
+
 ## [12.1.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.1.2...shared-log-v12.1.3) (2026-01-16)
 
 

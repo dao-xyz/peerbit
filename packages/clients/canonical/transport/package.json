@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/canonical-transport",
-	"version": "0.0.0",
+	"version": "1.0.0",
 	"description": "Transport and multiplexing utilities for the Peerbit canonical runtime",
 	"author": "dao.xyz",
 	"license": "MIT",

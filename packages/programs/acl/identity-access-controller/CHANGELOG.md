@@ -630,6 +630,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [5.3.0](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v5.2.16...identity-access-controller-v5.3.0) (2026-01-17)
+
+
+### Features
+
+* **canonical:** add proxy packages and e2e suites ([ad5b802](https://github.com/dao-xyz/peerbit/commit/ad5b802fd57546cc1757852d449e7616e32ff097))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 12.2.0
+    * @peerbit/program bumped to 5.6.0
+    * @peerbit/shared-log bumped to 12.2.0
+    * @peerbit/trusted-network bumped to 5.1.0
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.3.15
+
 ## [5.2.16](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v5.2.15...identity-access-controller-v5.2.16) (2026-01-16)
 
 
