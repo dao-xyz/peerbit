@@ -1,3 +1,5 @@
+/* eslint-env mocha */
+// Node-only: uses fs-based wasm init
 import { expect } from "chai";
 import { DecoderWrapper, EncoderWrapper, ready } from "../dist/index.js";
 
