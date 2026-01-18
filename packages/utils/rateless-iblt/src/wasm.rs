@@ -55,6 +55,12 @@ impl EncoderWrapper {
         self.encoder.add_symbol(&my_symbol);
     }
 
+    pub fn add_symbols(&mut self, symbols: Vec<u64>) {
+        for symbol in symbols.iter() {
+            self.encoder.add_symbol(symbol);
+        }
+    }
+
     pub fn produce_next_coded_symbol(&mut self) -> JsValue {
         let coded_symbol = self.encoder.produce_next_coded_symbol();
         let symbol_u64 = coded_symbol.symbol;
