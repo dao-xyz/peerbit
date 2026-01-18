@@ -125,8 +125,8 @@ jobs:
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
         uses: pnpm/action-setup@v4
         with:
+          version: 10.24.0
           run_install: false
-          package_json_file: bench-head/package.json
 
       - name: Install wasm-pack
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
