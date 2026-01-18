@@ -91,6 +91,7 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           run_install: false
+          package_json_file: bench-head/package.json
 
       - name: Install wasm-pack
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
@@ -150,7 +151,6 @@ jobs:
         with:
           script: |
             const fs = require('node:fs');
-            const path = require('node:path');
 
             const { owner, repo } = context.repo;
             const prNumber = Number('${{ steps.pr.outputs.number }}');
@@ -174,12 +174,12 @@ jobs:
             const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
 
             const format = (value, digits = 3) => {
-              if (value === null || value === undefined || Number.isNaN(value)) return '—';
+              if (value === null || value === undefined || Number.isNaN(value)) return '-';
               return Number(value).toFixed(digits);
             };
 
             const formatPercent = (value) => {
-              if (value === null || value === undefined || Number.isNaN(value)) return '—';
+              if (value === null || value === undefined || Number.isNaN(value)) return '-';
               const sign = value > 0 ? '+' : '';
               return `${sign}${value.toFixed(2)}%`;
             };
@@ -211,18 +211,22 @@ jobs:
                 );
               }
 
-              return lines.join('\\n');
+              return lines.join('\n');
             };
 
-            let body = `${marker}\\n## Benchmarks\\n\\nTriggered by \\`/bench\\` • Run: ${runUrl}\\n\\n`;
+            let body =
+              marker +
+              '\n## Benchmarks\n\nTriggered by `/bench` - Run: ' +
+              runUrl +
+              '\n\n';
 
             for (const suite of suites) {
               if (!fs.existsSync(suite.base) || !fs.existsSync(suite.head)) continue;
               const baseJson = readJson(suite.base);
               const headJson = readJson(suite.head);
-              body += `### ${suite.title}\\n\\n`;
+              body += `### ${suite.title}\n\n`;
               body += formatSuite(baseJson, headJson);
-              body += `\\n\\n`;
+              body += `\n\n`;
             }
 
             const comments = await github.paginate(github.rest.issues.listComments, {
