@@ -56,10 +56,45 @@ jobs:
             });
             const filenames = files.map((f) => f.filename);
 
-            const runSharedLog = filenames.some((p) =>
-              p.startsWith('packages/programs/data/shared-log/') || p.startsWith('packages/utils/rateless-iblt/')
+            const commentBody =
+              context.eventName === 'issue_comment' ? (context.payload.comment?.body || '') : '';
+            const argv = commentBody.trim().split(/\s+/).slice(1).filter(Boolean);
+            const hasArgs = argv.length > 0;
+            const wantAll = argv.includes('all');
+            const wantSharedLog =
+              wantAll || argv.includes('shared-log') || argv.includes('sharedlog') || argv.includes('shared');
+            const wantDocument = wantAll || argv.includes('document') || argv.includes('doc');
+
+            const touchedSharedLog = filenames.some(
+              (p) =>
+                p.startsWith('packages/programs/data/shared-log/') ||
+                p.startsWith('packages/utils/rateless-iblt/'),
             );
+            const touchedDocument = filenames.some((p) => p.startsWith('packages/programs/data/document/'));
+
+            const runSharedLog = wantSharedLog || (!hasArgs && touchedSharedLog);
+            const runDocument = wantDocument || (!hasArgs && touchedDocument);
+
             core.setOutput('run_shared_log', runSharedLog ? 'true' : 'false');
+            core.setOutput('run_document', runDocument ? 'true' : 'false');
+
+            const selected = [];
+            if (runSharedLog) selected.push('shared-log');
+            if (runDocument) selected.push('document');
+            core.setOutput('selected', selected.join(',') || 'none');
+            core.setOutput('mode', hasArgs ? 'manual' : 'auto');
+            core.setOutput('args', argv.join(' '));
+
+            const runAny = runSharedLog || runDocument;
+            core.setOutput('run_any', runAny ? 'true' : 'false');
+
+            let buildFilter = '';
+            if (runDocument) {
+              buildFilter = '@peerbit/document...';
+            } else if (runSharedLog) {
+              buildFilter = '@peerbit/shared-log...';
+            }
+            core.setOutput('build_filter', buildFilter);
 
       - name: Skip forked PRs
         if: steps.pr.outputs.same_repo != 'true'
@@ -67,55 +102,55 @@ jobs:
           echo "Benchmarks are only supported for same-repo branches (forks are skipped for security)."
 
       - name: Checkout base
-        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.pr.outputs.base_sha }}
           path: bench-base
 
       - name: Checkout head
-        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.pr.outputs.head_sha }}
           path: bench-head
 
       - name: Setup Node
-        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 22.x
 
       - name: Setup pnpm
-        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
         uses: pnpm/action-setup@v4
         with:
           run_install: false
           package_json_file: bench-head/package.json
 
       - name: Install wasm-pack
-        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Install deps (base)
-        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
         working-directory: bench-base
         run: pnpm install --frozen-lockfile=false
 
       - name: Install deps (head)
-        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
         working-directory: bench-head
         run: pnpm install --frozen-lockfile=false
 
       - name: Build (base)
-        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
         working-directory: bench-base
-        run: pnpm --filter @peerbit/shared-log... run build
+        run: pnpm --filter ${{ steps.pr.outputs.build_filter }} run build
 
       - name: Build (head)
-        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
         working-directory: bench-head
-        run: pnpm --filter @peerbit/shared-log... run build
+        run: pnpm --filter ${{ steps.pr.outputs.build_filter }} run build
 
       - name: Run shared-log benchmarks (base)
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
@@ -145,8 +180,40 @@ jobs:
           node --loader ts-node/esm ./benchmark/rateless-iblt-startsync-cache.ts > "$GITHUB_WORKSPACE/bench-results/head/rateless-iblt-startsync-cache.json"
           node --loader ts-node/esm ./benchmark/rateless-iblt-sender-startsync.ts > "$GITHUB_WORKSPACE/bench-results/head/rateless-iblt-sender-startsync.json"
 
+      - name: Run document benchmarks (base)
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_document == 'true'
+        working-directory: bench-base/packages/programs/data/document/document
+        env:
+          NODE_OPTIONS: --no-warnings
+          BENCH_JSON: "1"
+          DOC_WARMUP: "2"
+          DOC_ITERATIONS: "10"
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/bench-results/base"
+          if [ -f ./benchmark/document-put.ts ]; then
+            node --loader ts-node/esm ./benchmark/document-put.ts > "$GITHUB_WORKSPACE/bench-results/base/document-put.json"
+          else
+            echo "document-put benchmark not present in base; skipping."
+          fi
+
+      - name: Run document benchmarks (head)
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_document == 'true'
+        working-directory: bench-head/packages/programs/data/document/document
+        env:
+          NODE_OPTIONS: --no-warnings
+          BENCH_JSON: "1"
+          DOC_WARMUP: "2"
+          DOC_ITERATIONS: "10"
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/bench-results/head"
+          if [ -f ./benchmark/document-put.ts ]; then
+            node --loader ts-node/esm ./benchmark/document-put.ts > "$GITHUB_WORKSPACE/bench-results/head/document-put.json"
+          else
+            echo "document-put benchmark not present in head; skipping."
+          fi
+
       - name: Comment results
-        if: always() && steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        if: always() && steps.pr.outputs.same_repo == 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -157,6 +224,11 @@ jobs:
 
             const marker = '<!-- PEERBIT_BENCHMARKS -->';
             const runUrl = `${process.env.GITHUB_SERVER_URL}/${owner}/${repo}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            const triggerLabel =
+              context.eventName === 'workflow_dispatch' ? '`workflow_dispatch`' : '`/bench`';
+            const selected = '${{ steps.pr.outputs.selected }}';
+            const mode = '${{ steps.pr.outputs.mode }}';
+            const args = '${{ steps.pr.outputs.args }}';
 
             const suites = [
               {
@@ -168,6 +240,11 @@ jobs:
                 title: 'shared-log: sender StartSync setup (onMaybeMissingEntries)',
                 base: 'bench-results/base/rateless-iblt-sender-startsync.json',
                 head: 'bench-results/head/rateless-iblt-sender-startsync.json',
+              },
+              {
+                title: 'document: put',
+                base: 'bench-results/base/document-put.json',
+                head: 'bench-results/head/document-put.json',
               },
             ];
 
@@ -203,8 +280,8 @@ jobs:
                 const headHz = h?.hz ?? null;
 
                 const meanDelta =
-                  baseMean && headMean ? ((headMean - baseMean) / baseMean) * 100 : null;
-                const hzDelta = baseHz && headHz ? ((headHz - baseHz) / baseHz) * 100 : null;
+                  baseMean != null && headMean != null ? ((headMean - baseMean) / baseMean) * 100 : null;
+                const hzDelta = baseHz != null && headHz != null ? ((headHz - baseHz) / baseHz) * 100 : null;
 
                 lines.push(
                   `| ${name} | ${format(baseMean, 6)} | ${format(headMean, 6)} | ${formatPercent(meanDelta)} | ${format(baseHz, 0)} | ${format(headHz, 0)} | ${formatPercent(hzDelta)} |`,
@@ -216,17 +293,34 @@ jobs:
 
             let body =
               marker +
-              '\n## Benchmarks\n\nTriggered by `/bench` - Run: ' +
+              '\n## Benchmarks\n\nTriggered by ' +
+              triggerLabel +
+              ' - Run: ' +
               runUrl +
+              '\n\n' +
+              'Mode: ' +
+              mode +
+              (args ? ' (' + args + ')' : '') +
+              ' • Selected: ' +
+              selected +
               '\n\n';
 
+            let includedSuites = 0;
             for (const suite of suites) {
-              if (!fs.existsSync(suite.base) || !fs.existsSync(suite.head)) continue;
-              const baseJson = readJson(suite.base);
-              const headJson = readJson(suite.head);
+              const baseExists = fs.existsSync(suite.base);
+              const headExists = fs.existsSync(suite.head);
+              if (!baseExists && !headExists) continue;
+
+              const baseJson = baseExists ? readJson(suite.base) : { tasks: [] };
+              const headJson = headExists ? readJson(suite.head) : { tasks: [] };
               body += `### ${suite.title}\n\n`;
               body += formatSuite(baseJson, headJson);
               body += `\n\n`;
+              includedSuites += 1;
+            }
+
+            if (includedSuites === 0) {
+              body += '_No matching benchmark suites ran for this PR._\n';
             }
 
             const comments = await github.paginate(github.rest.issues.listComments, {
