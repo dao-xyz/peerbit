@@ -1,0 +1,250 @@
+name: Benchmarks
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  bench:
+    if: |
+      (github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        startsWith(github.event.comment.body, '/bench') &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+      ) ||
+      (github.event_name == 'workflow_dispatch')
+
+    runs-on: ubuntu-22.04
+    concurrency:
+      group: bench-${{ github.event.issue.number || inputs.pr }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Resolve PR details
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.eventName === 'workflow_dispatch'
+              ? Number(core.getInput('pr'))
+              : context.payload.issue.number;
+
+            const { owner, repo } = context.repo;
+            const pr = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+            core.setOutput('number', String(prNumber));
+            core.setOutput('base_sha', pr.data.base.sha);
+            core.setOutput('head_sha', pr.data.head.sha);
+            core.setOutput('head_repo', pr.data.head.repo.full_name);
+
+            const sameRepo = pr.data.head.repo.full_name === `${owner}/${repo}`;
+            core.setOutput('same_repo', sameRepo ? 'true' : 'false');
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner,
+              repo,
+              pull_number: prNumber,
+              per_page: 100,
+            });
+            const filenames = files.map((f) => f.filename);
+
+            const runSharedLog = filenames.some((p) =>
+              p.startsWith('packages/programs/data/shared-log/') || p.startsWith('packages/utils/rateless-iblt/')
+            );
+            core.setOutput('run_shared_log', runSharedLog ? 'true' : 'false');
+
+      - name: Skip forked PRs
+        if: steps.pr.outputs.same_repo != 'true'
+        run: |
+          echo "Benchmarks are only supported for same-repo branches (forks are skipped for security)."
+
+      - name: Checkout base
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.base_sha }}
+          path: bench-base
+
+      - name: Checkout head
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.head_sha }}
+          path: bench-head
+
+      - name: Setup Node
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      - name: Setup pnpm
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Install wasm-pack
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install deps (base)
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        working-directory: bench-base
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Install deps (head)
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        working-directory: bench-head
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Build (base)
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        working-directory: bench-base
+        run: pnpm --filter @peerbit/shared-log... run build
+
+      - name: Build (head)
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        working-directory: bench-head
+        run: pnpm --filter @peerbit/shared-log... run build
+
+      - name: Run shared-log benchmarks (base)
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        working-directory: bench-base/packages/programs/data/shared-log
+        env:
+          NODE_OPTIONS: --no-warnings
+          BENCH_JSON: "1"
+          RIBLT_SIZES: "1000,10000,50000"
+          RIBLT_WARMUP: "2"
+          RIBLT_ITERATIONS: "10"
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/bench-results/base"
+          node --loader ts-node/esm ./benchmark/rateless-iblt-startsync-cache.ts > "$GITHUB_WORKSPACE/bench-results/base/rateless-iblt-startsync-cache.json"
+          node --loader ts-node/esm ./benchmark/rateless-iblt-sender-startsync.ts > "$GITHUB_WORKSPACE/bench-results/base/rateless-iblt-sender-startsync.json"
+
+      - name: Run shared-log benchmarks (head)
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        working-directory: bench-head/packages/programs/data/shared-log
+        env:
+          NODE_OPTIONS: --no-warnings
+          BENCH_JSON: "1"
+          RIBLT_SIZES: "1000,10000,50000"
+          RIBLT_WARMUP: "2"
+          RIBLT_ITERATIONS: "10"
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/bench-results/head"
+          node --loader ts-node/esm ./benchmark/rateless-iblt-startsync-cache.ts > "$GITHUB_WORKSPACE/bench-results/head/rateless-iblt-startsync-cache.json"
+          node --loader ts-node/esm ./benchmark/rateless-iblt-sender-startsync.ts > "$GITHUB_WORKSPACE/bench-results/head/rateless-iblt-sender-startsync.json"
+
+      - name: Comment results
+        if: always() && steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('node:fs');
+            const path = require('node:path');
+
+            const { owner, repo } = context.repo;
+            const prNumber = Number('${{ steps.pr.outputs.number }}');
+
+            const marker = '<!-- PEERBIT_BENCHMARKS -->';
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${owner}/${repo}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+
+            const suites = [
+              {
+                title: 'shared-log: StartSync local decoder cache',
+                base: 'bench-results/base/rateless-iblt-startsync-cache.json',
+                head: 'bench-results/head/rateless-iblt-startsync-cache.json',
+              },
+              {
+                title: 'shared-log: sender StartSync setup (onMaybeMissingEntries)',
+                base: 'bench-results/base/rateless-iblt-sender-startsync.json',
+                head: 'bench-results/head/rateless-iblt-sender-startsync.json',
+              },
+            ];
+
+            const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
+
+            const format = (value, digits = 3) => {
+              if (value === null || value === undefined || Number.isNaN(value)) return '—';
+              return Number(value).toFixed(digits);
+            };
+
+            const formatPercent = (value) => {
+              if (value === null || value === undefined || Number.isNaN(value)) return '—';
+              const sign = value > 0 ? '+' : '';
+              return `${sign}${value.toFixed(2)}%`;
+            };
+
+            const formatSuite = (baseJson, headJson) => {
+              const baseMap = new Map((baseJson.tasks || []).map((t) => [t.name, t]));
+              const headMap = new Map((headJson.tasks || []).map((t) => [t.name, t]));
+              const taskNames = Array.from(new Set([...baseMap.keys(), ...headMap.keys()]));
+              taskNames.sort();
+
+              const lines = [];
+              lines.push('| Task | base mean (ms) | head mean (ms) | Δ mean | base ops/s | head ops/s | Δ ops/s |');
+              lines.push('|---|---:|---:|---:|---:|---:|---:|');
+
+              for (const name of taskNames) {
+                const b = baseMap.get(name);
+                const h = headMap.get(name);
+                const baseMean = b?.mean_ms ?? null;
+                const headMean = h?.mean_ms ?? null;
+                const baseHz = b?.hz ?? null;
+                const headHz = h?.hz ?? null;
+
+                const meanDelta =
+                  baseMean && headMean ? ((headMean - baseMean) / baseMean) * 100 : null;
+                const hzDelta = baseHz && headHz ? ((headHz - baseHz) / baseHz) * 100 : null;
+
+                lines.push(
+                  `| ${name} | ${format(baseMean, 6)} | ${format(headMean, 6)} | ${formatPercent(meanDelta)} | ${format(baseHz, 0)} | ${format(headHz, 0)} | ${formatPercent(hzDelta)} |`,
+                );
+              }
+
+              return lines.join('\\n');
+            };
+
+            let body = `${marker}\\n## Benchmarks\\n\\nTriggered by \\`/bench\\` • Run: ${runUrl}\\n\\n`;
+
+            for (const suite of suites) {
+              if (!fs.existsSync(suite.base) || !fs.existsSync(suite.head)) continue;
+              const baseJson = readJson(suite.base);
+              const headJson = readJson(suite.head);
+              body += `### ${suite.title}\\n\\n`;
+              body += formatSuite(baseJson, headJson);
+              body += `\\n\\n`;
+            }
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: prNumber,
+              per_page: 100,
+            });
+
+            const existing = comments.find((c) => typeof c.body === 'string' && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: prNumber,
+                body,
+              });
+            }
