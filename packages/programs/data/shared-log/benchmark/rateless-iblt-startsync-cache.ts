@@ -111,7 +111,28 @@ for (const size of sizes) {
 }
 
 await suite.run();
-console.table(suite.table());
+if (process.env.BENCH_JSON === "1") {
+	const tasks = suite.tasks.map((task) => ({
+		name: task.name,
+		hz: task.result?.hz ?? null,
+		mean_ms: task.result?.mean ?? null,
+		rme: task.result?.rme ?? null,
+		samples: task.result?.samples?.length ?? null,
+	}));
+	process.stdout.write(
+		JSON.stringify(
+			{
+				name: suite.name,
+				tasks,
+				meta: { sizes, warmupIterations, iterations },
+			},
+			null,
+			2,
+		),
+	);
+} else {
+	console.table(suite.table());
+}
 
 for (const closeSync of syncsToClose) {
 	await closeSync();
