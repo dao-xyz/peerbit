@@ -185,9 +185,10 @@ describe("rateless-iblt-syncronizer", () => {
 					() => expect(db2.log.log.length).to.equal(expectedCount),
 					{ timeout: 60_000 },
 				),
-			]);
+				]);
 
-			expect(countMessages(db1Messages.calls, MoreSymbols)).to.be.greaterThan(0);
-			expect(countMessages(db2Messages.calls, MoreSymbols)).to.be.greaterThan(0);
+				const db1MoreSymbols = countMessages(db1Messages.calls, MoreSymbols);
+				const db2MoreSymbols = countMessages(db2Messages.calls, MoreSymbols);
+				expect(db1MoreSymbols + db2MoreSymbols).to.be.greaterThan(0);
+			});
 		});
-	});

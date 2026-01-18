@@ -384,9 +384,13 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			}
 		}
 
-		let allCoordinatesToSyncWithIblt = nonBoundaryEntries
-			.filter((entry) => !entriesToSyncNaively.has(entry.hash))
-			.map((entry) => coerceBigInt(entry.hashNumber));
+		let allCoordinatesToSyncWithIblt: bigint[] = [];
+		for (const entry of nonBoundaryEntries) {
+			if (entriesToSyncNaively.has(entry.hash)) {
+				continue;
+			}
+			allCoordinatesToSyncWithIblt.push(coerceBigInt(entry.hashNumber));
+		}
 
 		if (entriesToSyncNaively.size > 0) {
 			// If there are special-case entries, sync them simply in parallel
@@ -401,9 +405,10 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			entriesToSyncNaively.size > maxSyncWithSimpleMethod
 		) {
 			// Fallback: if nothing left for IBLT (or simple set is too large), include all in IBLT
-			allCoordinatesToSyncWithIblt = Array.from(
-				properties.entries.values(),
-			).map((x) => coerceBigInt(x.hashNumber));
+			allCoordinatesToSyncWithIblt = [];
+			for (const entry of properties.entries.values()) {
+				allCoordinatesToSyncWithIblt.push(coerceBigInt(entry.hashNumber));
+			}
 		}
 
 		if (allCoordinatesToSyncWithIblt.length === 0) {
@@ -412,22 +417,32 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 
 		await ribltReady;
 
-		const sortedEntries = allCoordinatesToSyncWithIblt.sort((a, b) => {
-			if (a > b) {
-				return 1;
-			} else if (a < b) {
-				return -1;
-			} else {
-				return 0;
+		let sortedEntries: bigint[] | BigUint64Array;
+		if (typeof BigUint64Array !== "undefined") {
+			const typed = new BigUint64Array(allCoordinatesToSyncWithIblt.length);
+			for (let i = 0; i < allCoordinatesToSyncWithIblt.length; i++) {
+				typed[i] = allCoordinatesToSyncWithIblt[i];
 			}
-		});
+			typed.sort();
+			sortedEntries = typed;
+		} else {
+			sortedEntries = allCoordinatesToSyncWithIblt.sort((a, b) => {
+				if (a > b) {
+					return 1;
+				} else if (a < b) {
+					return -1;
+				} else {
+					return 0;
+				}
+			});
+		}
 
 		// assume sorted, and find the largest gap
 		let largestGap = 0n;
 		let largestGapIndex = 0;
-		for (let i = 0; i < sortedEntries.length - 1; i++) {
+		for (let i = 0; i < sortedEntries.length; i++) {
 			const current = sortedEntries[i];
-			const next = sortedEntries[i + 1];
+			const next = sortedEntries[(i + 1) % sortedEntries.length];
 			const gap =
 				next >= current
 					? next - current
@@ -457,8 +472,12 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 
 		const startSync = new StartSync({ from: start, to: end, symbols: [] });
 		const encoder = new EncoderWrapper();
-		for (const entry of sortedEntries) {
-			encoder.add_symbol(coerceBigInt(entry));
+		if (typeof BigUint64Array !== "undefined" && sortedEntries instanceof BigUint64Array) {
+			encoder.add_symbols(sortedEntries);
+		} else {
+			for (const entry of sortedEntries) {
+				encoder.add_symbol(coerceBigInt(entry));
+			}
 		}
 
 		let initialSymbols = Math.round(
