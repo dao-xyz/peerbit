@@ -187,6 +187,13 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	simple: SimpleSyncronizer<D>;
 
 	startedOrCompletedSynchronizations: Cache<string>;
+	private localRangeEncoderCacheVersion = 0;
+	private localRangeEncoderCache: Map<
+		string,
+		{ encoder: EncoderWrapper; version: number; lastUsed: number }
+	> = new Map();
+	private localRangeEncoderCacheMax = 2;
+
 	ingoingSyncProcesses: Map<
 		string,
 		{
@@ -220,6 +227,91 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		this.outgoingSyncProcesses = new Map();
 		this.ingoingSyncProcesses = new Map();
 		this.startedOrCompletedSynchronizations = new Cache({ max: 1e4 });
+	}
+
+	private clearLocalRangeEncoderCache() {
+		for (const [, cached] of this.localRangeEncoderCache) {
+			cached.encoder.free();
+		}
+		this.localRangeEncoderCache.clear();
+	}
+
+	private invalidateLocalRangeEncoderCache() {
+		this.localRangeEncoderCacheVersion += 1;
+		this.clearLocalRangeEncoderCache();
+	}
+
+	private localRangeEncoderCacheKey(ranges: {
+		start1: NumberOrBigint;
+		end1: NumberOrBigint;
+		start2: NumberOrBigint;
+		end2: NumberOrBigint;
+	}) {
+		return `${String(ranges.start1)}:${String(ranges.end1)}:${String(
+			ranges.start2,
+		)}:${String(ranges.end2)}`;
+	}
+
+	private decoderFromCachedEncoder(encoder: EncoderWrapper): DecoderWrapper {
+		const clone = encoder.clone();
+		const decoder = clone.to_decoder();
+		clone.free();
+		return decoder;
+	}
+
+	private async getLocalDecoderForRange(ranges: {
+		start1: NumberOrBigint;
+		end1: NumberOrBigint;
+		start2: NumberOrBigint;
+		end2: NumberOrBigint;
+	}): Promise<DecoderWrapper | false> {
+		const key = this.localRangeEncoderCacheKey(ranges);
+		const cached = this.localRangeEncoderCache.get(key);
+		if (cached && cached.version === this.localRangeEncoderCacheVersion) {
+			cached.lastUsed = Date.now();
+			return this.decoderFromCachedEncoder(cached.encoder);
+		}
+
+		const encoder = (await buildEncoderOrDecoderFromRange(
+			ranges,
+			this.properties.entryIndex,
+			"encoder",
+		)) as EncoderWrapper | false;
+		if (!encoder) {
+			return false;
+		}
+
+		const now = Date.now();
+		const existing = this.localRangeEncoderCache.get(key);
+		if (existing) {
+			existing.encoder.free();
+		}
+		this.localRangeEncoderCache.set(key, {
+			encoder,
+			version: this.localRangeEncoderCacheVersion,
+			lastUsed: now,
+		});
+
+		while (this.localRangeEncoderCache.size > this.localRangeEncoderCacheMax) {
+			let oldestKey: string | undefined;
+			let oldestUsed = Number.POSITIVE_INFINITY;
+			for (const [candidateKey, value] of this.localRangeEncoderCache) {
+				if (value.lastUsed < oldestUsed) {
+					oldestUsed = value.lastUsed;
+					oldestKey = candidateKey;
+				}
+			}
+			if (!oldestKey) {
+				break;
+			}
+			const victim = this.localRangeEncoderCache.get(oldestKey);
+			if (victim) {
+				victim.encoder.free();
+			}
+			this.localRangeEncoderCache.delete(oldestKey);
+		}
+
+		return this.decoderFromCachedEncoder(encoder);
 	}
 
 	async onMaybeMissingEntries(properties: {
@@ -442,16 +534,12 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			this.startedOrCompletedSynchronizations.add(syncId);
 
 			const wrapped = message.end < message.start;
-			const decoder = await buildEncoderOrDecoderFromRange(
-				{
-					start1: message.start,
-					end1: wrapped ? this.properties.numbers.maxValue : message.end,
-					start2: 0n,
-					end2: wrapped ? message.end : 0n,
-				},
-				this.properties.entryIndex,
-				"decoder",
-			);
+			const decoder = await this.getLocalDecoderForRange({
+				start1: message.start,
+				end1: wrapped ? this.properties.numbers.maxValue : message.end,
+				start2: 0n,
+				end2: wrapped ? message.end : 0n,
+			});
 
 			if (!decoder) {
 				await this.simple.rpc.send(
@@ -656,10 +744,12 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	}
 
 	onEntryAdded(entry: Entry<any>): void {
+		this.invalidateLocalRangeEncoderCache();
 		return this.simple.onEntryAdded(entry);
 	}
 
 	onEntryRemoved(hash: string) {
+		this.invalidateLocalRangeEncoderCache();
 		return this.simple.onEntryRemoved(hash);
 	}
 
@@ -678,6 +768,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		for (const [, obj] of this.outgoingSyncProcesses) {
 			obj.free();
 		}
+		this.clearLocalRangeEncoderCache();
 		return this.simple.close();
 	}
 
