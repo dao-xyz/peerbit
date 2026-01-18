@@ -220,7 +220,7 @@ export class MessageHeader<T extends DeliveryMode = DeliveryMode> {
 	@field({ type: "u64" })
 	expires: bigint;
 
-	// Priority. Lower hgher. used for implementing optimistic tx mempool behaviour
+	// Priority. Higher numbers are treated as higher priority by the transport scheduler.
 	@field({ type: option("u32") })
 	priority?: number;
 

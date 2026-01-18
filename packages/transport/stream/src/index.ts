@@ -171,11 +171,17 @@ const ROUTE_UPDATE_DELAY_FACTOR = 3e4;
 
 const DEFAULT_CREATE_OUTBOUND_STREAM_TIMEOUT = 30_000;
 
+const PRIORITY_LANES = 4;
+
 const getLaneFromPriority = (priority: number) => {
-	if (priority > 0) {
-		return 0;
+	// Higher priority numbers should be drained first.
+	// Lane 0 is the fastest/highest-priority lane.
+	const maxLane = PRIORITY_LANES - 1;
+	if (!Number.isFinite(priority)) {
+		return maxLane;
 	}
-	return 1;
+	const clampedPriority = Math.max(0, Math.min(maxLane, Math.floor(priority)));
+	return maxLane - clampedPriority;
 };
 interface OutboundCandidate {
 	raw: Stream;
@@ -195,7 +201,7 @@ export interface InboundStreamRecord {
 }
 // Hook for tests to override queued length measurement (peerStreams, default impl)
 export let measureOutboundQueuedBytes: (
-	ps: PeerStreams, // return queued bytes for active outbound (lane 0) or 0 if none
+	ps: PeerStreams, // return queued bytes for active outbound (all lanes) or 0 if none
 ) => number = (ps: PeerStreams) => {
 	const active = ps._getActiveOutboundPushable();
 	if (!active) return 0;
@@ -203,8 +209,7 @@ export let measureOutboundQueuedBytes: (
 	// @ts-ignore - optional test helper
 	if (typeof active.getReadableLength === "function") {
 		try {
-			// lane 0 only
-			return active.getReadableLength(0) || 0;
+			return active.getReadableLength() || 0;
 		} catch {
 			// ignore
 		}
@@ -284,7 +289,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		const existing = this.outboundStreams.find((c) => c.raw === raw);
 		if (existing) return existing;
 		const pushableInst = pushableLanes<Uint8Array>({
-			lanes: 2,
+			lanes: PRIORITY_LANES,
 			onPush: (val: Uint8Array) => {
 				candidate.bytesDelivered += val.length || val.byteLength || 0;
 			},
@@ -430,9 +435,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			try {
 				c.pushable.push(
 					payload,
-					c.pushable.getReadableLength(0) === 0
-						? 0
-						: getLaneFromPriority(priority),
+					getLaneFromPriority(priority),
 				);
 				successes++;
 			} catch (e) {
