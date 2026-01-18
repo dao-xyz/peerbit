@@ -457,8 +457,12 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 
 		const startSync = new StartSync({ from: start, to: end, symbols: [] });
 		const encoder = new EncoderWrapper();
-		for (const entry of sortedEntries) {
-			encoder.add_symbol(coerceBigInt(entry));
+		if (typeof BigUint64Array !== "undefined") {
+			encoder.add_symbols(BigUint64Array.from(sortedEntries));
+		} else {
+			for (const entry of sortedEntries) {
+				encoder.add_symbol(coerceBigInt(entry));
+			}
 		}
 
 		let initialSymbols = Math.round(
