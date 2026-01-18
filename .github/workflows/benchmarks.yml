@@ -35,7 +35,7 @@ jobs:
         with:
           script: |
             const prNumber = context.eventName === 'workflow_dispatch'
-              ? Number(core.getInput('pr'))
+              ? Number(context.payload.inputs?.pr)
               : context.payload.issue.number;
 
             const { owner, repo } = context.repo;
