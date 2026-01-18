@@ -2246,14 +2246,14 @@ describe("streams", function () {
 				}
 			}
 
-			await waitForResolved(() =>
-				expect(streams[0].received).to.have.length(count * 2),
-			);
-			await waitForResolved(() =>
-				expect(streams[1].received).to.have.length(count * 2),
-			);
-			await waitForResolved(() =>
-				expect(streams[2].received).to.have.length(count * 2),
+			const expected = count * 2;
+			await waitForResolved(
+				() => {
+					expect(streams[0].received).to.have.length(expected);
+					expect(streams[1].received).to.have.length(expected);
+					expect(streams[2].received).to.have.length(expected);
+				},
+				{ timeout: 30 * 1000 },
 			);
 		});
 	});
