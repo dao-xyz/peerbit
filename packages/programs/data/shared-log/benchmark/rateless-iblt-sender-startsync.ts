@@ -25,13 +25,28 @@ const sizes = parseNumberList(process.env.RIBLT_SIZES, [1_000, 10_000, 50_000]);
 const warmupIterations = Number.parseInt(process.env.RIBLT_WARMUP || "5", 10);
 const iterations = Number.parseInt(process.env.RIBLT_ITERATIONS || "20", 10);
 
+const useRandomHashes = process.env.RIBLT_RANDOM === "1";
+const U64_MASK = (1n << 64n) - 1n;
+const createXorShift64Star = (seed: bigint) => {
+	let x = seed & U64_MASK;
+	return () => {
+		x ^= x >> 12n;
+		x ^= (x << 25n) & U64_MASK;
+		x ^= x >> 27n;
+		return (x * 2685821657736338717n) & U64_MASK;
+	};
+};
+
 const createEntries = <R extends "u32" | "u64">(size: number) => {
 	const entries = new Map<string, any>();
+	const rand = useRandomHashes
+		? createXorShift64Star(88172645463393265n ^ BigInt(size))
+		: undefined;
 	for (let i = 0; i < size; i++) {
 		const hash = `h${i}`;
 		entries.set(hash, {
 			hash,
-			hashNumber: BigInt(i + 1),
+			hashNumber: useRandomHashes ? rand!() : BigInt(i + 1),
 			assignedToRangeBoundary: false,
 		});
 	}
@@ -107,4 +122,3 @@ if (process.env.BENCH_JSON === "1") {
 }
 
 await sync.close();
-
