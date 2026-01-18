@@ -2235,7 +2235,7 @@ export class DocumentIndex<
 			// give queries higher priority than other "normal" data activities
 			// without this, we might have a scenario that a peer joina  network with large amount of data to be synced, but can not query anything before that is done
 			// this will lead to bad UX as you usually want to list/expore whats going on before doing any replication work
-			remote.priority = 1;
+			remote.priority = 2;
 		}
 
 		if (!local && !remote) {
