@@ -376,11 +376,15 @@ export type SharedLogOptions<
 export const DEFAULT_MIN_REPLICAS = 2;
 export const WAIT_FOR_REPLICATOR_TIMEOUT = 9000;
 export const WAIT_FOR_ROLE_MATURITY = 5000;
-export const WAIT_FOR_PRUNE_DELAY = 5000;
+export const WAIT_FOR_PRUNE_DELAY = 0;
 const PRUNE_DEBOUNCE_INTERVAL = 500;
 
 // DONT SET THIS ANY LOWER, because it will make the pid controller unstable as the system responses are not fast enough to updates from the pid controller
 const RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL = 1000;
+const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE = 0.01;
+const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_CPU_LIMIT = 0.005;
+const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_MEMORY_LIMIT = 0.001;
+const RECALCULATE_PARTICIPATION_RELATIVE_DENOMINATOR_FLOOR = 1e-3;
 
 const DEFAULT_DISTRIBUTION_DEBOUNCE_TIME = 500;
 
@@ -617,15 +621,6 @@ export class SharedLog<
 	) {
 		this.rebalanceParticipationDebounced = undefined;
 
-		// make the rebalancing to respect warmup time
-		let intervalTime = interval * 2;
-		let timeout = setTimeout(() => {
-			intervalTime = interval;
-		}, this.timeUntilRoleMaturity);
-		this._closeController.signal.addEventListener("abort", () => {
-			clearTimeout(timeout);
-		});
-
 		this.rebalanceParticipationDebounced = debounceFixedInterval(
 			() => this.rebalanceParticipation(),
 			/* Math.max(
@@ -635,7 +630,7 @@ export class SharedLog<
 					REBALANCE_DEBOUNCE_INTERVAL
 				)
 			) */
-			() => intervalTime, // TODO make this dynamic on the number of replicators
+			interval, // TODO make this dynamic on the number of replicators
 		);
 	}
 
@@ -1883,8 +1878,8 @@ export class SharedLog<
 		this.timeUntilRoleMaturity =
 			options?.timeUntilRoleMaturity ?? WAIT_FOR_ROLE_MATURITY;
 		this.waitForReplicatorTimeout =
-			options?.waitForReplicatorTimeout || WAIT_FOR_REPLICATOR_TIMEOUT;
-		this.waitForPruneDelay = options?.waitForPruneDelay || WAIT_FOR_PRUNE_DELAY;
+			options?.waitForReplicatorTimeout ?? WAIT_FOR_REPLICATOR_TIMEOUT;
+		this.waitForPruneDelay = options?.waitForPruneDelay ?? WAIT_FOR_PRUNE_DELAY;
 
 		if (this.waitForReplicatorTimeout < this.timeUntilRoleMaturity) {
 			this.waitForReplicatorTimeout = this.timeUntilRoleMaturity; // does not makes sense to expect a replicator to mature faster than it is reachable
@@ -3750,7 +3745,7 @@ export class SharedLog<
 			for (const [k, v] of this._requestIPruneResponseReplicatorSet) {
 				v.delete(publicKey.hashcode());
 				if (v.size === 0) {
-					this._requestIPruneSent.delete(k);
+					this._requestIPruneResponseReplicatorSet.delete(k);
 				}
 			}
 
@@ -4100,8 +4095,13 @@ export class SharedLog<
 		);
 	}
 
-	async waitForPruned() {
-		await waitFor(() => this._pendingDeletes.size === 0);
+	async waitForPruned(options?: {
+		timeout?: number;
+		signal?: AbortSignal;
+		delayInterval?: number;
+		timeoutMessage?: string;
+	}) {
+		await waitFor(() => this._pendingDeletes.size === 0, options);
 	}
 
 	async onReplicationChange(
@@ -4280,11 +4280,24 @@ export class SharedLog<
 					cpuUsage: this.cpuUsage?.value(),
 				});
 
+				const absoluteDifference = Math.abs(dynamicRange.widthNormalized - newFactor);
 				const relativeDifference =
-					Math.abs(dynamicRange.widthNormalized - newFactor) /
-					dynamicRange.widthNormalized;
+					absoluteDifference /
+					Math.max(
+						dynamicRange.widthNormalized,
+						RECALCULATE_PARTICIPATION_RELATIVE_DENOMINATOR_FLOOR,
+					);
 
-				if (relativeDifference > 0.0001) {
+				let minRelativeChange = RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE;
+				if (this.replicationController.maxMemoryLimit != null) {
+					minRelativeChange =
+						RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_MEMORY_LIMIT;
+				} else if (this.replicationController.maxCPUUsage != null) {
+					minRelativeChange =
+						RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_CPU_LIMIT;
+				}
+
+				if (relativeDifference > minRelativeChange) {
 					// TODO can not reuse old range, since it will (potentially) affect the index because of sideeffects
 					dynamicRange = new this.indexableDomain.constructorRange({
 						offset: dynamicRange.start1,

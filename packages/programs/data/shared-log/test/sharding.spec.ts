@@ -134,6 +134,7 @@ testSetups.forEach((setup) => {
 			});
 
 			const sampleSize = 200; // must be < 255
+			const largeEntryCount = 1000;
 
 			it("will not have any prunable after balance", async () => {
 				const store = new EventStore<string, any>();
@@ -171,8 +172,10 @@ testSetups.forEach((setup) => {
 					},
 				);
 
-				await waitForConverged(() => db1.log.log.length);
-				await waitForConverged(() => db2.log.log.length);
+				await Promise.all([
+					waitForConverged(() => db1.log.log.length),
+					waitForConverged(() => db2.log.log.length),
+				]);
 
 				await waitForResolved(async () => {
 					const prunable1 = await db1.log.getPrunable();
@@ -530,12 +533,18 @@ testSetups.forEach((setup) => {
 			});
 
 			it("distributes to leaving peers", async () => {
+				const args = {
+					timeUntilRoleMaturity: 0,
+					waitForPruneDelay: 50,
+					setup,
+				} as const;
+
 				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
 						replicate: {
 							offset: 0,
 						},
-						setup,
+						...args,
 					},
 				});
 
@@ -547,7 +556,7 @@ testSetups.forEach((setup) => {
 							replicate: {
 								offset: 0.3333,
 							},
-							setup,
+							...args,
 						},
 					},
 				);
@@ -559,25 +568,24 @@ testSetups.forEach((setup) => {
 							replicate: {
 								offset: 0.6666,
 							},
-							setup,
+							...args,
 						},
 					},
 				);
 
-				//	await delay(1e3);
-				//	[db1, db2, db3].map(x => x.log.rebalanceParticipation = () => Promise.resolve(false))
-
 				const entryCount = sampleSize * 3;
 
-				await waitForResolved(async () =>
-					expect(await db1.log.replicationIndex?.getSize()).equal(3),
-				);
-				await waitForResolved(async () =>
-					expect(await db2.log.replicationIndex?.getSize()).equal(3),
-				);
-				await waitForResolved(async () =>
-					expect(await db3.log.replicationIndex?.getSize()).equal(3),
-				);
+				await Promise.all([
+					waitForResolved(async () =>
+						expect(await db1.log.replicationIndex?.getSize()).equal(3),
+					),
+					waitForResolved(async () =>
+						expect(await db2.log.replicationIndex?.getSize()).equal(3),
+					),
+					waitForResolved(async () =>
+						expect(await db3.log.replicationIndex?.getSize()).equal(3),
+					),
+				]);
 
 				const promises: Promise<any>[] = [];
 				for (let i = 0; i < entryCount; i++) {
@@ -590,18 +598,18 @@ testSetups.forEach((setup) => {
 
 				await Promise.all(promises);
 
-				await delay(1e4);
-
 				await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
 
-				if (true as any) {
-					return;
-				}
-
-				const distribute = sinon.spy(db1.log.onReplicationChange);
-				db1.log.onReplicationChange = distribute;
-
 				await db3.close();
+
+				await Promise.all([
+					waitForResolved(async () =>
+						expect(await db1.log.replicationIndex?.getSize()).equal(2),
+					),
+					waitForResolved(async () =>
+						expect(await db2.log.replicationIndex?.getSize()).equal(2),
+					),
+				]);
 				await checkBounded(entryCount, 1, 1, db1, db2);
 			});
 
@@ -909,14 +917,16 @@ testSetups.forEach((setup) => {
 								},
 							);
 
-							await waitForConverged(async () => {
-								const diff = await db1.log.calculateMyTotalParticipation();
-								return Math.round(diff * 100);
-							});
-							await waitForConverged(async () => {
-								const diff = await db2.log.calculateMyTotalParticipation();
-								return Math.round(diff * 100);
-							});
+							await Promise.all([
+								waitForConverged(async () => {
+									const diff = await db1.log.calculateMyTotalParticipation();
+									return Math.round(diff * 100);
+								}),
+								waitForConverged(async () => {
+									const diff = await db2.log.calculateMyTotalParticipation();
+									return Math.round(diff * 100);
+								}),
+							]);
 
 							expect(
 								await db1.log.calculateMyTotalParticipation(),
@@ -964,8 +974,7 @@ testSetups.forEach((setup) => {
 
 							const data = toBase64(randomBytes(5.5e2)); // about 1kb
 
-							for (let i = 0; i < 1000; i++) {
-								// insert 1mb
+							for (let i = 0; i < largeEntryCount; i++) {
 								await db1.add(data, { meta: { next: [] } });
 							}
 
@@ -1027,8 +1036,7 @@ testSetups.forEach((setup) => {
 
 							const data = toBase64(randomBytes(5.5e2)); // about 1kb
 
-							for (let i = 0; i < 1000; i++) {
-								// insert 1mb
+							for (let i = 0; i < largeEntryCount; i++) {
 								await db2.add(data, { meta: { next: [] } });
 							}
 							await waitForConverged(async () => {
@@ -1158,47 +1166,48 @@ testSetups.forEach((setup) => {
 
 							const data = toBase64(randomBytes(5.5e2)); // about 1kb
 
-							for (let i = 0; i < 1000; i++) {
-								// insert 1mb
+							for (let i = 0; i < largeEntryCount; i++) {
 								await db2.add(data, { meta: { next: [] } });
 							}
 
 							try {
-								await waitForConverged(
-									async () =>
-										Math.round(
-											(await db1.log.calculateMyTotalParticipation()) * 500,
-										),
-									{
-										tests: 3,
-										delta: 1,
-										timeout: 30 * 1000,
-										interval: 1000,
-									},
-								);
-								await waitForConverged(
-									async () =>
-										Math.round(
-											(await db2.log.calculateMyTotalParticipation()) * 500,
-										),
-									{
-										tests: 3,
-										delta: 1,
-										timeout: 30 * 1000,
-										interval: 1000,
-									},
-								);
+								await Promise.all([
+									waitForConverged(
+										async () =>
+											Math.round(
+												(await db1.log.calculateMyTotalParticipation()) * 500,
+											),
+										{
+											tests: 3,
+											delta: 1,
+											timeout: 30 * 1000,
+											interval: 1000,
+										},
+									),
+									waitForConverged(
+										async () =>
+											Math.round(
+												(await db2.log.calculateMyTotalParticipation()) * 500,
+											),
+										{
+											tests: 3,
+											delta: 1,
+											timeout: 30 * 1000,
+											interval: 1000,
+										},
+									),
+								]);
 							} catch (error) {
 								throw new Error("Total participation failed to converge");
 							}
 
-							expect(
-								await db1.log.calculateMyTotalParticipation(),
-							).to.be.within(0.03, 0.1);
-							expect(
-								await db1.log.calculateMyTotalParticipation(),
-							).to.be.within(0.03, 0.1);
-						});
+								expect(
+									await db1.log.calculateMyTotalParticipation(),
+								).to.be.within(0.03, 0.1);
+								expect(
+									await db2.log.calculateMyTotalParticipation(),
+								).to.be.within(0.03, 0.1);
+							});
 
 						it("evenly if limited when not constrained", async () => {
 							const memoryLimit = 100 * 1e3;
@@ -1428,8 +1437,7 @@ testSetups.forEach((setup) => {
 
 							const data = toBase64(randomBytes(5.5e2)); // about 1kb
 
-							for (let i = 0; i < 1000; i++) {
-								// insert 1mb
+							for (let i = 0; i < largeEntryCount; i++) {
 								await db2.add(data, { meta: { next: [] } });
 							}
 
