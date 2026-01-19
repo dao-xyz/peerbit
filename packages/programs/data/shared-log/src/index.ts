@@ -3142,25 +3142,29 @@ export class SharedLog<
 		},
 	): Promise<void> {
 		let entriesToReplicate: Entry<T>[] = [];
-		if (options?.replicate) {
+		if (options?.replicate && this.log.length > 0) {
 			// TODO this block should perhaps be called from a callback on the this.log.join method on all the ignored element because already joined, like "onAlreadyJoined"
 
 			// check which entrise we already have but not are replicating, and replicate them
 			// we can not just do the 'join' call because it will ignore the already joined entries
 			for (const element of entries) {
 				if (typeof element === "string") {
-					const entry = await this.log.get(element);
-					if (entry) {
-						entriesToReplicate.push(entry);
+					if (await this.log.has(element)) {
+						const entry = await this.log.get(element);
+						if (entry) {
+							entriesToReplicate.push(entry);
+						}
 					}
 				} else if (element instanceof Entry) {
 					if (await this.log.has(element.hash)) {
 						entriesToReplicate.push(element);
 					}
 				} else {
-					const entry = await this.log.get(element.hash);
-					if (entry) {
-						entriesToReplicate.push(entry);
+					if (await this.log.has(element.hash)) {
+						const entry = await this.log.get(element.hash);
+						if (entry) {
+							entriesToReplicate.push(entry);
+						}
 					}
 				}
 			}
