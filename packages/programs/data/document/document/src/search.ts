@@ -4273,10 +4273,11 @@ export class DocumentIndex<
 			},
 			all: async () => {
 				drain = true;
+				const drainBatchSize = replicate ? 1000 : 100;
 				let result: ValueTypeFromRequest<Resolve, T, I>[] = [];
 				let c = 0;
 				while (doneFn() !== true) {
-					let batch = await next(100);
+					let batch = await next(drainBatchSize);
 					c += batch.length;
 					if (c > WARNING_WHEN_ITERATING_FOR_MORE_THAN) {
 						warn(
@@ -4304,9 +4305,10 @@ export class DocumentIndex<
 			},
 			[Symbol.asyncIterator]: async function* () {
 				drain = true;
+				const drainBatchSize = replicate ? 1000 : 100;
 				let c = 0;
 				while (doneFn() !== true) {
-					const batch = await next(100);
+					const batch = await next(drainBatchSize);
 					c += batch.length;
 					if (c > WARNING_WHEN_ITERATING_FOR_MORE_THAN) {
 						warn(

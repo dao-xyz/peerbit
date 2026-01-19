@@ -1284,9 +1284,7 @@ describe("index", () => {
 							.all();
 						let t1 = +new Date();
 						expect(results.length).to.eq(docCount);
-						// Keep this loose to avoid CI flakiness; performance is tracked via benchmarks.
-						const maxDurationMs = process.env.CI ? 20_000 : 10_000;
-						expect(t1 - t0).to.be.lessThan(maxDurationMs); // TODO this.log.join(... { replicate: true }) is very slow
+						expect(t1 - t0).to.be.lessThan(5000); // TODO this.log.join(... { replicate: true }) is very slow
 						expect(
 							(await stores[1].docs.log.getMyReplicationSegments()).length,
 						).to.eq(docCount);
@@ -4393,8 +4391,22 @@ describe("index", () => {
 						await writer.docs.put(new Document({ id: "2" }));
 						await writer.docs.put(new Document({ id: "3" }));
 
-						const initial = await iterator.next(10);
-						expect(initial.map((x) => x.id)).to.deep.equal(["2", "3"]);
+						const initialIds: string[] = [];
+						const initialIdSet = new Set<string>();
+						await waitForResolved(
+							async () => {
+								const batch = await iterator.next(10);
+								for (const doc of batch) {
+									if (initialIdSet.has(doc.id)) {
+										continue;
+									}
+									initialIdSet.add(doc.id);
+									initialIds.push(doc.id);
+								}
+								expect(initialIds).to.deep.equal(["2", "3"]);
+							},
+							{ timeout: 10_000 },
+						);
 
 						// Insert an out-of-order doc; it should be dropped from push stream
 						await writer.docs.put(new Document({ id: "1" }));

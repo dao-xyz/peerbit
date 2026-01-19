@@ -1196,16 +1196,20 @@ export class SharedLog<
 				}
 			}
 
+			let prevCountForOwner: number | undefined = undefined;
 			if (existing.length === 0) {
-				let prevCount = await this.replicationIndex.count({
+				prevCountForOwner = await this.replicationIndex.count({
 					query: new StringMatch({ key: "hash", value: from.hashcode() }),
 				});
-				isNewReplicator = prevCount === 0;
+				isNewReplicator = prevCountForOwner === 0;
 			} else {
 				isNewReplicator = false;
 			}
 
-			if (checkDuplicates) {
+			if (
+				checkDuplicates &&
+				(existing.length > 0 || (prevCountForOwner ?? 0) > 0)
+			) {
 				let deduplicated: ReplicationRangeIndexable<any>[] = [];
 
 				// TODO also deduplicate/de-overlap among the ranges that ought to be inserted?
