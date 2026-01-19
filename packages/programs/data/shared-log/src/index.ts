@@ -376,6 +376,9 @@ export type SharedLogOptions<
 export const DEFAULT_MIN_REPLICAS = 2;
 export const WAIT_FOR_REPLICATOR_TIMEOUT = 9000;
 export const WAIT_FOR_ROLE_MATURITY = 5000;
+// TODO(prune): Investigate if/when a non-zero prune delay is required for correctness
+// (e.g. responsibility/replication-info message reordering in multi-peer scenarios).
+// Prefer making pruning robust without timing-based heuristics.
 export const WAIT_FOR_PRUNE_DELAY = 0;
 const PRUNE_DEBOUNCE_INTERVAL = 500;
 
