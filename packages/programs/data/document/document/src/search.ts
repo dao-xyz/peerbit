@@ -3728,9 +3728,13 @@ export class DocumentIndex<
 		const keepRemoteAlive = keepOpen && remoteOptions !== false;
 
 		if (queryRequestCoerced instanceof types.IterationRequest) {
-			queryRequestCoerced.resolve = resolve;
+			// If replication is requested, prefer fetching indexed results (with `entries`)
+			// even when the caller wants resolved documents. This allows `replicate(...)` to
+			// join using the provided `Entry` objects instead of doing per-head block fetches.
+			const requestResolve = resolve && !replicate;
+			queryRequestCoerced.resolve = requestResolve;
 			queryRequestCoerced.fetch = queryRequestCoerced.fetch ?? 10;
-			const replicateFlag = !resolve && replicate ? true : false;
+			const replicateFlag = !requestResolve && replicate ? true : false;
 			queryRequestCoerced.replicate = replicateFlag;
 			const ttlSource =
 				typeof remoteOptions === "object" &&
