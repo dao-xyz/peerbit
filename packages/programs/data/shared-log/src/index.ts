@@ -1165,16 +1165,31 @@ export class SharedLog<
 
 			let prevCount = deleted.length;
 
-			await this.replicationIndex.del({ query: { hash: from.hashcode() } });
+			const existingById = new Map(deleted.map((x) => [x.idString, x]));
+			const hasSameRanges =
+				deleted.length === ranges.length &&
+				ranges.every((range) => {
+					const existing = existingById.get(range.idString);
+					return existing != null && existing.equalRange(range);
+				});
 
-			diffs = [
-				...deleted.map((x) => {
-					return { range: x, type: "removed" as const, timestamp };
-				}),
-				...ranges.map((x) => {
-					return { range: x, type: "added" as const, timestamp };
-				}),
-			];
+			// Avoid churn on repeated full-state announcements that don't change any
+			// replication ranges. This prevents unnecessary `replication:change`
+			// events and rebalancing cascades.
+			if (hasSameRanges) {
+				diffs = [];
+			} else {
+				await this.replicationIndex.del({ query: { hash: from.hashcode() } });
+
+				diffs = [
+					...deleted.map((x) => {
+						return { range: x, type: "removed" as const, timestamp };
+					}),
+					...ranges.map((x) => {
+						return { range: x, type: "added" as const, timestamp };
+					}),
+				];
+			}
 
 			isNewReplicator = prevCount === 0 && ranges.length > 0;
 		} else {
