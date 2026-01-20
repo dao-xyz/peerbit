@@ -4255,22 +4255,26 @@ export class DocumentIndex<
 			}
 		};
 
-		return {
-			close,
-			next,
-			done: doneFn,
-			pending: async () => {
-				try {
-					await fetchPromise;
-					// In push-update mode, remotes will stream new results proactively.
-					// Calling `fetchAtLeast(1)` here can double-count by pulling from the
-					// remote iterator while we also have pushed results buffered locally.
-					if (!done && keepRemoteAlive && !pushUpdates) {
-						await fetchAtLeast(1);
+			return {
+				close,
+				next,
+				done: doneFn,
+				pending: async () => {
+					try {
+						await fetchPromise;
+						// In push-update mode, remotes will stream new results proactively.
+						// After the iterator has been primed (`first === true`), calling
+						// `fetchAtLeast(1)` from `pending()` can double-count by pulling from
+						// the remote iterator while we also have pushed results buffered locally.
+						//
+						// We still need to prime the iterator at least once so `pending()` is meaningful
+						// even before the first `next(...)` call.
+						if (!done && keepRemoteAlive && (!pushUpdates || !first)) {
+							await fetchAtLeast(1);
+						}
+					} catch (error) {
+						warn("Failed to refresh iterator pending state", error);
 					}
-				} catch (error) {
-					warn("Failed to refresh iterator pending state", error);
-				}
 
 				let total = 0;
 				for (const buffer of peerBufferMap.values()) {
