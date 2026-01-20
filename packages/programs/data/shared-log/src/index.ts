@@ -2913,74 +2913,61 @@ export class SharedLog<
 						}
 					}
 				}
-			} else if (
-				msg instanceof AllReplicatingSegmentsMessage ||
-				msg instanceof AddedReplicationSegmentMessage
-			) {
-				if (context.from.equals(this.node.identity.publicKey)) {
-					return;
-				}
+				} else if (
+					msg instanceof AllReplicatingSegmentsMessage ||
+					msg instanceof AddedReplicationSegmentMessage
+				) {
+					if (context.from.equals(this.node.identity.publicKey)) {
+						return;
+					}
 
-				let replicationInfoMessage = msg as
-					| AllReplicatingSegmentsMessage
-					| AddedReplicationSegmentMessage;
+					const replicationInfoMessage = msg as
+						| AllReplicatingSegmentsMessage
+						| AddedReplicationSegmentMessage;
 
-				// we have this statement because peers might have changed/announced their role,
-				// but we don't know them as "subscribers" yet. i.e. they are not online
-
-				this.waitFor(context.from, {
-					signal: this._closeController.signal,
-					timeout: this.waitForReplicatorTimeout,
-				})
-					.then(async () => {
-						// do use an operation log here, because we want to make sure that we don't miss any updates
-						// and do them in the right order
-						const prev = this.latestReplicationInfoMessage.get(
-							context.from!.hashcode(),
-						);
-
-						if (prev && prev > context.message.header.timestamp) {
+					// Process replication updates even if the sender isn't yet considered "ready" by
+					// `Program.waitFor()`. Dropping these messages can lead to missing replicator info
+					// (and downstream `waitForReplicator()` timeouts) under timing-sensitive joins.
+					const from = context.from!;
+					const messageTimestamp = context.message.header.timestamp;
+					(async () => {
+						const prev = this.latestReplicationInfoMessage.get(from.hashcode());
+						if (prev && prev > messageTimestamp) {
 							return;
 						}
 
-						this.latestReplicationInfoMessage.set(
-							context.from!.hashcode(),
-							context.message.header.timestamp,
-						);
-
-						let reset = msg instanceof AllReplicatingSegmentsMessage;
+						this.latestReplicationInfoMessage.set(from.hashcode(), messageTimestamp);
 
 						if (this.closed) {
 							return;
 						}
 
+						const reset = msg instanceof AllReplicatingSegmentsMessage;
 						await this.addReplicationRange(
 							replicationInfoMessage.segments.map((x) =>
-								x.toReplicationRangeIndexable(context.from!),
+								x.toReplicationRangeIndexable(from),
 							),
-							context.from!,
+							from,
 							{
 								reset,
 								checkDuplicates: true,
-								timestamp: Number(context.message.header.timestamp),
+								timestamp: Number(messageTimestamp),
 							},
 						);
-
-						/* await this._modifyReplicators(msg.role, context.from!); */
-					})
-					.catch((e) => {
+					})().catch((e) => {
 						if (isNotStartedError(e)) {
 							return;
 						}
 						logger.error(
-							"Failed to find peer who updated replication settings: " +
-								e?.message,
+							`Failed to apply replication settings from '${from.hashcode()}': ${
+								e?.message ?? e
+							}`,
 						);
 					});
-			} else if (msg instanceof StoppedReplicating) {
-				if (context.from.equals(this.node.identity.publicKey)) {
-					return;
-				}
+				} else if (msg instanceof StoppedReplicating) {
+					if (context.from.equals(this.node.identity.publicKey)) {
+						return;
+					}
 
 				const rangesToRemove = await this.resolveReplicationRangesFromIdsAndKey(
 					msg.segmentIds,
