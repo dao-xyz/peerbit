@@ -2877,21 +2877,19 @@ export class SharedLog<
 					context.from!.hashcode(),
 				);
 			} else if (msg instanceof RequestReplicationInfoMessage) {
-				// TODO this message type is never used, should we remove it?
-
 				if (context.from.equals(this.node.identity.publicKey)) {
 					return;
 				}
-				await this.rpc.send(
-					new AllReplicatingSegmentsMessage({
-						segments: (await this.getMyReplicationSegments()).map((x) =>
-							x.toReplicationRange(),
-						),
-					}),
-					{
-						mode: new SilentDelivery({ to: [context.from], redundancy: 1 }),
-					},
+
+				const segments = (await this.getMyReplicationSegments()).map((x) =>
+					x.toReplicationRange(),
 				);
+
+				this.rpc
+					.send(new AllReplicatingSegmentsMessage({ segments }), {
+						mode: new SeekDelivery({ to: [context.from], redundancy: 1 }),
+					})
+					.catch((e) => logger.error(e.toString()));
 
 				// for backwards compatibility (v8) remove this when we are sure that all nodes are v9+
 				if (this.v8Behaviour) {
@@ -2913,7 +2911,7 @@ export class SharedLog<
 						}
 					}
 				}
-				} else if (
+			} else if (
 					msg instanceof AllReplicatingSegmentsMessage ||
 					msg instanceof AddedReplicationSegmentMessage
 				) {
@@ -3301,6 +3299,7 @@ export class SharedLog<
 
 		let settled = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
+		let requestTimer: ReturnType<typeof setTimeout> | undefined;
 
 		const clear = () => {
 			this.events.removeEventListener("replicator:mature", check);
@@ -3309,6 +3308,10 @@ export class SharedLog<
 			if (timer != null) {
 				clearTimeout(timer);
 				timer = undefined;
+			}
+			if (requestTimer != null) {
+				clearTimeout(requestTimer);
+				requestTimer = undefined;
 			}
 		};
 
@@ -3341,6 +3344,37 @@ export class SharedLog<
 			);
 		}, timeoutMs);
 
+		let requestAttempts = 0;
+		const maxRequestAttempts = 3;
+		const requestIntervalMs = 1000;
+
+		const requestReplicationInfo = () => {
+			if (settled || this.closed) {
+				return;
+			}
+
+			if (requestAttempts >= maxRequestAttempts) {
+				return;
+			}
+
+			requestAttempts++;
+
+			this.rpc
+				.send(new RequestReplicationInfoMessage(), {
+					mode: new SeekDelivery({ redundancy: 1, to: [key] }),
+				})
+				.catch((e) => {
+					// Best-effort: missing peers / unopened RPC should not fail the wait logic.
+					if (isNotStartedError(e as Error)) {
+						return;
+					}
+				});
+
+			if (requestAttempts < maxRequestAttempts) {
+				requestTimer = setTimeout(requestReplicationInfo, requestIntervalMs);
+			}
+		};
+
 		const check = async () => {
 			const iterator = this.replicationIndex?.iterate(
 				{ query: new StringMatch({ key: "hash", value: key.hashcode() }) },
@@ -3365,6 +3399,7 @@ export class SharedLog<
 			}
 		};
 
+		requestReplicationInfo();
 		check();
 		this.events.addEventListener("replicator:mature", check);
 		this.events.addEventListener("replication:change", check);
@@ -3837,6 +3872,15 @@ export class SharedLog<
 						.catch((e) => logger.error(e.toString()));
 				}
 			}
+
+			// Request the remote peer's replication info. This makes joins resilient to
+			// timing-sensitive delivery/order issues where we may miss their initial
+			// replication announcement.
+			this.rpc
+				.send(new RequestReplicationInfoMessage(), {
+					mode: new SeekDelivery({ redundancy: 1, to: [publicKey] }),
+				})
+				.catch((e) => logger.error(e.toString()));
 		} else {
 			await this.removeReplicator(publicKey);
 		}
