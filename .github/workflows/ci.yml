@@ -13,6 +13,7 @@ jobs:
     if: github.event_name == 'push'
     name: Test (Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
        matrix:
         os: [ ubuntu-22.04 ]
@@ -48,6 +49,7 @@ jobs:
     if: github.event_name == 'pull_request'
     name: Test (Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
        matrix:
         os: [ ubuntu-22.04 ]
