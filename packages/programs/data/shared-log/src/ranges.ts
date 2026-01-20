@@ -2064,6 +2064,7 @@ export const getSamples = async <R extends "u32" | "u64">(
 	options?: {
 		onlyIntersecting?: boolean;
 		uniqueReplicators?: Set<string>;
+		peerFilter?: Set<string>;
 	},
 ): Promise<Map<string, { intersecting: boolean }>> => {
 	const leaders: Map<string, { intersecting: boolean }> = new Map();
@@ -2075,6 +2076,7 @@ export const getSamples = async <R extends "u32" | "u64">(
 	let matured = 0;
 
 	let uniqueVisited = new Set<string>();
+	const peerFilter = options?.peerFilter;
 	for (let i = 0; i < cursor.length; i++) {
 		let point = cursor[i];
 
@@ -2084,6 +2086,9 @@ export const getSamples = async <R extends "u32" | "u64">(
 		);
 
 		for (const rect of allContaining) {
+			if (peerFilter && !peerFilter.has(rect.value.hash)) {
+				continue;
+			}
 			uniqueVisited.add(rect.value.hash);
 			let prev = leaders.get(rect.value.hash);
 			if (!prev) {
@@ -2096,7 +2101,7 @@ export const getSamples = async <R extends "u32" | "u64">(
 			}
 		}
 
-		if (options?.uniqueReplicators) {
+		if (options?.uniqueReplicators && options.uniqueReplicators.size > 0) {
 			if (
 				options.uniqueReplicators.size === leaders.size ||
 				options.uniqueReplicators.size === uniqueVisited.size
@@ -2114,6 +2119,9 @@ export const getSamples = async <R extends "u32" | "u64">(
 			roleAge,
 			peers,
 			(rect, m) => {
+				if (peerFilter && !peerFilter.has(rect.hash)) {
+					return;
+				}
 				uniqueVisited.add(rect.hash);
 				const prev = leaders.get(rect.hash);
 				if (m) {
@@ -2288,12 +2296,17 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 		from: NumberFromType<R>,
 	) => {
 		const toEnd2 = properties.numbers.increment(to.end2); // TODO investigate why this is needed
-		if (toEnd2 < from || to.wrapped) {
+		if (toEnd2 < from) {
 			wrappedOnce = true;
 			// @ts-ignore
 			coveredLength += properties.numbers.maxValue - from;
 			// @ts-ignore
 			coveredLength += toEnd2;
+		} else if (to.wrapped) {
+			// When the range is wrapped and `from` is in the second segment (near zero),
+			// the distance to `end2` does not wrap.
+			// @ts-ignore
+			coveredLength += toEnd2 - from;
 		} else {
 			// @ts-ignore
 			coveredLength += to.end1 - from;

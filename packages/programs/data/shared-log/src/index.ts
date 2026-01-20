@@ -463,6 +463,7 @@ export class SharedLog<
 	private recentlyRebalanced!: Cache<string>;
 
 	uniqueReplicators!: Set<string>;
+	private _replicatorsReconciled!: boolean;
 
 	/* private _totalParticipation!: number; */
 
@@ -1876,6 +1877,7 @@ export class SharedLog<
 		this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
 
 		this.uniqueReplicators = new Set();
+		this._replicatorsReconciled = false;
 
 		this.openTime = +new Date();
 		this.oldestOpenTime = this.openTime;
@@ -2178,7 +2180,16 @@ export class SharedLog<
 		await super.afterOpen();
 
 		// We do this here, because these calls requires this.closed == false
-		this.pruneOfflineReplicators();
+		void this.pruneOfflineReplicators()
+			.then(() => {
+				this._replicatorsReconciled = true;
+			})
+			.catch((error) => {
+				if (isNotStartedError(error as Error)) {
+					return;
+				}
+				logger.error(error);
+			});
 
 		await this.rebalanceParticipation();
 
@@ -3715,13 +3726,37 @@ export class SharedLog<
 		},
 	): Promise<Map<string, { intersecting: boolean }>> {
 		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge()); // TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
+		const selfHash = this.node.identity.publicKey.hashcode();
+
+		// Use `uniqueReplicators` (replicator cache) once we've reconciled it against the
+		// persisted replication index. Until then, fall back to live pubsub subscribers
+		// and avoid relying on `uniqueReplicators` being complete.
+		let peerFilter: Set<string> | undefined = undefined;
+		if (this._replicatorsReconciled && this.uniqueReplicators.size > 0) {
+			peerFilter = this.uniqueReplicators.has(selfHash)
+				? this.uniqueReplicators
+				: new Set([...this.uniqueReplicators, selfHash]);
+		} else {
+			try {
+				const subscribers =
+					(await this.node.services.pubsub.getSubscribers(this.topic)) ??
+					undefined;
+				if (subscribers && subscribers.length > 0) {
+					peerFilter = new Set(subscribers.map((key) => key.hashcode()));
+					peerFilter.add(selfHash);
+				}
+			} catch {
+				// Best-effort only; if pubsub isn't ready, do a full scan.
+			}
+		}
 		return getSamples<R>(
 			cursors,
 			this.replicationIndex,
 			roleAge,
 			this.indexableDomain.numbers,
 			{
-				uniqueReplicators: this.uniqueReplicators,
+				peerFilter,
+				uniqueReplicators: peerFilter,
 			},
 		);
 	}

@@ -877,6 +877,32 @@ resolutions.forEach((resolution) => {
 						});
 					});
 				});
+
+				it("wrapped ranges: start in second segment does not overcount length", async () => {
+					await create(
+						createReplicationRangeFromNormalized({
+							publicKey: a,
+							width: 0.3,
+							offset: 0.9,
+							timestamp: 0n,
+						}),
+						createReplicationRangeFromNormalized({
+							publicKey: b,
+							width: 0.1,
+							offset: 0.55,
+							timestamp: 0n,
+						}),
+					);
+
+					expect([
+						...(await getCoverSet({
+							peers,
+							roleAge: 0,
+							start: denormalizeFn(0.1),
+							widthToCoverScaled: numbers.divRound(numbers.maxValue, 2),
+						})),
+					]).to.have.members([a.hashcode(), b.hashcode()]);
+				});
 			});
 
 			describe("getAdjecentSameOwner", () => {
@@ -1552,6 +1578,25 @@ resolutions.forEach((resolution) => {
 							},
 						);
 					});
+				});
+
+				it("does not early-break when uniqueReplicators is empty", async () => {
+					const cursor = numbers.getGrid(numbers.zero, 2);
+					await create(
+						createReplicationRange({
+							publicKey: a,
+							width: 10,
+							offset: cursor[1],
+							timestamp: 0n,
+						}),
+					);
+
+					const leaders = await getSamplesMap(cursor, peers, 0, numbers, {
+						onlyIntersecting: true,
+						uniqueReplicators: new Set(),
+					});
+
+					expect([...leaders.keys()]).to.have.members([a.hashcode()]);
 				});
 			});
 
