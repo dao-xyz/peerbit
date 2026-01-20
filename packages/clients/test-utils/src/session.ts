@@ -1,7 +1,11 @@
 import { yamux } from "@chainsafe/libp2p-yamux";
 import { DirectBlock } from "@peerbit/blocks";
 import { keychain } from "@peerbit/keychain";
-import { TestSession as SSession } from "@peerbit/libp2p-test-utils";
+import {
+	listenFast,
+	TestSession as SSession,
+	transportsFast,
+} from "@peerbit/libp2p-test-utils";
 import { type ProgramClient } from "@peerbit/program";
 import { DirectSub } from "@peerbit/pubsub";
 import {
@@ -41,6 +45,63 @@ export class TestSession {
 		await Promise.all(this._peers.map((x) => x.libp2p.stop())); // beacuse we initialize libp2p externally (potentially), we have to close externally
 	}
 
+	/**
+	 * Create a "mock-ish" session intended for fast and stable Node.js tests.
+	 *
+	 * Uses TCP-only transport (no WebRTC/WebSockets/circuit-relay) and disables
+	 * the libp2p relay service by default.
+	 */
+	static async connectedMock(n: number, options?: CreateOptions | CreateOptions[]) {
+		const session = await TestSession.disconnectedMock(n, options);
+		await session.connect();
+		// TODO types
+		await waitForPeersStreams(
+			...session.peers.map(
+				(x) => x.services.blocks as any as DirectStream<any>,
+			),
+		);
+		return session;
+	}
+
+	static async disconnectedMock(
+		n: number,
+		options?: CreateOptions | CreateOptions[],
+	) {
+		const applyMockDefaults = (o?: CreateOptions): CreateOptions | undefined => {
+			if (!o) {
+				return {
+					libp2p: {
+						transports: transportsFast(),
+						addresses: { listen: listenFast() },
+						services: { relay: null },
+					} as any,
+				};
+			}
+
+			return {
+				...o,
+				libp2p: {
+					...(o.libp2p ?? {}),
+					transports: o.libp2p?.transports ?? transportsFast(),
+					addresses: {
+						...(o.libp2p?.addresses ?? {}),
+						listen: o.libp2p?.addresses?.listen ?? listenFast(),
+					},
+					services: {
+						...(o.libp2p?.services ?? {}),
+						relay: o.libp2p?.services?.relay ?? null,
+					},
+				} as any,
+			};
+		};
+
+		const optionsWithMockDefaults = Array.isArray(options)
+			? options.map(applyMockDefaults)
+			: applyMockDefaults(options);
+
+		return TestSession.disconnected(n, optionsWithMockDefaults as any);
+	}
+
 	static async connected(n: number, options?: CreateOptions | CreateOptions[]) {
 		const session = await TestSession.disconnected(n, options);
 		await session.connect();
@@ -57,13 +118,34 @@ export class TestSession {
 		n: number,
 		options?: CreateOptions | CreateOptions[],
 	) {
+		const useMockSession =
+			process.env.PEERBIT_TEST_SESSION === "mock" ||
+			process.env.PEERBIT_TEST_SESSION === "fast" ||
+			process.env.PEERBIT_TEST_SESSION === "tcp";
+
 		const m = (o?: CreateOptions): Libp2pCreateOptionsWithServices => {
 			const blocksDirectory = o?.directory
 				? path.join(o.directory, "/blocks").toString()
 				: undefined;
 
+			const libp2pOptions: Libp2pCreateOptions = {
+				...(o?.libp2p ?? {}),
+			};
+
+			if (useMockSession) {
+				libp2pOptions.transports = libp2pOptions.transports ?? transportsFast();
+				libp2pOptions.addresses = {
+					...(libp2pOptions.addresses ?? {}),
+					listen: libp2pOptions.addresses?.listen ?? listenFast(),
+				};
+				libp2pOptions.services = {
+					...(libp2pOptions.services ?? {}),
+					relay: libp2pOptions.services?.relay ?? null,
+				};
+			}
+
 			return {
-				...o?.libp2p,
+				...libp2pOptions,
 				services: {
 					blocks: (c: any) =>
 						new DirectBlock(c, {
@@ -71,7 +153,7 @@ export class TestSession {
 						}),
 					pubsub: (c: any) => new DirectSub(c, { canRelayMessage: true }),
 					keychain: keychain(),
-					...o?.libp2p?.services,
+					...libp2pOptions.services,
 				} as any, /// TODO types
 				streamMuxers: [yamux()],
 				connectionMonitor: {
