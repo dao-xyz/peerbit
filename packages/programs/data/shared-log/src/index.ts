@@ -2394,15 +2394,35 @@ export class SharedLog<
 				set.add(key);
 			}
 
-			if (options?.reachableOnly) {
-				let reachableSet: string[] = [];
-				for (const peer of set) {
-					if (this.uniqueReplicators.has(peer)) {
-						reachableSet.push(peer);
+				if (options?.reachableOnly) {
+					// Prefer the live pubsub subscriber set when filtering reachability.
+					// `uniqueReplicators` is primarily driven by replication messages and can lag during
+					// joins/restarts; using subscribers prevents excluding peers that are reachable but
+					// whose replication ranges were loaded from disk or haven't been processed yet.
+					const subscribers =
+						(await this.node.services.pubsub.getSubscribers(this.topic)) ??
+						undefined;
+					const subscriberHashcodes = subscribers
+						? new Set(subscribers.map((key) => key.hashcode()))
+						: undefined;
+
+					const reachable: string[] = [];
+					const selfHash = this.node.identity.publicKey.hashcode();
+					for (const peer of set) {
+						if (peer === selfHash) {
+							reachable.push(peer);
+							continue;
+						}
+						if (
+							subscriberHashcodes
+								? subscriberHashcodes.has(peer)
+								: this.uniqueReplicators.has(peer)
+						) {
+							reachable.push(peer);
+						}
 					}
+					return reachable;
 				}
-				return reachableSet;
-			}
 
 			return [...set];
 		} catch (error) {
