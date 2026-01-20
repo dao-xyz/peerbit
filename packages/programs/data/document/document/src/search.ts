@@ -4262,7 +4262,10 @@ export class DocumentIndex<
 			pending: async () => {
 				try {
 					await fetchPromise;
-					if (!done && keepRemoteAlive) {
+					// In push-update mode, remotes will stream new results proactively.
+					// Calling `fetchAtLeast(1)` here can double-count by pulling from the
+					// remote iterator while we also have pushed results buffered locally.
+					if (!done && keepRemoteAlive && !pushUpdates) {
 						await fetchAtLeast(1);
 					}
 				} catch (error) {
