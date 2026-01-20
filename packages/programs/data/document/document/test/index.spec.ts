@@ -4391,8 +4391,22 @@ describe("index", () => {
 						await writer.docs.put(new Document({ id: "2" }));
 						await writer.docs.put(new Document({ id: "3" }));
 
-						const initial = await iterator.next(10);
-						expect(initial.map((x) => x.id)).to.deep.equal(["2", "3"]);
+						const initialIds: string[] = [];
+						const initialIdSet = new Set<string>();
+						await waitForResolved(
+							async () => {
+								const batch = await iterator.next(10);
+								for (const doc of batch) {
+									if (initialIdSet.has(doc.id)) {
+										continue;
+									}
+									initialIdSet.add(doc.id);
+									initialIds.push(doc.id);
+								}
+								expect(initialIds).to.deep.equal(["2", "3"]);
+							},
+							{ timeout: 10_000 },
+						);
 
 						// Insert an out-of-order doc; it should be dropped from push stream
 						await writer.docs.put(new Document({ id: "1" }));

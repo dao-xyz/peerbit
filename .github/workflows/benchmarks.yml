@@ -165,6 +165,7 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/bench-results/base"
           node --loader ts-node/esm ./benchmark/rateless-iblt-startsync-cache.ts > "$GITHUB_WORKSPACE/bench-results/base/rateless-iblt-startsync-cache.json"
           node --loader ts-node/esm ./benchmark/rateless-iblt-sender-startsync.ts > "$GITHUB_WORKSPACE/bench-results/base/rateless-iblt-sender-startsync.json"
+          node --loader ts-node/esm ./benchmark/pid-convergence.ts > "$GITHUB_WORKSPACE/bench-results/base/pid-convergence.json"
 
       - name: Run shared-log benchmarks (head)
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
@@ -179,6 +180,7 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/bench-results/head"
           node --loader ts-node/esm ./benchmark/rateless-iblt-startsync-cache.ts > "$GITHUB_WORKSPACE/bench-results/head/rateless-iblt-startsync-cache.json"
           node --loader ts-node/esm ./benchmark/rateless-iblt-sender-startsync.ts > "$GITHUB_WORKSPACE/bench-results/head/rateless-iblt-sender-startsync.json"
+          node --loader ts-node/esm ./benchmark/pid-convergence.ts > "$GITHUB_WORKSPACE/bench-results/head/pid-convergence.json"
 
       - name: Run document benchmarks (base)
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_document == 'true'
@@ -240,6 +242,11 @@ jobs:
                 title: 'shared-log: sender StartSync setup (onMaybeMissingEntries)',
                 base: 'bench-results/base/rateless-iblt-sender-startsync.json',
                 head: 'bench-results/head/rateless-iblt-sender-startsync.json',
+              },
+              {
+                title: 'shared-log: PID convergence (model)',
+                base: 'bench-results/base/pid-convergence.json',
+                head: 'bench-results/head/pid-convergence.json',
               },
               {
                 title: 'document: put',

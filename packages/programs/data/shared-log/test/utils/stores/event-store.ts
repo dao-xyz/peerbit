@@ -127,7 +127,7 @@ export class EventStore<
 			waitForReplicatorTimeout: properties?.waitForReplicatorTimeout,
 			encoding: JSON_ENCODING,
 			timeUntilRoleMaturity: properties?.timeUntilRoleMaturity ?? 3000,
-			waitForPruneDelay: properties?.waitForPruneDelay ?? 300,
+			waitForPruneDelay: properties?.waitForPruneDelay ?? 0,
 			keep: properties?.keep,
 			respondToIHaveTimeout: properties?.respondToIHaveTimeout,
 			distributionDebounceTime: 50, // to make tests fast

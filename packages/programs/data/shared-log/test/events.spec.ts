@@ -56,6 +56,30 @@ describe("events", () => {
 		expect(db1JoinEvents).to.have.length(1); // no new join event
 	});
 
+	it("cleans prune response tracking on unsubscribe", async () => {
+		session = await TestSession.connected(2);
+
+		const db1 = await session.peers[0].open(new EventStore(), {
+			args: { replicate: 1 },
+		});
+
+		const disconnectedPublicKey = session.peers[1].identity.publicKey;
+		const disconnectedPeerHash = disconnectedPublicKey.hashcode();
+		const entryHash = uuid();
+
+		const responseMap = (db1.log as any)
+			["_requestIPruneResponseReplicatorSet"] as Map<string, Set<string>>;
+		responseMap.set(entryHash, new Set([disconnectedPeerHash]));
+
+		await db1.log.handleSubscriptionChange(
+			disconnectedPublicKey,
+			[db1.log.topic],
+			false,
+		);
+
+		expect(responseMap.get(entryHash)).to.be.undefined;
+	});
+
 	it("replicate:join not emitted on update", async () => {
 		session = await TestSession.connected(2);
 

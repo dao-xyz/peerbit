@@ -376,11 +376,18 @@ export type SharedLogOptions<
 export const DEFAULT_MIN_REPLICAS = 2;
 export const WAIT_FOR_REPLICATOR_TIMEOUT = 9000;
 export const WAIT_FOR_ROLE_MATURITY = 5000;
-export const WAIT_FOR_PRUNE_DELAY = 5000;
+// TODO(prune): Investigate if/when a non-zero prune delay is required for correctness
+// (e.g. responsibility/replication-info message reordering in multi-peer scenarios).
+// Prefer making pruning robust without timing-based heuristics.
+export const WAIT_FOR_PRUNE_DELAY = 0;
 const PRUNE_DEBOUNCE_INTERVAL = 500;
 
 // DONT SET THIS ANY LOWER, because it will make the pid controller unstable as the system responses are not fast enough to updates from the pid controller
 const RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL = 1000;
+const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE = 0.01;
+const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_CPU_LIMIT = 0.005;
+const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_MEMORY_LIMIT = 0.001;
+const RECALCULATE_PARTICIPATION_RELATIVE_DENOMINATOR_FLOOR = 1e-3;
 
 const DEFAULT_DISTRIBUTION_DEBOUNCE_TIME = 500;
 
@@ -617,15 +624,6 @@ export class SharedLog<
 	) {
 		this.rebalanceParticipationDebounced = undefined;
 
-		// make the rebalancing to respect warmup time
-		let intervalTime = interval * 2;
-		let timeout = setTimeout(() => {
-			intervalTime = interval;
-		}, this.timeUntilRoleMaturity);
-		this._closeController.signal.addEventListener("abort", () => {
-			clearTimeout(timeout);
-		});
-
 		this.rebalanceParticipationDebounced = debounceFixedInterval(
 			() => this.rebalanceParticipation(),
 			/* Math.max(
@@ -635,7 +633,7 @@ export class SharedLog<
 					REBALANCE_DEBOUNCE_INTERVAL
 				)
 			) */
-			() => intervalTime, // TODO make this dynamic on the number of replicators
+			interval, // TODO make this dynamic on the number of replicators
 		);
 	}
 
@@ -1198,16 +1196,20 @@ export class SharedLog<
 				}
 			}
 
+			let prevCountForOwner: number | undefined = undefined;
 			if (existing.length === 0) {
-				let prevCount = await this.replicationIndex.count({
+				prevCountForOwner = await this.replicationIndex.count({
 					query: new StringMatch({ key: "hash", value: from.hashcode() }),
 				});
-				isNewReplicator = prevCount === 0;
+				isNewReplicator = prevCountForOwner === 0;
 			} else {
 				isNewReplicator = false;
 			}
 
-			if (checkDuplicates) {
+			if (
+				checkDuplicates &&
+				(existing.length > 0 || (prevCountForOwner ?? 0) > 0)
+			) {
 				let deduplicated: ReplicationRangeIndexable<any>[] = [];
 
 				// TODO also deduplicate/de-overlap among the ranges that ought to be inserted?
@@ -1883,8 +1885,8 @@ export class SharedLog<
 		this.timeUntilRoleMaturity =
 			options?.timeUntilRoleMaturity ?? WAIT_FOR_ROLE_MATURITY;
 		this.waitForReplicatorTimeout =
-			options?.waitForReplicatorTimeout || WAIT_FOR_REPLICATOR_TIMEOUT;
-		this.waitForPruneDelay = options?.waitForPruneDelay || WAIT_FOR_PRUNE_DELAY;
+			options?.waitForReplicatorTimeout ?? WAIT_FOR_REPLICATOR_TIMEOUT;
+		this.waitForPruneDelay = options?.waitForPruneDelay ?? WAIT_FOR_PRUNE_DELAY;
 
 		if (this.waitForReplicatorTimeout < this.timeUntilRoleMaturity) {
 			this.waitForReplicatorTimeout = this.timeUntilRoleMaturity; // does not makes sense to expect a replicator to mature faster than it is reachable
@@ -2392,15 +2394,35 @@ export class SharedLog<
 				set.add(key);
 			}
 
-			if (options?.reachableOnly) {
-				let reachableSet: string[] = [];
-				for (const peer of set) {
-					if (this.uniqueReplicators.has(peer)) {
-						reachableSet.push(peer);
+				if (options?.reachableOnly) {
+					// Prefer the live pubsub subscriber set when filtering reachability.
+					// `uniqueReplicators` is primarily driven by replication messages and can lag during
+					// joins/restarts; using subscribers prevents excluding peers that are reachable but
+					// whose replication ranges were loaded from disk or haven't been processed yet.
+					const subscribers =
+						(await this.node.services.pubsub.getSubscribers(this.topic)) ??
+						undefined;
+					const subscriberHashcodes = subscribers
+						? new Set(subscribers.map((key) => key.hashcode()))
+						: undefined;
+
+					const reachable: string[] = [];
+					const selfHash = this.node.identity.publicKey.hashcode();
+					for (const peer of set) {
+						if (peer === selfHash) {
+							reachable.push(peer);
+							continue;
+						}
+						if (
+							subscriberHashcodes
+								? subscriberHashcodes.has(peer)
+								: this.uniqueReplicators.has(peer)
+						) {
+							reachable.push(peer);
+						}
 					}
+					return reachable;
 				}
-				return reachableSet;
-			}
 
 			return [...set];
 		} catch (error) {
@@ -3140,25 +3162,29 @@ export class SharedLog<
 		},
 	): Promise<void> {
 		let entriesToReplicate: Entry<T>[] = [];
-		if (options?.replicate) {
+		if (options?.replicate && this.log.length > 0) {
 			// TODO this block should perhaps be called from a callback on the this.log.join method on all the ignored element because already joined, like "onAlreadyJoined"
 
 			// check which entrise we already have but not are replicating, and replicate them
 			// we can not just do the 'join' call because it will ignore the already joined entries
 			for (const element of entries) {
 				if (typeof element === "string") {
-					const entry = await this.log.get(element);
-					if (entry) {
-						entriesToReplicate.push(entry);
+					if (await this.log.has(element)) {
+						const entry = await this.log.get(element);
+						if (entry) {
+							entriesToReplicate.push(entry);
+						}
 					}
 				} else if (element instanceof Entry) {
 					if (await this.log.has(element.hash)) {
 						entriesToReplicate.push(element);
 					}
 				} else {
-					const entry = await this.log.get(element.hash);
-					if (entry) {
-						entriesToReplicate.push(entry);
+					if (await this.log.has(element.hash)) {
+						const entry = await this.log.get(element.hash);
+						if (entry) {
+							entriesToReplicate.push(entry);
+						}
 					}
 				}
 			}
@@ -3750,7 +3776,7 @@ export class SharedLog<
 			for (const [k, v] of this._requestIPruneResponseReplicatorSet) {
 				v.delete(publicKey.hashcode());
 				if (v.size === 0) {
-					this._requestIPruneSent.delete(k);
+					this._requestIPruneResponseReplicatorSet.delete(k);
 				}
 			}
 
@@ -4100,8 +4126,13 @@ export class SharedLog<
 		);
 	}
 
-	async waitForPruned() {
-		await waitFor(() => this._pendingDeletes.size === 0);
+	async waitForPruned(options?: {
+		timeout?: number;
+		signal?: AbortSignal;
+		delayInterval?: number;
+		timeoutMessage?: string;
+	}) {
+		await waitFor(() => this._pendingDeletes.size === 0, options);
 	}
 
 	async onReplicationChange(
@@ -4280,11 +4311,24 @@ export class SharedLog<
 					cpuUsage: this.cpuUsage?.value(),
 				});
 
+				const absoluteDifference = Math.abs(dynamicRange.widthNormalized - newFactor);
 				const relativeDifference =
-					Math.abs(dynamicRange.widthNormalized - newFactor) /
-					dynamicRange.widthNormalized;
+					absoluteDifference /
+					Math.max(
+						dynamicRange.widthNormalized,
+						RECALCULATE_PARTICIPATION_RELATIVE_DENOMINATOR_FLOOR,
+					);
 
-				if (relativeDifference > 0.0001) {
+				let minRelativeChange = RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE;
+				if (this.replicationController.maxMemoryLimit != null) {
+					minRelativeChange =
+						RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_MEMORY_LIMIT;
+				} else if (this.replicationController.maxCPUUsage != null) {
+					minRelativeChange =
+						RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_CPU_LIMIT;
+				}
+
+				if (relativeDifference > minRelativeChange) {
 					// TODO can not reuse old range, since it will (potentially) affect the index because of sideeffects
 					dynamicRange = new this.indexableDomain.constructorRange({
 						offset: dynamicRange.start1,

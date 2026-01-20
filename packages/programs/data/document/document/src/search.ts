@@ -3728,9 +3728,13 @@ export class DocumentIndex<
 		const keepRemoteAlive = keepOpen && remoteOptions !== false;
 
 		if (queryRequestCoerced instanceof types.IterationRequest) {
-			queryRequestCoerced.resolve = resolve;
+			// If replication is requested, prefer fetching indexed results (with `entries`)
+			// even when the caller wants resolved documents. This allows `replicate(...)` to
+			// join using the provided `Entry` objects instead of doing per-head block fetches.
+			const requestResolve = resolve && !replicate;
+			queryRequestCoerced.resolve = requestResolve;
 			queryRequestCoerced.fetch = queryRequestCoerced.fetch ?? 10;
-			const replicateFlag = !resolve && replicate ? true : false;
+			const replicateFlag = !requestResolve && replicate ? true : false;
 			queryRequestCoerced.replicate = replicateFlag;
 			const ttlSource =
 				typeof remoteOptions === "object" &&
@@ -4251,19 +4255,26 @@ export class DocumentIndex<
 			}
 		};
 
-		return {
-			close,
-			next,
-			done: doneFn,
-			pending: async () => {
-				try {
-					await fetchPromise;
-					if (!done && keepRemoteAlive) {
-						await fetchAtLeast(1);
+			return {
+				close,
+				next,
+				done: doneFn,
+				pending: async () => {
+					try {
+						await fetchPromise;
+						// In push-update mode, remotes will stream new results proactively.
+						// After the iterator has been primed (`first === true`), calling
+						// `fetchAtLeast(1)` from `pending()` can double-count by pulling from
+						// the remote iterator while we also have pushed results buffered locally.
+						//
+						// We still need to prime the iterator at least once so `pending()` is meaningful
+						// even before the first `next(...)` call.
+						if (!done && keepRemoteAlive && (!pushUpdates || !first)) {
+							await fetchAtLeast(1);
+						}
+					} catch (error) {
+						warn("Failed to refresh iterator pending state", error);
 					}
-				} catch (error) {
-					warn("Failed to refresh iterator pending state", error);
-				}
 
 				let total = 0;
 				for (const buffer of peerBufferMap.values()) {
@@ -4273,10 +4284,11 @@ export class DocumentIndex<
 			},
 			all: async () => {
 				drain = true;
+				const drainBatchSize = replicate ? 1000 : 100;
 				let result: ValueTypeFromRequest<Resolve, T, I>[] = [];
 				let c = 0;
 				while (doneFn() !== true) {
-					let batch = await next(100);
+					let batch = await next(drainBatchSize);
 					c += batch.length;
 					if (c > WARNING_WHEN_ITERATING_FOR_MORE_THAN) {
 						warn(
@@ -4304,9 +4316,10 @@ export class DocumentIndex<
 			},
 			[Symbol.asyncIterator]: async function* () {
 				drain = true;
+				const drainBatchSize = replicate ? 1000 : 100;
 				let c = 0;
 				while (doneFn() !== true) {
-					const batch = await next(100);
+					const batch = await next(drainBatchSize);
 					c += batch.length;
 					if (c > WARNING_WHEN_ITERATING_FOR_MORE_THAN) {
 						warn(

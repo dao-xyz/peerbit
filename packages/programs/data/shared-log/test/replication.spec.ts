@@ -13,7 +13,11 @@ import { expect } from "chai";
 import mapSeries from "p-each-series";
 import sinon from "sinon";
 import { BlocksMessage } from "../src/blocks.js";
-import { ExchangeHeadsMessage, RequestIPrune } from "../src/exchange-heads.js";
+import {
+	ExchangeHeadsMessage,
+	RequestIPrune,
+	ResponseIPrune,
+} from "../src/exchange-heads.js";
 import {
 	type ReplicationOptions,
 	createReplicationDomainHash,
@@ -23,6 +27,7 @@ import type { ReplicationRangeIndexable } from "../src/ranges.js";
 import {
 	AbsoluteReplicas,
 	AddedReplicationSegmentMessage,
+	AllReplicatingSegmentsMessage,
 	decodeReplicas,
 	maxReplicas,
 } from "../src/replication.js";
@@ -35,6 +40,7 @@ import {
 	collectMessagesFn,
 	dbgLogs,
 	getReceivedHeads,
+	slowDownMessage,
 	slowDownSend,
 	waitForConverged,
 } from "./utils.js";
@@ -3503,6 +3509,377 @@ testSetups.forEach((setup) => {
 								throw error;
 						}
 					});
+
+				it("does not lose entries when ranges rotate with delayed replication updates (prune delay 0)", async () => {
+					const entryCount = 120;
+					const ranges = [
+						{ offset: 0, factor: 0.34 },
+						{ offset: 0.34, factor: 0.33 },
+						{ offset: 0.67, factor: 0.33 },
+					];
+
+					db1 = await session.peers[0].open(new EventStore<string, any>(), {
+						args: {
+							replicate: ranges[0],
+							replicas: {
+								min: 1,
+							},
+							timeUntilRoleMaturity: 0, // avoid extra change events while maturing
+							waitForPruneDelay: 0,
+							setup,
+						},
+					});
+
+					db2 = (await EventStore.open<EventStore<string, any>>(
+						db1.address!,
+						session.peers[1],
+						{
+							args: {
+								replicate: ranges[1],
+								replicas: {
+									min: 1,
+								},
+								timeUntilRoleMaturity: 0,
+								waitForPruneDelay: 0,
+								setup,
+							},
+						},
+					))!;
+
+					db3 = (await EventStore.open<EventStore<string, any>>(
+						db1.address!,
+						session.peers[2],
+						{
+							args: {
+								replicate: ranges[2],
+								replicas: {
+									min: 1,
+								},
+								timeUntilRoleMaturity: 0,
+								waitForPruneDelay: 0,
+								setup,
+							},
+						},
+					))!;
+
+					await db1.waitFor(session.peers[1].peerId);
+					await db1.waitFor(session.peers[2].peerId);
+					await db2.waitFor(session.peers[0].peerId);
+					await db2.waitFor(session.peers[2].peerId);
+					await db3.waitFor(session.peers[0].peerId);
+					await db3.waitFor(session.peers[1].peerId);
+
+					await db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+						eager: true,
+						timeout: 60_000,
+					});
+					await db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
+						eager: true,
+						timeout: 60_000,
+					});
+
+					for (let i = 0; i < entryCount; i++) {
+						await db1.add("hello" + i, { meta: { next: [] } });
+					}
+
+					const minExpected = Math.floor(entryCount * 0.1);
+					await waitForResolved(
+						() => {
+							expect(db2.log.log.length).to.be.greaterThan(minExpected);
+							expect(db3.log.log.length).to.be.greaterThan(minExpected);
+							expect(db1.log.log.length).to.be.greaterThan(minExpected);
+							expect(db1.log.log.length).to.be.lessThan(entryCount - minExpected);
+						},
+						{ timeout: 60_000, delayInterval: 500 },
+					);
+
+					await Promise.all([
+						db1.log.waitForPruned({ timeout: 60_000 }),
+						db2.log.waitForPruned({ timeout: 60_000 }),
+						db3.log.waitForPruned({ timeout: 60_000 }),
+					]);
+
+					const initialDb1 = new Set(
+						(await db1.log.log.toArray()).map((entry) => entry.hash),
+					);
+					const initialDb2 = new Set(
+						(await db2.log.log.toArray()).map((entry) => entry.hash),
+					);
+					const initialDb3 = new Set(
+						(await db3.log.log.toArray()).map((entry) => entry.hash),
+					);
+					const initialUnion = new Set([
+						...initialDb1,
+						...initialDb2,
+						...initialDb3,
+					]);
+					expect(initialUnion.size).to.equal(entryCount);
+
+					// Delay db3's replication segment announcements so db1+db2 act on stale
+					// responsibility info while pruning/migrating.
+					const slowController = new AbortController();
+					slowDownMessage(
+						db3.log,
+						AddedReplicationSegmentMessage,
+						2000,
+						slowController.signal,
+					);
+					slowDownMessage(
+						db3.log,
+						AllReplicatingSegmentsMessage,
+						2000,
+						slowController.signal,
+					);
+
+					const range1 = (
+						await db1.log.getMyReplicationSegments()
+					)[0].toReplicationRange();
+					const range2 = (
+						await db2.log.getMyReplicationSegments()
+					)[0].toReplicationRange();
+					const range3 = (
+						await db3.log.getMyReplicationSegments()
+					)[0].toReplicationRange();
+
+					await Promise.all([
+						// Rotate ranges: 0 -> 1, 1 -> 2, 2 -> 0
+						db1.log.replicate({ id: range1.id, ...ranges[1] }),
+						db2.log.replicate({ id: range2.id, ...ranges[2] }),
+						db3.log.replicate({ id: range3.id, ...ranges[0] }),
+					]);
+
+					slowController.abort();
+
+					await waitForResolved(
+						async () => {
+							const db1Hashes = new Set(
+								(await db1.log.log.toArray()).map((entry) => entry.hash),
+							);
+							const movedOutDb1 = [...initialDb1].filter(
+								(h) => !db1Hashes.has(h),
+							).length;
+							expect(movedOutDb1).to.be.greaterThan(
+								Math.max(1, Math.floor(initialDb1.size * 0.5)),
+							);
+
+							const db2Hashes = (await db2.log.log.toArray()).map(
+								(entry) => entry.hash,
+							);
+							const db3Hashes = (await db3.log.log.toArray()).map(
+								(entry) => entry.hash,
+							);
+							const union = new Set([
+								...db1Hashes,
+								...db2Hashes,
+								...db3Hashes,
+							]);
+							expect(union.size).to.equal(entryCount);
+						},
+						{ timeout: 90_000, delayInterval: 500 },
+					);
+
+					await Promise.all([
+						db1.log.waitForPruned({ timeout: 60_000 }),
+						db2.log.waitForPruned({ timeout: 60_000 }),
+						db3.log.waitForPruned({ timeout: 60_000 }),
+					]);
+
+					const finalDb1 = new Set(
+						(await db1.log.log.toArray()).map((entry) => entry.hash),
+					);
+					const finalDb2 = new Set(
+						(await db2.log.log.toArray()).map((entry) => entry.hash),
+					);
+					const finalDb3 = new Set(
+						(await db3.log.log.toArray()).map((entry) => entry.hash),
+					);
+					const finalUnion = new Set([...finalDb1, ...finalDb2, ...finalDb3]);
+					expect(finalUnion.size).to.equal(entryCount);
+
+					const movedOutDb1 = [...initialDb1].filter((h) => !finalDb1.has(h))
+						.length;
+					const movedOutDb2 = [...initialDb2].filter((h) => !finalDb2.has(h))
+						.length;
+					const movedOutDb3 = [...initialDb3].filter((h) => !finalDb3.has(h))
+						.length;
+					expect(movedOutDb1).to.be.greaterThan(0);
+					expect(movedOutDb2).to.be.greaterThan(0);
+					expect(movedOutDb3).to.be.greaterThan(0);
+				});
+
+				it("does not lose entries with delayed prune messages across rapid range rotations (prune delay 0)", async () => {
+					const entryCount = 120;
+					const ranges = [
+						{ offset: 0, factor: 0.34 },
+						{ offset: 0.34, factor: 0.33 },
+						{ offset: 0.67, factor: 0.33 },
+					];
+
+					db1 = await session.peers[0].open(new EventStore<string, any>(), {
+						args: {
+							replicate: ranges[0],
+							replicas: {
+								min: 1,
+							},
+							timeUntilRoleMaturity: 0,
+							waitForPruneDelay: 0,
+							setup,
+						},
+					});
+
+					db2 = (await EventStore.open<EventStore<string, any>>(
+						db1.address!,
+						session.peers[1],
+						{
+							args: {
+								replicate: ranges[1],
+								replicas: {
+									min: 1,
+								},
+								timeUntilRoleMaturity: 0,
+								waitForPruneDelay: 0,
+								setup,
+							},
+						},
+					))!;
+
+					db3 = (await EventStore.open<EventStore<string, any>>(
+						db1.address!,
+						session.peers[2],
+						{
+							args: {
+								replicate: ranges[2],
+								replicas: {
+									min: 1,
+								},
+								timeUntilRoleMaturity: 0,
+								waitForPruneDelay: 0,
+								setup,
+							},
+						},
+					))!;
+
+					await db1.waitFor(session.peers[1].peerId);
+					await db1.waitFor(session.peers[2].peerId);
+					await db2.waitFor(session.peers[0].peerId);
+					await db2.waitFor(session.peers[2].peerId);
+					await db3.waitFor(session.peers[0].peerId);
+					await db3.waitFor(session.peers[1].peerId);
+
+					await db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+						eager: true,
+						timeout: 60_000,
+					});
+					await db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
+						eager: true,
+						timeout: 60_000,
+					});
+
+					for (let i = 0; i < entryCount; i++) {
+						await db1.add("hello" + i, { meta: { next: [] } });
+					}
+
+					await waitForResolved(
+						() => {
+							expect(db1.log.log.length).to.be.greaterThan(0);
+							expect(db2.log.log.length).to.be.greaterThan(0);
+							expect(db3.log.log.length).to.be.greaterThan(0);
+						},
+						{ timeout: 60_000, delayInterval: 500 },
+					);
+
+					await Promise.all([
+						db1.log.waitForPruned({ timeout: 60_000 }),
+						db2.log.waitForPruned({ timeout: 60_000 }),
+						db3.log.waitForPruned({ timeout: 60_000 }),
+					]);
+
+					const initialUnion = new Set([
+						...(await db1.log.log.toArray()).map((entry) => entry.hash),
+						...(await db2.log.log.toArray()).map((entry) => entry.hash),
+						...(await db3.log.log.toArray()).map((entry) => entry.hash),
+					]);
+					expect(initialUnion.size).to.equal(entryCount);
+
+					const slowController = new AbortController();
+
+					// Keep replication updates slow, but allow many prune messages to get "in flight".
+					slowDownMessage(
+						db1.log,
+						RequestIPrune,
+						1500,
+						slowController.signal,
+					);
+					slowDownMessage(
+						db2.log,
+						RequestIPrune,
+						1500,
+						slowController.signal,
+					);
+					slowDownMessage(
+						db2.log,
+						ResponseIPrune,
+						1500,
+						slowController.signal,
+					);
+					slowDownMessage(
+						db3.log,
+						ResponseIPrune,
+						1500,
+						slowController.signal,
+					);
+
+					const range1 = (
+						await db1.log.getMyReplicationSegments()
+					)[0].toReplicationRange();
+					const range2 = (
+						await db2.log.getMyReplicationSegments()
+					)[0].toReplicationRange();
+					const range3 = (
+						await db3.log.getMyReplicationSegments()
+					)[0].toReplicationRange();
+
+					// Rotation 1: 0 -> 1, 1 -> 2, 2 -> 0
+					await Promise.all([
+						db1.log.replicate({ id: range1.id, ...ranges[1] }),
+						db2.log.replicate({ id: range2.id, ...ranges[2] }),
+						db3.log.replicate({ id: range3.id, ...ranges[0] }),
+					]);
+
+					// Rotation 2: rotate back immediately, while prune messages are still delayed.
+					await Promise.all([
+						db1.log.replicate({ id: range1.id, ...ranges[0] }),
+						db2.log.replicate({ id: range2.id, ...ranges[1] }),
+						db3.log.replicate({ id: range3.id, ...ranges[2] }),
+					]);
+
+					slowController.abort();
+
+					await waitForResolved(
+						async () => {
+							const union = new Set([
+								...(await db1.log.log.toArray()).map((entry) => entry.hash),
+								...(await db2.log.log.toArray()).map((entry) => entry.hash),
+								...(await db3.log.log.toArray()).map((entry) => entry.hash),
+							]);
+							expect(union.size).to.equal(entryCount);
+						},
+						{ timeout: 90_000, delayInterval: 500 },
+					);
+
+					await Promise.all([
+						db1.log.waitForPruned({ timeout: 60_000 }),
+						db2.log.waitForPruned({ timeout: 60_000 }),
+						db3.log.waitForPruned({ timeout: 60_000 }),
+					]);
+
+					const finalUnion = new Set([
+						...(await db1.log.log.toArray()).map((entry) => entry.hash),
+						...(await db2.log.log.toArray()).map((entry) => entry.hash),
+						...(await db3.log.log.toArray()).map((entry) => entry.hash),
+					]);
+					expect(finalUnion.size).to.equal(entryCount);
+				});
 
 				it("replace range with another node write after join", async () => {
 					const db1 = await session.peers[0].open(
