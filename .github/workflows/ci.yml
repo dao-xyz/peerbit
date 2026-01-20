@@ -11,9 +11,11 @@ on:
 jobs:
   test_push:
     if: github.event_name == 'push'
-    name: Test (Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
+    name: Test (${{ matrix.test_cmd }}, Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    env:
+      PEERBIT_TEST_SESSION: mock
     strategy:
        matrix:
         os: [ ubuntu-22.04 ]
@@ -47,9 +49,11 @@ jobs:
 
   test_pr:
     if: github.event_name == 'pull_request'
-    name: Test (Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
+    name: Test (${{ matrix.test_cmd }}, Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    env:
+      PEERBIT_TEST_SESSION: mock
     strategy:
        matrix:
         os: [ ubuntu-22.04 ]
