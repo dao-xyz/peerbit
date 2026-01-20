@@ -2360,6 +2360,14 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 			distanceBefore < widthToCoverScaled &&
 			coveredLength >= widthToCoverScaled;
 
+		// If we hit the target width by jumping to a non-intersecting range, make sure
+		// we still include that last peer. Otherwise we can end up returning only the
+		// start peer even though additional peers are required to satisfy coverage.
+		if (isLast && !nextCandidate[1] /*  || equals(endRect.id, current.id) */) {
+			ret.add(current.hash);
+			break;
+		}
+
 		if (
 			!isLast ||
 			nextCandidate[1] ||
@@ -2393,10 +2401,6 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 				)
 		) {
 			ret.add(current.hash);
-		}
-
-		if (isLast && !nextCandidate[1] /*  || equals(endRect.id, current.id) */) {
-			break;
 		}
 
 		if (matured) {
