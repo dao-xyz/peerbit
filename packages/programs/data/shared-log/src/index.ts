@@ -3664,27 +3664,54 @@ export class SharedLog<
 			return 0;
 		}
 
-		const now = +new Date();
-		const subscribers = this.rpc.closed
-			? 1
-			: ((await this.node.services.pubsub.getSubscribers(this.rpc.topic))
-					?.length ?? 1);
-		const diffToOldest =
-			subscribers > 1 ? now - this.oldestOpenTime - 1 : Number.MAX_SAFE_INTEGER;
+		// Explicitly disable maturity gating (used by many tests).
+		if (this.timeUntilRoleMaturity <= 0) {
+			return 0;
+		}
 
-		const result = Math.min(
-			this.timeUntilRoleMaturity,
-			Math.max(diffToOldest, this.timeUntilRoleMaturity),
-			Math.max(
-				Math.round(
-					(this.timeUntilRoleMaturity * Math.log(subscribers + 1)) / 3,
-				),
-				this.timeUntilRoleMaturity,
-			),
-		); // / 3 so that if 2 replicators and timeUntilRoleMaturity = 1e4 the result will be 1
+		// If we're alone (or pubsub isn't ready), a fixed maturity time is sufficient.
+		// When there are multiple replicators we want a stable threshold that doesn't
+		// depend on "now" (otherwise it can drift and turn into a flake).
+		let subscribers = 1;
+		if (!this.rpc.closed) {
+			try {
+				subscribers =
+					(await this.node.services.pubsub.getSubscribers(this.rpc.topic))
+						?.length ?? 1;
+			} catch {
+				// Best-effort only; fall back to 1.
+			}
+		}
 
-		return result;
-		/* return Math.min(1e3, this.timeUntilRoleMaturity); */
+		if (subscribers <= 1) {
+			return this.timeUntilRoleMaturity;
+		}
+
+		// Use replication range timestamps to compute a stable "age gap" between the
+		// newest and oldest known roles. This keeps the oldest role mature while
+		// preventing newer roles from being treated as mature purely because time
+		// passes between test steps / network events.
+		let newestOpenTime = this.openTime;
+		try {
+			const newestIterator = await this.replicationIndex.iterate(
+				{
+					sort: [new Sort({ key: "timestamp", direction: "desc" })],
+				},
+				{ shape: { timestamp: true }, reference: true },
+			);
+			const newestTimestampFromDB = (await newestIterator.next(1))[0]?.value
+				.timestamp;
+			await newestIterator.close();
+			if (newestTimestampFromDB != null) {
+				newestOpenTime = Number(newestTimestampFromDB);
+			}
+		} catch {
+			// Best-effort only; fall back to local open time.
+		}
+
+		const ageGapToOldest = newestOpenTime - this.oldestOpenTime;
+		const roleAge = Math.max(this.timeUntilRoleMaturity, ageGapToOldest);
+		return roleAge < 0 ? 0 : roleAge;
 	}
 
 	async findLeaders(
@@ -4055,11 +4082,28 @@ export class SharedLog<
 
 			let cursor: NumberFromType<R>[] | undefined = undefined;
 
-			const timeout = setTimeout(async () => {
-				reject(
-					new Error("Timeout for checked pruning: Closed: " + this.closed),
+			// Checked prune requests can legitimately take longer than a fixed 10s:
+			// - The remote may not have the entry yet and will wait up to `_respondToIHaveTimeout`
+			// - Leadership/replicator information may take up to `waitForReplicatorTimeout` to settle
+			// If we time out too early we can end up with permanently prunable heads that never
+			// get retried (a common CI flake in "prune before join" tests).
+			const checkedPruneTimeoutMs =
+				options?.timeout ??
+				Math.max(
+					10_000,
+					Number(this._respondToIHaveTimeout ?? 0) +
+						this.waitForReplicatorTimeout +
+						PRUNE_DEBOUNCE_INTERVAL * 2,
 				);
-			}, options?.timeout ?? 1e4);
+
+			const timeout = setTimeout(() => {
+				reject(
+					new Error(
+						`Timeout for checked pruning after ${checkedPruneTimeoutMs}ms (closed=${this.closed})`,
+					),
+				);
+			}, checkedPruneTimeoutMs);
+			timeout.unref?.();
 
 			this._pendingDeletes.set(entry.hash, {
 				promise: deferredPromise,

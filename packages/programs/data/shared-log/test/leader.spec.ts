@@ -669,7 +669,8 @@ describe(`isLeader`, function () {
 			}
 		});
 
-		it("reachableOnly", async () => {
+		it("reachableOnly", async function () {
+			this.timeout(120_000);
 			await session.stop();
 
 			session = await TestSession.connected(2, [
@@ -681,13 +682,13 @@ describe(`isLeader`, function () {
 				},
 			]);
 
-			let db1Factor = 0.3;
+			const db1Factor = 0.3;
 
 			const store = new EventStore<string, any>();
 			db1 = await session.peers[0].open(store, {
 				args: {
 					replicate: {
-						factor: db1Factor, // numerical accuracy is bad so we need to use 0.5001 to make sure a single node can cover 0.5 of the content space
+						factor: db1Factor,
 					},
 					replicas: {
 						min: 2,
@@ -702,7 +703,7 @@ describe(`isLeader`, function () {
 				{
 					args: {
 						replicate: {
-							factor: 0.4999, // numerical accuracy is bad so we need to use 0.5001 to make sure a single node can cover 0.5 of the content space
+							factor: 0.4999,
 							offset: 0.5,
 						},
 						replicas: {
@@ -713,36 +714,49 @@ describe(`isLeader`, function () {
 				},
 			);
 
-				await waitForResolved(
-					async () => {
-						expect((await db1.log.getReplicators()).size).equal(2);
+			await db1.waitFor(session.peers[1].peerId);
+			await db2.waitFor(session.peers[0].peerId);
 
-						expect((await db2.log.getReplicators()).size).equal(2);
+			await Promise.all([
+				db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+					eager: true,
+					timeout: 60_000,
+				}),
+				db2.log.waitForReplicator(session.peers[0].identity.publicKey, {
+					eager: true,
+					timeout: 60_000,
+				}),
+			]);
 
-				expect(
-					[
-						...(await db1.log.getCover({ args: undefined }, { roleAge: 0 })),
-					].sort(),
-					).to.deep.equal(
-						[...session.peers.map((x) => x.identity.publicKey.hashcode())].sort(),
-					);
+			await waitForResolved(
+				async () => {
+					expect((await db1.log.getReplicators()).size).equal(2);
+					expect((await db2.log.getReplicators()).size).equal(2);
+
+					const expected = [
+						...session.peers.map((x) => x.identity.publicKey.hashcode()),
+					].sort();
 
 					expect(
-					[
-						...(await db1.log.getCover(
-							{ args: undefined },
-							{ roleAge: 0, reachableOnly: true },
-						)),
-					].sort(),
-					).to.deep.equal(
-						[...session.peers.map((x) => x.identity.publicKey.hashcode())].sort(),
-					);
-					},
-					{
-						timeout: 60 * 1000,
-						timeoutMessage: "reachableOnly cover not ready",
-					},
-				);
+						[
+							...(await db1.log.getCover({ args: undefined }, { roleAge: 0 })),
+						].sort(),
+					).to.deep.equal(expected);
+
+					expect(
+						[
+							...(await db1.log.getCover(
+								{ args: undefined },
+								{ roleAge: 0, reachableOnly: true },
+							)),
+						].sort(),
+					).to.deep.equal(expected);
+				},
+				{
+					timeout: 60 * 1000,
+					timeoutMessage: "reachableOnly cover not ready",
+				},
+			);
 
 			await db1.close();
 			await db2.close();
@@ -767,38 +781,39 @@ describe(`isLeader`, function () {
 			expect(db1FactorLoaded[0]).to.be.closeTo(db1Factor, 0.01); // loaded last factor
 			expect(db1FactorLoaded.length).to.equal(1); // only one segment loaded
 
-				await waitForResolved(
-					async () => {
-						const cover = await db1.log.getCover(
-							{ args: undefined },
-							{ roleAge: 0 },
-						);
-				expect(cover).to.include(
-					session.peers[0].identity.publicKey.hashcode(),
-				);
-				expect(new Set(cover).size).to.equal(cover.length);
-				const loadedReplicators = Array.from(
-					(await db1.log.getReplicators()).keys(),
-				);
-				expect(cover.every((x) => loadedReplicators.includes(x))).to.be.true;
+			await waitForResolved(
+				async () => {
+					const cover = await db1.log.getCover(
+						{ args: undefined },
+						{ roleAge: 0 },
+					);
+					expect(cover).to.include(
+						session.peers[0].identity.publicKey.hashcode(),
+					);
+					expect(new Set(cover).size).to.equal(cover.length);
 
-				const reachable = await db1.log.getCover(
-					{ args: undefined },
-					{ roleAge: 0, reachableOnly: true },
-				);
-				expect(reachable).to.include(
-					session.peers[0].identity.publicKey.hashcode(),
-				);
-				expect(new Set(reachable).size).to.equal(reachable.length);
+					const loadedReplicators = Array.from(
+						(await db1.log.getReplicators()).keys(),
+					);
+					expect(cover.every((x) => loadedReplicators.includes(x))).to.be.true;
+
+					const reachable = await db1.log.getCover(
+						{ args: undefined },
+						{ roleAge: 0, reachableOnly: true },
+					);
+					expect(reachable).to.include(
+						session.peers[0].identity.publicKey.hashcode(),
+					);
+					expect(new Set(reachable).size).to.equal(reachable.length);
 					expect(reachable.every((x) => loadedReplicators.includes(x))).to.be
 						.true;
-					},
-					{
-						timeout: 60 * 1000,
-						timeoutMessage: "reachableOnly cover not stable after reload",
-					},
-				);
-			});
+				},
+				{
+					timeout: 60 * 1000,
+					timeoutMessage: "reachableOnly cover not stable after reload",
+				},
+			);
+		});
 
 		describe("eager", () => {
 			it("eager, me not-mature, all included", async () => {
