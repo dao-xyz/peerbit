@@ -2242,7 +2242,7 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 		nextLocation: NumberFromType<R>,
 		roleAge: number,
 	) => {
-		let next = await fetchOne(
+		const next = await fetchOne(
 			iterateRangesContainingPoint<undefined, R>(peers, nextLocation, {
 				sort: [new Sort({ key: "end2", direction: SortDirection.DESC })],
 				time: {
@@ -2251,7 +2251,7 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 					now,
 				},
 			}),
-		); // get entersecting sort by largest end2
+		); // get intersecting sort by largest end2
 		return next;
 	};
 
@@ -2260,7 +2260,7 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 		roleAge: number,
 	) => {
 		// if not get closest from above
-		let next = await fetchOne<undefined, R>(
+		const next = await fetchOne<undefined, R>(
 			getClosest("above", peers, nextLocation, true, properties.numbers, {
 				time: {
 					matured: true,
@@ -2269,32 +2269,12 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 				},
 			}),
 		);
+
 		// `getClosest` wraps around. When the target cover range is not wrapped, we must not
-		// wrap when searching "above" (otherwise we can loop forever or select peers on the
-		// wrong side of the range).
-		if (next && endIsWrapped) {
-			const wrappedResult = next.start1 < nextLocation;
-
-			// Target cover range wraps (endLocation <= startLocation). After we've already
-			// crossed the wrap boundary once, we should not step beyond `endLocation` in the
-			// second segment (near zero).
-			// NOTE: Apply this restriction only for `roleAge === 0` (no maturity filtering).
-			// When filtering by maturity (`roleAge > 0`), we prefer selecting a mature
-			// replicator even if it lies beyond `endLocation` over falling back to
-			// potentially-unmatured peers.
-			if (wrappedOnce && roleAge === 0) {
-				if (wrappedResult && next.start1 > endLocation) {
-					return undefined;
-				}
-
-				if (
-					!wrappedResult &&
-					nextLocation <= endLocation &&
-					next.start1 > endLocation
-				) {
-					return undefined;
-				}
-			}
+		// accept wrapped candidates from "above" (otherwise we can loop forever or select peers
+		// on the wrong side of the range).
+		if (next && !endIsWrapped && next.start1 < nextLocation) {
+			return undefined;
 		}
 		return next;
 	};
@@ -2392,41 +2372,44 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 		let last = current;
 		current = nextCandidate[0];
 
-		let isLast =
-			distanceBefore < widthToCoverScaled &&
-			coveredLength >= widthToCoverScaled;
+		const isLast =
+			distanceBefore < widthToCoverScaled && coveredLength >= widthToCoverScaled;
+
+		const lastDistanceToEndLocation = properties.numbers.min(
+			getDistance(
+				last.start1,
+				endLocation,
+				"closest",
+				properties.numbers.maxValue,
+			),
+			getDistance(
+				last.end2,
+				endLocation,
+				"closest",
+				properties.numbers.maxValue,
+			),
+		);
+
+		const currentDistanceToEndLocation = properties.numbers.min(
+			getDistance(
+				current.start1,
+				endLocation,
+				"closest",
+				properties.numbers.maxValue,
+			),
+			getDistance(
+				current.end2,
+				endLocation,
+				"closest",
+				properties.numbers.maxValue,
+			),
+		);
 
 		if (
 			!isLast ||
 			nextCandidate[1] ||
-			properties.numbers.min(
-				getDistance(
-					last.start1,
-					endLocation,
-					"closest",
-					properties.numbers.maxValue,
-				),
-				getDistance(
-					last.end2,
-					endLocation,
-					"closest",
-					properties.numbers.maxValue,
-				),
-			) >
-				properties.numbers.min(
-					getDistance(
-						current.start1,
-						endLocation,
-						"closest",
-						properties.numbers.maxValue,
-					),
-					getDistance(
-						current.end2,
-						endLocation,
-						"closest",
-						properties.numbers.maxValue,
-					),
-				)
+			!last.contains(endLocation) ||
+			lastDistanceToEndLocation > currentDistanceToEndLocation
 		) {
 			ret.add(current.hash);
 		}
@@ -2657,19 +2640,19 @@ export const mergeReplicationChanges = <R extends NumericType>(
 			let results: ReplicationChange<ReplicationRangeIndexable<R>>[] = [];
 			let consumed: Set<number> = new Set();
 			for (let i = 0; i < v.length; i++) {
-				// if segment is removed and we have previously processed it
-				// then go over each overlapping added segment add remove the removal,
-				// equivalent is that this would represent  (1 - 1 + 1) = 1
+				// If segment is removed and we have previously processed it then go over each
+				// overlapping added segment and remove the overlap. Equivalent to: (1 - 1 + 1) = 1.
 				if (v[i].type === "removed" || v[i].type === "replaced") {
 					if (rebalanceHistory.has(v[i].range.rangeHash)) {
-						let vStart = v.length;
+						let adjusted = false;
+						const vStart = v.length;
 						for (let j = i + 1; j < vStart; j++) {
 							const newer = v[j];
 							if (newer.type === "added" && !newer.matured) {
-								const {
-									rangesFromA: updatedRemoved,
-									rangesFromB: updatedNewer,
-								} = symmetricDifferenceRanges(v[i].range, newer.range);
+								adjusted = true;
+								const { rangesFromA: updatedRemoved, rangesFromB: updatedNewer } =
+									symmetricDifferenceRanges(v[i].range, newer.range);
+
 								for (const diff of updatedRemoved) {
 									results.push({
 										range: diff,
@@ -2688,6 +2671,9 @@ export const mergeReplicationChanges = <R extends NumericType>(
 							}
 						}
 						rebalanceHistory.del(v[i].range.rangeHash);
+						if (!adjusted) {
+							results.push(v[i]);
+						}
 					} else {
 						results.push(v[i]);
 					}

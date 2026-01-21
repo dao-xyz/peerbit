@@ -1002,11 +1002,11 @@ resolutions.forEach((resolution) => {
 				});
 			});
 
-			describe("regressions", () => {
-				it("full width: start unmatured, still finds matured cover (wrapped target)", async () => {
-					await create(
-						createReplicationRangeFromNormalized({
-							publicKey: a,
+				describe("regressions", () => {
+					it("full width: start unmatured, still finds matured cover (wrapped target)", async () => {
+						await create(
+							createReplicationRangeFromNormalized({
+								publicKey: a,
 							width: 1,
 							offset: 0.1,
 							timestamp: 0n,
@@ -1027,14 +1027,41 @@ resolutions.forEach((resolution) => {
 						widthToCoverScaled,
 					});
 
-					expect([...result]).to.have.members([a.hashcode(), b.hashcode()]);
-				});
+						expect([...result]).to.have.members([a.hashcode(), b.hashcode()]);
+					});
 
-				it("wrapped range: distance accounting does not include extra peers", async () => {
-					await create(
-						createReplicationRangeFromNormalized({
-							publicKey: a,
-							width: 0.2,
+					it("wrapped range: still selects next peer after wrap", async () => {
+						await create(
+							createReplicationRangeFromNormalized({
+								publicKey: b,
+								width: 0.3,
+								offset: 0.8,
+								timestamp: 0n,
+							}),
+							createReplicationRangeFromNormalized({
+								publicKey: a,
+								width: 0.4999,
+								offset: 0.5,
+								timestamp: 0n,
+							}),
+						);
+
+						const widthToCoverScaled = numbers.divRound(numbers.maxValue, 2);
+						const result = await getCoverSet({
+							peers,
+							roleAge: 0,
+							start: b,
+							widthToCoverScaled,
+						});
+
+						expect([...result]).to.have.members([a.hashcode(), b.hashcode()]);
+					});
+
+					it("wrapped range: distance accounting does not include extra peers", async () => {
+						await create(
+							createReplicationRangeFromNormalized({
+								publicKey: a,
+								width: 0.2,
 							offset: 0.2,
 							timestamp: 0n,
 						}),
@@ -2786,11 +2813,11 @@ resolutions.forEach((resolution) => {
 							});
 						});
 
-						describe("replace", () => {
-							it("differential between added and removed", async () => {
-								await create(
-									createEntryReplicated({
-										coordinate: denormalizeFn(rotate(0.05)),
+							describe("replace", () => {
+								it("differential between added and removed", async () => {
+									await create(
+										createEntryReplicated({
+											coordinate: denormalizeFn(rotate(0.05)),
 										assignedToRangeBoundary: false,
 										hash: "a",
 										meta: new Meta({
@@ -2880,14 +2907,92 @@ resolutions.forEach((resolution) => {
 										index,
 										cache,
 									),
-								);
-								expect(result.map((x) => x.gid)).to.deep.equal(["c"]);
-							});
+									);
+									expect(result.map((x) => x.gid)).to.deep.equal(["c"]);
+								});
 
-							it("differential between added and replaced", async () => {
-								await create(
-									createEntryReplicated({
-										coordinate: denormalizeFn(rotate(0.05)),
+								it("removed still rebalances when previously processed", async () => {
+									await create(
+										createEntryReplicated({
+											coordinate: denormalizeFn(rotate(0.05)),
+											assignedToRangeBoundary: false,
+											hash: "a",
+											meta: new Meta({
+												clock: new LamportClock({ id: randomBytes(32) }),
+												gid: "a",
+												next: [],
+												type: 0,
+												data: undefined,
+											}),
+										}),
+										createEntryReplicated({
+											coordinate: denormalizeFn(rotate(0.15)),
+											assignedToRangeBoundary: false,
+											hash: "b",
+											meta: new Meta({
+												clock: new LamportClock({ id: randomBytes(32) }),
+												gid: "b",
+												next: [],
+												type: 0,
+												data: undefined,
+											}),
+										}),
+										createEntryReplicated({
+											coordinate: denormalizeFn(rotate(0.29)),
+											assignedToRangeBoundary: false,
+											hash: "c",
+											meta: new Meta({
+												clock: new LamportClock({ id: randomBytes(32) }),
+												gid: "c",
+												next: [],
+												type: 0,
+												data: undefined,
+											}),
+										}),
+									);
+
+									const first = createReplicationRangeFromNormalized({
+										publicKey: a,
+										offset: rotate(0),
+										width: 0.2,
+									});
+
+									const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
+									let result = await consumeAllFromAsyncIterator(
+										toRebalance(
+											[
+												{
+													range: first,
+													type: "added",
+													timestamp: 0n,
+												},
+											],
+											index,
+											cache,
+										),
+									);
+									expect(result.map((x) => x.gid)).to.deep.equal(["a", "b"]);
+
+									result = await consumeAllFromAsyncIterator(
+										toRebalance(
+											[
+												{
+													range: first,
+													type: "removed",
+													timestamp: 1n,
+												},
+											],
+											index,
+											cache,
+										),
+									);
+									expect(result.map((x) => x.gid)).to.deep.equal(["a", "b"]);
+								});
+
+								it("differential between added and replaced", async () => {
+									await create(
+										createEntryReplicated({
+											coordinate: denormalizeFn(rotate(0.05)),
 										assignedToRangeBoundary: false,
 										hash: "a",
 										meta: new Meta({
