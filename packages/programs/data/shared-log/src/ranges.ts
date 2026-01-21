@@ -2269,13 +2269,40 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 				},
 			}),
 		);
+		// `getClosest` wraps around. When the target cover range is not wrapped, we must not
+		// wrap when searching "above" (otherwise we can loop forever or select peers on the
+		// wrong side of the range).
+		if (next && endIsWrapped) {
+			const wrappedResult = next.start1 < nextLocation;
+
+			// Target cover range wraps (endLocation <= startLocation). After we've already
+			// crossed the wrap boundary once, we should not step beyond `endLocation` in the
+			// second segment (near zero).
+			// NOTE: Apply this restriction only for `roleAge === 0` (no maturity filtering).
+			// When filtering by maturity (`roleAge > 0`), we prefer selecting a mature
+			// replicator even if it lies beyond `endLocation` over falling back to
+			// potentially-unmatured peers.
+			if (wrappedOnce && roleAge === 0) {
+				if (wrappedResult && next.start1 > endLocation) {
+					return undefined;
+				}
+
+				if (
+					!wrappedResult &&
+					nextLocation <= endLocation &&
+					next.start1 > endLocation
+				) {
+					return undefined;
+				}
+			}
+		}
 		return next;
 	};
 
 	const resolveNext = async (
 		nextLocation: NumberFromType<R>,
 		roleAge: number,
-	): Promise<[ReplicationRangeIndexable<R>, boolean]> => {
+	): Promise<[ReplicationRangeIndexable<R> | undefined, boolean]> => {
 		const containing = await resolveNextContaining(nextLocation, roleAge);
 		if (containing) {
 			return [containing, true];
@@ -2304,9 +2331,17 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 			coveredLength += toEnd2;
 		} else if (to.wrapped) {
 			// When the range is wrapped and `from` is in the second segment (near zero),
-			// the distance to `end2` does not wrap.
-			// @ts-ignore
-			coveredLength += toEnd2 - from;
+			// the distance to `end2` does not wrap. Otherwise we must wrap to reach `end2`.
+			if (from < to.end2) {
+				// @ts-ignore
+				coveredLength += toEnd2 - from;
+			} else {
+				wrappedOnce = true;
+				// @ts-ignore
+				coveredLength += properties.numbers.maxValue - from;
+				// @ts-ignore
+				coveredLength += toEnd2;
+			}
 		} else {
 			// @ts-ignore
 			coveredLength += to.end1 - from;
@@ -2327,6 +2362,7 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 		(coveredLength <= properties.numbers.maxValue || !wrappedOnce) // eslint-disable-line no-unmodified-loop-condition
 	) {
 		let distanceBefore = coveredLength;
+		const nextLocationBefore = nextLocation;
 
 		let nextCandidate = await resolveNext(nextLocation, roleAge);
 		let matured = true;
@@ -2359,14 +2395,6 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 		let isLast =
 			distanceBefore < widthToCoverScaled &&
 			coveredLength >= widthToCoverScaled;
-
-		// If we hit the target width by jumping to a non-intersecting range, make sure
-		// we still include that last peer. Otherwise we can end up returning only the
-		// start peer even though additional peers are required to satisfy coverage.
-		if (isLast && !nextCandidate[1] /*  || equals(endRect.id, current.id) */) {
-			ret.add(current.hash);
-			break;
-		}
 
 		if (
 			!isLast ||
@@ -2408,13 +2436,22 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 		}
 
 		let startForNext = extraDistanceForNext
-			? properties.numbers.increment(current.end2)
+			? properties.numbers.increment(nextLocation)
 			: current.end2;
 		nextLocation = endIsWrapped
 			? wrappedOnce
 				? properties.numbers.min(startForNext, endLocation)
 				: startForNext
 			: properties.numbers.min(startForNext, endLocation);
+
+		// Safety: ensure we always make progress to avoid infinite loops (can happen when
+		// the chosen range is the same and `nextLocation` doesn't advance).
+		if (
+			nextLocation === nextLocationBefore &&
+			coveredLength === distanceBefore
+		) {
+			break;
+		}
 
 		if (
 			(typeof nextLocation === "bigint" &&
