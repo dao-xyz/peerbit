@@ -27,9 +27,11 @@ type CreateOptions = { libp2p?: Libp2pCreateOptions; directory?: string };
 export class TestSession {
 	private session: SSession<Libp2pExtendServices>;
 	private _peers: Peerbit[];
+	private connectedGroups: Set<Peerbit>[] | undefined;
 	constructor(session: SSession<Libp2pExtendServices>, peers: Peerbit[]) {
 		this.session = session;
 		this._peers = peers;
+		this.wrapPeerStartForReconnect();
 	}
 
 	public get peers(): ProgramClient[] {
@@ -38,11 +40,77 @@ export class TestSession {
 
 	async connect(groups?: ProgramClient[][]) {
 		await this.session.connect(groups?.map((x) => x.map((y) => y)));
+		this.connectedGroups = groups
+			? groups.map((group) => new Set(group as Peerbit[]))
+			: [new Set(this._peers)];
 		return;
 	}
+
+	private wrapPeerStartForReconnect() {
+		const patchedKey = Symbol.for("@peerbit/test-session.reconnect-on-start");
+		for (const peer of this._peers) {
+			const anyPeer = peer as any;
+			if (anyPeer[patchedKey]) {
+				continue;
+			}
+			anyPeer[patchedKey] = true;
+
+			const originalStart = peer.start.bind(peer);
+			peer.start = async () => {
+				await originalStart();
+
+				// Only auto-reconnect for sessions that have been explicitly connected.
+				// This preserves `TestSession.disconnected*()` semantics.
+				if (!this.connectedGroups || peer.libp2p.status !== "started") {
+					return;
+				}
+
+				const peerHash = peer.identity.publicKey.hashcode();
+				const peersToDial = new Set<Peerbit>();
+				for (const group of this.connectedGroups) {
+					if (!group.has(peer)) continue;
+					for (const other of group) {
+						if (other === peer) continue;
+						if (other.libp2p.status !== "started") continue;
+						peersToDial.add(other);
+					}
+				}
+
+				// Re-establish connectivity after a full stop/start. Without this, tests that
+				// restart a peer can fail to resolve programs/blocks because no node dials.
+				await Promise.all(
+					[...peersToDial].map(async (other) => {
+						await peer.dial(other);
+
+						// Also wait for the reverse direction to be fully established; some
+						// protocols require a writable stream on both sides to reply.
+						await Promise.all([
+							other.services.pubsub.waitFor(peerHash, {
+								target: "neighbor",
+								timeout: 10_000,
+							}),
+							other.services.blocks.waitFor(peerHash, {
+								target: "neighbor",
+								timeout: 10_000,
+							}),
+						]);
+					}),
+				);
+			};
+		}
+	}
 	async stop() {
-		await Promise.all(this._peers.map((x) => x.stop()));
-		await Promise.all(this._peers.map((x) => x.libp2p.stop())); // beacuse we initialize libp2p externally (potentially), we have to close externally
+		await Promise.all(this._peers.map((peer) => peer.stop()));
+		// `Peerbit.stop()` stops libp2p for sessions created by `Peerbit.create()`,
+		// but in case a test injected an already-started external libp2p instance,
+		// ensure it's stopped (without double-stopping).
+		await Promise.all(
+			this._peers.map(async (peer) => {
+				if (peer.libp2p.status !== "stopped") {
+					await peer.libp2p.stop();
+				}
+			}),
+		);
 	}
 
 	/**
