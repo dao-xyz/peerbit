@@ -21,16 +21,18 @@ jobs:
         os: [ ubuntu-22.04 ]
         node-version: [22.x]
         test_cmd: 
-          - pnpm run test:part-1
-          - pnpm run test:part-2
-          - pnpm run test:part-3
-          - pnpm run test:part-4
-          - pnpm run test:part-5
+          - pnpm run test:ci:part-1
+          - pnpm run test:ci:part-2
+          - pnpm run test:ci:part-3
+          - pnpm run test:ci:part-4
+          - pnpm run test:ci:part-5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
       - uses: pnpm/action-setup@v4
         with:
           run_install: false
@@ -43,8 +45,13 @@ jobs:
         run: |
           pnpm run build
       - name: Lint
+        if: matrix.test_cmd == 'pnpm run test:ci:part-1'
         run: pnpm run lint
       - name: Tests
+        env:
+          PEERBIT_MOCHA_LOG_TEST_START: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_QUIET: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '10000' || '0' }}
         run: ${{matrix.test_cmd}}
 
   test_pr:
@@ -59,17 +66,19 @@ jobs:
         os: [ ubuntu-22.04 ]
         node-version: [22.x]
         test_cmd: 
-          - pnpm run test:part-1
-          - pnpm run test:part-2
-          - pnpm run test:part-3
-          - pnpm run test:part-4
-          - pnpm run test:part-5
+          - pnpm run test:ci:part-1
+          - pnpm run test:ci:part-2
+          - pnpm run test:ci:part-3
+          - pnpm run test:ci:part-4
+          - pnpm run test:ci:part-5
 
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
       - uses: pnpm/action-setup@v4
         with:
           run_install: false
@@ -82,6 +91,11 @@ jobs:
         run: |
           pnpm run build
       - name: Lint
+        if: matrix.test_cmd == 'pnpm run test:ci:part-1'
         run: pnpm run lint
       - name: Tests
+        env:
+          PEERBIT_MOCHA_LOG_TEST_START: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_QUIET: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '10000' || '0' }}
         run: ${{matrix.test_cmd}}
