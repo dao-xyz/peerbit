@@ -9,8 +9,11 @@ import {
 import { Ed25519PublicKey, PreHash, SignatureWithKey } from "@peerbit/crypto";
 import { Program } from "@peerbit/program";
 import { expect } from "chai";
-import { CanonicalClient } from "../src/index.js";
-import { PeerbitCanonicalClient } from "../src/index.js";
+import {
+	CanonicalClient,
+	PeerbitCanonicalClient,
+	createVariantAdapter,
+} from "../src/index.js";
 
 describe("@peerbit/canonical-client", () => {
 	it("requests peerId and opens ports", async () => {
@@ -377,6 +380,208 @@ describe("@peerbit/canonical-client", () => {
 			CanonicalLoadProgramRequest,
 		) as CanonicalLoadProgramRequest;
 		expect(parsed.timeoutMs).to.equal(123);
+
+		await proxy.close();
+		peer.close();
+		try {
+			control.port2.close();
+		} catch {}
+	});
+
+	it("opens programs by adapter.variant without canOpen()", async () => {
+		@variant("canonical-test-program-2")
+		class TestProgram extends Program<any> {
+			@field({ type: "string" })
+			name: string;
+
+			constructor(properties?: { name?: string }) {
+				super();
+				this.name = properties?.name ?? "";
+			}
+
+			async open(): Promise<void> {}
+		}
+
+		const expectedPublicKey = new Ed25519PublicKey({
+			publicKey: new Uint8Array(32).fill(4),
+		});
+		const expectedPeerId = expectedPublicKey.toPeerId().toString();
+
+		const address = "bafycanonicaltestaddress2";
+		const storedProgram = new TestProgram({ name: "hello-2" });
+		const storedBytes = serialize(storedProgram);
+
+		const adapter = {
+			name: "test-adapter-2",
+			variant: "canonical-test-program-2",
+			open: async ({ program }: { program: TestProgram }) => {
+				return {
+					proxy: {
+						name: program.name,
+						close: async () => {},
+					},
+					address: program.address,
+				};
+			},
+		};
+
+		const control = new MessageChannel();
+		control.port2.start();
+		control.port2.addEventListener("message", (ev) => {
+			const bytes = ev.data as Uint8Array;
+			const msg = deserialize(bytes, CanonicalFrame) as CanonicalFrame;
+			if (!(msg instanceof CanonicalControlRequest)) return;
+
+			if (msg.op === "peerInfo") {
+				control.port2.postMessage(
+					serialize(
+						new CanonicalControlResponse({
+							id: msg.id,
+							ok: true,
+							peerId: expectedPeerId,
+							payload: expectedPublicKey.bytes,
+							strings: [],
+						}),
+					),
+				);
+				return;
+			}
+
+			if (msg.op === "loadProgram") {
+				control.port2.postMessage(
+					serialize(
+						new CanonicalControlResponse({
+							id: msg.id,
+							ok: true,
+							payload: storedBytes,
+						}),
+					),
+				);
+				return;
+			}
+
+			control.port2.postMessage(
+				serialize(
+					new CanonicalControlResponse({
+						id: msg.id,
+						ok: false,
+						error: "Unknown op",
+					}),
+				),
+			);
+		});
+
+		const canonical = new CanonicalClient(control.port1, {
+			requestTimeoutMs: 500,
+		});
+		const peer = await PeerbitCanonicalClient.create(canonical, {
+			adapters: [adapter as any],
+		});
+
+		const proxy = (await peer.open<TestProgram>(address)) as any;
+		expect(proxy).to.have.property("name", "hello-2");
+		expect(proxy).to.have.property("address", address);
+
+		await proxy.close();
+		peer.close();
+		try {
+			control.port2.close();
+		} catch {}
+	});
+
+	it("createVariantAdapter() creates a robust variant matcher", async () => {
+		@variant("canonical-test-program-3")
+		class TestProgram extends Program<any> {
+			@field({ type: "string" })
+			name: string;
+
+			constructor(properties?: { name?: string }) {
+				super();
+				this.name = properties?.name ?? "";
+			}
+
+			async open(): Promise<void> {}
+		}
+
+		const expectedPublicKey = new Ed25519PublicKey({
+			publicKey: new Uint8Array(32).fill(5),
+		});
+		const expectedPeerId = expectedPublicKey.toPeerId().toString();
+
+		const address = "bafycanonicaltestaddress3";
+		const storedProgram = new TestProgram({ name: "hello-3" });
+		const storedBytes = serialize(storedProgram);
+
+		const adapter = createVariantAdapter<TestProgram, any>({
+			name: "test-adapter-3",
+			variant: "canonical-test-program-3",
+			open: async ({ program }) => {
+				return {
+					proxy: {
+						name: program.name,
+						close: async () => {},
+					},
+					address: program.address,
+				};
+			},
+		});
+
+		const control = new MessageChannel();
+		control.port2.start();
+		control.port2.addEventListener("message", (ev) => {
+			const bytes = ev.data as Uint8Array;
+			const msg = deserialize(bytes, CanonicalFrame) as CanonicalFrame;
+			if (!(msg instanceof CanonicalControlRequest)) return;
+
+			if (msg.op === "peerInfo") {
+				control.port2.postMessage(
+					serialize(
+						new CanonicalControlResponse({
+							id: msg.id,
+							ok: true,
+							peerId: expectedPeerId,
+							payload: expectedPublicKey.bytes,
+							strings: [],
+						}),
+					),
+				);
+				return;
+			}
+
+			if (msg.op === "loadProgram") {
+				control.port2.postMessage(
+					serialize(
+						new CanonicalControlResponse({
+							id: msg.id,
+							ok: true,
+							payload: storedBytes,
+						}),
+					),
+				);
+				return;
+			}
+
+			control.port2.postMessage(
+				serialize(
+					new CanonicalControlResponse({
+						id: msg.id,
+						ok: false,
+						error: "Unknown op",
+					}),
+				),
+			);
+		});
+
+		const canonical = new CanonicalClient(control.port1, {
+			requestTimeoutMs: 500,
+		});
+		const peer = await PeerbitCanonicalClient.create(canonical, {
+			adapters: [adapter],
+		});
+
+		const proxy = (await peer.open<TestProgram>(address)) as any;
+		expect(proxy).to.have.property("name", "hello-3");
+		expect(proxy).to.have.property("address", address);
 
 		await proxy.close();
 		peer.close();

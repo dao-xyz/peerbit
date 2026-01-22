@@ -4,6 +4,7 @@ import type {
 	CanonicalClient,
 	CanonicalOpenAdapter,
 	CanonicalOpenMode,
+	CanonicalOpenOptions,
 	ConnectServiceWorkerOptions,
 	ConnectWindowOptions,
 } from "@peerbit/canonical-client";
@@ -11,7 +12,7 @@ import type { Identity, PublicSignKey } from "@peerbit/crypto";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import type { Indices } from "@peerbit/indexer-interface";
 import { logger as createLogger } from "@peerbit/logger";
-import type { Address, OpenOptions, Program } from "@peerbit/program";
+import type { Address, Program } from "@peerbit/program";
 import { waitFor } from "@peerbit/time";
 import * as React from "react";
 import type { JSX } from "react";
@@ -63,7 +64,7 @@ export type PeerbitLike = {
 	bootstrap?: (addresses?: string[] | Multiaddr[]) => Promise<void>;
 	open: <S extends Program<any>>(
 		storeOrAddress: S | Address | string,
-		options?: OpenOptions<S>,
+		options?: CanonicalOpenOptions<S>,
 	) => Promise<S>;
 };
 

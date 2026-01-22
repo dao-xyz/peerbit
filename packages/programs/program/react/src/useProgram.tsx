@@ -23,6 +23,8 @@ export type ProgramClientLike = {
 	) => Promise<P>;
 };
 
+export type UseProgramStatus = "idle" | "loading" | "ready" | "error";
+
 export function useProgram<
 	P extends Program<ExtractArgs<P>, ExtractEvents<P>> &
 		Program<any, ProgramEvents>,
@@ -34,21 +36,30 @@ export function useProgram<
 		keepOpenOnUnmount?: boolean;
 	},
 ) {
-	let [program, setProgram] = useState<P | undefined>();
+	const [program, setProgram] = useState<P | undefined>();
 	const [id, setId] = useState<string | undefined>(options?.id);
-	let [loading, setLoading] = useState(true);
+	const [loading, setLoading] = useState(false);
+	const [error, setError] = useState<Error | undefined>(undefined);
 	const [session, forceUpdate] = useReducer((x) => x + 1, 0);
-	let programLoadingRef = useRef<Promise<P>>(undefined);
+	const programLoadingRef = useRef<Promise<P | undefined> | undefined>(
+		undefined,
+	);
 	const [peers, setPeers] = useState<PublicSignKey[]>([]);
 
-	let closingRef = useRef<Promise<any>>(Promise.resolve());
+	const closingRef = useRef<Promise<any>>(Promise.resolve());
 	/*   if (options?.debug) {
           console.log("useProgram", addressOrOpen, options);
       } */
 	useEffect(() => {
 		if (!peer || !addressOrOpen) {
+			setLoading(false);
+			setError(undefined);
+			setPeers([]);
+			setProgram(undefined);
+			programLoadingRef.current = undefined;
 			return;
 		}
+		setError(undefined);
 		setLoading(true);
 		let changeListener: (() => void) | undefined = undefined;
 
@@ -111,8 +122,13 @@ export function useProgram<
 					return p;
 				})
 				.catch((e: unknown) => {
-					console.error("failed to open", e);
-					throw e;
+					const err = e instanceof Error ? e : new Error(String(e));
+					console.error("failed to open", err);
+					setProgram(undefined);
+					setPeers([]);
+					setError(err);
+					forceUpdate();
+					return undefined;
 				})
 				.finally(() => {
 					setLoading(false);
@@ -127,6 +143,7 @@ export function useProgram<
 			if (programLoadingRef.current) {
 				closingRef.current =
 					programLoadingRef.current.then((p) => {
+						if (!p) return;
 						const unsubscribe = () => {
 							changeListener &&
 								p.events.removeEventListener("join", changeListener);
@@ -155,10 +172,22 @@ export function useProgram<
 			? addressOrOpen
 			: addressOrDefined(addressOrOpen as P),
 	]);
+	const status: UseProgramStatus =
+		!peer || !addressOrOpen
+			? "idle"
+			: loading
+				? "loading"
+				: error
+					? "error"
+					: program
+						? "ready"
+						: "idle";
 	return {
 		program,
 		session,
 		loading,
+		status,
+		error,
 		promise: programLoadingRef.current,
 		peers,
 		id,

@@ -17,7 +17,9 @@ import type { Address, OpenOptions, ProgramClient } from "@peerbit/program";
 import {
 	type CanonicalOpenAdapter,
 	type CanonicalOpenMode,
+	type CanonicalOpenOptions,
 	createManagedProxy,
+	getProgramVariant,
 } from "./auto.js";
 import type { CanonicalChannel } from "./client.js";
 import type { CanonicalClient } from "./index.js";
@@ -242,7 +244,7 @@ export class PeerbitCanonicalClient {
 
 	async open<S extends Program<any>>(
 		storeOrAddress: S | Address,
-		openOptions: OpenOptions<S> = {},
+		openOptions: CanonicalOpenOptions<S> = {},
 	): Promise<S> {
 		const state = this.openState;
 		if (!state || state.adapters.length === 0) {
@@ -269,16 +271,29 @@ export class PeerbitCanonicalClient {
 		}
 
 		const program = storeOrAddress as Program<any>;
+		const programVariant = getProgramVariant(program);
 		const adapter = state.adapters.find((candidate) =>
-			candidate.canOpen(program),
+			typeof candidate.canOpen === "function"
+				? candidate.canOpen(program)
+				: !!programVariant &&
+					(candidate.variants ?? (candidate.variant ? [candidate.variant] : []))
+						.map(String)
+						.includes(programVariant),
 		);
 		if (!adapter) {
+			const knownVariants = state.adapters
+				.flatMap((candidate) =>
+					candidate.variants ?? (candidate.variant ? [candidate.variant] : []),
+				)
+				.filter((x): x is string => typeof x === "string" && x.length > 0);
 			throw new Error(
-				`No canonical adapter registered for ${program.constructor?.name ?? "program"}`,
+				`No canonical adapter registered for ${program.constructor?.name ?? "program"}${
+					programVariant ? ` (variant: '${programVariant}')` : ""
+				}${knownVariants.length ? `. Known variants: ${knownVariants.join(", ")}` : ""}`,
 			);
 		}
 
-		const key = adapter.getKey?.(program as any, openOptions);
+		const key = adapter.getKey?.(program as any, openOptions as OpenOptions<any>);
 		if (adapter.getKey && key === undefined) {
 			throw new Error(
 				`Canonical adapter '${adapter.name}' requires a cache key (adapter.getKey returned undefined)`,
@@ -306,21 +321,21 @@ export class PeerbitCanonicalClient {
 				if (openOptions?.parent) {
 					PeerbitCanonicalClient.attachParent(
 						existingProxy as any,
-						openOptions.parent,
+						openOptions.parent as any,
 					);
 				}
 				return existingProxy as S;
 			}
 		}
 
-		const peer = this as any as ProgramClient;
-		const openPromise = (async () => {
-			const result = await adapter.open({
-				program: program as any,
-				options: openOptions,
-				peer,
-				client: this.canonical,
-			});
+			const peer = this as any as ProgramClient;
+			const openPromise = (async () => {
+				const result = await adapter.open({
+					program: program as any,
+					options: openOptions as OpenOptions<any>,
+					peer,
+					client: this.canonical,
+				});
 
 			let managed: any;
 			managed = createManagedProxy(result.proxy as any, {
@@ -336,7 +351,7 @@ export class PeerbitCanonicalClient {
 
 			this.openState?.proxies.add(managed);
 			if (openOptions?.parent) {
-				PeerbitCanonicalClient.attachParent(managed, openOptions.parent);
+				PeerbitCanonicalClient.attachParent(managed, openOptions.parent as any);
 			}
 			return managed as S;
 		})();
