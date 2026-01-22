@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.0.1](https://github.com/dao-xyz/peerbit/compare/shared-log-proxy-v1.0.0...shared-log-proxy-v1.0.1) (2026-01-22)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/canonical-client bumped to 1.1.0
+    * @peerbit/canonical-host bumped to 1.0.1
+    * @peerbit/log bumped to 5.0.7
+    * @peerbit/program bumped to 5.6.1
+    * @peerbit/shared-log bumped to 12.3.0
+
 ## 1.0.0 (2026-01-17)
 
 

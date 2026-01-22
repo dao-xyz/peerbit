@@ -43,6 +43,25 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.6.0](https://github.com/dao-xyz/peerbit/compare/stream-v4.5.3...stream-v4.6.0) (2026-01-22)
+
+
+### Features
+
+* **stream:** add numeric priority lanes ([5818dd4](https://github.com/dao-xyz/peerbit/commit/5818dd449a108c98f202100d5170ba6e49e95c6a))
+
+
+### Bug Fixes
+
+* **stream:** cleanup waitForEvent listeners ([e0a0fef](https://github.com/dao-xyz/peerbit/commit/e0a0fef1dcceb75f4af327baf3157f75d214a620))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream-interface bumped to 5.4.0
+
 ## [4.5.3](https://github.com/dao-xyz/peerbit/compare/stream-v4.5.2...stream-v4.5.3) (2026-01-16)
 
 

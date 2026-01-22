@@ -66,6 +66,13 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [5.4.0](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.3.1...stream-interface-v5.4.0) (2026-01-22)
+
+
+### Features
+
+* **stream:** add numeric priority lanes ([5818dd4](https://github.com/dao-xyz/peerbit/commit/5818dd449a108c98f202100d5170ba6e49e95c6a))
+
 ## [5.3.1](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.3.0...stream-interface-v5.3.1) (2025-12-30)
 
 

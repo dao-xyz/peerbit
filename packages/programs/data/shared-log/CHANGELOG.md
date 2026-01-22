@@ -389,6 +389,48 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [12.3.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.2.0...shared-log-v12.3.0) (2026-01-22)
+
+
+### Features
+
+* **shared-log:** add sync prioritization options ([fee5046](https://github.com/dao-xyz/peerbit/commit/fee504636bd9900dda876499170087444c2b763a))
+* **shared-log:** make waitForReplicator request loop configurable ([e0f68cd](https://github.com/dao-xyz/peerbit/commit/e0f68cd4def66b8a296ddbfd3ac42124a7b39c75))
+
+
+### Bug Fixes
+
+* **document:** forward shared-log sync options ([874976b](https://github.com/dao-xyz/peerbit/commit/874976b7c668b1dea86d7a88d3393bddf3448fd2))
+* **shared-log:** apply replication segments without waitFor ([83bec78](https://github.com/dao-xyz/peerbit/commit/83bec7834299d877bdae85623daeeb01bcd6940c))
+* **shared-log:** cover selection for wrapped start ([36ad887](https://github.com/dao-xyz/peerbit/commit/36ad887b15756ae6c51eb27bf604d874eab66212))
+* **shared-log:** cover wrap + rebalance removals ([0536b98](https://github.com/dao-xyz/peerbit/commit/0536b981e9031f50b8b87c7c7a12c33f05eb5b1f))
+* **shared-log:** ignore no-op replication resets ([d31c0ff](https://github.com/dao-xyz/peerbit/commit/d31c0ff885f7f5cf71fcd5507005cea5f15bbfce))
+* **shared-log:** include last peer in cover set ([4a1b137](https://github.com/dao-xyz/peerbit/commit/4a1b13733f5e47bb68913fe96cb6e05bdbb942fa))
+* **shared-log:** include peer on cover tie ([e6e0217](https://github.com/dao-xyz/peerbit/commit/e6e02177b1cdacefce8d236596ee6f47883e0df1))
+* **shared-log:** keep requesting replication info ([74bcd55](https://github.com/dao-xyz/peerbit/commit/74bcd552a0348042f41f45b2315708b97b8e8242))
+* **shared-log:** prevent cover wrap loops ([19a7e13](https://github.com/dao-xyz/peerbit/commit/19a7e13a48fd45d55bbd4658bbba2fa8a44acb42))
+* **shared-log:** reachableOnly uses pubsub subscribers ([afdd8c0](https://github.com/dao-xyz/peerbit/commit/afdd8c0fb7eb5059a545530625dde0ab3dfe435e))
+* **shared-log:** request replication info for joins ([ac7de22](https://github.com/dao-xyz/peerbit/commit/ac7de22c5cf831fc8cf3a2b59a24b157dbcdf4e2))
+* **shared-log:** restore cover selection semantics ([fd6d8e7](https://github.com/dao-xyz/peerbit/commit/fd6d8e77b7cf04d7b9a1c6f59065a50944f9d9bb))
+* **shared-log:** stabilize prune + reachableOnly ([55a0ebf](https://github.com/dao-xyz/peerbit/commit/55a0ebf221a5d9d5f10c0d60ebd4c2fc8d628c08))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 5.0.7
+    * @peerbit/program bumped to 5.6.1
+    * @peerbit/rpc bumped to 5.4.16
+    * @peerbit/blocks bumped to 3.1.7
+    * @peerbit/blocks-interface bumped to 1.5.2
+    * @peerbit/indexer-sqlite3 bumped to 2.1.1
+    * @peerbit/pubsub bumped to 4.1.4
+    * @peerbit/pubsub-interface bumped to 4.1.2
+    * @peerbit/stream-interface bumped to 5.4.0
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.3.16
+
 ## [12.2.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.1.3...shared-log-v12.2.0) (2026-01-17)
 
 

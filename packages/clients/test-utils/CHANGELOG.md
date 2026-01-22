@@ -400,6 +400,24 @@
   * dependencies
     * peerbit bumped from 4.0.6 to 4.0.7
 
+## [2.3.16](https://github.com/dao-xyz/peerbit/compare/test-utils-v2.3.15...test-utils-v2.3.16) (2026-01-22)
+
+
+### Bug Fixes
+
+* **test-utils:** reconnect peers after restart ([f992df6](https://github.com/dao-xyz/peerbit/commit/f992df64197fd8533fc4ed87ef1f626c4b8ca0bc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped to 4.4.16
+    * @peerbit/blocks bumped to 3.1.7
+    * @peerbit/program bumped to 5.6.1
+    * @peerbit/pubsub bumped to 4.1.4
+    * @peerbit/stream bumped to 4.6.0
+
 ## [2.3.15](https://github.com/dao-xyz/peerbit/compare/test-utils-v2.3.14...test-utils-v2.3.15) (2026-01-17)
 
 

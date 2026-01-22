@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.1](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v2.1.0...indexer-sqlite3-v2.1.1) (2026-01-22)
+
+
+### Bug Fixes
+
+* **indexer-sqlite3:** correct child FK generation ([369b236](https://github.com/dao-xyz/peerbit/commit/369b236630c8e15da88f2ee7e4f64ed385c39ed2))
+* **indexer-sqlite3:** correct child FK generation ([e2f14de](https://github.com/dao-xyz/peerbit/commit/e2f14dec400b5aa693a1d2caa65e0f0902d5c459))
+
 ## [2.1.0](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v2.0.2...indexer-sqlite3-v2.1.0) (2026-01-17)
 
 
