@@ -1,0 +1,72 @@
+name: Site
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "apps/peerbit-org/**"
+      - "docs/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/site.yml"
+  pull_request:
+    paths:
+      - "apps/peerbit-org/**"
+      - "docs/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/site.yml"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Build site
+        run: pnpm --filter peerbit-org build
+
+      - name: Typecheck site
+        run: pnpm --filter peerbit-org typecheck
+
+      - name: Upload Pages artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/peerbit-org/dist
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
