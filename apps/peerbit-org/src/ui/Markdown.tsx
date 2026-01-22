@@ -22,7 +22,7 @@ export function Markdown({ base, docPath }: { base: string; docPath: string }) {
 			try {
 				const candidates = [docPath];
 				if (docPath.endsWith(".md") && !docPath.endsWith("/README.md")) {
-					candidates.push(docPath.replace(/\\.md$/, "/README.md"));
+					candidates.push(docPath.replace(/\.md$/, "/README.md"));
 				}
 
 				let lastError: string | null = null;
