@@ -1,3 +1,4 @@
+import { getSchema } from "@dao-xyz/borsh";
 import type {
 	Address,
 	OpenOptions,
@@ -13,12 +14,31 @@ export type CanonicalOpenResult<T> = {
 	address?: Address;
 };
 
+/**
+ * Canonical open supports "proxy parents" (managed proxies returned by adapters),
+ * which are not instances of `Program`. This widens `OpenOptions.parent` so apps
+ * don't need `parent: proxy as any`.
+ */
+export type CanonicalOpenOptions<S extends Program<any>> = Omit<
+	OpenOptions<S>,
+	"parent"
+> & {
+	parent?: unknown;
+};
+
 export type CanonicalOpenAdapter<
 	S extends Program<any> = Program<any>,
 	T = unknown,
 > = {
 	name: string;
-	canOpen(program: Program<any>): program is S;
+	/**
+	 * Optional list of borsh @variant strings this adapter can open.
+	 * If `canOpen` is omitted, canonical open will match by comparing
+	 * `getSchema(program.constructor).variant` against these values.
+	 */
+	variant?: string;
+	variants?: string[];
+	canOpen?(program: Program<any>): program is S;
 	getKey?(program: S, options?: OpenOptions<S>): string | undefined;
 	open(ctx: {
 		program: S;
@@ -26,6 +46,41 @@ export type CanonicalOpenAdapter<
 		peer: ProgramClient;
 		client: CanonicalClient;
 	}): Promise<CanonicalOpenResult<T>>;
+};
+
+export const getProgramVariant = (program: Program<any>): string | undefined => {
+	if (!program || typeof program !== "object") return undefined;
+	try {
+		const schema = getSchema((program as any).constructor);
+		const variant = schema?.variant;
+		return typeof variant === "string" ? variant : undefined;
+	} catch {
+		return undefined;
+	}
+};
+
+export const createVariantAdapter = <
+	S extends Program<any> = Program<any>,
+	T = unknown,
+>(options: {
+	name: string;
+	variant: string | string[];
+	getKey?: (program: S, options?: OpenOptions<S>) => string | undefined;
+	open: CanonicalOpenAdapter<S, T>["open"];
+}): CanonicalOpenAdapter<S, T> => {
+	const variants = (
+		Array.isArray(options.variant) ? options.variant : [options.variant]
+	).map(String);
+	return {
+		name: options.name,
+		variants,
+		canOpen: (program: Program<any>): program is S => {
+			const candidate = getProgramVariant(program);
+			return !!candidate && variants.includes(candidate);
+		},
+		getKey: options.getKey,
+		open: options.open,
+	};
 };
 
 type ManagedProxy = {
