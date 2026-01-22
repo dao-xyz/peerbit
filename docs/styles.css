@@ -1,12 +1,68 @@
+:root {
+	--theme-color: #00b5ff;
+	--code-theme-comment: #00b5ff;
+	--mono-hue: 251;
+	--mono-saturation: 7%;
+	--cover-background-image: radial-gradient(ellipse at center left,
+			var(--mono-tint3),
+			transparent);
+
+	--base-font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI,
+		Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+	--base-font-size: 16px;
+
+	--content-max-width: 960px;
+	--sidebar-width: 300px;
+}
+
 .markdown-section {
-	padding: 2rem 20px;
+	padding: 2.5rem 24px;
+}
+
+.app-nav {
+	font-weight: 600;
+}
+
+.app-nav a {
+	border-radius: 9999px;
+	padding: 0.2rem 0.55rem;
+}
+
+.app-nav a:hover {
+	background: var(--mono-tint2);
+}
+
+.sidebar {
+	border-right: 1px solid var(--mono-tint2);
+}
+
+.sidebar-nav a {
+	border-radius: 0.5rem;
+}
+
+.sidebar-nav a:hover {
+	background: var(--mono-tint2);
+}
+
+.markdown-section table {
+	display: block;
+	overflow-x: auto;
+}
+
+section.cover h1 {
+	letter-spacing: -0.02em;
+}
+
+section.cover ul li a {
+	border-radius: 9999px;
 }
 
 /* scrollbar color */
 ::-webkit-scrollbar {
-	background: var(--mono-shade3)
+	background: var(--mono-shade3);
 }
 
 ::-webkit-scrollbar-thumb {
 	background: #888;
+	border-radius: 9999px;
 }

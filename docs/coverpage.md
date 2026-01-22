@@ -22,6 +22,8 @@
 
 [Get Started](getting-started)
 [Examples](https://github.com/dao-xyz/peerbit-examples)
+[Release notes](release-notes)
+[Status](status)
 [GitHub](https://github.com/dao-xyz/peerbit)
 
 
