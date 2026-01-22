@@ -1,4 +1,5 @@
 packages:
+  - apps/*
   - docs
   - packages/transport/blocks
   - packages/transport/blocks-interface
