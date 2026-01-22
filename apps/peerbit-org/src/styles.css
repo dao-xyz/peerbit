@@ -1,8 +1,13 @@
+@custom-variant dark (&:where(.dark, .dark *));
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
 :root {
-	color-scheme: light dark;
+	color-scheme: light;
+}
+
+.dark {
+	color-scheme: dark;
 }
 
 html,
@@ -15,9 +20,9 @@ body {
 }
 
 code {
-	@apply rounded bg-slate-100 px-1 py-0.5 text-[0.9em] dark:bg-slate-900;
+	@apply rounded bg-slate-100 px-1 py-0.5 text-[0.9em] text-slate-900 dark:bg-slate-900 dark:text-slate-50;
 }
 
 pre code {
-	@apply bg-transparent p-0;
+	@apply bg-transparent p-0 text-slate-900 dark:text-slate-50;
 }

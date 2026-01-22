@@ -10,6 +10,26 @@
 		<meta property="og:image" content="/content/docs/peerbit-logo.png" />
 		<meta name="twitter:card" content="summary" />
 		<link rel="icon" href="/content/docs/media/favicon.ico" />
+		<script>
+			(() => {
+				try {
+					const key = "peerbit-theme";
+					const stored = localStorage.getItem(key);
+					const prefersDark =
+						window.matchMedia &&
+						window.matchMedia("(prefers-color-scheme: dark)").matches;
+					const theme =
+						stored === "dark" || stored === "light"
+							? stored
+							: prefersDark
+								? "dark"
+								: "light";
+					document.documentElement.classList.toggle("dark", theme === "dark");
+				} catch {
+					// ignore
+				}
+			})();
+		</script>
 	</head>
 	<body>
 		<div id="root"></div>
