@@ -3360,8 +3360,11 @@ export class SharedLog<
 		}, timeoutMs);
 
 		let requestAttempts = 0;
-		const maxRequestAttempts = 3;
 		const requestIntervalMs = 1000;
+		const maxRequestAttempts = Math.max(
+			3,
+			Math.ceil(timeoutMs / requestIntervalMs),
+		);
 
 		const requestReplicationInfo = () => {
 			if (settled || this.closed) {
