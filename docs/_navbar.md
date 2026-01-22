@@ -1,3 +1,7 @@
-* [Home](/)
-* [Chat on Matrix](https://matrix.to/#/#peerbit:matrix.org)
-
+* [Docs](/getting-started.md)
+* [Modules](/modules/client/)
+* [Blog](/blog.md)
+* [Release notes](/release-notes.md)
+* [Status](/status.md)
+* [GitHub](https://github.com/dao-xyz/peerbit)
+* [Matrix](https://matrix.to/#/#peerbit:matrix.org)
