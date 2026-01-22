@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.0](https://github.com/dao-xyz/peerbit/compare/program-react-v0.3.0...program-react-v0.4.0) (2026-01-22)
+
+
+### Features
+
+* canonical open DX improvements ([90d77b6](https://github.com/dao-xyz/peerbit/commit/90d77b6d9efc1cc502b5ac0948ecabf62692f46f))
+* canonical open DX improvements ([75e08ab](https://github.com/dao-xyz/peerbit/commit/75e08abd47e77041e483340317285612363426fe))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped to 5.6.1
+
 ## [0.3.0](https://github.com/dao-xyz/peerbit/compare/program-react-v0.2.8...program-react-v0.3.0) (2026-01-17)
 
 

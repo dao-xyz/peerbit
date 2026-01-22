@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/trusted-network",
-	"version": "5.1.0",
+	"version": "5.1.1",
 	"description": "Access controller that operates on a DB",
 	"sideEffects": false,
 	"type": "module",

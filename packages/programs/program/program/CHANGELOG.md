@@ -202,6 +202,24 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.6.1](https://github.com/dao-xyz/peerbit/compare/program-v5.6.0...program-v5.6.1) (2026-01-22)
+
+
+### Bug Fixes
+
+* **program:** cleanup waitFor cancellation ([01ab157](https://github.com/dao-xyz/peerbit/commit/01ab157858dc5fab43f4d1d4b27ecd27f16aaa38))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped to 1.5.2
+    * @peerbit/pubsub-interface bumped to 4.1.2
+    * @peerbit/stream-interface bumped to 5.4.0
+    * @peerbit/blocks bumped to 3.1.7
+    * @peerbit/pubsub bumped to 4.1.4
+
 ## [5.6.0](https://github.com/dao-xyz/peerbit/compare/program-v5.5.2...program-v5.6.0) (2026-01-17)
 
 

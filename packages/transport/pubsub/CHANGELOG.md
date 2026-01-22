@@ -188,6 +188,22 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [4.1.4](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.1.3...pubsub-v4.1.4) (2026-01-22)
+
+
+### Bug Fixes
+
+* **pubsub:** cleanup waitForSubscribers abort/timeout ([ff789fe](https://github.com/dao-xyz/peerbit/commit/ff789fe7b2ba5f3cdb75a53ced4da0351e77f657))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/pubsub-interface bumped to 4.1.2
+    * @peerbit/stream bumped to 4.6.0
+    * @peerbit/stream-interface bumped to 5.4.0
+
 ## [4.1.3](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.1.2...pubsub-v4.1.3) (2026-01-16)
 
 

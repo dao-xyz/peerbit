@@ -456,6 +456,37 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [12.3.0](https://github.com/dao-xyz/peerbit/compare/document-v12.2.0...document-v12.3.0) (2026-01-22)
+
+
+### Features
+
+* **document:** prioritize remote queries ([e38a67b](https://github.com/dao-xyz/peerbit/commit/e38a67bdcd313784de2c2e3db0099b24ce8c4acd))
+
+
+### Bug Fixes
+
+* **document:** avoid pending() double-count in push-updates ([c7c4213](https://github.com/dao-xyz/peerbit/commit/c7c42137a76f1cdc5ca4cba820687bda99788c1c))
+* **document:** forward shared-log sync options ([874976b](https://github.com/dao-xyz/peerbit/commit/874976b7c668b1dea86d7a88d3393bddf3448fd2))
+* **document:** prime pending() for push-updates ([1826fd2](https://github.com/dao-xyz/peerbit/commit/1826fd2f24e1949e8b94a36bb9573051d1ef59cd))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 5.0.7
+    * @peerbit/pubsub bumped to 4.1.4
+    * @peerbit/program bumped to 5.6.1
+    * @peerbit/rpc bumped to 5.4.16
+    * @peerbit/shared-log bumped to 12.3.0
+    * @peerbit/indexer-sqlite3 bumped to 2.1.1
+    * @peerbit/document-interface bumped to 3.2.1
+    * @peerbit/stream-interface bumped to 5.4.0
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.3.16
+    * peerbit bumped to 4.4.16
+
 ## [12.2.0](https://github.com/dao-xyz/peerbit/compare/document-v12.1.2...document-v12.2.0) (2026-01-17)
 
 
