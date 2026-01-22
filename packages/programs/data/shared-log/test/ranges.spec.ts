@@ -878,34 +878,60 @@ resolutions.forEach((resolution) => {
 					});
 				});
 
-				it("wrapped ranges: start in second segment does not overcount length", async () => {
-					await create(
-						createReplicationRangeFromNormalized({
-							publicKey: a,
-							width: 0.3,
-							offset: 0.9,
-							timestamp: 0n,
-						}),
-						createReplicationRangeFromNormalized({
-							publicKey: b,
-							width: 0.1,
-							offset: 0.55,
-							timestamp: 0n,
-						}),
-					);
+					it("wrapped ranges: start in second segment does not overcount length", async () => {
+						await create(
+							createReplicationRangeFromNormalized({
+								publicKey: a,
+								width: 0.3,
+								offset: 0.9,
+								timestamp: 0n,
+							}),
+							createReplicationRangeFromNormalized({
+								publicKey: b,
+								width: 0.1,
+								offset: 0.55,
+								timestamp: 0n,
+							}),
+						);
 
-					expect([
-						...(await getCoverSet({
-							peers,
-							roleAge: 0,
-							start: denormalizeFn(0.1),
-							widthToCoverScaled: numbers.divRound(numbers.maxValue, 2),
-						})),
-					]).to.have.members([a.hashcode(), b.hashcode()]);
+						expect([
+							...(await getCoverSet({
+								peers,
+								roleAge: 0,
+								start: denormalizeFn(0.1),
+								widthToCoverScaled: numbers.divRound(numbers.maxValue, 2),
+							})),
+						]).to.have.members([a.hashcode(), b.hashcode()]);
+					});
+
+					it("wrapped start node still selects next above endLocation", async () => {
+						await create(
+							createReplicationRangeFromNormalized({
+								publicKey: a,
+								width: 0.3,
+								offset: 0.9,
+								timestamp: 0n,
+							}),
+							createReplicationRangeFromNormalized({
+								publicKey: b,
+								width: 0.1,
+								offset: 0.5,
+								timestamp: 0n,
+							}),
+						);
+
+						expect([
+							...(await getCoverSet({
+								peers,
+								roleAge: 0,
+								start: a,
+								widthToCoverScaled: numbers.divRound(numbers.maxValue, 2),
+							})),
+						]).to.have.members([a.hashcode(), b.hashcode()]);
+					});
 				});
-			});
 
-			describe("getAdjecentSameOwner", () => {
+				describe("getAdjecentSameOwner", () => {
 				const rotations = [0, 0.333, 0.5, 0.8];
 				rotations.forEach((rotation) => {
 					describe("rotation: " + rotation, () => {

@@ -2255,36 +2255,22 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 		return next;
 	};
 
-	const resolveNextAbove = async (
-		nextLocation: NumberFromType<R>,
-		roleAge: number,
-	) => {
-		// if not get closest from above
-		const next = await fetchOne<undefined, R>(
-			getClosest("above", peers, nextLocation, true, properties.numbers, {
-				time: {
-					matured: true,
-					roleAgeLimit: roleAge,
-					now,
-				},
-			}),
-		);
-		// `getClosest` wraps around. When the target cover range wraps, avoid stepping
-		// beyond `endLocation` in the second segment once we have already wrapped.
-		// Apply this restriction only for the non-matured fallback (`roleAge === 0`).
-		if (next && endIsWrapped) {
-			const wrappedResult = next.start1 < nextLocation;
-			if (wrappedOnce && roleAge === 0) {
-				if (wrappedResult && next.start1 > endLocation) {
-					return undefined;
-				}
-				if (!wrappedResult && nextLocation <= endLocation && next.start1 > endLocation) {
-					return undefined;
-				}
-			}
-		}
-		return next;
-	};
+		const resolveNextAbove = async (
+			nextLocation: NumberFromType<R>,
+			roleAge: number,
+		) => {
+			// if not get closest from above
+			const next = await fetchOne<undefined, R>(
+				getClosest("above", peers, nextLocation, true, properties.numbers, {
+					time: {
+						matured: true,
+						roleAgeLimit: roleAge,
+						now,
+					},
+				}),
+			);
+			return next;
+		};
 
 	const resolveNext = async (
 		nextLocation: NumberFromType<R>,
