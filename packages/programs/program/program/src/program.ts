@@ -8,7 +8,7 @@ import {
 	UnsubcriptionEvent,
 } from "@peerbit/pubsub-interface";
 import type { PeerRefs } from "@peerbit/stream-interface";
-import { TimeoutError } from "@peerbit/time";
+import { AbortError, TimeoutError } from "@peerbit/time";
 import { type Block } from "multiformats/block";
 import { type Address } from "./address.js";
 import { type Client } from "./client.js";
@@ -506,24 +506,71 @@ export abstract class Program<
 
 		// wait for subscribing to topics
 		return new Promise<string[]>((resolve, reject) => {
-			const timeout = setTimeout(
-				() => {
-					this.node.services.pubsub.removeEventListener("subscribe", listener);
-					options?.signal?.removeEventListener("abort", abortListener);
-					reject(new TimeoutError("Timeout waiting for replicating peer"));
-				},
-				options?.timeout || 10 * 1000,
-			);
+			let settled = false;
+			const timeoutMs = options?.timeout || 10 * 1000;
+			let timeout: ReturnType<typeof setTimeout> | undefined = undefined;
+			let listener: (() => void) | undefined = undefined;
 
-			const abortListener = (e: Event) => {
-				this.node.services.pubsub.removeEventListener("subscribe", listener);
-				clearTimeout(timeout);
-				reject(new Error("Aborted"));
+			const clear = () => {
+				if (listener) {
+					this.node.services.pubsub.removeEventListener("subscribe", listener);
+				}
+				options?.signal?.removeEventListener("abort", abortListener);
+				this.events.removeEventListener("close", closeListener);
+				this.events.removeEventListener("drop", dropListener);
+				timeout && clearTimeout(timeout);
+				timeout = undefined;
 			};
 
-			options?.signal?.addEventListener("abort", abortListener);
+			const resolveOnce = (hashes: string[]) => {
+				if (settled) return;
+				settled = true;
+				clear();
+				resolve(hashes);
+			};
+
+			const rejectOnce = (error: unknown) => {
+				if (settled) return;
+				settled = true;
+				clear();
+				reject(error);
+			};
+
+			const abortListener = (e: Event) => {
+				const reason = (e.target as any)?.reason;
+				rejectOnce(
+					reason instanceof Error
+						? reason
+						: options?.signal?.reason instanceof Error
+							? options.signal.reason
+							: new AbortError("Aborted"),
+				);
+			};
+
+			const closeListener = () => rejectOnce(new AbortError("Program closed"));
+			const dropListener = () => rejectOnce(new AbortError("Program dropped"));
+
+			if (options?.signal?.aborted) {
+				rejectOnce(
+					options.signal.reason instanceof Error
+						? options.signal.reason
+						: new AbortError("Aborted"),
+				);
+				return;
+			}
+
+			timeout = setTimeout(() => {
+				rejectOnce(new TimeoutError("Timeout waiting for replicating peer"));
+			}, timeoutMs);
+
+			options?.signal?.addEventListener("abort", abortListener, { once: true });
+			this.events.addEventListener("close", closeListener, { once: true });
+			this.events.addEventListener("drop", dropListener, { once: true });
 
 			const checkReady = async () => {
+				if (settled) {
+					return;
+				}
 				let ready = true;
 				try {
 					const allReadyHashes = await this.getReady();
@@ -534,20 +581,14 @@ export abstract class Program<
 						}
 					}
 					if (ready) {
-						this.node.services.pubsub.removeEventListener(
-							"subscribe",
-							listener,
-						);
-						clearTimeout(timeout);
-						options?.signal?.removeEventListener("abort", abortListener);
-						resolve(expectedHashes);
+						resolveOnce(expectedHashes);
 					}
 				} catch (error) {
-					reject(error);
+					rejectOnce(error);
 				}
 			};
-			const listener = () => {
-				return checkReady();
+			listener = () => {
+				void checkReady();
 			};
 			this.node.services.pubsub.addEventListener("subscribe", listener);
 			checkReady();
