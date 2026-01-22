@@ -1007,25 +1007,25 @@ resolutions.forEach((resolution) => {
 						await create(
 							createReplicationRangeFromNormalized({
 								publicKey: a,
-							width: 1,
-							offset: 0.1,
-							timestamp: 0n,
-						}),
-						createReplicationRangeFromNormalized({
-							publicKey: b,
-							width: 1,
-							offset: 0.75,
-							timestamp: BigInt(+new Date()),
-						}),
-					);
+								width: 1,
+								offset: 0.1,
+								timestamp: 0n,
+							}),
+							createReplicationRangeFromNormalized({
+								publicKey: b,
+								width: 1,
+								offset: 0.75,
+								timestamp: BigInt(+new Date()),
+							}),
+						);
 
-					const widthToCoverScaled = numbers.divRound(numbers.maxValue, 2);
-					const result = await getCoverSet({
-						peers,
-						roleAge: 1_000_000_000,
-						start: b,
-						widthToCoverScaled,
-					});
+						const widthToCoverScaled = numbers.divRound(numbers.maxValue, 2);
+						const result = await getCoverSet({
+							peers,
+							roleAge: 1_000_000_000,
+							start: b,
+							widthToCoverScaled,
+						});
 
 						expect([...result]).to.have.members([a.hashcode(), b.hashcode()]);
 					});
@@ -1041,7 +1041,7 @@ resolutions.forEach((resolution) => {
 							createReplicationRangeFromNormalized({
 								publicKey: a,
 								width: 0.4999,
-								offset: 0.5,
+								offset: 0.2,
 								timestamp: 0n,
 							}),
 						);
@@ -1062,27 +1062,27 @@ resolutions.forEach((resolution) => {
 							createReplicationRangeFromNormalized({
 								publicKey: a,
 								width: 0.2,
-							offset: 0.2,
-							timestamp: 0n,
-						}),
-						createReplicationRangeFromNormalized({
-							publicKey: b,
-							width: 0.3,
-							offset: 0.8,
-							timestamp: 0n,
-						}),
-					);
+								offset: 0.2,
+								timestamp: 0n,
+							}),
+							createReplicationRangeFromNormalized({
+								publicKey: b,
+								width: 0.3,
+								offset: 0.8,
+								timestamp: 0n,
+							}),
+						);
 
-					const result = await getCoverSet({
-						peers,
-						roleAge: 0,
-						start: b,
-						widthToCoverScaled: denormalizeFn(0.05),
+						const result = await getCoverSet({
+							peers,
+							roleAge: 0,
+							start: b,
+							widthToCoverScaled: denormalizeFn(0.05),
+						});
+
+						expect([...result]).to.have.members([b.hashcode()]);
 					});
-
-					expect([...result]).to.have.members([b.hashcode()]);
 				});
-			});
 
 			describe("getSamples", () => {
 				const rotations = [0, 0.333, 0.5, 0.8];

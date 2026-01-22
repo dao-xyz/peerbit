@@ -2269,12 +2269,19 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 				},
 			}),
 		);
-
-		// `getClosest` wraps around. When the target cover range is not wrapped, we must not
-		// accept wrapped candidates from "above" (otherwise we can loop forever or select peers
-		// on the wrong side of the range).
-		if (next && !endIsWrapped && next.start1 < nextLocation) {
-			return undefined;
+		// `getClosest` wraps around. When the target cover range wraps, avoid stepping
+		// beyond `endLocation` in the second segment once we have already wrapped.
+		// Apply this restriction only for the non-matured fallback (`roleAge === 0`).
+		if (next && endIsWrapped) {
+			const wrappedResult = next.start1 < nextLocation;
+			if (wrappedOnce && roleAge === 0) {
+				if (wrappedResult && next.start1 > endLocation) {
+					return undefined;
+				}
+				if (!wrappedResult && nextLocation <= endLocation && next.start1 > endLocation) {
+					return undefined;
+				}
+			}
 		}
 		return next;
 	};
@@ -2408,7 +2415,6 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 		if (
 			!isLast ||
 			nextCandidate[1] ||
-			!last.contains(endLocation) ||
 			lastDistanceToEndLocation > currentDistanceToEndLocation
 		) {
 			ret.add(current.hash);
