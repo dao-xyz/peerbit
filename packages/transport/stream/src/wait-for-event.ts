@@ -20,33 +20,51 @@ export function waitForEvent<
 	},
 ): Promise<void> {
 	const deferred = pDefer<void>();
-	const abortFn = (e: any) =>
+	const abortFn = (e?: unknown) => {
+		if (e instanceof Error) {
+			deferred.reject(e);
+			return;
+		}
+
+		const reason = (e as any)?.target?.reason;
 		deferred.reject(
-			e ??
+			reason ??
 				new AbortError(
 					"Aborted waiting for event: " +
 						String(events.length > 1 ? events.join(", ") : events[0]),
 				),
 		);
+	};
 
 	const checkIsReady = (...args: any[]) => resolver(deferred);
+	let timeout: ReturnType<typeof setTimeout> | undefined = undefined;
 
 	deferred.promise.finally(() => {
 		for (const event of events) {
-			emitter.removeEventListener(event as any, checkIsReady);
+			emitter.removeEventListener(event as any, checkIsReady as any);
 		}
-		clearTimeout(timeout);
+		timeout && clearTimeout(timeout);
 		options?.signals?.forEach((signal) =>
 			signal.removeEventListener("abort", abortFn),
 		);
 	});
 
-	for (const event of events) {
-		emitter.addEventListener(event as any, (evt) => {
-			checkIsReady(event);
-		});
+	const abortedSignal = options?.signals?.find((signal) => signal.aborted);
+	if (abortedSignal) {
+		deferred.reject(
+			abortedSignal.reason ??
+				new AbortError(
+					"Aborted waiting for event: " +
+						String(events.length > 1 ? events.join(", ") : events[0]),
+				),
+		);
+		return deferred.promise;
 	}
-	let timeout = setTimeout(
+
+	for (const event of events) {
+		emitter.addEventListener(event as any, checkIsReady as any);
+	}
+	timeout = setTimeout(
 		() => abortFn(new TimeoutError("Timeout waiting for event")),
 		options?.timeout ?? 10 * 1000,
 	);
