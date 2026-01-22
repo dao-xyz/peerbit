@@ -2415,7 +2415,7 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 		if (
 			!isLast ||
 			nextCandidate[1] ||
-			lastDistanceToEndLocation > currentDistanceToEndLocation
+			lastDistanceToEndLocation >= currentDistanceToEndLocation
 		) {
 			ret.add(current.hash);
 		}
