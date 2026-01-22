@@ -13,7 +13,7 @@ export function HomePage() {
 					searchable data.
 				</p>
 
-				<div className="mt-8 grid gap-4 sm:grid-cols-2">
+				<div className="mt-8 grid auto-rows-fr gap-4 sm:grid-cols-2">
 					<Card
 						title="Get started"
 						description="Spin up a peer, open a program, store documents."
@@ -39,4 +39,3 @@ export function HomePage() {
 		</Container>
 	);
 }
-

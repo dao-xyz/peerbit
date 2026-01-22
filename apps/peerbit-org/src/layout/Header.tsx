@@ -1,10 +1,10 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
+import { ChatLines, Github, HalfMoon, Menu, SunLight, Xmark } from "iconoir-react";
 
 import { Container } from "../ui/Container";
 import { IconButton } from "../ui/IconButton";
 import { IconLink } from "../ui/IconLink";
-import { CloseIcon, GitHubIcon, MenuIcon, MoonIcon, SunIcon } from "../ui/icons";
 import { getActiveTheme, setTheme, type Theme } from "../utils/theme";
 
 function HeaderLink({ to, children }: { to: string; children: string }) {
@@ -84,8 +84,16 @@ export function Header() {
 		return () => window.removeEventListener("keydown", onKeyDown);
 	}, [mobileOpen]);
 
-	const themeIcon = useMemo(() => (theme === "dark" ? <SunIcon /> : <MoonIcon />), [theme]);
 	const themeLabel = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+	const themeIcon = useMemo(
+		() =>
+			theme === "dark" ? (
+				<SunLight className="h-5 w-5" />
+			) : (
+				<HalfMoon className="h-5 w-5" />
+			),
+		[theme],
+	);
 
 	return (
 		<>
@@ -111,6 +119,16 @@ export function Header() {
 						<HeaderLink to="/release-notes">Release notes</HeaderLink>
 						<HeaderLink to="/status">Status</HeaderLink>
 
+						<a
+							className="ml-2 inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-slate-50 dark:text-slate-950 dark:hover:bg-white"
+							href="https://matrix.to/#/#peerbit:matrix.org"
+							target="_blank"
+							rel="noreferrer"
+						>
+							<ChatLines className="h-4 w-4" />
+							Community chat
+						</a>
+
 						<IconLink
 							className="ml-1"
 							href="https://github.com/dao-xyz/peerbit"
@@ -119,7 +137,7 @@ export function Header() {
 							aria-label="Peerbit on GitHub"
 							title="GitHub"
 						>
-							<GitHubIcon />
+							<Github className="h-5 w-5" />
 						</IconLink>
 
 						<IconButton aria-label={themeLabel} title={themeLabel} onClick={toggleTheme}>
@@ -128,6 +146,16 @@ export function Header() {
 					</nav>
 
 					<div className="flex items-center gap-2 md:hidden">
+						<a
+							className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-slate-50 dark:text-slate-950 dark:hover:bg-white"
+							href="https://matrix.to/#/#peerbit:matrix.org"
+							target="_blank"
+							rel="noreferrer"
+						>
+							<ChatLines className="h-4 w-4" />
+							Chat
+						</a>
+
 						<IconLink
 							href="https://github.com/dao-xyz/peerbit"
 							target="_blank"
@@ -135,7 +163,7 @@ export function Header() {
 							aria-label="Peerbit on GitHub"
 							title="GitHub"
 						>
-							<GitHubIcon />
+							<Github className="h-5 w-5" />
 						</IconLink>
 
 						<IconButton aria-label={themeLabel} title={themeLabel} onClick={toggleTheme}>
@@ -147,7 +175,7 @@ export function Header() {
 							title={mobileOpen ? "Close menu" : "Open menu"}
 							onClick={() => setMobileOpen((v) => !v)}
 						>
-							{mobileOpen ? <CloseIcon /> : <MenuIcon />}
+							{mobileOpen ? <Xmark className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
 						</IconButton>
 					</div>
 				</Container>
@@ -176,6 +204,15 @@ export function Header() {
 								<MobileLink to="/status" onNavigate={() => setMobileOpen(false)}>
 									Status
 								</MobileLink>
+								<a
+									className="mt-2 inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-base font-semibold text-white transition hover:bg-slate-800 dark:bg-slate-50 dark:text-slate-950 dark:hover:bg-white"
+									href="https://matrix.to/#/#peerbit:matrix.org"
+									target="_blank"
+									rel="noreferrer"
+								>
+									<ChatLines className="h-5 w-5" />
+									Community chat
+								</a>
 							</div>
 						</Container>
 					</div>

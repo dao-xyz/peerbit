@@ -91,7 +91,6 @@
 		"build": "aegir run build",
 		"clean": "aegir run clean",
 		"lint": "pnpm exec eslint --config ./eslint.config.js --cache --max-warnings 9999 --ignore-pattern \"packages/**/public/**\" \"packages/**/*.{ts,tsx,js,jsx,mjs,cjs}\"",
-		"docsify": "docsify serve ./docs",
 		"site:dev": "pnpm --filter peerbit-org dev",
 		"site:build": "pnpm --filter peerbit-org build",
 		"site:preview": "pnpm --filter peerbit-org preview",
