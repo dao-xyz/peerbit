@@ -188,6 +188,7 @@ export default (
 		src,
 		dest: path.dirname(dest),
 		rename: path.basename(dest),
+		overwrite: false,
 	}));
 
 	const publicDir = resolveOrCreatePublicDir();
@@ -206,6 +207,7 @@ export default (
 							{
 								src: path.join(publicDir, "peerbit", "sqlite3", "sqlite3.wasm"),
 								dest: "node_modules/.vite/deps",
+								overwrite: false,
 							},
 						]
 					: []),
