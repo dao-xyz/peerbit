@@ -1,3 +1,5 @@
 import { TestSession } from "./session.js";
 
-export { TestSession };
+const createMock = TestSession.connectedMock;
+
+export { TestSession, createMock };

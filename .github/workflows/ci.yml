@@ -11,18 +11,21 @@ on:
 jobs:
   test_push:
     if: github.event_name == 'push'
-    name: Test (Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
+    name: Test (${{ matrix.test_cmd }}, Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      PEERBIT_TEST_SESSION: mock
     strategy:
        matrix:
         os: [ ubuntu-22.04 ]
         node-version: [22.x]
         test_cmd: 
-          - pnpm run test:part-1
-          - pnpm run test:part-2
-          - pnpm run test:part-3
-          - pnpm run test:part-4
-          - pnpm run test:part-5
+          - pnpm run test:ci:part-1
+          - pnpm run test:ci:part-2
+          - pnpm run test:ci:part-3
+          - pnpm run test:ci:part-4
+          - pnpm run test:ci:part-5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -40,24 +43,32 @@ jobs:
         run: |
           pnpm run build
       - name: Lint
+        if: matrix.test_cmd == 'pnpm run test:ci:part-1'
         run: pnpm run lint
       - name: Tests
+        env:
+          PEERBIT_MOCHA_LOG_TEST_START: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_QUIET: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '10000' || '0' }}
         run: ${{matrix.test_cmd}}
 
   test_pr:
     if: github.event_name == 'pull_request'
-    name: Test (Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
+    name: Test (${{ matrix.test_cmd }}, Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      PEERBIT_TEST_SESSION: mock
     strategy:
        matrix:
         os: [ ubuntu-22.04 ]
         node-version: [22.x]
         test_cmd: 
-          - pnpm run test:part-1
-          - pnpm run test:part-2
-          - pnpm run test:part-3
-          - pnpm run test:part-4
-          - pnpm run test:part-5
+          - pnpm run test:ci:part-1
+          - pnpm run test:ci:part-2
+          - pnpm run test:ci:part-3
+          - pnpm run test:ci:part-4
+          - pnpm run test:ci:part-5
 
     steps:
       - uses: actions/checkout@v4
@@ -76,6 +87,11 @@ jobs:
         run: |
           pnpm run build
       - name: Lint
+        if: matrix.test_cmd == 'pnpm run test:ci:part-1'
         run: pnpm run lint
       - name: Tests
+        env:
+          PEERBIT_MOCHA_LOG_TEST_START: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_QUIET: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '10000' || '0' }}
         run: ${{matrix.test_cmd}}

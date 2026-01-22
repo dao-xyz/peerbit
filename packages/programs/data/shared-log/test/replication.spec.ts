@@ -200,6 +200,44 @@ testSetups.forEach((setup) => {
 				expect(verified).to.be.false;
 			});
 
+			it("applies replication segments even if waitFor() fails", async () => {
+				db2 = await session.peers[1].open(db1.clone(), {
+					args: {
+						setup,
+					},
+				});
+
+				const fromHash = session.peers[0].identity.publicKey.hashcode();
+
+				// Ensure we start from a clean state on db2 for db1's ranges.
+				await db1.log.rpc.send(new AllReplicatingSegmentsMessage({ segments: [] }));
+				await waitForResolved(
+					async () =>
+						expect(
+							await db2.log.replicationIndex.count({ query: { hash: fromHash } }),
+						).to.equal(0),
+					{ timeout: 5_000 },
+				);
+
+				// Simulate the timing-sensitive case where `Program.waitFor()` rejects.
+				(db2.log as any).waitFor = () => Promise.reject(new Error("boom"));
+
+				const segments = (await db1.log.getMyReplicationSegments()).map((x) =>
+					x.toReplicationRange(),
+				);
+				expect(segments.length).to.be.greaterThan(0);
+
+				await db1.log.rpc.send(new AllReplicatingSegmentsMessage({ segments }));
+
+				await waitForResolved(
+					async () =>
+						expect(
+							await db2.log.replicationIndex.count({ query: { hash: fromHash } }),
+						).to.be.greaterThan(0),
+					{ timeout: 5_000 },
+				);
+			});
+
 			it("logs are unique", async () => {
 				const entryCount = 33;
 				const entryArr: number[] = [];

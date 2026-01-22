@@ -1,5 +1,5 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
-import { delay, waitForResolved } from "@peerbit/time";
+import { AbortError, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { ClosedError, type ProgramClient } from "../src/index.js";
 import {
@@ -312,12 +312,84 @@ describe("events", () => {
 
 	describe("waitFor", () => {
 		let peer: ProgramClient;
+		let state: any;
+		const createState = () => ({
+			pubsubEventHandlers: new Map(),
+			subsribers: new Map(),
+			peers: new Map(),
+		});
+
 		beforeEach(async () => {
-			peer = await creatMockPeer();
+			state = createState();
+			peer = await creatMockPeer(state);
+		});
+		afterEach(async () => {
+			await peer?.stop();
 		});
 		it("self", async () => {
 			const p = await peer.open(new TestProgramWithTopics());
 			await p.waitFor(p.node.identity.publicKey);
+		});
+
+		it("rejects immediately when signal already aborted", async () => {
+			const p = await peer.open(new TestProgramWithTopics());
+			(peer.services.pubsub as any).waitFor = async () => ["other"];
+
+			const baseSubscribeListeners =
+				(state.pubsubEventHandlers.get("subscribe")?.length as number) ?? 0;
+
+			const controller = new AbortController();
+			controller.abort(new AbortError("aborted"));
+
+			await expect(
+				p.waitFor(p.node.identity.publicKey, {
+					signal: controller.signal,
+					timeout: 50,
+				}),
+			).rejectedWith(AbortError);
+
+			expect(state.pubsubEventHandlers.get("subscribe")?.length).to.equal(
+				baseSubscribeListeners,
+			);
+		});
+
+		it("cleans up listeners when getReady throws", async () => {
+			const p = await peer.open(new ProgramWithoutTopics());
+			(peer.services.pubsub as any).waitFor = async () => ["other"];
+
+			const baseSubscribeListeners =
+				(state.pubsubEventHandlers.get("subscribe")?.length as number) ?? 0;
+
+			await expect(
+				p.waitFor(p.node.identity.publicKey, { timeout: 50 }),
+			).rejectedWith("Program has no topics, cannot get ready");
+
+			expect(state.pubsubEventHandlers.get("subscribe")?.length).to.equal(
+				baseSubscribeListeners,
+			);
+		});
+
+		it("rejects with AbortError when aborted during wait", async () => {
+			const p = await peer.open(new TestProgramWithTopics());
+			(peer.services.pubsub as any).waitFor = async () => ["other"];
+
+			const baseSubscribeListeners =
+				(state.pubsubEventHandlers.get("subscribe")?.length as number) ?? 0;
+
+			const controller = new AbortController();
+			const promise = p.waitFor(p.node.identity.publicKey, {
+				signal: controller.signal,
+				timeout: 1000,
+			});
+
+			// Ensure we’re past `await pubsub.waitFor` and have registered listeners.
+			await Promise.resolve();
+			controller.abort(new AbortError("aborted"));
+
+			await expect(promise).rejectedWith(AbortError);
+			expect(state.pubsubEventHandlers.get("subscribe")?.length).to.equal(
+				baseSubscribeListeners,
+			);
 		});
 	});
 

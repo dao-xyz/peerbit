@@ -877,9 +877,61 @@ resolutions.forEach((resolution) => {
 						});
 					});
 				});
-			});
 
-			describe("getAdjecentSameOwner", () => {
+					it("wrapped ranges: start in second segment does not overcount length", async () => {
+						await create(
+							createReplicationRangeFromNormalized({
+								publicKey: a,
+								width: 0.3,
+								offset: 0.9,
+								timestamp: 0n,
+							}),
+							createReplicationRangeFromNormalized({
+								publicKey: b,
+								width: 0.1,
+								offset: 0.55,
+								timestamp: 0n,
+							}),
+						);
+
+						expect([
+							...(await getCoverSet({
+								peers,
+								roleAge: 0,
+								start: denormalizeFn(0.1),
+								widthToCoverScaled: numbers.divRound(numbers.maxValue, 2),
+							})),
+						]).to.have.members([a.hashcode(), b.hashcode()]);
+					});
+
+					it("wrapped start node still selects next above endLocation", async () => {
+						await create(
+							createReplicationRangeFromNormalized({
+								publicKey: a,
+								width: 0.3,
+								offset: 0.9,
+								timestamp: 0n,
+							}),
+							createReplicationRangeFromNormalized({
+								publicKey: b,
+								width: 0.1,
+								offset: 0.5,
+								timestamp: 0n,
+							}),
+						);
+
+						expect([
+							...(await getCoverSet({
+								peers,
+								roleAge: 0,
+								start: a,
+								widthToCoverScaled: numbers.divRound(numbers.maxValue, 2),
+							})),
+						]).to.have.members([a.hashcode(), b.hashcode()]);
+					});
+				});
+
+				describe("getAdjecentSameOwner", () => {
 				const rotations = [0, 0.333, 0.5, 0.8];
 				rotations.forEach((rotation) => {
 					describe("rotation: " + rotation, () => {
@@ -975,6 +1027,88 @@ resolutions.forEach((resolution) => {
 					});
 				});
 			});
+
+				describe("regressions", () => {
+					it("full width: start unmatured, still finds matured cover (wrapped target)", async () => {
+						await create(
+							createReplicationRangeFromNormalized({
+								publicKey: a,
+								width: 1,
+								offset: 0.1,
+								timestamp: 0n,
+							}),
+							createReplicationRangeFromNormalized({
+								publicKey: b,
+								width: 1,
+								offset: 0.75,
+								timestamp: BigInt(+new Date()),
+							}),
+						);
+
+						const widthToCoverScaled = numbers.divRound(numbers.maxValue, 2);
+						const result = await getCoverSet({
+							peers,
+							roleAge: 1_000_000_000,
+							start: b,
+							widthToCoverScaled,
+						});
+
+						expect([...result]).to.have.members([a.hashcode(), b.hashcode()]);
+					});
+
+					it("wrapped range: still selects next peer after wrap", async () => {
+						await create(
+							createReplicationRangeFromNormalized({
+								publicKey: b,
+								width: 0.3,
+								offset: 0.8,
+								timestamp: 0n,
+							}),
+							createReplicationRangeFromNormalized({
+								publicKey: a,
+								width: 0.4999,
+								offset: 0.2,
+								timestamp: 0n,
+							}),
+						);
+
+						const widthToCoverScaled = numbers.divRound(numbers.maxValue, 2);
+						const result = await getCoverSet({
+							peers,
+							roleAge: 0,
+							start: b,
+							widthToCoverScaled,
+						});
+
+						expect([...result]).to.have.members([a.hashcode(), b.hashcode()]);
+					});
+
+					it("wrapped range: distance accounting does not include extra peers", async () => {
+						await create(
+							createReplicationRangeFromNormalized({
+								publicKey: a,
+								width: 0.2,
+								offset: 0.2,
+								timestamp: 0n,
+							}),
+							createReplicationRangeFromNormalized({
+								publicKey: b,
+								width: 0.3,
+								offset: 0.8,
+								timestamp: 0n,
+							}),
+						);
+
+						const result = await getCoverSet({
+							peers,
+							roleAge: 0,
+							start: b,
+							widthToCoverScaled: denormalizeFn(0.05),
+						});
+
+						expect([...result]).to.have.members([b.hashcode()]);
+					});
+				});
 
 			describe("getSamples", () => {
 				const rotations = [0, 0.333, 0.5, 0.8];
@@ -1552,6 +1686,25 @@ resolutions.forEach((resolution) => {
 							},
 						);
 					});
+				});
+
+				it("does not early-break when uniqueReplicators is empty", async () => {
+					const cursor = numbers.getGrid(numbers.zero, 2);
+					await create(
+						createReplicationRange({
+							publicKey: a,
+							width: 10,
+							offset: cursor[1],
+							timestamp: 0n,
+						}),
+					);
+
+					const leaders = await getSamplesMap(cursor, peers, 0, numbers, {
+						onlyIntersecting: true,
+						uniqueReplicators: new Set(),
+					});
+
+					expect([...leaders.keys()]).to.have.members([a.hashcode()]);
 				});
 			});
 
@@ -2686,11 +2839,11 @@ resolutions.forEach((resolution) => {
 							});
 						});
 
-						describe("replace", () => {
-							it("differential between added and removed", async () => {
-								await create(
-									createEntryReplicated({
-										coordinate: denormalizeFn(rotate(0.05)),
+							describe("replace", () => {
+								it("differential between added and removed", async () => {
+									await create(
+										createEntryReplicated({
+											coordinate: denormalizeFn(rotate(0.05)),
 										assignedToRangeBoundary: false,
 										hash: "a",
 										meta: new Meta({
@@ -2780,14 +2933,92 @@ resolutions.forEach((resolution) => {
 										index,
 										cache,
 									),
-								);
-								expect(result.map((x) => x.gid)).to.deep.equal(["c"]);
-							});
+									);
+									expect(result.map((x) => x.gid)).to.deep.equal(["c"]);
+								});
 
-							it("differential between added and replaced", async () => {
-								await create(
-									createEntryReplicated({
-										coordinate: denormalizeFn(rotate(0.05)),
+								it("removed still rebalances when previously processed", async () => {
+									await create(
+										createEntryReplicated({
+											coordinate: denormalizeFn(rotate(0.05)),
+											assignedToRangeBoundary: false,
+											hash: "a",
+											meta: new Meta({
+												clock: new LamportClock({ id: randomBytes(32) }),
+												gid: "a",
+												next: [],
+												type: 0,
+												data: undefined,
+											}),
+										}),
+										createEntryReplicated({
+											coordinate: denormalizeFn(rotate(0.15)),
+											assignedToRangeBoundary: false,
+											hash: "b",
+											meta: new Meta({
+												clock: new LamportClock({ id: randomBytes(32) }),
+												gid: "b",
+												next: [],
+												type: 0,
+												data: undefined,
+											}),
+										}),
+										createEntryReplicated({
+											coordinate: denormalizeFn(rotate(0.29)),
+											assignedToRangeBoundary: false,
+											hash: "c",
+											meta: new Meta({
+												clock: new LamportClock({ id: randomBytes(32) }),
+												gid: "c",
+												next: [],
+												type: 0,
+												data: undefined,
+											}),
+										}),
+									);
+
+									const first = createReplicationRangeFromNormalized({
+										publicKey: a,
+										offset: rotate(0),
+										width: 0.2,
+									});
+
+									const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
+									let result = await consumeAllFromAsyncIterator(
+										toRebalance(
+											[
+												{
+													range: first,
+													type: "added",
+													timestamp: 0n,
+												},
+											],
+											index,
+											cache,
+										),
+									);
+									expect(result.map((x) => x.gid)).to.deep.equal(["a", "b"]);
+
+									result = await consumeAllFromAsyncIterator(
+										toRebalance(
+											[
+												{
+													range: first,
+													type: "removed",
+													timestamp: 1n,
+												},
+											],
+											index,
+											cache,
+										),
+									);
+									expect(result.map((x) => x.gid)).to.deep.equal(["a", "b"]);
+								});
+
+								it("differential between added and replaced", async () => {
+									await create(
+										createEntryReplicated({
+											coordinate: denormalizeFn(rotate(0.05)),
 										assignedToRangeBoundary: false,
 										hash: "a",
 										meta: new Meta({

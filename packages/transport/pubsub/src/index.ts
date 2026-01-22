@@ -861,32 +861,62 @@ export const waitForSubscribers = async (
 			: getPublicKeyFromPeerId(id).hashcode();
 	});
 
-	// await libp2p.services.pubsub.requestSubscribers(topic);
 	return new Promise<void>((resolve, reject) => {
+		let settled = false;
 		let counter = 0;
-		options?.signal?.addEventListener("abort", () => {
-			reject(new AbortError("waitForSubscribers was aborted"));
-		});
 		let timeout: ReturnType<typeof setTimeout> | undefined = undefined;
-		if (options?.timeout) {
-			timeout = setTimeout(() => {
-				reject(new TimeoutError("waitForSubscribers timed out"));
-			}, options.timeout);
-			options.signal?.addEventListener("abort", () => {
-				clearTimeout(timeout);
-			});
-		}
+		let interval: ReturnType<typeof setInterval> | undefined = undefined;
+
 		const clear = () => {
-			clearInterval(interval);
-			timeout && clearTimeout(timeout);
+			if (interval) {
+				clearInterval(interval);
+				interval = undefined;
+			}
+			if (timeout) {
+				clearTimeout(timeout);
+				timeout = undefined;
+			}
+			options?.signal?.removeEventListener("abort", onAbort);
 		};
-		const interval = setInterval(async () => {
+
+		const resolveOnce = () => {
+			if (settled) return;
+			settled = true;
+			clear();
+			resolve();
+		};
+
+		const rejectOnce = (error: unknown) => {
+			if (settled) return;
+			settled = true;
+			clear();
+			reject(error);
+		};
+
+		const onAbort = () => {
+			rejectOnce(new AbortError("waitForSubscribers was aborted"));
+		};
+
+		if (options?.signal?.aborted) {
+			rejectOnce(new AbortError("waitForSubscribers was aborted"));
+			return;
+		}
+
+		options?.signal?.addEventListener("abort", onAbort);
+
+		if (options?.timeout != null) {
+			timeout = setTimeout(() => {
+				rejectOnce(new TimeoutError("waitForSubscribers timed out"));
+			}, options.timeout);
+		}
+
+		interval = setInterval(async () => {
 			counter += 1;
 			if (counter > 100) {
-				clearInterval(interval);
-				reject(
+				rejectOnce(
 					new Error("Failed to find expected subscribers for topic: " + topic),
 				);
+				return;
 			}
 			try {
 				const peers = await libp2p.services.pubsub.getSubscribers(topic);
@@ -894,14 +924,11 @@ export const waitForSubscribers = async (
 					peerIdsToWait.filter((e) => !peers?.find((x) => x.hashcode() === e))
 						.length === 0;
 
-				// FIXME: Does not fail on timeout, not easily fixable
 				if (hasAllPeers) {
-					clear();
-					resolve();
+					resolveOnce();
 				}
 			} catch (e) {
-				clear();
-				reject(e);
+				rejectOnce(e);
 			}
 		}, 200);
 	});

@@ -108,7 +108,8 @@ export class TestSession<T> {
 
 				const node = await createLibp2p<T & DefaultServices>({
 					addresses: {
-						listen: listen(),
+						...(definedOptions?.addresses ?? {}),
+						listen: definedOptions?.addresses?.listen ?? listen(),
 					},
 					connectionManager: definedOptions?.connectionManager,
 					privateKey: definedOptions?.privateKey,

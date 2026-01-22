@@ -3,6 +3,7 @@ import {
 	circuitRelayTransport,
 } from "@libp2p/circuit-relay-v2";
 import type { Transport } from "@libp2p/interface";
+import { tcp } from "@libp2p/tcp";
 import { webRTC } from "@libp2p/webrtc";
 import { webSockets } from "@libp2p/websockets";
 
@@ -14,6 +15,8 @@ export const transports = (): Array<(components: any) => Transport> => [
 	webSockets(),
 ];
 
+export const transportsFast = (): Array<(components: any) => Transport> => [tcp()];
+
 // applyDefaultLimit: false because of https://github.com/libp2p/js-libp2p/issues/2622
 export const relay = (): ReturnType<typeof circuitRelayServer> =>
 	circuitRelayServer({ reservations: { applyDefaultLimit: false } });
@@ -23,3 +26,5 @@ export const listen = (): string[] => [
 	"/ip4/127.0.0.1/tcp/0/ws",
 	"/p2p-circuit",
 ];
+
+export const listenFast = (): string[] => ["/ip4/127.0.0.1/tcp/0"];

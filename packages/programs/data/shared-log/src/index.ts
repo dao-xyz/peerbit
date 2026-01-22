@@ -463,6 +463,7 @@ export class SharedLog<
 	private recentlyRebalanced!: Cache<string>;
 
 	uniqueReplicators!: Set<string>;
+	private _replicatorsReconciled!: boolean;
 
 	/* private _totalParticipation!: number; */
 
@@ -1164,16 +1165,31 @@ export class SharedLog<
 
 			let prevCount = deleted.length;
 
-			await this.replicationIndex.del({ query: { hash: from.hashcode() } });
+			const existingById = new Map(deleted.map((x) => [x.idString, x]));
+			const hasSameRanges =
+				deleted.length === ranges.length &&
+				ranges.every((range) => {
+					const existing = existingById.get(range.idString);
+					return existing != null && existing.equalRange(range);
+				});
 
-			diffs = [
-				...deleted.map((x) => {
-					return { range: x, type: "removed" as const, timestamp };
-				}),
-				...ranges.map((x) => {
-					return { range: x, type: "added" as const, timestamp };
-				}),
-			];
+			// Avoid churn on repeated full-state announcements that don't change any
+			// replication ranges. This prevents unnecessary `replication:change`
+			// events and rebalancing cascades.
+			if (hasSameRanges) {
+				diffs = [];
+			} else {
+				await this.replicationIndex.del({ query: { hash: from.hashcode() } });
+
+				diffs = [
+					...deleted.map((x) => {
+						return { range: x, type: "removed" as const, timestamp };
+					}),
+					...ranges.map((x) => {
+						return { range: x, type: "added" as const, timestamp };
+					}),
+				];
+			}
 
 			isNewReplicator = prevCount === 0 && ranges.length > 0;
 		} else {
@@ -1876,6 +1892,7 @@ export class SharedLog<
 		this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
 
 		this.uniqueReplicators = new Set();
+		this._replicatorsReconciled = false;
 
 		this.openTime = +new Date();
 		this.oldestOpenTime = this.openTime;
@@ -2178,7 +2195,16 @@ export class SharedLog<
 		await super.afterOpen();
 
 		// We do this here, because these calls requires this.closed == false
-		this.pruneOfflineReplicators();
+		void this.pruneOfflineReplicators()
+			.then(() => {
+				this._replicatorsReconciled = true;
+			})
+			.catch((error) => {
+				if (isNotStartedError(error as Error)) {
+					return;
+				}
+				logger.error(error);
+			});
 
 		await this.rebalanceParticipation();
 
@@ -2866,21 +2892,19 @@ export class SharedLog<
 					context.from!.hashcode(),
 				);
 			} else if (msg instanceof RequestReplicationInfoMessage) {
-				// TODO this message type is never used, should we remove it?
-
 				if (context.from.equals(this.node.identity.publicKey)) {
 					return;
 				}
-				await this.rpc.send(
-					new AllReplicatingSegmentsMessage({
-						segments: (await this.getMyReplicationSegments()).map((x) =>
-							x.toReplicationRange(),
-						),
-					}),
-					{
-						mode: new SilentDelivery({ to: [context.from], redundancy: 1 }),
-					},
+
+				const segments = (await this.getMyReplicationSegments()).map((x) =>
+					x.toReplicationRange(),
 				);
+
+				this.rpc
+					.send(new AllReplicatingSegmentsMessage({ segments }), {
+						mode: new SeekDelivery({ to: [context.from], redundancy: 1 }),
+					})
+					.catch((e) => logger.error(e.toString()));
 
 				// for backwards compatibility (v8) remove this when we are sure that all nodes are v9+
 				if (this.v8Behaviour) {
@@ -2903,73 +2927,60 @@ export class SharedLog<
 					}
 				}
 			} else if (
-				msg instanceof AllReplicatingSegmentsMessage ||
-				msg instanceof AddedReplicationSegmentMessage
-			) {
-				if (context.from.equals(this.node.identity.publicKey)) {
-					return;
-				}
+					msg instanceof AllReplicatingSegmentsMessage ||
+					msg instanceof AddedReplicationSegmentMessage
+				) {
+					if (context.from.equals(this.node.identity.publicKey)) {
+						return;
+					}
 
-				let replicationInfoMessage = msg as
-					| AllReplicatingSegmentsMessage
-					| AddedReplicationSegmentMessage;
+					const replicationInfoMessage = msg as
+						| AllReplicatingSegmentsMessage
+						| AddedReplicationSegmentMessage;
 
-				// we have this statement because peers might have changed/announced their role,
-				// but we don't know them as "subscribers" yet. i.e. they are not online
-
-				this.waitFor(context.from, {
-					signal: this._closeController.signal,
-					timeout: this.waitForReplicatorTimeout,
-				})
-					.then(async () => {
-						// do use an operation log here, because we want to make sure that we don't miss any updates
-						// and do them in the right order
-						const prev = this.latestReplicationInfoMessage.get(
-							context.from!.hashcode(),
-						);
-
-						if (prev && prev > context.message.header.timestamp) {
+					// Process replication updates even if the sender isn't yet considered "ready" by
+					// `Program.waitFor()`. Dropping these messages can lead to missing replicator info
+					// (and downstream `waitForReplicator()` timeouts) under timing-sensitive joins.
+					const from = context.from!;
+					const messageTimestamp = context.message.header.timestamp;
+					(async () => {
+						const prev = this.latestReplicationInfoMessage.get(from.hashcode());
+						if (prev && prev > messageTimestamp) {
 							return;
 						}
 
-						this.latestReplicationInfoMessage.set(
-							context.from!.hashcode(),
-							context.message.header.timestamp,
-						);
-
-						let reset = msg instanceof AllReplicatingSegmentsMessage;
+						this.latestReplicationInfoMessage.set(from.hashcode(), messageTimestamp);
 
 						if (this.closed) {
 							return;
 						}
 
+						const reset = msg instanceof AllReplicatingSegmentsMessage;
 						await this.addReplicationRange(
 							replicationInfoMessage.segments.map((x) =>
-								x.toReplicationRangeIndexable(context.from!),
+								x.toReplicationRangeIndexable(from),
 							),
-							context.from!,
+							from,
 							{
 								reset,
 								checkDuplicates: true,
-								timestamp: Number(context.message.header.timestamp),
+								timestamp: Number(messageTimestamp),
 							},
 						);
-
-						/* await this._modifyReplicators(msg.role, context.from!); */
-					})
-					.catch((e) => {
+					})().catch((e) => {
 						if (isNotStartedError(e)) {
 							return;
 						}
 						logger.error(
-							"Failed to find peer who updated replication settings: " +
-								e?.message,
+							`Failed to apply replication settings from '${from.hashcode()}': ${
+								e?.message ?? e
+							}`,
 						);
 					});
-			} else if (msg instanceof StoppedReplicating) {
-				if (context.from.equals(this.node.identity.publicKey)) {
-					return;
-				}
+				} else if (msg instanceof StoppedReplicating) {
+					if (context.from.equals(this.node.identity.publicKey)) {
+						return;
+					}
 
 				const rangesToRemove = await this.resolveReplicationRangesFromIdsAndKey(
 					msg.segmentIds,
@@ -3303,6 +3314,7 @@ export class SharedLog<
 
 		let settled = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
+		let requestTimer: ReturnType<typeof setTimeout> | undefined;
 
 		const clear = () => {
 			this.events.removeEventListener("replicator:mature", check);
@@ -3311,6 +3323,10 @@ export class SharedLog<
 			if (timer != null) {
 				clearTimeout(timer);
 				timer = undefined;
+			}
+			if (requestTimer != null) {
+				clearTimeout(requestTimer);
+				requestTimer = undefined;
 			}
 		};
 
@@ -3343,6 +3359,40 @@ export class SharedLog<
 			);
 		}, timeoutMs);
 
+		let requestAttempts = 0;
+		const requestIntervalMs = 1000;
+		const maxRequestAttempts = Math.max(
+			3,
+			Math.ceil(timeoutMs / requestIntervalMs),
+		);
+
+		const requestReplicationInfo = () => {
+			if (settled || this.closed) {
+				return;
+			}
+
+			if (requestAttempts >= maxRequestAttempts) {
+				return;
+			}
+
+			requestAttempts++;
+
+			this.rpc
+				.send(new RequestReplicationInfoMessage(), {
+					mode: new SeekDelivery({ redundancy: 1, to: [key] }),
+				})
+				.catch((e) => {
+					// Best-effort: missing peers / unopened RPC should not fail the wait logic.
+					if (isNotStartedError(e as Error)) {
+						return;
+					}
+				});
+
+			if (requestAttempts < maxRequestAttempts) {
+				requestTimer = setTimeout(requestReplicationInfo, requestIntervalMs);
+			}
+		};
+
 		const check = async () => {
 			const iterator = this.replicationIndex?.iterate(
 				{ query: new StringMatch({ key: "hash", value: key.hashcode() }) },
@@ -3367,6 +3417,7 @@ export class SharedLog<
 			}
 		};
 
+		requestReplicationInfo();
 		check();
 		this.events.addEventListener("replicator:mature", check);
 		this.events.addEventListener("replication:change", check);
@@ -3616,27 +3667,54 @@ export class SharedLog<
 			return 0;
 		}
 
-		const now = +new Date();
-		const subscribers = this.rpc.closed
-			? 1
-			: ((await this.node.services.pubsub.getSubscribers(this.rpc.topic))
-					?.length ?? 1);
-		const diffToOldest =
-			subscribers > 1 ? now - this.oldestOpenTime - 1 : Number.MAX_SAFE_INTEGER;
+		// Explicitly disable maturity gating (used by many tests).
+		if (this.timeUntilRoleMaturity <= 0) {
+			return 0;
+		}
 
-		const result = Math.min(
-			this.timeUntilRoleMaturity,
-			Math.max(diffToOldest, this.timeUntilRoleMaturity),
-			Math.max(
-				Math.round(
-					(this.timeUntilRoleMaturity * Math.log(subscribers + 1)) / 3,
-				),
-				this.timeUntilRoleMaturity,
-			),
-		); // / 3 so that if 2 replicators and timeUntilRoleMaturity = 1e4 the result will be 1
+		// If we're alone (or pubsub isn't ready), a fixed maturity time is sufficient.
+		// When there are multiple replicators we want a stable threshold that doesn't
+		// depend on "now" (otherwise it can drift and turn into a flake).
+		let subscribers = 1;
+		if (!this.rpc.closed) {
+			try {
+				subscribers =
+					(await this.node.services.pubsub.getSubscribers(this.rpc.topic))
+						?.length ?? 1;
+			} catch {
+				// Best-effort only; fall back to 1.
+			}
+		}
 
-		return result;
-		/* return Math.min(1e3, this.timeUntilRoleMaturity); */
+		if (subscribers <= 1) {
+			return this.timeUntilRoleMaturity;
+		}
+
+		// Use replication range timestamps to compute a stable "age gap" between the
+		// newest and oldest known roles. This keeps the oldest role mature while
+		// preventing newer roles from being treated as mature purely because time
+		// passes between test steps / network events.
+		let newestOpenTime = this.openTime;
+		try {
+			const newestIterator = await this.replicationIndex.iterate(
+				{
+					sort: [new Sort({ key: "timestamp", direction: "desc" })],
+				},
+				{ shape: { timestamp: true }, reference: true },
+			);
+			const newestTimestampFromDB = (await newestIterator.next(1))[0]?.value
+				.timestamp;
+			await newestIterator.close();
+			if (newestTimestampFromDB != null) {
+				newestOpenTime = Number(newestTimestampFromDB);
+			}
+		} catch {
+			// Best-effort only; fall back to local open time.
+		}
+
+		const ageGapToOldest = newestOpenTime - this.oldestOpenTime;
+		const roleAge = Math.max(this.timeUntilRoleMaturity, ageGapToOldest);
+		return roleAge < 0 ? 0 : roleAge;
 	}
 
 	async findLeaders(
@@ -3715,13 +3793,37 @@ export class SharedLog<
 		},
 	): Promise<Map<string, { intersecting: boolean }>> {
 		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge()); // TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
+		const selfHash = this.node.identity.publicKey.hashcode();
+
+		// Use `uniqueReplicators` (replicator cache) once we've reconciled it against the
+		// persisted replication index. Until then, fall back to live pubsub subscribers
+		// and avoid relying on `uniqueReplicators` being complete.
+		let peerFilter: Set<string> | undefined = undefined;
+		if (this._replicatorsReconciled && this.uniqueReplicators.size > 0) {
+			peerFilter = this.uniqueReplicators.has(selfHash)
+				? this.uniqueReplicators
+				: new Set([...this.uniqueReplicators, selfHash]);
+		} else {
+			try {
+				const subscribers =
+					(await this.node.services.pubsub.getSubscribers(this.topic)) ??
+					undefined;
+				if (subscribers && subscribers.length > 0) {
+					peerFilter = new Set(subscribers.map((key) => key.hashcode()));
+					peerFilter.add(selfHash);
+				}
+			} catch {
+				// Best-effort only; if pubsub isn't ready, do a full scan.
+			}
+		}
 		return getSamples<R>(
 			cursors,
 			this.replicationIndex,
 			roleAge,
 			this.indexableDomain.numbers,
 			{
-				uniqueReplicators: this.uniqueReplicators,
+				peerFilter,
+				uniqueReplicators: peerFilter,
 			},
 		);
 	}
@@ -3815,6 +3917,15 @@ export class SharedLog<
 						.catch((e) => logger.error(e.toString()));
 				}
 			}
+
+			// Request the remote peer's replication info. This makes joins resilient to
+			// timing-sensitive delivery/order issues where we may miss their initial
+			// replication announcement.
+			this.rpc
+				.send(new RequestReplicationInfoMessage(), {
+					mode: new SeekDelivery({ redundancy: 1, to: [publicKey] }),
+				})
+				.catch((e) => logger.error(e.toString()));
 		} else {
 			await this.removeReplicator(publicKey);
 		}
@@ -3974,11 +4085,28 @@ export class SharedLog<
 
 			let cursor: NumberFromType<R>[] | undefined = undefined;
 
-			const timeout = setTimeout(async () => {
-				reject(
-					new Error("Timeout for checked pruning: Closed: " + this.closed),
+			// Checked prune requests can legitimately take longer than a fixed 10s:
+			// - The remote may not have the entry yet and will wait up to `_respondToIHaveTimeout`
+			// - Leadership/replicator information may take up to `waitForReplicatorTimeout` to settle
+			// If we time out too early we can end up with permanently prunable heads that never
+			// get retried (a common CI flake in "prune before join" tests).
+			const checkedPruneTimeoutMs =
+				options?.timeout ??
+				Math.max(
+					10_000,
+					Number(this._respondToIHaveTimeout ?? 0) +
+						this.waitForReplicatorTimeout +
+						PRUNE_DEBOUNCE_INTERVAL * 2,
 				);
-			}, options?.timeout ?? 1e4);
+
+			const timeout = setTimeout(() => {
+				reject(
+					new Error(
+						`Timeout for checked pruning after ${checkedPruneTimeoutMs}ms (closed=${this.closed})`,
+					),
+				);
+			}, checkedPruneTimeoutMs);
+			timeout.unref?.();
 
 			this._pendingDeletes.set(entry.hash, {
 				promise: deferredPromise,
