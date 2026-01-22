@@ -62,6 +62,8 @@ export type Args<
 	timeUntilRoleMaturity?: number;
 	waitForPruneDelay?: number;
 	waitForReplicatorTimeout?: number;
+	waitForReplicatorRequestIntervalMs?: number;
+	waitForReplicatorRequestMaxAttempts?: number;
 	keep?: (
 		entry: Entry<Operation<T>> | ShallowEntry | EntryReplicated<R>,
 	) => boolean;
@@ -125,6 +127,10 @@ export class EventStore<
 			trim: properties?.trim,
 			replicas: properties?.replicas,
 			waitForReplicatorTimeout: properties?.waitForReplicatorTimeout,
+			waitForReplicatorRequestIntervalMs:
+				properties?.waitForReplicatorRequestIntervalMs,
+			waitForReplicatorRequestMaxAttempts:
+				properties?.waitForReplicatorRequestMaxAttempts,
 			encoding: JSON_ENCODING,
 			timeUntilRoleMaturity: properties?.timeUntilRoleMaturity ?? 3000,
 			waitForPruneDelay: properties?.waitForPruneDelay ?? 0,

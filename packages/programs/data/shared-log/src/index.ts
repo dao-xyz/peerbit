@@ -366,6 +366,8 @@ export type SharedLogOptions<
 	syncronizer?: SynchronizerConstructor<R>;
 	timeUntilRoleMaturity?: number;
 	waitForReplicatorTimeout?: number;
+	waitForReplicatorRequestIntervalMs?: number;
+	waitForReplicatorRequestMaxAttempts?: number;
 	waitForPruneDelay?: number;
 	distributionDebounceTime?: number;
 	compatibility?: number;
@@ -376,6 +378,8 @@ export type SharedLogOptions<
 export const DEFAULT_MIN_REPLICAS = 2;
 export const WAIT_FOR_REPLICATOR_TIMEOUT = 9000;
 export const WAIT_FOR_ROLE_MATURITY = 5000;
+export const WAIT_FOR_REPLICATOR_REQUEST_INTERVAL = 1000;
+export const WAIT_FOR_REPLICATOR_REQUEST_MIN_ATTEMPTS = 3;
 // TODO(prune): Investigate if/when a non-zero prune delay is required for correctness
 // (e.g. responsibility/replication-info message reordering in multi-peer scenarios).
 // Prefer making pruning robust without timing-based heuristics.
@@ -564,6 +568,8 @@ export class SharedLog<
 
 	timeUntilRoleMaturity!: number;
 	waitForReplicatorTimeout!: number;
+	waitForReplicatorRequestIntervalMs!: number;
+	waitForReplicatorRequestMaxAttempts?: number;
 	waitForPruneDelay!: number;
 	distributionDebounceTime!: number;
 
@@ -1903,10 +1909,29 @@ export class SharedLog<
 			options?.timeUntilRoleMaturity ?? WAIT_FOR_ROLE_MATURITY;
 		this.waitForReplicatorTimeout =
 			options?.waitForReplicatorTimeout ?? WAIT_FOR_REPLICATOR_TIMEOUT;
+		this.waitForReplicatorRequestIntervalMs =
+			options?.waitForReplicatorRequestIntervalMs ??
+			WAIT_FOR_REPLICATOR_REQUEST_INTERVAL;
+		this.waitForReplicatorRequestMaxAttempts =
+			options?.waitForReplicatorRequestMaxAttempts;
 		this.waitForPruneDelay = options?.waitForPruneDelay ?? WAIT_FOR_PRUNE_DELAY;
 
 		if (this.waitForReplicatorTimeout < this.timeUntilRoleMaturity) {
 			this.waitForReplicatorTimeout = this.timeUntilRoleMaturity; // does not makes sense to expect a replicator to mature faster than it is reachable
+		}
+
+		if (this.waitForReplicatorRequestIntervalMs <= 0) {
+			throw new Error(
+				"waitForReplicatorRequestIntervalMs must be a positive number",
+			);
+		}
+		if (
+			this.waitForReplicatorRequestMaxAttempts != null &&
+			this.waitForReplicatorRequestMaxAttempts <= 0
+		) {
+			throw new Error(
+				"waitForReplicatorRequestMaxAttempts must be a positive number",
+			);
 		}
 
 		this._closeController = new AbortController();
@@ -3360,11 +3385,13 @@ export class SharedLog<
 		}, timeoutMs);
 
 		let requestAttempts = 0;
-		const requestIntervalMs = 1000;
-		const maxRequestAttempts = Math.max(
-			3,
-			Math.ceil(timeoutMs / requestIntervalMs),
-		);
+		const requestIntervalMs = this.waitForReplicatorRequestIntervalMs;
+		const maxRequestAttempts =
+			this.waitForReplicatorRequestMaxAttempts ??
+			Math.max(
+				WAIT_FOR_REPLICATOR_REQUEST_MIN_ATTEMPTS,
+				Math.ceil(timeoutMs / requestIntervalMs),
+			);
 
 		const requestReplicationInfo = () => {
 			if (settled || this.closed) {
