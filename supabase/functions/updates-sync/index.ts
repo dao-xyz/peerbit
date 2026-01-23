@@ -114,10 +114,10 @@ Deno.serve(async (req) => {
 
 	const functionsBaseUrl = `${supabaseUrl.replace(/\/$/, "")}/functions/v1`;
 
-	const results: Array<{ href: string; sent: number; errors: number }> = [];
+	const results: Array<{ href: string; sent: number; errors: number; skipped?: boolean }> = [];
 
 	for (const update of toSend) {
-		await supabase
+		const { error: recordError } = await supabase
 			.from("updates_sent")
 			.insert({
 				kind: update.kind,
@@ -125,10 +125,22 @@ Deno.serve(async (req) => {
 				title: update.title,
 				date: update.date,
 				excerpt: update.excerpt ?? null,
-			})
-			.select()
-			.single()
-			.catch(() => null);
+			});
+
+		// Ensure the function is safe to retry (or to run concurrently): if the row already exists,
+		// skip sending instead of duplicating emails.
+		if (recordError) {
+			const code = (recordError as { code?: string }).code;
+			if (code === "23505" || recordError.message.toLowerCase().includes("duplicate")) {
+				results.push({ href: update.href, sent: 0, errors: 0, skipped: true });
+				continue;
+			}
+
+			return new Response(JSON.stringify({ error: `DB error: ${recordError.message}` }, null, 2), {
+				status: 500,
+				headers: { ...headers, "Content-Type": "application/json; charset=utf-8" },
+			});
+		}
 
 		const topics = update.kind === "release" ? (["all", "release"] as const) : (["all", "post"] as const);
 		const { data: subscribers } = await supabase
@@ -157,4 +169,3 @@ Deno.serve(async (req) => {
 		headers: { ...headers, "Content-Type": "application/json; charset=utf-8" },
 	});
 });
-
