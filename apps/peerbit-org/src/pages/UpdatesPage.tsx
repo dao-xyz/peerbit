@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { BellNotification, Xmark } from "iconoir-react";
 
@@ -74,6 +74,10 @@ export function UpdatesPage() {
 	const [filter, setFilter] = useState<UpdateKind | "all">("all");
 	const [subscribeOpen, setSubscribeOpen] = useState(false);
 	const [subscribeTo, setSubscribeTo] = useState<UpdateKind | "all">("all");
+	const [email, setEmail] = useState("");
+	const [subscribeStatus, setSubscribeStatus] = useState<
+		{ type: "idle" } | { type: "loading" } | { type: "success"; message: string } | { type: "error"; message: string }
+	>({ type: "idle" });
 
 	useEffect(() => {
 		(async () => {
@@ -123,6 +127,58 @@ export function UpdatesPage() {
 			window.removeEventListener("keydown", onKeyDown);
 		};
 	}, [subscribeOpen]);
+
+	useEffect(() => {
+		if (!subscribeOpen) setSubscribeStatus({ type: "idle" });
+	}, [subscribeOpen]);
+
+	async function onSubscribe(e: FormEvent) {
+		e.preventDefault();
+		if (!emailFormAction) return;
+
+		setSubscribeStatus({ type: "loading" });
+		try {
+			const res = await fetch(emailFormAction, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ email, topic: subscribeTo }),
+			});
+
+			if (!res.ok) {
+				const contentType = res.headers.get("content-type") ?? "";
+				if (contentType.includes("application/json")) {
+					const json = (await res.json().catch(() => ({}))) as { error?: string };
+					setSubscribeStatus({ type: "error", message: json.error ?? `HTTP ${res.status}` });
+				} else {
+					const text = await res.text().catch(() => "");
+					setSubscribeStatus({ type: "error", message: text || `HTTP ${res.status}` });
+				}
+				return;
+			}
+
+			const contentType = res.headers.get("content-type") ?? "";
+			if (contentType.includes("application/json")) {
+				const json = (await res.json().catch(() => ({}))) as { status?: string };
+				if (json.status === "active") {
+					setSubscribeStatus({
+						type: "success",
+						message: "You're already subscribed. Preference updated.",
+					});
+					return;
+				}
+			}
+
+			setSubscribeStatus({
+				type: "success",
+				message: "Check your email to confirm your subscription.",
+			});
+		} catch (err) {
+			setSubscribeStatus({
+				type: "error",
+				message: err instanceof Error ? err.message : String(err),
+			});
+		}
+	}
 
 	return (
 		<DocsLayout>
@@ -331,29 +387,41 @@ export function UpdatesPage() {
 									</div>
 								</div>
 
-								<form className="flex w-full gap-2" action={emailFormAction} method="post" target="_blank">
-									<input type="hidden" name="topic" value={subscribeTo} />
+								<form className="flex w-full gap-2" onSubmit={onSubscribe}>
 									<input
 										className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300 dark:border-slate-800 dark:bg-slate-950 dark:focus:ring-slate-700"
 										type="email"
-										name="email"
 										placeholder="you@example.com"
 										required
 										disabled={!emailFormAction}
+										value={email}
+										onChange={(e) => setEmail(e.target.value)}
 									/>
 									<button
 										className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-50 dark:text-slate-950"
 										type="submit"
-										disabled={!emailFormAction}
+										disabled={!emailFormAction || subscribeStatus.type === "loading"}
 										title={
 											emailFormAction
 												? "Subscribe"
 												: "Set VITE_UPDATES_EMAIL_FORM_ACTION to enable email signup"
 										}
 									>
-										Subscribe
+										{subscribeStatus.type === "loading" ? "Subscribing…" : "Subscribe"}
 									</button>
 								</form>
+
+								{subscribeStatus.type === "success" ? (
+									<div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100">
+										{subscribeStatus.message}
+									</div>
+								) : null}
+
+								{subscribeStatus.type === "error" ? (
+									<div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
+										{subscribeStatus.message}
+									</div>
+								) : null}
 							</div>
 						</div>
 					</div>
