@@ -1,4 +1,4 @@
-import { field, variant } from "@dao-xyz/borsh";
+import { field, fixedArray, variant } from "@dao-xyz/borsh";
 import { id } from "@peerbit/indexer-interface";
 import { expect } from "chai";
 import {
@@ -33,7 +33,7 @@ describe("schema", () => {
 			abstract class ChildBase {}
 
 			@variant(0)
-			class ChildV0 extends ChildBase {
+			class _ChildV0 extends ChildBase {
 				@field({ type: "string" })
 				value: string;
 
@@ -44,7 +44,7 @@ describe("schema", () => {
 			}
 
 			@variant(1)
-			class ChildV1 extends ChildBase {
+			class _ChildV1 extends ChildBase {
 				@field({ type: "string" })
 				value: string;
 
@@ -89,6 +89,54 @@ describe("schema", () => {
 					`REFERENCES ${rootTable.name}(${primary})`,
 				);
 			}
+		});
+
+		it("uses bytes primary key for child FKs", () => {
+			abstract class ChildBase {}
+
+			@variant(0)
+			class _ChildV0 extends ChildBase {
+				@field({ type: "string" })
+				value: string;
+
+				constructor(value: string) {
+					super();
+					this.value = value;
+				}
+			}
+
+			@variant("Root")
+			class Root {
+				// Intentionally declared before the primary key.
+				@field({ type: ChildBase })
+				child: ChildBase;
+
+				@id({ type: fixedArray("u8", 32) })
+				id: Uint8Array;
+
+				constructor(id: Uint8Array, child: ChildBase) {
+					this.id = id;
+					this.child = child;
+				}
+			}
+
+			const primary = getInlineTableFieldName(["id"]);
+			const [rootTable] = getSQLTable(Root, [], primary, false, undefined, false);
+			expect(rootTable).to.exist;
+			expect(rootTable.children.length).to.equal(1);
+
+			const [childTable] = rootTable.children;
+			expect(childTable.inline).to.equal(false);
+
+			const parentIdField = childTable.fields.find((f) => f.name === "__parent_id");
+			expect(parentIdField?.type).to.equal("BLOB");
+
+			const fkConstraint = childTable.constraints.find(
+				(c) => c.name === "__parent_id_fk",
+			);
+			expect(fkConstraint?.definition).to.include(
+				`REFERENCES ${rootTable.name}(${primary})`,
+			);
 		});
 	});
 });
