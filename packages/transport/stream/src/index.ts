@@ -69,6 +69,12 @@ import { type Pushable, pushable } from "it-pushable";
 import pDefer, { type DeferredPromise } from "p-defer";
 import Queue from "p-queue";
 import { Uint8ArrayList } from "uint8arraylist";
+import {
+	computeSeekAckRouteUpdate,
+	selectSeekRelayTargets,
+	shouldAcknowledgeDataMessage,
+	shouldIgnoreDataMessage,
+} from "./core/seek-routing.js";
 import { logger } from "./logger.js";
 import { type PushableLanes, pushableLanes } from "./pushable-lanes.js";
 import { MAX_ROUTE_DISTANCE, Routes } from "./routes.js";
@@ -1727,24 +1733,17 @@ export abstract class DirectStream<
 	}
 
 	public shouldIgnore(message: DataMessage, seenBefore: number) {
-		const fromMe = message.header.signatures?.publicKeys.find((x) =>
-			x.equals(this.publicKey),
-		);
+		const signedBySelf =
+			message.header.signatures?.publicKeys.some((x) =>
+				x.equals(this.publicKey),
+			) ?? false;
 
-		if (fromMe) {
-			return true;
-		}
+		const mode =
+			message.header.mode instanceof SeekDelivery
+				? { kind: "seek" as const, redundancy: message.header.mode.redundancy }
+				: { kind: "non-seek" as const };
 
-		if (
-			(seenBefore > 0 &&
-				message.header.mode instanceof SeekDelivery === false) ||
-			(message.header.mode instanceof SeekDelivery &&
-				seenBefore >= message.header.mode.redundancy)
-		) {
-			return true;
-		}
-
-		return false;
+		return shouldIgnoreDataMessage({ signedBySelf, seenBefore, mode });
 	}
 
 	public async onDataMessage(
@@ -1806,12 +1805,18 @@ export abstract class DirectStream<
 			// DONT await this since it might introduce a dead-lock
 			if (message.header.mode instanceof SeekDelivery) {
 				if (seenBefore < message.header.mode.redundancy) {
-					const to = [...this.peers.values()].filter(
-						(x) =>
-							!message.header.signatures?.publicKeys.find((y) =>
-								y.equals(x.publicKey),
-							) && x !== peerStream,
+					const signerHashes = new Set(
+						message.header.signatures?.publicKeys.map((x) => x.hashcode()) ??
+							[],
 					);
+
+					const to = selectSeekRelayTargets({
+						candidates: this.peers,
+						getCandidateId: ([peerHash]) => peerHash,
+						inboundId: from.hashcode(),
+						hasSigned: (peerHash) => signerHashes.has(peerHash),
+					}).map(([, stream]) => stream);
+
 					if (to.length > 0) {
 						this.relayMessage(from, message, to);
 					}
@@ -1843,14 +1848,19 @@ export abstract class DirectStream<
 		seenBefore: number,
 	) {
 		if (
-			(message.header.mode instanceof SeekDelivery ||
-				message.header.mode instanceof AcknowledgeDelivery) &&
-			seenBefore < message.header.mode.redundancy
+			message.header.mode instanceof SeekDelivery ||
+			message.header.mode instanceof AcknowledgeDelivery
 		) {
-			const shouldAcknowldege =
+			const isRecipient =
 				message.header.mode.to == null ||
 				message.header.mode.to.includes(this.publicKeyHash);
-			if (!shouldAcknowldege) {
+			if (
+				!shouldAcknowledgeDataMessage({
+					isRecipient,
+					seenBefore,
+					redundancy: message.header.mode.redundancy,
+				})
+			) {
 				return;
 			}
 			const signers = message.header.signatures!.publicKeys.map((x) =>
@@ -2388,11 +2398,19 @@ export abstract class DirectStream<
 				// if the target is not inside the original message to, we still ad the target to our routes
 				// this because a relay might modify the 'to' list and we might receive more answers than initially set
 				if (message.header.mode instanceof SeekDelivery) {
+					const routeUpdate = computeSeekAckRouteUpdate({
+						current: this.publicKeyHash,
+						upstream: messageFrom?.publicKey.hashcode(),
+						downstream: messageThrough.publicKey.hashcode(),
+						target: messageTargetHash,
+						distance: seenCounter,
+					});
+
 					this.addRouteConnection(
-						messageFrom?.publicKey.hashcode() || this.publicKeyHash,
-						messageThrough.publicKey.hashcode(),
+						routeUpdate.from,
+						routeUpdate.neighbour,
 						messageTarget,
-						seenCounter,
+						routeUpdate.distance,
 						session,
 						Number(ack.header.session),
 					); // we assume the seenCounter = distance. The more the message has been seen by the target the longer the path is to the target
