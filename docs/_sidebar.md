@@ -6,7 +6,7 @@ Documentation
 - [Development (borsh-ts)](/development/borsh-ts.md)
 
 Updates
-- [Blog](/blog.md)
+- [Updates](/updates)
 - [Release notes](/release-notes.md)
 - [Status](/status.md)
 
