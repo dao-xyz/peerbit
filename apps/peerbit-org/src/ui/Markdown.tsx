@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { isValidElement, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";
@@ -6,19 +6,25 @@ import remarkGfm from "remark-gfm";
 import { CodeInclude } from "./MarkdownCodeInclude";
 import { InternalLink } from "./MarkdownLink";
 import { MarkdownImage } from "./MarkdownImage";
+import { highlightToHtml, languageFromClassName } from "../utils/highlight";
 import { splitPathDirname } from "../utils/path";
 
 export function Markdown({ base, docPath }: { base: string; docPath: string }) {
 	const [content, setContent] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [loadedDocPath, setLoadedDocPath] = useState<string | null>(null);
 
 	const docUrl = useMemo(() => `/${base}/${docPath}`, [base, docPath]);
-	const baseDir = useMemo(() => splitPathDirname(docPath), [docPath]);
+	const baseDir = useMemo(
+		() => splitPathDirname(loadedDocPath ?? docPath),
+		[docPath, loadedDocPath],
+	);
 
 	useEffect(() => {
 		(async () => {
 			setError(null);
 			setContent(null);
+			setLoadedDocPath(null);
 			try {
 				const candidates = [docPath];
 				if (docPath.endsWith(".md") && !docPath.endsWith("/README.md")) {
@@ -29,6 +35,7 @@ export function Markdown({ base, docPath }: { base: string; docPath: string }) {
 				for (const candidate of candidates) {
 					const res = await fetch(`/${base}/${candidate}`, { cache: "no-store" });
 					if (res.ok) {
+						setLoadedDocPath(candidate);
 						setContent(await res.text());
 						return;
 					}
@@ -70,7 +77,7 @@ export function Markdown({ base, docPath }: { base: string; docPath: string }) {
 					components={{
 						script: () => null,
 						style: () => null,
-						a: ({ href = "", title, children }) => {
+						a: ({ href = "", title, children, className }) => {
 							if (typeof title === "string" && title.includes(":include")) {
 								return (
 									<CodeInclude
@@ -82,7 +89,7 @@ export function Markdown({ base, docPath }: { base: string; docPath: string }) {
 								);
 							}
 							return (
-								<InternalLink href={href} title={title} docDir={baseDir}>
+								<InternalLink href={href} title={title} docDir={baseDir} className={className}>
 									{children}
 								</InternalLink>
 							);
@@ -90,18 +97,42 @@ export function Markdown({ base, docPath }: { base: string; docPath: string }) {
 						img: ({ src = "", alt = "" }) => (
 							<MarkdownImage base={base} markdownDir={baseDir} src={src} alt={alt} />
 						),
-						code: ({ className, children }) => {
+						code: ({ className, children }) => <code className={className}>{children}</code>,
+						pre: ({ children }) => {
+							const childArray = Array.isArray(children) ? children : [children];
+							const codeElement = childArray.find((child) => {
+								if (!isValidElement(child)) return false;
+								const node = (child.props as { node?: unknown }).node as { tagName?: string } | undefined;
+								return child.type === "code" || node?.tagName === "code";
+							});
+
+							if (isValidElement(codeElement)) {
+								const className = (codeElement.props as { className?: string }).className;
+								const lang = languageFromClassName(className);
+								const codeChildren = (codeElement.props as { children?: unknown }).children;
+								const text =
+									typeof codeChildren === "string"
+										? codeChildren
+										: Array.isArray(codeChildren)
+											? codeChildren.join("")
+											: String(codeChildren ?? "");
+								const html = highlightToHtml(text, lang);
+								return (
+									<pre className="overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-800 dark:bg-slate-900/40">
+										<code
+											className={["hljs", className].filter(Boolean).join(" ")}
+											dangerouslySetInnerHTML={{ __html: html }}
+										/>
+									</pre>
+								);
+							}
+
 							return (
-								<code className={className}>
-									{typeof children === "string" ? children : String(children)}
-								</code>
+								<pre className="overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-800 dark:bg-slate-900/40">
+									{children}
+								</pre>
 							);
 						},
-						pre: ({ children }) => (
-							<pre className="overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-800 dark:bg-slate-900/40">
-								{children}
-							</pre>
-						),
 					}}
 				>
 					{content}

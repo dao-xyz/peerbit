@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { resolveRelativePath } from "../utils/path";
+import { highlightToHtml, languageFromPath } from "../utils/highlight";
 
 function parseIncludeTitle(title: string) {
 	const fragmentMatch = title.match(/:fragment=([A-Za-z0-9_-]+)/);
-	return { fragment: fragmentMatch?.[1] ?? null };
+	const langMatch = title.match(/:lang=([A-Za-z0-9_-]+)/);
+	return { fragment: fragmentMatch?.[1] ?? null, lang: langMatch?.[1]?.toLowerCase() ?? null };
 }
 
 function extractFragment(source: string, fragment: string) {
@@ -35,9 +37,10 @@ export function CodeInclude({
 	href: string;
 	title: string;
 }) {
-	const { fragment } = useMemo(() => parseIncludeTitle(title), [title]);
+	const { fragment, lang } = useMemo(() => parseIncludeTitle(title), [title]);
 	const resolved = useMemo(() => resolveRelativePath(markdownDir, href), [href, markdownDir]);
 	const url = useMemo(() => `/${base}/${resolved}`, [base, resolved]);
+	const inferredLanguage = useMemo(() => lang ?? languageFromPath(resolved), [lang, resolved]);
 
 	const [code, setCode] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
@@ -73,9 +76,16 @@ export function CodeInclude({
 		return <div className="my-4 text-sm text-slate-500">Loading snippet…</div>;
 	}
 
+	const highlighted = highlightToHtml(code, inferredLanguage);
+
 	return (
 		<pre className="my-4 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-800 dark:bg-slate-900/40">
-			<code>{code}</code>
+			<code
+				className={["hljs", inferredLanguage ? `language-${inferredLanguage}` : null]
+					.filter(Boolean)
+					.join(" ")}
+				dangerouslySetInnerHTML={{ __html: highlighted }}
+			/>
 		</pre>
 	);
 }
