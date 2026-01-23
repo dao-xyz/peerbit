@@ -33,7 +33,7 @@ describe("schema", () => {
 			abstract class ChildBase {}
 
 			@variant(0)
-			class ChildV0 extends ChildBase {
+			class _ChildV0 extends ChildBase {
 				@field({ type: "string" })
 				value: string;
 
@@ -44,7 +44,7 @@ describe("schema", () => {
 			}
 
 			@variant(1)
-			class ChildV1 extends ChildBase {
+			class _ChildV1 extends ChildBase {
 				@field({ type: "string" })
 				value: string;
 
@@ -95,7 +95,7 @@ describe("schema", () => {
 			abstract class ChildBase {}
 
 			@variant(0)
-			class ChildV0 extends ChildBase {
+			class _ChildV0 extends ChildBase {
 				@field({ type: "string" })
 				value: string;
 
