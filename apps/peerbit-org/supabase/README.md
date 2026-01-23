@@ -12,12 +12,14 @@ This folder contains the database schema and Edge Functions for the **Updates** 
 ## Setup (high level)
 
 1) Create a Supabase project
-2) Apply migrations in `supabase/migrations/`
-3) Deploy the Edge Functions in `supabase/functions/`
+2) Apply migrations in `migrations/`
+3) Deploy the Edge Functions in `functions/`
 4) Configure secrets (Resend + site URLs + sync secret)
 5) Configure GitHub Actions + site env var to point to the subscribe endpoint
 
 ## Required secrets / env vars
+
+Use `../.env.supabase` (see `../.env.supabase.example`) as a single place to keep the values you need.
 
 ### Supabase Edge Functions secrets
 
@@ -41,4 +43,3 @@ Add these repository secrets so `site.yml` can trigger sending:
 
 - `SUPABASE_UPDATES_SYNC_URL=https://<project>.supabase.co/functions/v1/updates-sync`
 - `SUPABASE_UPDATES_SYNC_SECRET=<same as UPDATES_SYNC_SECRET>`
-
