@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.11](https://github.com/dao-xyz/peerbit/compare/vite-v1.1.10...vite-v1.1.11) (2026-01-23)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/indexer-sqlite3 bumped to 2.1.2
+
 ## [1.1.10](https://github.com/dao-xyz/peerbit/compare/vite-v1.1.9...vite-v1.1.10) (2026-01-22)
 
 
