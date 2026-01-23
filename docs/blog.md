@@ -2,6 +2,21 @@
 
 Product updates, release announcements, and engineering notes.
 
+## Posts
+
+<div class="not-prose grid gap-4">
+  <a class="group block rounded-xl border border-slate-200 bg-white p-4 no-underline shadow-sm transition hover:shadow-md dark:border-slate-800 dark:bg-slate-950" href="/blog/2026-01-23-peerbit-org-site-update.md">
+    <div class="flex items-start justify-between gap-3">
+      <div>
+        <div class="font-semibold text-slate-900 dark:text-slate-50">Peerbit.org site update</div>
+        <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">January 23, 2026</div>
+      </div>
+      <span class="text-xs text-slate-500 dark:text-slate-400">Post</span>
+    </div>
+    <p class="mt-2 text-sm text-slate-600 dark:text-slate-300">A refreshed docs experience, code highlighting, and a new blog layout.</p>
+  </a>
+</div>
+
 ## Articles
 
 <div class="not-prose grid gap-4 sm:grid-cols-2">
@@ -69,7 +84,3 @@ Product updates, release announcements, and engineering notes.
     <p class="mt-2 text-sm text-slate-600 dark:text-slate-300">How Peerbit compares to other approaches and systems.</p>
   </a>
 </div>
-
-## Posts
-
-- Coming soon.
