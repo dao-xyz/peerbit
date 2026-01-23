@@ -1,5 +1,24 @@
 # @peerbit/document-react
 
+## [0.6.2](https://github.com/dao-xyz/peerbit/compare/document-react-v0.6.1...document-react-v0.6.2) (2026-01-23)
+
+
+### Bug Fixes
+
+* **ci:** avoid Vite ENOTEMPTY by skipping party wrapper build ([2ed894b](https://github.com/dao-xyz/peerbit/commit/2ed894b84ef6e5b8fd276645909432d2f9dc7cb9))
+* **ci:** skip document-react-party wrapper build ([f91ea5b](https://github.com/dao-xyz/peerbit/commit/f91ea5bf2748c0495adc28658d78fb4394e1fb2a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 12.3.1
+    * @peerbit/react bumped to 0.2.1
+  * devDependencies
+    * @peerbit/shared-log bumped to 12.3.1
+    * peerbit bumped to 4.4.17
+
 ## [0.6.1](https://github.com/dao-xyz/peerbit/compare/document-react-v0.6.0...document-react-v0.6.1) (2026-01-22)
 
 

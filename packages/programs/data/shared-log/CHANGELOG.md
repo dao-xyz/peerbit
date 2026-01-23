@@ -389,6 +389,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [12.3.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.3.0...shared-log-v12.3.1) (2026-01-23)
+
+
+### Bug Fixes
+
+* **shared-log:** increase waitForReplicator timeout ([52eac7b](https://github.com/dao-xyz/peerbit/commit/52eac7b76b653a97aec2704f3ce38a454c75030f))
+* **shared-log:** increase waitForReplicator timeout ([11ea82e](https://github.com/dao-xyz/peerbit/commit/11ea82e83d0f12d59f249bfe0198b09587ae267e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 5.0.8
+    * @peerbit/rpc bumped to 5.4.17
+    * @peerbit/indexer-sqlite3 bumped to 2.1.2
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.3.17
+
 ## [12.3.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.2.0...shared-log-v12.3.0) (2026-01-22)
 
 

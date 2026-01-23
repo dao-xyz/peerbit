@@ -456,6 +456,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [12.3.1](https://github.com/dao-xyz/peerbit/compare/document-v12.3.0...document-v12.3.1) (2026-01-23)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 5.0.8
+    * @peerbit/rpc bumped to 5.4.17
+    * @peerbit/shared-log bumped to 12.3.1
+    * @peerbit/indexer-sqlite3 bumped to 2.1.2
+    * @peerbit/document-interface bumped to 3.2.2
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.3.17
+    * peerbit bumped to 4.4.17
+
 ## [12.3.0](https://github.com/dao-xyz/peerbit/compare/document-v12.2.0...document-v12.3.0) (2026-01-22)
 
 

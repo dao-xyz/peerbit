@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.2](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v2.1.1...indexer-sqlite3-v2.1.2) (2026-01-23)
+
+
+### Bug Fixes
+
+* **indexer-sqlite3:** map fixedArray(u8) parent ids as BLOB ([91f84d0](https://github.com/dao-xyz/peerbit/commit/91f84d093594f8c092d0b5e74c4c8c578e504867))
+* **indexer-sqlite3:** map fixedArray(u8) parent ids as BLOB ([227fffe](https://github.com/dao-xyz/peerbit/commit/227fffe5e8c5afe669ffcd42c732ede8b2b9168a))
+
 ## [2.1.1](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v2.1.0...indexer-sqlite3-v2.1.1) (2026-01-22)
 
 

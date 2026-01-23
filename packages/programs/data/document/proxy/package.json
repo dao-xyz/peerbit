@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/document-proxy",
-	"version": "1.0.1",
+	"version": "1.0.2",
 	"description": "RPC/proxy adapter for @peerbit/document (canonical runtime)",
 	"author": "dao.xyz",
 	"license": "MIT",
