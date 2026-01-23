@@ -11,8 +11,15 @@ function isHashLink(href: string) {
 	return href.startsWith("#");
 }
 
+const siteRoutes = new Set(["updates", "blog", "release-notes", "status"]);
+
 function toAppRoute(href: string, docDir: string) {
 	if (href === "/") return "/";
+
+	if (href.startsWith("/")) {
+		const first = href.split("/").filter(Boolean)[0] ?? "";
+		if (siteRoutes.has(first)) return href;
+	}
 
 	const resolved = resolveRelativePath(docDir, href);
 	if (resolved.endsWith(".md")) {

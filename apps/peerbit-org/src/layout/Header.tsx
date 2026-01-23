@@ -115,7 +115,7 @@ export function Header() {
 
 					<nav className="hidden items-center gap-1 md:flex">
 						<HeaderLink to="/docs/getting-started">Docs</HeaderLink>
-						<HeaderLink to="/blog">Blog</HeaderLink>
+						<HeaderLink to="/updates">Updates</HeaderLink>
 						<HeaderLink to="/release-notes">Release notes</HeaderLink>
 						<HeaderLink to="/status">Status</HeaderLink>
 
@@ -195,8 +195,8 @@ export function Header() {
 								<MobileLink to="/docs/getting-started" onNavigate={() => setMobileOpen(false)}>
 									Docs
 								</MobileLink>
-								<MobileLink to="/blog" onNavigate={() => setMobileOpen(false)}>
-									Blog
+								<MobileLink to="/updates" onNavigate={() => setMobileOpen(false)}>
+									Updates
 								</MobileLink>
 								<MobileLink to="/release-notes" onNavigate={() => setMobileOpen(false)}>
 									Release notes
