@@ -24,3 +24,6 @@ coverage
 references
 .npmrc
 .env.github
+
+# Local scratch docs copy (do not commit)
+apps/peerbit-org/dummy-non-existing-folder/
