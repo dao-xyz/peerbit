@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { BellNotification, Xmark } from "iconoir-react";
 
 import { DocsLayout } from "../layout/DocsLayout";
+import { IconButton } from "../ui/IconButton";
 
 type UpdateKind = "post" | "release";
 
@@ -70,6 +72,8 @@ export function UpdatesPage() {
 	const [items, setItems] = useState<UpdatesIndexItem[] | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [filter, setFilter] = useState<UpdateKind | "all">("all");
+	const [subscribeOpen, setSubscribeOpen] = useState(false);
+	const [subscribeTo, setSubscribeTo] = useState<UpdateKind | "all">("all");
 
 	useEffect(() => {
 		(async () => {
@@ -92,6 +96,33 @@ export function UpdatesPage() {
 	}, [filter, items]);
 
 	const emailFormAction = import.meta.env.VITE_UPDATES_EMAIL_FORM_ACTION as string | undefined;
+	const feedRssUrl = useMemo(() => {
+		if (subscribeTo === "post") return "/content/docs/updates/posts.xml";
+		if (subscribeTo === "release") return "/content/docs/updates/releases.xml";
+		return "/content/docs/updates/all.xml";
+	}, [subscribeTo]);
+	const feedJsonUrl = useMemo(() => {
+		if (subscribeTo === "post") return "/content/docs/updates/posts.json";
+		if (subscribeTo === "release") return "/content/docs/updates/releases.json";
+		return "/content/docs/updates/all.json";
+	}, [subscribeTo]);
+
+	useEffect(() => {
+		if (!subscribeOpen) return;
+
+		const previous = document.body.style.overflow;
+		document.body.style.overflow = "hidden";
+
+		const onKeyDown = (e: KeyboardEvent) => {
+			if (e.key === "Escape") setSubscribeOpen(false);
+		};
+		window.addEventListener("keydown", onKeyDown);
+
+		return () => {
+			document.body.style.overflow = previous;
+			window.removeEventListener("keydown", onKeyDown);
+		};
+	}, [subscribeOpen]);
 
 	return (
 		<DocsLayout>
@@ -101,111 +132,61 @@ export function UpdatesPage() {
 					<p className="mt-2 text-slate-600 dark:text-slate-300">
 						Product updates, release announcements, and engineering notes.
 					</p>
-
-					<div className="mt-6 grid gap-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950">
-						<div className="flex flex-wrap items-center gap-3 text-sm">
-							<span className="font-semibold">Subscribe</span>
-							<a
-								className="rounded-full bg-slate-100 px-3 py-1 font-semibold hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800"
-								href="/content/docs/updates/all.xml"
-								target="_blank"
-								rel="noreferrer"
-							>
-								RSS (All)
-							</a>
-							<a
-								className="rounded-full bg-slate-100 px-3 py-1 font-semibold hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800"
-								href="/content/docs/updates/posts.xml"
-								target="_blank"
-								rel="noreferrer"
-							>
-								RSS (Posts)
-							</a>
-							<a
-								className="rounded-full bg-slate-100 px-3 py-1 font-semibold hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800"
-								href="/content/docs/updates/releases.xml"
-								target="_blank"
-								rel="noreferrer"
-							>
-								RSS (Releases)
-							</a>
-						</div>
-
-						<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-							<div className="text-sm text-slate-600 dark:text-slate-300">
-								Get updates by email:
-							</div>
-							<form
-								className="flex w-full gap-2 sm:w-auto"
-								action={emailFormAction}
-								method="post"
-								target="_blank"
-							>
-								<input
-									className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300 dark:border-slate-800 dark:bg-slate-950 dark:focus:ring-slate-700 sm:w-72"
-									type="email"
-									name="email"
-									placeholder="you@example.com"
-									required
-									disabled={!emailFormAction}
-								/>
-								<button
-									className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-50 dark:text-slate-950"
-									type="submit"
-									disabled={!emailFormAction}
-									title={
-										emailFormAction
-											? "Subscribe"
-											: "Set VITE_UPDATES_EMAIL_FORM_ACTION to enable email signup"
-									}
-								>
-									Subscribe
-								</button>
-							</form>
-						</div>
-					</div>
 				</header>
 
 				<section>
 					<div className="flex flex-wrap items-center justify-between gap-3">
 						<h2 className="text-xl font-bold">Posts</h2>
-						<div className="flex gap-2 text-sm">
-							<button
-								type="button"
-								onClick={() => setFilter("all")}
-								className={[
-									"rounded-full px-3 py-1 font-semibold",
-									filter === "all"
-										? "bg-slate-900 text-white dark:bg-slate-50 dark:text-slate-950"
-										: "bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800",
-								].join(" ")}
+						<div className="flex items-center gap-2">
+							<div className="flex gap-2 text-sm">
+								<button
+									type="button"
+									onClick={() => setFilter("all")}
+									className={[
+										"rounded-full px-3 py-1 font-semibold",
+										filter === "all"
+											? "bg-slate-900 text-white dark:bg-slate-50 dark:text-slate-950"
+											: "bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800",
+									].join(" ")}
+								>
+									All
+								</button>
+								<button
+									type="button"
+									onClick={() => setFilter("post")}
+									className={[
+										"rounded-full px-3 py-1 font-semibold",
+										filter === "post"
+											? "bg-slate-900 text-white dark:bg-slate-50 dark:text-slate-950"
+											: "bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800",
+									].join(" ")}
+								>
+									Posts
+								</button>
+								<button
+									type="button"
+									onClick={() => setFilter("release")}
+									className={[
+										"rounded-full px-3 py-1 font-semibold",
+										filter === "release"
+											? "bg-slate-900 text-white dark:bg-slate-50 dark:text-slate-950"
+											: "bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800",
+									].join(" ")}
+								>
+									Releases
+								</button>
+							</div>
+
+							<IconButton
+								aria-label="Subscribe"
+								title="Subscribe"
+								onClick={() => {
+									setSubscribeTo(filter === "post" || filter === "release" ? filter : "all");
+									setSubscribeOpen(true);
+								}}
 							>
-								All
-							</button>
-							<button
-								type="button"
-								onClick={() => setFilter("post")}
-								className={[
-									"rounded-full px-3 py-1 font-semibold",
-									filter === "post"
-										? "bg-slate-900 text-white dark:bg-slate-50 dark:text-slate-950"
-										: "bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800",
-								].join(" ")}
-							>
-								Posts
-							</button>
-							<button
-								type="button"
-								onClick={() => setFilter("release")}
-								className={[
-									"rounded-full px-3 py-1 font-semibold",
-									filter === "release"
-										? "bg-slate-900 text-white dark:bg-slate-50 dark:text-slate-950"
-										: "bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800",
-								].join(" ")}
-							>
-								Releases
-							</button>
+								<BellNotification className="h-5 w-5" />
+							</IconButton>
 						</div>
 					</div>
 
@@ -272,8 +253,112 @@ export function UpdatesPage() {
 						))}
 					</div>
 				</section>
+
+				{subscribeOpen ? (
+					<div className="fixed inset-0 z-50">
+						<button
+							type="button"
+							aria-label="Close dialog"
+							className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm"
+							onClick={() => setSubscribeOpen(false)}
+						/>
+						<div
+							role="dialog"
+							aria-modal="true"
+							aria-label="Subscribe to updates"
+							className="absolute left-1/2 top-24 w-[min(560px,calc(100vw-2rem))] -translate-x-1/2 rounded-2xl border border-slate-200 bg-white p-5 shadow-xl dark:border-slate-800 dark:bg-slate-950"
+						>
+							<div className="flex items-center justify-between gap-3">
+								<div className="text-base font-bold">Subscribe</div>
+								<IconButton
+									aria-label="Close"
+									title="Close"
+									onClick={() => setSubscribeOpen(false)}
+								>
+									<Xmark className="h-5 w-5" />
+								</IconButton>
+							</div>
+
+							<div className="mt-4 grid gap-3">
+								<div className="grid gap-2">
+									<div className="flex items-center justify-between gap-3">
+										<div className="text-sm font-semibold">Feed</div>
+										<div className="flex gap-2 text-sm">
+											<a
+												className="rounded-full bg-slate-100 px-3 py-1 font-semibold hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800"
+												href={feedRssUrl}
+												target="_blank"
+												rel="noreferrer"
+											>
+												RSS
+											</a>
+											<a
+												className="rounded-full bg-slate-100 px-3 py-1 font-semibold hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800"
+												href={feedJsonUrl}
+												target="_blank"
+												rel="noreferrer"
+											>
+												JSON
+											</a>
+										</div>
+									</div>
+
+									<div className="grid gap-2 text-sm">
+										<label className="flex items-center gap-2">
+											<input
+												type="checkbox"
+												checked={subscribeTo === "all"}
+												onChange={() => setSubscribeTo("all")}
+											/>
+											<span className="font-semibold">All</span>
+										</label>
+										<label className="flex items-center gap-2">
+											<input
+												type="checkbox"
+												checked={subscribeTo === "post"}
+												onChange={() => setSubscribeTo("post")}
+											/>
+											<span className="font-semibold">Posts</span>
+										</label>
+										<label className="flex items-center gap-2">
+											<input
+												type="checkbox"
+												checked={subscribeTo === "release"}
+												onChange={() => setSubscribeTo("release")}
+											/>
+											<span className="font-semibold">Releases</span>
+										</label>
+									</div>
+								</div>
+
+								<form className="flex w-full gap-2" action={emailFormAction} method="post" target="_blank">
+									<input type="hidden" name="topic" value={subscribeTo} />
+									<input
+										className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300 dark:border-slate-800 dark:bg-slate-950 dark:focus:ring-slate-700"
+										type="email"
+										name="email"
+										placeholder="you@example.com"
+										required
+										disabled={!emailFormAction}
+									/>
+									<button
+										className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-50 dark:text-slate-950"
+										type="submit"
+										disabled={!emailFormAction}
+										title={
+											emailFormAction
+												? "Subscribe"
+												: "Set VITE_UPDATES_EMAIL_FORM_ACTION to enable email signup"
+										}
+									>
+										Subscribe
+									</button>
+								</form>
+							</div>
+						</div>
+					</div>
+				) : null}
 			</div>
 		</DocsLayout>
 	);
 }
-
