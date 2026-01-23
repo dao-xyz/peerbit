@@ -207,7 +207,14 @@ const resolvePrimaryFieldInfoFromSchema = (
 			fieldType = fieldType.elementType;
 		}
 
-		fieldType = unwrapNestedType(fieldType);
+		// fixedArray(u8, N) represents bytes and must map to BLOB in SQL. Note that
+		// FixedArrayKind is also a WrappedType, so unwrapNestedType() would otherwise
+		// turn it into the scalar "u8" and incorrectly treat it as INTEGER.
+		if (fieldType instanceof FixedArrayKind && fieldType.elementType === "u8") {
+			fieldType = Uint8Array;
+		} else {
+			fieldType = unwrapNestedType(fieldType);
+		}
 
 		// Arrays are always stored in separate tables.
 		if (fieldType instanceof VecKind) {
