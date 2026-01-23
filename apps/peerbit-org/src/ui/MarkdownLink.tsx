@@ -30,17 +30,20 @@ export function InternalLink({
 	title,
 	docDir,
 	children,
+	className,
 }: {
 	href: string;
 	title?: string | null;
 	docDir: string;
 	children: ReactNode;
+	className?: string;
 }) {
 	if (isExternal(href) || isHashLink(href)) {
 		return (
 			<a
 				href={href}
 				title={title ?? undefined}
+				className={className}
 				target={isExternal(href) ? "_blank" : undefined}
 				rel={isExternal(href) ? "noreferrer" : undefined}
 			>
@@ -50,7 +53,7 @@ export function InternalLink({
 	}
 
 	return (
-		<Link to={toAppRoute(href, docDir)} title={title ?? undefined}>
+		<Link to={toAppRoute(href, docDir)} title={title ?? undefined} className={className}>
 			{children}
 		</Link>
 	);
