@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/canonical-client",
-	"version": "1.1.0",
+	"version": "1.1.1",
 	"description": "Client helpers for connecting to a Peerbit canonical runtime",
 	"author": "dao.xyz",
 	"license": "MIT",

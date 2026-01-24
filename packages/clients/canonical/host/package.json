@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/canonical-host",
-	"version": "1.0.2",
+	"version": "1.0.3",
 	"description": "Peerbit canonical runtime host implementation (worker/server)",
 	"author": "dao.xyz",
 	"license": "MIT",

@@ -279,6 +279,13 @@
     * @peerbit/blocks-interface bumped from 1.2.18 to 1.2.19
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [3.1.8](https://github.com/dao-xyz/peerbit/compare/blocks-v3.1.7...blocks-v3.1.8) (2026-01-24)
+
+
+### Bug Fixes
+
+* **blocks:** handle delivery errors in publish and fetch request handling ([5fdadce](https://github.com/dao-xyz/peerbit/commit/5fdadce6269cd4591131941f27a4b95f2814820e))
+
 ## [3.1.7](https://github.com/dao-xyz/peerbit/compare/blocks-v3.1.6...blocks-v3.1.7) (2026-01-22)
 
 
