@@ -11,7 +11,7 @@ import {
 import { Cache } from "@peerbit/cache";
 import { PublicSignKey } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
-import type { PublishOptions } from "@peerbit/stream";
+import { type PublishOptions, dontThrowIfDeliveryError } from "@peerbit/stream";
 import {
 	AnyWhere,
 	type PeerRefs,
@@ -62,7 +62,7 @@ export class RemoteBlocks implements IBlocks {
 	localStore: BlockStore;
 
 	private _responseHandler?: (data: BlockMessage, from?: string) => any;
-	private _resolvers: Map<string, (data: Uint8Array) => void>;
+	private _resolvers: Map<string, (data: Uint8Array) => Promise<void>>;
 	private _blockCache?: Cache<Uint8Array>;
 
 	private _loadFetchQueue: PQueue;
@@ -110,9 +110,15 @@ export class RemoteBlocks implements IBlocks {
 		this._responseHandler = async (message: BlockMessage, from?: string) => {
 			try {
 				if (message instanceof BlockRequest && this.localStore) {
-					this._loadFetchQueue.add(() =>
-						this.handleFetchRequest(message, localTimeout, from),
-					);
+					this._loadFetchQueue
+						.add(() => this.handleFetchRequest(message, localTimeout, from))
+						.catch((e) => {
+							try {
+								dontThrowIfDeliveryError(e);
+							} catch (error) {
+								logger.error("Got error for libp2p block transport: ", error);
+							}
+						});
 				} else if (message instanceof BlockResponse) {
 					// TODO make sure we are not storing too much bytes in ram (like filter large blocks)
 					let resolver = this._resolvers.get(message.cid);
@@ -122,7 +128,7 @@ export class RemoteBlocks implements IBlocks {
 							this._blockCache!.add(message.cid, message.bytes);
 						}
 					} else {
-						resolver(message.bytes);
+						await resolver(message.bytes);
 					}
 				}
 			} catch (error) {
@@ -211,7 +217,9 @@ export class RemoteBlocks implements IBlocks {
 		if (!bytes) {
 			return;
 		}
-		await this.options.publish(new BlockResponse(cid, bytes), { to: [from] });
+		await this.options
+			.publish(new BlockResponse(cid, bytes), { to: [from] })
+			.catch(dontThrowIfDeliveryError);
 	}
 
 	private async _readFromPeers(
@@ -289,11 +297,13 @@ export class RemoteBlocks implements IBlocks {
 			const publishOnNewPeers = (e: CustomEvent<PublicSignKey>) => {
 				const to = e.detail.hashcode();
 				if (!options?.from || options.from.includes(to)) {
-					return this.options.publish(new BlockRequest(cidString), {
-						// We dont sent explicitly to 'to' here because we want the message to propagate beyond the first peer
-						to: [to],
-						mode: new AnyWhere(),
-					});
+					this.options
+						.publish(new BlockRequest(cidString), {
+							// We dont sent explicitly to 'to' here because we want the message to propagate beyond the first peer
+							to: [to],
+							mode: new AnyWhere(),
+						})
+						.catch(dontThrowIfDeliveryError);
 				}
 			};
 
