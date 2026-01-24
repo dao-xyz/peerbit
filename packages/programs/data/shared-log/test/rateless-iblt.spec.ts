@@ -164,31 +164,31 @@ describe("rateless-iblt-syncronizer", () => {
 		expect(countMessages(db2Messages.calls, MoreSymbols)).to.equal(0);
 	});
 
-		it("many missing", async function () {
-			this.timeout(120_000);
-			const syncedCount = 3000;
-			const unsyncedCount = 3000;
+	it("many missing", async function () {
+		this.timeout(120_000);
+		const syncedCount = 3000;
+		const unsyncedCount = 3000;
 
-			await setupLogs(syncedCount, unsyncedCount);
-			const db1Messages = await collectMessages(db1);
-			const db2Messages = await collectMessages(db2);
+		await setupLogs(syncedCount, unsyncedCount);
+		const db1Messages = await collectMessages(db1);
+		const db2Messages = await collectMessages(db2);
 
-			await db1.node.dial(db2.node.getMultiaddrs());
+		await db1.node.dial(db2.node.getMultiaddrs());
 
-			const expectedCount = syncedCount + unsyncedCount * 2;
-			await Promise.all([
-				waitForResolved(
-					() => expect(db1.log.log.length).to.equal(expectedCount),
-					{ timeout: 60_000 },
-				),
-				waitForResolved(
-					() => expect(db2.log.log.length).to.equal(expectedCount),
-					{ timeout: 60_000 },
-				),
-				]);
+		const expectedCount = syncedCount + unsyncedCount * 2;
+		await Promise.all([
+			waitForResolved(
+				() => expect(db1.log.log.length).to.equal(expectedCount),
+				{ timeout: 60_000 },
+			),
+			waitForResolved(
+				() => expect(db2.log.log.length).to.equal(expectedCount),
+				{ timeout: 60_000 },
+			),
+		]);
 
-				const db1MoreSymbols = countMessages(db1Messages.calls, MoreSymbols);
-				const db2MoreSymbols = countMessages(db2Messages.calls, MoreSymbols);
-				expect(db1MoreSymbols + db2MoreSymbols).to.be.greaterThan(0);
-			});
-		});
+		const db1MoreSymbols = countMessages(db1Messages.calls, MoreSymbols);
+		const db2MoreSymbols = countMessages(db2Messages.calls, MoreSymbols);
+		expect(db1MoreSymbols + db2MoreSymbols).to.be.greaterThan(0);
+	});
+});

@@ -282,8 +282,10 @@ export class PeerbitCanonicalClient {
 		);
 		if (!adapter) {
 			const knownVariants = state.adapters
-				.flatMap((candidate) =>
-					candidate.variants ?? (candidate.variant ? [candidate.variant] : []),
+				.flatMap(
+					(candidate) =>
+						candidate.variants ??
+						(candidate.variant ? [candidate.variant] : []),
 				)
 				.filter((x): x is string => typeof x === "string" && x.length > 0);
 			throw new Error(
@@ -293,7 +295,10 @@ export class PeerbitCanonicalClient {
 			);
 		}
 
-		const key = adapter.getKey?.(program as any, openOptions as OpenOptions<any>);
+		const key = adapter.getKey?.(
+			program as any,
+			openOptions as OpenOptions<any>,
+		);
 		if (adapter.getKey && key === undefined) {
 			throw new Error(
 				`Canonical adapter '${adapter.name}' requires a cache key (adapter.getKey returned undefined)`,
@@ -328,14 +333,14 @@ export class PeerbitCanonicalClient {
 			}
 		}
 
-			const peer = this as any as ProgramClient;
-			const openPromise = (async () => {
-				const result = await adapter.open({
-					program: program as any,
-					options: openOptions as OpenOptions<any>,
-					peer,
-					client: this.canonical,
-				});
+		const peer = this as any as ProgramClient;
+		const openPromise = (async () => {
+			const result = await adapter.open({
+				program: program as any,
+				options: openOptions as OpenOptions<any>,
+				peer,
+				client: this.canonical,
+			});
 
 			let managed: any;
 			managed = createManagedProxy(result.proxy as any, {

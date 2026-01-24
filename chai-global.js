@@ -46,8 +46,7 @@ if (
 
 		const now = () => Date.now();
 
-		const intervalMsRaw =
-			process.env.PEERBIT_MOCHA_LOG_INTERVAL_MS ?? "30000";
+		const intervalMsRaw = process.env.PEERBIT_MOCHA_LOG_INTERVAL_MS ?? "30000";
 		const intervalMs = Number(intervalMsRaw);
 		let interval;
 		if (Number.isFinite(intervalMs) && intervalMs > 0) {

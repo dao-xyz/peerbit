@@ -15,7 +15,9 @@ export const transports = (): Array<(components: any) => Transport> => [
 	webSockets(),
 ];
 
-export const transportsFast = (): Array<(components: any) => Transport> => [tcp()];
+export const transportsFast = (): Array<(components: any) => Transport> => [
+	tcp(),
+];
 
 // applyDefaultLimit: false because of https://github.com/libp2p/js-libp2p/issues/2622
 export const relay = (): ReturnType<typeof circuitRelayServer> =>

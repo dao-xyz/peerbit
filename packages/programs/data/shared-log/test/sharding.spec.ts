@@ -1102,17 +1102,17 @@ testSetups.forEach((setup) => {
 								await db2.add(data, { meta: { next: [] } });
 							}
 
-								await waitForResolved(
-									async () => {
-										expect(
-											await db1.log.calculateMyTotalParticipation(),
-										).to.be.within(0.38, 0.62);
-										expect(
-											await db2.log.calculateMyTotalParticipation(),
-										).to.be.within(0.38, 0.62);
-									},
-									{ timeout: 20 * 1000 },
-								);
+							await waitForResolved(
+								async () => {
+									expect(
+										await db1.log.calculateMyTotalParticipation(),
+									).to.be.within(0.38, 0.62);
+									expect(
+										await db2.log.calculateMyTotalParticipation(),
+									).to.be.within(0.38, 0.62);
+								},
+								{ timeout: 20 * 1000 },
+							);
 
 							// allow 10% error
 							await waitForResolved(async () => {
@@ -1201,13 +1201,13 @@ testSetups.forEach((setup) => {
 								throw new Error("Total participation failed to converge");
 							}
 
-								expect(
-									await db1.log.calculateMyTotalParticipation(),
-								).to.be.within(0.03, 0.1);
-								expect(
-									await db2.log.calculateMyTotalParticipation(),
-								).to.be.within(0.03, 0.1);
-							});
+							expect(
+								await db1.log.calculateMyTotalParticipation(),
+							).to.be.within(0.03, 0.1);
+							expect(
+								await db2.log.calculateMyTotalParticipation(),
+							).to.be.within(0.03, 0.1);
+						});
 
 						it("evenly if limited when not constrained", async () => {
 							const memoryLimit = 100 * 1e3;

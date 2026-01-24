@@ -8,7 +8,6 @@
 // - This is an integration benchmark (network + sync + indexing). It is more variable than pure
 //   algorithmic benches; prefer running it a few times and comparing medians.
 // - For CI regression tracking, consider smaller `CATCHUP_COUNT` values and low run counts.
-
 import { keys } from "@libp2p/crypto";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
@@ -48,8 +47,8 @@ const fixedKeys = [
 					204, 234, 187, 172, 226, 232, 70, 175, 62, 211, 147, 91, 229, 157,
 					168, 15, 45, 242, 144, 98, 75, 58, 208, 9, 223, 143, 251, 52, 252,
 					159, 64, 83, 52, 197, 24, 246, 24, 234, 141, 183, 151, 82, 53, 142,
-					57, 25, 148, 150, 26, 209, 223, 22, 212, 40, 201, 6, 191, 72, 148,
-					82, 66, 138, 199, 185,
+					57, 25, 148, 150, 26, 209, 223, 22, 212, 40, 201, 6, 191, 72, 148, 82,
+					66, 138, 199, 185,
 				]),
 			),
 		},

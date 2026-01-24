@@ -222,7 +222,13 @@ const resolvePrimaryFieldInfoFromSchema = (
 		}
 
 		if (typeof fieldType === "string" || isUint8ArrayType(fieldType)) {
-			const sqlField = createScalarSQLField(path, field, fieldType, primary, true);
+			const sqlField = createScalarSQLField(
+				path,
+				field,
+				fieldType,
+				primary,
+				true,
+			);
 			if (sqlField.isPrimary) {
 				return {
 					name: sqlField.name,
@@ -545,7 +551,13 @@ export const getSQLFields = (
 		type: FieldType,
 		isOptional: boolean,
 	) => {
-		const sqlField = createScalarSQLField(path, field, type, primary, isOptional);
+		const sqlField = createScalarSQLField(
+			path,
+			field,
+			type,
+			primary,
+			isOptional,
+		);
 		foundPrimary = foundPrimary || sqlField.isPrimary;
 		sqlFields.push(sqlField);
 	};

@@ -1,7 +1,10 @@
 import { Cache } from "@peerbit/cache";
 import { expect } from "chai";
 import sinon from "sinon";
-import { StartSync, RatelessIBLTSynchronizer } from "../src/sync/rateless-iblt.js";
+import {
+	RatelessIBLTSynchronizer,
+	StartSync,
+} from "../src/sync/rateless-iblt.js";
 
 describe("rateless-iblt-syncronizer cache", () => {
 	it("reuses cached local range encoder across StartSync", async () => {

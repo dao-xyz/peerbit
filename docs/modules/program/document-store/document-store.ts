@@ -206,14 +206,14 @@ export class Channel extends Program<ChannelArgs> {
 			},
 		});
 
-			await this.reactions.open({
-				type: Reaction,
-				replicate: properties?.replicate,
+		await this.reactions.open({
+			type: Reaction,
+			replicate: properties?.replicate,
 
-				// we don't provide an index here, which means we will index all fields of Reaction
-			});
-		}
+			// we don't provide an index here, which means we will index all fields of Reaction
+		});
 	}
+}
 /// [definition]
 
 /// [insert]

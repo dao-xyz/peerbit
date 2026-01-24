@@ -70,7 +70,14 @@ describe("schema", () => {
 			}
 
 			const primary = getInlineTableFieldName(["id"]);
-			const [rootTable] = getSQLTable(Root, [], primary, false, undefined, false);
+			const [rootTable] = getSQLTable(
+				Root,
+				[],
+				primary,
+				false,
+				undefined,
+				false,
+			);
 			expect(rootTable).to.exist;
 			expect(rootTable.children.length).to.equal(2);
 
@@ -121,14 +128,23 @@ describe("schema", () => {
 			}
 
 			const primary = getInlineTableFieldName(["id"]);
-			const [rootTable] = getSQLTable(Root, [], primary, false, undefined, false);
+			const [rootTable] = getSQLTable(
+				Root,
+				[],
+				primary,
+				false,
+				undefined,
+				false,
+			);
 			expect(rootTable).to.exist;
 			expect(rootTable.children.length).to.equal(1);
 
 			const [childTable] = rootTable.children;
 			expect(childTable.inline).to.equal(false);
 
-			const parentIdField = childTable.fields.find((f) => f.name === "__parent_id");
+			const parentIdField = childTable.fields.find(
+				(f) => f.name === "__parent_id",
+			);
 			expect(parentIdField?.type).to.equal("BLOB");
 
 			const fkConstraint = childTable.constraints.find(

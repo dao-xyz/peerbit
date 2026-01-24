@@ -140,4 +140,3 @@ try {
 	await store.drop();
 	await session.stop();
 }
-

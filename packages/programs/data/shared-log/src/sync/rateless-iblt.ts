@@ -13,10 +13,7 @@ import type { RPC, RequestContext } from "@peerbit/rpc";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { type EntryWithRefs } from "../exchange-heads.js";
 import { TransportMessage } from "../message.js";
-import {
-	type EntryReplicated,
-	matchEntriesInRangeQuery,
-} from "../ranges.js";
+import { type EntryReplicated, matchEntriesInRangeQuery } from "../ranges.js";
 import type {
 	SyncableKey,
 	SynchronizerComponents,
@@ -220,9 +217,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		}
 	>;
 
-	constructor(
-		readonly properties: SynchronizerComponents<D>,
-	) {
+	constructor(readonly properties: SynchronizerComponents<D>) {
 		this.simple = new SimpleSyncronizer(properties);
 		this.outgoingSyncProcesses = new Map();
 		this.ingoingSyncProcesses = new Map();
@@ -472,7 +467,10 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 
 		const startSync = new StartSync({ from: start, to: end, symbols: [] });
 		const encoder = new EncoderWrapper();
-		if (typeof BigUint64Array !== "undefined" && sortedEntries instanceof BigUint64Array) {
+		if (
+			typeof BigUint64Array !== "undefined" &&
+			sortedEntries instanceof BigUint64Array
+		) {
 			encoder.add_symbols(sortedEntries);
 		} else {
 			for (const entry of sortedEntries) {

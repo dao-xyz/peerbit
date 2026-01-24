@@ -44,4 +44,3 @@ describe("waitForEvent", () => {
 		expect(err).to.be.instanceOf(AbortError);
 	});
 });
-

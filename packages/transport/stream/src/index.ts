@@ -433,10 +433,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			}
 
 			try {
-				c.pushable.push(
-					payload,
-					getLaneFromPriority(priority),
-				);
+				c.pushable.push(payload, getLaneFromPriority(priority));
 				successes++;
 			} catch (e) {
 				failures.push(e);

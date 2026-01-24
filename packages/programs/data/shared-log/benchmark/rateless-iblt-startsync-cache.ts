@@ -1,7 +1,7 @@
 import { Cache } from "@peerbit/cache";
 import { ready as ribltReady } from "@peerbit/riblt";
 import { Bench } from "tinybench";
-import { createNumbers, type Numbers } from "../src/integers.js";
+import { type Numbers, createNumbers } from "../src/integers.js";
 import { RatelessIBLTSynchronizer } from "../src/sync/rateless-iblt.js";
 
 // Run with:
@@ -101,13 +101,16 @@ for (const size of sizes) {
 		}
 	});
 
-	suite.add(`StartSync local decoder (after invalidation, n=${size})`, async () => {
-		(warmSync as any).invalidateLocalRangeEncoderCache();
-		const decoder = await (warmSync as any).getLocalDecoderForRange(range);
-		if (decoder) {
-			decoder.free();
-		}
-	});
+	suite.add(
+		`StartSync local decoder (after invalidation, n=${size})`,
+		async () => {
+			(warmSync as any).invalidateLocalRangeEncoderCache();
+			const decoder = await (warmSync as any).getLocalDecoderForRange(range);
+			if (decoder) {
+				decoder.free();
+			}
+		},
+	);
 }
 
 await suite.run();

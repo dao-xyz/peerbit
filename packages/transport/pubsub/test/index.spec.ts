@@ -1421,27 +1421,27 @@ describe("pubsub", function () {
 					streams[0].stream.publicKey,
 				),
 			).to.be.true;
-				expect(streams[2].subscriptionEvents[0].topics).to.have.length(1);
-				expect(streams[2].subscriptionEvents[0].topics[0]).equal(TOPIC_1);
+			expect(streams[2].subscriptionEvents[0].topics).to.have.length(1);
+			expect(streams[2].subscriptionEvents[0].topics[0]).equal(TOPIC_1);
 
-				await delay(2000);
-				await session.peers[0].stop();
-				await waitFor(
-					() =>
-						!streams[1].stream.topics
-							.get(TOPIC_1)
-							?.has(streams[0].stream.publicKeyHash),
-					{ timeout: 30 * 1000 },
-				);
-				await waitFor(
-					() =>
-						!streams[2].stream.topics
-							.get(TOPIC_1)
-							?.has(streams[0].stream.publicKeyHash),
-					{
-						timeout: 30 * 1000,
-					},
-				);
+			await delay(2000);
+			await session.peers[0].stop();
+			await waitFor(
+				() =>
+					!streams[1].stream.topics
+						.get(TOPIC_1)
+						?.has(streams[0].stream.publicKeyHash),
+				{ timeout: 30 * 1000 },
+			);
+			await waitFor(
+				() =>
+					!streams[2].stream.topics
+						.get(TOPIC_1)
+						?.has(streams[0].stream.publicKeyHash),
+				{
+					timeout: 30 * 1000,
+				},
+			);
 
 			expect(streams[2].subscriptionEvents).to.have.length(1);
 			expect(streams[1].subscriptionEvents).to.have.length(1);

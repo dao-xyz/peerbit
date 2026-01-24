@@ -53,7 +53,9 @@ describe("priority lanes", () => {
 			streams.write(new Uint8Array([i + 1]), 0);
 		}
 
-		await waitForResolved(() => expect(outbound.sentPayloads.length).to.equal(1));
+		await waitForResolved(() =>
+			expect(outbound.sentPayloads.length).to.equal(1),
+		);
 		expect(outbound.sentPayloads[0]).to.equal(1);
 
 		// While the stream is blocked on drain, enqueue a high-priority message.
@@ -61,7 +63,9 @@ describe("priority lanes", () => {
 
 		// Allow the next frame to be flushed.
 		outbound.dispatchEvent(new Event("drain"));
-		await waitForResolved(() => expect(outbound.sentPayloads.length).to.equal(2));
+		await waitForResolved(() =>
+			expect(outbound.sentPayloads.length).to.equal(2),
+		);
 
 		// The high-priority message should jump ahead of the remaining low-priority backlog.
 		expect(outbound.sentPayloads[1]).to.equal(200);

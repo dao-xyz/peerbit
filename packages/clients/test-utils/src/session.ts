@@ -2,8 +2,8 @@ import { yamux } from "@chainsafe/libp2p-yamux";
 import { DirectBlock } from "@peerbit/blocks";
 import { keychain } from "@peerbit/keychain";
 import {
-	listenFast,
 	TestSession as SSession,
+	listenFast,
 	transportsFast,
 } from "@peerbit/libp2p-test-utils";
 import { type ProgramClient } from "@peerbit/program";
@@ -119,7 +119,10 @@ export class TestSession {
 	 * Uses TCP-only transport (no WebRTC/WebSockets/circuit-relay) and disables
 	 * the libp2p relay service by default.
 	 */
-	static async connectedMock(n: number, options?: CreateOptions | CreateOptions[]) {
+	static async connectedMock(
+		n: number,
+		options?: CreateOptions | CreateOptions[],
+	) {
 		const session = await TestSession.disconnectedMock(n, options);
 		await session.connect();
 		// TODO types
@@ -135,7 +138,9 @@ export class TestSession {
 		n: number,
 		options?: CreateOptions | CreateOptions[],
 	) {
-		const applyMockDefaults = (o?: CreateOptions): CreateOptions | undefined => {
+		const applyMockDefaults = (
+			o?: CreateOptions,
+		): CreateOptions | undefined => {
 			if (!o) {
 				return {
 					libp2p: {

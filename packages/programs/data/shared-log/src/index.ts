@@ -2445,35 +2445,35 @@ export class SharedLog<
 				set.add(key);
 			}
 
-				if (options?.reachableOnly) {
-					// Prefer the live pubsub subscriber set when filtering reachability.
-					// `uniqueReplicators` is primarily driven by replication messages and can lag during
-					// joins/restarts; using subscribers prevents excluding peers that are reachable but
-					// whose replication ranges were loaded from disk or haven't been processed yet.
-					const subscribers =
-						(await this.node.services.pubsub.getSubscribers(this.topic)) ??
-						undefined;
-					const subscriberHashcodes = subscribers
-						? new Set(subscribers.map((key) => key.hashcode()))
-						: undefined;
+			if (options?.reachableOnly) {
+				// Prefer the live pubsub subscriber set when filtering reachability.
+				// `uniqueReplicators` is primarily driven by replication messages and can lag during
+				// joins/restarts; using subscribers prevents excluding peers that are reachable but
+				// whose replication ranges were loaded from disk or haven't been processed yet.
+				const subscribers =
+					(await this.node.services.pubsub.getSubscribers(this.topic)) ??
+					undefined;
+				const subscriberHashcodes = subscribers
+					? new Set(subscribers.map((key) => key.hashcode()))
+					: undefined;
 
-					const reachable: string[] = [];
-					const selfHash = this.node.identity.publicKey.hashcode();
-					for (const peer of set) {
-						if (peer === selfHash) {
-							reachable.push(peer);
-							continue;
-						}
-						if (
-							subscriberHashcodes
-								? subscriberHashcodes.has(peer)
-								: this.uniqueReplicators.has(peer)
-						) {
-							reachable.push(peer);
-						}
+				const reachable: string[] = [];
+				const selfHash = this.node.identity.publicKey.hashcode();
+				for (const peer of set) {
+					if (peer === selfHash) {
+						reachable.push(peer);
+						continue;
 					}
-					return reachable;
+					if (
+						subscriberHashcodes
+							? subscriberHashcodes.has(peer)
+							: this.uniqueReplicators.has(peer)
+					) {
+						reachable.push(peer);
+					}
 				}
+				return reachable;
+			}
 
 			return [...set];
 		} catch (error) {
@@ -2952,60 +2952,63 @@ export class SharedLog<
 					}
 				}
 			} else if (
-					msg instanceof AllReplicatingSegmentsMessage ||
-					msg instanceof AddedReplicationSegmentMessage
-				) {
-					if (context.from.equals(this.node.identity.publicKey)) {
+				msg instanceof AllReplicatingSegmentsMessage ||
+				msg instanceof AddedReplicationSegmentMessage
+			) {
+				if (context.from.equals(this.node.identity.publicKey)) {
+					return;
+				}
+
+				const replicationInfoMessage = msg as
+					| AllReplicatingSegmentsMessage
+					| AddedReplicationSegmentMessage;
+
+				// Process replication updates even if the sender isn't yet considered "ready" by
+				// `Program.waitFor()`. Dropping these messages can lead to missing replicator info
+				// (and downstream `waitForReplicator()` timeouts) under timing-sensitive joins.
+				const from = context.from!;
+				const messageTimestamp = context.message.header.timestamp;
+				(async () => {
+					const prev = this.latestReplicationInfoMessage.get(from.hashcode());
+					if (prev && prev > messageTimestamp) {
 						return;
 					}
 
-					const replicationInfoMessage = msg as
-						| AllReplicatingSegmentsMessage
-						| AddedReplicationSegmentMessage;
+					this.latestReplicationInfoMessage.set(
+						from.hashcode(),
+						messageTimestamp,
+					);
 
-					// Process replication updates even if the sender isn't yet considered "ready" by
-					// `Program.waitFor()`. Dropping these messages can lead to missing replicator info
-					// (and downstream `waitForReplicator()` timeouts) under timing-sensitive joins.
-					const from = context.from!;
-					const messageTimestamp = context.message.header.timestamp;
-					(async () => {
-						const prev = this.latestReplicationInfoMessage.get(from.hashcode());
-						if (prev && prev > messageTimestamp) {
-							return;
-						}
-
-						this.latestReplicationInfoMessage.set(from.hashcode(), messageTimestamp);
-
-						if (this.closed) {
-							return;
-						}
-
-						const reset = msg instanceof AllReplicatingSegmentsMessage;
-						await this.addReplicationRange(
-							replicationInfoMessage.segments.map((x) =>
-								x.toReplicationRangeIndexable(from),
-							),
-							from,
-							{
-								reset,
-								checkDuplicates: true,
-								timestamp: Number(messageTimestamp),
-							},
-						);
-					})().catch((e) => {
-						if (isNotStartedError(e)) {
-							return;
-						}
-						logger.error(
-							`Failed to apply replication settings from '${from.hashcode()}': ${
-								e?.message ?? e
-							}`,
-						);
-					});
-				} else if (msg instanceof StoppedReplicating) {
-					if (context.from.equals(this.node.identity.publicKey)) {
+					if (this.closed) {
 						return;
 					}
+
+					const reset = msg instanceof AllReplicatingSegmentsMessage;
+					await this.addReplicationRange(
+						replicationInfoMessage.segments.map((x) =>
+							x.toReplicationRangeIndexable(from),
+						),
+						from,
+						{
+							reset,
+							checkDuplicates: true,
+							timestamp: Number(messageTimestamp),
+						},
+					);
+				})().catch((e) => {
+					if (isNotStartedError(e)) {
+						return;
+					}
+					logger.error(
+						`Failed to apply replication settings from '${from.hashcode()}': ${
+							e?.message ?? e
+						}`,
+					);
+				});
+			} else if (msg instanceof StoppedReplicating) {
+				if (context.from.equals(this.node.identity.publicKey)) {
+					return;
+				}
 
 				const rangesToRemove = await this.resolveReplicationRangesFromIdsAndKey(
 					msg.segmentIds,
@@ -4466,7 +4469,9 @@ export class SharedLog<
 					cpuUsage: this.cpuUsage?.value(),
 				});
 
-				const absoluteDifference = Math.abs(dynamicRange.widthNormalized - newFactor);
+				const absoluteDifference = Math.abs(
+					dynamicRange.widthNormalized - newFactor,
+				);
 				const relativeDifference =
 					absoluteDifference /
 					Math.max(

@@ -90,9 +90,14 @@ const suite = new Bench({
 
 const makeControllers = (
 	peerCount: number,
-	options: (peerIndex: number) => ConstructorParameters<typeof PIDReplicationController>[1],
+	options: (
+		peerIndex: number,
+	) => ConstructorParameters<typeof PIDReplicationController>[1],
 ) =>
-	Array.from({ length: peerCount }, (_, i) => new PIDReplicationController(`p${i}`, options(i)));
+	Array.from(
+		{ length: peerCount },
+		(_, i) => new PIDReplicationController(`p${i}`, options(i)),
+	);
 
 for (const peerCount of peersList) {
 	const controllers = makeControllers(peerCount, () => ({}));
@@ -181,4 +186,3 @@ if (process.env.BENCH_JSON === "1") {
 } else {
 	console.table(suite.table());
 }
-

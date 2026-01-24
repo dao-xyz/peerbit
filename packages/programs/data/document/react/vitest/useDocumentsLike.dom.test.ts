@@ -1,4 +1,8 @@
-import type { CountEstimate, DocumentsLike, ResultsIterator } from "@peerbit/document";
+import type {
+	CountEstimate,
+	DocumentsLike,
+	ResultsIterator,
+} from "@peerbit/document";
 import * as indexerTypes from "@peerbit/indexer-interface";
 import type { SharedLogLike } from "@peerbit/shared-log";
 import { act, render, waitFor } from "@testing-library/react";
@@ -128,25 +132,25 @@ const createDocumentsLike = (initial: Doc[]) => {
 	} = {
 		events,
 		changes: events,
-			log,
-			index: {
-				get: async <_Resolve extends boolean | undefined = true>(
-					id: indexerTypes.Ideable | indexerTypes.IdKey,
-					_options?: unknown,
-				) => {
-					const key = id instanceof indexerTypes.IdKey ? id.primitive : id;
+		log,
+		index: {
+			get: async <_Resolve extends boolean | undefined = true>(
+				id: indexerTypes.Ideable | indexerTypes.IdKey,
+				_options?: unknown,
+			) => {
+				const key = id instanceof indexerTypes.IdKey ? id.primitive : id;
 				return items.find((item) => item.id === String(key)) as any;
 			},
-				getDetailed: async () => undefined,
-				resolveId: (value) => indexerTypes.toId((value as Doc).id),
-				iterate: <_Resolve extends boolean | undefined = true>() =>
-					createIterator(items as any) as any,
-				search: async <_Resolve extends boolean | undefined = true>() =>
-					items as any,
-				getSize: async () => items.length,
-				waitFor: async () => [],
-				index: {
-					count: async () => items.length,
+			getDetailed: async () => undefined,
+			resolveId: (value) => indexerTypes.toId((value as Doc).id),
+			iterate: <_Resolve extends boolean | undefined = true>() =>
+				createIterator(items as any) as any,
+			search: async <_Resolve extends boolean | undefined = true>() =>
+				items as any,
+			getSize: async () => items.length,
+			waitFor: async () => [],
+			index: {
+				count: async () => items.length,
 				getSize: async () => items.length,
 			},
 		},
@@ -158,17 +162,17 @@ const createDocumentsLike = (initial: Doc[]) => {
 			const key = id instanceof indexerTypes.IdKey ? id.primitive : id;
 			return items.find((item) => item.id === String(key));
 		},
-			del: async (id) => {
-				const key = id instanceof indexerTypes.IdKey ? id.primitive : id;
-				items = items.filter((item) => item.id !== String(key));
-				emitChange();
-			},
-			count,
-			waitFor: async () => [],
-			recover: async () => {},
-			close: async () => {
-				docs.closed = true;
-				return true;
+		del: async (id) => {
+			const key = id instanceof indexerTypes.IdKey ? id.primitive : id;
+			items = items.filter((item) => item.id !== String(key));
+			emitChange();
+		},
+		count,
+		waitFor: async () => [],
+		recover: async () => {},
+		close: async () => {
+			docs.closed = true;
+			return true;
 		},
 	};
 	docs.address = "docs-like-address";

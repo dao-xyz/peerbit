@@ -2255,22 +2255,22 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 		return next;
 	};
 
-		const resolveNextAbove = async (
-			nextLocation: NumberFromType<R>,
-			roleAge: number,
-		) => {
-			// if not get closest from above
-			const next = await fetchOne<undefined, R>(
-				getClosest("above", peers, nextLocation, true, properties.numbers, {
-					time: {
-						matured: true,
-						roleAgeLimit: roleAge,
-						now,
-					},
-				}),
-			);
-			return next;
-		};
+	const resolveNextAbove = async (
+		nextLocation: NumberFromType<R>,
+		roleAge: number,
+	) => {
+		// if not get closest from above
+		const next = await fetchOne<undefined, R>(
+			getClosest("above", peers, nextLocation, true, properties.numbers, {
+				time: {
+					matured: true,
+					roleAgeLimit: roleAge,
+					now,
+				},
+			}),
+		);
+		return next;
+	};
 
 	const resolveNext = async (
 		nextLocation: NumberFromType<R>,
@@ -2366,7 +2366,8 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 		current = nextCandidate[0];
 
 		const isLast =
-			distanceBefore < widthToCoverScaled && coveredLength >= widthToCoverScaled;
+			distanceBefore < widthToCoverScaled &&
+			coveredLength >= widthToCoverScaled;
 
 		const lastDistanceToEndLocation = properties.numbers.min(
 			getDistance(
@@ -2642,8 +2643,10 @@ export const mergeReplicationChanges = <R extends NumericType>(
 							const newer = v[j];
 							if (newer.type === "added" && !newer.matured) {
 								adjusted = true;
-								const { rangesFromA: updatedRemoved, rangesFromB: updatedNewer } =
-									symmetricDifferenceRanges(v[i].range, newer.range);
+								const {
+									rangesFromA: updatedRemoved,
+									rangesFromB: updatedNewer,
+								} = symmetricDifferenceRanges(v[i].range, newer.range);
 
 								for (const diff of updatedRemoved) {
 									results.push({

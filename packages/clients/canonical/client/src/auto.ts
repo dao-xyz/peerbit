@@ -48,7 +48,9 @@ export type CanonicalOpenAdapter<
 	}): Promise<CanonicalOpenResult<T>>;
 };
 
-export const getProgramVariant = (program: Program<any>): string | undefined => {
+export const getProgramVariant = (
+	program: Program<any>,
+): string | undefined => {
 	if (!program || typeof program !== "object") return undefined;
 	try {
 		const schema = getSchema((program as any).constructor);

@@ -16,7 +16,7 @@ import {
 } from "../exchange-heads.js";
 import { TransportMessage } from "../message.js";
 import type { EntryReplicated } from "../ranges.js";
-import type { SyncableKey, SyncOptions, Syncronizer } from "./index.js";
+import type { SyncOptions, SyncableKey, Syncronizer } from "./index.js";
 
 @variant([0, 1])
 export class RequestMaybeSync extends TransportMessage {
@@ -157,13 +157,10 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			hashes = [...properties.entries.keys()];
 		}
 
-		return this.rpc.send(
-			new RequestMaybeSync({ hashes }),
-			{
-				priority: 1,
-				mode: new SilentDelivery({ to: properties.targets, redundancy: 1 }),
-			},
-		);
+		return this.rpc.send(new RequestMaybeSync({ hashes }), {
+			priority: 1,
+			mode: new SilentDelivery({ to: properties.targets, redundancy: 1 }),
+		});
 	}
 
 	async onMessage(

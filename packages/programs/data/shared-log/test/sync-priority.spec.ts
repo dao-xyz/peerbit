@@ -23,7 +23,10 @@ describe("sync-priority", () => {
 		entries.set("b", { hash: "b" });
 		entries.set("c", { hash: "c" });
 
-		await sync.onMaybeMissingEntries({ entries: entries as any, targets: ["p"] });
+		await sync.onMaybeMissingEntries({
+			entries: entries as any,
+			targets: ["p"],
+		});
 
 		expect(send.calledOnce).to.equal(true);
 		const msg = send.getCall(0).args[0];
@@ -61,7 +64,10 @@ describe("sync-priority", () => {
 			});
 		}
 
-		await sync.onMaybeMissingEntries({ entries: entries as any, targets: ["p"] });
+		await sync.onMaybeMissingEntries({
+			entries: entries as any,
+			targets: ["p"],
+		});
 
 		expect(simpleSyncSpy.calledOnce).to.equal(true);
 		const arg = simpleSyncSpy.getCall(0).args[0];
@@ -69,4 +75,3 @@ describe("sync-priority", () => {
 		expect([...arg.entries.keys()]).to.have.members(["h0", "h10", "h20"]);
 	});
 });
-

@@ -11,6 +11,7 @@ import type * as indexerTypes from "@peerbit/indexer-interface";
 import type { Program } from "@peerbit/program";
 import type { SharedLogLike } from "@peerbit/shared-log";
 import type { PeerRefs } from "@peerbit/stream-interface";
+import type { CountEstimate } from "./program.js";
 import type {
 	GetOptions,
 	QueryOptions,
@@ -21,7 +22,6 @@ import type {
 	WithContext,
 	WithIndexedContext,
 } from "./search.js";
-import type { CountEstimate } from "./program.js";
 
 export type DocumentsLikeQuery =
 	| SearchRequest

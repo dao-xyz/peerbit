@@ -14,56 +14,56 @@ describe("observer", () => {
 		await session.stop();
 	});
 
-		it("observers will not receive heads by default", async function () {
-			this.timeout(waitTimeout + 30_000);
-			session = await TestSession.disconnected(3);
-			await session.connect([
-				[session.peers[0], session.peers[1]],
-				[session.peers[1], session.peers[2]],
-			]);
+	it("observers will not receive heads by default", async function () {
+		this.timeout(waitTimeout + 30_000);
+		session = await TestSession.disconnected(3);
+		await session.connect([
+			[session.peers[0], session.peers[1]],
+			[session.peers[1], session.peers[2]],
+		]);
 
 		let stores: EventStore<string, any>[] = [];
 		const s = new EventStore<string, any>();
 		const createStore = () => deserialize(serialize(s), EventStore);
 		let replicatorEndIndex = 1;
 
-			for (const [i, peer] of session.peers.entries()) {
-				const store = await peer.open(createStore(), {
-					args: {
-						replicate: i <= replicatorEndIndex ? { factor: 1 } : false,
-					},
-				});
-				stores.push(store);
-			}
+		for (const [i, peer] of session.peers.entries()) {
+			const store = await peer.open(createStore(), {
+				args: {
+					replicate: i <= replicatorEndIndex ? { factor: 1 } : false,
+				},
+			});
+			stores.push(store);
+		}
 
-			await stores[0].waitFor(session.peers[1].peerId, {
-				seek: "present",
-				timeout: waitTimeout,
-			});
-			await stores[1].waitFor(session.peers[0].peerId, {
-				seek: "present",
-				timeout: waitTimeout,
-			});
-			await stores[1].waitFor(session.peers[2].peerId, {
-				seek: "present",
-				timeout: waitTimeout,
-			});
-			await stores[2].waitFor(session.peers[1].peerId, {
-				seek: "present",
-				timeout: waitTimeout,
-			});
+		await stores[0].waitFor(session.peers[1].peerId, {
+			seek: "present",
+			timeout: waitTimeout,
+		});
+		await stores[1].waitFor(session.peers[0].peerId, {
+			seek: "present",
+			timeout: waitTimeout,
+		});
+		await stores[1].waitFor(session.peers[2].peerId, {
+			seek: "present",
+			timeout: waitTimeout,
+		});
+		await stores[2].waitFor(session.peers[1].peerId, {
+			seek: "present",
+			timeout: waitTimeout,
+		});
 
-			await stores[0].log.waitForReplicator(session.peers[1].identity.publicKey, {
-				timeout: waitTimeout,
-			});
-			await stores[1].log.waitForReplicator(session.peers[0].identity.publicKey, {
-				timeout: waitTimeout,
-			});
+		await stores[0].log.waitForReplicator(session.peers[1].identity.publicKey, {
+			timeout: waitTimeout,
+		});
+		await stores[1].log.waitForReplicator(session.peers[0].identity.publicKey, {
+			timeout: waitTimeout,
+		});
 
-			const hashes: string[] = [];
-			for (let i = 0; i < 100; i++) {
-				hashes.push((await stores[0].add(String(i))).entry.hash);
-			}
+		const hashes: string[] = [];
+		for (let i = 0; i < 100; i++) {
+			hashes.push((await stores[0].add(String(i))).entry.hash);
+		}
 
 		await waitForResolved(
 			() => expect(stores[1].log.log.length).to.equal(hashes.length),
