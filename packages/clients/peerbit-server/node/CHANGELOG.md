@@ -452,6 +452,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.10.13](https://github.com/dao-xyz/peerbit/compare/server-v5.10.12...server-v5.10.13) (2026-01-24)
+
+
+### Bug Fixes
+
+* **server:** handle unhandled promise rejections and uncaught exceptions ([7ec5e7a](https://github.com/dao-xyz/peerbit/commit/7ec5e7ae424397802cd86d5a8899c29bbd5b5c78))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped to 4.4.18
+    * @peerbit/blocks bumped to 3.1.8
+    * @peerbit/program bumped to 5.6.2
+  * devDependencies
+    * @peerbit/test-utils bumped to 2.3.18
+
 ## [5.10.12](https://github.com/dao-xyz/peerbit/compare/server-v5.10.11...server-v5.10.12) (2026-01-23)
 
 
