@@ -28,6 +28,3 @@ references
 # Supabase local secrets (do not commit)
 .env.supabase
 apps/peerbit-org/.env.supabase
-
-# Local scratch docs copy (do not commit)
-apps/peerbit-org/dummy-non-existing-folder/
