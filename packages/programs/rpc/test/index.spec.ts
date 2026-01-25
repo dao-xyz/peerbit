@@ -492,6 +492,46 @@ describe("rpc", () => {
 			expect(results).to.have.length(1);
 			expect(results[0].arr).to.deep.equal(new Uint8Array([9, 9, 9]));
 		});
+
+		it("responseInterceptor does not leak unhandled rejections on abort", async () => {
+			const unhandledRejections: unknown[] = [];
+			const onUnhandledRejection = (reason: unknown) => {
+				unhandledRejections.push(reason);
+			};
+			process.on("unhandledRejection", onUnhandledRejection);
+
+			try {
+				const abortController = new AbortController();
+				let responseInterceptorInstalled = false;
+
+				const keypair = await Ed25519Keypair.create();
+				const requestPromise = reader.query.request(
+					new Body({
+						arr: new Uint8Array([0, 1, 2]),
+					}),
+					{
+						mode: new SilentDelivery({
+							to: [keypair.publicKey],
+							redundancy: 1,
+						}),
+						signal: abortController.signal,
+						responseInterceptor: () => {
+							responseInterceptorInstalled = true;
+						},
+					},
+				);
+
+				await waitFor(() => responseInterceptorInstalled, { timeout: 1000 });
+				abortController.abort(new AbortError("INTENTIONAL_ABORT"));
+
+				await requestPromise.catch(() => {});
+				await delay(0);
+
+				expect(unhandledRejections).to.have.length(0);
+			} finally {
+				process.removeListener("unhandledRejection", onUnhandledRejection);
+			}
+		});
 	});
 
 	describe("init", () => {

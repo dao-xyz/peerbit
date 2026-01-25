@@ -475,9 +475,11 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 		let signal: AbortSignal | undefined = undefined;
 		if (options?.responseInterceptor) {
 			const abortController = new AbortController();
-			deferredPromise.promise.finally(() => {
-				abortController.abort(new AbortError("Resolved early"));
-			});
+			void deferredPromise.promise
+				.finally(() => {
+					abortController.abort(new AbortError("Resolved early"));
+				})
+				.catch(() => {});
 			signal = abortController.signal;
 			options.responseInterceptor((response: RPCResponse<R>) => {
 				return this.handleDecodedResponse(
