@@ -417,6 +417,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [5.4.19](https://github.com/dao-xyz/peerbit/compare/rpc-v5.4.18...rpc-v5.4.19) (2026-01-25)
+
+
+### Bug Fixes
+
+* **rpc:** prevent unhandled rejection in responseInterceptor ([bbf27fa](https://github.com/dao-xyz/peerbit/commit/bbf27fa3860ed1b2d83ae4fd8bfb60bb23a9f31a))
+
 ## [5.4.18](https://github.com/dao-xyz/peerbit/compare/rpc-v5.4.17...rpc-v5.4.18) (2026-01-24)
 
 
