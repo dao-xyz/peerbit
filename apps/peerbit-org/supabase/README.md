@@ -27,9 +27,9 @@ Set these as function secrets in Supabase:
 
 - `RESEND_API_KEY`
 - `RESEND_FROM` (example: `Peerbit <updates@peerbit.org>`)
-- `SITE_URL` (example: `https://peerbit.org`)
+- `SITE_URL` (example: `https://www.peerbit.org`)
 - `UPDATES_SYNC_SECRET` (random long string used by CI to call `updates-sync`)
-- `UPDATES_ALLOWED_ORIGINS` (comma separated, example: `https://peerbit.org,http://localhost:5173`)
+- `UPDATES_ALLOWED_ORIGINS` (comma separated, example: `https://www.peerbit.org,https://peerbit.org,http://localhost:5173`)
 
 ### Site env var
 

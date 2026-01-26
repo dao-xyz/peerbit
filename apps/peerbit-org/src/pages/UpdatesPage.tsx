@@ -100,16 +100,6 @@ export function UpdatesPage() {
 	}, [filter, items]);
 
 	const emailFormAction = import.meta.env.VITE_UPDATES_EMAIL_FORM_ACTION as string | undefined;
-	const feedRssUrl = useMemo(() => {
-		if (subscribeTo === "post") return "/content/docs/updates/posts.xml";
-		if (subscribeTo === "release") return "/content/docs/updates/releases.xml";
-		return "/content/docs/updates/all.xml";
-	}, [subscribeTo]);
-	const feedJsonUrl = useMemo(() => {
-		if (subscribeTo === "post") return "/content/docs/updates/posts.json";
-		if (subscribeTo === "release") return "/content/docs/updates/releases.json";
-		return "/content/docs/updates/all.json";
-	}, [subscribeTo]);
 
 	useEffect(() => {
 		if (!subscribeOpen) return;
@@ -337,29 +327,8 @@ export function UpdatesPage() {
 
 							<div className="mt-4 grid gap-3">
 								<div className="grid gap-2">
-									<div className="flex items-center justify-between gap-3">
-										<div className="text-sm font-semibold">Feed</div>
-										<div className="flex gap-2 text-sm">
-											<a
-												className="rounded-full bg-slate-100 px-3 py-1 font-semibold hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800"
-												href={feedRssUrl}
-												target="_blank"
-												rel="noreferrer"
-											>
-												RSS
-											</a>
-											<a
-												className="rounded-full bg-slate-100 px-3 py-1 font-semibold hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800"
-												href={feedJsonUrl}
-												target="_blank"
-												rel="noreferrer"
-											>
-												JSON
-											</a>
-										</div>
-									</div>
-
 									<div className="grid gap-2 text-sm">
+										<div className="text-sm font-semibold">Email preference</div>
 										<label className="flex items-center gap-2">
 											<input
 												type="checkbox"
