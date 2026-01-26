@@ -5,6 +5,11 @@ Documentation
 - [Examples](/examples.md)
 - [Development (borsh-ts)](/development/borsh-ts.md)
 
+Updates
+- [Updates](/updates)
+- [Release notes](/release-notes.md)
+- [Status](/status.md)
+
 Modules
 - [Client](/modules/client/)
 - [Canonical runtime + proxies](/modules/client/canonical.md)
@@ -21,17 +26,3 @@ Modules
     - [Combining programs](/modules/program/composition/)
 - [Encoding](/modules/encoding/)
 - [Encryption](/modules/encryption/)
-
-Topics
-- [Resource-aware sharding](/topics/sharding/sharding.md)
-- [Generalized content space](/topics/custom-domain/)
-
-- [SQlite-integration](/topics/sqlite-integration/)
-- [Wallet integration](/topics/wallet-integration/)
-- [The use for Zero-knowledge proofs with Peerbit](/topics/zero-knowledge/)
-- [Forward Secrecy in Peerbit: Current Implementation, Tradeoffs, and Comparison with Signal](/topics/forward-secrecy/)
-- [Data integrity](/topics/integrity/integrity.md)
-- [Peerbit vs [?]](/topics/difference/difference.md)
-
-
-

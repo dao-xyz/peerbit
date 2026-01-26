@@ -1,0 +1,88 @@
+name: Site
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "apps/peerbit-org/**"
+      - "docs/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/site.yml"
+  pull_request:
+    paths:
+      - "apps/peerbit-org/**"
+      - "docs/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/site.yml"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Build site
+        env:
+          SUPABASE_UPDATES_SYNC_URL: ${{ secrets.SUPABASE_UPDATES_SYNC_URL }}
+        run: |
+          if [ -n "$SUPABASE_UPDATES_SYNC_URL" ]; then
+            export VITE_UPDATES_EMAIL_FORM_ACTION="${SUPABASE_UPDATES_SYNC_URL%/updates-sync}/updates-subscribe"
+          fi
+          pnpm --filter peerbit-org build
+
+      - name: Typecheck site
+        run: pnpm --filter peerbit-org typecheck
+
+      - name: Sync Updates email
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && env.UPDATES_SYNC_URL != '' && env.UPDATES_SYNC_SECRET != ''
+        env:
+          UPDATES_SYNC_URL: ${{ secrets.SUPABASE_UPDATES_SYNC_URL }}
+          UPDATES_SYNC_SECRET: ${{ secrets.SUPABASE_UPDATES_SYNC_SECRET }}
+        run: |
+          curl -sS -X POST "$UPDATES_SYNC_URL" \
+            -H "Authorization: Bearer $UPDATES_SYNC_SECRET" \
+            -H "Content-Type: application/json" \
+            --data-binary @apps/peerbit-org/dist/content/docs/updates/index.json
+
+      - name: Upload Pages artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/peerbit-org/dist
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -24,3 +24,11 @@ coverage
 references
 .npmrc
 .env.github
+
+# Supabase local secrets (do not commit)
+.env.supabase
+apps/peerbit-org/.env.supabase
+
+# Vite local env (do not commit)
+apps/peerbit-org/.env.local
+apps/peerbit-org/.env.*.local
