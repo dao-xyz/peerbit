@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.0](https://github.com/dao-xyz/peerbit/compare/program-react-v0.4.1...program-react-v0.5.0) (2026-01-26)
+
+
+### Features
+
+* **site:** peerbit.org docs site v2 ([2ab6232](https://github.com/dao-xyz/peerbit/commit/2ab6232f0fdabb5750afd843f9df18f0731a9251))
+* **site:** scaffold custom peerbit.org docs app ([8f70e58](https://github.com/dao-xyz/peerbit/commit/8f70e586cfe4c9ed79f0e5847fe0cf92f86f5eb0))
+
 ## [0.4.1](https://github.com/dao-xyz/peerbit/compare/program-react-v0.4.0...program-react-v0.4.1) (2026-01-24)
 
 

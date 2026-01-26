@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [12.4.0](https://github.com/dao-xyz/peerbit/compare/document-v12.3.3...document-v12.4.0) (2026-01-26)
+
+
+### Features
+
+* **site:** peerbit.org docs site v2 ([2ab6232](https://github.com/dao-xyz/peerbit/commit/2ab6232f0fdabb5750afd843f9df18f0731a9251))
+
 ## [12.3.3](https://github.com/dao-xyz/peerbit/compare/document-v12.3.2...document-v12.3.3) (2026-01-25)
 
 
