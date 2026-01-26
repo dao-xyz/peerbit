@@ -102,13 +102,16 @@ describe("domain", () => {
 				expect(await store2.docs.index.getSize()).to.equal(2);
 			});
 
-			await store.docs.log.waitForReplicator(
-				store2.docs.node.identity.publicKey,
-			);
-			await store2.docs.log.waitForReplicator(
-				store.docs.node.identity.publicKey,
-			);
-		});
+				const waitForReplicatorTimeoutMs = 45_000;
+				await Promise.all([
+					store.docs.log.waitForReplicator(store2.docs.node.identity.publicKey, {
+						timeout: waitForReplicatorTimeoutMs,
+					}),
+					store2.docs.log.waitForReplicator(store.docs.node.identity.publicKey, {
+						timeout: waitForReplicatorTimeoutMs,
+					}),
+				]);
+			});
 
 		afterEach(async () => {
 			await store.close();
