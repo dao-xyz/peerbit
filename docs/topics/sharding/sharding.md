@@ -34,7 +34,7 @@ const db = peer.open("address", {
 For (A), we already have many solutions that work well but generally do not consider (B) and (C). For instance, in common DHT systems, we can use the identities of the participants to distribute content and pick neighbors to satisfy the minimum replication degree constraint.
 
 <p align="center">
-<img width="800" src="./topics/sharding/p1.png" alt="p1">
+<img width="800" src="./p1.png" alt="p1">
 </p>
 
 
@@ -52,24 +52,24 @@ For simplicity, we consider that every peer can only have one range. And that ra
 A piece of data that needs to be stored will be stored at a location that depends on its hash. But instead of using the hash, we transform it into a number bounded by [0,1].
 
 <p align="center">
-<img width="800" src="./topics/sharding/p2.png" alt="p2">
+<img width="800" src="./p2.png" alt="p2">
 </p>
 
 If the vertical line intersects with a range, that peer will be responsible for replicating this data. A nice consequence of this is that peers can participate with different degrees of trust in how much work others will perform.
 <p align="center">
-<img width="800" src="./topics/sharding/p4.png" alt="p4">
+<img width="800" src="./p4.png" alt="p4">
 </p> 
 By replicating with a factor (width) of 1, every data point will intersect the range, hence the node will always be responsible for every data point. This means that if anyone in a network creates data, it will always be sent to this peer. This is also useful property if you want to create an app where every peer always should hold the complete state locally at all times.
 
 Another nice consequence of this is that if you only want to "pin" a specific data point, you only need to make your width as small as the floating points allow, to only cover that particular data point. *A line is a special case of a curve* and *pinning is a special case of range replication* (a range with width that approaches 0).
 
 <p align="center">
-<img width="800" src="./topics/sharding/p5.png" alt="p5">
+<img width="800" src="./p5.png" alt="p5">
 </p> 
 
 If there is a gap, then the closest node will be chosen in the following way:
 <p align="center">
-<img width="800" src="./topics/sharding/p6.png" alt="p3">
+<img width="800" src="./p6.png" alt="p3">
 </p>
 
 This means that even if the longer range is further away by measuring from the closest edge, it still needs to replicate the data due to that the transformed distance gets shorter because of the wider range. This property is important, because we wan't to make sure that someone who replicates with width 0 does not get delegated any replication work.
@@ -86,11 +86,11 @@ and to find all points, do the calculation for
 
 
 <p align="center">
-<img width="800" src="./topics/sharding/p7.png" alt="p7">
+<img width="800" src="./p7.png" alt="p7">
 </p>
 
 <p align="center">
-<img width="800" src="./topics/sharding/p8.png" alt="p8">
+<img width="800" src="./p8.png" alt="p8">
 </p>
 
 If you think of the content space as a circle, this would represent a rotation of `360° / min replicas`. So if `min replicas = 2` and the start point is the north pole, the second point would be the south pole.
@@ -100,20 +100,20 @@ But we will stick with the line representation because it will be easier to visu
 ### (B) Resource Awareness
 
 <p align="center">
-<img width="400" src="./topics/sharding/p10.png" alt="p10">
+<img width="400" src="./p10.png" alt="p10">
 </p>
 
 With this in (A) place, now it is time to consider constraint (B). The innovative step here is that we adjust our width to satisfy any resource constraint. Is the memory or CPU usage too high? Just reduce the width of your responsibility until satisfied. Do you have capacity? Then perhaps it would be helpful for others if you increase your width of responsibility.
 
 <p align="center">
-<img width="800" src="./topics/sharding/p9.png" alt="p9">
+<img width="800" src="./p9.png" alt="p9">
 </p>
 
 
 But this problem is actually more nuanced than just memory and CPU, for a healthy replication we also need to consider a few other goals.
 
 <p align="center">
-<img width="800" src="./topics/sharding/p13.png" alt="p13">
+<img width="800" src="./p13.png" alt="p13">
 </p>
 
 
@@ -121,7 +121,7 @@ We cannot feasibly predict the optimal width for every participant in one go bec
 
 For clarity these iterations on what happens when you update your width over time:
 <p align="center">
-<img width="800" src="./topics/sharding/p11.png" alt="p11">
+<img width="800" src="./p11.png" alt="p11">
 </p>
 
 
@@ -132,7 +132,7 @@ In practice, a special form of it that comes in the form of something that is ca
 A simplified mathematical representation of the iterator looks like this:
 
 <p align="center">
-<img width="800" src="./topics/sharding/p14.png" alt="p14">
+<img width="800" src="./p14.png" alt="p14">
 </p>
 
 
@@ -141,7 +141,7 @@ Simplified, we use [Lagrange relaxation](https://en.wikipedia.org/wiki/Lagrangia
 When everything functions correctly, the width will converge to a specific number for each peer over time.
 
 <p align="center">
-<img width="800" src="./topics/sharding/p15.png" alt="p15">
+<img width="800" src="./p15.png" alt="p15">
 </p>
 
 For better understanding, consider this analogy: it's as if we're trying to regulate the temperature in three houses simultaneously, where the thermostat in one house is influenced by the others. But the twist is that if one house requires less heating, another might need to compensate by heating more.
@@ -160,17 +160,17 @@ Below are illustrations of how aggregation is executed:
 
 Start "local first":
 <p align="center">
-<img width="500" src="./topics/sharding/p16.png" alt="p16">
+<img width="500" src="./p16.png" alt="p16">
 </p>
 
 Determine the length of your "walk":
 <p align="center">
-<img width="500" src="./topics/sharding/p17.png" alt="p17">
+<img width="500" src="./p17.png" alt="p17">
 </p>
 
 Aggregate every range and note its owner, but avoid considering more than one range per "step":
 <p align="center">
-<img width="500" src="./topics/sharding/p18.png" alt="p18">
+<img width="500" src="./p18.png" alt="p18">
 </p>
 
 The source code for the aggregation is accessible [here](https://github.com/dao-xyz/peerbit/blob/95420cd37cb8d2ced4733495b6901b2b5e445e01/packages/programs/data/shared-log/src/ranges.ts#L155).
@@ -182,13 +182,13 @@ Initially, we observe peers receiving segments within the content space, with st
 
 
 
-<video src="/topics/sharding/storage-toggle.mp4" controls muted style="width: 100%" ></video>
+<video src="/content/docs/topics/sharding/storage-toggle.mp4" controls muted style="width: 100%" ></video>
 
 When memory limitation is enabled, the ranges are observed to update accordingly to what we set the limit to. Also note on the top left "Used storage" and how that changes with the limit set.
 
 Upon enabling CPU limitation, it's noticeable that minimizing a client's tab halts data replication. This occurs because a minimized tab is typically subject to significant throttling, thereby constraining processing capacity. However, once the tab is reopened, operations resume to their optimal state.
 
-<video src="/topics/sharding/cpu-toggle.mp4" controls muted  style="width: 100%"></video>
+<video src="/content/docs/topics/sharding/cpu-toggle.mp4" controls muted  style="width: 100%"></video>
 
 Explore this yourself and review the source code [here](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/file-share).
 
@@ -216,4 +216,3 @@ The parameters for the PID regulator might need to be adaptive, depending on net
 ### Numerical Optimizers
 
 As previously described, the resource optimization problem was solved with a PID controller, under the assumption that the problem has desirable "convex" properties. While this assumption may hold in many cases, there might be scenarios where more robust (and more resource-intensive) solvers would be preferable. For instance, when non-numerical properties and non-linear features are involved, a [Recurrent Neural Network (RNN)](https://en.wikipedia.org/wiki/Recurrent_neural_network) might perform better.
-
