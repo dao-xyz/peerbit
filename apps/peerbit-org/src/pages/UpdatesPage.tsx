@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { BellNotification, Xmark } from "iconoir-react";
 
 import { DocsLayout } from "../layout/DocsLayout";
@@ -78,6 +78,10 @@ export function UpdatesPage() {
 	const [subscribeStatus, setSubscribeStatus] = useState<
 		{ type: "idle" } | { type: "loading" } | { type: "success"; message: string } | { type: "error"; message: string }
 	>({ type: "idle" });
+	const [notice, setNotice] = useState<{ tone: "success" | "error"; message: string } | null>(null);
+
+	const location = useLocation();
+	const navigate = useNavigate();
 
 	useEffect(() => {
 		(async () => {
@@ -100,6 +104,41 @@ export function UpdatesPage() {
 	}, [filter, items]);
 
 	const emailFormAction = import.meta.env.VITE_UPDATES_EMAIL_FORM_ACTION as string | undefined;
+
+	useEffect(() => {
+		const params = new URLSearchParams(location.search);
+		const confirmed = params.get("confirmed");
+		const unsubscribed = params.get("unsubscribed");
+		if (!confirmed && !unsubscribed) return;
+
+		const reason = params.get("reason");
+
+		if (confirmed === "1") {
+			setNotice({ tone: "success", message: "Subscription confirmed." });
+		} else if (confirmed === "0") {
+			const message =
+				reason === "expired"
+					? "Confirmation link expired. Please subscribe again."
+					: reason === "missing" || reason === "invalid"
+						? "Confirmation link invalid. Please subscribe again."
+						: "Failed to confirm subscription. Please try again.";
+			setNotice({ tone: "error", message });
+		} else if (unsubscribed === "1") {
+			setNotice({ tone: "success", message: "You’ve been unsubscribed from Peerbit Updates." });
+		} else if (unsubscribed === "0") {
+			const message =
+				reason === "missing" || reason === "invalid"
+					? "Unsubscribe link invalid."
+					: "Failed to unsubscribe. Please try again.";
+			setNotice({ tone: "error", message });
+		}
+
+		params.delete("confirmed");
+		params.delete("unsubscribed");
+		params.delete("reason");
+		const rest = params.toString();
+		navigate({ pathname: location.pathname, search: rest ? `?${rest}` : "" }, { replace: true });
+	}, [location.pathname, location.search, navigate]);
 
 	useEffect(() => {
 		if (!subscribeOpen) return;
@@ -179,6 +218,22 @@ export function UpdatesPage() {
 						Product updates, release announcements, and engineering notes.
 					</p>
 				</header>
+
+				{notice ? (
+					<div
+						className={[
+							"mb-6 flex items-start justify-between gap-3 rounded-xl border p-3 text-sm",
+							notice.tone === "success"
+								? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100"
+								: "border-red-200 bg-red-50 text-red-900 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200",
+						].join(" ")}
+					>
+						<div>{notice.message}</div>
+						<IconButton aria-label="Dismiss" title="Dismiss" onClick={() => setNotice(null)}>
+							<Xmark className="h-5 w-5" />
+						</IconButton>
+					</div>
+				) : null}
 
 				<section>
 					<div className="flex flex-wrap items-center justify-between gap-3">
