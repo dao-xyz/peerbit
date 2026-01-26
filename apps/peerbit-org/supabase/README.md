@@ -44,3 +44,13 @@ Add these repository secrets so `site.yml` can trigger sending:
 
 - `SUPABASE_UPDATES_SYNC_URL=https://<project>.supabase.co/functions/v1/updates-sync`
 - `SUPABASE_UPDATES_SYNC_SECRET=<same as UPDATES_SYNC_SECRET>`
+
+### Manual sync (optional)
+
+After building the site (so `apps/peerbit-org/dist/content/docs/updates/index.json` exists), you can trigger a sync manually:
+
+```bash
+UPDATES_SYNC_URL="https://<project>.supabase.co/functions/v1/updates-sync" \
+UPDATES_SYNC_SECRET="..." \
+pnpm site:sync-updates
+```
