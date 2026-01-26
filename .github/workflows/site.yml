@@ -59,7 +59,7 @@ jobs:
         run: pnpm --filter peerbit-org typecheck
 
       - name: Sync Updates email
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && secrets.SUPABASE_UPDATES_SYNC_URL != '' && secrets.SUPABASE_UPDATES_SYNC_SECRET != ''
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && env.UPDATES_SYNC_URL != '' && env.UPDATES_SYNC_SECRET != ''
         env:
           UPDATES_SYNC_URL: ${{ secrets.SUPABASE_UPDATES_SYNC_URL }}
           UPDATES_SYNC_SECRET: ${{ secrets.SUPABASE_UPDATES_SYNC_SECRET }}
