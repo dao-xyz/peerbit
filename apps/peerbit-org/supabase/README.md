@@ -35,7 +35,8 @@ Set these as function secrets in Supabase:
 
 Point the UI form action to the subscribe function:
 
-- `VITE_UPDATES_EMAIL_FORM_ACTION=https://<project>.supabase.co/functions/v1/updates-subscribe`
+- Local dev: set `VITE_UPDATES_EMAIL_FORM_ACTION=https://<project>.supabase.co/functions/v1/updates-subscribe` (e.g. in `apps/peerbit-org/.env.local`)
+- GitHub Actions: `site.yml` derives this automatically from `SUPABASE_UPDATES_SYNC_URL` (if set)
 
 ### GitHub Actions secrets
 
