@@ -93,6 +93,18 @@ describe("domain", () => {
 				},
 			});
 
+			const peerConnectivityTimeoutMs = 20_000;
+			await Promise.all([
+				store.docs.node.services.pubsub.waitFor(
+					store2.docs.node.identity.publicKey.hashcode(),
+					{ target: "neighbor", timeout: peerConnectivityTimeoutMs },
+				),
+				store2.docs.node.services.pubsub.waitFor(
+					store.docs.node.identity.publicKey.hashcode(),
+					{ target: "neighbor", timeout: peerConnectivityTimeoutMs },
+				),
+			]);
+
 			await store.docs.put(new Document({ id: "1", property: 1 }));
 			await store2.docs.put(new Document({ id: "2", property: 2 }));
 			await store2.docs.put(new Document({ id: "3", property: 3 }));
