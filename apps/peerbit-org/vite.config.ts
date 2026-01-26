@@ -4,7 +4,7 @@ import { defineConfig } from "vite";
 import { docsContentPlugin } from "./scripts/docsContentPlugin.js";
 
 export default defineConfig({
-	base: process.env.VITE_BASE ?? "/",
+	base: "./",
 	plugins: [
 		tailwindcss(),
 		react(),

@@ -14,7 +14,7 @@ export function StatusPage() {
 	useEffect(() => {
 		(async () => {
 			try {
-				const res = await fetch("/content/docs/status/bootstrap.json", {
+				const res = await fetch("content/docs/status/bootstrap.json", {
 					cache: "no-store",
 				});
 				if (!res.ok) throw new Error(`HTTP ${res.status}`);

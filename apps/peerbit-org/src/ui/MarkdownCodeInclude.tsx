@@ -39,7 +39,7 @@ export function CodeInclude({
 }) {
 	const { fragment, lang } = useMemo(() => parseIncludeTitle(title), [title]);
 	const resolved = useMemo(() => resolveRelativePath(markdownDir, href), [href, markdownDir]);
-	const url = useMemo(() => `/${base}/${resolved}`, [base, resolved]);
+	const url = useMemo(() => `${base}/${resolved}`, [base, resolved]);
 	const inferredLanguage = useMemo(() => lang ?? languageFromPath(resolved), [lang, resolved]);
 
 	const [code, setCode] = useState<string | null>(null);
