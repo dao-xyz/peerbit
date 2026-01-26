@@ -17,7 +17,7 @@ Traditional replication methods rely on fixed partitions or discrete addressing.
 
 For example, subscribing to a live feed might involve replicating only the latest segment (e.g., [0.999, 1]). As the stream evolves, the replication range shifts dynamically. Or when you are buffering a video, then you will replicate the segments that are being buffered and continously expand the replication range as the video progresses. See the video below 
 
-<video src="/topics/custom-domain/buffer.mp4" controls muted style="width: 100%" ></video>
+<video src="/content/docs/topics/custom-domain/buffer.mp4" controls muted style="width: 100%" ></video>
 
 The timeline will turn more blue and become taller when more replicators/viewers are watching the video.
 
