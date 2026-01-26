@@ -28,14 +28,15 @@ jobs:
           - pnpm run test:ci:part-5
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.24.0
+          run_install: false
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - uses: pnpm/action-setup@v4
-        with:
-          run_install: false
       - name: Install deps
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
@@ -74,14 +75,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.24.0
+          run_install: false
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - uses: pnpm/action-setup@v4
-        with:
-          run_install: false
       - name: Install deps
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
