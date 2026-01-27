@@ -33,13 +33,13 @@ Request using the requester
 ### Visualized 
 
 <p align="center">
-    <img width="400" src="/modules/program/rpc/rpc1.png"  alt="p1">
+    <img width="400" src="./rpc1.png"  alt="p1">
 </p>
 
 
 
 <p align="center">
-    <img width="400" src="/modules/program/rpc/rpc2.png"  alt="p1">
+    <img width="400" src="./rpc2.png"  alt="p1">
 </p>
 
 See [Document store](https://github.com/dao-xyz/peerbit/tree/master/packages/programs/data/document) and [Clock Service](https://github.com/dao-xyz/peerbit/tree/master/packages/programs/clock-service) as implementation examples.
