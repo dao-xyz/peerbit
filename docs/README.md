@@ -16,7 +16,7 @@ Later
 ## Throughput
 Peerbit is performant, so performant in fact you can use it for [streaming video](https://stream.dao.xyz) by having peers subscribing to database updates. In a low latency setting, you can achieve around 1000 replications a second and have a throughput of 100 MB/s. 
 
-![Dogestream](/videostream.gif)
+![Dogestream](./videostream.gif)
 
 *Left side is putting video frames in a [document store](https://github.com/dao-xyz/peerbit-examples/blob/master/packages/live-streaming/frontend/src/media/database.ts), every few ms. Right side is subscribed to changes of the document store and renders the changes once they arrive. [Source code](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/live-streaming).*
 

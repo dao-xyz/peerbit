@@ -1,0 +1,23 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+:root {
+	color-scheme: light dark;
+}
+
+html,
+body {
+	height: 100%;
+}
+
+body {
+	@apply bg-white text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-50;
+}
+
+code {
+	@apply rounded bg-slate-100 px-1 py-0.5 text-[0.9em] dark:bg-slate-900;
+}
+
+pre code {
+	@apply bg-transparent p-0;
+}
