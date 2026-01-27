@@ -3473,48 +3473,75 @@ export class SharedLog<
 
 		let coverageThreshold = options?.coverageThreshold ?? 1;
 		let deferred = pDefer<void>();
+		let settled = false;
 
 		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge());
 		const providedCustomRoleAge = options?.roleAge != null;
 
-		let checkCoverage = async () => {
+		const resolve = () => {
+			if (settled) return;
+			settled = true;
+			deferred.resolve();
+		};
+
+		const reject = (error: unknown) => {
+			if (settled) return;
+			settled = true;
+			deferred.reject(error);
+		};
+
+		let checkInFlight: Promise<void> | undefined;
+		const checkCoverage = async () => {
 			const coverage = await this.calculateCoverage({
 				roleAge,
 			});
 
 			if (coverage >= coverageThreshold) {
-				deferred.resolve();
+				resolve();
 				return true;
 			}
 			return false;
 		};
+
+		const scheduleCheckCoverage = () => {
+			if (settled || checkInFlight) {
+				return;
+			}
+
+			checkInFlight = checkCoverage()
+				.then(() => {})
+				.catch(reject)
+				.finally(() => {
+					checkInFlight = undefined;
+				});
+		};
 		const onReplicatorMature = () => {
-			checkCoverage();
+			scheduleCheckCoverage();
 		};
 		const onReplicationChange = () => {
-			checkCoverage();
+			scheduleCheckCoverage();
 		};
 		this.events.addEventListener("replicator:mature", onReplicatorMature);
 		this.events.addEventListener("replication:change", onReplicationChange);
-		await checkCoverage();
+		await checkCoverage().catch(reject);
 
-		let interval = providedCustomRoleAge
-			? setInterval(() => {
-					checkCoverage();
-				}, 100)
-			: undefined;
+		let intervalMs = providedCustomRoleAge ? 100 : 250;
+		let interval =
+			roleAge > 0
+				? setInterval(() => {
+						scheduleCheckCoverage();
+					}, intervalMs)
+				: undefined;
 
 		let timeout = options?.timeout ?? this.waitForReplicatorTimeout;
 		const timer = setTimeout(() => {
 			clear();
-			deferred.reject(
-				new TimeoutError(`Timeout waiting for mature replicators`),
-			);
+			reject(new TimeoutError(`Timeout waiting for mature replicators`));
 		}, timeout);
 
 		const abortListener = () => {
 			clear();
-			deferred.reject(new AbortError());
+			reject(new AbortError());
 		};
 
 		if (options?.signal) {

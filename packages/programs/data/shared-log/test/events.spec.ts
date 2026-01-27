@@ -290,7 +290,7 @@ describe("events", () => {
 			await waitPromise;
 		});
 
-		it("times out if maturity signal never fires", async () => {
+		it("resolves even if maturity timers are cleared", async () => {
 			session = await TestSession.connected(1);
 			const store = new EventStore();
 			const timeUntilRoleMaturity = 3e3;
@@ -314,11 +314,9 @@ describe("events", () => {
 				pending.clear();
 			}
 
-			await expect(
-				store1.log.waitForReplicators({
-					timeout: 500,
-				}),
-			).to.be.eventually.rejectedWith("Timeout");
+			await store1.log.waitForReplicators({
+				timeout: 10e3,
+			});
 		});
 
 		it("times out after timeout if online", async () => {
