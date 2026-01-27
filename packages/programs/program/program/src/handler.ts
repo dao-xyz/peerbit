@@ -157,33 +157,37 @@ export class Handler<T extends Manageable<any>> {
 			// TODO add locks for store lifecycle, e.g. what happens if we try to open and close a store at the same time?
 			let program = storeOrAddress as S;
 			if (typeof storeOrAddress === "string") {
+				const address = storeOrAddress.toString();
 				try {
-					if (this.items?.has(storeOrAddress.toString())) {
-						const existing = await this.checkProcessExisting(
-							storeOrAddress.toString(),
-							program,
-							options?.existing,
-						);
-						if (existing) {
+					const existing = this.items.get(address);
+					if (existing) {
+						// Be defensive: stale handles shouldn't be returned from the cache.
+						if (existing.closed) {
+							this.items.delete(address);
+						} else if (options?.existing === "reuse") {
 							return existing as S;
+						} else if (options?.existing === "replace") {
+							await existing.close();
+						} else {
+							throw new Error(`Program at ${address} is already open`);
 						}
-					} else {
-						program = (await this.properties.load(
-							storeOrAddress,
-							this.properties.client.services.blocks,
-							options,
-						)) as S; // TODO fix typings
+					}
 
-						if (!this.properties.shouldMonitor(program)) {
-							if (!program) {
-								throw new Error(
-									"Failed to resolve program with address: " + storeOrAddress,
-								);
-							}
+					program = (await this.properties.load(
+						address,
+						this.properties.client.services.blocks,
+						options,
+					)) as S; // TODO fix typings
+
+					if (!this.properties.shouldMonitor(program)) {
+						if (!program) {
 							throw new Error(
-								`Failed to open program because program is of type ${program?.constructor.name} `,
+								"Failed to resolve program with address: " + address,
 							);
 						}
+						throw new Error(
+							`Failed to open program because program is of type ${program?.constructor.name} `,
+						);
 					}
 				} catch (error) {
 					logger.error(

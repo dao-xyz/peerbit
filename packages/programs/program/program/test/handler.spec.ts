@@ -46,6 +46,24 @@ describe(`shared`, () => {
 		);
 	});
 
+	it("reuse open by address returns existing instance", async () => {
+		const db1 = await client.open(new TestProgram());
+		const db2 = await client.open(db1.address, { existing: "reuse" });
+		expect(db2).equal(db1);
+	});
+
+	it("replace open by address closes old and reopens", async () => {
+		const db1 = await client.open(new TestProgram());
+		const address = db1.address;
+
+		const db2 = await client.open(address, { existing: "replace" });
+
+		expect(db1.closed).to.be.true;
+		expect(db2.closed).to.be.false;
+		expect(db2.address).to.equal(address);
+		expect(db2).to.not.equal(db1);
+	});
+
 	it("is open on open", async () => {
 		const instance = new TestProgram();
 		const openFn = instance.open.bind(instance);
