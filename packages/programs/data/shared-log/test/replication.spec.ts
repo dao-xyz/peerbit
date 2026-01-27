@@ -1557,7 +1557,9 @@ testSetups.forEach((setup) => {
 					db2.node.identity.publicKey.hashcode(),
 					db3.node.identity.publicKey.hashcode(),
 				]).include(unionFromPeer0[selfIndex === 0 ? 1 : 0]);
-				expect(unionFromPeer0).to.have.length(2);
+				// `getCover` can include extra peers due to ongoing background sync (syncInFlight),
+				// which is timing-dependent and tends to happen more often for the u64 IBLT synchronizer.
+				expect(unionFromPeer0).to.have.length.within(2, 3);
 
 				// the other ones should only have to cover themselves
 				await Promise.all(
