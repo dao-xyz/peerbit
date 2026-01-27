@@ -202,6 +202,13 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.6.3](https://github.com/dao-xyz/peerbit/compare/program-v5.6.2...program-v5.6.3) (2026-01-27)
+
+
+### Bug Fixes
+
+* **program:** handle existing reuse/replace for address opens ([88b12bb](https://github.com/dao-xyz/peerbit/commit/88b12bb97eb068bef59e6fc827c6bc12b5712053))
+
 ## [5.6.2](https://github.com/dao-xyz/peerbit/compare/program-v5.6.1...program-v5.6.2) (2026-01-24)
 
 
