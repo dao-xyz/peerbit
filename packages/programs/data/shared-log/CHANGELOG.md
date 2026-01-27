@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [12.3.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.3.4...shared-log-v12.3.5) (2026-01-27)
+
+
+### Bug Fixes
+
+* **shared-log:** make waitForReplicators robust ([ad0f88c](https://github.com/dao-xyz/peerbit/commit/ad0f88c881aeea42f5fc07968648823ebad7a4a4))
+
 ## [12.3.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.3.3...shared-log-v12.3.4) (2026-01-27)
 
 
