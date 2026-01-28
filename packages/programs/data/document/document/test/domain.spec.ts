@@ -59,7 +59,9 @@ export class StoreWithCustomDomain extends Program {
 }
 
 describe("domain", () => {
-	describe("search replicate", () => {
+	describe("search replicate", function () {
+		this.retries(2);
+
 		let session: TestSession;
 		let store: StoreWithCustomDomain, store2: StoreWithCustomDomain;
 

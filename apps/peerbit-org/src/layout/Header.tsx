@@ -100,13 +100,13 @@ export function Header() {
 			<div className="sticky top-0 z-50 border-b border-slate-200 bg-white/70 backdrop-blur dark:border-slate-800 dark:bg-slate-950/70">
 				<Container className="flex h-14 items-center justify-between">
 					<div className="flex items-center gap-3">
-						<a href="#/" className="flex items-center gap-2 font-bold">
-							<img
-								src="/content/docs/peerbit-logo.png"
-								alt="Peerbit"
-								className="h-7 w-7"
-							/>
-							<span>Peerbit</span>
+							<a href="#/" className="flex items-center gap-2 font-bold">
+								<img
+									src="content/docs/peerbit-logo.png"
+									alt="Peerbit"
+									className="h-7 w-7"
+								/>
+								<span>Peerbit</span>
 						</a>
 						<span className="hidden text-xs text-slate-500 sm:inline dark:text-slate-400">
 							P2P framework

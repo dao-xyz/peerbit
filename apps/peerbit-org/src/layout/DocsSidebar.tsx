@@ -10,7 +10,7 @@ export function DocsSidebar() {
 	useEffect(() => {
 		(async () => {
 			try {
-				const res = await fetch("/content/docs/_sidebar.md", { cache: "no-store" });
+				const res = await fetch("content/docs/_sidebar.md", { cache: "no-store" });
 				if (!res.ok) throw new Error(`HTTP ${res.status}`);
 				setContent(await res.text());
 			} catch {

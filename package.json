@@ -94,6 +94,7 @@
 		"site:dev": "pnpm --filter peerbit-org dev",
 		"site:build": "pnpm --filter peerbit-org build",
 		"site:preview": "pnpm --filter peerbit-org preview",
+		"site:sync-updates": "node apps/peerbit-org/scripts/syncUpdatesEmail.mjs",
 		"dep-check": "aegir run dep-check",
 		"doc-check": "aegir run doc-check",
 		"release": "aegir exec --bail false pnpm -- publish",

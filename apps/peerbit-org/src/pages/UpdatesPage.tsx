@@ -88,7 +88,7 @@ export function UpdatesPage() {
 			setError(null);
 			setItems(null);
 			try {
-				const res = await fetch("/content/docs/updates/index.json", { cache: "no-store" });
+				const res = await fetch("content/docs/updates/index.json", { cache: "no-store" });
 				if (!res.ok) throw new Error(`HTTP ${res.status}`);
 				setItems((await res.json()) as UpdatesIndexItem[]);
 			} catch (e) {

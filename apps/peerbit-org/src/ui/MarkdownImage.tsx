@@ -16,9 +16,9 @@ export function MarkdownImage({
 	alt: string;
 }) {
 	if (!src || isExternal(src) || src.startsWith("/")) {
-		return <img src={src} alt={alt} />;
+		return <img src={src.startsWith("/") ? src.slice(1) : src} alt={alt} />;
 	}
 
 	const resolved = resolveRelativePath(markdownDir, src);
-	return <img src={`/${base}/${resolved}`} alt={alt} />;
+	return <img src={`${base}/${resolved}`} alt={alt} />;
 }

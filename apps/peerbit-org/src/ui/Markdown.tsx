@@ -14,7 +14,7 @@ export function Markdown({ base, docPath }: { base: string; docPath: string }) {
 	const [error, setError] = useState<string | null>(null);
 	const [loadedDocPath, setLoadedDocPath] = useState<string | null>(null);
 
-	const docUrl = useMemo(() => `/${base}/${docPath}`, [base, docPath]);
+	const docUrl = useMemo(() => `${base}/${docPath}`, [base, docPath]);
 	const baseDir = useMemo(
 		() => splitPathDirname(loadedDocPath ?? docPath),
 		[docPath, loadedDocPath],
@@ -33,7 +33,7 @@ export function Markdown({ base, docPath }: { base: string; docPath: string }) {
 
 				let lastError: string | null = null;
 				for (const candidate of candidates) {
-					const res = await fetch(`/${base}/${candidate}`, { cache: "no-store" });
+					const res = await fetch(`${base}/${candidate}`, { cache: "no-store" });
 					if (res.ok) {
 						setLoadedDocPath(candidate);
 						setContent(await res.text());
