@@ -54,7 +54,7 @@ jobs:
           if [ -n "$SUPABASE_UPDATES_SYNC_URL" ]; then
             export VITE_UPDATES_EMAIL_FORM_ACTION="${SUPABASE_UPDATES_SYNC_URL%/updates-sync}/updates-subscribe"
           fi
-          pnpm --filter peerbit-org build
+          pnpm --filter peerbit-org... build
 
       - name: Typecheck site
         run: pnpm --filter peerbit-org typecheck
