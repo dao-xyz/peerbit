@@ -1579,25 +1579,26 @@ export function FanoutProtocolSandbox({
 							<div className="flex flex-wrap items-center justify-between gap-2">
 								<div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
 									<span>
-										Click a node to set the writer (red). Pulses = data received on subscribers.
+										Click a node to set the writer (red). Subscribers pulse when they receive data.
 									</span>
 									<InfoPopover>
 										<div className="space-y-2">
 											<p>
-												Flow comets show traffic along graph edges. In <span className="font-mono">Bench</span>{" "}
-												mode they follow only published <span className="font-mono">PSIM</span> messages and
-												are colored by message sequence (0..messages-1).
+												Flow comets visualize traffic along graph edges. In{" "}
+												<span className="font-mono">Bench</span> mode we animate only the published{" "}
+												<span className="font-mono">PSIM</span> messages. Each color is a message index
+												(0..messages-1).
 											</p>
 											<p>
-												Because we <span className="font-mono">await publish()</span>, messages are sent
-												sequentially (you may see bursts separated by a bit, especially with rx delay).
-												Comet speed is an animation choice: if you make it very slow (and don’t sync to
-												rx delay), nodes can turn green before a comet reaches them.
+												We <span className="font-mono">await publish()</span>, so multiple messages are sent
+												sequentially. If the simulated receive delay is high, this can look like short bursts.
+												Comet speed is visual only. If you make it much slower than the receive delay, the
+												pulses can appear before a comet reaches the node.
 											</p>
 											<p>
-												Blue edge glow is just “recently used edge” heat. Optional orange comets show ACK
-												return paths. This runs the real DirectSub/DirectStream logic, but skips crypto
-												verification for speed.
+												Blue edge glow is “recently used edge” heat. Optional orange comets show ACK return
+												traffic. This runs the real DirectSub and DirectStream logic, but uses an in-memory
+												transport and skips crypto verification to keep the demo fast.
 											</p>
 										</div>
 									</InfoPopover>
