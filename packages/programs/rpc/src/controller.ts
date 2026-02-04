@@ -472,15 +472,17 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 			options,
 		);
 		this._responseResolver.set(id, responseHandler);
-		let signal: AbortSignal | undefined = undefined;
+		let publishSignal: AbortSignal | undefined = undefined;
+		let publishAbortReason: unknown | undefined = undefined;
 		if (options?.responseInterceptor) {
 			const abortController = new AbortController();
 			void deferredPromise.promise
 				.finally(() => {
-					abortController.abort(new AbortError("Resolved early"));
+					publishAbortReason = new AbortError("Resolved early");
+					abortController.abort(publishAbortReason);
 				})
 				.catch(() => {});
-			signal = abortController.signal;
+			publishSignal = abortController.signal;
 			options.responseInterceptor((response: RPCResponse<R>) => {
 				return this.handleDecodedResponse(
 					response,
@@ -496,17 +498,22 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 		try {
 			await this.node.services.pubsub.publish(
 				requestBytes,
-				this.getPublishOptions(messageId, options, signal),
+				this.getPublishOptions(messageId, options, publishSignal),
 			);
 			await deferredPromise.promise;
 		} catch (error: any) {
-			if (
-				error instanceof TimeoutError === false &&
-				error instanceof AbortError === false
+			if (error instanceof TimeoutError) {
+				// Ignore publish timeouts
+			} else if (
+				publishAbortReason &&
+				(error === publishAbortReason ||
+					(error instanceof AbortError &&
+						error.message === (publishAbortReason as AbortError).message))
 			) {
+				// Response interceptor resolved early; canceling publish is expected
+			} else {
 				throw error;
 			}
-			// Ignore timeout errors only
 		} finally {
 			clearTimeout(timeoutFn);
 			this.events.removeEventListener("close", closeListener);
@@ -515,7 +522,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 			this._responseResolver.delete(id);
 		}
 
-		return deferredPromise.promise.then(() => allResults);
+		return allResults;
 	}
 
 	public get topic(): string {

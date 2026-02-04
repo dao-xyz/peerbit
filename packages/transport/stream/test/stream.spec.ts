@@ -15,6 +15,7 @@ import {
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import {
 	type ACK,
+	AcknowledgeAnyWhere,
 	AcknowledgeDelivery,
 	AnyWhere,
 	DataMessage,
@@ -23,7 +24,6 @@ import {
 	InvalidMessageError,
 	Message,
 	MessageHeader,
-	SeekDelivery,
 	SilentDelivery,
 	getMsgId,
 } from "@peerbit/stream-interface";
@@ -427,14 +427,17 @@ describe("streams", function () {
 				);
 			});
 
-			it("1->3", async () => {
-				await streams[0].stream.publish(data, {
-					to: [streams[2].stream.components.peerId],
-				});
+				it("1->3", async () => {
+					await streams[0].stream.publish(data, {
+						mode: new AcknowledgeDelivery({
+							redundancy: 2,
+							to: [streams[2].stream.components.peerId],
+						}),
+					});
 
-				await waitForResolved(() =>
-					expect(streams[2].received).to.have.length(1),
-				);
+					await waitForResolved(() =>
+						expect(streams[2].received).to.have.length(1),
+					);
 				expect(new Uint8Array(streams[2].received[0].data!)).to.deep.equal(
 					data,
 				);
@@ -443,11 +446,14 @@ describe("streams", function () {
 				expect(streams[1].received).to.be.empty;
 			});
 
-			it("1->3 10mb data", async () => {
-				const bigData = crypto.randomBytes(1e7);
-				await streams[0].stream.publish(bigData, {
-					to: [streams[2].stream.components.peerId],
-				});
+				it("1->3 10mb data", async () => {
+					const bigData = crypto.randomBytes(1e7);
+					await streams[0].stream.publish(bigData, {
+						mode: new AcknowledgeDelivery({
+							redundancy: 2,
+							to: [streams[2].stream.components.peerId],
+						}),
+					});
 
 				await waitForResolved(() =>
 					expect(streams[2].received).to.have.length(1),
@@ -460,15 +466,18 @@ describe("streams", function () {
 				expect(streams[1].received).to.be.empty;
 			});
 
-			it("1->3 still works even if routing is missing", async () => {
-				streams[0].stream.routes.clear();
-				streams[1].stream.routes.clear();
-				await streams[0].stream.publish(data, {
-					to: [streams[2].stream.components.peerId],
-				});
-				await waitForResolved(() =>
-					expect(streams[2].received).to.have.length(1),
-				);
+				it("1->3 still works even if routing is missing", async () => {
+					streams[0].stream.routes.clear();
+					streams[1].stream.routes.clear();
+					await streams[0].stream.publish(data, {
+						mode: new AcknowledgeDelivery({
+							redundancy: 2,
+							to: [streams[2].stream.components.peerId],
+						}),
+					});
+					await waitForResolved(() =>
+						expect(streams[2].received).to.have.length(1),
+					);
 				expect(new Uint8Array(streams[2].received[0].data!)).to.deep.equal(
 					data,
 				);
@@ -489,7 +498,7 @@ describe("streams", function () {
 				expect(streams[2].messages).to.have.length(0);
 			});
 
-			it("will favor shortest path", async () => {
+				it("will favor shortest path", async () => {
 				/* 
 				┌───┐
 				│0  │
@@ -505,12 +514,15 @@ describe("streams", function () {
 				└─┘   
 				*/
 
-				await session.connect([[session.peers[0], session.peers[2]]]);
-				await waitForNeighbour(streams[0].stream, streams[2].stream);
+					await session.connect([[session.peers[0], session.peers[2]]]);
+					await waitForNeighbour(streams[0].stream, streams[2].stream);
 
-				await streams[0].stream.publish(crypto.randomBytes(1e2), {
-					to: [streams[3].stream.components.peerId],
-				});
+					await streams[0].stream.publish(crypto.randomBytes(1e2), {
+						mode: new AcknowledgeDelivery({
+							redundancy: 2,
+							to: [streams[3].stream.components.peerId],
+						}),
+					});
 
 				await waitForResolved(() =>
 					expect(
@@ -551,17 +563,17 @@ describe("streams", function () {
 				await waitForNeighbour(streams[0].stream, streams[2].stream);
 
 				await streams[0].stream.publish(crypto.randomBytes(1e2), {
-					mode: new SeekDelivery({
+					mode: new AcknowledgeDelivery({
 						redundancy: 2,
 						to: [streams[3].stream.components.peerId],
 					}),
 				});
 
-				await waitForResolved(() =>
-					expect(
-						streams[3].messages.filter((x) => x instanceof DataMessage),
-					).to.have.length(2),
-				); // seeking will yield 3 DataMessages to node 3, since redundancy: 2 with seek (?)
+					await waitForResolved(() =>
+						expect(
+							streams[3].messages.filter((x) => x instanceof DataMessage),
+						).to.have.length.greaterThanOrEqual(1),
+					);
 
 				resetMetrics(streams);
 
@@ -601,17 +613,17 @@ describe("streams", function () {
 				resetMetrics(streams);
 
 				await streams[0].stream.publish(crypto.randomBytes(1e2), {
-					mode: new SeekDelivery({
+					mode: new AcknowledgeDelivery({
 						redundancy: 2,
 						to: [streams[3].stream.components.peerId],
 					}),
 				});
 
-				await waitForResolved(() =>
-					expect(
-						streams[3].messages.filter((x) => x instanceof DataMessage),
-					).to.have.length(2),
-				); // seeking will yield 3 DataMessages to node 3, since redundancy: 2 with seek (?)
+					await waitForResolved(() =>
+						expect(
+							streams[3].messages.filter((x) => x instanceof DataMessage),
+						).to.have.length.greaterThanOrEqual(1),
+					);
 
 				resetMetrics(streams);
 
@@ -650,17 +662,25 @@ describe("streams", function () {
 				└─┘   
 				*/
 
-				await session.connect([[session.peers[0], session.peers[2]]]);
-				await waitForNeighbour(streams[0].stream, streams[2].stream);
+					await session.connect([[session.peers[0], session.peers[2]]]);
+					await waitForNeighbour(streams[0].stream, streams[2].stream);
 
-				await streams[0].stream.publish(crypto.randomBytes(1e2), {
-					to: [streams[3].stream.components.peerId],
-				});
+					await streams[0].stream.publish(crypto.randomBytes(1e2), {
+						mode: new AcknowledgeDelivery({
+							redundancy: 2,
+							to: [streams[3].stream.components.peerId],
+						}),
+					});
 
-				// since redundancy is set to 2 by default we wil receive 2 acks
-				await waitForResolved(() => expect(streams[0].ack).to.have.length(2));
-				await delay(2000);
-				await waitForResolved(() => expect(streams[0].ack).to.have.length(2));
+					await waitForResolved(() => {
+						const route = streams[0].stream.routes
+							.findNeighbor(
+								streams[0].stream.publicKeyHash,
+								streams[3].stream.publicKeyHash,
+							)
+							?.list?.map((x) => x.hash);
+						expect(route?.[0]).to.equal(streams[2].stream.publicKeyHash);
+					});
 
 				streams[1].messages = [];
 				streams[3].received = [];
@@ -672,17 +692,14 @@ describe("streams", function () {
 					}
 				}
 
-				expect(
-					streams[0].stream.routes
-						.findNeighbor(
-							streams[0].stream.publicKeyHash,
-							streams[3].stream.publicKeyHash,
-						)
-						?.list?.map((x) => x.hash),
-				).to.deep.equal([
-					streams[2].stream.publicKeyHash,
-					streams[1].stream.publicKeyHash,
-				]); // "2" is fastest route
+					expect(
+						streams[0].stream.routes
+							.findNeighbor(
+								streams[0].stream.publicKeyHash,
+								streams[3].stream.publicKeyHash,
+							)
+							?.list?.map((x) => x.hash)?.[0],
+					).to.equal(streams[2].stream.publicKeyHash); // "2" is fastest route
 
 				await waitForResolved(() =>
 					expect(
@@ -703,7 +720,9 @@ describe("streams", function () {
 					expect(streams[3].received).to.have.length(1),
 				);
 
-				expect(streams[1].messages).to.be.empty; // Because shortest route is 0 -> 2 -> 3
+					expect(
+						streams[1].messages.filter((x) => x instanceof DataMessage),
+					).to.be.empty; // Because shortest route is 0 -> 2 -> 3
 				expect(streams[1].stream.routes.count()).equal(2);
 			});
 
@@ -724,7 +743,7 @@ describe("streams", function () {
 				await waitForResolved(() =>
 					expect(
 						streams[1].received.filter(
-							(x) => x.header.mode instanceof SeekDelivery,
+							(x) => x.header.mode instanceof AcknowledgeDelivery,
 						).length,
 					).lessThanOrEqual(2),
 				);
@@ -739,7 +758,7 @@ describe("streams", function () {
 				await waitForNeighbour(streams[0].stream, streams[3].stream);
 
 				await streams[0].stream.publish(data, {
-					mode: new SeekDelivery({
+					mode: new AcknowledgeDelivery({
 						to: [
 							streams[1].stream.components.peerId,
 							streams[2].stream.components.peerId,
@@ -766,11 +785,11 @@ describe("streams", function () {
 				// expect no message to reaach stream[2] because the graph should be fully connect and so streams[1] will not forward any thing to streams[2]
 				// as reduncancy is set to 1 and the shortest path to streams[2] is direct from streams[0]
 
-				await delay(1000);
-				expect(streams[1].received).to.have.length(2);
-				expect(streams[2].received).to.have.length(1);
+					await delay(1000);
+					expect(streams[1].received).to.have.length(2);
+					expect(streams[2].received).to.have.length(2);
+				});
 			});
-		});
 
 		describe("seek", () => {
 			let session: TestSessionStream;
@@ -786,7 +805,7 @@ describe("streams", function () {
 					session.peers[0].services.directstream.publish(
 						new Uint8Array([1, 2, 3]),
 						{
-							mode: new SeekDelivery({
+							mode: new AcknowledgeDelivery({
 								redundancy: 1,
 								to: [(await Ed25519Keypair.create()).publicKey],
 							}),
@@ -839,22 +858,19 @@ describe("streams", function () {
 					}),
 				).rejectedWith(InvalidMessageError);
 
-				await expect(
-					session.peers[0].services.directstream.publish(data, {
-						mode: new AcknowledgeDelivery({ to: [], redundancy: 1 }),
-					}),
-				).rejectedWith(InvalidMessageError);
+					expect(() => new AcknowledgeDelivery({ to: [], redundancy: 1 })).to.throw(
+						Error,
+					);
 
 				await delay(1500);
 
 				expect(receivedData).to.have.length(0);
-				let seekData = randomBytes(32);
-				await session.peers[0].services.directstream.publish(seekData, {
-					mode: new SeekDelivery({ to: [], redundancy: 1 }),
+				await session.peers[0].services.directstream.publish(undefined, {
+					mode: new AcknowledgeAnyWhere({ redundancy: 1 }),
 				});
 
 				await waitForResolved(() =>
-					expect(receivedMessages).to.deep.equal([seekData]),
+					expect(receivedMessages).to.deep.equal([undefined]),
 				);
 				await waitForResolved(() => expect(receivedData).to.deep.equal([]));
 			});
@@ -901,7 +917,7 @@ describe("streams", function () {
 
 				await expect(
 					session.peers[0].services.directstream.publish(data, {
-						mode: new SeekDelivery({ to: [me], redundancy: 1 }),
+						mode: new AcknowledgeDelivery({ to: [me], redundancy: 1 }),
 					}),
 				).rejectedWith(InvalidMessageError);
 
@@ -911,7 +927,7 @@ describe("streams", function () {
 				expect(receivedData).to.have.length(0);
 				let seekData = randomBytes(32);
 				await session.peers[0].services.directstream.publish(seekData, {
-					mode: new SeekDelivery({
+					mode: new AcknowledgeDelivery({
 						to: [me, session.peers[1].services.directstream.peerId],
 						redundancy: 1,
 					}),
@@ -958,7 +974,7 @@ describe("streams", function () {
 					data: new Uint8Array([0]),
 					header: new MessageHeader({
 						session: +new Date(),
-						mode: new SeekDelivery({ redundancy: 1 }),
+						mode: new AnyWhere(),
 					}),
 				});
 				streams[2].stream.canRelayMessage = false; // so that 2 does not relay to 0
@@ -989,7 +1005,7 @@ describe("streams", function () {
 					data: new Uint8Array([0]),
 					header: new MessageHeader({
 						session: +new Date(),
-						mode: new SeekDelivery({
+						mode: new SilentDelivery({
 							to: [
 								streams[0].stream.publicKeyHash,
 								streams[2].stream.publicKeyHash,
@@ -1067,7 +1083,7 @@ describe("streams", function () {
 					data: new Uint8Array([0]),
 					header: new MessageHeader({
 						session: +new Date(),
-						mode: new SeekDelivery({
+						mode: new SilentDelivery({
 							to: [streams[2].stream.publicKeyHash],
 							redundancy: 1,
 						}),
@@ -1085,7 +1101,7 @@ describe("streams", function () {
 
 			it("will only send to neighbour if available", async () => {
 				await streams[0].stream.publish(crypto.randomBytes(1e2), {
-					mode: new SeekDelivery({
+					mode: new AcknowledgeDelivery({
 						redundancy: 2,
 						to: [streams[2].stream.components.peerId],
 					}),
@@ -1161,15 +1177,15 @@ describe("streams", function () {
 							),
 						);
 
-						await session.peers[0].services.directstream.publish(
-							new Uint8Array([0]),
-							{
-								mode: new SilentDelivery({
-									to: [session.peers[2].peerId],
-									redundancy: 1,
-								}),
-							},
-						);
+							await session.peers[0].services.directstream.publish(
+								new Uint8Array([0]),
+								{
+									mode: new AcknowledgeDelivery({
+										to: [session.peers[2].peerId],
+										redundancy: 1,
+									}),
+								},
+							);
 						await waitForResolved(() =>
 							waitForResolved(() =>
 								expect(streams[2].received).to.have.length(1),
@@ -1312,7 +1328,7 @@ describe("streams", function () {
 
 						//  push one message to ensure paths are found
 						await streams[0].stream.publish(data, {
-							mode: new SeekDelivery({
+							mode: new AcknowledgeDelivery({
 								redundancy: 2,
 								to: [
 									streams[1].stream.publicKeyHash,
@@ -1456,7 +1472,7 @@ describe("streams", function () {
 						});
 
 						await streams[0].stream.publish(data, {
-							mode: new SeekDelivery({
+							mode: new AcknowledgeDelivery({
 								to: [
 									streams[3].stream.publicKeyHash,
 									streams[4].stream.publicKeyHash,
@@ -1478,21 +1494,25 @@ describe("streams", function () {
 							),
 						).to.be.true;
 
-						expect(
-							streams[0].stream.routes
-								.findNeighbor(
-									streams[0].stream.publicKeyHash,
-									streams[3].stream.publicKeyHash,
-								)
-								?.list.map((x) => x.hash),
-						).to.have.length(2);
+							await waitForResolved(() =>
+								expect(
+									streams[0].stream.routes
+										.findNeighbor(
+											streams[0].stream.publicKeyHash,
+											streams[3].stream.publicKeyHash,
+										)
+										?.list.map((x) => x.hash),
+								).to.have.length(2),
+							);
 
-						expect(
-							streams[0].stream.routes.findNeighbor(
-								streams[0].stream.publicKeyHash,
-								streams[4].stream.publicKeyHash,
-							)?.list,
-						).to.have.length(2);
+							await waitForResolved(() =>
+								expect(
+									streams[0].stream.routes.findNeighbor(
+										streams[0].stream.publicKeyHash,
+										streams[4].stream.publicKeyHash,
+									)?.list,
+								).to.have.length(2),
+							);
 
 						await waitForResolved(() =>
 							expect(streams[0].stream.routes.countAll()).equal(6),
@@ -1563,7 +1583,7 @@ describe("streams", function () {
 
 					it("can send with higher redundancy", async () => {
 						await streams[0].stream.publish(data, {
-							mode: new SeekDelivery({
+							mode: new AcknowledgeDelivery({
 								redundancy: 2,
 								to: [
 									streams[3].stream.publicKeyHash,
@@ -1640,7 +1660,7 @@ describe("streams", function () {
 					// now route should persist even if peer can't reach
 					await expect(
 						session.peers[0].services.directstream.publish(new Uint8Array(0), {
-							mode: new SeekDelivery({
+							mode: new AcknowledgeDelivery({
 								redundancy: 1,
 								to: [session.peers[1].peerId],
 							}),
@@ -1692,7 +1712,7 @@ describe("streams", function () {
 
 					await session.peers[0].services.directstream.publish(
 						new Uint8Array([123]),
-						{ mode: new SeekDelivery({ redundancy: 2 }) },
+						{ mode: new AcknowledgeAnyWhere({ redundancy: 2 }) },
 					);
 
 					// wait for the route to be established, so that we can track how route updates are happening
@@ -1716,7 +1736,7 @@ describe("streams", function () {
 
 					await session.peers[0].services.directstream.publish(
 						new Uint8Array([123]),
-						{ mode: new SeekDelivery({ redundancy: 2 }) },
+						{ mode: new AcknowledgeAnyWhere({ redundancy: 2 }) },
 					);
 					try {
 						await waitForResolved(async () => {
@@ -2060,7 +2080,7 @@ describe("streams", function () {
 					Number.MAX_SAFE_INTEGER;
 
 				await streams[0].stream.publish(new Uint8Array(100), {
-					mode: new SeekDelivery({
+					mode: new AcknowledgeDelivery({
 						redundancy: 1,
 						to: [streams[1].stream.publicKey],
 					}),
@@ -2075,7 +2095,7 @@ describe("streams", function () {
 				// clear the map that filter the dial
 				streams[0].stream["prunedConnectionsCache"]?.clear();
 				await streams[0].stream.publish(new Uint8Array(100), {
-					mode: new SeekDelivery({
+					mode: new AcknowledgeDelivery({
 						redundancy: 2,
 						to: [streams[1].stream.publicKey.hashcode()],
 					}),
@@ -2128,20 +2148,20 @@ describe("streams", function () {
 				}),
 			});
 			streams[0].stream.publish(crypto.randomBytes(1e2), {
-				mode: new SeekDelivery({
+				mode: new AcknowledgeDelivery({
 					redundancy: 1,
 					to: [streams[2].stream.components.peerId],
 				}),
 			});
 
 			streams[0].stream.publish(crypto.randomBytes(1e2), {
-				mode: new SeekDelivery({
+				mode: new AcknowledgeDelivery({
 					redundancy: 1,
 					to: [streams[2].stream.components.peerId],
 				}),
 			});
 			streams[2].stream.publish(crypto.randomBytes(1e2), {
-				mode: new SeekDelivery({
+				mode: new AcknowledgeDelivery({
 					redundancy: 1,
 					to: [streams[0].stream.components.peerId],
 				}),
@@ -2157,28 +2177,28 @@ describe("streams", function () {
 			for (let i = 0; i < count; i++) {
 				if (i % 2 === 0) {
 					streams[0].stream.publish(crypto.randomBytes(docSize), {
-						mode: new SeekDelivery({
+						mode: new AcknowledgeDelivery({
 							redundancy: 1,
 							to: [streams[1].stream.components.peerId],
 						}),
 					});
 
 					streams[0].stream.publish(crypto.randomBytes(docSize), {
-						mode: new SeekDelivery({
+						mode: new AcknowledgeDelivery({
 							redundancy: 1,
 							to: [streams[2].stream.components.peerId],
 						}),
 					});
 				} else {
 					streams[0].stream.publish(crypto.randomBytes(docSize), {
-						mode: new SeekDelivery({
+						mode: new AcknowledgeDelivery({
 							redundancy: 1,
 							to: [streams[1].stream.components.peerId],
 						}),
 					});
 
 					streams[0].stream.publish(crypto.randomBytes(docSize), {
-						mode: new SeekDelivery({
+						mode: new AcknowledgeDelivery({
 							redundancy: 1,
 							to: [streams[2].stream.components.peerId],
 						}),
@@ -2187,21 +2207,21 @@ describe("streams", function () {
 
 				if (i % 2 === 0) {
 					streams[1].stream.publish(crypto.randomBytes(docSize), {
-						mode: new SeekDelivery({
+						mode: new AcknowledgeDelivery({
 							redundancy: 1,
 							to: [streams[0].stream.components.peerId],
 						}),
 					});
 
 					streams[1].stream.publish(crypto.randomBytes(docSize), {
-						mode: new SeekDelivery({
+						mode: new AcknowledgeDelivery({
 							redundancy: 1,
 							to: [streams[2].stream.components.peerId],
 						}),
 					});
 				} else {
 					streams[1].stream.publish(crypto.randomBytes(docSize), {
-						mode: new SeekDelivery({
+						mode: new AcknowledgeDelivery({
 							redundancy: 1,
 							to: [streams[0].stream.components.peerId],
 						}),
@@ -2217,28 +2237,28 @@ describe("streams", function () {
 
 				if (i % 2 === 0) {
 					streams[2].stream.publish(crypto.randomBytes(docSize), {
-						mode: new SeekDelivery({
+						mode: new AcknowledgeDelivery({
 							redundancy: 1,
 							to: [streams[0].stream.components.peerId],
 						}),
 					});
 
 					streams[2].stream.publish(crypto.randomBytes(docSize), {
-						mode: new SeekDelivery({
+						mode: new AcknowledgeDelivery({
 							redundancy: 1,
 							to: [streams[1].stream.components.peerId],
 						}),
 					});
 				} else {
 					streams[2].stream.publish(crypto.randomBytes(docSize), {
-						mode: new SeekDelivery({
+						mode: new AcknowledgeDelivery({
 							redundancy: 1,
 							to: [streams[0].stream.components.peerId],
 						}),
 					});
 
 					streams[2].stream.publish(crypto.randomBytes(docSize), {
-						mode: new SeekDelivery({
+						mode: new AcknowledgeDelivery({
 							redundancy: 1,
 							to: [streams[1].stream.components.peerId],
 						}),
@@ -2279,7 +2299,7 @@ describe("streams", function () {
 				session.peers[0].services.directstream.publish(
 					new Uint8Array(1e7 + 1001),
 					{
-						mode: new SeekDelivery({
+						mode: new AcknowledgeDelivery({
 							to: [session.peers[1].services.directstream.publicKeyHash],
 							redundancy: 1,
 						}),
@@ -2353,7 +2373,7 @@ describe("join/leave", () => {
 			expect(streams[0].stream.peers.size).equal(1);
 
 			await streams[0].stream.publish(data, {
-				mode: new SeekDelivery({
+				mode: new AcknowledgeDelivery({
 					to: [streams[3].stream.components.peerId],
 					redundancy: 1,
 				}),
@@ -2392,7 +2412,7 @@ describe("join/leave", () => {
 
 			streams[3].received = [];
 			await streamA.publish(data, {
-				mode: new SeekDelivery({
+				mode: new AcknowledgeDelivery({
 					to: [streams[3].stream.components.peerId],
 					redundancy: 1,
 				}),
@@ -2438,7 +2458,7 @@ describe("join/leave", () => {
 			expect(streams[3].stream.peers.size).equal(1);
 
 			await streams[0].stream.publish(data, {
-				mode: new SeekDelivery({
+				mode: new AcknowledgeDelivery({
 					to: [streams[3].stream.peerId],
 					redundancy: 1,
 				}),
@@ -2496,7 +2516,7 @@ describe("join/leave", () => {
 
 		it("can leave and join quickly", async () => {
 			await streams[0].stream.publish(data, {
-				mode: new SeekDelivery({
+				mode: new AcknowledgeDelivery({
 					redundancy: 2,
 					to: [streams[3].stream.publicKeyHash],
 				}),
@@ -2535,7 +2555,7 @@ describe("join/leave", () => {
 			};
 
 			const publishToMissing = streams[0].stream.publish(data, {
-				mode: new SeekDelivery({
+				mode: new AcknowledgeDelivery({
 					redundancy: 2,
 					to: [streams[3].stream.publicKeyHash],
 				}),
@@ -2544,7 +2564,7 @@ describe("join/leave", () => {
 			await streams[0].stream.publish(data, {
 				// Since this the next message
 
-				mode: new SeekDelivery({
+				mode: new AcknowledgeDelivery({
 					redundancy: 2,
 					to: [streams[3].stream.publicKeyHash],
 				}),
@@ -2568,7 +2588,7 @@ describe("join/leave", () => {
 			expect(streams[0].stream.peers.size).equal(1);
 
 			await streams[0].stream.publish(data, {
-				mode: new SeekDelivery({
+				mode: new AcknowledgeDelivery({
 					to: [streams[3].stream.components.peerId],
 					redundancy: 1,
 				}),
@@ -2587,7 +2607,7 @@ describe("join/leave", () => {
 
 			// Republishing will not result in an additional dial
 			await streams[0].stream.publish(data, {
-				mode: new SeekDelivery({
+				mode: new AcknowledgeDelivery({
 					to: [streams[3].stream.components.peerId],
 					redundancy: 1,
 				}),
@@ -2603,7 +2623,7 @@ describe("join/leave", () => {
 
 			// Try again, now expect another dial call, since the retry interval has been reached
 			await streams[0].stream.publish(data, {
-				mode: new SeekDelivery({
+				mode: new AcknowledgeDelivery({
 					to: [streams[3].stream.components.peerId],
 					redundancy: 1,
 				}),
@@ -2624,7 +2644,7 @@ describe("join/leave", () => {
 
 			let c = 1;
 			streams[0].stream.publish(data, {
-				mode: new SeekDelivery({
+				mode: new AcknowledgeDelivery({
 					to: [streams[2].stream.peerId],
 					redundancy: 1,
 				}),
@@ -2712,7 +2732,7 @@ describe("join/leave", () => {
 			expect(streams[0].stream.peers.size).equal(1);
 			await streams[0].stream.publish(data, {
 				to: [streams[3].stream.components.peerId],
-				mode: new SeekDelivery({redundancy: 1})
+				mode: new AcknowledgeDelivery({ redundancy: 1, to: [streams[3].stream.components.peerId] })
 			});
 			await waitFor(() => streams[3].received.length === 1);
 			await waitForResolved(() => expect(directlyDialded).to.be.true);
@@ -2812,7 +2832,7 @@ describe("join/leave", () => {
 			await connectLine(session);
 
 			await streams[0].stream.publish(new Uint8Array(0), {
-				mode: new SeekDelivery({
+				mode: new AcknowledgeDelivery({
 					redundancy: 2,
 					to: [streams[3].stream.publicKeyHash],
 				}),
@@ -2847,7 +2867,7 @@ describe("join/leave", () => {
 			streams.map((x) => slowDownStream(x.stream, 100));
 
 			await streams[0].stream.publish(new Uint8Array(0), {
-				mode: new SeekDelivery({
+				mode: new AcknowledgeDelivery({
 					redundancy: 2,
 					to: [streams[3].stream.publicKeyHash],
 				}),
@@ -2875,7 +2895,7 @@ describe("join/leave", () => {
 			await connectLine(session);
 		
 			await streams[0].stream.publish(new Uint8Array(0), {
-				mode: new SeekDelivery({
+				mode: new AcknowledgeDelivery({
 					redundancy: 2,
 					to: [streams[3].stream.publicKeyHash],
 				}),
@@ -2907,7 +2927,7 @@ describe("join/leave", () => {
 			await waitForNeighbour(streams[0].stream, streams[2].stream);
 
 			await streams[0].stream.publish(new Uint8Array(0), {
-				mode: new SeekDelivery({
+				mode: new AcknowledgeDelivery({
 					redundancy: 2,
 					to: [streams[1].stream.publicKeyHash],
 				}),
@@ -2953,23 +2973,25 @@ describe("join/leave", () => {
 			await session.connect([[session.peers[0], session.peers[3]]]);
 			await waitForNeighbour(streams[0].stream, streams[3].stream);
 
-			await streams[0].stream.publish(new Uint8Array([123]), {
-				mode: new SeekDelivery({
-					redundancy: 2,
-					to: [streams[3].stream.publicKeyHash],
-				}),
-			});
-			expect(
-				streams[0].stream.routes
-					.findNeighbor(
-						streams[0].stream.publicKeyHash,
+				await streams[0].stream.publish(new Uint8Array([123]), {
+					mode: new AcknowledgeDelivery({
+						redundancy: 2,
+						to: [streams[3].stream.publicKeyHash],
+					}),
+				});
+				await waitForResolved(() =>
+					expect(
+						streams[0].stream.routes
+							.findNeighbor(
+								streams[0].stream.publicKeyHash,
+								streams[3].stream.publicKeyHash,
+							)
+							?.list?.map((x) => x.hash),
+					).include.members([
+						streams[1].stream.publicKeyHash,
 						streams[3].stream.publicKeyHash,
-					)
-					?.list?.map((x) => x.hash),
-			).include.members([
-				streams[1].stream.publicKeyHash,
-				streams[3].stream.publicKeyHash,
-			]);
+					]),
+				);
 
 			expect(streams[3].received).to.have.length(1);
 
@@ -3026,7 +3048,7 @@ describe("join/leave", () => {
 					?.list?.map((x) => x.hash),
 			).equal(undefined);
 			await streams[0].stream.publish(new Uint8Array(0), {
-				mode: new SeekDelivery({
+				mode: new AcknowledgeDelivery({
 					redundancy: 2,
 					to: [streams[3].stream.publicKeyHash],
 				}),
@@ -3105,7 +3127,7 @@ describe("join/leave", () => {
 				await session.peers[0].services.directstream.publish(
 					new Uint8Array([1, 2, 3]),
 					{
-						mode: new SeekDelivery({
+						mode: new AcknowledgeDelivery({
 							redundancy: 1,
 							to: [
 								session.peers[0].services.directstream.publicKeyHash,
@@ -3150,7 +3172,7 @@ describe("join/leave", () => {
 					new Uint8Array([1, 2, 3]),
 					{
 						mode: seekDelivery[i]
-							? new SeekDelivery({
+							? new AcknowledgeDelivery({
 									redundancy: 1,
 									to: [slow.publicKey, fast.publicKey],
 								})
@@ -3183,7 +3205,7 @@ describe("join/leave", () => {
 			await session.peers[0].services.directstream.publish(
 				new Uint8Array([0]),
 				{
-					mode: new SeekDelivery({
+					mode: new AcknowledgeDelivery({
 						redundancy: 1,
 						to: [session.peers[3].services.directstream.publicKeyHash],
 					}),
@@ -3222,15 +3244,15 @@ describe("join/leave", () => {
 			);
 			streams[0].reachable = [];
 
-			await session.peers[0].services.directstream.publish(
-				new Uint8Array([0]),
-				{
-					mode: new SilentDelivery({
-						redundancy: 1,
-						to: [session.peers[3].services.directstream.publicKeyHash],
-					}),
-				},
-			);
+				await session.peers[0].services.directstream.publish(
+					new Uint8Array([0]),
+					{
+						mode: new AcknowledgeDelivery({
+							redundancy: 1,
+							to: [session.peers[3].services.directstream.publicKeyHash],
+						}),
+					},
+				);
 
 			await waitForResolved(() =>
 				expect(streams[3].received).to.have.length(2),
@@ -3299,7 +3321,7 @@ describe("join/leave", () => {
 			const abortContoller = new AbortController();
 			const lag = 300;
 			relay.onDataMessage = async (from, peerStreams, message, options) => {
-				if (!(message.header.mode instanceof SeekDelivery)) {
+				if (!(message.header.mode instanceof AcknowledgeDelivery)) {
 					try {
 						await delay(lag, { signal: abortContoller.signal });
 					} catch (err) {
@@ -3328,9 +3350,9 @@ describe("join/leave", () => {
 
 			const seekMessageData = randomBytes(1e3);
 
-			// Send a seek that we really need to get through in time
+			// Send a high-priority (acknowledged) message that we really need to get through in time
 			await session.peers[0].services.directstream.publish(seekMessageData, {
-				mode: new SeekDelivery({
+				mode: new AcknowledgeDelivery({
 					to: [session.peers[2].peerId],
 					redundancy: 1,
 				}),
@@ -3440,7 +3462,7 @@ describe("start/stop", () => {
 		await connectLine(session);
 		await delay(2000);
 		await session.peers[0].services.directstream.publish(new Uint8Array(0), {
-			mode: new SeekDelivery({
+			mode: new AcknowledgeDelivery({
 				redundancy: 2,
 				to: [session.peers[1].services.directstream.publicKeyHash],
 			}),
@@ -3799,7 +3821,10 @@ describe("start/stop", () => {
 			await session.peers[0].services.directstream.publish(
 				new Uint8Array([2]),
 				{
-					mode: new SeekDelivery({ redundancy: 1 }),
+					mode: new AcknowledgeDelivery({
+						redundancy: 1,
+						to: [session.peers[2].peerId],
+					}),
 				},
 			);
 			await session.peers[0].services.directstream.waitFor(

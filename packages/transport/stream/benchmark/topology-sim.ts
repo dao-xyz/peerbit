@@ -397,7 +397,7 @@ const simulate = (params: SimParams): SimResult => {
 					scheduleAck(ev.t, to, ev.signer.node, ev.signer, to, seenBefore);
 				}
 
-				// SeekDelivery-style forwarding: forward until local seenBefore reaches redundancy.
+				// Redundant forwarding: forward until local seenBefore reaches redundancy.
 				const newSigner: PathNode = { node: to, prev: ev.signer };
 				const relayTo = selectSeekRelayTargets({
 					candidates: graph[to]!,

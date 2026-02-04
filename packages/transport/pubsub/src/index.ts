@@ -24,6 +24,7 @@ import {
 } from "@peerbit/stream";
 import {
 	AcknowledgeDelivery,
+	AcknowledgeAnyWhere,
 	AnyWhere,
 	DataMessage,
 	DeliveryError,
@@ -31,7 +32,6 @@ import {
 	MessageHeader,
 	NotStartedError,
 	type PriorityOptions,
-	SeekDelivery,
 	SilentDelivery,
 	deliveryModeHasReceiver,
 } from "@peerbit/stream-interface";
@@ -41,6 +41,10 @@ import {
 	type DebouncedAccumulatorCounterMap,
 	debouncedAccumulatorSetCounter,
 } from "./debounced-set.js";
+import { FanoutChannel } from "./fanout-channel.js";
+import type { FanoutTree, FanoutTreeChannelOptions, FanoutTreeJoinOptions } from "./fanout-tree.js";
+export * from "./fanout-tree.js";
+export * from "./fanout-channel.js";
 
 export const toUint8Array = (arr: Uint8ArrayList | Uint8Array) =>
 	arr instanceof Uint8ArrayList ? arr.subarray() : arr;
@@ -78,6 +82,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 	private debounceSubscribeAggregator: DebouncedAccumulatorCounterMap;
 	private debounceUnsubscribeAggregator: DebouncedAccumulatorCounterMap;
+	private fanout?: FanoutTree;
 
 	constructor(
 		components: DirectSubComponents,
@@ -86,7 +91,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			subscriptionDebounceDelay?: number;
 		},
 	) {
-		super(components, ["/lazysub/0.0.0"], props);
+		super(components, ["/lazysub/0.0.1"], props);
 		this.subscriptions = new Map();
 		this.topics = new Map();
 		this.topicsToPeers = new Map();
@@ -101,6 +106,48 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			(set) => this._unsubscribe([...set.values()]),
 			props?.subscriptionDebounceDelay ?? 50,
 		);
+	}
+
+	/**
+	 * Optional integration hook: allow the pubsub service to expose FanoutTree-based
+	 * broadcast channels via `DirectSub.fanoutChannel(...)`.
+	 *
+	 * This keeps the core PubSub API unchanged while letting apps opt into the
+	 * experimental fanout protocol for large 1-writer->many-reader workloads.
+	 */
+	public setFanout(fanout: FanoutTree) {
+		this.fanout = fanout;
+	}
+
+	public fanoutChannel(topic: string, root: string): FanoutChannel {
+		if (!this.fanout) {
+			throw new Error(
+				"FanoutTree not configured on DirectSub (call setFanout(...) or use peer.services.fanout directly)",
+			);
+		}
+		return new FanoutChannel(this.fanout, { topic, root });
+	}
+
+	public fanoutSelfChannel(topic: string): FanoutChannel {
+		if (!this.fanout) {
+			throw new Error(
+				"FanoutTree not configured on DirectSub (call setFanout(...) or use peer.services.fanout directly)",
+			);
+		}
+		return FanoutChannel.fromSelf(this.fanout, topic);
+	}
+
+	public fanoutOpenAsRoot(topic: string, options: Omit<FanoutTreeChannelOptions, "role">) {
+		return this.fanoutSelfChannel(topic).openAsRoot(options);
+	}
+
+	public fanoutJoin(
+		topic: string,
+		root: string,
+		options: Omit<FanoutTreeChannelOptions, "role">,
+		joinOpts?: FanoutTreeJoinOptions,
+	) {
+		return this.fanoutChannel(topic, root).join(options, joinOpts);
 	}
 
 	stop() {
@@ -157,19 +204,20 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		}
 
 		if (newTopicsForTopicData.length > 0) {
-			const message = new DataMessage({
-				data: toUint8Array(
-					new Subscribe({
-						topics: newTopicsForTopicData,
-						requestSubscribers: true,
-					}).bytes(),
-				),
-				header: new MessageHeader({
-					priority: 1,
-					mode: new SeekDelivery({ redundancy: 2 }),
-					session: this.session,
-				}),
-			});
+				const message = new DataMessage({
+					data: toUint8Array(
+						new Subscribe({
+							topics: newTopicsForTopicData,
+							requestSubscribers: true,
+						}).bytes(),
+					),
+					header: new MessageHeader({
+						priority: 1,
+						// Flood but require ACKs so routes become populated (enables routed fanout vs blind flooding).
+						mode: new AcknowledgeAnyWhere({ redundancy: 1 }),
+						session: this.session,
+					}),
+				});
 
 			await this.publishMessage(this.publicKey, await message.sign(this.sign));
 		}
@@ -266,10 +314,10 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		this.initializeTopic(topic);
 	}
 
-	async requestSubscribers(
-		topic: string | string[],
-		to?: PublicSignKey,
-	): Promise<void> {
+		async requestSubscribers(
+			topic: string | string[],
+			to?: PublicSignKey,
+		): Promise<void> {
 		if (!this.started) {
 			throw new NotStartedError();
 		}
@@ -287,19 +335,24 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			this.listenForSubscribers(topic);
 		}
 
-		return this.publishMessage(
-			this.publicKey,
-			await new DataMessage({
+			const message = await new DataMessage({
 				data: toUint8Array(new GetSubscribers({ topics }).bytes()),
 				header: new MessageHeader({
-					mode: new SeekDelivery({
-						to: to ? [to.hashcode()] : undefined,
-						redundancy: 2,
-					}),
+					// Route-learning broadcast: flood but require ACKs so DirectStream can populate routes
+					// (used by pubsub routing to avoid forwarding to non-subscribers).
+					mode: to
+						? new AcknowledgeDelivery({ to: [to], redundancy: 1 })
+						: new AcknowledgeAnyWhere({ redundancy: 1 }),
 					session: this.session,
 					priority: 1,
 				}),
-			}).sign(this.sign),
+			}).sign(this.sign);
+
+		const stream = to ? this.peers.get(to.hashcode()) : undefined;
+		return this.publishMessage(
+			this.publicKey,
+			message,
+			stream ? [stream] : undefined,
 		);
 	}
 
@@ -344,12 +397,13 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 		return true;
 	}
+
 	async publish(
 		data: Uint8Array | undefined,
 		options?: {
 			topics: string[];
 		} & { client?: string } & {
-			mode?: SilentDelivery | AcknowledgeDelivery | SeekDelivery;
+			mode?: SilentDelivery | AcknowledgeDelivery;
 		} & PriorityOptions &
 			IdOptions & { signal?: AbortSignal },
 	): Promise<Uint8Array | undefined> {
@@ -470,41 +524,43 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		this.removeSubscriptions(key);
 	}
 
-	public async onPeerReachable(publicKey: PublicSignKey) {
-		// Aggregate subscribers for my topics through this new peer because if we don't do this we might end up with a situtation where
-		// we act as a relay and relay messages for a topic, but don't forward it to this new peer because we never learned about their subscriptions
+		public async onPeerReachable(publicKey: PublicSignKey) {
+			// Aggregate subscribers for my topics through this new peer because if we don't do this we might end up with a situtation where
+			// we act as a relay and relay messages for a topic, but don't forward it to this new peer because we never learned about their subscriptions
 
-		const resp = super.onPeerReachable(publicKey);
-		const stream = this.peers.get(publicKey.hashcode());
-		const isNeigbour = !!stream;
+			const resp = super.onPeerReachable(publicKey);
+			const stream = this.peers.get(publicKey.hashcode());
 
-		if (this.subscriptions.size > 0) {
-			// tell the peer about all topics we subscribe to
-			this.publishMessage(
-				this.publicKey,
-				await new DataMessage({
-					data: toUint8Array(
-						new Subscribe({
-							topics: this.getSubscriptionOverlap(), // TODO make the protocol more efficient, do we really need to share *everything* ?
-							requestSubscribers: true,
-						}).bytes(),
-					),
-					header: new MessageHeader({
-						// is new neighbour ? then send to all, though that connection (potentially find new peers)
-						// , else just try to reach the remote
-						priority: 1,
-						mode: new SeekDelivery({
-							redundancy: 2,
-							to: isNeigbour ? undefined : [publicKey.hashcode()],
+			if (this.subscriptions.size > 0) {
+				// Tell the newly reachable peer about our subscriptions. This also acts as a
+				// catch-up mechanism when we learn about new peers via routed ACKs (not only
+				// direct neighbours).
+				this.publishMessage(
+					this.publicKey,
+					await new DataMessage({
+						data: toUint8Array(
+							new Subscribe({
+								topics: this.getSubscriptionOverlap(), // TODO: protocol efficiency; do we really need to share *everything*?
+								requestSubscribers: true,
+							}).bytes(),
+						),
+						header: new MessageHeader({
+							priority: 1,
+							// If this is a direct neighbour, seed subscription gossip via that connection
+							// (and let it relay further). If it is only reachable via routes, deliver a
+							// unicast catch-up to that peer.
+							mode: stream
+								? new AnyWhere()
+								: new SilentDelivery({ to: [publicKey], redundancy: 1 }),
+							session: this.session,
 						}),
-						session: this.session,
-					}),
-				}).sign(this.sign),
-			).catch(dontThrowIfDeliveryError); // peer might have become unreachable immediately
-		}
+					}).sign(this.sign),
+					stream ? [stream] : undefined,
+				).catch(dontThrowIfDeliveryError); // peer might have become unreachable immediately
+			}
 
-		return resp;
-	}
+			return resp;
+		}
 
 	public onPeerUnreachable(publicKeyHash: string) {
 		super.onPeerUnreachable(publicKeyHash);
@@ -559,10 +615,10 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		return true;
 	}
 
-	private addPeersOnTopic(
-		message: DataMessage<AcknowledgeDelivery | SilentDelivery | SeekDelivery>,
-		topics: string[],
-	) {
+	private addPeersOnTopic(message: DataMessage, topics: string[]) {
+		if (!deliveryModeHasReceiver(message.header.mode)) {
+			return;
+		}
 		const existingPeers: Set<string> = new Set(message.header.mode.to);
 		const allPeersOnTopic = this.getPeersOnTopics(topics);
 
@@ -594,13 +650,9 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				throw new Error("Unexpected mode for PubSubData messages");
 			}
 
-			/**
-			 * See if we know more subscribers of the message topics. If so, add aditional end receivers of the message
-			 */
-
-			const meInTOs = !!message.header.mode.to?.find(
-				(x) => this.publicKeyHash === x,
-			);
+			const meInTOs =
+				deliveryModeHasReceiver(message.header.mode) &&
+				!!message.header.mode.to?.find((x) => this.publicKeyHash === x);
 
 			let isForMe: boolean;
 			if (pubsubMessage.strict) {
@@ -640,21 +692,16 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 			// Forward
 			if (!pubsubMessage.strict) {
-				this.addPeersOnTopic(
-					message as DataMessage<
-						SeekDelivery | SilentDelivery | AcknowledgeDelivery
-					>,
-					pubsubMessage.topics,
-				);
+				this.addPeersOnTopic(message, pubsubMessage.topics);
 			}
 
 			// Only relay if we got additional receivers
 			// or we are NOT subscribing ourselves (if we are not subscribing ourselves we are)
 			// If we are not subscribing ourselves, then we don't have enough information to "stop" message propagation here
 			if (
-				message.header.mode.to?.length ||
-				!pubsubMessage.topics.find((topic) => this.topics.has(topic)) ||
-				message.header.mode instanceof SeekDelivery
+				(deliveryModeHasReceiver(message.header.mode) &&
+					message.header.mode.to?.length) ||
+				!pubsubMessage.topics.find((topic) => this.topics.has(topic))
 			) {
 				// DONT await this since it might introduce a dead-lock
 				this.relayMessage(from, message).catch(logErrorIfStarted);
@@ -737,20 +784,17 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 										requestSubscribers: false,
 									}).bytes(),
 								),
-								// needs to be Ack or Silent else we will run into a infite message loop
 								header: new MessageHeader({
 									session: this.session,
 									priority: 1,
-									mode: new SeekDelivery({
-										redundancy: 2,
-										to: [senderKey],
-									}),
+									mode: new AnyWhere(),
 								}),
 							});
 
 							this.publishMessage(
 								this.publicKey,
 								await response.sign(this.sign),
+								[stream],
 							).catch(dontThrowIfDeliveryError);
 						}
 					}
@@ -758,7 +802,9 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 				// Forward
 				// DONT await this since it might introduce a dead-lock
-				this.relayMessage(from, message).catch(logErrorIfStarted);
+				if (seenBefore === 0) {
+					this.relayMessage(from, message).catch(logErrorIfStarted);
+				}
 			} else if (pubsubMessage instanceof Unsubscribe) {
 				if (this.subscriptionMessageIsLatest(message, pubsubMessage)) {
 					const changed: string[] = [];
@@ -778,23 +824,12 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 						);
 					}
 
-					// Forwarding
-					if (
-						message.header.mode instanceof SeekDelivery ||
-						message.header.mode instanceof SilentDelivery ||
-						message.header.mode instanceof AcknowledgeDelivery
-					) {
-						this.addPeersOnTopic(
-							message as DataMessage<
-								SeekDelivery | SilentDelivery | AcknowledgeDelivery
-							>,
-							pubsubMessage.topics,
-						);
-					}
 				}
 
 				// DONT await this since it might introduce a dead-lock
-				this.relayMessage(from, message).catch(logErrorIfStarted);
+				if (seenBefore === 0) {
+					this.relayMessage(from, message).catch(logErrorIfStarted);
+				}
 			} else if (pubsubMessage instanceof GetSubscribers) {
 				const subscriptionsToSend: string[] = this.getSubscriptionOverlap(
 					pubsubMessage.topics,
@@ -812,10 +847,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 							),
 							header: new MessageHeader({
 								priority: 1,
-								mode: new SilentDelivery({
-									redundancy: 2,
-									to: [sender.hashcode()],
-								}),
+								mode: new AnyWhere(),
 								session: this.session,
 							}),
 						}).sign(this.sign),
@@ -825,7 +857,9 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 				// Forward
 				// DONT await this since it might introduce a dead-lock
-				this.relayMessage(from, message).catch(logErrorIfStarted);
+				if (seenBefore === 0) {
+					this.relayMessage(from, message).catch(logErrorIfStarted);
+				}
 			}
 		}
 		return true;

@@ -6,7 +6,7 @@ import { getIdProperty, id } from "../src/utils.js";
 describe("toId", () => {
 	it("throws when given an unexpected index key", () => {
 		expect(() => toId(undefined as any)).to.throw(
-			"Unexpected index key: undefined, expected: string, number, bigint or Uint8Array",
+			"Unexpected index key: undefined, expected: string, number, bigint, Uint8Array or ArrayBufferView",
 		);
 	});
 });

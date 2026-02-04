@@ -367,12 +367,12 @@ export const tests = (
 					try {
 						await store.put(doc);
 					} catch (error) {
-						expect(error).to.haveOwnProperty(
-							"message",
-							"Unexpected index key: undefined, expected: string, number, bigint or Uint8Array",
-						);
-					}
-				});
+							expect(error).to.haveOwnProperty(
+								"message",
+								"Unexpected index key: undefined, expected: string, number, bigint, Uint8Array or ArrayBufferView",
+							);
+						}
+					});
 
 				it("index by another property", async () => {
 					const { store } = await setup({

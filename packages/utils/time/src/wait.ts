@@ -7,12 +7,22 @@ export const delay = async (
 	options?: { signal?: AbortSignal },
 ): Promise<void> => {
 	return new Promise<void>((resolve, reject) => {
+		let timer: ReturnType<typeof setTimeout> | undefined;
 		const handleAbort = (): void => {
-			clearTimeout(timer);
+			options?.signal?.removeEventListener("abort", handleAbort);
+			if (timer) clearTimeout(timer);
 			reject(new AbortError());
 		};
-		options?.signal?.addEventListener("abort", handleAbort);
-		const timer = setTimeout(() => {
+
+		if (options?.signal) {
+			if (options.signal.aborted) {
+				handleAbort();
+				return;
+			}
+			options.signal.addEventListener("abort", handleAbort, { once: true });
+		}
+
+		timer = setTimeout(() => {
 			options?.signal?.removeEventListener("abort", handleAbort);
 			resolve();
 		}, ms);

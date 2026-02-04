@@ -2313,29 +2313,23 @@ describe("index", () => {
 						});
 						await store1.docs.put(doc);
 					}
-					let lastLength = -1;
-
-					// search while it is distributing/syncing
-					for (let i = 0; i < 10; i++) {
-						if (store1.docs.log.log.length === lastLength) {
-							break;
-						}
-						lastLength = store1.docs.log.log.length;
-						for (const store of [store1, store2, store3]) {
-							const collected = await store.docs.index.search(
-								new SearchRequest({ fetch: count }),
-							);
-
-							try {
-								expect(collected.length).equal(count);
-							} catch (error) {
-								throw new Error(
-									`Failed to collect all messages ${collected.length} < ${count}. Log lengths:  ${JSON.stringify([store1, store2, store3].map((x) => x.docs.log.log.length))}`,
+					await waitForResolved(
+						async () => {
+							for (const store of [store1, store2, store3]) {
+								const collected = await store.docs.index.search(
+									new SearchRequest({ fetch: count }),
 								);
+								if (collected.length !== count) {
+									throw new Error(
+										`Failed to collect all messages ${collected.length} < ${count}. Log lengths: ${JSON.stringify(
+											[store1, store2, store3].map((x) => x.docs.log.log.length),
+										)}`,
+									);
+								}
 							}
-						}
-						await delay(100);
-					}
+						},
+						{ timeout: 60_000, delayInterval: 200 },
+					);
 				});
 			});
 

@@ -9,7 +9,6 @@ import {
 	sha256Base64Sync,
 } from "@peerbit/crypto";
 import { type Indices } from "@peerbit/indexer-interface";
-import { create } from "@peerbit/indexer-sqlite3";
 import { type CryptoKeychain } from "@peerbit/keychain";
 import { type Change } from "./change.js";
 import {
@@ -37,6 +36,16 @@ import type { Payload } from "./payload.js";
 import { Trim, type TrimOptions } from "./trim.js";
 
 const { LastWriteWins } = Sorting;
+
+type CreateSqliteIndexer = typeof import("@peerbit/indexer-sqlite3").create;
+let sqliteCreate: CreateSqliteIndexer | undefined;
+const createDefaultIndexer = async (): Promise<Indices> => {
+	if (!sqliteCreate) {
+		const mod = await import("@peerbit/indexer-sqlite3");
+		sqliteCreate = mod.create;
+	}
+	return sqliteCreate();
+};
 
 export type LogEvents<T> = {
 	onChange?: (change: Change<T> /* , reference?: R */) => void;
@@ -165,7 +174,7 @@ export class Log<T> {
 		this._sortFn = sortFn || LastWriteWins;
 
 		this._storage = store;
-		this._indexer = indexer || (await create());
+		this._indexer = indexer || (await createDefaultIndexer());
 		await this._indexer.start?.();
 
 		this._encoding = encoding || NO_ENCODING;

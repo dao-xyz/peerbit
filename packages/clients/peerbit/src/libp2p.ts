@@ -8,7 +8,7 @@ import {
 	type IPeerbitKeychain,
 	keychain,
 } from "@peerbit/keychain";
-import { DirectSub } from "@peerbit/pubsub";
+import { DirectSub, FanoutTree } from "@peerbit/pubsub";
 import {
 	type Libp2p,
 	type Libp2pOptions,
@@ -19,6 +19,7 @@ import { listen, relay, transports } from "./transports.js";
 
 export type Libp2pExtendServices = {
 	pubsub: DirectSub;
+	fanout: FanoutTree;
 	blocks: DirectBlock;
 	keychain: IPeerbitKeychain;
 };
@@ -43,6 +44,7 @@ export const createLibp2pExtended = (
 		services: {
 			blocks: (c: any) => new DirectBlock(c),
 			pubsub: (c: any) => new DirectSub(c),
+			fanout: (c: any) => new FanoutTree(c, { connectionManager: false }),
 			keychain: keychain(),
 		},
 	},
@@ -93,10 +95,21 @@ export const createLibp2pExtended = (
 						// auto dial true
 						// auto prune true
 					})),
+			fanout:
+				opts.services?.fanout ||
+				((c) => new FanoutTree(c, { connectionManager: false })),
 			blocks: opts.services?.blocks || ((c) => new DirectBlock(c)),
 			keychain: opts.services?.keychain || ((c) => new DefaultCryptoKeychain()),
 			...opts.services,
 			...extraServices,
 		},
+	}).then((libp2p) => {
+		// Convenience wiring so apps can access FanoutTree via the pubsub service.
+		try {
+			(libp2p.services.pubsub as any)?.setFanout?.((libp2p.services as any).fanout);
+		} catch {
+			// ignore
+		}
+		return libp2p as Libp2pExtended;
 	});
 };

@@ -1338,7 +1338,23 @@ export class DocumentIndex<
 				);
 			}
 			this.clearAllResultQueues();
-			await this.index?.stop?.();
+			await this._resumableIterators.clearAll();
+			if (this.iteratorKeepAliveTimers) {
+				for (const timer of this.iteratorKeepAliveTimers.values()) {
+					clearTimeout(timer);
+				}
+				this.iteratorKeepAliveTimers.clear();
+			}
+			try {
+				await this.index?.stop?.();
+			} catch (error) {
+				// Be defensive during teardown: stopping an already-stopped index shouldn't
+				// prevent closing the program and releasing timers/iterators.
+				if (error instanceof indexerTypes.NotStartedError) {
+					return closed;
+				}
+				throw error;
+			}
 		}
 		return closed;
 	}
@@ -1351,8 +1367,27 @@ export class DocumentIndex<
 				this.handleDocumentChange,
 			);
 			this.clearAllResultQueues();
-			await this.index?.drop?.();
-			await this.index?.stop?.();
+			await this._resumableIterators.clearAll();
+			if (this.iteratorKeepAliveTimers) {
+				for (const timer of this.iteratorKeepAliveTimers.values()) {
+					clearTimeout(timer);
+				}
+				this.iteratorKeepAliveTimers.clear();
+			}
+			try {
+				await this.index?.drop?.();
+			} catch (error) {
+				if (!(error instanceof indexerTypes.NotStartedError)) {
+					throw error;
+				}
+			}
+			try {
+				await this.index?.stop?.();
+			} catch (error) {
+				if (!(error instanceof indexerTypes.NotStartedError)) {
+					throw error;
+				}
+			}
 		}
 		return dropped;
 	}
@@ -1855,24 +1890,26 @@ export class DocumentIndex<
 			const resolveFlag = resolvesDocuments(
 				(fromQuery || query) as AnyIterationRequest,
 			);
-			prevQueued = {
-				from,
-				queue: [],
-				timeout: setTimeout(() => {
-					this._resultQueue.delete(query.idString);
-				}, 6e4),
-				keptInIndex: kept,
-				fromQuery: (fromQuery || query) as
-					| types.SearchRequest
-					| types.SearchRequestIndexed
-					| types.IterationRequest,
-				resolveResults: resolveFlag,
-			};
-			if (
-				fromQuery instanceof types.IterationRequest &&
-				fromQuery.pushUpdates
-			) {
-				prevQueued.pushMode = fromQuery.pushUpdates;
+				prevQueued = {
+					from,
+					queue: [],
+					timeout: setTimeout(() => {
+						this._resultQueue.delete(query.idString);
+					}, 6e4),
+					keptInIndex: kept,
+					fromQuery: (fromQuery || query) as
+						| types.SearchRequest
+						| types.SearchRequestIndexed
+						| types.IterationRequest,
+					resolveResults: resolveFlag,
+				};
+				// Don't keep Node alive just to GC old remote iterator state.
+				prevQueued.timeout.unref?.();
+				if (
+					fromQuery instanceof types.IterationRequest &&
+					fromQuery.pushUpdates
+				) {
+					prevQueued.pushMode = fromQuery.pushUpdates;
 			}
 			this._resultQueue.set(query.idString, prevQueued);
 		}
@@ -1970,17 +2007,19 @@ export class DocumentIndex<
 				string,
 				ReturnType<typeof setTimeout>
 			>());
-		const timer = setTimeout(() => {
-			timers.delete(idString);
-			const queued = this._resultQueue.get(idString);
-			if (queued) {
-				clearTimeout(queued.timeout);
-				this._resultQueue.delete(idString);
-			}
-			this._resumableIterators.close({ idString });
-		}, delay);
-		timers.set(idString, timer);
-	}
+			const timer = setTimeout(() => {
+				timers.delete(idString);
+				const queued = this._resultQueue.get(idString);
+				if (queued) {
+					clearTimeout(queued.timeout);
+					this._resultQueue.delete(idString);
+				}
+				this._resumableIterators.close({ idString });
+			}, delay);
+			// This is a best-effort cleanup timer; it should not keep Node alive.
+			timer.unref?.();
+			timers.set(idString, timer);
+		}
 
 	private cancelIteratorKeepAlive(idString: string) {
 		const timers = this.iteratorKeepAliveTimers;
@@ -3533,32 +3572,27 @@ export class DocumentIndex<
 			done = true;
 		};
 
-		let close = async () => {
-			cleanupAndDone();
+			let close = async () => {
+				cleanupAndDone();
 
-			// send close to remote
-			const closeRequest = new types.CloseIteratorRequest({
-				id: queryRequestCoerced.id,
-			});
-			const promises: Promise<any>[] = [];
-
-			for (const [peer, buffer] of peerBufferMap) {
-				if (buffer.kept === 0) {
-					peerBufferMap.delete(peer);
-					continue;
-				}
-				if (peer !== this.node.identity.publicKey.hashcode()) {
-					// Close remote
-					promises.push(
+				// send close to remote (only peers that actually served results / had an active buffer)
+				const closeRequest = new types.CloseIteratorRequest({
+					id: queryRequestCoerced.id,
+				});
+				const selfHash = this.node.identity.publicKey.hashcode();
+				const remotePeers = [...peerBufferMap.entries()]
+					.filter(([peer, buffer]) => peer !== selfHash && buffer.kept > 0)
+					.map(([peer]) => peer);
+				peerBufferMap.clear();
+				await Promise.allSettled(
+					remotePeers.map((peer) =>
 						this._query.send(closeRequest, {
 							...options,
 							mode: new SilentDelivery({ to: [peer], redundancy: 1 }),
 						}),
-					);
-				}
-			}
-			await Promise.all(promises);
-		};
+					),
+				);
+			};
 		options?.signal && options.signal.addEventListener("abort", close);
 
 		let doneFn = () => {

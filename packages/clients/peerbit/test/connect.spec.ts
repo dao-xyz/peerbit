@@ -1,4 +1,3 @@
-import { SeekDelivery } from "@peerbit/stream-interface";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { Peerbit } from "../src/index.js";
@@ -44,7 +43,6 @@ describe(`dial`, function () {
 
 			await clients[0].services.pubsub.publish(new Uint8Array([1]), {
 				topics: [topic],
-				mode: new SeekDelivery({ redundancy: 1 }),
 			});
 			await waitForResolved(() => expect(data).to.exist);
 			expect(data && new Uint8Array(data)).to.deep.equal(new Uint8Array([1]));

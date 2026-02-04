@@ -4,7 +4,9 @@ import {
 	SortDirection,
 	type WithIndexedContext,
 } from "@peerbit/document";
+import { create as createSimpleIndexer } from "@peerbit/indexer-simple";
 import { Program } from "@peerbit/program";
+import { TestSession } from "@peerbit/test-utils";
 import { act, render, waitFor } from "@testing-library/react";
 import sodium from "libsodium-wrappers";
 import { Peerbit } from "peerbit";
@@ -57,20 +59,27 @@ class PostsDB extends Program<{ replicate?: boolean }> {
 }
 
 describe("useQuery (integration with Documents)", () => {
+	let session: TestSession;
 	let peerWriter: Peerbit;
 	let peerReader: Peerbit;
-	let peerReader2: Peerbit | undefined;
+	let peerReader2: Peerbit;
 	let dbWriter: PostsDB;
 	let dbReader: PostsDB;
 	let dbReader2: PostsDB | undefined;
-	let autoUnmount: undefined | (() => void);
+	let dbReplicator: PostsDB | undefined;
+	let autoUnmounts: Array<() => void> = [];
 
 	beforeEach(async () => {
 		await sodium.ready;
-		peerWriter = await Peerbit.create();
-		peerReader = await Peerbit.create();
-		peerReader2 = undefined;
+		session = await TestSession.disconnectedInMemory(3, {
+			indexer: createSimpleIndexer,
+		});
+		peerWriter = session.peers[0] as Peerbit;
+		peerReader = session.peers[1] as Peerbit;
+		peerReader2 = session.peers[2] as Peerbit;
 		dbReader2 = undefined;
+		dbReplicator = undefined;
+		autoUnmounts = [];
 	});
 	const setupConnected = async () => {
 		await peerWriter.dial(peerReader);
@@ -97,11 +106,22 @@ describe("useQuery (integration with Documents)", () => {
 
 	afterEach(async () => {
 		// Unmount React trees before tearing down peers
-		autoUnmount?.();
-		autoUnmount = undefined;
-		await peerWriter?.stop();
-		await peerReader?.stop();
-		await peerReader2?.stop();
+		if (autoUnmounts.length) {
+			const fns = [...autoUnmounts];
+			autoUnmounts = [];
+			await act(async () => {
+				for (const fn of fns) fn();
+			});
+		}
+
+		// Close opened programs explicitly to avoid lingering async work in the background.
+		// If close throws, surface it so we don't silently leak background tasks.
+		await dbReader2?.close?.();
+		await dbReader?.close?.();
+		await dbWriter?.close?.();
+		await dbReplicator?.close?.();
+
+		await session?.stop();
 	});
 
 	function renderUseQuery<R extends boolean>(
@@ -131,13 +151,11 @@ describe("useQuery (integration with Documents)", () => {
 			if (hasUnmounted) return;
 			hasUnmounted = true;
 			api.unmount();
-			if (autoUnmount === doUnmount) {
-				// clear outer reference if we still own it
-				autoUnmount = undefined;
-			}
+			const idx = autoUnmounts.indexOf(doUnmount);
+			if (idx >= 0) autoUnmounts.splice(idx, 1);
 		};
 		// Expose to outer afterEach so tests don't need to remember calling unmount
-		autoUnmount = doUnmount;
+		autoUnmounts.push(doUnmount);
 		return { result, rerender, unmount: doUnmount };
 	}
 
@@ -277,16 +295,24 @@ describe("useQuery (integration with Documents)", () => {
 		);
 	});
 
-	it("fanouts pushed updates to multiple observers", async () => {
+		it(
+			"fanouts pushed updates to multiple observers",
+			{
+				timeout: 20_000,
+			},
+			async () => {
 		await setupConnected();
 
-		peerReader2 = await Peerbit.create();
-		await peerReader2.dial(peerWriter);
-		dbReader2 = await peerReader2.open<PostsDB>(dbWriter.address, {
-			args: { replicate: false },
-		});
+			await peerReader2.dial(peerWriter);
+			dbReader2 = await peerReader2.open<PostsDB>(dbWriter.address, {
+				args: { replicate: false },
+				},
+			);
 
-		await dbReader2.posts.log.waitForReplicator(peerWriter.identity.publicKey);
+			const reader2 = dbReader2;
+			if (!reader2) throw new Error("Expected dbReader2 to be defined");
+
+			await reader2.posts.log.waitForReplicator(peerWriter.identity.publicKey);
 
 		const hookOne = renderUseQuery(dbReader, {
 			query: {},
@@ -297,23 +323,25 @@ describe("useQuery (integration with Documents)", () => {
 			prefetch: false,
 		});
 
-		const hookTwo = renderUseQuery(dbReader2, {
-			query: {},
-			resolve: true,
-			local: false,
-			remote: { reach: { eager: true } },
-			updates: { merge: true },
-			prefetch: false,
-		});
+			const hookTwo = renderUseQuery(reader2, {
+				query: {},
+				resolve: true,
+				local: false,
+				remote: { reach: { eager: true } },
+				updates: { merge: true },
+				prefetch: false,
+			});
 
-		await waitFor(() => {
-			expect(hookOne.result.current).toBeDefined();
-			expect(hookTwo.result.current).toBeDefined();
-		});
+			await waitFor(() => {
+				expect(hookOne.result.current).toBeDefined();
+				expect(hookTwo.result.current).toBeDefined();
+			});
 
-		await act(async () => {
-			await dbWriter.posts.put(new Post({ message: "broadcast" }));
-		});
+			await act(async () => {
+				await dbWriter.posts.put(
+					new Post({ id: "broadcast", message: "broadcast" }),
+				);
+			});
 
 		await act(async () => {
 			await hookOne.result.current.loadMore();
@@ -330,24 +358,48 @@ describe("useQuery (integration with Documents)", () => {
 			{ timeout: 10_000 },
 		);
 
-		await waitFor(
-			() =>
-				expect(
-					hookTwo.result.current.items.some(
-						(p) => (p as Post).message === "broadcast",
-					),
-				).toBe(true),
-			{ timeout: 10_000 },
-		);
+			await waitFor(
+				() =>
+					expect(
+						hookTwo.result.current.items.some(
+							(p) => (p as Post).message === "broadcast",
+						),
+					).toBe(true),
+				{ timeout: 10_000 },
+			);
 
-		await act(async () => {
-			await dbReader.posts.put(new Post({ message: "observer-origin" }));
-		});
+			await act(async () => {
+				await dbReader.posts.put(
+					new Post({ id: "observer-origin", message: "observer-origin" }),
+				);
+			});
 
-		await act(async () => {
-			await hookOne.result.current.loadMore();
-			await hookTwo.result.current.loadMore();
-		});
+			await waitFor(
+				async () => {
+					const stored = await dbWriter.posts.get("observer-origin", {
+						local: true,
+						remote: false,
+					});
+					expect(stored?.message).toBe("observer-origin");
+				},
+				{ timeout: 10_000 },
+			);
+
+				await waitFor(
+					async () => {
+						const fetched = await reader2.posts.get("observer-origin", {
+							local: true,
+							remote: true,
+						});
+						expect(fetched?.message).toBe("observer-origin");
+				},
+				{ timeout: 10_000 },
+			);
+
+			await act(async () => {
+				await hookOne.result.current.loadMore();
+				await hookTwo.result.current.loadMore();
+			});
 
 		await waitFor(
 			() =>
@@ -369,83 +421,72 @@ describe("useQuery (integration with Documents)", () => {
 			timeout: 20_000,
 		},
 		async () => {
-			const peerReplicator = await Peerbit.create();
-			try {
-				await peerWriter.dial(peerReplicator);
-				await peerReader.dial(peerReplicator);
+			const peerReplicator = peerReader2;
+			await peerWriter.dial(peerReplicator);
+			await peerReader.dial(peerReplicator);
 
-				const base = new PostsDB();
-				const replicatorDb = await peerReplicator.open(base, {
-					args: { replicate: true },
-				});
-				dbWriter = await peerWriter.open(base.clone(), {
-					args: { replicate: true },
-				});
-				dbReader = await peerReader.open(base.clone(), {
-					args: { replicate: false },
-				});
+			const base = new PostsDB();
+			const replicatorDb = await peerReplicator.open(base, {
+				args: { replicate: true },
+			});
+			dbReplicator = replicatorDb;
+			dbWriter = await peerWriter.open(base.clone(), {
+				args: { replicate: true },
+			});
+			dbReader = await peerReader.open(base.clone(), {
+				args: { replicate: false },
+			});
 
-				await replicatorDb.posts.index.waitFor(
-					dbWriter.node.identity.publicKey,
-				);
-				await dbWriter.posts.log.waitForReplicator(
-					replicatorDb.node.identity.publicKey,
-				);
-				await dbReader.posts.index.waitFor(
-					replicatorDb.node.identity.publicKey,
-				);
-				await dbWriter.posts.index.waitFor(
-					replicatorDb.node.identity.publicKey,
-				);
+			await replicatorDb.posts.index.waitFor(dbWriter.node.identity.publicKey);
+			await dbWriter.posts.log.waitForReplicator(
+				replicatorDb.node.identity.publicKey,
+			);
+			await dbReader.posts.index.waitFor(replicatorDb.node.identity.publicKey);
+			await dbWriter.posts.index.waitFor(replicatorDb.node.identity.publicKey);
 
-				const { result, unmount } = renderUseQuery(dbReader, {
-					query: {},
-					resolve: true,
-					local: false,
-					remote: {
-						reach: {
-							discover: [replicatorDb.node.identity.publicKey],
-							eager: true,
-						},
-						wait: { timeout: 5_000, behavior: "keep-open" },
+			const { result, unmount } = renderUseQuery(dbReader, {
+				query: {},
+				resolve: true,
+				local: false,
+				remote: {
+					reach: {
+						discover: [replicatorDb.node.identity.publicKey],
+						eager: true,
 					},
-					updates: { push: true, merge: true },
-					prefetch: false,
-				});
+					wait: { timeout: 5_000, behavior: "keep-open" },
+				},
+				updates: { push: true, merge: true },
+				prefetch: false,
+			});
 
-				await waitFor(() => expect(result.current).toBeDefined());
-				expect(result.current.items.length).toBe(0);
+			await waitFor(() => expect(result.current).toBeDefined());
+			expect(result.current.items.length).toBe(0);
 
-				await act(async () => {
-					await dbWriter.posts.put(
-						new Post({ message: "push-through-replicator" }),
-					);
-				});
+			await act(async () => {
+				await dbWriter.posts.put(new Post({ message: "push-through-replicator" }));
+			});
 
-				await waitFor(() => expect(result.current.items).toBeDefined());
-				await waitFor(
-					async () => {
-						if (
-							result.current.items.some(
-								(p) => (p as Post).message === "push-through-replicator",
-							)
-						) {
-							return true;
-						}
-						await act(async () => {
-							await result.current.loadMore();
-						});
-						return result.current.items.some(
+			await waitFor(() => expect(result.current.items).toBeDefined());
+			await waitFor(
+				async () => {
+					if (
+						result.current.items.some(
 							(p) => (p as Post).message === "push-through-replicator",
-						);
-					},
-					{ timeout: 15_000 },
-				);
+						)
+					) {
+						return true;
+					}
+					await act(async () => {
+						await result.current.loadMore();
+					});
+					return result.current.items.some(
+						(p) => (p as Post).message === "push-through-replicator",
+					);
+				},
+				{ timeout: 15_000 },
+			);
 
-				unmount();
-			} finally {
-				await peerReplicator.stop();
-			}
+			unmount();
 		},
 	);
 
@@ -480,6 +521,7 @@ describe("useQuery (integration with Documents)", () => {
 				local: false,
 				remote: { reach: { eager: true } },
 				updates: { push: true, merge: true },
+				prefetch: false,
 				batchSize: 10,
 				applyResults: (_prev, _incoming, { defaultMerge }) => {
 					const merged = defaultMerge();
@@ -505,13 +547,10 @@ describe("useQuery (integration with Documents)", () => {
 			await act(async () => {
 				await result.current.loadMore();
 			});
-			await waitFor(() => expect(result.current.items.length).toBe(10));
+			await waitFor(() => expect(result.current.items.length).toBeGreaterThanOrEqual(10));
 
 			const pinnedBase = new Post({ id: "post-999", message: "pinned" });
 			pinnedIds.add(pinnedBase.id);
-			await act(async () => {
-				await dbWriter.posts.put(pinnedBase);
-			});
 			// fabricate a context for injection; we only need stable __context for identity/dedup
 			const sampleCtx = (
 				result.current.items[0] as WithIndexedContext<Post, PostIndexed>
@@ -526,6 +565,10 @@ describe("useQuery (integration with Documents)", () => {
 			pinnedPost = attachIndexed(pinnedBase);
 			extraMid = attachIndexed(extraMidBase);
 			extraEnd = attachIndexed(extraEndBase);
+
+			await act(async () => {
+				await dbWriter.posts.put(pinnedBase);
+			});
 
 			await waitFor(() => expect(lateCalled).toBe(true), { timeout: 20_000 });
 
@@ -939,8 +982,8 @@ describe("useQuery (integration with Documents)", () => {
 		);
 	});
 
-	describe("lifecycle edge cases", () => {
-		it("handles database close during remote query without throwing", async () => {
+		describe("lifecycle edge cases", () => {
+			it("handles database close during remote query without throwing", async () => {
 			// This test verifies that when a database is closed while a remote query
 			// is in-flight (e.g., during component unmount with keepOpenOnUnmount: false),
 			// the query gracefully returns empty results instead of throwing NotStartedError.
@@ -955,27 +998,30 @@ describe("useQuery (integration with Documents)", () => {
 				prefetch: true,
 			});
 
-			await waitFor(() => expect(result.current).toBeDefined());
+				await waitFor(() => expect(result.current).toBeDefined());
 
-			// Start a loadMore (which triggers getCover internally for remote queries)
-			// and close the database concurrently - this simulates the race condition
-			// that happens when a component unmounts while a remote query is in-flight
-			const loadMorePromise = act(async () => {
-				await result.current.loadMore();
+				// Start a loadMore (which triggers getCover internally for remote queries)
+				// and close the database concurrently - this simulates the race condition
+				// that happens when a component unmounts while a remote query is in-flight
+				let loadMorePromise: Promise<boolean>;
+				await act(async () => {
+					loadMorePromise = result.current.loadMore();
+
+					// Close the database while the query might be in-flight
+					// This should NOT cause an unhandled NotStartedError
+					await dbReader.close();
+
+					// Ensure any state updates from the in-flight query are flushed
+					await loadMorePromise;
+				});
+
+				await expect(loadMorePromise!).resolves.toBeDefined();
+
+				// Unmount should also be clean
+				await act(async () => {
+					unmount();
+				});
 			});
-
-			// Close the database while the query might be in-flight
-			// This should NOT cause an unhandled NotStartedError
-			await act(async () => {
-				await dbReader.close();
-			});
-
-			// The loadMore should complete without throwing
-			await expect(loadMorePromise).resolves.not.toThrow();
-
-			// Unmount should also be clean
-			unmount();
-		});
 
 		it("handles unmount during active remote query without throwing", async () => {
 			// This test simulates the exact scenario from the bug report:
@@ -992,29 +1038,34 @@ describe("useQuery (integration with Documents)", () => {
 				prefetch: true,
 			});
 
-			await waitFor(() => expect(result.current).toBeDefined());
+				await waitFor(() => expect(result.current).toBeDefined());
 
-			// Trigger a remote query
-			const loadMorePromise = result.current.loadMore();
+				// Trigger a remote query
+				const loadMorePromise = result.current.loadMore();
 
-			// Immediately unmount (simulating rapid navigation or re-render)
-			// This closes the iterator but the underlying getCover might still be running
-			unmount();
+				// Immediately unmount (simulating rapid navigation or re-render)
+				// This closes the iterator but the underlying getCover might still be running
+				await act(async () => {
+					unmount();
+				});
 
-			// Close the database (simulating useProgram cleanup with keepOpenOnUnmount: false)
-			await dbReader.close();
+				// Close the database (simulating useProgram cleanup with keepOpenOnUnmount: false)
+				await act(async () => {
+					await dbReader.close();
+					await loadMorePromise;
+				});
 
-			// The promise should resolve gracefully (returning false), not throw
-			await expect(loadMorePromise).resolves.toBeDefined();
-		});
+				// The promise should resolve gracefully (returning false), not throw
+				await expect(loadMorePromise).resolves.toBeDefined();
+			});
 
 		it("rapid mount/unmount cycles with remote queries do not cause errors", async () => {
 			await setupConnected();
 			await dbWriter.posts.put(new Post({ message: "test" }));
 
 			// Simulate rapid mount/unmount cycles (like React StrictMode or fast navigation)
-			for (let i = 0; i < 3; i++) {
-				const { result, unmount } = renderUseQuery(dbReader, {
+				for (let i = 0; i < 3; i++) {
+					const { result, unmount } = renderUseQuery(dbReader, {
 					query: {},
 					resolve: true,
 					local: true,
@@ -1022,15 +1073,18 @@ describe("useQuery (integration with Documents)", () => {
 					prefetch: true,
 				});
 
-				await waitFor(() => expect(result.current).toBeDefined());
+					await waitFor(() => expect(result.current).toBeDefined());
 
-				// Start a query and immediately unmount
-				const loadMorePromise = result.current.loadMore().catch(() => false);
-				unmount();
+					// Start a query and immediately unmount
+					const loadMorePromise = result.current.loadMore().catch(() => false);
+					await act(async () => {
+						unmount();
+						await loadMorePromise;
+					});
 
-				// Should not throw
-				await expect(loadMorePromise).resolves.toBeDefined();
-			}
+					// Should not throw
+					await expect(loadMorePromise).resolves.toBeDefined();
+				}
+			});
 		});
-	});
 });

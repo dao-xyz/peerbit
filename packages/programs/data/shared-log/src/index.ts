@@ -41,7 +41,6 @@ import {
 	AcknowledgeDelivery,
 	AnyWhere,
 	NotStartedError,
-	SeekDelivery,
 	SilentDelivery,
 	type WithMode,
 } from "@peerbit/stream-interface";
@@ -2445,35 +2444,33 @@ export class SharedLog<
 				set.add(key);
 			}
 
-			if (options?.reachableOnly) {
-				// Prefer the live pubsub subscriber set when filtering reachability.
-				// `uniqueReplicators` is primarily driven by replication messages and can lag during
-				// joins/restarts; using subscribers prevents excluding peers that are reachable but
-				// whose replication ranges were loaded from disk or haven't been processed yet.
-				const subscribers =
-					(await this.node.services.pubsub.getSubscribers(this.topic)) ??
-					undefined;
-				const subscriberHashcodes = subscribers
-					? new Set(subscribers.map((key) => key.hashcode()))
-					: undefined;
+				if (options?.reachableOnly) {
+					// Prefer the live pubsub subscriber set when filtering reachability, but fall back
+					// to `uniqueReplicators` (replication-message-driven cache). In some flows peers can
+					// be reachable/active even before (or without) subscriber state converging.
+					const subscribers =
+						(await this.node.services.pubsub.getSubscribers(this.topic)) ??
+						undefined;
+					const subscriberHashcodes = subscribers
+						? new Set(subscribers.map((key) => key.hashcode()))
+						: undefined;
 
 				const reachable: string[] = [];
 				const selfHash = this.node.identity.publicKey.hashcode();
 				for (const peer of set) {
-					if (peer === selfHash) {
-						reachable.push(peer);
-						continue;
+						if (peer === selfHash) {
+							reachable.push(peer);
+							continue;
+						}
+						if (
+							(subscriberHashcodes && subscriberHashcodes.has(peer)) ||
+							this.uniqueReplicators.has(peer)
+						) {
+							reachable.push(peer);
+						}
 					}
-					if (
-						subscriberHashcodes
-							? subscriberHashcodes.has(peer)
-							: this.uniqueReplicators.has(peer)
-					) {
-						reachable.push(peer);
-					}
+					return reachable;
 				}
-				return reachable;
-			}
 
 			return [...set];
 		} catch (error) {
@@ -2925,11 +2922,11 @@ export class SharedLog<
 					x.toReplicationRange(),
 				);
 
-				this.rpc
-					.send(new AllReplicatingSegmentsMessage({ segments }), {
-						mode: new SeekDelivery({ to: [context.from], redundancy: 1 }),
-					})
-					.catch((e) => logger.error(e.toString()));
+						this.rpc
+							.send(new AllReplicatingSegmentsMessage({ segments }), {
+								mode: new AcknowledgeDelivery({ to: [context.from], redundancy: 1 }),
+							})
+							.catch((e) => logger.error(e.toString()));
 
 				// for backwards compatibility (v8) remove this when we are sure that all nodes are v9+
 				if (this.v8Behaviour) {
@@ -3407,13 +3404,13 @@ export class SharedLog<
 
 			requestAttempts++;
 
-			this.rpc
-				.send(new RequestReplicationInfoMessage(), {
-					mode: new SeekDelivery({ redundancy: 1, to: [key] }),
-				})
-				.catch((e) => {
-					// Best-effort: missing peers / unopened RPC should not fail the wait logic.
-					if (isNotStartedError(e as Error)) {
+				this.rpc
+					.send(new RequestReplicationInfoMessage(), {
+						mode: new AcknowledgeDelivery({ redundancy: 1, to: [key] }),
+					})
+					.catch((e) => {
+						// Best-effort: missing peers / unopened RPC should not fail the wait logic.
+						if (isNotStartedError(e as Error)) {
 						return;
 					}
 				});
@@ -3852,26 +3849,34 @@ export class SharedLog<
 		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge()); // TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
 		const selfHash = this.node.identity.publicKey.hashcode();
 
-		// Use `uniqueReplicators` (replicator cache) once we've reconciled it against the
-		// persisted replication index. Until then, fall back to live pubsub subscribers
-		// and avoid relying on `uniqueReplicators` being complete.
-		let peerFilter: Set<string> | undefined = undefined;
-		if (this._replicatorsReconciled && this.uniqueReplicators.size > 0) {
-			peerFilter = this.uniqueReplicators.has(selfHash)
-				? this.uniqueReplicators
-				: new Set([...this.uniqueReplicators, selfHash]);
-		} else {
-			try {
-				const subscribers =
-					(await this.node.services.pubsub.getSubscribers(this.topic)) ??
-					undefined;
-				if (subscribers && subscribers.length > 0) {
-					peerFilter = new Set(subscribers.map((key) => key.hashcode()));
+			// Prefer `uniqueReplicators` (replicator cache) as soon as it has any data.
+			// Falling back to live pubsub subscribers can include non-replicators and can
+			// break delivery/availability when writers are not directly connected.
+			let peerFilter: Set<string> | undefined = undefined;
+			const selfReplicating = await this.isReplicating();
+			if (this.uniqueReplicators.size > 0) {
+				peerFilter = new Set(this.uniqueReplicators);
+				if (selfReplicating) {
 					peerFilter.add(selfHash);
+				} else {
+					peerFilter.delete(selfHash);
 				}
-			} catch {
-				// Best-effort only; if pubsub isn't ready, do a full scan.
-			}
+			} else {
+				try {
+					const subscribers =
+						(await this.node.services.pubsub.getSubscribers(this.topic)) ??
+						undefined;
+					if (subscribers && subscribers.length > 0) {
+						peerFilter = new Set(subscribers.map((key) => key.hashcode()));
+						if (selfReplicating) {
+							peerFilter.add(selfHash);
+						} else {
+							peerFilter.delete(selfHash);
+						}
+					}
+				} catch {
+					// Best-effort only; if pubsub isn't ready, do a full scan.
+				}
 		}
 		return getSamples<R>(
 			cursors,
@@ -3954,35 +3959,35 @@ export class SharedLog<
 		if (subscribed) {
 			const replicationSegments = await this.getMyReplicationSegments();
 			if (replicationSegments.length > 0) {
-				this.rpc
-					.send(
-						new AllReplicatingSegmentsMessage({
-							segments: replicationSegments.map((x) => x.toReplicationRange()),
-						}),
-						{
-							mode: new SeekDelivery({ redundancy: 1, to: [publicKey] }),
-						},
-					)
-					.catch((e) => logger.error(e.toString()));
+					this.rpc
+						.send(
+							new AllReplicatingSegmentsMessage({
+								segments: replicationSegments.map((x) => x.toReplicationRange()),
+							}),
+							{
+								mode: new AcknowledgeDelivery({ redundancy: 1, to: [publicKey] }),
+							},
+						)
+						.catch((e) => logger.error(e.toString()));
 
 				if (this.v8Behaviour) {
 					// for backwards compatibility
-					this.rpc
-						.send(new ResponseRoleMessage({ role: await this.getRole() }), {
-							mode: new SeekDelivery({ redundancy: 1, to: [publicKey] }),
-						})
-						.catch((e) => logger.error(e.toString()));
-				}
+						this.rpc
+							.send(new ResponseRoleMessage({ role: await this.getRole() }), {
+								mode: new AcknowledgeDelivery({ redundancy: 1, to: [publicKey] }),
+							})
+							.catch((e) => logger.error(e.toString()));
+					}
 			}
 
 			// Request the remote peer's replication info. This makes joins resilient to
 			// timing-sensitive delivery/order issues where we may miss their initial
 			// replication announcement.
-			this.rpc
-				.send(new RequestReplicationInfoMessage(), {
-					mode: new SeekDelivery({ redundancy: 1, to: [publicKey] }),
-				})
-				.catch((e) => logger.error(e.toString()));
+				this.rpc
+					.send(new RequestReplicationInfoMessage(), {
+						mode: new AcknowledgeDelivery({ redundancy: 1, to: [publicKey] }),
+					})
+					.catch((e) => logger.error(e.toString()));
 		} else {
 			await this.removeReplicator(publicKey);
 		}

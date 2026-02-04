@@ -10,7 +10,7 @@
  */
 
 import type { PeerId } from "@libp2p/interface";
-import { SeekDelivery } from "@peerbit/stream-interface";
+import { AcknowledgeDelivery } from "@peerbit/stream-interface";
 import { PreHash, SignatureWithKey } from "@peerbit/crypto";
 import { delay } from "@peerbit/time";
 import { DirectStream, type DirectStreamComponents } from "../src/index.js";
@@ -30,6 +30,7 @@ type SimParams = {
 	pruner: boolean;
 	prunerIntervalMs: number;
 	prunerMaxBufferBytes: number;
+	dialDelayMs: number;
 	streamRxDelayMs: number;
 	streamHighWaterMarkBytes: number;
 };
@@ -176,12 +177,6 @@ class SimDirectStream extends DirectStream {
 		}
 		return true;
 	}
-
-	// Expose protected method so the simulator can eagerly create streams after
-	// connecting, avoiding long waits for the outbound pump.
-	public async forceCreateOutbound(peerId: PeerId, connection: any) {
-		return this.createOutboundStream(peerId, connection);
-	}
 }
 
 const parseArgs = (argv: string[]): SimParams => {
@@ -207,6 +202,7 @@ const parseArgs = (argv: string[]): SimParams => {
 				"  --pruner 0|1         enable pruning (default: 0)",
 				"  --prunerIntervalMs X pruner interval (default: 50)",
 				"  --prunerMaxBufferBytes B prune when queued bytes > B (default: 65536)",
+				"  --dialDelayMs X      artificial dial delay (default: 0)",
 				"  --streamRxDelayMs X  per-chunk inbound delay in shim (default: 0)",
 				"  --streamHighWaterMarkBytes B backpressure threshold (default: 262144)",
 				"",
@@ -228,9 +224,39 @@ const parseArgs = (argv: string[]): SimParams => {
 		pruner: String(get("--pruner") ?? "0") === "1",
 		prunerIntervalMs: Number(get("--prunerIntervalMs") ?? 50),
 		prunerMaxBufferBytes: Number(get("--prunerMaxBufferBytes") ?? 64 * 1024),
+		dialDelayMs: Number(get("--dialDelayMs") ?? 0),
 		streamRxDelayMs: Number(get("--streamRxDelayMs") ?? 0),
 		streamHighWaterMarkBytes: Number(get("--streamHighWaterMarkBytes") ?? 256 * 1024),
 	};
+};
+
+const waitForProtocolStreams = async (
+	peers: { stream: DirectStream }[],
+	timeoutMs = 30_000,
+) => {
+	const start = Date.now();
+	while (Date.now() - start < timeoutMs) {
+		let missing = 0;
+		for (const p of peers) {
+			const protocols = p.stream.multicodecs;
+			for (const conn of p.stream.components.connectionManager.getConnections()) {
+				const streams = conn.streams as any as Array<{
+					protocol?: string;
+					direction?: string;
+				}>;
+				const hasOutbound = streams.some(
+					(s) => s.protocol && protocols.includes(s.protocol) && s.direction === "outbound",
+				);
+				const hasInbound = streams.some(
+					(s) => s.protocol && protocols.includes(s.protocol) && s.direction === "inbound",
+				);
+				if (!hasOutbound || !hasInbound) missing++;
+			}
+		}
+		if (missing === 0) return;
+		await delay(0);
+	}
+	throw new Error("Timeout waiting for protocol streams to become duplex");
 };
 
 const main = async () => {
@@ -241,6 +267,7 @@ const main = async () => {
 	const network = new InMemoryNetwork({
 		streamRxDelayMs: params.streamRxDelayMs,
 		streamHighWaterMarkBytes: params.streamHighWaterMarkBytes,
+		dialDelayMs: params.dialDelayMs,
 	});
 
 	const peers: {
@@ -251,7 +278,7 @@ const main = async () => {
 	const basePort = 30_000;
 	for (let i = 0; i < params.nodes; i++) {
 		const port = basePort + i;
-		const { runtime } = InMemoryNetwork.createPeer({ index: i, port });
+		const { runtime } = InMemoryNetwork.createPeer({ index: i, port, network });
 		runtime.connectionManager = new InMemoryConnectionManager(network, runtime);
 		network.registerPeer(runtime, port);
 
@@ -287,15 +314,7 @@ const main = async () => {
 		}
 	}
 
-	// Eagerly open protocol streams on all current connections.
-	for (const p of peers) {
-		for (const conn of p.stream.components.connectionManager.getConnections()) {
-			await p.stream.forceCreateOutbound(conn.remotePeer, conn);
-		}
-	}
-
-	// Give microtasks a moment to attach inbound streams.
-	await delay(0);
+	await waitForProtocolStreams(peers);
 
 	let delivered = 0;
 	for (let i = 0; i < params.messages; i++) {
@@ -309,7 +328,7 @@ const main = async () => {
 		const to = targets.map((t) => peers[t]!.stream.publicKey);
 
 		await peers[source]!.stream.publish(new Uint8Array([1]), {
-			mode: new SeekDelivery({
+			mode: new AcknowledgeDelivery({
 				to,
 				redundancy: params.redundancy,
 			}),

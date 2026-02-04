@@ -17,7 +17,6 @@ import {
 	getKeypairFromPrivateKey,
 } from "@peerbit/crypto";
 import type { Indices } from "@peerbit/indexer-interface";
-import { create as createSQLiteIndexer } from "@peerbit/indexer-sqlite3";
 import { DefaultCryptoKeychain, keychain } from "@peerbit/keychain";
 import { logger as loggerFn } from "@peerbit/logger";
 import {
@@ -28,7 +27,7 @@ import {
 	type ProgramClient,
 	ProgramHandler,
 } from "@peerbit/program";
-import { DirectSub } from "@peerbit/pubsub";
+import { DirectSub, FanoutTree } from "@peerbit/pubsub";
 import type { Libp2p } from "libp2p";
 import sodium from "libsodium-wrappers";
 import path from "path-browserify";
@@ -132,7 +131,13 @@ export class Peerbit implements ProgramClient {
 		const storage = await createCache(
 			directory != null ? path.join(directory, "/cache") : undefined,
 		);
-		const indexerFn = options.indexer || createSQLiteIndexer;
+		const indexerFn =
+			options.indexer ||
+			(async (directory?: string) => {
+				// Lazy-import to avoid loading sqlite-wasm in browser-like runtimes/tests
+				const { create } = await import("@peerbit/indexer-sqlite3");
+				return create(directory);
+			});
 		const indexer =
 			directory != null
 				? await indexerFn(path.join(directory, "/index"))
@@ -197,6 +202,7 @@ export class Peerbit implements ProgramClient {
 						directory: blocksDirectory,
 					}),
 				pubsub: (c: any) => new DirectSub(c, { canRelayMessage: asRelay }),
+				fanout: (c: any) => new FanoutTree(c, { connectionManager: false }),
 				...extendedOptions?.services,
 			};
 
@@ -264,6 +270,11 @@ export class Peerbit implements ProgramClient {
 			identity,
 			indexer,
 		});
+		try {
+			(peer.services.pubsub as any)?.setFanout?.((peer.services as any).fanout);
+		} catch {
+			// ignore
+		}
 		return peer;
 	}
 	get libp2p(): Libp2pExtended {
@@ -360,6 +371,13 @@ export class Peerbit implements ProgramClient {
 		const _addresses = addresses ?? (await resolveBootstrapAddresses());
 		if (_addresses.length === 0) {
 			throw new Error("Failed to find any addresses to dial");
+		}
+		// Keep fanout bootstrap config aligned with peer bootstrap config so fanout
+		// channels can join via the same rendezvous nodes.
+		try {
+			this.libp2p.services.fanout.setBootstraps(_addresses);
+		} catch {
+			// ignore if fanout service is not present/overridden
 		}
 		const settled = await Promise.allSettled(
 			_addresses.map((x) => this.dial(x)),

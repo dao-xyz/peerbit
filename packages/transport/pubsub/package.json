@@ -49,6 +49,7 @@
 		"access": "public"
 	},
 	"scripts": {
+		"bench": "TS_NODE_PROJECT=../../../tsconfig.json node --loader ts-node/esm ./benchmark/index.ts",
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
 		"test": "aegir test --target node",

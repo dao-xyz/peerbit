@@ -5,7 +5,18 @@ Product updates, release announcements, and engineering notes.
 ## Posts
 
 <div class="not-prose grid gap-4">
-  <a class="group block rounded-xl border border-slate-200 bg-white p-4 no-underline shadow-sm transition hover:shadow-md dark:border-slate-800 dark:bg-slate-950" href="/blog/2026-01-23-peerbit-org-site-update.md">
+  <a class="group block rounded-xl border border-slate-200 bg-white p-4 no-underline shadow-sm transition hover:shadow-md dark:border-slate-800 dark:bg-slate-950" href="blog/2026-02-02-interactive-fanout-visualizer.md">
+    <div class="flex items-start justify-between gap-3">
+      <div>
+        <div class="font-semibold text-slate-900 dark:text-slate-50">Interactive fanout visualizer (tree vs gossip)</div>
+        <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">February 2, 2026</div>
+      </div>
+      <span class="text-xs text-slate-500 dark:text-slate-400">Post</span>
+    </div>
+    <p class="mt-2 text-sm text-slate-600 dark:text-slate-300">An interactive demo for building intuition about scalable broadcast: tree push vs gossip flood.</p>
+  </a>
+
+  <a class="group block rounded-xl border border-slate-200 bg-white p-4 no-underline shadow-sm transition hover:shadow-md dark:border-slate-800 dark:bg-slate-950" href="blog/2026-01-23-peerbit-org-site-update.md">
     <div class="flex items-start justify-between gap-3">
       <div>
         <div class="font-semibold text-slate-900 dark:text-slate-50">Peerbit.org site update</div>

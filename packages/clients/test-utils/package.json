@@ -54,6 +54,7 @@
 		"access": "public"
 	},
 	"scripts": {
+		"bench": "TS_NODE_PROJECT=./tsconfig.bench.json node --loader ts-node/esm ./benchmark/index.ts",
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
 		"test": "aegir test -t node",
@@ -69,6 +70,13 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
+		"@libp2p/interface": "^3.1.0",
+		"@multiformats/multiaddr": "^13.0.1",
+		"it-pushable": "^3.1.4",
+		"libsodium-wrappers": "^0.7.15",
+		"@peerbit/any-store": "workspace:*",
+		"@peerbit/crypto": "workspace:*",
+		"@peerbit/indexer-interface": "workspace:*",
 		"@peerbit/libp2p-test-utils": "workspace:*",
 		"peerbit": "workspace:*",
 		"@chainsafe/libp2p-yamux": "^8.0.0",
@@ -81,6 +89,7 @@
 		"tty-table": "^4.2.1"
 	},
 	"devDependencies": {
+		"@types/libsodium-wrappers": "^0.7.14",
 		"@peerbit/time": "workspace:*"
 	},
 	"localMaintainers": [

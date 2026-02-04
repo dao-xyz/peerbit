@@ -3,10 +3,13 @@ Documentation
 - [Introduction](/)
 - [Getting started](/getting-started.md)
 - [Examples](/examples.md)
+- [Scalable fanout pubsub](/scalable-fanout.md)
+- [Fanout tree protocol](/fanout-tree-protocol.md)
 - [Development (borsh-ts)](/development/borsh-ts.md)
 
 Updates
 - [Updates](/updates)
+- [Blog](/blog.md)
 - [Release notes](/release-notes.md)
 - [Status](/status.md)
 

@@ -23,7 +23,17 @@ import { v4 as uuid } from "uuid";
  * These errors can occur during component unmount when the database is closing.
  */
 const isBenignLifecycleError = (e: unknown): boolean => {
-	return e instanceof ClosedError || e instanceof NotStartedError;
+	if (e instanceof ClosedError || e instanceof NotStartedError) {
+		return true;
+	}
+	// During teardown we may see transport-layer lifecycle errors from other packages
+	// (e.g. RPC/pubsub) that should not crash the hook.
+	if (e && typeof e === "object") {
+		const name = (e as any).name;
+		if (name === "AbortError") return true;
+		if (name === "NotStartedError") return true;
+	}
+	return false;
 };
 
 type QueryOptions = { query: QueryLike; id?: string };
@@ -186,11 +196,17 @@ export const useQuery = <
 		updateAll(fn(allRef.current));
 	};
 
-	const reset = () => {
+	const disposeIterators = (reason: string) => {
 		iteratorRefs.current?.forEach(({ iterator }) => iterator.close());
 		iteratorRefs.current = [];
 
-		closeControllerRef.current?.abort(new Error("Reset"));
+		// Abort any in-flight remote work (do not create new controllers here)
+		closeControllerRef.current?.abort(new Error(reason));
+		closeControllerRef.current = null;
+	};
+
+	const reset = () => {
+		disposeIterators("Reset");
 		closeControllerRef.current = new AbortController();
 		emptyResultsRef.current = false;
 		waitedOnceRef.current = false;
@@ -370,7 +386,25 @@ export const useQuery = <
 				.finally(() => {
 					draining = false;
 				});
-		};
+			};
+
+		const updatesOpt = options.updates;
+		const mergeEnabled =
+			typeof updatesOpt === "boolean"
+				? updatesOpt
+				: typeof updatesOpt === "string"
+					? true
+					: typeof updatesOpt === "object" && !!updatesOpt.merge;
+		const pushEnabled =
+			typeof updatesOpt === "boolean"
+				? updatesOpt
+				: typeof updatesOpt === "string"
+					? updatesOpt === "remote" || updatesOpt === "all"
+					: typeof updatesOpt === "object"
+						? "push" in updatesOpt && updatesOpt.push != null
+							? !!updatesOpt.push
+							: mergeEnabled
+						: false;
 
 		iteratorRefs.current = openDbs.map((db) => {
 			let currentRef: IteratorRef | undefined;
@@ -382,21 +416,19 @@ export const useQuery = <
 				resolve,
 				signal: abortSignal,
 				updates: {
-					push:
-						typeof options.updates === "boolean"
-							? options.updates
-							: typeof options.updates === "object" && options.updates.push
-								? true
-								: false,
-					merge:
-						typeof options.updates === "boolean" && options.updates
-							? true
-							: typeof options.updates === "object" && options.updates.merge
-								? true
-								: false,
+					push: pushEnabled,
+					merge: mergeEnabled,
 					notify: (reason) => {
 						log("notify", { reason, currentRef: !!currentRef });
 						if (reason === "change" || reason === "push" || reason === "join") {
+							// Keep "pull-first" semantics for remote-driven updates until the user
+							// starts reading results (or enables `prefetch`). Local changes should
+							// still surface immediately.
+							const remoteDriven = reason === "join" || reason === "push";
+							if (remoteDriven && !options.prefetch && allRef.current.length === 0) {
+								return;
+							}
+
 							const drainAmount = options.batchSize ?? 10;
 							scheduleDrain(iterator as ResultsIterator<RT>, drainAmount, {
 								force: true,
@@ -439,12 +471,18 @@ export const useQuery = <
 		/* store a deterministic id (useful for external keys) */
 		setId(uuid());
 
-		/* prefetch if requested */
-		if (options.prefetch) void loadMore();
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [
-		dbs.map((d, idx) => getDbKey(d) ?? `idx:${idx}`).join("|"),
-		options.query,
+			/* prefetch if requested */
+			if (options.prefetch) void loadMore();
+
+			return () => {
+				// Ensure we stop iterators + remote work on unmount / dependency changes,
+				// otherwise background replication/push can keep running and leak memory.
+				disposeIterators("Unmount");
+			};
+			// eslint-disable-next-line react-hooks/exhaustive-deps
+		}, [
+			dbs.map((d, idx) => getDbKey(d) ?? `idx:${idx}`).join("|"),
+			options.query,
 		options.resolve,
 		options.reverse,
 		options.batchSize,
@@ -698,10 +736,9 @@ export const useQuery = <
 			});
 			return false;
 		}
-		if (emptyResultsRef.current && !opts?.force) {
-			log("Skipping loadMore due to empty state");
-			return false;
-		} else if (opts?.force) {
+		// Iterators are kept alive (`closePolicy: "manual"`). After hitting "empty",
+		// new remote/local updates can make them yield again, so allow polling.
+		if (emptyResultsRef.current) {
 			emptyResultsRef.current = false;
 		}
 
