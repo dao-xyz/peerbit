@@ -144,6 +144,7 @@ describe("server", () => {
 	describe("api", () => {
 		let session: TestSession, serverPeer: Peerbit, server: http.Server;
 		let db: PermissionedString;
+		let apiAddress: string;
 		before(async () => {});
 
 		beforeEach(async () => {
@@ -155,7 +156,7 @@ describe("server", () => {
 				"api",
 				uuid(),
 			);
-			session = await TestSession.connected(1, {
+			session = await TestSession.disconnected(2, {
 				libp2p: { transports: [tcp(), webSockets()] },
 			});
 			serverPeer = session.peers[0] as Peerbit;
@@ -173,7 +174,13 @@ describe("server", () => {
 						Uint8Array
 					>,
 				),
+				port: 0,
 			});
+			const addr = server.address();
+			if (!addr || typeof addr === "string") {
+				throw new Error("Failed to resolve API server address");
+			}
+			apiAddress = `http://localhost:${addr.port}`;
 		});
 		afterEach(async () => {
 			server.close();
@@ -183,12 +190,12 @@ describe("server", () => {
 
 		describe("client", () => {
 			it("id", async () => {
-				const c = await client(session.peers[0].identity);
+				const c = await client(session.peers[0].identity, apiAddress);
 				expect(await c.peer.id.get()).equal(serverPeer.peerId.toString());
 			});
 
 			it("addresses", async () => {
-				const c = await client(session.peers[0].identity);
+				const c = await client(session.peers[0].identity, apiAddress);
 				expect(
 					(await c.peer.addresses.get()).map((x) => x.toString()),
 				).to.deep.equal(
@@ -200,7 +207,7 @@ describe("server", () => {
 		describe("program", () => {
 			describe("open", () => {
 				it("variant", async () => {
-					const c = await client(session.peers[0].identity);
+					const c = await client(session.peers[0].identity, apiAddress);
 					const address = await c.program.open({
 						variant: getSchema(PermissionedString).variant! as string,
 					});
@@ -208,7 +215,7 @@ describe("server", () => {
 				});
 
 				it("base64", async () => {
-					const c = await client(session.peers[0].identity);
+					const c = await client(session.peers[0].identity, apiAddress);
 					const program = new PermissionedString({
 						trusted: [],
 					});
@@ -219,7 +226,7 @@ describe("server", () => {
 				});
 
 				it("with args", async () => {
-					const c = await client(session.peers[0].identity);
+					const c = await client(session.peers[0].identity, apiAddress);
 					const serverOpen = sinon.spy(serverPeer, "open");
 					serverPeer.open = serverOpen as any;
 
@@ -234,11 +241,11 @@ describe("server", () => {
 
 			describe("trust", () => {
 				it("add", async () => {
-					const c = await client(session.peers[0].identity);
+					const c = await client(session.peers[0].identity, apiAddress);
 					const kp2 = await Ed25519Keypair.create();
 					const kp3 = await Ed25519Keypair.create();
 
-					const c2 = await client(kp2);
+					const c2 = await client(kp2, apiAddress);
 					await expect(c2.access.allow(kp3.publicKey)).rejectedWith(
 						"Request failed with status code 401",
 					);
@@ -256,7 +263,7 @@ describe("server", () => {
 					dropped = false;
 					closed = false;
 
-					const c = await client(session.peers[0].identity);
+					const c = await client(session.peers[0].identity, apiAddress);
 					address = await c.program.open({
 						variant: getSchema(PermissionedString).variant! as string,
 					});
@@ -276,14 +283,14 @@ describe("server", () => {
 				});
 
 				it("close", async () => {
-					const c = await client(session.peers[0].identity);
+					const c = await client(session.peers[0].identity, apiAddress);
 					await c.program.close(address);
 					expect(dropped).to.be.false;
 					expect(closed).to.be.true;
 				});
 
 				it("drop", async () => {
-					const c = await client(session.peers[0].identity);
+					const c = await client(session.peers[0].identity, apiAddress);
 					await c.program.drop(address);
 					expect(dropped).to.be.true;
 					expect(closed).to.be.false;
@@ -291,7 +298,7 @@ describe("server", () => {
 			});
 
 			it("list arg value", async () => {
-				const c = await client(session.peers[0].identity);
+				const c = await client(session.peers[0].identity, apiAddress);
 				const address = await c.program.open({
 					variant: getSchema(PermissionedString).variant! as string,
 					log: true,
@@ -301,7 +308,7 @@ describe("server", () => {
 			});
 
 			it("list arg undefined", async () => {
-				const c = await client(session.peers[0].identity);
+				const c = await client(session.peers[0].identity, apiAddress);
 				const address = await c.program.open({
 					variant: getSchema(PermissionedString).variant! as string,
 				});
@@ -328,8 +335,11 @@ describe("server", () => {
 
 		it("bootstrap", async () => {
 			expect((session.peers[0] as Peerbit).services.pubsub.peers.size).equal(0);
-			const c = await client(session.peers[0].identity);
-			await c.network.bootstrap();
+			const c = await client(session.peers[0].identity, apiAddress);
+			const bootstrapAddresses = (session.peers[1] as Peerbit)
+				.getMultiaddrs()
+				.map((x) => x.toString());
+			await c.network.bootstrap({ addresses: bootstrapAddresses });
 			expect(
 				(session.peers[0] as Peerbit).services.pubsub.peers.size,
 			).greaterThan(0);

@@ -13,14 +13,16 @@ import { getTrustPath } from "../src/config.js";
 import { Trust } from "../src/trust.js";
 import { __dirname, modulesPath } from "./utils.js";
 
+const BIN_PATH =
+	[
+		// When running compiled tests from `dist/test/*`
+		path.join(__dirname, "..", "src", "bin.js"),
+		// When running from sources in `test/*`
+		path.join(__dirname, "..", "dist", "src", "bin.js"),
+	].find((p) => fs.existsSync(p)) ?? path.join(__dirname, "..", "src", "bin.js");
+
 const runCommandProcess = (args: any): ProcessWithOut => {
-	const cmd = `node --experimental-vm-modules ${path.join(
-		__dirname,
-		"../",
-		"dist",
-		"src",
-		"bin.js",
-	)} ${args}`;
+	const cmd = `node --experimental-vm-modules ${BIN_PATH} ${args}`;
 	const p = exec(
 		cmd /* , { env: { ...process.env, "PEERBIT_MODULES_PATH": modulesPath } } */,
 	);
@@ -28,13 +30,7 @@ const runCommandProcess = (args: any): ProcessWithOut => {
 };
 
 const runCommand = (args: any): string => {
-	const cmd = `node --experimental-vm-modules ${path.join(
-		__dirname,
-		"../",
-		"dist",
-		"src",
-		"bin.js",
-	)} ${args}`;
+	const cmd = `node --experimental-vm-modules ${BIN_PATH} ${args}`;
 	return execSync(cmd).toString();
 };
 

@@ -857,7 +857,16 @@ export const startApiServer = async (
 									res.end("Server node is not running a native client");
 									return;
 								}
-								await (client as Peerbit).bootstrap();
+								let addresses: string[] | undefined;
+								try {
+									const parsed = body ? JSON.parse(body) : undefined;
+									if (Array.isArray(parsed?.addresses)) {
+										addresses = parsed.addresses;
+									}
+								} catch {
+									// ignore invalid bootstrap payload; fall back to default bootstrap list
+								}
+								await (client as Peerbit).bootstrap(addresses);
 								res.writeHead(200);
 								res.end();
 								break;

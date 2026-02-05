@@ -304,11 +304,17 @@ export const createClient = async (
 			},
 		},
 		network: {
-			bootstrap: async (): Promise<void> => {
+			bootstrap: async (options?: { addresses?: string[] }): Promise<void> => {
 				throwIfNot200(
-					await axiosInstance.post(endpoint + BOOTSTRAP_PATH, undefined, {
-						validateStatus,
-					}),
+					await axiosInstance.post(
+						endpoint + BOOTSTRAP_PATH,
+						options?.addresses
+							? JSON.stringify({ addresses: options.addresses })
+							: undefined,
+						{
+							validateStatus,
+						},
+					),
 				);
 			},
 		},
