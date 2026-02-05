@@ -683,10 +683,10 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				) {
 					const changed: string[] = [];
 					pubsubMessage.topics.forEach((topic) => {
-						const peers = this.topics.get(topic);
-						if (peers == null) {
-							return;
+						if (!this.topics.has(topic)) {
+							this.initializeTopic(topic);
 						}
+						const peers = this.topics.get(topic);
 
 						this.initializePeer(sender);
 
