@@ -850,14 +850,14 @@ export const startApiServer = async (
 							r404();
 						}
 					} else if (req.url.startsWith(BOOTSTRAP_PATH)) {
-							switch (req.method) {
-								case "POST": {
-									if (client instanceof Peerbit === false) {
-										res.writeHead(400);
-										res.end("Server node is not running a native client");
-										return;
-									}
-									let addresses: string[] | undefined;
+						switch (req.method) {
+							case "POST": {
+								if (client instanceof Peerbit === false) {
+									res.writeHead(400);
+									res.end("Server node is not running a native client");
+									return;
+								}
+								let addresses: string[] | undefined;
 								try {
 									const parsed = body ? JSON.parse(body) : undefined;
 									if (Array.isArray(parsed?.addresses)) {
@@ -865,17 +865,17 @@ export const startApiServer = async (
 									}
 								} catch {
 									// ignore invalid bootstrap payload; fall back to default bootstrap list
-									}
-									await (client as Peerbit).bootstrap(addresses);
-									res.writeHead(200);
-									res.end();
-									break;
 								}
-
-								default:
-									r404();
-									break;
+								await (client as Peerbit).bootstrap(addresses);
+								res.writeHead(200);
+								res.end();
+								break;
 							}
+
+							default:
+								r404();
+								break;
+						}
 					} else if (req.url.startsWith(TRUST_PATH)) {
 						switch (req.method) {
 							case "PUT": {
