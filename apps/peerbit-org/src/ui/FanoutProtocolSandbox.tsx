@@ -1429,7 +1429,7 @@ export function FanoutProtocolSandbox({
 												disabled={status === "setting-up" || status === "running"}
 											>
 												<option value="preseed">Preseed (no subscribe gossip)</option>
-												<option value="real">Real subscribe (gossipy)</option>
+												<option value="real">Real subscribe (control-plane gossip)</option>
 											</select>
 										</label>
 										<label className="block text-xs text-slate-600 dark:text-slate-300">
@@ -1588,6 +1588,13 @@ export function FanoutProtocolSandbox({
 												<span className="font-mono">Bench</span> mode we animate only the published{" "}
 												<span className="font-mono">PSIM</span> messages. Each color is a message index
 												(0..messages-1).
+											</p>
+											<p>
+												If you choose <span className="font-mono">Include setup + subscribe</span> and{" "}
+												<span className="font-mono">Real subscribe</span>, you’ll see extra control-plane
+												traffic (subscribe setup + route warmup) before the first publish. To focus on the data
+												plane, use <span className="font-mono">Preseed</span> +{" "}
+												<span className="font-mono">Publish only</span>.
 											</p>
 											<p>
 												We <span className="font-mono">await publish()</span>, so multiple messages are sent

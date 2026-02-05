@@ -1,4 +1,4 @@
-# Interactive fanout visualizer (tree vs gossip)
+# Interactive fanout visualizer (tree push + control-plane gossip)
 
 *February 2, 2026*
 
@@ -44,10 +44,13 @@ The catch is reliability. Trees break under churn and packet loss. The common st
 - eager push along the tree for efficiency, and
 - local recovery mechanisms so one broken edge does not break delivery. [1]
 
-### 2) Gossip flood (robust, but redundant)
-In a flood or mesh gossip design, messages are forwarded across many edges. Deduplication prevents loops, but the amount of work can still be closer to “per edge” than “per subscriber”. That cost becomes very noticeable at scale.
+### 2) Subscribe gossip (control plane)
+If you switch **Subscribe model → Real subscribe**, you’ll see extra traffic *before* the first publish: peers announce interest and the writer learns enough routes to deliver beyond the first hop. This is the “subscribe gossip exploding” symptom: as the audience grows, the overhead of “who is interested in what?” can grow faster than the payload.
 
-Gossip is excellent as a repair tool (and for small to medium topics), but it is hard to make it economical for very large audiences if it is also responsible for membership and subscription dissemination. This is where “subscribe gossip exploding” shows up.
+If you just want to study delivery, keep **Preseed (no subscribe gossip)** enabled. It skips the setup chatter so the visual flow mostly represents the publish data plane.
+
+### Background: mesh gossip (baseline, not simulated here)
+In a flood/mesh gossip design (e.g. FloodSub / Gossipsub), a publish is forwarded across many edges. Deduplication prevents loops, but the work is often closer to “per edge” than “per subscriber”. That’s robust, but it’s hard to make economical at very large audience sizes if the same mechanism also handles membership and subscription dissemination.
 
 ## How this maps to Peerbit work
 
