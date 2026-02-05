@@ -3629,14 +3629,24 @@ export class SharedLog<
 				resolve(leaders);
 			};
 
+			const safeCheck = () => {
+				void check().catch(() => {
+					// Best-effort: errors here should not surface as an unhandled
+					// rejection since `check()` is invoked from event listeners.
+					removeListeners();
+					clearTimeout(timer);
+					resolve(false);
+				});
+			};
+
 			const roleListener = () => {
-				check();
+				safeCheck();
 			};
 
 			this.events.addEventListener("replication:change", roleListener); // TODO replication:change event  ?
 			this.events.addEventListener("replicator:mature", roleListener); // TODO replication:change event  ?
 			this._closeController.signal.addEventListener("abort", abortListener);
-			check();
+			safeCheck();
 		});
 	}
 
@@ -3685,7 +3695,24 @@ export class SharedLog<
 			return; // no change
 		}
 
-		const cidObject = cidifyString(properties.entry.hash);
+		// Defensive: in some teardown/race scenarios we can end up persisting a
+		// coordinate for an entry-like object without a hash. Avoid throwing and
+		// surfacing as an unhandled rejection (e.g. from _waitForReplicators()).
+		const hash = (properties.entry as any)?.hash;
+		if (typeof hash !== "string" || hash.length === 0) {
+			return;
+		}
+
+		let cidObject;
+		try {
+			cidObject = cidifyString(hash);
+		} catch {
+			return;
+		}
+		if (!cidObject) {
+			return;
+		}
+
 		const hashNumber = this.indexableDomain.numbers.bytesToNumber(
 			cidObject.multihash.digest,
 		);
@@ -3695,13 +3722,13 @@ export class SharedLog<
 				assignedToRangeBoundary,
 				coordinates: properties.coordinates,
 				meta: properties.entry.meta,
-				hash: properties.entry.hash,
+				hash,
 				hashNumber,
 			}),
 		);
 
 		for (const coordinate of properties.coordinates) {
-			this.coordinateToHash.add(coordinate, properties.entry.hash);
+			this.coordinateToHash.add(coordinate, hash);
 		}
 
 		if (properties.entry.meta.next.length > 0) {
