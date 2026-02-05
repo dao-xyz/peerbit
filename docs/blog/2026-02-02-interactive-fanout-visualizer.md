@@ -26,13 +26,13 @@ This is a small browser-friendly sandbox that runs the **real code paths**:
 How to use it:
 1. Click a node to pick the **writer** (it turns red).
 2. Press **Generate network** if you want a new random topology.
-3. Press **Run** to (a) set up subscriptions and then (b) publish messages.
+3. Press **Run** to publish messages (by default the flow view focuses on the publish data plane).
 4. Enable **Show flow** to see “comets” moving along edges as data is forwarded.
 
 Tip: keep **Messages = 1** and **Flow speed = 1000 ms** while you are learning. It makes the pattern much easier to see.
 
 <div class="not-prose">
-  <fanout-protocol-sandbox nodes="20" degree="4" subscribers="19" messages="1" msgSize="32" intervalMs="0" seed="1"></fanout-protocol-sandbox>
+  <fanout-protocol-sandbox nodes="20" degree="4" subscribers="19" messages="1" msgSize="32" intervalMs="0" streamRxDelayMs="1000" seed="1"></fanout-protocol-sandbox>
 </div>
 
 ## What you’re seeing
@@ -45,7 +45,7 @@ The catch is reliability. Trees break under churn and packet loss. The common st
 - local recovery mechanisms so one broken edge does not break delivery. [1]
 
 ### 2) Subscribe gossip (control plane)
-If you switch **Subscribe model → Real subscribe**, you’ll see extra traffic *before* the first publish: peers announce interest and the writer learns enough routes to deliver beyond the first hop. This is the “subscribe gossip exploding” symptom: as the audience grows, the overhead of “who is interested in what?” can grow faster than the payload.
+If you switch **Flow capture → Include setup + subscribe** and **Subscribe model → Real subscribe**, you’ll see extra traffic *before* the first publish: peers announce interest and the writer learns enough routes to deliver beyond the first hop. This is the “subscribe gossip exploding” symptom: as the audience grows, the overhead of “who is interested in what?” can grow faster than the payload.
 
 If you just want to study delivery, keep **Preseed (no subscribe gossip)** enabled. It skips the setup chatter so the visual flow mostly represents the publish data plane.
 
