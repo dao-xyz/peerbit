@@ -734,6 +734,17 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 						const mySubscriptions = this.getSubscriptionOverlap(
 							pubsubMessage.topics,
 						);
+						// Also include topics with a pending subscribe (debounce
+						// not yet fired). This handles the race where subscribe()
+						// was called but _subscribe() hasn't executed yet.
+						for (const topic of pubsubMessage.topics) {
+							if (
+								!mySubscriptions.includes(topic) &&
+								this.debounceSubscribeAggregator.has(topic)
+							) {
+								mySubscriptions.push(topic);
+							}
+						}
 						if (mySubscriptions.length > 0) {
 							const response = new DataMessage({
 								data: toUint8Array(
