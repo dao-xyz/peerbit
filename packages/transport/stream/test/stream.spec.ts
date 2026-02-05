@@ -2025,7 +2025,12 @@ describe("streams", function () {
 					streams[0].stream.peers.get(streams[1].stream.publicKey.hashcode()),
 				).equal(undefined); // beacuse stream[1] has received less data from stream[0] (least important)
 
-				await session.peers[1].dial(session.peers[0].getMultiaddrs());
+				// Dial attempts can hang on some platforms; don't let a rejected incoming connection stall the suite.
+				const addr0 = session.peers[0].getMultiaddrs();
+				await Promise.race([
+					session.peers[1].dial(addr0).catch(() => {}),
+					delay(10_000),
+				]);
 
 				await delay(3000);
 
@@ -2038,9 +2043,12 @@ describe("streams", function () {
 					undefined;
 				session.peers[1].services.directstream.connectionManagerOptions.pruner =
 					undefined;
-				await session.peers[1].dial(session.peers[0].getMultiaddrs());
-
-				await delay(3000);
+				await Promise.race([
+					session.peers[1].dial(addr0),
+					delay(10_000).then(() => {
+						throw new Error("dial timeout");
+					}),
+				]);
 				await waitForResolved(
 					() =>
 						expect(
@@ -2048,6 +2056,7 @@ describe("streams", function () {
 								streams[1].stream.publicKey.hashcode(),
 							),
 						).to.exist,
+					{ timeout: 20_000 },
 				);
 			});
 

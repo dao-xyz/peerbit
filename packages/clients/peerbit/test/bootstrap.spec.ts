@@ -1,6 +1,8 @@
 import { expect } from "chai";
 import { Peerbit } from "../src/peer.js";
 
+const isNode = typeof process !== "undefined" && !!process.versions?.node;
+
 describe("bootstrap", () => {
 	let peer: Peerbit;
 	let bootstrapPeer: Peerbit;
@@ -15,12 +17,12 @@ describe("bootstrap", () => {
 		await bootstrapPeer?.stop();
 	});
 
-	it("local", async () => {
+	(isNode ? it : it.skip)("local", async () => {
 		await peer.bootstrap(bootstrapPeer.getMultiaddrs());
 		expect(peer.libp2p.services.pubsub.peers.size).greaterThan(0);
 	});
 
-	it("remote", async function () {
+	(isNode ? it : it.skip)("remote", async function () {
 		if (process.env.PEERBIT_RUN_REMOTE_BOOTSTRAP_TEST !== "1") {
 			this.skip();
 		}

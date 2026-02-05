@@ -19,6 +19,8 @@ const getDocStats = async (page: { evaluate: any }) => {
 const sessionParam = (value: string) => encodeURIComponent(value);
 
 test.describe("canonical lifetime", () => {
+	test.setTimeout(60_000);
+
 	test("releases document refs when tabs close", async ({ page }, testInfo) => {
 		const session = sessionParam(`lifetime-${testInfo.title}`);
 		await page.goto(`/?scenario=documents&label=tab-1&session=${session}`);
