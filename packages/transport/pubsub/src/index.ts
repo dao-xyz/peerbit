@@ -526,9 +526,11 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		this.lastSubscriptionMessages.delete(publicKey.hashcode());
 
 		if (changed.length > 0) {
+			const event = new UnsubcriptionEvent(publicKey, changed);
+			(event as any).reason = "peer-unreachable";
 			this.dispatchEvent(
 				new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
-					detail: new UnsubcriptionEvent(publicKey, changed),
+					detail: event,
 				}),
 			);
 		}
@@ -771,9 +773,11 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 					}
 
 					if (changed.length > 0 && seenBefore === 0) {
+						const event = new UnsubcriptionEvent(sender, changed);
+						(event as any).reason = "remote-unsubscribe";
 						this.dispatchEvent(
 							new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
-								detail: new UnsubcriptionEvent(sender, changed),
+								detail: event,
 							}),
 						);
 					}
