@@ -124,6 +124,11 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 	}
 
 	async subscribe(topic: string) {
+		// Eagerly initialize topic tracking so incoming Subscribe messages
+		// that arrive before the debounced _subscribe() fires are not dropped.
+		if (!this.topics.has(topic)) {
+			this.initializeTopic(topic);
+		}
 		// this.debounceUnsubscribeAggregator.delete(topic);
 		return this.debounceSubscribeAggregator.add({ key: topic });
 	}
@@ -683,10 +688,10 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				) {
 					const changed: string[] = [];
 					pubsubMessage.topics.forEach((topic) => {
-						if (!this.topics.has(topic)) {
-							this.initializeTopic(topic);
-						}
 						const peers = this.topics.get(topic);
+						if (peers == null) {
+							return;
+						}
 
 						this.initializePeer(sender);
 
