@@ -32,7 +32,11 @@ describe("fanout-tree-sim (ci)", () => {
 			result.joinedPct < 99 ||
 			result.deliveredPct < 99 ||
 			result.deliveredWithinDeadlinePct < 99 ||
-			result.overheadFactorData > 1.05
+			result.overheadFactorData > 1.05 ||
+			result.attachP95 > 5_000 ||
+			result.treeLevelP95 > 5 ||
+			result.formationScore > 20 ||
+			result.formationTreeOrphans > 0
 		) {
 			// Helpful for CI debug
 			console.log(formatFanoutTreeSimResult(result));
@@ -42,6 +46,14 @@ describe("fanout-tree-sim (ci)", () => {
 		expect(result.deliveredPct).to.be.greaterThan(99);
 		expect(result.deliveredWithinDeadlinePct).to.be.greaterThan(99);
 		expect(result.overheadFactorData).to.be.lessThan(1.05);
+		expect(result.attachSamples).to.equal(result.joinedCount);
+		expect(result.attachP95).to.be.lessThan(5_000);
+		expect(result.treeLevelP95).to.be.lessThan(5);
+		expect(result.formationTreeOrphans).to.equal(0);
+		expect(Number.isFinite(result.formationStretchP95)).to.equal(true);
+		expect(Number.isFinite(result.formationUnderlayDistP95)).to.equal(true);
+		expect(result.formationUnderlayEdges).to.be.greaterThan(0);
+		expect(result.formationScore).to.be.lessThan(20);
 		expect(result.protocolFetchReqSent).to.equal(0);
 		expect(result.protocolIHaveSent).to.equal(0);
 		expect(result.protocolControlBytesSent).to.be.lessThan(50_000);
@@ -82,7 +94,11 @@ describe("fanout-tree-sim (ci)", () => {
 			result.joinedPct < 99 ||
 			result.deliveredPct < 95 ||
 			result.deliveredWithinDeadlinePct < 95 ||
-			result.overheadFactorData > 2.2
+			result.overheadFactorData > 2.2 ||
+			result.attachP95 > 10_000 ||
+			result.treeLevelP95 > 8 ||
+			result.formationScore > 30 ||
+			result.formationTreeOrphans > 0
 		) {
 			// Helpful for CI debug
 			console.log(formatFanoutTreeSimResult(result));
@@ -92,6 +108,14 @@ describe("fanout-tree-sim (ci)", () => {
 		expect(result.deliveredPct).to.be.greaterThan(95);
 		expect(result.deliveredWithinDeadlinePct).to.be.greaterThan(95);
 		expect(result.overheadFactorData).to.be.lessThan(2.2);
+		expect(result.attachSamples).to.equal(result.joinedCount);
+		expect(result.attachP95).to.be.lessThan(10_000);
+		expect(result.treeLevelP95).to.be.lessThan(8);
+		expect(result.formationTreeOrphans).to.equal(0);
+		expect(Number.isFinite(result.formationStretchP95)).to.equal(true);
+		expect(Number.isFinite(result.formationUnderlayDistP95)).to.equal(true);
+		expect(result.formationUnderlayEdges).to.be.greaterThan(0);
+		expect(result.formationScore).to.be.lessThan(30);
 		expect(result.protocolFetchReqSent).to.be.lessThan(2_000);
 		expect(result.protocolIHaveSent).to.be.lessThan(4_000);
 		expect(result.protocolControlBytesSent).to.be.lessThan(300_000);

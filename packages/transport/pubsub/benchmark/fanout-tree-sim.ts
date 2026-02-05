@@ -94,6 +94,9 @@ const parseArgs = (argv: string[]) => {
 				"  --assertMaxControlBpp X       max control bytes per payload byte delivered (default: 0, off)",
 				"  --assertMaxTrackerBpp X       max tracker bytes per payload byte delivered (default: 0, off)",
 				"  --assertMaxRepairBpp X        max repair bytes per payload byte delivered (default: 0, off)",
+				"  --assertAttachP95Ms MS        max p95 time-to-attach since join start (default: 0, off)",
+				"  --assertMaxTreeLevelP95 N     max p95 tree depth/level (default: 0, off)",
+				"  --assertMaxFormationScore X   max formationScore (default: 0, off)",
 				"",
 				"Example:",
 				"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-sim --preset live --nodes 2000 --bootstraps 1 --seed 1",
@@ -424,6 +427,15 @@ const parseArgs = (argv: string[]) => {
 		...(maybeNumber("--assertMaxRepairBpp") != null
 			? { assertMaxRepairBpp: maybeNumber("--assertMaxRepairBpp") }
 			: {}),
+		...(maybeNumber("--assertAttachP95Ms") != null
+			? { assertAttachP95Ms: maybeNumber("--assertAttachP95Ms") }
+			: {}),
+		...(maybeNumber("--assertMaxTreeLevelP95") != null
+			? { assertMaxTreeLevelP95: maybeNumber("--assertMaxTreeLevelP95") }
+			: {}),
+		...(maybeNumber("--assertMaxFormationScore") != null
+			? { assertMaxFormationScore: maybeNumber("--assertMaxFormationScore") }
+			: {}),
 	};
 
 	const merged: Record<string, any> = { ...presetOpts, ...explicitOpts };
@@ -507,6 +519,30 @@ const main = async () => {
 	if (params.assertMaxRepairBpp > 0 && result.repairBpp - 1e-9 > params.assertMaxRepairBpp) {
 		console.error(
 			`ASSERT FAILED: repairBpp ${result.repairBpp.toFixed(4)} > ${params.assertMaxRepairBpp}`,
+		);
+		process.exit(2);
+	}
+	if (params.assertAttachP95Ms > 0 && result.attachP95 - 1e-9 > params.assertAttachP95Ms) {
+		console.error(
+			`ASSERT FAILED: attachP95 ${result.attachP95.toFixed(1)}ms > ${params.assertAttachP95Ms}ms`,
+		);
+		process.exit(2);
+	}
+	if (
+		params.assertMaxTreeLevelP95 > 0 &&
+		result.treeLevelP95 - 1e-9 > params.assertMaxTreeLevelP95
+	) {
+		console.error(
+			`ASSERT FAILED: treeLevelP95 ${result.treeLevelP95.toFixed(1)} > ${params.assertMaxTreeLevelP95}`,
+		);
+		process.exit(2);
+	}
+	if (
+		params.assertMaxFormationScore > 0 &&
+		result.formationScore - 1e-9 > params.assertMaxFormationScore
+	) {
+		console.error(
+			`ASSERT FAILED: formationScore ${result.formationScore.toFixed(2)} > ${params.assertMaxFormationScore}`,
 		);
 		process.exit(2);
 	}

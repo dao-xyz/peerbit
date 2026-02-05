@@ -101,6 +101,9 @@ export type FanoutTreeSimParams = {
 	assertMaxControlBpp: number;
 	assertMaxTrackerBpp: number;
 	assertMaxRepairBpp: number;
+	assertAttachP95Ms: number;
+	assertMaxTreeLevelP95: number;
+	assertMaxFormationScore: number;
 };
 
 export type FanoutTreeSimResult = {
@@ -113,6 +116,25 @@ export type FanoutTreeSimResult = {
 	joinedCount: number;
 	joinedPct: number;
 	joinMs: number;
+	attachSamples: number;
+	attachP50: number;
+	attachP95: number;
+	attachP99: number;
+	attachMax: number;
+
+	formationTreeMaxLevel: number;
+	formationTreeLevelP95: number;
+	formationTreeLevelAvg: number;
+	formationTreeOrphans: number;
+	formationTreeChildrenP95: number;
+	formationTreeChildrenMax: number;
+	formationTreeRootChildren: number;
+	formationUnderlayEdges: number;
+	formationUnderlayDistP95: number;
+	formationUnderlayDistMax: number;
+	formationStretchP95: number;
+	formationStretchMax: number;
+	formationScore: number;
 
 	publishMs: number;
 	expected: number;
@@ -354,6 +376,9 @@ export const resolveFanoutTreeSimParams = (
 		assertMaxControlBpp: Number(input.assertMaxControlBpp ?? 0),
 		assertMaxTrackerBpp: Number(input.assertMaxTrackerBpp ?? 0),
 		assertMaxRepairBpp: Number(input.assertMaxRepairBpp ?? 0),
+		assertAttachP95Ms: Number(input.assertAttachP95Ms ?? 0),
+		assertMaxTreeLevelP95: Number(input.assertMaxTreeLevelP95 ?? 0),
+		assertMaxFormationScore: Number(input.assertMaxFormationScore ?? 0),
 	};
 };
 
@@ -364,6 +389,9 @@ export const formatFanoutTreeSimResult = (r: FanoutTreeSimResult) => {
 		`nodes=${p.nodes} bootstraps=${r.bootstrapCount} bootstrapMaxPeers=${p.bootstrapMaxPeers} subscribers=${r.subscriberCount} relays=${r.relayCount}`,
 		`joined=${r.joinedCount}/${r.subscriberCount} (${r.joinedPct.toFixed(2)}%)`,
 		`join: ${(r.joinMs / 1000).toFixed(3)}s`,
+		`attachMs samples=${r.attachSamples} p50=${r.attachP50.toFixed(1)} p95=${r.attachP95.toFixed(1)} p99=${r.attachP99.toFixed(1)} max=${r.attachMax.toFixed(1)}`,
+		`formationPaths: underlayEdges=${r.formationUnderlayEdges} dist(p95/max)=${r.formationUnderlayDistP95.toFixed(1)}/${r.formationUnderlayDistMax.toFixed(1)} stretch(p95/max)=${r.formationStretchP95.toFixed(2)}/${r.formationStretchMax.toFixed(2)} score=${r.formationScore.toFixed(2)}`,
+		`formationTree: maxLevel=${r.formationTreeMaxLevel} p95Level=${r.formationTreeLevelP95.toFixed(1)} avgLevel=${r.formationTreeLevelAvg.toFixed(2)} orphans=${r.formationTreeOrphans} rootChildren=${r.formationTreeRootChildren} children(p95/max)=${r.formationTreeChildrenP95.toFixed(1)}/${r.formationTreeChildrenMax}`,
 		`publish: ${(r.publishMs / 1000).toFixed(3)}s intervalMs=${p.intervalMs}`,
 			`churn: everyMs=${p.churnEveryMs} downMs=${p.churnDownMs} fraction=${p.churnFraction} events=${r.churnEvents} peers=${r.churnedPeersTotal}`,
 			`delivered=${r.delivered}/${r.expected} (${r.deliveredPct.toFixed(2)}%) dup=${r.duplicates}`,
@@ -532,6 +560,7 @@ export const runFanoutTreeSim = async (
 			// Join subscribers (bounded concurrency).
 			const joinStart = Date.now();
 			const joined = new Array<boolean>(subscriberIndices.length).fill(false);
+			const attachDurationsByPos = new Array<number>(subscriberIndices.length).fill(-1);
 			const joinOne = async (idx: number): Promise<boolean> => {
 				const node = session.peers[idx]!.services.fanout;
 				const isRelay = relaySet.has(idx);
@@ -611,6 +640,7 @@ export const runFanoutTreeSim = async (
 					(pos) => async () => {
 						const ok = await joinOne(subscriberIndices[pos]!);
 						joined[pos] = ok;
+						if (ok) attachDurationsByPos[pos] = Date.now() - joinStart;
 						return ok;
 					},
 				);
@@ -639,12 +669,133 @@ export const runFanoutTreeSim = async (
 			}
 			const joinDone = Date.now();
 
+			const attachDurations = attachDurationsByPos.filter((d) => d >= 0).sort((a, b) => a - b);
+			const attachSamples = attachDurations.length;
+			const attachP50 = attachSamples > 0 ? quantile(attachDurations, 0.5) : NaN;
+			const attachP95 = attachSamples > 0 ? quantile(attachDurations, 0.95) : NaN;
+			const attachP99 = attachSamples > 0 ? quantile(attachDurations, 0.99) : NaN;
+			const attachMax = attachSamples > 0 ? attachDurations[attachSamples - 1]! : NaN;
+
 			const joinedHashes = new Set<string>(
 				subscriberIndices
 					.filter((_, i) => joined[i])
 					.map((i) => session.peers[i]!.services.fanout.publicKeyHash),
 			);
 			const joinedCount = joinedHashes.size;
+			const joinedSubscriberIndices = subscriberIndices.filter((_, i) => joined[i]);
+
+			const computeTreeShapeStats = () => {
+				const levels: number[] = [];
+				const levelByIndex: number[] = new Array(params.nodes).fill(NaN);
+				const childrenCounts: number[] = [];
+				let treeOrphans = 0;
+				let treeRootChildren = 0;
+				for (let i = 0; i < session.peers.length; i++) {
+					const s = session.peers[i]!.services.fanout.getChannelStats(params.topic, rootId);
+					if (!s) continue;
+					if (Number.isFinite(s.level)) {
+						levels.push(s.level);
+						levelByIndex[i] = s.level;
+					}
+					if (s.effectiveMaxChildren > 0) {
+						childrenCounts.push(s.children);
+					}
+					if (s.level === 0) {
+						treeRootChildren = s.children;
+					} else if (Number.isFinite(s.level) && !s.parent) {
+						treeOrphans += 1;
+					}
+				}
+				levels.sort((a, b) => a - b);
+				childrenCounts.sort((a, b) => a - b);
+				const treeMaxLevel = levels.length > 0 ? levels[levels.length - 1]! : 0;
+				const treeLevelP95 = levels.length > 0 ? quantile(levels, 0.95) : 0;
+				const treeLevelAvg =
+					levels.length > 0 ? levels.reduce((a, b) => a + b, 0) / levels.length : 0;
+				const treeChildrenP95 =
+					childrenCounts.length > 0 ? quantile(childrenCounts, 0.95) : 0;
+				const treeChildrenMax =
+					childrenCounts.length > 0 ? childrenCounts[childrenCounts.length - 1]! : 0;
+				return {
+					treeMaxLevel,
+					treeLevelP95,
+					treeLevelAvg,
+					treeOrphans,
+					treeChildrenP95,
+					treeChildrenMax,
+					treeRootChildren,
+					levelByIndex,
+				};
+			};
+
+			const formationTree = computeTreeShapeStats();
+
+			// Underlay (libp2p connection graph) shortest paths, used to spot wasted
+			// open connections that don't contribute to the overlay tree.
+			const underlayAdj: Array<Set<number>> = Array.from({ length: params.nodes }, () => new Set());
+			for (let i = 0; i < session.peers.length; i++) {
+				for (const c of session.peers[i]!.getConnections()) {
+					// @ts-ignore - bench shim uses the same field name as real libp2p connections
+					if ((c as any).status && (c as any).status !== "open") continue;
+					const j = parseSimPeerIndex((c as any).remotePeer);
+					if (j === i) continue;
+					if (j < 0 || j >= params.nodes) continue;
+					underlayAdj[i]!.add(j);
+				}
+			}
+			let formationUnderlayEdges = 0;
+			for (const s of underlayAdj) formationUnderlayEdges += s.size;
+			formationUnderlayEdges = Math.floor(formationUnderlayEdges / 2);
+
+			const underlayDist = new Array<number>(params.nodes).fill(Infinity);
+			const q: number[] = [];
+			underlayDist[rootIndex] = 0;
+			q.push(rootIndex);
+			for (let qi = 0; qi < q.length; qi++) {
+				const u = q[qi]!;
+				const du = underlayDist[u]!;
+				for (const v of underlayAdj[u]!) {
+					if (underlayDist[v] !== Infinity) continue;
+					underlayDist[v] = du + 1;
+					q.push(v);
+				}
+			}
+
+			const formationUnderlayDists = joinedSubscriberIndices
+				.map((i) => underlayDist[i]!)
+				.filter((d) => Number.isFinite(d))
+				.sort((a, b) => a - b);
+			const formationUnderlayDistP95 =
+				formationUnderlayDists.length > 0 ? quantile(formationUnderlayDists, 0.95) : NaN;
+			const formationUnderlayDistMax =
+				formationUnderlayDists.length > 0
+					? formationUnderlayDists[formationUnderlayDists.length - 1]!
+					: NaN;
+
+			const formationStretches = joinedSubscriberIndices
+				.map((i) => {
+					const overlay = formationTree.levelByIndex[i]!;
+					const under = underlayDist[i]!;
+					if (!Number.isFinite(overlay) || !Number.isFinite(under) || under <= 0) return NaN;
+					return overlay / under;
+				})
+				.filter((x) => Number.isFinite(x))
+				.sort((a, b) => a - b);
+			const formationStretchP95 =
+				formationStretches.length > 0 ? quantile(formationStretches, 0.95) : NaN;
+			const formationStretchMax =
+				formationStretches.length > 0 ? formationStretches[formationStretches.length - 1]! : NaN;
+
+			const formationOrphanPct =
+				joinedCount === 0 ? 0 : (100 * formationTree.treeOrphans) / joinedCount;
+			const formationStretchPenalty = Number.isFinite(formationStretchP95)
+				? Math.max(0, formationStretchP95 - 1) * 10
+				: 0;
+			const formationScore =
+				(Number.isFinite(attachP95) ? attachP95 / 1000 : 0) +
+				formationTree.treeLevelP95 +
+				formationOrphanPct +
+				formationStretchPenalty;
 
 			const churnController = new AbortController();
 			const churnSignal = anySignal([timeoutSignal, churnController.signal]) as AbortSignal & {
@@ -652,8 +803,6 @@ export const runFanoutTreeSim = async (
 			};
 			let churnEvents = 0;
 			let churnedPeersTotal = 0;
-
-			const joinedSubscriberIndices = subscriberIndices.filter((_, i) => joined[i]);
 
 			// Delivery tracking
 			const publishAt = new Map<number, number>();
@@ -817,35 +966,14 @@ export const runFanoutTreeSim = async (
 				}
 
 				// Tree shape stats (best-effort)
-				const levels: number[] = [];
-				const childrenCounts: number[] = [];
-				let treeOrphans = 0;
-				let treeRootChildren = 0;
-				for (const p of session.peers) {
-					const s = p.services.fanout.getChannelStats(params.topic, rootId);
-					if (!s) continue;
-					if (Number.isFinite(s.level)) {
-						levels.push(s.level);
-					}
-					if (s.effectiveMaxChildren > 0) {
-						childrenCounts.push(s.children);
-					}
-					if (s.level === 0) {
-						treeRootChildren = s.children;
-					} else if (Number.isFinite(s.level) && !s.parent) {
-						treeOrphans += 1;
-					}
-				}
-				levels.sort((a, b) => a - b);
-				childrenCounts.sort((a, b) => a - b);
-				const treeMaxLevel = levels.length > 0 ? levels[levels.length - 1]! : 0;
-				const treeLevelP95 = levels.length > 0 ? quantile(levels, 0.95) : 0;
-				const treeLevelAvg =
-					levels.length > 0 ? levels.reduce((a, b) => a + b, 0) / levels.length : 0;
-				const treeChildrenP95 =
-					childrenCounts.length > 0 ? quantile(childrenCounts, 0.95) : 0;
-				const treeChildrenMax =
-					childrenCounts.length > 0 ? childrenCounts[childrenCounts.length - 1]! : 0;
+				const tree = computeTreeShapeStats();
+				const treeMaxLevel = tree.treeMaxLevel;
+				const treeLevelP95 = tree.treeLevelP95;
+				const treeLevelAvg = tree.treeLevelAvg;
+				const treeOrphans = tree.treeOrphans;
+				const treeChildrenP95 = tree.treeChildrenP95;
+				const treeChildrenMax = tree.treeChildrenMax;
+				const treeRootChildren = tree.treeRootChildren;
 
 				// Stream backpressure stats (queued bytes)
 				const queuedBytesSamples: number[] = [];
@@ -1011,6 +1139,24 @@ export const runFanoutTreeSim = async (
 				joinedCount,
 				joinedPct,
 				joinMs: joinDone - joinStart,
+				attachSamples,
+				attachP50,
+				attachP95,
+				attachP99,
+				attachMax,
+				formationTreeMaxLevel: formationTree.treeMaxLevel,
+				formationTreeLevelP95: formationTree.treeLevelP95,
+				formationTreeLevelAvg: formationTree.treeLevelAvg,
+				formationTreeOrphans: formationTree.treeOrphans,
+				formationTreeChildrenP95: formationTree.treeChildrenP95,
+				formationTreeChildrenMax: formationTree.treeChildrenMax,
+				formationTreeRootChildren: formationTree.treeRootChildren,
+				formationUnderlayEdges,
+				formationUnderlayDistP95,
+				formationUnderlayDistMax,
+				formationStretchP95,
+				formationStretchMax,
+				formationScore,
 				publishMs: publishDone - publishStart,
 				expected,
 				delivered,
