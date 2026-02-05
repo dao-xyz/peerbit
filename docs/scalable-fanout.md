@@ -81,7 +81,8 @@ For a configurable workload (e.g. 2k nodes, 30 msg/s, 10s, 1KB):
 - Experimental production building blocks:
   - `packages/transport/pubsub/src/fanout-tree.ts` (protocol + join/repair)
   - `packages/transport/pubsub/src/fanout-channel.ts` (convenience wrapper)
-  - `peer.services.pubsub.fanoutChannel(...)` / `peer.services.pubsub.fanoutJoin(...)` (convenience APIs)
+  - `peer.services.fanout` + `peer.fanoutChannel(...)` / `peer.fanoutJoin(...)` (convenience APIs)
+  - SharedLog `target: "all"` now uses fanout as the data plane when configured (`fanout` option); there is no publish fallback from fanout back to legacy RPC send.
 - CI regression sims (small + assertive):
   - `packages/transport/pubsub/test/fanout-tree-sim.spec.ts`
   - `packages/transport/pubsub/test/pubsub-topic-sim.spec.ts`
@@ -91,6 +92,13 @@ For a configurable workload (e.g. 2k nodes, 30 msg/s, 10s, 1KB):
 ### Recent progress (2026-02-03)
 - Protocol multicodec bumped to `/peerbit/fanout-tree/0.4.0` (breaking, coordinated upgrades assumed).
 - Added channel-local economical unicast: `JOIN_ACCEPT` carries a route token and `UNICAST` forwards via root + tree edges (no full-network flooding).
+- Added channel-level targeted send API: `FanoutChannel.getRouteToken()` + `FanoutChannel.unicast(...)`.
+- Added route lookup + targeted send convenience: `FanoutChannel.resolveRouteToken(...)` + `FanoutChannel.unicastTo(...)` (resolves routes via the tree control-plane when no out-of-band token is available).
+- Added filtered `"unicast"` events for `(topic, root)` in `FanoutChannel`.
+- Route-token cache hardening: bounded route cache (`routeCacheMaxEntries`) + TTL (`routeCacheTtlMs`) + eviction/expiry metrics.
+- Added periodic route re-announces (`routeAnnounceIntervalMs`) so bounded caches are re-warmed without global membership exchange.
+- Added route-query fallback search on cache misses: parent/root can recursively query subtree branches and return first valid route (keeps lookup robust after cache expiry).
+- Added route-fallback observability counters: `routeProxyQueries`, `routeProxyTimeouts`, `routeProxyFanout` (also exposed in `fanout-tree-sim` output).
 - `JOIN_REJECT` now optionally includes redirect candidates so bootstraps/relays can steer joiners when full/not-attached.
 - Join loop throttling: cache bootstrap neighbors + tracker candidate results to avoid query storms at scale.
 - Join scaling: `bootstrapMaxPeers` option to limit how many bootstrap trackers each node dials/queries (join + tracker announce/refresh).
@@ -105,7 +113,7 @@ For a configurable workload (e.g. 2k nodes, 30 msg/s, 10s, 1KB):
 This is intentionally **separate from `DirectSub`** so existing “normal pubsub” use-cases (RPC, many-writers, small groups) remain unchanged.
 
 - As a Peerbit user you now have a dedicated service: `peer.services.fanout` (type: `FanoutTree`).
-- Convenience: `peer.services.pubsub.fanoutChannel(topic, root)` creates a `FanoutChannel` using the same underlying `peer.services.fanout` instance (if configured).
+- Convenience: `peer.fanoutChannel(topic, root)` creates a `FanoutChannel` bound to `peer.services.fanout`.
 - Bootstrapping/rendezvous:
   - Call `peer.bootstrap()` (recommended) to dial bootstrap servers **and** configure the same bootstrap list for `peer.services.fanout`.
   - Or call `peer.services.fanout.setBootstraps([...multiaddrs])` directly if you want a custom rendezvous set.
@@ -114,6 +122,7 @@ This is intentionally **separate from `DirectSub`** so existing “normal pubsub
   - **root** calls `openChannel(topic, rootId, { role: "root", ... })` then `publishData(...)`
   - **subscribers/relays** call `joinChannel(topic, rootId, { ... })` and listen on `"fanout:data"`
 - Convenience wrapper: `FanoutChannel` wraps `(topic, root)` + filters events for that channel.
+- SharedLog broadcast path (`append(..., { target: "all" })`) now requires a configured fanout channel (`log.open({ fanout: { root, ... } })`) and uses fanout as the transport path.
 
 Current upload shaping knobs (WIP):
 - `uploadLimitBps` + `maxChildren` still define *admission* capacity.

@@ -1,4 +1,4 @@
-import { BorshError, field, variant } from "@dao-xyz/borsh";
+import { BorshError, deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { AnyBlockStore, RemoteBlocks } from "@peerbit/blocks";
 import { cidifyString } from "@peerbit/blocks-interface";
 import { Cache } from "@peerbit/cache";
@@ -31,7 +31,13 @@ import {
 } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import { ClosedError, Program, type ProgramEvents } from "@peerbit/program";
-import { waitForSubscribers } from "@peerbit/pubsub";
+import {
+	FanoutChannel,
+	type FanoutTreeChannelOptions,
+	type FanoutTreeDataEvent,
+	type FanoutTreeJoinOptions,
+	waitForSubscribers,
+} from "@peerbit/pubsub";
 import {
 	SubscriptionEvent,
 	UnsubcriptionEvent,
@@ -372,6 +378,7 @@ export type SharedLogOptions<
 	compatibility?: number;
 	domain?: ReplicationDomainConstructor<D>;
 	eagerBlocks?: boolean | { cacheSize?: number };
+	fanout?: SharedLogFanoutOptions;
 };
 
 export const DEFAULT_MIN_REPLICAS = 2;
@@ -393,6 +400,17 @@ const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_MEMORY_LIMIT = 0.001;
 const RECALCULATE_PARTICIPATION_RELATIVE_DENOMINATOR_FLOOR = 1e-3;
 
 const DEFAULT_DISTRIBUTION_DEBOUNCE_TIME = 500;
+
+const DEFAULT_SHARED_LOG_FANOUT_CHANNEL_OPTIONS: Omit<
+	FanoutTreeChannelOptions,
+	"role"
+> = {
+	msgRate: 30,
+	msgSize: 1024,
+	uploadLimitBps: 5_000_000,
+	maxChildren: 24,
+	repair: true,
+};
 
 const getIdForDynamicRange = (publicKey: PublicSignKey) => {
 	return sha256Sync(
@@ -421,6 +439,12 @@ export type DeliveryOptions = {
 	requireRecipients?: boolean;
 	timeout?: number;
 	signal?: AbortSignal;
+};
+
+export type SharedLogFanoutOptions = {
+	root: string;
+	channel?: Partial<Omit<FanoutTreeChannelOptions, "role">>;
+	join?: FanoutTreeJoinOptions;
 };
 
 export type SharedAppendOptions<T> = AppendOptions<T> & {
@@ -475,6 +499,8 @@ export class SharedLog<
 
 	private _onSubscriptionFn!: (arg: any) => any;
 	private _onUnsubscriptionFn!: (arg: any) => any;
+	private _onFanoutDataFn?: (arg: any) => void;
+	private _fanoutChannel?: FanoutChannel;
 
 	private _isTrustedReplicator?: (
 		publicKey: PublicSignKey,
@@ -594,6 +620,106 @@ export class SharedLog<
 
 	private get v8Behaviour() {
 		return (this.compatibility ?? Number.MAX_VALUE) < 9;
+	}
+
+	private getFanoutChannelOptions(
+		options?: SharedLogFanoutOptions,
+	): Omit<FanoutTreeChannelOptions, "role"> {
+		return {
+			...DEFAULT_SHARED_LOG_FANOUT_CHANNEL_OPTIONS,
+			...(options?.channel ?? {}),
+		};
+	}
+
+	private async _openFanoutChannel(options?: SharedLogFanoutOptions) {
+		this._closeFanoutChannel();
+		if (!options) {
+			return;
+		}
+
+		const fanoutService = (this.node.services as any).fanout;
+		if (!fanoutService) {
+			throw new Error(
+				`Fanout is configured for shared-log topic ${this.topic}, but no fanout service is available on this client`,
+			);
+		}
+
+		const channel = new FanoutChannel(fanoutService, {
+			topic: this.topic,
+			root: options.root,
+		});
+		this._fanoutChannel = channel;
+
+		this._onFanoutDataFn =
+			this._onFanoutDataFn ||
+			((evt: any) => {
+				const detail = (evt as CustomEvent<FanoutTreeDataEvent>)?.detail;
+				if (!detail) {
+					return;
+				}
+				void this._onFanoutData(detail).catch((error) => logger.error(error));
+			});
+		channel.addEventListener("data", this._onFanoutDataFn);
+
+		try {
+			const channelOptions = this.getFanoutChannelOptions(options);
+			if (options.root === fanoutService.publicKeyHash) {
+				await channel.openAsRoot(channelOptions);
+				return;
+			}
+			await channel.join(channelOptions, options.join);
+		} catch (error) {
+			this._closeFanoutChannel();
+			throw error;
+		}
+	}
+
+	private _closeFanoutChannel() {
+		if (this._fanoutChannel) {
+			if (this._onFanoutDataFn) {
+				this._fanoutChannel.removeEventListener("data", this._onFanoutDataFn);
+			}
+			this._fanoutChannel.close();
+		}
+		this._fanoutChannel = undefined;
+	}
+
+	private async _onFanoutData(detail: FanoutTreeDataEvent) {
+		let message: TransportMessage;
+		try {
+			message = deserialize(detail.payload, TransportMessage);
+		} catch (error) {
+			if (error instanceof BorshError) {
+				return;
+			}
+			throw error;
+		}
+
+		if (!(message instanceof ExchangeHeadsMessage)) {
+			return;
+		}
+
+		const fanoutService = (this.node.services as any).fanout;
+		const from =
+			fanoutService?.getPublicKey?.(detail.from) ??
+			this.node.services.pubsub.getPublicKey(detail.from) ??
+			({ hashcode: () => detail.from } as PublicSignKey);
+
+		await this.onMessage(message, {
+			from,
+			message: {} as any,
+		});
+	}
+
+	private async _publishExchangeHeadsViaFanout(
+		message: ExchangeHeadsMessage<any>,
+	): Promise<void> {
+		if (!this._fanoutChannel) {
+			throw new Error(
+				`No fanout channel configured for shared-log topic ${this.topic}`,
+			);
+		}
+		await this._fanoutChannel.publish(serialize(message));
 	}
 
 	// @deprecated
@@ -1796,7 +1922,7 @@ export class SharedLog<
 					}
 				} else {
 					if (!delivery) {
-						this.rpc.send(message).catch((e) => logger.error(e));
+						await this._publishExchangeHeadsViaFanout(message);
 						continue;
 					}
 
@@ -2147,6 +2273,7 @@ export class SharedLog<
 		);
 
 		await this.rpc.subscribe();
+		await this._openFanoutChannel(options?.fanout);
 
 		// mark all our replicaiton ranges as "new", this would allow other peers to understand that we recently reopend our database and might need some sync and warmup
 		await this.updateTimestampOfOwnedReplicationRanges(); // TODO do we need to do this before subscribing?
@@ -2494,6 +2621,7 @@ export class SharedLog<
 		this.pendingMaturity.clear();
 
 		this.distributeQueue?.clear();
+		this._closeFanoutChannel();
 		this.coordinateToHash.clear();
 		this.recentlyRebalanced.clear();
 		this.uniqueReplicators.clear();

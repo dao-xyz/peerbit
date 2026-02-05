@@ -2820,6 +2820,27 @@ describe("index", () => {
 					// TODO separate setup so we don't need to close store 2 test here
 					await stores[2].close();
 					await stores[0].docs.log.replicate(false);
+					const fanout = {
+						root: (session.peers[1].services as any).fanout.publicKeyHash as string,
+						channel: {
+							msgRate: 10,
+							msgSize: 256,
+							uploadLimitBps: 1_000_000,
+							maxChildren: 8,
+							repair: true,
+						},
+						join: { timeoutMs: 20_000 },
+					};
+					const rootStore = stores[1];
+					if (!rootStore.closed) {
+						await (rootStore.docs.log as any)._openFanoutChannel(fanout);
+					}
+					for (const store of stores) {
+						if (store.closed || store === rootStore) {
+							continue;
+						}
+						await (store.docs.log as any)._openFanoutChannel(fanout);
+					}
 					await waitForResolved(async () =>
 						expect((await stores[0].docs.log.getReplicators()).size).equal(1),
 					);

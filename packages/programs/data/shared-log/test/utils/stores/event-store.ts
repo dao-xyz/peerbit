@@ -16,6 +16,7 @@ import {
 	AbsoluteReplicas,
 	type ReplicationLimitsOptions,
 	type ReplicationOptions,
+	type SharedLogFanoutOptions,
 	SharedLog,
 } from "../../../src/index.js";
 import type { TransportMessage } from "../../../src/message.js";
@@ -64,6 +65,7 @@ export type Args<
 	waitForReplicatorTimeout?: number;
 	waitForReplicatorRequestIntervalMs?: number;
 	waitForReplicatorRequestMaxAttempts?: number;
+	fanout?: SharedLogFanoutOptions;
 	keep?: (
 		entry: Entry<Operation<T>> | ShallowEntry | EntryReplicated<R>,
 	) => boolean;
@@ -135,6 +137,7 @@ export class EventStore<
 			timeUntilRoleMaturity: properties?.timeUntilRoleMaturity ?? 3000,
 			waitForPruneDelay: properties?.waitForPruneDelay ?? 0,
 			keep: properties?.keep,
+			fanout: properties?.fanout,
 			respondToIHaveTimeout: properties?.respondToIHaveTimeout,
 			distributionDebounceTime: 50, // to make tests fast
 			domain: (properties?.domain ?? (properties?.setup as any)?.domain) as any,

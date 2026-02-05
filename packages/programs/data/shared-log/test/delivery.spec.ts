@@ -80,6 +80,112 @@ describe("append delivery options", () => {
 		).to.be.rejectedWith(NoPeersError);
 	});
 
+	it("throws on target=all when fanout channel is not configured", async () => {
+		session = await TestSession.connected(2);
+
+		const db1 = await session.peers[0].open(new EventStore<string, any>());
+		await EventStore.open<EventStore<string, any>>(db1.address!, session.peers[1]);
+
+		await expect(
+			db1.add("missing-fanout", { target: "all" } as any),
+		).to.be.rejectedWith("No fanout channel configured");
+	});
+
+	it("uses fanout data plane for target=all when configured", async () => {
+		session = await TestSession.connected(2);
+
+		const root = (session.peers[0].services as any).fanout.publicKeyHash as string;
+		const fanout = {
+			root,
+			channel: {
+				msgRate: 10,
+				msgSize: 256,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 8,
+				repair: true,
+			},
+			join: { timeoutMs: 10_000 },
+		};
+
+		const db1 = await session.peers[0].open(new EventStore<string, any>(), {
+			args: { fanout },
+		});
+		const db2 = await EventStore.open<EventStore<string, any>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: { fanout },
+			},
+		);
+
+		let exchangeHeadsRpcSends = 0;
+		const rpcAny: any = db1.log.rpc;
+		const originalSend = rpcAny.send.bind(rpcAny);
+		rpcAny.send = async (...args: any[]) => {
+			if (args[0] instanceof ExchangeHeadsMessage) {
+				exchangeHeadsRpcSends++;
+			}
+			return originalSend(...args);
+		};
+
+		await db1.add("fanout-delivery", { target: "all" } as any);
+
+		await waitForResolved(async () => {
+			const values = (await db2.log.log.toArray()).map(
+				(entry) => entry.payload.getValue().value,
+			);
+			expect(values).to.include("fanout-delivery");
+		});
+
+		expect(exchangeHeadsRpcSends).to.equal(0);
+	});
+
+	it("does not fall back to rpc when fanout publish fails", async () => {
+		session = await TestSession.connected(2);
+
+		const root = (session.peers[0].services as any).fanout.publicKeyHash as string;
+		const fanout = {
+			root,
+			channel: {
+				msgRate: 10,
+				msgSize: 256,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 8,
+				repair: true,
+			},
+			join: { timeoutMs: 10_000 },
+		};
+
+		const db1 = await session.peers[0].open(new EventStore<string, any>(), {
+			args: { fanout },
+		});
+		await EventStore.open<EventStore<string, any>>(db1.address!, session.peers[1], {
+			args: { fanout },
+		});
+
+		let exchangeHeadsRpcSends = 0;
+		const rpcAny: any = db1.log.rpc;
+		const originalSend = rpcAny.send.bind(rpcAny);
+		rpcAny.send = async (...args: any[]) => {
+			if (args[0] instanceof ExchangeHeadsMessage) {
+				exchangeHeadsRpcSends++;
+			}
+			return originalSend(...args);
+		};
+
+		const fanoutChannel: any = (db1.log as any)._fanoutChannel;
+		expect(fanoutChannel).to.exist;
+		fanoutChannel.publish = async () => {
+			throw new Error("fanout publish failed");
+		};
+
+		await expect(
+			db1.add("fanout-fail", { target: "all" } as any),
+		).to.be.rejectedWith("fanout publish failed");
+
+		expect(exchangeHeadsRpcSends).to.equal(0);
+	});
+
 	it("settles towards the current replicators, not gid peer history", async () => {
 		session = await TestSession.connected(3);
 

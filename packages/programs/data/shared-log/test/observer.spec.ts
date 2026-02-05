@@ -91,12 +91,24 @@ describe("observer", () => {
 
 		const s = new EventStore<string, any>();
 		const createStore = () => deserialize(serialize(s), EventStore);
+		const fanout = {
+			root: (session.peers[0].services as any).fanout.publicKeyHash as string,
+			channel: {
+				msgRate: 10,
+				msgSize: 256,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 8,
+				repair: true,
+			},
+			join: { timeoutMs: 10_000 },
+		};
 
 		const replicator = await session.peers[0].open(createStore(), {
 			args: {
 				replicate: {
 					factor: 1,
 				},
+				fanout,
 			},
 		});
 
@@ -104,6 +116,7 @@ describe("observer", () => {
 			args: {
 				replicate: false,
 				keep: () => true,
+				fanout,
 			},
 		});
 		await waitForResolved(async () =>
