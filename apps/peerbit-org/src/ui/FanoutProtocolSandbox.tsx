@@ -590,7 +590,7 @@ export function FanoutProtocolSandbox({
 	const [writerIndex, setWriterIndex] = useState(0);
 	const [graph, setGraph] = useState<Graph | null>(null);
 
-	const containerRef = useRef<HTMLDivElement | null>(null);
+	const canvasContainerRef = useRef<HTMLDivElement | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: initialHeight });
 
@@ -633,7 +633,7 @@ export function FanoutProtocolSandbox({
 	} | null>(null);
 
 	useEffect(() => {
-		const el = containerRef.current;
+		const el = canvasContainerRef.current;
 		if (!el) return;
 		const obs = new ResizeObserver((entries) => {
 			const box = entries[0]?.contentRect;
@@ -1257,7 +1257,7 @@ export function FanoutProtocolSandbox({
 	}, [status]);
 
 	return (
-		<div className={className} ref={containerRef}>
+		<div className={className}>
 			<div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
 				<div className="flex flex-col gap-4">
 					<div className="flex flex-wrap items-start justify-between gap-2">
@@ -1648,9 +1648,12 @@ export function FanoutProtocolSandbox({
 										</span>
 									) : null}
 								</div>
-							) : null}
+									) : null}
 
-							<div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
+							<div
+								ref={canvasContainerRef}
+								className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800"
+							>
 								<canvas ref={canvasRef} onClick={onClickCanvas} />
 							</div>
 
