@@ -1,8 +1,15 @@
-// get monorepo root location using esm and .git folder
+// Resolve monorepo root from the location of this config file.
+// Note: in git worktrees `.git` is a file (not a directory), so we can't rely
+// on `findUp(..., { type: "directory" })` always succeeding.
 import * as findUp from "find-up";
 import path from "path";
+import { fileURLToPath } from "url";
 
-const root = path.dirname(await findUp.findUp(".git", { type: "directory" }));
+const configDir = path.dirname(fileURLToPath(import.meta.url));
+const gitPath =
+	(await findUp.findUp(".git", { cwd: configDir, type: "directory" })) ??
+	(await findUp.findUp(".git", { cwd: configDir, type: "file" }));
+const root = gitPath ? path.dirname(gitPath) : configDir;
 
 export default {
 	// global options

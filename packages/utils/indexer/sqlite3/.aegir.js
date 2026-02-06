@@ -1,8 +1,14 @@
 import * as findUp from "find-up";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 
-const root = path.dirname(await findUp.findUp(".git", { type: "directory" }));
+// In git worktrees `.git` is a file (not a directory), so allow both.
+const configDir = path.dirname(fileURLToPath(import.meta.url));
+const gitPath =
+	(await findUp.findUp(".git", { cwd: configDir, type: "directory" })) ??
+	(await findUp.findUp(".git", { cwd: configDir, type: "file" }));
+const root = gitPath ? path.dirname(gitPath) : configDir;
 
 export default {
 	// test cmd options
