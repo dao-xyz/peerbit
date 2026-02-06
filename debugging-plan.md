@@ -81,3 +81,33 @@ Last updated: 2026-02-06
 ### 2026-02-06
 - The same flake signature can be reproduced locally with a tight loop, even on a fast dev machine.
 - The current de-flake change (wait-for-resolved + lower count) reduces how often the test fails quickly, but it does not fully eliminate failures under stress; sometimes convergence never happens within the current `waitForResolved` window.
+
+## Key Learnings
+
+### 2026-02-06 (production analog / semantics)
+- Production analog: `docs.index.search({ fetch: N })` can return **fewer than N** results during churn (redundancy rebalance, indexing lag, or RPC timeouts/missing peer responses). In current code, that can be a *silent* partial result.
+- RPC behavior: `@peerbit/rpc` request/response has a default timeout of **10s** (`packages/programs/rpc/src/controller.ts`), and `queryAll(...)` will throw `MissingResponsesError` if some target peers never responded (`packages/programs/rpc/src/utils.ts`).
+- Document search behavior: `packages/programs/data/document/document/src/search.ts` catches `MissingResponsesError` and **swallows it by default**, unless the caller sets `remote.throwOnMissing: true`. This implies `search(...)` is effectively best-effort by default.
+- Therefore, a test that asserts strict completeness under churn must opt into strictness (e.g. `remote.throwOnMissing: true`, higher `remote.timeout`, and retries/backoff; potentially `remote.wait`/reachability behavior).
+
+## Test Results
+
+### 2026-02-06 (CI evidence: PR #594 still flakes)
+- FAIL (CI, dao-xyz/peerbit PR #594, head `13e908bbd`): run `21766414040`, job `62803272840` (`ci:part2`) failed in the updated test with:
+  - `Error: Failed to collect all messages 295 < 600. Log lengths: [62,271,343]` (at `waitForResolved.timeout ... index.spec.ts:2347`).
+  - This confirms the wait/retry mitigation reduces fast failures but does not eliminate timeouts; convergence sometimes does not occur within the current wait window.
+
+## Claims/Hypothesis
+
+### 2026-02-06
+| Claim/Hypothesis | Evidence so far | Test to confirm/reject | Status |
+|---|---|---|---|
+| H2: Default distributed search semantics are best-effort; strict completeness requires explicit options (throwOnMissing + longer timeout + wait/retry). | `queryAll` throws MissingResponsesError for missing shard responses; search swallows unless `remote.throwOnMissing=true`; CI logs show partial results without any MissingResponsesError in the test. | Write a strict-mode test that sets `remote.throwOnMissing=true` and `remote.timeout` high; observe either (a) eventual success or (b) deterministic error pointing to missing responders/unreachability. | Pending |
+| H3: There is a deeper production bug (not just test strictness): under redundancy churn, the system can fail to reach completeness within reasonable time even when peers are connected (either due to cover selection, reachability filtering, or replication/index lag). | Local stress loop can fail on both master and the de-flake branch; CI also fails on de-flake branch after 90s wait. | Add instrumentation: run strict-mode query, log which peers responded; explore `remote.wait`/reachableOnly behavior; isolate whether failures correlate with MissingResponsesError, indexing lag, or cover/rpc selection. | Pending |
+
+## Next Steps
+
+### 2026-02-06
+- Create 2 worktrees using `wt`:
+  - WT-A: implement a strict-mode test (throwOnMissing + increased timeout + retry/backoff + optional reachability/wait), so we can validate the intended contract.
+  - WT-B: investigate and fix the underlying cause of non-convergence/timeouts under churn (likely production code changes in search/rpc/cover selection/replication/indexing path).
