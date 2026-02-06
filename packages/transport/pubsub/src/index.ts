@@ -736,7 +736,8 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 						);
 						// Also include topics with a pending subscribe (debounce
 						// not yet fired). This handles the race where subscribe()
-						// was called but _subscribe() hasn't executed yet.
+						// was called but _subscribe() hasn't executed yet, so
+						// subscriptions isn't set but we should still respond.
 						for (const topic of pubsubMessage.topics) {
 							if (
 								!mySubscriptions.includes(topic) &&
