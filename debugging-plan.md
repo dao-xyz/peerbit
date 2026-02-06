@@ -69,3 +69,15 @@ Last updated: 2026-02-06
 
 ### 2026-02-06
 - PASS: `PEERBIT_TEST_SESSION=mock pnpm --filter @peerbit/document test -- --grep "can search while keeping minimum amount of replicas"` (after adding `debugging-plan.md` commit + updating PR body).
+
+## Test Results
+
+### 2026-02-06 (stress / local repro)
+- FAIL (stress loop, PR branch): iteration 17/25 failed: `Failed to collect all messages 317 < 600. Log lengths: [286,55,317]` after ~2 minutes (timed out inside `waitForResolved(...)`).
+- FAIL (stress loop, `origin/master`): iteration 11/25 failed quickly: `Failed to collect all messages 997 < 1000. Log lengths: [997,102,578]`.
+
+## Key Learnings
+
+### 2026-02-06
+- The same flake signature can be reproduced locally with a tight loop, even on a fast dev machine.
+- The current de-flake change (wait-for-resolved + lower count) reduces how often the test fails quickly, but it does not fully eliminate failures under stress; sometimes convergence never happens within the current `waitForResolved` window.
