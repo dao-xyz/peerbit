@@ -2,7 +2,16 @@ import * as findUp from "find-up";
 import fs from "fs";
 import path from "path";
 
-const root = path.dirname(await findUp.findUp(".git", { type: "directory" }));
+// In git worktrees, `.git` is a *file* (not a directory), so don't constrain the type.
+// Fall back to workspace markers for non-git environments.
+const rootMarker =
+	(await findUp.findUp(".git")) ??
+	(await findUp.findUp("pnpm-workspace.yaml")) ??
+	(await findUp.findUp("package.json"));
+if (!rootMarker) {
+	throw new Error("Unable to locate repo root (no .git/workspace marker found)");
+}
+const root = path.dirname(rootMarker);
 
 export default {
 	// test cmd options
