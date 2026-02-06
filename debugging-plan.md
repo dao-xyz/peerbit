@@ -121,3 +121,9 @@ Last updated: 2026-02-06
 - Parallel work:
   - Subagent A: implement strict-mode test (throwOnMissing + increased timeout + retry/backoff + optional reachability/wait), and run targeted stress to see if it stabilizes / provides actionable errors.
   - Subagent B: investigate why convergence can fail even with waitForResolved (root cause likely in missing responses, iterator/kept handling, cover selection/reachability, or indexing/prune timing). Propose and implement production-code fixes + narrow tests.
+
+## Ahas/Gotchas
+
+### 2026-02-06 (worktrees)
+- `wt` worktrees use a `.git` *file* (not a directory). Repo root `.aegir.js` currently does `findUp.findUp('.git', { type: 'directory' })`, which returns `undefined` in worktrees and breaks all `aegir test` runs with `ERR_INVALID_ARG_TYPE`.
+  - Fix: find `.git` without constraining `type: 'directory'`, or locate root via `pnpm-workspace.yaml` / `git rev-parse --show-toplevel`.
