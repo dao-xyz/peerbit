@@ -111,3 +111,13 @@ Last updated: 2026-02-06
 - Create 2 worktrees using `wt`:
   - WT-A: implement a strict-mode test (throwOnMissing + increased timeout + retry/backoff + optional reachability/wait), so we can validate the intended contract.
   - WT-B: investigate and fix the underlying cause of non-convergence/timeouts under churn (likely production code changes in search/rpc/cover selection/replication/indexing path).
+
+## Next Steps
+
+### 2026-02-06 (worktrees + parallel tracks)
+- Created worktrees via `wt`:
+  - WT-A (tests): `../peerbit.test-strict-search-under-churn` on branch `test/strict-search-under-churn`.
+  - WT-B (prod fix): `../peerbit.fix-search-convergence-under-churn` on branch `fix/search-convergence-under-churn`.
+- Parallel work:
+  - Subagent A: implement strict-mode test (throwOnMissing + increased timeout + retry/backoff + optional reachability/wait), and run targeted stress to see if it stabilizes / provides actionable errors.
+  - Subagent B: investigate why convergence can fail even with waitForResolved (root cause likely in missing responses, iterator/kept handling, cover selection/reachability, or indexing/prune timing). Propose and implement production-code fixes + narrow tests.
