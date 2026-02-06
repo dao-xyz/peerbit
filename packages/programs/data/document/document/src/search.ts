@@ -289,6 +289,7 @@ type QueryDetailedOptions<
 		response: types.AbstractSearchResult,
 		from: PublicSignKey,
 	) => void | Promise<void>;
+	onMissingResponses?: (error: MissingResponsesError) => void | Promise<void>;
 	remote?: {
 		from?: string[]; // if specified, only query these peers
 	};
@@ -2237,6 +2238,15 @@ export class DocumentIndex<
 			// this will lead to bad UX as you usually want to list/expore whats going on before doing any replication work
 			remote.priority = 2;
 		}
+		if (remote && remote.timeout == null && options?.remote) {
+			const waitPolicy =
+				typeof options.remote === "object" ? options.remote.wait : undefined;
+			const waitTimeout =
+				typeof waitPolicy === "object" ? waitPolicy.timeout : undefined;
+			if (waitTimeout != null) {
+				remote.timeout = waitTimeout;
+			}
+		}
 
 		if (!local && !remote) {
 			throw new Error(
@@ -2403,6 +2413,9 @@ export class DocumentIndex<
 				} catch (error) {
 					if (error instanceof MissingResponsesError) {
 						warn("Did not reciveve responses from all shard");
+						if (options?.onMissingResponses) {
+							await options.onMissingResponses(error);
+						}
 						if (remote?.throwOnMissing) {
 							throw error;
 						}
@@ -2961,6 +2974,7 @@ export class DocumentIndex<
 		): Promise<boolean> => {
 			await warmupPromise;
 			let hasMore = false;
+			let missingResponses = false;
 			const discoverTargets =
 				typeof options?.remote === "object"
 					? options.remote.reach?.discover
@@ -3096,10 +3110,17 @@ export class DocumentIndex<
 							);
 						}
 					},
+					onMissingResponses: () => {
+						missingResponses = true;
+					},
 				},
 				fetchOptions?.fetchedFirstForRemote,
 			);
 
+			if (missingResponses) {
+				hasMore = true;
+				unsetDone();
+			}
 			if (!hasMore) {
 				maybeSetDone();
 			}
