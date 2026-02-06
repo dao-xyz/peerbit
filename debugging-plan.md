@@ -64,3 +64,8 @@ Last updated: 2026-02-06
 ### 2026-02-06
 - PR opened on the Faolain fork for this fix: https://github.com/Faolain/peerbit/pull/8 (branch `fix/ci-part2-redundancy-flake`).
 - Correction: the local deterministic repro script is `packages/programs/data/document/document/tmp/repro-ci-part2-redundancy-flake.mjs` (it is under a `tmp/` folder which is gitignored by the repo root `.gitignore`, so it is not included in PR diffs unless force-added).
+
+## Test Results
+
+### 2026-02-06
+- PASS: `PEERBIT_TEST_SESSION=mock pnpm --filter @peerbit/document test -- --grep "can search while keeping minimum amount of replicas"` (after adding `debugging-plan.md` commit + updating PR body).
