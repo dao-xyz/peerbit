@@ -223,62 +223,68 @@ export const checkReplicas = async (
 	entryCount: number,
 ) => {
 	try {
-		await waitForResolved(async () => {
-			const map = new Map<string, number>();
-			const hashToEntry = new Map<string, Entry<any>>();
-			for (const db of dbs) {
-				for (const value of await db.log.log.toArray()) {
-					// eslint-disable-next-line @typescript-eslint/no-unused-expressions
-					expect(await db.log.log.blocks.has(value.hash)).to.be.true;
-					map.set(value.hash, (map.get(value.hash) || 0) + 1);
-					hashToEntry.set(value.hash, value);
+		// Under heavy CI load, full replication can take longer than the default
+		// waitForResolved timeout (10s). Also, polling too frequently increases
+		// load by repeatedly materializing log arrays.
+		await waitForResolved(
+			async () => {
+				const map = new Map<string, number>();
+				const hashToEntry = new Map<string, Entry<any>>();
+				for (const db of dbs) {
+					for (const value of await db.log.log.toArray()) {
+						// eslint-disable-next-line @typescript-eslint/no-unused-expressions
+						expect(await db.log.log.blocks.has(value.hash)).to.be.true;
+						map.set(value.hash, (map.get(value.hash) || 0) + 1);
+						hashToEntry.set(value.hash, value);
+					}
 				}
-			}
-			for (const [_k, v] of map) {
-				try {
-					expect(v).greaterThanOrEqual(minReplicas);
-				} catch (error) {
-					const entry = hashToEntry.get(_k)!;
-					const gid = entry.meta.gid;
-					const coordinates = await dbs[0].log.createCoordinates(
-						entry,
-						minReplicas,
-					);
-					throw new Error(
-						"Did not fulfill min replicas level for " +
-							entry.hash +
-							" coordinates" +
-							JSON.stringify(coordinates.map((x) => x.toString())) +
-							" of: " +
-							minReplicas +
-							" got " +
-							v +
-							". Gid to peer history? " +
-							JSON.stringify(
-								dbs.map(
-									(x) =>
-										[...(x.log._gidPeersHistory.get(gid) || [])].filter(
-											(id) => id !== x.log.node.identity.publicKey.hashcode(),
-										).length || 0,
-								) +
-									". Has? " +
-									JSON.stringify(
-										await Promise.all(
-											dbs.map((x) => x.log.log.has(entry.hash)),
-										),
+				for (const [_k, v] of map) {
+					try {
+						expect(v).greaterThanOrEqual(minReplicas);
+					} catch (error) {
+						const entry = hashToEntry.get(_k)!;
+						const gid = entry.meta.gid;
+						const coordinates = await dbs[0].log.createCoordinates(
+							entry,
+							minReplicas,
+						);
+						throw new Error(
+							"Did not fulfill min replicas level for " +
+								entry.hash +
+								" coordinates" +
+								JSON.stringify(coordinates.map((x) => x.toString())) +
+								" of: " +
+								minReplicas +
+								" got " +
+								v +
+								". Gid to peer history? " +
+								JSON.stringify(
+									dbs.map(
+										(x) =>
+											[...(x.log._gidPeersHistory.get(gid) || [])].filter(
+												(id) => id !== x.log.node.identity.publicKey.hashcode(),
+											).length || 0,
 									) +
-									", sync in flight ? " +
-									JSON.stringify(
-										dbs.map((x) =>
-											x.log.syncronizer.syncInFlight.has(entry.hash),
+										". Has? " +
+										JSON.stringify(
+											await Promise.all(
+												dbs.map((x) => x.log.log.has(entry.hash)),
+											),
+										) +
+										", sync in flight ? " +
+										JSON.stringify(
+											dbs.map((x) =>
+												x.log.syncronizer.syncInFlight.has(entry.hash),
+											),
 										),
-									),
-							),
-					);
+								),
+						);
+					}
+					expect(v).lessThanOrEqual(dbs.length);
 				}
-				expect(v).lessThanOrEqual(dbs.length);
-			}
-		});
+			},
+			{ timeout: 20_000, delayInterval: 250 },
+		);
 	} catch (error) {
 		await dbgLogs(dbs.map((x) => x.log));
 		throw error;

@@ -46,13 +46,27 @@ This doc started as an investigation log for CI flakes surfaced by PR #589. As o
 ## Verification (Local)
 
 - `pnpm run build` (PASS)
-- `node ./node_modules/aegir/src/index.js run test --roots ./packages/programs/data/shared-log -- -t node` (PASS; 1743 passing)
-- Targeted regression greps (PASS):
+- Targeted shared-log tests (PASS):
   - `replicate:join not emitted on update`
   - `8-9, replicates database of 1 entry`
   - `9-8, replicates database of 1 entry`
-  - `segments updated while offline`
-  - `will re-check replication segments on restart and announce online`
+  - `waitForReplicator waits until maturity`
+  - `handles peer joining and leaving multiple times`
+- Full Part 4 suite (PASS):
+  - `node ./node_modules/aegir/src/index.js run test --roots ./packages/programs/data/shared-log ./packages/programs/data/shared-log/proxy -- -t node --no-build`
+  - `@peerbit/shared-log`: `1743 passing` (~17m)
+  - `@peerbit/shared-log-proxy`: `1 passing`
+
+### Additional Note (Flake Observed + Fix)
+
+While re-running the full suite, `u32-simple > sharding > handles peer joining and leaving multiple times` intermittently failed with:
+
+- `Did not fulfill min replicas level ... of: 2 got 1` (i.e. replication convergence not reached within `waitForResolved`'s default 10s under load)
+
+Fix: `checkReplicas()` now uses a slightly longer timeout and a lower polling rate to reduce load:
+
+- File: `packages/programs/data/shared-log/test/utils.ts`
+- Change: `waitForResolved(..., { timeout: 20_000, delayInterval: 250 })`
 
 ## Commit
 
@@ -62,29 +76,33 @@ This doc started as an investigation log for CI flakes surfaced by PR #589. As o
 
 # Learnings
 
+> NOTE: The sections below are historical investigation notes captured *before* the fixes landed. They are kept for context, but some claim statuses and line references may no longer match the post-fix code. The authoritative current state is the **Status (2026-02-06)** section above.
+
 ## Test Results
 *(To be updated as tests are run)*
 
 | Test | Result | Notes |
 |------|--------|-------|
-| events.spec.ts "replicate:join not emitted on update" | KNOWN FLAKY | Duplicate replicator:join - same peer hash twice in db1JoinEvents |
-| migration.spec.ts "8-9, replicates database of 1 entry" | KNOWN FLAKY | waitForResolved timeout - replication never completes within 10s |
-| migration.spec.ts "9-8, replicates database of 1 entry" | KNOWN FLAKY | Same as above |
-| Master CI Part 4 (last 400 runs) | 5 failures, none matching triple-failure | Different shared-log flakes in other suites |
+| events.spec.ts "replicate:join not emitted on update" | PASS (fixed) | Was caused by shared-log replication-info TOCTOU; fixed by per-peer serialization + idempotent join |
+| migration.spec.ts "8-9, replicates database of 1 entry" | PASS (fixed) | Was caused by missed/early replication-info handshake; fixed by requestSubscribers backfill + pending replication-info retry + migration role fixes |
+| migration.spec.ts "9-8, replicates database of 1 entry" | PASS (fixed) | Same as above |
+| sharding.spec.ts "handles peer joining and leaving multiple times" (u32-simple) | PASS (hardened) | Under heavy load this could fail to converge within default waitForResolved timeout; `checkReplicas()` now waits longer with lower polling rate |
 
 ## Key Learnings
 
-1. **C4 is INCORRECT on current master**: The PR #589 fix (eager `initializeTopic()` in `subscribe()` and `debounceSubscribeAggregator.has(topic)` in requestSubscribers) is NOT in the current codebase. The current branch (`fix/sync`) is at master. The fix described in C4 exists only in PR #589's branch.
+1. **C4 was INCORRECT on origin/master during investigation**: the PR #589 pubsub fix was not present at the time the investigation notes were written. It is implemented on this branch now (see Status section).
 
 2. **The triple-failure signature is unique to PR #589's CI run**: Only run 21732319700 shows all three failures together. This strongly suggests the pubsub timing change exposes a latent shared-log race.
 
 3. **PR #3 does NOT fix the TOCTOU race**: It adds shutdown guards to `persistCoordinate` -- a completely different code path from the fire-and-forget IIFE at line 2971 that causes the race.
 
-4. **The real root cause is architectural**: The fire-and-forget `(async () => { ... })().catch(...)` pattern at line 2971 of shared-log/src/index.ts creates unguarded concurrent access to `addReplicationRange()`.
+4. **The root cause was architectural**: the fire-and-forget `(async () => { ... })().catch(...)` replication-info path allowed concurrent `addReplicationRange()` for the same peer, causing TOCTOU around join emission.
 
 ---
 
 # Claims
+
+> NOTE: Claims below were written against pre-fix code and kept for context. See **Status (2026-02-06)** for the current implementation and verification results.
 
 ## C1: DirectSub.subscribe() is debounced (subscriptionDebounceDelay ?? 50ms)
 **Status**: VERIFIED
