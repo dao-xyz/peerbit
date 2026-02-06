@@ -1,7 +1,7 @@
 import { keys } from "@libp2p/crypto";
 import { DirectBlock } from "@peerbit/blocks";
 import type { Ed25519Keypair } from "@peerbit/crypto";
-import { DirectSub } from "@peerbit/pubsub";
+import { TopicControlPlane } from "@peerbit/pubsub";
 import path from "path";
 import { Peerbit } from "peerbit";
 import { concat } from "uint8arrays";
@@ -72,7 +72,7 @@ export const create = (properties: {
 						directory: blocksDirectory,
 						canRelayMessage: true,
 					}),
-				pubsub: (c) => new DirectSub(c, { canRelayMessage: true }),
+				pubsub: (c) => new TopicControlPlane(c, { canRelayMessage: true }),
 			},
 		},
 		directory: properties.directory,

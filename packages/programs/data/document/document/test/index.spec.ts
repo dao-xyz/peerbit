@@ -44,7 +44,7 @@ import {
 } from "@peerbit/indexer-interface";
 import { Entry, Log, createEntry } from "@peerbit/log";
 import { ClosedError, Program } from "@peerbit/program";
-import type { DirectSub } from "@peerbit/pubsub";
+import type { TopicControlPlane } from "@peerbit/pubsub";
 import { RPCMessage, ResponseV0 } from "@peerbit/rpc";
 import {
 	AbsoluteReplicas,
@@ -416,7 +416,7 @@ describe("index", () => {
 				});
 
 				let largeMessagesSent: number = 0;
-				for (const peer of (session.peers[0].services.pubsub as DirectSub)
+				for (const peer of (session.peers[0].services.pubsub as TopicControlPlane)
 					.peers) {
 					const writeFn = peer[1].write.bind(peer[1]);
 					peer[1].write = (message, priority) => {
@@ -2355,7 +2355,7 @@ describe("index", () => {
 						libp2p: {
 							services: {
 								pubsub: (c) =>
-									new DirectSub(c, {
+									new TopicControlPlane(c, {
 										connectionManager: { dialer: false, pruner: false },
 									}), // prevent autodialing
 							},

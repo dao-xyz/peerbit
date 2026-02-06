@@ -2,7 +2,7 @@ import { type Constructor } from "@dao-xyz/borsh";
 import type { PublicSignKey } from "@peerbit/crypto";
 import type { Entry } from "@peerbit/log";
 import type { ProgramClient } from "@peerbit/program";
-import type { DirectSub } from "@peerbit/pubsub";
+import type { TopicControlPlane } from "@peerbit/pubsub";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import {
@@ -48,8 +48,8 @@ export const slowDownSend = (
 	to: ProgramClient,
 	ms: number | (() => number) = 3000,
 ) => {
-	const directsub = from.services.pubsub as DirectSub;
-	for (const [_key, peer] of directsub.peers) {
+	const pubsub = from.services.pubsub as TopicControlPlane;
+	for (const [_key, peer] of pubsub.peers) {
 		if (peer.publicKey.equals(to.identity.publicKey)) {
 			const writeFn = peer.write.bind(peer);
 			peer.write = async (msg, priority) => {

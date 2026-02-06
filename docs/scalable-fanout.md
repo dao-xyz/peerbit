@@ -73,7 +73,7 @@ For a configurable workload (e.g. 2k nodes, 30 msg/s, 10s, 1KB):
 
 ### Current implementation status (WIP)
 - Simulation harnesses:
-  - `packages/transport/pubsub/benchmark/pubsub-topic-sim.ts` (DirectSub; includes churn + CI runner via `pubsub-topic-sim-lib.ts`)
+  - `packages/transport/pubsub/benchmark/pubsub-topic-sim.ts` (TopicControlPlane; includes churn + CI runner via `pubsub-topic-sim-lib.ts`)
   - `packages/transport/pubsub/benchmark/pubsub-tree-sim.ts`
   - `packages/transport/pubsub/benchmark/fanout-tree-sim.ts` (timeouts, loss, churn, deadline+overhead CI gates, economics metrics)
 - Full Peerbit integration sim:
@@ -82,7 +82,8 @@ For a configurable workload (e.g. 2k nodes, 30 msg/s, 10s, 1KB):
   - `packages/transport/pubsub/src/fanout-tree.ts` (protocol + join/repair)
   - `packages/transport/pubsub/src/fanout-channel.ts` (convenience wrapper)
   - `peer.services.fanout` + `peer.fanoutChannel(...)` / `peer.fanoutJoin(...)` (convenience APIs)
-  - SharedLog `target: "all"` now uses fanout as the data plane when configured (`fanout` option); there is no publish fallback from fanout back to legacy RPC send.
+- SharedLog `target: "all"` now uses fanout as the data plane when configured (`fanout` option); there is no publish fallback from fanout back to legacy RPC send.
+- SharedLog `target: "all"` now enforces fanout-only semantics: delivery settle options are only supported for `target: "replicators"`, not fanout broadcast.
 - CI regression sims (small + assertive):
   - `packages/transport/pubsub/test/fanout-tree-sim.spec.ts`
   - `packages/transport/pubsub/test/pubsub-topic-sim.spec.ts`
@@ -96,7 +97,7 @@ For a configurable workload (e.g. 2k nodes, 30 msg/s, 10s, 1KB):
 - Added route lookup + targeted send convenience: `FanoutChannel.resolveRouteToken(...)` + `FanoutChannel.unicastTo(...)` (resolves routes via the tree control-plane when no out-of-band token is available).
 - Added filtered `"unicast"` events for `(topic, root)` in `FanoutChannel`.
 - Route-token cache hardening: bounded route cache (`routeCacheMaxEntries`) + TTL (`routeCacheTtlMs`) + eviction/expiry metrics.
-- Added periodic route re-announces (`routeAnnounceIntervalMs`) so bounded caches are re-warmed without global membership exchange.
+- Route caches warm on-demand via route queries (no periodic route announce control-plane).
 - Added route-query fallback search on cache misses: parent/root can recursively query subtree branches and return first valid route (keeps lookup robust after cache expiry).
 - Added route-fallback observability counters: `routeProxyQueries`, `routeProxyTimeouts`, `routeProxyFanout` (also exposed in `fanout-tree-sim` output).
 - `JOIN_REJECT` now optionally includes redirect candidates so bootstraps/relays can steer joiners when full/not-attached.
@@ -108,12 +109,14 @@ For a configurable workload (e.g. 2k nodes, 30 msg/s, 10s, 1KB):
 - Live control: optional `maxDataAgeMs` to drop forwarding of stale data (deadline-oriented workloads).
 - Sim speed: `fanout-tree-sim` uses mock signing/verification so crypto doesn’t dominate large local sims.
 - Sim observability: `fanout-tree-sim` reports tree shape + stream queue/backpressure metrics.
+- Control-plane split (slice 1): extracted topic-root discovery into a standalone `TopicRootControlPlane` module (explicit roots, deterministic fallback, resolver + tracker hooks) and wired `TopicControlPlane` to delegate topic-root resolution through it.
+- Removed duplicate topic-root convenience methods from `TopicControlPlane`; callers now use `topicRootControlPlane` directly for topic→root concerns.
 
 ### API sketch (current)
-This is intentionally **separate from `DirectSub`** so existing “normal pubsub” use-cases (RPC, many-writers, small groups) remain unchanged.
+This is intentionally **separate from FanoutTree data-plane channels** so existing “normal pubsub” use-cases (RPC, many-writers, small groups) remain unchanged under `TopicControlPlane`.
 
 - As a Peerbit user you now have a dedicated service: `peer.services.fanout` (type: `FanoutTree`).
-- Convenience: `peer.fanoutChannel(topic, root)` creates a `FanoutChannel` bound to `peer.services.fanout`.
+- Convenience: `peer.fanoutChannel(topic, root)` creates a `FanoutChannel` bound to `peer.services.fanout` and `peer.fanoutJoinAuto(topic, ...)` can resolve `root` via the topic-root control plane.
 - Bootstrapping/rendezvous:
   - Call `peer.bootstrap()` (recommended) to dial bootstrap servers **and** configure the same bootstrap list for `peer.services.fanout`.
   - Or call `peer.services.fanout.setBootstraps([...multiaddrs])` directly if you want a custom rendezvous set.
@@ -122,7 +125,20 @@ This is intentionally **separate from `DirectSub`** so existing “normal pubsub
   - **root** calls `openChannel(topic, rootId, { role: "root", ... })` then `publishData(...)`
   - **subscribers/relays** call `joinChannel(topic, rootId, { ... })` and listen on `"fanout:data"`
 - Convenience wrapper: `FanoutChannel` wraps `(topic, root)` + filters events for that channel.
-- SharedLog broadcast path (`append(..., { target: "all" })`) now requires a configured fanout channel (`log.open({ fanout: { root, ... } })`) and uses fanout as the transport path.
+- SharedLog broadcast path (`append(..., { target: "all" })`) now requires a configured fanout channel (`log.open({ fanout: { ... } })`) and uses fanout as the transport path. `fanout.root` can be provided explicitly or resolved via the topic-root control plane if omitted.
+
+### Breaking-phase scope (what this PR does and does not do)
+- This branch/PR (`#582`) hardens the fanout tree data plane and control-plane for large fanout channels.
+- Runtime defaults now wire pubsub through `TopicControlPlane`, so control-plane implementation can evolve without changing client wiring.
+- Internal peer/server/test wiring now instantiates `TopicControlPlane` by default.
+- Added standalone `TopicRootControlPlane` + `TopicRootDirectory` in `@peerbit/pubsub` as the explicit topic→root control-plane primitive (deterministic candidate hashing + override hooks).
+- `TopicControlPlane` still carries generic pubsub/control-plane semantics because core paths depend on `PubSub` behavior today:
+  - program lifecycle topic wiring (`@peerbit/program`)
+  - RPC topic request/response transport (`@peerbit/rpc`)
+  - non-fanout topic workflows in document/shared-log paths
+- Full “fanout-only runtime defaults” still requires an explicit root-discovery/control-plane split, not just a constructor swap.
+- Follow-up tracking:
+  - `#586` and `#587` (fanout/scaling follow-up issues)
 
 Current upload shaping knobs (WIP):
 - `uploadLimitBps` + `maxChildren` still define *admission* capacity.

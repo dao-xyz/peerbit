@@ -131,13 +131,6 @@ export type FanoutTreeChannelOptions = {
 	 * `0` disables expiry.
 	 */
 	routeCacheTtlMs?: number;
-
-	/**
-	 * Periodic route re-announce interval to keep upstream caches warm.
-	 *
-	 * This is independent from tracker announce cadence.
-	 */
-	routeAnnounceIntervalMs?: number;
 };
 
 export type FanoutTreeJoinOptions = {
@@ -208,11 +201,6 @@ export type FanoutTreeJoinOptions = {
 	 * Min interval between tracker queries while joining.
 	 */
 	trackerQueryIntervalMs?: number;
-
-	/**
-	 * Override periodic route re-announce interval while joining.
-	 */
-	routeAnnounceIntervalMs?: number;
 
 	/**
 	 * Max number of join candidates to try per retry "round".
@@ -328,6 +316,10 @@ export interface FanoutTreeEvents extends StreamEvents {
 const CONTROL_PRIORITY = 10;
 const DATA_PRIORITY = 1;
 const ROUTE_PROXY_TIMEOUT_MS = 10_000;
+const ROUTE_CACHE_MAX_ENTRIES_HARD_CAP = 100_000;
+const ROUTE_CACHE_PRUNE_SCAN_BASE = 128;
+const ROUTE_CACHE_PRUNE_SCAN_MAX = 4_096;
+const KNOWN_CANDIDATE_ADDRS_MAX_ENTRIES = 8_192;
 
 const FANOUT_PROTOCOLS = ["/peerbit/fanout-tree/0.4.0"];
 
@@ -356,7 +348,6 @@ const MSG_END = 11;
 const MSG_UNICAST = 12;
 const MSG_ROUTE_QUERY = 13;
 const MSG_ROUTE_REPLY = 14;
-const MSG_ROUTE_ANNOUNCE = 15;
 const MSG_REPAIR_REQ = 20;
 const MSG_FETCH_REQ = 21;
 const MSG_IHAVE = 22;
@@ -603,32 +594,6 @@ const encodeUnicast = (
 		offset += hb.length;
 	}
 	buf.set(payload, offset);
-	return buf;
-};
-
-const encodeRouteAnnounce = (channelKey: Uint8Array, route: string[]) => {
-	const routeBytes: Uint8Array[] = [];
-	let bytes = 1 + 32 + 1;
-	let count = 0;
-	for (const hop of route ?? []) {
-		if (count >= MAX_ROUTE_HOPS) break;
-		if (typeof hop !== "string") continue;
-		const hb = textEncoder.encode(hop);
-		if (hb.length === 0 || hb.length > 255) continue;
-		routeBytes.push(hb);
-		bytes += 1 + hb.length;
-		count += 1;
-	}
-	const buf = new Uint8Array(bytes);
-	buf[0] = MSG_ROUTE_ANNOUNCE;
-	buf.set(channelKey, 1);
-	buf[33] = count & 0xff;
-	let offset = 34;
-	for (const hb of routeBytes) {
-		buf[offset++] = hb.length & 0xff;
-		buf.set(hb, offset);
-		offset += hb.length;
-	}
 	return buf;
 };
 
@@ -950,6 +915,11 @@ type ChannelState = {
 			downstreamReqId: number;
 			timer: ReturnType<typeof setTimeout>;
 			expectedReplies: Set<string>;
+			/**
+			 * Optional local completion callback (used when the root resolves a route token
+			 * for itself by fanning out queries to children).
+			 */
+			localResolve?: (route?: string[]) => void;
 		}
 	>;
 
@@ -963,10 +933,9 @@ type ChannelState = {
 	announceIntervalMs: number;
 	announceTtlMs: number;
 	lastAnnouncedAt: number;
-	routeAnnounceIntervalMs: number;
-	lastRouteAnnouncedAt: number;
 	routeCacheMaxEntries: number;
 	routeCacheTtlMs: number;
+	routeCachePruneScanLimit: number;
 	announceLoop?: Promise<void>;
 	repairLoop?: Promise<void>;
 	meshLoop?: Promise<void>;
@@ -1084,7 +1053,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	}
 
 	public getChannelId(topic: string, root: string): FanoutTreeChannelId {
-		const key = sha256Sync(new TextEncoder().encode(`fanout-tree|${root}|${topic}`));
+		const key = sha256Sync(textEncoder.encode(`fanout-tree|${root}|${topic}`));
 		const suffixKey = toBase64(key.subarray(0, 24));
 		return { topic, root, key, suffixKey };
 	}
@@ -1111,20 +1080,32 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const byBps = uploadLimitBps > 0 ? Math.floor(uploadLimitBps / perChildBps) : 0;
 			const effectiveMaxChildren = Math.max(0, Math.min(maxChildren, byBps));
 			const maxDataAgeMs = Math.max(0, Math.floor(opts.maxDataAgeMs ?? 0));
-			const routeCacheMaxEntries = Math.max(
+			const requestedRouteCacheMaxEntries = Math.max(
 				0,
 				Math.floor(
 					opts.routeCacheMaxEntries ??
-						(opts.role === "root" ? 20_000 : 4_000),
+						(opts.role === "root" ? 8_192 : 2_048),
 				),
 			);
+			const routeCacheMaxEntries = Math.min(
+				ROUTE_CACHE_MAX_ENTRIES_HARD_CAP,
+				requestedRouteCacheMaxEntries,
+			);
 			const routeCacheTtlMs = Math.max(0, Math.floor(opts.routeCacheTtlMs ?? 10 * 60_000));
-			const routeAnnounceIntervalMs = Math.max(
-				0,
-				Math.floor(opts.routeAnnounceIntervalMs ?? 30_000),
+			const routeCachePruneScanLimit = Math.max(
+				ROUTE_CACHE_PRUNE_SCAN_BASE,
+				Math.min(
+					ROUTE_CACHE_PRUNE_SCAN_MAX,
+					routeCacheMaxEntries > 0
+						? Math.ceil(routeCacheMaxEntries / 8)
+						: ROUTE_CACHE_PRUNE_SCAN_BASE,
+				),
 			);
 			const uploadBurstMsDefault = Math.max(1, Math.ceil(1_000 / msgRate));
-		const uploadBurstMs = Math.max(0, Math.floor(opts.uploadBurstMs ?? uploadBurstMsDefault));
+			const uploadBurstMs = Math.max(
+				0,
+				Math.floor(opts.uploadBurstMs ?? uploadBurstMsDefault),
+			);
 			const uploadTokenCapacity =
 				uploadLimitBps > 0 && uploadBurstMs > 0
 					? Math.max(1, Math.floor((uploadLimitBps * uploadBurstMs) / 1_000))
@@ -1184,8 +1165,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				isRoot: opts.role === "root",
 				parent: undefined,
 				children: new Map(),
-					routeFromRoot: opts.role === "root" ? [this.publicKeyHash] : undefined,
-					routeByPeer: new Map(),
+				routeFromRoot: opts.role === "root" ? [this.publicKeyHash] : undefined,
+				routeByPeer: new Map(),
 				seq: 0,
 				bidPerByte,
 				uploadLimitBps,
@@ -1252,18 +1233,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					announceIntervalMs: 2_000,
 					announceTtlMs: 10_000,
 					lastAnnouncedAt: 0,
-					routeAnnounceIntervalMs,
-					lastRouteAnnouncedAt: 0,
 					routeCacheMaxEntries,
 					routeCacheTtlMs,
+					routeCachePruneScanLimit,
 					trackerQueryIntervalMs: 2_000,
 					cachedTrackerCandidates: [],
 					lastTrackerQueryAt: 0,
 				};
 				this.channelsBySuffixKey.set(id.suffixKey, ch);
-				if (!ch.isRoot || ch.effectiveMaxChildren > 0) {
-					ch.announceLoop = this._announceLoop(ch).catch(() => {});
-				}
+				const needsAnnounceLoop = ch.effectiveMaxChildren > 0;
+				if (needsAnnounceLoop) ch.announceLoop = this._announceLoop(ch).catch(() => {});
 			if (ch.repairEnabled && !ch.isRoot && ch.repairIntervalMs >= 0) {
 				ch.repairLoop = this._repairLoop(ch).catch(() => {});
 			}
@@ -1372,15 +1351,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				Math.floor(joinOpts.bootstrapEnsureIntervalMs),
 			);
 		}
-			if (joinOpts.trackerQueryIntervalMs != null) {
-				ch.trackerQueryIntervalMs = Math.max(0, Math.floor(joinOpts.trackerQueryIntervalMs));
-			}
-			if (joinOpts.routeAnnounceIntervalMs != null) {
-				ch.routeAnnounceIntervalMs = Math.max(
-					0,
-					Math.floor(joinOpts.routeAnnounceIntervalMs),
-				);
-			}
+		if (joinOpts.trackerQueryIntervalMs != null) {
+			ch.trackerQueryIntervalMs = Math.max(
+				0,
+				Math.floor(joinOpts.trackerQueryIntervalMs),
+			);
+		}
 
 		if (!ch.joinedOnce) ch.joinedOnce = createDeferred();
 		if (!ch.joinLoop) {
@@ -1413,13 +1389,30 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (!target) return;
 		if (target === this.publicKeyHash) return;
 		if (ch.routeCacheMaxEntries <= 0) return;
+		if (ch.isRoot && route.length === 2 && ch.children.has(target)) return;
 		const now = Date.now();
 		ch.routeByPeer.delete(target);
 		ch.routeByPeer.set(target, { route: [...route], updatedAt: now });
 		this.pruneRouteCache(ch, now);
 	}
 
-	private pruneRouteCache(ch: ChannelState, now = Date.now(), scanLimit = 128) {
+	private cacheKnownCandidateAddrs(ch: ChannelState, hash: string, addrs: Multiaddr[]) {
+		if (!hash) return;
+		if (!addrs || addrs.length === 0) return;
+		ch.knownCandidateAddrs.delete(hash);
+		ch.knownCandidateAddrs.set(hash, addrs);
+		while (ch.knownCandidateAddrs.size > KNOWN_CANDIDATE_ADDRS_MAX_ENTRIES) {
+			const oldest = ch.knownCandidateAddrs.keys().next().value as string | undefined;
+			if (!oldest) break;
+			ch.knownCandidateAddrs.delete(oldest);
+		}
+	}
+
+	private pruneRouteCache(
+		ch: ChannelState,
+		now = Date.now(),
+		scanLimit = ch.routeCachePruneScanLimit,
+	) {
 		if (ch.routeByPeer.size === 0) return;
 		if (ch.routeCacheMaxEntries <= 0) {
 			const removed = ch.routeByPeer.size;
@@ -1448,6 +1441,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	}
 
 	private getCachedRoute(ch: ChannelState, targetHash: string): string[] | undefined {
+		this.pruneRouteCache(ch);
 		const entry = ch.routeByPeer.get(targetHash);
 		if (!entry) {
 			ch.metrics.routeCacheMisses += 1;
@@ -1493,28 +1487,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		return reqId;
 	}
 
-	private async announceRoute(ch: ChannelState, force = false) {
-		if (!ch.routeFromRoot || ch.routeFromRoot.length === 0) return;
-		this.cacheRoute(ch, ch.routeFromRoot);
-		if (ch.isRoot) return;
-		if (!ch.parent) return;
-		const now = Date.now();
-		if (
-			!force &&
-			ch.routeAnnounceIntervalMs > 0 &&
-			now - ch.lastRouteAnnouncedAt < ch.routeAnnounceIntervalMs
-		) {
-			return;
-		}
-		ch.lastRouteAnnouncedAt = now;
-		await this._sendControl(ch.parent, encodeRouteAnnounce(ch.id.key, ch.routeFromRoot));
-	}
-
 	private completeRouteProxy(ch: ChannelState, proxyReqId: number, route?: string[]) {
 		const proxy = ch.pendingRouteProxy.get(proxyReqId);
 		if (!proxy) return;
 		ch.pendingRouteProxy.delete(proxyReqId);
 		clearTimeout(proxy.timer);
+		if (proxy.localResolve) {
+			proxy.localResolve(route);
+			return;
+		}
 		void this._sendControl(
 			proxy.requester,
 			encodeRouteReply(ch.id.key, proxy.downstreamReqId, route),
@@ -1592,7 +1573,74 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				this.cacheRoute(ch, route);
 				return route;
 			}
-			return undefined;
+			const candidates = [...ch.children.keys()];
+			if (candidates.length === 0) return undefined;
+
+			const timeoutMs = Math.max(1, Math.floor(options?.timeoutMs ?? 3_000));
+			return await new Promise<string[] | undefined>((resolve, reject) => {
+				let settled = false;
+				const onAbort = () => {
+					if (settled) return;
+					settled = true;
+					ch.pendingRouteProxy.delete(proxyReqId);
+					clearTimeout(timer);
+					reject(new AbortError());
+				};
+
+				const unique: string[] = [];
+				const seen = new Set<string>();
+				for (const candidate of candidates) {
+					if (!candidate || seen.has(candidate)) continue;
+					seen.add(candidate);
+					const stream = this.peers.get(candidate);
+					if (!stream || !stream.isWritable) continue;
+					unique.push(candidate);
+				}
+
+				if (unique.length === 0) {
+					resolve(undefined);
+					return;
+				}
+
+				ch.metrics.routeProxyQueries += 1;
+				ch.metrics.routeProxyFanout += unique.length;
+
+				const proxyReqId = this.nextReqId(ch);
+				const timer = setTimeout(() => {
+					ch.metrics.routeProxyTimeouts += 1;
+					this.completeRouteProxy(ch, proxyReqId);
+				}, timeoutMs);
+
+				if (options?.signal) {
+					options.signal.addEventListener("abort", onAbort, { once: true });
+				}
+
+				ch.pendingRouteProxy.set(proxyReqId, {
+					requester: this.publicKeyHash,
+					downstreamReqId: 0,
+					timer,
+					expectedReplies: new Set(unique),
+					localResolve: (route?: string[]) => {
+						if (settled) return;
+						settled = true;
+						clearTimeout(timer);
+						if (options?.signal) {
+							options.signal.removeEventListener("abort", onAbort);
+						}
+						if (this.isRouteValidForChannel(ch, route)) {
+							this.cacheRoute(ch, route!);
+							resolve([...route!]);
+							return;
+						}
+						resolve(undefined);
+					},
+				});
+
+				void this._sendControlMany(unique, encodeRouteQuery(ch.id.key, proxyReqId, targetHash))
+					.catch(() => {
+						this.completeRouteProxy(ch, proxyReqId);
+					});
+			});
 		}
 
 		if (!ch.parent) {
@@ -2614,9 +2662,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		for (;;) {
 			if (signal.aborted) return;
 			try {
-				if (!ch.isRoot) {
-					await this.announceRoute(ch);
-				}
+				this.pruneRouteCache(ch);
 			} catch {
 				// ignore
 			}
@@ -2792,14 +2838,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		);
 		if (trackerPeers.length === 0) return;
 
-		const want = Math.max(16, ch.neighborMeshPeers * 4);
-		const candidates = await this.queryTrackers(ch, trackerPeers, want, 1_000, signal);
-		for (const c of candidates) {
-			if (c.hash === this.publicKeyHash) continue;
-			if (c.addrs.length === 0) continue;
-			ch.knownCandidateAddrs.set(c.hash, c.addrs);
+			const want = Math.max(16, ch.neighborMeshPeers * 4);
+			const candidates = await this.queryTrackers(ch, trackerPeers, want, 1_000, signal);
+			for (const c of candidates) {
+				if (c.hash === this.publicKeyHash) continue;
+				if (c.addrs.length === 0) continue;
+				this.cacheKnownCandidateAddrs(ch, c.hash, c.addrs);
+			}
 		}
-	}
 
 	private async _meshLoop(ch: ChannelState): Promise<void> {
 		const signal = this.closeController.signal;
@@ -3321,14 +3367,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							if (queue.length >= JOIN_REJECT_REDIRECT_QUEUE_MAX) break;
 							if (!r?.hash) continue;
 							if (r.hash === this.publicKeyHash) continue;
-							if (!r.addrs || r.addrs.length === 0) continue;
-							if (queued.has(r.hash)) continue;
-							queued.add(r.hash);
-							ch.knownCandidateAddrs.set(r.hash, r.addrs);
-							queue.push({
-								hash: r.hash,
-								addrs: r.addrs,
-								level: 0xffff,
+								if (!r.addrs || r.addrs.length === 0) continue;
+								if (queued.has(r.hash)) continue;
+								queued.add(r.hash);
+								this.cacheKnownCandidateAddrs(ch, r.hash, r.addrs);
+								queue.push({
+									hash: r.hash,
+									addrs: r.addrs,
+									level: 0xffff,
 								freeSlots: 0,
 								bidPerByte: 0,
 								source: 3,
@@ -3458,7 +3504,6 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				kind === MSG_UNICAST ||
 				kind === MSG_ROUTE_QUERY ||
 				kind === MSG_ROUTE_REPLY ||
-				kind === MSG_ROUTE_ANNOUNCE ||
 				kind === MSG_REPAIR_REQ ||
 				kind === MSG_FETCH_REQ ||
 				kind === MSG_IHAVE ||
@@ -3646,31 +3691,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						} catch {
 							// ignore invalid multiaddrs
 						}
-					}
-						candidates.push({ hash, level, freeSlots, bidPerByte, addrs });
-						ch.knownCandidateAddrs.set(hash, addrs);
-					}
+							}
+							candidates.push({ hash, level, freeSlots, bidPerByte, addrs });
+							this.cacheKnownCandidateAddrs(ch, hash, addrs);
+						}
 
-					pending.resolve(candidates);
+						pending.resolve(candidates);
 					return true;
 				}
 
 				if (!ch) return true;
-
-				if (kind === MSG_ROUTE_ANNOUNCE) {
-					if (data.length < 1 + 32 + 1) return false;
-					const routeCount = Math.min(255, data[33]!);
-					const { route } = decodeRoute(data, 34, routeCount);
-					if (!this.isRouteValidForChannel(ch, route)) return true;
-					if (!route.includes(fromHash)) return true;
-					this.cacheRoute(ch, route);
-					if (!ch.isRoot && ch.parent && fromHash !== ch.parent) {
-						void this._sendControl(ch.parent, encodeRouteAnnounce(ch.id.key, route)).catch(
-							() => {},
-						);
-					}
-					return true;
-				}
 
 				if (kind === MSG_ROUTE_QUERY) {
 					if (data.length < 1 + 32 + 4 + 1) return false;
@@ -3910,10 +3940,6 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							// Minimal fallback: parent is the root.
 							ch.routeFromRoot = [ch.id.root, this.publicKeyHash];
 						}
-						if (ch.routeFromRoot?.length) {
-							this.cacheRoute(ch, ch.routeFromRoot);
-							void this.announceRoute(ch, true).catch(() => {});
-						}
 						ch.channelPeers.add(fromHash);
 						pending.resolve({ ok: true });
 						this.dispatchEvent(
@@ -3953,13 +3979,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									} catch {
 										// ignore invalid multiaddrs
 									}
-								}
-								if (hash && addrs.length > 0) {
-									redirects.push({ hash, addrs });
-									ch.knownCandidateAddrs.set(hash, addrs);
+									}
+									if (hash && addrs.length > 0) {
+										redirects.push({ hash, addrs });
+										this.cacheKnownCandidateAddrs(ch, hash, addrs);
+									}
 								}
 							}
-						}
 						pending.resolve({ ok: false, rejectReason: reason, redirects });
 					}
 					return true;

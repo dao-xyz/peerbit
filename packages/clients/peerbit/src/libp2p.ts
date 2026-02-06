@@ -8,7 +8,7 @@ import {
 	type IPeerbitKeychain,
 	keychain,
 } from "@peerbit/keychain";
-import { DirectSub, FanoutTree } from "@peerbit/pubsub";
+import { FanoutTree, TopicControlPlane } from "@peerbit/pubsub";
 import {
 	type Libp2p,
 	type Libp2pOptions,
@@ -18,7 +18,7 @@ import {
 import { listen, relay, transports } from "./transports.js";
 
 export type Libp2pExtendServices = {
-	pubsub: DirectSub;
+	pubsub: TopicControlPlane;
 	fanout: FanoutTree;
 	blocks: DirectBlock;
 	keychain: IPeerbitKeychain;
@@ -43,7 +43,7 @@ export const createLibp2pExtended = (
 	opts: PartialLibp2pCreateOptions = {
 		services: {
 			blocks: (c: any) => new DirectBlock(c),
-			pubsub: (c: any) => new DirectSub(c),
+			pubsub: (c: any) => new TopicControlPlane(c),
 			fanout: (c: any) => new FanoutTree(c, { connectionManager: false }),
 			keychain: keychain(),
 		},
@@ -90,7 +90,7 @@ export const createLibp2pExtended = (
 			pubsub:
 				opts.services?.pubsub ||
 				((c) =>
-					new DirectSub(c, {
+					new TopicControlPlane(c, {
 						canRelayMessage: true,
 						// auto dial true
 						// auto prune true

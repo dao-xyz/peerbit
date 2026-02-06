@@ -16,7 +16,7 @@ import {
 	type IPeerbitKeychain,
 } from "@peerbit/keychain";
 import { TestSession } from "@peerbit/libp2p-test-utils";
-import { DirectSub } from "@peerbit/pubsub";
+import { TopicControlPlane } from "@peerbit/pubsub";
 import {
 	SubscriptionEvent,
 	UnsubcriptionEvent,
@@ -200,13 +200,13 @@ export const createLibp2pPeer = async (): Promise<ProgramClient> => {
 	const client = (
 		await TestSession.connected<
 			{
-				pubsub: DirectSub;
+				pubsub: TopicControlPlane;
 				blocks: DirectBlock;
 				keychain: IPeerbitKeychain;
 			} & any
 		>(1, {
 			services: {
-				pubsub: (c) => new DirectSub(c),
+				pubsub: (c) => new TopicControlPlane(c),
 				blocks: (c) => new DirectBlock(c),
 				keychain: () =>
 					new DefaultCryptoKeychain() as unknown as IPeerbitKeychain,

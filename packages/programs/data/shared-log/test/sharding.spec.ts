@@ -936,7 +936,11 @@ testSetups.forEach((setup) => {
 							).to.be.within(0.45, 0.55); // because the CPU error from fixed usage (0.5) is always greater than max (0)
 						});
 					});
-					describe("memory", () => {
+					describe("memory", function () {
+						// These tests insert 1000 entries and wait for convergence; on
+						// slower CI machines this can exceed the default 60s timeout.
+						this.timeout(3 * 60 * 1000);
+
 						it("inserting half limited", async () => {
 							db1 = await session.peers[0].open(new EventStore<string, any>(), {
 								args: {

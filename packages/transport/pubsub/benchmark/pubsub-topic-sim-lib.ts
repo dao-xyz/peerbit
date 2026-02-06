@@ -2,7 +2,7 @@ import type { PeerId } from "@libp2p/interface";
 import { PreHash, SignatureWithKey } from "@peerbit/crypto";
 import { AcknowledgeAnyWhere, SilentDelivery } from "@peerbit/stream-interface";
 import { delay } from "@peerbit/time";
-import { DirectSub, type DirectSubComponents } from "../src/index.js";
+import { TopicControlPlane, type TopicControlPlaneComponents } from "../src/index.js";
 import {
 	InMemoryConnectionManager,
 	InMemoryNetwork,
@@ -22,7 +22,7 @@ export type PubsubTopicSimParams = {
 	 * When true, publish with `SilentDelivery` so the bench can continue even when
 	 * some recipients are temporarily unreachable (e.g. under churn).
 	 *
-	 * Note: DirectSub still embeds an explicit receiver set in the message header
+	 * Note: TopicControlPlane still embeds an explicit receiver set in the message header
 	 * (from `topicsToPeers`), so this is not a scalable 1->1M mode. It's here to
 	 * exercise the real stream routing under load.
 	 */
@@ -259,7 +259,7 @@ const runWithConcurrency = async <T>(
 };
 
 const waitForProtocolStreams = async (
-	peers: { sub: DirectSub }[],
+	peers: { sub: TopicControlPlane }[],
 	timeoutMs = 30_000,
 ) => {
 	const start = Date.now();
@@ -293,9 +293,9 @@ const waitForProtocolStreams = async (
 	throw new Error("Timeout waiting for protocol streams to become duplex");
 };
 
-class SimDirectSub extends DirectSub {
+class SimTopicControlPlane extends TopicControlPlane {
 	constructor(
-		c: DirectSubComponents,
+		c: TopicControlPlaneComponents,
 		opts: {
 			dialer: boolean;
 			pruner: boolean;
@@ -538,7 +538,7 @@ export const runPubsubTopicSim = async (
 
 	const peers: {
 		peerId: PeerId;
-		sub: SimDirectSub;
+		sub: SimTopicControlPlane;
 	}[] = [];
 
 	try {
@@ -549,7 +549,7 @@ export const runPubsubTopicSim = async (
 			runtime.connectionManager = new InMemoryConnectionManager(network, runtime);
 			network.registerPeer(runtime, port);
 
-			const components: DirectSubComponents = {
+			const components: TopicControlPlaneComponents = {
 				peerId: runtime.peerId,
 				privateKey: runtime.privateKey,
 				addressManager: runtime.addressManager as any,
@@ -562,7 +562,7 @@ export const runPubsubTopicSim = async (
 			const record = i === params.writerIndex ? recordModeToLen : undefined;
 			peers.push({
 				peerId: runtime.peerId,
-				sub: new SimDirectSub(
+				sub: new SimTopicControlPlane(
 					components,
 					{
 						dialer: params.dialer,

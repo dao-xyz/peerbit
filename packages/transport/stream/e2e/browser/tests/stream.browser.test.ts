@@ -38,6 +38,10 @@ test.describe("stream", () => {
 	});
 
 	test("can transmit with webrtc", async ({ page, browser }) => {
+		// WebRTC + relay reservation + circuit addressing can be slow/flaky on CI,
+		// so give this end-to-end test a larger budget than Playwright's 30s default.
+		test.setTimeout(120_000);
+
 		const relayAddres = relay.getMultiaddrs()[0].toString();
 		const relayPeerId = relayAddres.split("/p2p/").at(-1);
 		if (!relayPeerId) {

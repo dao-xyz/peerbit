@@ -14,6 +14,7 @@ import {
 	Ed25519PublicKey,
 	PublicSignKey,
 	Secp256k1Keypair,
+	getPublicKeyFromPeerId,
 	getKeypairFromPrivateKey,
 } from "@peerbit/crypto";
 import type { Indices } from "@peerbit/indexer-interface";
@@ -28,9 +29,9 @@ import {
 	ProgramHandler,
 } from "@peerbit/program";
 import {
-	DirectSub,
 	FanoutChannel,
 	FanoutTree,
+	TopicControlPlane,
 	type FanoutTreeChannelOptions,
 	type FanoutTreeJoinOptions,
 } from "@peerbit/pubsub";
@@ -207,7 +208,8 @@ export class Peerbit implements ProgramClient {
 						canRelayMessage: asRelay,
 						directory: blocksDirectory,
 					}),
-				pubsub: (c: any) => new DirectSub(c, { canRelayMessage: asRelay }),
+				pubsub: (c: any) =>
+					new TopicControlPlane(c, { canRelayMessage: asRelay }),
 				fanout: (c: any) => new FanoutTree(c, { connectionManager: false }),
 				...extendedOptions?.services,
 			};
@@ -399,7 +401,25 @@ export class Peerbit implements ProgramClient {
 		if (!once) {
 			throw new Error("Failed to succefully dial any bootstrap node");
 		}
-	}
+
+			// Seed deterministic topic-root candidates for the control-plane abstraction.
+			// We use all currently connected peers after bootstrap dialing.
+			const pubsub = this.libp2p.services.pubsub as any;
+			const topicRootControlPlane = pubsub?.topicRootControlPlane;
+			if (topicRootControlPlane) {
+				const candidates = new Set<string>();
+				for (const connection of this.libp2p.getConnections()) {
+					try {
+						candidates.add(getPublicKeyFromPeerId(connection.remotePeer).hashcode());
+					} catch {
+						// ignore peers without a resolvable public key
+					}
+				}
+				if (candidates.size > 0) {
+					topicRootControlPlane.setTopicRootCandidates([...candidates]);
+				}
+			}
+		}
 
 	/**
 	 * Default behaviour of a store is only to accept heads that are forks (new roots) with some probability
@@ -425,6 +445,18 @@ export class Peerbit implements ProgramClient {
 		return new FanoutChannel(this.services.fanout, { topic, root });
 	}
 
+	public async fanoutResolveRoot(topic: string): Promise<string> {
+		const pubsubAny: any = this.services.pubsub;
+		const topicRootControlPlane = pubsubAny?.topicRootControlPlane;
+		const resolved = await topicRootControlPlane?.resolveTopicRoot?.(topic);
+		if (!resolved) {
+			throw new Error(
+				`Failed to resolve fanout root for topic ${topic}. Configure topic-root candidates/resolver (Peerbit.bootstrap() does this automatically) or pass root explicitly.`,
+			);
+		}
+		return resolved;
+	}
+
 	public fanoutOpenAsRoot(
 		topic: string,
 		options: Omit<FanoutTreeChannelOptions, "role">,
@@ -439,6 +471,15 @@ export class Peerbit implements ProgramClient {
 		joinOpts?: FanoutTreeJoinOptions,
 	) {
 		return this.fanoutChannel(topic, root).join(options, joinOpts);
+	}
+
+	public async fanoutJoinAuto(
+		topic: string,
+		options: Omit<FanoutTreeChannelOptions, "role">,
+		joinOpts?: FanoutTreeJoinOptions,
+	) {
+		const root = await this.fanoutResolveRoot(topic);
+		return this.fanoutJoin(topic, root, options, joinOpts);
 	}
 
 	get storage() {

@@ -4,7 +4,7 @@ import { tcp } from "@libp2p/tcp";
 import { SearchRequest } from "@peerbit/document-interface";
 import { Sort } from "@peerbit/indexer-interface";
 import { Program } from "@peerbit/program";
-import { DirectSub } from "@peerbit/pubsub";
+import { TopicControlPlane } from "@peerbit/pubsub";
 import { Peerbit, createLibp2pExtended } from "peerbit";
 import * as B from "tinybench";
 import { v4 as uuid } from "uuid";
@@ -54,7 +54,7 @@ const peers = await Promise.all(
 			streamMuxers: [yamux()],
 			services: {
 				pubsub: (sub: any) =>
-					new DirectSub(sub, {
+					new TopicControlPlane(sub, {
 						canRelayMessage: true,
 						/* connectionManager: true */
 					}),
@@ -66,7 +66,7 @@ const peers = await Promise.all(
 			streamMuxers: [yamux()],
 			services: {
 				pubsub: (sub: any) =>
-					new DirectSub(sub, {
+					new TopicControlPlane(sub, {
 						canRelayMessage: true,
 						/* connectionManager: true */
 					}),

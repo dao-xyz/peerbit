@@ -1,4 +1,4 @@
-import { ACK, AcknowledgeDelivery } from "@peerbit/stream-interface";
+import { ACK, AcknowledgeDelivery, DataMessage } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -14,14 +14,33 @@ describe("append delivery options", () => {
 		await session?.stop();
 	});
 
-	it("awaits transport acks when delivery is set", async () => {
+	it("awaits transport acks when delivery is set for target=replicators", async () => {
 		session = await TestSession.connected(2);
 
-		const db1 = await session.peers[0].open(new EventStore<string, any>());
+		const db1 = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicas: { min: 2 },
+				replicate: { offset: 0, factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
 		await EventStore.open<EventStore<string, any>>(
 			db1.address!,
 			session.peers[1],
+			{
+				args: {
+					replicas: { min: 2 },
+					replicate: { offset: 0, factor: 1 },
+					timeUntilRoleMaturity: 0,
+				},
+			},
 		);
+
+		await db1.log.waitForReplicators({
+			coverageThreshold: 1,
+			roleAge: 0,
+			timeout: 15e3,
+		});
 
 		const remoteHash = session.peers[1].identity.publicKey.hashcode();
 		await waitForResolved(async () => {
@@ -35,6 +54,8 @@ describe("append delivery options", () => {
 
 		const gate = pDefer<void>();
 		const ackAttempted = pDefer<void>();
+		const expectedAckedMessageIds = new Set<string>();
+		const toB64 = (id: Uint8Array) => Buffer.from(id).toString("base64");
 
 		const remotePubsub: any = session.peers[1].services.pubsub;
 		const originalPublishMessage =
@@ -42,18 +63,37 @@ describe("append delivery options", () => {
 		remotePubsub.publishMessage = async (...args: any[]) => {
 			const message = args[1];
 			if (message instanceof ACK) {
-				ackAttempted.resolve();
-				await gate.promise;
+				// Only gate the ACKs that correspond to the message(s) produced by this test's `db1.add(...)`.
+				// There can be unrelated ACK traffic during session setup in the full test suite.
+				if (expectedAckedMessageIds.has(toB64(message.messageIdToAcknowledge))) {
+					ackAttempted.resolve();
+					await gate.promise;
+				}
 			}
 			return originalPublishMessage(...args);
+		};
+
+		const localPubsub: any = session.peers[0].services.pubsub;
+		const originalLocalPublishMessage =
+			localPubsub.publishMessage.bind(localPubsub);
+		localPubsub.publishMessage = async (...args: any[]) => {
+			const message = args[1];
+			if (
+				message instanceof DataMessage &&
+				message.header.mode instanceof AcknowledgeDelivery &&
+				message.header.mode.to?.includes(remoteHash)
+			) {
+				expectedAckedMessageIds.add(toB64(message.id));
+			}
+			return originalLocalPublishMessage(...args);
 		};
 
 		let resolved = false;
 		const promise = db1
 			.add("hello", {
-				target: "all",
+				target: "replicators",
 				delivery: true,
-			} as any)
+			})
 			.then((result) => {
 				resolved = true;
 				return result;
@@ -74,10 +114,41 @@ describe("append delivery options", () => {
 
 		await expect(
 			db1.add("hello", {
-				target: "all",
+				target: "replicators",
 				delivery: { requireRecipients: true },
-			} as any),
+			}),
 		).to.be.rejectedWith(NoPeersError);
+	});
+
+	it("throws when delivery options are used with target=all", async () => {
+		session = await TestSession.connected(2);
+
+		const root = (session.peers[0].services as any).fanout.publicKeyHash as string;
+		const fanout = {
+			root,
+			channel: {
+				msgRate: 10,
+				msgSize: 256,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 8,
+				repair: true,
+			},
+			join: { timeoutMs: 10_000 },
+		};
+
+		const db1 = await session.peers[0].open(new EventStore<string, any>(), {
+			args: { fanout },
+		});
+		await EventStore.open<EventStore<string, any>>(db1.address!, session.peers[1], {
+			args: { fanout },
+		});
+
+		await expect(
+			(db1.add as any)("bad-delivery-all", {
+				target: "all",
+				delivery: true,
+			}),
+		).to.be.rejectedWith("delivery options are not supported with target=\"all\"");
 	});
 
 	it("throws on target=all when fanout channel is not configured", async () => {
@@ -87,7 +158,7 @@ describe("append delivery options", () => {
 		await EventStore.open<EventStore<string, any>>(db1.address!, session.peers[1]);
 
 		await expect(
-			db1.add("missing-fanout", { target: "all" } as any),
+			db1.add("missing-fanout", { target: "all" }),
 		).to.be.rejectedWith("No fanout channel configured");
 	});
 
@@ -128,13 +199,128 @@ describe("append delivery options", () => {
 			return originalSend(...args);
 		};
 
-		await db1.add("fanout-delivery", { target: "all" } as any);
+		await db1.add("fanout-delivery", { target: "all" });
 
 		await waitForResolved(async () => {
 			const values = (await db2.log.log.toArray()).map(
 				(entry) => entry.payload.getValue().value,
 			);
 			expect(values).to.include("fanout-delivery");
+		});
+
+		expect(exchangeHeadsRpcSends).to.equal(0);
+	});
+
+	it("resolves fanout root via topic-root-control-plane when root is omitted", async () => {
+		session = await TestSession.connected(2);
+
+		const writerRoot = (session.peers[0].services as any).fanout.publicKeyHash as string;
+		for (const peer of session.peers) {
+			(peer.services.pubsub as any)?.topicRootControlPlane?.setTopicRootCandidates?.([
+				writerRoot,
+			]);
+		}
+
+		const fanout = {
+			channel: {
+				msgRate: 10,
+				msgSize: 256,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 8,
+				repair: true,
+			},
+			join: { timeoutMs: 10_000 },
+		};
+
+		const db1 = await session.peers[0].open(new EventStore<string, any>(), {
+			args: { fanout },
+		});
+		const db2 = await EventStore.open<EventStore<string, any>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: { fanout },
+			},
+		);
+
+		let exchangeHeadsRpcSends = 0;
+		const rpcAny: any = db1.log.rpc;
+		const originalSend = rpcAny.send.bind(rpcAny);
+		rpcAny.send = async (...args: any[]) => {
+			if (args[0] instanceof ExchangeHeadsMessage) {
+				exchangeHeadsRpcSends++;
+			}
+			return originalSend(...args);
+		};
+
+		await db1.add("fanout-root-auto", { target: "all" });
+
+		await waitForResolved(async () => {
+			const values = (await db2.log.log.toArray()).map(
+				(entry) => entry.payload.getValue().value,
+			);
+			expect(values).to.include("fanout-root-auto");
+		});
+
+		expect(exchangeHeadsRpcSends).to.equal(0);
+	});
+
+	it("does not fall back to rpc on target=all when a fanout member drops", async () => {
+		session = await TestSession.connected(3);
+
+		const root = (session.peers[0].services as any).fanout.publicKeyHash as string;
+		const fanout = {
+			root,
+			channel: {
+				msgRate: 10,
+				msgSize: 256,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 8,
+				repair: true,
+			},
+			join: { timeoutMs: 10_000 },
+		};
+
+		const db1 = await session.peers[0].open(new EventStore<string, any>(), {
+			args: { fanout },
+		});
+		const db2 = await EventStore.open<EventStore<string, any>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: { fanout },
+			},
+		);
+		await EventStore.open<EventStore<string, any>>(db1.address!, session.peers[2], {
+			args: { fanout },
+		});
+
+		const fanoutChannel: any = (db1.log as any)._fanoutChannel;
+		await waitForResolved(() => {
+			const peers = new Set(fanoutChannel.getPeerHashes());
+			expect(peers.has(session.peers[1].identity.publicKey.hashcode())).to.equal(
+				true,
+			);
+		});
+
+		let exchangeHeadsRpcSends = 0;
+		const rpcAny: any = db1.log.rpc;
+		const originalSend = rpcAny.send.bind(rpcAny);
+		rpcAny.send = async (...args: any[]) => {
+			if (args[0] instanceof ExchangeHeadsMessage) {
+				exchangeHeadsRpcSends++;
+			}
+			return originalSend(...args);
+		};
+
+		await session.peers[2].stop();
+		await db1.add("fanout-churn", { target: "all" });
+
+		await waitForResolved(async () => {
+			const values = (await db2.log.log.toArray()).map(
+				(entry) => entry.payload.getValue().value,
+			);
+			expect(values).to.include("fanout-churn");
 		});
 
 		expect(exchangeHeadsRpcSends).to.equal(0);
@@ -180,7 +366,7 @@ describe("append delivery options", () => {
 		};
 
 		await expect(
-			db1.add("fanout-fail", { target: "all" } as any),
+			db1.add("fanout-fail", { target: "all" }),
 		).to.be.rejectedWith("fanout publish failed");
 
 		expect(exchangeHeadsRpcSends).to.equal(0);
@@ -231,7 +417,7 @@ describe("append delivery options", () => {
 
 		const initial = await writer.log.append({ op: "ADD", value: `seed` }, {
 			target: "replicators",
-		} as any);
+		});
 		const firstLeader = await getSingleLeader(initial.entry);
 
 		const capturedModes: any[] = [];
@@ -262,7 +448,7 @@ describe("append delivery options", () => {
 		const res = await writer.log.append({ op: "ADD", value: `value` }, {
 			target: "replicators",
 			delivery: { settle: { min: 1 }, timeout: 15e3 },
-		} as any);
+		});
 		capture = false;
 
 		const leader = await getSingleLeader(res.entry);

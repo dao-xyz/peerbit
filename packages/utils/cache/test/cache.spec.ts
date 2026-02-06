@@ -1,29 +1,50 @@
 /* eslint-disable */
-import { delay } from "@peerbit/time";
 import { expect } from "chai";
 import { Cache } from "../src/index.js";
 
 describe("cache", () => {
+	const withFakeNow = async (
+		fn: (api: { now: (ms: number) => void }) => Promise<void> | void,
+	) => {
+		const originalNow = Date.now;
+		let current = originalNow();
+		Date.now = () => current;
+		try {
+			await fn({ now: (ms) => (current = ms) });
+		} finally {
+			Date.now = originalNow;
+		}
+	};
+
 	it("ttl", async () => {
-		const cache = new Cache({ max: 1e3, ttl: 1e3 });
-		cache.add("");
-		expect(cache.has("")).to.be.true;
-		await delay(3000);
-		expect(cache.has("")).to.be.false;
+		await withFakeNow(({ now }) => {
+			now(0);
+			const cache = new Cache({ max: 1e3, ttl: 1e3 });
+			cache.add("");
+			expect(cache.has("")).to.be.true;
+			now(3000);
+			expect(cache.has("")).to.be.false;
+		});
 	});
 
 	it("trim", async () => {
-		const cache = new Cache({ max: 1e3, ttl: 3e3 });
-		cache.add("1");
-		await delay(1500);
-		cache.add("2");
-		expect(cache.has("1")).to.be.true;
-		await delay(1600);
-		expect(cache.has("1")).to.be.false;
-		expect(cache.has("2")).to.be.true;
-		await delay(1600);
-		expect(cache.has("1")).to.be.false;
-		expect(cache.has("2")).to.be.false;
+		await withFakeNow(({ now }) => {
+			now(0);
+			const cache = new Cache({ max: 1e3, ttl: 3e3 });
+			cache.add("1");
+
+			now(1500);
+			cache.add("2");
+			expect(cache.has("1")).to.be.true;
+
+			now(3100);
+			expect(cache.has("1")).to.be.false;
+			expect(cache.has("2")).to.be.true;
+
+			now(4700);
+			expect(cache.has("1")).to.be.false;
+			expect(cache.has("2")).to.be.false;
+		});
 	});
 
 	it("max", async () => {

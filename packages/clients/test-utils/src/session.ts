@@ -11,7 +11,7 @@ import {
 } from "@peerbit/libp2p-test-utils";
 import type { Indices, Index, IndexEngineInitProperties } from "@peerbit/indexer-interface";
 import { type ProgramClient } from "@peerbit/program";
-import { DirectSub, FanoutTree } from "@peerbit/pubsub";
+import { FanoutTree, TopicControlPlane } from "@peerbit/pubsub";
 import {
 	type DirectStream,
 	waitForNeighbour as waitForPeersStreams,
@@ -86,7 +86,7 @@ class NoopIndices implements Indices {
 	}
 }
 
-class SimDirectSub extends DirectSub {
+class SimTopicControlPlane extends TopicControlPlane {
 	constructor(c: any, opts?: any, mockCrypto = true) {
 		super(c, opts);
 		if (mockCrypto) {
@@ -520,7 +520,8 @@ export class TestSession {
 						new DirectBlock(c, {
 							directory: blocksDirectory,
 						}),
-					pubsub: (c: any) => new DirectSub(c, { canRelayMessage: true }),
+					pubsub: (c: any) =>
+						new TopicControlPlane(c, { canRelayMessage: true }),
 					fanout: (c: any) => new FanoutTree(c, { connectionManager: false }),
 					keychain: keychain(),
 					...libp2pOptions.services,
@@ -582,7 +583,8 @@ export class TestSession {
 						},
 						mockCrypto,
 					),
-				pubsub: (c: any) => new SimDirectSub(c, { canRelayMessage: true }, mockCrypto),
+				pubsub: (c: any) =>
+					new SimTopicControlPlane(c, { canRelayMessage: true }, mockCrypto),
 				fanout: (c: any) =>
 					new SimFanoutTree(
 						c,

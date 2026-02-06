@@ -411,6 +411,16 @@ describe("fanout-tree", () => {
 				);
 			}
 
+			// Drive route discovery on-demand so the root cache actually fills and evicts.
+			for (const leaf of [leafA, leafB, leafC]) {
+				await waitForResolved(async () => {
+					const route = await relay.resolveRouteToken(topic, rootId, leaf.publicKeyHash, {
+						timeoutMs: 4_000,
+					});
+					expect(route).to.exist;
+				});
+			}
+
 			await waitForResolved(() =>
 				expect(root.getChannelStats(topic, rootId)?.routeCacheEntries).to.be.at.most(2),
 			);
@@ -422,8 +432,38 @@ describe("fanout-tree", () => {
 		}
 	});
 
-	it("keeps routes resolvable with ttl + periodic re-announces", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(4, {
+	it("clamps requested route cache size to a hard safety cap", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(1, {
+			services: {
+				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+			},
+		});
+
+		try {
+			const root = session.peers[0].services.fanout;
+			const topic = "route-cache-hard-cap";
+			const rootId = root.publicKeyHash;
+
+			root.openChannel(topic, rootId, {
+				role: "root",
+				msgRate: 10,
+				msgSize: 64,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 2,
+				repair: true,
+				routeCacheMaxEntries: 2_000_000_000,
+			});
+
+			const stats = root.getChannelStats(topic, rootId);
+			expect(stats).to.exist;
+			expect(stats?.routeCacheMaxEntries).to.equal(100_000);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("root resolves deep route tokens on-demand without route announcements", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(3, {
 			services: {
 				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
 			},
@@ -433,49 +473,42 @@ describe("fanout-tree", () => {
 			await session.connect([
 				[session.peers[0], session.peers[1]],
 				[session.peers[1], session.peers[2]],
-				[session.peers[1], session.peers[3]],
 			]);
 
 			const root = session.peers[0].services.fanout;
 			const relay = session.peers[1].services.fanout;
-			const sender = session.peers[2].services.fanout;
-			const target = session.peers[3].services.fanout;
+			const leaf = session.peers[2].services.fanout;
 
-			const topic = "route-cache-refresh";
+			const topic = "root-route-resolve";
 			const rootId = root.publicKeyHash;
 
-			const routeCacheTtlMs = 40;
-			const routeAnnounceIntervalMs = 20;
-
-			const rootChannel = FanoutChannel.fromSelf(root, topic);
-			rootChannel.openAsRoot({
+			root.openChannel(topic, rootId, {
+				role: "root",
 				msgRate: 10,
 				msgSize: 64,
 				uploadLimitBps: 1_000_000,
 				maxChildren: 1,
 				repair: true,
 				routeCacheMaxEntries: 16,
-				routeCacheTtlMs,
-				routeAnnounceIntervalMs,
 			});
 
-			const relayChannel = new FanoutChannel(relay, { topic, root: rootId });
-			await relayChannel.join(
+			await relay.joinChannel(
+				topic,
+				rootId,
 				{
 					msgRate: 10,
 					msgSize: 64,
 					uploadLimitBps: 1_000_000,
-					maxChildren: 2,
+					maxChildren: 1,
 					repair: true,
 					routeCacheMaxEntries: 16,
-					routeCacheTtlMs,
-					routeAnnounceIntervalMs,
 				},
-				{ timeoutMs: 10_000, routeAnnounceIntervalMs },
+				{ timeoutMs: 10_000 },
 			);
 
-			const senderChannel = new FanoutChannel(sender, { topic, root: rootId });
-			await senderChannel.join(
+			await leaf.joinChannel(
+				topic,
+				rootId,
 				{
 					msgRate: 10,
 					msgSize: 64,
@@ -483,43 +516,17 @@ describe("fanout-tree", () => {
 					maxChildren: 0,
 					repair: true,
 					routeCacheMaxEntries: 16,
-					routeCacheTtlMs,
-					routeAnnounceIntervalMs,
 				},
-				{ timeoutMs: 10_000, routeAnnounceIntervalMs },
+				{ timeoutMs: 10_000 },
 			);
 
-			const targetChannel = new FanoutChannel(target, { topic, root: rootId });
-			await targetChannel.join(
-				{
-					msgRate: 10,
-					msgSize: 64,
-					uploadLimitBps: 0,
-					maxChildren: 0,
-					repair: true,
-					routeCacheMaxEntries: 16,
-					routeCacheTtlMs,
-					routeAnnounceIntervalMs,
-				},
-				{ timeoutMs: 10_000, routeAnnounceIntervalMs },
-			);
-
-			await waitForResolved(async () => {
-				const route = await senderChannel.resolveRouteToken(target.publicKeyHash, {
-					timeoutMs: 2_000,
-				});
-				expect(route).to.exist;
+			const route = await root.resolveRouteToken(topic, rootId, leaf.publicKeyHash, {
+				timeoutMs: 4_000,
 			});
-
-			await delay(150);
-
-			await waitForResolved(async () => {
-				const route = await senderChannel.resolveRouteToken(target.publicKeyHash, {
-					timeoutMs: 2_000,
-				});
-				expect(route).to.exist;
-				expect(route?.[route.length - 1]).to.equal(target.publicKeyHash);
-			});
+			expect(route).to.exist;
+			expect(route?.[0]).to.equal(rootId);
+			expect(route?.[1]).to.equal(relay.publicKeyHash);
+			expect(route?.[route.length - 1]).to.equal(leaf.publicKeyHash);
 		} finally {
 			await session.stop();
 		}
@@ -551,7 +558,6 @@ describe("fanout-tree", () => {
 			const topic = "route-cache-subtree-fallback";
 			const rootId = root.publicKeyHash;
 			const routeCacheTtlMs = 40;
-			const routeAnnounceIntervalMs = 60_000;
 
 			const rootChannel = FanoutChannel.fromSelf(root, topic);
 			rootChannel.openAsRoot({
@@ -562,7 +568,6 @@ describe("fanout-tree", () => {
 				repair: true,
 				routeCacheMaxEntries: 64,
 				routeCacheTtlMs,
-				routeAnnounceIntervalMs,
 			});
 
 			for (const [node, maxChildren] of [
@@ -582,15 +587,21 @@ describe("fanout-tree", () => {
 						repair: true,
 						routeCacheMaxEntries: 64,
 						routeCacheTtlMs,
-						routeAnnounceIntervalMs,
 					},
-					{ timeoutMs: 10_000, routeAnnounceIntervalMs },
+					{ timeoutMs: 10_000 },
 				);
 			}
 
 			const senderChannel = new FanoutChannel(sender, { topic, root: rootId });
 
-			// Let initial route announcements age out from caches before resolving.
+			// Warm caches once, then let route tokens expire before resolving again.
+			await waitForResolved(async () => {
+				const route = await senderChannel.resolveRouteToken(target.publicKeyHash, {
+					timeoutMs: 4_000,
+				});
+				expect(route).to.exist;
+			});
+
 			await delay(160);
 			const missesBefore = root.getChannelMetrics(topic, rootId).routeCacheMisses;
 

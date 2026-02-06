@@ -41,8 +41,12 @@ import {
 	type DebouncedAccumulatorCounterMap,
 	debouncedAccumulatorSetCounter,
 } from "./debounced-set.js";
+import {
+	TopicRootControlPlane,
+} from "./topic-root-control-plane.js";
 export * from "./fanout-tree.js";
 export * from "./fanout-channel.js";
+export * from "./topic-root-control-plane.js";
 
 export const toUint8Array = (arr: Uint8ArrayList | Uint8Array) =>
 	arr instanceof Uint8ArrayList ? arr.subarray() : arr;
@@ -61,15 +65,23 @@ export interface PeerStreamsInit {
 	protocol: string;
 }
 
-export type DirectSubOptions = {
-	aggregate: boolean; // if true, we will collect topic/subscriber info for all traffic
+export type TopicControlPlaneOptions = DirectStreamOptions & {
+	dispatchEventOnSelfPublish?: boolean;
+	subscriptionDebounceDelay?: number;
+	topicRootControlPlane?: TopicRootControlPlane;
 };
 
-export type DirectSubComponents = DirectStreamComponents;
+export type TopicControlPlaneComponents = DirectStreamComponents;
 
 export type PeerId = Libp2pPeerId | PublicSignKey;
 
-export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
+/**
+ * Runtime control-plane implementation for pubsub topic membership + forwarding.
+ */
+export class TopicControlPlane
+	extends DirectStream<PubSubEvents>
+	implements PubSub
+{
 	public topics: Map<string, Map<string, SubscriptionData>>; // topic -> peers --> Uint8Array subscription metadata (the latest received)
 	public peerToTopic: Map<string, Set<string>>; // peer -> topics
 	public topicsToPeers: Map<string, Set<string>>; // topic -> peers
@@ -77,22 +89,22 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 	public lastSubscriptionMessages: Map<string, Map<string, DataMessage>> =
 		new Map();
 	public dispatchEventOnSelfPublish: boolean;
+	public readonly topicRootControlPlane: TopicRootControlPlane;
 
 	private debounceSubscribeAggregator: DebouncedAccumulatorCounterMap;
 	private debounceUnsubscribeAggregator: DebouncedAccumulatorCounterMap;
 
 	constructor(
-		components: DirectSubComponents,
-		props?: DirectStreamOptions & {
-			dispatchEventOnSelfPublish?: boolean;
-			subscriptionDebounceDelay?: number;
-		},
+		components: TopicControlPlaneComponents,
+		props?: TopicControlPlaneOptions,
 	) {
 		super(components, ["/lazysub/0.0.1"], props);
 		this.subscriptions = new Map();
 		this.topics = new Map();
 		this.topicsToPeers = new Map();
 		this.peerToTopic = new Map();
+		this.topicRootControlPlane =
+			props?.topicRootControlPlane || new TopicRootControlPlane();
 		this.dispatchEventOnSelfPublish =
 			props?.dispatchEventOnSelfPublish || false;
 		this.debounceSubscribeAggregator = debouncedAccumulatorSetCounter(
@@ -819,6 +831,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		}
 		return true;
 	}
+
 }
 
 export const waitForSubscribers = async (

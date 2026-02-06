@@ -2,7 +2,7 @@ import { yamux } from "@chainsafe/libp2p-yamux";
 import { field, option, variant } from "@dao-xyz/borsh";
 import { tcp } from "@libp2p/tcp";
 import { Program } from "@peerbit/program";
-import { DirectSub } from "@peerbit/pubsub";
+import { TopicControlPlane } from "@peerbit/pubsub";
 import { delay } from "@peerbit/time";
 import B from "benchmark";
 import { Peerbit, createLibp2pExtended } from "peerbit";
@@ -54,7 +54,7 @@ const peers = await Promise.all(
 			streamMuxers: [yamux()],
 			services: {
 				pubsub: (sub: any) =>
-					new DirectSub(sub, {
+					new TopicControlPlane(sub, {
 						canRelayMessage: true,
 						/* connectionManager: true */
 					}),
@@ -66,7 +66,7 @@ const peers = await Promise.all(
 			streamMuxers: [yamux()],
 			services: {
 				pubsub: (sub: any) =>
-					new DirectSub(sub, {
+					new TopicControlPlane(sub, {
 						canRelayMessage: true,
 						/* connectionManager: true */
 					}),
@@ -77,7 +77,7 @@ const peers = await Promise.all(
 			streamMuxers: [yamux()],
 			services: {
 				pubsub: (sub: any) =>
-					new DirectSub(sub, {
+					new TopicControlPlane(sub, {
 						canRelayMessage: true,
 						/* connectionManager: true */
 					}),

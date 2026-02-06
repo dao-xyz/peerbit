@@ -35,9 +35,9 @@ import {
 import { expect } from "chai";
 import sinon from "sinon";
 import { equals } from "uint8arrays";
-import { DirectSub, waitForSubscribers } from "../src/index.js";
+import { TopicControlPlane, waitForSubscribers } from "../src/index.js";
 
-const checkShortestPathIsNeighbours = (sub: DirectSub) => {
+const checkShortestPathIsNeighbours = (sub: TopicControlPlane) => {
 	const routes = sub.routes.routes.get(sub.routes.me)!;
 	for (let peer of sub.peers) {
 		const found = routes.get(peer[0])?.list.find((x) => x.hash === peer[0]);
@@ -46,7 +46,7 @@ const checkShortestPathIsNeighbours = (sub: DirectSub) => {
 };
 
 const subscribAndWait = async (
-	session: TestSession<{ pubsub: DirectSub }>,
+	session: TestSession<{ pubsub: TopicControlPlane }>,
 	topic: string,
 ) => {
 	for (const peer of session.peers) {
@@ -62,7 +62,7 @@ const subscribAndWait = async (
 		}
 	}
 };
-const createSubscriptionMetrics = (pubsub: DirectSub) => {
+const createSubscriptionMetrics = (pubsub: TopicControlPlane) => {
 	let m: {
 		subscriptions: DataMessage[];
 		unsubscriptions: DataMessage[];
@@ -87,9 +87,9 @@ const createSubscriptionMetrics = (pubsub: DirectSub) => {
 	return m;
 };
 
-const createMetrics = (pubsub: DirectSub) => {
+const createMetrics = (pubsub: TopicControlPlane) => {
 	const m: {
-		stream: DirectSub;
+		stream: TopicControlPlane;
 		relayedData: PubSubData[];
 		messages: Message[];
 		received: PubSubData[];
@@ -244,7 +244,7 @@ describe("pubsub", function () {
 	});
 
 	describe("topic", () => {
-		let session: TestSession<{ pubsub: DirectSub }>;
+		let session: TestSession<{ pubsub: TopicControlPlane }>;
 		let streams: ReturnType<typeof createMetrics>[] = [];
 
 		beforeEach(async () => {
@@ -252,7 +252,7 @@ describe("pubsub", function () {
 			session = await TestSession.disconnected(3, {
 				services: {
 					pubsub: (c) =>
-						new DirectSub(c, {
+						new TopicControlPlane(c, {
 							canRelayMessage: true,
 							connectionManager: false,
 						}),
@@ -381,7 +381,7 @@ describe("pubsub", function () {
 	});
 
 	describe("publish", () => {
-		let session: TestSession<{ pubsub: DirectSub }>;
+		let session: TestSession<{ pubsub: TopicControlPlane }>;
 		let streams: ReturnType<typeof createMetrics>[];
 		const data = new Uint8Array([1, 2, 3]);
 		const TOPIC = "world";
@@ -393,7 +393,7 @@ describe("pubsub", function () {
 					session = await TestSession.disconnected(3, {
 						services: {
 							pubsub: (c) =>
-								new DirectSub(c, {
+								new TopicControlPlane(c, {
 									canRelayMessage: true,
 									connectionManager: false,
 								}),
@@ -605,7 +605,7 @@ describe("pubsub", function () {
 				session = await TestSession.connected(3, {
 					services: {
 						pubsub: (c) =>
-							new DirectSub(c, {
+							new TopicControlPlane(c, {
 								canRelayMessage: true,
 								connectionManager: false,
 							}),
@@ -761,7 +761,7 @@ describe("pubsub", function () {
 				session = await TestSession.connected(2, {
 					services: {
 						pubsub: (c) =>
-							new DirectSub(c, {
+							new TopicControlPlane(c, {
 								canRelayMessage: true,
 								connectionManager: false,
 							}),
@@ -801,13 +801,13 @@ describe("pubsub", function () {
 	});
 
 	describe("events", () => {
-		let session: TestSession<{ pubsub: DirectSub }>;
+		let session: TestSession<{ pubsub: TopicControlPlane }>;
 
 		beforeEach(async () => {
 			session = await TestSession.disconnected(2, {
 				services: {
 					pubsub: (c) =>
-						new DirectSub(c, {
+						new TopicControlPlane(c, {
 							canRelayMessage: true,
 							connectionManager: false,
 						}),
@@ -860,7 +860,7 @@ describe("pubsub", function () {
 			
 			*/
 
-			let session: TestSession<{ pubsub: DirectSub }>;
+			let session: TestSession<{ pubsub: TopicControlPlane }>;
 			let streams: ReturnType<typeof createMetrics>[];
 
 			const data = new Uint8Array([1, 2, 3]);
@@ -870,7 +870,7 @@ describe("pubsub", function () {
 				session = await TestSession.disconnected(5, {
 					services: {
 						pubsub: (c) =>
-							new DirectSub(c, {
+							new TopicControlPlane(c, {
 								canRelayMessage: true,
 								connectionManager: false,
 							}),
@@ -949,7 +949,7 @@ describe("pubsub", function () {
 		});
 
 		describe("3", () => {
-			let session: TestSession<{ pubsub: DirectSub }>;
+			let session: TestSession<{ pubsub: TopicControlPlane }>;
 			let streams: ReturnType<typeof createMetrics>[];
 
 			const data = new Uint8Array([1, 2, 3]);
@@ -959,7 +959,7 @@ describe("pubsub", function () {
 				session = await TestSession.disconnected(3, {
 					services: {
 						pubsub: (c) =>
-							new DirectSub(c, {
+							new TopicControlPlane(c, {
 								canRelayMessage: true,
 								connectionManager: false,
 							}),
@@ -1100,7 +1100,7 @@ describe("pubsub", function () {
 	// test sending "0" to "3" only 1 message should appear even though not in strict mode
 
 	describe("join/leave", () => {
-		let session: TestSession<{ pubsub: DirectSub }>;
+		let session: TestSession<{ pubsub: TopicControlPlane }>;
 		let streams: ReturnType<typeof createMetrics>[] = [];
 		const TOPIC_1 = "topic";
 
@@ -1109,7 +1109,7 @@ describe("pubsub", function () {
 			session = await TestSession.disconnected(3, {
 				services: {
 					pubsub: (c) =>
-						new DirectSub(c, {
+						new TopicControlPlane(c, {
 							canRelayMessage: true,
 							connectionManager: false,
 						}),
@@ -1318,7 +1318,7 @@ describe("pubsub", function () {
 	});
 
 	describe("subscription", () => {
-		let session: TestSession<{ pubsub: DirectSub }>;
+		let session: TestSession<{ pubsub: TopicControlPlane }>;
 		let streams: ReturnType<typeof createMetrics>[];
 		const TOPIC_1 = "hello";
 		const TOPIC_2 = "world";
@@ -1329,7 +1329,7 @@ describe("pubsub", function () {
 				transports: [tcp(), webSockets()],
 				services: {
 					pubsub: (c) =>
-						new DirectSub(c, {
+						new TopicControlPlane(c, {
 							canRelayMessage: true,
 							connectionManager: false,
 							seekTimeout: 5000, // set seekTimeout to make GoodBye/leaving events to take effect faster
@@ -1786,7 +1786,7 @@ describe("pubsub", function () {
 	});
 
 	describe("waitForSubscribers", () => {
-		let session: TestSession<{ pubsub: DirectSub }>;
+		let session: TestSession<{ pubsub: TopicControlPlane }>;
 
 		afterEach(async () => {
 			await session.stop();
@@ -1796,7 +1796,7 @@ describe("pubsub", function () {
 			session = await TestSession.disconnected(1, {
 				services: {
 					pubsub: (c) =>
-						new DirectSub(c, {
+						new TopicControlPlane(c, {
 							canRelayMessage: true,
 							connectionManager: false,
 						}),
@@ -1815,7 +1815,7 @@ describe("pubsub", function () {
 			session = await TestSession.connected(2, {
 				services: {
 					pubsub: (c) =>
-						new DirectSub(c, {
+						new TopicControlPlane(c, {
 							canRelayMessage: true,
 							connectionManager: false,
 						}),
@@ -1843,7 +1843,7 @@ describe("pubsub", function () {
 			session = await TestSession.connected(2, {
 				services: {
 					pubsub: (c) =>
-						new DirectSub(c, {
+						new TopicControlPlane(c, {
 							canRelayMessage: true,
 							connectionManager: false,
 						}),

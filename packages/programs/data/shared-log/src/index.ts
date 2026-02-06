@@ -442,17 +442,27 @@ export type DeliveryOptions = {
 };
 
 export type SharedLogFanoutOptions = {
-	root: string;
+	root?: string;
 	channel?: Partial<Omit<FanoutTreeChannelOptions, "role">>;
 	join?: FanoutTreeJoinOptions;
 };
 
-export type SharedAppendOptions<T> = AppendOptions<T> & {
+type SharedAppendBaseOptions<T> = AppendOptions<T> & {
 	replicas?: AbsoluteReplicas | number;
 	replicate?: boolean;
-	target?: "all" | "replicators" | "none";
-	delivery?: false | true | DeliveryOptions;
 };
+
+export type SharedAppendOptions<T> =
+	| (SharedAppendBaseOptions<T> & {
+			target?: "replicators" | "none";
+			delivery?: false | true | DeliveryOptions;
+	  })
+	| (SharedAppendBaseOptions<T> & {
+			// target=all uses the fanout data plane and intentionally does not expose
+			// per-recipient settle semantics from RPC delivery options.
+			target: "all";
+			delivery?: false | undefined;
+	  });
 
 export type ReplicatorJoinEvent = { publicKey: PublicSignKey };
 export type ReplicatorLeaveEvent = { publicKey: PublicSignKey };
@@ -644,9 +654,20 @@ export class SharedLog<
 			);
 		}
 
+		const resolvedRoot =
+			options.root ??
+			(await (this.node.services.pubsub as any)?.topicRootControlPlane?.resolveTopicRoot?.(
+				this.topic,
+			));
+		if (!resolvedRoot) {
+			throw new Error(
+				`Fanout is configured for shared-log topic ${this.topic}, but no fanout root was provided and none could be resolved`,
+			);
+		}
+
 		const channel = new FanoutChannel(fanoutService, {
 			topic: this.topic,
-			root: options.root,
+			root: resolvedRoot,
 		});
 		this._fanoutChannel = channel;
 
@@ -663,7 +684,7 @@ export class SharedLog<
 
 		try {
 			const channelOptions = this.getFanoutChannelOptions(options);
-			if (options.root === fanoutService.publicKeyHash) {
+			if (resolvedRoot === fanoutService.publicKeyHash) {
 				await channel.openAsRoot(channelOptions);
 				return;
 			}
@@ -720,6 +741,246 @@ export class SharedLog<
 		await this._fanoutChannel.publish(serialize(message));
 	}
 
+	private _parseDeliveryOptions(
+		deliveryArg: false | true | DeliveryOptions | undefined,
+	): {
+		delivery?: DeliveryOptions;
+		requireRecipients: boolean;
+		settleMin?: number;
+		wrap?: (promise: Promise<void>) => Promise<void>;
+	} {
+		const delivery: DeliveryOptions | undefined =
+			deliveryArg === undefined || deliveryArg === false
+				? undefined
+				: deliveryArg === true
+					? {}
+					: deliveryArg;
+		if (!delivery) {
+			return {
+				delivery: undefined,
+				requireRecipients: false,
+				settleMin: undefined,
+				wrap: undefined,
+			};
+		}
+
+		const deliverySettle = delivery.settle ?? true;
+		const deliveryTimeout = delivery.timeout;
+		const deliverySignal = delivery.signal;
+		const requireRecipients = delivery.requireRecipients === true;
+		const settleMin =
+			typeof deliverySettle === "object" && Number.isFinite(deliverySettle.min)
+				? Math.max(0, Math.floor(deliverySettle.min))
+				: undefined;
+
+		const wrap =
+			deliveryTimeout == null && deliverySignal == null
+				? undefined
+				: (promise: Promise<void>) =>
+						new Promise<void>((resolve, reject) => {
+							let settled = false;
+							let timer: ReturnType<typeof setTimeout> | undefined = undefined;
+							const onAbort = () => {
+								if (settled) {
+									return;
+								}
+								settled = true;
+								promise.catch(() => {});
+								cleanup();
+								reject(new AbortError());
+							};
+
+							const cleanup = () => {
+								if (timer != null) {
+									clearTimeout(timer);
+									timer = undefined;
+								}
+								deliverySignal?.removeEventListener("abort", onAbort);
+							};
+
+							if (deliverySignal) {
+								if (deliverySignal.aborted) {
+									onAbort();
+									return;
+								}
+								deliverySignal.addEventListener("abort", onAbort);
+							}
+
+							if (deliveryTimeout != null) {
+								timer = setTimeout(() => {
+									if (settled) {
+										return;
+									}
+									settled = true;
+									promise.catch(() => {});
+									cleanup();
+									reject(new TimeoutError(`Timeout waiting for delivery`));
+								}, deliveryTimeout);
+							}
+
+							promise
+								.then(() => {
+									if (settled) {
+										return;
+									}
+									settled = true;
+									cleanup();
+									resolve();
+								})
+								.catch((error) => {
+									if (settled) {
+										return;
+									}
+									settled = true;
+									cleanup();
+									reject(error);
+								});
+						});
+
+		return {
+			delivery,
+			requireRecipients,
+			settleMin,
+			wrap,
+		};
+	}
+
+		private async _appendDeliverToReplicators(
+			entry: Entry<T>,
+			minReplicasValue: number,
+			leaders: Map<string, any>,
+			selfHash: string,
+			isLeader: boolean,
+			deliveryArg: false | true | DeliveryOptions | undefined,
+		) {
+			const { delivery, requireRecipients, settleMin, wrap } =
+				this._parseDeliveryOptions(deliveryArg);
+			const pending: Promise<void>[] = [];
+			const track = (promise: Promise<void>) => {
+				pending.push(wrap ? wrap(promise) : promise);
+			};
+
+			for await (const message of createExchangeHeadsMessages(this.log, [entry])) {
+				await this._mergeLeadersFromGidReferences(message, minReplicasValue, leaders);
+				const leadersForDelivery = delivery ? new Set(leaders.keys()) : undefined;
+
+				const set = this.addPeersToGidPeerHistory(entry.meta.gid, leaders.keys());
+				const hasRemotePeers = set.has(selfHash) ? set.size > 1 : set.size > 0;
+				if (!hasRemotePeers) {
+					if (requireRecipients) {
+					throw new NoPeersError(this.rpc.topic);
+				}
+				continue;
+			}
+
+				if (!delivery) {
+					this.rpc
+						.send(message, {
+							mode: isLeader
+							? new SilentDelivery({ redundancy: 1, to: set })
+							: new AcknowledgeDelivery({ redundancy: 1, to: set }),
+					})
+					.catch((error) => logger.error(error));
+					continue;
+				}
+
+				const orderedRemoteRecipients: string[] = [];
+				for (const peer of leadersForDelivery!) {
+					if (peer === selfHash) {
+						continue;
+					}
+					orderedRemoteRecipients.push(peer);
+				}
+				for (const peer of set) {
+					if (peer === selfHash) {
+						continue;
+					}
+					if (leadersForDelivery!.has(peer)) {
+						continue;
+					}
+					orderedRemoteRecipients.push(peer);
+				}
+
+				const ackTo: string[] = [];
+				let silentTo: string[] | undefined;
+				// Default delivery semantics: require enough remote ACKs to reach the requested
+				// replication degree (local append counts as 1).
+				const ackLimit =
+					settleMin == null ? Math.max(0, minReplicasValue - 1) : settleMin;
+
+				for (const peer of orderedRemoteRecipients) {
+					if (ackTo.length < ackLimit) {
+						ackTo.push(peer);
+					} else {
+						silentTo ||= [];
+						silentTo.push(peer);
+					}
+				}
+
+				if (requireRecipients && orderedRemoteRecipients.length === 0) {
+					throw new NoPeersError(this.rpc.topic);
+				}
+				if (requireRecipients && ackTo.length + (silentTo?.length || 0) === 0) {
+					throw new NoPeersError(this.rpc.topic);
+				}
+
+			if (ackTo.length > 0) {
+				track(
+					this.rpc.send(message, {
+						mode: new AcknowledgeDelivery({
+							redundancy: 1,
+							to: ackTo,
+						}),
+					}),
+				);
+			}
+
+			if (silentTo?.length) {
+				this.rpc
+					.send(message, {
+						mode: new SilentDelivery({ redundancy: 1, to: silentTo }),
+					})
+					.catch((error) => logger.error(error));
+			}
+		}
+
+		if (pending.length > 0) {
+			await Promise.all(pending);
+		}
+	}
+
+	private async _mergeLeadersFromGidReferences(
+		message: ExchangeHeadsMessage<any>,
+		minReplicasValue: number,
+		leaders: Map<string, any>,
+	) {
+		const gidReferences = message.heads[0]?.gidRefrences;
+		if (!gidReferences || gidReferences.length === 0) {
+			return;
+		}
+
+		for (const gidReference of gidReferences) {
+			const entryFromGid = this.log.entryIndex.getHeads(gidReference, false);
+			for (const gidEntry of await entryFromGid.all()) {
+				let coordinates = await this.getCoordinates(gidEntry);
+				if (coordinates == null) {
+					coordinates = await this.createCoordinates(gidEntry, minReplicasValue);
+				}
+
+				const found = await this._findLeaders(coordinates);
+				for (const [key, value] of found) {
+					leaders.set(key, value);
+				}
+			}
+		}
+	}
+
+	private async _appendDeliverToAllFanout(entry: Entry<T>) {
+		for await (const message of createExchangeHeadsMessages(this.log, [entry])) {
+			await this._publishExchangeHeadsViaFanout(message);
+		}
+	}
+
 	private async _resolvePublicKeyFromHash(
 		hash: string,
 	): Promise<PublicSignKey | undefined> {
@@ -755,10 +1016,9 @@ export class SharedLog<
 					seen.add(hash);
 					uniqueKeys.push(key);
 				}
-				if (uniqueKeys.length > 0) {
-					return uniqueKeys;
-				}
+				return uniqueKeys;
 			}
+			return [];
 		}
 		return (await this.node.services.pubsub.getSubscribers(topic)) ?? undefined;
 	}
@@ -1737,284 +1997,30 @@ export class SharedLog<
 		if (options?.target !== "none") {
 			const target = options?.target;
 			const deliveryArg = options?.delivery;
-			const delivery: DeliveryOptions | undefined =
-				deliveryArg === undefined || deliveryArg === false
-					? undefined
-					: deliveryArg === true
-						? {}
-						: deliveryArg;
+			const hasDelivery = !(deliveryArg === undefined || deliveryArg === false);
 
-			let requireRecipients = false;
-			let settleMin: number | undefined;
-			let guardDelivery:
-				| ((promise: Promise<void>) => Promise<void>)
-				| undefined = undefined;
-
-			let firstDeliveryPromise: Promise<void> | undefined;
-			let deliveryPromises: Promise<void>[] | undefined;
-			let addDeliveryPromise: ((promise: Promise<void>) => void) | undefined;
-
-			const leadersForDelivery =
-				delivery && (target === "replicators" || !target)
-					? new Set(leaders.keys())
-					: undefined;
-
-			if (delivery) {
-				const deliverySettle = delivery.settle ?? true;
-				const deliveryTimeout = delivery.timeout;
-				const deliverySignal = delivery.signal;
-				requireRecipients = delivery.requireRecipients === true;
-				settleMin =
-					typeof deliverySettle === "object" &&
-					Number.isFinite(deliverySettle.min)
-						? Math.max(0, Math.floor(deliverySettle.min))
-						: undefined;
-
-				guardDelivery =
-					deliveryTimeout == null && deliverySignal == null
-						? undefined
-						: (promise: Promise<void>) =>
-								new Promise<void>((resolve, reject) => {
-									let settled = false;
-									let timer: ReturnType<typeof setTimeout> | undefined =
-										undefined;
-									const onAbort = () => {
-										if (settled) {
-											return;
-										}
-										settled = true;
-										promise.catch(() => {});
-										cleanup();
-										reject(new AbortError());
-									};
-
-									const cleanup = () => {
-										if (timer != null) {
-											clearTimeout(timer);
-											timer = undefined;
-										}
-										deliverySignal?.removeEventListener("abort", onAbort);
-									};
-
-									if (deliverySignal) {
-										if (deliverySignal.aborted) {
-											onAbort();
-											return;
-										}
-										deliverySignal.addEventListener("abort", onAbort);
-									}
-
-									if (deliveryTimeout != null) {
-										timer = setTimeout(() => {
-											if (settled) {
-												return;
-											}
-											settled = true;
-											promise.catch(() => {});
-											cleanup();
-											reject(new TimeoutError(`Timeout waiting for delivery`));
-										}, deliveryTimeout);
-									}
-
-									promise
-										.then(() => {
-											if (settled) {
-												return;
-											}
-											settled = true;
-											cleanup();
-											resolve();
-										})
-										.catch((e) => {
-											if (settled) {
-												return;
-											}
-											settled = true;
-											cleanup();
-											reject(e);
-										});
-								});
-
-				addDeliveryPromise = (promise: Promise<void>) => {
-					if (!firstDeliveryPromise) {
-						firstDeliveryPromise = promise;
-						return;
-					}
-					if (!deliveryPromises) {
-						deliveryPromises = [firstDeliveryPromise, promise];
-						firstDeliveryPromise = undefined;
-						return;
-					}
-					deliveryPromises.push(promise);
-				};
+			if (target === "all" && hasDelivery) {
+				throw new Error(
+					`delivery options are not supported with target="all"; fanout broadcast is fire-and-forward`,
+				);
+			}
+			if (target === "all" && !this._fanoutChannel) {
+				throw new Error(
+					`No fanout channel configured for shared-log topic ${this.topic}`,
+				);
 			}
 
-			for await (const message of createExchangeHeadsMessages(this.log, [
-				result.entry,
-			])) {
-				if (target === "replicators" || !target) {
-					if (message.heads[0].gidRefrences.length > 0) {
-						for (const ref of message.heads[0].gidRefrences) {
-							const entryFromGid = this.log.entryIndex.getHeads(ref, false);
-							for (const entry of await entryFromGid.all()) {
-								let coordinates = await this.getCoordinates(entry);
-								if (coordinates == null) {
-									coordinates = await this.createCoordinates(
-										entry,
-										minReplicasValue,
-									);
-									// TODO are we every to come here?
-								}
-
-								const result = await this._findLeaders(coordinates);
-								for (const [k, v] of result) {
-									leaders.set(k, v);
-								}
-							}
-						}
-					}
-
-					const set = this.addPeersToGidPeerHistory(
-						result.entry.meta.gid,
-						leaders.keys(),
-					);
-					let hasRemotePeers = set.has(selfHash) ? set.size > 1 : set.size > 0;
-					if (!hasRemotePeers) {
-						if (requireRecipients) {
-							throw new NoPeersError(this.rpc.topic);
-						}
-						continue;
-					}
-
-					if (!delivery) {
-						this.rpc
-							.send(message, {
-								mode: isLeader
-									? new SilentDelivery({ redundancy: 1, to: set })
-									: new AcknowledgeDelivery({ redundancy: 1, to: set }),
-							})
-							.catch((e) => logger.error(e));
-						continue;
-					}
-
-					let expectedRemoteRecipientsCount = 0;
-					const ackTo: string[] = [];
-					let silentTo: string[] | undefined;
-					const ackLimit =
-						settleMin == null ? Number.POSITIVE_INFINITY : settleMin;
-
-					// Always settle towards the current expected replicators for this entry,
-					// not the entire gid peer history.
-					for (const peer of leadersForDelivery!) {
-						if (peer === selfHash) {
-							continue;
-						}
-						expectedRemoteRecipientsCount++;
-						if (ackTo.length < ackLimit) {
-							ackTo.push(peer);
-						} else {
-							silentTo ||= [];
-							silentTo.push(peer);
-						}
-					}
-
-					// Still deliver to known peers for the gid (best-effort), but don't let them
-					// satisfy the settle requirement.
-					for (const peer of set) {
-						if (peer === selfHash) {
-							continue;
-						}
-						if (leadersForDelivery!.has(peer)) {
-							continue;
-						}
-						silentTo ||= [];
-						silentTo.push(peer);
-					}
-
-					if (requireRecipients && expectedRemoteRecipientsCount === 0) {
-						throw new NoPeersError(this.rpc.topic);
-					}
-
-					if (
-						requireRecipients &&
-						ackTo.length + (silentTo?.length || 0) === 0
-					) {
-						throw new NoPeersError(this.rpc.topic);
-					}
-
-					if (ackTo.length > 0) {
-						const promise = this.rpc.send(message, {
-							mode: new AcknowledgeDelivery({
-								redundancy: 1,
-								to: ackTo,
-							}),
-						});
-						addDeliveryPromise!(
-							guardDelivery ? guardDelivery(promise) : promise,
-						);
-					}
-
-					if (silentTo?.length) {
-						this.rpc
-							.send(message, {
-								mode: new SilentDelivery({ redundancy: 1, to: silentTo }),
-							})
-							.catch((e) => logger.error(e));
-					}
-				} else {
-					if (!delivery) {
-						await this._publishExchangeHeadsViaFanout(message);
-						continue;
-					}
-
-					const subscribers = await this._getTopicSubscribers(this.rpc.topic);
-
-					const ackTo: PublicSignKey[] = [];
-					let silentTo: PublicSignKey[] | undefined;
-					const ackLimit =
-						settleMin == null ? Number.POSITIVE_INFINITY : settleMin;
-					for (const subscriber of subscribers || []) {
-						if (subscriber.hashcode() === selfHash) {
-							continue;
-						}
-						if (ackTo.length < ackLimit) {
-							ackTo.push(subscriber);
-						} else {
-							silentTo ||= [];
-							silentTo.push(subscriber);
-						}
-					}
-
-					if (
-						requireRecipients &&
-						ackTo.length + (silentTo?.length || 0) === 0
-					) {
-						throw new NoPeersError(this.rpc.topic);
-					}
-
-					if (ackTo.length > 0) {
-						const promise = this.rpc.send(message, {
-							mode: new AcknowledgeDelivery({ redundancy: 1, to: ackTo }),
-						});
-						addDeliveryPromise!(
-							guardDelivery ? guardDelivery(promise) : promise,
-						);
-					}
-
-					if (silentTo?.length) {
-						this.rpc
-							.send(message, {
-								mode: new SilentDelivery({ redundancy: 1, to: silentTo }),
-							})
-							.catch((e) => logger.error(e));
-					}
-				}
-			}
-
-			if (deliveryPromises) {
-				await Promise.all(deliveryPromises);
-			} else if (firstDeliveryPromise) {
-				await firstDeliveryPromise;
+			if (target === "all") {
+				await this._appendDeliverToAllFanout(result.entry);
+			} else {
+				await this._appendDeliverToReplicators(
+					result.entry,
+					minReplicasValue,
+					leaders,
+					selfHash,
+					isLeader,
+					deliveryArg,
+				);
 			}
 		}
 

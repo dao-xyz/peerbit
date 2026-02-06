@@ -17,7 +17,7 @@ const usage = () => {
 			"  pnpm -C packages/transport/pubsub run bench -- <benchmark> [args]",
 			"",
 			"Benchmarks:",
-			"  topic-sim  in-memory DirectSub topic fanout sim",
+			"  topic-sim  in-memory TopicControlPlane topic fanout sim",
 			"  tree-sim   capacity-aware tree overlay sim (Plumtree-inspired)",
 			"  fanout-tree-sim  end-to-end FanoutTree protocol sim (bootstrap tracker join)",
 			"",

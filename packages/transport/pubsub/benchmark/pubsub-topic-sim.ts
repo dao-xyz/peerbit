@@ -1,5 +1,5 @@
 /**
- * In-memory DirectSub simulator (1 writer -> many subscribers).
+ * In-memory TopicControlPlane simulator (1 writer -> many subscribers).
  *
  * Goal: stress the real @peerbit/pubsub + @peerbit/stream code paths (routing,
  * ACK learning, backpressure/lanes, dialer/pruner) while avoiding real sockets
@@ -120,4 +120,3 @@ try {
 	console.error(e?.message ?? e);
 	process.exit(String(e?.message ?? "").includes("timed out") ? 124 : 1);
 }
-

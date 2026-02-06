@@ -4,9 +4,7 @@ import type {
 	CanAppend,
 	Change,
 	Encoding,
-	EncryptionTemplateMaybeEncrypted,
 	Entry,
-	EntryType,
 	ShallowEntry,
 	TrimOptions,
 } from "@peerbit/log";
@@ -16,6 +14,7 @@ import {
 	AbsoluteReplicas,
 	type ReplicationLimitsOptions,
 	type ReplicationOptions,
+	type SharedAppendOptions,
 	type SharedLogFanoutOptions,
 	SharedLog,
 } from "../../../src/index.js";
@@ -149,19 +148,7 @@ export class EventStore<
 
 	add(
 		data: T,
-		options?: {
-			pin?: boolean;
-			receiver?: EncryptionTemplateMaybeEncrypted;
-			meta?: {
-				next?: Entry<any>[];
-				gidSeed?: Uint8Array;
-				type?: EntryType;
-			};
-			replicas?: AbsoluteReplicas;
-			target?: "all" | "replicators";
-			canAppend?: CanAppend<Operation<T>>;
-			replicate?: boolean;
-		},
+		options?: SharedAppendOptions<Operation<T>>,
 	) {
 		return this.log.append(
 			{

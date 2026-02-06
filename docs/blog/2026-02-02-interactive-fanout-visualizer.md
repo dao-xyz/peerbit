@@ -19,7 +19,7 @@ This post introduces a small interactive sandbox that helps build intuition for 
 
 This is a small browser-friendly sandbox that runs the **real code paths**:
 
-- `@peerbit/pubsub` (`DirectSub`)
+- `@peerbit/pubsub` (`TopicControlPlane`)
 - `@peerbit/stream` (routing + connection handling)
 - over an **in-memory libp2p shim** (no sockets)
 
@@ -44,17 +44,17 @@ The catch is reliability. Trees break under churn and packet loss. The common st
 - eager push along the tree for efficiency, and
 - local recovery mechanisms so one broken edge does not break delivery. [1]
 
-### 2) Subscribe gossip (control plane)
-If you switch **Flow capture → Include setup + subscribe** and **Subscribe model → Real subscribe**, you’ll see extra traffic *before* the first publish: peers announce interest and the writer learns enough routes to deliver beyond the first hop. This is the “subscribe gossip exploding” symptom: as the audience grows, the overhead of “who is interested in what?” can grow faster than the payload.
+### 2) Subscribe/setup traffic (control plane)
+If you switch **Flow capture → Include setup + subscribe** and **Subscribe model → Real subscribe**, you’ll see extra traffic *before* the first publish: peers announce interest and the writer learns enough routes to deliver beyond the first hop. This is where “subscribe gossip exploding” can appear: as the audience grows, the overhead of “who is interested in what?” can grow faster than the payload.
 
 If you just want to study delivery, keep **Preseed (no subscribe gossip)** enabled. It skips the setup chatter so the visual flow mostly represents the publish data plane.
 
-### Background: mesh gossip (baseline, not simulated here)
-In a flood/mesh gossip design (e.g. FloodSub / Gossipsub), a publish is forwarded across many edges. Deduplication prevents loops, but the work is often closer to “per edge” than “per subscriber”. That’s robust, but it’s hard to make economical at very large audience sizes if the same mechanism also handles membership and subscription dissemination.
+### Background: mesh gossip (reference model)
+This sandbox does not provide a FloodSub/Gossipsub toggle. It always runs the TopicControlPlane path over in-memory transport. We still reference mesh gossip because it is the common baseline in the literature: forwards are often closer to “per edge” than “per subscriber”, which can be robust but expensive at very large audience sizes.
 
 ## How this maps to Peerbit work
 
-This sandbox runs the real `DirectSub` and `DirectStream` logic over a fake in-memory transport. It skips real sockets and expensive crypto verification so you can run hundreds or thousands of nodes locally, including in the browser.
+This sandbox runs the real `TopicControlPlane` and `DirectStream` logic over a fake in-memory transport. It skips real sockets and expensive crypto verification so you can run hundreds or thousands of nodes locally, including in the browser.
 
 The architectural direction in Peerbit is:
 

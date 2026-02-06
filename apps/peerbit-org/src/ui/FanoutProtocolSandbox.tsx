@@ -11,7 +11,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { PeerId } from "@libp2p/interface";
 import { PreHash, SignatureWithKey } from "@peerbit/crypto";
-import { DirectSub, type DirectSubComponents } from "@peerbit/pubsub";
+import { TopicControlPlane, type TopicControlPlaneComponents } from "@peerbit/pubsub";
 import { AcknowledgeAnyWhere } from "@peerbit/stream-interface";
 
 import {
@@ -454,9 +454,9 @@ const quantile = (sorted: number[], q: number) => {
 	return sorted[lo]! * (1 - t) + sorted[hi]! * t;
 };
 
-class SimDirectSub extends DirectSub {
+class SimTopicControlPlane extends TopicControlPlane {
 	constructor(
-		components: DirectSubComponents,
+		components: TopicControlPlaneComponents,
 		opts: { subscriptionDebounceDelayMs: number; seekTimeoutMs: number },
 	) {
 		super(components, {
@@ -494,7 +494,7 @@ class SimDirectSub extends DirectSub {
 	}
 }
 
-const waitForProtocolStreams = async (peers: Array<{ sub: SimDirectSub }>) => {
+const waitForProtocolStreams = async (peers: Array<{ sub: SimTopicControlPlane }>) => {
 	const start = Date.now();
 	const timeoutMs = 30_000;
 	for (;;) {
@@ -628,7 +628,7 @@ export function FanoutProtocolSandbox({
 
 	const runRef = useRef<{
 		network: InMemoryNetwork;
-		peers: Array<{ peerId: PeerId; sub: SimDirectSub }>;
+		peers: Array<{ peerId: PeerId; sub: SimTopicControlPlane }>;
 		stop: () => Promise<void>;
 	} | null>(null);
 
@@ -872,7 +872,7 @@ export function FanoutProtocolSandbox({
 					  }
 					: undefined,
 			});
-			const peers: Array<{ peerId: PeerId; sub: SimDirectSub }> = [];
+			const peers: Array<{ peerId: PeerId; sub: SimTopicControlPlane }> = [];
 
 			const seekTimeoutMs = clamp(
 				10_000 + streamRxDelayMs * Math.round(8 + 2 * Math.log2(n + 1)),
@@ -888,7 +888,7 @@ export function FanoutProtocolSandbox({
 			network.registerPeer(runtime, port);
 			peerIndexById.set(runtime.peerId.toString(), i);
 
-			const components: DirectSubComponents = {
+			const components: TopicControlPlaneComponents = {
 				peerId: runtime.peerId,
 				privateKey: runtime.privateKey,
 				addressManager: runtime.addressManager as any,
@@ -900,7 +900,7 @@ export function FanoutProtocolSandbox({
 
 				peers.push({
 					peerId: runtime.peerId,
-					sub: new SimDirectSub(components, { subscriptionDebounceDelayMs, seekTimeoutMs }),
+					sub: new SimTopicControlPlane(components, { subscriptionDebounceDelayMs, seekTimeoutMs }),
 				});
 
 			// Yield occasionally so the UI doesn't look frozen on larger node counts.
@@ -1263,7 +1263,7 @@ export function FanoutProtocolSandbox({
 					<div className="flex flex-wrap items-start justify-between gap-2">
 						<div>
 							<div className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-								Real protocol sandbox (DirectSub over in-memory libp2p)
+								Real protocol sandbox (TopicControlPlane over in-memory libp2p)
 							</div>
 							<div className="text-xs text-slate-500 dark:text-slate-400">
 								Status: <span className="font-mono">{statusLabel}</span>
@@ -1604,7 +1604,7 @@ export function FanoutProtocolSandbox({
 											</p>
 											<p>
 												Blue edge glow is “recently used edge” heat. Optional orange comets show ACK return
-												traffic. This runs the real DirectSub and DirectStream logic, but uses an in-memory
+												traffic. This runs the real TopicControlPlane and DirectStream logic, but uses an in-memory
 												transport and skips crypto verification to keep the demo fast.
 											</p>
 										</div>
