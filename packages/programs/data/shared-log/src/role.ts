@@ -64,7 +64,7 @@ export class RoleReplicationSegment {
 		if (offset > 1 || offset < 0) {
 			throw new Error("Expecting offset to be between 0 and 1, got: " + offset);
 		}
-		this.offsetNominator = denormalizeru32(factor);
+		this.offsetNominator = denormalizeru32(offset);
 	}
 
 	get factor(): number {

@@ -519,6 +519,15 @@ export class SharedLog<
 	>; // map of peerId to timeout
 
 	private latestReplicationInfoMessage!: Map<string, bigint>;
+	private replicationInfoQueue!: Map<string, Promise<void>>;
+	private pendingReplicationInfo!: Map<
+		string,
+		{
+			from: PublicSignKey;
+			messageTimestamp: bigint;
+			message: AllReplicatingSegmentsMessage | AddedReplicationSegmentMessage;
+		}
+	>;
 
 	private remoteBlocks!: RemoteBlocks;
 
@@ -600,18 +609,23 @@ export class SharedLog<
 	// @deprecated
 	private async getRole() {
 		const segments = await this.getMyReplicationSegments();
-		if (segments.length > 1) {
-			throw new Error(
-				"More than one replication segment found. Can only use one segment for compatbility with v8",
-			);
-		}
-
 		if (segments.length > 0) {
-			const segment = segments[0].toReplicationRange();
+			// v8 role messages can only express a single segment (factor+offset). If we
+			// ever have more than one segment locally (e.g. due to restore or bugs),
+			// pick the widest to best approximate our participation.
+			let selected = segments[0]!;
+			for (const seg of segments) {
+				if (seg.widthNormalized > selected.widthNormalized) {
+					selected = seg;
+				}
+			}
+
+			const segment = selected.toReplicationRange();
 			return new Replicator({
 				// TODO types
 				factor: (segment.factor as number) / MAX_U32,
 				offset: (segment.offset as number) / MAX_U32,
+				timestamp: segment.timestamp,
 			});
 		}
 
@@ -1154,12 +1168,12 @@ export class SharedLog<
 		if (this._isTrustedReplicator && !(await this._isTrustedReplicator(from))) {
 			return undefined;
 		}
-		let isNewReplicator = false;
 		let timestamp = BigInt(ts ?? +new Date());
 		rebalance = rebalance == null ? true : rebalance;
 
 		let diffs: ReplicationChanges<ReplicationRangeIndexable<R>>;
 		let deleted: ReplicationRangeIndexable<R>[] | undefined = undefined;
+		let hadSegmentsBefore = false;
 		if (reset) {
 			deleted = (
 				await this.replicationIndex
@@ -1170,6 +1184,7 @@ export class SharedLog<
 			).map((x) => x.value);
 
 			let prevCount = deleted.length;
+			hadSegmentsBefore = prevCount > 0;
 
 			const existingById = new Map(deleted.map((x) => [x.idString, x]));
 			const hasSameRanges =
@@ -1197,7 +1212,6 @@ export class SharedLog<
 				];
 			}
 
-			isNewReplicator = prevCount === 0 && ranges.length > 0;
 		} else {
 			let batchSize = 100;
 			let existing: ReplicationRangeIndexable<R>[] = [];
@@ -1223,9 +1237,9 @@ export class SharedLog<
 				prevCountForOwner = await this.replicationIndex.count({
 					query: new StringMatch({ key: "hash", value: from.hashcode() }),
 				});
-				isNewReplicator = prevCountForOwner === 0;
+				hadSegmentsBefore = prevCountForOwner > 0;
 			} else {
-				isNewReplicator = false;
+				hadSegmentsBefore = true;
 			}
 
 			if (
@@ -1281,7 +1295,19 @@ export class SharedLog<
 			diffs = changes;
 		}
 
-		this.uniqueReplicators.add(from.hashcode());
+		const fromHash = from.hashcode();
+		const isMe = fromHash === this.node.identity.publicKey.hashcode();
+		const hasSegmentsAfter =
+			reset === true ? ranges.length > 0 : hadSegmentsBefore || ranges.length > 0;
+		const wasKnownReplicator = this.uniqueReplicators.has(fromHash);
+
+		if (hasSegmentsAfter) {
+			this.uniqueReplicators.add(fromHash);
+		} else {
+			this.uniqueReplicators.delete(fromHash);
+		}
+
+		const shouldEmitJoin = !isMe && !wasKnownReplicator && hasSegmentsAfter;
 
 		let now = +new Date();
 		let minRoleAge = await this.getDefaultMinRoleAge();
@@ -1379,22 +1405,6 @@ export class SharedLog<
 				}),
 			);
 
-			if (isNewReplicator) {
-				this.events.dispatchEvent(
-					new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
-						detail: { publicKey: from },
-					}),
-				);
-
-				if (isAllMature) {
-					this.events.dispatchEvent(
-						new CustomEvent<ReplicatorMatureEvent>("replicator:mature", {
-							detail: { publicKey: from },
-						}),
-					);
-				}
-			}
-
 			if (rebalance) {
 				for (const diff of diffs) {
 					this.replicationChangeDebounceFn.add(diff);
@@ -1403,6 +1413,22 @@ export class SharedLog<
 
 			if (!from.equals(this.node.identity.publicKey)) {
 				this.rebalanceParticipationDebounced?.call();
+			}
+		}
+
+		if (shouldEmitJoin) {
+			this.events.dispatchEvent(
+				new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
+					detail: { publicKey: from },
+				}),
+			);
+
+			if (diffs.length > 0 && isAllMature) {
+				this.events.dispatchEvent(
+					new CustomEvent<ReplicatorMatureEvent>("replicator:mature", {
+						detail: { publicKey: from },
+					}),
+				);
 			}
 		}
 		return diffs;
@@ -1894,6 +1920,8 @@ export class SharedLog<
 		this._pendingDeletes = new Map();
 		this._pendingIHave = new Map();
 		this.latestReplicationInfoMessage = new Map();
+		this.replicationInfoQueue = new Map();
+		this.pendingReplicationInfo = new Map();
 		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
 		this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
 
@@ -2233,6 +2261,9 @@ export class SharedLog<
 
 		await this.rebalanceParticipation();
 
+		// Backfill subscriber state for peers that subscribed while we were starting
+		await this.node.services.pubsub.requestSubscribers(this.topic);
+
 		// Take into account existing subscription
 		(await this.node.services.pubsub.getSubscribers(this.topic))?.forEach(
 			(v, k) => {
@@ -2245,6 +2276,9 @@ export class SharedLog<
 				this.handleSubscriptionChange(v, [this.topic], true);
 			},
 		);
+
+		// Flush any replication-info messages that arrived before indexes were ready
+		await this.flushPendingReplicationInfo();
 	}
 
 	async reset() {
@@ -2281,24 +2315,28 @@ export class SharedLog<
 								const key = await this.node.services.pubsub.getPublicKey(
 									segment.value.hash,
 								);
-								if (!key) {
-									throw new Error(
-										"Failed to resolve public key from hash: " +
-											segment.value.hash,
-									);
-								}
+									if (!key) {
+										throw new Error(
+											"Failed to resolve public key from hash: " +
+												segment.value.hash,
+										);
+									}
 
-								this.uniqueReplicators.add(key.hashcode());
+									const keyHash = key.hashcode();
+									const wasKnownReplicator = this.uniqueReplicators.has(keyHash);
+									this.uniqueReplicators.add(keyHash);
 
-								this.events.dispatchEvent(
-									new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
-										detail: { publicKey: key },
-									}),
-								);
-								this.events.dispatchEvent(
-									new CustomEvent<ReplicationChangeEvent>(
-										"replication:change",
-										{
+									if (!wasKnownReplicator) {
+										this.events.dispatchEvent(
+											new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
+												detail: { publicKey: key },
+											}),
+										);
+									}
+									this.events.dispatchEvent(
+										new CustomEvent<ReplicationChangeEvent>(
+											"replication:change",
+											{
 											detail: { publicKey: key },
 										},
 									),
@@ -2500,6 +2538,8 @@ export class SharedLog<
 		this.coordinateToHash.clear();
 		this.recentlyRebalanced.clear();
 		this.uniqueReplicators.clear();
+		this.replicationInfoQueue.clear();
+		this.pendingReplicationInfo.clear();
 		this._closeController.abort();
 
 		clearInterval(this.interval);
@@ -2563,6 +2603,84 @@ export class SharedLog<
 
 	async recover(): Promise<void> {
 		return this.log.recover();
+	}
+
+	private enqueueReplicationInfoMessage(args: {
+		from: PublicSignKey;
+		messageTimestamp: bigint;
+		message: AllReplicatingSegmentsMessage | AddedReplicationSegmentMessage;
+	}): Promise<void> {
+		const fromHash = args.from.hashcode();
+		const prev = this.replicationInfoQueue.get(fromHash) ?? Promise.resolve();
+		let next: Promise<void>;
+		next = prev
+			.catch(() => {})
+			.then(() => this.applyReplicationInfoMessage(args))
+			.finally(() => {
+				if (this.replicationInfoQueue.get(fromHash) === next) {
+					this.replicationInfoQueue.delete(fromHash);
+				}
+			});
+		this.replicationInfoQueue.set(fromHash, next);
+		return next;
+	}
+
+	private async applyReplicationInfoMessage(args: {
+		from: PublicSignKey;
+		messageTimestamp: bigint;
+		message: AllReplicatingSegmentsMessage | AddedReplicationSegmentMessage;
+	}): Promise<void> {
+		const { from, messageTimestamp, message } = args;
+		const fromHash = from.hashcode();
+
+		try {
+			const prev = this.latestReplicationInfoMessage.get(fromHash);
+			if (prev && prev > messageTimestamp) {
+				return;
+			}
+
+			this.latestReplicationInfoMessage.set(fromHash, messageTimestamp);
+
+			if (this.closed) {
+				return;
+			}
+
+			const reset = message instanceof AllReplicatingSegmentsMessage;
+			await this.addReplicationRange(
+				message.segments.map((x) => x.toReplicationRangeIndexable(from)),
+				from,
+				{
+					reset,
+					checkDuplicates: true,
+					timestamp: Number(messageTimestamp),
+				},
+			);
+		} catch (e: any) {
+			if (isNotStartedError(e)) {
+				const prev = this.pendingReplicationInfo.get(fromHash);
+				if (!prev || prev.messageTimestamp <= messageTimestamp) {
+					this.pendingReplicationInfo.set(fromHash, {
+						from,
+						messageTimestamp,
+						message,
+					});
+				}
+				return;
+			}
+			logger.error(
+				`Failed to apply replication settings from '${fromHash}': ${
+					e?.message ?? e
+				}`,
+			);
+		}
+	}
+
+	private async flushPendingReplicationInfo(): Promise<void> {
+		const pending = new Map(this.pendingReplicationInfo);
+		this.pendingReplicationInfo.clear();
+		for (const [, info] of pending) {
+			await this.enqueueReplicationInfoMessage(info);
+		}
 	}
 
 	// Callback for receiving a message from the network
@@ -2933,22 +3051,26 @@ export class SharedLog<
 
 				// for backwards compatibility (v8) remove this when we are sure that all nodes are v9+
 				if (this.v8Behaviour) {
-					const role = this.getRole();
-					if (role instanceof Replicator) {
-						const fixedSettings = !this._isAdaptiveReplicating;
-						if (fixedSettings) {
-							await this.rpc.send(
-								new ResponseRoleMessage({
-									role,
-								}),
-								{
-									mode: new SilentDelivery({
-										to: [context.from],
-										redundancy: 1,
+					try {
+						const role = await this.getRole();
+						if (role instanceof Replicator) {
+							const fixedSettings = !this._isAdaptiveReplicating;
+							if (fixedSettings) {
+								await this.rpc.send(
+									new ResponseRoleMessage({
+										role,
 									}),
-								},
-							);
+									{
+										mode: new SilentDelivery({
+											to: [context.from],
+											redundancy: 1,
+										}),
+									},
+								);
+							}
 						}
+					} catch (e: any) {
+						logger.error(e?.toString?.() ?? String(e));
 					}
 				}
 			} else if (
@@ -2968,42 +3090,10 @@ export class SharedLog<
 				// (and downstream `waitForReplicator()` timeouts) under timing-sensitive joins.
 				const from = context.from!;
 				const messageTimestamp = context.message.header.timestamp;
-				(async () => {
-					const prev = this.latestReplicationInfoMessage.get(from.hashcode());
-					if (prev && prev > messageTimestamp) {
-						return;
-					}
-
-					this.latestReplicationInfoMessage.set(
-						from.hashcode(),
-						messageTimestamp,
-					);
-
-					if (this.closed) {
-						return;
-					}
-
-					const reset = msg instanceof AllReplicatingSegmentsMessage;
-					await this.addReplicationRange(
-						replicationInfoMessage.segments.map((x) =>
-							x.toReplicationRangeIndexable(from),
-						),
-						from,
-						{
-							reset,
-							checkDuplicates: true,
-							timestamp: Number(messageTimestamp),
-						},
-					);
-				})().catch((e) => {
-					if (isNotStartedError(e)) {
-						return;
-					}
-					logger.error(
-						`Failed to apply replication settings from '${from.hashcode()}': ${
-							e?.message ?? e
-						}`,
-					);
+				void this.enqueueReplicationInfoMessage({
+					from,
+					messageTimestamp,
+					message: replicationInfoMessage,
 				});
 			} else if (msg instanceof StoppedReplicating) {
 				if (context.from.equals(this.node.identity.publicKey)) {
@@ -3967,10 +4057,12 @@ export class SharedLog<
 
 				if (this.v8Behaviour) {
 					// for backwards compatibility
-					this.rpc
-						.send(new ResponseRoleMessage({ role: await this.getRole() }), {
-							mode: new SeekDelivery({ redundancy: 1, to: [publicKey] }),
-						})
+					this.getRole()
+						.then((role) =>
+							this.rpc.send(new ResponseRoleMessage({ role }), {
+								mode: new SeekDelivery({ redundancy: 1, to: [publicKey] }),
+							}),
+						)
 						.catch((e) => logger.error(e.toString()));
 				}
 			}

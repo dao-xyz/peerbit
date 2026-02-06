@@ -328,31 +328,48 @@ describe(`replicate`, () => {
 			await checkRoleIsDynamic(db1.log);
 		});
 
-		it("waitForReplicator waits until maturity", async () => {
-			const store = new EventStore<string, any>();
+			it("waitForReplicator waits until maturity", async () => {
+				const store = new EventStore<string, any>();
 
-			const db1 = await session.peers[0].open(store.clone(), {
-				args: {
-					replicate: {
-						factor: 1,
+				const db1 = await session.peers[0].open(store.clone(), {
+					args: {
+						replicate: {
+							factor: 1,
+						},
 					},
-				},
-			});
-			const db2 = await session.peers[1].open(store.clone(), {
-				args: {
-					replicate: {
-						factor: 1,
+				});
+				const db2 = await session.peers[1].open(store.clone(), {
+					args: {
+						replicate: {
+							factor: 1,
+						},
 					},
-				},
+				});
+				const roleAgeMs = 3e3;
+				db2.log.getDefaultMinRoleAge = () => Promise.resolve(roleAgeMs);
+
+				// Ensure we have observed db1's replication segment so we can compute the
+				// remaining time until maturity. Depending on timing, the segment may be
+				// present slightly before we start waiting.
+				await waitForResolved(async () => {
+					const rects = await db2.log.replicationIndex
+						.iterate({ query: { hash: db1.node.identity.publicKey.hashcode() } })
+						.all();
+					expect(rects[0]?.value).to.exist;
+				});
+
+				const rect = (
+					await db2.log.replicationIndex
+						.iterate({ query: { hash: db1.node.identity.publicKey.hashcode() } })
+						.all()
+				)[0]!.value;
+
+				const t0 = +new Date();
+				await db2.log.waitForReplicator(db1.node.identity.publicKey);
+				const t1 = +new Date();
+				const remaining = Math.max(0, roleAgeMs - (t0 - Number(rect.timestamp)));
+				expect(t1 - t0).greaterThanOrEqual(remaining - 100); // - 100 for timer inaccuracy
 			});
-			db2.log.getDefaultMinRoleAge = () => Promise.resolve(3e3);
-			const t0 = +new Date();
-			await db2.log.waitForReplicator(db1.node.identity.publicKey);
-			const t1 = +new Date();
-			expect(t1 - t0).greaterThanOrEqual(
-				(await db2.log.getDefaultMinRoleAge()) - 100,
-			); // - 100 for handle timer inaccuracy
-		});
 
 		it("waitForReplicator eager resolves before maturity", async () => {
 			const store = new EventStore<string, any>();

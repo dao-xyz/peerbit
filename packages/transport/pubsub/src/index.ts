@@ -125,6 +125,9 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 	async subscribe(topic: string) {
 		// this.debounceUnsubscribeAggregator.delete(topic);
+		if (!this.topics.has(topic)) {
+			this.initializeTopic(topic);
+		}
 		return this.debounceSubscribeAggregator.add({ key: topic });
 	}
 
@@ -178,6 +181,8 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 	async unsubscribe(topic: string) {
 		if (this.debounceSubscribeAggregator.has(topic)) {
 			this.debounceSubscribeAggregator.delete(topic); // cancel subscription before it performed
+			this.topics.delete(topic);
+			this.topicsToPeers.delete(topic);
 			return false;
 		}
 		const subscriptions = this.subscriptions.get(topic);
@@ -729,6 +734,15 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 						const mySubscriptions = this.getSubscriptionOverlap(
 							pubsubMessage.topics,
 						);
+						// Also include topics pending in the debounce window
+						for (const topic of pubsubMessage.topics) {
+							if (
+								!mySubscriptions.includes(topic) &&
+								this.debounceSubscribeAggregator.has(topic)
+							) {
+								mySubscriptions.push(topic);
+							}
+						}
 						if (mySubscriptions.length > 0) {
 							const response = new DataMessage({
 								data: toUint8Array(

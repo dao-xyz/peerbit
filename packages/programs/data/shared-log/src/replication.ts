@@ -15,6 +15,7 @@ import {
 	ReplicationRangeMessage,
 	ReplicationRangeMessageU32,
 } from "./ranges.js";
+import { denormalizer } from "./integers.js";
 import { Observer, Replicator, Role } from "./role.js";
 
 export type ReplicationLimits = { min: MinReplicas; max?: MinReplicas };
@@ -64,14 +65,15 @@ export class ResponseRoleMessage extends TransportMessage {
 	}
 
 	toReplicationInfoMessage(): AllReplicatingSegmentsMessage {
+		const denormalizeru32 = denormalizer("u32");
 		return new AllReplicatingSegmentsMessage({
 			segments:
 				this.role instanceof Replicator
 					? this.role.segments.map((x) => {
 							return new ReplicationRangeMessageU32({
 								id: randomBytes(32),
-								offset: x.offset,
-								factor: x.factor,
+								offset: denormalizeru32(x.offset),
+								factor: denormalizeru32(x.factor),
 								timestamp: x.timestamp,
 								mode: ReplicationIntent.NonStrict,
 							});

@@ -69,7 +69,7 @@ describe(`migration-8-9`, function () {
 						if (msg instanceof RequestReplicationInfoMessage) {
 							// TODO we never respond to this message, nor in older version do we need to send it
 							// we are keeping this here to mimic the old behaviour
-							await db.log.rpc.send(
+							await db1.log.rpc.send(
 								new ResponseRoleMessage({
 									role: new Replicator({ factor: 1, offset: 0 }),
 								}),
