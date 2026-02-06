@@ -70,7 +70,8 @@ Fix: `checkReplicas()` now uses a slightly longer timeout and a lower polling ra
 
 ## Commit
 
-- **TBD** (filled in after commit)
+- `35963a7ac` `tests: checkpoint` (main implementation + investigation logs)
+- `a2ab6d31d` `shared-log: harden replication handshake + reduce flakes` (final verification notes + sharding convergence flake hardening)
 
 ---
 
