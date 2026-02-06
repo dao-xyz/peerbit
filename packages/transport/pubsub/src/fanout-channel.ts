@@ -1,7 +1,14 @@
-import type { FanoutTree, FanoutTreeChannelOptions, FanoutTreeDataEvent, FanoutTreeJoinOptions } from "./fanout-tree.js";
+import type {
+	FanoutTree,
+	FanoutTreeChannelOptions,
+	FanoutTreeDataEvent,
+	FanoutTreeJoinOptions,
+	FanoutTreeUnicastEvent,
+} from "./fanout-tree.js";
 
 export interface FanoutChannelEvents {
 	data: CustomEvent<FanoutTreeDataEvent>;
+	unicast: CustomEvent<FanoutTreeUnicastEvent>;
 	joined: CustomEvent<{ topic: string; root: string; parent: string }>;
 	kicked: CustomEvent<{ topic: string; root: string; from: string }>;
 }
@@ -17,6 +24,13 @@ export class FanoutChannel extends EventTarget {
 		if (d.root !== this.root) return;
 		if (d.topic !== this.topic) return;
 		this.dispatchEvent(new CustomEvent("data", { detail: d }));
+	};
+	private readonly onUnicast = (ev: any) => {
+		const d = ev?.detail as FanoutTreeUnicastEvent | undefined;
+		if (!d) return;
+		if (d.root !== this.root) return;
+		if (d.topic !== this.topic) return;
+		this.dispatchEvent(new CustomEvent("unicast", { detail: d }));
 	};
 	private readonly onJoined = (ev: any) => {
 		const d = ev?.detail as { topic: string; root: string; parent: string } | undefined;
@@ -50,6 +64,7 @@ export class FanoutChannel extends EventTarget {
 		if (this.listening) return;
 		this.listening = true;
 		this.fanout.addEventListener("fanout:data", this.onData);
+		this.fanout.addEventListener("fanout:unicast", this.onUnicast);
 		this.fanout.addEventListener("fanout:joined", this.onJoined);
 		this.fanout.addEventListener("fanout:kicked", this.onKicked);
 	}
@@ -58,6 +73,7 @@ export class FanoutChannel extends EventTarget {
 		if (!this.listening) return;
 		this.listening = false;
 		this.fanout.removeEventListener("fanout:data", this.onData);
+		this.fanout.removeEventListener("fanout:unicast", this.onUnicast);
 		this.fanout.removeEventListener("fanout:joined", this.onJoined);
 		this.fanout.removeEventListener("fanout:kicked", this.onKicked);
 	}
@@ -79,8 +95,30 @@ export class FanoutChannel extends EventTarget {
 		return this.fanout.publishData(this.topic, this.root, payload);
 	}
 
+	public getRouteToken() {
+		return this.fanout.getRouteToken(this.topic, this.root);
+	}
+
+	public resolveRouteToken(
+		targetHash: string,
+		options?: { timeoutMs?: number; signal?: AbortSignal },
+	) {
+		return this.fanout.resolveRouteToken(this.topic, this.root, targetHash, options);
+	}
+
+	public unicast(toRoute: string[], payload: Uint8Array) {
+		return this.fanout.unicast(this.topic, this.root, toRoute, payload);
+	}
+
+	public unicastTo(
+		targetHash: string,
+		payload: Uint8Array,
+		options?: { timeoutMs?: number; signal?: AbortSignal },
+	) {
+		return this.fanout.unicastTo(this.topic, this.root, targetHash, payload, options);
+	}
+
 	public end(lastSeqExclusive: number) {
 		return this.fanout.publishEnd(this.topic, this.root, lastSeqExclusive);
 	}
 }
-

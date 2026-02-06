@@ -27,7 +27,13 @@ import {
 	type ProgramClient,
 	ProgramHandler,
 } from "@peerbit/program";
-import { DirectSub, FanoutTree } from "@peerbit/pubsub";
+import {
+	DirectSub,
+	FanoutChannel,
+	FanoutTree,
+	type FanoutTreeChannelOptions,
+	type FanoutTreeJoinOptions,
+} from "@peerbit/pubsub";
 import type { Libp2p } from "libp2p";
 import sodium from "libsodium-wrappers";
 import path from "path-browserify";
@@ -270,11 +276,6 @@ export class Peerbit implements ProgramClient {
 			identity,
 			indexer,
 		});
-		try {
-			(peer.services.pubsub as any)?.setFanout?.((peer.services as any).fanout);
-		} catch {
-			// ignore
-		}
 		return peer;
 	}
 	get libp2p(): Libp2pExtended {
@@ -415,6 +416,29 @@ export class Peerbit implements ProgramClient {
 		return (
 			this._handler || (this._handler = new ProgramHandler({ client: this }))
 		).open(storeOrAddress, options);
+	}
+
+	public fanoutChannel(topic: string, root: string = this.services.fanout.publicKeyHash) {
+		if (root === this.services.fanout.publicKeyHash) {
+			return FanoutChannel.fromSelf(this.services.fanout, topic);
+		}
+		return new FanoutChannel(this.services.fanout, { topic, root });
+	}
+
+	public fanoutOpenAsRoot(
+		topic: string,
+		options: Omit<FanoutTreeChannelOptions, "role">,
+	) {
+		return this.fanoutChannel(topic).openAsRoot(options);
+	}
+
+	public fanoutJoin(
+		topic: string,
+		root: string,
+		options: Omit<FanoutTreeChannelOptions, "role">,
+		joinOpts?: FanoutTreeJoinOptions,
+	) {
+		return this.fanoutChannel(topic, root).join(options, joinOpts);
 	}
 
 	get storage() {

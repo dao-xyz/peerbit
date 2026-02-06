@@ -149,6 +149,53 @@ Semantics:
 - `root` forwards downstream along `route` by sending to `route[1]`, then `route[2]`, ... until `target`.
 - Only tree edges are used (parent/child), so forwarding stays bounded and economical.
 
+### `ROUTE_ANNOUNCE` (kind = 15) *(new in 0.4.0)*
+
+Child/relay → parent route advertisement.
+
+Wire format:
+- `routeCount` (u8)
+- `routeCount * (hashLen (u8) + hashBytes)` where `hashBytes` is utf-8 `PublicSignKey.hashcode()`
+
+Semantics:
+- Carries the sender's current root route token: `route = [root, ..., self]`.
+- Receiver caches route by `target = route[route.length - 1]`.
+- Non-root relays forward announces upstream to their parent.
+- This keeps route-token lookup local and incremental (no global member list exchange).
+- Implementations should treat route caches as bounded/expiring (size cap + TTL), and rely on periodic `ROUTE_ANNOUNCE` refreshes.
+
+### `ROUTE_QUERY` (kind = 13) *(new in 0.4.0)*
+
+Child/relay → parent query for a target route token.
+
+Wire format:
+- `reqId` (u32)
+- `targetHashLen` (u8)
+- `targetHash` (utf8 bytes)
+
+Semantics:
+- Receiver responds with `ROUTE_REPLY`.
+- If receiver has cached route, it may reply immediately.
+- If receiver is root and the target is a direct child, it may synthesize `[root, target]`.
+- If receiver is an intermediate relay and does not know the route, it may proxy upstream and map request ids hop-by-hop.
+- If a parent/root misses cache, it may fan out a bounded subtree lookup and return the first valid reply (or empty if unresolved/timeout).
+- This allows route resolution to recover from cache expiry without exchanging global membership maps.
+
+### `ROUTE_REPLY` (kind = 14) *(new in 0.4.0)*
+
+Parent/relay → child/relay response for route lookup.
+
+Wire format:
+- `reqId` (u32)
+- `routeCount` (u8)
+- `routeCount * (hashLen (u8) + hashBytes)`
+
+Semantics:
+- Empty route (`routeCount=0`) means route unknown.
+- Non-empty route is a route token: `[root, ..., target]`.
+- Nodes may cache valid replies for subsequent `unicastTo(...)` sends.
+- Under bounded caches, a route can temporarily miss and later become available again via refresh announces.
+
 ---
 
 ## Bootstrap tracker (rendezvous) messages (WIP)

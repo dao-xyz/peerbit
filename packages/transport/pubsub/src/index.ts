@@ -41,8 +41,6 @@ import {
 	type DebouncedAccumulatorCounterMap,
 	debouncedAccumulatorSetCounter,
 } from "./debounced-set.js";
-import { FanoutChannel } from "./fanout-channel.js";
-import type { FanoutTree, FanoutTreeChannelOptions, FanoutTreeJoinOptions } from "./fanout-tree.js";
 export * from "./fanout-tree.js";
 export * from "./fanout-channel.js";
 
@@ -82,7 +80,6 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 	private debounceSubscribeAggregator: DebouncedAccumulatorCounterMap;
 	private debounceUnsubscribeAggregator: DebouncedAccumulatorCounterMap;
-	private fanout?: FanoutTree;
 
 	constructor(
 		components: DirectSubComponents,
@@ -106,48 +103,6 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			(set) => this._unsubscribe([...set.values()]),
 			props?.subscriptionDebounceDelay ?? 50,
 		);
-	}
-
-	/**
-	 * Optional integration hook: allow the pubsub service to expose FanoutTree-based
-	 * broadcast channels via `DirectSub.fanoutChannel(...)`.
-	 *
-	 * This keeps the core PubSub API unchanged while letting apps opt into the
-	 * experimental fanout protocol for large 1-writer->many-reader workloads.
-	 */
-	public setFanout(fanout: FanoutTree) {
-		this.fanout = fanout;
-	}
-
-	public fanoutChannel(topic: string, root: string): FanoutChannel {
-		if (!this.fanout) {
-			throw new Error(
-				"FanoutTree not configured on DirectSub (call setFanout(...) or use peer.services.fanout directly)",
-			);
-		}
-		return new FanoutChannel(this.fanout, { topic, root });
-	}
-
-	public fanoutSelfChannel(topic: string): FanoutChannel {
-		if (!this.fanout) {
-			throw new Error(
-				"FanoutTree not configured on DirectSub (call setFanout(...) or use peer.services.fanout directly)",
-			);
-		}
-		return FanoutChannel.fromSelf(this.fanout, topic);
-	}
-
-	public fanoutOpenAsRoot(topic: string, options: Omit<FanoutTreeChannelOptions, "role">) {
-		return this.fanoutSelfChannel(topic).openAsRoot(options);
-	}
-
-	public fanoutJoin(
-		topic: string,
-		root: string,
-		options: Omit<FanoutTreeChannelOptions, "role">,
-		joinOpts?: FanoutTreeJoinOptions,
-	) {
-		return this.fanoutChannel(topic, root).join(options, joinOpts);
 	}
 
 	stop() {

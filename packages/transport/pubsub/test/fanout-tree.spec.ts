@@ -1,7 +1,7 @@
 import { TestSession } from "@peerbit/libp2p-test-utils";
-import { waitForResolved } from "@peerbit/time";
+import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
-import { FanoutTree } from "../src/index.js";
+import { FanoutChannel, FanoutTree } from "../src/index.js";
 
 describe("fanout-tree", () => {
 	it("forms a small tree and delivers data", async () => {
@@ -78,6 +78,463 @@ describe("fanout-tree", () => {
 
 			await waitForResolved(() => expect(received).to.exist);
 			expect([...received!]).to.deep.equal([...payload]);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("supports economical unicast via route tokens through the root", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
+			3,
+			{
+				services: {
+					fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+				},
+			},
+		);
+
+		try {
+			await session.connect([
+				[session.peers[0], session.peers[1]],
+				[session.peers[0], session.peers[2]],
+			]);
+
+			const root = session.peers[0].services.fanout;
+			const sender = session.peers[1].services.fanout;
+			const target = session.peers[2].services.fanout;
+
+			const topic = "unicast-demo";
+			const rootId = root.publicKeyHash;
+
+			const rootChannel = FanoutChannel.fromSelf(root, topic);
+			rootChannel.openAsRoot({
+				msgRate: 10,
+				msgSize: 64,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 2,
+				repair: true,
+			});
+
+			const senderChannel = new FanoutChannel(sender, { topic, root: rootId });
+			await senderChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 0,
+					repair: true,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			const targetChannel = new FanoutChannel(target, { topic, root: rootId });
+			await targetChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 0,
+					repair: true,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			let targetRoute: string[] | undefined;
+			await waitForResolved(() => {
+				targetRoute = targetChannel.getRouteToken();
+				expect(targetRoute).to.exist;
+			});
+			expect(targetRoute![0]).to.equal(rootId);
+			expect(targetRoute![targetRoute!.length - 1]).to.equal(target.publicKeyHash);
+
+			let received: Uint8Array | undefined;
+			let origin: string | undefined;
+			targetChannel.addEventListener("unicast", (ev: any) => {
+				received = ev.detail.payload;
+				origin = ev.detail.origin;
+			});
+
+			const payload = new Uint8Array([4, 3, 2, 1]);
+			await senderChannel.unicast(targetRoute!, payload);
+
+			await waitForResolved(() => expect(received).to.exist);
+			expect([...received!]).to.deep.equal([...payload]);
+			expect(origin).to.equal(sender.publicKeyHash);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("resolves route tokens through control-plane proxy and unicasts across branches", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(5, {
+			services: {
+				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+			},
+		});
+
+		try {
+			// Root <-> relayA and root <-> relayB. sender is only connected to relayA,
+			// target is only connected to relayB.
+			await session.connect([
+				[session.peers[0], session.peers[1]],
+				[session.peers[0], session.peers[2]],
+				[session.peers[1], session.peers[3]],
+				[session.peers[2], session.peers[4]],
+			]);
+
+			const root = session.peers[0].services.fanout;
+			const relayA = session.peers[1].services.fanout;
+			const relayB = session.peers[2].services.fanout;
+			const sender = session.peers[3].services.fanout;
+			const target = session.peers[4].services.fanout;
+
+			const topic = "unicast-proxy-demo";
+			const rootId = root.publicKeyHash;
+
+			const rootChannel = FanoutChannel.fromSelf(root, topic);
+			rootChannel.openAsRoot({
+				msgRate: 10,
+				msgSize: 64,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 2,
+				repair: true,
+			});
+
+			const relayAChannel = new FanoutChannel(relayA, { topic, root: rootId });
+			await relayAChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 2,
+					repair: true,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			const relayBChannel = new FanoutChannel(relayB, { topic, root: rootId });
+			await relayBChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 2,
+					repair: true,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			const senderChannel = new FanoutChannel(sender, { topic, root: rootId });
+			await senderChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 0,
+					maxChildren: 0,
+					repair: true,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			const targetChannel = new FanoutChannel(target, { topic, root: rootId });
+			await targetChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 0,
+					maxChildren: 0,
+					repair: true,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			let resolvedRoute: string[] | undefined;
+			await waitForResolved(async () => {
+				resolvedRoute = await senderChannel.resolveRouteToken(target.publicKeyHash, {
+					timeoutMs: 2_000,
+				});
+				expect(resolvedRoute).to.exist;
+			});
+			expect(resolvedRoute![0]).to.equal(rootId);
+			expect(resolvedRoute![resolvedRoute!.length - 1]).to.equal(target.publicKeyHash);
+
+			let received: Uint8Array | undefined;
+			let origin: string | undefined;
+			targetChannel.addEventListener("unicast", (ev: any) => {
+				received = ev.detail.payload;
+				origin = ev.detail.origin;
+			});
+
+			const payload = new Uint8Array([5, 6, 7, 8]);
+			await senderChannel.unicastTo(target.publicKeyHash, payload, { timeoutMs: 2_000 });
+
+			await waitForResolved(() => expect(received).to.exist);
+			expect([...received!]).to.deep.equal([...payload]);
+			expect(origin).to.equal(sender.publicKeyHash);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("bounds route cache size and evicts old entries", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(5, {
+			services: {
+				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+			},
+		});
+
+		try {
+			await session.connect([
+				[session.peers[0], session.peers[1]],
+				[session.peers[1], session.peers[2]],
+				[session.peers[1], session.peers[3]],
+				[session.peers[1], session.peers[4]],
+			]);
+
+			const root = session.peers[0].services.fanout;
+			const relay = session.peers[1].services.fanout;
+			const leafA = session.peers[2].services.fanout;
+			const leafB = session.peers[3].services.fanout;
+			const leafC = session.peers[4].services.fanout;
+
+			const topic = "route-cache-bound";
+			const rootId = root.publicKeyHash;
+
+			root.openChannel(topic, rootId, {
+				role: "root",
+				msgRate: 10,
+				msgSize: 64,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 1,
+				repair: true,
+				routeCacheMaxEntries: 2,
+			});
+
+			await relay.joinChannel(
+				topic,
+				rootId,
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 3,
+					repair: true,
+					routeCacheMaxEntries: 2,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			for (const leaf of [leafA, leafB, leafC]) {
+				await leaf.joinChannel(
+					topic,
+					rootId,
+					{
+						msgRate: 10,
+						msgSize: 64,
+						uploadLimitBps: 0,
+						maxChildren: 0,
+						repair: true,
+						routeCacheMaxEntries: 2,
+					},
+					{ timeoutMs: 10_000 },
+				);
+			}
+
+			await waitForResolved(() =>
+				expect(root.getChannelStats(topic, rootId)?.routeCacheEntries).to.be.at.most(2),
+			);
+			await waitForResolved(() =>
+				expect(root.getChannelMetrics(topic, rootId).routeCacheEvictions).to.be.greaterThan(0),
+			);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("keeps routes resolvable with ttl + periodic re-announces", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(4, {
+			services: {
+				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+			},
+		});
+
+		try {
+			await session.connect([
+				[session.peers[0], session.peers[1]],
+				[session.peers[1], session.peers[2]],
+				[session.peers[1], session.peers[3]],
+			]);
+
+			const root = session.peers[0].services.fanout;
+			const relay = session.peers[1].services.fanout;
+			const sender = session.peers[2].services.fanout;
+			const target = session.peers[3].services.fanout;
+
+			const topic = "route-cache-refresh";
+			const rootId = root.publicKeyHash;
+
+			const routeCacheTtlMs = 40;
+			const routeAnnounceIntervalMs = 20;
+
+			const rootChannel = FanoutChannel.fromSelf(root, topic);
+			rootChannel.openAsRoot({
+				msgRate: 10,
+				msgSize: 64,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 1,
+				repair: true,
+				routeCacheMaxEntries: 16,
+				routeCacheTtlMs,
+				routeAnnounceIntervalMs,
+			});
+
+			const relayChannel = new FanoutChannel(relay, { topic, root: rootId });
+			await relayChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 2,
+					repair: true,
+					routeCacheMaxEntries: 16,
+					routeCacheTtlMs,
+					routeAnnounceIntervalMs,
+				},
+				{ timeoutMs: 10_000, routeAnnounceIntervalMs },
+			);
+
+			const senderChannel = new FanoutChannel(sender, { topic, root: rootId });
+			await senderChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 0,
+					maxChildren: 0,
+					repair: true,
+					routeCacheMaxEntries: 16,
+					routeCacheTtlMs,
+					routeAnnounceIntervalMs,
+				},
+				{ timeoutMs: 10_000, routeAnnounceIntervalMs },
+			);
+
+			const targetChannel = new FanoutChannel(target, { topic, root: rootId });
+			await targetChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 0,
+					maxChildren: 0,
+					repair: true,
+					routeCacheMaxEntries: 16,
+					routeCacheTtlMs,
+					routeAnnounceIntervalMs,
+				},
+				{ timeoutMs: 10_000, routeAnnounceIntervalMs },
+			);
+
+			await waitForResolved(async () => {
+				const route = await senderChannel.resolveRouteToken(target.publicKeyHash, {
+					timeoutMs: 2_000,
+				});
+				expect(route).to.exist;
+			});
+
+			await delay(150);
+
+			await waitForResolved(async () => {
+				const route = await senderChannel.resolveRouteToken(target.publicKeyHash, {
+					timeoutMs: 2_000,
+				});
+				expect(route).to.exist;
+				expect(route?.[route.length - 1]).to.equal(target.publicKeyHash);
+			});
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("resolves route tokens after cache expiry via subtree fallback search", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(6, {
+			services: {
+				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+			},
+		});
+
+		try {
+			await session.connect([
+				[session.peers[0], session.peers[1]],
+				[session.peers[0], session.peers[2]],
+				[session.peers[1], session.peers[3]],
+				[session.peers[2], session.peers[4]],
+				[session.peers[4], session.peers[5]],
+			]);
+
+			const root = session.peers[0].services.fanout;
+			const relayA = session.peers[1].services.fanout;
+			const relayB = session.peers[2].services.fanout;
+			const sender = session.peers[3].services.fanout;
+			const relayB2 = session.peers[4].services.fanout;
+			const target = session.peers[5].services.fanout;
+
+			const topic = "route-cache-subtree-fallback";
+			const rootId = root.publicKeyHash;
+			const routeCacheTtlMs = 40;
+			const routeAnnounceIntervalMs = 60_000;
+
+			const rootChannel = FanoutChannel.fromSelf(root, topic);
+			rootChannel.openAsRoot({
+				msgRate: 10,
+				msgSize: 64,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 2,
+				repair: true,
+				routeCacheMaxEntries: 64,
+				routeCacheTtlMs,
+				routeAnnounceIntervalMs,
+			});
+
+			for (const [node, maxChildren] of [
+				[relayA, 1],
+				[relayB, 2],
+				[sender, 0],
+				[relayB2, 1],
+				[target, 0],
+			] as const) {
+				const ch = new FanoutChannel(node, { topic, root: rootId });
+				await ch.join(
+					{
+						msgRate: 10,
+						msgSize: 64,
+						uploadLimitBps: 1_000_000,
+						maxChildren,
+						repair: true,
+						routeCacheMaxEntries: 64,
+						routeCacheTtlMs,
+						routeAnnounceIntervalMs,
+					},
+					{ timeoutMs: 10_000, routeAnnounceIntervalMs },
+				);
+			}
+
+			const senderChannel = new FanoutChannel(sender, { topic, root: rootId });
+
+			// Let initial route announcements age out from caches before resolving.
+			await delay(160);
+			const missesBefore = root.getChannelMetrics(topic, rootId).routeCacheMisses;
+
+			let resolvedRoute: string[] | undefined;
+			await waitForResolved(async () => {
+				resolvedRoute = await senderChannel.resolveRouteToken(target.publicKeyHash, {
+					timeoutMs: 4_000,
+				});
+				expect(resolvedRoute).to.exist;
+			});
+			expect(resolvedRoute![0]).to.equal(rootId);
+			expect(resolvedRoute![resolvedRoute!.length - 1]).to.equal(target.publicKeyHash);
+
+			const missesAfter = root.getChannelMetrics(topic, rootId).routeCacheMisses;
+			expect(missesAfter).to.be.greaterThan(missesBefore);
 		} finally {
 			await session.stop();
 		}

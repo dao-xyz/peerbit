@@ -103,13 +103,5 @@ export const createLibp2pExtended = (
 			...opts.services,
 			...extraServices,
 		},
-	}).then((libp2p) => {
-		// Convenience wiring so apps can access FanoutTree via the pubsub service.
-		try {
-			(libp2p.services.pubsub as any)?.setFanout?.((libp2p.services as any).fanout);
-		} catch {
-			// ignore
-		}
-		return libp2p as Libp2pExtended;
-	});
+	}).then((libp2p) => libp2p as Libp2pExtended);
 };

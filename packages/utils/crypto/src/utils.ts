@@ -5,8 +5,13 @@ export const fromHexString = (hexString: string) => sodium.from_hex(hexString);
 
 // Normalize to a "local realm" Uint8Array.
 // This avoids libsodium rejecting cross-realm typed arrays (e.g. jsdom/happy-dom environments).
-const asU8 = (bytes: Uint8Array) =>
-	new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+const asU8 = (bytes: ArrayBufferView) => {
+	// Fast-path: in normal runtimes `bytes` is already a local Uint8Array.
+	// Cross-realm typed arrays (iframes/jsdom/happy-dom) fail `instanceof` checks in libsodium-wrappers.
+	return bytes instanceof Uint8Array
+		? bytes
+		: new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+};
 
 export const toHexString = (bytes: Uint8Array) => sodium.to_hex(asU8(bytes));
 
