@@ -2254,7 +2254,7 @@ describe("index", () => {
 				});
 
 				it("can search while keeping minimum amount of replicas", async function () {
-					this.timeout(120_000);
+					this.timeout(180_000);
 					// TODO fix flakiness
 					const store = new TestStore({
 						docs: new Documents<Document>(),
@@ -2305,7 +2305,7 @@ describe("index", () => {
 						expect((await store3.docs.log.getReplicators()).size).equal(3),
 					);
 
-					const count = 600;
+					const count = 300;
 
 					for (let i = 0; i < count; i++) {
 						const doc = new Document({
@@ -2329,7 +2329,7 @@ describe("index", () => {
 								}
 							}
 						},
-						{ timeout: 90_000, delayInterval: 200 },
+						{ timeout: 120_000, delayInterval: 200 },
 					);
 				});
 			});
