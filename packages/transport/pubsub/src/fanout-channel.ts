@@ -95,6 +95,10 @@ export class FanoutChannel extends EventTarget {
 		return this.fanout.publishData(this.topic, this.root, payload);
 	}
 
+	public getPeerHashes(options?: { includeSelf?: boolean }) {
+		return this.fanout.getChannelPeerHashes(this.topic, this.root, options);
+	}
+
 	public getRouteToken() {
 		return this.fanout.getRouteToken(this.topic, this.root);
 	}

@@ -83,6 +83,77 @@ describe("fanout-tree", () => {
 		}
 	});
 
+	it("exposes channel peers for fanout membership-aware consumers", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
+			3,
+			{
+				services: {
+					fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+				},
+			},
+		);
+
+		try {
+			await session.connect([
+				[session.peers[0], session.peers[1]],
+				[session.peers[0], session.peers[2]],
+			]);
+
+			const root = session.peers[0].services.fanout;
+			const leafA = session.peers[1].services.fanout;
+			const leafB = session.peers[2].services.fanout;
+
+			const topic = "peer-list-demo";
+			const rootId = root.publicKeyHash;
+
+			const rootChannel = FanoutChannel.fromSelf(root, topic);
+			rootChannel.openAsRoot({
+				msgRate: 10,
+				msgSize: 64,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 2,
+				repair: true,
+			});
+
+			const leafAChannel = new FanoutChannel(leafA, { topic, root: rootId });
+			await leafAChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 0,
+					maxChildren: 0,
+					repair: true,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			const leafBChannel = new FanoutChannel(leafB, { topic, root: rootId });
+			await leafBChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 0,
+					maxChildren: 0,
+					repair: true,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			await waitForResolved(() => {
+				const peers = new Set(rootChannel.getPeerHashes());
+				expect(peers.has(leafA.publicKeyHash)).to.equal(true);
+				expect(peers.has(leafB.publicKeyHash)).to.equal(true);
+			});
+
+			await waitForResolved(() => {
+				const peers = new Set(leafAChannel.getPeerHashes());
+				expect(peers.has(root.publicKeyHash)).to.equal(true);
+			});
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("supports economical unicast via route tokens through the root", async () => {
 		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
 			3,

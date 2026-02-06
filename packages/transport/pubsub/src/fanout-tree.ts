@@ -1307,6 +1307,34 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		return this.getMetricsForSuffixKey(id.suffixKey);
 	}
 
+	public getChannelPeerHashes(
+		topic: string,
+		root: string,
+		options?: { includeSelf?: boolean },
+	): string[] {
+		const id = this.getChannelId(topic, root);
+		const ch = this.channelsBySuffixKey.get(id.suffixKey);
+		if (!ch) return [];
+
+		const includeSelf = options?.includeSelf === true;
+		const peers = new Set<string>();
+
+		if (ch.parent) peers.add(ch.parent);
+		for (const child of ch.children.keys()) peers.add(child);
+		for (const peer of ch.channelPeers) peers.add(peer);
+		if (ch.routeFromRoot) {
+			for (const peer of ch.routeFromRoot) peers.add(peer);
+		}
+
+		if (includeSelf) {
+			peers.add(this.publicKeyHash);
+		} else {
+			peers.delete(this.publicKeyHash);
+		}
+
+		return [...peers];
+	}
+
 	public async joinChannel(
 		topic: string,
 		root: string,

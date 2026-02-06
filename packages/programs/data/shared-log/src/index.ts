@@ -699,10 +699,8 @@ export class SharedLog<
 			return;
 		}
 
-		const fanoutService = (this.node.services as any).fanout;
 		const from =
-			fanoutService?.getPublicKey?.(detail.from) ??
-			this.node.services.pubsub.getPublicKey(detail.from) ??
+			(await this._resolvePublicKeyFromHash(detail.from)) ??
 			({ hashcode: () => detail.from } as PublicSignKey);
 
 		await this.onMessage(message, {
@@ -720,6 +718,49 @@ export class SharedLog<
 			);
 		}
 		await this._fanoutChannel.publish(serialize(message));
+	}
+
+	private async _resolvePublicKeyFromHash(
+		hash: string,
+	): Promise<PublicSignKey | undefined> {
+		const fanoutService = (this.node.services as any).fanout;
+		return (
+			fanoutService?.getPublicKey?.(hash) ??
+			this.node.services.pubsub.getPublicKey(hash)
+		);
+	}
+
+	private async _getTopicSubscribers(
+		topic: string,
+	): Promise<PublicSignKey[] | undefined> {
+		if (this._fanoutChannel && topic === this.topic) {
+			const hashes = this._fanoutChannel.getPeerHashes({ includeSelf: false });
+			if (hashes.length > 0) {
+				const keys = await Promise.all(
+					hashes.map((hash) => this._resolvePublicKeyFromHash(hash)),
+				);
+				const uniqueKeys: PublicSignKey[] = [];
+				const seen = new Set<string>();
+				for (const key of keys) {
+					if (!key) {
+						continue;
+					}
+					const hash = key.hashcode();
+					if (hash === this.node.identity.publicKey.hashcode()) {
+						continue;
+					}
+					if (seen.has(hash)) {
+						continue;
+					}
+					seen.add(hash);
+					uniqueKeys.push(key);
+				}
+				if (uniqueKeys.length > 0) {
+					return uniqueKeys;
+				}
+			}
+		}
+		return (await this.node.services.pubsub.getSubscribers(topic)) ?? undefined;
 	}
 
 	// @deprecated
@@ -1926,9 +1967,7 @@ export class SharedLog<
 						continue;
 					}
 
-					const subscribers = await this.node.services.pubsub.getSubscribers(
-						this.rpc.topic,
-					);
+					const subscribers = await this._getTopicSubscribers(this.rpc.topic);
 
 					const ackTo: PublicSignKey[] = [];
 					let silentTo: PublicSignKey[] | undefined;
@@ -2360,17 +2399,15 @@ export class SharedLog<
 		await this.rebalanceParticipation();
 
 		// Take into account existing subscription
-		(await this.node.services.pubsub.getSubscribers(this.topic))?.forEach(
-			(v, k) => {
-				if (v.equals(this.node.identity.publicKey)) {
-					return;
-				}
-				if (this.closed) {
-					return;
-				}
-				this.handleSubscriptionChange(v, [this.topic], true);
-			},
-		);
+		(await this._getTopicSubscribers(this.topic))?.forEach((v) => {
+			if (v.equals(this.node.identity.publicKey)) {
+				return;
+			}
+			if (this.closed) {
+				return;
+			}
+			this.handleSubscriptionChange(v, [this.topic], true);
+		});
 	}
 
 	async reset() {
@@ -2404,7 +2441,7 @@ export class SharedLog<
 						})
 							.then(async () => {
 								// is reachable, announce change events
-								const key = await this.node.services.pubsub.getPublicKey(
+								const key = await this._resolvePublicKeyFromHash(
 									segment.value.hash,
 								);
 								if (!key) {
@@ -2571,33 +2608,32 @@ export class SharedLog<
 				set.add(key);
 			}
 
-				if (options?.reachableOnly) {
-					// Prefer the live pubsub subscriber set when filtering reachability, but fall back
-					// to `uniqueReplicators` (replication-message-driven cache). In some flows peers can
-					// be reachable/active even before (or without) subscriber state converging.
-					const subscribers =
-						(await this.node.services.pubsub.getSubscribers(this.topic)) ??
-						undefined;
-					const subscriberHashcodes = subscribers
-						? new Set(subscribers.map((key) => key.hashcode()))
-						: undefined;
+			if (options?.reachableOnly) {
+				// Prefer the live pubsub subscriber set when filtering reachability, but fall back
+				// to `uniqueReplicators` (replication-message-driven cache). In some flows peers can
+				// be reachable/active even before (or without) subscriber state converging.
+				const subscribers =
+					(await this._getTopicSubscribers(this.topic)) ?? undefined;
+				const subscriberHashcodes = subscribers
+					? new Set(subscribers.map((key) => key.hashcode()))
+					: undefined;
 
 				const reachable: string[] = [];
 				const selfHash = this.node.identity.publicKey.hashcode();
 				for (const peer of set) {
-						if (peer === selfHash) {
-							reachable.push(peer);
-							continue;
-						}
-						if (
-							(subscriberHashcodes && subscriberHashcodes.has(peer)) ||
-							this.uniqueReplicators.has(peer)
-						) {
-							reachable.push(peer);
-						}
+					if (peer === selfHash) {
+						reachable.push(peer);
+						continue;
 					}
-					return reachable;
+					if (
+						(subscriberHashcodes && subscriberHashcodes.has(peer)) ||
+						this.uniqueReplicators.has(peer)
+					) {
+						reachable.push(peer);
+					}
 				}
+				return reachable;
+			}
 
 			return [...set];
 		} catch (error) {
@@ -3588,9 +3624,7 @@ export class SharedLog<
 		waitForNewPeers?: boolean;
 	}) {
 		// if no remotes, just return
-		const subscribers = await this.node.services.pubsub.getSubscribers(
-			this.rpc.topic,
-		);
+		const subscribers = await this._getTopicSubscribers(this.rpc.topic);
 		let waitForNewPeers = options?.waitForNewPeers;
 		if (!waitForNewPeers && (subscribers?.length ?? 0) === 0) {
 			throw new NoPeersError(this.rpc.topic);
@@ -3860,9 +3894,7 @@ export class SharedLog<
 		let subscribers = 1;
 		if (!this.rpc.closed) {
 			try {
-				subscribers =
-					(await this.node.services.pubsub.getSubscribers(this.rpc.topic))
-						?.length ?? 1;
+				subscribers = (await this._getTopicSubscribers(this.rpc.topic))?.length ?? 1;
 			} catch {
 				// Best-effort only; fall back to 1.
 			}
@@ -3977,34 +4009,33 @@ export class SharedLog<
 		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge()); // TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
 		const selfHash = this.node.identity.publicKey.hashcode();
 
-			// Prefer `uniqueReplicators` (replicator cache) as soon as it has any data.
-			// Falling back to live pubsub subscribers can include non-replicators and can
-			// break delivery/availability when writers are not directly connected.
-			let peerFilter: Set<string> | undefined = undefined;
-			const selfReplicating = await this.isReplicating();
-			if (this.uniqueReplicators.size > 0) {
-				peerFilter = new Set(this.uniqueReplicators);
-				if (selfReplicating) {
-					peerFilter.add(selfHash);
-				} else {
-					peerFilter.delete(selfHash);
-				}
+		// Prefer `uniqueReplicators` (replicator cache) as soon as it has any data.
+		// Falling back to live pubsub subscribers can include non-replicators and can
+		// break delivery/availability when writers are not directly connected.
+		let peerFilter: Set<string> | undefined = undefined;
+		const selfReplicating = await this.isReplicating();
+		if (this.uniqueReplicators.size > 0) {
+			peerFilter = new Set(this.uniqueReplicators);
+			if (selfReplicating) {
+				peerFilter.add(selfHash);
 			} else {
-				try {
-					const subscribers =
-						(await this.node.services.pubsub.getSubscribers(this.topic)) ??
-						undefined;
-					if (subscribers && subscribers.length > 0) {
-						peerFilter = new Set(subscribers.map((key) => key.hashcode()));
-						if (selfReplicating) {
-							peerFilter.add(selfHash);
-						} else {
-							peerFilter.delete(selfHash);
-						}
+				peerFilter.delete(selfHash);
+			}
+		} else {
+			try {
+				const subscribers =
+					(await this._getTopicSubscribers(this.topic)) ?? undefined;
+				if (subscribers && subscribers.length > 0) {
+					peerFilter = new Set(subscribers.map((key) => key.hashcode()));
+					if (selfReplicating) {
+						peerFilter.add(selfHash);
+					} else {
+						peerFilter.delete(selfHash);
 					}
-				} catch {
-					// Best-effort only; if pubsub isn't ready, do a full scan.
 				}
+			} catch {
+				// Best-effort only; if pubsub isn't ready, do a full scan.
+			}
 		}
 		return getSamples<R>(
 			cursors,
