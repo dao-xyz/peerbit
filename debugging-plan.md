@@ -148,3 +148,10 @@ Last updated: 2026-02-06
 - Validate PR #9 (`fix/search-convergence-under-churn`) in CI `ci:part2` (and optionally also run `PEERBIT_TEST_SESSION=mock pnpm run test:ci:part-2` locally).
 - Decide whether the test-only de-flake PR (#8) is still needed once the underlying iterator behavior is fixed (PR #9).
 - Optional: strict churn coverage PR: https://github.com/Faolain/peerbit/pull/10 (branch `test/strict-search-under-churn`).
+
+## Claims/Hypothesis
+
+### 2026-02-07
+| Claim/Hypothesis | Evidence so far | Test to confirm/reject | Status |
+|---|---|---|---|
+| H4: Missing remote shard responses can cause the distributed search iterator to prematurely conclude `done`, yielding silent short-reads; preventing `done` on missing responses de-flakes `ci:part2`. | With PR #9 changes (`unsetDone()` + `hasMore=true` when MissingResponsesError occurs), the previously-flaky test passes 25/25 in a local stress loop and `PEERBIT_TEST_SESSION=mock pnpm run test:ci:part-2` passes locally. | Confirm by CI on PR #9 (watch for recurring failure signature `Failed to collect all messages ... Log lengths: [...]`). | In progress |
