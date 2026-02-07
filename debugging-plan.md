@@ -127,3 +127,23 @@ Last updated: 2026-02-06
 ### 2026-02-06 (worktrees)
 - `wt` worktrees use a `.git` *file* (not a directory). Repo root `.aegir.js` currently does `findUp.findUp('.git', { type: 'directory' })`, which returns `undefined` in worktrees and breaks all `aegir test` runs with `ERR_INVALID_ARG_TYPE`.
   - Fix: find `.git` without constraining `type: 'directory'`, or locate root via `pnpm-workspace.yaml` / `git rev-parse --show-toplevel`.
+
+## Key Learnings
+
+### 2026-02-07
+- Production fix candidate: https://github.com/Faolain/peerbit/pull/9 (branch `fix/search-convergence-under-churn`) keeps the search iterator open when remote shard responses are missing, and surfaces missing shard groups on `MissingResponsesError`.
+- The strict churn test initially failed with `199/200` after stop/start when using default (in-memory) blocks; switching the session to per-peer on-disk block directories makes the churn scenario stable and more representative of production restart semantics.
+
+## Test Results
+
+### 2026-02-07
+- PASS (WT-B / prod fix): `pnpm --filter @peerbit/rpc test -- --grep "reports missing groups on timeout"`.
+- PASS (WT-B / prod fix, stress): `for i in {1..25}; do PEERBIT_TEST_SESSION=mock pnpm --filter @peerbit/document test -- --grep "can search while keeping minimum amount of replicas" || break; done` (25/25).
+- PASS (WT-A / strict churn, stress): `for i in {1..10}; do PEERBIT_TEST_SESSION=mock pnpm --filter @peerbit/document test -- --grep "strict search under churn" || break; done` (10/10).
+
+## Next Steps
+
+### 2026-02-07
+- Validate PR #9 (`fix/search-convergence-under-churn`) in CI `ci:part2` (and optionally also run `PEERBIT_TEST_SESSION=mock pnpm run test:ci:part-2` locally).
+- Decide whether the test-only de-flake PR (#8) is still needed once the underlying iterator behavior is fixed (PR #9).
+- Optional: strict churn coverage PR: https://github.com/Faolain/peerbit/pull/10 (branch `test/strict-search-under-churn`).
