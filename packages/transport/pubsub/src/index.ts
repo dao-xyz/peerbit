@@ -78,6 +78,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 	private debounceSubscribeAggregator: DebouncedAccumulatorCounterMap;
 	private debounceUnsubscribeAggregator: DebouncedAccumulatorCounterMap;
+	private pendingSubscriptions: Set<string>;
 
 	constructor(
 		components: DirectSubComponents,
@@ -93,6 +94,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		this.peerToTopic = new Map();
 		this.dispatchEventOnSelfPublish =
 			props?.dispatchEventOnSelfPublish || false;
+		this.pendingSubscriptions = new Set();
 		this.debounceSubscribeAggregator = debouncedAccumulatorSetCounter(
 			(set) => this._subscribe([...set.values()]),
 			props?.subscriptionDebounceDelay ?? 50,
@@ -108,6 +110,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		this.topics.clear();
 		this.peerToTopic.clear();
 		this.topicsToPeers.clear();
+		this.pendingSubscriptions.clear();
 		this.debounceSubscribeAggregator.close();
 		this.debounceUnsubscribeAggregator.close();
 		return super.stop();
@@ -124,10 +127,13 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 	}
 
 	async subscribe(topic: string) {
-		// this.debounceUnsubscribeAggregator.delete(topic);
-		if (!this.topics.has(topic)) {
-			this.initializeTopic(topic);
-		}
+		this.pendingSubscriptions.add(topic);
+
+		// NOTE: subscribe() is debounced, but we still need to start tracking the topic
+		// immediately. Otherwise we can drop incoming Subscribe traffic during the
+		// debounce window (`this.topics.get(topic)` is undefined) and/or fail to
+		// advertise pending subscribes in requestSubscribers-style handshakes.
+		this.initializeTopic(topic);
 		return this.debounceSubscribeAggregator.add({ key: topic });
 	}
 
@@ -157,6 +163,10 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				newTopicsForTopicData.push(topic);
 				this.listenForSubscribers(topic);
 			}
+
+			// `_subscribe()` updates `subscriptions` synchronously; once we're here the
+			// topic is no longer "pending" (debounce window).
+			this.pendingSubscriptions.delete(topic);
 		}
 
 		if (newTopicsForTopicData.length > 0) {
@@ -179,10 +189,34 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 	}
 
 	async unsubscribe(topic: string) {
+		this.pendingSubscriptions.delete(topic);
+
 		if (this.debounceSubscribeAggregator.has(topic)) {
 			this.debounceSubscribeAggregator.delete(topic); // cancel subscription before it performed
-			this.topics.delete(topic);
-			this.topicsToPeers.delete(topic);
+
+			// If `subscribe()` eagerly initialized the topic, undo it when the debounced
+			// subscribe is cancelled to avoid "ghost topic" tracking (which can affect
+			// relay heuristics that use `this.topics.has(topic)`).
+			if (!this.subscriptions.get(topic)) {
+				const peersOnTopic = this.topicsToPeers.get(topic);
+				if (peersOnTopic) {
+					for (const peerHash of peersOnTopic) {
+						this.peerToTopic.get(peerHash)?.delete(topic);
+						if (!this.peerToTopic.get(peerHash)?.size) {
+							this.peerToTopic.delete(peerHash);
+						}
+
+						this.lastSubscriptionMessages.get(peerHash)?.delete(topic);
+						if (!this.lastSubscriptionMessages.get(peerHash)?.size) {
+							this.lastSubscriptionMessages.delete(peerHash);
+						}
+					}
+				}
+
+				this.topics.delete(topic);
+				this.topicsToPeers.delete(topic);
+			}
+
 			return false;
 		}
 		const subscriptions = this.subscriptions.get(topic);
@@ -607,18 +641,17 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				(x) => this.publicKeyHash === x,
 			);
 
+			const hasLocalInterest = !!pubsubMessage.topics.find(
+				(topic) =>
+					this.subscriptions.has(topic) || this.pendingSubscriptions.has(topic),
+			);
+
 			let isForMe: boolean;
 			if (pubsubMessage.strict) {
-				isForMe =
-					!!pubsubMessage.topics.find((topic) =>
-						this.subscriptions.has(topic),
-					) && meInTOs;
+				isForMe = hasLocalInterest && meInTOs;
 			} else {
 				isForMe =
-					!!pubsubMessage.topics.find((topic) =>
-						this.subscriptions.has(topic),
-					) ||
-					(pubsubMessage.topics.length === 0 && meInTOs);
+					hasLocalInterest || (pubsubMessage.topics.length === 0 && meInTOs);
 			}
 
 			if (isForMe) {
@@ -738,7 +771,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 						for (const topic of pubsubMessage.topics) {
 							if (
 								!mySubscriptions.includes(topic) &&
-								this.debounceSubscribeAggregator.has(topic)
+								this.pendingSubscriptions.has(topic)
 							) {
 								mySubscriptions.push(topic);
 							}
