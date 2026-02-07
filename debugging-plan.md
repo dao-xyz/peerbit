@@ -139,6 +139,7 @@ Last updated: 2026-02-06
 ### 2026-02-07
 - PASS (WT-B / prod fix): `pnpm --filter @peerbit/rpc test -- --grep "reports missing groups on timeout"`.
 - PASS (WT-B / prod fix, stress): `for i in {1..25}; do PEERBIT_TEST_SESSION=mock pnpm --filter @peerbit/document test -- --grep "can search while keeping minimum amount of replicas" || break; done` (25/25).
+- PASS (WT-B / prod fix): `PEERBIT_TEST_SESSION=mock pnpm run test:ci:part-2`.
 - PASS (WT-A / strict churn, stress): `for i in {1..10}; do PEERBIT_TEST_SESSION=mock pnpm --filter @peerbit/document test -- --grep "strict search under churn" || break; done` (10/10).
 
 ## Next Steps
