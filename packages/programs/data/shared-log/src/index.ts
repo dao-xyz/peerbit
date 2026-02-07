@@ -48,6 +48,7 @@ import {
 import {
 	AbortError,
 	TimeoutError,
+	delay,
 	debounceAccumulator,
 	debounceFixedInterval,
 	waitFor,
@@ -2265,17 +2266,18 @@ export class SharedLog<
 		await this.node.services.pubsub.requestSubscribers(this.topic);
 
 		// Take into account existing subscription
-		(await this.node.services.pubsub.getSubscribers(this.topic))?.forEach(
-			(v, k) => {
+		const subscribers = await this.node.services.pubsub.getSubscribers(this.topic);
+		if (subscribers) {
+			for (const v of subscribers.values()) {
 				if (v.equals(this.node.identity.publicKey)) {
-					return;
+					continue;
 				}
 				if (this.closed) {
-					return;
+					break;
 				}
-				this.handleSubscriptionChange(v, [this.topic], true);
-			},
-		);
+				await this.handleSubscriptionChange(v, [this.topic], true);
+			}
+		}
 
 		// Flush any replication-info messages that arrived before indexes were ready
 		await this.flushPendingReplicationInfo();
@@ -4042,39 +4044,61 @@ export class SharedLog<
 		}
 
 		if (subscribed) {
+			const sendTimeout = 10_000;
 			const replicationSegments = await this.getMyReplicationSegments();
 			if (replicationSegments.length > 0) {
-				this.rpc
-					.send(
-						new AllReplicatingSegmentsMessage({
-							segments: replicationSegments.map((x) => x.toReplicationRange()),
-						}),
-						{
-							mode: new SeekDelivery({ redundancy: 1, to: [publicKey] }),
-						},
-					)
-					.catch((e) => logger.error(e.toString()));
+				// Wait briefly so initial segment announcements don't race later updates
+				// (see replication.spec.ts), but bound the wait so open/close can't hang on
+				// delivery/acks.
+				await Promise.race([
+					this.rpc
+						.send(
+							new AllReplicatingSegmentsMessage({
+								segments: replicationSegments.map((x) => x.toReplicationRange()),
+							}),
+							{
+								mode: new SeekDelivery({ redundancy: 1, to: [publicKey] }),
+							},
+						)
+						.catch((e) => logger.error(e.toString())),
+					delay(sendTimeout, { signal: this._closeController.signal }).catch(
+						() => undefined,
+					),
+				]);
 
 				if (this.v8Behaviour) {
 					// for backwards compatibility
-					this.getRole()
-						.then((role) =>
-							this.rpc.send(new ResponseRoleMessage({ role }), {
-								mode: new SeekDelivery({ redundancy: 1, to: [publicKey] }),
-							}),
-						)
-						.catch((e) => logger.error(e.toString()));
+					try {
+						const role = await this.getRole();
+						await Promise.race([
+							this.rpc
+								.send(new ResponseRoleMessage({ role }), {
+									mode: new SeekDelivery({ redundancy: 1, to: [publicKey] }),
+								})
+								.catch((e) => logger.error(e.toString())),
+							delay(sendTimeout, { signal: this._closeController.signal }).catch(
+								() => undefined,
+							),
+						]);
+					} catch (e: any) {
+						logger.error(e?.toString?.() ?? String(e));
+					}
 				}
 			}
 
 			// Request the remote peer's replication info. This makes joins resilient to
 			// timing-sensitive delivery/order issues where we may miss their initial
 			// replication announcement.
-			this.rpc
-				.send(new RequestReplicationInfoMessage(), {
-					mode: new SeekDelivery({ redundancy: 1, to: [publicKey] }),
-				})
-				.catch((e) => logger.error(e.toString()));
+			await Promise.race([
+				this.rpc
+					.send(new RequestReplicationInfoMessage(), {
+						mode: new SeekDelivery({ redundancy: 1, to: [publicKey] }),
+					})
+					.catch((e) => logger.error(e.toString())),
+				delay(sendTimeout, { signal: this._closeController.signal }).catch(
+					() => undefined,
+				),
+			]);
 		} else {
 			await this.removeReplicator(publicKey);
 		}

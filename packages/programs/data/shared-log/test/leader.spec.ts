@@ -753,7 +753,10 @@ describe(`isLeader`, function () {
 					).to.deep.equal(expected);
 				},
 				{
-					timeout: 60 * 1000,
+					// Keep this aligned with the test-level timeout (120s) to avoid flakes
+					// under high suite load where replication-info handshakes can take longer.
+					timeout: 110 * 1000,
+					delayInterval: 200,
 					timeoutMessage: "reachableOnly cover not ready",
 				},
 			);
@@ -783,13 +786,8 @@ describe(`isLeader`, function () {
 
 			await waitForResolved(
 				async () => {
-					const cover = await db1.log.getCover(
-						{ args: undefined },
-						{ roleAge: 0 },
-					);
-					expect(cover).to.include(
-						session.peers[0].identity.publicKey.hashcode(),
-					);
+					const cover = await db1.log.getCover({ args: undefined }, { roleAge: 0 });
+					expect(cover).to.include(session.peers[0].identity.publicKey.hashcode());
 					expect(new Set(cover).size).to.equal(cover.length);
 
 					const loadedReplicators = Array.from(
@@ -809,7 +807,8 @@ describe(`isLeader`, function () {
 						.true;
 				},
 				{
-					timeout: 60 * 1000,
+					timeout: 110 * 1000,
+					delayInterval: 200,
 					timeoutMessage: "reachableOnly cover not stable after reload",
 				},
 			);

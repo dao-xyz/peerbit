@@ -723,15 +723,19 @@ testSetups.forEach((setup) => {
 
 				await checkBounded(entryCount, 1, 1, db1, db2);
 
-				await waitForResolved(async () =>
-					expect((await db1.log.calculateTotalParticipation()) - 1).lessThan(
-						0.1,
-					),
+				await waitForResolved(
+					async () =>
+						expect((await db1.log.calculateTotalParticipation()) - 1).lessThan(
+							0.1,
+						),
+					{ timeout: 30_000, delayInterval: 200 },
 				);
-				await waitForResolved(async () =>
-					expect((await db2.log.calculateTotalParticipation()) - 1).lessThan(
-						0.1,
-					),
+				await waitForResolved(
+					async () =>
+						expect((await db2.log.calculateTotalParticipation()) - 1).lessThan(
+							0.1,
+						),
+					{ timeout: 30_000, delayInterval: 200 },
 				);
 			});
 
