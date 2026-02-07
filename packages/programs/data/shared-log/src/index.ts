@@ -194,6 +194,36 @@ const getLatestEntry = (
 	return latest;
 };
 
+const hashToSeed32 = (str: string) => {
+	// FNV-1a 32-bit, fast and deterministic.
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < str.length; i++) {
+		hash ^= str.charCodeAt(i);
+		hash = Math.imul(hash, 0x01000193);
+	}
+	return hash >>> 0;
+};
+
+const pickDeterministicSubset = (peers: string[], seed: number, max: number) => {
+	if (peers.length <= max) return peers;
+
+	const subset: string[] = [];
+	const used = new Set<string>();
+	let x = seed || 1;
+	while (subset.length < max) {
+		// xorshift32
+		x ^= x << 13;
+		x ^= x >>> 17;
+		x ^= x << 5;
+		const peer = peers[(x >>> 0) % peers.length];
+		if (!used.has(peer)) {
+			used.add(peer);
+			subset.push(peer);
+		}
+	}
+	return subset;
+};
+
 export type ReplicationLimitsOptions =
 	| Partial<ReplicationLimits>
 	| { min?: number; max?: number };
@@ -2238,6 +2268,50 @@ export class SharedLog<
 
 		await this.log.open(this.remoteBlocks, this.node.identity, {
 			keychain: this.node.services.keychain,
+			resolveRemotePeers: async (hash, options) => {
+				if (options?.signal?.aborted) return undefined;
+
+				const maxPeers = 8;
+				const self = this.node.identity.publicKey.hashcode();
+				const seed = hashToSeed32(hash);
+
+				// Best hint: peers that have recently confirmed having this entry hash.
+				const hinted = this._requestIPruneResponseReplicatorSet.get(hash);
+				if (hinted && hinted.size > 0) {
+					const peers = [...hinted].filter((p) => p !== self);
+					return peers.length > 0
+						? pickDeterministicSubset(peers, seed, maxPeers)
+						: undefined;
+				}
+
+				// Next: peers we already contacted about this hash (may still have it).
+				const contacted = this._requestIPruneSent.get(hash);
+				if (contacted && contacted.size > 0) {
+					const peers = [...contacted].filter((p) => p !== self);
+					return peers.length > 0
+						? pickDeterministicSubset(peers, seed, maxPeers)
+						: undefined;
+				}
+
+				let candidates: string[] | undefined;
+
+				// Prefer the replicator cache; fall back to subscribers if we have no other signal.
+				if (this.uniqueReplicators.size > 0) {
+					candidates = [...this.uniqueReplicators];
+				} else {
+					try {
+						const subscribers = await this._getTopicSubscribers(this.topic);
+						candidates = subscribers?.map((k) => k.hashcode());
+					} catch {
+						// Best-effort only.
+					}
+				}
+
+				if (!candidates || candidates.length === 0) return undefined;
+				const peers = candidates.filter((p) => p !== self);
+				if (peers.length === 0) return undefined;
+				return pickDeterministicSubset(peers, seed, maxPeers);
+			},
 			...this._logProperties,
 			onChange: async (change) => {
 				await this.onChange(change);

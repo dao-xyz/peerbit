@@ -64,6 +64,10 @@ export type LogProperties<T> = {
 	sortFn?: Sorting.SortFn;
 	trim?: TrimOptions;
 	canAppend?: CanAppend<T>;
+	resolveRemotePeers?: (
+		hash: string,
+		options?: { signal?: AbortSignal },
+	) => Promise<string[] | undefined> | string[] | undefined;
 };
 
 export type LogOptions<T> = LogProperties<T> & LogEvents<T> & MemoryProperties;
@@ -168,7 +172,15 @@ export class Log<T> {
 
 		this._closeController = new AbortController();
 
-		const { encoding, trim, keychain, indexer, onGidRemoved, sortFn } = options;
+		const {
+			encoding,
+			trim,
+			keychain,
+			indexer,
+			onGidRemoved,
+			sortFn,
+			resolveRemotePeers,
+		} = options;
 
 		// TODO do correctly with tie breaks
 		this._sortFn = sortFn || LastWriteWins;
@@ -203,6 +215,7 @@ export class Log<T> {
 			).init({ schema: ShallowEntry }),
 			publicKey: this._identity.publicKey,
 			sort: this._sortFn,
+			resolveRemotePeers,
 		});
 		await this._entryIndex.init();
 		/* 	this._values = new Values(this._entryIndex, this._sortFn); */

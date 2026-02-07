@@ -141,6 +141,30 @@ describe("properties", function () {
 			expect(fetched).to.be.true;
 			expect(timeout).to.eq(123);
 		});
+
+		it("injects remote.from when resolveRemotePeers is configured", async () => {
+			const fromPeers = ["peer-a", "peer-b", "peer-c"];
+			const storeGetFn = store.get.bind(store);
+			let observedFrom: any = undefined;
+			store.get = async (hash, options) => {
+				observedFrom = (options?.remote as any)?.from;
+				return storeGetFn(hash, options);
+			};
+
+			const logWithResolver = new Log<Uint8Array>();
+			await logWithResolver.open(store, signKey, {
+				encoding: JSON_ENCODING,
+				indexer: new HashmapIndices(),
+				resolveRemotePeers: () => fromPeers,
+			});
+
+			const entry = await logWithResolver.get(
+				"zb2rhbnwihVVVVEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J",
+				{ remote: true },
+			);
+			assert.deepStrictEqual(entry, undefined);
+			expect(observedFrom).to.deep.equal(fromPeers);
+		});
 	});
 
 	describe("setIdentity", () => {
