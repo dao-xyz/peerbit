@@ -46,10 +46,8 @@ import {
 import { RPC, type RequestContext } from "@peerbit/rpc";
 import {
 	AcknowledgeDelivery,
-	AnyWhere,
 	NotStartedError,
 	SilentDelivery,
-	type WithMode,
 } from "@peerbit/stream-interface";
 import {
 	AbortError,
@@ -2146,17 +2144,17 @@ export class SharedLog<
 		const localBlocks = await new AnyBlockStore(
 			await storage.sublevel("blocks"),
 		);
-		this.remoteBlocks = new RemoteBlocks({
-			local: localBlocks,
-			publish: (message, options) =>
-				this.rpc.send(
-					new BlocksMessage(message),
-					(options as WithMode).mode instanceof AnyWhere ? undefined : options,
-				),
-			waitFor: this.rpc.waitFor.bind(this.rpc),
-			publicKey: this.node.identity.publicKey,
-			eagerBlocks: options?.eagerBlocks ?? true,
-		});
+			this.remoteBlocks = new RemoteBlocks({
+				local: localBlocks,
+				publish: (message, options) =>
+					this.rpc.send(
+						new BlocksMessage(message),
+						options,
+					),
+				waitFor: this.rpc.waitFor.bind(this.rpc),
+				publicKey: this.node.identity.publicKey,
+				eagerBlocks: options?.eagerBlocks ?? true,
+			});
 
 		await this.remoteBlocks.start();
 
@@ -4489,12 +4487,14 @@ export class SharedLog<
 							existCounter,
 						);
 					}
-					existCounter.add(publicKeyHash);
+						existCounter.add(publicKeyHash);
+						// Seed provider hints so future remote reads can avoid extra round-trips.
+						this.remoteBlocks.hintProviders(entry.hash, [publicKeyHash]);
 
-					if (minReplicasValue <= existCounter.size) {
-						resolve();
-					}
-				},
+						if (minReplicasValue <= existCounter.size) {
+							resolve();
+						}
+					},
 			});
 
 			promises.push(deferredPromise.promise);
