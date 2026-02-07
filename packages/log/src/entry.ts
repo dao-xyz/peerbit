@@ -1,5 +1,5 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
-import { type Blocks } from "@peerbit/blocks-interface";
+import { type Blocks, type GetOptions } from "@peerbit/blocks-interface";
 import type { PublicSignKey, SignatureWithKey } from "@peerbit/crypto";
 import type { CryptoKeychain } from "@peerbit/keychain";
 import { LamportClock as Clock } from "./clock.js";
@@ -84,7 +84,7 @@ export abstract class Entry<T> {
 	static fromMultihash = async <T>(
 		store: Blocks,
 		hash: string,
-		options?: { remote?: { timeout?: number; replicate?: boolean } | boolean },
+		options?: GetOptions,
 	) => {
 		if (!hash) {
 			throw new Error(`Invalid hash: ${hash}`);

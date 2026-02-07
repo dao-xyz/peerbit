@@ -5,6 +5,7 @@ import { Cache } from "@peerbit/cache";
 import {
 	AccessError,
 	PublicSignKey,
+	getPublicKeyFromPeerId,
 	sha256Base64Sync,
 	sha256Sync,
 } from "@peerbit/crypto";
@@ -2293,25 +2294,62 @@ export class SharedLog<
 						: undefined;
 				}
 
-				let candidates: string[] | undefined;
+					let candidates: string[] | undefined;
 
-				// Prefer the replicator cache; fall back to subscribers if we have no other signal.
-				if (this.uniqueReplicators.size > 0) {
-					candidates = [...this.uniqueReplicators];
-				} else {
-					try {
-						const subscribers = await this._getTopicSubscribers(this.topic);
-						candidates = subscribers?.map((k) => k.hashcode());
-					} catch {
-						// Best-effort only.
+					// Prefer the replicator cache; fall back to subscribers if we have no other signal.
+					const replicatorCandidates = [...this.uniqueReplicators].filter(
+						(p) => p !== self,
+					);
+					if (replicatorCandidates.length > 0) {
+						candidates = replicatorCandidates;
+					} else {
+						try {
+							const subscribers = await this._getTopicSubscribers(this.topic);
+							const subscriberCandidates =
+								subscribers?.map((k) => k.hashcode()).filter((p) => p !== self) ??
+								[];
+							candidates =
+								subscriberCandidates.length > 0 ? subscriberCandidates : undefined;
+						} catch {
+							// Best-effort only.
+						}
+
+						if (!candidates || candidates.length === 0) {
+							// Last resort: peers we are already directly connected to. This avoids
+							// depending on global membership knowledge in early-join scenarios.
+							const peerMap = (this.node.services.pubsub as any)?.peers;
+							if (peerMap?.keys) {
+								candidates = [...peerMap.keys()];
+							}
+						}
+
+						if (!candidates || candidates.length === 0) {
+							// Even if the pubsub stream has no established peer streams yet, we may
+							// still have a libp2p connection to one or more peers (e.g. bootstrap).
+							const connectionManager = (this.node.services.pubsub as any)?.components
+								?.connectionManager;
+							const connections = connectionManager?.getConnections?.() ?? [];
+							const connectionHashes: string[] = [];
+							for (const conn of connections) {
+								const peerId = conn?.remotePeer;
+								if (!peerId) continue;
+								try {
+									connectionHashes.push(getPublicKeyFromPeerId(peerId).hashcode());
+								} catch {
+									// Best-effort only.
+								}
+							}
+							if (connectionHashes.length > 0) {
+								candidates = connectionHashes;
+							}
+						}
 					}
-				}
 
-				if (!candidates || candidates.length === 0) return undefined;
-				const peers = candidates.filter((p) => p !== self);
-				if (peers.length === 0) return undefined;
-				return pickDeterministicSubset(peers, seed, maxPeers);
-			},
+					if (!candidates || candidates.length === 0) return undefined;
+					const peers = candidates.filter((p) => p !== self);
+					if (peers.length === 0) return undefined;
+					return pickDeterministicSubset(peers, seed, maxPeers);
+				},
 			...this._logProperties,
 			onChange: async (change) => {
 				await this.onChange(change);
