@@ -141,6 +141,7 @@ Last updated: 2026-02-06
 - PASS (WT-B / prod fix, stress): `for i in {1..25}; do PEERBIT_TEST_SESSION=mock pnpm --filter @peerbit/document test -- --grep "can search while keeping minimum amount of replicas" || break; done` (25/25).
 - PASS (WT-B / prod fix): `PEERBIT_TEST_SESSION=mock pnpm run test:ci:part-2`.
 - PASS (WT-A / strict churn, stress): `for i in {1..10}; do PEERBIT_TEST_SESSION=mock pnpm --filter @peerbit/document test -- --grep "strict search under churn" || break; done` (10/10).
+- FAIL (master baseline, stress): `for i in {1..25}; do PEERBIT_TEST_SESSION=mock pnpm --filter @peerbit/document test -- --grep "can search while keeping minimum amount of replicas" || break; done` failed at iteration 9/25 with `997 < 1000` and log lengths `[997,98,544]`.
 
 ## Next Steps
 
