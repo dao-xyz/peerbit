@@ -1,7 +1,7 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { createStore } from "@peerbit/any-store";
 import type { GetOptions, Blocks as IBlocks } from "@peerbit/blocks-interface";
-import { type PublicSignKey } from "@peerbit/crypto";
+import { getPublicKeyFromPeerId, type PublicSignKey } from "@peerbit/crypto";
 import { DirectStream } from "@peerbit/stream";
 import { type DirectStreamComponents } from "@peerbit/stream";
 import {
@@ -26,7 +26,19 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			localTimeout?: number;
 			messageProcessingConcurrency?: number;
 			eagerBlocks?: boolean | { cacheSize?: number };
-		},
+			resolveProviders?: (
+				cid: string,
+				options?: { signal?: AbortSignal },
+			) => Promise<string[] | undefined> | string[] | undefined;
+			providerCache?:
+				| boolean
+				| {
+						maxEntries?: number;
+						ttlMs?: number;
+						maxProvidersPerCid?: number;
+				  };
+				requeryOnReachable?: number;
+			},
 	) {
 		super(components, ["/lazyblock/0.0.1"], {
 			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
@@ -36,6 +48,37 @@ export class DirectBlock extends DirectStream implements IBlocks {
 				pruner: false,
 			},
 		});
+
+		const defaultResolveProviders = () => {
+			const out: string[] = [];
+			const push = (hash?: string) => {
+				if (!hash) return;
+				if (hash === this.publicKeyHash) return;
+				// Small bounded list; avoid Set allocations on hot paths.
+				if (out.includes(hash)) return;
+				out.push(hash);
+			};
+
+			// Prefer peers we've already negotiated streams with for this protocol.
+			for (const h of this.peers.keys()) {
+				push(h);
+				if (out.length >= 32) return out;
+			}
+
+			// Fall back to currently connected libp2p peers (even if we haven't opened
+			// a `/lazyblock` stream yet). This makes "join by hash" flows work without
+			// requiring an explicit `remote.from` list.
+			for (const conn of this.components.connectionManager.getConnections()) {
+				try {
+					push(getPublicKeyFromPeerId(conn.remotePeer).hashcode());
+				} catch {
+					// ignore unexpected key types
+				}
+				if (out.length >= 32) break;
+			}
+
+			return out;
+		};
 		this.remoteBlocks = new RemoteBlocks({
 			local: new AnyBlockStore(createStore(options?.directory)),
 			publish: (message, options) => this.publish(serialize(message), options),
@@ -44,6 +87,9 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			waitFor: this.waitFor.bind(this) as WaitForPeersFn,
 			publicKey: this.publicKey,
 			eagerBlocks: options?.eagerBlocks,
+			resolveProviders: options?.resolveProviders ?? defaultResolveProviders,
+			providerCache: options?.providerCache,
+			requeryOnReachable: options?.requeryOnReachable,
 		});
 
 		this.onDataFn = (data: CustomEvent<DataMessage>) => {
@@ -70,6 +116,10 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		options?: GetOptions | undefined,
 	): Promise<Uint8Array | undefined> {
 		return this.remoteBlocks.get(cid, options);
+	}
+
+	hintProviders(cid: string, providers: string[]) {
+		this.remoteBlocks.hintProviders(cid, providers);
 	}
 
 	async rm(cid: string) {

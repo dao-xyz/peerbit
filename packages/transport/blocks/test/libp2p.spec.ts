@@ -55,7 +55,9 @@ describe("transport", function () {
 		const cid = await store(session, 0).put(data);
 
 		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
-		const readData = await store(session, 2).get(cid, { remote: true });
+		const readData = await store(session, 2).get(cid, {
+			remote: { from: [store(session, 0).publicKeyHash] },
+		});
 		expect(new Uint8Array(readData!)).to.deep.equal(data);
 	});
 
@@ -77,7 +79,7 @@ describe("transport", function () {
 		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
 
 		const readDataPromise = store(session, 2).get(cid, {
-			remote: { timeout: 5000 },
+			remote: { timeout: 5000, from: [store(session, 0).publicKeyHash] },
 		});
 		await delay(1000);
 		await session.connect([[session.peers[1], session.peers[2]]]);
@@ -85,6 +87,84 @@ describe("transport", function () {
 		const readData = await readDataPromise;
 		expect(readData).to.exist;
 		expect(new Uint8Array(readData!)).to.deep.equal(data);
+	});
+
+	it("reads from neighbour without explicit providers", async () => {
+		session = await TestSession.connected(2, {
+			services: { blocks: (c) => new DirectBlock(c) },
+		});
+		await store(session, 0).start();
+		await store(session, 1).start();
+		await waitForNeighbour(store(session, 0), store(session, 1));
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store(session, 0).put(data);
+		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
+
+		const readData = await store(session, 1).get(cid, { remote: { timeout: 5000 } });
+		expect(new Uint8Array(readData!)).to.deep.equal(data);
+	});
+
+	it("learns provider from response and reuses it", async () => {
+		session = await TestSession.disconnected(3, {
+			services: { blocks: (c) => new DirectBlock(c) },
+		});
+
+		await store(session, 0).start();
+		await store(session, 1).start();
+		await store(session, 2).start();
+
+		await session.connect([
+			[session.peers[0], session.peers[1]],
+			[session.peers[1], session.peers[2]],
+		]);
+		await waitForNeighbour(store(session, 0), store(session, 1));
+		await waitForNeighbour(store(session, 1), store(session, 2));
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store(session, 0).put(data);
+		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
+
+		// First read uses an explicit provider (0) so the request can reach the true holder.
+		const read1 = await store(session, 2).get(cid, {
+			remote: { timeout: 5000, from: [store(session, 0).publicKeyHash] },
+		});
+		expect(new Uint8Array(read1!)).to.deep.equal(data);
+
+		// Second read uses the learned provider cache (no explicit `from`).
+		const read2 = await store(session, 2).get(cid, { remote: { timeout: 5000 } });
+		expect(new Uint8Array(read2!)).to.deep.equal(data);
+	});
+
+	it("can seed providers for an in-flight get via hintProviders", async () => {
+		session = await TestSession.disconnected(2, {
+			services: {
+				blocks: (c) =>
+					new DirectBlock(c, {
+						// Simulate program-level provider discovery: start empty, then add hints later.
+						resolveProviders: () => [],
+					}),
+			},
+		});
+
+		await store(session, 0).start();
+		await store(session, 1).start();
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store(session, 0).put(data);
+		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
+
+		const readPromise = store(session, 1).get(cid, { remote: { timeout: 10_000 } });
+
+		// Connect after the get is already waiting (no explicit `remote.from`).
+		await session.connect([[session.peers[0], session.peers[1]]]);
+		await waitForNeighbour(store(session, 0), store(session, 1));
+
+		// Provide a hint once the peer is reachable to avoid a "seek then deliver" roundtrip.
+		store(session, 1).hintProviders?.(cid, [store(session, 0).publicKeyHash]);
+
+		const read = await readPromise;
+		expect(new Uint8Array(read!)).to.deep.equal(data);
 	});
 
 	it("only responds to peer that needs block", async () => {
@@ -120,7 +200,7 @@ describe("transport", function () {
 		expect(
 			new Uint8Array(
 				(await store(session, 2).get(cid, {
-					remote: { timeout: 5000 },
+					remote: { timeout: 5000, from: [store(session, 0).publicKeyHash] },
 				}))!,
 			),
 		).to.deep.equal(data);
@@ -149,7 +229,11 @@ describe("transport", function () {
 
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < 100; i++) {
-			promises.push(store(session, 1).get(cid, { remote: true }));
+			promises.push(
+				store(session, 1).get(cid, {
+					remote: { from: [store(session, 0).publicKeyHash] },
+				}),
+			);
 		}
 		const resolved = await Promise.all(promises);
 		expect(publish.calledOnce).to.be.true;
@@ -168,7 +252,7 @@ describe("transport", function () {
 
 		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
 		const readDataPromise = store(session, 1).get(cid, {
-			remote: true,
+			remote: { from: [store(session, 0).publicKeyHash] },
 		});
 
 		await session.connect(); // we connect after get request is sent
@@ -186,7 +270,9 @@ describe("transport", function () {
 		const cid = await store(session, 0).put(data);
 
 		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
-		const readDataPromise = store(session, 1).get(cid, { remote: true });
+		const readDataPromise = store(session, 1).get(cid, {
+			remote: { from: [store(session, 0).publicKeyHash] },
+		});
 
 		await session.connect(); // we connect after get request is sent
 		await waitForNeighbour(store(session, 0), store(session, 1));
@@ -203,7 +289,7 @@ describe("transport", function () {
 		const t1 = +new Date();
 		const readData = await store(session, 0).get(
 			"zb3we1BmfxpFg6bCXmrsuEo8JuQrGEf7RyFBdRxEHLuqc4CSr",
-			{ remote: { timeout: 3000 } },
+			{ remote: { timeout: 3000, from: [store(session, 1).publicKeyHash] } },
 		);
 		const t2 = +new Date();
 		expect(readData).equal(undefined);
