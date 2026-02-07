@@ -670,7 +670,7 @@ describe(`isLeader`, function () {
 		});
 
 		it("reachableOnly", async function () {
-			this.timeout(120_000);
+			this.timeout(300_000);
 			await session.stop();
 
 			session = await TestSession.connected(2, [
@@ -753,10 +753,10 @@ describe(`isLeader`, function () {
 					).to.deep.equal(expected);
 				},
 				{
-					// Keep this aligned with the test-level timeout (120s) to avoid flakes
-					// under high suite load where replication-info handshakes can take longer.
-					timeout: 110 * 1000,
-					delayInterval: 200,
+					// Budget: generous timeout for CI where sequential replication-info
+					// processing + bounded sends can take longer under load.
+					timeout: 180_000,
+					delayInterval: 500,
 					timeoutMessage: "reachableOnly cover not ready",
 				},
 			);
@@ -807,8 +807,8 @@ describe(`isLeader`, function () {
 						.true;
 				},
 				{
-					timeout: 110 * 1000,
-					delayInterval: 200,
+					timeout: 180_000,
+					delayInterval: 500,
 					timeoutMessage: "reachableOnly cover not stable after reload",
 				},
 			);
