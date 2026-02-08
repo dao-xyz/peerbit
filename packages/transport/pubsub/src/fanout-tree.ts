@@ -245,6 +245,30 @@ export type FanoutTreeJoinOptions = {
 	 * keeps control-plane traffic bounded at large scale.
 	 */
 	candidateCooldownMs?: number;
+
+	/**
+	 * Candidate scoring mode for selecting parent join targets.
+	 *
+	 * - `ranked-shuffle` (default): rank by (level, freeSlots, bid, source) and
+	 *   shuffle within `candidateShuffleTopK` to spread load.
+	 * - `ranked-strict`: try ranked candidates in order (no shuffle).
+	 * - `weighted`: weighted shuffle within `candidateShuffleTopK` using
+	 *   `candidateScoringWeights` (defaults bias low level + free slots).
+	 */
+	candidateScoringMode?: "ranked-shuffle" | "ranked-strict" | "weighted";
+
+	/**
+	 * Weights used when `candidateScoringMode="weighted"`.
+	 *
+	 * Larger values increase the influence of that signal.
+	 */
+	candidateScoringWeights?: {
+		level?: number;
+		freeSlots?: number;
+		connected?: number;
+		bidPerByte?: number;
+		source?: number;
+	};
 };
 
 export type FanoutTreeDataEvent = {
@@ -3284,6 +3308,20 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			0,
 			Math.floor(joinOpts.candidateCooldownMs ?? 2_000),
 		);
+		const candidateScoringModeRaw = joinOpts.candidateScoringMode ?? "ranked-shuffle";
+		const candidateScoringMode: "ranked-shuffle" | "ranked-strict" | "weighted" =
+			candidateScoringModeRaw === "ranked-strict" ||
+			candidateScoringModeRaw === "weighted" ||
+			candidateScoringModeRaw === "ranked-shuffle"
+				? candidateScoringModeRaw
+				: "ranked-shuffle";
+		const candidateScoringWeights = {
+			level: Number(joinOpts.candidateScoringWeights?.level ?? 1),
+			freeSlots: Number(joinOpts.candidateScoringWeights?.freeSlots ?? 0.25),
+			connected: Number(joinOpts.candidateScoringWeights?.connected ?? 0.5),
+			bidPerByte: Number(joinOpts.candidateScoringWeights?.bidPerByte ?? 0),
+			source: Number(joinOpts.candidateScoringWeights?.source ?? 0.25),
+		};
 		const start = Date.now();
 		const cooldownUntilByHash = new Map<string, number>();
 		const combinedSignal = joinOpts.signal
@@ -3505,18 +3543,92 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					continue;
 				}
 
-				// Shuffle to spread load (only among the top ranked candidates).
-				if (candidateShuffleTopK > 0 && candidates.length > 1) {
-					const k = Math.min(candidateShuffleTopK, candidates.length);
-					for (let i = k - 1; i > 0; i--) {
-						const j = Math.floor(this.random() * (i + 1));
-						const tmp = candidates[i]!;
-						candidates[i] = candidates[j]!;
-						candidates[j] = tmp;
+				let ordered = [...candidates];
+
+				if (candidateScoringMode === "ranked-shuffle") {
+					// Shuffle to spread load (only among the top ranked candidates).
+					if (candidateShuffleTopK > 0 && ordered.length > 1) {
+						const k = Math.min(candidateShuffleTopK, ordered.length);
+						for (let i = k - 1; i > 0; i--) {
+							const j = Math.floor(this.random() * (i + 1));
+							const tmp = ordered[i]!;
+							ordered[i] = ordered[j]!;
+							ordered[j] = tmp;
+						}
+					}
+				} else if (candidateScoringMode === "weighted") {
+					const wLevel = Number.isFinite(candidateScoringWeights.level)
+						? Math.max(0, candidateScoringWeights.level)
+						: 0;
+					const wSlots = Number.isFinite(candidateScoringWeights.freeSlots)
+						? Math.max(0, candidateScoringWeights.freeSlots)
+						: 0;
+					const wConnected = Number.isFinite(candidateScoringWeights.connected)
+						? Math.max(0, candidateScoringWeights.connected)
+						: 0;
+					const wBid = Number.isFinite(candidateScoringWeights.bidPerByte)
+						? Math.max(0, candidateScoringWeights.bidPerByte)
+						: 0;
+					const wSource = Number.isFinite(candidateScoringWeights.source)
+						? Math.max(0, candidateScoringWeights.source)
+						: 0;
+
+					const k =
+						candidateShuffleTopK > 0
+							? Math.min(candidateShuffleTopK, ordered.length)
+							: 0;
+					if (k > 1) {
+						const head = ordered.slice(0, k);
+						const tail = ordered.slice(k);
+
+						const weightOf = (c: (typeof head)[number]) => {
+							const level = Math.max(0, Math.floor(c.level));
+							const freeSlots = Math.max(0, Math.floor(c.freeSlots));
+							const bidPerByte = Math.max(0, Math.floor(c.bidPerByte));
+							const source = Math.max(0, Math.floor(c.source));
+							const connected = Boolean(this.peers.get(c.hash));
+
+							let weight = 1;
+							if (wLevel > 0) weight *= 1 / (1 + wLevel * level);
+							if (wSlots > 0) weight *= 1 + wSlots * freeSlots;
+							if (wConnected > 0 && connected) weight *= 1 + wConnected;
+							if (wBid > 0) weight *= 1 + wBid * bidPerByte;
+							if (wSource > 0) weight *= 1 / (1 + wSource * source);
+							return weight;
+						};
+
+						const out: typeof head = [];
+						const remaining = [...head];
+						while (remaining.length > 0) {
+							let sum = 0;
+							const weights: number[] = new Array(remaining.length);
+							for (let i = 0; i < remaining.length; i++) {
+								const w = weightOf(remaining[i]!);
+								const v = Number.isFinite(w) ? Math.max(0, w) : 0;
+								weights[i] = v;
+								sum += v;
+							}
+							if (sum <= 0) {
+								out.push(...remaining);
+								break;
+							}
+
+							let r = this.random() * sum;
+							let pick = 0;
+							for (; pick < weights.length; pick++) {
+								r -= weights[pick]!;
+								if (r <= 0) break;
+							}
+							if (pick >= remaining.length) pick = remaining.length - 1;
+							out.push(remaining[pick]!);
+							remaining.splice(pick, 1);
+						}
+
+						ordered = out.concat(tail);
 					}
 				}
 
-				const queue = [...candidates];
+				const queue = ordered;
 				const queued = new Set<string>(queue.map((c) => c.hash));
 				let attempts = 0;
 				for (
@@ -3561,14 +3673,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							if (queue.length >= JOIN_REJECT_REDIRECT_QUEUE_MAX) break;
 							if (!r?.hash) continue;
 							if (r.hash === this.publicKeyHash) continue;
-								if (!r.addrs || r.addrs.length === 0) continue;
-								if (queued.has(r.hash)) continue;
-								queued.add(r.hash);
-								this.cacheKnownCandidateAddrs(ch, r.hash, r.addrs);
-								queue.push({
-									hash: r.hash,
-									addrs: r.addrs,
-									level: 0xffff,
+							if (!r.addrs || r.addrs.length === 0) continue;
+							if (queued.has(r.hash)) continue;
+							queued.add(r.hash);
+							this.cacheKnownCandidateAddrs(ch, r.hash, r.addrs);
+							queue.push({
+								hash: r.hash,
+								addrs: r.addrs,
+								level: 0xffff,
 								freeSlots: 0,
 								bidPerByte: 0,
 								source: 3,

@@ -13,6 +13,7 @@ describe("fanout-tree-sim (ci)", () => {
 			bootstraps: 1,
 			subscribers: 20,
 			relayFraction: 0.3,
+			candidateScoringMode: "weighted",
 			messages: 20,
 			msgRate: 50,
 			msgSize: 64,

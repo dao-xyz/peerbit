@@ -72,6 +72,10 @@ For a configurable workload (e.g. 2k nodes, 30 msg/s, 10s, 1KB):
 ## Spec Notes
 
 ### Current implementation status (WIP)
+Tracking issues:
+- `dao-xyz/peerbit#586`: churn maintenance objective metrics (CI gates)
+- `dao-xyz/peerbit#587`: join formation optimization (candidate scoring + formation score)
+
 - Simulation harnesses:
   - `packages/transport/pubsub/benchmark/pubsub-topic-sim.ts` (TopicControlPlane; includes churn + CI runner via `pubsub-topic-sim-lib.ts`)
   - `packages/transport/pubsub/benchmark/pubsub-tree-sim.ts`
@@ -104,6 +108,7 @@ For a configurable workload (e.g. 2k nodes, 30 msg/s, 10s, 1KB):
 - Join loop throttling: cache bootstrap neighbors + tracker candidate results to avoid query storms at scale.
 - Join scaling: `bootstrapMaxPeers` option to limit how many bootstrap trackers each node dials/queries (join + tracker announce/refresh).
 - Join stability at scale: per-round attempt cap + candidate cooldown to avoid long sequential timeouts and hot-spotting.
+- Join formation: candidate scoring mode (`candidateScoringMode`) for parent selection (ranked-shuffle|ranked-strict|weighted).
 - In-memory sim correctness: fixed deterministic public key hash collisions once `nodes >= 256` (enables accurate 1k–10k sims).
 - Data-plane perf: forwarding no longer re-signs at each hop (forwards the original signed `DataMessage` bytes).
 - Live control: optional `maxDataAgeMs` to drop forwarding of stale data (deadline-oriented workloads).
@@ -172,6 +177,7 @@ Current sim knobs worth calling out:
 - **Peerbit integration presets:** `fanout-peerbit-sim --preset ci-small|ci-loss|live|reliable|scale-1k`
 - **Scale benchmark:** `fanout-tree-sim --preset scale-5k` (5k nodes with assertions for join/delivery/overhead)
 - **Scale benchmark (bigger):** `fanout-tree-sim --preset scale-10k` (10k nodes, intended for local profiling)
+- **Join scoring:** `fanout-tree-sim --candidateScoringMode ranked-shuffle|ranked-strict|weighted`
 - **Live deadline metric:** `--deadlineMs` reports delivery-within-deadline (in addition to eventual delivery)
 - **Profiling:** `--profile 1` collects CPU, memory, and event-loop delay stats
 - **Data overhead factor:** reported as `sentPayloadBytes / idealTreePayloadBytes` (ideal = `subscribers * messages * msgSize`)

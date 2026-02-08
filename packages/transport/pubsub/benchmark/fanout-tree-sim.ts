@@ -76,6 +76,7 @@ const parseArgs = (argv: string[]) => {
 				"  --joinPhaseSettleMs MS        wait between join phases (default: 2000)",
 				"  --joinReqTimeoutMs MS         join request timeout per candidate (default: 2000)",
 				"  --candidateShuffleTopK N      shuffle only within top K candidates (default: 8)",
+				"  --candidateScoringMode MODE   join scoring (ranked-shuffle|ranked-strict|weighted, default: ranked-shuffle)",
 				"  --bootstrapEnsureIntervalMs MS  min interval between bootstrap re-dials (-1 = FanoutTree default)",
 				"  --trackerQueryIntervalMs MS     min interval between tracker queries (-1 = FanoutTree default)",
 				"  --joinAttemptsPerRound N        max join candidates tried per retry round (-1 = FanoutTree default)",
@@ -378,6 +379,9 @@ const parseArgs = (argv: string[]) => {
 			: {}),
 			...(maybeNumber("--candidateShuffleTopK") != null
 				? { candidateShuffleTopK: maybeNumber("--candidateShuffleTopK") }
+				: {}),
+			...(maybeString("--candidateScoringMode") != null
+				? { candidateScoringMode: maybeString("--candidateScoringMode") }
 				: {}),
 			...(maybeNumber("--bootstrapEnsureIntervalMs") != null
 				? { bootstrapEnsureIntervalMs: maybeNumber("--bootstrapEnsureIntervalMs") }

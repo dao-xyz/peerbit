@@ -77,6 +77,7 @@ export type FanoutTreeSimParams = {
 	joinConcurrency: number;
 	joinReqTimeoutMs: number;
 	candidateShuffleTopK: number;
+	candidateScoringMode: "ranked-shuffle" | "ranked-strict" | "weighted";
 	bootstrapEnsureIntervalMs: number;
 	trackerQueryIntervalMs: number;
 	joinAttemptsPerRound: number;
@@ -375,6 +376,12 @@ export const resolveFanoutTreeSimParams = (
 		joinConcurrency: Number(input.joinConcurrency ?? 256),
 		joinReqTimeoutMs: Number(input.joinReqTimeoutMs ?? -1),
 		candidateShuffleTopK: Number(input.candidateShuffleTopK ?? -1),
+		candidateScoringMode:
+			input.candidateScoringMode === "ranked-strict" ||
+			input.candidateScoringMode === "weighted" ||
+			input.candidateScoringMode === "ranked-shuffle"
+				? input.candidateScoringMode
+				: "ranked-shuffle",
 		bootstrapEnsureIntervalMs: Number(input.bootstrapEnsureIntervalMs ?? -1),
 		trackerQueryIntervalMs: Number(input.trackerQueryIntervalMs ?? -1),
 		joinAttemptsPerRound: Number(input.joinAttemptsPerRound ?? -1),
@@ -645,6 +652,7 @@ export const runFanoutTreeSim = async (
 									...(params.candidateShuffleTopK >= 0
 									? { candidateShuffleTopK: params.candidateShuffleTopK }
 									: {}),
+									candidateScoringMode: params.candidateScoringMode,
 								...(params.bootstrapEnsureIntervalMs >= 0
 									? { bootstrapEnsureIntervalMs: params.bootstrapEnsureIntervalMs }
 									: {}),
