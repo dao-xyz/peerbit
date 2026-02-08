@@ -189,7 +189,11 @@ describe("pubsub", function () {
 
 		it("stops polling on abort", async () => {
 			const getSubscribers = sinon.stub().resolves([]);
-			const libp2p = { services: { pubsub: { getSubscribers } } } as any;
+			const addEventListener = sinon.stub();
+			const removeEventListener = sinon.stub();
+			const libp2p = {
+				services: { pubsub: { getSubscribers, addEventListener, removeEventListener } },
+			} as any;
 
 			const controller = new AbortController();
 			const promise = waitForSubscribers(libp2p, "peer", "topic", {
@@ -197,9 +201,8 @@ describe("pubsub", function () {
 				timeout: 10_000,
 			});
 
-			clock.tick(201);
 			await Promise.resolve();
-			expect(getSubscribers.callCount).to.be.greaterThan(0);
+			expect(getSubscribers.callCount).to.equal(1);
 			const before = getSubscribers.callCount;
 
 			controller.abort();
@@ -219,7 +222,11 @@ describe("pubsub", function () {
 
 		it("stops polling on timeout", async () => {
 			const getSubscribers = sinon.stub().resolves([]);
-			const libp2p = { services: { pubsub: { getSubscribers } } } as any;
+			const addEventListener = sinon.stub();
+			const removeEventListener = sinon.stub();
+			const libp2p = {
+				services: { pubsub: { getSubscribers, addEventListener, removeEventListener } },
+			} as any;
 
 			const promise = waitForSubscribers(libp2p, "peer", "topic", {
 				timeout: 1000,

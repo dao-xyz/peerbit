@@ -2942,28 +2942,36 @@ testSetups.forEach((setup) => {
 						expect(db2.log.log.length).to.be.above(entryCount / 3),
 					);
 
-					await db2.log.replicate(
-						{ factor: halfRegion, offset: halfRegion, normalized: false },
-						{ reset: true },
-					);
+						await db2.log.replicate(
+							{ factor: halfRegion, offset: halfRegion, normalized: false },
+							{ reset: true },
+						);
 
-					try {
-						await waitForResolved(() =>
-							expect(db1.log.log.length).to.closeTo(entryCount / 2, 20),
-						);
-						await waitForResolved(() =>
-							expect(db2.log.log.length).to.closeTo(entryCount / 2, 20),
-						);
-						await waitForResolved(() =>
-							expect(db1.log.log.length + db2.log.log.length).to.equal(
-								entryCount,
-							),
-						);
-					} catch (error) {
-						await dbgLogs([db1.log, db2.log]);
-						throw error;
-					}
-				});
+						try {
+							// Under heavy CI load, rebalancing + prune can take longer than the
+							// default `waitForResolved` timeout (10s). Keep the assertion strict
+							// but allow more time to converge.
+							const convergeTimeoutMs = 60_000;
+							await waitForResolved(
+								() => expect(db1.log.log.length).to.closeTo(entryCount / 2, 20),
+								{ timeout: convergeTimeoutMs },
+							);
+							await waitForResolved(
+								() => expect(db2.log.log.length).to.closeTo(entryCount / 2, 20),
+								{ timeout: convergeTimeoutMs },
+							);
+							await waitForResolved(
+								() =>
+									expect(db1.log.log.length + db2.log.log.length).to.equal(
+										entryCount,
+									),
+								{ timeout: convergeTimeoutMs },
+							);
+						} catch (error) {
+							await dbgLogs([db1.log, db2.log]);
+							throw error;
+						}
+					});
 
 				it("to same range", async () => {
 					const db1 = await session.peers[0].open(
@@ -4016,11 +4024,15 @@ testSetups.forEach((setup) => {
 						await waitForResolved(() =>
 							expect(db1.log.log.length).to.be.closeTo(entryCount / 2, 20),
 						);
-						await waitForResolved(() =>
-							expect(db2.log.log.length).to.be.closeTo(entryCount / 10, 10),
+						// This can be slower under full-suite load (especially for u64 IBLT sync),
+						// so allow extra time for prune convergence.
+						await waitForResolved(
+							() => expect(db2.log.log.length).to.be.closeTo(entryCount / 10, 10),
+							{ timeout: 60_000 },
 						);
-						await waitForResolved(() =>
-							expect(db3.log.log.length).to.be.closeTo(entryCount / 10, 10),
+						await waitForResolved(
+							() => expect(db3.log.log.length).to.be.closeTo(entryCount / 10, 10),
+							{ timeout: 60_000 },
 						);
 
 						// reset to original

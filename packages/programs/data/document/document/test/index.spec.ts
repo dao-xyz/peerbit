@@ -3635,23 +3635,21 @@ describe("index", () => {
 							await store2.docs.put(new Document({ id: "1" }));
 
 							let joined = false;
-							store.docs.log.events.addEventListener(
-								"replicator:join",
-								async () => {
-									expect(await store.docs.index.iterate().all()).to.have.length(
-										0,
-									);
-									expect(
-										(
-											await store.docs.index
-												.iterate(
-													{},
-													{
-														remote: { reach: { eager: true } },
-													},
-												)
-												.all()
-										).length,
+								store.docs.log.events.addEventListener(
+									"replicator:join",
+									async () => {
+										expect(
+											(
+												await store.docs.index
+													.iterate(
+														{},
+														{
+															local: false,
+															remote: { reach: { eager: true } },
+														},
+													)
+													.all()
+											).length,
 									).to.equal(1);
 									joined = true;
 								},
@@ -4658,16 +4656,29 @@ describe("index", () => {
 						},
 					);
 
-					try {
-						// two in-order items that should remain pending
-						await writer.docs.put(new Document({ id: "2" }));
-						await writer.docs.put(new Document({ id: "3" }));
-						// establish frontier with in-order fetch (leave one buffered)
-						await iterator.next(1);
-						// one late item that will be dropped
-						await writer.docs.put(new Document({ id: "1" }));
+						try {
+							// two in-order items that should remain pending
+							await writer.docs.put(new Document({ id: "2" }));
+							await writer.docs.put(new Document({ id: "3" }));
+							// establish frontier with in-order fetch (leave one buffered)
+							// In push-update mode this can briefly return an empty batch under load.
+							const firstBatch = await waitForResolved(
+								async () => {
+									const batch = await iterator.next(1);
+									if (batch.length !== 1) {
+										throw new Error(
+											`Expected 1 frontier item, got ${batch.length}`,
+										);
+									}
+									return batch;
+								},
+								{ timeout: 10_000, delayInterval: 50 },
+							);
+							expect(firstBatch.map((x) => x.id)).to.deep.equal(["2"]);
+							// one late item that will be dropped
+							await writer.docs.put(new Document({ id: "1" }));
 
-						// Late-drop callback timing can vary; avoid hanging the test on callback delivery.
+							// Late-drop callback timing can vary; avoid hanging the test on callback delivery.
 						await Promise.race([latePromise.promise, delay(5_000)]);
 
 						const pendingBefore = await iterator.pending();

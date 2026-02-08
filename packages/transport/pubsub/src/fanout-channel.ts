@@ -78,6 +78,11 @@ export class FanoutChannel extends EventTarget {
 		this.fanout.removeEventListener("fanout:kicked", this.onKicked);
 	}
 
+	public async leave(options?: { notifyParent?: boolean; kickChildren?: boolean }) {
+		this.close();
+		await this.fanout.closeChannel(this.topic, this.root, options);
+	}
+
 	public openAsRoot(options: Omit<FanoutTreeChannelOptions, "role">) {
 		this.ensureListening();
 		return this.fanout.openChannel(this.topic, this.root, { ...options, role: "root" });
@@ -92,7 +97,7 @@ export class FanoutChannel extends EventTarget {
 	}
 
 	public publish(payload: Uint8Array) {
-		return this.fanout.publishData(this.topic, this.root, payload);
+		return this.fanout.publishToChannel(this.topic, this.root, payload);
 	}
 
 	public getPeerHashes(options?: { includeSelf?: boolean }) {

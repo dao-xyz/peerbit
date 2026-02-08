@@ -21,6 +21,7 @@ import {
 	IdentityRelation,
 	createIdentityGraphStore,
 	getFromByTo,
+	getFromByToLocalOnly,
 	getPathGenerator,
 	getToByFrom,
 	hasPath,
@@ -155,6 +156,10 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 	@field({ type: Documents })
 	trustGraph: DocumentsLike<IdentityRelation, FromTo>;
 
+	// Best-effort remote warmup throttle for `isTrusted()` calls when the local graph is empty.
+	// Access control should be conservative (default deny) and non-blocking, so this is fire-and-forget.
+	private _lastWarmupAt = 0;
+
 	constructor(props: { id?: Uint8Array; rootTrust: PublicSignKey | PeerId }) {
 		super();
 		this.rootTrust = coercePublicKey(props.rootTrust);
@@ -244,19 +249,25 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 		if (trustee.equals(this.rootTrust)) {
 			return true;
 		}
-		const log = (this.trustGraph as any)?.log;
-		const isReplicating =
-			log && typeof log.isReplicating === "function"
-				? await log.isReplicating()
-				: false;
-		if (isReplicating) {
-			return this._isTrustedLocal(trustee, truster);
-		} else {
-			this.trustGraph.index.search(new SearchRequest({ query: [] }), {
-				remote: { replicate: true },
-			});
-			return this._isTrustedLocal(trustee, truster);
+
+		// Fast local-only check first. This avoids stalling writes on cold-start or churn.
+		if (await this._isTrustedLocal(trustee, truster)) {
+			return true;
 		}
+
+		// Best-effort: kick off a background remote query to encourage replication metadata to converge.
+		// Do not await; access control remains default-deny until local state reflects trust.
+		const now = Date.now();
+		if (now - this._lastWarmupAt > 2_000) {
+			this._lastWarmupAt = now;
+			void this.trustGraph.index
+				.search(new SearchRequest({ query: [] }), {
+					remote: { replicate: true },
+				})
+				.catch(() => {});
+		}
+
+		return false;
 	}
 
 	async _isTrustedLocal(
@@ -267,7 +278,7 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 			trustee,
 			truster,
 			this.trustGraph,
-			getFromByTo,
+			getFromByToLocalOnly,
 		);
 		return !!trustPath;
 	}

@@ -8,9 +8,9 @@ describe("fanout-tree", () => {
 		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
 			3,
 			{
-			services: {
-				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-			},
+				services: {
+					fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+				},
 			},
 		);
 
@@ -78,6 +78,157 @@ describe("fanout-tree", () => {
 
 			await waitForResolved(() => expect(received).to.exist);
 			expect([...received!]).to.deep.equal([...payload]);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("allows a child to leave and immediately frees parent capacity", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(3, {
+			services: {
+				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+			},
+		});
+
+		try {
+			await session.connect([
+				[session.peers[0], session.peers[1]],
+				[session.peers[1], session.peers[2]],
+			]);
+
+			const root = session.peers[0].services.fanout;
+			const relay = session.peers[1].services.fanout;
+			const leaf = session.peers[2].services.fanout;
+
+			const topic = "leave-demo";
+			const rootId = root.publicKeyHash;
+
+			root.openChannel(topic, rootId, {
+				role: "root",
+				msgRate: 10,
+				msgSize: 64,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 1,
+				repair: true,
+			});
+
+			await relay.joinChannel(
+				topic,
+				rootId,
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 1,
+					repair: true,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			await leaf.joinChannel(
+				topic,
+				rootId,
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 0,
+					maxChildren: 0,
+					repair: true,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			await waitForResolved(() =>
+				expect(relay.getChannelStats(topic, rootId)?.children).to.equal(1),
+			);
+
+			await leaf.closeChannel(topic, rootId);
+
+			await waitForResolved(() =>
+				expect(relay.getChannelStats(topic, rootId)?.children).to.equal(0),
+			);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("proxies publish from non-root via the root", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(3, {
+			services: {
+				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+			},
+		});
+
+		try {
+			await session.connect([
+				[session.peers[0], session.peers[1]],
+				[session.peers[0], session.peers[2]],
+			]);
+
+			const root = session.peers[0].services.fanout;
+			const publisher = session.peers[1].services.fanout;
+			const subscriber = session.peers[2].services.fanout;
+
+			const topic = "proxy-publish";
+			const rootId = root.publicKeyHash;
+
+			const rootChannel = FanoutChannel.fromSelf(root, topic);
+			rootChannel.openAsRoot({
+				msgRate: 10,
+				msgSize: 32,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 2,
+				repair: true,
+			});
+
+			const publisherChannel = new FanoutChannel(publisher, { topic, root: rootId });
+			await publisherChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 32,
+					uploadLimitBps: 0,
+					maxChildren: 0,
+					repair: true,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			const subscriberChannel = new FanoutChannel(subscriber, { topic, root: rootId });
+			await subscriberChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 32,
+					uploadLimitBps: 0,
+					maxChildren: 0,
+					repair: true,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			let receivedBySubscriber: Uint8Array | undefined;
+			subscriber.addEventListener("fanout:data", (ev: any) => {
+				if (ev.detail.topic !== topic) return;
+				if (ev.detail.root !== rootId) return;
+				if (ev.detail.seq !== 0) return;
+				receivedBySubscriber = ev.detail.payload;
+			});
+
+			let receivedByPublisher: Uint8Array | undefined;
+			publisher.addEventListener("fanout:data", (ev: any) => {
+				if (ev.detail.topic !== topic) return;
+				if (ev.detail.root !== rootId) return;
+				if (ev.detail.seq !== 0) return;
+				receivedByPublisher = ev.detail.payload;
+			});
+
+			const payload = new Uint8Array([9, 8, 7, 6]);
+			await publisherChannel.publish(payload);
+
+			await waitForResolved(() => expect(receivedBySubscriber).to.exist);
+			expect([...receivedBySubscriber!]).to.deep.equal([...payload]);
+
+			await waitForResolved(() => expect(receivedByPublisher).to.exist);
+			expect([...receivedByPublisher!]).to.deep.equal([...payload]);
 		} finally {
 			await session.stop();
 		}
@@ -457,6 +608,88 @@ describe("fanout-tree", () => {
 			const stats = root.getChannelStats(topic, rootId);
 			expect(stats).to.exist;
 			expect(stats?.routeCacheMaxEntries).to.equal(100_000);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("bounds peer hint cache size and prunes old entries", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(8, {
+			services: {
+				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+			},
+		});
+
+		try {
+			// Star topology: all peers connect to the root so we can drive many JOIN_REQs.
+			await session.connect(
+				session.peers.slice(1).map((peer) => [session.peers[0], peer] as const),
+			);
+
+			const root = session.peers[0].services.fanout;
+			const leaves = session.peers.slice(1).map((p) => p.services.fanout);
+
+			const topic = "peer-hints-bound";
+			const rootId = root.publicKeyHash;
+
+			root.openChannel(topic, rootId, {
+				role: "root",
+				msgRate: 10,
+				msgSize: 64,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 32,
+				repair: true,
+				peerHintMaxEntries: 2,
+			});
+
+			for (const leaf of leaves) {
+				await leaf.joinChannel(
+					topic,
+					rootId,
+					{
+						msgRate: 10,
+						msgSize: 64,
+						uploadLimitBps: 0,
+						maxChildren: 0,
+						repair: true,
+					},
+					{ timeoutMs: 10_000 },
+				);
+			}
+
+			const stats = root.getChannelStats(topic, rootId);
+			expect(stats?.peerHintMaxEntries).to.equal(2);
+			expect(stats?.peerHintEntries).to.equal(2);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("clamps requested peer hint size to a hard safety cap", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(1, {
+			services: {
+				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+			},
+		});
+
+		try {
+			const root = session.peers[0].services.fanout;
+			const topic = "peer-hints-hard-cap";
+			const rootId = root.publicKeyHash;
+
+			root.openChannel(topic, rootId, {
+				role: "root",
+				msgRate: 10,
+				msgSize: 64,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 2,
+				repair: true,
+				peerHintMaxEntries: 2_000_000_000,
+			});
+
+			const stats = root.getChannelStats(topic, rootId);
+			expect(stats).to.exist;
+			expect(stats?.peerHintMaxEntries).to.equal(100_000);
 		} finally {
 			await session.stop();
 		}

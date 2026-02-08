@@ -4,11 +4,10 @@ import type { CircuitRelayService } from "@libp2p/circuit-relay-v2";
 import { identify } from "@libp2p/identify";
 import { DirectBlock } from "@peerbit/blocks";
 import {
-	DefaultCryptoKeychain,
 	type IPeerbitKeychain,
 	keychain,
 } from "@peerbit/keychain";
-import { FanoutTree, TopicControlPlane } from "@peerbit/pubsub";
+import { FanoutTree, TopicControlPlane, TopicRootControlPlane } from "@peerbit/pubsub";
 import {
 	type Libp2p,
 	type Libp2pOptions,
@@ -40,15 +39,9 @@ export type Libp2pCreateOptionsWithServices = Libp2pCreateOptions & {
 };
 
 export const createLibp2pExtended = (
-	opts: PartialLibp2pCreateOptions = {
-		services: {
-			blocks: (c: any) => new DirectBlock(c),
-			pubsub: (c: any) => new TopicControlPlane(c),
-			fanout: (c: any) => new FanoutTree(c, { connectionManager: false }),
-			keychain: keychain(),
-		},
-	},
+	opts: PartialLibp2pCreateOptions = {},
 ): Promise<Libp2pExtended> => {
+	const topicRootControlPlane = new TopicRootControlPlane();
 	let extraServices: any = {};
 
 	if (opts.services?.["relay"] === null) {
@@ -92,14 +85,15 @@ export const createLibp2pExtended = (
 				((c) =>
 					new TopicControlPlane(c, {
 						canRelayMessage: true,
+						topicRootControlPlane,
 						// auto dial true
 						// auto prune true
 					})),
 			fanout:
 				opts.services?.fanout ||
-				((c) => new FanoutTree(c, { connectionManager: false })),
+				((c) => new FanoutTree(c, { connectionManager: false, topicRootControlPlane })),
 			blocks: opts.services?.blocks || ((c) => new DirectBlock(c)),
-			keychain: opts.services?.keychain || ((c) => new DefaultCryptoKeychain()),
+			keychain: opts.services?.keychain || keychain(),
 			...opts.services,
 			...extraServices,
 		},

@@ -91,7 +91,7 @@ For a configurable workload (e.g. 2k nodes, 30 msg/s, 10s, 1KB):
   - `.github/workflows/nightly-sims.yml`
 
 ### Recent progress (2026-02-03)
-- Protocol multicodec bumped to `/peerbit/fanout-tree/0.4.0` (breaking, coordinated upgrades assumed).
+- Protocol multicodec bumped to `/peerbit/fanout-tree/0.5.0` (breaking, coordinated upgrades assumed).
 - Added channel-local economical unicast: `JOIN_ACCEPT` carries a route token and `UNICAST` forwards via root + tree edges (no full-network flooding).
 - Added channel-level targeted send API: `FanoutChannel.getRouteToken()` + `FanoutChannel.unicast(...)`.
 - Added route lookup + targeted send convenience: `FanoutChannel.resolveRouteToken(...)` + `FanoutChannel.unicastTo(...)` (resolves routes via the tree control-plane when no out-of-band token is available).

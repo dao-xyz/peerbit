@@ -216,7 +216,7 @@ describe("append delivery options", () => {
 
 		const writerRoot = (session.peers[0].services as any).fanout.publicKeyHash as string;
 		for (const peer of session.peers) {
-			(peer.services.pubsub as any)?.topicRootControlPlane?.setTopicRootCandidates?.([
+			(peer.services as any)?.fanout?.topicRootControlPlane?.setTopicRootCandidates?.([
 				writerRoot,
 			]);
 		}

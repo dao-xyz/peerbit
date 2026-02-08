@@ -6,7 +6,7 @@ It is **not** the final design yet; we expect breaking changes and will bump the
 
 ## Multicodec
 
-`/peerbit/fanout-tree/0.4.0`
+`/peerbit/fanout-tree/0.5.0`
 
 ## Channel identity
 
@@ -149,20 +149,28 @@ Semantics:
 - `root` forwards downstream along `route` by sending to `route[1]`, then `route[2]`, ... until `target`.
 - Only tree edges are used (parent/child), so forwarding stays bounded and economical.
 
-### `ROUTE_ANNOUNCE` (kind = 15) *(new in 0.4.0)*
+### `PUBLISH_PROXY` (kind = 15) *(new in 0.5.0)*
 
-Child/relay → parent route advertisement.
+Non-root member → parent proxy publish upstream to the channel root.
 
 Wire format:
-- `routeCount` (u8)
-- `routeCount * (hashLen (u8) + hashBytes)` where `hashBytes` is utf-8 `PublicSignKey.hashcode()`
+- `payload` (remaining bytes)
 
 Semantics:
-- Carries the sender's current root route token: `route = [root, ..., self]`.
-- Receiver caches route by `target = route[route.length - 1]`.
-- Non-root relays forward announces upstream to their parent.
-- This keeps route-token lookup local and incremental (no global member list exchange).
-- Implementations should treat route caches as bounded/expiring (size cap + TTL), and rely on periodic `ROUTE_ANNOUNCE` refreshes.
+- Sender forwards to its `parent`; intermediate relays forward upstream unchanged.
+- Root assigns a sequence number and broadcasts as `DATA` to its children.
+- Only established tree edges are used (parent/child), so forwarding stays bounded and economical.
+
+### `LEAVE` (kind = 16) *(new in 0.5.0)*
+
+Child → parent explicit detach.
+
+Wire format:
+- (no extra fields)
+
+Semantics:
+- Receiver removes the child from `children` and frees capacity immediately.
+- This is used by `closeChannel()`; disconnect pruning remains a fallback.
 
 ### `ROUTE_QUERY` (kind = 13) *(new in 0.4.0)*
 
@@ -194,7 +202,7 @@ Semantics:
 - Empty route (`routeCount=0`) means route unknown.
 - Non-empty route is a route token: `[root, ..., target]`.
 - Nodes may cache valid replies for subsequent `unicastTo(...)` sends.
-- Under bounded caches, a route can temporarily miss and later become available again via refresh announces.
+- Under bounded caches, a route can temporarily miss and later become available again via on-demand queries.
 
 ---
 

@@ -685,7 +685,7 @@ export class SharedLog<
 
 		const resolvedRoot =
 			options.root ??
-			(await (this.node.services.pubsub as any)?.topicRootControlPlane?.resolveTopicRoot?.(
+			(await (fanoutService as any)?.topicRootControlPlane?.resolveTopicRoot?.(
 				this.topic,
 			));
 		if (!resolvedRoot) {
@@ -2714,28 +2714,42 @@ export class SharedLog<
 				numbers: this.indexableDomain.numbers,
 			});
 
-			// Check abort signal before building result
-			if (options?.signal?.aborted) {
-				return [];
-			}
+				// Check abort signal before building result
+				if (options?.signal?.aborted) {
+					return [];
+				}
 
-			// add all in flight
-			for (const [key, _] of this.syncronizer.syncInFlight) {
-				set.add(key);
-			}
+				// add all in flight
+				for (const [key, _] of this.syncronizer.syncInFlight) {
+					set.add(key);
+				}
 
-			if (options?.reachableOnly) {
-				// Prefer the live pubsub subscriber set when filtering reachability, but fall back
-				// to `uniqueReplicators` (replication-message-driven cache). In some flows peers can
-				// be reachable/active even before (or without) subscriber state converging.
-				const subscribers =
-					(await this._getTopicSubscribers(this.topic)) ?? undefined;
-				const subscriberHashcodes = subscribers
-					? new Set(subscribers.map((key) => key.hashcode()))
+				const selfHash = this.node.identity.publicKey.hashcode();
+
+				if (options?.reachableOnly) {
+					const directPeers: Map<string, unknown> | undefined = (this.node.services
+						.pubsub as any)?.peers;
+
+					// Prefer the live pubsub subscriber set when filtering reachability. In some
+					// flows peers can be reachable/active even before (or without) subscriber
+					// state converging, so also consider direct pubsub peers.
+					const subscribers =
+						(await this._getTopicSubscribers(this.topic)) ?? undefined;
+					const subscriberHashcodes = subscribers
+						? new Set(subscribers.map((key) => key.hashcode()))
 					: undefined;
 
+				// If reachability is requested but we have no basis for filtering yet
+				// (subscriber snapshot hasn't converged), return the full cover set.
+				// Otherwise, only keep peers we can currently reach.
+				const canFilter =
+					directPeers != null ||
+					(subscriberHashcodes && subscriberHashcodes.size > 0);
+				if (!canFilter) {
+					return [...set];
+				}
+
 				const reachable: string[] = [];
-				const selfHash = this.node.identity.publicKey.hashcode();
 				for (const peer of set) {
 					if (peer === selfHash) {
 						reachable.push(peer);
@@ -2743,16 +2757,16 @@ export class SharedLog<
 					}
 					if (
 						(subscriberHashcodes && subscriberHashcodes.has(peer)) ||
-						this.uniqueReplicators.has(peer)
+						(directPeers && directPeers.has(peer))
 					) {
 						reachable.push(peer);
 					}
 				}
 				return reachable;
-			}
+				}
 
-			return [...set];
-		} catch (error) {
+				return [...set];
+			} catch (error) {
 			// Handle race conditions where the index gets closed during the operation
 			if (isNotStartedError(error as Error)) {
 				return [];

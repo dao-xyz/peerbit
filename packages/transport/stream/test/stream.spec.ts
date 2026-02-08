@@ -2020,39 +2020,55 @@ describe("streams", function () {
 					expect(streams[1].stream.peers.size).equal(1),
 				);
 
-				expect(streams[0].stream["prunedConnectionsCache"]!.size).equal(1);
-				expect(
-					streams[0].stream.peers.get(streams[1].stream.publicKey.hashcode()),
-				).equal(undefined); // beacuse stream[1] has received less data from stream[0] (least important)
+					expect(streams[0].stream["prunedConnectionsCache"]!.size).equal(1);
+					expect(
+						streams[0].stream.peers.get(streams[1].stream.publicKey.hashcode()),
+					).equal(undefined); // beacuse stream[1] has received less data from stream[0] (least important)
 
-				// Dial attempts can hang on some platforms; don't let a rejected incoming connection stall the suite.
-				const addr0 = session.peers[0].getMultiaddrs();
-				await Promise.race([
-					session.peers[1].dial(addr0).catch(() => {}),
-					delay(10_000),
-				]);
+					// Dial attempts can hang on some platforms; abort so we don't leave an in-flight dial
+					// that blocks subsequent dial attempts.
+					const addr0 = session.peers[0].getMultiaddrs();
+					{
+						const abortController = new AbortController();
+						const timeoutId = setTimeout(() => abortController.abort(), 10_000);
+						try {
+							await session.peers[1]
+								.dial(addr0, { signal: abortController.signal })
+								.catch(() => {});
+						} finally {
+							clearTimeout(timeoutId);
+						}
+					}
 
-				await delay(3000);
+					await delay(3000);
 
-				// expect a connection to not be established
-				expect(
+					// expect a connection to not be established
+					expect(
 					streams[0].stream.peers.get(streams[1].stream.publicKey.hashcode()),
 				).equal(undefined); // beacuse stream[1] has received less data from stream[0] (least important)
 				streams[0].stream["prunedConnectionsCache"]?.clear();
-				session.peers[0].services.directstream.connectionManagerOptions.pruner =
-					undefined;
-				session.peers[1].services.directstream.connectionManagerOptions.pruner =
-					undefined;
-				await Promise.race([
-					session.peers[1].dial(addr0),
-					delay(10_000).then(() => {
-						throw new Error("dial timeout");
-					}),
-				]);
-				await waitForResolved(
-					() =>
-						expect(
-							streams[0].stream.peers.get(
+					session.peers[0].services.directstream.connectionManagerOptions.pruner =
+						undefined;
+					session.peers[1].services.directstream.connectionManagerOptions.pruner =
+						undefined;
+					{
+						const abortController = new AbortController();
+						const timeoutId = setTimeout(() => abortController.abort(), 10_000);
+						try {
+							await session.peers[1].dial(addr0, { signal: abortController.signal });
+						} catch (error) {
+							if (abortController.signal.aborted) {
+								throw new Error("dial timeout");
+							}
+							throw error;
+						} finally {
+							clearTimeout(timeoutId);
+						}
+					}
+					await waitForResolved(
+						() =>
+							expect(
+								streams[0].stream.peers.get(
 								streams[1].stream.publicKey.hashcode(),
 							),
 						).to.exist,

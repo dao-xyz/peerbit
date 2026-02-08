@@ -86,8 +86,7 @@ export class TopicControlPlane
 	public peerToTopic: Map<string, Set<string>>; // peer -> topics
 	public topicsToPeers: Map<string, Set<string>>; // topic -> peers
 	public subscriptions: Map<string, { counter: number }>; // topic -> subscription ids
-	public lastSubscriptionMessages: Map<string, Map<string, DataMessage>> =
-		new Map();
+	public lastSubscriptionMessages: Map<string, Map<string, bigint>> = new Map();
 	public dispatchEventOnSelfPublish: boolean;
 	public readonly topicRootControlPlane: TopicRootControlPlane;
 
@@ -563,12 +562,13 @@ export class TopicControlPlane
 	) {
 		const subscriber = message.header.signatures!.signatures[0].publicKey!;
 		const subscriberKey = subscriber.hashcode(); // Assume first signature is the one who is signing
+		const messageTimestamp = message.header.timestamp;
 
 		for (const topic of pubsubMessage.topics) {
 			const lastTimestamp = this.lastSubscriptionMessages
 				.get(subscriberKey)
-				?.get(topic)?.header.timestamp;
-			if (lastTimestamp != null && lastTimestamp > message.header.timestamp) {
+				?.get(topic);
+			if (lastTimestamp != null && lastTimestamp > messageTimestamp) {
 				return false; // message is old
 			}
 		}
@@ -577,7 +577,7 @@ export class TopicControlPlane
 			if (!this.lastSubscriptionMessages.has(subscriberKey)) {
 				this.lastSubscriptionMessages.set(subscriberKey, new Map());
 			}
-			this.lastSubscriptionMessages.get(subscriberKey)?.set(topic, message);
+			this.lastSubscriptionMessages.get(subscriberKey)?.set(topic, messageTimestamp);
 		}
 		return true;
 	}
@@ -864,21 +864,36 @@ export const waitForSubscribers = async (
 	});
 
 	return new Promise<void>((resolve, reject) => {
+		if (peerIdsToWait.length === 0) {
+			resolve();
+			return;
+		}
+
 		let settled = false;
-		let counter = 0;
 		let timeout: ReturnType<typeof setTimeout> | undefined = undefined;
 		let interval: ReturnType<typeof setInterval> | undefined = undefined;
+		let pollInFlight = false;
+		const wanted = new Set(peerIdsToWait);
+		const seen = new Set<string>();
+		const pubsub = libp2p.services.pubsub;
+		const shouldRejectWithTimeoutError = options?.timeout != null;
 
 		const clear = () => {
-			if (interval) {
-				clearInterval(interval);
-				interval = undefined;
-			}
 			if (timeout) {
 				clearTimeout(timeout);
 				timeout = undefined;
 			}
+			if (interval) {
+				clearInterval(interval);
+				interval = undefined;
+			}
 			options?.signal?.removeEventListener("abort", onAbort);
+			try {
+				pubsub.removeEventListener("subscribe", onSubscribe);
+				pubsub.removeEventListener("unsubscribe", onUnsubscribe);
+			} catch {
+				// ignore
+			}
 		};
 
 		const resolveOnce = () => {
@@ -899,6 +914,47 @@ export const waitForSubscribers = async (
 			rejectOnce(new AbortError("waitForSubscribers was aborted"));
 		};
 
+		const updateSeen = (hash?: string, isSubscribed?: boolean) => {
+			if (!hash) return false;
+			if (!wanted.has(hash)) return false;
+			if (isSubscribed) {
+				seen.add(hash);
+			} else {
+				seen.delete(hash);
+			}
+			return seen.size === wanted.size;
+		};
+
+		const reconcileFromSubscribers = (peers?: PublicSignKey[]) => {
+			const current = new Set<string>();
+			for (const peer of peers || []) current.add(peer.hashcode());
+			for (const hash of wanted) {
+				if (current.has(hash)) seen.add(hash);
+				else seen.delete(hash);
+			}
+			if (seen.size === wanted.size) resolveOnce();
+		};
+
+		const onSubscribe = (ev: any) => {
+			const detail = ev?.detail as SubscriptionEvent | undefined;
+			if (!detail) return;
+			if (!detail.topics || detail.topics.length === 0) return;
+			if (!detail.topics.includes(topic)) return;
+			const hash = detail.from?.hashcode?.();
+			if (updateSeen(hash, true)) {
+				resolveOnce();
+			}
+		};
+
+		const onUnsubscribe = (ev: any) => {
+			const detail = ev?.detail as UnsubcriptionEvent | undefined;
+			if (!detail) return;
+			if (!detail.topics || detail.topics.length === 0) return;
+			if (!detail.topics.includes(topic)) return;
+			const hash = detail.from?.hashcode?.();
+			updateSeen(hash, false);
+		};
+
 		if (options?.signal?.aborted) {
 			rejectOnce(new AbortError("waitForSubscribers was aborted"));
 			return;
@@ -906,32 +962,47 @@ export const waitForSubscribers = async (
 
 		options?.signal?.addEventListener("abort", onAbort);
 
-		if (options?.timeout != null) {
+		// Preserve previous behavior: without an explicit timeout, fail after ~20s.
+		const timeoutMs = Math.max(0, Math.floor(options?.timeout ?? 20_000));
+		if (timeoutMs > 0) {
 			timeout = setTimeout(() => {
-				rejectOnce(new TimeoutError("waitForSubscribers timed out"));
-			}, options.timeout);
+				rejectOnce(
+					shouldRejectWithTimeoutError
+						? new TimeoutError("waitForSubscribers timed out")
+						: new Error(
+								"Failed to find expected subscribers for topic: " + topic,
+							),
+				);
+			}, timeoutMs);
 		}
 
-		interval = setInterval(async () => {
-			counter += 1;
-			if (counter > 100) {
-				rejectOnce(
-					new Error("Failed to find expected subscribers for topic: " + topic),
-				);
-				return;
-			}
-			try {
-				const peers = await libp2p.services.pubsub.getSubscribers(topic);
-				const hasAllPeers =
-					peerIdsToWait.filter((e) => !peers?.find((x) => x.hashcode() === e))
-						.length === 0;
+		// Observe new subscriptions.
+		try {
+			void pubsub.addEventListener("subscribe", onSubscribe);
+			void pubsub.addEventListener("unsubscribe", onUnsubscribe);
+		} catch (e) {
+			rejectOnce(e);
+			return;
+		}
 
-				if (hasAllPeers) {
-					resolveOnce();
-				}
-			} catch (e) {
-				rejectOnce(e);
-			}
-		}, 200);
+		const poll = () => {
+			if (settled) return;
+			if (pollInFlight) return;
+			pollInFlight = true;
+			void Promise.resolve(pubsub.getSubscribers(topic))
+				.then((peers) => {
+					if (settled) return;
+					reconcileFromSubscribers(peers || []);
+				})
+				.catch((e) => rejectOnce(e))
+				.finally(() => {
+					pollInFlight = false;
+				});
+		};
+
+		// Polling is a fallback for cases where no event is emitted (e.g. local subscribe completion),
+		// and keeps behavior stable across implementations.
+		poll();
+		interval = setInterval(poll, 200);
 	});
 };

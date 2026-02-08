@@ -18,7 +18,13 @@ export const createCanonicalHost = () => {
 			},
 		},
 	});
-	const host = new CanonicalHost(runtime, { idleTimeoutMs: 10_000 });
+	// Keep this relatively low so abrupt-close tests release refs quickly and reliably.
+	// Clients run their own keep-alive pings while tabs are open, so active sessions
+	// should not be collected.
+	const host = new CanonicalHost(runtime, {
+		idleTimeoutMs: 5_000,
+		idleCheckIntervalMs: 1_000,
+	});
 	installSharedLogModule(host);
 	host.registerModule(debugModule);
 	return host;

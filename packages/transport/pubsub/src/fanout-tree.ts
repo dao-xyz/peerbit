@@ -11,6 +11,7 @@ import { AnyWhere, DataMessage, type StreamEvents } from "@peerbit/stream-interf
 import { AbortError, delay } from "@peerbit/time";
 import { anySignal } from "any-signal";
 import { Uint8ArrayList } from "uint8arraylist";
+import { TopicRootControlPlane } from "./topic-root-control-plane.js";
 
 export type FanoutTreeChannelId = {
 	root: string;
@@ -28,6 +29,15 @@ export type FanoutTreeStreamOptions = DirectStreamOptions & {
 	 * This is primarily intended for deterministic simulation harnesses.
 	 */
 	random?: () => number;
+	/**
+	 * Optional topic-root resolver for consumers (e.g. shared-log) that need to
+	 * resolve a root when joining a channel without an explicit root.
+	 *
+	 * FanoutTree does not currently use this internally, but we expose it as a
+	 * shared control-plane hook so applications do not need to hang root
+	 * resolution off of a separate pubsub implementation.
+	 */
+	topicRootControlPlane?: TopicRootControlPlane;
 };
 
 export type FanoutTreeChannelOptions = {
@@ -131,6 +141,24 @@ export type FanoutTreeChannelOptions = {
 	 * `0` disables expiry.
 	 */
 	routeCacheTtlMs?: number;
+
+	/**
+	 * Best-effort "peer hints" cache size bound (per channel).
+	 *
+	 * This tracks peer hashes observed on the channel control-plane and is used
+	 * for route proxy fanout and neighbor-assisted repair. It is intentionally
+	 * bounded so it cannot grow toward channel size at large scale.
+	 *
+	 * `0` disables peer hint tracking.
+	 */
+	peerHintMaxEntries?: number;
+
+	/**
+	 * TTL for peer hint entries (milliseconds).
+	 *
+	 * `0` disables expiry.
+	 */
+	peerHintTtlMs?: number;
 };
 
 export type FanoutTreeJoinOptions = {
@@ -317,11 +345,10 @@ const CONTROL_PRIORITY = 10;
 const DATA_PRIORITY = 1;
 const ROUTE_PROXY_TIMEOUT_MS = 10_000;
 const ROUTE_CACHE_MAX_ENTRIES_HARD_CAP = 100_000;
-const ROUTE_CACHE_PRUNE_SCAN_BASE = 128;
-const ROUTE_CACHE_PRUNE_SCAN_MAX = 4_096;
+const PEER_HINT_MAX_ENTRIES_HARD_CAP = 100_000;
 const KNOWN_CANDIDATE_ADDRS_MAX_ENTRIES = 8_192;
 
-const FANOUT_PROTOCOLS = ["/peerbit/fanout-tree/0.4.0"];
+const FANOUT_PROTOCOLS = ["/peerbit/fanout-tree/0.5.0"];
 
 const ID_PREFIX = Uint8Array.from([0x46, 0x4f, 0x55, 0x54]); // "FOUT"
 
@@ -348,6 +375,8 @@ const MSG_END = 11;
 const MSG_UNICAST = 12;
 const MSG_ROUTE_QUERY = 13;
 const MSG_ROUTE_REPLY = 14;
+const MSG_PUBLISH_PROXY = 15;
+const MSG_LEAVE = 16;
 const MSG_REPAIR_REQ = 20;
 const MSG_FETCH_REQ = 21;
 const MSG_IHAVE = 22;
@@ -560,6 +589,21 @@ const encodeData = (payload: Uint8Array) => {
 	const buf = new Uint8Array(1 + payload.length);
 	buf[0] = MSG_DATA;
 	buf.set(payload, 1);
+	return buf;
+};
+
+const encodePublishProxy = (channelKey: Uint8Array, payload: Uint8Array) => {
+	const buf = new Uint8Array(1 + 32 + payload.length);
+	buf[0] = MSG_PUBLISH_PROXY;
+	buf.set(channelKey, 1);
+	buf.set(payload, 33);
+	return buf;
+};
+
+const encodeLeave = (channelKey: Uint8Array) => {
+	const buf = new Uint8Array(1 + 32);
+	buf[0] = MSG_LEAVE;
+	buf.set(channelKey, 1);
 	return buf;
 };
 
@@ -826,6 +870,7 @@ type ChannelState = {
 	metrics: FanoutTreeChannelMetrics;
 	level: number;
 	isRoot: boolean;
+	closed: boolean;
 	parent?: string;
 	children: Map<string, ChildInfo>;
 	/**
@@ -838,8 +883,7 @@ type ChannelState = {
 	/**
 	 * Best-effort route cache keyed by target peer hash.
 	 *
-	 * Root learns this from route announcements. Non-root nodes can query root
-	 * and cache replies locally.
+	 * Entries are learned on-demand via `ROUTE_QUERY/ROUTE_REPLY` and cached locally.
 	 */
 	routeByPeer: Map<string, RouteCacheEntry>;
 
@@ -885,12 +929,12 @@ type ChannelState = {
 	nextExpectedSeq: number;
 	missingSeqs: Set<number>;
 	endSeqExclusive: number;
-	lastRepairSentAt: number;
-	lastParentDataAt: number;
-	receivedAnyParentData: boolean;
-	channelPeers: Set<string>;
-	knownCandidateAddrs: Map<string, Multiaddr[]>;
-	lazyPeers: Set<string>;
+		lastRepairSentAt: number;
+		lastParentDataAt: number;
+		receivedAnyParentData: boolean;
+		channelPeers: Map<string, number>;
+		knownCandidateAddrs: Map<string, Multiaddr[]>;
+		lazyPeers: Set<string>;
 	haveByPeer: Map<
 		string,
 		{
@@ -930,13 +974,14 @@ type ChannelState = {
 	cachedBootstrapPeers: string[];
 	lastBootstrapEnsureAt: number;
 
-	announceIntervalMs: number;
-	announceTtlMs: number;
-	lastAnnouncedAt: number;
-	routeCacheMaxEntries: number;
-	routeCacheTtlMs: number;
-	routeCachePruneScanLimit: number;
-	announceLoop?: Promise<void>;
+			announceIntervalMs: number;
+			announceTtlMs: number;
+			lastAnnouncedAt: number;
+			peerHintMaxEntries: number;
+			peerHintTtlMs: number;
+			routeCacheMaxEntries: number;
+			routeCacheTtlMs: number;
+		announceLoop?: Promise<void>;
 	repairLoop?: Promise<void>;
 	meshLoop?: Promise<void>;
 	joinLoop?: Promise<void>;
@@ -1033,17 +1078,19 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	private trackerBySuffixKey = new Map<string, Map<string, TrackerEntry>>();
 	private readonly defaultUploadOverheadBytes = 128;
 	private readonly random: () => number;
+	public readonly topicRootControlPlane: TopicRootControlPlane;
 
 	constructor(
 		components: DirectStreamComponents,
 		opts?: FanoutTreeStreamOptions,
 	) {
-		const { random, ...rest } = (opts ?? {}) as FanoutTreeStreamOptions;
+		const { random, topicRootControlPlane, ...rest } = (opts ?? {}) as FanoutTreeStreamOptions;
 		super(components, FANOUT_PROTOCOLS, {
 			canRelayMessage: false,
 			...rest,
 		});
 		this.random = typeof random === "function" ? random : Math.random;
+		this.topicRootControlPlane = topicRootControlPlane ?? new TopicRootControlPlane();
 	}
 
 	public setBootstraps(addrs: Array<string | Multiaddr>) {
@@ -1078,192 +1125,273 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const perChildBytes = Math.max(1, 1 + msgSize + uploadOverheadBytes);
 		const perChildBps = Math.max(1, Math.floor(msgRate * perChildBytes));
 		const byBps = uploadLimitBps > 0 ? Math.floor(uploadLimitBps / perChildBps) : 0;
-			const effectiveMaxChildren = Math.max(0, Math.min(maxChildren, byBps));
-			const maxDataAgeMs = Math.max(0, Math.floor(opts.maxDataAgeMs ?? 0));
-			const requestedRouteCacheMaxEntries = Math.max(
+		const effectiveMaxChildren = Math.max(0, Math.min(maxChildren, byBps));
+		const maxDataAgeMs = Math.max(0, Math.floor(opts.maxDataAgeMs ?? 0));
+		const requestedRouteCacheMaxEntries = Math.max(
+			0,
+			Math.floor(
+				opts.routeCacheMaxEntries ?? (opts.role === "root" ? 8_192 : 2_048),
+			),
+		);
+		const routeCacheMaxEntries = Math.min(
+			ROUTE_CACHE_MAX_ENTRIES_HARD_CAP,
+			requestedRouteCacheMaxEntries,
+		);
+			const routeCacheTtlMs = Math.max(
 				0,
-				Math.floor(
-					opts.routeCacheMaxEntries ??
-						(opts.role === "root" ? 8_192 : 2_048),
+				Math.floor(opts.routeCacheTtlMs ?? 10 * 60_000),
+			);
+				const requestedPeerHintMaxEntries = Math.max(
+					0,
+					Math.floor(
+						opts.peerHintMaxEntries ?? (opts.role === "root" ? 16_384 : 4_096),
 				),
 			);
-			const routeCacheMaxEntries = Math.min(
-				ROUTE_CACHE_MAX_ENTRIES_HARD_CAP,
-				requestedRouteCacheMaxEntries,
+			const peerHintMaxEntries = Math.min(
+				PEER_HINT_MAX_ENTRIES_HARD_CAP,
+				requestedPeerHintMaxEntries,
 			);
-			const routeCacheTtlMs = Math.max(0, Math.floor(opts.routeCacheTtlMs ?? 10 * 60_000));
-			const routeCachePruneScanLimit = Math.max(
-				ROUTE_CACHE_PRUNE_SCAN_BASE,
-				Math.min(
-					ROUTE_CACHE_PRUNE_SCAN_MAX,
-					routeCacheMaxEntries > 0
-						? Math.ceil(routeCacheMaxEntries / 8)
-						: ROUTE_CACHE_PRUNE_SCAN_BASE,
-				),
+				const peerHintTtlMs = Math.max(
+					0,
+					Math.floor(opts.peerHintTtlMs ?? 10 * 60_000),
+				);
+				const uploadBurstMsDefault = Math.max(1, Math.ceil(1_000 / msgRate));
+				const uploadBurstMs = Math.max(
+					0,
+					Math.floor(opts.uploadBurstMs ?? uploadBurstMsDefault),
 			);
-			const uploadBurstMsDefault = Math.max(1, Math.ceil(1_000 / msgRate));
-			const uploadBurstMs = Math.max(
-				0,
-				Math.floor(opts.uploadBurstMs ?? uploadBurstMsDefault),
-			);
-			const uploadTokenCapacity =
-				uploadLimitBps > 0 && uploadBurstMs > 0
-					? Math.max(1, Math.floor((uploadLimitBps * uploadBurstMs) / 1_000))
-					: 0;
+		const uploadTokenCapacity =
+			uploadLimitBps > 0 && uploadBurstMs > 0
+				? Math.max(1, Math.floor((uploadLimitBps * uploadBurstMs) / 1_000))
+				: 0;
 
-			const repairEnabled = opts.repair === true;
-			const repairWindowMessages = Math.max(
-				0,
-				Math.floor(opts.repairWindowMessages ?? 1024),
-			);
-			const repairMaxBackfillMessagesRaw = Math.max(
-				0,
-				Math.floor(opts.repairMaxBackfillMessages ?? repairWindowMessages),
-			);
-			const repairMaxBackfillMessages =
+		const repairEnabled = opts.repair === true;
+		const repairWindowMessages = Math.max(
+			0,
+			Math.floor(opts.repairWindowMessages ?? 1024),
+		);
+		const repairMaxBackfillMessagesRaw = Math.max(
+			0,
+			Math.floor(opts.repairMaxBackfillMessages ?? repairWindowMessages),
+		);
+		const repairMaxBackfillMessages =
+			repairEnabled && repairWindowMessages > 0
+				? Math.min(repairMaxBackfillMessagesRaw, repairWindowMessages)
+				: 0;
+		const repairIntervalMs = Math.max(0, Math.floor(opts.repairIntervalMs ?? 200));
+		const repairMaxPerReq = Math.max(0, Math.floor(opts.repairMaxPerReq ?? 64));
+
+		const neighborRepair = opts.neighborRepair === true;
+		const neighborRepairPeers = Math.max(
+			0,
+			Math.floor(opts.neighborRepairPeers ?? 2),
+		);
+		const neighborMeshPeers = Math.max(
+			0,
+			Math.floor(opts.neighborMeshPeers ?? Math.max(0, neighborRepairPeers * 2)),
+		);
+		const neighborAnnounceIntervalMs = Math.max(
+			0,
+			Math.floor(opts.neighborAnnounceIntervalMs ?? 500),
+		);
+		const neighborMeshRefreshIntervalMs = Math.max(
+			0,
+			Math.floor(opts.neighborMeshRefreshIntervalMs ?? 2_000),
+		);
+		const neighborHaveTtlMs = Math.max(
+			0,
+			Math.floor(opts.neighborHaveTtlMs ?? 5_000),
+		);
+		const neighborRepairBudgetBps = Math.max(
+			0,
+			Math.floor(opts.neighborRepairBudgetBps ?? 0),
+		);
+		const neighborRepairBurstMs = Math.max(
+			0,
+			Math.floor(opts.neighborRepairBurstMs ?? 1_000),
+		);
+		const neighborRepairTokenCapacity =
+			neighborRepairBudgetBps > 0 && neighborRepairBurstMs > 0
+				? Math.max(
+						1,
+						Math.floor((neighborRepairBudgetBps * neighborRepairBurstMs) / 1_000),
+					)
+				: 0;
+
+		ch = {
+			id,
+			metrics: this.getMetricsForSuffixKey(id.suffixKey),
+			level: opts.role === "root" ? 0 : Number.POSITIVE_INFINITY,
+			isRoot: opts.role === "root",
+			closed: false,
+			parent: undefined,
+			children: new Map(),
+			routeFromRoot: opts.role === "root" ? [this.publicKeyHash] : undefined,
+			routeByPeer: new Map(),
+			seq: 0,
+			bidPerByte,
+			uploadLimitBps,
+			maxChildren,
+			effectiveMaxChildren,
+			allowKick: opts.allowKick === true,
+			maxDataAgeMs,
+			repairEnabled,
+			repairWindowMessages,
+			repairMaxBackfillMessages,
+			repairIntervalMs,
+			repairMaxPerReq,
+			neighborRepair,
+			neighborRepairPeers,
+			neighborMeshPeers,
+			neighborAnnounceIntervalMs,
+			neighborMeshRefreshIntervalMs,
+			neighborHaveTtlMs,
+			neighborRepairBudgetBps,
+			neighborRepairTokenCapacity,
+			neighborRepairTokens: neighborRepairTokenCapacity,
+			neighborRepairLastRefillAt: Date.now(),
+			uploadOverheadBytes,
+			uploadBurstMs,
+			uploadTokenCapacity,
+			uploadTokens: uploadTokenCapacity,
+			uploadLastRefillAt: Date.now(),
+			droppedForwards: 0,
+			overloadStreak: 0,
+			lastOverloadKickAt: 0,
+			dataWriteFailStreakByChild: new Map(),
+			lastDataWriteFailKickAt: 0,
+			cacheSeqs:
 				repairEnabled && repairWindowMessages > 0
-					? Math.min(repairMaxBackfillMessagesRaw, repairWindowMessages)
-					: 0;
-			const repairIntervalMs = Math.max(0, Math.floor(opts.repairIntervalMs ?? 200));
-			const repairMaxPerReq = Math.max(0, Math.floor(opts.repairMaxPerReq ?? 64));
-
-			const neighborRepair = opts.neighborRepair === true;
-			const neighborRepairPeers = Math.max(0, Math.floor(opts.neighborRepairPeers ?? 2));
-			const neighborMeshPeers = Math.max(
-				0,
-				Math.floor(opts.neighborMeshPeers ?? Math.max(0, neighborRepairPeers * 2)),
-			);
-			const neighborAnnounceIntervalMs = Math.max(
-				0,
-				Math.floor(opts.neighborAnnounceIntervalMs ?? 500),
-			);
-			const neighborMeshRefreshIntervalMs = Math.max(
-				0,
-				Math.floor(opts.neighborMeshRefreshIntervalMs ?? 2_000),
-			);
-			const neighborHaveTtlMs = Math.max(
-				0,
-				Math.floor(opts.neighborHaveTtlMs ?? 5_000),
-			);
-			const neighborRepairBudgetBps = Math.max(
-				0,
-				Math.floor(opts.neighborRepairBudgetBps ?? 0),
-			);
-			const neighborRepairBurstMs = Math.max(
-				0,
-				Math.floor(opts.neighborRepairBurstMs ?? 1_000),
-			);
-			const neighborRepairTokenCapacity =
-				neighborRepairBudgetBps > 0 && neighborRepairBurstMs > 0
-					? Math.max(1, Math.floor((neighborRepairBudgetBps * neighborRepairBurstMs) / 1_000))
-					: 0;
-
-			ch = {
-				id,
-				metrics: this.getMetricsForSuffixKey(id.suffixKey),
-				level: opts.role === "root" ? 0 : Number.POSITIVE_INFINITY,
-				isRoot: opts.role === "root",
-				parent: undefined,
-				children: new Map(),
-				routeFromRoot: opts.role === "root" ? [this.publicKeyHash] : undefined,
-				routeByPeer: new Map(),
-				seq: 0,
-				bidPerByte,
-				uploadLimitBps,
-				maxChildren,
-				effectiveMaxChildren,
-				allowKick: opts.allowKick === true,
-				maxDataAgeMs,
-				repairEnabled,
-				repairWindowMessages,
-				repairMaxBackfillMessages,
-				repairIntervalMs,
-				repairMaxPerReq,
-				neighborRepair,
-				neighborRepairPeers,
-				neighborMeshPeers,
-				neighborAnnounceIntervalMs,
-				neighborMeshRefreshIntervalMs,
-				neighborHaveTtlMs,
-				neighborRepairBudgetBps,
-				neighborRepairTokenCapacity,
-				neighborRepairTokens: neighborRepairTokenCapacity,
-				neighborRepairLastRefillAt: Date.now(),
-				uploadOverheadBytes,
-				uploadBurstMs,
-				uploadTokenCapacity,
-				uploadTokens: uploadTokenCapacity,
-				uploadLastRefillAt: Date.now(),
-				droppedForwards: 0,
-				overloadStreak: 0,
-				lastOverloadKickAt: 0,
-				dataWriteFailStreakByChild: new Map(),
-				lastDataWriteFailKickAt: 0,
-				cacheSeqs:
-					repairEnabled && repairWindowMessages > 0
-						? new Int32Array(repairWindowMessages).fill(-1)
-						: undefined,
+					? new Int32Array(repairWindowMessages).fill(-1)
+					: undefined,
 			cachePayloads:
 				repairEnabled && repairWindowMessages > 0
-						? new Array<Uint8Array | undefined>(repairWindowMessages)
-						: undefined,
-					nextExpectedSeq: 0,
-					missingSeqs: new Set<number>(),
-					endSeqExclusive: -1,
-					lastRepairSentAt: 0,
-					lastParentDataAt: 0,
-					receivedAnyParentData: false,
-				channelPeers: new Set<string>(),
+					? new Array<Uint8Array | undefined>(repairWindowMessages)
+					: undefined,
+			nextExpectedSeq: 0,
+			missingSeqs: new Set<number>(),
+			endSeqExclusive: -1,
+				lastRepairSentAt: 0,
+				lastParentDataAt: 0,
+				receivedAnyParentData: false,
+				channelPeers: new Map<string, number>(),
 				knownCandidateAddrs: new Map<string, Multiaddr[]>(),
 				lazyPeers: new Set<string>(),
 				haveByPeer: new Map(),
-				maxSeqSeen: -1,
-				lastIHaveSentAt: 0,
-				lastIHaveSentMaxSeq: -1,
-				pendingJoin: new Map(),
-				pendingTrackerQuery: new Map(),
-				pendingRouteQuery: new Map(),
-				pendingRouteProxy: new Map(),
-				bootstrapOverride: undefined,
-				bootstrapDialTimeoutMs: 10_000,
-				bootstrapMaxPeers: 0,
-				bootstrapEnsureIntervalMs: 5_000,
-				cachedBootstrapPeers: [],
-					lastBootstrapEnsureAt: 0,
-					announceIntervalMs: 2_000,
-					announceTtlMs: 10_000,
+			maxSeqSeen: -1,
+			lastIHaveSentAt: 0,
+			lastIHaveSentMaxSeq: -1,
+			pendingJoin: new Map(),
+			pendingTrackerQuery: new Map(),
+			pendingRouteQuery: new Map(),
+			pendingRouteProxy: new Map(),
+			bootstrapOverride: undefined,
+			bootstrapDialTimeoutMs: 10_000,
+			bootstrapMaxPeers: 0,
+			bootstrapEnsureIntervalMs: 5_000,
+			cachedBootstrapPeers: [],
+			lastBootstrapEnsureAt: 0,
+				announceIntervalMs: 2_000,
+				announceTtlMs: 10_000,
 					lastAnnouncedAt: 0,
+					peerHintMaxEntries,
+					peerHintTtlMs,
 					routeCacheMaxEntries,
 					routeCacheTtlMs,
-					routeCachePruneScanLimit,
 					trackerQueryIntervalMs: 2_000,
-					cachedTrackerCandidates: [],
-					lastTrackerQueryAt: 0,
-				};
-				this.channelsBySuffixKey.set(id.suffixKey, ch);
-				const needsAnnounceLoop = ch.effectiveMaxChildren > 0;
-				if (needsAnnounceLoop) ch.announceLoop = this._announceLoop(ch).catch(() => {});
-			if (ch.repairEnabled && !ch.isRoot && ch.repairIntervalMs >= 0) {
-				ch.repairLoop = this._repairLoop(ch).catch(() => {});
-			}
-			if (ch.repairEnabled && ch.neighborRepair && !ch.isRoot && ch.neighborMeshPeers > 0) {
-				ch.meshLoop = this._meshLoop(ch).catch(() => {});
-			}
-			return id;
+				cachedTrackerCandidates: [],
+				lastTrackerQueryAt: 0,
+			};
+		this.channelsBySuffixKey.set(id.suffixKey, ch);
+		const needsAnnounceLoop = ch.effectiveMaxChildren > 0;
+		if (needsAnnounceLoop) {
+			ch.announceLoop = this._announceLoop(ch).catch(() => {});
+		}
+		if (ch.repairEnabled && !ch.isRoot && ch.repairIntervalMs >= 0) {
+			ch.repairLoop = this._repairLoop(ch).catch(() => {});
+		}
+		if (
+			ch.repairEnabled &&
+			ch.neighborRepair &&
+			!ch.isRoot &&
+			ch.neighborMeshPeers > 0
+		) {
+			ch.meshLoop = this._meshLoop(ch).catch(() => {});
+		}
+		return id;
+	}
+
+	public async closeChannel(
+		topic: string,
+		root: string,
+		options?: { notifyParent?: boolean; kickChildren?: boolean },
+	): Promise<void> {
+		const id = this.getChannelId(topic, root);
+		const ch = this.channelsBySuffixKey.get(id.suffixKey);
+		if (!ch) return;
+		if (ch.closed) return;
+		ch.closed = true;
+
+		// If a join is in-flight, surface that it won't complete.
+		try {
+			ch.joinedOnce?.reject(new AbortError("fanout channel closed"));
+		} catch {
+			// ignore
+		}
+		ch.joinedOnce = undefined;
+
+		const notifyParent = options?.notifyParent !== false;
+		const kickChildren = options?.kickChildren !== false;
+
+		const pendingSends: Array<Promise<void>> = [];
+		if (notifyParent && !ch.isRoot && ch.parent) {
+			pendingSends.push(
+				this._sendControl(ch.parent, encodeLeave(ch.id.key)).catch(() => {}),
+			);
+		}
+		if (kickChildren && ch.children.size > 0) {
+			pendingSends.push(this.kickChildren(ch).catch(() => {}));
 		}
 
-	public getChannelStats(topic: string, root: string): {
-		topic: string;
-		root: string;
-		parent?: string;
-		level: number;
-		children: number;
-		effectiveMaxChildren: number;
-		uploadLimitBps: number;
-		droppedForwards: number;
-		routeCacheEntries: number;
-		routeCacheMaxEntries: number;
-	} | undefined {
+		ch.pendingJoin.clear();
+		ch.pendingTrackerQuery.clear();
+		ch.pendingRouteQuery.clear();
+		for (const pending of ch.pendingRouteProxy.values()) {
+			clearTimeout(pending.timer);
+		}
+		ch.pendingRouteProxy.clear();
+
+		ch.parent = undefined;
+		ch.children.clear();
+		ch.lazyPeers.clear();
+		ch.haveByPeer.clear();
+		ch.knownCandidateAddrs.clear();
+		ch.channelPeers.clear();
+		ch.routeFromRoot = undefined;
+		ch.routeByPeer.clear();
+
+		this.channelsBySuffixKey.delete(id.suffixKey);
+		this.trackerBySuffixKey.delete(id.suffixKey);
+
+		await Promise.all(pendingSends);
+	}
+
+	public getChannelStats(topic: string, root: string):
+		| {
+				topic: string;
+				root: string;
+				parent?: string;
+				level: number;
+				children: number;
+				effectiveMaxChildren: number;
+					uploadLimitBps: number;
+					droppedForwards: number;
+					peerHintEntries: number;
+					peerHintMaxEntries: number;
+					routeCacheEntries: number;
+					routeCacheMaxEntries: number;
+			  }
+			| undefined {
 		const id = this.getChannelId(topic, root);
 		const ch = this.channelsBySuffixKey.get(id.suffixKey);
 		if (!ch) return;
@@ -1273,13 +1401,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			parent: ch.parent,
 			level: ch.level,
 			children: ch.children.size,
-			effectiveMaxChildren: ch.effectiveMaxChildren,
-			uploadLimitBps: ch.uploadLimitBps,
-			droppedForwards: ch.droppedForwards,
-			routeCacheEntries: ch.routeByPeer.size,
-			routeCacheMaxEntries: ch.routeCacheMaxEntries,
-		};
-	}
+				effectiveMaxChildren: ch.effectiveMaxChildren,
+				uploadLimitBps: ch.uploadLimitBps,
+				droppedForwards: ch.droppedForwards,
+				peerHintEntries: ch.channelPeers.size,
+				peerHintMaxEntries: ch.peerHintMaxEntries,
+				routeCacheEntries: ch.routeByPeer.size,
+				routeCacheMaxEntries: ch.routeCacheMaxEntries,
+			};
+		}
 
 	public getChannelMetrics(topic: string, root: string): FanoutTreeChannelMetrics {
 		const id = this.getChannelId(topic, root);
@@ -1298,12 +1428,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const includeSelf = options?.includeSelf === true;
 		const peers = new Set<string>();
 
-		if (ch.parent) peers.add(ch.parent);
-		for (const child of ch.children.keys()) peers.add(child);
-		for (const peer of ch.channelPeers) peers.add(peer);
-		if (ch.routeFromRoot) {
-			for (const peer of ch.routeFromRoot) peers.add(peer);
-		}
+			if (ch.parent) peers.add(ch.parent);
+			for (const child of ch.children.keys()) peers.add(child);
+			for (const peer of ch.channelPeers.keys()) peers.add(peer);
+			if (ch.routeFromRoot) {
+				for (const peer of ch.routeFromRoot) peers.add(peer);
+			}
 
 		if (includeSelf) {
 			peers.add(this.publicKeyHash);
@@ -1396,41 +1526,79 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		this.pruneRouteCache(ch, now);
 	}
 
-	private cacheKnownCandidateAddrs(ch: ChannelState, hash: string, addrs: Multiaddr[]) {
-		if (!hash) return;
-		if (!addrs || addrs.length === 0) return;
-		ch.knownCandidateAddrs.delete(hash);
-		ch.knownCandidateAddrs.set(hash, addrs);
-		while (ch.knownCandidateAddrs.size > KNOWN_CANDIDATE_ADDRS_MAX_ENTRIES) {
-			const oldest = ch.knownCandidateAddrs.keys().next().value as string | undefined;
-			if (!oldest) break;
-			ch.knownCandidateAddrs.delete(oldest);
+		private cacheKnownCandidateAddrs(ch: ChannelState, hash: string, addrs: Multiaddr[]) {
+			if (!hash) return;
+			if (!addrs || addrs.length === 0) return;
+			ch.knownCandidateAddrs.delete(hash);
+			ch.knownCandidateAddrs.set(hash, addrs);
+			while (ch.knownCandidateAddrs.size > KNOWN_CANDIDATE_ADDRS_MAX_ENTRIES) {
+				const oldest = ch.knownCandidateAddrs.keys().next().value as string | undefined;
+				if (!oldest) break;
+				ch.knownCandidateAddrs.delete(oldest);
+			}
 		}
-	}
 
-	private pruneRouteCache(
-		ch: ChannelState,
-		now = Date.now(),
-		scanLimit = ch.routeCachePruneScanLimit,
-	) {
-		if (ch.routeByPeer.size === 0) return;
-		if (ch.routeCacheMaxEntries <= 0) {
-			const removed = ch.routeByPeer.size;
-			ch.routeByPeer.clear();
+		private touchPeerHint(ch: ChannelState, peerHash: string, now = Date.now()) {
+			if (!peerHash) return;
+			if (peerHash === this.publicKeyHash) return;
+			if (ch.peerHintMaxEntries <= 0) return;
+			// LRU touch
+			ch.channelPeers.delete(peerHash);
+			ch.channelPeers.set(peerHash, now);
+			this.prunePeerHints(ch, now);
+		}
+
+			private prunePeerHints(ch: ChannelState, now = Date.now()) {
+				if (ch.channelPeers.size === 0) return;
+				if (ch.peerHintMaxEntries <= 0) {
+					ch.channelPeers.clear();
+					return;
+				}
+
+				// `channelPeers` is maintained as an LRU (touch via delete+set), so the oldest
+				// entry is always first. This makes TTL pruning O(expired) rather than O(N).
+				if (ch.peerHintTtlMs > 0) {
+					for (;;) {
+						const oldest = ch.channelPeers.keys().next().value as string | undefined;
+						if (!oldest) break;
+						const seenAt = ch.channelPeers.get(oldest) ?? 0;
+						if (now - seenAt <= ch.peerHintTtlMs) break;
+						ch.channelPeers.delete(oldest);
+					}
+				}
+
+				while (ch.channelPeers.size > ch.peerHintMaxEntries) {
+					const oldest = ch.channelPeers.keys().next().value as string | undefined;
+					if (!oldest) break;
+					ch.channelPeers.delete(oldest);
+				}
+			}
+
+			private pruneRouteCache(ch: ChannelState, now = Date.now()) {
+			if (ch.routeByPeer.size === 0) return;
+			if (ch.routeCacheMaxEntries <= 0) {
+				const removed = ch.routeByPeer.size;
+				ch.routeByPeer.clear();
 			if (removed > 0) ch.metrics.routeCacheEvictions += removed;
 			return;
 		}
 
-		if (ch.routeCacheTtlMs > 0) {
-			let scanned = 0;
-			for (const [targetHash, entry] of ch.routeByPeer) {
-				if (scanned >= scanLimit) break;
-				scanned += 1;
-				if (now - entry.updatedAt <= ch.routeCacheTtlMs) continue;
-				ch.routeByPeer.delete(targetHash);
-				ch.metrics.routeCacheExpirations += 1;
+			// `routeByPeer` is maintained as an LRU (touch via delete+set), so the oldest
+			// entry is always first. This makes TTL pruning O(expired) rather than O(N).
+			if (ch.routeCacheTtlMs > 0) {
+				for (;;) {
+					const oldest = ch.routeByPeer.keys().next().value as string | undefined;
+					if (!oldest) break;
+					const entry = ch.routeByPeer.get(oldest);
+					if (!entry) {
+						ch.routeByPeer.delete(oldest);
+						continue;
+					}
+					if (now - entry.updatedAt <= ch.routeCacheTtlMs) break;
+					ch.routeByPeer.delete(oldest);
+					ch.metrics.routeCacheExpirations += 1;
+				}
 			}
-		}
 
 		while (ch.routeByPeer.size > ch.routeCacheMaxEntries) {
 			const oldest = ch.routeByPeer.keys().next().value as string | undefined;
@@ -1779,6 +1947,29 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (!ch.isRoot) throw new Error("Only the channel root can publish");
 		const seq = ch.seq++;
 		await this._sendData(ch, [...ch.children.keys()], seq, payload);
+	}
+
+	/**
+	 * Publishes payload to all channel members.
+	 *
+	 * Root publishes directly on the data-plane. Non-root members proxy the publish
+	 * upstream to the root, which assigns a sequence number and broadcasts.
+	 */
+	public async publishToChannel(
+		topic: string,
+		root: string,
+		payload: Uint8Array,
+	): Promise<void> {
+		const id = this.getChannelId(topic, root);
+		const ch = this.channelsBySuffixKey.get(id.suffixKey);
+		if (!ch) throw new Error(`Channel not open: ${topic} (${root})`);
+		if (ch.isRoot) {
+			return this.publishData(topic, root, payload);
+		}
+		if (!ch.parent) {
+			throw new Error("Cannot proxy publish while not attached to a parent");
+		}
+		await this._sendControl(ch.parent, encodePublishProxy(ch.id.key, payload));
 	}
 
 	public async publishEnd(topic: string, root: string, lastSeqExclusive: number): Promise<void> {
@@ -2457,12 +2648,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 
 		if (ch.neighborRepair && ch.neighborRepairPeers > 0) {
-			const candidates: string[] = [];
+				const candidates: string[] = [];
 
-			for (const h of ch.knownCandidateAddrs.keys()) candidates.push(h);
-			for (const h of ch.channelPeers) candidates.push(h);
-			for (const h of ch.lazyPeers) candidates.push(h);
-			for (const h of ch.haveByPeer.keys()) candidates.push(h);
+				for (const h of ch.knownCandidateAddrs.keys()) candidates.push(h);
+				for (const h of ch.channelPeers.keys()) candidates.push(h);
+				for (const h of ch.lazyPeers) candidates.push(h);
+				for (const h of ch.haveByPeer.keys()) candidates.push(h);
 
 			const unique = [...new Set(candidates)].filter((h) => {
 				if (h === this.publicKeyHash) return false;
@@ -2660,7 +2851,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	private async _announceLoop(ch: ChannelState): Promise<void> {
 		const signal = this.closeController.signal;
 		for (;;) {
-			if (signal.aborted) return;
+			if (signal.aborted || ch.closed) return;
 			try {
 				this.pruneRouteCache(ch);
 			} catch {
@@ -2679,7 +2870,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	private async _repairLoop(ch: ChannelState): Promise<void> {
 		const signal = this.closeController.signal;
 		for (;;) {
-			if (signal.aborted) return;
+			if (signal.aborted || ch.closed) return;
 			try {
 				await this.tickRepair(ch);
 			} catch {
@@ -2847,16 +3038,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 		}
 
-	private async _meshLoop(ch: ChannelState): Promise<void> {
-		const signal = this.closeController.signal;
-		let lastRefreshAt = 0;
-		for (;;) {
-			if (signal.aborted) return;
+		private async _meshLoop(ch: ChannelState): Promise<void> {
+			const signal = this.closeController.signal;
+			let lastRefreshAt = 0;
+			for (;;) {
+				if (signal.aborted || ch.closed) return;
 
-			const now = Date.now();
-			try {
-				this.pruneLazyPeers(ch);
-				this.pruneHaveByPeer(ch, now);
+				const now = Date.now();
+				try {
+					this.pruneLazyPeers(ch);
+					this.pruneHaveByPeer(ch, now);
 
 				const refreshMs = Math.max(0, ch.neighborMeshRefreshIntervalMs);
 				if (refreshMs === 0 || now - lastRefreshAt >= refreshMs) {
@@ -3100,11 +3291,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			: this.closeController.signal;
 		const signal = combinedSignal as AbortSignal & { clear?: () => void };
 
-		try {
-			for (;;) {
-				if (signal.aborted) {
-					throw signal.reason ?? new AbortError("fanout join aborted");
-				}
+			try {
+				for (;;) {
+					if (ch.closed) {
+						throw new AbortError("fanout join aborted: channel closed");
+					}
+					if (signal.aborted) {
+						throw signal.reason ?? new AbortError("fanout join aborted");
+					}
 
 					// Parent disappeared? Rejoin.
 					if (ch.parent && !this.peers.get(ch.parent)) {
@@ -3494,21 +3688,23 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const kind = data[0]!;
 		const fromHash = from.hashcode();
 
-		// Control-plane + tracker messages carry channelKey (32 bytes) at offset 1.
-			if (
-				kind === MSG_JOIN_REQ ||
-				kind === MSG_JOIN_ACCEPT ||
-				kind === MSG_JOIN_REJECT ||
-				kind === MSG_KICK ||
-				kind === MSG_END ||
-				kind === MSG_UNICAST ||
-				kind === MSG_ROUTE_QUERY ||
-				kind === MSG_ROUTE_REPLY ||
-				kind === MSG_REPAIR_REQ ||
-				kind === MSG_FETCH_REQ ||
-				kind === MSG_IHAVE ||
-				kind === MSG_TRACKER_ANNOUNCE ||
-				kind === MSG_TRACKER_QUERY ||
+			// Control-plane + tracker messages carry channelKey (32 bytes) at offset 1.
+				if (
+					kind === MSG_JOIN_REQ ||
+					kind === MSG_JOIN_ACCEPT ||
+					kind === MSG_JOIN_REJECT ||
+					kind === MSG_KICK ||
+					kind === MSG_END ||
+					kind === MSG_UNICAST ||
+						kind === MSG_ROUTE_QUERY ||
+						kind === MSG_ROUTE_REPLY ||
+						kind === MSG_PUBLISH_PROXY ||
+						kind === MSG_LEAVE ||
+						kind === MSG_REPAIR_REQ ||
+					kind === MSG_FETCH_REQ ||
+					kind === MSG_IHAVE ||
+					kind === MSG_TRACKER_ANNOUNCE ||
+					kind === MSG_TRACKER_QUERY ||
 				kind === MSG_TRACKER_REPLY ||
 				kind === MSG_TRACKER_FEEDBACK
 			) {
@@ -3700,9 +3896,21 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					return true;
 				}
 
-				if (!ch) return true;
+					if (!ch) return true;
+					if (ch.closed) return true;
 
-				if (kind === MSG_ROUTE_QUERY) {
+					if (kind === MSG_LEAVE) {
+						// Best-effort: allow a child to explicitly detach to immediately free capacity.
+						if (!ch.children.has(fromHash)) return true;
+						ch.children.delete(fromHash);
+						ch.dataWriteFailStreakByChild.delete(fromHash);
+						ch.channelPeers.delete(fromHash);
+						ch.lazyPeers.delete(fromHash);
+						ch.haveByPeer.delete(fromHash);
+						return true;
+					}
+
+					if (kind === MSG_ROUTE_QUERY) {
 					if (data.length < 1 + 32 + 4 + 1) return false;
 					const reqId = readU32BE(data, 33);
 					const hashLen = data[37]!;
@@ -3799,20 +4007,20 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					prev.haveFrom = haveFrom;
 					prev.haveToExclusive = haveToExclusive;
 					prev.updatedAt = now;
-				} else {
-					ch.haveByPeer.set(fromHash, {
-						haveFrom,
-						haveToExclusive,
-						updatedAt: now,
-						requests: 0,
-						successes: 0,
-					});
-				}
-				ch.channelPeers.add(fromHash);
+					} else {
+						ch.haveByPeer.set(fromHash, {
+							haveFrom,
+							haveToExclusive,
+							updatedAt: now,
+							requests: 0,
+							successes: 0,
+						});
+					}
+					this.touchPeerHint(ch, fromHash, now);
 
-				// Opportunistic reciprocity: if we still have room in our lazy mesh, add
-				// peers that are actively exchanging IHAVE summaries with us.
-				if (
+					// Opportunistic reciprocity: if we still have room in our lazy mesh, add
+					// peers that are actively exchanging IHAVE summaries with us.
+					if (
 					ch.neighborRepair &&
 					ch.neighborMeshPeers > 0 &&
 					ch.lazyPeers.size < ch.neighborMeshPeers &&
@@ -3891,7 +4099,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					}
 
 					ch.children.set(fromHash, { bidPerByte });
-					ch.channelPeers.add(fromHash);
+					this.touchPeerHint(ch, fromHash);
 					void this._sendControl(
 						fromHash,
 						encodeJoinAccept(ch.id.key, reqId, ch.level, ch.routeFromRoot),
@@ -3936,15 +4144,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							parentRouteFromRoot[parentRouteFromRoot.length - 1] === fromHash
 						) {
 							ch.routeFromRoot = [...parentRouteFromRoot, this.publicKeyHash];
-						} else if (fromHash === ch.id.root) {
-							// Minimal fallback: parent is the root.
-							ch.routeFromRoot = [ch.id.root, this.publicKeyHash];
-						}
-						ch.channelPeers.add(fromHash);
-						pending.resolve({ ok: true });
-						this.dispatchEvent(
-							new CustomEvent("fanout:joined", {
-								detail: { topic: ch.id.topic, root: ch.id.root, parent: fromHash },
+							} else if (fromHash === ch.id.root) {
+								// Minimal fallback: parent is the root.
+								ch.routeFromRoot = [ch.id.root, this.publicKeyHash];
+							}
+							this.touchPeerHint(ch, fromHash);
+							pending.resolve({ ok: true });
+							this.dispatchEvent(
+								new CustomEvent("fanout:joined", {
+									detail: { topic: ch.id.topic, root: ch.id.root, parent: fromHash },
 						}),
 					);
 					void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
@@ -3989,12 +4197,45 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						pending.resolve({ ok: false, rejectReason: reason, redirects });
 					}
 					return true;
-				}
+					}
+	
+					if (kind === MSG_PUBLISH_PROXY) {
+						// Requires an open channel state
+						if (!ch) return true;
 
-				if (kind === MSG_UNICAST) {
-					// Requires an open channel state
-					if (!ch) return true;
+						// Only accept/forward within established tree edges to keep the data-plane economical.
+						const isFromParent = fromHash === ch.parent;
+						const isFromChild = ch.children.has(fromHash);
+							if (!isFromParent && !isFromChild) return true;
 
+							const payload = data.subarray(33);
+							this.touchPeerHint(ch, fromHash);
+
+							if (ch.isRoot) {
+								// Only accept upstream proxy publishes from established children.
+								if (!isFromChild) return true;
+							const seq = ch.seq++;
+							await this._sendData(ch, [...ch.children.keys()], seq, payload);
+							return true;
+						}
+
+						// Upstream forwarding (child -> ... -> root).
+						if (!isFromChild) return true;
+						if (!ch.parent) return true;
+						const up = this.peers.get(ch.parent);
+						if (!up || !up.isWritable) return true;
+						try {
+							up.write(message.bytes(), Number(message.header.priority ?? CONTROL_PRIORITY));
+						} catch {
+							// ignore
+						}
+						return true;
+					}
+
+					if (kind === MSG_UNICAST) {
+						// Requires an open channel state
+						if (!ch) return true;
+	
 					// Only accept/forward within established tree edges to keep the data-plane economical.
 					const isFromParent = fromHash === ch.parent;
 					const isFromChild = ch.children.has(fromHash);
@@ -4005,14 +4246,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					const { route, offset } = decodeRoute(data, 34, routeCount);
 					const payload = data.subarray(offset);
 					const target = route.length > 0 ? route[route.length - 1]! : "";
-					const origin =
-						message.header.signatures?.publicKeys?.[0]?.hashcode?.() ?? fromHash;
+						const origin =
+							message.header.signatures?.publicKeys?.[0]?.hashcode?.() ?? fromHash;
 
-					ch.channelPeers.add(fromHash);
+						this.touchPeerHint(ch, fromHash);
 
-					// Root routes downward using the provided token.
-					if (ch.isRoot) {
-						if (route.length === 0 || route[0] !== ch.id.root) return true;
+						// Root routes downward using the provided token.
+						if (ch.isRoot) {
+							if (route.length === 0 || route[0] !== ch.id.root) return true;
 						if (target === this.publicKeyHash) {
 							this.dispatchEvent(
 								new CustomEvent("fanout:unicast", {
@@ -4110,14 +4351,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 
 					if (kind === MSG_END) {
-						if (data.length < 1 + 32 + 4) return false;
-						const lastSeqExclusive = readU32BE(data, 33);
-						ch.endSeqExclusive = Math.max(ch.endSeqExclusive, lastSeqExclusive);
-						ch.channelPeers.add(fromHash);
-						this.noteEnd(ch, fromHash, lastSeqExclusive);
-						if (ch.children.size > 0) {
-						void this._sendControlMany(
-							[...ch.children.keys()],
+							if (data.length < 1 + 32 + 4) return false;
+							const lastSeqExclusive = readU32BE(data, 33);
+							ch.endSeqExclusive = Math.max(ch.endSeqExclusive, lastSeqExclusive);
+							this.touchPeerHint(ch, fromHash);
+							this.noteEnd(ch, fromHash, lastSeqExclusive);
+							if (ch.children.size > 0) {
+							void this._sendControlMany(
+								[...ch.children.keys()],
 						encodeEnd(ch.id.key, lastSeqExclusive),
 					);
 				}
@@ -4143,13 +4384,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					return true;
 				}
 
-				if (kind === MSG_FETCH_REQ) {
-					if (data.length < 1 + 32 + 4 + 1) return false;
-					ch.channelPeers.add(fromHash);
-					const count = data[37]!;
-					const max = Math.min(count, Math.floor((data.length - 38) / 4));
-					for (let i = 0; i < max; i++) {
-						const seq = readU32BE(data, 38 + i * 4);
+					if (kind === MSG_FETCH_REQ) {
+						if (data.length < 1 + 32 + 4 + 1) return false;
+						this.touchPeerHint(ch, fromHash);
+						const count = data[37]!;
+						const max = Math.min(count, Math.floor((data.length - 38) / 4));
+						for (let i = 0; i < max; i++) {
+							const seq = readU32BE(data, 38 + i * 4);
 						const cached = this.getCached(ch, seq);
 						if (!cached) {
 							ch.metrics.cacheMissesServed += 1;
@@ -4163,19 +4404,18 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 				return true;
 			}
-
-		// Data-plane (topic identified via id suffix)
-			if (kind === MSG_DATA) {
-			const id = message.id as Uint8Array;
-			if (!(id instanceof Uint8Array) || !isDataId(id)) return false;
+	
+			// Data-plane (topic identified via id suffix)
+				if (kind === MSG_DATA) {
+				const id = message.id as Uint8Array;
+				if (!(id instanceof Uint8Array) || !isDataId(id)) return false;
 			const suffixKey = this.getSuffixKeyFromId(id);
 			const ch = this.channelsBySuffixKey.get(suffixKey);
 			if (!ch) return false;
 
-				const seq = readU32BE(id, 4);
-				ch.maxSeqSeen = Math.max(ch.maxSeqSeen, seq);
-				ch.channelPeers.add(fromHash);
-				this.noteReceivedSeq(ch, fromHash, seq);
+					const seq = readU32BE(id, 4);
+					ch.maxSeqSeen = Math.max(ch.maxSeqSeen, seq);
+					this.noteReceivedSeq(ch, fromHash, seq);
 
 				const payload = (data as Uint8Array).subarray(1);
 				ch.metrics.dataReceives += 1;

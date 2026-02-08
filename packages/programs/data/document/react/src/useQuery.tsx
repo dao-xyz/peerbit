@@ -165,7 +165,6 @@ export const useQuery = <
 	const itemIdRef = useRef(new WeakMap<object, string>());
 	const emptyResultsRef = useRef(false);
 	const closeControllerRef = useRef<AbortController | null>(null);
-	const waitedOnceRef = useRef(false);
 	const loadMoreRef = useRef<LoadMoreFn | undefined>(undefined);
 
 	/* keep an id mostly for debugging – mirrors original behaviour */
@@ -209,7 +208,6 @@ export const useQuery = <
 		disposeIterators("Reset");
 		closeControllerRef.current = new AbortController();
 		emptyResultsRef.current = false;
-		waitedOnceRef.current = false;
 
 		allRef.current = [];
 		itemIdRef.current = new WeakMap();
@@ -319,10 +317,46 @@ export const useQuery = <
 
 		reset();
 		const abortSignal = closeControllerRef.current?.signal;
+
+		const updatesOpt = options.updates;
+		const mergeEnabled =
+			typeof updatesOpt === "boolean"
+				? updatesOpt
+				: typeof updatesOpt === "string"
+					? true
+					: typeof updatesOpt === "object" && !!updatesOpt.merge;
+		const pushEnabled =
+			typeof updatesOpt === "boolean"
+				? updatesOpt
+				: typeof updatesOpt === "string"
+					? updatesOpt === "remote" || updatesOpt === "all"
+					: typeof updatesOpt === "object"
+						? "push" in updatesOpt && updatesOpt.push != null
+							? typeof updatesOpt.push === "number"
+								? true
+								: !!updatesOpt.push
+							: mergeEnabled
+						: false;
+		const pushMode =
+			typeof updatesOpt === "object" &&
+			updatesOpt != null &&
+			"push" in updatesOpt &&
+			updatesOpt.push != null
+				? updatesOpt.push
+				: pushEnabled;
+
 		const resolveRemoteOptions = () => {
 			if (options.remote === false) return false;
 			if (!options.remote) return undefined;
 			if (typeof options.remote === "object") {
+				if (options.remote.wait == null) {
+					return {
+						...options.remote,
+						wait: {
+							timeout: 5000,
+						},
+					};
+				}
 				return {
 					...options.remote,
 					wait: {
@@ -388,24 +422,6 @@ export const useQuery = <
 				});
 			};
 
-		const updatesOpt = options.updates;
-		const mergeEnabled =
-			typeof updatesOpt === "boolean"
-				? updatesOpt
-				: typeof updatesOpt === "string"
-					? true
-					: typeof updatesOpt === "object" && !!updatesOpt.merge;
-		const pushEnabled =
-			typeof updatesOpt === "boolean"
-				? updatesOpt
-				: typeof updatesOpt === "string"
-					? updatesOpt === "remote" || updatesOpt === "all"
-					: typeof updatesOpt === "object"
-						? "push" in updatesOpt && updatesOpt.push != null
-							? !!updatesOpt.push
-							: mergeEnabled
-						: false;
-
 		iteratorRefs.current = openDbs.map((db) => {
 			let currentRef: IteratorRef | undefined;
 			const iterator = db.index.iterate(query ?? {}, {
@@ -416,7 +432,7 @@ export const useQuery = <
 				resolve,
 				signal: abortSignal,
 				updates: {
-					push: pushEnabled,
+					push: pushMode,
 					merge: mergeEnabled,
 					notify: (reason) => {
 						log("notify", { reason, currentRef: !!currentRef });
@@ -492,16 +508,6 @@ export const useQuery = <
 
 	/* ────────────── loadMore implementation ────────────── */
 	const batchSize = options.batchSize ?? 10;
-
-	const shouldWait = (): boolean => {
-		if (waitedOnceRef.current) return false;
-		if (options.remote === false) return false;
-		return true; // mimic original behaviour – wait once if remote allowed
-	};
-
-	const markWaited = () => {
-		waitedOnceRef.current = true;
-	};
 
 	/* helper to turn primitive ids into stable map keys */
 	const idToKey = (value: indexerTypes.IdPrimitive): string => {
@@ -744,34 +750,6 @@ export const useQuery = <
 
 		setIsLoading(true);
 		try {
-			/* one-time replicator warm-up across all DBs */
-			if (shouldWait()) {
-				/*   if (
-                     typeof options.remote === "object" &&
-                     options.remote.wait
-                 ) {
-                     await Promise.all(
-                         iterators.map(async ({ db }) => {
-                             try {  
-                                 await db.log.waitForReplicators({
-                                     timeout: (options.remote as { warmup })
-                                         .warmup,
-                                     signal: closeControllerRef.current?.signal,
-                                 });
-                             } catch (e) {
-                                 if (
-                                     e instanceof AbortError ||
-                                     e instanceof NoPeersError
-                                 )
-                                     return;
-                                 console.warn("Remote replicators not ready", e);
-                             }
-                         })
-                     );
-				}*/
-				markWaited();
-			}
-
 			return drainRoundRobin(iterators, n, opts?.reason ?? "batch");
 		} catch (e) {
 			if (!isBenignLifecycleError(e)) throw e;

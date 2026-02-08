@@ -16,23 +16,33 @@ export type RelationResolver = {
 	next: (relation: IdentityRelation) => PublicSignKey;
 };
 
+const LOCAL_ONLY_QUERY = { remote: false, local: true } as any;
+
+const searchRelations = async (
+	db: DocumentsLike<IdentityRelation, FromTo>,
+	query: { key: "from" | "to"; value: string },
+	options?: any,
+): Promise<IdentityRelation[]> => {
+	const request = new SearchRequest({
+		query: [
+			new StringMatch({
+				key: query.key,
+				value: query.value,
+			}),
+		],
+	});
+	const results = options
+		? await db.index.search(request, options)
+		: await db.index.search(request);
+	return Promise.all(results);
+};
+
 export const getFromByTo: RelationResolver = {
 	resolve: async (
 		to: PublicSignKey,
 		db: DocumentsLike<IdentityRelation, FromTo>,
 	) => {
-		return Promise.all(
-			await db.index.search(
-				new SearchRequest({
-					query: [
-						new StringMatch({
-							key: "to",
-							value: to.hashcode(),
-						}),
-					],
-				}),
-			),
-		);
+		return searchRelations(db, { key: "to", value: to.hashcode() });
 	},
 	next: (relation) => relation.from,
 };
@@ -42,17 +52,31 @@ export const getToByFrom: RelationResolver = {
 		from: PublicSignKey,
 		db: DocumentsLike<IdentityRelation, FromTo>,
 	) => {
-		return Promise.all(
-			await db.index.search(
-				new SearchRequest({
-					query: [
-						new StringMatch({
-							key: "from",
-							value: from.hashcode(),
-						}),
-					],
-				}),
-			),
+		return searchRelations(db, { key: "from", value: from.hashcode() });
+	},
+	next: (relation) => relation.to,
+};
+
+// Local-only resolvers for access control checks. These must be conservative and non-blocking.
+export const getFromByToLocalOnly: RelationResolver = {
+	resolve: async (
+		to: PublicSignKey,
+		db: DocumentsLike<IdentityRelation, FromTo>,
+	) => {
+		return searchRelations(db, { key: "to", value: to.hashcode() }, LOCAL_ONLY_QUERY);
+	},
+	next: (relation) => relation.from,
+};
+
+export const getToByFromLocalOnly: RelationResolver = {
+	resolve: async (
+		from: PublicSignKey,
+		db: DocumentsLike<IdentityRelation, FromTo>,
+	) => {
+		return searchRelations(
+			db,
+			{ key: "from", value: from.hashcode() },
+			LOCAL_ONLY_QUERY,
 		);
 	},
 	next: (relation) => relation.to,
@@ -173,7 +197,12 @@ export const getRelation = async (
 	to: PublicSignKey,
 	db: DocumentsLike<IdentityRelation, FromTo>,
 ): Promise<IdentityRelation | undefined> => {
-	return db.index.get(new IdentityRelation({ from, to }).id);
+	// This is used as a local existence check before writing relations.
+	// Avoid remote queries which can hang under churn or cold-start.
+	return db.index.get(new IdentityRelation({ from, to }).id, {
+		remote: false,
+		local: true,
+	} as any);
 };
 
 @variant(0)
