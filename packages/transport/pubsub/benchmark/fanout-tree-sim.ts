@@ -97,6 +97,10 @@ const parseArgs = (argv: string[]) => {
 				"  --assertAttachP95Ms MS        max p95 time-to-attach since join start (default: 0, off)",
 				"  --assertMaxTreeLevelP95 N     max p95 tree depth/level (default: 0, off)",
 				"  --assertMaxFormationScore X   max formationScore (default: 0, off)",
+				"  --assertMaxOrphans N          max online orphans during publish+settle (default: 0, off)",
+				"  --assertMaxOrphanArea S       max orphan-area (orphan-seconds) during publish+settle (default: 0, off)",
+				"  --assertRecoveryP95Ms MS      max p95 recovery time after churn (default: 0, off)",
+				"  --assertMaxReparentsPerMin N  max reparent events per minute (default: 0, off)",
 				"",
 				"Example:",
 				"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-sim --preset live --nodes 2000 --bootstraps 1 --seed 1",
@@ -436,6 +440,18 @@ const parseArgs = (argv: string[]) => {
 		...(maybeNumber("--assertMaxFormationScore") != null
 			? { assertMaxFormationScore: maybeNumber("--assertMaxFormationScore") }
 			: {}),
+		...(maybeNumber("--assertMaxOrphans") != null
+			? { assertMaxOrphans: maybeNumber("--assertMaxOrphans") }
+			: {}),
+		...(maybeNumber("--assertMaxOrphanArea") != null
+			? { assertMaxOrphanArea: maybeNumber("--assertMaxOrphanArea") }
+			: {}),
+		...(maybeNumber("--assertRecoveryP95Ms") != null
+			? { assertRecoveryP95Ms: maybeNumber("--assertRecoveryP95Ms") }
+			: {}),
+		...(maybeNumber("--assertMaxReparentsPerMin") != null
+			? { assertMaxReparentsPerMin: maybeNumber("--assertMaxReparentsPerMin") }
+			: {}),
 	};
 
 	const merged: Record<string, any> = { ...presetOpts, ...explicitOpts };
@@ -543,6 +559,39 @@ const main = async () => {
 	) {
 		console.error(
 			`ASSERT FAILED: formationScore ${result.formationScore.toFixed(2)} > ${params.assertMaxFormationScore}`,
+		);
+		process.exit(2);
+	}
+	if (params.assertMaxOrphans > 0 && result.maintMaxOrphans - 1e-9 > params.assertMaxOrphans) {
+		console.error(
+			`ASSERT FAILED: maintMaxOrphans ${result.maintMaxOrphans} > ${params.assertMaxOrphans}`,
+		);
+		process.exit(2);
+	}
+	if (
+		params.assertMaxOrphanArea > 0 &&
+		result.maintOrphanArea - 1e-9 > params.assertMaxOrphanArea
+	) {
+		console.error(
+			`ASSERT FAILED: maintOrphanArea ${result.maintOrphanArea.toFixed(1)} > ${params.assertMaxOrphanArea}`,
+		);
+		process.exit(2);
+	}
+	if (
+		params.assertRecoveryP95Ms > 0 &&
+		result.maintRecoveryP95Ms - 1e-9 > params.assertRecoveryP95Ms
+	) {
+		console.error(
+			`ASSERT FAILED: maintRecoveryP95Ms ${result.maintRecoveryP95Ms.toFixed(1)}ms > ${params.assertRecoveryP95Ms}ms`,
+		);
+		process.exit(2);
+	}
+	if (
+		params.assertMaxReparentsPerMin > 0 &&
+		result.maintReparentsPerMin - 1e-9 > params.assertMaxReparentsPerMin
+	) {
+		console.error(
+			`ASSERT FAILED: maintReparentsPerMin ${result.maintReparentsPerMin.toFixed(2)} > ${params.assertMaxReparentsPerMin}`,
 		);
 		process.exit(2);
 	}

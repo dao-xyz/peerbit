@@ -104,6 +104,10 @@ export type FanoutTreeSimParams = {
 	assertAttachP95Ms: number;
 	assertMaxTreeLevelP95: number;
 	assertMaxFormationScore: number;
+	assertMaxOrphans: number;
+	assertRecoveryP95Ms: number;
+	assertMaxReparentsPerMin: number;
+	assertMaxOrphanArea: number;
 };
 
 export type FanoutTreeSimResult = {
@@ -183,6 +187,18 @@ export type FanoutTreeSimResult = {
 
 	churnEvents: number;
 	churnedPeersTotal: number;
+
+	maintDurationMs: number;
+	maintSamples: number;
+	maintMaxOrphans: number;
+	maintOrphanArea: number; // integral of (orphansOnline) over time, in orphan-seconds
+	maintRecoveryCount: number;
+	maintRecoveryP50Ms: number;
+	maintRecoveryP95Ms: number;
+	maintReparentsPerMin: number;
+	maintMaxReparentsPerPeer: number;
+	maintLevelP95DriftMax: number;
+	maintChildrenP95DriftMax: number;
 
 	overheadFactorData: number;
 	controlBpp: number;
@@ -386,6 +402,10 @@ export const resolveFanoutTreeSimParams = (
 		assertAttachP95Ms: Number(input.assertAttachP95Ms ?? 0),
 		assertMaxTreeLevelP95: Number(input.assertMaxTreeLevelP95 ?? 0),
 		assertMaxFormationScore: Number(input.assertMaxFormationScore ?? 0),
+		assertMaxOrphans: Number(input.assertMaxOrphans ?? 0),
+		assertRecoveryP95Ms: Number(input.assertRecoveryP95Ms ?? 0),
+		assertMaxReparentsPerMin: Number(input.assertMaxReparentsPerMin ?? 0),
+		assertMaxOrphanArea: Number(input.assertMaxOrphanArea ?? 0),
 	};
 };
 
@@ -397,11 +417,16 @@ export const formatFanoutTreeSimResult = (r: FanoutTreeSimResult) => {
 		`joined=${r.joinedCount}/${r.subscriberCount} (${r.joinedPct.toFixed(2)}%)`,
 		`join: ${(r.joinMs / 1000).toFixed(3)}s`,
 		`attachMs samples=${r.attachSamples} p50=${r.attachP50.toFixed(1)} p95=${r.attachP95.toFixed(1)} p99=${r.attachP99.toFixed(1)} max=${r.attachMax.toFixed(1)}`,
-		`formationPaths: underlayEdges=${r.formationUnderlayEdges} dist(p95/max)=${r.formationUnderlayDistP95.toFixed(1)}/${r.formationUnderlayDistMax.toFixed(1)} stretch(p95/max)=${r.formationStretchP95.toFixed(2)}/${r.formationStretchMax.toFixed(2)} score=${r.formationScore.toFixed(2)}`,
-		`formationTree: maxLevel=${r.formationTreeMaxLevel} p95Level=${r.formationTreeLevelP95.toFixed(1)} avgLevel=${r.formationTreeLevelAvg.toFixed(2)} orphans=${r.formationTreeOrphans} rootChildren=${r.formationTreeRootChildren} children(p95/max)=${r.formationTreeChildrenP95.toFixed(1)}/${r.formationTreeChildrenMax}`,
-		`publish: ${(r.publishMs / 1000).toFixed(3)}s intervalMs=${p.intervalMs}`,
-			`churn: everyMs=${p.churnEveryMs} downMs=${p.churnDownMs} fraction=${p.churnFraction} events=${r.churnEvents} peers=${r.churnedPeersTotal}`,
-			`delivered=${r.delivered}/${r.expected} (${r.deliveredPct.toFixed(2)}%) dup=${r.duplicates}`,
+			`formationPaths: underlayEdges=${r.formationUnderlayEdges} dist(p95/max)=${r.formationUnderlayDistP95.toFixed(1)}/${r.formationUnderlayDistMax.toFixed(1)} stretch(p95/max)=${r.formationStretchP95.toFixed(2)}/${r.formationStretchMax.toFixed(2)} score=${r.formationScore.toFixed(2)}`,
+			`formationTree: maxLevel=${r.formationTreeMaxLevel} p95Level=${r.formationTreeLevelP95.toFixed(1)} avgLevel=${r.formationTreeLevelAvg.toFixed(2)} orphans=${r.formationTreeOrphans} rootChildren=${r.formationTreeRootChildren} children(p95/max)=${r.formationTreeChildrenP95.toFixed(1)}/${r.formationTreeChildrenMax}`,
+			`publish: ${(r.publishMs / 1000).toFixed(3)}s intervalMs=${p.intervalMs}`,
+				`churn: everyMs=${p.churnEveryMs} downMs=${p.churnDownMs} fraction=${p.churnFraction} events=${r.churnEvents} peers=${r.churnedPeersTotal}`,
+				...(r.maintSamples > 0
+					? [
+							`maintenance: maxOrphans=${r.maintMaxOrphans} orphanArea=${r.maintOrphanArea.toFixed(1)}s recoveryMs p50=${r.maintRecoveryP50Ms.toFixed(1)} p95=${r.maintRecoveryP95Ms.toFixed(1)} reparentsPerMin=${r.maintReparentsPerMin.toFixed(2)} flapMax=${r.maintMaxReparentsPerPeer} driftP95(level/children)=${r.maintLevelP95DriftMax.toFixed(1)}/${r.maintChildrenP95DriftMax.toFixed(1)}`,
+						]
+					: []),
+				`delivered=${r.delivered}/${r.expected} (${r.deliveredPct.toFixed(2)}%) dup=${r.duplicates}`,
 			p.deadlineMs > 0
 				? `deadline=${p.deadlineMs}ms${p.maxDataAgeMs > 0 ? ` maxAgeMs=${p.maxDataAgeMs}` : ""} delivered=${r.deliveredWithinDeadline}/${r.expected} (${r.deliveredWithinDeadlinePct.toFixed(2)}%)`
 				: `deadline=off${p.maxDataAgeMs > 0 ? ` maxAgeMs=${p.maxDataAgeMs}` : ""}`,
@@ -810,6 +835,30 @@ export const runFanoutTreeSim = async (
 			};
 			let churnEvents = 0;
 			let churnedPeersTotal = 0;
+			const wantsMaintenance =
+				(params.churnEveryMs > 0 && params.churnDownMs > 0 && params.churnFraction > 0) ||
+				params.assertMaxOrphans > 0 ||
+				params.assertMaxOrphanArea > 0 ||
+				params.assertRecoveryP95Ms > 0 ||
+				params.assertMaxReparentsPerMin > 0;
+			const maintenanceController = new AbortController();
+			const maintenanceSignal = anySignal([
+				timeoutSignal,
+				maintenanceController.signal,
+			]) as AbortSignal & {
+				clear?: () => void;
+			};
+			let maintDurationMs = 0;
+			let maintSamples = 0;
+			let maintMaxOrphans = 0;
+			let maintOrphanAreaMs = 0;
+			const pendingRecoveryStarts: number[] = [];
+			const recoveryDurations: number[] = [];
+			let maintLevelP95DriftMax = 0;
+			let maintChildrenP95DriftMax = 0;
+			const reparentBaselineByHash = new Map<string, number>();
+			let maintReparentsTotal = 0;
+			let maintMaxReparentsPerPeer = 0;
 
 			// Delivery tracking
 			const publishAt = new Map<number, number>();
@@ -878,6 +927,151 @@ export const runFanoutTreeSim = async (
 			const payload = new Uint8Array(Math.max(0, params.msgSize));
 			for (let i = 0; i < payload.length; i++) payload[i] = i & 0xff;
 
+			const quantileFromCounts = (
+				counts: number[],
+				maxValue: number,
+				total: number,
+				q: number,
+			) => {
+				if (total <= 0) return 0;
+				const target = Math.min(
+					total - 1,
+					Math.max(0, Math.floor(q * (total - 1))),
+				);
+				let seen = 0;
+				for (let v = 0; v <= maxValue; v++) {
+					seen += counts[v] ?? 0;
+					if (seen > target) return v;
+				}
+				return maxValue;
+			};
+
+			const levelCounts: number[] = [];
+			const childCounts: number[] = [];
+			const sampleMaintenance = (now: number) => {
+				let onlineJoined = 0;
+				let orphansOnline = 0;
+
+				let levelsTotal = 0;
+				let levelsMax = 0;
+				levelCounts.fill(0);
+				let childrenTotal = 0;
+				let childrenMax = 0;
+				childCounts.fill(0);
+
+				for (const idx of joinedSubscriberIndices) {
+					const peer = session.peers[idx]!;
+					if (network.isPeerOffline(peer.peerId, now)) continue;
+					onlineJoined += 1;
+
+					const s = peer.services.fanout.getChannelStats(params.topic, rootId);
+					if (!s) {
+						orphansOnline += 1;
+						continue;
+					}
+
+					if (Number.isFinite(s.level)) {
+						const lvl = Math.max(0, Math.floor(s.level));
+						levelsMax = Math.max(levelsMax, lvl);
+						while (levelCounts.length <= lvl) levelCounts.push(0);
+						levelCounts[lvl] = (levelCounts[lvl] ?? 0) + 1;
+						levelsTotal += 1;
+					}
+					if (s.effectiveMaxChildren > 0) {
+						const c = Math.max(0, Math.floor(s.children));
+						childrenMax = Math.max(childrenMax, c);
+						while (childCounts.length <= c) childCounts.push(0);
+						childCounts[c] = (childCounts[c] ?? 0) + 1;
+						childrenTotal += 1;
+					}
+
+					if (s.level > 0 && !s.parent) {
+						orphansOnline += 1;
+					}
+				}
+
+				const levelP95 =
+					levelsTotal > 0
+						? quantileFromCounts(levelCounts, levelsMax, levelsTotal, 0.95)
+						: NaN;
+				const childrenP95 =
+					childrenTotal > 0
+						? quantileFromCounts(childCounts, childrenMax, childrenTotal, 0.95)
+						: NaN;
+
+				return {
+					onlineJoined,
+					orphansOnline,
+					levelP95,
+					childrenP95,
+				};
+			};
+
+			const maintenanceLoop = async () => {
+				if (!wantsMaintenance) return;
+				const sampleEveryMs = Math.max(
+					100,
+					Math.min(1_000, Math.floor(params.nodes / 10)),
+				);
+
+				const baselineOrphans = formationTree.treeOrphans;
+				const baselineLevelP95 = formationTree.treeLevelP95;
+				const baselineChildrenP95 = formationTree.treeChildrenP95;
+
+				let lastAt = Date.now();
+				let lastOrphans = 0;
+				const startAt = lastAt;
+				try {
+					for (;;) {
+						if (maintenanceSignal.aborted) return;
+						const now = Date.now();
+						const dt = Math.max(0, now - lastAt);
+						if (dt > 0) {
+							maintOrphanAreaMs += lastOrphans * dt;
+						}
+						lastAt = now;
+
+						const snap = sampleMaintenance(now);
+						lastOrphans = snap.orphansOnline;
+						maintMaxOrphans = Math.max(maintMaxOrphans, snap.orphansOnline);
+						maintSamples += 1;
+
+						if (Number.isFinite(snap.levelP95)) {
+							maintLevelP95DriftMax = Math.max(
+								maintLevelP95DriftMax,
+								Math.abs(snap.levelP95 - baselineLevelP95),
+							);
+						}
+						if (Number.isFinite(snap.childrenP95)) {
+							maintChildrenP95DriftMax = Math.max(
+								maintChildrenP95DriftMax,
+								Math.abs(snap.childrenP95 - baselineChildrenP95),
+							);
+						}
+
+						if (
+							snap.orphansOnline <= baselineOrphans &&
+							pendingRecoveryStarts.length > 0
+						) {
+							for (const s of pendingRecoveryStarts) recoveryDurations.push(now - s);
+							pendingRecoveryStarts.length = 0;
+						}
+
+						await delay(sampleEveryMs, { signal: maintenanceSignal });
+					}
+				} finally {
+					const endAt = Date.now();
+					const dt = Math.max(0, endAt - lastAt);
+					if (dt > 0) {
+						maintOrphanAreaMs += lastOrphans * dt;
+					}
+					maintDurationMs = Math.max(0, endAt - startAt);
+
+					for (const s of pendingRecoveryStarts) recoveryDurations.push(endAt - s);
+					pendingRecoveryStarts.length = 0;
+				}
+			};
+
 			const churnLoop = async () => {
 				const everyMs = Math.max(0, Math.floor(params.churnEveryMs));
 				const downMs = Math.max(0, Math.floor(params.churnDownMs));
@@ -905,20 +1099,32 @@ export const runFanoutTreeSim = async (
 					if (chosen.size === 0) continue;
 
 					churnEvents += 1;
-					churnedPeersTotal += chosen.size;
+						churnedPeersTotal += chosen.size;
 
-					const now = Date.now();
-					await Promise.all(
-						[...chosen].map(async (idx) => {
-							const peer = session.peers[idx]!;
-							network.setPeerOffline(peer.peerId, downMs, now);
+						const now = Date.now();
+						if (wantsMaintenance) pendingRecoveryStarts.push(now);
+						await Promise.all(
+							[...chosen].map(async (idx) => {
+								const peer = session.peers[idx]!;
+								network.setPeerOffline(peer.peerId, downMs, now);
 							await network.disconnectPeer(peer.peerId);
 						}),
 					);
 				}
-			};
+				};
 
 			const publishStart = Date.now();
+			if (wantsMaintenance) {
+				for (const p of session.peers) {
+					const nodeHash = p.services.fanout.publicKeyHash;
+					const m = p.services.fanout.getChannelMetrics(params.topic, rootId);
+					reparentBaselineByHash.set(
+						nodeHash,
+						m.reparentDisconnect + m.reparentStale + m.reparentKicked,
+					);
+				}
+			}
+			const maintenancePromise = maintenanceLoop().catch(() => {});
 			const churnPromise = churnLoop().catch(() => {});
 			try {
 				for (let seq = 0; seq < params.messages; seq++) {
@@ -946,6 +1152,32 @@ export const runFanoutTreeSim = async (
 			if (params.settleMs > 0) {
 				await delay(params.settleMs, { signal: timeoutSignal });
 			}
+			maintenanceController.abort();
+			await maintenancePromise;
+			maintenanceSignal.clear?.();
+
+			recoveryDurations.sort((a, b) => a - b);
+			const maintRecoveryCount = recoveryDurations.length;
+			const maintRecoveryP50Ms =
+				maintRecoveryCount > 0 ? quantile(recoveryDurations, 0.5) : 0;
+			const maintRecoveryP95Ms =
+				maintRecoveryCount > 0 ? quantile(recoveryDurations, 0.95) : 0;
+
+			if (wantsMaintenance) {
+				for (const p of session.peers) {
+					const nodeHash = p.services.fanout.publicKeyHash;
+					const m = p.services.fanout.getChannelMetrics(params.topic, rootId);
+					const total = m.reparentDisconnect + m.reparentStale + m.reparentKicked;
+					const base = reparentBaselineByHash.get(nodeHash) ?? 0;
+					const delta = Math.max(0, total - base);
+					maintReparentsTotal += delta;
+					maintMaxReparentsPerPeer = Math.max(maintMaxReparentsPerPeer, delta);
+				}
+			}
+			const maintDurationMin = maintDurationMs / 60_000;
+			const maintReparentsPerMin =
+				maintDurationMin > 0 ? maintReparentsTotal / maintDurationMin : 0;
+			const maintOrphanArea = maintOrphanAreaMs / 1_000;
 
 			// Compute delivery
 			const expected = joinedCount * params.messages;
@@ -1216,12 +1448,23 @@ export const runFanoutTreeSim = async (
 					streamQueuedBytesMax,
 					streamQueuedBytesP95,
 					streamQueuedBytesMaxNode,
-					streamQueuedBytesByLane,
-					churnEvents,
-					churnedPeersTotal,
-					overheadFactorData,
-					controlBpp,
-					trackerBpp,
+						streamQueuedBytesByLane,
+						churnEvents,
+						churnedPeersTotal,
+						maintDurationMs,
+						maintSamples,
+						maintMaxOrphans,
+						maintOrphanArea,
+						maintRecoveryCount,
+						maintRecoveryP50Ms,
+						maintRecoveryP95Ms,
+						maintReparentsPerMin,
+						maintMaxReparentsPerPeer,
+						maintLevelP95DriftMax,
+						maintChildrenP95DriftMax,
+						overheadFactorData,
+						controlBpp,
+						trackerBpp,
 					repairBpp,
 					earningsTotal,
 					earningsRelayCount,

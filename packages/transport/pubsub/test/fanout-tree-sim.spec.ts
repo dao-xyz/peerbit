@@ -95,6 +95,10 @@ describe("fanout-tree-sim (ci)", () => {
 			result.deliveredPct < 95 ||
 			result.deliveredWithinDeadlinePct < 95 ||
 			result.overheadFactorData > 2.2 ||
+			result.maintMaxOrphans > 10 ||
+			result.maintOrphanArea > 30 ||
+			result.maintRecoveryP95Ms > 6_000 ||
+			result.maintReparentsPerMin > 500 ||
 			result.attachP95 > 10_000 ||
 			result.treeLevelP95 > 8 ||
 			result.formationScore > 30 ||
@@ -112,6 +116,12 @@ describe("fanout-tree-sim (ci)", () => {
 		expect(result.attachP95).to.be.lessThan(10_000);
 		expect(result.treeLevelP95).to.be.lessThan(8);
 		expect(result.formationTreeOrphans).to.equal(0);
+		expect(result.maintSamples).to.be.greaterThan(0);
+		expect(result.maintMaxOrphans).to.be.lessThan(10);
+		expect(result.maintOrphanArea).to.be.lessThan(30);
+		expect(result.maintRecoveryCount).to.equal(result.churnEvents);
+		expect(result.maintRecoveryP95Ms).to.be.lessThan(6_000);
+		expect(result.maintReparentsPerMin).to.be.lessThan(500);
 		expect(Number.isFinite(result.formationStretchP95)).to.equal(true);
 		expect(Number.isFinite(result.formationUnderlayDistP95)).to.equal(true);
 		expect(result.formationUnderlayEdges).to.be.greaterThan(0);
