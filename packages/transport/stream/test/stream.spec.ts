@@ -186,29 +186,27 @@ const collectMetrics = (session: TestSession<any>) => {
 	return streams;
 };
 
-class TestDirectStream extends DirectStream {
-	constructor(
-		components: DirectStreamComponents,
-		options: {
-			id?: string;
-			connectionManager?: ConnectionManagerArguments;
-			seekTimeout?: number;
-			routeSeekInterval?: number;
-			routeMaxRetentionPeriod?: number;
-			inboundIdleTimeout?: number;
-			maxInboundStreams?: number;
-		} = {},
-	) {
+	class TestDirectStream extends DirectStream {
+		constructor(
+			components: DirectStreamComponents,
+			options: {
+				id?: string;
+				connectionManager?: ConnectionManagerArguments;
+				seekTimeout?: number;
+				routeMaxRetentionPeriod?: number;
+				inboundIdleTimeout?: number;
+				maxInboundStreams?: number;
+			} = {},
+		) {
 		super(components, [options.id || "/test/0.0.0"], {
-			canRelayMessage: true,
-			connectionManager: options.connectionManager,
-			seekTimeout: options.seekTimeout,
-			routeSeekInterval: options.routeSeekInterval,
-			routeMaxRetentionPeriod: options.routeMaxRetentionPeriod,
-			inboundIdleTimeout: options.inboundIdleTimeout,
-			maxInboundStreams: options.maxInboundStreams,
-			...options,
-		});
+				canRelayMessage: true,
+				connectionManager: options.connectionManager,
+				seekTimeout: options.seekTimeout,
+				routeMaxRetentionPeriod: options.routeMaxRetentionPeriod,
+				inboundIdleTimeout: options.inboundIdleTimeout,
+				maxInboundStreams: options.maxInboundStreams,
+				...options,
+			});
 	}
 
 	public async __testOnPeerDisconnected(peerId: PeerId, conn?: Connection) {
@@ -332,14 +330,13 @@ describe("streams", function () {
 			beforeEach(async () => {
 				// 0 and 2 not connected
 				session = await disconnected(4, {
-					services: {
-						directstream: (c) =>
-							new TestDirectStream(c, {
-								connectionManager: false,
-								routeSeekInterval: Number.MAX_SAFE_INTEGER, //  disable auto seek so we can control routing changes manually
-							}),
-					},
-				});
+						services: {
+							directstream: (c) =>
+								new TestDirectStream(c, {
+									connectionManager: false,
+								}),
+						},
+					});
 
 				/* 
 				┌─┐
@@ -724,14 +721,13 @@ describe("streams", function () {
 						streams[1].messages.filter((x) => x instanceof DataMessage),
 					).to.be.empty; // Because shortest route is 0 -> 2 -> 3
 				expect(streams[1].stream.routes.count()).equal(2);
-			});
-
-			it("will not unecessarely seek", async () => {
-				streams[0].stream.routeSeekInterval = 1000;
-				await streams[0].stream.publish(crypto.randomBytes(1e2), {
-					to: [streams[1].stream.components.peerId],
 				});
-				await delay(1000);
+
+				it("will not unecessarely seek", async () => {
+					await streams[0].stream.publish(crypto.randomBytes(1e2), {
+						to: [streams[1].stream.components.peerId],
+					});
+					await delay(1000);
 				for (let i = 0; i < 10; i++) {
 					await streams[0].stream.publish(crypto.randomBytes(1e2), {
 						to: [streams[1].stream.components.peerId],
@@ -1359,14 +1355,13 @@ describe("streams", function () {
 						await waitForResolved(() =>
 							expect(streams[1].stream.routes.countAll()).equal(3),
 						);
-						await waitForResolved(() =>
-							expect(streams[2].stream.routes.countAll()).equal(3),
-						);
+							await waitForResolved(() =>
+								expect(streams[2].stream.routes.countAll()).equal(3),
+							);
 
-						streams[0].stream.routeSeekInterval = Number.MAX_VALUE; // disable seek so that we can check that the right amount of messages are sent below
-						streams[1].received = [];
-						streams[2].received = [];
-						const allWrites = streams.map((x) => collectDataWrites(x.stream));
+							streams[1].received = [];
+							streams[2].received = [];
+							const allWrites = streams.map((x) => collectDataWrites(x.stream));
 
 						// expect the data to be sent smartly
 						for (let i = 0; i < totalWrites; i++) {
@@ -1539,17 +1534,13 @@ describe("streams", function () {
 						streams[4].received = [];
 						/* 	streams[3].messages = [];
 							streams[4].messages = []; */
-						streams[3].processed.clear();
-						streams[4].processed.clear();
+							streams[3].processed.clear();
+							streams[4].processed.clear();
 
-						streams.forEach(
-							(x) => (x.stream.routeSeekInterval = Number.MAX_SAFE_INTEGER),
-						);
-
-						for (let i = 0; i < totalWrites; i++) {
-							streams[0].stream.publish(data, {
-								mode: new SilentDelivery({
-									redundancy: 1,
+							for (let i = 0; i < totalWrites; i++) {
+								streams[0].stream.publish(data, {
+									mode: new SilentDelivery({
+										redundancy: 1,
 									to: [
 										streams[3].stream.publicKeyHash,
 										streams[4].stream.publicKeyHash,

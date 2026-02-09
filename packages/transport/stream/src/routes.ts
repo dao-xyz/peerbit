@@ -1,6 +1,8 @@
-import { AbortError, delay } from "@peerbit/time";
-
 export const MAX_ROUTE_DISTANCE = Number.MAX_SAFE_INTEGER - 1;
+
+const DEFAULT_MAX_FROM_ENTRIES = 2048;
+const DEFAULT_MAX_TARGETS_PER_FROM = 10_000;
+const DEFAULT_MAX_RELAYS_PER_TARGET = 32;
 
 type RelayInfo = {
 	session: number;
@@ -44,17 +46,103 @@ export class Routes {
 
 	signal?: AbortSignal;
 
+	private pendingCleanupByFrom: Map<string, Set<string>> = new Map();
+	private cleanupTimer?: ReturnType<typeof setTimeout>;
+	private maxFromEntries: number;
+	private maxTargetsPerFrom: number;
+	private maxRelaysPerTarget: number;
+
 	constructor(
 		readonly me: string,
-		options?: { routeMaxRetentionPeriod?: number; signal?: AbortSignal },
+		options?: {
+			routeMaxRetentionPeriod?: number;
+			signal?: AbortSignal;
+			maxFromEntries?: number;
+			maxTargetsPerFrom?: number;
+			maxRelaysPerTarget?: number;
+		},
 	) {
 		this.routeMaxRetentionPeriod =
 			options?.routeMaxRetentionPeriod ?? 10 * 1000;
 		this.signal = options?.signal;
+		this.maxFromEntries = Math.max(
+			1,
+			Math.floor(options?.maxFromEntries ?? DEFAULT_MAX_FROM_ENTRIES),
+		);
+		this.maxTargetsPerFrom = Math.max(
+			1,
+			Math.floor(options?.maxTargetsPerFrom ?? DEFAULT_MAX_TARGETS_PER_FROM),
+		);
+		this.maxRelaysPerTarget = Math.max(
+			1,
+			Math.floor(options?.maxRelaysPerTarget ?? DEFAULT_MAX_RELAYS_PER_TARGET),
+		);
 	}
 
 	clear() {
 		this.routes.clear();
+		this.pendingCleanupByFrom.clear();
+		if (this.cleanupTimer) clearTimeout(this.cleanupTimer);
+		this.cleanupTimer = undefined;
+	}
+
+	private requestCleanup(from: string, to: string) {
+		if (this.signal?.aborted) return;
+		let targets = this.pendingCleanupByFrom.get(from);
+		if (!targets) {
+			targets = new Set<string>();
+			this.pendingCleanupByFrom.set(from, targets);
+		}
+		targets.add(to);
+
+		// Coalesce cleanups into a single timer. The previous per-update timer approach
+		// scales poorly in large networks and can OOM in single-process simulations.
+		if (this.cleanupTimer) return;
+		this.cleanupTimer = setTimeout(() => {
+			this.cleanupTimer = undefined;
+			const pending = this.pendingCleanupByFrom;
+			this.pendingCleanupByFrom = new Map();
+			for (const [fromKey, tos] of pending) {
+				for (const toKey of tos) {
+					this.cleanup(fromKey, toKey);
+				}
+			}
+		}, this.routeMaxRetentionPeriod + 100);
+	}
+
+	private pruneFromMaps() {
+		if (this.routes.size <= this.maxFromEntries) return;
+
+		// Keep `me` pinned: local routes are used for pruning decisions and should be
+		// the last thing we evict under memory pressure.
+		while (this.routes.size > this.maxFromEntries) {
+			const oldest = this.routes.keys().next().value as string | undefined;
+			if (!oldest) return;
+			if (oldest === this.me) {
+				const selfMap = this.routes.get(oldest);
+				if (!selfMap) {
+					this.routes.delete(oldest);
+					continue;
+				}
+				// Move to the end (most recently used) and continue eviction.
+				this.routes.delete(oldest);
+				this.routes.set(oldest, selfMap);
+				continue;
+			}
+			this.routes.delete(oldest);
+		}
+	}
+
+	private pruneTargets(from: string, fromMap: Map<string, RouteInfo>) {
+		if (fromMap.size <= this.maxTargetsPerFrom) return;
+		while (fromMap.size > this.maxTargetsPerFrom) {
+			const oldestTarget = fromMap.keys().next().value as string | undefined;
+			if (!oldestTarget) break;
+			fromMap.delete(oldestTarget);
+		}
+		if (fromMap.size === 0) {
+			this.routes.delete(from);
+		}
 	}
 
 	private cleanup(from: string, to: string) {
@@ -71,6 +159,10 @@ export class Routes {
 					} else {
 						keepRoutes.push(route);
 					}
+				}
+
+				if (keepRoutes.length > this.maxRelaysPerTarget) {
+					keepRoutes.length = this.maxRelaysPerTarget;
 				}
 
 				if (keepRoutes.length > 0) {
@@ -96,6 +188,10 @@ export class Routes {
 		if (!fromMap) {
 			fromMap = new Map();
 			this.routes.set(from, fromMap);
+		} else {
+			// LRU-touch the `from` map.
+			this.routes.delete(from);
+			this.routes.set(from, fromMap);
 		}
 
 		let prev = fromMap.get(target);
@@ -105,6 +201,10 @@ export class Routes {
 
 		if (!prev) {
 			prev = { session, remoteSession, list: [] as RelayInfo[] };
+			fromMap.set(target, prev);
+		} else {
+			// LRU-touch the target entry.
+			fromMap.delete(target);
 			fromMap.set(target, prev);
 		}
 
@@ -127,20 +227,6 @@ export class Routes {
 
 		prev.session = Math.max(session, prev.session);
 
-		const scheduleCleanup = () => {
-			return delay(this.routeMaxRetentionPeriod + 100, { signal: this.signal })
-				.then(() => {
-					this.cleanup(from, target);
-				})
-				.catch((e) => {
-					if (e instanceof AbortError) {
-						// skip
-						return;
-					}
-					throw e;
-				});
-		};
-
 		// Update routes and cleanup all old routes that are older than latest session - some threshold
 		if (isNewSession) {
 			// Mark previous routes as old
@@ -156,10 +242,10 @@ export class Routes {
 
 			// Initiate cleanup
 			if (distance !== -1 && foundNodeToExpire) {
-				scheduleCleanup();
+				this.requestCleanup(from, target);
 			}
 		} else if (isOldSession) {
-			scheduleCleanup();
+			this.requestCleanup(from, target);
 		}
 
 		// Modify list for new/update route
@@ -173,10 +259,20 @@ export class Routes {
 						route.session = session;
 						route.expireAt = undefined; // remove expiry since we updated
 						sortRoutes(prev.list);
+						if (prev.list.length > this.maxRelaysPerTarget) {
+							prev.list.length = this.maxRelaysPerTarget;
+						}
+						this.pruneTargets(from, fromMap);
+						this.pruneFromMaps();
 						return isNewRemoteSession ? "restart" : "updated";
 					} else if (route.distance === distance) {
 						route.session = session;
 						route.expireAt = undefined; // remove expiry since we updated
+						if (prev.list.length > this.maxRelaysPerTarget) {
+							prev.list.length = this.maxRelaysPerTarget;
+						}
+						this.pruneTargets(from, fromMap);
+						this.pruneFromMaps();
 						return isNewRemoteSession ? "restart" : "updated";
 					}
 				}
@@ -199,7 +295,13 @@ export class Routes {
 					: undefined,
 			});
 			sortRoutes(prev.list);
+			if (prev.list.length > this.maxRelaysPerTarget) {
+				prev.list.length = this.maxRelaysPerTarget;
+			}
 		}
+
+		this.pruneTargets(from, fromMap);
+		this.pruneFromMaps();
 
 		return exist ? (isNewRemoteSession ? "restart" : "updated") : "new";
 	}

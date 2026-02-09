@@ -171,8 +171,6 @@ const DEFAULT_MAX_CONNECTIONS = 300;
 
 const DEFAULT_PRUNED_CONNNECTIONS_TIMEOUT = 30 * 1000;
 
-const ROUTE_UPDATE_DELAY_FACTOR = 3e4;
-
 const DEFAULT_CREATE_OUTBOUND_STREAM_TIMEOUT = 30_000;
 
 const PRIORITY_LANES = 4;
@@ -855,9 +853,17 @@ export type DirectStreamOptions = {
 	maxOutboundStreams?: number;
 	inboundIdleTimeout?: number; // override PeerStreams.INBOUND_IDLE_MS
 	connectionManager?: ConnectionManagerArguments;
-	routeSeekInterval?: number;
 	seekTimeout?: number;
 	routeMaxRetentionPeriod?: number;
+	/**
+	 * Best-effort bounds for the per-process route cache. These exist to prevent
+	 * unbounded memory growth in large networks/simulations.
+	 */
+	routeCacheMaxFromEntries?: number;
+	routeCacheMaxTargetsPerFrom?: number;
+	routeCacheMaxRelaysPerTarget?: number;
+	seenCacheMax?: number;
+	seenCacheTtlMs?: number;
 };
 
 type ConnectionManagerLike = {
@@ -892,11 +898,11 @@ export type PublishOptions = (WithMode | WithTo) &
 	WithExtraSigners;
 
 export abstract class DirectStream<
-		Events extends { [s: string]: any } = StreamEvents,
-	>
-	extends TypedEventEmitter<Events>
-	implements WaitForPeer, PublicKeyFromHashResolver
-{
+			Events extends { [s: string]: any } = StreamEvents,
+		>
+		extends TypedEventEmitter<Events>
+		implements WaitForPeer, PublicKeyFromHashResolver
+	{
 	public peerId: PeerId;
 	public publicKey: PublicSignKey;
 	public publicKeyHash: string;
@@ -927,21 +933,24 @@ export abstract class DirectStream<
 	connectionManagerOptions: ConnectionManagerOptions;
 	private recentDials?: Cache<string>;
 	private healthChecks: Map<string, ReturnType<typeof setTimeout>>;
-	private pruneConnectionsTimeout: ReturnType<typeof setInterval>;
-	private prunedConnectionsCache?: Cache<string>;
-	private routeMaxRetentionPeriod: number;
+		private pruneConnectionsTimeout: ReturnType<typeof setInterval>;
+		private prunedConnectionsCache?: Cache<string>;
+		private pruneToLimitsInFlight?: Promise<void>;
+		private routeMaxRetentionPeriod: number;
+		private routeCacheMaxFromEntries?: number;
+		private routeCacheMaxTargetsPerFrom?: number;
+		private routeCacheMaxRelaysPerTarget?: number;
 
 	// for sequential creation of outbound streams
-	public outboundInflightQueue: Pushable<{
-		connection: Connection;
-		peerId: PeerId;
-	}>;
+		public outboundInflightQueue: Pushable<{
+			connection: Connection;
+			peerId: PeerId;
+		}>;
 
-	routeSeekInterval: number;
-	seekTimeout: number;
-	closeController: AbortController;
-	session: number;
-	_outboundPump: ReturnType<typeof pipe> | undefined;
+		seekTimeout: number;
+		closeController: AbortController;
+		session: number;
+		_outboundPump: ReturnType<typeof pipe> | undefined;
 
 	private _ackCallbacks: Map<
 		string,
@@ -965,14 +974,18 @@ export abstract class DirectStream<
 		const {
 			canRelayMessage = true,
 			messageProcessingConcurrency = 10,
-			maxInboundStreams,
-			maxOutboundStreams,
-			connectionManager,
-			routeSeekInterval = ROUTE_UPDATE_DELAY_FACTOR,
-			seekTimeout = SEEK_DELIVERY_TIMEOUT,
-			routeMaxRetentionPeriod = ROUTE_MAX_RETANTION_PERIOD,
-			inboundIdleTimeout,
-		} = options || {};
+				maxInboundStreams,
+				maxOutboundStreams,
+				connectionManager,
+					seekTimeout = SEEK_DELIVERY_TIMEOUT,
+					routeMaxRetentionPeriod = ROUTE_MAX_RETANTION_PERIOD,
+					routeCacheMaxFromEntries,
+					routeCacheMaxTargetsPerFrom,
+				routeCacheMaxRelaysPerTarget,
+				seenCacheMax = 1e6,
+				seenCacheTtlMs = 10 * 60 * 1e3,
+				inboundIdleTimeout,
+			} = options || {};
 
 		const signKey = getKeypairFromPrivateKey(components.privateKey);
 		this.seekTimeout = seekTimeout;
@@ -986,19 +999,24 @@ export abstract class DirectStream<
 		this.publicKeyHash = signKey.publicKey.hashcode();
 		this.multicodecs = multicodecs;
 		this.started = false;
-		this.peers = new Map<string, PeerStreams>();
-		this.canRelayMessage = canRelayMessage;
-		this.healthChecks = new Map();
-		this.routeSeekInterval = routeSeekInterval;
-		this.queue = new Queue({ concurrency: messageProcessingConcurrency });
-		this.maxInboundStreams = maxInboundStreams;
-		this.maxOutboundStreams = maxOutboundStreams;
-		this.seenCache = new Cache({ max: 1e6, ttl: 10 * 60 * 1e3 });
-		this.routeMaxRetentionPeriod = routeMaxRetentionPeriod;
-		this.peerKeyHashToPublicKey = new Map();
-		this._onIncomingStream = this._onIncomingStream.bind(this);
-		this.onPeerConnected = this.onPeerConnected.bind(this);
-		this.onPeerDisconnected = this.onPeerDisconnected.bind(this);
+			this.peers = new Map<string, PeerStreams>();
+			this.canRelayMessage = canRelayMessage;
+			this.healthChecks = new Map();
+			this.queue = new Queue({ concurrency: messageProcessingConcurrency });
+			this.maxInboundStreams = maxInboundStreams;
+			this.maxOutboundStreams = maxOutboundStreams;
+			this.seenCache = new Cache({
+				max: Math.max(1, Math.floor(seenCacheMax)),
+				ttl: Math.max(1, Math.floor(seenCacheTtlMs)),
+			});
+			this.routeMaxRetentionPeriod = routeMaxRetentionPeriod;
+			this.routeCacheMaxFromEntries = routeCacheMaxFromEntries;
+			this.routeCacheMaxTargetsPerFrom = routeCacheMaxTargetsPerFrom;
+			this.routeCacheMaxRelaysPerTarget = routeCacheMaxRelaysPerTarget;
+			this.peerKeyHashToPublicKey = new Map();
+			this._onIncomingStream = this._onIncomingStream.bind(this);
+			this.onPeerConnected = this.onPeerConnected.bind(this);
+			this.onPeerDisconnected = this.onPeerDisconnected.bind(this);
 
 		this._ackCallbacks = new Map();
 
@@ -1039,13 +1057,42 @@ export abstract class DirectStream<
 				})
 			: undefined;
 
-		this.prunedConnectionsCache = this.connectionManagerOptions.pruner
-			? new Cache({
-					max: 1e6,
-					ttl: this.connectionManagerOptions.pruner.connectionTimeout,
-				})
-			: undefined;
-	}
+			this.prunedConnectionsCache = this.connectionManagerOptions.pruner
+				? new Cache({
+						max: 1e6,
+						ttl: this.connectionManagerOptions.pruner.connectionTimeout,
+					})
+				: undefined;
+		}
+
+		private pruneConnectionsToLimits(): Promise<void> {
+			if (this.pruneToLimitsInFlight) {
+				return this.pruneToLimitsInFlight;
+			}
+			this.pruneToLimitsInFlight = (async () => {
+				// Respect minConnections as a hard floor.
+				const maxConnections = Math.max(
+					this.connectionManagerOptions.minConnections,
+					this.connectionManagerOptions.maxConnections,
+				);
+				if (this.peers.size <= maxConnections) {
+					return;
+				}
+
+				// Prune in batches so we can quickly recover from join storms without waiting
+				// for repeated pruner ticks. Bound work per run to avoid starving the event loop.
+				const maxPrunes = Math.min(256, Math.max(1, this.peers.size - maxConnections));
+				for (let i = 0; i < maxPrunes; i++) {
+					if (this.peers.size <= maxConnections) break;
+					const before = this.peers.size;
+					await this.pruneConnections();
+					if (this.peers.size >= before) break; // nothing prunable
+				}
+			})().finally(() => {
+				this.pruneToLimitsInFlight = undefined;
+			});
+			return this.pruneToLimitsInFlight;
+		}
 
 	async start() {
 		if (this.started) {
@@ -1133,10 +1180,13 @@ export abstract class DirectStream<
 			this.outboundInflightQueue.return();
 		});
 
-		this.routes = new Routes(this.publicKeyHash, {
-			routeMaxRetentionPeriod: this.routeMaxRetentionPeriod,
-			signal: this.closeController.signal,
-		});
+			this.routes = new Routes(this.publicKeyHash, {
+				routeMaxRetentionPeriod: this.routeMaxRetentionPeriod,
+				signal: this.closeController.signal,
+				maxFromEntries: this.routeCacheMaxFromEntries,
+				maxTargetsPerFrom: this.routeCacheMaxTargetsPerFrom,
+				maxRelaysPerTarget: this.routeCacheMaxRelaysPerTarget,
+			});
 
 		this.started = true;
 		this.stopping = false;
@@ -1539,11 +1589,11 @@ export abstract class DirectStream<
 	/**
 	 * Notifies the router that a peer has been connected
 	 */
-	addPeer(
-		peerId: PeerId,
-		publicKey: PublicSignKey,
-		protocol: string,
-		connId: string,
+		addPeer(
+			peerId: PeerId,
+			publicKey: PublicSignKey,
+			protocol: string,
+			connId: string,
 	): PeerStreams {
 		const publicKeyHash = publicKey.hashcode();
 
@@ -1591,17 +1641,23 @@ export abstract class DirectStream<
 			{ once: true },
 		);
 
-		this.addRouteConnection(
-			this.publicKeyHash,
-			publicKey.hashcode(),
-			publicKey,
-			-1,
-			+new Date(),
-			-1,
-		);
+			this.addRouteConnection(
+				this.publicKeyHash,
+				publicKey.hashcode(),
+				publicKey,
+				-1,
+				+new Date(),
+				-1,
+			);
 
-		return peerStreams;
-	}
+			// Enforce connection manager limits eagerly when new peers are added. Without this,
+			// join storms can create large temporary peer sets and OOM in single-process sims.
+			if (this.peers.size > this.connectionManagerOptions.maxConnections) {
+				void this.pruneConnectionsToLimits().catch(() => {});
+			}
+
+			return peerStreams;
+		}
 
 	/**
 	 * Notifies the router that a peer has been disconnected
@@ -2469,6 +2525,7 @@ export abstract class DirectStream<
 			throw new NotStartedError();
 		}
 
+		const isRelayed = relayed ?? from.hashcode() !== this.publicKeyHash;
 		let delivereyPromise: Promise<void> | undefined = undefined as any;
 
 		if (
@@ -2486,24 +2543,24 @@ export abstract class DirectStream<
 
 		if (
 			(message instanceof DataMessage || message instanceof Goodbye) &&
-			(message.header.mode instanceof AcknowledgeDelivery ||
-				message.header.mode instanceof AcknowledgeAnyWhere)
-		) {
-			const deliveryDeferredPromise = await this.createDeliveryPromise(
-				from,
-				message,
-				relayed,
-				signal,
-			);
-			delivereyPromise = deliveryDeferredPromise.promise;
-		}
+				(message.header.mode instanceof AcknowledgeDelivery ||
+					message.header.mode instanceof AcknowledgeAnyWhere)
+			) {
+				const deliveryDeferredPromise = await this.createDeliveryPromise(
+					from,
+					message,
+					isRelayed,
+					signal,
+				);
+				delivereyPromise = deliveryDeferredPromise.promise;
+			}
 
-		const bytes = message.bytes();
+			const bytes = message.bytes();
 
-		if (!relayed) {
-			const bytesArray = bytes instanceof Uint8Array ? bytes : bytes.subarray();
-			await this.modifySeenCache(bytesArray);
-		}
+			if (!isRelayed) {
+				const bytesArray = bytes instanceof Uint8Array ? bytes : bytes.subarray();
+				await this.modifySeenCache(bytesArray);
+			}
 
 		/**
 		 * For non SEEKing message delivery modes, use routing
@@ -2519,48 +2576,47 @@ export abstract class DirectStream<
 					return delivereyPromise; // we defintely know that we should not forward the message anywhere
 				}
 
-				const fanout = this.routes.getFanout(
-					from.hashcode(),
-					message.header.mode.to,
-					message.header.mode.redundancy,
-				);
+					const fanout = this.routes.getFanout(
+						from.hashcode(),
+						message.header.mode.to,
+						message.header.mode.redundancy,
+					);
 
-					if (fanout) {
-						if (fanout.size > 0) {
-							const promises: Promise<any>[] = [];
-							const usedNeighbours = new Set<string>();
-							const originalTo = message.header.mode.to;
-							for (const [neighbour, _distantPeers] of fanout) {
-								const stream = this.peers.get(neighbour);
-								if (!stream) continue;
-								if (message.header.mode instanceof SilentDelivery) {
-									message.header.mode.to = [..._distantPeers.keys()];
-									promises.push(
-										stream.waitForWrite(
-											message.bytes(),
-											message.header.priority,
-										),
-									);
-								} else {
-									promises.push(stream.waitForWrite(bytes, message.header.priority));
-								}
-								usedNeighbours.add(neighbour);
-							}
+					// If we have explicit routing information, send only along the chosen next-hops.
+					// If `fanout` is empty (no route info yet), fall through to the flooding logic below
+					// so acknowledged deliveries can discover/repair routes instead of timing out.
+					if (fanout && fanout.size > 0) {
+						const promises: Promise<any>[] = [];
+						const usedNeighbours = new Set<string>();
+						const originalTo = message.header.mode.to;
+						for (const [neighbour, _distantPeers] of fanout) {
+							const stream = this.peers.get(neighbour);
+							if (!stream) continue;
 							if (message.header.mode instanceof SilentDelivery) {
-								message.header.mode.to = originalTo;
+								message.header.mode.to = [..._distantPeers.keys()];
+								promises.push(
+									stream.waitForWrite(message.bytes(), message.header.priority),
+								);
+							} else {
+								promises.push(stream.waitForWrite(bytes, message.header.priority));
 							}
+							usedNeighbours.add(neighbour);
+						}
+						if (message.header.mode instanceof SilentDelivery) {
+							message.header.mode.to = originalTo;
+						}
 
-							// If the sender requested redundancy but we don't yet have enough distinct
-							// next-hops for the target(s), opportunistically probe additional neighbours.
-							// This replaces the previous "greedy fanout" probing behavior without needing
-							// a separate delivery mode.
-						if (
-							!relayed &&
-							message.header.mode instanceof AcknowledgeDelivery &&
-							usedNeighbours.size < message.header.mode.redundancy
-						) {
-							for (const [neighbour, stream] of this.peers) {
-								if (usedNeighbours.size >= message.header.mode.redundancy) {
+						// If the sender requested redundancy but we don't yet have enough distinct
+						// next-hops for the target(s), opportunistically probe additional neighbours.
+						// This replaces the previous "greedy fanout" probing behavior without needing
+						// a separate delivery mode.
+							if (
+								!isRelayed &&
+								message.header.mode instanceof AcknowledgeDelivery &&
+								usedNeighbours.size < message.header.mode.redundancy
+							) {
+								for (const [neighbour, stream] of this.peers) {
+									if (usedNeighbours.size >= message.header.mode.redundancy) {
 									break;
 								}
 								if (usedNeighbours.has(neighbour)) continue;
@@ -2573,19 +2629,16 @@ export abstract class DirectStream<
 						return delivereyPromise; // we are done sending the message in all direction with updates 'to' lists
 					}
 
-					return; // we defintely know that we should not forward the message anywhere
-				}
-
-					// If we don't have routing information:
-					// - For acknowledged deliveries, fall through to flooding (route discovery / repair).
-					// - For silent deliveries, relays should not flood (prevents unnecessary fanout); origin may still flood.
-					//   We still allow direct neighbour delivery to explicit recipients (if connected).
-					if (relayed && message.header.mode instanceof SilentDelivery) {
-						const promises: Promise<any>[] = [];
-						const originalTo = message.header.mode.to;
-						for (const recipient of originalTo) {
-							if (recipient === this.publicKeyHash) continue;
-							if (recipient === from.hashcode()) continue; // never send back to previous hop
+						// If we don't have routing information:
+						// - For acknowledged deliveries, fall through to flooding (route discovery / repair).
+						// - For silent deliveries, relays should not flood (prevents unnecessary fanout); origin may still flood.
+						//   We still allow direct neighbour delivery to explicit recipients (if connected).
+						if (isRelayed && message.header.mode instanceof SilentDelivery) {
+							const promises: Promise<any>[] = [];
+							const originalTo = message.header.mode.to;
+							for (const recipient of originalTo) {
+								if (recipient === this.publicKeyHash) continue;
+								if (recipient === from.hashcode()) continue; // never send back to previous hop
 							const stream = this.peers.get(recipient);
 							if (!stream) continue;
 							if (
@@ -2643,13 +2696,15 @@ export abstract class DirectStream<
 		}
 		await Promise.all(promises);
 
-		if (!sentOnce) {
-			if (!relayed) {
-				throw new DeliveryError("Message did not have any valid receivers");
+			if (!sentOnce) {
+				// If the caller provided an explicit peer list, treat "no valid receivers" as an error
+				// even when forwarding. This catches programming mistakes early and matches test expectations.
+				if (!isRelayed || to != null) {
+					throw new DeliveryError("Message did not have any valid receivers");
+				}
 			}
+			return delivereyPromise;
 		}
-		return delivereyPromise;
-	}
 
 	async maybeConnectDirectly(toHash: string, origin: MultiAddrinfo) {
 		if (this.peers.has(toHash) || this.prunedConnectionsCache?.has(toHash)) {
@@ -2788,143 +2843,62 @@ export abstract class DirectStream<
 				return defer.resolve();
 		};
 
-		try {
-			await waitForEvent(this, eventsFor(target), check, {
-				signals: abortSignals,
-				timeout,
-			});
-			return [...wins];
-		} catch (e) {
-			const abortSignal = abortSignals.find((s) => s.aborted);
-			if (abortSignal) {
-				if (abortSignal.reason instanceof Error) {
-					throw abortSignal.reason;
-				}
-				throw new AbortError(
-					"Aborted waiting for peers: " + abortSignal.reason,
-				);
-			}
-			if (e instanceof Error) {
-				throw e;
-			}
-			if (settle === "all") throw new TimeoutError("Timeout waiting for peers");
-			return [...wins]; // settle:any: return whatever successes we got
-		}
-	}
-
-	/* async waitFor(
-		peer: PeerId | PublicSignKey | string,
-		options?: {
-			timeout?: number;
-			signal?: AbortSignal;
-			neighbour?: boolean;
-			inflight?: boolean;
-		},
-	) {
-		const hash =
-			typeof peer === "string"
-				? peer
-				: (peer instanceof PublicSignKey
-					? peer
-					: getPublicKeyFromPeerId(peer)
-				).hashcode();
-		if (hash === this.publicKeyHash) {
-			return; // TODO throw error instead?
-		}
-
-		if (options?.inflight) {
-			// if peer is not in active connections or dialQueue, return silenty
-			if (
-				!this.peers.has(hash) &&
-				!this.components.connectionManager
-					.getDialQueue()
-					.some((x) => getPublicKeyFromPeerId(x.peerId).hashcode() === hash) &&
-				!this.components.connectionManager
-					.getConnections()
-					.some((x) => getPublicKeyFromPeerId(x.remotePeer).hashcode() === hash)
-			) {
-				return;
-			}
-		}
-
-		const checkIsReachable = (deferred: DeferredPromise<void>) => {
-			if (options?.neighbour && !this.peers.has(hash)) {
-				return;
-			}
-
-			if (!this.routes.isReachable(this.publicKeyHash, hash, 0)) {
-				return;
-			}
-
-			deferred.resolve();
-		};
-		const abortSignals = [this.closeController.signal];
-		if (options?.signal) {
-			abortSignals.push(options.signal);
-		}
-
-		try {
-			await waitForEvent(this, ["peer:reachable"], checkIsReachable, {
-				signals: abortSignals,
-				timeout: options?.timeout,
-			});
-		} catch (error) {
-			throw new Error(
-				"Stream to " +
-				hash +
-				" from " +
-				this.publicKeyHash +
-				" does not exist. Connection exist: " +
-				this.peers.has(hash) +
-				". Route exist: " +
-				this.routes.isReachable(this.publicKeyHash, hash, 0),
-			);
-		}
-
-		if (options?.neighbour) {
-			const stream = this.peers.get(hash)!;
 			try {
-				let checkIsWritable = (pDefer: DeferredPromise<void>) => {
-					if (stream.isReadable && stream.isWritable) {
-						pDefer.resolve();
+				await waitForEvent(this, eventsFor(target), check, {
+					signals: abortSignals,
+					timeout,
+				});
+				return [...wins];
+			} catch (e) {
+				const abortSignal = abortSignals.find((s) => s.aborted);
+				if (abortSignal) {
+					if (abortSignal.reason instanceof Error) {
+						throw abortSignal.reason;
 					}
-				};
-				await waitForEvent(
-					stream,
-					["stream:outbound", "stream:inbound"],
-					checkIsWritable,
-					{
-						signals: abortSignals,
-						timeout: options?.timeout,
-					},
-				);
-			} catch (error) {
-				throw new Error(
-					"Stream to " +
-					stream.publicKey.hashcode() +
-					" not ready. Readable: " +
-					stream.isReadable +
-					". Writable " +
-					stream.isWritable,
-				);
+					throw new AbortError(
+						"Aborted waiting for peers: " + abortSignal.reason,
+					);
+				}
+				if (e instanceof TimeoutError) {
+					if (settle === "any") {
+						if (wins.size > 0) return [...wins];
+						throw new TimeoutError(
+							`Timeout waiting for peers (target=${target}, seek=${seek}, missing=${admitted.length}/${admitted.length})`,
+						);
+					}
+					const missing = admitted.filter((h) => !wins.has(h));
+					const preview = missing.slice(0, 5).join(", ");
+					throw new TimeoutError(
+						`Timeout waiting for peers (target=${target}, seek=${seek}, missing=${missing.length}/${admitted.length}${
+							preview ? `, e.g. ${preview}` : ""
+						})`,
+					);
+				}
+				if (e instanceof Error) throw e;
+				if (settle === "all") throw new TimeoutError("Timeout waiting for peers");
+				return [...wins]; // settle:any: return whatever successes we got
 			}
 		}
-	} */
 
-	getPublicKey(hash: string): PublicSignKey | undefined {
-		return this.peerKeyHashToPublicKey.get(hash);
-	}
+		getPublicKey(hash: string): PublicSignKey | undefined {
+			return this.peerKeyHashToPublicKey.get(hash);
+		}
 
 	get pending(): boolean {
 		return this._ackCallbacks.size > 0;
 	}
 
 	// make this into a job? run every few ms
-	maybePruneConnections(): Promise<void> {
-		if (this.connectionManagerOptions.pruner) {
-			if (this.connectionManagerOptions.pruner.bandwidth != null) {
-				let usedBandwidth = 0;
-				for (const [_k, v] of this.peers) {
+		maybePruneConnections(): Promise<void> {
+			// Hard cap on peer streams: treat as a primary pruning signal.
+			if (this.peers.size > this.connectionManagerOptions.maxConnections) {
+				return this.pruneConnectionsToLimits();
+			}
+
+			if (this.connectionManagerOptions.pruner) {
+				if (this.connectionManagerOptions.pruner.bandwidth != null) {
+					let usedBandwidth = 0;
+					for (const [_k, v] of this.peers) {
 					usedBandwidth += v.usedBandwidth;
 				}
 				usedBandwidth /= this.peers.size;
@@ -2933,17 +2907,17 @@ export abstract class DirectStream<
 					// prune
 					return this.pruneConnections();
 				}
-			} else if (this.connectionManagerOptions.pruner.maxBuffer != null) {
-				const queuedBytes = this.getQueuedBytes();
-				if (queuedBytes > this.connectionManagerOptions.pruner.maxBuffer) {
-					// prune
-					return this.pruneConnections();
+				} else if (this.connectionManagerOptions.pruner.maxBuffer != null) {
+					const queuedBytes = this.getQueuedBytes();
+					if (queuedBytes > this.connectionManagerOptions.pruner.maxBuffer) {
+						// prune
+						return this.pruneConnections();
+					}
 				}
 			}
-		}
 
-		return Promise.resolve();
-	}
+			return Promise.resolve();
+		}
 
 	async pruneConnections(): Promise<void> {
 		// TODO sort by bandwidth
@@ -2954,17 +2928,17 @@ export abstract class DirectStream<
 		const sorted = [...this.peers.values()]
 			.sort((x, y) => x.usedBandwidth - y.usedBandwidth)
 			.map((x) => x.publicKey.hashcode());
-		const prunables = this.routes.getPrunable(sorted);
-		if (prunables.length === 0) {
-			return;
+			const prunables = this.routes.getPrunable(sorted);
+			if (prunables.length === 0) {
+				return;
+			}
+
+			const stream = this.peers.get(prunables[0])!;
+			this.prunedConnectionsCache?.add(stream.publicKey.hashcode());
+
+			await this.onPeerDisconnected(stream.peerId);
+			return this.components.connectionManager.closeConnections(stream.peerId);
 		}
-
-		const stream = this.peers.get(prunables[0])!;
-		this.prunedConnectionsCache!.add(stream.publicKey.hashcode());
-
-		await this.onPeerDisconnected(stream.peerId);
-		return this.components.connectionManager.closeConnections(stream.peerId);
-	}
 
 	getQueuedBytes(): number {
 		let sum = 0;

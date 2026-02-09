@@ -110,6 +110,42 @@ describe("routes", () => {
 			// Expect parent 'from' map to be removed when it becomes empty
 			expect(routes.routes.get(me)).to.equal(undefined);
 		});
+
+		it("bounds number of 'from' maps (pins me)", async () => {
+			const routes = new Routes(me, { maxFromEntries: 2 });
+			routes.add(me, a, a, -1, +new Date(), +new Date());
+			routes.add(a, b, c, 0, +new Date(), +new Date());
+			routes.add(b, c, d, 0, +new Date(), +new Date());
+
+			expect(routes.routes.has(me)).to.equal(true);
+			expect(routes.routes.has(b)).to.equal(true);
+			expect(routes.routes.has(a)).to.equal(false);
+		});
+
+		it("bounds number of targets per 'from'", async () => {
+			const routes = new Routes(me, { maxTargetsPerFrom: 2 });
+			const now = +new Date();
+			routes.add(me, a, a, -1, now, now);
+			routes.add(me, b, b, -1, now + 1, now + 1);
+			routes.add(me, c, c, -1, now + 2, now + 2);
+
+			const map = routes.routes.get(me)!;
+			expect(map.has(a)).to.equal(false);
+			expect(map.has(b)).to.equal(true);
+			expect(map.has(c)).to.equal(true);
+		});
+
+		it("bounds relay list per target", async () => {
+			const routes = new Routes(me, { maxRelaysPerTarget: 2 });
+			const now = +new Date();
+			routes.add(me, b, b, -1, now, now);
+			routes.add(me, a, b, 0, now + 1, now + 1);
+			routes.add(me, c, b, 0, now + 2, now + 2);
+
+			const entry = routes.routes.get(me)!.get(b)!;
+			expect(entry.list.length).to.equal(2);
+			expect(entry.list.find((x) => x.hash === b)?.distance).to.equal(-1);
+		});
 	});
 
 	describe("remove", () => {
