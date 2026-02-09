@@ -271,6 +271,41 @@ export type FanoutTreeJoinOptions = {
 	};
 };
 
+/**
+ * Tracker-backed provider discovery for targeted pulls (blocks/RPC).
+ *
+ * Providers announce under a bounded namespace key, and consumers query for K candidates.
+ * This avoids any search/flood behaviors at large scale.
+ */
+export type FanoutProviderCandidate = {
+	hash: string;
+	addrs: Multiaddr[];
+};
+
+export type FanoutProviderAnnounceOptions = {
+	ttlMs?: number;
+	announceIntervalMs?: number;
+	bootstrap?: Array<string | Multiaddr>;
+	bootstrapDialTimeoutMs?: number;
+	bootstrapMaxPeers?: number;
+};
+
+export type FanoutProviderQueryOptions = {
+	want?: number;
+	seed?: number;
+	timeoutMs?: number;
+	queryTimeoutMs?: number;
+	cacheTtlMs?: number;
+	signal?: AbortSignal;
+	bootstrap?: Array<string | Multiaddr>;
+	bootstrapDialTimeoutMs?: number;
+	bootstrapMaxPeers?: number;
+};
+
+export type FanoutProviderHandle = {
+	close: () => void;
+};
+
 export type FanoutTreeDataEvent = {
 	topic: string;
 	root: string;
@@ -370,7 +405,10 @@ const DATA_PRIORITY = 1;
 const ROUTE_PROXY_TIMEOUT_MS = 10_000;
 const ROUTE_CACHE_MAX_ENTRIES_HARD_CAP = 100_000;
 const PEER_HINT_MAX_ENTRIES_HARD_CAP = 100_000;
-const KNOWN_CANDIDATE_ADDRS_MAX_ENTRIES = 8_192;
+// Best-effort address cache for join candidates learned via trackers/redirects.
+// This must stay small; large values can blow up memory in large-scale sims.
+const KNOWN_CANDIDATE_ADDRS_MAX_ENTRIES = 256;
+const PROVIDER_DIRECTORY_MAX_ENTRIES = 16_384;
 
 const FANOUT_PROTOCOLS = ["/peerbit/fanout-tree/0.5.0"];
 
@@ -408,6 +446,9 @@ const MSG_TRACKER_ANNOUNCE = 30;
 const MSG_TRACKER_QUERY = 31;
 const MSG_TRACKER_REPLY = 32;
 const MSG_TRACKER_FEEDBACK = 33;
+const MSG_PROVIDER_ANNOUNCE = 34;
+const MSG_PROVIDER_QUERY = 35;
+const MSG_PROVIDER_REPLY = 36;
 
 const JOIN_REJECT_NOT_ATTACHED = 1;
 const JOIN_REJECT_NO_CAPACITY = 2;
@@ -880,6 +921,114 @@ const encodeTrackerFeedback = (
 	return buf;
 };
 
+type ProviderNamespaceId = {
+	namespace: string;
+	key: Uint8Array;
+	suffixKey: string;
+};
+
+type ProviderEntry = {
+	hash: string;
+	addrs: Uint8Array[];
+	expiresAt: number;
+};
+
+type ProviderAnnounceState = {
+	id: ProviderNamespaceId;
+	ttlMs: number;
+	announceIntervalMs: number;
+	bootstrapOverride?: Multiaddr[];
+	bootstrapDialTimeoutMs: number;
+	bootstrapMaxPeers: number;
+	closed: boolean;
+	loop?: Promise<void>;
+};
+
+const encodeProviderAnnounce = (
+	namespaceKey: Uint8Array,
+	ttlMs: number,
+	addrs: Multiaddr[],
+) => {
+	const addrCount = Math.max(0, Math.min(255, addrs.length));
+	let bytes = 1 + 32 + 4 + 1;
+	const addrBytes = new Array<Uint8Array>(addrCount);
+	for (let i = 0; i < addrCount; i++) {
+		const b = addrs[i]!.bytes;
+		addrBytes[i] = b;
+		bytes += 2 + b.length;
+	}
+
+	const buf = new Uint8Array(bytes);
+	buf[0] = MSG_PROVIDER_ANNOUNCE;
+	buf.set(namespaceKey, 1);
+	writeU32BE(buf, 33, Math.max(0, Math.floor(ttlMs)) >>> 0);
+	buf[37] = addrCount & 0xff;
+	let offset = 38;
+	for (let i = 0; i < addrCount; i++) {
+		const b = addrBytes[i]!;
+		writeU16BE(buf, offset, b.length);
+		offset += 2;
+		buf.set(b, offset);
+		offset += b.length;
+	}
+	return buf;
+};
+
+const encodeProviderQuery = (
+	namespaceKey: Uint8Array,
+	reqId: number,
+	want: number,
+	seed: number,
+) => {
+	const buf = new Uint8Array(1 + 32 + 4 + 2 + 4);
+	buf[0] = MSG_PROVIDER_QUERY;
+	buf.set(namespaceKey, 1);
+	writeU32BE(buf, 33, reqId >>> 0);
+	writeU16BE(buf, 37, clampU16(want));
+	writeU32BE(buf, 39, seed >>> 0);
+	return buf;
+};
+
+const encodeProviderReply = (
+	namespaceKey: Uint8Array,
+	reqId: number,
+	entries: ProviderEntry[],
+) => {
+	const count = Math.max(0, Math.min(255, entries.length));
+	let bytes = 1 + 32 + 4 + 1;
+	const encoded: Array<{ hashBytes: Uint8Array; addrs: Uint8Array[] }> = [];
+	for (let i = 0; i < count; i++) {
+		const e = entries[i]!;
+		const hashBytes = textEncoder.encode(e.hash);
+		if (hashBytes.length > 255) continue;
+		const addrCount = Math.max(0, Math.min(255, e.addrs.length));
+		const addrs = e.addrs.slice(0, addrCount);
+		bytes += 1 + hashBytes.length + 1;
+		for (const a of addrs) bytes += 2 + a.length;
+		encoded.push({ hashBytes, addrs });
+	}
+
+	const buf = new Uint8Array(bytes);
+	buf[0] = MSG_PROVIDER_REPLY;
+	buf.set(namespaceKey, 1);
+	writeU32BE(buf, 33, reqId >>> 0);
+	buf[37] = Math.max(0, Math.min(255, encoded.length)) & 0xff;
+	let offset = 38;
+	for (const e of encoded) {
+		buf[offset++] = e.hashBytes.length & 0xff;
+		buf.set(e.hashBytes, offset);
+		offset += e.hashBytes.length;
+		buf[offset++] = Math.max(0, Math.min(255, e.addrs.length)) & 0xff;
+		for (const a of e.addrs) {
+			writeU16BE(buf, offset, a.length);
+			offset += 2;
+			buf.set(a, offset);
+			offset += a.length;
+		}
+	}
+	return buf;
+};
+
 type ChildInfo = { bidPerByte: number };
 
 type JoinAttemptResult = {
@@ -1100,6 +1249,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	private readonly metricsBySuffixKey = new Map<string, FanoutTreeChannelMetrics>();
 	private bootstraps: Multiaddr[] = [];
 	private trackerBySuffixKey = new Map<string, Map<string, TrackerEntry>>();
+	private providerBySuffixKey = new Map<string, Map<string, ProviderEntry>>();
+	private pendingProviderQueryBySuffixKey = new Map<
+		string,
+		Map<number, { resolve: (providers: FanoutProviderCandidate[]) => void }>
+	>();
+	private providerAnnounceBySuffixKey = new Map<string, ProviderAnnounceState>();
 	private readonly defaultUploadOverheadBytes = 128;
 	private readonly random: () => number;
 	public readonly topicRootControlPlane: TopicRootControlPlane;
@@ -1121,6 +1276,320 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		this.bootstraps = addrs
 			.map((a) => (typeof a === "string" ? multiaddr(a) : a))
 			.filter((a) => Boolean(a));
+	}
+
+	private getProviderNamespaceId(namespace: string): ProviderNamespaceId {
+		const key = sha256Sync(textEncoder.encode(`provider|${namespace}`));
+		const suffixKey = toBase64(key.subarray(0, 24));
+		return { namespace, key, suffixKey };
+	}
+
+	public provide(
+		namespace: string,
+		options: FanoutProviderAnnounceOptions = {},
+	): FanoutProviderHandle {
+		if (!this.started) {
+			throw new Error("FanoutTree must be started before providing");
+		}
+
+		const id = this.getProviderNamespaceId(namespace);
+		const ttlMsRaw = Math.max(0, Math.floor(options.ttlMs ?? 120_000));
+		const ttlMs = Math.min(ttlMsRaw, 120_000);
+		const announceIntervalMsRaw =
+			options.announceIntervalMs ?? Math.max(1_000, Math.floor(ttlMs / 2));
+		const announceIntervalMs = Math.max(100, Math.floor(announceIntervalMsRaw));
+
+		const bootstrapOverride =
+			options.bootstrap && options.bootstrap.length > 0
+				? options.bootstrap
+						.map((a) => (typeof a === "string" ? multiaddr(a) : a))
+						.filter((a) => Boolean(a))
+				: undefined;
+
+		const bootstrapDialTimeoutMs = Math.max(
+			0,
+			Math.floor(options.bootstrapDialTimeoutMs ?? 2_000),
+		);
+		const bootstrapMaxPeers = Math.max(
+			0,
+			Math.floor(options.bootstrapMaxPeers ?? 0),
+		);
+
+		let state = this.providerAnnounceBySuffixKey.get(id.suffixKey);
+		if (!state) {
+			state = {
+				id,
+				ttlMs,
+				announceIntervalMs,
+				bootstrapOverride,
+				bootstrapDialTimeoutMs,
+				bootstrapMaxPeers,
+				closed: false,
+			};
+			this.providerAnnounceBySuffixKey.set(id.suffixKey, state);
+			state.loop = this._providerAnnounceLoop(state).catch(() => {});
+		} else {
+			state.ttlMs = ttlMs;
+			state.announceIntervalMs = announceIntervalMs;
+			state.bootstrapOverride = bootstrapOverride;
+			state.bootstrapDialTimeoutMs = bootstrapDialTimeoutMs;
+			state.bootstrapMaxPeers = bootstrapMaxPeers;
+		}
+
+		return {
+			close: () => {
+				const current = this.providerAnnounceBySuffixKey.get(id.suffixKey);
+				if (!current) return;
+				current.closed = true;
+				this.providerAnnounceBySuffixKey.delete(id.suffixKey);
+				// Best-effort immediate withdrawal (ttl=0).
+				void this.announceProviderOnce(current, this.closeController.signal, 0).catch(
+					() => {},
+				);
+			},
+		};
+	}
+
+	private async _providerAnnounceLoop(state: ProviderAnnounceState): Promise<void> {
+		const signal = this.closeController.signal;
+		for (;;) {
+			if (signal.aborted || state.closed) return;
+			try {
+				await this.announceProviderOnce(state, signal);
+			} catch {
+				// ignore
+			}
+			await delay(Math.max(50, state.announceIntervalMs));
+		}
+	}
+
+	private async announceProviderOnce(
+		state: ProviderAnnounceState,
+		signal: AbortSignal,
+		ttlOverrideMs?: number,
+	): Promise<void> {
+		const bootstraps = state.bootstrapOverride ?? this.bootstraps;
+		if (bootstraps.length === 0) return;
+
+		const peers = await this.ensureBootstrapPeers(
+			bootstraps,
+			state.bootstrapDialTimeoutMs,
+			signal,
+			state.bootstrapMaxPeers,
+		);
+		if (peers.length === 0) return;
+
+		const ttlMs = ttlOverrideMs != null ? ttlOverrideMs : state.ttlMs;
+		const addrs = this.getSelfAnnounceAddrs();
+		const bytes = encodeProviderAnnounce(state.id.key, ttlMs, addrs);
+		await this._sendControlMany(peers, bytes);
+	}
+
+	private nextProviderReqId(suffixKey: string): number {
+		const pending = this.pendingProviderQueryBySuffixKey.get(suffixKey);
+		let reqId = (this.random() * 0xffffffff) >>> 0;
+		while (pending?.has(reqId)) {
+			reqId = (this.random() * 0xffffffff) >>> 0;
+		}
+		return reqId;
+	}
+
+	public async queryProviderCandidates(
+		namespace: string,
+		options: FanoutProviderQueryOptions = {},
+	): Promise<FanoutProviderCandidate[]> {
+		if (!this.started) {
+			throw new Error("FanoutTree must be started before querying providers");
+		}
+
+		const want = Math.max(0, Math.floor(options.want ?? 8));
+		if (want === 0) return [];
+
+		const id = this.getProviderNamespaceId(namespace);
+		const seed = options.seed != null ? options.seed >>> 0 : 0;
+		const cacheTtlMs = Math.max(0, Math.floor(options.cacheTtlMs ?? 60_000));
+
+		const signal = options.signal
+			? anySignal([this.closeController.signal, options.signal])
+			: this.closeController.signal;
+
+		try {
+			const now = Date.now();
+
+			const shuffleInPlace = (arr: FanoutProviderCandidate[], seed32: number) => {
+				if (arr.length <= 1) return;
+				if ((seed32 >>> 0) === 0) {
+					for (let i = arr.length - 1; i > 0; i--) {
+						const j = Math.floor(this.random() * (i + 1));
+						const tmp = arr[i]!;
+						arr[i] = arr[j]!;
+						arr[j] = tmp;
+					}
+					return;
+				}
+				let x = seed32 >>> 0;
+				for (let i = arr.length - 1; i > 0; i--) {
+					// xorshift32
+					x ^= x << 13;
+					x ^= x >>> 17;
+					x ^= x << 5;
+					const j = (x >>> 0) % (i + 1);
+					const tmp = arr[i]!;
+					arr[i] = arr[j]!;
+					arr[j] = tmp;
+				}
+			};
+
+			const orderCandidates = (items: FanoutProviderCandidate[]) => {
+				// Prefer already-connected providers, but still spread load within each group.
+				const connected: FanoutProviderCandidate[] = [];
+				const unconnected: FanoutProviderCandidate[] = [];
+				for (const c of items) {
+					(this.peers.get(c.hash) ? connected : unconnected).push(c);
+				}
+				shuffleInPlace(connected, seed);
+				shuffleInPlace(unconnected, seed ? (seed ^ 0x9e3779b9) >>> 0 : 0);
+				return connected.concat(unconnected).slice(0, want);
+			};
+
+			const cached: FanoutProviderCandidate[] = [];
+			const byPeer = this.providerBySuffixKey.get(id.suffixKey);
+			if (byPeer) {
+				for (const [hash, e] of byPeer) {
+					if (e.expiresAt <= now) {
+						byPeer.delete(hash);
+						continue;
+					}
+					if (hash === this.publicKeyHash) continue;
+					const addrs: Multiaddr[] = [];
+					for (const a of e.addrs) {
+						try {
+							addrs.push(multiaddr(a));
+						} catch {
+							// ignore invalid
+						}
+					}
+					cached.push({ hash, addrs });
+				}
+			}
+
+			// If the cache is warm, avoid tracker queries on hot paths.
+			if (cached.length >= want) {
+				return orderCandidates(cached);
+			}
+
+			const bootstrapOverride =
+				options.bootstrap && options.bootstrap.length > 0
+					? options.bootstrap
+							.map((a) => (typeof a === "string" ? multiaddr(a) : a))
+							.filter((a) => Boolean(a))
+					: undefined;
+			const bootstraps = bootstrapOverride ?? this.bootstraps;
+			const dialTimeoutMs = Math.max(
+				0,
+				Math.floor(options.bootstrapDialTimeoutMs ?? 2_000),
+			);
+			const bootstrapMaxPeers = Math.max(
+				0,
+				Math.floor(options.bootstrapMaxPeers ?? 0),
+			);
+			const trackerPeers =
+				bootstraps.length > 0
+					? await this.ensureBootstrapPeers(
+							bootstraps,
+							dialTimeoutMs,
+							signal,
+							bootstrapMaxPeers,
+						)
+					: [];
+
+			const perTrackerTimeout = Math.max(
+				0,
+				Math.floor(options.queryTimeoutMs ?? 1_000),
+			);
+			const overallTimeout = Math.max(0, Math.floor(options.timeoutMs ?? 5_000));
+			const deadlineAt = overallTimeout > 0 ? Date.now() + overallTimeout : 0;
+
+			const byReq =
+				this.pendingProviderQueryBySuffixKey.get(id.suffixKey) ||
+				new Map<number, { resolve: (providers: FanoutProviderCandidate[]) => void }>();
+			this.pendingProviderQueryBySuffixKey.set(id.suffixKey, byReq);
+
+			const results = await Promise.all(
+				trackerPeers.map(async (trackerHash) => {
+					const reqId = this.nextProviderReqId(id.suffixKey);
+					const p = new Promise<FanoutProviderCandidate[]>((resolve) => {
+						byReq.set(reqId, { resolve });
+					});
+					void this._sendControl(
+						trackerHash,
+						encodeProviderQuery(id.key, reqId, want, seed),
+					);
+
+					const remainingMs =
+						deadlineAt > 0 ? Math.max(0, deadlineAt - Date.now()) : perTrackerTimeout;
+					const timeoutMs =
+						deadlineAt > 0 ? Math.min(perTrackerTimeout, remainingMs) : perTrackerTimeout;
+
+					const res = await Promise.race([
+						p,
+						delay(timeoutMs, { signal }).then((): null => null),
+					]);
+					if (res == null) {
+						byReq.delete(reqId);
+						return [];
+					}
+					return res;
+				}),
+			);
+
+			const merged: FanoutProviderCandidate[] = [...cached];
+			for (const r of results) merged.push(...r);
+
+			const seen = new Set<string>();
+			const deduped = merged.filter((c) => {
+				if (!c.hash) return false;
+				if (c.hash === this.publicKeyHash) return false;
+				if (seen.has(c.hash)) return false;
+				seen.add(c.hash);
+				return true;
+			});
+
+			// Cache (best-effort) to avoid repeated tracker lookups.
+			if (cacheTtlMs > 0) {
+				const exp = Date.now() + cacheTtlMs;
+				let cache = this.providerBySuffixKey.get(id.suffixKey);
+				if (!cache) {
+					cache = new Map<string, ProviderEntry>();
+					this.providerBySuffixKey.set(id.suffixKey, cache);
+				}
+				for (const c of deduped) {
+					cache.delete(c.hash);
+					cache.set(c.hash, {
+						hash: c.hash,
+						addrs: c.addrs.map((a) => a.bytes),
+						expiresAt: exp,
+					});
+				}
+				while (cache.size > PROVIDER_DIRECTORY_MAX_ENTRIES) {
+					const oldest = cache.keys().next().value as string | undefined;
+					if (!oldest) break;
+					cache.delete(oldest);
+				}
+			}
+
+			return orderCandidates(deduped);
+		} finally {
+			(signal as any)?.clear?.();
+		}
+	}
+
+	public async queryProviders(
+		namespace: string,
+		options: FanoutProviderQueryOptions = {},
+	): Promise<string[]> {
+		const candidates = await this.queryProviderCandidates(namespace, options);
+		return candidates.map((c) => c.hash);
 	}
 
 	public getChannelId(topic: string, root: string): FanoutTreeChannelId {
@@ -1148,46 +1617,46 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		);
 		const perChildBytes = Math.max(1, 1 + msgSize + uploadOverheadBytes);
 		const perChildBps = Math.max(1, Math.floor(msgRate * perChildBytes));
-		const byBps = uploadLimitBps > 0 ? Math.floor(uploadLimitBps / perChildBps) : 0;
-		const effectiveMaxChildren = Math.max(0, Math.min(maxChildren, byBps));
-		const maxDataAgeMs = Math.max(0, Math.floor(opts.maxDataAgeMs ?? 0));
-		const requestedRouteCacheMaxEntries = Math.max(
-			0,
-			Math.floor(
-				opts.routeCacheMaxEntries ?? (opts.role === "root" ? 8_192 : 2_048),
-			),
-		);
-		const routeCacheMaxEntries = Math.min(
-			ROUTE_CACHE_MAX_ENTRIES_HARD_CAP,
-			requestedRouteCacheMaxEntries,
-		);
+			const byBps = uploadLimitBps > 0 ? Math.floor(uploadLimitBps / perChildBps) : 0;
+			const effectiveMaxChildren = Math.max(0, Math.min(maxChildren, byBps));
+			const maxDataAgeMs = Math.max(0, Math.floor(opts.maxDataAgeMs ?? 0));
+			const requestedRouteCacheMaxEntries = Math.max(
+				0,
+				Math.floor(
+					opts.routeCacheMaxEntries ?? (opts.role === "root" ? 2_048 : 512),
+				),
+			);
+			const routeCacheMaxEntries = Math.min(
+				ROUTE_CACHE_MAX_ENTRIES_HARD_CAP,
+				requestedRouteCacheMaxEntries,
+			);
 			const routeCacheTtlMs = Math.max(
 				0,
 				Math.floor(opts.routeCacheTtlMs ?? 10 * 60_000),
 			);
-				const requestedPeerHintMaxEntries = Math.max(
-					0,
-					Math.floor(
-						opts.peerHintMaxEntries ?? (opts.role === "root" ? 16_384 : 4_096),
+			const requestedPeerHintMaxEntries = Math.max(
+				0,
+				Math.floor(
+					opts.peerHintMaxEntries ?? (opts.role === "root" ? 4_096 : 1_024),
 				),
 			);
 			const peerHintMaxEntries = Math.min(
 				PEER_HINT_MAX_ENTRIES_HARD_CAP,
 				requestedPeerHintMaxEntries,
 			);
-				const peerHintTtlMs = Math.max(
-					0,
-					Math.floor(opts.peerHintTtlMs ?? 10 * 60_000),
-				);
-				const uploadBurstMsDefault = Math.max(1, Math.ceil(1_000 / msgRate));
-				const uploadBurstMs = Math.max(
-					0,
-					Math.floor(opts.uploadBurstMs ?? uploadBurstMsDefault),
+			const peerHintTtlMs = Math.max(
+				0,
+				Math.floor(opts.peerHintTtlMs ?? 10 * 60_000),
 			);
-		const uploadTokenCapacity =
-			uploadLimitBps > 0 && uploadBurstMs > 0
-				? Math.max(1, Math.floor((uploadLimitBps * uploadBurstMs) / 1_000))
-				: 0;
+			const uploadBurstMsDefault = Math.max(1, Math.ceil(1_000 / msgRate));
+			const uploadBurstMs = Math.max(
+				0,
+				Math.floor(opts.uploadBurstMs ?? uploadBurstMsDefault),
+			);
+			const uploadTokenCapacity =
+				uploadLimitBps > 0 && uploadBurstMs > 0
+					? Math.max(1, Math.floor((uploadLimitBps * uploadBurstMs) / 1_000))
+					: 0;
 
 		const repairEnabled = opts.repair === true;
 		const repairWindowMessages = Math.max(
@@ -1550,79 +2019,89 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		this.pruneRouteCache(ch, now);
 	}
 
-		private cacheKnownCandidateAddrs(ch: ChannelState, hash: string, addrs: Multiaddr[]) {
-			if (!hash) return;
-			if (!addrs || addrs.length === 0) return;
-			ch.knownCandidateAddrs.delete(hash);
-			ch.knownCandidateAddrs.set(hash, addrs);
-			while (ch.knownCandidateAddrs.size > KNOWN_CANDIDATE_ADDRS_MAX_ENTRIES) {
-				const oldest = ch.knownCandidateAddrs.keys().next().value as string | undefined;
+	private cacheKnownCandidateAddrs(
+		ch: ChannelState,
+		hash: string,
+		addrs: Multiaddr[],
+	) {
+		if (!hash) return;
+		if (!addrs || addrs.length === 0) return;
+		// We only need a handful of addresses to dial a candidate.
+		const limited =
+			addrs.length > JOIN_REJECT_REDIRECT_ADDR_MAX
+				? addrs.slice(0, JOIN_REJECT_REDIRECT_ADDR_MAX)
+				: addrs;
+		ch.knownCandidateAddrs.delete(hash);
+		ch.knownCandidateAddrs.set(hash, limited);
+		while (ch.knownCandidateAddrs.size > KNOWN_CANDIDATE_ADDRS_MAX_ENTRIES) {
+			const oldest = ch.knownCandidateAddrs.keys().next()
+				.value as string | undefined;
+			if (!oldest) break;
+			ch.knownCandidateAddrs.delete(oldest);
+		}
+	}
+
+	private touchPeerHint(ch: ChannelState, peerHash: string, now = Date.now()) {
+		if (!peerHash) return;
+		if (peerHash === this.publicKeyHash) return;
+		if (ch.peerHintMaxEntries <= 0) return;
+		// LRU touch
+		ch.channelPeers.delete(peerHash);
+		ch.channelPeers.set(peerHash, now);
+		this.prunePeerHints(ch, now);
+	}
+
+	private prunePeerHints(ch: ChannelState, now = Date.now()) {
+		if (ch.channelPeers.size === 0) return;
+		if (ch.peerHintMaxEntries <= 0) {
+			ch.channelPeers.clear();
+			return;
+		}
+
+		// `channelPeers` is maintained as an LRU (touch via delete+set), so the oldest
+		// entry is always first. This makes TTL pruning O(expired) rather than O(N).
+		if (ch.peerHintTtlMs > 0) {
+			for (;;) {
+				const oldest = ch.channelPeers.keys().next().value as string | undefined;
 				if (!oldest) break;
-				ch.knownCandidateAddrs.delete(oldest);
+				const seenAt = ch.channelPeers.get(oldest) ?? 0;
+				if (now - seenAt <= ch.peerHintTtlMs) break;
+				ch.channelPeers.delete(oldest);
 			}
 		}
 
-		private touchPeerHint(ch: ChannelState, peerHash: string, now = Date.now()) {
-			if (!peerHash) return;
-			if (peerHash === this.publicKeyHash) return;
-			if (ch.peerHintMaxEntries <= 0) return;
-			// LRU touch
-			ch.channelPeers.delete(peerHash);
-			ch.channelPeers.set(peerHash, now);
-			this.prunePeerHints(ch, now);
+		while (ch.channelPeers.size > ch.peerHintMaxEntries) {
+			const oldest = ch.channelPeers.keys().next().value as string | undefined;
+			if (!oldest) break;
+			ch.channelPeers.delete(oldest);
 		}
+	}
 
-			private prunePeerHints(ch: ChannelState, now = Date.now()) {
-				if (ch.channelPeers.size === 0) return;
-				if (ch.peerHintMaxEntries <= 0) {
-					ch.channelPeers.clear();
-					return;
-				}
-
-				// `channelPeers` is maintained as an LRU (touch via delete+set), so the oldest
-				// entry is always first. This makes TTL pruning O(expired) rather than O(N).
-				if (ch.peerHintTtlMs > 0) {
-					for (;;) {
-						const oldest = ch.channelPeers.keys().next().value as string | undefined;
-						if (!oldest) break;
-						const seenAt = ch.channelPeers.get(oldest) ?? 0;
-						if (now - seenAt <= ch.peerHintTtlMs) break;
-						ch.channelPeers.delete(oldest);
-					}
-				}
-
-				while (ch.channelPeers.size > ch.peerHintMaxEntries) {
-					const oldest = ch.channelPeers.keys().next().value as string | undefined;
-					if (!oldest) break;
-					ch.channelPeers.delete(oldest);
-				}
-			}
-
-			private pruneRouteCache(ch: ChannelState, now = Date.now()) {
-			if (ch.routeByPeer.size === 0) return;
-			if (ch.routeCacheMaxEntries <= 0) {
-				const removed = ch.routeByPeer.size;
-				ch.routeByPeer.clear();
+	private pruneRouteCache(ch: ChannelState, now = Date.now()) {
+		if (ch.routeByPeer.size === 0) return;
+		if (ch.routeCacheMaxEntries <= 0) {
+			const removed = ch.routeByPeer.size;
+			ch.routeByPeer.clear();
 			if (removed > 0) ch.metrics.routeCacheEvictions += removed;
 			return;
 		}
 
-			// `routeByPeer` is maintained as an LRU (touch via delete+set), so the oldest
-			// entry is always first. This makes TTL pruning O(expired) rather than O(N).
-			if (ch.routeCacheTtlMs > 0) {
-				for (;;) {
-					const oldest = ch.routeByPeer.keys().next().value as string | undefined;
-					if (!oldest) break;
-					const entry = ch.routeByPeer.get(oldest);
-					if (!entry) {
-						ch.routeByPeer.delete(oldest);
-						continue;
-					}
-					if (now - entry.updatedAt <= ch.routeCacheTtlMs) break;
+		// `routeByPeer` is maintained as an LRU (touch via delete+set), so the oldest
+		// entry is always first. This makes TTL pruning O(expired) rather than O(N).
+		if (ch.routeCacheTtlMs > 0) {
+			for (;;) {
+				const oldest = ch.routeByPeer.keys().next().value as string | undefined;
+				if (!oldest) break;
+				const entry = ch.routeByPeer.get(oldest);
+				if (!entry) {
 					ch.routeByPeer.delete(oldest);
-					ch.metrics.routeCacheExpirations += 1;
+					continue;
 				}
+				if (now - entry.updatedAt <= ch.routeCacheTtlMs) break;
+				ch.routeByPeer.delete(oldest);
+				ch.metrics.routeCacheExpirations += 1;
 			}
+		}
 
 		while (ch.routeByPeer.size > ch.routeCacheMaxEntries) {
 			const oldest = ch.routeByPeer.keys().next().value as string | undefined;
@@ -2087,6 +2566,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				m.trackerFeedbackSent += transmissions;
 				m.controlBytesSentTracker += sentBytes;
 				break;
+			case MSG_PROVIDER_ANNOUNCE:
+			case MSG_PROVIDER_QUERY:
+			case MSG_PROVIDER_REPLY:
+				m.controlBytesSentTracker += sentBytes;
+				break;
 			default:
 				break;
 		}
@@ -2143,6 +2627,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				break;
 			case MSG_TRACKER_FEEDBACK:
 				m.trackerFeedbackReceived += 1;
+				m.controlBytesReceivedTracker += bytesReceived;
+				break;
+			case MSG_PROVIDER_ANNOUNCE:
+			case MSG_PROVIDER_QUERY:
+			case MSG_PROVIDER_REPLY:
 				m.controlBytesReceivedTracker += bytesReceived;
 				break;
 			default:
@@ -2887,7 +3376,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				// ignore
 			}
 			const sleepMs = ch.announceIntervalMs > 0 ? ch.announceIntervalMs : 1_000;
-			await delay(sleepMs, { signal });
+			await delay(sleepMs);
 		}
 	}
 
@@ -2900,8 +3389,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			} catch {
 				// ignore
 			}
-			const sleepMs = ch.repairIntervalMs > 0 ? ch.repairIntervalMs : 200;
-			await delay(sleepMs, { signal });
+			const activeMs = ch.repairIntervalMs > 0 ? ch.repairIntervalMs : 200;
+			const sleepMs = ch.missingSeqs.size > 0 ? activeMs : Math.max(activeMs, 1_000);
+			await delay(sleepMs);
 		}
 	}
 
@@ -3089,7 +3579,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				(v) => v > 0,
 			);
 			const sleepMs = intervals.length > 0 ? Math.min(...intervals) : 500;
-			await delay(Math.max(50, sleepMs), { signal });
+			await delay(Math.max(50, sleepMs));
 		}
 	}
 
@@ -3371,13 +3861,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							ch.receivedAnyParentData = false;
 						ch.pendingJoin.clear();
 						void this.kickChildren(ch).catch(() => {});
-						await delay(retryMs, { signal });
-						continue;
-					}
+							await delay(retryMs);
+							continue;
+						}
 
 					if (!ch.joinedOnce) ch.joinedOnce = createDeferred();
 					ch.joinedOnce.resolve();
-					await delay(retryMs, { signal });
+					// Once attached, we don't need a fast retry cadence; keep polling coarse to
+					// avoid excessive timers when simulating many nodes in one process.
+					await delay(Math.max(retryMs, 1_000));
 					continue;
 				}
 
@@ -3493,7 +3985,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					});
 				}
 
-				// Fallback: try any already-connected peers (old behavior).
+				// Fallback: try a bounded set of already-connected peers.
+				let connectedFallbackAdded = 0;
+				const connectedFallbackMax = 64;
 				for (const h of this.peers.keys()) {
 					if (h === this.publicKeyHash) continue;
 					upsertCandidate({
@@ -3504,6 +3998,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						bidPerByte: 0,
 						source: 2,
 					});
+					connectedFallbackAdded += 1;
+					if (connectedFallbackAdded >= connectedFallbackMax) break;
 				}
 
 				const now = Date.now();
@@ -3536,12 +4032,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							retryMs,
 							trackerQueryIntervalMs > 0 ? trackerQueryIntervalMs : retryMs,
 						);
-						await delay(Math.max(1, Math.min(waitMs, capMs)), { signal });
+							await delay(Math.max(1, Math.min(waitMs, capMs)));
+							continue;
+						}
+						await delay(retryMs);
 						continue;
 					}
-					await delay(retryMs, { signal });
-					continue;
-				}
 
 				let ordered = [...candidates];
 
@@ -3626,30 +4122,32 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 						ordered = out.concat(tail);
 					}
-				}
+					}
 
-				const queue = ordered;
-				const queued = new Set<string>(queue.map((c) => c.hash));
-				let attempts = 0;
-				for (
-					let i = 0;
-					i < queue.length && i < JOIN_REJECT_REDIRECT_QUEUE_MAX;
+					const queue = ordered;
+					const queued = new Set<string>(queue.map((c) => c.hash));
+					const dialedNew = new Set<string>();
+					let attempts = 0;
+					for (
+						let i = 0;
+						i < queue.length && i < JOIN_REJECT_REDIRECT_QUEUE_MAX;
 					i++
 				) {
-					if (signal.aborted) break;
-					if (attempts >= joinAttemptsPerRound) break;
-					const c = queue[i]!;
-					attempts += 1;
-					let dialOk = Boolean(this.peers.get(c.hash));
-					if (!dialOk && c.addrs.length > 0) {
-						dialOk = await this.ensurePeerConnection(
-							c.hash,
-							c.addrs,
-							bootstrapDialTimeoutMs,
-							signal,
-						);
-					}
-					if (!dialOk) {
+						if (signal.aborted) break;
+						if (attempts >= joinAttemptsPerRound) break;
+						const c = queue[i]!;
+						attempts += 1;
+						const wasConnected = Boolean(this.peers.get(c.hash));
+						let dialOk = wasConnected;
+						if (!dialOk && c.addrs.length > 0) {
+							dialOk = await this.ensurePeerConnection(
+								c.hash,
+								c.addrs,
+								bootstrapDialTimeoutMs,
+								signal,
+							);
+						}
+						if (!dialOk) {
 						try {
 							await this.sendTrackerFeedback(
 								ch,
@@ -3662,13 +4160,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						}
 						if (candidateCooldownMs > 0) {
 							cooldownUntilByHash.set(c.hash, Date.now() + candidateCooldownMs * 5);
+							}
+							continue;
 						}
-						continue;
-					}
-					const reqId = (this.random() * 0xffffffff) >>> 0;
-					const res = await this.tryJoinOnce(ch, c.hash, reqId, joinReqTimeoutMs, signal);
+						if (!wasConnected) {
+							dialedNew.add(c.hash);
+						}
+						const reqId = (this.random() * 0xffffffff) >>> 0;
+						const res = await this.tryJoinOnce(ch, c.hash, reqId, joinReqTimeoutMs, signal);
 
-					if (res.redirects && res.redirects.length > 0) {
+						if (res.redirects && res.redirects.length > 0) {
 						for (const r of res.redirects) {
 							if (queue.length >= JOIN_REJECT_REDIRECT_QUEUE_MAX) break;
 							if (!r?.hash) continue;
@@ -3699,14 +4200,26 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						} catch {
 							// ignore
 						}
-						cooldownUntilByHash.delete(c.hash);
-						break;
-					}
+							cooldownUntilByHash.delete(c.hash);
+							break;
+						}
 
-					if (res.timedOut) {
-						try {
-							await this.sendTrackerFeedback(
-								ch,
+						// Connection hygiene: if we dialed this candidate just for joining and it
+						// didn't work out, drop it so large join storms don't accumulate thousands
+						// of idle neighbours (important for large sims and long-running clients).
+						if (!wasConnected && !bootstrapPeers.includes(c.hash)) {
+							const stream = this.peers.get(c.hash);
+							if (stream) {
+								void this.components.connectionManager
+									.closeConnections(stream.peerId)
+									.catch(() => {});
+							}
+						}
+
+						if (res.timedOut) {
+							try {
+								await this.sendTrackerFeedback(
+									ch,
 								bootstrapPeers,
 								c.hash,
 								TRACKER_FEEDBACK_JOIN_TIMEOUT,
@@ -3739,17 +4252,29 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							c.hash,
 							TRACKER_FEEDBACK_JOIN_REJECT,
 							rejectReason,
-						);
-					} catch {
-						// ignore
+							);
+						} catch {
+							// ignore
+						}
 					}
-				}
 
-				await delay(retryMs, { signal });
+						if (ch.parent) {
+							// Keep only the selected parent + bootstraps. Everything else we dialed is
+							// best-effort and can be re-dialed if needed later.
+							for (const h of dialedNew) {
+								if (h === ch.parent) continue;
+								if (bootstrapPeers.includes(h)) continue;
+								const stream = this.peers.get(h);
+								if (!stream) continue;
+								void this.components.connectionManager.closeConnections(stream.peerId).catch(() => {});
+							}
+							continue;
+						}
+						await delay(retryMs);
+					}
+				} finally {
+					signal.clear?.();
 			}
-		} finally {
-			signal.clear?.();
-		}
 	}
 
 	private async tryJoinOnce(
@@ -3815,10 +4340,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						kind === MSG_REPAIR_REQ ||
 					kind === MSG_FETCH_REQ ||
 					kind === MSG_IHAVE ||
-					kind === MSG_TRACKER_ANNOUNCE ||
+				kind === MSG_TRACKER_ANNOUNCE ||
 					kind === MSG_TRACKER_QUERY ||
 				kind === MSG_TRACKER_REPLY ||
-				kind === MSG_TRACKER_FEEDBACK
+				kind === MSG_TRACKER_FEEDBACK ||
+				kind === MSG_PROVIDER_ANNOUNCE ||
+				kind === MSG_PROVIDER_QUERY ||
+				kind === MSG_PROVIDER_REPLY
 			) {
 			if (data.length < 1 + 32) return false;
 			const channelKey = data.subarray(1, 33);
@@ -3956,6 +4484,175 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					return true;
 				}
 
+				return true;
+			}
+
+			if (kind === MSG_PROVIDER_ANNOUNCE) {
+				if (data.length < 1 + 32 + 4 + 1) return false;
+				const ttlMs = readU32BE(data, 33);
+				const addrCount = data[37]!;
+				let offset = 38;
+
+				const addrs: Uint8Array[] = [];
+				const max = Math.min(addrCount, 16);
+				for (let i = 0; i < max; i++) {
+					if (offset + 2 > data.length) break;
+					const len = readU16BE(data, offset);
+					offset += 2;
+					if (offset + len > data.length) break;
+					addrs.push(data.subarray(offset, offset + len));
+					offset += len;
+				}
+
+				if (addrs.length === 0) {
+					try {
+						const peer: any = await this.components.peerStore.get(peerStream.peerId);
+						const addresses: any[] = Array.isArray(peer?.addresses) ? peer.addresses : [];
+						for (const a of addresses) {
+							const ma: any = a?.multiaddr ?? a;
+							const bytes: Uint8Array | undefined = ma?.bytes;
+							if (bytes instanceof Uint8Array) addrs.push(bytes);
+							if (addrs.length >= 16) break;
+						}
+					} catch {
+						// ignore
+					}
+				}
+
+				let byPeer = this.providerBySuffixKey.get(suffixKey);
+				if (!byPeer) {
+					byPeer = new Map<string, ProviderEntry>();
+					this.providerBySuffixKey.set(suffixKey, byPeer);
+				}
+
+				const now = Date.now();
+				const ttl = Math.min(ttlMs, 120_000);
+				if (ttl === 0) {
+					byPeer.delete(fromHash);
+					return true;
+				}
+				// LRU by announce freshness, with a hard per-namespace cap.
+				byPeer.delete(fromHash);
+				byPeer.set(fromHash, {
+					hash: fromHash,
+					addrs,
+					expiresAt: now + ttl,
+				});
+				while (byPeer.size > PROVIDER_DIRECTORY_MAX_ENTRIES) {
+					const oldest = byPeer.keys().next().value as string | undefined;
+					if (!oldest) break;
+					byPeer.delete(oldest);
+				}
+				return true;
+			}
+
+			if (kind === MSG_PROVIDER_QUERY) {
+				if (data.length < 1 + 32 + 4 + 2 + 4) return false;
+				const reqId = readU32BE(data, 33);
+				const want = readU16BE(data, 37);
+				const seed = readU32BE(data, 39);
+
+				const now = Date.now();
+				const byPeer = this.providerBySuffixKey.get(suffixKey);
+				const entries: ProviderEntry[] = [];
+				if (byPeer) {
+					for (const [hash, e] of byPeer) {
+						if (e.expiresAt <= now) {
+							byPeer.delete(hash);
+							continue;
+						}
+						if (hash === fromHash) continue;
+						entries.push(e);
+					}
+				}
+
+				// Shuffle to spread load (deterministic if seed is provided).
+				if (entries.length > 1) {
+					if (seed !== 0) {
+						let x = seed >>> 0;
+						for (let i = entries.length - 1; i > 0; i--) {
+							x ^= x << 13;
+							x ^= x >>> 17;
+							x ^= x << 5;
+							const j = (x >>> 0) % (i + 1);
+							const tmp = entries[i]!;
+							entries[i] = entries[j]!;
+							entries[j] = tmp;
+						}
+					} else {
+						for (let i = entries.length - 1; i > 0; i--) {
+							const j = Math.floor(this.random() * (i + 1));
+							const tmp = entries[i]!;
+							entries[i] = entries[j]!;
+							entries[j] = tmp;
+						}
+					}
+				}
+
+				const picked = entries.slice(0, clampU16(want));
+				void this._sendControl(fromHash, encodeProviderReply(channelKey, reqId, picked));
+				return true;
+			}
+
+			if (kind === MSG_PROVIDER_REPLY) {
+				if (data.length < 1 + 32 + 4 + 1) return false;
+				const reqId = readU32BE(data, 33);
+
+				const pendingByReq = this.pendingProviderQueryBySuffixKey.get(suffixKey);
+				const pending = pendingByReq?.get(reqId);
+				if (!pending) return true;
+				pendingByReq!.delete(reqId);
+
+				const count = data[37]!;
+				let offset = 38;
+				const candidates: FanoutProviderCandidate[] = [];
+				const max = Math.min(count, 255);
+				const now = Date.now();
+				let cache = this.providerBySuffixKey.get(suffixKey);
+				if (!cache) {
+					cache = new Map<string, ProviderEntry>();
+					this.providerBySuffixKey.set(suffixKey, cache);
+				}
+				for (let i = 0; i < max; i++) {
+					if (offset + 1 > data.length) break;
+					const hashLen = data[offset++]!;
+					if (offset + hashLen > data.length) break;
+					const hash = textDecoder.decode(data.subarray(offset, offset + hashLen));
+					offset += hashLen;
+					if (offset + 1 > data.length) break;
+					const addrCount = data[offset++]!;
+					const addrs: Multiaddr[] = [];
+					const addrBytes: Uint8Array[] = [];
+					const addrMax = Math.min(addrCount, 16);
+					for (let j = 0; j < addrMax; j++) {
+						if (offset + 2 > data.length) break;
+						const len = readU16BE(data, offset);
+						offset += 2;
+						if (offset + len > data.length) break;
+						const bytes = data.subarray(offset, offset + len);
+						offset += len;
+						addrBytes.push(bytes);
+						try {
+							addrs.push(multiaddr(bytes));
+						} catch {
+							// ignore invalid multiaddrs
+						}
+					}
+					candidates.push({ hash, addrs });
+					cache.delete(hash);
+					cache.set(hash, {
+						hash,
+						addrs: addrBytes,
+						expiresAt: now + 60_000,
+					});
+				}
+				while (cache.size > PROVIDER_DIRECTORY_MAX_ENTRIES) {
+					const oldest = cache.keys().next().value as string | undefined;
+					if (!oldest) break;
+					cache.delete(oldest);
+				}
+
+				pending.resolve(candidates);
 				return true;
 			}
 

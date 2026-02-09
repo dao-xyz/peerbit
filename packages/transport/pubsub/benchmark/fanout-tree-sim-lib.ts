@@ -87,6 +87,8 @@ export type FanoutTreeSimParams = {
 
 	maxLatencySamples: number;
 	profile: boolean;
+	progress: boolean;
+	progressEveryMs: number;
 
 	dropDataFrameRate: number;
 
@@ -327,7 +329,7 @@ export const resolveFanoutTreeSimParams = (
 				? Math.floor(1000 / msgRate)
 				: 0;
 
-	return {
+		return {
 		nodes,
 		rootIndex: Number(input.rootIndex ?? 0),
 		bootstraps,
@@ -389,10 +391,12 @@ export const resolveFanoutTreeSimParams = (
 		joinPhases: Boolean(input.joinPhases ?? false),
 			joinPhaseSettleMs: Number(input.joinPhaseSettleMs ?? 2_000),
 
-			maxLatencySamples: Number(input.maxLatencySamples ?? 1_000_000),
-			profile: Boolean(input.profile ?? false),
+				maxLatencySamples: Number(input.maxLatencySamples ?? 1_000_000),
+				profile: Boolean(input.profile ?? false),
+				progress: Boolean(input.progress ?? false),
+				progressEveryMs: Number(input.progressEveryMs ?? 5_000),
 
-			dropDataFrameRate: Number(input.dropDataFrameRate ?? 0),
+				dropDataFrameRate: Number(input.dropDataFrameRate ?? 0),
 
 		churnEveryMs: Number(input.churnEveryMs ?? 0),
 		churnDownMs: Number(input.churnDownMs ?? 0),
@@ -515,17 +519,46 @@ export const runFanoutTreeSim = async (
 		dropSeed: params.seed,
 	});
 
-		const session = await InMemorySession.disconnected<{ fanout: FanoutTree }>(params.nodes, {
-			network,
-			basePort: 30_000,
-			services: {
-				fanout: (c) =>
-					new SimFanoutTree(c, {
-						connectionManager: false,
-						random: mulberry32((params.seed >>> 0) ^ parseSimPeerIndex(c?.peerId)),
-					}),
+	const bootstrapIndexSet = new Set<number>(bootstrapIndices);
+	const maxConnectionsFor = (index: number) => {
+		if (index === rootIndex) return 256;
+		if (bootstrapIndexSet.has(index)) return 128;
+		if (relaySet.has(index)) return 64;
+		return 16;
+	};
+	const seenCacheMaxFor = (index: number) => {
+		if (index === rootIndex) return 200_000;
+		if (bootstrapIndexSet.has(index)) return 100_000;
+		if (relaySet.has(index)) return 50_000;
+		return 20_000;
+	};
+	const seenCacheTtlMsFor = (index: number) => {
+		if (index === rootIndex || bootstrapIndexSet.has(index)) return 120_000;
+		return 60_000;
+	};
+
+	const session = await InMemorySession.disconnected<{ fanout: FanoutTree }>(params.nodes, {
+		network,
+		basePort: 30_000,
+		services: {
+			fanout: (c) => {
+				const index = parseSimPeerIndex(c?.peerId);
+				return new SimFanoutTree(c, {
+					// Keep sims bounded: limit per-node connections to roughly the fanout degree,
+					// so large networks can run in a single process without OOM.
+					connectionManager: {
+						minConnections: 0,
+						maxConnections: maxConnectionsFor(index),
+						dialer: false,
+						pruner: { interval: 1_000 },
+					},
+					seenCacheMax: seenCacheMaxFor(index),
+					seenCacheTtlMs: seenCacheTtlMsFor(index),
+					random: mulberry32((params.seed >>> 0) ^ index),
+				});
 			},
-		});
+		},
+	});
 
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const timeoutController = new AbortController();
@@ -542,13 +575,13 @@ export const runFanoutTreeSim = async (
 			}, timeoutMs);
 		}
 
-		const run = async (): Promise<FanoutTreeSimResult> => {
-			const bootstrapAddrs = bootstrapIndices.flatMap((i) =>
-				session.peers[i]!.getMultiaddrs(),
-			);
-			if (bootstrapAddrs.length === 0) {
-				throw new Error("No bootstrap addrs; pass --bootstraps >= 1");
-			}
+			const run = async (): Promise<FanoutTreeSimResult> => {
+				const bootstrapAddrs = bootstrapIndices.flatMap((i) =>
+					session.peers[i]!.getMultiaddrs(),
+				);
+				if (bootstrapAddrs.length === 0) {
+					throw new Error("No bootstrap addrs; pass --bootstraps >= 1");
+				}
 
 			for (const p of session.peers) {
 				p.services.fanout.setBootstraps(bootstrapAddrs);
@@ -596,14 +629,36 @@ export const runFanoutTreeSim = async (
 					: {}),
 			});
 
-			// Join subscribers (bounded concurrency).
-			const joinStart = Date.now();
-			const joined = new Array<boolean>(subscriberIndices.length).fill(false);
-			const attachDurationsByPos = new Array<number>(subscriberIndices.length).fill(-1);
-			const joinOne = async (idx: number): Promise<boolean> => {
-				const node = session.peers[idx]!.services.fanout;
-				const isRelay = relaySet.has(idx);
-				try {
+				// Join subscribers (bounded concurrency).
+				const joinStart = Date.now();
+				const joined = new Array<boolean>(subscriberIndices.length).fill(false);
+				const attachDurationsByPos = new Array<number>(subscriberIndices.length).fill(-1);
+				let joinCompleted = 0;
+				let joinOk = 0;
+				const progressEveryMs = Math.max(250, Math.floor(params.progressEveryMs || 5_000));
+				let joinProgressTimer: ReturnType<typeof setInterval> | undefined;
+				if (params.progress) {
+					console.log(
+						`[fanout-tree-sim] phase=join subscribers=${subscriberIndices.length} relays=${relaySet.size} joinConcurrency=${params.joinConcurrency}`,
+					);
+					joinProgressTimer = setInterval(() => {
+						const mu = process.memoryUsage();
+						const rssMb = mu.rss / (1024 * 1024);
+						const heapUsedMb = mu.heapUsed / (1024 * 1024);
+						const openConns = Math.max(
+							0,
+							network.metrics.connectionsOpened - network.metrics.connectionsClosed,
+						);
+						console.log(
+							`[fanout-tree-sim] join progress ok=${joinOk}/${subscriberIndices.length} done=${joinCompleted}/${subscriberIndices.length} openConns=${openConns} dials=${network.metrics.dials} streamsOpened=${network.metrics.streamsOpened} rssMb=${rssMb.toFixed(1)} heapUsedMb=${heapUsedMb.toFixed(1)}`,
+						);
+					}, progressEveryMs);
+					joinProgressTimer.unref?.();
+				}
+				const joinOne = async (idx: number): Promise<boolean> => {
+					const node = session.peers[idx]!.services.fanout;
+					const isRelay = relaySet.has(idx);
+					try {
 						await node.joinChannel(
 							params.topic,
 							rootId,
@@ -669,45 +724,65 @@ export const runFanoutTreeSim = async (
 								bootstrapMaxPeers: params.bootstrapMaxPeers,
 							},
 						);
-						return true;
-				} catch {
-					return false;
+							return true;
+					} catch {
+						return false;
+					}
+				};
+
+				const runPhase = async (indices: number[]) => {
+					const tasks = indices.map(
+						(pos) => async () => {
+							const ok = await joinOne(subscriberIndices[pos]!);
+							joined[pos] = ok;
+							if (ok) {
+								joinOk += 1;
+								attachDurationsByPos[pos] = Date.now() - joinStart;
+							}
+							joinCompleted += 1;
+							return ok;
+						},
+					);
+					await runWithConcurrency(tasks, params.joinConcurrency);
+				};
+
+				try {
+					if (params.joinPhases) {
+						const relayPositions: number[] = [];
+						const leafPositions: number[] = [];
+						for (let i = 0; i < subscriberIndices.length; i++) {
+							const idx = subscriberIndices[i]!;
+							if (relaySet.has(idx)) relayPositions.push(i);
+							else leafPositions.push(i);
+						}
+
+						await runPhase(relayPositions);
+
+						const settleMs = Math.max(0, Math.floor(params.joinPhaseSettleMs));
+						if (settleMs > 0) {
+							await delay(settleMs, { signal: timeoutSignal });
+						}
+
+						await runPhase(leafPositions);
+					} else {
+						await runPhase(subscriberIndices.map((_, i) => i));
+					}
+				} finally {
+					if (joinProgressTimer) clearInterval(joinProgressTimer);
 				}
-			};
-
-			const runPhase = async (indices: number[]) => {
-				const tasks = indices.map(
-					(pos) => async () => {
-						const ok = await joinOne(subscriberIndices[pos]!);
-						joined[pos] = ok;
-						if (ok) attachDurationsByPos[pos] = Date.now() - joinStart;
-						return ok;
-					},
-				);
-				await runWithConcurrency(tasks, params.joinConcurrency);
-			};
-
-			if (params.joinPhases) {
-				const relayPositions: number[] = [];
-				const leafPositions: number[] = [];
-				for (let i = 0; i < subscriberIndices.length; i++) {
-					const idx = subscriberIndices[i]!;
-					if (relaySet.has(idx)) relayPositions.push(i);
-					else leafPositions.push(i);
+				const joinDone = Date.now();
+				if (params.progress) {
+					const mu = process.memoryUsage();
+					const rssMb = mu.rss / (1024 * 1024);
+					const heapUsedMb = mu.heapUsed / (1024 * 1024);
+					const openConns = Math.max(
+						0,
+						network.metrics.connectionsOpened - network.metrics.connectionsClosed,
+					);
+					console.log(
+						`[fanout-tree-sim] phase=join_done ok=${joinOk}/${subscriberIndices.length} openConns=${openConns} rssMb=${rssMb.toFixed(1)} heapUsedMb=${heapUsedMb.toFixed(1)} joinMs=${joinDone - joinStart}`,
+					);
 				}
-
-				await runPhase(relayPositions);
-
-				const settleMs = Math.max(0, Math.floor(params.joinPhaseSettleMs));
-				if (settleMs > 0) {
-					await delay(settleMs, { signal: timeoutSignal });
-				}
-
-				await runPhase(leafPositions);
-			} else {
-				await runPhase(subscriberIndices.map((_, i) => i));
-			}
-			const joinDone = Date.now();
 
 			const attachDurations = attachDurationsByPos.filter((d) => d >= 0).sort((a, b) => a - b);
 			const attachSamples = attachDurations.length;

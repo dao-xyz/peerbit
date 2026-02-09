@@ -23,6 +23,8 @@ import {
 	AcknowledgeDelivery,
 	DataMessage,
 	type Message,
+	MessageHeader,
+	AnyWhere,
 	SilentDelivery,
 } from "@peerbit/stream-interface";
 import {
@@ -35,7 +37,7 @@ import {
 import { expect } from "chai";
 import sinon from "sinon";
 import { equals } from "uint8arrays";
-import { TopicControlPlane, waitForSubscribers } from "../src/index.js";
+import { TopicControlPlane, toUint8Array, waitForSubscribers } from "../src/index.js";
 
 const checkShortestPathIsNeighbours = (sub: TopicControlPlane) => {
 	const routes = sub.routes.routes.get(sub.routes.me)!;
@@ -247,6 +249,74 @@ describe("pubsub", function () {
 			clock.tick(5_000);
 			await Promise.resolve();
 			expect(getSubscribers.callCount).to.equal(before);
+		});
+	});
+
+	describe("subscriber cache", () => {
+		it("bounds cached remote subscribers per topic (LRU)", async () => {
+			const topic = "subscriber-cache-bound";
+
+			const session: TestSession<{ pubsub: TopicControlPlane }> =
+				await TestSession.disconnected(5, {
+					services: {
+						pubsub: (c) =>
+							new TopicControlPlane(c, {
+								canRelayMessage: true,
+								connectionManager: false,
+								subscriberCacheMaxEntries: 2,
+							}),
+					},
+				});
+
+			try {
+				const observer = session.peers[0]!.services.pubsub;
+				(observer as any).listenForSubscribers(topic);
+
+				const sendSubscribe = async (sender: TopicControlPlane) => {
+					const msg = await new DataMessage({
+						data: toUint8Array(
+							new Subscribe({
+								topics: [topic],
+								requestSubscribers: false,
+							}).bytes(),
+						),
+						header: new MessageHeader({
+							mode: new AnyWhere(),
+							session: sender.session,
+							priority: 1,
+						}),
+					}).sign(sender.sign);
+
+					await observer.onDataMessage(sender.publicKey, {} as any, msg, 0);
+				};
+
+				const a = session.peers[1]!.services.pubsub;
+				const b = session.peers[2]!.services.pubsub;
+				const c = session.peers[3]!.services.pubsub;
+				const d = session.peers[4]!.services.pubsub;
+
+				await sendSubscribe(a);
+				await sendSubscribe(b);
+				expect(observer.getSubscribers(topic)).to.have.length(2);
+
+				// Add a third subscriber; oldest should be evicted.
+				await sendSubscribe(c);
+				expect(observer.getSubscribers(topic)).to.have.length(2);
+				expect(observer.topics.get(topic)?.has(a.publicKeyHash)).to.equal(false);
+				expect(observer.topics.get(topic)?.has(b.publicKeyHash)).to.equal(true);
+				expect(observer.topics.get(topic)?.has(c.publicKeyHash)).to.equal(true);
+
+				// Touch `b` (LRU), then add `d`; `c` should be evicted.
+				await sendSubscribe(b);
+				await sendSubscribe(d);
+
+				expect(observer.getSubscribers(topic)).to.have.length(2);
+				expect(observer.topics.get(topic)?.has(b.publicKeyHash)).to.equal(true);
+				expect(observer.topics.get(topic)?.has(c.publicKeyHash)).to.equal(false);
+				expect(observer.topics.get(topic)?.has(d.publicKeyHash)).to.equal(true);
+			} finally {
+				await session.stop();
+			}
 		});
 	});
 

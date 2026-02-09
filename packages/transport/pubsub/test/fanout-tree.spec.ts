@@ -3,11 +3,125 @@ import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { FanoutChannel, FanoutTree } from "../src/index.js";
 
-describe("fanout-tree", () => {
-	it("forms a small tree and delivers data", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
-			3,
-			{
+	describe("fanout-tree", () => {
+		it("bounds per-channel route token cache (LRU + TTL)", async () => {
+			const session: TestSession<{ fanout: FanoutTree }> =
+				await TestSession.disconnected(1, {
+					services: {
+						fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+					},
+				});
+
+			try {
+				const fanout = session.peers[0].services.fanout;
+				const topic = "route-cache";
+				const root = fanout.publicKeyHash;
+
+				const id = fanout.openChannel(topic, root, {
+					role: "root",
+					msgRate: 1,
+					msgSize: 8,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 128,
+					repair: false,
+					routeCacheMaxEntries: 3,
+					routeCacheTtlMs: 25,
+				});
+
+				const ch = (fanout as any).channelsBySuffixKey.get(id.suffixKey);
+				expect(ch).to.exist;
+
+				const cacheRoute = (fanout as any).cacheRoute.bind(fanout) as (
+					ch: any,
+					route: string[],
+				) => void;
+				const getCachedRoute = (fanout as any).getCachedRoute.bind(fanout) as (
+					ch: any,
+					target: string,
+				) => string[] | undefined;
+
+				// Root route-cache entries must start with a valid child hop.
+				ch.children.set("child1", { bidPerByte: 0 });
+
+				cacheRoute(ch, [root, "child1", "p1"]);
+				cacheRoute(ch, [root, "child1", "p2"]);
+				cacheRoute(ch, [root, "child1", "p3"]);
+				expect(ch.routeByPeer.size).to.equal(3);
+
+				// LRU touch p1, then insert p4: p2 should be evicted.
+				expect(getCachedRoute(ch, "p1")).to.deep.equal([root, "child1", "p1"]);
+				cacheRoute(ch, [root, "child1", "p4"]);
+				expect(ch.routeByPeer.size).to.equal(3);
+				expect(ch.routeByPeer.has("p2")).to.equal(false);
+				expect(ch.routeByPeer.has("p1")).to.equal(true);
+				expect(ch.routeByPeer.has("p3")).to.equal(true);
+				expect(ch.routeByPeer.has("p4")).to.equal(true);
+
+				// TTL expiry prunes oldest entries.
+				await delay(60);
+				expect(getCachedRoute(ch, "p1")).to.equal(undefined);
+				expect(getCachedRoute(ch, "p3")).to.equal(undefined);
+				expect(getCachedRoute(ch, "p4")).to.equal(undefined);
+				expect(ch.routeByPeer.size).to.equal(0);
+			} finally {
+				await session.stop();
+			}
+		});
+
+		it("invalidates cached routes when root child set changes", async () => {
+			const session: TestSession<{ fanout: FanoutTree }> =
+				await TestSession.disconnected(1, {
+					services: {
+						fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+					},
+				});
+
+			try {
+				const fanout = session.peers[0].services.fanout;
+				const topic = "route-cache-validity";
+				const root = fanout.publicKeyHash;
+
+				const id = fanout.openChannel(topic, root, {
+					role: "root",
+					msgRate: 1,
+					msgSize: 8,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 128,
+					repair: false,
+					routeCacheMaxEntries: 16,
+					routeCacheTtlMs: 0,
+				});
+
+				const ch = (fanout as any).channelsBySuffixKey.get(id.suffixKey);
+				expect(ch).to.exist;
+
+				const cacheRoute = (fanout as any).cacheRoute.bind(fanout) as (
+					ch: any,
+					route: string[],
+				) => void;
+				const getCachedRoute = (fanout as any).getCachedRoute.bind(fanout) as (
+					ch: any,
+					target: string,
+				) => string[] | undefined;
+
+				// Root requires the first hop after root to be a current child.
+				ch.children.set("child1", { bidPerByte: 0 });
+				cacheRoute(ch, [root, "child1", "target"]);
+				expect(getCachedRoute(ch, "target")).to.deep.equal([root, "child1", "target"]);
+
+				// Drop child1, cached route must be treated as invalid and removed.
+				ch.children.delete("child1");
+				expect(getCachedRoute(ch, "target")).to.equal(undefined);
+				expect(ch.routeByPeer.has("target")).to.equal(false);
+			} finally {
+				await session.stop();
+			}
+		});
+
+		it("forms a small tree and delivers data", async () => {
+			const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
+				3,
+				{
 				services: {
 					fanout: (c) => new FanoutTree(c, { connectionManager: false }),
 				},

@@ -80,11 +80,13 @@ const parseArgs = (argv: string[]) => {
 				"  --bootstrapEnsureIntervalMs MS  min interval between bootstrap re-dials (-1 = FanoutTree default)",
 				"  --trackerQueryIntervalMs MS     min interval between tracker queries (-1 = FanoutTree default)",
 				"  --joinAttemptsPerRound N        max join candidates tried per retry round (-1 = FanoutTree default)",
-					"  --candidateCooldownMs MS        cooldown applied to bad join candidates (-1 = FanoutTree default)",
-					"  --maxLatencySamples N         reservoir sample size (default: 1000000)",
-					"  --profile 0|1                 collect CPU/mem/event-loop delay stats (default: 0)",
-					"  --dropDataFrameRate P         drop rate for stream data frames (default: 0)",
-					"  --churnEveryMs MS             churn interval (default: 0, off)",
+				"  --candidateCooldownMs MS        cooldown applied to bad join candidates (-1 = FanoutTree default)",
+				"  --maxLatencySamples N         reservoir sample size (default: 1000000)",
+				"  --profile 0|1                 collect CPU/mem/event-loop delay stats (default: 0)",
+				"  --progress 0|1                log join progress + memory stats (default: 0)",
+				"  --progressEveryMs MS          progress log interval (default: 5000)",
+				"  --dropDataFrameRate P         drop rate for stream data frames (default: 0)",
+				"  --churnEveryMs MS             churn interval (default: 0, off)",
 				"  --churnDownMs MS              offline duration per churn (default: 0, off)",
 				"  --churnFraction F             fraction to churn per event (default: 0, off)",
 				"  --assertMinJoinedPct PCT      (default: 0)",
@@ -158,11 +160,11 @@ const parseArgs = (argv: string[]) => {
 						churnDownMs: 1_000,
 						churnFraction: 0.005,
 						}
-					: preset === "scale-5k"
-						? {
-								nodes: 5000,
-								bootstraps: 3,
-								bootstrapMaxPeers: 1,
+								: preset === "scale-5k"
+									? {
+											nodes: 5000,
+											bootstraps: 3,
+											bootstrapMaxPeers: 1,
 								subscribers: 4800,
 								relayFraction: 0.25,
 								msgRate: 30,
@@ -171,15 +173,16 @@ const parseArgs = (argv: string[]) => {
 								settleMs: 5_000,
 								deadlineMs: 10_000,
 								timeoutMs: 600_000,
-								seed: 1,
-								allowKick: true,
-								bidPerByteRelay: 1,
-								bidPerByteLeaf: 0,
-								joinConcurrency: 512,
-								joinPhases: true,
-								joinPhaseSettleMs: 2_000,
-								joinReqTimeoutMs: 1_000,
-								joinAttemptsPerRound: 2,
+											seed: 1,
+											allowKick: true,
+											bidPerByteRelay: 1,
+											bidPerByteLeaf: 0,
+											// Avoid join storms (and excess temporary connections) in single-process sims.
+											joinConcurrency: 128,
+											joinPhases: true,
+											joinPhaseSettleMs: 2_000,
+											joinReqTimeoutMs: 1_000,
+											joinAttemptsPerRound: 2,
 								trackerQueryIntervalMs: 10_000,
 								bootstrapEnsureIntervalMs: 10_000,
 								candidateCooldownMs: 5_000,
@@ -188,6 +191,8 @@ const parseArgs = (argv: string[]) => {
 								neighborRepair: true,
 								neighborRepairPeers: 3,
 								dropDataFrameRate: 0.01,
+								// Keep in-memory sims bounded (avoid buffering OOM at 5k+ nodes).
+								streamHighWaterMarkBytes: 8 * 1024,
 								// Bench assertions (tune as we learn; these should be achievable on a dev machine).
 								assertMinJoinedPct: 99.5,
 								assertMinDeliveryPct: 99.9,
@@ -199,11 +204,11 @@ const parseArgs = (argv: string[]) => {
 								assertMaxTrackerBpp: 0.3,
 								assertMaxRepairBpp: 0.3,
 							}
-						: preset === "scale-10k"
-							? {
-									nodes: 10_000,
-									bootstraps: 3,
-									bootstrapMaxPeers: 1,
+									: preset === "scale-10k"
+										? {
+												nodes: 10_000,
+												bootstraps: 3,
+												bootstrapMaxPeers: 1,
 									subscribers: 9_600,
 									relayFraction: 0.25,
 									msgRate: 30,
@@ -212,15 +217,16 @@ const parseArgs = (argv: string[]) => {
 									settleMs: 5_000,
 									deadlineMs: 10_000,
 									timeoutMs: 1_200_000,
-									seed: 1,
-									allowKick: true,
-									bidPerByteRelay: 1,
-									bidPerByteLeaf: 0,
-									joinConcurrency: 768,
-									joinPhases: true,
-									joinPhaseSettleMs: 2_000,
-									joinReqTimeoutMs: 1_000,
-									joinAttemptsPerRound: 2,
+												seed: 1,
+												allowKick: true,
+												bidPerByteRelay: 1,
+												bidPerByteLeaf: 0,
+												// Avoid join storms (and excess temporary connections) in single-process sims.
+												joinConcurrency: 192,
+												joinPhases: true,
+												joinPhaseSettleMs: 2_000,
+												joinReqTimeoutMs: 1_000,
+												joinAttemptsPerRound: 2,
 									trackerQueryIntervalMs: 10_000,
 									bootstrapEnsureIntervalMs: 10_000,
 									candidateCooldownMs: 5_000,
@@ -229,6 +235,8 @@ const parseArgs = (argv: string[]) => {
 									neighborRepair: true,
 									neighborRepairPeers: 3,
 									dropDataFrameRate: 0.01,
+									// Keep in-memory sims bounded (avoid buffering OOM at 10k nodes).
+									streamHighWaterMarkBytes: 8 * 1024,
 								}
 						: preset === "ci-small"
 							? {
@@ -395,10 +403,14 @@ const parseArgs = (argv: string[]) => {
 			...(maybeNumber("--candidateCooldownMs") != null
 				? { candidateCooldownMs: maybeNumber("--candidateCooldownMs") }
 				: {}),
-				...(maybeNumber("--maxLatencySamples") != null
-					? { maxLatencySamples: maybeNumber("--maxLatencySamples") }
-					: {}),
+			...(maybeNumber("--maxLatencySamples") != null
+				? { maxLatencySamples: maybeNumber("--maxLatencySamples") }
+				: {}),
 			...(has("--profile") ? { profile: String(get("--profile") ?? "0") === "1" } : {}),
+			...(has("--progress") ? { progress: String(get("--progress") ?? "0") === "1" } : {}),
+			...(maybeNumber("--progressEveryMs") != null
+				? { progressEveryMs: maybeNumber("--progressEveryMs") }
+				: {}),
 			...(maybeNumber("--dropDataFrameRate") != null
 				? { dropDataFrameRate: maybeNumber("--dropDataFrameRate") }
 				: {}),

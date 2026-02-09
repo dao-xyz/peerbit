@@ -23,8 +23,8 @@ import {
 	dontThrowIfDeliveryError,
 } from "@peerbit/stream";
 import {
-	AcknowledgeDelivery,
 	AcknowledgeAnyWhere,
+	AcknowledgeDelivery,
 	AnyWhere,
 	DataMessage,
 	DeliveryError,
@@ -41,9 +41,8 @@ import {
 	type DebouncedAccumulatorCounterMap,
 	debouncedAccumulatorSetCounter,
 } from "./debounced-set.js";
-import {
-	TopicRootControlPlane,
-} from "./topic-root-control-plane.js";
+import { TopicRootControlPlane } from "./topic-root-control-plane.js";
+
 export * from "./fanout-tree.js";
 export * from "./fanout-channel.js";
 export * from "./topic-root-control-plane.js";
@@ -60,15 +59,20 @@ const logErrorIfStarted = (e?: { message: string }) => {
 	e instanceof NotStartedError === false && logError(e);
 };
 
-export interface PeerStreamsInit {
-	id: Libp2pPeerId;
-	protocol: string;
-}
+const SUBSCRIBER_CACHE_MAX_ENTRIES_HARD_CAP = 100_000;
+const SUBSCRIBER_CACHE_DEFAULT_MAX_ENTRIES = 4_096;
 
 export type TopicControlPlaneOptions = DirectStreamOptions & {
 	dispatchEventOnSelfPublish?: boolean;
 	subscriptionDebounceDelay?: number;
 	topicRootControlPlane?: TopicRootControlPlane;
+	/**
+	 * Best-effort bound on cached remote subscribers per topic.
+	 *
+	 * This controls memory growth at scale and bounds `getSubscribers()` and the
+	 * receiver lists used for routing optimizations.
+	 */
+	subscriberCacheMaxEntries?: number;
 };
 
 export type TopicControlPlaneComponents = DirectStreamComponents;
@@ -89,6 +93,7 @@ export class TopicControlPlane
 	public lastSubscriptionMessages: Map<string, Map<string, bigint>> = new Map();
 	public dispatchEventOnSelfPublish: boolean;
 	public readonly topicRootControlPlane: TopicRootControlPlane;
+	public readonly subscriberCacheMaxEntries: number;
 
 	private debounceSubscribeAggregator: DebouncedAccumulatorCounterMap;
 	private debounceUnsubscribeAggregator: DebouncedAccumulatorCounterMap;
@@ -106,6 +111,12 @@ export class TopicControlPlane
 			props?.topicRootControlPlane || new TopicRootControlPlane();
 		this.dispatchEventOnSelfPublish =
 			props?.dispatchEventOnSelfPublish || false;
+		const requestedSubscriberCacheMaxEntries =
+			props?.subscriberCacheMaxEntries ?? SUBSCRIBER_CACHE_DEFAULT_MAX_ENTRIES;
+		this.subscriberCacheMaxEntries = Math.min(
+			SUBSCRIBER_CACHE_MAX_ENTRIES_HARD_CAP,
+			Math.max(1, Math.floor(requestedSubscriberCacheMaxEntries)),
+		);
 		this.debounceSubscribeAggregator = debouncedAccumulatorSetCounter(
 			(set) => this._subscribe([...set.values()]),
 			props?.subscriptionDebounceDelay ?? 50,
@@ -121,6 +132,7 @@ export class TopicControlPlane
 		this.topics.clear();
 		this.peerToTopic.clear();
 		this.topicsToPeers.clear();
+		this.lastSubscriptionMessages.clear();
 		this.debounceSubscribeAggregator.close();
 		this.debounceUnsubscribeAggregator.close();
 		return super.stop();
@@ -170,20 +182,20 @@ export class TopicControlPlane
 		}
 
 		if (newTopicsForTopicData.length > 0) {
-				const message = new DataMessage({
-					data: toUint8Array(
-						new Subscribe({
-							topics: newTopicsForTopicData,
-							requestSubscribers: true,
-						}).bytes(),
-					),
-					header: new MessageHeader({
-						priority: 1,
-						// Flood but require ACKs so routes become populated (enables routed fanout vs blind flooding).
-						mode: new AcknowledgeAnyWhere({ redundancy: 1 }),
-						session: this.session,
-					}),
-				});
+			const message = new DataMessage({
+				data: toUint8Array(
+					new Subscribe({
+						topics: newTopicsForTopicData,
+						requestSubscribers: true,
+					}).bytes(),
+				),
+				header: new MessageHeader({
+					priority: 1,
+					// Flood but require ACKs so routes become populated (enables routed fanout vs blind flooding).
+					mode: new AcknowledgeAnyWhere({ redundancy: 1 }),
+					session: this.session,
+				}),
+			});
 
 			await this.publishMessage(this.publicKey, await message.sign(this.sign));
 		}
@@ -218,15 +230,21 @@ export class TopicControlPlane
 				`unsubscribe from ${topic} - am subscribed with subscriptions ${JSON.stringify(subscriptions)}`,
 			);
 
-			const peersOnTopic = this.topicsToPeers.get(topic);
-			if (peersOnTopic) {
-				for (const peer of peersOnTopic) {
-					this.lastSubscriptionMessages.delete(peer);
-				}
-			}
-
 			if (!subscriptions) {
-				return false;
+				// Not subscribed (any longer). Treat as local cache cleanup.
+				const peersOnTopic = this.topicsToPeers.get(topic);
+				if (peersOnTopic) {
+					for (const peer of [...peersOnTopic]) {
+						const last = this.lastSubscriptionMessages.get(peer);
+						last?.delete(topic);
+						if (last && last.size === 0)
+							this.lastSubscriptionMessages.delete(peer);
+						this.deletePeerFromTopic(topic, peer);
+					}
+				}
+				this.topics.delete(topic);
+				this.topicsToPeers.delete(topic);
+				continue;
 			}
 
 			if (subscriptions?.counter && subscriptions?.counter >= 0) {
@@ -234,6 +252,17 @@ export class TopicControlPlane
 			}
 
 			if (!subscriptions.counter || options?.force) {
+				const peersOnTopic = this.topicsToPeers.get(topic);
+				if (peersOnTopic) {
+					for (const peer of [...peersOnTopic]) {
+						const last = this.lastSubscriptionMessages.get(peer);
+						last?.delete(topic);
+						if (last && last.size === 0)
+							this.lastSubscriptionMessages.delete(peer);
+						this.deletePeerFromTopic(topic, peer);
+					}
+				}
+
 				topicsToUnsubscribe.push(topic);
 				this.subscriptions.delete(topic);
 				this.topics.delete(topic);
@@ -280,10 +309,10 @@ export class TopicControlPlane
 		this.initializeTopic(topic);
 	}
 
-		async requestSubscribers(
-			topic: string | string[],
-			to?: PublicSignKey,
-		): Promise<void> {
+	async requestSubscribers(
+		topic: string | string[],
+		to?: PublicSignKey,
+	): Promise<void> {
 		if (!this.started) {
 			throw new NotStartedError();
 		}
@@ -301,20 +330,24 @@ export class TopicControlPlane
 			this.listenForSubscribers(topic);
 		}
 
-			const message = await new DataMessage({
-				data: toUint8Array(new GetSubscribers({ topics }).bytes()),
-				header: new MessageHeader({
-					// Route-learning broadcast: flood but require ACKs so DirectStream can populate routes
-					// (used by pubsub routing to avoid forwarding to non-subscribers).
-					mode: to
-						? new AcknowledgeDelivery({ to: [to], redundancy: 1 })
-						: new AcknowledgeAnyWhere({ redundancy: 1 }),
-					session: this.session,
-					priority: 1,
-				}),
-			}).sign(this.sign);
-
 		const stream = to ? this.peers.get(to.hashcode()) : undefined;
+		const mode = stream
+			? new AcknowledgeDelivery({ to: [to!], redundancy: 1 })
+			: // If we don't have a direct stream yet, targeted delivery may not be routable.
+				// Fall back to a route-learning broadcast so subscribers can respond and routes can form.
+				new AcknowledgeAnyWhere({ redundancy: 1 });
+
+		const message = await new DataMessage({
+			data: toUint8Array(new GetSubscribers({ topics }).bytes()),
+			header: new MessageHeader({
+				// Route-learning broadcast: flood but require ACKs so DirectStream can populate routes
+				// (used by pubsub routing to avoid forwarding to non-subscribers).
+				mode,
+				session: this.session,
+				priority: 1,
+			}),
+		}).sign(this.sign);
+
 		return this.publishMessage(
 			this.publicKey,
 			message,
@@ -336,13 +369,6 @@ export class TopicControlPlane
 		}
 		return newPeers;
 	}
-
-	/* getStreamsWithTopics(topics: string[], otherPeers?: string[]): PeerStreams[] {
-		const peers = this.getNeighboursWithTopics(topics, otherPeers);
-		return [...this.peers.values()].filter((s) =>
-			peers.has(s.publicKey.hashcode())
-		);
-	} */
 
 	private shouldSendMessage(tos?: string[] | Set<string>) {
 		if (
@@ -382,9 +408,52 @@ export class TopicControlPlane
 
 		const hasExplicitTOs =
 			options?.mode && deliveryModeHasReceiver(options.mode);
-		const tos = hasExplicitTOs
-			? options.mode?.to
-			: this.getPeersOnTopics(topics);
+		let tos = hasExplicitTOs ? options.mode?.to : this.getPeersOnTopics(topics);
+
+		// Bootstrap publish (best-effort):
+		// If the caller publishes on a topic it is NOT subscribed to, we may have zero
+		// subscriber knowledge for that topic yet (cache cold), even though subscribers
+		// exist. In that situation, send to a small bounded set of already connected peers
+		// so the message has a chance to reach a subscriber and warm the cache.
+		//
+		// Important: when publishing on topics we *are* subscribed to, keep the legacy
+		// behavior: if we only know about ourselves (no known remote subscribers), treat
+		// it as a no-op unless `dispatchEventOnSelfPublish` is enabled.
+		const canBootstrapToConnectedPeers =
+			topics.length > 0 && topics.every((t) => !this.subscriptions.has(t));
+		if (
+			canBootstrapToConnectedPeers &&
+			!hasExplicitTOs &&
+			tos instanceof Set &&
+			tos.size === 0
+		) {
+			const bootstrap = new Set<string>();
+			const push = (hash?: string) => {
+				if (!hash) return;
+				if (hash === this.publicKeyHash) return;
+				if (bootstrap.has(hash)) return;
+				bootstrap.add(hash);
+			};
+
+			for (const h of this.peers.keys()) {
+				push(h);
+				if (bootstrap.size >= 32) break;
+			}
+			if (bootstrap.size < 32) {
+				for (const conn of this.components.connectionManager.getConnections()) {
+					try {
+						push(getPublicKeyFromPeerId(conn.remotePeer).hashcode());
+					} catch {
+						// ignore unexpected key types
+					}
+					if (bootstrap.size >= 32) break;
+				}
+			}
+
+			if (bootstrap.size > 0) {
+				tos = bootstrap;
+			}
+		}
 
 		// Embedd topic info before the data so that peers/relays can also use topic info to route messages efficiently
 		const dataMessage = data
@@ -461,11 +530,23 @@ export class TopicControlPlane
 		this.peerToTopic.get(publicKeyHash)?.delete(topic);
 		if (!this.peerToTopic.get(publicKeyHash)?.size) {
 			this.peerToTopic.delete(publicKeyHash);
+			this.lastSubscriptionMessages.delete(publicKeyHash);
 		}
 
 		this.topicsToPeers.get(topic)?.delete(publicKeyHash);
 
 		return change;
+	}
+
+	private pruneTopicSubscribers(topic: string) {
+		const peers = this.topics.get(topic);
+		if (!peers) return;
+
+		while (peers.size > this.subscriberCacheMaxEntries) {
+			const oldest = peers.keys().next().value as string | undefined;
+			if (!oldest) break;
+			this.deletePeerFromTopic(topic, oldest);
+		}
 	}
 
 	private getSubscriptionOverlap(topics?: string[]) {
@@ -490,43 +571,43 @@ export class TopicControlPlane
 		this.removeSubscriptions(key);
 	}
 
-		public async onPeerReachable(publicKey: PublicSignKey) {
-			// Aggregate subscribers for my topics through this new peer because if we don't do this we might end up with a situtation where
-			// we act as a relay and relay messages for a topic, but don't forward it to this new peer because we never learned about their subscriptions
+	public async onPeerReachable(publicKey: PublicSignKey) {
+		// Aggregate subscribers for my topics through this new peer because if we don't do this we might end up with a situtation where
+		// we act as a relay and relay messages for a topic, but don't forward it to this new peer because we never learned about their subscriptions
 
-			const resp = super.onPeerReachable(publicKey);
-			const stream = this.peers.get(publicKey.hashcode());
+		const resp = super.onPeerReachable(publicKey);
+		const stream = this.peers.get(publicKey.hashcode());
 
-			if (this.subscriptions.size > 0) {
-				// Tell the newly reachable peer about our subscriptions. This also acts as a
-				// catch-up mechanism when we learn about new peers via routed ACKs (not only
-				// direct neighbours).
-				this.publishMessage(
-					this.publicKey,
-					await new DataMessage({
-						data: toUint8Array(
-							new Subscribe({
-								topics: this.getSubscriptionOverlap(), // TODO: protocol efficiency; do we really need to share *everything*?
-								requestSubscribers: true,
-							}).bytes(),
-						),
-						header: new MessageHeader({
-							priority: 1,
-							// If this is a direct neighbour, seed subscription gossip via that connection
-							// (and let it relay further). If it is only reachable via routes, deliver a
-							// unicast catch-up to that peer.
-							mode: stream
-								? new AnyWhere()
-								: new SilentDelivery({ to: [publicKey], redundancy: 1 }),
-							session: this.session,
-						}),
-					}).sign(this.sign),
-					stream ? [stream] : undefined,
-				).catch(dontThrowIfDeliveryError); // peer might have become unreachable immediately
-			}
-
-			return resp;
+		if (this.subscriptions.size > 0) {
+			// Tell the newly reachable peer about our subscriptions. This also acts as a
+			// catch-up mechanism when we learn about new peers via routed ACKs (not only
+			// direct neighbours).
+			this.publishMessage(
+				this.publicKey,
+				await new DataMessage({
+					data: toUint8Array(
+						new Subscribe({
+							topics: this.getSubscriptionOverlap(), // TODO: protocol efficiency; do we really need to share *everything*?
+							requestSubscribers: true,
+						}).bytes(),
+					),
+					header: new MessageHeader({
+						priority: 1,
+						// If this is a direct neighbour, seed subscription gossip via that connection
+						// (and let it relay further). If it is only reachable via routes, deliver a
+						// unicast catch-up to that peer.
+						mode: stream
+							? new AnyWhere()
+							: new SilentDelivery({ to: [publicKey], redundancy: 1 }),
+						session: this.session,
+					}),
+				}).sign(this.sign),
+				stream ? [stream] : undefined,
+			).catch(dontThrowIfDeliveryError); // peer might have become unreachable immediately
 		}
+
+		return resp;
+	}
 
 	public onPeerUnreachable(publicKeyHash: string) {
 		super.onPeerUnreachable(publicKeyHash);
@@ -577,7 +658,9 @@ export class TopicControlPlane
 			if (!this.lastSubscriptionMessages.has(subscriberKey)) {
 				this.lastSubscriptionMessages.set(subscriberKey, new Map());
 			}
-			this.lastSubscriptionMessages.get(subscriberKey)?.set(topic, messageTimestamp);
+			this.lastSubscriptionMessages
+				.get(subscriberKey)
+				?.set(topic, messageTimestamp);
 		}
 		return true;
 	}
@@ -712,6 +795,8 @@ export class TopicControlPlane
 							!existingSubscription ||
 							existingSubscription.session < message.header.session
 						) {
+							// LRU touch
+							peers.delete(senderKey);
 							peers.set(
 								senderKey,
 								new SubscriptionData({
@@ -722,12 +807,18 @@ export class TopicControlPlane
 							);
 
 							changed.push(topic);
+						} else if (existingSubscription) {
+							// LRU touch
+							peers.delete(senderKey);
+							peers.set(senderKey, existingSubscription);
 						}
 
 						if (!existingSubscription) {
 							this.topicsToPeers.get(topic)?.add(senderKey);
 							this.peerToTopic.get(senderKey)?.add(topic);
 						}
+
+						this.pruneTopicSubscribers(topic);
 					});
 
 					if (changed.length > 0) {
@@ -790,7 +881,6 @@ export class TopicControlPlane
 							}),
 						);
 					}
-
 				}
 
 				// DONT await this since it might introduce a dead-lock
@@ -831,7 +921,6 @@ export class TopicControlPlane
 		}
 		return true;
 	}
-
 }
 
 export const waitForSubscribers = async (
