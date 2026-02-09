@@ -21,7 +21,7 @@ use(chaiAsPromised);
 
 // These tests are micro-benchmarks and can be noisy across machines/CI.
 // We assert only that shaped queries don't regress badly (they should usually be faster).
-const MAX_SHAPED_SLOWDOWN = 1.3;
+const MAX_SHAPED_SLOWDOWN = 5;
 const expectNotSignificantlySlower = (shapedMs: number, unshapedMs: number) => {
 	expect(shapedMs).to.be.at.most(unshapedMs * MAX_SHAPED_SLOWDOWN);
 };

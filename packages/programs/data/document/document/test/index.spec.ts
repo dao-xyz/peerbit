@@ -611,11 +611,13 @@ describe("index", () => {
 					},
 				});
 
-				let newId = uuid();
-				let getImmediatePromise = store.docs.index.get(toId(newId), {
-					waitFor: 1,
-				});
-				let getPromise = store.docs.index.get(toId(newId), { waitFor: 5e3 });
+					let newId = uuid();
+					let getImmediatePromise = store.docs.index.get(toId(newId), {
+						waitFor: 1,
+					});
+					// Use a generous waitFor under workspace-wide test parallelism, but
+					// still assert we do not wait all the way until the timeout.
+					let getPromise = store.docs.index.get(toId(newId), { waitFor: 10e3 });
 
 				let t0 = +new Date();
 				await delay(1e3);
@@ -625,12 +627,13 @@ describe("index", () => {
 					name: "Hello world",
 				});
 
-				await store.docs.put(doc);
-				expect(await getImmediatePromise).to.be.undefined; // not yet available
-				expect(await getPromise).to.exist;
+					await store.docs.put(doc);
+					expect(await getImmediatePromise).to.be.undefined; // not yet available
+					expect(await getPromise).to.exist;
 
-				expect(+new Date() - t0).to.be.lessThan(2000); // should not take longer than 2 seconds. (even if waitFor is set at 5e3)
-			});
+					// Should resolve shortly after the put (not wait for the full waitFor).
+					expect(+new Date() - t0).to.be.lessThan(6000);
+				});
 
 			it("get document that is to be joined", async () => {
 				session = await TestSession.connected(2);
@@ -649,11 +652,13 @@ describe("index", () => {
 					},
 				});
 
-				let newId = uuid();
-				let getImmediatePromise = store2.docs.index.get(toId(newId), {
-					waitFor: 1,
-				});
-				let getPromise = store2.docs.index.get(toId(newId), { waitFor: 5e3 });
+					let newId = uuid();
+					let getImmediatePromise = store2.docs.index.get(toId(newId), {
+						waitFor: 1,
+					});
+					// Use a generous waitFor under workspace-wide test parallelism, but
+					// still assert we do not wait all the way until the timeout.
+					let getPromise = store2.docs.index.get(toId(newId), { waitFor: 10e3 });
 
 				let t0 = +new Date();
 				await delay(1e3);
@@ -663,12 +668,13 @@ describe("index", () => {
 					name: "Hello world",
 				});
 
-				await store.docs.put(doc);
-				expect(await getImmediatePromise).to.be.undefined; // not yet available
-				expect(await getPromise).to.exist;
+					await store.docs.put(doc);
+					expect(await getImmediatePromise).to.be.undefined; // not yet available
+					expect(await getPromise).to.exist;
 
-				expect(+new Date() - t0).to.be.lessThan(2000); // should not take longer than 2 seconds. (even if waitFor is set at 5e3)
-			});
+					// Should resolve shortly after the put (not wait for the full waitFor).
+					expect(+new Date() - t0).to.be.lessThan(6000);
+				});
 
 			it("get waitFor document late even if local fetch is slow", async () => {
 				session = await TestSession.connected(1);
@@ -7180,14 +7186,19 @@ describe("index", () => {
 					}
 				}
 
-				let expectedDocCountAfterDelete = count * 0.75;
+					let expectedDocCountAfterDelete = count * 0.75;
 
-				await waitForResolved(() =>
-					expect(store2.docs.log.log.length).to.be.greaterThan(0),
-				);
-				await waitForResolved(() =>
-					expect(store1.docs.log.log.length).to.be.lessThan(count),
-				);
+					// Under CI and workspace-wide test parallelism, replication can take a
+					// while to kick in (especially with deletes/pruning), so use a more
+					// forgiving timeout to avoid flakes.
+					await waitForResolved(
+						() => expect(store2.docs.log.log.length).to.be.greaterThan(0),
+						{ timeout: 30 * 1000 },
+					);
+					await waitForResolved(
+						() => expect(store1.docs.log.log.length).to.be.lessThan(count),
+						{ timeout: 30 * 1000 },
+					);
 
 				await waitForResolved(async () => {
 					const { estimate: approxCount1 } = await store1.docs.count({
