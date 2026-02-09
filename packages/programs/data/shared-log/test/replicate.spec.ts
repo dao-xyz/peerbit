@@ -346,12 +346,27 @@ describe(`replicate`, () => {
 				},
 			});
 			db2.log.getDefaultMinRoleAge = () => Promise.resolve(3e3);
-			const t0 = +new Date();
+			const minRoleAge = await db2.log.getDefaultMinRoleAge();
+
+			// Wait for the replicator to be observed so we can compute the remaining maturity delay.
+			let segmentTimestamp: number | undefined;
+			await waitForResolved(async () => {
+				const segments = await db2.log.getAllReplicationSegments();
+				const segment = segments.find(
+					(s) => s.hash === db1.node.identity.publicKey.hashcode(),
+				);
+				expect(segment, "expected db1 to be visible as a replicator").to.exist;
+				segmentTimestamp = segment ? Number(segment.timestamp) : undefined;
+			});
+
+			const now = Date.now();
+			const ageSoFar = segmentTimestamp != null ? now - segmentTimestamp : 0;
+			const remaining = Math.max(minRoleAge - ageSoFar, 0);
+
+			const t0 = Date.now();
 			await db2.log.waitForReplicator(db1.node.identity.publicKey);
-			const t1 = +new Date();
-			expect(t1 - t0).greaterThanOrEqual(
-				(await db2.log.getDefaultMinRoleAge()) - 100,
-			); // - 100 for handle timer inaccuracy
+			const t1 = Date.now();
+			expect(t1 - t0).greaterThanOrEqual(Math.max(remaining - 150, 0)); // allow timer inaccuracy
 		});
 
 		it("waitForReplicator eager resolves before maturity", async () => {

@@ -393,7 +393,9 @@ export abstract class Program<
 		if (!this.emittedEventsFor.has(fromHash)) return;
 
 		const entry = this.peerTopicsByHash.get(fromHash);
-		const hasAllTopics = entry ? this.peerHasAllTopics(entry, allTopics) : false;
+		const hasAllTopics = entry
+			? this.peerHasAllTopics(entry, allTopics)
+			: false;
 
 		if (hasAllTopics) {
 			return; // still here!?
@@ -541,24 +543,70 @@ export abstract class Program<
 		if (allTopics.length === 0) {
 			throw new Error("Program has no topics, cannot get ready");
 		}
-		// Seed a fresh subscriber snapshot for program topics so readiness doesn't depend
-		// on seeing historical subscribe events (common when a program subscribes before
-		// the stream-layer neighbors are established).
-		if (allTopics.length > 0 && expectedHashes.length > 0) {
-			for (const hash of expectedHashes) {
-				const publicKey = await this.node.services.pubsub.getPublicKey(hash);
-				for (const topic of allTopics) {
-					// Prefer a direct request to the peer we're about to talk to (fast path).
-					// Fall back to broadcast if we can't resolve the public key yet.
-					await this.node.services.pubsub.requestSubscribers(topic, publicKey);
-				}
+		const pubsub = this.node.services.pubsub;
+
+		// Prefer a direct neighbour stream when available. This avoids cases where
+		// peers are "reachable" via the routing table but we haven't established
+		// a writable protocol stream yet (initial control-plane gossip can be dropped).
+		const neighborProbeTimeout = Math.min(options?.timeout ?? 10_000, 3_000);
+		await Promise.all(
+			expectedHashes.map((hash) =>
+				pubsub
+					.waitFor(hash, { target: "neighbor", timeout: neighborProbeTimeout })
+					.catch(() => {
+						// Multi-hop overlays may never be direct neighbours; best-effort only.
+					}),
+			),
+		);
+
+		// Best-effort seeding: subscribe events are edge-triggered and can be missed if a peer
+		// subscribed before this program attached listeners. Actively ask for subscriber
+		// snapshots while waiting, but rate-limit to avoid fanout in larger overlays.
+		const REQUEST_MIN_INTERVAL_MS = 500;
+		const lastRequestAtByPeer = new Map<string, number>();
+		const publicKeyByHash = new Map<
+			string,
+			Promise<PublicSignKey | undefined>
+		>();
+		const resolvePublicKey = (
+			hash: string,
+		): Promise<PublicSignKey | undefined> => {
+			let existing = publicKeyByHash.get(hash);
+			if (!existing) {
+				existing = Promise.resolve(pubsub.getPublicKey(hash)).catch(
+					(): PublicSignKey | undefined => undefined,
+				);
+				publicKeyByHash.set(hash, existing);
 			}
+			return existing;
+		};
+		const requestSubscriberSnapshots = (hash: string): void => {
+			const now = Date.now();
+			const last = lastRequestAtByPeer.get(hash) ?? 0;
+			if (now - last < REQUEST_MIN_INTERVAL_MS) return;
+			lastRequestAtByPeer.set(hash, now);
+
+			void resolvePublicKey(hash).then((publicKey) => {
+				for (const topic of allTopics) {
+					void Promise.resolve(
+						pubsub.requestSubscribers(topic, publicKey),
+					).catch(() => {
+						// best-effort; the wait loop will retry and/or time out
+					});
+				}
+			});
+		};
+
+		for (const hash of expectedHashes) {
+			requestSubscriberSnapshots(hash);
 		}
 
 		// wait for subscribing to topics
 		return new Promise<string[]>((resolve, reject) => {
 			let settled = false;
-			const timeoutMs = options?.timeout || 10 * 1000;
+			// Historically this was ~20s; keep enough headroom for initial control-plane
+			// convergence (stream establishment + subscription gossip) in sparse overlays.
+			const timeoutMs = options?.timeout || 20 * 1000;
 			let timeout: ReturnType<typeof setTimeout> | undefined = undefined;
 			let listener: (() => void) | undefined = undefined;
 			let poll: ReturnType<typeof setInterval> | undefined = undefined;
@@ -628,26 +676,34 @@ export abstract class Program<
 					return true;
 				}
 
+				// Subscription events are edge-triggered: we may have missed earlier subscribe
+				// events (e.g. if they arrived during program open). Fall back to best-effort
+				// pubsub snapshots to avoid false timeouts.
+				const pubsubAny = this.node.services.pubsub as any;
 				let key: PublicSignKey | undefined;
-				let sawKnownTopic = false;
+
 				for (const topic of allTopics) {
-					const subscribers = await this.node.services.pubsub.getSubscribers(topic);
-					if (!subscribers) {
+					// Fast path for TopicControlPlane: O(1) membership check without allocations.
+					const topicPeers:
+						| Map<string, { publicKey: PublicSignKey }>
+						| undefined = pubsubAny?.topics?.get?.(topic);
+					if (topicPeers?.has?.(hash)) {
+						key ||= topicPeers.get(hash)?.publicKey;
 						continue;
 					}
-					sawKnownTopic = true;
-					if (subscribers.length === 0) {
+
+					const subscribers =
+						await this.node.services.pubsub.getSubscribers(topic);
+					if (!subscribers || subscribers.length === 0) {
 						return false;
 					}
 					const found = subscribers.find((x) => x.hashcode() === hash);
 					if (!found) {
 						return false;
 					}
-					key = found;
+					key ||= found;
 				}
-				if (!sawKnownTopic) {
-					return false;
-				}
+
 				if (key) {
 					this.recordPeerSubscription(key, allTopics);
 				}
@@ -666,6 +722,7 @@ export abstract class Program<
 				try {
 					for (const hash of expectedHashes) {
 						if (!(await isPeerReady(hash))) {
+							requestSubscriberSnapshots(hash);
 							ready = false;
 							break;
 						}

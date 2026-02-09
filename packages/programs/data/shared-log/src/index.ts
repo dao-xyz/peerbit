@@ -34,6 +34,7 @@ import { logger as loggerFn } from "@peerbit/logger";
 import { ClosedError, Program, type ProgramEvents } from "@peerbit/program";
 import {
 	FanoutChannel,
+	type FanoutProviderHandle,
 	type FanoutTreeChannelOptions,
 	type FanoutTreeDataEvent,
 	type FanoutTreeJoinOptions,
@@ -540,6 +541,7 @@ export class SharedLog<
 	private _onUnsubscriptionFn!: (arg: any) => any;
 	private _onFanoutDataFn?: (arg: any) => void;
 	private _fanoutChannel?: FanoutChannel;
+	private _providerHandle?: FanoutProviderHandle;
 
 	private _isTrustedReplicator?: (
 		publicKey: PublicSignKey,
@@ -583,6 +585,10 @@ export class SharedLog<
 	>; // map of peerId to timeout
 
 	private latestReplicationInfoMessage!: Map<string, bigint>;
+	private _replicationInfoRequestByPeer!: Map<
+		string,
+		{ attempts: number; timer?: ReturnType<typeof setTimeout> }
+	>;
 
 	private remoteBlocks!: RemoteBlocks;
 
@@ -1023,33 +1029,108 @@ export class SharedLog<
 	private async _getTopicSubscribers(
 		topic: string,
 	): Promise<PublicSignKey[] | undefined> {
-		if (this._fanoutChannel && topic === this.topic) {
-			const hashes = this._fanoutChannel.getPeerHashes({ includeSelf: false });
-			if (hashes.length > 0) {
-				const keys = await Promise.all(
-					hashes.map((hash) => this._resolvePublicKeyFromHash(hash)),
-				);
-				const uniqueKeys: PublicSignKey[] = [];
-				const seen = new Set<string>();
-				for (const key of keys) {
-					if (!key) {
-						continue;
-					}
-					const hash = key.hashcode();
-					if (hash === this.node.identity.publicKey.hashcode()) {
-						continue;
-					}
-					if (seen.has(hash)) {
-						continue;
-					}
-					seen.add(hash);
-					uniqueKeys.push(key);
-				}
-				return uniqueKeys;
+		const maxPeers = 64;
+
+		// Prefer the bounded peer set we already know from the fanout overlay.
+		if (this._fanoutChannel && (topic === this.topic || topic === this.rpc.topic)) {
+			const hashes = this._fanoutChannel
+				.getPeerHashes({ includeSelf: false })
+				.slice(0, maxPeers);
+			if (hashes.length === 0) return [];
+
+			const keys = await Promise.all(
+				hashes.map((hash) => this._resolvePublicKeyFromHash(hash)),
+			);
+			const uniqueKeys: PublicSignKey[] = [];
+			const seen = new Set<string>();
+			const selfHash = this.node.identity.publicKey.hashcode();
+			for (const key of keys) {
+				if (!key) continue;
+				const hash = key.hashcode();
+				if (hash === selfHash) continue;
+				if (seen.has(hash)) continue;
+				seen.add(hash);
+				uniqueKeys.push(key);
 			}
-			return [];
+			return uniqueKeys;
 		}
-		return (await this.node.services.pubsub.getSubscribers(topic)) ?? undefined;
+
+		const selfHash = this.node.identity.publicKey.hashcode();
+		const hashes: string[] = [];
+
+		// Best-effort provider discovery (bounded). This requires bootstrap trackers.
+		try {
+			const fanoutService = (this.node.services as any).fanout;
+			if (fanoutService?.queryProviders) {
+				const ns = `shared-log|${this.topic}`;
+				const seed = hashToSeed32(topic);
+				const providers: string[] = await fanoutService.queryProviders(ns, {
+					want: maxPeers,
+					seed,
+				});
+				for (const h of providers ?? []) {
+					if (!h || h === selfHash) continue;
+					hashes.push(h);
+					if (hashes.length >= maxPeers) break;
+				}
+			}
+		} catch {
+			// Best-effort only.
+		}
+
+		// Next, use already-connected peer streams (bounded and cheap).
+		const peerMap: Map<string, unknown> | undefined = (this.node.services.pubsub as any)
+			?.peers;
+		if (peerMap?.keys) {
+			for (const h of peerMap.keys()) {
+				if (!h || h === selfHash) continue;
+				hashes.push(h);
+				if (hashes.length >= maxPeers) break;
+			}
+		}
+
+		// Finally, fall back to libp2p connections (e.g. bootstrap peers) without requiring
+		// any global topic membership view.
+		if (hashes.length < maxPeers) {
+			const connectionManager = (this.node.services.pubsub as any)?.components
+				?.connectionManager;
+			const connections = connectionManager?.getConnections?.() ?? [];
+			for (const conn of connections) {
+				const peerId = conn?.remotePeer;
+				if (!peerId) continue;
+				try {
+					const h = getPublicKeyFromPeerId(peerId).hashcode();
+					if (!h || h === selfHash) continue;
+					hashes.push(h);
+					if (hashes.length >= maxPeers) break;
+				} catch {
+					// Best-effort only.
+				}
+			}
+		}
+
+		if (hashes.length === 0) return [];
+
+		const uniqueHashes: string[] = [];
+		const seen = new Set<string>();
+		for (const h of hashes) {
+			if (seen.has(h)) continue;
+			seen.add(h);
+			uniqueHashes.push(h);
+			if (uniqueHashes.length >= maxPeers) break;
+		}
+
+		const keys = await Promise.all(
+			uniqueHashes.map((hash) => this._resolvePublicKeyFromHash(hash)),
+		);
+		const uniqueKeys: PublicSignKey[] = [];
+		for (const key of keys) {
+			if (!key) continue;
+			const hash = key.hashcode();
+			if (hash === selfHash) continue;
+			uniqueKeys.push(key);
+		}
+		return uniqueKeys;
 	}
 
 	// @deprecated
@@ -1615,6 +1696,7 @@ export class SharedLog<
 
 		let diffs: ReplicationChanges<ReplicationRangeIndexable<R>>;
 		let deleted: ReplicationRangeIndexable<R>[] | undefined = undefined;
+		let isStoppedReplicating = false;
 		if (reset) {
 			deleted = (
 				await this.replicationIndex
@@ -1653,6 +1735,7 @@ export class SharedLog<
 			}
 
 			isNewReplicator = prevCount === 0 && ranges.length > 0;
+			isStoppedReplicating = prevCount > 0 && ranges.length === 0;
 		} else {
 			let batchSize = 100;
 			let existing: ReplicationRangeIndexable<R>[] = [];
@@ -1736,7 +1819,11 @@ export class SharedLog<
 			diffs = changes;
 		}
 
-		this.uniqueReplicators.add(from.hashcode());
+		if (ranges.length === 0) {
+			this.uniqueReplicators.delete(from.hashcode());
+		} else {
+			this.uniqueReplicators.add(from.hashcode());
+		}
 
 		let now = +new Date();
 		let minRoleAge = await this.getDefaultMinRoleAge();
@@ -1850,6 +1937,14 @@ export class SharedLog<
 				}
 			}
 
+			if (isStoppedReplicating) {
+				this.events.dispatchEvent(
+					new CustomEvent<ReplicatorLeaveEvent>("replicator:leave", {
+						detail: { publicKey: from },
+					}),
+				);
+			}
+
 			if (rebalance) {
 				for (const diff of diffs) {
 					this.replicationChangeDebounceFn.add(diff);
@@ -1887,6 +1982,20 @@ export class SharedLog<
 		if (change) {
 			let addedOrReplaced = change.filter((x) => x.type !== "removed");
 			if (addedOrReplaced.length > 0) {
+				// Provider discovery keep-alive (best-effort). This enables bounded targeted fetches
+				// without relying on any global subscriber list.
+				try {
+					const fanoutService = (this.node.services as any).fanout;
+					if (fanoutService?.provide && !this._providerHandle) {
+						this._providerHandle = fanoutService.provide(`shared-log|${this.topic}`, {
+							ttlMs: 120_000,
+							announceIntervalMs: 60_000,
+						});
+					}
+				} catch {
+					// Best-effort only.
+				}
+
 				let message:
 					| AllReplicatingSegmentsMessage
 					| AddedReplicationSegmentMessage
@@ -2093,6 +2202,7 @@ export class SharedLog<
 		this._pendingDeletes = new Map();
 		this._pendingIHave = new Map();
 		this.latestReplicationInfoMessage = new Map();
+		this._replicationInfoRequestByPeer = new Map();
 		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
 		this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
 
@@ -2134,6 +2244,12 @@ export class SharedLog<
 		}
 
 		this._closeController = new AbortController();
+		this._closeController.signal.addEventListener("abort", () => {
+			for (const [_peer, state] of this._replicationInfoRequestByPeer) {
+				if (state.timer) clearTimeout(state.timer);
+			}
+			this._replicationInfoRequestByPeer.clear();
+		});
 		this._isTrustedReplicator = options?.canReplicate;
 		this.keep = options?.keep;
 		this.pendingMaturity = new Map();
@@ -2788,6 +2904,12 @@ export class SharedLog<
 
 		this.distributeQueue?.clear();
 		this._closeFanoutChannel();
+		try {
+			this._providerHandle?.close();
+		} catch {
+			// ignore
+		}
+		this._providerHandle = undefined;
 		this.coordinateToHash.clear();
 		this.recentlyRebalanced.clear();
 		this.uniqueReplicators.clear();
@@ -2831,6 +2953,21 @@ export class SharedLog<
 		/* this._totalParticipation = 0; */
 	}
 	async close(from?: Program): Promise<boolean> {
+		// Best-effort: announce that we are going offline before tearing down
+		// RPC/subscription state.
+		//
+		// Important: do not delete our local replication ranges here. Keeping them
+		// allows `replicate: { type: "resume" }` to restore the previous role on
+		// restart. Explicit `unreplicate()` still clears local state.
+		try {
+			if (!this.closed) {
+				await this.rpc.send(new AllReplicatingSegmentsMessage({ segments: [] }), {
+					priority: 1,
+				});
+			}
+		} catch {
+			// ignore: close should be resilient even if we were never fully started
+		}
 		const superClosed = await super.close(from);
 		if (!superClosed) {
 			return superClosed;
@@ -3286,6 +3423,12 @@ export class SharedLog<
 							timestamp: Number(messageTimestamp),
 						},
 					);
+
+					// If the peer reports any replication segments, stop re-requesting.
+					// (Empty reports can be transient during startup.)
+					if (replicationInfoMessage.segments.length > 0) {
+						this.cancelReplicationInfoRequests(from.hashcode());
+					}
 				})().catch((e) => {
 					if (isNotStartedError(e)) {
 						return;
@@ -3753,13 +3896,6 @@ export class SharedLog<
 		coverageThreshold?: number;
 		waitForNewPeers?: boolean;
 	}) {
-		// if no remotes, just return
-		const subscribers = await this._getTopicSubscribers(this.rpc.topic);
-		let waitForNewPeers = options?.waitForNewPeers;
-		if (!waitForNewPeers && (subscribers?.length ?? 0) === 0) {
-			throw new NoPeersError(this.rpc.topic);
-		}
-
 		let coverageThreshold = options?.coverageThreshold ?? 1;
 		let deferred = pDefer<void>();
 		let settled = false;
@@ -4207,6 +4343,65 @@ export class SharedLog<
 		);
 	}
 
+	private cancelReplicationInfoRequests(peerHash: string) {
+		const state = this._replicationInfoRequestByPeer.get(peerHash);
+		if (!state) return;
+		if (state.timer) {
+			clearTimeout(state.timer);
+		}
+		this._replicationInfoRequestByPeer.delete(peerHash);
+	}
+
+	private scheduleReplicationInfoRequests(peer: PublicSignKey) {
+		const peerHash = peer.hashcode();
+		if (this._replicationInfoRequestByPeer.has(peerHash)) {
+			return;
+		}
+
+		const state: { attempts: number; timer?: ReturnType<typeof setTimeout> } = {
+			attempts: 0,
+		};
+		this._replicationInfoRequestByPeer.set(peerHash, state);
+
+		const intervalMs = Math.max(50, this.waitForReplicatorRequestIntervalMs);
+		const maxAttempts = Math.min(
+			5,
+			this.waitForReplicatorRequestMaxAttempts ??
+				WAIT_FOR_REPLICATOR_REQUEST_MIN_ATTEMPTS,
+		);
+
+		const tick = () => {
+			if (this.closed || this._closeController.signal.aborted) {
+				this.cancelReplicationInfoRequests(peerHash);
+				return;
+			}
+
+			state.attempts++;
+
+			this.rpc
+				.send(new RequestReplicationInfoMessage(), {
+					mode: new AcknowledgeDelivery({ redundancy: 1, to: [peer] }),
+				})
+				.catch((e) => {
+					// Best-effort: missing peers / unopened RPC should not fail join flows.
+					if (isNotStartedError(e as Error)) {
+						return;
+					}
+					logger.error(e?.toString?.() ?? String(e));
+				});
+
+			if (state.attempts >= maxAttempts) {
+				this.cancelReplicationInfoRequests(peerHash);
+				return;
+			}
+
+			state.timer = setTimeout(tick, intervalMs);
+			state.timer.unref?.();
+		};
+
+		tick();
+	}
+
 	async handleSubscriptionChange(
 		publicKey: PublicSignKey,
 		topics: string[],
@@ -4217,6 +4412,7 @@ export class SharedLog<
 		}
 
 		if (!subscribed) {
+			this.cancelReplicationInfoRequests(publicKey.hashcode());
 			this.removePeerFromGidPeerHistory(publicKey.hashcode());
 
 			for (const [k, v] of this._requestIPruneSent) {
@@ -4272,11 +4468,7 @@ export class SharedLog<
 			// Request the remote peer's replication info. This makes joins resilient to
 			// timing-sensitive delivery/order issues where we may miss their initial
 			// replication announcement.
-				this.rpc
-					.send(new RequestReplicationInfoMessage(), {
-						mode: new AcknowledgeDelivery({ redundancy: 1, to: [publicKey] }),
-					})
-					.catch((e) => logger.error(e.toString()));
+			this.scheduleReplicationInfoRequests(publicKey);
 		} else {
 			await this.removeReplicator(publicKey);
 		}

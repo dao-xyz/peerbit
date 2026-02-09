@@ -13,6 +13,8 @@ describe("events", () => {
 	});
 
 	it("replicator:(join|leave)", async () => {
+		// Joining now includes a targeted replication-info handshake which can race on
+		// slower CI machines. Use waitForResolved instead of a fixed delay.
 		session = await TestSession.connected(2);
 
 		let db1JoinEvents: string[] = [];
@@ -40,19 +42,25 @@ describe("events", () => {
 		const db2b = await session.peers[1].open(db1b.clone(), {
 			args: { replicate: 0.4 },
 		});
-		await delay(2e3); // some time for all join events to emit
-		expect(db1JoinEvents).to.have.members([
-			session.peers[1].identity.publicKey.hashcode(),
-		]);
+		await waitForResolved(
+			() =>
+				expect(db1JoinEvents).to.have.members([
+					session.peers[1].identity.publicKey.hashcode(),
+				]),
+			{ timeout: 20_000 },
+		);
 
 		await db2a.close();
 		await db2b.close();
 
 		// try open another db and make sure it does not trigger join event to db1
-		await delay(2e3); // some time for all leave events to emit
-		expect(db1LeaveEvents).to.have.members([
-			session.peers[1].identity.publicKey.hashcode(),
-		]);
+		await waitForResolved(
+			() =>
+				expect(db1LeaveEvents).to.have.members([
+					session.peers[1].identity.publicKey.hashcode(),
+				]),
+			{ timeout: 20_000 },
+		);
 		expect(db1JoinEvents).to.have.length(1); // no new join event
 	});
 
