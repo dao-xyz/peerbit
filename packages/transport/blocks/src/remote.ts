@@ -98,6 +98,13 @@ export class RemoteBlocks implements IBlocks {
 				options?: { signal?: AbortSignal },
 			) => Promise<string[] | undefined> | string[] | undefined;
 			/**
+			 * Optional hook called after a block is stored locally (best-effort).
+			 *
+			 * Intended for wiring in discovery/provider announcements without coupling
+			 * this transport to a specific directory implementation.
+			 */
+			onPut?: (cid: string) => Promise<void> | void;
+			/**
 			 * Cache of learned/suggested providers per CID to reduce repeated lookups and avoid
 			 * expensive "search" behaviors.
 			 */
@@ -262,7 +269,13 @@ export class RemoteBlocks implements IBlocks {
 		if (!this.localStore) {
 			throw new Error("Local store not set");
 		}
-		return this.localStore!.put(bytes);
+		const cid = await this.localStore!.put(bytes);
+		try {
+			await this.options.onPut?.(cid);
+		} catch {
+			// ignore best-effort hooks
+		}
+		return cid;
 	}
 
 	async has(cid: string) {
@@ -279,15 +292,16 @@ export class RemoteBlocks implements IBlocks {
 
 		if (!value) {
 			// try to get it remotelly
-			let remoteOptions = options?.remote === true ? {} : options?.remote;
+			const remoteOptions = options?.remote === true ? {} : options?.remote;
 			if (remoteOptions) {
 				const cidObject = cidifyString(cid);
 				value = await this._readFromPeers(cid, cidObject, remoteOptions);
 				if (remoteOptions?.replicate && value) {
-					await this.localStore!.put(value);
+					await this.put(value);
 				}
 			}
 		}
+
 		return value;
 	}
 

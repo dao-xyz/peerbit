@@ -203,22 +203,97 @@ export class Peerbit implements ProgramClient {
 
 			const topicRootControlPlane = new TopicRootControlPlane();
 
+			// Used for wiring blocks <-> fanout provider discovery without introducing hard
+			// dependencies between services. (Both services are optional/overridable.)
+			let fanoutService: FanoutTree | undefined;
+			const blockProviderNamespace = (cid: string) => `cid:${cid}`;
+
 			const services: any = {
 				keychain: (components: KeychainComponents) =>
 					keychain({ libp2p: {}, crypto: cryptoKeychain })(components),
-				blocks: (c: any) =>
-					new DirectBlock(c, {
+				fanout: (c: any) =>
+					(fanoutService = new FanoutTree(c, {
+						connectionManager: false,
+						topicRootControlPlane,
+					})),
+				blocks: (c: any) => {
+					let blocksService: DirectBlock | undefined;
+
+					const fallbackConnectedPeers = () => {
+						const out: string[] = [];
+						const push = (hash?: string) => {
+							if (!hash) return;
+							if (hash === blocksService?.publicKeyHash) return;
+							// Small bounded list; avoid Set allocations on hot paths.
+							if (out.includes(hash)) return;
+							out.push(hash);
+						};
+
+						// Prefer peers we've already negotiated `/lazyblock` streams with.
+						for (const h of blocksService?.peers.keys() ?? []) {
+							push(h);
+							if (out.length >= 32) return out;
+						}
+
+						// Fall back to currently connected libp2p peers.
+						for (const conn of c.connectionManager.getConnections()) {
+							try {
+								push(getPublicKeyFromPeerId(conn.remotePeer).hashcode());
+							} catch {
+								// ignore unexpected key types
+							}
+							if (out.length >= 32) break;
+						}
+
+						return out;
+					};
+
+					const resolveProviders = async (
+						cid: string,
+						options?: { signal?: AbortSignal },
+					) => {
+						// 1) tracker-backed provider directory (best-effort, bounded)
+						try {
+							const providers = await fanoutService?.queryProviders(
+								blockProviderNamespace(cid),
+								{
+									want: 8,
+									timeoutMs: 2_000,
+									queryTimeoutMs: 500,
+									bootstrapMaxPeers: 2,
+									signal: options?.signal,
+								},
+							);
+							if (providers && providers.length > 0) return providers;
+						} catch {
+							// ignore discovery failures
+						}
+
+						// 2) fallback to currently connected peers (keeps local/small nets working without trackers)
+						return fallbackConnectedPeers();
+					};
+
+					blocksService = new DirectBlock(c, {
 						canRelayMessage: asRelay,
 						directory: blocksDirectory,
-					}),
+						resolveProviders,
+						onPut: async (cid) => {
+							// Best-effort directory announce for "get without remote.from" workflows.
+							try {
+								await fanoutService?.announceProvider(blockProviderNamespace(cid), {
+									ttlMs: 120_000,
+									bootstrapMaxPeers: 2,
+								});
+							} catch {
+								// ignore announce failures
+							}
+						},
+					});
+					return blocksService;
+				},
 				pubsub: (c: any) =>
 					new TopicControlPlane(c, {
 						canRelayMessage: asRelay,
-						topicRootControlPlane,
-					}),
-				fanout: (c: any) =>
-					new FanoutTree(c, {
-						connectionManager: false,
 						topicRootControlPlane,
 					}),
 				...extendedOptions?.services,

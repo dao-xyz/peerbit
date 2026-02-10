@@ -35,6 +35,7 @@ import { ClosedError, Program, type ProgramEvents } from "@peerbit/program";
 import {
 	FanoutChannel,
 	type FanoutProviderHandle,
+	type FanoutTree,
 	type FanoutTreeChannelOptions,
 	type FanoutTreeDataEvent,
 	type FanoutTreeJoinOptions,
@@ -2250,31 +2251,69 @@ export class SharedLog<
 			}
 			this._replicationInfoRequestByPeer.clear();
 		});
-		this._isTrustedReplicator = options?.canReplicate;
-		this.keep = options?.keep;
-		this.pendingMaturity = new Map();
+			this._isTrustedReplicator = options?.canReplicate;
+			this.keep = options?.keep;
+			this.pendingMaturity = new Map();
 
-		const id = sha256Base64Sync(this.log.id);
-		const storage = await this.node.storage.sublevel(id);
+			const id = sha256Base64Sync(this.log.id);
+			const storage = await this.node.storage.sublevel(id);
 
-		const localBlocks = await new AnyBlockStore(
-			await storage.sublevel("blocks"),
-		);
+			const localBlocks = await new AnyBlockStore(await storage.sublevel("blocks"));
+			const fanoutService = (this.node.services as any).fanout as FanoutTree | undefined;
+			const blockProviderNamespace = (cid: string) => `cid:${cid}`;
 			this.remoteBlocks = new RemoteBlocks({
 				local: localBlocks,
 				publish: (message, options) =>
-					this.rpc.send(
-						new BlocksMessage(message),
-						options,
-					),
+					this.rpc.send(new BlocksMessage(message), options),
 				waitFor: this.rpc.waitFor.bind(this.rpc),
 				publicKey: this.node.identity.publicKey,
 				eagerBlocks: options?.eagerBlocks ?? true,
+				resolveProviders: async (cid, opts) => {
+					// 1) tracker-backed provider directory (best-effort, bounded)
+					try {
+						const providers = await fanoutService?.queryProviders(
+							blockProviderNamespace(cid),
+							{
+								want: 8,
+								timeoutMs: 2_000,
+								queryTimeoutMs: 500,
+								bootstrapMaxPeers: 2,
+								signal: opts?.signal,
+							},
+						);
+						if (providers && providers.length > 0) return providers;
+					} catch {
+						// ignore discovery failures
+					}
+
+					// 2) fallback to currently connected RPC peers
+					const self = this.node.identity.publicKey.hashcode();
+					const out: string[] = [];
+					const peers = (this.rpc as any)?.peers;
+					for (const h of peers?.keys?.() ?? []) {
+						if (h === self) continue;
+						if (out.includes(h)) continue;
+						out.push(h);
+						if (out.length >= 32) break;
+					}
+					return out;
+				},
+				onPut: async (cid) => {
+					// Best-effort directory announce for "get without remote.from" workflows.
+					try {
+						await fanoutService?.announceProvider(blockProviderNamespace(cid), {
+							ttlMs: 120_000,
+							bootstrapMaxPeers: 2,
+						});
+					} catch {
+						// ignore announce failures
+					}
+				},
 			});
 
-		await this.remoteBlocks.start();
+			await this.remoteBlocks.start();
 
-		const logScope = await this.node.indexer.scope(id);
+			const logScope = await this.node.indexer.scope(id);
 		const replicationIndex = await logScope.scope("replication");
 		this._replicationRangeIndex = await replicationIndex.init({
 			schema: this.indexableDomain.constructorRange,
@@ -3349,20 +3388,20 @@ export class SharedLog<
 					return;
 				}
 
-				const segments = (await this.getMyReplicationSegments()).map((x) =>
-					x.toReplicationRange(),
-				);
+					const segments = (await this.getMyReplicationSegments()).map((x) =>
+						x.toReplicationRange(),
+					);
 
-						this.rpc
-							.send(new AllReplicatingSegmentsMessage({ segments }), {
-								mode: new AcknowledgeDelivery({ to: [context.from], redundancy: 1 }),
-							})
-							.catch((e) => logger.error(e.toString()));
+					this.rpc
+						.send(new AllReplicatingSegmentsMessage({ segments }), {
+							mode: new AcknowledgeDelivery({ to: [context.from], redundancy: 1 }),
+						})
+						.catch((e) => logger.error(e.toString()));
 
-				// for backwards compatibility (v8) remove this when we are sure that all nodes are v9+
-				if (this.v8Behaviour) {
-					const role = this.getRole();
-					if (role instanceof Replicator) {
+					// for backwards compatibility (v8) remove this when we are sure that all nodes are v9+
+					if (this.v8Behaviour) {
+						const role = this.getRole();
+						if (role instanceof Replicator) {
 						const fixedSettings = !this._isAdaptiveReplicating;
 						if (fixedSettings) {
 							await this.rpc.send(
@@ -3839,7 +3878,7 @@ export class SharedLog<
 				return;
 			}
 
-			requestAttempts++;
+				requestAttempts++;
 
 				this.rpc
 					.send(new RequestReplicationInfoMessage(), {
@@ -3848,14 +3887,15 @@ export class SharedLog<
 					.catch((e) => {
 						// Best-effort: missing peers / unopened RPC should not fail the wait logic.
 						if (isNotStartedError(e as Error)) {
-						return;
-					}
-				});
+							return;
+						}
+						logger.error(e?.toString?.() ?? String(e));
+					});
 
-			if (requestAttempts < maxRequestAttempts) {
-				requestTimer = setTimeout(requestReplicationInfo, requestIntervalMs);
-			}
-		};
+				if (requestAttempts < maxRequestAttempts) {
+					requestTimer = setTimeout(requestReplicationInfo, requestIntervalMs);
+				}
+			};
 
 		const check = async () => {
 			const iterator = this.replicationIndex?.iterate(
@@ -4441,9 +4481,9 @@ export class SharedLog<
 				);
 		}
 
-		if (subscribed) {
-			const replicationSegments = await this.getMyReplicationSegments();
-			if (replicationSegments.length > 0) {
+			if (subscribed) {
+				const replicationSegments = await this.getMyReplicationSegments();
+				if (replicationSegments.length > 0) {
 					this.rpc
 						.send(
 							new AllReplicatingSegmentsMessage({
@@ -4455,18 +4495,18 @@ export class SharedLog<
 						)
 						.catch((e) => logger.error(e.toString()));
 
-				if (this.v8Behaviour) {
-					// for backwards compatibility
+					if (this.v8Behaviour) {
+						// for backwards compatibility
 						this.rpc
 							.send(new ResponseRoleMessage({ role: await this.getRole() }), {
 								mode: new AcknowledgeDelivery({ redundancy: 1, to: [publicKey] }),
 							})
 							.catch((e) => logger.error(e.toString()));
 					}
-			}
+				}
 
-			// Request the remote peer's replication info. This makes joins resilient to
-			// timing-sensitive delivery/order issues where we may miss their initial
+				// Request the remote peer's replication info. This makes joins resilient to
+				// timing-sensitive delivery/order issues where we may miss their initial
 			// replication announcement.
 			this.scheduleReplicationInfoRequests(publicKey);
 		} else {
@@ -4686,13 +4726,13 @@ export class SharedLog<
 					let existCounter = this._requestIPruneResponseReplicatorSet.get(
 						entry.hash,
 					);
-					if (!existCounter) {
-						existCounter = new Set();
-						this._requestIPruneResponseReplicatorSet.set(
-							entry.hash,
-							existCounter,
-						);
-					}
+						if (!existCounter) {
+							existCounter = new Set();
+							this._requestIPruneResponseReplicatorSet.set(
+								entry.hash,
+								existCounter,
+							);
+						}
 						existCounter.add(publicKeyHash);
 						// Seed provider hints so future remote reads can avoid extra round-trips.
 						this.remoteBlocks.hintProviders(entry.hash, [publicKeyHash]);
@@ -4701,7 +4741,7 @@ export class SharedLog<
 							resolve();
 						}
 					},
-			});
+				});
 
 			promises.push(deferredPromise.promise);
 		}

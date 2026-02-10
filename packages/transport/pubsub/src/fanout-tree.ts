@@ -68,6 +68,11 @@ export type FanoutTreeChannelOptions = {
 	bidPerByte?: number;
 	allowKick?: boolean;
 
+	/**
+	 * Enable bounded pull-repair (tree-first delivery, parent-based backfill).
+	 *
+	 * Defaults to `true`. Set to `false` to disable caching/repair logic for the channel.
+	 */
 	repair?: boolean;
 	repairWindowMessages?: number;
 	/**
@@ -409,6 +414,10 @@ const PEER_HINT_MAX_ENTRIES_HARD_CAP = 100_000;
 // This must stay small; large values can blow up memory in large-scale sims.
 const KNOWN_CANDIDATE_ADDRS_MAX_ENTRIES = 256;
 const PROVIDER_DIRECTORY_MAX_ENTRIES = 16_384;
+// Best-effort bound on the number of provider namespaces we keep cached locally.
+// This prevents unbounded memory growth if callers use extremely high-cardinality namespaces
+// (for example, `cid:<cid>` per block).
+const PROVIDER_DIRECTORY_MAX_NAMESPACES = 4_096;
 
 const FANOUT_PROTOCOLS = ["/peerbit/fanout-tree/0.5.0"];
 
@@ -1250,6 +1259,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	private bootstraps: Multiaddr[] = [];
 	private trackerBySuffixKey = new Map<string, Map<string, TrackerEntry>>();
 	private providerBySuffixKey = new Map<string, Map<string, ProviderEntry>>();
+	private providerNamespaceLru = new Map<string, number>();
 	private pendingProviderQueryBySuffixKey = new Map<
 		string,
 		Map<number, { resolve: (providers: FanoutProviderCandidate[]) => void }>
@@ -1276,6 +1286,29 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		this.bootstraps = addrs
 			.map((a) => (typeof a === "string" ? multiaddr(a) : a))
 			.filter((a) => Boolean(a));
+	}
+
+	private touchProviderNamespace(suffixKey: string, now = Date.now()) {
+		if (!suffixKey) return;
+		// LRU touch
+		this.providerNamespaceLru.delete(suffixKey);
+		this.providerNamespaceLru.set(suffixKey, now);
+		while (this.providerNamespaceLru.size > PROVIDER_DIRECTORY_MAX_NAMESPACES) {
+			const oldest = this.providerNamespaceLru.keys().next().value as string | undefined;
+			if (!oldest) break;
+			this.providerNamespaceLru.delete(oldest);
+			this.providerBySuffixKey.delete(oldest);
+			this.pendingProviderQueryBySuffixKey.delete(oldest);
+		}
+	}
+
+	private pruneProviderNamespaceIfEmpty(suffixKey: string) {
+		const byPeer = this.providerBySuffixKey.get(suffixKey);
+		if (byPeer && byPeer.size === 0) {
+			this.providerBySuffixKey.delete(suffixKey);
+			this.providerNamespaceLru.delete(suffixKey);
+			this.pendingProviderQueryBySuffixKey.delete(suffixKey);
+		}
 	}
 
 	private getProviderNamespaceId(namespace: string): ProviderNamespaceId {
@@ -1350,6 +1383,55 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		};
 	}
 
+	/**
+	 * Announce provider presence once (no background loop).
+	 *
+	 * This is useful for "on-demand" discovery where the caller wants to publish a
+	 * short-lived provider hint (e.g. after putting a block) without keeping a
+	 * per-namespace timer alive.
+	 */
+	public async announceProvider(
+		namespace: string,
+		options: Omit<FanoutProviderAnnounceOptions, "announceIntervalMs"> = {},
+	): Promise<void> {
+		if (!this.started) {
+			throw new Error("FanoutTree must be started before providing");
+		}
+
+		const id = this.getProviderNamespaceId(namespace);
+		const ttlMsRaw = Math.max(0, Math.floor(options.ttlMs ?? 120_000));
+		const ttlMs = Math.min(ttlMsRaw, 120_000);
+
+		const bootstrapOverride =
+			options.bootstrap && options.bootstrap.length > 0
+				? options.bootstrap
+						.map((a) => (typeof a === "string" ? multiaddr(a) : a))
+						.filter((a) => Boolean(a))
+				: undefined;
+
+		const bootstrapDialTimeoutMs = Math.max(
+			0,
+			Math.floor(options.bootstrapDialTimeoutMs ?? 2_000),
+		);
+		const bootstrapMaxPeers = Math.max(
+			0,
+			Math.floor(options.bootstrapMaxPeers ?? 0),
+		);
+
+		const state: ProviderAnnounceState = {
+			id,
+			ttlMs,
+			// ignored by `announceProviderOnce`
+			announceIntervalMs: 0,
+			bootstrapOverride,
+			bootstrapDialTimeoutMs,
+			bootstrapMaxPeers,
+			closed: false,
+		};
+
+		await this.announceProviderOnce(state, this.closeController.signal, ttlMs);
+	}
+
 	private async _providerAnnounceLoop(state: ProviderAnnounceState): Promise<void> {
 		const signal = this.closeController.signal;
 		for (;;) {
@@ -1415,6 +1497,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 		try {
 			const now = Date.now();
+			this.touchProviderNamespace(id.suffixKey, now);
 
 			const shuffleInPlace = (arr: FanoutProviderCandidate[], seed32: number) => {
 				if (arr.length <= 1) return;
@@ -1471,6 +1554,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					}
 					cached.push({ hash, addrs });
 				}
+				this.pruneProviderNamespaceIfEmpty(id.suffixKey);
 			}
 
 			// If the cache is warm, avoid tracker queries on hot paths.
@@ -1576,6 +1660,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					if (!oldest) break;
 					cache.delete(oldest);
 				}
+				this.touchProviderNamespace(id.suffixKey);
 			}
 
 			return orderCandidates(deduped);
@@ -1617,48 +1702,35 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		);
 		const perChildBytes = Math.max(1, 1 + msgSize + uploadOverheadBytes);
 		const perChildBps = Math.max(1, Math.floor(msgRate * perChildBytes));
-			const byBps = uploadLimitBps > 0 ? Math.floor(uploadLimitBps / perChildBps) : 0;
-			const effectiveMaxChildren = Math.max(0, Math.min(maxChildren, byBps));
-			const maxDataAgeMs = Math.max(0, Math.floor(opts.maxDataAgeMs ?? 0));
-			const requestedRouteCacheMaxEntries = Math.max(
-				0,
-				Math.floor(
-					opts.routeCacheMaxEntries ?? (opts.role === "root" ? 2_048 : 512),
-				),
-			);
-			const routeCacheMaxEntries = Math.min(
-				ROUTE_CACHE_MAX_ENTRIES_HARD_CAP,
-				requestedRouteCacheMaxEntries,
-			);
-			const routeCacheTtlMs = Math.max(
-				0,
-				Math.floor(opts.routeCacheTtlMs ?? 10 * 60_000),
-			);
-			const requestedPeerHintMaxEntries = Math.max(
-				0,
-				Math.floor(
-					opts.peerHintMaxEntries ?? (opts.role === "root" ? 4_096 : 1_024),
-				),
-			);
-			const peerHintMaxEntries = Math.min(
-				PEER_HINT_MAX_ENTRIES_HARD_CAP,
-				requestedPeerHintMaxEntries,
-			);
-			const peerHintTtlMs = Math.max(
-				0,
-				Math.floor(opts.peerHintTtlMs ?? 10 * 60_000),
-			);
-			const uploadBurstMsDefault = Math.max(1, Math.ceil(1_000 / msgRate));
-			const uploadBurstMs = Math.max(
-				0,
-				Math.floor(opts.uploadBurstMs ?? uploadBurstMsDefault),
-			);
-			const uploadTokenCapacity =
-				uploadLimitBps > 0 && uploadBurstMs > 0
-					? Math.max(1, Math.floor((uploadLimitBps * uploadBurstMs) / 1_000))
-					: 0;
+		const byBps = uploadLimitBps > 0 ? Math.floor(uploadLimitBps / perChildBps) : 0;
+		const effectiveMaxChildren = Math.max(0, Math.min(maxChildren, byBps));
+		const maxDataAgeMs = Math.max(0, Math.floor(opts.maxDataAgeMs ?? 0));
+		const requestedRouteCacheMaxEntries = Math.max(
+			0,
+			Math.floor(opts.routeCacheMaxEntries ?? (opts.role === "root" ? 2_048 : 512)),
+		);
+		const routeCacheMaxEntries = Math.min(
+			ROUTE_CACHE_MAX_ENTRIES_HARD_CAP,
+			requestedRouteCacheMaxEntries,
+		);
+		const routeCacheTtlMs = Math.max(0, Math.floor(opts.routeCacheTtlMs ?? 10 * 60_000));
+		const requestedPeerHintMaxEntries = Math.max(
+			0,
+			Math.floor(opts.peerHintMaxEntries ?? (opts.role === "root" ? 4_096 : 1_024)),
+		);
+		const peerHintMaxEntries = Math.min(
+			PEER_HINT_MAX_ENTRIES_HARD_CAP,
+			requestedPeerHintMaxEntries,
+		);
+		const peerHintTtlMs = Math.max(0, Math.floor(opts.peerHintTtlMs ?? 10 * 60_000));
+		const uploadBurstMsDefault = Math.max(1, Math.ceil(1_000 / msgRate));
+		const uploadBurstMs = Math.max(0, Math.floor(opts.uploadBurstMs ?? uploadBurstMsDefault));
+		const uploadTokenCapacity =
+			uploadLimitBps > 0 && uploadBurstMs > 0
+				? Math.max(1, Math.floor((uploadLimitBps * uploadBurstMs) / 1_000))
+				: 0;
 
-		const repairEnabled = opts.repair === true;
+		const repairEnabled = opts.repair !== false;
 		const repairWindowMessages = Math.max(
 			0,
 			Math.floor(opts.repairWindowMessages ?? 1024),
@@ -1764,13 +1836,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			nextExpectedSeq: 0,
 			missingSeqs: new Set<number>(),
 			endSeqExclusive: -1,
-				lastRepairSentAt: 0,
-				lastParentDataAt: 0,
-				receivedAnyParentData: false,
-				channelPeers: new Map<string, number>(),
-				knownCandidateAddrs: new Map<string, Multiaddr[]>(),
-				lazyPeers: new Set<string>(),
-				haveByPeer: new Map(),
+			lastRepairSentAt: 0,
+			lastParentDataAt: 0,
+			receivedAnyParentData: false,
+			channelPeers: new Map<string, number>(),
+			knownCandidateAddrs: new Map<string, Multiaddr[]>(),
+			lazyPeers: new Set<string>(),
+			haveByPeer: new Map(),
 			maxSeqSeen: -1,
 			lastIHaveSentAt: 0,
 			lastIHaveSentMaxSeq: -1,
@@ -1784,16 +1856,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			bootstrapEnsureIntervalMs: 5_000,
 			cachedBootstrapPeers: [],
 			lastBootstrapEnsureAt: 0,
-				announceIntervalMs: 2_000,
-				announceTtlMs: 10_000,
-					lastAnnouncedAt: 0,
-					peerHintMaxEntries,
-					peerHintTtlMs,
-					routeCacheMaxEntries,
-					routeCacheTtlMs,
-					trackerQueryIntervalMs: 2_000,
-				cachedTrackerCandidates: [],
-				lastTrackerQueryAt: 0,
+			announceIntervalMs: 2_000,
+			announceTtlMs: 10_000,
+			lastAnnouncedAt: 0,
+			peerHintMaxEntries,
+			peerHintTtlMs,
+			routeCacheMaxEntries,
+			routeCacheTtlMs,
+			trackerQueryIntervalMs: 2_000,
+			cachedTrackerCandidates: [],
+			lastTrackerQueryAt: 0,
 			};
 		this.channelsBySuffixKey.set(id.suffixKey, ch);
 		const needsAnnounceLoop = ch.effectiveMaxChildren > 0;
@@ -3161,12 +3233,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 
 		if (ch.neighborRepair && ch.neighborRepairPeers > 0) {
-				const candidates: string[] = [];
+			const candidates: string[] = [];
 
-				for (const h of ch.knownCandidateAddrs.keys()) candidates.push(h);
-				for (const h of ch.channelPeers.keys()) candidates.push(h);
-				for (const h of ch.lazyPeers) candidates.push(h);
-				for (const h of ch.haveByPeer.keys()) candidates.push(h);
+			for (const h of ch.knownCandidateAddrs.keys()) candidates.push(h);
+			for (const h of ch.channelPeers.keys()) candidates.push(h);
+			for (const h of ch.lazyPeers) candidates.push(h);
+			for (const h of ch.haveByPeer.keys()) candidates.push(h);
 
 			const unique = [...new Set(candidates)].filter((h) => {
 				if (h === this.publicKeyHash) return false;
@@ -4322,37 +4394,37 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const data = raw instanceof Uint8ArrayList ? raw.subarray() : raw;
 		if (!data || data.length === 0) return false;
 
-		const kind = data[0]!;
-		const fromHash = from.hashcode();
+			const kind = data[0]!;
+			const fromHash = from.hashcode();
 
 			// Control-plane + tracker messages carry channelKey (32 bytes) at offset 1.
-				if (
-					kind === MSG_JOIN_REQ ||
-					kind === MSG_JOIN_ACCEPT ||
-					kind === MSG_JOIN_REJECT ||
-					kind === MSG_KICK ||
-					kind === MSG_END ||
-					kind === MSG_UNICAST ||
-						kind === MSG_ROUTE_QUERY ||
-						kind === MSG_ROUTE_REPLY ||
-						kind === MSG_PUBLISH_PROXY ||
-						kind === MSG_LEAVE ||
-						kind === MSG_REPAIR_REQ ||
-					kind === MSG_FETCH_REQ ||
-					kind === MSG_IHAVE ||
+			if (
+				kind === MSG_JOIN_REQ ||
+				kind === MSG_JOIN_ACCEPT ||
+				kind === MSG_JOIN_REJECT ||
+				kind === MSG_KICK ||
+				kind === MSG_END ||
+				kind === MSG_UNICAST ||
+				kind === MSG_ROUTE_QUERY ||
+				kind === MSG_ROUTE_REPLY ||
+				kind === MSG_PUBLISH_PROXY ||
+				kind === MSG_LEAVE ||
+				kind === MSG_REPAIR_REQ ||
+				kind === MSG_FETCH_REQ ||
+				kind === MSG_IHAVE ||
 				kind === MSG_TRACKER_ANNOUNCE ||
-					kind === MSG_TRACKER_QUERY ||
+				kind === MSG_TRACKER_QUERY ||
 				kind === MSG_TRACKER_REPLY ||
 				kind === MSG_TRACKER_FEEDBACK ||
 				kind === MSG_PROVIDER_ANNOUNCE ||
 				kind === MSG_PROVIDER_QUERY ||
 				kind === MSG_PROVIDER_REPLY
 			) {
-			if (data.length < 1 + 32) return false;
-			const channelKey = data.subarray(1, 33);
-			const suffixKey = toBase64(channelKey.subarray(0, 24));
-			this.recordControlReceive(suffixKey, kind, data.byteLength);
-			const ch = this.channelsBySuffixKey.get(suffixKey);
+				if (data.length < 1 + 32) return false;
+				const channelKey = data.subarray(1, 33);
+				const suffixKey = toBase64(channelKey.subarray(0, 24));
+				this.recordControlReceive(suffixKey, kind, data.byteLength);
+				const ch = this.channelsBySuffixKey.get(suffixKey);
 
 			if (kind === MSG_TRACKER_ANNOUNCE) {
 				if (data.length < 1 + 32 + 4 + 2 + 2 + 2 + 4 + 1) return false;
@@ -4487,64 +4559,70 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				return true;
 			}
 
-			if (kind === MSG_PROVIDER_ANNOUNCE) {
-				if (data.length < 1 + 32 + 4 + 1) return false;
-				const ttlMs = readU32BE(data, 33);
-				const addrCount = data[37]!;
-				let offset = 38;
+				if (kind === MSG_PROVIDER_ANNOUNCE) {
+					if (data.length < 1 + 32 + 4 + 1) return false;
+					const ttlMs = readU32BE(data, 33);
+					const addrCount = data[37]!;
+					let offset = 38;
 
-				const addrs: Uint8Array[] = [];
-				const max = Math.min(addrCount, 16);
-				for (let i = 0; i < max; i++) {
-					if (offset + 2 > data.length) break;
-					const len = readU16BE(data, offset);
-					offset += 2;
-					if (offset + len > data.length) break;
-					addrs.push(data.subarray(offset, offset + len));
-					offset += len;
-				}
-
-				if (addrs.length === 0) {
-					try {
-						const peer: any = await this.components.peerStore.get(peerStream.peerId);
-						const addresses: any[] = Array.isArray(peer?.addresses) ? peer.addresses : [];
-						for (const a of addresses) {
-							const ma: any = a?.multiaddr ?? a;
-							const bytes: Uint8Array | undefined = ma?.bytes;
-							if (bytes instanceof Uint8Array) addrs.push(bytes);
-							if (addrs.length >= 16) break;
-						}
-					} catch {
-						// ignore
+					const addrs: Uint8Array[] = [];
+					const max = Math.min(addrCount, 16);
+					for (let i = 0; i < max; i++) {
+						if (offset + 2 > data.length) break;
+						const len = readU16BE(data, offset);
+						offset += 2;
+						if (offset + len > data.length) break;
+						addrs.push(data.subarray(offset, offset + len));
+						offset += len;
 					}
-				}
 
-				let byPeer = this.providerBySuffixKey.get(suffixKey);
-				if (!byPeer) {
-					byPeer = new Map<string, ProviderEntry>();
-					this.providerBySuffixKey.set(suffixKey, byPeer);
-				}
+					if (addrs.length === 0) {
+						try {
+							const peer: any = await this.components.peerStore.get(peerStream.peerId);
+							const addresses: any[] = Array.isArray(peer?.addresses)
+								? peer.addresses
+								: [];
+							for (const a of addresses) {
+								const ma: any = a?.multiaddr ?? a;
+								const bytes: Uint8Array | undefined = ma?.bytes;
+								if (bytes instanceof Uint8Array) addrs.push(bytes);
+								if (addrs.length >= 16) break;
+							}
+						} catch {
+							// ignore
+						}
+					}
 
-				const now = Date.now();
-				const ttl = Math.min(ttlMs, 120_000);
-				if (ttl === 0) {
+					let byPeer = this.providerBySuffixKey.get(suffixKey);
+					if (!byPeer) {
+						byPeer = new Map<string, ProviderEntry>();
+						this.providerBySuffixKey.set(suffixKey, byPeer);
+					}
+
+					const now = Date.now();
+					this.touchProviderNamespace(suffixKey, now);
+					const ttl = Math.min(ttlMs, 120_000);
+					if (ttl === 0) {
+						byPeer.delete(fromHash);
+						this.pruneProviderNamespaceIfEmpty(suffixKey);
+						return true;
+					}
+
+					// LRU by announce freshness, with a hard per-namespace cap.
 					byPeer.delete(fromHash);
+					byPeer.set(fromHash, {
+						hash: fromHash,
+						addrs,
+						expiresAt: now + ttl,
+					});
+					while (byPeer.size > PROVIDER_DIRECTORY_MAX_ENTRIES) {
+						const oldest = byPeer.keys().next().value as string | undefined;
+						if (!oldest) break;
+						byPeer.delete(oldest);
+					}
+					this.pruneProviderNamespaceIfEmpty(suffixKey);
 					return true;
 				}
-				// LRU by announce freshness, with a hard per-namespace cap.
-				byPeer.delete(fromHash);
-				byPeer.set(fromHash, {
-					hash: fromHash,
-					addrs,
-					expiresAt: now + ttl,
-				});
-				while (byPeer.size > PROVIDER_DIRECTORY_MAX_ENTRIES) {
-					const oldest = byPeer.keys().next().value as string | undefined;
-					if (!oldest) break;
-					byPeer.delete(oldest);
-				}
-				return true;
-			}
 
 			if (kind === MSG_PROVIDER_QUERY) {
 				if (data.length < 1 + 32 + 4 + 2 + 4) return false;
@@ -4553,6 +4631,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				const seed = readU32BE(data, 39);
 
 				const now = Date.now();
+				this.touchProviderNamespace(suffixKey, now);
 				const byPeer = this.providerBySuffixKey.get(suffixKey);
 				const entries: ProviderEntry[] = [];
 				if (byPeer) {
@@ -4564,6 +4643,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						if (hash === fromHash) continue;
 						entries.push(e);
 					}
+					this.pruneProviderNamespaceIfEmpty(suffixKey);
 				}
 
 				// Shuffle to spread load (deterministic if seed is provided).
@@ -4607,12 +4687,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				let offset = 38;
 				const candidates: FanoutProviderCandidate[] = [];
 				const max = Math.min(count, 255);
+
 				const now = Date.now();
+				this.touchProviderNamespace(suffixKey, now);
 				let cache = this.providerBySuffixKey.get(suffixKey);
 				if (!cache) {
 					cache = new Map<string, ProviderEntry>();
 					this.providerBySuffixKey.set(suffixKey, cache);
 				}
+
 				for (let i = 0; i < max; i++) {
 					if (offset + 1 > data.length) break;
 					const hashLen = data[offset++]!;
@@ -4651,13 +4734,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					if (!oldest) break;
 					cache.delete(oldest);
 				}
+				this.pruneProviderNamespaceIfEmpty(suffixKey);
 
 				pending.resolve(candidates);
 				return true;
 			}
 
-				if (kind === MSG_TRACKER_REPLY) {
-					if (!ch) return true;
+			if (kind === MSG_TRACKER_REPLY) {
+				if (!ch) return true;
 				if (data.length < 1 + 32 + 4 + 1) return false;
 				const reqId = readU32BE(data, 33);
 				const pending = ch.pendingTrackerQuery.get(reqId);

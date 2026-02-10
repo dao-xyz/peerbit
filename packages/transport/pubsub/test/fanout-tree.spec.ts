@@ -25,7 +25,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 					maxChildren: 128,
 					repair: false,
 					routeCacheMaxEntries: 3,
-					routeCacheTtlMs: 25,
+					routeCacheTtlMs: 0,
 				});
 
 				const ch = (fanout as any).channelsBySuffixKey.get(id.suffixKey);
@@ -58,7 +58,10 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 				expect(ch.routeByPeer.has("p4")).to.equal(true);
 
 				// TTL expiry prunes oldest entries.
-				await delay(60);
+				// Mutate timestamps to avoid relying on wall-clock timing (keeps this test deterministic).
+				ch.routeCacheTtlMs = 25;
+				const expiredAt = Date.now() - 1_000;
+				for (const entry of ch.routeByPeer.values()) entry.updatedAt = expiredAt;
 				expect(getCachedRoute(ch, "p1")).to.equal(undefined);
 				expect(getCachedRoute(ch, "p3")).to.equal(undefined);
 				expect(getCachedRoute(ch, "p4")).to.equal(undefined);

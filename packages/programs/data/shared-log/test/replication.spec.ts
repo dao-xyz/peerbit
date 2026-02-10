@@ -2819,7 +2819,12 @@ testSetups.forEach((setup) => {
 						setup,
 					},
 				});
-				await waitForResolved(() => expect(db2.log.log.length).equal(count));
+				// Large payload replication can get GC/IO-heavy in the full suite; avoid flaking on the
+				// default 10s `waitForResolved` timeout.
+				await waitForResolved(
+					() => expect(db2.log.log.length).equal(count),
+					{ timeout: 120_000, delayInterval: 200 },
+				);
 			});
 
 			describe("update", () => {

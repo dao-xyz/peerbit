@@ -30,6 +30,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 				cid: string,
 				options?: { signal?: AbortSignal },
 			) => Promise<string[] | undefined> | string[] | undefined;
+			onPut?: (cid: string) => Promise<void> | void;
 			providerCache?:
 				| boolean
 				| {
@@ -37,8 +38,8 @@ export class DirectBlock extends DirectStream implements IBlocks {
 						ttlMs?: number;
 						maxProvidersPerCid?: number;
 				  };
-				requeryOnReachable?: number;
-			},
+			requeryOnReachable?: number;
+		},
 	) {
 		super(components, ["/lazyblock/0.0.1"], {
 			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
@@ -88,6 +89,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			publicKey: this.publicKey,
 			eagerBlocks: options?.eagerBlocks,
 			resolveProviders: options?.resolveProviders ?? defaultResolveProviders,
+			onPut: options?.onPut,
 			providerCache: options?.providerCache,
 			requeryOnReachable: options?.requeryOnReachable,
 		});
