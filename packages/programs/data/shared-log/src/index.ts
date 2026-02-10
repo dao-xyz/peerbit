@@ -2251,69 +2251,69 @@ export class SharedLog<
 			}
 			this._replicationInfoRequestByPeer.clear();
 		});
-			this._isTrustedReplicator = options?.canReplicate;
-			this.keep = options?.keep;
-			this.pendingMaturity = new Map();
 
-			const id = sha256Base64Sync(this.log.id);
-			const storage = await this.node.storage.sublevel(id);
+		this._isTrustedReplicator = options?.canReplicate;
+		this.keep = options?.keep;
+		this.pendingMaturity = new Map();
 
-			const localBlocks = await new AnyBlockStore(await storage.sublevel("blocks"));
-			const fanoutService = (this.node.services as any).fanout as FanoutTree | undefined;
-			const blockProviderNamespace = (cid: string) => `cid:${cid}`;
-			this.remoteBlocks = new RemoteBlocks({
-				local: localBlocks,
-				publish: (message, options) =>
-					this.rpc.send(new BlocksMessage(message), options),
-				waitFor: this.rpc.waitFor.bind(this.rpc),
-				publicKey: this.node.identity.publicKey,
-				eagerBlocks: options?.eagerBlocks ?? true,
-				resolveProviders: async (cid, opts) => {
-					// 1) tracker-backed provider directory (best-effort, bounded)
-					try {
-						const providers = await fanoutService?.queryProviders(
-							blockProviderNamespace(cid),
-							{
-								want: 8,
-								timeoutMs: 2_000,
-								queryTimeoutMs: 500,
-								bootstrapMaxPeers: 2,
-								signal: opts?.signal,
-							},
-						);
-						if (providers && providers.length > 0) return providers;
-					} catch {
-						// ignore discovery failures
-					}
+		const id = sha256Base64Sync(this.log.id);
+		const storage = await this.node.storage.sublevel(id);
 
-					// 2) fallback to currently connected RPC peers
-					const self = this.node.identity.publicKey.hashcode();
-					const out: string[] = [];
-					const peers = (this.rpc as any)?.peers;
-					for (const h of peers?.keys?.() ?? []) {
-						if (h === self) continue;
-						if (out.includes(h)) continue;
-						out.push(h);
-						if (out.length >= 32) break;
-					}
-					return out;
-				},
-				onPut: async (cid) => {
-					// Best-effort directory announce for "get without remote.from" workflows.
-					try {
-						await fanoutService?.announceProvider(blockProviderNamespace(cid), {
-							ttlMs: 120_000,
+		const localBlocks = await new AnyBlockStore(await storage.sublevel("blocks"));
+		const fanoutService = (this.node.services as any).fanout as FanoutTree | undefined;
+		const blockProviderNamespace = (cid: string) => `cid:${cid}`;
+		this.remoteBlocks = new RemoteBlocks({
+			local: localBlocks,
+			publish: (message, options) => this.rpc.send(new BlocksMessage(message), options),
+			waitFor: this.rpc.waitFor.bind(this.rpc),
+			publicKey: this.node.identity.publicKey,
+			eagerBlocks: options?.eagerBlocks ?? true,
+			resolveProviders: async (cid, opts) => {
+				// 1) tracker-backed provider directory (best-effort, bounded)
+				try {
+					const providers = await fanoutService?.queryProviders(
+						blockProviderNamespace(cid),
+						{
+							want: 8,
+							timeoutMs: 2_000,
+							queryTimeoutMs: 500,
 							bootstrapMaxPeers: 2,
-						});
-					} catch {
-						// ignore announce failures
-					}
-				},
-			});
+							signal: opts?.signal,
+						},
+					);
+					if (providers && providers.length > 0) return providers;
+				} catch {
+					// ignore discovery failures
+				}
 
-			await this.remoteBlocks.start();
+				// 2) fallback to currently connected RPC peers
+				const self = this.node.identity.publicKey.hashcode();
+				const out: string[] = [];
+				const peers = (this.rpc as any)?.peers;
+				for (const h of peers?.keys?.() ?? []) {
+					if (h === self) continue;
+					if (out.includes(h)) continue;
+					out.push(h);
+					if (out.length >= 32) break;
+				}
+				return out;
+			},
+			onPut: async (cid) => {
+				// Best-effort directory announce for "get without remote.from" workflows.
+				try {
+					await fanoutService?.announceProvider(blockProviderNamespace(cid), {
+						ttlMs: 120_000,
+						bootstrapMaxPeers: 2,
+					});
+				} catch {
+					// ignore announce failures
+				}
+			},
+		});
 
-			const logScope = await this.node.indexer.scope(id);
+		await this.remoteBlocks.start();
+
+		const logScope = await this.node.indexer.scope(id);
 		const replicationIndex = await logScope.scope("replication");
 		this._replicationRangeIndex = await replicationIndex.init({
 			schema: this.indexableDomain.constructorRange,
@@ -3878,24 +3878,24 @@ export class SharedLog<
 				return;
 			}
 
-				requestAttempts++;
+			requestAttempts++;
 
-				this.rpc
-					.send(new RequestReplicationInfoMessage(), {
-						mode: new AcknowledgeDelivery({ redundancy: 1, to: [key] }),
-					})
-					.catch((e) => {
-						// Best-effort: missing peers / unopened RPC should not fail the wait logic.
-						if (isNotStartedError(e as Error)) {
-							return;
-						}
-						logger.error(e?.toString?.() ?? String(e));
-					});
+			this.rpc
+				.send(new RequestReplicationInfoMessage(), {
+					mode: new AcknowledgeDelivery({ redundancy: 1, to: [key] }),
+				})
+				.catch((e) => {
+					// Best-effort: missing peers / unopened RPC should not fail the wait logic.
+					if (isNotStartedError(e as Error)) {
+						return;
+					}
+					logger.error(e?.toString?.() ?? String(e));
+				});
 
-				if (requestAttempts < maxRequestAttempts) {
-					requestTimer = setTimeout(requestReplicationInfo, requestIntervalMs);
-				}
-			};
+			if (requestAttempts < maxRequestAttempts) {
+				requestTimer = setTimeout(requestReplicationInfo, requestIntervalMs);
+			}
+		};
 
 		const check = async () => {
 			const iterator = this.replicationIndex?.iterate(
