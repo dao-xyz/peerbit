@@ -1106,27 +1106,30 @@ describe("pubsub", function () {
 				}
 			});
 
-			it("fully connected", async () => {
-				await session.connect([
-					[session.peers[0], session.peers[1]],
-					[session.peers[1], session.peers[2]],
-					[session.peers[0], session.peers[2]],
-				]);
+				it("fully connected", async () => {
+					await session.connect([
+						[session.peers[0], session.peers[1]],
+						[session.peers[1], session.peers[2]],
+						[session.peers[0], session.peers[2]],
+					]);
 
-				await delay(5000);
+					await delay(5000);
 
-				for (const [_i, peer] of session.peers.entries()) {
-					await peer.services.pubsub.subscribe(TOPIC);
-				}
-				for (const [_i, peer] of streams.entries()) {
-					await waitForResolved(() =>
-						expect(peer.stream.getSubscribers(TOPIC)).to.have.length(3),
+					// Subscribe concurrently to reduce timing sensitivity in slow CI environments.
+					await Promise.all(
+						session.peers.map((peer) => peer.services.pubsub.subscribe(TOPIC)),
+					);
+					await Promise.all(
+						streams.map((peer) =>
+							waitForResolved(() =>
+								expect(peer.stream.getSubscribers(TOPIC)).to.have.length(3),
+							),
+						),
 					); // all others (except 4 which is not subscribing)
-				}
 
-				await streams[0].stream.publish(data, {
-					topics: [TOPIC],
-					mode: new SilentDelivery({
+					await streams[0].stream.publish(data, {
+						topics: [TOPIC],
+						mode: new SilentDelivery({
 						to: streams.map((x) => x.stream.publicKeyHash),
 						redundancy: 1,
 					}),
@@ -1151,21 +1154,23 @@ describe("pubsub", function () {
 
 				await delay(3000);
 
-				streams[1].received = [];
-				streams[2].received = [];
+					streams[1].received = [];
+					streams[2].received = [];
 
-				await streams[0].stream.publish(data, {
+					await streams[0].stream.publish(data, {
 					topics: [TOPIC],
 					mode: new SilentDelivery({
 						to: streams.map((x) => x.stream.publicKeyHash),
-						redundancy: 1,
-					}),
-				});
-				await waitFor(() => streams[1].received.length === 1);
-				await waitFor(() => streams[2].received.length === 1);
+							redundancy: 1,
+						}),
+					});
+					await Promise.all([
+						waitFor(() => streams[1].received.length === 1),
+						waitFor(() => streams[2].received.length === 1),
+					]);
 
-				expect(new Uint8Array(streams[1].received[0].data)).to.deep.equal(data);
-				expect(new Uint8Array(streams[2].received[0].data)).to.deep.equal(data);
+					expect(new Uint8Array(streams[1].received[0].data)).to.deep.equal(data);
+					expect(new Uint8Array(streams[2].received[0].data)).to.deep.equal(data);
 
 				await delay(1000); // some delay to allow all messages to progagate
 				expect(streams[1].received).to.have.length(1);
