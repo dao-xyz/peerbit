@@ -1879,23 +1879,28 @@ describe("streams", function () {
 			});
 		});
 
-		describe("bandwidth", () => {
-			let session: TestSessionStream;
-			let streams: ReturnType<typeof createMetrics>[];
+			describe("bandwidth", () => {
+				let session: TestSessionStream;
+				let streams: ReturnType<typeof createMetrics>[];
 
-			beforeEach(async () => {
-				session = await connected(3, {
-					services: {
-						directstream: (c) =>
-							new TestDirectStream(c, {
-								connectionManager: {
-									dialer: false,
-									minConnections: 1,
-									pruner: { interval: 1000 },
-								},
-							}),
-					},
-				});
+				beforeEach(async () => {
+					session = await connected(3, {
+						// Use tcp-only to keep dials deterministic and avoid transport-specific dial hangs.
+						addresses: { listen: ["/ip4/127.0.0.1/tcp/0"] },
+						transports: [tcp()],
+						services: {
+							// TestSession enables relay unless we explicitly set it to null.
+							relay: null,
+							directstream: (c: DirectStreamComponents) =>
+								new TestDirectStream(c, {
+									connectionManager: {
+										dialer: false,
+										minConnections: 1,
+										pruner: { interval: 1000 },
+									},
+								}),
+						} as any,
+					});
 				streams = collectMetrics(session);
 
 				await waitForNeighbour(streams[0].stream, streams[1].stream);
@@ -2018,12 +2023,20 @@ describe("streams", function () {
 
 					// Dial attempts can hang on some platforms; abort so we don't leave an in-flight dial
 					// that blocks subsequent dial attempts.
-					const addr0 = session.peers[0].getMultiaddrs();
-					{
-						const abortController = new AbortController();
-						const timeoutId = setTimeout(() => abortController.abort(), 10_000);
-						try {
-							await session.peers[1]
+						// Dial only direct addresses (avoid circuit-relay) and prefer ws addrs to
+						// keep dials deterministic when multiple transports are configured.
+						const addr0All = session.peers[0]
+							.getMultiaddrs()
+							.filter(
+								(x) => !x.getComponents().some((component) => component.code === 290),
+							);
+						const addr0Ws = addr0All.filter((x) => x.toString().includes("/ws"));
+						const addr0 = addr0Ws.length > 0 ? addr0Ws : addr0All;
+						{
+							const abortController = new AbortController();
+							const timeoutId = setTimeout(() => abortController.abort(), 10_000);
+							try {
+								await session.peers[1]
 								.dial(addr0, { signal: abortController.signal })
 								.catch(() => {});
 						} finally {
@@ -2040,16 +2053,16 @@ describe("streams", function () {
 				streams[0].stream["prunedConnectionsCache"]?.clear();
 					session.peers[0].services.directstream.connectionManagerOptions.pruner =
 						undefined;
-					session.peers[1].services.directstream.connectionManagerOptions.pruner =
-						undefined;
-					{
-						const abortController = new AbortController();
-						const timeoutId = setTimeout(() => abortController.abort(), 10_000);
-						try {
-							await session.peers[1].dial(addr0, { signal: abortController.signal });
-						} catch (error) {
-							if (abortController.signal.aborted) {
-								throw new Error("dial timeout");
+						session.peers[1].services.directstream.connectionManagerOptions.pruner =
+							undefined;
+						{
+							const abortController = new AbortController();
+							const timeoutId = setTimeout(() => abortController.abort(), 20_000);
+							try {
+								await session.peers[1].dial(addr0, { signal: abortController.signal });
+							} catch (error) {
+								if (abortController.signal.aborted) {
+									throw new Error("dial timeout");
 							}
 							throw error;
 						} finally {

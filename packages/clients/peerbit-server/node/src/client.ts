@@ -77,18 +77,31 @@ export const createClient = async (
 
 	const throwIfNot200 = (resp: { status: number; data: any }) => {
 		if (resp.status !== 200) {
-			throw new Error(resp.data);
+			throw new Error(`HTTP ${resp.status}: ${resp.data ?? ""}`.trim());
 		}
 		return resp;
 	};
 
+	const endpointUrl = (path: string) => new URL(path, endpoint).toString();
+
 	const getId = async () =>
-		throwIfNot200(
-			await axiosInstance.get(endpoint + PEER_ID_PATH, {
-				validateStatus,
-				timeout: 5000,
-			}),
-		).data;
+		(
+			await waitForResolved(
+				async () => {
+					const resp = await axiosInstance.get(endpointUrl(PEER_ID_PATH), {
+						validateStatus,
+						timeout: 5000,
+					});
+					return throwIfNot200(resp).data as string;
+				},
+				{
+					// Occasional CI flake: server can return 404 during very early startup
+					// or transient network hiccups; retry briefly.
+					timeout: 5000,
+					delayInterval: 50,
+				},
+			)
+		).toString();
 
 	const close = async (address: string) => {
 		return throwIfNot200(
@@ -123,14 +136,17 @@ export const createClient = async (
 			},
 			addresses: {
 				get: async () => {
-					return (
-						throwIfNot200(
-							await axiosInstance.get(endpoint + ADDRESS_PATH, {
+					const addresses = await waitForResolved(
+						async () => {
+							const resp = await axiosInstance.get(endpointUrl(ADDRESS_PATH), {
 								timeout: 5000,
 								validateStatus,
-							}),
-						).data as string[]
-					).map((x) => multiaddr(x));
+							});
+							return throwIfNot200(resp).data as string[];
+						},
+						{ timeout: 5000, delayInterval: 50 },
+					);
+					return addresses.map((x) => multiaddr(x));
 				},
 			},
 			stats: {
