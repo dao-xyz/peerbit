@@ -1106,14 +1106,29 @@ describe("pubsub", function () {
 				}
 			});
 
-				it("fully connected", async () => {
+				it("fully connected", async function () {
+					this.timeout(90_000);
+
 					await session.connect([
 						[session.peers[0], session.peers[1]],
 						[session.peers[1], session.peers[2]],
 						[session.peers[0], session.peers[2]],
 					]);
 
-					await delay(5000);
+					await Promise.all([
+						waitForNeighbour(
+							session.peers[0].services.pubsub,
+							session.peers[1].services.pubsub,
+						),
+						waitForNeighbour(
+							session.peers[1].services.pubsub,
+							session.peers[2].services.pubsub,
+						),
+						waitForNeighbour(
+							session.peers[0].services.pubsub,
+							session.peers[2].services.pubsub,
+						),
+					]);
 
 					// Subscribe concurrently to reduce timing sensitivity in slow CI environments.
 					await Promise.all(
@@ -1125,45 +1140,28 @@ describe("pubsub", function () {
 								expect(peer.stream.getSubscribers(TOPIC)).to.have.length(3),
 							),
 						),
-					); // all others (except 4 which is not subscribing)
+					);
 
-					await streams[0].stream.publish(data, {
+					const publishOpts = {
 						topics: [TOPIC],
 						mode: new SilentDelivery({
-						to: streams.map((x) => x.stream.publicKeyHash),
-						redundancy: 1,
-					}),
-				});
+							to: streams.map((x) => x.stream.publicKeyHash),
+							redundancy: 1,
+						}),
+					};
 
-				await delay(3000);
-
-				await streams[0].stream.publish(data, {
-					topics: [TOPIC],
-					mode: new SilentDelivery({
-						to: streams.map((x) => x.stream.publicKeyHash),
-						redundancy: 1,
-					}),
-				});
-				await streams[0].stream.publish(data, {
-					topics: [TOPIC],
-					mode: new SilentDelivery({
-						to: streams.map((x) => x.stream.publicKeyHash),
-						redundancy: 1,
-					}),
-				});
-
-				await delay(3000);
+					// Warm up routes/cache, then assert a clean single delivery.
+					streams[1].received = [];
+					streams[2].received = [];
+					await streams[0].stream.publish(data, publishOpts);
+					await Promise.all([
+						waitFor(() => streams[1].received.length >= 1),
+						waitFor(() => streams[2].received.length >= 1),
+					]);
 
 					streams[1].received = [];
 					streams[2].received = [];
-
-					await streams[0].stream.publish(data, {
-					topics: [TOPIC],
-					mode: new SilentDelivery({
-						to: streams.map((x) => x.stream.publicKeyHash),
-							redundancy: 1,
-						}),
-					});
+					await streams[0].stream.publish(data, publishOpts);
 					await Promise.all([
 						waitFor(() => streams[1].received.length === 1),
 						waitFor(() => streams[2].received.length === 1),
@@ -1172,12 +1170,13 @@ describe("pubsub", function () {
 					expect(new Uint8Array(streams[1].received[0].data)).to.deep.equal(data);
 					expect(new Uint8Array(streams[2].received[0].data)).to.deep.equal(data);
 
-				await delay(1000); // some delay to allow all messages to progagate
-				expect(streams[1].received).to.have.length(1);
-				expect(streams[2].received).to.have.length(1);
+					// some delay to allow any duplicates to show up
+					await delay(1000);
+					expect(streams[1].received).to.have.length(1);
+					expect(streams[2].received).to.have.length(1);
+				});
 			});
 		});
-	});
 
 	// test sending "0" to "3" only 1 message should appear even though not in strict mode
 
