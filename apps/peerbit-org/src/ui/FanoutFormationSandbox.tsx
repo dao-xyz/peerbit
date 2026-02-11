@@ -525,6 +525,27 @@ export function FanoutFormationSandbox({
 			}
 		}
 
+		// Defensive: if a malformed parent map forms a cycle, the loop above may not find
+		// a component root. Ensure every remaining online node is placed below the root.
+		for (let i = 1; i < max; i++) {
+			if (offlineByIndex[i]) continue;
+			if (visited[i]) continue;
+			visited[i] = 1;
+			levelByNode[i] = baseLevel;
+			const cq: number[] = [i];
+			for (let ci = 0; ci < cq.length; ci++) {
+				const p = cq[ci]!;
+				const lvl = levelByNode[p] ?? baseLevel;
+				for (const c of children[p]!) {
+					if (offlineByIndex[c]) continue;
+					if (visited[c]) continue;
+					visited[c] = 1;
+					levelByNode[c] = (lvl + 1) & 0xffff;
+					cq.push(c);
+				}
+			}
+		}
+
 		const nextEdges: Edge[] = [];
 		for (let i = 1; i < joinedNow; i++) {
 			if (offlineByIndex[i]) continue;
