@@ -70,6 +70,7 @@ How to use it:
 1. Press **Step join** a few times, then press **Auto**.
 2. Try `rootMaxChildren=2` and `nodeMaxChildren=3` to force deeper trees quickly.
 3. Observe how capacity changes the shape and depth of the tree.
+4. Click a non-root node to drop it (simulate churn) and watch orphans reattach.
 
 <div class="not-prose">
   <fanout-formation-sandbox nodes="80" rootMaxChildren="4" nodeMaxChildren="4" joinIntervalMs="250" seed="1"></fanout-formation-sandbox>

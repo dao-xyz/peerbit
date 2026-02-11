@@ -696,6 +696,17 @@ export class InMemoryNetwork {
 		this.peersByPort.set(port, peer);
 	}
 
+	unregisterPeer(peerId: PeerId) {
+		const id = peerId.toString();
+		this.peersById.delete(id);
+		for (const [port, runtime] of this.peersByPort) {
+			if (runtime.peerId.toString() === id) {
+				this.peersByPort.delete(port);
+				break;
+			}
+		}
+	}
+
 	getPeerById(id: string): PeerRuntime | undefined {
 		return this.peersById.get(id);
 	}

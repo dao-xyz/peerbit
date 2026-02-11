@@ -24,6 +24,8 @@ type RunStatus = "idle" | "initializing" | "ready" | "joining" | "done" | "error
 
 type Edge = { from: number; to: number };
 
+type NodeState = "root" | "online" | "orphan" | "offline";
+
 type LayoutResult = {
 	pos: Vec2[];
 	levelByNode: Uint16Array;
@@ -225,11 +227,14 @@ export function FanoutFormationSandbox({
 	const pulsesRef = useRef<Pulse[]>([]);
 	const rafRef = useRef<number | null>(null);
 
-	const parentByNodeRef = useRef<number[]>([]);
+	const parentByNodeRef = useRef<Array<number | undefined>>([]);
 	const levelByNodeRef = useRef<Uint16Array>(new Uint16Array(1024));
 	const edgesRef = useRef<Edge[]>([]);
 	const appliedRef = useRef(applied);
 	const statusRef = useRef<RunStatus>(status);
+	const nodeStateByIndexRef = useRef<NodeState[]>([]);
+	const offlineByIndexRef = useRef<boolean[]>([]);
+	const [offlineCount, setOfflineCount] = useState(0);
 
 	const appendEvent = (line: string) => {
 		setEvents((prev) => {
@@ -283,6 +288,10 @@ export function FanoutFormationSandbox({
 		parentByNodeRef.current = [];
 		parentByNodeRef.current[0] = -1;
 		levelByNodeRef.current[0] = 0;
+		nodeStateByIndexRef.current = new Array(target).fill("online");
+		nodeStateByIndexRef.current[0] = "root";
+		offlineByIndexRef.current = new Array(target).fill(false);
+		setOfflineCount(0);
 	};
 
 	const createPeer = async (run: RunState, index: number) => {
@@ -386,6 +395,124 @@ export function FanoutFormationSandbox({
 		}
 	};
 
+	const rebuildDerivedGraph = (joinedNow: number) => {
+		const parentByNode = parentByNodeRef.current;
+		const offlineByIndex = offlineByIndexRef.current;
+		const nodeStateByIndex = nodeStateByIndexRef.current;
+
+		const max = Math.max(1, joinedNow);
+		const children: number[][] = Array.from({ length: max }, () => []);
+
+		for (let i = 1; i < joinedNow; i++) {
+			if (offlineByIndex[i]) continue;
+			const parent = parentByNode[i];
+			if (typeof parent !== "number" || parent < 0 || parent >= joinedNow) {
+				nodeStateByIndex[i] = "orphan";
+				continue;
+			}
+			if (offlineByIndex[parent]) {
+				nodeStateByIndex[i] = "orphan";
+				continue;
+			}
+			nodeStateByIndex[i] = "online";
+			children[parent]!.push(i);
+		}
+
+		// BFS levels from root.
+		levelByNodeRef.current.fill(0);
+		levelByNodeRef.current[0] = 0;
+		const q: number[] = [0];
+		while (q.length > 0) {
+			const p = q.shift()!;
+			const lvl = levelByNodeRef.current[p] ?? 0;
+			for (const c of children[p]!) {
+				levelByNodeRef.current[c] = (lvl + 1) & 0xffff;
+				q.push(c);
+			}
+		}
+
+		const nextEdges: Edge[] = [];
+		for (let i = 1; i < joinedNow; i++) {
+			if (offlineByIndex[i]) continue;
+			const parent = parentByNode[i];
+			if (typeof parent !== "number" || parent < 0 || parent >= joinedNow) continue;
+			if (offlineByIndex[parent]) continue;
+			nextEdges.push({ from: parent, to: i });
+		}
+
+		const prev = edgesRef.current;
+		let same = prev.length === nextEdges.length;
+		if (same) {
+			for (let i = 0; i < prev.length; i++) {
+				const a = prev[i]!;
+				const b = nextEdges[i]!;
+				if (a.from !== b.from || a.to !== b.to) {
+					same = false;
+					break;
+				}
+			}
+		}
+		if (!same) setEdges(nextEdges);
+	};
+
+	const dropNode = async (index: number) => {
+		const run = runRef.current;
+		if (!run) return;
+		if (index <= 0) {
+			appendEvent("root cannot be deleted in this demo (it is also the tracker)");
+			return;
+		}
+		if (offlineByIndexRef.current[index]) return;
+
+		const peer = run.peers.find((p) => p.index === index);
+		if (!peer) return;
+
+		offlineByIndexRef.current[index] = true;
+		nodeStateByIndexRef.current[index] = "offline";
+		setOfflineCount(offlineByIndexRef.current.filter(Boolean).length);
+		appendEvent(`node ${index} dropped (children will rejoin)`);
+
+		try {
+			// Close all streams/connections so remaining peers observe the disconnect quickly.
+			const cm = (peer.fanout as any).components?.connectionManager as any;
+			const conns = (cm?.getConnections?.() ?? []) as any[];
+			const remotePeers = new Set<any>();
+			for (const c of conns) {
+				const rp = (c as any)?.remotePeer;
+				if (rp) remotePeers.add(rp);
+			}
+			await Promise.allSettled(
+				[...remotePeers.values()].map((rp) => cm?.closeConnections?.(rp)),
+			);
+		} catch {
+			// ignore
+		}
+
+		try {
+			await peer.fanout.stop();
+		} catch {
+			// ignore
+		}
+
+		try {
+			run.network.unregisterPeer((peer.fanout as any).components.peerId);
+		} catch {
+			// ignore
+		}
+
+		// Mark any direct children as temporarily orphaned in the visual until they reattach.
+		for (let i = 1; i < joinedRef.current; i++) {
+			if (offlineByIndexRef.current[i]) continue;
+			if (parentByNodeRef.current[i] === index) {
+				parentByNodeRef.current[i] = undefined;
+				nodeStateByIndexRef.current[i] = "orphan";
+			}
+		}
+
+		rebuildDerivedGraph(joinedRef.current);
+		requestDraw();
+	};
+
 	const joinAt = async (index: number) => {
 		const run = runRef.current;
 		if (!run) return;
@@ -431,10 +558,8 @@ export function FanoutFormationSandbox({
 			}
 
 			parentByNodeRef.current[index] = parentIndex;
-			const parentLevel = levelByNodeRef.current[parentIndex] ?? 0;
-			levelByNodeRef.current[index] = (parentLevel + 1) & 0xffff;
-
-			setEdges((prev) => [...prev, { from: parentIndex, to: index }]);
+			nodeStateByIndexRef.current[index] = "online";
+			rebuildDerivedGraph(index + 1);
 			setJoined(index + 1);
 
 			const pulseDurationMs = clamp(Math.max(250, joinIntervalMs), 250, 2_000);
@@ -446,12 +571,70 @@ export function FanoutFormationSandbox({
 				color: "rgba(239, 68, 68, 0.95)", // red comet for JOIN_ACCEPT edge
 			});
 
-			appendEvent(`node ${index} joined via parent ${parentIndex} (level ${parentLevel + 1})`);
+			const level = levelByNodeRef.current[index] ?? 0;
+			appendEvent(`node ${index} joined via parent ${parentIndex} (level ${level})`);
 		} catch (e) {
 			setError(e instanceof Error ? e.message : String(e));
 			throw e;
 		}
 	};
+
+	const reconcileParents = () => {
+		const run = runRef.current;
+		if (!run) return;
+		const joinedNow = joinedRef.current;
+		if (joinedNow <= 1) return;
+
+		let changed = false;
+		const offlineByIndex = offlineByIndexRef.current;
+
+		for (const p of run.peers) {
+			const idx = p.index;
+			if (idx <= 0) continue;
+			if (idx >= joinedNow) continue;
+			if (offlineByIndex[idx]) continue;
+
+			const stats = p.fanout.getChannelStats(run.topic, run.rootHash);
+			const parentHash = stats?.parent;
+			const parentIndex = parentHash ? run.hashToIndex.get(parentHash) : undefined;
+			const prev = parentByNodeRef.current[idx];
+
+			if (parentIndex == null || offlineByIndex[parentIndex]) {
+				if (prev !== undefined) {
+					parentByNodeRef.current[idx] = undefined;
+					nodeStateByIndexRef.current[idx] = "orphan";
+					changed = true;
+				}
+				continue;
+			}
+
+			if (prev !== parentIndex) {
+				parentByNodeRef.current[idx] = parentIndex;
+				nodeStateByIndexRef.current[idx] = "online";
+				changed = true;
+
+				const pulseDurationMs = clamp(Math.max(250, joinIntervalMs), 250, 2_000);
+				pulsesRef.current.push({
+					from: parentIndex,
+					to: idx,
+					startMs: performance.now(),
+					durationMs: pulseDurationMs,
+					color: "rgba(59, 130, 246, 0.9)", // blue comet for reparent edge
+				});
+			}
+		}
+
+		if (changed) {
+			rebuildDerivedGraph(joinedNow);
+			requestDraw();
+		}
+	};
+
+	useEffect(() => {
+		const id = setInterval(() => reconcileParents(), 300);
+		return () => clearInterval(id);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [joinIntervalMs]);
 
 	const joinOne = async () => {
 		const run = runRef.current;
@@ -640,14 +823,21 @@ export function FanoutFormationSandbox({
 			const r = clamp(9 - Math.log2(Math.max(2, joinedNow)), 3.5, 7.5);
 			for (let i = 0; i < joinedNow; i++) {
 				const p = layoutNow.pos[i]!;
-				const max =
-					i === 0 ? appliedNow.rootMaxChildren : appliedNow.nodeMaxChildren;
+				const state: NodeState =
+					i === 0
+						? "root"
+						: offlineByIndexRef.current[i]
+							? "offline"
+							: nodeStateByIndexRef.current[i] ?? "online";
+				const max = i === 0 ? appliedNow.rootMaxChildren : appliedNow.nodeMaxChildren;
 				const used = childCountsNow[i] ?? 0;
 				const full = max > 0 && used >= max;
-				const isRoot = i === 0;
+				const isRoot = state === "root";
 
-				let fill = "rgba(34, 197, 94, 0.95)"; // green
-				if (full && !isRoot) fill = "rgba(245, 158, 11, 0.95)"; // amber
+				let fill = "rgba(34, 197, 94, 0.95)"; // green (online)
+				if (state === "offline") fill = "rgba(148, 163, 184, 0.95)"; // slate
+				else if (state === "orphan") fill = "rgba(59, 130, 246, 0.95)"; // blue
+				else if (full && !isRoot) fill = "rgba(245, 158, 11, 0.95)"; // amber
 				if (isRoot) fill = "rgba(239, 68, 68, 0.95)"; // red
 
 				ctx.fillStyle = fill;
@@ -710,7 +900,8 @@ export function FanoutFormationSandbox({
 													? "Done"
 													: "Error"}
 							</span>{" "}
-							· joined {Math.max(0, joined)}/{applied.nodes} · max level {stats.maxLevel}
+							· joined {Math.max(0, joined)}/{applied.nodes} · offline {offlineCount} · max
+							level {stats.maxLevel}
 						</p>
 					</div>
 					<div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
@@ -764,6 +955,10 @@ export function FanoutFormationSandbox({
 									<p>
 										This demo focuses on join formation. The bootstrap node (index 0) also
 										acts as a tracker and will redirect joiners once it is full.
+									</p>
+									<p>
+										Churn: click a non-root node in the graph to drop it (simulate going
+										offline). Orphans (blue) will reattach by re-running the join loop.
 									</p>
 									<p>
 										Root capacity is controlled by <code>rootMaxChildren</code>. Nodes with{" "}
@@ -904,8 +1099,45 @@ export function FanoutFormationSandbox({
 				<div className="mt-4" ref={containerRef}>
 					<canvas
 						ref={canvasRef}
-						className="w-full rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950"
+						className="w-full cursor-pointer rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950"
 						aria-label="FanoutTree formation graph"
+						onClick={(e) => {
+							const run = runRef.current;
+							if (!run) return;
+							const canvas = canvasRef.current;
+							if (!canvas) return;
+							const rect = canvas.getBoundingClientRect();
+							const x = e.clientX - rect.left;
+							const y = e.clientY - rect.top;
+
+							const joinedNow = joinedRef.current;
+							const layoutNow = computeLayout({
+								joined: Math.max(1, joinedNow),
+								levelByNode: levelByNodeRef.current,
+								width: Math.max(240, Math.floor(widthRef.current)),
+								height: Math.max(220, Math.floor(heightRef.current)),
+							});
+
+							let best = -1;
+							let bestD2 = Number.POSITIVE_INFINITY;
+							for (let i = 0; i < joinedNow; i++) {
+								const p = layoutNow.pos[i];
+								if (!p) continue;
+								const dx = p.x - x;
+								const dy = p.y - y;
+								const d2 = dx * dx + dy * dy;
+								if (d2 < bestD2) {
+									bestD2 = d2;
+									best = i;
+								}
+							}
+
+							const hitRadius =
+								clamp(9 - Math.log2(Math.max(2, joinedNow)), 3.5, 7.5) + 6;
+							if (best >= 0 && bestD2 <= hitRadius * hitRadius) {
+								void dropNode(best);
+							}
+						}}
 					/>
 				</div>
 
