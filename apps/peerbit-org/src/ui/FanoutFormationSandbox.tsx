@@ -218,6 +218,8 @@ export function FanoutFormationSandbox({
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const [width, setWidth] = useState(640);
+	const widthRef = useRef(640);
+	const heightRef = useRef(initialHeight);
 
 	const runRef = useRef<RunState | null>(null);
 	const pulsesRef = useRef<Pulse[]>([]);
@@ -225,6 +227,9 @@ export function FanoutFormationSandbox({
 
 	const parentByNodeRef = useRef<number[]>([]);
 	const levelByNodeRef = useRef<Uint16Array>(new Uint16Array(1024));
+	const edgesRef = useRef<Edge[]>([]);
+	const appliedRef = useRef(applied);
+	const statusRef = useRef<RunStatus>(status);
 
 	const appendEvent = (line: string) => {
 		setEvents((prev) => {
@@ -236,6 +241,26 @@ export function FanoutFormationSandbox({
 	useEffect(() => {
 		joinedRef.current = joined;
 	}, [joined]);
+
+	useEffect(() => {
+		edgesRef.current = edges;
+	}, [edges]);
+
+	useEffect(() => {
+		appliedRef.current = applied;
+	}, [applied]);
+
+	useEffect(() => {
+		statusRef.current = status;
+	}, [status]);
+
+	useEffect(() => {
+		widthRef.current = width;
+	}, [width]);
+
+	useEffect(() => {
+		heightRef.current = height;
+	}, [height]);
 
 	const stopRun = async () => {
 		const run = runRef.current;
@@ -548,9 +573,14 @@ export function FanoutFormationSandbox({
 				return;
 			}
 
+			const joinedNow = joinedRef.current;
+			const edgesNow = edgesRef.current;
+			const appliedNow = appliedRef.current;
+			const statusNow = statusRef.current;
+
 			const dpr = Math.max(1, Math.floor(window.devicePixelRatio || 1));
-			const w = Math.max(240, Math.floor(width));
-			const h = Math.max(220, Math.floor(height));
+			const w = Math.max(240, Math.floor(widthRef.current));
+			const h = Math.max(220, Math.floor(heightRef.current));
 			if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
 				canvas.width = w * dpr;
 				canvas.height = h * dpr;
@@ -559,14 +589,26 @@ export function FanoutFormationSandbox({
 				ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 			}
 
+			const layoutNow = computeLayout({
+				joined: Math.max(1, joinedNow),
+				levelByNode: levelByNodeRef.current,
+				width: w,
+				height: h,
+			});
+
+			const childCountsNow = new Uint16Array(Math.max(1, joinedNow));
+			for (const e of edgesNow) {
+				if (e.from >= 0 && e.from < childCountsNow.length) childCountsNow[e.from] += 1;
+			}
+
 			ctx.clearRect(0, 0, w, h);
 
 			// Edges
 			ctx.lineWidth = 1;
 			ctx.strokeStyle = "rgba(148, 163, 184, 0.7)"; // slate-400-ish
-			for (const e of edges) {
-				const a = layout.pos[e.from];
-				const b = layout.pos[e.to];
+			for (const e of edgesNow) {
+				const a = layoutNow.pos[e.from];
+				const b = layoutNow.pos[e.to];
 				if (!a || !b) continue;
 				ctx.beginPath();
 				ctx.moveTo(a.x, a.y);
@@ -581,8 +623,8 @@ export function FanoutFormationSandbox({
 				const t = (now - p.startMs) / p.durationMs;
 				if (t < 0) continue;
 				if (t > 1) continue;
-				const a = layout.pos[p.from];
-				const b = layout.pos[p.to];
+				const a = layoutNow.pos[p.from];
+				const b = layoutNow.pos[p.to];
 				if (!a || !b) continue;
 				const x = a.x + (b.x - a.x) * t;
 				const y = a.y + (b.y - a.y) * t;
@@ -595,11 +637,12 @@ export function FanoutFormationSandbox({
 			pulsesRef.current = alive;
 
 			// Nodes
-			const r = clamp(9 - Math.log2(Math.max(2, joined)), 3.5, 7.5);
-			for (let i = 0; i < joined; i++) {
-				const p = layout.pos[i]!;
-				const max = i === 0 ? applied.rootMaxChildren : applied.nodeMaxChildren;
-				const used = childCounts[i] ?? 0;
+			const r = clamp(9 - Math.log2(Math.max(2, joinedNow)), 3.5, 7.5);
+			for (let i = 0; i < joinedNow; i++) {
+				const p = layoutNow.pos[i]!;
+				const max =
+					i === 0 ? appliedNow.rootMaxChildren : appliedNow.nodeMaxChildren;
+				const used = childCountsNow[i] ?? 0;
 				const full = max > 0 && used >= max;
 				const isRoot = i === 0;
 
@@ -617,7 +660,8 @@ export function FanoutFormationSandbox({
 				ctx.stroke();
 			}
 
-			const keepAnimating = pulsesRef.current.length > 0 || status === "joining";
+			const keepAnimating =
+				pulsesRef.current.length > 0 || statusNow === "joining";
 			if (keepAnimating) {
 				rafRef.current = requestAnimationFrame(tick);
 			} else {
