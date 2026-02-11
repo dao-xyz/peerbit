@@ -53,6 +53,12 @@ const mulberry32 = (seed: number) => {
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+// Optional "live stream" heartbeat to make churn recovery visible:
+// if a node stops receiving data it can detach and rejoin.
+const LIVE_HEARTBEAT_INTERVAL_MS = 1_000;
+const LIVE_STALE_AFTER_MS = 3_000;
+const LIVE_MAX_DATA_AGE_MS = 5_000;
+
 const InfoPopover = ({ children }: { children: ReactNode }) => (
 	<details className="relative inline-block align-middle">
 		<summary
@@ -101,16 +107,21 @@ const computeLayout = (opts: {
 	levelByNode: Uint16Array;
 	width: number;
 	height: number;
+	offlineByIndex?: boolean[];
 }): LayoutResult => {
 	const joined = Math.max(1, Math.floor(opts.joined));
 	const width = Math.max(240, Math.floor(opts.width));
 	const height = Math.max(220, Math.floor(opts.height));
 
 	let maxLevel = 0;
-	for (let i = 0; i < joined; i++) maxLevel = Math.max(maxLevel, opts.levelByNode[i] ?? 0);
+	for (let i = 0; i < joined; i++) {
+		if (opts.offlineByIndex?.[i]) continue;
+		maxLevel = Math.max(maxLevel, opts.levelByNode[i] ?? 0);
+	}
 
 	const perLevel: number[][] = Array.from({ length: maxLevel + 1 }, () => []);
 	for (let i = 0; i < joined; i++) {
+		if (opts.offlineByIndex?.[i]) continue;
 		const lvl = opts.levelByNode[i] ?? 0;
 		perLevel[Math.min(maxLevel, lvl)]!.push(i);
 	}
@@ -155,6 +166,7 @@ type RunState = {
 		rootMaxChildren: number;
 		nodeMaxChildren: number;
 		seed: number;
+		liveMode: boolean;
 	};
 	peers: Array<{
 		index: number;
@@ -166,6 +178,8 @@ type RunState = {
 	rootAddr: string;
 	topic: string;
 	rootHash: string;
+	rootChannel?: FanoutChannel;
+	heartbeatStop?: () => void;
 	metrics: () => InMemoryNetworkMetrics;
 	stop: () => Promise<void>;
 };
@@ -200,6 +214,7 @@ export function FanoutFormationSandbox({
 	const [joinIntervalMs, setJoinIntervalMs] = useState(initialJoinIntervalMs);
 	const [seed, setSeed] = useState(initialSeed);
 	const [height, setHeight] = useState(initialHeight);
+	const [liveMode, setLiveMode] = useState(false);
 
 	// Inputs are editable, but changes take effect only after Reset.
 	const [applied, setApplied] = useState(() => ({
@@ -207,6 +222,7 @@ export function FanoutFormationSandbox({
 		rootMaxChildren: initialRootMaxChildren,
 		nodeMaxChildren: initialNodeMaxChildren,
 		seed: initialSeed,
+		liveMode: false,
 	}));
 
 	const [status, setStatus] = useState<RunStatus>("idle");
@@ -321,6 +337,31 @@ export function FanoutFormationSandbox({
 		return { index, fanout, channel, hash };
 	};
 
+	const startLiveHeartbeat = (run: RunState) => {
+		let stopped = false;
+		let tick = 0;
+		const loop = async () => {
+			while (!stopped && !run.abort.signal.aborted) {
+				// Avoid publishing before any joiners exist.
+				if (joinedRef.current > 1 && run.rootChannel) {
+					try {
+						// Small payload; content isn't important, only that data flows.
+						await run.rootChannel.publish(new Uint8Array([tick & 0xff]));
+						tick = (tick + 1) & 0xff;
+					} catch {
+						// ignore
+					}
+				}
+				// eslint-disable-next-line no-await-in-loop
+				await delay(LIVE_HEARTBEAT_INTERVAL_MS);
+			}
+		};
+		void loop();
+		return () => {
+			stopped = true;
+		};
+	};
+
 	const reset = async () => {
 		setError(null);
 		setStatus("initializing");
@@ -343,6 +384,7 @@ export function FanoutFormationSandbox({
 				rootMaxChildren: initialRootMaxChildren,
 				nodeMaxChildren: initialNodeMaxChildren,
 				seed: initialSeed,
+				liveMode: false,
 			},
 			peers: [],
 			hashToIndex,
@@ -351,6 +393,7 @@ export function FanoutFormationSandbox({
 			rootHash: "",
 			metrics: () => network.metrics,
 			stop: async () => {
+				run.heartbeatStop?.();
 				await Promise.allSettled(run.peers.map((p) => p.fanout.stop()));
 			},
 		};
@@ -362,6 +405,7 @@ export function FanoutFormationSandbox({
 				rootMaxChildren,
 				nodeMaxChildren,
 				seed,
+				liveMode,
 			};
 			setApplied(run.config);
 			initLevelArrays(nodes);
@@ -382,9 +426,13 @@ export function FanoutFormationSandbox({
 				msgSize: 256,
 				uploadLimitBps: 1_000_000_000,
 				maxChildren: Math.max(1, Math.floor(run.config.rootMaxChildren)),
+				maxDataAgeMs: run.config.liveMode ? LIVE_MAX_DATA_AGE_MS : 0,
 				repair: false,
 				allowKick: false,
 			});
+			run.rootChannel = rootChannel;
+			run.heartbeatStop?.();
+			run.heartbeatStop = run.config.liveMode ? startLiveHeartbeat(run) : undefined;
 
 			setJoined(1);
 			setStatus("ready");
@@ -418,16 +466,62 @@ export function FanoutFormationSandbox({
 			children[parent]!.push(i);
 		}
 
-		// BFS levels from root.
-		levelByNodeRef.current.fill(0);
-		levelByNodeRef.current[0] = 0;
+		// BFS levels from root, then place disconnected components below.
+		const levelByNode = levelByNodeRef.current;
+		levelByNode.fill(0);
+		const visited = new Uint8Array(max);
+		visited[0] = 1;
+		levelByNode[0] = 0;
+
 		const q: number[] = [0];
-		while (q.length > 0) {
-			const p = q.shift()!;
-			const lvl = levelByNodeRef.current[p] ?? 0;
+		for (let qi = 0; qi < q.length; qi++) {
+			const p = q[qi]!;
+			const lvl = levelByNode[p] ?? 0;
 			for (const c of children[p]!) {
-				levelByNodeRef.current[c] = (lvl + 1) & 0xffff;
+				if (offlineByIndex[c]) continue;
+				if (visited[c]) continue;
+				visited[c] = 1;
+				levelByNode[c] = (lvl + 1) & 0xffff;
 				q.push(c);
+			}
+		}
+
+		let maxLevel = 0;
+		for (let i = 0; i < max; i++) {
+			if (offlineByIndex[i]) continue;
+			if (!visited[i]) continue;
+			maxLevel = Math.max(maxLevel, levelByNode[i] ?? 0);
+		}
+
+		// Any online node not reachable from root is part of a disconnected component.
+		// Put those components below so the root stays visually stable.
+		const baseLevel = (maxLevel + 2) & 0xffff;
+		for (let i = 1; i < max; i++) {
+			if (offlineByIndex[i]) continue;
+			if (visited[i]) continue;
+			const parent = parentByNode[i];
+			const parentOk =
+				typeof parent === "number" &&
+				parent >= 0 &&
+				parent < max &&
+				!offlineByIndex[parent] &&
+				visited[parent] === 0;
+			// Component roots: parent missing/offline/or in another component.
+			if (parentOk) continue;
+
+			visited[i] = 1;
+			levelByNode[i] = baseLevel;
+			const cq: number[] = [i];
+			for (let ci = 0; ci < cq.length; ci++) {
+				const p = cq[ci]!;
+				const lvl = levelByNode[p] ?? baseLevel;
+				for (const c of children[p]!) {
+					if (offlineByIndex[c]) continue;
+					if (visited[c]) continue;
+					visited[c] = 1;
+					levelByNode[c] = (lvl + 1) & 0xffff;
+					cq.push(c);
+				}
 			}
 		}
 
@@ -530,12 +624,14 @@ export function FanoutFormationSandbox({
 					msgSize: 256,
 					uploadLimitBps: 1_000_000_000,
 					maxChildren,
+					maxDataAgeMs: run.config.liveMode ? LIVE_MAX_DATA_AGE_MS : 0,
 					repair: false,
 					allowKick: false,
 				},
 				{
 					bootstrap: run.rootAddr ? [run.rootAddr] : undefined,
 					timeoutMs: 10_000,
+					staleAfterMs: run.config.liveMode ? LIVE_STALE_AFTER_MS : 0,
 					retryMs: 50,
 					joinReqTimeoutMs: 1_000,
 					trackerQueryTimeoutMs: 500,
@@ -723,6 +819,7 @@ export function FanoutFormationSandbox({
 				levelByNode: levelByNodeRef.current,
 				width,
 				height,
+				offlineByIndex: offlineByIndexRef.current,
 			}),
 		[joined, edges, width, height],
 	);
@@ -777,6 +874,7 @@ export function FanoutFormationSandbox({
 				levelByNode: levelByNodeRef.current,
 				width: w,
 				height: h,
+				offlineByIndex: offlineByIndexRef.current,
 			});
 
 			const childCountsNow = new Uint16Array(Math.max(1, joinedNow));
@@ -806,6 +904,7 @@ export function FanoutFormationSandbox({
 				const t = (now - p.startMs) / p.durationMs;
 				if (t < 0) continue;
 				if (t > 1) continue;
+				if (offlineByIndexRef.current[p.from] || offlineByIndexRef.current[p.to]) continue;
 				const a = layoutNow.pos[p.from];
 				const b = layoutNow.pos[p.to];
 				if (!a || !b) continue;
@@ -822,21 +921,21 @@ export function FanoutFormationSandbox({
 			// Nodes
 			const r = clamp(9 - Math.log2(Math.max(2, joinedNow)), 3.5, 7.5);
 			for (let i = 0; i < joinedNow; i++) {
-				const p = layoutNow.pos[i]!;
 				const state: NodeState =
 					i === 0
 						? "root"
 						: offlineByIndexRef.current[i]
 							? "offline"
 							: nodeStateByIndexRef.current[i] ?? "online";
+				if (state === "offline") continue;
+				const p = layoutNow.pos[i]!;
 				const max = i === 0 ? appliedNow.rootMaxChildren : appliedNow.nodeMaxChildren;
 				const used = childCountsNow[i] ?? 0;
 				const full = max > 0 && used >= max;
 				const isRoot = state === "root";
 
 				let fill = "rgba(34, 197, 94, 0.95)"; // green (online)
-				if (state === "offline") fill = "rgba(148, 163, 184, 0.95)"; // slate
-				else if (state === "orphan") fill = "rgba(59, 130, 246, 0.95)"; // blue
+				if (state === "orphan") fill = "rgba(59, 130, 246, 0.95)"; // blue
 				else if (full && !isRoot) fill = "rgba(245, 158, 11, 0.95)"; // amber
 				if (isRoot) fill = "rgba(239, 68, 68, 0.95)"; // red
 
@@ -900,8 +999,8 @@ export function FanoutFormationSandbox({
 													? "Done"
 													: "Error"}
 							</span>{" "}
-							· joined {Math.max(0, joined)}/{applied.nodes} · offline {offlineCount} · max
-							level {stats.maxLevel}
+							· joined {Math.max(0, joined)}/{applied.nodes} · offline {offlineCount} · live{" "}
+							{applied.liveMode ? "on" : "off"} · max level {stats.maxLevel}
 						</p>
 					</div>
 					<div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
@@ -959,6 +1058,11 @@ export function FanoutFormationSandbox({
 									<p>
 										Churn: click a non-root node in the graph to drop it (simulate going
 										offline). Orphans (blue) will reattach by re-running the join loop.
+									</p>
+									<p>
+										Note: without <em>Live mode</em>, recovery is mostly visible at the cut
+										edge. Deeper subtrees recover when their parent reattaches, but may not
+										detach on their own if no data is flowing.
 									</p>
 									<p>
 										Root capacity is controlled by <code>rootMaxChildren</code>. Nodes with{" "}
@@ -1064,13 +1168,32 @@ export function FanoutFormationSandbox({
 								onChange={(e) => setHeight(clamp(Number(e.target.value || 0), 240, 900))}
 							/>
 						</label>
+						<label className="flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/30 md:col-span-2">
+							<input
+								type="checkbox"
+								className="mt-0.5 h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+								checked={liveMode}
+								onChange={(e) => setLiveMode(e.target.checked)}
+								disabled={status === "joining" || status === "initializing"}
+							/>
+							<span className="min-w-0">
+								<span className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+									Live mode (heartbeat)
+								</span>
+								<span className="mt-0.5 block text-xs text-slate-600 dark:text-slate-300">
+									Root publishes a tiny heartbeat every {LIVE_HEARTBEAT_INTERVAL_MS}ms. This
+									makes recovery visible: nodes that stop receiving data detach and rejoin
+									after ~{LIVE_STALE_AFTER_MS}ms.
+								</span>
+							</span>
+						</label>
 					</div>
 
 					<div className="mt-3 text-xs text-slate-600 dark:text-slate-300">
 						Bootstrapping: joiners dial node 0, query it for candidates, then JOIN_REQ a parent.
 						When node 0 is full, it returns redirects to other nodes that still have free slots.
 						<span className="ml-1">
-							(Changes to nodes/capacity/seed apply after Reset.)
+							(Changes to nodes/capacity/seed/live mode apply after Reset.)
 						</span>
 					</div>
 				</details>
@@ -1116,11 +1239,13 @@ export function FanoutFormationSandbox({
 								levelByNode: levelByNodeRef.current,
 								width: Math.max(240, Math.floor(widthRef.current)),
 								height: Math.max(220, Math.floor(heightRef.current)),
+								offlineByIndex: offlineByIndexRef.current,
 							});
 
 							let best = -1;
 							let bestD2 = Number.POSITIVE_INFINITY;
 							for (let i = 0; i < joinedNow; i++) {
+								if (offlineByIndexRef.current[i]) continue;
 								const p = layoutNow.pos[i];
 								if (!p) continue;
 								const dx = p.x - x;
