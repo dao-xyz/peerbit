@@ -10,6 +10,7 @@ import { MarkdownImage } from "./MarkdownImage";
 import { highlightToHtml, languageFromClassName } from "../utils/highlight";
 import { splitPathDirname } from "../utils/path";
 import { FanoutProtocolSandbox } from "./FanoutProtocolSandbox";
+import { FanoutFormationSandbox } from "./FanoutFormationSandbox";
 
 export function Markdown({ base, docPath }: { base: string; docPath: string }) {
 	const [content, setContent] = useState<string | null>(null);
@@ -87,6 +88,7 @@ export function Markdown({ base, docPath }: { base: string; docPath: string }) {
 		// react-markdown's `Components` type only includes standard HTML tag names.
 		// We intentionally support a few custom tags for interactive docs.
 		(out as any)["fanout-protocol-sandbox"] = (props: any) => <FanoutProtocolSandbox {...props} />;
+		(out as any)["fanout-formation-sandbox"] = (props: any) => <FanoutFormationSandbox {...props} />;
 
 		return out;
 	}, [base, baseDir]);

@@ -52,6 +52,29 @@ If you just want to study delivery, keep **Preseed (no subscribe gossip)** enabl
 ### Background: mesh gossip (reference model)
 This sandbox does not provide a FloodSub/Gossipsub toggle. It always runs the TopicControlPlane path over in-memory transport. We still reference mesh gossip because it is the common baseline in the literature: forwards are often closer to “per edge” than “per subscriber”, which can be robust but expensive at very large audience sizes.
 
+## Network formation (join + capacity)
+
+Delivery is only half the story. To scale, you also need a join process that:
+- converges quickly without global membership knowledge, and
+- respects per-node capacity (so “bootstrap/root is full” does not melt the system).
+
+This sandbox visualizes **real FanoutTree join** over the same in-memory transport.
+
+For simplicity, node 0 acts as both:
+- the **bootstrap/tracker** (rendezvous that returns join candidates), and
+- the **root** (level 0 of the tree).
+
+As peers join, node 0 accepts up to `rootMaxChildren`. After that it responds with redirects to other nodes that still have free slots, so the tree can keep growing without everyone attaching to the root.
+
+How to use it:
+1. Press **Step join** a few times, then press **Auto**.
+2. Try `rootMaxChildren=2` and `nodeMaxChildren=3` to force deeper trees quickly.
+3. Observe how capacity changes the shape and depth of the tree.
+
+<div class="not-prose">
+  <fanout-formation-sandbox nodes="80" rootMaxChildren="4" nodeMaxChildren="4" joinIntervalMs="250" seed="1"></fanout-formation-sandbox>
+</div>
+
 ## How this maps to Peerbit work
 
 This sandbox runs the real `TopicControlPlane` and `DirectStream` logic over a fake in-memory transport. It skips real sockets and expensive crypto verification so you can run hundreds or thousands of nodes locally, including in the browser.
