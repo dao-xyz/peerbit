@@ -1075,24 +1075,26 @@ export function FanoutProtocolSandbox({
 		}
 	};
 
-	useEffect(() => {
-		const canvas = canvasRef.current;
-		if (!canvas) return;
-		const ctx = canvas.getContext("2d");
-		if (!ctx) return;
+		useEffect(() => {
+			const canvas = canvasRef.current;
+			if (!canvas) return;
+			const ctx = canvas.getContext("2d");
+			if (!ctx) return;
 
-		let raf = 0;
-			const draw = () => {
-				const g = graph;
-				const w = Math.max(1, size.w || 760);
-				const h = Math.max(1, size.h || initialHeight);
+			let raf = 0;
+				const draw = () => {
+					const g = graph;
+					const w = Math.max(1, size.w);
+					const h = Math.max(1, size.h || initialHeight);
 
-			canvas.width = w * devicePixelRatio;
-			canvas.height = h * devicePixelRatio;
-			canvas.style.width = `${w}px`;
-			canvas.style.height = `${h}px`;
-			ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
-			ctx.clearRect(0, 0, w, h);
+				canvas.width = w * devicePixelRatio;
+				canvas.height = h * devicePixelRatio;
+				// Avoid mobile horizontal overflow caused by an early large fallback width.
+				// The backing buffer still uses `w` for correct rendering.
+				canvas.style.width = "100%";
+				canvas.style.height = `${h}px`;
+				ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+				ctx.clearRect(0, 0, w, h);
 
 			if (!g) {
 				ctx.fillStyle = "#64748b";
@@ -1575,11 +1577,11 @@ export function FanoutProtocolSandbox({
 							) : null}
 						</div>
 
-						<div className="flex flex-col gap-3">
-							<div className="flex flex-wrap items-center justify-between gap-2">
-								<div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-									<span>
-										Click a node to set the writer (red). Subscribers pulse when they receive data.
+							<div className="min-w-0 flex flex-col gap-3">
+								<div className="flex flex-wrap items-center justify-between gap-2">
+									<div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+										<span>
+											Click a node to set the writer (red). Subscribers pulse when they receive data.
 									</span>
 									<InfoPopover>
 										<div className="space-y-2">
@@ -1657,12 +1659,12 @@ export function FanoutProtocolSandbox({
 								</div>
 									) : null}
 
-							<div
-								ref={canvasContainerRef}
-								className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800"
-							>
-								<canvas ref={canvasRef} onClick={onClickCanvas} />
-							</div>
+								<div
+									ref={canvasContainerRef}
+									className="min-w-0 w-full max-w-full overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800"
+								>
+									<canvas className="block w-full max-w-full" ref={canvasRef} onClick={onClickCanvas} />
+								</div>
 
 							{error ? (
 								<div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800 dark:border-red-900/40 dark:bg-red-950/40 dark:text-red-200">

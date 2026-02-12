@@ -20,7 +20,14 @@ import {
 
 type Vec2 = { x: number; y: number };
 
-type RunStatus = "idle" | "initializing" | "ready" | "joining" | "done" | "error";
+type RunStatus =
+	| "idle"
+	| "initializing"
+	| "ready"
+	| "joining"
+	| "reconfiguring"
+	| "done"
+	| "error";
 
 type Edge = { from: number; to: number };
 
@@ -216,7 +223,7 @@ export function FanoutFormationSandbox({
 	const [height, setHeight] = useState(initialHeight);
 	const [liveMode, setLiveMode] = useState(false);
 
-	// Inputs are editable, but changes take effect only after Reset.
+	// Inputs are editable, but (most) changes take effect only after Reset.
 	const [applied, setApplied] = useState(() => ({
 		nodes: initialNodes,
 		rootMaxChildren: initialRootMaxChildren,
@@ -360,6 +367,105 @@ export function FanoutFormationSandbox({
 		return () => {
 			stopped = true;
 		};
+	};
+
+	const reconfigureLiveMode = async (nextLiveMode: boolean) => {
+		const run = runRef.current;
+		setLiveMode(nextLiveMode);
+
+		if (!run) return;
+		const statusNow = statusRef.current;
+		// Avoid reconfiguring while joinAll is running or reset is building the network.
+		if (statusNow === "initializing" || statusNow === "joining" || statusNow === "reconfiguring") {
+			appendEvent("Live mode change queued. Press Reset to apply cleanly.");
+			return;
+		}
+
+		// No-op: already applied. Just start/stop heartbeat if needed.
+		if (appliedRef.current.liveMode === nextLiveMode) {
+			if (nextLiveMode && !run.heartbeatStop) run.heartbeatStop = startLiveHeartbeat(run);
+			if (!nextLiveMode && run.heartbeatStop) {
+				run.heartbeatStop();
+				run.heartbeatStop = undefined;
+			}
+			return;
+		}
+
+		setStatus("reconfiguring");
+		setError(null);
+		appendEvent(`Reconfiguring live mode (${nextLiveMode ? "on" : "off"})…`);
+
+		// Stop any existing heartbeat while channels are being rebuilt.
+		run.heartbeatStop?.();
+		run.heartbeatStop = undefined;
+
+		run.config.liveMode = nextLiveMode;
+		setApplied({ ...run.config });
+
+		const joinedNow = joinedRef.current;
+		const peersByIndex = new Map(run.peers.map((p) => [p.index, p] as const));
+
+		for (let i = 1; i < joinedNow; i++) {
+			if (offlineByIndexRef.current[i]) continue;
+			const peer = peersByIndex.get(i);
+			if (!peer) continue;
+
+			// Clear visual parent immediately so the user sees the rejoin phase.
+			parentByNodeRef.current[i] = undefined;
+			nodeStateByIndexRef.current[i] = "orphan";
+
+			try {
+				await peer.channel.leave({ notifyParent: false, kickChildren: false });
+			} catch {
+				// ignore
+			}
+
+			const maxChildren = Math.max(0, Math.floor(run.config.nodeMaxChildren));
+			void peer.channel
+				.join(
+					{
+						msgRate: 30,
+						msgSize: 256,
+						uploadLimitBps: 1_000_000_000,
+						maxChildren,
+						maxDataAgeMs: nextLiveMode ? LIVE_MAX_DATA_AGE_MS : 0,
+						repair: false,
+						allowKick: false,
+					},
+					{
+						bootstrap: run.rootAddr ? [run.rootAddr] : undefined,
+						timeoutMs: 10_000,
+						staleAfterMs: nextLiveMode ? LIVE_STALE_AFTER_MS : 0,
+						retryMs: 50,
+						joinReqTimeoutMs: 1_000,
+						trackerQueryTimeoutMs: 500,
+						announceIntervalMs: 250,
+						announceTtlMs: 5_000,
+						bootstrapEnsureIntervalMs: 250,
+						trackerQueryIntervalMs: 250,
+						candidateCooldownMs: 500,
+						joinAttemptsPerRound: 6,
+						trackerCandidates: 24,
+						candidateShuffleTopK: 8,
+					},
+				)
+				.catch((e) => {
+					appendEvent(
+						`node ${i} rejoin failed: ${e instanceof Error ? e.message : String(e)}`,
+					);
+				});
+
+			// Yield so big networks stay responsive.
+			// eslint-disable-next-line no-await-in-loop
+			await delay(0);
+		}
+
+		rebuildDerivedGraph(joinedNow);
+		requestDraw();
+
+		run.heartbeatStop = nextLiveMode ? startLiveHeartbeat(run) : undefined;
+
+		setStatus(joinedNow >= run.config.nodes ? "done" : "ready");
 	};
 
 	const reset = async () => {
@@ -570,28 +676,40 @@ export function FanoutFormationSandbox({
 		if (!same) setEdges(nextEdges);
 	};
 
-	const dropNode = async (index: number) => {
-		const run = runRef.current;
-		if (!run) return;
-		if (index <= 0) {
-			appendEvent("root cannot be deleted in this demo (it is also the tracker)");
-			return;
-		}
-		if (offlineByIndexRef.current[index]) return;
+		const dropNode = async (index: number) => {
+			const run = runRef.current;
+			if (!run) return;
+			if (index <= 0) {
+				appendEvent("root cannot be deleted in this demo (it is also the tracker)");
+				return;
+			}
+			if (offlineByIndexRef.current[index]) return;
 
-		const peer = run.peers.find((p) => p.index === index);
-		if (!peer) return;
+			const peer = run.peers.find((p) => p.index === index);
+			if (!peer) return;
 
-		offlineByIndexRef.current[index] = true;
-		nodeStateByIndexRef.current[index] = "offline";
-		setOfflineCount(offlineByIndexRef.current.filter(Boolean).length);
-		appendEvent(`node ${index} dropped (children will rejoin)`);
+			offlineByIndexRef.current[index] = true;
+			nodeStateByIndexRef.current[index] = "offline";
+			setOfflineCount(offlineByIndexRef.current.filter(Boolean).length);
+			appendEvent(`node ${index} dropped (children will rejoin)`);
 
-		try {
-			// Close all streams/connections so remaining peers observe the disconnect quickly.
-			const cm = (peer.fanout as any).components?.connectionManager as any;
-			const conns = (cm?.getConnections?.() ?? []) as any[];
-			const remotePeers = new Set<any>();
+			// Update the visual immediately. Stopping/unregistering peers can take time and should
+			// not block the UI from reflecting that a node was removed.
+			for (let i = 1; i < joinedRef.current; i++) {
+				if (offlineByIndexRef.current[i]) continue;
+				if (parentByNodeRef.current[i] === index) {
+					parentByNodeRef.current[i] = undefined;
+					nodeStateByIndexRef.current[i] = "orphan";
+				}
+			}
+			rebuildDerivedGraph(joinedRef.current);
+			requestDraw();
+
+			try {
+				// Close all streams/connections so remaining peers observe the disconnect quickly.
+				const cm = (peer.fanout as any).components?.connectionManager as any;
+				const conns = (cm?.getConnections?.() ?? []) as any[];
+				const remotePeers = new Set<any>();
 			for (const c of conns) {
 				const rp = (c as any)?.remotePeer;
 				if (rp) remotePeers.add(rp);
@@ -612,21 +730,11 @@ export function FanoutFormationSandbox({
 		try {
 			run.network.unregisterPeer((peer.fanout as any).components.peerId);
 		} catch {
-			// ignore
-		}
-
-		// Mark any direct children as temporarily orphaned in the visual until they reattach.
-		for (let i = 1; i < joinedRef.current; i++) {
-			if (offlineByIndexRef.current[i]) continue;
-			if (parentByNodeRef.current[i] === index) {
-				parentByNodeRef.current[i] = undefined;
-				nodeStateByIndexRef.current[i] = "orphan";
+				// ignore
 			}
-		}
 
-		rebuildDerivedGraph(joinedRef.current);
-		requestDraw();
-	};
+			// Derived graph was already updated above for responsiveness.
+		};
 
 	const joinAt = async (index: number) => {
 		const run = runRef.current;
@@ -845,18 +953,88 @@ export function FanoutFormationSandbox({
 		[joined, edges, width, height],
 	);
 
-	const stats = useMemo(() => {
-		const maxLevel = layout.maxLevel;
-		const rootChildren = joined > 0 ? childCounts[0] ?? 0 : 0;
-		const networkMetrics = runRef.current?.metrics?.();
-		return {
-			maxLevel,
-			rootChildren,
-			dials: networkMetrics?.dials ?? 0,
-			connectionsOpened: networkMetrics?.connectionsOpened ?? 0,
-			streamsOpened: networkMetrics?.streamsOpened ?? 0,
-		};
-	}, [layout.maxLevel, childCounts, joined]);
+		const stats = useMemo(() => {
+			const maxLevel = layout.maxLevel;
+			const rootChildren = joined > 0 ? childCounts[0] ?? 0 : 0;
+			const networkMetrics = runRef.current?.metrics?.();
+
+			const joinedNow = Math.max(1, joined);
+			const offlineByIndex = offlineByIndexRef.current;
+			const parentByNode = parentByNodeRef.current;
+
+			// Compute root connectivity (component size) from the current parent/edge map.
+			const childrenByNode: number[][] = Array.from({ length: joinedNow }, () => []);
+			for (const e of edges) {
+				if (e.from < 0 || e.from >= joinedNow) continue;
+				if (e.to < 0 || e.to >= joinedNow) continue;
+				if (offlineByIndex[e.from] || offlineByIndex[e.to]) continue;
+				childrenByNode[e.from]!.push(e.to);
+			}
+
+			const reachableFromRoot = new Uint8Array(joinedNow);
+			let connectedCount = 0;
+			if (!offlineByIndex[0]) {
+				reachableFromRoot[0] = 1;
+				const q: number[] = [0];
+				for (let qi = 0; qi < q.length; qi++) {
+					const p = q[qi]!;
+					connectedCount += 1;
+					for (const c of childrenByNode[p]!) {
+						if (offlineByIndex[c]) continue;
+						if (reachableFromRoot[c]) continue;
+						reachableFromRoot[c] = 1;
+						q.push(c);
+					}
+				}
+			}
+
+			let onlineCount = 0;
+			let orphanCount = 0;
+			for (let i = 0; i < joinedNow; i++) {
+				if (offlineByIndex[i]) continue;
+				onlineCount += 1;
+				if (i === 0) continue;
+				const parent = parentByNode[i];
+				if (
+					typeof parent !== "number" ||
+					parent < 0 ||
+					parent >= joinedNow ||
+					offlineByIndex[parent]
+				) {
+					orphanCount += 1;
+				}
+			}
+
+			let freeSlotsRootComponent = 0;
+			for (let i = 0; i < joinedNow; i++) {
+				if (offlineByIndex[i]) continue;
+				if (!reachableFromRoot[i]) continue;
+				const max = i === 0 ? applied.rootMaxChildren : applied.nodeMaxChildren;
+				const used = childCounts[i] ?? 0;
+				freeSlotsRootComponent += Math.max(0, max - used);
+			}
+
+			return {
+				maxLevel,
+				rootChildren,
+				dials: networkMetrics?.dials ?? 0,
+				connectionsOpened: networkMetrics?.connectionsOpened ?? 0,
+				streamsOpened: networkMetrics?.streamsOpened ?? 0,
+				onlineCount,
+				connectedCount,
+				disconnectedCount: Math.max(0, onlineCount - connectedCount),
+				orphanCount,
+				freeSlotsRootComponent,
+			};
+		}, [
+			layout.maxLevel,
+			childCounts,
+			joined,
+			edges,
+			offlineCount,
+			applied.rootMaxChildren,
+			applied.nodeMaxChildren,
+		]);
 
 	const requestDraw = () => {
 		if (rafRef.current != null) return;
@@ -905,15 +1083,17 @@ export function FanoutFormationSandbox({
 
 			ctx.clearRect(0, 0, w, h);
 
-			// Edges
-			ctx.lineWidth = 1;
-			ctx.strokeStyle = "rgba(148, 163, 184, 0.7)"; // slate-400-ish
-			for (const e of edgesNow) {
-				const a = layoutNow.pos[e.from];
-				const b = layoutNow.pos[e.to];
-				if (!a || !b) continue;
-				ctx.beginPath();
-				ctx.moveTo(a.x, a.y);
+				// Edges
+				ctx.lineWidth = 1;
+				ctx.strokeStyle = "rgba(148, 163, 184, 0.7)"; // slate-400-ish
+				const offlineByIndex = offlineByIndexRef.current;
+				for (const e of edgesNow) {
+					if (offlineByIndex[e.from] || offlineByIndex[e.to]) continue;
+					const a = layoutNow.pos[e.from];
+					const b = layoutNow.pos[e.to];
+					if (!a || !b) continue;
+					ctx.beginPath();
+					ctx.moveTo(a.x, a.y);
 				ctx.lineTo(b.x, b.y);
 				ctx.stroke();
 			}
@@ -970,8 +1150,10 @@ export function FanoutFormationSandbox({
 				ctx.stroke();
 			}
 
-			const keepAnimating =
-				pulsesRef.current.length > 0 || statusNow === "joining";
+				const keepAnimating =
+					pulsesRef.current.length > 0 ||
+					statusNow === "joining" ||
+					statusNow === "reconfiguring";
 			if (keepAnimating) {
 				rafRef.current = requestAnimationFrame(tick);
 			} else {
@@ -990,49 +1172,54 @@ export function FanoutFormationSandbox({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
-	useEffect(() => {
-		return () => {
-			void stopRun();
-		};
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, []);
+		useEffect(() => {
+			return () => {
+				void stopRun();
+			};
+			// eslint-disable-next-line react-hooks/exhaustive-deps
+		}, []);
 
-	return (
-		<div className={["w-full", className].filter(Boolean).join(" ")}>
-			<div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
-				<div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+		const busy =
+			status === "joining" || status === "initializing" || status === "reconfiguring";
+
+		return (
+			<div className={["w-full", className].filter(Boolean).join(" ")}>
+				<div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+					<div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
 					<div className="min-w-0">
 						<h3 className="text-base font-semibold text-slate-900 dark:text-slate-50">
 							Network formation sandbox (FanoutTree join over in-memory libp2p)
 						</h3>
 						<p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
 					Status:{" "}
-							<span className="font-medium">
-								{status === "idle"
-									? "Idle"
-									: status === "initializing"
-										? "Initializing"
-										: status === "ready"
-											? "Ready"
-											: status === "joining"
-												? "Joining"
-												: status === "done"
-													? "Done"
-													: "Error"}
-							</span>{" "}
+								<span className="font-medium">
+									{status === "idle"
+										? "Idle"
+										: status === "initializing"
+											? "Initializing"
+											: status === "ready"
+												? "Ready"
+												: status === "joining"
+													? "Joining"
+													: status === "reconfiguring"
+														? "Reconfiguring"
+													: status === "done"
+														? "Done"
+														: "Error"}
+								</span>{" "}
 							· joined {Math.max(0, joined)}/{applied.nodes} · offline {offlineCount} · live{" "}
 							{applied.liveMode ? "on" : "off"} · max level {stats.maxLevel}
 						</p>
 					</div>
 					<div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
-						<button
-							type="button"
-							className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-900"
-							onClick={() => void reset()}
-							disabled={status === "initializing" || status === "joining"}
-						>
-							Reset
-						</button>
+							<button
+								type="button"
+								className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-900"
+									onClick={() => void reset()}
+									disabled={busy}
+							>
+								Reset
+							</button>
 						<button
 							type="button"
 							className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-950 dark:hover:bg-slate-200"
@@ -1102,67 +1289,67 @@ export function FanoutFormationSandbox({
 							<span className="text-xs font-medium text-slate-700 dark:text-slate-300">
 								Nodes (max 1000)
 							</span>
-							<input
-								className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-slate-400 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-								type="number"
-								min={3}
-								max={1000}
-								value={nodes}
-								onChange={(e) => setNodes(clamp(Number(e.target.value || 0), 3, 1000))}
-								disabled={status === "joining" || status === "initializing"}
-							/>
-						</label>
-						<label className="block">
-							<span className="text-xs font-medium text-slate-700 dark:text-slate-300">
-								Root max children
+								<input
+									className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-slate-400 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+									type="number"
+									min={3}
+									max={1000}
+									value={nodes}
+										onChange={(e) => setNodes(clamp(Number(e.target.value || 0), 3, 1000))}
+										disabled={busy}
+								/>
+							</label>
+							<label className="block">
+								<span className="text-xs font-medium text-slate-700 dark:text-slate-300">
+									Root max children
 							</span>
 							<input
 								className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-slate-400 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
 								type="number"
 								min={1}
 								max={64}
-								value={rootMaxChildren}
-								onChange={(e) =>
-									setRootMaxChildren(clamp(Number(e.target.value || 0), 1, 64))
-								}
-								disabled={status === "joining" || status === "initializing"}
-							/>
-						</label>
-						<label className="block">
-							<span className="text-xs font-medium text-slate-700 dark:text-slate-300">
-								Node max children
+									value={rootMaxChildren}
+									onChange={(e) =>
+										setRootMaxChildren(clamp(Number(e.target.value || 0), 1, 64))
+									}
+										disabled={busy}
+								/>
+							</label>
+							<label className="block">
+								<span className="text-xs font-medium text-slate-700 dark:text-slate-300">
+									Node max children
 							</span>
 							<input
 								className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-slate-400 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
 								type="number"
 								min={0}
 								max={64}
-								value={nodeMaxChildren}
-								onChange={(e) =>
-									setNodeMaxChildren(clamp(Number(e.target.value || 0), 0, 64))
-								}
-								disabled={status === "joining" || status === "initializing"}
-							/>
-						</label>
-						<label className="block">
-							<span className="text-xs font-medium text-slate-700 dark:text-slate-300">
-								Join interval (ms)
+									value={nodeMaxChildren}
+									onChange={(e) =>
+										setNodeMaxChildren(clamp(Number(e.target.value || 0), 0, 64))
+									}
+										disabled={busy}
+								/>
+							</label>
+							<label className="block">
+								<span className="text-xs font-medium text-slate-700 dark:text-slate-300">
+									Join interval (ms)
 							</span>
 							<input
 								className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-slate-400 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
 								type="number"
 								min={0}
 								max={10_000}
-								value={joinIntervalMs}
-								onChange={(e) =>
-									setJoinIntervalMs(clamp(Number(e.target.value || 0), 0, 10_000))
-								}
-								disabled={status === "joining" || status === "initializing"}
-							/>
-						</label>
-						<label className="block">
-							<span className="text-xs font-medium text-slate-700 dark:text-slate-300">
-								Seed
+									value={joinIntervalMs}
+									onChange={(e) =>
+										setJoinIntervalMs(clamp(Number(e.target.value || 0), 0, 10_000))
+									}
+										disabled={busy}
+								/>
+							</label>
+							<label className="block">
+								<span className="text-xs font-medium text-slate-700 dark:text-slate-300">
+									Seed
 							</span>
 							<input
 								className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-slate-400 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
@@ -1170,12 +1357,12 @@ export function FanoutFormationSandbox({
 								min={0}
 								max={1_000_000_000}
 								value={seed}
-								onChange={(e) =>
-									setSeed(clamp(Number(e.target.value || 0), 0, 1_000_000_000))
-								}
-								disabled={status === "joining" || status === "initializing"}
-							/>
-						</label>
+									onChange={(e) =>
+										setSeed(clamp(Number(e.target.value || 0), 0, 1_000_000_000))
+									}
+									disabled={busy}
+								/>
+							</label>
 						<label className="block">
 							<span className="text-xs font-medium text-slate-700 dark:text-slate-300">
 								Height (px)
@@ -1190,13 +1377,13 @@ export function FanoutFormationSandbox({
 							/>
 						</label>
 						<label className="flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/30 md:col-span-2">
-							<input
-								type="checkbox"
-								className="mt-0.5 h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-								checked={liveMode}
-								onChange={(e) => setLiveMode(e.target.checked)}
-								disabled={status === "joining" || status === "initializing"}
-							/>
+								<input
+										type="checkbox"
+									className="mt-0.5 h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+										checked={liveMode}
+										onChange={(e) => void reconfigureLiveMode(e.target.checked)}
+										disabled={busy}
+								/>
 							<span className="min-w-0">
 								<span className="block text-xs font-medium text-slate-700 dark:text-slate-300">
 									Live mode (heartbeat)
@@ -1211,34 +1398,52 @@ export function FanoutFormationSandbox({
 					</div>
 
 					<div className="mt-3 text-xs text-slate-600 dark:text-slate-300">
-						Bootstrapping: joiners dial node 0, query it for candidates, then JOIN_REQ a parent.
-						When node 0 is full, it returns redirects to other nodes that still have free slots.
-						<span className="ml-1">
-							(Changes to nodes/capacity/seed/live mode apply after Reset.)
-						</span>
-					</div>
+							Bootstrapping: joiners dial node 0, query it for candidates, then JOIN_REQ a parent.
+							When node 0 is full, it returns redirects to other nodes that still have free slots.
+							<span className="ml-1">
+								(Changes to nodes/capacity/seed apply after Reset.)
+							</span>
+						</div>
 				</details>
 
-				<div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-slate-600 dark:text-slate-300">
-					<div>
-						Root children:{" "}
-						<span className="font-medium text-slate-900 dark:text-slate-50">
-							{stats.rootChildren}/{applied.rootMaxChildren}
-						</span>
+					<div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-slate-600 dark:text-slate-300">
+						<div>
+							Root children:{" "}
+							<span className="font-medium text-slate-900 dark:text-slate-50">
+								{stats.rootChildren}/{applied.rootMaxChildren}
+							</span>
+						</div>
+						<div>
+							Connected:{" "}
+							<span className="font-medium text-slate-900 dark:text-slate-50">
+								{stats.connectedCount}/{stats.onlineCount}
+							</span>
+						</div>
+						<div>
+							Orphans:{" "}
+							<span className="font-medium text-slate-900 dark:text-slate-50">
+								{stats.orphanCount}
+							</span>
+						</div>
+						<div>
+							Free slots (root comp):{" "}
+							<span className="font-medium text-slate-900 dark:text-slate-50">
+								{stats.freeSlotsRootComponent}
+							</span>
+						</div>
+						<div>
+							Connections opened:{" "}
+							<span className="font-medium text-slate-900 dark:text-slate-50">
+								{stats.connectionsOpened}
+							</span>
+						</div>
+						<div>
+							Streams opened:{" "}
+							<span className="font-medium text-slate-900 dark:text-slate-50">
+								{stats.streamsOpened}
+							</span>
+						</div>
 					</div>
-					<div>
-						Connections opened:{" "}
-						<span className="font-medium text-slate-900 dark:text-slate-50">
-							{stats.connectionsOpened}
-						</span>
-					</div>
-					<div>
-						Streams opened:{" "}
-						<span className="font-medium text-slate-900 dark:text-slate-50">
-							{stats.streamsOpened}
-						</span>
-					</div>
-				</div>
 
 				<div className="mt-4" ref={containerRef}>
 					<canvas

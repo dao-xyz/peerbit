@@ -1,27 +1,40 @@
-# Interactive fanout visualizer (tree push + control-plane gossip)
+# Making a leap toward large-scale P2P broadcasting with Fanout Trees
 
 *February 2, 2026*
 
-When a topic grows from 20 peers to 20,000 peers, the failure mode is rarely “the publisher is too slow”.
+Sending a message to 20 peers is easy.
 
-It is almost always **network overhead**:
-- too much control traffic (membership, subscribe announcements, retries), and
-- too much redundant forwarding (messages bouncing across many links even after deduplication).
+Sending it to 20,000 peers is where things get weird. Not because the payload is large, but because the network starts spending more effort on:
+- learning who is interested,
+- keeping that membership fresh under churn, and
+- forwarding the same content over and over across the overlay.
 
-In Peerbit we started calling one common symptom **“subscribe gossip exploding”**. The exact mechanics vary by protocol, but the pattern is the same: as the audience grows, the amount of “who is interested in what?” traffic grows faster than the useful payload.
+In Peerbit we started calling one common symptom **subscribe gossip exploding**. Different systems get there in different ways, but the smell is the same: the amount of "who is subscribed to what?" traffic grows faster than the useful payload.
 
-This post introduces a small interactive sandbox that helps build intuition for why that happens, and why scalable broadcast systems usually split the work into two layers:
+This post is a more human tour of a new Peerbit network protocol we have been building: **Fanout Trees**.
 
-- a **control-plane** (join / discovery / capacity announcements), and
-- a **data-plane** (actual message delivery with bounded per-node fanout).
+It is informed by classic work like Epidemic Broadcast Trees (Plumtree style) [1], HyParView [2], and modern pubsub practice like libp2p Gossipsub [3].
+If your mental model is more "Netflix/Twitch CDN trees" or "Tor-style overlays", that is fine too. Fanout Trees live in the same design space of making large distribution networks behave politely under real constraints.
 
-## Try it
+The idea is simple:
+- keep delivery costs bounded per node (economic), and
+- make the overlay form and heal without requiring global membership knowledge (scalable).
 
-This is a small browser-friendly sandbox that runs the **real code paths**:
+Below are two interactive sandboxes. One focuses on delivery (where the bytes go). The other focuses on topology formation (how the network connects in the first place).
 
-- `@peerbit/pubsub` (`TopicControlPlane`)
-- `@peerbit/stream` (routing + connection handling)
-- over an **in-memory libp2p shim** (no sockets)
+## Demo 1: Economic broadcast delivery
+
+Fanout Trees try to behave like a broadcast tree: each node forwards to a bounded number of children.
+If the tree is healthy, one publish is close to **N - 1** payload transmissions, roughly one per subscriber.
+
+### Try it
+
+This sandbox runs **the real Peerbit code paths**:
+- `@peerbit/pubsub` (Fanout Trees and control traffic)
+- `@peerbit/stream` (routing and connection handling)
+- over an in-memory libp2p shim (no sockets)
+
+We skip expensive crypto verification so you can run hundreds or thousands of nodes locally, including in the browser.
 
 How to use it:
 1. Click a node to pick the **writer** (it turns red).
@@ -35,28 +48,30 @@ Tip: keep **Messages = 1** and **Flow speed = 1000 ms** while you are learning. 
   <fanout-protocol-sandbox nodes="20" degree="4" subscribers="19" messages="1" msgSize="32" intervalMs="0" streamRxDelayMs="1000" seed="1"></fanout-protocol-sandbox>
 </div>
 
-## What you’re seeing
+### What you're seeing
 
-### 1) Tree push (economical, but needs repair)
-In a tree overlay, each node forwards to a bounded number of children. If the tree is well formed, a single publish uses close to **N - 1** payload transmissions (roughly one per subscriber). This is what makes “1 publisher to 1,000,000 subscribers” possible in principle.
+This is the core reason "1 publisher to 1,000,000 subscribers" is plausible in principle. If each peer only forwards to a few children, you do not melt the whole network just because the audience is huge.
 
-The catch is reliability. Trees break under churn and packet loss. The common state of the art pattern is not “tree only”, it is “tree push plus bounded repair”. Plumtree is the classic example of this style. It uses:
-- eager push along the tree for efficiency, and
-- local recovery mechanisms so one broken edge does not break delivery. [1]
+The catch is reliability. Trees break under churn and loss. The state of the art pattern is not "tree only", it is "tree push plus bounded repair":
+- deliver eagerly along the tree for efficiency, and
+- repair locally so one broken edge does not break delivery. [1]
 
-### 2) Subscribe/setup traffic (control plane)
-If you switch **Flow capture → Include setup + subscribe** and **Subscribe model → Real subscribe**, you’ll see extra traffic *before* the first publish: peers announce interest and the writer learns enough routes to deliver beyond the first hop. This is where “subscribe gossip exploding” can appear: as the audience grows, the overhead of “who is interested in what?” can grow faster than the payload.
+What to play with:
+- Try increasing `nodes` and keep `degree` bounded. Watch whether one publish lights up a small set of edges (tree-like) or lots of edges (mesh-like).
+- Switch `Flow capture` to include setup and see how much traffic happens before the first publish.
+- Keep `Preseed (no subscribe gossip)` if you only want to study the pure delivery pattern.
 
-If you just want to study delivery, keep **Preseed (no subscribe gossip)** enabled. It skips the setup chatter so the visual flow mostly represents the publish data plane.
+If you notice that nodes receive the same payload more than once, that is not automatically "wrong". Redundancy is a dial:
+- too little redundancy and a single broken edge can drop delivery,
+- too much redundancy and you throttle yourself with repeated forwarding.
 
-### Background: mesh gossip (reference model)
-This sandbox does not provide a FloodSub/Gossipsub toggle. It always runs the TopicControlPlane path over in-memory transport. We still reference mesh gossip because it is the common baseline in the literature: forwards are often closer to “per edge” than “per subscriber”, which can be robust but expensive at very large audience sizes.
+Fanout Trees are designed so that redundancy stays bounded. The goal is not perfect delivery in the face of arbitrary failures, it is predictable delivery cost and predictable recovery behavior.
 
-## Network formation (join + capacity)
+## Demo 2: Network formation (join + capacity)
 
-Delivery is only half the story. To scale, you also need a join process that:
-- converges quickly without global membership knowledge, and
-- respects per-node capacity (so “bootstrap/root is full” does not melt the system).
+Delivery is only half the story. Large networks need a join process that:
+- converges without everyone knowing everyone, and
+- respects per-node capacity (so the bootstrap node does not get crushed).
 
 This sandbox visualizes **real FanoutTree join** over the same in-memory transport.
 
@@ -65,6 +80,8 @@ For simplicity, node 0 acts as both:
 - the **root** (level 0 of the tree).
 
 As peers join, node 0 accepts up to `rootMaxChildren`. After that it responds with redirects to other nodes that still have free slots, so the tree can keep growing without everyone attaching to the root.
+
+### Try it
 
 How to use it:
 1. Press **Step join** a few times, then press **Auto**.
@@ -77,18 +94,21 @@ How to use it:
   <fanout-formation-sandbox nodes="80" rootMaxChildren="4" nodeMaxChildren="4" joinIntervalMs="250" seed="1"></fanout-formation-sandbox>
 </div>
 
-## How this maps to Peerbit work
+## Where this fits in the landscape
 
-This sandbox runs the real `TopicControlPlane` and `DirectStream` logic over a fake in-memory transport. It skips real sockets and expensive crypto verification so you can run hundreds or thousands of nodes locally, including in the browser.
+We did not invent broadcast trees. We are adapting well-known ideas to a Peerbit setting where nodes are untrusted, churn is real, and we want per-node costs to stay bounded.
 
-The architectural direction in Peerbit is:
+Some helpful mental comparisons:
+- **libp2p Gossipsub**: a strong baseline for decentralized pubsub, but at huge audience sizes you can still run into overhead patterns that look like "subscribe gossip exploding". Fanout Trees aim for a delivery pattern that is closer to "one transmission per subscriber" than "one transmission per edge in a mesh". [3]
+- **Netflix / Twitch**: they solve the economics of large broadcast by owning the infrastructure (CDNs and edge distribution). The "tree" is real, but it is run by a single operator. Fanout Trees are chasing similar economics without assuming one operator controls the whole network.
+- **Tor**: not a broadcast system, but it is a real-world example of long-lived overlay routing where relays have capacity and policy. The overlap is in the engineering constraints (connection management, churn, incentives), not in the goal (Tor is about anonymity).
+- **Iroh**: a modern peer-to-peer transport and sync toolbox. Fanout Trees sit above the transport layer. The synergy is that fast connection setup and good routing primitives make higher-level overlays like Fanout Trees more practical.
 
-- **FanoutTree** uses tracker/bootstraps for join/discovery and a bounded tree for delivery.
-- Reliability is regained with **local pull repair** (and optional neighbor-assisted repair), instead of global ACKs.
+## What we are shipping in Peerbit
 
-In the sandbox you can also switch the subscribe setup:
-- **Preseed (no subscribe gossip)**: pre-wires the writer’s view of subscribers so you can focus on the data plane.
-- **Real subscribe model**: uses actual subscribe flows so you can see the control-plane cost.
+This post is centered around two pieces:
+- **FanoutTree**: a bounded broadcast overlay with a join process that respects capacity and can re-form under churn.
+- **A split between formation and delivery**: you can change join/discovery behavior without changing how payload delivery is forwarded.
 
 ## What to look for
 
