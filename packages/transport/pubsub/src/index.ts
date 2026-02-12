@@ -61,6 +61,9 @@ const logErrorIfStarted = (e?: { message: string }) => {
 
 const SUBSCRIBER_CACHE_MAX_ENTRIES_HARD_CAP = 100_000;
 const SUBSCRIBER_CACHE_DEFAULT_MAX_ENTRIES = 4_096;
+const RECENT_TOPIC_PEERS_TTL_MS = 30_000;
+const RECENT_TOPIC_PEERS_MAX_PEERS = 32;
+const RECENT_TOPIC_PEERS_MAX_TOPICS = 4_096;
 
 export type TopicControlPlaneOptions = DirectStreamOptions & {
 	dispatchEventOnSelfPublish?: boolean;
@@ -97,6 +100,7 @@ export class TopicControlPlane
 
 	private debounceSubscribeAggregator: DebouncedAccumulatorCounterMap;
 	private debounceUnsubscribeAggregator: DebouncedAccumulatorCounterMap;
+	private recentTopicPeers = new Map<string, { peers: string[]; expiresAt: number }>();
 
 	constructor(
 		components: TopicControlPlaneComponents,
@@ -133,6 +137,7 @@ export class TopicControlPlane
 		this.peerToTopic.clear();
 		this.topicsToPeers.clear();
 		this.lastSubscriptionMessages.clear();
+		this.recentTopicPeers.clear();
 		this.debounceSubscribeAggregator.close();
 		this.debounceUnsubscribeAggregator.close();
 		return super.stop();
@@ -254,11 +259,30 @@ export class TopicControlPlane
 			if (!subscriptions.counter || options?.force) {
 				const peersOnTopic = this.topicsToPeers.get(topic);
 				if (peersOnTopic) {
+					// Remember the last known subscribers for a short time so that a fast re-subscribe
+					// can still publish control-plane messages (rpc) without waiting for subscriber gossip.
+					// This avoids correctness issues on rapid open/close cycles while preserving the
+					// "no-op when I'm the only subscriber" behavior for brand new topics.
+					if (peersOnTopic.size > 0) {
+						const peers = [...peersOnTopic].slice(0, RECENT_TOPIC_PEERS_MAX_PEERS);
+						this.recentTopicPeers.set(topic, {
+							peers,
+							expiresAt: Date.now() + RECENT_TOPIC_PEERS_TTL_MS,
+						});
+						while (this.recentTopicPeers.size > RECENT_TOPIC_PEERS_MAX_TOPICS) {
+							const oldest = this.recentTopicPeers.keys().next().value as
+								| string
+								| undefined;
+							if (!oldest) break;
+							this.recentTopicPeers.delete(oldest);
+						}
+					}
 					for (const peer of [...peersOnTopic]) {
 						const last = this.lastSubscriptionMessages.get(peer);
 						last?.delete(topic);
-						if (last && last.size === 0)
+						if (last && last.size === 0) {
 							this.lastSubscriptionMessages.delete(peer);
+						}
 						this.deletePeerFromTopic(topic, peer);
 					}
 				}
@@ -406,19 +430,72 @@ export class TopicControlPlane
 		const topics =
 			(options as { topics: string[] }).topics?.map((x) => x.toString()) || [];
 
-		const hasExplicitTOs =
-			options?.mode && deliveryModeHasReceiver(options.mode);
+		const hasExplicitTOs = options?.mode && deliveryModeHasReceiver(options.mode);
 		let tos = hasExplicitTOs ? options.mode?.to : this.getPeersOnTopics(topics);
 
 		// Bootstrap publish (best-effort):
+		// When we re-subscribe to a topic, subscriber gossip may not have re-populated
+		// `topicsToPeers` yet. Use a short-lived "recent peers" cache so control-plane
+		// publishes (e.g. rpc "I'm going offline") don't silently no-op during that window.
+		//
+		// For brand new topics with no known remote subscribers, this stays a no-op, by design.
+		let hasRecentTopicPeersHint = false;
+		if (!hasExplicitTOs && tos instanceof Set && tos.size === 0 && topics.length > 0) {
+			const recent = new Set<string>();
+			const now = Date.now();
+			for (const t of topics) {
+				const entry = this.recentTopicPeers.get(t);
+				if (!entry) continue;
+				if (entry.expiresAt <= now) {
+					this.recentTopicPeers.delete(t);
+					continue;
+				}
+				hasRecentTopicPeersHint = true;
+				for (const peer of entry.peers) recent.add(peer);
+			}
+			if (recent.size > 0) {
+				tos = recent;
+			}
+		}
+
+		// If we have a hint that the topic used to have remote subscribers but our current
+		// subscriber cache is incomplete (fast re-subscribe), pad the recipient set with a
+		// few connected peers. This improves robustness for control-plane messages while
+		// keeping brand new topics (no history) as a strict no-op.
+		if (
+			hasRecentTopicPeersHint &&
+			!hasExplicitTOs &&
+			tos instanceof Set &&
+			tos.size < RECENT_TOPIC_PEERS_MAX_PEERS
+		) {
+			const padded = new Set<string>(tos);
+			const push = (hash?: string) => {
+				if (!hash) return;
+				if (hash === this.publicKeyHash) return;
+				if (padded.has(hash)) return;
+				padded.add(hash);
+			};
+			for (const h of this.peers.keys()) {
+				push(h);
+				if (padded.size >= RECENT_TOPIC_PEERS_MAX_PEERS) break;
+			}
+			if (padded.size < RECENT_TOPIC_PEERS_MAX_PEERS) {
+				for (const conn of this.components.connectionManager.getConnections()) {
+					try {
+						push(getPublicKeyFromPeerId(conn.remotePeer).hashcode());
+					} catch {
+						// ignore unexpected key types
+					}
+					if (padded.size >= RECENT_TOPIC_PEERS_MAX_PEERS) break;
+				}
+			}
+			tos = padded;
+		}
+
 		// If the caller publishes on a topic it is NOT subscribed to, we may have zero
 		// subscriber knowledge for that topic yet (cache cold), even though subscribers
 		// exist. In that situation, send to a small bounded set of already connected peers
 		// so the message has a chance to reach a subscriber and warm the cache.
-		//
-		// Important: when publishing on topics we *are* subscribed to, keep the legacy
-		// behavior: if we only know about ourselves (no known remote subscribers), treat
-		// it as a no-op unless `dispatchEventOnSelfPublish` is enabled.
 		const canBootstrapToConnectedPeers =
 			topics.length > 0 && topics.every((t) => !this.subscriptions.has(t));
 		if (
