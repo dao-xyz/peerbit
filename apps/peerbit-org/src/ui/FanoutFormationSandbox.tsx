@@ -8,7 +8,6 @@
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { DirectStreamComponents } from "@peerbit/stream";
 import { PreHash, SignatureWithKey } from "@peerbit/crypto";
 import { FanoutChannel, FanoutTree } from "@peerbit/pubsub";
 
@@ -38,6 +37,8 @@ type LayoutResult = {
 	levelByNode: Uint16Array;
 	maxLevel: number;
 };
+
+type FanoutTreeComponents = ConstructorParameters<typeof FanoutTree>[0];
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
@@ -81,7 +82,7 @@ const InfoPopover = ({ children }: { children: ReactNode }) => (
 );
 
 class SimFanoutTree extends FanoutTree {
-	constructor(components: DirectStreamComponents, opts?: { random?: () => number }) {
+	constructor(components: FanoutTreeComponents, opts?: { random?: () => number }) {
 		super(components, {
 			connectionManager: false,
 			random: opts?.random,
@@ -324,7 +325,7 @@ export function FanoutFormationSandbox({
 		run.network.registerPeer(runtime, port);
 
 		const rng = mulberry32((run.config.seed ^ (index * 0x9e3779b1)) >>> 0);
-		const components: DirectStreamComponents = {
+		const components: FanoutTreeComponents = {
 			peerId: runtime.peerId,
 			privateKey: runtime.privateKey,
 			addressManager: runtime.addressManager as any,
