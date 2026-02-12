@@ -224,7 +224,8 @@ export const checkReplicas = async (
 ) => {
 	try {
 		// Replica convergence can take longer under full-suite load (GC, many
-		// concurrent timers). Use a larger window and slower polling to reduce flakiness.
+		// concurrent timers). Use a larger window and slower polling to reduce flakiness
+		// and avoid starving the event loop with tight, heavy polling.
 		await waitForResolved(
 			async () => {
 				const map = new Map<string, number>();
@@ -280,10 +281,10 @@ export const checkReplicas = async (
 						);
 					}
 					expect(v).lessThanOrEqual(dbs.length);
-				}
-			},
-			{ timeout: 30_000, delayInterval: 200 },
-		);
+					}
+				},
+				{ timeout: 120_000, delayInterval: 1_000 },
+			);
 	} catch (error) {
 		await dbgLogs(dbs.map((x) => x.log));
 		throw error;

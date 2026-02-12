@@ -478,14 +478,18 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			}
 		}
 
-		let initialSymbols = Math.round(
-			Math.sqrt(allCoordinatesToSyncWithIblt.length),
-		); // TODO choose better
-		for (let i = 0; i < initialSymbols; i++) {
-			startSync.symbols.push(
-				new SymbolSerialized(encoder.produce_next_coded_symbol()),
-			);
-		}
+			// For smaller sets, the original `sqrt(n)` heuristic can occasionally under-provision
+			// low-degree symbols early, causing an unnecessary `MoreSymbols` round-trip. Use a
+			// small floor to make small-delta syncs more reliable without affecting large-n behavior.
+			let initialSymbols = Math.round(
+				Math.sqrt(allCoordinatesToSyncWithIblt.length),
+			); // TODO choose better
+			initialSymbols = Math.max(64, initialSymbols);
+			for (let i = 0; i < initialSymbols; i++) {
+				startSync.symbols.push(
+					new SymbolSerialized(encoder.produce_next_coded_symbol()),
+				);
+			}
 
 		const clear = () => {
 			encoder.free();
