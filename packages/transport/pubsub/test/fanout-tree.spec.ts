@@ -1135,15 +1135,163 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 
 			await waitForResolved(() => expect(received).to.exist);
 			expect([...received!]).to.deep.equal([...payload]);
-		} finally {
-			await session.stop();
-		}
-	});
+			} finally {
+				await session.stop();
+			}
+		});
 
-	it("re-parents when its parent disconnects", async function () {
-		this.timeout(30_000);
-		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
-			3,
+		it("re-parents when no data arrives within staleAfterMs", async function () {
+			this.timeout(30_000);
+			const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
+				2,
+				{
+					services: {
+						fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+					},
+				},
+			);
+
+			try {
+				await session.connect([[session.peers[0], session.peers[1]]]);
+
+				const root = session.peers[0].services.fanout;
+				const leaf = session.peers[1].services.fanout;
+
+				const topic = "stale";
+				const rootId = root.publicKeyHash;
+
+				root.openChannel(topic, rootId, {
+					role: "root",
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 1,
+					maxDataAgeMs: 10_000,
+					repair: false,
+				});
+
+				await leaf.joinChannel(
+					topic,
+					rootId,
+					{
+						msgRate: 10,
+						msgSize: 64,
+						uploadLimitBps: 0,
+						maxChildren: 0,
+						maxDataAgeMs: 10_000,
+						repair: false,
+					},
+					{
+						timeoutMs: 10_000,
+						staleAfterMs: 200,
+						retryMs: 50,
+					},
+				);
+
+				await waitForResolved(() =>
+					expect(leaf.getChannelMetrics(topic, rootId).reparentStale).to.be.greaterThan(0),
+				);
+			} finally {
+				await session.stop();
+			}
+		});
+
+		it("keeps rejoining after the initial join timeout has elapsed", async function () {
+			this.timeout(30_000);
+			const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
+				2,
+				{
+					services: {
+						fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+					},
+				},
+			);
+
+			try {
+				await session.connect([[session.peers[0], session.peers[1]]]);
+
+				const rootNode = session.peers[0];
+				const root = rootNode.services.fanout;
+				const leaf = session.peers[1].services.fanout;
+
+				const bootstrapAddrs = rootNode
+					.getMultiaddrs()
+					.filter((x) => !x.getComponents().some((c) => c.code === 290));
+
+				const topic = "rejoin-timeout";
+				const rootId = root.publicKeyHash;
+
+				root.openChannel(topic, rootId, {
+					role: "root",
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 1,
+					maxDataAgeMs: 10_000,
+					repair: false,
+				});
+
+				const timeoutMs = 2_000;
+					await leaf.joinChannel(
+						topic,
+						rootId,
+						{
+							msgRate: 10,
+							msgSize: 64,
+							uploadLimitBps: 0,
+							maxChildren: 0,
+							maxDataAgeMs: 10_000,
+							repair: false,
+						},
+						{
+							timeoutMs,
+							bootstrap: bootstrapAddrs,
+							staleAfterMs: 250,
+							retryMs: 50,
+						},
+					);
+
+					expect(leaf.getChannelStats(topic, rootId)?.parent).to.equal(rootId);
+
+					// Keep data flowing until after the initial `timeoutMs` has elapsed, so any later
+					// detach/rejoin would have previously tripped the join-loop timeout bug.
+					const keepAliveUntil = Date.now() + timeoutMs + 500;
+					while (Date.now() < keepAliveUntil) {
+						await root.publishData(topic, rootId, new Uint8Array([0x01]));
+						// eslint-disable-next-line no-await-in-loop
+						await delay(100);
+					}
+
+					// Stop sending for long enough to trigger stale re-parenting.
+					await waitForResolved(
+						() =>
+							expect(leaf.getChannelMetrics(topic, rootId).reparentStale).to.be.greaterThan(0),
+						{ timeout: 20_000, delayInterval: 50 },
+					);
+
+					// Once it has re-joined, it should receive fresh data again.
+					let markerReceived = false;
+					leaf.addEventListener("fanout:data", (ev: any) => {
+						if (ev.detail.topic !== topic) return;
+						if (ev.detail.root !== rootId) return;
+						if ((ev.detail.payload as Uint8Array)?.[0] !== 0x99) return;
+						markerReceived = true;
+					});
+					for (let i = 0; i < 20 && !markerReceived; i++) {
+						await root.publishData(topic, rootId, new Uint8Array([0x99]));
+						// eslint-disable-next-line no-await-in-loop
+						await delay(100);
+					}
+					expect(markerReceived).to.equal(true);
+				} finally {
+					await session.stop();
+				}
+			});
+
+		it("re-parents when its parent disconnects", async function () {
+			this.timeout(30_000);
+			const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
+				3,
 			{
 				services: {
 					fanout: (c) => new FanoutTree(c, { connectionManager: false }),
@@ -1227,8 +1375,128 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 
 			await waitForResolved(() => expect(received).to.exist);
 			expect([...received!]).to.deep.equal([...payload]);
-		} finally {
-			await session.stop();
-		}
+			} finally {
+				await session.stop();
+			}
+		});
+
+			it("prevents stable disconnected components when an intermediate relay loses the root", async function () {
+				this.timeout(30_000);
+				const session: TestSession<{ fanout: FanoutTree }> =
+					await TestSession.disconnected(3, {
+						services: {
+							fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+						},
+					});
+
+				try {
+					await session.connect([
+						[session.peers[0], session.peers[1]],
+						[session.peers[1], session.peers[2]],
+					]);
+
+					const rootNode = session.peers[0];
+					const relayNode = session.peers[1];
+
+					const root = rootNode.services.fanout;
+					const relay = relayNode.services.fanout;
+					const leaf = session.peers[2].services.fanout;
+
+				const bootstrapAddrs = rootNode
+					.getMultiaddrs()
+					.filter((x) => !x.getComponents().some((c) => c.code === 290));
+
+				const topic = "partition";
+				const rootId = root.publicKeyHash;
+
+				root.openChannel(topic, rootId, {
+					role: "root",
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 1,
+					repair: false,
+				});
+
+				await relay.joinChannel(
+					topic,
+					rootId,
+					{
+						msgRate: 10,
+						msgSize: 64,
+						uploadLimitBps: 1_000_000,
+						maxChildren: 1,
+						repair: false,
+					},
+					{ timeoutMs: 10_000, bootstrap: bootstrapAddrs },
+				);
+
+				await leaf.joinChannel(
+					topic,
+					rootId,
+					{
+						msgRate: 10,
+						msgSize: 64,
+						uploadLimitBps: 0,
+						maxChildren: 0,
+						repair: false,
+					},
+					{ timeoutMs: 10_000, bootstrap: bootstrapAddrs },
+				);
+
+					expect(leaf.getChannelStats(topic, rootId)?.parent).to.equal(relay.publicKeyHash);
+
+					// Break the relay<->root connection but keep relay alive.
+					const rootConnMgr = (root as any)?.components?.connectionManager;
+					const relayConnMgr = (relay as any)?.components?.connectionManager;
+					expect(rootConnMgr).to.exist;
+					expect(relayConnMgr).to.exist;
+					const relayAsSeenByRoot = (root as any)?.peers?.get?.(relay.publicKeyHash);
+					const rootAsSeenByRelay = (relay as any)?.peers?.get?.(rootId);
+					const relayPeerId = relayAsSeenByRoot?.peerId;
+					const rootPeerId = rootAsSeenByRelay?.peerId;
+					expect(relayPeerId).to.exist;
+					expect(rootPeerId).to.exist;
+					await Promise.allSettled([
+						rootConnMgr?.closeConnections?.(relayPeerId),
+						relayConnMgr?.closeConnections?.(rootPeerId),
+					]);
+
+					// Ensure the connection is actually down (otherwise the rest of the test is meaningless).
+					await waitForResolved(
+						() => {
+							const a = rootConnMgr?.getConnections?.(relayPeerId) ?? [];
+							const b = relayConnMgr?.getConnections?.(rootPeerId) ?? [];
+							expect(a.length).to.equal(0);
+							expect(b.length).to.equal(0);
+						},
+						{ timeout: 20_000, delayInterval: 50 },
+					);
+
+						// Relay should detect the disconnect from its parent and trigger a reparent.
+						// `stats.parent` can be transiently undefined and then quickly restored if the
+						// root reconnects, so assert on the metric rather than the brief state.
+						await waitForResolved(
+							() =>
+								expect(
+									relay.getChannelMetrics(topic, rootId).reparentDisconnect,
+								).to.be.greaterThan(0),
+							{ timeout: 20_000, delayInterval: 50 },
+						);
+
+					// Relay should kick its children once it loses the rooted route, and leaf should
+					// rejoin directly to the root instead of stabilizing in a disconnected component.
+					await waitForResolved(
+						() =>
+							expect(leaf.getChannelMetrics(topic, rootId).reparentKicked).to.be.greaterThan(0),
+					{ timeout: 20_000, delayInterval: 50 },
+				);
+				await waitForResolved(
+					() => expect(leaf.getChannelStats(topic, rootId)?.parent).to.equal(rootId),
+					{ timeout: 20_000, delayInterval: 50 },
+				);
+			} finally {
+				await session.stop();
+			}
+		});
 	});
-});

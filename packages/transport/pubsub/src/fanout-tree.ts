@@ -1,4 +1,5 @@
 import { getPublicKeyFromPeerId, ready, sha256Sync, toBase64 } from "@peerbit/crypto";
+import type { Connection } from "@libp2p/interface";
 import { type Multiaddr, multiaddr } from "@multiformats/multiaddr";
 import {
 	DirectStream,
@@ -436,6 +437,9 @@ const DATA_WRITE_FAIL_KICK_MAX_PER_EVENT = 4;
 const JOIN_REJECT_REDIRECT_MAX = 4;
 const JOIN_REJECT_REDIRECT_ADDR_MAX = 8;
 const JOIN_REJECT_REDIRECT_QUEUE_MAX = 64;
+// When a relay loses its parent, pause before trying to rejoin so its children can
+// attach elsewhere (helps avoid disconnected components stabilizing).
+const RELAY_REJOIN_COOLDOWN_MS = 3_000;
 
 const MSG_JOIN_REQ = 1;
 const MSG_JOIN_ACCEPT = 2;
@@ -1056,6 +1060,21 @@ type ChannelState = {
 	parent?: string;
 	children: Map<string, ChildInfo>;
 	/**
+	 * Cooldown applied after a relay loses its parent.
+	 *
+	 * This gives recently-kicked children a chance to attach elsewhere before the
+	 * relay races to reclaim scarce parent capacity, which helps avoid
+	 * disconnected components stabilizing under an unrooted relay.
+	 */
+	rejoinCooldownUntil: number;
+	/**
+	 * True once this node has successfully joined the channel at least once.
+	 *
+	 * Join timeouts should only apply to the initial `joinChannel()` await, not to
+	 * later re-parenting after disconnects.
+	 */
+	joinedAtLeastOnce: boolean;
+	/**
 	 * Source route from the channel root to this node (inclusive).
 	 *
 	 * This is learned during JOIN via the parent and can be shared out-of-band
@@ -1260,6 +1279,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	private trackerBySuffixKey = new Map<string, Map<string, TrackerEntry>>();
 	private providerBySuffixKey = new Map<string, Map<string, ProviderEntry>>();
 	private providerNamespaceLru = new Map<string, number>();
+	private underlayPeerDisconnectHandler?: (ev: any) => void;
 	private pendingProviderQueryBySuffixKey = new Map<
 		string,
 		Map<number, { resolve: (providers: FanoutProviderCandidate[]) => void }>
@@ -1279,13 +1299,38 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			...rest,
 		});
 		this.random = typeof random === "function" ? random : Math.random;
-		this.topicRootControlPlane = topicRootControlPlane ?? new TopicRootControlPlane();
-	}
+			this.topicRootControlPlane = topicRootControlPlane ?? new TopicRootControlPlane();
 
-	public setBootstraps(addrs: Array<string | Multiaddr>) {
-		this.bootstraps = addrs
-			.map((a) => (typeof a === "string" ? multiaddr(a) : a))
-			.filter((a) => Boolean(a));
+			const onPeerDisconnect = (ev: any) => {
+				const peerId = ev?.detail;
+			if (!peerId) return;
+			let peerHash: string;
+			try {
+				peerHash = getPublicKeyFromPeerId(peerId).hashcode();
+			} catch {
+				return;
+				}
+				this.onPeerDisconnectedFromUnderlay(peerHash);
+			};
+			this.underlayPeerDisconnectHandler = onPeerDisconnect;
+			this.components.events.addEventListener("peer:disconnect", onPeerDisconnect as any);
+		}
+
+		public override async stop() {
+			if (this.underlayPeerDisconnectHandler) {
+				this.components.events.removeEventListener(
+					"peer:disconnect",
+					this.underlayPeerDisconnectHandler as any,
+				);
+				this.underlayPeerDisconnectHandler = undefined;
+			}
+			return super.stop();
+		}
+
+		public setBootstraps(addrs: Array<string | Multiaddr>) {
+			this.bootstraps = addrs
+				.map((a) => (typeof a === "string" ? multiaddr(a) : a))
+				.filter((a) => Boolean(a));
 	}
 
 	private touchProviderNamespace(suffixKey: string, now = Date.now()) {
@@ -1783,18 +1828,20 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					)
 				: 0;
 
-		ch = {
-			id,
-			metrics: this.getMetricsForSuffixKey(id.suffixKey),
-			level: opts.role === "root" ? 0 : Number.POSITIVE_INFINITY,
-			isRoot: opts.role === "root",
-			closed: false,
-			parent: undefined,
-			children: new Map(),
-			routeFromRoot: opts.role === "root" ? [this.publicKeyHash] : undefined,
-			routeByPeer: new Map(),
-			seq: 0,
-			bidPerByte,
+				ch = {
+					id,
+					metrics: this.getMetricsForSuffixKey(id.suffixKey),
+					level: opts.role === "root" ? 0 : Number.POSITIVE_INFINITY,
+					isRoot: opts.role === "root",
+					closed: false,
+					parent: undefined,
+					children: new Map(),
+					rejoinCooldownUntil: 0,
+					joinedAtLeastOnce: opts.role === "root",
+					routeFromRoot: opts.role === "root" ? [this.publicKeyHash] : undefined,
+					routeByPeer: new Map(),
+					seq: 0,
+				bidPerByte,
 			uploadLimitBps,
 			maxChildren,
 			effectiveMaxChildren,
@@ -1883,7 +1930,54 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		) {
 			ch.meshLoop = this._meshLoop(ch).catch(() => {});
 		}
-		return id;
+			return id;
+		}
+
+	private detachFromParent(ch: ChannelState) {
+		ch.parent = undefined;
+		ch.level = Number.POSITIVE_INFINITY;
+		ch.routeFromRoot = undefined;
+		ch.routeByPeer.clear();
+		ch.lastParentDataAt = 0;
+		ch.receivedAnyParentData = false;
+		ch.pendingJoin.clear();
+		ch.pendingRouteQuery.clear();
+		for (const pending of ch.pendingRouteProxy.values()) {
+			clearTimeout(pending.timer);
+		}
+		ch.pendingRouteProxy.clear();
+	}
+
+	private onPeerDisconnectedFromUnderlay(peerHash: string) {
+		if (!peerHash) return;
+
+		// Detach from a disconnected parent immediately, so children can rejoin.
+		// This is more reliable than polling `getConnections()` because the underlay
+		// can flap/reconnect faster than the join loop cadence.
+		const now = Date.now();
+		for (const ch of this.channelsBySuffixKey.values()) {
+			if (!ch.parent) continue;
+			if (ch.parent !== peerHash) continue;
+			if (ch.closed) continue;
+
+			ch.metrics.reparentDisconnect += 1;
+			const hadChildren = ch.children.size > 0;
+			this.detachFromParent(ch);
+			void this.kickChildren(ch).catch(() => {});
+			if (hadChildren) {
+				ch.rejoinCooldownUntil = Math.max(
+					ch.rejoinCooldownUntil,
+					now + RELAY_REJOIN_COOLDOWN_MS,
+				);
+			}
+		}
+
+		// Also prune disconnected children from rooted nodes to free capacity fast.
+		for (const ch of this.channelsBySuffixKey.values()) {
+			if (ch.children.delete(peerHash)) {
+				ch.dataWriteFailStreakByChild.delete(peerHash);
+			}
+		}
 	}
 
 	public async closeChannel(
@@ -3135,10 +3229,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 	}
 
-	private noteReceivedSeq(ch: ChannelState, fromHash: string, seq: number) {
-		if (!ch.repairEnabled) return;
-		if (!ch.parent || fromHash !== ch.parent) {
-			// Neighbor-assisted repair may deliver payload from a peer other than the
+		private noteReceivedSeq(ch: ChannelState, fromHash: string, seq: number) {
+			if (!ch.repairEnabled) return;
+			if (!ch.parent || fromHash !== ch.parent) {
+				// Neighbor-assisted repair may deliver payload from a peer other than the
 			// current parent; treat it as a "hole fill" only.
 			const wasMissing = ch.missingSeqs.delete(seq);
 			if (wasMissing) {
@@ -3156,15 +3250,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				have.successes += 1;
 				ch.metrics.holeFillsFromNeighbor += 1;
 			}
-			return;
-		}
+				return;
+			}
 
-		ch.lastParentDataAt = Date.now();
-		ch.receivedAnyParentData = true;
-
-		if (seq >= ch.nextExpectedSeq) {
-			const maxBackfill = Math.max(0, ch.repairMaxBackfillMessages);
-			const start =
+			if (seq >= ch.nextExpectedSeq) {
+				const maxBackfill = Math.max(0, ch.repairMaxBackfillMessages);
+				const start =
 				maxBackfill > 0 ? Math.max(ch.nextExpectedSeq, Math.max(0, seq - maxBackfill)) : ch.nextExpectedSeq;
 			for (let s = start; s < seq; s++) ch.missingSeqs.add(s);
 			ch.nextExpectedSeq = seq + 1;
@@ -3506,7 +3597,22 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 	private pruneDisconnectedChildren(ch: ChannelState) {
 		for (const childHash of ch.children.keys()) {
-			if (!this.peers.get(childHash)) {
+			const peer = this.peers.get(childHash);
+			if (!peer) {
+				ch.children.delete(childHash);
+				ch.dataWriteFailStreakByChild.delete(childHash);
+				continue;
+			}
+
+			let connected = true;
+			try {
+				const conns = this.components.connectionManager.getConnections(peer.peerId);
+				connected = conns.length > 0;
+			} catch {
+				connected = peer.isReadable || peer.isWritable;
+			}
+
+			if (!connected) {
 				ch.children.delete(childHash);
 				ch.dataWriteFailStreakByChild.delete(childHash);
 			}
@@ -3900,16 +4006,38 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						throw signal.reason ?? new AbortError("fanout join aborted");
 					}
 
-					// Parent disappeared? Rejoin.
-					if (ch.parent && !this.peers.get(ch.parent)) {
-						ch.metrics.reparentDisconnect += 1;
-						ch.parent = undefined;
-						ch.level = Number.POSITIVE_INFINITY;
-						ch.lastParentDataAt = 0;
-						ch.receivedAnyParentData = false;
-					}
+						// Parent disappeared? Rejoin.
+						if (ch.parent) {
+							const parentPeer = this.peers.get(ch.parent);
+							let connected = false;
+							if (parentPeer) {
+								try {
+									const conns =
+										this.components.connectionManager.getConnections(parentPeer.peerId) as
+											| Connection[]
+											| undefined;
+									connected = (conns?.length ?? 0) > 0;
+								} catch {
+									connected = parentPeer.isReadable || parentPeer.isWritable;
+								}
+							}
+							if (!connected) {
+								ch.metrics.reparentDisconnect += 1;
+								const hadChildren = ch.children.size > 0;
+								this.detachFromParent(ch);
+								// If we lose our parent, we are no longer on the rooted tree; detach children so
+								// they can rejoin as well (prevents stable disconnected components).
+								void this.kickChildren(ch).catch(() => {});
+								if (hadChildren) {
+									ch.rejoinCooldownUntil = Math.max(
+										ch.rejoinCooldownUntil,
+										Date.now() + Math.max(retryMs, RELAY_REJOIN_COOLDOWN_MS),
+									);
+								}
+							}
+						}
 
-					if (ch.parent) {
+						if (ch.parent) {
 						const endedAndComplete =
 							ch.endSeqExclusive > 0 &&
 							ch.missingSeqs.size === 0 &&
@@ -3923,36 +4051,52 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							ch.lastParentDataAt > 0 &&
 							Date.now() - ch.lastParentDataAt > staleAfterMs &&
 							expectingData
-						) {
-							// Parent is "alive" at the stream layer but we're not receiving
-							// data at the expected rate; detach and try to re-parent.
-							ch.metrics.reparentStale += 1;
-							ch.parent = undefined;
-							ch.level = Number.POSITIVE_INFINITY;
-							ch.lastParentDataAt = 0;
-							ch.receivedAnyParentData = false;
-						ch.pendingJoin.clear();
-						void this.kickChildren(ch).catch(() => {});
-							await delay(retryMs);
+							) {
+								// Parent is "alive" at the stream layer but we're not receiving
+								// data at the expected rate; detach and try to re-parent.
+								ch.metrics.reparentStale += 1;
+								ch.parent = undefined;
+								ch.level = Number.POSITIVE_INFINITY;
+								ch.routeFromRoot = undefined;
+								ch.routeByPeer.clear();
+								ch.lastParentDataAt = 0;
+								ch.receivedAnyParentData = false;
+								ch.pendingJoin.clear();
+								ch.pendingRouteQuery.clear();
+								for (const pending of ch.pendingRouteProxy.values()) {
+									clearTimeout(pending.timer);
+								}
+								ch.pendingRouteProxy.clear();
+								void this.kickChildren(ch).catch(() => {});
+								await delay(retryMs);
+								continue;
+							}
+
+						if (!ch.joinedOnce) ch.joinedOnce = createDeferred();
+						ch.joinedOnce.resolve();
+						ch.joinedAtLeastOnce = true;
+						// Once attached, we don't need a fast retry cadence; keep polling coarse to
+						// avoid excessive timers when simulating many nodes in one process.
+						await delay(Math.max(retryMs, 1_000));
+						continue;
+					}
+
+						// `timeoutMs` is meant to bound the initial `joinChannel()` await, not to
+						// stop re-parenting attempts for long-running nodes.
+						if (!ch.joinedAtLeastOnce && timeoutMs > 0 && Date.now() - start > timeoutMs) {
+							throw new Error(`fanout join timed out after ${timeoutMs}ms`);
+						}
+
+						const cooldownMs = ch.rejoinCooldownUntil - Date.now();
+						if (cooldownMs > 0) {
+							await delay(cooldownMs, { signal });
 							continue;
 						}
 
-					if (!ch.joinedOnce) ch.joinedOnce = createDeferred();
-					ch.joinedOnce.resolve();
-					// Once attached, we don't need a fast retry cadence; keep polling coarse to
-					// avoid excessive timers when simulating many nodes in one process.
-					await delay(Math.max(retryMs, 1_000));
-					continue;
-				}
-
-				if (timeoutMs > 0 && Date.now() - start > timeoutMs) {
-					throw new Error(`fanout join timed out after ${timeoutMs}ms`);
-				}
-
-				const bootstraps = this.getBootstrapsForChannel(ch);
-				let bootstrapPeers: string[] = [];
-				if (bootstraps.length > 0) {
-					const now = Date.now();
+					const bootstraps = this.getBootstrapsForChannel(ch);
+					let bootstrapPeers: string[] = [];
+					if (bootstraps.length > 0) {
+						const now = Date.now();
 					const connectedCached = ch.cachedBootstrapPeers.filter((h) =>
 						Boolean(this.peers.get(h)),
 					);
@@ -4927,28 +5071,48 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				return true;
 			}
 
-				if (kind === MSG_JOIN_REQ) {
-					if (data.length < 1 + 32 + 4 + 4) return false;
-					const reqId = readU32BE(data, 33);
-					const bidPerByte = readU32BE(data, 37);
-					this.pruneDisconnectedChildren(ch);
+					if (kind === MSG_JOIN_REQ) {
+						if (data.length < 1 + 32 + 4 + 4) return false;
+						const reqId = readU32BE(data, 33);
+						const bidPerByte = readU32BE(data, 37);
+						this.pruneDisconnectedChildren(ch);
 
-					// Only accept if we're already attached.
-					if (!ch.isRoot && !ch.parent) {
-						void this.sendJoinReject(
-							ch,
-							fromHash,
-							reqId,
-							JOIN_REJECT_NOT_ATTACHED,
-						).catch(() => {});
-						return true;
-					}
+						// Only accept if we're already attached.
+						if (!ch.isRoot && !ch.parent) {
+							void this.sendJoinReject(
+								ch,
+								fromHash,
+								reqId,
+								JOIN_REJECT_NOT_ATTACHED,
+							).catch(() => {});
+							return true;
+						}
 
-					if (ch.effectiveMaxChildren <= 0) {
-						void this.sendJoinReject(
-							ch,
-							fromHash,
-							reqId,
+						// Only accept children if we can prove we're on the rooted tree.
+						// Otherwise, disconnected components can "stabilize" by joining via unrooted parents.
+						if (!ch.isRoot) {
+							const route = ch.routeFromRoot;
+							const rooted =
+								Array.isArray(route) &&
+								route.length >= 2 &&
+								route[0] === ch.id.root &&
+								route[route.length - 1] === this.publicKeyHash;
+							if (!rooted) {
+								void this.sendJoinReject(
+									ch,
+									fromHash,
+									reqId,
+									JOIN_REJECT_NOT_ATTACHED,
+								).catch(() => {});
+								return true;
+							}
+						}
+
+						if (ch.effectiveMaxChildren <= 0) {
+							void this.sendJoinReject(
+								ch,
+								fromHash,
+								reqId,
 							JOIN_REJECT_NO_CAPACITY,
 						).catch(() => {});
 						return true;
@@ -5015,31 +5179,46 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						let offset = 40;
 						const parentRouteFromRoot: string[] = [];
 						const max = Math.min(routeCount, MAX_ROUTE_HOPS);
-						for (let i = 0; i < max; i++) {
-							if (offset + 1 > data.length) break;
-							const len = data[offset++]!;
-							if (len === 0) break;
-							if (offset + len > data.length) break;
-							parentRouteFromRoot.push(
-								textDecoder.decode(data.subarray(offset, offset + len)),
-							);
-							offset += len;
-						}
+							for (let i = 0; i < max; i++) {
+								if (offset + 1 > data.length) break;
+								const len = data[offset++]!;
+								if (len === 0) break;
+								if (offset + len > data.length) break;
+								parentRouteFromRoot.push(
+									textDecoder.decode(data.subarray(offset, offset + len)),
+								);
+								offset += len;
+							}
 
-						ch.parent = fromHash;
-						ch.level = parentLevel + 1;
-						ch.lastParentDataAt = Date.now();
-						ch.receivedAnyParentData = false;
-						// Build/refresh a route token that enables economical unicast.
-						if (
-							parentRouteFromRoot.length > 0 &&
-							parentRouteFromRoot[0] === ch.id.root &&
-							parentRouteFromRoot[parentRouteFromRoot.length - 1] === fromHash
-						) {
-							ch.routeFromRoot = [...parentRouteFromRoot, this.publicKeyHash];
-							} else if (fromHash === ch.id.root) {
-								// Minimal fallback: parent is the root.
-								ch.routeFromRoot = [ch.id.root, this.publicKeyHash];
+							const hasValidParentRoute =
+								parentRouteFromRoot.length > 0 &&
+								parentRouteFromRoot[0] === ch.id.root &&
+								parentRouteFromRoot[parentRouteFromRoot.length - 1] === fromHash;
+
+							// Defensive: a JOIN_ACCEPT without a rooted route token (unless the parent is the
+							// actual root) can create stable disconnected components. Treat it as a reject.
+							if (fromHash !== ch.id.root && !hasValidParentRoute) {
+								pending.resolve({ ok: false, rejectReason: JOIN_REJECT_NOT_ATTACHED });
+								return true;
+							}
+
+								ch.parent = fromHash;
+								ch.level = parentLevel + 1;
+								ch.joinedAtLeastOnce = true;
+								ch.lastParentDataAt = Date.now();
+								// Treat JOIN_ACCEPT as parent liveness for stale re-parenting:
+								// if callers enable `staleAfterMs`, we should be able to detach even
+						// before the first data message arrives (for example, during churn
+						// or when a component is partitioned from the root).
+							ch.receivedAnyParentData = true;
+							// Build/refresh a route token that enables economical unicast.
+							if (
+								hasValidParentRoute
+							) {
+								ch.routeFromRoot = [...parentRouteFromRoot, this.publicKeyHash];
+								} else if (fromHash === ch.id.root) {
+									// Minimal fallback: parent is the root.
+									ch.routeFromRoot = [ch.id.root, this.publicKeyHash];
 							}
 							this.touchPeerHint(ch, fromHash);
 							pending.resolve({ ok: true });
@@ -5301,14 +5480,18 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			// Data-plane (topic identified via id suffix)
 				if (kind === MSG_DATA) {
 				const id = message.id as Uint8Array;
-				if (!(id instanceof Uint8Array) || !isDataId(id)) return false;
-			const suffixKey = this.getSuffixKeyFromId(id);
-			const ch = this.channelsBySuffixKey.get(suffixKey);
-			if (!ch) return false;
+					if (!(id instanceof Uint8Array) || !isDataId(id)) return false;
+				const suffixKey = this.getSuffixKeyFromId(id);
+				const ch = this.channelsBySuffixKey.get(suffixKey);
+				if (!ch) return false;
 
-					const seq = readU32BE(id, 4);
-					ch.maxSeqSeen = Math.max(ch.maxSeqSeen, seq);
-					this.noteReceivedSeq(ch, fromHash, seq);
+						const seq = readU32BE(id, 4);
+						if (ch.parent && fromHash === ch.parent) {
+							ch.lastParentDataAt = Date.now();
+							ch.receivedAnyParentData = true;
+						}
+						ch.maxSeqSeen = Math.max(ch.maxSeqSeen, seq);
+						this.noteReceivedSeq(ch, fromHash, seq);
 
 				const payload = (data as Uint8Array).subarray(1);
 				ch.metrics.dataReceives += 1;
