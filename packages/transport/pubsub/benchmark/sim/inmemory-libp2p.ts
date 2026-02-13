@@ -20,6 +20,32 @@ type Topology = {
 	notifyOnLimitedConnection?: boolean;
 };
 
+const dispatchPeerEvent = (
+	events: TypedEventTarget<Libp2pEvents>,
+	type: "peer:connect" | "peer:disconnect",
+	peerId: PeerId,
+) => {
+	try {
+		const CustomEventCtor = (globalThis as any).CustomEvent as
+			| (new (type: string, init?: { detail?: any }) => Event)
+			| undefined;
+		if (CustomEventCtor) {
+			events.dispatchEvent(new CustomEventCtor(type, { detail: peerId }) as any);
+			return;
+		}
+	} catch {
+		// ignore and try fallback
+	}
+
+	try {
+		const ev = new Event(type) as any;
+		ev.detail = peerId;
+		events.dispatchEvent(ev);
+	} catch {
+		// ignore (best-effort shim)
+	}
+};
+
 export type InMemoryNetworkMetrics = {
 	dials: number;
 	connectionsOpened: number;
@@ -536,10 +562,12 @@ export class InMemoryConnectionManager {
 	}
 
 	getConnections(peerId?: PeerId): Connection[] {
-		if (!peerId) {
-			return [...this.connectionsByRemote.values()].flat() as any;
-		}
-		return (this.connectionsByRemote.get(peerId.toString()) ?? []) as any;
+		const all = !peerId
+			? ([...this.connectionsByRemote.values()].flat() as any[])
+			: ((this.connectionsByRemote.get(peerId.toString()) ?? []) as any[]);
+		// Some callers only check `length > 0`. Ensure closed connections don't keep
+		// peers looking "connected" during churn.
+		return all.filter((c) => c?.status !== "closed") as any;
 	}
 
 	getConnectionsMap(): { get(peer: PeerId): Connection[] | undefined } {
@@ -942,6 +970,7 @@ export class InMemoryNetwork {
 			if (remote && !remote.registrar.getHandler(protocol)) continue;
 			topology.onConnect(peerId, connection);
 		}
+		dispatchPeerEvent(owner.events, "peer:connect", peerId);
 	}
 
 	notifyDisconnect(
@@ -956,6 +985,7 @@ export class InMemoryNetwork {
 				topology.onDisconnect(peerId, conn as any);
 			}
 		}
+		dispatchPeerEvent(owner.events, "peer:disconnect", peerId);
 	}
 
 	static createPeer(opts: {
