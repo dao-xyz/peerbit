@@ -2826,8 +2826,11 @@ export abstract class DirectStream<
 		const wins = new Set<string>();
 		for (const h of admitted) if (reached(h, target)) wins.add(h);
 
-		if (settle === "any" && wins.size > 0) return [...wins];
-		if (settle === "all" && wins.size === admitted.length) return [...wins];
+		// Preserve input order in the returned list (important for deterministic callers/tests).
+		const orderedWins = () => admitted.filter((h) => wins.has(h));
+
+		if (settle === "any" && wins.size > 0) return orderedWins();
+		if (settle === "all" && wins.size === admitted.length) return orderedWins();
 
 		// Abort/timeout
 		const abortSignals = [this.closeController.signal];
@@ -2848,7 +2851,7 @@ export abstract class DirectStream<
 					signals: abortSignals,
 					timeout,
 				});
-				return [...wins];
+				return orderedWins();
 			} catch (e) {
 				const abortSignal = abortSignals.find((s) => s.aborted);
 				if (abortSignal) {
@@ -2861,7 +2864,7 @@ export abstract class DirectStream<
 				}
 				if (e instanceof TimeoutError) {
 					if (settle === "any") {
-						if (wins.size > 0) return [...wins];
+						if (wins.size > 0) return orderedWins();
 						throw new TimeoutError(
 							`Timeout waiting for peers (target=${target}, seek=${seek}, missing=${admitted.length}/${admitted.length})`,
 						);
@@ -2876,7 +2879,7 @@ export abstract class DirectStream<
 				}
 				if (e instanceof Error) throw e;
 				if (settle === "all") throw new TimeoutError("Timeout waiting for peers");
-				return [...wins]; // settle:any: return whatever successes we got
+				return orderedWins(); // settle:any: return whatever successes we got
 			}
 		}
 
