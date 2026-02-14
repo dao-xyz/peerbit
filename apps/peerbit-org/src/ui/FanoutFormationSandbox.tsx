@@ -707,30 +707,14 @@ export function FanoutFormationSandbox({
 			requestDraw();
 
 			try {
-				// Close all streams/connections so remaining peers observe the disconnect quickly.
-				const cm = (peer.fanout as any).components?.connectionManager as any;
-				const conns = (cm?.getConnections?.() ?? []) as any[];
-				const remotePeers = new Set<any>();
-			for (const c of conns) {
-				const rp = (c as any)?.remotePeer;
-				if (rp) remotePeers.add(rp);
+				await run.network.unregisterPeer((peer.fanout as any).components.peerId);
+			} catch {
+				// ignore
 			}
-			await Promise.allSettled(
-				[...remotePeers.values()].map((rp) => cm?.closeConnections?.(rp)),
-			);
-		} catch {
-			// ignore
-		}
 
-		try {
-			await peer.fanout.stop();
-		} catch {
-			// ignore
-		}
-
-		try {
-			run.network.unregisterPeer((peer.fanout as any).components.peerId);
-		} catch {
+			try {
+				await peer.fanout.stop();
+			} catch {
 				// ignore
 			}
 

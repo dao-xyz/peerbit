@@ -724,8 +724,16 @@ export class InMemoryNetwork {
 		this.peersByPort.set(port, peer);
 	}
 
-	unregisterPeer(peerId: PeerId) {
+	async unregisterPeer(peerId: PeerId) {
 		const id = peerId.toString();
+		const runtime = this.peersById.get(id);
+		if (runtime) {
+			// Simulate a real peer going offline: close its connections so remote peers
+			// observe disconnect and can re-parent/rejoin.
+			const conns = runtime.connectionManager.getConnections();
+			await Promise.allSettled(conns.map((c) => c.close()));
+		}
+
 		this.peersById.delete(id);
 		for (const [port, runtime] of this.peersByPort) {
 			if (runtime.peerId.toString() === id) {
