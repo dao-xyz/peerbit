@@ -50,7 +50,7 @@ export * from "./topic-root-control-plane.js";
 export const toUint8Array = (arr: Uint8ArrayList | Uint8Array) =>
 	arr instanceof Uint8ArrayList ? arr.subarray() : arr;
 
-export const logger = loggerFn("peerbit:transport:lazysub");
+export const logger = loggerFn("peerbit:transport:topic-control-plane");
 const warn = logger.newScope("warn");
 const logError = (e?: { message: string }) => {
 	logger.error(e?.message);
@@ -106,7 +106,7 @@ export class TopicControlPlane
 		components: TopicControlPlaneComponents,
 		props?: TopicControlPlaneOptions,
 	) {
-		super(components, ["/lazysub/0.0.1"], props);
+		super(components, ["/peerbit/topic-control-plane/1.0.0"], props);
 		this.subscriptions = new Map();
 		this.topics = new Map();
 		this.topicsToPeers = new Map();

@@ -3,7 +3,7 @@
 This package contains two related building blocks that both run on top of
 [`@peerbit/stream`](../stream/README.md):
 
-## `TopicControlPlane` (`/lazysub/0.0.1`)
+## `TopicControlPlane` (`/peerbit/topic-control-plane/1.0.0`)
 
 A DirectStream-based topic membership and forwarding layer.
 

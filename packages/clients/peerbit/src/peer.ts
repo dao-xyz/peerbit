@@ -229,7 +229,7 @@ export class Peerbit implements ProgramClient {
 							out.push(hash);
 						};
 
-						// Prefer peers we've already negotiated `/lazyblock` streams with.
+						// Prefer peers we've already negotiated `/peerbit/direct-block` streams with.
 						for (const h of blocksService?.peers.keys() ?? []) {
 							push(h);
 							if (out.length >= 32) return out;

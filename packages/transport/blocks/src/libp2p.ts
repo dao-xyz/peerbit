@@ -41,7 +41,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			requeryOnReachable?: number;
 		},
 	) {
-		super(components, ["/lazyblock/0.0.1"], {
+		super(components, ["/peerbit/direct-block/1.0.0"], {
 			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
 			canRelayMessage: options?.canRelayMessage ?? true,
 			connectionManager: {
@@ -67,8 +67,8 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			}
 
 			// Fall back to currently connected libp2p peers (even if we haven't opened
-			// a `/lazyblock` stream yet). This makes "join by hash" flows work without
-			// requiring an explicit `remote.from` list.
+			// a `/peerbit/direct-block` stream yet). This makes "join by hash" flows work
+			// without requiring an explicit `remote.from` list.
 			for (const conn of this.components.connectionManager.getConnections()) {
 				try {
 					push(getPublicKeyFromPeerId(conn.remotePeer).hashcode());
