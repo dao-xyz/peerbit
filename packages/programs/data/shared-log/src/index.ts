@@ -38,6 +38,7 @@ import {
 	type FanoutTree,
 	type FanoutTreeChannelOptions,
 	type FanoutTreeDataEvent,
+	type FanoutTreeUnicastEvent,
 	type FanoutTreeJoinOptions,
 	waitForSubscribers,
 } from "@peerbit/pubsub";
@@ -545,6 +546,7 @@ export class SharedLog<
 	private _onSubscriptionFn!: (arg: any) => any;
 	private _onUnsubscriptionFn!: (arg: any) => any;
 	private _onFanoutDataFn?: (arg: any) => void;
+	private _onFanoutUnicastFn?: (arg: any) => void;
 	private _fanoutChannel?: FanoutChannel;
 	private _providerHandle?: FanoutProviderHandle;
 
@@ -722,6 +724,17 @@ export class SharedLog<
 			});
 		channel.addEventListener("data", this._onFanoutDataFn);
 
+		this._onFanoutUnicastFn =
+			this._onFanoutUnicastFn ||
+			((evt: any) => {
+				const detail = (evt as CustomEvent<FanoutTreeUnicastEvent>)?.detail;
+				if (!detail) {
+					return;
+				}
+				void this._onFanoutUnicast(detail).catch((error) => logger.error(error));
+			});
+		channel.addEventListener("unicast", this._onFanoutUnicastFn);
+
 		try {
 			const channelOptions = this.getFanoutChannelOptions(options);
 			if (resolvedRoot === fanoutService.publicKeyHash) {
@@ -739,6 +752,12 @@ export class SharedLog<
 		if (this._fanoutChannel) {
 			if (this._onFanoutDataFn) {
 				this._fanoutChannel.removeEventListener("data", this._onFanoutDataFn);
+			}
+			if (this._onFanoutUnicastFn) {
+				this._fanoutChannel.removeEventListener(
+					"unicast",
+					this._onFanoutUnicastFn,
+				);
 			}
 			this._fanoutChannel.close();
 		}
@@ -782,6 +801,37 @@ export class SharedLog<
 			}),
 		});
 		contextMessage.header.timestamp = envelope.timestamp;
+
+		await this.onMessage(message, {
+			from,
+			message: contextMessage,
+		});
+	}
+
+	private async _onFanoutUnicast(detail: FanoutTreeUnicastEvent) {
+		let message: TransportMessage;
+		try {
+			message = deserialize(detail.payload, TransportMessage);
+		} catch (error) {
+			if (error instanceof BorshError) {
+				return;
+			}
+			throw error;
+		}
+
+		const fromHash = detail.origin || detail.from;
+		const from =
+			(await this._resolvePublicKeyFromHash(fromHash)) ??
+			({ hashcode: () => fromHash } as PublicSignKey);
+
+		const contextMessage = new DataMessage({
+			header: new MessageHeader({
+				session: 0,
+				mode: new AnyWhere(),
+				priority: 0,
+			}),
+		});
+		contextMessage.header.timestamp = detail.timestamp;
 
 		await this.onMessage(message, {
 			from,
@@ -923,6 +973,10 @@ export class SharedLog<
 			const track = (promise: Promise<void>) => {
 				pending.push(wrap ? wrap(promise) : promise);
 			};
+			const fanoutUnicastOptions =
+				delivery?.timeout != null || delivery?.signal != null
+					? { timeoutMs: delivery.timeout, signal: delivery.signal }
+					: undefined;
 
 			for await (const message of createExchangeHeadsMessages(this.log, [entry])) {
 				await this._mergeLeadersFromGidReferences(message, minReplicasValue, leaders);
@@ -941,10 +995,10 @@ export class SharedLog<
 					this.rpc
 						.send(message, {
 							mode: isLeader
-							? new SilentDelivery({ redundancy: 1, to: set })
-							: new AcknowledgeDelivery({ redundancy: 1, to: set }),
-					})
-					.catch((error) => logger.error(error));
+								? new SilentDelivery({ redundancy: 1, to: set })
+								: new AcknowledgeDelivery({ redundancy: 1, to: set }),
+						})
+						.catch((error) => logger.error(error));
 					continue;
 				}
 
@@ -989,14 +1043,31 @@ export class SharedLog<
 				}
 
 			if (ackTo.length > 0) {
-				track(
-					this.rpc.send(message, {
-						mode: new AcknowledgeDelivery({
-							redundancy: 1,
-							to: ackTo,
-						}),
-					}),
-				);
+				const payload = serialize(message);
+				for (const peer of ackTo) {
+					track(
+						(async () => {
+							if (this._fanoutChannel) {
+								try {
+									await this._fanoutChannel.unicastToAck(
+										peer,
+										payload,
+										fanoutUnicastOptions,
+									);
+									return;
+								} catch {
+									// fall back below
+								}
+							}
+							await this.rpc.send(message, {
+								mode: new AcknowledgeDelivery({
+									redundancy: 1,
+									to: [peer],
+								}),
+							});
+						})(),
+					);
+				}
 			}
 
 			if (silentTo?.length) {

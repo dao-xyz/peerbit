@@ -615,6 +615,199 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 		}
 	});
 
+	it("supports economical unicast with ACKs (shared intermediate hop)", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(4, {
+			services: {
+				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+			},
+		});
+
+		try {
+			// Root <-> relay. Two leaves only connect to relay. This creates a shared intermediate
+			// hop so the unicast goes: sender -> relay -> root -> relay -> target.
+			await session.connect([
+				[session.peers[0], session.peers[1]],
+				[session.peers[1], session.peers[2]],
+				[session.peers[1], session.peers[3]],
+			]);
+
+			const root = session.peers[0].services.fanout;
+			const relay = session.peers[1].services.fanout;
+			const sender = session.peers[2].services.fanout;
+			const target = session.peers[3].services.fanout;
+
+			const topic = "unicast-ack-shared-hop";
+			const rootId = root.publicKeyHash;
+
+			const rootChannel = FanoutChannel.fromSelf(root, topic);
+			rootChannel.openAsRoot({
+				msgRate: 10,
+				msgSize: 64,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 1,
+				repair: true,
+			});
+
+			const relayChannel = new FanoutChannel(relay, { topic, root: rootId });
+			await relayChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 2,
+					repair: true,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			const senderChannel = new FanoutChannel(sender, { topic, root: rootId });
+			await senderChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 0,
+					maxChildren: 0,
+					repair: true,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			const targetChannel = new FanoutChannel(target, { topic, root: rootId });
+			await targetChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 0,
+					maxChildren: 0,
+					repair: true,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			let targetRoute: string[] | undefined;
+			await waitForResolved(() => {
+				targetRoute = targetChannel.getRouteToken();
+				expect(targetRoute).to.exist;
+			});
+
+			let received: Uint8Array | undefined;
+				targetChannel.addEventListener("unicast", (ev: any) => {
+					received = ev.detail.payload;
+				});
+
+				const payload = new Uint8Array([9, 8, 7, 6]);
+				received = undefined;
+				await senderChannel.unicast(targetRoute!, payload);
+				await waitForResolved(() => expect(received).to.exist);
+				expect([...received!]).to.deep.equal([...payload]);
+
+				received = undefined;
+				await senderChannel.unicastAck(targetRoute!, payload, { timeoutMs: 2_000 });
+				await waitForResolved(() => expect(received).to.exist);
+				expect([...received!]).to.deep.equal([...payload]);
+			} finally {
+				await session.stop();
+		}
+	});
+
+	it("supports economical unicast with ACKs across branches", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(5, {
+			services: {
+				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+			},
+		});
+
+		try {
+			// Root <-> relayA and root <-> relayB. sender is only connected to relayA,
+			// target is only connected to relayB.
+			await session.connect([
+				[session.peers[0], session.peers[1]],
+				[session.peers[0], session.peers[2]],
+				[session.peers[1], session.peers[3]],
+				[session.peers[2], session.peers[4]],
+			]);
+
+			const root = session.peers[0].services.fanout;
+			const relayA = session.peers[1].services.fanout;
+			const relayB = session.peers[2].services.fanout;
+			const sender = session.peers[3].services.fanout;
+			const target = session.peers[4].services.fanout;
+
+			const topic = "unicast-ack-branches";
+			const rootId = root.publicKeyHash;
+
+			const rootChannel = FanoutChannel.fromSelf(root, topic);
+			rootChannel.openAsRoot({
+				msgRate: 10,
+				msgSize: 64,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 2,
+				repair: true,
+			});
+
+			const relayAChannel = new FanoutChannel(relayA, { topic, root: rootId });
+			await relayAChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 2,
+					repair: true,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			const relayBChannel = new FanoutChannel(relayB, { topic, root: rootId });
+			await relayBChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 2,
+					repair: true,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			const senderChannel = new FanoutChannel(sender, { topic, root: rootId });
+			await senderChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 0,
+					maxChildren: 0,
+					repair: true,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			const targetChannel = new FanoutChannel(target, { topic, root: rootId });
+			await targetChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 0,
+					maxChildren: 0,
+					repair: true,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			let received: Uint8Array | undefined;
+			targetChannel.addEventListener("unicast", (ev: any) => {
+				received = ev.detail.payload;
+			});
+
+			const payload = new Uint8Array([1, 3, 3, 7]);
+			await senderChannel.unicastToAck(target.publicKeyHash, payload, { timeoutMs: 10_000 });
+
+			await waitForResolved(() => expect(received).to.exist);
+			expect([...received!]).to.deep.equal([...payload]);
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("bounds route cache size and evicts old entries", async () => {
 		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(5, {
 			services: {

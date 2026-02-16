@@ -127,6 +127,23 @@ export class FanoutChannel extends EventTarget {
 		return this.fanout.unicastTo(this.topic, this.root, targetHash, payload, options);
 	}
 
+	public unicastAck(
+		toRoute: string[],
+		payload: Uint8Array,
+		options?: { timeoutMs?: number; signal?: AbortSignal },
+	) {
+		const target = toRoute[toRoute.length - 1]!;
+		return this.fanout.unicastAck(this.topic, this.root, toRoute, target, payload, options);
+	}
+
+	public unicastToAck(
+		targetHash: string,
+		payload: Uint8Array,
+		options?: { timeoutMs?: number; signal?: AbortSignal },
+	) {
+		return this.fanout.unicastToAck(this.topic, this.root, targetHash, payload, options);
+	}
+
 	public end(lastSeqExclusive: number) {
 		return this.fanout.publishEnd(this.topic, this.root, lastSeqExclusive);
 	}

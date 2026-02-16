@@ -9,7 +9,7 @@ import {
 	dontThrowIfDeliveryError,
 } from "@peerbit/stream";
 import { AnyWhere, DataMessage, type StreamEvents } from "@peerbit/stream-interface";
-import { AbortError, delay } from "@peerbit/time";
+import { AbortError, TimeoutError, delay } from "@peerbit/time";
 import { anySignal } from "any-signal";
 import { Uint8ArrayList } from "uint8arraylist";
 import { TopicRootControlPlane } from "./topic-root-control-plane.js";
@@ -455,6 +455,7 @@ const MSG_ROUTE_QUERY = 13;
 const MSG_ROUTE_REPLY = 14;
 const MSG_PUBLISH_PROXY = 15;
 const MSG_LEAVE = 16;
+const MSG_UNICAST_ACK = 17;
 const MSG_REPAIR_REQ = 20;
 const MSG_FETCH_REQ = 21;
 const MSG_IHAVE = 22;
@@ -491,6 +492,22 @@ const readU32BE = (buf: Uint8Array, offset: number) =>
 		(buf[offset + 2] << 8) |
 		buf[offset + 3]) >>> 0;
 
+const writeU64BE = (buf: Uint8Array, offset: number, value: bigint) => {
+	let v = value & 0xffffffffffffffffn;
+	for (let i = 7; i >= 0; i--) {
+		buf[offset + i] = Number(v & 0xffn);
+		v >>= 8n;
+	}
+};
+
+const readU64BE = (buf: Uint8Array, offset: number) => {
+	let v = 0n;
+	for (let i = 0; i < 8; i++) {
+		v = (v << 8n) | BigInt(buf[offset + i]!);
+	}
+	return v;
+};
+
 const writeU16BE = (buf: Uint8Array, offset: number, value: number) => {
 	buf[offset + 0] = (value >>> 8) & 0xff;
 	buf[offset + 1] = value & 0xff;
@@ -509,6 +526,9 @@ const encodeJoinReq = (channelKey: Uint8Array, reqId: number, bidPerByte: number
 };
 
 const MAX_ROUTE_HOPS = 32;
+
+const UNICAST_FLAG_ACK = 1;
+const UNICAST_ACK_DEFAULT_TIMEOUT_MS = 30_000;
 
 const encodeJoinAccept = (
 	channelKey: Uint8Array,
@@ -692,11 +712,71 @@ const encodeUnicast = (
 	channelKey: Uint8Array,
 	route: string[],
 	payload: Uint8Array,
+	options?: { ackToken?: bigint; replyRoute?: string[] },
 ) => {
-	const routeBytes: Uint8Array[] = [];
-	let bytes = 1 + 32 + 1;
-	let count = 0;
+	const wantsAck = options?.ackToken != null;
+	const flags = wantsAck ? UNICAST_FLAG_ACK : 0;
+	const toRouteBytes: Uint8Array[] = [];
+	let bytes = 1 + 32 + 1 + (wantsAck ? 8 : 0) + 1;
+	let toCount = 0;
 
+	for (const hop of route ?? []) {
+		if (toCount >= MAX_ROUTE_HOPS) break;
+		if (typeof hop !== "string") continue;
+		const hb = textEncoder.encode(hop);
+		if (hb.length === 0 || hb.length > 255) continue;
+		toRouteBytes.push(hb);
+		bytes += 1 + hb.length;
+		toCount += 1;
+	}
+
+	const replyRouteBytes: Uint8Array[] = [];
+	let replyCount = 0;
+	if (wantsAck) {
+		bytes += 1; // replyRouteCount
+		for (const hop of options?.replyRoute ?? []) {
+			if (replyCount >= MAX_ROUTE_HOPS) break;
+			if (typeof hop !== "string") continue;
+			const hb = textEncoder.encode(hop);
+			if (hb.length === 0 || hb.length > 255) continue;
+			replyRouteBytes.push(hb);
+			bytes += 1 + hb.length;
+			replyCount += 1;
+		}
+	}
+
+	bytes += payload.byteLength;
+	const buf = new Uint8Array(bytes);
+	buf[0] = MSG_UNICAST;
+	buf.set(channelKey, 1);
+	buf[33] = flags & 0xff;
+	let offset = 34;
+	if (wantsAck) {
+		writeU64BE(buf, offset, options!.ackToken!);
+		offset += 8;
+	}
+	buf[offset++] = toCount & 0xff;
+	for (const hb of toRouteBytes) {
+		buf[offset++] = hb.length & 0xff;
+		buf.set(hb, offset);
+		offset += hb.length;
+	}
+	if (wantsAck) {
+		buf[offset++] = replyCount & 0xff;
+		for (const hb of replyRouteBytes) {
+			buf[offset++] = hb.length & 0xff;
+			buf.set(hb, offset);
+			offset += hb.length;
+		}
+	}
+	buf.set(payload, offset);
+	return buf;
+};
+
+const encodeUnicastAck = (channelKey: Uint8Array, ackToken: bigint, route: string[]) => {
+	const routeBytes: Uint8Array[] = [];
+	let bytes = 1 + 32 + 8 + 1;
+	let count = 0;
 	for (const hop of route ?? []) {
 		if (count >= MAX_ROUTE_HOPS) break;
 		if (typeof hop !== "string") continue;
@@ -706,19 +786,17 @@ const encodeUnicast = (
 		bytes += 1 + hb.length;
 		count += 1;
 	}
-
-	bytes += payload.byteLength;
 	const buf = new Uint8Array(bytes);
-	buf[0] = MSG_UNICAST;
+	buf[0] = MSG_UNICAST_ACK;
 	buf.set(channelKey, 1);
-	buf[33] = count & 0xff;
-	let offset = 34;
+	writeU64BE(buf, 33, ackToken);
+	buf[41] = count & 0xff;
+	let offset = 42;
 	for (const hb of routeBytes) {
 		buf[offset++] = hb.length & 0xff;
 		buf.set(hb, offset);
 		offset += hb.length;
 	}
-	buf.set(payload, offset);
 	return buf;
 };
 
@@ -1054,6 +1132,15 @@ type JoinAttemptResult = {
 	redirects?: Array<{ hash: string; addrs: Multiaddr[] }>;
 };
 
+type PendingUnicastAck = {
+	expectedOrigin: string;
+	resolve: () => void;
+	reject: (error: unknown) => void;
+	timer: ReturnType<typeof setTimeout>;
+	signal?: AbortSignal;
+	onAbort?: () => void;
+};
+
 type ChannelState = {
 	id: FanoutTreeChannelId;
 	metrics: FanoutTreeChannelMetrics;
@@ -1156,6 +1243,7 @@ type ChannelState = {
 	pendingJoin: Map<number, { resolve(res: JoinAttemptResult): void }>;
 	pendingTrackerQuery: Map<number, { resolve(entries: TrackerCandidate[]): void }>;
 	pendingRouteQuery: Map<number, { resolve(route?: string[]): void }>;
+	pendingUnicastAck: Map<bigint, PendingUnicastAck>;
 	pendingRouteProxy: Map<
 		number,
 		{
@@ -1290,6 +1378,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	private providerAnnounceBySuffixKey = new Map<string, ProviderAnnounceState>();
 	private readonly defaultUploadOverheadBytes = 128;
 	private readonly random: () => number;
+	private readonly unicastAckNodeTag32: number;
+	private unicastAckSeq = 0;
 	public readonly topicRootControlPlane: TopicRootControlPlane;
 
 	constructor(
@@ -1302,6 +1392,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			...rest,
 		});
 		this.random = typeof random === "function" ? random : Math.random;
+		this.unicastAckNodeTag32 = readU32BE(
+			sha256Sync(textEncoder.encode(this.publicKeyHash)),
+			0,
+		);
 			this.topicRootControlPlane = topicRootControlPlane ?? new TopicRootControlPlane();
 
 			const onPeerDisconnect = (ev: any) => {
@@ -1898,11 +1992,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			lastIHaveSentMaxSeq: -1,
 			pendingJoin: new Map(),
 			pendingTrackerQuery: new Map(),
-			pendingRouteQuery: new Map(),
-			pendingRouteProxy: new Map(),
-			bootstrapOverride: undefined,
-			bootstrapDialTimeoutMs: 10_000,
-			bootstrapMaxPeers: 0,
+				pendingRouteQuery: new Map(),
+				pendingUnicastAck: new Map(),
+				pendingRouteProxy: new Map(),
+				bootstrapOverride: undefined,
+				bootstrapDialTimeoutMs: 10_000,
+				bootstrapMaxPeers: 0,
 			bootstrapEnsureIntervalMs: 5_000,
 			cachedBootstrapPeers: [],
 			lastBootstrapEnsureAt: 0,
@@ -1936,6 +2031,29 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			return id;
 		}
 
+	private abortPendingUnicastAcks(ch: ChannelState, error: AbortError) {
+		for (const pending of ch.pendingUnicastAck.values()) {
+			try {
+				clearTimeout(pending.timer);
+			} catch {
+				// ignore
+			}
+			try {
+				if (pending.signal && pending.onAbort) {
+					pending.signal.removeEventListener("abort", pending.onAbort);
+				}
+			} catch {
+				// ignore
+			}
+			try {
+				pending.reject(error);
+			} catch {
+				// ignore
+			}
+		}
+		ch.pendingUnicastAck.clear();
+	}
+
 	private detachFromParent(ch: ChannelState) {
 		ch.parent = undefined;
 		ch.level = Number.POSITIVE_INFINITY;
@@ -1945,6 +2063,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		ch.receivedAnyParentData = false;
 		ch.pendingJoin.clear();
 		ch.pendingRouteQuery.clear();
+		this.abortPendingUnicastAcks(ch, new AbortError("fanout channel detached"));
 		for (const pending of ch.pendingRouteProxy.values()) {
 			clearTimeout(pending.timer);
 		}
@@ -2018,6 +2137,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		ch.pendingJoin.clear();
 		ch.pendingTrackerQuery.clear();
 		ch.pendingRouteQuery.clear();
+		this.abortPendingUnicastAcks(ch, new AbortError("fanout channel closed"));
 		for (const pending of ch.pendingRouteProxy.values()) {
 			clearTimeout(pending.timer);
 		}
@@ -2537,6 +2657,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		});
 	}
 
+	private nextUnicastAckToken(): bigint {
+		const seq = this.unicastAckSeq >>> 0;
+		this.unicastAckSeq = (this.unicastAckSeq + 1) >>> 0;
+		return (BigInt(this.unicastAckNodeTag32) << 32n) | BigInt(seq);
+	}
+
 	public async unicastTo(
 		topic: string,
 		root: string,
@@ -2549,6 +2675,166 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			throw new Error(`No route token available for target ${targetHash}`);
 		}
 		return this.unicast(topic, root, route, payload);
+	}
+
+	public async unicastToAck(
+		topic: string,
+		root: string,
+		targetHash: string,
+		payload: Uint8Array,
+		options?: { timeoutMs?: number; signal?: AbortSignal },
+	): Promise<void> {
+		const route = await this.resolveRouteToken(topic, root, targetHash, options);
+		if (!route) {
+			throw new Error(`No route token available for target ${targetHash}`);
+		}
+		return this.unicastAck(topic, root, route, targetHash, payload, options);
+	}
+
+	public async unicastAck(
+		topic: string,
+		root: string,
+		toRoute: string[],
+		targetHash: string,
+		payload: Uint8Array,
+		options?: { timeoutMs?: number; signal?: AbortSignal },
+	): Promise<void> {
+		const id = this.getChannelId(topic, root);
+		const ch = this.channelsBySuffixKey.get(id.suffixKey);
+		if (!ch) throw new Error(`Channel not open: ${topic} (${root})`);
+		if (!Array.isArray(toRoute) || toRoute.length === 0) {
+			throw new Error("Invalid unicast route token");
+		}
+		if (toRoute[0] !== ch.id.root) {
+			throw new Error("Unicast route token root mismatch");
+		}
+
+		const target = toRoute[toRoute.length - 1]!;
+		if (targetHash && targetHash !== target) {
+			throw new Error("Unicast route token target mismatch");
+		}
+		if (target === this.publicKeyHash) {
+			this.dispatchEvent(
+				new CustomEvent("fanout:unicast", {
+					detail: {
+						topic: ch.id.topic,
+						root: ch.id.root,
+						route: [...toRoute],
+						payload,
+						from: this.publicKeyHash,
+						origin: this.publicKeyHash,
+						to: target,
+						timestamp: BigInt(Date.now()),
+					},
+				}),
+			);
+			return;
+		}
+
+		const timeoutMs = Math.max(
+			1,
+			Math.floor(options?.timeoutMs ?? UNICAST_ACK_DEFAULT_TIMEOUT_MS),
+		);
+		const signal = options?.signal
+			? anySignal([this.closeController.signal, options.signal])
+			: this.closeController.signal;
+
+		const ackToken = this.nextUnicastAckToken();
+		const replyRoute = ch.routeFromRoot;
+		if (!replyRoute || replyRoute.length === 0) {
+			throw new Error("Cannot unicast with ACK without a route token to self");
+		}
+		if (replyRoute[0] !== ch.id.root) {
+			throw new Error("Cannot unicast with ACK: self route token root mismatch");
+		}
+		const selfHash = this.publicKeyHash;
+		if (replyRoute[replyRoute.length - 1] !== selfHash) {
+			throw new Error("Cannot unicast with ACK: self route token target mismatch");
+		}
+
+		const data = encodeUnicast(ch.id.key, toRoute, payload, {
+			ackToken,
+			replyRoute,
+		});
+
+		return await new Promise<void>((resolve, reject) => {
+			let settled = false;
+			let timer: ReturnType<typeof setTimeout> | undefined;
+
+			const cleanup = () => {
+				if (timer != null) {
+					clearTimeout(timer);
+					timer = undefined;
+				}
+				const pending = ch.pendingUnicastAck.get(ackToken);
+				if (pending?.signal && pending.onAbort) {
+					pending.signal.removeEventListener("abort", pending.onAbort);
+				}
+				ch.pendingUnicastAck.delete(ackToken);
+			};
+
+			const settleOk = () => {
+				if (settled) return;
+				settled = true;
+				cleanup();
+				resolve();
+			};
+
+			const settleErr = (error: unknown) => {
+				if (settled) return;
+				settled = true;
+				cleanup();
+				reject(error);
+			};
+
+			const onAbort = () => {
+				settleErr(new AbortError());
+			};
+
+			if (signal.aborted) {
+				onAbort();
+				return;
+			}
+			signal.addEventListener("abort", onAbort);
+
+			timer = setTimeout(() => {
+				settleErr(new TimeoutError("Timeout waiting for unicast ACK"));
+			}, timeoutMs);
+
+			ch.pendingUnicastAck.set(ackToken, {
+				expectedOrigin: targetHash,
+				resolve: settleOk,
+				reject: settleErr,
+				timer,
+				signal,
+				onAbort,
+			});
+
+			void (async () => {
+				try {
+					if (ch.isRoot) {
+						const nextHop = toRoute[1];
+						if (!nextHop) {
+							throw new Error("Unicast route token missing first hop");
+						}
+						if (!ch.children.has(nextHop)) {
+							throw new Error(
+								"Unicast first hop is not a direct child of the root",
+							);
+						}
+						await this._sendControl(nextHop, data);
+						return;
+					}
+
+					if (!ch.parent) {
+						throw new Error("Cannot unicast while not attached to a parent");
+					}
+					await this._sendControl(ch.parent, data);
+				} catch (error) {
+					settleErr(error);
+				}
+			})();
+		});
 	}
 
 	/**
@@ -4535,9 +4821,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		message: DataMessage,
 		seenBefore: number,
 	) {
-		if (this.shouldIgnore(message, seenBefore)) {
-			return false;
-		}
+		const ignore = this.shouldIgnore(message, seenBefore);
 		const raw = message.data as Uint8ArrayList | Uint8Array | undefined;
 		const data = raw instanceof Uint8ArrayList ? raw.subarray() : raw;
 		if (!data || data.length === 0) return false;
@@ -4553,6 +4837,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				kind === MSG_KICK ||
 				kind === MSG_END ||
 				kind === MSG_UNICAST ||
+				kind === MSG_UNICAST_ACK ||
 				kind === MSG_ROUTE_QUERY ||
 				kind === MSG_ROUTE_REPLY ||
 				kind === MSG_PUBLISH_PROXY ||
@@ -4573,6 +4858,19 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				const suffixKey = toBase64(channelKey.subarray(0, 24));
 				this.recordControlReceive(suffixKey, kind, data.byteLength);
 				const ch = this.channelsBySuffixKey.get(suffixKey);
+				// DirectStream de-duplicates by message-id, but FanoutTree unicast (and its ACK)
+				// legitimately reflect "up to root, then down" through the same top-level branch.
+				// Allow a duplicate only when it arrives from the parent (downstream reflection).
+				if (
+					ignore &&
+					!(
+						(kind === MSG_UNICAST || kind === MSG_UNICAST_ACK) &&
+						ch &&
+						fromHash === ch.parent
+					)
+				) {
+					return false;
+				}
 
 			if (kind === MSG_TRACKER_ANNOUNCE) {
 				if (data.length < 1 + 32 + 4 + 2 + 2 + 2 + 4 + 1) return false;
@@ -5299,12 +5597,99 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						if (!isFromChild) return true;
 						if (!ch.parent) return true;
 						const up = this.peers.get(ch.parent);
-						if (!up || !up.isWritable) return true;
-						try {
-							up.write(message.bytes(), Number(message.header.priority ?? CONTROL_PRIORITY));
-						} catch {
-							// ignore
+						if (!up) return true;
+						void up
+							.waitForWrite(
+								message.bytes(),
+								Number(message.header.priority ?? CONTROL_PRIORITY),
+								this.closeController.signal,
+							)
+							.catch(() => {});
+						return true;
+					}
+
+					if (kind === MSG_UNICAST_ACK) {
+						// Requires an open channel state
+						if (!ch) return true;
+
+						// Only accept/forward within established tree edges.
+						const isFromParent = fromHash === ch.parent;
+						const isFromChild = ch.children.has(fromHash);
+						if (!isFromParent && !isFromChild) return true;
+
+						if (data.length < 1 + 32 + 8 + 1) return false;
+						const ackToken = readU64BE(data, 33);
+						const routeCount = Math.min(255, data[41]!);
+						const decoded = decodeRoute(data, 42, routeCount);
+						const route = decoded.route;
+						const target = route.length > 0 ? route[route.length - 1]! : "";
+						const origin =
+							message.header.signatures?.publicKeys?.[0]?.hashcode?.() ?? fromHash;
+
+						this.touchPeerHint(ch, fromHash);
+
+						const settleLocal = () => {
+							const pending = ch.pendingUnicastAck.get(ackToken);
+							if (!pending) return;
+							if (pending.expectedOrigin !== origin) return;
+							pending.resolve();
+						};
+
+						// Root routes downward using the provided token.
+						if (ch.isRoot) {
+							if (route.length === 0 || route[0] !== ch.id.root) return true;
+							if (target === this.publicKeyHash) {
+								settleLocal();
+								return true;
+							}
+							const nextHop = route[1];
+							if (!nextHop || !ch.children.has(nextHop)) return true;
+							const stream = this.peers.get(nextHop);
+							if (!stream) return true;
+							void stream
+								.waitForWrite(
+									message.bytes(),
+									Number(message.header.priority ?? CONTROL_PRIORITY),
+									this.closeController.signal,
+								)
+								.catch(() => {});
+							return true;
 						}
+
+						// Downstream routing: parent -> child -> ... -> sender.
+						if (isFromParent) {
+							const selfHash = this.publicKeyHash;
+							const myIndex = route.indexOf(selfHash);
+							if (myIndex < 0) return true;
+							if (myIndex === route.length - 1) {
+								settleLocal();
+								return true;
+							}
+							const nextHop = route[myIndex + 1];
+							if (!nextHop || !ch.children.has(nextHop)) return true;
+							const stream = this.peers.get(nextHop);
+							if (!stream) return true;
+							void stream
+								.waitForWrite(
+									message.bytes(),
+									Number(message.header.priority ?? CONTROL_PRIORITY),
+									this.closeController.signal,
+								)
+								.catch(() => {});
+							return true;
+						}
+
+						// Upstream forwarding (child -> ... -> root). Route token is only used by the root.
+						if (!ch.parent) return true;
+						const up = this.peers.get(ch.parent);
+						if (!up) return true;
+						void up
+							.waitForWrite(
+								message.bytes(),
+								Number(message.header.priority ?? CONTROL_PRIORITY),
+								this.closeController.signal,
+							)
+							.catch(() => {});
 						return true;
 					}
 
@@ -5317,18 +5702,38 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					const isFromChild = ch.children.has(fromHash);
 					if (!isFromParent && !isFromChild) return true;
 
-					if (data.length < 1 + 32 + 1) return false;
-					const routeCount = Math.min(255, data[33]!);
-					const { route, offset } = decodeRoute(data, 34, routeCount);
+					if (data.length < 1 + 32 + 1 + 1) return false;
+					const flags = data[33]! & 0xff;
+					let offset = 34;
+					let ackToken: bigint | undefined;
+					if (flags & UNICAST_FLAG_ACK) {
+						if (data.length < offset + 8 + 1) return false;
+						ackToken = readU64BE(data, offset);
+						offset += 8;
+					}
+					const routeCount = Math.min(255, data[offset]!);
+					offset += 1;
+					const decoded = decodeRoute(data, offset, routeCount);
+					const route = decoded.route;
+					offset = decoded.offset;
+					let replyRoute: string[] | undefined;
+					if (ackToken != null) {
+						if (data.length < offset + 1) return false;
+						const replyCount = Math.min(255, data[offset]!);
+						offset += 1;
+						const decodedReply = decodeRoute(data, offset, replyCount);
+						replyRoute = decodedReply.route;
+						offset = decodedReply.offset;
+					}
 					const payload = data.subarray(offset);
 					const target = route.length > 0 ? route[route.length - 1]! : "";
 						const origin =
 							message.header.signatures?.publicKeys?.[0]?.hashcode?.() ?? fromHash;
 
-						this.touchPeerHint(ch, fromHash);
+							this.touchPeerHint(ch, fromHash);
 
-						// Root routes downward using the provided token.
-						if (ch.isRoot) {
+							// Root routes downward using the provided token.
+							if (ch.isRoot) {
 							if (route.length === 0 || route[0] !== ch.id.root) return true;
 						if (target === this.publicKeyHash) {
 							this.dispatchEvent(
@@ -5345,17 +5750,35 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									},
 								}),
 							);
+							if (ackToken != null) {
+								const canAck =
+									replyRoute &&
+									replyRoute.length > 0 &&
+									replyRoute[0] === ch.id.root &&
+									replyRoute[replyRoute.length - 1] === origin;
+								if (canAck) {
+									const nextHop = replyRoute![1];
+									if (nextHop && ch.children.has(nextHop)) {
+										void this._sendControl(
+											nextHop,
+											encodeUnicastAck(ch.id.key, ackToken, replyRoute!),
+										).catch(() => {});
+									}
+								}
+							}
 							return true;
 						}
 						const nextHop = route[1];
 						if (!nextHop || !ch.children.has(nextHop)) return true;
 						const stream = this.peers.get(nextHop);
-						if (!stream || !stream.isWritable) return true;
-						try {
-							stream.write(message.bytes(), Number(message.header.priority ?? CONTROL_PRIORITY));
-						} catch {
-							// rely on higher-level retries / token refresh
-						}
+						if (!stream) return true;
+						void stream
+							.waitForWrite(
+								message.bytes(),
+								Number(message.header.priority ?? CONTROL_PRIORITY),
+								this.closeController.signal,
+							)
+							.catch(() => {});
 						return true;
 					}
 
@@ -5379,29 +5802,46 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									},
 								}),
 							);
+							if (ackToken != null && ch.parent) {
+								const canAck =
+									replyRoute &&
+									replyRoute.length > 0 &&
+									replyRoute[0] === ch.id.root &&
+									replyRoute[replyRoute.length - 1] === origin;
+								if (canAck) {
+									void this._sendControl(
+										ch.parent,
+										encodeUnicastAck(ch.id.key, ackToken, replyRoute!),
+									).catch(() => {});
+								}
+							}
 							return true;
 						}
 						const nextHop = route[myIndex + 1];
 						if (!nextHop || !ch.children.has(nextHop)) return true;
 						const stream = this.peers.get(nextHop);
-						if (!stream || !stream.isWritable) return true;
-						try {
-							stream.write(message.bytes(), Number(message.header.priority ?? CONTROL_PRIORITY));
-						} catch {
-							// rely on higher-level retries / token refresh
-						}
+						if (!stream) return true;
+						void stream
+							.waitForWrite(
+								message.bytes(),
+								Number(message.header.priority ?? CONTROL_PRIORITY),
+								this.closeController.signal,
+							)
+							.catch(() => {});
 						return true;
 					}
 
 					// Upstream forwarding (child -> ... -> root). Route token is only used by the root.
 					if (!ch.parent) return true;
 					const up = this.peers.get(ch.parent);
-					if (!up || !up.isWritable) return true;
-					try {
-						up.write(message.bytes(), Number(message.header.priority ?? CONTROL_PRIORITY));
-					} catch {
-						// ignore
-					}
+					if (!up) return true;
+					void up
+						.waitForWrite(
+							message.bytes(),
+							Number(message.header.priority ?? CONTROL_PRIORITY),
+							this.closeController.signal,
+						)
+						.catch(() => {});
 					return true;
 				}
 
@@ -5413,11 +5853,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					ch.routeByPeer.clear();
 					ch.lastParentDataAt = 0;
 					ch.receivedAnyParentData = false;
-					ch.pendingJoin.clear();
-					ch.pendingRouteQuery.clear();
-					for (const pending of ch.pendingRouteProxy.values()) {
-						clearTimeout(pending.timer);
-					}
+						ch.pendingJoin.clear();
+						ch.pendingRouteQuery.clear();
+						this.abortPendingUnicastAcks(ch, new AbortError("fanout channel kicked"));
+						for (const pending of ch.pendingRouteProxy.values()) {
+							clearTimeout(pending.timer);
+						}
 					ch.pendingRouteProxy.clear();
 					void this.kickChildren(ch).catch(() => {});
 				this.dispatchEvent(

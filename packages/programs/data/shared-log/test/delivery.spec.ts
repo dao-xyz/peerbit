@@ -107,6 +107,102 @@ describe("append delivery options", () => {
 		expect(resolved).to.equal(true);
 	});
 
+	it("awaits fanout unicast acks when delivery is set for target=replicators and fanout is configured", async () => {
+		session = await TestSession.connected(2);
+
+		const remoteHash = session.peers[1].identity.publicKey.hashcode();
+
+		const root = (session.peers[0].services as any).fanout.publicKeyHash as string;
+		const fanout = {
+			root,
+			channel: {
+				msgRate: 10,
+				msgSize: 256,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 8,
+				repair: true,
+			},
+			join: { timeoutMs: 10_000 },
+		};
+
+		const db1 = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				fanout,
+				replicas: { min: 2 },
+				replicate: { offset: 0, factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		await EventStore.open<EventStore<string, any>>(db1.address!, session.peers[1], {
+			args: {
+				fanout,
+				replicas: { min: 2 },
+				replicate: { offset: 0, factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+
+		await db1.log.waitForReplicators({
+			coverageThreshold: 1,
+			roleAge: 0,
+			timeout: 15e3,
+		});
+
+		await waitForResolved(async () => {
+			const ch: any = (db1.log as any)._fanoutChannel;
+			expect(ch, "expected shared-log to open a fanout channel").to.exist;
+			const peers = ch.getPeerHashes({ includeSelf: true });
+			expect(peers, "expected fanout overlay to include remote peer").to.include(
+				remoteHash,
+			);
+		});
+
+		// Ensure the remote peer is known as a replicator before we append; otherwise the
+		// writer may compute a leader set that only includes itself and skip directed delivery.
+		await db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+			timeout: 15e3,
+			roleAge: 0,
+		});
+
+		const gate = pDefer<void>();
+		const ackAttempted = pDefer<void>();
+
+		const remoteFanout: any = (session.peers[1].services as any).fanout;
+		const originalPublishMessage = remoteFanout.publishMessage.bind(remoteFanout);
+		remoteFanout.publishMessage = async (...args: any[]) => {
+			const message = args[1];
+			if (message instanceof DataMessage) {
+				const raw: any = message.data;
+				const bytes: Uint8Array | undefined =
+					raw instanceof Uint8Array ? raw : raw?.subarray?.();
+				// FanoutTree internal: MSG_UNICAST_ACK = 17
+				if (bytes?.[0] === 17) {
+					ackAttempted.resolve();
+					await gate.promise;
+				}
+			}
+			return originalPublishMessage(...args);
+		};
+
+		let resolved = false;
+		const promise = db1
+			.add("hello", {
+				target: "replicators",
+				delivery: true,
+			})
+			.then((result) => {
+				resolved = true;
+				return result;
+			});
+
+		await ackAttempted.promise;
+		expect(resolved).to.equal(false);
+
+		gate.resolve();
+		await promise;
+		expect(resolved).to.equal(true);
+	});
+
 	it("throws when requireRecipients is true and there are no remotes", async () => {
 		session = await TestSession.disconnected(1);
 
