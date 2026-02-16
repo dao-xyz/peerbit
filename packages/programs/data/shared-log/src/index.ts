@@ -48,6 +48,9 @@ import {
 import { RPC, type RequestContext } from "@peerbit/rpc";
 import {
 	AcknowledgeDelivery,
+	AnyWhere,
+	DataMessage,
+	MessageHeader,
 	NotStartedError,
 	SilentDelivery,
 } from "@peerbit/stream-interface";
@@ -75,6 +78,7 @@ import {
 	ResponseIPrune,
 	createExchangeHeadsMessages,
 } from "./exchange-heads.js";
+import { FanoutEnvelope } from "./fanout-envelope.js";
 import {
 	MAX_U32,
 	MAX_U64,
@@ -742,9 +746,19 @@ export class SharedLog<
 	}
 
 	private async _onFanoutData(detail: FanoutTreeDataEvent) {
+		let envelope: FanoutEnvelope;
+		try {
+			envelope = deserialize(detail.payload, FanoutEnvelope);
+		} catch (error) {
+			if (error instanceof BorshError) {
+				return;
+			}
+			throw error;
+		}
+
 		let message: TransportMessage;
 		try {
-			message = deserialize(detail.payload, TransportMessage);
+			message = deserialize(envelope.payload, TransportMessage);
 		} catch (error) {
 			if (error instanceof BorshError) {
 				return;
@@ -757,12 +771,21 @@ export class SharedLog<
 		}
 
 		const from =
-			(await this._resolvePublicKeyFromHash(detail.from)) ??
-			({ hashcode: () => detail.from } as PublicSignKey);
+			(await this._resolvePublicKeyFromHash(envelope.from)) ??
+			({ hashcode: () => envelope.from } as PublicSignKey);
+
+		const contextMessage = new DataMessage({
+			header: new MessageHeader({
+				session: 0,
+				mode: new AnyWhere(),
+				priority: 0,
+			}),
+		});
+		contextMessage.header.timestamp = envelope.timestamp;
 
 		await this.onMessage(message, {
 			from,
-			message: {} as any,
+			message: contextMessage,
 		});
 	}
 
@@ -774,7 +797,12 @@ export class SharedLog<
 				`No fanout channel configured for shared-log topic ${this.topic}`,
 			);
 		}
-		await this._fanoutChannel.publish(serialize(message));
+		const envelope = new FanoutEnvelope({
+			from: this.node.identity.publicKey.hashcode(),
+			timestamp: BigInt(Date.now()),
+			payload: serialize(message),
+		});
+		await this._fanoutChannel.publish(serialize(envelope));
 	}
 
 	private _parseDeliveryOptions(

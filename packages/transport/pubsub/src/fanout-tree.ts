@@ -317,7 +317,9 @@ export type FanoutTreeDataEvent = {
 	root: string;
 	seq: number;
 	payload: Uint8Array;
-	from: string;
+	from: string; // immediate sender (edge used for forwarding)
+	origin: string; // original sender (signature[0]) if present, else `from`
+	timestamp: bigint; // sender-provided timestamp (DataMessage.header.timestamp)
 };
 
 export type FanoutTreeUnicastEvent = {
@@ -328,6 +330,7 @@ export type FanoutTreeUnicastEvent = {
 	from: string; // immediate sender (edge used for forwarding)
 	origin: string; // original sender (signature[0])
 	to: string; // final destination hash
+	timestamp: bigint; // sender-provided timestamp (DataMessage.header.timestamp)
 };
 
 export type FanoutTreeChannelMetrics = {
@@ -2587,6 +2590,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							from: this.publicKeyHash,
 							origin: this.publicKeyHash,
 							to: target,
+							timestamp: BigInt(Date.now()),
 						},
 					}),
 				);
@@ -5337,6 +5341,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 										from: fromHash,
 										origin,
 										to: target,
+										timestamp: message.header.timestamp,
 									},
 								}),
 							);
@@ -5370,6 +5375,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 										from: fromHash,
 										origin,
 										to: target,
+										timestamp: message.header.timestamp,
 									},
 								}),
 							);
@@ -5499,7 +5505,17 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				this.markCached(ch, seq, payload);
 				this.dispatchEvent(
 					new CustomEvent("fanout:data", {
-						detail: { topic: ch.id.topic, root: ch.id.root, seq, payload, from: fromHash },
+						detail: {
+							topic: ch.id.topic,
+							root: ch.id.root,
+							seq,
+							payload,
+							from: fromHash,
+							origin:
+								message.header.signatures?.publicKeys?.[0]?.hashcode?.() ??
+								fromHash,
+							timestamp: message.header.timestamp,
+						},
 					}),
 			);
 
