@@ -1430,7 +1430,7 @@ export function FanoutProtocolSandbox({
 												}
 												disabled={status === "setting-up" || status === "running"}
 											>
-												<option value="preseed">Preseed (no subscribe gossip)</option>
+												<option value="preseed">Preseed (no subscription gossip)</option>
 												<option value="real">Real subscribe (control-plane gossip)</option>
 											</select>
 										</label>

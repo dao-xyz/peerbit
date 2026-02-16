@@ -9,11 +9,11 @@ Sending it to 20,000 peers is where things get weird. Not because the payload is
 - keeping that membership fresh under churn, and
 - forwarding the same content over and over across the overlay.
 
-In Peerbit we started calling one common symptom **subscribe gossip exploding**. Different systems get there in different ways, but the smell is the same: the amount of "who is subscribed to what?" traffic grows faster than the useful payload.
+In Peerbit we started calling one common symptom **subscription gossip amplification**. Different systems get there in different ways, but the smell is the same: the amount of "who is subscribed to what?" traffic grows faster than the useful payload.
 
 This post is a more human tour of a new Peerbit network protocol we have been building: **Fanout Trees**.
 
-It is informed by classic work like Epidemic Broadcast Trees (Plumtree style) [1], HyParView [2], and modern pubsub practice like libp2p Gossipsub [3].
+It is informed by classic work like Epidemic Broadcast Trees (Plumtree-style tree + repair) [1], HyParView [2], and modern pubsub practice like libp2p Gossipsub [3], all of which build on older epidemic/gossip framing [4].
 If your mental model is more "Netflix/Twitch CDN trees" or "Tor-style overlays", that is fine too. Fanout Trees live in the same design space of making large distribution networks behave politely under real constraints.
 
 The idea is simple:
@@ -30,11 +30,11 @@ If the tree is healthy, one publish is close to **N - 1** payload transmissions,
 ### Try it
 
 This sandbox runs **the real Peerbit code paths**:
-- `@peerbit/pubsub` (Fanout Trees and control traffic)
-- `@peerbit/stream` (routing and connection handling)
+- `@peerbit/pubsub` (`TopicControlPlane` + forwarding behavior)
+- `@peerbit/stream` (DirectStream transport + ACK modes)
 - over an in-memory libp2p shim (no sockets)
 
-We skip expensive crypto verification so you can run hundreds or thousands of nodes locally, including in the browser.
+We skip expensive crypto verification in the demo harness so you can run hundreds or thousands of nodes locally, including in the browser.
 
 How to use it:
 1. Click a node to pick the **writer** (it turns red).
@@ -59,7 +59,7 @@ The catch is reliability. Trees break under churn and loss. The state of the art
 What to play with:
 - Try increasing `nodes` and keep `degree` bounded. Watch whether one publish lights up a small set of edges (tree-like) or lots of edges (mesh-like).
 - Switch `Flow capture` to include setup and see how much traffic happens before the first publish.
-- Keep `Preseed (no subscribe gossip)` if you only want to study the pure delivery pattern.
+- Keep `Preseed (no subscription gossip)` if you only want to study the pure delivery pattern.
 
 If you notice that nodes receive the same payload more than once, that is not automatically "wrong". Redundancy is a dial:
 - too little redundancy and a single broken edge can drop delivery,
@@ -79,7 +79,7 @@ For simplicity, node 0 acts as both:
 - the **bootstrap/tracker** (rendezvous that returns join candidates), and
 - the **root** (level 0 of the tree).
 
-As peers join, node 0 accepts up to `rootMaxChildren`. After that it responds with redirects to other nodes that still have free slots, so the tree can keep growing without everyone attaching to the root.
+As peers join, node 0 accepts up to `rootMaxChildren`. After that it starts rejecting joins and, because it also acts as the tracker in this demo, it steers joiners toward other nodes with free slots so the tree can keep growing without everyone attaching to the root.
 
 ### Try it
 
@@ -99,10 +99,10 @@ How to use it:
 We did not invent broadcast trees. We are adapting well-known ideas to a Peerbit setting where nodes are untrusted, churn is real, and we want per-node costs to stay bounded.
 
 Some helpful mental comparisons:
-- **libp2p Gossipsub**: a strong baseline for decentralized pubsub, but at huge audience sizes you can still run into overhead patterns that look like "subscribe gossip exploding". Fanout Trees aim for a delivery pattern that is closer to "one transmission per subscriber" than "one transmission per edge in a mesh". [3]
-- **Netflix / Twitch**: they solve the economics of large broadcast by owning the infrastructure (CDNs and edge distribution). The "tree" is real, but it is run by a single operator. Fanout Trees are chasing similar economics without assuming one operator controls the whole network.
-- **Tor**: not a broadcast system, but it is a real-world example of long-lived overlay routing where relays have capacity and policy. The overlap is in the engineering constraints (connection management, churn, incentives), not in the goal (Tor is about anonymity).
-- **Iroh**: a modern peer-to-peer transport and sync toolbox. Fanout Trees sit above the transport layer. The synergy is that fast connection setup and good routing primitives make higher-level overlays like Fanout Trees more practical.
+- **libp2p Gossipsub**: a strong baseline for decentralized pubsub, but at huge audience sizes you can still run into control-plane overhead patterns that look like subscription gossip amplification. Fanout Trees aim for a delivery pattern that is closer to "one transmission per subscriber" than "one transmission per underlay edge in a mesh". [3]
+- **Netflix / Twitch**: their distribution "tree" is mostly an operator-controlled hierarchy (origin -> regional -> edge) plus caching, and the last hop is client unicast (the audience does not relay). That means membership is handled by centralized control planes and load balancers, not by decentralized discovery, and the bandwidth bill is paid by the operator. Fanout Trees are chasing a similar bounded-fanout delivery shape, but with relays selected by a join protocol and capacity limits enforced by peers rather than by a single provider.
+- **Tor**: not a broadcast system, but it is a mature overlay where relays expose capacity and policy and clients build routes through multiple relays. The overlap here is operational: dialing/keeping connections, handling churn, and making capacity-aware routing decisions without melting the network. The differences are just as important: Tor optimizes for anonymity (extra hops, different threat model) and relies on directory authorities for relay discovery, while Fanout Trees are about single-writer fanout delivery and try to avoid global membership.
+- **Iroh**: Iroh's `iroh-gossip` implements Epidemic Broadcast Trees (HyParView membership + PlumTree broadcast). That puts it in the same family of "tree push + repair over a partial view." The main differences are scope and control: Iroh's gossip is symmetric (any peer can broadcast to a topic swarm) and relies on HyParView's constantly refreshed active/passive views for resilience, while Peerbit Fanout Trees are channel-rooted (explicit root + sequence stream) and add tracker-backed, capacity-aware admission (max children, upload budgets, optional bidding) plus route tokens for economical unicast/proxy-publish inside the same overlay.
 
 ## What we are shipping in Peerbit
 
