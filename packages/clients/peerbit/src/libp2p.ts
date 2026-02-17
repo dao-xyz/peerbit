@@ -43,6 +43,16 @@ export const createLibp2pExtended = (
 ): Promise<Libp2pExtended> => {
 	const topicRootControlPlane = new TopicRootControlPlane();
 	let extraServices: any = {};
+	let fanoutInstance: FanoutTree | undefined;
+	const configuredFanoutFactory =
+		opts.services?.fanout ||
+		((c) => new FanoutTree(c, { connectionManager: false, topicRootControlPlane }));
+	const getOrCreateFanout = (c: any) => {
+		if (!fanoutInstance) {
+			fanoutInstance = configuredFanoutFactory(c) as FanoutTree;
+		}
+		return fanoutInstance;
+	};
 
 	if (opts.services?.["relay"] === null) {
 		delete opts.services?.["relay"];
@@ -80,21 +90,20 @@ export const createLibp2pExtended = (
 		connectionEncrypters: opts.connectionEncrypters || [noise()],
 		streamMuxers: opts.streamMuxers || [yamux()],
 		services: {
+			...opts.services,
 			pubsub:
 				opts.services?.pubsub ||
 				((c) =>
 					new TopicControlPlane(c, {
 						canRelayMessage: true,
 						topicRootControlPlane,
+						fanout: getOrCreateFanout(c),
 						// auto dial true
 						// auto prune true
 					})),
-			fanout:
-				opts.services?.fanout ||
-				((c) => new FanoutTree(c, { connectionManager: false, topicRootControlPlane })),
+			fanout: (c) => getOrCreateFanout(c),
 			blocks: opts.services?.blocks || ((c) => new DirectBlock(c)),
 			keychain: opts.services?.keychain || keychain(),
-			...opts.services,
 			...extraServices,
 		},
 	}).then((libp2p) => libp2p as Libp2pExtended);

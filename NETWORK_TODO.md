@@ -1,6 +1,6 @@
 # Network V2 TODO (Unify Routing + Fanout Overlays)
 
-Last updated: 2026-02-16
+Last updated: 2026-02-17
 
 This doc captures the current state, the core design direction we want (V2), and the next concrete implementation steps so another agent can pick up the work.
 
@@ -25,13 +25,12 @@ V2 goal: one coherent story where topology/routing knowledge is shared and compo
 - Direct routing knowledge: `packages/transport/stream/src/routes.ts` (ACK/trace-based route store).
 - Fanout overlay: `packages/transport/pubsub/src/fanout-tree.ts` + `packages/transport/pubsub/src/fanout-channel.ts`.
 - Shared-log uses both planes today:
-  - RPC (DirectStream) for most directed traffic: `packages/programs/data/shared-log/src/index.ts`
-  - FanoutTree only for `append(..., { target: "all" })` via ExchangeHeads broadcast.
+  - FanoutTree for `append(..., { target: "all" })` broadcast, and now also for "directed delivery w/ settle" via fanout unicast ACK where available: `packages/programs/data/shared-log/src/index.ts`
+  - RPC/DirectStream remains as a fallback path for directed delivery when fanout is not configured or a unicast cannot be routed.
 
 ## Observed Issues / Smells
 
-- Shared-log currently receives fanout payloads without a proper `RequestContext.message` (it uses `{ } as any`). Anything that reads `context.message.header.timestamp` will break if we move more messages onto fanout.
-- FanoutTree `MSG_DATA` publish proxy currently makes the root the transport-level origin (root re-wraps payload into a new signed `DataMessage`). If the application needs the original publisher identity, it must be carried in the payload.
+- FanoutTree `MSG_DATA` publish proxy makes the root the transport-level origin (root signs the DATA frame). If the application needs original publisher identity, it must be carried at the application level.
 - Two independent mechanisms try to solve "how do I reach peer X?":
   - DirectStream learns ephemeral routes from ACK traces.
   - FanoutTree has route tokens scoped to `(topic, root)` and a root proxy path.
@@ -84,47 +83,68 @@ The key is that all proofs reduce to the same abstraction: "for destination D, h
 
 ## Concrete V2 Milestones
 
-1. Make fanout-delivered program messages carry origin + timestamp (so program semantics don't depend on transport hop identity).
-2. Normalize metadata across planes:
-   - Every delivered message has a meaningful `timestamp` and an origin identity.
-3. Introduce a "route proof" abstraction and bridge fanout tokens and ACK traces into it.
-4. Move shared-log directed traffic onto fanout unicast where it is topologically cheaper than DirectStream seek/flood.
-5. Reduce or delete redundant topology managers (ultimately, DirectStream routing becomes either optional or a thin adapter over the shared route store).
+1. (Done) Make fanout-delivered program messages carry origin + timestamp.
+   - Shared-log now wraps fanout payloads in an application envelope: `packages/programs/data/shared-log/src/fanout-envelope.ts`
+   - Shared-log reconstructs a real `RequestContext.message.header.timestamp` when receiving fanout payloads: `packages/programs/data/shared-log/src/index.ts`
+2. (Done) Normalize event metadata on fanout overlays.
+   - `FanoutTreeDataEvent` and `FanoutTreeUnicastEvent` now include `timestamp` and `origin`: `packages/transport/pubsub/src/fanout-tree.ts`
+3. (Done, partial) Add an economical directed path inside the fanout overlay.
+   - Added `MSG_UNICAST_ACK` + `FanoutTree.unicastToAck()` and `FanoutChannel.unicastToAck()`: `packages/transport/pubsub/src/fanout-tree.ts`, `packages/transport/pubsub/src/fanout-channel.ts`
+   - Added tests: `packages/transport/pubsub/test/fanout-tree.spec.ts`
+4. (Done) Move shared-log directed delivery (when `delivery:true`) onto fanout unicast ACK when a fanout channel is configured.
+   - Tests: `packages/programs/data/shared-log/test/delivery.spec.ts`
+5. (Done, opt-in) Replace subscription gossip for large topics (pubsub delivery should not require global-ish subscriber dissemination).
+   - `TopicControlPlane` now supports per-topic delivery policy: "direct" (old behavior) vs "fanout topic" (new).
+   - For fanout topics:
+     - `subscribe(topic)` joins the fanout overlay (no `Subscribe` gossip).
+     - `publish(topic)` broadcasts via fanout overlay (no subscriber set required).
+     - `unsubscribe(topic)` leaves overlay (no `Unsubscribe` gossip).
+     - `getSubscribers(topic)` is explicitly bounded/best-effort (overlay-local peer hints), never global membership.
+   - Default policy is conservative: fanout topics are enabled only when the topic has an explicit root set in `TopicRootControlPlane`.
+     - i.e. opt-in via `topicRootControlPlane.setTopicRoot(topic, rootHash)`.
+   - Code: `packages/transport/pubsub/src/index.ts`, `packages/clients/peerbit/src/libp2p.ts`
+   - Tests: `packages/transport/pubsub/test/fanout-topics.spec.ts`
+6. (Next) Route-proof abstraction and unified route store (ACK traces + fanout route tokens as inputs to one decision point).
+7. (Later) Reduce/delete redundant topology managers (DirectStream routing becomes optional or a thin adapter over the shared route store).
 
 ## Immediate Next Steps (Implementation TODO)
 
-These are ordered to keep the PR green and create foundations for the bigger merge.
+These are ordered to keep the PR green while moving toward the V2 "single story" architecture.
 
-1. Fanout events expose metadata
-   - Add `timestamp` (and `origin` for data events) to `FanoutTreeDataEvent` and `FanoutTreeUnicastEvent`.
-   - Files: `packages/transport/pubsub/src/fanout-tree.ts`, `packages/transport/pubsub/src/fanout-channel.ts`
+1. Replace subscription gossip for large topics
+   - Status: Implemented (opt-in fanout topics via `TopicRootControlPlane` explicit roots).
+   - Follow-ups:
+     - Decide whether `TopicControlPlane.publish(..., { id, priority })` should be preserved for fanout topics (FanoutTree currently assigns its own ids).
+     - Clarify signature semantics for fanout-backed pubsub delivery:
+       - fanout transport frames are signed by the root; original publisher identity is not preserved unless carried at application-level.
+     - Add a policy knob for "publish on fanout topic without subscribing" (currently requires join; consider LRU/TTL auto-join).
 
-2. Shared-log fanout envelope (no migration/back-compat needed)
-   - Wrap shared-log fanout payloads in an envelope that carries:
-     - `publisher` (public key hash)
-     - `timestamp`
-     - `payload` (serialized `TransportMessage`)
-   - On receive, reconstruct a minimal `RequestContext.message` with a real timestamp.
-   - Files: `packages/programs/data/shared-log/src/index.ts` (and a small helper file)
+2. Define the unified routing decision point (route proofs)
+   - Create a small shared abstraction: `RouteHint` / `RouteProof`
+     - inputs: ACK traces (DirectStream), fanout route tokens (FanoutTree), underlay metrics (RTT, liveness)
+     - outputs: next-hop candidates + cost + TTL/confidence
+   - Ensure there is exactly one "should I send direct / proxy / flood?" decision site.
+   - Files: `packages/transport/stream/src/routes.ts`, `packages/transport/pubsub/src/fanout-tree.ts` (route token caching), shared-log delivery decision code
 
-3. Start unifying directed delivery
-   - Decide whether unicast ACK belongs in:
-     - FanoutTree transport (new `MSG_UNICAST_ACK`), or
-     - Program-level (shared-log ACK message).
-   - Goal: stop requiring DirectStream seek/flood for directed delivery inside an already-joined fanout overlay.
-   - Files: `packages/transport/pubsub/src/fanout-tree.ts`, shared-log delivery tests
+3. Abuse resistance and cost control (make scaling predictable)
+   - Per-hop rate limiting for proxy publish / unicast relay.
+   - Cap fanout tracker state and make it cheap to reject abusive join/publish.
+   - Consider optional capability gates for "inbox-like" directed traffic.
 
-4. Replace subscription gossip for large topics
-   - Long term: TopicControlPlane should not need to flood subscribe state to achieve reachability.
-   - Candidate: "subscribe = join fanout overlay" and `getSubscribers()` becomes overlay-member-aware (bounded, not global).
-   - Files: `packages/transport/pubsub/src/index.ts` (`TopicControlPlane`)
+4. Benchmarks
+   - Update / add benchmarks that stress:
+     - huge topic fanout
+     - many topics (high topic cardinality)
+     - hotspots (skewed publishers/consumers)
+     - repair effectiveness under loss/churn
+   - Keep the "cost knobs" measurable: bytes sent, connections, join time, delivery latency.
 
 ## Test / Verification Checklist
 
 - `pnpm run test`
 - `pnpm run build`
 - Add/adjust tests for:
-  - Fanout-delivered shared-log `target="all"` still replicates entries.
-  - Fanout-delivered messages provide a usable `context.message.header.timestamp` in shared-log receive paths.
-  - FanoutTree event metadata fields are populated and consistent.
-
+  - Fanout-delivered shared-log `target="all"` still replicates entries (already covered).
+  - Fanout-delivered shared-log directed delivery blocks on fanout unicast ACK when configured (already covered).
+  - Pubsub large-topic mode does not require subscription gossip for reachability (new).
+  - Pubsub `getSubscribers()` is explicitly best-effort/bounded and callers do not assume completeness (new).

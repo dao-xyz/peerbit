@@ -41,6 +41,13 @@ import {
 	type DebouncedAccumulatorCounterMap,
 	debouncedAccumulatorSetCounter,
 } from "./debounced-set.js";
+import { FanoutChannel } from "./fanout-channel.js";
+import type {
+	FanoutTree,
+	FanoutTreeChannelOptions,
+	FanoutTreeDataEvent,
+	FanoutTreeJoinOptions,
+} from "./fanout-tree.js";
 import { TopicRootControlPlane } from "./topic-root-control-plane.js";
 
 export * from "./fanout-tree.js";
@@ -65,10 +72,43 @@ const RECENT_TOPIC_PEERS_TTL_MS = 30_000;
 const RECENT_TOPIC_PEERS_MAX_PEERS = 32;
 const RECENT_TOPIC_PEERS_MAX_TOPICS = 4_096;
 
+const DEFAULT_PUBSUB_FANOUT_CHANNEL_OPTIONS: Omit<
+	FanoutTreeChannelOptions,
+	"role"
+> = {
+	msgRate: 30,
+	msgSize: 1024,
+	uploadLimitBps: 5_000_000,
+	maxChildren: 24,
+	repair: true,
+};
+
 export type TopicControlPlaneOptions = DirectStreamOptions & {
 	dispatchEventOnSelfPublish?: boolean;
 	subscriptionDebounceDelay?: number;
 	topicRootControlPlane?: TopicRootControlPlane;
+	/**
+	 * Optional fanout overlay used for large-topic delivery without subscriber gossip.
+	 *
+	 * When configured, topics selected by `fanoutTopics(topic)` will be delivered over
+	 * the fanout tree (subscribe = join overlay) and `getSubscribers()` becomes
+	 * bounded (overlay neighbors + cached hints), not global membership.
+	 */
+	fanout?: FanoutTree;
+	/**
+	 * Per-topic policy: return `true` to use the fanout overlay for this topic.
+	 *
+	 * Defaults to "explicit roots only": topics with a root set in `topicRootControlPlane`.
+	 */
+	fanoutTopics?: (topic: string) => boolean;
+	/**
+	 * Fanout channel options for topics delivered over the fanout overlay.
+	 */
+	fanoutChannel?: Partial<Omit<FanoutTreeChannelOptions, "role">>;
+	/**
+	 * Fanout join options for overlay topics.
+	 */
+	fanoutJoin?: FanoutTreeJoinOptions;
 	/**
 	 * Best-effort bound on cached remote subscribers per topic.
 	 *
@@ -97,10 +137,23 @@ export class TopicControlPlane
 	public dispatchEventOnSelfPublish: boolean;
 	public readonly topicRootControlPlane: TopicRootControlPlane;
 	public readonly subscriberCacheMaxEntries: number;
+	public readonly fanout?: FanoutTree;
 
 	private debounceSubscribeAggregator: DebouncedAccumulatorCounterMap;
 	private debounceUnsubscribeAggregator: DebouncedAccumulatorCounterMap;
 	private recentTopicPeers = new Map<string, { peers: string[]; expiresAt: number }>();
+	private readonly fanoutTopicsFn: (topic: string) => boolean;
+	private readonly fanoutChannelOptions: Omit<FanoutTreeChannelOptions, "role">;
+	private readonly fanoutJoinOptions?: FanoutTreeJoinOptions;
+	private fanoutChannels = new Map<
+		string,
+		{
+			root: string;
+			channel: FanoutChannel;
+			join: Promise<void>;
+			onData: (ev: CustomEvent<FanoutTreeDataEvent>) => void;
+		}
+	>();
 
 	constructor(
 		components: TopicControlPlaneComponents,
@@ -115,6 +168,15 @@ export class TopicControlPlane
 			props?.topicRootControlPlane || new TopicRootControlPlane();
 		this.dispatchEventOnSelfPublish =
 			props?.dispatchEventOnSelfPublish || false;
+		this.fanout = props?.fanout;
+		this.fanoutTopicsFn =
+			props?.fanoutTopics ||
+			((topic: string) => this.topicRootControlPlane.getTopicRoot(topic) != null);
+		this.fanoutChannelOptions = {
+			...DEFAULT_PUBSUB_FANOUT_CHANNEL_OPTIONS,
+			...(props?.fanoutChannel || {}),
+		} as Omit<FanoutTreeChannelOptions, "role">;
+		this.fanoutJoinOptions = props?.fanoutJoin;
 		const requestedSubscriberCacheMaxEntries =
 			props?.subscriberCacheMaxEntries ?? SUBSCRIBER_CACHE_DEFAULT_MAX_ENTRIES;
 		this.subscriberCacheMaxEntries = Math.min(
@@ -132,6 +194,19 @@ export class TopicControlPlane
 	}
 
 	stop() {
+		for (const st of this.fanoutChannels.values()) {
+			try {
+				st.channel.removeEventListener("data", st.onData as any);
+			} catch {
+				// ignore
+			}
+			try {
+				st.channel.close();
+			} catch {
+				// ignore
+			}
+		}
+		this.fanoutChannels.clear();
 		this.subscriptions.clear();
 		this.topics.clear();
 		this.peerToTopic.clear();
@@ -153,6 +228,122 @@ export class TopicControlPlane
 			this.peerToTopic.set(publicKey.hashcode(), new Set());
 	}
 
+	private isFanoutTopic(topic: string) {
+		return Boolean(this.fanout && this.fanoutTopicsFn(topic.toString()));
+	}
+
+	private async ensureFanoutChannel(topic: string): Promise<void> {
+		const t = topic.toString();
+		if (!this.fanout) {
+			throw new Error(
+				`Fanout is required for topic ${t}, but no fanout service was provided to TopicControlPlane`,
+			);
+		}
+
+		const existing = this.fanoutChannels.get(t);
+		if (existing) {
+			return existing.join;
+		}
+
+		const root = await this.topicRootControlPlane.resolveTopicRoot(t);
+		if (!root) {
+			throw new Error(`Fanout topic root could not be resolved for topic: ${t}`);
+		}
+
+		const channel = new FanoutChannel(this.fanout, { topic: t, root });
+		const onData = (ev: any) => {
+			const detail = ev?.detail as FanoutTreeDataEvent | undefined;
+			if (!detail) return;
+
+			let pubsubMessage: PubSubMessage;
+			try {
+				pubsubMessage = PubSubMessage.from(detail.payload);
+			} catch {
+				return;
+			}
+			if (!(pubsubMessage instanceof PubSubData)) return;
+
+			// Deliver only if we're currently subscribed.
+			const forMe = pubsubMessage.topics.some((x) => this.subscriptions.has(x));
+			if (!forMe) return;
+
+			// Fanout transport frames include a kind-prefix. Present a PubSub-shaped message
+			// to consumers (data = PubSub bytes) while carrying best-effort metadata (id/timestamp).
+			const contextMessage = new DataMessage({
+				data: detail.payload,
+				header: new MessageHeader({
+					id: detail.message.id,
+					session: 0,
+					mode: new AnyWhere(),
+					priority: detail.message.header.priority,
+				}),
+			});
+			contextMessage.header.timestamp = detail.timestamp;
+			// Note: the fanout transport frame is signed over its own wire bytes (kind + channel key + seq + payload).
+			// Presenting those signatures on a synthetic PubSub-shaped DataMessage would be misleading (it would not verify).
+
+			this.dispatchEvent(
+				new CustomEvent("data", {
+					detail: new DataEvent({
+						data: pubsubMessage,
+						message: contextMessage,
+					}),
+				}),
+			);
+		};
+		channel.addEventListener("data", onData as any);
+
+		const join = (async () => {
+			try {
+				if (root === this.publicKeyHash) {
+					channel.openAsRoot(this.fanoutChannelOptions);
+					return;
+				}
+				await channel.join(this.fanoutChannelOptions, this.fanoutJoinOptions);
+			} catch (error) {
+				try {
+					channel.removeEventListener("data", onData as any);
+				} catch {
+					// ignore
+				}
+				try {
+					channel.close();
+				} catch {
+					// ignore
+				}
+				throw error;
+			}
+		})();
+
+		this.fanoutChannels.set(t, { root, channel, join, onData });
+		join.catch(() => {
+			this.fanoutChannels.delete(t);
+		});
+		return join;
+	}
+
+	private async closeFanoutChannel(topic: string): Promise<void> {
+		const t = topic.toString();
+		const st = this.fanoutChannels.get(t);
+		if (!st) return;
+		this.fanoutChannels.delete(t);
+		try {
+			st.channel.removeEventListener("data", st.onData as any);
+		} catch {
+			// ignore
+		}
+		try {
+			await st.channel.leave({ notifyParent: true });
+		} catch {
+			// ignore
+			try {
+				st.channel.close();
+			} catch {
+				// ignore
+			}
+		}
+	}
+
 	async subscribe(topic: string) {
 		// this.debounceUnsubscribeAggregator.delete(topic);
 		return this.debounceSubscribeAggregator.add({ key: topic });
@@ -171,6 +362,7 @@ export class TopicControlPlane
 		}
 
 		const newTopicsForTopicData: string[] = [];
+		const fanoutJoins: Promise<void>[] = [];
 		for (const { key: topic, counter } of topics) {
 			let prev = this.subscriptions.get(topic);
 			if (prev) {
@@ -181,8 +373,12 @@ export class TopicControlPlane
 				};
 				this.subscriptions.set(topic, prev);
 
-				newTopicsForTopicData.push(topic);
-				this.listenForSubscribers(topic);
+				if (this.isFanoutTopic(topic)) {
+					fanoutJoins.push(this.ensureFanoutChannel(topic));
+				} else {
+					newTopicsForTopicData.push(topic);
+					this.listenForSubscribers(topic);
+				}
 			}
 		}
 
@@ -203,6 +399,10 @@ export class TopicControlPlane
 			});
 
 			await this.publishMessage(this.publicKey, await message.sign(this.sign));
+		}
+
+		if (fanoutJoins.length > 0) {
+			await Promise.all(fanoutJoins);
 		}
 	}
 
@@ -249,6 +449,9 @@ export class TopicControlPlane
 				}
 				this.topics.delete(topic);
 				this.topicsToPeers.delete(topic);
+				if (this.isFanoutTopic(topic)) {
+					await this.closeFanoutChannel(topic);
+				}
 				continue;
 			}
 
@@ -287,7 +490,11 @@ export class TopicControlPlane
 					}
 				}
 
-				topicsToUnsubscribe.push(topic);
+				if (this.isFanoutTopic(topic)) {
+					await this.closeFanoutChannel(topic);
+				} else {
+					topicsToUnsubscribe.push(topic);
+				}
 				this.subscriptions.delete(topic);
 				this.topics.delete(topic);
 				this.topicsToPeers.delete(topic);
@@ -314,18 +521,33 @@ export class TopicControlPlane
 	}
 
 	getSubscribers(topic: string): PublicSignKey[] | undefined {
-		const remote = this.topics.get(topic.toString());
+		const t = topic.toString();
 
-		if (!remote) {
-			return undefined;
+		// Fanout topics: bounded, overlay-local view only.
+		if (this.fanout && this.fanoutTopicsFn(t)) {
+			const st = this.fanoutChannels.get(t);
+			const includeSelf = this.subscriptions.has(t);
+			const hashes = st?.channel.getPeerHashes({ includeSelf }) ?? [];
+			const seen = new Set<string>();
+			const ret: PublicSignKey[] = [];
+			for (const h of hashes) {
+				if (!h || seen.has(h)) continue;
+				seen.add(h);
+				const key = this.getPublicKey(h) ?? this.fanout.getPublicKey(h);
+				if (key) ret.push(key);
+			}
+			if (ret.length === 0 && includeSelf) {
+				return [this.publicKey];
+			}
+			return ret.length > 0 ? ret : undefined;
 		}
+
+		const remote = this.topics.get(t);
+		if (!remote) return undefined;
+
 		const ret: PublicSignKey[] = [];
-		for (const v of remote.values()) {
-			ret.push(v.publicKey);
-		}
-		if (this.subscriptions.get(topic)) {
-			ret.push(this.publicKey);
-		}
+		for (const v of remote.values()) ret.push(v.publicKey);
+		if (this.subscriptions.get(t)) ret.push(this.publicKey);
 		return ret;
 	}
 
@@ -349,9 +571,21 @@ export class TopicControlPlane
 			return;
 		}
 
-		const topics = typeof topic === "string" ? [topic] : topic;
-		for (const topic of topics) {
-			this.listenForSubscribers(topic);
+		const topicsAll = (typeof topic === "string" ? [topic] : topic).map((t) =>
+			t.toString(),
+		);
+		const topics =
+			this.fanout
+				? topicsAll.filter((t) => !this.fanoutTopicsFn(t))
+				: topicsAll;
+		for (const t of topics) {
+			this.listenForSubscribers(t);
+		}
+
+		// Fanout-backed topics do not use subscriber gossip. Callers can still use
+		// `getSubscribers()` for a bounded overlay-local view once joined.
+		if (topics.length === 0) {
+			return;
 		}
 
 		const stream = to ? this.peers.get(to.hashcode()) : undefined;
@@ -427,10 +661,33 @@ export class TopicControlPlane
 			throw new NotStartedError();
 		}
 
-		const topics =
+		const topicsAll =
 			(options as { topics: string[] }).topics?.map((x) => x.toString()) || [];
 
 		const hasExplicitTOs = options?.mode && deliveryModeHasReceiver(options.mode);
+
+		// Fanout-backed publish for selected topics (no subscriber gossip required).
+		let topics = topicsAll;
+		const fanoutTopics =
+			!hasExplicitTOs && data && this.fanout
+				? topicsAll.filter((t) => this.fanoutTopicsFn(t))
+				: [];
+		if (fanoutTopics.length > 0) {
+			for (const t of fanoutTopics) {
+				await this.ensureFanoutChannel(t);
+				const st = this.fanoutChannels.get(t);
+				if (!st) {
+					throw new Error(`Fanout channel missing for topic: ${t}`);
+				}
+				const msg = new PubSubData({ topics: [t], data, strict: false });
+				await st.channel.publish(toUint8Array(msg.bytes()));
+			}
+			topics = topicsAll.filter((t) => !this.fanoutTopicsFn(t));
+			if (topics.length === 0) {
+				return;
+			}
+		}
+
 		let tos = hasExplicitTOs ? options.mode?.to : this.getPeersOnTopics(topics);
 
 		// Bootstrap publish (best-effort):
@@ -656,6 +913,12 @@ export class TopicControlPlane
 		const stream = this.peers.get(publicKey.hashcode());
 
 		if (this.subscriptions.size > 0) {
+			const topicsToGossip = this.getSubscriptionOverlap().filter(
+				(t) => !this.isFanoutTopic(t),
+			);
+			if (topicsToGossip.length === 0) {
+				return resp;
+			}
 			// Tell the newly reachable peer about our subscriptions. This also acts as a
 			// catch-up mechanism when we learn about new peers via routed ACKs (not only
 			// direct neighbours).
@@ -664,7 +927,7 @@ export class TopicControlPlane
 				await new DataMessage({
 					data: toUint8Array(
 						new Subscribe({
-							topics: this.getSubscriptionOverlap(), // TODO: protocol efficiency; do we really need to share *everything*?
+							topics: topicsToGossip, // TODO: protocol efficiency; do we really need to share *everything*?
 							requestSubscribers: true,
 						}).bytes(),
 					),
@@ -910,7 +1173,7 @@ export class TopicControlPlane
 						// respond if we are subscribing
 						const mySubscriptions = this.getSubscriptionOverlap(
 							pubsubMessage.topics,
-						);
+						).filter((t) => !this.isFanoutTopic(t));
 						if (mySubscriptions.length > 0) {
 							const response = new DataMessage({
 								data: toUint8Array(
@@ -967,7 +1230,7 @@ export class TopicControlPlane
 			} else if (pubsubMessage instanceof GetSubscribers) {
 				const subscriptionsToSend: string[] = this.getSubscriptionOverlap(
 					pubsubMessage.topics,
-				);
+				).filter((t) => !this.isFanoutTopic(t));
 				if (subscriptionsToSend.length > 0) {
 					// respond
 					this.publishMessage(

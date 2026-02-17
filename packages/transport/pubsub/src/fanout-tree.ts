@@ -320,6 +320,7 @@ export type FanoutTreeDataEvent = {
 	from: string; // immediate sender (edge used for forwarding)
 	origin: string; // original sender (signature[0]) if present, else `from`
 	timestamp: bigint; // sender-provided timestamp (DataMessage.header.timestamp)
+	message: DataMessage; // transport-level message (signed by root for proxy publishes)
 };
 
 export type FanoutTreeUnicastEvent = {
@@ -331,6 +332,7 @@ export type FanoutTreeUnicastEvent = {
 	origin: string; // original sender (signature[0])
 	to: string; // final destination hash
 	timestamp: bigint; // sender-provided timestamp (DataMessage.header.timestamp)
+	message: DataMessage; // transport-level message carrying the unicast control frame
 };
 
 export type FanoutTreeChannelMetrics = {
@@ -2714,6 +2716,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			throw new Error("Unicast route token target mismatch");
 		}
 		if (target === this.publicKeyHash) {
+			const wire = encodeUnicast(ch.id.key, toRoute, payload);
+			const message = await this.createMessage(wire, {
+				mode: new AnyWhere(),
+				priority: CONTROL_PRIORITY,
+			} as any);
 			this.dispatchEvent(
 				new CustomEvent("fanout:unicast", {
 					detail: {
@@ -2724,7 +2731,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						from: this.publicKeyHash,
 						origin: this.publicKeyHash,
 						to: target,
-						timestamp: BigInt(Date.now()),
+						timestamp: message.header.timestamp,
+						message,
 					},
 				}),
 			);
@@ -2866,6 +2874,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (ch.isRoot) {
 			const target = toRoute[toRoute.length - 1]!;
 			if (target === this.publicKeyHash) {
+				const message = await this.createMessage(data, {
+					mode: new AnyWhere(),
+					priority: CONTROL_PRIORITY,
+				} as any);
 				this.dispatchEvent(
 					new CustomEvent("fanout:unicast", {
 						detail: {
@@ -2876,7 +2888,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							from: this.publicKeyHash,
 							origin: this.publicKeyHash,
 							to: target,
-							timestamp: BigInt(Date.now()),
+							timestamp: message.header.timestamp,
+							message,
 						},
 					}),
 				);
@@ -2905,7 +2918,21 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (!ch) throw new Error(`Channel not open: ${topic} (${root})`);
 		if (!ch.isRoot) throw new Error("Only the channel root can publish");
 		const seq = ch.seq++;
-		await this._sendData(ch, [...ch.children.keys()], seq, payload);
+		const message = await this._sendData(ch, [...ch.children.keys()], seq, payload);
+		this.dispatchEvent(
+			new CustomEvent("fanout:data", {
+				detail: {
+					topic: ch.id.topic,
+					root: ch.id.root,
+					seq,
+					payload,
+					from: this.publicKeyHash,
+					origin: this.publicKeyHash,
+					timestamp: message.header.timestamp,
+					message,
+				},
+			}),
+		);
 	}
 
 	/**
@@ -3159,18 +3186,32 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		);
 	}
 
-	private async _sendData(ch: ChannelState, to: string[], seq: number, payload: Uint8Array) {
-		if (to.length === 0) return;
+	private async _sendData(
+		ch: ChannelState,
+		to: string[],
+		seq: number,
+		payload: Uint8Array,
+	): Promise<DataMessage> {
 		this.markCached(ch, seq, payload);
 		ch.maxSeqSeen = Math.max(ch.maxSeqSeen, seq);
 
+		const framed = encodeData(payload);
+		const message = await this.createMessage(framed, {
+			mode: new AnyWhere(),
+			priority: DATA_PRIORITY,
+			id: this.makeDataId(ch, seq),
+		} as any);
+
+		if (to.length === 0) {
+			return message;
+		}
+
 		this.pruneDisconnectedChildren(ch);
 
-		const framed = encodeData(payload);
 		const candidates = to
 			.map((hash) => ({ hash, stream: this.peers.get(hash) }))
 			.filter((c): c is { hash: string; stream: PeerStreams } => Boolean(c.stream));
-		if (candidates.length === 0) return;
+		if (candidates.length === 0) return message;
 
 		let selected = candidates;
 		let dropped = 0;
@@ -3246,13 +3287,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 		}
 
-		if (selected.length === 0) return;
-
-		const message = await this.createMessage(framed, {
-			mode: new AnyWhere(),
-			priority: DATA_PRIORITY,
-			id: this.makeDataId(ch, seq),
-		} as any);
+		if (selected.length === 0) return message;
 
 		// Best-effort DATA-plane: never block on writability. Drop if not writable and rely on repair.
 		const msgBytes = message.bytes();
@@ -3341,6 +3376,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
 			}
 		}
+
+		return message;
 	}
 
 	private async _forwardDataMessage(
@@ -5589,7 +5626,21 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 								// Only accept upstream proxy publishes from established children.
 								if (!isFromChild) return true;
 							const seq = ch.seq++;
-							await this._sendData(ch, [...ch.children.keys()], seq, payload);
+							const message = await this._sendData(ch, [...ch.children.keys()], seq, payload);
+							this.dispatchEvent(
+								new CustomEvent("fanout:data", {
+									detail: {
+										topic: ch.id.topic,
+										root: ch.id.root,
+										seq,
+										payload,
+										from: this.publicKeyHash,
+										origin: this.publicKeyHash,
+										timestamp: message.header.timestamp,
+										message,
+									},
+								}),
+							);
 							return true;
 						}
 
@@ -5747,6 +5798,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 										origin,
 										to: target,
 										timestamp: message.header.timestamp,
+										message,
 									},
 								}),
 							);
@@ -5799,6 +5851,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 										origin,
 										to: target,
 										timestamp: message.header.timestamp,
+										message,
 									},
 								}),
 							);
@@ -5956,6 +6009,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 								message.header.signatures?.publicKeys?.[0]?.hashcode?.() ??
 								fromHash,
 							timestamp: message.header.timestamp,
+							message,
 						},
 					}),
 			);
