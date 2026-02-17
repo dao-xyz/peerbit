@@ -104,8 +104,12 @@ The key is that all proofs reduce to the same abstraction: "for destination D, h
      - i.e. opt-in via `topicRootControlPlane.setTopicRoot(topic, rootHash)`.
    - Code: `packages/transport/pubsub/src/index.ts`, `packages/clients/peerbit/src/libp2p.ts`
    - Tests: `packages/transport/pubsub/test/fanout-topics.spec.ts`
-6. (Next) Route-proof abstraction and unified route store (ACK traces + fanout route tokens as inputs to one decision point).
-7. (Later) Reduce/delete redundant topology managers (DirectStream routing becomes optional or a thin adapter over the shared route store).
+6. (Done) Route-proof decision point + unified route store (ACK traces + fanout route tokens as inputs to one decision point).
+   - Shared-log directed delivery now prefers a proven cheap direct path (connected or routed) and falls back to fanout unicast ACK, then to RPC/pubsub routing: `packages/programs/data/shared-log/src/index.ts`
+   - DirectStream now shares a single node-level session + `Routes` table across co-located protocols by default (`sharedRouting=true`), so ACK-learned routes are not duplicated per protocol: `packages/transport/stream/src/index.ts`
+7. (Done, partial) Reduce/delete redundant topology managers.
+   - We still have distinct overlay semantics (FanoutTree vs DirectStream), but the *node-level routing knowledge* is now shared.
+   - The remaining work (if we want to go further) is to decide whether to fully deprecate DirectStream multi-hop routing for fanout-backed workloads.
 
 ## Immediate Next Steps (Implementation TODO)
 
@@ -123,21 +127,25 @@ These are ordered to keep the PR green while moving toward the V2 "single story"
    - Create a small shared abstraction: `RouteHint` / `RouteProof`
      - inputs: ACK traces (DirectStream), fanout route tokens (FanoutTree), underlay metrics (RTT, liveness)
      - outputs: next-hop candidates + cost + TTL/confidence
-   - Ensure there is exactly one "should I send direct / proxy / flood?" decision site.
-   - Files: `packages/transport/stream/src/routes.ts`, `packages/transport/pubsub/src/fanout-tree.ts` (route token caching), shared-log delivery decision code
+   - Status: Implemented as a single decision point for shared-log directed delivery:
+     - if a cheap direct path is known, use it
+     - else use fanout unicast ACK (bounded overlay)
+     - else fall back to RPC/pubsub routing (may flood for discovery)
+   - Node-level route store is shared across protocols via `DirectStreamOptions.sharedRouting` (default true).
+   - Files: `packages/transport/stream/src/index.ts`, `packages/programs/data/shared-log/src/index.ts`
 
 3. Abuse resistance and cost control (make scaling predictable)
-   - Per-hop rate limiting for proxy publish / unicast relay.
-   - Cap fanout tracker state and make it cheap to reject abusive join/publish.
-   - Consider optional capability gates for "inbox-like" directed traffic.
+   - Status: Implemented
+   - Per-hop rate limiting for proxy publish / unicast relay:
+     - `proxyPublishBudgetBps`/`unicastBudgetBps` token buckets (per-child ingress), with tests
+   - Cap fanout tracker state:
+     - bounded tracker directory per channel + bounded namespace cache (LRU)
+   - Code: `packages/transport/pubsub/src/fanout-tree.ts`, tests: `packages/transport/pubsub/test/fanout-tree.spec.ts`
 
 4. Benchmarks
-   - Update / add benchmarks that stress:
-     - huge topic fanout
-     - many topics (high topic cardinality)
-     - hotspots (skewed publishers/consumers)
-     - repair effectiveness under loss/churn
-   - Keep the "cost knobs" measurable: bytes sent, connections, join time, delivery latency.
+   - Status: Updated
+   - `pubsub-topic-sim` now supports `--fanoutTopic 1` + `--fanoutRootIndex` to exercise fanout-backed topic delivery on the real `TopicControlPlane` code path.
+   - Files: `packages/transport/pubsub/benchmark/pubsub-topic-sim-lib.ts`, `packages/transport/pubsub/benchmark/pubsub-topic-sim.ts`
 
 ## Test / Verification Checklist
 

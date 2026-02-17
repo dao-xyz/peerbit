@@ -862,6 +862,16 @@ export type DirectStreamOptions = {
 	routeCacheMaxFromEntries?: number;
 	routeCacheMaxTargetsPerFrom?: number;
 	routeCacheMaxRelaysPerTarget?: number;
+	/**
+	 * Share node-level routing/session state across DirectStream instances created
+	 * from the same libp2p private key.
+	 *
+	 * This reduces duplicated topology knowledge when multiple protocols run on
+	 * the same node (e.g. pubsub + fanout overlays).
+	 *
+	 * Defaults to `true`.
+	 */
+	sharedRouting?: boolean;
 	seenCacheMax?: number;
 	seenCacheTtlMs?: number;
 };
@@ -892,6 +902,15 @@ export interface DirectStreamComponents {
 	events: TypedEventTarget<Libp2pEvents>;
 	privateKey: PrivateKey;
 }
+
+type SharedRoutingState = {
+	session: number;
+	routes: Routes;
+	controller: AbortController;
+	refs: number;
+};
+
+const sharedRoutingByPrivateKey = new WeakMap<PrivateKey, SharedRoutingState>();
 
 export type PublishOptions = (WithMode | WithTo) &
 	PriorityOptions &
@@ -937,9 +956,12 @@ export abstract class DirectStream<
 		private prunedConnectionsCache?: Cache<string>;
 		private pruneToLimitsInFlight?: Promise<void>;
 		private routeMaxRetentionPeriod: number;
-		private routeCacheMaxFromEntries?: number;
-		private routeCacheMaxTargetsPerFrom?: number;
-		private routeCacheMaxRelaysPerTarget?: number;
+	private routeCacheMaxFromEntries?: number;
+	private routeCacheMaxTargetsPerFrom?: number;
+	private routeCacheMaxRelaysPerTarget?: number;
+	private readonly sharedRouting: boolean;
+	private sharedRoutingKey?: PrivateKey;
+	private sharedRoutingState?: SharedRoutingState;
 
 	// for sequential creation of outbound streams
 		public outboundInflightQueue: Pushable<{
@@ -982,6 +1004,7 @@ export abstract class DirectStream<
 					routeCacheMaxFromEntries,
 					routeCacheMaxTargetsPerFrom,
 				routeCacheMaxRelaysPerTarget,
+				sharedRouting = true,
 				seenCacheMax = 1e6,
 				seenCacheTtlMs = 10 * 60 * 1e3,
 				inboundIdleTimeout,
@@ -1013,6 +1036,7 @@ export abstract class DirectStream<
 			this.routeCacheMaxFromEntries = routeCacheMaxFromEntries;
 			this.routeCacheMaxTargetsPerFrom = routeCacheMaxTargetsPerFrom;
 			this.routeCacheMaxRelaysPerTarget = routeCacheMaxRelaysPerTarget;
+			this.sharedRouting = sharedRouting !== false;
 			this.peerKeyHashToPublicKey = new Map();
 			this._onIncomingStream = this._onIncomingStream.bind(this);
 			this.onPeerConnected = this.onPeerConnected.bind(this);
@@ -1099,7 +1123,6 @@ export abstract class DirectStream<
 			return;
 		}
 
-		this.session = +new Date();
 		await ready;
 
 		this.closeController = new AbortController();
@@ -1180,6 +1203,39 @@ export abstract class DirectStream<
 			this.outboundInflightQueue.return();
 		});
 
+		if (this.sharedRouting) {
+			const key = this.components.privateKey;
+			this.sharedRoutingKey = key;
+			let state = sharedRoutingByPrivateKey.get(key);
+			if (!state) {
+				const controller = new AbortController();
+				state = {
+					session: Date.now(),
+					controller,
+					routes: new Routes(this.publicKeyHash, {
+						routeMaxRetentionPeriod: this.routeMaxRetentionPeriod,
+						signal: controller.signal,
+						maxFromEntries: this.routeCacheMaxFromEntries,
+						maxTargetsPerFrom: this.routeCacheMaxTargetsPerFrom,
+						maxRelaysPerTarget: this.routeCacheMaxRelaysPerTarget,
+					}),
+					refs: 0,
+				};
+				sharedRoutingByPrivateKey.set(key, state);
+			} else {
+				// Best-effort: prefer the strictest cleanup policy among co-located protocols.
+				state.routes.routeMaxRetentionPeriod = Math.min(
+					state.routes.routeMaxRetentionPeriod,
+					this.routeMaxRetentionPeriod,
+				);
+			}
+
+			state.refs += 1;
+			this.sharedRoutingState = state;
+			this.session = state.session;
+			this.routes = state.routes;
+		} else {
+			this.session = Date.now();
 			this.routes = new Routes(this.publicKeyHash, {
 				routeMaxRetentionPeriod: this.routeMaxRetentionPeriod,
 				signal: this.closeController.signal,
@@ -1187,6 +1243,7 @@ export abstract class DirectStream<
 				maxTargetsPerFrom: this.routeCacheMaxTargetsPerFrom,
 				maxRelaysPerTarget: this.routeCacheMaxRelaysPerTarget,
 			});
+		}
 
 		this.started = true;
 		this.stopping = false;
@@ -1265,6 +1322,9 @@ export abstract class DirectStream<
 			return;
 		}
 
+		const sharedState = this.sharedRoutingState;
+		const sharedKey = this.sharedRoutingKey;
+
 		clearTimeout(this.pruneConnectionsTimeout);
 
 		await Promise.all(
@@ -1299,7 +1359,11 @@ export abstract class DirectStream<
 		this.queue.clear();
 		this.peers.clear();
 		this.seenCache.clear();
-		this.routes.clear();
+		// When routing is shared across co-located protocols, only clear once the last
+		// instance stops. Otherwise we'd wipe routes still in use by other services.
+		if (!sharedState) {
+			this.routes.clear();
+		}
 		this.peerKeyHashToPublicKey.clear();
 
 		for (const [_k, v] of this._ackCallbacks) {
@@ -1307,6 +1371,24 @@ export abstract class DirectStream<
 		}
 
 		this._ackCallbacks.clear();
+		this.sharedRoutingState = undefined;
+		this.sharedRoutingKey = undefined;
+		if (sharedState && sharedKey) {
+			sharedState.refs = Math.max(0, sharedState.refs - 1);
+			if (sharedState.refs === 0) {
+				try {
+					sharedState.routes.clear();
+				} catch {
+					// ignore
+				}
+				try {
+					sharedState.controller.abort();
+				} catch {
+					// ignore
+				}
+				sharedRoutingByPrivateKey.delete(sharedKey);
+			}
+		}
 		logger.trace("stopped");
 		this.stopping = false;
 	}

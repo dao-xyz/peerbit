@@ -2,7 +2,12 @@ import type { PeerId } from "@libp2p/interface";
 import { PreHash, SignatureWithKey } from "@peerbit/crypto";
 import { AcknowledgeAnyWhere, SilentDelivery } from "@peerbit/stream-interface";
 import { delay } from "@peerbit/time";
-import { TopicControlPlane, type TopicControlPlaneComponents } from "../src/index.js";
+import {
+	FanoutTree,
+	TopicControlPlane,
+	TopicRootControlPlane,
+	type TopicControlPlaneComponents,
+} from "../src/index.js";
 import {
 	InMemoryConnectionManager,
 	InMemoryNetwork,
@@ -12,6 +17,8 @@ export type PubsubTopicSimParams = {
 	nodes: number;
 	degree: number;
 	writerIndex: number;
+	fanoutTopic: boolean;
+	fanoutRootIndex: number;
 	subscribers: number;
 
 	messages: number;
@@ -293,6 +300,29 @@ const waitForProtocolStreams = async (
 	throw new Error("Timeout waiting for protocol streams to become duplex");
 };
 
+class SimFanoutTree extends FanoutTree {
+	constructor(c: any, opts?: any) {
+		super(c, opts);
+		// Fast/mock signing: keep signer identity semantics but skip crypto work.
+		this.sign = async () =>
+			new SignatureWithKey({
+				signature: new Uint8Array([0]),
+				publicKey: this.publicKey,
+				prehash: PreHash.NONE,
+			});
+	}
+
+	public async verifyAndProcess(message: any) {
+		// Skip expensive crypto verify for large sims, but keep session handling behavior
+		// consistent with the real implementation.
+		const from = message.header.signatures!.publicKeys[0];
+		if (!this.peers.has(from.hashcode())) {
+			this.updateSession(from, Number(message.header.session));
+		}
+		return true;
+	}
+}
+
 class SimTopicControlPlane extends TopicControlPlane {
 	constructor(
 		c: TopicControlPlaneComponents,
@@ -304,6 +334,7 @@ class SimTopicControlPlane extends TopicControlPlane {
 			subscriptionDebounceDelayMs: number;
 		},
 		private readonly recordModeToLen?: (len: number) => void,
+		extra?: Partial<ConstructorParameters<typeof TopicControlPlane>[1]>,
 	) {
 		super(c, {
 			canRelayMessage: true,
@@ -319,6 +350,7 @@ class SimTopicControlPlane extends TopicControlPlane {
 				maxConnections: Number.MAX_SAFE_INTEGER,
 				minConnections: 0,
 			},
+			...(extra || {}),
 		});
 
 		// Fast/mock signing: keep signer identity semantics but skip crypto work.
@@ -374,12 +406,20 @@ export const resolvePubsubTopicSimParams = (
 	const nodes = clampInt(Number(input.nodes ?? 2000), 1, 1_000_000_000);
 	const degree = clampInt(Number(input.degree ?? 6), 0, Math.max(0, nodes - 1));
 	const writerIndex = clampInt(Number(input.writerIndex ?? 0), 0, nodes - 1);
+	const fanoutTopic = Boolean(input.fanoutTopic ?? false);
+	const fanoutRootIndex = clampInt(
+		Number(input.fanoutRootIndex ?? writerIndex),
+		0,
+		nodes - 1,
+	);
 	const subscribers = clampInt(Number(input.subscribers ?? nodes - 1), 0, nodes - 1);
 
 	return {
 		nodes,
 		degree,
 		writerIndex,
+		fanoutTopic,
+		fanoutRootIndex,
 		subscribers,
 
 		messages: clampInt(Number(input.messages ?? 200), 0, 1_000_000_000),
@@ -442,6 +482,9 @@ export const formatPubsubTopicSimResult = (r: PubsubTopicSimResult) => {
 	lines.push(`- nodes: ${p.nodes}, degree: ${p.degree}`);
 	lines.push(
 		`- writerIndex: ${p.writerIndex}, subscribers: ${r.subscriberCount}, topic: ${p.topic}, silent: ${p.silent ? "on" : "off"}`,
+	);
+	lines.push(
+		`- fanoutTopic: ${p.fanoutTopic ? "on" : "off"} (rootIndex=${p.fanoutRootIndex})`,
 	);
 	lines.push(
 		`- messages: ${p.messages}, msgSize: ${p.msgSize}B, intervalMs: ${p.intervalMs}, redundancy: ${p.redundancy}`,
@@ -535,10 +578,12 @@ export const runPubsubTopicSim = async (
 		dropDataFrameRate: params.dropDataFrameRate,
 		dropSeed: params.seed,
 	});
+	const topicRootControlPlane = new TopicRootControlPlane();
 
 	const peers: {
 		peerId: PeerId;
 		sub: SimTopicControlPlane;
+		fanout?: SimFanoutTree;
 	}[] = [];
 
 	try {
@@ -560,8 +605,15 @@ export const runPubsubTopicSim = async (
 			};
 
 			const record = i === params.writerIndex ? recordModeToLen : undefined;
+			const fanout = params.fanoutTopic
+				? new SimFanoutTree(components as any, {
+						connectionManager: false,
+						topicRootControlPlane,
+					})
+				: undefined;
 			peers.push({
 				peerId: runtime.peerId,
+				fanout,
 				sub: new SimTopicControlPlane(
 					components,
 					{
@@ -572,10 +624,23 @@ export const runPubsubTopicSim = async (
 						subscriptionDebounceDelayMs: params.subscriptionDebounceDelayMs,
 					},
 					record,
+					params.fanoutTopic
+						? {
+								fanout,
+								topicRootControlPlane,
+							}
+						: undefined,
 				),
 			});
 		}
 
+		if (params.fanoutTopic) {
+			await Promise.all(
+				peers
+					.filter((p): p is typeof p & { fanout: SimFanoutTree } => Boolean(p.fanout))
+					.map((p) => p.fanout.start()),
+			);
+		}
 		await Promise.all(peers.map((p) => p.sub.start()));
 
 		// Establish initial graph via dials (bounded concurrency).
@@ -595,6 +660,13 @@ export const runPubsubTopicSim = async (
 		await runWithConcurrency(dialTasks, params.dialConcurrency);
 
 		await waitForProtocolStreams(peers);
+		if (params.fanoutTopic) {
+			await waitForProtocolStreams(
+				peers
+					.filter((p): p is typeof p & { fanout: SimFanoutTree } => Boolean(p.fanout))
+					.map((p) => ({ sub: p.fanout as any })),
+			);
+		}
 
 		const writer = peers[params.writerIndex]!.sub;
 		const subscriberIndices = pickDistinct(
@@ -606,7 +678,20 @@ export const runPubsubTopicSim = async (
 
 		// Subscribe
 		const subscribeStart = Date.now();
-		if (params.subscribeModel === "preseed") {
+		if (params.fanoutTopic) {
+			// Fanout-backed topic: join the overlay (no subscriber gossip required).
+			const rootHash = peers[params.fanoutRootIndex]!.sub.publicKeyHash;
+			topicRootControlPlane.setTopicRoot(params.topic, rootHash);
+
+			// Open the root channel before subscribing the rest to reduce join tail latency.
+			await peers[params.fanoutRootIndex]!.sub.subscribe(params.topic);
+
+			await Promise.all(
+				subscriberIndices.map(async (idx) => {
+					await peers[idx]!.sub.subscribe(params.topic);
+				}),
+			);
+		} else if (params.subscribeModel === "preseed") {
 			for (const idx of subscriberIndices) {
 				const node = peers[idx]!.sub;
 				(node as any).listenForSubscribers?.(params.topic);
@@ -875,7 +960,13 @@ export const runPubsubTopicSim = async (
 				}
 
 				try {
-					if (params.silent) {
+					if (params.fanoutTopic) {
+						await writer.publish(payload, {
+							id,
+							topics: [params.topic],
+							signal: timeoutSignal,
+						});
+					} else if (params.silent) {
 						const tos = [...writer.getPeersOnTopics([params.topic])];
 						await writer.publish(payload, {
 							id,
@@ -1002,6 +1093,8 @@ export const runPubsubTopicSim = async (
 		throw e;
 	} finally {
 		if (timeout) clearTimeout(timeout);
+		// Stop pubsub first (some scenarios share routing/session state with fanout).
 		await Promise.all(peers.map((p) => p.sub.stop().catch(() => {})));
+		await Promise.all(peers.map((p) => p.fanout?.stop().catch(() => {})));
 	}
 };

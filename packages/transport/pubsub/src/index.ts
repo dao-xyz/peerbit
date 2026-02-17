@@ -830,11 +830,26 @@ export class TopicControlPlane
 		}
 
 		// send to all the other peers
+		const explicitDirectStreams =
+			hasExplicitTOs && options?.mode && deliveryModeHasReceiver(options.mode)
+				? (() => {
+						// Fast path: if every explicit recipient is a directly connected neighbour,
+						// send only to those streams (avoid route-based flooding when the route cache is cold).
+						const streams: PeerStreams[] = [];
+						for (const h of options.mode.to) {
+							if (!h || h === this.publicKeyHash) continue;
+							const s = this.peers.get(h);
+							if (!s || !s.isWritable) return undefined;
+							streams.push(s);
+						}
+						return streams.length > 0 ? streams : undefined;
+					})()
+				: undefined;
 		try {
 			await this.publishMessage(
 				this.publicKey,
 				message,
-				undefined,
+				explicitDirectStreams,
 				undefined,
 				options?.signal,
 			);

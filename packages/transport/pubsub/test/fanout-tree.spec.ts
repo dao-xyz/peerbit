@@ -1692,4 +1692,143 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 				await session.stop();
 			}
 		});
+
+		it("rate limits proxy publish ingress (abuse resistance)", async () => {
+			const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
+				2,
+				{
+					services: {
+						fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+					},
+				},
+			);
+
+			try {
+				await session.connect([[session.peers[0], session.peers[1]]]);
+
+				const root = session.peers[0].services.fanout;
+				const leaf = session.peers[1].services.fanout;
+
+				const topic = "proxy-publish-rate-limit";
+				const rootId = root.publicKeyHash;
+
+				const rootChannel = FanoutChannel.fromSelf(root, topic);
+				rootChannel.openAsRoot({
+					msgRate: 10,
+					msgSize: 32,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 1,
+					repair: false,
+					// Deterministic drop: capacity=1 byte, but payload > 1 byte.
+					proxyPublishBudgetBps: 1,
+					proxyPublishBurstMs: 1_000,
+				});
+
+				const leafChannel = new FanoutChannel(leaf, { topic, root: rootId });
+				await leafChannel.join(
+					{
+						msgRate: 10,
+						msgSize: 32,
+						uploadLimitBps: 0,
+						maxChildren: 0,
+						repair: false,
+					},
+					{ timeoutMs: 10_000 },
+				);
+
+				let received = 0;
+				leafChannel.addEventListener("data", () => {
+					received += 1;
+				});
+
+				await leafChannel.publish(new Uint8Array(16).fill(7));
+				await delay(200);
+				expect(received).to.equal(0);
+
+				const id = root.getChannelId(topic, rootId);
+				const ch = (root as any).channelsBySuffixKey.get(id.suffixKey);
+				expect(ch?.metrics?.proxyPublishDrops ?? 0).to.be.greaterThan(0);
+			} finally {
+				await session.stop();
+			}
+		});
+
+		it("rate limits unicast ingress (abuse resistance)", async () => {
+			const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
+				3,
+				{
+					services: {
+						fanout: (c) => new FanoutTree(c, { connectionManager: false }),
+					},
+				},
+			);
+
+			try {
+				await session.connect([
+					[session.peers[0], session.peers[1]],
+					[session.peers[0], session.peers[2]],
+				]);
+
+				const root = session.peers[0].services.fanout;
+				const leafA = session.peers[1].services.fanout;
+				const leafB = session.peers[2].services.fanout;
+
+				const topic = "unicast-rate-limit";
+				const rootId = root.publicKeyHash;
+
+				const rootChannel = FanoutChannel.fromSelf(root, topic);
+				rootChannel.openAsRoot({
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 2,
+					repair: false,
+					// Deterministic drop for unicast payload frames.
+					unicastBudgetBps: 1,
+					unicastBurstMs: 1_000,
+				});
+
+				const leafAChannel = new FanoutChannel(leafA, { topic, root: rootId });
+				await leafAChannel.join(
+					{
+						msgRate: 10,
+						msgSize: 64,
+						uploadLimitBps: 0,
+						maxChildren: 0,
+						repair: false,
+					},
+					{ timeoutMs: 10_000 },
+				);
+
+				const leafBChannel = new FanoutChannel(leafB, { topic, root: rootId });
+				await leafBChannel.join(
+					{
+						msgRate: 10,
+						msgSize: 64,
+						uploadLimitBps: 0,
+						maxChildren: 0,
+						repair: false,
+					},
+					{ timeoutMs: 10_000 },
+				);
+
+				let received: Uint8Array | undefined;
+				leafBChannel.addEventListener("unicast", (ev: any) => {
+					received = (ev?.detail as any)?.payload;
+				});
+
+				await leafAChannel.unicastTo(leafB.publicKeyHash, new Uint8Array([1, 2, 3]), {
+					timeoutMs: 5_000,
+				});
+
+				await delay(200);
+				expect(received).to.equal(undefined);
+
+				const id = root.getChannelId(topic, rootId);
+				const ch = (root as any).channelsBySuffixKey.get(id.suffixKey);
+				expect(ch?.metrics?.unicastDrops ?? 0).to.be.greaterThan(0);
+			} finally {
+				await session.stop();
+			}
+		});
 	});

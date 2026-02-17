@@ -1047,6 +1047,31 @@ export class SharedLog<
 				for (const peer of ackTo) {
 					track(
 						(async () => {
+							// Unified decision point:
+							// - If we can prove a cheap direct path (connected or routed), use it.
+							// - Otherwise, fall back to the fanout unicast ACK path (bounded overlay routing).
+							// - If that fails, fall back to pubsub/RPC routing which may flood to discover routes.
+							const pubsub: any = this.node.services.pubsub as any;
+							const canDirectFast =
+								Boolean(pubsub?.peers?.get?.(peer)?.isWritable) ||
+								Boolean(
+									pubsub?.routes?.isReachable?.(
+										pubsub?.publicKeyHash,
+										peer,
+										0,
+									),
+								);
+
+							if (canDirectFast) {
+								await this.rpc.send(message, {
+									mode: new AcknowledgeDelivery({
+										redundancy: 1,
+										to: [peer],
+									}),
+								});
+								return;
+							}
+
 							if (this._fanoutChannel) {
 								try {
 									await this._fanoutChannel.unicastToAck(

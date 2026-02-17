@@ -125,6 +125,28 @@ export type FanoutTreeChannelOptions = {
 	neighborRepairBurstMs?: number;
 
 	/**
+	 * Optional ingress budget (token bucket) for proxy publishes (`MSG_PUBLISH_PROXY`).
+	 *
+	 * This is enforced per established child link to cap amplification/DoS at the root
+	 * and on intermediate relays. Cost is measured in payload bytes.
+	 *
+	 * If `<= 0`, no budget is applied.
+	 */
+	proxyPublishBudgetBps?: number;
+	proxyPublishBurstMs?: number;
+
+	/**
+	 * Optional ingress budget (token bucket) for relaying unicast control traffic
+	 * (`MSG_UNICAST`, `MSG_UNICAST_ACK`).
+	 *
+	 * This is enforced per established child link. Cost is measured in payload bytes.
+	 *
+	 * If `<= 0`, no budget is applied.
+	 */
+	unicastBudgetBps?: number;
+	unicastBurstMs?: number;
+
+	/**
 	 * If set (>0), do not forward data that is older than this many milliseconds,
 	 * based on the message header timestamp (origin publish time, when forwarding
 	 * without re-signing).
@@ -359,6 +381,17 @@ export type FanoutTreeChannelMetrics = {
 	dataPayloadBytesReceived: number;
 	staleForwardsDropped: number;
 	dataWriteDrops: number;
+	/**
+	 * Proxy publish frames dropped due to local rate limiting.
+	 *
+	 * This is an abuse-resistance knob: it caps how much a single child can
+	 * amplify traffic via the root.
+	 */
+	proxyPublishDrops: number;
+	/**
+	 * Unicast frames dropped due to local rate limiting.
+	 */
+	unicastDrops: number;
 
 	joinReqSent: number;
 	joinReqReceived: number;
@@ -424,6 +457,11 @@ const PROVIDER_DIRECTORY_MAX_ENTRIES = 16_384;
 // This prevents unbounded memory growth if callers use extremely high-cardinality namespaces
 // (for example, `cid:<cid>` per block).
 const PROVIDER_DIRECTORY_MAX_NAMESPACES = 4_096;
+// Best-effort bounds for tracker state (join candidate directory).
+// Trackers should keep only a bounded set of recent candidates per channel, otherwise
+// large networks can cause unbounded memory growth on the tracker nodes.
+const TRACKER_DIRECTORY_MAX_ENTRIES = 16_384;
+const TRACKER_DIRECTORY_MAX_NAMESPACES = 4_096;
 
 const FANOUT_PROTOCOLS = ["/peerbit/fanout-tree/0.5.0"];
 
@@ -1205,6 +1243,12 @@ type ChannelState = {
 	neighborRepairTokenCapacity: number;
 	neighborRepairTokens: number;
 	neighborRepairLastRefillAt: number;
+	proxyPublishBudgetBps: number;
+	proxyPublishTokenCapacity: number;
+	proxyPublishTokensByPeer: Map<string, { tokens: number; lastRefillAt: number }>;
+	unicastBudgetBps: number;
+	unicastTokenCapacity: number;
+	unicastTokensByPeer: Map<string, { tokens: number; lastRefillAt: number }>;
 
 	uploadOverheadBytes: number;
 	uploadBurstMs: number;
@@ -1317,6 +1361,8 @@ const createEmptyMetrics = (): FanoutTreeChannelMetrics => ({
 	dataPayloadBytesReceived: 0,
 	staleForwardsDropped: 0,
 	dataWriteDrops: 0,
+	proxyPublishDrops: 0,
+	unicastDrops: 0,
 	joinReqSent: 0,
 	joinReqReceived: 0,
 	joinAcceptSent: 0,
@@ -1370,6 +1416,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	private readonly metricsBySuffixKey = new Map<string, FanoutTreeChannelMetrics>();
 	private bootstraps: Multiaddr[] = [];
 	private trackerBySuffixKey = new Map<string, Map<string, TrackerEntry>>();
+	private trackerNamespaceLru = new Map<string, number>();
 	private providerBySuffixKey = new Map<string, Map<string, ProviderEntry>>();
 	private providerNamespaceLru = new Map<string, number>();
 	private underlayPeerDisconnectHandler?: (ev: any) => void;
@@ -1426,10 +1473,31 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			return super.stop();
 		}
 
-		public setBootstraps(addrs: Array<string | Multiaddr>) {
-			this.bootstraps = addrs
-				.map((a) => (typeof a === "string" ? multiaddr(a) : a))
-				.filter((a) => Boolean(a));
+	public setBootstraps(addrs: Array<string | Multiaddr>) {
+		this.bootstraps = addrs
+			.map((a) => (typeof a === "string" ? multiaddr(a) : a))
+			.filter((a) => Boolean(a));
+	}
+
+	private touchTrackerNamespace(suffixKey: string, now = Date.now()) {
+		if (!suffixKey) return;
+		// LRU touch
+		this.trackerNamespaceLru.delete(suffixKey);
+		this.trackerNamespaceLru.set(suffixKey, now);
+		while (this.trackerNamespaceLru.size > TRACKER_DIRECTORY_MAX_NAMESPACES) {
+			const oldest = this.trackerNamespaceLru.keys().next().value as string | undefined;
+			if (!oldest) break;
+			this.trackerNamespaceLru.delete(oldest);
+			this.trackerBySuffixKey.delete(oldest);
+		}
+	}
+
+	private pruneTrackerNamespaceIfEmpty(suffixKey: string) {
+		const byPeer = this.trackerBySuffixKey.get(suffixKey);
+		if (byPeer && byPeer.size === 0) {
+			this.trackerBySuffixKey.delete(suffixKey);
+			this.trackerNamespaceLru.delete(suffixKey);
+		}
 	}
 
 	private touchProviderNamespace(suffixKey: string, now = Date.now()) {
@@ -1927,6 +1995,32 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					)
 				: 0;
 
+		const proxyPublishBudgetBps = Math.max(
+			0,
+			Math.floor(opts.proxyPublishBudgetBps ?? perChildBps),
+		);
+		const proxyPublishBurstMs = Math.max(
+			0,
+			Math.floor(opts.proxyPublishBurstMs ?? 1_000),
+		);
+		const proxyPublishTokenCapacity =
+			proxyPublishBudgetBps > 0 && proxyPublishBurstMs > 0
+				? Math.max(
+						1,
+						Math.floor((proxyPublishBudgetBps * proxyPublishBurstMs) / 1_000),
+					)
+				: 0;
+
+		const unicastBudgetBps = Math.max(
+			0,
+			Math.floor(opts.unicastBudgetBps ?? perChildBps),
+		);
+		const unicastBurstMs = Math.max(0, Math.floor(opts.unicastBurstMs ?? 1_000));
+		const unicastTokenCapacity =
+			unicastBudgetBps > 0 && unicastBurstMs > 0
+				? Math.max(1, Math.floor((unicastBudgetBps * unicastBurstMs) / 1_000))
+				: 0;
+
 				ch = {
 					id,
 					metrics: this.getMetricsForSuffixKey(id.suffixKey),
@@ -1961,6 +2055,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			neighborRepairTokenCapacity,
 			neighborRepairTokens: neighborRepairTokenCapacity,
 			neighborRepairLastRefillAt: Date.now(),
+			proxyPublishBudgetBps,
+			proxyPublishTokenCapacity,
+			proxyPublishTokensByPeer: new Map(),
+			unicastBudgetBps,
+			unicastTokenCapacity,
+			unicastTokensByPeer: new Map(),
 			uploadOverheadBytes,
 			uploadBurstMs,
 			uploadTokenCapacity,
@@ -3184,6 +3284,49 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			ch.neighborRepairTokenCapacity,
 			ch.neighborRepairTokens + (elapsedMs * ch.neighborRepairBudgetBps) / 1_000,
 		);
+	}
+
+	private takeIngressBudget(
+		ch: ChannelState,
+		kind: "proxy-publish" | "unicast",
+		fromHash: string,
+		costBytes: number,
+		now = Date.now(),
+	): boolean {
+		if (!fromHash) return false;
+		if (costBytes <= 0) return true;
+
+		const budgetBps =
+			kind === "proxy-publish" ? ch.proxyPublishBudgetBps : ch.unicastBudgetBps;
+		const capacity =
+			kind === "proxy-publish"
+				? ch.proxyPublishTokenCapacity
+				: ch.unicastTokenCapacity;
+		const byPeer =
+			kind === "proxy-publish"
+				? ch.proxyPublishTokensByPeer
+				: ch.unicastTokensByPeer;
+
+		if (budgetBps <= 0 || capacity <= 0) return true;
+
+		const prev = byPeer.get(fromHash);
+		const entry =
+			prev || ({ tokens: capacity, lastRefillAt: now } as const);
+		const elapsedMs = now - entry.lastRefillAt;
+		let tokens = entry.tokens;
+		if (elapsedMs > 0) {
+			tokens = Math.min(capacity, tokens + (elapsedMs * budgetBps) / 1_000);
+		}
+		if (tokens < costBytes) {
+			// LRU-touch on access to keep the bucket map bounded by active children.
+			byPeer.delete(fromHash);
+			byPeer.set(fromHash, { tokens, lastRefillAt: now });
+			return false;
+		}
+		tokens -= costBytes;
+		byPeer.delete(fromHash);
+		byPeer.set(fromHash, { tokens, lastRefillAt: now });
+		return true;
 	}
 
 	private async _sendData(
@@ -4953,11 +5096,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				}
 
 				const now = Date.now();
+				this.touchTrackerNamespace(suffixKey, now);
 				const ttl = Math.min(ttlMs, 120_000);
 				if (ttl === 0) {
 					byPeer.delete(fromHash);
+					this.pruneTrackerNamespaceIfEmpty(suffixKey);
 					return true;
 				}
+				// LRU by announce freshness, with a hard per-channel cap.
+				byPeer.delete(fromHash);
 				byPeer.set(fromHash, {
 					hash: fromHash,
 					level,
@@ -4966,6 +5113,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					addrs,
 					expiresAt: now + ttl,
 				});
+				while (byPeer.size > TRACKER_DIRECTORY_MAX_ENTRIES) {
+					const oldest = byPeer.keys().next().value as string | undefined;
+					if (!oldest) break;
+					byPeer.delete(oldest);
+				}
 				return true;
 			}
 
@@ -4975,6 +5127,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				const want = readU16BE(data, 37);
 
 				const now = Date.now();
+				this.touchTrackerNamespace(suffixKey, now);
 				const byPeer = this.trackerBySuffixKey.get(suffixKey);
 				const entries: TrackerEntry[] = [];
 				if (byPeer) {
@@ -4987,6 +5140,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						if (e.freeSlots <= 0) continue;
 						entries.push(e);
 					}
+					this.pruneTrackerNamespaceIfEmpty(suffixKey);
 				}
 
 				entries.sort((a, b) => {
@@ -5013,12 +5167,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 				const byPeer = this.trackerBySuffixKey.get(suffixKey);
 				if (!byPeer) return true;
+				this.touchTrackerNamespace(suffixKey);
 				const entry = byPeer.get(candidateHash);
 				if (!entry) return true;
 
 				const now = Date.now();
 				if (entry.expiresAt <= now) {
 					byPeer.delete(candidateHash);
+					this.pruneTrackerNamespaceIfEmpty(suffixKey);
 					return true;
 				}
 
@@ -5028,6 +5184,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				}
 				if (event === TRACKER_FEEDBACK_DIAL_FAILED || event === TRACKER_FEEDBACK_JOIN_TIMEOUT) {
 					byPeer.delete(candidateHash);
+					this.pruneTrackerNamespaceIfEmpty(suffixKey);
 					return true;
 				}
 				if (event === TRACKER_FEEDBACK_JOIN_REJECT) {
@@ -5620,6 +5777,18 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							if (!isFromParent && !isFromChild) return true;
 
 							const payload = data.subarray(33);
+							if (isFromChild) {
+								const ok = this.takeIngressBudget(
+									ch,
+									"proxy-publish",
+									fromHash,
+									payload.byteLength,
+								);
+								if (!ok) {
+									ch.metrics.proxyPublishDrops += 1;
+									return true;
+								}
+							}
 							this.touchPeerHint(ch, fromHash);
 
 							if (ch.isRoot) {
@@ -5752,6 +5921,18 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					const isFromParent = fromHash === ch.parent;
 					const isFromChild = ch.children.has(fromHash);
 					if (!isFromParent && !isFromChild) return true;
+					if (isFromChild) {
+						const ok = this.takeIngressBudget(
+							ch,
+							"unicast",
+							fromHash,
+							data.byteLength,
+						);
+						if (!ok) {
+							ch.metrics.unicastDrops += 1;
+							return true;
+						}
+					}
 
 					if (data.length < 1 + 32 + 1 + 1) return false;
 					const flags = data[33]! & 0xff;
