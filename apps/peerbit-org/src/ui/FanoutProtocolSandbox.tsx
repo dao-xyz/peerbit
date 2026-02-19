@@ -11,7 +11,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { PeerId } from "@libp2p/interface";
 import { PreHash, SignatureWithKey } from "@peerbit/crypto";
-import { TopicControlPlane, type TopicControlPlaneComponents } from "@peerbit/pubsub";
+import {
+	FanoutTree,
+	TopicControlPlane,
+	TopicRootControlPlane,
+	type TopicControlPlaneComponents,
+} from "@peerbit/pubsub";
 import { AcknowledgeAnyWhere } from "@peerbit/stream-interface";
 
 import {
@@ -105,6 +110,8 @@ const mulberry32 = (seed: number) => {
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 const EDGE_KEY_BASE = 2048;
+const SANDBOX_SHARD_TOPIC_PREFIX = "/peerbit/sandbox-shard/1/";
+const SANDBOX_SHARD_COUNT = 1;
 
 const createFlowBuffer = (cap: number): FlowBuffer => {
 	const safeCap = clamp(Math.floor(cap), 256, 40_000);
@@ -455,22 +462,43 @@ const quantile = (sorted: number[], q: number) => {
 };
 
 class SimTopicControlPlane extends TopicControlPlane {
+	private readonly simFanout: FanoutTree;
+
 	constructor(
 		components: TopicControlPlaneComponents,
-		opts: { subscriptionDebounceDelayMs: number; seekTimeoutMs: number },
+		opts: {
+			subscriptionDebounceDelayMs: number;
+			seekTimeoutMs: number;
+			topicRootControlPlane: TopicRootControlPlane;
+		},
 	) {
+		const connectionManager = {
+			// Keep it simple for browser demos.
+			dialer: false,
+			pruner: false,
+			maxConnections: Number.MAX_SAFE_INTEGER,
+			minConnections: 0,
+		} as const;
+
+		// PubSub now requires a FanoutTree instance for sharded delivery. We keep it
+		// per-peer but share a TopicRootControlPlane across peers for deterministic roots.
+		const fanout = new FanoutTree(components, {
+			seekTimeout: opts.seekTimeoutMs,
+			connectionManager,
+			topicRootControlPlane: opts.topicRootControlPlane,
+		});
+
 		super(components, {
 			canRelayMessage: true,
+			fanout,
 			subscriptionDebounceDelay: opts.subscriptionDebounceDelayMs,
 			seekTimeout: opts.seekTimeoutMs,
-			connectionManager: {
-				// Keep it simple for browser demos.
-				dialer: false,
-				pruner: false,
-				maxConnections: Number.MAX_SAFE_INTEGER,
-				minConnections: 0,
-			},
+			connectionManager,
+			topicRootControlPlane: opts.topicRootControlPlane,
+			shardCount: SANDBOX_SHARD_COUNT,
+			shardTopicPrefix: SANDBOX_SHARD_TOPIC_PREFIX,
 		});
+		this.simFanout = fanout;
 
 		// Fast/mock signing: we want the routing + stream behavior, not crypto cost.
 		this.sign = async () =>
@@ -491,6 +519,13 @@ class SimTopicControlPlane extends TopicControlPlane {
 			}
 		}
 		return true;
+	}
+
+	public override async stop() {
+		// TopicControlPlane owns the FanoutTree instance in this sandbox. The real
+		// libp2p setup runs them as separate services, so we need to stop both.
+		await super.stop();
+		await this.simFanout.stop();
 	}
 }
 
@@ -872,6 +907,7 @@ export function FanoutProtocolSandbox({
 					  }
 					: undefined,
 			});
+			const topicRootControlPlane = new TopicRootControlPlane();
 			const peers: Array<{ peerId: PeerId; sub: SimTopicControlPlane }> = [];
 
 			const seekTimeoutMs = clamp(
@@ -900,7 +936,11 @@ export function FanoutProtocolSandbox({
 
 				peers.push({
 					peerId: runtime.peerId,
-					sub: new SimTopicControlPlane(components, { subscriptionDebounceDelayMs, seekTimeoutMs }),
+					sub: new SimTopicControlPlane(components, {
+						subscriptionDebounceDelayMs,
+						seekTimeoutMs,
+						topicRootControlPlane,
+					}),
 				});
 
 			// Yield occasionally so the UI doesn't look frozen on larger node counts.
@@ -942,13 +982,26 @@ export function FanoutProtocolSandbox({
 				subscriberIndices.push(i);
 			}
 
+			// Use a deterministic shard root for the sandbox so joins work reliably
+			// even in sparse graphs without trackers/bootstraps.
+			const shardRoot = writer.publicKeyHash;
+			for (const p of peers) p.sub.setTopicRootCandidates([shardRoot]);
+
 				const subscribeStart = Date.now();
 				if (subscribeModel === "preseed") {
+					// Ensure the shard overlay is hosted (writer is the configured root).
+					await writer.requestSubscribers(topic).catch(() => {});
+
 					for (const idx of subscriberIndices) {
 						peers[idx]!.sub.subscriptions.set(topic, { counter: 1 });
 					}
+					// Join the shard overlay without publishing Subscribe messages.
+					await Promise.all(
+						subscriberIndices.map(async (idx) => {
+							await peers[idx]!.sub.requestSubscribers(topic).catch(() => {});
+						}),
+					);
 					const subscriberHashes = subscriberIndices.map((i) => peers[i]!.sub.publicKeyHash);
-					writer.topicsToPeers.set(topic, new Set(subscriberHashes));
 
 					// Warm up DirectStream routes so subsequent SilentDelivery publishes can travel beyond one relay hop.
 					// In the absence of routing info, relays intentionally avoid flooding SilentDelivery traffic
@@ -1041,7 +1094,7 @@ export function FanoutProtocolSandbox({
 			const publishDone = Date.now();
 
 			latencies.sort((a, b) => a - b);
-			const writerKnown = writer.topicsToPeers.get(topic)?.size ?? 0;
+			const writerKnown = writer.topics.get(topic)?.size ?? 0;
 
 			setResult({
 				nodes: n,

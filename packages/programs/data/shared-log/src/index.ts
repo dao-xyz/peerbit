@@ -4891,17 +4891,43 @@ export class SharedLog<
 			for (const { entry, leaders } of entries.values()) {
 				for (const leader of leaders.keys()) {
 					let set = peerToEntries.get(leader);
-				if (!set) {
-					set = [];
-					peerToEntries.set(leader, set);
+					if (!set) {
+						set = [];
+						peerToEntries.set(leader, set);
+					}
+
+					set.push(entry.hash);
 				}
 
-				set.push(entry.hash);
-			}
-
-			const pendingPrev = this._pendingDeletes.get(entry.hash);
-			if (pendingPrev) {
-				promises.push(pendingPrev.promise.promise);
+				const pendingPrev = this._pendingDeletes.get(entry.hash);
+				if (pendingPrev) {
+					// If a background prune is already in-flight, an explicit prune request should
+					// still respect the caller's timeout. Otherwise, tests (and user calls) can
+					// block on the longer "checked prune" timeout derived from
+					// `_respondToIHaveTimeout + waitForReplicatorTimeout`, which is intentionally
+					// large for resiliency.
+					if (explicitTimeout) {
+						const timeoutMs = Math.max(0, Math.floor(options?.timeout ?? 0));
+						promises.push(
+							new Promise((resolve, reject) => {
+								// Mirror the checked-prune error prefix so existing callers/tests can
+								// match on the message substring.
+								const timer = setTimeout(() => {
+									reject(
+										new Error(
+											`Timeout for checked pruning after ${timeoutMs}ms (pending=true closed=${this.closed})`,
+										),
+									);
+								}, timeoutMs);
+								timer.unref?.();
+								pendingPrev.promise.promise
+									.then(resolve, reject)
+									.finally(() => clearTimeout(timer));
+							}),
+						);
+					} else {
+						promises.push(pendingPrev.promise.promise);
+					}
 					continue;
 				}
 
