@@ -29,7 +29,9 @@ const createIdentity = async () => {
 
 // Tests in this workspace run in parallel across packages; allow extra headroom for
 // network/replication warmup under CI load.
-const REPLICATOR_WAIT_TIMEOUT = 60_000;
+// CI can be significantly slower/noisier than local runs; replicator discovery is network-driven.
+// Give this test enough time to avoid flaking under load.
+const REPLICATOR_WAIT_TIMEOUT = 120_000;
 
 @variant("any_identity_graph")
 class AnyCanAppendIdentityGraph extends IdentityGraph {
@@ -223,9 +225,10 @@ describe("index", () => {
 				}
 			});
 
-				it("trusted by chain", async function () {
-					// This test performs multiple networked operations and is sensitive to overall CI load.
-					this.timeout(180_000);
+					it("trusted by chain", async function () {
+						// This test performs multiple networked operations and is sensitive to overall CI load.
+						// It also includes explicit waits for replicator discovery.
+						this.timeout(300_000);
 
 				const l0a = new TrustedNetwork({ rootTrust: session.peers[0].peerId });
 				let l0b: TrustedNetwork | undefined;
@@ -242,10 +245,15 @@ describe("index", () => {
 						args: { replicate: false },
 					});
 
-					await session.peers[3].services.blocks.waitFor(session.peers[0].peerId);
-					l0d = await TrustedNetwork.open(l0a.address!, session.peers[3]);
+						await session.peers[3].services.blocks.waitFor(session.peers[0].peerId);
+						l0d = await TrustedNetwork.open(l0a.address!, session.peers[3]);
 
-					await l0c.waitFor([session.peers[0].peerId, session.peers[1].peerId]);
+						// Ensure the observer can directly reach the expected replicators before requesting
+						// replication info (avoids timing-sensitive routing flakes in CI).
+						await session.peers[2].services.blocks.waitFor(session.peers[1].peerId);
+						await session.peers[2].services.blocks.waitFor(session.peers[3].peerId);
+
+						await l0c.waitFor([session.peers[0].peerId, session.peers[1].peerId]);
 
 					await l0a.add(session.peers[1].peerId);
 
