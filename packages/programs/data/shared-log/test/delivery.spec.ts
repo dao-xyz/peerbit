@@ -157,15 +157,31 @@ describe("append delivery options", () => {
 			);
 		});
 
-		// Ensure the remote peer is known as a replicator before we append; otherwise the
-		// writer may compute a leader set that only includes itself and skip directed delivery.
-		await db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
-			timeout: 15e3,
-			roleAge: 0,
-		});
+			// Ensure the remote peer is known as a replicator before we append; otherwise the
+			// writer may compute a leader set that only includes itself and skip directed delivery.
+			await db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+				timeout: 15e3,
+				roleAge: 0,
+			});
 
-		const gate = pDefer<void>();
-		const ackAttempted = pDefer<void>();
+			// The implementation prefers direct pubsub/RPC delivery when it can prove a cheap
+			// path. In a 2-peer session that would bypass the fanout unicast-ACK path entirely,
+			// so we force the fallback path here to keep this behavior covered by tests.
+			const localPubsub: any = session.peers[0].services.pubsub;
+			const originalPeersGet = localPubsub?.peers?.get?.bind(localPubsub.peers);
+			if (originalPeersGet) {
+				localPubsub.peers.get = (hash: any) =>
+					hash === remoteHash ? undefined : originalPeersGet(hash);
+			}
+			const originalIsReachable = localPubsub?.routes?.isReachable?.bind(
+				localPubsub.routes,
+			);
+			if (originalIsReachable) {
+				localPubsub.routes.isReachable = () => false;
+			}
+
+			const gate = pDefer<void>();
+			const ackAttempted = pDefer<void>();
 
 		const remoteFanout: any = (session.peers[1].services as any).fanout;
 		const originalPublishMessage = remoteFanout.publishMessage.bind(remoteFanout);
@@ -307,42 +323,56 @@ describe("append delivery options", () => {
 		expect(exchangeHeadsRpcSends).to.equal(0);
 	});
 
-	it("resolves fanout root via topic-root-control-plane when root is omitted", async () => {
-		session = await TestSession.connected(2);
+		it("resolves fanout root via topic-root-control-plane when root is omitted", async () => {
+			session = await TestSession.connected(2);
 
-		const writerRoot = (session.peers[0].services as any).fanout.publicKeyHash as string;
-		for (const peer of session.peers) {
-			(peer.services as any)?.fanout?.topicRootControlPlane?.setTopicRootCandidates?.([
-				writerRoot,
-			]);
-		}
+			const writerRoot = (session.peers[0].services as any).fanout.publicKeyHash as string;
+			// Configure a deterministic root for this log topic without mutating the
+			// pubsub shard-root candidate set (which can otherwise break RPC delivery).
+			const store = new EventStore<string, any>();
+			const topic = store.log.topic;
+			for (const peer of session.peers) {
+				const plane: any = (peer.services as any)?.fanout?.topicRootControlPlane;
+				expect(plane, "expected fanout to expose topicRootControlPlane").to.exist;
+				plane.setTopicRoot(topic, writerRoot);
+				expect(await plane.resolveTopicRoot(topic)).to.equal(writerRoot);
+			}
 
-		const fanout = {
-			channel: {
-				msgRate: 10,
+			const fanout = {
+				channel: {
+					msgRate: 10,
 				msgSize: 256,
 				uploadLimitBps: 1_000_000,
 				maxChildren: 8,
 				repair: true,
-			},
-			join: { timeoutMs: 10_000 },
-		};
+				},
+				join: { timeoutMs: 10_000 },
+			};
 
-		const db1 = await session.peers[0].open(new EventStore<string, any>(), {
-			args: { fanout },
-		});
-		const db2 = await EventStore.open<EventStore<string, any>>(
-			db1.address!,
+			const db1 = await session.peers[0].open(store, {
+				args: { fanout },
+			});
+			const db2 = await EventStore.open<EventStore<string, any>>(
+				db1.address!,
 			session.peers[1],
 			{
 				args: { fanout },
-			},
-		);
+				},
+			);
 
-		let exchangeHeadsRpcSends = 0;
-		const rpcAny: any = db1.log.rpc;
-		const originalSend = rpcAny.send.bind(rpcAny);
-		rpcAny.send = async (...args: any[]) => {
+			await waitForResolved(async () => {
+				const ch: any = (db1.log as any)._fanoutChannel;
+				expect(ch, "expected shared-log to open a fanout channel").to.exist;
+				const peers = ch.getPeerHashes({ includeSelf: true });
+				expect(peers, "expected fanout overlay to include remote peer").to.include(
+					session.peers[1].identity.publicKey.hashcode(),
+				);
+			});
+
+			let exchangeHeadsRpcSends = 0;
+			const rpcAny: any = db1.log.rpc;
+			const originalSend = rpcAny.send.bind(rpcAny);
+			rpcAny.send = async (...args: any[]) => {
 			if (args[0] instanceof ExchangeHeadsMessage) {
 				exchangeHeadsRpcSends++;
 			}

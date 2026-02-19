@@ -126,12 +126,18 @@ const channel = new Channel("general");
 await forum.channels.put(channel);
 await channel.db.posts.put(new Post("Hello world!"));
 
-// Another peer
-const client2 = await Peerbit.create();
-await client2.dial(client.getMultiaddrs());
+	// Another peer
+	const client2 = await Peerbit.create();
+	await client2.dial(client.getMultiaddrs());
+	// In small ad-hoc networks (no bootstraps/trackers), proactively hosting shard
+	// roots avoids flaky "join before root is hosted" races.
+	await Promise.all([
+		(client.services.pubsub as any).hostShardRootsNow?.(),
+		(client2.services.pubsub as any).hostShardRootsNow?.(),
+	]);
 
-// open the forum as a observer, i.e. not replication duties
-const forum2 = await client2.open<Forum>(forum.address, {
+	// open the forum as a observer, i.e. not replication duties
+	const forum2 = await client2.open<Forum>(forum.address, {
 	args: { replicate: false },
 });
 

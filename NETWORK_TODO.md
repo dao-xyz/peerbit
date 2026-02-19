@@ -1,158 +1,164 @@
-# Network V2 TODO (Unify Routing + Fanout Overlays)
+# Network V2 TODO: Fanout Shards Everywhere
 
 Last updated: 2026-02-17
 
-This doc captures the current state, the core design direction we want (V2), and the next concrete implementation steps so another agent can pick up the work.
+This doc is the handoff for the "fanout shards everywhere" direction: **every pubsub topic maps to a bounded number of shard overlays**, and we build both broadcast and (some) directed control traffic on top of those overlays with explicit, testable tradeoffs.
+
+If you are reading this as the next agent: start with `packages/transport/pubsub/src/index.ts` and run `pnpm run test` before touching anything.
+
+## TL;DR
+
+- We cannot afford "one overlay per topic" at scale (topic explosion).
+- We can afford "one overlay per shard" where `shard = hash(topic) % shardCount` with `shardCount` fixed (e.g. 256).
+- Pubsub uses **FanoutTree per shard** for broadcast + membership control.
+- Directed delivery uses **DirectStream when explicit recipients are provided**, and can use fanout unicast ACK as an economical overlay path where possible.
+- Deterministic shard roots require a stable candidate set (routers/bootstraps). Small ad-hoc nets use an auto-candidate fallback.
 
 ## Why This Exists
 
-We currently maintain two partially overlapping "network knowledge" systems:
+Historically we had two overlapping "network knowledge" planes:
 
-- `@peerbit/stream` (DirectStream): general-purpose message transport with multi-hop routing learned via ACK traces and seek/flood behavior.
-- `@peerbit/pubsub` (FanoutTree): a topic/root scoped overlay (bounded fanout tree + repair) with its own join/repair and "route token" unicast.
+- `@peerbit/stream` (DirectStream): targeted delivery + route learning (ACK traces + seek/flood).
+- `@peerbit/pubsub` (FanoutTree): topic/root scoped overlay (bounded fanout tree + repair + route tokens).
 
-That duplication is starting to feel bloaty:
+V2 is about making the story coherent and predictable at scale:
 
-- Two topology managers.
-- Two kinds of "route knowledge" (ACK-learned paths vs fanout route tokens).
-- Two delivery semantics in shared-log (RPC/DirectStream for directed control traffic, FanoutTree for `target="all"` broadcast).
-
-V2 goal: one coherent story where topology/routing knowledge is shared and composed, not duplicated.
+- **Bound memory:** no global membership dissemination.
+- **Bound overlays:** fixed number of shard overlays regardless of user-topic count.
+- **Explicit knobs:** router vs leaf roles, shardCount, budgets, retry behavior.
 
 ## Current State (Code Pointers)
 
-- Topic membership + forwarding baseline: `packages/transport/pubsub/src/index.ts` (`TopicControlPlane`) extends `DirectStream`.
-- Direct routing knowledge: `packages/transport/stream/src/routes.ts` (ACK/trace-based route store).
-- Fanout overlay: `packages/transport/pubsub/src/fanout-tree.ts` + `packages/transport/pubsub/src/fanout-channel.ts`.
-- Shared-log uses both planes today:
-  - FanoutTree for `append(..., { target: "all" })` broadcast, and now also for "directed delivery w/ settle" via fanout unicast ACK where available: `packages/programs/data/shared-log/src/index.ts`
-  - RPC/DirectStream remains as a fallback path for directed delivery when fanout is not configured or a unicast cannot be routed.
+- Sharded pubsub control plane: `packages/transport/pubsub/src/index.ts` (`TopicControlPlane`)
+  - Topic -> shard mapping
+  - Join/leave shard overlays
+  - Publish via shard overlays
+  - Bounded `getSubscribers()` cache + `requestSubscribers()` snapshots
+- Fanout overlay: `packages/transport/pubsub/src/fanout-tree.ts` + `packages/transport/pubsub/src/fanout-channel.ts`
+- Root selection: `packages/transport/pubsub/src/topic-root-control-plane.ts` (`TopicRootControlPlane`)
+- Shared-log (fanout delivery envelope + directed delivery preferences):
+  - `packages/programs/data/shared-log/src/fanout-envelope.ts`
+  - `packages/programs/data/shared-log/src/index.ts`
+- "Two peers, no bootstraps" reliability fixes (auto candidates + re-announce): `packages/transport/pubsub/src/index.ts`
 
-## Observed Issues / Smells
+## The Design (What We Actually Implemented)
 
-- FanoutTree `MSG_DATA` publish proxy makes the root the transport-level origin (root signs the DATA frame). If the application needs original publisher identity, it must be carried at the application level.
-- Two independent mechanisms try to solve "how do I reach peer X?":
-  - DirectStream learns ephemeral routes from ACK traces.
-  - FanoutTree has route tokens scoped to `(topic, root)` and a root proxy path.
+### 1. Shards Everywhere
 
-## V2 North Star
+Every user topic maps to exactly one shard overlay:
 
-Design a single routing fabric that can support:
+- `shard = hash32(topic) % shardCount`
+- internal shard topic: `shardTopicPrefix + shardIndex`
+- default values:
+  - `shardCount = 256`
+  - `shardTopicPrefix = /peerbit/pubsub-shard/1/`
 
-- Broadcast at massive scale with bounded per-node cost (Fanout-style trees).
-- Directed messages with "fast path if known, safe path if not" semantics.
-- Multiple traffic patterns (single-writer to huge audience, many-writer to many-reader, replication graphs) without multiplying bespoke overlays.
+This means:
 
-## Core Unification Idea
+- 1,000,000 user topics still means ~256 overlays.
+- Each node joins only the shard overlays it needs, not the whole world.
 
-Bridge with a tiny contract:
+### 2. Root Selection (Deterministic)
 
-- If a sender can produce a cheap *proof of path* to the destination (or a cheap next-hop hint), use it.
-- Otherwise, fall back to an overlay that guarantees reachability (tree root proxy, limited flood, or repair mesh).
+Shard overlays are `FanoutChannel(topic=shardTopic, root=rootHash)` where `rootHash` is resolved by `TopicRootControlPlane`.
 
-In practice, "proof of path" can come from:
+Root resolution requires a consistent candidate set across peers, otherwise the overlay partitions.
 
-- DirectStream ACK traces (what worked recently).
-- Fanout route tokens (tree-derived economical unicast paths).
-- Any future directory/lookup system (DHT-ish, trackers, provider indices).
+We support two modes:
 
-The key is that all proofs reduce to the same abstraction: "for destination D, here are candidate next hops with a cost/TTL and a confidence."
+- Production/large net mode:
+  - Candidates are seeded from bootstraps/routers (stable).
+  - See `Peerbit.bootstrap()` which aligns fanout bootstraps and seeds candidates.
+- Small ad-hoc mode (no bootstraps):
+  - Candidate set starts as `[self]`.
+  - As underlay peers connect, candidates expand to include those peers.
+  - When candidates change, we reconcile shard channels and re-announce subscriptions so membership caches converge.
 
-## Proposed Long-Term Shape
+### 3. Router vs Leaf Behavior (Churn Control)
 
-- Underlay: libp2p streams and connection management. Keep this dumb.
-- One shared route knowledge store (per node) that can ingest:
-  - ACK traces (observations).
-  - Overlay route tokens (structured paths).
-  - Connection liveness/latency (measurements).
-- Overlays:
-  - A small, churn-resilient membership/repair view (HyParView-like active/passive) as the "always-on" background.
-  - One or more logical fanout trees (per writer, per shard, or per channel) for economical push.
-- Unicast becomes a mode of the overlay, not a separate system:
-  - Prefer direct/cheap proof routes.
-  - Otherwise route via overlay proxy/root.
+Shard overlay fanout options are split by role:
 
-## Multi-Writer Scenarios (What We Need To Handle)
+- `fanoutRootChannel`: applied when this node is the shard root.
+- `fanoutNodeChannel`: applied when joining as a node.
 
-- 2 writers -> 1,000,000 readers:
-  - Two logical trees (or a forest) keyed by writer/shard. Shared repair/membership substrate.
-- 100 active writers -> 100 active readers:
-  - Likely not "one giant tree"; prefer small clusters and/or per-shard trees with opportunistic direct edges.
-- Shared-log replicators streaming by public keys:
-  - Lots of directed flows; we should not require one-off routing systems per program. The unified route store should pay off here.
+This lets us do "leaf-only non-routers" cleanly:
 
-## Concrete V2 Milestones
+- routers: `maxChildren > 0`, often `hostShards=true`
+- leaves: `maxChildren=0` so they never become relays, reducing churn cascades
 
-1. (Done) Make fanout-delivered program messages carry origin + timestamp.
-   - Shared-log now wraps fanout payloads in an application envelope: `packages/programs/data/shared-log/src/fanout-envelope.ts`
-   - Shared-log reconstructs a real `RequestContext.message.header.timestamp` when receiving fanout payloads: `packages/programs/data/shared-log/src/index.ts`
-2. (Done) Normalize event metadata on fanout overlays.
-   - `FanoutTreeDataEvent` and `FanoutTreeUnicastEvent` now include `timestamp` and `origin`: `packages/transport/pubsub/src/fanout-tree.ts`
-3. (Done, partial) Add an economical directed path inside the fanout overlay.
-   - Added `MSG_UNICAST_ACK` + `FanoutTree.unicastToAck()` and `FanoutChannel.unicastToAck()`: `packages/transport/pubsub/src/fanout-tree.ts`, `packages/transport/pubsub/src/fanout-channel.ts`
-   - Added tests: `packages/transport/pubsub/test/fanout-tree.spec.ts`
-4. (Done) Move shared-log directed delivery (when `delivery:true`) onto fanout unicast ACK when a fanout channel is configured.
-   - Tests: `packages/programs/data/shared-log/test/delivery.spec.ts`
-5. (Done, opt-in) Replace subscription gossip for large topics (pubsub delivery should not require global-ish subscriber dissemination).
-   - `TopicControlPlane` now supports per-topic delivery policy: "direct" (old behavior) vs "fanout topic" (new).
-   - For fanout topics:
-     - `subscribe(topic)` joins the fanout overlay (no `Subscribe` gossip).
-     - `publish(topic)` broadcasts via fanout overlay (no subscriber set required).
-     - `unsubscribe(topic)` leaves overlay (no `Unsubscribe` gossip).
-     - `getSubscribers(topic)` is explicitly bounded/best-effort (overlay-local peer hints), never global membership.
-   - Default policy is conservative: fanout topics are enabled only when the topic has an explicit root set in `TopicRootControlPlane`.
-     - i.e. opt-in via `topicRootControlPlane.setTopicRoot(topic, rootHash)`.
-   - Code: `packages/transport/pubsub/src/index.ts`, `packages/clients/peerbit/src/libp2p.ts`
-   - Tests: `packages/transport/pubsub/test/fanout-topics.spec.ts`
-6. (Done) Route-proof decision point + unified route store (ACK traces + fanout route tokens as inputs to one decision point).
-   - Shared-log directed delivery now prefers a proven cheap direct path (connected or routed) and falls back to fanout unicast ACK, then to RPC/pubsub routing: `packages/programs/data/shared-log/src/index.ts`
-   - DirectStream now shares a single node-level session + `Routes` table across co-located protocols by default (`sharedRouting=true`), so ACK-learned routes are not duplicated per protocol: `packages/transport/stream/src/index.ts`
-7. (Done, partial) Reduce/delete redundant topology managers.
-   - We still have distinct overlay semantics (FanoutTree vs DirectStream), but the *node-level routing knowledge* is now shared.
-   - The remaining work (if we want to go further) is to decide whether to fully deprecate DirectStream multi-hop routing for fanout-backed workloads.
+### 4. Membership Knowledge Is Bounded
 
-## Immediate Next Steps (Implementation TODO)
+We do not attempt to maintain global membership.
 
-These are ordered to keep the PR green while moving toward the V2 "single story" architecture.
+- `getSubscribers(topic)` returns:
+  - self if subscribed
+  - plus a bounded best-effort cache of remote subscribers learned from shard Subscribe messages
+- `requestSubscribers(topic[, to])` sends a `GetSubscribers` control message on the shard overlay and receives best-effort snapshots from peers that overlap.
 
-1. Replace subscription gossip for large topics
-   - Status: Implemented (opt-in fanout topics via `TopicRootControlPlane` explicit roots).
-   - Follow-ups:
-     - Decide whether `TopicControlPlane.publish(..., { id, priority })` should be preserved for fanout topics (FanoutTree currently assigns its own ids).
-     - Clarify signature semantics for fanout-backed pubsub delivery:
-       - fanout transport frames are signed by the root; original publisher identity is not preserved unless carried at application-level.
-     - Add a policy knob for "publish on fanout topic without subscribing" (currently requires join; consider LRU/TTL auto-join).
+This is the scalable alternative to "every peer knows every subscriber".
 
-2. Define the unified routing decision point (route proofs)
-   - Create a small shared abstraction: `RouteHint` / `RouteProof`
-     - inputs: ACK traces (DirectStream), fanout route tokens (FanoutTree), underlay metrics (RTT, liveness)
-     - outputs: next-hop candidates + cost + TTL/confidence
-   - Status: Implemented as a single decision point for shared-log directed delivery:
-     - if a cheap direct path is known, use it
-     - else use fanout unicast ACK (bounded overlay)
-     - else fall back to RPC/pubsub routing (may flood for discovery)
-   - Node-level route store is shared across protocols via `DirectStreamOptions.sharedRouting` (default true).
-   - Files: `packages/transport/stream/src/index.ts`, `packages/programs/data/shared-log/src/index.ts`
+### 5. Publish Semantics
 
-3. Abuse resistance and cost control (make scaling predictable)
-   - Status: Implemented
-   - Per-hop rate limiting for proxy publish / unicast relay:
-     - `proxyPublishBudgetBps`/`unicastBudgetBps` token buckets (per-child ingress), with tests
-   - Cap fanout tracker state:
-     - bounded tracker directory per channel + bounded namespace cache (LRU)
-   - Code: `packages/transport/pubsub/src/fanout-tree.ts`, tests: `packages/transport/pubsub/test/fanout-tree.spec.ts`
+Two paths:
 
-4. Benchmarks
-   - Status: Updated
-   - `pubsub-topic-sim` now supports `--fanoutTopic 1` + `--fanoutRootIndex` to exercise fanout-backed topic delivery on the real `TopicControlPlane` code path.
-   - Files: `packages/transport/pubsub/benchmark/pubsub-topic-sim-lib.ts`, `packages/transport/pubsub/benchmark/pubsub-topic-sim.ts`
+- Explicit recipients (`options.mode.to`): use DirectStream delivery (targeted).
+- Broadcast (`topics` only): publish once per shard overlay.
 
-## Test / Verification Checklist
+Fanout payloads carry a publisher-signed `DataMessage` embedded in the fanout payload, so message `id`, `priority`, and publisher signature semantics are preserved even though the fanout transport frames are root-signed.
 
-- `pnpm run test`
-- `pnpm run build`
-- Add/adjust tests for:
-  - Fanout-delivered shared-log `target="all"` still replicates entries (already covered).
-  - Fanout-delivered shared-log directed delivery blocks on fanout unicast ACK when configured (already covered).
-  - Pubsub large-topic mode does not require subscription gossip for reachability (new).
-  - Pubsub `getSubscribers()` is explicitly best-effort/bounded and callers do not assume completeness (new).
+## Verification (What's Green)
+
+- `pnpm run build` passes.
+- `@peerbit/pubsub` tests pass, including churn simulation.
+- `@peerbit/program` tests pass (fixed shard-root candidate determinism + shard-root hosting for 2-peer tests).
+- `peerbit` client test `dial waits for pubsub` now passes by:
+  - defaulting shard-root candidates to `[self]` when not configured
+  - expanding candidates on connect
+  - reconciling shard channels + re-announcing subscriptions
+
+## Remaining Work (What's Left)
+
+### Required for This PR
+
+- Ensure **full** `pnpm run test` is green (currently re-running after fixing `peerbit` pubsub dial test).
+- Re-run `pnpm run build` if any further changes land.
+
+### Near-Term Cleanup (Bloat Reduction)
+
+- Decide whether we want to fully deprecate direct (non-sharded) subscription gossip paths.
+  - Today, `TopicControlPlane.onDataMessage` still parses subscription control messages, but control is intended to live on shard overlays.
+- Confirm `Peerbit.dial()` semantics:
+  - Today it waits for pubsub + blocks neighbor reachability.
+  - Consider also waiting for fanout neighbor streams if we want "pubsub is usable immediately after dial" to be strictly true.
+
+### Performance / Frontier Knobs (Research + Bench)
+
+- Tune `shardCount` and default fanout channel options across realistic workloads.
+- Make router selection explicit and measurable:
+  - number of routers
+  - router capacity (maxChildren, uploadLimitBps)
+  - join/repair aggressiveness
+- Add metrics + dashboards for:
+  - shard join latency
+  - repair rate
+  - per-node bandwidth
+  - subscriber-cache hit rates / requestSubscribers rates
+
+### Unification (Long-Term)
+
+We still have two kinds of route knowledge:
+
+- ACK-trace routes (DirectStream)
+- Overlay route tokens / root-proxy semantics (FanoutTree)
+
+The long-term direction is to unify these behind a single "route hint" interface:
+
+- if we can prove a cheap path, use it
+- otherwise, fall back to the shard overlay for reachability
+
+## Commands
+
+- Build: `pnpm run build`
+- Full test: `pnpm run test`
+- Pubsub only: `pnpm -s --filter @peerbit/pubsub test`
+- Peerbit only: `pnpm -s --filter peerbit test`

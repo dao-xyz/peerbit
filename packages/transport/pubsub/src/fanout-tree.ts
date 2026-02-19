@@ -482,6 +482,10 @@ const JOIN_REJECT_REDIRECT_ADDR_MAX = 8;
 const JOIN_REJECT_REDIRECT_QUEUE_MAX = 64;
 // When a relay loses its parent, pause before trying to rejoin so its children can
 // attach elsewhere (helps avoid disconnected components stabilizing).
+// Rejoin cooldown after losing a parent while acting as a relay (had children).
+//
+// This gives kicked children a window to reattach elsewhere (helps avoid stable
+// disconnected components). Leaf nodes (no children) rejoin immediately.
 const RELAY_REJOIN_COOLDOWN_MS = 3_000;
 
 const MSG_JOIN_REQ = 1;
@@ -3053,9 +3057,74 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			return this.publishData(topic, root, payload);
 		}
 		if (!ch.parent) {
-			throw new Error("Cannot proxy publish while not attached to a parent");
+			// Channels can temporarily detach/re-parent under churn. Proxy publishes should
+			// wait briefly for the join loop to attach instead of hard-throwing (which
+			// can surface as unhandled rejections in higher layers like pubsub/RPC).
+			await this.waitForChannelAttachment(ch, 10_000);
+		}
+		if (!ch.parent) {
+			throw new Error(
+				`Cannot proxy publish while not attached to a parent (topic=${topic} root=${root} self=${this.publicKeyHash})`,
+			);
 		}
 		await this._sendControl(ch.parent, encodePublishProxy(ch.id.key, payload));
+	}
+
+	private waitForChannelAttachment(ch: ChannelState, timeoutMs: number): Promise<void> {
+		if (ch.isRoot || ch.parent) return Promise.resolve();
+		const ms = Math.max(0, Math.floor(timeoutMs));
+		if (ms === 0) return Promise.resolve();
+
+		const signal = this.closeController.signal;
+		return new Promise<void>((resolve, reject) => {
+			let done = false;
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			const cleanup = () => {
+				if (done) return;
+				done = true;
+				try {
+					if (timer) clearTimeout(timer);
+				} catch {
+					// ignore
+				}
+				try {
+					this.removeEventListener("fanout:joined", onJoined as any);
+				} catch {
+					// ignore
+				}
+				try {
+					signal.removeEventListener("abort", onAbort);
+				} catch {
+					// ignore
+				}
+			};
+			const onAbort = () => {
+				cleanup();
+				reject(signal.reason ?? new AbortError("fanout stopped"));
+			};
+			const onJoined = (ev: any) => {
+				const d = ev?.detail as { topic: string; root: string } | undefined;
+				if (!d) return;
+				if (d.topic !== ch.id.topic) return;
+				if (d.root !== ch.id.root) return;
+				if (!ch.parent) return;
+				cleanup();
+				resolve();
+			};
+
+			if (signal.aborted) return onAbort();
+			this.addEventListener("fanout:joined", onJoined as any);
+			signal.addEventListener("abort", onAbort, { once: true });
+			timer = setTimeout(() => {
+				cleanup();
+				reject(
+					new Error(
+						`fanout proxy publish timed out waiting for attachment (topic=${ch.id.topic} root=${ch.id.root} self=${this.publicKeyHash})`,
+					),
+				);
+			}, ms);
+			timer.unref?.();
+		});
 	}
 
 	public async publishEnd(topic: string, root: string, lastSeqExclusive: number): Promise<void> {
@@ -4551,11 +4620,18 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						continue;
 					}
 
-						// `timeoutMs` is meant to bound the initial `joinChannel()` await, not to
-						// stop re-parenting attempts for long-running nodes.
-						if (!ch.joinedAtLeastOnce && timeoutMs > 0 && Date.now() - start > timeoutMs) {
-							throw new Error(`fanout join timed out after ${timeoutMs}ms`);
-						}
+							// `timeoutMs` is meant to bound the initial `joinChannel()` await, not to
+							// stop re-parenting attempts for long-running nodes.
+							if (!ch.joinedAtLeastOnce && timeoutMs > 0 && Date.now() - start > timeoutMs) {
+								const bootstrapsCount = this.getBootstrapsForChannel(ch).length;
+								const rootPeer = this.peers.get(ch.id.root);
+								const rootNeighbor = Boolean(
+									rootPeer && rootPeer.isReadable && rootPeer.isWritable,
+								);
+								throw new Error(
+									`fanout join timed out after ${timeoutMs}ms (topic=${ch.id.topic} root=${ch.id.root} self=${this.publicKeyHash} rootNeighbor=${rootNeighbor} peers=${this.peers.size} bootstraps=${bootstrapsCount})`,
+								);
+							}
 
 						const cooldownMs = ch.rejoinCooldownUntil - Date.now();
 						if (cooldownMs > 0) {

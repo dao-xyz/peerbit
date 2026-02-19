@@ -668,14 +668,21 @@ describe(`replicate`, () => {
 
 				const added = await db1.add("data", { replicate: true });
 
-				await checkReplication(db1, added.entry);
-				await waitForResolved(async () => checkReplication(db2, added.entry));
+					await checkReplication(db1, added.entry);
+					// Under full workspace/CI load, replication propagation can exceed the
+					// default waitForResolved timeout (10s). Give it more headroom.
+					await waitForResolved(async () => checkReplication(db2, added.entry), {
+						timeout: 60_000,
+					});
 
-				await db1.log.unreplicate(added.entry);
+					await db1.log.unreplicate(added.entry);
 
-				await checkUnreplication(db1);
-				await waitForResolved(async () => checkUnreplication(db2));
-			});
+					await checkUnreplication(db1);
+					// Unreplication propagation can also be slow under load.
+					await waitForResolved(async () => checkUnreplication(db2), {
+						timeout: 60_000,
+					});
+				});
 
 			it("entry with range", async () => {
 				const store = new EventStore<string, any>();

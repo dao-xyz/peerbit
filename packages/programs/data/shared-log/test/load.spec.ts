@@ -28,11 +28,31 @@ describe("load", function () {
 	it("load after replicate", async () => {
 		session = await TestSession.connected(2);
 
-		db1 = await session.peers[0].open(new EventStore<string, any>());
+		db1 = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicas: { min: 2 },
+				replicate: { offset: 0, factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
 		db2 = await EventStore.open<EventStore<string, any>>(
 			db1.address!,
 			session.peers[1],
+			{
+				args: {
+					replicas: { min: 2 },
+					replicate: { offset: 0, factor: 1 },
+					timeUntilRoleMaturity: 0,
+				},
+			},
 		);
+
+		// Ensure the remote peer is known as a replicator before we append; otherwise the
+		// writer may compute a leader set that only includes itself and skip directed delivery.
+		await db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+			timeout: 15e3,
+			roleAge: 0,
+		});
 
 		const entryCount = 100;
 		const entryArr: number[] = [];

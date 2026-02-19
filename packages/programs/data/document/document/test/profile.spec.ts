@@ -55,8 +55,13 @@ describe("profile", () => {
 	beforeEach(async () => {
 		session = await TestSession.disconnected(3);
 
-		await session.peers[0].dial(session.peers[1].getMultiaddrs());
-		await session.peers[1].dial(session.peers[2].getMultiaddrs());
+		// Keep a sparse topology (a line) while still configuring sharded pubsub/fanout
+		// shard-root candidates. Direct `dial()` does not update TestSession's connected
+		// groups and can deadlock fanout joins when topics are sharded.
+		await session.connect([
+			[session.peers[0], session.peers[1]],
+			[session.peers[1], session.peers[2]],
+		]);
 
 		stores = [];
 

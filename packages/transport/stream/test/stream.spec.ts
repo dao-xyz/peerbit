@@ -3636,42 +3636,46 @@ describe("start/stop", () => {
 		expect(ps.inboundStreams.length).to.equal(1);
 	});
 
-	it("updates activity only on active inbound record", async () => {
-		const IDLE = 500;
-		session = await connected(2, {
-			services: {
-				directstream: (c) =>
-					new TestDirectStream(c, {
-						inboundIdleTimeout: IDLE,
-						connectionManager: false,
-					}),
-			},
+		it("updates activity only on active inbound record", async () => {
+			const IDLE = 500;
+			session = await connected(2, {
+				services: {
+					directstream: (c) =>
+						new TestDirectStream(c, {
+							inboundIdleTimeout: IDLE,
+							connectionManager: false,
+						}),
+				},
+			});
+			await waitForNeighbour(stream(session, 0), stream(session, 1));
+			const ps = stream(session, 0).peers.get(stream(session, 1).publicKeyHash)!;
+			const firstInbound = ps.rawInboundStream!;
+			// Attach second inbound that we will NOT send data on
+			const silentInbound: any = {
+				id: firstInbound.id + "-silent",
+				source: (async function* () {})(),
+				sink: async () => {},
+				abort: () => {},
+				close: async () => {},
+				protocol: firstInbound.protocol,
+			};
+			ps.attachInboundStream(silentInbound as any);
+			expect(ps.inboundStreams.length).to.equal(2);
+			const recs = [...ps.inboundStreams];
+			const initialActive = recs[0].lastActivity;
+			const initialSilent = recs[1].lastActivity;
+			// Publish a message so active (real) inbound updates
+			await stream(session, 1).publish(new Uint8Array([9]));
+			await waitForResolved(
+				() => {
+					expect(recs[0].lastActivity).to.be.greaterThan(initialActive);
+					expect(recs[1].lastActivity).to.equal(initialSilent);
+				},
+				{ timeout: 10_000 },
+			);
+			// Active should now be at least as recent as silent.
+			expect(recs[0].lastActivity).to.be.at.least(recs[1].lastActivity);
 		});
-		await waitForNeighbour(stream(session, 0), stream(session, 1));
-		const ps = stream(session, 0).peers.get(stream(session, 1).publicKeyHash)!;
-		const firstInbound = ps.rawInboundStream!;
-		// Attach second inbound that we will NOT send data on
-		const silentInbound: any = {
-			id: firstInbound.id + "-silent",
-			source: (async function* () {})(),
-			sink: async () => {},
-			abort: () => {},
-			close: async () => {},
-			protocol: firstInbound.protocol,
-		};
-		ps.attachInboundStream(silentInbound as any);
-		expect(ps.inboundStreams.length).to.equal(2);
-		const recs = [...ps.inboundStreams];
-		// Publish a message so active (real) inbound updates
-		await stream(session, 1).publish(new Uint8Array([9]));
-		await delay(50);
-		const now = Date.now();
-		const activeDelta = now - recs[0].lastActivity;
-		const silentDelta = now - recs[1].lastActivity;
-		// Active should have very recent activity, silent should be older
-		expect(activeDelta).to.be.lessThan(IDLE);
-		expect(silentDelta).to.be.greaterThanOrEqual(activeDelta);
-	});
 
 	it("evicts oldest inactive when exceeding max inbound streams", async () => {
 		const MAX = 3;

@@ -4,11 +4,11 @@ import type { Peerbit } from "peerbit";
 import { TestSession } from "../src/session.js";
 
 describe("session", () => {
-	let session: TestSession;
+	let session: TestSession | undefined;
 	before(async () => {});
 
 	after(async () => {
-		await session.stop();
+		await session?.stop();
 	});
 	it("pubsub", async () => {
 		session = await TestSession.connected(3);
@@ -121,7 +121,10 @@ describe("session", () => {
 		}
 	});
 
-	it("fanout (in-memory transport, bootstraps, sparse relays)", async () => {
+	it("fanout (in-memory transport, bootstraps, sparse relays)", async function () {
+		// This is a large-n integration test; it can take >60s on slow CI machines.
+		this.timeout(180_000);
+
 		const nodes = 40;
 		const rootIndex = 0;
 		const seed = 1;

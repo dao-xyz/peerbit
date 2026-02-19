@@ -133,12 +133,53 @@ describe("observer", () => {
 		await waitForResolved(() => expect(observer.log.log.length).equal(1));
 	});
 
-	it("can wait for replicator", async () => {
+	it("can wait for replicator", async function () {
+		this.timeout(waitTimeout + 30_000);
 		session = await TestSession.disconnected(3);
 		await session.connect([
 			[session.peers[0], session.peers[1]],
 			[session.peers[1], session.peers[2]],
 		]);
+
+		// Ensure pubsub neighbour streams are established in this sparse topology.
+		// `waitForReplicator()` relies on RPC requests/responses being routed via pubsub DirectStream,
+		// and without these streams the first few requests can be dropped and never reach the target.
+		await session.peers[0].services.pubsub.waitFor(session.peers[1].peerId, {
+			target: "neighbor",
+			timeout: waitTimeout,
+		});
+		await session.peers[1].services.pubsub.waitFor(session.peers[0].peerId, {
+			target: "neighbor",
+			timeout: waitTimeout,
+		});
+		await session.peers[1].services.pubsub.waitFor(session.peers[2].peerId, {
+			target: "neighbor",
+			timeout: waitTimeout,
+		});
+		await session.peers[2].services.pubsub.waitFor(session.peers[1].peerId, {
+			target: "neighbor",
+			timeout: waitTimeout,
+		});
+
+		const fanout0: any = (session.peers[0].services as any).fanout;
+		const fanout1: any = (session.peers[1].services as any).fanout;
+		const fanout2: any = (session.peers[2].services as any).fanout;
+		await fanout0.waitFor(session.peers[1].peerId, {
+			target: "neighbor",
+			timeout: waitTimeout,
+		});
+		await fanout1.waitFor(session.peers[0].peerId, {
+			target: "neighbor",
+			timeout: waitTimeout,
+		});
+		await fanout1.waitFor(session.peers[2].peerId, {
+			target: "neighbor",
+			timeout: waitTimeout,
+		});
+		await fanout2.waitFor(session.peers[1].peerId, {
+			target: "neighbor",
+			timeout: waitTimeout,
+		});
 
 		const s = new EventStore<string, any>();
 		const createStore = () => deserialize(serialize(s), EventStore);

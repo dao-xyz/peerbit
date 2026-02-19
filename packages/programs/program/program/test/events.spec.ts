@@ -16,6 +16,23 @@ describe("events", () => {
 	beforeEach(async () => {
 		client1 = await createLibp2pPeer();
 		client2 = await createLibp2pPeer();
+		// Sharded pubsub join requires at least one underlay connection so the
+		// non-root peer can attach to the shard overlay (no bootstraps in these tests).
+		await client1.dial(client2.getMultiaddrs());
+		// Establish fanout protocol streams so the join loop has candidates without
+		// relying on bootstrap trackers (these tests use only two peers).
+		await (client1.services as any).fanout.waitFor(client2.identity.publicKey, {
+			target: "neighbor",
+			timeout: 10_000,
+		});
+		await (client2.services as any).fanout.waitFor(client1.identity.publicKey, {
+			target: "neighbor",
+			timeout: 10_000,
+		});
+		// Ensure shard roots are hosted even if the root peer is not subscribed to a
+		// particular topic (tests open different programs/topics on different peers).
+		await (client1.services as any).pubsub.hostShardRootsNow();
+		await (client2.services as any).pubsub.hostShardRootsNow();
 	});
 
 	afterEach(async () => {
@@ -39,8 +56,6 @@ describe("events", () => {
 
 		const db2 = await client2.open(db1.clone());
 
-		await client1.dial(client2.getMultiaddrs());
-
 		await waitForResolved(() =>
 			expect(joinEvents).to.deep.equal([client2.identity.publicKey.hashcode()]),
 		);
@@ -58,9 +73,7 @@ describe("events", () => {
 			expect(joinEvents).to.deep.equal([client2.identity.publicKey.hashcode()]),
 		);
 		await waitForResolved(() =>
-			expect(leaveEvents).to.deep.equal([
-				client2.identity.publicKey.hashcode(),
-			]),
+			expect(leaveEvents).to.deep.equal([client2.identity.publicKey.hashcode()]),
 		);
 
 		await delay(1000); // allow extra events for additional events to be processed
@@ -84,8 +97,6 @@ describe("events", () => {
 		});
 
 		const db2 = await client2.open(db1.clone());
-
-		await client1.dial(client2.getMultiaddrs());
 
 		await waitForResolved(() =>
 			expect(joinEvents).to.deep.equal([client2.identity.publicKey.hashcode()]),
@@ -131,8 +142,6 @@ describe("events", () => {
 
 		const db2 = await client2.open(new TestProgramWithTopics(1)); // another program
 		expect(db2.address).not.equal(db1.address);
-
-		await client1.dial(client2.getMultiaddrs());
 		await delay(3e3);
 		expect(joinEvents).to.have.length(0);
 	});
@@ -153,8 +162,6 @@ describe("events", () => {
 
 		const db2 = await client2.open(new TestProgramWithTopics(0, 2)); // another program
 		expect(db2.address).not.equal(db1.address);
-
-		await client1.dial(client2.getMultiaddrs());
 		await delay(3e3);
 		expect(joinEvents).to.have.length(0);
 
@@ -196,8 +203,6 @@ describe("events", () => {
 			db2b.programs.map((x) => x.getTopics?.()).flat().length,
 		).to.be.greaterThan(0);
 		expect(db2b.address).to.equal(db1b.address);
-
-		await client1.dial(client2.getMultiaddrs());
 		await delay(3e3);
 		expect(joinEvents).to.have.length(0);
 		await delay(2e3);
@@ -268,10 +273,12 @@ describe("events", () => {
 	});
 
 	describe("getReady", () => {
-		let peer: ProgramClient, peer2: ProgramClient;
+		let peer: ProgramClient | undefined, peer2: ProgramClient | undefined;
 		afterEach(async () => {
 			await peer?.stop();
 			await peer2?.stop();
+			peer = undefined;
+			peer2 = undefined;
 		});
 
 		it("throws on no topics", async () => {
@@ -283,7 +290,7 @@ describe("events", () => {
 
 		it("will not ask for topics on closed subprogram", async () => {
 			const test = new TestProgram();
-			const peer = await creatMockPeer();
+			peer = await creatMockPeer();
 			await peer.open(test, { args: { dontOpenNested: true } });
 			expect(() => test.nested.getTopics()).to.throw(ClosedError);
 			expect(test.getReady()).rejectedWith(
@@ -293,17 +300,13 @@ describe("events", () => {
 
 		it("returns ready when another peer join", async () => {
 			const test = new TestProgramWithTopics();
-			peer = await createLibp2pPeer();
-			await peer.open(test);
-
-			peer2 = await createLibp2pPeer();
-			await peer2.open(test.clone());
-			await peer.dial(peer2.getMultiaddrs());
+			await client1.open(test);
+			await client2.open(test.clone());
 			await waitForResolved(async () => {
 				expect(
 					(await test.getReady())
-						.get(peer2.identity.publicKey.hashcode())
-						?.equals(peer2.identity.publicKey),
+						.get(client2.identity.publicKey.hashcode())
+						?.equals(client2.identity.publicKey),
 				).to.be.true;
 			});
 		});

@@ -1,7 +1,7 @@
 import { keys } from "@libp2p/crypto";
 import { DirectBlock } from "@peerbit/blocks";
 import type { Ed25519Keypair } from "@peerbit/crypto";
-import { TopicControlPlane } from "@peerbit/pubsub";
+import { FanoutTree, TopicControlPlane, TopicRootControlPlane } from "@peerbit/pubsub";
 import path from "path";
 import { Peerbit } from "peerbit";
 import { concat } from "uint8arrays";
@@ -14,6 +14,19 @@ export const create = (properties: {
 	keypair: Ed25519Keypair;
 }) => {
 	const listenPort = properties.listenPort ?? LIBP2P_LISTEN_PORT;
+	const topicRootControlPlane = new TopicRootControlPlane({
+		defaultCandidates: [properties.keypair.publicKey.hashcode()],
+	});
+	let fanoutInstance: FanoutTree | undefined;
+	const getOrCreateFanout = (c: any) => {
+		if (!fanoutInstance) {
+			fanoutInstance = new FanoutTree(c, {
+				connectionManager: false,
+				topicRootControlPlane,
+			});
+		}
+		return fanoutInstance;
+	};
 	const blocksDirectory =
 		properties.directory != null
 			? path.join(properties.directory, "/blocks").toString()
@@ -72,7 +85,14 @@ export const create = (properties: {
 						directory: blocksDirectory,
 						canRelayMessage: true,
 					}),
-				pubsub: (c) => new TopicControlPlane(c, { canRelayMessage: true }),
+				pubsub: (c) =>
+					new TopicControlPlane(c, {
+						canRelayMessage: true,
+						topicRootControlPlane,
+						fanout: getOrCreateFanout(c),
+						hostShards: true,
+					}),
+				fanout: (c) => getOrCreateFanout(c),
 			},
 		},
 		directory: properties.directory,

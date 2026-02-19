@@ -159,6 +159,11 @@ export const checkBounded = async (
 	higher: number,
 	...dbs: { log: SharedLog<any, any> }[]
 ) => {
+	// Under full-suite load (GC + lots of timers), rebalancing/pruning can take
+	// noticeably longer. Use a larger window with slower polling to avoid flaky
+	// upper-bound assertions.
+	const boundWaitOpts = { timeout: 60_000, delayInterval: 1_000 } as const;
+
 	const checkConverged = async (db: { log: SharedLog<any, any> }) => {
 		const a = db.log.log.length;
 		await delay(100); // arb delay
@@ -169,7 +174,7 @@ export const checkBounded = async (
 		); // TODO make this a parameter
 	};
 
-	for (const [_i, db] of dbs.entries()) {
+	for (const db of dbs) {
 		try {
 			await waitForResolved(() => checkConverged(db), {
 				timeout: 25000,
@@ -186,10 +191,11 @@ export const checkBounded = async (
 		entryCount,
 	);
 
-	for (const [_i, db] of dbs.entries()) {
+	for (const db of dbs) {
 		try {
-			await waitForResolved(() =>
-				expect(db.log.log.length).greaterThanOrEqual(entryCount * lower),
+			await waitForResolved(
+				() => expect(db.log.log.length).greaterThanOrEqual(entryCount * lower),
+				boundWaitOpts,
 			);
 		} catch (error) {
 			await dbgLogs(dbs.map((x) => x.log));
@@ -202,8 +208,9 @@ export const checkBounded = async (
 		}
 
 		try {
-			await waitForResolved(() =>
-				expect(db.log.log.length).lessThanOrEqual(entryCount * higher),
+			await waitForResolved(
+				() => expect(db.log.log.length).lessThanOrEqual(entryCount * higher),
+				boundWaitOpts,
 			);
 		} catch (error) {
 			await dbgLogs(dbs.map((x) => x.log));

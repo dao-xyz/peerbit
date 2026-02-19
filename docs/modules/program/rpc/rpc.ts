@@ -76,11 +76,17 @@ class RPCTest extends Program<Args> {
 /// [definition-program]
 
 /// [open]
-const requester = await Peerbit.create();
-const responder = await Peerbit.create();
-await requester.dial(responder);
+	const requester = await Peerbit.create();
+	const responder = await Peerbit.create();
+	await requester.dial(responder);
+	// In small ad-hoc networks (no bootstraps/trackers), proactively hosting shard
+	// roots avoids flaky "join before root is hosted" races.
+	await Promise.all([
+		(requester.services.pubsub as any).hostShardRootsNow?.(),
+		(responder.services.pubsub as any).hostShardRootsNow?.(),
+	]);
 
-const rpcRequester = await requester.open(new RPCTest());
+	const rpcRequester = await requester.open(new RPCTest());
 
 const rpcResponder = await responder.open(new RPCTest(), {
 	args: { role: new Responder() },

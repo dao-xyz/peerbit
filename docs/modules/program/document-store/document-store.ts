@@ -224,6 +224,12 @@ const peer2 = await Peerbit.create();
 
 // Connect to the first peer
 await peer2.dial(peer.getMultiaddrs());
+// In small ad-hoc networks (no bootstraps/trackers), proactively hosting shard
+// roots avoids flaky "join before root is hosted" races.
+await Promise.all([
+	(peer.services.pubsub as any).hostShardRootsNow?.(),
+	(peer2.services.pubsub as any).hostShardRootsNow?.(),
+]);
 
 const channelFromClient1 = await peer.open<Channel>(new Channel(), {
 	args: { replicate: { factor: 1 } },

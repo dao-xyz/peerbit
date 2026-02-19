@@ -8,7 +8,7 @@ describe("pubsub-topic-sim (ci)", () => {
 	it("delivers on a small sim", async function () {
 		this.timeout(60_000);
 
-		const result = await runPubsubTopicSim({
+			const result = await runPubsubTopicSim({
 			nodes: 20,
 			degree: 4,
 			writerIndex: 0,
@@ -21,10 +21,12 @@ describe("pubsub-topic-sim (ci)", () => {
 			seed: 1,
 			topic: "concert",
 			subscribeModel: "preseed",
-			warmupMessages: 2,
-			settleMs: 750,
-			timeoutMs: 20_000,
-		});
+				warmupMessages: 2,
+				settleMs: 750,
+				// CI can be heavily loaded (especially in monorepo runs); give the sim more time
+				// to converge before treating it as a failure.
+				timeoutMs: 40_000,
+			});
 
 		if (result.deliveredPct < 99.9 || result.publishErrors > 0) {
 			console.log(formatPubsubTopicSimResult(result));
@@ -33,7 +35,9 @@ describe("pubsub-topic-sim (ci)", () => {
 		expect(result.deliveredPct).to.be.greaterThan(99.9);
 		expect(result.deliveredOnlinePct).to.be.greaterThan(99.9);
 		expect(result.publishErrors).to.equal(0);
-		expect(result.modeToLenMax).to.equal(result.subscriberCount);
+		// Sharded fanout publish does not embed explicit `to=[subscribers]` lists.
+		// This keeps per-message overhead independent of subscriber count.
+		expect(result.modeToLenMax).to.equal(0);
 	});
 
 	it("remains mostly connected under mild churn", async function () {

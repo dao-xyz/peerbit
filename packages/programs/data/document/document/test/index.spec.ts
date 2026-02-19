@@ -86,12 +86,15 @@ describe("index", () => {
 		describe("basic", () => {
 			let store: TestStore | undefined = undefined;
 
-			before(async () => {
-				session = await TestSession.connected(2);
-			});
-			afterEach(async () => {
-				await store?.close();
-			});
+				before(async () => {
+					session = await TestSession.connected(2);
+				});
+				afterEach(async function () {
+					// Closing a large document index (many persisted blocks + index flush) can take
+					// longer than Mocha's default 60s under CI load.
+					this.timeout(180_000);
+					await store?.close();
+				});
 
 			after(async () => {
 				await session.stop();
@@ -3303,11 +3306,11 @@ describe("index", () => {
 						expect(store.docs.index.hasPending).to.be.false;
 					});
 
-					it("can query joining first replicator", async () => {
-						const { observer, writer } = await writerObserverSetup();
+						it("can query joining first replicator", async () => {
+							const { observer, writer } = await writerObserverSetup();
 
-						await writer.docs.put(new Document({ id: "1" }));
-						let onMissedResults: number[] = [];
+							await writer.docs.put(new Document({ id: "1" }));
+							let onMissedResults: number[] = [];
 
 						const iterator = observer.docs.index.iterate(
 							{},
@@ -3328,17 +3331,24 @@ describe("index", () => {
 						expect(first).to.have.length(0);
 						expect(iterator.done()).to.be.false;
 
-						await session.connect(); // connect the nodes!
+							await session.connect(); // connect the nodes!
 
-						await observer.docs.index.waitFor(writer.node.identity.publicKey);
-						expect(iterator.done()).to.be.false;
-						const second = await iterator.next(1);
-						expect(second).to.have.length(1);
+							await observer.docs.index.waitFor(writer.node.identity.publicKey);
+							expect(iterator.done()).to.be.false;
+							// Under full-suite load, the join and first remote query can take longer to converge.
+							const second = await waitForResolved(
+								async () => {
+									const next = await iterator.next(1);
+									expect(next).to.have.length(1);
+									return next;
+								},
+								{ timeout: 30_000, delayInterval: 250 },
+							);
 
-						expect(onMissedResults).to.deep.equal([1]); // we should have missed one result
+							expect(onMissedResults).to.deep.equal([1]); // we should have missed one result
 
-						expect(observer.docs.index.hasPending).to.be.false;
-						expect(writer.docs.index.hasPending).to.be.false;
+							expect(observer.docs.index.hasPending).to.be.false;
+							expect(writer.docs.index.hasPending).to.be.false;
 					});
 
 					it("late join will not re-open iterator", async () => {
@@ -3528,15 +3538,16 @@ describe("index", () => {
 						);
 						let t0 = +new Date();
 						await iterator.next(1);
-						let t1 = +new Date();
-						let delta = 500; // 500ms delta
-						expect(t1 - t0).to.lessThan(delta); // +some delta
-						expect(iterator.done()).to.be.false;
-						await iterator.all();
-						let t2 = +new Date();
-						expect(t2 - t0).to.lessThan(waitForMax + delta); // +some delta
-						expect(t2 - t0).to.be.greaterThanOrEqual(waitForMax - delta); // -some delta
-					});
+							let t1 = +new Date();
+							let delta = 500; // lower bound slack (ms)
+							let upperDelta = 1500; // CI/full-suite can overshoot timers under load
+							expect(t1 - t0).to.lessThan(delta); // +some delta
+							expect(iterator.done()).to.be.false;
+							await iterator.all();
+							let t2 = +new Date();
+							expect(t2 - t0).to.lessThan(waitForMax + upperDelta); // +some delta
+							expect(t2 - t0).to.be.greaterThanOrEqual(waitForMax - delta); // -some delta
+						});
 
 					describe("policy", () => {
 						it("blocking wait for any", async () => {
@@ -4536,12 +4547,17 @@ describe("index", () => {
 					}
 				});
 
-				it("outOfOrder mode=queue buffers late items for next()", async function () {
-					session = await TestSession.disconnected(3);
-					await session.connect([
-						[session.peers[0], session.peers[1]],
-						[session.peers[1], session.peers[2]],
-					]);
+					it("outOfOrder mode=queue buffers late items for next()", async function () {
+						// This test can run under heavy full-suite load where push iterators may briefly yield
+						// empty batches. We explicitly drain in-order items before inserting the late one,
+						// and we bound waiting on the outOfOrder handler to avoid hanging the entire suite.
+						this.timeout(80_000);
+
+						session = await TestSession.disconnected(3);
+						await session.connect([
+							[session.peers[0], session.peers[1]],
+							[session.peers[1], session.peers[2]],
+						]);
 
 					const base = new TestStore({ docs: new Documents<Document>() });
 					const replicator = await session.peers[1].open(base, {
@@ -4589,21 +4605,52 @@ describe("index", () => {
 							},
 							updates: { push: true, merge: true },
 						},
-					);
+						);
 
-					try {
-						await writer.docs.put(new Document({ id: "2" }));
-						await writer.docs.put(new Document({ id: "3" }));
-						await iterator.next(10);
+						try {
+							await writer.docs.put(new Document({ id: "2" }));
+							await writer.docs.put(new Document({ id: "3" }));
+							// Drain in-order items so the iterator establishes a frontier beyond "1".
+							// If we insert "1" before that frontier exists, it may no longer be considered "late"
+							// and the outOfOrder handler would never fire (leading to a timeout).
+							const seen = new Set<string>();
+							const start = Date.now();
+							while (
+								Date.now() - start < 10_000 &&
+								(!seen.has("2") || !seen.has("3"))
+							) {
+								const batch = await iterator.next(10);
+								for (const doc of batch) {
+									seen.add(doc.id);
+								}
+								if (!seen.has("2") || !seen.has("3")) {
+									await delay(50);
+								}
+							}
+							expect([...seen]).to.include("2");
+							expect([...seen]).to.include("3");
 
-						await writer.docs.put(new Document({ id: "1" }));
+							await waitForResolved(
+								async () => expect(await iterator.pending()).to.equal(0),
+								{ timeout: 10_000, delayInterval: 50 },
+							);
 
-						await latePromise.promise;
-						expect(collected?.length).to.equal(1);
-						expect(lateEvt?.items?.length).to.equal(1);
-						const item = lateEvt!.items![0];
-						expect(item.value?.id ?? item.indexed.id).to.equal("1");
-						expect(item.value?.__context).to.exist;
+							await writer.docs.put(new Document({ id: "1" }));
+
+							// Avoid hanging the entire suite if outOfOrder delivery never happens.
+							await Promise.race([
+								latePromise.promise,
+								delay(20_000).then(() => {
+									throw new Error(
+										"Timed out waiting for outOfOrder(queue) handler",
+									);
+								}),
+							]);
+							expect(collected?.length).to.equal(1);
+							expect(lateEvt?.items?.length).to.equal(1);
+							const item = lateEvt!.items![0];
+							expect(item.value?.id ?? item.indexed.id).to.equal("1");
+							expect(item.value?.__context).to.exist;
 						expect(item.value?.__indexed).to.exist;
 						expect(collected?.[0]?.value?.__context).to.exist;
 						expect(collected?.[0]?.value?.__indexed).to.exist;

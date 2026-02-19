@@ -16,7 +16,7 @@ import {
 	type IPeerbitKeychain,
 } from "@peerbit/keychain";
 import { TestSession } from "@peerbit/libp2p-test-utils";
-import { TopicControlPlane } from "@peerbit/pubsub";
+import { FanoutTree, TopicControlPlane, TopicRootControlPlane } from "@peerbit/pubsub";
 import {
 	SubscriptionEvent,
 	UnsubcriptionEvent,
@@ -25,6 +25,22 @@ import { type ProgramClient, ProgramHandler } from "../src/program.js";
 
 type PubsubHandler = (event: CustomEvent<unknown>) => void;
 type StoredBlock = Uint8Array | { cid: string; block: { bytes: Uint8Array } };
+
+// Program tests create libp2p peers independently (not in a shared session) and
+// then dial them explicitly. Sharded pubsub requires a consistent shard-root
+// candidate set across peers; otherwise each peer may resolve roots to itself
+// and never converge on the same overlay.
+const TEST_TOPIC_ROOT_PLANES = new Set<TopicRootControlPlane>();
+const TEST_TOPIC_ROOT_CANDIDATES = new Set<string>();
+let TEST_ACTIVE_LIBP2P_PEERS = 0;
+const updateTestTopicRootCandidates = () => {
+	const candidates = [...TEST_TOPIC_ROOT_CANDIDATES].sort((a, b) =>
+		a < b ? -1 : a > b ? 1 : 0,
+	);
+	for (const plane of TEST_TOPIC_ROOT_PLANES) {
+		plane.setTopicRootCandidates(candidates);
+	}
+};
 
 export const creatMockPeer = async (
 	state: {
@@ -197,16 +213,34 @@ export const creatMockPeer = async (
 };
 
 export const createLibp2pPeer = async (): Promise<ProgramClient> => {
+	const topicRootControlPlane = new TopicRootControlPlane();
+	let fanoutInstance: FanoutTree | undefined;
+	const getOrCreateFanout = (c: any) => {
+		if (!fanoutInstance) {
+			fanoutInstance = new FanoutTree(c, {
+				connectionManager: false,
+				topicRootControlPlane,
+			});
+		}
+		return fanoutInstance;
+	};
+
 	const client = (
 		await TestSession.connected<
 			{
 				pubsub: TopicControlPlane;
+				fanout: FanoutTree;
 				blocks: DirectBlock;
 				keychain: IPeerbitKeychain;
 			} & any
 		>(1, {
 			services: {
-				pubsub: (c) => new TopicControlPlane(c),
+				pubsub: (c) =>
+					new TopicControlPlane(c, {
+						topicRootControlPlane,
+						fanout: getOrCreateFanout(c),
+					}),
+				fanout: (c) => getOrCreateFanout(c),
 				blocks: (c) => new DirectBlock(c),
 				keychain: () =>
 					new DefaultCryptoKeychain() as unknown as IPeerbitKeychain,
@@ -214,11 +248,28 @@ export const createLibp2pPeer = async (): Promise<ProgramClient> => {
 		})
 	).peers[0];
 
+	// Keep shard-root resolution consistent across all peers created by this helper.
+	// NOTE: Callers should create all peers for a given test before subscribing/opening
+	// programs, otherwise changing the candidate set can change shard roots.
+	try {
+		const selfHash = (client as any)?.services?.pubsub?.publicKeyHash as
+			| string
+			| undefined;
+		if (typeof selfHash === "string" && selfHash.length > 0) {
+			TEST_TOPIC_ROOT_PLANES.add(topicRootControlPlane);
+			TEST_TOPIC_ROOT_CANDIDATES.add(selfHash);
+			updateTestTopicRootCandidates();
+		}
+	} catch {
+		// ignore
+	}
+
 	const identity = getKeypairFromPrivateKey(
 		(client as any)["components"].privateKey, // TODO can we export privateKey in a better way?
 	);
 
 	let handler: ProgramHandler | undefined = undefined;
+	let stopped = false;
 	const peer: ProgramClient = {
 		peerId: await identity.toPeerId(),
 		services: client.services,
@@ -242,8 +293,18 @@ export const createLibp2pPeer = async (): Promise<ProgramClient> => {
 			return peer as any; // TODO
 		},
 		stop: async () => {
-			await handler?.stop();
-			await client.stop();
+			if (stopped) return;
+			stopped = true;
+			try {
+				await handler?.stop();
+				await client.stop();
+			} finally {
+				TEST_ACTIVE_LIBP2P_PEERS = Math.max(0, TEST_ACTIVE_LIBP2P_PEERS - 1);
+				if (TEST_ACTIVE_LIBP2P_PEERS === 0) {
+					TEST_TOPIC_ROOT_PLANES.clear();
+					TEST_TOPIC_ROOT_CANDIDATES.clear();
+				}
+			}
 		},
 		dial: async (address: string | Multiaddr | Multiaddr[]) => {
 			const maddress =
@@ -260,5 +321,6 @@ export const createLibp2pPeer = async (): Promise<ProgramClient> => {
 			return !!out;
 		},
 	};
+	TEST_ACTIVE_LIBP2P_PEERS += 1;
 	return peer;
 };

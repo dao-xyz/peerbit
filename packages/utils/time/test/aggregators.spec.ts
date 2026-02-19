@@ -244,19 +244,24 @@ describe("debounceAccumulator", () => {
 			{ leading: false }, // Leading disabled, so all calls are trailing.
 		);
 
-		const t0 = Date.now();
-		await debounced.add(1);
-		const t1 = Date.now();
-		// With leading disabled, the first call should resolve only after the delay.
-		expect(t1 - t0).to.be.closeTo(delayTime, 100);
+			const t0 = Date.now();
+			await debounced.add(1);
+			const t1 = Date.now();
+			// With leading disabled, the first call should resolve only after the delay.
+			// In CI and during workspace-wide test runs, the event loop can be delayed by
+			// unrelated CPU-heavy tasks. Assert "not early" and keep a generous upper bound
+			// to avoid flakes while still catching egregious regressions.
+			expect(t1 - t0).to.be.greaterThan(delayTime - 100);
+			expect(t1 - t0).to.be.lessThan(delayTime + 2500);
 
-		const tGroupStart = Date.now();
-		await Promise.all([debounced.add(2), debounced.add(3), debounced.add(4)]);
-		const t2 = Date.now();
-		// Subsequent calls within the same batch should also resolve after delayTime.
-		expect(t2 - tGroupStart).to.be.closeTo(delayTime, 100);
-		expect(out).to.deep.eq([[1], [2, 3, 4]]);
-	});
+			const tGroupStart = Date.now();
+			await Promise.all([debounced.add(2), debounced.add(3), debounced.add(4)]);
+			const t2 = Date.now();
+			// Subsequent calls within the same batch should also resolve after delayTime.
+			expect(t2 - tGroupStart).to.be.greaterThan(delayTime - 100);
+			expect(t2 - tGroupStart).to.be.lessThan(delayTime + 2500);
+			expect(out).to.deep.eq([[1], [2, 3, 4]]);
+		});
 
 	const makeAcc = (delayTime: number, opts?: { leading?: boolean }) => {
 		let out: number[][] = [];

@@ -1,4 +1,4 @@
-import { type PeerId as Libp2pPeerId } from "@libp2p/interface";
+import { type Connection, type PeerId as Libp2pPeerId } from "@libp2p/interface";
 import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 import {
@@ -12,6 +12,7 @@ import {
 	Subscribe,
 	SubscriptionData,
 	SubscriptionEvent,
+	TopicRootCandidates,
 	UnsubcriptionEvent,
 	Unsubscribe,
 } from "@peerbit/pubsub-interface";
@@ -33,7 +34,9 @@ import {
 	NotStartedError,
 	type PriorityOptions,
 	SilentDelivery,
+	type WithExtraSigners,
 	deliveryModeHasReceiver,
+	getMsgId,
 } from "@peerbit/stream-interface";
 import { AbortError, TimeoutError } from "@peerbit/time";
 import { Uint8ArrayList } from "uint8arraylist";
@@ -68,9 +71,12 @@ const logErrorIfStarted = (e?: { message: string }) => {
 
 const SUBSCRIBER_CACHE_MAX_ENTRIES_HARD_CAP = 100_000;
 const SUBSCRIBER_CACHE_DEFAULT_MAX_ENTRIES = 4_096;
-const RECENT_TOPIC_PEERS_TTL_MS = 30_000;
-const RECENT_TOPIC_PEERS_MAX_PEERS = 32;
-const RECENT_TOPIC_PEERS_MAX_TOPICS = 4_096;
+const DEFAULT_FANOUT_PUBLISH_IDLE_CLOSE_MS = 60_000;
+const DEFAULT_FANOUT_PUBLISH_MAX_EPHEMERAL_CHANNELS = 64;
+const DEFAULT_PUBSUB_SHARD_COUNT = 256;
+const PUBSUB_SHARD_COUNT_HARD_CAP = 16_384;
+const DEFAULT_PUBSUB_SHARD_TOPIC_PREFIX = "/peerbit/pubsub-shard/1/";
+const AUTO_TOPIC_ROOT_CANDIDATES_MAX = 64;
 
 const DEFAULT_PUBSUB_FANOUT_CHANNEL_OPTIONS: Omit<
 	FanoutTreeChannelOptions,
@@ -88,27 +94,71 @@ export type TopicControlPlaneOptions = DirectStreamOptions & {
 	subscriptionDebounceDelay?: number;
 	topicRootControlPlane?: TopicRootControlPlane;
 	/**
-	 * Optional fanout overlay used for large-topic delivery without subscriber gossip.
-	 *
-	 * When configured, topics selected by `fanoutTopics(topic)` will be delivered over
-	 * the fanout tree (subscribe = join overlay) and `getSubscribers()` becomes
-	 * bounded (overlay neighbors + cached hints), not global membership.
+	 * Fanout overlay used for sharded topic delivery.
 	 */
-	fanout?: FanoutTree;
+	fanout: FanoutTree;
 	/**
-	 * Per-topic policy: return `true` to use the fanout overlay for this topic.
-	 *
-	 * Defaults to "explicit roots only": topics with a root set in `topicRootControlPlane`.
-	 */
-	fanoutTopics?: (topic: string) => boolean;
-	/**
-	 * Fanout channel options for topics delivered over the fanout overlay.
+	 * Base fanout channel options for shard overlays (applies to both roots and nodes).
 	 */
 	fanoutChannel?: Partial<Omit<FanoutTreeChannelOptions, "role">>;
+	/**
+	 * Fanout channel overrides applied only when this node is the shard root.
+	 */
+	fanoutRootChannel?: Partial<Omit<FanoutTreeChannelOptions, "role">>;
+	/**
+	 * Fanout channel overrides applied when joining shard overlays as a node.
+	 *
+	 * This is the primary knob for "leaf-only" subscribers: set `maxChildren=0`
+	 * for non-router nodes so they never become relays under churn.
+	 */
+	fanoutNodeChannel?: Partial<Omit<FanoutTreeChannelOptions, "role">>;
 	/**
 	 * Fanout join options for overlay topics.
 	 */
 	fanoutJoin?: FanoutTreeJoinOptions;
+	/**
+	 * Number of pubsub shards (overlays) used for topic delivery.
+	 *
+	 * Each user-topic deterministically maps to exactly one shard topic:
+	 * `shard = hash(topic) % shardCount`, and subscription joins that shard overlay.
+	 *
+	 * Default: 256.
+	 */
+	shardCount?: number;
+	/**
+	 * Prefix used to form internal shard topics.
+	 *
+	 * Default: `/peerbit/pubsub-shard/1/`.
+	 */
+	shardTopicPrefix?: string;
+	/**
+	 * If enabled, this node will host (open as root) every shard for which it is
+	 * the deterministically selected root.
+	 *
+	 * This is intended for "router"/"supernode" deployments.
+	 *
+	 * Default: `false`.
+	 */
+	hostShards?: boolean;
+	/**
+	 * Fanout-backed topics: require a local `subscribe(topic)` before `publish(topic)` is allowed.
+	 *
+	 * Default: `false` (publishing without subscribing will temporarily join the overlay).
+	 */
+	fanoutPublishRequiresSubscribe?: boolean;
+	/**
+	 * When publishing on a fanout topic without subscribing, keep the ephemeral join
+	 * open for this long since the last publish, then auto-leave.
+	 *
+	 * Default: 60s. Set to `0` to close immediately after each publish.
+	 */
+	fanoutPublishIdleCloseMs?: number;
+	/**
+	 * Max number of ephemeral fanout channels kept open concurrently for publish-only usage.
+	 *
+	 * Default: 64. Set to `0` to disable caching (channels will close after publish).
+	 */
+	fanoutPublishMaxEphemeralChannels?: number;
 	/**
 	 * Best-effort bound on cached remote subscribers per topic.
 	 *
@@ -122,6 +172,16 @@ export type TopicControlPlaneComponents = DirectStreamComponents;
 
 export type PeerId = Libp2pPeerId | PublicSignKey;
 
+const topicHash32 = (topic: string) => {
+	let hash = 0x811c9dc5; // FNV-1a
+	for (let index = 0; index < topic.length; index++) {
+		hash ^= topic.charCodeAt(index);
+		hash = (hash * 0x01000193) >>> 0;
+	}
+	return hash >>> 0;
+};
+
+
 /**
  * Runtime control-plane implementation for pubsub topic membership + forwarding.
  */
@@ -129,22 +189,46 @@ export class TopicControlPlane
 	extends DirectStream<PubSubEvents>
 	implements PubSub
 {
-	public topics: Map<string, Map<string, SubscriptionData>>; // topic -> peers --> Uint8Array subscription metadata (the latest received)
-	public peerToTopic: Map<string, Set<string>>; // peer -> topics
-	public topicsToPeers: Map<string, Set<string>>; // topic -> peers
-	public subscriptions: Map<string, { counter: number }>; // topic -> subscription ids
+	// Tracked topics -> remote subscribers (best-effort).
+	public topics: Map<string, Map<string, SubscriptionData>>;
+	// Remote peer -> tracked topics.
+	public peerToTopic: Map<string, Set<string>>;
+	// Local topic -> reference count.
+	public subscriptions: Map<string, { counter: number }>;
 	public lastSubscriptionMessages: Map<string, Map<string, bigint>> = new Map();
 	public dispatchEventOnSelfPublish: boolean;
 	public readonly topicRootControlPlane: TopicRootControlPlane;
 	public readonly subscriberCacheMaxEntries: number;
-	public readonly fanout?: FanoutTree;
+	public readonly fanout: FanoutTree;
 
 	private debounceSubscribeAggregator: DebouncedAccumulatorCounterMap;
 	private debounceUnsubscribeAggregator: DebouncedAccumulatorCounterMap;
-	private recentTopicPeers = new Map<string, { peers: string[]; expiresAt: number }>();
-	private readonly fanoutTopicsFn: (topic: string) => boolean;
-	private readonly fanoutChannelOptions: Omit<FanoutTreeChannelOptions, "role">;
+
+	private readonly shardCount: number;
+	private readonly shardTopicPrefix: string;
+	private readonly hostShards: boolean;
+	private readonly shardRootCache = new Map<string, string>();
+	private readonly shardTopicCache = new Map<string, string>();
+	private readonly shardRefCounts = new Map<string, number>();
+	private readonly pinnedShards = new Set<string>();
+
+	private readonly fanoutRootChannelOptions: Omit<FanoutTreeChannelOptions, "role">;
+	private readonly fanoutNodeChannelOptions: Omit<FanoutTreeChannelOptions, "role">;
 	private readonly fanoutJoinOptions?: FanoutTreeJoinOptions;
+	private readonly fanoutPublishRequiresSubscribe: boolean;
+	private readonly fanoutPublishIdleCloseMs: number;
+	private readonly fanoutPublishMaxEphemeralChannels: number;
+
+	// If no shard-root candidates are configured, we fall back to an "auto" mode:
+	// start with `[self]` and expand candidates as underlay peers connect.
+	// This keeps small ad-hoc networks working without explicit bootstraps.
+	private autoTopicRootCandidates = false;
+	private autoTopicRootCandidateSet?: Set<string>;
+	private reconcileShardOverlaysInFlight?: Promise<void>;
+	private autoCandidatesBroadcastTimers: Array<ReturnType<typeof setTimeout>> = [];
+	private autoCandidatesGossipInterval?: ReturnType<typeof setInterval>;
+	private autoCandidatesGossipUntil = 0;
+
 	private fanoutChannels = new Map<
 		string,
 		{
@@ -152,6 +236,10 @@ export class TopicControlPlane
 			channel: FanoutChannel;
 			join: Promise<void>;
 			onData: (ev: CustomEvent<FanoutTreeDataEvent>) => void;
+			onUnicast: (ev: any) => void;
+			ephemeral: boolean;
+			lastUsedAt: number;
+			idleCloseTimeout?: ReturnType<typeof setTimeout>;
 		}
 	>();
 
@@ -159,30 +247,78 @@ export class TopicControlPlane
 		components: TopicControlPlaneComponents,
 		props?: TopicControlPlaneOptions,
 	) {
-		super(components, ["/peerbit/topic-control-plane/1.0.0"], props);
+		super(components, ["/peerbit/topic-control-plane/2.0.0"], props);
 		this.subscriptions = new Map();
 		this.topics = new Map();
-		this.topicsToPeers = new Map();
 		this.peerToTopic = new Map();
+
 		this.topicRootControlPlane =
 			props?.topicRootControlPlane || new TopicRootControlPlane();
 		this.dispatchEventOnSelfPublish =
 			props?.dispatchEventOnSelfPublish || false;
-		this.fanout = props?.fanout;
-		this.fanoutTopicsFn =
-			props?.fanoutTopics ||
-			((topic: string) => this.topicRootControlPlane.getTopicRoot(topic) != null);
-		this.fanoutChannelOptions = {
+
+		if (!props?.fanout) {
+			throw new Error(
+				"TopicControlPlane requires a FanoutTree instance (options.fanout)",
+			);
+		}
+		this.fanout = props.fanout;
+
+		// Default to a local-only shard-root candidate set so standalone peers can
+		// subscribe/publish without explicit bootstraps. We'll expand candidates
+		// opportunistically as neighbours connect.
+		if (this.topicRootControlPlane.getTopicRootCandidates().length === 0) {
+			this.autoTopicRootCandidates = true;
+			this.autoTopicRootCandidateSet = new Set([this.publicKeyHash]);
+			this.topicRootControlPlane.setTopicRootCandidates([this.publicKeyHash]);
+		}
+
+		const requestedShardCount = props?.shardCount ?? DEFAULT_PUBSUB_SHARD_COUNT;
+		this.shardCount = Math.min(
+			PUBSUB_SHARD_COUNT_HARD_CAP,
+			Math.max(1, Math.floor(requestedShardCount)),
+		);
+		const prefix = props?.shardTopicPrefix ?? DEFAULT_PUBSUB_SHARD_TOPIC_PREFIX;
+		this.shardTopicPrefix = prefix.endsWith("/") ? prefix : prefix + "/";
+		this.hostShards = props?.hostShards ?? false;
+
+		const baseFanoutChannelOptions = {
 			...DEFAULT_PUBSUB_FANOUT_CHANNEL_OPTIONS,
 			...(props?.fanoutChannel || {}),
 		} as Omit<FanoutTreeChannelOptions, "role">;
+		this.fanoutRootChannelOptions = {
+			...baseFanoutChannelOptions,
+			...(props?.fanoutRootChannel || {}),
+		} as Omit<FanoutTreeChannelOptions, "role">;
+		this.fanoutNodeChannelOptions = {
+			...baseFanoutChannelOptions,
+			...(props?.fanoutNodeChannel || {}),
+		} as Omit<FanoutTreeChannelOptions, "role">;
 		this.fanoutJoinOptions = props?.fanoutJoin;
+
+		this.fanoutPublishRequiresSubscribe =
+			props?.fanoutPublishRequiresSubscribe ?? false;
+		const requestedIdleCloseMs =
+			props?.fanoutPublishIdleCloseMs ?? DEFAULT_FANOUT_PUBLISH_IDLE_CLOSE_MS;
+		this.fanoutPublishIdleCloseMs = Math.max(
+			0,
+			Math.floor(requestedIdleCloseMs),
+		);
+		const requestedMaxEphemeral =
+			props?.fanoutPublishMaxEphemeralChannels ??
+			DEFAULT_FANOUT_PUBLISH_MAX_EPHEMERAL_CHANNELS;
+		this.fanoutPublishMaxEphemeralChannels = Math.max(
+			0,
+			Math.floor(requestedMaxEphemeral),
+		);
+
 		const requestedSubscriberCacheMaxEntries =
 			props?.subscriberCacheMaxEntries ?? SUBSCRIBER_CACHE_DEFAULT_MAX_ENTRIES;
 		this.subscriberCacheMaxEntries = Math.min(
 			SUBSCRIBER_CACHE_MAX_ENTRIES_HARD_CAP,
 			Math.max(1, Math.floor(requestedSubscriberCacheMaxEntries)),
 		);
+
 		this.debounceSubscribeAggregator = debouncedAccumulatorSetCounter(
 			(set) => this._subscribe([...set.values()]),
 			props?.subscriptionDebounceDelay ?? 50,
@@ -193,34 +329,355 @@ export class TopicControlPlane
 		);
 	}
 
-	stop() {
-		for (const st of this.fanoutChannels.values()) {
-			try {
-				st.channel.removeEventListener("data", st.onData as any);
-			} catch {
-				// ignore
-			}
-			try {
-				st.channel.close();
-			} catch {
-				// ignore
-			}
+	/**
+	 * Configure deterministic topic-root candidates and disable the pubsub "auto"
+	 * candidate mode.
+	 *
+	 * Auto mode is a convenience for small ad-hoc networks where no bootstraps/
+	 * routers are configured. When an explicit candidate set is provided (e.g.
+	 * from bootstraps or a test harness), we must stop mutating/gossiping the
+	 * candidate set; otherwise shard root resolution can diverge and overlays can
+	 * partition (especially in sparse graphs).
+	 */
+	public setTopicRootCandidates(candidates: string[]) {
+		this.topicRootControlPlane.setTopicRootCandidates(candidates);
+
+		// Disable auto mode and stop its background gossip/timers.
+		this.autoTopicRootCandidates = false;
+		this.autoTopicRootCandidateSet = undefined;
+		for (const t of this.autoCandidatesBroadcastTimers) clearTimeout(t);
+		this.autoCandidatesBroadcastTimers = [];
+		if (this.autoCandidatesGossipInterval) {
+			clearInterval(this.autoCandidatesGossipInterval);
+			this.autoCandidatesGossipInterval = undefined;
 		}
-		this.fanoutChannels.clear();
-		this.subscriptions.clear();
-		this.topics.clear();
-		this.peerToTopic.clear();
-		this.topicsToPeers.clear();
+		this.autoCandidatesGossipUntil = 0;
+
+		// Re-resolve roots under the new mapping.
+		this.shardRootCache.clear();
+		// Only candidates can become deterministic roots. Avoid doing a full shard
+		// scan on non-candidates in large sessions.
+		if (candidates.includes(this.publicKeyHash)) {
+			void this.hostShardRootsNow().catch(() => {});
+		}
+		this.scheduleReconcileShardOverlays();
+	}
+
+	public override async start() {
+		await this.fanout.start();
+		await super.start();
+
+		if (this.hostShards) {
+			await this.hostShardRootsNow();
+		}
+	}
+
+	public override async stop() {
+			for (const st of this.fanoutChannels.values()) {
+				if (st.idleCloseTimeout) clearTimeout(st.idleCloseTimeout);
+				try {
+					st.channel.removeEventListener("data", st.onData as any);
+			} catch {
+				// ignore
+			}
+			try {
+				st.channel.removeEventListener("unicast", st.onUnicast as any);
+			} catch {
+				// ignore
+				}
+				try {
+					// Shutdown should be bounded and not depend on network I/O.
+					await st.channel.leave({ notifyParent: false, kickChildren: false });
+				} catch {
+					try {
+						st.channel.close();
+					} catch {
+					// ignore
+				}
+			}
+			}
+			this.fanoutChannels.clear();
+			for (const t of this.autoCandidatesBroadcastTimers) clearTimeout(t);
+			this.autoCandidatesBroadcastTimers = [];
+			if (this.autoCandidatesGossipInterval) {
+				clearInterval(this.autoCandidatesGossipInterval);
+				this.autoCandidatesGossipInterval = undefined;
+			}
+			this.autoCandidatesGossipUntil = 0;
+
+			this.subscriptions.clear();
+			this.topics.clear();
+			this.peerToTopic.clear();
 		this.lastSubscriptionMessages.clear();
-		this.recentTopicPeers.clear();
+		this.shardRootCache.clear();
+		this.shardTopicCache.clear();
+		this.shardRefCounts.clear();
+		this.pinnedShards.clear();
+
 		this.debounceSubscribeAggregator.close();
 		this.debounceUnsubscribeAggregator.close();
 		return super.stop();
 	}
 
+	public override async onPeerConnected(
+		peerId: Libp2pPeerId,
+		connection: Connection,
+	) {
+		await super.onPeerConnected(peerId, connection);
+
+		// If we're in auto-candidate mode, expand the deterministic shard-root
+		// candidate set as neighbours connect, then reconcile shard overlays and
+		// re-announce subscriptions so membership knowledge converges.
+		if (!this.autoTopicRootCandidates) return;
+		let peerHash: string;
+		try {
+			peerHash = getPublicKeyFromPeerId(peerId).hashcode();
+		} catch {
+			return;
+		}
+		void this.maybeUpdateAutoTopicRootCandidates(peerHash);
+	}
+
+	// Ensure auto-candidate mode converges even when libp2p topology callbacks
+	// are delayed or only fire for one side of a connection. `addPeer()` runs for
+	// both inbound + outbound protocol streams once the remote public key is known.
+	public override addPeer(
+		peerId: Libp2pPeerId,
+		publicKey: PublicSignKey,
+		protocol: string,
+		connId: string,
+	): PeerStreams {
+		const peer = super.addPeer(peerId, publicKey, protocol, connId);
+		if (this.autoTopicRootCandidates) {
+			void this.maybeUpdateAutoTopicRootCandidates(publicKey.hashcode());
+			this.scheduleAutoTopicRootCandidatesBroadcast([peer]);
+		}
+		return peer;
+	}
+
+	private maybeDisableAutoTopicRootCandidatesIfExternallyConfigured(): boolean {
+		if (!this.autoTopicRootCandidates) return false;
+
+		const managed = this.autoTopicRootCandidateSet;
+		if (!managed) return false;
+
+		const current = this.topicRootControlPlane.getTopicRootCandidates();
+		const externallyConfigured =
+			current.length !== managed.size || current.some((c) => !managed.has(c));
+		if (!externallyConfigured) return false;
+
+		// Stop mutating the candidate set. Leave the externally configured candidates
+		// intact and reconcile shard overlays under the new mapping.
+		this.autoTopicRootCandidates = false;
+		this.autoTopicRootCandidateSet = undefined;
+		this.shardRootCache.clear();
+
+		// Ensure we host any shard roots we're now responsible for. This is important
+		// in tests where candidates may be configured before protocol streams have
+		// fully started; earlier `hostShardRootsNow()` attempts can be skipped,
+		// leading to join timeouts.
+		void this.hostShardRootsNow().catch(() => {});
+		this.scheduleReconcileShardOverlays();
+		return true;
+	}
+
+	private maybeUpdateAutoTopicRootCandidates(peerHash: string) {
+		if (!this.autoTopicRootCandidates) return;
+		if (!peerHash || peerHash === this.publicKeyHash) return;
+
+		if (this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured()) return;
+
+		const current = this.topicRootControlPlane.getTopicRootCandidates();
+		const managed = this.autoTopicRootCandidateSet;
+
+		if (current.includes(peerHash)) return;
+
+		managed?.add(peerHash);
+		const next = this.normalizeAutoTopicRootCandidates(
+			managed ? [...managed] : [...current, peerHash],
+		);
+		this.autoTopicRootCandidateSet = new Set(next);
+		this.topicRootControlPlane.setTopicRootCandidates(next);
+		this.shardRootCache.clear();
+		this.scheduleReconcileShardOverlays();
+
+		// In auto-candidate mode, shard roots are selected deterministically across
+		// *all* connected peers (not just those currently subscribed to a shard).
+		// That means a peer can be selected as root for shards it isn't using yet.
+		// Ensure we proactively host the shard roots we're responsible for so other
+		// peers can join without timing out in small ad-hoc networks.
+		void this.hostShardRootsNow().catch(() => {});
+
+		// Share the updated candidate set so other peers converge on the same
+		// deterministic mapping even in partially connected topologies.
+		this.scheduleAutoTopicRootCandidatesBroadcast();
+	}
+
+	private normalizeAutoTopicRootCandidates(candidates: string[]): string[] {
+		const unique = new Set<string>();
+		for (const c of candidates) {
+			if (!c) continue;
+			unique.add(c);
+		}
+		unique.add(this.publicKeyHash);
+		const sorted = [...unique].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+		return sorted.slice(0, AUTO_TOPIC_ROOT_CANDIDATES_MAX);
+	}
+
+	private scheduleAutoTopicRootCandidatesBroadcast(targets?: PeerStreams[]) {
+		if (!this.autoTopicRootCandidates) return;
+		if (!this.started || this.stopping) return;
+
+		if (targets && targets.length > 0) {
+			void this.sendAutoTopicRootCandidates(targets).catch(() => {});
+			return;
+		}
+
+		for (const t of this.autoCandidatesBroadcastTimers) clearTimeout(t);
+		this.autoCandidatesBroadcastTimers = [];
+
+		// Burst a few times to survive early "stream not writable yet" races.
+		const delays = [25, 500, 2_000];
+		for (const delayMs of delays) {
+			const t = setTimeout(() => {
+				void this.sendAutoTopicRootCandidates().catch(() => {});
+			}, delayMs);
+			t.unref?.();
+			this.autoCandidatesBroadcastTimers.push(t);
+		}
+
+		// Keep gossiping for a while after changes so partially connected topologies
+		// converge even under slow stream negotiation.
+		this.autoCandidatesGossipUntil = Date.now() + 60_000;
+		this.ensureAutoCandidatesGossipInterval();
+	}
+
+	private ensureAutoCandidatesGossipInterval() {
+		if (!this.autoTopicRootCandidates) return;
+		if (!this.started || this.stopping) return;
+		if (this.autoCandidatesGossipInterval) return;
+		this.autoCandidatesGossipInterval = setInterval(() => {
+			if (!this.started || this.stopping || !this.autoTopicRootCandidates) return;
+			if (this.autoCandidatesGossipUntil > 0 && Date.now() > this.autoCandidatesGossipUntil) {
+				if (this.autoCandidatesGossipInterval) {
+					clearInterval(this.autoCandidatesGossipInterval);
+					this.autoCandidatesGossipInterval = undefined;
+				}
+				return;
+			}
+			void this.sendAutoTopicRootCandidates().catch(() => {});
+		}, 2_000);
+		this.autoCandidatesGossipInterval.unref?.();
+	}
+
+	private async sendAutoTopicRootCandidates(targets?: PeerStreams[]) {
+		if (!this.started) throw new NotStartedError();
+		const streams = targets ?? [...this.peers.values()];
+		if (streams.length === 0) return;
+
+		const candidates = this.topicRootControlPlane.getTopicRootCandidates();
+		if (candidates.length === 0) return;
+
+		const msg = new TopicRootCandidates({ candidates });
+		const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
+			mode: new AnyWhere(),
+			priority: 1,
+			skipRecipientValidation: true,
+		} as any);
+		await this.publishMessage(this.publicKey, embedded, streams).catch(
+			dontThrowIfDeliveryError,
+		);
+	}
+
+	private mergeAutoTopicRootCandidatesFromPeer(candidates: string[]): boolean {
+		if (!this.autoTopicRootCandidates) return false;
+		if (this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured()) return false;
+		const managed = this.autoTopicRootCandidateSet;
+		if (!managed) return false;
+
+		const before = this.topicRootControlPlane.getTopicRootCandidates();
+		for (const c of candidates) {
+			if (!c) continue;
+			managed.add(c);
+		}
+		const next = this.normalizeAutoTopicRootCandidates([...managed]);
+		if (before.length === next.length && before.every((c, i) => c === next[i])) {
+			return false;
+		}
+
+		this.autoTopicRootCandidateSet = new Set(next);
+		this.topicRootControlPlane.setTopicRootCandidates(next);
+		this.shardRootCache.clear();
+		this.scheduleReconcileShardOverlays();
+		void this.hostShardRootsNow().catch(() => {});
+		this.scheduleAutoTopicRootCandidatesBroadcast();
+		return true;
+	}
+
+	private scheduleReconcileShardOverlays() {
+		if (this.reconcileShardOverlaysInFlight) return;
+		this.reconcileShardOverlaysInFlight = this.reconcileShardOverlays()
+			.catch(() => {
+				// best-effort retry: fanout streams/roots might not be ready yet.
+				if (!this.started || this.stopping) return;
+				const t = setTimeout(() => this.scheduleReconcileShardOverlays(), 250);
+				t.unref?.();
+			})
+			.finally(() => {
+				this.reconcileShardOverlaysInFlight = undefined;
+			});
+	}
+
+	private async reconcileShardOverlays() {
+		if (!this.started) return;
+
+		const byShard = new Map<string, string[]>();
+		for (const topic of this.subscriptions.keys()) {
+			const shardTopic = this.getShardTopicForUserTopic(topic);
+			byShard.set(shardTopic, [...(byShard.get(shardTopic) ?? []), topic]);
+		}
+
+		// Ensure shard overlays are joined using the current root mapping (may
+		// migrate channels if roots changed), then re-announce subscriptions.
+		await Promise.all(
+			[...byShard.entries()].map(async ([shardTopic, userTopics]) => {
+				if (userTopics.length === 0) return;
+				await this.ensureFanoutChannel(shardTopic, { ephemeral: false });
+
+				const msg = new Subscribe({ topics: userTopics, requestSubscribers: true });
+				const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
+					mode: new AnyWhere(),
+					priority: 1,
+					skipRecipientValidation: true,
+				} as any);
+				const st = this.fanoutChannels.get(shardTopic);
+				if (!st) return;
+				await st.channel.publish(toUint8Array(embedded.bytes()));
+				this.touchFanoutChannel(shardTopic);
+			}),
+		);
+	}
+
+	private isTrackedTopic(topic: string) {
+		return this.topics.has(topic);
+	}
+
 	private initializeTopic(topic: string) {
 		this.topics.get(topic) || this.topics.set(topic, new Map());
-		this.topicsToPeers.get(topic) || this.topicsToPeers.set(topic, new Set());
+	}
+
+	private untrackTopic(topic: string) {
+		const peers = this.topics.get(topic);
+		this.topics.delete(topic);
+		if (!peers) return;
+		for (const peerHash of peers.keys()) {
+			this.peerToTopic.get(peerHash)?.delete(topic);
+			this.lastSubscriptionMessages.get(peerHash)?.delete(topic);
+			if (!this.peerToTopic.get(peerHash)?.size) {
+				this.peerToTopic.delete(peerHash);
+				this.lastSubscriptionMessages.delete(peerHash);
+			}
+		}
 	}
 
 	private initializePeer(publicKey: PublicSignKey) {
@@ -228,81 +685,262 @@ export class TopicControlPlane
 			this.peerToTopic.set(publicKey.hashcode(), new Set());
 	}
 
-	private isFanoutTopic(topic: string) {
-		return Boolean(this.fanout && this.fanoutTopicsFn(topic.toString()));
+	private pruneTopicSubscribers(topic: string) {
+		const peers = this.topics.get(topic);
+		if (!peers) return;
+
+		while (peers.size > this.subscriberCacheMaxEntries) {
+			const oldest = peers.keys().next().value as string | undefined;
+			if (!oldest) break;
+			peers.delete(oldest);
+			this.peerToTopic.get(oldest)?.delete(topic);
+			this.lastSubscriptionMessages.get(oldest)?.delete(topic);
+			if (!this.peerToTopic.get(oldest)?.size) {
+				this.peerToTopic.delete(oldest);
+				this.lastSubscriptionMessages.delete(oldest);
+			}
+		}
 	}
 
-	private async ensureFanoutChannel(topic: string): Promise<void> {
+	private getSubscriptionOverlap(topics?: string[]) {
+		const subscriptions: string[] = [];
+		if (topics) {
+			for (const topic of topics) {
+				if (this.subscriptions.get(topic)) subscriptions.push(topic);
+			}
+			return subscriptions;
+		}
+		for (const [topic] of this.subscriptions) subscriptions.push(topic);
+		return subscriptions;
+	}
+
+	private clearFanoutIdleClose(
+		st: { idleCloseTimeout?: ReturnType<typeof setTimeout> },
+	) {
+		if (st.idleCloseTimeout) {
+			clearTimeout(st.idleCloseTimeout);
+			st.idleCloseTimeout = undefined;
+		}
+	}
+
+	private scheduleFanoutIdleClose(topic: string) {
+		const st = this.fanoutChannels.get(topic);
+		if (!st || !st.ephemeral) return;
+		this.clearFanoutIdleClose(st);
+		if (this.fanoutPublishIdleCloseMs <= 0) return;
+		st.idleCloseTimeout = setTimeout(() => {
+			const cur = this.fanoutChannels.get(topic);
+			if (!cur || !cur.ephemeral) return;
+			const idleMs = Date.now() - cur.lastUsedAt;
+			if (idleMs >= this.fanoutPublishIdleCloseMs) {
+				void this.closeFanoutChannel(topic);
+				return;
+			}
+			this.scheduleFanoutIdleClose(topic);
+		}, this.fanoutPublishIdleCloseMs);
+	}
+
+	private touchFanoutChannel(topic: string) {
+		const st = this.fanoutChannels.get(topic);
+		if (!st) return;
+		st.lastUsedAt = Date.now();
+		if (st.ephemeral) {
+			this.scheduleFanoutIdleClose(topic);
+		}
+	}
+
+	private evictEphemeralFanoutChannels(exceptTopic?: string) {
+		const max = this.fanoutPublishMaxEphemeralChannels;
+		if (max < 0) return;
+		const exceptIsEphemeral = exceptTopic
+			? this.fanoutChannels.get(exceptTopic)?.ephemeral === true
+			: false;
+		const keep = Math.max(0, max - (exceptIsEphemeral ? 1 : 0));
+
+		const candidates: Array<[string, { lastUsedAt: number }]> = [];
+		for (const [t, st] of this.fanoutChannels) {
+			if (!st.ephemeral) continue;
+			if (exceptTopic && t === exceptTopic) continue;
+			candidates.push([t, st]);
+		}
+		if (candidates.length <= keep) return;
+
+		candidates.sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
+		const toClose = candidates.length - keep;
+		for (let i = 0; i < toClose; i++) {
+			const t = candidates[i]![0];
+			void this.closeFanoutChannel(t);
+		}
+	}
+
+	private getShardTopicForUserTopic(topic: string): string {
 		const t = topic.toString();
-		if (!this.fanout) {
+		const cached = this.shardTopicCache.get(t);
+		if (cached) return cached;
+		const index = topicHash32(t) % this.shardCount;
+		const shardTopic = `${this.shardTopicPrefix}${index}`;
+		this.shardTopicCache.set(t, shardTopic);
+		return shardTopic;
+	}
+
+	private async resolveShardRoot(shardTopic: string): Promise<string> {
+		// If someone configured topic-root candidates externally (e.g. TestSession router
+		// selection or Peerbit.bootstrap) after this peer entered auto mode, disable auto
+		// mode before we cache any roots based on a stale candidate set.
+		if (this.autoTopicRootCandidates) {
+			this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured();
+		}
+
+		const cached = this.shardRootCache.get(shardTopic);
+		if (cached) return cached;
+		const resolved = await this.topicRootControlPlane.resolveTopicRoot(shardTopic);
+		if (!resolved) {
 			throw new Error(
-				`Fanout is required for topic ${t}, but no fanout service was provided to TopicControlPlane`,
+				`No root resolved for shard topic ${shardTopic}. Configure TopicRootControlPlane candidates/resolver/trackers.`,
 			);
 		}
+		this.shardRootCache.set(shardTopic, resolved);
+		return resolved;
+	}
 
+	private async ensureFanoutChannel(
+		shardTopic: string,
+		options?: { ephemeral?: boolean; pin?: boolean; root?: string },
+	): Promise<void> {
+		const t = shardTopic.toString();
+		const pin = options?.pin === true;
+		const wantEphemeral = options?.ephemeral === true;
+
+		// Allow callers that already resolved the shard root (e.g. hostShardRootsNow)
+		// to pass it through to avoid a race where the candidate set changes between
+		// two resolve calls, causing an unnecessary (and potentially slow) join.
+		let root: string | undefined = options?.root;
 		const existing = this.fanoutChannels.get(t);
 		if (existing) {
-			return existing.join;
+			root = root ?? (await this.resolveShardRoot(t));
+			if (root === existing.root) {
+				existing.lastUsedAt = Date.now();
+				if (existing.ephemeral && !wantEphemeral) {
+					existing.ephemeral = false;
+					this.clearFanoutIdleClose(existing);
+				} else if (existing.ephemeral) {
+					this.scheduleFanoutIdleClose(t);
+				}
+				if (pin) this.pinnedShards.add(t);
+				await existing.join;
+				return;
+			}
+
+			// Root mapping changed (candidate set updated): migrate to the new overlay.
+			await this.closeFanoutChannel(t, { force: true });
 		}
 
-		const root = await this.topicRootControlPlane.resolveTopicRoot(t);
-		if (!root) {
-			throw new Error(`Fanout topic root could not be resolved for topic: ${t}`);
-		}
-
+		root = root ?? (await this.resolveShardRoot(t));
 		const channel = new FanoutChannel(this.fanout, { topic: t, root });
-		const onData = (ev: any) => {
-			const detail = ev?.detail as FanoutTreeDataEvent | undefined;
-			if (!detail) return;
 
-			let pubsubMessage: PubSubMessage;
+		const onPayload = (payload: Uint8Array) => {
+			let dm: DataMessage;
 			try {
-				pubsubMessage = PubSubMessage.from(detail.payload);
+				dm = DataMessage.from(new Uint8ArrayList(payload));
 			} catch {
 				return;
 			}
-			if (!(pubsubMessage instanceof PubSubData)) return;
+			if (!dm?.data) return;
+			if (!dm.header.signatures?.signatures?.length) return;
 
-			// Deliver only if we're currently subscribed.
-			const forMe = pubsubMessage.topics.some((x) => this.subscriptions.has(x));
-			if (!forMe) return;
+			const signedBySelf =
+				dm.header.signatures?.publicKeys.some((x) => x.equals(this.publicKey)) ??
+				false;
+			if (signedBySelf) return;
 
-			// Fanout transport frames include a kind-prefix. Present a PubSub-shaped message
-			// to consumers (data = PubSub bytes) while carrying best-effort metadata (id/timestamp).
-			const contextMessage = new DataMessage({
-				data: detail.payload,
-				header: new MessageHeader({
-					id: detail.message.id,
-					session: 0,
-					mode: new AnyWhere(),
-					priority: detail.message.header.priority,
-				}),
-			});
-			contextMessage.header.timestamp = detail.timestamp;
-			// Note: the fanout transport frame is signed over its own wire bytes (kind + channel key + seq + payload).
-			// Presenting those signatures on a synthetic PubSub-shaped DataMessage would be misleading (it would not verify).
+			let pubsubMessage: PubSubMessage;
+			try {
+				pubsubMessage = PubSubMessage.from(dm.data);
+			} catch {
+				return;
+			}
 
-			this.dispatchEvent(
-				new CustomEvent("data", {
-					detail: new DataEvent({
-						data: pubsubMessage,
-						message: contextMessage,
-					}),
-				}),
-			);
+			// Fast filter before hashing/verifying.
+			if (pubsubMessage instanceof PubSubData) {
+				const forMe = pubsubMessage.topics.some((x) => this.subscriptions.has(x));
+				if (!forMe) return;
+			} else if (
+				pubsubMessage instanceof Subscribe ||
+				pubsubMessage instanceof Unsubscribe
+			) {
+				const relevant = pubsubMessage.topics.some((x) => this.isTrackedTopic(x));
+				const needRespond =
+					pubsubMessage instanceof Subscribe && pubsubMessage.requestSubscribers
+						? pubsubMessage.topics.some((x) => this.subscriptions.has(x))
+						: false;
+				if (!relevant && !needRespond) return;
+			} else if (pubsubMessage instanceof GetSubscribers) {
+				const overlap = pubsubMessage.topics.some((x) => this.subscriptions.has(x));
+				if (!overlap) return;
+			} else {
+				return;
+			}
+
+			void (async () => {
+				const msgId = await getMsgId(payload);
+				const seen = this.seenCache.get(msgId);
+				this.seenCache.add(msgId, seen ? seen + 1 : 1);
+				if (seen) return;
+
+				if ((await this.verifyAndProcess(dm)) === false) {
+					return;
+				}
+				const sender = dm.header.signatures!.signatures[0]!.publicKey!;
+				await this.processPubSubMessage({
+					pubsubMessage,
+					message: dm,
+					from: sender,
+					source: { type: "fanout", shardTopic: t },
+				});
+			})();
+		};
+
+		const onData = (ev?: CustomEvent<FanoutTreeDataEvent>) => {
+			const detail = ev?.detail as FanoutTreeDataEvent | undefined;
+			if (!detail) return;
+			onPayload(detail.payload);
+		};
+		const onUnicast = (ev?: any) => {
+			const detail = ev?.detail as any | undefined;
+			if (!detail) return;
+			if (detail.to && detail.to !== this.publicKeyHash) return;
+			onPayload(detail.payload);
 		};
 		channel.addEventListener("data", onData as any);
+		channel.addEventListener("unicast", onUnicast as any);
 
 		const join = (async () => {
 			try {
 				if (root === this.publicKeyHash) {
-					channel.openAsRoot(this.fanoutChannelOptions);
+					channel.openAsRoot(this.fanoutRootChannelOptions);
 					return;
 				}
-				await channel.join(this.fanoutChannelOptions, this.fanoutJoinOptions);
+				// Joining by root hash is much more reliable if the fanout protocol
+				// stream is already established (especially in small test nets without
+				// trackers/bootstraps). Best-effort only: join can still succeed via
+				// trackers/other routing if this times out.
+				try {
+					await this.fanout.waitFor(root, {
+						target: "neighbor",
+						timeout: 10_000,
+					});
+				} catch {
+					// ignore
+				}
+				await channel.join(this.fanoutNodeChannelOptions, this.fanoutJoinOptions);
 			} catch (error) {
 				try {
 					channel.removeEventListener("data", onData as any);
+				} catch {
+					// ignore
+				}
+				try {
+					channel.removeEventListener("unicast", onUnicast as any);
 				} catch {
 					// ignore
 				}
@@ -315,27 +953,58 @@ export class TopicControlPlane
 			}
 		})();
 
-		this.fanoutChannels.set(t, { root, channel, join, onData });
+		const lastUsedAt = Date.now();
+		if (pin) this.pinnedShards.add(t);
+		this.fanoutChannels.set(t, {
+			root,
+			channel,
+			join,
+			onData,
+			onUnicast,
+			ephemeral: wantEphemeral,
+			lastUsedAt,
+		});
 		join.catch(() => {
 			this.fanoutChannels.delete(t);
 		});
-		return join;
+		join
+			.then(() => {
+				const st = this.fanoutChannels.get(t);
+				if (st?.ephemeral) this.scheduleFanoutIdleClose(t);
+			})
+			.catch(() => {
+				// ignore
+			});
+		if (wantEphemeral) {
+			this.evictEphemeralFanoutChannels(t);
+		}
+		await join;
 	}
 
-	private async closeFanoutChannel(topic: string): Promise<void> {
-		const t = topic.toString();
+	private async closeFanoutChannel(
+		shardTopic: string,
+		options?: { force?: boolean },
+	): Promise<void> {
+		const t = shardTopic.toString();
+		if (!options?.force && this.pinnedShards.has(t)) return;
+		if (options?.force) this.pinnedShards.delete(t);
 		const st = this.fanoutChannels.get(t);
 		if (!st) return;
 		this.fanoutChannels.delete(t);
+		this.clearFanoutIdleClose(st);
 		try {
 			st.channel.removeEventListener("data", st.onData as any);
 		} catch {
 			// ignore
 		}
 		try {
-			await st.channel.leave({ notifyParent: true });
+			st.channel.removeEventListener("unicast", st.onUnicast as any);
 		} catch {
 			// ignore
+		}
+		try {
+			await st.channel.leave({ notifyParent: true });
+		} catch {
 			try {
 				st.channel.close();
 			} catch {
@@ -344,644 +1013,346 @@ export class TopicControlPlane
 		}
 	}
 
+	public async hostShardRootsNow() {
+		if (!this.started) throw new NotStartedError();
+		const joins: Promise<void>[] = [];
+		for (let i = 0; i < this.shardCount; i++) {
+			const shardTopic = `${this.shardTopicPrefix}${i}`;
+			const root = await this.resolveShardRoot(shardTopic);
+			if (root !== this.publicKeyHash) continue;
+			joins.push(this.ensureFanoutChannel(shardTopic, { pin: true, root }));
+		}
+		await Promise.all(joins);
+	}
+
 	async subscribe(topic: string) {
-		// this.debounceUnsubscribeAggregator.delete(topic);
 		return this.debounceSubscribeAggregator.add({ key: topic });
 	}
 
-	/**
-	 * Subscribes to a given topic.
-	 */
-	async _subscribe(topics: { key: string; counter: number }[]) {
-		if (!this.started) {
-			throw new NotStartedError();
-		}
+	private async _subscribe(topics: { key: string; counter: number }[]) {
+		if (!this.started) throw new NotStartedError();
+		if (topics.length === 0) return;
 
-		if (topics.length === 0) {
-			return;
-		}
-
-		const newTopicsForTopicData: string[] = [];
-		const fanoutJoins: Promise<void>[] = [];
+		const byShard = new Map<string, string[]>();
+		const joins: Promise<void>[] = [];
 		for (const { key: topic, counter } of topics) {
 			let prev = this.subscriptions.get(topic);
 			if (prev) {
 				prev.counter += counter;
-			} else {
-				prev = {
-					counter: counter,
-				};
-				this.subscriptions.set(topic, prev);
-
-				if (this.isFanoutTopic(topic)) {
-					fanoutJoins.push(this.ensureFanoutChannel(topic));
-				} else {
-					newTopicsForTopicData.push(topic);
-					this.listenForSubscribers(topic);
-				}
+				continue;
 			}
+			this.subscriptions.set(topic, { counter });
+			this.initializeTopic(topic);
+
+			const shardTopic = this.getShardTopicForUserTopic(topic);
+			byShard.set(shardTopic, [...(byShard.get(shardTopic) ?? []), topic]);
+			this.shardRefCounts.set(
+				shardTopic,
+				(this.shardRefCounts.get(shardTopic) ?? 0) + 1,
+			);
+			joins.push(this.ensureFanoutChannel(shardTopic));
 		}
 
-		if (newTopicsForTopicData.length > 0) {
-			const message = new DataMessage({
-				data: toUint8Array(
-					new Subscribe({
-						topics: newTopicsForTopicData,
-						requestSubscribers: true,
-					}).bytes(),
-				),
-				header: new MessageHeader({
+		await Promise.all(joins);
+
+		// Announce subscriptions per shard overlay.
+		await Promise.all(
+			[...byShard.entries()].map(async ([shardTopic, userTopics]) => {
+				if (userTopics.length === 0) return;
+				const msg = new Subscribe({ topics: userTopics, requestSubscribers: true });
+				const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
+					mode: new AnyWhere(),
 					priority: 1,
-					// Flood but require ACKs so routes become populated (enables routed fanout vs blind flooding).
-					mode: new AcknowledgeAnyWhere({ redundancy: 1 }),
-					session: this.session,
-				}),
-			});
-
-			await this.publishMessage(this.publicKey, await message.sign(this.sign));
-		}
-
-		if (fanoutJoins.length > 0) {
-			await Promise.all(fanoutJoins);
-		}
+					skipRecipientValidation: true,
+				} as any);
+				const st = this.fanoutChannels.get(shardTopic);
+				if (!st) throw new Error(`Fanout channel missing for shard: ${shardTopic}`);
+				await st.channel.publish(toUint8Array(embedded.bytes()));
+				this.touchFanoutChannel(shardTopic);
+			}),
+		);
 	}
 
 	async unsubscribe(topic: string) {
 		if (this.debounceSubscribeAggregator.has(topic)) {
-			this.debounceSubscribeAggregator.delete(topic); // cancel subscription before it performed
+			this.debounceSubscribeAggregator.delete(topic);
 			return false;
 		}
-		const subscriptions = this.subscriptions.get(topic);
+		const had = this.subscriptions.get(topic);
 		await this.debounceUnsubscribeAggregator.add({ key: topic });
-		return !!subscriptions;
+		return !!had;
 	}
 
-	async _unsubscribe(
+	private async _unsubscribe(
 		topics: { key: string; counter: number }[],
 		options?: { force: boolean },
 	) {
-		if (!this.started) {
-			throw new NotStartedError();
-		}
+		if (!this.started) throw new NotStartedError();
 
-		let topicsToUnsubscribe: string[] = [];
+		const byShard = new Map<string, string[]>();
 		for (const { key: topic, counter } of topics) {
-			if (counter <= 0) {
-				continue;
-			}
-			const subscriptions = this.subscriptions.get(topic);
+			if (counter <= 0) continue;
+			const sub = this.subscriptions.get(topic);
+			if (!sub) continue;
+			sub.counter -= counter;
+			if (sub.counter > 0 && !options?.force) continue;
 
-			logger.trace(
-				`unsubscribe from ${topic} - am subscribed with subscriptions ${JSON.stringify(subscriptions)}`,
-			);
+			this.subscriptions.delete(topic);
+			this.untrackTopic(topic);
 
-			if (!subscriptions) {
-				// Not subscribed (any longer). Treat as local cache cleanup.
-				const peersOnTopic = this.topicsToPeers.get(topic);
-				if (peersOnTopic) {
-					for (const peer of [...peersOnTopic]) {
-						const last = this.lastSubscriptionMessages.get(peer);
-						last?.delete(topic);
-						if (last && last.size === 0)
-							this.lastSubscriptionMessages.delete(peer);
-						this.deletePeerFromTopic(topic, peer);
-					}
-				}
-				this.topics.delete(topic);
-				this.topicsToPeers.delete(topic);
-				if (this.isFanoutTopic(topic)) {
-					await this.closeFanoutChannel(topic);
-				}
-				continue;
-			}
-
-			if (subscriptions?.counter && subscriptions?.counter >= 0) {
-				subscriptions.counter -= counter;
-			}
-
-			if (!subscriptions.counter || options?.force) {
-				const peersOnTopic = this.topicsToPeers.get(topic);
-				if (peersOnTopic) {
-					// Remember the last known subscribers for a short time so that a fast re-subscribe
-					// can still publish control-plane messages (rpc) without waiting for subscriber gossip.
-					// This avoids correctness issues on rapid open/close cycles while preserving the
-					// "no-op when I'm the only subscriber" behavior for brand new topics.
-					if (peersOnTopic.size > 0) {
-						const peers = [...peersOnTopic].slice(0, RECENT_TOPIC_PEERS_MAX_PEERS);
-						this.recentTopicPeers.set(topic, {
-							peers,
-							expiresAt: Date.now() + RECENT_TOPIC_PEERS_TTL_MS,
-						});
-						while (this.recentTopicPeers.size > RECENT_TOPIC_PEERS_MAX_TOPICS) {
-							const oldest = this.recentTopicPeers.keys().next().value as
-								| string
-								| undefined;
-							if (!oldest) break;
-							this.recentTopicPeers.delete(oldest);
-						}
-					}
-					for (const peer of [...peersOnTopic]) {
-						const last = this.lastSubscriptionMessages.get(peer);
-						last?.delete(topic);
-						if (last && last.size === 0) {
-							this.lastSubscriptionMessages.delete(peer);
-						}
-						this.deletePeerFromTopic(topic, peer);
-					}
-				}
-
-				if (this.isFanoutTopic(topic)) {
-					await this.closeFanoutChannel(topic);
-				} else {
-					topicsToUnsubscribe.push(topic);
-				}
-				this.subscriptions.delete(topic);
-				this.topics.delete(topic);
-				this.topicsToPeers.delete(topic);
-			}
+			const shardTopic = this.getShardTopicForUserTopic(topic);
+			byShard.set(shardTopic, [...(byShard.get(shardTopic) ?? []), topic]);
 		}
 
-		if (topicsToUnsubscribe.length > 0) {
-			await this.publishMessage(
-				this.publicKey,
-				await new DataMessage({
-					header: new MessageHeader({
-						mode: new AnyWhere(), // TODO make this better
-						session: this.session,
+		await Promise.all(
+			[...byShard.entries()].map(async ([shardTopic, userTopics]) => {
+				if (userTopics.length === 0) return;
+
+				// Announce first.
+				try {
+					const msg = new Unsubscribe({ topics: userTopics });
+					const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
+						mode: new AnyWhere(),
 						priority: 1,
-					}),
-					data: toUint8Array(
-						new Unsubscribe({
-							topics: topicsToUnsubscribe,
-						}).bytes(),
-					),
-				}).sign(this.sign),
-			);
-		}
+						skipRecipientValidation: true,
+					} as any);
+					const st = this.fanoutChannels.get(shardTopic);
+					if (st) {
+						await st.channel.publish(toUint8Array(embedded.bytes()));
+						this.touchFanoutChannel(shardTopic);
+					}
+				} catch {
+					// best-effort
+				}
+
+				// Decrement local refcount and close if unused.
+				const next = (this.shardRefCounts.get(shardTopic) ?? 0) - userTopics.length;
+				if (next <= 0) {
+					this.shardRefCounts.delete(shardTopic);
+					await this.closeFanoutChannel(shardTopic);
+				} else {
+					this.shardRefCounts.set(shardTopic, next);
+				}
+			}),
+		);
 	}
 
 	getSubscribers(topic: string): PublicSignKey[] | undefined {
 		const t = topic.toString();
-
-		// Fanout topics: bounded, overlay-local view only.
-		if (this.fanout && this.fanoutTopicsFn(t)) {
-			const st = this.fanoutChannels.get(t);
-			const includeSelf = this.subscriptions.has(t);
-			const hashes = st?.channel.getPeerHashes({ includeSelf }) ?? [];
-			const seen = new Set<string>();
-			const ret: PublicSignKey[] = [];
-			for (const h of hashes) {
-				if (!h || seen.has(h)) continue;
-				seen.add(h);
-				const key = this.getPublicKey(h) ?? this.fanout.getPublicKey(h);
-				if (key) ret.push(key);
-			}
-			if (ret.length === 0 && includeSelf) {
-				return [this.publicKey];
-			}
-			return ret.length > 0 ? ret : undefined;
-		}
-
 		const remote = this.topics.get(t);
-		if (!remote) return undefined;
-
+		const includeSelf = this.subscriptions.has(t);
+		if (!remote || remote.size == 0) {
+			return includeSelf ? [this.publicKey] : undefined;
+		}
 		const ret: PublicSignKey[] = [];
 		for (const v of remote.values()) ret.push(v.publicKey);
-		if (this.subscriptions.get(t)) ret.push(this.publicKey);
+		if (includeSelf) ret.push(this.publicKey);
 		return ret;
-	}
-
-	private listenForSubscribers(topic: string) {
-		this.initializeTopic(topic);
 	}
 
 	async requestSubscribers(
 		topic: string | string[],
 		to?: PublicSignKey,
 	): Promise<void> {
-		if (!this.started) {
-			throw new NotStartedError();
-		}
-
-		if (topic == null) {
-			throw new Error("ERR_NOT_VALID_TOPIC");
-		}
-
-		if (topic.length === 0) {
-			return;
-		}
+		if (!this.started) throw new NotStartedError();
+		if (topic == null) throw new Error("ERR_NOT_VALID_TOPIC");
+		if (topic.length === 0) return;
 
 		const topicsAll = (typeof topic === "string" ? [topic] : topic).map((t) =>
 			t.toString(),
 		);
-		const topics =
-			this.fanout
-				? topicsAll.filter((t) => !this.fanoutTopicsFn(t))
-				: topicsAll;
-		for (const t of topics) {
-			this.listenForSubscribers(t);
+		for (const t of topicsAll) this.initializeTopic(t);
+
+		const byShard = new Map<string, string[]>();
+		for (const t of topicsAll) {
+			const shardTopic = this.getShardTopicForUserTopic(t);
+			byShard.set(shardTopic, [...(byShard.get(shardTopic) ?? []), t]);
 		}
 
-		// Fanout-backed topics do not use subscriber gossip. Callers can still use
-		// `getSubscribers()` for a bounded overlay-local view once joined.
-		if (topics.length === 0) {
-			return;
-		}
+		await Promise.all(
+			[...byShard.entries()].map(async ([shardTopic, userTopics]) => {
+				const persistent = (this.shardRefCounts.get(shardTopic) ?? 0) > 0;
+				await this.ensureFanoutChannel(shardTopic, { ephemeral: !persistent });
 
-		const stream = to ? this.peers.get(to.hashcode()) : undefined;
-		const mode = stream
-			? new AcknowledgeDelivery({ to: [to!], redundancy: 1 })
-			: // If we don't have a direct stream yet, targeted delivery may not be routable.
-				// Fall back to a route-learning broadcast so subscribers can respond and routes can form.
-				new AcknowledgeAnyWhere({ redundancy: 1 });
+				const msg = new GetSubscribers({ topics: userTopics });
+				const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
+					mode: new AnyWhere(),
+					priority: 1,
+					skipRecipientValidation: true,
+				} as any);
+				const payload = toUint8Array(embedded.bytes());
 
-		const message = await new DataMessage({
-			data: toUint8Array(new GetSubscribers({ topics }).bytes()),
-			header: new MessageHeader({
-				// Route-learning broadcast: flood but require ACKs so DirectStream can populate routes
-				// (used by pubsub routing to avoid forwarding to non-subscribers).
-				mode,
-				session: this.session,
-				priority: 1,
-			}),
-		}).sign(this.sign);
+				const st = this.fanoutChannels.get(shardTopic);
+				if (!st) throw new Error(`Fanout channel missing for shard: ${shardTopic}`);
 
-		return this.publishMessage(
-			this.publicKey,
-			message,
-			stream ? [stream] : undefined,
-		);
-	}
-
-	getPeersOnTopics(topics: string[]): Set<string> {
-		const newPeers: Set<string> = new Set();
-		if (topics?.length) {
-			for (const topic of topics) {
-				const peersOnTopic = this.topicsToPeers.get(topic);
-				if (peersOnTopic) {
-					peersOnTopic.forEach((peer) => {
-						newPeers.add(peer);
-					});
+				if (to) {
+					try {
+						await st.channel.unicastToAck(to.hashcode(), payload, {
+							timeoutMs: 5_000,
+						});
+					} catch {
+						await st.channel.publish(payload);
+					}
+				} else {
+					await st.channel.publish(payload);
 				}
-			}
-		}
-		return newPeers;
-	}
-
-	private shouldSendMessage(tos?: string[] | Set<string>) {
-		if (
-			Array.isArray(tos) &&
-			(tos.length === 0 || (tos.length === 1 && tos[0] === this.publicKeyHash))
-		) {
-			// skip this one
-			return false;
-		}
-
-		if (
-			tos instanceof Set &&
-			(tos.size === 0 || (tos.size === 1 && tos.has(this.publicKeyHash)))
-		) {
-			// skip this one
-			return false;
-		}
-
-		return true;
+				this.touchFanoutChannel(shardTopic);
+			}),
+		);
 	}
 
 	async publish(
 		data: Uint8Array | undefined,
-		options?: {
-			topics: string[];
-		} & { client?: string } & {
+	options?: {
+		topics: string[];
+	} & { client?: string } & {
 			mode?: SilentDelivery | AcknowledgeDelivery;
-		} & PriorityOptions &
-			IdOptions & { signal?: AbortSignal },
+		} &
+			PriorityOptions &
+			IdOptions &
+			WithExtraSigners & { signal?: AbortSignal },
 	): Promise<Uint8Array | undefined> {
-		if (!this.started) {
-			throw new NotStartedError();
-		}
+		if (!this.started) throw new NotStartedError();
 
-		const topicsAll =
-			(options as { topics: string[] }).topics?.map((x) => x.toString()) || [];
+		const topicsAll = (options as { topics: string[] }).topics?.map((x) =>
+			x.toString(),
+		) || [];
 
 		const hasExplicitTOs = options?.mode && deliveryModeHasReceiver(options.mode);
 
-		// Fanout-backed publish for selected topics (no subscriber gossip required).
-		let topics = topicsAll;
-		const fanoutTopics =
-			!hasExplicitTOs && data && this.fanout
-				? topicsAll.filter((t) => this.fanoutTopicsFn(t))
-				: [];
-		if (fanoutTopics.length > 0) {
-			for (const t of fanoutTopics) {
-				await this.ensureFanoutChannel(t);
-				const st = this.fanoutChannels.get(t);
-				if (!st) {
-					throw new Error(`Fanout channel missing for topic: ${t}`);
-				}
-				const msg = new PubSubData({ topics: [t], data, strict: false });
-				await st.channel.publish(toUint8Array(msg.bytes()));
-			}
-			topics = topicsAll.filter((t) => !this.fanoutTopicsFn(t));
-			if (topics.length === 0) {
-				return;
-			}
-		}
+		// Explicit recipients: use DirectStream delivery (no shard broadcast).
+		if (hasExplicitTOs || !data) {
+			const msg = data
+				? new PubSubData({ topics: topicsAll, data, strict: true })
+				: undefined;
+			const message = await this.createMessage(msg?.bytes(), {
+				...options,
+				skipRecipientValidation: this.dispatchEventOnSelfPublish,
+			});
 
-		let tos = hasExplicitTOs ? options.mode?.to : this.getPeersOnTopics(topics);
-
-		// Bootstrap publish (best-effort):
-		// When we re-subscribe to a topic, subscriber gossip may not have re-populated
-		// `topicsToPeers` yet. Use a short-lived "recent peers" cache so control-plane
-		// publishes (e.g. rpc "I'm going offline") don't silently no-op during that window.
-		//
-		// For brand new topics with no known remote subscribers, this stays a no-op, by design.
-		let hasRecentTopicPeersHint = false;
-		if (!hasExplicitTOs && tos instanceof Set && tos.size === 0 && topics.length > 0) {
-			const recent = new Set<string>();
-			const now = Date.now();
-			for (const t of topics) {
-				const entry = this.recentTopicPeers.get(t);
-				if (!entry) continue;
-				if (entry.expiresAt <= now) {
-					this.recentTopicPeers.delete(t);
-					continue;
-				}
-				hasRecentTopicPeersHint = true;
-				for (const peer of entry.peers) recent.add(peer);
-			}
-			if (recent.size > 0) {
-				tos = recent;
-			}
-		}
-
-		// If we have a hint that the topic used to have remote subscribers but our current
-		// subscriber cache is incomplete (fast re-subscribe), pad the recipient set with a
-		// few connected peers. This improves robustness for control-plane messages while
-		// keeping brand new topics (no history) as a strict no-op.
-		if (
-			hasRecentTopicPeersHint &&
-			!hasExplicitTOs &&
-			tos instanceof Set &&
-			tos.size < RECENT_TOPIC_PEERS_MAX_PEERS
-		) {
-			const padded = new Set<string>(tos);
-			const push = (hash?: string) => {
-				if (!hash) return;
-				if (hash === this.publicKeyHash) return;
-				if (padded.has(hash)) return;
-				padded.add(hash);
-			};
-			for (const h of this.peers.keys()) {
-				push(h);
-				if (padded.size >= RECENT_TOPIC_PEERS_MAX_PEERS) break;
-			}
-			if (padded.size < RECENT_TOPIC_PEERS_MAX_PEERS) {
-				for (const conn of this.components.connectionManager.getConnections()) {
-					try {
-						push(getPublicKeyFromPeerId(conn.remotePeer).hashcode());
-					} catch {
-						// ignore unexpected key types
-					}
-					if (padded.size >= RECENT_TOPIC_PEERS_MAX_PEERS) break;
-				}
-			}
-			tos = padded;
-		}
-
-		// If the caller publishes on a topic it is NOT subscribed to, we may have zero
-		// subscriber knowledge for that topic yet (cache cold), even though subscribers
-		// exist. In that situation, send to a small bounded set of already connected peers
-		// so the message has a chance to reach a subscriber and warm the cache.
-		const canBootstrapToConnectedPeers =
-			topics.length > 0 && topics.every((t) => !this.subscriptions.has(t));
-		if (
-			canBootstrapToConnectedPeers &&
-			!hasExplicitTOs &&
-			tos instanceof Set &&
-			tos.size === 0
-		) {
-			const bootstrap = new Set<string>();
-			const push = (hash?: string) => {
-				if (!hash) return;
-				if (hash === this.publicKeyHash) return;
-				if (bootstrap.has(hash)) return;
-				bootstrap.add(hash);
-			};
-
-			for (const h of this.peers.keys()) {
-				push(h);
-				if (bootstrap.size >= 32) break;
-			}
-			if (bootstrap.size < 32) {
-				for (const conn of this.components.connectionManager.getConnections()) {
-					try {
-						push(getPublicKeyFromPeerId(conn.remotePeer).hashcode());
-					} catch {
-						// ignore unexpected key types
-					}
-					if (bootstrap.size >= 32) break;
-				}
-			}
-
-			if (bootstrap.size > 0) {
-				tos = bootstrap;
-			}
-		}
-
-		// Embedd topic info before the data so that peers/relays can also use topic info to route messages efficiently
-		const dataMessage = data
-			? new PubSubData({
-					topics: topics.map((x) => x.toString()),
-					data,
-					strict: hasExplicitTOs,
-				})
-			: undefined;
-
-		const bytes = dataMessage?.bytes();
-		const silentDelivery = options?.mode instanceof SilentDelivery;
-
-		// do send check before creating and signing the message
-		if (!this.dispatchEventOnSelfPublish && !this.shouldSendMessage(tos)) {
-			return;
-		}
-
-		const message = await this.createMessage(bytes, {
-			...options,
-			to: tos,
-			skipRecipientValidation: this.dispatchEventOnSelfPublish,
-		});
-
-		if (dataMessage) {
-			this.dispatchEvent(
-				new CustomEvent("publish", {
-					detail: new PublishEvent({
-						client: options?.client,
-						data: dataMessage,
-						message,
+			if (msg) {
+				this.dispatchEvent(
+					new CustomEvent("publish", {
+						detail: new PublishEvent({
+							client: options?.client,
+							data: msg,
+							message,
+						}),
 					}),
-				}),
-			);
-		}
+				);
+			}
 
-		// for emitSelf we do this check here, since we don't want to send the message to ourselves
-		if (this.dispatchEventOnSelfPublish && !this.shouldSendMessage(tos)) {
+			const silentDelivery = options?.mode instanceof SilentDelivery;
+			try {
+				await this.publishMessage(
+					this.publicKey,
+					message,
+					undefined,
+					undefined,
+					options?.signal,
+				);
+			} catch (error) {
+				if (error instanceof DeliveryError && silentDelivery !== false) {
+					return message.id;
+				}
+				throw error;
+			}
 			return message.id;
 		}
 
-		// send to all the other peers
-		const explicitDirectStreams =
-			hasExplicitTOs && options?.mode && deliveryModeHasReceiver(options.mode)
-				? (() => {
-						// Fast path: if every explicit recipient is a directly connected neighbour,
-						// send only to those streams (avoid route-based flooding when the route cache is cold).
-						const streams: PeerStreams[] = [];
-						for (const h of options.mode.to) {
-							if (!h || h === this.publicKeyHash) continue;
-							const s = this.peers.get(h);
-							if (!s || !s.isWritable) return undefined;
-							streams.push(s);
-						}
-						return streams.length > 0 ? streams : undefined;
-					})()
-				: undefined;
-		try {
-			await this.publishMessage(
-				this.publicKey,
-				message,
-				explicitDirectStreams,
-				undefined,
-				options?.signal,
-			);
-		} catch (error) {
-			if (error instanceof DeliveryError) {
-				if (silentDelivery === false) {
-					// If we are not in silent mode, we should throw the error
-					throw error;
-				}
-				return message.id;
-			}
-			throw error;
-		}
-
-		return message.id;
-	}
-
-	private deletePeerFromTopic(topic: string, publicKeyHash: string) {
-		const peers = this.topics.get(topic);
-		let change: SubscriptionData | undefined = undefined;
-		if (peers) {
-			change = peers.get(publicKeyHash);
-		}
-
-		this.topics.get(topic)?.delete(publicKeyHash);
-
-		this.peerToTopic.get(publicKeyHash)?.delete(topic);
-		if (!this.peerToTopic.get(publicKeyHash)?.size) {
-			this.peerToTopic.delete(publicKeyHash);
-			this.lastSubscriptionMessages.delete(publicKeyHash);
-		}
-
-		this.topicsToPeers.get(topic)?.delete(publicKeyHash);
-
-		return change;
-	}
-
-	private pruneTopicSubscribers(topic: string) {
-		const peers = this.topics.get(topic);
-		if (!peers) return;
-
-		while (peers.size > this.subscriberCacheMaxEntries) {
-			const oldest = peers.keys().next().value as string | undefined;
-			if (!oldest) break;
-			this.deletePeerFromTopic(topic, oldest);
-		}
-	}
-
-	private getSubscriptionOverlap(topics?: string[]) {
-		const subscriptions: string[] = [];
-		if (topics) {
-			for (const topic of topics) {
-				const subscription = this.subscriptions.get(topic);
-				if (subscription) {
-					subscriptions.push(topic);
+		if (this.fanoutPublishRequiresSubscribe) {
+			for (const t of topicsAll) {
+				if (!this.subscriptions.has(t)) {
+					throw new Error(
+						`Cannot publish to topic ${t} without subscribing (fanoutPublishRequiresSubscribe=true)`,
+					);
 				}
 			}
-		} else {
-			for (const [topic, _subscription] of this.subscriptions) {
-				subscriptions.push(topic);
+		}
+
+		const msg = new PubSubData({ topics: topicsAll, data, strict: false });
+		const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
+			mode: new AnyWhere(),
+			priority: options?.priority,
+			id: options?.id,
+			extraSigners: options?.extraSigners,
+			skipRecipientValidation: true,
+		} as any);
+
+		this.dispatchEvent(
+			new CustomEvent("publish", {
+				detail: new PublishEvent({
+					client: options?.client,
+					data: msg,
+					message: embedded,
+				}),
+			}),
+		);
+
+		const byShard = new Map<string, string[]>();
+		for (const t of topicsAll) {
+			const shardTopic = this.getShardTopicForUserTopic(t);
+			byShard.set(shardTopic, [...(byShard.get(shardTopic) ?? []), t]);
+		}
+
+		for (const shardTopic of byShard.keys()) {
+			const persistent = (this.shardRefCounts.get(shardTopic) ?? 0) > 0;
+			await this.ensureFanoutChannel(shardTopic, { ephemeral: !persistent });
+		}
+
+		const payload = toUint8Array(embedded.bytes());
+		await Promise.all(
+			[...byShard.keys()].map(async (shardTopic) => {
+				if (options?.signal?.aborted) {
+					throw new AbortError("Publish was aborted");
+				}
+				const st = this.fanoutChannels.get(shardTopic);
+				if (!st) {
+					throw new Error(`Fanout channel missing for shard: ${shardTopic}`);
+				}
+				await st.channel.publish(payload);
+				this.touchFanoutChannel(shardTopic);
+			}),
+		);
+
+		if (
+			this.fanoutPublishIdleCloseMs == 0 ||
+			this.fanoutPublishMaxEphemeralChannels == 0
+		) {
+			for (const shardTopic of byShard.keys()) {
+				const st = this.fanoutChannels.get(shardTopic);
+				if (st?.ephemeral) await this.closeFanoutChannel(shardTopic);
 			}
 		}
-		return subscriptions;
+
+		return embedded.id;
 	}
 
-	public onPeerSession(key: PublicSignKey, session: number): void {
-		// reset subs, the peer has restarted
+	public onPeerSession(key: PublicSignKey, _session: number): void {
 		this.removeSubscriptions(key);
 	}
 
-	public async onPeerReachable(publicKey: PublicSignKey) {
-		// Aggregate subscribers for my topics through this new peer because if we don't do this we might end up with a situtation where
-		// we act as a relay and relay messages for a topic, but don't forward it to this new peer because we never learned about their subscriptions
-
-		const resp = super.onPeerReachable(publicKey);
-		const stream = this.peers.get(publicKey.hashcode());
-
-		if (this.subscriptions.size > 0) {
-			const topicsToGossip = this.getSubscriptionOverlap().filter(
-				(t) => !this.isFanoutTopic(t),
-			);
-			if (topicsToGossip.length === 0) {
-				return resp;
-			}
-			// Tell the newly reachable peer about our subscriptions. This also acts as a
-			// catch-up mechanism when we learn about new peers via routed ACKs (not only
-			// direct neighbours).
-			this.publishMessage(
-				this.publicKey,
-				await new DataMessage({
-					data: toUint8Array(
-						new Subscribe({
-							topics: topicsToGossip, // TODO: protocol efficiency; do we really need to share *everything*?
-							requestSubscribers: true,
-						}).bytes(),
-					),
-					header: new MessageHeader({
-						priority: 1,
-						// If this is a direct neighbour, seed subscription gossip via that connection
-						// (and let it relay further). If it is only reachable via routes, deliver a
-						// unicast catch-up to that peer.
-						mode: stream
-							? new AnyWhere()
-							: new SilentDelivery({ to: [publicKey], redundancy: 1 }),
-						session: this.session,
-					}),
-				}).sign(this.sign),
-				stream ? [stream] : undefined,
-			).catch(dontThrowIfDeliveryError); // peer might have become unreachable immediately
-		}
-
-		return resp;
-	}
-
-	public onPeerUnreachable(publicKeyHash: string) {
+	public override onPeerUnreachable(publicKeyHash: string) {
 		super.onPeerUnreachable(publicKeyHash);
-		this.removeSubscriptions(this.peerKeyHashToPublicKey.get(publicKeyHash)!);
+		const key = this.peerKeyHashToPublicKey.get(publicKeyHash);
+		if (key) this.removeSubscriptions(key);
 	}
 
 	private removeSubscriptions(publicKey: PublicSignKey) {
-		const peerTopics = this.peerToTopic.get(publicKey.hashcode());
-
+		const peerHash = publicKey.hashcode();
+		const peerTopics = this.peerToTopic.get(peerHash);
 		const changed: string[] = [];
 		if (peerTopics) {
 			for (const topic of peerTopics) {
-				const change = this.deletePeerFromTopic(topic, publicKey.hashcode());
-				if (change) {
+				const peers = this.topics.get(topic);
+				if (!peers) continue;
+				if (peers.delete(peerHash)) {
 					changed.push(topic);
 				}
 			}
 		}
-		this.lastSubscriptionMessages.delete(publicKey.hashcode());
+		this.peerToTopic.delete(peerHash);
+		this.lastSubscriptionMessages.delete(peerHash);
 
 		if (changed.length > 0) {
 			this.dispatchEvent(
@@ -995,47 +1366,225 @@ export class TopicControlPlane
 	private subscriptionMessageIsLatest(
 		message: DataMessage,
 		pubsubMessage: Subscribe | Unsubscribe,
+		relevantTopics: string[],
 	) {
 		const subscriber = message.header.signatures!.signatures[0].publicKey!;
-		const subscriberKey = subscriber.hashcode(); // Assume first signature is the one who is signing
+		const subscriberKey = subscriber.hashcode();
 		const messageTimestamp = message.header.timestamp;
 
-		for (const topic of pubsubMessage.topics) {
+		for (const topic of relevantTopics) {
 			const lastTimestamp = this.lastSubscriptionMessages
 				.get(subscriberKey)
 				?.get(topic);
 			if (lastTimestamp != null && lastTimestamp > messageTimestamp) {
-				return false; // message is old
+				return false;
 			}
 		}
 
-		for (const topic of pubsubMessage.topics) {
+		for (const topic of relevantTopics) {
 			if (!this.lastSubscriptionMessages.has(subscriberKey)) {
 				this.lastSubscriptionMessages.set(subscriberKey, new Map());
 			}
-			this.lastSubscriptionMessages
-				.get(subscriberKey)
-				?.set(topic, messageTimestamp);
+			this.lastSubscriptionMessages.get(subscriberKey)!.set(topic, messageTimestamp);
 		}
 		return true;
 	}
 
-	private addPeersOnTopic(message: DataMessage, topics: string[]) {
-		if (!deliveryModeHasReceiver(message.header.mode)) {
+	private async sendFanoutUnicastOrBroadcast(
+		shardTopic: string,
+		targetHash: string,
+		payload: Uint8Array,
+	) {
+		const st = this.fanoutChannels.get(shardTopic);
+		if (!st) return;
+		try {
+			await st.channel.unicastToAck(targetHash, payload, { timeoutMs: 5_000 });
 			return;
+		} catch {
+			// ignore and fall back
 		}
-		const existingPeers: Set<string> = new Set(message.header.mode.to);
-		const allPeersOnTopic = this.getPeersOnTopics(topics);
-
-		for (const existing of existingPeers) {
-			allPeersOnTopic.add(existing);
+		try {
+			await st.channel.publish(payload);
+		} catch {
+			// ignore
 		}
-
-		allPeersOnTopic.delete(this.publicKeyHash);
-		message.header.mode.to = [...allPeersOnTopic];
 	}
 
-	async onDataMessage(
+	private async processPubSubMessage(input: {
+		pubsubMessage: PubSubMessage;
+		message: DataMessage;
+		from: PublicSignKey;
+		source:
+			| { type: "direct"; stream: PeerStreams }
+			| { type: "fanout"; shardTopic: string };
+		}) {
+			const { pubsubMessage, message, from, source } = input;
+
+			if (pubsubMessage instanceof TopicRootCandidates) {
+				// Used only to converge deterministic shard-root candidates in auto mode.
+				this.mergeAutoTopicRootCandidatesFromPeer(pubsubMessage.candidates);
+				return;
+			}
+
+			if (pubsubMessage instanceof PubSubData) {
+				this.dispatchEvent(
+					new CustomEvent("data", {
+						detail: new DataEvent({
+						data: pubsubMessage,
+						message,
+					}),
+				}),
+			);
+			return;
+		}
+
+		if (pubsubMessage instanceof Subscribe) {
+			const sender = from;
+			const senderKey = sender.hashcode();
+			const relevantTopics = pubsubMessage.topics.filter((t) =>
+				this.isTrackedTopic(t),
+			);
+
+			if (
+				relevantTopics.length > 0 &&
+				this.subscriptionMessageIsLatest(message, pubsubMessage, relevantTopics)
+			) {
+				const changed: string[] = [];
+				for (const topic of relevantTopics) {
+					const peers = this.topics.get(topic);
+					if (!peers) continue;
+					this.initializePeer(sender);
+
+					const existing = peers.get(senderKey);
+					if (!existing || existing.session < message.header.session) {
+						peers.delete(senderKey);
+						peers.set(
+							senderKey,
+							new SubscriptionData({
+								session: message.header.session,
+								timestamp: message.header.timestamp,
+								publicKey: sender,
+							}),
+						);
+						changed.push(topic);
+					} else {
+						peers.delete(senderKey);
+						peers.set(senderKey, existing);
+					}
+
+					if (!existing) {
+						this.peerToTopic.get(senderKey)!.add(topic);
+					}
+					this.pruneTopicSubscribers(topic);
+				}
+
+				if (changed.length > 0) {
+					this.dispatchEvent(
+						new CustomEvent<SubscriptionEvent>("subscribe", {
+							detail: new SubscriptionEvent(sender, changed),
+						}),
+					);
+				}
+			}
+
+			if (pubsubMessage.requestSubscribers) {
+				const overlap = this.getSubscriptionOverlap(pubsubMessage.topics);
+				if (overlap.length > 0) {
+					const response = new Subscribe({
+						topics: overlap,
+						requestSubscribers: false,
+					});
+					const embedded = await this.createMessage(
+						toUint8Array(response.bytes()),
+						{
+							mode: new AnyWhere(),
+							priority: 1,
+							skipRecipientValidation: true,
+						} as any,
+					);
+					const payload = toUint8Array(embedded.bytes());
+
+					if (source.type === "fanout") {
+						await this.sendFanoutUnicastOrBroadcast(
+							source.shardTopic,
+							senderKey,
+							payload,
+						);
+					} else {
+						this.publishMessage(this.publicKey, embedded, [source.stream]).catch(
+							dontThrowIfDeliveryError,
+						);
+					}
+				}
+			}
+			return;
+		}
+
+		if (pubsubMessage instanceof Unsubscribe) {
+			const sender = from;
+			const senderKey = sender.hashcode();
+			const relevantTopics = pubsubMessage.topics.filter((t) =>
+				this.isTrackedTopic(t),
+			);
+
+			if (
+				relevantTopics.length > 0 &&
+				this.subscriptionMessageIsLatest(message, pubsubMessage, relevantTopics)
+			) {
+				const changed: string[] = [];
+				for (const topic of relevantTopics) {
+					const peers = this.topics.get(topic);
+					if (!peers) continue;
+					if (peers.delete(senderKey)) {
+						changed.push(topic);
+						this.peerToTopic.get(senderKey)?.delete(topic);
+					}
+				}
+				if (!this.peerToTopic.get(senderKey)?.size) {
+					this.peerToTopic.delete(senderKey);
+					this.lastSubscriptionMessages.delete(senderKey);
+				}
+				if (changed.length > 0) {
+					this.dispatchEvent(
+						new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
+							detail: new UnsubcriptionEvent(sender, changed),
+						}),
+					);
+				}
+			}
+			return;
+		}
+
+		if (pubsubMessage instanceof GetSubscribers) {
+			const sender = from;
+			const senderKey = sender.hashcode();
+			const overlap = this.getSubscriptionOverlap(pubsubMessage.topics);
+			if (overlap.length === 0) return;
+
+			const response = new Subscribe({ topics: overlap, requestSubscribers: false });
+			const embedded = await this.createMessage(toUint8Array(response.bytes()), {
+				mode: new AnyWhere(),
+				priority: 1,
+				skipRecipientValidation: true,
+			} as any);
+			const payload = toUint8Array(embedded.bytes());
+
+			if (source.type === "fanout") {
+				await this.sendFanoutUnicastOrBroadcast(
+					source.shardTopic,
+					senderKey,
+					payload,
+				);
+			} else {
+				this.publishMessage(this.publicKey, embedded, [source.stream]).catch(
+					dontThrowIfDeliveryError,
+				);
+			}
+			return;
+		}
+	}
+
+	public override async onDataMessage(
 		from: PublicSignKey,
 		stream: PeerStreams,
 		message: DataMessage,
@@ -1044,235 +1593,79 @@ export class TopicControlPlane
 		if (!message.data || message.data.length === 0) {
 			return super.onDataMessage(from, stream, message, seenBefore);
 		}
+		if (this.shouldIgnore(message, seenBefore)) return false;
 
-		if (this.shouldIgnore(message, seenBefore)) {
-			return false;
+		let pubsubMessage: PubSubMessage;
+		try {
+			pubsubMessage = PubSubMessage.from(message.data);
+		} catch {
+			return super.onDataMessage(from, stream, message, seenBefore);
 		}
 
-		const pubsubMessage = PubSubMessage.from(message.data);
+		// Determine if this node should process it.
+		let isForMe = false;
+		if (deliveryModeHasReceiver(message.header.mode)) {
+			isForMe = message.header.mode.to.includes(this.publicKeyHash);
+		} else if (
+			message.header.mode instanceof AnyWhere ||
+			message.header.mode instanceof AcknowledgeAnyWhere
+		) {
+			isForMe = true;
+		}
+
 		if (pubsubMessage instanceof PubSubData) {
-			if (message.header.mode instanceof AnyWhere) {
-				throw new Error("Unexpected mode for PubSubData messages");
-			}
+			const wantsTopic = pubsubMessage.topics.some((t) =>
+				this.subscriptions.has(t),
+			);
+			isForMe = pubsubMessage.strict ? isForMe && wantsTopic : wantsTopic;
+		} else if (pubsubMessage instanceof Subscribe || pubsubMessage instanceof Unsubscribe) {
+			const relevant = pubsubMessage.topics.some((t) => this.isTrackedTopic(t));
+			const needRespond =
+				pubsubMessage instanceof Subscribe && pubsubMessage.requestSubscribers
+					? pubsubMessage.topics.some((t) => this.subscriptions.has(t))
+					: false;
+			isForMe = relevant || needRespond;
+		} else if (pubsubMessage instanceof GetSubscribers) {
+			isForMe = pubsubMessage.topics.some((t) => this.subscriptions.has(t));
+		}
 
-			const meInTOs =
-				deliveryModeHasReceiver(message.header.mode) &&
-				!!message.header.mode.to?.find((x) => this.publicKeyHash === x);
-
-			let isForMe: boolean;
-			if (pubsubMessage.strict) {
-				isForMe =
-					!!pubsubMessage.topics.find((topic) =>
-						this.subscriptions.has(topic),
-					) && meInTOs;
-			} else {
-				isForMe =
-					!!pubsubMessage.topics.find((topic) =>
-						this.subscriptions.has(topic),
-					) ||
-					(pubsubMessage.topics.length === 0 && meInTOs);
-			}
-
-			if (isForMe) {
-				if ((await this.verifyAndProcess(message)) === false) {
-					warn("Recieved message that did not verify PubSubData");
-					return false;
-				}
-			}
-
+		if (isForMe) {
+			if ((await this.verifyAndProcess(message)) === false) return false;
 			await this.maybeAcknowledgeMessage(stream, message, seenBefore);
-
-			if (isForMe) {
-				if (seenBefore === 0) {
-					this.dispatchEvent(
-						new CustomEvent("data", {
-							detail: new DataEvent({
-								data: pubsubMessage,
-								message,
-							}),
-						}),
-					);
-				}
+			if (seenBefore === 0) {
+				await this.processPubSubMessage({
+					pubsubMessage,
+					message,
+					from,
+					source: { type: "direct", stream },
+				});
 			}
+		}
 
-			// Forward
-			if (!pubsubMessage.strict) {
-				this.addPeersOnTopic(message, pubsubMessage.topics);
-			}
+		// Forward direct PubSubData only (subscription control lives on fanout shards).
+		if (!(pubsubMessage instanceof PubSubData)) {
+			return true;
+		}
 
-			// Only relay if we got additional receivers
-			// or we are NOT subscribing ourselves (if we are not subscribing ourselves we are)
-			// If we are not subscribing ourselves, then we don't have enough information to "stop" message propagation here
+		if (
+			message.header.mode instanceof SilentDelivery ||
+			message.header.mode instanceof AcknowledgeDelivery
+		) {
 			if (
-				(deliveryModeHasReceiver(message.header.mode) &&
-					message.header.mode.to?.length) ||
-				!pubsubMessage.topics.find((topic) => this.topics.has(topic))
+				message.header.mode.to.length === 1 &&
+				message.header.mode.to[0] === this.publicKeyHash
 			) {
-				// DONT await this since it might introduce a dead-lock
-				this.relayMessage(from, message).catch(logErrorIfStarted);
+				return true;
 			}
-		} else {
-			if ((await this.verifyAndProcess(message)) === false) {
-				warn("Recieved message that did not verify Unsubscribe");
-				return false;
-			}
+		}
 
-			if (message.header.signatures!.signatures.length === 0) {
-				warn("Recieved subscription message with no signers");
-				return false;
-			}
-
-			await this.maybeAcknowledgeMessage(stream, message, seenBefore);
-
-			const sender = message.header.signatures!.signatures[0].publicKey!;
-			const senderKey = sender.hashcode(); // Assume first signature is the one who is signing
-
-			if (pubsubMessage instanceof Subscribe) {
-				if (
-					seenBefore === 0 &&
-					this.subscriptionMessageIsLatest(message, pubsubMessage) &&
-					pubsubMessage.topics.length > 0
-				) {
-					const changed: string[] = [];
-					pubsubMessage.topics.forEach((topic) => {
-						const peers = this.topics.get(topic);
-						if (peers == null) {
-							return;
-						}
-
-						this.initializePeer(sender);
-
-						// if no subscription data, or new subscription has data (and is newer) then overwrite it.
-						// subscription where data is undefined is not intended to replace existing data
-						const existingSubscription = peers.get(senderKey);
-
-						if (
-							!existingSubscription ||
-							existingSubscription.session < message.header.session
-						) {
-							// LRU touch
-							peers.delete(senderKey);
-							peers.set(
-								senderKey,
-								new SubscriptionData({
-									session: message.header.session,
-									timestamp: message.header.timestamp, // TODO update timestamps on all messages?
-									publicKey: sender,
-								}),
-							);
-
-							changed.push(topic);
-						} else if (existingSubscription) {
-							// LRU touch
-							peers.delete(senderKey);
-							peers.set(senderKey, existingSubscription);
-						}
-
-						if (!existingSubscription) {
-							this.topicsToPeers.get(topic)?.add(senderKey);
-							this.peerToTopic.get(senderKey)?.add(topic);
-						}
-
-						this.pruneTopicSubscribers(topic);
-					});
-
-					if (changed.length > 0) {
-						this.dispatchEvent(
-							new CustomEvent<SubscriptionEvent>("subscribe", {
-								detail: new SubscriptionEvent(sender, changed),
-							}),
-						);
-					}
-
-					if (pubsubMessage.requestSubscribers) {
-						// respond if we are subscribing
-						const mySubscriptions = this.getSubscriptionOverlap(
-							pubsubMessage.topics,
-						).filter((t) => !this.isFanoutTopic(t));
-						if (mySubscriptions.length > 0) {
-							const response = new DataMessage({
-								data: toUint8Array(
-									new Subscribe({
-										topics: mySubscriptions,
-										requestSubscribers: false,
-									}).bytes(),
-								),
-								header: new MessageHeader({
-									session: this.session,
-									priority: 1,
-									mode: new AnyWhere(),
-								}),
-							});
-
-							this.publishMessage(
-								this.publicKey,
-								await response.sign(this.sign),
-								[stream],
-							).catch(dontThrowIfDeliveryError);
-						}
-					}
-				}
-
-				// Forward
-				// DONT await this since it might introduce a dead-lock
-				if (seenBefore === 0) {
-					this.relayMessage(from, message).catch(logErrorIfStarted);
-				}
-			} else if (pubsubMessage instanceof Unsubscribe) {
-				if (this.subscriptionMessageIsLatest(message, pubsubMessage)) {
-					const changed: string[] = [];
-
-					for (const unsubscription of pubsubMessage.topics) {
-						const change = this.deletePeerFromTopic(unsubscription, senderKey);
-						if (change) {
-							changed.push(unsubscription);
-						}
-					}
-
-					if (changed.length > 0 && seenBefore === 0) {
-						this.dispatchEvent(
-							new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
-								detail: new UnsubcriptionEvent(sender, changed),
-							}),
-						);
-					}
-				}
-
-				// DONT await this since it might introduce a dead-lock
-				if (seenBefore === 0) {
-					this.relayMessage(from, message).catch(logErrorIfStarted);
-				}
-			} else if (pubsubMessage instanceof GetSubscribers) {
-				const subscriptionsToSend: string[] = this.getSubscriptionOverlap(
-					pubsubMessage.topics,
-				).filter((t) => !this.isFanoutTopic(t));
-				if (subscriptionsToSend.length > 0) {
-					// respond
-					this.publishMessage(
-						this.publicKey,
-						await new DataMessage({
-							data: toUint8Array(
-								new Subscribe({
-									topics: subscriptionsToSend,
-									requestSubscribers: false,
-								}).bytes(),
-							),
-							header: new MessageHeader({
-								priority: 1,
-								mode: new AnyWhere(),
-								session: this.session,
-							}),
-						}).sign(this.sign),
-						[stream],
-					).catch(dontThrowIfDeliveryError); // send back to same stream
-				}
-
-				// Forward
-				// DONT await this since it might introduce a dead-lock
-				if (seenBefore === 0) {
-					this.relayMessage(from, message).catch(logErrorIfStarted);
-				}
-			}
+		const shouldForward =
+			seenBefore === 0 ||
+			((message.header.mode instanceof AcknowledgeDelivery ||
+				message.header.mode instanceof AcknowledgeAnyWhere) &&
+				seenBefore < message.header.mode.redundancy);
+		if (shouldForward) {
+			this.relayMessage(from, message).catch(logErrorIfStarted);
 		}
 		return true;
 	}

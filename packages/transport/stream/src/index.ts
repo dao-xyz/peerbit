@@ -510,7 +510,10 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			return;
 		}
 
-		const timeoutMs = 3_000;
+			// Outbound stream negotiation can legitimately take several seconds in CI
+			// (identify/protocol discovery, resource contention, etc). Keep this fairly
+			// generous so control-plane messages (joins/subscriptions) don't flap.
+			const timeoutMs = 10_000;
 
 		await new Promise<void>((resolve, reject) => {
 			const onOutbound = () => {
@@ -795,21 +798,29 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			this.outboundAbortController.abort();
 		}
 
-		// End inbound streams
-		if (this.inboundStreams.length) {
-			for (const inbound of this.inboundStreams) {
-				try {
-					inbound.abortController.abort();
-				} catch {
-					logger.error("Failed to abort inbound stream");
-				}
-				try {
-					await inbound.raw.close?.();
-				} catch {
-					logger.error("Failed to close inbound stream");
+			// End inbound streams
+			if (this.inboundStreams.length) {
+				for (const inbound of this.inboundStreams) {
+					try {
+						inbound.abortController.abort();
+					} catch {
+						logger.error("Failed to abort inbound stream");
+					}
+					try {
+						// Best-effort shutdown: on some transports (notably websockets),
+						// awaiting a graceful close can hang indefinitely if the remote is
+						// concurrently stopping. Abort immediately and do not await close.
+						try {
+							inbound.raw.abort?.(new AbortError("Closed"));
+						} catch {
+							// ignore
+						}
+						void Promise.resolve(inbound.raw.close?.()).catch(() => {});
+					} catch {
+						logger.error("Failed to close inbound stream");
+					}
 				}
 			}
-		}
 
 		this.usedBandWidthTracker.stop();
 
@@ -947,15 +958,18 @@ export abstract class DirectStream<
 	public multicodecs: string[];
 	public seenCache: Cache<number>;
 	private _registrarTopologyIds: string[] | undefined;
+	private _peerConnectListener?: (ev: any) => void;
+	private _peerDisconnectListener?: (ev: any) => void;
 	private readonly maxInboundStreams?: number;
 	private readonly maxOutboundStreams?: number;
 	connectionManagerOptions: ConnectionManagerOptions;
 	private recentDials?: Cache<string>;
 	private healthChecks: Map<string, ReturnType<typeof setTimeout>>;
-		private pruneConnectionsTimeout: ReturnType<typeof setInterval>;
-		private prunedConnectionsCache?: Cache<string>;
-		private pruneToLimitsInFlight?: Promise<void>;
-		private routeMaxRetentionPeriod: number;
+			private pruneConnectionsTimeout: ReturnType<typeof setInterval>;
+			private prunedConnectionsCache?: Cache<string>;
+			private pruneToLimitsInFlight?: Promise<void>;
+			private _startInFlight?: Promise<void>;
+			private routeMaxRetentionPeriod: number;
 	private routeCacheMaxFromEntries?: number;
 	private routeCacheMaxTargetsPerFrom?: number;
 	private routeCacheMaxRelaysPerTarget?: number;
@@ -1118,14 +1132,23 @@ export abstract class DirectStream<
 			return this.pruneToLimitsInFlight;
 		}
 
-	async start() {
-		if (this.started) {
-			return;
+		async start() {
+			if (this.started) return;
+			if (this._startInFlight) return this._startInFlight;
+			this._startInFlight = this._startImpl().finally(() => {
+				this._startInFlight = undefined;
+			});
+			return this._startInFlight;
 		}
 
-		await ready;
+		private async _startImpl() {
+			if (this.started) {
+				return;
+			}
 
-		this.closeController = new AbortController();
+			await ready;
+
+			this.closeController = new AbortController();
 
 		this.outboundInflightQueue = pushable({ objectMode: true });
 
@@ -1273,6 +1296,46 @@ export abstract class DirectStream<
 			),
 		);
 
+		// Best-effort fallback: topology callbacks can depend on identify/protocol
+		// discovery. Some test environments connect peers without triggering the
+		// per-protocol topology immediately. Listening to peer connection events
+		// ensures we still attempt to open outbound streams opportunistically.
+		this._peerConnectListener = (ev: any) => {
+			if (this.stopping || !this.started) return;
+			const peerId = (ev as any)?.detail ?? (ev as any)?.peerId;
+			if (!peerId) return;
+			const conns = this.components.connectionManager.getConnections(peerId);
+			if (!conns || conns.length === 0) return;
+			let conn = conns[0]!;
+			for (const c of conns) {
+				if (!isWebsocketConnection(c)) {
+					conn = c;
+					break;
+				}
+			}
+			void this.onPeerConnected(peerId, conn);
+		};
+		this._peerDisconnectListener = (ev: any) => {
+			if (this.stopping || !this.started) return;
+			const peerId = (ev as any)?.detail ?? (ev as any)?.peerId;
+			if (!peerId) return;
+			const conns = this.components.connectionManager.getConnections(peerId);
+			const conn = conns && conns.length > 0 ? conns[0] : undefined;
+			void this.onPeerDisconnected(peerId, conn);
+		};
+		try {
+			this.components.events.addEventListener(
+				"peer:connect",
+				this._peerConnectListener as any,
+			);
+			this.components.events.addEventListener(
+				"peer:disconnect",
+				this._peerDisconnectListener as any,
+			);
+		} catch {
+			// ignore unsupported event targets
+		}
+
 		// All existing connections are like new ones for us. To deduplication on remotes so we only resuse one connection for this protocol (we could be connected with many connections)
 		const peerToConnections: Map<string, Connection[]> = new Map();
 		const connections = this.components.connectionManager.getConnections();
@@ -1326,6 +1389,24 @@ export abstract class DirectStream<
 		const sharedKey = this.sharedRoutingKey;
 
 		clearTimeout(this.pruneConnectionsTimeout);
+		try {
+			if (this._peerConnectListener) {
+				this.components.events.removeEventListener(
+					"peer:connect",
+					this._peerConnectListener as any,
+				);
+			}
+			if (this._peerDisconnectListener) {
+				this.components.events.removeEventListener(
+					"peer:disconnect",
+					this._peerDisconnectListener as any,
+				);
+			}
+		} catch {
+			// ignore unsupported event targets
+		}
+		this._peerConnectListener = undefined;
+		this._peerDisconnectListener = undefined;
 
 		await Promise.all(
 			this.multicodecs.map((x) => this.components.registrar.unhandle(x)),
@@ -1610,27 +1691,31 @@ export abstract class DirectStream<
 		distance: number,
 		session: number,
 		remoteSession: number,
-	) {
-		const targetHash = typeof target === "string" ? target : target.hashcode();
+		) {
+			const targetHash = typeof target === "string" ? target : target.hashcode();
+			// Best-effort: keep a hash -> public key map for any routed targets so
+			// peer:unreachable events can always carry a PublicSignKey when we have seen it.
+			if (typeof target !== "string") {
+				this.peerKeyHashToPublicKey.set(targetHash, target);
+			}
 
-		const update = this.routes.add(
-			from,
-			neighbour,
-			targetHash,
+			const update = this.routes.add(
+				from,
+				neighbour,
+				targetHash,
 			distance,
 			session,
 			remoteSession,
 		);
 
-		// second condition is that we don't want to emit 'reachable' events for routes where we act only as a relay
-		// in this case, from is != this.publicKeyhash
-		if (from === this.publicKeyHash) {
-			if (update === "new") {
-				this.peerKeyHashToPublicKey.set(target.hashcode(), target);
-				this.onPeerReachable(target);
+			// second condition is that we don't want to emit 'reachable' events for routes where we act only as a relay
+			// in this case, from is != this.publicKeyhash
+			if (from === this.publicKeyHash) {
+				if (update === "new") {
+					this.onPeerReachable(target);
+				}
 			}
 		}
-	}
 
 	public onPeerReachable(publicKey: PublicSignKey) {
 		// override this fn
@@ -1639,16 +1724,19 @@ export abstract class DirectStream<
 		);
 	}
 
-	public onPeerUnreachable(hash: string) {
-		// override this fns
-
-		this.dispatchEvent(
-			// TODO types
-			new CustomEvent("peer:unreachable", {
-				detail: this.peerKeyHashToPublicKey.get(hash)!,
-			}),
-		);
-	}
+		public onPeerUnreachable(hash: string) {
+			// override this fns
+			const key = this.peerKeyHashToPublicKey.get(hash);
+			if (!key) {
+				// Best-effort: we may only have the hash (no public key) for some routes.
+				// Avoid crashing downstream listeners that assume `detail` is a PublicSignKey.
+				return;
+			}
+			this.dispatchEvent(
+				// TODO types
+				new CustomEvent("peer:unreachable", { detail: key }),
+			);
+		}
 
 	public updateSession(key: PublicSignKey, session?: number) {
 		if (this.routes.updateSession(key.hashcode(), session)) {

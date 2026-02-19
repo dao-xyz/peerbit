@@ -82,7 +82,9 @@ describe("useQuery (integration with Documents)", () => {
 		autoUnmounts = [];
 	});
 	const setupConnected = async () => {
-		await peerWriter.dial(peerReader);
+		// Use TestSession.connect so sharded pubsub/fanout root candidates are
+		// configured consistently for this connected component.
+		await session.connect([[peerWriter, peerReader]]);
 		dbWriter = await peerWriter.open(new PostsDB(), {
 			existing: "reuse",
 			args: { replicate: true },
@@ -249,14 +251,16 @@ describe("useQuery (integration with Documents)", () => {
 		// Now connect and write
 
 		await act(async () => {
-			await dbReader.node.dial(dbWriter.node.getMultiaddrs());
+			// Write while disconnected so the prefetching iterator can deterministically
+			// observe the entry once the remote connection is established.
 			await dbWriter.posts.put(new Post({ message: "late" }));
+			await session.connect([[peerReader, peerWriter]]);
 			await dbReader.posts.log.waitForReplicator(
 				dbWriter.node.identity.publicKey,
 			);
 		});
 
-		await waitFor(() => expect(result.current.items.length).toBe(1));
+		await waitFor(() => expect(result.current.items.length).toBe(1), { timeout: 10_000 });
 		expect((result.current.items[0] as Post).message).toBe("late");
 	});
 
@@ -303,7 +307,7 @@ describe("useQuery (integration with Documents)", () => {
 			async () => {
 		await setupConnected();
 
-			await peerReader2.dial(peerWriter);
+			await session.connect([[peerWriter, peerReader], [peerWriter, peerReader2]]);
 			dbReader2 = await peerReader2.open<PostsDB>(dbWriter.address, {
 				args: { replicate: false },
 				},
@@ -420,14 +424,16 @@ describe("useQuery (integration with Documents)", () => {
 		{
 			timeout: 20_000,
 		},
-		async () => {
-			const peerReplicator = peerReader2;
-			await peerWriter.dial(peerReplicator);
-			await peerReader.dial(peerReplicator);
+			async () => {
+				const peerReplicator = peerReader2;
+				await session.connect([
+					[peerWriter, peerReplicator],
+					[peerReader, peerReplicator],
+				]);
 
-			const base = new PostsDB();
-			const replicatorDb = await peerReplicator.open(base, {
-				args: { replicate: true },
+				const base = new PostsDB();
+				const replicatorDb = await peerReplicator.open(base, {
+					args: { replicate: true },
 			});
 			dbReplicator = replicatorDb;
 			dbWriter = await peerWriter.open(base.clone(), {

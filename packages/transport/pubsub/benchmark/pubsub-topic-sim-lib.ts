@@ -1,6 +1,6 @@
 import type { PeerId } from "@libp2p/interface";
 import { PreHash, SignatureWithKey } from "@peerbit/crypto";
-import { AcknowledgeAnyWhere, SilentDelivery } from "@peerbit/stream-interface";
+import { AcknowledgeAnyWhere } from "@peerbit/stream-interface";
 import { delay } from "@peerbit/time";
 import {
 	FanoutTree,
@@ -25,16 +25,10 @@ export type PubsubTopicSimParams = {
 	msgSize: number;
 	intervalMs: number;
 
-	/**
-	 * When true, publish with `SilentDelivery` so the bench can continue even when
-	 * some recipients are temporarily unreachable (e.g. under churn).
-	 *
-	 * Note: TopicControlPlane still embeds an explicit receiver set in the message header
-	 * (from `topicsToPeers`), so this is not a scalable 1->1M mode. It's here to
-	 * exercise the real stream routing under load.
-	 */
-	silent: boolean;
-	redundancy: number;
+		// Kept for backwards compatibility with older bench runs. Sharded pubsub delivery
+		// does not rely on explicit receiver lists, so this flag is currently ignored.
+		silent: boolean;
+		redundancy: number;
 
 	seed: number;
 	topic: string;
@@ -334,8 +328,13 @@ class SimTopicControlPlane extends TopicControlPlane {
 			subscriptionDebounceDelayMs: number;
 		},
 		private readonly recordModeToLen?: (len: number) => void,
-		extra?: Partial<ConstructorParameters<typeof TopicControlPlane>[1]>,
+		extra?: Partial<ConstructorParameters<typeof TopicControlPlane>[1]> & {
+			fanout: SimFanoutTree;
+		},
 	) {
+		if (!extra?.fanout) {
+			throw new Error("SimTopicControlPlane requires a FanoutTree instance");
+		}
 		super(c, {
 			canRelayMessage: true,
 			subscriptionDebounceDelay: opts.subscriptionDebounceDelayMs,
@@ -348,9 +347,9 @@ class SimTopicControlPlane extends TopicControlPlane {
 						}
 					: false,
 				maxConnections: Number.MAX_SAFE_INTEGER,
-				minConnections: 0,
-			},
-			...(extra || {}),
+					minConnections: 0,
+				},
+				...extra,
 		});
 
 		// Fast/mock signing: keep signer identity semantics but skip crypto work.
@@ -580,15 +579,26 @@ export const runPubsubTopicSim = async (
 	});
 	const topicRootControlPlane = new TopicRootControlPlane();
 
-	const peers: {
-		peerId: PeerId;
-		sub: SimTopicControlPlane;
-		fanout?: SimFanoutTree;
-	}[] = [];
+	// Use a small stable router set for shard roots so topic delivery remains
+	// reliable under subscriber churn (roots must stay online).
+	const routerCount = Math.min(4, Math.max(1, params.nodes));
+	const routerIndices = new Set<number>();
+	routerIndices.add(params.writerIndex);
+	for (let i = 0; routerIndices.size < routerCount && i < params.nodes; i++) {
+		const idx = (params.writerIndex + 1 + i) % params.nodes;
+		routerIndices.add(idx);
+	}
+
+		const peers: {
+			peerId: PeerId;
+			sub: SimTopicControlPlane;
+			fanout: SimFanoutTree;
+		}[] = [];
 
 	try {
 		const basePort = 40_000;
 		for (let i = 0; i < params.nodes; i++) {
+			const isRouter = routerIndices.has(i);
 			const port = basePort + i;
 			const { runtime } = InMemoryNetwork.createPeer({ index: i, port, network });
 			runtime.connectionManager = new InMemoryConnectionManager(network, runtime);
@@ -602,48 +612,58 @@ export const runPubsubTopicSim = async (
 				connectionManager: runtime.connectionManager as any,
 				peerStore: runtime.peerStore as any,
 				events: runtime.events,
-			};
+				};
 
-			const record = i === params.writerIndex ? recordModeToLen : undefined;
-			const fanout = params.fanoutTopic
-				? new SimFanoutTree(components as any, {
-						connectionManager: false,
-						topicRootControlPlane,
-					})
-				: undefined;
-			peers.push({
-				peerId: runtime.peerId,
-				fanout,
-				sub: new SimTopicControlPlane(
+				const record = i === params.writerIndex ? recordModeToLen : undefined;
+				const fanout = new SimFanoutTree(components as any, {
+					connectionManager: false,
+					topicRootControlPlane,
+				});
+				peers.push({
+					peerId: runtime.peerId,
+					fanout,
+					sub: new SimTopicControlPlane(
 					components,
 					{
 						dialer: params.dialer,
 						pruner: params.pruner,
 						prunerIntervalMs: params.prunerIntervalMs,
-						prunerMaxBufferBytes: params.prunerMaxBufferBytes,
-						subscriptionDebounceDelayMs: params.subscriptionDebounceDelayMs,
-					},
-					record,
-					params.fanoutTopic
-						? {
-								fanout,
-								topicRootControlPlane,
-							}
-						: undefined,
-				),
-			});
-		}
+							prunerMaxBufferBytes: params.prunerMaxBufferBytes,
+							subscriptionDebounceDelayMs: params.subscriptionDebounceDelayMs,
+						},
+						record,
+						{
+							fanout,
+							topicRootControlPlane,
+							hostShards: isRouter,
+							// Make the shard overlay robust under subscriber churn by ensuring
+							// only stable "router" nodes can act as relays.
+							fanoutRootChannel: { maxChildren: 64 },
+							fanoutNodeChannel: { maxChildren: isRouter ? 24 : 0 },
+						},
+					),
+				});
+			}
 
-		if (params.fanoutTopic) {
-			await Promise.all(
-				peers
-					.filter((p): p is typeof p & { fanout: SimFanoutTree } => Boolean(p.fanout))
-					.map((p) => p.fanout.start()),
+			// TopicControlPlane.start() will start the fanout underlay as needed.
+			// Configure shard roots deterministically across the whole sim before starting.
+			topicRootControlPlane.setTopicRootCandidates(
+				[...routerIndices].map((i) => peers[i]!.sub.publicKeyHash),
 			);
-		}
-		await Promise.all(peers.map((p) => p.sub.start()));
 
-		// Establish initial graph via dials (bounded concurrency).
+			// Ensure all nodes can discover stable router peers when joining shard overlays.
+			// Without bootstraps, the join loop falls back to already-connected neighbors,
+			// which is insufficient when most nodes are configured as leaf-only.
+			const routerBootstraps = [...routerIndices].map(
+				(i) =>
+					(peers[i]!.sub.components.addressManager as any).getAddresses()[0] as any,
+			);
+			for (const p of peers) {
+				p.fanout.setBootstraps(routerBootstraps);
+			}
+			await Promise.all(peers.map((p) => p.sub.start()));
+
+			// Establish initial graph via dials (bounded concurrency).
 		const addrs = peers.map(
 			(p) => (p.sub.components.addressManager as any).getAddresses()[0] as any,
 		);
@@ -657,83 +677,27 @@ export const runPubsubTopicSim = async (
 				});
 			}
 		}
-		await runWithConcurrency(dialTasks, params.dialConcurrency);
+			await runWithConcurrency(dialTasks, params.dialConcurrency);
 
-		await waitForProtocolStreams(peers);
-		if (params.fanoutTopic) {
-			await waitForProtocolStreams(
-				peers
-					.filter((p): p is typeof p & { fanout: SimFanoutTree } => Boolean(p.fanout))
-					.map((p) => ({ sub: p.fanout as any })),
-			);
-		}
+			await waitForProtocolStreams(peers);
+			await waitForProtocolStreams(peers.map((p) => ({ sub: p.fanout as any })));
 
 		const writer = peers[params.writerIndex]!.sub;
-		const subscriberIndices = pickDistinct(
-			rng,
-			params.nodes,
-			subscriberCount,
-			params.writerIndex,
-		);
+			const subscriberIndices = pickDistinct(
+				rng,
+				params.nodes,
+				subscriberCount,
+				params.writerIndex,
+			);
 
-		// Subscribe
-		const subscribeStart = Date.now();
-		if (params.fanoutTopic) {
-			// Fanout-backed topic: join the overlay (no subscriber gossip required).
-			const rootHash = peers[params.fanoutRootIndex]!.sub.publicKeyHash;
-			topicRootControlPlane.setTopicRoot(params.topic, rootHash);
-
-			// Open the root channel before subscribing the rest to reduce join tail latency.
-			await peers[params.fanoutRootIndex]!.sub.subscribe(params.topic);
-
+			// Subscribe
+			const subscribeStart = Date.now();
 			await Promise.all(
 				subscriberIndices.map(async (idx) => {
 					await peers[idx]!.sub.subscribe(params.topic);
 				}),
 			);
-		} else if (params.subscribeModel === "preseed") {
-			for (const idx of subscriberIndices) {
-				const node = peers[idx]!.sub;
-				(node as any).listenForSubscribers?.(params.topic);
-				node.subscriptions.set(params.topic, { counter: 1 });
-			}
-
-			// Ensure the writer can publish without first running the subscription gossip.
-			(writer as any).listenForSubscribers?.(params.topic);
-			const subscriberHashes = subscriberIndices.map(
-				(i) => peers[i]!.sub.publicKeyHash,
-			);
-			writer.topicsToPeers.set(params.topic, new Set(subscriberHashes));
-		} else {
-			// Ensure the writer is actually listening for subscribers.
-			void writer.requestSubscribers(params.topic).catch(() => {});
-
-			// Subscribe (real protocol path)
-			await Promise.all(
-				subscriberIndices.map(async (idx) => {
-					await peers[idx]!.sub.subscribe(params.topic);
-				}),
-			);
-
-			// Wait for writer to learn subscribers for the topic (best-effort).
-			const subTimeoutMs = 120_000;
-			const subWaitStart = Date.now();
-			let lastRequest = 0;
-			while (Date.now() - subWaitStart < subTimeoutMs) {
-				if (timeoutSignal.aborted) {
-					throw timeoutSignal.reason ?? new Error("pubsub-topic-sim aborted");
-				}
-				const known = writer.topicsToPeers.get(params.topic)?.size ?? 0;
-				if (known >= subscriberCount) break;
-				const now = Date.now();
-				if (now - lastRequest >= 1_000) {
-					lastRequest = now;
-					void writer.requestSubscribers(params.topic).catch(() => {});
-				}
-				await delay(10, { signal: timeoutSignal });
-			}
-		}
-		const subscribeDone = Date.now();
+			const subscribeDone = Date.now();
 
 		if (params.warmupMs > 0) {
 			await delay(params.warmupMs, { signal: timeoutSignal });
@@ -854,6 +818,7 @@ export const runPubsubTopicSim = async (
 				const maxAttempts = Math.max(10, target * 20);
 				for (let tries = 0; chosen.size < target && tries < maxAttempts; tries++) {
 					const idx = subscriberIndices[int(rng, subscriberIndices.length)]!;
+					if (routerIndices.has(idx)) continue;
 					const peer = peers[idx]!;
 					if (network.isPeerOffline(peer.peerId)) continue;
 					chosen.add(idx);
@@ -959,31 +924,15 @@ export const runPubsubTopicSim = async (
 					expectedOnline += subscriberIndices.length;
 				}
 
-				try {
-					if (params.fanoutTopic) {
+					try {
 						await writer.publish(payload, {
 							id,
 							topics: [params.topic],
 							signal: timeoutSignal,
 						});
-					} else if (params.silent) {
-						const tos = [...writer.getPeersOnTopics([params.topic])];
-						await writer.publish(payload, {
-							id,
-							topics: [params.topic],
-							mode: new SilentDelivery({ to: tos, redundancy: params.redundancy }),
-							signal: timeoutSignal,
-						} as any);
-					} else {
-						await writer.publish(payload, {
-							id,
-							topics: [params.topic],
-							signal: timeoutSignal,
-						});
+					} catch {
+						publishErrors += 1;
 					}
-				} catch {
-					publishErrors += 1;
-				}
 
 				if (params.intervalMs > 0) {
 					await delay(params.intervalMs, { signal: timeoutSignal });
@@ -1038,7 +987,7 @@ export const runPubsubTopicSim = async (
 		return {
 			params,
 			subscriberCount: subscriberIndices.length,
-			writerKnown: writer.topicsToPeers.get(params.topic)?.size ?? 0,
+				writerKnown: writer.getSubscribers(params.topic)?.length ?? 0,
 			subscribeMs: subscribeDone - subscribeStart,
 			warmupMs: params.warmupMs,
 

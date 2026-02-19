@@ -11,7 +11,7 @@ import {
 } from "@peerbit/libp2p-test-utils";
 import type { Indices, Index, IndexEngineInitProperties } from "@peerbit/indexer-interface";
 import { type ProgramClient } from "@peerbit/program";
-import { FanoutTree, TopicControlPlane } from "@peerbit/pubsub";
+import { FanoutTree, TopicControlPlane, TopicRootControlPlane } from "@peerbit/pubsub";
 import {
 	type DirectStream,
 	waitForNeighbour as waitForPeersStreams,
@@ -285,11 +285,179 @@ export class TestSession {
 		return this._peers;
 	}
 
+		private async configureFanoutShardRoots() {
+			if (!this.connectedGroups) return;
+
+			// Build a view of direct underlay adjacency from the original dial-groups.
+			// This is used to pick "universally reachable" routers in sparse topologies
+			// (e.g. a line) so that sharded pubsub roots are directly dialable.
+			const adjacency = new Map<Peerbit, Set<Peerbit>>();
+			const addAdj = (a: Peerbit, b: Peerbit) => {
+				let sa = adjacency.get(a);
+				if (!sa) {
+					sa = new Set();
+					adjacency.set(a, sa);
+				}
+				sa.add(b);
+			};
+			for (const groupSet of this.connectedGroups) {
+				const peers = [...groupSet];
+				for (let i = 0; i < peers.length; i++) {
+					for (let j = i + 1; j < peers.length; j++) {
+						const a = peers[i]!;
+						const b = peers[j]!;
+						addAdj(a, b);
+						addAdj(b, a);
+					}
+				}
+			}
+
+			// `connect(groups)` is sometimes used to form sparse topologies by passing
+			// overlapping "dial groups" (e.g. [[a,b],[b,c]] for a line). For shard-root
+			// resolution we must instead configure candidates consistently per connected
+			// component; otherwise a peer that appears in multiple groups would have its
+		// candidate set overwritten and pubsub/rpc can deadlock.
+		const mergedComponents: Set<Peerbit>[] = [];
+		for (const groupSet of this.connectedGroups) {
+			const intersections: number[] = [];
+			for (let i = 0; i < mergedComponents.length; i++) {
+				const existing = mergedComponents[i]!;
+				for (const peer of groupSet) {
+					if (existing.has(peer)) {
+						intersections.push(i);
+						break;
+					}
+				}
+			}
+			if (intersections.length === 0) {
+				mergedComponents.push(new Set(groupSet));
+				continue;
+			}
+
+			const union = new Set<Peerbit>(groupSet);
+			intersections.sort((a, b) => b - a); // splice from end
+			for (const idx of intersections) {
+				for (const peer of mergedComponents[idx]!) union.add(peer);
+				mergedComponents.splice(idx, 1);
+			}
+			mergedComponents.push(union);
+		}
+
+		const peerIndex = new Map<Peerbit, number>();
+		for (let i = 0; i < this._peers.length; i++) {
+			peerIndex.set(this._peers[i]!, i);
+		}
+
+			for (const groupSet of mergedComponents) {
+				const group = [...groupSet].sort(
+					(a, b) => (peerIndex.get(a) ?? 0) - (peerIndex.get(b) ?? 0),
+				);
+				if (group.length === 0) continue;
+
+				// Prefer routers that are directly connected to every peer in this component
+				// (e.g. the center node in a line). This avoids picking a root that some peers
+				// cannot dial directly, which can cause fanout join timeouts in sparse graphs.
+				const universalRouters = group.filter((p) => {
+					const n = adjacency.get(p);
+					if (!n) return false;
+					for (const other of group) {
+						if (other === p) continue;
+						if (!n.has(other)) return false;
+					}
+					return true;
+				});
+
+				// Keep a small deterministic router set so shard roots are always hosted.
+				// If no universally reachable peers exist, fall back to a bounded prefix.
+				const routers =
+					universalRouters.length > 0
+						? universalRouters.slice(0, 8)
+						: group.slice(
+								0,
+								Math.min(
+									8,
+									Math.max(1, Math.ceil(Math.log2(Math.max(1, group.length)))),
+								),
+							);
+			const routerHashes = routers
+				.map(
+					(p) =>
+						(p as any)?.services?.pubsub?.publicKeyHash ??
+						(p as any)?.identity?.publicKey?.hashcode?.(),
+				)
+				.filter((x): x is string => typeof x === "string" && x.length > 0);
+
+			if (routerHashes.length === 0) continue;
+
+				for (const peer of group) {
+					const servicesAny: any = (peer as any).services;
+					// Prefer the pubsub service helper so we also disable its auto-candidate
+					// mode (otherwise it can keep gossiping/expanding candidates and shard-root
+					// resolution can diverge in sparse topologies).
+					try {
+						servicesAny?.pubsub?.setTopicRootCandidates?.(routerHashes);
+					} catch {
+						// ignore
+					}
+
+					// Also update the shared topic-root control plane directly for any
+					// services that are not wired through pubsub.
+					const fanoutPlane = servicesAny?.fanout?.topicRootControlPlane;
+					const pubsubPlane = servicesAny?.pubsub?.topicRootControlPlane;
+					const planes = [...new Set([fanoutPlane, pubsubPlane].filter(Boolean))];
+					for (const plane of planes) {
+						try {
+							plane.setTopicRootCandidates(routerHashes);
+						} catch {
+							// ignore
+						}
+					}
+				}
+
+				// Ensure subsequent root resolution (and root hosting) uses the updated
+				// candidate set rather than any earlier auto-candidate cached mapping.
+				for (const peer of group) {
+					try {
+						(peer as any)?.services?.pubsub?.shardRootCache?.clear?.();
+					} catch {
+						// ignore
+					}
+				}
+
+					// Bring up shard roots on router peers.
+					await Promise.all(
+						routers.map(async (peer) => {
+							try {
+								await (peer as any)?.services?.pubsub?.hostShardRootsNow?.();
+						} catch {
+							// ignore
+						}
+					}),
+				);
+
+				// If programs were opened before `connect()`, they may have subscribed under the
+				// initial local-only shard mapping. After updating candidates, force a best-effort
+				// reconcile so pubsub overlay joins + subscription announcements converge.
+				await Promise.all(
+					group.map(async (peer) => {
+						try {
+							const pubsub: any = (peer as any)?.services?.pubsub;
+							pubsub?.shardRootCache?.clear?.();
+							await pubsub?.reconcileShardOverlays?.();
+						} catch {
+							// ignore
+						}
+					}),
+				);
+			}
+		}
+
 	async connect(groups?: ProgramClient[][]) {
 		await this.session.connect(groups?.map((x) => x.map((y) => y)));
 		this.connectedGroups = groups
 			? groups.map((group) => new Set(group as Peerbit[]))
 			: [new Set(this._peers)];
+		await this.configureFanoutShardRoots();
 		return;
 	}
 
@@ -335,6 +503,7 @@ export class TestSession {
 		}
 
 		this.connectedGroups = groups.map((group) => new Set(group as Peerbit[]));
+		await this.configureFanoutShardRoots();
 		return out;
 	}
 
@@ -427,6 +596,18 @@ export class TestSession {
 				(x) => x.services.blocks as any as DirectStream<any>,
 			),
 		);
+		// Sharded pubsub/fanout uses its own DirectStream protocols; ensure those
+		// neighbor streams are established before tests start opening programs.
+		await waitForPeersStreams(
+			...session.peers.map(
+				(x) => x.services.pubsub as any as DirectStream<any>,
+			),
+		);
+		await waitForPeersStreams(
+			...session.peers.map(
+				(x) => (x.services as any).fanout as any as DirectStream<any>,
+			),
+		);
 		return session;
 	}
 
@@ -480,6 +661,18 @@ export class TestSession {
 				(x) => x.services.blocks as any as DirectStream<any>,
 			),
 		);
+		// Sharded pubsub/fanout uses its own DirectStream protocols; ensure those
+		// neighbor streams are established before tests start opening programs.
+		await waitForPeersStreams(
+			...session.peers.map(
+				(x) => x.services.pubsub as any as DirectStream<any>,
+			),
+		);
+		await waitForPeersStreams(
+			...session.peers.map(
+				(x) => (x.services as any).fanout as any as DirectStream<any>,
+			),
+		);
 		return session;
 	}
 
@@ -492,14 +685,39 @@ export class TestSession {
 			process.env.PEERBIT_TEST_SESSION === "fast" ||
 			process.env.PEERBIT_TEST_SESSION === "tcp";
 
-		const m = (o?: CreateOptions): Libp2pCreateOptionsWithServices => {
-			const blocksDirectory = o?.directory
-				? path.join(o.directory, "/blocks").toString()
-				: undefined;
+			const m = (o?: CreateOptions): Libp2pCreateOptionsWithServices => {
+				const blocksDirectory = o?.directory
+					? path.join(o.directory, "/blocks").toString()
+					: undefined;
 
-			const libp2pOptions: Libp2pCreateOptions = {
-				...(o?.libp2p ?? {}),
-			};
+				const libp2pOptions: Libp2pCreateOptions = {
+					...(o?.libp2p ?? {}),
+				};
+
+				// `SSession.disconnected(n, opts)` can re-use the same `opts` object across many
+				// libp2p peers. Memoizing a single instance in a closure would accidentally
+				// share one FanoutTree (and TopicRootControlPlane) across the entire session.
+				// That breaks shard-root resolution (everyone would inherit the first peer's
+				// candidate set) and can deadlock fanout joins in disconnected tests.
+				const perPeer = new WeakMap<
+					any,
+					{ fanout: FanoutTree; topicRootControlPlane: TopicRootControlPlane }
+				>();
+				const getOrCreatePerPeer = (c: any) => {
+					const key = c?.privateKey ?? c;
+					let existing = perPeer.get(key);
+					if (existing) return existing;
+
+					const topicRootControlPlane = new TopicRootControlPlane();
+					const fanout = new FanoutTree(c, {
+						connectionManager: false,
+						topicRootControlPlane,
+					});
+					existing = { fanout, topicRootControlPlane };
+					perPeer.set(key, existing);
+					return existing;
+				};
+				const getOrCreateFanout = (c: any) => getOrCreatePerPeer(c).fanout;
 
 			if (useMockSession) {
 				libp2pOptions.transports = libp2pOptions.transports ?? transportsFast();
@@ -521,8 +739,12 @@ export class TestSession {
 							directory: blocksDirectory,
 						}),
 					pubsub: (c: any) =>
-						new TopicControlPlane(c, { canRelayMessage: true }),
-					fanout: (c: any) => new FanoutTree(c, { connectionManager: false }),
+						new TopicControlPlane(c, {
+							canRelayMessage: true,
+							topicRootControlPlane: getOrCreatePerPeer(c).topicRootControlPlane,
+							fanout: getOrCreatePerPeer(c).fanout,
+						}),
+					fanout: (c: any) => getOrCreateFanout(c),
 					keychain: keychain(),
 					...libp2pOptions.services,
 				} as any, /// TODO types
@@ -569,6 +791,30 @@ export class TestSession {
 		const indexer = opts.indexer ?? (() => new NoopIndices());
 		const seed = Math.max(0, Math.floor(opts.seed ?? 1));
 
+		const perPeer = new Map<
+			string,
+			{ fanout: SimFanoutTree; topicRootControlPlane: TopicRootControlPlane }
+		>();
+		const getOrCreatePerPeer = (c: any) => {
+			const key = c?.peerId?.toString?.() ?? "";
+			const existing = perPeer.get(key);
+			if (existing) return existing;
+
+			const topicRootControlPlane = new TopicRootControlPlane();
+			const fanout = new SimFanoutTree(
+				c,
+				{
+					connectionManager: false,
+					random: mulberry32((seed >>> 0) ^ parseSimPeerIndex(c?.peerId)),
+					topicRootControlPlane,
+				},
+				mockCrypto,
+			);
+			const created = { fanout, topicRootControlPlane };
+			perPeer.set(key, created);
+			return created;
+		};
+
 		const inMemory = await InMemorySession.disconnected<Libp2pExtendServices>(n, {
 			start: false,
 			basePort: opts.basePort ?? 30_000,
@@ -584,16 +830,19 @@ export class TestSession {
 						mockCrypto,
 					),
 				pubsub: (c: any) =>
-					new SimTopicControlPlane(c, { canRelayMessage: true }, mockCrypto),
-				fanout: (c: any) =>
-					new SimFanoutTree(
+					new SimTopicControlPlane(
 						c,
-						{
-							connectionManager: false,
-							random: mulberry32((seed >>> 0) ^ parseSimPeerIndex(c?.peerId)),
-						},
+						(() => {
+							const { fanout, topicRootControlPlane } = getOrCreatePerPeer(c);
+							return {
+								canRelayMessage: true,
+								topicRootControlPlane,
+								fanout,
+							};
+						})(),
 						mockCrypto,
 					),
+				fanout: (c: any) => getOrCreatePerPeer(c).fanout,
 				keychain: () =>
 					// Avoid libp2p keychain (datastore dependency) for large sims.
 					// Peerbit only requires the CryptoKeychain surface in these sessions.

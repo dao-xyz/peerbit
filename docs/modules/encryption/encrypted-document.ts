@@ -19,6 +19,13 @@ const nonMember = await Peerbit.create({
 
 await groupMember2.dial(groupMember1.getMultiaddrs());
 await nonMember.dial(groupMember1.getMultiaddrs());
+// In small ad-hoc networks (no bootstraps/trackers), proactively hosting shard
+// roots avoids flaky "join before root is hosted" races.
+await Promise.all([
+	(groupMember1.services.pubsub as any).hostShardRootsNow?.(),
+	(groupMember2.services.pubsub as any).hostShardRootsNow?.(),
+	(nonMember.services.pubsub as any).hostShardRootsNow?.(),
+]);
 
 @variant(0) // version 0
 class Post {

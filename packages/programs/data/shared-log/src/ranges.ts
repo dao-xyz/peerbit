@@ -2565,13 +2565,17 @@ export const debounceAggregationChanges = <
 			let aggregated: Map<string, ReplicationChange<T>> = new Map();
 			return {
 				add: (change: ReplicationChange<T>) => {
-					const prev = aggregated.get(change.range.idString);
+					// Keep different change types for the same segment id. In particular, range
+					// updates produce a `replaced` + `added` pair; collapsing by id would drop the
+					// "removed" portion and prevent correct rebalancing/pruning.
+					const key = `${change.type}:${change.range.idString}`;
+					const prev = aggregated.get(key);
 					if (prev) {
 						if (prev.range.timestamp < change.range.timestamp) {
-							aggregated.set(change.range.idString, change);
+							aggregated.set(key, change);
 						}
 					} else {
-						aggregated.set(change.range.idString, change);
+						aggregated.set(key, change);
 					}
 				},
 				delete: (key: string) => {

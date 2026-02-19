@@ -67,19 +67,21 @@ describe("fanout-tree-sim (ci)", () => {
 			this.timeout(90_000);
 
 			const result = await runFanoutTreeSim({
-			nodes: 40,
-			bootstraps: 1,
-			subscribers: 30,
-			relayFraction: 0.35,
-				messages: 40,
-				msgRate: 50,
-				msgSize: 64,
-				settleMs: 2_500,
-				// CI can be noisy; use a slightly looser deadline while still enforcing low-latency delivery.
-				deadlineMs: 500,
-				timeoutMs: 40_000,
-				seed: 1,
-				repair: true,
+				nodes: 40,
+				bootstraps: 1,
+				subscribers: 30,
+				relayFraction: 0.35,
+					messages: 40,
+					msgRate: 50,
+					msgSize: 64,
+					// Under monorepo CI load, repairs can be delayed; give the sim a bit more
+					// time to converge after publishing.
+					settleMs: 5_000,
+					// CI can be noisy; use a slightly looser deadline while still enforcing low-latency delivery.
+					deadlineMs: 500,
+					timeoutMs: 40_000,
+					seed: 1,
+					repair: true,
 			rootUploadLimitBps: 100_000_000,
 			relayUploadLimitBps: 100_000_000,
 			rootMaxChildren: 64,

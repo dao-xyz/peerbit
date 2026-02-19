@@ -427,6 +427,10 @@ export const WAIT_FOR_REPLICATOR_REQUEST_MIN_ATTEMPTS = 3;
 // Prefer making pruning robust without timing-based heuristics.
 export const WAIT_FOR_PRUNE_DELAY = 0;
 const PRUNE_DEBOUNCE_INTERVAL = 500;
+const CHECKED_PRUNE_RESEND_INTERVAL_MIN_MS = 250;
+const CHECKED_PRUNE_RESEND_INTERVAL_MAX_MS = 5_000;
+const CHECKED_PRUNE_RETRY_MAX_ATTEMPTS = 3;
+const CHECKED_PRUNE_RETRY_MAX_DELAY_MS = 30_000;
 
 // DONT SET THIS ANY LOWER, because it will make the pid controller unstable as the system responses are not fast enough to updates from the pid controller
 const RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL = 1000;
@@ -532,11 +536,12 @@ export class SharedLog<
 
 	private _replicationRangeIndex!: Index<ReplicationRangeIndexable<R>>;
 	private _entryCoordinatesIndex!: Index<EntryReplicated<R>>;
-	private coordinateToHash!: Cache<string>;
-	private recentlyRebalanced!: Cache<string>;
+		private coordinateToHash!: Cache<string>;
+		private recentlyRebalanced!: Cache<string>;
 
-	uniqueReplicators!: Set<string>;
-	private _replicatorsReconciled!: boolean;
+		uniqueReplicators!: Set<string>;
+		private _replicatorJoinEmitted!: Set<string>;
+		private _replicatorsReconciled!: boolean;
 
 	/* private _totalParticipation!: number; */
 
@@ -596,6 +601,7 @@ export class SharedLog<
 		string,
 		{ attempts: number; timer?: ReturnType<typeof setTimeout> }
 	>;
+	private _replicationInfoApplyQueueByPeer!: Map<string, Promise<void>>;
 
 	private remoteBlocks!: RemoteBlocks;
 
@@ -629,6 +635,10 @@ export class SharedLog<
 
 	private _requestIPruneSent!: Map<string, Set<string>>; // tracks entry hash to peer hash for requesting I prune messages
 	private _requestIPruneResponseReplicatorSet!: Map<string, Set<string>>; // tracks entry hash to peer hash
+	private _checkedPruneRetries!: Map<
+		string,
+		{ attempts: number; timer?: ReturnType<typeof setTimeout> }
+	>;
 
 	private replicationChangeDebounceFn!: ReturnType<
 		typeof debounceAggregationChanges<ReplicationRangeIndexable<R>>
@@ -1665,8 +1675,9 @@ export class SharedLog<
 			})
 			.all();
 
-		this.uniqueReplicators.delete(keyHash);
-		await this.replicationIndex.del({ query: { hash: keyHash } });
+			this.uniqueReplicators.delete(keyHash);
+			this._replicatorJoinEmitted.delete(keyHash);
+			await this.replicationIndex.del({ query: { hash: keyHash } });
 
 		await this.updateOldestTimestampFromIndex();
 
@@ -1691,14 +1702,14 @@ export class SharedLog<
 			}
 		}
 
-		const timestamp = BigInt(+new Date());
-		for (const x of deleted) {
-			this.replicationChangeDebounceFn.add({
-				range: x.value,
-				type: "removed",
-				timestamp,
-			});
-		}
+			const timestamp = BigInt(+new Date());
+			for (const x of deleted) {
+				this.replicationChangeDebounceFn.add({
+					range: x.value,
+					type: "removed",
+					timestamp,
+				});
+			}
 
 		const pendingMaturity = this.pendingMaturity.get(keyHash);
 		if (pendingMaturity) {
@@ -1779,9 +1790,10 @@ export class SharedLog<
 			{ query: { hash: from.hashcode() } },
 			{ shape: { id: true } },
 		);
-		if ((await otherSegmentsIterator.next(1)).length === 0) {
-			this.uniqueReplicators.delete(from.hashcode());
-		}
+			if ((await otherSegmentsIterator.next(1)).length === 0) {
+				this.uniqueReplicators.delete(from.hashcode());
+				this._replicatorJoinEmitted.delete(from.hashcode());
+			}
 		await otherSegmentsIterator.close();
 
 		await this.updateOldestTimestampFromIndex();
@@ -1944,11 +1956,16 @@ export class SharedLog<
 			diffs = changes;
 		}
 
-		if (ranges.length === 0) {
-			this.uniqueReplicators.delete(from.hashcode());
-		} else {
-			this.uniqueReplicators.add(from.hashcode());
-		}
+			const fromHash = from.hashcode();
+			// Track replicator membership transitions synchronously so join/leave events are
+			// idempotent even if we process concurrent reset messages/unsubscribes.
+			const stoppedTransition =
+				ranges.length === 0 ? this.uniqueReplicators.delete(fromHash) : false;
+			if (ranges.length === 0) {
+				this._replicatorJoinEmitted.delete(fromHash);
+			} else {
+				this.uniqueReplicators.add(fromHash);
+			}
 
 		let now = +new Date();
 		let minRoleAge = await this.getDefaultMinRoleAge();
@@ -1994,13 +2011,13 @@ export class SharedLog<
 								}),
 							);
 
-							if (rebalance && diff.range.mode !== ReplicationIntent.Strict) {
-								// TODO this statement (might) cause issues with triggering pruning if the segment is strict and maturity timings will affect the outcome of rebalancing
-								this.replicationChangeDebounceFn.add({
-									...diff,
-									matured: true,
-								}); // we need to call this here because the outcom of findLeaders will be different when some ranges become mature, i.e. some of data we own might be prunable!
-							}
+								if (rebalance && diff.range.mode !== ReplicationIntent.Strict) {
+									// TODO this statement (might) cause issues with triggering pruning if the segment is strict and maturity timings will affect the outcome of rebalancing
+									this.replicationChangeDebounceFn.add({
+										...diff,
+										matured: true,
+									}); // we need to call this here because the outcom of findLeaders will be different when some ranges become mature, i.e. some of data we own might be prunable!
+								}
 							pendingRanges.delete(diff.range.idString);
 							if (pendingRanges.size === 0) {
 								this.pendingMaturity.delete(diff.range.hash);
@@ -2046,23 +2063,26 @@ export class SharedLog<
 				}),
 			);
 
-			if (isNewReplicator) {
-				this.events.dispatchEvent(
-					new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
-						detail: { publicKey: from },
-					}),
-				);
+				if (isNewReplicator) {
+					if (!this._replicatorJoinEmitted.has(fromHash)) {
+						this._replicatorJoinEmitted.add(fromHash);
+						this.events.dispatchEvent(
+							new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
+								detail: { publicKey: from },
+							}),
+						);
+					}
 
-				if (isAllMature) {
-					this.events.dispatchEvent(
-						new CustomEvent<ReplicatorMatureEvent>("replicator:mature", {
-							detail: { publicKey: from },
+					if (isAllMature) {
+						this.events.dispatchEvent(
+							new CustomEvent<ReplicatorMatureEvent>("replicator:mature", {
+								detail: { publicKey: from },
 						}),
 					);
 				}
 			}
 
-			if (isStoppedReplicating) {
+			if (isStoppedReplicating && stoppedTransition) {
 				this.events.dispatchEvent(
 					new CustomEvent<ReplicatorLeaveEvent>("replicator:leave", {
 						detail: { publicKey: from },
@@ -2070,11 +2090,11 @@ export class SharedLog<
 				);
 			}
 
-			if (rebalance) {
-				for (const diff of diffs) {
-					this.replicationChangeDebounceFn.add(diff);
+				if (rebalance) {
+					for (const diff of diffs) {
+						this.replicationChangeDebounceFn.add(diff);
+					}
 				}
-			}
 
 			if (!from.equals(this.node.identity.publicKey)) {
 				this.rebalanceParticipationDebounced?.call();
@@ -2193,6 +2213,82 @@ export class SharedLog<
 		if (!this.keep || !(await this.keep(args.value.entry))) {
 			return this.pruneDebouncedFn.add(args);
 		}
+	}
+
+	private clearCheckedPruneRetry(hash: string) {
+		const state = this._checkedPruneRetries.get(hash);
+		if (state?.timer) {
+			clearTimeout(state.timer);
+		}
+		this._checkedPruneRetries.delete(hash);
+	}
+
+	private scheduleCheckedPruneRetry(args: {
+		entry: EntryReplicated<R> | ShallowOrFullEntry<any>;
+		leaders: Map<string, unknown> | Set<string>;
+	}) {
+		if (this.closed) return;
+		if (this._pendingDeletes.has(args.entry.hash)) return;
+
+		const hash = args.entry.hash;
+		const state =
+			this._checkedPruneRetries.get(hash) ?? { attempts: 0 };
+
+		if (state.timer) return;
+		if (state.attempts >= CHECKED_PRUNE_RETRY_MAX_ATTEMPTS) {
+			// Avoid unbounded background retries; a new replication-change event can
+			// always re-enqueue pruning with fresh leader info.
+			return;
+		}
+
+		const attempt = state.attempts + 1;
+		const jitterMs = Math.floor(Math.random() * 250);
+		const delayMs = Math.min(
+			CHECKED_PRUNE_RETRY_MAX_DELAY_MS,
+			1_000 * 2 ** (attempt - 1) + jitterMs,
+		);
+
+		state.attempts = attempt;
+		state.timer = setTimeout(async () => {
+			const st = this._checkedPruneRetries.get(hash);
+			if (st) st.timer = undefined;
+			if (this.closed) return;
+			if (this._pendingDeletes.has(hash)) return;
+
+			let leadersMap: Map<string, any> | undefined;
+			try {
+				const replicas = decodeReplicas(args.entry).getValue(this);
+				leadersMap = await this.findLeadersFromEntry(args.entry, replicas, {
+					roleAge: 0,
+				});
+			} catch {
+				// Best-effort only.
+			}
+
+				if (!leadersMap || leadersMap.size === 0) {
+					if (args.leaders instanceof Map) {
+						leadersMap = args.leaders as any;
+					} else {
+						leadersMap = new Map<string, any>();
+						for (const k of args.leaders) {
+							leadersMap.set(k, { intersecting: true });
+						}
+					}
+				}
+
+				try {
+					const leadersForRetry = leadersMap ?? new Map<string, any>();
+					await this.pruneDebouncedFnAddIfNotKeeping({
+						key: hash,
+						// TODO types
+						value: { entry: args.entry as any, leaders: leadersForRetry },
+					});
+				} catch {
+					// Best-effort only; pruning will be re-attempted on future changes.
+				}
+		}, delayMs);
+		state.timer.unref?.();
+		this._checkedPruneRetries.set(hash, state);
 	}
 
 	async append(
@@ -2324,15 +2420,17 @@ export class SharedLog<
 			this.domain.resolution,
 		);
 		this._respondToIHaveTimeout = options?.respondToIHaveTimeout ?? 2e4;
-		this._pendingDeletes = new Map();
-		this._pendingIHave = new Map();
-		this.latestReplicationInfoMessage = new Map();
-		this._replicationInfoRequestByPeer = new Map();
-		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
-		this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
+			this._pendingDeletes = new Map();
+			this._pendingIHave = new Map();
+			this.latestReplicationInfoMessage = new Map();
+			this._replicationInfoRequestByPeer = new Map();
+			this._replicationInfoApplyQueueByPeer = new Map();
+			this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
+			this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
 
-		this.uniqueReplicators = new Set();
-		this._replicatorsReconciled = false;
+			this.uniqueReplicators = new Set();
+			this._replicatorJoinEmitted = new Set();
+			this._replicatorsReconciled = false;
 
 		this.openTime = +new Date();
 		this.oldestOpenTime = this.openTime;
@@ -2459,9 +2557,10 @@ export class SharedLog<
 				],
 			})) > 0;
 
-		this._gidPeersHistory = new Map();
-		this._requestIPruneSent = new Map();
-		this._requestIPruneResponseReplicatorSet = new Map();
+			this._gidPeersHistory = new Map();
+			this._requestIPruneSent = new Map();
+			this._requestIPruneResponseReplicatorSet = new Map();
+			this._checkedPruneRetries = new Map();
 
 		this.replicationChangeDebounceFn = debounceAggregationChanges<
 			ReplicationRangeIndexable<R>
@@ -2846,22 +2945,26 @@ export class SharedLog<
 									);
 								}
 
-								this.uniqueReplicators.add(key.hashcode());
+									const keyHash = key.hashcode();
+									this.uniqueReplicators.add(keyHash);
 
-								this.events.dispatchEvent(
-									new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
-										detail: { publicKey: key },
-									}),
-								);
-								this.events.dispatchEvent(
-									new CustomEvent<ReplicationChangeEvent>(
-										"replication:change",
-										{
-											detail: { publicKey: key },
-										},
-									),
-								);
-							})
+									if (!this._replicatorJoinEmitted.has(keyHash)) {
+										this._replicatorJoinEmitted.add(keyHash);
+										this.events.dispatchEvent(
+											new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
+												detail: { publicKey: key },
+											}),
+										);
+										this.events.dispatchEvent(
+											new CustomEvent<ReplicationChangeEvent>(
+												"replication:change",
+												{
+													detail: { publicKey: key },
+												},
+											),
+										);
+									}
+								})
 							.catch(async (e) => {
 								if (isNotStartedError(e)) {
 									return; // TODO test this path
@@ -3094,43 +3197,69 @@ export class SharedLog<
 			v.clear();
 			v.promise.resolve(); // TODO or reject?
 		}
-		for (const [_k, v] of this._pendingIHave) {
-			v.clear();
-		}
+			for (const [_k, v] of this._pendingIHave) {
+				v.clear();
+			}
+			for (const [_k, v] of this._checkedPruneRetries) {
+				if (v.timer) clearTimeout(v.timer);
+			}
 
 		await this.remoteBlocks.stop();
-		this._pendingDeletes.clear();
-		this._pendingIHave.clear();
-		this.latestReplicationInfoMessage.clear();
-		this._gidPeersHistory.clear();
-		this._requestIPruneSent.clear();
-		this._requestIPruneResponseReplicatorSet.clear();
-		this.pruneDebouncedFn = undefined as any;
-		this.rebalanceParticipationDebounced = undefined;
-		this._replicationRangeIndex.stop();
-		this._entryCoordinatesIndex.stop();
+			this._pendingDeletes.clear();
+			this._pendingIHave.clear();
+			this._checkedPruneRetries.clear();
+			this.latestReplicationInfoMessage.clear();
+			this._gidPeersHistory.clear();
+				this._requestIPruneSent.clear();
+				this._requestIPruneResponseReplicatorSet.clear();
+			// Cancel any pending debounced timers so they can't fire after we've torn down
+			// indexes/RPC state.
+			this.rebalanceParticipationDebounced?.close();
+			this.replicationChangeDebounceFn?.close?.();
+			this.pruneDebouncedFn?.close?.();
+			this.responseToPruneDebouncedFn?.close?.();
+			this.pruneDebouncedFn = undefined as any;
+			this.rebalanceParticipationDebounced = undefined;
+			this._replicationRangeIndex.stop();
+			this._entryCoordinatesIndex.stop();
 		this._replicationRangeIndex = undefined as any;
 		this._entryCoordinatesIndex = undefined as any;
 
 		this.cpuUsage?.stop?.();
 		/* this._totalParticipation = 0; */
 	}
-	async close(from?: Program): Promise<boolean> {
-		// Best-effort: announce that we are going offline before tearing down
-		// RPC/subscription state.
-		//
-		// Important: do not delete our local replication ranges here. Keeping them
-		// allows `replicate: { type: "resume" }` to restore the previous role on
-		// restart. Explicit `unreplicate()` still clears local state.
-		try {
-			if (!this.closed) {
-				await this.rpc.send(new AllReplicatingSegmentsMessage({ segments: [] }), {
-					priority: 1,
-				});
-			}
-		} catch {
-			// ignore: close should be resilient even if we were never fully started
-		}
+			async close(from?: Program): Promise<boolean> {
+				// Best-effort: announce that we are going offline before tearing down
+				// RPC/subscription state.
+			//
+				// Important: do not delete our local replication ranges here. Keeping them
+				// allows `replicate: { type: "resume" }` to restore the previous role on
+				// restart. Explicit `unreplicate()` still clears local state.
+				try {
+					if (!this.closed) {
+						// Prevent any late debounced timers (rebalance/prune) from publishing
+						// replication info after we announce "segments: []". These races can leave
+						// stale segments on remotes after rapid open/close cycles.
+						this._isReplicating = false;
+						this._isAdaptiveReplicating = false;
+						this.rebalanceParticipationDebounced?.close();
+						this.replicationChangeDebounceFn?.close?.();
+						this.pruneDebouncedFn?.close?.();
+						this.responseToPruneDebouncedFn?.close?.();
+
+						// Ensure the "I'm leaving" replication reset is actually published before
+						// the RPC child program closes and unsubscribes from its topic. If we fire
+						// and forget here, the publish can race with `super.close()` and get dropped,
+						// leaving stale replication segments on remotes (flaky join/leave tests).
+						await this.rpc
+							.send(new AllReplicatingSegmentsMessage({ segments: [] }), {
+								priority: 1,
+							})
+							.catch(() => {});
+					}
+				} catch {
+					// ignore: close should be resilient even if we were never fully started
+				}
 		const superClosed = await super.close(from);
 		if (!superClosed) {
 			return superClosed;
@@ -3550,77 +3679,79 @@ export class SharedLog<
 					return;
 				}
 
-				const replicationInfoMessage = msg as
-					| AllReplicatingSegmentsMessage
-					| AddedReplicationSegmentMessage;
+					const replicationInfoMessage = msg as
+						| AllReplicatingSegmentsMessage
+						| AddedReplicationSegmentMessage;
 
-				// Process replication updates even if the sender isn't yet considered "ready" by
-				// `Program.waitFor()`. Dropping these messages can lead to missing replicator info
-				// (and downstream `waitForReplicator()` timeouts) under timing-sensitive joins.
-				const from = context.from!;
-				const messageTimestamp = context.message.header.timestamp;
-				(async () => {
-					const prev = this.latestReplicationInfoMessage.get(from.hashcode());
-					if (prev && prev > messageTimestamp) {
+					// Process replication updates even if the sender isn't yet considered "ready" by
+					// `Program.waitFor()`. Dropping these messages can lead to missing replicator info
+					// (and downstream `waitForReplicator()` timeouts) under timing-sensitive joins.
+					const from = context.from!;
+					const fromHash = from.hashcode();
+					const messageTimestamp = context.message.header.timestamp;
+					await this.withReplicationInfoApplyQueue(fromHash, async () => {
+						try {
+							// Process in-order to avoid races where repeated reset messages arrive
+							// concurrently and trigger spurious "added" diffs / rebalancing.
+							const prev = this.latestReplicationInfoMessage.get(fromHash);
+							if (prev && prev > messageTimestamp) {
+								return;
+							}
+
+							this.latestReplicationInfoMessage.set(fromHash, messageTimestamp);
+
+							if (this.closed) {
+								return;
+							}
+
+						const reset = msg instanceof AllReplicatingSegmentsMessage;
+						await this.addReplicationRange(
+							replicationInfoMessage.segments.map((x) =>
+								x.toReplicationRangeIndexable(from),
+							),
+							from,
+							{
+								reset,
+								checkDuplicates: true,
+								timestamp: Number(messageTimestamp),
+							},
+						);
+
+							// If the peer reports any replication segments, stop re-requesting.
+							// (Empty reports can be transient during startup.)
+							if (replicationInfoMessage.segments.length > 0) {
+								this.cancelReplicationInfoRequests(fromHash);
+							}
+						} catch (e) {
+							if (isNotStartedError(e as Error)) {
+								return;
+							}
+							logger.error(
+								`Failed to apply replication settings from '${fromHash}': ${
+									(e as any)?.message ?? e
+								}`,
+							);
+						}
+					});
+				} else if (msg instanceof StoppedReplicating) {
+					if (context.from.equals(this.node.identity.publicKey)) {
 						return;
 					}
-
-					this.latestReplicationInfoMessage.set(
-						from.hashcode(),
-						messageTimestamp,
-					);
-
-					if (this.closed) {
-						return;
-					}
-
-					const reset = msg instanceof AllReplicatingSegmentsMessage;
-					await this.addReplicationRange(
-						replicationInfoMessage.segments.map((x) =>
-							x.toReplicationRangeIndexable(from),
-						),
-						from,
-						{
-							reset,
-							checkDuplicates: true,
-							timestamp: Number(messageTimestamp),
-						},
-					);
-
-					// If the peer reports any replication segments, stop re-requesting.
-					// (Empty reports can be transient during startup.)
-					if (replicationInfoMessage.segments.length > 0) {
-						this.cancelReplicationInfoRequests(from.hashcode());
-					}
-				})().catch((e) => {
-					if (isNotStartedError(e)) {
-						return;
-					}
-					logger.error(
-						`Failed to apply replication settings from '${from.hashcode()}': ${
-							e?.message ?? e
-						}`,
-					);
-				});
-			} else if (msg instanceof StoppedReplicating) {
-				if (context.from.equals(this.node.identity.publicKey)) {
-					return;
-				}
 
 				const rangesToRemove = await this.resolveReplicationRangesFromIdsAndKey(
 					msg.segmentIds,
 					context.from,
 				);
 
-				await this.removeReplicationRanges(rangesToRemove, context.from);
-				const timestamp = BigInt(+new Date());
-				for (const range of rangesToRemove) {
-					this.replicationChangeDebounceFn.add({
-						range,
-						type: "removed",
-						timestamp,
-					});
-				}
+					await this.removeReplicationRanges(rangesToRemove, context.from);
+					const timestamp = BigInt(+new Date());
+					for (const range of rangesToRemove) {
+						this.replicationChangeDebounceFn.add({
+							range,
+							type: "removed",
+							timestamp,
+						});
+					}
 			} else {
 				throw new Error("Unexpected message");
 			}
@@ -3922,10 +4053,10 @@ export class SharedLog<
 		}
 	}
 
-	async waitForReplicator(
-		key: PublicSignKey,
-		options?: {
-			signal?: AbortSignal;
+		async waitForReplicator(
+			key: PublicSignKey,
+			options?: {
+				signal?: AbortSignal;
 			eager?: boolean;
 			roleAge?: number;
 			timeout?: number;
@@ -3937,9 +4068,9 @@ export class SharedLog<
 			? undefined
 			: (options?.roleAge ?? (await this.getDefaultMinRoleAge()));
 
-		let settled = false;
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		let requestTimer: ReturnType<typeof setTimeout> | undefined;
+			let settled = false;
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			let requestTimer: ReturnType<typeof setTimeout> | undefined;
 
 		const clear = () => {
 			this.events.removeEventListener("replicator:mature", check);
@@ -3955,14 +4086,19 @@ export class SharedLog<
 			}
 		};
 
-		const resolve = () => {
-			if (settled) {
-				return;
-			}
-			settled = true;
-			clear();
-			deferred.resolve();
-		};
+			const resolve = async () => {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				clear();
+				// `waitForReplicator()` is typically used as a precondition before join/replicate
+				// flows. A replicator can become mature and enqueue a debounced rebalance
+				// (`replicationChangeDebounceFn`) slightly later. Flush here so callers don't
+				// observe a "late" rebalance after the wait resolves.
+				await this.replicationChangeDebounceFn?.flush?.();
+				deferred.resolve();
+			};
 
 		const reject = (error: Error) => {
 			if (settled) {
@@ -4021,29 +4157,29 @@ export class SharedLog<
 			}
 		};
 
-		const check = async () => {
-			const iterator = this.replicationIndex?.iterate(
-				{ query: new StringMatch({ key: "hash", value: key.hashcode() }) },
-				{ reference: true },
-			);
-			try {
-				const rects = await iterator?.next(1);
-				const rect = rects?.[0]?.value;
-				if (!rect) {
-					return;
-				}
-				if (!options?.eager && resolvedRoleAge != null) {
-					if (!isMatured(rect, +new Date(), resolvedRoleAge)) {
+			const check = async () => {
+				const iterator = this.replicationIndex?.iterate(
+					{ query: new StringMatch({ key: "hash", value: key.hashcode() }) },
+					{ reference: true },
+				);
+				try {
+					const rects = await iterator?.next(1);
+					const rect = rects?.[0]?.value;
+					if (!rect) {
 						return;
 					}
+					if (!options?.eager && resolvedRoleAge != null) {
+						if (!isMatured(rect, +new Date(), resolvedRoleAge)) {
+							return;
+						}
+					}
+					await resolve();
+				} catch (error) {
+					reject(error instanceof Error ? error : new Error(String(error)));
+				} finally {
+					await iterator?.close();
 				}
-				resolve();
-			} catch (error) {
-				reject(error instanceof Error ? error : new Error(String(error)));
-			} finally {
-				await iterator?.close();
-			}
-		};
+			};
 
 		requestReplicationInfo();
 		check();
@@ -4507,6 +4643,24 @@ export class SharedLog<
 		);
 	}
 
+	private withReplicationInfoApplyQueue(
+		peerHash: string,
+		fn: () => Promise<void>,
+	): Promise<void> {
+		const prev = this._replicationInfoApplyQueueByPeer.get(peerHash);
+		const next = (prev ?? Promise.resolve())
+			.catch(() => {
+				// Avoid stuck queues if a previous apply failed.
+			})
+			.then(fn);
+		this._replicationInfoApplyQueueByPeer.set(peerHash, next);
+		return next.finally(() => {
+			if (this._replicationInfoApplyQueueByPeer.get(peerHash) === next) {
+				this._replicationInfoApplyQueueByPeer.delete(peerHash);
+			}
+		});
+	}
+
 	private cancelReplicationInfoRequests(peerHash: string) {
 		const state = this._replicationInfoRequestByPeer.get(peerHash);
 		if (!state) return;
@@ -4566,44 +4720,48 @@ export class SharedLog<
 		tick();
 	}
 
-	async handleSubscriptionChange(
-		publicKey: PublicSignKey,
-		topics: string[],
-		subscribed: boolean,
-	) {
-		if (!topics.includes(this.topic)) {
-			return;
-		}
-
-		if (!subscribed) {
-			this.cancelReplicationInfoRequests(publicKey.hashcode());
-			this.removePeerFromGidPeerHistory(publicKey.hashcode());
-
-			for (const [k, v] of this._requestIPruneSent) {
-				v.delete(publicKey.hashcode());
-				if (v.size === 0) {
-					this._requestIPruneSent.delete(k);
-				}
+		async handleSubscriptionChange(
+			publicKey: PublicSignKey,
+			topics: string[],
+			subscribed: boolean,
+		) {
+			if (!topics.includes(this.topic)) {
+				return;
 			}
 
-			for (const [k, v] of this._requestIPruneResponseReplicatorSet) {
-				v.delete(publicKey.hashcode());
-				if (v.size === 0) {
-					this._requestIPruneResponseReplicatorSet.delete(k);
+			if (!subscribed) {
+				const peerHash = publicKey.hashcode();
+				// Emit replicator:leave at most once per (join -> leave) transition, even if we
+				// concurrently process unsubscribe + replication reset messages for the same peer.
+				const stoppedTransition = this.uniqueReplicators.delete(peerHash);
+				this._replicatorJoinEmitted.delete(peerHash);
+
+				this.cancelReplicationInfoRequests(peerHash);
+				this.removePeerFromGidPeerHistory(peerHash);
+
+				for (const [k, v] of this._requestIPruneSent) {
+					v.delete(peerHash);
+					if (v.size === 0) {
+						this._requestIPruneSent.delete(k);
+					}
 				}
+
+				for (const [k, v] of this._requestIPruneResponseReplicatorSet) {
+					v.delete(peerHash);
+					if (v.size === 0) {
+						this._requestIPruneResponseReplicatorSet.delete(k);
+					}
+				}
+
+				this.syncronizer.onPeerDisconnected(publicKey);
+
+				stoppedTransition &&
+					this.events.dispatchEvent(
+						new CustomEvent<ReplicatorLeaveEvent>("replicator:leave", {
+							detail: { publicKey },
+						}),
+					);
 			}
-
-			this.syncronizer.onPeerDisconnected(publicKey);
-
-			(await this.replicationIndex.count({
-				query: { hash: publicKey.hashcode() },
-			})) > 0 &&
-				this.events.dispatchEvent(
-					new CustomEvent<ReplicatorLeaveEvent>("replicator:leave", {
-						detail: { publicKey },
-					}),
-				);
-		}
 
 			if (subscribed) {
 				const replicationSegments = await this.getMyReplicationSegments();
@@ -4675,8 +4833,8 @@ export class SharedLog<
 				leaders: Map<string, unknown> | Set<string>;
 			}
 		>,
-		options?: { timeout?: number; unchecked?: boolean },
-	): Promise<any>[] {
+			options?: { timeout?: number; unchecked?: boolean },
+		): Promise<any>[] {
 		if (options?.unchecked) {
 			return [...entries.values()].map((x) => {
 				this._gidPeersHistory.delete(x.entry.meta.gid);
@@ -4701,14 +4859,15 @@ export class SharedLog<
 		// - An entry is joined, where min replicas is lower than before (for all heads for this particular gid) and therefore we are not replicating anymore for this particular gid
 		// - Peers join and leave, which means we might not be a replicator anymore
 
-		const promises: Promise<any>[] = [];
+			const promises: Promise<any>[] = [];
 
-		let peerToEntries: Map<string, string[]> = new Map();
-		let cleanupTimer: ReturnType<typeof setTimeout>[] = [];
+			let peerToEntries: Map<string, string[]> = new Map();
+			let cleanupTimer: ReturnType<typeof setTimeout>[] = [];
+			const explicitTimeout = options?.timeout != null;
 
-		for (const { entry, leaders } of entries.values()) {
-			for (const leader of leaders.keys()) {
-				let set = peerToEntries.get(leader);
+			for (const { entry, leaders } of entries.values()) {
+				for (const leader of leaders.keys()) {
+					let set = peerToEntries.get(leader);
 				if (!set) {
 					set = [];
 					peerToEntries.set(leader, set);
@@ -4720,11 +4879,11 @@ export class SharedLog<
 			const pendingPrev = this._pendingDeletes.get(entry.hash);
 			if (pendingPrev) {
 				promises.push(pendingPrev.promise.promise);
-				continue;
-			}
+					continue;
+				}
 
-			const minReplicas = decodeReplicas(entry);
-			const deferredPromise: DeferredPromise<void> = pDefer();
+				const minReplicas = decodeReplicas(entry);
+				const deferredPromise: DeferredPromise<void> = pDefer();
 
 			const clear = () => {
 				const pending = this._pendingDeletes.get(entry.hash);
@@ -4734,12 +4893,13 @@ export class SharedLog<
 				clearTimeout(timeout);
 			};
 
-			const resolve = () => {
-				clear();
-				cleanupTimer.push(
-					setTimeout(async () => {
-						this._gidPeersHistory.delete(entry.meta.gid);
-						this.removePruneRequestSent(entry.hash);
+				const resolve = () => {
+					clear();
+					this.clearCheckedPruneRetry(entry.hash);
+					cleanupTimer.push(
+						setTimeout(async () => {
+							this._gidPeersHistory.delete(entry.meta.gid);
+							this.removePruneRequestSent(entry.hash);
 						this._requestIPruneResponseReplicatorSet.delete(entry.hash);
 
 						if (
@@ -4783,12 +4943,19 @@ export class SharedLog<
 				);
 			};
 
-			const reject = (e: any) => {
-				clear();
-				this.removePruneRequestSent(entry.hash);
-				this._requestIPruneResponseReplicatorSet.delete(entry.hash);
-				deferredPromise.reject(e);
-			};
+				const reject = (e: any) => {
+					clear();
+					const isCheckedPruneTimeout =
+						e instanceof Error &&
+						typeof e.message === "string" &&
+						e.message.startsWith("Timeout for checked pruning");
+					if (explicitTimeout || !isCheckedPruneTimeout) {
+						this.clearCheckedPruneRetry(entry.hash);
+					}
+					this.removePruneRequestSent(entry.hash);
+					this._requestIPruneResponseReplicatorSet.delete(entry.hash);
+					deferredPromise.reject(e);
+				};
 
 			let cursor: NumberFromType<R>[] | undefined = undefined;
 
@@ -4806,14 +4973,20 @@ export class SharedLog<
 						PRUNE_DEBOUNCE_INTERVAL * 2,
 				);
 
-			const timeout = setTimeout(() => {
-				reject(
-					new Error(
-						`Timeout for checked pruning after ${checkedPruneTimeoutMs}ms (closed=${this.closed})`,
-					),
-				);
-			}, checkedPruneTimeoutMs);
-			timeout.unref?.();
+				const timeout = setTimeout(() => {
+					// For internal/background prune flows (no explicit timeout), retry a few times
+					// to avoid "permanently prunable" entries when `_pendingIHave` expires under
+					// heavy load.
+					if (!explicitTimeout) {
+						this.scheduleCheckedPruneRetry({ entry, leaders });
+					}
+					reject(
+						new Error(
+							`Timeout for checked pruning after ${checkedPruneTimeoutMs}ms (closed=${this.closed})`,
+						),
+					);
+				}, checkedPruneTimeoutMs);
+				timeout.unref?.();
 
 			this._pendingDeletes.set(entry.hash, {
 				promise: deferredPromise,
@@ -4901,16 +5074,58 @@ export class SharedLog<
 			}
 		};
 
-		for (const [k, v] of peerToEntries) {
-			emitMessages(v, k);
-		}
-
-		let cleanup = () => {
-			for (const timer of cleanupTimer) {
-				clearTimeout(timer);
+			for (const [k, v] of peerToEntries) {
+				emitMessages(v, k);
 			}
-			this._closeController.signal.removeEventListener("abort", cleanup);
-		};
+
+			// Keep remote `_pendingIHave` alive in the common "leader doesn't have entry yet"
+			// case. This is intentionally disabled when an explicit timeout is provided to
+			// preserve unit tests that assert remote `_pendingIHave` clears promptly.
+			if (!explicitTimeout && peerToEntries.size > 0) {
+				const respondToIHaveTimeout = Number(this._respondToIHaveTimeout ?? 0);
+				const resendIntervalMs = Math.min(
+					CHECKED_PRUNE_RESEND_INTERVAL_MAX_MS,
+					Math.max(
+						CHECKED_PRUNE_RESEND_INTERVAL_MIN_MS,
+						Math.floor(respondToIHaveTimeout / 2) || 1_000,
+					),
+				);
+				let inFlight = false;
+				const timer = setInterval(() => {
+					if (inFlight) return;
+					if (this.closed) return;
+
+					const pendingByPeer: [string, string[]][] = [];
+					for (const [peer, hashes] of peerToEntries) {
+						const pending = hashes.filter((h) => this._pendingDeletes.has(h));
+						if (pending.length > 0) {
+							pendingByPeer.push([peer, pending]);
+						}
+					}
+					if (pendingByPeer.length === 0) {
+						clearInterval(timer);
+						return;
+					}
+
+					inFlight = true;
+					Promise.allSettled(
+						pendingByPeer.map(([peer, hashes]) =>
+							emitMessages(hashes, peer).catch(() => {}),
+						),
+					).finally(() => {
+						inFlight = false;
+					});
+				}, resendIntervalMs);
+				timer.unref?.();
+				cleanupTimer.push(timer as any);
+			}
+
+			let cleanup = () => {
+				for (const timer of cleanupTimer) {
+					clearTimeout(timer);
+				}
+				this._closeController.signal.removeEventListener("abort", cleanup);
+			};
 
 		Promise.allSettled(promises).finally(cleanup);
 		this._closeController.signal.addEventListener("abort", cleanup);
@@ -4972,21 +5187,21 @@ export class SharedLog<
 		await waitFor(() => this._pendingDeletes.size === 0, options);
 	}
 
-	async onReplicationChange(
-		changeOrChanges:
-			| ReplicationChanges<ReplicationRangeIndexable<R>>
-			| ReplicationChanges<ReplicationRangeIndexable<R>>[],
-	) {
+		async onReplicationChange(
+			changeOrChanges:
+				| ReplicationChanges<ReplicationRangeIndexable<R>>
+				| ReplicationChanges<ReplicationRangeIndexable<R>>[],
+		) {
 		/**
 		 * TODO use information of new joined/leaving peer to create a subset of heads
 		 * that we potentially need to share with other peers
 		 */
 
-		if (this.closed) {
-			return;
-		}
+			if (this.closed) {
+				return;
+			}
 
-		await this.log.trim();
+			await this.log.trim();
 
 		const changed = false;
 
@@ -5084,17 +5299,25 @@ export class SharedLog<
 		}
 	}
 
-	async _onUnsubscription(evt: CustomEvent<UnsubcriptionEvent>) {
-		logger.trace(
-			`Peer disconnected '${evt.detail.from.hashcode()}' from '${JSON.stringify(
-				evt.detail.topics.map((x) => x),
-			)} '`,
-		);
-		this.latestReplicationInfoMessage.delete(evt.detail.from.hashcode());
+		async _onUnsubscription(evt: CustomEvent<UnsubcriptionEvent>) {
+			logger.trace(
+				`Peer disconnected '${evt.detail.from.hashcode()}' from '${JSON.stringify(
+					evt.detail.topics.map((x) => x),
+				)} '`,
+			);
+			// Keep a per-peer timestamp watermark when we observe an unsubscribe. This
+			// prevents late/out-of-order replication-info messages from re-introducing
+			// stale segments for a peer that has already left the topic.
+			const fromHash = evt.detail.from.hashcode();
+			const now = BigInt(+new Date());
+			const prev = this.latestReplicationInfoMessage.get(fromHash);
+			if (!prev || prev < now) {
+				this.latestReplicationInfoMessage.set(fromHash, now);
+			}
 
-		return this.handleSubscriptionChange(
-			evt.detail.from,
-			evt.detail.topics,
+			return this.handleSubscriptionChange(
+				evt.detail.from,
+				evt.detail.topics,
 			false,
 		);
 	}

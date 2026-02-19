@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { TestSession } from "@peerbit/libp2p-test-utils";
-import { TopicControlPlane, TopicRootControlPlane } from "../src/index.js";
+import { FanoutTree, TopicControlPlane, TopicRootControlPlane } from "../src/index.js";
 
 describe("topic-root-control-plane", () => {
 	it("handles explicit roots", async () => {
@@ -70,12 +70,27 @@ describe("topic-root-control-plane", () => {
 
 	it("can be injected into TopicControlPlane", async () => {
 		const topicRootControlPlane = new TopicRootControlPlane();
-		const session = await TestSession.connected<{ pubsub: TopicControlPlane }>(1, {
+		let fanoutInstance: FanoutTree | undefined;
+		const getOrCreateFanout = (c: any) => {
+			if (!fanoutInstance) {
+				fanoutInstance = new FanoutTree(c, {
+					connectionManager: false,
+					topicRootControlPlane,
+				});
+			}
+			return fanoutInstance;
+		};
+		const session = await TestSession.connected<{
+			pubsub: TopicControlPlane;
+			fanout: FanoutTree;
+		}>(1, {
 			services: {
-				pubsub: (c) =>
+				pubsub: (c: any) =>
 					new TopicControlPlane(c, {
 						topicRootControlPlane,
+						fanout: getOrCreateFanout(c),
 					}),
+				fanout: (c: any) => getOrCreateFanout(c),
 			},
 		});
 

@@ -100,14 +100,15 @@ describe("rateless-iblt-syncronizer", () => {
 		await session.stop();
 	});
 
-	it("already synced", async () => {
+	it("already synced", async function () {
+		this.timeout(120_000);
 		const syncedCount = 1000;
 		await setupLogs(syncedCount, 0);
 
 		const db1Messages = await collectMessages(db1);
 		const db2Messages = await collectMessages(db2);
 
-		await db1.node.dial(db2.node.getMultiaddrs());
+		await session.connect();
 
 		await waitForResolved(() =>
 			expect(db1.log.log.length).to.equal(syncedCount),
@@ -126,7 +127,7 @@ describe("rateless-iblt-syncronizer", () => {
 		const db1Messages = await collectMessages(db1);
 		const db2Messages = await collectMessages(db2);
 
-		await db1.node.dial(db2.node.getMultiaddrs());
+		await session.connect();
 		await waitForResolved(() =>
 			expect(db1.log.log.length).to.equal(unsyncedCount),
 		);
@@ -151,7 +152,7 @@ describe("rateless-iblt-syncronizer", () => {
 		const db1Messages = await collectMessages(db1);
 		const db2Messages = await collectMessages(db2);
 
-		await db1.node.dial(db2.node.getMultiaddrs());
+		await session.connect();
 
 		await waitForResolved(() =>
 			expect(db1.log.log.length).to.equal(syncedCount + unsyncedCount * 2),
@@ -173,7 +174,7 @@ describe("rateless-iblt-syncronizer", () => {
 		const db1Messages = await collectMessages(db1);
 		const db2Messages = await collectMessages(db2);
 
-		await db1.node.dial(db2.node.getMultiaddrs());
+		await session.connect();
 
 		const expectedCount = syncedCount + unsyncedCount * 2;
 		await Promise.all([
