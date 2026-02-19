@@ -4748,11 +4748,13 @@ describe("index", () => {
 					}
 				});
 
-				it("outOfOrder queue emits normalized late items", async function () {
-					session = await TestSession.disconnected(3);
-					await session.connect([
-						[session.peers[0], session.peers[1]],
-						[session.peers[1], session.peers[2]],
+					it("outOfOrder queue emits normalized late items", async function () {
+						this.timeout(120_000);
+
+						session = await TestSession.disconnected(3);
+						await session.connect([
+							[session.peers[0], session.peers[1]],
+							[session.peers[1], session.peers[2]],
 					]);
 
 					const base = new TestStore({ docs: new Documents<Document>() });
@@ -4796,17 +4798,43 @@ describe("index", () => {
 						},
 					);
 
-					try {
-						await writer.docs.put(new Document({ id: "2" }));
-						await iterator.next(10);
+						try {
+							await writer.docs.put(new Document({ id: "2" }));
+							// Establish frontier deterministically. Under load, push-update mode may
+							// briefly return empty batches.
+							const firstBatch = await waitForResolved(
+								async () => {
+									const batch = await iterator.next(10);
+									if (batch.length !== 1) {
+										throw new Error(
+											`Expected 1 frontier item, got ${batch.length}`,
+										);
+									}
+									if (batch[0].id !== "2") {
+										throw new Error(
+											`Expected frontier id=2, got id=${batch[0].id}`,
+										);
+									}
+									return batch;
+								},
+								{ timeout: 30_000, delayInterval: 100 },
+							);
+							expect(firstBatch.map((x) => x.id)).to.deep.equal(["2"]);
 
-						await writer.docs.put(new Document({ id: "1" }));
+							await writer.docs.put(new Document({ id: "1" }));
 
-						await latePromise.promise;
-						expect(lateEvt?.items).to.exist;
-						expect(lateEvt?.items?.length).to.equal(1);
-						const item = lateEvt!.items![0];
-						expect(item.value?.id ?? item.indexed.id).to.equal("1");
+							await Promise.race([
+								latePromise.promise,
+								delay(30_000).then(() => {
+									throw new Error(
+										"Timed out waiting for outOfOrder queue late-results event",
+									);
+								}),
+							]);
+							expect(lateEvt?.items).to.exist;
+							expect(lateEvt?.items?.length).to.equal(1);
+							const item = lateEvt!.items![0];
+							expect(item.value?.id ?? item.indexed.id).to.equal("1");
 						expect(item.value?.__context).to.exist;
 						expect(item.value?.__indexed).to.exist;
 
