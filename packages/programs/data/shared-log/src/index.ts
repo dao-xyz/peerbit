@@ -597,6 +597,10 @@ export class SharedLog<
 	>; // map of peerId to timeout
 
 	private latestReplicationInfoMessage!: Map<string, bigint>;
+	// Peers that have unsubscribed from this log's topic. We ignore replication-info
+	// messages from them until we see a new subscription, to avoid re-introducing
+	// stale membership state during close/unsubscribe races.
+	private _replicationInfoBlockedPeers!: Set<string>;
 	private _replicationInfoRequestByPeer!: Map<
 		string,
 		{ attempts: number; timer?: ReturnType<typeof setTimeout> }
@@ -2423,6 +2427,7 @@ export class SharedLog<
 			this._pendingDeletes = new Map();
 			this._pendingIHave = new Map();
 			this.latestReplicationInfoMessage = new Map();
+			this._replicationInfoBlockedPeers = new Set();
 			this._replicationInfoRequestByPeer = new Map();
 			this._replicationInfoApplyQueueByPeer = new Map();
 			this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
@@ -3688,9 +3693,17 @@ export class SharedLog<
 					// (and downstream `waitForReplicator()` timeouts) under timing-sensitive joins.
 					const from = context.from!;
 					const fromHash = from.hashcode();
+					if (this._replicationInfoBlockedPeers.has(fromHash)) {
+						return;
+					}
 					const messageTimestamp = context.message.header.timestamp;
 					await this.withReplicationInfoApplyQueue(fromHash, async () => {
 						try {
+							// The peer may have unsubscribed after this message was queued.
+							if (this._replicationInfoBlockedPeers.has(fromHash)) {
+								return;
+							}
+
 							// Process in-order to avoid races where repeated reset messages arrive
 							// concurrently and trigger spurious "added" diffs / rebalancing.
 							const prev = this.latestReplicationInfoMessage.get(fromHash);
@@ -3733,14 +3746,18 @@ export class SharedLog<
 							);
 						}
 					});
-				} else if (msg instanceof StoppedReplicating) {
-					if (context.from.equals(this.node.identity.publicKey)) {
-						return;
-					}
+					} else if (msg instanceof StoppedReplicating) {
+						if (context.from.equals(this.node.identity.publicKey)) {
+							return;
+						}
+						const fromHash = context.from.hashcode();
+						if (this._replicationInfoBlockedPeers.has(fromHash)) {
+							return;
+						}
 
-				const rangesToRemove = await this.resolveReplicationRangesFromIdsAndKey(
-					msg.segmentIds,
-					context.from,
+						const rangesToRemove = await this.resolveReplicationRangesFromIdsAndKey(
+							msg.segmentIds,
+							context.from,
 				);
 
 					await this.removeReplicationRanges(rangesToRemove, context.from);
@@ -4729,8 +4746,14 @@ export class SharedLog<
 				return;
 			}
 
+			const peerHash = publicKey.hashcode();
+			if (subscribed) {
+				this._replicationInfoBlockedPeers.delete(peerHash);
+			} else {
+				this._replicationInfoBlockedPeers.add(peerHash);
+			}
+
 			if (!subscribed) {
-				const peerHash = publicKey.hashcode();
 				// Emit replicator:leave at most once per (join -> leave) transition, even if we
 				// concurrently process unsubscribe + replication reset messages for the same peer.
 				const stoppedTransition = this.uniqueReplicators.delete(peerHash);
@@ -5305,10 +5328,16 @@ export class SharedLog<
 					evt.detail.topics.map((x) => x),
 				)} '`,
 			);
+			if (!evt.detail.topics.includes(this.topic)) {
+				return;
+			}
+
+			const fromHash = evt.detail.from.hashcode();
+			this._replicationInfoBlockedPeers.add(fromHash);
+
 			// Keep a per-peer timestamp watermark when we observe an unsubscribe. This
 			// prevents late/out-of-order replication-info messages from re-introducing
 			// stale segments for a peer that has already left the topic.
-			const fromHash = evt.detail.from.hashcode();
 			const now = BigInt(+new Date());
 			const prev = this.latestReplicationInfoMessage.get(fromHash);
 			if (!prev || prev < now) {
@@ -5318,21 +5347,26 @@ export class SharedLog<
 			return this.handleSubscriptionChange(
 				evt.detail.from,
 				evt.detail.topics,
-			false,
-		);
-	}
+				false,
+			);
+		}
 
-	async _onSubscription(evt: CustomEvent<SubscriptionEvent>) {
-		logger.trace(
-			`New peer '${evt.detail.from.hashcode()}' connected to '${JSON.stringify(
-				evt.detail.topics.map((x) => x),
-			)}'`,
-		);
-		this.remoteBlocks.onReachable(evt.detail.from);
+		async _onSubscription(evt: CustomEvent<SubscriptionEvent>) {
+			logger.trace(
+				`New peer '${evt.detail.from.hashcode()}' connected to '${JSON.stringify(
+					evt.detail.topics.map((x) => x),
+				)}'`,
+			);
+			if (!evt.detail.topics.includes(this.topic)) {
+				return;
+			}
 
-		return this.handleSubscriptionChange(
-			evt.detail.from,
-			evt.detail.topics,
+			this.remoteBlocks.onReachable(evt.detail.from);
+			this._replicationInfoBlockedPeers.delete(evt.detail.from.hashcode());
+
+			return this.handleSubscriptionChange(
+				evt.detail.from,
+				evt.detail.topics,
 			true,
 		);
 	}
