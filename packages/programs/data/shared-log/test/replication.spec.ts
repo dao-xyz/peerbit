@@ -2778,34 +2778,32 @@ testSetups.forEach((setup) => {
 			it("restarting node will receive entries", async () => {
 				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
-						replicate: {
-							factor: 1,
-						},
+						replicate: { factor: 1 },
 						setup,
 					},
 				});
 
 				db2 = await session.peers[1].open<EventStore<any, any>>(db1.address, {
 					args: {
-						replicate: {
-							factor: 1,
-						},
+						replicate: { factor: 1 },
 						setup,
 					},
 				});
+
 				await db1.add("hello");
 				await waitForResolved(() => expect(db2.log.log.length).equal(1));
+
 				await db2.drop();
 				await session.peers[1].stop();
 				await session.peers[1].start();
+
 				db2 = await session.peers[1].open<EventStore<any, any>>(db1.address, {
 					args: {
-						replicate: {
-							factor: 1,
-						},
+						replicate: { factor: 1 },
 						setup,
 					},
 				});
+
 				await waitForResolved(() => expect(db2.log.log.length).equal(1));
 			});
 

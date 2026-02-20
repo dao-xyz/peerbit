@@ -3274,12 +3274,33 @@ export class SharedLog<
 		return true;
 	}
 
-	async drop(from?: Program): Promise<boolean> {
-		const superDropped = await super.drop(from);
-		if (!superDropped) {
-			return superDropped;
-		}
-		await this._entryCoordinatesIndex.drop();
+		async drop(from?: Program): Promise<boolean> {
+			// Best-effort: announce that we are going offline before tearing down
+			// RPC/subscription state (same reasoning as in `close()`).
+			try {
+				if (!this.closed) {
+					this._isReplicating = false;
+					this._isAdaptiveReplicating = false;
+					this.rebalanceParticipationDebounced?.close();
+					this.replicationChangeDebounceFn?.close?.();
+					this.pruneDebouncedFn?.close?.();
+					this.responseToPruneDebouncedFn?.close?.();
+
+					await this.rpc
+						.send(new AllReplicatingSegmentsMessage({ segments: [] }), {
+							priority: 1,
+						})
+						.catch(() => {});
+				}
+			} catch {
+				// ignore: drop should be resilient even if we were never fully started
+			}
+
+			const superDropped = await super.drop(from);
+			if (!superDropped) {
+				return superDropped;
+			}
+			await this._entryCoordinatesIndex.drop();
 		await this._replicationRangeIndex.drop();
 		await this.log.drop();
 		await this._close();

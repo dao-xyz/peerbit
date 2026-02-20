@@ -507,6 +507,7 @@ export class TestSession {
 		return out;
 	}
 
+
 	private wrapPeerStartForReconnect() {
 		const patchedKey = Symbol.for("@peerbit/test-session.reconnect-on-start");
 		for (const peer of this._peers) {
@@ -561,9 +562,16 @@ export class TestSession {
 						]);
 					}),
 				);
+
+				// A stop/start can leave sharded pubsub/fanout in a stale state (old shard-root
+				// cache, roots no longer hosted on restarted routers, overlays not rejoined).
+				// Re-apply the session's deterministic shard-root configuration so program-level
+				// RPC/pubsub resumes working without each test having to manually reconnect.
+				await this.configureFanoutShardRoots();
 			};
 		}
 	}
+
 	async stop() {
 		await Promise.all(this._peers.map((peer) => peer.stop()));
 		// `Peerbit.stop()` stops libp2p for sessions created by `Peerbit.create()`,
