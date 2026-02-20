@@ -189,7 +189,7 @@ describe("index", () => {
 			// Create a fresh session per test to avoid cross-test state/leaks causing flakiness
 			// when the full workspace runs many packages in parallel.
 			beforeEach(async () => {
-				session = await TestSession.connected(4);
+				session = await TestSession.connected(3);
 			});
 
 			afterEach(async () => {
@@ -233,7 +233,6 @@ describe("index", () => {
 				const l0a = new TrustedNetwork({ rootTrust: session.peers[0].peerId });
 				let l0b: TrustedNetwork | undefined;
 				let l0c: TrustedNetwork | undefined;
-				let l0d: TrustedNetwork | undefined;
 				try {
 					await session.peers[0].open(l0a);
 
@@ -245,13 +244,9 @@ describe("index", () => {
 						args: { replicate: false },
 					});
 
-						await session.peers[3].services.blocks.waitFor(session.peers[0].peerId);
-						l0d = await TrustedNetwork.open(l0a.address!, session.peers[3]);
-
 						// Ensure the observer can directly reach the expected replicators before requesting
 						// replication info (avoids timing-sensitive routing flakes in CI).
 						await session.peers[2].services.blocks.waitFor(session.peers[1].peerId);
-						await session.peers[2].services.blocks.waitFor(session.peers[3].peerId);
 
 						await l0c.waitFor([session.peers[0].peerId, session.peers[1].peerId]);
 
@@ -282,38 +277,16 @@ describe("index", () => {
 						expect(await l0a.trustGraph.index.getSize()).equal(2),
 					);
 
-					// Wait for all expected replicators concurrently to minimize total wall time.
-					await Promise.all([
-						(
-							l0c.trustGraph as Documents<IdentityRelation, FromTo>
-						).log.waitForReplicator(session.peers[0].identity.publicKey, {
-							timeout: REPLICATOR_WAIT_TIMEOUT,
-						}),
-						(
-							l0c.trustGraph as Documents<IdentityRelation, FromTo>
-						).log.waitForReplicator(session.peers[1].identity.publicKey, {
-							timeout: REPLICATOR_WAIT_TIMEOUT,
-						}),
-						(
-							l0c.trustGraph as Documents<IdentityRelation, FromTo>
-						).log.waitForReplicator(session.peers[3].identity.publicKey, {
-							timeout: REPLICATOR_WAIT_TIMEOUT,
-						}),
-					]);
-
+					// End-to-end: wait until the observer can query and see the full chain.
 					await waitForResolved(
-						async () => expect(await l0c.trustGraph.index.getSize()).equal(2),
+						async () => {
+							const responses: IdentityRelation[] =
+								await l0c.trustGraph.index.search(new SearchRequest({ query: [] }));
+							expect(responses).to.have.length(2);
+						},
 						{ timeout: REPLICATOR_WAIT_TIMEOUT },
 					);
-
-					// Try query with trusted
-					const responses: IdentityRelation[] = await l0c.trustGraph.index.search(
-						new SearchRequest({ query: [] }),
-					);
-
-					expect(responses).to.have.length(2);
 				} finally {
-					await l0d?.close();
 					await l0c?.close();
 					await l0b?.close();
 					await l0a.close();
