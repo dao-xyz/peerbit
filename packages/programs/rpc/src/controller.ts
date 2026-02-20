@@ -304,11 +304,14 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 	 */
 	public async send(
 		message: Q,
-		options?: EncryptionOptions & WithMode & PriorityOptions & WithExtraSigners,
+		options?: EncryptionOptions &
+			WithMode &
+			PriorityOptions &
+			WithExtraSigners & { signal?: AbortSignal },
 	): Promise<void> {
 		await this.node.services.pubsub.publish(
 			serialize(await this.seal(message, undefined, options)),
-			this.getPublishOptions(undefined, options),
+			this.getPublishOptions(undefined, options, options?.signal),
 		);
 	}
 

@@ -490,7 +490,38 @@ export const useQuery = <
 			/* prefetch if requested */
 			if (options.prefetch) void loadMore();
 
+			const onDbClose = () => {
+				// If the underlying Program is closed while a remote query is in-flight,
+				// ensure we abort any pending remote work so hook consumers don't hang.
+				try {
+					disposeIterators("DB closed");
+				} catch {
+					// ignore
+				}
+				try {
+					setIsLoading(false);
+				} catch {
+					// ignore
+				}
+			};
+			for (const db of openDbs) {
+				try {
+					db.events?.addEventListener?.("close" as any, onDbClose as any);
+					db.events?.addEventListener?.("drop" as any, onDbClose as any);
+				} catch {
+					// ignore
+				}
+			}
+
 			return () => {
+				for (const db of openDbs) {
+					try {
+						db.events?.removeEventListener?.("close" as any, onDbClose as any);
+						db.events?.removeEventListener?.("drop" as any, onDbClose as any);
+					} catch {
+						// ignore
+					}
+				}
 				// Ensure we stop iterators + remote work on unmount / dependency changes,
 				// otherwise background replication/push can keep running and leak memory.
 				disposeIterators("Unmount");

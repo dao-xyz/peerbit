@@ -3256,11 +3256,29 @@ export class SharedLog<
 						// the RPC child program closes and unsubscribes from its topic. If we fire
 						// and forget here, the publish can race with `super.close()` and get dropped,
 						// leaving stale replication segments on remotes (flaky join/leave tests).
-						await this.rpc
-							.send(new AllReplicatingSegmentsMessage({ segments: [] }), {
-								priority: 1,
-							})
-							.catch(() => {});
+						// Also ensure close is bounded even when shard overlays are mid-reconcile.
+						const abort = new AbortController();
+						const abortTimer = setTimeout(() => {
+							try {
+								abort.abort(
+									new TimeoutError(
+										"shared-log close replication reset timed out",
+									),
+								);
+							} catch {
+								abort.abort();
+							}
+						}, 2_000);
+						try {
+							await this.rpc
+								.send(new AllReplicatingSegmentsMessage({ segments: [] }), {
+									priority: 1,
+									signal: abort.signal,
+								})
+								.catch(() => {});
+						} finally {
+							clearTimeout(abortTimer);
+						}
 					}
 				} catch {
 					// ignore: close should be resilient even if we were never fully started
@@ -3286,11 +3304,28 @@ export class SharedLog<
 					this.pruneDebouncedFn?.close?.();
 					this.responseToPruneDebouncedFn?.close?.();
 
-					await this.rpc
-						.send(new AllReplicatingSegmentsMessage({ segments: [] }), {
-							priority: 1,
-						})
-						.catch(() => {});
+					const abort = new AbortController();
+					const abortTimer = setTimeout(() => {
+						try {
+							abort.abort(
+								new TimeoutError(
+									"shared-log drop replication reset timed out",
+								),
+							);
+						} catch {
+							abort.abort();
+						}
+					}, 2_000);
+					try {
+						await this.rpc
+							.send(new AllReplicatingSegmentsMessage({ segments: [] }), {
+								priority: 1,
+								signal: abort.signal,
+							})
+							.catch(() => {});
+					} finally {
+						clearTimeout(abortTimer);
+					}
 				}
 			} catch {
 				// ignore: drop should be resilient even if we were never fully started

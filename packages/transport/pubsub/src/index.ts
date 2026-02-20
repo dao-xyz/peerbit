@@ -1,4 +1,7 @@
-import { type Connection, type PeerId as Libp2pPeerId } from "@libp2p/interface";
+import {
+	type Connection,
+	type PeerId as Libp2pPeerId,
+} from "@libp2p/interface";
 import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 import {
@@ -67,6 +70,37 @@ const logError = (e?: { message: string }) => {
 };
 const logErrorIfStarted = (e?: { message: string }) => {
 	e instanceof NotStartedError === false && logError(e);
+};
+
+const withAbort = async <T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> => {
+	if (!signal) return promise;
+	if (signal.aborted) {
+		throw signal.reason ?? new AbortError("Operation was aborted");
+	}
+	return new Promise<T>((resolve, reject) => {
+		const onAbort = () => {
+			cleanup();
+			reject(signal.reason ?? new AbortError("Operation was aborted"));
+		};
+		const cleanup = () => {
+			try {
+				signal.removeEventListener("abort", onAbort);
+			} catch {
+				// ignore
+			}
+		};
+		signal.addEventListener("abort", onAbort, { once: true });
+		promise.then(
+			(v) => {
+				cleanup();
+				resolve(v);
+			},
+			(e) => {
+				cleanup();
+				reject(e);
+			},
+		);
+	});
 };
 
 const SUBSCRIBER_CACHE_MAX_ENTRIES_HARD_CAP = 100_000;
@@ -181,7 +215,6 @@ const topicHash32 = (topic: string) => {
 	return hash >>> 0;
 };
 
-
 /**
  * Runtime control-plane implementation for pubsub topic membership + forwarding.
  */
@@ -212,8 +245,14 @@ export class TopicControlPlane
 	private readonly shardRefCounts = new Map<string, number>();
 	private readonly pinnedShards = new Set<string>();
 
-	private readonly fanoutRootChannelOptions: Omit<FanoutTreeChannelOptions, "role">;
-	private readonly fanoutNodeChannelOptions: Omit<FanoutTreeChannelOptions, "role">;
+	private readonly fanoutRootChannelOptions: Omit<
+		FanoutTreeChannelOptions,
+		"role"
+	>;
+	private readonly fanoutNodeChannelOptions: Omit<
+		FanoutTreeChannelOptions,
+		"role"
+	>;
 	private readonly fanoutJoinOptions?: FanoutTreeJoinOptions;
 	private readonly fanoutPublishRequiresSubscribe: boolean;
 	private readonly fanoutPublishIdleCloseMs: number;
@@ -225,7 +264,8 @@ export class TopicControlPlane
 	private autoTopicRootCandidates = false;
 	private autoTopicRootCandidateSet?: Set<string>;
 	private reconcileShardOverlaysInFlight?: Promise<void>;
-	private autoCandidatesBroadcastTimers: Array<ReturnType<typeof setTimeout>> = [];
+	private autoCandidatesBroadcastTimers: Array<ReturnType<typeof setTimeout>> =
+		[];
 	private autoCandidatesGossipInterval?: ReturnType<typeof setInterval>;
 	private autoCandidatesGossipUntil = 0;
 
@@ -323,8 +363,10 @@ export class TopicControlPlane
 			(set) => this._subscribe([...set.values()]),
 			props?.subscriptionDebounceDelay ?? 50,
 		);
+		// NOTE: Unsubscribe should update local state immediately and batch only the
+		// best-effort network announcements to avoid teardown stalls (program close).
 		this.debounceUnsubscribeAggregator = debouncedAccumulatorSetCounter(
-			(set) => this._unsubscribe([...set.values()]),
+			(set) => this._announceUnsubscribe([...set.values()]),
 			props?.subscriptionDebounceDelay ?? 50,
 		);
 	}
@@ -373,10 +415,10 @@ export class TopicControlPlane
 	}
 
 	public override async stop() {
-			for (const st of this.fanoutChannels.values()) {
-				if (st.idleCloseTimeout) clearTimeout(st.idleCloseTimeout);
-				try {
-					st.channel.removeEventListener("data", st.onData as any);
+		for (const st of this.fanoutChannels.values()) {
+			if (st.idleCloseTimeout) clearTimeout(st.idleCloseTimeout);
+			try {
+				st.channel.removeEventListener("data", st.onData as any);
 			} catch {
 				// ignore
 			}
@@ -384,30 +426,30 @@ export class TopicControlPlane
 				st.channel.removeEventListener("unicast", st.onUnicast as any);
 			} catch {
 				// ignore
-				}
+			}
+			try {
+				// Shutdown should be bounded and not depend on network I/O.
+				await st.channel.leave({ notifyParent: false, kickChildren: false });
+			} catch {
 				try {
-					// Shutdown should be bounded and not depend on network I/O.
-					await st.channel.leave({ notifyParent: false, kickChildren: false });
+					st.channel.close();
 				} catch {
-					try {
-						st.channel.close();
-					} catch {
 					// ignore
 				}
 			}
-			}
-			this.fanoutChannels.clear();
-			for (const t of this.autoCandidatesBroadcastTimers) clearTimeout(t);
-			this.autoCandidatesBroadcastTimers = [];
-			if (this.autoCandidatesGossipInterval) {
-				clearInterval(this.autoCandidatesGossipInterval);
-				this.autoCandidatesGossipInterval = undefined;
-			}
-			this.autoCandidatesGossipUntil = 0;
+		}
+		this.fanoutChannels.clear();
+		for (const t of this.autoCandidatesBroadcastTimers) clearTimeout(t);
+		this.autoCandidatesBroadcastTimers = [];
+		if (this.autoCandidatesGossipInterval) {
+			clearInterval(this.autoCandidatesGossipInterval);
+			this.autoCandidatesGossipInterval = undefined;
+		}
+		this.autoCandidatesGossipUntil = 0;
 
-			this.subscriptions.clear();
-			this.topics.clear();
-			this.peerToTopic.clear();
+		this.subscriptions.clear();
+		this.topics.clear();
+		this.peerToTopic.clear();
 		this.lastSubscriptionMessages.clear();
 		this.shardRootCache.clear();
 		this.shardTopicCache.clear();
@@ -485,7 +527,8 @@ export class TopicControlPlane
 		if (!this.autoTopicRootCandidates) return;
 		if (!peerHash || peerHash === this.publicKeyHash) return;
 
-		if (this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured()) return;
+		if (this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured())
+			return;
 
 		const current = this.topicRootControlPlane.getTopicRootCandidates();
 		const managed = this.autoTopicRootCandidateSet;
@@ -557,8 +600,12 @@ export class TopicControlPlane
 		if (!this.started || this.stopping) return;
 		if (this.autoCandidatesGossipInterval) return;
 		this.autoCandidatesGossipInterval = setInterval(() => {
-			if (!this.started || this.stopping || !this.autoTopicRootCandidates) return;
-			if (this.autoCandidatesGossipUntil > 0 && Date.now() > this.autoCandidatesGossipUntil) {
+			if (!this.started || this.stopping || !this.autoTopicRootCandidates)
+				return;
+			if (
+				this.autoCandidatesGossipUntil > 0 &&
+				Date.now() > this.autoCandidatesGossipUntil
+			) {
 				if (this.autoCandidatesGossipInterval) {
 					clearInterval(this.autoCandidatesGossipInterval);
 					this.autoCandidatesGossipInterval = undefined;
@@ -591,7 +638,8 @@ export class TopicControlPlane
 
 	private mergeAutoTopicRootCandidatesFromPeer(candidates: string[]): boolean {
 		if (!this.autoTopicRootCandidates) return false;
-		if (this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured()) return false;
+		if (this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured())
+			return false;
 		const managed = this.autoTopicRootCandidateSet;
 		if (!managed) return false;
 
@@ -601,7 +649,10 @@ export class TopicControlPlane
 			managed.add(c);
 		}
 		const next = this.normalizeAutoTopicRootCandidates([...managed]);
-		if (before.length === next.length && before.every((c, i) => c === next[i])) {
+		if (
+			before.length === next.length &&
+			before.every((c, i) => c === next[i])
+		) {
 			return false;
 		}
 
@@ -644,7 +695,10 @@ export class TopicControlPlane
 				if (userTopics.length === 0) return;
 				await this.ensureFanoutChannel(shardTopic, { ephemeral: false });
 
-				const msg = new Subscribe({ topics: userTopics, requestSubscribers: true });
+				const msg = new Subscribe({
+					topics: userTopics,
+					requestSubscribers: true,
+				});
 				const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
 					mode: new AnyWhere(),
 					priority: 1,
@@ -714,9 +768,9 @@ export class TopicControlPlane
 		return subscriptions;
 	}
 
-	private clearFanoutIdleClose(
-		st: { idleCloseTimeout?: ReturnType<typeof setTimeout> },
-	) {
+	private clearFanoutIdleClose(st: {
+		idleCloseTimeout?: ReturnType<typeof setTimeout>;
+	}) {
 		if (st.idleCloseTimeout) {
 			clearTimeout(st.idleCloseTimeout);
 			st.idleCloseTimeout = undefined;
@@ -793,7 +847,8 @@ export class TopicControlPlane
 
 		const cached = this.shardRootCache.get(shardTopic);
 		if (cached) return cached;
-		const resolved = await this.topicRootControlPlane.resolveTopicRoot(shardTopic);
+		const resolved =
+			await this.topicRootControlPlane.resolveTopicRoot(shardTopic);
 		if (!resolved) {
 			throw new Error(
 				`No root resolved for shard topic ${shardTopic}. Configure TopicRootControlPlane candidates/resolver/trackers.`,
@@ -805,7 +860,12 @@ export class TopicControlPlane
 
 	private async ensureFanoutChannel(
 		shardTopic: string,
-		options?: { ephemeral?: boolean; pin?: boolean; root?: string },
+		options?: {
+			ephemeral?: boolean;
+			pin?: boolean;
+			root?: string;
+			signal?: AbortSignal;
+		},
 	): Promise<void> {
 		const t = shardTopic.toString();
 		const pin = options?.pin === true;
@@ -827,12 +887,12 @@ export class TopicControlPlane
 					this.scheduleFanoutIdleClose(t);
 				}
 				if (pin) this.pinnedShards.add(t);
-				await existing.join;
+				await withAbort(existing.join, options?.signal);
 				return;
 			}
 
 			// Root mapping changed (candidate set updated): migrate to the new overlay.
-			await this.closeFanoutChannel(t, { force: true });
+			await withAbort(this.closeFanoutChannel(t, { force: true }), options?.signal);
 		}
 
 		root = root ?? (await this.resolveShardRoot(t));
@@ -849,8 +909,9 @@ export class TopicControlPlane
 			if (!dm.header.signatures?.signatures?.length) return;
 
 			const signedBySelf =
-				dm.header.signatures?.publicKeys.some((x) => x.equals(this.publicKey)) ??
-				false;
+				dm.header.signatures?.publicKeys.some((x) =>
+					x.equals(this.publicKey),
+				) ?? false;
 			if (signedBySelf) return;
 
 			let pubsubMessage: PubSubMessage;
@@ -862,20 +923,26 @@ export class TopicControlPlane
 
 			// Fast filter before hashing/verifying.
 			if (pubsubMessage instanceof PubSubData) {
-				const forMe = pubsubMessage.topics.some((x) => this.subscriptions.has(x));
+				const forMe = pubsubMessage.topics.some((x) =>
+					this.subscriptions.has(x),
+				);
 				if (!forMe) return;
 			} else if (
 				pubsubMessage instanceof Subscribe ||
 				pubsubMessage instanceof Unsubscribe
 			) {
-				const relevant = pubsubMessage.topics.some((x) => this.isTrackedTopic(x));
+				const relevant = pubsubMessage.topics.some((x) =>
+					this.isTrackedTopic(x),
+				);
 				const needRespond =
 					pubsubMessage instanceof Subscribe && pubsubMessage.requestSubscribers
 						? pubsubMessage.topics.some((x) => this.subscriptions.has(x))
 						: false;
 				if (!relevant && !needRespond) return;
 			} else if (pubsubMessage instanceof GetSubscribers) {
-				const overlap = pubsubMessage.topics.some((x) => this.subscriptions.has(x));
+				const overlap = pubsubMessage.topics.some((x) =>
+					this.subscriptions.has(x),
+				);
 				if (!overlap) return;
 			} else {
 				return;
@@ -891,11 +958,11 @@ export class TopicControlPlane
 					return;
 				}
 				const sender = dm.header.signatures!.signatures[0]!.publicKey!;
-				await this.processPubSubMessage({
+				await this.processShardPubSubMessage({
 					pubsubMessage,
 					message: dm,
 					from: sender,
-					source: { type: "fanout", shardTopic: t },
+					shardTopic: t,
 				});
 			})();
 		};
@@ -932,7 +999,10 @@ export class TopicControlPlane
 				} catch {
 					// ignore
 				}
-				await channel.join(this.fanoutNodeChannelOptions, this.fanoutJoinOptions);
+				const joinOpts = options?.signal
+					? { ...(this.fanoutJoinOptions ?? {}), signal: options.signal }
+					: this.fanoutJoinOptions;
+				await channel.join(this.fanoutNodeChannelOptions, joinOpts);
 			} catch (error) {
 				try {
 					channel.removeEventListener("data", onData as any);
@@ -978,7 +1048,7 @@ export class TopicControlPlane
 		if (wantEphemeral) {
 			this.evictEphemeralFanoutChannels(t);
 		}
-		await join;
+		await withAbort(join, options?.signal);
 	}
 
 	private async closeFanoutChannel(
@@ -1059,47 +1129,73 @@ export class TopicControlPlane
 		await Promise.all(
 			[...byShard.entries()].map(async ([shardTopic, userTopics]) => {
 				if (userTopics.length === 0) return;
-				const msg = new Subscribe({ topics: userTopics, requestSubscribers: true });
+				const msg = new Subscribe({
+					topics: userTopics,
+					requestSubscribers: true,
+				});
 				const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
 					mode: new AnyWhere(),
 					priority: 1,
 					skipRecipientValidation: true,
 				} as any);
 				const st = this.fanoutChannels.get(shardTopic);
-				if (!st) throw new Error(`Fanout channel missing for shard: ${shardTopic}`);
+				if (!st)
+					throw new Error(`Fanout channel missing for shard: ${shardTopic}`);
 				await st.channel.publish(toUint8Array(embedded.bytes()));
 				this.touchFanoutChannel(shardTopic);
 			}),
 		);
 	}
 
-	async unsubscribe(topic: string) {
+	async unsubscribe(
+		topic: string,
+		options?: {
+			force?: boolean;
+			data?: Uint8Array;
+		},
+	) {
 		if (this.debounceSubscribeAggregator.has(topic)) {
 			this.debounceSubscribeAggregator.delete(topic);
 			return false;
 		}
-		const had = this.subscriptions.get(topic);
-		await this.debounceUnsubscribeAggregator.add({ key: topic });
-		return !!had;
+
+		const sub = this.subscriptions.get(topic);
+		if (!sub) return false;
+
+		if (options?.force) {
+			sub.counter = 0;
+		} else {
+			sub.counter -= 1;
+		}
+		if (sub.counter > 0) return true;
+
+		// Remove local subscription immediately so `publish()`/delivery paths observe
+		// the change without waiting for batched control-plane announces.
+		this.subscriptions.delete(topic);
+		this.untrackTopic(topic);
+
+		// Update shard refcount immediately. The debounced announcer will close the
+		// channel if this was the last local subscription for that shard.
+		const shardTopic = this.getShardTopicForUserTopic(topic);
+		const next = (this.shardRefCounts.get(shardTopic) ?? 0) - 1;
+		if (next <= 0) {
+			this.shardRefCounts.delete(shardTopic);
+		} else {
+			this.shardRefCounts.set(shardTopic, next);
+		}
+
+		// Best-effort: do not block callers on network I/O (can hang under teardown).
+		void this.debounceUnsubscribeAggregator.add({ key: topic }).catch(logErrorIfStarted);
+		return true;
 	}
 
-	private async _unsubscribe(
-		topics: { key: string; counter: number }[],
-		options?: { force: boolean },
-	) {
+	private async _announceUnsubscribe(topics: { key: string; counter: number }[]) {
 		if (!this.started) throw new NotStartedError();
 
 		const byShard = new Map<string, string[]>();
-		for (const { key: topic, counter } of topics) {
-			if (counter <= 0) continue;
-			const sub = this.subscriptions.get(topic);
-			if (!sub) continue;
-			sub.counter -= counter;
-			if (sub.counter > 0 && !options?.force) continue;
-
-			this.subscriptions.delete(topic);
-			this.untrackTopic(topic);
-
+		for (const { key: topic } of topics) {
+			// If the topic got re-subscribed before this debounced batch ran, skip.
+			if (this.subscriptions.has(topic)) continue;
 			const shardTopic = this.getShardTopicForUserTopic(topic);
 			byShard.set(shardTopic, [...(byShard.get(shardTopic) ?? []), topic]);
 		}
@@ -1118,20 +1214,24 @@ export class TopicControlPlane
 					} as any);
 					const st = this.fanoutChannels.get(shardTopic);
 					if (st) {
-						await st.channel.publish(toUint8Array(embedded.bytes()));
+						// Best-effort: do not let a stuck proxy publish stall teardown.
+						void st.channel
+							.publish(toUint8Array(embedded.bytes()))
+							.catch(() => {});
 						this.touchFanoutChannel(shardTopic);
 					}
 				} catch {
 					// best-effort
 				}
 
-				// Decrement local refcount and close if unused.
-				const next = (this.shardRefCounts.get(shardTopic) ?? 0) - userTopics.length;
-				if (next <= 0) {
-					this.shardRefCounts.delete(shardTopic);
-					await this.closeFanoutChannel(shardTopic);
-				} else {
-					this.shardRefCounts.set(shardTopic, next);
+				// Close shard overlay if no local topics remain.
+				if ((this.shardRefCounts.get(shardTopic) ?? 0) <= 0) {
+					try {
+						// Shutdown should be bounded and not depend on network I/O.
+						await this.closeFanoutChannel(shardTopic);
+					} catch {
+						// best-effort
+					}
 				}
 			}),
 		);
@@ -1183,7 +1283,8 @@ export class TopicControlPlane
 				const payload = toUint8Array(embedded.bytes());
 
 				const st = this.fanoutChannels.get(shardTopic);
-				if (!st) throw new Error(`Fanout channel missing for shard: ${shardTopic}`);
+				if (!st)
+					throw new Error(`Fanout channel missing for shard: ${shardTopic}`);
 
 				if (to) {
 					try {
@@ -1203,22 +1304,21 @@ export class TopicControlPlane
 
 	async publish(
 		data: Uint8Array | undefined,
-	options?: {
-		topics: string[];
-	} & { client?: string } & {
+		options?: {
+			topics: string[];
+		} & { client?: string } & {
 			mode?: SilentDelivery | AcknowledgeDelivery;
-		} &
-			PriorityOptions &
+		} & PriorityOptions &
 			IdOptions &
 			WithExtraSigners & { signal?: AbortSignal },
 	): Promise<Uint8Array | undefined> {
 		if (!this.started) throw new NotStartedError();
 
-		const topicsAll = (options as { topics: string[] }).topics?.map((x) =>
-			x.toString(),
-		) || [];
+		const topicsAll =
+			(options as { topics: string[] }).topics?.map((x) => x.toString()) || [];
 
-		const hasExplicitTOs = options?.mode && deliveryModeHasReceiver(options.mode);
+		const hasExplicitTOs =
+			options?.mode && deliveryModeHasReceiver(options.mode);
 
 		// Explicit recipients: use DirectStream delivery (no shard broadcast).
 		if (hasExplicitTOs || !data) {
@@ -1297,7 +1397,10 @@ export class TopicControlPlane
 
 		for (const shardTopic of byShard.keys()) {
 			const persistent = (this.shardRefCounts.get(shardTopic) ?? 0) > 0;
-			await this.ensureFanoutChannel(shardTopic, { ephemeral: !persistent });
+			await this.ensureFanoutChannel(shardTopic, {
+				ephemeral: !persistent,
+				signal: options?.signal,
+			});
 		}
 
 		const payload = toUint8Array(embedded.bytes());
@@ -1310,7 +1413,7 @@ export class TopicControlPlane
 				if (!st) {
 					throw new Error(`Fanout channel missing for shard: ${shardTopic}`);
 				}
-				await st.channel.publish(payload);
+				await withAbort(st.channel.publish(payload), options?.signal);
 				this.touchFanoutChannel(shardTopic);
 			}),
 		);
@@ -1385,7 +1488,9 @@ export class TopicControlPlane
 			if (!this.lastSubscriptionMessages.has(subscriberKey)) {
 				this.lastSubscriptionMessages.set(subscriberKey, new Map());
 			}
-			this.lastSubscriptionMessages.get(subscriberKey)!.set(topic, messageTimestamp);
+			this.lastSubscriptionMessages
+				.get(subscriberKey)!
+				.set(topic, messageTimestamp);
 		}
 		return true;
 	}
@@ -1410,26 +1515,43 @@ export class TopicControlPlane
 		}
 	}
 
-	private async processPubSubMessage(input: {
+	private async processDirectPubSubMessage(input: {
+		pubsubMessage: PubSubMessage;
+		message: DataMessage;
+	}): Promise<void> {
+		const { pubsubMessage, message } = input;
+
+		if (pubsubMessage instanceof TopicRootCandidates) {
+			// Used only to converge deterministic shard-root candidates in auto mode.
+			this.mergeAutoTopicRootCandidatesFromPeer(pubsubMessage.candidates);
+			return;
+		}
+
+		if (pubsubMessage instanceof PubSubData) {
+			this.dispatchEvent(
+				new CustomEvent("data", {
+					detail: new DataEvent({
+						data: pubsubMessage,
+						message,
+					}),
+				}),
+			);
+			return;
+		}
+	}
+
+	private async processShardPubSubMessage(input: {
 		pubsubMessage: PubSubMessage;
 		message: DataMessage;
 		from: PublicSignKey;
-		source:
-			| { type: "direct"; stream: PeerStreams }
-			| { type: "fanout"; shardTopic: string };
-		}) {
-			const { pubsubMessage, message, from, source } = input;
+		shardTopic: string;
+	}): Promise<void> {
+		const { pubsubMessage, message, from, shardTopic } = input;
 
-			if (pubsubMessage instanceof TopicRootCandidates) {
-				// Used only to converge deterministic shard-root candidates in auto mode.
-				this.mergeAutoTopicRootCandidatesFromPeer(pubsubMessage.candidates);
-				return;
-			}
-
-			if (pubsubMessage instanceof PubSubData) {
-				this.dispatchEvent(
-					new CustomEvent("data", {
-						detail: new DataEvent({
+		if (pubsubMessage instanceof PubSubData) {
+			this.dispatchEvent(
+				new CustomEvent("data", {
+					detail: new DataEvent({
 						data: pubsubMessage,
 						message,
 					}),
@@ -1503,18 +1625,11 @@ export class TopicControlPlane
 						} as any,
 					);
 					const payload = toUint8Array(embedded.bytes());
-
-					if (source.type === "fanout") {
-						await this.sendFanoutUnicastOrBroadcast(
-							source.shardTopic,
-							senderKey,
-							payload,
-						);
-					} else {
-						this.publishMessage(this.publicKey, embedded, [source.stream]).catch(
-							dontThrowIfDeliveryError,
-						);
-					}
+					await this.sendFanoutUnicastOrBroadcast(
+						shardTopic,
+						senderKey,
+						payload,
+					);
 				}
 			}
 			return;
@@ -1561,25 +1676,20 @@ export class TopicControlPlane
 			const overlap = this.getSubscriptionOverlap(pubsubMessage.topics);
 			if (overlap.length === 0) return;
 
-			const response = new Subscribe({ topics: overlap, requestSubscribers: false });
-			const embedded = await this.createMessage(toUint8Array(response.bytes()), {
-				mode: new AnyWhere(),
-				priority: 1,
-				skipRecipientValidation: true,
-			} as any);
+			const response = new Subscribe({
+				topics: overlap,
+				requestSubscribers: false,
+			});
+			const embedded = await this.createMessage(
+				toUint8Array(response.bytes()),
+				{
+					mode: new AnyWhere(),
+					priority: 1,
+					skipRecipientValidation: true,
+				} as any,
+			);
 			const payload = toUint8Array(embedded.bytes());
-
-			if (source.type === "fanout") {
-				await this.sendFanoutUnicastOrBroadcast(
-					source.shardTopic,
-					senderKey,
-					payload,
-				);
-			} else {
-				this.publishMessage(this.publicKey, embedded, [source.stream]).catch(
-					dontThrowIfDeliveryError,
-				);
-			}
+			await this.sendFanoutUnicastOrBroadcast(shardTopic, senderKey, payload);
 			return;
 		}
 	}
@@ -1602,6 +1712,15 @@ export class TopicControlPlane
 			return super.onDataMessage(from, stream, message, seenBefore);
 		}
 
+		// DirectStream only supports targeted pubsub data and a small set of utility
+		// messages. All membership/control traffic is shard-only.
+		if (
+			!(pubsubMessage instanceof PubSubData) &&
+			!(pubsubMessage instanceof TopicRootCandidates)
+		) {
+			return true;
+		}
+
 		// Determine if this node should process it.
 		let isForMe = false;
 		if (deliveryModeHasReceiver(message.header.mode)) {
@@ -1618,27 +1737,13 @@ export class TopicControlPlane
 				this.subscriptions.has(t),
 			);
 			isForMe = pubsubMessage.strict ? isForMe && wantsTopic : wantsTopic;
-		} else if (pubsubMessage instanceof Subscribe || pubsubMessage instanceof Unsubscribe) {
-			const relevant = pubsubMessage.topics.some((t) => this.isTrackedTopic(t));
-			const needRespond =
-				pubsubMessage instanceof Subscribe && pubsubMessage.requestSubscribers
-					? pubsubMessage.topics.some((t) => this.subscriptions.has(t))
-					: false;
-			isForMe = relevant || needRespond;
-		} else if (pubsubMessage instanceof GetSubscribers) {
-			isForMe = pubsubMessage.topics.some((t) => this.subscriptions.has(t));
 		}
 
 		if (isForMe) {
 			if ((await this.verifyAndProcess(message)) === false) return false;
 			await this.maybeAcknowledgeMessage(stream, message, seenBefore);
 			if (seenBefore === 0) {
-				await this.processPubSubMessage({
-					pubsubMessage,
-					message,
-					from,
-					source: { type: "direct", stream },
-				});
+				await this.processDirectPubSubMessage({ pubsubMessage, message });
 			}
 		}
 

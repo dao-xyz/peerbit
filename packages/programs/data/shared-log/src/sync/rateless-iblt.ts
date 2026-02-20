@@ -1,7 +1,13 @@
 import { field, variant, vec } from "@dao-xyz/borsh";
 import { Cache } from "@peerbit/cache";
 import { type PublicSignKey, randomBytes, toBase64 } from "@peerbit/crypto";
-import { type Index } from "@peerbit/indexer-interface";
+import {
+	And,
+	type Index,
+	IntegerCompare,
+	Or,
+	type Query,
+} from "@peerbit/indexer-interface";
 import type { Entry, Log } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import {
@@ -13,7 +19,7 @@ import type { RPC, RequestContext } from "@peerbit/rpc";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { type EntryWithRefs } from "../exchange-heads.js";
 import { TransportMessage } from "../message.js";
-import { type EntryReplicated, matchEntriesInRangeQuery } from "../ranges.js";
+import { type EntryReplicated } from "../ranges.js";
 import type {
 	SyncableKey,
 	SynchronizerComponents,
@@ -131,6 +137,50 @@ export interface SSymbol {
 	symbol: bigint;
 }
 
+const matchEntriesByHashNumberInRangeQuery = (range: {
+	start1: number | bigint;
+	end1: number | bigint;
+	start2: number | bigint;
+	end2: number | bigint;
+}): Query => {
+	const c1 = new And([
+		new IntegerCompare({
+			key: "hashNumber",
+			compare: "gte",
+			value: range.start1,
+		}),
+		new IntegerCompare({
+			key: "hashNumber",
+			compare: "lt",
+			value: range.end1,
+		}),
+	]);
+
+	// if range2 has length 0 or range 2 is equal to range 1 only make one query
+	if (
+		range.start2 === range.end2 ||
+		(range.start1 === range.start2 && range.end1 === range.end2)
+	) {
+		return c1;
+	}
+
+	return new Or([
+		c1,
+		new And([
+			new IntegerCompare({
+				key: "hashNumber",
+				compare: "gte",
+				value: range.start2,
+			}),
+			new IntegerCompare({
+				key: "hashNumber",
+				compare: "lt",
+				value: range.end2,
+			}),
+		]),
+	]);
+};
+
 const buildEncoderOrDecoderFromRange = async <
 	T extends "encoder" | "decoder",
 	E = T extends "encoder" ? EncoderWrapper : DecoderWrapper,
@@ -152,7 +202,8 @@ const buildEncoderOrDecoderFromRange = async <
 	const entries = await entryIndex
 		.iterate(
 			{
-				query: matchEntriesInRangeQuery({
+				// Range sync for IBLT is done in hashNumber space.
+				query: matchEntriesByHashNumberInRangeQuery({
 					end1: ranges.end1,
 					start1: ranges.start1,
 					end2: ranges.end2,
@@ -478,18 +529,18 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			}
 		}
 
-			// For smaller sets, the original `sqrt(n)` heuristic can occasionally under-provision
-			// low-degree symbols early, causing an unnecessary `MoreSymbols` round-trip. Use a
-			// small floor to make small-delta syncs more reliable without affecting large-n behavior.
-			let initialSymbols = Math.round(
-				Math.sqrt(allCoordinatesToSyncWithIblt.length),
-			); // TODO choose better
-			initialSymbols = Math.max(64, initialSymbols);
-			for (let i = 0; i < initialSymbols; i++) {
-				startSync.symbols.push(
-					new SymbolSerialized(encoder.produce_next_coded_symbol()),
-				);
-			}
+		// For smaller sets, the original `sqrt(n)` heuristic can occasionally under-provision
+		// low-degree symbols early, causing an unnecessary `MoreSymbols` round-trip. Use a
+		// small floor to make small-delta syncs more reliable without affecting large-n behavior.
+		let initialSymbols = Math.round(
+			Math.sqrt(allCoordinatesToSyncWithIblt.length),
+		); // TODO choose better
+		initialSymbols = Math.max(64, initialSymbols);
+		for (let i = 0; i < initialSymbols; i++) {
+			startSync.symbols.push(
+				new SymbolSerialized(encoder.produce_next_coded_symbol()),
+			);
+		}
 
 		const clear = () => {
 			encoder.free();

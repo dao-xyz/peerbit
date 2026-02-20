@@ -182,11 +182,11 @@ describe("server", () => {
 			}
 			apiAddress = `http://localhost:${addr.port}`;
 		});
-			afterEach(async () => {
-				server.close();
-				await db.close();
-				await session.stop();
-			});
+		afterEach(async () => {
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+			await db.close();
+			await session.stop();
+		});
 
 		describe("client", () => {
 			it("id", async () => {

@@ -1,6 +1,6 @@
 # Network V2 TODO: Fanout Shards Everywhere
 
-Last updated: 2026-02-17
+Last updated: 2026-02-20
 
 This doc is the handoff for the "fanout shards everywhere" direction: **every pubsub topic maps to a bounded number of shard overlays**, and we build both broadcast and (some) directed control traffic on top of those overlays with explicit, testable tradeoffs.
 
@@ -11,7 +11,7 @@ If you are reading this as the next agent: start with `packages/transport/pubsub
 - We cannot afford "one overlay per topic" at scale (topic explosion).
 - We can afford "one overlay per shard" where `shard = hash(topic) % shardCount` with `shardCount` fixed (e.g. 256).
 - Pubsub uses **FanoutTree per shard** for broadcast + membership control.
-- Directed delivery uses **DirectStream when explicit recipients are provided**, and can use fanout unicast ACK as an economical overlay path where possible.
+- Directed delivery uses **DirectStream only when explicit recipients are provided** (targeted), and can use fanout unicast ACK as an economical overlay path where possible.
 - Deterministic shard roots require a stable candidate set (routers/bootstraps). Small ad-hoc nets use an auto-candidate fallback.
 
 ## Why This Exists
@@ -104,29 +104,30 @@ Two paths:
 - Explicit recipients (`options.mode.to`): use DirectStream delivery (targeted).
 - Broadcast (`topics` only): publish once per shard overlay.
 
-Fanout payloads carry a publisher-signed `DataMessage` embedded in the fanout payload, so message `id`, `priority`, and publisher signature semantics are preserved even though the fanout transport frames are root-signed.
+For pubsub broadcast: fanout payloads carry a publisher-signed `DataMessage` embedded in the fanout payload, so message `id`, `priority`, and publisher signature semantics are preserved even though the fanout transport frames are root-signed.
 
-## Verification (What's Green)
+Note: shared-log has its own fanout fast-path (`FanoutEnvelope`) and does not embed a publisher-signed pubsub `DataMessage` for every replication message.
 
-- `pnpm run build` passes.
-- `@peerbit/pubsub` tests pass, including churn simulation.
-- `@peerbit/program` tests pass (fixed shard-root candidate determinism + shard-root hosting for 2-peer tests).
-- `peerbit` client test `dial waits for pubsub` now passes by:
-  - defaulting shard-root candidates to `[self]` when not configured
-  - expanding candidates on connect
-  - reconciling shard channels + re-announcing subscriptions
+### 6. Transport Boundaries (Bloat Reduction)
+
+- Subscription control (`Subscribe`/`Unsubscribe`/`GetSubscribers`) is shard-only.
+- DirectStream handles only targeted `PubSubData` (explicit recipients).
+- DirectStream handles `TopicRootCandidates` (auto root-candidate gossip in small ad-hoc nets).
+- Any other `PubSubMessage` received on the direct plane is dropped/ignored.
+- Pubsub broadcast `publish()` honors `options.signal` across shard joins + shard publishes so
+  best-effort "teardown announcements" (e.g. SharedLog replication reset on close) can be bounded.
+
+## Verification
+
+- Build: `pnpm run build`
+- Full test: `pnpm run test`
+- Pubsub only: `pnpm -s --filter @peerbit/pubsub test`
+- Peerbit only: `pnpm -s --filter peerbit test`
 
 ## Remaining Work (What's Left)
 
-### Required for This PR
-
-- Ensure **full** `pnpm run test` is green (currently re-running after fixing `peerbit` pubsub dial test).
-- Re-run `pnpm run build` if any further changes land.
-
 ### Near-Term Cleanup (Bloat Reduction)
 
-- Decide whether we want to fully deprecate direct (non-sharded) subscription gossip paths.
-  - Today, `TopicControlPlane.onDataMessage` still parses subscription control messages, but control is intended to live on shard overlays.
 - Confirm `Peerbit.dial()` semantics:
   - Today it waits for pubsub + blocks neighbor reachability.
   - Consider also waiting for fanout neighbor streams if we want "pubsub is usable immediately after dial" to be strictly true.
@@ -155,10 +156,3 @@ The long-term direction is to unify these behind a single "route hint" interface
 
 - if we can prove a cheap path, use it
 - otherwise, fall back to the shard overlay for reachability
-
-## Commands
-
-- Build: `pnpm run build`
-- Full test: `pnpm run test`
-- Pubsub only: `pnpm -s --filter @peerbit/pubsub test`
-- Peerbit only: `pnpm -s --filter peerbit test`
