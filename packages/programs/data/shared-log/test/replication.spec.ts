@@ -2804,7 +2804,12 @@ testSetups.forEach((setup) => {
 					},
 				});
 
-				await waitForResolved(() => expect(db2.log.log.length).equal(1));
+				// Reconnect + replication after process restart can exceed the default 10s
+				// `waitForResolved` timeout under full-suite CI load.
+				await waitForResolved(() => expect(db2.log.log.length).equal(1), {
+					timeout: 120_000,
+					delayInterval: 200,
+				});
 			});
 
 			it("can handle many large messages", async () => {
