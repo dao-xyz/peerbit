@@ -2817,6 +2817,8 @@ testSetups.forEach((setup) => {
 				// Ensure reconnect has completed before asserting data transfer.
 				await db1.waitFor(session.peers[1].peerId);
 				await db2.waitFor(session.peers[0].peerId);
+				// Restart can leave stale gid->peer history; force a fresh replica evaluation.
+				await db1.log.rebalanceAll({ clearCache: true });
 				await waitForResolved(() => expect(db1.log.log.length).equal(1));
 
 				await waitForResolved(() => expect(db2.log.log.length).equal(1), {

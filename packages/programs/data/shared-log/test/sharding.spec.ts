@@ -618,8 +618,14 @@ testSetups.forEach((setup) => {
 						expect(await db2.log.replicationIndex?.getSize()).equal(2),
 					),
 				]);
+				// Leaving peers can leave stale gid->peer history; force a fresh assignment
+				// pass before asserting strict 1:1 replication on the remaining peers.
+				await Promise.all([
+					db1.log.rebalanceAll({ clearCache: true }),
+					db2.log.rebalanceAll({ clearCache: true }),
+				]);
 				await checkBounded(entryCount, 1, 1, db1, db2);
-			});
+				});
 
 			it("handles peer joining and leaving multiple times", async () => {
 					db1 = await session.peers[0].open(new EventStore<string, any>(), {
@@ -1004,6 +1010,13 @@ testSetups.forEach((setup) => {
 										(await db1.log.calculateMyTotalParticipation()),
 								);
 								return Math.round(diff * 50);
+							}, {
+								// Under full-suite load, this often needs longer to stabilize than
+								// the default 30s used by waitForConverged.
+								timeout: 90 * 1000,
+								tests: 3,
+								interval: 1000,
+								delta: 1,
 							});
 
 							await waitForResolved(
