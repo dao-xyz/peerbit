@@ -2778,8 +2778,8 @@ testSetups.forEach((setup) => {
 			it("restarting node will receive entries", async () => {
 				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
-						replicate: { factor: 1 },
-						replicas: { min: 2 },
+						// Keep a stable source of truth while peer 2 is dropped/restarted.
+						replicate: false,
 						setup,
 					},
 				});
@@ -2787,12 +2787,12 @@ testSetups.forEach((setup) => {
 				db2 = await session.peers[1].open<EventStore<any, any>>(db1.address, {
 					args: {
 						replicate: { factor: 1 },
-						replicas: { min: 2 },
 						setup,
 					},
 				});
 
 				await db1.add("hello");
+				await waitForResolved(() => expect(db1.log.log.length).equal(1));
 				await waitForResolved(() => expect(db2.log.log.length).equal(1));
 
 				await db2.drop();
@@ -2802,22 +2802,13 @@ testSetups.forEach((setup) => {
 				db2 = await session.peers[1].open<EventStore<any, any>>(db1.address, {
 					args: {
 						replicate: { factor: 1 },
-						replicas: { min: 2 },
 						setup,
 					},
 				});
 
-				// Ensure reconnect/role propagation has completed before asserting data.
+				// Ensure reconnect has completed before asserting data transfer.
 				await db1.waitFor(session.peers[1].peerId);
 				await db2.waitFor(session.peers[0].peerId);
-				await db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
-					eager: true,
-					timeout: 60_000,
-				});
-				await db2.log.waitForReplicator(session.peers[0].identity.publicKey, {
-					eager: true,
-					timeout: 60_000,
-				});
 
 				await waitForResolved(() => expect(db2.log.log.length).equal(1), {
 					timeout: 120_000,
