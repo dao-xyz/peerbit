@@ -5292,11 +5292,11 @@ export class SharedLog<
 		await waitFor(() => this._pendingDeletes.size === 0, options);
 	}
 
-		async onReplicationChange(
-			changeOrChanges:
-				| ReplicationChanges<ReplicationRangeIndexable<R>>
-				| ReplicationChanges<ReplicationRangeIndexable<R>>[],
-		) {
+	async onReplicationChange(
+		changeOrChanges:
+			| ReplicationChanges<ReplicationRangeIndexable<R>>
+			| ReplicationChanges<ReplicationRangeIndexable<R>>[],
+	) {
 		/**
 		 * TODO use information of new joined/leaving peer to create a subset of heads
 		 * that we potentially need to share with other peers
@@ -5306,7 +5306,16 @@ export class SharedLog<
 				return;
 			}
 
-			await this.log.trim();
+		await this.log.trim();
+
+		const batchedChanges = Array.isArray(changeOrChanges[0])
+			? (changeOrChanges as ReplicationChanges<ReplicationRangeIndexable<R>>[])
+			: [changeOrChanges as ReplicationChanges<ReplicationRangeIndexable<R>>];
+		const changes = batchedChanges.flat();
+		// On removed ranges (peer leaves / shrink), gid-level history can hide
+		// per-entry gaps. Force a fresh delivery pass for reassigned entries.
+		const forceFreshDelivery = changes.some((change) => change.type === "removed");
+		const gidPeersHistorySnapshot = new Map<string, Set<string> | undefined>();
 
 		const changed = false;
 
@@ -5317,7 +5326,7 @@ export class SharedLog<
 			> = new Map();
 
 			for await (const entryReplicated of toRebalance<R>(
-				changeOrChanges,
+				changes,
 				this.entryCoordinatesIndex,
 				this.recentlyRebalanced,
 			)) {
@@ -5325,7 +5334,16 @@ export class SharedLog<
 					break;
 				}
 
-				let oldPeersSet = this._gidPeersHistory.get(entryReplicated.gid);
+				let oldPeersSet: Set<string> | undefined;
+				if (!forceFreshDelivery) {
+					const gid = entryReplicated.gid;
+					oldPeersSet = gidPeersHistorySnapshot.get(gid);
+					if (!gidPeersHistorySnapshot.has(gid)) {
+						const existing = this._gidPeersHistory.get(gid);
+						oldPeersSet = existing ? new Set(existing) : undefined;
+						gidPeersHistorySnapshot.set(gid, oldPeersSet);
+					}
+				}
 				let isLeader = false;
 
 				let currentPeers = await this.findLeaders(
