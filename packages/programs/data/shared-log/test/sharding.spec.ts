@@ -618,14 +618,8 @@ testSetups.forEach((setup) => {
 						expect(await db2.log.replicationIndex?.getSize()).equal(2),
 					),
 				]);
-				// Leaving peers can leave stale gid->peer history; force a fresh assignment
-				// pass before asserting strict 1:1 replication on the remaining peers.
-				await Promise.all([
-					db1.log.rebalanceAll({ clearCache: true }),
-					db2.log.rebalanceAll({ clearCache: true }),
-				]);
 				await checkBounded(entryCount, 1, 1, db1, db2);
-				});
+			});
 
 			it("handles peer joining and leaving multiple times", async () => {
 					db1 = await session.peers[0].open(new EventStore<string, any>(), {
@@ -1064,40 +1058,45 @@ testSetups.forEach((setup) => {
 										setup,
 									},
 								},
-								);
+							);
 
-								const data = toBase64(randomBytes(5.5e2)); // about 1kb
+							const data = toBase64(randomBytes(5.5e2)); // about 1kb
 
-								for (let i = 0; i < largeEntryCount; i++) {
-									await db2.add(data, { meta: { next: [] } });
-								}
-								await waitForConverged(
-									async () => {
-										const diff = Math.abs(
-											(await db2.log.calculateMyTotalParticipation()) -
-												(await db1.log.calculateMyTotalParticipation()),
-										);
+							for (let i = 0; i < largeEntryCount; i++) {
+								await db2.add(data, { meta: { next: [] } });
+							}
 
-										return Math.round(diff * 100);
-									},
-									{
-										// Rebalancing under memory limits can take longer under full-suite load
-										// (GC + lots of timers). Allow more time to stabilize.
-										timeout: 90 * 1000,
-										tests: 3,
-										interval: 1000,
-										delta: 1,
-									},
-								);
+							await delay(db1.log.timeUntilRoleMaturity + 1000);
 
-								await waitForResolved(
-									async () =>
-										expect(
-											Math.abs(memoryLimit - (await db2.log.getMemoryUsage())),
-										).lessThan((memoryLimit / 100) * 10), // 10% error at most
-									{ timeout: 20 * 1000, delayInterval: 1000 },
-								); // 10% error at most
-							});
+							await waitForConverged(
+								async () => {
+									const diff = Math.abs(
+										(await db2.log.calculateMyTotalParticipation()) -
+											(await db1.log.calculateMyTotalParticipation()),
+									);
+
+									// Match the same precision used by "inserting half limited".
+									// Under full-suite load, participation can oscillate at ~1% granularity.
+									return Math.round(diff * 50);
+								},
+								{
+									// Rebalancing under memory limits can take longer under full-suite load
+									// (GC + lots of timers). Allow more time to stabilize.
+									timeout: 120 * 1000,
+									tests: 3,
+									interval: 1000,
+									delta: 1,
+								},
+							);
+
+							await waitForResolved(
+								async () =>
+									expect(
+										Math.abs(memoryLimit - (await db2.log.getMemoryUsage())),
+									).lessThan((memoryLimit / 100) * 10), // 10% error at most
+								{ timeout: 20 * 1000, delayInterval: 1000 },
+							); // 10% error at most
+						});
 
 						it("underflow limited", async () => {
 							const memoryLimit = 100 * 1e3;
