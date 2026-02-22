@@ -36,7 +36,7 @@ This sandbox runs **the real Peerbit code paths**:
 
 Note: this demo focuses on **forwarding behavior** (and the cost of learning "who is subscribed") on a fixed underlay graph. The actual **FanoutTree overlay protocol** (join + admission + repair) is what Demo 2 visualizes.
 
-We skip expensive crypto verification in the demo harness so you can run hundreds or thousands of nodes locally, including in the browser.
+We skip expensive crypto verification in the demo harness so you can run hundreds or thousands of nodes locally, including in the browser. This is a measurement convenience, not a production security recommendation.
 
 How to use it:
 1. Click a node to pick the **writer** (it turns red).
@@ -52,9 +52,11 @@ Tip: keep **Messages = 1** and **Flow speed = 1000 ms** while you are learning. 
 
 ### What you're seeing
 
-This is the core reason "1 publisher to 1,000,000 subscribers" is plausible in principle. If each peer only forwards to a few children, you do not melt the whole network just because the audience is huge.
+This is the core reason very large fanout channels are plausible in principle. If each peer only forwards to a few children, you do not melt the whole network just because the audience is huge.
 
-The catch is reliability. Trees break under churn and loss. The state of the art pattern is not "tree only", it is "tree push plus bounded repair":
+As of February 2026, Peerbit validates this direction with CI-sized deterministic sims plus larger local/nightly fanout simulations (see the linked spec doc for the exact presets and thresholds). So this post should be read as an architecture + evidence-of-direction writeup, not a claim that every target scale is already production-proven.
+
+The catch is reliability. Trees break under churn and loss. A well-established pattern in this design family is "tree push plus bounded repair":
 - deliver eagerly along the tree for efficiency, and
 - repair locally so one broken edge does not break delivery. [1]
 
@@ -69,6 +71,11 @@ If you notice that nodes receive the same payload more than once, that is not au
 
 Fanout Trees are designed so that redundancy stays bounded. The goal is not perfect delivery in the face of arbitrary failures, it is predictable delivery cost and predictable recovery behavior.
 
+Assumptions behind these claims:
+- We are optimizing for large-scale throughput and bounded per-node cost under churn/loss, not byzantine-adversary guarantees.
+- Repair is intentionally local and budgeted (parent/nearby peers), not a global ACK/repair mesh.
+- Capacity limits and admission policy are part of correctness: if those are misconfigured, you can still overload specific parts of the overlay.
+
 ## Demo 2: Network formation (join + capacity)
 
 Delivery is only half the story. Large networks need a join process that:
@@ -80,6 +87,8 @@ This sandbox visualizes **real FanoutTree join** over the same in-memory transpo
 For simplicity, node 0 acts as both:
 - the **bootstrap/tracker** (rendezvous that returns join candidates), and
 - the **root** (level 0 of the tree).
+
+In production these roles do not need to be the same node. The combined role here is a visualization simplification.
 
 As peers join, node 0 accepts up to `rootMaxChildren`. After that it starts rejecting joins and, because it also acts as the tracker in this demo, it steers joiners toward other nodes with free slots so the tree can keep growing without everyone attaching to the root.
 
@@ -106,11 +115,25 @@ Some helpful mental comparisons:
 - **Tor**: not a broadcast system, but it is a mature overlay where relays expose capacity and policy and clients build routes through multiple relays. The overlap here is operational: dialing/keeping connections, handling churn, and making capacity-aware routing decisions without melting the network. One key connection is discovery: Tor uses directory authorities to publish and agree on network status, so clients can find relays and weight paths by capacity. [7] Fanout Trees are about high-throughput fanout delivery, so the threat model and routing goals are different, but the "directory/tracker + capacity-aware route selection" idea is very much shared.
 - **Iroh**: Iroh's `iroh-gossip` explicitly builds on *Epidemic Broadcast Trees* (HyParView membership + PlumTree broadcast), so it is in the same family of "tree push + bounded repair over a partial view." [5] The main differences are scope and control: Iroh's gossip is symmetric (any peer can broadcast within a topic swarm) and does not assume a designated root, while Peerbit Fanout Trees are channel-rooted and root-sequenced (publishes can be proxied upstream to a root that assigns sequence numbers). Fanout Trees also add tracker-backed, capacity-aware admission (max children, upload budgets, optional bidding) plus route tokens for economical unicast/proxy-publish inside the same overlay. The tradeoff is explicit: a root is a coordination point, so the long-term answer is multi-root sharding and/or root rotation when you want many writers at once.
 
+When each model tends to fit better:
+- Rooted fanout channels (Peerbit style): stronger control over ordering/cost envelopes for high-fanout broadcast channels.
+- Symmetric topic swarms (Iroh style): simpler many-writer symmetry when you do not want one logical coordination point.
+
 ## What we are shipping in Peerbit
 
 This post is centered around two pieces:
 - **FanoutTree**: a bounded broadcast overlay with a join process that respects capacity and can re-form under churn.
 - **A split between formation and delivery**: you can change join/discovery behavior without changing how payload delivery is forwarded.
+
+How routing works in Peerbit today (important nuance):
+- User topics are sharded: `shard = hash(topic) % shardCount`, and broadcast goes over that shard's fanout overlay.
+- Explicit recipient pubsub delivery uses targeted DirectStream paths (not shard broadcast).
+- Fanout route-token unicast/proxy paths are used for economical targeted control inside a shard/channel, with bounded fallback behavior when route resolution misses.
+
+Status (current vs next):
+- Implemented now: rooted channel sequencing, bounded fanout forwarding, join/admission controls, local repair, route-token unicast/proxy-publish, shard-based topic mapping.
+- In progress: stronger reliability/perf gates and wider workload coverage in simulation and CI.
+- Planned: multi-root strategies (sharding/rotation) for heavier concurrent multi-writer workloads.
 
 ## What to look for
 
