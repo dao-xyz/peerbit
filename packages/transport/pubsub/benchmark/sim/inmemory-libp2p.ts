@@ -1,1 +1,1 @@
-export * from "@peerbit/test-utils/inmemory-libp2p.js";
+export * from "@peerbit/libp2p-test-utils/inmemory-libp2p.js";

@@ -28,6 +28,10 @@
 		"!**/*.tsbuildinfo"
 	],
 	"exports": {
+		"./inmemory-libp2p.js": {
+			"types": "./dist/src/inmemory-libp2p.d.ts",
+			"import": "./dist/src/inmemory-libp2p.js"
+		},
 		".": {
 			"types": "./dist/src/index.d.ts",
 			"import": "./dist/src/index.js"
@@ -67,6 +71,9 @@
 		"@libp2p/circuit-relay-v2": "^4.1.0",
 		"@chainsafe/libp2p-noise": "^17.0.0",
 		"@chainsafe/libp2p-yamux": "^8.0.0",
+		"@peerbit/crypto": "workspace:*",
+		"it-pushable": "^3.1.4",
+		"libsodium-wrappers": "^0.7.15",
 		"libp2p": "^3.1.0"
 	},
 	"scripts": {
@@ -76,6 +83,7 @@
 		"lint": "aegir lint"
 	},
 	"devDependencies": {
+		"@types/libsodium-wrappers": "^0.7.14",
 		"@peerbit/time": "workspace:*"
 	},
 	"localMaintainers": [

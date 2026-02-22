@@ -77,7 +77,6 @@
 	],
 	"devDependencies": {
 		"@peerbit/libp2p-test-utils": "workspace:*",
-		"@peerbit/test-utils": "workspace:*",
 		"@types/fast-fifo": "^1.0.2",
 		"@types/sinon": "^10.0.20",
 		"sinon": "^21.0.0",

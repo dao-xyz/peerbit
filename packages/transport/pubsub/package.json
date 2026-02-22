@@ -75,8 +75,7 @@
 		"dao.xyz"
 	],
 	"devDependencies": {
-		"@peerbit/libp2p-test-utils": "workspace:*",
-		"@peerbit/test-utils": "workspace:*"
+		"@peerbit/libp2p-test-utils": "workspace:*"
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",

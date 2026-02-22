@@ -2016,13 +2016,25 @@ importers:
       '@multiformats/multiaddr':
         specifier: ^13.0.1
         version: 13.0.1
+      '@peerbit/crypto':
+        specifier: workspace:*
+        version: link:../../utils/crypto
+      it-pushable:
+        specifier: ^3.1.4
+        version: 3.2.3
       libp2p:
         specifier: ^3.1.0
         version: 3.1.1
+      libsodium-wrappers:
+        specifier: ^0.7.15
+        version: 0.7.15
     devDependencies:
       '@peerbit/time':
         specifier: workspace:*
         version: link:../../utils/time
+      '@types/libsodium-wrappers':
+        specifier: ^0.7.14
+        version: 0.7.14
 
   packages/transport/pubsub:
     dependencies:
@@ -2096,9 +2108,6 @@ importers:
       '@peerbit/libp2p-test-utils':
         specifier: workspace:*
         version: link:../libp2p-test-utils
-      '@peerbit/test-utils':
-        specifier: workspace:*
-        version: link:../../clients/test-utils
 
   packages/transport/pubsub-interface:
     dependencies:
@@ -2208,9 +2217,6 @@ importers:
       '@peerbit/libp2p-test-utils':
         specifier: workspace:*
         version: link:../libp2p-test-utils
-      '@peerbit/test-utils':
-        specifier: workspace:*
-        version: link:../../clients/test-utils
       '@types/fast-fifo':
         specifier: ^1.0.2
         version: 1.3.0
