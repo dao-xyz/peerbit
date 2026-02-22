@@ -33,6 +33,10 @@
 			"types": "./dist/src/log-utils.d.ts",
 			"import": "./dist/src/log-utils.js"
 		},
+		"./inmemory-libp2p.js": {
+			"types": "./dist/src/inmemory-libp2p.d.ts",
+			"import": "./dist/src/inmemory-libp2p.js"
+		},
 		".": {
 			"types": "./dist/src/index.d.ts",
 			"import": "./dist/src/index.js"

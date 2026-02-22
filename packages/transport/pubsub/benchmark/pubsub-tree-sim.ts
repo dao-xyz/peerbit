@@ -21,6 +21,18 @@ import {
 	InMemoryConnectionManager,
 	InMemoryNetwork,
 } from "./sim/inmemory-libp2p.js";
+import {
+	BENCH_ID_PREFIX,
+	buildRandomGraph,
+	int,
+	isBenchId,
+	mulberry32,
+	quantile,
+	readU32BE,
+	runWithConcurrency,
+	waitForProtocolStreams,
+	writeU32BE,
+} from "./sim/bench-utils.js";
 
 type SimParams = {
 	nodes: number;
@@ -64,42 +76,6 @@ type SimParams = {
 const CONTROL_PRIORITY = 10;
 const DATA_PRIORITY = 1;
 
-const BENCH_ID_PREFIX = Uint8Array.from([0x50, 0x53, 0x49, 0x4d]); // "PSIM"
-
-const isBenchId = (id: Uint8Array) =>
-	id.length === 32 &&
-	id[0] === BENCH_ID_PREFIX[0] &&
-	id[1] === BENCH_ID_PREFIX[1] &&
-	id[2] === BENCH_ID_PREFIX[2] &&
-	id[3] === BENCH_ID_PREFIX[3];
-
-const writeU32BE = (buf: Uint8Array, offset: number, value: number) => {
-	buf[offset + 0] = (value >>> 24) & 0xff;
-	buf[offset + 1] = (value >>> 16) & 0xff;
-	buf[offset + 2] = (value >>> 8) & 0xff;
-	buf[offset + 3] = value & 0xff;
-};
-
-const readU32BE = (buf: Uint8Array, offset: number) =>
-	((buf[offset + 0] << 24) |
-		(buf[offset + 1] << 16) |
-		(buf[offset + 2] << 8) |
-		buf[offset + 3]) >>> 0;
-
-const mulberry32 = (seed: number) => {
-	let t = seed >>> 0;
-	return () => {
-		t += 0x6d2b79f5;
-		let x = t;
-		x = Math.imul(x ^ (x >>> 15), x | 1);
-		x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
-		return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
-	};
-};
-
-const int = (rng: () => number, maxExclusive: number) =>
-	Math.floor(rng() * maxExclusive);
-
 const shuffleInPlace = <T>(rng: () => number, arr: T[]) => {
 	for (let i = arr.length - 1; i > 0; i--) {
 		const j = int(rng, i + 1);
@@ -108,72 +84,6 @@ const shuffleInPlace = <T>(rng: () => number, arr: T[]) => {
 		arr[j] = tmp;
 	}
 	return arr;
-};
-
-const buildRandomGraph = (
-	n: number,
-	targetDegree: number,
-	rng: () => number,
-): number[][] => {
-	if (n <= 0) throw new Error("nodes must be > 0");
-	if (targetDegree < 0) throw new Error("degree must be >= 0");
-	if (targetDegree >= n) {
-		throw new Error("degree must be < nodes for a simple graph");
-	}
-
-	const adj: Set<number>[] = Array.from({ length: n }, () => new Set<number>());
-	const degree = new Uint16Array(n);
-
-	const connect = (a: number, b: number) => {
-		if (a === b) return false;
-		if (adj[a]!.has(b)) return false;
-		if (degree[a]! >= targetDegree || degree[b]! >= targetDegree) return false;
-		adj[a]!.add(b);
-		adj[b]!.add(a);
-		degree[a]! += 1;
-		degree[b]! += 1;
-		return true;
-	};
-
-	// Seed connectivity.
-	if (targetDegree >= 2 && n >= 3) {
-		for (let i = 0; i < n; i++) connect(i, (i + 1) % n);
-	} else if (targetDegree >= 1 && n >= 2) {
-		for (let i = 0; i < n - 1; i++) connect(i, i + 1);
-	}
-
-	const available: number[] = [];
-	const pos = new Int32Array(n).fill(-1);
-	for (let i = 0; i < n; i++) {
-		if (degree[i]! < targetDegree) {
-			pos[i] = available.length;
-			available.push(i);
-		}
-	}
-	const removeAvailable = (id: number) => {
-		const p = pos[id]!;
-		if (p < 0) return;
-		const last = available.pop()!;
-		if (last !== id) {
-			available[p] = last;
-			pos[last] = p;
-		}
-		pos[id] = -1;
-	};
-
-	const maxAttempts = n * Math.max(1, targetDegree) * 200;
-	let attempts = 0;
-	while (available.length > 1 && attempts < maxAttempts) {
-		attempts++;
-		const a = available[int(rng, available.length)]!;
-		const b = available[int(rng, available.length)]!;
-		if (a === b) continue;
-		if (!connect(a, b)) continue;
-		if (degree[a]! >= targetDegree) removeAvailable(a);
-		if (degree[b]! >= targetDegree) removeAvailable(b);
-	}
-
-	return adj.map((s) => [...s]);
 };
 
 const bfsLevels = (graph: number[][], rootIndex: number): Int32Array => {
@@ -192,15 +102,6 @@ const bfsLevels = (graph: number[][], rootIndex: number): Int32Array => {
 		}
 	}
 	return levels;
-};
-
-const quantile = (sorted: number[], q: number) => {
-	if (sorted.length === 0) return NaN;
-	const idx = Math.min(
-		sorted.length - 1,
-		Math.max(0, Math.floor(q * (sorted.length - 1))),
-	);
-	return sorted[idx]!;
 };
 
 const parseArgs = (argv: string[]): SimParams => {
@@ -750,58 +651,6 @@ class TreeNode extends DirectStream {
 	}
 }
 
-const runWithConcurrency = async <T>(
-	tasks: Array<() => Promise<T>>,
-	concurrency: number,
-): Promise<T[]> => {
-	const results: T[] = new Array(tasks.length);
-	let index = 0;
-	const workers = Array.from({ length: Math.max(1, concurrency) }, async () => {
-		for (;;) {
-			const i = index++;
-			if (i >= tasks.length) return;
-			results[i] = await tasks[i]!();
-		}
-	});
-	await Promise.all(workers);
-	return results;
-};
-
-const waitForProtocolStreams = async (
-	peers: { node: DirectStream }[],
-	timeoutMs = 30_000,
-) => {
-	const start = Date.now();
-	while (Date.now() - start < timeoutMs) {
-		let missing = 0;
-		for (const p of peers) {
-			const protocols = p.node.multicodecs;
-			for (const conn of p.node.components.connectionManager.getConnections()) {
-				const streams = conn.streams as any as Array<{
-					protocol?: string;
-					direction?: string;
-				}>;
-				const hasOutbound = streams.some(
-					(s) =>
-						s.protocol &&
-						protocols.includes(s.protocol) &&
-						s.direction === "outbound",
-				);
-				const hasInbound = streams.some(
-					(s) =>
-						s.protocol &&
-						protocols.includes(s.protocol) &&
-						s.direction === "inbound",
-				);
-				if (!hasOutbound || !hasInbound) missing++;
-			}
-		}
-		if (missing === 0) return;
-		await delay(0);
-	}
-	throw new Error("Timeout waiting for protocol streams to become duplex");
-};
-
 const main = async () => {
 	const rawParams = parseArgs(process.argv.slice(2));
 	const nodes = Math.max(1, Math.floor(rawParams.nodes));
@@ -954,7 +803,7 @@ const main = async () => {
 			}
 		}
 		await runWithConcurrency(dialTasks, params.dialConcurrency);
-		await waitForProtocolStreams(peers);
+		await waitForProtocolStreams(peers.map((p) => p.node as any));
 
 		// Candidate parents: neighbors strictly closer to root (prevents cycles).
 		for (let i = 0; i < peers.length; i++) {

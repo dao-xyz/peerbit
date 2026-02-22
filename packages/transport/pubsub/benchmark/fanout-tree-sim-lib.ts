@@ -4,6 +4,7 @@ import { anySignal } from "any-signal";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { FanoutTree } from "../src/index.js";
 import { InMemoryNetwork, InMemorySession } from "./sim/inmemory-libp2p.js";
+import { int, mulberry32, quantile, runWithConcurrency } from "./sim/bench-utils.js";
 
 class SimFanoutTree extends FanoutTree {
 	constructor(c: any, opts?: any) {
@@ -249,20 +250,6 @@ export type FanoutTreeSimResult = {
 	};
 };
 
-const mulberry32 = (seed: number) => {
-	let t = seed >>> 0;
-	return () => {
-		t += 0x6d2b79f5;
-		let x = t;
-		x = Math.imul(x ^ (x >>> 15), x | 1);
-		x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
-		return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
-	};
-};
-
-const int = (rng: () => number, maxExclusive: number) =>
-	Math.floor(rng() * maxExclusive);
-
 const pickDistinct = (
 	rng: () => number,
 	n: number,
@@ -277,32 +264,6 @@ const pickDistinct = (
 		out.add(candidate);
 	}
 	return [...out];
-};
-
-const runWithConcurrency = async <T>(
-	tasks: Array<() => Promise<T>>,
-	concurrency: number,
-): Promise<T[]> => {
-	const results: T[] = new Array(tasks.length);
-	let index = 0;
-	const workers = Array.from({ length: Math.max(1, concurrency) }, async () => {
-		for (;;) {
-			const i = index++;
-			if (i >= tasks.length) return;
-			results[i] = await tasks[i]!();
-		}
-	});
-	await Promise.all(workers);
-	return results;
-};
-
-const quantile = (sorted: number[], q: number) => {
-	if (sorted.length === 0) return NaN;
-	const idx = Math.min(
-		sorted.length - 1,
-		Math.max(0, Math.floor(q * (sorted.length - 1))),
-	);
-	return sorted[idx]!;
 };
 
 const parseSimPeerIndex = (peerId: any): number => {
