@@ -17,7 +17,7 @@ import { DirectStream, type DirectStreamComponents } from "../src/index.js";
 import {
 	InMemoryConnectionManager,
 	InMemoryNetwork,
-} from "./sim/inmemory-libp2p.js";
+} from "@peerbit/libp2p-test-utils/inmemory-libp2p.js";
 
 type SimParams = {
 	nodes: number;

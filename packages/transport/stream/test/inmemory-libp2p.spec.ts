@@ -4,7 +4,7 @@ import {
 	InMemoryConnectionManager,
 	InMemoryNetwork,
 	publicKeyHash,
-} from "../benchmark/sim/inmemory-libp2p.js";
+} from "@peerbit/libp2p-test-utils/inmemory-libp2p.js";
 
 describe("in-memory libp2p shim", () => {
 	it("exposes dialQueue entries during dial delay", async () => {

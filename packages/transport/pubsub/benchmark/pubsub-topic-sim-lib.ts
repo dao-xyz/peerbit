@@ -11,7 +11,7 @@ import {
 import {
 	InMemoryConnectionManager,
 	InMemoryNetwork,
-} from "./sim/inmemory-libp2p.js";
+} from "@peerbit/libp2p-test-utils/inmemory-libp2p.js";
 import {
 	BENCH_ID_PREFIX,
 	buildRandomGraph,

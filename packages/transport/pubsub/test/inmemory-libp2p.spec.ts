@@ -1,5 +1,8 @@
 import { expect } from "chai";
-import { InMemoryNetwork, publicKeyHash } from "../benchmark/sim/inmemory-libp2p.js";
+import {
+	InMemoryNetwork,
+	publicKeyHash,
+} from "@peerbit/libp2p-test-utils/inmemory-libp2p.js";
 
 describe("pubsub in-memory libp2p shim", () => {
 	it("createPeer produces unique public keys beyond 256 nodes", () => {
@@ -35,4 +38,3 @@ describe("pubsub in-memory libp2p shim", () => {
 		expect(ma.toString()).to.include("/tcp/46001");
 	});
 });
-

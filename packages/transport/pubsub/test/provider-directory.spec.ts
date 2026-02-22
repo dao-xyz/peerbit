@@ -1,6 +1,6 @@
 import { delay } from "@peerbit/time";
 import { expect } from "chai";
-import { InMemorySession } from "../benchmark/sim/inmemory-libp2p.js";
+import { InMemorySession } from "@peerbit/libp2p-test-utils/inmemory-libp2p.js";
 import { FanoutTree } from "../src/fanout-tree.js";
 
 describe("fanout provider discovery", () => {
@@ -51,4 +51,3 @@ describe("fanout provider discovery", () => {
 		}
 	});
 });
-

@@ -3,7 +3,10 @@ import { delay } from "@peerbit/time";
 import { anySignal } from "any-signal";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { FanoutTree } from "../src/index.js";
-import { InMemoryNetwork, InMemorySession } from "./sim/inmemory-libp2p.js";
+import {
+	InMemoryNetwork,
+	InMemorySession,
+} from "@peerbit/libp2p-test-utils/inmemory-libp2p.js";
 import { int, mulberry32, quantile, runWithConcurrency } from "./sim/bench-utils.js";
 
 class SimFanoutTree extends FanoutTree {
