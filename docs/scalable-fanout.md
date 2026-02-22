@@ -72,11 +72,7 @@ For a configurable workload (e.g. 2k nodes, 30 msg/s, 10s, 1KB):
 ## Spec Notes
 
 ### Current implementation status (WIP)
-Tracking issues:
-- `dao-xyz/peerbit#586`: churn maintenance objective metrics (CI gates)
-- `dao-xyz/peerbit#587`: join formation optimization (candidate scoring + formation score)
-- `dao-xyz/peerbit#599`: define `Peerbit.dial()` readiness semantics for fanout-backed pubsub
-- `dao-xyz/peerbit#600`: unify route hints across DirectStream ACK routes and FanoutTree route tokens
+Tracking: see parent issue `dao-xyz/peerbit#577` for active child issues and prioritization.
 
 - Simulation harnesses:
   - `packages/transport/pubsub/benchmark/pubsub-topic-sim.ts` (TopicControlPlane; includes churn + CI runner via `pubsub-topic-sim-lib.ts`)
@@ -143,8 +139,7 @@ This is intentionally **separate from FanoutTree data-plane channels** so existi
   - RPC topic request/response transport (`@peerbit/rpc`)
   - non-fanout topic workflows in document/shared-log paths
 - Full “fanout-only runtime defaults” still requires an explicit root-discovery/control-plane split, not just a constructor swap.
-- Follow-up tracking:
-  - `#586`, `#587`, `#599`, and `#600` (fanout/scaling follow-up issues)
+- Follow-up tracking: see `#577`.
 
 Current upload shaping knobs (WIP):
 - `uploadLimitBps` + `maxChildren` still define *admission* capacity.
@@ -194,8 +189,8 @@ Practical note:
 - Add stronger CI gates: max peak upload vs cap (`maxUploadFracPct`) and upper bounds on repair control-plane bytes.
 - Run scale profiling (1k→10k nodes locally): memory growth, CPU hotspots, event-loop lag, queue/backpressure behavior.
 - Expand economics hooks: configurable relay selection (by bid, trust, or explicit “premium subscribers”) + output fairness metrics.
-- Make post-dial fanout readiness explicit and testable (`#599`) so app-level publish/subscribe behavior is predictable immediately after connect.
-- Define a shared route-hint abstraction (`#600`) so targeted and shard-overlay paths can choose cheap routes consistently with bounded fallbacks.
+- Make post-dial fanout readiness explicit and testable so app-level publish/subscribe behavior is predictable immediately after connect.
+- Define a shared route-hint abstraction so targeted and shard-overlay paths can choose cheap routes consistently with bounded fallbacks.
 
 ---
 
