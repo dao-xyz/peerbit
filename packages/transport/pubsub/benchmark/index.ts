@@ -18,7 +18,6 @@ const usage = () => {
 			"",
 			"Benchmarks:",
 			"  topic-sim  in-memory TopicControlPlane topic fanout sim",
-			"  tree-sim   capacity-aware tree overlay sim (Plumtree-inspired)",
 			"  fanout-tree-sim  end-to-end FanoutTree protocol sim (bootstrap tracker join)",
 			"",
 			"Example:",
@@ -37,9 +36,6 @@ if (!bench || bench === "--help" || bench === "-h") {
 switch (bench) {
 	case "topic-sim":
 		await import("./pubsub-topic-sim.js");
-		break;
-	case "tree-sim":
-		await import("./pubsub-tree-sim.js");
 		break;
 	case "fanout-tree-sim":
 		await import("./fanout-tree-sim.js");

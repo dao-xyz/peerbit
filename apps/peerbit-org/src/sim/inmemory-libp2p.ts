@@ -1,5 +1,4 @@
 import {
-	UnsupportedProtocolError,
 	type AbortOptions,
 	type Connection,
 	type Libp2pEvents,
@@ -7,16 +6,22 @@ import {
 	type PrivateKey,
 	type Stream,
 	type TypedEventTarget,
+	UnsupportedProtocolError,
 } from "@libp2p/interface";
 import { type Multiaddr, multiaddr } from "@multiformats/multiaddr";
-import { getPublicKeyFromPeerId } from "@peerbit/crypto";
-import { pushable, type Pushable } from "it-pushable";
+import { type Pushable, pushable } from "it-pushable";
 
-type ProtocolHandler = (stream: Stream, connection: Connection) => Promise<void>;
+type ProtocolHandler = (
+	stream: Stream,
+	connection: Connection,
+) => Promise<void>;
 
 type Topology = {
 	onConnect: (peerId: PeerId, connection: Connection) => Promise<void> | void;
-	onDisconnect: (peerId: PeerId, connection: Connection) => Promise<void> | void;
+	onDisconnect: (
+		peerId: PeerId,
+		connection: Connection,
+	) => Promise<void> | void;
 	notifyOnLimitedConnection?: boolean;
 };
 
@@ -65,7 +70,9 @@ const dispatchPeerEvent = (
 			| (new (type: string, init?: { detail?: any }) => Event)
 			| undefined;
 		if (CustomEventCtor) {
-			events.dispatchEvent(new CustomEventCtor(type, { detail: peerId }) as any);
+			events.dispatchEvent(
+				new CustomEventCtor(type, { detail: peerId }) as any,
+			);
 			return;
 		}
 	} catch {
@@ -112,7 +119,10 @@ type OutboundFrameParser = {
 
 export class InMemoryRegistrar {
 	private handlers = new Map<string, ProtocolHandler>();
-	private topologies = new Map<string, { protocol: string; topology: Topology }>();
+	private topologies = new Map<
+		string,
+		{ protocol: string; topology: Topology }
+	>();
 	private topologySeq = 0;
 
 	async handle(
@@ -256,7 +266,11 @@ class InMemoryConnection {
 	private readonly getLocalRegistrar: () => InMemoryRegistrar;
 	private readonly getRemoteRegistrar: () => InMemoryRegistrar;
 	private readonly getRemoteConnection: () => InMemoryConnection;
-	private readonly recordSend: (chunk: ByteView, protocol: string, streamId: string) => void;
+	private readonly recordSend: (
+		chunk: ByteView,
+		protocol: string,
+		streamId: string,
+	) => void;
 	private readonly recordStreamOpen: () => void;
 	private readonly streamHighWaterMarkBytes: number;
 	private readonly streamRxDelayMs: number;
@@ -431,7 +445,9 @@ export class InMemoryPeerStore {
 		private readonly getAddressesForPeerId: (peerId: PeerId) => Multiaddr[],
 	) {}
 
-	async get(peerId: PeerId): Promise<{ addresses: Array<{ multiaddr: Multiaddr }> }> {
+	async get(
+		peerId: PeerId,
+	): Promise<{ addresses: Array<{ multiaddr: Multiaddr }> }> {
 		const addrs = this.getAddressesForPeerId(peerId) ?? [];
 		return { addresses: addrs.map((multiaddr) => ({ multiaddr })) };
 	}
@@ -452,7 +468,10 @@ type PeerRuntime = {
 };
 
 export class InMemoryConnectionManager {
-	private readonly connectionsByRemote = new Map<string, InMemoryConnection[]>();
+	private readonly connectionsByRemote = new Map<
+		string,
+		InMemoryConnection[]
+	>();
 	private readonly dialQueue: Array<{ peerId?: PeerId }> = [];
 	private readonly connSeqBase: string;
 
@@ -496,7 +515,9 @@ export class InMemoryConnectionManager {
 		return false;
 	}
 
-	async openConnection(peer: PeerId | Multiaddr | Multiaddr[]): Promise<Connection> {
+	async openConnection(
+		peer: PeerId | Multiaddr | Multiaddr[],
+	): Promise<Connection> {
 		const remote = (() => {
 			if (isPeerId(peer)) {
 				return this.network.getPeerById(peer.toString());
@@ -519,9 +540,9 @@ export class InMemoryConnectionManager {
 		}
 
 		const remoteKey = remote.peerId.toString();
-		const existing = this.connectionsByRemote.get(remoteKey)?.find(
-			(c) => c.status === "open",
-		);
+		const existing = this.connectionsByRemote
+			.get(remoteKey)
+			?.find((c) => c.status === "open");
 		if (existing) return existing as any;
 
 		const dialEntry = { peerId: remote.peerId };
@@ -564,9 +585,9 @@ export class InMemoryConnectionManager {
 
 	_connectTo(remote: PeerRuntime): Connection {
 		const remoteKey = remote.peerId.toString();
-		const existing = this.connectionsByRemote.get(remoteKey)?.find(
-			(c) => c.status === "open",
-		);
+		const existing = this.connectionsByRemote
+			.get(remoteKey)
+			?.find((c) => c.status === "open");
 		if (existing) return existing as any;
 
 		const addr = remote.addressManager.getAddresses()[0]!;
@@ -580,46 +601,46 @@ export class InMemoryConnectionManager {
 		let connA!: InMemoryConnection;
 		let connB!: InMemoryConnection;
 
-			connA = new InMemoryConnection({
+		connA = new InMemoryConnection({
 			id: connIdA,
 			remotePeer: remote.peerId,
 			remoteAddr: addr,
-				getLocalRegistrar: () => this.owner.registrar,
-				getRemoteRegistrar: () => remote.registrar,
-				getRemoteConnection: () => connB,
-				recordSend: (chunk, protocol, streamId) =>
-					this.network.recordSend({
-						from: this.owner.peerId,
-						to: remote.peerId,
-						protocol,
-						streamId,
-						chunk,
-					}),
-				recordStreamOpen: () => {
-					this.network.metrics.streamsOpened += 1;
-				},
-				streamHighWaterMarkBytes: this.network.streamHighWaterMarkBytes,
-				streamRxDelayMs: this.network.streamRxDelayMs,
-			});
-			connB = new InMemoryConnection({
+			getLocalRegistrar: () => this.owner.registrar,
+			getRemoteRegistrar: () => remote.registrar,
+			getRemoteConnection: () => connB,
+			recordSend: (chunk, protocol, streamId) =>
+				this.network.recordSend({
+					from: this.owner.peerId,
+					to: remote.peerId,
+					protocol,
+					streamId,
+					chunk,
+				}),
+			recordStreamOpen: () => {
+				this.network.metrics.streamsOpened += 1;
+			},
+			streamHighWaterMarkBytes: this.network.streamHighWaterMarkBytes,
+			streamRxDelayMs: this.network.streamRxDelayMs,
+		});
+		connB = new InMemoryConnection({
 			id: connIdB,
 			remotePeer: this.owner.peerId,
 			remoteAddr: this.owner.addressManager.getAddresses()[0]!,
-				getLocalRegistrar: () => remote.registrar,
-				getRemoteRegistrar: () => this.owner.registrar,
-				getRemoteConnection: () => connA,
-				recordSend: (chunk, protocol, streamId) =>
-					this.network.recordSend({
-						from: remote.peerId,
-						to: this.owner.peerId,
-						protocol,
-						streamId,
-						chunk,
-					}),
-				recordStreamOpen: () => {
-					this.network.metrics.streamsOpened += 1;
-				},
-				streamHighWaterMarkBytes: this.network.streamHighWaterMarkBytes,
+			getLocalRegistrar: () => remote.registrar,
+			getRemoteRegistrar: () => this.owner.registrar,
+			getRemoteConnection: () => connA,
+			recordSend: (chunk, protocol, streamId) =>
+				this.network.recordSend({
+					from: remote.peerId,
+					to: this.owner.peerId,
+					protocol,
+					streamId,
+					chunk,
+				}),
+			recordStreamOpen: () => {
+				this.network.metrics.streamsOpened += 1;
+			},
+			streamHighWaterMarkBytes: this.network.streamHighWaterMarkBytes,
 			streamRxDelayMs: this.network.streamRxDelayMs,
 		});
 
@@ -641,9 +662,10 @@ export class InMemoryConnectionManager {
 			this.connectionsByRemote.set(remoteKey, arr);
 		}
 		{
-			const arr = remote.connectionManager.connectionsByRemote.get(
-				this.owner.peerId.toString(),
-			) ?? [];
+			const arr =
+				remote.connectionManager.connectionsByRemote.get(
+					this.owner.peerId.toString(),
+				) ?? [];
 			arr.push(connB);
 			remote.connectionManager.connectionsByRemote.set(
 				this.owner.peerId.toString(),
@@ -688,7 +710,8 @@ export class InMemoryNetwork {
 		dialDelayMs?: number;
 		onFrameSent?: (ev: InMemoryFrameSentEvent) => void;
 	}) {
-		this.streamHighWaterMarkBytes = opts?.streamHighWaterMarkBytes ?? 256 * 1024;
+		this.streamHighWaterMarkBytes =
+			opts?.streamHighWaterMarkBytes ?? 256 * 1024;
 		this.streamRxDelayMs = opts?.streamRxDelayMs ?? 0;
 		this.dialDelayMs = opts?.dialDelayMs ?? 0;
 		this.onFrameSent = opts?.onFrameSent;
@@ -759,7 +782,8 @@ export class InMemoryNetwork {
 		chunk: ByteView;
 	}) {
 		const { from, to, protocol, streamId } = ev;
-		const bytes = ev.chunk instanceof Uint8Array ? ev.chunk : ev.chunk.subarray();
+		const bytes =
+			ev.chunk instanceof Uint8Array ? ev.chunk : ev.chunk.subarray();
 		this.metrics.bytesSent += bytes.byteLength;
 
 		let parser = this.outboundParsers.get(streamId);
@@ -840,7 +864,10 @@ export class InMemoryNetwork {
 			const available = bytes.length - offset;
 			const take = Math.min(remaining, available);
 			if (take > 0) {
-				payload.set(bytes.subarray(offset, offset + take), parser.payloadWritten);
+				payload.set(
+					bytes.subarray(offset, offset + take),
+					parser.payloadWritten,
+				);
 				parser.payloadWritten += take;
 				offset += take;
 			}
@@ -973,145 +1000,5 @@ export class InMemoryNetwork {
 		} as PeerRuntime;
 
 		return { runtime: runtime as any, port: opts.port };
-	}
-}
-
-export const publicKeyHash = (peerId: PeerId) =>
-	getPublicKeyFromPeerId(peerId).hashcode();
-
-export type InMemoryServiceFactories<T extends Record<string, unknown>> = {
-	[K in keyof T]: (components: any) => T[K];
-};
-
-export class InMemoryLibp2p<TServices extends Record<string, unknown> = {}> {
-	public status: "started" | "stopped" = "stopped";
-	public readonly peerId: PeerId;
-	public readonly services: TServices;
-
-	constructor(
-		public readonly runtime: PeerRuntime,
-		services?: InMemoryServiceFactories<TServices>,
-	) {
-		this.peerId = runtime.peerId;
-		const components = {
-			peerId: runtime.peerId,
-			privateKey: runtime.privateKey,
-			addressManager: runtime.addressManager as any,
-			registrar: runtime.registrar as any,
-			connectionManager: runtime.connectionManager as any,
-			peerStore: runtime.peerStore as any,
-			events: runtime.events,
-		};
-
-		const out: Record<string, unknown> = {};
-		if (services) {
-			for (const [name, factory] of Object.entries(services)) {
-				out[name] = (factory as any)(components);
-			}
-		}
-		this.services = out as any as TServices;
-	}
-
-	getMultiaddrs(): Multiaddr[] {
-		return this.runtime.addressManager.getAddresses();
-	}
-
-	dial(addresses: Multiaddr | Multiaddr[]): Promise<Connection> {
-		return this.runtime.connectionManager.openConnection(addresses as any);
-	}
-
-	hangUp(peerId: PeerId, options?: AbortOptions): Promise<void> {
-		return this.runtime.connectionManager.closeConnections(peerId, options);
-	}
-
-	getConnections(peerId?: PeerId): Connection[] {
-		return this.runtime.connectionManager.getConnections(peerId);
-	}
-
-	async start(): Promise<void> {
-		if (this.status === "started") return;
-		this.status = "started";
-		await Promise.all(
-			Object.values(this.services as any).map((svc: any) => svc?.start?.()),
-		);
-	}
-
-	async stop(): Promise<void> {
-		if (this.status === "stopped") return;
-		this.status = "stopped";
-
-		await Promise.all(
-			Object.values(this.services as any).map((svc: any) => svc?.stop?.()),
-		);
-
-		const conns = this.runtime.connectionManager.getConnections();
-		await Promise.all(conns.map((c) => c.close()));
-	}
-}
-
-export class InMemorySession<TServices extends Record<string, unknown> = {}> {
-	public readonly peers: Array<InMemoryLibp2p<TServices>>;
-	public readonly network: InMemoryNetwork;
-
-	constructor(opts: {
-		peers: Array<InMemoryLibp2p<TServices>>;
-		network: InMemoryNetwork;
-	}) {
-		this.peers = opts.peers;
-		this.network = opts.network;
-	}
-
-	static async disconnected<TServices extends Record<string, unknown>>(
-		n: number,
-		opts?: {
-			basePort?: number;
-			start?: boolean;
-			network?: InMemoryNetwork;
-			networkOpts?: ConstructorParameters<typeof InMemoryNetwork>[0];
-			services?: InMemoryServiceFactories<TServices>;
-		},
-	): Promise<InMemorySession<TServices>> {
-		const network = opts?.network ?? new InMemoryNetwork(opts?.networkOpts);
-		const basePort = opts?.basePort ?? 30_000;
-
-		const peers: Array<InMemoryLibp2p<TServices>> = [];
-		for (let i = 0; i < n; i++) {
-			const port = basePort + i;
-			const { runtime } = InMemoryNetwork.createPeer({ index: i, port, network });
-			runtime.connectionManager = new InMemoryConnectionManager(network, runtime);
-			network.registerPeer(runtime, port);
-			peers.push(new InMemoryLibp2p(runtime, opts?.services));
-		}
-
-		const session = new InMemorySession<TServices>({ peers, network });
-		if (opts?.start !== false) {
-			await Promise.all(session.peers.map((p) => p.start()));
-		}
-		return session;
-	}
-
-	async connectFully(
-		groups?: Array<
-			Array<{
-				getMultiaddrs(): Multiaddr[];
-				dial(addresses: Multiaddr[]): Promise<any>;
-			}>
-		>,
-	): Promise<this> {
-		const peers = groups ?? [this.peers];
-		const connectPromises: Promise<any>[] = [];
-		for (const group of peers) {
-			for (let i = 0; i < group.length - 1; i++) {
-				for (let j = i + 1; j < group.length; j++) {
-					connectPromises.push(group[i]!.dial(group[j]!.getMultiaddrs()));
-				}
-			}
-		}
-		await Promise.all(connectPromises);
-		return this;
-	}
-
-	async stop(): Promise<void> {
-		await Promise.all(this.peers.map((p) => p.stop()));
 	}
 }

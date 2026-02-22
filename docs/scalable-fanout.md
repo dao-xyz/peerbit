@@ -78,7 +78,6 @@ Tracking issues:
 
 - Simulation harnesses:
   - `packages/transport/pubsub/benchmark/pubsub-topic-sim.ts` (TopicControlPlane; includes churn + CI runner via `pubsub-topic-sim-lib.ts`)
-  - `packages/transport/pubsub/benchmark/pubsub-tree-sim.ts`
   - `packages/transport/pubsub/benchmark/fanout-tree-sim.ts` (timeouts, loss, churn, deadline+overhead CI gates, economics metrics)
 - Full Peerbit integration sim:
   - `packages/clients/test-utils/benchmark/fanout-peerbit-sim.ts` (full Peerbit clients over in-memory libp2p; uses FanoutTree + blocks + pubsub services)

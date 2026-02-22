@@ -5,7 +5,6 @@
  * (no sockets). The visual is a simplified tree layout focused on parent selection + capacity.
  */
 
-import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { PreHash, SignatureWithKey } from "@peerbit/crypto";
@@ -16,6 +15,13 @@ import {
 	InMemoryNetwork,
 	type InMemoryNetworkMetrics,
 } from "../sim/inmemory-libp2p.js";
+import {
+	InfoPopover,
+	clamp,
+	delayMs as delay,
+	mulberry32,
+	readIntAttr,
+} from "./sandbox-shared.js";
 
 type Vec2 = { x: number; y: number };
 
@@ -40,46 +46,11 @@ type LayoutResult = {
 
 type FanoutTreeComponents = ConstructorParameters<typeof FanoutTree>[0];
 
-const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
-
-const readIntAttr = (value: unknown, fallback: number, min: number, max: number) => {
-	const v = typeof value === "string" ? Number(value) : typeof value === "number" ? value : NaN;
-	if (!Number.isFinite(v)) return fallback;
-	return clamp(Math.floor(v), min, max);
-};
-
-const mulberry32 = (seed: number) => {
-	let t = seed >>> 0;
-	return () => {
-		t += 0x6d2b79f5;
-		let x = t;
-		x = Math.imul(x ^ (x >>> 15), x | 1);
-		x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
-		return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
-	};
-};
-
-const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-
 // Optional "live stream" heartbeat to make churn recovery visible:
 // if a node stops receiving data it can detach and rejoin.
 const LIVE_HEARTBEAT_INTERVAL_MS = 1_000;
 const LIVE_STALE_AFTER_MS = 3_000;
 const LIVE_MAX_DATA_AGE_MS = 5_000;
-
-const InfoPopover = ({ children }: { children: ReactNode }) => (
-	<details className="relative inline-block align-middle">
-		<summary
-			className="inline-flex h-5 w-5 cursor-pointer list-none items-center justify-center rounded-full border border-slate-200 bg-white text-[10px] font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 [&::-webkit-details-marker]:hidden"
-			aria-label="Info"
-		>
-			i
-		</summary>
-		<div className="absolute right-0 z-20 mt-2 w-72 rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-700 shadow-lg dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
-			{children}
-		</div>
-	</details>
-);
 
 class SimFanoutTree extends FanoutTree {
 	constructor(components: FanoutTreeComponents, opts?: { random?: () => number }) {

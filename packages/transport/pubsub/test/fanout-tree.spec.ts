@@ -3,14 +3,22 @@ import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { FanoutChannel, FanoutTree } from "../src/index.js";
 
-	describe("fanout-tree", () => {
+type FanoutServices = { fanout: FanoutTree };
+
+const createFanoutService = (components: any) =>
+	new FanoutTree(components, { connectionManager: false });
+
+const createFanoutTestSession = (n: number) =>
+	TestSession.disconnected<FanoutServices>(n, {
+		services: {
+			fanout: createFanoutService,
+		},
+	});
+
+describe("fanout-tree", () => {
 		it("bounds per-channel route token cache (LRU + TTL)", async () => {
 			const session: TestSession<{ fanout: FanoutTree }> =
-				await TestSession.disconnected(1, {
-					services: {
-						fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-					},
-				});
+				await createFanoutTestSession(1);
 
 			try {
 				const fanout = session.peers[0].services.fanout;
@@ -73,11 +81,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 
 		it("invalidates cached routes when root child set changes", async () => {
 			const session: TestSession<{ fanout: FanoutTree }> =
-				await TestSession.disconnected(1, {
-					services: {
-						fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-					},
-				});
+				await createFanoutTestSession(1);
 
 			try {
 				const fanout = session.peers[0].services.fanout;
@@ -122,14 +126,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 		});
 
 		it("forms a small tree and delivers data", async () => {
-			const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
-				3,
-				{
-				services: {
-					fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-				},
-			},
-		);
+			const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
 
 		try {
 			// Connect 0<->1<->2 (line) so 2 can join via 1 if root is full.
@@ -201,11 +198,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 	});
 
 	it("allows a child to leave and immediately frees parent capacity", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(3, {
-			services: {
-				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-			},
-		});
+		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
 
 		try {
 			await session.connect([
@@ -270,11 +263,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 	});
 
 	it("proxies publish from non-root via the root", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(3, {
-			services: {
-				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-			},
-		});
+		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
 
 		try {
 			await session.connect([
@@ -352,14 +341,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 	});
 
 	it("exposes channel peers for fanout membership-aware consumers", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
-			3,
-			{
-				services: {
-					fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-				},
-			},
-		);
+		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
 
 		try {
 			await session.connect([
@@ -423,14 +405,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 	});
 
 	it("supports economical unicast via route tokens through the root", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
-			3,
-			{
-				services: {
-					fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-				},
-			},
-		);
+		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
 
 		try {
 			await session.connect([
@@ -505,11 +480,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 	});
 
 	it("resolves route tokens through control-plane proxy and unicasts across branches", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(5, {
-			services: {
-				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-			},
-		});
+		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(5);
 
 		try {
 			// Root <-> relayA and root <-> relayB. sender is only connected to relayA,
@@ -616,11 +587,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 	});
 
 	it("supports economical unicast with ACKs (shared intermediate hop)", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(4, {
-			services: {
-				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-			},
-		});
+		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(4);
 
 		try {
 			// Root <-> relay. Two leaves only connect to relay. This creates a shared intermediate
@@ -711,11 +678,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 	});
 
 	it("supports economical unicast with ACKs across branches", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(5, {
-			services: {
-				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-			},
-		});
+		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(5);
 
 		try {
 			// Root <-> relayA and root <-> relayB. sender is only connected to relayA,
@@ -809,11 +772,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 	});
 
 	it("bounds route cache size and evicts old entries", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(5, {
-			services: {
-				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-			},
-		});
+		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(5);
 
 		try {
 			await session.connect([
@@ -894,11 +853,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 	});
 
 	it("clamps requested route cache size to a hard safety cap", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(1, {
-			services: {
-				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-			},
-		});
+		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(1);
 
 		try {
 			const root = session.peers[0].services.fanout;
@@ -924,11 +879,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 	});
 
 	it("bounds peer hint cache size and prunes old entries", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(8, {
-			services: {
-				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-			},
-		});
+		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(8);
 
 		try {
 			// Star topology: all peers connect to the root so we can drive many JOIN_REQs.
@@ -976,11 +927,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 	});
 
 	it("clamps requested peer hint size to a hard safety cap", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(1, {
-			services: {
-				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-			},
-		});
+		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(1);
 
 		try {
 			const root = session.peers[0].services.fanout;
@@ -1006,11 +953,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 	});
 
 	it("root resolves deep route tokens on-demand without route announcements", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(3, {
-			services: {
-				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-			},
-		});
+		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
 
 		try {
 			await session.connect([
@@ -1076,11 +1019,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 	});
 
 	it("resolves route tokens after cache expiry via subtree fallback search", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(6, {
-			services: {
-				fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-			},
-		});
+		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(6);
 
 		try {
 			await session.connect([
@@ -1166,14 +1105,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 	});
 
 	it("uses JOIN_REJECT redirects to attach via relay without trackers", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
-			3,
-			{
-				services: {
-					fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-				},
-			},
-		);
+		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
 
 		try {
 			// 0 connected to both 1 and 2. Leaf (2) should be able to re-attach to relay (1)
@@ -1235,14 +1167,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 	});
 
 	it("joins via bootstrap tracker (dial + capacity announcements)", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
-			4,
-			{
-				services: {
-					fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-				},
-			},
-		);
+		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(4);
 
 		try {
 			// Star topology via a bootstrap node so join must happen via dial + tracker redirect.
@@ -1335,14 +1260,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 
 		it("re-parents when no data arrives within staleAfterMs", async function () {
 			this.timeout(30_000);
-			const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
-				2,
-				{
-					services: {
-						fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-					},
-				},
-			);
+			const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(2);
 
 			try {
 				await session.connect([[session.peers[0], session.peers[1]]]);
@@ -1391,14 +1309,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 
 		it("keeps rejoining after the initial join timeout has elapsed", async function () {
 			this.timeout(30_000);
-			const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
-				2,
-				{
-					services: {
-						fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-					},
-				},
-			);
+			const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(2);
 
 			try {
 				await session.connect([[session.peers[0], session.peers[1]]]);
@@ -1483,14 +1394,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 
 		it("re-parents when its parent disconnects", async function () {
 			this.timeout(30_000);
-			const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
-				3,
-			{
-				services: {
-					fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-				},
-			},
-		);
+			const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
 
 		try {
 			// Root connected to both relay and leaf. Leaf initially joins via relay (root full),
@@ -1576,11 +1480,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 			it("prevents stable disconnected components when an intermediate relay loses the root", async function () {
 				this.timeout(30_000);
 				const session: TestSession<{ fanout: FanoutTree }> =
-					await TestSession.disconnected(3, {
-						services: {
-							fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-						},
-					});
+					await createFanoutTestSession(3);
 
 				try {
 					await session.connect([
@@ -1694,14 +1594,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 		});
 
 		it("rate limits proxy publish ingress (abuse resistance)", async () => {
-			const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
-				2,
-				{
-					services: {
-						fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-					},
-				},
-			);
+			const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(2);
 
 			try {
 				await session.connect([[session.peers[0], session.peers[1]]]);
@@ -1754,14 +1647,7 @@ import { FanoutChannel, FanoutTree } from "../src/index.js";
 		});
 
 		it("rate limits unicast ingress (abuse resistance)", async () => {
-			const session: TestSession<{ fanout: FanoutTree }> = await TestSession.disconnected(
-				3,
-				{
-					services: {
-						fanout: (c) => new FanoutTree(c, { connectionManager: false }),
-					},
-				},
-			);
+			const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
 
 			try {
 				await session.connect([
