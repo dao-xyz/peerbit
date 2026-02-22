@@ -93,6 +93,11 @@ export class SQLLiteIndex<T extends Record<string, any>>
 	// a barrier, concurrent `put()` and `del()` can interleave mid-insert and
 	// create large volumes of FK constraint noise (and occasional timeouts in
 	// browser/webworker runners).
+	// TODO(perf): This is intentionally coarse-grained for correctness.
+	// Possible optimizations:
+	// 1) wrap nested writes in explicit transactions to reduce lock time;
+	// 2) use table/key-scoped write queues when overlap detection is available.
+	// Any relaxation must keep concurrent put/del stability across all runners.
 	private _writeBarrier: Promise<void> = Promise.resolve();
 
 	private async withWriteBarrier<R>(fn: () => Promise<R>): Promise<R> {
