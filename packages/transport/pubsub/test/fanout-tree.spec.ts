@@ -125,8 +125,8 @@ describe("fanout-tree", () => {
 			}
 		});
 
-		it("forms a small tree and delivers data", async () => {
-			const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
+	it("forms a small tree and delivers data", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
 
 		try {
 			// Connect 0<->1<->2 (line) so 2 can join via 1 if root is full.
@@ -192,6 +192,66 @@ describe("fanout-tree", () => {
 
 			await waitForResolved(() => expect(received).to.exist);
 			expect([...received!]).to.deep.equal([...payload]);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("prioritizes direct root candidate during join when root is outside ranked top-K", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(10);
+
+		try {
+			const fanouts = session.peers.map((p) => p.services.fanout);
+			const byHash = fanouts
+				.map((f) => ({ hash: f.publicKeyHash, fanout: f }))
+				.sort((a, b) => a.hash.localeCompare(b.hash));
+
+			// Pick a root that is guaranteed to be outside the first ranked window.
+			const rootEntry = byHash[byHash.length - 1]!;
+			const root = rootEntry.fanout;
+			const rootId = rootEntry.hash;
+
+			const joinerEntry = byHash.find((x) => x.hash !== rootId)!;
+			const joiner = joinerEntry.fanout;
+			const joinerPeer = session.peers.find(
+				(p) => p.services.fanout.publicKeyHash === joinerEntry.hash,
+			)!;
+			const starGroups = session.peers
+				.filter((p) => p !== joinerPeer)
+				.map((p) => [joinerPeer, p]);
+			await session.connect(starGroups);
+
+			const topic = "join-root-priority";
+			root.openChannel(topic, rootId, {
+				role: "root",
+				msgRate: 10,
+				msgSize: 32,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 32,
+				repair: true,
+			});
+
+			await joiner.joinChannel(
+				topic,
+				rootId,
+				{
+					msgRate: 10,
+					msgSize: 32,
+					uploadLimitBps: 0,
+					maxChildren: 0,
+					repair: true,
+				},
+				{
+					timeoutMs: 10_000,
+					joinReqTimeoutMs: 500,
+					retryMs: 100,
+				},
+			);
+
+			await waitForResolved(() =>
+				expect(joiner.getChannelStats(topic, rootId)?.parent).to.equal(rootId),
+			);
 		} finally {
 			await session.stop();
 		}

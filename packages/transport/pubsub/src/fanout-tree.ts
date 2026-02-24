@@ -4720,6 +4720,20 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					prev.source = Math.min(prev.source, c.source);
 				};
 
+				// Fast path: if the designated root is already a direct neighbor, try it first.
+				// Without this, large join storms can repeatedly time out on arbitrary peers
+				// that don't host the channel yet, starving the real root candidate.
+				if (ch.id.root !== this.publicKeyHash && this.peers.has(ch.id.root)) {
+					upsertCandidate({
+						hash: ch.id.root,
+						addrs: [],
+						level: 0,
+						freeSlots: Number.MAX_SAFE_INTEGER,
+						bidPerByte: 0,
+						source: -1,
+					});
+				}
+
 				for (const c of tracker) {
 					if (c.hash === this.publicKeyHash) continue;
 					if (c.freeSlots <= 0) continue;
