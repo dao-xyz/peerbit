@@ -78,11 +78,16 @@ type Result = {
 	flowMode: FlowMode;
 	flowDataFrames: number;
 	flowAckFrames: number;
+	setupWarnings?: string[];
 };
 
 const EDGE_KEY_BASE = 2048;
 const SANDBOX_SHARD_TOPIC_PREFIX = "/peerbit/sandbox-shard/1/";
 const SANDBOX_SHARD_COUNT = 1;
+const RUNTIME_EDGE_DASH_PATTERN: [number, number] = [10, 6];
+const RUNTIME_EDGE_HEAT_DECAY = 0.992;
+const RUNTIME_EDGE_MIN_HOLD_MS = 10_000;
+const RUNTIME_EDGE_MIN_HEAT_WHILE_HELD = 0.18;
 
 const createFlowBuffer = (cap: number): FlowBuffer => {
 	const safeCap = clamp(Math.floor(cap), 256, 40_000);
@@ -375,6 +380,10 @@ const writeU32BE = (buf: Uint8Array, offset: number, value: number) => {
 const readU32BE = (buf: Uint8Array, offset: number) =>
 	((buf[offset + 0] << 24) | (buf[offset + 1] << 16) | (buf[offset + 2] << 8) | buf[offset + 3]) >>> 0;
 
+// In fanout mode, the bench id can be nested deeper (PubSubData wrapped in fanout control/data frames).
+// Keep this bounded so large payload benches don't spend too much time scanning.
+const BENCH_ID_SEARCH_BYTES = 2048;
+
 const hasBenchPrefixAt = (buf: Uint8Array, offset: number) =>
 	offset + 4 <= buf.length &&
 	buf[offset + 0] === BENCH_ID_PREFIX[0] &&
@@ -392,8 +401,9 @@ const parseBenchSeqFromDataPayload = (payload: Uint8Array): number | undefined =
 		return readU32BE(payload, 6);
 	}
 
-	// Fallback: find the PSIM prefix near the front. This is robust across minor schema changes.
-	const max = Math.min(64, payload.length - 8);
+	// Fallback: search a bounded prefix window. This covers nested fanout wrappers while
+	// keeping frame parsing cheap for larger message sizes.
+	const max = Math.min(BENCH_ID_SEARCH_BYTES, payload.length - 8);
 	for (let i = 0; i <= max; i++) {
 		if (!hasBenchPrefixAt(payload, i)) continue;
 		return readU32BE(payload, i + 4);
@@ -430,6 +440,50 @@ const quantile = (sorted: number[], q: number) => {
 	const hi = Math.min(sorted.length - 1, lo + 1);
 	const t = idx - lo;
 	return sorted[lo]! * (1 - t) + sorted[hi]! * t;
+};
+
+type TimedSetupResult<T> =
+	| { ok: true; value: T }
+	| {
+			ok: false;
+			timeout: boolean;
+			message: string;
+	  };
+
+const toErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+const runSetupStepWithTimeout = async <T,>(
+	label: string,
+	timeoutMs: number,
+	step: () => Promise<T>,
+): Promise<TimedSetupResult<T>> => {
+	let timedOut = false;
+	let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+	const operation = Promise.resolve().then(step);
+	try {
+		const value = await Promise.race([
+			operation,
+			new Promise<T>((_, reject) => {
+				timeoutHandle = setTimeout(() => {
+					timedOut = true;
+					reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+				}, timeoutMs);
+			}),
+		]);
+		return { ok: true, value };
+	} catch (error) {
+		if (timedOut) {
+			// Timeout races don't cancel the underlying operation. Swallow late failures.
+			void operation.catch(() => {});
+		}
+		return {
+			ok: false,
+			timeout: timedOut,
+			message: timedOut ? `${label} timed out after ${timeoutMs}ms` : `${label} failed: ${toErrorMessage(error)}`,
+		};
+	} finally {
+		if (timeoutHandle != null) clearTimeout(timeoutHandle);
+	}
 };
 
 class SimTopicControlPlane extends TopicControlPlane {
@@ -497,6 +551,10 @@ class SimTopicControlPlane extends TopicControlPlane {
 		// libp2p setup runs them as separate services, so we need to stop both.
 		await super.stop();
 		await this.simFanout.stop();
+	}
+
+	public setFanoutBootstraps(addrs: string[]) {
+		this.simFanout.setBootstraps(addrs);
 	}
 }
 
@@ -585,10 +643,11 @@ export function FanoutProtocolSandbox({
 	const [flowMode, setFlowMode] = useState<FlowMode>("bench");
 	const [flowDurationMs, setFlowDurationMs] = useState(1000);
 	const [syncFlowToRxDelay, setSyncFlowToRxDelay] = useState(true);
-	const [flowCapture, setFlowCapture] = useState<FlowCapture>("publish-only");
+	const [flowCapture, setFlowCapture] = useState<FlowCapture>("setup+publish");
 	const [showAckFlows, setShowAckFlows] = useState(false);
 
 	const [status, setStatus] = useState<RunStatus>("idle");
+	const [setupNote, setSetupNote] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [result, setResult] = useState<Result | null>(null);
 	const [publishProgress, setPublishProgress] = useState<{ seq: number; total: number } | null>(null);
@@ -621,6 +680,8 @@ export function FanoutProtocolSandbox({
 	const flowBufRef = useRef<FlowBuffer | null>(null);
 	const edgeHeatRef = useRef<Float32Array | null>(null);
 	const edgeIndexByKeyRef = useRef<Map<number, number> | null>(null);
+	const runtimeEdgeHeatByKeyRef = useRef<Map<number, number> | null>(null);
+	const runtimeEdgeHoldUntilByKeyRef = useRef<Map<number, number> | null>(null);
 	const flowCaptureStartMsRef = useRef<number>(0);
 	const invalidateRafRef = useRef<number | null>(null);
 	const [, setPaintTick] = useState(0);
@@ -707,6 +768,8 @@ export function FanoutProtocolSandbox({
 		}
 		edgeIndexByKeyRef.current = edgeIndexByKey;
 		edgeHeatRef.current = new Float32Array(g.edges.length);
+		runtimeEdgeHeatByKeyRef.current = new Map<number, number>();
+		runtimeEdgeHoldUntilByKeyRef.current = new Map<number, number>();
 		flowBufRef.current = createFlowBuffer(Math.max(2_000, Math.min(20_000, g.edges.length * 8)));
 	};
 
@@ -728,6 +791,7 @@ export function FanoutProtocolSandbox({
 			setStatus("idle");
 			setError(null);
 		}
+		setSetupNote(null);
 		if (run) {
 			await run.stop();
 		}
@@ -744,6 +808,7 @@ export function FanoutProtocolSandbox({
 		setError(null);
 		setResult(null);
 		setPublishProgress(null);
+		setSetupNote("Preparing network");
 		setStatus("setting-up");
 
 		await stop({ keepStatus: true });
@@ -757,6 +822,8 @@ export function FanoutProtocolSandbox({
 
 			// Reset flow visuals early so we can optionally include setup/subscription traffic in the view.
 			edgeHeatRef.current?.fill(0);
+			runtimeEdgeHeatByKeyRef.current?.clear();
+			runtimeEdgeHoldUntilByKeyRef.current?.clear();
 			if (flowBufRef.current) clearFlowBuffer(flowBufRef.current);
 			flowCaptureStartMsRef.current = flowCapture === "setup+publish" ? 0 : Number.POSITIVE_INFINITY;
 
@@ -789,14 +856,25 @@ export function FanoutProtocolSandbox({
 							const buf = flowBufRef.current;
 							const heat = edgeHeatRef.current;
 							const indexByKey = edgeIndexByKeyRef.current;
+							const runtimeHeatByKey = runtimeEdgeHeatByKeyRef.current;
+							const runtimeHoldUntilByKey = runtimeEdgeHoldUntilByKeyRef.current;
 
 							const bumpHeat = () => {
-								if (!heat || !indexByKey) return;
 								const a = Math.min(from, to);
 								const b = Math.max(from, to);
-								const idx = indexByKey.get(a * EDGE_KEY_BASE + b);
-								if (idx != null) heat[idx] = Math.min(1, heat[idx] + 0.22);
-							};
+								const key = a * EDGE_KEY_BASE + b;
+								const idx = indexByKey?.get(key);
+								if (idx != null) {
+									if (heat) heat[idx] = Math.min(1, heat[idx] + 0.22);
+									return;
+								}
+									if (!runtimeHeatByKey) return;
+									runtimeHeatByKey.set(
+										key,
+										Math.min(1, (runtimeHeatByKey.get(key) ?? 0) + 0.22),
+									);
+									runtimeHoldUntilByKey?.set(key, now + RUNTIME_EDGE_MIN_HOLD_MS);
+								};
 
 							const readPayload = () => {
 								if (ev.payloadLength <= 0) return;
@@ -926,22 +1004,54 @@ export function FanoutProtocolSandbox({
 		runRef.current = { network, peers, stop: stopAll };
 
 		try {
+			const setupWarnings: string[] = [];
+			const addSetupWarning = (message: string) => {
+				if (setupWarnings.length < 8) setupWarnings.push(message);
+				else if (setupWarnings.length === 8) setupWarnings.push("additional setup warnings omitted");
+			};
+			const setupTimeoutMs = clamp(
+				8_000 + streamRxDelayMs * 2 + dialDelayMs * 4 + n * Math.max(1, degree) * 4,
+				12_000,
+				45_000,
+			);
+			// TopicControlPlane currently performs a best-effort pre-join neighbor probe that can
+			// take up to ~10s on sparse overlays; keep this above that to avoid false timeouts.
+			const subscribeStepTimeoutMs = clamp(Math.round(setupTimeoutMs * 0.9), 11_000, 30_000);
+			const subscribeBatchSize = n <= 128 ? 256 : 96;
+			const runSetupStep = async <T,>(
+				label: string,
+				timeoutMs: number,
+				step: () => Promise<T>,
+				options?: { soft?: boolean },
+			): Promise<T | undefined> => {
+				const result = await runSetupStepWithTimeout(label, timeoutMs, step);
+				if (result.ok) return result.value;
+				if (options?.soft) {
+					addSetupWarning(result.message);
+					return;
+				}
+				throw new Error(result.message);
+			};
+
+			setSetupNote("Starting protocol services");
 			await Promise.all(peers.map((p) => p.sub.start()));
 
-				// Establish initial graph via dials.
-				let dialed = 0;
-				for (let a = 0; a < g.adj.length; a++) {
-					for (const b of g.adj[a]!) {
-						if (b <= a) continue;
-						const addrB = (peers[b]!.sub.components.addressManager as any).getAddresses()[0];
-						await peers[a]!.sub.components.connectionManager.openConnection(addrB);
-						dialed += 1;
-						if (dialed % 200 === 0) {
-							await delay(0);
-						}
+			setSetupNote("Dialing graph links");
+			// Establish initial graph via dials.
+			let dialed = 0;
+			for (let a = 0; a < g.adj.length; a++) {
+				for (const b of g.adj[a]!) {
+					if (b <= a) continue;
+					const addrB = (peers[b]!.sub.components.addressManager as any).getAddresses()[0];
+					await peers[a]!.sub.components.connectionManager.openConnection(addrB);
+					dialed += 1;
+					if (dialed % 200 === 0) {
+						await delay(0);
 					}
 				}
+			}
 
+			setSetupNote("Waiting for duplex streams");
 			await waitForProtocolStreams(peers);
 
 			const writer = peers[writerIndex]!.sub;
@@ -953,60 +1063,176 @@ export function FanoutProtocolSandbox({
 				subscriberIndices.push(i);
 			}
 
-			// Use a deterministic shard root for the sandbox so joins work reliably
-			// even in sparse graphs without trackers/bootstraps.
-			const shardRoot = writer.publicKeyHash;
-			for (const p of peers) p.sub.setTopicRootCandidates([shardRoot]);
+				// Use a deterministic shard root for the sandbox so joins work reliably
+				// even in sparse graphs without trackers/bootstraps.
+				const shardRoot = writer.publicKeyHash;
+				for (const p of peers) p.sub.setTopicRootCandidates([shardRoot]);
+				const writerAddr = (writer.components.addressManager as any).getAddresses?.()?.[0];
+				if (writerAddr) {
+					const bootstraps = [writerAddr.toString()];
+					for (const p of peers) p.sub.setFanoutBootstraps(bootstraps);
+				}
 
 				const subscribeStart = Date.now();
-				if (subscribeModel === "preseed") {
+			const setupRxDelayMs = 0;
+			const restoreRxDelayMs = network.streamRxDelayMs;
+			if (network.streamRxDelayMs !== setupRxDelayMs) {
+				network.setStreamRxDelayMs(setupRxDelayMs);
+			}
+			try {
+					if (subscribeModel === "preseed") {
+					setSetupNote("Seeding shard root");
 					// Ensure the shard overlay is hosted (writer is the configured root).
-					await writer.requestSubscribers(topic).catch(() => {});
+					await runSetupStep(
+						"writer requestSubscribers",
+						subscribeStepTimeoutMs,
+						() => writer.requestSubscribers(topic),
+						{ soft: true },
+					);
 
 					for (const idx of subscriberIndices) {
 						peers[idx]!.sub.subscriptions.set(topic, { counter: 1 });
 					}
+
+					setSetupNote("Preseeding subscriber joins");
 					// Join the shard overlay without publishing Subscribe messages.
-					await Promise.all(
-						subscriberIndices.map(async (idx) => {
-							await peers[idx]!.sub.requestSubscribers(topic).catch(() => {});
-						}),
-					);
+					let subscriberTimeouts = 0;
+					let subscriberFailures = 0;
+					let subscriberSkipped = 0;
+					const subscriberJoinDeadline = Date.now() + setupTimeoutMs;
+					for (let i = 0; i < subscriberIndices.length; i += subscribeBatchSize) {
+						const remainingMs = subscriberJoinDeadline - Date.now();
+						if (remainingMs <= 0) {
+							subscriberSkipped += subscriberIndices.length - i;
+							break;
+						}
+						const batchTimeoutMs = clamp(
+							Math.min(subscribeStepTimeoutMs, remainingMs),
+							1000,
+							subscribeStepTimeoutMs,
+						);
+						const batch = subscriberIndices.slice(i, i + subscribeBatchSize);
+						const results = await Promise.all(
+							batch.map(async (idx) => ({
+								idx,
+								result: await runSetupStepWithTimeout(
+									`subscriber ${idx} requestSubscribers`,
+									batchTimeoutMs,
+									() => peers[idx]!.sub.requestSubscribers(topic),
+								),
+							})),
+						);
+						for (const { result } of results) {
+							if (result.ok) continue;
+							if (result.timeout) subscriberTimeouts += 1;
+							else subscriberFailures += 1;
+						}
+						if (i + subscribeBatchSize < subscriberIndices.length) {
+							await delay(0);
+						}
+					}
+					if (subscriberSkipped > 0) {
+						subscriberTimeouts += subscriberSkipped;
+					}
+					if (subscriberTimeouts || subscriberFailures) {
+						addSetupWarning(
+							`subscriber join fallback used (${subscriberTimeouts} timeouts, ${subscriberFailures} failures)`,
+						);
+					}
 					const subscriberHashes = subscriberIndices.map((i) => peers[i]!.sub.publicKeyHash);
 
+					setSetupNote("Warming direct routes");
 					// Warm up DirectStream routes so subsequent SilentDelivery publishes can travel beyond one relay hop.
 					// In the absence of routing info, relays intentionally avoid flooding SilentDelivery traffic
 					// (otherwise it degenerates into FloodSub-like O(E) fanout).
-					// Keep the warmup very fast; we still render the actual publish phase in "slow motion".
-					const warmupRxDelayMs = 0;
-					if (warmupRxDelayMs !== network.streamRxDelayMs) {
-						network.setStreamRxDelayMs(warmupRxDelayMs);
-					}
-					try {
-						const warmup = await writer.createMessage(undefined, {
-							mode: new AcknowledgeAnyWhere({ redundancy: 1 }),
-							priority: 1,
-						});
-						await writer.publishMessage(writer.publicKey, warmup);
-						// Wait until all intended subscribers become reachable from the writer.
-						// This keeps the real publish phase "economic" (SilentDelivery) while avoiding the large receiver list
-						// overhead during warmup.
-						const warmupTimeoutMs = clamp(3000 + n * Math.max(1, degree), 3000, 30_000);
-						await writer.waitFor(subscriberHashes, { timeout: warmupTimeoutMs, settle: "all" });
-					} finally {
-						if (network.streamRxDelayMs !== streamRxDelayMs) {
-							network.setStreamRxDelayMs(streamRxDelayMs);
+					await runSetupStep(
+						"warmup publish",
+						subscribeStepTimeoutMs,
+						async () => {
+							const warmup = await writer.createMessage(undefined, {
+								mode: new AcknowledgeAnyWhere({ redundancy: 1 }),
+								priority: 1,
+							});
+							await writer.publishMessage(writer.publicKey, warmup);
+						},
+						{ soft: true },
+					);
+
+					// Wait until all intended subscribers become reachable from the writer.
+					// This keeps the real publish phase "economic" (SilentDelivery) while avoiding the large receiver list
+					// overhead during warmup.
+					const warmupTimeoutMs = clamp(3000 + n * Math.max(1, degree), 3000, 30_000);
+						await runSetupStep(
+							"warmup waitFor subscribers",
+							warmupTimeoutMs + 1000,
+							() => writer.waitFor(subscriberHashes, { timeout: warmupTimeoutMs, settle: "all" }),
+							{ soft: true },
+						);
+					} else {
+					setSetupNote("Subscribing peers");
+					await runSetupStep(
+						"writer requestSubscribers",
+						subscribeStepTimeoutMs,
+						() => writer.requestSubscribers(topic),
+						{ soft: true },
+					);
+
+					let subscribeTimeouts = 0;
+					let subscribeFailures = 0;
+					let subscribeSkipped = 0;
+					const subscribeDeadline = Date.now() + setupTimeoutMs;
+					for (let i = 0; i < subscriberIndices.length; i += subscribeBatchSize) {
+						const remainingMs = subscribeDeadline - Date.now();
+						if (remainingMs <= 0) {
+							subscribeSkipped += subscriberIndices.length - i;
+							break;
+						}
+						const batchTimeoutMs = clamp(
+							Math.min(subscribeStepTimeoutMs, remainingMs),
+							1000,
+							subscribeStepTimeoutMs,
+						);
+						const batch = subscriberIndices.slice(i, i + subscribeBatchSize);
+						const results = await Promise.all(
+							batch.map(async (idx) => ({
+								idx,
+								result: await runSetupStepWithTimeout(`subscriber ${idx} subscribe`, batchTimeoutMs, () =>
+									peers[idx]!.sub.subscribe(topic),
+								),
+							})),
+						);
+						for (const { result } of results) {
+							if (result.ok) continue;
+							if (result.timeout) subscribeTimeouts += 1;
+							else subscribeFailures += 1;
+						}
+						if (i + subscribeBatchSize < subscriberIndices.length) {
+							await delay(0);
 						}
 					}
-				} else {
-					void writer.requestSubscribers(topic).catch(() => {});
-					await Promise.all(
-						subscriberIndices.map(async (idx) => {
-							await peers[idx]!.sub.subscribe(topic);
-					}),
-				);
-			}
+					if (subscribeSkipped > 0) {
+						subscribeTimeouts += subscribeSkipped;
+					}
+						if (subscribeTimeouts || subscribeFailures) {
+							addSetupWarning(
+								`real subscribe fallback used (${subscribeTimeouts} timeouts, ${subscribeFailures} failures)`,
+							);
+						}
+					}
+					setSetupNote("Refreshing writer subscriber view");
+					await runSetupStep(
+						"writer requestSubscribers refresh",
+						subscribeStepTimeoutMs,
+						() => writer.requestSubscribers(topic),
+						{ soft: true },
+					);
+				} finally {
+					if (network.streamRxDelayMs !== restoreRxDelayMs) {
+						network.setStreamRxDelayMs(restoreRxDelayMs);
+					}
+				}
 			const subscribeDone = Date.now();
+			setSetupNote(null);
 
 			// Reset visualization state.
 			pulseAtRef.current?.fill(-1);
@@ -1050,19 +1276,30 @@ export function FanoutProtocolSandbox({
 				for (let i = 0; i < messages; i++) {
 					setPublishProgress({ seq: i, total: messages });
 					const id = new Uint8Array(32);
-					id.set(BENCH_ID_PREFIX, 0);
-					writeU32BE(id, 4, i);
-					sendTimes[i] = Date.now();
-
+				id.set(BENCH_ID_PREFIX, 0);
+				writeU32BE(id, 4, i);
+				sendTimes[i] = Date.now();
 				await writer.publish(payload, { id, topics: [topic] } as any);
-
 					// Always yield at least one macrotask so the canvas can animate.
 					await delay(intervalMs);
 				}
 
-			setPublishProgress(null);
-			await delay(200);
-			const publishDone = Date.now();
+				setPublishProgress(null);
+				const maxDepthEstimate = Math.max(1, Math.ceil(Math.log2(Math.max(2, subscriberCount + 1))));
+				const settleTimeoutMs = clamp(
+					600 +
+						streamRxDelayMs * (maxDepthEstimate * 2 + 4) +
+						intervalMs * Math.max(1, messages),
+					600,
+					45_000,
+				);
+				const settleDeadline = Date.now() + settleTimeoutMs;
+				while (observedDeliveries < expectedDeliveries) {
+					const remaining = settleDeadline - Date.now();
+					if (remaining <= 0) break;
+					await delay(Math.min(100, remaining));
+				}
+				const publishDone = Date.now();
 
 			latencies.sort((a, b) => a - b);
 			const writerKnown = writer.topics.get(topic)?.size ?? 0;
@@ -1082,22 +1319,24 @@ export function FanoutProtocolSandbox({
 				p50: latencies.length ? quantile(latencies, 0.5) : undefined,
 				p95: latencies.length ? quantile(latencies, 0.95) : undefined,
 				p99: latencies.length ? quantile(latencies, 0.99) : undefined,
-					max: latencies.length ? latencies[latencies.length - 1] : undefined,
-					framesSent: network.metrics.framesSent,
-					bytesSent: network.metrics.bytesSent,
-					flowMode,
-					flowDataFrames,
-					flowAckFrames,
-				});
+				max: latencies.length ? latencies[latencies.length - 1] : undefined,
+				framesSent: network.metrics.framesSent,
+				bytesSent: network.metrics.bytesSent,
+				flowMode,
+				flowDataFrames,
+				flowAckFrames,
+				setupWarnings: setupWarnings.length ? [...setupWarnings] : undefined,
+			});
 			setStatus("done");
 		} catch (e: any) {
 			await stopAll();
 			runRef.current = null;
+			setSetupNote(null);
 			setPublishProgress(null);
 			setStatus("error");
 			setError(e?.message ?? String(e));
 		}
-	};
+		};
 
 		useEffect(() => {
 			const canvas = canvasRef.current;
@@ -1128,9 +1367,9 @@ export function FanoutProtocolSandbox({
 				return;
 			}
 
-				// Edges
-				ctx.lineWidth = 1;
-				ctx.strokeStyle = "rgba(100, 116, 139, 0.35)";
+					// Edges
+					ctx.lineWidth = 1;
+					ctx.strokeStyle = "rgba(100, 116, 139, 0.35)";
 				for (const e of g.edges) {
 					const a = g.nodes[e.a]!.pos;
 					const b = g.nodes[e.b]!.pos;
@@ -1140,12 +1379,14 @@ export function FanoutProtocolSandbox({
 					ctx.stroke();
 				}
 
-				const now = performance.now();
-				if (showEdgeFlows) {
-					const benchColors = flowMode === "bench";
-					const heat = edgeHeatRef.current;
-					if (heat) {
-						for (let i = 0; i < g.edges.length; i++) {
+					const now = performance.now();
+					if (showEdgeFlows) {
+						const benchColors = flowMode === "bench";
+						const heat = edgeHeatRef.current;
+						const runtimeHeatByKey = runtimeEdgeHeatByKeyRef.current;
+						const runtimeHoldUntilByKey = runtimeEdgeHoldUntilByKeyRef.current;
+						if (heat) {
+							for (let i = 0; i < g.edges.length; i++) {
 							const v = heat[i]!;
 							if (v <= 0.01) continue;
 							const e = g.edges[i]!;
@@ -1157,12 +1398,46 @@ export function FanoutProtocolSandbox({
 							ctx.moveTo(a.x, a.y);
 							ctx.lineTo(b.x, b.y);
 							ctx.stroke();
-							heat[i] = v * 0.97;
+								heat[i] = v * 0.97;
+							}
 						}
-					}
+						if (runtimeHeatByKey && runtimeHeatByKey.size > 0) {
+							const updates: Array<{ key: number; value: number }> = [];
+							const removals: number[] = [];
+							ctx.setLineDash(RUNTIME_EDGE_DASH_PATTERN);
+							for (const [key, value] of runtimeHeatByKey) {
+								const aIndex = Math.floor(key / EDGE_KEY_BASE);
+								const bIndex = key % EDGE_KEY_BASE;
+								const a = g.nodes[aIndex]?.pos;
+								const b = g.nodes[bIndex]?.pos;
+								if (!a || !b) {
+									removals.push(key);
+									continue;
+								}
+								ctx.strokeStyle = `rgba(14,165,233,${0.5 + value * 0.45})`;
+								ctx.lineWidth = 2 + value * 4;
+								ctx.beginPath();
+								ctx.moveTo(a.x, a.y);
+								ctx.lineTo(b.x, b.y);
+								ctx.stroke();
+								const holdUntil = runtimeHoldUntilByKey?.get(key) ?? 0;
+								let next = value * RUNTIME_EDGE_HEAT_DECAY;
+								if (holdUntil > now) {
+									next = Math.max(next, RUNTIME_EDGE_MIN_HEAT_WHILE_HELD);
+								}
+								if (next <= 0.01 && holdUntil <= now) removals.push(key);
+								else updates.push({ key, value: next });
+							}
+							ctx.setLineDash([]);
+							for (const key of removals) {
+								runtimeHeatByKey.delete(key);
+								runtimeHoldUntilByKey?.delete(key);
+							}
+							for (const update of updates) runtimeHeatByKey.set(update.key, update.value);
+						}
 
-					const buf = flowBufRef.current;
-					if (buf) {
+						const buf = flowBufRef.current;
+						if (buf) {
 						for (let i = 0; i < buf.cap; i++) {
 							const dur = buf.durationMs[i]!;
 							if (dur === 0) continue;
@@ -1293,6 +1568,12 @@ export function FanoutProtocolSandbox({
 							</div>
 							<div className="text-xs text-slate-500 dark:text-slate-400">
 								Status: <span className="font-mono">{statusLabel}</span>
+								{status === "setting-up" && setupNote ? (
+									<>
+										{" "}
+										· <span className="font-mono">{setupNote}</span>
+									</>
+								) : null}
 							</div>
 						</div>
 					</div>
@@ -1605,16 +1886,19 @@ export function FanoutProtocolSandbox({
 								<div className="flex flex-wrap items-center justify-between gap-2">
 									<div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
 										<span>
-											Click a node to set the writer (red). Subscribers pulse when they receive data.
+											Click a node to set the writer (red). Subscribers pulse when they receive data. Dashed
+											blue links are live runtime stream connections opened by join/repair/bootstrap logic.
 									</span>
 									<InfoPopover>
-										<div className="space-y-2">
-											<p>
-												Flow comets visualize traffic along graph edges. In{" "}
-												<span className="font-mono">Bench</span> mode we animate only the published{" "}
-												<span className="font-mono">PSIM</span> messages. Each color is a message index
-												(0..messages-1).
-											</p>
+											<div className="space-y-2">
+												<p>
+													Flow comets visualize traffic along visible links. Solid lines are the generated
+													underlay graph. Dashed blue lines are runtime stream connections that the protocol
+													opened while running. In{" "}
+													<span className="font-mono">Bench</span> mode we animate only the published{" "}
+													<span className="font-mono">PSIM</span> messages. Each color is a message index
+													(0..messages-1).
+												</p>
 											<p>
 												If you choose <span className="font-mono">Include setup + subscribe</span> and{" "}
 												<span className="font-mono">Real subscribe</span>, you’ll see extra control-plane
@@ -1628,11 +1912,15 @@ export function FanoutProtocolSandbox({
 												Comet speed is visual only. If you make it much slower than the receive delay, the
 												pulses can appear before a comet reaches the node.
 											</p>
-											<p>
-												Blue edge glow is “recently used edge” heat. Optional orange comets show ACK return
-												traffic. This runs the real TopicControlPlane and DirectStream logic, but uses an in-memory
-												transport and skips crypto verification to keep the demo fast.
-											</p>
+												<p>
+													Blue edge glow is “recently used edge” heat. Optional orange comets show ACK return
+													traffic. Dashed blue lines indicate runtime links that were opened during setup/join
+													and were not present in the initial generated graph. They are real transport
+													connections in this in-memory run and linger for several seconds so topology
+													shifts are easier to inspect. This runs the real
+													TopicControlPlane and DirectStream logic, but uses an in-memory transport and skips
+													crypto verification to keep the demo fast.
+												</p>
 										</div>
 									</InfoPopover>
 								</div>
@@ -1707,6 +1995,11 @@ export function FanoutProtocolSandbox({
 										<div className="mt-1 text-slate-500 dark:text-slate-400">
 											subscribe {result.subscribeMs}ms · publish {result.publishMs}ms
 										</div>
+										{result.setupWarnings?.length ? (
+											<div className="mt-1 text-amber-700 dark:text-amber-300">
+												setup fallback: {result.setupWarnings.join("; ")}
+											</div>
+										) : null}
 									</div>
 									<div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-200">
 										<div className="font-medium">Latency + transport</div>

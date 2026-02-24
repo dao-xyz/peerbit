@@ -991,14 +991,16 @@ export class TopicControlPlane
 				// stream is already established (especially in small test nets without
 				// trackers/bootstraps). Best-effort only: join can still succeed via
 				// trackers/other routing if this times out.
-				try {
-					await this.fanout.waitFor(root, {
-						target: "neighbor",
-						timeout: 10_000,
-					});
-				} catch {
-					// ignore
-				}
+					try {
+						await this.fanout.waitFor(root, {
+							target: "neighbor",
+							// Best-effort pre-check only: do not block subscribe/publish setup
+							// for long periods if the root is not yet a direct stream neighbor.
+							timeout: 1_000,
+						});
+					} catch {
+						// ignore
+					}
 				const joinOpts = options?.signal
 					? { ...(this.fanoutJoinOptions ?? {}), signal: options.signal }
 					: this.fanoutJoinOptions;
