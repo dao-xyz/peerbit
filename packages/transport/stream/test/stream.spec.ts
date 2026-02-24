@@ -2303,11 +2303,64 @@ describe("streams", function () {
 					expect(streams[2].received).to.have.length(expected);
 				},
 				{ timeout: 30 * 1000 },
-			);
-		});
-	});
+				);
+			});
+			it("does not fail delivery on transient peer:unreachable before ack", async () => {
+				const sender = streams[0].stream;
+				const receiver = streams[1].stream;
+				let received = 0;
 
-	describe("limits", () => {
+				receiver.addEventListener("data", () => {
+					received += 1;
+				});
+
+				// Delay ACK processing so we can inject a transient unreachable event while
+				// delivery is in-flight.
+				slowDownStream(receiver, 75);
+
+				(sender as any).peerKeyHashToPublicKey.set(
+					receiver.publicKeyHash,
+					receiver.publicKey,
+				);
+
+				const publishPromise = sender.publish(new Uint8Array([1, 2, 3]), {
+					mode: new AcknowledgeDelivery({
+						redundancy: 2,
+						to: [receiver.publicKey],
+					}),
+				});
+
+				await delay(5);
+				(sender as any).onPeerUnreachable(receiver.publicKeyHash);
+
+				await publishPromise;
+				await waitForResolved(
+					() => expect(received).to.equal(1),
+					{ timeout: 10_000, delayInterval: 25 },
+				);
+			});
+
+			it("treats keepalive delivery errors as offline (non-fatal)", async () => {
+				const sender: any = streams[0].stream;
+				const target = streams[1].stream.publicKeyHash;
+				const originalPublish = sender.publish.bind(sender);
+
+				sender.publish = async () => {
+					const err = new Error("simulated keepalive delivery timeout");
+					err.name = "DeliveryError";
+					throw err;
+				};
+
+				try {
+					const alive = await sender.checkIsAlive([target]);
+					expect(alive).to.equal(false);
+				} finally {
+					sender.publish = originalPublish;
+				}
+			});
+		});
+
+		describe("limits", () => {
 		let session: TestSessionStream;
 
 		before(async () => {});

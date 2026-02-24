@@ -2275,26 +2275,34 @@ export abstract class DirectStream<
 			return false;
 		}
 		if (remotes.length > 0) {
-			return this.publish(undefined, {
-				mode: new AcknowledgeDelivery({
-					to: remotes,
-					redundancy: DEFAULT_SEEK_MESSAGE_REDUDANCY,
-				}),
-			})
-				.then(() => true)
-				.catch((e) => {
-					if (e instanceof DeliveryError) {
-						return false;
-					} else if (e instanceof NotStartedError) {
-						return false;
-					} else if (e instanceof TimeoutError) {
-						return false;
-					} else if (e instanceof AbortError) {
-						return false;
-					} else {
-						throw e;
-					}
-				}); // this will remove the target if it is still not reable
+			try {
+				// Keepalive probes are best-effort. SilentDelivery avoids waiting for ACKs
+				// during churn/disconnect storms while still attempting a direct write.
+				await this.publish(undefined, {
+					mode: new SilentDelivery({
+						to: remotes,
+						redundancy: DEFAULT_SILENT_MESSAGE_REDUDANCY,
+					}),
+				});
+				return true;
+			} catch (e: any) {
+				const errorName =
+					e?.name ?? e?.constructor?.name ?? "UnknownError";
+				if (
+					e instanceof DeliveryError ||
+					e instanceof NotStartedError ||
+					e instanceof TimeoutError ||
+					e instanceof AbortError ||
+					errorName === "DeliveryError" ||
+					errorName === "NotStartedError" ||
+					errorName === "TimeoutError" ||
+					errorName === "AbortError"
+				) {
+					return false;
+				}
+				warn(`checkIsAlive unexpected error: ${errorName}`);
+				return false;
+			}
 		}
 		return false;
 	}
@@ -2446,6 +2454,37 @@ export abstract class DirectStream<
 		this.healthChecks.delete(to);
 	}
 
+	private formatDeliveryDebugState(
+		targets: Set<string>,
+		fastestNodesReached: Map<string, number[]>,
+	): string {
+		const sampleSize = 16;
+		const sampledTargets = [...targets].slice(0, sampleSize);
+		const sampled = sampledTargets.map((target) => {
+			const route = this.routes.findNeighbor(this.publicKeyHash, target);
+			const routeSample =
+				route?.list
+					.slice(0, 3)
+					.map((r) => `${r.hash}:${r.distance}${r.expireAt ? ":old" : ""}`)
+					.join(",") ?? "-";
+			const reachable = this.routes.isReachable(this.publicKeyHash, target);
+			const stream = this.peers.get(target);
+			let openConnections = 0;
+			if (stream) {
+				try {
+					openConnections = this.components.connectionManager.getConnections(
+						stream.peerId,
+					).length;
+				} catch {
+					openConnections = stream.isReadable || stream.isWritable ? 1 : 0;
+				}
+			}
+			return `${target}{reachable=${reachable ? 1 : 0},ack=${fastestNodesReached.has(target) ? 1 : 0},stream=${stream ? 1 : 0},conns=${openConnections},routes=${routeSample}}`;
+		});
+		const more = targets.size - sampledTargets.length;
+		return `deliveryState peers=${this.peers.size} routesLocal=${this.routes.count()} routesAll=${this.routes.countAll()} targets=[${sampled.join(";")}]${more > 0 ? ` (+${more} more)` : ""}`;
+	}
+
 	private async createDeliveryPromise(
 		from: PublicSignKey,
 		message: DataMessage | Goodbye,
@@ -2510,20 +2549,20 @@ export abstract class DirectStream<
 		const uniqueAcks = new Set();
 		const session = +new Date();
 
-		const onUnreachable =
-			!relayed &&
-			((ev: any) => {
-				const deletedReceiver = messageToSet.delete(ev.detail.hashcode());
-				if (deletedReceiver) {
-					// Only reject if we are the sender
-					clear();
-					deliveryDeferredPromise.reject(
-						new DeliveryError(
-							`At least one recipent became unreachable while delivering messsage of type ${message.constructor.name}} to ${ev.detail.hashcode()}`,
-						),
-					);
-				}
-			});
+			const onUnreachable =
+				!relayed &&
+				((ev: any) => {
+					const target = ev.detail.hashcode();
+					if (messageToSet.has(target)) {
+						// A peer can transiently appear unreachable while routes are being updated.
+						// Keep waiting for ACK/timeout instead of failing delivery immediately.
+						logger.trace(
+							"peer unreachable during delivery (msg=%s, target=%s); waiting for ACK/timeout",
+							idString,
+							target,
+						);
+					}
+				});
 
 		onUnreachable && this.addEventListener("peer:unreachable", onUnreachable);
 
@@ -2555,18 +2594,27 @@ export abstract class DirectStream<
 				}
 			}
 
-			if (!hasAll && willGetAllAcknowledgements) {
-				deliveryDeferredPromise.reject(
-					new DeliveryError(
-						`Failed to get message ${idString} ${filterMessageForSeenCounter} ${[
-							...messageToSet,
-						]} delivery acknowledges from all nodes (${
-							fastestNodesReached.size
-						}/${messageToSet.size}). Mode: ${
-							message.header.mode.constructor.name
-						}. Redundancy: ${(message.header.mode as any)["redundancy"]}`,
-					),
-				);
+				if (!hasAll && willGetAllAcknowledgements) {
+					const debugState = this.formatDeliveryDebugState(
+						messageToSet,
+						fastestNodesReached,
+					);
+					const msgMeta = `msgType=${message.constructor.name} dataBytes=${
+						message instanceof DataMessage
+							? (message.data?.byteLength ?? 0)
+							: 0
+					} relayed=${relayed ? 1 : 0}`;
+					deliveryDeferredPromise.reject(
+						new DeliveryError(
+							`Failed to get message ${idString} ${filterMessageForSeenCounter} ${[
+								...messageToSet,
+							]} delivery acknowledges from all nodes (${
+								fastestNodesReached.size
+							}/${messageToSet.size}). Mode: ${
+								message.header.mode.constructor.name
+							}. Redundancy: ${(message.header.mode as any)["redundancy"]}. ${msgMeta}. ${debugState}`,
+						),
+					);
 			} else {
 				deliveryDeferredPromise.resolve();
 			}
@@ -2653,13 +2701,10 @@ export abstract class DirectStream<
 					);
 				}
 
-				if (messageToSet.has(messageTargetHash)) {
-					// Only keep track of relevant acks
-					if (
-						filterMessageForSeenCounter == null ||
-						seenCounter < filterMessageForSeenCounter
-					) {
-						// TODO set limit correctly
+					if (messageToSet.has(messageTargetHash)) {
+						// Any ACK from the target should satisfy delivery semantics.
+						// Relying on only seenCounter=0 can fail under churn if the first ACK
+						// is lost but a later ACK (seenCounter>0) arrives.
 						if (seenCounter < MAX_ROUTE_DISTANCE) {
 							let arr = fastestNodesReached.get(messageTargetHash);
 							if (!arr) {
@@ -2668,10 +2713,9 @@ export abstract class DirectStream<
 							}
 							arr.push(seenCounter);
 
-							uniqueAcks.add(messageTargetHash + seenCounter);
+							uniqueAcks.add(messageTargetHash);
 						}
 					}
-				}
 
 				checkDone();
 			},
