@@ -434,6 +434,7 @@ const main = async () => {
 	}, params.timeoutMs);
 	let session: TestSession | undefined;
 	let mainError: unknown;
+	let stopError: unknown;
 
 	try {
 		session = await TestSession.disconnectedInMemory(params.nodes, {
@@ -948,13 +949,20 @@ const main = async () => {
 		if (session) {
 			try {
 				await session.stop();
-			} catch (stopError) {
+			} catch (sessionStopError) {
 				if (!mainError) {
-					throw stopError;
+					stopError = sessionStopError;
+				} else {
+					console.error(
+						"fanout-peerbit-sim: failed to stop session after error",
+						sessionStopError,
+					);
 				}
-				console.error("fanout-peerbit-sim: failed to stop session after error", stopError);
 			}
 		}
+	}
+	if (stopError) {
+		throw stopError;
 	}
 };
 
