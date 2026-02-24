@@ -19,6 +19,10 @@ export function waitForEvent<
 		timeout?: number;
 	},
 ): Promise<void> {
+	const traceEnabled =
+		(globalThis as any)?.process?.env?.PEERBIT_WAITFOREVENT_TRACE === "1";
+	const callsite = traceEnabled ? new Error("waitForEvent callsite").stack : undefined;
+
 	const deferred = pDefer<void>();
 	const abortFn = (e?: unknown) => {
 		if (e instanceof Error) {
@@ -39,15 +43,18 @@ export function waitForEvent<
 	const checkIsReady = (...args: any[]) => resolver(deferred);
 	let timeout: ReturnType<typeof setTimeout> | undefined = undefined;
 
-	deferred.promise.finally(() => {
-		for (const event of events) {
-			emitter.removeEventListener(event as any, checkIsReady as any);
-		}
-		timeout && clearTimeout(timeout);
-		options?.signals?.forEach((signal) =>
-			signal.removeEventListener("abort", abortFn),
-		);
-	});
+	void deferred.promise
+		.finally(() => {
+			for (const event of events) {
+				emitter.removeEventListener(event as any, checkIsReady as any);
+			}
+			timeout && clearTimeout(timeout);
+			options?.signals?.forEach((signal) =>
+				signal.removeEventListener("abort", abortFn),
+			);
+		})
+		// Avoid triggering an unhandled rejection from the `.finally()` return promise.
+		.catch(() => {});
 
 	const abortedSignal = options?.signals?.find((signal) => signal.aborted);
 	if (abortedSignal) {
@@ -65,7 +72,13 @@ export function waitForEvent<
 		emitter.addEventListener(event as any, checkIsReady as any);
 	}
 	timeout = setTimeout(
-		() => abortFn(new TimeoutError("Timeout waiting for event")),
+		() => {
+			const err = new TimeoutError("Timeout waiting for event");
+			if (callsite && err.stack) {
+				err.stack += `\n\n${callsite}`;
+			}
+			abortFn(err);
+		},
 		options?.timeout ?? 10 * 1000,
 	);
 	options?.signals?.forEach((signal) =>

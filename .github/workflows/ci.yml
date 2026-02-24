@@ -40,7 +40,8 @@ jobs:
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
           pnpm install --frozen-lockfile=false
-          pnpm exec playwright install-deps
+          # NOTE: CI runs node-only tests (`-t node`). Playwright system deps are not required
+          # here and have proven flaky on GitHub runners due to transient apt repository errors.
       - name: Build
         run: |
           pnpm run build
@@ -86,7 +87,8 @@ jobs:
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
           pnpm install --frozen-lockfile=false
-          pnpm exec playwright install-deps
+          # NOTE: CI runs node-only tests (`-t node`). Playwright system deps are not required
+          # here and have proven flaky on GitHub runners due to transient apt repository errors.
       - name: Build
         run: |
           pnpm run build

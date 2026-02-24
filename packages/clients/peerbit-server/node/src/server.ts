@@ -851,16 +851,26 @@ export const startApiServer = async (
 						}
 					} else if (req.url.startsWith(BOOTSTRAP_PATH)) {
 						switch (req.method) {
-							case "POST":
+							case "POST": {
 								if (client instanceof Peerbit === false) {
 									res.writeHead(400);
 									res.end("Server node is not running a native client");
 									return;
 								}
-								await (client as Peerbit).bootstrap();
+								let addresses: string[] | undefined;
+								try {
+									const parsed = body ? JSON.parse(body) : undefined;
+									if (Array.isArray(parsed?.addresses)) {
+										addresses = parsed.addresses;
+									}
+								} catch {
+									// ignore invalid bootstrap payload; fall back to default bootstrap list
+								}
+								await (client as Peerbit).bootstrap(addresses);
 								res.writeHead(200);
 								res.end();
 								break;
+							}
 
 							default:
 								r404();

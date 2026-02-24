@@ -1,10 +1,11 @@
-import { BorshError, field, variant } from "@dao-xyz/borsh";
+import { BorshError, deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { AnyBlockStore, RemoteBlocks } from "@peerbit/blocks";
 import { cidifyString } from "@peerbit/blocks-interface";
 import { Cache } from "@peerbit/cache";
 import {
 	AccessError,
 	PublicSignKey,
+	getPublicKeyFromPeerId,
 	sha256Base64Sync,
 	sha256Sync,
 } from "@peerbit/crypto";
@@ -31,7 +32,16 @@ import {
 } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import { ClosedError, Program, type ProgramEvents } from "@peerbit/program";
-import { waitForSubscribers } from "@peerbit/pubsub";
+import {
+	FanoutChannel,
+	type FanoutProviderHandle,
+	type FanoutTree,
+	type FanoutTreeChannelOptions,
+	type FanoutTreeDataEvent,
+	type FanoutTreeUnicastEvent,
+	type FanoutTreeJoinOptions,
+	waitForSubscribers,
+} from "@peerbit/pubsub";
 import {
 	SubscriptionEvent,
 	UnsubcriptionEvent,
@@ -40,10 +50,10 @@ import { RPC, type RequestContext } from "@peerbit/rpc";
 import {
 	AcknowledgeDelivery,
 	AnyWhere,
+	DataMessage,
+	MessageHeader,
 	NotStartedError,
-	SeekDelivery,
 	SilentDelivery,
-	type WithMode,
 } from "@peerbit/stream-interface";
 import {
 	AbortError,
@@ -69,6 +79,7 @@ import {
 	ResponseIPrune,
 	createExchangeHeadsMessages,
 } from "./exchange-heads.js";
+import { FanoutEnvelope } from "./fanout-envelope.js";
 import {
 	MAX_U32,
 	MAX_U64,
@@ -187,6 +198,36 @@ const getLatestEntry = (
 		}
 	}
 	return latest;
+};
+
+const hashToSeed32 = (str: string) => {
+	// FNV-1a 32-bit, fast and deterministic.
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < str.length; i++) {
+		hash ^= str.charCodeAt(i);
+		hash = Math.imul(hash, 0x01000193);
+	}
+	return hash >>> 0;
+};
+
+const pickDeterministicSubset = (peers: string[], seed: number, max: number) => {
+	if (peers.length <= max) return peers;
+
+	const subset: string[] = [];
+	const used = new Set<string>();
+	let x = seed || 1;
+	while (subset.length < max) {
+		// xorshift32
+		x ^= x << 13;
+		x ^= x >>> 17;
+		x ^= x << 5;
+		const peer = peers[(x >>> 0) % peers.length];
+		if (!used.has(peer)) {
+			used.add(peer);
+			subset.push(peer);
+		}
+	}
+	return subset;
 };
 
 export type ReplicationLimitsOptions =
@@ -373,6 +414,7 @@ export type SharedLogOptions<
 	compatibility?: number;
 	domain?: ReplicationDomainConstructor<D>;
 	eagerBlocks?: boolean | { cacheSize?: number };
+	fanout?: SharedLogFanoutOptions;
 };
 
 export const DEFAULT_MIN_REPLICAS = 2;
@@ -385,6 +427,10 @@ export const WAIT_FOR_REPLICATOR_REQUEST_MIN_ATTEMPTS = 3;
 // Prefer making pruning robust without timing-based heuristics.
 export const WAIT_FOR_PRUNE_DELAY = 0;
 const PRUNE_DEBOUNCE_INTERVAL = 500;
+const CHECKED_PRUNE_RESEND_INTERVAL_MIN_MS = 250;
+const CHECKED_PRUNE_RESEND_INTERVAL_MAX_MS = 5_000;
+const CHECKED_PRUNE_RETRY_MAX_ATTEMPTS = 3;
+const CHECKED_PRUNE_RETRY_MAX_DELAY_MS = 30_000;
 
 // DONT SET THIS ANY LOWER, because it will make the pid controller unstable as the system responses are not fast enough to updates from the pid controller
 const RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL = 1000;
@@ -394,6 +440,17 @@ const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_MEMORY_LIMIT = 0.001;
 const RECALCULATE_PARTICIPATION_RELATIVE_DENOMINATOR_FLOOR = 1e-3;
 
 const DEFAULT_DISTRIBUTION_DEBOUNCE_TIME = 500;
+
+const DEFAULT_SHARED_LOG_FANOUT_CHANNEL_OPTIONS: Omit<
+	FanoutTreeChannelOptions,
+	"role"
+> = {
+	msgRate: 30,
+	msgSize: 1024,
+	uploadLimitBps: 5_000_000,
+	maxChildren: 24,
+	repair: true,
+};
 
 const getIdForDynamicRange = (publicKey: PublicSignKey) => {
 	return sha256Sync(
@@ -424,12 +481,28 @@ export type DeliveryOptions = {
 	signal?: AbortSignal;
 };
 
-export type SharedAppendOptions<T> = AppendOptions<T> & {
+export type SharedLogFanoutOptions = {
+	root?: string;
+	channel?: Partial<Omit<FanoutTreeChannelOptions, "role">>;
+	join?: FanoutTreeJoinOptions;
+};
+
+type SharedAppendBaseOptions<T> = AppendOptions<T> & {
 	replicas?: AbsoluteReplicas | number;
 	replicate?: boolean;
-	target?: "all" | "replicators" | "none";
-	delivery?: false | true | DeliveryOptions;
 };
+
+export type SharedAppendOptions<T> =
+	| (SharedAppendBaseOptions<T> & {
+			target?: "replicators" | "none";
+			delivery?: false | true | DeliveryOptions;
+	  })
+	| (SharedAppendBaseOptions<T> & {
+			// target=all uses the fanout data plane and intentionally does not expose
+			// per-recipient settle semantics from RPC delivery options.
+			target: "all";
+			delivery?: false | undefined;
+	  });
 
 export type ReplicatorJoinEvent = { publicKey: PublicSignKey };
 export type ReplicatorLeaveEvent = { publicKey: PublicSignKey };
@@ -463,11 +536,12 @@ export class SharedLog<
 
 	private _replicationRangeIndex!: Index<ReplicationRangeIndexable<R>>;
 	private _entryCoordinatesIndex!: Index<EntryReplicated<R>>;
-	private coordinateToHash!: Cache<string>;
-	private recentlyRebalanced!: Cache<string>;
+		private coordinateToHash!: Cache<string>;
+		private recentlyRebalanced!: Cache<string>;
 
-	uniqueReplicators!: Set<string>;
-	private _replicatorsReconciled!: boolean;
+		uniqueReplicators!: Set<string>;
+		private _replicatorJoinEmitted!: Set<string>;
+		private _replicatorsReconciled!: boolean;
 
 	/* private _totalParticipation!: number; */
 
@@ -476,6 +550,10 @@ export class SharedLog<
 
 	private _onSubscriptionFn!: (arg: any) => any;
 	private _onUnsubscriptionFn!: (arg: any) => any;
+	private _onFanoutDataFn?: (arg: any) => void;
+	private _onFanoutUnicastFn?: (arg: any) => void;
+	private _fanoutChannel?: FanoutChannel;
+	private _providerHandle?: FanoutProviderHandle;
 
 	private _isTrustedReplicator?: (
 		publicKey: PublicSignKey,
@@ -519,6 +597,15 @@ export class SharedLog<
 	>; // map of peerId to timeout
 
 	private latestReplicationInfoMessage!: Map<string, bigint>;
+	// Peers that have unsubscribed from this log's topic. We ignore replication-info
+	// messages from them until we see a new subscription, to avoid re-introducing
+	// stale membership state during close/unsubscribe races.
+	private _replicationInfoBlockedPeers!: Set<string>;
+	private _replicationInfoRequestByPeer!: Map<
+		string,
+		{ attempts: number; timer?: ReturnType<typeof setTimeout> }
+	>;
+	private _replicationInfoApplyQueueByPeer!: Map<string, Promise<void>>;
 
 	private remoteBlocks!: RemoteBlocks;
 
@@ -552,6 +639,10 @@ export class SharedLog<
 
 	private _requestIPruneSent!: Map<string, Set<string>>; // tracks entry hash to peer hash for requesting I prune messages
 	private _requestIPruneResponseReplicatorSet!: Map<string, Set<string>>; // tracks entry hash to peer hash
+	private _checkedPruneRetries!: Map<
+		string,
+		{ attempts: number; timer?: ReturnType<typeof setTimeout> }
+	>;
 
 	private replicationChangeDebounceFn!: ReturnType<
 		typeof debounceAggregationChanges<ReplicationRangeIndexable<R>>
@@ -595,6 +686,590 @@ export class SharedLog<
 
 	private get v8Behaviour() {
 		return (this.compatibility ?? Number.MAX_VALUE) < 9;
+	}
+
+	private getFanoutChannelOptions(
+		options?: SharedLogFanoutOptions,
+	): Omit<FanoutTreeChannelOptions, "role"> {
+		return {
+			...DEFAULT_SHARED_LOG_FANOUT_CHANNEL_OPTIONS,
+			...(options?.channel ?? {}),
+		};
+	}
+
+	private async _openFanoutChannel(options?: SharedLogFanoutOptions) {
+		this._closeFanoutChannel();
+		if (!options) {
+			return;
+		}
+
+		const fanoutService = (this.node.services as any).fanout;
+		if (!fanoutService) {
+			throw new Error(
+				`Fanout is configured for shared-log topic ${this.topic}, but no fanout service is available on this client`,
+			);
+		}
+
+		const resolvedRoot =
+			options.root ??
+			(await (fanoutService as any)?.topicRootControlPlane?.resolveTopicRoot?.(
+				this.topic,
+			));
+		if (!resolvedRoot) {
+			throw new Error(
+				`Fanout is configured for shared-log topic ${this.topic}, but no fanout root was provided and none could be resolved`,
+			);
+		}
+
+		const channel = new FanoutChannel(fanoutService, {
+			topic: this.topic,
+			root: resolvedRoot,
+		});
+		this._fanoutChannel = channel;
+
+		this._onFanoutDataFn =
+			this._onFanoutDataFn ||
+			((evt: any) => {
+				const detail = (evt as CustomEvent<FanoutTreeDataEvent>)?.detail;
+				if (!detail) {
+					return;
+				}
+				void this._onFanoutData(detail).catch((error) => logger.error(error));
+			});
+		channel.addEventListener("data", this._onFanoutDataFn);
+
+		this._onFanoutUnicastFn =
+			this._onFanoutUnicastFn ||
+			((evt: any) => {
+				const detail = (evt as CustomEvent<FanoutTreeUnicastEvent>)?.detail;
+				if (!detail) {
+					return;
+				}
+				void this._onFanoutUnicast(detail).catch((error) => logger.error(error));
+			});
+		channel.addEventListener("unicast", this._onFanoutUnicastFn);
+
+		try {
+			const channelOptions = this.getFanoutChannelOptions(options);
+			if (resolvedRoot === fanoutService.publicKeyHash) {
+				await channel.openAsRoot(channelOptions);
+				return;
+			}
+			await channel.join(channelOptions, options.join);
+		} catch (error) {
+			this._closeFanoutChannel();
+			throw error;
+		}
+	}
+
+	private _closeFanoutChannel() {
+		if (this._fanoutChannel) {
+			if (this._onFanoutDataFn) {
+				this._fanoutChannel.removeEventListener("data", this._onFanoutDataFn);
+			}
+			if (this._onFanoutUnicastFn) {
+				this._fanoutChannel.removeEventListener(
+					"unicast",
+					this._onFanoutUnicastFn,
+				);
+			}
+			this._fanoutChannel.close();
+		}
+		this._fanoutChannel = undefined;
+	}
+
+	private async _onFanoutData(detail: FanoutTreeDataEvent) {
+		let envelope: FanoutEnvelope;
+		try {
+			envelope = deserialize(detail.payload, FanoutEnvelope);
+		} catch (error) {
+			if (error instanceof BorshError) {
+				return;
+			}
+			throw error;
+		}
+
+		let message: TransportMessage;
+		try {
+			message = deserialize(envelope.payload, TransportMessage);
+		} catch (error) {
+			if (error instanceof BorshError) {
+				return;
+			}
+			throw error;
+		}
+
+		if (!(message instanceof ExchangeHeadsMessage)) {
+			return;
+		}
+
+		const from =
+			(await this._resolvePublicKeyFromHash(envelope.from)) ??
+			({ hashcode: () => envelope.from } as PublicSignKey);
+
+		const contextMessage = new DataMessage({
+			header: new MessageHeader({
+				session: 0,
+				mode: new AnyWhere(),
+				priority: 0,
+			}),
+		});
+		contextMessage.header.timestamp = envelope.timestamp;
+
+		await this.onMessage(message, {
+			from,
+			message: contextMessage,
+		});
+	}
+
+	private async _onFanoutUnicast(detail: FanoutTreeUnicastEvent) {
+		let message: TransportMessage;
+		try {
+			message = deserialize(detail.payload, TransportMessage);
+		} catch (error) {
+			if (error instanceof BorshError) {
+				return;
+			}
+			throw error;
+		}
+
+		const fromHash = detail.origin || detail.from;
+		const from =
+			(await this._resolvePublicKeyFromHash(fromHash)) ??
+			({ hashcode: () => fromHash } as PublicSignKey);
+
+		const contextMessage = new DataMessage({
+			header: new MessageHeader({
+				session: 0,
+				mode: new AnyWhere(),
+				priority: 0,
+			}),
+		});
+		contextMessage.header.timestamp = detail.timestamp;
+
+		await this.onMessage(message, {
+			from,
+			message: contextMessage,
+		});
+	}
+
+	private async _publishExchangeHeadsViaFanout(
+		message: ExchangeHeadsMessage<any>,
+	): Promise<void> {
+		if (!this._fanoutChannel) {
+			throw new Error(
+				`No fanout channel configured for shared-log topic ${this.topic}`,
+			);
+		}
+		const envelope = new FanoutEnvelope({
+			from: this.node.identity.publicKey.hashcode(),
+			timestamp: BigInt(Date.now()),
+			payload: serialize(message),
+		});
+		await this._fanoutChannel.publish(serialize(envelope));
+	}
+
+	private _parseDeliveryOptions(
+		deliveryArg: false | true | DeliveryOptions | undefined,
+	): {
+		delivery?: DeliveryOptions;
+		requireRecipients: boolean;
+		settleMin?: number;
+		wrap?: (promise: Promise<void>) => Promise<void>;
+	} {
+		const delivery: DeliveryOptions | undefined =
+			deliveryArg === undefined || deliveryArg === false
+				? undefined
+				: deliveryArg === true
+					? {}
+					: deliveryArg;
+		if (!delivery) {
+			return {
+				delivery: undefined,
+				requireRecipients: false,
+				settleMin: undefined,
+				wrap: undefined,
+			};
+		}
+
+		const deliverySettle = delivery.settle ?? true;
+		const deliveryTimeout = delivery.timeout;
+		const deliverySignal = delivery.signal;
+		const requireRecipients = delivery.requireRecipients === true;
+		const settleMin =
+			typeof deliverySettle === "object" && Number.isFinite(deliverySettle.min)
+				? Math.max(0, Math.floor(deliverySettle.min))
+				: undefined;
+
+		const wrap =
+			deliveryTimeout == null && deliverySignal == null
+				? undefined
+				: (promise: Promise<void>) =>
+						new Promise<void>((resolve, reject) => {
+							let settled = false;
+							let timer: ReturnType<typeof setTimeout> | undefined = undefined;
+							const onAbort = () => {
+								if (settled) {
+									return;
+								}
+								settled = true;
+								promise.catch(() => {});
+								cleanup();
+								reject(new AbortError());
+							};
+
+							const cleanup = () => {
+								if (timer != null) {
+									clearTimeout(timer);
+									timer = undefined;
+								}
+								deliverySignal?.removeEventListener("abort", onAbort);
+							};
+
+							if (deliverySignal) {
+								if (deliverySignal.aborted) {
+									onAbort();
+									return;
+								}
+								deliverySignal.addEventListener("abort", onAbort);
+							}
+
+							if (deliveryTimeout != null) {
+								timer = setTimeout(() => {
+									if (settled) {
+										return;
+									}
+									settled = true;
+									promise.catch(() => {});
+									cleanup();
+									reject(new TimeoutError(`Timeout waiting for delivery`));
+								}, deliveryTimeout);
+							}
+
+							promise
+								.then(() => {
+									if (settled) {
+										return;
+									}
+									settled = true;
+									cleanup();
+									resolve();
+								})
+								.catch((error) => {
+									if (settled) {
+										return;
+									}
+									settled = true;
+									cleanup();
+									reject(error);
+								});
+						});
+
+		return {
+			delivery,
+			requireRecipients,
+			settleMin,
+			wrap,
+		};
+	}
+
+		private async _appendDeliverToReplicators(
+			entry: Entry<T>,
+			minReplicasValue: number,
+			leaders: Map<string, any>,
+			selfHash: string,
+			isLeader: boolean,
+			deliveryArg: false | true | DeliveryOptions | undefined,
+		) {
+			const { delivery, requireRecipients, settleMin, wrap } =
+				this._parseDeliveryOptions(deliveryArg);
+			const pending: Promise<void>[] = [];
+			const track = (promise: Promise<void>) => {
+				pending.push(wrap ? wrap(promise) : promise);
+			};
+			const fanoutUnicastOptions =
+				delivery?.timeout != null || delivery?.signal != null
+					? { timeoutMs: delivery.timeout, signal: delivery.signal }
+					: undefined;
+
+			for await (const message of createExchangeHeadsMessages(this.log, [entry])) {
+				await this._mergeLeadersFromGidReferences(message, minReplicasValue, leaders);
+				const leadersForDelivery = delivery ? new Set(leaders.keys()) : undefined;
+
+				const set = this.addPeersToGidPeerHistory(entry.meta.gid, leaders.keys());
+				const hasRemotePeers = set.has(selfHash) ? set.size > 1 : set.size > 0;
+				if (!hasRemotePeers) {
+					if (requireRecipients) {
+					throw new NoPeersError(this.rpc.topic);
+				}
+				continue;
+			}
+
+				if (!delivery) {
+					this.rpc
+						.send(message, {
+							mode: isLeader
+								? new SilentDelivery({ redundancy: 1, to: set })
+								: new AcknowledgeDelivery({ redundancy: 1, to: set }),
+						})
+						.catch((error) => logger.error(error));
+					continue;
+				}
+
+				const orderedRemoteRecipients: string[] = [];
+				for (const peer of leadersForDelivery!) {
+					if (peer === selfHash) {
+						continue;
+					}
+					orderedRemoteRecipients.push(peer);
+				}
+				for (const peer of set) {
+					if (peer === selfHash) {
+						continue;
+					}
+					if (leadersForDelivery!.has(peer)) {
+						continue;
+					}
+					orderedRemoteRecipients.push(peer);
+				}
+
+				const ackTo: string[] = [];
+				let silentTo: string[] | undefined;
+				// Default delivery semantics: require enough remote ACKs to reach the requested
+				// replication degree (local append counts as 1).
+				const ackLimit =
+					settleMin == null ? Math.max(0, minReplicasValue - 1) : settleMin;
+
+				for (const peer of orderedRemoteRecipients) {
+					if (ackTo.length < ackLimit) {
+						ackTo.push(peer);
+					} else {
+						silentTo ||= [];
+						silentTo.push(peer);
+					}
+				}
+
+				if (requireRecipients && orderedRemoteRecipients.length === 0) {
+					throw new NoPeersError(this.rpc.topic);
+				}
+				if (requireRecipients && ackTo.length + (silentTo?.length || 0) === 0) {
+					throw new NoPeersError(this.rpc.topic);
+				}
+
+			if (ackTo.length > 0) {
+				const payload = serialize(message);
+				for (const peer of ackTo) {
+					track(
+						(async () => {
+							// Unified decision point:
+							// - If we can prove a cheap direct path (connected or routed), use it.
+							// - Otherwise, fall back to the fanout unicast ACK path (bounded overlay routing).
+							// - If that fails, fall back to pubsub/RPC routing which may flood to discover routes.
+							const pubsub: any = this.node.services.pubsub as any;
+							const canDirectFast =
+								Boolean(pubsub?.peers?.get?.(peer)?.isWritable) ||
+								Boolean(
+									pubsub?.routes?.isReachable?.(
+										pubsub?.publicKeyHash,
+										peer,
+										0,
+									),
+								);
+
+							if (canDirectFast) {
+								await this.rpc.send(message, {
+									mode: new AcknowledgeDelivery({
+										redundancy: 1,
+										to: [peer],
+									}),
+								});
+								return;
+							}
+
+							if (this._fanoutChannel) {
+								try {
+									await this._fanoutChannel.unicastToAck(
+										peer,
+										payload,
+										fanoutUnicastOptions,
+									);
+									return;
+								} catch {
+									// fall back below
+								}
+							}
+							await this.rpc.send(message, {
+								mode: new AcknowledgeDelivery({
+									redundancy: 1,
+									to: [peer],
+								}),
+							});
+						})(),
+					);
+				}
+			}
+
+			if (silentTo?.length) {
+				this.rpc
+					.send(message, {
+						mode: new SilentDelivery({ redundancy: 1, to: silentTo }),
+					})
+					.catch((error) => logger.error(error));
+			}
+		}
+
+		if (pending.length > 0) {
+			await Promise.all(pending);
+		}
+	}
+
+	private async _mergeLeadersFromGidReferences(
+		message: ExchangeHeadsMessage<any>,
+		minReplicasValue: number,
+		leaders: Map<string, any>,
+	) {
+		const gidReferences = message.heads[0]?.gidRefrences;
+		if (!gidReferences || gidReferences.length === 0) {
+			return;
+		}
+
+		for (const gidReference of gidReferences) {
+			const entryFromGid = this.log.entryIndex.getHeads(gidReference, false);
+			for (const gidEntry of await entryFromGid.all()) {
+				let coordinates = await this.getCoordinates(gidEntry);
+				if (coordinates == null) {
+					coordinates = await this.createCoordinates(gidEntry, minReplicasValue);
+				}
+
+				const found = await this._findLeaders(coordinates);
+				for (const [key, value] of found) {
+					leaders.set(key, value);
+				}
+			}
+		}
+	}
+
+	private async _appendDeliverToAllFanout(entry: Entry<T>) {
+		for await (const message of createExchangeHeadsMessages(this.log, [entry])) {
+			await this._publishExchangeHeadsViaFanout(message);
+		}
+	}
+
+	private async _resolvePublicKeyFromHash(
+		hash: string,
+	): Promise<PublicSignKey | undefined> {
+		const fanoutService = (this.node.services as any).fanout;
+		return (
+			fanoutService?.getPublicKey?.(hash) ??
+			this.node.services.pubsub.getPublicKey(hash)
+		);
+	}
+
+	private async _getTopicSubscribers(
+		topic: string,
+	): Promise<PublicSignKey[] | undefined> {
+		const maxPeers = 64;
+
+		// Prefer the bounded peer set we already know from the fanout overlay.
+		if (this._fanoutChannel && (topic === this.topic || topic === this.rpc.topic)) {
+			const hashes = this._fanoutChannel
+				.getPeerHashes({ includeSelf: false })
+				.slice(0, maxPeers);
+			if (hashes.length === 0) return [];
+
+			const keys = await Promise.all(
+				hashes.map((hash) => this._resolvePublicKeyFromHash(hash)),
+			);
+			const uniqueKeys: PublicSignKey[] = [];
+			const seen = new Set<string>();
+			const selfHash = this.node.identity.publicKey.hashcode();
+			for (const key of keys) {
+				if (!key) continue;
+				const hash = key.hashcode();
+				if (hash === selfHash) continue;
+				if (seen.has(hash)) continue;
+				seen.add(hash);
+				uniqueKeys.push(key);
+			}
+			return uniqueKeys;
+		}
+
+		const selfHash = this.node.identity.publicKey.hashcode();
+		const hashes: string[] = [];
+
+		// Best-effort provider discovery (bounded). This requires bootstrap trackers.
+		try {
+			const fanoutService = (this.node.services as any).fanout;
+			if (fanoutService?.queryProviders) {
+				const ns = `shared-log|${this.topic}`;
+				const seed = hashToSeed32(topic);
+				const providers: string[] = await fanoutService.queryProviders(ns, {
+					want: maxPeers,
+					seed,
+				});
+				for (const h of providers ?? []) {
+					if (!h || h === selfHash) continue;
+					hashes.push(h);
+					if (hashes.length >= maxPeers) break;
+				}
+			}
+		} catch {
+			// Best-effort only.
+		}
+
+		// Next, use already-connected peer streams (bounded and cheap).
+		const peerMap: Map<string, unknown> | undefined = (this.node.services.pubsub as any)
+			?.peers;
+		if (peerMap?.keys) {
+			for (const h of peerMap.keys()) {
+				if (!h || h === selfHash) continue;
+				hashes.push(h);
+				if (hashes.length >= maxPeers) break;
+			}
+		}
+
+		// Finally, fall back to libp2p connections (e.g. bootstrap peers) without requiring
+		// any global topic membership view.
+		if (hashes.length < maxPeers) {
+			const connectionManager = (this.node.services.pubsub as any)?.components
+				?.connectionManager;
+			const connections = connectionManager?.getConnections?.() ?? [];
+			for (const conn of connections) {
+				const peerId = conn?.remotePeer;
+				if (!peerId) continue;
+				try {
+					const h = getPublicKeyFromPeerId(peerId).hashcode();
+					if (!h || h === selfHash) continue;
+					hashes.push(h);
+					if (hashes.length >= maxPeers) break;
+				} catch {
+					// Best-effort only.
+				}
+			}
+		}
+
+		if (hashes.length === 0) return [];
+
+		const uniqueHashes: string[] = [];
+		const seen = new Set<string>();
+		for (const h of hashes) {
+			if (seen.has(h)) continue;
+			seen.add(h);
+			uniqueHashes.push(h);
+			if (uniqueHashes.length >= maxPeers) break;
+		}
+
+		const keys = await Promise.all(
+			uniqueHashes.map((hash) => this._resolvePublicKeyFromHash(hash)),
+		);
+		const uniqueKeys: PublicSignKey[] = [];
+		for (const key of keys) {
+			if (!key) continue;
+			const hash = key.hashcode();
+			if (hash === selfHash) continue;
+			uniqueKeys.push(key);
+		}
+		return uniqueKeys;
 	}
 
 	// @deprecated
@@ -1004,8 +1679,9 @@ export class SharedLog<
 			})
 			.all();
 
-		this.uniqueReplicators.delete(keyHash);
-		await this.replicationIndex.del({ query: { hash: keyHash } });
+			this.uniqueReplicators.delete(keyHash);
+			this._replicatorJoinEmitted.delete(keyHash);
+			await this.replicationIndex.del({ query: { hash: keyHash } });
 
 		await this.updateOldestTimestampFromIndex();
 
@@ -1030,14 +1706,14 @@ export class SharedLog<
 			}
 		}
 
-		const timestamp = BigInt(+new Date());
-		for (const x of deleted) {
-			this.replicationChangeDebounceFn.add({
-				range: x.value,
-				type: "removed",
-				timestamp,
-			});
-		}
+			const timestamp = BigInt(+new Date());
+			for (const x of deleted) {
+				this.replicationChangeDebounceFn.add({
+					range: x.value,
+					type: "removed",
+					timestamp,
+				});
+			}
 
 		const pendingMaturity = this.pendingMaturity.get(keyHash);
 		if (pendingMaturity) {
@@ -1118,9 +1794,10 @@ export class SharedLog<
 			{ query: { hash: from.hashcode() } },
 			{ shape: { id: true } },
 		);
-		if ((await otherSegmentsIterator.next(1)).length === 0) {
-			this.uniqueReplicators.delete(from.hashcode());
-		}
+			if ((await otherSegmentsIterator.next(1)).length === 0) {
+				this.uniqueReplicators.delete(from.hashcode());
+				this._replicatorJoinEmitted.delete(from.hashcode());
+			}
 		await otherSegmentsIterator.close();
 
 		await this.updateOldestTimestampFromIndex();
@@ -1160,6 +1837,7 @@ export class SharedLog<
 
 		let diffs: ReplicationChanges<ReplicationRangeIndexable<R>>;
 		let deleted: ReplicationRangeIndexable<R>[] | undefined = undefined;
+		let isStoppedReplicating = false;
 		if (reset) {
 			deleted = (
 				await this.replicationIndex
@@ -1198,6 +1876,7 @@ export class SharedLog<
 			}
 
 			isNewReplicator = prevCount === 0 && ranges.length > 0;
+			isStoppedReplicating = prevCount > 0 && ranges.length === 0;
 		} else {
 			let batchSize = 100;
 			let existing: ReplicationRangeIndexable<R>[] = [];
@@ -1281,7 +1960,16 @@ export class SharedLog<
 			diffs = changes;
 		}
 
-		this.uniqueReplicators.add(from.hashcode());
+			const fromHash = from.hashcode();
+			// Track replicator membership transitions synchronously so join/leave events are
+			// idempotent even if we process concurrent reset messages/unsubscribes.
+			const stoppedTransition =
+				ranges.length === 0 ? this.uniqueReplicators.delete(fromHash) : false;
+			if (ranges.length === 0) {
+				this._replicatorJoinEmitted.delete(fromHash);
+			} else {
+				this.uniqueReplicators.add(fromHash);
+			}
 
 		let now = +new Date();
 		let minRoleAge = await this.getDefaultMinRoleAge();
@@ -1327,13 +2015,13 @@ export class SharedLog<
 								}),
 							);
 
-							if (rebalance && diff.range.mode !== ReplicationIntent.Strict) {
-								// TODO this statement (might) cause issues with triggering pruning if the segment is strict and maturity timings will affect the outcome of rebalancing
-								this.replicationChangeDebounceFn.add({
-									...diff,
-									matured: true,
-								}); // we need to call this here because the outcom of findLeaders will be different when some ranges become mature, i.e. some of data we own might be prunable!
-							}
+								if (rebalance && diff.range.mode !== ReplicationIntent.Strict) {
+									// TODO this statement (might) cause issues with triggering pruning if the segment is strict and maturity timings will affect the outcome of rebalancing
+									this.replicationChangeDebounceFn.add({
+										...diff,
+										matured: true,
+									}); // we need to call this here because the outcom of findLeaders will be different when some ranges become mature, i.e. some of data we own might be prunable!
+								}
 							pendingRanges.delete(diff.range.idString);
 							if (pendingRanges.size === 0) {
 								this.pendingMaturity.delete(diff.range.hash);
@@ -1379,27 +2067,38 @@ export class SharedLog<
 				}),
 			);
 
-			if (isNewReplicator) {
-				this.events.dispatchEvent(
-					new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
-						detail: { publicKey: from },
-					}),
-				);
+				if (isNewReplicator) {
+					if (!this._replicatorJoinEmitted.has(fromHash)) {
+						this._replicatorJoinEmitted.add(fromHash);
+						this.events.dispatchEvent(
+							new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
+								detail: { publicKey: from },
+							}),
+						);
+					}
 
-				if (isAllMature) {
-					this.events.dispatchEvent(
-						new CustomEvent<ReplicatorMatureEvent>("replicator:mature", {
-							detail: { publicKey: from },
+					if (isAllMature) {
+						this.events.dispatchEvent(
+							new CustomEvent<ReplicatorMatureEvent>("replicator:mature", {
+								detail: { publicKey: from },
 						}),
 					);
 				}
 			}
 
-			if (rebalance) {
-				for (const diff of diffs) {
-					this.replicationChangeDebounceFn.add(diff);
-				}
+			if (isStoppedReplicating && stoppedTransition) {
+				this.events.dispatchEvent(
+					new CustomEvent<ReplicatorLeaveEvent>("replicator:leave", {
+						detail: { publicKey: from },
+					}),
+				);
 			}
+
+				if (rebalance) {
+					for (const diff of diffs) {
+						this.replicationChangeDebounceFn.add(diff);
+					}
+				}
 
 			if (!from.equals(this.node.identity.publicKey)) {
 				this.rebalanceParticipationDebounced?.call();
@@ -1432,6 +2131,20 @@ export class SharedLog<
 		if (change) {
 			let addedOrReplaced = change.filter((x) => x.type !== "removed");
 			if (addedOrReplaced.length > 0) {
+				// Provider discovery keep-alive (best-effort). This enables bounded targeted fetches
+				// without relying on any global subscriber list.
+				try {
+					const fanoutService = (this.node.services as any).fanout;
+					if (fanoutService?.provide && !this._providerHandle) {
+						this._providerHandle = fanoutService.provide(`shared-log|${this.topic}`, {
+							ttlMs: 120_000,
+							announceIntervalMs: 60_000,
+						});
+					}
+				} catch {
+					// Best-effort only.
+				}
+
 				let message:
 					| AllReplicatingSegmentsMessage
 					| AddedReplicationSegmentMessage
@@ -1506,6 +2219,82 @@ export class SharedLog<
 		}
 	}
 
+	private clearCheckedPruneRetry(hash: string) {
+		const state = this._checkedPruneRetries.get(hash);
+		if (state?.timer) {
+			clearTimeout(state.timer);
+		}
+		this._checkedPruneRetries.delete(hash);
+	}
+
+	private scheduleCheckedPruneRetry(args: {
+		entry: EntryReplicated<R> | ShallowOrFullEntry<any>;
+		leaders: Map<string, unknown> | Set<string>;
+	}) {
+		if (this.closed) return;
+		if (this._pendingDeletes.has(args.entry.hash)) return;
+
+		const hash = args.entry.hash;
+		const state =
+			this._checkedPruneRetries.get(hash) ?? { attempts: 0 };
+
+		if (state.timer) return;
+		if (state.attempts >= CHECKED_PRUNE_RETRY_MAX_ATTEMPTS) {
+			// Avoid unbounded background retries; a new replication-change event can
+			// always re-enqueue pruning with fresh leader info.
+			return;
+		}
+
+		const attempt = state.attempts + 1;
+		const jitterMs = Math.floor(Math.random() * 250);
+		const delayMs = Math.min(
+			CHECKED_PRUNE_RETRY_MAX_DELAY_MS,
+			1_000 * 2 ** (attempt - 1) + jitterMs,
+		);
+
+		state.attempts = attempt;
+		state.timer = setTimeout(async () => {
+			const st = this._checkedPruneRetries.get(hash);
+			if (st) st.timer = undefined;
+			if (this.closed) return;
+			if (this._pendingDeletes.has(hash)) return;
+
+			let leadersMap: Map<string, any> | undefined;
+			try {
+				const replicas = decodeReplicas(args.entry).getValue(this);
+				leadersMap = await this.findLeadersFromEntry(args.entry, replicas, {
+					roleAge: 0,
+				});
+			} catch {
+				// Best-effort only.
+			}
+
+				if (!leadersMap || leadersMap.size === 0) {
+					if (args.leaders instanceof Map) {
+						leadersMap = args.leaders as any;
+					} else {
+						leadersMap = new Map<string, any>();
+						for (const k of args.leaders) {
+							leadersMap.set(k, { intersecting: true });
+						}
+					}
+				}
+
+				try {
+					const leadersForRetry = leadersMap ?? new Map<string, any>();
+					await this.pruneDebouncedFnAddIfNotKeeping({
+						key: hash,
+						// TODO types
+						value: { entry: args.entry as any, leaders: leadersForRetry },
+					});
+				} catch {
+					// Best-effort only; pruning will be re-attempted on future changes.
+				}
+		}, delayMs);
+		state.timer.unref?.();
+		this._checkedPruneRetries.set(hash, state);
+	}
+
 	async append(
 		data: T,
 		options?: SharedAppendOptions<T> | undefined,
@@ -1571,286 +2360,30 @@ export class SharedLog<
 		if (options?.target !== "none") {
 			const target = options?.target;
 			const deliveryArg = options?.delivery;
-			const delivery: DeliveryOptions | undefined =
-				deliveryArg === undefined || deliveryArg === false
-					? undefined
-					: deliveryArg === true
-						? {}
-						: deliveryArg;
+			const hasDelivery = !(deliveryArg === undefined || deliveryArg === false);
 
-			let requireRecipients = false;
-			let settleMin: number | undefined;
-			let guardDelivery:
-				| ((promise: Promise<void>) => Promise<void>)
-				| undefined = undefined;
-
-			let firstDeliveryPromise: Promise<void> | undefined;
-			let deliveryPromises: Promise<void>[] | undefined;
-			let addDeliveryPromise: ((promise: Promise<void>) => void) | undefined;
-
-			const leadersForDelivery =
-				delivery && (target === "replicators" || !target)
-					? new Set(leaders.keys())
-					: undefined;
-
-			if (delivery) {
-				const deliverySettle = delivery.settle ?? true;
-				const deliveryTimeout = delivery.timeout;
-				const deliverySignal = delivery.signal;
-				requireRecipients = delivery.requireRecipients === true;
-				settleMin =
-					typeof deliverySettle === "object" &&
-					Number.isFinite(deliverySettle.min)
-						? Math.max(0, Math.floor(deliverySettle.min))
-						: undefined;
-
-				guardDelivery =
-					deliveryTimeout == null && deliverySignal == null
-						? undefined
-						: (promise: Promise<void>) =>
-								new Promise<void>((resolve, reject) => {
-									let settled = false;
-									let timer: ReturnType<typeof setTimeout> | undefined =
-										undefined;
-									const onAbort = () => {
-										if (settled) {
-											return;
-										}
-										settled = true;
-										promise.catch(() => {});
-										cleanup();
-										reject(new AbortError());
-									};
-
-									const cleanup = () => {
-										if (timer != null) {
-											clearTimeout(timer);
-											timer = undefined;
-										}
-										deliverySignal?.removeEventListener("abort", onAbort);
-									};
-
-									if (deliverySignal) {
-										if (deliverySignal.aborted) {
-											onAbort();
-											return;
-										}
-										deliverySignal.addEventListener("abort", onAbort);
-									}
-
-									if (deliveryTimeout != null) {
-										timer = setTimeout(() => {
-											if (settled) {
-												return;
-											}
-											settled = true;
-											promise.catch(() => {});
-											cleanup();
-											reject(new TimeoutError(`Timeout waiting for delivery`));
-										}, deliveryTimeout);
-									}
-
-									promise
-										.then(() => {
-											if (settled) {
-												return;
-											}
-											settled = true;
-											cleanup();
-											resolve();
-										})
-										.catch((e) => {
-											if (settled) {
-												return;
-											}
-											settled = true;
-											cleanup();
-											reject(e);
-										});
-								});
-
-				addDeliveryPromise = (promise: Promise<void>) => {
-					if (!firstDeliveryPromise) {
-						firstDeliveryPromise = promise;
-						return;
-					}
-					if (!deliveryPromises) {
-						deliveryPromises = [firstDeliveryPromise, promise];
-						firstDeliveryPromise = undefined;
-						return;
-					}
-					deliveryPromises.push(promise);
-				};
+			if (target === "all" && hasDelivery) {
+				throw new Error(
+					`delivery options are not supported with target="all"; fanout broadcast is fire-and-forward`,
+				);
+			}
+			if (target === "all" && !this._fanoutChannel) {
+				throw new Error(
+					`No fanout channel configured for shared-log topic ${this.topic}`,
+				);
 			}
 
-			for await (const message of createExchangeHeadsMessages(this.log, [
-				result.entry,
-			])) {
-				if (target === "replicators" || !target) {
-					if (message.heads[0].gidRefrences.length > 0) {
-						for (const ref of message.heads[0].gidRefrences) {
-							const entryFromGid = this.log.entryIndex.getHeads(ref, false);
-							for (const entry of await entryFromGid.all()) {
-								let coordinates = await this.getCoordinates(entry);
-								if (coordinates == null) {
-									coordinates = await this.createCoordinates(
-										entry,
-										minReplicasValue,
-									);
-									// TODO are we every to come here?
-								}
-
-								const result = await this._findLeaders(coordinates);
-								for (const [k, v] of result) {
-									leaders.set(k, v);
-								}
-							}
-						}
-					}
-
-					const set = this.addPeersToGidPeerHistory(
-						result.entry.meta.gid,
-						leaders.keys(),
-					);
-					let hasRemotePeers = set.has(selfHash) ? set.size > 1 : set.size > 0;
-					if (!hasRemotePeers) {
-						if (requireRecipients) {
-							throw new NoPeersError(this.rpc.topic);
-						}
-						continue;
-					}
-
-					if (!delivery) {
-						this.rpc
-							.send(message, {
-								mode: isLeader
-									? new SilentDelivery({ redundancy: 1, to: set })
-									: new AcknowledgeDelivery({ redundancy: 1, to: set }),
-							})
-							.catch((e) => logger.error(e));
-						continue;
-					}
-
-					let expectedRemoteRecipientsCount = 0;
-					const ackTo: string[] = [];
-					let silentTo: string[] | undefined;
-					const ackLimit =
-						settleMin == null ? Number.POSITIVE_INFINITY : settleMin;
-
-					// Always settle towards the current expected replicators for this entry,
-					// not the entire gid peer history.
-					for (const peer of leadersForDelivery!) {
-						if (peer === selfHash) {
-							continue;
-						}
-						expectedRemoteRecipientsCount++;
-						if (ackTo.length < ackLimit) {
-							ackTo.push(peer);
-						} else {
-							silentTo ||= [];
-							silentTo.push(peer);
-						}
-					}
-
-					// Still deliver to known peers for the gid (best-effort), but don't let them
-					// satisfy the settle requirement.
-					for (const peer of set) {
-						if (peer === selfHash) {
-							continue;
-						}
-						if (leadersForDelivery!.has(peer)) {
-							continue;
-						}
-						silentTo ||= [];
-						silentTo.push(peer);
-					}
-
-					if (requireRecipients && expectedRemoteRecipientsCount === 0) {
-						throw new NoPeersError(this.rpc.topic);
-					}
-
-					if (
-						requireRecipients &&
-						ackTo.length + (silentTo?.length || 0) === 0
-					) {
-						throw new NoPeersError(this.rpc.topic);
-					}
-
-					if (ackTo.length > 0) {
-						const promise = this.rpc.send(message, {
-							mode: new AcknowledgeDelivery({
-								redundancy: 1,
-								to: ackTo,
-							}),
-						});
-						addDeliveryPromise!(
-							guardDelivery ? guardDelivery(promise) : promise,
-						);
-					}
-
-					if (silentTo?.length) {
-						this.rpc
-							.send(message, {
-								mode: new SilentDelivery({ redundancy: 1, to: silentTo }),
-							})
-							.catch((e) => logger.error(e));
-					}
-				} else {
-					if (!delivery) {
-						this.rpc.send(message).catch((e) => logger.error(e));
-						continue;
-					}
-
-					const subscribers = await this.node.services.pubsub.getSubscribers(
-						this.rpc.topic,
-					);
-
-					const ackTo: PublicSignKey[] = [];
-					let silentTo: PublicSignKey[] | undefined;
-					const ackLimit =
-						settleMin == null ? Number.POSITIVE_INFINITY : settleMin;
-					for (const subscriber of subscribers || []) {
-						if (subscriber.hashcode() === selfHash) {
-							continue;
-						}
-						if (ackTo.length < ackLimit) {
-							ackTo.push(subscriber);
-						} else {
-							silentTo ||= [];
-							silentTo.push(subscriber);
-						}
-					}
-
-					if (
-						requireRecipients &&
-						ackTo.length + (silentTo?.length || 0) === 0
-					) {
-						throw new NoPeersError(this.rpc.topic);
-					}
-
-					if (ackTo.length > 0) {
-						const promise = this.rpc.send(message, {
-							mode: new AcknowledgeDelivery({ redundancy: 1, to: ackTo }),
-						});
-						addDeliveryPromise!(
-							guardDelivery ? guardDelivery(promise) : promise,
-						);
-					}
-
-					if (silentTo?.length) {
-						this.rpc
-							.send(message, {
-								mode: new SilentDelivery({ redundancy: 1, to: silentTo }),
-							})
-							.catch((e) => logger.error(e));
-					}
-				}
-			}
-
-			if (deliveryPromises) {
-				await Promise.all(deliveryPromises);
-			} else if (firstDeliveryPromise) {
-				await firstDeliveryPromise;
+			if (target === "all") {
+				await this._appendDeliverToAllFanout(result.entry);
+			} else {
+				await this._appendDeliverToReplicators(
+					result.entry,
+					minReplicasValue,
+					leaders,
+					selfHash,
+					isLeader,
+					deliveryArg,
+				);
 			}
 		}
 
@@ -1891,14 +2424,18 @@ export class SharedLog<
 			this.domain.resolution,
 		);
 		this._respondToIHaveTimeout = options?.respondToIHaveTimeout ?? 2e4;
-		this._pendingDeletes = new Map();
-		this._pendingIHave = new Map();
-		this.latestReplicationInfoMessage = new Map();
-		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
-		this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
+			this._pendingDeletes = new Map();
+			this._pendingIHave = new Map();
+			this.latestReplicationInfoMessage = new Map();
+			this._replicationInfoBlockedPeers = new Set();
+			this._replicationInfoRequestByPeer = new Map();
+			this._replicationInfoApplyQueueByPeer = new Map();
+			this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
+			this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
 
-		this.uniqueReplicators = new Set();
-		this._replicatorsReconciled = false;
+			this.uniqueReplicators = new Set();
+			this._replicatorJoinEmitted = new Set();
+			this._replicatorsReconciled = false;
 
 		this.openTime = +new Date();
 		this.oldestOpenTime = this.openTime;
@@ -1935,6 +2472,13 @@ export class SharedLog<
 		}
 
 		this._closeController = new AbortController();
+		this._closeController.signal.addEventListener("abort", () => {
+			for (const [_peer, state] of this._replicationInfoRequestByPeer) {
+				if (state.timer) clearTimeout(state.timer);
+			}
+			this._replicationInfoRequestByPeer.clear();
+		});
+
 		this._isTrustedReplicator = options?.canReplicate;
 		this.keep = options?.keep;
 		this.pendingMaturity = new Map();
@@ -1942,19 +2486,56 @@ export class SharedLog<
 		const id = sha256Base64Sync(this.log.id);
 		const storage = await this.node.storage.sublevel(id);
 
-		const localBlocks = await new AnyBlockStore(
-			await storage.sublevel("blocks"),
-		);
+		const localBlocks = await new AnyBlockStore(await storage.sublevel("blocks"));
+		const fanoutService = (this.node.services as any).fanout as FanoutTree | undefined;
+		const blockProviderNamespace = (cid: string) => `cid:${cid}`;
 		this.remoteBlocks = new RemoteBlocks({
 			local: localBlocks,
-			publish: (message, options) =>
-				this.rpc.send(
-					new BlocksMessage(message),
-					(options as WithMode).mode instanceof AnyWhere ? undefined : options,
-				),
+			publish: (message, options) => this.rpc.send(new BlocksMessage(message), options),
 			waitFor: this.rpc.waitFor.bind(this.rpc),
 			publicKey: this.node.identity.publicKey,
 			eagerBlocks: options?.eagerBlocks ?? true,
+			resolveProviders: async (cid, opts) => {
+				// 1) tracker-backed provider directory (best-effort, bounded)
+				try {
+					const providers = await fanoutService?.queryProviders(
+						blockProviderNamespace(cid),
+						{
+							want: 8,
+							timeoutMs: 2_000,
+							queryTimeoutMs: 500,
+							bootstrapMaxPeers: 2,
+							signal: opts?.signal,
+						},
+					);
+					if (providers && providers.length > 0) return providers;
+				} catch {
+					// ignore discovery failures
+				}
+
+				// 2) fallback to currently connected RPC peers
+				const self = this.node.identity.publicKey.hashcode();
+				const out: string[] = [];
+				const peers = (this.rpc as any)?.peers;
+				for (const h of peers?.keys?.() ?? []) {
+					if (h === self) continue;
+					if (out.includes(h)) continue;
+					out.push(h);
+					if (out.length >= 32) break;
+				}
+				return out;
+			},
+			onPut: async (cid) => {
+				// Best-effort directory announce for "get without remote.from" workflows.
+				try {
+					await fanoutService?.announceProvider(blockProviderNamespace(cid), {
+						ttlMs: 120_000,
+						bootstrapMaxPeers: 2,
+					});
+				} catch {
+					// ignore announce failures
+				}
+			},
 		});
 
 		await this.remoteBlocks.start();
@@ -1981,9 +2562,10 @@ export class SharedLog<
 				],
 			})) > 0;
 
-		this._gidPeersHistory = new Map();
-		this._requestIPruneSent = new Map();
-		this._requestIPruneResponseReplicatorSet = new Map();
+			this._gidPeersHistory = new Map();
+			this._requestIPruneSent = new Map();
+			this._requestIPruneResponseReplicatorSet = new Map();
+			this._checkedPruneRetries = new Map();
 
 		this.replicationChangeDebounceFn = debounceAggregationChanges<
 			ReplicationRangeIndexable<R>
@@ -2068,6 +2650,87 @@ export class SharedLog<
 
 		await this.log.open(this.remoteBlocks, this.node.identity, {
 			keychain: this.node.services.keychain,
+			resolveRemotePeers: async (hash, options) => {
+				if (options?.signal?.aborted) return undefined;
+
+				const maxPeers = 8;
+				const self = this.node.identity.publicKey.hashcode();
+				const seed = hashToSeed32(hash);
+
+				// Best hint: peers that have recently confirmed having this entry hash.
+				const hinted = this._requestIPruneResponseReplicatorSet.get(hash);
+				if (hinted && hinted.size > 0) {
+					const peers = [...hinted].filter((p) => p !== self);
+					return peers.length > 0
+						? pickDeterministicSubset(peers, seed, maxPeers)
+						: undefined;
+				}
+
+				// Next: peers we already contacted about this hash (may still have it).
+				const contacted = this._requestIPruneSent.get(hash);
+				if (contacted && contacted.size > 0) {
+					const peers = [...contacted].filter((p) => p !== self);
+					return peers.length > 0
+						? pickDeterministicSubset(peers, seed, maxPeers)
+						: undefined;
+				}
+
+					let candidates: string[] | undefined;
+
+					// Prefer the replicator cache; fall back to subscribers if we have no other signal.
+					const replicatorCandidates = [...this.uniqueReplicators].filter(
+						(p) => p !== self,
+					);
+					if (replicatorCandidates.length > 0) {
+						candidates = replicatorCandidates;
+					} else {
+						try {
+							const subscribers = await this._getTopicSubscribers(this.topic);
+							const subscriberCandidates =
+								subscribers?.map((k) => k.hashcode()).filter((p) => p !== self) ??
+								[];
+							candidates =
+								subscriberCandidates.length > 0 ? subscriberCandidates : undefined;
+						} catch {
+							// Best-effort only.
+						}
+
+						if (!candidates || candidates.length === 0) {
+							// Last resort: peers we are already directly connected to. This avoids
+							// depending on global membership knowledge in early-join scenarios.
+							const peerMap = (this.node.services.pubsub as any)?.peers;
+							if (peerMap?.keys) {
+								candidates = [...peerMap.keys()];
+							}
+						}
+
+						if (!candidates || candidates.length === 0) {
+							// Even if the pubsub stream has no established peer streams yet, we may
+							// still have a libp2p connection to one or more peers (e.g. bootstrap).
+							const connectionManager = (this.node.services.pubsub as any)?.components
+								?.connectionManager;
+							const connections = connectionManager?.getConnections?.() ?? [];
+							const connectionHashes: string[] = [];
+							for (const conn of connections) {
+								const peerId = conn?.remotePeer;
+								if (!peerId) continue;
+								try {
+									connectionHashes.push(getPublicKeyFromPeerId(peerId).hashcode());
+								} catch {
+									// Best-effort only.
+								}
+							}
+							if (connectionHashes.length > 0) {
+								candidates = connectionHashes;
+							}
+						}
+					}
+
+					if (!candidates || candidates.length === 0) return undefined;
+					const peers = candidates.filter((p) => p !== self);
+					if (peers.length === 0) return undefined;
+					return pickDeterministicSubset(peers, seed, maxPeers);
+				},
 			...this._logProperties,
 			onChange: async (change) => {
 				await this.onChange(change);
@@ -2148,6 +2811,7 @@ export class SharedLog<
 		);
 
 		await this.rpc.subscribe();
+		await this._openFanoutChannel(options?.fanout);
 
 		// mark all our replicaiton ranges as "new", this would allow other peers to understand that we recently reopend our database and might need some sync and warmup
 		await this.updateTimestampOfOwnedReplicationRanges(); // TODO do we need to do this before subscribing?
@@ -2234,17 +2898,15 @@ export class SharedLog<
 		await this.rebalanceParticipation();
 
 		// Take into account existing subscription
-		(await this.node.services.pubsub.getSubscribers(this.topic))?.forEach(
-			(v, k) => {
-				if (v.equals(this.node.identity.publicKey)) {
-					return;
-				}
-				if (this.closed) {
-					return;
-				}
-				this.handleSubscriptionChange(v, [this.topic], true);
-			},
-		);
+		(await this._getTopicSubscribers(this.topic))?.forEach((v) => {
+			if (v.equals(this.node.identity.publicKey)) {
+				return;
+			}
+			if (this.closed) {
+				return;
+			}
+			this.handleSubscriptionChange(v, [this.topic], true);
+		});
 	}
 
 	async reset() {
@@ -2278,7 +2940,7 @@ export class SharedLog<
 						})
 							.then(async () => {
 								// is reachable, announce change events
-								const key = await this.node.services.pubsub.getPublicKey(
+								const key = await this._resolvePublicKeyFromHash(
 									segment.value.hash,
 								);
 								if (!key) {
@@ -2288,22 +2950,26 @@ export class SharedLog<
 									);
 								}
 
-								this.uniqueReplicators.add(key.hashcode());
+									const keyHash = key.hashcode();
+									this.uniqueReplicators.add(keyHash);
 
-								this.events.dispatchEvent(
-									new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
-										detail: { publicKey: key },
-									}),
-								);
-								this.events.dispatchEvent(
-									new CustomEvent<ReplicationChangeEvent>(
-										"replication:change",
-										{
-											detail: { publicKey: key },
-										},
-									),
-								);
-							})
+									if (!this._replicatorJoinEmitted.has(keyHash)) {
+										this._replicatorJoinEmitted.add(keyHash);
+										this.events.dispatchEvent(
+											new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
+												detail: { publicKey: key },
+											}),
+										);
+										this.events.dispatchEvent(
+											new CustomEvent<ReplicationChangeEvent>(
+												"replication:change",
+												{
+													detail: { publicKey: key },
+												},
+											),
+										);
+									}
+								})
 							.catch(async (e) => {
 								if (isNotStartedError(e)) {
 									return; // TODO test this path
@@ -2435,48 +3101,59 @@ export class SharedLog<
 				numbers: this.indexableDomain.numbers,
 			});
 
-			// Check abort signal before building result
-			if (options?.signal?.aborted) {
-				return [];
-			}
+				// Check abort signal before building result
+				if (options?.signal?.aborted) {
+					return [];
+				}
 
-			// add all in flight
-			for (const [key, _] of this.syncronizer.syncInFlight) {
-				set.add(key);
-			}
+				// add all in flight
+				for (const [key, _] of this.syncronizer.syncInFlight) {
+					set.add(key);
+				}
 
-			if (options?.reachableOnly) {
-				// Prefer the live pubsub subscriber set when filtering reachability.
-				// `uniqueReplicators` is primarily driven by replication messages and can lag during
-				// joins/restarts; using subscribers prevents excluding peers that are reachable but
-				// whose replication ranges were loaded from disk or haven't been processed yet.
-				const subscribers =
-					(await this.node.services.pubsub.getSubscribers(this.topic)) ??
-					undefined;
-				const subscriberHashcodes = subscribers
-					? new Set(subscribers.map((key) => key.hashcode()))
+				const selfHash = this.node.identity.publicKey.hashcode();
+
+				if (options?.reachableOnly) {
+					const directPeers: Map<string, unknown> | undefined = (this.node.services
+						.pubsub as any)?.peers;
+
+					// Prefer the live pubsub subscriber set when filtering reachability. In some
+					// flows peers can be reachable/active even before (or without) subscriber
+					// state converging, so also consider direct pubsub peers.
+					const subscribers =
+						(await this._getTopicSubscribers(this.topic)) ?? undefined;
+					const subscriberHashcodes = subscribers
+						? new Set(subscribers.map((key) => key.hashcode()))
 					: undefined;
 
+				// If reachability is requested but we have no basis for filtering yet
+				// (subscriber snapshot hasn't converged), return the full cover set.
+				// Otherwise, only keep peers we can currently reach.
+				const canFilter =
+					directPeers != null ||
+					(subscriberHashcodes && subscriberHashcodes.size > 0);
+				if (!canFilter) {
+					return [...set];
+				}
+
 				const reachable: string[] = [];
-				const selfHash = this.node.identity.publicKey.hashcode();
 				for (const peer of set) {
 					if (peer === selfHash) {
 						reachable.push(peer);
 						continue;
 					}
 					if (
-						subscriberHashcodes
-							? subscriberHashcodes.has(peer)
-							: this.uniqueReplicators.has(peer)
+						(subscriberHashcodes && subscriberHashcodes.has(peer)) ||
+						(directPeers && directPeers.has(peer))
 					) {
 						reachable.push(peer);
 					}
 				}
 				return reachable;
-			}
+				}
 
-			return [...set];
-		} catch (error) {
+				return [...set];
+			} catch (error) {
 			// Handle race conditions where the index gets closed during the operation
 			if (isNotStartedError(error as Error)) {
 				return [];
@@ -2497,6 +3174,13 @@ export class SharedLog<
 		this.pendingMaturity.clear();
 
 		this.distributeQueue?.clear();
+		this._closeFanoutChannel();
+		try {
+			this._providerHandle?.close();
+		} catch {
+			// ignore
+		}
+		this._providerHandle = undefined;
 		this.coordinateToHash.clear();
 		this.recentlyRebalanced.clear();
 		this.uniqueReplicators.clear();
@@ -2518,28 +3202,87 @@ export class SharedLog<
 			v.clear();
 			v.promise.resolve(); // TODO or reject?
 		}
-		for (const [_k, v] of this._pendingIHave) {
-			v.clear();
-		}
+			for (const [_k, v] of this._pendingIHave) {
+				v.clear();
+			}
+			for (const [_k, v] of this._checkedPruneRetries) {
+				if (v.timer) clearTimeout(v.timer);
+			}
 
 		await this.remoteBlocks.stop();
-		this._pendingDeletes.clear();
-		this._pendingIHave.clear();
-		this.latestReplicationInfoMessage.clear();
-		this._gidPeersHistory.clear();
-		this._requestIPruneSent.clear();
-		this._requestIPruneResponseReplicatorSet.clear();
-		this.pruneDebouncedFn = undefined as any;
-		this.rebalanceParticipationDebounced = undefined;
-		this._replicationRangeIndex.stop();
-		this._entryCoordinatesIndex.stop();
+			this._pendingDeletes.clear();
+			this._pendingIHave.clear();
+			this._checkedPruneRetries.clear();
+			this.latestReplicationInfoMessage.clear();
+			this._gidPeersHistory.clear();
+				this._requestIPruneSent.clear();
+				this._requestIPruneResponseReplicatorSet.clear();
+			// Cancel any pending debounced timers so they can't fire after we've torn down
+			// indexes/RPC state.
+			this.rebalanceParticipationDebounced?.close();
+			this.replicationChangeDebounceFn?.close?.();
+			this.pruneDebouncedFn?.close?.();
+			this.responseToPruneDebouncedFn?.close?.();
+			this.pruneDebouncedFn = undefined as any;
+			this.rebalanceParticipationDebounced = undefined;
+			this._replicationRangeIndex.stop();
+			this._entryCoordinatesIndex.stop();
 		this._replicationRangeIndex = undefined as any;
 		this._entryCoordinatesIndex = undefined as any;
 
 		this.cpuUsage?.stop?.();
 		/* this._totalParticipation = 0; */
 	}
-	async close(from?: Program): Promise<boolean> {
+			async close(from?: Program): Promise<boolean> {
+				// Best-effort: announce that we are going offline before tearing down
+				// RPC/subscription state.
+			//
+				// Important: do not delete our local replication ranges here. Keeping them
+				// allows `replicate: { type: "resume" }` to restore the previous role on
+				// restart. Explicit `unreplicate()` still clears local state.
+				try {
+					if (!this.closed) {
+						// Prevent any late debounced timers (rebalance/prune) from publishing
+						// replication info after we announce "segments: []". These races can leave
+						// stale segments on remotes after rapid open/close cycles.
+						this._isReplicating = false;
+						this._isAdaptiveReplicating = false;
+						this.rebalanceParticipationDebounced?.close();
+						this.replicationChangeDebounceFn?.close?.();
+						this.pruneDebouncedFn?.close?.();
+						this.responseToPruneDebouncedFn?.close?.();
+
+						// Ensure the "I'm leaving" replication reset is actually published before
+						// the RPC child program closes and unsubscribes from its topic. If we fire
+						// and forget here, the publish can race with `super.close()` and get dropped,
+						// leaving stale replication segments on remotes (flaky join/leave tests).
+						// Also ensure close is bounded even when shard overlays are mid-reconcile.
+						const abort = new AbortController();
+						const abortTimer = setTimeout(() => {
+							try {
+								abort.abort(
+									new TimeoutError(
+										"shared-log close replication reset timed out",
+									),
+								);
+							} catch {
+								abort.abort();
+							}
+						}, 2_000);
+						try {
+							await this.rpc
+								.send(new AllReplicatingSegmentsMessage({ segments: [] }), {
+									priority: 1,
+									signal: abort.signal,
+								})
+								.catch(() => {});
+						} finally {
+							clearTimeout(abortTimer);
+						}
+					}
+				} catch {
+					// ignore: close should be resilient even if we were never fully started
+				}
 		const superClosed = await super.close(from);
 		if (!superClosed) {
 			return superClosed;
@@ -2549,12 +3292,50 @@ export class SharedLog<
 		return true;
 	}
 
-	async drop(from?: Program): Promise<boolean> {
-		const superDropped = await super.drop(from);
-		if (!superDropped) {
-			return superDropped;
-		}
-		await this._entryCoordinatesIndex.drop();
+		async drop(from?: Program): Promise<boolean> {
+			// Best-effort: announce that we are going offline before tearing down
+			// RPC/subscription state (same reasoning as in `close()`).
+			try {
+				if (!this.closed) {
+					this._isReplicating = false;
+					this._isAdaptiveReplicating = false;
+					this.rebalanceParticipationDebounced?.close();
+					this.replicationChangeDebounceFn?.close?.();
+					this.pruneDebouncedFn?.close?.();
+					this.responseToPruneDebouncedFn?.close?.();
+
+					const abort = new AbortController();
+					const abortTimer = setTimeout(() => {
+						try {
+							abort.abort(
+								new TimeoutError(
+									"shared-log drop replication reset timed out",
+								),
+							);
+						} catch {
+							abort.abort();
+						}
+					}, 2_000);
+					try {
+						await this.rpc
+							.send(new AllReplicatingSegmentsMessage({ segments: [] }), {
+								priority: 1,
+								signal: abort.signal,
+							})
+							.catch(() => {});
+					} finally {
+						clearTimeout(abortTimer);
+					}
+				}
+			} catch {
+				// ignore: drop should be resilient even if we were never fully started
+			}
+
+			const superDropped = await super.drop(from);
+			if (!superDropped) {
+				return superDropped;
+			}
+			await this._entryCoordinatesIndex.drop();
 		await this._replicationRangeIndex.drop();
 		await this.log.drop();
 		await this._close();
@@ -2921,20 +3702,20 @@ export class SharedLog<
 					return;
 				}
 
-				const segments = (await this.getMyReplicationSegments()).map((x) =>
-					x.toReplicationRange(),
-				);
+					const segments = (await this.getMyReplicationSegments()).map((x) =>
+						x.toReplicationRange(),
+					);
 
-				this.rpc
-					.send(new AllReplicatingSegmentsMessage({ segments }), {
-						mode: new SeekDelivery({ to: [context.from], redundancy: 1 }),
-					})
-					.catch((e) => logger.error(e.toString()));
+					this.rpc
+						.send(new AllReplicatingSegmentsMessage({ segments }), {
+							mode: new AcknowledgeDelivery({ to: [context.from], redundancy: 1 }),
+						})
+						.catch((e) => logger.error(e.toString()));
 
-				// for backwards compatibility (v8) remove this when we are sure that all nodes are v9+
-				if (this.v8Behaviour) {
-					const role = this.getRole();
-					if (role instanceof Replicator) {
+					// for backwards compatibility (v8) remove this when we are sure that all nodes are v9+
+					if (this.v8Behaviour) {
+						const role = this.getRole();
+						if (role instanceof Replicator) {
 						const fixedSettings = !this._isAdaptiveReplicating;
 						if (fixedSettings) {
 							await this.rpc.send(
@@ -2959,71 +3740,91 @@ export class SharedLog<
 					return;
 				}
 
-				const replicationInfoMessage = msg as
-					| AllReplicatingSegmentsMessage
-					| AddedReplicationSegmentMessage;
+					const replicationInfoMessage = msg as
+						| AllReplicatingSegmentsMessage
+						| AddedReplicationSegmentMessage;
 
-				// Process replication updates even if the sender isn't yet considered "ready" by
-				// `Program.waitFor()`. Dropping these messages can lead to missing replicator info
-				// (and downstream `waitForReplicator()` timeouts) under timing-sensitive joins.
-				const from = context.from!;
-				const messageTimestamp = context.message.header.timestamp;
-				(async () => {
-					const prev = this.latestReplicationInfoMessage.get(from.hashcode());
-					if (prev && prev > messageTimestamp) {
+					// Process replication updates even if the sender isn't yet considered "ready" by
+					// `Program.waitFor()`. Dropping these messages can lead to missing replicator info
+					// (and downstream `waitForReplicator()` timeouts) under timing-sensitive joins.
+					const from = context.from!;
+					const fromHash = from.hashcode();
+					if (this._replicationInfoBlockedPeers.has(fromHash)) {
 						return;
 					}
+					const messageTimestamp = context.message.header.timestamp;
+					await this.withReplicationInfoApplyQueue(fromHash, async () => {
+						try {
+							// The peer may have unsubscribed after this message was queued.
+							if (this._replicationInfoBlockedPeers.has(fromHash)) {
+								return;
+							}
 
-					this.latestReplicationInfoMessage.set(
-						from.hashcode(),
-						messageTimestamp,
-					);
+							// Process in-order to avoid races where repeated reset messages arrive
+							// concurrently and trigger spurious "added" diffs / rebalancing.
+							const prev = this.latestReplicationInfoMessage.get(fromHash);
+							if (prev && prev > messageTimestamp) {
+								return;
+							}
 
-					if (this.closed) {
-						return;
-					}
+							this.latestReplicationInfoMessage.set(fromHash, messageTimestamp);
 
-					const reset = msg instanceof AllReplicatingSegmentsMessage;
-					await this.addReplicationRange(
-						replicationInfoMessage.segments.map((x) =>
-							x.toReplicationRangeIndexable(from),
-						),
-						from,
-						{
-							reset,
-							checkDuplicates: true,
-							timestamp: Number(messageTimestamp),
-						},
-					);
-				})().catch((e) => {
-					if (isNotStartedError(e)) {
-						return;
-					}
-					logger.error(
-						`Failed to apply replication settings from '${from.hashcode()}': ${
-							e?.message ?? e
-						}`,
-					);
-				});
-			} else if (msg instanceof StoppedReplicating) {
-				if (context.from.equals(this.node.identity.publicKey)) {
-					return;
-				}
+							if (this.closed) {
+								return;
+							}
 
-				const rangesToRemove = await this.resolveReplicationRangesFromIdsAndKey(
-					msg.segmentIds,
-					context.from,
+						const reset = msg instanceof AllReplicatingSegmentsMessage;
+						await this.addReplicationRange(
+							replicationInfoMessage.segments.map((x) =>
+								x.toReplicationRangeIndexable(from),
+							),
+							from,
+							{
+								reset,
+								checkDuplicates: true,
+								timestamp: Number(messageTimestamp),
+							},
+						);
+
+							// If the peer reports any replication segments, stop re-requesting.
+							// (Empty reports can be transient during startup.)
+							if (replicationInfoMessage.segments.length > 0) {
+								this.cancelReplicationInfoRequests(fromHash);
+							}
+						} catch (e) {
+							if (isNotStartedError(e as Error)) {
+								return;
+							}
+							logger.error(
+								`Failed to apply replication settings from '${fromHash}': ${
+									(e as any)?.message ?? e
+								}`,
+							);
+						}
+					});
+					} else if (msg instanceof StoppedReplicating) {
+						if (context.from.equals(this.node.identity.publicKey)) {
+							return;
+						}
+						const fromHash = context.from.hashcode();
+						if (this._replicationInfoBlockedPeers.has(fromHash)) {
+							return;
+						}
+
+						const rangesToRemove = await this.resolveReplicationRangesFromIdsAndKey(
+							msg.segmentIds,
+							context.from,
 				);
 
-				await this.removeReplicationRanges(rangesToRemove, context.from);
-				const timestamp = BigInt(+new Date());
-				for (const range of rangesToRemove) {
-					this.replicationChangeDebounceFn.add({
-						range,
-						type: "removed",
-						timestamp,
-					});
-				}
+					await this.removeReplicationRanges(rangesToRemove, context.from);
+					const timestamp = BigInt(+new Date());
+					for (const range of rangesToRemove) {
+						this.replicationChangeDebounceFn.add({
+							range,
+							type: "removed",
+							timestamp,
+						});
+					}
 			} else {
 				throw new Error("Unexpected message");
 			}
@@ -3325,10 +4126,10 @@ export class SharedLog<
 		}
 	}
 
-	async waitForReplicator(
-		key: PublicSignKey,
-		options?: {
-			signal?: AbortSignal;
+		async waitForReplicator(
+			key: PublicSignKey,
+			options?: {
+				signal?: AbortSignal;
 			eager?: boolean;
 			roleAge?: number;
 			timeout?: number;
@@ -3340,9 +4141,9 @@ export class SharedLog<
 			? undefined
 			: (options?.roleAge ?? (await this.getDefaultMinRoleAge()));
 
-		let settled = false;
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		let requestTimer: ReturnType<typeof setTimeout> | undefined;
+			let settled = false;
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			let requestTimer: ReturnType<typeof setTimeout> | undefined;
 
 		const clear = () => {
 			this.events.removeEventListener("replicator:mature", check);
@@ -3358,14 +4159,19 @@ export class SharedLog<
 			}
 		};
 
-		const resolve = () => {
-			if (settled) {
-				return;
-			}
-			settled = true;
-			clear();
-			deferred.resolve();
-		};
+			const resolve = async () => {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				clear();
+				// `waitForReplicator()` is typically used as a precondition before join/replicate
+				// flows. A replicator can become mature and enqueue a debounced rebalance
+				// (`replicationChangeDebounceFn`) slightly later. Flush here so callers don't
+				// observe a "late" rebalance after the wait resolves.
+				await this.replicationChangeDebounceFn?.flush?.();
+				deferred.resolve();
+			};
 
 		const reject = (error: Error) => {
 			if (settled) {
@@ -3409,13 +4215,14 @@ export class SharedLog<
 
 			this.rpc
 				.send(new RequestReplicationInfoMessage(), {
-					mode: new SeekDelivery({ redundancy: 1, to: [key] }),
+					mode: new AcknowledgeDelivery({ redundancy: 1, to: [key] }),
 				})
 				.catch((e) => {
 					// Best-effort: missing peers / unopened RPC should not fail the wait logic.
 					if (isNotStartedError(e as Error)) {
 						return;
 					}
+					logger.error(e?.toString?.() ?? String(e));
 				});
 
 			if (requestAttempts < maxRequestAttempts) {
@@ -3423,29 +4230,29 @@ export class SharedLog<
 			}
 		};
 
-		const check = async () => {
-			const iterator = this.replicationIndex?.iterate(
-				{ query: new StringMatch({ key: "hash", value: key.hashcode() }) },
-				{ reference: true },
-			);
-			try {
-				const rects = await iterator?.next(1);
-				const rect = rects?.[0]?.value;
-				if (!rect) {
-					return;
-				}
-				if (!options?.eager && resolvedRoleAge != null) {
-					if (!isMatured(rect, +new Date(), resolvedRoleAge)) {
+			const check = async () => {
+				const iterator = this.replicationIndex?.iterate(
+					{ query: new StringMatch({ key: "hash", value: key.hashcode() }) },
+					{ reference: true },
+				);
+				try {
+					const rects = await iterator?.next(1);
+					const rect = rects?.[0]?.value;
+					if (!rect) {
 						return;
 					}
+					if (!options?.eager && resolvedRoleAge != null) {
+						if (!isMatured(rect, +new Date(), resolvedRoleAge)) {
+							return;
+						}
+					}
+					await resolve();
+				} catch (error) {
+					reject(error instanceof Error ? error : new Error(String(error)));
+				} finally {
+					await iterator?.close();
 				}
-				resolve();
-			} catch (error) {
-				reject(error instanceof Error ? error : new Error(String(error)));
-			} finally {
-				await iterator?.close();
-			}
-		};
+			};
 
 		requestReplicationInfo();
 		check();
@@ -3462,15 +4269,6 @@ export class SharedLog<
 		coverageThreshold?: number;
 		waitForNewPeers?: boolean;
 	}) {
-		// if no remotes, just return
-		const subscribers = await this.node.services.pubsub.getSubscribers(
-			this.rpc.topic,
-		);
-		let waitForNewPeers = options?.waitForNewPeers;
-		if (!waitForNewPeers && (subscribers?.length ?? 0) === 0) {
-			throw new NoPeersError(this.rpc.topic);
-		}
-
 		let coverageThreshold = options?.coverageThreshold ?? 1;
 		let deferred = pDefer<void>();
 		let settled = false;
@@ -3735,9 +4533,7 @@ export class SharedLog<
 		let subscribers = 1;
 		if (!this.rpc.closed) {
 			try {
-				subscribers =
-					(await this.node.services.pubsub.getSubscribers(this.rpc.topic))
-						?.length ?? 1;
+				subscribers = (await this._getTopicSubscribers(this.rpc.topic))?.length ?? 1;
 			} catch {
 				// Best-effort only; fall back to 1.
 			}
@@ -3852,22 +4648,29 @@ export class SharedLog<
 		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge()); // TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
 		const selfHash = this.node.identity.publicKey.hashcode();
 
-		// Use `uniqueReplicators` (replicator cache) once we've reconciled it against the
-		// persisted replication index. Until then, fall back to live pubsub subscribers
-		// and avoid relying on `uniqueReplicators` being complete.
+		// Prefer `uniqueReplicators` (replicator cache) as soon as it has any data.
+		// Falling back to live pubsub subscribers can include non-replicators and can
+		// break delivery/availability when writers are not directly connected.
 		let peerFilter: Set<string> | undefined = undefined;
-		if (this._replicatorsReconciled && this.uniqueReplicators.size > 0) {
-			peerFilter = this.uniqueReplicators.has(selfHash)
-				? this.uniqueReplicators
-				: new Set([...this.uniqueReplicators, selfHash]);
+		const selfReplicating = await this.isReplicating();
+		if (this.uniqueReplicators.size > 0) {
+			peerFilter = new Set(this.uniqueReplicators);
+			if (selfReplicating) {
+				peerFilter.add(selfHash);
+			} else {
+				peerFilter.delete(selfHash);
+			}
 		} else {
 			try {
 				const subscribers =
-					(await this.node.services.pubsub.getSubscribers(this.topic)) ??
-					undefined;
+					(await this._getTopicSubscribers(this.topic)) ?? undefined;
 				if (subscribers && subscribers.length > 0) {
 					peerFilter = new Set(subscribers.map((key) => key.hashcode()));
-					peerFilter.add(selfHash);
+					if (selfReplicating) {
+						peerFilter.add(selfHash);
+					} else {
+						peerFilter.delete(selfHash);
+					}
 				}
 			} catch {
 				// Best-effort only; if pubsub isn't ready, do a full scan.
@@ -3913,76 +4716,160 @@ export class SharedLog<
 		);
 	}
 
-	async handleSubscriptionChange(
-		publicKey: PublicSignKey,
-		topics: string[],
-		subscribed: boolean,
-	) {
-		if (!topics.includes(this.topic)) {
+	private withReplicationInfoApplyQueue(
+		peerHash: string,
+		fn: () => Promise<void>,
+	): Promise<void> {
+		const prev = this._replicationInfoApplyQueueByPeer.get(peerHash);
+		const next = (prev ?? Promise.resolve())
+			.catch(() => {
+				// Avoid stuck queues if a previous apply failed.
+			})
+			.then(fn);
+		this._replicationInfoApplyQueueByPeer.set(peerHash, next);
+		return next.finally(() => {
+			if (this._replicationInfoApplyQueueByPeer.get(peerHash) === next) {
+				this._replicationInfoApplyQueueByPeer.delete(peerHash);
+			}
+		});
+	}
+
+	private cancelReplicationInfoRequests(peerHash: string) {
+		const state = this._replicationInfoRequestByPeer.get(peerHash);
+		if (!state) return;
+		if (state.timer) {
+			clearTimeout(state.timer);
+		}
+		this._replicationInfoRequestByPeer.delete(peerHash);
+	}
+
+	private scheduleReplicationInfoRequests(peer: PublicSignKey) {
+		const peerHash = peer.hashcode();
+		if (this._replicationInfoRequestByPeer.has(peerHash)) {
 			return;
 		}
 
-		if (!subscribed) {
-			this.removePeerFromGidPeerHistory(publicKey.hashcode());
+		const state: { attempts: number; timer?: ReturnType<typeof setTimeout> } = {
+			attempts: 0,
+		};
+		this._replicationInfoRequestByPeer.set(peerHash, state);
 
-			for (const [k, v] of this._requestIPruneSent) {
-				v.delete(publicKey.hashcode());
-				if (v.size === 0) {
-					this._requestIPruneSent.delete(k);
-				}
+		const intervalMs = Math.max(50, this.waitForReplicatorRequestIntervalMs);
+		const maxAttempts = Math.min(
+			5,
+			this.waitForReplicatorRequestMaxAttempts ??
+				WAIT_FOR_REPLICATOR_REQUEST_MIN_ATTEMPTS,
+		);
+
+		const tick = () => {
+			if (this.closed || this._closeController.signal.aborted) {
+				this.cancelReplicationInfoRequests(peerHash);
+				return;
 			}
 
-			for (const [k, v] of this._requestIPruneResponseReplicatorSet) {
-				v.delete(publicKey.hashcode());
-				if (v.size === 0) {
-					this._requestIPruneResponseReplicatorSet.delete(k);
-				}
-			}
+			state.attempts++;
 
-			this.syncronizer.onPeerDisconnected(publicKey);
-
-			(await this.replicationIndex.count({
-				query: { hash: publicKey.hashcode() },
-			})) > 0 &&
-				this.events.dispatchEvent(
-					new CustomEvent<ReplicatorLeaveEvent>("replicator:leave", {
-						detail: { publicKey },
-					}),
-				);
-		}
-
-		if (subscribed) {
-			const replicationSegments = await this.getMyReplicationSegments();
-			if (replicationSegments.length > 0) {
-				this.rpc
-					.send(
-						new AllReplicatingSegmentsMessage({
-							segments: replicationSegments.map((x) => x.toReplicationRange()),
-						}),
-						{
-							mode: new SeekDelivery({ redundancy: 1, to: [publicKey] }),
-						},
-					)
-					.catch((e) => logger.error(e.toString()));
-
-				if (this.v8Behaviour) {
-					// for backwards compatibility
-					this.rpc
-						.send(new ResponseRoleMessage({ role: await this.getRole() }), {
-							mode: new SeekDelivery({ redundancy: 1, to: [publicKey] }),
-						})
-						.catch((e) => logger.error(e.toString()));
-				}
-			}
-
-			// Request the remote peer's replication info. This makes joins resilient to
-			// timing-sensitive delivery/order issues where we may miss their initial
-			// replication announcement.
 			this.rpc
 				.send(new RequestReplicationInfoMessage(), {
-					mode: new SeekDelivery({ redundancy: 1, to: [publicKey] }),
+					mode: new AcknowledgeDelivery({ redundancy: 1, to: [peer] }),
 				})
-				.catch((e) => logger.error(e.toString()));
+				.catch((e) => {
+					// Best-effort: missing peers / unopened RPC should not fail join flows.
+					if (isNotStartedError(e as Error)) {
+						return;
+					}
+					logger.error(e?.toString?.() ?? String(e));
+				});
+
+			if (state.attempts >= maxAttempts) {
+				this.cancelReplicationInfoRequests(peerHash);
+				return;
+			}
+
+			state.timer = setTimeout(tick, intervalMs);
+			state.timer.unref?.();
+		};
+
+		tick();
+	}
+
+		async handleSubscriptionChange(
+			publicKey: PublicSignKey,
+			topics: string[],
+			subscribed: boolean,
+		) {
+			if (!topics.includes(this.topic)) {
+				return;
+			}
+
+			const peerHash = publicKey.hashcode();
+			if (subscribed) {
+				this._replicationInfoBlockedPeers.delete(peerHash);
+			} else {
+				this._replicationInfoBlockedPeers.add(peerHash);
+			}
+
+			if (!subscribed) {
+				// Emit replicator:leave at most once per (join -> leave) transition, even if we
+				// concurrently process unsubscribe + replication reset messages for the same peer.
+				const stoppedTransition = this.uniqueReplicators.delete(peerHash);
+				this._replicatorJoinEmitted.delete(peerHash);
+
+				this.cancelReplicationInfoRequests(peerHash);
+				this.removePeerFromGidPeerHistory(peerHash);
+
+				for (const [k, v] of this._requestIPruneSent) {
+					v.delete(peerHash);
+					if (v.size === 0) {
+						this._requestIPruneSent.delete(k);
+					}
+				}
+
+				for (const [k, v] of this._requestIPruneResponseReplicatorSet) {
+					v.delete(peerHash);
+					if (v.size === 0) {
+						this._requestIPruneResponseReplicatorSet.delete(k);
+					}
+				}
+
+				this.syncronizer.onPeerDisconnected(publicKey);
+
+				stoppedTransition &&
+					this.events.dispatchEvent(
+						new CustomEvent<ReplicatorLeaveEvent>("replicator:leave", {
+							detail: { publicKey },
+						}),
+					);
+			}
+
+			if (subscribed) {
+				const replicationSegments = await this.getMyReplicationSegments();
+				if (replicationSegments.length > 0) {
+					this.rpc
+						.send(
+							new AllReplicatingSegmentsMessage({
+								segments: replicationSegments.map((x) => x.toReplicationRange()),
+							}),
+							{
+								mode: new AcknowledgeDelivery({ redundancy: 1, to: [publicKey] }),
+							},
+						)
+						.catch((e) => logger.error(e.toString()));
+
+					if (this.v8Behaviour) {
+						// for backwards compatibility
+						this.rpc
+							.send(new ResponseRoleMessage({ role: await this.getRole() }), {
+								mode: new AcknowledgeDelivery({ redundancy: 1, to: [publicKey] }),
+							})
+							.catch((e) => logger.error(e.toString()));
+					}
+				}
+
+				// Request the remote peer's replication info. This makes joins resilient to
+				// timing-sensitive delivery/order issues where we may miss their initial
+			// replication announcement.
+			this.scheduleReplicationInfoRequests(publicKey);
 		} else {
 			await this.removeReplicator(publicKey);
 		}
@@ -4025,8 +4912,8 @@ export class SharedLog<
 				leaders: Map<string, unknown> | Set<string>;
 			}
 		>,
-		options?: { timeout?: number; unchecked?: boolean },
-	): Promise<any>[] {
+			options?: { timeout?: number; unchecked?: boolean },
+		): Promise<any>[] {
 		if (options?.unchecked) {
 			return [...entries.values()].map((x) => {
 				this._gidPeersHistory.delete(x.entry.meta.gid);
@@ -4051,30 +4938,57 @@ export class SharedLog<
 		// - An entry is joined, where min replicas is lower than before (for all heads for this particular gid) and therefore we are not replicating anymore for this particular gid
 		// - Peers join and leave, which means we might not be a replicator anymore
 
-		const promises: Promise<any>[] = [];
+			const promises: Promise<any>[] = [];
 
-		let peerToEntries: Map<string, string[]> = new Map();
-		let cleanupTimer: ReturnType<typeof setTimeout>[] = [];
+			let peerToEntries: Map<string, string[]> = new Map();
+			let cleanupTimer: ReturnType<typeof setTimeout>[] = [];
+			const explicitTimeout = options?.timeout != null;
 
-		for (const { entry, leaders } of entries.values()) {
-			for (const leader of leaders.keys()) {
-				let set = peerToEntries.get(leader);
-				if (!set) {
-					set = [];
-					peerToEntries.set(leader, set);
+			for (const { entry, leaders } of entries.values()) {
+				for (const leader of leaders.keys()) {
+					let set = peerToEntries.get(leader);
+					if (!set) {
+						set = [];
+						peerToEntries.set(leader, set);
+					}
+
+					set.push(entry.hash);
 				}
 
-				set.push(entry.hash);
-			}
+				const pendingPrev = this._pendingDeletes.get(entry.hash);
+				if (pendingPrev) {
+					// If a background prune is already in-flight, an explicit prune request should
+					// still respect the caller's timeout. Otherwise, tests (and user calls) can
+					// block on the longer "checked prune" timeout derived from
+					// `_respondToIHaveTimeout + waitForReplicatorTimeout`, which is intentionally
+					// large for resiliency.
+					if (explicitTimeout) {
+						const timeoutMs = Math.max(0, Math.floor(options?.timeout ?? 0));
+						promises.push(
+							new Promise((resolve, reject) => {
+								// Mirror the checked-prune error prefix so existing callers/tests can
+								// match on the message substring.
+								const timer = setTimeout(() => {
+									reject(
+										new Error(
+											`Timeout for checked pruning after ${timeoutMs}ms (pending=true closed=${this.closed})`,
+										),
+									);
+								}, timeoutMs);
+								timer.unref?.();
+								pendingPrev.promise.promise
+									.then(resolve, reject)
+									.finally(() => clearTimeout(timer));
+							}),
+						);
+					} else {
+						promises.push(pendingPrev.promise.promise);
+					}
+					continue;
+				}
 
-			const pendingPrev = this._pendingDeletes.get(entry.hash);
-			if (pendingPrev) {
-				promises.push(pendingPrev.promise.promise);
-				continue;
-			}
-
-			const minReplicas = decodeReplicas(entry);
-			const deferredPromise: DeferredPromise<void> = pDefer();
+				const minReplicas = decodeReplicas(entry);
+				const deferredPromise: DeferredPromise<void> = pDefer();
 
 			const clear = () => {
 				const pending = this._pendingDeletes.get(entry.hash);
@@ -4084,12 +4998,13 @@ export class SharedLog<
 				clearTimeout(timeout);
 			};
 
-			const resolve = () => {
-				clear();
-				cleanupTimer.push(
-					setTimeout(async () => {
-						this._gidPeersHistory.delete(entry.meta.gid);
-						this.removePruneRequestSent(entry.hash);
+				const resolve = () => {
+					clear();
+					this.clearCheckedPruneRetry(entry.hash);
+					cleanupTimer.push(
+						setTimeout(async () => {
+							this._gidPeersHistory.delete(entry.meta.gid);
+							this.removePruneRequestSent(entry.hash);
 						this._requestIPruneResponseReplicatorSet.delete(entry.hash);
 
 						if (
@@ -4133,12 +5048,19 @@ export class SharedLog<
 				);
 			};
 
-			const reject = (e: any) => {
-				clear();
-				this.removePruneRequestSent(entry.hash);
-				this._requestIPruneResponseReplicatorSet.delete(entry.hash);
-				deferredPromise.reject(e);
-			};
+				const reject = (e: any) => {
+					clear();
+					const isCheckedPruneTimeout =
+						e instanceof Error &&
+						typeof e.message === "string" &&
+						e.message.startsWith("Timeout for checked pruning");
+					if (explicitTimeout || !isCheckedPruneTimeout) {
+						this.clearCheckedPruneRetry(entry.hash);
+					}
+					this.removePruneRequestSent(entry.hash);
+					this._requestIPruneResponseReplicatorSet.delete(entry.hash);
+					deferredPromise.reject(e);
+				};
 
 			let cursor: NumberFromType<R>[] | undefined = undefined;
 
@@ -4156,14 +5078,20 @@ export class SharedLog<
 						PRUNE_DEBOUNCE_INTERVAL * 2,
 				);
 
-			const timeout = setTimeout(() => {
-				reject(
-					new Error(
-						`Timeout for checked pruning after ${checkedPruneTimeoutMs}ms (closed=${this.closed})`,
-					),
-				);
-			}, checkedPruneTimeoutMs);
-			timeout.unref?.();
+				const timeout = setTimeout(() => {
+					// For internal/background prune flows (no explicit timeout), retry a few times
+					// to avoid "permanently prunable" entries when `_pendingIHave` expires under
+					// heavy load.
+					if (!explicitTimeout) {
+						this.scheduleCheckedPruneRetry({ entry, leaders });
+					}
+					reject(
+						new Error(
+							`Timeout for checked pruning after ${checkedPruneTimeoutMs}ms (closed=${this.closed})`,
+						),
+					);
+				}, checkedPruneTimeoutMs);
+				timeout.unref?.();
 
 			this._pendingDeletes.set(entry.hash, {
 				promise: deferredPromise,
@@ -4200,20 +5128,22 @@ export class SharedLog<
 					let existCounter = this._requestIPruneResponseReplicatorSet.get(
 						entry.hash,
 					);
-					if (!existCounter) {
-						existCounter = new Set();
-						this._requestIPruneResponseReplicatorSet.set(
-							entry.hash,
-							existCounter,
-						);
-					}
-					existCounter.add(publicKeyHash);
+						if (!existCounter) {
+							existCounter = new Set();
+							this._requestIPruneResponseReplicatorSet.set(
+								entry.hash,
+								existCounter,
+							);
+						}
+						existCounter.add(publicKeyHash);
+						// Seed provider hints so future remote reads can avoid extra round-trips.
+						this.remoteBlocks.hintProviders(entry.hash, [publicKeyHash]);
 
-					if (minReplicasValue <= existCounter.size) {
-						resolve();
-					}
-				},
-			});
+						if (minReplicasValue <= existCounter.size) {
+							resolve();
+						}
+					},
+				});
 
 			promises.push(deferredPromise.promise);
 		}
@@ -4249,16 +5179,58 @@ export class SharedLog<
 			}
 		};
 
-		for (const [k, v] of peerToEntries) {
-			emitMessages(v, k);
-		}
-
-		let cleanup = () => {
-			for (const timer of cleanupTimer) {
-				clearTimeout(timer);
+			for (const [k, v] of peerToEntries) {
+				emitMessages(v, k);
 			}
-			this._closeController.signal.removeEventListener("abort", cleanup);
-		};
+
+			// Keep remote `_pendingIHave` alive in the common "leader doesn't have entry yet"
+			// case. This is intentionally disabled when an explicit timeout is provided to
+			// preserve unit tests that assert remote `_pendingIHave` clears promptly.
+			if (!explicitTimeout && peerToEntries.size > 0) {
+				const respondToIHaveTimeout = Number(this._respondToIHaveTimeout ?? 0);
+				const resendIntervalMs = Math.min(
+					CHECKED_PRUNE_RESEND_INTERVAL_MAX_MS,
+					Math.max(
+						CHECKED_PRUNE_RESEND_INTERVAL_MIN_MS,
+						Math.floor(respondToIHaveTimeout / 2) || 1_000,
+					),
+				);
+				let inFlight = false;
+				const timer = setInterval(() => {
+					if (inFlight) return;
+					if (this.closed) return;
+
+					const pendingByPeer: [string, string[]][] = [];
+					for (const [peer, hashes] of peerToEntries) {
+						const pending = hashes.filter((h) => this._pendingDeletes.has(h));
+						if (pending.length > 0) {
+							pendingByPeer.push([peer, pending]);
+						}
+					}
+					if (pendingByPeer.length === 0) {
+						clearInterval(timer);
+						return;
+					}
+
+					inFlight = true;
+					Promise.allSettled(
+						pendingByPeer.map(([peer, hashes]) =>
+							emitMessages(hashes, peer).catch(() => {}),
+						),
+					).finally(() => {
+						inFlight = false;
+					});
+				}, resendIntervalMs);
+				timer.unref?.();
+				cleanupTimer.push(timer as any);
+			}
+
+			let cleanup = () => {
+				for (const timer of cleanupTimer) {
+					clearTimeout(timer);
+				}
+				this._closeController.signal.removeEventListener("abort", cleanup);
+			};
 
 		Promise.allSettled(promises).finally(cleanup);
 		this._closeController.signal.addEventListener("abort", cleanup);
@@ -4330,11 +5302,20 @@ export class SharedLog<
 		 * that we potentially need to share with other peers
 		 */
 
-		if (this.closed) {
-			return;
-		}
+			if (this.closed) {
+				return;
+			}
 
 		await this.log.trim();
+
+		const batchedChanges = Array.isArray(changeOrChanges[0])
+			? (changeOrChanges as ReplicationChanges<ReplicationRangeIndexable<R>>[])
+			: [changeOrChanges as ReplicationChanges<ReplicationRangeIndexable<R>>];
+		const changes = batchedChanges.flat();
+		// On removed ranges (peer leaves / shrink), gid-level history can hide
+		// per-entry gaps. Force a fresh delivery pass for reassigned entries.
+		const forceFreshDelivery = changes.some((change) => change.type === "removed");
+		const gidPeersHistorySnapshot = new Map<string, Set<string> | undefined>();
 
 		const changed = false;
 
@@ -4345,7 +5326,7 @@ export class SharedLog<
 			> = new Map();
 
 			for await (const entryReplicated of toRebalance<R>(
-				changeOrChanges,
+				changes,
 				this.entryCoordinatesIndex,
 				this.recentlyRebalanced,
 			)) {
@@ -4353,7 +5334,16 @@ export class SharedLog<
 					break;
 				}
 
-				let oldPeersSet = this._gidPeersHistory.get(entryReplicated.gid);
+				let oldPeersSet: Set<string> | undefined;
+				if (!forceFreshDelivery) {
+					const gid = entryReplicated.gid;
+					oldPeersSet = gidPeersHistorySnapshot.get(gid);
+					if (!gidPeersHistorySnapshot.has(gid)) {
+						const existing = this._gidPeersHistory.get(gid);
+						oldPeersSet = existing ? new Set(existing) : undefined;
+						gidPeersHistorySnapshot.set(gid, oldPeersSet);
+					}
+				}
 				let isLeader = false;
 
 				let currentPeers = await this.findLeaders(
@@ -4432,32 +5422,51 @@ export class SharedLog<
 		}
 	}
 
-	async _onUnsubscription(evt: CustomEvent<UnsubcriptionEvent>) {
-		logger.trace(
-			`Peer disconnected '${evt.detail.from.hashcode()}' from '${JSON.stringify(
-				evt.detail.topics.map((x) => x),
-			)} '`,
-		);
-		this.latestReplicationInfoMessage.delete(evt.detail.from.hashcode());
+		async _onUnsubscription(evt: CustomEvent<UnsubcriptionEvent>) {
+			logger.trace(
+				`Peer disconnected '${evt.detail.from.hashcode()}' from '${JSON.stringify(
+					evt.detail.topics.map((x) => x),
+				)} '`,
+			);
+			if (!evt.detail.topics.includes(this.topic)) {
+				return;
+			}
 
-		return this.handleSubscriptionChange(
-			evt.detail.from,
-			evt.detail.topics,
-			false,
-		);
-	}
+			const fromHash = evt.detail.from.hashcode();
+			this._replicationInfoBlockedPeers.add(fromHash);
 
-	async _onSubscription(evt: CustomEvent<SubscriptionEvent>) {
-		logger.trace(
-			`New peer '${evt.detail.from.hashcode()}' connected to '${JSON.stringify(
-				evt.detail.topics.map((x) => x),
-			)}'`,
-		);
-		this.remoteBlocks.onReachable(evt.detail.from);
+			// Keep a per-peer timestamp watermark when we observe an unsubscribe. This
+			// prevents late/out-of-order replication-info messages from re-introducing
+			// stale segments for a peer that has already left the topic.
+			const now = BigInt(+new Date());
+			const prev = this.latestReplicationInfoMessage.get(fromHash);
+			if (!prev || prev < now) {
+				this.latestReplicationInfoMessage.set(fromHash, now);
+			}
 
-		return this.handleSubscriptionChange(
-			evt.detail.from,
-			evt.detail.topics,
+			return this.handleSubscriptionChange(
+				evt.detail.from,
+				evt.detail.topics,
+				false,
+			);
+		}
+
+		async _onSubscription(evt: CustomEvent<SubscriptionEvent>) {
+			logger.trace(
+				`New peer '${evt.detail.from.hashcode()}' connected to '${JSON.stringify(
+					evt.detail.topics.map((x) => x),
+				)}'`,
+			);
+			if (!evt.detail.topics.includes(this.topic)) {
+				return;
+			}
+
+			this.remoteBlocks.onReachable(evt.detail.from);
+			this._replicationInfoBlockedPeers.delete(evt.detail.from.hashcode());
+
+			return this.handleSubscriptionChange(
+				evt.detail.from,
+				evt.detail.topics,
 			true,
 		);
 	}

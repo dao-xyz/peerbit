@@ -232,14 +232,16 @@ describe("DocumentsLike hooks", () => {
 			{ id: "b", text: "two" },
 		]);
 		const result: { current?: ReturnType<typeof useQuery<Doc, Doc>> } = {};
+		const options = {
+			query: {},
+			resolve: true,
+			prefetch: false,
+			batchSize: 2,
+		} as const;
 
 		function Hook() {
-			const hook = useQuery(docs, {
-				query: {},
-				resolve: true,
-				prefetch: false,
-				batchSize: 2,
-			});
+			// Keep options stable across renders to avoid infinite reset loops.
+			const hook = useQuery(docs, options);
 			React.useEffect(() => {
 				result.current = hook;
 			}, [hook]);

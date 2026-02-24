@@ -1,0 +1,57 @@
+name: Nightly sims
+on:
+  schedule:
+    # 03:30 UTC every day
+    - cron: '30 3 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  pubsub_sims:
+    name: PubSub sims
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      NODE_OPTIONS: --no-warnings
+      PEERBIT_TEST_SESSION: mock
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install deps
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          pnpm install --frozen-lockfile=false
+
+      - name: Build pubsub workspace
+        run: |
+          pnpm --filter @peerbit/pubsub... run build
+
+      - name: Run fanout-tree-sim (scale-5k)
+        run: |
+          mkdir -p sim-results
+          pnpm -C packages/transport/pubsub run bench -- fanout-tree-sim --preset scale-5k --profile 1 > sim-results/fanout-tree-scale-5k.txt
+
+      - name: Run DirectSub topic-sim (500 nodes)
+        run: |
+          pnpm -C packages/transport/pubsub run bench -- topic-sim \
+            --nodes 500 --degree 6 --subscribers 400 \
+            --messages 50 --msgSize 256 --intervalMs 0 \
+            --seed 1 --subscribeModel preseed --silent 1 \
+            --timeoutMs 600000 > sim-results/topic-sim-500.txt
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-sims-${{ github.run_id }}
+          path: sim-results
+

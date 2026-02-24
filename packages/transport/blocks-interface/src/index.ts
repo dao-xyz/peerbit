@@ -23,6 +23,12 @@ export interface Blocks extends WaitForPeer {
 	): MaybePromise<string>;
 	has(cid: string): MaybePromise<boolean>;
 	get(cid: string, options?: GetOptions): MaybePromise<Uint8Array | undefined>;
+	/**
+	 * Best-effort provider hints for `get(..., { remote: true })` without explicit `remote.from`.
+	 *
+	 * Implementations should treat hints as advisory and keep them bounded (LRU/TTL).
+	 */
+	hintProviders?(cid: string, providers: string[]): void;
 	rm(cid: string): MaybePromise<void>;
 	iterator(): AsyncGenerator<[string, Uint8Array], void, void>;
 	size(): MaybePromise<number>;

@@ -27,6 +27,12 @@ pre code {
 	@apply bg-transparent p-0 text-slate-900 dark:text-slate-50;
 }
 
+/* Tailwind Typography adds `...` markers around inline <code> via ::before/::after. */
+.prose :where(code):not(:where([class~=not-prose], [class~=not-prose] *))::before,
+.prose :where(code):not(:where([class~=not-prose], [class~=not-prose] *))::after {
+	content: none;
+}
+
 /* Syntax highlighting (highlight.js) */
 :root {
 	--hljs-fg: #24292f;

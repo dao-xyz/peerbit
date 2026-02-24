@@ -87,6 +87,38 @@ async function getIgnoreFK(stmt: Statement, values: any[]) {
 export class SQLLiteIndex<T extends Record<string, any>>
 	implements Index<T, any>
 {
+	// SQLite writes are inherently serialized per connection.
+	// We still need an explicit async barrier because our API is async and
+	// awaits between statements (root insert -> many child inserts). Without
+	// a barrier, concurrent `put()` and `del()` can interleave mid-insert and
+	// create large volumes of FK constraint noise (and occasional timeouts in
+	// browser/webworker runners).
+	// TODO(perf): This is intentionally coarse-grained for correctness.
+	// Possible optimizations:
+	// 1) wrap nested writes in explicit transactions to reduce lock time;
+	// 2) use table/key-scoped write queues when overlap detection is available.
+	// Any relaxation must keep concurrent put/del stability across all runners.
+	private _writeBarrier: Promise<void> = Promise.resolve();
+
+	private async withWriteBarrier<R>(fn: () => Promise<R>): Promise<R> {
+		const prev = this._writeBarrier;
+		let release!: () => void;
+		const next = new Promise<void>((r) => (release = r));
+		// Keep the chain alive even if `prev` rejected.
+		this._writeBarrier = prev.then(
+			() => next,
+			() => next,
+		);
+
+		// Wait for previous writer without propagating its error.
+		await prev.catch(() => undefined);
+		try {
+			return await fn();
+		} finally {
+			release();
+		}
+	}
+
 	primaryKeyArr!: string[];
 	primaryKeyString!: string;
 	planner: QueryPlanner;
@@ -397,52 +429,54 @@ export class SQLLiteIndex<T extends Record<string, any>>
 	}
 
 	async put(value: T, _id?: any): Promise<void> {
-		const classOfValue = value.constructor as Constructor<T>;
-		return insert(
-			async (values, table) => {
-				let preId = values[table.primaryIndex];
-				let statement: Statement | undefined = undefined;
-				try {
-					if (preId != null) {
-						statement = this.properties.db.statements.get(
-							replaceStatementKey(table),
-						)!;
-						this.fkMode === "race-tolerant"
-							? await runIgnoreFK(statement, values)
-							: await statement.run(values);
-						return preId;
-					} else {
-						statement = this.properties.db.statements.get(
-							putStatementKey(table),
-						)!;
-						const out =
+		return this.withWriteBarrier(async () => {
+			const classOfValue = value.constructor as Constructor<T>;
+			return insert(
+				async (values, table) => {
+					let preId = values[table.primaryIndex];
+					let statement: Statement | undefined = undefined;
+					try {
+						if (preId != null) {
+							statement = this.properties.db.statements.get(
+								replaceStatementKey(table),
+							)!;
 							this.fkMode === "race-tolerant"
-								? await getIgnoreFK(statement, values)
-								: await statement.get(values);
+								? await runIgnoreFK(statement, values)
+								: await statement.run(values);
+							return preId;
+						} else {
+							statement = this.properties.db.statements.get(
+								putStatementKey(table),
+							)!;
+							const out =
+								this.fkMode === "race-tolerant"
+									? await getIgnoreFK(statement, values)
+									: await statement.get(values);
 
-						// TODO types
-						if (out == null) {
-							return undefined;
+							// TODO types
+							if (out == null) {
+								return undefined;
+							}
+							return out[table.primary as string];
 						}
-						return out[table.primary as string];
+					} finally {
+						await statement?.reset?.();
 					}
-				} finally {
-					await statement?.reset?.();
-				}
-			},
-			value,
-			this.tables,
-			resolveTable(
-				this.scopeString ? [this.scopeString] : [],
+				},
+				value,
 				this.tables,
-				classOfValue,
-				true,
-			),
-			getSchema(classOfValue).fields,
-			(_fn) => {
-				throw new Error("Unexpected");
-			},
-		);
+				resolveTable(
+					this.scopeString ? [this.scopeString] : [],
+					this.tables,
+					classOfValue,
+					true,
+				),
+				getSchema(classOfValue).fields,
+				(_fn) => {
+					throw new Error("Unexpected");
+				},
+			);
+		});
 	}
 
 	iterate<S extends Shape | undefined>(
@@ -629,46 +663,48 @@ export class SQLLiteIndex<T extends Record<string, any>>
 	}
 
 	async del(query: types.DeleteOptions): Promise<types.IdKey[]> {
-		let ret: types.IdKey[] = [];
-		let once = false;
-		let lastError: Error | undefined = undefined;
-		for (const table of this._rootTables) {
-			try {
-				const { sql, bindable } = convertDeleteRequestToQuery(
-					query,
-					this.tables,
-					table,
-				);
-				const stmt = await this.properties.db.prepare(sql, sql);
-				const results: any[] = await stmt.all(bindable);
-
-				// TODO types
-				for (const result of results) {
-					ret.push(
-						types.toId(
-							convertFromSQLType(
-								result[table.primary as string],
-								table.primaryField!.from!.type,
-							),
-						),
+		return this.withWriteBarrier(async () => {
+			let ret: types.IdKey[] = [];
+			let once = false;
+			let lastError: Error | undefined = undefined;
+			for (const table of this._rootTables) {
+				try {
+					const { sql, bindable } = convertDeleteRequestToQuery(
+						query,
+						this.tables,
+						table,
 					);
-				}
-				once = true;
-			} catch (error) {
-				if (error instanceof MissingFieldError) {
-					lastError = error;
-					continue;
-				}
+					const stmt = await this.properties.db.prepare(sql, sql);
+					const results: any[] = await stmt.all(bindable);
 
-				throw error;
+					// TODO types
+					for (const result of results) {
+						ret.push(
+							types.toId(
+								convertFromSQLType(
+									result[table.primary as string],
+									table.primaryField!.from!.type,
+								),
+							),
+						);
+					}
+					once = true;
+				} catch (error) {
+					if (error instanceof MissingFieldError) {
+						lastError = error;
+						continue;
+					}
+
+					throw error;
+				}
 			}
-		}
 
-		if (!once) {
-			throw lastError!;
-		}
+			if (!once) {
+				throw lastError!;
+			}
 
-		return ret;
+			return ret;
+		});
 	}
 
 	async sum(query: types.SumOptions): Promise<number | bigint> {

@@ -1,5 +1,5 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { X25519Keypair } from "@peerbit/crypto";
+import { Ed25519Keypair, X25519Keypair } from "@peerbit/crypto";
 import { Program } from "@peerbit/program";
 import { SharedLog } from "@peerbit/shared-log";
 import { waitForResolved } from "@peerbit/time";
@@ -24,52 +24,67 @@ class SimpleStore extends Program {
 	}
 }
 
-const client = await Peerbit.create();
+const [client, client2, thirdPartyIdentity] = await Promise.all([
+	Peerbit.create(),
+	Peerbit.create(),
+	// We only need a public key for the third party (no libp2p node required).
+	Ed25519Keypair.create(),
+]);
 
-const client2 = await Peerbit.create();
-await client2.dial(client.getMultiaddrs());
+try {
+	// Dial only a direct TCP address when possible. Dialing a full multiaddr set can
+	// be slow/flaky in CI if some transports are unavailable.
+	const addrs = client.getMultiaddrs();
+	const preferred = addrs.find((addr) => {
+		const s = addr.toString();
+		return s.includes("/tcp/") && !s.includes("/ws");
+	});
+	await client2.dial(preferred ? [preferred] : addrs);
+	// In small ad-hoc networks (no bootstraps/trackers), proactively hosting shard
+	// roots avoids flaky "join before root is hosted" races.
+	await Promise.all([
+		(client.services.pubsub as any).hostShardRootsNow?.(),
+		(client2.services.pubsub as any).hostShardRootsNow?.(),
+	]);
 
-const client3 = await Peerbit.create();
-await client3.dial(client.getMultiaddrs());
+	const store = await client.open(new SimpleStore());
 
-const store = await client.open(new SimpleStore());
+	const payload = new Uint8Array([1, 2, 3]);
+	await store.log.append(payload, {
+		encryption: {
+			keypair: await X25519Keypair.create(),
+			receiver: {
+				// Who can read the log entry metadata (e.g. timestamps), next pointers,
+				// and more location information?
+				meta: [
+					client.identity.publicKey,
+					client2.identity.publicKey,
+					thirdPartyIdentity.publicKey,
+				],
 
-const payload = new Uint8Array([1, 2, 3]);
-await store.log.append(payload, {
-	encryption: {
-		keypair: await X25519Keypair.create(),
-		receiver: {
-			// Who can read the log entry metadata (e.g. timestamps), next pointers, and more location information
-			meta: [
-				client.identity.publicKey,
-				client2.identity.publicKey,
-				client3.identity.publicKey,
-			],
+				// Who can read the message payload?
+				payload: [client.identity.publicKey, client2.identity.publicKey],
 
-			// Who can read the message?
-			payload: [client.identity.publicKey, client2.identity.publicKey],
-
-			// Who can read the signature ?
-			// (In order to validate entries you need to be able to read the signature)
-			signatures: [
-				client.identity.publicKey,
-				client2.identity.publicKey,
-				client3.identity.publicKey,
-			],
-
-			// Omitting any of the fields below will make it unencrypted
+				// Who can read the signature?
+				// (In order to validate entries you need to be able to read the signature.)
+				signatures: [
+					client.identity.publicKey,
+					client2.identity.publicKey,
+					thirdPartyIdentity.publicKey,
+				],
+			},
 		},
-	},
-});
+	});
 
-// A peer that can open
-const store2 = await client2.open<SimpleStore>(store.address!);
-await waitForResolved(() => assert.equal(store2.log.log.length, 1));
-const entry = (await store2.log.log.toArray())[0];
+	// A peer that can open.
+	const store2 = await client2.open<SimpleStore>(store.address!);
+	await waitForResolved(() => assert.equal(store2.log.log.length, 1), {
+		timeout: 30_000,
+	});
+	const entry = (await store2.log.log.toArray())[0];
 
-// use .getPayload() instead of .payload to decrypt the payload
-assert.deepEqual(await entry.getPayloadValue(), payload);
-
-await client.stop();
-await client2.stop();
-await client3.stop();
+	// Use .getPayloadValue() instead of .payload to decrypt the payload.
+	assert.deepEqual(await entry.getPayloadValue(), payload);
+} finally {
+	await Promise.allSettled([client.stop(), client2.stop()]);
+}

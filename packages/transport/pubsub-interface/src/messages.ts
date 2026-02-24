@@ -19,6 +19,10 @@ export abstract class PubSubMessage {
 			return GetSubscribers.from(bytes);
 		}
 
+		if (first === 4) {
+			return TopicRootCandidates.from(bytes);
+		}
+
 		throw new Error("Unsupported");
 	}
 }
@@ -159,6 +163,41 @@ export class GetSubscribers extends PubSubMessage {
 		const ret = deserialize(
 			bytes instanceof Uint8Array ? bytes : bytes.subarray(),
 			GetSubscribers,
+		);
+		if (bytes instanceof Uint8ArrayList) {
+			ret._serialized = bytes;
+		}
+		return ret;
+	}
+}
+
+// Internal control-plane message: used to converge deterministic topic-root
+// candidate sets in small ad-hoc networks (when no explicit candidates/trackers
+// are configured). This keeps shard-root resolution stable across partially
+// connected topologies (e.g. star graphs).
+@variant(4)
+export class TopicRootCandidates extends PubSubMessage {
+	@field({ type: vec("string") })
+	candidates: string[];
+
+	constructor(options: { candidates: string[] }) {
+		super();
+		this.candidates = options.candidates;
+	}
+
+	private _serialized!: Uint8ArrayList;
+
+	bytes() {
+		if (this._serialized) {
+			return this._serialized;
+		}
+		return serialize(this);
+	}
+
+	static from(bytes: Uint8Array | Uint8ArrayList): TopicRootCandidates {
+		const ret = deserialize(
+			bytes instanceof Uint8Array ? bytes : bytes.subarray(),
+			TopicRootCandidates,
 		);
 		if (bytes instanceof Uint8ArrayList) {
 			ret._serialized = bytes;

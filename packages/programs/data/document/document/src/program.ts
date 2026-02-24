@@ -317,6 +317,7 @@ export class Documents<
 				: undefined) as any, /// TODO types,
 			compatibility: logCompatiblity,
 			eagerBlocks: options?.eagerBlocks,
+			fanout: options?.fanout,
 			keep: keepFunction,
 		});
 	}

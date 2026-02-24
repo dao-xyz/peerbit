@@ -113,6 +113,9 @@ export class IdentityAccessController extends Program {
 						]),
 					],
 				}),
+				// Access control must be conservative and non-blocking.
+				// Do not wait on remote discovery/replication here.
+				{ remote: false, local: true } as any,
 			);
 			for (const access of accessReadOrAny) {
 				if (access instanceof Access) {
@@ -174,6 +177,9 @@ export class IdentityAccessController extends Program {
 							]),
 						],
 					}),
+					// Access control must be conservative and non-blocking.
+					// Do not wait on remote discovery/replication here.
+					{ remote: false, local: true } as any,
 				);
 
 				for (const access of accessWritedOrAny) {

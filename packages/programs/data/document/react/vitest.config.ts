@@ -26,12 +26,5 @@ export default defineConfig({
 		include: ["src/**/*.dom.test.ts?(x)", "vitest/**/*.dom.test.ts?(x)"],
 		exclude: ["node_modules", "dist"],
 		setupFiles: DOM_SETUP,
-		deps: {
-			optimizer: {
-				web: {
-					include: ["@peerbit/document", "@peerbit/program"],
-				},
-			},
-		},
 	},
 });

@@ -41,6 +41,7 @@ type ResolveFullyOptions =
 						replicate?: boolean;
 						signal?: AbortSignal;
 						timeout?: number;
+						from?: string[];
 				  }
 				| boolean;
 			ignoreMissing?: boolean;
@@ -74,6 +75,10 @@ export class EntryIndex<T> {
 			index: Index<ShallowEntry>;
 			sort: SortFn;
 			onGidRemoved?: (gid: string[]) => Promise<void> | void;
+			resolveRemotePeers?: (
+				hash: string,
+				options?: { signal?: AbortSignal },
+			) => Promise<string[] | undefined> | string[] | undefined;
 		},
 	) {
 		this.sortReversed = properties.sort.sort.map((x) =>
@@ -488,11 +493,46 @@ export class EntryIndex<T> {
 		k: string,
 		options?: {
 			remote?:
-				| { signal?: AbortSignal; replicate?: boolean; timeout?: number }
+				| {
+						signal?: AbortSignal;
+						replicate?: boolean;
+						timeout?: number;
+						from?: string[];
+				  }
 				| boolean;
 		},
 	): Promise<Entry<T> | null> {
-		const value = await this.properties.store.get(k, options);
+		let coercedOptions = options;
+		const remote = coercedOptions?.remote;
+
+		if (this.properties.resolveRemotePeers) {
+			if (remote === true) {
+				try {
+					const from = await this.properties.resolveRemotePeers(k);
+					if (from && from.length > 0) {
+						coercedOptions = { ...coercedOptions, remote: { from } };
+					}
+				} catch {
+					// Best-effort only; fall back to the store's default remote strategy.
+				}
+			} else if (remote && typeof remote === "object" && remote.from == null) {
+				try {
+					const from = await this.properties.resolveRemotePeers(k, {
+						signal: remote.signal,
+					});
+					if (from && from.length > 0) {
+						coercedOptions = {
+							...coercedOptions,
+							remote: { ...remote, from },
+						};
+					}
+				} catch {
+					// Best-effort only; fall back to the store's default remote strategy.
+				}
+			}
+		}
+
+		const value = await this.properties.store.get(k, coercedOptions);
 		if (value) {
 			const entry = deserialize(value, Entry);
 			entry.size = value.length;

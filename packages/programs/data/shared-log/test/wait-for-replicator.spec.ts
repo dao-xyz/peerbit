@@ -1,5 +1,5 @@
 import { TestSession } from "@peerbit/test-utils";
-import { TimeoutError } from "@peerbit/time";
+import { TimeoutError, delay } from "@peerbit/time";
 import { expect } from "chai";
 import { RequestReplicationInfoMessage } from "../src/replication.js";
 import { EventStore } from "./utils/stores/index.js";
@@ -35,6 +35,11 @@ describe("waitForReplicator", () => {
 			return originalSend(message, options);
 		};
 
+		// `open()` may schedule a best-effort replication info request to recently seen peers.
+		// We only want to count the retries issued by `waitForReplicator()`.
+		await delay(100);
+		const baseline = requestCount;
+
 		try {
 			await db.log.waitForReplicator(session.peers[1].identity.publicKey, {
 				timeout: 300,
@@ -47,6 +52,6 @@ describe("waitForReplicator", () => {
 			db.log.rpc.send = originalSend;
 		}
 
-		expect(requestCount).to.equal(2);
+		expect(requestCount - baseline).to.equal(2);
 	});
 });

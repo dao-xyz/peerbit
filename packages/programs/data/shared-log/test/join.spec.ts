@@ -16,8 +16,8 @@ describe("join", () => {
 	let session: TestSession;
 	let db1: EventStore<string, any>, db2: EventStore<string, any>;
 
-	before(async () => {
-		session = await TestSession.disconnected(3, [
+		before(async () => {
+			session = await TestSession.disconnected(3, [
 			{
 				libp2p: {
 					privateKey: await keys.privateKeyFromRaw(
@@ -58,13 +58,27 @@ describe("join", () => {
 				},
 			},
 		]);
-		await session.connect([
-			[session.peers[0], session.peers[1]],
-			[session.peers[1], session.peers[2]],
-		]);
-		await session.peers[1].services.blocks.waitFor(session.peers[0].peerId);
-		await session.peers[2].services.blocks.waitFor(session.peers[1].peerId);
-	});
+			await session.connect([
+				[session.peers[0], session.peers[1]],
+				[session.peers[1], session.peers[2]],
+			]);
+			await session.peers[1].services.blocks.waitFor(session.peers[0].peerId);
+			await session.peers[2].services.blocks.waitFor(session.peers[1].peerId);
+			// Pubsub/fanout use additional DirectStream protocols; ensure those neighbour
+			// streams are established in this sparse topology before opening programs.
+			await session.peers[0].services.pubsub.waitFor(session.peers[1].peerId);
+			await session.peers[1].services.pubsub.waitFor(session.peers[0].peerId);
+			await session.peers[1].services.pubsub.waitFor(session.peers[2].peerId);
+			await session.peers[2].services.pubsub.waitFor(session.peers[1].peerId);
+
+			const fanout0: any = (session.peers[0].services as any).fanout;
+			const fanout1: any = (session.peers[1].services as any).fanout;
+			const fanout2: any = (session.peers[2].services as any).fanout;
+			await fanout0.waitFor(session.peers[1].peerId);
+			await fanout1.waitFor(session.peers[0].peerId);
+			await fanout1.waitFor(session.peers[2].peerId);
+			await fanout2.waitFor(session.peers[1].peerId);
+		});
 
 	after(async () => {
 		await session.stop();
@@ -179,7 +193,7 @@ describe("join", () => {
 			expect(db2.log.log.length).to.equal(2);
 		});
 
-		it("can join and merge with existing segments (2)", async () => {
+			it("can join and merge with existing segments (2)", async () => {
 			db1 = await session.peers[0].open(new EventStore<string, any>(), {
 				args: {
 					domain: createReplicationDomainTime({
@@ -199,11 +213,14 @@ describe("join", () => {
 						}),
 					},
 				},
-			))!;
+				))!;
 
-			await db1.waitFor(session.peers[1].peerId);
+				await db1.waitFor(session.peers[1].peerId);
+				// Ensure the writer is known as a replicator before we expect segment
+				// announcements to propagate; otherwise this can flake under load.
+				await db2.log.waitForReplicator(db1.node.identity.publicKey);
 
-			const e1 = await db1.add("hello", { meta: { next: [] } });
+				const e1 = await db1.add("hello", { meta: { next: [] } });
 
 			await db2.log.join([e1.entry], {
 				replicate: { mergeSegments: true },

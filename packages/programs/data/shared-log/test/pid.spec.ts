@@ -96,25 +96,24 @@ describe("PIDReplicationController", () => {
 				cpu: { max: 0.5 },
 			});
 			let cpuUsage = 0.4; // < 0.5
-			expect(
-				controller.step({
-					currentFactor: 1,
-					memoryUsage: 0,
-					totalFactor: 1,
-					peerCount: 2,
-					cpuUsage,
-				}),
-			).equal(1);
+			// Keep balance/coverage neutral so we isolate the CPU limiter behavior.
+			let f = controller.step({
+				currentFactor: 0.5,
+				memoryUsage: 0,
+				totalFactor: 1,
+				peerCount: 2,
+				cpuUsage,
+			});
+			expect(f).to.be.within(0.49, 0.51);
 			cpuUsage = 0.6;
-			expect(
-				controller.step({
-					currentFactor: 1,
-					memoryUsage: 0,
-					totalFactor: 1,
-					peerCount: 2,
-					cpuUsage,
-				}),
-			).lessThan(1);
+			f = controller.step({
+				currentFactor: f,
+				memoryUsage: 0,
+				totalFactor: 1,
+				peerCount: 2,
+				cpuUsage,
+			});
+			expect(f).lessThan(0.5);
 		});
 	});
 });

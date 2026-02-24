@@ -311,6 +311,17 @@ test.describe("document react party", () => {
 				{ label: "observer-b", replicate: false, write: [], push: false },
 			]);
 
+			// Ensure observer-b has completed at least one explicit pull after connect.
+			// Without this, the observer may still be in its initial join/sync window and can
+			// legitimately fetch data that was published while it was still settling.
+			await pages[1].evaluate(async () => {
+				const fn = (window as any).__partyForceSync;
+				if (typeof fn === "function") {
+					await fn();
+				}
+			});
+			await assertMessages(pages[1], []);
+
 			await sendMessage(pages[0], "a");
 
 			// assert that the replicator has the message

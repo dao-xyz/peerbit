@@ -60,24 +60,24 @@ test.describe("canonical lifetime", () => {
 		await page3.close();
 	});
 
-	test("releases shared-log refs after abrupt tab close", async ({
-		page,
-	}, testInfo) => {
-		const session = sessionParam(`lifetime-abrupt-${testInfo.title}`);
-		await page.goto(
-			`/?scenario=shared-log&label=tab-1&session=${session}&autoClose=false`,
-		);
-		await expect(page.getByTestId("status")).toHaveText("ready", {
-			timeout: 20_000,
-		});
+		test("releases shared-log refs after abrupt tab close", async ({
+			page,
+		}, testInfo) => {
+			const session = sessionParam(`lifetime-abrupt-${testInfo.title}`);
+			await page.goto(
+				`/?scenario=shared-log&label=tab-1&session=${session}&autoClose=false&keepAliveIntervalMs=250&keepAliveTimeoutMs=500&keepAliveFailures=1`,
+			);
+			await expect(page.getByTestId("status")).toHaveText("ready", {
+				timeout: 20_000,
+			});
 
-		const page2 = await page.context().newPage();
-		await page2.goto(
-			`/?scenario=shared-log&label=tab-2&session=${session}&autoClose=false`,
-		);
-		await expect(page2.getByTestId("status")).toHaveText("ready", {
-			timeout: 20_000,
-		});
+			const page2 = await page.context().newPage();
+			await page2.goto(
+				`/?scenario=shared-log&label=tab-2&session=${session}&autoClose=false&keepAliveIntervalMs=250&keepAliveTimeoutMs=500&keepAliveFailures=1`,
+			);
+			await expect(page2.getByTestId("status")).toHaveText("ready", {
+				timeout: 20_000,
+			});
 
 		const page3 = await page.context().newPage();
 		await page3.goto(`/?scenario=stats`);

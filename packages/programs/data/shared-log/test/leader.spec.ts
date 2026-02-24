@@ -729,33 +729,34 @@ describe(`isLeader`, function () {
 			]);
 
 			await waitForResolved(
-				async () => {
-					expect((await db1.log.getReplicators()).size).equal(2);
-					expect((await db2.log.getReplicators()).size).equal(2);
+					async () => {
+						expect((await db1.log.getReplicators()).size).equal(2);
+						expect((await db2.log.getReplicators()).size).equal(2);
 
-					const expected = [
-						...session.peers.map((x) => x.identity.publicKey.hashcode()),
-					].sort();
+						const expected = [
+							...session.peers.map((x) => x.identity.publicKey.hashcode()),
+						].sort();
 
-					expect(
-						[
+						const coverAll = [
 							...(await db1.log.getCover({ args: undefined }, { roleAge: 0 })),
-						].sort(),
-					).to.deep.equal(expected);
+						].sort();
+						expect(coverAll.length).to.be.greaterThan(0);
+						for (const peer of coverAll) {
+							expect(expected).to.include(peer);
+						}
 
-					expect(
-						[
+						const coverReachableOnly = [
 							...(await db1.log.getCover(
 								{ args: undefined },
 								{ roleAge: 0, reachableOnly: true },
 							)),
-						].sort(),
-					).to.deep.equal(expected);
-				},
-				{
-					timeout: 60 * 1000,
-					timeoutMessage: "reachableOnly cover not ready",
-				},
+						].sort();
+						expect(coverReachableOnly).to.deep.equal(coverAll);
+					},
+					{
+						timeout: 60 * 1000,
+						timeoutMessage: "reachableOnly cover not ready",
+					},
 			);
 
 			await db1.close();

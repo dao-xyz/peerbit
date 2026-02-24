@@ -121,7 +121,40 @@ export class ResumableIterators<T extends Record<string, any>> {
 		iteratorLogger("iterate:clear", {
 			id,
 		});
+		const cached = this.queues.get(id);
+		if (cached) {
+			try {
+				Promise.resolve(cached.iterator.close()).catch((error) => {
+					iteratorLogger.error("Iterator close failed", {
+						id,
+						error: (error as any)?.message ?? error,
+					});
+				});
+			} catch (error) {
+				iteratorLogger.error("Iterator close threw", {
+					id,
+					error: (error as any)?.message ?? error,
+				});
+			}
+		}
 		this.queues.del(id);
+	}
+
+	async clearAll() {
+		const cacheEntries = [...this.queues.map.entries()]
+			.map(([key, data]) => ({ id: key.toString(), cached: data.value }))
+			.filter((entry) => entry.cached);
+		await Promise.allSettled(
+			cacheEntries.map(({ id, cached }) =>
+				Promise.resolve((cached as any).iterator?.close?.()).catch((error) => {
+					iteratorLogger.error("Iterator close failed", {
+						id,
+						error: (error as any)?.message ?? error,
+					});
+				}),
+			),
+		);
+		this.queues.clear();
 	}
 
 	has(id: string) {

@@ -14,10 +14,10 @@ import {
 	Ed25519PublicKey,
 	PublicSignKey,
 	Secp256k1Keypair,
+	getPublicKeyFromPeerId,
 	getKeypairFromPrivateKey,
 } from "@peerbit/crypto";
 import type { Indices } from "@peerbit/indexer-interface";
-import { create as createSQLiteIndexer } from "@peerbit/indexer-sqlite3";
 import { DefaultCryptoKeychain, keychain } from "@peerbit/keychain";
 import { logger as loggerFn } from "@peerbit/logger";
 import {
@@ -28,7 +28,14 @@ import {
 	type ProgramClient,
 	ProgramHandler,
 } from "@peerbit/program";
-import { DirectSub } from "@peerbit/pubsub";
+import {
+	FanoutChannel,
+	FanoutTree,
+	TopicControlPlane,
+	TopicRootControlPlane,
+	type FanoutTreeChannelOptions,
+	type FanoutTreeJoinOptions,
+} from "@peerbit/pubsub";
 import type { Libp2p } from "libp2p";
 import sodium from "libsodium-wrappers";
 import path from "path-browserify";
@@ -132,7 +139,13 @@ export class Peerbit implements ProgramClient {
 		const storage = await createCache(
 			directory != null ? path.join(directory, "/cache") : undefined,
 		);
-		const indexerFn = options.indexer || createSQLiteIndexer;
+		const indexerFn =
+			options.indexer ||
+			(async (directory?: string) => {
+				// Lazy-import to avoid loading sqlite-wasm in browser-like runtimes/tests
+				const { create } = await import("@peerbit/indexer-sqlite3");
+				return create(directory);
+			});
 		const indexer =
 			directory != null
 				? await indexerFn(path.join(directory, "/index"))
@@ -186,19 +199,123 @@ export class Peerbit implements ProgramClient {
 							]),
 						)
 					: undefined;
-			}
+				}
 
-			const services: any = {
-				keychain: (components: KeychainComponents) =>
-					keychain({ libp2p: {}, crypto: cryptoKeychain })(components),
-				blocks: (c: any) =>
-					new DirectBlock(c, {
-						canRelayMessage: asRelay,
-						directory: blocksDirectory,
-					}),
-				pubsub: (c: any) => new DirectSub(c, { canRelayMessage: asRelay }),
-				...extendedOptions?.services,
-			};
+				const topicRootControlPlane = new TopicRootControlPlane();
+
+				// Keep a single FanoutTree instance per peer so pubsub sharding + provider
+				// discovery share the same overlay.
+				let fanoutInstance: FanoutTree | undefined;
+				const configuredFanoutFactory =
+					extendedOptions?.services?.fanout ||
+					((c: any) =>
+						new FanoutTree(c, {
+							connectionManager: false,
+							topicRootControlPlane,
+						}));
+				const getOrCreateFanout = (c: any) => {
+					if (!fanoutInstance) {
+						fanoutInstance = configuredFanoutFactory(c) as FanoutTree;
+					}
+					return fanoutInstance;
+				};
+
+				const blockProviderNamespace = (cid: string) => `cid:${cid}`;
+
+				const services: any = {
+					keychain: (components: KeychainComponents) =>
+						keychain({ libp2p: {}, crypto: cryptoKeychain })(components),
+					fanout: (c: any) => getOrCreateFanout(c),
+					blocks: (c: any) => {
+						let blocksService: DirectBlock | undefined;
+						const fanout = (() => {
+							try {
+								return getOrCreateFanout(c);
+							} catch {
+								return undefined;
+							}
+						})();
+
+						const fallbackConnectedPeers = () => {
+							const out: string[] = [];
+							const push = (hash?: string) => {
+								if (!hash) return;
+							if (hash === blocksService?.publicKeyHash) return;
+							// Small bounded list; avoid Set allocations on hot paths.
+							if (out.includes(hash)) return;
+							out.push(hash);
+						};
+
+						// Prefer peers we've already negotiated `/peerbit/direct-block` streams with.
+						for (const h of blocksService?.peers.keys() ?? []) {
+							push(h);
+							if (out.length >= 32) return out;
+						}
+
+						// Fall back to currently connected libp2p peers.
+						for (const conn of c.connectionManager.getConnections()) {
+							try {
+								push(getPublicKeyFromPeerId(conn.remotePeer).hashcode());
+							} catch {
+								// ignore unexpected key types
+							}
+							if (out.length >= 32) break;
+						}
+
+						return out;
+					};
+
+						const resolveProviders = async (
+							cid: string,
+							options?: { signal?: AbortSignal },
+						) => {
+							// 1) tracker-backed provider directory (best-effort, bounded)
+							try {
+								const providers = await fanout?.queryProviders(
+									blockProviderNamespace(cid),
+									{
+										want: 8,
+										timeoutMs: 2_000,
+									queryTimeoutMs: 500,
+									bootstrapMaxPeers: 2,
+									signal: options?.signal,
+								},
+							);
+							if (providers && providers.length > 0) return providers;
+						} catch {
+							// ignore discovery failures
+						}
+
+						// 2) fallback to currently connected peers (keeps local/small nets working without trackers)
+						return fallbackConnectedPeers();
+					};
+
+						blocksService = new DirectBlock(c, {
+							canRelayMessage: asRelay,
+							directory: blocksDirectory,
+							resolveProviders,
+							onPut: async (cid) => {
+								// Best-effort directory announce for "get without remote.from" workflows.
+								try {
+									await fanout?.announceProvider(blockProviderNamespace(cid), {
+										ttlMs: 120_000,
+										bootstrapMaxPeers: 2,
+									});
+								} catch {
+								// ignore announce failures
+							}
+						},
+					});
+					return blocksService;
+					},
+					pubsub: (c: any) =>
+						new TopicControlPlane(c, {
+							canRelayMessage: asRelay,
+							topicRootControlPlane,
+							fanout: getOrCreateFanout(c),
+						}),
+					...extendedOptions?.services,
+				};
 
 			if (!asRelay) {
 				services.relay = null;
@@ -294,6 +411,7 @@ export class Peerbit implements ProgramClient {
 	 */
 	async dial(
 		address: string | Multiaddr | Multiaddr[] | ProgramClient,
+		options?: { dialTimeoutMs?: number; signal?: AbortSignal },
 	): Promise<boolean> {
 		const maddress =
 			typeof address === "string"
@@ -301,27 +419,68 @@ export class Peerbit implements ProgramClient {
 				: isMultiaddr(address) || Array.isArray(address)
 					? address
 					: address.getMultiaddrs();
-		const connection = await this.libp2p.dial(maddress);
 
-		const publicKey = Ed25519PublicKey.fromPeerId(connection.remotePeer);
+		let dialSignal: AbortSignal | undefined = options?.signal;
+		let dialAbortController: AbortController | undefined;
+		let dialTimeout: ReturnType<typeof setTimeout> | undefined;
+		let onAbort: (() => void) | undefined;
 
-		// TODO, do this as a promise instead using the onPeerConnected vents in pubsub and blocks
-		try {
-			await this.libp2p.services.pubsub.waitFor(publicKey.hashcode(), {
-				target: "neighbor",
-			});
-		} catch (error) {
-			throw new Error(`Failed to dial peer. Not available on Pubsub`);
+		if (options?.dialTimeoutMs != null) {
+			dialAbortController = new AbortController();
+			const abort = (reason?: unknown) => {
+				if (dialAbortController?.signal.aborted) return;
+				dialAbortController?.abort(reason);
+			};
+
+			dialTimeout = setTimeout(() => {
+				abort(new Error(`Dial timeout after ${options.dialTimeoutMs}ms`));
+			}, options.dialTimeoutMs);
+
+			if (dialSignal) {
+				if (dialSignal.aborted) {
+					abort(dialSignal.reason);
+				} else {
+					onAbort = () => abort(dialSignal?.reason);
+					dialSignal.addEventListener("abort", onAbort, { once: true });
+				}
+			}
+
+			dialSignal = dialAbortController.signal;
 		}
 
 		try {
-			await this.libp2p.services.blocks.waitFor(publicKey.hashcode(), {
-				target: "neighbor",
-			});
-		} catch (error) {
-			throw new Error(`Failed to dial peer. Not available on Blocks`);
+			const connection = await this.libp2p.dial(
+				maddress as any,
+				dialSignal ? ({ signal: dialSignal } as any) : undefined,
+			);
+
+			const publicKey = Ed25519PublicKey.fromPeerId(connection.remotePeer);
+			const peerHash = publicKey.hashcode();
+
+			// TODO, do this as a promise instead using the onPeerConnected vents in pubsub and blocks
+			try {
+				await this.libp2p.services.pubsub.waitFor(peerHash, {
+					target: "neighbor",
+				});
+			} catch (error) {
+				throw new Error(`Failed to dial peer. Not available on Pubsub`);
+			}
+
+			try {
+				await this.libp2p.services.blocks.waitFor(peerHash, {
+					target: "neighbor",
+				});
+			} catch (error) {
+				throw new Error(`Failed to dial peer. Not available on Blocks`);
+			}
+
+			return true;
+		} finally {
+			if (dialTimeout) clearTimeout(dialTimeout);
+			if (onAbort && options?.signal) {
+				options.signal.removeEventListener("abort", onAbort);
+			}
 		}
-		return true;
 	}
 
 	async hangUp(address: PeerId | PublicSignKey | string | Multiaddr) {
@@ -361,9 +520,78 @@ export class Peerbit implements ProgramClient {
 		if (_addresses.length === 0) {
 			throw new Error("Failed to find any addresses to dial");
 		}
-		const settled = await Promise.allSettled(
-			_addresses.map((x) => this.dial(x)),
-		);
+
+		const extractPeerId = (a: string | Multiaddr): string | undefined => {
+			const s = typeof a === "string" ? a : a.toString();
+			const m = s.match(/\/(?:p2p|ipfs)\/([^/]+)(?:\/|$)/);
+			return m?.[1];
+		};
+
+		// Keep fanout bootstrap config aligned with peer bootstrap config so fanout
+		// channels can join via the same rendezvous nodes.
+		try {
+			this.libp2p.services.fanout.setBootstraps(_addresses);
+		} catch {
+			// ignore if fanout service is not present/overridden
+		}
+
+		// Avoid dialing the same peer multiple times concurrently (multiaddrs often come
+		// with both `/tcp` and `/ws` addresses for the same peer). Concurrent dials to
+		// the same peer can race internal stream readiness, causing waits to stall.
+		const byPeerId = new Map<string, (string | Multiaddr)[]>();
+		const unknown: (string | Multiaddr)[] = [];
+		for (const a of _addresses) {
+			const pid = extractPeerId(a as any);
+			if (!pid) {
+				unknown.push(a);
+				continue;
+			}
+			const list = byPeerId.get(pid) ?? [];
+			list.push(a);
+			byPeerId.set(pid, list);
+		}
+
+		const dialTimeoutMs = 30_000;
+		const scoreBootstrapAddr = (a: Multiaddr) => {
+			const s = a.toString();
+			const isCircuit = s.includes("p2p-circuit");
+			const isWs = s.includes("/ws") || s.includes("/wss");
+			return (isCircuit ? 2 : 0) + (isWs ? 1 : 0);
+		};
+
+		const dialPeer = async (list: (string | Multiaddr)[]) => {
+			const maddrs = list
+				.map((x) => (typeof x === "string" ? multiaddr(x) : x))
+				.sort((a, b) => scoreBootstrapAddr(a) - scoreBootstrapAddr(b));
+			let lastError: unknown;
+			for (const ma of maddrs) {
+				try {
+					await this.dial(ma, { dialTimeoutMs });
+					return true;
+				} catch (e) {
+					lastError = e;
+				}
+			}
+			throw lastError ?? new Error("Failed to dial bootstrap peer");
+		};
+
+		const dialTasks: Array<{ label: string[]; promise: Promise<boolean> }> = [];
+		for (const list of byPeerId.values()) {
+			dialTasks.push({
+				label: list.map((x) => (typeof x === "string" ? x : x.toString())),
+				promise: dialPeer(list),
+			});
+		}
+		for (const a of unknown) {
+			dialTasks.push({
+				label: [typeof a === "string" ? a : a.toString()],
+				promise: this.dial(typeof a === "string" ? multiaddr(a) : a, {
+					dialTimeoutMs,
+				}),
+			});
+		}
+
+		const settled = await Promise.allSettled(dialTasks.map((t) => t.promise));
 		let once = false;
 		for (const [i, result] of settled.entries()) {
 			if (result.status === "fulfilled") {
@@ -371,7 +599,7 @@ export class Peerbit implements ProgramClient {
 			} else {
 				logger.error(
 					"Failed to dial bootstrap address(s): " +
-						JSON.stringify(_addresses[i]) +
+						JSON.stringify(dialTasks[i]?.label ?? []) +
 						". Reason: " +
 						result.reason,
 				);
@@ -379,6 +607,71 @@ export class Peerbit implements ProgramClient {
 		}
 		if (!once) {
 			throw new Error("Failed to succefully dial any bootstrap node");
+		}
+
+		// Seed deterministic topic-root candidates for shard root resolution.
+		//
+		// IMPORTANT: this set must be stable across peers, otherwise different nodes
+		// will resolve different roots for the same shard and the overlay will partition.
+		//
+		// We therefore constrain candidates to the bootstrap peerIds we were asked
+		// to dial (and that we successfully connected to).
+		const servicesAny: any = this.libp2p.services as any;
+		const fanoutPlane = servicesAny?.fanout?.topicRootControlPlane;
+		const pubsubPlane = servicesAny?.pubsub?.topicRootControlPlane;
+		const planes = [...new Set([fanoutPlane, pubsubPlane].filter(Boolean))];
+		if (planes.length > 0) {
+			const bootstrapPeerIds = new Set<string>();
+			for (const a of _addresses) {
+				const pid = extractPeerId(a as any);
+				if (pid) bootstrapPeerIds.add(pid);
+			}
+
+			const candidates = new Set<string>();
+			for (const connection of this.libp2p.getConnections()) {
+				if (bootstrapPeerIds.size > 0) {
+					const remoteId = connection.remotePeer?.toString?.();
+					if (!remoteId || !bootstrapPeerIds.has(remoteId)) continue;
+				}
+				try {
+					candidates.add(getPublicKeyFromPeerId(connection.remotePeer).hashcode());
+				} catch {
+					// ignore peers without a resolvable public key
+				}
+			}
+			// If this node is itself one of the bootstraps, it won't show up among
+			// remote connections; add it explicitly so shard mapping matches other peers.
+			try {
+				if (bootstrapPeerIds.has(this.libp2p.peerId.toString())) {
+					candidates.add(this.services.pubsub.publicKeyHash);
+				}
+			} catch {
+				// ignore
+			}
+			if (candidates.size > 0) {
+				const list = [...candidates];
+				// Prefer the pubsub helper so we also disable its auto-candidate mode.
+				try {
+					(this.services.pubsub as any)?.setTopicRootCandidates?.(list);
+				} catch {
+					// ignore
+				}
+				for (const plane of planes) {
+					try {
+						plane.setTopicRootCandidates(list);
+					} catch {
+						// ignore
+					}
+				}
+				// Open shard roots this node is responsible for (no-op for non-candidates).
+				try {
+					if (list.includes(this.services.pubsub.publicKeyHash)) {
+						await this.services.pubsub.hostShardRootsNow();
+					}
+				} catch {
+					// ignore
+				}
+			}
 		}
 	}
 
@@ -397,6 +690,52 @@ export class Peerbit implements ProgramClient {
 		return (
 			this._handler || (this._handler = new ProgramHandler({ client: this }))
 		).open(storeOrAddress, options);
+	}
+
+	public fanoutChannel(topic: string, root: string = this.services.fanout.publicKeyHash) {
+		if (root === this.services.fanout.publicKeyHash) {
+			return FanoutChannel.fromSelf(this.services.fanout, topic);
+		}
+		return new FanoutChannel(this.services.fanout, { topic, root });
+	}
+
+	public async fanoutResolveRoot(topic: string): Promise<string> {
+		const servicesAny: any = this.services as any;
+		const topicRootControlPlane =
+			servicesAny?.fanout?.topicRootControlPlane ||
+			servicesAny?.pubsub?.topicRootControlPlane;
+		const resolved = await topicRootControlPlane?.resolveTopicRoot?.(topic);
+		if (!resolved) {
+			throw new Error(
+				`Failed to resolve fanout root for topic ${topic}. Configure topic-root candidates/resolver (Peerbit.bootstrap() does this automatically) or pass root explicitly.`,
+			);
+		}
+		return resolved;
+	}
+
+	public fanoutOpenAsRoot(
+		topic: string,
+		options: Omit<FanoutTreeChannelOptions, "role">,
+	) {
+		return this.fanoutChannel(topic).openAsRoot(options);
+	}
+
+	public fanoutJoin(
+		topic: string,
+		root: string,
+		options: Omit<FanoutTreeChannelOptions, "role">,
+		joinOpts?: FanoutTreeJoinOptions,
+	) {
+		return this.fanoutChannel(topic, root).join(options, joinOpts);
+	}
+
+	public async fanoutJoinAuto(
+		topic: string,
+		options: Omit<FanoutTreeChannelOptions, "role">,
+		joinOpts?: FanoutTreeJoinOptions,
+	) {
+		const root = await this.fanoutResolveRoot(topic);
+		return this.fanoutJoin(topic, root, options, joinOpts);
 	}
 
 	get storage() {

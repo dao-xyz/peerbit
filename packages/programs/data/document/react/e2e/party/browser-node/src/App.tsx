@@ -125,6 +125,22 @@ const DocumentParty = ({ label, replicate }: DocumentPartyProps) => {
 
 	const displayItems = items;
 
+	useEffect(() => {
+		// Test-only escape hatch: allow Playwright to force a "pull" after the app is connected.
+		// This helps stabilize semantics around "push disabled" by ensuring we have completed an
+		// initial fetch before asserting that no further live updates arrive.
+		(window as any).__partyForceSync = async () => {
+			try {
+				await loadMore?.(10, { force: true, reason: "manual" });
+			} catch (error) {
+				console.warn("Force sync failed", error);
+			}
+		};
+		return () => {
+			delete (window as any).__partyForceSync;
+		};
+	}, [loadMore]);
+
 	// read the amount of messages to write from the query params
 
 	useEffect(() => {

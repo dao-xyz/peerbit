@@ -2,7 +2,7 @@ import { type Constructor } from "@dao-xyz/borsh";
 import type { PublicSignKey } from "@peerbit/crypto";
 import type { Entry } from "@peerbit/log";
 import type { ProgramClient } from "@peerbit/program";
-import type { DirectSub } from "@peerbit/pubsub";
+import type { TopicControlPlane } from "@peerbit/pubsub";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import {
@@ -48,8 +48,8 @@ export const slowDownSend = (
 	to: ProgramClient,
 	ms: number | (() => number) = 3000,
 ) => {
-	const directsub = from.services.pubsub as DirectSub;
-	for (const [_key, peer] of directsub.peers) {
+	const pubsub = from.services.pubsub as TopicControlPlane;
+	for (const [_key, peer] of pubsub.peers) {
 		if (peer.publicKey.equals(to.identity.publicKey)) {
 			const writeFn = peer.write.bind(peer);
 			peer.write = async (msg, priority) => {
@@ -159,6 +159,11 @@ export const checkBounded = async (
 	higher: number,
 	...dbs: { log: SharedLog<any, any> }[]
 ) => {
+	// Under full-suite load (GC + lots of timers), rebalancing/pruning can take
+	// noticeably longer. Use a larger window with slower polling to avoid flaky
+	// upper-bound assertions.
+	const boundWaitOpts = { timeout: 60_000, delayInterval: 1_000 } as const;
+
 	const checkConverged = async (db: { log: SharedLog<any, any> }) => {
 		const a = db.log.log.length;
 		await delay(100); // arb delay
@@ -169,7 +174,7 @@ export const checkBounded = async (
 		); // TODO make this a parameter
 	};
 
-	for (const [_i, db] of dbs.entries()) {
+	for (const db of dbs) {
 		try {
 			await waitForResolved(() => checkConverged(db), {
 				timeout: 25000,
@@ -186,10 +191,11 @@ export const checkBounded = async (
 		entryCount,
 	);
 
-	for (const [_i, db] of dbs.entries()) {
+	for (const db of dbs) {
 		try {
-			await waitForResolved(() =>
-				expect(db.log.log.length).greaterThanOrEqual(entryCount * lower),
+			await waitForResolved(
+				() => expect(db.log.log.length).greaterThanOrEqual(entryCount * lower),
+				boundWaitOpts,
 			);
 		} catch (error) {
 			await dbgLogs(dbs.map((x) => x.log));
@@ -202,8 +208,9 @@ export const checkBounded = async (
 		}
 
 		try {
-			await waitForResolved(() =>
-				expect(db.log.log.length).lessThanOrEqual(entryCount * higher),
+			await waitForResolved(
+				() => expect(db.log.log.length).lessThanOrEqual(entryCount * higher),
+				boundWaitOpts,
 			);
 		} catch (error) {
 			await dbgLogs(dbs.map((x) => x.log));
@@ -223,62 +230,68 @@ export const checkReplicas = async (
 	entryCount: number,
 ) => {
 	try {
-		await waitForResolved(async () => {
-			const map = new Map<string, number>();
-			const hashToEntry = new Map<string, Entry<any>>();
-			for (const db of dbs) {
-				for (const value of await db.log.log.toArray()) {
-					// eslint-disable-next-line @typescript-eslint/no-unused-expressions
-					expect(await db.log.log.blocks.has(value.hash)).to.be.true;
-					map.set(value.hash, (map.get(value.hash) || 0) + 1);
-					hashToEntry.set(value.hash, value);
+		// Replica convergence can take longer under full-suite load (GC, many
+		// concurrent timers). Use a larger window and slower polling to reduce flakiness
+		// and avoid starving the event loop with tight, heavy polling.
+		await waitForResolved(
+			async () => {
+				const map = new Map<string, number>();
+				const hashToEntry = new Map<string, Entry<any>>();
+				for (const db of dbs) {
+					for (const value of await db.log.log.toArray()) {
+						// eslint-disable-next-line @typescript-eslint/no-unused-expressions
+						expect(await db.log.log.blocks.has(value.hash)).to.be.true;
+						map.set(value.hash, (map.get(value.hash) || 0) + 1);
+						hashToEntry.set(value.hash, value);
+					}
 				}
-			}
-			for (const [_k, v] of map) {
-				try {
-					expect(v).greaterThanOrEqual(minReplicas);
-				} catch (error) {
-					const entry = hashToEntry.get(_k)!;
-					const gid = entry.meta.gid;
-					const coordinates = await dbs[0].log.createCoordinates(
-						entry,
-						minReplicas,
-					);
-					throw new Error(
-						"Did not fulfill min replicas level for " +
-							entry.hash +
-							" coordinates" +
-							JSON.stringify(coordinates.map((x) => x.toString())) +
-							" of: " +
-							minReplicas +
-							" got " +
-							v +
-							". Gid to peer history? " +
-							JSON.stringify(
-								dbs.map(
-									(x) =>
-										[...(x.log._gidPeersHistory.get(gid) || [])].filter(
-											(id) => id !== x.log.node.identity.publicKey.hashcode(),
-										).length || 0,
-								) +
-									". Has? " +
-									JSON.stringify(
-										await Promise.all(
-											dbs.map((x) => x.log.log.has(entry.hash)),
-										),
+				for (const [_k, v] of map) {
+					try {
+						expect(v).greaterThanOrEqual(minReplicas);
+					} catch (error) {
+						const entry = hashToEntry.get(_k)!;
+						const gid = entry.meta.gid;
+						const coordinates = await dbs[0].log.createCoordinates(
+							entry,
+							minReplicas,
+						);
+						throw new Error(
+							"Did not fulfill min replicas level for " +
+								entry.hash +
+								" coordinates" +
+								JSON.stringify(coordinates.map((x) => x.toString())) +
+								" of: " +
+								minReplicas +
+								" got " +
+								v +
+								". Gid to peer history? " +
+								JSON.stringify(
+									dbs.map(
+										(x) =>
+											[...(x.log._gidPeersHistory.get(gid) || [])].filter(
+												(id) => id !== x.log.node.identity.publicKey.hashcode(),
+											).length || 0,
 									) +
-									", sync in flight ? " +
-									JSON.stringify(
-										dbs.map((x) =>
-											x.log.syncronizer.syncInFlight.has(entry.hash),
+										". Has? " +
+										JSON.stringify(
+											await Promise.all(
+												dbs.map((x) => x.log.log.has(entry.hash)),
+											),
+										) +
+										", sync in flight ? " +
+										JSON.stringify(
+											dbs.map((x) =>
+												x.log.syncronizer.syncInFlight.has(entry.hash),
+											),
 										),
-									),
-							),
-					);
-				}
-				expect(v).lessThanOrEqual(dbs.length);
-			}
-		});
+								),
+						);
+					}
+					expect(v).lessThanOrEqual(dbs.length);
+					}
+				},
+				{ timeout: 120_000, delayInterval: 1_000 },
+			);
 	} catch (error) {
 		await dbgLogs(dbs.map((x) => x.log));
 		throw error;

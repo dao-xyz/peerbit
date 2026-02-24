@@ -10,12 +10,13 @@
  * If you are to copy code from this example, you can safely remove these
  */
 /// [imports]
-import { field, variant } from "@dao-xyz/borsh";
-import { Documents, SearchRequest } from "@peerbit/document";
-import { Program } from "@peerbit/program";
-import assert from "node:assert";
-import { Peerbit } from "peerbit";
-import { v4 as uuid } from "uuid";
+	import { field, variant } from "@dao-xyz/borsh";
+	import { Documents, SearchRequest } from "@peerbit/document";
+	import { Program } from "@peerbit/program";
+	import { waitForResolved } from "@peerbit/time";
+	import assert from "node:assert";
+	import { Peerbit } from "peerbit";
+	import { v4 as uuid } from "uuid";
 
 /// [imports]
 
@@ -76,25 +77,37 @@ const peer2 = await Peerbit.create();
 
 // Connect to the first peer
 await peer2.dial(peer.getMultiaddrs());
+// In small ad-hoc networks (no bootstraps/trackers), proactively hosting shard
+// roots avoids flaky "join before root is hosted" races.
+await Promise.all([
+	(peer.services.pubsub as any).hostShardRootsNow?.(),
+	(peer2.services.pubsub as any).hostShardRootsNow?.(),
+]);
 
-const store2 = await peer2.open<PostsDB>(store.address!);
+	const store2 = await peer2.open<PostsDB>(store.address!);
 
-// Wait for peer1 to be reachable for query
-await store.posts.log.waitForReplicator(peer2.identity.publicKey);
+	// Wait for the write to become queryable. Depending on scheduling/GC this can take a moment
+	// even on localhost, so we poll rather than assuming a fixed delay.
+	const responses: Post[] = await waitForResolved(
+		async () => {
+			const results = await store2.posts.index.search(
+				new SearchRequest({
+					query: [], // query all
+				}),
+				{
+					local: true,
+					remote: true,
+				},
+			);
+			assert.equal(results.length, 1);
+			return results;
+		},
+		{ timeout: 30_000, delayInterval: 200 },
+	);
 
-const responses: Post[] = await store2.posts.index.search(
-	new SearchRequest({
-		query: [], // query all
-	}),
-	{
-		local: true,
-		remote: true,
-	},
-);
-
-assert.equal(responses.length, 1);
-assert.deepEqual(
-	responses.map((x) => x.message),
+	assert.equal(responses.length, 1);
+	assert.deepEqual(
+		responses.map((x) => x.message),
 	["hello world"],
 );
 /// [another-client]

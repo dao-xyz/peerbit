@@ -1,4 +1,10 @@
-const defaultAllowed = ["https://peerbit.org", "http://localhost:5173"];
+const defaultAllowed = [
+	"https://peerbit.org",
+	// Vite dev/preview (peerbit-org uses 5193/5194 by default, but keep 5173 for compatibility).
+	"http://localhost:5193",
+	"http://localhost:5194",
+	"http://localhost:5173",
+];
 
 function allowedOrigins() {
 	const raw = Deno.env.get("UPDATES_ALLOWED_ORIGINS");
@@ -22,4 +28,3 @@ export function corsHeaders(req: Request) {
 		"Vary": "Origin",
 	};
 }
-

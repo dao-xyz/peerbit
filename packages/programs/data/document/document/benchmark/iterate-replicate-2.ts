@@ -4,7 +4,6 @@ import { tcp } from "@libp2p/tcp";
 import { SearchRequest } from "@peerbit/document-interface";
 import { Sort } from "@peerbit/indexer-interface";
 import { Program } from "@peerbit/program";
-import { DirectSub } from "@peerbit/pubsub";
 import { Peerbit, createLibp2pExtended } from "peerbit";
 import { v4 as uuid } from "uuid";
 import { createDocumentDomainFromProperty } from "../src/domain.js";
@@ -63,25 +62,11 @@ const peers = await Promise.all(
 		await createLibp2pExtended({
 			transports: [tcp()],
 			streamMuxers: [yamux()],
-			services: {
-				pubsub: (sub: any) =>
-					new DirectSub(sub, {
-						canRelayMessage: true,
-						/* connectionManager: true */
-					}),
-			},
 		}),
 		await createLibp2pExtended({
 			connectionManager: {},
 			transports: [tcp()],
 			streamMuxers: [yamux()],
-			services: {
-				pubsub: (sub: any) =>
-					new DirectSub(sub, {
-						canRelayMessage: true,
-						/* connectionManager: true */
-					}),
-			},
 		}),
 	].map((x) => Peerbit.create({ libp2p: x })),
 );

@@ -197,6 +197,12 @@ export class FastMutex {
 	 * that we can expire it in the future) and json.stringify's it
 	 */
 	setItem(key: string, value: any, keepLocked?: () => boolean) {
+		// Avoid leaking keep-alive intervals when re-setting the same key (e.g. re-lock with replaceIfSameClient).
+		const existing = this.intervals.get(key);
+		if (existing) {
+			clearInterval(existing);
+			this.intervals.delete(key);
+		}
 		if (!keepLocked) {
 			return this.localStorage.setItem(
 				key,

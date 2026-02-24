@@ -25,14 +25,14 @@ export default {
 		target: ["node", "browser", "webworker"],
 		watch: false,
 		files: [],
-		timeout: 60000,
+		timeout: 120000,
 
 		grep: "",
 		bail: false,
 		debug: true,
 		progress: false,
 		cov: false,
-		covTimeout: 60000,
+		covTimeout: 120000,
 		browser: {
 			config: {
 				assets: [

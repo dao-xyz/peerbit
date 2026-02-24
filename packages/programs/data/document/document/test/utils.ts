@@ -1,5 +1,5 @@
 import type { ProgramClient } from "@peerbit/program";
-import type { DirectSub } from "@peerbit/pubsub";
+import type { TopicControlPlane } from "@peerbit/pubsub";
 import { delay } from "@peerbit/time";
 
 export const slowDownSend = (
@@ -7,8 +7,8 @@ export const slowDownSend = (
 	to: ProgramClient,
 	ms = 3000,
 ) => {
-	const directsub = from.services.pubsub as DirectSub;
-	for (const [_key, peer] of directsub.peers) {
+	const pubsub = from.services.pubsub as TopicControlPlane;
+	for (const [_key, peer] of pubsub.peers) {
 		if (peer.publicKey.equals(to.identity.publicKey)) {
 			const writeFn = peer.write.bind(peer);
 			peer.write = async (msg, priority) => {

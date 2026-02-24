@@ -64,3 +64,59 @@ if (typeof (globalThis as any).addEventListener !== "function") {
 		} as any;
 	}
 }
+
+// Optional: debug why a worker won't exit (e.g. active handles / timers)
+if (process.env.VITEST_DEBUG_HANDLES) {
+	afterAll(() => {
+		const handles = (process as any)._getActiveHandles?.() ?? [];
+		const requests = (process as any)._getActiveRequests?.() ?? [];
+		const counts: Record<string, number> = {};
+		const details: any[] = [];
+		for (const h of handles) {
+			const name = h?.constructor?.name ?? typeof h;
+			counts[name] = (counts[name] ?? 0) + 1;
+			if (name === "Socket") {
+				details.push({
+					type: name,
+					localAddress: (h as any).localAddress,
+					localPort: (h as any).localPort,
+					remoteAddress: (h as any).remoteAddress,
+					remotePort: (h as any).remotePort,
+					bytesRead: (h as any).bytesRead,
+					bytesWritten: (h as any).bytesWritten,
+					destroyed: (h as any).destroyed,
+				});
+			} else if (name === "Pipe") {
+				details.push({
+					type: name,
+					fd: (h as any).fd,
+				});
+			}
+		}
+		// eslint-disable-next-line no-console
+		console.log(
+			"[vitest.setup] debug handles",
+			counts,
+			"requests",
+			requests.length,
+			"mem",
+			(process as any).memoryUsage?.(),
+			"details",
+			details,
+		);
+
+		// Periodic memory probe (unref so it doesn't keep the worker alive).
+		try {
+			const interval = setInterval(() => {
+				// eslint-disable-next-line no-console
+				console.log(
+					"[vitest.setup] mem tick",
+					(process as any).memoryUsage?.(),
+				);
+			}, 10_000);
+			(interval as any).unref?.();
+		} catch {
+			// ignore
+		}
+	});
+}

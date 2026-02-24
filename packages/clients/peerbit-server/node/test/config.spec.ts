@@ -3,12 +3,12 @@ import { getPackageName } from "../src/config.js";
 
 describe("tgz", () => {
 	it("can get package.json name", async () => {
-		const pathLib = await import("path");
 		const urlLib = await import("url");
-		const filename = urlLib.fileURLToPath(import.meta.url);
-		const dirname = pathLib.dirname(filename);
+		const tgzPath = urlLib.fileURLToPath(
+			new URL("../../test/test.tgz", import.meta.url),
+		);
 
-		expect(await getPackageName(pathLib.join(dirname, "/test.tgz"))).equal(
+		expect(await getPackageName(tgzPath)).equal(
 			"@peerbit/test-lib",
 		);
 	});

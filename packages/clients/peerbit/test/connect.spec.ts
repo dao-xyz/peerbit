@@ -1,4 +1,3 @@
-import { SeekDelivery } from "@peerbit/stream-interface";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { Peerbit } from "../src/index.js";
@@ -44,10 +43,45 @@ describe(`dial`, function () {
 
 			await clients[0].services.pubsub.publish(new Uint8Array([1]), {
 				topics: [topic],
-				mode: new SeekDelivery({ redundancy: 1 }),
 			});
 			await waitForResolved(() => expect(data).to.exist);
 			expect(data && new Uint8Array(data)).to.deep.equal(new Uint8Array([1]));
+		});
+
+		it("exposes fanout helpers separately from pubsub", async () => {
+			const topic = "fanout-topic";
+			const root = clients[0].services.fanout.publicKeyHash;
+			const rootChannel = clients[0].fanoutChannel(topic);
+			const leafChannel = clients[1].fanoutChannel(topic, root);
+
+			await clients[0].dial(clients[1].getMultiaddrs()[0]);
+
+			rootChannel.openAsRoot({
+				msgRate: 10,
+				msgSize: 64,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 8,
+				repair: true,
+			});
+			await leafChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 0,
+					maxChildren: 0,
+					repair: true,
+				},
+				{ timeoutMs: 10_000 },
+			);
+
+			let received: Uint8Array | undefined;
+			leafChannel.addEventListener("data", (ev: any) => {
+				received = ev.detail.payload;
+			});
+
+			await rootChannel.publish(new Uint8Array([7, 8, 9]));
+			await waitForResolved(() => expect(received).to.exist);
+			expect([...received!]).to.deep.equal([7, 8, 9]);
 		});
 	}
 	it("dialer settings", async () => {

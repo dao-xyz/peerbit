@@ -144,7 +144,7 @@ export class LargeIntegerKey extends IdKey {
 	}
 }
 
-export type Ideable = string | number | bigint | Uint8Array;
+export type Ideable = string | number | bigint | Uint8Array | ArrayBufferView;
 
 const idKeyTypes = new Set(["string", "number", "bigint"]);
 
@@ -165,31 +165,40 @@ export const toId = (obj: Ideable): IdKey => {
 				(2 ** 64 - 1) +
 				". Provided value: " +
 				obj,
-		);
+			);
 	}
-	if (obj instanceof Uint8Array) {
-		return new Uint8ArrayKey(obj);
+	if (obj instanceof Uint8Array || ArrayBuffer.isView(obj)) {
+		// Support cross-realm typed arrays (e.g. jsdom) by normalizing to a local Uint8Array.
+		const bytes =
+			obj instanceof Uint8Array
+				? obj
+				: new Uint8Array(obj.buffer, obj.byteOffset, obj.byteLength);
+		return new Uint8ArrayKey(bytes);
 	}
 	throw new Error(
 		"Unexpected index key: " +
 			typeof obj +
-			", expected: string, number, bigint or Uint8Array",
+			", expected: string, number, bigint, Uint8Array or ArrayBufferView",
 	);
 };
 
 export const toIdeable = (
 	key: IdKey | Ideable,
 ): string | number | bigint | Uint8Array => {
-	if (key instanceof IdKey) {
-		return key.key;
+	const value = key instanceof IdKey ? key.key : key;
+	if (value instanceof Uint8Array) {
+		return value;
 	}
-	return key;
+	if (ArrayBuffer.isView(value)) {
+		return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+	}
+	return value;
 };
 
 export const checkId = (obj: Ideable) => {
 	if (obj == null) {
 		throw new Error(
-			`The provided key value is null or undefined, expecting string, number, bigint, or Uint8array`,
+			`The provided key value is null or undefined, expecting string, number, bigint, Uint8array, or ArrayBufferView`,
 		);
 	}
 	const type = typeof obj;
@@ -200,7 +209,11 @@ export const checkId = (obj: Ideable) => {
 		}
 	}
 
-	if (idKeyTypes.has(type) || obj instanceof Uint8Array) {
+	if (
+		idKeyTypes.has(type) ||
+		obj instanceof Uint8Array ||
+		ArrayBuffer.isView(obj)
+	) {
 		return;
 	}
 

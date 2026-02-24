@@ -1,6 +1,6 @@
 import { tcp } from "@libp2p/tcp";
 import { TestSession } from "@peerbit/libp2p-test-utils";
-import { SeekDelivery } from "@peerbit/stream-interface";
+import { AcknowledgeDelivery } from "@peerbit/stream-interface";
 import { waitForResolved } from "@peerbit/time";
 import B from "benchmark";
 import crypto from "crypto";
@@ -58,7 +58,7 @@ await waitForNeighbour(stream(1), stream(2));
 await waitForNeighbour(stream(2), stream(3));
 
 stream(0).publish(new Uint8Array([123]), {
-	mode: new SeekDelivery({
+	mode: new AcknowledgeDelivery({
 		redundancy: 1,
 		to: [stream(session.peers.length - 1).publicKey],
 	}),

@@ -1,6 +1,6 @@
 import { deserialize, field, fixedArray, variant } from "@dao-xyz/borsh";
 import { type AnyStore } from "@peerbit/any-store";
-import { type Blocks, cidifyString } from "@peerbit/blocks-interface";
+import { type Blocks, type GetOptions, cidifyString } from "@peerbit/blocks-interface";
 import {
 	type Identity,
 	SignatureWithKey,
@@ -9,7 +9,6 @@ import {
 	sha256Base64Sync,
 } from "@peerbit/crypto";
 import { type Indices } from "@peerbit/indexer-interface";
-import { create } from "@peerbit/indexer-sqlite3";
 import { type CryptoKeychain } from "@peerbit/keychain";
 import { type Change } from "./change.js";
 import {
@@ -38,6 +37,16 @@ import { Trim, type TrimOptions } from "./trim.js";
 
 const { LastWriteWins } = Sorting;
 
+type CreateSqliteIndexer = typeof import("@peerbit/indexer-sqlite3").create;
+let sqliteCreate: CreateSqliteIndexer | undefined;
+const createDefaultIndexer = async (): Promise<Indices> => {
+	if (!sqliteCreate) {
+		const mod = await import("@peerbit/indexer-sqlite3");
+		sqliteCreate = mod.create;
+	}
+	return sqliteCreate();
+};
+
 export type LogEvents<T> = {
 	onChange?: (change: Change<T> /* , reference?: R */) => void;
 	onGidRemoved?: (gids: string[]) => Promise<void> | void;
@@ -55,6 +64,10 @@ export type LogProperties<T> = {
 	sortFn?: Sorting.SortFn;
 	trim?: TrimOptions;
 	canAppend?: CanAppend<T>;
+	resolveRemotePeers?: (
+		hash: string,
+		options?: { signal?: AbortSignal },
+	) => Promise<string[] | undefined> | string[] | undefined;
 };
 
 export type LogOptions<T> = LogProperties<T> & LogEvents<T> & MemoryProperties;
@@ -159,13 +172,21 @@ export class Log<T> {
 
 		this._closeController = new AbortController();
 
-		const { encoding, trim, keychain, indexer, onGidRemoved, sortFn } = options;
+		const {
+			encoding,
+			trim,
+			keychain,
+			indexer,
+			onGidRemoved,
+			sortFn,
+			resolveRemotePeers,
+		} = options;
 
 		// TODO do correctly with tie breaks
 		this._sortFn = sortFn || LastWriteWins;
 
 		this._storage = store;
-		this._indexer = indexer || (await create());
+		this._indexer = indexer || (await createDefaultIndexer());
 		await this._indexer.start?.();
 
 		this._encoding = encoding || NO_ENCODING;
@@ -194,6 +215,7 @@ export class Log<T> {
 			).init({ schema: ShallowEntry }),
 			publicKey: this._identity.publicKey,
 			sort: this._sortFn,
+			resolveRemotePeers,
 		});
 		await this._entryIndex.init();
 		/* 	this._values = new Values(this._entryIndex, this._sortFn); */
@@ -357,23 +379,15 @@ export class Log<T> {
 	 * Get an entry.
 	 * @param {string} [hash] The hashes of the entry
 	 */
-	get(
-		hash: string,
-		options?: { remote?: { timeout?: number } | boolean },
-	): Promise<Entry<T> | undefined> {
+	get(hash: string, options?: GetOptions): Promise<Entry<T> | undefined> {
 		return this._entryIndex.get(
 			hash,
 			options
 				? {
 						type: "full",
-						remote: options?.remote && {
-							timeout:
-								typeof options?.remote !== "boolean"
-									? options.remote.timeout
-									: undefined,
-						},
+						remote: options.remote,
 						ignoreMissing: true, // always return undefined instead of throwing errors on missing entries
-					}
+				  }
 				: { type: "full", ignoreMissing: true },
 		);
 	}
@@ -629,103 +643,128 @@ export class Log<T> {
 		},
 	): Promise<void> {
 		let entries: Entry<T>[];
-		let references: Map<string, Entry<T>> = new Map();
+		const references: Map<string, Entry<T>> = new Map();
+
+		const fromCache = new Map<string, string[] | null>();
+		const resolveRemoteFrom = async (hash: string, signal?: AbortSignal) => {
+			const cached = fromCache.get(hash);
+			if (cached !== undefined) return cached === null ? undefined : cached;
+
+			let from: string[] | undefined;
+			try {
+				from = await this.entryIndex.properties.resolveRemotePeers?.(hash, { signal });
+			} catch {
+				from = undefined;
+			}
+			const normalized = from && from.length > 0 ? from : undefined;
+			fromCache.set(hash, normalized ?? null);
+			return normalized;
+		};
+
+		const remote: NonNullable<Exclude<GetOptions["remote"], boolean>> = {
+			timeout: options?.timeout,
+			signal: this._closeController.signal,
+		};
 
 		if (entriesOrLog instanceof Log) {
 			if (entriesOrLog.entryIndex.length === 0) return;
 			entries = await entriesOrLog.toArray();
-			for (const element of entries) {
-				references.set(element.hash, element);
-			}
+			for (const element of entries) references.set(element.hash, element);
 		} else if (Array.isArray(entriesOrLog)) {
-			if (entriesOrLog.length === 0) {
-				return;
-			}
+			if (entriesOrLog.length === 0) return;
 
 			entries = [];
 			for (const element of entriesOrLog) {
 				if (element instanceof Entry) {
 					entries.push(element);
 					references.set(element.hash, element);
-				} else if (typeof element === "string") {
-					if ((await this.has(element)) && !options?.reset) {
+					continue;
+				}
+
+				if (typeof element === "string") {
+					if ((await this.entryIndex.getShallow(element)) != null && !options?.reset) {
 						continue; // already in log
 					}
 
-					let entry = await Entry.fromMultihash<T>(this._storage, element, {
+					const from = await resolveRemoteFrom(element, this._closeController.signal);
+					const entry = await Entry.fromMultihash<T>(this._storage, element, {
 						remote: {
-							timeout: options?.timeout,
+							timeout: remote.timeout,
+							signal: remote.signal,
+							...(from && from.length > 0 ? { from } : {}),
 						},
 					});
-					if (!entry) {
-						throw new Error("Missing entry in join by hash: " + element);
-					}
 					entries.push(entry);
-				} else if (element instanceof ShallowEntry) {
-					if ((await this.has(element.hash)) && !options?.reset) {
+					references.set(entry.hash, entry);
+					continue;
+				}
+
+				if (element instanceof ShallowEntry) {
+					if (
+						(await this.entryIndex.getShallow(element.hash)) != null &&
+						!options?.reset
+					) {
 						continue; // already in log
 					}
 
-					let entry = await Entry.fromMultihash<T>(
-						this._storage,
+					const from = await resolveRemoteFrom(
 						element.hash,
-						{
-							remote: {
-								timeout: options?.timeout,
-							},
-						},
+						this._closeController.signal,
 					);
-					if (!entry) {
-						throw new Error("Missing entry in join by hash: " + element.hash);
-					}
+					const entry = await Entry.fromMultihash<T>(this._storage, element.hash, {
+						remote: {
+							timeout: remote.timeout,
+							signal: remote.signal,
+							...(from && from.length > 0 ? { from } : {}),
+						},
+					});
 					entries.push(entry);
-				} else {
-					entries.push(element.entry);
-					references.set(element.entry.hash, element.entry);
+					references.set(entry.hash, entry);
+					continue;
+				}
 
-					for (const ref of element.references) {
-						references.set(ref.hash, ref);
-					}
+				entries.push(element.entry);
+				references.set(element.entry.hash, element.entry);
+				for (const ref of element.references) {
+					references.set(ref.hash, ref);
 				}
 			}
 		} else {
-			let all = await entriesOrLog.all(); // TODO dont load all at once
-			if (all.length === 0) {
-				return;
-			}
-
+			const all = await entriesOrLog.all(); // TODO dont load all at once
+			if (all.length === 0) return;
 			entries = all;
 		}
 
-		let heads: Map<string, boolean> = new Map();
+		const heads: Map<string, boolean> = new Map();
 		for (const entry of entries) {
-			if (heads.has(entry.hash)) {
-				continue;
-			}
+			if (heads.has(entry.hash)) continue;
 			heads.set(entry.hash, true);
-			for (const next of await entry.getNext()) {
-				heads.set(next, false);
-			}
+			for (const next of await entry.getNext()) heads.set(next, false);
 		}
 
 		for (const entry of entries) {
-			let isHead = heads.get(entry.hash)!;
-			let prev = this._joining.get(entry.hash);
+			const isHead = heads.get(entry.hash)!;
+			const prev = this._joining.get(entry.hash);
 			if (prev) {
 				await prev;
-			} else {
-				const p = this.joinRecursively(entry, {
-					references,
-					isHead,
-					...options,
-				});
-
-				this._joining.set(entry.hash, p);
-				p.finally(() => {
-					this._joining.delete(entry.hash);
-				});
-				await p;
+				continue;
 			}
+
+			const p = this.joinRecursively(entry, {
+				references,
+				isHead,
+				reset: options?.reset,
+				verifySignatures: options?.verifySignatures,
+				trim: options?.trim,
+				onChange: options?.onChange,
+				remote,
+				resolveRemoteFrom,
+			});
+			this._joining.set(entry.hash, p);
+			p.finally(() => {
+				this._joining.delete(entry.hash);
+			});
+			await p;
 		}
 	}
 
@@ -746,12 +785,14 @@ export class Log<T> {
 			isHead: boolean;
 			reset?: boolean;
 			onChange?: OnChange<T>;
-			remote?: {
-				timeout?: number;
-			};
+			remote?: GetOptions["remote"];
+			resolveRemoteFrom?: (
+				hash: string,
+				signal?: AbortSignal,
+			) => Promise<string[] | undefined>;
 		},
 	): Promise<boolean> {
-		if (this.entryIndex.length > (options?.length ?? Number.MAX_SAFE_INTEGER)) {
+		if (this.entryIndex.length > (options.length ?? Number.MAX_SAFE_INTEGER)) {
 			return false;
 		}
 
@@ -759,17 +800,15 @@ export class Log<T> {
 			throw new Error("Unexpected");
 		}
 
-		if ((await this.has(entry.hash)) && !options.reset) {
+		if ((await this.entryIndex.getShallow(entry.hash)) != null && !options.reset) {
 			return false;
 		}
 
 		entry.init(this);
 
-		if (options?.verifySignatures) {
+		if (options.verifySignatures) {
 			if (!(await entry.verifySignatures())) {
-				throw new Error(
-					'Invalid signature entry with hash "' + entry.hash + '"',
-				);
+				throw new Error(`Invalid signature entry with hash "${entry.hash}"`);
 			}
 		}
 
@@ -791,34 +830,45 @@ export class Log<T> {
 		}
 
 		if (entry.meta.type !== EntryType.CUT) {
+			const remote =
+				options.remote && typeof options.remote === "object"
+					? options.remote
+					: undefined;
+
 			for (const a of entry.meta.next) {
 				const prev = this._joining.get(a);
 				if (prev) {
 					await prev;
-				} else if (!(await this.has(a)) || options.reset) {
-					const nested =
-						options.references?.get(a) ||
-						(await Entry.fromMultihash<T>(this._storage, a, {
-							remote: { timeout: options?.remote?.timeout },
-						}));
-					if (!nested) {
-						throw new Error("Missing entry in joinRecursively: " + a);
-					}
-
-					const p = this.joinRecursively(
-						nested,
-						options.isHead ? { ...options, isHead: false } : options,
-					);
-					this._joining.set(nested.hash, p);
-					p.finally(() => {
-						this._joining.delete(nested.hash);
-					});
-					await p;
+					continue;
 				}
+				if ((await this.entryIndex.getShallow(a)) != null && !options.reset) {
+					continue;
+				}
+
+				const from = await options.resolveRemoteFrom?.(a, remote?.signal);
+				const nested =
+					options.references?.get(a) ??
+					(await Entry.fromMultihash<T>(this._storage, a, {
+						remote: {
+							timeout: remote?.timeout,
+							signal: remote?.signal,
+							...(from && from.length > 0 ? { from } : {}),
+						},
+					}));
+
+				const p = this.joinRecursively(
+					nested,
+					options.isHead ? { ...options, isHead: false } : options,
+				);
+				this._joining.set(nested.hash, p);
+				p.finally(() => {
+					this._joining.delete(nested.hash);
+				});
+				await p;
 			}
 		}
 
-		if (this?._canAppend && !(await this?._canAppend(entry))) {
+		if (this._canAppend && !(await this._canAppend(entry))) {
 			return false;
 		}
 
@@ -835,23 +885,23 @@ export class Log<T> {
 			| PendingDelete<T>
 			| { entry: Entry<T>; fn: undefined }
 		)[] = await this.processEntry(entry);
-		const trimmed = await this.trim(options?.trim);
+		const trimmed = await this.trim(options.trim);
 
 		if (trimmed) {
-			for (const entry of trimmed) {
-				pendingDeletes.push({ entry, fn: undefined });
+			for (const removedEntry of trimmed) {
+				pendingDeletes.push({ entry: removedEntry, fn: undefined });
 			}
 		}
 
 		const removed = pendingDeletes.map((x) => x.entry);
 
-		await options?.onChange?.({
+		await options.onChange?.({
 			added: [{ head: options.isHead, entry }],
-			removed: removed,
+			removed,
 		});
 		await this._onChange?.({
 			added: [{ head: options.isHead, entry }],
-			removed: removed,
+			removed,
 		});
 
 		await Promise.all(pendingDeletes.map((x) => x.fn?.()));

@@ -4,9 +4,7 @@ import type {
 	CanAppend,
 	Change,
 	Encoding,
-	EncryptionTemplateMaybeEncrypted,
 	Entry,
-	EntryType,
 	ShallowEntry,
 	TrimOptions,
 } from "@peerbit/log";
@@ -16,6 +14,8 @@ import {
 	AbsoluteReplicas,
 	type ReplicationLimitsOptions,
 	type ReplicationOptions,
+	type SharedAppendOptions,
+	type SharedLogFanoutOptions,
 	SharedLog,
 } from "../../../src/index.js";
 import type { TransportMessage } from "../../../src/message.js";
@@ -64,6 +64,7 @@ export type Args<
 	waitForReplicatorTimeout?: number;
 	waitForReplicatorRequestIntervalMs?: number;
 	waitForReplicatorRequestMaxAttempts?: number;
+	fanout?: SharedLogFanoutOptions;
 	keep?: (
 		entry: Entry<Operation<T>> | ShallowEntry | EntryReplicated<R>,
 	) => boolean;
@@ -135,6 +136,7 @@ export class EventStore<
 			timeUntilRoleMaturity: properties?.timeUntilRoleMaturity ?? 3000,
 			waitForPruneDelay: properties?.waitForPruneDelay ?? 0,
 			keep: properties?.keep,
+			fanout: properties?.fanout,
 			respondToIHaveTimeout: properties?.respondToIHaveTimeout,
 			distributionDebounceTime: 50, // to make tests fast
 			domain: (properties?.domain ?? (properties?.setup as any)?.domain) as any,
@@ -146,19 +148,7 @@ export class EventStore<
 
 	add(
 		data: T,
-		options?: {
-			pin?: boolean;
-			receiver?: EncryptionTemplateMaybeEncrypted;
-			meta?: {
-				next?: Entry<any>[];
-				gidSeed?: Uint8Array;
-				type?: EntryType;
-			};
-			replicas?: AbsoluteReplicas;
-			target?: "all" | "replicators";
-			canAppend?: CanAppend<Operation<T>>;
-			replicate?: boolean;
-		},
+		options?: SharedAppendOptions<Operation<T>>,
 	) {
 		return this.log.append(
 			{

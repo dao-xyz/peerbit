@@ -4,11 +4,10 @@ import type { CircuitRelayService } from "@libp2p/circuit-relay-v2";
 import { identify } from "@libp2p/identify";
 import { DirectBlock } from "@peerbit/blocks";
 import {
-	DefaultCryptoKeychain,
 	type IPeerbitKeychain,
 	keychain,
 } from "@peerbit/keychain";
-import { DirectSub } from "@peerbit/pubsub";
+import { FanoutTree, TopicControlPlane, TopicRootControlPlane } from "@peerbit/pubsub";
 import {
 	type Libp2p,
 	type Libp2pOptions,
@@ -18,7 +17,8 @@ import {
 import { listen, relay, transports } from "./transports.js";
 
 export type Libp2pExtendServices = {
-	pubsub: DirectSub;
+	pubsub: TopicControlPlane;
+	fanout: FanoutTree;
 	blocks: DirectBlock;
 	keychain: IPeerbitKeychain;
 };
@@ -39,15 +39,20 @@ export type Libp2pCreateOptionsWithServices = Libp2pCreateOptions & {
 };
 
 export const createLibp2pExtended = (
-	opts: PartialLibp2pCreateOptions = {
-		services: {
-			blocks: (c: any) => new DirectBlock(c),
-			pubsub: (c: any) => new DirectSub(c),
-			keychain: keychain(),
-		},
-	},
+	opts: PartialLibp2pCreateOptions = {},
 ): Promise<Libp2pExtended> => {
+	const topicRootControlPlane = new TopicRootControlPlane();
 	let extraServices: any = {};
+	let fanoutInstance: FanoutTree | undefined;
+	const configuredFanoutFactory =
+		opts.services?.fanout ||
+		((c) => new FanoutTree(c, { connectionManager: false, topicRootControlPlane }));
+	const getOrCreateFanout = (c: any) => {
+		if (!fanoutInstance) {
+			fanoutInstance = configuredFanoutFactory(c) as FanoutTree;
+		}
+		return fanoutInstance;
+	};
 
 	if (opts.services?.["relay"] === null) {
 		delete opts.services?.["relay"];
@@ -85,18 +90,21 @@ export const createLibp2pExtended = (
 		connectionEncrypters: opts.connectionEncrypters || [noise()],
 		streamMuxers: opts.streamMuxers || [yamux()],
 		services: {
+			...opts.services,
 			pubsub:
 				opts.services?.pubsub ||
 				((c) =>
-					new DirectSub(c, {
+					new TopicControlPlane(c, {
 						canRelayMessage: true,
+						topicRootControlPlane,
+						fanout: getOrCreateFanout(c),
 						// auto dial true
 						// auto prune true
 					})),
+			fanout: (c) => getOrCreateFanout(c),
 			blocks: opts.services?.blocks || ((c) => new DirectBlock(c)),
-			keychain: opts.services?.keychain || ((c) => new DefaultCryptoKeychain()),
-			...opts.services,
+			keychain: opts.services?.keychain || keychain(),
 			...extraServices,
 		},
-	});
+	}).then((libp2p) => libp2p as Libp2pExtended);
 };

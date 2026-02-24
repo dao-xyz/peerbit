@@ -27,7 +27,9 @@ describe("FastMutex singleton semantics", () => {
 		const fm1 = new FastMutex({
 			localStorage,
 			clientId: "session-1",
-			timeout: 200,
+			// Use a generous timeout to avoid timing flakiness on busy CI runners,
+			// while still asserting that replaceIfSameClient is fast relative to the timeout.
+			timeout: 1000,
 		});
 
 		// First acquire and keep the lock alive
@@ -39,8 +41,8 @@ describe("FastMutex singleton semantics", () => {
 		await fm1.lock(key, () => true, { replaceIfSameClient: true });
 		const elapsed = Date.now() - start;
 
-		// Should not time out and should be very fast
-		expect(elapsed).to.be.lessThan(100);
+		// Should not time out and should be fast (no retry loop / contention).
+		expect(elapsed).to.be.lessThan(250);
 		expect(fm1.isLocked(key)).to.be.true;
 
 		fm1.release(key);

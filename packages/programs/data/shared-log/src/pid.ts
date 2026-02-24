@@ -63,16 +63,34 @@ export class PIDReplicationController {
 			errorCoverageUnmodified;
 
 		const errorFromEven = 1 / peerCount - currentFactor;
+		// When the network is under-covered (`totalFactor < 1`) balancing "down" (negative
+		// error) can further reduce coverage and force constrained peers (memory/CPU limited)
+		// to take boundary assignments that exceed their budgets.
+		//
+		// Use a soft clamp: only suppress negative balance strongly when the coverage deficit
+		// is material. This avoids oscillations around `totalFactor ~= 1`.
+		const coverageDeficit = Math.max(0, errorCoverageUnmodified); // ~= max(0, 1 - totalFactor)
+		const negativeBalanceScale =
+			coverageDeficit <= 0
+				? 1
+				: 1 - Math.min(1, coverageDeficit / 0.1); // full clamp at 10% deficit
+		const errorFromEvenForBalance =
+			errorFromEven >= 0 ? errorFromEven : errorFromEven * negativeBalanceScale;
 
 		const balanceErrorScaler = this.maxMemoryLimit
 			? Math.abs(errorMemory)
 			: 1 - Math.abs(errorCoverage);
 
-		const errorBalance = (this.maxMemoryLimit ? errorMemory > 0 : true)
-			? errorFromEven > 0
-				? balanceErrorScaler * errorFromEven
+		// Balance should be symmetric (allow negative error) so a peer can *reduce*
+		// participation when peerCount increases. Otherwise early joiners can get
+		// "stuck" over-replicating even after new peers join (no memory/CPU limits).
+		const errorBalance = this.maxMemoryLimit
+			? // Only balance when we have spare memory headroom. When memory is
+				// constrained (`errorMemory < 0`) the memory term will dominate anyway.
+				errorMemory > 0
+				? balanceErrorScaler * errorFromEvenForBalance
 				: 0
-			: 0;
+			: balanceErrorScaler * errorFromEvenForBalance;
 
 		const errorCPU = peerCount > 1 ? -1 * (cpuUsage || 0) : 0;
 

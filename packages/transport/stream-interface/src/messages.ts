@@ -12,7 +12,7 @@ import {
 	PublicSignKey,
 	SignatureWithKey,
 	randomBytes,
-	sha256Base64,
+	toBase64,
 	verify,
 } from "@peerbit/crypto";
 import { Uint8ArrayList } from "uint8arraylist";
@@ -31,16 +31,13 @@ const SIGNATURES_SIZE_ENCODING = "u8"; // with 7 steps you know everyone in the 
 export const getMsgId = async (msg: Uint8ArrayList | Uint8Array) => {
 	// first bytes fis discriminator,
 	// next 32 bytes should be an id
-	return sha256Base64(msg.subarray(0, 33)); // base64EncArr(msg, 0, ID_LENGTH + 1);
+	return toBase64(msg.subarray(0, 33)); // discriminator + id (33 bytes)
 };
 
 export const deliveryModeHasReceiver = (
 	mode: DeliveryMode,
 ): mode is { to: string[] } => {
 	if (mode instanceof SilentDelivery && mode.to.length > 0) {
-		return true;
-	}
-	if (mode instanceof SeekDelivery && mode.to?.length && mode.to?.length > 0) {
 		return true;
 	}
 	if (mode instanceof AcknowledgeDelivery && mode.to.length > 0) {
@@ -82,40 +79,38 @@ export class AcknowledgeDelivery extends DeliveryMode {
 
 	constructor(properties: { to: PeerRefs; redundancy: number }) {
 		super();
-		if (this.to?.length === 0) {
+		const to = coercePeerRefsToHashes(properties.to);
+		if (to.length === 0) {
 			throw new Error(
 				"Invalud value of property 'to', expecting either undefined or an array with more than one element",
 			);
 		}
-		this.to = coercePeerRefsToHashes(properties.to);
+		this.to = to;
 		this.redundancy = properties.redundancy;
 	}
 }
 
 /**
- * Deliver but with greedy fanout so that we eventually reach our target
- * Expect acknowledgement
+ * Flood (AnyWhere) but expect acknowledgement.
+ *
+ * This is primarily useful for control-plane probing / route discovery where
+ * the sender does not have (or does not want) an explicit recipient list.
  */
-@variant(2)
-export class SeekDelivery extends DeliveryMode {
-	@field({ type: option(vec("string")) })
-	to?: string[];
-
+@variant(5)
+export class AcknowledgeAnyWhere extends DeliveryMode {
 	@field({ type: "u8" })
 	redundancy: number;
 
-	constructor(properties: { to?: PeerRefs; redundancy: number }) {
+	constructor(properties: { redundancy: number }) {
 		super();
-		if (this.to?.length === 0) {
-			throw new Error(
-				"Invalud value of property 'to', expecting either undefined or an array with more than one element",
-			);
-		}
-		this.to = properties.to ? coercePeerRefsToHashes(properties.to) : undefined;
 		this.redundancy = properties.redundancy;
 	}
 }
 
+/**
+ * Delivery mode used for acknowledgement frames and debugging.
+ * Carries a trace of hops.
+ */
 @variant(3)
 export class TracedDelivery extends DeliveryMode {
 	@field({ type: vec("string") })
@@ -169,7 +164,7 @@ export type WithTo = {
 };
 
 export type WithMode = {
-	mode?: SilentDelivery | SeekDelivery | AcknowledgeDelivery | AnyWhere;
+	mode?: SilentDelivery | AcknowledgeDelivery | AcknowledgeAnyWhere | AnyWhere;
 };
 
 export type PriorityOptions = {
@@ -193,7 +188,7 @@ const getDefaultPriorityFromMode = (mode: DeliveryMode) => {
 	if (mode instanceof AnyWhere) {
 		return 0;
 	}
-	if (mode instanceof SeekDelivery) {
+	if (mode instanceof AcknowledgeAnyWhere) {
 		return 1;
 	}
 
@@ -357,10 +352,14 @@ const DATA_VARIANT = 0;
 
 @variant(DATA_VARIANT)
 export class DataMessage<
-	T extends SilentDelivery | SeekDelivery | AcknowledgeDelivery | AnyWhere =
+	T extends
 		| SilentDelivery
-		| SeekDelivery
 		| AcknowledgeDelivery
+		| AcknowledgeAnyWhere
+		| AnyWhere =
+		| SilentDelivery
+		| AcknowledgeDelivery
+		| AcknowledgeAnyWhere
 		| AnyWhere,
 > extends Message<T> {
 	@field({ type: MessageHeader })

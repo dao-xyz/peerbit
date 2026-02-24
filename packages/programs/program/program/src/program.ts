@@ -37,28 +37,6 @@ export class MissingAddressError extends Error {
 	}
 }
 
-const intersection = (
-	a: Map<string, PublicSignKey> | undefined,
-	b: Map<string, PublicSignKey> | PublicSignKey[],
-) => {
-	const newSet = new Map<string, PublicSignKey>();
-
-	if (Array.isArray(b)) {
-		for (const el of b) {
-			if (!a || a.has(el.hashcode())) {
-				newSet.set(el.hashcode(), el);
-			}
-		}
-	} else {
-		for (const [key, el] of b) {
-			if (!a || a.has(key)) {
-				newSet.set(key, el);
-			}
-		}
-	}
-	return newSet;
-};
-
 export type OpenProgram = (program: Program) => Promise<Program>;
 
 export interface NetworkEvents {
@@ -302,8 +280,52 @@ export abstract class Program<
 		this._allPrograms = undefined;
 	}
 	private _emittedEventsFor: Set<string> | undefined;
+	private _peerTopicsByHash:
+		| Map<string, { publicKey: PublicSignKey; topics: Set<string> }>
+		| undefined;
+	private _seedPeerTopicsFromSubscribers?: Promise<void>;
 	private get emittedEventsFor(): Set<string> {
 		return (this._emittedEventsFor = this._emittedEventsFor || new Set());
+	}
+	private get peerTopicsByHash(): Map<
+		string,
+		{ publicKey: PublicSignKey; topics: Set<string> }
+	> {
+		return (this._peerTopicsByHash =
+			this._peerTopicsByHash ||
+			new Map<string, { publicKey: PublicSignKey; topics: Set<string> }>());
+	}
+
+	private recordPeerSubscription(from: PublicSignKey, topics: string[]) {
+		if (!topics || topics.length === 0) return;
+		const fromHash = from.hashcode();
+		const existing = this.peerTopicsByHash.get(fromHash);
+		if (!existing) {
+			const set = new Set<string>();
+			for (const topic of topics) set.add(topic);
+			this.peerTopicsByHash.set(fromHash, { publicKey: from, topics: set });
+			return;
+		}
+		for (const topic of topics) existing.topics.add(topic);
+	}
+
+	private recordPeerUnsubscription(from: PublicSignKey, topics: string[]) {
+		if (!topics || topics.length === 0) return;
+		const fromHash = from.hashcode();
+		const existing = this.peerTopicsByHash.get(fromHash);
+		if (!existing) return;
+		for (const topic of topics) existing.topics.delete(topic);
+		if (existing.topics.size === 0) this.peerTopicsByHash.delete(fromHash);
+	}
+
+	private peerHasAllTopics(
+		entry: { topics: Set<string> },
+		allTopics: string[],
+	): boolean {
+		for (const topic of allTopics) {
+			if (!entry.topics.has(topic)) return false;
+		}
+		return true;
 	}
 
 	private getAllTopicsIncludingThis(): string[] {
@@ -314,64 +336,72 @@ export abstract class Program<
 			.flat() as string[];
 		return allTopics;
 	}
-	private async _emitJoinNetworkEvents(s: SubscriptionEvent) {
-		if (this.emittedEventsFor.has(s.from.hashcode())) {
-			return;
-		}
 
+	private async seedPeerTopicsSnapshot(allTopics: string[]) {
+		// Subscription events are edge-triggered: if a peer subscribed before this program
+		// attached its listeners, we'd miss it and `waitFor()` could hang. Seed an initial
+		// snapshot from `pubsub.getSubscribers()` once, then keep it up to date via events.
+		//
+		// This is best-effort and does not imply the system has global membership knowledge
+		// (implementations may only return known peers).
+		if (this._seedPeerTopicsFromSubscribers) {
+			return this._seedPeerTopicsFromSubscribers;
+		}
+		this._seedPeerTopicsFromSubscribers = (async () => {
+			if (!this.node) return;
+			const pubsub = this.node.services.pubsub;
+			for (const topic of allTopics) {
+				const subscribers = await pubsub.getSubscribers(topic);
+				if (!subscribers || subscribers.length === 0) continue;
+				for (const subscriber of subscribers) {
+					this.recordPeerSubscription(subscriber, [topic]);
+				}
+			}
+		})();
+		return this._seedPeerTopicsFromSubscribers;
+	}
+	private _emitJoinNetworkEvents(s: SubscriptionEvent) {
 		const allTopics = this.getAllTopicsIncludingThis();
 		if (allTopics.length === 0) {
 			return; // this is important (see events.spec.ts)
 		}
 
-		// if subscribing to all topics, emit "join" event
-		for (const topic of allTopics) {
-			if (
-				!(await this.node.services.pubsub.getSubscribers(topic))?.find((x) =>
-					s.from.equals(x),
-				)
-			) {
-				return;
-			}
-		}
-		if (this.emittedEventsFor.has(s.from.hashcode())) {
+		this.recordPeerSubscription(s.from, s.topics);
+
+		const fromHash = s.from.hashcode();
+		if (this.emittedEventsFor.has(fromHash)) {
 			return;
 		}
-		this.emittedEventsFor.add(s.from.hashcode());
+
+		const entry = this.peerTopicsByHash.get(fromHash);
+		if (!entry) return;
+		if (!this.peerHasAllTopics(entry, allTopics)) return;
+
+		this.emittedEventsFor.add(fromHash);
 		this.events.dispatchEvent(new CustomEvent("join", { detail: s.from }));
 	}
 
-	private async _emitLeaveNetworkEvents(s: UnsubcriptionEvent) {
-		if (!this.emittedEventsFor.has(s.from.hashcode())) {
-			return;
-		}
-
+	private _emitLeaveNetworkEvents(s: UnsubcriptionEvent) {
 		const allTopics = this.getAllTopicsIncludingThis();
 		if (allTopics.length === 0) {
 			return; // this is important (see events.spec.ts)
 		}
 
-		// if subscribing not subscribing to any topics, emit "leave" event
-		let hasAllTopics = true;
-		for (const topic of allTopics) {
-			if (
-				!(await this.node.services.pubsub.getSubscribers(topic))?.find((x) =>
-					s.from.equals(x),
-				)
-			) {
-				hasAllTopics = false;
-				break;
-			}
-		}
+		this.recordPeerUnsubscription(s.from, s.topics);
+
+		const fromHash = s.from.hashcode();
+		if (!this.emittedEventsFor.has(fromHash)) return;
+
+		const entry = this.peerTopicsByHash.get(fromHash);
+		const hasAllTopics = entry
+			? this.peerHasAllTopics(entry, allTopics)
+			: false;
 
 		if (hasAllTopics) {
 			return; // still here!?
 		}
 
-		if (!this.emittedEventsFor.has(s.from.hashcode())) {
-			return;
-		}
-		this.emittedEventsFor.delete(s.from.hashcode());
+		this.emittedEventsFor.delete(fromHash);
 		this.events.dispatchEvent(new CustomEvent("leave", { detail: s.from }));
 	}
 
@@ -451,6 +481,11 @@ export abstract class Program<
 				"unsubscribe",
 				this._unsubscriptionEventListener,
 			);
+			this._emittedEventsFor?.clear();
+			this._emittedEventsFor = undefined;
+			this._peerTopicsByHash?.clear();
+			this._peerTopicsByHash = undefined;
+			this._seedPeerTopicsFromSubscribers = undefined;
 
 			this._eventOptions = undefined;
 
@@ -504,12 +539,78 @@ export abstract class Program<
 			timeout: options?.timeout,
 		});
 
+		const allTopics = this.getAllTopicsIncludingThis();
+		if (allTopics.length === 0) {
+			throw new Error("Program has no topics, cannot get ready");
+		}
+		const pubsub = this.node.services.pubsub;
+
+		// Prefer a direct neighbour stream when available. This avoids cases where
+		// peers are "reachable" via the routing table but we haven't established
+		// a writable protocol stream yet (initial control-plane gossip can be dropped).
+		const neighborProbeTimeout = Math.min(options?.timeout ?? 10_000, 3_000);
+		await Promise.all(
+			expectedHashes.map((hash) =>
+				pubsub
+					.waitFor(hash, { target: "neighbor", timeout: neighborProbeTimeout })
+					.catch(() => {
+						// Multi-hop overlays may never be direct neighbours; best-effort only.
+					}),
+			),
+		);
+
+		// Best-effort seeding: subscribe events are edge-triggered and can be missed if a peer
+		// subscribed before this program attached listeners. Actively ask for subscriber
+		// snapshots while waiting, but rate-limit to avoid fanout in larger overlays.
+		const REQUEST_MIN_INTERVAL_MS = 500;
+		const lastRequestAtByPeer = new Map<string, number>();
+		const publicKeyByHash = new Map<
+			string,
+			Promise<PublicSignKey | undefined>
+		>();
+		const resolvePublicKey = (
+			hash: string,
+		): Promise<PublicSignKey | undefined> => {
+			let existing = publicKeyByHash.get(hash);
+			if (!existing) {
+				existing = Promise.resolve(pubsub.getPublicKey(hash)).catch(
+					(): PublicSignKey | undefined => undefined,
+				);
+				publicKeyByHash.set(hash, existing);
+			}
+			return existing;
+		};
+		const requestSubscriberSnapshots = (hash: string): void => {
+			const now = Date.now();
+			const last = lastRequestAtByPeer.get(hash) ?? 0;
+			if (now - last < REQUEST_MIN_INTERVAL_MS) return;
+			lastRequestAtByPeer.set(hash, now);
+
+			void resolvePublicKey(hash).then((publicKey) => {
+				for (const topic of allTopics) {
+					void Promise.resolve(
+						pubsub.requestSubscribers(topic, publicKey),
+					).catch(() => {
+						// best-effort; the wait loop will retry and/or time out
+					});
+				}
+			});
+		};
+
+		for (const hash of expectedHashes) {
+			requestSubscriberSnapshots(hash);
+		}
+
 		// wait for subscribing to topics
 		return new Promise<string[]>((resolve, reject) => {
 			let settled = false;
-			const timeoutMs = options?.timeout || 10 * 1000;
+			// Historically this was ~20s; keep enough headroom for initial control-plane
+			// convergence (stream establishment + subscription gossip) in sparse overlays.
+			const timeoutMs = options?.timeout || 20 * 1000;
 			let timeout: ReturnType<typeof setTimeout> | undefined = undefined;
 			let listener: (() => void) | undefined = undefined;
+			let poll: ReturnType<typeof setInterval> | undefined = undefined;
+			let checking = false;
 
 			const clear = () => {
 				if (listener) {
@@ -519,7 +620,9 @@ export abstract class Program<
 				this.events.removeEventListener("close", closeListener);
 				this.events.removeEventListener("drop", dropListener);
 				timeout && clearTimeout(timeout);
+				poll && clearInterval(poll);
 				timeout = undefined;
+				poll = undefined;
 			};
 
 			const resolveOnce = (hashes: string[]) => {
@@ -567,15 +670,59 @@ export abstract class Program<
 			this.events.addEventListener("close", closeListener, { once: true });
 			this.events.addEventListener("drop", dropListener, { once: true });
 
+			const isPeerReady = async (hash: string) => {
+				const cached = this._peerTopicsByHash?.get(hash);
+				if (cached && this.peerHasAllTopics(cached, allTopics)) {
+					return true;
+				}
+
+				// Subscription events are edge-triggered: we may have missed earlier subscribe
+				// events (e.g. if they arrived during program open). Fall back to best-effort
+				// pubsub snapshots to avoid false timeouts.
+				const pubsubAny = this.node.services.pubsub as any;
+				let key: PublicSignKey | undefined;
+
+				for (const topic of allTopics) {
+					// Fast path for TopicControlPlane: O(1) membership check without allocations.
+					const topicPeers:
+						| Map<string, { publicKey: PublicSignKey }>
+						| undefined = pubsubAny?.topics?.get?.(topic);
+					if (topicPeers?.has?.(hash)) {
+						key ||= topicPeers.get(hash)?.publicKey;
+						continue;
+					}
+
+					const subscribers =
+						await this.node.services.pubsub.getSubscribers(topic);
+					if (!subscribers || subscribers.length === 0) {
+						return false;
+					}
+					const found = subscribers.find((x) => x.hashcode() === hash);
+					if (!found) {
+						return false;
+					}
+					key ||= found;
+				}
+
+				if (key) {
+					this.recordPeerSubscription(key, allTopics);
+				}
+				return true;
+			};
+
 			const checkReady = async () => {
 				if (settled) {
 					return;
 				}
+				if (checking) {
+					return;
+				}
+				checking = true;
 				let ready = true;
 				try {
-					const allReadyHashes = await this.getReady();
 					for (const hash of expectedHashes) {
-						if (!allReadyHashes.has(hash)) {
+						if (!(await isPeerReady(hash))) {
+							requestSubscriberSnapshots(hash);
 							ready = false;
 							break;
 						}
@@ -585,33 +732,35 @@ export abstract class Program<
 					}
 				} catch (error) {
 					rejectOnce(error);
+				} finally {
+					checking = false;
 				}
 			};
 			listener = () => {
 				void checkReady();
 			};
 			this.node.services.pubsub.addEventListener("subscribe", listener);
+			poll = setInterval(() => void checkReady(), 200);
+			poll.unref?.();
 			checkReady();
 		});
 	}
 
 	async getReady(): Promise<Map<string, PublicSignKey>> {
-		// all peers that subscribe to all topics
-		let ready: Map<string, PublicSignKey> | undefined = undefined; // the interesection of all ready
+		// Observed peers that subscribe to all topics.
+		// We intentionally do not depend on `pubsub.getSubscribers()` since that implies
+		// global membership knowledge which does not scale for large overlays.
 		const allTopics = this.getAllTopicsIncludingThis();
 		if (allTopics.length === 0) {
 			throw new Error("Program has no topics, cannot get ready");
 		}
 
-		for (const topic of allTopics) {
-			const subscribers = await this.node.services.pubsub.getSubscribers(topic);
-			if (!subscribers) {
-				continue;
-			}
-			ready = intersection(ready, subscribers);
-		}
-		if (ready == null) {
-			return new Map();
+		const ready = new Map<string, PublicSignKey>();
+		await this.seedPeerTopicsSnapshot(allTopics);
+
+		for (const [hash, entry] of this.peerTopicsByHash) {
+			if (!this.peerHasAllTopics(entry, allTopics)) continue;
+			ready.set(hash, entry.publicKey);
 		}
 		return ready;
 	}

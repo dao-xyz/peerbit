@@ -23,7 +23,17 @@ import { v4 as uuid } from "uuid";
  * These errors can occur during component unmount when the database is closing.
  */
 const isBenignLifecycleError = (e: unknown): boolean => {
-	return e instanceof ClosedError || e instanceof NotStartedError;
+	if (e instanceof ClosedError || e instanceof NotStartedError) {
+		return true;
+	}
+	// During teardown we may see transport-layer lifecycle errors from other packages
+	// (e.g. RPC/pubsub) that should not crash the hook.
+	if (e && typeof e === "object") {
+		const name = (e as any).name;
+		if (name === "AbortError") return true;
+		if (name === "NotStartedError") return true;
+	}
+	return false;
 };
 
 type QueryOptions = { query: QueryLike; id?: string };
@@ -155,7 +165,6 @@ export const useQuery = <
 	const itemIdRef = useRef(new WeakMap<object, string>());
 	const emptyResultsRef = useRef(false);
 	const closeControllerRef = useRef<AbortController | null>(null);
-	const waitedOnceRef = useRef(false);
 	const loadMoreRef = useRef<LoadMoreFn | undefined>(undefined);
 
 	/* keep an id mostly for debugging – mirrors original behaviour */
@@ -186,14 +195,19 @@ export const useQuery = <
 		updateAll(fn(allRef.current));
 	};
 
-	const reset = () => {
+	const disposeIterators = (reason: string) => {
 		iteratorRefs.current?.forEach(({ iterator }) => iterator.close());
 		iteratorRefs.current = [];
 
-		closeControllerRef.current?.abort(new Error("Reset"));
+		// Abort any in-flight remote work (do not create new controllers here)
+		closeControllerRef.current?.abort(new Error(reason));
+		closeControllerRef.current = null;
+	};
+
+	const reset = () => {
+		disposeIterators("Reset");
 		closeControllerRef.current = new AbortController();
 		emptyResultsRef.current = false;
-		waitedOnceRef.current = false;
 
 		allRef.current = [];
 		itemIdRef.current = new WeakMap();
@@ -303,10 +317,46 @@ export const useQuery = <
 
 		reset();
 		const abortSignal = closeControllerRef.current?.signal;
+
+		const updatesOpt = options.updates;
+		const mergeEnabled =
+			typeof updatesOpt === "boolean"
+				? updatesOpt
+				: typeof updatesOpt === "string"
+					? true
+					: typeof updatesOpt === "object" && !!updatesOpt.merge;
+		const pushEnabled =
+			typeof updatesOpt === "boolean"
+				? updatesOpt
+				: typeof updatesOpt === "string"
+					? updatesOpt === "remote" || updatesOpt === "all"
+					: typeof updatesOpt === "object"
+						? "push" in updatesOpt && updatesOpt.push != null
+							? typeof updatesOpt.push === "number"
+								? true
+								: !!updatesOpt.push
+							: mergeEnabled
+						: false;
+		const pushMode =
+			typeof updatesOpt === "object" &&
+			updatesOpt != null &&
+			"push" in updatesOpt &&
+			updatesOpt.push != null
+				? updatesOpt.push
+				: pushEnabled;
+
 		const resolveRemoteOptions = () => {
 			if (options.remote === false) return false;
 			if (!options.remote) return undefined;
 			if (typeof options.remote === "object") {
+				if (options.remote.wait == null) {
+					return {
+						...options.remote,
+						wait: {
+							timeout: 5000,
+						},
+					};
+				}
 				return {
 					...options.remote,
 					wait: {
@@ -370,7 +420,7 @@ export const useQuery = <
 				.finally(() => {
 					draining = false;
 				});
-		};
+			};
 
 		iteratorRefs.current = openDbs.map((db) => {
 			let currentRef: IteratorRef | undefined;
@@ -382,21 +432,19 @@ export const useQuery = <
 				resolve,
 				signal: abortSignal,
 				updates: {
-					push:
-						typeof options.updates === "boolean"
-							? options.updates
-							: typeof options.updates === "object" && options.updates.push
-								? true
-								: false,
-					merge:
-						typeof options.updates === "boolean" && options.updates
-							? true
-							: typeof options.updates === "object" && options.updates.merge
-								? true
-								: false,
+					push: pushMode,
+					merge: mergeEnabled,
 					notify: (reason) => {
 						log("notify", { reason, currentRef: !!currentRef });
 						if (reason === "change" || reason === "push" || reason === "join") {
+							// Keep "pull-first" semantics for remote-driven updates until the user
+							// starts reading results (or enables `prefetch`). Local changes should
+							// still surface immediately.
+							const remoteDriven = reason === "join" || reason === "push";
+							if (remoteDriven && !options.prefetch && allRef.current.length === 0) {
+								return;
+							}
+
 							const drainAmount = options.batchSize ?? 10;
 							scheduleDrain(iterator as ResultsIterator<RT>, drainAmount, {
 								force: true,
@@ -439,12 +487,49 @@ export const useQuery = <
 		/* store a deterministic id (useful for external keys) */
 		setId(uuid());
 
-		/* prefetch if requested */
-		if (options.prefetch) void loadMore();
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [
-		dbs.map((d, idx) => getDbKey(d) ?? `idx:${idx}`).join("|"),
-		options.query,
+			/* prefetch if requested */
+			if (options.prefetch) void loadMore();
+
+			const onDbClose = () => {
+				// If the underlying Program is closed while a remote query is in-flight,
+				// ensure we abort any pending remote work so hook consumers don't hang.
+				try {
+					disposeIterators("DB closed");
+				} catch {
+					// ignore
+				}
+				try {
+					setIsLoading(false);
+				} catch {
+					// ignore
+				}
+			};
+			for (const db of openDbs) {
+				try {
+					db.events?.addEventListener?.("close" as any, onDbClose as any);
+					db.events?.addEventListener?.("drop" as any, onDbClose as any);
+				} catch {
+					// ignore
+				}
+			}
+
+			return () => {
+				for (const db of openDbs) {
+					try {
+						db.events?.removeEventListener?.("close" as any, onDbClose as any);
+						db.events?.removeEventListener?.("drop" as any, onDbClose as any);
+					} catch {
+						// ignore
+					}
+				}
+				// Ensure we stop iterators + remote work on unmount / dependency changes,
+				// otherwise background replication/push can keep running and leak memory.
+				disposeIterators("Unmount");
+			};
+			// eslint-disable-next-line react-hooks/exhaustive-deps
+		}, [
+			dbs.map((d, idx) => getDbKey(d) ?? `idx:${idx}`).join("|"),
+			options.query,
 		options.resolve,
 		options.reverse,
 		options.batchSize,
@@ -454,16 +539,6 @@ export const useQuery = <
 
 	/* ────────────── loadMore implementation ────────────── */
 	const batchSize = options.batchSize ?? 10;
-
-	const shouldWait = (): boolean => {
-		if (waitedOnceRef.current) return false;
-		if (options.remote === false) return false;
-		return true; // mimic original behaviour – wait once if remote allowed
-	};
-
-	const markWaited = () => {
-		waitedOnceRef.current = true;
-	};
 
 	/* helper to turn primitive ids into stable map keys */
 	const idToKey = (value: indexerTypes.IdPrimitive): string => {
@@ -698,43 +773,14 @@ export const useQuery = <
 			});
 			return false;
 		}
-		if (emptyResultsRef.current && !opts?.force) {
-			log("Skipping loadMore due to empty state");
-			return false;
-		} else if (opts?.force) {
+		// Iterators are kept alive (`closePolicy: "manual"`). After hitting "empty",
+		// new remote/local updates can make them yield again, so allow polling.
+		if (emptyResultsRef.current) {
 			emptyResultsRef.current = false;
 		}
 
 		setIsLoading(true);
 		try {
-			/* one-time replicator warm-up across all DBs */
-			if (shouldWait()) {
-				/*   if (
-                     typeof options.remote === "object" &&
-                     options.remote.wait
-                 ) {
-                     await Promise.all(
-                         iterators.map(async ({ db }) => {
-                             try {  
-                                 await db.log.waitForReplicators({
-                                     timeout: (options.remote as { warmup })
-                                         .warmup,
-                                     signal: closeControllerRef.current?.signal,
-                                 });
-                             } catch (e) {
-                                 if (
-                                     e instanceof AbortError ||
-                                     e instanceof NoPeersError
-                                 )
-                                     return;
-                                 console.warn("Remote replicators not ready", e);
-                             }
-                         })
-                     );
-				}*/
-				markWaited();
-			}
-
 			return drainRoundRobin(iterators, n, opts?.reason ?? "batch");
 		} catch (e) {
 			if (!isBenignLifecycleError(e)) throw e;
