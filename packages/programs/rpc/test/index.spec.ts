@@ -11,6 +11,7 @@ import { TestSession } from "@peerbit/test-utils";
 import { AbortError, delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import {
+	MissingResponsesError,
 	RPC,
 	type RPCResponse,
 	type RequestEvent,
@@ -733,5 +734,25 @@ describe("queryAll", () => {
 
 		await expect(promise).rejectedWith("TestAborted");
 		expect(+new Date() - t1).lessThan(1000);
+	});
+
+	it("reports missing groups on timeout", async () => {
+		clients[1].delay = 200;
+		const missingGroup = [[clients[1].node.identity.publicKey.hashcode()]];
+		try {
+			await queryAll(
+				clients[0].query,
+				missingGroup,
+				new Body({ arr: new Uint8Array([1]) }),
+				() => {},
+				{ timeout: 50 },
+			);
+			expect.fail("Expected MissingResponsesError");
+		} catch (error) {
+			expect(error).to.be.instanceOf(MissingResponsesError);
+			expect((error as MissingResponsesError).missingGroups).to.deep.equal(
+				missingGroup,
+			);
+		}
 	});
 });

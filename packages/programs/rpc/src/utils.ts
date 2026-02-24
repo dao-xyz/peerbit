@@ -13,8 +13,10 @@ import type {
 } from "./io.js";
 
 export class MissingResponsesError extends Error {
-	constructor(message: string) {
+	missingGroups: string[][];
+	constructor(message: string, missingGroups: string[][] = []) {
 		super(message);
+		this.missingGroups = missingGroups;
 	}
 }
 export type RPCRequestAllOptions<_Q, R> = RPCRequestResponseOptions<R> &
@@ -84,6 +86,7 @@ export const queryAll = async <Q, R>(
 		throw new MissingResponsesError(
 			"Did not receive responses from all shards: " +
 				JSON.stringify(missingReponses),
+			missingReponses,
 		);
 	}
 };
