@@ -1666,7 +1666,8 @@ export abstract class DirectStream<
 				).catch(dontThrowIfDeliveryError);
 			}
 
-			this.checkIsAlive([peerKeyHash]);
+			// Best-effort liveness probe; never let background probe failures crash callers.
+			void this.checkIsAlive([peerKeyHash]).catch(() => false);
 		}
 
 		logger.trace("connection ended:" + peerKey.toString());
@@ -2268,7 +2269,8 @@ export abstract class DirectStream<
 		for (const remote of remotes) {
 			this.invalidateSession(remote);
 		}
-		this.checkIsAlive(remotes);
+		// Best-effort liveness probe; never let background probe failures crash callers.
+		void this.checkIsAlive(remotes).catch(() => false);
 	}
 	private async checkIsAlive(remotes: string[]) {
 		if (this.peers.size === 0) {
@@ -2741,6 +2743,7 @@ export abstract class DirectStream<
 
 		const isRelayed = relayed ?? from.hashcode() !== this.publicKeyHash;
 		let delivereyPromise: Promise<void> | undefined = undefined as any;
+		let ackCallbackId: string | undefined;
 
 		if (
 			(!message.header.signatures ||
@@ -2757,18 +2760,20 @@ export abstract class DirectStream<
 
 		if (
 			(message instanceof DataMessage || message instanceof Goodbye) &&
-				(message.header.mode instanceof AcknowledgeDelivery ||
-					message.header.mode instanceof AcknowledgeAnyWhere)
-			) {
-				const deliveryDeferredPromise = await this.createDeliveryPromise(
-					from,
-					message,
-					isRelayed,
-					signal,
-				);
-				delivereyPromise = deliveryDeferredPromise.promise;
-			}
+			(message.header.mode instanceof AcknowledgeDelivery ||
+				message.header.mode instanceof AcknowledgeAnyWhere)
+		) {
+			const deliveryDeferredPromise = await this.createDeliveryPromise(
+				from,
+				message,
+				isRelayed,
+				signal,
+			);
+			delivereyPromise = deliveryDeferredPromise.promise;
+			ackCallbackId = toBase64(message.id);
+		}
 
+		try {
 			const bytes = message.bytes();
 
 			if (!isRelayed) {
@@ -2776,19 +2781,20 @@ export abstract class DirectStream<
 				await this.modifySeenCache(bytesArray);
 			}
 
-		/**
-		 * For non SEEKing message delivery modes, use routing
-		 */
+			/**
+			 * For non SEEKing message delivery modes, use routing
+			 */
 
-		if (message instanceof DataMessage) {
-			if (
-				(message.header.mode instanceof AcknowledgeDelivery ||
-					message.header.mode instanceof SilentDelivery) &&
-				!to
-			) {
-				if (message.header.mode.to.length === 0) {
-					return delivereyPromise; // we defintely know that we should not forward the message anywhere
-				}
+			if (message instanceof DataMessage) {
+				if (
+					(message.header.mode instanceof AcknowledgeDelivery ||
+						message.header.mode instanceof SilentDelivery) &&
+					!to
+				) {
+					if (message.header.mode.to.length === 0) {
+						// we definitely know that we should not forward the message anywhere
+						return delivereyPromise;
+					}
 
 					const fanout = this.routes.getFanout(
 						from.hashcode(),
@@ -2824,13 +2830,13 @@ export abstract class DirectStream<
 						// next-hops for the target(s), opportunistically probe additional neighbours.
 						// This replaces the previous "greedy fanout" probing behavior without needing
 						// a separate delivery mode.
-							if (
-								!isRelayed &&
-								message.header.mode instanceof AcknowledgeDelivery &&
-								usedNeighbours.size < message.header.mode.redundancy
-							) {
-								for (const [neighbour, stream] of this.peers) {
-									if (usedNeighbours.size >= message.header.mode.redundancy) {
+						if (
+							!isRelayed &&
+							message.header.mode instanceof AcknowledgeDelivery &&
+							usedNeighbours.size < message.header.mode.redundancy
+						) {
+							for (const [neighbour, stream] of this.peers) {
+								if (usedNeighbours.size >= message.header.mode.redundancy) {
 									break;
 								}
 								if (usedNeighbours.has(neighbour)) continue;
@@ -2840,19 +2846,19 @@ export abstract class DirectStream<
 						}
 
 						await Promise.all(promises);
-						return delivereyPromise; // we are done sending the message in all direction with updates 'to' lists
+						return delivereyPromise;
 					}
 
-						// If we don't have routing information:
-						// - For acknowledged deliveries, fall through to flooding (route discovery / repair).
-						// - For silent deliveries, relays should not flood (prevents unnecessary fanout); origin may still flood.
-						//   We still allow direct neighbour delivery to explicit recipients (if connected).
-						if (isRelayed && message.header.mode instanceof SilentDelivery) {
-							const promises: Promise<any>[] = [];
-							const originalTo = message.header.mode.to;
-							for (const recipient of originalTo) {
-								if (recipient === this.publicKeyHash) continue;
-								if (recipient === from.hashcode()) continue; // never send back to previous hop
+					// If we don't have routing information:
+					// - For acknowledged deliveries, fall through to flooding (route discovery / repair).
+					// - For silent deliveries, relays should not flood (prevents unnecessary fanout); origin may still flood.
+					//   We still allow direct neighbour delivery to explicit recipients (if connected).
+					if (isRelayed && message.header.mode instanceof SilentDelivery) {
+						const promises: Promise<any>[] = [];
+						const originalTo = message.header.mode.to;
+						for (const recipient of originalTo) {
+							if (recipient === this.publicKeyHash) continue;
+							if (recipient === from.hashcode()) continue; // never send back to previous hop
 							const stream = this.peers.get(recipient);
 							if (!stream) continue;
 							if (
@@ -2873,42 +2879,42 @@ export abstract class DirectStream<
 						}
 						return delivereyPromise;
 					}
-				} // else send to all (fallthrough to code below)
+				}
 			}
 
-		// We fils to send the message directly, instead fallback to floodsub
-		const peers: PeerStreams[] | Map<string, PeerStreams> = to || this.peers;
-		if (
-			peers == null ||
-			(Array.isArray(peers) && peers.length === 0) ||
-			(peers instanceof Map && peers.size === 0)
-		) {
-			logger.trace("No peers to send to");
-			return delivereyPromise;
-		}
-
-		let sentOnce = false;
-		const promises: Promise<any>[] = [];
-		for (const stream of peers.values()) {
-			const id = stream as PeerStreams;
-
-			// Dont sent back to the sender
-			if (id.publicKey.equals(from)) {
-				continue;
-			}
-			// Dont send message back to any of the signers (they have already seen the message)
+			// We fail to send the message directly, instead fallback to floodsub
+			const peers: PeerStreams[] | Map<string, PeerStreams> = to || this.peers;
 			if (
-				message.header.signatures?.publicKeys.find((x) =>
-					x.equals(id.publicKey),
-				)
+				peers == null ||
+				(Array.isArray(peers) && peers.length === 0) ||
+				(peers instanceof Map && peers.size === 0)
 			) {
-				continue;
+				logger.trace("No peers to send to");
+				return delivereyPromise;
 			}
 
-			sentOnce = true;
-			promises.push(id.waitForWrite(bytes, message.header.priority));
-		}
-		await Promise.all(promises);
+			let sentOnce = false;
+			const promises: Promise<any>[] = [];
+			for (const stream of peers.values()) {
+				const id = stream as PeerStreams;
+
+				// Dont sent back to the sender
+				if (id.publicKey.equals(from)) {
+					continue;
+				}
+				// Dont send message back to any of the signers (they have already seen the message)
+				if (
+					message.header.signatures?.publicKeys.find((x) =>
+						x.equals(id.publicKey),
+					)
+				) {
+					continue;
+				}
+
+				sentOnce = true;
+				promises.push(id.waitForWrite(bytes, message.header.priority));
+			}
+			await Promise.all(promises);
 
 			if (!sentOnce) {
 				// If the caller provided an explicit peer list, treat "no valid receivers" as an error
@@ -2917,8 +2923,18 @@ export abstract class DirectStream<
 					throw new DeliveryError("Message did not have any valid receivers");
 				}
 			}
+
 			return delivereyPromise;
+		} catch (error) {
+			// If message fanout/write fails before publishMessage returns its delivery
+			// promise, clear any ACK callback to avoid late timer rejections leaking as
+			// unhandled rejections in fire-and-forget call paths.
+			if (ackCallbackId) {
+				this._ackCallbacks.get(ackCallbackId)?.clear();
+			}
+			throw error;
 		}
+	}
 
 	async maybeConnectDirectly(toHash: string, origin: MultiAddrinfo) {
 		if (this.peers.has(toHash) || this.prunedConnectionsCache?.has(toHash)) {

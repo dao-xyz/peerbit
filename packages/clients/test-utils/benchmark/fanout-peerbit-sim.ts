@@ -198,7 +198,9 @@ const parseArgs = (argv: string[]): Params => {
 						repair: true,
 						neighborRepair: true,
 						dropDataFrameRate: 0.1,
-						churnEveryMs: 200,
+						// Keep this CI profile bounded in wall-clock time; very aggressive
+						// churn (e.g. 200ms) can dominate runtime and hit the global timeout.
+						churnEveryMs: 1_000,
 						churnDownMs: 100,
 						churnFraction: 0.05,
 				  }
@@ -430,9 +432,11 @@ const main = async () => {
 	const timeoutId = setTimeout(() => {
 		timeout.abort(new Error(`timeout after ${params.timeoutMs}ms`));
 	}, params.timeoutMs);
+	let session: TestSession | undefined;
+	let mainError: unknown;
 
 	try {
-		const session = await TestSession.disconnectedInMemory(params.nodes, {
+		session = await TestSession.disconnectedInMemory(params.nodes, {
 			seed: params.seed,
 			concurrency: params.concurrency,
 			mockCrypto: params.mockCrypto,
@@ -936,10 +940,21 @@ const main = async () => {
 		if (asserts.length > 0) {
 			throw new Error(`fanout-peerbit-sim assertions failed: ${asserts.join("; ")}`);
 		}
-
-		await session.stop();
+	} catch (error) {
+		mainError = error;
+		throw error;
 	} finally {
 		clearTimeout(timeoutId);
+		if (session) {
+			try {
+				await session.stop();
+			} catch (stopError) {
+				if (!mainError) {
+					throw stopError;
+				}
+				console.error("fanout-peerbit-sim: failed to stop session after error", stopError);
+			}
+		}
 	}
 };
 
