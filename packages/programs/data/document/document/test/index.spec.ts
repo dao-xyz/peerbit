@@ -45,7 +45,7 @@ import {
 import { Entry, Log, createEntry } from "@peerbit/log";
 import { ClosedError, Program } from "@peerbit/program";
 import type { TopicControlPlane } from "@peerbit/pubsub";
-import { RPCMessage, ResponseV0 } from "@peerbit/rpc";
+import { MissingResponsesError, RPCMessage, ResponseV0 } from "@peerbit/rpc";
 import {
 	AbsoluteReplicas,
 	SharedLog,
@@ -3612,8 +3612,8 @@ describe("index", () => {
 							expect(t1 - t0).to.be.lessThan(500); // Should return quickly, not wait for timeout
 						});
 
-						it("uses wait timeout as remote rpc timeout when timeout is omitted", async () => {
-							session = await TestSession.connected(1);
+							it("uses wait timeout as remote rpc timeout when timeout is omitted", async () => {
+								session = await TestSession.connected(1);
 
 							const store = await session.peers[0].open(
 								new TestStore({
@@ -3656,10 +3656,61 @@ describe("index", () => {
 								},
 							);
 
-							expect(observedTimeout).to.equal(wantedTimeout);
+								expect(observedTimeout).to.equal(wantedTimeout);
+							});
+
+							it("retries missing shard groups before closing the iterator", async () => {
+								session = await TestSession.connected(1);
+
+								const store = await session.peers[0].open(
+									new TestStore({
+										docs: new Documents<Document>(),
+									}),
+									{
+										args: {
+											replicate: false,
+										},
+									},
+								);
+
+								const missingPeer = "missing-peer";
+								const observedRemoteFrom: (string[] | undefined)[] = [];
+								const queryCommenceFn =
+									store.docs.index["queryCommence"].bind(store.docs.index);
+								store.docs.index["queryCommence"] = async (...args: any[]) => {
+									const options = args[1];
+									observedRemoteFrom.push(options?.remote?.from);
+									if (observedRemoteFrom.length === 1) {
+										const error = new MissingResponsesError("missing shards");
+										(error as MissingResponsesError & { missingGroups?: string[][] })
+											.missingGroups = [[missingPeer]];
+										await options?.onMissingResponses?.(error);
+										return [];
+									}
+									return (queryCommenceFn as any)(...args);
+								};
+
+								const iterator = store.docs.index.iterate(
+									{},
+									{
+										local: false,
+										remote: {
+											wait: { timeout: 5_000, behavior: "keep-open" },
+										},
+									},
+								);
+
+								const first = await iterator.next(1);
+								expect(first).to.have.length(0);
+								expect(iterator.done()).to.equal(false);
+
+								await iterator.next(1);
+								expect(observedRemoteFrom[1]).to.deep.equal([missingPeer]);
+
+								await iterator.close();
+							});
 						});
 					});
-				});
 
 				describe("scope", () => {
 					describe("eager", () => {
