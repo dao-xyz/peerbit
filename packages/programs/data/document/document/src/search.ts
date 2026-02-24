@@ -2283,6 +2283,15 @@ export class DocumentIndex<
 			// this will lead to bad UX as you usually want to list/expore whats going on before doing any replication work
 			remote.priority = 2;
 		}
+		if (remote && remote.timeout == null && options?.remote) {
+			const waitPolicy =
+				typeof options.remote === "object" ? options.remote.wait : undefined;
+			const waitTimeout =
+				typeof waitPolicy === "object" ? waitPolicy.timeout : undefined;
+			if (waitTimeout != null) {
+				remote.timeout = waitTimeout;
+			}
+		}
 
 		if (!local && !remote) {
 			throw new Error(

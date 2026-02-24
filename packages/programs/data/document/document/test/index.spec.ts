@@ -3611,6 +3611,53 @@ describe("index", () => {
 							expect(result?.id).to.equal("1");
 							expect(t1 - t0).to.be.lessThan(500); // Should return quickly, not wait for timeout
 						});
+
+						it("uses wait timeout as remote rpc timeout when timeout is omitted", async () => {
+							session = await TestSession.connected(1);
+
+							const store = await session.peers[0].open(
+								new TestStore({
+									docs: new Documents<Document>(),
+								}),
+								{
+									args: {
+										replicate: false,
+									},
+								},
+							);
+
+							const wantedTimeout = 12_345;
+							let observedTimeout: number | undefined = undefined;
+							const requestFn = store.docs.index._query.request.bind(
+								store.docs.index._query,
+							);
+							store.docs.index._query.request = async (request, options) => {
+								if (
+									request instanceof SearchRequest ||
+									request instanceof SearchRequestIndexed ||
+									request instanceof IterationRequest
+								) {
+									observedTimeout = options?.timeout;
+									return [];
+								}
+								return requestFn(request, options);
+							};
+
+							await store.docs.index["queryCommence"](
+								new SearchRequest({ fetch: 1 }),
+								{
+									local: false,
+									remote: {
+										from: ["missing-peer"],
+										wait: {
+											timeout: wantedTimeout,
+										},
+									},
+								},
+							);
+
+							expect(observedTimeout).to.equal(wantedTimeout);
+						});
 					});
 				});
 
