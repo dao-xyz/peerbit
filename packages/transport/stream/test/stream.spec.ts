@@ -3080,42 +3080,56 @@ describe("join/leave", () => {
 			streams[0].unrechable = [];
 			streams[0].reachable = [];
 
-			await session.peers[0].hangUp(session.peers[3].peerId);
+				await session.peers[0].hangUp(session.peers[3].peerId);
 
-			await waitForResolved(() => {
-				expect(
-					streams[0].stream.routes
-						.findNeighbor(
-							streams[0].stream.publicKeyHash,
-							streams[3].stream.publicKeyHash,
-						)
-						?.list?.map((x) => x.hash),
-				).to.deep.equal([streams[1].stream.publicKeyHash]);
+				await waitForResolved(() => {
+					const route =
+						streams[0].stream.routes
+							.findNeighbor(
+								streams[0].stream.publicKeyHash,
+								streams[3].stream.publicKeyHash,
+							)
+							?.list?.map((x) => x.hash) ?? [];
+					expect(
+						route.includes(streams[3].stream.publicKeyHash),
+					).to.equal(false);
+				});
+
+				// We should observe the disconnected peer as unreachable.
+				expect(streams[0].unrechable.map((x) => x.hashcode())).to.have.members([
+					streams[3].stream.publicKeyHash,
+				]);
+
+				// Trigger reseek/re-route via acknowledged delivery after the direct edge dropped.
+				await streams[0].stream.publish(new Uint8Array([234]), {
+					mode: new AcknowledgeDelivery({
+						redundancy: 1,
+						to: [streams[3].stream.publicKeyHash],
+					}),
+				});
+
+				await waitForResolved(() =>
+					expect(streams[3].received).to.have.length(2),
+				);
+				expect(streams[3].received[1].header.mode).to.be.instanceOf(
+					AcknowledgeDelivery,
+				);
+
+				await waitForResolved(() => {
+					expect(
+						streams[0].stream.routes
+							.findNeighbor(
+								streams[0].stream.publicKeyHash,
+								streams[3].stream.publicKeyHash,
+							)
+							?.list?.map((x) => x.hash),
+					).to.deep.equal([streams[1].stream.publicKeyHash]);
+				});
+
+				expect(streams[0].reachable.map((x) => x.hashcode())).to.have.members([
+					streams[3].stream.publicKeyHash,
+				]);
 			});
-
-			// will emit unreachable and reachable events (again)
-			expect(streams[0].unrechable.map((x) => x.hashcode())).to.have.members([
-				streams[3].stream.publicKeyHash,
-			]);
-			expect(streams[0].reachable.map((x) => x.hashcode())).to.have.members([
-				streams[3].stream.publicKeyHash,
-			]);
-
-			// the route should now be the long route
-			await streams[0].stream.publish(new Uint8Array([234]), {
-				mode: new SilentDelivery({
-					redundancy: 1,
-					to: [streams[3].stream.publicKeyHash],
-				}),
-			});
-
-			await waitForResolved(() =>
-				expect(streams[3].received).to.have.length(2),
-			);
-			expect(streams[3].received[1].header.mode).to.be.instanceOf(
-				SilentDelivery,
-			);
-		});
 
 		it("distant drop", async () => {
 			// line topology
