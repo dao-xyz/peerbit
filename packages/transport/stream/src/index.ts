@@ -2276,10 +2276,10 @@ export abstract class DirectStream<
 		}
 		if (remotes.length > 0) {
 			try {
-				// Keepalive probes are best-effort. SilentDelivery avoids waiting for ACKs
-				// during churn/disconnect storms while still attempting a direct write.
+				// Keepalive probes are best-effort, but must still require ACKs so we can
+				// conclusively prune stale routes when peers actually went away.
 				await this.publish(undefined, {
-					mode: new SilentDelivery({
+					mode: new AcknowledgeDelivery({
 						to: remotes,
 						redundancy: DEFAULT_SILENT_MESSAGE_REDUDANCY,
 					}),
