@@ -228,6 +228,8 @@ export class TopicControlPlane
 	public peerToTopic: Map<string, Set<string>>;
 	// Local topic -> reference count.
 	public subscriptions: Map<string, { counter: number }>;
+	// Local topics requested via debounced subscribe, not yet applied in `subscriptions`.
+	private pendingSubscriptions: Set<string>;
 	public lastSubscriptionMessages: Map<string, Map<string, bigint>> = new Map();
 	public dispatchEventOnSelfPublish: boolean;
 	public readonly topicRootControlPlane: TopicRootControlPlane;
@@ -289,6 +291,7 @@ export class TopicControlPlane
 	) {
 		super(components, ["/peerbit/topic-control-plane/2.0.0"], props);
 		this.subscriptions = new Map();
+		this.pendingSubscriptions = new Set();
 		this.topics = new Map();
 		this.peerToTopic = new Map();
 
@@ -448,6 +451,7 @@ export class TopicControlPlane
 		this.autoCandidatesGossipUntil = 0;
 
 		this.subscriptions.clear();
+		this.pendingSubscriptions.clear();
 		this.topics.clear();
 		this.peerToTopic.clear();
 		this.lastSubscriptionMessages.clear();
@@ -760,11 +764,24 @@ export class TopicControlPlane
 		const subscriptions: string[] = [];
 		if (topics) {
 			for (const topic of topics) {
-				if (this.subscriptions.get(topic)) subscriptions.push(topic);
+				if (
+					this.subscriptions.get(topic) ||
+					this.pendingSubscriptions.has(topic)
+				) {
+					subscriptions.push(topic);
+				}
 			}
 			return subscriptions;
 		}
-		for (const [topic] of this.subscriptions) subscriptions.push(topic);
+		const seen = new Set<string>();
+		for (const [topic] of this.subscriptions) {
+			subscriptions.push(topic);
+			seen.add(topic);
+		}
+		for (const topic of this.pendingSubscriptions) {
+			if (seen.has(topic)) continue;
+			subscriptions.push(topic);
+		}
 		return subscriptions;
 	}
 
@@ -1098,6 +1115,10 @@ export class TopicControlPlane
 	}
 
 	async subscribe(topic: string) {
+		this.pendingSubscriptions.add(topic);
+		// `subscribe()` is debounced; start tracking immediately to avoid dropping
+		// inbound subscription traffic during the debounce window.
+		this.initializeTopic(topic);
 		return this.debounceSubscribeAggregator.add({ key: topic });
 	}
 
@@ -1111,10 +1132,12 @@ export class TopicControlPlane
 			let prev = this.subscriptions.get(topic);
 			if (prev) {
 				prev.counter += counter;
+				this.pendingSubscriptions.delete(topic);
 				continue;
 			}
 			this.subscriptions.set(topic, { counter });
 			this.initializeTopic(topic);
+			this.pendingSubscriptions.delete(topic);
 
 			const shardTopic = this.getShardTopicForUserTopic(topic);
 			byShard.set(shardTopic, [...(byShard.get(shardTopic) ?? []), topic]);
@@ -1156,8 +1179,13 @@ export class TopicControlPlane
 			data?: Uint8Array;
 		},
 	) {
+		this.pendingSubscriptions.delete(topic);
+
 		if (this.debounceSubscribeAggregator.has(topic)) {
 			this.debounceSubscribeAggregator.delete(topic);
+			if (!this.subscriptions.has(topic)) {
+				this.untrackTopic(topic);
+			}
 			return false;
 		}
 
@@ -1736,7 +1764,7 @@ export class TopicControlPlane
 
 		if (pubsubMessage instanceof PubSubData) {
 			const wantsTopic = pubsubMessage.topics.some((t) =>
-				this.subscriptions.has(t),
+				this.subscriptions.has(t) || this.pendingSubscriptions.has(t),
 			);
 			isForMe = pubsubMessage.strict ? isForMe && wantsTopic : wantsTopic;
 		}

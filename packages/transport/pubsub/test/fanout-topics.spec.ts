@@ -1,10 +1,12 @@
 import { getPublicKeyFromPeerId, randomBytes } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import {
+	PubSubData,
 	PubSubMessage,
 	Subscribe,
 	type DataEvent as PubSubDataEvent,
 } from "@peerbit/pubsub-interface";
+import { SilentDelivery } from "@peerbit/stream-interface";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { FanoutTree, TopicControlPlane, TopicRootControlPlane } from "../src/index.js";
@@ -327,6 +329,84 @@ describe("pubsub (fanout topics)", function () {
 			expect(received[0]!.data.topics.sort()).to.deep.equal(
 				[TOPIC_A, TOPIC_B].sort(),
 			);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("tracks pending subscribe immediately and cleans up if cancelled before debounce", async () => {
+		const { session } = await createSession(1, {
+			pubsub: {
+				subscriptionDebounceDelay: 500,
+			},
+		});
+
+		try {
+			const topic = "pending-subscribe-topic";
+			const pubsub = session.peers[0]!.services.pubsub as any;
+
+			const subscribePromise = pubsub.subscribe(topic);
+			expect(pubsub.topics.has(topic)).to.equal(true);
+			expect(pubsub.subscriptions.has(topic)).to.equal(false);
+			expect(pubsub.pendingSubscriptions.has(topic)).to.equal(true);
+			expect(pubsub.getSubscriptionOverlap([topic])).to.deep.equal([topic]);
+
+			const removed = await pubsub.unsubscribe(topic);
+			expect(removed).to.equal(false);
+			expect(pubsub.pendingSubscriptions.has(topic)).to.equal(false);
+			expect(pubsub.subscriptions.has(topic)).to.equal(false);
+			expect(pubsub.topics.has(topic)).to.equal(false);
+
+			await subscribePromise;
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("accepts strict direct delivery while subscribe is pending", async () => {
+		const { session } = await createSession(2, {
+			pubsub: {
+				subscriptionDebounceDelay: 500,
+			},
+		});
+
+		try {
+			const topic = "pending-strict-delivery-topic";
+			const sender = session.peers[0]!.services.pubsub;
+			const receiver = session.peers[1]!.services.pubsub;
+			const received: Uint8Array[] = [];
+
+			receiver.addEventListener("data", (ev: any) => {
+				const detail = ev.detail as PubSubDataEvent;
+				if (!detail?.data?.topics?.includes?.(topic)) return;
+				received.push(detail.data.data);
+			});
+
+			const pendingSubscribe = receiver.subscribe(topic);
+			const payload = new Uint8Array([7, 9, 11, 13]);
+			const strictMessage = await (sender as any).createMessage(
+				new PubSubData({ topics: [topic], data: payload, strict: true }).bytes(),
+				{
+					mode: new SilentDelivery({
+						to: [receiver.publicKeyHash],
+						redundancy: 1,
+					}),
+					skipRecipientValidation: true,
+				},
+			);
+			await receiver.onDataMessage(
+				sender.publicKey,
+				{} as any,
+				strictMessage,
+				0,
+			);
+
+			await waitForResolved(() => {
+				expect(received).to.have.length(1);
+				expect([...received[0]!]).to.deep.equal([...payload]);
+			});
+
+			await pendingSubscribe;
 		} finally {
 			await session.stop();
 		}
