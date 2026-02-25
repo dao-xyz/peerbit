@@ -289,6 +289,7 @@ type QueryDetailedOptions<
 		response: types.AbstractSearchResult,
 		from: PublicSignKey,
 	) => void | Promise<void>;
+	onMissingResponses?: (error: MissingResponsesError) => void | Promise<void>;
 	remote?: {
 		from?: string[]; // if specified, only query these peers
 	};
@@ -2515,6 +2516,9 @@ export class DocumentIndex<
 				} catch (error) {
 					if (error instanceof MissingResponsesError) {
 						warn("Did not reciveve responses from all shard");
+						if (options?.onMissingResponses) {
+							await options.onMissingResponses(error);
+						}
 						if (remote?.throwOnMissing) {
 							throw error;
 						}
@@ -3074,6 +3078,7 @@ export class DocumentIndex<
 		): Promise<boolean> => {
 			await warmupPromise;
 			let hasMore = false;
+			let missingResponses = false;
 			const discoverTargets =
 				typeof options?.remote === "object"
 					? options.remote.reach?.discover
@@ -3090,14 +3095,14 @@ export class DocumentIndex<
 			queryRequestCoerced.fetch = n;
 			await this.queryCommence(
 				queryRequestCoerced,
-						{
-							local: fetchOptions?.from != null ? false : options?.local,
-							remote:
-								options?.remote !== false && !skipRemoteDueToDiscovery
-									? {
-											...(typeof options?.remote === "object"
-												? options.remote
-												: {}),
+				{
+					local: fetchOptions?.from != null ? false : options?.local,
+					remote:
+						options?.remote !== false && !skipRemoteDueToDiscovery
+							? {
+									...(typeof options?.remote === "object"
+										? options.remote
+										: {}),
 									from: fetchOptions?.from ?? initialRemoteTargets,
 								}
 							: false,
@@ -3209,10 +3214,38 @@ export class DocumentIndex<
 							);
 						}
 					},
+					onMissingResponses: (error) => {
+						missingResponses = true;
+						const missingGroups = (error as MissingResponsesError & {
+							missingGroups?: string[][];
+						}).missingGroups;
+						if (!missingGroups?.length) {
+							return;
+						}
+
+						const selfHash = this.node.identity.publicKey.hashcode();
+						for (const group of missingGroups) {
+							const target = group.find((hash) => {
+								if (!hash || hash === selfHash) return false;
+								const attempts = missingResponseRetryAttempts.get(hash) ?? 0;
+								return attempts < maxMissingResponseRetryAttempts;
+							});
+							if (!target) continue;
+							pendingMissingResponseRetryPeers.add(target);
+							missingResponseRetryAttempts.set(
+								target,
+								(missingResponseRetryAttempts.get(target) ?? 0) + 1,
+							);
+						}
+					},
 				},
 				fetchOptions?.fetchedFirstForRemote,
 			);
 
+			if (missingResponses) {
+				hasMore = true;
+				unsetDone();
+			}
 			if (!hasMore) {
 				maybeSetDone();
 			}
@@ -3236,6 +3269,17 @@ export class DocumentIndex<
 			if (!first) {
 				first = true;
 				fetchPromise = fetchFirst(n);
+				return fetchPromise;
+			}
+
+			if (pendingMissingResponseRetryPeers.size > 0) {
+				const retryTargets = [...pendingMissingResponseRetryPeers];
+				pendingMissingResponseRetryPeers.clear();
+				fetchPromise = fetchFirst(n, {
+					from: retryTargets,
+					// retries for missing groups should not be suppressed by first-fetch dedupe
+					fetchedFirstForRemote: undefined,
+				});
 				return fetchPromise;
 			}
 
@@ -3676,6 +3720,9 @@ export class DocumentIndex<
 		let joinListener: (() => void) | undefined;
 
 		let fetchedFirstForRemote: Set<string> | undefined = undefined;
+		const pendingMissingResponseRetryPeers = new Set<string>();
+		const missingResponseRetryAttempts = new Map<string, number>();
+		const maxMissingResponseRetryAttempts = 2;
 
 		let updateDeferred: ReturnType<typeof pDefer> | undefined;
 		const onLateResultsQueue =

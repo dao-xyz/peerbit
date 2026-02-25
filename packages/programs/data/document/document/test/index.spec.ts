@@ -45,7 +45,7 @@ import {
 import { Entry, Log, createEntry } from "@peerbit/log";
 import { ClosedError, Program } from "@peerbit/program";
 import type { TopicControlPlane } from "@peerbit/pubsub";
-import { RPCMessage, ResponseV0 } from "@peerbit/rpc";
+import { MissingResponsesError, RPCMessage, ResponseV0 } from "@peerbit/rpc";
 import {
 	AbsoluteReplicas,
 	SharedLog,
@@ -3612,54 +3612,211 @@ describe("index", () => {
 							expect(t1 - t0).to.be.lessThan(500); // Should return quickly, not wait for timeout
 						});
 
-						it("uses wait timeout as remote rpc timeout when timeout is omitted", async () => {
-							session = await TestSession.connected(1);
+							it("uses wait timeout as remote rpc timeout when timeout is omitted", async () => {
+								session = await TestSession.connected(1);
 
-							const store = await session.peers[0].open(
-								new TestStore({
-									docs: new Documents<Document>(),
-								}),
-								{
-									args: {
-										replicate: false,
-									},
-								},
-							);
-
-							const wantedTimeout = 12_345;
-							let observedTimeout: number | undefined = undefined;
-							const requestFn = store.docs.index._query.request.bind(
-								store.docs.index._query,
-							);
-							store.docs.index._query.request = async (request, options) => {
-								if (
-									request instanceof SearchRequest ||
-									request instanceof SearchRequestIndexed ||
-									request instanceof IterationRequest
-								) {
-									observedTimeout = options?.timeout;
-									return [];
-								}
-								return requestFn(request, options);
-							};
-
-							await store.docs.index["queryCommence"](
-								new SearchRequest({ fetch: 1 }),
-								{
-									local: false,
-									remote: {
-										from: ["missing-peer"],
-										wait: {
-											timeout: wantedTimeout,
+								const store = await session.peers[0].open(
+									new TestStore({
+										docs: new Documents<Document>(),
+									}),
+									{
+										args: {
+											replicate: false,
 										},
 									},
-								},
-							);
+								);
 
-							expect(observedTimeout).to.equal(wantedTimeout);
+								const wantedTimeout = 12_345;
+								let observedTimeout: number | undefined = undefined;
+								const requestFn = store.docs.index._query.request.bind(
+									store.docs.index._query,
+								);
+								store.docs.index._query.request = async (request, options) => {
+									if (
+										request instanceof SearchRequest ||
+										request instanceof SearchRequestIndexed ||
+										request instanceof IterationRequest
+									) {
+										observedTimeout = options?.timeout;
+										return [];
+									}
+									return requestFn(request, options);
+								};
+
+								await store.docs.index["queryCommence"](
+									new SearchRequest({ fetch: 1 }),
+									{
+										local: false,
+										remote: {
+											from: ["missing-peer"],
+											wait: {
+												timeout: wantedTimeout,
+											},
+										},
+									},
+								);
+
+								expect(observedTimeout).to.equal(wantedTimeout);
+							});
+
+							it("does not retry when initial fetch has no missing responses", async () => {
+								session = await TestSession.connected(1);
+
+								const store = await session.peers[0].open(
+									new TestStore({
+										docs: new Documents<Document>(),
+									}),
+									{
+										args: {
+											replicate: false,
+										},
+									},
+								);
+
+								const observedRemoteFrom: (string[] | undefined)[] = [];
+								const queryCommenceFn =
+									store.docs.index["queryCommence"].bind(store.docs.index);
+								store.docs.index["queryCommence"] = async (...args: any[]) => {
+									const options = args[1];
+									observedRemoteFrom.push(options?.remote?.from);
+									// Simulate a successful empty fetch without triggering onMissingResponses.
+									return [];
+								};
+
+								const iterator = store.docs.index.iterate(
+									{},
+									{
+										local: false,
+										remote: {
+											wait: { timeout: 5_000, behavior: "keep-open" },
+										},
+									},
+								);
+
+								const first = await iterator.next(1);
+								expect(first).to.have.length(0);
+								expect(iterator.done()).to.equal(false);
+								expect(observedRemoteFrom).to.deep.equal([undefined]);
+
+								const second = await iterator.next(1);
+								expect(second).to.have.length(0);
+								expect(iterator.done()).to.equal(false);
+								expect(observedRemoteFrom).to.deep.equal([undefined]);
+
+								store.docs.index["queryCommence"] = queryCommenceFn;
+								await iterator.close();
+							});
+
+							it("retries missing shard groups before closing the iterator", async () => {
+								session = await TestSession.connected(1);
+
+								const store = await session.peers[0].open(
+									new TestStore({
+										docs: new Documents<Document>(),
+									}),
+									{
+										args: {
+											replicate: false,
+										},
+									},
+								);
+
+								const missingPeer = "missing-peer";
+								const observedRemoteFrom: (string[] | undefined)[] = [];
+								const queryCommenceFn =
+									store.docs.index["queryCommence"].bind(store.docs.index);
+								store.docs.index["queryCommence"] = async (...args: any[]) => {
+									const options = args[1];
+									observedRemoteFrom.push(options?.remote?.from);
+									if (observedRemoteFrom.length === 1) {
+										const error = new MissingResponsesError("missing shards");
+										(error as MissingResponsesError & { missingGroups?: string[][] })
+											.missingGroups = [[missingPeer]];
+										await options?.onMissingResponses?.(error);
+										return [];
+									}
+									return (queryCommenceFn as any)(...args);
+								};
+
+								const iterator = store.docs.index.iterate(
+									{},
+									{
+										local: false,
+										remote: {
+											wait: { timeout: 5_000, behavior: "keep-open" },
+										},
+									},
+								);
+
+								const first = await iterator.next(1);
+								expect(first).to.have.length(0);
+								expect(iterator.done()).to.equal(false);
+								expect(observedRemoteFrom[0]).to.equal(undefined);
+
+								const second = await iterator.next(1);
+								expect(second).to.have.length(0);
+								expect(iterator.done()).to.equal(false);
+								expect(observedRemoteFrom).to.have.length(2);
+								expect(observedRemoteFrom[1]).to.deep.equal([missingPeer]);
+
+								await iterator.close();
+							});
+
+							it("caps missing-shard retries to configured budget", async () => {
+								session = await TestSession.connected(1);
+
+								const store = await session.peers[0].open(
+									new TestStore({
+										docs: new Documents<Document>(),
+									}),
+									{
+										args: {
+											replicate: false,
+										},
+									},
+								);
+
+								const missingPeer = "missing-peer";
+								const observedRemoteFrom: (string[] | undefined)[] = [];
+								let missingCallbacks = 0;
+								store.docs.index["queryCommence"] = async (...args: any[]) => {
+									const options = args[1];
+									observedRemoteFrom.push(options?.remote?.from);
+									missingCallbacks++;
+									const error = new MissingResponsesError("missing shards");
+									(error as MissingResponsesError & { missingGroups?: string[][] })
+										.missingGroups = [[missingPeer]];
+									await options?.onMissingResponses?.(error);
+									return [];
+								};
+
+								const iterator = store.docs.index.iterate(
+									{},
+									{
+										local: false,
+										remote: {
+											wait: { timeout: 5_000, behavior: "keep-open" },
+										},
+									},
+								);
+
+								await iterator.next(1); // initial
+								await iterator.next(1); // retry 1
+								await iterator.next(1); // retry 2 (max)
+								await iterator.next(1); // no additional retry beyond cap
+
+								expect(observedRemoteFrom).to.deep.equal([
+									undefined,
+									[missingPeer],
+									[missingPeer],
+								]);
+								expect(missingCallbacks).to.equal(3);
+								expect(iterator.done()).to.equal(false);
+
+								await iterator.close();
+							});
 						});
 					});
-				});
 
 				describe("scope", () => {
 					describe("eager", () => {
@@ -6966,21 +7123,66 @@ describe("index", () => {
 				expect(counters[2]).equal(0);
 			});
 
-			it("non-local", async () => {
-				stores[0].docs.log.getCover = async () => [
-					stores[1].node.identity.publicKey.hashcode(),
-					stores[2].node.identity.publicKey.hashcode(),
-				];
-				await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
-					local: false,
+				it("non-local", async () => {
+					stores[0].docs.log.getCover = async () => [
+						stores[1].node.identity.publicKey.hashcode(),
+						stores[2].node.identity.publicKey.hashcode(),
+					];
+					await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
+						local: false,
+					});
+					expect(counters[0]).equal(0);
+					expect(counters[1]).equal(1);
+					expect(counters[2]).equal(1);
 				});
-				expect(counters[0]).equal(0);
-				expect(counters[1]).equal(1);
-				expect(counters[2]).equal(1);
-			});
 
-			describe("errors", () => {
-				let fns: any[];
+				it("economy: happy path does one distributed fetch with no retry callback", async () => {
+					stores[0].docs.log.getCover = async () => [
+						stores[1].node.identity.publicKey.hashcode(),
+						stores[2].node.identity.publicKey.hashcode(),
+					];
+
+					// Explicitly pin random selection for deterministic request-count assertions.
+					const randomFn = Math.random;
+					Math.random = () => 0;
+					const queryCommenceFn = stores[0].docs.index["queryCommence"].bind(
+						stores[0].docs.index,
+					);
+					let queryCommenceCalls = 0;
+					let missingResponseCallbacks = 0;
+					stores[0].docs.index["queryCommence"] = async (...args: any[]) => {
+						queryCommenceCalls++;
+						const options = args[1];
+						return (queryCommenceFn as any)(
+							args[0],
+							{
+								...options,
+								onMissingResponses: async (error: MissingResponsesError) => {
+									missingResponseCallbacks++;
+									await options?.onMissingResponses?.(error);
+								},
+							},
+							args[2],
+						);
+					};
+					try {
+						await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
+							local: false,
+							remote: { timeout: 1_000 },
+						});
+						expect(queryCommenceCalls).equal(1);
+						expect(counters[0]).equal(0);
+						expect(counters[1]).equal(1);
+						expect(counters[2]).equal(1);
+						expect(missingResponseCallbacks).equal(0);
+					} finally {
+						stores[0].docs.index["queryCommence"] = queryCommenceFn;
+						Math.random = randomFn;
+					}
+				});
+
+				describe("errors", () => {
+					let fns: any[];
 
 				beforeEach(() => {
 					fns = stores.map((x) => x.docs.index.processQuery.bind(x.docs.index));
@@ -7017,8 +7219,9 @@ describe("index", () => {
 					});
 					expect(failedOnce).to.be.true;
 					expect(counters[0]).equal(1);
-					expect(counters[1] + counters[2]).equal(1);
-					expect(counters[1]).not.equal(counters[2]);
+					const remoteCalls = counters[1] + counters[2];
+					expect(remoteCalls).to.be.greaterThan(0);
+					expect(remoteCalls).to.be.at.most(2);
 				});
 
 				it("will fail silently if can not reach all shards", async () => {
