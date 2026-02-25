@@ -204,9 +204,11 @@ testSetups.forEach((setup) => {
 				const fromHash = session.peers[0].identity.publicKey.hashcode();
 
 				// Ensure we start from a clean state on db2 for db1's ranges.
-				await db1.log.rpc.send(
-					new AllReplicatingSegmentsMessage({ segments: [] }),
-				);
+				// Clearing through the network can race with periodic replication
+				// announcements and make this test flaky under CI load.
+				await db2.log.replicationIndex.del({
+					query: { hash: fromHash },
+				});
 				await waitForResolved(
 					async () =>
 						expect(
