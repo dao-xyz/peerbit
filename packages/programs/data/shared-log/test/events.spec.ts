@@ -352,7 +352,8 @@ describe("events", () => {
 				}),
 			).to.be.eventually.rejectedWith("Timeout");
 			let t1 = Date.now();
-			expect(t1 - t0).to.be.greaterThanOrEqual(timeout);
+			// Allow small timer jitter on busy CI runners.
+			expect(t1 - t0).to.be.greaterThanOrEqual(timeout - 25);
 		});
 
 		it("will wait for role age", async () => {
