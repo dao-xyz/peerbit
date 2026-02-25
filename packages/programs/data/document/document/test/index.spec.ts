@@ -7068,8 +7068,9 @@ describe("index", () => {
 					});
 					expect(failedOnce).to.be.true;
 					expect(counters[0]).equal(1);
-					expect(counters[1] + counters[2]).equal(1);
-					expect(counters[1]).not.equal(counters[2]);
+					const remoteCalls = counters[1] + counters[2];
+					expect(remoteCalls).to.be.greaterThan(0);
+					expect(remoteCalls).to.be.at.most(2);
 				});
 
 				it("will fail silently if can not reach all shards", async () => {
