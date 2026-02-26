@@ -4382,6 +4382,7 @@ export class SharedLog<
 		const timeout = options.timeout ?? this.waitForReplicatorTimeout;
 
 		return new Promise((resolve, reject) => {
+			let settled = false;
 			const removeListeners = () => {
 				this.events.removeEventListener("replication:change", roleListener);
 				this.events.removeEventListener("replicator:mature", roleListener); // TODO replication:change event  ?
@@ -4390,15 +4391,26 @@ export class SharedLog<
 					abortListener,
 				);
 			};
-			const abortListener = () => {
+			const settleResolve = (value: Map<string, { intersecting: boolean }> | false) => {
+				if (settled) return;
+				settled = true;
 				removeListeners();
 				clearTimeout(timer);
-				resolve(false);
+				resolve(value);
+			};
+			const settleReject = (error: unknown) => {
+				if (settled) return;
+				settled = true;
+				removeListeners();
+				clearTimeout(timer);
+				reject(error);
+			};
+			const abortListener = () => {
+				settleResolve(false);
 			};
 
 			const timer = setTimeout(async () => {
-				removeListeners();
-				resolve(false);
+				settleResolve(false);
 			}, timeout);
 
 			const check = async () => {
@@ -4422,19 +4434,22 @@ export class SharedLog<
 				}
 				options?.onLeader && leaderKeys.forEach(options.onLeader);
 
-				removeListeners();
-				clearTimeout(timer);
-				resolve(leaders);
+				settleResolve(leaders);
+			};
+			const runCheck = () => {
+				void check().catch((error) => {
+					settleReject(error);
+				});
 			};
 
 			const roleListener = () => {
-				check();
+				runCheck();
 			};
 
 			this.events.addEventListener("replication:change", roleListener); // TODO replication:change event  ?
 			this.events.addEventListener("replicator:mature", roleListener); // TODO replication:change event  ?
 			this._closeController.signal.addEventListener("abort", abortListener);
-			check();
+			runCheck();
 		});
 	}
 
@@ -4483,7 +4498,27 @@ export class SharedLog<
 			return; // no change
 		}
 
-		const cidObject = cidifyString(properties.entry.hash);
+		const entryHash = (properties.entry as any)?.hash;
+		if (typeof entryHash !== "string" || entryHash.length === 0) {
+			warn("Skipping persistCoordinate for entry without hash");
+			return;
+		}
+
+		let cidObject: ReturnType<typeof cidifyString>;
+		try {
+			cidObject = cidifyString(entryHash);
+		} catch (error) {
+			warn(
+				`Skipping persistCoordinate for invalid hash '${entryHash}': ${
+					(error as any)?.message ?? error
+				}`,
+			);
+			return;
+		}
+		if (!cidObject?.multihash?.digest) {
+			warn(`Skipping persistCoordinate for entry '${entryHash}' without digest`);
+			return;
+		}
 		const hashNumber = this.indexableDomain.numbers.bytesToNumber(
 			cidObject.multihash.digest,
 		);
@@ -4493,22 +4528,19 @@ export class SharedLog<
 				assignedToRangeBoundary,
 				coordinates: properties.coordinates,
 				meta: properties.entry.meta,
-				hash: properties.entry.hash,
+				hash: entryHash,
 				hashNumber,
 			}),
 		);
 
 		for (const coordinate of properties.coordinates) {
-			this.coordinateToHash.add(coordinate, properties.entry.hash);
+			this.coordinateToHash.add(coordinate, entryHash);
 		}
 
-		if (properties.entry.meta.next.length > 0) {
+		const next = properties.entry.meta?.next ?? [];
+		if (next.length > 0) {
 			await this.entryCoordinatesIndex.del({
-				query: new Or(
-					properties.entry.meta.next.map(
-						(x) => new StringMatch({ key: "hash", value: x }),
-					),
-				),
+				query: new Or(next.map((x) => new StringMatch({ key: "hash", value: x }))),
 			});
 		}
 	}
