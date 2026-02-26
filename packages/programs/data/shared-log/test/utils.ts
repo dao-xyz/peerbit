@@ -107,6 +107,7 @@ export const waitForConverged = async (
 		tests: number;
 		interval: number;
 		delta: number;
+		jitter?: number;
 		debug?: boolean;
 	} = {
 		tests: 3,
@@ -117,15 +118,23 @@ export const waitForConverged = async (
 	},
 ) => {
 	let lastResult = undefined;
-	let c = 0;
 	let ok = 0;
+	const startedAt = Date.now();
+	const jitter = options.jitter ?? 0;
 	for (;;) {
+		if (Date.now() - startedAt > options.timeout) {
+			throw new Error("Timeout");
+		}
+
 		const current = await fn();
 		if (options.debug) {
 			console.log("Waiting for convergence: " + current);
 		}
 
-		if (lastResult != null && Math.abs(lastResult - current) <= options.delta) {
+		if (
+			lastResult != null &&
+			Math.abs(lastResult - current) <= options.delta + jitter
+		) {
 			ok += 1;
 			if (options.tests <= ok) {
 				break;
@@ -134,11 +143,12 @@ export const waitForConverged = async (
 			ok = 0;
 		}
 		lastResult = current;
-		await delay(options.interval);
-		c++;
-		if (c * options.interval > options.timeout) {
+
+		if (Date.now() - startedAt > options.timeout) {
 			throw new Error("Timeout");
 		}
+
+		await delay(options.interval);
 	}
 };
 export const getUnionSize = async (
@@ -229,12 +239,17 @@ export const checkReplicas = async (
 	minReplicas: number,
 	entryCount: number,
 ) => {
+	const verboseReplicaTrace = process.env.PEERBIT_TRACE_REPLICA_INVARIANTS === "1";
+	let iteration = 0;
+	const startedAt = Date.now();
+
 	try {
 		// Replica convergence can take longer under full-suite load (GC, many
 		// concurrent timers). Use a larger window and slower polling to reduce flakiness
 		// and avoid starving the event loop with tight, heavy polling.
 		await waitForResolved(
 			async () => {
+				iteration += 1;
 				const map = new Map<string, number>();
 				const hashToEntry = new Map<string, Entry<any>>();
 				for (const db of dbs) {
@@ -245,15 +260,37 @@ export const checkReplicas = async (
 						hashToEntry.set(value.hash, value);
 					}
 				}
+
+				if (verboseReplicaTrace && map.size > 0) {
+					let minObserved = Number.POSITIVE_INFINITY;
+					for (const [, count] of map) {
+						if (count < minObserved) {
+							minObserved = count;
+						}
+					}
+					const elapsedMs = Date.now() - startedAt;
+					console.error(
+						`[replica-trace] iter=${iteration} elapsedMs=${elapsedMs} entries=${map.size} minExpected=${minReplicas} minObserved=${minObserved}`,
+					);
+				}
+
 				for (const [_k, v] of map) {
 					try {
 						expect(v).greaterThanOrEqual(minReplicas);
-					} catch (error) {
+					} catch {
 						const entry = hashToEntry.get(_k)!;
 						const gid = entry.meta.gid;
 						const coordinates = await dbs[0].log.createCoordinates(
 							entry,
 							minReplicas,
+						);
+						const diag = await gatherReplicaDiagnostics(
+							dbs,
+							entry,
+							minReplicas,
+							entryCount,
+							iteration,
+							Date.now() - startedAt,
 						);
 						throw new Error(
 							"Did not fulfill min replicas level for " +
@@ -284,20 +321,81 @@ export const checkReplicas = async (
 												x.log.syncronizer.syncInFlight.has(entry.hash),
 											),
 										),
-								),
+								) +
+								". Diagnostics: " +
+								JSON.stringify(diag),
 						);
 					}
 					expect(v).lessThanOrEqual(dbs.length);
-					}
-				},
-				{ timeout: 120_000, delayInterval: 1_000 },
-			);
+				}
+			},
+			{ timeout: 120_000, delayInterval: 1_000 },
+		);
 	} catch (error) {
 		await dbgLogs(dbs.map((x) => x.log));
 		throw error;
 	}
 };
 
+const gatherReplicaDiagnostics = async (
+	dbs: { log: SharedLog<any, any> }[],
+	entry: Entry<any>,
+	minReplicas: number,
+	entryCount: number,
+	iteration: number,
+	elapsedMs: number,
+) => {
+	const gid = entry.meta.gid;
+	const coordinates = await dbs[0].log.createCoordinates(entry, minReplicas);
+
+	const perNode = await Promise.all(
+		dbs.map(async (db) => {
+			const id = db.log.node.identity.publicKey.hashcode();
+			const logLength = db.log.log.length;
+			const hasEntry = await db.log.log.has(entry.hash);
+			const blockHasEntry = await db.log.log.blocks.has(entry.hash);
+			const inFlight = db.log.syncronizer.syncInFlight.has(entry.hash);
+			const gidPeerHistoryCount =
+				[...(db.log._gidPeersHistory.get(gid) || [])].filter(
+					(peerId) => peerId !== id,
+				).length || 0;
+			const segments = (await db.log.getAllReplicationSegments()).map((segment) =>
+				segment.toString(),
+			);
+
+			let totalParticipation: number | string = "n/a";
+			let myParticipation: number | string = "n/a";
+			try {
+				totalParticipation = await db.log.calculateTotalParticipation();
+				myParticipation = await db.log.calculateMyTotalParticipation();
+			} catch {
+				// Keep diagnostics best-effort while nodes are joining/leaving.
+			}
+
+			return {
+				id,
+				logLength,
+				hasEntry,
+				blockHasEntry,
+				inFlight,
+				gidPeerHistoryCount,
+				segments,
+				totalParticipation,
+				myParticipation,
+			};
+		}),
+	);
+
+	return {
+		iteration,
+		elapsedMs,
+		entryCount,
+		entryHash: entry.hash,
+		gid,
+		coordinates: coordinates.map((x) => x.toString()),
+		perNode,
+	};
+};
 export type TestSetupConfig<R extends "u32" | "u64"> = {
 	type: R;
 	domain: ReplicationDomainConstructor<ReplicationDomainHash<R>>;

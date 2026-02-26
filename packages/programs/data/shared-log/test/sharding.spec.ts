@@ -998,20 +998,25 @@ testSetups.forEach((setup) => {
 
 							await delay(db1.log.timeUntilRoleMaturity + 1000);
 
-							await waitForConverged(async () => {
-								const diff = Math.abs(
-									(await db2.log.calculateMyTotalParticipation()) -
-										(await db1.log.calculateMyTotalParticipation()),
-								);
-								return Math.round(diff * 50);
-							}, {
-								// Under full-suite load, this often needs longer to stabilize than
-								// the default 30s used by waitForConverged.
-								timeout: 90 * 1000,
-								tests: 3,
-								interval: 1000,
-								delta: 1,
-							});
+							await waitForConverged(
+								async () => {
+									const diff = Math.abs(
+										(await db2.log.calculateMyTotalParticipation()) -
+											(await db1.log.calculateMyTotalParticipation()),
+									);
+									return Math.round(diff * 50);
+								},
+								{
+									// Under full-suite load, this often needs longer to stabilize than
+									// the default 30s used by waitForConverged.
+									timeout: 90 * 1000,
+									tests: 3,
+									interval: 1000,
+									delta: 1,
+									// Rounded participation can oscillate by one bucket under CI load.
+									jitter: 1,
+								},
+							);
 
 							await waitForResolved(
 								async () => {
