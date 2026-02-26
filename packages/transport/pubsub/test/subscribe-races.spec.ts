@@ -104,9 +104,10 @@ describe("pubsub (subscribe race regressions)", function () {
 
 	it("does not advertise cancelled pending subscriptions to peers", async () => {
 		const TOPIC = "subscribe-then-unsubscribe-before-debounce-regression";
+		const debounceDelayMs = 500;
 		const session = await createDisconnectedSession(2, {
 			pubsub: {
-				subscriptionDebounceDelay: 500,
+				subscriptionDebounceDelay: debounceDelayMs,
 			},
 		});
 
@@ -117,21 +118,23 @@ describe("pubsub (subscribe race regressions)", function () {
 			await session.connect([[session.peers[0], session.peers[1]]]);
 			await waitForNeighbour(a, b);
 
-			const pendingSubscribe = a.subscribe(TOPIC).catch(() => {});
+			const pendingSubscribe = a.subscribe(TOPIC);
 			const removed = await a.unsubscribe(TOPIC);
 			expect(removed).to.equal(false);
 
 			await b.subscribe(TOPIC);
-			await waitForResolved(() => {
-				expect(a.topics.has(TOPIC)).to.equal(false);
-				const bTopics = b.topics.get(TOPIC);
-				if (!bTopics) {
-					return;
-				}
-				expect(bTopics.has(a.publicKeyHash)).to.equal(false);
-			});
 
+			// Wait for A's debounced subscribe cycle to settle before asserting.
+			// This validates that A does not get (stale) advertised at flush time.
 			await pendingSubscribe;
+			await delay(debounceDelayMs + 100);
+
+			expect(a.topics.has(TOPIC)).to.equal(false);
+			const bTopics = b.topics.get(TOPIC);
+			if (bTopics) {
+				expect(bTopics.has(a.publicKeyHash)).to.equal(false);
+			}
+
 		} finally {
 			await session.stop();
 		}
