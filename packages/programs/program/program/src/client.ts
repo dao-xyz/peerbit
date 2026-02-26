@@ -22,7 +22,15 @@ export interface Client<T extends Manageable<ExtractArgs<T>>> {
 	peerId: Libp2pPeerId;
 	identity: Identity<Ed25519PublicKey>;
 	getMultiaddrs: () => Multiaddr[];
-	dial(address: string | Multiaddr | Multiaddr[]): Promise<boolean>;
+	dial(
+		address: string | Multiaddr | Multiaddr[],
+		options?: {
+			dialTimeoutMs?: number;
+			serviceWaitTimeoutMs?: number;
+			readiness?: "connection" | "services" | "services-and-fanout";
+			signal?: AbortSignal;
+		},
+	): Promise<boolean>;
 	hangUp(address: PeerId | PublicSignKey | string | Multiaddr): Promise<void>;
 	services: {
 		pubsub: PubSub;

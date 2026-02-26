@@ -83,6 +83,63 @@ describe(`dial`, function () {
 			await waitForResolved(() => expect(received).to.exist);
 			expect([...received!]).to.deep.equal([7, 8, 9]);
 		});
+
+		it("waits for fanout by default when fanout service is present", async () => {
+			const originalWaitFor = clients[0].services.fanout.waitFor.bind(
+				clients[0].services.fanout,
+			);
+			(clients[0].services.fanout as any).waitFor = async () => {
+				throw new Error("fanout-not-ready");
+			};
+
+			try {
+				await expect(
+					clients[0].dial(clients[1].getMultiaddrs()[0], {
+						dialTimeoutMs: 5_000,
+					}),
+				).to.be.rejectedWith("Fanout");
+			} finally {
+				(clients[0].services.fanout as any).waitFor = originalWaitFor;
+			}
+		});
+
+		it("allows skipping fanout readiness checks", async () => {
+			const originalWaitFor = clients[0].services.fanout.waitFor.bind(
+				clients[0].services.fanout,
+			);
+			(clients[0].services.fanout as any).waitFor = async () => {
+				throw new Error("fanout-not-ready");
+			};
+
+			try {
+				const ok = await clients[0].dial(clients[1].getMultiaddrs()[0], {
+					readiness: "services",
+					dialTimeoutMs: 5_000,
+				});
+				expect(ok).to.be.true;
+			} finally {
+				(clients[0].services.fanout as any).waitFor = originalWaitFor;
+			}
+		});
+
+		it("supports connection-only dial readiness", async () => {
+			const originalPubsubWaitFor = clients[0].services.pubsub.waitFor.bind(
+				clients[0].services.pubsub,
+			);
+			(clients[0].services.pubsub as any).waitFor = async () => {
+				throw new Error("pubsub-not-ready");
+			};
+
+			try {
+				const ok = await clients[0].dial(clients[1].getMultiaddrs()[0], {
+					readiness: "connection",
+					dialTimeoutMs: 5_000,
+				});
+				expect(ok).to.be.true;
+			} finally {
+				(clients[0].services.pubsub as any).waitFor = originalPubsubWaitFor;
+			}
+		});
 	}
 	it("dialer settings", async () => {
 		expect(clients[0].services.pubsub.connectionManagerOptions.dialer).to.exist;

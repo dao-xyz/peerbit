@@ -68,6 +68,18 @@ export type CreateInstanceOptions = (SimpleLibp2pOptions | Libp2pOptions) & {
 	indexer?: (directory?: string) => Promise<Indices> | Indices;
 } & OptionalCreateOptions;
 
+export type DialReadiness =
+	| "connection"
+	| "services"
+	| "services-and-fanout";
+
+export type DialOptions = {
+	dialTimeoutMs?: number;
+	serviceWaitTimeoutMs?: number;
+	readiness?: DialReadiness;
+	signal?: AbortSignal;
+};
+
 const isLibp2pInstance = (libp2p: Libp2pExtended | ClientCreateOptions) =>
 	!!(libp2p as Libp2p).getMultiaddrs;
 
@@ -411,7 +423,7 @@ export class Peerbit implements ProgramClient {
 	 */
 	async dial(
 		address: string | Multiaddr | Multiaddr[] | ProgramClient,
-		options?: { dialTimeoutMs?: number; signal?: AbortSignal },
+		options?: DialOptions,
 	): Promise<boolean> {
 		const maddress =
 			typeof address === "string"
@@ -457,21 +469,42 @@ export class Peerbit implements ProgramClient {
 			const publicKey = Ed25519PublicKey.fromPeerId(connection.remotePeer);
 			const peerHash = publicKey.hashcode();
 
-			// TODO, do this as a promise instead using the onPeerConnected vents in pubsub and blocks
-			try {
-				await this.libp2p.services.pubsub.waitFor(peerHash, {
-					target: "neighbor",
-				});
-			} catch (error) {
-				throw new Error(`Failed to dial peer. Not available on Pubsub`);
+			const resolvedReadiness: DialReadiness =
+				options?.readiness ??
+				(this.libp2p.services.fanout ? "services-and-fanout" : "services");
+			const serviceWaitTimeoutMs =
+				options?.serviceWaitTimeoutMs ?? options?.dialTimeoutMs;
+			if (resolvedReadiness === "connection") {
+				return true;
 			}
 
-			try {
-				await this.libp2p.services.blocks.waitFor(peerHash, {
-					target: "neighbor",
-				});
-			} catch (error) {
-				throw new Error(`Failed to dial peer. Not available on Blocks`);
+			const waitForNeighbor = async (
+				label: "Pubsub" | "Blocks" | "Fanout",
+				service: { waitFor: (peer: string, options?: any) => Promise<any> },
+			) => {
+				try {
+					await service.waitFor(peerHash, {
+						target: "neighbor",
+						timeout: serviceWaitTimeoutMs,
+						signal: dialSignal,
+					});
+				} catch (_error) {
+					throw new Error(`Failed to dial peer. Not available on ${label}`);
+				}
+			};
+
+			// TODO, do this as a promise instead using the onPeerConnected vents in pubsub and blocks
+			await waitForNeighbor("Pubsub", this.libp2p.services.pubsub);
+			await waitForNeighbor("Blocks", this.libp2p.services.blocks);
+
+			if (resolvedReadiness === "services-and-fanout") {
+				const fanoutService = (this.libp2p.services as any).fanout;
+				if (!fanoutService?.waitFor) {
+					throw new Error(
+						"Failed to dial peer. Not available on Fanout (service missing)",
+					);
+				}
+				await waitForNeighbor("Fanout", fanoutService);
 			}
 
 			return true;
