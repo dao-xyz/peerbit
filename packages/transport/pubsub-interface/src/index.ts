@@ -9,6 +9,7 @@ import {
 	type PeerEvents,
 	type PriorityOptions,
 	type PublicKeyFromHashResolver,
+	type RouteHint,
 	type WaitForPeer,
 	type WithExtraSigners,
 } from "@peerbit/stream-interface";
@@ -136,6 +137,10 @@ export interface PubSub
 		WaitForPeer,
 		PublicKeyFromHashResolver {
 	getSubscribers(topic: string): MaybePromise<PublicSignKey[] | undefined>;
+	getUnifiedRouteHints?(
+		topic: string,
+		targetHash: string,
+	): MaybePromise<RouteHint[]>;
 
 	requestSubscribers(topic: string, from?: PublicSignKey): MaybePromise<void>;
 

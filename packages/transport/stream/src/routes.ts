@@ -1,3 +1,5 @@
+import type { DirectStreamAckRouteHint } from "@peerbit/stream-interface";
+
 export const MAX_ROUTE_DISTANCE = Number.MAX_SAFE_INTEGER - 1;
 
 const DEFAULT_MAX_FROM_ENTRIES = 2048;
@@ -7,6 +9,7 @@ const DEFAULT_MAX_RELAYS_PER_TARGET = 32;
 type RelayInfo = {
 	session: number;
 	hash: string;
+	updatedAt: number;
 	expireAt?: number;
 	distance: number;
 };
@@ -257,6 +260,7 @@ export class Routes {
 					if (route.distance > distance) {
 						route.distance = distance;
 						route.session = session;
+						route.updatedAt = +new Date();
 						route.expireAt = undefined; // remove expiry since we updated
 						sortRoutes(prev.list);
 						if (prev.list.length > this.maxRelaysPerTarget) {
@@ -267,6 +271,7 @@ export class Routes {
 						return isNewRemoteSession ? "restart" : "updated";
 					} else if (route.distance === distance) {
 						route.session = session;
+						route.updatedAt = +new Date();
 						route.expireAt = undefined; // remove expiry since we updated
 						if (prev.list.length > this.maxRelaysPerTarget) {
 							prev.list.length = this.maxRelaysPerTarget;
@@ -290,6 +295,7 @@ export class Routes {
 				distance,
 				session,
 				hash: neighbour,
+				updatedAt: +new Date(),
 				expireAt: isOldSession
 					? +new Date() + this.routeMaxRetentionPeriod
 					: undefined,
@@ -362,6 +368,38 @@ export class Routes {
 
 	findNeighbor(from: string, target: string) {
 		return this.routes.get(from)?.get(target);
+	}
+
+	getRouteHints(from: string, target: string): DirectStreamAckRouteHint[] {
+		const route = this.routes.get(from)?.get(target);
+		if (!route) {
+			return [];
+		}
+		const now = Date.now();
+		const out: DirectStreamAckRouteHint[] = [];
+		for (const next of route.list) {
+			if (next.expireAt != null && next.expireAt < now) {
+				continue;
+			}
+			out.push({
+				kind: "directstream-ack",
+				from,
+				target,
+				nextHop: next.hash,
+				distance: next.distance,
+				session: next.session,
+				updatedAt: next.updatedAt,
+				expiresAt: next.expireAt,
+			});
+		}
+		return out;
+	}
+
+	getBestRouteHint(
+		from: string,
+		target: string,
+	): DirectStreamAckRouteHint | undefined {
+		return this.getRouteHints(from, target)[0];
 	}
 
 	isReachable(from: string, target: string, maxDistance = MAX_ROUTE_DISTANCE) {

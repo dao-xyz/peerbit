@@ -47,6 +47,7 @@ import {
 	getMsgId,
 } from "@peerbit/stream-interface";
 import type {
+	DirectStreamAckRouteHint,
 	IdOptions,
 	PeerRefs,
 	PriorityOptions,
@@ -1746,6 +1747,20 @@ export abstract class DirectStream<
 	}
 	public invalidateSession(key: string) {
 		this.routes.updateSession(key, undefined);
+	}
+
+	public getRouteHints(
+		target: string,
+		from: string = this.publicKeyHash,
+	): DirectStreamAckRouteHint[] {
+		return this.routes.getRouteHints(from, target);
+	}
+
+	public getBestRouteHint(
+		target: string,
+		from: string = this.publicKeyHash,
+	): DirectStreamAckRouteHint | undefined {
+		return this.routes.getBestRouteHint(from, target);
 	}
 
 	public onPeerSession(key: PublicSignKey, session: number) {

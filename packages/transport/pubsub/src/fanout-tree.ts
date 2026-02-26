@@ -8,7 +8,12 @@ import {
 	type PeerStreams,
 	dontThrowIfDeliveryError,
 } from "@peerbit/stream";
-import { AnyWhere, DataMessage, type StreamEvents } from "@peerbit/stream-interface";
+import {
+	AnyWhere,
+	DataMessage,
+	type FanoutRouteTokenHint,
+	type StreamEvents,
+} from "@peerbit/stream-interface";
 import { AbortError, TimeoutError, delay } from "@peerbit/time";
 import { anySignal } from "any-signal";
 import { Uint8ArrayList } from "uint8arraylist";
@@ -2398,6 +2403,50 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const ch = this.channelsBySuffixKey.get(id.suffixKey);
 		if (!ch?.routeFromRoot || ch.routeFromRoot.length === 0) return undefined;
 		return [...ch.routeFromRoot];
+	}
+
+	public getRouteHint(
+		topic: string,
+		root: string,
+		targetHash: string,
+	): FanoutRouteTokenHint | undefined {
+		const id = this.getChannelId(topic, root);
+		const ch = this.channelsBySuffixKey.get(id.suffixKey);
+		if (!ch) return undefined;
+
+		if (targetHash === this.publicKeyHash && ch.routeFromRoot?.length) {
+			return {
+				kind: "fanout-token",
+				root,
+				target: targetHash,
+				route: [...ch.routeFromRoot],
+				updatedAt: Date.now(),
+			};
+		}
+		if (ch.isRoot && ch.children.has(targetHash)) {
+			return {
+				kind: "fanout-token",
+				root,
+				target: targetHash,
+				route: [root, targetHash],
+				updatedAt: Date.now(),
+			};
+		}
+
+		const route = this.getCachedRoute(ch, targetHash);
+		if (!route) return undefined;
+		const entry = ch.routeByPeer.get(targetHash);
+		const updatedAt = entry?.updatedAt ?? Date.now();
+
+		return {
+			kind: "fanout-token",
+			root,
+			target: targetHash,
+			route,
+			updatedAt,
+			expiresAt:
+				ch.routeCacheTtlMs > 0 ? updatedAt + ch.routeCacheTtlMs : undefined,
+		};
 	}
 
 	private cacheRoute(ch: ChannelState, route: string[]) {
