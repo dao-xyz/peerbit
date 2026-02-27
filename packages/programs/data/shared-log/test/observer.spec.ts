@@ -6,7 +6,39 @@ import { EventStore } from "./utils/stores/index.js";
 
 describe("observer", () => {
 	let session: TestSession;
-	const waitTimeout = 60 * 1000;
+	const waitTimeout = 120 * 1000;
+	const TRACE_OBSERVER_DIAG =
+		process.env.PEERBIT_TRACE_OBSERVER_TESTS === "1" ||
+		process.env.PEERBIT_TRACE_ALL_TEST_FAILURES === "1";
+
+	const emitObserverDiag = async (
+		label: string,
+		stores: EventStore<string, any>[],
+	) => {
+		if (!TRACE_OBSERVER_DIAG) {
+			return;
+		}
+		const rows = await Promise.all(
+			stores.map(async (store) => {
+				try {
+					return {
+						id: store.node.identity.publicKey.hashcode(),
+						length: store.log.log.length,
+						isReplicating: await store.log.isReplicating(),
+						replicationIndexSize: (await store.log.replicationIndex?.getSize()) ?? "n/a",
+						totalParticipation: await store.log.calculateTotalParticipation(),
+						myParticipation: await store.log.calculateMyTotalParticipation(),
+					};
+				} catch (error: any) {
+					return {
+						id: store.node.identity.publicKey.hashcode(),
+						error: error?.message ?? String(error),
+					};
+				}
+			}),
+		);
+		console.error(`[observer-diag] ${label}: ${JSON.stringify(rows)}`);
+	};
 
 	before(async () => {});
 
@@ -21,6 +53,22 @@ describe("observer", () => {
 			[session.peers[0], session.peers[1]],
 			[session.peers[1], session.peers[2]],
 		]);
+		await session.peers[0].services.pubsub.waitFor(session.peers[1].peerId, {
+			target: "neighbor",
+			timeout: waitTimeout,
+		});
+		await session.peers[1].services.pubsub.waitFor(session.peers[0].peerId, {
+			target: "neighbor",
+			timeout: waitTimeout,
+		});
+		await session.peers[1].services.pubsub.waitFor(session.peers[2].peerId, {
+			target: "neighbor",
+			timeout: waitTimeout,
+		});
+		await session.peers[2].services.pubsub.waitFor(session.peers[1].peerId, {
+			target: "neighbor",
+			timeout: waitTimeout,
+		});
 
 		let stores: EventStore<string, any>[] = [];
 		const s = new EventStore<string, any>();
@@ -65,23 +113,39 @@ describe("observer", () => {
 			hashes.push((await stores[0].add(String(i))).entry.hash);
 		}
 
-		await waitForResolved(
-			() => expect(stores[1].log.log.length).to.equal(hashes.length),
-			{ timeout: waitTimeout },
-		);
+		try {
+			await waitForResolved(
+				() => expect(stores[1].log.log.length).to.equal(hashes.length),
+				{ timeout: waitTimeout + 60_000, delayInterval: 1_000 },
+			);
+		} catch (error) {
+			await emitObserverDiag(
+				"observers will not receive heads by default::replicator lag",
+				stores,
+			);
+			throw error;
+		}
 
 		const isReplicating = await Promise.all(
 			stores.map((store) => store.log.isReplicating()),
 		);
-		for (let i = 0; i < hashes.length; i++) {
-			for (let j = 1; j < stores.length; j++) {
-				const hash = hashes[i];
-				if (isReplicating[j]) {
-					expect(await stores[j].log.log.has(hash)).to.be.true;
-				} else {
-					expect(await stores[j].log.log.has(hash)).to.be.false;
+		try {
+			for (let i = 0; i < hashes.length; i++) {
+				for (let j = 1; j < stores.length; j++) {
+					const hash = hashes[i];
+					if (isReplicating[j]) {
+						expect(await stores[j].log.log.has(hash)).to.be.true;
+					} else {
+						expect(await stores[j].log.log.has(hash)).to.be.false;
+					}
 				}
 			}
+		} catch (error) {
+			await emitObserverDiag(
+				"observers will not receive heads by default::hash-presence",
+				stores,
+			);
+			throw error;
 		}
 	});
 

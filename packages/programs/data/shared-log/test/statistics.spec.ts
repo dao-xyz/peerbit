@@ -4,6 +4,46 @@ import { expect } from "chai";
 import { waitForConverged } from "./utils.js";
 import { EventStore } from "./utils/stores/event-store.js";
 
+const STATS_DIAG =
+	process.env.PEERBIT_TRACE_STATISTICS_TESTS === "1" ||
+	process.env.PEERBIT_TRACE_ALL_TEST_FAILURES === "1";
+
+const emitStatisticsDiag = async (
+	label: string,
+	dbs: Array<EventStore<string, any> | undefined>,
+) => {
+	if (!STATS_DIAG) {
+		return;
+	}
+	const rows = await Promise.all(
+		dbs
+			.filter((db): db is EventStore<string, any> => !!db)
+			.map(async (db) => {
+				let totalParticipation: number | string = "n/a";
+				let myParticipation: number | string = "n/a";
+				let assignedHeads: number | string = "n/a";
+				let approxHeads: number | string = "n/a";
+				try {
+					totalParticipation = await db.log.calculateTotalParticipation();
+					myParticipation = await db.log.calculateMyTotalParticipation();
+					assignedHeads = await db.log.countAssignedHeads();
+					approxHeads = await db.log.countHeads({ approximate: true });
+				} catch {
+					// Keep diagnostics best-effort.
+				}
+				return {
+					id: db.log.node.identity.publicKey.hashcode(),
+					length: db.log.log.length,
+					totalParticipation,
+					myParticipation,
+					assignedHeads,
+					approxHeads,
+				};
+			}),
+	);
+	console.error(`[statistics-diag] ${label}: ${JSON.stringify(rows)}`);
+};
+
 describe(`countAssignedHeads`, function () {
 	let session: TestSession;
 
@@ -29,6 +69,7 @@ describe(`countAssignedHeads`, function () {
 	});
 
 	it("partial", async () => {
+		const diagLabel = "countAssignedHeads::partial";
 		let db1 = await session.peers[0].open(new EventStore<string, any>(), {
 			args: {
 				replicate: {
@@ -59,17 +100,34 @@ describe(`countAssignedHeads`, function () {
 			await db1.add(i.toString(), { meta: { next: [] } });
 		}
 
-		await waitForResolved(() =>
-			expect(db2.log.log.length).to.be.greaterThan(0),
-		);
-		await waitForConverged(() => db1.log.log.length);
-		await waitForConverged(() => db2.log.log.length);
+		try {
+			await waitForResolved(() =>
+				expect(db2.log.log.length).to.be.greaterThan(0),
+			);
+			await waitForConverged(() => db1.log.log.length, {
+				timeout: 120_000,
+				tests: 3,
+				interval: 1_000,
+				delta: 2,
+				jitter: 2,
+			});
+			await waitForConverged(() => db2.log.log.length, {
+				timeout: 120_000,
+				tests: 3,
+				interval: 1_000,
+				delta: 2,
+				jitter: 2,
+			});
 
-		const owned1 = await db1.log.countAssignedHeads();
-		const owned2 = await db2.log.countAssignedHeads();
+			const owned1 = await db1.log.countAssignedHeads();
+			const owned2 = await db2.log.countAssignedHeads();
 
-		expect(owned1).to.be.within(count * 0.4, count * 0.6);
-		expect(owned2).to.be.within(count * 0.4, count * 0.6);
+			expect(owned1).to.be.within(count * 0.4, count * 0.6);
+			expect(owned2).to.be.within(count * 0.4, count * 0.6);
+		} catch (error) {
+			await emitStatisticsDiag(diagLabel, [db1, db2]);
+			throw error;
+		}
 	});
 });
 
@@ -114,6 +172,7 @@ describe(`countHeads`, function () {
 		});
 
 		it("partial 0.5", async () => {
+			const diagLabel = "countHeads::partial 0.5";
 			let db1 = await session.peers[0].open(new EventStore<string, any>(), {
 				args: {
 					replicate: {
@@ -127,12 +186,24 @@ describe(`countHeads`, function () {
 				await db1.add(i.toString(), { meta: { next: [] } });
 			}
 
-			await waitForConverged(() => db1.log.log.length);
-			const total1 = await db1.log.countHeads({ approximate: true });
-			expect(total1).to.be.within(count * 0.8, count * 1.2);
+			try {
+				await waitForConverged(() => db1.log.log.length, {
+					timeout: 120_000,
+					tests: 3,
+					interval: 1_000,
+					delta: 2,
+					jitter: 2,
+				});
+				const total1 = await db1.log.countHeads({ approximate: true });
+				expect(total1).to.be.within(count * 0.8, count * 1.2);
+			} catch (error) {
+				await emitStatisticsDiag(diagLabel, [db1]);
+				throw error;
+			}
 		});
 
 		it("partial 0.25", async () => {
+			const diagLabel = "countHeads::partial 0.25";
 			let db1 = await session.peers[0].open(new EventStore<string, any>(), {
 				args: {
 					replicate: {
@@ -146,9 +217,20 @@ describe(`countHeads`, function () {
 				await db1.add(i.toString(), { meta: { next: [] } });
 			}
 
-			await waitForConverged(() => db1.log.log.length);
-			const total1 = await db1.log.countHeads({ approximate: true });
-			expect(total1).to.be.within(count * 0.8, count * 1.2);
+			try {
+				await waitForConverged(() => db1.log.log.length, {
+					timeout: 120_000,
+					tests: 3,
+					interval: 1_000,
+					delta: 2,
+					jitter: 2,
+				});
+				const total1 = await db1.log.countHeads({ approximate: true });
+				expect(total1).to.be.within(count * 0.8, count * 1.2);
+			} catch (error) {
+				await emitStatisticsDiag(diagLabel, [db1]);
+				throw error;
+			}
 		});
 	});
 });

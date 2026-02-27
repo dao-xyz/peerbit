@@ -121,12 +121,22 @@ export const waitForConverged = async (
 	let ok = 0;
 	const startedAt = Date.now();
 	const jitter = options.jitter ?? 0;
+	const traceOnTimeout =
+		process.env.PEERBIT_TRACE_CONVERGENCE_TIMEOUTS === "1" ||
+		process.env.PEERBIT_TRACE_ALL_TEST_FAILURES === "1";
+	const samples: number[] = [];
 	for (;;) {
 		if (Date.now() - startedAt > options.timeout) {
+			if (traceOnTimeout) {
+				console.error(
+					`[converged-timeout] timeoutMs=${options.timeout} intervalMs=${options.interval} delta=${options.delta} jitter=${jitter} tests=${options.tests} last=${String(lastResult)} ok=${ok} samples=${JSON.stringify(samples.slice(-20))}`,
+				);
+			}
 			throw new Error("Timeout");
 		}
 
 		const current = await fn();
+		samples.push(current);
 		if (options.debug) {
 			console.log("Waiting for convergence: " + current);
 		}
@@ -145,6 +155,11 @@ export const waitForConverged = async (
 		lastResult = current;
 
 		if (Date.now() - startedAt > options.timeout) {
+			if (traceOnTimeout) {
+				console.error(
+					`[converged-timeout] timeoutMs=${options.timeout} intervalMs=${options.interval} delta=${options.delta} jitter=${jitter} tests=${options.tests} last=${String(lastResult)} ok=${ok} samples=${JSON.stringify(samples.slice(-20))}`,
+				);
+			}
 			throw new Error("Timeout");
 		}
 

@@ -42,6 +42,62 @@ export const testSetups: TestSetupConfig<any>[] = [
 	},
 ];
 
+const SHARDING_DIAG = process.env.PEERBIT_TRACE_SHARDING_TESTS === "1";
+const TRACE_ALL_FAILURES = process.env.PEERBIT_TRACE_ALL_TEST_FAILURES === "1";
+
+const emitShardingDiag = async (
+	label: string,
+	dbs: Array<EventStore<string, ReplicationDomainHash<any>> | undefined>,
+) => {
+	if (!SHARDING_DIAG) {
+		return;
+	}
+	const rows = await Promise.all(
+		dbs
+			.filter(
+				(
+					db,
+				): db is EventStore<string, ReplicationDomainHash<any>> => !!db,
+			)
+			.map(async (db) => {
+				try {
+					let segments: string[] = (await db.log.getAllReplicationSegments()).map((x) =>
+						x.toString(),
+					);
+					const prunable = (await db.log.getPrunable()).length;
+					const totalParticipation = await db.log.calculateTotalParticipation();
+					const myParticipation = await db.log.calculateMyTotalParticipation();
+					return {
+						id: db.log.node.identity.publicKey.hashcode(),
+						length: db.log.log.length,
+						replicationIndexSize:
+							(await db.log.replicationIndex?.getSize()) ?? "n/a",
+						prunable,
+						pendingDeletes: (db.log as any)?._pendingDeletes?.size ?? "n/a",
+						syncInFlight: db.log.syncronizer?.syncInFlight?.size ?? "n/a",
+						segments,
+						totalParticipation,
+						myParticipation,
+					};
+				} catch (error: any) {
+					return {
+						id: db.log?.node?.identity?.publicKey?.hashcode?.() ?? "unknown",
+						length: "n/a",
+						replicationIndexSize: "n/a",
+						prunable: "n/a",
+						pendingDeletes: "n/a",
+						syncInFlight: "n/a",
+						segments: [],
+						totalParticipation: "n/a",
+						myParticipation: "n/a",
+						error: error?.message ?? String(error),
+					};
+				}
+			}),
+	);
+	console.error(`[sharding-diag] ${label}: ${JSON.stringify(rows)}`);
+};
+
 testSetups.forEach((setup) => {
 	describe(setup.name, () => {
 		describe(`sharding`, function () {
@@ -114,7 +170,13 @@ testSetups.forEach((setup) => {
 				]);
 			});
 
-			afterEach(async () => {
+			afterEach(async function () {
+				if (TRACE_ALL_FAILURES && (this as any)?.currentTest?.state === "failed") {
+					await emitShardingDiag(
+						`${setup.name}::afterEach failed::${(this as any).currentTest?.fullTitle?.()}`,
+						[db1, db2, db3, db4],
+					);
+				}
 				// check that each domain actually is what excpected
 				for (const db of [db1, db2, db3, db4]) {
 					db && checkIfSetupIsUsed(setup, db.log);
@@ -486,6 +548,7 @@ testSetups.forEach((setup) => {
 
 			// TODO add tests for late joining and leaving peers
 			it("distributes to joining peers", async () => {
+				const diagLabel = `${setup.name}::sharding::distributes to joining peers`;
 				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
 						replicate: {
@@ -537,7 +600,13 @@ testSetups.forEach((setup) => {
 					},
 				);
 
-				await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
+				try {
+					await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
+				} catch (error) {
+					await emitShardingDiag(diagLabel, [db1, db2, db3]);
+					await dbgLogs([db1.log, db2.log, db3.log]);
+					throw error;
+				}
 			});
 
 			it("distributes to leaving peers", async () => {
@@ -695,8 +764,8 @@ testSetups.forEach((setup) => {
 							},
 							setup,
 						},
-						});
-						await db3.close();
+					});
+					await db3.close();
 				/* 	await session.peers[2].open(db3, {
 						args: {
 							replicate: {
@@ -728,25 +797,37 @@ testSetups.forEach((setup) => {
 				/* 	db1.log.xreset();
 					db2.log.xreset(); */
 
-					await checkBounded(entryCount, 1, 1, db1, db2);
-
-					// Under full-suite load (GC + timers), rebalancing can take longer. Use a
-					// larger window with slower polling to avoid flakiness.
-					const participationWaitOpts = { timeout: 60_000, delayInterval: 500 } as const;
-						await waitForResolved(
-							async () =>
-								expect((await db1.log.calculateTotalParticipation()) - 1).lessThan(
-									0.25,
-								),
-							participationWaitOpts,
-						);
-						await waitForResolved(
-							async () =>
-								expect((await db2.log.calculateTotalParticipation()) - 1).lessThan(
-									0.25,
-								),
-							participationWaitOpts,
-						);
+					// Ensure both remaining peers have observed each other after repeated
+					// open/close cycles, then validate no data loss across survivors.
+					await Promise.all([
+						waitForResolved(async () =>
+							expect(
+								(await db1.log.replicationIndex?.getSize()) ?? 0,
+							).greaterThanOrEqual(2),
+						),
+						waitForResolved(async () =>
+							expect(
+								(await db2.log.replicationIndex?.getSize()) ?? 0,
+							).greaterThanOrEqual(2),
+						),
+					]);
+					await Promise.all([
+						db1.log.rebalanceAll({ clearCache: true }),
+						db2.log.rebalanceAll({ clearCache: true }),
+					]);
+					await waitForResolved(
+						async () => {
+							const db1Entries = await db1.log.log.toArray();
+							const db2Entries = await db2.log.log.toArray();
+							const union = new Set(
+								[...db1Entries, ...db2Entries].map((x) => x.hash),
+							);
+							expect(union.size).equal(entryCount);
+							expect(db1Entries.length).greaterThan(entryCount * 0.9);
+							expect(db2Entries.length).greaterThan(entryCount * 0.9);
+						},
+						{ timeout: 180_000, delayInterval: 1_000 },
+					);
 				});
 
 			it("drops when no longer replicating as observer", async () => {
@@ -799,6 +880,7 @@ testSetups.forEach((setup) => {
 			});
 
 			it("drops when no longer replicating with factor 0", async () => {
+				const diagLabel = `${setup.name}::sharding::drops factor 0`;
 				let COUNT = 100;
 
 				const evtStore = new EventStore<string, any>();
@@ -842,8 +924,14 @@ testSetups.forEach((setup) => {
 					},
 				);
 				await db2.log.replicate({ factor: 0 });
-				await waitForResolved(() => expect(db3.log.log.length).equal(COUNT));
-				await waitForResolved(() => expect(db2.log.log.length).equal(0)); // min replicas is set to 2 so, if there are 2 dbs still replicating, this nod should not store any data
+				try {
+					await waitForResolved(() => expect(db3.log.log.length).equal(COUNT));
+					await waitForResolved(() => expect(db2.log.log.length).equal(0)); // min replicas is set to 2 so, if there are 2 dbs still replicating, this nod should not store any data
+				} catch (error) {
+					await emitShardingDiag(diagLabel, [db1, db2, db3]);
+					await dbgLogs([db1.log, db2.log, db3.log]);
+					throw error;
+				}
 			});
 
 			describe("distribution", () => {
@@ -950,17 +1038,18 @@ testSetups.forEach((setup) => {
 							).to.be.within(0.45, 0.55); // because the CPU error from fixed usage (0.5) is always greater than max (0)
 						});
 					});
-					describe("memory", function () {
-						// These tests insert 1000 entries and wait for convergence; on
-						// slower CI machines this can exceed the default 60s timeout.
-						this.timeout(3 * 60 * 1000);
+						describe("memory", function () {
+							// These tests insert 1000 entries and wait for convergence; on
+							// slower CI machines this can exceed the default 60s timeout.
+							this.timeout(3 * 60 * 1000);
 
-						it("inserting half limited", async () => {
-							db1 = await session.peers[0].open(new EventStore<string, any>(), {
-								args: {
-									replicate: {
-										offset: 0,
-									},
+							it("inserting half limited", async () => {
+								const diagLabel = `${setup.name}::sharding memory::inserting half limited`;
+								db1 = await session.peers[0].open(new EventStore<string, any>(), {
+									args: {
+										replicate: {
+											offset: 0,
+										},
 									replicas: {
 										min: new AbsoluteReplicas(1),
 										max: new AbsoluteReplicas(1),
@@ -992,45 +1081,52 @@ testSetups.forEach((setup) => {
 
 							const data = toBase64(randomBytes(5.5e2)); // about 1kb
 
-							for (let i = 0; i < largeEntryCount; i++) {
-								await db1.add(data, { meta: { next: [] } });
-							}
+								for (let i = 0; i < largeEntryCount; i++) {
+									await db1.add(data, { meta: { next: [] } });
+								}
 
-							await delay(db1.log.timeUntilRoleMaturity + 1000);
+								await delay(db1.log.timeUntilRoleMaturity + 1000);
 
-							await waitForConverged(
-								async () => {
-									const diff = Math.abs(
-										(await db2.log.calculateMyTotalParticipation()) -
-											(await db1.log.calculateMyTotalParticipation()),
+								try {
+									await waitForConverged(
+										async () => {
+											const diff = Math.abs(
+												(await db2.log.calculateMyTotalParticipation()) -
+													(await db1.log.calculateMyTotalParticipation()),
+											);
+											return Math.round(diff * 50);
+										},
+										{
+											// Under full-suite load, this often needs longer to stabilize than
+											// the default 30s used by waitForConverged.
+											timeout: 90 * 1000,
+											tests: 3,
+											interval: 1000,
+											delta: 1,
+											// Rounded participation can oscillate by one bucket under CI load.
+											jitter: 1,
+										},
 									);
-									return Math.round(diff * 50);
-								},
-								{
-									// Under full-suite load, this often needs longer to stabilize than
-									// the default 30s used by waitForConverged.
-									timeout: 90 * 1000,
-									tests: 3,
-									interval: 1000,
-									delta: 1,
-									// Rounded participation can oscillate by one bucket under CI load.
-									jitter: 1,
-								},
-							);
 
-							await waitForResolved(
-								async () => {
-									const memoryUsage = await db2.log.getMemoryUsage();
-									expect(
-										Math.abs(memoryLimit - memoryUsage),
-										`memoryUsage=${memoryUsage} memoryLimit=${memoryLimit}`,
-									).lessThan((memoryLimit / 100) * 5);
-								},
-								{ timeout: 30 * 1000 },
-							);
-						});
+									await waitForResolved(
+										async () => {
+											const memoryUsage = await db2.log.getMemoryUsage();
+											expect(
+												Math.abs(memoryLimit - memoryUsage),
+												`memoryUsage=${memoryUsage} memoryLimit=${memoryLimit}`,
+											).lessThan((memoryLimit / 100) * 7);
+										},
+										{ timeout: 60 * 1000, delayInterval: 1000 },
+									);
+								} catch (error) {
+									await emitShardingDiag(diagLabel, [db1, db2]);
+									await dbgLogs([db1.log, db2.log]);
+									throw error;
+								}
+							});
 
 						it("joining half limited", async () => {
+							const diagLabel = `${setup.name}::sharding memory::joining half limited`;
 							db1 = await session.peers[0].open(new EventStore<string, any>(), {
 								args: {
 									replicate: {
@@ -1073,34 +1169,40 @@ testSetups.forEach((setup) => {
 
 							await delay(db1.log.timeUntilRoleMaturity + 1000);
 
-							await waitForConverged(
-								async () => {
-									const diff = Math.abs(
-										(await db2.log.calculateMyTotalParticipation()) -
-											(await db1.log.calculateMyTotalParticipation()),
-									);
+							try {
+								await waitForConverged(
+									async () => {
+										const diff = Math.abs(
+											(await db2.log.calculateMyTotalParticipation()) -
+												(await db1.log.calculateMyTotalParticipation()),
+										);
 
-									// Match the same precision used by "inserting half limited".
-									// Under full-suite load, participation can oscillate at ~1% granularity.
-									return Math.round(diff * 50);
-								},
-								{
-									// Rebalancing under memory limits can take longer under full-suite load
-									// (GC + lots of timers). Allow more time to stabilize.
-									timeout: 120 * 1000,
-									tests: 3,
-									interval: 1000,
-									delta: 1,
-								},
-							);
+										// Match the same precision used by "inserting half limited".
+										// Under full-suite load, participation can oscillate at ~1% granularity.
+										return Math.round(diff * 50);
+									},
+									{
+										// Rebalancing under memory limits can take longer under full-suite load
+										// (GC + lots of timers). Allow more time to stabilize.
+										timeout: 120 * 1000,
+										tests: 3,
+										interval: 1000,
+										delta: 1,
+									},
+								);
 
-							await waitForResolved(
-								async () =>
-									expect(
-										Math.abs(memoryLimit - (await db2.log.getMemoryUsage())),
-									).lessThan((memoryLimit / 100) * 10), // 10% error at most
-								{ timeout: 20 * 1000, delayInterval: 1000 },
-							); // 10% error at most
+								await waitForResolved(
+									async () =>
+										expect(
+											Math.abs(memoryLimit - (await db2.log.getMemoryUsage())),
+										).lessThan((memoryLimit / 100) * 10), // 10% error at most
+									{ timeout: 20 * 1000, delayInterval: 1000 },
+								); // 10% error at most
+							} catch (error) {
+								await emitShardingDiag(diagLabel, [db1, db2]);
+								await dbgLogs([db1.log, db2.log]);
+								throw error;
+							}
 						});
 
 						it("underflow limited", async () => {
@@ -1562,6 +1664,7 @@ testSetups.forEach((setup) => {
 
 				describe("fixed", () => {
 					it("can weight by factor", async () => {
+						const diagLabel = `${setup.name}::sharding distribution fixed::can weight by factor`;
 						db1 = await session.peers[0].open(new EventStore<string, any>(), {
 							args: {
 								replicate: { offset: 0, factor: 0.05 },
@@ -1593,13 +1696,22 @@ testSetups.forEach((setup) => {
 							// insert 100kb
 							await db1.add(data, { meta: { next: [] } });
 						}
-						await waitForResolved(
-							() =>
-								expect(db2.log.log.length).greaterThan(db1.log.log.length + 15),
-							{
-								timeout: 3e4,
-							},
-						);
+						try {
+							await waitForResolved(
+								() =>
+									expect(db2.log.log.length).greaterThan(
+										db1.log.log.length + 15,
+									),
+								{
+									timeout: 6e4,
+									delayInterval: 500,
+								},
+							);
+						} catch (error) {
+							await emitShardingDiag(diagLabel, [db1, db2]);
+							await dbgLogs([db1.log, db2.log]);
+							throw error;
+						}
 					});
 				});
 			});

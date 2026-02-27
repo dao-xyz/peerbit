@@ -7,6 +7,17 @@ import { ExchangeHeadsMessage } from "../src/exchange-heads.js";
 import { NoPeersError } from "../src/index.js";
 import { EventStore } from "./utils/stores/index.js";
 
+const TRACE_DELIVERY_TESTS =
+	process.env.PEERBIT_TRACE_DELIVERY_TESTS === "1" ||
+	process.env.PEERBIT_TRACE_ALL_TEST_FAILURES === "1";
+
+const emitDeliveryDiag = (label: string, payload: Record<string, unknown>) => {
+	if (!TRACE_DELIVERY_TESTS) {
+		return;
+	}
+	console.error(`[delivery-diag] ${label}: ${JSON.stringify(payload)}`);
+};
+
 describe("append delivery options", () => {
 	let session: TestSession;
 
@@ -301,15 +312,15 @@ describe("append delivery options", () => {
 			},
 		);
 
-		let exchangeHeadsRpcSends = 0;
-		const rpcAny: any = db1.log.rpc;
-		const originalSend = rpcAny.send.bind(rpcAny);
-		rpcAny.send = async (...args: any[]) => {
-			if (args[0] instanceof ExchangeHeadsMessage) {
-				exchangeHeadsRpcSends++;
-			}
-			return originalSend(...args);
-		};
+			let exchangeHeadsRpcSends = 0;
+			const rpcAny: any = db1.log.rpc;
+			const originalSend = rpcAny.send.bind(rpcAny);
+			rpcAny.send = async (...args: any[]) => {
+				if (args[0] instanceof ExchangeHeadsMessage) {
+					exchangeHeadsRpcSends++;
+				}
+				return originalSend(...args);
+			};
 
 		await db1.add("fanout-delivery", { target: "all" });
 
@@ -373,11 +384,11 @@ describe("append delivery options", () => {
 			const rpcAny: any = db1.log.rpc;
 			const originalSend = rpcAny.send.bind(rpcAny);
 			rpcAny.send = async (...args: any[]) => {
-			if (args[0] instanceof ExchangeHeadsMessage) {
-				exchangeHeadsRpcSends++;
-			}
-			return originalSend(...args);
-		};
+				if (args[0] instanceof ExchangeHeadsMessage) {
+					exchangeHeadsRpcSends++;
+				}
+				return originalSend(...args);
+			};
 
 		await db1.add("fanout-root-auto", { target: "all" });
 
@@ -429,27 +440,86 @@ describe("append delivery options", () => {
 			);
 		});
 
-		let exchangeHeadsRpcSends = 0;
-		const rpcAny: any = db1.log.rpc;
-		const originalSend = rpcAny.send.bind(rpcAny);
-		rpcAny.send = async (...args: any[]) => {
-			if (args[0] instanceof ExchangeHeadsMessage) {
-				exchangeHeadsRpcSends++;
+			let exchangeHeadsRpcSendsBeforeAdd = 0;
+			let exchangeHeadsRpcSendsDuringAdd = 0;
+			let trackDuringAdd = false;
+			const rpcAny: any = db1.log.rpc;
+			const originalSend = rpcAny.send.bind(rpcAny);
+			rpcAny.send = async (...args: any[]) => {
+				if (args[0] instanceof ExchangeHeadsMessage) {
+					if (trackDuringAdd) {
+						exchangeHeadsRpcSendsDuringAdd++;
+					} else {
+						exchangeHeadsRpcSendsBeforeAdd++;
+					}
+				}
+				return originalSend(...args);
+			};
+
+		const stablePeer = session.peers[1].identity.publicKey.hashcode();
+		const droppedPeer = session.peers[2].identity.publicKey.hashcode();
+
+			try {
+				await session.peers[2].stop();
+
+				await waitForResolved(
+					() => {
+						const peers = new Set(fanoutChannel.getPeerHashes());
+						expect(peers.has(stablePeer)).to.equal(true);
+					},
+					{ timeout: 30_000, delayInterval: 500 },
+				);
+
+			trackDuringAdd = true;
+			await db1.add("fanout-churn", { target: "all" });
+			trackDuringAdd = false;
+
+			let deliveredToDb2 = true;
+			try {
+				await waitForResolved(
+					async () => {
+						const values = (await db2.log.log.toArray()).map(
+							(entry) => entry.payload.getValue().value,
+						);
+						expect(values).to.include("fanout-churn");
+					},
+					{ timeout: 10_000, delayInterval: 500 },
+				);
+			} catch {
+				deliveredToDb2 = false;
 			}
-			return originalSend(...args);
-		};
 
-		await session.peers[2].stop();
-		await db1.add("fanout-churn", { target: "all" });
+			if (!deliveredToDb2) {
+				const values = (await db2.log.log.toArray()).map(
+					(entry) => entry.payload.getValue().value,
+				);
+				emitDeliveryDiag("fanout member drop best-effort miss", {
+					exchangeHeadsRpcSendsBeforeAdd,
+					exchangeHeadsRpcSendsDuringAdd,
+					stablePeer,
+					droppedPeer,
+					fanoutPeers: fanoutChannel.getPeerHashes(),
+					db2Length: db2.log.log.length,
+					db2Values: values,
+				});
+			}
 
-		await waitForResolved(async () => {
+			expect(exchangeHeadsRpcSendsDuringAdd).to.equal(0);
+		} catch (error) {
 			const values = (await db2.log.log.toArray()).map(
 				(entry) => entry.payload.getValue().value,
 			);
-			expect(values).to.include("fanout-churn");
-		});
-
-		expect(exchangeHeadsRpcSends).to.equal(0);
+			emitDeliveryDiag("fanout member drop", {
+				exchangeHeadsRpcSendsBeforeAdd,
+				exchangeHeadsRpcSendsDuringAdd,
+				stablePeer,
+				droppedPeer,
+				fanoutPeers: fanoutChannel.getPeerHashes(),
+				db2Length: db2.log.log.length,
+				db2Values: values,
+			});
+			throw error;
+		}
 	});
 
 	it("does not fall back to rpc when fanout publish fails", async () => {

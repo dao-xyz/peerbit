@@ -12,6 +12,38 @@ describe("load", function () {
 	let db1: EventStore<string, any>, db2: EventStore<string, any>;
 
 	let session: TestSession;
+	const TRACE_LOAD_DIAG =
+		process.env.PEERBIT_TRACE_LOAD_TESTS === "1" ||
+		process.env.PEERBIT_TRACE_ALL_TEST_FAILURES === "1";
+
+	const emitLoadDiag = async (label: string) => {
+		if (!TRACE_LOAD_DIAG) {
+			return;
+		}
+		const rows = await Promise.all(
+			[db1, db2]
+				.filter((db): db is EventStore<string, any> => !!db)
+				.map(async (db) => {
+					try {
+						return {
+							id: db.node.identity.publicKey.hashcode(),
+							length: db.log.log.length,
+							isReplicating: await db.log.isReplicating(),
+							replicationIndexSize:
+								(await db.log.replicationIndex?.getSize()) ?? "n/a",
+							totalParticipation: await db.log.calculateTotalParticipation(),
+							myParticipation: await db.log.calculateMyTotalParticipation(),
+						};
+					} catch (error: any) {
+						return {
+							id: db.node.identity.publicKey.hashcode(),
+							error: error?.message ?? String(error),
+						};
+					}
+				}),
+		);
+		console.error(`[load-diag] ${label}: ${JSON.stringify(rows)}`);
+	};
 
 	afterEach(async () => {
 		await session.stop();
@@ -71,7 +103,9 @@ describe("load", function () {
 		});
 	});
 
-	it("load after prune", async () => {
+	it("load after prune", async function () {
+		const pruneTimeout = 180_000;
+		this.timeout(pruneTimeout + 30_000);
 		// TODO fix test flakiness
 
 		session = await TestSession.connected(2, [
@@ -135,30 +169,56 @@ describe("load", function () {
 			},
 		);
 
-		await waitForResolved(() => expect(db1.log.log.length).lessThan(count)); // pruning started
+		try {
+			await waitForResolved(
+				() => expect(db1.log.log.length).lessThan(count),
+				{ timeout: 60_000, delayInterval: 500 },
+			); // pruning started
 
-		await waitForConverged(() => db1.log.log.length); // pruning done
+			await waitForConverged(() => db1.log.log.length, {
+				timeout: pruneTimeout,
+				interval: 1_000,
+				tests: 3,
+				delta: 2,
+				jitter: 2,
+			}); // pruning done
 
-		await waitForConverged(() => db2.log.log.length);
-		await session.peers[1].stop();
-		await waitForConverged(() => db1.log.log.length);
-		const lengthBeforeClose = db1.log.log.length;
-		await db1.close();
-		db1 = await EventStore.open<EventStore<string, any>>(
-			db1.address!,
-			session.peers[0],
-			{
-				args: {
-					replicate: { factor: 0.5 },
-					replicas: {
-						min: 1,
+			await waitForConverged(() => db2.log.log.length, {
+				timeout: pruneTimeout,
+				interval: 1_000,
+				tests: 3,
+				delta: 2,
+				jitter: 2,
+			});
+			await session.peers[1].stop();
+			await waitForConverged(() => db1.log.log.length, {
+				timeout: pruneTimeout,
+				interval: 1_000,
+				tests: 3,
+				delta: 2,
+				jitter: 2,
+			});
+			const lengthBeforeClose = db1.log.log.length;
+			await db1.close();
+			db1 = await EventStore.open<EventStore<string, any>>(
+				db1.address!,
+				session.peers[0],
+				{
+					args: {
+						replicate: { factor: 0.5 },
+						replicas: {
+							min: 1,
+						},
 					},
 				},
-			},
-		);
-		let lengthAfterClose = db1.log.log.length;
-		expect(lengthBeforeClose).equal(lengthAfterClose);
-		expect(lengthAfterClose).greaterThan(0);
+			);
+			let lengthAfterClose = db1.log.log.length;
+			expect(lengthBeforeClose).equal(lengthAfterClose);
+			expect(lengthAfterClose).greaterThan(0);
+		} catch (error) {
+			await emitLoadDiag("load after prune");
+			throw error;
+		}
 	});
 
 	it("reload emit change events for loaded entries", async () => {

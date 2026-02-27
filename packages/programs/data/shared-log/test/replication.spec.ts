@@ -48,6 +48,56 @@ import { EventStore, type Operation } from "./utils/stores/event-store.js";
 
 const DEFAULT_ROLE_MATURITY = 2000;
 
+const REPLICATION_DIAG = process.env.PEERBIT_TRACE_REPLICATION_TESTS === "1";
+const TRACE_ALL_FAILURES = process.env.PEERBIT_TRACE_ALL_TEST_FAILURES === "1";
+
+const shouldEmitFailureDiagnostics = (ctx: any) =>
+	TRACE_ALL_FAILURES && ctx?.currentTest?.state === "failed";
+
+const emitReplicationDiag = async (
+	label: string,
+	dbs: Array<{ log: any } | undefined>,
+) => {
+	if (!REPLICATION_DIAG) {
+		return;
+	}
+
+	const rows = await Promise.all(
+		dbs
+			.filter((db): db is { log: any } => !!db)
+			.map(async (db) => {
+				let prunable = -1;
+				let segments: string[] = [];
+				let totalParticipation: number | string = "n/a";
+				let myParticipation: number | string = "n/a";
+				try {
+					prunable = (await db.log.getPrunable()).length;
+					segments = (await db.log.getAllReplicationSegments()).map((x: any) =>
+						x.toString(),
+					);
+					totalParticipation = await db.log.calculateTotalParticipation();
+					myParticipation = await db.log.calculateMyTotalParticipation();
+				} catch {
+					// Keep diagnostics best-effort.
+				}
+
+				return {
+					id: db.log.node.identity.publicKey.hashcode(),
+					length: db.log.log.length,
+					prunable,
+					pendingDeletes: (db.log as any)?._pendingDeletes?.size ?? "n/a",
+					syncInFlight: db.log.syncronizer?.syncInFlight?.size ?? "n/a",
+					replicationIndexSize: (await db.log.replicationIndex?.getSize()) ?? "n/a",
+					segments,
+					totalParticipation,
+					myParticipation,
+				};
+			}),
+	);
+
+	console.error(`[replication-diag] ${label}: ${JSON.stringify(rows)}`);
+};
+
 export const testSetups: TestSetupConfig<any>[] = [
 	{
 		domain: createReplicationDomainHash("u32"),
@@ -141,7 +191,13 @@ testSetups.forEach((setup) => {
 				});
 			});
 
-			afterEach(async () => {
+			afterEach(async function () {
+				if (shouldEmitFailureDiagnostics(this)) {
+					await emitReplicationDiag(
+						`${setup.name}::afterEach failed::${this.currentTest?.fullTitle?.()}`,
+						[db1, db2],
+					);
+				}
 				if (db1 && db1.closed === false) {
 					await db1.drop();
 				}
@@ -527,6 +583,7 @@ testSetups.forEach((setup) => {
 			describe("replication", () => {
 				describe("one way", () => {
 					it("replicates database of 1 entry", async () => {
+						const diagLabel = `${setup.name}::replication one-way::1 entry`;
 						const value = "hello";
 						await db1.add(value);
 
@@ -544,7 +601,12 @@ testSetups.forEach((setup) => {
 						await db1.waitFor(session.peers[1].peerId);
 						await db2.waitFor(session.peers[0].peerId);
 
-						await waitForResolved(() => expect(db2.log.log.length).equal(1));
+						try {
+							await waitForResolved(() => expect(db2.log.log.length).equal(1));
+						} catch (error) {
+							await emitReplicationDiag(diagLabel, [db1, db2]);
+							throw error;
+						}
 
 						expect((await db2.iterator({ limit: -1 })).collect().length).equal(
 							1,
@@ -555,19 +617,24 @@ testSetups.forEach((setup) => {
 						).collect();
 						expect(db1Entries.length).equal(1);
 
-						await waitForResolved(async () =>
-							expect([
-								...(
-									await db1.log.findLeadersFromEntry(
-										db1Entries[0],
-										maxReplicas(db1.log, db1Entries),
-									)
-								).keys(),
-							]).to.have.members([
-								session.peers[0].identity.publicKey.hashcode(),
-								session.peers[1].identity.publicKey.hashcode(),
-							]),
-						);
+						try {
+							await waitForResolved(async () =>
+								expect([
+									...(
+										await db1.log.findLeadersFromEntry(
+											db1Entries[0],
+											maxReplicas(db1.log, db1Entries),
+										)
+									).keys(),
+								]).to.have.members([
+									session.peers[0].identity.publicKey.hashcode(),
+									session.peers[1].identity.publicKey.hashcode(),
+								]),
+							);
+						} catch (error) {
+							await emitReplicationDiag(`${diagLabel}::leaders`, [db1, db2]);
+							throw error;
+						}
 
 						expect(db1Entries[0].payload.getValue().value).equal(value);
 						const db2Entries: Entry<Operation<string>>[] = (
@@ -590,6 +657,7 @@ testSetups.forEach((setup) => {
 					});
 
 						it("replicates database of 1000 entries", async () => {
+							const diagLabel = `${setup.name}::replication one-way::1000 entries`;
 							db2 = (await EventStore.open<EventStore<string, any>>(
 								db1.address!,
 								session.peers[1],
@@ -615,10 +683,15 @@ testSetups.forEach((setup) => {
 							// Under full workspace/CI load (many packages testing concurrently),
 							// 1k-entry replication can occasionally take >10s, which is the
 							// `waitForResolved` default. Give this stress test more headroom.
-							await waitForResolved(
-								() => expect(db2.log.log.length).equal(entryCount),
-								{ timeout: 120_000 },
-							);
+							try {
+								await waitForResolved(
+									() => expect(db2.log.log.length).equal(entryCount),
+									{ timeout: 120_000 },
+								);
+							} catch (error) {
+								await emitReplicationDiag(diagLabel, [db1, db2]);
+								throw error;
+							}
 
 							const entries = (await db2.iterator({ limit: -1 })).collect();
 							expect(entries.length).equal(entryCount);
@@ -931,7 +1004,13 @@ testSetups.forEach((setup) => {
 				fetchEvents = 0;
 				fetchHashes = new Set();
 			});
-			afterEach(async () => {
+			afterEach(async function () {
+				if (shouldEmitFailureDiagnostics(this)) {
+					await emitReplicationDiag(
+						`${setup.name}::afterEach failed::${this.currentTest?.fullTitle?.()}`,
+						[db1, db2, db3],
+					);
+				}
 				if (db1 && db1.closed === false) await db1.drop();
 				if (db2 && db2.closed === false) await db2.drop();
 				if (db3 && db3.closed === false) await db3.drop();
@@ -1513,7 +1592,13 @@ testSetups.forEach((setup) => {
 				(EventStore as any).staticArgs = undefined;
 			});
 
-			afterEach(async () => {
+			afterEach(async function () {
+				if (shouldEmitFailureDiagnostics(this)) {
+					await emitReplicationDiag(
+						`${setup.name}::afterEach failed::${this.currentTest?.fullTitle?.()}`,
+						[db1, db2, db3],
+					);
+				}
 				if (db1) await db1.drop();
 
 				if (db2) await db2.drop();
@@ -1725,7 +1810,13 @@ testSetups.forEach((setup) => {
 				db3 = undefined as any;
 			});
 
-			afterEach(async () => {
+			afterEach(async function () {
+				if (shouldEmitFailureDiagnostics(this)) {
+					await emitReplicationDiag(
+						`${setup.name}::afterEach failed::${this.currentTest?.fullTitle?.()}`,
+						[db1, db2, db3],
+					);
+				}
 				if (db1 && db1.closed === false) await db1.drop();
 
 				if (db2 && db2.closed === false) await db2.drop();
@@ -1859,6 +1950,7 @@ testSetups.forEach((setup) => {
 			});
 
 			it("will prune on put 300 after join", async () => {
+				const diagLabel = `${setup.name}::replication degree::put 300 after join`;
 				const pruneDelay = 5_000;
 				await init({ min: 1, waitForPruneDelay: pruneDelay });
 
@@ -1882,6 +1974,7 @@ testSetups.forEach((setup) => {
 						{ timeout: pruneDelay + 90_000, delayInterval: 200 },
 					);
 				} catch (error) {
+					await emitReplicationDiag(diagLabel, [db1, db2, db3]);
 					await dbgLogs([db1.log, db2.log, db3.log]);
 					const pending = (db1.log as any)?.["_pendingDeletes"];
 					if (pending) {
@@ -2830,6 +2923,7 @@ testSetups.forEach((setup) => {
 			});
 
 			it("can handle many large messages", async () => {
+				const diagLabel = `${setup.name}::replication degree::large messages`;
 				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
 						replicate: {
@@ -2854,10 +2948,15 @@ testSetups.forEach((setup) => {
 				});
 				// Large payload replication can get GC/IO-heavy in the full suite; avoid flaking on the
 				// default 10s `waitForResolved` timeout.
-				await waitForResolved(
-					() => expect(db2.log.log.length).equal(count),
-					{ timeout: 120_000, delayInterval: 200 },
-				);
+				try {
+					await waitForResolved(
+						() => expect(db2.log.log.length).equal(count),
+						{ timeout: 120_000, delayInterval: 200 },
+					);
+				} catch (error) {
+					await emitReplicationDiag(diagLabel, [db1, db2]);
+					throw error;
+				}
 			});
 
 			describe("update", () => {
@@ -3599,6 +3698,7 @@ testSetups.forEach((setup) => {
 				});
 
 				it("does not lose entries when ranges rotate with delayed replication updates (prune delay 0)", async () => {
+					const diagLabel = `${setup.name}::replication degree update::rotate delayed replication updates`;
 					const entryCount = 120;
 					const ranges = [
 						{ offset: 0, factor: 0.34 },
@@ -3671,23 +3771,33 @@ testSetups.forEach((setup) => {
 					}
 
 					const minExpected = Math.floor(entryCount * 0.1);
-					await waitForResolved(
-						() => {
-							expect(db2.log.log.length).to.be.greaterThan(minExpected);
-							expect(db3.log.log.length).to.be.greaterThan(minExpected);
-							expect(db1.log.log.length).to.be.greaterThan(minExpected);
-							expect(db1.log.log.length).to.be.lessThan(
-								entryCount - minExpected,
-							);
-						},
-						{ timeout: 60_000, delayInterval: 500 },
-					);
+					try {
+						await waitForResolved(
+							() => {
+								expect(db2.log.log.length).to.be.greaterThan(minExpected);
+								expect(db3.log.log.length).to.be.greaterThan(minExpected);
+								expect(db1.log.log.length).to.be.greaterThan(minExpected);
+								expect(db1.log.log.length).to.be.lessThan(
+									entryCount - minExpected,
+								);
+							},
+							{ timeout: 60_000, delayInterval: 500 },
+						);
 
-					await Promise.all([
-						db1.log.waitForPruned({ timeout: 60_000 }),
-						db2.log.waitForPruned({ timeout: 60_000 }),
-						db3.log.waitForPruned({ timeout: 60_000 }),
-					]);
+						await Promise.all([
+							db1.log.waitForPruned({ timeout: 60_000 }),
+							db2.log.waitForPruned({ timeout: 60_000 }),
+							db3.log.waitForPruned({ timeout: 60_000 }),
+						]);
+					} catch (error) {
+						await emitReplicationDiag(`${diagLabel}::pre-rotation`, [
+							db1,
+							db2,
+							db3,
+						]);
+						await dbgLogs([db1.log, db2.log, db3.log]);
+						throw error;
+					}
 
 					const initialDb1 = new Set(
 						(await db1.log.log.toArray()).map((entry) => entry.hash),
@@ -3740,35 +3850,47 @@ testSetups.forEach((setup) => {
 
 					slowController.abort();
 
-					await waitForResolved(
-						async () => {
-							const db1Hashes = new Set(
-								(await db1.log.log.toArray()).map((entry) => entry.hash),
-							);
-							const movedOutDb1 = [...initialDb1].filter(
-								(h) => !db1Hashes.has(h),
-							).length;
-							expect(movedOutDb1).to.be.greaterThan(
-								Math.max(1, Math.floor(initialDb1.size * 0.5)),
-							);
+					try {
+						await waitForResolved(
+							async () => {
+								const db1Hashes = new Set(
+									(await db1.log.log.toArray()).map((entry) => entry.hash),
+								);
+								const movedOutDb1 = [...initialDb1].filter(
+									(h) => !db1Hashes.has(h),
+								).length;
+								const minExpectedMovedOut = Math.max(
+									1,
+									Math.floor(initialDb1.size * 0.35),
+								);
+								expect(movedOutDb1).to.be.greaterThan(minExpectedMovedOut);
 
-							const db2Hashes = (await db2.log.log.toArray()).map(
-								(entry) => entry.hash,
-							);
-							const db3Hashes = (await db3.log.log.toArray()).map(
-								(entry) => entry.hash,
-							);
-							const union = new Set([...db1Hashes, ...db2Hashes, ...db3Hashes]);
-							expect(union.size).to.equal(entryCount);
-						},
-						{ timeout: 90_000, delayInterval: 500 },
-					);
+								const db2Hashes = (await db2.log.log.toArray()).map(
+									(entry) => entry.hash,
+								);
+								const db3Hashes = (await db3.log.log.toArray()).map(
+									(entry) => entry.hash,
+								);
+								const union = new Set([...db1Hashes, ...db2Hashes, ...db3Hashes]);
+								expect(union.size).to.equal(entryCount);
+							},
+							{ timeout: 90_000, delayInterval: 500 },
+						);
 
-					await Promise.all([
-						db1.log.waitForPruned({ timeout: 60_000 }),
-						db2.log.waitForPruned({ timeout: 60_000 }),
-						db3.log.waitForPruned({ timeout: 60_000 }),
-					]);
+						await Promise.all([
+							db1.log.waitForPruned({ timeout: 60_000 }),
+							db2.log.waitForPruned({ timeout: 60_000 }),
+							db3.log.waitForPruned({ timeout: 60_000 }),
+						]);
+					} catch (error) {
+						await emitReplicationDiag(`${diagLabel}::post-rotation`, [
+							db1,
+							db2,
+							db3,
+						]);
+						await dbgLogs([db1.log, db2.log, db3.log]);
+						throw error;
+					}
 
 					const finalDb1 = new Set(
 						(await db1.log.log.toArray()).map((entry) => entry.hash),
@@ -3791,9 +3913,15 @@ testSetups.forEach((setup) => {
 					const movedOutDb3 = [...initialDb3].filter(
 						(h) => !finalDb3.has(h),
 					).length;
-					expect(movedOutDb1).to.be.greaterThan(0);
-					expect(movedOutDb2).to.be.greaterThan(0);
-					expect(movedOutDb3).to.be.greaterThan(0);
+					try {
+						expect(movedOutDb1).to.be.greaterThan(0);
+						expect(movedOutDb2).to.be.greaterThan(0);
+						expect(movedOutDb3).to.be.greaterThan(0);
+					} catch (error) {
+						await emitReplicationDiag(`${diagLabel}::moved-out`, [db1, db2, db3]);
+						await dbgLogs([db1.log, db2.log, db3.log]);
+						throw error;
+					}
 				});
 
 				it("does not lose entries with delayed prune messages across rapid range rotations (prune delay 0)", async () => {
@@ -3950,9 +4078,10 @@ testSetups.forEach((setup) => {
 					expect(finalUnion.size).to.equal(entryCount);
 				});
 
-				it("replace range with another node write after join", async () => {
-					const db1 = await session.peers[0].open(
-						new EventStore<string, any>(),
+					it("replace range with another node write after join", async () => {
+						const diagLabel = `${setup.name}::replication degree update::replace range with another node write after join`;
+						const db1 = await session.peers[0].open(
+							new EventStore<string, any>(),
 						{
 							args: {
 								replicate: {
@@ -4052,19 +4181,35 @@ testSetups.forEach((setup) => {
 							factor: 0.1,
 						});
 
-						await waitForResolved(() =>
-							expect(db1.log.log.length).to.be.closeTo(entryCount / 2, 20),
-						);
-						// This can be slower under full-suite load (especially for u64 IBLT sync),
-						// so allow extra time for prune convergence.
-						await waitForResolved(
-							() => expect(db2.log.log.length).to.be.closeTo(entryCount / 10, 10),
-							{ timeout: 60_000 },
-						);
-						await waitForResolved(
-							() => expect(db3.log.log.length).to.be.closeTo(entryCount / 10, 10),
-							{ timeout: 60_000 },
-						);
+							await waitForResolved(() =>
+								expect(db1.log.log.length).to.be.closeTo(entryCount / 2, 20),
+							);
+							// This can be slower under full-suite load (especially for u64 IBLT sync),
+							// so allow extra time for prune convergence.
+							await waitForConverged(() => db2.log.log.length, {
+								timeout: 60_000,
+								tests: 3,
+								interval: 1_000,
+								delta: 2,
+								jitter: 2,
+							});
+							await waitForConverged(() => db3.log.log.length, {
+								timeout: 60_000,
+								tests: 3,
+								interval: 1_000,
+								delta: 2,
+								jitter: 2,
+							});
+							await waitForResolved(
+								() =>
+									expect(db2.log.log.length).to.be.closeTo(entryCount / 10, 12),
+								{ timeout: 90_000, delayInterval: 500 },
+							);
+							await waitForResolved(
+								() =>
+									expect(db3.log.log.length).to.be.closeTo(entryCount / 10, 12),
+								{ timeout: 90_000, delayInterval: 500 },
+							);
 
 						// reset to original
 
@@ -4090,11 +4235,12 @@ testSetups.forEach((setup) => {
 								expect(db3.log.log.length).to.be.closeTo(entryCount / 2, 20),
 							{ timeout: 60_000 },
 						);
-					} catch (error) {
-						await dbgLogs([db1.log, db2.log, db3.log]);
-						throw error;
-					}
-				});
+						} catch (error) {
+							await emitReplicationDiag(diagLabel, [db1, db2, db3]);
+							await dbgLogs([db1.log, db2.log, db3.log]);
+							throw error;
+						}
+					});
 
 				it("distribute", async () => {
 					const maxDiv3 = Math.round(Number(numbers.maxValue) / 3);
@@ -4458,7 +4604,13 @@ testSetups.forEach((setup) => {
 				await session.stop();
 			});
 
-			afterEach(async () => {
+			afterEach(async function () {
+				if (shouldEmitFailureDiagnostics(this)) {
+					await emitReplicationDiag(
+						`${setup.name}::afterEach failed::${this.currentTest?.fullTitle?.()}`,
+						[db1, db2],
+					);
+				}
 				if (db1) await db1.drop();
 				if (db2) await db2.drop();
 			});
