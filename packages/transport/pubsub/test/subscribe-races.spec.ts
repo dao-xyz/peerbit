@@ -93,7 +93,13 @@ describe("pubsub (subscribe race regressions)", function () {
 			await waitForNeighbour(a, b);
 
 			await b.subscribe(TOPIC);
-			await delay(250);
+			await waitForResolved(() => {
+				expect(b.subscriptions.has(TOPIC)).to.equal(true);
+				const bSubscribers = b.getSubscribers(TOPIC);
+				expect(
+					bSubscribers?.some((subscriber) => subscriber.hashcode() === b.publicKeyHash),
+				).to.equal(true);
+			});
 
 			expect(a.topics.has(TOPIC)).to.equal(false);
 			expect(a.topics.get(TOPIC)).to.equal(undefined);
@@ -131,10 +137,8 @@ describe("pubsub (subscribe race regressions)", function () {
 
 			expect(a.topics.has(TOPIC)).to.equal(false);
 			const bTopics = b.topics.get(TOPIC);
-			if (bTopics) {
-				expect(bTopics.has(a.publicKeyHash)).to.equal(false);
-			}
-
+			expect(bTopics).to.not.equal(undefined);
+			expect(bTopics!.has(a.publicKeyHash)).to.equal(false);
 		} finally {
 			await session.stop();
 		}
