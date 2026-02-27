@@ -18,6 +18,7 @@ export interface StreamEvents extends PeerEvents, MessageEvents {
 }
 
 export * from "./messages.js";
+export * from "./route-hints.js";
 
 // ---------- wait for peer types ----------
 export type Target = "neighbor" | "reachable";

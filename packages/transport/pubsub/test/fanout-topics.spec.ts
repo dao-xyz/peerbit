@@ -177,6 +177,31 @@ describe("pubsub (fanout topics)", function () {
 		}
 	});
 
+	it("exposes unified route hints from directstream and fanout", async () => {
+		const { session, configureBootstraps, configureShards } = await createSession(2);
+
+		try {
+			const TOPIC = "fanout-route-hints-topic";
+			await configureShards([0]);
+			configureBootstraps([0]);
+
+			await session.peers[0]!.services.pubsub.subscribe(TOPIC);
+			await session.peers[1]!.services.pubsub.subscribe(TOPIC);
+
+			const targetHash = session.peers[1]!.services.pubsub.publicKeyHash;
+			await waitForResolved(() => {
+				const hints = session.peers[0]!.services.pubsub.getUnifiedRouteHints!(
+					TOPIC,
+					targetHash,
+				);
+				expect(hints.some((h) => h.kind === "directstream-ack")).to.equal(true);
+				expect(hints.some((h) => h.kind === "fanout-token")).to.equal(true);
+			});
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("preserves publish id/priority/signatures for fanout-backed topics", async () => {
 		const { session, configureBootstraps, configureShards } = await createSession(3);
 

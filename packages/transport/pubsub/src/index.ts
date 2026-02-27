@@ -36,6 +36,7 @@ import {
 	MessageHeader,
 	NotStartedError,
 	type PriorityOptions,
+	type RouteHint,
 	SilentDelivery,
 	type WithExtraSigners,
 	deliveryModeHasReceiver,
@@ -1278,6 +1279,39 @@ export class TopicControlPlane
 		for (const v of remote.values()) ret.push(v.publicKey);
 		if (includeSelf) ret.push(this.publicKey);
 		return ret;
+	}
+
+	/**
+	 * Returns best-effort route hints for a target peer by combining:
+	 * - DirectStream ACK-learned routes
+	 * - Fanout route tokens for the topic's shard overlay
+	 */
+	getUnifiedRouteHints(topic: string, targetHash: string): RouteHint[] {
+		const hints: RouteHint[] = [];
+		const directHint = this.getBestRouteHint(targetHash);
+		if (directHint) {
+			hints.push(directHint);
+		}
+
+		const topicString = topic.toString();
+		const shardTopic = topicString.startsWith(this.shardTopicPrefix)
+			? topicString
+			: this.getShardTopicForUserTopic(topicString);
+		const shard = this.fanoutChannels.get(shardTopic);
+		if (!shard) {
+			return hints;
+		}
+
+		const fanoutHint = this.fanout.getRouteHint(
+			shardTopic,
+			shard.root,
+			targetHash,
+		);
+		if (fanoutHint) {
+			hints.push(fanoutHint);
+		}
+
+		return hints;
 	}
 
 	async requestSubscribers(
