@@ -5997,7 +5997,20 @@ describe("index", () => {
 			});
 
 			await store1.docs.put(doc1);
-			await store2.docs.put(new Document({ id: doc1.id, number: 2n }));
+
+			// Make immutable behavior deterministic: ensure store2 has observed the
+			// first write before attempting an overwrite of the same id.
+			await waitForResolved(async () => {
+				const synced = await store2.docs.get(doc1.id, {
+					local: true,
+					remote: false,
+				});
+				expect(synced?.number).to.equal(1n);
+			});
+
+			await expect(
+				store2.docs.put(new Document({ id: doc1.id, number: 2n })),
+			).to.be.rejectedWith("Not allowed to append");
 
 			/* TODO force test env to make sure remote queries are performed
 			
