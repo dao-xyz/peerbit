@@ -54,6 +54,11 @@ jobs:
           PEERBIT_MOCHA_LOG_QUIET: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '1' || '0' }}
           PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '10000' || '0' }}
         run: ${{matrix.test_cmd}}
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: dao-xyz/peerbit
 
   test_pr:
     if: github.event_name == 'pull_request'
@@ -101,6 +106,11 @@ jobs:
           PEERBIT_MOCHA_LOG_QUIET: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '1' || '0' }}
           PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '10000' || '0' }}
         run: ${{matrix.test_cmd}}
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: dao-xyz/peerbit
 
   fanout_gate_pr:
     if: github.event_name == 'pull_request'
