@@ -54,4 +54,35 @@ describe("waitForReplicator", () => {
 
 		expect(requestCount - baseline).to.equal(2);
 	});
+
+	it("rejects waitForReplicators when internal leader check throws", async () => {
+		session = await TestSession.connected(1);
+		db = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				timeUntilRoleMaturity: 0,
+			},
+		});
+
+		const originalFindLeaders = db.log.findLeaders.bind(db.log);
+		(db.log as any).findLeaders = async () => {
+			throw new Error("forced-findLeaders-error");
+		};
+
+		try {
+			await expect(
+				(db.log as any)._waitForReplicators(
+					[0n],
+					{
+						hash: "bafkreif4wi7jfhqqlvgyj7a5z2fi6zt2fx5b5h3h3rfwjz2wco6n2w2k7u",
+						meta: { next: [] },
+					},
+					[],
+					{ timeout: 200 },
+				),
+			).to.be.rejectedWith("forced-findLeaders-error");
+		} finally {
+			(db.log as any).findLeaders = originalFindLeaders;
+		}
+	});
+
 });
