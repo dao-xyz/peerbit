@@ -368,6 +368,37 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [6.0.0](https://github.com/dao-xyz/peerbit/compare/log-v5.0.10...log-v6.0.0) (2026-02-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
+
+### Features
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped to 2.2.5
+    * @peerbit/blocks bumped to 4.0.0
+    * @peerbit/blocks-interface bumped to 2.0.0
+    * @peerbit/cache bumped to 3.0.0
+    * @peerbit/crypto bumped to 3.0.0
+    * @peerbit/indexer-sqlite3 bumped to 3.0.0
+    * @peerbit/indexer-interface bumped to 3.0.0
+    * @peerbit/indexer-simple bumped to 1.2.3
+    * @peerbit/keychain bumped to 1.2.5
+    * @peerbit/pubsub-interface bumped to 5.0.0
+    * @peerbit/stream-interface bumped to 6.0.0
+    * @peerbit/time bumped to 3.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.0
+
 ## [5.0.10](https://github.com/dao-xyz/peerbit/compare/log-v5.0.9...log-v5.0.10) (2026-01-27)
 
 

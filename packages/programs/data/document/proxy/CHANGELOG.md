@@ -1,5 +1,32 @@
 # Changelog
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/document-proxy-v1.0.6...document-proxy-v2.0.0) (2026-02-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
+
+### Features
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/canonical-client bumped to 1.1.3
+    * @peerbit/canonical-host bumped to 1.0.5
+    * @peerbit/document bumped to 13.0.0
+    * @peerbit/document-interface bumped to 3.2.5
+    * @peerbit/indexer-interface bumped to 3.0.0
+    * @peerbit/program bumped to 6.0.0
+    * @peerbit/shared-log-proxy bumped to 2.0.0
+    * @peerbit/stream-interface bumped to 6.0.0
+  * devDependencies
+    * @peerbit/crypto bumped to 3.0.0
+
 ## [1.0.6](https://github.com/dao-xyz/peerbit/compare/document-proxy-v1.0.5...document-proxy-v1.0.6) (2026-01-27)
 
 

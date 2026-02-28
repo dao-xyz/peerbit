@@ -389,6 +389,45 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.3.5...shared-log-v13.0.0) (2026-02-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
+
+### Features
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
+
+
+### Bug Fixes
+
+* **pubsub:** treat pending subscriptions as local interest ([#602](https://github.com/dao-xyz/peerbit/issues/602)) ([14881a0](https://github.com/dao-xyz/peerbit/commit/14881a07efffc5dd0da404afa25dada687cb5492))
+* **shared-log:** harden wait-for-replicator error handling ([#612](https://github.com/dao-xyz/peerbit/issues/612)) ([c6403d3](https://github.com/dao-xyz/peerbit/commit/c6403d3d1378413bafebdbd731e4ce55810eeb44))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.0
+    * @peerbit/program bumped to 6.0.0
+    * @peerbit/rpc bumped to 6.0.0
+    * @peerbit/any-store bumped to 2.2.5
+    * @peerbit/blocks bumped to 4.0.0
+    * @peerbit/blocks-interface bumped to 2.0.0
+    * @peerbit/cache bumped to 3.0.0
+    * @peerbit/crypto bumped to 3.0.0
+    * @peerbit/indexer-interface bumped to 3.0.0
+    * @peerbit/indexer-sqlite3 bumped to 3.0.0
+    * @peerbit/pubsub bumped to 5.0.0
+    * @peerbit/pubsub-interface bumped to 5.0.0
+    * @peerbit/stream-interface bumped to 6.0.0
+    * @peerbit/time bumped to 3.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.0
+
 ## [12.3.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.3.4...shared-log-v12.3.5) (2026-01-27)
 
 
