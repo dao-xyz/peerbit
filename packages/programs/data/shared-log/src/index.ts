@@ -4382,6 +4382,7 @@ export class SharedLog<
 		const timeout = options.timeout ?? this.waitForReplicatorTimeout;
 
 		return new Promise((resolve, reject) => {
+			let settled = false;
 			const removeListeners = () => {
 				this.events.removeEventListener("replication:change", roleListener);
 				this.events.removeEventListener("replicator:mature", roleListener); // TODO replication:change event  ?
@@ -4391,12 +4392,20 @@ export class SharedLog<
 				);
 			};
 			const abortListener = () => {
+				if (settled) {
+					return;
+				}
+				settled = true;
 				removeListeners();
 				clearTimeout(timer);
 				resolve(false);
 			};
 
-			const timer = setTimeout(async () => {
+			const timer = setTimeout(() => {
+				if (settled) {
+					return;
+				}
+				settled = true;
 				removeListeners();
 				resolve(false);
 			}, timeout);
@@ -4422,19 +4431,34 @@ export class SharedLog<
 				}
 				options?.onLeader && leaderKeys.forEach(options.onLeader);
 
+				if (settled) {
+					return;
+				}
+				settled = true;
 				removeListeners();
 				clearTimeout(timer);
 				resolve(leaders);
 			};
+			const triggerCheck = () => {
+				void check().catch((error) => {
+					if (settled) {
+						return;
+					}
+					settled = true;
+					removeListeners();
+					clearTimeout(timer);
+					reject(error instanceof Error ? error : new Error(String(error)));
+				});
+			};
 
 			const roleListener = () => {
-				check();
+				triggerCheck();
 			};
 
 			this.events.addEventListener("replication:change", roleListener); // TODO replication:change event  ?
 			this.events.addEventListener("replicator:mature", roleListener); // TODO replication:change event  ?
 			this._closeController.signal.addEventListener("abort", abortListener);
-			check();
+			triggerCheck();
 		});
 	}
 
