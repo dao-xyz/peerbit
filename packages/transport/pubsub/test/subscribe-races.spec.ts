@@ -6,6 +6,13 @@ import { expect } from "chai";
 import { FanoutTree, TopicControlPlane, TopicRootControlPlane } from "../src/index.js";
 
 describe("pubsub (subscribe race regressions)", function () {
+	let session:
+		| TestSession<{
+				pubsub: TopicControlPlane;
+				fanout: FanoutTree;
+		  }>
+		| undefined;
+
 	const createDisconnectedSession = async (
 		peerCount: number,
 		options?: {
@@ -51,96 +58,91 @@ describe("pubsub (subscribe race regressions)", function () {
 						...(options?.pubsub || {}),
 					}),
 			},
-		});
-	};
+			});
+		};
+
+	afterEach(async () => {
+		if (session) {
+			await session.stop();
+			session = undefined;
+		}
+	});
 
 	it("discovers peers when subscribe and connect happen concurrently", async () => {
 		const TOPIC = "concurrent-subscribe-connect-regression";
-		const session = await createDisconnectedSession(2);
+		session = await createDisconnectedSession(2);
 
-		try {
-			const a = session.peers[0]!.services.pubsub;
-			const b = session.peers[1]!.services.pubsub;
+		const a = session.peers[0]!.services.pubsub;
+		const b = session.peers[1]!.services.pubsub;
 
-			await Promise.all([
-				a.subscribe(TOPIC),
-				b.subscribe(TOPIC),
-				session.connect([[session.peers[0], session.peers[1]]]),
-			]);
+		await Promise.all([
+			a.subscribe(TOPIC),
+			b.subscribe(TOPIC),
+			session.connect([[session.peers[0], session.peers[1]]]),
+		]);
 
-			await waitForResolved(() => {
-				const aTopics = a.topics.get(TOPIC);
-				const bTopics = b.topics.get(TOPIC);
-				expect(aTopics).to.not.equal(undefined);
-				expect(bTopics).to.not.equal(undefined);
-				expect(aTopics?.has(b.publicKeyHash)).to.equal(true);
-				expect(bTopics?.has(a.publicKeyHash)).to.equal(true);
-			});
-		} finally {
-			await session.stop();
-		}
+		await waitForResolved(() => {
+			const aTopics = a.topics.get(TOPIC);
+			const bTopics = b.topics.get(TOPIC);
+			expect(aTopics).to.not.equal(undefined);
+			expect(bTopics).to.not.equal(undefined);
+			expect(aTopics?.has(b.publicKeyHash)).to.equal(true);
+			expect(bTopics?.has(a.publicKeyHash)).to.equal(true);
+		});
 	});
 
 	it("does not track a topic on a peer that never subscribed", async () => {
 		const TOPIC = "non-subscriber-should-not-track-regression";
-		const session = await createDisconnectedSession(2);
+		session = await createDisconnectedSession(2);
 
-		try {
-			const a = session.peers[0]!.services.pubsub;
-			const b = session.peers[1]!.services.pubsub;
+		const a = session.peers[0]!.services.pubsub;
+		const b = session.peers[1]!.services.pubsub;
 
-			await session.connect([[session.peers[0], session.peers[1]]]);
-			await waitForNeighbour(a, b);
+		await session.connect([[session.peers[0], session.peers[1]]]);
+		await waitForNeighbour(a, b);
 
-			await b.subscribe(TOPIC);
-			await waitForResolved(() => {
-				expect(b.subscriptions.has(TOPIC)).to.equal(true);
-				const bSubscribers = b.getSubscribers(TOPIC);
-				expect(
-					bSubscribers?.some((subscriber) => subscriber.hashcode() === b.publicKeyHash),
-				).to.equal(true);
-			});
+		await b.subscribe(TOPIC);
+		await waitForResolved(() => {
+			expect(b.subscriptions.has(TOPIC)).to.equal(true);
+			const bSubscribers = b.getSubscribers(TOPIC);
+			expect(
+				bSubscribers?.some((subscriber) => subscriber.hashcode() === b.publicKeyHash),
+			).to.equal(true);
+		});
 
-			expect(a.topics.has(TOPIC)).to.equal(false);
-			expect(a.topics.get(TOPIC)).to.equal(undefined);
-		} finally {
-			await session.stop();
-		}
+		expect(a.topics.has(TOPIC)).to.equal(false);
+		expect(a.topics.get(TOPIC)).to.equal(undefined);
 	});
 
 	it("does not advertise cancelled pending subscriptions to peers", async () => {
 		const TOPIC = "subscribe-then-unsubscribe-before-debounce-regression";
 		const debounceDelayMs = 500;
-		const session = await createDisconnectedSession(2, {
+		session = await createDisconnectedSession(2, {
 			pubsub: {
 				subscriptionDebounceDelay: debounceDelayMs,
 			},
 		});
 
-		try {
-			const a = session.peers[0]!.services.pubsub;
-			const b = session.peers[1]!.services.pubsub;
+		const a = session.peers[0]!.services.pubsub;
+		const b = session.peers[1]!.services.pubsub;
 
-			await session.connect([[session.peers[0], session.peers[1]]]);
-			await waitForNeighbour(a, b);
+		await session.connect([[session.peers[0], session.peers[1]]]);
+		await waitForNeighbour(a, b);
 
-			const pendingSubscribe = a.subscribe(TOPIC);
-			const removed = await a.unsubscribe(TOPIC);
-			expect(removed).to.equal(false);
+		const pendingSubscribe = a.subscribe(TOPIC);
+		const removed = await a.unsubscribe(TOPIC);
+		expect(removed).to.equal(false);
 
-			await b.subscribe(TOPIC);
+		await b.subscribe(TOPIC);
 
-			// Wait for A's debounced subscribe cycle to settle before asserting.
-			// This validates that A does not get (stale) advertised at flush time.
-			await pendingSubscribe;
-			await delay(debounceDelayMs + 100);
+		// Wait for A's debounced subscribe cycle to settle before asserting.
+		// This validates that A does not get (stale) advertised at flush time.
+		await pendingSubscribe;
+		await delay(debounceDelayMs + 100);
 
-			expect(a.topics.has(TOPIC)).to.equal(false);
-			const bTopics = b.topics.get(TOPIC);
-			expect(bTopics).to.not.equal(undefined);
-			expect(bTopics!.has(a.publicKeyHash)).to.equal(false);
-		} finally {
-			await session.stop();
-		}
+		expect(a.topics.has(TOPIC)).to.equal(false);
+		const bTopics = b.topics.get(TOPIC);
+		expect(bTopics).to.not.equal(undefined);
+		expect(bTopics!.has(a.publicKeyHash)).to.equal(false);
 	});
 });
