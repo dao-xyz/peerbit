@@ -43,6 +43,30 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [5.0.0](https://github.com/dao-xyz/peerbit/compare/stream-v4.6.0...stream-v5.0.0) (2026-02-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
+
+### Features
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
+* **transport:** unify directstream and fanout route hints ([#614](https://github.com/dao-xyz/peerbit/issues/614)) ([4783d05](https://github.com/dao-xyz/peerbit/commit/4783d057edb7122426d63b323d2bd35195f36416))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped to 3.0.0
+    * @peerbit/crypto bumped to 3.0.0
+    * @peerbit/stream-interface bumped to 6.0.0
+    * @peerbit/time bumped to 3.0.0
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped to 3.0.0
+
 ## [4.6.0](https://github.com/dao-xyz/peerbit/compare/stream-v4.5.3...stream-v4.6.0) (2026-01-22)
 
 

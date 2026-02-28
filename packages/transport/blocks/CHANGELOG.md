@@ -279,6 +279,32 @@
     * @peerbit/blocks-interface bumped from 1.2.18 to 1.2.19
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [4.0.0](https://github.com/dao-xyz/peerbit/compare/blocks-v3.1.8...blocks-v4.0.0) (2026-02-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
+
+### Features
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped to 2.2.5
+    * @peerbit/cache bumped to 3.0.0
+    * @peerbit/stream bumped to 5.0.0
+    * @peerbit/stream-interface bumped to 6.0.0
+    * @peerbit/time bumped to 3.0.0
+    * @peerbit/blocks-interface bumped to 2.0.0
+    * @peerbit/crypto bumped to 3.0.0
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped to 3.0.0
+
 ## [3.1.8](https://github.com/dao-xyz/peerbit/compare/blocks-v3.1.7...blocks-v3.1.8) (2026-01-24)
 
 

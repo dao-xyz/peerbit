@@ -456,6 +456,47 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [13.0.0](https://github.com/dao-xyz/peerbit/compare/document-v12.3.5...document-v13.0.0) (2026-02-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
+
+### Features
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
+
+
+### Bug Fixes
+
+* **document:** align remote rpc timeout with wait policy ([#603](https://github.com/dao-xyz/peerbit/issues/603)) ([cb91e7b](https://github.com/dao-xyz/peerbit/commit/cb91e7b929f18290705b9245eaf8561407b462e1))
+* **document:** retry missing shard groups before iterator close ([#605](https://github.com/dao-xyz/peerbit/issues/605)) ([000e3f1](https://github.com/dao-xyz/peerbit/commit/000e3f1c4606b6e5a3d183390033cef8dda01305))
+* **shared-log:** harden wait-for-replicator error handling ([#612](https://github.com/dao-xyz/peerbit/issues/612)) ([c6403d3](https://github.com/dao-xyz/peerbit/commit/c6403d3d1378413bafebdbd731e4ce55810eeb44))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped to 3.0.0
+    * @peerbit/crypto bumped to 3.0.0
+    * @peerbit/log bumped to 6.0.0
+    * @peerbit/pubsub bumped to 5.0.0
+    * @peerbit/program bumped to 6.0.0
+    * @peerbit/rpc bumped to 6.0.0
+    * @peerbit/shared-log bumped to 13.0.0
+    * @peerbit/indexer-interface bumped to 3.0.0
+    * @peerbit/indexer-simple bumped to 1.2.3
+    * @peerbit/indexer-sqlite3 bumped to 3.0.0
+    * @peerbit/document-interface bumped to 3.2.5
+    * @peerbit/indexer-cache bumped to 0.2.3
+    * @peerbit/stream-interface bumped to 6.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.0
+    * @peerbit/time bumped to 3.0.0
+    * peerbit bumped to 5.0.0
+
 ## [12.3.5](https://github.com/dao-xyz/peerbit/compare/document-v12.3.4...document-v12.3.5) (2026-01-27)
 
 

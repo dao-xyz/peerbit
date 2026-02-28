@@ -630,6 +630,31 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [6.0.0](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v5.3.6...identity-access-controller-v6.0.0) (2026-02-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
+
+### Features
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 3.0.0
+    * @peerbit/document bumped to 13.0.0
+    * @peerbit/program bumped to 6.0.0
+    * @peerbit/shared-log bumped to 13.0.0
+    * @peerbit/trusted-network bumped to 6.0.0
+  * devDependencies
+    * @peerbit/time bumped to 3.0.0
+    * @peerbit/test-utils bumped to 3.0.0
+
 ## [5.3.6](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v5.3.5...identity-access-controller-v5.3.6) (2026-01-27)
 
 

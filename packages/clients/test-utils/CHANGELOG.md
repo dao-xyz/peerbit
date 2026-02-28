@@ -400,6 +400,35 @@
   * dependencies
     * peerbit bumped from 4.0.6 to 4.0.7
 
+## [3.0.0](https://github.com/dao-xyz/peerbit/compare/test-utils-v2.3.19...test-utils-v3.0.0) (2026-02-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
+
+### Features
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped to 2.2.5
+    * @peerbit/crypto bumped to 3.0.0
+    * @peerbit/indexer-interface bumped to 3.0.0
+    * @peerbit/libp2p-test-utils bumped to 3.0.0
+    * peerbit bumped to 5.0.0
+    * @peerbit/blocks bumped to 4.0.0
+    * @peerbit/keychain bumped to 1.2.5
+    * @peerbit/program bumped to 6.0.0
+    * @peerbit/pubsub bumped to 5.0.0
+    * @peerbit/stream bumped to 5.0.0
+  * devDependencies
+    * @peerbit/time bumped to 3.0.0
+
 ## [2.3.19](https://github.com/dao-xyz/peerbit/compare/test-utils-v2.3.18...test-utils-v2.3.19) (2026-01-27)
 
 

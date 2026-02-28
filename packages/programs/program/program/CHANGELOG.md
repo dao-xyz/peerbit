@@ -202,6 +202,34 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [6.0.0](https://github.com/dao-xyz/peerbit/compare/program-v5.6.3...program-v6.0.0) (2026-02-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
+
+### Features
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
+* **peerbit:** define dial readiness semantics for fanout ([#613](https://github.com/dao-xyz/peerbit/issues/613)) ([c485a73](https://github.com/dao-xyz/peerbit/commit/c485a737fd037ee4c12ba99f1d47560c5993da70))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 3.0.0
+    * @peerbit/keychain bumped to 1.2.5
+    * @peerbit/blocks-interface bumped to 2.0.0
+    * @peerbit/pubsub-interface bumped to 5.0.0
+    * @peerbit/libp2p-test-utils bumped to 3.0.0
+    * @peerbit/indexer-interface bumped to 3.0.0
+    * @peerbit/stream-interface bumped to 6.0.0
+    * @peerbit/time bumped to 3.0.0
+    * @peerbit/blocks bumped to 4.0.0
+    * @peerbit/pubsub bumped to 5.0.0
+
 ## [5.6.3](https://github.com/dao-xyz/peerbit/compare/program-v5.6.2...program-v5.6.3) (2026-01-27)
 
 

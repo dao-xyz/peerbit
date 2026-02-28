@@ -108,6 +108,26 @@
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
     * @peerbit/stream-interface bumped from ^5.0.1 to ^5.0.2
 
+## [5.0.0](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v4.1.2...pubsub-interface-v5.0.0) (2026-02-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
+
+### Features
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
+* **transport:** unify directstream and fanout route hints ([#614](https://github.com/dao-xyz/peerbit/issues/614)) ([4783d05](https://github.com/dao-xyz/peerbit/commit/4783d057edb7122426d63b323d2bd35195f36416))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 3.0.0
+    * @peerbit/stream-interface bumped to 6.0.0
+
 ## [4.1.2](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v4.1.1...pubsub-interface-v4.1.2) (2026-01-22)
 
 

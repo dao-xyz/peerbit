@@ -1,5 +1,27 @@
 # Changelog
 
+## [3.0.0](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v2.1.2...indexer-sqlite3-v3.0.0) (2026-02-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
+
+### Features
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-interface bumped to 3.0.0
+    * @peerbit/crypto bumped to 3.0.0
+    * @peerbit/time bumped to 3.0.0
+  * devDependencies
+    * @peerbit/indexer-tests bumped to 3.0.0
+
 ## [2.1.2](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v2.1.1...indexer-sqlite3-v2.1.2) (2026-01-23)
 
 

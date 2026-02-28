@@ -1,5 +1,32 @@
 # @peerbit/document-react
 
+## [1.0.0](https://github.com/dao-xyz/peerbit/compare/document-react-v0.6.6...document-react-v1.0.0) (2026-02-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
+
+### Features
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 13.0.0
+    * @peerbit/indexer-interface bumped to 3.0.0
+    * @peerbit/react bumped to 1.0.0
+  * devDependencies
+    * @peerbit/blocks-interface bumped to 2.0.0
+    * @peerbit/indexer-simple bumped to 1.2.3
+    * @peerbit/program bumped to 6.0.0
+    * @peerbit/test-utils bumped to 3.0.0
+    * @peerbit/shared-log bumped to 13.0.0
+    * peerbit bumped to 5.0.0
+
 ## [0.6.6](https://github.com/dao-xyz/peerbit/compare/document-react-v0.6.5...document-react-v0.6.6) (2026-01-27)
 
 

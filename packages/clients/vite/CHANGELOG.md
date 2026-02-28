@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/vite-v1.1.11...vite-v2.0.0) (2026-02-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
+
+### Features
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/indexer-sqlite3 bumped to 3.0.0
+    * @peerbit/any-store bumped to 2.2.5
+    * @peerbit/any-store-opfs bumped to 1.1.4
+
 ## [1.1.11](https://github.com/dao-xyz/peerbit/compare/vite-v1.1.10...vite-v1.1.11) (2026-01-23)
 
 

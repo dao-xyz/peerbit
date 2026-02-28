@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.0.0](https://github.com/dao-xyz/peerbit/compare/time-v2.3.0...time-v3.0.0) (2026-02-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
+
+### Features
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
+
 ## [2.3.0](https://github.com/dao-xyz/peerbit/compare/time-v2.2.0...time-v2.3.0) (2025-11-25)
 
 
