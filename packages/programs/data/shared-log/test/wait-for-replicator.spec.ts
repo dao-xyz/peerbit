@@ -85,32 +85,4 @@ describe("waitForReplicator", () => {
 		}
 	});
 
-	it("ignores persistCoordinate for missing or invalid hashes", async () => {
-		session = await TestSession.connected(1);
-		db = await session.peers[0].open(new EventStore<string, any>(), {
-			args: {
-				timeUntilRoleMaturity: 0,
-			},
-		});
-
-		const persistCoordinate = (db.log as any).persistCoordinate.bind(db.log);
-
-		await expect(
-			persistCoordinate({
-				coordinates: [0n],
-				entry: { hash: undefined, meta: { next: [] } },
-				leaders: new Map(),
-				replicas: 1,
-			}),
-		).to.not.be.rejected;
-
-		await expect(
-			persistCoordinate({
-				coordinates: [0n],
-				entry: { hash: "not-a-cid", meta: { next: [] } },
-				leaders: new Map(),
-				replicas: 1,
-			}),
-		).to.not.be.rejected;
-	});
 });

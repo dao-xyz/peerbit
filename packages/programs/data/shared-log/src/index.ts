@@ -4498,27 +4498,7 @@ export class SharedLog<
 			return; // no change
 		}
 
-		const entryHash = (properties.entry as any)?.hash;
-		if (typeof entryHash !== "string" || entryHash.length === 0) {
-			warn("Skipping persistCoordinate for entry without hash");
-			return;
-		}
-
-		let cidObject: ReturnType<typeof cidifyString>;
-		try {
-			cidObject = cidifyString(entryHash);
-		} catch (error) {
-			warn(
-				`Skipping persistCoordinate for invalid hash '${entryHash}': ${
-					(error as any)?.message ?? error
-				}`,
-			);
-			return;
-		}
-		if (!cidObject?.multihash?.digest) {
-			warn(`Skipping persistCoordinate for entry '${entryHash}' without digest`);
-			return;
-		}
+		const cidObject = cidifyString(properties.entry.hash);
 		const hashNumber = this.indexableDomain.numbers.bytesToNumber(
 			cidObject.multihash.digest,
 		);
@@ -4528,19 +4508,22 @@ export class SharedLog<
 				assignedToRangeBoundary,
 				coordinates: properties.coordinates,
 				meta: properties.entry.meta,
-				hash: entryHash,
+				hash: properties.entry.hash,
 				hashNumber,
 			}),
 		);
 
 		for (const coordinate of properties.coordinates) {
-			this.coordinateToHash.add(coordinate, entryHash);
+			this.coordinateToHash.add(coordinate, properties.entry.hash);
 		}
 
-		const next = properties.entry.meta?.next ?? [];
-		if (next.length > 0) {
+		if (properties.entry.meta.next.length > 0) {
 			await this.entryCoordinatesIndex.del({
-				query: new Or(next.map((x) => new StringMatch({ key: "hash", value: x }))),
+				query: new Or(
+					properties.entry.meta.next.map(
+						(x) => new StringMatch({ key: "hash", value: x }),
+					),
+				),
 			});
 		}
 	}
