@@ -606,6 +606,7 @@ export class SharedLog<
 		{ attempts: number; timer?: ReturnType<typeof setTimeout> }
 	>;
 	private _replicationInfoApplyQueueByPeer!: Map<string, Promise<void>>;
+	private _forceFreshRepairRetryTimers!: Set<ReturnType<typeof setTimeout>>;
 
 	private remoteBlocks!: RemoteBlocks;
 
@@ -2430,6 +2431,7 @@ export class SharedLog<
 			this._replicationInfoBlockedPeers = new Set();
 			this._replicationInfoRequestByPeer = new Map();
 			this._replicationInfoApplyQueueByPeer = new Map();
+			this._forceFreshRepairRetryTimers = new Set();
 			this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
 			this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
 
@@ -3208,11 +3210,15 @@ export class SharedLog<
 			for (const [_k, v] of this._checkedPruneRetries) {
 				if (v.timer) clearTimeout(v.timer);
 			}
+			for (const timer of this._forceFreshRepairRetryTimers) {
+				clearTimeout(timer);
+			}
 
 		await this.remoteBlocks.stop();
 			this._pendingDeletes.clear();
 			this._pendingIHave.clear();
 			this._checkedPruneRetries.clear();
+			this._forceFreshRepairRetryTimers.clear();
 			this.latestReplicationInfoMessage.clear();
 			this._gidPeersHistory.clear();
 				this._requestIPruneSent.clear();
@@ -4825,9 +4831,20 @@ export class SharedLog<
 			}
 
 			if (!subscribed) {
+				const wasReplicator = this.uniqueReplicators.has(peerHash);
+				try {
+					// Unsubscribe can race with the peer's final replication reset message.
+					// Proactively evict its ranges so leader selection doesn't keep stale owners.
+					await this.removeReplicator(publicKey, { noEvent: true });
+				} catch (error) {
+					if (!isNotStartedError(error as Error)) {
+						throw error;
+					}
+				}
+
 				// Emit replicator:leave at most once per (join -> leave) transition, even if we
 				// concurrently process unsubscribe + replication reset messages for the same peer.
-				const stoppedTransition = this.uniqueReplicators.delete(peerHash);
+				const stoppedTransition = wasReplicator;
 				this._replicatorJoinEmitted.delete(peerHash);
 
 				this.cancelReplicationInfoRequests(peerHash);
@@ -5333,17 +5350,53 @@ export class SharedLog<
 		const gidPeersHistorySnapshot = new Map<string, Set<string> | undefined>();
 
 		const changed = false;
+		const selfHash = this.node.identity.publicKey.hashcode();
 
 		try {
 			const uncheckedDeliver: Map<
 				string,
 				Map<string, EntryReplicated<any>>
 			> = new Map();
+			const forceFreshRepairBatchSize = 256;
+			const dispatchMaybeMissingEntries = (
+				target: string,
+				entries: Map<string, EntryReplicated<any>>,
+			) => {
+				// During leave/rejoin churn we prefer bounded simple-sync batches. Large
+				// one-shot sets can go through the IBLT path and occasionally leave
+				// single-entry gaps behind under heavy timing pressure.
+				if (!forceFreshDelivery || entries.size <= forceFreshRepairBatchSize) {
+					this.syncronizer.onMaybeMissingEntries({
+						entries,
+						targets: [target],
+					});
+					return;
+				}
+
+				let batch = new Map<string, EntryReplicated<any>>();
+				for (const [hash, entry] of entries) {
+					batch.set(hash, entry);
+					if (batch.size >= forceFreshRepairBatchSize) {
+						this.syncronizer.onMaybeMissingEntries({
+							entries: batch,
+							targets: [target],
+						});
+						batch = new Map();
+					}
+				}
+				if (batch.size > 0) {
+					this.syncronizer.onMaybeMissingEntries({
+						entries: batch,
+						targets: [target],
+					});
+				}
+			};
 
 			for await (const entryReplicated of toRebalance<R>(
 				changes,
 				this.entryCoordinatesIndex,
 				this.recentlyRebalanced,
+				{ forceFresh: forceFreshDelivery },
 			)) {
 				if (this.closed) {
 					break;
@@ -5418,12 +5471,74 @@ export class SharedLog<
 						?.reject(new Error("Failed to delete, is leader again"));
 					this.removePruneRequestSent(entryReplicated.hash);
 				}
+				}
+
+			if (forceFreshDelivery) {
+				// Churn edge-case hardening:
+				// a remove+rejoin sequence can leave isolated under-replicated entries with no
+				// active sync in flight. Do a one-shot fresh sweep over indexed entries and
+				// seed repair deliveries for current leaders.
+				const iterator = this.entryCoordinatesIndex.iterate({});
+				while (iterator.done() !== true) {
+					const entries = await iterator.all();
+					for (const entry of entries) {
+						const entryReplicated = entry.value;
+						const currentPeers = await this.findLeaders(
+							entryReplicated.coordinates,
+							entryReplicated,
+							{
+								roleAge: 0,
+							},
+						);
+
+						for (const [currentPeer] of currentPeers) {
+							if (currentPeer === selfHash) {
+								continue;
+							}
+
+							let set = uncheckedDeliver.get(currentPeer);
+							if (!set) {
+								set = new Map();
+								uncheckedDeliver.set(currentPeer, set);
+							}
+							if (!set.has(entryReplicated.hash)) {
+								set.set(entryReplicated.hash, entryReplicated);
+							}
+						}
+					}
+				}
+				await iterator.close();
 			}
+
 			for (const [target, entries] of uncheckedDeliver) {
-				this.syncronizer.onMaybeMissingEntries({
-					entries,
-					targets: [target],
-				});
+				dispatchMaybeMissingEntries(target, entries);
+			}
+
+			if (forceFreshDelivery && uncheckedDeliver.size > 0) {
+				// Repair requests can race with transient disconnect/rejoin windows and get
+				// dropped. Re-seed the same requests shortly after to improve eventual
+				// convergence under churn.
+				const retryPayload = [...uncheckedDeliver.entries()].map(
+					([target, entries]) => ({
+						target,
+						entries: new Map(entries),
+					}),
+				);
+				const retry = (delayMs: number) => {
+					const timer = setTimeout(() => {
+						this._forceFreshRepairRetryTimers.delete(timer);
+						if (this.closed) {
+							return;
+						}
+						for (const { target, entries } of retryPayload) {
+							dispatchMaybeMissingEntries(target, entries);
+						}
+					}, delayMs);
+					timer.unref?.();
+					this._forceFreshRepairRetryTimers.add(timer);
+				};
+				retry(2_000);
+				retry(8_000);
 			}
 
 			return changed;

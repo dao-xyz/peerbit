@@ -2707,8 +2707,14 @@ export const toRebalance = <R extends "u32" | "u64">(
 		| ReplicationChanges<ReplicationRangeIndexable<R>>[],
 	index: Index<EntryReplicated<R>>,
 	rebalanceHistory: Cache<string>,
+	options?: { forceFresh?: boolean },
 ): AsyncIterable<EntryReplicated<R>> => {
-	const change = mergeReplicationChanges(changeOrChanges, rebalanceHistory);
+	const change = options?.forceFresh
+		? (Array.isArray(changeOrChanges[0])
+				? (changeOrChanges as ReplicationChanges<ReplicationRangeIndexable<R>>[])
+						.flat()
+				: (changeOrChanges as ReplicationChanges<ReplicationRangeIndexable<R>>))
+		: mergeReplicationChanges(changeOrChanges, rebalanceHistory);
 	return {
 		[Symbol.asyncIterator]: async function* () {
 			const iterator = index.iterate({

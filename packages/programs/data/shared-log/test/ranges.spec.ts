@@ -3809,6 +3809,32 @@ resolutions.forEach((resolution) => {
 								).map((x) => x.gid),
 							).to.deep.eq([]);
 
+							// Removal-driven churn should be able to force a fresh pass even if
+							// rebalance history would normally suppress this non-matured add.
+							expect(
+								(
+									await consumeAllFromAsyncIterator(
+										toRebalance(
+											[
+												{
+													range,
+													type: "removed",
+													timestamp: 0n,
+												},
+												{
+													range,
+													type: "added",
+													timestamp: 1n,
+												},
+											],
+											index,
+											cache,
+											{ forceFresh: true },
+										),
+									)
+								).map((x) => x.gid),
+							).to.deep.eq(["a"]);
+
 							expect(
 								(
 									await consumeAllFromAsyncIterator(
