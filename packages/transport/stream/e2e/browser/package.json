@@ -20,7 +20,8 @@
 	"scripts": {
 		"test": "playwright test",
 		"lint": "aegir lint",
-		"build": "echo 'No build step for stream-browser-test'"
+		"build": "echo 'No build step for stream-browser-test'",
+		"test:cov": "playwright test"
 	},
 	"dependencies": {
 		"@peerbit/stream": "workspace:*"
