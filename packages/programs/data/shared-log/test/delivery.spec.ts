@@ -163,7 +163,7 @@ describe("append delivery options", () => {
 			delivery: {
 				reliability: "best-effort",
 				requireRecipients: true,
-				timeoutMs: 15e3,
+				timeout: 15e3,
 			},
 		});
 
@@ -643,7 +643,7 @@ describe("append delivery options", () => {
 		capture = true;
 		const res = await writer.log.append({ op: "ADD", value: `value` }, {
 			target: "replicators",
-			delivery: { reliability: "ack", minAcks: 1, timeoutMs: 15e3 },
+			delivery: { reliability: "ack", minAcks: 1, timeout: 15e3 },
 		});
 		capture = false;
 

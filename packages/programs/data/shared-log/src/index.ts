@@ -482,12 +482,8 @@ export type DeliveryOptions = {
 	reliability?: DeliveryReliability;
 	minAcks?: number;
 	requireRecipients?: boolean;
-	timeoutMs?: number;
-	signal?: AbortSignal;
-	/** @deprecated Use `minAcks` and `reliability` */
-	settle?: true | { min: number };
-	/** @deprecated Use `timeoutMs` */
 	timeout?: number;
+	signal?: AbortSignal;
 };
 
 export type SharedLogFanoutOptions = {
@@ -906,18 +902,16 @@ export class SharedLog<
 		}
 
 		const reliability: DeliveryReliability = delivery.reliability ?? "ack";
-		const deliveryTimeoutMs = delivery.timeoutMs ?? delivery.timeout;
+		const deliveryTimeout = delivery.timeout;
 		const deliverySignal = delivery.signal;
 		const requireRecipients = delivery.requireRecipients === true;
 		const minAcks =
 			delivery.minAcks != null && Number.isFinite(delivery.minAcks)
 				? Math.max(0, Math.floor(delivery.minAcks))
-				: typeof delivery.settle === "object" && Number.isFinite(delivery.settle.min)
-					? Math.max(0, Math.floor(delivery.settle.min))
 				: undefined;
 
 		const wrap =
-			deliveryTimeoutMs == null && deliverySignal == null
+			deliveryTimeout == null && deliverySignal == null
 				? undefined
 				: (promise: Promise<void>) =>
 						new Promise<void>((resolve, reject) => {
@@ -949,7 +943,7 @@ export class SharedLog<
 								deliverySignal.addEventListener("abort", onAbort);
 							}
 
-							if (deliveryTimeoutMs != null) {
+							if (deliveryTimeout != null) {
 								timer = setTimeout(() => {
 									if (settled) {
 										return;
@@ -958,7 +952,7 @@ export class SharedLog<
 									promise.catch(() => {});
 									cleanup();
 									reject(new TimeoutError(`Timeout waiting for delivery`));
-								}, deliveryTimeoutMs);
+								}, deliveryTimeout);
 							}
 
 							promise
@@ -1098,8 +1092,8 @@ export class SharedLog<
 				pending.push(wrap ? wrap(promise) : promise);
 			};
 			const fanoutUnicastOptions =
-				delivery?.timeoutMs != null || delivery?.signal != null
-					? { timeoutMs: delivery.timeoutMs, signal: delivery.signal }
+				delivery?.timeout != null || delivery?.signal != null
+					? { timeoutMs: delivery.timeout, signal: delivery.signal }
 					: undefined;
 
 			for await (const message of createExchangeHeadsMessages(this.log, [entry])) {
