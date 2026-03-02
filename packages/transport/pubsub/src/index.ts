@@ -1566,6 +1566,21 @@ export class TopicControlPlane
 	) {
 		const st = this.fanoutChannels.get(shardTopic);
 		if (!st) return;
+		const hints = this.getUnifiedRouteHints(shardTopic, targetHash);
+		const fanoutHint = hints.find(
+			(hint): hint is Extract<RouteHint, { kind: "fanout-token" }> =>
+				hint.kind === "fanout-token",
+		);
+		if (fanoutHint) {
+			try {
+				await st.channel.unicastAck(fanoutHint.route, payload, {
+					timeoutMs: 5_000,
+				});
+				return;
+			} catch {
+				// ignore and fall back
+			}
+		}
 		try {
 			await st.channel.unicastToAck(targetHash, payload, { timeoutMs: 5_000 });
 			return;

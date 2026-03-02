@@ -101,3 +101,56 @@ jobs:
           PEERBIT_MOCHA_LOG_QUIET: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '1' || '0' }}
           PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '10000' || '0' }}
         run: ${{matrix.test_cmd}}
+
+  fanout_gate_pr:
+    if: github.event_name == 'pull_request'
+    name: Fanout Gate (PR)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    env:
+      PEERBIT_TEST_SESSION: mock
+      NODE_OPTIONS: --no-warnings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install deps
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          pnpm install --frozen-lockfile=false
+      - name: Build pubsub workspace
+        run: |
+          pnpm --filter @peerbit/pubsub... run build
+      - name: Run fanout-tree-sim ci-small gate
+        run: |
+          pnpm -C packages/transport/pubsub run bench -- fanout-tree-sim \
+            --preset ci-small --seed 1 \
+            --assertMinJoinedPct 99 \
+            --assertMinDeliveryPct 99 \
+            --assertMaxOverheadFactor 1.15 \
+            --assertMaxControlBpp 1.0 \
+            --assertMaxTrackerBpp 0.7 \
+            --assertMaxRepairBpp 0.15 \
+            --assertAttachP95Ms 6000 \
+            --assertMaxTreeLevelP95 5 \
+            --assertMaxFormationScore 25
+      - name: Run fanout-tree-sim ci-loss gate
+        run: |
+          pnpm -C packages/transport/pubsub run bench -- fanout-tree-sim \
+            --preset ci-loss --seed 1 \
+            --assertMinJoinedPct 99 \
+            --assertMinDeliveryPct 93 \
+            --assertMaxOverheadFactor 2.5 \
+            --assertMaxControlBpp 2.5 \
+            --assertMaxTrackerBpp 1.8 \
+            --assertMaxRepairBpp 0.9 \
+            --assertMaxOrphans 3 \
+            --assertMaxOrphanArea 10 \
+            --assertRecoveryP95Ms 750 \
+            --assertMaxReparentsPerMin 180

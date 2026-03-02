@@ -41,7 +41,33 @@ export type SynchronizerConstructor<R extends "u32" | "u64"> = new (
 
 export type SyncableKey = string | bigint; // hash or coordinate
 
+export type RepairSessionMode = "best-effort" | "convergent";
+
+export type RepairSessionResult = {
+	target: string;
+	requested: number;
+	resolved: number;
+	unresolved: string[];
+	attempts: number;
+	durationMs: number;
+	completed: boolean;
+};
+
+export type RepairSession = {
+	id: string;
+	done: Promise<RepairSessionResult[]>;
+	cancel: () => void;
+};
+
 export interface Syncronizer<R extends "u32" | "u64"> {
+	startRepairSession(properties: {
+		entries: Map<string, EntryReplicated<R>>;
+		targets: string[];
+		mode?: RepairSessionMode;
+		timeoutMs?: number;
+		retryIntervalsMs?: number[];
+	}): RepairSession;
+
 	onMaybeMissingEntries(properties: {
 		entries: Map<string, EntryReplicated<R>>;
 		targets: string[];
@@ -59,7 +85,7 @@ export interface Syncronizer<R extends "u32" | "u64"> {
 
 	onEntryAdded(entry: Entry<any>): void;
 	onEntryRemoved(hash: string): void;
-	onPeerDisconnected(key: PublicSignKey): void;
+	onPeerDisconnected(key: PublicSignKey | string): void;
 
 	open(): Promise<void> | void;
 	close(): Promise<void> | void;

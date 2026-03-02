@@ -35,10 +35,18 @@ jobs:
         run: |
           pnpm --filter @peerbit/pubsub... run build
 
+      - name: Build test-utils workspace
+        run: |
+          pnpm --filter @peerbit/test-utils... run build
+
       - name: Run fanout-tree-sim (scale-5k)
         run: |
           mkdir -p sim-results
           pnpm -C packages/transport/pubsub run bench -- fanout-tree-sim --preset scale-5k --profile 1 > sim-results/fanout-tree-scale-5k.txt
+
+      - name: Run fanout-peerbit-sim (scale-1k)
+        run: |
+          pnpm -C packages/clients/test-utils run bench -- fanout-peerbit-sim --preset scale-1k --seed 1 > sim-results/fanout-peerbit-scale-1k.txt
 
       - name: Run DirectSub topic-sim (500 nodes)
         run: |
@@ -54,4 +62,3 @@ jobs:
         with:
           name: nightly-sims-${{ github.run_id }}
           path: sim-results
-

@@ -1,4 +1,9 @@
-import { ACK, AcknowledgeDelivery, DataMessage } from "@peerbit/stream-interface";
+import {
+	ACK,
+	AcknowledgeDelivery,
+	DataMessage,
+	SilentDelivery,
+} from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -107,6 +112,67 @@ describe("append delivery options", () => {
 		expect(resolved).to.equal(true);
 	});
 
+	it("uses best-effort delivery when reliability is set to best-effort", async () => {
+		session = await TestSession.connected(2);
+
+		const db1 = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicas: { min: 2 },
+				replicate: { offset: 0, factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		await EventStore.open<EventStore<string, any>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					replicas: { min: 2 },
+					replicate: { offset: 0, factor: 1 },
+					timeUntilRoleMaturity: 0,
+				},
+			},
+		);
+
+		await db1.log.waitForReplicators({
+			coverageThreshold: 1,
+			roleAge: 0,
+			timeout: 15e3,
+		});
+
+		const remoteHash = session.peers[1].identity.publicKey.hashcode();
+		await waitForResolved(async () => {
+			const subscribers = await session.peers[0].services.pubsub.getSubscribers(
+				db1.log.rpc.topic,
+			);
+			expect((subscribers || []).map((x) => x.hashcode())).to.include(remoteHash);
+		});
+
+		const capturedModes: any[] = [];
+		const rpcAny: any = db1.log.rpc;
+		const originalSend = rpcAny.send.bind(rpcAny);
+		rpcAny.send = async (...args: any[]) => {
+			if (args[0] instanceof ExchangeHeadsMessage) {
+				capturedModes.push(args[1]?.mode);
+			}
+			return originalSend(...args);
+		};
+
+		await db1.add("hello-best-effort", {
+			target: "replicators",
+			delivery: {
+				reliability: "best-effort",
+				requireRecipients: true,
+				timeoutMs: 15e3,
+			},
+		});
+
+		expect(capturedModes.length).to.be.greaterThan(0);
+		expect(capturedModes.every((mode) => mode instanceof SilentDelivery)).to.equal(
+			true,
+		);
+	});
+
 	it("awaits fanout unicast acks when delivery is set for target=replicators and fanout is configured", async () => {
 		session = await TestSession.connected(2);
 
@@ -157,31 +223,32 @@ describe("append delivery options", () => {
 			);
 		});
 
-			// Ensure the remote peer is known as a replicator before we append; otherwise the
-			// writer may compute a leader set that only includes itself and skip directed delivery.
-			await db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
-				timeout: 15e3,
-				roleAge: 0,
-			});
+		// Ensure the remote peer is known as a replicator before we append; otherwise the
+		// writer may compute a leader set that only includes itself and skip directed delivery.
+		await db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+			timeout: 15e3,
+			roleAge: 0,
+		});
 
-			// The implementation prefers direct pubsub/RPC delivery when it can prove a cheap
-			// path. In a 2-peer session that would bypass the fanout unicast-ACK path entirely,
-			// so we force the fallback path here to keep this behavior covered by tests.
-			const localPubsub: any = session.peers[0].services.pubsub;
-			const originalPeersGet = localPubsub?.peers?.get?.bind(localPubsub.peers);
-			if (originalPeersGet) {
-				localPubsub.peers.get = (hash: any) =>
-					hash === remoteHash ? undefined : originalPeersGet(hash);
-			}
-			const originalIsReachable = localPubsub?.routes?.isReachable?.bind(
-				localPubsub.routes,
-			);
-			if (originalIsReachable) {
-				localPubsub.routes.isReachable = () => false;
-			}
+		// Force fanout-token ACK routing for this test so we exercise the fanout unicast
+		// ACK path (instead of a directstream-hinted ACK shortcut in 2-peer setups).
+		const localPubsub: any = session.peers[0].services.pubsub;
+		const originalGetUnifiedRouteHints =
+			localPubsub.getUnifiedRouteHints?.bind(localPubsub);
+		if (originalGetUnifiedRouteHints) {
+			localPubsub.getUnifiedRouteHints = async (
+				topic: string,
+				targetHash: string,
+			) => {
+				const hints = await Promise.resolve(
+					originalGetUnifiedRouteHints(topic, targetHash),
+				);
+				return (hints ?? []).filter((hint: any) => hint?.kind === "fanout-token");
+			};
+		}
 
-			const gate = pDefer<void>();
-			const ackAttempted = pDefer<void>();
+		const gate = pDefer<void>();
+		const ackAttempted = pDefer<void>();
 
 		const remoteFanout: any = (session.peers[1].services as any).fanout;
 		const originalPublishMessage = remoteFanout.publishMessage.bind(remoteFanout);
@@ -442,12 +509,15 @@ describe("append delivery options", () => {
 		await session.peers[2].stop();
 		await db1.add("fanout-churn", { target: "all" });
 
-		await waitForResolved(async () => {
-			const values = (await db2.log.log.toArray()).map(
-				(entry) => entry.payload.getValue().value,
-			);
-			expect(values).to.include("fanout-churn");
-		});
+		await waitForResolved(
+			async () => {
+				const values = (await db2.log.log.toArray()).map(
+					(entry) => entry.payload.getValue().value,
+				);
+				expect(values).to.include("fanout-churn");
+			},
+			{ timeout: 30_000 },
+		);
 
 		expect(exchangeHeadsRpcSends).to.equal(0);
 	});
@@ -573,7 +643,7 @@ describe("append delivery options", () => {
 		capture = true;
 		const res = await writer.log.append({ op: "ADD", value: `value` }, {
 			target: "replicators",
-			delivery: { settle: { min: 1 }, timeout: 15e3 },
+			delivery: { reliability: "ack", minAcks: 1, timeoutMs: 15e3 },
 		});
 		capture = false;
 

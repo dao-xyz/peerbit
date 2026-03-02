@@ -21,6 +21,9 @@ import { type EntryWithRefs } from "../exchange-heads.js";
 import { TransportMessage } from "../message.js";
 import { type EntryReplicated } from "../ranges.js";
 import type {
+	RepairSession,
+	RepairSessionMode,
+	RepairSessionResult,
 	SyncableKey,
 	SynchronizerComponents,
 	Syncronizer,
@@ -233,6 +236,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	implements Syncronizer<D>
 {
 	simple: SimpleSyncronizer<D>;
+	private repairSessionCounter: number;
 
 	startedOrCompletedSynchronizations: Cache<string>;
 	private localRangeEncoderCacheVersion = 0;
@@ -270,9 +274,54 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 
 	constructor(readonly properties: SynchronizerComponents<D>) {
 		this.simple = new SimpleSyncronizer(properties);
+		this.repairSessionCounter = 0;
 		this.outgoingSyncProcesses = new Map();
 		this.ingoingSyncProcesses = new Map();
 		this.startedOrCompletedSynchronizations = new Cache({ max: 1e4 });
+	}
+
+	startRepairSession(properties: {
+		entries: Map<string, EntryReplicated<D>>;
+		targets: string[];
+		mode?: RepairSessionMode;
+		timeoutMs?: number;
+		retryIntervalsMs?: number[];
+	}): RepairSession {
+		const mode = properties.mode ?? "best-effort";
+		if (mode === "convergent") {
+			return this.simple.startRepairSession({
+				...properties,
+				mode: "convergent",
+			});
+		}
+
+		const id = `rateless-repair-${++this.repairSessionCounter}`;
+		const startedAt = Date.now();
+		const requestedHashes = [...properties.entries.keys()];
+		const targets = [...new Set(properties.targets)];
+		const done = (async (): Promise<RepairSessionResult[]> => {
+			await this.onMaybeMissingEntries({
+				entries: properties.entries,
+				targets,
+			});
+			const durationMs = Date.now() - startedAt;
+			return targets.map((target) => ({
+				target,
+				requested: requestedHashes.length,
+				resolved: 0,
+				unresolved: [...requestedHashes],
+				attempts: 1,
+				durationMs,
+				completed: false,
+			}));
+		})();
+		return {
+			id,
+			done,
+			cancel: () => {
+				// no-op: best-effort dispatch does not maintain cancelable session state
+			},
+		};
 	}
 
 	private clearLocalRangeEncoderCache() {
@@ -825,7 +874,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		return this.simple.onEntryRemoved(hash);
 	}
 
-	onPeerDisconnected(key: PublicSignKey) {
+	onPeerDisconnected(key: PublicSignKey | string) {
 		return this.simple.onPeerDisconnected(key);
 	}
 

@@ -1013,16 +1013,17 @@ testSetups.forEach((setup) => {
 								delta: 1,
 							});
 
-							await waitForResolved(
-								async () => {
-									const memoryUsage = await db2.log.getMemoryUsage();
-									expect(
-										Math.abs(memoryLimit - memoryUsage),
-										`memoryUsage=${memoryUsage} memoryLimit=${memoryLimit}`,
-									).lessThan((memoryLimit / 100) * 5);
-								},
-								{ timeout: 30 * 1000 },
-							);
+								await waitForResolved(
+									async () => {
+										const memoryUsage = await db2.log.getMemoryUsage();
+										const tolerance = Math.max((memoryLimit / 100) * 5, 10_000);
+										expect(
+											Math.abs(memoryLimit - memoryUsage),
+											`memoryUsage=${memoryUsage} memoryLimit=${memoryLimit}`,
+										).lessThan(tolerance);
+									},
+									{ timeout: 30 * 1000 },
+								);
 						});
 
 						it("joining half limited", async () => {

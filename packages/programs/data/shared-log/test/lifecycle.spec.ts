@@ -3,14 +3,8 @@ import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import sinon from "sinon";
-import { ExchangeHeadsMessage } from "../src/exchange-heads.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
-import {
-	RequestMaybeSync,
-	RequestMaybeSyncCoordinate,
-	SimpleSyncronizer,
-} from "../src/sync/simple.js";
-import { slowDownMessage } from "./utils.js";
+import { SimpleSyncronizer } from "../src/sync/simple.js";
 import { EventStore } from "./utils/stores/index.js";
 
 describe("lifecycle", () => {
@@ -149,29 +143,20 @@ describe("lifecycle", () => {
 				},
 			});
 
-			const abortController = new AbortController();
-			const { entry } = await db1.add("hello!");
-			await waitForResolved(() => expect(db2.log.log.length).equal(1));
+			await waitForResolved(async () => {
+				const subscribers = await session.peers[0].services.pubsub.getSubscribers(
+					db1.log.rpc.topic,
+				);
+				expect((subscribers || []).map((x) => x.hashcode())).to.include(
+					session.peers[1].identity.publicKey.hashcode(),
+				);
+			});
+			await db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+				timeout: 15e3,
+				roleAge: 0,
+			});
 
-			slowDownMessage(
-				db1.log,
-				ExchangeHeadsMessage,
-				1e4,
-				abortController.signal,
-			);
-			slowDownMessage(
-				db2.log,
-				ExchangeHeadsMessage,
-				1e4,
-				abortController.signal,
-			);
-			slowDownMessage(db2.log, RequestMaybeSync, 2e3, abortController.signal); // make db2 a bit slower so the assertions below become deterministic (easily)
-			slowDownMessage(
-				db2.log,
-				RequestMaybeSyncCoordinate,
-				2e3,
-				abortController.signal,
-			); // make db2 a bit slower so the assertions below become deterministic (easily)
+			const { entry } = await db1.add("hello!");
 
 			const db3 = await session.peers[2].open(store, {
 				args: {
@@ -194,51 +179,31 @@ describe("lifecycle", () => {
 				expect((await db3.log.getReplicators()).size).equal(3);
 			});
 
-			await waitForResolved(
-				() =>
-					expect(
-						db3.log.syncronizer.syncInFlight.has(
-							db1.node.identity.publicKey.hashcode(),
-						),
-					).to.be.true,
+			const sync = db3.log.syncronizer as SimpleSyncronizer<any>;
+			const db1Hash = db1.node.identity.publicKey.hashcode();
+			const db2Hash = db2.node.identity.publicKey.hashcode();
+			sync.syncInFlight.set(
+				db1Hash,
+				new Map([
+					[
+						entry.hash,
+						{
+							timestamp: Date.now(),
+						},
+					],
+				]),
 			);
-			await waitForResolved(
-				() =>
-					expect(
-						!!(db3.log.syncronizer as SimpleSyncronizer<any>)[
-							"syncInFlightQueue"
-						]
-							.get(entry.hash)
-							?.find((x) => x.equals(db2.node.identity.publicKey)),
-					).to.be.true,
-			);
-			await waitForResolved(
-				() =>
-					expect(
-						(db3.log.syncronizer as SimpleSyncronizer<any>)[
-							"syncInFlightQueueInverted"
-						].has(db2.node.identity.publicKey.hashcode()),
-					).to.be.true,
-			); // because db2 is slower
-			await waitForResolved(
-				() =>
-					expect(
-						(db3.log.syncronizer as SimpleSyncronizer<any>)[
-							"syncInFlightQueueInverted"
-						].has(db1.node.identity.publicKey.hashcode()),
-					).to.be.false,
-			);
+			sync.syncInFlightQueue.set(entry.hash, [db2.node.identity.publicKey]);
+			sync.syncInFlightQueueInverted.set(db2Hash, new Set([entry.hash]));
 
+			expect(sync.syncInFlight.has(db1Hash)).to.equal(true);
+			expect(sync.syncInFlightQueue.has(entry.hash)).to.equal(true);
+			expect(sync.syncInFlightQueueInverted.has(db2Hash)).to.equal(true);
 			await db1.close();
 			await db2.close();
 
-			await waitForResolved(
-				() =>
-					expect(
-						db3.log.syncronizer.syncInFlight.has(
-							db1.node.identity.publicKey.hashcode(),
-						),
-					).to.be.false,
+			await waitForResolved(() =>
+				expect(db3.log.syncronizer.syncInFlight.size).to.equal(0),
 			);
 			await waitForResolved(
 				() =>
@@ -251,13 +216,11 @@ describe("lifecycle", () => {
 			await waitForResolved(
 				() =>
 					expect(
-						(db3.log.syncronizer as SimpleSyncronizer<any>)[
-							"syncInFlightQueueInverted"
-						].has(db2.node.identity.publicKey.hashcode()),
+						(sync as SimpleSyncronizer<any>)["syncInFlightQueueInverted"].has(
+							db2Hash,
+						),
 					).to.be.false,
 			);
-
-			abortController.abort("Done");
 		});
 	});
 

@@ -53,6 +53,7 @@ import {
 	DataMessage,
 	MessageHeader,
 	NotStartedError,
+	type RouteHint,
 	SilentDelivery,
 } from "@peerbit/stream-interface";
 import {
@@ -440,6 +441,7 @@ const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_MEMORY_LIMIT = 0.001;
 const RECALCULATE_PARTICIPATION_RELATIVE_DENOMINATOR_FLOOR = 1e-3;
 
 const DEFAULT_DISTRIBUTION_DEBOUNCE_TIME = 500;
+const RECENT_REPAIR_DISPATCH_TTL_MS = 5_000;
 
 const DEFAULT_SHARED_LOG_FANOUT_CHANNEL_OPTIONS: Omit<
 	FanoutTreeChannelOptions,
@@ -474,11 +476,18 @@ export type Args<
 		: "u32",
 > = LogProperties<T> & LogEvents<T> & SharedLogOptions<T, D, R>;
 
+export type DeliveryReliability = "ack" | "best-effort";
+
 export type DeliveryOptions = {
-	settle?: true | { min: number };
+	reliability?: DeliveryReliability;
+	minAcks?: number;
 	requireRecipients?: boolean;
-	timeout?: number;
+	timeoutMs?: number;
 	signal?: AbortSignal;
+	/** @deprecated Use `minAcks` and `reliability` */
+	settle?: true | { min: number };
+	/** @deprecated Use `timeoutMs` */
+	timeout?: number;
 };
 
 export type SharedLogFanoutOptions = {
@@ -606,7 +615,6 @@ export class SharedLog<
 		{ attempts: number; timer?: ReturnType<typeof setTimeout> }
 	>;
 	private _replicationInfoApplyQueueByPeer!: Map<string, Promise<void>>;
-	private _forceFreshRepairRetryTimers!: Set<ReturnType<typeof setTimeout>>;
 
 	private remoteBlocks!: RemoteBlocks;
 
@@ -648,6 +656,8 @@ export class SharedLog<
 	private replicationChangeDebounceFn!: ReturnType<
 		typeof debounceAggregationChanges<ReplicationRangeIndexable<R>>
 	>;
+	private _repairRetryTimers!: Set<ReturnType<typeof setTimeout>>;
+	private _recentRepairDispatch!: Map<string, Map<string, number>>;
 
 	// regular distribution checks
 	private distributeQueue?: PQueue;
@@ -874,36 +884,40 @@ export class SharedLog<
 		deliveryArg: false | true | DeliveryOptions | undefined,
 	): {
 		delivery?: DeliveryOptions;
+		reliability: DeliveryReliability;
 		requireRecipients: boolean;
-		settleMin?: number;
+		minAcks?: number;
 		wrap?: (promise: Promise<void>) => Promise<void>;
 	} {
 		const delivery: DeliveryOptions | undefined =
 			deliveryArg === undefined || deliveryArg === false
 				? undefined
 				: deliveryArg === true
-					? {}
+					? { reliability: "ack" }
 					: deliveryArg;
 		if (!delivery) {
 			return {
 				delivery: undefined,
+				reliability: "best-effort",
 				requireRecipients: false,
-				settleMin: undefined,
+				minAcks: undefined,
 				wrap: undefined,
 			};
 		}
 
-		const deliverySettle = delivery.settle ?? true;
-		const deliveryTimeout = delivery.timeout;
+		const reliability: DeliveryReliability = delivery.reliability ?? "ack";
+		const deliveryTimeoutMs = delivery.timeoutMs ?? delivery.timeout;
 		const deliverySignal = delivery.signal;
 		const requireRecipients = delivery.requireRecipients === true;
-		const settleMin =
-			typeof deliverySettle === "object" && Number.isFinite(deliverySettle.min)
-				? Math.max(0, Math.floor(deliverySettle.min))
+		const minAcks =
+			delivery.minAcks != null && Number.isFinite(delivery.minAcks)
+				? Math.max(0, Math.floor(delivery.minAcks))
+				: typeof delivery.settle === "object" && Number.isFinite(delivery.settle.min)
+					? Math.max(0, Math.floor(delivery.settle.min))
 				: undefined;
 
 		const wrap =
-			deliveryTimeout == null && deliverySignal == null
+			deliveryTimeoutMs == null && deliverySignal == null
 				? undefined
 				: (promise: Promise<void>) =>
 						new Promise<void>((resolve, reject) => {
@@ -935,7 +949,7 @@ export class SharedLog<
 								deliverySignal.addEventListener("abort", onAbort);
 							}
 
-							if (deliveryTimeout != null) {
+							if (deliveryTimeoutMs != null) {
 								timer = setTimeout(() => {
 									if (settled) {
 										return;
@@ -944,7 +958,7 @@ export class SharedLog<
 									promise.catch(() => {});
 									cleanup();
 									reject(new TimeoutError(`Timeout waiting for delivery`));
-								}, deliveryTimeout);
+								}, deliveryTimeoutMs);
 							}
 
 							promise
@@ -968,10 +982,105 @@ export class SharedLog<
 
 		return {
 			delivery,
+			reliability,
 			requireRecipients,
-			settleMin,
+			minAcks,
 			wrap,
 		};
+	}
+
+	private async _getSortedRouteHints(
+		targetHash: string,
+	): Promise<RouteHint[]> {
+		const pubsub: any = this.node.services.pubsub as any;
+		const maybeHints = await pubsub?.getUnifiedRouteHints?.(this.topic, targetHash);
+		const hints: RouteHint[] = Array.isArray(maybeHints) ? maybeHints : [];
+		const now = Date.now();
+		return hints
+			.filter((hint) => hint.expiresAt == null || hint.expiresAt > now)
+			.sort((a, b) => {
+				const rankA = a.kind === "directstream-ack" ? 0 : 1;
+				const rankB = b.kind === "directstream-ack" ? 0 : 1;
+				if (rankA !== rankB) {
+					return rankA - rankB;
+				}
+
+				const costA =
+					a.kind === "directstream-ack"
+						? a.distance
+						: Math.max(0, (a.route?.length ?? 1) - 1);
+				const costB =
+					b.kind === "directstream-ack"
+						? b.distance
+						: Math.max(0, (b.route?.length ?? 1) - 1);
+				if (costA !== costB) {
+					return costA - costB;
+				}
+
+				return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+			});
+	}
+
+	private async _sendAckWithUnifiedHints(properties: {
+		peer: string;
+		message: ExchangeHeadsMessage<any>;
+		payload: Uint8Array;
+		fanoutUnicastOptions?: { timeoutMs?: number; signal?: AbortSignal };
+	}): Promise<void> {
+		const { peer, message, payload, fanoutUnicastOptions } = properties;
+		const hints = await this._getSortedRouteHints(peer);
+		const hasDirectHint = hints.some((hint) => hint.kind === "directstream-ack");
+		const fanoutHint = hints.find(
+			(hint): hint is Extract<RouteHint, { kind: "fanout-token" }> =>
+				hint.kind === "fanout-token",
+		);
+
+		if (hasDirectHint) {
+			try {
+				await this.rpc.send(message, {
+					mode: new AcknowledgeDelivery({
+						redundancy: 1,
+						to: [peer],
+					}),
+				});
+				return;
+			} catch {
+				// Fall back to fanout token/direct fanout unicast below.
+			}
+		}
+
+		if (fanoutHint && this._fanoutChannel) {
+			try {
+				await this._fanoutChannel.unicastAck(
+					fanoutHint.route,
+					payload,
+					fanoutUnicastOptions,
+				);
+				return;
+			} catch {
+				// Fall back below.
+			}
+		}
+
+		if (this._fanoutChannel) {
+			try {
+				await this._fanoutChannel.unicastToAck(
+					peer,
+					payload,
+					fanoutUnicastOptions,
+				);
+				return;
+			} catch {
+				// Fall back below.
+			}
+		}
+
+		await this.rpc.send(message, {
+			mode: new AcknowledgeDelivery({
+				redundancy: 1,
+				to: [peer],
+			}),
+		});
 	}
 
 		private async _appendDeliverToReplicators(
@@ -982,15 +1091,15 @@ export class SharedLog<
 			isLeader: boolean,
 			deliveryArg: false | true | DeliveryOptions | undefined,
 		) {
-			const { delivery, requireRecipients, settleMin, wrap } =
+			const { delivery, reliability, requireRecipients, minAcks, wrap } =
 				this._parseDeliveryOptions(deliveryArg);
 			const pending: Promise<void>[] = [];
 			const track = (promise: Promise<void>) => {
 				pending.push(wrap ? wrap(promise) : promise);
 			};
 			const fanoutUnicastOptions =
-				delivery?.timeout != null || delivery?.signal != null
-					? { timeoutMs: delivery.timeout, signal: delivery.signal }
+				delivery?.timeoutMs != null || delivery?.signal != null
+					? { timeoutMs: delivery.timeoutMs, signal: delivery.signal }
 					: undefined;
 
 			for await (const message of createExchangeHeadsMessages(this.log, [entry])) {
@@ -998,11 +1107,32 @@ export class SharedLog<
 				const leadersForDelivery = delivery ? new Set(leaders.keys()) : undefined;
 
 				const set = this.addPeersToGidPeerHistory(entry.meta.gid, leaders.keys());
-				const hasRemotePeers = set.has(selfHash) ? set.size > 1 : set.size > 0;
+				let hasRemotePeers = set.has(selfHash) ? set.size > 1 : set.size > 0;
+				const allowSubscriberFallback =
+					this.syncronizer instanceof SimpleSyncronizer ||
+					(this.compatibility ?? Number.MAX_VALUE) < 10;
+				if (!hasRemotePeers && allowSubscriberFallback) {
+					try {
+						const subscribers = await this._getTopicSubscribers(this.topic);
+						if (subscribers && subscribers.length > 0) {
+							for (const subscriber of subscribers) {
+								const hash = subscriber.hashcode();
+								if (hash === selfHash) {
+									continue;
+								}
+								set.add(hash);
+								leadersForDelivery?.add(hash);
+							}
+							hasRemotePeers = set.has(selfHash) ? set.size > 1 : set.size > 0;
+						}
+					} catch {
+						// Best-effort only; keep discovered recipients as-is.
+					}
+				}
 				if (!hasRemotePeers) {
 					if (requireRecipients) {
-					throw new NoPeersError(this.rpc.topic);
-				}
+						throw new NoPeersError(this.rpc.topic);
+					}
 				continue;
 			}
 
@@ -1038,8 +1168,13 @@ export class SharedLog<
 				let silentTo: string[] | undefined;
 				// Default delivery semantics: require enough remote ACKs to reach the requested
 				// replication degree (local append counts as 1).
-				const ackLimit =
-					settleMin == null ? Math.max(0, minReplicasValue - 1) : settleMin;
+				const defaultMinAcks = Math.max(0, minReplicasValue - 1);
+				const ackLimitRaw =
+					reliability === "ack" ? (minAcks ?? defaultMinAcks) : 0;
+				const ackLimit = Math.max(
+					0,
+					Math.min(Math.floor(ackLimitRaw), orderedRemoteRecipients.length),
+				);
 
 				for (const peer of orderedRemoteRecipients) {
 					if (ackTo.length < ackLimit) {
@@ -1062,48 +1197,11 @@ export class SharedLog<
 				for (const peer of ackTo) {
 					track(
 						(async () => {
-							// Unified decision point:
-							// - If we can prove a cheap direct path (connected or routed), use it.
-							// - Otherwise, fall back to the fanout unicast ACK path (bounded overlay routing).
-							// - If that fails, fall back to pubsub/RPC routing which may flood to discover routes.
-							const pubsub: any = this.node.services.pubsub as any;
-							const canDirectFast =
-								Boolean(pubsub?.peers?.get?.(peer)?.isWritable) ||
-								Boolean(
-									pubsub?.routes?.isReachable?.(
-										pubsub?.publicKeyHash,
-										peer,
-										0,
-									),
-								);
-
-							if (canDirectFast) {
-								await this.rpc.send(message, {
-									mode: new AcknowledgeDelivery({
-										redundancy: 1,
-										to: [peer],
-									}),
-								});
-								return;
-							}
-
-							if (this._fanoutChannel) {
-								try {
-									await this._fanoutChannel.unicastToAck(
-										peer,
-										payload,
-										fanoutUnicastOptions,
-									);
-									return;
-								} catch {
-									// fall back below
-								}
-							}
-							await this.rpc.send(message, {
-								mode: new AcknowledgeDelivery({
-									redundancy: 1,
-									to: [peer],
-								}),
+							await this._sendAckWithUnifiedHints({
+								peer,
+								message,
+								payload,
+								fanoutUnicastOptions,
 							});
 						})(),
 					);
@@ -1722,6 +1820,14 @@ export class SharedLog<
 				clearTimeout(v.timeout);
 			}
 			this.pendingMaturity.delete(keyHash);
+		}
+
+		// Keep local sync/prune state consistent even when a peer disappears
+		// through replication-info updates without a topic unsubscribe event.
+		this.removePeerFromGidPeerHistory(keyHash);
+		this._recentRepairDispatch.delete(keyHash);
+		if (!isMe) {
+			this.syncronizer.onPeerDisconnected(keyHash);
 		}
 
 		if (!isMe) {
@@ -2431,7 +2537,8 @@ export class SharedLog<
 			this._replicationInfoBlockedPeers = new Set();
 			this._replicationInfoRequestByPeer = new Map();
 			this._replicationInfoApplyQueueByPeer = new Map();
-			this._forceFreshRepairRetryTimers = new Set();
+			this._repairRetryTimers = new Set();
+			this._recentRepairDispatch = new Map();
 			this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
 			this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
 
@@ -3199,6 +3306,11 @@ export class SharedLog<
 			"unsubscribe",
 			this._onUnsubscriptionFn,
 		);
+		for (const timer of this._repairRetryTimers) {
+			clearTimeout(timer);
+		}
+		this._repairRetryTimers.clear();
+		this._recentRepairDispatch.clear();
 
 		for (const [_k, v] of this._pendingDeletes) {
 			v.clear();
@@ -3210,15 +3322,11 @@ export class SharedLog<
 			for (const [_k, v] of this._checkedPruneRetries) {
 				if (v.timer) clearTimeout(v.timer);
 			}
-			for (const timer of this._forceFreshRepairRetryTimers) {
-				clearTimeout(timer);
-			}
 
 		await this.remoteBlocks.stop();
 			this._pendingDeletes.clear();
 			this._pendingIHave.clear();
 			this._checkedPruneRetries.clear();
-			this._forceFreshRepairRetryTimers.clear();
 			this.latestReplicationInfoMessage.clear();
 			this._gidPeersHistory.clear();
 				this._requestIPruneSent.clear();
@@ -3396,7 +3504,6 @@ export class SharedLog<
 					if (filteredHeads.length === 0) {
 						return;
 					}
-
 					const groupedByGid = await groupByGid(filteredHeads);
 					const promises: Promise<void>[] = [];
 
@@ -4670,8 +4777,8 @@ export class SharedLog<
 		const selfHash = this.node.identity.publicKey.hashcode();
 
 		// Prefer `uniqueReplicators` (replicator cache) as soon as it has any data.
-		// Falling back to live pubsub subscribers can include non-replicators and can
-		// break delivery/availability when writers are not directly connected.
+		// If it is still warming up (for example, only contains self), supplement with
+		// current subscribers until we have enough candidates for this decision.
 		let peerFilter: Set<string> | undefined = undefined;
 		const selfReplicating = await this.isReplicating();
 		if (this.uniqueReplicators.size > 0) {
@@ -4680,6 +4787,22 @@ export class SharedLog<
 				peerFilter.add(selfHash);
 			} else {
 				peerFilter.delete(selfHash);
+			}
+
+			try {
+				const subscribers = await this._getTopicSubscribers(this.topic);
+				if (subscribers && subscribers.length > 0) {
+					for (const subscriber of subscribers) {
+						peerFilter.add(subscriber.hashcode());
+					}
+					if (selfReplicating) {
+						peerFilter.add(selfHash);
+					} else {
+						peerFilter.delete(selfHash);
+					}
+				}
+			} catch {
+				// Best-effort only; keep current peerFilter.
 			}
 		} else {
 			try {
@@ -5334,9 +5457,9 @@ export class SharedLog<
 		 * that we potentially need to share with other peers
 		 */
 
-			if (this.closed) {
-				return;
-			}
+		if (this.closed) {
+			return;
+		}
 
 		await this.log.trim();
 
@@ -5344,51 +5467,130 @@ export class SharedLog<
 			? (changeOrChanges as ReplicationChanges<ReplicationRangeIndexable<R>>[])
 			: [changeOrChanges as ReplicationChanges<ReplicationRangeIndexable<R>>];
 		const changes = batchedChanges.flat();
+		const selfHash = this.node.identity.publicKey.hashcode();
 		// On removed ranges (peer leaves / shrink), gid-level history can hide
 		// per-entry gaps. Force a fresh delivery pass for reassigned entries.
-		const forceFreshDelivery = changes.some((change) => change.type === "removed");
+		const forceFreshDelivery = changes.some(
+			(change) => change.type === "removed" && change.range.hash !== selfHash,
+		);
 		const gidPeersHistorySnapshot = new Map<string, Set<string> | undefined>();
+		const dedupeCutoff = Date.now() - RECENT_REPAIR_DISPATCH_TTL_MS;
+		for (const [target, hashes] of this._recentRepairDispatch) {
+			for (const [hash, ts] of hashes) {
+				if (ts <= dedupeCutoff) {
+					hashes.delete(hash);
+				}
+			}
+			if (hashes.size === 0) {
+				this._recentRepairDispatch.delete(target);
+			}
+		}
 
 		const changed = false;
-		const selfHash = this.node.identity.publicKey.hashcode();
+		const replacedPeers = new Set<string>();
+		for (const change of changes) {
+			if (change.type === "replaced" && change.range.hash !== selfHash) {
+				replacedPeers.add(change.range.hash);
+			}
+		}
+		const addedPeers = new Set<string>();
+		for (const change of changes) {
+			if (change.type === "added" || change.type === "replaced") {
+				const hash = change.range.hash;
+				if (hash !== selfHash) {
+					// Range updates can reassign entries to an existing peer shortly after it
+					// already received a subset. Avoid suppressing legitimate follow-up repair.
+					this._recentRepairDispatch.delete(hash);
+				}
+			}
+			if (change.type === "added") {
+				const hash = change.range.hash;
+				if (hash !== selfHash && !replacedPeers.has(hash)) {
+					addedPeers.add(hash);
+				}
+			}
+		}
 
 		try {
 			const uncheckedDeliver: Map<
 				string,
 				Map<string, EntryReplicated<any>>
 			> = new Map();
-			const forceFreshRepairBatchSize = 256;
 			const dispatchMaybeMissingEntries = (
 				target: string,
 				entries: Map<string, EntryReplicated<any>>,
+				options?: {
+					bypassRecentDedupe?: boolean;
+					retryScheduleMs?: number[];
+				},
 			) => {
-				// During leave/rejoin churn we prefer bounded simple-sync batches. Large
-				// one-shot sets can go through the IBLT path and occasionally leave
-				// single-entry gaps behind under heavy timing pressure.
-				if (!forceFreshDelivery || entries.size <= forceFreshRepairBatchSize) {
-					this.syncronizer.onMaybeMissingEntries({
-						entries,
-						targets: [target],
-					});
+				if (entries.size === 0) {
 					return;
 				}
 
-				let batch = new Map<string, EntryReplicated<any>>();
-				for (const [hash, entry] of entries) {
-					batch.set(hash, entry);
-					if (batch.size >= forceFreshRepairBatchSize) {
-						this.syncronizer.onMaybeMissingEntries({
-							entries: batch,
-							targets: [target],
-						});
-						batch = new Map();
+				const now = Date.now();
+				let recentlyDispatchedByHash = this._recentRepairDispatch.get(target);
+				if (!recentlyDispatchedByHash) {
+					recentlyDispatchedByHash = new Map();
+					this._recentRepairDispatch.set(target, recentlyDispatchedByHash);
+				}
+				for (const [hash, ts] of recentlyDispatchedByHash) {
+					if (now - ts > RECENT_REPAIR_DISPATCH_TTL_MS) {
+						recentlyDispatchedByHash.delete(hash);
 					}
 				}
-				if (batch.size > 0) {
-					this.syncronizer.onMaybeMissingEntries({
-						entries: batch,
-						targets: [target],
-					});
+
+				const filteredEntries =
+					options?.bypassRecentDedupe === true
+						? new Map(entries)
+						: new Map<string, EntryReplicated<any>>();
+				if (options?.bypassRecentDedupe !== true) {
+					for (const [hash, entry] of entries) {
+						const prev = recentlyDispatchedByHash.get(hash);
+						if (prev != null && now - prev <= RECENT_REPAIR_DISPATCH_TTL_MS) {
+							continue;
+						}
+						recentlyDispatchedByHash.set(hash, now);
+						filteredEntries.set(hash, entry);
+					}
+				} else {
+					for (const hash of entries.keys()) {
+						recentlyDispatchedByHash.set(hash, now);
+					}
+				}
+				if (filteredEntries.size === 0) {
+					return;
+				}
+
+				const run = () =>
+					Promise.resolve(
+						this.syncronizer.onMaybeMissingEntries({
+							entries: filteredEntries,
+							targets: [target],
+						}),
+					).catch((error: any) => logger.error(error));
+
+				const retrySchedule =
+					options?.retryScheduleMs && options.retryScheduleMs.length > 0
+						? options.retryScheduleMs
+						: forceFreshDelivery
+							? [0, 1_000, 3_000, 7_000]
+							: [0];
+
+				for (const delayMs of retrySchedule) {
+					if (delayMs === 0) {
+						void run();
+						continue;
+					}
+					const timer = setTimeout(() => {
+						this._repairRetryTimers.delete(timer);
+						if (this.closed) {
+							return;
+						}
+						void run();
+					}, delayMs);
+					timer.unref?.();
+					this._repairRetryTimers.add(timer);
 				}
 			};
 
@@ -5471,7 +5673,7 @@ export class SharedLog<
 						?.reject(new Error("Failed to delete, is leader again"));
 					this.removePruneRequestSent(entryReplicated.hash);
 				}
-				}
+			}
 
 			if (forceFreshDelivery) {
 				// Churn edge-case hardening:
@@ -5479,8 +5681,8 @@ export class SharedLog<
 				// active sync in flight. Do a one-shot fresh sweep over indexed entries and
 				// seed repair deliveries for current leaders.
 				const iterator = this.entryCoordinatesIndex.iterate({});
-				while (iterator.done() !== true) {
-					const entries = await iterator.all();
+				while (!iterator.done()) {
+					const entries = await iterator.next(1000);
 					for (const entry of entries) {
 						const entryReplicated = entry.value;
 						const currentPeers = await this.findLeaders(
@@ -5510,35 +5712,48 @@ export class SharedLog<
 				await iterator.close();
 			}
 
-			for (const [target, entries] of uncheckedDeliver) {
-				dispatchMaybeMissingEntries(target, entries);
+			if (addedPeers.size > 0) {
+				// Join warmup hardening:
+				// when a new peer appears, rebalance diffs can be empty in timing windows.
+				// Do a bounded sweep and seed maybe-missing entries for peers added in this
+				// change batch based on current leader assignment.
+				const iterator = this.entryCoordinatesIndex.iterate({});
+				while (!iterator.done()) {
+					const entries = await iterator.next(1000);
+					for (const entry of entries) {
+						const entryReplicated = entry.value;
+						const currentPeers = await this.findLeaders(
+							entryReplicated.coordinates,
+							entryReplicated,
+							{
+								roleAge: 0,
+							},
+						);
+						for (const peer of addedPeers) {
+							if (!currentPeers.has(peer)) {
+								continue;
+							}
+							let set = uncheckedDeliver.get(peer);
+							if (!set) {
+								set = new Map();
+								uncheckedDeliver.set(peer, set);
+							}
+							if (!set.has(entryReplicated.hash)) {
+								set.set(entryReplicated.hash, entryReplicated);
+							}
+						}
+					}
+				}
+				await iterator.close();
 			}
 
-			if (forceFreshDelivery && uncheckedDeliver.size > 0) {
-				// Repair requests can race with transient disconnect/rejoin windows and get
-				// dropped. Re-seed the same requests shortly after to improve eventual
-				// convergence under churn.
-				const retryPayload = [...uncheckedDeliver.entries()].map(
-					([target, entries]) => ({
-						target,
-						entries: new Map(entries),
-					}),
-				);
-				const retry = (delayMs: number) => {
-					const timer = setTimeout(() => {
-						this._forceFreshRepairRetryTimers.delete(timer);
-						if (this.closed) {
-							return;
-						}
-						for (const { target, entries } of retryPayload) {
-							dispatchMaybeMissingEntries(target, entries);
-						}
-					}, delayMs);
-					timer.unref?.();
-					this._forceFreshRepairRetryTimers.add(timer);
-				};
-				retry(2_000);
-				retry(8_000);
+			for (const [target, entries] of uncheckedDeliver) {
+				const isJoinWarmupTarget = addedPeers.has(target);
+				const bypassRecentDedupe = isJoinWarmupTarget || forceFreshDelivery;
+				dispatchMaybeMissingEntries(target, entries, {
+					bypassRecentDedupe,
+					retryScheduleMs: isJoinWarmupTarget ? [0, 1_000, 3_000] : undefined,
+				});
 			}
 
 			return changed;
@@ -5552,51 +5767,52 @@ export class SharedLog<
 		}
 	}
 
-		async _onUnsubscription(evt: CustomEvent<UnsubcriptionEvent>) {
-			logger.trace(
-				`Peer disconnected '${evt.detail.from.hashcode()}' from '${JSON.stringify(
-					evt.detail.topics.map((x) => x),
-				)} '`,
-			);
-			if (!evt.detail.topics.includes(this.topic)) {
-				return;
-			}
-
-			const fromHash = evt.detail.from.hashcode();
-			this._replicationInfoBlockedPeers.add(fromHash);
-
-			// Keep a per-peer timestamp watermark when we observe an unsubscribe. This
-			// prevents late/out-of-order replication-info messages from re-introducing
-			// stale segments for a peer that has already left the topic.
-			const now = BigInt(+new Date());
-			const prev = this.latestReplicationInfoMessage.get(fromHash);
-			if (!prev || prev < now) {
-				this.latestReplicationInfoMessage.set(fromHash, now);
-			}
-
-			return this.handleSubscriptionChange(
-				evt.detail.from,
-				evt.detail.topics,
-				false,
-			);
+	async _onUnsubscription(evt: CustomEvent<UnsubcriptionEvent>) {
+		logger.trace(
+			`Peer disconnected '${evt.detail.from.hashcode()}' from '${JSON.stringify(
+				evt.detail.topics.map((x) => x),
+			)} '`,
+		);
+		if (!evt.detail.topics.includes(this.topic)) {
+			return;
 		}
 
-		async _onSubscription(evt: CustomEvent<SubscriptionEvent>) {
-			logger.trace(
-				`New peer '${evt.detail.from.hashcode()}' connected to '${JSON.stringify(
-					evt.detail.topics.map((x) => x),
-				)}'`,
-			);
-			if (!evt.detail.topics.includes(this.topic)) {
-				return;
-			}
+		const fromHash = evt.detail.from.hashcode();
+		this._replicationInfoBlockedPeers.add(fromHash);
+		this._recentRepairDispatch.delete(fromHash);
 
-			this.remoteBlocks.onReachable(evt.detail.from);
-			this._replicationInfoBlockedPeers.delete(evt.detail.from.hashcode());
+		// Keep a per-peer timestamp watermark when we observe an unsubscribe. This
+		// prevents late/out-of-order replication-info messages from re-introducing
+		// stale segments for a peer that has already left the topic.
+		const now = BigInt(+new Date());
+		const prev = this.latestReplicationInfoMessage.get(fromHash);
+		if (!prev || prev < now) {
+			this.latestReplicationInfoMessage.set(fromHash, now);
+		}
 
-			return this.handleSubscriptionChange(
-				evt.detail.from,
-				evt.detail.topics,
+		return this.handleSubscriptionChange(
+			evt.detail.from,
+			evt.detail.topics,
+			false,
+		);
+	}
+
+	async _onSubscription(evt: CustomEvent<SubscriptionEvent>) {
+		logger.trace(
+			`New peer '${evt.detail.from.hashcode()}' connected to '${JSON.stringify(
+				evt.detail.topics.map((x) => x),
+			)}'`,
+		);
+		if (!evt.detail.topics.includes(this.topic)) {
+			return;
+		}
+
+		this.remoteBlocks.onReachable(evt.detail.from);
+		this._replicationInfoBlockedPeers.delete(evt.detail.from.hashcode());
+
+		await this.handleSubscriptionChange(
+			evt.detail.from,
+			evt.detail.topics,
 			true,
 		);
 	}

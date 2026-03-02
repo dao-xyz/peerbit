@@ -16,7 +16,14 @@ import {
 } from "../exchange-heads.js";
 import { TransportMessage } from "../message.js";
 import type { EntryReplicated } from "../ranges.js";
-import type { SyncOptions, SyncableKey, Syncronizer } from "./index.js";
+import type {
+	RepairSession,
+	RepairSessionMode,
+	RepairSessionResult,
+	SyncOptions,
+	SyncableKey,
+	Syncronizer,
+} from "./index.js";
 
 @variant([0, 1])
 export class RequestMaybeSync extends TransportMessage {
@@ -95,6 +102,39 @@ const getHashesFromSymbols = async (
 	return results;
 };
 
+const DEFAULT_CONVERGENT_REPAIR_TIMEOUT_MS = 30_000;
+const DEFAULT_CONVERGENT_RETRY_INTERVALS_MS = [0, 1_000, 3_000, 7_000];
+const DEFAULT_BEST_EFFORT_RETRY_INTERVALS_MS = [0];
+const SESSION_POLL_INTERVAL_MS = 100;
+
+const createDeferred = <T>() => {
+	let resolve!: (value: T | PromiseLike<T>) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+	return { promise, resolve, reject };
+};
+
+type RepairSessionTargetState = {
+	unresolved: Set<string>;
+	requestedCount: number;
+	attempts: number;
+};
+
+type RepairSessionState = {
+	id: string;
+	mode: RepairSessionMode;
+	startedAt: number;
+	timeoutMs: number;
+	retryIntervalsMs: number[];
+	targets: Map<string, RepairSessionTargetState>;
+	deferred: ReturnType<typeof createDeferred<RepairSessionResult[]>>;
+	cancelled: boolean;
+	timer?: ReturnType<typeof setTimeout>;
+};
+
 export class SimpleSyncronizer<R extends "u32" | "u64">
 	implements Syncronizer<R>
 {
@@ -110,6 +150,8 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	entryIndex: Index<EntryReplicated<R>, any>;
 	coordinateToHash: Cache<string>;
 	private syncOptions?: SyncOptions<R>;
+	private repairSessionCounter: number;
+	private repairSessions: Map<string, RepairSessionState>;
 
 	// Syncing and dedeplucation work
 	syncMoreInterval?: ReturnType<typeof setTimeout>;
@@ -131,31 +173,288 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		this.entryIndex = properties.entryIndex;
 		this.coordinateToHash = properties.coordinateToHash;
 		this.syncOptions = properties.sync;
+		this.repairSessionCounter = 0;
+		this.repairSessions = new Map();
+	}
+
+	private getPrioritizedHashes(
+		entries: Map<string, EntryReplicated<R>>,
+	): string[] {
+		const priorityFn = this.syncOptions?.priority;
+		if (!priorityFn) {
+			return [...entries.keys()];
+		}
+
+		let index = 0;
+		const scored: { hash: string; index: number; priority: number }[] = [];
+		for (const [hash, entry] of entries) {
+			const priorityValue = priorityFn(entry);
+			scored.push({
+				hash,
+				index,
+				priority: Number.isFinite(priorityValue) ? priorityValue : 0,
+			});
+			index += 1;
+		}
+		scored.sort((a, b) => b.priority - a.priority || a.index - b.index);
+		return scored.map((x) => x.hash);
+	}
+
+	private normalizeRetryIntervals(
+		mode: RepairSessionMode,
+		retryIntervalsMs?: number[],
+	): number[] {
+		const defaults =
+			mode === "convergent"
+				? DEFAULT_CONVERGENT_RETRY_INTERVALS_MS
+				: DEFAULT_BEST_EFFORT_RETRY_INTERVALS_MS;
+		if (!retryIntervalsMs || retryIntervalsMs.length === 0) {
+			return [...defaults];
+		}
+
+		return [...retryIntervalsMs]
+			.map((x) => Math.max(0, Math.floor(x)))
+			.filter((x, i, arr) => arr.indexOf(x) === i)
+			.sort((a, b) => a - b);
+	}
+
+	private isRepairSessionComplete(session: RepairSessionState): boolean {
+		for (const state of session.targets.values()) {
+			if (state.unresolved.size > 0) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private buildRepairSessionResult(
+		session: RepairSessionState,
+		completed: boolean,
+	): RepairSessionResult[] {
+		const durationMs = Date.now() - session.startedAt;
+		const out: RepairSessionResult[] = [];
+		for (const [target, state] of session.targets) {
+			const unresolved = [...state.unresolved];
+			out.push({
+				target,
+				requested: state.requestedCount,
+				resolved: state.requestedCount - unresolved.length,
+				unresolved,
+				attempts: state.attempts,
+				durationMs,
+				completed,
+			});
+		}
+		return out;
+	}
+
+	private finalizeRepairSession(sessionId: string, completed: boolean): void {
+		const session = this.repairSessions.get(sessionId);
+		if (!session) {
+			return;
+		}
+		this.repairSessions.delete(sessionId);
+		session.cancelled = true;
+		if (session.timer) {
+			clearTimeout(session.timer);
+		}
+		session.deferred.resolve(this.buildRepairSessionResult(session, completed));
+	}
+
+	private async refreshRepairSessionState(sessionId: string): Promise<void> {
+		const session = this.repairSessions.get(sessionId);
+		if (!session) {
+			return;
+		}
+		for (const state of session.targets.values()) {
+			for (const hash of [...state.unresolved]) {
+				if (await this.log.has(hash)) {
+					state.unresolved.delete(hash);
+				}
+			}
+		}
+	}
+
+	private markRepairSessionResolvedHashes(hashes: string[]): void {
+		if (hashes.length === 0 || this.repairSessions.size === 0) {
+			return;
+		}
+		for (const [sessionId, session] of this.repairSessions) {
+			for (const state of session.targets.values()) {
+				for (const hash of hashes) {
+					state.unresolved.delete(hash);
+				}
+			}
+			if (this.isRepairSessionComplete(session)) {
+				this.finalizeRepairSession(sessionId, true);
+			}
+		}
+	}
+
+	private async runRepairSession(sessionId: string): Promise<void> {
+		const session = this.repairSessions.get(sessionId);
+		if (!session) {
+			return;
+		}
+
+		let previousDelay = 0;
+		for (const delayMs of session.retryIntervalsMs) {
+			if (!this.repairSessions.has(sessionId) || this.closed) {
+				return;
+			}
+
+			const waitMs = Math.max(0, delayMs - previousDelay);
+			previousDelay = delayMs;
+			if (waitMs > 0) {
+				await new Promise<void>((resolve) => {
+					const timer = setTimeout(resolve, waitMs);
+					timer.unref?.();
+				});
+			}
+			if (!this.repairSessions.has(sessionId) || this.closed) {
+				return;
+			}
+
+			await this.refreshRepairSessionState(sessionId);
+			const current = this.repairSessions.get(sessionId);
+			if (!current) {
+				return;
+			}
+			if (this.isRepairSessionComplete(current)) {
+				this.finalizeRepairSession(sessionId, true);
+				return;
+			}
+
+			for (const [target, state] of current.targets) {
+				if (state.unresolved.size === 0) {
+					continue;
+				}
+				state.attempts += 1;
+				try {
+					await this.requestSync([...state.unresolved], [target]);
+				} catch {
+					// Best-effort: keep unresolved and let retries/timeout determine outcome.
+				}
+			}
+
+			await this.refreshRepairSessionState(sessionId);
+			const afterSend = this.repairSessions.get(sessionId);
+			if (!afterSend) {
+				return;
+			}
+			if (this.isRepairSessionComplete(afterSend)) {
+				this.finalizeRepairSession(sessionId, true);
+				return;
+			}
+
+			if (afterSend.mode === "best-effort") {
+				this.finalizeRepairSession(sessionId, false);
+				return;
+			}
+		}
+
+		for (;;) {
+			if (!this.repairSessions.has(sessionId) || this.closed) {
+				return;
+			}
+			await this.refreshRepairSessionState(sessionId);
+			const current = this.repairSessions.get(sessionId);
+			if (!current) {
+				return;
+			}
+			if (this.isRepairSessionComplete(current)) {
+				this.finalizeRepairSession(sessionId, true);
+				return;
+			}
+			await new Promise<void>((resolve) => {
+				const timer = setTimeout(resolve, SESSION_POLL_INTERVAL_MS);
+				timer.unref?.();
+			});
+		}
+	}
+
+	startRepairSession(properties: {
+		entries: Map<string, EntryReplicated<R>>;
+		targets: string[];
+		mode?: RepairSessionMode;
+		timeoutMs?: number;
+		retryIntervalsMs?: number[];
+	}): RepairSession {
+		const mode = properties.mode ?? "best-effort";
+		const startedAt = Date.now();
+		const timeoutMs = Math.max(
+			1,
+			Math.floor(
+				properties.timeoutMs ??
+					(mode === "convergent"
+						? DEFAULT_CONVERGENT_REPAIR_TIMEOUT_MS
+						: DEFAULT_CONVERGENT_REPAIR_TIMEOUT_MS),
+			),
+		);
+		const retryIntervalsMs = this.normalizeRetryIntervals(
+			mode,
+			properties.retryIntervalsMs,
+		);
+		const hashes = this.getPrioritizedHashes(properties.entries);
+		const targets = [...new Set(properties.targets)];
+		const id = `repair-${++this.repairSessionCounter}`;
+		const deferred = createDeferred<RepairSessionResult[]>();
+
+		const targetStates = new Map<string, RepairSessionTargetState>();
+		for (const target of targets) {
+			targetStates.set(target, {
+				unresolved: new Set(hashes),
+				requestedCount: hashes.length,
+				attempts: 0,
+			});
+		}
+
+		const session: RepairSessionState = {
+			id,
+			mode,
+			startedAt,
+			timeoutMs,
+			retryIntervalsMs,
+			targets: targetStates,
+			deferred,
+			cancelled: false,
+		};
+
+		if (hashes.length === 0 || targets.length === 0) {
+			deferred.resolve(this.buildRepairSessionResult(session, true));
+			return {
+				id,
+				done: deferred.promise,
+				cancel: () => {
+					// no-op
+				},
+			};
+		}
+
+		session.timer = setTimeout(() => {
+			this.finalizeRepairSession(id, false);
+		}, timeoutMs);
+		session.timer.unref?.();
+
+		this.repairSessions.set(id, session);
+		void this.runRepairSession(id).catch(() => {
+			this.finalizeRepairSession(id, false);
+		});
+
+		return {
+			id,
+			done: deferred.promise,
+			cancel: () => {
+				this.finalizeRepairSession(id, false);
+			},
+		};
 	}
 
 	onMaybeMissingEntries(properties: {
 		entries: Map<string, EntryReplicated<R>>;
 		targets: string[];
 	}): Promise<void> {
-		let hashes: string[];
-		const priorityFn = this.syncOptions?.priority;
-		if (priorityFn) {
-			let index = 0;
-			const scored: { hash: string; index: number; priority: number }[] = [];
-			for (const [hash, entry] of properties.entries) {
-				const priorityValue = priorityFn(entry);
-				scored.push({
-					hash,
-					index,
-					priority: Number.isFinite(priorityValue) ? priorityValue : 0,
-				});
-				index += 1;
-			}
-			scored.sort((a, b) => b.priority - a.priority || a.index - b.index);
-			hashes = scored.map((x) => x.hash);
-		} else {
-			hashes = [...properties.entries.keys()];
-		}
+		const hashes = this.getPrioritizedHashes(properties.entries);
 
 		return this.rpc.send(new RequestMaybeSync({ hashes }), {
 			priority: 1,
@@ -210,7 +509,9 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		entries: EntryWithRefs<any>[];
 		from: PublicSignKey;
 	}): Promise<void> | void {
+		const resolvedHashes: string[] = [];
 		for (const entry of properties.entries) {
+			resolvedHashes.push(entry.entry.hash);
 			const set = this.syncInFlight.get(properties.from.hashcode());
 			if (set) {
 				set.delete(entry.entry.hash);
@@ -219,6 +520,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				}
 			}
 		}
+		this.markRepairSessionResolvedHashes(resolvedHashes);
 	}
 
 	async queueSync(
@@ -366,10 +668,14 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		this.syncInFlightQueue.clear();
 		this.syncInFlightQueueInverted.clear();
 		this.syncInFlight.clear();
+		for (const sessionId of [...this.repairSessions.keys()]) {
+			this.finalizeRepairSession(sessionId, false);
+		}
 		clearTimeout(this.syncMoreInterval);
 	}
 	onEntryAdded(entry: Entry<any>): void {
-		return this.clearSyncProcess(entry.hash);
+		this.clearSyncProcess(entry.hash);
+		this.markRepairSessionResolvedHashes([entry.hash]);
 	}
 
 	onEntryRemoved(hash: string): void {
@@ -393,17 +699,18 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		}
 	}
 
-	onPeerDisconnected(key: PublicSignKey): Promise<void> | void {
-		return this.clearSyncProcessPublicKey(key);
+	onPeerDisconnected(key: PublicSignKey | string): Promise<void> | void {
+		const publicKeyHash = typeof key === "string" ? key : key.hashcode();
+		return this.clearSyncProcessPublicKeyHash(publicKeyHash);
 	}
-	private clearSyncProcessPublicKey(publicKey: PublicSignKey) {
-		this.syncInFlight.delete(publicKey.hashcode());
-		const map = this.syncInFlightQueueInverted.get(publicKey.hashcode());
+	private clearSyncProcessPublicKeyHash(publicKeyHash: string) {
+		this.syncInFlight.delete(publicKeyHash);
+		const map = this.syncInFlightQueueInverted.get(publicKeyHash);
 		if (map) {
 			for (const hash of map) {
 				const arr = this.syncInFlightQueue.get(hash);
 				if (arr) {
-					const filtered = arr.filter((x) => !x.equals(publicKey));
+					const filtered = arr.filter((x) => x.hashcode() !== publicKeyHash);
 					if (filtered.length > 0) {
 						this.syncInFlightQueue.set(hash, filtered);
 					} else {
@@ -411,7 +718,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 					}
 				}
 			}
-			this.syncInFlightQueueInverted.delete(publicKey.hashcode());
+			this.syncInFlightQueueInverted.delete(publicKeyHash);
 		}
 	}
 
