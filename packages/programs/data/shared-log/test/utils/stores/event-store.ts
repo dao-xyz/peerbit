@@ -24,7 +24,10 @@ import type {
 	ReplicationDomain,
 	ReplicationDomainConstructor,
 } from "../../../src/replication-domain.js";
-import type { SynchronizerConstructor } from "../../../src/sync/index.js";
+import type {
+	SyncOptions,
+	SynchronizerConstructor,
+} from "../../../src/sync/index.js";
 import type { TestSetupConfig } from "../../utils.js";
 import { JSON_ENCODING } from "./encoding.js";
 
@@ -73,6 +76,7 @@ export type Args<
 	onMessage?: (msg: TransportMessage, context: RequestContext) => Promise<void>;
 	compatibility?: number;
 	setup?: TestSetupConfig<R>;
+	sync?: SyncOptions<R>;
 	domain?: ReplicationDomainConstructor<D>;
 };
 @variant("event_store")
@@ -141,6 +145,7 @@ export class EventStore<
 			distributionDebounceTime: 50, // to make tests fast
 			domain: (properties?.domain ?? (properties?.setup as any)?.domain) as any,
 			syncronizer: properties?.setup?.syncronizer as SynchronizerConstructor<R>,
+			sync: properties?.sync,
 
 			// staticArgs was unused; keep open args explicit in tests
 		});

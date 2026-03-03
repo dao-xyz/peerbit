@@ -194,6 +194,7 @@ describe("pubsub (fanout topics)", function () {
 					TOPIC,
 					targetHash,
 				);
+				expect(hints[0]?.kind).to.equal("directstream-ack");
 				expect(hints.some((h) => h.kind === "directstream-ack")).to.equal(true);
 				expect(hints.some((h) => h.kind === "fanout-token")).to.equal(true);
 			});

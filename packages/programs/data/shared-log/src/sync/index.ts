@@ -24,6 +24,30 @@ export type SyncOptions<R extends "u32" | "u64"> = {
 	 * high-priority entries using the simple synchronizer.
 	 */
 	maxSimpleEntries?: number;
+
+	/**
+	 * Maximum number of hash strings in one simple sync message.
+	 */
+	maxSimpleHashesPerMessage?: number;
+
+	/**
+	 * Maximum number of coordinates in one simple sync coordinate message.
+	 */
+	maxSimpleCoordinatesPerMessage?: number;
+
+	/**
+	 * Maximum number of hashes tracked per convergent repair session target.
+	 * Large sessions still dispatch all entries, but only this many are tracked
+	 * for deterministic completion metadata.
+	 */
+	maxConvergentTrackedHashes?: number;
+
+	/**
+	 * Maximum number of candidate entries buffered per target before the
+	 * background repair sweep dispatches a maybe-sync batch.
+	 * Larger values reduce orchestration overhead but increase per-target memory.
+	 */
+	repairSweepTargetBufferSize?: number;
 };
 
 export type SynchronizerComponents<R extends "u32" | "u64"> = {
@@ -41,7 +65,35 @@ export type SynchronizerConstructor<R extends "u32" | "u64"> = new (
 
 export type SyncableKey = string | bigint; // hash or coordinate
 
+export type RepairSessionMode = "best-effort" | "convergent";
+
+export type RepairSessionResult = {
+	target: string;
+	requested: number;
+	resolved: number;
+	unresolved: string[];
+	attempts: number;
+	durationMs: number;
+	completed: boolean;
+	requestedTotal?: number;
+	truncated?: boolean;
+};
+
+export type RepairSession = {
+	id: string;
+	done: Promise<RepairSessionResult[]>;
+	cancel: () => void;
+};
+
 export interface Syncronizer<R extends "u32" | "u64"> {
+	startRepairSession(properties: {
+		entries: Map<string, EntryReplicated<R>>;
+		targets: string[];
+		mode?: RepairSessionMode;
+		timeoutMs?: number;
+		retryIntervalsMs?: number[];
+	}): RepairSession;
+
 	onMaybeMissingEntries(properties: {
 		entries: Map<string, EntryReplicated<R>>;
 		targets: string[];
@@ -59,7 +111,7 @@ export interface Syncronizer<R extends "u32" | "u64"> {
 
 	onEntryAdded(entry: Entry<any>): void;
 	onEntryRemoved(hash: string): void;
-	onPeerDisconnected(key: PublicSignKey): void;
+	onPeerDisconnected(key: PublicSignKey | string): void;
 
 	open(): Promise<void> | void;
 	close(): Promise<void> | void;

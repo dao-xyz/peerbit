@@ -173,7 +173,7 @@ export const creatMockPeer = async (
 				},
 				dispatchEvent,
 
-				requestSubscribers: async (): Promise<void> => {
+					requestSubscribers: async (): Promise<void> => {
 					for (const [topic, data] of state.subsribers) {
 						for (const [hash, _opts] of data) {
 							if (hash !== keypair.publicKey.hashcode()) {
@@ -190,10 +190,11 @@ export const creatMockPeer = async (
 							}
 						}
 					}
+					},
+					getUnifiedRouteHints: () => [],
+					waitFor: () => Promise.resolve([] as string[]),
+					getPublicKey: (_hash: string) => keypair.publicKey, // TODO
 				},
-				waitFor: () => Promise.resolve([] as string[]),
-				getPublicKey: (_hash: string) => keypair.publicKey, // TODO
-			},
 			keychain: undefined as any, // TODO
 		},
 		storage: undefined as any, // TODO

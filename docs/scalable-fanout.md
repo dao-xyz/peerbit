@@ -150,6 +150,41 @@ Acceptance targets:
 - `packages/transport/pubsub/test/fanout-tree-sim.spec.ts`
 - `packages/transport/pubsub/test/pubsub-topic-sim.spec.ts`
 - `.github/workflows/nightly-sims.yml`
+- `.github/workflows/ci.yml` (`fanout_gate_pr` job)
+
+### PR fanout gate (CI)
+
+Pull requests run two deterministic fanout-tree-sim gates:
+
+- `ci-small`:
+  - `--assertMinJoinedPct 99`
+  - `--assertMinDeliveryPct 99`
+  - `--assertMaxOverheadFactor 1.15`
+  - `--assertMaxControlBpp 1.0`
+  - `--assertMaxTrackerBpp 0.7`
+  - `--assertMaxRepairBpp 0.15`
+  - `--assertAttachP95Ms 6000`
+  - `--assertMaxTreeLevelP95 5`
+  - `--assertMaxFormationScore 25`
+- `ci-loss`:
+  - `--assertMinJoinedPct 99`
+  - `--assertMinDeliveryPct 93`
+  - `--assertMaxOverheadFactor 2.5`
+  - `--assertMaxControlBpp 2.5`
+  - `--assertMaxTrackerBpp 1.8`
+  - `--assertMaxRepairBpp 0.9`
+  - `--assertMaxOrphans 3`
+  - `--assertMaxOrphanArea 10`
+  - `--assertRecoveryP95Ms 750`
+  - `--assertMaxReparentsPerMin 180`
+
+### Nightly sims
+
+Nightly workflow runs:
+
+- `fanout-tree-sim --preset scale-5k --profile 1`
+- `fanout-peerbit-sim --preset scale-1k --seed 1`
+- `topic-sim` with preseeded subscriptions (500 nodes)
 
 ### Canonical knobs (for comparable runs)
 

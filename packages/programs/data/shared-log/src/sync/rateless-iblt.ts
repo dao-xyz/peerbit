@@ -21,6 +21,9 @@ import { type EntryWithRefs } from "../exchange-heads.js";
 import { TransportMessage } from "../message.js";
 import { type EntryReplicated } from "../ranges.js";
 import type {
+	RepairSession,
+	RepairSessionMode,
+	RepairSessionResult,
 	SyncableKey,
 	SynchronizerComponents,
 	Syncronizer,
@@ -54,6 +57,10 @@ class SymbolSerialized implements SSymbol {
 const getSyncIdString = (message: { syncId: Uint8Array }) => {
 	return toBase64(message.syncId);
 };
+
+const DEFAULT_CONVERGENT_REPAIR_TIMEOUT_MS = 30_000;
+const DEFAULT_CONVERGENT_RETRY_INTERVALS_MS = [0, 1_000, 3_000, 7_000];
+const DEFAULT_MAX_CONVERGENT_TRACKED_HASHES = 4_096;
 
 @variant([3, 0])
 export class StartSync extends TransportMessage {
@@ -233,6 +240,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	implements Syncronizer<D>
 {
 	simple: SimpleSyncronizer<D>;
+	private repairSessionCounter: number;
 
 	startedOrCompletedSynchronizations: Cache<string>;
 	private localRangeEncoderCacheVersion = 0;
@@ -270,9 +278,177 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 
 	constructor(readonly properties: SynchronizerComponents<D>) {
 		this.simple = new SimpleSyncronizer(properties);
+		this.repairSessionCounter = 0;
 		this.outgoingSyncProcesses = new Map();
 		this.ingoingSyncProcesses = new Map();
 		this.startedOrCompletedSynchronizations = new Cache({ max: 1e4 });
+	}
+
+	private get maxConvergentTrackedHashes() {
+		const value = this.properties.sync?.maxConvergentTrackedHashes;
+		return value && Number.isFinite(value) && value > 0
+			? Math.floor(value)
+			: DEFAULT_MAX_CONVERGENT_TRACKED_HASHES;
+	}
+
+	private normalizeRetryIntervals(retryIntervalsMs?: number[]): number[] {
+		if (!retryIntervalsMs || retryIntervalsMs.length === 0) {
+			return [...DEFAULT_CONVERGENT_RETRY_INTERVALS_MS];
+		}
+
+		return [...retryIntervalsMs]
+			.map((x) => Math.max(0, Math.floor(x)))
+			.filter((x, i, arr) => arr.indexOf(x) === i)
+			.sort((a, b) => a - b);
+	}
+
+	private getPrioritizedEntries(entries: Map<string, EntryReplicated<D>>) {
+		const priorityFn = this.properties.sync?.priority;
+		if (!priorityFn) {
+			return [...entries.values()];
+		}
+
+		let index = 0;
+		const scored: { entry: EntryReplicated<D>; index: number; priority: number }[] =
+			[];
+		for (const entry of entries.values()) {
+			const priorityValue = priorityFn(entry);
+			scored.push({
+				entry,
+				index,
+				priority: Number.isFinite(priorityValue) ? priorityValue : 0,
+			});
+			index += 1;
+		}
+		scored.sort((a, b) => b.priority - a.priority || a.index - b.index);
+		return scored.map((x) => x.entry);
+	}
+
+	startRepairSession(properties: {
+		entries: Map<string, EntryReplicated<D>>;
+		targets: string[];
+		mode?: RepairSessionMode;
+		timeoutMs?: number;
+		retryIntervalsMs?: number[];
+	}): RepairSession {
+		const mode = properties.mode ?? "best-effort";
+		const targets = [...new Set(properties.targets)];
+		const timeoutMs = Math.max(
+			1,
+			Math.floor(properties.timeoutMs ?? DEFAULT_CONVERGENT_REPAIR_TIMEOUT_MS),
+		);
+		const retryIntervalsMs = this.normalizeRetryIntervals(properties.retryIntervalsMs);
+		const trackedLimit = this.maxConvergentTrackedHashes;
+		const requestedHashes = [...properties.entries.keys()];
+		const requestedHashesTracked = requestedHashes.slice(0, trackedLimit);
+		const truncated = requestedHashesTracked.length < requestedHashes.length;
+
+		if (mode === "convergent") {
+			if (properties.entries.size <= trackedLimit) {
+				return this.simple.startRepairSession({
+					...properties,
+					mode: "convergent",
+					timeoutMs,
+					retryIntervalsMs,
+				});
+			}
+
+			const id = `rateless-repair-${++this.repairSessionCounter}`;
+			const startedAt = Date.now();
+			const prioritized = this.getPrioritizedEntries(properties.entries);
+			const trackedEntries = new Map<string, EntryReplicated<D>>();
+			for (const entry of prioritized.slice(0, trackedLimit)) {
+				trackedEntries.set(entry.hash, entry);
+			}
+
+			let cancelled = false;
+			const trackedSession = this.simple.startRepairSession({
+				entries: trackedEntries,
+				targets,
+				mode: "convergent",
+				timeoutMs,
+				retryIntervalsMs,
+			});
+
+			const runDispatchSchedule = async () => {
+				let previousDelay = 0;
+				for (const delayMs of retryIntervalsMs) {
+					if (cancelled) {
+						return;
+					}
+					const elapsed = Date.now() - startedAt;
+					if (elapsed >= timeoutMs) {
+						return;
+					}
+					const waitMs = Math.max(0, delayMs - previousDelay);
+					previousDelay = delayMs;
+					if (waitMs > 0) {
+						await new Promise<void>((resolve) => {
+							const timer = setTimeout(resolve, waitMs);
+							timer.unref?.();
+						});
+					}
+					if (cancelled) {
+						return;
+					}
+					try {
+						await this.onMaybeMissingEntries({
+							entries: properties.entries,
+							targets,
+						});
+					} catch {
+						// Best-effort schedule: tracked session timeout/result decides completion.
+					}
+				}
+			};
+
+			const done = (async (): Promise<RepairSessionResult[]> => {
+				await runDispatchSchedule();
+				const trackedResults = await trackedSession.done;
+				return trackedResults.map((result) => ({
+					...result,
+					requestedTotal: requestedHashes.length,
+					truncated: true,
+				}));
+			})();
+
+			return {
+				id,
+				done,
+				cancel: () => {
+					cancelled = true;
+					trackedSession.cancel();
+				},
+			};
+		}
+
+		const id = `rateless-repair-${++this.repairSessionCounter}`;
+		const startedAt = Date.now();
+		const done = (async (): Promise<RepairSessionResult[]> => {
+			await this.onMaybeMissingEntries({
+				entries: properties.entries,
+				targets,
+			});
+			const durationMs = Date.now() - startedAt;
+			return targets.map((target) => ({
+				target,
+				requested: requestedHashesTracked.length,
+				resolved: 0,
+				unresolved: [...requestedHashesTracked],
+				attempts: 1,
+				durationMs,
+				completed: false,
+				requestedTotal: requestedHashes.length,
+				truncated,
+			}));
+		})();
+		return {
+			id,
+			done,
+			cancel: () => {
+				// no-op: best-effort dispatch does not maintain cancelable session state
+			},
+		};
 	}
 
 	private clearLocalRangeEncoderCache() {
@@ -825,7 +1001,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		return this.simple.onEntryRemoved(hash);
 	}
 
-	onPeerDisconnected(key: PublicSignKey) {
+	onPeerDisconnected(key: PublicSignKey | string) {
 		return this.simple.onPeerDisconnected(key);
 	}
 

@@ -137,7 +137,7 @@ export interface PubSub
 		WaitForPeer,
 		PublicKeyFromHashResolver {
 	getSubscribers(topic: string): MaybePromise<PublicSignKey[] | undefined>;
-	getUnifiedRouteHints?(
+	getUnifiedRouteHints(
 		topic: string,
 		targetHash: string,
 	): MaybePromise<RouteHint[]>;
