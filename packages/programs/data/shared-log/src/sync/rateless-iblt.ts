@@ -540,6 +540,8 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		entries: Map<string, EntryReplicated<D>>;
 		targets: string[];
 	}): Promise<void> {
+		// NOTE: this method is best-effort dispatch, not a per-hash convergence API.
+		// It may require follow-up repair rounds under churn/loss to fully close all gaps.
 		// Strategy:
 		// - For small sets, prefer the simple synchronizer to reduce complexity and avoid
 		//   IBLT overhead on tiny batches.
