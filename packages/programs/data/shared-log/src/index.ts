@@ -447,6 +447,20 @@ const REPAIR_SWEEP_TARGET_BUFFER_SIZE = 1024;
 const FORCE_FRESH_RETRY_SCHEDULE_MS = [0, 1_000, 3_000, 7_000];
 const JOIN_WARMUP_RETRY_SCHEDULE_MS = [0, 1_000, 3_000];
 
+const toPositiveInteger = (
+	value: number | undefined,
+	fallback: number,
+	label: string,
+) => {
+	if (value == null) {
+		return fallback;
+	}
+	if (!Number.isFinite(value) || value <= 0) {
+		throw new Error(`${label} must be a positive number`);
+	}
+	return Math.max(1, Math.floor(value));
+};
+
 const DEFAULT_SHARED_LOG_FANOUT_CHANNEL_OPTIONS: Omit<
 	FanoutTreeChannelOptions,
 	"role"
@@ -677,6 +691,7 @@ export class SharedLog<
 	waitForReplicatorRequestMaxAttempts?: number;
 	waitForPruneDelay!: number;
 	distributionDebounceTime!: number;
+	repairSweepTargetBufferSize!: number;
 
 	replicationController!: PIDReplicationController;
 	history!: { usedMemory: number; factor: number }[];
@@ -2452,7 +2467,7 @@ export class SharedLog<
 						return;
 					}
 					set.set(entry.hash, entry);
-					if (set.size >= REPAIR_SWEEP_TARGET_BUFFER_SIZE) {
+					if (set.size >= this.repairSweepTargetBufferSize) {
 						flushTarget(target);
 					}
 				};
@@ -2749,6 +2764,11 @@ export class SharedLog<
 		this.oldestOpenTime = this.openTime;
 		this.distributionDebounceTime =
 			options?.distributionDebounceTime || DEFAULT_DISTRIBUTION_DEBOUNCE_TIME; // expect > 0
+		this.repairSweepTargetBufferSize = toPositiveInteger(
+			options?.sync?.repairSweepTargetBufferSize,
+			REPAIR_SWEEP_TARGET_BUFFER_SIZE,
+			"sync.repairSweepTargetBufferSize",
+		);
 
 		this.timeUntilRoleMaturity =
 			options?.timeUntilRoleMaturity ?? WAIT_FOR_ROLE_MATURITY;
@@ -5747,7 +5767,7 @@ export class SharedLog<
 					return;
 				}
 				set.set(entry.hash, entry);
-				if (set.size >= REPAIR_SWEEP_TARGET_BUFFER_SIZE) {
+				if (set.size >= this.repairSweepTargetBufferSize) {
 					flushUncheckedDeliverTarget(target);
 				}
 			};

@@ -41,6 +41,13 @@ export type SyncOptions<R extends "u32" | "u64"> = {
 	 * for deterministic completion metadata.
 	 */
 	maxConvergentTrackedHashes?: number;
+
+	/**
+	 * Maximum number of candidate entries buffered per target before the
+	 * background repair sweep dispatches a maybe-sync batch.
+	 * Larger values reduce orchestration overhead but increase per-target memory.
+	 */
+	repairSweepTargetBufferSize?: number;
 };
 
 export type SynchronizerComponents<R extends "u32" | "u64"> = {

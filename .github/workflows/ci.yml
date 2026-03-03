@@ -154,3 +154,40 @@ jobs:
             --assertMaxOrphanArea 10 \
             --assertRecoveryP95Ms 750 \
             --assertMaxReparentsPerMin 180
+
+  shared_log_sync_batch_gate_pr:
+    if: github.event_name == 'pull_request'
+    name: Shared Log Sync Batch Gate (PR)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    env:
+      PEERBIT_TEST_SESSION: mock
+      NODE_OPTIONS: --no-warnings
+      SWEEP_BATCH_SIZES: "512,1024,16384"
+      SWEEP_ENTRY_COUNT: "20000"
+      SWEEP_WARMUP_RUNS: "0"
+      SWEEP_RUNS: "1"
+      SWEEP_TIMEOUT: "120000"
+      SWEEP_ASSERT_MAX_RATIO: "8"
+      SWEEP_ASSERT_REQUIRE_STARTSYNC_FOR_BATCH_GTE: "512"
+      SWEEP_ASSERT_MAX_MEAN_MS: "512:90000,1024:90000,16384:90000"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install deps
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          pnpm install --frozen-lockfile=false
+      - name: Build shared-log workspace
+        run: |
+          pnpm --filter @peerbit/shared-log... run build
+      - name: Run shared-log sync batch sweep gate
+        run: |
+          pnpm -C packages/programs/data/shared-log exec node --loader ts-node/esm ./benchmark/sync-batch-sweep.ts

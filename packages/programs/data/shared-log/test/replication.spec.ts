@@ -1011,12 +1011,12 @@ testSetups.forEach((setup) => {
 					const message2 = collectMessages(db2.log);
 					await delay(3000);
 
-					const dataMessages2 = getReceivedHeads(message2);
-					await waitForResolved(() =>
+					await waitForResolved(() => {
+						const dataMessages2 = getReceivedHeads(message2);
 						expect(new Set(dataMessages2.map((x) => x.entry.hash)).size).to.equal(
 							count,
-						),
-					);
+						);
+					});
 
 					const dataMessages1 = getReceivedHeads(message1);
 					// A single bounce-back can happen under timing-sensitive repair races in the

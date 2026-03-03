@@ -161,10 +161,16 @@ jobs:
           RIBLT_SIZES: "1000,10000,50000"
           RIBLT_WARMUP: "2"
           RIBLT_ITERATIONS: "10"
+          SWEEP_BATCH_SIZES: "256,512,1024,4096,16384,65536"
+          SWEEP_ENTRY_COUNT: "20000"
+          SWEEP_WARMUP_RUNS: "0"
+          SWEEP_RUNS: "1"
+          SWEEP_TIMEOUT: "120000"
         run: |
           mkdir -p "$GITHUB_WORKSPACE/bench-results/base"
           node --loader ts-node/esm ./benchmark/rateless-iblt-startsync-cache.ts > "$GITHUB_WORKSPACE/bench-results/base/rateless-iblt-startsync-cache.json"
           node --loader ts-node/esm ./benchmark/rateless-iblt-sender-startsync.ts > "$GITHUB_WORKSPACE/bench-results/base/rateless-iblt-sender-startsync.json"
+          node --loader ts-node/esm ./benchmark/sync-batch-sweep.ts > "$GITHUB_WORKSPACE/bench-results/base/sync-batch-sweep.json"
           node --loader ts-node/esm ./benchmark/pid-convergence.ts > "$GITHUB_WORKSPACE/bench-results/base/pid-convergence.json"
 
       - name: Run shared-log benchmarks (head)
@@ -176,10 +182,16 @@ jobs:
           RIBLT_SIZES: "1000,10000,50000"
           RIBLT_WARMUP: "2"
           RIBLT_ITERATIONS: "10"
+          SWEEP_BATCH_SIZES: "256,512,1024,4096,16384,65536"
+          SWEEP_ENTRY_COUNT: "20000"
+          SWEEP_WARMUP_RUNS: "0"
+          SWEEP_RUNS: "1"
+          SWEEP_TIMEOUT: "120000"
         run: |
           mkdir -p "$GITHUB_WORKSPACE/bench-results/head"
           node --loader ts-node/esm ./benchmark/rateless-iblt-startsync-cache.ts > "$GITHUB_WORKSPACE/bench-results/head/rateless-iblt-startsync-cache.json"
           node --loader ts-node/esm ./benchmark/rateless-iblt-sender-startsync.ts > "$GITHUB_WORKSPACE/bench-results/head/rateless-iblt-sender-startsync.json"
+          node --loader ts-node/esm ./benchmark/sync-batch-sweep.ts > "$GITHUB_WORKSPACE/bench-results/head/sync-batch-sweep.json"
           node --loader ts-node/esm ./benchmark/pid-convergence.ts > "$GITHUB_WORKSPACE/bench-results/head/pid-convergence.json"
 
       - name: Run document benchmarks (base)
@@ -242,6 +254,11 @@ jobs:
                 title: 'shared-log: sender StartSync setup (onMaybeMissingEntries)',
                 base: 'bench-results/base/rateless-iblt-sender-startsync.json',
                 head: 'bench-results/head/rateless-iblt-sender-startsync.json',
+              },
+              {
+                title: 'shared-log: sync catch-up batch sweep (including large-edge batch)',
+                base: 'bench-results/base/sync-batch-sweep.json',
+                head: 'bench-results/head/sync-batch-sweep.json',
               },
               {
                 title: 'shared-log: PID convergence (model)',
