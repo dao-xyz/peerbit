@@ -2332,7 +2332,7 @@ export class SharedLog<
 
 	private dispatchMaybeMissingEntries(
 		target: string,
-		entries: Map<string, EntryReplicated<any>>,
+		entries: Map<string, EntryReplicated<R>>,
 		options?: {
 			bypassRecentDedupe?: boolean;
 			retryScheduleMs?: number[];
@@ -2377,13 +2377,30 @@ export class SharedLog<
 			return;
 		}
 
-		const run = () =>
-			Promise.resolve(
+		const run = () => {
+			// For force-fresh churn repair we intentionally bypass rateless IBLT and
+			// use simple hash-based sync. This path is a directed "push these hashes
+			// to that peer" recovery flow; using simple sync here avoids occasional
+			// single-hash gaps seen with IBLT-oriented maybe-sync batches under churn.
+			if (
+				options?.forceFreshDelivery &&
+				this.syncronizer instanceof RatelessIBLTSynchronizer
+			) {
+				return Promise.resolve(
+					this.syncronizer.simple.onMaybeMissingEntries({
+						entries: filteredEntries,
+						targets: [target],
+					}),
+				).catch((error: any) => logger.error(error));
+			}
+
+			return Promise.resolve(
 				this.syncronizer.onMaybeMissingEntries({
 					entries: filteredEntries,
 					targets: [target],
 				}),
 			).catch((error: any) => logger.error(error));
+		};
 
 		const retrySchedule =
 			options?.retryScheduleMs && options.retryScheduleMs.length > 0

@@ -540,8 +540,7 @@ testSetups.forEach((setup) => {
 				await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
 			});
 
-			it("distributes to leaving peers", async function (this: Mocha.Context) {
-				this.retries(2);
+			it("distributes to leaving peers", async () => {
 				const args = {
 					timeUntilRoleMaturity: 0,
 					waitForPruneDelay: 50,
@@ -620,6 +619,132 @@ testSetups.forEach((setup) => {
 					),
 				]);
 				await checkBounded(entryCount, 1, 1, db1, db2);
+			});
+
+			it("repairs redistributed entry when maybe-sync misses one hash on peer leave", async function () {
+				if (setup.name !== "u64-iblt") {
+					this.skip();
+				}
+
+				const args = {
+					timeUntilRoleMaturity: 0,
+					waitForPruneDelay: 50,
+					setup,
+				} as const;
+
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						replicate: {
+							offset: 0,
+						},
+						...args,
+					},
+				});
+
+				db2 = await EventStore.open<EventStore<string, any>>(
+					db1.address!,
+					session.peers[1],
+					{
+						args: {
+							replicate: {
+								offset: 0.3333,
+							},
+							...args,
+						},
+					},
+				);
+				db3 = await EventStore.open<EventStore<string, any>>(
+					db1.address!,
+					session.peers[2],
+					{
+						args: {
+							replicate: {
+								offset: 0.6666,
+							},
+							...args,
+						},
+					},
+				);
+
+				const entryCount = sampleSize * 3;
+				const inserts: Promise<any>[] = [];
+				for (let i = 0; i < entryCount; i++) {
+					inserts.push(
+						db1.add(toBase64(new Uint8Array([i])), {
+							meta: { next: [] },
+						}),
+					);
+				}
+				await Promise.all(inserts);
+				await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
+
+				const db2Hash = db2.node.identity.publicKey.hashcode();
+				let candidateHash: string | undefined;
+				for (const entry of await db1.log.log.toArray()) {
+					if (await db2.log.log.has(entry.hash)) {
+						continue;
+					}
+					if (!(await db3.log.log.has(entry.hash))) {
+						continue;
+					}
+					candidateHash = entry.hash;
+					break;
+				}
+				expect(
+					candidateHash,
+					"expected entry that requires redistribution to surviving peer",
+				).to.be.a("string");
+
+				const sync = db1.log.syncronizer as {
+					onMaybeMissingEntries: (properties: {
+						entries: Map<string, any>;
+						targets: string[];
+					}) => Promise<void>;
+				};
+				const originalOnMaybeMissingEntries =
+					sync.onMaybeMissingEntries.bind(sync);
+
+				sync.onMaybeMissingEntries = async (properties) => {
+					if (
+						candidateHash &&
+						properties.targets.includes(db2Hash) &&
+						properties.entries.has(candidateHash)
+					) {
+						const filtered = new Map(properties.entries);
+						filtered.delete(candidateHash);
+						return originalOnMaybeMissingEntries({
+							...properties,
+							entries: filtered,
+						});
+					}
+					return originalOnMaybeMissingEntries(properties);
+				};
+
+				try {
+					await db3.close();
+
+					await Promise.all([
+						waitForResolved(async () =>
+							expect(await db1.log.replicationIndex?.getSize()).equal(2),
+						),
+						waitForResolved(async () =>
+							expect(await db2.log.replicationIndex?.getSize()).equal(2),
+						),
+					]);
+
+					await waitForResolved(
+						async () =>
+							expect(await db2.log.log.has(candidateHash!)).to.be.true,
+						{
+							timeout: 30_000,
+							delayInterval: 500,
+						},
+					);
+
+					await checkBounded(entryCount, 1, 1, db1, db2);
+				} finally {
+					sync.onMaybeMissingEntries = originalOnMaybeMissingEntries;
+				}
 			});
 
 			it("handles peer joining and leaving multiple times", async () => {
