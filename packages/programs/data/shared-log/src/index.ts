@@ -442,6 +442,10 @@ const RECALCULATE_PARTICIPATION_RELATIVE_DENOMINATOR_FLOOR = 1e-3;
 
 const DEFAULT_DISTRIBUTION_DEBOUNCE_TIME = 500;
 const RECENT_REPAIR_DISPATCH_TTL_MS = 5_000;
+const REPAIR_SWEEP_ENTRY_BATCH_SIZE = 1_000;
+const REPAIR_SWEEP_TARGET_BUFFER_SIZE = 1024;
+const FORCE_FRESH_RETRY_SCHEDULE_MS = [0, 1_000, 3_000, 7_000];
+const JOIN_WARMUP_RETRY_SCHEDULE_MS = [0, 1_000, 3_000];
 
 const DEFAULT_SHARED_LOG_FANOUT_CHANNEL_OPTIONS: Omit<
 	FanoutTreeChannelOptions,
@@ -654,6 +658,9 @@ export class SharedLog<
 	>;
 	private _repairRetryTimers!: Set<ReturnType<typeof setTimeout>>;
 	private _recentRepairDispatch!: Map<string, Map<string, number>>;
+	private _repairSweepRunning!: boolean;
+	private _repairSweepForceFreshPending!: boolean;
+	private _repairSweepAddedPeersPending!: Set<string>;
 
 	// regular distribution checks
 	private distributeQueue?: PQueue;
@@ -2308,6 +2315,201 @@ export class SharedLog<
 		return set;
 	}
 
+	private dispatchMaybeMissingEntries(
+		target: string,
+		entries: Map<string, EntryReplicated<any>>,
+		options?: {
+			bypassRecentDedupe?: boolean;
+			retryScheduleMs?: number[];
+			forceFreshDelivery?: boolean;
+		},
+	) {
+		if (entries.size === 0) {
+			return;
+		}
+
+		const now = Date.now();
+		let recentlyDispatchedByHash = this._recentRepairDispatch.get(target);
+		if (!recentlyDispatchedByHash) {
+			recentlyDispatchedByHash = new Map();
+			this._recentRepairDispatch.set(target, recentlyDispatchedByHash);
+		}
+		for (const [hash, ts] of recentlyDispatchedByHash) {
+			if (now - ts > RECENT_REPAIR_DISPATCH_TTL_MS) {
+				recentlyDispatchedByHash.delete(hash);
+			}
+		}
+
+		const filteredEntries =
+			options?.bypassRecentDedupe === true
+				? new Map(entries)
+				: new Map<string, EntryReplicated<any>>();
+		if (options?.bypassRecentDedupe !== true) {
+			for (const [hash, entry] of entries) {
+				const prev = recentlyDispatchedByHash.get(hash);
+				if (prev != null && now - prev <= RECENT_REPAIR_DISPATCH_TTL_MS) {
+					continue;
+				}
+				recentlyDispatchedByHash.set(hash, now);
+				filteredEntries.set(hash, entry);
+			}
+		} else {
+			for (const hash of entries.keys()) {
+				recentlyDispatchedByHash.set(hash, now);
+			}
+		}
+		if (filteredEntries.size === 0) {
+			return;
+		}
+
+		const run = () =>
+			Promise.resolve(
+				this.syncronizer.onMaybeMissingEntries({
+					entries: filteredEntries,
+					targets: [target],
+				}),
+			).catch((error: any) => logger.error(error));
+
+		const retrySchedule =
+			options?.retryScheduleMs && options.retryScheduleMs.length > 0
+				? options.retryScheduleMs
+				: options?.forceFreshDelivery
+					? FORCE_FRESH_RETRY_SCHEDULE_MS
+					: [0];
+
+		for (const delayMs of retrySchedule) {
+			if (delayMs === 0) {
+				void run();
+				continue;
+			}
+			const timer = setTimeout(() => {
+				this._repairRetryTimers.delete(timer);
+				if (this.closed) {
+					return;
+				}
+				void run();
+			}, delayMs);
+			timer.unref?.();
+			this._repairRetryTimers.add(timer);
+		}
+	}
+
+	private scheduleRepairSweep(options: {
+		forceFreshDelivery: boolean;
+		addedPeers: Set<string>;
+	}) {
+		if (options.forceFreshDelivery) {
+			this._repairSweepForceFreshPending = true;
+		}
+		for (const peer of options.addedPeers) {
+			this._repairSweepAddedPeersPending.add(peer);
+		}
+		if (!this._repairSweepRunning && !this.closed) {
+			this._repairSweepRunning = true;
+			void this.runRepairSweep();
+		}
+	}
+
+	private async runRepairSweep() {
+		try {
+			while (!this.closed) {
+				const forceFreshDelivery = this._repairSweepForceFreshPending;
+				const addedPeers = new Set(this._repairSweepAddedPeersPending);
+				this._repairSweepForceFreshPending = false;
+				this._repairSweepAddedPeersPending.clear();
+
+				if (!forceFreshDelivery && addedPeers.size === 0) {
+					return;
+				}
+
+				const pendingByTarget = new Map<string, Map<string, EntryReplicated<any>>>();
+				const flushTarget = (target: string) => {
+					const entries = pendingByTarget.get(target);
+					if (!entries || entries.size === 0) {
+						return;
+					}
+					const isJoinWarmupTarget = addedPeers.has(target);
+					const bypassRecentDedupe = isJoinWarmupTarget || forceFreshDelivery;
+					this.dispatchMaybeMissingEntries(target, entries, {
+						bypassRecentDedupe,
+						retryScheduleMs: isJoinWarmupTarget
+							? JOIN_WARMUP_RETRY_SCHEDULE_MS
+							: undefined,
+						forceFreshDelivery,
+					});
+					pendingByTarget.delete(target);
+				};
+				const queueEntryForTarget = (
+					target: string,
+					entry: EntryReplicated<any>,
+				) => {
+					let set = pendingByTarget.get(target);
+					if (!set) {
+						set = new Map();
+						pendingByTarget.set(target, set);
+					}
+					if (set.has(entry.hash)) {
+						return;
+					}
+					set.set(entry.hash, entry);
+					if (set.size >= REPAIR_SWEEP_TARGET_BUFFER_SIZE) {
+						flushTarget(target);
+					}
+				};
+
+				const iterator = this.entryCoordinatesIndex.iterate({});
+				try {
+					while (!this.closed && !iterator.done()) {
+						const entries = await iterator.next(REPAIR_SWEEP_ENTRY_BATCH_SIZE);
+						for (const entry of entries) {
+							const entryReplicated = entry.value;
+							const currentPeers = await this.findLeaders(
+								entryReplicated.coordinates,
+								entryReplicated,
+								{ roleAge: 0 },
+							);
+							if (forceFreshDelivery) {
+								for (const [currentPeer] of currentPeers) {
+									if (currentPeer === this.node.identity.publicKey.hashcode()) {
+										continue;
+									}
+									queueEntryForTarget(currentPeer, entryReplicated);
+								}
+							}
+							if (addedPeers.size > 0) {
+								for (const peer of addedPeers) {
+									if (currentPeers.has(peer)) {
+										queueEntryForTarget(peer, entryReplicated);
+									}
+								}
+							}
+						}
+					}
+				} finally {
+					await iterator.close();
+				}
+
+				for (const target of [...pendingByTarget.keys()]) {
+					flushTarget(target);
+				}
+			}
+		} catch (error: any) {
+			if (!isNotStartedError(error)) {
+				logger.error(`Repair sweep failed: ${error?.message ?? error}`);
+			}
+		} finally {
+			this._repairSweepRunning = false;
+			if (
+				!this.closed &&
+				(this._repairSweepForceFreshPending ||
+					this._repairSweepAddedPeersPending.size > 0)
+			) {
+				this._repairSweepRunning = true;
+				void this.runRepairSweep();
+			}
+		}
+	}
+
 	private async pruneDebouncedFnAddIfNotKeeping(args: {
 		key: string;
 		value: {
@@ -2529,12 +2731,15 @@ export class SharedLog<
 			this._pendingIHave = new Map();
 			this.latestReplicationInfoMessage = new Map();
 			this._replicationInfoBlockedPeers = new Set();
-			this._replicationInfoRequestByPeer = new Map();
-			this._replicationInfoApplyQueueByPeer = new Map();
-			this._repairRetryTimers = new Set();
-			this._recentRepairDispatch = new Map();
-			this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
-			this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
+				this._replicationInfoRequestByPeer = new Map();
+				this._replicationInfoApplyQueueByPeer = new Map();
+				this._repairRetryTimers = new Set();
+				this._recentRepairDispatch = new Map();
+				this._repairSweepRunning = false;
+				this._repairSweepForceFreshPending = false;
+				this._repairSweepAddedPeersPending = new Set();
+				this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
+				this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
 
 			this.uniqueReplicators = new Set();
 			this._replicatorJoinEmitted = new Set();
@@ -3300,11 +3505,14 @@ export class SharedLog<
 			"unsubscribe",
 			this._onUnsubscriptionFn,
 		);
-		for (const timer of this._repairRetryTimers) {
-			clearTimeout(timer);
-		}
-		this._repairRetryTimers.clear();
-		this._recentRepairDispatch.clear();
+			for (const timer of this._repairRetryTimers) {
+				clearTimeout(timer);
+			}
+			this._repairRetryTimers.clear();
+			this._recentRepairDispatch.clear();
+			this._repairSweepRunning = false;
+			this._repairSweepForceFreshPending = false;
+			this._repairSweepAddedPeersPending.clear();
 
 		for (const [_k, v] of this._pendingDeletes) {
 			v.clear();
@@ -5510,81 +5718,37 @@ export class SharedLog<
 				string,
 				Map<string, EntryReplicated<any>>
 			> = new Map();
-			const dispatchMaybeMissingEntries = (
+			const flushUncheckedDeliverTarget = (target: string) => {
+				const entries = uncheckedDeliver.get(target);
+				if (!entries || entries.size === 0) {
+					return;
+				}
+				const isJoinWarmupTarget = addedPeers.has(target);
+				const bypassRecentDedupe = isJoinWarmupTarget || forceFreshDelivery;
+				this.dispatchMaybeMissingEntries(target, entries, {
+					bypassRecentDedupe,
+					retryScheduleMs: isJoinWarmupTarget
+						? JOIN_WARMUP_RETRY_SCHEDULE_MS
+						: undefined,
+					forceFreshDelivery,
+				});
+				uncheckedDeliver.delete(target);
+			};
+			const queueUncheckedDeliver = (
 				target: string,
-				entries: Map<string, EntryReplicated<any>>,
-				options?: {
-					bypassRecentDedupe?: boolean;
-					retryScheduleMs?: number[];
-				},
+				entry: EntryReplicated<any>,
 			) => {
-				if (entries.size === 0) {
+				let set = uncheckedDeliver.get(target);
+				if (!set) {
+					set = new Map();
+					uncheckedDeliver.set(target, set);
+				}
+				if (set.has(entry.hash)) {
 					return;
 				}
-
-				const now = Date.now();
-				let recentlyDispatchedByHash = this._recentRepairDispatch.get(target);
-				if (!recentlyDispatchedByHash) {
-					recentlyDispatchedByHash = new Map();
-					this._recentRepairDispatch.set(target, recentlyDispatchedByHash);
-				}
-				for (const [hash, ts] of recentlyDispatchedByHash) {
-					if (now - ts > RECENT_REPAIR_DISPATCH_TTL_MS) {
-						recentlyDispatchedByHash.delete(hash);
-					}
-				}
-
-				const filteredEntries =
-					options?.bypassRecentDedupe === true
-						? new Map(entries)
-						: new Map<string, EntryReplicated<any>>();
-				if (options?.bypassRecentDedupe !== true) {
-					for (const [hash, entry] of entries) {
-						const prev = recentlyDispatchedByHash.get(hash);
-						if (prev != null && now - prev <= RECENT_REPAIR_DISPATCH_TTL_MS) {
-							continue;
-						}
-						recentlyDispatchedByHash.set(hash, now);
-						filteredEntries.set(hash, entry);
-					}
-				} else {
-					for (const hash of entries.keys()) {
-						recentlyDispatchedByHash.set(hash, now);
-					}
-				}
-				if (filteredEntries.size === 0) {
-					return;
-				}
-
-				const run = () =>
-					Promise.resolve(
-						this.syncronizer.onMaybeMissingEntries({
-							entries: filteredEntries,
-							targets: [target],
-						}),
-					).catch((error: any) => logger.error(error));
-
-				const retrySchedule =
-					options?.retryScheduleMs && options.retryScheduleMs.length > 0
-						? options.retryScheduleMs
-						: forceFreshDelivery
-							? [0, 1_000, 3_000, 7_000]
-							: [0];
-
-				for (const delayMs of retrySchedule) {
-					if (delayMs === 0) {
-						void run();
-						continue;
-					}
-					const timer = setTimeout(() => {
-						this._repairRetryTimers.delete(timer);
-						if (this.closed) {
-							return;
-						}
-						void run();
-					}, delayMs);
-					timer.unref?.();
-					this._repairRetryTimers.add(timer);
+				set.set(entry.hash, entry);
+				if (set.size >= REPAIR_SWEEP_TARGET_BUFFER_SIZE) {
+					flushUncheckedDeliverTarget(target);
 				}
 			};
 
@@ -5620,24 +5784,16 @@ export class SharedLog<
 					},
 				);
 
-				for (const [currentPeer] of currentPeers) {
-					if (currentPeer === this.node.identity.publicKey.hashcode()) {
-						isLeader = true;
-						continue;
-					}
-
-					if (!oldPeersSet?.has(currentPeer)) {
-						let set = uncheckedDeliver.get(currentPeer);
-						if (!set) {
-							set = new Map();
-							uncheckedDeliver.set(currentPeer, set);
+					for (const [currentPeer] of currentPeers) {
+						if (currentPeer === this.node.identity.publicKey.hashcode()) {
+							isLeader = true;
+							continue;
 						}
 
-						if (!set.has(entryReplicated.hash)) {
-							set.set(entryReplicated.hash, entryReplicated);
+						if (!oldPeersSet?.has(currentPeer)) {
+							queueUncheckedDeliver(currentPeer, entryReplicated);
 						}
 					}
-				}
 
 				if (oldPeersSet) {
 					for (const oldPeer of oldPeersSet) {
@@ -5669,85 +5825,14 @@ export class SharedLog<
 				}
 			}
 
-			if (forceFreshDelivery) {
-				// Churn edge-case hardening:
-				// a remove+rejoin sequence can leave isolated under-replicated entries with no
-				// active sync in flight. Do a one-shot fresh sweep over indexed entries and
-				// seed repair deliveries for current leaders.
-				const iterator = this.entryCoordinatesIndex.iterate({});
-				while (!iterator.done()) {
-					const entries = await iterator.next(1000);
-					for (const entry of entries) {
-						const entryReplicated = entry.value;
-						const currentPeers = await this.findLeaders(
-							entryReplicated.coordinates,
-							entryReplicated,
-							{
-								roleAge: 0,
-							},
-						);
-
-						for (const [currentPeer] of currentPeers) {
-							if (currentPeer === selfHash) {
-								continue;
-							}
-
-							let set = uncheckedDeliver.get(currentPeer);
-							if (!set) {
-								set = new Map();
-								uncheckedDeliver.set(currentPeer, set);
-							}
-							if (!set.has(entryReplicated.hash)) {
-								set.set(entryReplicated.hash, entryReplicated);
-							}
-						}
-					}
-				}
-				await iterator.close();
+			if (forceFreshDelivery || addedPeers.size > 0) {
+				// Schedule a coalesced background sweep for churn/join windows instead of
+				// scanning the whole index synchronously on each replication change.
+				this.scheduleRepairSweep({ forceFreshDelivery, addedPeers });
 			}
 
-			if (addedPeers.size > 0) {
-				// Join warmup hardening:
-				// when a new peer appears, rebalance diffs can be empty in timing windows.
-				// Do a bounded sweep and seed maybe-missing entries for peers added in this
-				// change batch based on current leader assignment.
-				const iterator = this.entryCoordinatesIndex.iterate({});
-				while (!iterator.done()) {
-					const entries = await iterator.next(1000);
-					for (const entry of entries) {
-						const entryReplicated = entry.value;
-						const currentPeers = await this.findLeaders(
-							entryReplicated.coordinates,
-							entryReplicated,
-							{
-								roleAge: 0,
-							},
-						);
-						for (const peer of addedPeers) {
-							if (!currentPeers.has(peer)) {
-								continue;
-							}
-							let set = uncheckedDeliver.get(peer);
-							if (!set) {
-								set = new Map();
-								uncheckedDeliver.set(peer, set);
-							}
-							if (!set.has(entryReplicated.hash)) {
-								set.set(entryReplicated.hash, entryReplicated);
-							}
-						}
-					}
-				}
-				await iterator.close();
-			}
-
-			for (const [target, entries] of uncheckedDeliver) {
-				const isJoinWarmupTarget = addedPeers.has(target);
-				const bypassRecentDedupe = isJoinWarmupTarget || forceFreshDelivery;
-				dispatchMaybeMissingEntries(target, entries, {
-					bypassRecentDedupe,
-					retryScheduleMs: isJoinWarmupTarget ? [0, 1_000, 3_000] : undefined,
-				});
+			for (const target of [...uncheckedDeliver.keys()]) {
+				flushUncheckedDeliverTarget(target);
 			}
 
 			return changed;

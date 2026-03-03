@@ -24,6 +24,23 @@ export type SyncOptions<R extends "u32" | "u64"> = {
 	 * high-priority entries using the simple synchronizer.
 	 */
 	maxSimpleEntries?: number;
+
+	/**
+	 * Maximum number of hash strings in one simple sync message.
+	 */
+	maxSimpleHashesPerMessage?: number;
+
+	/**
+	 * Maximum number of coordinates in one simple sync coordinate message.
+	 */
+	maxSimpleCoordinatesPerMessage?: number;
+
+	/**
+	 * Maximum number of hashes tracked per convergent repair session target.
+	 * Large sessions still dispatch all entries, but only this many are tracked
+	 * for deterministic completion metadata.
+	 */
+	maxConvergentTrackedHashes?: number;
 };
 
 export type SynchronizerComponents<R extends "u32" | "u64"> = {
@@ -51,6 +68,8 @@ export type RepairSessionResult = {
 	attempts: number;
 	durationMs: number;
 	completed: boolean;
+	requestedTotal?: number;
+	truncated?: boolean;
 };
 
 export type RepairSession = {

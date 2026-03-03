@@ -145,7 +145,6 @@ describe("rateless-iblt-syncronizer", () => {
 			const totalStartSync =
 				countMessages(db1Messages.calls, StartSync) +
 				countMessages(db2Messages.calls, StartSync);
-
 			// Direction can vary with scheduling, but behavior should remain:
 			// no incremental IBLT symbol exchange and at least one fallback/full-sync trigger.
 			expect(totalMoreSymbols).to.equal(0);

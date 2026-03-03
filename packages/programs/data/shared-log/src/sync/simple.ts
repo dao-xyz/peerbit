@@ -106,6 +106,9 @@ const DEFAULT_CONVERGENT_REPAIR_TIMEOUT_MS = 30_000;
 const DEFAULT_CONVERGENT_RETRY_INTERVALS_MS = [0, 1_000, 3_000, 7_000];
 const DEFAULT_BEST_EFFORT_RETRY_INTERVALS_MS = [0];
 const SESSION_POLL_INTERVAL_MS = 100;
+const DEFAULT_MAX_HASHES_PER_MESSAGE = 1_024;
+const DEFAULT_MAX_COORDINATES_PER_MESSAGE = 1_024;
+const DEFAULT_MAX_CONVERGENT_TRACKED_HASHES = 4_096;
 
 const createDeferred = <T>() => {
 	let resolve!: (value: T | PromiseLike<T>) => void;
@@ -120,6 +123,7 @@ const createDeferred = <T>() => {
 type RepairSessionTargetState = {
 	unresolved: Set<string>;
 	requestedCount: number;
+	requestedTotalCount: number;
 	attempts: number;
 };
 
@@ -130,6 +134,7 @@ type RepairSessionState = {
 	timeoutMs: number;
 	retryIntervalsMs: number[];
 	targets: Map<string, RepairSessionTargetState>;
+	truncated: boolean;
 	deferred: ReturnType<typeof createDeferred<RepairSessionResult[]>>;
 	cancelled: boolean;
 	timer?: ReturnType<typeof setTimeout>;
@@ -218,6 +223,38 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			.sort((a, b) => a - b);
 	}
 
+	private get maxHashesPerMessage() {
+		const value = this.syncOptions?.maxSimpleHashesPerMessage;
+		return value && Number.isFinite(value) && value > 0
+			? Math.floor(value)
+			: DEFAULT_MAX_HASHES_PER_MESSAGE;
+	}
+
+	private get maxCoordinatesPerMessage() {
+		const value = this.syncOptions?.maxSimpleCoordinatesPerMessage;
+		return value && Number.isFinite(value) && value > 0
+			? Math.floor(value)
+			: DEFAULT_MAX_COORDINATES_PER_MESSAGE;
+	}
+
+	private get maxConvergentTrackedHashes() {
+		const value = this.syncOptions?.maxConvergentTrackedHashes;
+		return value && Number.isFinite(value) && value > 0
+			? Math.floor(value)
+			: DEFAULT_MAX_CONVERGENT_TRACKED_HASHES;
+	}
+
+	private chunk<T>(values: T[], size: number): T[][] {
+		if (values.length === 0) {
+			return [];
+		}
+		const out: T[][] = [];
+		for (let i = 0; i < values.length; i += size) {
+			out.push(values.slice(i, i + size));
+		}
+		return out;
+	}
+
 	private isRepairSessionComplete(session: RepairSessionState): boolean {
 		for (const state of session.targets.values()) {
 			if (state.unresolved.size > 0) {
@@ -243,6 +280,8 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				attempts: state.attempts,
 				durationMs,
 				completed,
+				requestedTotal: state.requestedTotalCount,
+				truncated: session.truncated,
 			});
 		}
 		return out;
@@ -395,7 +434,12 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			mode,
 			properties.retryIntervalsMs,
 		);
-		const hashes = this.getPrioritizedHashes(properties.entries);
+		const allHashes = this.getPrioritizedHashes(properties.entries);
+		const trackedHashes =
+			mode === "convergent" && allHashes.length > this.maxConvergentTrackedHashes
+				? allHashes.slice(0, this.maxConvergentTrackedHashes)
+				: allHashes;
+		const truncated = trackedHashes.length < allHashes.length;
 		const targets = [...new Set(properties.targets)];
 		const id = `repair-${++this.repairSessionCounter}`;
 		const deferred = createDeferred<RepairSessionResult[]>();
@@ -403,8 +447,9 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		const targetStates = new Map<string, RepairSessionTargetState>();
 		for (const target of targets) {
 			targetStates.set(target, {
-				unresolved: new Set(hashes),
-				requestedCount: hashes.length,
+				unresolved: new Set(trackedHashes),
+				requestedCount: trackedHashes.length,
+				requestedTotalCount: allHashes.length,
 				attempts: 0,
 			});
 		}
@@ -416,11 +461,12 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			timeoutMs,
 			retryIntervalsMs,
 			targets: targetStates,
+			truncated,
 			deferred,
 			cancelled: false,
 		};
 
-		if (hashes.length === 0 || targets.length === 0) {
+		if (allHashes.length === 0 || targets.length === 0) {
 			deferred.resolve(this.buildRepairSessionResult(session, true));
 			return {
 				id,
@@ -428,7 +474,18 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				cancel: () => {
 					// no-op
 				},
-			};
+				};
+		}
+
+		// For capped convergent sessions, still dispatch the full set once so large
+		// repairs are not limited to tracked hashes.
+		if (mode === "convergent" && truncated) {
+			void this.onMaybeMissingEntries({
+				entries: properties.entries,
+				targets,
+			}).catch(() => {
+				// Best-effort: retries on tracked hashes continue via runRepairSession.
+			});
 		}
 
 		session.timer = setTimeout(() => {
@@ -455,11 +512,20 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		targets: string[];
 	}): Promise<void> {
 		const hashes = this.getPrioritizedHashes(properties.entries);
-
-		return this.rpc.send(new RequestMaybeSync({ hashes }), {
-			priority: 1,
-			mode: new SilentDelivery({ to: properties.targets, redundancy: 1 }),
-		});
+		const chunks = this.chunk(hashes, this.maxHashesPerMessage);
+		return chunks.reduce(
+			(promise, chunk) =>
+				promise.then(() =>
+					this.rpc.send(new RequestMaybeSync({ hashes: chunk }), {
+						priority: 1,
+						mode: new SilentDelivery({
+							to: properties.targets,
+							redundancy: 1,
+						}),
+					}),
+				),
+			Promise.resolve(),
+		);
 	}
 
 	async onMessage(
@@ -578,16 +644,29 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		}
 
 		const isBigInt = typeof hashes[0] === "bigint";
-
-		await this.rpc.send(
-			isBigInt
-				? new RequestMaybeSyncCoordinate({ hashNumbers: hashes as bigint[] })
-				: new ResponseMaybeSync({ hashes: hashes as string[] }),
-			{
-				mode: new SilentDelivery({ to, redundancy: 1 }),
-				priority: 1,
-			},
-		);
+		if (isBigInt) {
+			const chunks = this.chunk(
+				hashes as bigint[],
+				this.maxCoordinatesPerMessage,
+			);
+			for (const chunk of chunks) {
+				await this.rpc.send(
+					new RequestMaybeSyncCoordinate({ hashNumbers: chunk }),
+					{
+						mode: new SilentDelivery({ to, redundancy: 1 }),
+						priority: 1,
+					},
+				);
+			}
+		} else {
+			const chunks = this.chunk(hashes as string[], this.maxHashesPerMessage);
+			for (const chunk of chunks) {
+				await this.rpc.send(new ResponseMaybeSync({ hashes: chunk }), {
+					mode: new SilentDelivery({ to, redundancy: 1 }),
+					priority: 1,
+				});
+			}
+		}
 	}
 	private async checkHasCoordinateOrHash(key: string | bigint) {
 		return typeof key === "bigint"

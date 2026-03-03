@@ -201,6 +201,12 @@ describe("lifecycle", () => {
 			expect(sync.syncInFlightQueueInverted.has(db2Hash)).to.equal(true);
 			await db1.close();
 			await db2.close();
+			// Closing a remote log propagates through unsubscribe + replication updates.
+			// Under full-suite load this can take longer than the default wait timeout.
+			await waitForResolved(
+				async () => expect((await db3.log.getReplicators()).size).to.equal(1),
+				{ timeout: 30e3, delayInterval: 100 },
+			);
 
 			await waitForResolved(() =>
 				expect(db3.log.syncronizer.syncInFlight.size).to.equal(0),

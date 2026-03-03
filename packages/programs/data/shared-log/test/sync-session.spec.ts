@@ -86,4 +86,44 @@ describe("sync-repair-session", () => {
 		expect(result[0]!.unresolved).to.deep.equal(["a"]);
 		expect(result[0]!.attempts).to.be.greaterThan(0);
 	});
+
+	it("caps tracked hashes for large convergent sessions", async () => {
+		const send = sinon.stub().resolves();
+		const rpc = { send } as any;
+
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc,
+			entryIndex: {
+				count: async () => 0,
+			} as any,
+			log: {
+				has: async () => false,
+			} as any,
+			coordinateToHash: new Cache<string>({ max: 10 }),
+			sync: {
+				maxConvergentTrackedHashes: 1,
+			},
+		});
+
+		const entries = new Map<string, any>();
+		entries.set("a", { hash: "a" });
+		entries.set("b", { hash: "b" });
+		entries.set("c", { hash: "c" });
+
+		const session = sync.startRepairSession({
+			entries: entries as any,
+			targets: ["p1"],
+			mode: "convergent",
+			timeoutMs: 120,
+			retryIntervalsMs: [0],
+		});
+
+		const result = await session.done;
+		expect(send.called).to.equal(true);
+		expect(result).to.have.length(1);
+		expect(result[0]!.requested).to.equal(1);
+		expect(result[0]!.requestedTotal).to.equal(3);
+		expect(result[0]!.truncated).to.equal(true);
+		expect(result[0]!.unresolved).to.have.length(1);
+	});
 });
