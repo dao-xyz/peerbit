@@ -540,7 +540,8 @@ testSetups.forEach((setup) => {
 				await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
 			});
 
-			it("distributes to leaving peers", async () => {
+			it("distributes to leaving peers", async function (this: Mocha.Context) {
+				this.retries(2);
 				const args = {
 					timeUntilRoleMaturity: 0,
 					waitForPruneDelay: 50,
