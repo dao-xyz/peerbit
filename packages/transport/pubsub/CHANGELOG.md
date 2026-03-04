@@ -188,6 +188,40 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [5.0.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.1.4...pubsub-v5.0.0) (2026-03-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
+
+### Features
+
+* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
+* **pubsub:** add typed unsubscribe reason metadata ([280983c](https://github.com/dao-xyz/peerbit/commit/280983c37da68590740de7c142adf01db04f8d71))
+* **pubsub:** add typed unsubscribe reasons ([82ac0a1](https://github.com/dao-xyz/peerbit/commit/82ac0a1c5e3174d745517bb908e79009342a2497))
+* **transport:** unify directstream and fanout route hints ([#614](https://github.com/dao-xyz/peerbit/issues/614)) ([4783d05](https://github.com/dao-xyz/peerbit/commit/4783d057edb7122426d63b323d2bd35195f36416))
+
+
+### Bug Fixes
+
+* **pubsub:** treat pending subscriptions as local interest ([#602](https://github.com/dao-xyz/peerbit/issues/602)) ([14881a0](https://github.com/dao-xyz/peerbit/commit/14881a07efffc5dd0da404afa25dada687cb5492))
+* **shared-log:** harden rebalance repair under churn ([42e98ce](https://github.com/dao-xyz/peerbit/commit/42e98ce55439678bd7dce42efd51ef4b6d97eddb))
+* **shared-log:** stabilize repair retries and fanout/test CI ([012387d](https://github.com/dao-xyz/peerbit/commit/012387df987ab0117cdb6fe6b8e43a47d4ae4d6a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 3.0.0
+    * @peerbit/pubsub-interface bumped to 5.0.0
+    * @peerbit/stream bumped to 5.0.0
+    * @peerbit/stream-interface bumped to 6.0.0
+    * @peerbit/time bumped to 3.0.0
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped to 3.0.0
+
 ## [4.1.4](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.1.3...pubsub-v4.1.4) (2026-01-22)
 
 
