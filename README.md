@@ -85,11 +85,13 @@ To generate a local, navigable HTML report with the same remapped source paths u
 
 1. (Optional) clear old coverage artifacts:
    `find . -type d -name .coverage -prune -exec rm -rf {} + && rm -rf .nyc_output coverage`
-2. Run the CI coverage shards you want to include:
+2. Rebuild workspace packages (refreshes generated `dist` type artifacts):
+   `pnpm run build`
+3. Run the CI coverage shards you want to include:
    `pnpm run test:ci:part-1 && pnpm run test:ci:part-2 && pnpm run test:ci:part-3 && pnpm run test:ci:part-4 && pnpm run test:ci:part-5`
-3. Generate the merged report:
+4. Generate the merged report:
    `pnpm run coverage:report`
-4. Open the report:
+5. Open the report:
    macOS: `open coverage/index.html`
    Linux: `xdg-open coverage/index.html`
 
