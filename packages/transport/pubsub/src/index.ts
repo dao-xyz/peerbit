@@ -17,6 +17,7 @@ import {
 	SubscriptionEvent,
 	TopicRootCandidates,
 	UnsubcriptionEvent,
+	type UnsubscriptionReason,
 	Unsubscribe,
 } from "@peerbit/pubsub-interface";
 import {
@@ -1496,16 +1497,19 @@ export class TopicControlPlane
 	}
 
 	public onPeerSession(key: PublicSignKey, _session: number): void {
-		this.removeSubscriptions(key);
+		this.removeSubscriptions(key, "peer-session-reset");
 	}
 
 	public override onPeerUnreachable(publicKeyHash: string) {
 		super.onPeerUnreachable(publicKeyHash);
 		const key = this.peerKeyHashToPublicKey.get(publicKeyHash);
-		if (key) this.removeSubscriptions(key);
+		if (key) this.removeSubscriptions(key, "peer-unreachable");
 	}
 
-	private removeSubscriptions(publicKey: PublicSignKey) {
+	private removeSubscriptions(
+		publicKey: PublicSignKey,
+		reason: UnsubscriptionReason,
+	) {
 		const peerHash = publicKey.hashcode();
 		const peerTopics = this.peerToTopic.get(peerHash);
 		const changed: string[] = [];
@@ -1524,7 +1528,7 @@ export class TopicControlPlane
 		if (changed.length > 0) {
 			this.dispatchEvent(
 				new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
-					detail: new UnsubcriptionEvent(publicKey, changed),
+					detail: new UnsubcriptionEvent(publicKey, changed, reason),
 				}),
 			);
 		}
@@ -1741,7 +1745,11 @@ export class TopicControlPlane
 				if (changed.length > 0) {
 					this.dispatchEvent(
 						new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
-							detail: new UnsubcriptionEvent(sender, changed),
+							detail: new UnsubcriptionEvent(
+								sender,
+								changed,
+								"remote-unsubscribe",
+							),
 						}),
 					);
 				}
