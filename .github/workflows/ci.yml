@@ -54,11 +54,33 @@ jobs:
           PEERBIT_MOCHA_LOG_QUIET: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '1' || '0' }}
           PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '10000' || '0' }}
         run: ${{matrix.test_cmd}}
+      - name: Find coverage report files
+        id: coverage_files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find . -type f \( -name 'coverage-final.json' -o -name 'coverage-pw.json' \) -path '*/.coverage/*' | sort)
+          echo "Found ${#files[@]} coverage files"
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "count=0" >> "$GITHUB_OUTPUT"
+            echo "files=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "count=${#files[@]}" >> "$GITHUB_OUTPUT"
+          echo "files=$(IFS=,; echo "${files[*]}")" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "${files[@]}"
+      - name: Fail if no coverage files were produced
+        if: steps.coverage_files.outputs.count == '0'
+        run: |
+          echo "No coverage files found under */.coverage/"
+          exit 1
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: ${{ github.repository }}
+          files: ${{ steps.coverage_files.outputs.files }}
+          disable_search: true
           fail_ci_if_error: true
           verbose: true
 
@@ -108,11 +130,33 @@ jobs:
           PEERBIT_MOCHA_LOG_QUIET: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '1' || '0' }}
           PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '10000' || '0' }}
         run: ${{matrix.test_cmd}}
+      - name: Find coverage report files
+        id: coverage_files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find . -type f \( -name 'coverage-final.json' -o -name 'coverage-pw.json' \) -path '*/.coverage/*' | sort)
+          echo "Found ${#files[@]} coverage files"
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "count=0" >> "$GITHUB_OUTPUT"
+            echo "files=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "count=${#files[@]}" >> "$GITHUB_OUTPUT"
+          echo "files=$(IFS=,; echo "${files[*]}")" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "${files[@]}"
+      - name: Fail if no coverage files were produced
+        if: steps.coverage_files.outputs.count == '0'
+        run: |
+          echo "No coverage files found under */.coverage/"
+          exit 1
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: ${{ github.repository }}
+          files: ${{ steps.coverage_files.outputs.files }}
+          disable_search: true
           fail_ci_if_error: true
           verbose: true
 
