@@ -103,6 +103,12 @@ importers:
       gh-pages:
         specifier: ^6.3.0
         version: 6.3.0
+      istanbul-lib-coverage:
+        specifier: ^3.2.2
+        version: 3.2.2
+      istanbul-lib-source-maps:
+        specifier: ^5.0.6
+        version: 5.0.6
       mocha:
         specifier: ^11.7.2
         version: 11.7.5

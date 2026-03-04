@@ -153,6 +153,8 @@
 		"eslint-plugin-react-hooks": "^4.6.2",
 		"find-up": "^8.0.0",
 		"gh-pages": "^6.3.0",
+		"istanbul-lib-coverage": "^3.2.2",
+		"istanbul-lib-source-maps": "^5.0.6",
 		"mocha": "^11.7.2",
 		"nyc": "^18.0.0",
 		"prettier": "^3.3.3",

@@ -1,13 +1,13 @@
 # This is a Github Workflow that runs tests on any push or pull request.
 # If the tests pass and this is a push to the master branch it also runs Semantic Release.
 name: CI
-on: 
+on:
   push:
     paths-ignore:
-      - '**.md'
-      - 'docs/**'
+      - "**.md"
+      - "docs/**"
   pull_request:
-    types: ['opened', 'reopened', 'synchronize']
+    types: ["opened", "reopened", "synchronize"]
 jobs:
   test_push:
     if: github.event_name == 'push'
@@ -17,10 +17,10 @@ jobs:
     env:
       PEERBIT_TEST_SESSION: mock
     strategy:
-       matrix:
-        os: [ ubuntu-22.04 ]
+      matrix:
+        os: [ubuntu-22.04]
         node-version: [22.x]
-        test_cmd: 
+        test_cmd:
           - pnpm run test:ci:part-1
           - pnpm run test:ci:part-2
           - pnpm run test:ci:part-3
@@ -54,12 +54,19 @@ jobs:
           PEERBIT_MOCHA_LOG_QUIET: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '1' || '0' }}
           PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '10000' || '0' }}
         run: ${{matrix.test_cmd}}
+      - name: Remap coverage reports to source paths
+        if: always()
+        run: node ./scripts/remap-coverage.mjs
       - name: Find coverage report files
         id: coverage_files
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t files < <(find . -type f \( -name 'coverage-final.json' -o -name 'coverage-pw.json' \) -path '*/.coverage/*' | sort)
+          mapfile -t files < <(find . -type f -name 'coverage-remapped.json' -path '*/.coverage/*' | sort)
+          if [ ${#files[@]} -eq 0 ]; then
+            mapfile -t files < <(find . -type f \( -name 'coverage-final.json' -o -name 'coverage-pw.json' \) -path '*/.coverage/*' | sort)
+          fi
           echo "Found ${#files[@]} coverage files"
           if [ ${#files[@]} -eq 0 ]; then
             echo "count=0" >> "$GITHUB_OUTPUT"
@@ -70,11 +77,12 @@ jobs:
           echo "files=$(IFS=,; echo "${files[*]}")" >> "$GITHUB_OUTPUT"
           printf '%s\n' "${files[@]}"
       - name: Fail if no coverage files were produced
-        if: steps.coverage_files.outputs.count == '0'
+        if: always() && steps.coverage_files.outputs.count == '0'
         run: |
           echo "No coverage files found under */.coverage/"
           exit 1
       - name: Upload coverage reports to Codecov
+        if: always() && steps.coverage_files.outputs.count != '0'
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -92,10 +100,10 @@ jobs:
     env:
       PEERBIT_TEST_SESSION: mock
     strategy:
-       matrix:
-        os: [ ubuntu-22.04 ]
+      matrix:
+        os: [ubuntu-22.04]
         node-version: [22.x]
-        test_cmd: 
+        test_cmd:
           - pnpm run test:ci:part-1
           - pnpm run test:ci:part-2
           - pnpm run test:ci:part-3
@@ -130,12 +138,19 @@ jobs:
           PEERBIT_MOCHA_LOG_QUIET: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '1' || '0' }}
           PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '10000' || '0' }}
         run: ${{matrix.test_cmd}}
+      - name: Remap coverage reports to source paths
+        if: always()
+        run: node ./scripts/remap-coverage.mjs
       - name: Find coverage report files
         id: coverage_files
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t files < <(find . -type f \( -name 'coverage-final.json' -o -name 'coverage-pw.json' \) -path '*/.coverage/*' | sort)
+          mapfile -t files < <(find . -type f -name 'coverage-remapped.json' -path '*/.coverage/*' | sort)
+          if [ ${#files[@]} -eq 0 ]; then
+            mapfile -t files < <(find . -type f \( -name 'coverage-final.json' -o -name 'coverage-pw.json' \) -path '*/.coverage/*' | sort)
+          fi
           echo "Found ${#files[@]} coverage files"
           if [ ${#files[@]} -eq 0 ]; then
             echo "count=0" >> "$GITHUB_OUTPUT"
@@ -146,11 +161,12 @@ jobs:
           echo "files=$(IFS=,; echo "${files[*]}")" >> "$GITHUB_OUTPUT"
           printf '%s\n' "${files[@]}"
       - name: Fail if no coverage files were produced
-        if: steps.coverage_files.outputs.count == '0'
+        if: always() && steps.coverage_files.outputs.count == '0'
         run: |
           echo "No coverage files found under */.coverage/"
           exit 1
       - name: Upload coverage reports to Codecov
+        if: always() && steps.coverage_files.outputs.count != '0'
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
