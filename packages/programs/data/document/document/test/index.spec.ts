@@ -48,6 +48,7 @@ import type { TopicControlPlane } from "@peerbit/pubsub";
 import { MissingResponsesError, RPCMessage, ResponseV0 } from "@peerbit/rpc";
 import {
 	AbsoluteReplicas,
+	ReplicationLeaseMessage,
 	SharedLog,
 	decodeReplicas,
 } from "@peerbit/shared-log";
@@ -1373,7 +1374,11 @@ describe("index", () => {
 						expect(
 							await stores[1].docs.log.getMyReplicationSegments(),
 						).to.have.length(1);
-						expect(emittedMessage).to.have.length(0);
+						expect(
+							emittedMessage.filter(
+								(message) => !(message instanceof ReplicationLeaseMessage),
+							),
+						).to.have.length(0);
 						stores[1].docs.log.events.removeEventListener(
 							"replication:change",
 							listener,

@@ -2316,13 +2316,15 @@ export class SharedLog<
 					});
 				}
 			}
-			await this.announceReplicationLease(this._isReplicating).catch((error) => {
-				if (!isNotStartedError(error as Error)) {
-					logger.error(error);
+				if (change.length > 0) {
+					await this.announceReplicationLease(this._isReplicating).catch((error) => {
+						if (!isNotStartedError(error as Error)) {
+							logger.error(error);
+						}
+					});
 				}
-			});
+			}
 		}
-	}
 
 	private removePeerFromGidPeerHistory(publicKeyHash: string, gid?: string) {
 		if (gid) {
