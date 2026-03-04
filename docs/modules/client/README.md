@@ -20,7 +20,7 @@ Data is not only things that you generate in your databases, but also keys that 
 ## Connecting nodes
 
 ### Bootstrapping
-The easiest way to go online is to "bootstrap" your node. At the moment, this will dial all addresses available in the [public bootstrap list](https://github.com/dao-xyz/peerbit-bootstrap/blob/master/bootstrap.env)
+The easiest way to go online is to "bootstrap" your node. At the moment, this will dial all addresses available in the [public bootstrap list](https://github.com/dao-xyz/peerbit-bootstrap/blob/master/bootstrap-5.env)
 
 [bootstrap](./bootstrap.ts ':include')
 
@@ -45,4 +45,3 @@ Browser-to-browser connections can not be established without an intermediate no
 You can read more about deploying a relay [here](/modules/deploy/server/)
 
 [connectivity](./connectivity-relay.ts ':include')
-

@@ -1,5 +1,5 @@
 export const resolveBootstrapAddresses = async (
-	v: string = "4",
+	v: string = "5",
 ): Promise<string[]> => {
 	// Bootstrap addresses for network
 	return (
