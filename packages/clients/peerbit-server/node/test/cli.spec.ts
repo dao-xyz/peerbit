@@ -201,7 +201,7 @@ describe("cli", () => {
 		});
 	});
 
-	describe("remote", () => {
+		describe("remote", () => {
 		it("rejets on invalid remote", async () => {
 			let rejected = false;
 			try {
@@ -222,7 +222,7 @@ describe("cli", () => {
 			await checkPeerId(terminal);
 		});
 
-		describe("connect", () => {
+			describe("connect", () => {
 			const GROUP_A = "GROUP_A";
 			beforeEach(async () => {
 				await start();
@@ -260,9 +260,47 @@ describe("cli", () => {
 					expect(countPeerIds(terminal.out)).equal(1),
 				);
 			});
-		});
+			});
 
-		describe("restart", () => {
+			describe("non-interactive automation commands", () => {
+				it("self-update requires explicit target selection", async () => {
+					let rejected = false;
+					try {
+						runCommand(`remote self-update --directory ${configDirectory}`);
+					} catch (error) {
+						rejected = true;
+						expect(error?.toString()).to.include("No targets selected");
+					}
+					expect(rejected).to.be.true;
+				});
+
+				it("exports bootstrap multiaddr for a selected remote", async () => {
+					await start();
+					const out = runCommand(
+						`remote export-bootstrap ${LOCAL_REMOTE_NAME} --directory ${configDirectory}`,
+					).trim();
+					expect(out.length).to.be.greaterThan(0);
+					expect(out).to.include("/p2p/");
+				});
+
+				it("exports bootstrap JSON for selected remotes", async () => {
+					await start();
+					const out = runCommand(
+						`remote export-bootstrap ${LOCAL_REMOTE_NAME} --json --directory ${configDirectory}`,
+					);
+					const rows = JSON.parse(out) as Array<{
+						name: string;
+						bootstrap: string;
+						addresses: string[];
+					}>;
+					expect(rows.length).to.equal(1);
+					expect(rows[0]!.name).to.equal(LOCAL_REMOTE_NAME);
+					expect(rows[0]!.bootstrap).to.include("/p2p/");
+					expect(rows[0]!.addresses.length).to.be.greaterThan(0);
+				});
+			});
+
+			describe("restart", () => {
 			afterEach(async () => {
 				const terminal = connect();
 				terminal.write("stop"); // we have to do this because else we create detached processes during restart

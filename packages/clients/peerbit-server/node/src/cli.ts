@@ -3,6 +3,7 @@
 import type { PeerId } from "@libp2p/interface";
 import { peerIdFromString } from "@libp2p/peer-id";
 import { toBase64 } from "@peerbit/crypto";
+import { waitForResolved } from "@peerbit/time";
 import chalk from "chalk";
 import fs from "fs";
 import sodium from "libsodium-wrappers";
@@ -123,6 +124,74 @@ const padString = function (
 	//      var pad = String(c || ' ').charAt(0).repeat(Math.abs(n) - this.length);
 	return padding < 0 ? pad + val : val + pad;
 	//      return (n < 0) ? val + pad : pad + val;
+};
+
+const resolveRemoteTargets = async (properties: {
+	directory: string;
+	names?: string[];
+	all?: boolean;
+	groups?: string[];
+}): Promise<RemoteObject[]> => {
+	const remotes = new Remotes(getRemotesPath(properties.directory));
+	const groups = (properties.groups || []).filter((g) => g.length > 0);
+	const includeAll = Boolean(properties.all);
+	let names = [...(properties.names || [])];
+	if (names.length === 0 && (includeAll || groups.length > 0)) {
+		names = (await remotes.all()).map((x) => x.name);
+	}
+
+	if (names.length === 0) {
+		throw new Error(
+			"No targets selected. Provide [name...], or use --all/--group to select remotes.",
+		);
+	}
+
+	const selectedRemotes: RemoteObject[] = [];
+	for (const name of names) {
+		if (name === "localhost") {
+			selectedRemotes.push({
+				address: "http://localhost:" + LOCAL_API_PORT,
+				name: "localhost",
+				group: DEFAULT_REMOTE_GROUP,
+			});
+			continue;
+		}
+
+		const remote = remotes.getByName(name);
+		if (!remote) {
+			throw new Error("Missing remote with name: " + name);
+		}
+		if (groups.length > 0 && !groups.includes(remote.group)) {
+			continue;
+		}
+		selectedRemotes.push(remote);
+	}
+
+	const deduped = new Map<string, RemoteObject>();
+	for (const remote of selectedRemotes) {
+		deduped.set(remote.name, remote);
+	}
+	const values = [...deduped.values()];
+	if (values.length === 0) {
+		throw new Error("No remotes matched your selection");
+	}
+	return values;
+};
+
+const pickPreferredBootstrapAddress = (addresses: string[]): string | undefined => {
+	const candidates = addresses.filter((a) => a.includes("/p2p/"));
+	if (candidates.length === 0) {
+		return undefined;
+	}
+	const score = (a: string) => {
+		let value = 0;
+		if (a.includes("/dns")) value += 8;
+		if (a.includes("/wss")) value += 6;
+		else if (a.includes("/ws")) value += 4;
+		if (a.includes("/tcp/4003")) value += 2;
+		return value;
+	};
+	return [...candidates].sort((a, b) => score(b) - score(a))[0];
 };
 
 export const cli = async (args?: string[]) => {
@@ -661,10 +730,10 @@ export const cli = async (args?: string[]) => {
 						}
 					},
 				})
-				.command({
-					command: "list",
-					aliases: "ls",
-					describe: "List remotes",
+					.command({
+						command: "list",
+						aliases: "ls",
+						describe: "List remotes",
 					builder: (yargs: Argv) => {
 						yargs.option("directory", {
 							describe: "Peerbit directory",
@@ -717,12 +786,184 @@ export const cli = async (args?: string[]) => {
 							console.log(table.render());
 						} else {
 							console.log("No remotes found!");
-						}
-					},
-				})
-				.command({
-					command: "add <name> <address>",
-					describe: "Add remote",
+							}
+						},
+					})
+					.command({
+						command: "self-update [version] [name...]",
+						describe:
+							"Update @peerbit/server on selected remotes without interactive shell",
+						builder: (yargs: Argv) => {
+							yargs
+								.positional("version", {
+									describe:
+										"Version spec for @peerbit/server (e.g. 5.10.14). Defaults to latest.",
+									type: "string",
+								})
+								.positional("name", {
+									type: "string",
+									describe: "Remote name(s)",
+									demandOption: false,
+									array: true,
+									default: [],
+								})
+								.option("all", {
+									type: "boolean",
+									describe: "Target all known remotes",
+									default: false,
+								})
+								.option("group", {
+									type: "string",
+									describe: "Target remotes by group",
+									alias: "g",
+									default: [],
+									array: true,
+								})
+								.option("wait-ready", {
+									type: "boolean",
+									describe: "Wait until each remote is reachable after restart",
+									default: true,
+								})
+								.option("timeout", {
+									type: "number",
+									describe: "Readiness timeout in milliseconds",
+									default: 180_000,
+								})
+								.option("delay", {
+									type: "number",
+									describe: "Readiness poll interval in milliseconds",
+									default: 3_000,
+								})
+								.option("directory", {
+									describe: "Peerbit directory",
+									defaultDescription: "~.peerbit",
+									type: "string",
+									alias: "d",
+									default: getHomeConfigDir(),
+								});
+							return yargs;
+						},
+						handler: async (args) => {
+							const targets = await resolveRemoteTargets({
+								directory: args.directory,
+								names: args.name,
+								all: args.all,
+								groups: args.group,
+							});
+							const keypair = await getKeypair(args.directory);
+							for (const target of targets) {
+								const api = await createClient(keypair, target);
+								const update = await api.selfUpdate(args.version);
+								console.log(
+									`${target.name}: self-update initiated -> @peerbit/server@${update.version}`,
+								);
+							}
+
+							if (args["wait-ready"]) {
+								for (const target of targets) {
+									await waitForResolved(
+										async () => {
+											const api = await createClient(keypair, target);
+											return api.peer.id.get();
+										},
+										{
+											timeout: args.timeout,
+											delayInterval: args.delay,
+										},
+									);
+									console.log(`${target.name}: ready`);
+								}
+							}
+						},
+					})
+					.command({
+						command: "export-bootstrap [name...]",
+						describe:
+							"Export preferred bootstrap multiaddrs from selected remotes",
+						builder: (yargs: Argv) => {
+							yargs
+								.positional("name", {
+									type: "string",
+									describe: "Remote name(s)",
+									demandOption: false,
+									array: true,
+									default: [],
+								})
+								.option("all", {
+									type: "boolean",
+									describe: "Target all known remotes",
+									default: false,
+								})
+								.option("group", {
+									type: "string",
+									describe: "Target remotes by group",
+									alias: "g",
+									default: [],
+									array: true,
+								})
+								.option("json", {
+									type: "boolean",
+									describe: "Output machine-readable JSON",
+									default: false,
+								})
+								.option("directory", {
+									describe: "Peerbit directory",
+									defaultDescription: "~.peerbit",
+									type: "string",
+									alias: "d",
+									default: getHomeConfigDir(),
+								});
+							return yargs;
+						},
+						handler: async (args) => {
+							const targets = await resolveRemoteTargets({
+								directory: args.directory,
+								names: args.name,
+								all: args.all,
+								groups: args.group,
+							});
+							const keypair = await getKeypair(args.directory);
+							const rows: {
+								name: string;
+								address: string;
+								peerId: string;
+								bootstrap: string;
+								addresses: string[];
+							}[] = [];
+
+							for (const target of targets) {
+								const api = await createClient(keypair, target);
+								const peerId = (await api.peer.id.get()).toString();
+								const addresses = (await api.peer.addresses.get()).map((x) =>
+									x.toString(),
+								);
+								const bootstrap = pickPreferredBootstrapAddress(addresses);
+								if (!bootstrap) {
+									throw new Error(
+										`No bootstrap-compatible multiaddr found for '${target.name}'`,
+									);
+								}
+								rows.push({
+									name: target.name,
+									address: target.address,
+									peerId,
+									bootstrap,
+									addresses,
+								});
+							}
+
+							if (args.json) {
+								console.log(JSON.stringify(rows, null, 2));
+							} else {
+								for (const row of rows) {
+									console.log(row.bootstrap);
+								}
+							}
+						},
+					})
+					.command({
+						command: "add <name> <address>",
+						describe: "Add remote",
 					builder: (yargs: Argv) => {
 						yargs
 							.positional("name", {
