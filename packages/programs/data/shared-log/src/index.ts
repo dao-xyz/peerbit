@@ -444,8 +444,13 @@ const DEFAULT_DISTRIBUTION_DEBOUNCE_TIME = 500;
 const RECENT_REPAIR_DISPATCH_TTL_MS = 5_000;
 const REPAIR_SWEEP_ENTRY_BATCH_SIZE = 1_000;
 const REPAIR_SWEEP_TARGET_BUFFER_SIZE = 1024;
-const FORCE_FRESH_RETRY_SCHEDULE_MS = [0, 1_000, 3_000, 7_000];
-const JOIN_WARMUP_RETRY_SCHEDULE_MS = [0, 1_000, 3_000];
+// Churn/join repair can race with pruning and transient missed sync requests under
+// heavy event-loop load. Keep retries alive with a longer tail so reassigned
+// entries are retried after short bursts and slower recovery windows.
+const FORCE_FRESH_RETRY_SCHEDULE_MS = [
+	0, 1_000, 3_000, 7_000, 15_000, 30_000, 45_000,
+];
+const JOIN_WARMUP_RETRY_SCHEDULE_MS = [0, 1_000, 3_000, 7_000, 15_000];
 
 const toPositiveInteger = (
 	value: number | undefined,
@@ -2376,6 +2381,12 @@ export class SharedLog<
 		if (filteredEntries.size === 0) {
 			return;
 		}
+		const retrySchedule =
+			options?.retryScheduleMs && options.retryScheduleMs.length > 0
+				? options.retryScheduleMs
+				: options?.forceFreshDelivery
+					? FORCE_FRESH_RETRY_SCHEDULE_MS
+					: [0];
 
 		const run = () => {
 			// For force-fresh churn repair we intentionally bypass rateless IBLT and
@@ -2401,13 +2412,6 @@ export class SharedLog<
 				}),
 			).catch((error: any) => logger.error(error));
 		};
-
-		const retrySchedule =
-			options?.retryScheduleMs && options.retryScheduleMs.length > 0
-				? options.retryScheduleMs
-				: options?.forceFreshDelivery
-					? FORCE_FRESH_RETRY_SCHEDULE_MS
-					: [0];
 
 		for (const delayMs of retrySchedule) {
 			if (delayMs === 0) {
