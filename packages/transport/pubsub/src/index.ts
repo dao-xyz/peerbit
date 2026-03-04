@@ -741,6 +741,10 @@ export class TopicControlPlane
 	}
 
 	private initializePeer(publicKey: PublicSignKey) {
+		// Remote subscribers can be non-neighbours (learned via relayed topic control).
+		// Keep hash->key mapping so later route-unreachable events can evict stale
+		// subscription state for abruptly departed peers.
+		this.peerKeyHashToPublicKey.set(publicKey.hashcode(), publicKey);
 		this.peerToTopic.get(publicKey.hashcode()) ||
 			this.peerToTopic.set(publicKey.hashcode(), new Set());
 	}
