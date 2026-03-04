@@ -114,6 +114,17 @@ export class StoppedReplicating extends TransportMessage {
 	}
 }
 
+@variant([1, 5])
+export class ReplicationLeaseMessage extends TransportMessage {
+	@field({ type: "bool" })
+	replicating: boolean;
+
+	constructor(properties: { replicating: boolean }) {
+		super();
+		this.replicating = properties.replicating;
+	}
+}
+
 /* 
 @variant(1)
 export class RelativeMinReplicas extends MinReplicas {

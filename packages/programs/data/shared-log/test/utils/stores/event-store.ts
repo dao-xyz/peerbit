@@ -67,6 +67,8 @@ export type Args<
 	waitForReplicatorTimeout?: number;
 	waitForReplicatorRequestIntervalMs?: number;
 	waitForReplicatorRequestMaxAttempts?: number;
+	replicatorLeaseHeartbeatIntervalMs?: number;
+	replicatorLeaseTtlMs?: number;
 	fanout?: SharedLogFanoutOptions;
 	keep?: (
 		entry: Entry<Operation<T>> | ShallowEntry | EntryReplicated<R>,
@@ -136,6 +138,9 @@ export class EventStore<
 				properties?.waitForReplicatorRequestIntervalMs,
 			waitForReplicatorRequestMaxAttempts:
 				properties?.waitForReplicatorRequestMaxAttempts,
+			replicatorLeaseHeartbeatIntervalMs:
+				properties?.replicatorLeaseHeartbeatIntervalMs,
+			replicatorLeaseTtlMs: properties?.replicatorLeaseTtlMs,
 			encoding: JSON_ENCODING,
 			timeUntilRoleMaturity: properties?.timeUntilRoleMaturity ?? 3000,
 			waitForPruneDelay: properties?.waitForPruneDelay ?? 0,

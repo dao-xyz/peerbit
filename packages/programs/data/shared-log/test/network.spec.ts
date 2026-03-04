@@ -93,4 +93,125 @@ describe(`network`, () => {
 		).to.have.members(["hello", "world"]);
 		await waitForResolved(() => expect(db2.log.log.length).equal(2));
 	});
+
+	it("prunes departed replicator in relay topology after abrupt stop", async () => {
+		session = await TestSession.disconnected(3);
+
+		// peer 3 is relay, and dont connect 1 with 2 directly
+		await session.peers[0].dial(session.peers[2].getMultiaddrs()[0]);
+		await session.peers[1].dial(session.peers[2].getMultiaddrs()[0]);
+
+		await session.peers[0].services.blocks.waitFor(session.peers[2].peerId);
+		await session.peers[1].services.blocks.waitFor(session.peers[2].peerId);
+
+		// Force all shards to resolve to relay.
+		const relayHash = (session.peers[2].services as any).pubsub.publicKeyHash as
+			| string
+			| undefined;
+		expect(relayHash, "relayHash").to.be.a("string");
+		for (const peer of session.peers as any[]) {
+			const servicesAny: any = peer.services;
+			const fanoutPlane = servicesAny?.fanout?.topicRootControlPlane;
+			const pubsubPlane = servicesAny?.pubsub?.topicRootControlPlane;
+			const planes = [...new Set([fanoutPlane, pubsubPlane].filter(Boolean))];
+			for (const plane of planes) {
+				try {
+					plane.setTopicRootCandidates([relayHash]);
+				} catch {
+					// ignore
+				}
+			}
+		}
+		await (session.peers[2].services as any).pubsub.hostShardRootsNow();
+
+		db1 = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicas: { min: 2 },
+				replicate: { offset: 0, factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+
+		db2 = await EventStore.open<EventStore<string, any>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					replicas: { min: 2 },
+					replicate: { offset: 0, factor: 1 },
+					timeUntilRoleMaturity: 0,
+				},
+			},
+		);
+
+		await db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+			timeout: 20_000,
+			roleAge: 0,
+		});
+		await waitForResolved(
+			async () => expect((await db1.log.getReplicators()).size).to.equal(2),
+			{ timeout: 20_000, delayInterval: 100 },
+		);
+
+		// Simulate abrupt tab/process loss (no program-level close handshake).
+		await (session.peers[1] as any).libp2p.stop();
+
+		await waitForResolved(
+			async () => {
+				await (db1.log as any).probeReplicatorLiveness();
+				expect((await db1.log.getReplicators()).size).to.equal(1);
+			},
+			{ timeout: 30_000, delayInterval: 100 },
+		);
+	});
+
+	it("tracks and clears replicator leases on replicate and unreplicate", async () => {
+		session = await TestSession.connected(2);
+
+		db1 = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicas: { min: 2 },
+				replicate: { offset: 0, factor: 1 },
+				timeUntilRoleMaturity: 0,
+				replicatorLeaseHeartbeatIntervalMs: 100,
+				replicatorLeaseTtlMs: 1_000,
+			},
+		});
+
+		db2 = await EventStore.open<EventStore<string, any>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					replicas: { min: 2 },
+					replicate: { offset: 0, factor: 1 },
+					timeUntilRoleMaturity: 0,
+					replicatorLeaseHeartbeatIntervalMs: 100,
+					replicatorLeaseTtlMs: 1_000,
+				},
+			},
+		);
+
+		const peer2Hash = session.peers[1].identity.publicKey.hashcode();
+		await db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+			timeout: 20_000,
+			roleAge: 0,
+		});
+		await waitForResolved(
+			() =>
+				expect(
+					(db1.log as any)._replicatorLeaseExpiryByPeer.has(peer2Hash),
+				).to.equal(true),
+			{ timeout: 20_000, delayInterval: 100 },
+		);
+
+		await db2.log.replicate(false);
+		await waitForResolved(
+			() =>
+				expect(
+					(db1.log as any)._replicatorLeaseExpiryByPeer.has(peer2Hash),
+				).to.equal(false),
+			{ timeout: 20_000, delayInterval: 100 },
+		);
+	});
 });
