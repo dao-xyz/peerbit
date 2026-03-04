@@ -58,7 +58,9 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          slug: dao-xyz/peerbit
+          slug: ${{ github.repository }}
+          fail_ci_if_error: true
+          verbose: true
 
   test_pr:
     if: github.event_name == 'pull_request'
@@ -110,7 +112,9 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          slug: dao-xyz/peerbit
+          slug: ${{ github.repository }}
+          fail_ci_if_error: true
+          verbose: true
 
   fanout_gate_pr:
     if: github.event_name == 'pull_request'
