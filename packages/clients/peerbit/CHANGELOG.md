@@ -313,6 +313,14 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [5.0.1](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.0.0...peerbit-v5.0.1) (2026-03-04)
+
+
+### Bug Fixes
+
+* **peerbit:** default bootstrap resolver to v5 list ([c28cd68](https://github.com/dao-xyz/peerbit/commit/c28cd682bf445ba74997fb26700bc16e0f111863))
+* **peerbit:** default bootstrap to v5 list and lock with tests ([b712c6b](https://github.com/dao-xyz/peerbit/commit/b712c6b6527f9d3c21ddca0cb3a7a90e3d906011))
+
 ## [5.0.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.4.19...peerbit-v5.0.0) (2026-03-04)
 
 
