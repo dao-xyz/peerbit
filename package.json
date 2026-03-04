@@ -103,7 +103,9 @@
 		"deploy:docs": "pnpm run site:build && gh-pages --dist apps/peerbit-org/dist --dotfiles",
 		"fmt": "prettier --write '{*,**/*}.{js,ts,jsx,tsx,json,vue}'",
 		"postinstall": "mkdir -p node_modules/chai-extend && cp chai-global.js node_modules/chai-extend/chai-global.js && echo '{\"type\": \"module\"}' > node_modules/chai-extend/package.json",
-		"coverage:report": "node scripts/merge-coverage.mjs && nyc report --reporter=html --reporter=text"
+		"coverage:remap": "node scripts/remap-coverage.mjs",
+		"coverage:merge": "node scripts/merge-coverage.mjs",
+		"coverage:report": "pnpm run coverage:remap && pnpm run coverage:merge && nyc report --reporter=html --reporter=text"
 	},
 	"pnpm": {
 		"onlyBuiltDependencies": [
