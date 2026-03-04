@@ -35,11 +35,23 @@ export class UnsubcriptionEvent {
 	@field({ type: vec("string") })
 	topics: string[];
 
-	constructor(from: PublicSignKey, topics: string[]) {
+	reason?: UnsubscriptionReason;
+
+	constructor(
+		from: PublicSignKey,
+		topics: string[],
+		reason?: UnsubscriptionReason,
+	) {
 		this.from = from;
 		this.topics = topics;
+		this.reason = reason;
 	}
 }
+
+export type UnsubscriptionReason =
+	| "remote-unsubscribe"
+	| "peer-unreachable"
+	| "peer-session-reset";
 
 export class PublishEvent {
 	@field({ type: PubSubData })
