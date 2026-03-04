@@ -26,6 +26,7 @@ jobs:
           - pnpm run test:ci:part-3
           - pnpm run test:ci:part-4
           - pnpm run test:ci:part-5
+          - pnpm run test:ci:part-6
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -50,9 +51,9 @@ jobs:
         run: pnpm run lint
       - name: Tests
         env:
-          PEERBIT_MOCHA_LOG_TEST_START: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '1' || '0' }}
-          PEERBIT_MOCHA_LOG_QUIET: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '1' || '0' }}
-          PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '10000' || '0' }}
+          PEERBIT_MOCHA_LOG_TEST_START: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6') && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_QUIET: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6') && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6') && '10000' || '0' }}
         run: ${{matrix.test_cmd}}
 
   test_pr:
@@ -72,6 +73,7 @@ jobs:
           - pnpm run test:ci:part-3
           - pnpm run test:ci:part-4
           - pnpm run test:ci:part-5
+          - pnpm run test:ci:part-6
 
     steps:
       - uses: actions/checkout@v4
@@ -97,9 +99,9 @@ jobs:
         run: pnpm run lint
       - name: Tests
         env:
-          PEERBIT_MOCHA_LOG_TEST_START: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '1' || '0' }}
-          PEERBIT_MOCHA_LOG_QUIET: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '1' || '0' }}
-          PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ matrix.test_cmd == 'pnpm run test:ci:part-4' && '10000' || '0' }}
+          PEERBIT_MOCHA_LOG_TEST_START: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6') && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_QUIET: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6') && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6') && '10000' || '0' }}
         run: ${{matrix.test_cmd}}
 
   fanout_gate_pr:
