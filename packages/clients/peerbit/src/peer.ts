@@ -466,17 +466,20 @@ export class Peerbit implements ProgramClient {
 				dialSignal ? ({ signal: dialSignal } as any) : undefined,
 			);
 
-			const publicKey = Ed25519PublicKey.fromPeerId(connection.remotePeer);
-			const peerHash = publicKey.hashcode();
-
 			const resolvedReadiness: DialReadiness =
 				options?.readiness ??
 				(this.libp2p.services.fanout ? "services-and-fanout" : "services");
 			const serviceWaitTimeoutMs =
 				options?.serviceWaitTimeoutMs ?? options?.dialTimeoutMs;
 			if (resolvedReadiness === "connection") {
+				// Transport-level dial success is enough here. Do not require remote public key
+				// readiness, which may only become available after identify completes (notably
+				// in browser runtimes).
 				return true;
 			}
+
+			const publicKey = Ed25519PublicKey.fromPeerId(connection.remotePeer);
+			const peerHash = publicKey.hashcode();
 
 			const waitForNeighbor = async (
 				label: "Pubsub" | "Blocks" | "Fanout",
@@ -643,7 +646,21 @@ export class Peerbit implements ProgramClient {
 			}
 		}
 		if (!once) {
-			throw new Error("Failed to succefully dial any bootstrap node");
+			const reasons = settled
+				.filter((r): r is PromiseRejectedResult => r.status === "rejected")
+				.map((r) => r.reason);
+			const preview = reasons
+				.slice(0, 3)
+				.map((r) => (r instanceof Error ? r.message : String(r)))
+				.filter((x) => x.length > 0)
+				.join("; ");
+			const err = new Error(
+				preview
+					? `Failed to succefully dial any bootstrap node (first errors: ${preview})`
+					: "Failed to succefully dial any bootstrap node",
+			);
+			(err as any).causes = reasons;
+			throw err;
 		}
 
 		// Seed deterministic topic-root candidates for shard root resolution.

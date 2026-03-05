@@ -422,8 +422,15 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 						if (list.length === 0) {
 							bootstrapLog("offline: skipping relay dialing");
 						} else {
-							for (const addr of list) {
-								await created.dial(addr as any);
+							// Treat explicit bootstraps as actual bootstraps:
+							// run Peerbit.bootstrap(list) so fanout/topic-root candidates are seeded,
+							// instead of only dialing transport connections.
+							if (typeof created.bootstrap === "function") {
+								await created.bootstrap(list as any);
+							} else {
+								for (const addr of list) {
+									await created.dial(addr as any);
+								}
 							}
 						}
 					} else if (
