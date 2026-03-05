@@ -137,6 +137,7 @@ import {
 	AddedReplicationSegmentMessage,
 	AllReplicatingSegmentsMessage,
 	MinReplicas,
+	ReplicationPingMessage,
 	ReplicationError,
 	type ReplicationLimits,
 	RequestReplicationInfoMessage,
@@ -3471,7 +3472,7 @@ export class SharedLog<
 			}
 
 			try {
-				await this.rpc.send(new RequestReplicationInfoMessage(), {
+				await this.rpc.send(new ReplicationPingMessage(), {
 					mode: new AcknowledgeDelivery({ redundancy: 1, to: [key] }),
 					priority: 1,
 				});
@@ -4219,6 +4220,8 @@ export class SharedLog<
 					msg.message,
 					context.from!.hashcode(),
 				);
+			} else if (msg instanceof ReplicationPingMessage) {
+				// No-op: used as an ACKed unicast liveness probe.
 			} else if (msg instanceof RequestReplicationInfoMessage) {
 				if (context.from.equals(this.node.identity.publicKey)) {
 					return;
