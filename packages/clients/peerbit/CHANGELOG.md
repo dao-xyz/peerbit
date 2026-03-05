@@ -313,6 +313,13 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [5.0.2](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.0.1...peerbit-v5.0.2) (2026-03-05)
+
+
+### Bug Fixes
+
+* **peerbit:** make bootstrap dial connection-only ([bba7de4](https://github.com/dao-xyz/peerbit/commit/bba7de4bd93f3a5d184c0636db2ea91660f999e1))
+
 ## [5.0.1](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.0.0...peerbit-v5.0.1) (2026-03-04)
 
 

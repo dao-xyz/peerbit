@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.2](https://github.com/dao-xyz/peerbit/compare/react-v1.0.1...react-v1.0.2) (2026-03-05)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped to 5.0.2
+
 ## [1.0.1](https://github.com/dao-xyz/peerbit/compare/react-v1.0.0...react-v1.0.1) (2026-03-04)
 
 
