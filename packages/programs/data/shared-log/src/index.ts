@@ -3478,8 +3478,8 @@ export class SharedLog<
 						mode: new AcknowledgeDelivery({ redundancy: 1, to: [key] }),
 						priority: 1,
 					});
-				this._replicatorLivenessFailures.delete(peerHash);
-			} catch (error) {
+					this._replicatorLivenessFailures.delete(peerHash);
+				} catch (error) {
 				if (isNotStartedError(error as Error)) {
 					return;
 				}
