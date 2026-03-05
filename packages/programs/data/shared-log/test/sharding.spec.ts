@@ -1717,11 +1717,31 @@ testSetups.forEach((setup) => {
 							// insert 100kb
 							await db1.add(data, { meta: { next: [] } });
 						}
+						await Promise.all([
+							waitForConverged(() => db1.log.log.length),
+							waitForConverged(() => db2.log.log.length),
+						]);
+
 						await waitForResolved(
-							() =>
-								expect(db2.log.log.length).greaterThan(db1.log.log.length + 15),
+							async () => {
+								const [p1, p2, owned1, owned2] = await Promise.all([
+									db1.log.calculateMyTotalParticipation(),
+									db2.log.calculateMyTotalParticipation(),
+									db1.log.countAssignedHeads({ strict: true }),
+									db2.log.countAssignedHeads({ strict: true }),
+								]);
+								expect(
+									p2,
+									`db1 participation=${p1}, db2 participation=${p2}`,
+								).to.be.greaterThan(p1 + 0.1);
+								expect(
+									owned2,
+									`db1 owned=${owned1}, db2 owned=${owned2}`,
+								).to.be.greaterThan(owned1 + 5);
+							},
 							{
 								timeout: 3e4,
+								delayInterval: 250,
 							},
 						);
 					});

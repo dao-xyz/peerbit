@@ -77,6 +77,37 @@ describe("pubsub (unsubscribe reason)", function () {
 		return { a, b };
 	};
 
+	const setupTrackedSubscribersViaRelay = async (
+		topic: string,
+		session: Awaited<ReturnType<typeof createDisconnectedSession>>,
+	) => {
+		const a = session.peers[0]!.services.pubsub;
+		const b = session.peers[1]!.services.pubsub;
+		const relay = session.peers[2]!.services.pubsub;
+
+		await session.connect([
+			[session.peers[0], session.peers[2]],
+			[session.peers[1], session.peers[2]],
+		]);
+
+		const relayHash = relay.publicKeyHash;
+		for (const peer of session.peers) {
+			peer!.services.pubsub.setTopicRootCandidates([relayHash]);
+		}
+		await relay.hostShardRootsNow();
+
+		await Promise.all([a.subscribe(topic), b.subscribe(topic)]);
+
+		await waitForResolved(() => {
+			const aTopics = a.topics.get(topic);
+			const bTopics = b.topics.get(topic);
+			expect(aTopics?.has(b.publicKeyHash)).to.equal(true);
+			expect(bTopics?.has(a.publicKeyHash)).to.equal(true);
+		});
+
+		return { a, b };
+	};
+
 	const expectUnsubscribeEvent = async (properties: {
 		events: UnsubcriptionEvent[];
 		fromHash: string;
@@ -125,6 +156,32 @@ describe("pubsub (unsubscribe reason)", function () {
 		const session = await createDisconnectedSession(2);
 		try {
 			const { a, b } = await setupTrackedSubscribers(topic, session);
+			const events: UnsubcriptionEvent[] = [];
+			const onUnsubscribe = (ev: CustomEvent<UnsubcriptionEvent>) =>
+				events.push(ev.detail);
+
+			a.addEventListener("unsubscribe", onUnsubscribe as any);
+			try {
+				a.onPeerUnreachable(b.publicKeyHash);
+				await expectUnsubscribeEvent({
+					events,
+					fromHash: b.publicKeyHash,
+					topic,
+					reason: "peer-unreachable",
+				});
+			} finally {
+				a.removeEventListener("unsubscribe", onUnsubscribe as any);
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("emits reason=peer-unreachable for tracked relay-only subscribers", async () => {
+		const topic = "unsubscribe-reason-unreachable-relay";
+		const session = await createDisconnectedSession(3);
+		try {
+			const { a, b } = await setupTrackedSubscribersViaRelay(topic, session);
 			const events: UnsubcriptionEvent[] = [];
 			const onUnsubscribe = (ev: CustomEvent<UnsubcriptionEvent>) =>
 				events.push(ev.detail);
