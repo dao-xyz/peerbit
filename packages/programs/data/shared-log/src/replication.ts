@@ -116,6 +116,11 @@ export class StoppedReplicating extends TransportMessage {
 
 @variant([1, 5])
 export class ReplicationLeaseMessage extends TransportMessage {
+	// Lightweight liveness signal for replicator membership.
+	//
+	// Replication ranges describe *state* ("what I replicate") and can be large/sparse.
+	// This lease heartbeat lets peers expire stale membership when a node disappears
+	// without a clean unsubscribe, without re-broadcasting the full range set.
 	@field({ type: "bool" })
 	replicating: boolean;
 
