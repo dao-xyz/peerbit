@@ -441,9 +441,14 @@ const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_MEMORY_LIMIT = 0.001;
 const RECALCULATE_PARTICIPATION_RELATIVE_DENOMINATOR_FLOOR = 1e-3;
 
 const DEFAULT_DISTRIBUTION_DEBOUNCE_TIME = 500;
-const RECENT_REPAIR_DISPATCH_TTL_MS = 5_000;
-const REPAIR_SWEEP_ENTRY_BATCH_SIZE = 1_000;
-const REPAIR_SWEEP_TARGET_BUFFER_SIZE = 1024;
+	const RECENT_REPAIR_DISPATCH_TTL_MS = 5_000;
+	const REPAIR_SWEEP_ENTRY_BATCH_SIZE = 1_000;
+	const REPAIR_SWEEP_TARGET_BUFFER_SIZE = 1024;
+	// In sparse topologies (browser/relay), peers can learn about replicators via broadcast
+	// replication announcements without having a direct connection that emits unsubscribe
+	// on abrupt churn. Periodically probe replicators to evict stale membership.
+	const REPLICATOR_LIVENESS_SWEEP_INTERVAL_MS = 2_000;
+	const REPLICATOR_LIVENESS_PROBE_FAILURES_TO_EVICT = 1;
 // Churn/join repair can race with pruning and transient missed sync requests under
 // heavy event-loop load. Keep retries alive with a longer tail so reassigned
 // entries are retried after short bursts and slower recovery windows.
@@ -629,11 +634,17 @@ export class SharedLog<
 	// messages from them until we see a new subscription, to avoid re-introducing
 	// stale membership state during close/unsubscribe races.
 	private _replicationInfoBlockedPeers!: Set<string>;
-	private _replicationInfoRequestByPeer!: Map<
-		string,
-		{ attempts: number; timer?: ReturnType<typeof setTimeout> }
-	>;
-	private _replicationInfoApplyQueueByPeer!: Map<string, Promise<void>>;
+		private _replicationInfoRequestByPeer!: Map<
+			string,
+			{ attempts: number; timer?: ReturnType<typeof setTimeout> }
+		>;
+		private _replicationInfoApplyQueueByPeer!: Map<string, Promise<void>>;
+		private _replicatorLivenessSweepRunning!: boolean;
+		private _replicatorLivenessTimer?: ReturnType<typeof setInterval>;
+		private _replicatorLivenessTargets!: string[];
+		private _replicatorLivenessTargetsSize!: number;
+		private _replicatorLivenessCursor!: number;
+		private _replicatorLivenessFailures!: Map<string, number>;
 
 	private remoteBlocks!: RemoteBlocks;
 
@@ -2777,9 +2788,15 @@ export class SharedLog<
 				this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
 				this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
 
-			this.uniqueReplicators = new Set();
-			this._replicatorJoinEmitted = new Set();
-			this._replicatorsReconciled = false;
+				this.uniqueReplicators = new Set();
+				this._replicatorJoinEmitted = new Set();
+				this._replicatorsReconciled = false;
+				this._replicatorLivenessSweepRunning = false;
+				this._replicatorLivenessTimer = undefined;
+				this._replicatorLivenessTargets = [];
+				this._replicatorLivenessTargetsSize = 0;
+				this._replicatorLivenessCursor = 0;
+				this._replicatorLivenessFailures = new Map();
 
 		this.openTime = +new Date();
 		this.oldestOpenTime = this.openTime;
@@ -3233,18 +3250,20 @@ export class SharedLog<
 		await super.afterOpen();
 
 		// We do this here, because these calls requires this.closed == false
-		void this.pruneOfflineReplicators()
-			.then(() => {
-				this._replicatorsReconciled = true;
-			})
+			void this.pruneOfflineReplicators()
+				.then(() => {
+					this._replicatorsReconciled = true;
+				})
 			.catch((error) => {
 				if (isNotStartedError(error as Error)) {
 					return;
 				}
-				logger.error(error);
-			});
+					logger.error(error);
+				});
 
-		await this.rebalanceParticipation();
+			this.startReplicatorLivenessSweep();
+
+			await this.rebalanceParticipation();
 
 		// Take into account existing subscription
 		(await this._getTopicSubscribers(this.topic))?.forEach((v) => {
@@ -3262,8 +3281,8 @@ export class SharedLog<
 		await this.log.load({ reset: true });
 	}
 
-	async pruneOfflineReplicators() {
-		// go through all segments and for waitForAll replicators to become reachable if not prune them away
+		async pruneOfflineReplicators() {
+			// go through all segments and for waitForAll replicators to become reachable if not prune them away
 
 		try {
 			const promises: Promise<any>[] = [];
@@ -3339,13 +3358,159 @@ export class SharedLog<
 				return;
 			}
 			throw error;
+			}
 		}
-	}
 
-	async getMemoryUsage() {
-		return this.log.blocks.size();
-		/* ((await this.log.entryIndex?.getMemoryUsage()) || 0) */ // + (await this.log.blocks.size())
-	}
+		private startReplicatorLivenessSweep() {
+			if (this._replicatorLivenessTimer) {
+				return;
+			}
+			this._replicatorLivenessTimer = setInterval(() => {
+				void this.runReplicatorLivenessSweep();
+			}, REPLICATOR_LIVENESS_SWEEP_INTERVAL_MS);
+			this._replicatorLivenessTimer.unref?.();
+		}
+
+		private stopReplicatorLivenessSweep() {
+			if (this._replicatorLivenessTimer) {
+				clearInterval(this._replicatorLivenessTimer);
+				this._replicatorLivenessTimer = undefined;
+			}
+			this._replicatorLivenessSweepRunning = false;
+			this._replicatorLivenessTargets = [];
+			this._replicatorLivenessTargetsSize = 0;
+			this._replicatorLivenessCursor = 0;
+			this._replicatorLivenessFailures?.clear?.();
+		}
+
+		private rebuildReplicatorLivenessTargets() {
+			const selfHash = this.node.identity.publicKey.hashcode();
+			this._replicatorLivenessTargets = [...this.uniqueReplicators].filter(
+				(h) => h !== selfHash,
+			);
+			this._replicatorLivenessTargetsSize = this.uniqueReplicators.size;
+			if (this._replicatorLivenessCursor >= this._replicatorLivenessTargets.length) {
+				this._replicatorLivenessCursor = 0;
+			}
+		}
+
+		private getReplicatorLivenessTargets() {
+			const selfHash = this.node.identity.publicKey.hashcode();
+			const expected =
+				this.uniqueReplicators.size - (this.uniqueReplicators.has(selfHash) ? 1 : 0);
+
+			if (this._replicatorLivenessTargets.length > 0) {
+				// Keep the cursor stable, but purge stale hashes (membership can change while
+				// the total size stays constant).
+				this._replicatorLivenessTargets = this._replicatorLivenessTargets.filter(
+					(h) => h !== selfHash && this.uniqueReplicators.has(h),
+				);
+			}
+
+			if (
+				this._replicatorLivenessTargetsSize !== this.uniqueReplicators.size ||
+				this._replicatorLivenessTargets.length !== expected
+			) {
+				this.rebuildReplicatorLivenessTargets();
+			}
+
+			return this._replicatorLivenessTargets;
+		}
+
+		private async runReplicatorLivenessSweep() {
+			if (this.closed || this._closeController.signal.aborted) {
+				return;
+			}
+			if (this._replicatorLivenessSweepRunning) {
+				return;
+			}
+			const targets = this.getReplicatorLivenessTargets();
+			if (targets.length === 0) {
+				return;
+			}
+
+			this._replicatorLivenessSweepRunning = true;
+			try {
+				if (this._replicatorLivenessCursor >= targets.length) {
+					this._replicatorLivenessCursor = 0;
+				}
+				const peerHash = targets[this._replicatorLivenessCursor]!;
+				this._replicatorLivenessCursor =
+					(this._replicatorLivenessCursor + 1) % targets.length;
+				await this.probeReplicatorLiveness(peerHash);
+			} catch (error) {
+				if (!isNotStartedError(error as Error)) {
+					logger.error((error as any)?.toString?.() ?? String(error));
+				}
+			} finally {
+				this._replicatorLivenessSweepRunning = false;
+			}
+		}
+
+		private async probeReplicatorLiveness(peerHash: string) {
+			if (this.closed || this._closeController.signal.aborted) {
+				return;
+			}
+			if (!this.uniqueReplicators.has(peerHash)) {
+				this._replicatorLivenessFailures.delete(peerHash);
+				return;
+			}
+
+			const key = await this._resolvePublicKeyFromHash(peerHash);
+			if (!key) {
+				// No longer resolvable: treat as stale membership.
+				try {
+					await this.removeReplicator(peerHash, { noEvent: true });
+				} catch (error) {
+					if (!isNotStartedError(error as Error)) {
+						throw error;
+					}
+				}
+				this._replicatorLivenessTargetsSize = -1;
+				return;
+			}
+
+			try {
+				await this.rpc.send(new RequestReplicationInfoMessage(), {
+					mode: new AcknowledgeDelivery({ redundancy: 1, to: [key] }),
+					priority: 1,
+				});
+				this._replicatorLivenessFailures.delete(peerHash);
+			} catch (error) {
+				if (isNotStartedError(error as Error)) {
+					return;
+				}
+				const failures = (this._replicatorLivenessFailures.get(peerHash) ?? 0) + 1;
+				if (failures < REPLICATOR_LIVENESS_PROBE_FAILURES_TO_EVICT) {
+					this._replicatorLivenessFailures.set(peerHash, failures);
+					return;
+				}
+				this._replicatorLivenessFailures.delete(peerHash);
+
+				// Still considered a replicator? If not, nothing to do.
+				if (!this.uniqueReplicators.has(peerHash)) {
+					return;
+				}
+
+				// Treat as an implicit unsubscribe/disconnect. This ensures we clean up all
+				// per-peer sync/prune state and emit replicator:leave once.
+				try {
+					await this.handleSubscriptionChange(key, [this.topic], false);
+				} catch (e) {
+					if (!isNotStartedError(e as Error)) {
+						await this.removeReplicator(peerHash, { noEvent: true });
+					}
+				}
+
+				// Force a target rebuild next sweep so we don't keep probing the evicted peer.
+				this._replicatorLivenessTargetsSize = -1;
+			}
+		}
+
+		async getMemoryUsage() {
+			return this.log.blocks.size();
+			/* ((await this.log.entryIndex?.getMemoryUsage()) || 0) */ // + (await this.log.blocks.size())
+		}
 
 	get topic() {
 		return this.log.idString;
@@ -3533,13 +3698,14 @@ export class SharedLog<
 		this.coordinateToHash.clear();
 		this.recentlyRebalanced.clear();
 		this.uniqueReplicators.clear();
-		this._closeController.abort();
+			this._closeController.abort();
 
-		clearInterval(this.interval);
+			clearInterval(this.interval);
+			this.stopReplicatorLivenessSweep();
 
-		this.node.services.pubsub.removeEventListener(
-			"subscribe",
-			this._onSubscriptionFn,
+			this.node.services.pubsub.removeEventListener(
+				"subscribe",
+				this._onSubscriptionFn,
 		);
 
 		this.node.services.pubsub.removeEventListener(
