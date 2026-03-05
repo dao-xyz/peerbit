@@ -389,6 +389,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.0.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.2...shared-log-v13.0.3) (2026-03-05)
+
+
+### Bug Fixes
+
+* **shared-log:** evict stale replicators on abrupt churn ([893c3b8](https://github.com/dao-xyz/peerbit/commit/893c3b89b0c778ef575486005d8985b86df028dc))
+* **shared-log:** ping replicators for liveness ([9def613](https://github.com/dao-xyz/peerbit/commit/9def613ab2ec1fe105bff4fac181437fc4880eb0))
+* **shared-log:** probe replicator liveness on idle peers ([2c6ff5f](https://github.com/dao-xyz/peerbit/commit/2c6ff5fc0b71316ba050163bc72d8808d4178a84))
+* **shared-log:** soften liveness eviction ([8de888f](https://github.com/dao-xyz/peerbit/commit/8de888f20c7ca86ebe69d97f64f3a2e5049ff6b7))
+* **shared-log:** split mixed maybe-sync batches by type ([adc743a](https://github.com/dao-xyz/peerbit/commit/adc743a0b73cc8d67748606acbfbba900fdf1621))
+* **shared-log:** unicast ping for replicator liveness sweep ([a54459d](https://github.com/dao-xyz/peerbit/commit/a54459d2d8a60cb4a0ee04f999b068f3538634c0))
+
+
+### Documentation
+
+* **shared-log:** explain ping probe rationale ([47679a2](https://github.com/dao-xyz/peerbit/commit/47679a24f627867226cee1fbda73a2348990ef0b))
+
 ## [13.0.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.1...shared-log-v13.0.2) (2026-03-05)
 
 
