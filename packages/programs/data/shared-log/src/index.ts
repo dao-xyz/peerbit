@@ -631,6 +631,7 @@ export class SharedLog<
 	>; // map of peerId to timeout
 
 	private latestReplicationInfoMessage!: Map<string, bigint>;
+	private latestReplicationLeaseMessage!: Map<string, bigint>;
 	// Peers that have unsubscribed from this log's topic. We ignore replication-info
 	// messages from them until we see a new subscription, to avoid re-introducing
 	// stale membership state during close/unsubscribe races.
@@ -2795,6 +2796,7 @@ export class SharedLog<
 			this._pendingDeletes = new Map();
 			this._pendingIHave = new Map();
 			this.latestReplicationInfoMessage = new Map();
+			this.latestReplicationLeaseMessage = new Map();
 			this._replicationInfoBlockedPeers = new Set();
 				this._replicationInfoRequestByPeer = new Map();
 				this._replicationInfoApplyQueueByPeer = new Map();
@@ -3366,13 +3368,18 @@ export class SharedLog<
 									);
 								}
 
-									const keyHash = key.hashcode();
-									this.uniqueReplicators.add(keyHash);
+										const keyHash = key.hashcode();
+										this.uniqueReplicators.add(keyHash);
+										// Consider this peer live now that it is reachable. Without setting a
+										// lease here, the periodic liveness probe can immediately evict the
+										// replicator before it has sent a heartbeat, causing join/leave churn
+										// on startup with persisted replication segments.
+										this.setReplicatorLease(keyHash);
 
-									if (!this._replicatorJoinEmitted.has(keyHash)) {
-										this._replicatorJoinEmitted.add(keyHash);
-										this.events.dispatchEvent(
-											new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
+										if (!this._replicatorJoinEmitted.has(keyHash)) {
+											this._replicatorJoinEmitted.add(keyHash);
+											this.events.dispatchEvent(
+												new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
 												detail: { publicKey: key },
 											}),
 										);
@@ -3640,14 +3647,15 @@ export class SharedLog<
 			}
 
 		await this.remoteBlocks.stop();
-			this._pendingDeletes.clear();
-			this._pendingIHave.clear();
-			this._checkedPruneRetries.clear();
-			this.latestReplicationInfoMessage.clear();
-			this._gidPeersHistory.clear();
-				this._requestIPruneSent.clear();
-				this._requestIPruneResponseReplicatorSet.clear();
-			// Cancel any pending debounced timers so they can't fire after we've torn down
+				this._pendingDeletes.clear();
+				this._pendingIHave.clear();
+				this._checkedPruneRetries.clear();
+				this.latestReplicationInfoMessage.clear();
+				this.latestReplicationLeaseMessage.clear();
+				this._gidPeersHistory.clear();
+					this._requestIPruneSent.clear();
+					this._requestIPruneResponseReplicatorSet.clear();
+				// Cancel any pending debounced timers so they can't fire after we've torn down
 			// indexes/RPC state.
 			this.rebalanceParticipationDebounced?.close();
 			this.replicationChangeDebounceFn?.close?.();
@@ -4194,6 +4202,21 @@ export class SharedLog<
 					if (this._replicationInfoBlockedPeers.has(fromHash)) {
 						return;
 					}
+
+					// Lease messages can be delivered out-of-order relative to replication segment
+					// announcements (and between restarts). Ignore stale lease updates so a late
+					// "replicating:false" can't evict a peer that has already rejoined.
+					const messageTimestamp = context.message.header.timestamp;
+					const prevReplicationInfo =
+						this.latestReplicationInfoMessage.get(fromHash);
+					if (prevReplicationInfo && prevReplicationInfo > messageTimestamp) {
+						return;
+					}
+					const prevLease = this.latestReplicationLeaseMessage.get(fromHash);
+					if (prevLease && prevLease > messageTimestamp) {
+						return;
+					}
+					this.latestReplicationLeaseMessage.set(fromHash, messageTimestamp);
 
 					if (!msg.replicating) {
 						const wasReplicator = this.uniqueReplicators.has(fromHash);
