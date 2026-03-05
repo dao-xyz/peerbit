@@ -3471,11 +3471,13 @@ export class SharedLog<
 				return;
 			}
 
-			try {
-				await this.rpc.send(new ReplicationPingMessage(), {
-					mode: new AcknowledgeDelivery({ redundancy: 1, to: [key] }),
-					priority: 1,
-				});
+				try {
+					// Explicit ping (ACKed) instead of RequestReplicationInfoMessage to avoid
+					// triggering large segment snapshots just to prove liveness.
+					await this.rpc.send(new ReplicationPingMessage(), {
+						mode: new AcknowledgeDelivery({ redundancy: 1, to: [key] }),
+						priority: 1,
+					});
 				this._replicatorLivenessFailures.delete(peerHash);
 			} catch (error) {
 				if (isNotStartedError(error as Error)) {
