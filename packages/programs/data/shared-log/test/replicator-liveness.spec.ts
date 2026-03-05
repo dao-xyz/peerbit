@@ -114,6 +114,48 @@ describe("replicator liveness", () => {
 		}
 	});
 
+	it("does not ping replicators that have been recently active", async () => {
+		session = await TestSession.connected(2);
+
+		const store = new EventStore<string, any>();
+		const db0 = await session.peers[0].open(store, {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		await session.peers[1].open(store.clone(), {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+
+		const peerHash = session.peers[1].identity.publicKey.hashcode();
+		await waitForResolved(
+			async () => expect((await db0.log.getReplicators()).size).to.equal(2),
+			{ timeout: 20_000, delayInterval: 100 },
+		);
+
+		const originalSend = db0.log.rpc.send.bind(db0.log.rpc);
+		let pingAttempts = 0;
+		db0.log.rpc.send = async (message: any, options: any) => {
+			if (message instanceof ReplicationPingMessage) {
+				pingAttempts++;
+			}
+			return originalSend(message, options);
+		};
+
+		try {
+			(db0.log as any).markReplicatorActivity(peerHash);
+			await (db0.log as any).probeReplicatorLiveness(peerHash);
+			expect(pingAttempts).to.equal(0);
+			expect((await db0.log.getReplicators()).size).to.equal(2);
+		} finally {
+			db0.log.rpc.send = originalSend;
+		}
+	});
+
 	it("can relearn a liveness-evicted replicator from later replication info", async () => {
 		session = await TestSession.connected(2);
 
@@ -170,7 +212,9 @@ describe("replicator liveness", () => {
 		};
 
 		try {
+			(db0.log as any).markReplicatorActivity(peerHash, Date.now() - 60_000);
 			await (db0.log as any).probeReplicatorLiveness(peerHash);
+			(db0.log as any).markReplicatorActivity(peerHash, Date.now() - 60_000);
 			await (db0.log as any).probeReplicatorLiveness(peerHash);
 
 			await waitForResolved(

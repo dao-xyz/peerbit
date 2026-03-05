@@ -450,6 +450,7 @@ const REPAIR_SWEEP_TARGET_BUFFER_SIZE = 1024;
 // on abrupt churn. Probe conservatively so a single missed ACK does not evict a
 // healthy replicator, and rely on replication-info refresh to recover membership.
 const REPLICATOR_LIVENESS_SWEEP_INTERVAL_MS = 2_000;
+const REPLICATOR_LIVENESS_IDLE_THRESHOLD_MS = 8_000;
 const REPLICATOR_LIVENESS_PROBE_FAILURES_TO_EVICT = 2;
 // Churn/join repair can race with pruning and transient missed sync requests under
 // heavy event-loop load. Keep retries alive with a longer tail so reassigned
@@ -647,6 +648,7 @@ export class SharedLog<
 	private _replicatorLivenessTargetsSize!: number;
 	private _replicatorLivenessCursor!: number;
 	private _replicatorLivenessFailures!: Map<string, number>;
+	private _replicatorLastActivityAt!: Map<string, number>;
 
 	private remoteBlocks!: RemoteBlocks;
 
@@ -2799,6 +2801,7 @@ export class SharedLog<
 		this._replicatorLivenessTargetsSize = 0;
 		this._replicatorLivenessCursor = 0;
 		this._replicatorLivenessFailures = new Map();
+		this._replicatorLastActivityAt = new Map();
 
 		this.openTime = +new Date();
 		this.oldestOpenTime = this.openTime;
@@ -3378,6 +3381,7 @@ export class SharedLog<
 		this._replicatorLivenessTargetsSize = 0;
 		this._replicatorLivenessCursor = 0;
 		this._replicatorLivenessFailures.clear();
+		this._replicatorLastActivityAt.clear();
 	}
 
 	private rebuildReplicatorLivenessTargets() {
@@ -3417,6 +3421,7 @@ export class SharedLog<
 	private cleanupPeerDisconnectTracking(peerHash: string) {
 		this.cancelReplicationInfoRequests(peerHash);
 		this._replicatorLivenessFailures.delete(peerHash);
+		this._replicatorLastActivityAt.delete(peerHash);
 
 		for (const [hash, peers] of this._requestIPruneSent) {
 			peers.delete(peerHash);
@@ -3431,6 +3436,22 @@ export class SharedLog<
 				this._requestIPruneResponseReplicatorSet.delete(hash);
 			}
 		}
+	}
+
+	private markReplicatorActivity(peerHash: string, now = Date.now()) {
+		this._replicatorLastActivityAt.set(peerHash, now);
+	}
+
+	private hasRecentReplicatorActivity(peerHash: string, now = Date.now()) {
+		const lastActivityAt = this._replicatorLastActivityAt.get(peerHash);
+		if (
+			lastActivityAt != null &&
+			now - lastActivityAt < REPLICATOR_LIVENESS_IDLE_THRESHOLD_MS
+		) {
+			this._replicatorLivenessFailures.delete(peerHash);
+			return true;
+		}
+		return false;
 	}
 
 	private async evictReplicatorFromLiveness(
@@ -3507,6 +3528,9 @@ export class SharedLog<
 			this._replicatorLivenessFailures.delete(peerHash);
 			return;
 		}
+		if (this.hasRecentReplicatorActivity(peerHash)) {
+			return;
+		}
 
 		const publicKey = await this._resolvePublicKeyFromHash(peerHash);
 		if (!publicKey) {
@@ -3529,6 +3553,7 @@ export class SharedLog<
 				mode: new AcknowledgeDelivery({ redundancy: 1, to: [publicKey] }),
 				priority: 1,
 			});
+			this.markReplicatorActivity(peerHash);
 			this._replicatorLivenessFailures.delete(peerHash);
 			return;
 		} catch (error) {
@@ -3922,6 +3947,9 @@ export class SharedLog<
 		try {
 			if (!context.from) {
 				throw new Error("Missing from in update role message");
+			}
+			if (!context.from.equals(this.node.identity.publicKey)) {
+				this.markReplicatorActivity(context.from.hashcode());
 			}
 
 			if (msg instanceof ResponseRoleMessage) {
@@ -5440,6 +5468,7 @@ export class SharedLog<
 
 		this._replicationInfoBlockedPeers.delete(peerHash);
 		this._replicatorLivenessFailures.delete(peerHash);
+		this.markReplicatorActivity(peerHash);
 
 		const replicationSegments = await this.getMyReplicationSegments();
 		if (replicationSegments.length > 0) {
