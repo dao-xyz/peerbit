@@ -232,7 +232,10 @@ export class TopicControlPlane
 	public subscriptions: Map<string, { counter: number }>;
 	// Local topics requested via debounced subscribe, not yet applied in `subscriptions`.
 	private pendingSubscriptions: Set<string>;
-	public lastSubscriptionMessages: Map<string, Map<string, bigint>> = new Map();
+	public lastSubscriptionMessages: Map<
+		string,
+		Map<string, { session: bigint; timestamp: bigint }>
+	> = new Map();
 	public dispatchEventOnSelfPublish: boolean;
 	public readonly topicRootControlPlane: TopicRootControlPlane;
 	public readonly subscriberCacheMaxEntries: number;
@@ -1501,13 +1504,56 @@ export class TopicControlPlane
 	}
 
 	public onPeerSession(key: PublicSignKey, _session: number): void {
-		this.removeSubscriptions(key, "peer-session-reset");
+		if (!Number.isFinite(_session) || _session < 0) {
+			return;
+		}
+		this.removeSubscriptionsBeforeSession(
+			key,
+			BigInt(Math.trunc(_session)),
+			"peer-session-reset",
+		);
 	}
 
 	public override onPeerUnreachable(publicKeyHash: string) {
 		super.onPeerUnreachable(publicKeyHash);
 		const key = this.peerKeyHashToPublicKey.get(publicKeyHash);
 		if (key) this.removeSubscriptions(key, "peer-unreachable");
+	}
+
+	private removeSubscriptionsBeforeSession(
+		publicKey: PublicSignKey,
+		session: bigint,
+		reason: UnsubscriptionReason,
+	) {
+		const peerHash = publicKey.hashcode();
+		const peerTopics = this.peerToTopic.get(peerHash);
+		const changed: string[] = [];
+		if (peerTopics) {
+			for (const topic of [...peerTopics]) {
+				const peers = this.topics.get(topic);
+				const existing = peers?.get(peerHash);
+				if (!existing || existing.session >= session) {
+					continue;
+				}
+				if (peers.delete(peerHash)) {
+					changed.push(topic);
+					peerTopics.delete(topic);
+					this.lastSubscriptionMessages.get(peerHash)?.delete(topic);
+				}
+			}
+		}
+		if (!peerTopics?.size) {
+			this.peerToTopic.delete(peerHash);
+			this.lastSubscriptionMessages.delete(peerHash);
+		}
+
+		if (changed.length > 0) {
+			this.dispatchEvent(
+				new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
+					detail: new UnsubcriptionEvent(publicKey, changed, reason),
+				}),
+			);
+		}
 	}
 
 	private removeSubscriptions(
@@ -1545,13 +1591,23 @@ export class TopicControlPlane
 	) {
 		const subscriber = message.header.signatures!.signatures[0].publicKey!;
 		const subscriberKey = subscriber.hashcode();
+		const messageSession = message.header.session;
 		const messageTimestamp = message.header.timestamp;
 
 		for (const topic of relevantTopics) {
-			const lastTimestamp = this.lastSubscriptionMessages
+			const last = this.lastSubscriptionMessages
 				.get(subscriberKey)
 				?.get(topic);
-			if (lastTimestamp != null && lastTimestamp > messageTimestamp) {
+			if (!last) {
+				continue;
+			}
+			if (last.session > messageSession) {
+				return false;
+			}
+			if (
+				last.session === messageSession &&
+				last.timestamp > messageTimestamp
+			) {
 				return false;
 			}
 		}
@@ -1562,7 +1618,10 @@ export class TopicControlPlane
 			}
 			this.lastSubscriptionMessages
 				.get(subscriberKey)!
-				.set(topic, messageTimestamp);
+				.set(topic, {
+					session: messageSession,
+					timestamp: messageTimestamp,
+				});
 		}
 		return true;
 	}
