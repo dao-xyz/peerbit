@@ -1535,7 +1535,7 @@ export class TopicControlPlane
 				if (!existing || existing.session >= session) {
 					continue;
 				}
-				if (peers.delete(peerHash)) {
+				if (peers?.delete(peerHash)) {
 					changed.push(topic);
 					peerTopics.delete(topic);
 					this.lastSubscriptionMessages.get(peerHash)?.delete(topic);
