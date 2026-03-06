@@ -2862,7 +2862,22 @@ export class SharedLog<
 		const blockProviderNamespace = (cid: string) => `cid:${cid}`;
 		this.remoteBlocks = new RemoteBlocks({
 			local: localBlocks,
-			publish: (message, options) => this.rpc.send(new BlocksMessage(message), options),
+			publish: (message, options) => {
+				// RemoteBlocks uses either an explicit delivery mode or a bare `to` field.
+				// RPC.send only understands `mode`, so convert targeted block responses
+				// into a unicast delivery instead of broadcasting them on the RPC topic.
+				const rpcOptions =
+					(options as any)?.mode == null && (options as any)?.to != null
+						? ({
+								...options,
+								mode: new SilentDelivery({
+									to: (options as any).to,
+									redundancy: 1,
+								}),
+							} as any)
+						: options;
+				return this.rpc.send(new BlocksMessage(message), rpcOptions as any);
+			},
 			waitFor: this.rpc.waitFor.bind(this.rpc),
 			publicKey: this.node.identity.publicKey,
 			eagerBlocks: options?.eagerBlocks ?? true,
