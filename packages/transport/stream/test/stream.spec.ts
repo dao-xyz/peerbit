@@ -39,6 +39,8 @@ import {
 	type ConnectionManagerArguments,
 	DirectStream,
 	type DirectStreamComponents,
+	type DirectStreamOptions,
+	type PeerStreams,
 	waitForNeighbour,
 } from "../src/index.js";
 
@@ -78,6 +80,45 @@ const connectLine = async (session: TestSessionStream) => {
 		session.peers[session.peers.length - 2].services.directstream.publicKeyHash,
 	]);
 };
+
+class BlockingOutboundStream extends EventTarget {
+	id: string;
+	protocol = "/test/0.0.0";
+	sentPayloads: number[] = [];
+	private expectedLength?: number;
+	private currentPayloadLength = 0;
+
+	constructor(id: string) {
+		super();
+		this.id = id;
+	}
+
+	send(bytes: Uint8Array): boolean {
+		let completedFrame = false;
+
+		for (const byte of bytes) {
+			if (this.expectedLength == null) {
+				this.expectedLength = byte;
+				this.currentPayloadLength = 0;
+				continue;
+			}
+
+			this.currentPayloadLength += 1;
+			if (this.currentPayloadLength === this.expectedLength) {
+				this.sentPayloads.push(byte);
+				this.expectedLength = undefined;
+				this.currentPayloadLength = 0;
+				completedFrame = true;
+			}
+		}
+
+		return completedFrame ? false : true;
+	}
+
+	abort() {}
+
+	async close() {}
+}
 const collectDataWrites = (client: DirectStream) => {
 	const writes: Map<string, DataMessage[]> = new Map();
 	for (const [name, peer] of client.peers) {
@@ -196,6 +237,7 @@ const collectMetrics = (session: TestSession<any>) => {
 				routeMaxRetentionPeriod?: number;
 				inboundIdleTimeout?: number;
 				maxInboundStreams?: number;
+				outboundQueue?: DirectStreamOptions["outboundQueue"];
 			} = {},
 		) {
 		super(components, [options.id || "/test/0.0.0"], {
@@ -211,6 +253,15 @@ const collectMetrics = (session: TestSession<any>) => {
 
 	public async __testOnPeerDisconnected(peerId: PeerId, conn?: Connection) {
 		return super.onPeerDisconnected(peerId, conn);
+	}
+
+	public async __waitForPeerWrite(
+		stream: PeerStreams,
+		bytes: Uint8Array | Uint8ArrayList,
+		priority = 0,
+		signal?: AbortSignal,
+	) {
+		return super.waitForPeerWrite(stream, bytes, priority, signal);
 	}
 }
 const connected = async (
@@ -3462,6 +3513,100 @@ describe("join/leave", () => {
 				),
 			).lessThan(dataMessageCount / 10); // if no prioritization this would be at index dataMessageCount
 			abortContoller.abort(new Error("Done"));
+		});
+
+		it("applies node-wide outbound backpressure while reserving total priority capacity", async () => {
+			session = await disconnected(1, {
+				services: {
+					directstream: (c) =>
+						new TestDirectStream(c, {
+							connectionManager: false,
+						}),
+				},
+			});
+
+			const writer = stream(session, 0) as TestDirectStream;
+			(writer as any).outboundQueueOptions = {
+				maxBufferedBytes: 4,
+				reservedPriorityBytes: 1,
+				maxTotalBufferedBytes: 4,
+				reservedTotalPriorityBytes: 1,
+			};
+			const peerAKey = await Ed25519Keypair.create();
+			const peerBKey = await Ed25519Keypair.create();
+			const peerA = writer.addPeer(
+				{ toString: () => "peer-a" } as PeerId,
+				peerAKey.publicKey,
+				"/test/0.0.0",
+				"conn-a",
+			);
+			const peerB = writer.addPeer(
+				{ toString: () => "peer-b" } as PeerId,
+				peerBKey.publicKey,
+				"/test/0.0.0",
+				"conn-b",
+			);
+			const outboundA = new BlockingOutboundStream("peer-a");
+			const outboundB = new BlockingOutboundStream("peer-b");
+			await peerA.attachOutboundStream(outboundA as any);
+			await peerB.attachOutboundStream(outboundB as any);
+
+			await writer.__waitForPeerWrite(peerA, new Uint8Array([1]), 0);
+			await writer.__waitForPeerWrite(peerB, new Uint8Array([2]), 0);
+			await waitForResolved(() =>
+				expect(outboundA.sentPayloads).to.deep.equal([1]),
+			);
+			await waitForResolved(() =>
+				expect(outboundB.sentPayloads).to.deep.equal([2]),
+			);
+
+			await writer.__waitForPeerWrite(peerA, new Uint8Array([11]), 0);
+			await writer.__waitForPeerWrite(peerA, new Uint8Array([12]), 0);
+			await writer.__waitForPeerWrite(peerB, new Uint8Array([22]), 0);
+			expect(writer.getQueuedBytes()).to.equal(3);
+
+			let lowResolved = false;
+			const blockedLow = writer
+				.__waitForPeerWrite(peerA, new Uint8Array([33]), 0)
+				.then(() => {
+					lowResolved = true;
+				});
+
+			await delay(50);
+			expect(lowResolved).to.equal(false);
+			expect(writer.getQueuedBytes()).to.equal(3);
+
+			await writer.__waitForPeerWrite(peerB, new Uint8Array([200]), 1);
+			expect(writer.getQueuedBytes()).to.equal(4);
+
+			outboundB.dispatchEvent(new Event("drain"));
+			await waitForResolved(() =>
+				expect(outboundB.sentPayloads).to.deep.equal([2, 200]),
+			);
+			expect(lowResolved).to.equal(false);
+
+			outboundB.dispatchEvent(new Event("drain"));
+			await waitForResolved(() =>
+				expect(outboundB.sentPayloads).to.deep.equal([2, 200, 22]),
+			);
+			await waitForResolved(() => expect(lowResolved).to.equal(true));
+
+			outboundA.dispatchEvent(new Event("drain"));
+			await waitForResolved(() =>
+				expect(outboundA.sentPayloads).to.deep.equal([1, 11]),
+			);
+
+			outboundA.dispatchEvent(new Event("drain"));
+			await waitForResolved(() =>
+				expect(outboundA.sentPayloads).to.deep.equal([1, 11, 12]),
+			);
+
+			outboundA.dispatchEvent(new Event("drain"));
+			await waitForResolved(() =>
+				expect(outboundA.sentPayloads).to.deep.equal([1, 11, 12, 33]),
+			);
+
+			await blockedLow;
 		});
 	});
 });

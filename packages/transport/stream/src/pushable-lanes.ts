@@ -98,6 +98,12 @@ export interface Options {
 	onPush?(value: { byteLength: number }, lane: number): void;
 
 	/**
+	 * Optional hook invoked whenever the total buffered bytes change.
+	 * Useful for external backpressure coordination.
+	 */
+	onBufferSize?(bufferedBytes: number): void;
+
+	/**
 	 * Fairness mode:
 	 * - 'priority': strict priority (original behavior).
 	 * - 'wrr': weighted round-robin (starvation-free).
@@ -334,6 +340,9 @@ function _pushable<PushType extends Uint8Array, ValueType, ReturnType>(
 
 	const maxBytes = options.maxBufferedBytes;
 	const overflow: OverflowPolicy = options.overflow ?? "throw";
+	const notifyBufferSize = () => {
+		options?.onBufferSize?.(totalBufferedBytes());
+	};
 
 	const notifyBufferedBelowWaiters = () => {
 		if (bufferedBelowWaiters.size === 0) return;
@@ -391,6 +400,7 @@ function _pushable<PushType extends Uint8Array, ValueType, ReturnType>(
 				};
 			});
 		} finally {
+			notifyBufferSize();
 			notifyBufferedBelowWaiters();
 			// If buffer is empty after this turn, resolve the drain promise (in a microtask)
 			if (buffer.isEmpty()) {
@@ -413,6 +423,7 @@ function _pushable<PushType extends Uint8Array, ValueType, ReturnType>(
 	const bufferError = (err: Error): ReturnType => {
 		// swap to ByteFifo to deliver a single terminal error
 		buffer = new ByteFifo<PushType>();
+		notifyBufferSize();
 		notifyBufferedBelowWaiters();
 		if (onNext != null) {
 			return onNext({ error: err }, 0);
@@ -452,6 +463,7 @@ function _pushable<PushType extends Uint8Array, ValueType, ReturnType>(
 			value,
 			clampLane(lane, isLaneQueue(buffer) ? buffer.lanes.length : 1),
 		);
+		notifyBufferSize();
 		return out;
 	};
 
@@ -469,6 +481,7 @@ function _pushable<PushType extends Uint8Array, ValueType, ReturnType>(
 	const _return = (): DoneResult => {
 		// Ensure prompt termination
 		buffer = new ByteFifo<PushType>();
+		notifyBufferSize();
 		notifyBufferedBelowWaiters();
 		end();
 		return { done: true };
