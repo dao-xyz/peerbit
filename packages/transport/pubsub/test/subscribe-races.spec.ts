@@ -61,6 +61,69 @@ describe("pubsub (subscribe race regressions)", function () {
 			});
 		};
 
+	const createDisconnectedSessionWithPerPeerRoots = async (
+		peerCount: number,
+		options?: {
+			pubsub?: Partial<ConstructorParameters<typeof TopicControlPlane>[1]>;
+		},
+	) => {
+		const perPeer = new Map<
+			string,
+			{ fanout: FanoutTree; topicRootControlPlane: TopicRootControlPlane }
+		>();
+		const getOrCreatePerPeer = (c: any) => {
+			const hash = getPublicKeyFromPeerId(c.peerId).hashcode();
+			let existing = perPeer.get(hash);
+			if (!existing) {
+				const topicRootControlPlane = new TopicRootControlPlane();
+				const fanout = new FanoutTree(c, {
+					connectionManager: false,
+					topicRootControlPlane,
+				});
+				existing = { fanout, topicRootControlPlane };
+				perPeer.set(hash, existing);
+			}
+			return existing;
+		};
+
+		return TestSession.disconnected<{
+			pubsub: TopicControlPlane;
+			fanout: FanoutTree;
+		}>(peerCount, {
+			services: {
+				fanout: (c: any) => getOrCreatePerPeer(c).fanout,
+				pubsub: (c: any) => {
+					const { fanout, topicRootControlPlane } = getOrCreatePerPeer(c);
+					return new TopicControlPlane(c, {
+						canRelayMessage: true,
+						connectionManager: false,
+						topicRootControlPlane,
+						fanout,
+						shardCount: 16,
+						fanoutJoin: {
+							timeoutMs: 10_000,
+							retryMs: 50,
+							bootstrapEnsureIntervalMs: 200,
+							trackerQueryIntervalMs: 200,
+							joinReqTimeoutMs: 1_000,
+							trackerQueryTimeoutMs: 1_000,
+						},
+						...(options?.pubsub || {}),
+					});
+				},
+			},
+		});
+	};
+
+	const topicHash32 = (topic: string) => {
+		let hash = 0x811c9dc5; // FNV-1a
+		for (let index = 0; index < topic.length; index++) {
+			hash ^= topic.charCodeAt(index);
+			hash = (hash * 0x01000193) >>> 0;
+		}
+		return hash >>> 0;
+	};
+
 	afterEach(async () => {
 		if (session) {
 			await session.stop();
@@ -80,6 +143,7 @@ describe("pubsub (subscribe race regressions)", function () {
 			b.subscribe(TOPIC),
 			session.connect([[session.peers[0], session.peers[1]]]),
 		]);
+		await waitForNeighbour(a, b);
 
 		await waitForResolved(() => {
 			const aTopics = a.topics.get(TOPIC);
@@ -144,5 +208,58 @@ describe("pubsub (subscribe race regressions)", function () {
 		const bTopics = b.topics.get(TOPIC);
 		expect(bTopics).to.not.equal(undefined);
 		expect(bTopics!.has(a.publicKeyHash)).to.equal(false);
+	});
+
+	it("converges sparse relay topology without forced shard-root candidates", async function () {
+		this.timeout(120_000);
+
+		const TOPIC = "sparse-relay-root-candidate-convergence";
+		session = await createDisconnectedSessionWithPerPeerRoots(3);
+
+		const a = session.peers[0]!.services.pubsub;
+		const b = session.peers[1]!.services.pubsub;
+		const relay = session.peers[2]!.services.pubsub;
+
+		await session.peers[0]!.dial(session.peers[2]!.getMultiaddrs()[0]!);
+		await session.peers[1]!.dial(session.peers[2]!.getMultiaddrs()[0]!);
+
+		await waitForNeighbour(a, relay);
+		await waitForNeighbour(b, relay);
+
+		const shardTopic = `/peerbit/pubsub-shard/1/${topicHash32(TOPIC) % 16}`;
+		await waitForResolved(
+			async () => {
+				const candidateLists = [a, b, relay].map((peer) =>
+					peer.topicRootControlPlane.getTopicRootCandidates().join(","),
+				);
+				expect(
+					new Set(candidateLists).size,
+					`candidate lists: ${candidateLists.join(" | ")}`,
+				).to.equal(1);
+
+				const roots = await Promise.all(
+					[a, b, relay].map((peer) =>
+						peer.topicRootControlPlane.resolveTopicRoot(shardTopic),
+					),
+				);
+				expect(new Set(roots).size, `roots: ${roots.join(",")}`).to.equal(1);
+			},
+			{ timeout: 20_000, delayInterval: 100 },
+		);
+
+		const resolvedRoot = await a.topicRootControlPlane.resolveTopicRoot(shardTopic);
+		expect(resolvedRoot).to.be.a("string");
+		const rootPeer = [a, b, relay].find((peer) => peer.publicKeyHash === resolvedRoot);
+		expect(rootPeer, `resolved root ${resolvedRoot}`).to.exist;
+
+		await waitForResolved(
+			() => {
+				const rootChannel = (rootPeer as any).fanoutChannels?.get?.(shardTopic);
+				expect(rootChannel, `expected root ${resolvedRoot} to host ${shardTopic}`).to
+					.exist;
+				expect(rootChannel.root).to.equal(resolvedRoot);
+			},
+			{ timeout: 20_000, delayInterval: 100 },
+		);
 	});
 });

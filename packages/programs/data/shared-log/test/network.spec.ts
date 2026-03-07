@@ -45,7 +45,9 @@ describe(`network`, () => {
 		await session.stop();
 	});
 
-	it("can replicate entries through relay", async () => {
+	it("can replicate entries through relay without forced shard-root candidates", async function () {
+		this.timeout(120_000);
+
 		session = await TestSession.disconnected(3);
 
 		// peer 3 is relay, and dont connect 1 with 2 directly
@@ -54,11 +56,6 @@ describe(`network`, () => {
 
 		await session.peers[0].services.blocks.waitFor(session.peers[2].peerId);
 		await session.peers[1].services.blocks.waitFor(session.peers[2].peerId);
-
-		// Sharded pubsub requires a stable shard-root candidate set across peers.
-		// Force all shards to resolve to the relay peer so the overlay is reachable
-		// even when peer[0] and peer[1] never connect directly.
-		await forceRelayShardRoots(session, 2);
 
 		db1 = await session.peers[0].open(new EventStore<string, any>(), {
 			args: {
@@ -109,6 +106,8 @@ describe(`network`, () => {
 		await session.peers[0].services.blocks.waitFor(session.peers[2].peerId);
 		await session.peers[1].services.blocks.waitFor(session.peers[2].peerId);
 
+		// This test targets shared-log liveness after abrupt stop, not shard-root
+		// convergence. Pin the relay as root so root placement stays out of the way.
 		await forceRelayShardRoots(session, 2);
 
 		db1 = await session.peers[0].open(new EventStore<string, any>(), {

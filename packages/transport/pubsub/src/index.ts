@@ -43,7 +43,7 @@ import {
 	deliveryModeHasReceiver,
 	getMsgId,
 } from "@peerbit/stream-interface";
-import { AbortError, TimeoutError } from "@peerbit/time";
+import { AbortError, TimeoutError, delay } from "@peerbit/time";
 import { Uint8ArrayList } from "uint8arraylist";
 import {
 	type DebouncedAccumulatorCounterMap,
@@ -271,6 +271,8 @@ export class TopicControlPlane
 	private autoTopicRootCandidates = false;
 	private autoTopicRootCandidateSet?: Set<string>;
 	private reconcileShardOverlaysInFlight?: Promise<void>;
+	private hostOwnedShardRootsInFlight?: Promise<void>;
+	private hostOwnedShardRootsDirty = false;
 	private autoCandidatesBroadcastTimers: Array<ReturnType<typeof setTimeout>> =
 		[];
 	private autoCandidatesGossipInterval?: ReturnType<typeof setInterval>;
@@ -408,7 +410,7 @@ export class TopicControlPlane
 		// Only candidates can become deterministic roots. Avoid doing a full shard
 		// scan on non-candidates in large sessions.
 		if (candidates.includes(this.publicKeyHash)) {
-			void this.hostShardRootsNow().catch(() => {});
+			this.scheduleHostOwnedShardRoots();
 		}
 		this.scheduleReconcileShardOverlays();
 	}
@@ -419,6 +421,9 @@ export class TopicControlPlane
 
 		if (this.hostShards) {
 			await this.hostShardRootsNow();
+		}
+		if (this.hostOwnedShardRootsDirty) {
+			this.scheduleHostOwnedShardRoots();
 		}
 	}
 
@@ -454,6 +459,7 @@ export class TopicControlPlane
 			this.autoCandidatesGossipInterval = undefined;
 		}
 		this.autoCandidatesGossipUntil = 0;
+		this.hostOwnedShardRootsDirty = false;
 
 		this.subscriptions.clear();
 		this.pendingSubscriptions.clear();
@@ -527,7 +533,7 @@ export class TopicControlPlane
 		// in tests where candidates may be configured before protocol streams have
 		// fully started; earlier `hostShardRootsNow()` attempts can be skipped,
 		// leading to join timeouts.
-		void this.hostShardRootsNow().catch(() => {});
+		this.scheduleHostOwnedShardRoots();
 		this.scheduleReconcileShardOverlays();
 		return true;
 	}
@@ -558,7 +564,7 @@ export class TopicControlPlane
 		// That means a peer can be selected as root for shards it isn't using yet.
 		// Ensure we proactively host the shard roots we're responsible for so other
 		// peers can join without timing out in small ad-hoc networks.
-		void this.hostShardRootsNow().catch(() => {});
+		this.scheduleHostOwnedShardRoots();
 
 		// Share the updated candidate set so other peers converge on the same
 		// deterministic mapping even in partially connected topologies.
@@ -669,9 +675,34 @@ export class TopicControlPlane
 		this.topicRootControlPlane.setTopicRootCandidates(next);
 		this.shardRootCache.clear();
 		this.scheduleReconcileShardOverlays();
-		void this.hostShardRootsNow().catch(() => {});
+		this.scheduleHostOwnedShardRoots();
 		this.scheduleAutoTopicRootCandidatesBroadcast();
 		return true;
+	}
+
+	private scheduleHostOwnedShardRoots() {
+		this.hostOwnedShardRootsDirty = true;
+		if (!this.started || this.stopping) return;
+		if (this.hostOwnedShardRootsInFlight) return;
+		this.hostOwnedShardRootsInFlight = (async () => {
+			for (;;) {
+				if (!this.started || this.stopping) return;
+				if (!this.hostOwnedShardRootsDirty) return;
+				this.hostOwnedShardRootsDirty = false;
+				try {
+					await this.hostShardRootsNow();
+				} catch {
+					if (!this.started || this.stopping) return;
+					this.hostOwnedShardRootsDirty = true;
+					await delay(250);
+				}
+			}
+		})().finally(() => {
+			this.hostOwnedShardRootsInFlight = undefined;
+			if (this.hostOwnedShardRootsDirty && this.started && !this.stopping) {
+				this.scheduleHostOwnedShardRoots();
+			}
+		});
 	}
 
 	private scheduleReconcileShardOverlays() {
