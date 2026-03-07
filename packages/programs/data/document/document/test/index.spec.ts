@@ -2264,7 +2264,6 @@ describe("index", () => {
 
 				it("can search while keeping minimum amount of replicas", async function () {
 					this.timeout(180_000);
-					// TODO fix flakiness
 					const store = new TestStore({
 						docs: new Documents<Document>(),
 					});
@@ -2304,36 +2303,51 @@ describe("index", () => {
 						},
 					});
 
-					await waitForResolved(async () =>
-						expect((await store1.docs.log.getReplicators()).size).equal(3),
-					);
-					await waitForResolved(async () =>
-						expect((await store2.docs.log.getReplicators()).size).equal(3),
-					);
-					await waitForResolved(async () =>
-						expect((await store3.docs.log.getReplicators()).size).equal(3),
-					);
+					const stores = [store1, store2, store3];
+					const peers = session.peers.map((peer) => peer.identity.publicKey);
+
+					for (let i = 0; i < stores.length; i++) {
+						for (let j = 0; j < peers.length; j++) {
+							if (i === j) {
+								continue;
+							}
+							await stores[i].docs.log.waitForReplicator(peers[j]);
+						}
+					}
 
 					const count = 300;
+					const searchOptions = {
+						remote: {
+							throwOnMissing: true,
+							timeout: 30_000,
+							wait: { timeout: 30_000, behavior: "keep-open" as const },
+						},
+					};
 
 					for (let i = 0; i < count; i++) {
 						const doc = new Document({
-							id: uuid(),
+							id: i.toString(),
 							data: randomBytes(10),
 						});
 						await store1.docs.put(doc);
 					}
 					await waitForResolved(
 						async () => {
-							for (const store of [store1, store2, store3]) {
+							const logLengths = stores.map((x) => x.docs.log.log.length);
+							const replicatorCounts = await Promise.all(
+								stores.map(async (x) => (await x.docs.log.getReplicators()).size),
+							);
+
+							for (const [index, store] of stores.entries()) {
 								const collected = await store.docs.index.search(
 									new SearchRequest({ fetch: count }),
+									searchOptions,
 								);
 								if (collected.length !== count) {
 									throw new Error(
-										`Failed to collect all messages ${collected.length} < ${count}. Log lengths: ${JSON.stringify(
-											[store1, store2, store3].map((x) => x.docs.log.log.length),
-										)}`,
+										`Store ${index} failed to collect all messages ${collected.length} < ${count}. Log lengths: ${JSON.stringify(
+											logLengths,
+										)}. Replicators: ${JSON.stringify(replicatorCounts)}`,
 									);
 								}
 							}
