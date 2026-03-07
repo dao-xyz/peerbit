@@ -21,7 +21,7 @@
 // - Lane indices are 0..(lanes-1). Defaults to lane 0.
 import { AbortError } from "@peerbit/time";
 import GenericFIFO from "fast-fifo";
-import defer from "p-defer";
+import defer, { type DeferredPromise } from "p-defer";
 
 export interface AbortOptions {
 	signal?: AbortSignal;
@@ -55,6 +55,13 @@ export interface PushableLanes<T, R = void, N = unknown>
 	 * the pushable itself is not ended.
 	 */
 	onEmpty(options?: AbortOptions): Promise<void>;
+
+	/**
+	 * Resolves when the total buffered bytes are at or below `limitBytes`.
+	 * If an AbortSignal is given and it aborts, only this promise rejects;
+	 * the pushable itself is not ended.
+	 */
+	onBufferedBelow(limitBytes: number, options?: AbortOptions): Promise<void>;
 
 	/** Total number of bytes buffered (across all lanes). */
 	get readableLength(): number;
@@ -320,9 +327,31 @@ function _pushable<PushType extends Uint8Array, ValueType, ReturnType>(
 	let onNext: ((next: Next<PushType>, lane: number) => ReturnType) | null;
 	let ended = false;
 	let drain = defer<void>();
+	const bufferedBelowWaiters = new Set<{
+		limitBytes: number;
+		deferred: DeferredPromise<void>;
+	}>();
 
 	const maxBytes = options.maxBufferedBytes;
 	const overflow: OverflowPolicy = options.overflow ?? "throw";
+
+	const notifyBufferedBelowWaiters = () => {
+		if (bufferedBelowWaiters.size === 0) return;
+		const size = totalBufferedBytes();
+		for (const waiter of [...bufferedBelowWaiters]) {
+			if (size <= waiter.limitBytes) {
+				bufferedBelowWaiters.delete(waiter);
+				waiter.deferred.resolve();
+			}
+		}
+	};
+
+	const resolveBufferedBelowWaiters = () => {
+		for (const waiter of [...bufferedBelowWaiters]) {
+			bufferedBelowWaiters.delete(waiter);
+			waiter.deferred.resolve();
+		}
+	};
 
 	const getNext = (): NextResult<ValueType> => {
 		const next: Next<PushType> | undefined = buffer.shift();
@@ -362,6 +391,7 @@ function _pushable<PushType extends Uint8Array, ValueType, ReturnType>(
 				};
 			});
 		} finally {
+			notifyBufferedBelowWaiters();
 			// If buffer is empty after this turn, resolve the drain promise (in a microtask)
 			if (buffer.isEmpty()) {
 				queueMicrotask(() => {
@@ -383,6 +413,7 @@ function _pushable<PushType extends Uint8Array, ValueType, ReturnType>(
 	const bufferError = (err: Error): ReturnType => {
 		// swap to ByteFifo to deliver a single terminal error
 		buffer = new ByteFifo<PushType>();
+		notifyBufferedBelowWaiters();
 		if (onNext != null) {
 			return onNext({ error: err }, 0);
 		}
@@ -427,12 +458,18 @@ function _pushable<PushType extends Uint8Array, ValueType, ReturnType>(
 	const end = (err?: Error): ReturnType => {
 		if (ended) return pushable;
 		ended = true;
+		queueMicrotask(() => {
+			drain.resolve();
+			drain = defer<void>();
+			resolveBufferedBelowWaiters();
+		});
 		return err != null ? bufferError(err) : bufferNext({ done: true }, 0);
 	};
 
 	const _return = (): DoneResult => {
 		// Ensure prompt termination
 		buffer = new ByteFifo<PushType>();
+		notifyBufferedBelowWaiters();
 		end();
 		return { done: true };
 	};
@@ -470,7 +507,7 @@ function _pushable<PushType extends Uint8Array, ValueType, ReturnType>(
 			const signal = opts?.signal;
 			signal?.throwIfAborted?.();
 
-			if (buffer.isEmpty()) return;
+			if (buffer.isEmpty() || ended) return;
 
 			let cancel: Promise<void> | undefined;
 			let listener: (() => void) | undefined;
@@ -483,8 +520,50 @@ function _pushable<PushType extends Uint8Array, ValueType, ReturnType>(
 			}
 
 			try {
-				await Promise.race([drain.promise, cancel]);
+				await Promise.race(
+					cancel != null ? [drain.promise, cancel] : [drain.promise],
+				);
 			} finally {
+				if (listener != null) {
+					signal?.removeEventListener("abort", listener);
+				}
+			}
+		},
+
+		onBufferedBelow: async (limitBytes: number, opts?: AbortOptions) => {
+			const signal = opts?.signal;
+			signal?.throwIfAborted?.();
+			const normalizedLimit = Math.max(0, Math.floor(limitBytes));
+
+			if (totalBufferedBytes() <= normalizedLimit || ended) return;
+
+			const waiter = {
+				limitBytes: normalizedLimit,
+				deferred: defer<void>(),
+			};
+			bufferedBelowWaiters.add(waiter);
+
+			let cancel: Promise<void> | undefined;
+			let listener: (() => void) | undefined;
+
+			if (signal != null) {
+				cancel = new Promise<void>((_resolve, reject) => {
+					listener = () => {
+						bufferedBelowWaiters.delete(waiter);
+						reject(new AbortError());
+					};
+					signal.addEventListener("abort", listener!);
+				});
+			}
+
+			try {
+				await Promise.race(
+					cancel != null
+						? [waiter.deferred.promise, cancel]
+						: [waiter.deferred.promise],
+				);
+			} finally {
+				bufferedBelowWaiters.delete(waiter);
 				if (listener != null) {
 					signal?.removeEventListener("abort", listener);
 				}
@@ -539,6 +618,9 @@ function _pushable<PushType extends Uint8Array, ValueType, ReturnType>(
 		},
 		onEmpty(opts?: AbortOptions) {
 			return _pushable.onEmpty(opts);
+		},
+		onBufferedBelow(limitBytes: number, opts?: AbortOptions) {
+			return _pushable.onBufferedBelow(limitBytes, opts);
 		},
 	};
 
