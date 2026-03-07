@@ -10,6 +10,7 @@ import type {
 	PriorityOptions,
 	WithExtraSigners,
 	WithMode,
+	WithTo,
 } from "@peerbit/stream-interface";
 
 export const logger = loggerFn("peerbit:rpc");
@@ -31,6 +32,13 @@ export type RPCRequestOptions<R> = RPCRequestResponseOptions<R> &
 	PriorityOptions &
 	WithExtraSigners &
 	RequestResponseInterceptor<R>;
+
+export type RPCSendOptions = EncryptionOptions &
+	(WithMode | WithTo) &
+	PriorityOptions &
+	WithExtraSigners & {
+		signal?: AbortSignal;
+	};
 
 export type EncryptionOptions = {
 	encryption?: {
