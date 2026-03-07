@@ -10,6 +10,7 @@ import { SilentDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { AbortError, delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import sinon from "sinon";
 import {
 	MissingResponsesError,
 	RPC,
@@ -298,6 +299,32 @@ describe("rpc", () => {
 					(x) => x.hashcode(),
 				);
 			expect(from).to.deep.eq(expectedSigner);
+		});
+
+		it("send normalizes bare to into silent delivery", async () => {
+			const publish = sinon.spy(reader.node.services.pubsub, "publish");
+
+			try {
+				await reader.query.send(
+					new Body({
+						arr: new Uint8Array([0, 1, 2]),
+					}),
+					{
+						to: [responder.node.identity.publicKey],
+					},
+				);
+			} finally {
+				publish.restore();
+			}
+
+			expect(publish.calledOnce).to.be.true;
+			const options = publish.firstCall.args[1];
+			expect(options.mode).to.be.instanceOf(SilentDelivery);
+			const mode = options.mode as SilentDelivery;
+			expect(mode.to).to.deep.equal([
+				responder.node.identity.publicKey.hashcode(),
+			]);
+			expect(mode.redundancy).to.equal(1);
 		});
 
 		it("onResponse", async () => {

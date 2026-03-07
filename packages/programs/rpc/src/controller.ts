@@ -25,7 +25,6 @@ import {
 	type PriorityOptions,
 	SilentDelivery,
 	type WithExtraSigners,
-	type WithMode,
 	deliveryModeHasReceiver,
 } from "@peerbit/stream-interface";
 import { AbortError, TimeoutError } from "@peerbit/time";
@@ -35,6 +34,7 @@ import {
 	type EncryptionOptions,
 	type RPCRequestOptions,
 	type RPCResponse,
+	type RPCSendOptions,
 	logger,
 } from "./io.js";
 
@@ -284,13 +284,24 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 
 	private getPublishOptions(
 		id?: Uint8Array,
-		options?: EncryptionOptions & WithMode & PriorityOptions & WithExtraSigners,
+		options?: RPCSendOptions,
 		signal?: AbortSignal,
 	): PubSubPublishOptions {
+		const explicitMode =
+			options && "mode" in options ? options.mode : undefined;
+		const explicitTo = options && "to" in options ? options.to : undefined;
+		const normalizedMode =
+			explicitMode ??
+			(explicitTo != null
+				? new SilentDelivery({
+						to: explicitTo,
+						redundancy: 1,
+					})
+				: undefined);
 		return {
 			id,
 			priority: options?.priority,
-			mode: options?.mode,
+			mode: normalizedMode,
 			topics: [this.topic],
 			extraSigners: options?.extraSigners,
 			signal,
@@ -304,10 +315,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 	 */
 	public async send(
 		message: Q,
-		options?: EncryptionOptions &
-			WithMode &
-			PriorityOptions &
-			WithExtraSigners & { signal?: AbortSignal },
+		options?: RPCSendOptions,
 	): Promise<void> {
 		await this.node.services.pubsub.publish(
 			serialize(await this.seal(message, undefined, options)),
