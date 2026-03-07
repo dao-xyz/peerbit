@@ -417,6 +417,28 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [6.0.3](https://github.com/dao-xyz/peerbit/compare/rpc-v6.0.2...rpc-v6.0.3) (2026-03-07)
+
+
+### Bug Fixes
+
+* **shared-log:** target block responses over RPC ([e16fd7f](https://github.com/dao-xyz/peerbit/commit/e16fd7fefdb1b3a053ff39ac6f75ef11069f9a08))
+
+
+### Refactors
+
+* **rpc:** normalize targeted send options ([8c4e39b](https://github.com/dao-xyz/peerbit/commit/8c4e39bdc7da1f3a92dfa2f779b87c0b5f60f8b8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped to 6.0.1
+    * @peerbit/pubsub bumped to 5.0.1
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.3
+
 ## [6.0.2](https://github.com/dao-xyz/peerbit/compare/rpc-v6.0.1...rpc-v6.0.2) (2026-03-05)
 
 

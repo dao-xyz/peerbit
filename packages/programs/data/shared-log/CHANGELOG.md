@@ -389,6 +389,34 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.0.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.3...shared-log-v13.0.4) (2026-03-07)
+
+
+### Bug Fixes
+
+* **pubsub:** handle session reset follow-up issues ([d7e845a](https://github.com/dao-xyz/peerbit/commit/d7e845ad2f42d11b75c4e929d7bebfcb790f789e))
+* **pubsub:** ignore duplicate peer session resets ([89efa1b](https://github.com/dao-xyz/peerbit/commit/89efa1b4c77090769288798ae16ded068b507570))
+* **pubsub:** retry hosting auto-selected shard roots ([90c22a0](https://github.com/dao-xyz/peerbit/commit/90c22a0dc3ff95099ec20899a8a4c96523f8151b))
+* **shared-log:** target block responses over rpc ([10d008a](https://github.com/dao-xyz/peerbit/commit/10d008a2d6948227c257c8b4fba251ed0d5ce936))
+* **shared-log:** target block responses over RPC ([e16fd7f](https://github.com/dao-xyz/peerbit/commit/e16fd7fefdb1b3a053ff39ac6f75ef11069f9a08))
+
+
+### Refactors
+
+* **rpc:** normalize targeted send options ([8c4e39b](https://github.com/dao-xyz/peerbit/commit/8c4e39bdc7da1f3a92dfa2f779b87c0b5f60f8b8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.3
+    * @peerbit/program bumped to 6.0.1
+    * @peerbit/rpc bumped to 6.0.3
+    * @peerbit/pubsub bumped to 5.0.1
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.3
+
 ## [13.0.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.2...shared-log-v13.0.3) (2026-03-05)
 
 

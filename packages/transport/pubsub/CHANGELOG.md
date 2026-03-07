@@ -188,6 +188,19 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [5.0.1](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.0.0...pubsub-v5.0.1) (2026-03-07)
+
+
+### Bug Fixes
+
+* **pubsub:** clean up relay-only subscriber state ([c89b0fa](https://github.com/dao-xyz/peerbit/commit/c89b0fa245ca8383f2615a1f3bdb27159579abd2))
+* **pubsub:** clean up relay-only subscriber state ([5b9e861](https://github.com/dao-xyz/peerbit/commit/5b9e861fb599399ec9724cc4e9c0736691515117))
+* **pubsub:** handle session reset follow-up issues ([d7e845a](https://github.com/dao-xyz/peerbit/commit/d7e845ad2f42d11b75c4e929d7bebfcb790f789e))
+* **pubsub:** ignore duplicate peer session resets ([89efa1b](https://github.com/dao-xyz/peerbit/commit/89efa1b4c77090769288798ae16ded068b507570))
+* **pubsub:** ignore duplicate peer session resets ([1f25cea](https://github.com/dao-xyz/peerbit/commit/1f25cea7c91317399f39f71a3cab72a36050a8f8))
+* **pubsub:** retry hosting auto-selected shard roots ([90c22a0](https://github.com/dao-xyz/peerbit/commit/90c22a0dc3ff95099ec20899a8a4c96523f8151b))
+* **pubsub:** retry hosting auto-selected shard roots ([9523b54](https://github.com/dao-xyz/peerbit/commit/9523b544d4556cfc5acf48f8ef4555223a85b8ee))
+
 ## [5.0.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.1.4...pubsub-v5.0.0) (2026-03-04)
 
 
