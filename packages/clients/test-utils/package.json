@@ -62,7 +62,8 @@
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
 		"test": "aegir test -t node",
-		"lint": "aegir lint"
+		"lint": "aegir lint",
+		"test:cov": "aegir test -t node --cov"
 	},
 	"repository": {
 		"type": "git",

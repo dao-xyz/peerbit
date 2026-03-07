@@ -60,7 +60,8 @@
 	"scripts": {
 		"clean": "shx rm -rf dist/*",
 		"build": "pnpm run clean && tsc -p tsconfig.json && tsc -p tsconfig.json",
-		"test": "aegir test -t node"
+		"test": "aegir test -t node",
+		"test:cov": "aegir test -t node --cov"
 	},
 	"devDependencies": {
 		"tty-table": "^4.2.1",

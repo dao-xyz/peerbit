@@ -20,7 +20,8 @@
 		"clean": "aegir clean",
 		"build": "aegir build  --no-bundle",
 		"test": "echo 'No tests configured'",
-		"lint": "echo 'No linting configured'"
+		"lint": "echo 'No linting configured'",
+		"test:cov": "echo 'No tests configured'"
 	},
 	"dependencies": {}
 }
