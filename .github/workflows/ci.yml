@@ -192,4 +192,4 @@ jobs:
           pnpm --filter @peerbit/shared-log... run build
       - name: Run shared-log sync batch sweep gate
         run: |
-          pnpm -C packages/programs/data/shared-log exec node --loader ts-node/esm ./benchmark/sync-batch-sweep.ts
+          node ./packages/programs/data/shared-log/dist/benchmark/sync-batch-sweep.js

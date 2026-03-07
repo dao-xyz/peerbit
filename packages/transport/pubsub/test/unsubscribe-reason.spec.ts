@@ -4,11 +4,31 @@ import type {
 	UnsubcriptionEvent,
 	UnsubscriptionReason,
 } from "@peerbit/pubsub-interface";
+import {
+	SubscriptionData,
+	Subscribe,
+	Unsubscribe,
+} from "@peerbit/pubsub-interface";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { FanoutTree, TopicControlPlane, TopicRootControlPlane } from "../src/index.js";
 
 describe("pubsub (unsubscribe reason)", function () {
+	const createControlEnvelope = (properties: {
+		publicKey: ReturnType<typeof getPublicKeyFromPeerId>;
+		session: bigint;
+		timestamp: bigint;
+	}) =>
+		({
+			header: {
+				session: properties.session,
+				timestamp: properties.timestamp,
+				signatures: {
+					signatures: [{ publicKey: properties.publicKey }],
+				},
+			},
+		}) as any;
+
 	const createDisconnectedSession = async (
 		peerCount: number,
 		options?: {
@@ -212,10 +232,12 @@ describe("pubsub (unsubscribe reason)", function () {
 			const onUnsubscribe = (ev: CustomEvent<UnsubcriptionEvent>) =>
 				events.push(ev.detail);
 			const bPublicKey = getPublicKeyFromPeerId(session.peers[1]!.peerId);
+			const currentSession =
+				a.topics.get(topic)?.get(b.publicKeyHash)?.session ?? 0n;
 
 			a.addEventListener("unsubscribe", onUnsubscribe as any);
 			try {
-				a.onPeerSession(bPublicKey, 1);
+				a.onPeerSession(bPublicKey, Number(currentSession + 1n));
 				await expectUnsubscribeEvent({
 					events,
 					fromHash: b.publicKeyHash,
@@ -225,6 +247,98 @@ describe("pubsub (unsubscribe reason)", function () {
 			} finally {
 				a.removeEventListener("unsubscribe", onUnsubscribe as any);
 			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("ignores duplicate peer-session-reset for the current subscription session", async () => {
+		const topic = "unsubscribe-reason-session-duplicate";
+		const session = await createDisconnectedSession(2);
+		try {
+			const { a, b } = await setupTrackedSubscribers(topic, session);
+			const events: UnsubcriptionEvent[] = [];
+			const onUnsubscribe = (ev: CustomEvent<UnsubcriptionEvent>) =>
+				events.push(ev.detail);
+			const bPublicKey = getPublicKeyFromPeerId(session.peers[1]!.peerId);
+			const currentSession =
+				a.topics.get(topic)?.get(b.publicKeyHash)?.session ?? 0n;
+
+			a.addEventListener("unsubscribe", onUnsubscribe as any);
+			try {
+				a.onPeerSession(bPublicKey, Number(currentSession));
+				expect(a.topics.get(topic)?.has(b.publicKeyHash)).to.equal(true);
+				expect(events).to.deep.equal([]);
+			} finally {
+				a.removeEventListener("unsubscribe", onUnsubscribe as any);
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("ignores stale old-session unsubscribe messages", async () => {
+		const topic = "unsubscribe-reason-ignore-stale-old-session";
+		const session = await createDisconnectedSession(2);
+		try {
+			const { a, b } = await setupTrackedSubscribers(topic, session);
+			const bPublicKey = getPublicKeyFromPeerId(session.peers[1]!.peerId);
+
+			a.topics.get(topic)!.set(
+				b.publicKeyHash,
+				new SubscriptionData({
+					publicKey: bPublicKey,
+					session: 2n,
+					timestamp: 20n,
+				}),
+			);
+
+			await (a as any).processShardPubSubMessage({
+				pubsubMessage: new Unsubscribe({ topics: [topic] }),
+				message: createControlEnvelope({
+					publicKey: bPublicKey,
+					session: 1n,
+					timestamp: 30n,
+				}),
+				from: bPublicKey,
+				shardTopic: (a as any).getShardTopicForUserTopic(topic),
+			});
+
+			expect(a.topics.get(topic)?.has(b.publicKeyHash)).to.equal(true);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("accepts newer-session subscribe after older-session control timestamp", async () => {
+		const topic = "unsubscribe-reason-newer-subscribe-beats-older-session";
+		const session = await createDisconnectedSession(2);
+		try {
+			const { a, b } = await setupTrackedSubscribers(topic, session);
+			const bPublicKey = getPublicKeyFromPeerId(session.peers[1]!.peerId);
+
+			a.topics.get(topic)!.delete(b.publicKeyHash);
+			a.peerToTopic.delete(b.publicKeyHash);
+			a.lastSubscriptionMessages.set(
+				b.publicKeyHash,
+				new Map([[topic, { session: 1n, timestamp: 30n }]]),
+			);
+
+			await (a as any).processShardPubSubMessage({
+				pubsubMessage: new Subscribe({
+					topics: [topic],
+					requestSubscribers: false,
+				}),
+				message: createControlEnvelope({
+					publicKey: bPublicKey,
+					session: 2n,
+					timestamp: 20n,
+				}),
+				from: bPublicKey,
+				shardTopic: (a as any).getShardTopicForUserTopic(topic),
+			});
+
+			expect(a.topics.get(topic)?.has(b.publicKeyHash)).to.equal(true);
 		} finally {
 			await session.stop();
 		}
