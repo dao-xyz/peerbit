@@ -412,14 +412,11 @@ export class RemoteBlocks implements IBlocks {
 		}
 
 		if (!bytes) return;
-		const responseTransportOptions = context?.transport
-			? context.transport.responseOptions()
-			: {};
+		const responsePublishOptions = context?.transport
+			? context.transport.withResponseOptions({ to: [from] })
+			: { to: [from] };
 		await this.options
-			.publish(new BlockResponse(cid, bytes), {
-				to: [from],
-				...responseTransportOptions,
-			})
+			.publish(new BlockResponse(cid, bytes), responsePublishOptions)
 			.catch(dontThrowIfDeliveryError);
 	}
 

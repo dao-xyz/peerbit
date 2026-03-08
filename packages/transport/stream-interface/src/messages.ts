@@ -432,9 +432,9 @@ export type RequestTransportContext = {
 	readonly requestPriority?: number;
 	readonly responsePriority?: number;
 	remainingTime(now?: number): number;
-	responseOptions(
-		overrides?: PriorityOptions & ExpiresAtOptions,
-	): PriorityOptions & ExpiresAtOptions;
+	withResponseOptions<T extends object>(
+		options: T & Partial<PriorityOptions & ExpiresAtOptions>,
+	): T & PriorityOptions & ExpiresAtOptions;
 };
 
 export const createRequestTransportContext = (
@@ -444,8 +444,12 @@ export const createRequestTransportContext = (
 	requestPriority: message.header.priority,
 	responsePriority: getResponsePriorityFromMessage(message),
 	remainingTime: (now?: number) => getMessageRemainingTime(message, now),
-	responseOptions: (overrides?: PriorityOptions & ExpiresAtOptions) =>
-		inheritResponseTransportOptions(message, overrides),
+	withResponseOptions: <T extends object>(
+		options: T & Partial<PriorityOptions & ExpiresAtOptions>,
+	) => ({
+		...options,
+		...inheritResponseTransportOptions(message, options),
+	}),
 });
 
 export const inheritResponseTransportOptions = (

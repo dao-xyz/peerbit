@@ -213,16 +213,15 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 										requestId: message.id,
 									}),
 								),
-								{
+								transport.withResponseOptions({
 									topics: [this.topic],
-									...transport.responseOptions(),
 
 									/// TODO make redundancy parameter configurable?
 									mode: new SilentDelivery({
 										to: [message.header.signatures!.publicKeys[0]],
 										redundancy: 1,
 									}),
-								},
+								}),
 							);
 						}
 					}
