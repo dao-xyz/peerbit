@@ -167,6 +167,72 @@ describe("transport", function () {
 		expect(new Uint8Array(read!)).to.deep.equal(data);
 	});
 
+	it("can recover when explicit providers are stale but resolver knows a better peer", async () => {
+		session = await TestSession.disconnected(3, {
+			services: {
+				blocks: (c) =>
+					new DirectBlock(c, {
+						resolveProviders: () => [store(session, 0).publicKeyHash],
+					}),
+			},
+		});
+
+		await store(session, 0).start();
+		await store(session, 1).start();
+		await store(session, 2).start();
+
+		await session.connect([
+			[session.peers[0], session.peers[1]],
+			[session.peers[1], session.peers[2]],
+		]);
+
+		await waitForNeighbour(store(session, 0), store(session, 1));
+		await waitForNeighbour(store(session, 1), store(session, 2));
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store(session, 0).put(data);
+		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
+
+		const read = await store(session, 1).get(cid, {
+			remote: {
+				timeout: 5_000,
+				from: [store(session, 2).publicKeyHash],
+			},
+		});
+		expect(new Uint8Array(read!)).to.deep.equal(data);
+	});
+
+	it("can bypass stale cached explicit providers on forced retry", async () => {
+		session = await TestSession.disconnected(3, {
+			services: {
+				blocks: (c) =>
+					new DirectBlock(c, {
+						resolveProviders: () => [store(session, 0).publicKeyHash],
+					}),
+			},
+		});
+
+		await store(session, 0).start();
+		await store(session, 1).start();
+		await store(session, 2).start();
+
+		await session.connect([[session.peers[0], session.peers[1]]]);
+
+		await waitForNeighbour(store(session, 0), store(session, 1));
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store(session, 0).put(data);
+		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
+
+		const read = await store(session, 1).get(cid, {
+			remote: {
+				timeout: 5_000,
+				from: [store(session, 2).publicKeyHash],
+			},
+		});
+		expect(new Uint8Array(read!)).to.deep.equal(data);
+	});
+
 	it("only responds to peer that needs block", async () => {
 		session = await TestSession.disconnected(3, {
 			services: { blocks: (c) => new DirectBlock(c) },
