@@ -16,7 +16,7 @@
 	"scripts": {
 		"clean": "#not used",
 		"build": "tsc -p tsconfig.json",
-		"test": "node -e \"process.exit(0)\"",
+		"test": "true",
 		"lint": "aegir lint"
 	},
 	"dependencies": {
