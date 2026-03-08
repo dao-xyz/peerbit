@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.11](https://github.com/dao-xyz/peerbit/compare/canonical-host-v1.0.10...canonical-host-v1.0.11) (2026-03-08)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped to 5.0.6
+  * devDependencies
+    * @peerbit/canonical-client bumped to 1.1.7
+
 ## [1.0.10](https://github.com/dao-xyz/peerbit/compare/canonical-host-v1.0.9...canonical-host-v1.0.10) (2026-03-08)
 
 

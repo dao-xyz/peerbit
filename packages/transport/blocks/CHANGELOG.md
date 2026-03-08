@@ -279,6 +279,13 @@
     * @peerbit/blocks-interface bumped from 1.2.18 to 1.2.19
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [4.0.3](https://github.com/dao-xyz/peerbit/compare/blocks-v4.0.2...blocks-v4.0.3) (2026-03-08)
+
+
+### Bug Fixes
+
+* stabilize file-share refresh catch-up under churn ([#647](https://github.com/dao-xyz/peerbit/issues/647)) ([cba1bcc](https://github.com/dao-xyz/peerbit/commit/cba1bcc80af7ef5190f6e9154e5c8670db6853e5))
+
 ## [4.0.2](https://github.com/dao-xyz/peerbit/compare/blocks-v4.0.1...blocks-v4.0.2) (2026-03-08)
 
 
