@@ -251,6 +251,19 @@ export class RemoteBlocks implements IBlocks {
 		this._providerCache.add(cidString, normalized);
 	}
 
+	private pickRequestBatch(providers: string[], attempt: number): string[] {
+		if (providers.length <= 1) {
+			return providers;
+		}
+		const batchSize = Math.min(2, providers.length);
+		const start = (attempt * batchSize) % providers.length;
+		const batch: string[] = [];
+		for (let i = 0; i < batchSize; i++) {
+			batch.push(providers[(start + i) % providers.length]);
+		}
+		return this.normalizeProviderHints(batch, batchSize);
+	}
+
 	private async resolveRemoteProviders(
 		cidString: string,
 		options?: { signal?: AbortSignal; refresh?: boolean },
@@ -541,13 +554,20 @@ export class RemoteBlocks implements IBlocks {
 				if (providers.length === 0) return;
 				try {
 					const expiresAt = Date.now() + (options.timeout ?? 30_000);
+					const requestProviders = this.pickRequestBatch(
+						providers,
+						requeryCount,
+					);
 					await this.options.publish(
 						new BlockRequest(cidString),
 						{
 							priority: options.priority,
 							responsePriority: options.priority,
 							expiresAt,
-							mode: new SilentDelivery({ to: providers, redundancy: 1 }),
+							mode: new SilentDelivery({
+								to: requestProviders,
+								redundancy: requestProviders.length,
+							}),
 						},
 					);
 					requeryCount += 1;
