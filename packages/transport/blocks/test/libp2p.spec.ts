@@ -260,16 +260,18 @@ describe("transport", function () {
 				const to = (options?.mode as any)?.to ?? [];
 				const redundancy = Math.max(1, (options?.mode as any)?.redundancy ?? 1);
 				const selected = to.slice(0, redundancy);
-				return Promise.all(
-					selected.map(async (target: string) => {
-						if (target === store(session, 0).publicKeyHash) {
-							forwardedToSource++;
-							await (store(session, 0) as any).onMessage(message, {
-								from: store(session, 1).publicKeyHash,
-							});
-						}
-					}),
-				).then(() => undefined);
+					return (async (): Promise<void> => {
+						await Promise.all(
+							selected.map(async (target: string): Promise<void> => {
+								if (target === store(session, 0).publicKeyHash) {
+									forwardedToSource++;
+									await (store(session, 0) as any).onMessage(message, {
+										from: store(session, 1).publicKeyHash,
+									});
+								}
+							}),
+						);
+					})();
 			}
 			return originalPublish(message, options);
 		};
