@@ -368,6 +368,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [6.0.6](https://github.com/dao-xyz/peerbit/compare/log-v6.0.5...log-v6.0.6) (2026-03-08)
+
+
+### Bug Fixes
+
+* stabilize file-share refresh catch-up under churn ([#647](https://github.com/dao-xyz/peerbit/issues/647)) ([cba1bcc](https://github.com/dao-xyz/peerbit/commit/cba1bcc80af7ef5190f6e9154e5c8670db6853e5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks bumped to 4.0.3
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.6
+
 ## [6.0.5](https://github.com/dao-xyz/peerbit/compare/log-v6.0.4...log-v6.0.5) (2026-03-08)
 
 
