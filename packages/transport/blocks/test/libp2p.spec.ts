@@ -233,6 +233,61 @@ describe("transport", function () {
 		expect(new Uint8Array(read!)).to.deep.equal(data);
 	});
 
+	it("probes additional explicit providers when the first candidate does not answer", async () => {
+		session = await TestSession.disconnected(3, {
+			services: { blocks: (c) => new DirectBlock(c) },
+		});
+
+		await store(session, 0).start();
+		await store(session, 1).start();
+		await store(session, 2).start();
+
+		await session.connect([[session.peers[0], session.peers[1]]]);
+		await waitForNeighbour(store(session, 0), store(session, 1));
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store(session, 0).put(data);
+		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
+
+		const requesterRemoteBlocks = (store(session, 1) as any)[
+			"remoteBlocks"
+		] as RemoteBlocks;
+		const originalPublish = requesterRemoteBlocks.options.publish;
+		let forwardedToSource = 0;
+
+		requesterRemoteBlocks.options.publish = (message: any, options: any) => {
+			if (message instanceof BlockRequest) {
+				const to = (options?.mode as any)?.to ?? [];
+				const redundancy = Math.max(1, (options?.mode as any)?.redundancy ?? 1);
+				const selected = to.slice(0, redundancy);
+				return Promise.all(
+					selected.map(async (target: string) => {
+						if (target === store(session, 0).publicKeyHash) {
+							forwardedToSource++;
+							await (store(session, 0) as any).onMessage(message, {
+								from: store(session, 1).publicKeyHash,
+							});
+						}
+					}),
+				).then(() => undefined);
+			}
+			return originalPublish(message, options);
+		};
+
+		try {
+			const read = await store(session, 1).get(cid, {
+				remote: {
+					timeout: 5_000,
+					from: [store(session, 2).publicKeyHash, store(session, 0).publicKeyHash],
+				},
+			});
+			expect(new Uint8Array(read!)).to.deep.equal(data);
+			expect(forwardedToSource).greaterThan(0);
+		} finally {
+			requesterRemoteBlocks.options.publish = originalPublish;
+		}
+	});
+
 	it("only responds to peer that needs block", async () => {
 		session = await TestSession.disconnected(3, {
 			services: { blocks: (c) => new DirectBlock(c) },
