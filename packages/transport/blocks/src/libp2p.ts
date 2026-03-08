@@ -5,6 +5,7 @@ import { getPublicKeyFromPeerId, type PublicSignKey } from "@peerbit/crypto";
 import { DirectStream } from "@peerbit/stream";
 import { type DirectStreamComponents } from "@peerbit/stream";
 import {
+	createRequestTransportContext,
 	type DataMessage,
 	type WaitForPeersFn,
 } from "@peerbit/stream-interface";
@@ -101,7 +102,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 					deserialize(data.detail.data!, BlockMessage),
 					{
 						from: data.detail.header.signatures?.publicKeys[0]?.hashcode(),
-						message: data.detail,
+						transport: createRequestTransportContext(data.detail),
 					},
 				);
 		};

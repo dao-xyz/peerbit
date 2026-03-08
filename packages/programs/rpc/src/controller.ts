@@ -21,9 +21,10 @@ import {
 	type PublishOptions as PubSubPublishOptions,
 } from "@peerbit/pubsub-interface";
 import {
+	createRequestTransportContext,
 	DataMessage,
-	inheritResponseTransportOptions,
 	type PriorityOptions,
+	type RequestTransportContext,
 	SilentDelivery,
 	type WithExtraSigners,
 	deliveryModeHasReceiver,
@@ -48,6 +49,7 @@ export type RPCSetupOptions<Q, R> = {
 export type RequestContext = {
 	from?: PublicSignKey;
 	message: DataMessage;
+	transport: RequestTransportContext;
 };
 export type ResponseHandler<Q, R> = (
 	query: Q,
@@ -177,9 +179,11 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 							}),
 						);
 
+						const transport = createRequestTransportContext(message);
 						const response = await this._responseHandler(request, {
 							from,
 							message: message,
+							transport,
 						});
 
 						if (response && rpcMessage.respondTo) {
@@ -211,7 +215,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 								),
 								{
 									topics: [this.topic],
-									...inheritResponseTransportOptions(message),
+									...transport.responseOptions(),
 
 									/// TODO make redundancy parameter configurable?
 									mode: new SilentDelivery({

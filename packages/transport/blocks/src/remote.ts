@@ -13,9 +13,7 @@ import { PublicSignKey } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 import { type PublishOptions, dontThrowIfDeliveryError } from "@peerbit/stream";
 import {
-	DataMessage,
-	getMessageRemainingTime,
-	inheritResponseTransportOptions,
+	type RequestTransportContext,
 	type PeerRefs,
 	SilentDelivery,
 	type WaitForAnyOpts,
@@ -62,7 +60,7 @@ export class BlockResponse extends BlockMessage {
 
 type BlockMessageContext = {
 	from?: string;
-	message?: DataMessage;
+	transport?: RequestTransportContext;
 };
 
 export class RemoteBlocks implements IBlocks {
@@ -378,8 +376,8 @@ export class RemoteBlocks implements IBlocks {
 			// requiring the requester to know an explicit `remote.from` provider set.
 			try {
 				const cidObject = cidifyString(cid);
-				const inheritedTimeoutMs = context?.message
-					? Math.floor(getMessageRemainingTime(context.message))
+				const inheritedTimeoutMs = context?.transport
+					? Math.floor(context.transport.remainingTime())
 					: undefined;
 				if (inheritedTimeoutMs != null && inheritedTimeoutMs <= 0) {
 					return;
@@ -414,8 +412,8 @@ export class RemoteBlocks implements IBlocks {
 		}
 
 		if (!bytes) return;
-		const responseTransportOptions = context?.message
-			? inheritResponseTransportOptions(context.message)
+		const responseTransportOptions = context?.transport
+			? context.transport.responseOptions()
 			: {};
 		await this.options
 			.publish(new BlockResponse(cid, bytes), {

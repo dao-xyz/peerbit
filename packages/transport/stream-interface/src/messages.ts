@@ -427,6 +427,27 @@ export const getMessageRemainingTime = (
 export const getResponsePriorityFromMessage = (message: Message | DataMessage) =>
 	message.header.responsePriority ?? message.header.priority;
 
+export type RequestTransportContext = {
+	readonly expiresAt: number;
+	readonly requestPriority?: number;
+	readonly responsePriority?: number;
+	remainingTime(now?: number): number;
+	responseOptions(
+		overrides?: PriorityOptions & ExpiresAtOptions,
+	): PriorityOptions & ExpiresAtOptions;
+};
+
+export const createRequestTransportContext = (
+	message: Message | DataMessage,
+): RequestTransportContext => ({
+	expiresAt: getMessageExpiresAt(message),
+	requestPriority: message.header.priority,
+	responsePriority: getResponsePriorityFromMessage(message),
+	remainingTime: (now?: number) => getMessageRemainingTime(message, now),
+	responseOptions: (overrides?: PriorityOptions & ExpiresAtOptions) =>
+		inheritResponseTransportOptions(message, overrides),
+});
+
 export const inheritResponseTransportOptions = (
 	message: Message | DataMessage,
 	overrides?: PriorityOptions & ExpiresAtOptions,
