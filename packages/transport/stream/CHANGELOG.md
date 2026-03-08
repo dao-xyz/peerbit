@@ -43,6 +43,27 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [5.0.1](https://github.com/dao-xyz/peerbit/compare/stream-v5.0.0...stream-v5.0.1) (2026-03-08)
+
+
+### Bug Fixes
+
+* **stream:** add node-wide outbound backpressure ([a7a021c](https://github.com/dao-xyz/peerbit/commit/a7a021caf9fde238aaa736338bc462a295dd8551))
+* **stream:** bound outbound queue backpressure ([73058b3](https://github.com/dao-xyz/peerbit/commit/73058b37117a02242079becc1bd900bf8d889b82))
+* **stream:** bound outbound queue backpressure ([998da70](https://github.com/dao-xyz/peerbit/commit/998da70c276382bbfe896a87d6ea9b7697008653))
+
+
+### Refactors
+
+* **stream:** inherit response transport hints from requests ([cc853c0](https://github.com/dao-xyz/peerbit/commit/cc853c087fd31a7f7b5964f8b05722f500a8d2f2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream-interface bumped to 6.0.1
+
 ## [5.0.0](https://github.com/dao-xyz/peerbit/compare/stream-v4.6.0...stream-v5.0.0) (2026-03-04)
 
 

@@ -389,6 +389,35 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.0.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.4...shared-log-v13.0.5) (2026-03-08)
+
+
+### Bug Fixes
+
+* **stream:** bound outbound queue backpressure ([73058b3](https://github.com/dao-xyz/peerbit/commit/73058b37117a02242079becc1bd900bf8d889b82))
+
+
+### Refactors
+
+* **stream:** add request transport context ([e7625b2](https://github.com/dao-xyz/peerbit/commit/e7625b281ec919c18c2ba28724a8eee02a3b3081))
+* **stream:** inherit response transport hints from requests ([cc853c0](https://github.com/dao-xyz/peerbit/commit/cc853c087fd31a7f7b5964f8b05722f500a8d2f2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.4
+    * @peerbit/program bumped to 6.0.2
+    * @peerbit/rpc bumped to 6.0.4
+    * @peerbit/blocks bumped to 4.0.1
+    * @peerbit/blocks-interface bumped to 2.0.1
+    * @peerbit/pubsub bumped to 5.0.2
+    * @peerbit/pubsub-interface bumped to 5.0.1
+    * @peerbit/stream-interface bumped to 6.0.1
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.4
+
 ## [13.0.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.3...shared-log-v13.0.4) (2026-03-07)
 
 

@@ -188,6 +188,27 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [5.0.2](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.0.1...pubsub-v5.0.2) (2026-03-08)
+
+
+### Bug Fixes
+
+* **stream:** bound outbound queue backpressure ([73058b3](https://github.com/dao-xyz/peerbit/commit/73058b37117a02242079becc1bd900bf8d889b82))
+
+
+### Refactors
+
+* **stream:** inherit response transport hints from requests ([cc853c0](https://github.com/dao-xyz/peerbit/commit/cc853c087fd31a7f7b5964f8b05722f500a8d2f2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/pubsub-interface bumped to 5.0.1
+    * @peerbit/stream bumped to 5.0.1
+    * @peerbit/stream-interface bumped to 6.0.1
+
 ## [5.0.1](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.0.0...pubsub-v5.0.1) (2026-03-07)
 
 

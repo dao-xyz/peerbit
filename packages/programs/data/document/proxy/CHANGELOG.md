@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.0.5](https://github.com/dao-xyz/peerbit/compare/document-proxy-v2.0.4...document-proxy-v2.0.5) (2026-03-08)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/canonical-client bumped to 1.1.5
+    * @peerbit/canonical-host bumped to 1.0.9
+    * @peerbit/document bumped to 13.0.5
+    * @peerbit/document-interface bumped to 3.2.9
+    * @peerbit/program bumped to 6.0.2
+    * @peerbit/shared-log-proxy bumped to 2.0.5
+    * @peerbit/stream-interface bumped to 6.0.1
+
 ## [2.0.4](https://github.com/dao-xyz/peerbit/compare/document-proxy-v2.0.3...document-proxy-v2.0.4) (2026-03-07)
 
 

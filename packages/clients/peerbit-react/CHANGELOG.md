@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.0.4](https://github.com/dao-xyz/peerbit/compare/react-v1.0.3...react-v1.0.4) (2026-03-08)
+
+
+### Bug Fixes
+
+* **blocks:** stabilize late joins during active upload ([a7c7b36](https://github.com/dao-xyz/peerbit/commit/a7c7b36d00fba6590a7b5b7451944d1a881762a6))
+* **stream:** bound outbound queue backpressure ([73058b3](https://github.com/dao-xyz/peerbit/commit/73058b37117a02242079becc1bd900bf8d889b82))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/canonical-client bumped to 1.1.5
+    * @peerbit/program-react bumped to 0.4.5
+    * @peerbit/program bumped to 6.0.2
+    * peerbit bumped to 5.0.4
+
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/react-v1.0.2...react-v1.0.3) (2026-03-07)
 
 
