@@ -7,7 +7,9 @@ import type {
 import { logger as loggerFn } from "@peerbit/logger";
 import type {
 	DataMessage,
+	ExpiresAtOptions,
 	PriorityOptions,
+	ResponsePriorityOptions,
 	WithExtraSigners,
 	WithMode,
 	WithTo,
@@ -30,12 +32,16 @@ export type RPCRequestOptions<R> = RPCRequestResponseOptions<R> &
 	EncryptionOptions &
 	WithMode &
 	PriorityOptions &
+	ResponsePriorityOptions &
+	ExpiresAtOptions &
 	WithExtraSigners &
 	RequestResponseInterceptor<R>;
 
 export type RPCSendOptions = EncryptionOptions &
 	(WithMode | WithTo) &
 	PriorityOptions &
+	ResponsePriorityOptions &
+	ExpiresAtOptions &
 	WithExtraSigners & {
 		signal?: AbortSignal;
 	};

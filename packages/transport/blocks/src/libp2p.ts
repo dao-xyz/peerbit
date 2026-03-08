@@ -99,7 +99,10 @@ export class DirectBlock extends DirectStream implements IBlocks {
 				data.detail?.data.length > 0 &&
 				this.remoteBlocks.onMessage(
 					deserialize(data.detail.data!, BlockMessage),
-					data.detail.header.signatures?.publicKeys[0]?.hashcode(),
+					{
+						from: data.detail.header.signatures?.publicKeys[0]?.hashcode(),
+						message: data.detail,
+					},
 				);
 		};
 		this.onPeerConnectedFn = (evt: CustomEvent<PublicSignKey>) =>

@@ -22,6 +22,7 @@ import {
 } from "@peerbit/pubsub-interface";
 import {
 	DataMessage,
+	inheritResponseTransportOptions,
 	type PriorityOptions,
 	SilentDelivery,
 	type WithExtraSigners,
@@ -210,7 +211,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 								),
 								{
 									topics: [this.topic],
-									priority: message.header.priority, // send back with same priority. TODO, make this better in the future
+									...inheritResponseTransportOptions(message),
 
 									/// TODO make redundancy parameter configurable?
 									mode: new SilentDelivery({
@@ -301,6 +302,8 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 		return {
 			id,
 			priority: options?.priority,
+			responsePriority: options?.responsePriority,
+			expiresAt: options?.expiresAt,
 			mode: normalizedMode,
 			topics: [this.topic],
 			extraSigners: options?.extraSigners,

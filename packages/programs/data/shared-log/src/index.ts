@@ -4290,7 +4290,7 @@ export class SharedLog<
 			} else if (msg instanceof BlocksMessage) {
 				await this.remoteBlocks.onMessage(
 					msg.message,
-					context.from!.hashcode(),
+					{ from: context.from!.hashcode(), message: context.message },
 				);
 			} else if (msg instanceof ReplicationPingMessage) {
 				// No-op: used as an ACKed unicast liveness probe.

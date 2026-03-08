@@ -13,6 +13,9 @@ import { PublicSignKey } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 import { type PublishOptions, dontThrowIfDeliveryError } from "@peerbit/stream";
 import {
+	DataMessage,
+	getMessageRemainingTime,
+	inheritResponseTransportOptions,
 	type PeerRefs,
 	SilentDelivery,
 	type WaitForAnyOpts,
@@ -36,21 +39,9 @@ export class BlockRequest extends BlockMessage {
 	@field({ type: "string" })
 	cid: string;
 
-	@field({ type: "u8" })
-	priority: number;
-
-	@field({ type: "u32" })
-	timeoutMs: number;
-
-	constructor(cid: string, priority: number = 0, timeoutMs: number = 30_000) {
+	constructor(cid: string) {
 		super();
 		this.cid = cid;
-		this.priority = Number.isFinite(priority)
-			? Math.max(0, Math.min(255, Math.floor(priority)))
-			: 0;
-		this.timeoutMs = Number.isFinite(timeoutMs)
-			? Math.max(1_000, Math.min(60_000, Math.floor(timeoutMs)))
-			: 30_000;
 	}
 }
 
@@ -69,10 +60,18 @@ export class BlockResponse extends BlockMessage {
 	}
 }
 
+type BlockMessageContext = {
+	from?: string;
+	message?: DataMessage;
+};
+
 export class RemoteBlocks implements IBlocks {
 	localStore: BlockStore;
 
-	private _responseHandler?: (data: BlockMessage, from?: string) => any;
+	private _responseHandler?: (
+		data: BlockMessage,
+		context?: BlockMessageContext,
+	) => any;
 	private _resolvers: Map<string, (data: Uint8Array) => Promise<void>>;
 	private _blockCache?: Cache<Uint8Array>;
 	private _providerCache?: Cache<string[]>;
@@ -179,11 +178,14 @@ export class RemoteBlocks implements IBlocks {
 		this.maxProviderHintsPerCid = providerCache?.maxProvidersPerCid ?? 8;
 		this.maxRequeryOnReachable = options.requeryOnReachable ?? 4;
 
-		this._responseHandler = async (message: BlockMessage, from?: string) => {
+		this._responseHandler = async (
+			message: BlockMessage,
+			context?: BlockMessageContext,
+		) => {
 			try {
 				if (message instanceof BlockRequest && this.localStore) {
 					this._loadFetchQueue
-						.add(() => this.handleFetchRequest(message, localTimeout, from))
+						.add(() => this.handleFetchRequest(message, localTimeout, context))
 						.catch((e) => {
 							try {
 								dontThrowIfDeliveryError(e);
@@ -193,8 +195,8 @@ export class RemoteBlocks implements IBlocks {
 						});
 				} else if (message instanceof BlockResponse) {
 					// TODO make sure we are not storing too much bytes in ram (like filter large blocks)
-					if (from) {
-						this.rememberProvider(message.cid, from);
+					if (context?.from) {
+						this.rememberProvider(message.cid, context.from);
 					}
 					let resolver = this._resolvers.get(message.cid);
 					if (!resolver) {
@@ -342,8 +344,8 @@ export class RemoteBlocks implements IBlocks {
 		this._open = true;
 	}
 
-	onMessage(data: BlockMessage, from?: string) {
-		return this._responseHandler!(data, from);
+	onMessage(data: BlockMessage, context?: BlockMessageContext) {
+		return this._responseHandler!(data, context);
 	}
 	onReachable(publicKey: PublicSignKey) {
 		this._events.dispatchEvent(
@@ -354,8 +356,9 @@ export class RemoteBlocks implements IBlocks {
 	private async handleFetchRequest(
 		request: BlockRequest,
 		localTimeout: number,
-		from?: string,
+		context?: BlockMessageContext,
 	) {
+		const from = context?.from;
 		if (!from) {
 			warn("No from in handleFetchRequest");
 			return;
@@ -375,9 +378,16 @@ export class RemoteBlocks implements IBlocks {
 			// requiring the requester to know an explicit `remote.from` provider set.
 			try {
 				const cidObject = cidifyString(cid);
-				const proxyTimeoutMs = Number.isFinite(request.timeoutMs)
-					? Math.max(1_000, Math.floor(request.timeoutMs))
-					: Math.max(10_000, Math.floor(localTimeout) || 0);
+				const inheritedTimeoutMs = context?.message
+					? Math.floor(getMessageRemainingTime(context.message))
+					: undefined;
+				if (inheritedTimeoutMs != null && inheritedTimeoutMs <= 0) {
+					return;
+				}
+				const proxyTimeoutMs =
+					inheritedTimeoutMs != null
+						? Math.max(1, Math.min(60_000, inheritedTimeoutMs))
+						: Math.max(10_000, Math.floor(localTimeout) || 0);
 				const controller = new AbortController();
 				const timer = setTimeout(() => controller.abort(), proxyTimeoutMs);
 				try {
@@ -404,10 +414,13 @@ export class RemoteBlocks implements IBlocks {
 		}
 
 		if (!bytes) return;
+		const responseTransportOptions = context?.message
+			? inheritResponseTransportOptions(context.message)
+			: {};
 		await this.options
 			.publish(new BlockResponse(cid, bytes), {
 				to: [from],
-				priority: request.priority,
+				...responseTransportOptions,
 			})
 			.catch(dontThrowIfDeliveryError);
 	}
@@ -522,14 +535,13 @@ export class RemoteBlocks implements IBlocks {
 				}
 				if (providers.length === 0) return;
 				try {
+					const expiresAt = Date.now() + (options.timeout ?? 30_000);
 					await this.options.publish(
-						new BlockRequest(
-							cidString,
-							options.priority ?? 0,
-							options.timeout ?? 30_000,
-						),
+						new BlockRequest(cidString),
 						{
 							priority: options.priority,
+							responsePriority: options.priority,
+							expiresAt,
 							mode: new SilentDelivery({ to: providers, redundancy: 1 }),
 						},
 					);

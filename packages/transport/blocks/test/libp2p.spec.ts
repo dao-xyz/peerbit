@@ -190,11 +190,11 @@ describe("transport", function () {
 		const db1 = store(session, 1) as DirectBlock;
 		const rmb1 = db1["remoteBlocks"] as RemoteBlocks;
 		const onMessage1 = rmb1.onMessage.bind(rmb1);
-		rmb1.onMessage = (data: any, from: any) => {
+		rmb1.onMessage = (data: any, context: any) => {
 			if (data instanceof BlockResponse) {
 				receivedblockInfo = true;
 			}
-			return onMessage1(data, from);
+			return onMessage1(data, context);
 		};
 
 		expect(
@@ -280,7 +280,7 @@ describe("transport", function () {
 		expect(new Uint8Array((await readDataPromise)!)).to.deep.equal(data);
 	});
 
-	it("propagates fetch priority to block request and response", async () => {
+	it("inherits response transport options from block request envelope", async () => {
 		session = await TestSession.connected(2, {
 			services: { blocks: (c) => new DirectBlock(c) },
 		});
@@ -311,14 +311,18 @@ describe("transport", function () {
 			.getCalls()
 			.find((call) => call.args[0] instanceof BlockRequest);
 		expect(requestCall, "expected block request publish").to.exist;
-		expect((requestCall!.args[0] as BlockRequest).priority).to.equal(1);
 		expect(requestCall!.args[1]?.priority).to.equal(1);
+		expect(requestCall!.args[1]?.responsePriority).to.equal(1);
+		expect(requestCall!.args[1]?.expiresAt).to.be.a("number");
 
 		const responseCall = responsePublish
 			.getCalls()
 			.find((call) => call.args[0] instanceof BlockResponse);
 		expect(responseCall, "expected block response publish").to.exist;
 		expect(responseCall!.args[1]?.priority).to.equal(1);
+		expect(responseCall!.args[1]?.expiresAt).to.equal(
+			requestCall!.args[1]?.expiresAt,
+		);
 	});
 
 	it("relay proxy honors request timeout when upstream response is slow", async () => {
@@ -454,11 +458,11 @@ describe("transport", function () {
 		});
 		const rmb2 = db2["remoteBlocks"] as RemoteBlocks;
 		const onMessage2 = rmb2.onMessage.bind(rmb2);
-		rmb2.onMessage = (data, from) => {
+		rmb2.onMessage = (data, context) => {
 			if (data instanceof BlockResponse) {
 				db2ReceivedBlockResponse.resolve();
 			}
-			return onMessage2(data, from);
+			return onMessage2(data, context);
 		};
 		await db1.publish(
 			serialize(

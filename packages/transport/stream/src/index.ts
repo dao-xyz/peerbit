@@ -48,10 +48,12 @@ import {
 } from "@peerbit/stream-interface";
 import type {
 	DirectStreamAckRouteHint,
+	ExpiresAtOptions,
 	IdOptions,
 	PeerRefs,
 	PriorityOptions,
 	PublicKeyFromHashResolver,
+	ResponsePriorityOptions,
 	StreamEvents,
 	WaitForAnyOpts,
 	WaitForBaseOpts,
@@ -1061,6 +1063,8 @@ const sharedRoutingByPrivateKey = new WeakMap<PrivateKey, SharedRoutingState>();
 
 export type PublishOptions = (WithMode | WithTo) &
 	PriorityOptions &
+	ResponsePriorityOptions &
+	ExpiresAtOptions &
 	WithExtraSigners;
 
 export abstract class DirectStream<
@@ -2517,6 +2521,8 @@ export abstract class DirectStream<
 		data: Uint8Array | Uint8ArrayList | undefined,
 		options: (WithTo | WithMode) &
 			PriorityOptions &
+			ResponsePriorityOptions &
+			ExpiresAtOptions &
 			IdOptions & { skipRecipientValidation?: boolean } & WithExtraSigners,
 	) {
 		// dispatch the event if we are interested
@@ -2566,6 +2572,8 @@ export abstract class DirectStream<
 				mode,
 				session: this.session,
 				priority: options.priority,
+				responsePriority: options.responsePriority,
+				expires: options.expiresAt,
 			}),
 		});
 
