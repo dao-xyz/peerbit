@@ -253,7 +253,7 @@ export class RemoteBlocks implements IBlocks {
 
 	private async resolveRemoteProviders(
 		cidString: string,
-		options?: { signal?: AbortSignal },
+		options?: { signal?: AbortSignal; refresh?: boolean },
 	): Promise<string[]> {
 		// Priority:
 		// 1. cached providers (from previous reads)
@@ -261,17 +261,17 @@ export class RemoteBlocks implements IBlocks {
 		const cached = this.normalizeProviderHints(
 			this._providerCache?.get(cidString) ?? undefined,
 		);
-		if (cached.length > 0) return cached;
-		if (!this.options.resolveProviders) return [];
+		if (!this.options.resolveProviders) return cached;
+		if (cached.length > 0 && !options?.refresh) return cached;
 		try {
 			const resolved = await this.options.resolveProviders(cidString, options);
-			const normalized = this.normalizeProviderHints(resolved);
+			const normalized = this.normalizeProviderHints([...cached, ...(resolved ?? [])]);
 			if (normalized.length > 0) {
 				this.rememberProviderHints(cidString, normalized);
 			}
 			return normalized;
 		} catch {
-			return [];
+			return cached;
 		}
 	}
 
@@ -459,8 +459,7 @@ export class RemoteBlocks implements IBlocks {
 			explicitFrom.length > 0
 				? explicitFrom
 				: await this.resolveRemoteProviders(cidString, { signal: options.signal });
-		const canResolveLater =
-			explicitFrom.length === 0 && typeof this.options.resolveProviders === "function";
+		const canResolveLater = typeof this.options.resolveProviders === "function";
 		if (providers.length === 0 && !canResolveLater) {
 			// Without an explicit provider set (or a resolver), we intentionally do not
 			// fall back to network-wide flooding. Scalable deployments must provide a
@@ -473,10 +472,10 @@ export class RemoteBlocks implements IBlocks {
 
 		let promise = this._readFromPeersPromises.get(cidString);
 		if (!promise) {
+			const attemptedProviders = new Set<string>(providers);
 			promise = new Promise<Block<any, any, any, 1> | undefined>(
 				(resolve, reject) => {
 					let timeoutCallback: ReturnType<typeof setTimeout> | undefined;
-					let retryTimeout: ReturnType<typeof setTimeout> | undefined;
 					const abortHandler = () => {
 						cleanup();
 						reject(new AbortError());
@@ -484,7 +483,6 @@ export class RemoteBlocks implements IBlocks {
 
 					const cleanup = () => {
 						if (timeoutCallback) clearTimeout(timeoutCallback);
-						if (retryTimeout) clearTimeout(retryTimeout);
 						this._resolvers.delete(cidString);
 						this.closeController.signal.removeEventListener(
 							"abort",
@@ -521,12 +519,24 @@ export class RemoteBlocks implements IBlocks {
 				),
 			);
 			let retryTimeout: ReturnType<typeof setTimeout> | undefined;
-			const tryPublishRequest = async () => {
+			const refreshProviders = async (force = false) => {
+				if (!canResolveLater) return;
+				if (!force && explicitFrom.length > 0) return;
+				const resolved = await this.resolveRemoteProviders(cidString, {
+					signal: options.signal,
+					refresh: force,
+				});
+				if (resolved.length > 0) {
+					providers = this.normalizeProviderHints([...providers, ...resolved]);
+					for (const provider of providers) {
+						attemptedProviders.add(provider);
+					}
+				}
+			};
+			const tryPublishRequest = async (properties?: { refreshProviders?: boolean }) => {
 				if (requeryCount >= maxRequests) return;
-				if (providers.length === 0) {
-					providers = await this.resolveRemoteProviders(cidString, {
-						signal: options.signal,
-					});
+				if (providers.length === 0 || properties?.refreshProviders) {
+					await refreshProviders(properties?.refreshProviders === true);
 				}
 				if (providers.length === 0) return;
 				try {
@@ -552,7 +562,7 @@ export class RemoteBlocks implements IBlocks {
 				if (requeryCount >= maxRequests) return;
 				retryTimeout = setTimeout(() => {
 					if (!this._resolvers.has(cidString)) return;
-					tryPublishRequest()
+					tryPublishRequest({ refreshProviders: true })
 						.catch(dontThrowIfDeliveryError)
 						.finally(scheduleRetry);
 				}, retryIntervalMs);
@@ -562,14 +572,18 @@ export class RemoteBlocks implements IBlocks {
 				// Re-issue when reachability changes to handle "get before connect".
 				// Bounded to avoid accidental amplification at large scale.
 				if (requeryCount >= maxRequests) return;
-				tryPublishRequest().catch(dontThrowIfDeliveryError);
+				tryPublishRequest({ refreshProviders: true }).catch(
+					dontThrowIfDeliveryError,
+				);
 			};
 
 			const publishOnProviderHints = (ev: CustomEvent<{ cid: string }>) => {
 				if (requeryCount >= maxRequests) return;
 				if (!ev?.detail?.cid) return;
 				if (ev.detail.cid !== cidString) return;
-				tryPublishRequest().catch(dontThrowIfDeliveryError);
+				tryPublishRequest({ refreshProviders: true }).catch(
+					dontThrowIfDeliveryError,
+				);
 			};
 
 			this._events.addEventListener("peer:reachable", publishOnNewPeers);

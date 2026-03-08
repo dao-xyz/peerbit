@@ -2887,17 +2887,14 @@ export class SharedLog<
 					// ignore discovery failures
 				}
 
-				// 2) fallback to currently connected RPC peers
-				const self = this.node.identity.publicKey.hashcode();
-				const out: string[] = [];
-				const peers = (this.rpc as any)?.peers;
-				for (const h of peers?.keys?.() ?? []) {
-					if (h === self) continue;
-					if (out.includes(h)) continue;
-					out.push(h);
-					if (out.length >= 32) break;
-				}
-				return out;
+				// 2) reuse the same per-hash / replicator / subscriber fallback used by
+				// entry loads so block retries can widen beyond stale explicit hints.
+				return (
+					(await this.resolveCandidatePeersForHash(cid, {
+						signal: opts?.signal,
+						maxPeers: 8,
+					})) ?? []
+				);
 			},
 			onPut: async (cid) => {
 				// Best-effort directory announce for "get without remote.from" workflows.
@@ -3024,87 +3021,11 @@ export class SharedLog<
 
 		await this.log.open(this.remoteBlocks, this.node.identity, {
 			keychain: this.node.services.keychain,
-			resolveRemotePeers: async (hash, options) => {
-				if (options?.signal?.aborted) return undefined;
-
-				const maxPeers = 8;
-				const self = this.node.identity.publicKey.hashcode();
-				const seed = hashToSeed32(hash);
-
-				// Best hint: peers that have recently confirmed having this entry hash.
-				const hinted = this._requestIPruneResponseReplicatorSet.get(hash);
-				if (hinted && hinted.size > 0) {
-					const peers = [...hinted].filter((p) => p !== self);
-					return peers.length > 0
-						? pickDeterministicSubset(peers, seed, maxPeers)
-						: undefined;
-				}
-
-				// Next: peers we already contacted about this hash (may still have it).
-				const contacted = this._requestIPruneSent.get(hash);
-				if (contacted && contacted.size > 0) {
-					const peers = [...contacted].filter((p) => p !== self);
-					return peers.length > 0
-						? pickDeterministicSubset(peers, seed, maxPeers)
-						: undefined;
-				}
-
-					let candidates: string[] | undefined;
-
-					// Prefer the replicator cache; fall back to subscribers if we have no other signal.
-					const replicatorCandidates = [...this.uniqueReplicators].filter(
-						(p) => p !== self,
-					);
-					if (replicatorCandidates.length > 0) {
-						candidates = replicatorCandidates;
-					} else {
-						try {
-							const subscribers = await this._getTopicSubscribers(this.topic);
-							const subscriberCandidates =
-								subscribers?.map((k) => k.hashcode()).filter((p) => p !== self) ??
-								[];
-							candidates =
-								subscriberCandidates.length > 0 ? subscriberCandidates : undefined;
-						} catch {
-							// Best-effort only.
-						}
-
-						if (!candidates || candidates.length === 0) {
-							// Last resort: peers we are already directly connected to. This avoids
-							// depending on global membership knowledge in early-join scenarios.
-							const peerMap = (this.node.services.pubsub as any)?.peers;
-							if (peerMap?.keys) {
-								candidates = [...peerMap.keys()];
-							}
-						}
-
-						if (!candidates || candidates.length === 0) {
-							// Even if the pubsub stream has no established peer streams yet, we may
-							// still have a libp2p connection to one or more peers (e.g. bootstrap).
-							const connectionManager = (this.node.services.pubsub as any)?.components
-								?.connectionManager;
-							const connections = connectionManager?.getConnections?.() ?? [];
-							const connectionHashes: string[] = [];
-							for (const conn of connections) {
-								const peerId = conn?.remotePeer;
-								if (!peerId) continue;
-								try {
-									connectionHashes.push(getPublicKeyFromPeerId(peerId).hashcode());
-								} catch {
-									// Best-effort only.
-								}
-							}
-							if (connectionHashes.length > 0) {
-								candidates = connectionHashes;
-							}
-						}
-					}
-
-					if (!candidates || candidates.length === 0) return undefined;
-					const peers = candidates.filter((p) => p !== self);
-					if (peers.length === 0) return undefined;
-					return pickDeterministicSubset(peers, seed, maxPeers);
-				},
+			resolveRemotePeers: (hash, options) =>
+				this.resolveCandidatePeersForHash(hash, {
+					signal: options?.signal,
+					maxPeers: 8,
+				}),
 			...this._logProperties,
 			onChange: async (change) => {
 				await this.onChange(change);
@@ -3490,6 +3411,80 @@ export class SharedLog<
 			this.scheduleReplicationInfoRequests(publicKey);
 		}
 		this._replicatorLivenessTargetsSize = -1;
+	}
+
+	private async resolveCandidatePeersForHash(
+		hash: string,
+		options?: { signal?: AbortSignal; maxPeers?: number },
+	): Promise<string[] | undefined> {
+		if (options?.signal?.aborted) return undefined;
+
+		const maxPeers = options?.maxPeers ?? 8;
+		const self = this.node.identity.publicKey.hashcode();
+		const seed = hashToSeed32(hash);
+
+		const hinted = this._requestIPruneResponseReplicatorSet.get(hash);
+		if (hinted && hinted.size > 0) {
+			const peers = [...hinted].filter((p) => p !== self);
+			return peers.length > 0
+				? pickDeterministicSubset(peers, seed, maxPeers)
+				: undefined;
+		}
+
+		const contacted = this._requestIPruneSent.get(hash);
+		if (contacted && contacted.size > 0) {
+			const peers = [...contacted].filter((p) => p !== self);
+			return peers.length > 0
+				? pickDeterministicSubset(peers, seed, maxPeers)
+				: undefined;
+		}
+
+		let candidates: string[] | undefined;
+		const replicatorCandidates = [...this.uniqueReplicators].filter((p) => p !== self);
+		if (replicatorCandidates.length > 0) {
+			candidates = replicatorCandidates;
+		} else {
+			try {
+				const subscribers = await this._getTopicSubscribers(this.topic);
+				const subscriberCandidates =
+					subscribers?.map((k) => k.hashcode()).filter((p) => p !== self) ?? [];
+				candidates =
+					subscriberCandidates.length > 0 ? subscriberCandidates : undefined;
+			} catch {
+				// Best-effort only.
+			}
+
+			if (!candidates || candidates.length === 0) {
+				const peerMap = (this.node.services.pubsub as any)?.peers;
+				if (peerMap?.keys) {
+					candidates = [...peerMap.keys()];
+				}
+			}
+
+			if (!candidates || candidates.length === 0) {
+				const connectionManager = (this.node.services.pubsub as any)?.components
+					?.connectionManager;
+				const connections = connectionManager?.getConnections?.() ?? [];
+				const connectionHashes: string[] = [];
+				for (const conn of connections) {
+					const peerId = conn?.remotePeer;
+					if (!peerId) continue;
+					try {
+						connectionHashes.push(getPublicKeyFromPeerId(peerId).hashcode());
+					} catch {
+						// Best-effort only.
+					}
+				}
+				if (connectionHashes.length > 0) {
+					candidates = connectionHashes;
+				}
+			}
+		}
+
+		if (!candidates || candidates.length === 0) return undefined;
+		const peers = candidates.filter((p) => p !== self);
+		if (peers.length === 0) return undefined;
+		return pickDeterministicSubset(peers, seed, maxPeers);
 	}
 
 	private async runReplicatorLivenessSweep() {
