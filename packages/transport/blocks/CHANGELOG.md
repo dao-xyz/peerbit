@@ -279,6 +279,14 @@
     * @peerbit/blocks-interface bumped from 1.2.18 to 1.2.19
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [4.0.2](https://github.com/dao-xyz/peerbit/compare/blocks-v4.0.1...blocks-v4.0.2) (2026-03-08)
+
+
+### Bug Fixes
+
+* recover file-share block fetches after refresh churn ([5d63b4f](https://github.com/dao-xyz/peerbit/commit/5d63b4f3c619c1965572ee8bc8d11e0a1c0d0360))
+* **shared-log:** widen block retry provider fallbacks ([f0f53b3](https://github.com/dao-xyz/peerbit/commit/f0f53b3753c53e828197c31f0d155dcb28dc5ffc))
+
 ## [4.0.1](https://github.com/dao-xyz/peerbit/compare/blocks-v4.0.0...blocks-v4.0.1) (2026-03-08)
 
 

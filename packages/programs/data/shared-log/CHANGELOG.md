@@ -389,6 +389,26 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.0.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.5...shared-log-v13.0.6) (2026-03-08)
+
+
+### Bug Fixes
+
+* recover file-share block fetches after refresh churn ([5d63b4f](https://github.com/dao-xyz/peerbit/commit/5d63b4f3c619c1965572ee8bc8d11e0a1c0d0360))
+* **shared-log:** widen block retry provider fallbacks ([f0f53b3](https://github.com/dao-xyz/peerbit/commit/f0f53b3753c53e828197c31f0d155dcb28dc5ffc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.5
+    * @peerbit/program bumped to 6.0.3
+    * @peerbit/rpc bumped to 6.0.5
+    * @peerbit/blocks bumped to 4.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.5
+
 ## [13.0.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.4...shared-log-v13.0.5) (2026-03-08)
 
 
