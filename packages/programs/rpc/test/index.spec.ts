@@ -161,6 +161,46 @@ describe("rpc", () => {
 			);
 		});
 
+		it("inherits response transport hints from request envelope", async () => {
+			const requestEventFromResponder: CustomEvent<RequestEvent<Body>>[] = [];
+			const responseEventsFromRequester: CustomEvent<ResponseEvent<Body>>[] =
+				[];
+
+			responder.query.events.addEventListener("request", (e) => {
+				requestEventFromResponder.push(e);
+			});
+
+			reader.query.events.addEventListener("response", (e) => {
+				responseEventsFromRequester.push(e);
+			});
+
+			await reader.query.request(
+				new Body({
+					arr: new Uint8Array([0, 1, 2]),
+				}),
+				{
+					amount: 1,
+					priority: 1,
+					responsePriority: 2,
+					expiresAt: Date.now() + 5_000,
+				},
+			);
+
+			await waitForResolved(() => expect(requestEventFromResponder).to.have.length(1));
+			await waitForResolved(() =>
+				expect(responseEventsFromRequester).to.have.length(1),
+			);
+
+			const requestMessage = requestEventFromResponder[0]!.detail.message;
+			const responseMessage = responseEventsFromRequester[0]!.detail.message;
+			expect(requestMessage.header.priority).to.equal(1);
+			expect(requestMessage.header.responsePriority).to.equal(2);
+			expect(responseMessage.header.priority).to.equal(2);
+			expect(Number(responseMessage.header.expires)).to.equal(
+				Number(requestMessage.header.expires),
+			);
+		});
+
 		it("custom signer", async () => {
 			const requestEventFromResponder: CustomEvent<RequestEvent<Body>>[] = [];
 			const responseEventsFromResponder: CustomEvent<ResponseEvent<Body>>[] =

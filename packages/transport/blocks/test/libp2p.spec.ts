@@ -6,7 +6,7 @@ import { expect } from "chai";
 import pDefer from "p-defer";
 import sinon from "sinon";
 import { DirectBlock } from "../src/libp2p.js";
-import { BlockResponse, type RemoteBlocks } from "../src/remote.js";
+import { BlockRequest, BlockResponse, type RemoteBlocks } from "../src/remote.js";
 
 const store = (s: TestSession<{ blocks: DirectBlock }>, i: number) =>
 	s.peers[i].services.blocks;
@@ -190,11 +190,11 @@ describe("transport", function () {
 		const db1 = store(session, 1) as DirectBlock;
 		const rmb1 = db1["remoteBlocks"] as RemoteBlocks;
 		const onMessage1 = rmb1.onMessage.bind(rmb1);
-		rmb1.onMessage = (data: any, from: any) => {
+		rmb1.onMessage = (data: any, context: any) => {
 			if (data instanceof BlockResponse) {
 				receivedblockInfo = true;
 			}
-			return onMessage1(data, from);
+			return onMessage1(data, context);
 		};
 
 		expect(
@@ -280,6 +280,127 @@ describe("transport", function () {
 		expect(new Uint8Array((await readDataPromise)!)).to.deep.equal(data);
 	});
 
+	it("inherits response transport options from block request envelope", async () => {
+		session = await TestSession.connected(2, {
+			services: { blocks: (c) => new DirectBlock(c) },
+		});
+		await waitForNeighbour(store(session, 0), store(session, 1));
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store(session, 0).put(data);
+		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
+
+		const requesterRemoteBlocks = (store(session, 1) as any)["remoteBlocks"] as RemoteBlocks;
+		const providerRemoteBlocks = (store(session, 0) as any)["remoteBlocks"] as RemoteBlocks;
+		const requestPublish = sinon.spy(requesterRemoteBlocks.options, "publish");
+		const responsePublish = sinon.spy(providerRemoteBlocks.options, "publish");
+
+		expect(
+			new Uint8Array(
+				(await store(session, 1).get(cid, {
+					remote: {
+						timeout: 5_000,
+						from: [store(session, 0).publicKeyHash],
+						priority: 1,
+					},
+				}))!,
+			),
+		).to.deep.equal(data);
+
+		const requestCall = requestPublish
+			.getCalls()
+			.find((call) => call.args[0] instanceof BlockRequest);
+		expect(requestCall, "expected block request publish").to.exist;
+		expect(requestCall!.args[1]?.priority).to.equal(1);
+		expect(requestCall!.args[1]?.responsePriority).to.equal(1);
+		expect(requestCall!.args[1]?.expiresAt).to.be.a("number");
+
+		const responseCall = responsePublish
+			.getCalls()
+			.find((call) => call.args[0] instanceof BlockResponse);
+		expect(responseCall, "expected block response publish").to.exist;
+		expect(responseCall!.args[1]?.priority).to.equal(1);
+		expect(responseCall!.args[1]?.expiresAt).to.equal(
+			requestCall!.args[1]?.expiresAt,
+		);
+	});
+
+	it("relay proxy honors request timeout when upstream response is slow", async () => {
+		session = await TestSession.disconnected(3, {
+			services: { blocks: (c) => new DirectBlock(c) },
+		});
+
+		await store(session, 0).start();
+		await store(session, 1).start();
+		await store(session, 2).start();
+
+		await session.connect([
+			[session.peers[0], session.peers[1]],
+			[session.peers[1], session.peers[2]],
+		]);
+
+		await waitForNeighbour(store(session, 0), store(session, 1));
+		await waitForNeighbour(store(session, 1), store(session, 2));
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store(session, 0).put(data);
+		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
+
+		const providerRemoteBlocks = (store(session, 0) as any)["remoteBlocks"] as RemoteBlocks;
+		const originalPublish = providerRemoteBlocks.options.publish.bind(
+			providerRemoteBlocks.options,
+		);
+		providerRemoteBlocks.options.publish = async (message, options) => {
+			if (message instanceof BlockResponse) {
+				await delay(1_500);
+			}
+			return originalPublish(message, options);
+		};
+
+		const readData = await store(session, 2).get(cid, {
+			remote: {
+				timeout: 5_000,
+				from: [store(session, 1).publicKeyHash],
+				priority: 1,
+			},
+		});
+		expect(new Uint8Array(readData!)).to.deep.equal(data);
+	});
+
+	it("retries after a dropped block response", async () => {
+		session = await TestSession.connected(2, {
+			services: { blocks: (c) => new DirectBlock(c) },
+		});
+		await waitForNeighbour(store(session, 0), store(session, 1));
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store(session, 0).put(data);
+		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
+
+		const providerRemoteBlocks = (store(session, 0) as any)["remoteBlocks"] as RemoteBlocks;
+		const originalPublish = providerRemoteBlocks.options.publish.bind(
+			providerRemoteBlocks.options,
+		);
+		let droppedResponses = 0;
+		providerRemoteBlocks.options.publish = async (message, options) => {
+			if (message instanceof BlockResponse && droppedResponses === 0) {
+				droppedResponses++;
+				return;
+			}
+			return originalPublish(message, options);
+		};
+
+		const readData = await store(session, 1).get(cid, {
+			remote: {
+				timeout: 5_000,
+				from: [store(session, 0).publicKeyHash],
+				priority: 1,
+			},
+		});
+		expect(droppedResponses).to.equal(1);
+		expect(new Uint8Array(readData!)).to.deep.equal(data);
+	});
+
 	it("timeout", async () => {
 		session = await TestSession.connected(2, {
 			services: { blocks: (c) => new DirectBlock(c) },
@@ -337,11 +458,11 @@ describe("transport", function () {
 		});
 		const rmb2 = db2["remoteBlocks"] as RemoteBlocks;
 		const onMessage2 = rmb2.onMessage.bind(rmb2);
-		rmb2.onMessage = (data, from) => {
+		rmb2.onMessage = (data, context) => {
 			if (data instanceof BlockResponse) {
 				db2ReceivedBlockResponse.resolve();
 			}
-			return onMessage2(data, from);
+			return onMessage2(data, context);
 		};
 		await db1.publish(
 			serialize(

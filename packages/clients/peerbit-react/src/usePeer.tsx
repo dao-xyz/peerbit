@@ -422,8 +422,17 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 						if (list.length === 0) {
 							bootstrapLog("offline: skipping relay dialing");
 						} else {
-							for (const addr of list) {
-								await created.dial(addr as any);
+							if (typeof created.bootstrap === "function") {
+								bootstrapLog("bootstrapping explicit addresses", list);
+								await created.bootstrap(
+									list.map((addr) =>
+										typeof addr === "string" ? addr : addr.toString(),
+									),
+								);
+							} else {
+								for (const addr of list) {
+									await created.dial(addr as any);
+								}
 							}
 						}
 					} else if (

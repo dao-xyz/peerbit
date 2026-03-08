@@ -33,10 +33,12 @@ import {
 	AnyWhere,
 	DataMessage,
 	DeliveryError,
+	type ExpiresAtOptions,
 	type IdOptions,
 	MessageHeader,
 	NotStartedError,
 	type PriorityOptions,
+	type ResponsePriorityOptions,
 	type RouteHint,
 	SilentDelivery,
 	type WithExtraSigners,
@@ -1412,6 +1414,8 @@ export class TopicControlPlane
 		} & { client?: string } & {
 			mode?: SilentDelivery | AcknowledgeDelivery;
 		} & PriorityOptions &
+			ResponsePriorityOptions &
+			ExpiresAtOptions &
 			IdOptions &
 			WithExtraSigners & { signal?: AbortSignal },
 	): Promise<Uint8Array | undefined> {
@@ -1477,6 +1481,8 @@ export class TopicControlPlane
 		const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
 			mode: new AnyWhere(),
 			priority: options?.priority,
+			responsePriority: options?.responsePriority,
+			expiresAt: options?.expiresAt,
 			id: options?.id,
 			extraSigners: options?.extraSigners,
 			skipRecipientValidation: true,

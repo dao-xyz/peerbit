@@ -50,6 +50,7 @@ import { RPC, type RequestContext } from "@peerbit/rpc";
 import {
 	AcknowledgeDelivery,
 	AnyWhere,
+	createRequestTransportContext,
 	DataMessage,
 	MessageHeader,
 	NotStartedError,
@@ -868,6 +869,7 @@ export class SharedLog<
 		await this.onMessage(message, {
 			from,
 			message: contextMessage,
+			transport: createRequestTransportContext(contextMessage),
 		});
 	}
 
@@ -899,6 +901,7 @@ export class SharedLog<
 		await this.onMessage(message, {
 			from,
 			message: contextMessage,
+			transport: createRequestTransportContext(contextMessage),
 		});
 	}
 
@@ -4290,7 +4293,10 @@ export class SharedLog<
 			} else if (msg instanceof BlocksMessage) {
 				await this.remoteBlocks.onMessage(
 					msg.message,
-					context.from!.hashcode(),
+					{
+						from: context.from!.hashcode(),
+						transport: createRequestTransportContext(context.message),
+					},
 				);
 			} else if (msg instanceof ReplicationPingMessage) {
 				// No-op: used as an ACKed unicast liveness probe.

@@ -8,6 +8,7 @@ export type GetOptions = {
 				timeout?: number;
 				replicate?: boolean;
 				from?: string[];
+				priority?: number;
 		  }
 		| boolean;
 };
