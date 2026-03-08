@@ -255,26 +255,29 @@ describe("transport", function () {
 		const originalPublish = requesterRemoteBlocks.options.publish;
 		let forwardedToSource = 0;
 
-		requesterRemoteBlocks.options.publish = (message: any, options: any) => {
-			if (message instanceof BlockRequest) {
-				const to = (options?.mode as any)?.to ?? [];
-				const redundancy = Math.max(1, (options?.mode as any)?.redundancy ?? 1);
-				const selected = to.slice(0, redundancy);
+			requesterRemoteBlocks.options.publish = (message: any, options: any) => {
+				if (message instanceof BlockRequest) {
+					const to = (options?.mode as any)?.to ?? [];
+					const redundancy = Math.max(1, (options?.mode as any)?.redundancy ?? 1);
+					const selected = to.slice(0, redundancy);
 					return (async (): Promise<void> => {
+						const sourceRemoteBlocks = (store(session, 0) as any)[
+							"remoteBlocks"
+						] as RemoteBlocks;
 						await Promise.all(
 							selected.map(async (target: string): Promise<void> => {
 								if (target === store(session, 0).publicKeyHash) {
 									forwardedToSource++;
-									await (store(session, 0) as any).onMessage(message, {
+									await sourceRemoteBlocks.onMessage(message, {
 										from: store(session, 1).publicKeyHash,
 									});
 								}
 							}),
 						);
 					})();
-			}
-			return originalPublish(message, options);
-		};
+				}
+				return originalPublish(message, options);
+			};
 
 		try {
 			const read = await store(session, 1).get(cid, {
