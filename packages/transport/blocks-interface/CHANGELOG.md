@@ -194,6 +194,21 @@
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
     * @peerbit/stream-interface bumped from ^5.0.1 to ^5.0.2
 
+## [2.0.1](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v2.0.0...blocks-interface-v2.0.1) (2026-03-08)
+
+
+### Bug Fixes
+
+* **blocks:** stabilize late joins during active upload ([a7c7b36](https://github.com/dao-xyz/peerbit/commit/a7c7b36d00fba6590a7b5b7451944d1a881762a6))
+* **stream:** bound outbound queue backpressure ([73058b3](https://github.com/dao-xyz/peerbit/commit/73058b37117a02242079becc1bd900bf8d889b82))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream-interface bumped to 6.0.1
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v1.5.2...blocks-interface-v2.0.0) (2026-03-04)
 
 
