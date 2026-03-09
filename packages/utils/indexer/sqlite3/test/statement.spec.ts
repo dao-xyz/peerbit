@@ -6,13 +6,13 @@ import {
 	toId,
 } from "@peerbit/indexer-interface";
 import { expect } from "chai";
-import { SQLLiteIndex } from "../src/engine.js";
+import { SQLiteIndex } from "../src/engine.js";
 import { create } from "../src/index.js";
 import { setup } from "./utils.js";
 
 describe("statement", () => {
 	let index: Awaited<ReturnType<typeof setup<any>>>;
-	let store: SQLLiteIndex<DocumentWithFromProperty>;
+	let store: SQLiteIndex<DocumentWithFromProperty>;
 
 	@variant("DocumentWithFromProperty")
 	class DocumentWithFromProperty {
@@ -32,7 +32,7 @@ describe("statement", () => {
 
 	beforeEach(async () => {
 		index = await setup({ schema: DocumentWithFromProperty }, create);
-		store = index.store as SQLLiteIndex<DocumentWithFromProperty>;
+		store = index.store as SQLiteIndex<DocumentWithFromProperty>;
 		expect(store.tables.size).to.equal(1);
 		expect(store.properties.db.statements.size).to.equal(defaultStatementCount); // put + replace stmt
 	});

@@ -2,7 +2,7 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { id } from "@peerbit/indexer-interface";
 import { expect } from "chai";
-import { SQLLiteIndex } from "../src/engine.js";
+import { SQLiteIndex } from "../src/engine.js";
 import { create } from "../src/index.js";
 import { setup } from "./utils.js";
 
@@ -45,7 +45,7 @@ describe("inline", () => {
 			}
 
 			index = await setup({ schema: NestedBoolQueryDocument }, create);
-			const store = index.store as SQLLiteIndex<NestedBoolQueryDocument>;
+			const store = index.store as SQLiteIndex<NestedBoolQueryDocument>;
 			expect(store.tables.size).to.equal(2);
 			expect(store.rootTables).to.have.length(1);
 			const first = store.rootTables[0];
@@ -103,7 +103,7 @@ describe("inline", () => {
 			}
 
 			index = await setup({ schema: NestedBoolQueryDocument }, create);
-			const store = index.store as SQLLiteIndex<NestedBoolQueryDocument>;
+			const store = index.store as SQLiteIndex<NestedBoolQueryDocument>;
 			expect(store.tables.size).to.equal(3);
 			expect(store.rootTables).to.have.length(1);
 			const first = store.rootTables[0];
