@@ -8,7 +8,8 @@
 		"build": "echo 'No build step for @peerbit/document-react-party'",
 		"preview": "pnpm --dir ./shared build && pnpm --dir ./browser-node preview",
 		"test": "playwright test --config playwright.config.ts",
-		"test:headed": "PWDEBUG=1 pnpm test -- --headed"
+		"test:headed": "PWDEBUG=1 pnpm test -- --headed",
+		"test:cov": "playwright test --config playwright.config.ts"
 	},
 	"dependencies": {
 		"@libp2p/websockets": "^10.1.0",

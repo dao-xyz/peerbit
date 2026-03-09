@@ -64,7 +64,8 @@
 		"build-ui": "pnpm --dir ../frontend build",
 		"postbuild": "cp src/nginx-template.conf dist/src/ && cp -r ../frontend/dist/. dist/ui",
 		"test": "aegir test --t node",
-		"lint": "aegir lint"
+		"lint": "aegir lint",
+		"test:cov": "aegir test -t node --cov"
 	},
 	"devDependencies": {
 		"@peerbit/test-lib": "workspace:*",
