@@ -21,11 +21,12 @@ import {
 	type PublishOptions as PubSubPublishOptions,
 } from "@peerbit/pubsub-interface";
 import {
+	createRequestTransportContext,
 	DataMessage,
 	type PriorityOptions,
+	type RequestTransportContext,
 	SilentDelivery,
 	type WithExtraSigners,
-	type WithMode,
 	deliveryModeHasReceiver,
 } from "@peerbit/stream-interface";
 import { AbortError, TimeoutError } from "@peerbit/time";
@@ -35,6 +36,7 @@ import {
 	type EncryptionOptions,
 	type RPCRequestOptions,
 	type RPCResponse,
+	type RPCSendOptions,
 	logger,
 } from "./io.js";
 
@@ -47,6 +49,7 @@ export type RPCSetupOptions<Q, R> = {
 export type RequestContext = {
 	from?: PublicSignKey;
 	message: DataMessage;
+	transport: RequestTransportContext;
 };
 export type ResponseHandler<Q, R> = (
 	query: Q,
@@ -176,9 +179,11 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 							}),
 						);
 
+						const transport = createRequestTransportContext(message);
 						const response = await this._responseHandler(request, {
 							from,
 							message: message,
+							transport,
 						});
 
 						if (response && rpcMessage.respondTo) {
@@ -208,16 +213,15 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 										requestId: message.id,
 									}),
 								),
-								{
+								transport.withResponseOptions({
 									topics: [this.topic],
-									priority: message.header.priority, // send back with same priority. TODO, make this better in the future
 
 									/// TODO make redundancy parameter configurable?
 									mode: new SilentDelivery({
 										to: [message.header.signatures!.publicKeys[0]],
 										redundancy: 1,
 									}),
-								},
+								}),
 							);
 						}
 					}
@@ -284,13 +288,26 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 
 	private getPublishOptions(
 		id?: Uint8Array,
-		options?: EncryptionOptions & WithMode & PriorityOptions & WithExtraSigners,
+		options?: RPCSendOptions,
 		signal?: AbortSignal,
 	): PubSubPublishOptions {
+		const explicitMode =
+			options && "mode" in options ? options.mode : undefined;
+		const explicitTo = options && "to" in options ? options.to : undefined;
+		const normalizedMode =
+			explicitMode ??
+			(explicitTo != null
+				? new SilentDelivery({
+						to: explicitTo,
+						redundancy: 1,
+					})
+				: undefined);
 		return {
 			id,
 			priority: options?.priority,
-			mode: options?.mode,
+			responsePriority: options?.responsePriority,
+			expiresAt: options?.expiresAt,
+			mode: normalizedMode,
 			topics: [this.topic],
 			extraSigners: options?.extraSigners,
 			signal,
@@ -304,10 +321,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 	 */
 	public async send(
 		message: Q,
-		options?: EncryptionOptions &
-			WithMode &
-			PriorityOptions &
-			WithExtraSigners & { signal?: AbortSignal },
+		options?: RPCSendOptions,
 	): Promise<void> {
 		await this.node.services.pubsub.publish(
 			serialize(await this.seal(message, undefined, options)),

@@ -1033,6 +1033,30 @@ describe("join", function () {
 				expect(fetchCounter).equal(0); // no fetches since all entries where passed
 				expect(joinEntryCounter).equal(2);
 			});
+
+			it("does not reject join when a nested entry block is temporarily missing", async () => {
+				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]));
+				const { entry: a2 } = await log1.append(new Uint8Array([0, 2]), {
+					meta: { next: [a1] },
+				});
+
+				const fromMultihashStub = sinon
+					.stub(Entry, "fromMultihash")
+					.callsFake(async (store, hash, options) => {
+						if (hash === a1.hash) {
+							throw new Error("Failed to resolve block: " + hash);
+						}
+						return fromMultihashOrg(store, hash, options);
+					});
+
+				try {
+					await log2.join([a2]);
+				} finally {
+					fromMultihashStub.restore();
+				}
+
+				expect(log2.length).equal(0);
+			});
 		});
 
 		// TODO move this into the prune test file

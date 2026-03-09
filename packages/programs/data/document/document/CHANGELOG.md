@@ -456,6 +456,114 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [13.0.8](https://github.com/dao-xyz/peerbit/compare/document-v13.0.7...document-v13.0.8) (2026-03-09)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.7
+    * @peerbit/pubsub bumped to 5.0.3
+    * @peerbit/program bumped to 6.0.5
+    * @peerbit/rpc bumped to 6.0.7
+    * @peerbit/shared-log bumped to 13.0.8
+    * @peerbit/document-interface bumped to 3.2.12
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.7
+    * peerbit bumped to 5.0.7
+
+## [13.0.7](https://github.com/dao-xyz/peerbit/compare/document-v13.0.6...document-v13.0.7) (2026-03-08)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.6
+    * @peerbit/program bumped to 6.0.4
+    * @peerbit/rpc bumped to 6.0.6
+    * @peerbit/shared-log bumped to 13.0.7
+    * @peerbit/document-interface bumped to 3.2.11
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.6
+    * peerbit bumped to 5.0.6
+
+## [13.0.6](https://github.com/dao-xyz/peerbit/compare/document-v13.0.5...document-v13.0.6) (2026-03-08)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.5
+    * @peerbit/program bumped to 6.0.3
+    * @peerbit/rpc bumped to 6.0.5
+    * @peerbit/shared-log bumped to 13.0.6
+    * @peerbit/document-interface bumped to 3.2.10
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.5
+    * peerbit bumped to 5.0.5
+
+## [13.0.5](https://github.com/dao-xyz/peerbit/compare/document-v13.0.4...document-v13.0.5) (2026-03-08)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.4
+    * @peerbit/pubsub bumped to 5.0.2
+    * @peerbit/program bumped to 6.0.2
+    * @peerbit/rpc bumped to 6.0.4
+    * @peerbit/shared-log bumped to 13.0.5
+    * @peerbit/document-interface bumped to 3.2.9
+    * @peerbit/stream-interface bumped to 6.0.1
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.4
+    * peerbit bumped to 5.0.4
+
+## [13.0.4](https://github.com/dao-xyz/peerbit/compare/document-v13.0.3...document-v13.0.4) (2026-03-07)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.3
+    * @peerbit/pubsub bumped to 5.0.1
+    * @peerbit/program bumped to 6.0.1
+    * @peerbit/rpc bumped to 6.0.3
+    * @peerbit/shared-log bumped to 13.0.4
+    * @peerbit/document-interface bumped to 3.2.8
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.3
+    * peerbit bumped to 5.0.3
+
+## [13.0.3](https://github.com/dao-xyz/peerbit/compare/document-v13.0.2...document-v13.0.3) (2026-03-05)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped to 13.0.3
+
+## [13.0.2](https://github.com/dao-xyz/peerbit/compare/document-v13.0.1...document-v13.0.2) (2026-03-05)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.2
+    * @peerbit/rpc bumped to 6.0.2
+    * @peerbit/shared-log bumped to 13.0.2
+    * @peerbit/document-interface bumped to 3.2.7
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.2
+    * peerbit bumped to 5.0.2
+
 ## [13.0.1](https://github.com/dao-xyz/peerbit/compare/document-v13.0.0...document-v13.0.1) (2026-03-04)
 
 

@@ -114,6 +114,16 @@ export class StoppedReplicating extends TransportMessage {
 	}
 }
 
+@variant([1, 5])
+export class ReplicationPingMessage extends TransportMessage {
+	// Lightweight unicast liveness probe for replicator membership.
+	// This exists to avoid using RequestReplicationInfoMessage as a "ping"
+	// (which can cause large replication segment snapshots to be sent).
+	constructor() {
+		super();
+	}
+}
+
 /* 
 @variant(1)
 export class RelativeMinReplicas extends MinReplicas {

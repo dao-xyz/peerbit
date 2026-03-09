@@ -590,7 +590,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	}
 
 	async queueSync(
-		keys: string[] | bigint[],
+		keys: SyncableKey[],
 		from: PublicSignKey,
 		options?: { skipCheck?: boolean },
 	) {
@@ -618,15 +618,10 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		}
 
 		requestHashes.length > 0 &&
-			(await this.requestSync(requestHashes as string[] | bigint[], [
-				from!.hashcode(),
-			]));
+			(await this.requestSync(requestHashes, [from!.hashcode()]));
 	}
 
-	private async requestSync(
-		hashes: string[] | bigint[],
-		to: Set<string> | string[],
-	) {
+	private async requestSync(hashes: SyncableKey[], to: Set<string> | string[]) {
 		if (hashes.length === 0) {
 			return;
 		}
@@ -643,12 +638,18 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			}
 		}
 
-		const isBigInt = typeof hashes[0] === "bigint";
-		if (isBigInt) {
-			const chunks = this.chunk(
-				hashes as bigint[],
-				this.maxCoordinatesPerMessage,
-			);
+		const coordinateHashes: bigint[] = [];
+		const stringHashes: string[] = [];
+		for (const hash of hashes) {
+			if (typeof hash === "bigint") {
+				coordinateHashes.push(hash);
+			} else {
+				stringHashes.push(hash);
+			}
+		}
+
+		if (coordinateHashes.length > 0) {
+			const chunks = this.chunk(coordinateHashes, this.maxCoordinatesPerMessage);
 			for (const chunk of chunks) {
 				await this.rpc.send(
 					new RequestMaybeSyncCoordinate({ hashNumbers: chunk }),
@@ -658,8 +659,9 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 					},
 				);
 			}
-		} else {
-			const chunks = this.chunk(hashes as string[], this.maxHashesPerMessage);
+		}
+		if (stringHashes.length > 0) {
+			const chunks = this.chunk(stringHashes, this.maxHashesPerMessage);
 			for (const chunk of chunks) {
 				await this.rpc.send(new ResponseMaybeSync({ hashes: chunk }), {
 					mode: new SilentDelivery({ to, redundancy: 1 }),
@@ -729,14 +731,12 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 					this.syncInFlight.delete(key);
 				}
 			}
-			this.requestSync(requestHashes as string[] | bigint[], from).finally(
-				() => {
-					if (this.closed) {
-						return;
-					}
-					this.syncMoreInterval = setTimeout(requestSyncLoop, 3e3);
-				},
-			);
+			this.requestSync(requestHashes, from).finally(() => {
+				if (this.closed) {
+					return;
+				}
+				this.syncMoreInterval = setTimeout(requestSyncLoop, 3e3);
+			});
 		};
 
 		requestSyncLoop();

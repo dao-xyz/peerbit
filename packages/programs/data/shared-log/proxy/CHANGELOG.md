@@ -1,5 +1,90 @@
 # Changelog
 
+## [2.0.8](https://github.com/dao-xyz/peerbit/compare/shared-log-proxy-v2.0.7...shared-log-proxy-v2.0.8) (2026-03-09)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/canonical-client bumped to 1.1.8
+    * @peerbit/canonical-host bumped to 1.0.12
+    * @peerbit/log bumped to 6.0.7
+    * @peerbit/program bumped to 6.0.5
+    * @peerbit/shared-log bumped to 13.0.8
+
+## [2.0.7](https://github.com/dao-xyz/peerbit/compare/shared-log-proxy-v2.0.6...shared-log-proxy-v2.0.7) (2026-03-08)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/canonical-client bumped to 1.1.7
+    * @peerbit/canonical-host bumped to 1.0.11
+    * @peerbit/log bumped to 6.0.6
+    * @peerbit/program bumped to 6.0.4
+    * @peerbit/shared-log bumped to 13.0.7
+
+## [2.0.6](https://github.com/dao-xyz/peerbit/compare/shared-log-proxy-v2.0.5...shared-log-proxy-v2.0.6) (2026-03-08)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/canonical-client bumped to 1.1.6
+    * @peerbit/canonical-host bumped to 1.0.10
+    * @peerbit/log bumped to 6.0.5
+    * @peerbit/program bumped to 6.0.3
+    * @peerbit/shared-log bumped to 13.0.6
+
+## [2.0.5](https://github.com/dao-xyz/peerbit/compare/shared-log-proxy-v2.0.4...shared-log-proxy-v2.0.5) (2026-03-08)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/canonical-client bumped to 1.1.5
+    * @peerbit/canonical-host bumped to 1.0.9
+    * @peerbit/log bumped to 6.0.4
+    * @peerbit/program bumped to 6.0.2
+    * @peerbit/shared-log bumped to 13.0.5
+
+## [2.0.4](https://github.com/dao-xyz/peerbit/compare/shared-log-proxy-v2.0.3...shared-log-proxy-v2.0.4) (2026-03-07)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/canonical-client bumped to 1.1.4
+    * @peerbit/canonical-host bumped to 1.0.8
+    * @peerbit/log bumped to 6.0.3
+    * @peerbit/program bumped to 6.0.1
+    * @peerbit/shared-log bumped to 13.0.4
+
+## [2.0.3](https://github.com/dao-xyz/peerbit/compare/shared-log-proxy-v2.0.2...shared-log-proxy-v2.0.3) (2026-03-05)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped to 13.0.3
+
+## [2.0.2](https://github.com/dao-xyz/peerbit/compare/shared-log-proxy-v2.0.1...shared-log-proxy-v2.0.2) (2026-03-05)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/canonical-host bumped to 1.0.7
+    * @peerbit/log bumped to 6.0.2
+    * @peerbit/shared-log bumped to 13.0.2
+
 ## [2.0.1](https://github.com/dao-xyz/peerbit/compare/shared-log-proxy-v2.0.0...shared-log-proxy-v2.0.1) (2026-03-04)
 
 

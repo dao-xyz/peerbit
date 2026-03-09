@@ -10,6 +10,7 @@ import { SilentDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { AbortError, delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import sinon from "sinon";
 import {
 	MissingResponsesError,
 	RPC,
@@ -160,6 +161,46 @@ describe("rpc", () => {
 			);
 		});
 
+		it("inherits response transport hints from request envelope", async () => {
+			const requestEventFromResponder: CustomEvent<RequestEvent<Body>>[] = [];
+			const responseEventsFromRequester: CustomEvent<ResponseEvent<Body>>[] =
+				[];
+
+			responder.query.events.addEventListener("request", (e) => {
+				requestEventFromResponder.push(e);
+			});
+
+			reader.query.events.addEventListener("response", (e) => {
+				responseEventsFromRequester.push(e);
+			});
+
+			await reader.query.request(
+				new Body({
+					arr: new Uint8Array([0, 1, 2]),
+				}),
+				{
+					amount: 1,
+					priority: 1,
+					responsePriority: 2,
+					expiresAt: Date.now() + 5_000,
+				},
+			);
+
+			await waitForResolved(() => expect(requestEventFromResponder).to.have.length(1));
+			await waitForResolved(() =>
+				expect(responseEventsFromRequester).to.have.length(1),
+			);
+
+			const requestMessage = requestEventFromResponder[0]!.detail.message;
+			const responseMessage = responseEventsFromRequester[0]!.detail.message;
+			expect(requestMessage.header.priority).to.equal(1);
+			expect(requestMessage.header.responsePriority).to.equal(2);
+			expect(responseMessage.header.priority).to.equal(2);
+			expect(Number(responseMessage.header.expires)).to.equal(
+				Number(requestMessage.header.expires),
+			);
+		});
+
 		it("custom signer", async () => {
 			const requestEventFromResponder: CustomEvent<RequestEvent<Body>>[] = [];
 			const responseEventsFromResponder: CustomEvent<ResponseEvent<Body>>[] =
@@ -298,6 +339,32 @@ describe("rpc", () => {
 					(x) => x.hashcode(),
 				);
 			expect(from).to.deep.eq(expectedSigner);
+		});
+
+		it("send normalizes bare to into silent delivery", async () => {
+			const publish = sinon.spy(reader.node.services.pubsub, "publish");
+
+			try {
+				await reader.query.send(
+					new Body({
+						arr: new Uint8Array([0, 1, 2]),
+					}),
+					{
+						to: [responder.node.identity.publicKey],
+					},
+				);
+			} finally {
+				publish.restore();
+			}
+
+			expect(publish.calledOnce).to.be.true;
+			const options = publish.firstCall.args[1];
+			expect(options.mode).to.be.instanceOf(SilentDelivery);
+			const mode = options.mode as SilentDelivery;
+			expect(mode.to).to.deep.equal([
+				responder.node.identity.publicKey.hashcode(),
+			]);
+			expect(mode.redundancy).to.equal(1);
 		});
 
 		it("onResponse", async () => {

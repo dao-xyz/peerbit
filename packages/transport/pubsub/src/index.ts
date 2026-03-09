@@ -7,6 +7,7 @@ import { logger as loggerFn } from "@peerbit/logger";
 import {
 	DataEvent,
 	GetSubscribers,
+	PeerUnavailable,
 	type PubSub,
 	PubSubData,
 	type PubSubEvents,
@@ -33,17 +34,19 @@ import {
 	AnyWhere,
 	DataMessage,
 	DeliveryError,
+	type ExpiresAtOptions,
 	type IdOptions,
 	MessageHeader,
 	NotStartedError,
 	type PriorityOptions,
+	type ResponsePriorityOptions,
 	type RouteHint,
 	SilentDelivery,
 	type WithExtraSigners,
 	deliveryModeHasReceiver,
 	getMsgId,
 } from "@peerbit/stream-interface";
-import { AbortError, TimeoutError } from "@peerbit/time";
+import { AbortError, TimeoutError, delay } from "@peerbit/time";
 import { Uint8ArrayList } from "uint8arraylist";
 import {
 	type DebouncedAccumulatorCounterMap,
@@ -232,7 +235,10 @@ export class TopicControlPlane
 	public subscriptions: Map<string, { counter: number }>;
 	// Local topics requested via debounced subscribe, not yet applied in `subscriptions`.
 	private pendingSubscriptions: Set<string>;
-	public lastSubscriptionMessages: Map<string, Map<string, bigint>> = new Map();
+	public lastSubscriptionMessages: Map<
+		string,
+		Map<string, { session: bigint; timestamp: bigint }>
+	> = new Map();
 	public dispatchEventOnSelfPublish: boolean;
 	public readonly topicRootControlPlane: TopicRootControlPlane;
 	public readonly subscriberCacheMaxEntries: number;
@@ -268,10 +274,15 @@ export class TopicControlPlane
 	private autoTopicRootCandidates = false;
 	private autoTopicRootCandidateSet?: Set<string>;
 	private reconcileShardOverlaysInFlight?: Promise<void>;
+	private hostOwnedShardRootsInFlight?: Promise<void>;
+	private hostOwnedShardRootsDirty = false;
 	private autoCandidatesBroadcastTimers: Array<ReturnType<typeof setTimeout>> =
 		[];
 	private autoCandidatesGossipInterval?: ReturnType<typeof setInterval>;
 	private autoCandidatesGossipUntil = 0;
+	private _onFanoutPeerUnreachable?: (
+		ev: CustomEvent<{ topic: string; root: string; publicKeyHash: string }>,
+	) => void;
 
 	private fanoutChannels = new Map<
 		string,
@@ -405,21 +416,37 @@ export class TopicControlPlane
 		// Only candidates can become deterministic roots. Avoid doing a full shard
 		// scan on non-candidates in large sessions.
 		if (candidates.includes(this.publicKeyHash)) {
-			void this.hostShardRootsNow().catch(() => {});
+			this.scheduleHostOwnedShardRoots();
 		}
 		this.scheduleReconcileShardOverlays();
 	}
 
 	public override async start() {
 		await this.fanout.start();
+		this._onFanoutPeerUnreachable =
+			this._onFanoutPeerUnreachable ||
+			this.onFanoutPeerUnreachable.bind(this);
+		await this.fanout.addEventListener(
+			"fanout:peer-unreachable",
+			this._onFanoutPeerUnreachable as any,
+		);
 		await super.start();
 
 		if (this.hostShards) {
 			await this.hostShardRootsNow();
 		}
+		if (this.hostOwnedShardRootsDirty) {
+			this.scheduleHostOwnedShardRoots();
+		}
 	}
 
 	public override async stop() {
+		if (this._onFanoutPeerUnreachable) {
+			this.fanout.removeEventListener(
+				"fanout:peer-unreachable",
+				this._onFanoutPeerUnreachable as any,
+			);
+		}
 		for (const st of this.fanoutChannels.values()) {
 			if (st.idleCloseTimeout) clearTimeout(st.idleCloseTimeout);
 			try {
@@ -451,6 +478,7 @@ export class TopicControlPlane
 			this.autoCandidatesGossipInterval = undefined;
 		}
 		this.autoCandidatesGossipUntil = 0;
+		this.hostOwnedShardRootsDirty = false;
 
 		this.subscriptions.clear();
 		this.pendingSubscriptions.clear();
@@ -524,7 +552,7 @@ export class TopicControlPlane
 		// in tests where candidates may be configured before protocol streams have
 		// fully started; earlier `hostShardRootsNow()` attempts can be skipped,
 		// leading to join timeouts.
-		void this.hostShardRootsNow().catch(() => {});
+		this.scheduleHostOwnedShardRoots();
 		this.scheduleReconcileShardOverlays();
 		return true;
 	}
@@ -555,7 +583,7 @@ export class TopicControlPlane
 		// That means a peer can be selected as root for shards it isn't using yet.
 		// Ensure we proactively host the shard roots we're responsible for so other
 		// peers can join without timing out in small ad-hoc networks.
-		void this.hostShardRootsNow().catch(() => {});
+		this.scheduleHostOwnedShardRoots();
 
 		// Share the updated candidate set so other peers converge on the same
 		// deterministic mapping even in partially connected topologies.
@@ -666,9 +694,34 @@ export class TopicControlPlane
 		this.topicRootControlPlane.setTopicRootCandidates(next);
 		this.shardRootCache.clear();
 		this.scheduleReconcileShardOverlays();
-		void this.hostShardRootsNow().catch(() => {});
+		this.scheduleHostOwnedShardRoots();
 		this.scheduleAutoTopicRootCandidatesBroadcast();
 		return true;
+	}
+
+	private scheduleHostOwnedShardRoots() {
+		this.hostOwnedShardRootsDirty = true;
+		if (!this.started || this.stopping) return;
+		if (this.hostOwnedShardRootsInFlight) return;
+		this.hostOwnedShardRootsInFlight = (async () => {
+			for (;;) {
+				if (!this.started || this.stopping) return;
+				if (!this.hostOwnedShardRootsDirty) return;
+				this.hostOwnedShardRootsDirty = false;
+				try {
+					await this.hostShardRootsNow();
+				} catch {
+					if (!this.started || this.stopping) return;
+					this.hostOwnedShardRootsDirty = true;
+					await delay(250);
+				}
+			}
+		})().finally(() => {
+			this.hostOwnedShardRootsInFlight = undefined;
+			if (this.hostOwnedShardRootsDirty && this.started && !this.stopping) {
+				this.scheduleHostOwnedShardRoots();
+			}
+		});
 	}
 
 	private scheduleReconcileShardOverlays() {
@@ -741,6 +794,10 @@ export class TopicControlPlane
 	}
 
 	private initializePeer(publicKey: PublicSignKey) {
+		// Remote subscribers can be non-neighbours (learned via relayed topic control).
+		// Keep hash->key mapping so later unreachable events can evict stale
+		// subscription state for abruptly departed peers.
+		this.peerKeyHashToPublicKey.set(publicKey.hashcode(), publicKey);
 		this.peerToTopic.get(publicKey.hashcode()) ||
 			this.peerToTopic.set(publicKey.hashcode(), new Set());
 	}
@@ -963,6 +1020,14 @@ export class TopicControlPlane
 					this.subscriptions.has(x),
 				);
 				if (!overlap) return;
+			} else if (pubsubMessage instanceof PeerUnavailable) {
+				const relevant =
+					pubsubMessage.topics.length > 0
+						? pubsubMessage.topics.some((x) => this.isTrackedTopic(x))
+						: [...this.topics.keys()].some(
+								(topic) => this.getShardTopicForUserTopic(topic) === t,
+							);
+				if (!relevant) return;
 			} else {
 				return;
 			}
@@ -1269,6 +1334,103 @@ export class TopicControlPlane
 		);
 	}
 
+	private async announcePeerUnavailable(
+		publicKeyHash: string,
+		batches: { session: bigint; timestamp: bigint; topics: string[] }[],
+	) {
+		if (!this.started) throw new NotStartedError();
+
+		const byShard = new Map<
+			string,
+			{ session: bigint; timestamp: bigint; topics: string[] }
+		>();
+		for (const batch of batches) {
+			for (const topic of batch.topics) {
+				if (!this.isTrackedTopic(topic)) {
+					continue;
+				}
+				const shardTopic = this.getShardTopicForUserTopic(topic);
+				const key = `${shardTopic}:${batch.session}:${batch.timestamp}`;
+				const existing = byShard.get(key);
+				if (existing) {
+					existing.topics.push(topic);
+				} else {
+					byShard.set(key, {
+						session: batch.session,
+						timestamp: batch.timestamp,
+						topics: [topic],
+					});
+				}
+			}
+		}
+
+		await Promise.all(
+			[...byShard.entries()].map(async ([key, batch]) => {
+				const [shardTopic] = key.split(":");
+				if (!shardTopic || batch.topics.length === 0) {
+					return;
+				}
+				try {
+					const msg = new PeerUnavailable({
+						publicKeyHash,
+						session: batch.session,
+						timestamp: batch.timestamp,
+						topics: batch.topics,
+					});
+					const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
+						mode: new AnyWhere(),
+						priority: 1,
+						skipRecipientValidation: true,
+					} as any);
+					await this.ensureFanoutChannel(shardTopic, { ephemeral: true });
+					const st = this.fanoutChannels.get(shardTopic);
+					if (st) {
+						void st.channel.publish(toUint8Array(embedded.bytes())).catch(() => {});
+						this.touchFanoutChannel(shardTopic);
+					}
+				} catch {
+					// best-effort
+				}
+			}),
+		);
+	}
+
+	private async announcePeerUnavailableOnShard(
+		publicKeyHash: string,
+		shardTopic: string,
+	) {
+		if (!this.started) throw new NotStartedError();
+		try {
+			const msg = new PeerUnavailable({
+				publicKeyHash,
+				session: 0n,
+				timestamp: 0n,
+				topics: [],
+			});
+			const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
+				mode: new AnyWhere(),
+				priority: 1,
+				skipRecipientValidation: true,
+			} as any);
+			await this.ensureFanoutChannel(shardTopic, { ephemeral: true });
+			const st = this.fanoutChannels.get(shardTopic);
+			if (st) {
+				void st.channel.publish(toUint8Array(embedded.bytes())).catch(() => {});
+				this.touchFanoutChannel(shardTopic);
+			}
+		} catch {
+			// best-effort
+		}
+	}
+
+	private onFanoutPeerUnreachable(
+		ev: CustomEvent<{ topic: string; root: string; publicKeyHash: string }>,
+	) {
+		void this
+			.announcePeerUnavailableOnShard(ev.detail.publicKeyHash, ev.detail.topic)
+			.catch(logErrorIfStarted);
+	}
+
 	getSubscribers(topic: string): PublicSignKey[] | undefined {
 		const t = topic.toString();
 		const remote = this.topics.get(t);
@@ -1374,6 +1536,8 @@ export class TopicControlPlane
 		} & { client?: string } & {
 			mode?: SilentDelivery | AcknowledgeDelivery;
 		} & PriorityOptions &
+			ResponsePriorityOptions &
+			ExpiresAtOptions &
 			IdOptions &
 			WithExtraSigners & { signal?: AbortSignal },
 	): Promise<Uint8Array | undefined> {
@@ -1439,6 +1603,8 @@ export class TopicControlPlane
 		const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
 			mode: new AnyWhere(),
 			priority: options?.priority,
+			responsePriority: options?.responsePriority,
+			expiresAt: options?.expiresAt,
 			id: options?.id,
 			extraSigners: options?.extraSigners,
 			skipRecipientValidation: true,
@@ -1497,13 +1663,104 @@ export class TopicControlPlane
 	}
 
 	public onPeerSession(key: PublicSignKey, _session: number): void {
-		this.removeSubscriptions(key, "peer-session-reset");
+		if (!Number.isFinite(_session) || _session < 0) {
+			return;
+		}
+		this.removeSubscriptionsBeforeSession(
+			key,
+			BigInt(Math.trunc(_session)),
+			"peer-session-reset",
+		);
 	}
 
 	public override onPeerUnreachable(publicKeyHash: string) {
 		super.onPeerUnreachable(publicKeyHash);
 		const key = this.peerKeyHashToPublicKey.get(publicKeyHash);
-		if (key) this.removeSubscriptions(key, "peer-unreachable");
+		if (!key) {
+			return;
+		}
+
+		const removed = this.collectSubscriptionState(publicKeyHash);
+		const changed = this.removeSubscriptions(key, "peer-unreachable");
+		if (changed.length === 0) {
+			return;
+		}
+
+		const changedSet = new Set(changed);
+		const batches = removed
+			.map((batch) => ({
+				...batch,
+				topics: batch.topics.filter((topic) => changedSet.has(topic)),
+			}))
+			.filter((batch) => batch.topics.length > 0);
+		if (batches.length > 0) {
+			void this
+				.announcePeerUnavailable(publicKeyHash, batches)
+				.catch(logErrorIfStarted);
+		}
+	}
+
+	private collectSubscriptionState(peerHash: string) {
+		const peerTopics = this.peerToTopic.get(peerHash);
+		if (!peerTopics) {
+			return [];
+		}
+
+		const grouped = new Map<string, { session: bigint; timestamp: bigint; topics: string[] }>();
+		for (const topic of peerTopics) {
+			const existing = this.topics.get(topic)?.get(peerHash);
+			if (!existing) {
+				continue;
+			}
+			const key = `${existing.session}:${existing.timestamp}`;
+			const batch = grouped.get(key);
+			if (batch) {
+				batch.topics.push(topic);
+			} else {
+				grouped.set(key, {
+					session: existing.session,
+					timestamp: existing.timestamp,
+					topics: [topic],
+				});
+			}
+		}
+		return [...grouped.values()];
+	}
+
+	private removeSubscriptionsBeforeSession(
+		publicKey: PublicSignKey,
+		session: bigint,
+		reason: UnsubscriptionReason,
+	) {
+		const peerHash = publicKey.hashcode();
+		const peerTopics = this.peerToTopic.get(peerHash);
+		const changed: string[] = [];
+		if (peerTopics) {
+			for (const topic of [...peerTopics]) {
+				const peers = this.topics.get(topic);
+				const existing = peers?.get(peerHash);
+				if (!existing || existing.session >= session) {
+					continue;
+				}
+				if (peers?.delete(peerHash)) {
+					changed.push(topic);
+					peerTopics.delete(topic);
+					this.lastSubscriptionMessages.get(peerHash)?.delete(topic);
+				}
+			}
+		}
+		if (!peerTopics?.size) {
+			this.peerToTopic.delete(peerHash);
+			this.lastSubscriptionMessages.delete(peerHash);
+		}
+
+		if (changed.length > 0) {
+			this.dispatchEvent(
+				new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
+					detail: new UnsubcriptionEvent(publicKey, changed, reason),
+				}),
+			);
+		}
 	}
 
 	private removeSubscriptions(
@@ -1532,22 +1789,31 @@ export class TopicControlPlane
 				}),
 			);
 		}
+
+		return changed;
 	}
 
-	private subscriptionMessageIsLatest(
-		message: DataMessage,
-		pubsubMessage: Subscribe | Unsubscribe,
+	private subscriptionStateIsLatest(
+		subscriberKey: string,
+		session: bigint,
+		timestamp: bigint,
 		relevantTopics: string[],
 	) {
-		const subscriber = message.header.signatures!.signatures[0].publicKey!;
-		const subscriberKey = subscriber.hashcode();
-		const messageTimestamp = message.header.timestamp;
-
 		for (const topic of relevantTopics) {
-			const lastTimestamp = this.lastSubscriptionMessages
+			const last = this.lastSubscriptionMessages
 				.get(subscriberKey)
 				?.get(topic);
-			if (lastTimestamp != null && lastTimestamp > messageTimestamp) {
+			if (!last) {
+				continue;
+			}
+			if (last.session > session) {
+				return false;
+			}
+			if (
+				timestamp !== 0n &&
+				last.session === session &&
+				last.timestamp > timestamp
+			) {
 				return false;
 			}
 		}
@@ -1558,9 +1824,26 @@ export class TopicControlPlane
 			}
 			this.lastSubscriptionMessages
 				.get(subscriberKey)!
-				.set(topic, messageTimestamp);
+				.set(topic, {
+					session,
+					timestamp,
+				});
 		}
 		return true;
+	}
+
+	private subscriptionMessageIsLatest(
+		message: DataMessage,
+		_pubsubMessage: Subscribe | Unsubscribe,
+		relevantTopics: string[],
+	) {
+		const subscriber = message.header.signatures!.signatures[0].publicKey!;
+		return this.subscriptionStateIsLatest(
+			subscriber.hashcode(),
+			message.header.session,
+			message.header.timestamp,
+			relevantTopics,
+		);
 	}
 
 	private async sendFanoutUnicastOrBroadcast(
@@ -1749,6 +2032,69 @@ export class TopicControlPlane
 								sender,
 								changed,
 								"remote-unsubscribe",
+							),
+						}),
+					);
+				}
+			}
+			return;
+		}
+
+		if (pubsubMessage instanceof PeerUnavailable) {
+			const peerHash = pubsubMessage.publicKeyHash;
+			// Relay-originated shard deltas are keyed only by shard membership, not by
+			// per-topic subscription watermarks. They are emitted immediately when the
+			// relay loses a child so downstream peers can shed stale membership without
+			// waiting for the slower shared-log liveness sweep.
+			const isShardFastPath =
+				pubsubMessage.topics.length === 0 && pubsubMessage.timestamp === 0n;
+			const relevantTopics =
+				pubsubMessage.topics.length > 0
+					? pubsubMessage.topics.filter((topic) => {
+							if (!this.isTrackedTopic(topic)) {
+								return false;
+							}
+							return this.topics.get(topic)?.has(peerHash) ?? false;
+						})
+					: [...this.topics.keys()].filter(
+							(topic) =>
+								this.getShardTopicForUserTopic(topic) === shardTopic &&
+								(this.topics.get(topic)?.has(peerHash) ?? false),
+						);
+			const shouldApply =
+				relevantTopics.length > 0 &&
+				(isShardFastPath ||
+					this.subscriptionStateIsLatest(
+						peerHash,
+						pubsubMessage.session,
+						pubsubMessage.timestamp,
+						relevantTopics,
+					));
+			if (shouldApply) {
+				const changed: string[] = [];
+				let publicKey: PublicSignKey | undefined;
+				for (const topic of relevantTopics) {
+					const peers = this.topics.get(topic);
+					if (!peers) continue;
+					const existing = peers.get(peerHash);
+					if (!existing) continue;
+					publicKey = publicKey ?? existing.publicKey;
+					if (peers.delete(peerHash)) {
+						changed.push(topic);
+						this.peerToTopic.get(peerHash)?.delete(topic);
+					}
+				}
+				if (!this.peerToTopic.get(peerHash)?.size) {
+					this.peerToTopic.delete(peerHash);
+					this.lastSubscriptionMessages.delete(peerHash);
+				}
+				if (changed.length > 0 && publicKey) {
+					this.dispatchEvent(
+						new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
+							detail: new UnsubcriptionEvent(
+								publicKey,
+								changed,
+								"peer-unreachable",
 							),
 						}),
 					);

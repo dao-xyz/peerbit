@@ -7,9 +7,12 @@ import type {
 import { logger as loggerFn } from "@peerbit/logger";
 import type {
 	DataMessage,
+	ExpiresAtOptions,
 	PriorityOptions,
+	ResponsePriorityOptions,
 	WithExtraSigners,
 	WithMode,
+	WithTo,
 } from "@peerbit/stream-interface";
 
 export const logger = loggerFn("peerbit:rpc");
@@ -29,8 +32,19 @@ export type RPCRequestOptions<R> = RPCRequestResponseOptions<R> &
 	EncryptionOptions &
 	WithMode &
 	PriorityOptions &
+	ResponsePriorityOptions &
+	ExpiresAtOptions &
 	WithExtraSigners &
 	RequestResponseInterceptor<R>;
+
+export type RPCSendOptions = EncryptionOptions &
+	(WithMode | WithTo) &
+	PriorityOptions &
+	ResponsePriorityOptions &
+	ExpiresAtOptions &
+	WithExtraSigners & {
+		signal?: AbortSignal;
+	};
 
 export type EncryptionOptions = {
 	encryption?: {

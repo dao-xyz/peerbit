@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/stream",
-	"version": "5.0.0",
+	"version": "5.0.1",
 	"description": "A building block for direct streaming protocols",
 	"sideEffects": false,
 	"type": "module",

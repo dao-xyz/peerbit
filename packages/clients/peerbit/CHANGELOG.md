@@ -313,6 +313,65 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [5.0.7](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.0.6...peerbit-v5.0.7) (2026-03-09)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped to 6.0.5
+    * @peerbit/pubsub bumped to 5.0.3
+
+## [5.0.6](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.0.5...peerbit-v5.0.6) (2026-03-08)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped to 6.0.4
+    * @peerbit/blocks bumped to 4.0.3
+
+## [5.0.5](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.0.4...peerbit-v5.0.5) (2026-03-08)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped to 6.0.3
+    * @peerbit/blocks bumped to 4.0.2
+
+## [5.0.4](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.0.3...peerbit-v5.0.4) (2026-03-08)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped to 6.0.2
+    * @peerbit/blocks bumped to 4.0.1
+    * @peerbit/pubsub bumped to 5.0.2
+    * @peerbit/stream-interface bumped to 6.0.1
+
+## [5.0.3](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.0.2...peerbit-v5.0.3) (2026-03-07)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped to 6.0.1
+    * @peerbit/pubsub bumped to 5.0.1
+
+## [5.0.2](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.0.1...peerbit-v5.0.2) (2026-03-05)
+
+
+### Bug Fixes
+
+* **peerbit:** make bootstrap dial connection-only ([bba7de4](https://github.com/dao-xyz/peerbit/commit/bba7de4bd93f3a5d184c0636db2ea91660f999e1))
+
 ## [5.0.1](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.0.0...peerbit-v5.0.1) (2026-03-04)
 
 

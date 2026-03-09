@@ -48,10 +48,12 @@ import {
 } from "@peerbit/stream-interface";
 import type {
 	DirectStreamAckRouteHint,
+	ExpiresAtOptions,
 	IdOptions,
 	PeerRefs,
 	PriorityOptions,
 	PublicKeyFromHashResolver,
+	ResponsePriorityOptions,
 	StreamEvents,
 	WaitForAnyOpts,
 	WaitForBaseOpts,
@@ -144,6 +146,7 @@ export interface PeerStreamsInit {
 	publicKey: PublicSignKey;
 	protocol: string;
 	connId: string;
+	outboundQueue?: PeerOutboundQueueOptions;
 }
 const DEFAULT_SEEK_MESSAGE_REDUDANCY = 2;
 const DEFAULT_SILENT_MESSAGE_REDUDANCY = 1;
@@ -156,6 +159,7 @@ const isWebsocketConnection = (c: Connection) =>
 export interface PeerStreamEvents {
 	"stream:inbound": CustomEvent<never>;
 	"stream:outbound": CustomEvent<never>;
+	"queue:outbound": CustomEvent<never>;
 	close: CustomEvent<never>;
 }
 
@@ -165,6 +169,8 @@ const MAX_DATA_LENGTH_IN = 15e6 + 1000; // 15 mb and some metadata
 const MAX_DATA_LENGTH_OUT = 1e7 + 1000; // 10 mb and some metadata
 
 const MAX_QUEUED_BYTES = MAX_DATA_LENGTH_IN * 50;
+const DEFAULT_OUTBOUND_QUEUE_MAX_BYTES = MAX_DATA_LENGTH_OUT * 2;
+const DEFAULT_OUTBOUND_QUEUE_RESERVED_PRIORITY_BYTES = 1024 * 1024;
 
 const DEFAULT_PRUNE_CONNECTIONS_INTERVAL = 2e4;
 const DEFAULT_MIN_CONNECTIONS = 2;
@@ -186,6 +192,16 @@ const getLaneFromPriority = (priority: number) => {
 	const clampedPriority = Math.max(0, Math.min(maxLane, Math.floor(priority)));
 	return maxLane - clampedPriority;
 };
+type OutboundQueueOptions = {
+	maxBufferedBytes: number;
+	reservedPriorityBytes: number;
+	maxTotalBufferedBytes: number;
+	reservedTotalPriorityBytes: number;
+};
+type PeerOutboundQueueOptions = Pick<
+	OutboundQueueOptions,
+	"maxBufferedBytes" | "reservedPriorityBytes"
+>;
 interface OutboundCandidate {
 	raw: Stream;
 	pushable: PushableLanes<Uint8Array>;
@@ -201,6 +217,36 @@ export interface InboundStreamRecord {
 	created: number;
 	lastActivity: number;
 	bytesReceived: number;
+}
+
+export class BackpressureError extends Error {
+	readonly scope: "peer" | "node";
+	readonly peerId: PeerId;
+	readonly priority: number;
+	readonly limitBytes: number;
+	readonly currentBufferedBytes: number;
+	readonly attemptedBytes: number;
+
+	constructor(options: {
+		scope: "peer" | "node";
+		peerId: PeerId;
+		priority: number;
+		limitBytes: number;
+		currentBufferedBytes: number;
+		attemptedBytes: number;
+	}) {
+		super(
+			`Outbound ${options.scope} queue full for ${options.peerId.toString()} on priority ${options.priority}: ` +
+				`${options.currentBufferedBytes} buffered + ${options.attemptedBytes} attempted > ${options.limitBytes} limit`,
+		);
+		this.name = "BackpressureError";
+		this.scope = options.scope;
+		this.peerId = options.peerId;
+		this.priority = options.priority;
+		this.limitBytes = options.limitBytes;
+		this.currentBufferedBytes = options.currentBufferedBytes;
+		this.attemptedBytes = options.attemptedBytes;
+	}
 }
 // Hook for tests to override queued length measurement (peerStreams, default impl)
 export let measureOutboundQueuedBytes: (
@@ -254,6 +300,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	public seekedOnce: boolean;
 
 	private usedBandWidthTracker: BandwidthTracker;
+	private readonly outboundQueue?: PeerOutboundQueueOptions;
 
 	// Unified outbound streams list (during grace may contain >1; after pruning length==1)
 	private outboundStreams: OutboundCandidate[] = [];
@@ -306,6 +353,11 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		if (existing) return existing;
 		const pushableInst = pushableLanes<Uint8Array>({
 			lanes: PRIORITY_LANES,
+			maxBufferedBytes: this.outboundQueue?.maxBufferedBytes,
+			overflow: "throw",
+			onBufferSize: () => {
+				this.dispatchEvent(new CustomEvent("queue:outbound"));
+			},
 			onPush: (val: Uint8Array) => {
 				candidate.bytesDelivered += val.length || val.byteLength || 0;
 			},
@@ -397,6 +449,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		this.connId = init.connId;
 		this.usedBandWidthTracker = new BandwidthTracker(10);
 		this.usedBandWidthTracker.start();
+		this.outboundQueue = init.outboundQueue;
 	}
 
 	/**
@@ -417,6 +470,65 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		return this.usedBandWidthTracker.value;
 	}
 
+	private getQueueAdmissionLimitBytes(lane: number): number | undefined {
+		if (!this.outboundQueue) {
+			return undefined;
+		}
+		if (lane === getLaneFromPriority(0)) {
+			return Math.max(
+				0,
+				this.outboundQueue.maxBufferedBytes -
+					this.outboundQueue.reservedPriorityBytes,
+			);
+		}
+		return this.outboundQueue.maxBufferedBytes;
+	}
+
+	private assertQueueCapacity(
+		candidate: OutboundCandidate,
+		payloadBytes: number,
+		priority: number,
+	) {
+		const lane = getLaneFromPriority(priority);
+		const limitBytes = this.getQueueAdmissionLimitBytes(lane);
+		if (limitBytes == null) {
+			return;
+		}
+		const currentBufferedBytes = candidate.pushable.getReadableLength();
+		if (currentBufferedBytes + payloadBytes > limitBytes) {
+			throw new BackpressureError({
+				scope: "peer",
+				peerId: this.peerId,
+				priority,
+				limitBytes,
+				currentBufferedBytes,
+				attemptedBytes: payloadBytes,
+			});
+		}
+	}
+
+	private async waitForQueueCapacity(
+		payloadBytes: number,
+		priority: number,
+		signal?: AbortSignal,
+	) {
+		const lane = getLaneFromPriority(priority);
+		const limitBytes = this.getQueueAdmissionLimitBytes(lane);
+		if (limitBytes == null) {
+			return;
+		}
+		const threshold = Math.max(0, limitBytes - payloadBytes);
+		const waiters = this.outboundStreams
+			.filter((candidate) => !candidate.aborted)
+			.map((candidate) =>
+				candidate.pushable.onBufferedBelow(threshold, { signal }),
+			);
+		if (waiters.length === 0) {
+			throw new Error("No writable connection to " + this.peerId.toString());
+		}
+		await Promise.race(waiters);
+	}
+
 	/**
 	 * Send a message to this peer.
 	 * Throws if there is no `stream` to write to available.
@@ -434,8 +546,6 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			throw new Error("No writable connection to " + this.peerId.toString());
 		}
 
-		this.usedBandWidthTracker.add(data.byteLength);
-
 		// Write to all current outbound streams (normally 1, but >1 during grace)
 		const payload = data instanceof Uint8Array ? data : data.subarray();
 		let successes = 0;
@@ -449,6 +559,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			}
 
 			try {
+				this.assertQueueCapacity(c, payload.byteLength, priority);
 				c.pushable.push(payload, getLaneFromPriority(priority));
 				successes++;
 			} catch (e) {
@@ -458,6 +569,12 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			}
 		}
 		if (successes === 0) {
+			const backpressureFailures = failures.filter(
+				(f) => f instanceof BackpressureError,
+			);
+			if (backpressureFailures.length === failures.length) {
+				throw backpressureFailures[0];
+			}
 			throw new Error(
 				"All outbound writes failed (" +
 					failures.map((f) => f?.message).join(", ") +
@@ -489,6 +606,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 				else this.dispatchEvent(new CustomEvent("stream:outbound"));
 			}
 		}
+		this.usedBandWidthTracker.add(payload.byteLength);
 	}
 
 	/**
@@ -506,54 +624,63 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			return;
 		}
 
-		if (this.isWritable) {
-			this.write(bytes, priority);
-			return;
-		}
+		while (true) {
+			if (!this.isWritable) {
+				// Outbound stream negotiation can legitimately take several seconds in CI
+				// (identify/protocol discovery, resource contention, etc). Keep this fairly
+				// generous so control-plane messages (joins/subscriptions) don't flap.
+				const timeoutMs = 10_000;
 
-			// Outbound stream negotiation can legitimately take several seconds in CI
-			// (identify/protocol discovery, resource contention, etc). Keep this fairly
-			// generous so control-plane messages (joins/subscriptions) don't flap.
-			const timeoutMs = 10_000;
+				await new Promise<void>((resolve, reject) => {
+					const onOutbound = () => {
+						cleanup();
+						resolve();
+					};
 
-		await new Promise<void>((resolve, reject) => {
-			const onOutbound = () => {
-				cleanup();
-				resolve();
-			};
+					const onAbortOrClose = () => {
+						cleanup();
+						reject(new AbortError("Closed"));
+					};
 
-			const onAbortOrClose = () => {
-				cleanup();
-				reject(new AbortError("Closed"));
-			};
+					const onTimeout = () => {
+						cleanup();
+						reject(
+							new TimeoutError("Failed to deliver message, never reachable"),
+						);
+					};
 
-			const onTimeout = () => {
-				cleanup();
-				reject(new TimeoutError("Failed to deliver message, never reachable"));
-			};
+					const timerId = setTimeout(onTimeout, timeoutMs);
 
-			const timerId = setTimeout(onTimeout, timeoutMs);
+					const cleanup = () => {
+						clearTimeout(timerId);
+						this.removeEventListener("stream:outbound", onOutbound);
+						this.removeEventListener("close", onAbortOrClose);
+						signal?.removeEventListener("abort", onAbortOrClose);
+					};
 
-			const cleanup = () => {
-				clearTimeout(timerId);
-				this.removeEventListener("stream:outbound", onOutbound);
-				this.removeEventListener("close", onAbortOrClose);
-				signal?.removeEventListener("abort", onAbortOrClose);
-			};
+					this.addEventListener("stream:outbound", onOutbound, { once: true });
+					this.addEventListener("close", onAbortOrClose, { once: true });
+					if (signal?.aborted) {
+						onAbortOrClose();
+					} else {
+						signal?.addEventListener("abort", onAbortOrClose, { once: true });
+					}
 
-			this.addEventListener("stream:outbound", onOutbound, { once: true });
-			this.addEventListener("close", onAbortOrClose, { once: true });
-			if (signal?.aborted) {
-				onAbortOrClose();
-			} else {
-				signal?.addEventListener("abort", onAbortOrClose, { once: true });
+					// Catch a race where writability flips after the first check.
+					if (this.isWritable) onOutbound();
+				});
 			}
 
-			// Catch a race where writability flips after the first check.
-			if (this.isWritable) onOutbound();
-		});
-
-		this.write(bytes, priority);
+			try {
+				this.write(bytes, priority);
+				return;
+			} catch (error) {
+				if (!(error instanceof BackpressureError)) {
+					throw error;
+				}
+				await this.waitForQueueCapacity(bytes.byteLength, priority, signal);
+			}
+		}
 	}
 
 	/**
@@ -858,6 +985,15 @@ export type ConnectionManagerArguments =
 			} & { dialer?: Partial<DialerOptions> | false })
 	| false;
 
+type OutboundQueueArguments =
+	| {
+			maxBufferedBytes?: number;
+			reservedPriorityBytes?: number;
+			maxTotalBufferedBytes?: number;
+			reservedTotalPriorityBytes?: number;
+	  }
+	| false;
+
 export type DirectStreamOptions = {
 	canRelayMessage?: boolean;
 	messageProcessingConcurrency?: number;
@@ -886,6 +1022,7 @@ export type DirectStreamOptions = {
 	sharedRouting?: boolean;
 	seenCacheMax?: number;
 	seenCacheTtlMs?: number;
+	outboundQueue?: OutboundQueueArguments;
 };
 
 type ConnectionManagerLike = {
@@ -926,6 +1063,8 @@ const sharedRoutingByPrivateKey = new WeakMap<PrivateKey, SharedRoutingState>();
 
 export type PublishOptions = (WithMode | WithTo) &
 	PriorityOptions &
+	ResponsePriorityOptions &
+	ExpiresAtOptions &
 	WithExtraSigners;
 
 export abstract class DirectStream<
@@ -975,6 +1114,11 @@ export abstract class DirectStream<
 	private routeCacheMaxTargetsPerFrom?: number;
 	private routeCacheMaxRelaysPerTarget?: number;
 	private readonly sharedRouting: boolean;
+	private readonly outboundQueueOptions?: OutboundQueueOptions;
+	private readonly totalOutboundQueueWaiters: Set<{
+		limitBytes: number;
+		deferred: DeferredPromise<void>;
+	}> = new Set();
 	private sharedRoutingKey?: PrivateKey;
 	private sharedRoutingState?: SharedRoutingState;
 
@@ -1023,6 +1167,7 @@ export abstract class DirectStream<
 				seenCacheMax = 1e6,
 				seenCacheTtlMs = 10 * 60 * 1e3,
 				inboundIdleTimeout,
+				outboundQueue,
 			} = options || {};
 
 		const signKey = getKeypairFromPrivateKey(components.privateKey);
@@ -1086,6 +1231,50 @@ export abstract class DirectStream<
 								...connectionManager?.pruner,
 							}
 						: undefined,
+			};
+		}
+		if (outboundQueue === false) {
+			this.outboundQueueOptions = undefined;
+		} else {
+			const maxBufferedBytes = Math.max(
+				MAX_DATA_LENGTH_OUT,
+				Math.floor(
+					outboundQueue?.maxBufferedBytes ?? DEFAULT_OUTBOUND_QUEUE_MAX_BYTES,
+				),
+			);
+			const reservedPriorityBytes = Math.max(
+				0,
+				Math.min(
+					maxBufferedBytes,
+					Math.floor(
+						outboundQueue?.reservedPriorityBytes ??
+							DEFAULT_OUTBOUND_QUEUE_RESERVED_PRIORITY_BYTES,
+					),
+				),
+			);
+			const maxTotalBufferedBytes = Math.max(
+				maxBufferedBytes,
+				Math.floor(
+					outboundQueue?.maxTotalBufferedBytes ??
+						this.connectionManagerOptions.pruner?.maxBuffer ??
+						MAX_QUEUED_BYTES,
+				),
+			);
+			const reservedTotalPriorityBytes = Math.max(
+				0,
+				Math.min(
+					maxTotalBufferedBytes,
+					Math.floor(
+						outboundQueue?.reservedTotalPriorityBytes ??
+							DEFAULT_OUTBOUND_QUEUE_RESERVED_PRIORITY_BYTES,
+					),
+				),
+			);
+			this.outboundQueueOptions = {
+				maxBufferedBytes,
+				reservedPriorityBytes,
+				maxTotalBufferedBytes,
+				reservedTotalPriorityBytes,
 			};
 		}
 
@@ -1802,30 +1991,35 @@ export abstract class DirectStream<
 			publicKey,
 			protocol,
 			connId,
+			outboundQueue: this.outboundQueueOptions,
 		});
 
 		this.peers.set(publicKeyHash, peerStreams);
 		this.updateSession(publicKey, -1);
 
 		// Propagate per-peer stream readiness events to the parent emitter
-		const forwardOutbound = () =>
-			this.dispatchEvent(new CustomEvent("stream:outbound"));
-		const forwardInbound = () =>
-			this.dispatchEvent(new CustomEvent("stream:inbound"));
-		peerStreams.addEventListener("stream:outbound", forwardOutbound);
-		peerStreams.addEventListener("stream:inbound", forwardInbound);
+			const forwardOutbound = () =>
+				this.dispatchEvent(new CustomEvent("stream:outbound"));
+			const forwardInbound = () =>
+				this.dispatchEvent(new CustomEvent("stream:inbound"));
+			const forwardQueue = () => this.notifyTotalOutboundQueueWaiters();
+			peerStreams.addEventListener("stream:outbound", forwardOutbound);
+			peerStreams.addEventListener("stream:inbound", forwardInbound);
+			peerStreams.addEventListener("queue:outbound", forwardQueue);
 
-		peerStreams.addEventListener("close", () => this._removePeer(publicKey), {
-			once: true,
+			peerStreams.addEventListener("close", () => this._removePeer(publicKey), {
+				once: true,
 		});
 		peerStreams.addEventListener(
-			"close",
-			() => {
-				peerStreams.removeEventListener("stream:outbound", forwardOutbound);
-				peerStreams.removeEventListener("stream:inbound", forwardInbound);
-			},
-			{ once: true },
-		);
+				"close",
+				() => {
+					peerStreams.removeEventListener("stream:outbound", forwardOutbound);
+					peerStreams.removeEventListener("stream:inbound", forwardInbound);
+					peerStreams.removeEventListener("queue:outbound", forwardQueue);
+					this.notifyTotalOutboundQueueWaiters();
+				},
+				{ once: true },
+			);
 
 			this.addRouteConnection(
 				this.publicKeyHash,
@@ -2228,7 +2422,6 @@ export abstract class DirectStream<
 			}
 		}
 	}
-
 	async onGoodBye(
 		publicKey: PublicSignKey,
 		peerStream: PeerStreams,
@@ -2328,6 +2521,8 @@ export abstract class DirectStream<
 		data: Uint8Array | Uint8ArrayList | undefined,
 		options: (WithTo | WithMode) &
 			PriorityOptions &
+			ResponsePriorityOptions &
+			ExpiresAtOptions &
 			IdOptions & { skipRecipientValidation?: boolean } & WithExtraSigners,
 	) {
 		// dispatch the event if we are interested
@@ -2377,6 +2572,8 @@ export abstract class DirectStream<
 				mode,
 				session: this.session,
 				priority: options.priority,
+				responsePriority: options.responsePriority,
+				expires: options.expiresAt,
 			}),
 		});
 
@@ -2827,14 +3024,24 @@ export abstract class DirectStream<
 						for (const [neighbour, _distantPeers] of fanout) {
 							const stream = this.peers.get(neighbour);
 							if (!stream) continue;
-							if (message.header.mode instanceof SilentDelivery) {
-								message.header.mode.to = [..._distantPeers.keys()];
-								promises.push(
-									stream.waitForWrite(message.bytes(), message.header.priority),
-								);
-							} else {
-								promises.push(stream.waitForWrite(bytes, message.header.priority));
-							}
+								if (message.header.mode instanceof SilentDelivery) {
+									message.header.mode.to = [..._distantPeers.keys()];
+									promises.push(
+										this.waitForPeerWrite(
+											stream,
+											message.bytes(),
+											message.header.priority,
+										),
+									);
+								} else {
+									promises.push(
+										this.waitForPeerWrite(
+											stream,
+											bytes,
+											message.header.priority,
+										),
+									);
+								}
 							usedNeighbours.add(neighbour);
 						}
 						if (message.header.mode instanceof SilentDelivery) {
@@ -2853,12 +3060,18 @@ export abstract class DirectStream<
 							for (const [neighbour, stream] of this.peers) {
 								if (usedNeighbours.size >= message.header.mode.redundancy) {
 									break;
+									}
+									if (usedNeighbours.has(neighbour)) continue;
+									usedNeighbours.add(neighbour);
+									promises.push(
+										this.waitForPeerWrite(
+											stream,
+											bytes,
+											message.header.priority,
+										),
+									);
 								}
-								if (usedNeighbours.has(neighbour)) continue;
-								usedNeighbours.add(neighbour);
-								promises.push(stream.waitForWrite(bytes, message.header.priority));
 							}
-						}
 
 						await Promise.all(promises);
 						return delivereyPromise;
@@ -2882,12 +3095,16 @@ export abstract class DirectStream<
 								)
 							) {
 								continue; // recipient already signed/seen this message
+								}
+								message.header.mode.to = [recipient];
+								promises.push(
+									this.waitForPeerWrite(
+										stream,
+										message.bytes(),
+										message.header.priority,
+									),
+								);
 							}
-							message.header.mode.to = [recipient];
-							promises.push(
-								stream.waitForWrite(message.bytes(), message.header.priority),
-							);
-						}
 						message.header.mode.to = originalTo;
 						if (promises.length > 0) {
 							await Promise.all(promises);
@@ -2924,11 +3141,11 @@ export abstract class DirectStream<
 					)
 				) {
 					continue;
-				}
+					}
 
-				sentOnce = true;
-				promises.push(id.waitForWrite(bytes, message.header.priority));
-			}
+					sentOnce = true;
+					promises.push(this.waitForPeerWrite(id, bytes, message.header.priority));
+				}
 			await Promise.all(promises);
 
 			if (!sentOnce) {
@@ -3187,6 +3404,121 @@ export abstract class DirectStream<
 			await this.onPeerDisconnected(stream.peerId);
 			return this.components.connectionManager.closeConnections(stream.peerId);
 		}
+
+	private getTotalQueueAdmissionLimitBytes(
+		priority: number,
+	): number | undefined {
+		const limitBytes = this.outboundQueueOptions?.maxTotalBufferedBytes;
+		if (limitBytes == null) {
+			return undefined;
+		}
+		if (getLaneFromPriority(priority) === getLaneFromPriority(0)) {
+			return Math.max(
+				0,
+				limitBytes - this.outboundQueueOptions.reservedTotalPriorityBytes,
+			);
+		}
+		return limitBytes;
+	}
+
+	private assertTotalQueueCapacity(
+		peerId: PeerId,
+		payloadBytes: number,
+		priority: number,
+	) {
+		const limitBytes = this.getTotalQueueAdmissionLimitBytes(priority);
+		if (limitBytes == null) {
+			return;
+		}
+		const currentBufferedBytes = this.getQueuedBytes();
+		if (currentBufferedBytes + payloadBytes > limitBytes) {
+			throw new BackpressureError({
+				scope: "node",
+				peerId,
+				priority,
+				limitBytes,
+				currentBufferedBytes,
+				attemptedBytes: payloadBytes,
+			});
+		}
+	}
+
+	private notifyTotalOutboundQueueWaiters() {
+		if (this.totalOutboundQueueWaiters.size === 0) {
+			return;
+		}
+		const queuedBytes = this.getQueuedBytes();
+		for (const waiter of [...this.totalOutboundQueueWaiters]) {
+			if (queuedBytes <= waiter.limitBytes) {
+				this.totalOutboundQueueWaiters.delete(waiter);
+				waiter.deferred.resolve();
+			}
+		}
+	}
+
+	private async waitForTotalQueueCapacity(
+		payloadBytes: number,
+		priority: number,
+		signal?: AbortSignal,
+	) {
+		const limitBytes = this.getTotalQueueAdmissionLimitBytes(priority);
+		if (limitBytes == null) {
+			return;
+		}
+		const threshold = Math.max(0, limitBytes - payloadBytes);
+		if (this.getQueuedBytes() <= threshold) {
+			return;
+		}
+		const waiter = {
+			limitBytes: threshold,
+			deferred: pDefer<void>(),
+		};
+		this.totalOutboundQueueWaiters.add(waiter);
+
+		let cancel: Promise<void> | undefined;
+		let listener: (() => void) | undefined;
+
+		if (signal != null) {
+			cancel = new Promise<void>((_resolve, reject) => {
+				listener = () => {
+					this.totalOutboundQueueWaiters.delete(waiter);
+					reject(new AbortError());
+				};
+				signal.addEventListener("abort", listener!);
+			});
+		}
+
+		try {
+			await Promise.race(
+				cancel != null ? [waiter.deferred.promise, cancel] : [waiter.deferred.promise],
+			);
+		} finally {
+			this.totalOutboundQueueWaiters.delete(waiter);
+			if (listener != null) {
+				signal?.removeEventListener("abort", listener);
+			}
+		}
+	}
+
+	protected async waitForPeerWrite(
+		stream: PeerStreams,
+		bytes: Uint8Array | Uint8ArrayList,
+		priority = 0,
+		signal?: AbortSignal,
+	) {
+		while (true) {
+			try {
+				this.assertTotalQueueCapacity(stream.peerId, bytes.byteLength, priority);
+				await stream.waitForWrite(bytes, priority, signal);
+				return;
+			} catch (error) {
+				if (!(error instanceof BackpressureError) || error.scope !== "node") {
+					throw error;
+				}
+				await this.waitForTotalQueueCapacity(bytes.byteLength, priority, signal);
+			}
+		}
+	}
 
 	getQueuedBytes(): number {
 		let sum = 0;

@@ -1,5 +1,59 @@
 # Changelog
 
+## [3.2.12](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.11...document-interface-v3.2.12) (2026-03-09)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.7
+
+## [3.2.11](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.10...document-interface-v3.2.11) (2026-03-08)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.6
+
+## [3.2.10](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.9...document-interface-v3.2.10) (2026-03-08)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.5
+
+## [3.2.9](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.8...document-interface-v3.2.9) (2026-03-08)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.4
+
+## [3.2.8](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.7...document-interface-v3.2.8) (2026-03-07)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.3
+
+## [3.2.7](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.6...document-interface-v3.2.7) (2026-03-05)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.2
+
 ## [3.2.6](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.5...document-interface-v3.2.6) (2026-03-04)
 
 

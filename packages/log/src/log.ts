@@ -37,6 +37,15 @@ import { Trim, type TrimOptions } from "./trim.js";
 
 const { LastWriteWins } = Sorting;
 
+const isRecoverableJoinResolveError = (error: unknown): boolean => {
+	const message =
+		error instanceof Error ? error.message : typeof error === "string" ? error : "";
+	return (
+		message.includes("Failed to resolve block") ||
+		(error instanceof Error && error.name === "AbortError")
+	);
+};
+
 type CreateSqliteIndexer = typeof import("@peerbit/indexer-sqlite3").create;
 let sqliteCreate: CreateSqliteIndexer | undefined;
 const createDefaultIndexer = async (): Promise<Indices> => {
@@ -846,15 +855,23 @@ export class Log<T> {
 				}
 
 				const from = await options.resolveRemoteFrom?.(a, remote?.signal);
-				const nested =
-					options.references?.get(a) ??
-					(await Entry.fromMultihash<T>(this._storage, a, {
-						remote: {
-							timeout: remote?.timeout,
-							signal: remote?.signal,
-							...(from && from.length > 0 ? { from } : {}),
-						},
-					}));
+				let nested: Entry<T>;
+				try {
+					nested =
+						options.references?.get(a) ??
+						(await Entry.fromMultihash<T>(this._storage, a, {
+							remote: {
+								timeout: remote?.timeout,
+								signal: remote?.signal,
+								...(from && from.length > 0 ? { from } : {}),
+							},
+						}));
+				} catch (error) {
+					if (isRecoverableJoinResolveError(error)) {
+						return false;
+					}
+					throw error;
+				}
 
 				const p = this.joinRecursively(
 					nested,

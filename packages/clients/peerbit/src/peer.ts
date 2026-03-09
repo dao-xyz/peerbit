@@ -599,7 +599,10 @@ export class Peerbit implements ProgramClient {
 			let lastError: unknown;
 			for (const ma of maddrs) {
 				try {
-					await this.dial(ma, { dialTimeoutMs });
+					// Bootstrap nodes are rendezvous points; they may not immediately satisfy
+					// "services" readiness (pubsub/blocks/fanout neighbor checks), especially in
+					// browser runtimes. A successful transport-level dial is enough here.
+					await this.dial(ma, { dialTimeoutMs, readiness: "connection" });
 					return true;
 				} catch (e) {
 					lastError = e;
@@ -620,6 +623,7 @@ export class Peerbit implements ProgramClient {
 				label: [typeof a === "string" ? a : a.toString()],
 				promise: this.dial(typeof a === "string" ? multiaddr(a) : a, {
 					dialTimeoutMs,
+					readiness: "connection",
 				}),
 			});
 		}

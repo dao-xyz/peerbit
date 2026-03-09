@@ -23,6 +23,10 @@ export abstract class PubSubMessage {
 			return TopicRootCandidates.from(bytes);
 		}
 
+		if (first === 5) {
+			return PeerUnavailable.from(bytes);
+		}
+
 		throw new Error("Unsupported");
 	}
 }
@@ -198,6 +202,54 @@ export class TopicRootCandidates extends PubSubMessage {
 		const ret = deserialize(
 			bytes instanceof Uint8Array ? bytes : bytes.subarray(),
 			TopicRootCandidates,
+		);
+		if (bytes instanceof Uint8ArrayList) {
+			ret._serialized = bytes;
+		}
+		return ret;
+	}
+}
+
+@variant(5)
+export class PeerUnavailable extends PubSubMessage {
+	@field({ type: "string" })
+	publicKeyHash: string;
+
+	@field({ type: "u64" })
+	session: bigint;
+
+	@field({ type: "u64" })
+	timestamp: bigint;
+
+	@field({ type: vec("string") })
+	topics: string[];
+
+	constructor(options: {
+		publicKeyHash: string;
+		session: bigint;
+		timestamp: bigint;
+		topics: string[];
+	}) {
+		super();
+		this.publicKeyHash = options.publicKeyHash;
+		this.session = options.session;
+		this.timestamp = options.timestamp;
+		this.topics = options.topics;
+	}
+
+	private _serialized!: Uint8ArrayList;
+
+	bytes() {
+		if (this._serialized) {
+			return this._serialized;
+		}
+		return serialize(this);
+	}
+
+	static from(bytes: Uint8Array | Uint8ArrayList): PeerUnavailable {
+		const ret = deserialize(
+			bytes instanceof Uint8Array ? bytes : bytes.subarray(),
+			PeerUnavailable,
 		);
 		if (bytes instanceof Uint8ArrayList) {
 			ret._serialized = bytes;

@@ -1,6 +1,6 @@
 import { type PeerId } from "@libp2p/interface";
 import { Ed25519Keypair } from "@peerbit/crypto";
-import { waitForResolved } from "@peerbit/time";
+import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { PeerStreams } from "../src/index.js";
 
@@ -78,6 +78,68 @@ describe("priority lanes", () => {
 			);
 		}
 
+		await streams.close();
+	});
+
+	it("applies backpressure to bulk writes while reserving capacity for higher priority traffic", async () => {
+		const keypair = await Ed25519Keypair.create();
+		const streams = new PeerStreams({
+			peerId: { toString: () => "test-peer" } as unknown as PeerId,
+			publicKey: keypair.publicKey,
+			protocol: "/test",
+			connId: "test-conn",
+			outboundQueue: {
+				maxBufferedBytes: 3,
+				reservedPriorityBytes: 1,
+			},
+		});
+
+		const outbound = new TestOutboundStream();
+		await streams.attachOutboundStream(outbound as any);
+
+		await streams.waitForWrite(new Uint8Array([1]), 0);
+		await streams.waitForWrite(new Uint8Array([2]), 0);
+		await streams.waitForWrite(new Uint8Array([3]), 0);
+
+		await waitForResolved(() =>
+			expect(outbound.sentPayloads).to.deep.equal([1]),
+		);
+		expect(streams.getOutboundQueuedBytes()).to.equal(2);
+
+		let lowResolved = false;
+		const blockedLow = streams.waitForWrite(new Uint8Array([4]), 0).then(() => {
+			lowResolved = true;
+		});
+
+		await delay(50);
+		expect(lowResolved).to.equal(false);
+		expect(streams.getOutboundQueuedBytes()).to.equal(2);
+
+		await streams.waitForWrite(new Uint8Array([200]), 1);
+		expect(streams.getOutboundQueuedBytes()).to.equal(3);
+
+		outbound.dispatchEvent(new Event("drain"));
+		await waitForResolved(() =>
+			expect(outbound.sentPayloads).to.deep.equal([1, 200]),
+		);
+
+		outbound.dispatchEvent(new Event("drain"));
+		await waitForResolved(() =>
+			expect(outbound.sentPayloads).to.deep.equal([1, 200, 2]),
+		);
+		await waitForResolved(() => expect(lowResolved).to.equal(true));
+
+		outbound.dispatchEvent(new Event("drain"));
+		await waitForResolved(() =>
+			expect(outbound.sentPayloads).to.deep.equal([1, 200, 2, 3]),
+		);
+
+		outbound.dispatchEvent(new Event("drain"));
+		await waitForResolved(() =>
+			expect(outbound.sentPayloads).to.deep.equal([1, 200, 2, 3, 4]),
+		);
+
+		await blockedLow;
 		await streams.close();
 	});
 });

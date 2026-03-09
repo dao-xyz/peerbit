@@ -279,6 +279,45 @@
     * @peerbit/blocks-interface bumped from 1.2.18 to 1.2.19
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [4.0.3](https://github.com/dao-xyz/peerbit/compare/blocks-v4.0.2...blocks-v4.0.3) (2026-03-08)
+
+
+### Bug Fixes
+
+* stabilize file-share refresh catch-up under churn ([#647](https://github.com/dao-xyz/peerbit/issues/647)) ([cba1bcc](https://github.com/dao-xyz/peerbit/commit/cba1bcc80af7ef5190f6e9154e5c8670db6853e5))
+
+## [4.0.2](https://github.com/dao-xyz/peerbit/compare/blocks-v4.0.1...blocks-v4.0.2) (2026-03-08)
+
+
+### Bug Fixes
+
+* recover file-share block fetches after refresh churn ([5d63b4f](https://github.com/dao-xyz/peerbit/commit/5d63b4f3c619c1965572ee8bc8d11e0a1c0d0360))
+* **shared-log:** widen block retry provider fallbacks ([f0f53b3](https://github.com/dao-xyz/peerbit/commit/f0f53b3753c53e828197c31f0d155dcb28dc5ffc))
+
+## [4.0.1](https://github.com/dao-xyz/peerbit/compare/blocks-v4.0.0...blocks-v4.0.1) (2026-03-08)
+
+
+### Bug Fixes
+
+* **blocks:** stabilize late joins during active upload ([a7c7b36](https://github.com/dao-xyz/peerbit/commit/a7c7b36d00fba6590a7b5b7451944d1a881762a6))
+* **stream:** bound outbound queue backpressure ([73058b3](https://github.com/dao-xyz/peerbit/commit/73058b37117a02242079becc1bd900bf8d889b82))
+
+
+### Refactors
+
+* **stream:** add request transport context ([e7625b2](https://github.com/dao-xyz/peerbit/commit/e7625b281ec919c18c2ba28724a8eee02a3b3081))
+* **stream:** add response publish helper ([0455c79](https://github.com/dao-xyz/peerbit/commit/0455c7991a5e99120b9337774abcf69bbfe2c708))
+* **stream:** inherit response transport hints from requests ([cc853c0](https://github.com/dao-xyz/peerbit/commit/cc853c087fd31a7f7b5964f8b05722f500a8d2f2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped to 5.0.1
+    * @peerbit/stream-interface bumped to 6.0.1
+    * @peerbit/blocks-interface bumped to 2.0.1
+
 ## [4.0.0](https://github.com/dao-xyz/peerbit/compare/blocks-v3.1.8...blocks-v4.0.0) (2026-03-04)
 
 

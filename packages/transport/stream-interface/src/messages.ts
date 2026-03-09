@@ -171,6 +171,14 @@ export type PriorityOptions = {
 	priority?: number;
 };
 
+export type ResponsePriorityOptions = {
+	responsePriority?: number;
+};
+
+export type ExpiresAtOptions = {
+	expiresAt?: number;
+};
+
 export type IdOptions = {
 	id?: Uint8Array;
 };
@@ -219,6 +227,11 @@ export class MessageHeader<T extends DeliveryMode = DeliveryMode> {
 	@field({ type: option("u32") })
 	priority?: number;
 
+	// Preferred priority for the response path to this message. Higher numbers are
+	// treated as higher priority by the transport scheduler.
+	@field({ type: option("u32") })
+	responsePriority?: number;
+
 	@field({ type: option(PeerInfo) })
 	private _origin?: MultiAddrinfo;
 
@@ -237,6 +250,7 @@ export class MessageHeader<T extends DeliveryMode = DeliveryMode> {
 		id?: Uint8Array;
 		mode: T;
 		priority?: number;
+		responsePriority?: number;
 	}) {
 		this._id = properties?.id || randomBytes(ID_LENGTH);
 		this.expires = BigInt(properties?.expires || +new Date() + WEEK_MS);
@@ -249,6 +263,7 @@ export class MessageHeader<T extends DeliveryMode = DeliveryMode> {
 			properties.priority != null
 				? properties.priority
 				: getDefaultPriorityFromMode(this.mode);
+		this.responsePriority = properties.responsePriority;
 	}
 
 	get id() {
@@ -400,6 +415,56 @@ export class DataMessage<
 		return ret;
 	}
 }
+
+export const getMessageExpiresAt = (message: Message | DataMessage) =>
+	Number(message.header.expires);
+
+export const getMessageRemainingTime = (
+	message: Message | DataMessage,
+	now: number = Date.now(),
+) => Math.max(0, getMessageExpiresAt(message) - now);
+
+export const getResponsePriorityFromMessage = (message: Message | DataMessage) =>
+	message.header.responsePriority ?? message.header.priority;
+
+export type RequestTransportContext = {
+	readonly expiresAt: number;
+	readonly requestPriority?: number;
+	readonly responsePriority?: number;
+	remainingTime(now?: number): number;
+	withResponseOptions<T extends object>(
+		options: T & Partial<PriorityOptions & ExpiresAtOptions>,
+	): T & PriorityOptions & ExpiresAtOptions;
+};
+
+export const createRequestTransportContext = (
+	message: Message | DataMessage,
+): RequestTransportContext => ({
+	expiresAt: getMessageExpiresAt(message),
+	requestPriority: message.header.priority,
+	responsePriority: getResponsePriorityFromMessage(message),
+	remainingTime: (now?: number) => getMessageRemainingTime(message, now),
+	withResponseOptions: <T extends object>(
+		options: T & Partial<PriorityOptions & ExpiresAtOptions>,
+	) => ({
+		...options,
+		...inheritResponseTransportOptions(message, options),
+	}),
+});
+
+export const inheritResponseTransportOptions = (
+	message: Message | DataMessage,
+	overrides?: PriorityOptions & ExpiresAtOptions,
+): PriorityOptions & ExpiresAtOptions => ({
+	priority:
+		overrides?.priority != null
+			? overrides.priority
+			: getResponsePriorityFromMessage(message),
+	expiresAt:
+		overrides?.expiresAt != null
+			? overrides.expiresAt
+			: getMessageExpiresAt(message),
+});
 
 const ACKNOWLEDGE_VARIANT = 1;
 

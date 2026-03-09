@@ -4,11 +4,13 @@ import { PublicSignKey } from "@peerbit/crypto";
 import {
 	DataMessage,
 	DeliveryMode,
+	type ExpiresAtOptions,
 	type IdOptions,
 	Message,
 	type PeerEvents,
 	type PriorityOptions,
 	type PublicKeyFromHashResolver,
+	type ResponsePriorityOptions,
 	type RouteHint,
 	type WaitForPeer,
 	type WithExtraSigners,
@@ -139,6 +141,8 @@ export type PublishOptions = (
 			mode?: DeliveryMode | undefined;
 	  }
 ) & { client?: string } & PriorityOptions &
+	ResponsePriorityOptions &
+	ExpiresAtOptions &
 	IdOptions &
 	WithExtraSigners & {
 		signal?: AbortSignal;

@@ -4,11 +4,31 @@ import type {
 	UnsubcriptionEvent,
 	UnsubscriptionReason,
 } from "@peerbit/pubsub-interface";
+import {
+	SubscriptionData,
+	Subscribe,
+	Unsubscribe,
+} from "@peerbit/pubsub-interface";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { FanoutTree, TopicControlPlane, TopicRootControlPlane } from "../src/index.js";
 
 describe("pubsub (unsubscribe reason)", function () {
+	const createControlEnvelope = (properties: {
+		publicKey: ReturnType<typeof getPublicKeyFromPeerId>;
+		session: bigint;
+		timestamp: bigint;
+	}) =>
+		({
+			header: {
+				session: properties.session,
+				timestamp: properties.timestamp,
+				signatures: {
+					signatures: [{ publicKey: properties.publicKey }],
+				},
+			},
+		}) as any;
+
 	const createDisconnectedSession = async (
 		peerCount: number,
 		options?: {
@@ -65,6 +85,37 @@ describe("pubsub (unsubscribe reason)", function () {
 		const b = session.peers[1]!.services.pubsub;
 
 		await session.connect([[session.peers[0], session.peers[1]]]);
+		await Promise.all([a.subscribe(topic), b.subscribe(topic)]);
+
+		await waitForResolved(() => {
+			const aTopics = a.topics.get(topic);
+			const bTopics = b.topics.get(topic);
+			expect(aTopics?.has(b.publicKeyHash)).to.equal(true);
+			expect(bTopics?.has(a.publicKeyHash)).to.equal(true);
+		});
+
+		return { a, b };
+	};
+
+	const setupTrackedSubscribersViaRelay = async (
+		topic: string,
+		session: Awaited<ReturnType<typeof createDisconnectedSession>>,
+	) => {
+		const a = session.peers[0]!.services.pubsub;
+		const b = session.peers[1]!.services.pubsub;
+		const relay = session.peers[2]!.services.pubsub;
+
+		await session.connect([
+			[session.peers[0], session.peers[2]],
+			[session.peers[1], session.peers[2]],
+		]);
+
+		const relayHash = relay.publicKeyHash;
+		for (const peer of session.peers) {
+			peer!.services.pubsub.setTopicRootCandidates([relayHash]);
+		}
+		await relay.hostShardRootsNow();
+
 		await Promise.all([a.subscribe(topic), b.subscribe(topic)]);
 
 		await waitForResolved(() => {
@@ -146,6 +197,58 @@ describe("pubsub (unsubscribe reason)", function () {
 		}
 	});
 
+	it("emits reason=peer-unreachable for tracked relay-only subscribers", async () => {
+		const topic = "unsubscribe-reason-unreachable-relay";
+		const session = await createDisconnectedSession(3);
+		try {
+			const { a, b } = await setupTrackedSubscribersViaRelay(topic, session);
+			const events: UnsubcriptionEvent[] = [];
+			const onUnsubscribe = (ev: CustomEvent<UnsubcriptionEvent>) =>
+				events.push(ev.detail);
+
+			a.addEventListener("unsubscribe", onUnsubscribe as any);
+			try {
+				a.onPeerUnreachable(b.publicKeyHash);
+				await expectUnsubscribeEvent({
+					events,
+					fromHash: b.publicKeyHash,
+					topic,
+					reason: "peer-unreachable",
+				});
+			} finally {
+				a.removeEventListener("unsubscribe", onUnsubscribe as any);
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("propagates relay-observed abrupt child loss to tracked relay-only subscribers", async () => {
+		const topic = "unsubscribe-reason-unreachable-relay-propagated";
+		const session = await createDisconnectedSession(3);
+		try {
+			const { a, b } = await setupTrackedSubscribersViaRelay(topic, session);
+			const events: UnsubcriptionEvent[] = [];
+			const onUnsubscribe = (ev: CustomEvent<UnsubcriptionEvent>) =>
+				events.push(ev.detail);
+
+			a.addEventListener("unsubscribe", onUnsubscribe as any);
+			try {
+				await session.peers[1]!.stop();
+				await expectUnsubscribeEvent({
+					events,
+					fromHash: b.publicKeyHash,
+					topic,
+					reason: "peer-unreachable",
+				});
+			} finally {
+				a.removeEventListener("unsubscribe", onUnsubscribe as any);
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("emits reason=peer-session-reset on peer session updates", async () => {
 		const topic = "unsubscribe-reason-session";
 		const session = await createDisconnectedSession(2);
@@ -155,10 +258,12 @@ describe("pubsub (unsubscribe reason)", function () {
 			const onUnsubscribe = (ev: CustomEvent<UnsubcriptionEvent>) =>
 				events.push(ev.detail);
 			const bPublicKey = getPublicKeyFromPeerId(session.peers[1]!.peerId);
+			const currentSession =
+				a.topics.get(topic)?.get(b.publicKeyHash)?.session ?? 0n;
 
 			a.addEventListener("unsubscribe", onUnsubscribe as any);
 			try {
-				a.onPeerSession(bPublicKey, 1);
+				a.onPeerSession(bPublicKey, Number(currentSession + 1n));
 				await expectUnsubscribeEvent({
 					events,
 					fromHash: b.publicKeyHash,
@@ -168,6 +273,98 @@ describe("pubsub (unsubscribe reason)", function () {
 			} finally {
 				a.removeEventListener("unsubscribe", onUnsubscribe as any);
 			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("ignores duplicate peer-session-reset for the current subscription session", async () => {
+		const topic = "unsubscribe-reason-session-duplicate";
+		const session = await createDisconnectedSession(2);
+		try {
+			const { a, b } = await setupTrackedSubscribers(topic, session);
+			const events: UnsubcriptionEvent[] = [];
+			const onUnsubscribe = (ev: CustomEvent<UnsubcriptionEvent>) =>
+				events.push(ev.detail);
+			const bPublicKey = getPublicKeyFromPeerId(session.peers[1]!.peerId);
+			const currentSession =
+				a.topics.get(topic)?.get(b.publicKeyHash)?.session ?? 0n;
+
+			a.addEventListener("unsubscribe", onUnsubscribe as any);
+			try {
+				a.onPeerSession(bPublicKey, Number(currentSession));
+				expect(a.topics.get(topic)?.has(b.publicKeyHash)).to.equal(true);
+				expect(events).to.deep.equal([]);
+			} finally {
+				a.removeEventListener("unsubscribe", onUnsubscribe as any);
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("ignores stale old-session unsubscribe messages", async () => {
+		const topic = "unsubscribe-reason-ignore-stale-old-session";
+		const session = await createDisconnectedSession(2);
+		try {
+			const { a, b } = await setupTrackedSubscribers(topic, session);
+			const bPublicKey = getPublicKeyFromPeerId(session.peers[1]!.peerId);
+
+			a.topics.get(topic)!.set(
+				b.publicKeyHash,
+				new SubscriptionData({
+					publicKey: bPublicKey,
+					session: 2n,
+					timestamp: 20n,
+				}),
+			);
+
+			await (a as any).processShardPubSubMessage({
+				pubsubMessage: new Unsubscribe({ topics: [topic] }),
+				message: createControlEnvelope({
+					publicKey: bPublicKey,
+					session: 1n,
+					timestamp: 30n,
+				}),
+				from: bPublicKey,
+				shardTopic: (a as any).getShardTopicForUserTopic(topic),
+			});
+
+			expect(a.topics.get(topic)?.has(b.publicKeyHash)).to.equal(true);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("accepts newer-session subscribe after older-session control timestamp", async () => {
+		const topic = "unsubscribe-reason-newer-subscribe-beats-older-session";
+		const session = await createDisconnectedSession(2);
+		try {
+			const { a, b } = await setupTrackedSubscribers(topic, session);
+			const bPublicKey = getPublicKeyFromPeerId(session.peers[1]!.peerId);
+
+			a.topics.get(topic)!.delete(b.publicKeyHash);
+			a.peerToTopic.delete(b.publicKeyHash);
+			a.lastSubscriptionMessages.set(
+				b.publicKeyHash,
+				new Map([[topic, { session: 1n, timestamp: 30n }]]),
+			);
+
+			await (a as any).processShardPubSubMessage({
+				pubsubMessage: new Subscribe({
+					topics: [topic],
+					requestSubscribers: false,
+				}),
+				message: createControlEnvelope({
+					publicKey: bPublicKey,
+					session: 2n,
+					timestamp: 20n,
+				}),
+				from: bPublicKey,
+				shardTopic: (a as any).getShardTopicForUserTopic(topic),
+			});
+
+			expect(a.topics.get(topic)?.has(b.publicKeyHash)).to.equal(true);
 		} finally {
 			await session.stop();
 		}

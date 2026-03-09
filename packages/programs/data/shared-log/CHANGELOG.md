@@ -389,6 +389,146 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.0.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.7...shared-log-v13.0.8) (2026-03-09)
+
+
+### Bug Fixes
+
+* **pubsub:** propagate relay child loss quickly ([#649](https://github.com/dao-xyz/peerbit/issues/649)) ([887f8e3](https://github.com/dao-xyz/peerbit/commit/887f8e3ea8872a85929e3e0fd2d7382e0e2bd911))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.7
+    * @peerbit/program bumped to 6.0.5
+    * @peerbit/rpc bumped to 6.0.7
+    * @peerbit/pubsub bumped to 5.0.3
+    * @peerbit/pubsub-interface bumped to 5.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.7
+
+## [13.0.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.6...shared-log-v13.0.7) (2026-03-08)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.6
+    * @peerbit/program bumped to 6.0.4
+    * @peerbit/rpc bumped to 6.0.6
+    * @peerbit/blocks bumped to 4.0.3
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.6
+
+## [13.0.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.5...shared-log-v13.0.6) (2026-03-08)
+
+
+### Bug Fixes
+
+* recover file-share block fetches after refresh churn ([5d63b4f](https://github.com/dao-xyz/peerbit/commit/5d63b4f3c619c1965572ee8bc8d11e0a1c0d0360))
+* **shared-log:** widen block retry provider fallbacks ([f0f53b3](https://github.com/dao-xyz/peerbit/commit/f0f53b3753c53e828197c31f0d155dcb28dc5ffc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.5
+    * @peerbit/program bumped to 6.0.3
+    * @peerbit/rpc bumped to 6.0.5
+    * @peerbit/blocks bumped to 4.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.5
+
+## [13.0.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.4...shared-log-v13.0.5) (2026-03-08)
+
+
+### Bug Fixes
+
+* **stream:** bound outbound queue backpressure ([73058b3](https://github.com/dao-xyz/peerbit/commit/73058b37117a02242079becc1bd900bf8d889b82))
+
+
+### Refactors
+
+* **stream:** add request transport context ([e7625b2](https://github.com/dao-xyz/peerbit/commit/e7625b281ec919c18c2ba28724a8eee02a3b3081))
+* **stream:** inherit response transport hints from requests ([cc853c0](https://github.com/dao-xyz/peerbit/commit/cc853c087fd31a7f7b5964f8b05722f500a8d2f2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.4
+    * @peerbit/program bumped to 6.0.2
+    * @peerbit/rpc bumped to 6.0.4
+    * @peerbit/blocks bumped to 4.0.1
+    * @peerbit/blocks-interface bumped to 2.0.1
+    * @peerbit/pubsub bumped to 5.0.2
+    * @peerbit/pubsub-interface bumped to 5.0.1
+    * @peerbit/stream-interface bumped to 6.0.1
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.4
+
+## [13.0.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.3...shared-log-v13.0.4) (2026-03-07)
+
+
+### Bug Fixes
+
+* **pubsub:** handle session reset follow-up issues ([d7e845a](https://github.com/dao-xyz/peerbit/commit/d7e845ad2f42d11b75c4e929d7bebfcb790f789e))
+* **pubsub:** ignore duplicate peer session resets ([89efa1b](https://github.com/dao-xyz/peerbit/commit/89efa1b4c77090769288798ae16ded068b507570))
+* **pubsub:** retry hosting auto-selected shard roots ([90c22a0](https://github.com/dao-xyz/peerbit/commit/90c22a0dc3ff95099ec20899a8a4c96523f8151b))
+* **shared-log:** target block responses over rpc ([10d008a](https://github.com/dao-xyz/peerbit/commit/10d008a2d6948227c257c8b4fba251ed0d5ce936))
+* **shared-log:** target block responses over RPC ([e16fd7f](https://github.com/dao-xyz/peerbit/commit/e16fd7fefdb1b3a053ff39ac6f75ef11069f9a08))
+
+
+### Refactors
+
+* **rpc:** normalize targeted send options ([8c4e39b](https://github.com/dao-xyz/peerbit/commit/8c4e39bdc7da1f3a92dfa2f779b87c0b5f60f8b8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.3
+    * @peerbit/program bumped to 6.0.1
+    * @peerbit/rpc bumped to 6.0.3
+    * @peerbit/pubsub bumped to 5.0.1
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.3
+
+## [13.0.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.2...shared-log-v13.0.3) (2026-03-05)
+
+
+### Bug Fixes
+
+* **shared-log:** evict stale replicators on abrupt churn ([893c3b8](https://github.com/dao-xyz/peerbit/commit/893c3b89b0c778ef575486005d8985b86df028dc))
+* **shared-log:** ping replicators for liveness ([9def613](https://github.com/dao-xyz/peerbit/commit/9def613ab2ec1fe105bff4fac181437fc4880eb0))
+* **shared-log:** probe replicator liveness on idle peers ([2c6ff5f](https://github.com/dao-xyz/peerbit/commit/2c6ff5fc0b71316ba050163bc72d8808d4178a84))
+* **shared-log:** soften liveness eviction ([8de888f](https://github.com/dao-xyz/peerbit/commit/8de888f20c7ca86ebe69d97f64f3a2e5049ff6b7))
+* **shared-log:** split mixed maybe-sync batches by type ([adc743a](https://github.com/dao-xyz/peerbit/commit/adc743a0b73cc8d67748606acbfbba900fdf1621))
+* **shared-log:** unicast ping for replicator liveness sweep ([a54459d](https://github.com/dao-xyz/peerbit/commit/a54459d2d8a60cb4a0ee04f999b068f3538634c0))
+
+
+### Documentation
+
+* **shared-log:** explain ping probe rationale ([47679a2](https://github.com/dao-xyz/peerbit/commit/47679a24f627867226cee1fbda73a2348990ef0b))
+
+## [13.0.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.1...shared-log-v13.0.2) (2026-03-05)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.2
+    * @peerbit/rpc bumped to 6.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.2
+
 ## [13.0.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.0...shared-log-v13.0.1) (2026-03-04)
 
 

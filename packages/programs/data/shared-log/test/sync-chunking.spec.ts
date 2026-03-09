@@ -4,6 +4,7 @@ import sinon from "sinon";
 import {
 	RequestMaybeSync,
 	RequestMaybeSyncCoordinate,
+	ResponseMaybeSync,
 	SimpleSyncronizer,
 } from "../src/sync/simple.js";
 
@@ -71,5 +72,43 @@ describe("sync-chunking", () => {
 		});
 		expect(sentCoordinates.flat()).to.deep.equal([1n, 2n, 3n, 4n, 5n]);
 		expect(sentCoordinates.map((x) => x.length)).to.deep.equal([2, 2, 1]);
+	});
+
+	it("splits mixed hash and coordinate maybe-sync batches by type", async () => {
+		const send = sinon.stub().resolves();
+		const rpc = { send } as any;
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc,
+			entryIndex: { count: async () => 0 } as any,
+			log: { has: async () => false } as any,
+			coordinateToHash: new Cache<string>({ max: 10 }),
+			sync: {
+				maxSimpleHashesPerMessage: 8,
+				maxSimpleCoordinatesPerMessage: 8,
+			},
+		});
+
+		await (sync as any).requestSync(["h1", 2n, "h2", 4n], ["peer-a"]);
+
+		expect(send.callCount).to.equal(2);
+
+		const sentHashMessages = send
+			.getCalls()
+			.map((call) => call.args[0])
+			.filter((message) => message instanceof ResponseMaybeSync);
+		expect(sentHashMessages).to.have.length(1);
+		expect((sentHashMessages[0] as ResponseMaybeSync).hashes).to.deep.equal([
+			"h1",
+			"h2",
+		]);
+
+		const sentCoordinateMessages = send
+			.getCalls()
+			.map((call) => call.args[0])
+			.filter((message) => message instanceof RequestMaybeSyncCoordinate);
+		expect(sentCoordinateMessages).to.have.length(1);
+		expect(
+			(sentCoordinateMessages[0] as RequestMaybeSyncCoordinate).hashNumbers,
+		).to.deep.equal([2n, 4n]);
 	});
 });

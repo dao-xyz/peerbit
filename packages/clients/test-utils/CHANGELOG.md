@@ -400,6 +400,72 @@
   * dependencies
     * peerbit bumped from 4.0.6 to 4.0.7
 
+## [3.0.7](https://github.com/dao-xyz/peerbit/compare/test-utils-v3.0.6...test-utils-v3.0.7) (2026-03-09)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped to 5.0.7
+    * @peerbit/program bumped to 6.0.5
+    * @peerbit/pubsub bumped to 5.0.3
+
+## [3.0.6](https://github.com/dao-xyz/peerbit/compare/test-utils-v3.0.5...test-utils-v3.0.6) (2026-03-08)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped to 5.0.6
+    * @peerbit/blocks bumped to 4.0.3
+    * @peerbit/program bumped to 6.0.4
+
+## [3.0.5](https://github.com/dao-xyz/peerbit/compare/test-utils-v3.0.4...test-utils-v3.0.5) (2026-03-08)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped to 5.0.5
+    * @peerbit/blocks bumped to 4.0.2
+    * @peerbit/program bumped to 6.0.3
+
+## [3.0.4](https://github.com/dao-xyz/peerbit/compare/test-utils-v3.0.3...test-utils-v3.0.4) (2026-03-08)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped to 5.0.4
+    * @peerbit/blocks bumped to 4.0.1
+    * @peerbit/program bumped to 6.0.2
+    * @peerbit/pubsub bumped to 5.0.2
+    * @peerbit/stream bumped to 5.0.1
+
+## [3.0.3](https://github.com/dao-xyz/peerbit/compare/test-utils-v3.0.2...test-utils-v3.0.3) (2026-03-07)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped to 5.0.3
+    * @peerbit/program bumped to 6.0.1
+    * @peerbit/pubsub bumped to 5.0.1
+
+## [3.0.2](https://github.com/dao-xyz/peerbit/compare/test-utils-v3.0.1...test-utils-v3.0.2) (2026-03-05)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped to 5.0.2
+
 ## [3.0.1](https://github.com/dao-xyz/peerbit/compare/test-utils-v3.0.0...test-utils-v3.0.1) (2026-03-04)
 
 

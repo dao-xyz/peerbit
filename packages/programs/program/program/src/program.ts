@@ -857,6 +857,7 @@ export abstract class Program<
 		const bytes = await store.get(address, {
 			remote: {
 				timeout: options?.timeout,
+				priority: 1,
 			},
 		});
 		if (!bytes) {

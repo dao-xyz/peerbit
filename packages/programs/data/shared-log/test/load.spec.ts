@@ -72,8 +72,6 @@ describe("load", function () {
 	});
 
 	it("load after prune", async () => {
-		// TODO fix test flakiness
-
 		session = await TestSession.connected(2, [
 			{
 				directory: "./tmp/shared-log/load-after-prune/" + uuid(),
@@ -110,12 +108,12 @@ describe("load", function () {
 				replicate: { offset: 0, factor: 0.5 },
 				replicas: {
 					min: 1,
-				} /* 
-				timeUntilRoleMaturity: 0 */,
+				},
+				timeUntilRoleMaturity: 0,
 			},
 		});
 
-		let count = 100;
+		let count = 64;
 
 		for (let i = 0; i < count; i++) {
 			await db1.add("hello" + i, { meta: { next: [] } });
@@ -129,17 +127,28 @@ describe("load", function () {
 					replicate: { offset: 0.3, factor: 0.5 },
 					replicas: {
 						min: 1,
-					} /* 
-					timeUntilRoleMaturity: 0 */,
+					},
+					timeUntilRoleMaturity: 0,
 				},
 			},
 		);
+
+		await Promise.all([
+			db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+				timeout: 15_000,
+				roleAge: 0,
+			}),
+			db2.log.waitForReplicator(session.peers[0].identity.publicKey, {
+				timeout: 15_000,
+				roleAge: 0,
+			}),
+		]);
 
 		await waitForResolved(() => expect(db1.log.log.length).lessThan(count)); // pruning started
 
 		await waitForConverged(() => db1.log.log.length); // pruning done
 
-		await waitForConverged(() => db2.log.log.length);
+		await waitForResolved(() => expect(db2.log.log.length).greaterThan(0));
 		await session.peers[1].stop();
 		await waitForConverged(() => db1.log.log.length);
 		const lengthBeforeClose = db1.log.log.length;

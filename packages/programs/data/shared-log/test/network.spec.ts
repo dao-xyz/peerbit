@@ -12,34 +12,14 @@ describe(`network`, () => {
 	let session: TestSession;
 	let db1: EventStore<string, any>, db2: EventStore<string, any>;
 
-	after(async () => {});
-
-	beforeEach(async () => {});
-
-	afterEach(async () => {
-		if (db1) await db1.drop();
-		if (db2) await db2.drop();
-		await session.stop();
-	});
-
-	it("can replicate entries through relay", async () => {
-		session = await TestSession.disconnected(3);
-
-		// peer 3 is relay, and dont connect 1 with 2 directly
-		await session.peers[0].dial(session.peers[2].getMultiaddrs()[0]);
-		await session.peers[1].dial(session.peers[2].getMultiaddrs()[0]);
-
-		await session.peers[0].services.blocks.waitFor(session.peers[2].peerId);
-		await session.peers[1].services.blocks.waitFor(session.peers[2].peerId);
-
-		// Sharded pubsub requires a stable shard-root candidate set across peers.
-		// Force all shards to resolve to the relay peer so the overlay is reachable
-		// even when peer[0] and peer[1] never connect directly.
-		const relayHash = (session.peers[2].services as any).pubsub.publicKeyHash as
-			| string
-			| undefined;
+	const forceRelayShardRoots = async (
+		currentSession: TestSession,
+		relayIndex: number,
+	) => {
+		const relayHash = (currentSession.peers[relayIndex].services as any).pubsub
+			.publicKeyHash as string | undefined;
 		expect(relayHash, "relayHash").to.be.a("string");
-		for (const peer of session.peers as any[]) {
+		for (const peer of currentSession.peers as any[]) {
 			const servicesAny: any = peer.services;
 			const fanoutPlane = servicesAny?.fanout?.topicRootControlPlane;
 			const pubsubPlane = servicesAny?.pubsub?.topicRootControlPlane;
@@ -52,7 +32,30 @@ describe(`network`, () => {
 				}
 			}
 		}
-		await (session.peers[2].services as any).pubsub.hostShardRootsNow();
+		await (currentSession.peers[relayIndex].services as any).pubsub.hostShardRootsNow();
+	};
+
+	after(async () => {});
+
+	beforeEach(async () => {});
+
+	afterEach(async () => {
+		if (db1) await db1.drop();
+		if (db2) await db2.drop();
+		await session.stop();
+	});
+
+	it("can replicate entries through relay without forced shard-root candidates", async function () {
+		this.timeout(120_000);
+
+		session = await TestSession.disconnected(3);
+
+		// Keep a relay-only topology while still converging sharded pubsub/fanout
+		// root candidates for this connected component.
+		await session.connect([
+			[session.peers[0], session.peers[2]],
+			[session.peers[1], session.peers[2]],
+		]);
 
 		db1 = await session.peers[0].open(new EventStore<string, any>(), {
 			args: {
@@ -92,5 +95,61 @@ describe(`network`, () => {
 			(await db1.log.log.toArray()).map((x) => x.payload.getValue().value),
 		).to.have.members(["hello", "world"]);
 		await waitForResolved(() => expect(db2.log.log.length).equal(2));
+	});
+
+	it("prunes departed replicator promptly in relay topology after abrupt stop", async function () {
+		this.timeout(60_000);
+
+		session = await TestSession.disconnected(3);
+
+		await session.connect([
+			[session.peers[0], session.peers[2]],
+			[session.peers[1], session.peers[2]],
+		]);
+
+		// This test targets shared-log liveness after abrupt stop, not shard-root
+		// convergence. Pin the relay as root so root placement stays out of the way.
+		await forceRelayShardRoots(session, 2);
+
+		db1 = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicas: { min: 2 },
+				replicate: { offset: 0, factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+
+		db2 = await EventStore.open<EventStore<string, any>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					replicas: { min: 2 },
+					replicate: { offset: 0, factor: 1 },
+					timeUntilRoleMaturity: 0,
+				},
+			},
+		);
+
+		const peerHash = session.peers[1].identity.publicKey.hashcode();
+		await db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+			timeout: 20_000,
+			roleAge: 0,
+		});
+		await waitForResolved(
+			async () => expect((await db1.log.getReplicators()).size).to.equal(2),
+			{ timeout: 20_000, delayInterval: 100 },
+		);
+
+		// Simulate abrupt tab/process loss without program-level close/reset messages.
+		db2 = undefined as any;
+		await (session.peers[1] as any).libp2p.stop();
+
+		await waitForResolved(
+			async () => {
+				expect((await db1.log.getReplicators()).size).to.equal(1);
+			},
+			{ timeout: 10_000, delayInterval: 100 },
+		);
 	});
 });

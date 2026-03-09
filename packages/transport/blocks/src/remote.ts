@@ -13,6 +13,7 @@ import { PublicSignKey } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 import { type PublishOptions, dontThrowIfDeliveryError } from "@peerbit/stream";
 import {
+	type RequestTransportContext,
 	type PeerRefs,
 	SilentDelivery,
 	type WaitForAnyOpts,
@@ -57,10 +58,18 @@ export class BlockResponse extends BlockMessage {
 	}
 }
 
+type BlockMessageContext = {
+	from?: string;
+	transport?: RequestTransportContext;
+};
+
 export class RemoteBlocks implements IBlocks {
 	localStore: BlockStore;
 
-	private _responseHandler?: (data: BlockMessage, from?: string) => any;
+	private _responseHandler?: (
+		data: BlockMessage,
+		context?: BlockMessageContext,
+	) => any;
 	private _resolvers: Map<string, (data: Uint8Array) => Promise<void>>;
 	private _blockCache?: Cache<Uint8Array>;
 	private _providerCache?: Cache<string[]>;
@@ -167,11 +176,14 @@ export class RemoteBlocks implements IBlocks {
 		this.maxProviderHintsPerCid = providerCache?.maxProvidersPerCid ?? 8;
 		this.maxRequeryOnReachable = options.requeryOnReachable ?? 4;
 
-		this._responseHandler = async (message: BlockMessage, from?: string) => {
+		this._responseHandler = async (
+			message: BlockMessage,
+			context?: BlockMessageContext,
+		) => {
 			try {
 				if (message instanceof BlockRequest && this.localStore) {
 					this._loadFetchQueue
-						.add(() => this.handleFetchRequest(message, localTimeout, from))
+						.add(() => this.handleFetchRequest(message, localTimeout, context))
 						.catch((e) => {
 							try {
 								dontThrowIfDeliveryError(e);
@@ -181,8 +193,8 @@ export class RemoteBlocks implements IBlocks {
 						});
 				} else if (message instanceof BlockResponse) {
 					// TODO make sure we are not storing too much bytes in ram (like filter large blocks)
-					if (from) {
-						this.rememberProvider(message.cid, from);
+					if (context?.from) {
+						this.rememberProvider(message.cid, context.from);
 					}
 					let resolver = this._resolvers.get(message.cid);
 					if (!resolver) {
@@ -239,9 +251,22 @@ export class RemoteBlocks implements IBlocks {
 		this._providerCache.add(cidString, normalized);
 	}
 
+	private pickRequestBatch(providers: string[], attempt: number): string[] {
+		if (providers.length <= 1) {
+			return providers;
+		}
+		const batchSize = Math.min(2, providers.length);
+		const start = (attempt * batchSize) % providers.length;
+		const batch: string[] = [];
+		for (let i = 0; i < batchSize; i++) {
+			batch.push(providers[(start + i) % providers.length]);
+		}
+		return this.normalizeProviderHints(batch, batchSize);
+	}
+
 	private async resolveRemoteProviders(
 		cidString: string,
-		options?: { signal?: AbortSignal },
+		options?: { signal?: AbortSignal; refresh?: boolean },
 	): Promise<string[]> {
 		// Priority:
 		// 1. cached providers (from previous reads)
@@ -249,17 +274,17 @@ export class RemoteBlocks implements IBlocks {
 		const cached = this.normalizeProviderHints(
 			this._providerCache?.get(cidString) ?? undefined,
 		);
-		if (cached.length > 0) return cached;
-		if (!this.options.resolveProviders) return [];
+		if (!this.options.resolveProviders) return cached;
+		if (cached.length > 0 && !options?.refresh) return cached;
 		try {
 			const resolved = await this.options.resolveProviders(cidString, options);
-			const normalized = this.normalizeProviderHints(resolved);
+			const normalized = this.normalizeProviderHints([...cached, ...(resolved ?? [])]);
 			if (normalized.length > 0) {
 				this.rememberProviderHints(cidString, normalized);
 			}
 			return normalized;
 		} catch {
-			return [];
+			return cached;
 		}
 	}
 
@@ -330,8 +355,8 @@ export class RemoteBlocks implements IBlocks {
 		this._open = true;
 	}
 
-	onMessage(data: BlockMessage, from?: string) {
-		return this._responseHandler!(data, from);
+	onMessage(data: BlockMessage, context?: BlockMessageContext) {
+		return this._responseHandler!(data, context);
 	}
 	onReachable(publicKey: PublicSignKey) {
 		this._events.dispatchEvent(
@@ -342,8 +367,9 @@ export class RemoteBlocks implements IBlocks {
 	private async handleFetchRequest(
 		request: BlockRequest,
 		localTimeout: number,
-		from?: string,
+		context?: BlockMessageContext,
 	) {
+		const from = context?.from;
 		if (!from) {
 			warn("No from in handleFetchRequest");
 			return;
@@ -363,7 +389,16 @@ export class RemoteBlocks implements IBlocks {
 			// requiring the requester to know an explicit `remote.from` provider set.
 			try {
 				const cidObject = cidifyString(cid);
-				const proxyTimeoutMs = Math.max(1_000, Math.floor(localTimeout) || 0);
+				const inheritedTimeoutMs = context?.transport
+					? Math.floor(context.transport.remainingTime())
+					: undefined;
+				if (inheritedTimeoutMs != null && inheritedTimeoutMs <= 0) {
+					return;
+				}
+				const proxyTimeoutMs =
+					inheritedTimeoutMs != null
+						? Math.max(1, Math.min(60_000, inheritedTimeoutMs))
+						: Math.max(10_000, Math.floor(localTimeout) || 0);
 				const controller = new AbortController();
 				const timer = setTimeout(() => controller.abort(), proxyTimeoutMs);
 				try {
@@ -390,8 +425,11 @@ export class RemoteBlocks implements IBlocks {
 		}
 
 		if (!bytes) return;
+		const responsePublishOptions = context?.transport
+			? context.transport.withResponseOptions({ to: [from] })
+			: { to: [from] };
 		await this.options
-			.publish(new BlockResponse(cid, bytes), { to: [from] })
+			.publish(new BlockResponse(cid, bytes), responsePublishOptions)
 			.catch(dontThrowIfDeliveryError);
 	}
 
@@ -403,6 +441,7 @@ export class RemoteBlocks implements IBlocks {
 			timeout?: number;
 			hasher?: any;
 			from?: string[];
+			priority?: number;
 		} = {},
 	): Promise<Uint8Array | undefined> {
 		const codec = (codecCodes as any)[cidObject.code];
@@ -433,8 +472,7 @@ export class RemoteBlocks implements IBlocks {
 			explicitFrom.length > 0
 				? explicitFrom
 				: await this.resolveRemoteProviders(cidString, { signal: options.signal });
-		const canResolveLater =
-			explicitFrom.length === 0 && typeof this.options.resolveProviders === "function";
+		const canResolveLater = typeof this.options.resolveProviders === "function";
 		if (providers.length === 0 && !canResolveLater) {
 			// Without an explicit provider set (or a resolver), we intentionally do not
 			// fall back to network-wide flooding. Scalable deployments must provide a
@@ -447,6 +485,7 @@ export class RemoteBlocks implements IBlocks {
 
 		let promise = this._readFromPeersPromises.get(cidString);
 		if (!promise) {
+			const attemptedProviders = new Set<string>(providers);
 			promise = new Promise<Block<any, any, any, 1> | undefined>(
 				(resolve, reject) => {
 					let timeoutCallback: ReturnType<typeof setTimeout> | undefined;
@@ -484,45 +523,100 @@ export class RemoteBlocks implements IBlocks {
 			this._readFromPeersPromises.set(cidString, promise);
 
 			let requeryCount = 0;
-			const tryPublishRequest = async () => {
-				if (requeryCount >= this.maxRequeryOnReachable) return;
-				if (providers.length === 0) {
-					providers = await this.resolveRemoteProviders(cidString, {
-						signal: options.signal,
-					});
+			const maxRequests = Math.max(1, this.maxRequeryOnReachable);
+			const retryIntervalMs = Math.max(
+				1_000,
+				Math.min(
+					5_000,
+					Math.floor((options.timeout ?? 30_000) / Math.max(2, maxRequests)),
+				),
+			);
+			let retryTimeout: ReturnType<typeof setTimeout> | undefined;
+			const refreshProviders = async (force = false) => {
+				if (!canResolveLater) return;
+				if (!force && explicitFrom.length > 0) return;
+				const resolved = await this.resolveRemoteProviders(cidString, {
+					signal: options.signal,
+					refresh: force,
+				});
+				if (resolved.length > 0) {
+					providers = this.normalizeProviderHints([...providers, ...resolved]);
+					for (const provider of providers) {
+						attemptedProviders.add(provider);
+					}
+				}
+			};
+			const tryPublishRequest = async (properties?: { refreshProviders?: boolean }) => {
+				if (requeryCount >= maxRequests) return;
+				if (providers.length === 0 || properties?.refreshProviders) {
+					await refreshProviders(properties?.refreshProviders === true);
 				}
 				if (providers.length === 0) return;
 				try {
-					await this.options.publish(new BlockRequest(cidString), {
-						mode: new SilentDelivery({ to: providers, redundancy: 1 }),
-					});
+					const expiresAt = Date.now() + (options.timeout ?? 30_000);
+					const requestProviders = this.pickRequestBatch(
+						providers,
+						requeryCount,
+					);
+					await this.options.publish(
+						new BlockRequest(cidString),
+						{
+							priority: options.priority,
+							responsePriority: options.priority,
+							expiresAt,
+							mode: new SilentDelivery({
+								to: requestProviders,
+								redundancy: requestProviders.length,
+							}),
+						},
+					);
 					requeryCount += 1;
 				} catch (e) {
 					dontThrowIfDeliveryError(e);
 				}
 			};
+			const scheduleRetry = () => {
+				if (retryTimeout) {
+					clearTimeout(retryTimeout);
+				}
+				if (requeryCount >= maxRequests) return;
+				retryTimeout = setTimeout(() => {
+					if (!this._resolvers.has(cidString)) return;
+					tryPublishRequest({ refreshProviders: true })
+						.catch(dontThrowIfDeliveryError)
+						.finally(scheduleRetry);
+				}, retryIntervalMs);
+			};
 
 			const publishOnNewPeers = () => {
 				// Re-issue when reachability changes to handle "get before connect".
 				// Bounded to avoid accidental amplification at large scale.
-				if (requeryCount >= this.maxRequeryOnReachable) return;
-				tryPublishRequest().catch(dontThrowIfDeliveryError);
+				if (requeryCount >= maxRequests) return;
+				tryPublishRequest({ refreshProviders: true }).catch(
+					dontThrowIfDeliveryError,
+				);
 			};
 
 			const publishOnProviderHints = (ev: CustomEvent<{ cid: string }>) => {
-				if (requeryCount >= this.maxRequeryOnReachable) return;
+				if (requeryCount >= maxRequests) return;
 				if (!ev?.detail?.cid) return;
 				if (ev.detail.cid !== cidString) return;
-				tryPublishRequest().catch(dontThrowIfDeliveryError);
+				tryPublishRequest({ refreshProviders: true }).catch(
+					dontThrowIfDeliveryError,
+				);
 			};
 
 			this._events.addEventListener("peer:reachable", publishOnNewPeers);
 			this._events.addEventListener("providers:hints", publishOnProviderHints);
 			try {
 				await tryPublishRequest();
+				scheduleRetry();
 				const result = await promise;
 				return result?.bytes;
 			} finally {
+				if (retryTimeout) {
+					clearTimeout(retryTimeout);
+				}
 				this._readFromPeersPromises.delete(cidString);
 				this._events.removeEventListener("peer:reachable", publishOnNewPeers);
 				this._events.removeEventListener("providers:hints", publishOnProviderHints);

@@ -1,4 +1,4 @@
-name: Restore Workspace Dependencies
+name: Post Release Automation
 
 on:
   workflow_run:
@@ -49,3 +49,66 @@ jobs:
           add-paths: |
             **/package.json
             tools/restore-workspace-deps.mjs
+  bootstrap-rollout-pr:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && vars.ENABLE_BOOTSTRAP_ROLLOUT_PR == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout peerbit
+        uses: actions/checkout@v4
+
+      - name: Resolve bootstrap PR auth
+        id: auth
+        env:
+          BOOTSTRAP_PR_TOKEN: ${{ secrets.PEERBIT_BOOTSTRAP_PR_TOKEN }}
+        run: |
+          if [ -z "$BOOTSTRAP_PR_TOKEN" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+      - name: Read released server version
+        if: ${{ steps.auth.outputs.enabled == 'true' }}
+        id: server
+        run: |
+          version=$(node -p "JSON.parse(require('node:fs').readFileSync('packages/clients/peerbit-server/node/package.json','utf8')).version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout peerbit-bootstrap
+        if: ${{ steps.auth.outputs.enabled == 'true' }}
+        uses: actions/checkout@v4
+        with:
+          repository: dao-xyz/peerbit-bootstrap
+          token: ${{ secrets.PEERBIT_BOOTSTRAP_PR_TOKEN }}
+          path: peerbit-bootstrap
+
+      - name: Sync rollout target
+        if: ${{ steps.auth.outputs.enabled == 'true' }}
+        run: |
+          node tools/sync-bootstrap-rollout.mjs peerbit-bootstrap "${{ steps.server.outputs.version }}"
+
+      - name: Create bootstrap rollout pull request
+        if: ${{ steps.auth.outputs.enabled == 'true' }}
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.PEERBIT_BOOTSTRAP_PR_TOKEN }}
+          path: peerbit-bootstrap
+          commit-message: "chore: roll bootstrap-5 to @peerbit/server@${{ steps.server.outputs.version }}"
+          title: "chore: roll bootstrap-5 to @peerbit/server@${{ steps.server.outputs.version }}"
+          body: |
+            ## Summary
+
+            * update `rollouts/bootstrap-5.json` to `@peerbit/server@${{ steps.server.outputs.version }}`
+            * align the bootstrap ops dependency on `@peerbit/server`
+            * generated automatically after a successful `peerbit` release
+
+            Merging this PR triggers the bootstrap rollout workflow in `dao-xyz/peerbit-bootstrap`.
+
+            ---
+
+            _This PR was opened by the **Post Release Automation** workflow after [Run Release Please](${{ github.event.workflow_run.html_url }})._
+          branch: chore/bootstrap-5-rollout-server-v${{ steps.server.outputs.version }}
+          delete-branch: false
+          add-paths: |
+            rollouts/bootstrap-5.json
+            package.json
