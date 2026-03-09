@@ -16,6 +16,7 @@ jobs:
     timeout-minutes: 30
     env:
       PEERBIT_TEST_SESSION: mock
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     strategy:
       matrix:
         os: [ubuntu-22.04]
@@ -83,10 +84,10 @@ jobs:
           echo "No coverage files found under */.coverage/"
           exit 1
       - name: Upload coverage reports to Codecov
-        if: always() && steps.coverage_files.outputs.count != '0' && secrets.CODECOV_TOKEN != ''
+        if: always() && steps.coverage_files.outputs.count != '0' && env.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@v5
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          token: ${{ env.CODECOV_TOKEN }}
           slug: ${{ github.repository }}
           files: ${{ steps.coverage_files.outputs.files }}
           disable_search: true
@@ -100,6 +101,7 @@ jobs:
     timeout-minutes: 30
     env:
       PEERBIT_TEST_SESSION: mock
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     strategy:
       matrix:
         os: [ubuntu-22.04]
@@ -168,10 +170,10 @@ jobs:
           echo "No coverage files found under */.coverage/"
           exit 1
       - name: Upload coverage reports to Codecov
-        if: always() && steps.coverage_files.outputs.count != '0' && secrets.CODECOV_TOKEN != ''
+        if: always() && steps.coverage_files.outputs.count != '0' && env.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@v5
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          token: ${{ env.CODECOV_TOKEN }}
           slug: ${{ github.repository }}
           files: ${{ steps.coverage_files.outputs.files }}
           disable_search: true
