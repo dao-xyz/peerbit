@@ -447,6 +447,11 @@ export interface FanoutTreeEvents extends StreamEvents {
 	"fanout:unicast": CustomEvent<FanoutTreeUnicastEvent>;
 	"fanout:joined": CustomEvent<{ topic: string; root: string; parent: string }>;
 	"fanout:kicked": CustomEvent<{ topic: string; root: string; from: string }>;
+	"fanout:peer-unreachable": CustomEvent<{
+		topic: string;
+		root: string;
+		publicKeyHash: string;
+	}>;
 }
 
 const CONTROL_PRIORITY = 10;
@@ -2209,6 +2214,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		for (const ch of this.channelsBySuffixKey.values()) {
 			if (ch.children.delete(peerHash)) {
 				ch.dataWriteFailStreakByChild.delete(peerHash);
+				this.dispatchEvent(
+					new CustomEvent("fanout:peer-unreachable", {
+						detail: {
+							topic: ch.id.topic,
+							root: ch.id.root,
+							publicKeyHash: peerHash,
+						},
+					}),
+				);
 			}
 		}
 	}

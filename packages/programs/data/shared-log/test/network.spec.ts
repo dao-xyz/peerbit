@@ -97,7 +97,9 @@ describe(`network`, () => {
 		await waitForResolved(() => expect(db2.log.log.length).equal(2));
 	});
 
-	it("prunes departed replicator in relay topology after abrupt stop", async () => {
+	it("prunes departed replicator promptly in relay topology after abrupt stop", async function () {
+		this.timeout(60_000);
+
 		session = await TestSession.disconnected(3);
 
 		await session.connect([
@@ -145,10 +147,9 @@ describe(`network`, () => {
 
 		await waitForResolved(
 			async () => {
-				await (db1.log as any).probeReplicatorLiveness(peerHash);
 				expect((await db1.log.getReplicators()).size).to.equal(1);
 			},
-			{ timeout: 30_000, delayInterval: 100 },
+			{ timeout: 10_000, delayInterval: 100 },
 		);
 	});
 });

@@ -223,6 +223,32 @@ describe("pubsub (unsubscribe reason)", function () {
 		}
 	});
 
+	it("propagates relay-observed abrupt child loss to tracked relay-only subscribers", async () => {
+		const topic = "unsubscribe-reason-unreachable-relay-propagated";
+		const session = await createDisconnectedSession(3);
+		try {
+			const { a, b } = await setupTrackedSubscribersViaRelay(topic, session);
+			const events: UnsubcriptionEvent[] = [];
+			const onUnsubscribe = (ev: CustomEvent<UnsubcriptionEvent>) =>
+				events.push(ev.detail);
+
+			a.addEventListener("unsubscribe", onUnsubscribe as any);
+			try {
+				await session.peers[1]!.stop();
+				await expectUnsubscribeEvent({
+					events,
+					fromHash: b.publicKeyHash,
+					topic,
+					reason: "peer-unreachable",
+				});
+			} finally {
+				a.removeEventListener("unsubscribe", onUnsubscribe as any);
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("emits reason=peer-session-reset on peer session updates", async () => {
 		const topic = "unsubscribe-reason-session";
 		const session = await createDisconnectedSession(2);

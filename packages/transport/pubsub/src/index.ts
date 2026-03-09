@@ -7,6 +7,7 @@ import { logger as loggerFn } from "@peerbit/logger";
 import {
 	DataEvent,
 	GetSubscribers,
+	PeerUnavailable,
 	type PubSub,
 	PubSubData,
 	type PubSubEvents,
@@ -279,6 +280,9 @@ export class TopicControlPlane
 		[];
 	private autoCandidatesGossipInterval?: ReturnType<typeof setInterval>;
 	private autoCandidatesGossipUntil = 0;
+	private _onFanoutPeerUnreachable?: (
+		ev: CustomEvent<{ topic: string; root: string; publicKeyHash: string }>,
+	) => void;
 
 	private fanoutChannels = new Map<
 		string,
@@ -419,6 +423,13 @@ export class TopicControlPlane
 
 	public override async start() {
 		await this.fanout.start();
+		this._onFanoutPeerUnreachable =
+			this._onFanoutPeerUnreachable ||
+			this.onFanoutPeerUnreachable.bind(this);
+		await this.fanout.addEventListener(
+			"fanout:peer-unreachable",
+			this._onFanoutPeerUnreachable as any,
+		);
 		await super.start();
 
 		if (this.hostShards) {
@@ -430,6 +441,12 @@ export class TopicControlPlane
 	}
 
 	public override async stop() {
+		if (this._onFanoutPeerUnreachable) {
+			this.fanout.removeEventListener(
+				"fanout:peer-unreachable",
+				this._onFanoutPeerUnreachable as any,
+			);
+		}
 		for (const st of this.fanoutChannels.values()) {
 			if (st.idleCloseTimeout) clearTimeout(st.idleCloseTimeout);
 			try {
@@ -1003,6 +1020,14 @@ export class TopicControlPlane
 					this.subscriptions.has(x),
 				);
 				if (!overlap) return;
+			} else if (pubsubMessage instanceof PeerUnavailable) {
+				const relevant =
+					pubsubMessage.topics.length > 0
+						? pubsubMessage.topics.some((x) => this.isTrackedTopic(x))
+						: [...this.topics.keys()].some(
+								(topic) => this.getShardTopicForUserTopic(topic) === t,
+							);
+				if (!relevant) return;
 			} else {
 				return;
 			}
@@ -1309,6 +1334,103 @@ export class TopicControlPlane
 		);
 	}
 
+	private async announcePeerUnavailable(
+		publicKeyHash: string,
+		batches: { session: bigint; timestamp: bigint; topics: string[] }[],
+	) {
+		if (!this.started) throw new NotStartedError();
+
+		const byShard = new Map<
+			string,
+			{ session: bigint; timestamp: bigint; topics: string[] }
+		>();
+		for (const batch of batches) {
+			for (const topic of batch.topics) {
+				if (!this.isTrackedTopic(topic)) {
+					continue;
+				}
+				const shardTopic = this.getShardTopicForUserTopic(topic);
+				const key = `${shardTopic}:${batch.session}:${batch.timestamp}`;
+				const existing = byShard.get(key);
+				if (existing) {
+					existing.topics.push(topic);
+				} else {
+					byShard.set(key, {
+						session: batch.session,
+						timestamp: batch.timestamp,
+						topics: [topic],
+					});
+				}
+			}
+		}
+
+		await Promise.all(
+			[...byShard.entries()].map(async ([key, batch]) => {
+				const [shardTopic] = key.split(":");
+				if (!shardTopic || batch.topics.length === 0) {
+					return;
+				}
+				try {
+					const msg = new PeerUnavailable({
+						publicKeyHash,
+						session: batch.session,
+						timestamp: batch.timestamp,
+						topics: batch.topics,
+					});
+					const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
+						mode: new AnyWhere(),
+						priority: 1,
+						skipRecipientValidation: true,
+					} as any);
+					await this.ensureFanoutChannel(shardTopic, { ephemeral: true });
+					const st = this.fanoutChannels.get(shardTopic);
+					if (st) {
+						void st.channel.publish(toUint8Array(embedded.bytes())).catch(() => {});
+						this.touchFanoutChannel(shardTopic);
+					}
+				} catch {
+					// best-effort
+				}
+			}),
+		);
+	}
+
+	private async announcePeerUnavailableOnShard(
+		publicKeyHash: string,
+		shardTopic: string,
+	) {
+		if (!this.started) throw new NotStartedError();
+		try {
+			const msg = new PeerUnavailable({
+				publicKeyHash,
+				session: 0n,
+				timestamp: 0n,
+				topics: [],
+			});
+			const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
+				mode: new AnyWhere(),
+				priority: 1,
+				skipRecipientValidation: true,
+			} as any);
+			await this.ensureFanoutChannel(shardTopic, { ephemeral: true });
+			const st = this.fanoutChannels.get(shardTopic);
+			if (st) {
+				void st.channel.publish(toUint8Array(embedded.bytes())).catch(() => {});
+				this.touchFanoutChannel(shardTopic);
+			}
+		} catch {
+			// best-effort
+		}
+	}
+
+	private onFanoutPeerUnreachable(
+		ev: CustomEvent<{ topic: string; root: string; publicKeyHash: string }>,
+	) {
+		void this
+			.announcePeerUnavailableOnShard(ev.detail.publicKeyHash, ev.detail.topic)
+			.catch(logErrorIfStarted);
+	}
+
 	getSubscribers(topic: string): PublicSignKey[] | undefined {
 		const t = topic.toString();
 		const remote = this.topics.get(t);
@@ -1554,7 +1676,55 @@ export class TopicControlPlane
 	public override onPeerUnreachable(publicKeyHash: string) {
 		super.onPeerUnreachable(publicKeyHash);
 		const key = this.peerKeyHashToPublicKey.get(publicKeyHash);
-		if (key) this.removeSubscriptions(key, "peer-unreachable");
+		if (!key) {
+			return;
+		}
+
+		const removed = this.collectSubscriptionState(publicKeyHash);
+		const changed = this.removeSubscriptions(key, "peer-unreachable");
+		if (changed.length === 0) {
+			return;
+		}
+
+		const changedSet = new Set(changed);
+		const batches = removed
+			.map((batch) => ({
+				...batch,
+				topics: batch.topics.filter((topic) => changedSet.has(topic)),
+			}))
+			.filter((batch) => batch.topics.length > 0);
+		if (batches.length > 0) {
+			void this
+				.announcePeerUnavailable(publicKeyHash, batches)
+				.catch(logErrorIfStarted);
+		}
+	}
+
+	private collectSubscriptionState(peerHash: string) {
+		const peerTopics = this.peerToTopic.get(peerHash);
+		if (!peerTopics) {
+			return [];
+		}
+
+		const grouped = new Map<string, { session: bigint; timestamp: bigint; topics: string[] }>();
+		for (const topic of peerTopics) {
+			const existing = this.topics.get(topic)?.get(peerHash);
+			if (!existing) {
+				continue;
+			}
+			const key = `${existing.session}:${existing.timestamp}`;
+			const batch = grouped.get(key);
+			if (batch) {
+				batch.topics.push(topic);
+			} else {
+				grouped.set(key, {
+					session: existing.session,
+					timestamp: existing.timestamp,
+					topics: [topic],
+				});
+			}
+		}
+		return [...grouped.values()];
 	}
 
 	private removeSubscriptionsBeforeSession(
@@ -1619,18 +1789,16 @@ export class TopicControlPlane
 				}),
 			);
 		}
+
+		return changed;
 	}
 
-	private subscriptionMessageIsLatest(
-		message: DataMessage,
-		pubsubMessage: Subscribe | Unsubscribe,
+	private subscriptionStateIsLatest(
+		subscriberKey: string,
+		session: bigint,
+		timestamp: bigint,
 		relevantTopics: string[],
 	) {
-		const subscriber = message.header.signatures!.signatures[0].publicKey!;
-		const subscriberKey = subscriber.hashcode();
-		const messageSession = message.header.session;
-		const messageTimestamp = message.header.timestamp;
-
 		for (const topic of relevantTopics) {
 			const last = this.lastSubscriptionMessages
 				.get(subscriberKey)
@@ -1638,12 +1806,13 @@ export class TopicControlPlane
 			if (!last) {
 				continue;
 			}
-			if (last.session > messageSession) {
+			if (last.session > session) {
 				return false;
 			}
 			if (
-				last.session === messageSession &&
-				last.timestamp > messageTimestamp
+				timestamp !== 0n &&
+				last.session === session &&
+				last.timestamp > timestamp
 			) {
 				return false;
 			}
@@ -1656,11 +1825,25 @@ export class TopicControlPlane
 			this.lastSubscriptionMessages
 				.get(subscriberKey)!
 				.set(topic, {
-					session: messageSession,
-					timestamp: messageTimestamp,
+					session,
+					timestamp,
 				});
 		}
 		return true;
+	}
+
+	private subscriptionMessageIsLatest(
+		message: DataMessage,
+		_pubsubMessage: Subscribe | Unsubscribe,
+		relevantTopics: string[],
+	) {
+		const subscriber = message.header.signatures!.signatures[0].publicKey!;
+		return this.subscriptionStateIsLatest(
+			subscriber.hashcode(),
+			message.header.session,
+			message.header.timestamp,
+			relevantTopics,
+		);
 	}
 
 	private async sendFanoutUnicastOrBroadcast(
@@ -1849,6 +2032,69 @@ export class TopicControlPlane
 								sender,
 								changed,
 								"remote-unsubscribe",
+							),
+						}),
+					);
+				}
+			}
+			return;
+		}
+
+		if (pubsubMessage instanceof PeerUnavailable) {
+			const peerHash = pubsubMessage.publicKeyHash;
+			// Relay-originated shard deltas are keyed only by shard membership, not by
+			// per-topic subscription watermarks. They are emitted immediately when the
+			// relay loses a child so downstream peers can shed stale membership without
+			// waiting for the slower shared-log liveness sweep.
+			const isShardFastPath =
+				pubsubMessage.topics.length === 0 && pubsubMessage.timestamp === 0n;
+			const relevantTopics =
+				pubsubMessage.topics.length > 0
+					? pubsubMessage.topics.filter((topic) => {
+							if (!this.isTrackedTopic(topic)) {
+								return false;
+							}
+							return this.topics.get(topic)?.has(peerHash) ?? false;
+						})
+					: [...this.topics.keys()].filter(
+							(topic) =>
+								this.getShardTopicForUserTopic(topic) === shardTopic &&
+								(this.topics.get(topic)?.has(peerHash) ?? false),
+						);
+			const shouldApply =
+				relevantTopics.length > 0 &&
+				(isShardFastPath ||
+					this.subscriptionStateIsLatest(
+						peerHash,
+						pubsubMessage.session,
+						pubsubMessage.timestamp,
+						relevantTopics,
+					));
+			if (shouldApply) {
+				const changed: string[] = [];
+				let publicKey: PublicSignKey | undefined;
+				for (const topic of relevantTopics) {
+					const peers = this.topics.get(topic);
+					if (!peers) continue;
+					const existing = peers.get(peerHash);
+					if (!existing) continue;
+					publicKey = publicKey ?? existing.publicKey;
+					if (peers.delete(peerHash)) {
+						changed.push(topic);
+						this.peerToTopic.get(peerHash)?.delete(topic);
+					}
+				}
+				if (!this.peerToTopic.get(peerHash)?.size) {
+					this.peerToTopic.delete(peerHash);
+					this.lastSubscriptionMessages.delete(peerHash);
+				}
+				if (changed.length > 0 && publicKey) {
+					this.dispatchEvent(
+						new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
+							detail: new UnsubcriptionEvent(
+								publicKey,
+								changed,
+								"peer-unreachable",
 							),
 						}),
 					);
