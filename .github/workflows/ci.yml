@@ -83,14 +83,14 @@ jobs:
           echo "No coverage files found under */.coverage/"
           exit 1
       - name: Upload coverage reports to Codecov
-        if: always() && steps.coverage_files.outputs.count != '0'
+        if: always() && steps.coverage_files.outputs.count != '0' && secrets.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: ${{ github.repository }}
           files: ${{ steps.coverage_files.outputs.files }}
           disable_search: true
-          fail_ci_if_error: true
+          fail_ci_if_error: false
           verbose: true
 
   test_pr:
@@ -168,14 +168,14 @@ jobs:
           echo "No coverage files found under */.coverage/"
           exit 1
       - name: Upload coverage reports to Codecov
-        if: always() && steps.coverage_files.outputs.count != '0'
+        if: always() && steps.coverage_files.outputs.count != '0' && secrets.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: ${{ github.repository }}
           files: ${{ steps.coverage_files.outputs.files }}
           disable_search: true
-          fail_ci_if_error: true
+          fail_ci_if_error: false
           verbose: true
 
   fanout_gate_pr:
