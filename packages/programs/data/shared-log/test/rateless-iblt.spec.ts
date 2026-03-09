@@ -128,6 +128,16 @@ describe("rateless-iblt-syncronizer", () => {
 		const db2Messages = await collectMessages(db2);
 
 		await session.connect();
+		await Promise.all([
+			db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+				timeout: 15_000,
+				roleAge: 0,
+			}),
+			db2.log.waitForReplicator(session.peers[0].identity.publicKey, {
+				timeout: 15_000,
+				roleAge: 0,
+			}),
+		]);
 		await waitForResolved(() =>
 			expect(db1.log.log.length).to.equal(unsyncedCount),
 		);
