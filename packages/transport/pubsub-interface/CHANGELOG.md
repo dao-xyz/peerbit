@@ -108,6 +108,13 @@
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
     * @peerbit/stream-interface bumped from ^5.0.1 to ^5.0.2
 
+## [5.0.2](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v5.0.1...pubsub-interface-v5.0.2) (2026-03-09)
+
+
+### Bug Fixes
+
+* **pubsub:** propagate relay child loss quickly ([#649](https://github.com/dao-xyz/peerbit/issues/649)) ([887f8e3](https://github.com/dao-xyz/peerbit/commit/887f8e3ea8872a85929e3e0fd2d7382e0e2bd911))
+
 ## [5.0.1](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v5.0.0...pubsub-interface-v5.0.1) (2026-03-08)
 
 

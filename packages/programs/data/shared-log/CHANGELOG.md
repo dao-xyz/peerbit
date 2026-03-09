@@ -389,6 +389,26 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.0.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.7...shared-log-v13.0.8) (2026-03-09)
+
+
+### Bug Fixes
+
+* **pubsub:** propagate relay child loss quickly ([#649](https://github.com/dao-xyz/peerbit/issues/649)) ([887f8e3](https://github.com/dao-xyz/peerbit/commit/887f8e3ea8872a85929e3e0fd2d7382e0e2bd911))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.7
+    * @peerbit/program bumped to 6.0.5
+    * @peerbit/rpc bumped to 6.0.7
+    * @peerbit/pubsub bumped to 5.0.3
+    * @peerbit/pubsub-interface bumped to 5.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.7
+
 ## [13.0.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.6...shared-log-v13.0.7) (2026-03-08)
 
 
