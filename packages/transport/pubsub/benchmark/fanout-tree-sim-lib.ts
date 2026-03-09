@@ -484,10 +484,22 @@ export const runFanoutTreeSim = async (
 	});
 
 	const bootstrapIndexSet = new Set<number>(bootstrapIndices);
+	// Sim-only connection caps must account for tracker/bootstrap fan-in. Capping those
+	// peers near the overlay degree works for small runs, but at 5k+ it starves join
+	// formation long before the tree itself is saturated.
+	const rootConnectionCap = Math.max(256, params.rootMaxChildren * 8);
+	const relayConnectionCap = Math.max(64, params.relayMaxChildren * 4);
+	const bootstrapConnectionCap = Math.max(
+		512,
+		Math.min(
+			2_048,
+			Math.ceil((subscriberIndices.length + 1) / Math.max(1, bootstrapIndices.length)),
+		),
+	);
 	const maxConnectionsFor = (index: number) => {
-		if (index === rootIndex) return 256;
-		if (bootstrapIndexSet.has(index)) return 128;
-		if (relaySet.has(index)) return 64;
+		if (index === rootIndex) return rootConnectionCap;
+		if (bootstrapIndexSet.has(index)) return bootstrapConnectionCap;
+		if (relaySet.has(index)) return relayConnectionCap;
 		return 16;
 	};
 	const seenCacheMaxFor = (index: number) => {
@@ -1546,7 +1558,31 @@ export const runFanoutTreeSim = async (
 			};
 		};
 
-			const result = await run();
+			const abortPromise =
+				timeoutMs > 0
+					? new Promise<never>((_, reject) => {
+							const onAbort = () => {
+								timeoutSignal.removeEventListener("abort", onAbort);
+								const reason = timeoutSignal.reason;
+								reject(
+									reason instanceof Error
+										? reason
+										: new Error(
+												typeof reason === "string"
+													? reason
+													: "fanout-tree-sim aborted",
+											),
+								);
+							};
+							if (timeoutSignal.aborted) {
+								onAbort();
+								return;
+							}
+							timeoutSignal.addEventListener("abort", onAbort, { once: true });
+						})
+					: undefined;
+
+			const result = abortPromise ? await Promise.race([run(), abortPromise]) : await run();
 
 			if (profileEnabled && profileCpuStart) {
 				try {
