@@ -188,6 +188,21 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [5.0.3](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.0.2...pubsub-v5.0.3) (2026-03-09)
+
+
+### Bug Fixes
+
+* **pubsub-bench:** unblock scale fanout sims ([#650](https://github.com/dao-xyz/peerbit/issues/650)) ([40dcd79](https://github.com/dao-xyz/peerbit/commit/40dcd79b92947def70dd13afcd3bf5cceb8e6045))
+* **pubsub:** propagate relay child loss quickly ([#649](https://github.com/dao-xyz/peerbit/issues/649)) ([887f8e3](https://github.com/dao-xyz/peerbit/commit/887f8e3ea8872a85929e3e0fd2d7382e0e2bd911))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/pubsub-interface bumped to 5.0.2
+
 ## [5.0.2](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.0.1...pubsub-v5.0.2) (2026-03-08)
 
 
