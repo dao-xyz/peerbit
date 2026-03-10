@@ -8,7 +8,7 @@ import {
 } from "@peerbit/indexer-interface";
 import { expect, use } from "chai";
 import chaiAsPromised from "chai-as-promised";
-import { SQLLiteIndex } from "../src/engine.js";
+import { SQLiteIndex } from "../src/engine.js";
 import { create } from "../src/index.js";
 import { setup } from "./utils.js";
 
@@ -36,7 +36,7 @@ describe("sort", () => {
 	it("sorts by default by id ", async () => {
 		// this test is to insure that the iterator is stable. I.e. default sorting is applied
 		index = await setup({ schema: Document }, create);
-		const store = index.store as SQLLiteIndex<Document>;
+		const store = index.store as SQLiteIndex<Document>;
 		expect(store.tables.size).to.equal(1);
 		await index.store.put(new Document("3"));
 		await index.store.put(new Document("2"));
@@ -67,7 +67,7 @@ describe("sort", () => {
 	it("will not sort by default when fetching all", async () => {
 		// this test is to insure that the iterator is stable. I.e. default sorting is applied
 		index = await setup({ schema: Document }, create);
-		const store = index.store as SQLLiteIndex<Document>;
+		const store = index.store as SQLiteIndex<Document>;
 		expect(store.tables.size).to.equal(1);
 		await index.store.put(new Document("3"));
 		await index.store.put(new Document("2"));
@@ -91,7 +91,7 @@ describe("sort", () => {
 
 	it("will sort correctly when query is split", async () => {
 		index = await setup({ schema: Document }, create);
-		const store = index.store as SQLLiteIndex<Document>;
+		const store = index.store as SQLiteIndex<Document>;
 		expect(store.tables.size).to.equal(1);
 		await index.store.put(new Document("3"));
 		await index.store.put(new Document("2"));

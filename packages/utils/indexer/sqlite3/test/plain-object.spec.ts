@@ -1,7 +1,7 @@
 import { field, variant, vec } from "@dao-xyz/borsh";
 import { id, toId } from "@peerbit/indexer-interface";
 import { expect } from "chai";
-import { SQLLiteIndex } from "../src/engine.js";
+import { SQLiteIndex } from "../src/engine.js";
 import { create } from "../src/index.js";
 import { setup } from "./utils.js";
 
@@ -39,7 +39,7 @@ describe("plain object inputs", () => {
 
 	it("inlines nested object from plain object", async () => {
 		index = await setup({ schema: RootDocInline }, create);
-		const store = index.store as SQLLiteIndex<RootDocInline>;
+		const store = index.store as SQLiteIndex<RootDocInline>;
 
 		await store.put(
 			new RootDocInline({
@@ -71,7 +71,7 @@ describe("plain object inputs", () => {
 
 	it("stores vec(nested) elements from plain objects", async () => {
 		index = await setup({ schema: RootDocArray }, create);
-		const store = index.store as SQLLiteIndex<RootDocArray>;
+		const store = index.store as SQLiteIndex<RootDocArray>;
 
 		await store.put(
 			new RootDocArray({
@@ -131,7 +131,7 @@ describe("plain object inputs", () => {
 
 	it("throws for polymorphic nested POJO values", async () => {
 		index = await setup({ schema: RootDocPoly }, create);
-		const store = index.store as SQLLiteIndex<RootDocPoly>;
+		const store = index.store as SQLiteIndex<RootDocPoly>;
 
 		let error: unknown;
 		try {

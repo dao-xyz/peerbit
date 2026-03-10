@@ -13,7 +13,7 @@ import {
 import { expect, use } from "chai";
 import chaiAsPromised from "chai-as-promised";
 import { v4 as uuid } from "uuid";
-import { SQLLiteIndex } from "../src/engine.js";
+import { SQLiteIndex } from "../src/engine.js";
 import { create } from "../src/index.js";
 import { setup } from "./utils.js";
 
@@ -133,7 +133,7 @@ describe("shape", () => {
 			{ schema: DocumentWithProperties, indexBy: ["a"] },
 			create,
 		);
-		index.store as SQLLiteIndex<DocumentWithProperties>;
+		index.store as SQLiteIndex<DocumentWithProperties>;
 		await index.store.put(new DocumentWithProperties({ a: "1" }));
 		await index.store.put(new DocumentWithProperties({ a: "2" }));
 
@@ -155,7 +155,7 @@ describe("shape", () => {
 
 		it("shaped queries are faster", async () => {
 			index = await setup({ schema: ArrayDocument }, create);
-			index.store as SQLLiteIndex<ArrayDocument>;
+			index.store as SQLiteIndex<ArrayDocument>;
 			let count = 5e4;
 			let itemsToQuery: bigint[] = [];
 			for (let i = 0; i < count; i++) {
@@ -232,7 +232,7 @@ describe("shape", () => {
 	describe("document array", () => {
 		it("shaped queries are faster", async () => {
 			index = await setup({ schema: Base }, create);
-			index.store as SQLLiteIndex<Base>;
+			index.store as SQLiteIndex<Base>;
 			let count = 1e4;
 			for (let i = 0; i < count; i++) {
 				if (i % 5 === 0) {
@@ -407,7 +407,7 @@ describe("shape", () => {
 
 		it("shaped queries are faster", async () => {
 			index = await setup({ schema: NestedBoolQueryDocument }, create);
-			index.store as SQLLiteIndex<NestedBoolQueryDocument>;
+			index.store as SQLiteIndex<NestedBoolQueryDocument>;
 			let count = 1e4;
 			for (let i = 0; i < count; i++) {
 				if (i % 5 === 0) {
