@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.8](https://github.com/dao-xyz/peerbit/compare/react-v1.0.7...react-v1.0.8) (2026-03-10)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped to 5.0.8
+
 ## [1.0.7](https://github.com/dao-xyz/peerbit/compare/react-v1.0.6...react-v1.0.7) (2026-03-09)
 
 
