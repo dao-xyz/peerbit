@@ -389,6 +389,19 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.0.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.8...shared-log-v13.0.9) (2026-03-10)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.8
+    * @peerbit/rpc bumped to 6.0.8
+    * @peerbit/indexer-sqlite3 bumped to 3.0.1
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.8
+
 ## [13.0.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.7...shared-log-v13.0.8) (2026-03-09)
 
 
