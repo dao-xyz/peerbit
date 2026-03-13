@@ -82,6 +82,7 @@ export type LogProperties<T> = {
 export type LogOptions<T> = LogProperties<T> & LogEvents<T> & MemoryProperties;
 
 export type AppendOptions<T> = {
+	deferIndexWrite?: boolean;
 	meta?: {
 		type?: EntryType;
 		gidSeed?: Uint8Array;
@@ -562,6 +563,7 @@ export class Log<T> {
 			unique: true,
 			isHead: true,
 			toMultiHash: false,
+			deferIndexWrite: options.deferIndexWrite === true,
 		});
 
 		const pendingDeletes: (
@@ -1063,6 +1065,7 @@ export class Log<T> {
 		// Don't return early here if closed = true, because "load" might create processes that needs to be closed
 		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
 		this._closeController.abort();
+		await this._entryIndex.flushPendingWrites();
 		await this._indexer?.stop?.();
 		this._indexer = undefined as any;
 		this._loadedOnce = false;

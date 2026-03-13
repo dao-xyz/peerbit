@@ -37,6 +37,8 @@ const escapePathToSQLName = (path: string[]) => {
 };
 
 const putStatementKey = (table: Table) => table.name + "_put";
+const putStatementBatchNoReturnKey = (table: Table, rows: number) =>
+	table.name + "_put_batch_noreturn_" + rows;
 const replaceStatementKey = (table: Table) => table.name + "_replicate";
 const resolveChildrenStatement = (table: Table) =>
 	table.name + "_resolve_children";
@@ -83,6 +85,23 @@ async function getIgnoreFK(stmt: Statement, values: any[]) {
 		throw e;
 	}
 }
+
+const createBatchInsertSQL = (table: Table, rows: number) => {
+	const columns = table.fields.map((field) => escapeColumnName(field.name)).join(", ");
+	const rowPlaceholder = `(${table.fields.map(() => "?").join(", ")})`;
+	return `insert into ${table.name} (${columns}) VALUES ${Array.from({
+		length: rows,
+	})
+		.map(() => rowPlaceholder)
+		.join(", ")};`;
+};
+
+const canUseWithoutRowId = (table: Table) => {
+	if (table.inline || table.primary === false || !table.primaryField) {
+		return false;
+	}
+	return !/^INTEGER\b/i.test(table.primaryField.type);
+};
 
 export class SQLLiteIndex<T extends Record<string, any>>
 	implements Index<T, any>
@@ -251,7 +270,10 @@ export class SQLLiteIndex<T extends Record<string, any>>
 				continue;
 			}
 
-			const sqlCreateTable = `create table if not exists ${table.name} (${[...table.fields, ...table.constraints].map((s) => s.definition).join(", ")}) strict`;
+			const tableOptions = canUseWithoutRowId(table)
+				? " strict, without rowid"
+				: " strict";
+			const sqlCreateTable = `create table if not exists ${table.name} (${[...table.fields, ...table.constraints].map((s) => s.definition).join(", ")})${tableOptions}`;
 			this.properties.db.exec(sqlCreateTable);
 
 			/* const fieldsToIndex = table.fields.filter(
@@ -428,7 +450,10 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		return undefined;
 	}
 
-	async put(value: T, _id?: any): Promise<void> {
+	async put(
+		value: T,
+		_id?: any,
+	): Promise<void> {
 		return this.withWriteBarrier(async () => {
 			const classOfValue = value.constructor as Constructor<T>;
 			return insert(
@@ -474,6 +499,24 @@ export class SQLLiteIndex<T extends Record<string, any>>
 				getSchema(classOfValue).fields,
 				(_fn) => {
 					throw new Error("Unexpected");
+				},
+				undefined,
+				undefined,
+				{
+					insertSimpleVecRows: async (rows, table) => {
+						if (rows.length === 0) {
+							return;
+						}
+						const key = putStatementBatchNoReturnKey(table, rows.length);
+						const sql = createBatchInsertSQL(table, rows.length);
+						const statement =
+							this.properties.db.statements.get(key) ||
+							(await this.properties.db.prepare(sql, key));
+						const values = rows.flat();
+						this.fkMode === "race-tolerant"
+							? await runIgnoreFK(statement, values)
+							: await statement.run(values);
+					},
 				},
 			);
 		});

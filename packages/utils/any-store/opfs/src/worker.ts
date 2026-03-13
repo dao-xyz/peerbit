@@ -9,6 +9,12 @@ import { type AnyStore } from "@peerbit/any-store-interface";
 import * as memory from "@peerbit/any-store-interface/messages";
 import { fromBase64URL, ready, toBase64URL } from "@peerbit/crypto";
 import { waitForResolved } from "@peerbit/time";
+import {
+	getTransferables,
+	type OPFSRequest,
+	type OPFSResponse,
+	isOPFSRequest,
+} from "./protocol.js";
 
 const directory = location.hash.split("#")?.[1];
 
@@ -162,7 +168,8 @@ export class OPFSStoreWorker {
 						create: true,
 					});
 					const writeFileHandle = await createWriteHandle(fileHandle);
-					writeFileHandle.write(value);
+					writeFileHandle.write(value, { at: 0 });
+					writeFileHandle.truncate(value.byteLength);
 					writeFileHandle.flush();
 					writeFileHandle.close();
 
@@ -214,7 +221,7 @@ export class OPFSStoreWorker {
 		this._rootStore = createMemory();
 
 		self.addEventListener("message", async (ev) => {
-			const message = deserialize(ev["data"], memory.MemoryRequest);
+			const message = this.parseMessage(ev.data);
 			try {
 				if (message instanceof memory.MemoryMessage) {
 					if (message instanceof memory.REQ_Open) {
@@ -329,27 +336,156 @@ export class OPFSStoreWorker {
 						);
 					}
 				}
+				if (isOPFSRequest(message)) {
+					if (message.type === "open") {
+						if ((await this._rootStore.status()) === "closed") {
+							await this._rootStore.open();
+						}
+						await this.respond(message, {
+							type: "ack",
+							level: message.level,
+							messageId: message.messageId,
+						});
+						return;
+					}
+
+					const m =
+						message.level.length === 0
+							? this._rootStore
+							: this._levels.get(memory.levelKey(message.level));
+					if (!m) {
+						throw new Error("Recieved memory message for an undefined level");
+					}
+					if (message.type === "clear") {
+						await m.clear();
+						await this.respond(message, {
+							type: "ack",
+							level: message.level,
+							messageId: message.messageId,
+						});
+					} else if (message.type === "close") {
+						await m.close();
+						await this.respond(message, {
+							type: "ack",
+							level: message.level,
+							messageId: message.messageId,
+						});
+					} else if (message.type === "del") {
+						await m.del(message.key);
+						await this.respond(message, {
+							type: "ack",
+							level: message.level,
+							messageId: message.messageId,
+						});
+					} else if (message.type === "iterator-next") {
+						let iterator = this._memoryIterator.get(message.id);
+						if (!iterator) {
+							iterator = m.iterator()[Symbol.asyncIterator]();
+							this._memoryIterator.set(message.id, iterator);
+						}
+						const next = await iterator.next();
+						const nextValue = next.done ? undefined : next.value;
+						const response: OPFSResponse = {
+							type: "iterator-next",
+							keys: nextValue ? [nextValue[0]] : [],
+							values: nextValue ? [nextValue[1]] : [],
+							level: message.level,
+							messageId: message.messageId,
+						};
+						await this.respond(message, response);
+						if (next.done) {
+							this._memoryIterator.delete(message.id);
+						}
+					} else if (message.type === "iterator-stop") {
+						this._memoryIterator.delete(message.id);
+						await this.respond(message, {
+							type: "ack",
+							level: message.level,
+							messageId: message.messageId,
+						});
+					} else if (message.type === "get") {
+						await this.respond(message, {
+							type: "get",
+							bytes: await m.get(message.key),
+							level: message.level,
+							messageId: message.messageId,
+						});
+					} else if (message.type === "put") {
+						await m.put(message.key, message.bytes);
+						await this.respond(message, {
+							type: "ack",
+							level: message.level,
+							messageId: message.messageId,
+						});
+					} else if (message.type === "size") {
+						await this.respond(message, {
+							type: "size",
+							size: await m.size(),
+							level: message.level,
+							messageId: message.messageId,
+						});
+					} else if (message.type === "status") {
+						await this.respond(message, {
+							type: "status",
+							status: await m.status(),
+							level: message.level,
+							messageId: message.messageId,
+						});
+					} else if (message.type === "sublevel") {
+						await m.sublevel(message.name);
+						await this.respond(message, {
+							type: "ack",
+							level: message.level,
+							messageId: message.messageId,
+						});
+					}
+				}
 			} catch (error) {
-				await this.respond(
-					message,
-					new memory.RESP_Error({
-						error: (error as any)?.["message"] || error?.constructor.name,
-						level: (message as any)["level"] || [],
-					}),
-					postMessageFn,
-				);
+				if (message instanceof memory.MemoryRequest) {
+					await this.respond(
+						message,
+						new memory.RESP_Error({
+							error: (error as any)?.["message"] || error?.constructor.name,
+							level: (message as any)["level"] || [],
+						}),
+						postMessageFn,
+					);
+					return;
+				}
+				await this.respond(message, {
+					type: "error",
+					error: (error as any)?.["message"] || error?.constructor.name,
+					level: message?.level || [],
+					messageId: message?.messageId || "",
+				});
 			}
 		});
 	}
 
+	private parseMessage(data: unknown): OPFSRequest | memory.MemoryRequest {
+		if (isOPFSRequest(data)) {
+			return data;
+		}
+		const bytes =
+			data instanceof Uint8Array ? data : new Uint8Array(data as ArrayBuffer);
+		return deserialize(bytes, memory.MemoryRequest);
+	}
+
 	async respond(
-		request: memory.MemoryRequest,
-		response: memory.MemoryRequest,
+		request: OPFSRequest | memory.MemoryRequest,
+		response: OPFSResponse | memory.MemoryRequest,
 		postMessageFn = postMessage,
 	) {
-		response.messageId = request.messageId;
-		const bytes = serialize(response);
-		postMessageFn(bytes, { transfer: [bytes.buffer] });
+		if (request instanceof memory.MemoryRequest) {
+			const legacyResponse = response as memory.MemoryRequest;
+			legacyResponse.messageId = request.messageId;
+			const bytes = serialize(legacyResponse);
+			postMessageFn(bytes, { transfer: [bytes.buffer] });
+			return;
+		}
+		const cloneResponse = response as OPFSResponse;
+		cloneResponse.messageId = request.messageId;
+		postMessageFn(cloneResponse, { transfer: getTransferables(cloneResponse) });
 	}
 }
 

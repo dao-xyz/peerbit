@@ -44,7 +44,6 @@ describe("statement", () => {
 	describe("reuse", () => {
 		it("get", async () => {
 			await store.put(new DocumentWithFromProperty("1", "from"));
-
 			await store.get(toId("1"));
 			await store.get(toId("2"));
 			await store.get(toId("3"));

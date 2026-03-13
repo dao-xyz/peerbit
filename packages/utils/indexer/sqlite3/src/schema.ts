@@ -817,7 +817,11 @@ const isUint8ArrayType = (type: FieldType) => {
 };
 
 export const insert = async (
-	insertFn: (values: any[], table: Table) => Promise<any> | any,
+	insertFn: (
+		values: any[],
+		table: Table,
+		options?: { requireId?: boolean },
+	) => Promise<any> | any,
 	obj: Record<string, any>,
 	tables: Map<string, Table>,
 	table: Table,
@@ -827,6 +831,12 @@ export const insert = async (
 	) => Promise<void> | void | number,
 	parentId: any = undefined,
 	index?: number,
+	options?: {
+		insertSimpleVecRows?: (
+			rows: any[][],
+			table: Table,
+		) => Promise<void> | void;
+	},
 ): Promise<void> => {
 	const bindableValues: any[] = [];
 	let nestedCallbacks: ((id: any) => Promise<void>)[] = [];
@@ -835,6 +845,14 @@ export const insert = async (
 		table.primary === false
 			? handleNestedCallback
 			: (fn) => nestedCallbacks.push(fn);
+
+	const toInsertValue = (item: any, subTable: Table) =>
+		typeof item === "function" && item instanceof Uint8Array === false
+			? item
+			: subTable.isSimpleValue
+				? // eslint-disable-next-line new-cap
+					new subTable.ctor(item)
+				: Object.assign(Object.create(subTable.ctor.prototype), item);
 
 	const handleElement = async (
 		item: any,
@@ -846,18 +864,14 @@ export const insert = async (
 
 		await insert(
 			insertFn,
-			typeof item === "function" && item instanceof Uint8Array === false
-				? item
-				: subTable.isSimpleValue
-					? // eslint-disable-next-line new-cap
-						new subTable.ctor(item)
-					: Object.assign(Object.create(subTable.ctor.prototype), item),
+			toInsertValue(item, subTable),
 			tables,
 			subTable,
 			getSchema(subTable.ctor).fields,
 			handleNestedCallback,
 			parentId,
 			index,
+			options,
 		);
 	};
 
@@ -868,6 +882,39 @@ export const insert = async (
 	) => {
 		if (Array.isArray(obj[field.key])) {
 			const arr = obj[field.key];
+			const firstItem = arr.find((item: any) => item != null);
+			if (
+				parentId != null &&
+				arr.length > 1 &&
+				firstItem != null &&
+				options?.insertSimpleVecRows
+			) {
+				const subTable = getTableFromValue(table, tables, field, firstItem);
+				if (subTable.isSimpleValue) {
+					const rows: any[][] = [];
+					for (let i = 0; i < arr.length; i++) {
+						const item = arr[i];
+						await insert(
+							(values) => {
+								rows.push(values);
+								return undefined;
+							},
+							toInsertValue(item, subTable),
+							tables,
+							subTable,
+							getSchema(subTable.ctor).fields,
+							handleNestedCallback,
+							parentId,
+							i,
+							options,
+						);
+					}
+					if (rows.length > 0) {
+						await options.insertSimpleVecRows(rows, subTable);
+					}
+					return;
+				}
+			}
 			for (let i = 0; i < arr.length; i++) {
 				const item = arr[i];
 				await handleElement(item, field, parentId, i);
@@ -945,6 +992,7 @@ export const insert = async (
 					(fn) => nestedCallbacks.push(fn),
 					undefined, // parentId is not defined here, we are inserting a nested object inline
 					undefined, // index is not defined here, we are inserting a nested object inline
+					options,
 				);
 				/* await insert(, obj[field.key], tables, subTable, getSchema(unwrappedType).fields, parentId, index); */
 			} else {
@@ -963,7 +1011,9 @@ export const insert = async (
 		await handleNestedCallback!((id) => handleNested(nested, isOptional, id));
 	}
 
-	const thisId = await insertFn(bindableValues, table);
+	const thisId = await insertFn(bindableValues, table, {
+		requireId: nestedCallbacks.length > 0,
+	});
 	if (table.primary === false && nestedCallbacks.length > 0) {
 		throw new Error("Unexpected");
 	}
@@ -1875,9 +1925,15 @@ const _buildJoin = (
 
 	if (table!.columns.length > 0) {
 		const usedColumns = removeDuplicatesOrdered(table!.columns);
-		indexedBy = options?.planner
-			? ` INDEXED BY ${options.planner.resolveIndex(table.table.name, usedColumns)} `
-			: "";
+		const usesImplicitPrimaryKeyIndex =
+			table.type === "root" &&
+			table.table.primary !== false &&
+			usedColumns.length === 1 &&
+			usedColumns[0] === table.table.primary;
+		indexedBy =
+			options?.planner && !usesImplicitPrimaryKeyIndex
+				? ` INDEXED BY ${options.planner.resolveIndex(table.table.name, usedColumns)} `
+				: "";
 	}
 
 	if (table.type !== "root") {

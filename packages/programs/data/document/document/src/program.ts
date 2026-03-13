@@ -453,20 +453,26 @@ export class Documents<
 
 				const key = indexerTypes.toId(keyValue);
 
-				const existingDocument = (
-					await this.index.getDetailed(key, {
-						resolve: false,
-						local: true,
-						remote: this.immutable ? { strategy: "fallback" } : false,
-					})
-				)?.[0]?.results[0];
-				if (existingDocument && existingDocument.context.head !== entry.hash) {
+				const existingDocument = this.immutable
+					? (
+							await this.index.getDetailed(key, {
+								resolve: false,
+								local: true,
+								remote: { strategy: "fallback" },
+							})
+						)?.[0]?.results[0]
+					: await this.index.index.get(key);
+				const existingContext =
+					existingDocument instanceof ResultIndexedValue
+						? existingDocument.context
+						: existingDocument?.value.__context;
+				if (existingContext && existingContext.head !== entry.hash) {
 					//  econd condition can false if we reset the operation log, while not  resetting the index. For example when doing .recover
 					if (this.immutable) {
 						// key already exist but pick the oldest entry
 						// this is because we can not overwrite same id if immutable
 						if (
-							existingDocument.context.created <
+							existingContext.created <
 							entry.meta.clock.timestamp.wallTime
 						) {
 							return false;
@@ -485,7 +491,7 @@ export class Documents<
 							}
 
 							const prevEntry = await this.log.log.entryIndex.get(
-								existingDocument.context.head,
+								existingContext.head,
 							);
 							if (!prevEntry) {
 								logger.error(
@@ -510,19 +516,29 @@ export class Documents<
 				if (entry.meta.next.length !== 1) {
 					return false;
 				}
-				const existingDocument = (
-					await this.index.getDetailed(operation.key, {
-						resolve: false,
-						local: true,
-						remote: this.immutable,
-					})
-				)?.[0]?.results[0];
+				const existingDocument = this.immutable
+					? (
+							await this.index.getDetailed(operation.key, {
+								resolve: false,
+								local: true,
+								remote: true,
+							})
+						)?.[0]?.results[0]
+					: await this.index.index.get(
+							operation.key instanceof indexerTypes.IdKey
+								? operation.key
+								: indexerTypes.toId(operation.key),
+						);
+				const existingHead =
+					existingDocument instanceof ResultIndexedValue
+						? existingDocument.context.head
+						: existingDocument?.value.__context.head;
 
-				if (!existingDocument) {
+				if (!existingHead) {
 					// already deleted
 					return coerceDeleteOperation(operation); // assume ok
 				}
-				let doc = await this.log.log.get(existingDocument.context.head);
+				let doc = await this.log.log.get(existingHead);
 				if (!doc) {
 					logger.error("Failed to find Document from head");
 					return false;
@@ -560,7 +576,6 @@ export class Documents<
 
 		// type check the key
 		indexerTypes.checkId(keyValue);
-
 		const ser = serialize(doc);
 		if (ser.length > MAX_BATCH_SIZE) {
 			throw new Error(
@@ -570,17 +585,18 @@ export class Documents<
 			);
 		}
 
-		const existingDocument = options?.unique
+		const existingHead = options?.unique
 			? undefined
-			: (
-					await this._index.getDetailed(keyValue, {
-						resolve: false,
-						local: true,
-						remote: options?.checkRemote
-							? { replicate: options?.replicate }
-							: false, // only query remote if we know they exist
-					})
-				)?.[0]?.results[0];
+			: options?.checkRemote
+				? (
+						await this._index.getDetailed(keyValue, {
+							resolve: false,
+							local: true,
+							remote: { replicate: options?.replicate },
+						})
+					)?.[0]?.results[0]?.context.head
+				: (await this._index.index.get(indexerTypes.toId(keyValue)))?.value
+						.__context.head;
 
 		let operation: PutOperation | PutWithKeyOperation;
 		if (this.compatibility === 6) {
@@ -601,9 +617,7 @@ export class Documents<
 		const appended = await this.log.append(operation, {
 			...options,
 			meta: {
-				next: existingDocument
-					? [await this._resolveEntry(existingDocument.context.head)]
-					: [],
+				next: existingHead ? [await this._resolveEntry(existingHead)] : [],
 				...options?.meta,
 			},
 			canAppend: (entry) => {

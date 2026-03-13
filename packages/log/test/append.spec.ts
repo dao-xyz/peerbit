@@ -1,6 +1,7 @@
 import { AnyBlockStore, type BlockStore } from "@peerbit/blocks";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { expect } from "chai";
+import sinon from "sinon";
 import { EntryType } from "../src/entry-type.js";
 import { Log } from "../src/log.js";
 
@@ -99,6 +100,38 @@ describe("append", function () {
 			await log.append(new Uint8Array([2]), { meta: { type: EntryType.CUT } });
 			expect(resolved).to.deep.eq(new Uint8Array([1]));
 		});
+	});
+
+	it("flushes deferred head index writes on demand and on close", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey);
+		const putSpy = sinon.spy(log.entryIndex.properties.index, "put");
+		const { entry } = await log.append(new Uint8Array([1]), {
+			deferIndexWrite: true,
+			meta: { next: [] },
+		});
+
+		expect((await log.get(entry.hash))?.hash).equal(entry.hash);
+		expect(putSpy.callCount).equal(0);
+		expect((await log.getHeads().all()).map((head) => head.hash)).to.have.members([
+			entry.hash,
+		]);
+		expect(putSpy.callCount).equal(1);
+		putSpy.restore();
+
+		const log2 = new Log<Uint8Array>();
+		await log2.open(store, signKey);
+		const closeSpy = sinon.spy(log2.entryIndex.properties.index, "put");
+		await log2.append(new Uint8Array([2]), {
+			deferIndexWrite: true,
+			meta: { next: [] },
+		});
+		expect(closeSpy.callCount).equal(0);
+		await log2.close();
+		expect(closeSpy.callCount).equal(1);
+		closeSpy.restore();
+
+		await log.close();
 	});
 
 	describe("append 100 items to a log", () => {

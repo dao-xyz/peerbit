@@ -23,6 +23,7 @@ import {
 	type AppendOptions,
 	type Change,
 	Entry,
+	EntryType,
 	Log,
 	type LogEvents,
 	type LogProperties,
@@ -441,6 +442,8 @@ const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE = 0.01;
 const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_CPU_LIMIT = 0.005;
 const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_MEMORY_LIMIT = 0.001;
 const RECALCULATE_PARTICIPATION_RELATIVE_DENOMINATOR_FLOOR = 1e-3;
+const ADAPTIVE_REBALANCE_IDLE_INTERVAL_MULTIPLIER = 5;
+const ADAPTIVE_REBALANCE_MIN_IDLE_AFTER_LOCAL_APPEND_MS = 10_000;
 
 const DEFAULT_DISTRIBUTION_DEBOUNCE_TIME = 500;
 const RECENT_REPAIR_DISPATCH_TTL_MS = 5_000;
@@ -705,6 +708,8 @@ export class SharedLog<
 	replicas!: ReplicationLimits;
 
 	private cpuUsage?: CPUUsage;
+	private _lastLocalAppendAt!: number;
+	private adaptiveRebalanceIdleMs!: number;
 
 	timeUntilRoleMaturity!: number;
 	waitForReplicatorTimeout!: number;
@@ -1455,6 +1460,71 @@ export class SharedLog<
 			) */
 			interval, // TODO make this dynamic on the number of replicators
 		);
+	}
+
+	private markLocalAppendActivity(timestamp = Date.now()) {
+		this._lastLocalAppendAt = Math.max(this._lastLocalAppendAt ?? 0, timestamp);
+	}
+
+	private shouldDelayAdaptiveRebalance(now = Date.now()) {
+		return (
+			this._isAdaptiveReplicating &&
+			this._lastLocalAppendAt > 0 &&
+			now - this._lastLocalAppendAt < this.adaptiveRebalanceIdleMs
+		);
+	}
+
+	private shouldDeferHeadCoordinatePersistence(
+		options?: SharedAppendOptions<T>,
+	) {
+		return (
+			!this._isReplicating &&
+			options?.replicate === false &&
+			options?.target === "none"
+		);
+	}
+
+	private async deleteCoordinatesForHashes(hashes: Iterable<string>) {
+		const values = [...new Set([...hashes].filter(Boolean))];
+		if (values.length === 0) {
+			return;
+		}
+		await this.entryCoordinatesIndex.del({
+			query:
+				values.length === 1
+					? { hash: values[0] }
+					: new Or(
+							values.map((hash) => new StringMatch({ key: "hash", value: hash })),
+						),
+		});
+	}
+
+	private async ensureCurrentHeadCoordinatesIndexed() {
+		const heads = await this.log.getHeads(true).all();
+		const headsByHash = new Map(heads.map((head) => [head.hash, head]));
+		const indexedHeads = await this.entryCoordinatesIndex
+			.iterate({}, { shape: { hash: true } })
+			.all();
+		const indexedHashes = new Set(indexedHeads.map((entry) => entry.value.hash));
+		const staleHashes = indexedHeads
+			.map((entry) => entry.value.hash)
+			.filter((hash) => !headsByHash.has(hash));
+
+		if (staleHashes.length > 0) {
+			await this.deleteCoordinatesForHashes(staleHashes);
+		}
+
+		for (const head of heads) {
+			if (indexedHashes.has(head.hash)) {
+				continue;
+			}
+			const minReplicas = decodeReplicas(head).getValue(this);
+			await this.findLeaders(
+				await this.createCoordinates(head, minReplicas),
+				head,
+				{ persist: {} },
+			);
+		}
 	}
 
 	private async _replicate(
@@ -2264,6 +2334,8 @@ export class SharedLog<
 			) => void;
 		} = {},
 	) {
+		await this.ensureCurrentHeadCoordinatesIndexed();
+
 		const change = await this.addReplicationRange(
 			range,
 			this.node.identity.publicKey,
@@ -2659,6 +2731,10 @@ export class SharedLog<
 		entry: Entry<T>;
 		removed: ShallowOrFullEntry<T>[];
 	}> {
+		if (this._isAdaptiveReplicating) {
+			this.markLocalAppendActivity();
+		}
+
 		const appendOptions: AppendOptions<T> = { ...options };
 		const minReplicas = this.getClampedReplicas(
 			options?.replicas
@@ -2693,11 +2769,24 @@ export class SharedLog<
 				return options.onChange!(change);
 			};
 		}
+		appendOptions.deferIndexWrite =
+			this.shouldDeferHeadCoordinatePersistence(options);
 
 		const result = await this.log.append(data, appendOptions);
+		const deferHeadCoordinatePersistence =
+			result.entry.meta.type !== EntryType.CUT &&
+			this.shouldDeferHeadCoordinatePersistence(options);
 
 		if (options?.replicate) {
 			await this.replicate(result.entry, { checkDuplicates: true });
+		}
+
+		if (deferHeadCoordinatePersistence) {
+			await this.deleteCoordinatesForHashes([
+				...result.entry.meta.next,
+				...result.removed.map((entry) => entry.hash),
+			]);
+			return result;
 		}
 
 		const coordinates = await this.createCoordinates(
@@ -2744,13 +2833,15 @@ export class SharedLog<
 			}
 		}
 
-		if (!isLeader) {
+		if (!isLeader && !this.shouldDelayAdaptiveRebalance()) {
 			this.pruneDebouncedFnAddIfNotKeeping({
 				key: result.entry.hash,
 				value: { entry: result.entry, leaders },
 			});
 		}
-		this.rebalanceParticipationDebounced?.call();
+		if (!this._isAdaptiveReplicating) {
+			this.rebalanceParticipationDebounced?.call();
+		}
 
 		return result;
 	}
@@ -2805,6 +2896,17 @@ export class SharedLog<
 		this._replicatorLivenessCursor = 0;
 		this._replicatorLivenessFailures = new Map();
 		this._replicatorLastActivityAt = new Map();
+		this._lastLocalAppendAt = 0;
+		const adaptiveReplicateOptions =
+			options?.replicate && isAdaptiveReplicatorOption(options.replicate)
+				? options.replicate
+				: undefined;
+		this.adaptiveRebalanceIdleMs = Math.max(
+			ADAPTIVE_REBALANCE_MIN_IDLE_AFTER_LOCAL_APPEND_MS,
+			(adaptiveReplicateOptions?.limits?.interval ??
+				RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL) *
+				ADAPTIVE_REBALANCE_IDLE_INTERVAL_MULTIPLIER,
+		);
 
 		this.openTime = +new Date();
 		this.oldestOpenTime = this.openTime;
@@ -2933,10 +3035,10 @@ export class SharedLog<
 				],
 			})) > 0;
 
-			this._gidPeersHistory = new Map();
-			this._requestIPruneSent = new Map();
-			this._requestIPruneResponseReplicatorSet = new Map();
-			this._checkedPruneRetries = new Map();
+		this._gidPeersHistory = new Map();
+		this._requestIPruneSent = new Map();
+		this._requestIPruneResponseReplicatorSet = new Map();
+		this._checkedPruneRetries = new Map();
 
 		this.replicationChangeDebounceFn = debounceAggregationChanges<
 			ReplicationRangeIndexable<R>
@@ -3801,23 +3903,23 @@ export class SharedLog<
 			}
 
 		await this.remoteBlocks.stop();
-			this._pendingDeletes.clear();
-			this._pendingIHave.clear();
-			this._checkedPruneRetries.clear();
-			this.latestReplicationInfoMessage.clear();
-			this._gidPeersHistory.clear();
-				this._requestIPruneSent.clear();
-				this._requestIPruneResponseReplicatorSet.clear();
-			// Cancel any pending debounced timers so they can't fire after we've torn down
-			// indexes/RPC state.
-			this.rebalanceParticipationDebounced?.close();
-			this.replicationChangeDebounceFn?.close?.();
-			this.pruneDebouncedFn?.close?.();
-			this.responseToPruneDebouncedFn?.close?.();
-			this.pruneDebouncedFn = undefined as any;
-			this.rebalanceParticipationDebounced = undefined;
-			this._replicationRangeIndex.stop();
-			this._entryCoordinatesIndex.stop();
+		this._pendingDeletes.clear();
+		this._pendingIHave.clear();
+		this._checkedPruneRetries.clear();
+		this.latestReplicationInfoMessage.clear();
+		this._gidPeersHistory.clear();
+		this._requestIPruneSent.clear();
+		this._requestIPruneResponseReplicatorSet.clear();
+		// Cancel any pending debounced timers so they can't fire after we've torn down
+		// indexes/RPC state.
+		this.rebalanceParticipationDebounced?.close();
+		this.replicationChangeDebounceFn?.close?.();
+		this.pruneDebouncedFn?.close?.();
+		this.responseToPruneDebouncedFn?.close?.();
+		this.pruneDebouncedFn = undefined as any;
+		this.rebalanceParticipationDebounced = undefined;
+		this._replicationRangeIndex.stop();
+		this._entryCoordinatesIndex.stop();
 		this._replicationRangeIndex = undefined as any;
 		this._entryCoordinatesIndex = undefined as any;
 
@@ -6168,6 +6270,17 @@ export class SharedLog<
 		// update more participation rate to converge to the average expected rate or bounded by
 		// resources such as memory and or cpu
 
+		const isClosedStoreRace = (error: any) => {
+			const message =
+				typeof error?.message === "string" ? error.message : String(error);
+			return (
+				this.closed ||
+				message.includes("Iterator is not open") ||
+				message.includes("cannot read after close()") ||
+				message.includes("Database is not open")
+			);
+		};
+
 		const fn = async () => {
 			if (this.closed) {
 				return false;
@@ -6179,6 +6292,11 @@ export class SharedLog<
 			}
 
 			if (this._isAdaptiveReplicating) {
+				if (this.shouldDelayAdaptiveRebalance()) {
+					this.rebalanceParticipationDebounced?.call();
+					return false;
+				}
+
 				const peers = this.replicationIndex;
 				const usedMemory = await this.getMemoryUsage();
 				let dynamicRange = await this.getDynamicRange();
@@ -6252,7 +6370,12 @@ export class SharedLog<
 			return false;
 		};
 
-		const resp = await fn();
+		const resp = await fn().catch((error: any) => {
+			if (isNotStartedError(error) || isClosedStoreRace(error)) {
+				return false;
+			}
+			throw error;
+		});
 
 		return resp;
 	}

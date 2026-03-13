@@ -12,6 +12,7 @@ import {
 	type Statement as IStatement,
 	type StatementGetResult,
 } from "./types.js";
+import type { SQLitePragmaOptions } from "./sqlite3-messages.worker.js";
 
 export const encodeName = (name: string): string => {
 	// since "/" and perhaps other characters might not be allowed we do encode
@@ -183,7 +184,23 @@ const getSqlite3 = async (): Promise<Sqlite3Module> => {
 	return sqlite3Promise;
 };
 
-const create = async (directory?: string) => {
+const applyPragmas = (
+	db: SQLDatabase | OpfsSAHPoolDatabase,
+	pragmas?: SQLitePragmaOptions,
+) => {
+	db.exec("PRAGMA journal_mode = WAL");
+	db.exec("PRAGMA foreign_keys = on");
+	// Browser SQLite state is a rebuildable materialized view over the log, so
+	// NORMAL is a better default tradeoff than FULL for OPFS-backed write latency.
+	db.exec(
+		`PRAGMA synchronous = ${(pragmas?.synchronous ?? "NORMAL").toUpperCase()}`,
+	);
+};
+
+const create = async (
+	directory?: string,
+	options?: { pragmas?: SQLitePragmaOptions },
+) => {
 	let statements: Map<string, Statement> = new Map();
 
 	const sqlite3 = await getSqlite3();
@@ -299,8 +316,7 @@ const create = async (directory?: string) => {
 		if (!sqliteDb) {
 			throw new Error("Failed to open sqlite database");
 		}
-		sqliteDb.exec("PRAGMA journal_mode = WAL");
-		sqliteDb.exec("PRAGMA foreign_keys = on");
+		applyPragmas(sqliteDb, options?.pragmas);
 	};
 
 	return {

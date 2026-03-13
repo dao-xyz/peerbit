@@ -14,6 +14,7 @@ import type {
 } from "@peerbit/stream-interface";
 import { waitFor } from "@peerbit/time";
 import { type Block, decode } from "multiformats/block";
+import * as raw from "multiformats/codecs/raw";
 
 export class AnyBlockStore implements Blocks {
 	private _store: AnyStore;
@@ -40,6 +41,12 @@ export class AnyBlockStore implements Blocks {
 			const bytes = await this._store.get(cid);
 			if (!bytes) {
 				return undefined;
+			}
+			if (
+				cidObject.code === raw.code &&
+				(options?.hasher == null || options.hasher === defaultHasher)
+			) {
+				return bytes;
 			}
 			const codec = (codecCodes as any)[cidObject.code];
 			const block = await decode({

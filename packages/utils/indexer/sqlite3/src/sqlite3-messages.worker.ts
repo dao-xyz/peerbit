@@ -1,14 +1,23 @@
 import { fromBase64, toBase64 } from "@peerbit/crypto";
 
+export type SqliteWorkerProtocol = "legacy" | "clone";
+export type SQLiteSynchronousMode = "FULL" | "NORMAL" | "OFF";
+export type SQLitePragmaOptions = {
+	synchronous?: SQLiteSynchronousMode;
+};
+
 interface Message {
 	id: string;
 	databaseId: string;
+	profile?: boolean;
+	protocol?: SqliteWorkerProtocol;
 }
 
 // Database messages
 interface CreateDatabase extends Message {
 	type: "create";
 	directory?: string;
+	pragmas?: SQLitePragmaOptions;
 }
 
 interface Exec extends Message {
@@ -37,23 +46,102 @@ interface Prepare extends Message {
 	sql: string;
 }
 
-type Uint8ArrayType = { type: "uint8array"; base64: string };
+type Uint8ArrayBase64Type = {
+	type: "uint8array";
+	encoding: "base64";
+	base64: string;
+};
+
+type Uint8ArrayCloneType = {
+	type: "uint8array";
+	encoding: "clone";
+	value: Uint8Array;
+};
 
 type SimpleType = { type: "simple"; value: any };
 
-export const resolveValue = (value: Uint8ArrayType | SimpleType) =>
-	value.type === "simple" ? value.value : fromBase64(value.base64);
-export const encodeValue = (value: any): Uint8ArrayType | SimpleType => {
+export type EncodedValue =
+	| Uint8ArrayBase64Type
+	| Uint8ArrayCloneType
+	| SimpleType;
+
+export type ClientEncodeMetrics = {
+	encodeMs: number;
+	valueCount: number;
+	blobValueCount: number;
+	blobBytes: number;
+};
+
+export type WorkerTiming = {
+	decodeMs: number;
+	execMs: number;
+	totalMs: number;
+	valueCount: number;
+	blobValueCount: number;
+	blobBytes: number;
+};
+
+export const resolveValue = (value: EncodedValue) => {
+	if (value.type === "simple") {
+		return value.value;
+	}
+	return value.encoding === "clone" ? value.value : fromBase64(value.base64);
+};
+
+export const encodeValue = (
+	value: any,
+	protocol: SqliteWorkerProtocol = "legacy",
+): EncodedValue => {
 	if (value instanceof Uint8Array) {
-		return { type: "uint8array", base64: toBase64(value) };
+		return protocol === "clone"
+			? { type: "uint8array", encoding: "clone", value }
+			: { type: "uint8array", encoding: "base64", base64: toBase64(value) };
 	}
 	return { type: "simple", value };
+};
+
+export const encodeValues = (
+	values: any[] | undefined,
+	protocol: SqliteWorkerProtocol = "legacy",
+): { values: EncodedValue[] | undefined; metrics: ClientEncodeMetrics } => {
+	if (!values || values.length === 0) {
+		return {
+			values,
+			metrics: {
+				encodeMs: 0,
+				valueCount: 0,
+				blobValueCount: 0,
+				blobBytes: 0,
+			},
+		};
+	}
+
+	let blobBytes = 0;
+	let blobValueCount = 0;
+	const startedAt = performance.now();
+	const encodedValues = values.map((value) => {
+		if (value instanceof Uint8Array) {
+			blobValueCount++;
+			blobBytes += value.byteLength;
+		}
+		return encodeValue(value, protocol);
+	});
+
+	return {
+		values: encodedValues,
+		metrics: {
+			encodeMs: performance.now() - startedAt,
+			valueCount: values.length,
+			blobValueCount,
+			blobBytes,
+		},
+	};
 };
 
 interface Run extends Statement {
 	type: "run";
 	sql: string;
-	values: (Uint8ArrayType | SimpleType)[];
+	values: EncodedValue[];
 }
 
 // Statement messages
@@ -63,7 +151,7 @@ interface Statement extends Message {
 
 interface Bind extends Statement {
 	type: "bind";
-	values: (Uint8ArrayType | SimpleType)[];
+	values: EncodedValue[];
 }
 
 interface Step extends Statement {
@@ -72,7 +160,7 @@ interface Step extends Statement {
 
 interface Get extends Statement {
 	type: "get";
-	values?: any[];
+	values?: EncodedValue[];
 }
 
 interface Reset extends Statement {
@@ -81,12 +169,12 @@ interface Reset extends Statement {
 
 interface RunStatement extends Statement {
 	type: "run-statement";
-	values: any[];
+	values: EncodedValue[];
 }
 
 interface All extends Statement {
 	type: "all";
-	values: (Uint8ArrayType | SimpleType)[];
+	values: EncodedValue[];
 }
 
 interface Finalize extends Statement {
@@ -98,12 +186,14 @@ interface ErrorResponse {
 	type: "error";
 	id: string;
 	message: string;
+	timing?: WorkerTiming;
 }
 
 interface Response {
 	type: "response";
 	id: string;
 	result: any;
+	timing?: WorkerTiming;
 }
 
 export type DatabaseMessages =
