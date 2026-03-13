@@ -42,4 +42,27 @@ describe("message signing", () => {
 			Array.from(serializeUnsignedMessage(message)),
 		);
 	});
+
+	it("serializes data-message bytes canonically after routing changes", () => {
+		const message = new DataMessage({
+			header: new MessageHeader({
+				session: 1,
+				mode: new SilentDelivery({
+					to: ["peer-a"],
+					redundancy: 2,
+				}),
+			}),
+			data: new Uint8Array([4, 5, 6]),
+		});
+
+		expect(Array.from(message.bytes())).to.deep.equal(
+			Array.from(serialize(message)),
+		);
+
+		message.header.mode.to = ["peer-z"];
+
+		expect(Array.from(message.bytes())).to.deep.equal(
+			Array.from(serialize(message)),
+		);
+	});
 });

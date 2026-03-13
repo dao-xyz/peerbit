@@ -275,7 +275,10 @@ export class MessageHeader<T extends DeliveryMode = DeliveryMode> {
 		return this._origin;
 	}
 
-	writeSignableBytes(writer: BinaryWriter) {
+	writeBytes(
+		writer: BinaryWriter,
+		properties: { includeMode: boolean; includeSignatures: boolean },
+	) {
 		writer.u8(0);
 		BinaryWriter.uint8ArrayFixed(this._id, writer);
 		writer.u64(this.timestamp);
@@ -299,8 +302,18 @@ export class MessageHeader<T extends DeliveryMode = DeliveryMode> {
 		} else {
 			writer.u8(0);
 		}
-		writer.u8(0);
-		writer.u8(0);
+		if (properties.includeMode && this.mode != null) {
+			writer.u8(1);
+			serialize(this.mode, writer);
+		} else {
+			writer.u8(0);
+		}
+		if (properties.includeSignatures && this.signatures != null) {
+			writer.u8(1);
+			serialize(this.signatures, writer);
+		} else {
+			writer.u8(0);
+		}
 	}
 
 	verify() {
@@ -445,20 +458,16 @@ export class DataMessage<
 
 	/** Manually ser/der for performance gains */
 	bytes() {
-		return serialize(this);
+		return this.serializeBytes();
 	}
 
-	override getSignableBytes(): Uint8Array {
-		return (
-			this._cachedSignableBytes ??
-			(this._cachedSignableBytes = this.serializeSignableBytes())
-		);
-	}
-
-	private serializeSignableBytes() {
+	private serializeBytes() {
 		const writer = new BinaryWriter();
 		writer.u8(DATA_VARIANT);
-		this._header.writeSignableBytes(writer);
+		this._header.writeBytes(writer, {
+			includeMode: true,
+			includeSignatures: true,
+		});
 		if (this._data != null) {
 			writer.u8(1);
 			BinaryWriter.uint8Array(this._data, writer);

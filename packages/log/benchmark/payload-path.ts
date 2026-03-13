@@ -70,17 +70,6 @@ const measure = async <T>(fn: () => Promise<T> | T) => {
 	};
 };
 
-const serializeUnsignedMessage = (message: DataMessage) => {
-	const mode = message.header.mode;
-	message.header.mode = undefined as any;
-	const signatures = message.header.signatures;
-	message.header.signatures = undefined;
-	const bytes = serialize(message);
-	message.header.signatures = signatures;
-	message.header.mode = mode;
-	return bytes;
-};
-
 const formatBytes = (value: number) => Number(value.toFixed(2));
 
 const summarize = async (payloadBytes: number) => {
@@ -149,20 +138,16 @@ const summarize = async (payloadBytes: number) => {
 			}),
 			data: encodedEntry.value,
 		});
-		const genericMessageSignable = await measure(() =>
-			serializeUnsignedMessage(message),
-		);
-		const messageSignable = await measure(() => message.getSignableBytes());
+		const genericEncodedMessage = await measure(() => serialize(message));
+		const encodedMessage = await measure(() => message.bytes());
 		if (
-			genericMessageSignable.value.byteLength !==
-				messageSignable.value.byteLength ||
-			!genericMessageSignable.value.every(
-				(byte, index) => byte === messageSignable.value[index],
+			genericEncodedMessage.value.byteLength !== encodedMessage.value.byteLength ||
+			!genericEncodedMessage.value.every(
+				(byte, index) => byte === encodedMessage.value[index],
 			)
 		) {
-			throw new Error("Optimized message signable bytes do not match");
+			throw new Error("Optimized message bytes do not match");
 		}
-		const encodedMessage = await measure(() => serialize(message));
 		const encryptedMessage = await measure(() =>
 			encryptionProvider(encodedMessage.value, { type: "hash" }),
 		);
@@ -188,8 +173,7 @@ const summarize = async (payloadBytes: number) => {
 				signatureEncodeMs: encodedSignature.ms,
 				entryEncodeMs: encodedEntry.ms,
 				blockPutMs: storedEntry.ms,
-				messageSignableEncodeGenericMs: genericMessageSignable.ms,
-				messageSignableEncodeMs: messageSignable.ms,
+				messageEncodeGenericMs: genericEncodedMessage.ms,
 				messageEncodeMs: encodedMessage.ms,
 				symmetricEncryptMs: encryptedMessage.ms,
 			},
@@ -247,9 +231,7 @@ const main = async () => {
 			signableEncodeMs: result.stages.signableEncodeMs,
 			entryEncodeMs: result.stages.entryEncodeMs,
 			blockPutMs: result.stages.blockPutMs,
-			messageSignableEncodeGenericMs:
-				result.stages.messageSignableEncodeGenericMs,
-			messageSignableEncodeMs: result.stages.messageSignableEncodeMs,
+			messageEncodeGenericMs: result.stages.messageEncodeGenericMs,
 			messageEncodeMs: result.stages.messageEncodeMs,
 			symmetricEncryptMs: result.stages.symmetricEncryptMs,
 			totalSerializedOverDocument:
