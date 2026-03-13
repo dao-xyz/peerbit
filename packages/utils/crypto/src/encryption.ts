@@ -9,6 +9,7 @@ import {
 } from "@dao-xyz/borsh";
 import sodium from "libsodium-wrappers";
 import { equals as uequals } from "uint8arrays";
+import { coerce } from "./bytes.js";
 import { Ed25519PublicKey } from "./ed25519.js";
 import { AccessError } from "./errors.js";
 import { sha256 } from "./hash.js";
@@ -134,7 +135,7 @@ export const createLocalEncryptProvider = <
 			});
 
 			return {
-				cipher: new Uint8Array(cipher), // TODO do we need this clone?
+				cipher: coerce(cipher),
 				nonce,
 				envelope: new PublicKeyEnvelope({
 					senderPublicKey: keys.publicKey,
@@ -147,7 +148,7 @@ export const createLocalEncryptProvider = <
 		) {
 			const cipher = sodium.crypto_secretbox_easy(bytes, nonce, keys);
 			return {
-				cipher: new Uint8Array(cipher), // TODO do we need this clone?
+				cipher: coerce(cipher),
 				nonce,
 				envelope: new HashedKeyEnvelope({
 					hash: await sha256(keys),
@@ -225,7 +226,9 @@ export const createDecrypterFromKeyResolver = (
 			throw new Error("Failed to resolve ephemeral key");
 		}
 
-		return sodium.crypto_secretbox_open_easy(encrypted, nonce, epheremalKey);
+		return coerce(
+			sodium.crypto_secretbox_open_easy(encrypted, nonce, epheremalKey),
+		);
 	};
 };
 
