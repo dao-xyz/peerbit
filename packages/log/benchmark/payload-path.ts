@@ -70,6 +70,17 @@ const measure = async <T>(fn: () => Promise<T> | T) => {
 	};
 };
 
+const serializeUnsignedMessage = (message: DataMessage) => {
+	const mode = message.header.mode;
+	message.header.mode = undefined as any;
+	const signatures = message.header.signatures;
+	message.header.signatures = undefined;
+	const bytes = serialize(message);
+	message.header.signatures = signatures;
+	message.header.mode = mode;
+	return bytes;
+};
+
 const formatBytes = (value: number) => Number(value.toFixed(2));
 
 const summarize = async (payloadBytes: number) => {
@@ -111,7 +122,7 @@ const summarize = async (payloadBytes: number) => {
 			signatures: undefined,
 			createdLocally: true,
 		});
-		const signable = await measure(() => serialize(unsignedEntry.toSignable()));
+		const signable = await measure(() => unsignedEntry.getSignableBytes());
 		const signature = await measure<Promise<SignatureWithKey>>(() =>
 			key.sign(signable.value),
 		);
@@ -129,7 +140,7 @@ const summarize = async (payloadBytes: number) => {
 			}),
 			createdLocally: true,
 		});
-		const encodedEntry = await measure(() => serialize(entry));
+		const encodedEntry = await measure(() => entry.getStorageBytes());
 		const storedEntry = await measure(async () => store.put(encodedEntry.value));
 		const message = new DataMessage({
 			header: new MessageHeader({
@@ -138,6 +149,19 @@ const summarize = async (payloadBytes: number) => {
 			}),
 			data: encodedEntry.value,
 		});
+		const genericMessageSignable = await measure(() =>
+			serializeUnsignedMessage(message),
+		);
+		const messageSignable = await measure(() => message.getSignableBytes());
+		if (
+			genericMessageSignable.value.byteLength !==
+				messageSignable.value.byteLength ||
+			!genericMessageSignable.value.every(
+				(byte, index) => byte === messageSignable.value[index],
+			)
+		) {
+			throw new Error("Optimized message signable bytes do not match");
+		}
 		const encodedMessage = await measure(() => serialize(message));
 		const encryptedMessage = await measure(() =>
 			encryptionProvider(encodedMessage.value, { type: "hash" }),
@@ -164,6 +188,8 @@ const summarize = async (payloadBytes: number) => {
 				signatureEncodeMs: encodedSignature.ms,
 				entryEncodeMs: encodedEntry.ms,
 				blockPutMs: storedEntry.ms,
+				messageSignableEncodeGenericMs: genericMessageSignable.ms,
+				messageSignableEncodeMs: messageSignable.ms,
 				messageEncodeMs: encodedMessage.ms,
 				symmetricEncryptMs: encryptedMessage.ms,
 			},
@@ -221,6 +247,9 @@ const main = async () => {
 			signableEncodeMs: result.stages.signableEncodeMs,
 			entryEncodeMs: result.stages.entryEncodeMs,
 			blockPutMs: result.stages.blockPutMs,
+			messageSignableEncodeGenericMs:
+				result.stages.messageSignableEncodeGenericMs,
+			messageSignableEncodeMs: result.stages.messageSignableEncodeMs,
 			messageEncodeMs: result.stages.messageEncodeMs,
 			symmetricEncryptMs: result.stages.symmetricEncryptMs,
 			totalSerializedOverDocument:

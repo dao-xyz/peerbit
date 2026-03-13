@@ -11,6 +11,7 @@ import sodium from "libsodium-wrappers";
 import { LamportClock, Timestamp } from "../src/clock.js";
 import { createEntry } from "../src/entry-create.js";
 import { Entry } from "../src/entry.js";
+import { EntryV0 } from "../src/entry-v0.js";
 import { Payload } from "../src/payload.js";
 import { signKey } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
@@ -54,6 +55,24 @@ describe("entry", function () {
 		it("nested", async () => {
 			const bytes = serialize(new NestedEntry(await create()));
 			deserialize(bytes, NestedEntry);
+		});
+
+		it("reuses canonical signable bytes", async () => {
+			const entry = await create();
+			entry.hash = undefined as any;
+			expect(Array.from(entry.getSignableBytes())).to.deep.equal(
+				Array.from(serialize(EntryV0.toSignable(entry as EntryV0<any>))),
+			);
+		});
+
+		it("reuses canonical storage bytes", async () => {
+			const entry = await create();
+			const hash = entry.hash;
+			entry.hash = undefined as any;
+			expect(Array.from(entry.getStorageBytes())).to.deep.equal(
+				Array.from(serialize(entry)),
+			);
+			entry.hash = hash;
 		});
 	});
 

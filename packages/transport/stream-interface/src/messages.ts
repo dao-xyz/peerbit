@@ -1,4 +1,5 @@
 import {
+	BinaryWriter,
 	deserialize,
 	field,
 	fixedArray,
@@ -274,6 +275,34 @@ export class MessageHeader<T extends DeliveryMode = DeliveryMode> {
 		return this._origin;
 	}
 
+	writeSignableBytes(writer: BinaryWriter) {
+		writer.u8(0);
+		BinaryWriter.uint8ArrayFixed(this._id, writer);
+		writer.u64(this.timestamp);
+		writer.u64(this.session);
+		writer.u64(this.expires);
+		if (this.priority != null) {
+			writer.u8(1);
+			writer.u32(this.priority);
+		} else {
+			writer.u8(0);
+		}
+		if (this.responsePriority != null) {
+			writer.u8(1);
+			writer.u32(this.responsePriority);
+		} else {
+			writer.u8(0);
+		}
+		if (this._origin != null) {
+			writer.u8(1);
+			serialize(this._origin, writer);
+		} else {
+			writer.u8(0);
+		}
+		writer.u8(0);
+		writer.u8(0);
+	}
+
 	verify() {
 		return this.expires >= +new Date();
 	}
@@ -283,24 +312,29 @@ interface WithHeader {
 	header: MessageHeader;
 }
 
-const sign = async <T extends WithHeader>(
-	obj: T,
-	signer: (bytes: Uint8Array) => Promise<SignatureWithKey> | SignatureWithKey,
-): Promise<T> => {
+const serializeUnsigned = (obj: WithHeader): Uint8Array => {
 	const mode = obj.header.mode;
 	obj.header.mode = undefined as any;
 	const signatures = obj.header.signatures;
 	obj.header.signatures = undefined;
 	const bytes = serialize(obj);
-	// reassign properties if some other process expects them
 	obj.header.signatures = signatures;
 	obj.header.mode = mode;
+	return bytes;
+};
+
+const sign = async <T extends WithHeader>(
+	obj: T,
+	signer: (bytes: Uint8Array) => Promise<SignatureWithKey> | SignatureWithKey,
+): Promise<T> => {
+	const bytes =
+		obj instanceof Message ? obj.getSignableBytes() : serializeUnsigned(obj);
+	const signatures = obj.header.signatures;
 
 	const signature = await signer(bytes);
 	obj.header.signatures = new Signatures(
 		signatures ? [...signatures.signatures, signature] : [signature],
 	);
-	obj.header.mode = mode;
 	return obj;
 };
 
@@ -312,12 +346,10 @@ const verifyMultiSig = async (
 	if (!signatures || signatures.signatures.length === 0) {
 		return !expectSignatures;
 	}
-	const to = message.header.mode;
-	message.header.mode = undefined as any;
-	message.header.signatures = undefined;
-	const bytes = serialize(message);
-	message.header.mode = to;
-	message.header.signatures = signatures;
+	const bytes =
+		message instanceof Message
+			? message.getSignableBytes()
+			: serializeUnsigned(message);
 
 	for (const signature of signatures.signatures) {
 		if (!(await verify(signature, bytes))) {
@@ -328,6 +360,8 @@ const verifyMultiSig = async (
 };
 
 export abstract class Message<T extends DeliveryMode = DeliveryMode> {
+	protected _cachedSignableBytes?: Uint8Array;
+
 	static from(bytes: Uint8ArrayList) {
 		if (bytes.get(0) === DATA_VARIANT) {
 			// Data
@@ -349,6 +383,14 @@ export abstract class Message<T extends DeliveryMode = DeliveryMode> {
 	): Promise<this> {
 		return sign(this, signer);
 	}
+
+	getSignableBytes(): Uint8Array {
+		return (
+			this._cachedSignableBytes ??
+			(this._cachedSignableBytes = serializeUnsigned(this))
+		);
+	}
+
 	abstract bytes(): Uint8ArrayList | Uint8Array;
 	/* abstract equals(other: Message): boolean; */
 	_verified: boolean;
@@ -404,6 +446,26 @@ export class DataMessage<
 	/** Manually ser/der for performance gains */
 	bytes() {
 		return serialize(this);
+	}
+
+	override getSignableBytes(): Uint8Array {
+		return (
+			this._cachedSignableBytes ??
+			(this._cachedSignableBytes = this.serializeSignableBytes())
+		);
+	}
+
+	private serializeSignableBytes() {
+		const writer = new BinaryWriter();
+		writer.u8(DATA_VARIANT);
+		this._header.writeSignableBytes(writer);
+		if (this._data != null) {
+			writer.u8(1);
+			BinaryWriter.uint8Array(this._data, writer);
+		} else {
+			writer.u8(0);
+		}
+		return writer.finalize();
 	}
 
 	static from(bytes: Uint8ArrayList): DataMessage {
