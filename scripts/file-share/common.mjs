@@ -325,6 +325,11 @@ export const overlayInstalledPackages = async ({
 				`Cannot overlay ${packageName}: missing installed package at ${installedPackagePath}`,
 			);
 		}
+		const installedRealPath = await fsp.realpath(installedPackagePath);
+		const packageRealPath = await fsp.realpath(packageDir);
+		if (installedRealPath === packageRealPath) {
+			continue;
+		}
 		for (const entry of ["dist", "src"]) {
 			const sourcePath = path.join(packageDir, entry);
 			if (!fs.existsSync(sourcePath)) {
