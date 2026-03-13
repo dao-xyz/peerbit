@@ -97,6 +97,11 @@ export const createLocalEncryptProvider = <
 >(
 	keys: K,
 ) => {
+	let symmetricKeyHash: Promise<Uint8Array> | undefined;
+	if (!isAsymmetricEncryptionKeys(keys)) {
+		symmetricKeyHash = sha256(keys);
+	}
+
 	return async (
 		bytes: Uint8Array,
 		parameters: Parameters,
@@ -151,7 +156,7 @@ export const createLocalEncryptProvider = <
 				cipher: coerce(cipher),
 				nonce,
 				envelope: new HashedKeyEnvelope({
-					hash: await sha256(keys),
+					hash: await (symmetricKeyHash ?? sha256(keys)),
 				}) as EnvelopeFromParameter<Parameters>,
 			};
 		}
