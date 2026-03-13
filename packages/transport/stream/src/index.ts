@@ -204,7 +204,7 @@ type PeerOutboundQueueOptions = Pick<
 >;
 interface OutboundCandidate {
 	raw: Stream;
-	pushable: PushableLanes<Uint8Array>;
+	pushable: PushableLanes<Uint8Array | Uint8ArrayList>;
 	created: number;
 	bytesDelivered: number;
 	aborted: boolean;
@@ -308,7 +308,9 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	public get rawOutboundStreams(): Stream[] {
 		return this.outboundStreams.map((c) => c.raw);
 	}
-	public _getActiveOutboundPushable(): PushableLanes<Uint8Array> | undefined {
+	public _getActiveOutboundPushable():
+		| PushableLanes<Uint8Array | Uint8ArrayList>
+		| undefined {
 		return this.outboundStreams[0]?.pushable;
 	}
 	public getOutboundQueuedBytes(): number {
@@ -351,15 +353,15 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	private _addOutboundCandidate(raw: Stream): OutboundCandidate {
 		const existing = this.outboundStreams.find((c) => c.raw === raw);
 		if (existing) return existing;
-		const pushableInst = pushableLanes<Uint8Array>({
+		const pushableInst = pushableLanes<Uint8Array | Uint8ArrayList>({
 			lanes: PRIORITY_LANES,
 			maxBufferedBytes: this.outboundQueue?.maxBufferedBytes,
 			overflow: "throw",
 			onBufferSize: () => {
 				this.dispatchEvent(new CustomEvent("queue:outbound"));
 			},
-			onPush: (val: Uint8Array) => {
-				candidate.bytesDelivered += val.length || val.byteLength || 0;
+			onPush: (val) => {
+				candidate.bytesDelivered += val.byteLength;
 			},
 		});
 		const candidate: OutboundCandidate = {
@@ -383,9 +385,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 							new AbortError("Outbound stream aborted")
 						);
 					}
-					const bytes =
-						chunk instanceof Uint8ArrayList ? chunk.subarray() : chunk;
-					if (!raw.send(bytes)) {
+					if (!raw.send(chunk)) {
 						await waitForDrain(raw, this.outboundAbortController.signal);
 					}
 				}
@@ -547,7 +547,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		}
 
 		// Write to all current outbound streams (normally 1, but >1 during grace)
-		const payload = data instanceof Uint8Array ? data : data.subarray();
+		const payloadBytes = data.byteLength;
 		let successes = 0;
 		let failures: any[] = [];
 		const failed: OutboundCandidate[] = [];
@@ -559,8 +559,8 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			}
 
 			try {
-				this.assertQueueCapacity(c, payload.byteLength, priority);
-				c.pushable.push(payload, getLaneFromPriority(priority));
+				this.assertQueueCapacity(c, payloadBytes, priority);
+				c.pushable.push(data, getLaneFromPriority(priority));
 				successes++;
 			} catch (e) {
 				failures.push(e);
@@ -606,7 +606,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 				else this.dispatchEvent(new CustomEvent("stream:outbound"));
 			}
 		}
-		this.usedBandWidthTracker.add(payload.byteLength);
+		this.usedBandWidthTracker.add(payloadBytes);
 	}
 
 	/**
@@ -2126,8 +2126,10 @@ export abstract class DirectStream<
 	}
 
 	private async modifySeenCache(
-		message: Uint8Array,
-		getIdFn: (bytes: Uint8Array) => Promise<string> = getMsgId,
+		message: Uint8Array | Uint8ArrayList,
+		getIdFn: (
+			bytes: Uint8Array | Uint8ArrayList,
+		) => Promise<string> = getMsgId,
 	) {
 		const msgId = await getIdFn(message);
 		const seen = this.seenCache.get(msgId);
@@ -2353,11 +2355,7 @@ export abstract class DirectStream<
 		messageBytes: Uint8ArrayList | Uint8Array,
 		message: DataMessage,
 	) {
-		const seenBefore = await this.modifySeenCache(
-			messageBytes instanceof Uint8ArrayList
-				? messageBytes.subarray()
-				: messageBytes,
-		);
+		const seenBefore = await this.modifySeenCache(messageBytes);
 
 		return this.onDataMessage(from, peerStream, message, seenBefore);
 	}
@@ -2372,7 +2370,8 @@ export abstract class DirectStream<
 			messageBytes instanceof Uint8Array
 				? messageBytes
 				: messageBytes.subarray(),
-			(bytes) => sha256Base64(bytes),
+			(bytes) =>
+				sha256Base64(bytes instanceof Uint8Array ? bytes : bytes.subarray()),
 		);
 
 		if (seenBefore > 0) {
@@ -2989,8 +2988,7 @@ export abstract class DirectStream<
 			const bytes = message.bytes();
 
 			if (!isRelayed) {
-				const bytesArray = bytes instanceof Uint8Array ? bytes : bytes.subarray();
-				await this.modifySeenCache(bytesArray);
+				await this.modifySeenCache(bytes);
 			}
 
 			/**

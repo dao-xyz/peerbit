@@ -72,6 +72,10 @@ const measure = async <T>(fn: () => Promise<T> | T) => {
 
 const formatBytes = (value: number) => Number(value.toFixed(2));
 
+const toUint8Array = (
+	bytes: Uint8Array | { subarray(): Uint8Array; byteLength: number },
+) => (bytes instanceof Uint8Array ? bytes : bytes.subarray());
+
 const summarize = async (payloadBytes: number) => {
 	const key = await Ed25519Keypair.create();
 	const symmetricKey = randomBytes(32);
@@ -140,16 +144,17 @@ const summarize = async (payloadBytes: number) => {
 		});
 		const genericEncodedMessage = await measure(() => serialize(message));
 		const encodedMessage = await measure(() => message.bytes());
+		const encodedMessageBytes = toUint8Array(encodedMessage.value);
 		if (
-			genericEncodedMessage.value.byteLength !== encodedMessage.value.byteLength ||
+			genericEncodedMessage.value.byteLength !== encodedMessageBytes.byteLength ||
 			!genericEncodedMessage.value.every(
-				(byte, index) => byte === encodedMessage.value[index],
+				(byte, index) => byte === encodedMessageBytes[index],
 			)
 		) {
 			throw new Error("Optimized message bytes do not match");
 		}
 		const encryptedMessage = await measure(() =>
-			encryptionProvider(encodedMessage.value, { type: "hash" }),
+			encryptionProvider(encodedMessageBytes, { type: "hash" }),
 		);
 
 		const totalSerializedBytes =
@@ -158,7 +163,7 @@ const summarize = async (payloadBytes: number) => {
 			encodedPayload.value.byteLength +
 			signable.value.byteLength +
 			encodedEntry.value.byteLength +
-			encodedMessage.value.byteLength +
+			encodedMessageBytes.byteLength +
 			encryptedMessage.value.cipher.byteLength;
 
 		return {
@@ -183,7 +188,7 @@ const summarize = async (payloadBytes: number) => {
 				payloadBytes: encodedPayload.value.byteLength,
 				signableBytes: signable.value.byteLength,
 				entryBytes: encodedEntry.value.byteLength,
-				messageBytes: encodedMessage.value.byteLength,
+				messageBytes: encodedMessageBytes.byteLength,
 				encryptedBytes: encryptedMessage.value.cipher.byteLength,
 			},
 			amplification: {

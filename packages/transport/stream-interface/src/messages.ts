@@ -470,7 +470,8 @@ export class DataMessage<
 		});
 		if (this._data != null) {
 			writer.u8(1);
-			BinaryWriter.uint8Array(this._data, writer);
+			writer.u32(this._data.length);
+			return new Uint8ArrayList(writer.finalize(), this._data);
 		} else {
 			writer.u8(0);
 		}
