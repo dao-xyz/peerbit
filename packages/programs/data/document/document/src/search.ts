@@ -1547,13 +1547,16 @@ export class DocumentIndex<
 			gid: entry.meta.gid,
 			size: entry.payload.byteLength,
 		});
-		return this.putWithContext(value, id, context);
+		return this.putWithContext(value, id, context, {
+			replace: existingDefined != null,
+		});
 	}
 
 	public async putWithContext(
 		value: T,
 		id: indexerTypes.IdKey,
 		context: types.Context,
+		options?: { replace?: boolean },
 	): Promise<{ context: types.Context; indexable: I }> {
 		const idString = id.primitive;
 		if (
@@ -1582,7 +1585,7 @@ export class DocumentIndex<
 
 		coerceWithContext(value, context);
 
-		await this.index.put(wrappedValueToIndex);
+		await this.index.put(wrappedValueToIndex, undefined, options);
 		return { context, indexable: valueToIndex };
 	}
 

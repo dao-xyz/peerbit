@@ -100,7 +100,13 @@ export interface Index<T extends Record<string, any>, NestedType = any> {
 		id: IdKey,
 		options?: { shape: Shape },
 	): MaybePromise<IndexedResult<T> | undefined>;
-	put(value: T, id?: IdKey): MaybePromise<void>;
+	put(
+		value: T,
+		id?: IdKey,
+		options?: {
+			replace?: boolean;
+		},
+	): MaybePromise<void>;
 	del(query: DeleteOptions): MaybePromise<IdKey[]>;
 	sum(query: SumOptions): MaybePromise<bigint | number>;
 	count(query?: CountOptions): MaybePromise<number>;

@@ -167,6 +167,10 @@ test("runs the document write benchmark with persistence and clone sqlite protoc
 				sql.includes("_index_id on")
 			);
 		});
+		const hasReplaceInsert = profiles.some((sample) => {
+			const sql = (sample.sql ?? "").toLowerCase();
+			return sample.requestType === "run-statement" && sql.includes("insert or replace into");
+		});
 		const byIdAllQueryCount = profiles.filter((sample) => {
 			const sql = (sample.sql ?? "").toLowerCase();
 			return (
@@ -186,6 +190,7 @@ test("runs the document write benchmark with persistence and clone sqlite protoc
 		expect(hasCoordinateInsert).toBeFalsy();
 		expect(hasLogHeadInsert).toBeFalsy();
 		expect(hasExplicitPrimaryKeyIndexCreation).toBeFalsy();
+		expect(hasReplaceInsert).toBeFalsy();
 		expect(byIdAllQueryCount).toBeLessThanOrEqual(12);
 	} finally {
 		await context?.close();

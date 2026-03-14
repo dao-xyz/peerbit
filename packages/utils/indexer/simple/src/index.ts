@@ -79,6 +79,7 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 	put(
 		value: T,
 		id = types.toId(types.extractFieldValue(value, this.indexByArr)),
+		_options?: { replace?: boolean },
 	): void {
 		this._index.set(id.primitive, { id, value });
 	}

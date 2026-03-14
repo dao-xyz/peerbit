@@ -30,13 +30,15 @@ import {
 	selectChildren,
 } from "./schema.js";
 import type { Database, Statement } from "./types.js";
-import { isFKError } from "./utils.js";
+import { isFKError, isUniqueConstraintError } from "./utils.js";
 
 const escapePathToSQLName = (path: string[]) => {
 	return path.map((x) => x.replace(/[^a-zA-Z0-9]/g, "_"));
 };
 
 const putStatementKey = (table: Table) => table.name + "_put";
+const insertKnownIdStatementKey = (table: Table) =>
+	table.name + "_insert_known_id";
 const putStatementBatchNoReturnKey = (table: Table, rows: number) =>
 	table.name + "_put_batch_noreturn_" + rows;
 const replaceStatementKey = (table: Table) => table.name + "_replicate";
@@ -312,10 +314,17 @@ export class SQLLiteIndex<T extends Record<string, any>>
 			// put and return the id
 			let sqlPut = `insert into ${table.name}  (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")}) RETURNING ${table.primary};`;
 
+			// insert without replace when the caller already knows the id is fresh
+			let sqlInsertKnownId = `insert into ${table.name} (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")});`;
+
 			// insert or replace with id already defined
 			let sqlReplace = `insert or replace into ${table.name} (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")});`;
 
 			await this.properties.db.prepare(sqlPut, putStatementKey(table));
+			await this.properties.db.prepare(
+				sqlInsertKnownId,
+				insertKnownIdStatementKey(table),
+			);
 			await this.properties.db.prepare(sqlReplace, replaceStatementKey(table));
 
 			if (table.parent) {
@@ -453,6 +462,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 	async put(
 		value: T,
 		_id?: any,
+		options?: { replace?: boolean },
 	): Promise<void> {
 		return this.withWriteBarrier(async () => {
 			const classOfValue = value.constructor as Constructor<T>;
@@ -462,12 +472,35 @@ export class SQLLiteIndex<T extends Record<string, any>>
 					let statement: Statement | undefined = undefined;
 					try {
 						if (preId != null) {
-							statement = this.properties.db.statements.get(
-								replaceStatementKey(table),
-							)!;
-							this.fkMode === "race-tolerant"
-								? await runIgnoreFK(statement, values)
-								: await statement.run(values);
+							const shouldReplace = options?.replace ?? true;
+							if (!shouldReplace) {
+								statement = this.properties.db.statements.get(
+									insertKnownIdStatementKey(table),
+								)!;
+								try {
+									this.fkMode === "race-tolerant"
+										? await runIgnoreFK(statement, values)
+										: await statement.run(values);
+								} catch (error) {
+									if (!isUniqueConstraintError(error)) {
+										throw error;
+									}
+									await statement.reset?.();
+									statement = this.properties.db.statements.get(
+										replaceStatementKey(table),
+									)!;
+									this.fkMode === "race-tolerant"
+										? await runIgnoreFK(statement, values)
+										: await statement.run(values);
+								}
+							} else {
+								statement = this.properties.db.statements.get(
+									replaceStatementKey(table),
+								)!;
+								this.fkMode === "race-tolerant"
+									? await runIgnoreFK(statement, values)
+									: await statement.run(values);
+							}
 							return preId;
 						} else {
 							statement = this.properties.db.statements.get(
