@@ -524,6 +524,19 @@ export type WithContext<I> = {
 	__context: types.Context;
 } & I;
 
+export const INDEX_CONTEXT_SHAPE = {
+	__context: {
+		created: true,
+		modified: true,
+		head: true,
+		gid: true,
+		size: true,
+	},
+} as const;
+
+export type IndexedContextOnly<I extends Record<string, any>> =
+	indexerTypes.ReturnTypeFromShape<WithContext<I>, typeof INDEX_CONTEXT_SHAPE>;
+
 export type WithIndexed<T, I> = {
 	// experimental, used to quickly get the indexed representation
 	__indexed: I;
@@ -1534,10 +1547,18 @@ export class DocumentIndex<
 		value: T,
 		id: indexerTypes.IdKey,
 		entry: Entry<Operation>,
-		existing: indexerTypes.IndexedResult<WithContext<I>> | null | undefined,
+		existing:
+			| indexerTypes.IndexedResult<WithContext<I>>
+			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
+			| null
+			| undefined,
 	): Promise<{ context: types.Context; indexable: I }> {
 		const existingDefined =
-			existing === undefined ? await this.index.get(id) : existing;
+			existing === undefined
+				? await this.index.get(id, {
+						shape: INDEX_CONTEXT_SHAPE,
+					})
+				: existing;
 		const context = new types.Context({
 			created:
 				existingDefined?.value.__context.created ||

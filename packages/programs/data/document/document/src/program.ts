@@ -43,9 +43,12 @@ import {
 	type CanSearch,
 	DocumentIndex,
 	type GetOptions,
+	type IndexedContextOnly,
+	INDEX_CONTEXT_SHAPE,
 	type PrefetchOptions,
 	type ReachScope,
 	type TransformOptions,
+	type WithContext,
 	type WithIndexedContext,
 	coerceWithContext,
 	coerceWithIndexed,
@@ -174,6 +177,33 @@ export class Documents<
 
 	get index(): DocumentIndex<T, I, D> {
 		return this._index;
+	}
+
+	private getLocalIndexedContext(
+		key: indexerTypes.IdKey,
+	): Promise<indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined> {
+		return this._index.index.get(key, {
+			shape: INDEX_CONTEXT_SHAPE,
+		}) as Promise<
+			indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined
+		>;
+	}
+
+	private getExistingContext(
+		existing:
+			| ResultIndexedValue<WithContext<I>>
+			| indexerTypes.IndexedResult<WithContext<I>>
+			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
+			| null
+			| undefined,
+	): indexerTypes.ReturnTypeFromShape<
+		WithContext<I>,
+		typeof INDEX_CONTEXT_SHAPE
+	>["__context"]
+		| undefined {
+		return existing instanceof ResultIndexedValue
+			? existing.context
+			: existing?.value.__context;
 	}
 
 	get changes() {
@@ -461,11 +491,8 @@ export class Documents<
 								remote: { strategy: "fallback" },
 							})
 						)?.[0]?.results[0]
-					: await this.index.index.get(key);
-				const existingContext =
-					existingDocument instanceof ResultIndexedValue
-						? existingDocument.context
-						: existingDocument?.value.__context;
+					: await this.getLocalIndexedContext(key);
+				const existingContext = this.getExistingContext(existingDocument);
 				if (existingContext && existingContext.head !== entry.hash) {
 					//  econd condition can false if we reset the operation log, while not  resetting the index. For example when doing .recover
 					if (this.immutable) {
@@ -524,15 +551,12 @@ export class Documents<
 								remote: true,
 							})
 						)?.[0]?.results[0]
-					: await this.index.index.get(
+					: await this.getLocalIndexedContext(
 							operation.key instanceof indexerTypes.IdKey
 								? operation.key
 								: indexerTypes.toId(operation.key),
 						);
-				const existingHead =
-					existingDocument instanceof ResultIndexedValue
-						? existingDocument.context.head
-						: existingDocument?.value.__context.head;
+				const existingHead = this.getExistingContext(existingDocument)?.head;
 
 				if (!existingHead) {
 					// already deleted
@@ -595,8 +619,8 @@ export class Documents<
 							remote: { replicate: options?.replicate },
 						})
 					)?.[0]?.results[0]?.context.head
-				: (await this._index.index.get(indexerTypes.toId(keyValue)))?.value
-						.__context.head;
+				: (await this.getLocalIndexedContext(indexerTypes.toId(keyValue)))
+						?.value.__context.head;
 
 		let operation: PutOperation | PutWithKeyOperation;
 		if (this.compatibility === 6) {
@@ -746,7 +770,7 @@ export class Documents<
 					// if no casual ordering is used, use timestamps to order docs
 					let existing = reference?.unique
 						? null
-						: (await this._index.index.get(key)) || null;
+						: (await this.getLocalIndexedContext(key)) || null;
 					if (!this.strictHistory && existing) {
 						// if immutable use oldest, else use newest
 						let shouldIgnoreChange = this.immutable

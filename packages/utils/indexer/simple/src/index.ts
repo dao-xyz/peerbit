@@ -65,7 +65,10 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 		return this;
 	}
 
-	async get(id: types.IdKey): Promise<types.IndexedResult<T> | undefined> {
+	async get(
+		id: types.IdKey,
+		_options?: { shape: types.Shape },
+	): Promise<types.IndexedResult<T> | undefined> {
 		const value = this._index.get(id.primitive);
 		if (!value) {
 			return;
