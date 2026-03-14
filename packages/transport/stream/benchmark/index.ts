@@ -21,12 +21,12 @@ const usage = () => {
 			"Benchmarks:",
 			"  directstream-sim  in-memory DirectStream network sim",
 			"  topology-sim      discrete-event topology/routing sim",
-			"  transfer          small real-libp2p throughput microbench",
+			"  transfer          real-libp2p transfer throughput bench",
 			"",
 			"Examples:",
 			"  pnpm -C packages/transport/stream run bench -- directstream-sim --nodes 500 --degree 6",
 			"  pnpm -C packages/transport/stream run bench -- topology-sim --nodes 2000 --degree 4",
-			"  pnpm -C packages/transport/stream run bench -- transfer",
+			"  pnpm -C packages/transport/stream run bench -- transfer --sizes 262144,1048576 --mode both",
 		].join("\n"),
 	);
 };
