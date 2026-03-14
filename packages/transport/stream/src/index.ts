@@ -19,6 +19,7 @@ import { type Multiaddr, multiaddr } from "@multiformats/multiaddr";
 import { Circuit } from "@multiformats/multiaddr-matcher";
 import { Cache } from "@peerbit/cache";
 import {
+	PreHash,
 	PublicSignKey,
 	getKeypairFromPrivateKey,
 	getPublicKeyFromPeerId,
@@ -1172,7 +1173,7 @@ export abstract class DirectStream<
 
 		const signKey = getKeypairFromPrivateKey(components.privateKey);
 		this.seekTimeout = seekTimeout;
-		this.sign = signKey.sign.bind(signKey);
+		this.sign = (bytes) => signKey.sign(bytes, PreHash.SHA_256);
 		this.peerId = components.peerId;
 		this.publicKey = signKey.publicKey;
 		if (inboundIdleTimeout != null)

@@ -29,15 +29,19 @@ export const verifySignatureEd25519 = async (
 	let res = false;
 	try {
 		const hashedData = await prehashFn(data, signature.prehash);
-
-		const verified = sodium.crypto_sign_verify_detached(
-			signature.signature,
-			hashedData,
-			(signature.publicKey as Ed25519PublicKey).publicKey,
-		);
-		res = verified;
+		res = verifySignatureEd25519Prepared(signature, hashedData);
 	} catch (error) {
 		return false;
 	}
 	return res;
 };
+
+export const verifySignatureEd25519Prepared = (
+	signature: SignatureWithKey,
+	preparedData: Uint8Array,
+) =>
+	sodium.crypto_sign_verify_detached(
+		signature.signature,
+		preparedData,
+		(signature.publicKey as Ed25519PublicKey).publicKey,
+	);

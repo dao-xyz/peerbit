@@ -9,6 +9,7 @@ import { type Multiaddr } from "@multiformats/multiaddr";
 import { Cache } from "@peerbit/cache";
 import {
 	Ed25519Keypair,
+	PreHash,
 	type PublicSignKey,
 	randomBytes,
 } from "@peerbit/crypto";
@@ -304,6 +305,33 @@ const service = (s: TestSessionStream, i: number, service: string) =>
 	(s.peers[i].services as any)[service];
 
 describe("streams", function () {
+	describe("signing", () => {
+		let session: TestSessionStream;
+
+		beforeEach(async () => {
+			session = await disconnected(1);
+		});
+
+		afterEach(async () => {
+			await session.stop();
+		});
+
+		it("creates stream messages with sha256-prehashed signatures", async () => {
+			const message = await stream(session, 0).createMessage(
+				new Uint8Array([1, 2, 3]),
+				{
+					mode: new AcknowledgeAnyWhere({ redundancy: 1 }),
+				},
+			);
+
+			expect(message.header.signatures?.signatures).to.have.length(1);
+			expect(message.header.signatures?.signatures[0]?.prehash).to.equal(
+				PreHash.SHA_256,
+			);
+			expect(await message.verify(true)).to.equal(true);
+		});
+	});
+
 	describe("mode", () => {
 		const data = new Uint8Array([1, 2, 3]);
 

@@ -10,11 +10,13 @@ import {
 } from "@dao-xyz/borsh";
 import type { PeerId } from "@libp2p/interface";
 import {
+	PreHash,
 	PublicSignKey,
 	SignatureWithKey,
+	prehashFn,
 	randomBytes,
 	toBase64,
-	verify,
+	verifyPrepared,
 } from "@peerbit/crypto";
 import { Uint8ArrayList } from "uint8arraylist";
 import { type PeerRefs, coercePeerRefsToHashes } from "./keys.js";
@@ -363,9 +365,18 @@ const verifyMultiSig = async (
 		message instanceof Message
 			? message.getSignableBytes()
 			: serializeUnsigned(message);
+	const preparedByPrehash = new Map<number, Uint8Array>();
 
 	for (const signature of signatures.signatures) {
-		if (!(await verify(signature, bytes))) {
+		let prepared = preparedByPrehash.get(signature.prehash);
+		if (!prepared) {
+			prepared =
+				signature.prehash === PreHash.NONE
+					? bytes
+					: await prehashFn(bytes, signature.prehash);
+			preparedByPrehash.set(signature.prehash, prepared);
+		}
+		if (!(await verifyPrepared(signature, prepared))) {
 			return false;
 		}
 	}
