@@ -9,9 +9,45 @@ on:
   pull_request:
     types: ['opened', 'reopened', 'synchronize']
 jobs:
+  build_workspace:
+    name: Build Workspace
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      PEERBIT_TEST_SESSION: mock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install deps
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          pnpm install --frozen-lockfile=false
+      - name: Build
+        run: |
+          pnpm run build
+      - name: Pack build outputs
+        run: |
+          find . \
+            \( -path '*/node_modules' -o -path '*/.git' \) -prune -o \
+            -type d -name dist -print0 | \
+            tar --null -T - -czf workspace-dist.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workspace-dist-${{ github.sha }}
+          path: workspace-dist.tar.gz
+          retention-days: 1
+
   test_push:
     if: github.event_name == 'push'
     name: Test (${{ matrix.test_cmd }}, Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
+    needs: build_workspace
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
@@ -44,9 +80,12 @@ jobs:
           pnpm install --frozen-lockfile=false
           # NOTE: CI runs node-only tests (`-t node`). Playwright system deps are not required
           # here and have proven flaky on GitHub runners due to transient apt repository errors.
-      - name: Build
+      - uses: actions/download-artifact@v4
+        with:
+          name: workspace-dist-${{ github.sha }}
+      - name: Restore build outputs
         run: |
-          pnpm run build
+          tar -xzf workspace-dist.tar.gz
       - name: Lint
         if: matrix.test_cmd == 'pnpm run test:ci:part-1'
         run: pnpm run lint
@@ -60,6 +99,7 @@ jobs:
   test_pr:
     if: github.event_name == 'pull_request'
     name: Test (${{ matrix.test_cmd }}, Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
+    needs: build_workspace
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
@@ -93,9 +133,12 @@ jobs:
           pnpm install --frozen-lockfile=false
           # NOTE: CI runs node-only tests (`-t node`). Playwright system deps are not required
           # here and have proven flaky on GitHub runners due to transient apt repository errors.
-      - name: Build
+      - uses: actions/download-artifact@v4
+        with:
+          name: workspace-dist-${{ github.sha }}
+      - name: Restore build outputs
         run: |
-          pnpm run build
+          tar -xzf workspace-dist.tar.gz
       - name: Lint
         if: matrix.test_cmd == 'pnpm run test:ci:part-1'
         run: pnpm run lint
