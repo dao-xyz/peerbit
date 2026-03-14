@@ -63,17 +63,33 @@ jobs:
             const wantAll = argv.includes('all');
             const wantSharedLog =
               wantAll || argv.includes('shared-log') || argv.includes('sharedlog') || argv.includes('shared');
-            const wantDocument = wantAll || argv.includes('document') || argv.includes('doc');
+            const wantDocument =
+              wantAll ||
+              argv.includes('document') ||
+              argv.includes('doc') ||
+              argv.includes('ingest') ||
+              argv.includes('file-ingest');
 
             const touchedSharedLog = filenames.some(
               (p) =>
                 p.startsWith('packages/programs/data/shared-log/') ||
                 p.startsWith('packages/utils/rateless-iblt/'),
             );
-            const touchedDocument = filenames.some((p) => p.startsWith('packages/programs/data/document/'));
+            const touchedIngestStack = filenames.some(
+              (p) =>
+                p.startsWith('packages/programs/data/document/') ||
+                p.startsWith('packages/programs/data/shared-log/') ||
+                p.startsWith('packages/log/') ||
+                p.startsWith('packages/transport/stream/') ||
+                p.startsWith('packages/transport/stream-interface/') ||
+                p.startsWith('packages/transport/blocks/') ||
+                p.startsWith('packages/transport/blocks-interface/') ||
+                p.startsWith('packages/utils/indexer/') ||
+                p.startsWith('packages/utils/crypto/'),
+            );
 
             const runSharedLog = wantSharedLog || (!hasArgs && touchedSharedLog);
-            const runDocument = wantDocument || (!hasArgs && touchedDocument);
+            const runDocument = wantDocument || (!hasArgs && touchedIngestStack);
 
             core.setOutput('run_shared_log', runSharedLog ? 'true' : 'false');
             core.setOutput('run_document', runDocument ? 'true' : 'false');
@@ -202,12 +218,22 @@ jobs:
           BENCH_JSON: "1"
           DOC_WARMUP: "2"
           DOC_ITERATIONS: "10"
+          FILE_INGEST_WARMUP: "1"
+          FILE_INGEST_ITERATIONS: "3"
+          FILE_INGEST_CHUNKS: "24"
+          FILE_INGEST_CHUNK_BYTES: "262144"
+          FILE_INGEST_READY_TIMEOUT_MS: "30000"
         run: |
           mkdir -p "$GITHUB_WORKSPACE/bench-results/base"
           if [ -f ./benchmark/document-put.ts ]; then
             node --loader ts-node/esm ./benchmark/document-put.ts > "$GITHUB_WORKSPACE/bench-results/base/document-put.json"
           else
             echo "document-put benchmark not present in base; skipping."
+          fi
+          if [ -f ./benchmark/file-ingest.ts ]; then
+            node --loader ts-node/esm ./benchmark/file-ingest.ts > "$GITHUB_WORKSPACE/bench-results/base/file-ingest.json"
+          else
+            echo "file-ingest benchmark not present in base; skipping."
           fi
 
       - name: Run document benchmarks (head)
@@ -218,12 +244,22 @@ jobs:
           BENCH_JSON: "1"
           DOC_WARMUP: "2"
           DOC_ITERATIONS: "10"
+          FILE_INGEST_WARMUP: "1"
+          FILE_INGEST_ITERATIONS: "3"
+          FILE_INGEST_CHUNKS: "24"
+          FILE_INGEST_CHUNK_BYTES: "262144"
+          FILE_INGEST_READY_TIMEOUT_MS: "30000"
         run: |
           mkdir -p "$GITHUB_WORKSPACE/bench-results/head"
           if [ -f ./benchmark/document-put.ts ]; then
             node --loader ts-node/esm ./benchmark/document-put.ts > "$GITHUB_WORKSPACE/bench-results/head/document-put.json"
           else
             echo "document-put benchmark not present in head; skipping."
+          fi
+          if [ -f ./benchmark/file-ingest.ts ]; then
+            node --loader ts-node/esm ./benchmark/file-ingest.ts > "$GITHUB_WORKSPACE/bench-results/head/file-ingest.json"
+          else
+            echo "file-ingest benchmark not present in head; skipping."
           fi
 
       - name: Comment results
@@ -269,6 +305,11 @@ jobs:
                 title: 'document: put',
                 base: 'bench-results/base/document-put.json',
                 head: 'bench-results/head/document-put.json',
+              },
+              {
+                title: 'document: chunked file-ingest',
+                base: 'bench-results/base/file-ingest.json',
+                head: 'bench-results/head/file-ingest.json',
               },
             ];
 
