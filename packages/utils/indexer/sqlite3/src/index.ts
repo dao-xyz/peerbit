@@ -7,8 +7,10 @@ import type {
 	SQLiteProfileSample,
 } from "./sqlite3.browser.js";
 import type {
+	SQLiteLockingMode,
 	SQLitePragmaOptions,
 	SQLiteSynchronousMode,
+	SQLiteTempStoreMode,
 	SqliteWorkerProtocol,
 } from "./sqlite3-messages.worker.js";
 
@@ -34,8 +36,10 @@ const createDatabase = (
 export { create, createDatabase, SQLiteIndices, SQLLiteIndex };
 export type {
 	SQLiteBrowserOptions,
+	SQLiteLockingMode,
 	SQLitePragmaOptions,
 	SQLiteProfileSample,
 	SQLiteSynchronousMode,
+	SQLiteTempStoreMode,
 	SqliteWorkerProtocol,
 };

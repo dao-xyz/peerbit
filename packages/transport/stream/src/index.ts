@@ -2316,7 +2316,7 @@ export abstract class DirectStream<
 				x.hashcode(),
 			);
 
-			await this.publishMessage(
+			void this.publishMessage(
 				this.publicKey,
 				await new ACK({
 					messageIdToAcknowledge: message.id,
@@ -2341,7 +2341,7 @@ export abstract class DirectStream<
 											.getAddresses()
 											.map((x) => x.toString()),
 									)
-								: undefined,
+									: undefined,
 					}),
 				}).sign(this.sign),
 				[peerStream],

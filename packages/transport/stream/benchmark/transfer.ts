@@ -27,6 +27,7 @@ type IterationResult = {
 	iteration: number;
 	publishResolvedMs: number;
 	receiverObservedMs: number;
+	publisherTailMs: number;
 	completeMs: number;
 };
 
@@ -39,6 +40,9 @@ type CaseResult = {
 	metrics: {
 		publishResolvedMsAvg: number;
 		receiverObservedMsAvg: number;
+		publisherTailMsAvg: number;
+		publisherTailMsMedian: number;
+		publisherTailMsP95: number;
 		completeMsAvg: number;
 		completeMsMedian: number;
 		completeMsP95: number;
@@ -194,6 +198,7 @@ const summarize = (
 ): CaseResult => {
 	const publishResolved = iterationResults.map((result) => result.publishResolvedMs);
 	const receiverObserved = iterationResults.map((result) => result.receiverObservedMs);
+	const publisherTail = iterationResults.map((result) => result.publisherTailMs);
 	const complete = iterationResults.map((result) => result.completeMs);
 	const elapsedSeconds =
 		complete.reduce((sum, value) => sum + value, 0) / 1_000;
@@ -208,6 +213,9 @@ const summarize = (
 		metrics: {
 			publishResolvedMsAvg: round(average(publishResolved)),
 			receiverObservedMsAvg: round(average(receiverObserved)),
+			publisherTailMsAvg: round(average(publisherTail)),
+			publisherTailMsMedian: round(percentile(publisherTail, 0.5)),
+			publisherTailMsP95: round(percentile(publisherTail, 0.95)),
 			completeMsAvg: round(average(complete)),
 			completeMsMedian: round(percentile(complete, 0.5)),
 			completeMsP95: round(percentile(complete, 0.95)),
@@ -308,10 +316,15 @@ const main = async () => {
 								publishResolvedMs = performance.now() - startedAt;
 							});
 						await Promise.all([publishPromise, receivePromise]);
+						const publisherTailMs = Math.max(
+							0,
+							publishResolvedMs - receiverObservedMs,
+						);
 						iterationResults.push({
 							iteration: run * options.iterations + measuredIteration + 1,
 							publishResolvedMs: round(publishResolvedMs, 3),
 							receiverObservedMs: round(receiverObservedMs, 3),
+							publisherTailMs: round(publisherTailMs, 3),
 							completeMs: round(
 								Math.max(publishResolvedMs, receiverObservedMs),
 								3,
@@ -344,6 +357,9 @@ const main = async () => {
 				completeMsP95: result.metrics.completeMsP95,
 				publishResolvedMsAvg: result.metrics.publishResolvedMsAvg,
 				receiverObservedMsAvg: result.metrics.receiverObservedMsAvg,
+				publisherTailMsAvg: result.metrics.publisherTailMsAvg,
+				publisherTailMsMedian: result.metrics.publisherTailMsMedian,
+				publisherTailMsP95: result.metrics.publisherTailMsP95,
 				opsPerSecond: result.metrics.opsPerSecond,
 				mbPerSecond: result.metrics.mbPerSecond,
 			})),

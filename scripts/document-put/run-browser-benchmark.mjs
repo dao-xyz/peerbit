@@ -145,6 +145,8 @@ const runCase = async ({
 	payloadBytes,
 	count,
 	sqliteSynchronous,
+	sqliteLockingMode,
+	sqliteTempStore,
 }) => {
 	const origin = new URL(baseURL).origin;
 	let context;
@@ -177,6 +179,10 @@ const runCase = async ({
 			count: String(count),
 			...profile.params,
 			...(sqliteSynchronous ? { sqlitesynchronous: sqliteSynchronous } : {}),
+			...(sqliteLockingMode
+				? { sqlitelockingmode: sqliteLockingMode }
+				: {}),
+			...(sqliteTempStore ? { sqlitetempstore: sqliteTempStore } : {}),
 		});
 		if (!profile.persistent) {
 			params.set("inmemory", "1");
@@ -208,6 +214,10 @@ const runCase = async ({
 			sqliteProtocol: result.sqliteProtocol,
 			sqliteSynchronous:
 				result.sqliteSynchronous ?? sqliteSynchronous ?? "default",
+			sqliteLockingMode:
+				result.sqliteLockingMode ?? sqliteLockingMode ?? "default",
+			sqliteTempStore:
+				result.sqliteTempStore ?? sqliteTempStore ?? "default",
 			serializeMs: Number(result.serializeMs.toFixed(1)),
 			blockPutMs: Number(result.blockPutMs.toFixed(1)),
 			documentPutMs: Number(result.documentPutMs.toFixed(1)),
@@ -294,6 +304,8 @@ const main = async () => {
 		throw new Error("No valid profiles selected");
 	}
 	const sqliteSynchronous = args["sqlite-synchronous"];
+	const sqliteLockingMode = args["sqlite-locking-mode"];
+	const sqliteTempStore = args["sqlite-temp-store"];
 	const outputPath = args.output ? path.resolve(args.output) : undefined;
 	const countsOverride = args.count ? Number(args.count) : undefined;
 
@@ -319,6 +331,8 @@ const main = async () => {
 							payloadBytes,
 							count,
 							sqliteSynchronous,
+							sqliteLockingMode,
+							sqliteTempStore,
 						}),
 					);
 				}
@@ -330,6 +344,8 @@ const main = async () => {
 			repeats,
 			payloadSizes,
 			sqliteSynchronous: sqliteSynchronous ?? "default",
+			sqliteLockingMode: sqliteLockingMode ?? "default",
+			sqliteTempStore: sqliteTempStore ?? "default",
 			runs,
 			summary,
 		};

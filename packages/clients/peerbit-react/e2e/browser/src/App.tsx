@@ -57,6 +57,8 @@ const getSQLiteProtocol = (): SqliteWorkerProtocol | undefined => {
 
 type SqliteWorkerProtocol = "legacy" | "clone";
 type SQLiteSynchronousMode = "FULL" | "NORMAL" | "OFF";
+type SQLiteLockingMode = "NORMAL" | "EXCLUSIVE";
+type SQLiteTempStoreMode = "DEFAULT" | "FILE" | "MEMORY";
 
 const getSQLiteSynchronous = (): SQLiteSynchronousMode | undefined => {
 	const mode =
@@ -68,6 +70,32 @@ const getSQLiteSynchronous = (): SQLiteSynchronousMode | undefined => {
 	return normalized === "FULL" ||
 		normalized === "NORMAL" ||
 		normalized === "OFF"
+		? normalized
+		: undefined;
+};
+
+const getSQLiteLockingMode = (): SQLiteLockingMode | undefined => {
+	const mode =
+		new URLSearchParams(window.location.search).get("sqlitelockingmode");
+	if (!mode) {
+		return undefined;
+	}
+	const normalized = mode.toUpperCase();
+	return normalized === "NORMAL" || normalized === "EXCLUSIVE"
+		? normalized
+		: undefined;
+};
+
+const getSQLiteTempStore = (): SQLiteTempStoreMode | undefined => {
+	const mode =
+		new URLSearchParams(window.location.search).get("sqlitetempstore");
+	if (!mode) {
+		return undefined;
+	}
+	const normalized = mode.toUpperCase();
+	return normalized === "DEFAULT" ||
+		normalized === "FILE" ||
+		normalized === "MEMORY"
 		? normalized
 		: undefined;
 };
@@ -107,6 +135,8 @@ type SQLiteCreateOptions = {
 	protocol?: SqliteWorkerProtocol;
 	pragmas?: {
 		synchronous?: SQLiteSynchronousMode;
+		lockingMode?: SQLiteLockingMode;
+		tempStore?: SQLiteTempStoreMode;
 	};
 	profile?: boolean;
 	onProfile?: (sample: SQLiteProfileSample) => void;
@@ -614,6 +644,8 @@ const OPFSBenchmarkStatus = () => {
 type SQLiteBenchmarkResult = {
 	protocol: SqliteWorkerProtocol;
 	synchronous?: SQLiteSynchronousMode;
+	lockingMode?: SQLiteLockingMode;
+	tempStore?: SQLiteTempStoreMode;
 	payloadBytes: number;
 	count: number;
 	createMs: number;
@@ -627,11 +659,15 @@ type SQLiteBenchmarkResult = {
 const runSQLiteBenchmark = async ({
 	protocol,
 	synchronous,
+	lockingMode,
+	tempStore,
 	bytes,
 	count,
 }: {
 	protocol: SqliteWorkerProtocol;
 	synchronous?: SQLiteSynchronousMode;
+	lockingMode?: SQLiteLockingMode;
+	tempStore?: SQLiteTempStoreMode;
 	bytes: number;
 	count: number;
 }): Promise<SQLiteBenchmarkResult> => {
@@ -650,7 +686,10 @@ const runSQLiteBenchmark = async ({
 	const createStart = performance.now();
 	const db = await createDatabase(directory, {
 		protocol,
-		pragmas: synchronous ? { synchronous } : undefined,
+		pragmas:
+			synchronous || lockingMode || tempStore
+				? { synchronous, lockingMode, tempStore }
+				: undefined,
 		profile: true,
 		onProfile: (sample) => profiles.push(sample),
 	});
@@ -698,6 +737,8 @@ const runSQLiteBenchmark = async ({
 		return {
 			protocol,
 			synchronous,
+			lockingMode,
+			tempStore,
 			payloadBytes: bytes,
 			count,
 			createMs,
@@ -717,6 +758,8 @@ const SQLiteBenchmarkStatus = () => {
 	const bytes = React.useMemo(() => getNumberParam("bytes", 256 * 1024), []);
 	const count = React.useMemo(() => getNumberParam("count", 12), []);
 	const synchronous = React.useMemo(getSQLiteSynchronous, []);
+	const lockingMode = React.useMemo(getSQLiteLockingMode, []);
+	const tempStore = React.useMemo(getSQLiteTempStore, []);
 	const [status, setStatus] = React.useState("idle");
 	const [results, setResults] = React.useState<SQLiteBenchmarkResult[] | null>(
 		null,
@@ -733,12 +776,16 @@ const SQLiteBenchmarkStatus = () => {
 				const legacy = await runSQLiteBenchmark({
 					protocol: "legacy",
 					synchronous,
+					lockingMode,
+					tempStore,
 					bytes,
 					count,
 				});
 				const clone = await runSQLiteBenchmark({
 					protocol: "clone",
 					synchronous,
+					lockingMode,
+					tempStore,
 					bytes,
 					count,
 				});
@@ -757,7 +804,7 @@ const SQLiteBenchmarkStatus = () => {
 		return () => {
 			cancelled = true;
 		};
-	}, [bytes, count, enabled, synchronous]);
+	}, [bytes, count, enabled, lockingMode, synchronous, tempStore]);
 
 	if (!enabled) {
 		return null;
@@ -812,6 +859,8 @@ type DocumentBenchmarkResult = {
 	persisted: boolean | undefined;
 	sqliteProtocol?: SqliteWorkerProtocol;
 	sqliteSynchronous?: SQLiteSynchronousMode;
+	sqliteLockingMode?: SQLiteLockingMode;
+	sqliteTempStore?: SQLiteTempStoreMode;
 	serializeMs: number;
 	blockPutMs: number;
 	documentPutMs: number;
@@ -842,6 +891,8 @@ const DocumentBenchmarkStatus = ({
 	);
 	const count = React.useMemo(() => getNumberParam("count", 12), []);
 	const sqliteSynchronous = React.useMemo(getSQLiteSynchronous, []);
+	const sqliteLockingMode = React.useMemo(getSQLiteLockingMode, []);
+	const sqliteTempStore = React.useMemo(getSQLiteTempStore, []);
 	const inMemory = React.useMemo(getInMemoryEnabled, []);
 	const simpleIndex = React.useMemo(getSimpleIndexEnabled, []);
 	const docIndexMode = React.useMemo(getDocumentIndexMode, []);
@@ -926,6 +977,8 @@ const DocumentBenchmarkStatus = ({
 						persisted,
 						sqliteProtocol,
 						sqliteSynchronous,
+						sqliteLockingMode,
+						sqliteTempStore,
 						serializeMs,
 						blockPutMs,
 						documentPutMs,
@@ -959,8 +1012,10 @@ const DocumentBenchmarkStatus = ({
 		resetSQLiteProfiles,
 		simpleIndex,
 		docIndexMode,
+		sqliteLockingMode,
 		sqliteSynchronous,
 		sqliteProtocol,
+		sqliteTempStore,
 	]);
 
 	return (
@@ -1006,6 +1061,8 @@ const App = () => {
 	const simpleIndex = React.useMemo(getSimpleIndexEnabled, []);
 	const sqliteProtocol = React.useMemo(getSQLiteProtocol, []);
 	const sqliteSynchronous = React.useMemo(getSQLiteSynchronous, []);
+	const sqliteLockingMode = React.useMemo(getSQLiteLockingMode, []);
+	const sqliteTempStore = React.useMemo(getSQLiteTempStore, []);
 	const sqliteProfilesRef = React.useRef<SQLiteProfileSample[]>([]);
 
 	const resetSQLiteProfiles = React.useCallback(() => {
@@ -1065,9 +1122,16 @@ const App = () => {
 												};
 												return create(directory, {
 													protocol: sqliteProtocol,
-													pragmas: sqliteSynchronous
-														? { synchronous: sqliteSynchronous }
-														: undefined,
+													pragmas:
+														sqliteSynchronous ||
+														sqliteLockingMode ||
+														sqliteTempStore
+															? {
+																	synchronous: sqliteSynchronous,
+																	lockingMode: sqliteLockingMode,
+																	tempStore: sqliteTempStore,
+																}
+															: undefined,
 													profile: documentBenchmark,
 													onProfile: (sample: SQLiteProfileSample) => {
 														sqliteProfilesRef.current.push(sample);

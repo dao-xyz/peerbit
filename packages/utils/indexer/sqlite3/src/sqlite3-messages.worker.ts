@@ -2,8 +2,12 @@ import { fromBase64, toBase64 } from "@peerbit/crypto";
 
 export type SqliteWorkerProtocol = "legacy" | "clone";
 export type SQLiteSynchronousMode = "FULL" | "NORMAL" | "OFF";
+export type SQLiteLockingMode = "NORMAL" | "EXCLUSIVE";
+export type SQLiteTempStoreMode = "DEFAULT" | "FILE" | "MEMORY";
 export type SQLitePragmaOptions = {
 	synchronous?: SQLiteSynchronousMode;
+	lockingMode?: SQLiteLockingMode;
+	tempStore?: SQLiteTempStoreMode;
 };
 
 interface Message {

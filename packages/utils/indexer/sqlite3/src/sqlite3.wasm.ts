@@ -195,6 +195,12 @@ const applyPragmas = (
 	db.exec(
 		`PRAGMA synchronous = ${(pragmas?.synchronous ?? "NORMAL").toUpperCase()}`,
 	);
+	if (pragmas?.lockingMode) {
+		db.exec(`PRAGMA locking_mode = ${pragmas.lockingMode.toUpperCase()}`);
+	}
+	if (pragmas?.tempStore && pragmas.tempStore !== "DEFAULT") {
+		db.exec(`PRAGMA temp_store = ${pragmas.tempStore.toUpperCase()}`);
+	}
 };
 
 const create = async (

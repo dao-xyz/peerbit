@@ -14,7 +14,7 @@ import {
 } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import {
-	type ACK,
+	ACK,
 	AcknowledgeAnyWhere,
 	AcknowledgeDelivery,
 	AnyWhere,
@@ -512,6 +512,51 @@ describe("streams", function () {
 				);
 				expect(streams[2].received).to.have.length(1);
 				expect(streams[1].received).to.be.empty;
+			});
+
+			it("dispatches data before an acknowledged send finishes writing the ack", async () => {
+				const receiver = streams[2].stream;
+				const originalPublishMessage = receiver.publishMessage.bind(receiver);
+				const ackStarted = pDefer<void>();
+				const releaseAck = pDefer<void>();
+				let dataDelivered = false;
+				let publishResolved = false;
+				const onData = () => {
+					dataDelivered = true;
+				};
+				receiver.addEventListener("data", onData as EventListener);
+
+				receiver.publishMessage = (async (...args: Parameters<typeof originalPublishMessage>) => {
+					const [, message] = args;
+					if (message instanceof ACK) {
+						ackStarted.resolve();
+						await releaseAck.promise;
+					}
+					return originalPublishMessage(...args);
+				}) as typeof receiver.publishMessage;
+
+				try {
+					const publishPromise = streams[0].stream
+						.publish(data, {
+							mode: new AcknowledgeDelivery({
+								redundancy: 1,
+								to: [streams[2].stream.components.peerId],
+							}),
+						})
+						.then(() => {
+							publishResolved = true;
+						});
+
+					await ackStarted.promise;
+					await waitForResolved(() => expect(dataDelivered).to.be.true);
+					expect(publishResolved).to.be.false;
+
+					releaseAck.resolve();
+					await publishPromise;
+				} finally {
+					receiver.publishMessage = originalPublishMessage;
+					receiver.removeEventListener("data", onData as EventListener);
+				}
 			});
 
 				it("1->3 still works even if routing is missing", async () => {

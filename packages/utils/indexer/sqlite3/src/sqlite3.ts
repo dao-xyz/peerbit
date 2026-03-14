@@ -10,6 +10,12 @@ const applyPragmas = (db: DB.Database, pragmas?: SQLitePragmaOptions) => {
 	db.pragma("journal_mode = WAL");
 	db.pragma("foreign_keys = on");
 	db.pragma(`synchronous = ${(pragmas?.synchronous ?? "FULL").toUpperCase()}`);
+	if (pragmas?.lockingMode) {
+		db.pragma(`locking_mode = ${pragmas.lockingMode.toUpperCase()}`);
+	}
+	if (pragmas?.tempStore && pragmas.tempStore !== "DEFAULT") {
+		db.pragma(`temp_store = ${pragmas.tempStore.toUpperCase()}`);
+	}
 	db.defaultSafeIntegers(true);
 };
 
