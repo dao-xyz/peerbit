@@ -51,6 +51,35 @@ export const deliveryModeHasReceiver = (
 
 export abstract class DeliveryMode {}
 
+export const isAcknowledgedDeliveryMode = (
+	mode: DeliveryMode,
+): mode is AcknowledgeDelivery | AcknowledgeAnyWhere =>
+	mode instanceof AcknowledgeDelivery || mode instanceof AcknowledgeAnyWhere;
+
+export const getDeliveryHopTrace = (mode: DeliveryMode): string[] =>
+	isAcknowledgedDeliveryMode(mode) ? mode.hops : [];
+
+export const hasDeliveryHop = (mode: DeliveryMode, hash: string) =>
+	isAcknowledgedDeliveryMode(mode) && mode.hops.includes(hash);
+
+export const setDeliveryOriginHop = (mode: DeliveryMode, hash: string) => {
+	if (isAcknowledgedDeliveryMode(mode)) {
+		mode.hops = [hash];
+	}
+	return mode;
+};
+
+export const appendDeliveryHop = (mode: DeliveryMode, hash: string) => {
+	if (!isAcknowledgedDeliveryMode(mode)) {
+		return mode;
+	}
+	if (mode.hops.includes(hash)) {
+		return mode;
+	}
+	mode.hops = [...mode.hops, hash];
+	return mode;
+};
+
 /**
  * when you just want to deliver at paths, but does not expect acknowledgement
  */
@@ -80,7 +109,14 @@ export class AcknowledgeDelivery extends DeliveryMode {
 	@field({ type: "u8" })
 	redundancy: number;
 
-	constructor(properties: { to: PeerRefs; redundancy: number }) {
+	@field({ type: vec("string") })
+	hops: string[];
+
+	constructor(properties: {
+		to: PeerRefs;
+		redundancy: number;
+		hops?: string[];
+	}) {
 		super();
 		const to = coercePeerRefsToHashes(properties.to);
 		if (to.length === 0) {
@@ -90,6 +126,7 @@ export class AcknowledgeDelivery extends DeliveryMode {
 		}
 		this.to = to;
 		this.redundancy = properties.redundancy;
+		this.hops = properties.hops ?? [];
 	}
 }
 
@@ -104,9 +141,13 @@ export class AcknowledgeAnyWhere extends DeliveryMode {
 	@field({ type: "u8" })
 	redundancy: number;
 
-	constructor(properties: { redundancy: number }) {
+	@field({ type: vec("string") })
+	hops: string[];
+
+	constructor(properties: { redundancy: number; hops?: string[] }) {
 		super();
 		this.redundancy = properties.redundancy;
+		this.hops = properties.hops ?? [];
 	}
 }
 
@@ -482,12 +523,18 @@ const skipPeerInfo = (bytes: Uint8ArrayList, offset: number) => {
 const skipDeliveryMode = (bytes: Uint8ArrayList, offset: number) => {
 	const variant = readU8At(bytes, offset);
 	offset += 1;
-	if (variant === 0 || variant === 1) {
+	if (variant === 0) {
 		offset = skipStringVec(bytes, offset);
 		return offset + 1;
 	}
+	if (variant === 1) {
+		offset = skipStringVec(bytes, offset);
+		offset += 1;
+		return skipStringVec(bytes, offset);
+	}
 	if (variant === 5) {
-		return offset + 1;
+		offset += 1;
+		return skipStringVec(bytes, offset);
 	}
 	if (variant === 3) {
 		return skipStringVec(bytes, offset);

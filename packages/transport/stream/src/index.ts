@@ -44,9 +44,14 @@ import {
 	SilentDelivery,
 	Signatures,
 	TracedDelivery,
+	appendDeliveryHop,
 	coercePeerRefsToHashes,
 	deliveryModeHasReceiver,
 	getMsgId,
+	getDeliveryHopTrace,
+	hasDeliveryHop,
+	isAcknowledgedDeliveryMode,
+	setDeliveryOriginHop,
 } from "@peerbit/stream-interface";
 import type {
 	DirectStreamAckRouteHint,
@@ -2190,6 +2195,13 @@ export abstract class DirectStream<
 	}
 
 	public shouldIgnore(message: DataMessage, seenBefore: number) {
+		if (isAcknowledgedDeliveryMode(message.header.mode)) {
+			if (hasDeliveryHop(message.header.mode, this.publicKeyHash)) {
+				return true;
+			}
+			return seenBefore >= message.header.mode.redundancy;
+		}
+
 		const signedBySelf =
 			message.header.signatures?.publicKeys.some((x) =>
 				x.equals(this.publicKey),
@@ -2197,15 +2209,6 @@ export abstract class DirectStream<
 
 		if (signedBySelf) {
 			return true;
-		}
-
-		// For acknowledged modes, allow limited duplicate forwarding so that we can
-		// discover and maintain multiple candidate routes (distance=seenCounter).
-		if (
-			message.header.mode instanceof AcknowledgeDelivery ||
-			message.header.mode instanceof AcknowledgeAnyWhere
-		) {
-			return seenBefore >= message.header.mode.redundancy;
 		}
 
 		return seenBefore > 0;
@@ -2320,9 +2323,7 @@ export abstract class DirectStream<
 			) {
 				return;
 			}
-			const signers = message.header.signatures!.publicKeys.map((x) =>
-				x.hashcode(),
-			);
+			const signers = [...getDeliveryHopTrace(message.header.mode)];
 
 			void this.publishMessage(
 				this.publicKey,
@@ -2341,8 +2342,8 @@ export abstract class DirectStream<
 								(message.header.mode instanceof AcknowledgeAnyWhere ||
 									message.header.mode instanceof AcknowledgeDelivery) &&
 								seenBefore === 0 &&
-								!message.header.signatures!.publicKeys.find((x) =>
-									this.prunedConnectionsCache?.has(x.hashcode()),
+								!signers.find((x) =>
+									this.prunedConnectionsCache?.has(x),
 								)
 									? new MultiAddrinfo(
 											this.components.addressManager
@@ -2572,6 +2573,8 @@ export abstract class DirectStream<
 			}
 		}
 
+		setDeliveryOriginHop(mode, this.publicKeyHash);
+
 		const message = new DataMessage({
 			data,
 			header: new MessageHeader({
@@ -2656,11 +2659,8 @@ export abstract class DirectStream<
 	) {
 		if (this.canRelayMessage) {
 			if (message instanceof DataMessage) {
-				if (
-					message.header.mode instanceof AcknowledgeDelivery ||
-					message.header.mode instanceof AcknowledgeAnyWhere
-				) {
-					await this.signDataMessage(message);
+				if (isAcknowledgedDeliveryMode(message.header.mode)) {
+					appendDeliveryHop(message.header.mode, this.publicKeyHash);
 				}
 			}
 			if (deliveryModeHasReceiver(message.header.mode)) {
@@ -3104,21 +3104,17 @@ export abstract class DirectStream<
 							if (recipient === from.hashcode()) continue; // never send back to previous hop
 							const stream = this.peers.get(recipient);
 							if (!stream) continue;
-							if (
-								message.header.signatures?.publicKeys.find(
-									(x) => x.hashcode() === recipient,
-								)
-							) {
+							if (hasDeliveryHop(message.header.mode, recipient)) {
 								continue; // recipient already signed/seen this message
-								}
-								message.header.mode.to = [recipient];
-								promises.push(
-									this.waitForPeerWrite(
-										stream,
-										message.bytes(),
-										message.header.priority,
-									),
-								);
+							}
+							message.header.mode.to = [recipient];
+							promises.push(
+								this.waitForPeerWrite(
+									stream,
+									message.bytes(),
+									message.header.priority,
+								),
+							);
 							}
 						message.header.mode.to = originalTo;
 						if (promises.length > 0) {
@@ -3149,18 +3145,20 @@ export abstract class DirectStream<
 				if (id.publicKey.equals(from)) {
 					continue;
 				}
-				// Dont send message back to any of the signers (they have already seen the message)
+				// Dont send message back to any peer already present in the path.
 				if (
 					message.header.signatures?.publicKeys.find((x) =>
 						x.equals(id.publicKey),
-					)
+					) ||
+					hasDeliveryHop(message.header.mode, id.publicKey.hashcode())
 				) {
 					continue;
-					}
-
-					sentOnce = true;
-					promises.push(this.waitForPeerWrite(id, bytes, message.header.priority));
 				}
+				sentOnce = true;
+				promises.push(
+					this.waitForPeerWrite(id, bytes, message.header.priority),
+				);
+			}
 			await Promise.all(promises);
 
 			if (!sentOnce) {

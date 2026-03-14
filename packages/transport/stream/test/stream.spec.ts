@@ -328,7 +328,55 @@ describe("streams", function () {
 			expect(message.header.signatures?.signatures[0]?.prehash).to.equal(
 				PreHash.SHA_256,
 			);
+			expect(message.header.mode).to.be.instanceOf(AcknowledgeAnyWhere);
+			expect((message.header.mode as AcknowledgeAnyWhere).hops).to.deep.equal([
+				stream(session, 0).publicKeyHash,
+			]);
 			expect(await message.verify(true)).to.equal(true);
+		});
+
+		it("relays acknowledged messages by extending the hop trace instead of adding signatures", async () => {
+			await session.stop();
+			session = await disconnected(3, {
+				services: {
+					directstream: (c) =>
+						new TestDirectStream(c, {
+							connectionManager: false,
+						}),
+				},
+			});
+			await connectLine(session);
+
+			const relay = session.peers[1].services.directstream;
+			const writes = collectDataWrites(relay);
+			const recipient = createMetrics(session.peers[2].services.directstream);
+
+			await session.peers[0].services.directstream.publish(
+				new Uint8Array([4, 5, 6]),
+				{
+					mode: new AcknowledgeDelivery({
+						to: [session.peers[2].peerId],
+						redundancy: 1,
+					}),
+				},
+			);
+
+			await waitForResolved(() => expect(recipient.received).to.have.length(1));
+			await waitForResolved(() =>
+				expect(writes.get(session.peers[2].services.directstream.publicKeyHash))
+					.to.have.length(1),
+			);
+
+			const forwarded = writes.get(
+				session.peers[2].services.directstream.publicKeyHash,
+			)?.[0];
+			expect(forwarded).to.be.instanceOf(DataMessage);
+			expect(forwarded?.header.signatures?.signatures).to.have.length(1);
+			expect(forwarded?.header.mode).to.be.instanceOf(AcknowledgeDelivery);
+			expect((forwarded?.header.mode as AcknowledgeDelivery).hops).to.deep.equal([
+				session.peers[0].services.directstream.publicKeyHash,
+				session.peers[1].services.directstream.publicKeyHash,
+			]);
 		});
 	});
 
