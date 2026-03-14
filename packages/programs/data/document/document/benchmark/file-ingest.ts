@@ -17,10 +17,15 @@ type Args = {
 
 type Sample = {
 	writerCompleteMs: number;
+	observerFinalManifestEntryKnownMs: number;
+	observerChunkEntriesKnownMs: number;
 	observerManifestReadyMs: number;
 	observerChunksReadyMs: number;
+	observerFinalManifestEntryKnownTailMs: number;
+	observerChunkEntriesKnownTailMs: number;
 	observerManifestTailMs: number;
 	observerChunksTailMs: number;
+	entryPolls: number;
 	manifestPolls: number;
 	chunkPolls: number;
 };
@@ -209,9 +214,10 @@ const uploadChunkedFile = async (
 		}),
 	);
 
+	const chunkEntryHashes: string[] = [];
 	for (let index = 0; index < payloadChunks.length; index++) {
 		const bytes = payloadChunks[index]!;
-		await store.files.put(
+		const chunk = await store.files.put(
 			new FileRecord({
 				id: `${uploadId}:${index}`,
 				name: `${fileName}/${index}`,
@@ -223,9 +229,10 @@ const uploadChunkedFile = async (
 				bytes,
 			}),
 		);
+		chunkEntryHashes.push(chunk.entry.hash);
 	}
 
-	await store.files.put(
+	const finalManifest = await store.files.put(
 		new FileRecord({
 			id: uploadId,
 			name: fileName,
@@ -237,7 +244,11 @@ const uploadChunkedFile = async (
 		}),
 	);
 
-	return uploadId;
+	return {
+		uploadId,
+		finalManifestEntryHash: finalManifest.entry.hash,
+		chunkEntryHashes,
+	};
 };
 
 const queryOptions = {
@@ -250,22 +261,53 @@ const queryOptions = {
 
 const waitForObserverReady = async (
 	observer: FileStore,
-	uploadId: string,
+	upload: Awaited<ReturnType<typeof uploadChunkedFile>>,
 	expectedChunks: number,
 	startedAt: number,
 ) => {
 	const deadline = startedAt + readyTimeoutMs;
+	let entryPolls = 0;
 	let manifestPolls = 0;
 	let chunkPolls = 0;
+	let finalManifestEntryKnownMs: number | undefined;
+	let chunkEntriesKnownMs: number | undefined;
 	let manifestReadyMs: number | undefined;
 
 	while (performance.now() < deadline) {
+		entryPolls += 1;
+		if (finalManifestEntryKnownMs == null) {
+			const finalManifestKnown =
+				(await observer.files.log.replicationIndex.count({
+					query: { hash: upload.finalManifestEntryHash },
+				})) > 0;
+			if (finalManifestKnown) {
+				finalManifestEntryKnownMs = performance.now() - startedAt;
+			}
+		}
+
+		if (chunkEntriesKnownMs == null) {
+			let remainingChunkEntries = upload.chunkEntryHashes.length;
+			for (const hash of upload.chunkEntryHashes) {
+				const present =
+					(await observer.files.log.replicationIndex.count({
+						query: { hash },
+					})) > 0;
+				if (!present) {
+					break;
+				}
+				remainingChunkEntries -= 1;
+			}
+			if (remainingChunkEntries === 0) {
+				chunkEntriesKnownMs = performance.now() - startedAt;
+			}
+		}
+
 		manifestPolls += 1;
 		const manifests = await observer.files.index.search(
 			new SearchRequest({
 				query: new StringMatch({
 					key: "id",
-					value: uploadId,
+					value: upload.uploadId,
 				}),
 				fetch: 1,
 			}),
@@ -280,7 +322,7 @@ const waitForObserverReady = async (
 				new SearchRequest({
 					query: new StringMatch({
 						key: "parentId",
-						value: uploadId,
+						value: upload.uploadId,
 					}),
 					fetch: 0xffffffff,
 				}),
@@ -288,8 +330,13 @@ const waitForObserverReady = async (
 			);
 			if (chunkResults.length === expectedChunks) {
 				return {
+					finalManifestEntryKnownMs:
+						finalManifestEntryKnownMs ?? performance.now() - startedAt,
+					chunkEntriesKnownMs:
+						chunkEntriesKnownMs ?? performance.now() - startedAt,
 					manifestReadyMs: manifestReadyMs ?? performance.now() - startedAt,
 					chunksReadyMs: performance.now() - startedAt,
+					entryPolls,
 					manifestPolls,
 					chunkPolls,
 				};
@@ -300,7 +347,7 @@ const waitForObserverReady = async (
 	}
 
 	throw new Error(
-		`Timed out waiting for observer readiness for upload ${uploadId}`,
+		`Timed out waiting for observer readiness for upload ${upload.uploadId}`,
 	);
 };
 
@@ -359,7 +406,7 @@ const runIteration = async (
 		await waitForReplicationSetup(writer, seeder);
 
 		const startedAt = performance.now();
-		const uploadId = await uploadChunkedFile(
+		const upload = await uploadChunkedFile(
 			writer,
 			`${mode}-file-${sequence}`,
 			payloadChunks,
@@ -368,19 +415,27 @@ const runIteration = async (
 
 		const observerProgress = await waitForObserverReady(
 			observer,
-			uploadId,
+			upload,
 			payloadChunks.length,
 			startedAt,
 		);
 
 		return {
 			writerCompleteMs,
+			observerFinalManifestEntryKnownMs:
+				observerProgress.finalManifestEntryKnownMs,
+			observerChunkEntriesKnownMs: observerProgress.chunkEntriesKnownMs,
 			observerManifestReadyMs: observerProgress.manifestReadyMs,
 			observerChunksReadyMs: observerProgress.chunksReadyMs,
+			observerFinalManifestEntryKnownTailMs:
+				observerProgress.finalManifestEntryKnownMs - writerCompleteMs,
+			observerChunkEntriesKnownTailMs:
+				observerProgress.chunkEntriesKnownMs - writerCompleteMs,
 			observerManifestTailMs:
 				observerProgress.manifestReadyMs - writerCompleteMs,
 			observerChunksTailMs:
 				observerProgress.chunksReadyMs - writerCompleteMs,
+			entryPolls: observerProgress.entryPolls,
 			manifestPolls: observerProgress.manifestPolls,
 			chunkPolls: observerProgress.chunkPolls,
 		};
@@ -436,6 +491,18 @@ for (const result of results) {
 	);
 	tasks.push(
 		summarizeTask(
+			`${result.mode}: observer-final-manifest-entry-known`,
+			result.samples.map((sample) => sample.observerFinalManifestEntryKnownMs),
+		),
+	);
+	tasks.push(
+		summarizeTask(
+			`${result.mode}: observer-chunk-entries-known`,
+			result.samples.map((sample) => sample.observerChunkEntriesKnownMs),
+		),
+	);
+	tasks.push(
+		summarizeTask(
 			`${result.mode}: observer-manifest-ready`,
 			result.samples.map((sample) => sample.observerManifestReadyMs),
 		),
@@ -444,6 +511,20 @@ for (const result of results) {
 		summarizeTask(
 			`${result.mode}: observer-chunks-ready`,
 			result.samples.map((sample) => sample.observerChunksReadyMs),
+		),
+	);
+	tasks.push(
+		summarizeTask(
+			`${result.mode}: observer-final-manifest-entry-known-tail`,
+			result.samples.map(
+				(sample) => sample.observerFinalManifestEntryKnownTailMs,
+			),
+		),
+	);
+	tasks.push(
+		summarizeTask(
+			`${result.mode}: observer-chunk-entries-known-tail`,
+			result.samples.map((sample) => sample.observerChunkEntriesKnownTailMs),
 		),
 	);
 	tasks.push(
@@ -476,6 +557,18 @@ const output = {
 			writerCompleteMsAvg: round(
 				average(result.samples.map((sample) => sample.writerCompleteMs)),
 			),
+			observerFinalManifestEntryKnownMsAvg: round(
+				average(
+					result.samples.map(
+						(sample) => sample.observerFinalManifestEntryKnownMs,
+					),
+				),
+			),
+			observerChunkEntriesKnownMsAvg: round(
+				average(
+					result.samples.map((sample) => sample.observerChunkEntriesKnownMs),
+				),
+			),
 			observerManifestReadyMsAvg: round(
 				average(
 					result.samples.map((sample) => sample.observerManifestReadyMs),
@@ -487,8 +580,25 @@ const output = {
 			observerManifestTailMsAvg: round(
 				average(result.samples.map((sample) => sample.observerManifestTailMs)),
 			),
+			observerFinalManifestEntryKnownTailMsAvg: round(
+				average(
+					result.samples.map(
+						(sample) => sample.observerFinalManifestEntryKnownTailMs,
+					),
+				),
+			),
+			observerChunkEntriesKnownTailMsAvg: round(
+				average(
+					result.samples.map(
+						(sample) => sample.observerChunkEntriesKnownTailMs,
+					),
+				),
+			),
 			observerChunksTailMsAvg: round(
 				average(result.samples.map((sample) => sample.observerChunksTailMs)),
+			),
+			entryPollsAvg: round(
+				average(result.samples.map((sample) => sample.entryPolls)),
 			),
 			manifestPollsAvg: round(
 				average(result.samples.map((sample) => sample.manifestPolls)),
@@ -498,10 +608,23 @@ const output = {
 			),
 			samples: result.samples.map((sample) => ({
 				writerCompleteMs: round(sample.writerCompleteMs),
+				observerFinalManifestEntryKnownMs: round(
+					sample.observerFinalManifestEntryKnownMs,
+				),
+				observerChunkEntriesKnownMs: round(
+					sample.observerChunkEntriesKnownMs,
+				),
 				observerManifestReadyMs: round(sample.observerManifestReadyMs),
 				observerChunksReadyMs: round(sample.observerChunksReadyMs),
+				observerFinalManifestEntryKnownTailMs: round(
+					sample.observerFinalManifestEntryKnownTailMs,
+				),
+				observerChunkEntriesKnownTailMs: round(
+					sample.observerChunkEntriesKnownTailMs,
+				),
 				observerManifestTailMs: round(sample.observerManifestTailMs),
 				observerChunksTailMs: round(sample.observerChunksTailMs),
+				entryPolls: sample.entryPolls,
 				manifestPolls: sample.manifestPolls,
 				chunkPolls: sample.chunkPolls,
 			})),

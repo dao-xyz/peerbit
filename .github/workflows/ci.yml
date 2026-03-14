@@ -53,13 +53,15 @@ jobs:
     env:
       PEERBIT_TEST_SESSION: mock
     strategy:
-       matrix:
+      fail-fast: false
+      matrix:
         os: [ ubuntu-22.04 ]
         node-version: [22.x]
         test_cmd: 
           - pnpm run test:ci:part-1
           - pnpm run test:ci:part-2a
           - pnpm run test:ci:part-2b
+          - pnpm run test:ci:part-2c
           - pnpm run test:ci:part-3
           - pnpm run test:ci:part-4
           - pnpm run test:ci:part-5a
@@ -107,13 +109,15 @@ jobs:
     env:
       PEERBIT_TEST_SESSION: mock
     strategy:
-       matrix:
+      fail-fast: false
+      matrix:
         os: [ ubuntu-22.04 ]
         node-version: [22.x]
         test_cmd: 
           - pnpm run test:ci:part-1
           - pnpm run test:ci:part-2a
           - pnpm run test:ci:part-2b
+          - pnpm run test:ci:part-2c
           - pnpm run test:ci:part-3
           - pnpm run test:ci:part-4
           - pnpm run test:ci:part-5a
