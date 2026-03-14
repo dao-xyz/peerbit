@@ -393,6 +393,7 @@ const runPlaywright = ({
 	uploadTimeoutMs,
 	postUploadMonitorMs,
 	pollMs,
+	minReadySeeders,
 	readyTimeoutMs,
 	sampleMs,
 	sampleCount,
@@ -426,6 +427,9 @@ const runPlaywright = ({
 				PW_RESULT_FILE: resultFile,
 				PW_BENCHMARK_SCENARIO: scenario,
 				PW_NETWORK_MODE: network,
+				...(minReadySeeders != null
+					? { PW_MIN_READY_SEEDERS: String(minReadySeeders) }
+					: {}),
 				...(uploadTimeoutMs
 					? { PW_UPLOAD_TIMEOUT_MS: String(uploadTimeoutMs) }
 					: {}),
@@ -468,6 +472,7 @@ const main = async () => {
 	const uploadTimeoutMs = args["upload-timeout-ms"];
 	const postUploadMonitorMs = args["post-upload-monitor-ms"];
 	const pollMs = args["poll-ms"];
+	const minReadySeeders = args["min-ready-seeders"];
 	const readyTimeoutMs = args["ready-timeout-ms"];
 	const sampleMs = args["sample-ms"];
 	const sampleCount = args["sample-count"];
@@ -610,6 +615,7 @@ const main = async () => {
 				uploadTimeoutMs,
 				postUploadMonitorMs,
 				pollMs,
+				minReadySeeders,
 				readyTimeoutMs,
 				sampleMs,
 				sampleCount,

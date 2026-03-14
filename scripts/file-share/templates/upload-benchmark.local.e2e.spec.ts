@@ -21,7 +21,9 @@ const UPLOAD_TIMEOUT_MS = Number(process.env.PW_UPLOAD_TIMEOUT_MS || "600000");
 const MODE = process.env.PW_REPLICATION_MODE || "adaptive";
 const NETWORK_MODE = process.env.PW_NETWORK_MODE || "local";
 const RESULT_FILE = process.env.PW_RESULT_FILE;
-const MIN_READY_SEEDERS = MODE === "adaptive" ? 2 : 0;
+const MIN_READY_SEEDERS = Number(
+	process.env.PW_MIN_READY_SEEDERS || (MODE === "adaptive" ? "2" : "0"),
+);
 const VERBOSE = process.env.PW_VERBOSE === "1";
 
 if (!["local", "remote"].includes(NETWORK_MODE)) {
