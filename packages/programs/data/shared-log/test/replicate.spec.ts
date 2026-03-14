@@ -811,6 +811,15 @@ describe(`replicate`, () => {
 			});
 
 			afterEach(async () => {
+				const stores = [db1, db2].filter(
+					(store): store is EventStore<string, ReplicationDomainHash<"u32">> =>
+						Boolean(store) && store.closed === false,
+				);
+				db1 = undefined as any;
+				db2 = undefined as any;
+				for (const store of stores) {
+					await store.drop();
+				}
 				await session.stop();
 			});
 

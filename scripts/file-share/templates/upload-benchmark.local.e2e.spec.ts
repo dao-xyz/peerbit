@@ -21,6 +21,7 @@ const UPLOAD_TIMEOUT_MS = Number(process.env.PW_UPLOAD_TIMEOUT_MS || "600000");
 const MODE = process.env.PW_REPLICATION_MODE || "adaptive";
 const NETWORK_MODE = process.env.PW_NETWORK_MODE || "local";
 const RESULT_FILE = process.env.PW_RESULT_FILE;
+const ENABLE_VISIBILITY_PROBE = process.env.PW_ENABLE_VISIBILITY_PROBE === "1";
 const MIN_READY_SEEDERS = Number(
 	process.env.PW_MIN_READY_SEEDERS || (MODE === "adaptive" ? "2" : "0"),
 );
@@ -107,6 +108,38 @@ const applyRole = async (page: Page, shareUrl: string) => {
 	}, getRole());
 };
 
+const getDiagnostics = async (page: Page) => {
+	try {
+		return await page.evaluate(async () => {
+			const hooks = (window as any).__peerbitFileShareTestHooks;
+			const benchmarkStats = (window as any).__peerbitFileShareBenchmarkStats;
+			if (!hooks?.getDiagnostics) {
+				return benchmarkStats ? { benchmarkStats } : null;
+			}
+			return {
+				...(await hooks.getDiagnostics()),
+				benchmarkStats: benchmarkStats ?? null,
+			};
+		});
+	} catch {
+		return null;
+	}
+};
+
+const probeVisibilityPath = async (page: Page) => {
+	try {
+		return await page.evaluate(async () => {
+			const hooks = (window as any).__peerbitFileShareTestHooks;
+			if (!hooks?.probeVisibilityPath) {
+				return null;
+			}
+			return await hooks.probeVisibilityPath();
+		});
+	} catch {
+		return null;
+	}
+};
+
 const persistResult = async (result: Record<string, unknown>) => {
 	if (!RESULT_FILE) {
 		return;
@@ -170,6 +203,8 @@ test.describe("generated upload benchmark", () => {
 		let uploadSettledAt: number | undefined;
 		let writerListedAt: number | undefined;
 		let readerListedAt: number | undefined;
+		let writerVisibilityProbe: Record<string, unknown> | null = null;
+		let readerVisibilityProbe: Record<string, unknown> | null = null;
 		let dropped = false;
 		let baselineWriterSeeders = MIN_READY_SEEDERS;
 		let baselineReaderSeeders = MIN_READY_SEEDERS;
@@ -338,6 +373,15 @@ test.describe("generated upload benchmark", () => {
 				await writer.waitForTimeout(POLL_MS);
 			}
 
+			if (ENABLE_VISIBILITY_PROBE) {
+				stage = "probe-visibility-path";
+				logStage(stage);
+				[writerVisibilityProbe, readerVisibilityProbe] = await Promise.all([
+					probeVisibilityPath(writer),
+					probeVisibilityPath(reader),
+				]);
+			}
+
 			stage = "wait-for-listing";
 			logStage(stage);
 			[writerListedAt, readerListedAt] = await Promise.all([
@@ -389,9 +433,13 @@ test.describe("generated upload benchmark", () => {
 				shareUrl,
 				droppedSeeders: dropped,
 				phaseDurationsMs: getPhaseDurations(),
+				writerVisibilityProbe,
+				readerVisibilityProbe,
 				errorCount: errors.length,
 				errors,
 				snapshots,
+				writerDiagnostics: await getDiagnostics(writer),
+				readerDiagnostics: await getDiagnostics(reader),
 			};
 
 			await persistResult(result);
@@ -426,9 +474,13 @@ test.describe("generated upload benchmark", () => {
 				shareUrl,
 				droppedSeeders: dropped,
 				phaseDurationsMs: getPhaseDurations(),
+				writerVisibilityProbe,
+				readerVisibilityProbe,
 				errorCount: errors.length,
 				errors,
 				snapshots,
+				writerDiagnostics: await getDiagnostics(writer),
+				readerDiagnostics: await getDiagnostics(reader),
 				failure: {
 					message:
 						typeof error?.message === "string"

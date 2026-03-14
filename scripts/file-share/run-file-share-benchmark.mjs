@@ -44,6 +44,7 @@ const SCENARIOS = {
 	},
 };
 const DROP_HOOK_MARKER = "/* peerbit-benchmark-hook */";
+const DROP_UPDATE_LIST_MARKER = "/* peerbit-benchmark-update-list */";
 const VITE_BENCHMARK_MARKER = "/* peerbit-benchmark-vite */";
 const REMOTE_NETWORK_DEFAULTS = {
 	viteMode: "staging",
@@ -161,7 +162,10 @@ const maybeCopyFrontendCerts = async ({
 const instrumentFileShareFrontend = async (frontendRoot) => {
 	const dropPath = path.join(frontendRoot, "src", "Drop.tsx");
 	let contents = await fsp.readFile(dropPath, "utf8");
-	if (contents.includes(DROP_HOOK_MARKER)) {
+	if (
+		contents.includes(DROP_HOOK_MARKER) &&
+		contents.includes(DROP_UPDATE_LIST_MARKER)
+	) {
 		return;
 	}
 
@@ -172,6 +176,9 @@ const instrumentFileShareFrontend = async (frontendRoot) => {
             __peerbitFileShareTestHooks?: {
                 setReplicationRole: (roleOptions: ReplicationOptions) => Promise<void>;
                 getDiagnostics: () => Promise<Record<string, unknown>>;
+            };
+            __peerbitFileShareBenchmarkStats?: {
+                updateListCalls?: Array<Record<string, unknown>>;
             };
         };
         if (!files.program || files.program.closed) {
@@ -203,6 +210,7 @@ const instrumentFileShareFrontend = async (frontendRoot) => {
                             : null,
                     listCount: list.length,
                     replicationSetSize: replicationSet.size,
+                    benchmarkStats: testWindow.__peerbitFileShareBenchmarkStats ?? null,
                     isHost: isHost ?? null,
                     left,
                 };
@@ -214,10 +222,91 @@ const instrumentFileShareFrontend = async (frontendRoot) => {
     }, [files.program?.address, files.program?.closed]);
 
 `;
-	if (!contents.includes(anchor)) {
-		throw new Error(`Could not find benchmark hook anchor in ${dropPath}`);
+	if (!contents.includes(DROP_HOOK_MARKER)) {
+		if (!contents.includes(anchor)) {
+			throw new Error(`Could not find benchmark hook anchor in ${dropPath}`);
+		}
+		contents = contents.replace(anchor, `${hook}${anchor}`);
 	}
-	contents = contents.replace(anchor, `${hook}${anchor}`);
+
+	const updateListAnchor = `    const updateList = async () => {\n        if (files.program.files.log.closed) {\n            return;\n        }\n\n        // TODO don't reload the whole list, just add the new elements..\n        try {\n`;
+	const updateListInstrumented = `    const updateList = async () => {
+        if (files.program.files.log.closed) {
+            return;
+        }
+
+        const benchmarkWindow = window as Window & {
+            __peerbitFileShareBenchmarkStats?: {
+                updateListCalls?: Array<Record<string, unknown>>;
+            };
+        };
+        const updateListStartedAt = performance.now();
+        const updateListStats: Record<string, unknown> = {
+            ${DROP_UPDATE_LIST_MARKER}
+            startedAt: Date.now(),
+        };
+
+        // TODO don't reload the whole list, just add the new elements..
+        try {
+`;
+	if (!contents.includes(DROP_UPDATE_LIST_MARKER)) {
+		if (!contents.includes(updateListAnchor)) {
+			throw new Error(`Could not find updateList anchor in ${dropPath}`);
+		}
+		contents = contents.replace(updateListAnchor, updateListInstrumented);
+	}
+
+	contents = contents.replace(
+		`            const list = await files.program.list();\n`,
+		`            const listStartedAt = performance.now();
+            const list = await files.program.list();
+            updateListStats.listMs = performance.now() - listStartedAt;
+            updateListStats.listCount = list.length;
+`,
+	);
+	contents = contents.replace(
+		`            setReplicationSet(
+                new Set(
+                    (
+                        await files.program.files.index.search(
+                            new SearchRequest({})
+                        )
+                    ).map((x) => x.id)
+                )
+            );
+`,
+		`            const replicationSetStartedAt = performance.now();
+            const replicationSetResults = await files.program.files.index.search(
+                new SearchRequest({})
+            );
+            updateListStats.replicationSetSearchMs =
+                performance.now() - replicationSetStartedAt;
+            updateListStats.replicationSetSize = replicationSetResults.length;
+            setReplicationSet(new Set(replicationSetResults.map((x) => x.id)));
+`,
+	);
+	contents = contents.replace(
+		`            setReplicatorCount(
+                (await files.program.files.log.getReplicators()).size
+            );
+            forceUpdate();
+`,
+		`            const replicatorCountStartedAt = performance.now();
+            const replicators = await files.program.files.log.getReplicators();
+            updateListStats.replicatorCountMs =
+                performance.now() - replicatorCountStartedAt;
+            updateListStats.replicatorCount = replicators.size;
+            setReplicatorCount(replicators.size);
+            updateListStats.totalMs = performance.now() - updateListStartedAt;
+            const updateListCalls =
+                benchmarkWindow.__peerbitFileShareBenchmarkStats?.updateListCalls ?? [];
+            updateListCalls.push(updateListStats);
+            benchmarkWindow.__peerbitFileShareBenchmarkStats = {
+                updateListCalls,
+            };
+            forceUpdate();
+`,
+	);
 	await fsp.writeFile(dropPath, contents);
 };
 

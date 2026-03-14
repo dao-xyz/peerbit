@@ -358,6 +358,7 @@ export class EntryIndex<T> {
 	}
 
 	async hasMany(hashes: Iterable<string>) {
+		const batchSize = 64;
 		const existing = new Set<string>();
 		const missing: string[] = [];
 		for (const hash of new Set([...hashes].filter(Boolean))) {
@@ -372,32 +373,38 @@ export class EntryIndex<T> {
 			return existing;
 		}
 
-		const iterator = this.properties.index.iterate(
-			{
-				query:
-					missing.length === 1
-						? new StringMatch({
-								key: "hash",
-								value: missing[0]!,
-							})
-						: new Or(
-								missing.map(
-									(hash) =>
-										new StringMatch({
-											key: "hash",
-											value: hash,
-										}),
+		for (let i = 0; i < missing.length; i += batchSize) {
+			const batch = missing.slice(i, i + batchSize);
+			const iterator = this.properties.index.iterate(
+				{
+					query:
+						batch.length === 1
+							? new StringMatch({
+									key: "hash",
+									value: batch[0]!,
+								})
+							: new Or(
+									batch.map(
+										(hash) =>
+											new StringMatch({
+												key: "hash",
+												value: hash,
+											}),
+									),
 								),
-							),
-			},
-			{
-				shape: { hash: true },
-			},
-		);
-		const indexed = await iterator.all();
-		await iterator.close();
-		for (const entry of indexed) {
-			existing.add(entry.value.hash);
+				},
+				{
+					shape: { hash: true },
+				},
+			);
+			try {
+				const indexed = await iterator.all();
+				for (const entry of indexed) {
+					existing.add(entry.value.hash);
+				}
+			} finally {
+				await iterator.close();
+			}
 		}
 
 		return existing;

@@ -197,6 +197,7 @@ export type RemoteQueryOptions<Q, R, D> = RPCRequestAllOptions<Q, R> & {
 	replicate?: boolean;
 	minAge?: number;
 	throwOnMissing?: boolean;
+	retryMissingResponses?: boolean;
 	strategy?: "fallback";
 	domain?:
 		| {
@@ -2625,17 +2626,29 @@ export class DocumentIndex<
 		options?: O,
 	): Promise<ValueTypeFromRequest<Resolve, T, I>[]> {
 		// Set fetch to search size, or max value (default to max u32 (4294967295))
-			const coercedRequest = coerceQuery(
-				queryRequest,
-				options,
-				this.compatibility,
-			);
-			coercedRequest.fetch = coercedRequest.fetch ?? 0xffffffff;
+		const coercedRequest = coerceQuery(
+			queryRequest,
+			options,
+			this.compatibility,
+		);
+		coercedRequest.fetch = coercedRequest.fetch ?? 0xffffffff;
 
-			// Use an iterator so large results respect message size limits.
-			const iterator = this.iterate<Resolve>(coercedRequest, options);
+		const searchOptions =
+			typeof options?.remote === "object" &&
+			options.remote.retryMissingResponses === undefined
+				? ({
+						...options,
+						remote: {
+							...options.remote,
+							retryMissingResponses: false,
+						},
+					} as O)
+				: options;
 
-			const allResults: ValueTypeFromRequest<Resolve, T, I>[] = [];
+		// Use an iterator so large results respect message size limits.
+		const iterator = this.iterate<Resolve>(coercedRequest, searchOptions);
+
+		const allResults: ValueTypeFromRequest<Resolve, T, I>[] = [];
 
 		while (
 			iterator.done() !== true &&
@@ -2915,6 +2928,10 @@ export class DocumentIndex<
 		) {
 			queryRequestCoerced.replicate = true;
 		}
+		const retryMissingResponseGroups =
+			typeof options?.remote === "object"
+				? options.remote.retryMissingResponses ?? true
+				: true;
 
 		indexIteratorLogger.trace("Iterate with options", {
 			query: queryRequestCoerced,
@@ -3261,6 +3278,9 @@ export class DocumentIndex<
 					},
 					onMissingResponses: (error) => {
 						missingResponses = true;
+						if (!retryMissingResponseGroups) {
+							return;
+						}
 						const missingGroups = (error as MissingResponsesError & {
 							missingGroups?: string[][];
 						}).missingGroups;
@@ -3287,7 +3307,7 @@ export class DocumentIndex<
 				fetchOptions?.fetchedFirstForRemote,
 			);
 
-			if (missingResponses) {
+			if (missingResponses && retryMissingResponseGroups) {
 				hasMore = true;
 				unsetDone();
 			}

@@ -3849,6 +3849,46 @@ describe("index", () => {
 								await iterator.close();
 							});
 
+							it("does not retry missing shard groups for one-shot queries", async () => {
+								session = await TestSession.connected(1);
+
+								const store = await session.peers[0].open(
+									new TestStore({
+										docs: new Documents<Document>(),
+									}),
+									{
+										args: {
+											replicate: false,
+										},
+									},
+								);
+
+								const missingPeer = "missing-peer";
+								const observedRemoteFrom: (string[] | undefined)[] = [];
+								store.docs.index["queryCommence"] = async (...args: any[]) => {
+									const options = args[1];
+									observedRemoteFrom.push(options?.remote?.from);
+									const error = new MissingResponsesError("missing shards");
+									(error as MissingResponsesError & { missingGroups?: string[][] })
+										.missingGroups = [[missingPeer]];
+									await options?.onMissingResponses?.(error);
+									return [];
+								};
+
+								const results = await store.docs.index.search(
+									{},
+									{
+										local: false,
+										remote: {
+											wait: { timeout: 5_000, behavior: "keep-open" },
+										},
+									},
+								);
+
+								expect(results).to.deep.equal([]);
+								expect(observedRemoteFrom).to.deep.equal([undefined]);
+							});
+
 							it("caps missing-shard retries to configured budget", async () => {
 								session = await TestSession.connected(1);
 

@@ -79,6 +79,11 @@ describe("observer", () => {
 			stores.push(store);
 		}
 
+		// `waitForReplicator()` below relies on RequestReplicationInfo RPCs routing over the
+		// sparse pubsub/fanout transport. Opening the stores wires up additional channels, so
+		// re-assert the underlying neighbor streams before waiting on role discovery.
+		await waitForSparseNeighborStreams(session, waitTimeout);
+
 		await stores[0].waitFor(session.peers[1].peerId, {
 			seek: "present",
 			timeout: waitTimeout,

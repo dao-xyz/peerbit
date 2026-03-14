@@ -73,15 +73,63 @@ type DocumentPartyProps = {
 
 const DocumentParty = ({ label, replicate }: DocumentPartyProps) => {
 	const { peer, status, error } = usePeer();
+	const [networkReady, setNetworkReady] = useState(
+		bootstrapAddrs.length === 0,
+	);
 	useEffect(() => {
 		if (!peer) return;
 		(window as any)["peerbit"] = peer;
 	}, [peer]);
-	const store = useMemo(() => PartyDocumentStore.createFixed(), []);
+	useEffect(() => {
+		if (!peer) {
+			setNetworkReady(bootstrapAddrs.length === 0);
+			return;
+		}
+		if (bootstrapAddrs.length === 0) {
+			setNetworkReady(true);
+			return;
+		}
+		let cancelled = false;
+		const ensureConnected = async () => {
+			const deadline = Date.now() + 20_000;
+			while (!cancelled && Date.now() < deadline) {
+				if (peer.libp2p.getConnections().length > 0) {
+					setNetworkReady(true);
+					return;
+				}
+				try {
+					await peer.bootstrap(bootstrapAddrs);
+				} catch {
+					for (const address of bootstrapAddrs) {
+						try {
+							await peer.dial(address);
+							break;
+						} catch {
+							// try the next bootstrap candidate
+						}
+					}
+				}
+				if (peer.libp2p.getConnections().length > 0) {
+					setNetworkReady(true);
+					return;
+				}
+				await new Promise((resolve) => setTimeout(resolve, 500));
+			}
+		};
+		void ensureConnected();
+		return () => {
+			cancelled = true;
+		};
+	}, [peer]);
+	const store = useMemo(
+		() => PartyDocumentStore.createFixed(),
+		[networkReady],
+	);
 	const [message, setMessage] = useState("");
 
-	const { program } = useProgram(peer, peer ? store : undefined, {
+	const { program } = useProgram(peer, peer && networkReady ? store : undefined, {
 		args: { replicate },
+		id: networkReady ? "connected" : "waiting-for-bootstrap",
 		keepOpenOnUnmount: true,
 	});
 

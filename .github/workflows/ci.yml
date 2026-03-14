@@ -84,6 +84,9 @@ jobs:
           pnpm install --frozen-lockfile=false
           # NOTE: CI runs node-only tests (`-t node`). Playwright system deps are not required
           # here and have proven flaky on GitHub runners due to transient apt repository errors.
+      - name: Install Playwright browser
+        if: matrix.test_cmd == 'pnpm run test:ci:part-2c'
+        run: pnpm exec playwright install --only-shell chromium
       - uses: actions/download-artifact@v4
         with:
           name: workspace-dist-${{ github.sha }}
@@ -141,6 +144,9 @@ jobs:
           pnpm install --frozen-lockfile=false
           # NOTE: CI runs node-only tests (`-t node`). Playwright system deps are not required
           # here and have proven flaky on GitHub runners due to transient apt repository errors.
+      - name: Install Playwright browser
+        if: matrix.test_cmd == 'pnpm run test:ci:part-2c'
+        run: pnpm exec playwright install --only-shell chromium
       - uses: actions/download-artifact@v4
         with:
           name: workspace-dist-${{ github.sha }}
