@@ -42,6 +42,7 @@ import {
 	MultiAddrinfo,
 	NotStartedError,
 	SilentDelivery,
+	Signatures,
 	TracedDelivery,
 	coercePeerRefsToHashes,
 	deliveryModeHasReceiver,
@@ -1078,6 +1079,7 @@ export abstract class DirectStream<
 	public publicKey: PublicSignKey;
 	public publicKeyHash: string;
 	public sign: (bytes: Uint8Array) => Promise<SignatureWithKey>;
+	private signPreparedSha256: (bytes: Uint8Array) => Promise<SignatureWithKey>;
 
 	public started: boolean;
 	public stopping: boolean;
@@ -1174,6 +1176,11 @@ export abstract class DirectStream<
 		const signKey = getKeypairFromPrivateKey(components.privateKey);
 		this.seekTimeout = seekTimeout;
 		this.sign = (bytes) => signKey.sign(bytes, PreHash.SHA_256);
+		this.signPreparedSha256 = async (bytes) => {
+			const signature = await signKey.sign(bytes, PreHash.NONE);
+			signature.prehash = PreHash.SHA_256;
+			return signature;
+		};
 		this.peerId = components.peerId;
 		this.publicKey = signKey.publicKey;
 		if (inboundIdleTimeout != null)
@@ -2579,7 +2586,7 @@ export abstract class DirectStream<
 
 		// TODO allow messages to also be sent unsigned (signaturePolicy property)
 
-		await message.sign(this.sign);
+		await this.signDataMessage(message);
 		if (options.extraSigners) {
 			for (const signer of options.extraSigners) {
 				await message.sign(signer);
@@ -2631,6 +2638,17 @@ export abstract class DirectStream<
 		return message.id;
 	}
 
+	private async signDataMessage(message: DataMessage) {
+		const signature = await this.signPreparedSha256(
+			await message.getPreparedSignableBytes(PreHash.SHA_256),
+		);
+		const signatures = message.header.signatures;
+		message.header.signatures = new Signatures(
+			signatures ? [...signatures.signatures, signature] : [signature],
+		);
+		return message;
+	}
+
 	public async relayMessage(
 		from: PublicSignKey,
 		message: Message,
@@ -2642,7 +2660,7 @@ export abstract class DirectStream<
 					message.header.mode instanceof AcknowledgeDelivery ||
 					message.header.mode instanceof AcknowledgeAnyWhere
 				) {
-					await message.sign(this.sign);
+					await this.signDataMessage(message);
 				}
 			}
 			if (deliveryModeHasReceiver(message.header.mode)) {

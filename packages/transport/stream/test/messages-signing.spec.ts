@@ -1,5 +1,6 @@
 import { serialize } from "@dao-xyz/borsh";
 import { expect } from "chai";
+import { PreHash, sha256 } from "@peerbit/crypto";
 import {
 	DataMessage,
 	MessageHeader,
@@ -116,5 +117,26 @@ describe("message signing", () => {
 			Array.from(toByteArray(encoded)),
 		);
 		expect(Array.from(decoded.data!)).to.deep.equal(Array.from(payload));
+	});
+
+	it("caches prepared signable sha256 bytes for a data-message", async () => {
+		const message = new DataMessage({
+			header: new MessageHeader({
+				session: 1,
+				mode: new SilentDelivery({
+					to: ["peer-a"],
+					redundancy: 1,
+				}),
+			}),
+			data: new Uint8Array([21, 22, 23]),
+		});
+
+		const prepared = await message.getPreparedSignableBytes(PreHash.SHA_256);
+		const again = await message.getPreparedSignableBytes(PreHash.SHA_256);
+
+		expect(again).to.equal(prepared);
+		expect(Array.from(prepared)).to.deep.equal(
+			Array.from(await sha256(message.getSignableBytes())),
+		);
 	});
 });

@@ -385,6 +385,7 @@ const verifyMultiSig = async (
 
 export abstract class Message<T extends DeliveryMode = DeliveryMode> {
 	protected _cachedSignableBytes?: Uint8Array;
+	protected _cachedPreparedSignableBytes?: Map<number, Uint8Array>;
 
 	static from(bytes: Uint8ArrayList) {
 		if (bytes.get(0) === DATA_VARIANT) {
@@ -413,6 +414,22 @@ export abstract class Message<T extends DeliveryMode = DeliveryMode> {
 			this._cachedSignableBytes ??
 			(this._cachedSignableBytes = serializeUnsigned(this))
 		);
+	}
+
+	async getPreparedSignableBytes(prehash: PreHash): Promise<Uint8Array> {
+		if (prehash === PreHash.NONE) {
+			return this.getSignableBytes();
+		}
+		let prepared = this._cachedPreparedSignableBytes?.get(prehash);
+		if (prepared) {
+			return prepared;
+		}
+		prepared = await prehashFn(this.getSignableBytes(), prehash);
+		if (!this._cachedPreparedSignableBytes) {
+			this._cachedPreparedSignableBytes = new Map();
+		}
+		this._cachedPreparedSignableBytes.set(prehash, prepared);
+		return prepared;
 	}
 
 	abstract bytes(): Uint8ArrayList | Uint8Array;
@@ -632,6 +649,7 @@ export class DataMessage<
 		this._dataBytes = data;
 		this._data = data instanceof Uint8Array ? data : undefined;
 		this._cachedSignableBytes = undefined;
+		this._cachedPreparedSignableBytes = undefined;
 	}
 
 	private serializeBytes(properties: {
