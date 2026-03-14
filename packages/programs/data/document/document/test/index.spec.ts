@@ -1099,6 +1099,79 @@ describe("index", () => {
 						).to.have.length(docCount); // no new segments
 					});
 
+					it("deduplicates replicated query sync across responders", async () => {
+						const session3 = await TestSession.connected(3);
+						const stores3: TestStore[] = [];
+						let joinSpy: sinon.SinonSpy | undefined;
+
+						try {
+							stores3[0] = await session3.peers[0].open<TestStore>(
+								new TestStore({ docs: new Documents() }),
+								{
+									args: {
+										replicate: {
+											factor: 1,
+										},
+									},
+								},
+							);
+							stores3[1] = await session3.peers[1].open<TestStore>(
+								stores3[0].clone(),
+								{
+									args: {
+										replicate: {
+											factor: 1,
+										},
+									},
+								},
+							);
+
+							await stores3[0].docs.put(new Document({ id: "dedup-sync" }));
+							await waitForResolved(async () =>
+								expect(await stores3[1].docs.index.getSize()).equal(1),
+							);
+
+							stores3[2] = await session3.peers[2].open<TestStore>(
+								stores3[0].clone(),
+								{
+									args: {
+										replicate: false,
+									},
+								},
+							);
+
+							await Promise.all([
+								stores3[2].docs.log.waitForReplicator(
+									stores3[0].node.identity.publicKey,
+								),
+								stores3[2].docs.log.waitForReplicator(
+									stores3[1].node.identity.publicKey,
+								),
+							]);
+
+							joinSpy = sinon.spy(stores3[2].docs.log, "join");
+
+							const results = await stores3[2].docs.index.search(
+								new SearchRequest({
+									query: [],
+								}),
+								{ remote: { replicate: true } },
+							);
+
+							expect(results).to.have.length(1);
+							expect(joinSpy.callCount).equal(1);
+							expect(joinSpy.getCall(0).args[0]).to.have.length(1);
+						} finally {
+							joinSpy?.restore();
+							for (const store of stores3) {
+								if (store && store.closed === false) {
+									await store.close();
+								}
+							}
+							await session3.stop();
+						}
+					});
+
 					it("iterate replicate", async () => {
 						stores[0] = await session.peers[0].open<TestStore>(
 							new TestStore({ docs: new Documents() }),

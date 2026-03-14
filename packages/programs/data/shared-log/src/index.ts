@@ -4704,6 +4704,14 @@ export class SharedLog<
 		},
 	): Promise<void> {
 		let entriesToReplicate: Entry<T>[] = [];
+		const localHashes =
+			options?.replicate && this.log.length > 0
+				? await this.log.entryIndex.hasMany(
+						entries.map((element) =>
+							typeof element === "string" ? element : element.hash,
+						),
+				  )
+				: new Set<string>();
 		if (options?.replicate && this.log.length > 0) {
 			// TODO this block should perhaps be called from a callback on the this.log.join method on all the ignored element because already joined, like "onAlreadyJoined"
 
@@ -4711,18 +4719,18 @@ export class SharedLog<
 			// we can not just do the 'join' call because it will ignore the already joined entries
 			for (const element of entries) {
 				if (typeof element === "string") {
-					if (await this.log.has(element)) {
+					if (localHashes.has(element)) {
 						const entry = await this.log.get(element);
 						if (entry) {
 							entriesToReplicate.push(entry);
 						}
 					}
 				} else if (element instanceof Entry) {
-					if (await this.log.has(element.hash)) {
+					if (localHashes.has(element.hash)) {
 						entriesToReplicate.push(element);
 					}
 				} else {
-					if (await this.log.has(element.hash)) {
+					if (localHashes.has(element.hash)) {
 						const entry = await this.log.get(element.hash);
 						if (entry) {
 							entriesToReplicate.push(entry);

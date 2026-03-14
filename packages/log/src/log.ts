@@ -683,17 +683,33 @@ export class Log<T> {
 			for (const element of entries) references.set(element.hash, element);
 		} else if (Array.isArray(entriesOrLog)) {
 			if (entriesOrLog.length === 0) return;
+			const existingHashes = options?.reset
+				? new Set<string>()
+				: await this.entryIndex.hasMany(
+						entriesOrLog.map((element) =>
+							typeof element === "string"
+								? element
+								: element instanceof Entry
+									? element.hash
+									: element instanceof ShallowEntry
+										? element.hash
+										: element.entry.hash,
+						),
+				  );
 
 			entries = [];
 			for (const element of entriesOrLog) {
 				if (element instanceof Entry) {
+					if (existingHashes.has(element.hash)) {
+						continue;
+					}
 					entries.push(element);
 					references.set(element.hash, element);
 					continue;
 				}
 
 				if (typeof element === "string") {
-					if ((await this.entryIndex.getShallow(element)) != null && !options?.reset) {
+					if (existingHashes.has(element)) {
 						continue; // already in log
 					}
 
@@ -711,10 +727,7 @@ export class Log<T> {
 				}
 
 				if (element instanceof ShallowEntry) {
-					if (
-						(await this.entryIndex.getShallow(element.hash)) != null &&
-						!options?.reset
-					) {
+					if (existingHashes.has(element.hash)) {
 						continue; // already in log
 					}
 

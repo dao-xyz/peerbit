@@ -21,6 +21,10 @@ type Sample = {
 	observerChunkEntriesKnownMs: number;
 	observerManifestReadyMs: number;
 	observerChunksReadyMs: number;
+	observerManifestSearchMs: number;
+	observerChunkSearchMs: number;
+	observerJoinMs: number;
+	observerJoinCalls: number;
 	observerFinalManifestEntryKnownTailMs: number;
 	observerChunkEntriesKnownTailMs: number;
 	observerManifestTailMs: number;
@@ -269,6 +273,8 @@ const waitForObserverReady = async (
 	let entryPolls = 0;
 	let manifestPolls = 0;
 	let chunkPolls = 0;
+	let manifestSearchMs = 0;
+	let chunkSearchMs = 0;
 	let finalManifestEntryKnownMs: number | undefined;
 	let chunkEntriesKnownMs: number | undefined;
 	let manifestReadyMs: number | undefined;
@@ -303,6 +309,7 @@ const waitForObserverReady = async (
 		}
 
 		manifestPolls += 1;
+		const manifestSearchStartedAt = performance.now();
 		const manifests = await observer.files.index.search(
 			new SearchRequest({
 				query: new StringMatch({
@@ -313,11 +320,13 @@ const waitForObserverReady = async (
 			}),
 			queryOptions,
 		);
+		manifestSearchMs += performance.now() - manifestSearchStartedAt;
 		const manifest = manifests[0] as FileRecord | undefined;
 
 		if (manifest?.ready) {
 			manifestReadyMs ??= performance.now() - startedAt;
 			chunkPolls += 1;
+			const chunkSearchStartedAt = performance.now();
 			const chunkResults = await observer.files.index.search(
 				new SearchRequest({
 					query: new StringMatch({
@@ -328,6 +337,7 @@ const waitForObserverReady = async (
 				}),
 				queryOptions,
 			);
+			chunkSearchMs += performance.now() - chunkSearchStartedAt;
 			if (chunkResults.length === expectedChunks) {
 				return {
 					finalManifestEntryKnownMs:
@@ -336,6 +346,8 @@ const waitForObserverReady = async (
 						chunkEntriesKnownMs ?? performance.now() - startedAt,
 					manifestReadyMs: manifestReadyMs ?? performance.now() - startedAt,
 					chunksReadyMs: performance.now() - startedAt,
+					manifestSearchMs,
+					chunkSearchMs,
 					entryPolls,
 					manifestPolls,
 					chunkPolls,
@@ -401,6 +413,18 @@ const runIteration = async (
 			replicate: false,
 		},
 	});
+	let observerJoinMs = 0;
+	let observerJoinCalls = 0;
+	const originalObserverJoin = observer.files.log.join.bind(observer.files.log);
+	observer.files.log.join = (async (...args: Parameters<typeof originalObserverJoin>) => {
+		observerJoinCalls += 1;
+		const startedAt = performance.now();
+		try {
+			return await originalObserverJoin(...args);
+		} finally {
+			observerJoinMs += performance.now() - startedAt;
+		}
+	}) as typeof observer.files.log.join;
 
 	try {
 		await waitForReplicationSetup(writer, seeder);
@@ -427,6 +451,10 @@ const runIteration = async (
 			observerChunkEntriesKnownMs: observerProgress.chunkEntriesKnownMs,
 			observerManifestReadyMs: observerProgress.manifestReadyMs,
 			observerChunksReadyMs: observerProgress.chunksReadyMs,
+			observerManifestSearchMs: observerProgress.manifestSearchMs,
+			observerChunkSearchMs: observerProgress.chunkSearchMs,
+			observerJoinMs,
+			observerJoinCalls,
 			observerFinalManifestEntryKnownTailMs:
 				observerProgress.finalManifestEntryKnownMs - writerCompleteMs,
 			observerChunkEntriesKnownTailMs:
@@ -515,6 +543,24 @@ for (const result of results) {
 	);
 	tasks.push(
 		summarizeTask(
+			`${result.mode}: observer-manifest-search`,
+			result.samples.map((sample) => sample.observerManifestSearchMs),
+		),
+	);
+	tasks.push(
+		summarizeTask(
+			`${result.mode}: observer-chunk-search`,
+			result.samples.map((sample) => sample.observerChunkSearchMs),
+		),
+	);
+	tasks.push(
+		summarizeTask(
+			`${result.mode}: observer-join`,
+			result.samples.map((sample) => sample.observerJoinMs),
+		),
+	);
+	tasks.push(
+		summarizeTask(
 			`${result.mode}: observer-final-manifest-entry-known-tail`,
 			result.samples.map(
 				(sample) => sample.observerFinalManifestEntryKnownTailMs,
@@ -577,6 +623,20 @@ const output = {
 			observerChunksReadyMsAvg: round(
 				average(result.samples.map((sample) => sample.observerChunksReadyMs)),
 			),
+			observerManifestSearchMsAvg: round(
+				average(
+					result.samples.map((sample) => sample.observerManifestSearchMs),
+				),
+			),
+			observerChunkSearchMsAvg: round(
+				average(result.samples.map((sample) => sample.observerChunkSearchMs)),
+			),
+			observerJoinMsAvg: round(
+				average(result.samples.map((sample) => sample.observerJoinMs)),
+			),
+			observerJoinCallsAvg: round(
+				average(result.samples.map((sample) => sample.observerJoinCalls)),
+			),
 			observerManifestTailMsAvg: round(
 				average(result.samples.map((sample) => sample.observerManifestTailMs)),
 			),
@@ -616,6 +676,10 @@ const output = {
 				),
 				observerManifestReadyMs: round(sample.observerManifestReadyMs),
 				observerChunksReadyMs: round(sample.observerChunksReadyMs),
+				observerManifestSearchMs: round(sample.observerManifestSearchMs),
+				observerChunkSearchMs: round(sample.observerChunkSearchMs),
+				observerJoinMs: round(sample.observerJoinMs),
+				observerJoinCalls: sample.observerJoinCalls,
 				observerFinalManifestEntryKnownTailMs: round(
 					sample.observerFinalManifestEntryKnownTailMs,
 				),

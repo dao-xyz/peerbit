@@ -404,6 +404,7 @@ const introduceEntries = async <
 	RPCResponse<types.Results<types.ResultTypeFromRequest<R, T, I>>>[]
 > => {
 	const results: RPCResponse<types.Results<any>>[] = [];
+	const replicatedHeads = new Set<string>();
 	for (const response of responses) {
 		if (!response.from) {
 			logger.error("Missing from for response");
@@ -416,7 +417,27 @@ const introduceEntries = async <
 					: r.init(indexedType),
 			);
 			if (typeof options?.remote !== "boolean" && options?.remote?.replicate) {
-				await sync(queryRequest, response.response);
+				const uniqueResults = response.response.results.filter((result) => {
+					const head =
+						result instanceof types.ResultIndexedValue &&
+						result.entries.length > 0
+							? result.entries[0]!.hash
+							: result.context.head;
+					if (replicatedHeads.has(head)) {
+						return false;
+					}
+					replicatedHeads.add(head);
+					return true;
+				});
+				if (uniqueResults.length > 0) {
+					await sync(
+						queryRequest,
+						new types.Results({
+							results: uniqueResults,
+							kept: response.response.kept,
+						}),
+					);
+				}
 			}
 			options?.onResponse &&
 				(await options.onResponse(response.response, response.from!)); // TODO fix types

@@ -357,6 +357,52 @@ export class EntryIndex<T> {
 		return result != null;
 	}
 
+	async hasMany(hashes: Iterable<string>) {
+		const existing = new Set<string>();
+		const missing: string[] = [];
+		for (const hash of new Set([...hashes].filter(Boolean))) {
+			if (this.cache.get(hash) || this.pendingIndexWrites.has(hash)) {
+				existing.add(hash);
+				continue;
+			}
+			missing.push(hash);
+		}
+
+		if (missing.length === 0) {
+			return existing;
+		}
+
+		const iterator = this.properties.index.iterate(
+			{
+				query:
+					missing.length === 1
+						? new StringMatch({
+								key: "hash",
+								value: missing[0]!,
+							})
+						: new Or(
+								missing.map(
+									(hash) =>
+										new StringMatch({
+											key: "hash",
+											value: hash,
+										}),
+								),
+							),
+			},
+			{
+				shape: { hash: true },
+			},
+		);
+		const indexed = await iterator.all();
+		await iterator.close();
+		for (const entry of indexed) {
+			existing.add(entry.value.hash);
+		}
+
+		return existing;
+	}
+
 	async put(
 		entry: Entry<any>,
 		properties: {
