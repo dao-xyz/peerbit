@@ -89,27 +89,32 @@ const DocumentParty = ({ label, replicate }: DocumentPartyProps) => {
 			setNetworkReady(true);
 			return;
 		}
+		const networkPeer = peer as any;
 		let cancelled = false;
 		const ensureConnected = async () => {
 			const deadline = Date.now() + 20_000;
 			while (!cancelled && Date.now() < deadline) {
-				if (peer.libp2p.getConnections().length > 0) {
+				if (networkPeer.libp2p.getConnections().length > 0) {
 					setNetworkReady(true);
 					return;
 				}
 				try {
-					await peer.bootstrap(bootstrapAddrs);
+					if (typeof networkPeer.bootstrap === "function") {
+						await networkPeer.bootstrap(bootstrapAddrs);
+					}
 				} catch {
 					for (const address of bootstrapAddrs) {
 						try {
-							await peer.dial(address);
+							if (typeof networkPeer.dial === "function") {
+								await networkPeer.dial(address);
+							}
 							break;
 						} catch {
 							// try the next bootstrap candidate
 						}
 					}
 				}
-				if (peer.libp2p.getConnections().length > 0) {
+				if (networkPeer.libp2p.getConnections().length > 0) {
 					setNetworkReady(true);
 					return;
 				}
