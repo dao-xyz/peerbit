@@ -76,10 +76,10 @@ const injectViteBenchmarkResolveGuards = (contents, filePath, frontendRoot) => {
 				path.join(examplesNodeModules, "@dao-xyz", "borsh"),
 			)},
         },\n`;
-	next = next.replace(
-		/        \/\* peerbit-benchmark-vite \*\/\n        alias: \{\n[\s\S]*?        \},\n/,
-		reactAliasBlock,
-	);
+		next = next.replace(
+			/ {8}\/\* peerbit-benchmark-vite \*\/\n {8}alias: \{\n[\s\S]*? {8}\},\n/,
+			reactAliasBlock,
+		);
 	if (next.includes(`${VITE_BENCHMARK_MARKER}\n        preserveSymlinks: true,\n`)) {
 		next = next.replace(
 			`${VITE_BENCHMARK_MARKER}\n        preserveSymlinks: true,\n`,
@@ -263,6 +263,24 @@ const summarizeUploadResults = (results) => {
 			items
 				.filter((item) => item.status === "passed")
 				.map((item) => item.uploadDurationMs)
+				.filter((value) => typeof value === "number"),
+		),
+		uploadSettledMsAvg: average(
+			items
+				.filter((item) => item.status === "passed")
+				.map((item) => item.phaseDurationsMs?.timeToUploadSettled)
+				.filter((value) => typeof value === "number"),
+		),
+		writerListingLagMsAvg: average(
+			items
+				.filter((item) => item.status === "passed")
+				.map((item) => item.phaseDurationsMs?.writerListingLag)
+				.filter((value) => typeof value === "number"),
+		),
+		readerListingLagMsAvg: average(
+			items
+				.filter((item) => item.status === "passed")
+				.map((item) => item.phaseDurationsMs?.readerListingLag)
 				.filter((value) => typeof value === "number"),
 		),
 		errorCount: items.reduce((sum, item) => sum + item.errorCount, 0),
@@ -660,6 +678,9 @@ const main = async () => {
 					? result.samples.at(-1).readerSeeders
 					: null,
 			uploadDurationMs: result.uploadDurationMs,
+			uploadSettledMs: result.phaseDurationsMs?.timeToUploadSettled ?? null,
+			writerListingLagMs: result.phaseDurationsMs?.writerListingLag ?? null,
+			readerListingLagMs: result.phaseDurationsMs?.readerListingLag ?? null,
 			playwrightWallTimeMs: result.playwrightWallTimeMs,
 			playwrightExitCode: result.playwrightExitCode,
 			droppedSeeders: result.droppedSeeders,

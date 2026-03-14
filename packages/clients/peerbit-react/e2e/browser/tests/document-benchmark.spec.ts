@@ -65,7 +65,7 @@ test("runs the document write benchmark", async ({ page }) => {
 });
 
 test("runs the document write benchmark with persistence", async (
-	{},
+	_fixtures,
 	testInfo,
 ) => {
 	const baseURL =
@@ -111,7 +111,7 @@ test("runs the document write benchmark with persistence", async (
 });
 
 test("runs the document write benchmark with persistence and clone sqlite protocol", async (
-	{},
+	_fixtures,
 	testInfo,
 ) => {
 	const baseURL =

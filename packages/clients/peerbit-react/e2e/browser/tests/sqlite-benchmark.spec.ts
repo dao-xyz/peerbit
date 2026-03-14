@@ -35,7 +35,7 @@ const launchPersistentBrowserContext = async (
 };
 
 test("runs the persisted sqlite worker benchmark for both protocols", async (
-	{},
+	_fixtures,
 	testInfo,
 ) => {
 	const baseURL =

@@ -166,6 +166,10 @@ test.describe("generated upload benchmark", () => {
 		let startedAt: number | undefined;
 		let finishedAt: number | undefined;
 		let shareUrl: string | undefined;
+		let progressVisibleAt: number | undefined;
+		let uploadSettledAt: number | undefined;
+		let writerListedAt: number | undefined;
+		let readerListedAt: number | undefined;
 		let dropped = false;
 		let baselineWriterSeeders = MIN_READY_SEEDERS;
 		let baselineReaderSeeders = MIN_READY_SEEDERS;
@@ -207,6 +211,38 @@ test.describe("generated upload benchmark", () => {
 			logSnapshot(state);
 			return state;
 		};
+
+		const getPhaseDurations = () =>
+			startedAt == null
+				? undefined
+				: {
+						timeToProgressVisible:
+							progressVisibleAt != null ? progressVisibleAt - startedAt : undefined,
+						activeUpload:
+							progressVisibleAt != null && uploadSettledAt != null
+								? uploadSettledAt - progressVisibleAt
+								: uploadSettledAt != null
+									? uploadSettledAt - startedAt
+									: undefined,
+						timeToUploadSettled:
+							uploadSettledAt != null ? uploadSettledAt - startedAt : undefined,
+						writerListingLag:
+							uploadSettledAt != null && writerListedAt != null
+								? writerListedAt - uploadSettledAt
+								: undefined,
+						readerListingLag:
+							uploadSettledAt != null && readerListedAt != null
+								? readerListedAt - uploadSettledAt
+								: undefined,
+						readerAfterWriter:
+							writerListedAt != null && readerListedAt != null
+								? readerListedAt - writerListedAt
+								: undefined,
+						timeToWriterListed:
+							writerListedAt != null ? writerListedAt - startedAt : undefined,
+						timeToReaderListed:
+							readerListedAt != null ? readerListedAt - startedAt : undefined,
+					};
 
 		try {
 			stage = "create-space";
@@ -270,6 +306,7 @@ test.describe("generated upload benchmark", () => {
 				.first()
 				.waitFor({ state: "visible", timeout: 5000 })
 				.catch(() => {});
+			progressVisibleAt = Date.now();
 			stage = "monitor-upload";
 			logStage(stage);
 
@@ -290,6 +327,7 @@ test.describe("generated upload benchmark", () => {
 				}
 				uploadCompleted = !(current.uploadVisible as boolean);
 				if (uploadCompleted) {
+					uploadSettledAt = current.at as number;
 					break;
 				}
 				if (Date.now() - startedAt > UPLOAD_TIMEOUT_MS) {
@@ -302,8 +340,16 @@ test.describe("generated upload benchmark", () => {
 
 			stage = "wait-for-listing";
 			logStage(stage);
-			await waitForFileListed(writer, file.fileName, 180_000);
-			await waitForFileListed(reader, file.fileName, 180_000);
+			[writerListedAt, readerListedAt] = await Promise.all([
+				(async () => {
+					await waitForFileListed(writer, file.fileName, 180_000);
+					return Date.now();
+				})(),
+				(async () => {
+					await waitForFileListed(reader, file.fileName, 180_000);
+					return Date.now();
+				})(),
+			]);
 
 			stage = "post-upload-monitor";
 			logStage(stage);
@@ -342,6 +388,7 @@ test.describe("generated upload benchmark", () => {
 				baselineReaderSeeders,
 				shareUrl,
 				droppedSeeders: dropped,
+				phaseDurationsMs: getPhaseDurations(),
 				errorCount: errors.length,
 				errors,
 				snapshots,
@@ -378,6 +425,7 @@ test.describe("generated upload benchmark", () => {
 				baselineReaderSeeders,
 				shareUrl,
 				droppedSeeders: dropped,
+				phaseDurationsMs: getPhaseDurations(),
 				errorCount: errors.length,
 				errors,
 				snapshots,

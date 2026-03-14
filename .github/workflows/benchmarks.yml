@@ -381,7 +381,16 @@ jobs:
               },
             ];
 
-            const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
+            const readJson = (file) => {
+              try {
+                return JSON.parse(fs.readFileSync(file, 'utf8'));
+              } catch (error) {
+                return {
+                  tasks: [],
+                  __parseError: error instanceof Error ? error.message : String(error),
+                };
+              }
+            };
 
             const format = (value, digits = 3) => {
               if (value === null || value === undefined || Number.isNaN(value)) return '-';
@@ -448,6 +457,13 @@ jobs:
               const headJson = headExists ? readJson(suite.head) : { tasks: [] };
               body += `### ${suite.title}\n\n`;
               body += formatSuite(baseJson, headJson);
+              if (baseJson.__parseError || headJson.__parseError) {
+                body += '\n\n';
+                body += [
+                  baseJson.__parseError ? `base parse error: ${baseJson.__parseError}` : null,
+                  headJson.__parseError ? `head parse error: ${headJson.__parseError}` : null,
+                ].filter(Boolean).join(' • ');
+              }
               body += `\n\n`;
               includedSuites += 1;
             }
