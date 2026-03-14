@@ -288,7 +288,7 @@ test.describe("document react party", () => {
 							.sort();
 					});
 					const allAddresses = out;
-					const compareAddresses = expectedAddresses.sort();
+					const compareAddresses = [...expectedAddresses].sort();
 					return (
 						JSON.stringify(allAddresses) === JSON.stringify(compareAddresses)
 					);

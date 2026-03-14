@@ -299,6 +299,47 @@ describe("useQuery (integration with Documents)", () => {
 		);
 	});
 
+	it(
+		"does not surface remote writes live when push is disabled",
+		{ timeout: 20_000 },
+		async () => {
+			await setupConnected();
+
+			const { result } = renderUseQuery(dbReader, {
+				query: {},
+				resolve: true,
+				local: false,
+				remote: { reach: { eager: true } },
+				updates: { push: false, merge: true },
+				prefetch: false,
+			});
+
+			await waitFor(() => {
+				expect(result.current).toBeDefined();
+			});
+
+			expect(result.current.items.length).toBe(0);
+
+			await act(async () => {
+				await result.current.loadMore(10, { force: true, reason: "manual" });
+			});
+
+			expect(result.current.items.length).toBe(0);
+
+			await act(async () => {
+				await dbWriter.posts.put(new Post({ message: "manual-only" }));
+			});
+
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 1_000));
+			});
+
+			expect(
+				result.current.items.map((p) => (p as Post).message),
+			).not.toContain("manual-only");
+		},
+	);
+
 		it(
 			"fanouts pushed updates to multiple observers",
 			{
