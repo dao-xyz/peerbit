@@ -420,6 +420,133 @@ export abstract class Message<T extends DeliveryMode = DeliveryMode> {
 // I pack data with this message
 const DATA_VARIANT = 0;
 
+const readU8At = (bytes: Uint8ArrayList, offset: number) => bytes.get(offset);
+
+const readU32LEAt = (bytes: Uint8ArrayList, offset: number) =>
+	bytes.getUint32(offset, true);
+
+const skipBorshBytes = (bytes: Uint8ArrayList, offset: number) => {
+	const length = readU32LEAt(bytes, offset);
+	return offset + 4 + length;
+};
+
+const skipBorshString = (bytes: Uint8ArrayList, offset: number) =>
+	skipBorshBytes(bytes, offset);
+
+const skipStringVec = (bytes: Uint8ArrayList, offset: number) => {
+	const length = readU32LEAt(bytes, offset);
+	offset += 4;
+	for (let i = 0; i < length; i++) {
+		offset = skipBorshString(bytes, offset);
+	}
+	return offset;
+};
+
+const skipPeerInfo = (bytes: Uint8ArrayList, offset: number) => {
+	const variant = readU8At(bytes, offset);
+	offset += 1;
+	if (variant === 0) {
+		return skipStringVec(bytes, offset);
+	}
+	throw new Error(`Unsupported peer info variant: ${variant}`);
+};
+
+const skipDeliveryMode = (bytes: Uint8ArrayList, offset: number) => {
+	const variant = readU8At(bytes, offset);
+	offset += 1;
+	if (variant === 0 || variant === 1) {
+		offset = skipStringVec(bytes, offset);
+		return offset + 1;
+	}
+	if (variant === 5) {
+		return offset + 1;
+	}
+	if (variant === 3) {
+		return skipStringVec(bytes, offset);
+	}
+	if (variant === 4) {
+		return offset;
+	}
+	throw new Error(`Unsupported delivery mode variant: ${variant}`);
+};
+
+const skipPublicSignKey = (bytes: Uint8ArrayList, offset: number) => {
+	const variant = readU8At(bytes, offset);
+	offset += 1;
+	if (variant === 0) {
+		return offset + 32;
+	}
+	if (variant === 1) {
+		return offset + 33;
+	}
+	throw new Error(`Unsupported public sign key variant: ${variant}`);
+};
+
+const skipSignatureWithKey = (bytes: Uint8ArrayList, offset: number) => {
+	const variant = readU8At(bytes, offset);
+	if (variant !== 0) {
+		throw new Error(`Unsupported signature variant: ${variant}`);
+	}
+	offset += 1;
+	offset = skipBorshBytes(bytes, offset);
+	offset = skipPublicSignKey(bytes, offset);
+	return offset + 1;
+};
+
+const skipSignatures = (bytes: Uint8ArrayList, offset: number) => {
+	const variant = readU8At(bytes, offset);
+	if (variant !== 0) {
+		throw new Error(`Unsupported signatures variant: ${variant}`);
+	}
+	offset += 1;
+	const length = readU8At(bytes, offset);
+	offset += 1;
+	for (let i = 0; i < length; i++) {
+		offset = skipSignatureWithKey(bytes, offset);
+	}
+	return offset;
+};
+
+const getDataMessageDataFlagOffset = (bytes: Uint8ArrayList) => {
+	let offset = 0;
+	if (readU8At(bytes, offset) !== DATA_VARIANT) {
+		throw new Error("Unsupported");
+	}
+	offset += 1;
+	if (readU8At(bytes, offset) !== 0) {
+		throw new Error("Unsupported message header variant");
+	}
+	offset += 1;
+	offset += ID_LENGTH;
+	offset += 8 * 3;
+	if (readU8At(bytes, offset) === 1) {
+		offset += 5;
+	} else {
+		offset += 1;
+	}
+	if (readU8At(bytes, offset) === 1) {
+		offset += 5;
+	} else {
+		offset += 1;
+	}
+	if (readU8At(bytes, offset) === 1) {
+		offset = skipPeerInfo(bytes, offset + 1);
+	} else {
+		offset += 1;
+	}
+	if (readU8At(bytes, offset) === 1) {
+		offset = skipDeliveryMode(bytes, offset + 1);
+	} else {
+		offset += 1;
+	}
+	if (readU8At(bytes, offset) === 1) {
+		offset = skipSignatures(bytes, offset + 1);
+	} else {
+		offset += 1;
+	}
+	return offset;
+};
+
 @variant(DATA_VARIANT)
 export class DataMessage<
 	T extends
@@ -438,10 +565,15 @@ export class DataMessage<
 	@field({ type: option(Uint8Array) })
 	private _data?: Uint8Array;
 
-	constructor(properties: { header: MessageHeader<T>; data?: Uint8Array }) {
+	private _dataBytes?: Uint8Array | Uint8ArrayList;
+
+	constructor(properties: {
+		header: MessageHeader<T>;
+		data?: Uint8Array | Uint8ArrayList;
+	}) {
 		super();
-		this._data = properties.data;
 		this._header = properties.header;
+		this.setDataSource(properties.data);
 	}
 
 	get id(): Uint8Array {
@@ -453,25 +585,56 @@ export class DataMessage<
 	}
 
 	get data(): Uint8Array | undefined {
+		if (this._data == null && this._dataBytes instanceof Uint8ArrayList) {
+			this._data = this._dataBytes.subarray();
+		}
 		return this._data;
+	}
+
+	get dataByteLength(): number {
+		return this._dataBytes?.byteLength ?? this._data?.byteLength ?? 0;
+	}
+
+	get hasData(): boolean {
+		return this.dataByteLength > 0;
 	}
 
 	/** Manually ser/der for performance gains */
 	bytes() {
-		return this.serializeBytes();
-	}
-
-	private serializeBytes() {
-		const writer = new BinaryWriter();
-		writer.u8(DATA_VARIANT);
-		this._header.writeBytes(writer, {
+		return this.serializeBytes({
 			includeMode: true,
 			includeSignatures: true,
 		});
-		if (this._data != null) {
+	}
+
+	override getSignableBytes(): Uint8Array {
+		return (
+			this._cachedSignableBytes ??
+			(this._cachedSignableBytes = this.serializeBytes({
+				includeMode: false,
+				includeSignatures: false,
+			}).subarray())
+		);
+	}
+
+	private setDataSource(data?: Uint8Array | Uint8ArrayList) {
+		this._dataBytes = data;
+		this._data = data instanceof Uint8Array ? data : undefined;
+		this._cachedSignableBytes = undefined;
+	}
+
+	private serializeBytes(properties: {
+		includeMode: boolean;
+		includeSignatures: boolean;
+	}) {
+		const writer = new BinaryWriter();
+		writer.u8(DATA_VARIANT);
+		this._header.writeBytes(writer, properties);
+		const data = this._dataBytes ?? this._data;
+		if (data != null) {
 			writer.u8(1);
-			writer.u32(this._data.length);
-			return new Uint8ArrayList(writer.finalize(), this._data);
+			writer.u32(data.byteLength);
+			return new Uint8ArrayList(writer.finalize(), data);
 		} else {
 			writer.u8(0);
 		}
@@ -479,11 +642,23 @@ export class DataMessage<
 	}
 
 	static from(bytes: Uint8ArrayList): DataMessage {
-		if (bytes.get(0) !== 0) {
-			throw new Error("Unsupported");
+		const dataFlagOffset = getDataMessageDataFlagOffset(bytes);
+		const hasData = readU8At(bytes, dataFlagOffset) === 1;
+		const headerOnlyBytes = hasData
+			? (() => {
+					const prefix = bytes.subarray(0, dataFlagOffset);
+					const out = new Uint8Array(prefix.byteLength + 1);
+					out.set(prefix, 0);
+					out[prefix.byteLength] = 0;
+					return out;
+				})()
+			: bytes.subarray();
+		const ret = deserialize(headerOnlyBytes, DataMessage);
+		if (hasData) {
+			const dataLength = readU32LEAt(bytes, dataFlagOffset + 1);
+			const dataStart = dataFlagOffset + 5;
+			ret.setDataSource(bytes.sublist(dataStart, dataStart + dataLength));
 		}
-		const arr = bytes.subarray();
-		const ret = deserialize(arr, DataMessage);
 		return ret;
 	}
 }

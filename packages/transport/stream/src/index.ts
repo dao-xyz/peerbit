@@ -2239,7 +2239,7 @@ export abstract class DirectStream<
 
 			await this.maybeAcknowledgeMessage(peerStream, message, seenBefore);
 
-			if (seenBefore === 0 && message.data) {
+			if (seenBefore === 0 && message.hasData) {
 				this.dispatchEvent(
 					new CustomEvent("data", {
 						detail: message,
@@ -2565,7 +2565,7 @@ export abstract class DirectStream<
 		}
 
 		const message = new DataMessage({
-			data: data instanceof Uint8ArrayList ? data.subarray() : data,
+			data,
 			header: new MessageHeader({
 				id: options.id,
 				mode,
@@ -2813,9 +2813,7 @@ export abstract class DirectStream<
 						fastestNodesReached,
 					);
 					const msgMeta = `msgType=${message.constructor.name} dataBytes=${
-						message instanceof DataMessage
-							? (message.data?.byteLength ?? 0)
-							: 0
+						message instanceof DataMessage ? message.dataByteLength : 0
 					} relayed=${relayed ? 1 : 0}`;
 					deliveryDeferredPromise.reject(
 						new DeliveryError(

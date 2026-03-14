@@ -92,4 +92,29 @@ describe("message signing", () => {
 			Array.from(serialize(message)),
 		);
 	});
+
+	it("decodes segmented payloads lazily from serialized data-messages", () => {
+		const payload = new Uint8Array([10, 11, 12, 13]);
+		const encoded = new DataMessage({
+			header: new MessageHeader({
+				session: 1,
+				mode: new SilentDelivery({
+					to: ["peer-a"],
+					redundancy: 1,
+				}),
+			}),
+			data: payload,
+		}).bytes() as Uint8ArrayList;
+
+		const decoded = DataMessage.from(encoded);
+		const decodedAny = decoded as any;
+
+		expect(decoded.hasData).to.equal(true);
+		expect(decodedAny._data).to.equal(undefined);
+		expect(decodedAny._dataBytes).to.be.instanceOf(Uint8ArrayList);
+		expect(Array.from(toByteArray(decoded.bytes()))).to.deep.equal(
+			Array.from(toByteArray(encoded)),
+		);
+		expect(Array.from(decoded.data!)).to.deep.equal(Array.from(payload));
+	});
 });
