@@ -63,6 +63,12 @@ jobs:
             const wantAll = argv.includes('all');
             const wantSharedLog =
               wantAll || argv.includes('shared-log') || argv.includes('sharedlog') || argv.includes('shared');
+            const wantTransport =
+              wantAll ||
+              argv.includes('transport') ||
+              argv.includes('stream') ||
+              argv.includes('transfer') ||
+              argv.includes('ack');
             const wantDocument =
               wantAll ||
               argv.includes('document') ||
@@ -87,30 +93,31 @@ jobs:
                 p.startsWith('packages/utils/indexer/') ||
                 p.startsWith('packages/utils/crypto/'),
             );
+            const touchedTransport = filenames.some(
+              (p) =>
+                p.startsWith('packages/transport/stream/') ||
+                p.startsWith('packages/transport/stream-interface/') ||
+                p.startsWith('packages/utils/crypto/'),
+            );
 
             const runSharedLog = wantSharedLog || (!hasArgs && touchedSharedLog);
+            const runTransport = wantTransport || (!hasArgs && touchedTransport);
             const runDocument = wantDocument || (!hasArgs && touchedIngestStack);
 
             core.setOutput('run_shared_log', runSharedLog ? 'true' : 'false');
+            core.setOutput('run_transport', runTransport ? 'true' : 'false');
             core.setOutput('run_document', runDocument ? 'true' : 'false');
 
             const selected = [];
             if (runSharedLog) selected.push('shared-log');
+            if (runTransport) selected.push('transport');
             if (runDocument) selected.push('document');
             core.setOutput('selected', selected.join(',') || 'none');
             core.setOutput('mode', hasArgs ? 'manual' : 'auto');
             core.setOutput('args', argv.join(' '));
 
-            const runAny = runSharedLog || runDocument;
+            const runAny = runSharedLog || runTransport || runDocument;
             core.setOutput('run_any', runAny ? 'true' : 'false');
-
-            let buildFilter = '';
-            if (runDocument) {
-              buildFilter = '@peerbit/document...';
-            } else if (runSharedLog) {
-              buildFilter = '@peerbit/shared-log...';
-            }
-            core.setOutput('build_filter', buildFilter);
 
       - name: Skip forked PRs
         if: steps.pr.outputs.same_repo != 'true'
@@ -161,12 +168,30 @@ jobs:
       - name: Build (base)
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
         working-directory: bench-base
-        run: pnpm --filter ${{ steps.pr.outputs.build_filter }} run build
+        run: |
+          if [ "${{ steps.pr.outputs.run_shared_log }}" = "true" ]; then
+            pnpm --filter @peerbit/shared-log... run build
+          fi
+          if [ "${{ steps.pr.outputs.run_transport }}" = "true" ]; then
+            pnpm --filter @peerbit/stream... run build
+          fi
+          if [ "${{ steps.pr.outputs.run_document }}" = "true" ]; then
+            pnpm --filter @peerbit/document... run build
+          fi
 
       - name: Build (head)
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
         working-directory: bench-head
-        run: pnpm --filter ${{ steps.pr.outputs.build_filter }} run build
+        run: |
+          if [ "${{ steps.pr.outputs.run_shared_log }}" = "true" ]; then
+            pnpm --filter @peerbit/shared-log... run build
+          fi
+          if [ "${{ steps.pr.outputs.run_transport }}" = "true" ]; then
+            pnpm --filter @peerbit/stream... run build
+          fi
+          if [ "${{ steps.pr.outputs.run_document }}" = "true" ]; then
+            pnpm --filter @peerbit/document... run build
+          fi
 
       - name: Run shared-log benchmarks (base)
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
@@ -236,6 +261,25 @@ jobs:
             echo "file-ingest benchmark not present in base; skipping."
           fi
 
+      - name: Run transport benchmarks (base)
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_transport == 'true'
+        working-directory: bench-base/packages/transport/stream
+        env:
+          NODE_OPTIONS: --no-warnings
+          BENCH_JSON: "1"
+          CHUNK_TRANSFER_WARMUP: "1"
+          CHUNK_TRANSFER_ITERATIONS: "3"
+          CHUNK_TRANSFER_CHUNKS: "24"
+          CHUNK_TRANSFER_CHUNK_BYTES: "262144"
+          CHUNK_TRANSFER_TIMEOUT_MS: "30000"
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/bench-results/base"
+          if [ -f ./benchmark/chunk-transfer.ts ]; then
+            node ./dist/benchmark/chunk-transfer.js > "$GITHUB_WORKSPACE/bench-results/base/chunk-transfer.json"
+          else
+            echo "chunk-transfer benchmark not present in base; skipping."
+          fi
+
       - name: Run document benchmarks (head)
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_document == 'true'
         working-directory: bench-head/packages/programs/data/document/document
@@ -260,6 +304,25 @@ jobs:
             node --loader ts-node/esm ./benchmark/file-ingest.ts > "$GITHUB_WORKSPACE/bench-results/head/file-ingest.json"
           else
             echo "file-ingest benchmark not present in head; skipping."
+          fi
+
+      - name: Run transport benchmarks (head)
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_transport == 'true'
+        working-directory: bench-head/packages/transport/stream
+        env:
+          NODE_OPTIONS: --no-warnings
+          BENCH_JSON: "1"
+          CHUNK_TRANSFER_WARMUP: "1"
+          CHUNK_TRANSFER_ITERATIONS: "3"
+          CHUNK_TRANSFER_CHUNKS: "24"
+          CHUNK_TRANSFER_CHUNK_BYTES: "262144"
+          CHUNK_TRANSFER_TIMEOUT_MS: "30000"
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/bench-results/head"
+          if [ -f ./benchmark/chunk-transfer.ts ]; then
+            node ./dist/benchmark/chunk-transfer.js > "$GITHUB_WORKSPACE/bench-results/head/chunk-transfer.json"
+          else
+            echo "chunk-transfer benchmark not present in head; skipping."
           fi
 
       - name: Comment results
@@ -305,6 +368,11 @@ jobs:
                 title: 'document: put',
                 base: 'bench-results/base/document-put.json',
                 head: 'bench-results/head/document-put.json',
+              },
+              {
+                title: 'transport: multi-hop chunk transfer',
+                base: 'bench-results/base/chunk-transfer.json',
+                head: 'bench-results/head/chunk-transfer.json',
               },
               {
                 title: 'document: chunked file-ingest',
