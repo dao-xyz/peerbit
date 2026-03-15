@@ -4,7 +4,20 @@ on:
         - master
       paths:
           - packages/**
-          - .release-please.json  
+          - package.json
+          - scripts/**
+          - .release-please.json
+          - .github/workflows/release.yml
+    workflow_dispatch:
+      inputs:
+        publish_mode:
+          description: Publish mode
+          required: true
+          default: stable
+          type: choice
+          options:
+            - stable
+            - rc
 permissions:
   contents: write
   issues: write
@@ -22,6 +35,7 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
+        if: ${{ github.event_name == 'push' }}
         with:
           token: ${{secrets.GITHUB_TOKEN}}
           manifest-file: .release-please-manifest.json
@@ -29,40 +43,40 @@ jobs:
 
     # The logic below handles the npm publication:
       - name: Checkout Repository
-        if: ${{ steps.release.outputs.releases_created }}
+        if: ${{ github.event_name == 'workflow_dispatch' || steps.release.outputs.releases_created == 'true' }}
         uses: actions/checkout@v4
       - name: Setup Node
         uses: actions/setup-node@v4
-        if: ${{ steps.release.outputs.releases_created }}
+        if: ${{ github.event_name == 'workflow_dispatch' || steps.release.outputs.releases_created == 'true' }}
         with:
           node-version: lts/*
           registry-url: 'https://registry.npmjs.org'
       - uses: pnpm/action-setup@v4
-        if: ${{ steps.release.outputs.releases_created }}
+        if: ${{ github.event_name == 'workflow_dispatch' || steps.release.outputs.releases_created == 'true' }}
         with:
           run_install: false
 
       - name: Install deps
-        if: ${{ steps.release.outputs.releases_created }}
+        if: ${{ github.event_name == 'workflow_dispatch' || steps.release.outputs.releases_created == 'true' }}
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
           pnpm install --frozen-lockfile=false
 
       - name: Build Packages
-        if: ${{ steps.release.outputs.releases_created }}
+        if: ${{ github.event_name == 'workflow_dispatch' || steps.release.outputs.releases_created == 'true' }}
         run: pnpm run build
 
     # Release Please has already incremented versions and published tags, so we just
     # need to publish all unpublished versions to NPM here
     # See: https://github.com/lerna/lerna/tree/main/commands/publish#bump-from-package
       - name: Publish to NPM
-        if: ${{ steps.release.outputs.releases_created == 'true' }}
+        if: ${{ (github.event_name == 'push' && steps.release.outputs.releases_created == 'true') || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_mode == 'stable') }}
         env:
           NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
-        run: npm run --if-present release
+        run: pnpm run --if-present release
       - name: Publish RC to NPM
-        if: ${{ steps.release.outputs.releases_created != 'true' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish_mode == 'rc' }}
         env:
           NPM_CONFIG_GIT_CHECKS: "false"
           NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
-        run: npm run --if-present release:rc
+        run: pnpm run --if-present release:rc

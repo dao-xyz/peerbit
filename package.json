@@ -109,7 +109,7 @@
 		"site:sync-updates": "node apps/peerbit-org/scripts/syncUpdatesEmail.mjs",
 		"dep-check": "aegir run dep-check",
 		"doc-check": "aegir run doc-check",
-		"release": "aegir exec --bail false pnpm -- publish",
+		"release": "node ./scripts/publish-public-packages.mjs",
 		"release:rc": "AEGIR_PACKAGE_MANAGER=pnpm aegir release-rc",
 		"deploy": "pnpm run deploy:docs",
 		"deploy:docs": "pnpm run site:build && gh-pages --dist apps/peerbit-org/dist --dotfiles",
