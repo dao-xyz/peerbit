@@ -61,6 +61,13 @@
   * dependencies
     * @peerbit/cache bumped from ^2.0.5 to ^2.0.6
 
+## [3.0.1](https://github.com/dao-xyz/peerbit/compare/crypto-v3.0.0...crypto-v3.0.1) (2026-03-15)
+
+
+### Bug Fixes
+
+* preserve crypto root verifyPrepared export surface ([#665](https://github.com/dao-xyz/peerbit/issues/665)) ([fea7755](https://github.com/dao-xyz/peerbit/commit/fea7755595b75b6becc1e8a963d856bf4d6b693b))
+
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/crypto-v2.4.1...crypto-v3.0.0) (2026-03-04)
 
 
