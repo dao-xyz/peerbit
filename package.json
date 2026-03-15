@@ -77,7 +77,7 @@
 		"test:interop": "aegir run test:interop",
 		"test:docs": "aegir run test --roots ./docs -- -t node",
 		"test:part-1": "aegir run test --roots ./packages/utils/** ./packages/clients/** ./packages/log  -- -t node",
-		"test:ci:part-1": "aegir run test --roots ./packages/utils/** ./packages/clients/** ./packages/log  -- -t node",
+		"test:ci:part-1": "aegir run test:cov --roots ./packages/utils/** ./packages/clients/** ./packages/log",
 		"test:part-2": "aegir run test --roots ./packages/programs/data/document/** -- -t node",
 		"test:ci:part-2a": "aegir run test --roots ./packages/programs/data/document/document ./packages/programs/data/document/interface ./packages/programs/data/document/proxy -- -t node --no-build",
 		"test:ci:part-2b": "aegir run test --roots ./packages/programs/data/document/react -- -t node",
@@ -114,7 +114,10 @@
 		"deploy": "pnpm run deploy:docs",
 		"deploy:docs": "pnpm run site:build && gh-pages --dist apps/peerbit-org/dist --dotfiles",
 		"fmt": "prettier --write '{*,**/*}.{js,ts,jsx,tsx,json,vue}'",
-		"postinstall": "mkdir -p node_modules/chai-extend && cp chai-global.js node_modules/chai-extend/chai-global.js && echo '{\"type\": \"module\"}' > node_modules/chai-extend/package.json"
+		"postinstall": "mkdir -p node_modules/chai-extend && cp chai-global.js node_modules/chai-extend/chai-global.js && echo '{\"type\": \"module\"}' > node_modules/chai-extend/package.json",
+		"coverage:remap": "node scripts/remap-coverage.mjs",
+		"coverage:merge": "node scripts/merge-coverage.mjs",
+		"coverage:report": "pnpm run coverage:remap && pnpm run coverage:merge && nyc report --reporter=html --reporter=text"
 	},
 	"pnpm": {
 		"onlyBuiltDependencies": [
@@ -149,6 +152,7 @@
 		"@types/wicg-file-system-access": "^2023.10.5",
 		"@typescript-eslint/eslint-plugin": "^7.18.0",
 		"@typescript-eslint/parser": "^7.18.0",
+		"@vitest/coverage-v8": "^4.0.12",
 		"aegir": "github:marcus-pousette/aegir#multiple-assets",
 		"benchmark": "^2.1.4",
 		"chai": "^6.0.1",
@@ -163,7 +167,10 @@
 		"eslint-plugin-react-hooks": "^4.6.2",
 		"find-up": "^8.0.0",
 		"gh-pages": "^6.3.0",
+		"istanbul-lib-coverage": "^3.2.2",
+		"istanbul-lib-source-maps": "^5.0.6",
 		"mocha": "^11.7.2",
+		"nyc": "^18.0.0",
 		"prettier": "^3.3.3",
 		"shx": "^0.4.0",
 		"sinon": "^21.0.0",

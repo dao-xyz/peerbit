@@ -52,7 +52,8 @@
 		"clean": "aegir clean",
 		"build": "aegir build  --no-bundle",
 		"test": "aegir test",
-		"lint": "aegir lint"
+		"lint": "aegir lint",
+		"test:cov": "aegir test -t node --cov"
 	},
 	"author": "dao.xyz",
 	"license": "MIT",

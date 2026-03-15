@@ -1,7 +1,7 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { id } from "@peerbit/indexer-interface";
 import { expect } from "chai";
-import { SQLLiteIndex } from "../src/engine.js";
+import { SQLiteIndex } from "../src/engine.js";
 import { create } from "../src/index.js";
 import { setup } from "./utils.js";
 
@@ -29,7 +29,7 @@ describe("table", () => {
 		}
 
 		index = await setup({ schema: DocumentWithFromProperty }, create);
-		const store = index.store as SQLLiteIndex<DocumentWithFromProperty>;
+		const store = index.store as SQLiteIndex<DocumentWithFromProperty>;
 		expect(store.tables.size).to.equal(1);
 		await store.put(new DocumentWithFromProperty("1", "from"));
 

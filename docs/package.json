@@ -17,7 +17,8 @@
 		"clean": "#not used",
 		"build": "tsc -p tsconfig.json",
 		"test": "true",
-		"lint": "aegir lint"
+		"lint": "aegir lint",
+		"test:cov": "true"
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",

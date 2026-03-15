@@ -1,6 +1,6 @@
 import { BinaryWriter } from "@dao-xyz/borsh";
 import { sha256Sync, toBase58 } from "@peerbit/crypto";
-import { SQLLiteIndex, SQLiteIndices } from "./engine.js";
+import { SQLiteIndex, SQLiteIndices } from "./engine.js";
 import { create as sqlite3 } from "./sqlite3.js";
 import type {
 	SQLiteBrowserOptions,
@@ -33,7 +33,13 @@ const createDatabase = (
 	options?: SQLiteBrowserOptions,
 ) => sqlite3(directory, options);
 
-export { create, createDatabase, SQLiteIndices, SQLLiteIndex };
+export {
+	create,
+	createDatabase,
+	SQLiteIndices,
+	SQLiteIndex,
+	SQLiteIndex as SQLLiteIndex,
+};
 export type {
 	SQLiteBrowserOptions,
 	SQLiteLockingMode,

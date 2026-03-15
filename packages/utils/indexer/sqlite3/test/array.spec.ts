@@ -10,7 +10,7 @@ Or, */
 } from "@peerbit/indexer-interface";
 import { expect, use } from "chai";
 import chaiAsPromised from "chai-as-promised";
-import { SQLLiteIndex } from "../src/engine.js";
+import { SQLiteIndex } from "../src/engine.js";
 import { create } from "../src/index.js";
 import { setup } from "./utils.js";
 
@@ -88,7 +88,7 @@ describe("simple array", () => {
 
 	/* it("query inner items does not take too long time", async () => {
 		index = await setup({ schema: ArrayDocumentBase }, create);
-		const store = index.store as SQLLiteIndex<ArrayDocument>;
+		const store = index.store as SQLiteIndex<ArrayDocument>;
 		expect(store.tables.size).to.equal(4);
 		let count = 1000;
 		let itemsToQuery: bigint[] = [];
@@ -121,7 +121,7 @@ describe("simple array", () => {
 
 	it("poly-morphic base resolving many items is sufficiently fast", async () => {
 		index = await setup({ schema: ArrayDocumentBase }, create);
-		const store = index.store as SQLLiteIndex<ArrayDocument>;
+		const store = index.store as SQLiteIndex<ArrayDocument>;
 		expect(store.tables.size).to.equal(4);
 		let count = 1e4;
 		for (let i = 0; i < count; i++) {
@@ -241,7 +241,7 @@ describe("document array", () => {
 	});
 
 	it("can query multiple versions at once", async () => {
-		const store = index.store as SQLLiteIndex<PolymorpArrayDocument>;
+		const store = index.store as SQLiteIndex<PolymorpArrayDocument>;
 		await store.put(
 			new PolymorpArrayDocument({
 				id: "1",
@@ -291,7 +291,7 @@ describe("document array", () => {
 	});
 
 	it("all", async () => {
-		const store = index.store as SQLLiteIndex<PolymorpArrayDocument>;
+		const store = index.store as SQLiteIndex<PolymorpArrayDocument>;
 		await store.put(
 			new PolymorpArrayDocument({
 				id: "1",

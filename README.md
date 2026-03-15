@@ -79,6 +79,24 @@ IMPORTANT: Peerbit uses pnpm.
 
 You might possibly need to CMD + Shift + P and then enter to restart the typescript server after the build step.
 
+### Local coverage report (Codecov-style)
+
+To generate a local, navigable HTML report with the same remapped source paths used for Codecov uploads:
+
+1. (Optional) clear old coverage artifacts:
+   `find . -type d -name .coverage -prune -exec rm -rf {} + && rm -rf .nyc_output coverage`
+2. Rebuild workspace packages (refreshes generated `dist` type artifacts):
+   `pnpm run build`
+3. Run the CI coverage shards you want to include:
+   `pnpm run test:ci:part-1 && pnpm run test:ci:part-2 && pnpm run test:ci:part-3 && pnpm run test:ci:part-4 && pnpm run test:ci:part-5 && pnpm run test:ci:part-6`
+4. Generate the merged report:
+   `pnpm run coverage:report`
+5. Open the report:
+   macOS: `open coverage/index.html`
+   Linux: `xdg-open coverage/index.html`
+
+`pnpm run coverage:report` runs remapping first (`coverage-remapped.json` when available), then merges all workspace coverage files and creates HTML + text output via `nyc`.
+
 To create a new package, follow the following steps:
 
 1. Clone the time folder within /packages/utils/time to the desired destination and rename it

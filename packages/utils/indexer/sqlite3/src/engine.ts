@@ -105,7 +105,7 @@ const canUseWithoutRowId = (table: Table) => {
 	return !/^INTEGER\b/i.test(table.primaryField.type);
 };
 
-export class SQLLiteIndex<T extends Record<string, any>>
+export class SQLiteIndex<T extends Record<string, any>>
 	implements Index<T, any>
 {
 	// SQLite writes are inherently serialized per connection.
@@ -897,7 +897,7 @@ export class SQLiteIndices implements types.Indices {
 			return existing.index;
 		}
 
-		const index: types.Index<T, any> = new SQLLiteIndex({
+		const index: types.Index<T, any> = new SQLiteIndex({
 			db: this.properties.db,
 			schema: properties.schema,
 			scope: this._scope,
@@ -984,3 +984,5 @@ export class SQLiteIndices implements types.Indices {
 		this.scopes.clear();
 	}
 }
+
+export { SQLiteIndex as SQLLiteIndex };

@@ -2,7 +2,7 @@ import { field, variant } from "@dao-xyz/borsh";
 import { type IndexedResults, id } from "@peerbit/indexer-interface";
 import { expect, use } from "chai";
 import chaiAsPromised from "chai-as-promised";
-import { SQLLiteIndex } from "../src/engine.js";
+import { SQLiteIndex } from "../src/engine.js";
 import { create } from "../src/index.js";
 import { setup } from "./utils.js";
 
@@ -47,7 +47,7 @@ describe("u64", () => {
 
 	it("fetch bounds ", async () => {
 		index = await setup({ schema: DocumentWithBigint }, create);
-		const store = index.store as SQLLiteIndex<DocumentWithBigint>;
+		const store = index.store as SQLiteIndex<DocumentWithBigint>;
 		expect(store.tables.size).to.equal(1);
 		await index.store.put(new DocumentWithBigint(0n, 0n));
 		await index.store.put(
@@ -72,7 +72,7 @@ describe("u64", () => {
 
 	it("summing not supported", async () => {
 		index = await setup({ schema: DocumentWithBigint }, create);
-		const store = index.store as SQLLiteIndex<DocumentWithBigint>;
+		const store = index.store as SQLiteIndex<DocumentWithBigint>;
 		await expect(store.sum({ key: "value" })).eventually.rejectedWith(
 			"Summing is not supported for u64 fields",
 		);
