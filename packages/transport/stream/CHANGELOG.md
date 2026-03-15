@@ -43,6 +43,20 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [5.0.2](https://github.com/dao-xyz/peerbit/compare/stream-v5.0.1...stream-v5.0.2) (2026-03-15)
+
+
+### Bug Fixes
+
+* stabilize relay liveness and prioritize ACK control traffic ([#661](https://github.com/dao-xyz/peerbit/issues/661)) ([590af40](https://github.com/dao-xyz/peerbit/commit/590af40823c12c2137d6b94bc65eb12438866190))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream-interface bumped to 6.0.2
+
 ## [5.0.1](https://github.com/dao-xyz/peerbit/compare/stream-v5.0.0...stream-v5.0.1) (2026-03-08)
 
 
