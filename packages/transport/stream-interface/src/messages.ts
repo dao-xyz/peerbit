@@ -175,7 +175,7 @@ export class Signatures {
 	signatures: SignatureWithKey[];
 
 	constructor(signatures: SignatureWithKey[] = []) {
-		this.signatures = signatures;
+		this.signatures = signatures.map(normalizeSignatureWithKey);
 	}
 
 	equals(other: Signatures) {
@@ -189,6 +189,35 @@ export class Signatures {
 		return this.signatures.map((x) => x.publicKey);
 	}
 }
+
+const normalizeSignatureWithKey = (
+	signature: SignatureWithKey,
+): SignatureWithKey => {
+	if (
+		signature instanceof SignatureWithKey &&
+		signature.publicKey instanceof PublicSignKey
+	) {
+		return signature;
+	}
+	return deserialize(serialize(signature), SignatureWithKey);
+};
+
+const coerceSignatures = (signatures?: Signatures): Signatures | undefined => {
+	if (!signatures) {
+		return undefined;
+	}
+	if (
+		signatures instanceof Signatures &&
+		signatures.signatures.every(
+			(signature) =>
+				signature instanceof SignatureWithKey &&
+				signature.publicKey instanceof PublicSignKey,
+		)
+	) {
+		return signatures;
+	}
+	return new Signatures(signatures.signatures);
+};
 
 abstract class PeerInfo {}
 
@@ -338,6 +367,10 @@ export class MessageHeader<T extends DeliveryMode = DeliveryMode> {
 		writer: BinaryWriter,
 		properties: { includeMode: boolean; includeSignatures: boolean },
 	) {
+		const normalizedSignatures = coerceSignatures(this.signatures);
+		if (normalizedSignatures && normalizedSignatures !== this.signatures) {
+			this.signatures = normalizedSignatures;
+		}
 		writer.u8(0);
 		BinaryWriter.uint8ArrayFixed(this._id, writer);
 		writer.u64(this.timestamp);
@@ -367,9 +400,9 @@ export class MessageHeader<T extends DeliveryMode = DeliveryMode> {
 		} else {
 			writer.u8(0);
 		}
-		if (properties.includeSignatures && this.signatures != null) {
+		if (properties.includeSignatures && normalizedSignatures != null) {
 			writer.u8(1);
-			serialize(this.signatures, writer);
+			serialize(normalizedSignatures, writer);
 		} else {
 			writer.u8(0);
 		}
@@ -401,9 +434,12 @@ const sign = async <T extends WithHeader>(
 ): Promise<T> => {
 	const bytes =
 		obj instanceof Message ? obj.getSignableBytes() : serializeUnsigned(obj);
-	const signatures = obj.header.signatures;
+	const signatures = coerceSignatures(obj.header.signatures);
+	if (signatures && signatures !== obj.header.signatures) {
+		obj.header.signatures = signatures;
+	}
 
-	const signature = await signer(bytes);
+	const signature = normalizeSignatureWithKey(await signer(bytes));
 	obj.header.signatures = new Signatures(
 		signatures ? [...signatures.signatures, signature] : [signature],
 	);
@@ -414,7 +450,10 @@ const verifyMultiSig = async (
 	message: WithHeader,
 	expectSignatures: boolean,
 ) => {
-	const signatures = message.header.signatures;
+	const signatures = coerceSignatures(message.header.signatures);
+	if (signatures && signatures !== message.header.signatures) {
+		message.header.signatures = signatures;
+	}
 	if (!signatures || signatures.signatures.length === 0) {
 		return !expectSignatures;
 	}
