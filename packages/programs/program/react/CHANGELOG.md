@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.11](https://github.com/dao-xyz/peerbit/compare/program-react-v0.4.10...program-react-v0.4.11) (2026-03-15)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped to 6.0.8
+
 ## [0.4.10](https://github.com/dao-xyz/peerbit/compare/program-react-v0.4.9...program-react-v0.4.10) (2026-03-15)
 
 
