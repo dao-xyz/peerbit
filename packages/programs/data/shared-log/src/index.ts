@@ -2769,9 +2769,6 @@ export class SharedLog<
 				return options.onChange!(change);
 			};
 		}
-		appendOptions.deferIndexWrite =
-			this.shouldDeferHeadCoordinatePersistence(options);
-
 		const result = await this.log.append(data, appendOptions);
 		const deferHeadCoordinatePersistence =
 			result.entry.meta.type !== EntryType.CUT &&

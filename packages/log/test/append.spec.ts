@@ -102,7 +102,7 @@ describe("append", function () {
 		});
 	});
 
-	it("flushes deferred head index writes on demand and on close", async () => {
+	it("writes head index eagerly even when deferIndexWrite is requested", async () => {
 		const log = new Log<Uint8Array>();
 		await log.open(store, signKey);
 		const putSpy = sinon.spy(log.entryIndex.properties.index, "put");
@@ -112,26 +112,13 @@ describe("append", function () {
 		});
 
 		expect((await log.get(entry.hash))?.hash).equal(entry.hash);
-		expect(putSpy.callCount).equal(0);
+		expect(putSpy.callCount).equal(1);
 		expect((await log.getHeads().all()).map((head) => head.hash)).to.have.members([
 			entry.hash,
 		]);
+		await log.close();
 		expect(putSpy.callCount).equal(1);
 		putSpy.restore();
-
-		const log2 = new Log<Uint8Array>();
-		await log2.open(store, signKey);
-		const closeSpy = sinon.spy(log2.entryIndex.properties.index, "put");
-		await log2.append(new Uint8Array([2]), {
-			deferIndexWrite: true,
-			meta: { next: [] },
-		});
-		expect(closeSpy.callCount).equal(0);
-		await log2.close();
-		expect(closeSpy.callCount).equal(1);
-		closeSpy.restore();
-
-		await log.close();
 	});
 
 	describe("append 100 items to a log", () => {
