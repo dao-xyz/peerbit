@@ -1,13 +1,13 @@
 import { test, type Page } from "@playwright/test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { startBootstrapPeer } from "./bootstrapPeer";
 import {
 	createSpace,
-	createSyntheticFileOnDisk,
 	expectSeedersAtLeast,
 	getSeederCount,
 	rootUrl,
+	uploadSyntheticFile,
 	waitForFileListed,
 	withBootstrap,
 } from "./helpers";
@@ -185,10 +185,7 @@ test.describe("generated upload benchmark", () => {
 		const usesLocalBootstrap = NETWORK_MODE === "local";
 		const bootstrap: Awaited<ReturnType<typeof startBootstrapPeer>> | undefined =
 			usesLocalBootstrap ? await startBootstrapPeer() : undefined;
-		const file = await createSyntheticFileOnDisk(
-			`file-share-benchmark-${MODE}-${Date.now()}.bin`,
-			FILE_SIZE_MB,
-		);
+		const fileName = `file-share-benchmark-${MODE}-${Date.now()}.bin`;
 		const writerContext = await browser.newContext({ acceptDownloads: true });
 		const readerContext = await browser.newContext({ acceptDownloads: true });
 		const writer = await writerContext.newPage();
@@ -222,12 +219,12 @@ test.describe("generated upload benchmark", () => {
 						.isVisible()
 						.catch(() => false),
 					writer
-						.locator("li", { hasText: file.fileName })
+						.locator("li", { hasText: fileName })
 						.first()
 						.isVisible()
 						.catch(() => false),
 					reader
-						.locator("li", { hasText: file.fileName })
+						.locator("li", { hasText: fileName })
 						.first()
 						.isVisible()
 						.catch(() => false),
@@ -333,7 +330,7 @@ test.describe("generated upload benchmark", () => {
 			});
 			stage = "set-input-files";
 			logStage(stage);
-			await writer.locator("#imgupload").setInputFiles(file.filePath);
+			await uploadSyntheticFile(writer, fileName, FILE_SIZE_MB);
 			stage = "wait-for-progress";
 			logStage(stage);
 			await writer
@@ -386,11 +383,11 @@ test.describe("generated upload benchmark", () => {
 			logStage(stage);
 			[writerListedAt, readerListedAt] = await Promise.all([
 				(async () => {
-					await waitForFileListed(writer, file.fileName, 180_000);
+					await waitForFileListed(writer, fileName, 180_000);
 					return Date.now();
 				})(),
 				(async () => {
-					await waitForFileListed(reader, file.fileName, 180_000);
+					await waitForFileListed(reader, fileName, 180_000);
 					return Date.now();
 				})(),
 			]);
@@ -496,7 +493,6 @@ test.describe("generated upload benchmark", () => {
 		} finally {
 			await writerContext.close().catch(() => {});
 			await readerContext.close().catch(() => {});
-			await rm(file.dir, { recursive: true, force: true }).catch(() => {});
 			await bootstrap?.stop().catch(() => {});
 		}
 	});
