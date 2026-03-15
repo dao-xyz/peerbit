@@ -1,4 +1,5 @@
 import { field, option, variant } from "@dao-xyz/borsh";
+import type { AppendDurability } from "@peerbit/log";
 import { Program } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import { delay } from "@peerbit/time";
@@ -13,6 +14,7 @@ type BenchMode = "adaptive" | "fixed1";
 
 type Args = {
 	replicate: any;
+	appendDurability?: AppendDurability;
 };
 
 type Sample = {
@@ -61,6 +63,11 @@ const readyTimeoutMs = Math.max(
 	envInt("FILE_INGEST_READY_TIMEOUT_MS", 30_000),
 );
 const pollDelayMs = Math.max(10, envInt("FILE_INGEST_POLL_DELAY_MS", 50));
+const appendDurabilityEnv = process.env.FILE_INGEST_APPEND_DURABILITY;
+const appendDurability: AppendDurability | undefined =
+	appendDurabilityEnv === "strict" || appendDurabilityEnv === "buffered"
+		? appendDurabilityEnv
+		: undefined;
 
 const replicationByMode: Record<BenchMode, any> = {
 	adaptive: {
@@ -173,6 +180,7 @@ class FileStore extends Program<Partial<SetupOptions<FileRecord>> & Args> {
 			index: {
 				type: FileRecordIndexable,
 			},
+			appendDurability: options?.appendDurability,
 			replicate: options?.replicate,
 			replicas: { min: 1 },
 		});
@@ -398,18 +406,21 @@ const runIteration = async (
 ): Promise<Sample> => {
 	const writer = await session.peers[0].open(new FileStore(), {
 		args: {
+			appendDurability,
 			replicate: replicationByMode[mode],
 		},
 	});
 
 	const seeder = await session.peers[1].open<FileStore>(writer.address!, {
 		args: {
+			appendDurability,
 			replicate: replicationByMode[mode],
 		},
 	});
 
 	const observer = await session.peers[2].open<FileStore>(writer.address!, {
 		args: {
+			appendDurability,
 			replicate: false,
 		},
 	});
@@ -598,6 +609,7 @@ const output = {
 		iterations,
 		readyTimeoutMs,
 		pollDelayMs,
+		appendDurability,
 		results: results.map((result) => ({
 			mode: result.mode,
 			writerCompleteMsAvg: round(

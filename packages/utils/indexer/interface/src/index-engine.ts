@@ -115,6 +115,7 @@ export interface Index<T extends Record<string, any>, NestedType = any> {
 		options?: { shape?: S; reference?: boolean },
 	): IndexIterator<T, S>;
 	getSize(): MaybePromise<number>;
+	persisted(): MaybePromise<boolean>;
 	start(): MaybePromise<void>;
 	stop(): MaybePromise<void>;
 }
@@ -180,6 +181,7 @@ export interface Indices {
 		properties: IndexEngineInitProperties<T, NestedType>,
 	): MaybePromise<Index<T, NestedType>>;
 	scope(name: string): MaybePromise<Indices>;
+	persisted(): MaybePromise<boolean>;
 	start(): MaybePromise<void>;
 	stop(): MaybePromise<void>;
 	drop(): MaybePromise<void>;

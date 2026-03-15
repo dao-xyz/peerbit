@@ -166,6 +166,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 			scope: string[];
 			db: Database;
 			schema: AbstractType<any>;
+			persisted?: boolean;
 			start?: () => Promise<void> | void;
 			stop?: () => Promise<void> | void;
 		},
@@ -182,6 +183,10 @@ export class SQLiteIndex<T extends Record<string, any>>
 		this.planner = new QueryPlanner({
 			exec: this.properties.db.exec.bind(this.properties.db),
 		});
+	}
+
+	persisted(): boolean {
+		return this.properties.persisted ?? true;
 	}
 
 	get tables() {
@@ -901,6 +906,7 @@ export class SQLiteIndices implements types.Indices {
 			db: this.properties.db,
 			schema: properties.schema,
 			scope: this._scope,
+			persisted: await this.persisted(),
 		});
 		await index.init(properties);
 		this.indices.push({ schema: properties.schema, index });
@@ -933,6 +939,10 @@ export class SQLiteIndices implements types.Indices {
 			await scope.start();
 		}
 		return scope;
+	}
+
+	persisted(): boolean {
+		return this.properties.directory != null;
 	}
 
 	async start(): Promise<void> {

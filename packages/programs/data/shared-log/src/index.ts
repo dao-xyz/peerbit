@@ -400,6 +400,7 @@ export type SharedLogOptions<
 		? I
 		: "u32",
 > = {
+	appendDurability?: LogProperties<T>["appendDurability"];
 	replicate?: ReplicationOptions<R>;
 	replicas?: ReplicationLimitsOptions;
 	respondToIHaveTimeout?: number;

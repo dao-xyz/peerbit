@@ -32,6 +32,7 @@ export type ResultsIterator<T> = {
 };
 
 const ENTRY_CACHE_MAX_SIZE = 10; // TODO as param for log
+const DEFERRED_INDEX_FLUSH_IDLE_MS = 250;
 type ResolveFullyOptions =
 	| true
 	| {
@@ -66,6 +67,8 @@ export class EntryIndex<T> {
 	private initialied = false;
 	private _length: number;
 	private insertionPromises: Map<string, Promise<void>>;
+	private pendingIndexWrites: Map<string, ShallowEntry>;
+	private pendingIndexFlushTimer?: ReturnType<typeof setTimeout>;
 	constructor(
 		readonly properties: {
 			store: Blocks;
@@ -94,10 +97,48 @@ export class EntryIndex<T> {
 		this.cache = properties.cache ?? new Cache({ max: ENTRY_CACHE_MAX_SIZE });
 		this._length = 0;
 		this.insertionPromises = new Map();
+		this.pendingIndexWrites = new Map();
 	}
 
-	async flushPendingWrites(_hashes?: Iterable<string>) {
-		// Head rows are written eagerly again, so there is nothing left to flush.
+	private schedulePendingIndexWriteFlush() {
+		if (this.pendingIndexFlushTimer) {
+			clearTimeout(this.pendingIndexFlushTimer);
+		}
+		this.pendingIndexFlushTimer = setTimeout(() => {
+			void this.flushPendingWrites().catch((error) => {
+				log.error("Failed to flush deferred entry-index writes", error);
+			});
+		}, DEFERRED_INDEX_FLUSH_IDLE_MS);
+		this.pendingIndexFlushTimer.unref?.();
+	}
+
+	private clearPendingIndexFlushTimer() {
+		if (!this.pendingIndexFlushTimer) {
+			return;
+		}
+		clearTimeout(this.pendingIndexFlushTimer);
+		this.pendingIndexFlushTimer = undefined;
+	}
+
+	async flushPendingWrites(hashes?: Iterable<string>) {
+		const keys = hashes
+			? [...new Set([...hashes].filter((hash): hash is string => !!hash))]
+			: [...this.pendingIndexWrites.keys()];
+		if (keys.length === 0) {
+			return;
+		}
+		this.clearPendingIndexFlushTimer();
+		for (const hash of keys) {
+			const pending = this.pendingIndexWrites.get(hash);
+			if (!pending) {
+				continue;
+			}
+			await this.properties.index.put(pending);
+			this.pendingIndexWrites.delete(hash);
+		}
+		if (this.pendingIndexWrites.size > 0) {
+			this.schedulePendingIndexWriteFlush();
+		}
 	}
 
 	getHeads<R extends MaybeResolveOptions = false>(
@@ -295,12 +336,19 @@ export class EntryIndex<T> {
 	}
 
 	async getShallow(k: string) {
+		const pending = this.pendingIndexWrites.get(k);
+		if (pending) {
+			return { id: toId(k), value: pending };
+		}
 		return this.properties.index.get(toId(k));
 	}
 
 	async has(k: string) {
 		let mem = this.cache.get(k);
 		if (mem) {
+			return true;
+		}
+		if (this.pendingIndexWrites.has(k)) {
 			return true;
 		}
 		const result = await this.properties.index.get(toId(k), {
@@ -314,7 +362,7 @@ export class EntryIndex<T> {
 		const existing = new Set<string>();
 		const missing: string[] = [];
 		for (const hash of new Set([...hashes].filter(Boolean))) {
-			if (this.cache.get(hash)) {
+			if (this.cache.get(hash) || this.pendingIndexWrites.has(hash)) {
 				existing.add(hash);
 				continue;
 			}
@@ -405,7 +453,19 @@ export class EntryIndex<T> {
 				// add cache after .has check before .has uses the cache
 				this.cache.add(entry.hash, entry);
 				const shallowEntry = entry.toShallow(properties.isHead);
-				await this.properties.index.put(shallowEntry);
+				const shouldDeferIndexWrite =
+					properties.deferIndexWrite === true &&
+					properties.isHead &&
+					entry.meta.type !== EntryType.CUT &&
+					entry.meta.next.length === 0;
+
+				if (shouldDeferIndexWrite) {
+					this.pendingIndexWrites.set(entry.hash, shallowEntry);
+					this.schedulePendingIndexWriteFlush();
+				} else {
+					await this.flushPendingWrites(entry.meta.next);
+					await this.properties.index.put(shallowEntry);
+				}
 
 				// check if gids has been shadowed, by query all nexts that have a different gid
 				if (this.properties.onGidRemoved && entry.meta.next.length > 0) {
@@ -470,9 +530,17 @@ export class EntryIndex<T> {
 			throw new Error("Shallow hash doesn't match the key");
 		}
 
-		from = from || (await this.getShallow(k))?.value;
+		const pending = this.pendingIndexWrites.get(k);
+		from = from || pending || (await this.getShallow(k))?.value;
 		if (!from) {
 			return; // already deleted
+		}
+		if (pending) {
+			this.pendingIndexWrites.delete(k);
+			await this.properties.store.rm(k);
+			this._length--;
+			await this.privateUpdateNextHeadProperty(from, true);
+			return from;
 		}
 
 		let deleted = await this.properties.index.del({ query: { hash: k } });
@@ -490,7 +558,11 @@ export class EntryIndex<T> {
 	async getMemoryUsage() {
 		const indexed =
 			(await this.properties.index.sum({ key: "payloadSize" })) || 0;
-		return indexed;
+		const pending = [...this.pendingIndexWrites.values()].reduce(
+			(sum, entry) => sum + (entry.payloadSize || 0),
+			0,
+		);
+		return typeof indexed === "bigint" ? indexed + BigInt(pending) : indexed + pending;
 	}
 
 	private async privateUpdateNextHeadProperty(
@@ -503,7 +575,10 @@ export class EntryIndex<T> {
 		}
 
 		for (const next of from.meta.next) {
-			const indexedEntry = await this.properties.index.get(toId(next));
+			const pending = this.pendingIndexWrites.get(next);
+			const indexedEntry = pending
+				? { id: toId(next), value: pending }
+				: await this.properties.index.get(toId(next));
 
 			if (!indexedEntry) {
 				continue; // we could end up here because another entry with same next ref is of CUT and has removed it from the index
@@ -513,16 +588,26 @@ export class EntryIndex<T> {
 				const noPointersToNext = (await this.countHasNext(next)) === 0;
 				if (noPointersToNext) {
 					indexedEntry.value.head = true;
-					await this.properties.index.put(indexedEntry.value);
+					if (pending) {
+						this.pendingIndexWrites.set(next, indexedEntry.value);
+					} else {
+						await this.properties.index.put(indexedEntry.value);
+					}
 				}
 			} else {
 				indexedEntry.value.head = false;
-				await this.properties.index.put(indexedEntry.value);
+				if (pending) {
+					this.pendingIndexWrites.set(next, indexedEntry.value);
+				} else {
+					await this.properties.index.put(indexedEntry.value);
+				}
 			}
 		}
 	}
 
 	async clear() {
+		this.clearPendingIndexFlushTimer();
+		this.pendingIndexWrites.clear();
 		const iterator = this.iterate([], undefined, false);
 		while (!iterator.done()) {
 			const results = await iterator.next(100);
@@ -543,6 +628,8 @@ export class EntryIndex<T> {
 	}
 
 	async init() {
+		this.clearPendingIndexFlushTimer();
+		this.pendingIndexWrites.clear();
 		this._length = await this.properties.index.getSize();
 		this.initialied = true;
 	}

@@ -101,6 +101,10 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 		return this._index.size;
 	}
 
+	persisted(): boolean {
+		return false;
+	}
+
 	iterator() {
 		// return a iterator if key value pairs, where the value is the indexed record
 		return this._index.entries();
@@ -561,6 +565,10 @@ export class HashmapIndices implements types.Indices {
 			this.scopes.set(name, scope);
 		}
 		return scope;
+	}
+
+	persisted(): boolean {
+		return false;
 	}
 
 	async start(): Promise<void> {

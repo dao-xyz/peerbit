@@ -1,5 +1,6 @@
 import { AnyBlockStore, type BlockStore } from "@peerbit/blocks";
 import { Ed25519Keypair } from "@peerbit/crypto";
+import { HashmapIndices } from "@peerbit/indexer-simple";
 import { expect } from "chai";
 import sinon from "sinon";
 import { EntryType } from "../src/entry-type.js";
@@ -102,20 +103,41 @@ describe("append", function () {
 		});
 	});
 
-	it("writes head index eagerly even when deferIndexWrite is requested", async () => {
+	it("buffers head index writes by default for ephemeral indexers", async () => {
 		const log = new Log<Uint8Array>();
-		await log.open(store, signKey);
+		await log.open(store, signKey, { indexer: new HashmapIndices() });
 		const putSpy = sinon.spy(log.entryIndex.properties.index, "put");
 		const { entry } = await log.append(new Uint8Array([1]), {
-			deferIndexWrite: true,
 			meta: { next: [] },
 		});
 
 		expect((await log.get(entry.hash))?.hash).equal(entry.hash);
-		expect(putSpy.callCount).equal(1);
+		expect(putSpy.callCount).equal(0);
 		expect((await log.getHeads().all()).map((head) => head.hash)).to.have.members([
 			entry.hash,
 		]);
+		expect(putSpy.callCount).equal(1);
+		await log.close();
+		expect(putSpy.callCount).equal(1);
+		putSpy.restore();
+	});
+
+	it("writes head index eagerly when strict durability is requested on ephemeral indexers", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			indexer: new HashmapIndices(),
+			appendDurability: "strict",
+		});
+		const putSpy = sinon.spy(log.entryIndex.properties.index, "put");
+		const { entry } = await log.append(new Uint8Array([1]), {
+			meta: { next: [] },
+		});
+
+		expect((await log.get(entry.hash))?.hash).equal(entry.hash);
+		expect((await log.getHeads().all()).map((head) => head.hash)).to.have.members([
+			entry.hash,
+		]);
+		expect(putSpy.callCount).equal(1);
 		await log.close();
 		expect(putSpy.callCount).equal(1);
 		putSpy.restore();

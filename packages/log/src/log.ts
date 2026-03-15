@@ -70,6 +70,7 @@ export type LogProperties<T> = {
 	keychain?: CryptoKeychain;
 	encoding?: Encoding<T>;
 	clock?: LamportClock;
+	appendDurability?: AppendDurability;
 	sortFn?: Sorting.SortFn;
 	trim?: TrimOptions;
 	canAppend?: CanAppend<T>;
@@ -81,7 +82,10 @@ export type LogProperties<T> = {
 
 export type LogOptions<T> = LogProperties<T> & LogEvents<T> & MemoryProperties;
 
+export type AppendDurability = "strict" | "buffered";
+
 export type AppendOptions<T> = {
+	durability?: AppendDurability;
 	deferIndexWrite?: boolean;
 	meta?: {
 		type?: EntryType;
@@ -160,6 +164,7 @@ export class Log<T> {
 	private _closeController!: AbortController;
 	private _loadedOnce = false;
 	private _indexer!: Indices;
+	private _appendDurability!: AppendDurability;
 	private _joining!: Map<string, Promise<any>>; // entry hashes that are currently joining into this log
 	private _sortFn!: Sorting.SortFn;
 
@@ -228,6 +233,11 @@ export class Log<T> {
 			resolveRemotePeers,
 		});
 		await this._entryIndex.init();
+		this._appendDurability =
+			options.appendDurability ??
+			((await this._entryIndex.properties.index.persisted())
+				? "strict"
+				: "buffered");
 		/* 	this._values = new Values(this._entryIndex, this._sortFn); */
 
 		this._trim = new Trim(
@@ -563,7 +573,11 @@ export class Log<T> {
 			unique: true,
 			isHead: true,
 			toMultiHash: false,
-			deferIndexWrite: options.deferIndexWrite === true,
+			deferIndexWrite:
+				options.deferIndexWrite ??
+				(options.durability
+					? options.durability === "buffered"
+					: this._appendDurability === "buffered"),
 		});
 
 		const pendingDeletes: (
