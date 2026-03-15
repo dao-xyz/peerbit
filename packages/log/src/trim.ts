@@ -137,11 +137,10 @@ export class Trim<T> {
 			}
 			done = async () => this._log.getLength() <= to;
 		} else if (option.type === "bytelength") {
-			// TODO calculate the sum and cache it and update it only when entries are added or removed
+			// Include buffered head-index writes so trim decisions stay correct for
+			// ephemeral/buffered append durability too.
 			const byteLengthFn = async () =>
-				BigInt(
-					await this._log.index.properties.index.sum({ key: "payloadSize" }),
-				);
+				BigInt(await this._log.index.getMemoryUsage());
 
 			// prune to max sum payload sizes in bytes
 			const byteLengthFrom = BigInt(option.from ?? option.to);

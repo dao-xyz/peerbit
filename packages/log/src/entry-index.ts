@@ -607,17 +607,22 @@ export class EntryIndex<T> {
 
 	async clear() {
 		this.clearPendingIndexFlushTimer();
-		this.pendingIndexWrites.clear();
+		const hashes = new Set<string>(this.pendingIndexWrites.keys());
 		const iterator = this.iterate([], undefined, false);
 		while (!iterator.done()) {
 			const results = await iterator.next(100);
 			for (const result of results) {
-				await this.delete(result.hash);
+				hashes.add(result.hash);
 			}
+		}
+		this.pendingIndexWrites.clear();
+		for (const hash of hashes) {
+			await this.properties.store.rm(hash);
 		}
 		await this.properties.index.drop();
 		await this.properties.index.start();
 		this.cache.clear();
+		this._length = 0;
 	}
 
 	get length() {

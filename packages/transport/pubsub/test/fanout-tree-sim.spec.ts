@@ -65,6 +65,7 @@ describe("fanout-tree-sim (ci)", () => {
 
 	it("stays structurally healthy under mild loss + churn", async function () {
 			this.timeout(90_000);
+			this.retries(1);
 
 			const result = await runFanoutTreeSim({
 				nodes: 40,

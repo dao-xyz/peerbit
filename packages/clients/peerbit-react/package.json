@@ -68,6 +68,7 @@
 		"uuid": "^10.0.0"
 	},
 	"devDependencies": {
+		"@vitest/coverage-v8": "^4.0.12",
 		"@testing-library/dom": "^10.4.0",
 		"@types/debug": "^4.1.12",
 		"@types/libsodium-wrappers": "^0.7.14",
