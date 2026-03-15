@@ -96,15 +96,15 @@ const walkPackageJsonFiles = async (root) => {
 	return packageJsons;
 };
 
-export const collectLocalPeerbitPackages = async (
-	peerbitRoot = repoRoot,
-	options = {},
-) => {
+const WORKSPACE_DEP_FIELDS = [
+	"dependencies",
+	"optionalDependencies",
+	"peerDependencies",
+];
+
+const loadWorkspacePeerbitPackages = async (peerbitRoot = repoRoot) => {
 	const packageJsonFiles = await walkPackageJsonFiles(peerbitRoot);
-	const mappings = new Map();
-	const selectedNames = Array.isArray(options.names)
-		? new Set(options.names)
-		: undefined;
+	const workspacePackages = new Map();
 	for (const packageJsonFile of packageJsonFiles) {
 		const packageJson = JSON.parse(await fsp.readFile(packageJsonFile, "utf8"));
 		const name = packageJson?.name;
@@ -112,11 +112,74 @@ export const collectLocalPeerbitPackages = async (
 			name === "peerbit" ||
 			(typeof name === "string" && name.startsWith("@peerbit/"))
 		) {
-			if (selectedNames && !selectedNames.has(name)) {
-				continue;
-			}
-			mappings.set(name, path.dirname(packageJsonFile));
+			workspacePackages.set(name, {
+				dir: path.dirname(packageJsonFile),
+				packageJson,
+			});
 		}
+	}
+	return workspacePackages;
+};
+
+const expandWorkspacePackageSelection = ({
+	workspacePackages,
+	selectedNames,
+	includeTransitive = true,
+}) => {
+	if (!selectedNames || selectedNames.size === 0) {
+		return new Set(workspacePackages.keys());
+	}
+	if (!includeTransitive) {
+		return new Set(
+			[...selectedNames].filter((name) => workspacePackages.has(name)),
+		);
+	}
+	const expanded = new Set();
+	const pending = [...selectedNames];
+	while (pending.length > 0) {
+		const name = pending.pop();
+		if (!name || expanded.has(name)) {
+			continue;
+		}
+		const info = workspacePackages.get(name);
+		if (!info) {
+			continue;
+		}
+		expanded.add(name);
+		for (const field of WORKSPACE_DEP_FIELDS) {
+			for (const depName of Object.keys(info.packageJson?.[field] ?? {})) {
+				if (
+					(depName === "peerbit" || depName.startsWith("@peerbit/")) &&
+					workspacePackages.has(depName) &&
+					!expanded.has(depName)
+				) {
+					pending.push(depName);
+				}
+			}
+		}
+	}
+	return expanded;
+};
+
+export const collectLocalPeerbitPackages = async (
+	peerbitRoot = repoRoot,
+	options = {},
+) => {
+	const workspacePackages = await loadWorkspacePeerbitPackages(peerbitRoot);
+	const mappings = new Map();
+	const selectedNames = Array.isArray(options.names)
+		? new Set(options.names)
+		: undefined;
+	const expandedSelection = expandWorkspacePackageSelection({
+		workspacePackages,
+		selectedNames,
+		includeTransitive: options.includeTransitive !== false,
+	});
+	for (const [name, info] of workspacePackages.entries()) {
+		if (!expandedSelection.has(name)) {
+			continue;
+		}
+		mappings.set(name, info.dir);
 	}
 	return new Map([...mappings.entries()].sort(([a], [b]) => a.localeCompare(b)));
 };
