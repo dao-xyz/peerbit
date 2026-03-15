@@ -66,8 +66,12 @@ export class CachedIndex<T extends Record<string, any>, Nested = unknown>
 		return this.origin.getSize();
 	}
 
-	async put(value: T, id?: any) {
-		await this.origin.put(value, id);
+	persisted() {
+		return this.origin.persisted();
+	}
+
+	async put(value: T, id?: any, options?: { replace?: boolean }) {
+		await this.origin.put(value, id, options);
 		await this._cache.refresh();
 	}
 

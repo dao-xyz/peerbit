@@ -30,13 +30,17 @@ import {
 	selectChildren,
 } from "./schema.js";
 import type { Database, Statement } from "./types.js";
-import { isFKError } from "./utils.js";
+import { isFKError, isUniqueConstraintError } from "./utils.js";
 
 const escapePathToSQLName = (path: string[]) => {
 	return path.map((x) => x.replace(/[^a-zA-Z0-9]/g, "_"));
 };
 
 const putStatementKey = (table: Table) => table.name + "_put";
+const insertKnownIdStatementKey = (table: Table) =>
+	table.name + "_insert_known_id";
+const putStatementBatchNoReturnKey = (table: Table, rows: number) =>
+	table.name + "_put_batch_noreturn_" + rows;
 const replaceStatementKey = (table: Table) => table.name + "_replicate";
 const resolveChildrenStatement = (table: Table) =>
 	table.name + "_resolve_children";
@@ -83,6 +87,23 @@ async function getIgnoreFK(stmt: Statement, values: any[]) {
 		throw e;
 	}
 }
+
+const createBatchInsertSQL = (table: Table, rows: number) => {
+	const columns = table.fields.map((field) => escapeColumnName(field.name)).join(", ");
+	const rowPlaceholder = `(${table.fields.map(() => "?").join(", ")})`;
+	return `insert into ${table.name} (${columns}) VALUES ${Array.from({
+		length: rows,
+	})
+		.map(() => rowPlaceholder)
+		.join(", ")};`;
+};
+
+const canUseWithoutRowId = (table: Table) => {
+	if (table.inline || table.primary === false || !table.primaryField) {
+		return false;
+	}
+	return !/^INTEGER\b/i.test(table.primaryField.type);
+};
 
 export class SQLiteIndex<T extends Record<string, any>>
 	implements Index<T, any>
@@ -145,6 +166,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 			scope: string[];
 			db: Database;
 			schema: AbstractType<any>;
+			persisted?: boolean;
 			start?: () => Promise<void> | void;
 			stop?: () => Promise<void> | void;
 		},
@@ -161,6 +183,10 @@ export class SQLiteIndex<T extends Record<string, any>>
 		this.planner = new QueryPlanner({
 			exec: this.properties.db.exec.bind(this.properties.db),
 		});
+	}
+
+	persisted(): boolean {
+		return this.properties.persisted ?? true;
 	}
 
 	get tables() {
@@ -251,7 +277,10 @@ export class SQLiteIndex<T extends Record<string, any>>
 				continue;
 			}
 
-			const sqlCreateTable = `create table if not exists ${table.name} (${[...table.fields, ...table.constraints].map((s) => s.definition).join(", ")}) strict`;
+			const tableOptions = canUseWithoutRowId(table)
+				? " strict, without rowid"
+				: " strict";
+			const sqlCreateTable = `create table if not exists ${table.name} (${[...table.fields, ...table.constraints].map((s) => s.definition).join(", ")})${tableOptions}`;
 			this.properties.db.exec(sqlCreateTable);
 
 			/* const fieldsToIndex = table.fields.filter(
@@ -290,10 +319,17 @@ export class SQLiteIndex<T extends Record<string, any>>
 			// put and return the id
 			let sqlPut = `insert into ${table.name}  (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")}) RETURNING ${table.primary};`;
 
+			// insert without replace when the caller already knows the id is fresh
+			let sqlInsertKnownId = `insert into ${table.name} (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")});`;
+
 			// insert or replace with id already defined
 			let sqlReplace = `insert or replace into ${table.name} (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")});`;
 
 			await this.properties.db.prepare(sqlPut, putStatementKey(table));
+			await this.properties.db.prepare(
+				sqlInsertKnownId,
+				insertKnownIdStatementKey(table),
+			);
 			await this.properties.db.prepare(sqlReplace, replaceStatementKey(table));
 
 			if (table.parent) {
@@ -428,7 +464,11 @@ export class SQLiteIndex<T extends Record<string, any>>
 		return undefined;
 	}
 
-	async put(value: T, _id?: any): Promise<void> {
+	async put(
+		value: T,
+		_id?: any,
+		options?: { replace?: boolean },
+	): Promise<void> {
 		return this.withWriteBarrier(async () => {
 			const classOfValue = value.constructor as Constructor<T>;
 			return insert(
@@ -437,12 +477,35 @@ export class SQLiteIndex<T extends Record<string, any>>
 					let statement: Statement | undefined = undefined;
 					try {
 						if (preId != null) {
-							statement = this.properties.db.statements.get(
-								replaceStatementKey(table),
-							)!;
-							this.fkMode === "race-tolerant"
-								? await runIgnoreFK(statement, values)
-								: await statement.run(values);
+							const shouldReplace = options?.replace ?? true;
+							if (!shouldReplace) {
+								statement = this.properties.db.statements.get(
+									insertKnownIdStatementKey(table),
+								)!;
+								try {
+									this.fkMode === "race-tolerant"
+										? await runIgnoreFK(statement, values)
+										: await statement.run(values);
+								} catch (error) {
+									if (!isUniqueConstraintError(error)) {
+										throw error;
+									}
+									await statement.reset?.();
+									statement = this.properties.db.statements.get(
+										replaceStatementKey(table),
+									)!;
+									this.fkMode === "race-tolerant"
+										? await runIgnoreFK(statement, values)
+										: await statement.run(values);
+								}
+							} else {
+								statement = this.properties.db.statements.get(
+									replaceStatementKey(table),
+								)!;
+								this.fkMode === "race-tolerant"
+									? await runIgnoreFK(statement, values)
+									: await statement.run(values);
+							}
 							return preId;
 						} else {
 							statement = this.properties.db.statements.get(
@@ -474,6 +537,24 @@ export class SQLiteIndex<T extends Record<string, any>>
 				getSchema(classOfValue).fields,
 				(_fn) => {
 					throw new Error("Unexpected");
+				},
+				undefined,
+				undefined,
+				{
+					insertSimpleVecRows: async (rows, table) => {
+						if (rows.length === 0) {
+							return;
+						}
+						const key = putStatementBatchNoReturnKey(table, rows.length);
+						const sql = createBatchInsertSQL(table, rows.length);
+						const statement =
+							this.properties.db.statements.get(key) ||
+							(await this.properties.db.prepare(sql, key));
+						const values = rows.flat();
+						this.fkMode === "race-tolerant"
+							? await runIgnoreFK(statement, values)
+							: await statement.run(values);
+					},
 				},
 			);
 		});
@@ -825,6 +906,7 @@ export class SQLiteIndices implements types.Indices {
 			db: this.properties.db,
 			schema: properties.schema,
 			scope: this._scope,
+			persisted: await this.persisted(),
 		});
 		await index.init(properties);
 		this.indices.push({ schema: properties.schema, index });
@@ -857,6 +939,10 @@ export class SQLiteIndices implements types.Indices {
 			await scope.start();
 		}
 		return scope;
+	}
+
+	persisted(): boolean {
+		return this.properties.directory != null;
 	}
 
 	async start(): Promise<void> {
@@ -908,3 +994,5 @@ export class SQLiteIndices implements types.Indices {
 		this.scopes.clear();
 	}
 }
+
+export { SQLiteIndex as SQLLiteIndex };

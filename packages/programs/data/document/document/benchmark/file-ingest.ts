@@ -1,0 +1,732 @@
+import { field, option, variant } from "@dao-xyz/borsh";
+import type { AppendDurability } from "@peerbit/log";
+import { Program } from "@peerbit/program";
+import { TestSession } from "@peerbit/test-utils";
+import { delay } from "@peerbit/time";
+import {
+	Documents,
+	SearchRequest,
+	StringMatch,
+	type SetupOptions,
+} from "../src/index.js";
+
+type BenchMode = "adaptive" | "fixed1";
+
+type Args = {
+	replicate: any;
+	appendDurability?: AppendDurability;
+};
+
+type Sample = {
+	writerCompleteMs: number;
+	observerFinalManifestEntryKnownMs: number;
+	observerChunkEntriesKnownMs: number;
+	observerManifestReadyMs: number;
+	observerChunksReadyMs: number;
+	observerManifestSearchMs: number;
+	observerChunkSearchMs: number;
+	observerJoinMs: number;
+	observerJoinCalls: number;
+	observerFinalManifestEntryKnownTailMs: number;
+	observerChunkEntriesKnownTailMs: number;
+	observerManifestTailMs: number;
+	observerChunksTailMs: number;
+	entryPolls: number;
+	manifestPolls: number;
+	chunkPolls: number;
+};
+
+type Task = {
+	name: string;
+	hz: number;
+	mean_ms: number;
+	rme: null;
+	samples: number;
+};
+
+const modes = ["adaptive", "fixed1"] as const satisfies readonly BenchMode[];
+const envInt = (name: string, fallback: number) => {
+	const value = process.env[name];
+	if (value == null) {
+		return fallback;
+	}
+	const parsed = Number.parseInt(value, 10);
+	return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const chunkBytes = Math.max(1, envInt("FILE_INGEST_CHUNK_BYTES", 262144));
+const chunks = Math.max(1, envInt("FILE_INGEST_CHUNKS", 24));
+const warmupIterations = Math.max(0, envInt("FILE_INGEST_WARMUP", 1));
+const iterations = Math.max(1, envInt("FILE_INGEST_ITERATIONS", 3));
+const readyTimeoutMs = Math.max(
+	1_000,
+	envInt("FILE_INGEST_READY_TIMEOUT_MS", 30_000),
+);
+const pollDelayMs = Math.max(10, envInt("FILE_INGEST_POLL_DELAY_MS", 50));
+const appendDurabilityEnv = process.env.FILE_INGEST_APPEND_DURABILITY;
+const appendDurability: AppendDurability | undefined =
+	appendDurabilityEnv === "strict" || appendDurabilityEnv === "buffered"
+		? appendDurabilityEnv
+		: undefined;
+
+const replicationByMode: Record<BenchMode, any> = {
+	adaptive: {
+		limits: {
+			cpu: {
+				max: 1,
+			},
+		},
+	},
+	fixed1: {
+		factor: 1,
+	},
+};
+
+@variant("bench_file_record")
+class FileRecord {
+	@field({ type: "string" })
+	id: string;
+
+	@field({ type: "string" })
+	name: string;
+
+	@field({ type: "string" })
+	kind: "manifest" | "chunk";
+
+	@field({ type: "u32" })
+	size: number;
+
+	@field({ type: "bool" })
+	ready: boolean;
+
+	@field({ type: option("string") })
+	parentId?: string;
+
+	@field({ type: option("u32") })
+	index?: number;
+
+	@field({ type: option("u32") })
+	chunkCount?: number;
+
+	@field({ type: option("string") })
+	finalHash?: string;
+
+	@field({ type: option(Uint8Array) })
+	bytes?: Uint8Array;
+
+	constructor(properties?: Partial<FileRecord>) {
+		this.id = properties?.id ?? "";
+		this.name = properties?.name ?? "";
+		this.kind = (properties?.kind as "manifest" | "chunk") ?? "chunk";
+		this.size = properties?.size ?? 0;
+		this.ready = properties?.ready ?? false;
+		this.parentId = properties?.parentId;
+		this.index = properties?.index;
+		this.chunkCount = properties?.chunkCount;
+		this.finalHash = properties?.finalHash;
+		this.bytes = properties?.bytes;
+	}
+}
+
+@variant("bench_file_indexable")
+class FileRecordIndexable {
+	@field({ type: "string" })
+	id: string;
+
+	@field({ type: "string" })
+	name: string;
+
+	@field({ type: "string" })
+	kind: string;
+
+	@field({ type: "u32" })
+	size: number;
+
+	@field({ type: "bool" })
+	ready: boolean;
+
+	@field({ type: option("string") })
+	parentId?: string;
+
+	@field({ type: option("u32") })
+	index?: number;
+
+	constructor(record: FileRecord) {
+		this.id = record.id;
+		this.name = record.name;
+		this.kind = record.kind;
+		this.size = record.size;
+		this.ready = record.ready;
+		this.parentId = record.parentId;
+		this.index = record.index;
+	}
+}
+
+@variant("bench_file_store")
+class FileStore extends Program<Partial<SetupOptions<FileRecord>> & Args> {
+	@field({ type: Documents })
+	files: Documents<FileRecord, FileRecordIndexable>;
+
+	constructor() {
+		super();
+		this.files = new Documents();
+	}
+
+	async open(
+		options?: Partial<SetupOptions<FileRecord>> & Partial<Args>,
+	): Promise<void> {
+		await this.files.open({
+			type: FileRecord,
+			index: {
+				type: FileRecordIndexable,
+			},
+			appendDurability: options?.appendDurability,
+			replicate: options?.replicate,
+			replicas: { min: 1 },
+		});
+	}
+}
+
+const average = (values: number[]) =>
+	values.reduce((sum, value) => sum + value, 0) / values.length;
+
+const round = (value: number, digits = 3) =>
+	Number.isFinite(value) ? Number(value.toFixed(digits)) : value;
+
+const makePayloadChunks = (): Uint8Array[] => {
+	const all = new Uint8Array(chunkBytes * chunks);
+	for (let i = 0; i < all.length; i++) {
+		all[i] = i % 251;
+	}
+	return Array.from({ length: chunks }, (_, index) =>
+		all.subarray(index * chunkBytes, (index + 1) * chunkBytes),
+	);
+};
+
+const uploadChunkedFile = async (
+	store: FileStore,
+	fileName: string,
+	payloadChunks: Uint8Array[],
+) => {
+	const uploadId = `${fileName}-upload`;
+	const totalSize = payloadChunks.reduce(
+		(sum, value) => sum + value.byteLength,
+		0,
+	);
+	const hash = Buffer.from(uploadId).toString("base64url");
+
+	await store.files.put(
+		new FileRecord({
+			id: uploadId,
+			name: fileName,
+			kind: "manifest",
+			size: totalSize,
+			chunkCount: payloadChunks.length,
+			ready: false,
+		}),
+	);
+
+	const chunkEntryHashes: string[] = [];
+	for (let index = 0; index < payloadChunks.length; index++) {
+		const bytes = payloadChunks[index]!;
+		const chunk = await store.files.put(
+			new FileRecord({
+				id: `${uploadId}:${index}`,
+				name: `${fileName}/${index}`,
+				kind: "chunk",
+				size: bytes.byteLength,
+				parentId: uploadId,
+				index,
+				ready: true,
+				bytes,
+			}),
+		);
+		chunkEntryHashes.push(chunk.entry.hash);
+	}
+
+	const finalManifest = await store.files.put(
+		new FileRecord({
+			id: uploadId,
+			name: fileName,
+			kind: "manifest",
+			size: totalSize,
+			chunkCount: payloadChunks.length,
+			ready: true,
+			finalHash: hash,
+		}),
+	);
+
+	return {
+		uploadId,
+		finalManifestEntryHash: finalManifest.entry.hash,
+		chunkEntryHashes,
+	};
+};
+
+const queryOptions = {
+	local: true,
+	remote: {
+		throwOnMissing: false,
+		replicate: true,
+	},
+} as const;
+
+const waitForObserverReady = async (
+	observer: FileStore,
+	upload: Awaited<ReturnType<typeof uploadChunkedFile>>,
+	expectedChunks: number,
+	startedAt: number,
+) => {
+	const deadline = startedAt + readyTimeoutMs;
+	let entryPolls = 0;
+	let manifestPolls = 0;
+	let chunkPolls = 0;
+	let manifestSearchMs = 0;
+	let chunkSearchMs = 0;
+	let finalManifestEntryKnownMs: number | undefined;
+	let chunkEntriesKnownMs: number | undefined;
+	let manifestReadyMs: number | undefined;
+
+	while (performance.now() < deadline) {
+		entryPolls += 1;
+		if (finalManifestEntryKnownMs == null) {
+			const finalManifestKnown =
+				(await observer.files.log.replicationIndex.count({
+					query: { hash: upload.finalManifestEntryHash },
+				})) > 0;
+			if (finalManifestKnown) {
+				finalManifestEntryKnownMs = performance.now() - startedAt;
+			}
+		}
+
+		if (chunkEntriesKnownMs == null) {
+			let remainingChunkEntries = upload.chunkEntryHashes.length;
+			for (const hash of upload.chunkEntryHashes) {
+				const present =
+					(await observer.files.log.replicationIndex.count({
+						query: { hash },
+					})) > 0;
+				if (!present) {
+					break;
+				}
+				remainingChunkEntries -= 1;
+			}
+			if (remainingChunkEntries === 0) {
+				chunkEntriesKnownMs = performance.now() - startedAt;
+			}
+		}
+
+		manifestPolls += 1;
+		const manifestSearchStartedAt = performance.now();
+		const manifests = await observer.files.index.search(
+			new SearchRequest({
+				query: new StringMatch({
+					key: "id",
+					value: upload.uploadId,
+				}),
+				fetch: 1,
+			}),
+			queryOptions,
+		);
+		manifestSearchMs += performance.now() - manifestSearchStartedAt;
+		const manifest = manifests[0] as FileRecord | undefined;
+
+		if (manifest?.ready) {
+			manifestReadyMs ??= performance.now() - startedAt;
+			chunkPolls += 1;
+			const chunkSearchStartedAt = performance.now();
+			const chunkResults = await observer.files.index.search(
+				new SearchRequest({
+					query: new StringMatch({
+						key: "parentId",
+						value: upload.uploadId,
+					}),
+					fetch: 0xffffffff,
+				}),
+				queryOptions,
+			);
+			chunkSearchMs += performance.now() - chunkSearchStartedAt;
+			if (chunkResults.length === expectedChunks) {
+				return {
+					finalManifestEntryKnownMs:
+						finalManifestEntryKnownMs ?? performance.now() - startedAt,
+					chunkEntriesKnownMs:
+						chunkEntriesKnownMs ?? performance.now() - startedAt,
+					manifestReadyMs: manifestReadyMs ?? performance.now() - startedAt,
+					chunksReadyMs: performance.now() - startedAt,
+					manifestSearchMs,
+					chunkSearchMs,
+					entryPolls,
+					manifestPolls,
+					chunkPolls,
+				};
+			}
+		}
+
+		await delay(pollDelayMs);
+	}
+
+	throw new Error(
+		`Timed out waiting for observer readiness for upload ${upload.uploadId}`,
+	);
+};
+
+const waitForReplicationSetup = async (
+	writer: FileStore,
+	seeder: FileStore,
+) => {
+	let lastError: unknown;
+	for (let attempt = 0; attempt < 2; attempt++) {
+		try {
+			await Promise.all([
+				writer.files.log.waitForReplicator(seeder.node.identity.publicKey, {
+					timeout: readyTimeoutMs,
+				}),
+				seeder.files.log.waitForReplicator(writer.node.identity.publicKey, {
+					timeout: readyTimeoutMs,
+				}),
+			]);
+			return;
+		} catch (error) {
+			lastError = error;
+			if (attempt === 1) {
+				break;
+			}
+			await delay(Math.min(1_000, pollDelayMs * 4));
+		}
+	}
+	throw lastError;
+};
+
+const runIteration = async (
+	session: Awaited<ReturnType<typeof TestSession.connected>>,
+	mode: BenchMode,
+	sequence: number,
+	payloadChunks: Uint8Array[],
+): Promise<Sample> => {
+	const writer = await session.peers[0].open(new FileStore(), {
+		args: {
+			appendDurability,
+			replicate: replicationByMode[mode],
+		},
+	});
+
+	const seeder = await session.peers[1].open<FileStore>(writer.address!, {
+		args: {
+			appendDurability,
+			replicate: replicationByMode[mode],
+		},
+	});
+
+	const observer = await session.peers[2].open<FileStore>(writer.address!, {
+		args: {
+			appendDurability,
+			replicate: false,
+		},
+	});
+	let observerJoinMs = 0;
+	let observerJoinCalls = 0;
+	const originalObserverJoin = observer.files.log.join.bind(observer.files.log);
+	observer.files.log.join = (async (...args: Parameters<typeof originalObserverJoin>) => {
+		observerJoinCalls += 1;
+		const startedAt = performance.now();
+		try {
+			return await originalObserverJoin(...args);
+		} finally {
+			observerJoinMs += performance.now() - startedAt;
+		}
+	}) as typeof observer.files.log.join;
+
+	try {
+		await waitForReplicationSetup(writer, seeder);
+
+		const startedAt = performance.now();
+		const upload = await uploadChunkedFile(
+			writer,
+			`${mode}-file-${sequence}`,
+			payloadChunks,
+		);
+		const writerCompleteMs = performance.now() - startedAt;
+
+		const observerProgress = await waitForObserverReady(
+			observer,
+			upload,
+			payloadChunks.length,
+			startedAt,
+		);
+
+		return {
+			writerCompleteMs,
+			observerFinalManifestEntryKnownMs:
+				observerProgress.finalManifestEntryKnownMs,
+			observerChunkEntriesKnownMs: observerProgress.chunkEntriesKnownMs,
+			observerManifestReadyMs: observerProgress.manifestReadyMs,
+			observerChunksReadyMs: observerProgress.chunksReadyMs,
+			observerManifestSearchMs: observerProgress.manifestSearchMs,
+			observerChunkSearchMs: observerProgress.chunkSearchMs,
+			observerJoinMs,
+			observerJoinCalls,
+			observerFinalManifestEntryKnownTailMs:
+				observerProgress.finalManifestEntryKnownMs - writerCompleteMs,
+			observerChunkEntriesKnownTailMs:
+				observerProgress.chunkEntriesKnownMs - writerCompleteMs,
+			observerManifestTailMs:
+				observerProgress.manifestReadyMs - writerCompleteMs,
+			observerChunksTailMs:
+				observerProgress.chunksReadyMs - writerCompleteMs,
+			entryPolls: observerProgress.entryPolls,
+			manifestPolls: observerProgress.manifestPolls,
+			chunkPolls: observerProgress.chunkPolls,
+		};
+	} finally {
+		await Promise.allSettled([observer.close(), seeder.close(), writer.close()]);
+	}
+};
+
+const summarizeTask = (name: string, values: number[]): Task => {
+	const meanMs = average(values);
+	return {
+		name,
+		hz: round(1000 / meanMs, 6),
+		mean_ms: round(meanMs, 6),
+		rme: null,
+		samples: values.length,
+	};
+};
+
+const runMode = async (mode: BenchMode, payloadChunks: Uint8Array[]) => {
+	const session = await TestSession.connected(3);
+	const samples: Sample[] = [];
+
+	try {
+		for (let i = 0; i < warmupIterations; i++) {
+			await runIteration(session, mode, -1 - i, payloadChunks);
+		}
+		for (let i = 0; i < iterations; i++) {
+			samples.push(await runIteration(session, mode, i, payloadChunks));
+		}
+	} finally {
+		await session.stop();
+	}
+
+	return samples;
+};
+
+const payloadChunks = makePayloadChunks();
+const results = await Promise.all(
+	modes.map(async (mode) => ({
+		mode,
+		samples: await runMode(mode, payloadChunks),
+	})),
+);
+
+const tasks: Task[] = [];
+for (const result of results) {
+	tasks.push(
+		summarizeTask(
+			`${result.mode}: writer-complete`,
+			result.samples.map((sample) => sample.writerCompleteMs),
+		),
+	);
+	tasks.push(
+		summarizeTask(
+			`${result.mode}: observer-final-manifest-entry-known`,
+			result.samples.map((sample) => sample.observerFinalManifestEntryKnownMs),
+		),
+	);
+	tasks.push(
+		summarizeTask(
+			`${result.mode}: observer-chunk-entries-known`,
+			result.samples.map((sample) => sample.observerChunkEntriesKnownMs),
+		),
+	);
+	tasks.push(
+		summarizeTask(
+			`${result.mode}: observer-manifest-ready`,
+			result.samples.map((sample) => sample.observerManifestReadyMs),
+		),
+	);
+	tasks.push(
+		summarizeTask(
+			`${result.mode}: observer-chunks-ready`,
+			result.samples.map((sample) => sample.observerChunksReadyMs),
+		),
+	);
+	tasks.push(
+		summarizeTask(
+			`${result.mode}: observer-manifest-search`,
+			result.samples.map((sample) => sample.observerManifestSearchMs),
+		),
+	);
+	tasks.push(
+		summarizeTask(
+			`${result.mode}: observer-chunk-search`,
+			result.samples.map((sample) => sample.observerChunkSearchMs),
+		),
+	);
+	tasks.push(
+		summarizeTask(
+			`${result.mode}: observer-join`,
+			result.samples.map((sample) => sample.observerJoinMs),
+		),
+	);
+	tasks.push(
+		summarizeTask(
+			`${result.mode}: observer-final-manifest-entry-known-tail`,
+			result.samples.map(
+				(sample) => sample.observerFinalManifestEntryKnownTailMs,
+			),
+		),
+	);
+	tasks.push(
+		summarizeTask(
+			`${result.mode}: observer-chunk-entries-known-tail`,
+			result.samples.map((sample) => sample.observerChunkEntriesKnownTailMs),
+		),
+	);
+	tasks.push(
+		summarizeTask(
+			`${result.mode}: observer-manifest-tail`,
+			result.samples.map((sample) => sample.observerManifestTailMs),
+		),
+	);
+	tasks.push(
+		summarizeTask(
+			`${result.mode}: observer-chunks-tail`,
+			result.samples.map((sample) => sample.observerChunksTailMs),
+		),
+	);
+}
+
+const output = {
+	name: "file-ingest",
+	tasks,
+	meta: {
+		chunks,
+		chunkBytes,
+		totalBytes: chunks * chunkBytes,
+		warmupIterations,
+		iterations,
+		readyTimeoutMs,
+		pollDelayMs,
+		appendDurability,
+		results: results.map((result) => ({
+			mode: result.mode,
+			writerCompleteMsAvg: round(
+				average(result.samples.map((sample) => sample.writerCompleteMs)),
+			),
+			observerFinalManifestEntryKnownMsAvg: round(
+				average(
+					result.samples.map(
+						(sample) => sample.observerFinalManifestEntryKnownMs,
+					),
+				),
+			),
+			observerChunkEntriesKnownMsAvg: round(
+				average(
+					result.samples.map((sample) => sample.observerChunkEntriesKnownMs),
+				),
+			),
+			observerManifestReadyMsAvg: round(
+				average(
+					result.samples.map((sample) => sample.observerManifestReadyMs),
+				),
+			),
+			observerChunksReadyMsAvg: round(
+				average(result.samples.map((sample) => sample.observerChunksReadyMs)),
+			),
+			observerManifestSearchMsAvg: round(
+				average(
+					result.samples.map((sample) => sample.observerManifestSearchMs),
+				),
+			),
+			observerChunkSearchMsAvg: round(
+				average(result.samples.map((sample) => sample.observerChunkSearchMs)),
+			),
+			observerJoinMsAvg: round(
+				average(result.samples.map((sample) => sample.observerJoinMs)),
+			),
+			observerJoinCallsAvg: round(
+				average(result.samples.map((sample) => sample.observerJoinCalls)),
+			),
+			observerManifestTailMsAvg: round(
+				average(result.samples.map((sample) => sample.observerManifestTailMs)),
+			),
+			observerFinalManifestEntryKnownTailMsAvg: round(
+				average(
+					result.samples.map(
+						(sample) => sample.observerFinalManifestEntryKnownTailMs,
+					),
+				),
+			),
+			observerChunkEntriesKnownTailMsAvg: round(
+				average(
+					result.samples.map(
+						(sample) => sample.observerChunkEntriesKnownTailMs,
+					),
+				),
+			),
+			observerChunksTailMsAvg: round(
+				average(result.samples.map((sample) => sample.observerChunksTailMs)),
+			),
+			entryPollsAvg: round(
+				average(result.samples.map((sample) => sample.entryPolls)),
+			),
+			manifestPollsAvg: round(
+				average(result.samples.map((sample) => sample.manifestPolls)),
+			),
+			chunkPollsAvg: round(
+				average(result.samples.map((sample) => sample.chunkPolls)),
+			),
+			samples: result.samples.map((sample) => ({
+				writerCompleteMs: round(sample.writerCompleteMs),
+				observerFinalManifestEntryKnownMs: round(
+					sample.observerFinalManifestEntryKnownMs,
+				),
+				observerChunkEntriesKnownMs: round(
+					sample.observerChunkEntriesKnownMs,
+				),
+				observerManifestReadyMs: round(sample.observerManifestReadyMs),
+				observerChunksReadyMs: round(sample.observerChunksReadyMs),
+				observerManifestSearchMs: round(sample.observerManifestSearchMs),
+				observerChunkSearchMs: round(sample.observerChunkSearchMs),
+				observerJoinMs: round(sample.observerJoinMs),
+				observerJoinCalls: sample.observerJoinCalls,
+				observerFinalManifestEntryKnownTailMs: round(
+					sample.observerFinalManifestEntryKnownTailMs,
+				),
+				observerChunkEntriesKnownTailMs: round(
+					sample.observerChunkEntriesKnownTailMs,
+				),
+				observerManifestTailMs: round(sample.observerManifestTailMs),
+				observerChunksTailMs: round(sample.observerChunksTailMs),
+				entryPolls: sample.entryPolls,
+				manifestPolls: sample.manifestPolls,
+				chunkPolls: sample.chunkPolls,
+			})),
+		})),
+	},
+};
+
+if (process.env.BENCH_JSON === "1") {
+	await new Promise<void>((resolve, reject) => {
+		process.stdout.write(JSON.stringify(output, null, 2), (error) => {
+			if (error) {
+				reject(error);
+				return;
+			}
+			resolve();
+		});
+	});
+} else {
+	console.table(
+		tasks.map((task) => ({
+			task: task.name,
+			mean_ms: task.mean_ms,
+			ops_s: round(task.hz, 3),
+			samples: task.samples,
+		})),
+	);
+}
+
+process.exit(0);

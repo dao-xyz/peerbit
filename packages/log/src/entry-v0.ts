@@ -338,8 +338,7 @@ export class EntryV0<T>
 			return false;
 		}
 
-		const signable = EntryV0.toSignable(this);
-		const signableBytes = serialize(signable);
+		const signableBytes = this.getSignableBytes();
 		for (const signature of signatures) {
 			if (!(await verify(signature, signableBytes))) {
 				return false;
@@ -369,6 +368,10 @@ export class EntryV0<T>
 			throw new Error("Expected hash to be undefined");
 		}
 		return EntryV0.toSignable(this);
+	}
+
+	override getSignableBytes(): Uint8Array {
+		return serialize(EntryV0.toSignable(this));
 	}
 
 	equals(other: Entry<T>) {
@@ -533,7 +536,7 @@ export class EntryV0<T>
 			properties.identity.sign.bind(properties.identity),
 		];
 
-		const signableBytes = serialize(entry.toSignable());
+		const signableBytes = entry.getSignableBytes();
 		let signatures = await Promise.all(
 			signers.map((signer) => signer(signableBytes)),
 		);

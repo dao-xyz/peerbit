@@ -19,6 +19,7 @@ import { type Multiaddr, multiaddr } from "@multiformats/multiaddr";
 import { Circuit } from "@multiformats/multiaddr-matcher";
 import { Cache } from "@peerbit/cache";
 import {
+	PreHash,
 	PublicSignKey,
 	getKeypairFromPrivateKey,
 	getPublicKeyFromPeerId,
@@ -41,10 +42,16 @@ import {
 	MultiAddrinfo,
 	NotStartedError,
 	SilentDelivery,
+	Signatures,
 	TracedDelivery,
+	appendDeliveryHop,
 	coercePeerRefsToHashes,
 	deliveryModeHasReceiver,
 	getMsgId,
+	getDeliveryHopTrace,
+	hasDeliveryHop,
+	isAcknowledgedDeliveryMode,
+	setDeliveryOriginHop,
 } from "@peerbit/stream-interface";
 import type {
 	DirectStreamAckRouteHint,
@@ -204,7 +211,7 @@ type PeerOutboundQueueOptions = Pick<
 >;
 interface OutboundCandidate {
 	raw: Stream;
-	pushable: PushableLanes<Uint8Array>;
+	pushable: PushableLanes<Uint8Array | Uint8ArrayList>;
 	created: number;
 	bytesDelivered: number;
 	aborted: boolean;
@@ -308,7 +315,9 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	public get rawOutboundStreams(): Stream[] {
 		return this.outboundStreams.map((c) => c.raw);
 	}
-	public _getActiveOutboundPushable(): PushableLanes<Uint8Array> | undefined {
+	public _getActiveOutboundPushable():
+		| PushableLanes<Uint8Array | Uint8ArrayList>
+		| undefined {
 		return this.outboundStreams[0]?.pushable;
 	}
 	public getOutboundQueuedBytes(): number {
@@ -351,15 +360,15 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	private _addOutboundCandidate(raw: Stream): OutboundCandidate {
 		const existing = this.outboundStreams.find((c) => c.raw === raw);
 		if (existing) return existing;
-		const pushableInst = pushableLanes<Uint8Array>({
+		const pushableInst = pushableLanes<Uint8Array | Uint8ArrayList>({
 			lanes: PRIORITY_LANES,
 			maxBufferedBytes: this.outboundQueue?.maxBufferedBytes,
 			overflow: "throw",
 			onBufferSize: () => {
 				this.dispatchEvent(new CustomEvent("queue:outbound"));
 			},
-			onPush: (val: Uint8Array) => {
-				candidate.bytesDelivered += val.length || val.byteLength || 0;
+			onPush: (val) => {
+				candidate.bytesDelivered += val.byteLength;
 			},
 		});
 		const candidate: OutboundCandidate = {
@@ -383,9 +392,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 							new AbortError("Outbound stream aborted")
 						);
 					}
-					const bytes =
-						chunk instanceof Uint8ArrayList ? chunk.subarray() : chunk;
-					if (!raw.send(bytes)) {
+					if (!raw.send(chunk)) {
 						await waitForDrain(raw, this.outboundAbortController.signal);
 					}
 				}
@@ -547,7 +554,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		}
 
 		// Write to all current outbound streams (normally 1, but >1 during grace)
-		const payload = data instanceof Uint8Array ? data : data.subarray();
+		const payloadBytes = data.byteLength;
 		let successes = 0;
 		let failures: any[] = [];
 		const failed: OutboundCandidate[] = [];
@@ -559,8 +566,8 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			}
 
 			try {
-				this.assertQueueCapacity(c, payload.byteLength, priority);
-				c.pushable.push(payload, getLaneFromPriority(priority));
+				this.assertQueueCapacity(c, payloadBytes, priority);
+				c.pushable.push(data, getLaneFromPriority(priority));
 				successes++;
 			} catch (e) {
 				failures.push(e);
@@ -606,7 +613,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 				else this.dispatchEvent(new CustomEvent("stream:outbound"));
 			}
 		}
-		this.usedBandWidthTracker.add(payload.byteLength);
+		this.usedBandWidthTracker.add(payloadBytes);
 	}
 
 	/**
@@ -1077,6 +1084,7 @@ export abstract class DirectStream<
 	public publicKey: PublicSignKey;
 	public publicKeyHash: string;
 	public sign: (bytes: Uint8Array) => Promise<SignatureWithKey>;
+	private signPreparedSha256: (bytes: Uint8Array) => Promise<SignatureWithKey>;
 
 	public started: boolean;
 	public stopping: boolean;
@@ -1172,7 +1180,12 @@ export abstract class DirectStream<
 
 		const signKey = getKeypairFromPrivateKey(components.privateKey);
 		this.seekTimeout = seekTimeout;
-		this.sign = signKey.sign.bind(signKey);
+		this.sign = (bytes) => signKey.sign(bytes, PreHash.SHA_256);
+		this.signPreparedSha256 = async (bytes) => {
+			const signature = await signKey.sign(bytes, PreHash.NONE);
+			signature.prehash = PreHash.SHA_256;
+			return signature;
+		};
 		this.peerId = components.peerId;
 		this.publicKey = signKey.publicKey;
 		if (inboundIdleTimeout != null)
@@ -2126,8 +2139,10 @@ export abstract class DirectStream<
 	}
 
 	private async modifySeenCache(
-		message: Uint8Array,
-		getIdFn: (bytes: Uint8Array) => Promise<string> = getMsgId,
+		message: Uint8Array | Uint8ArrayList,
+		getIdFn: (
+			bytes: Uint8Array | Uint8ArrayList,
+		) => Promise<string> = getMsgId,
 	) {
 		const msgId = await getIdFn(message);
 		const seen = this.seenCache.get(msgId);
@@ -2180,6 +2195,13 @@ export abstract class DirectStream<
 	}
 
 	public shouldIgnore(message: DataMessage, seenBefore: number) {
+		if (isAcknowledgedDeliveryMode(message.header.mode)) {
+			if (hasDeliveryHop(message.header.mode, this.publicKeyHash)) {
+				return true;
+			}
+			return seenBefore >= message.header.mode.redundancy;
+		}
+
 		const signedBySelf =
 			message.header.signatures?.publicKeys.some((x) =>
 				x.equals(this.publicKey),
@@ -2187,15 +2209,6 @@ export abstract class DirectStream<
 
 		if (signedBySelf) {
 			return true;
-		}
-
-		// For acknowledged modes, allow limited duplicate forwarding so that we can
-		// discover and maintain multiple candidate routes (distance=seenCounter).
-		if (
-			message.header.mode instanceof AcknowledgeDelivery ||
-			message.header.mode instanceof AcknowledgeAnyWhere
-		) {
-			return seenBefore >= message.header.mode.redundancy;
 		}
 
 		return seenBefore > 0;
@@ -2237,7 +2250,7 @@ export abstract class DirectStream<
 
 			await this.maybeAcknowledgeMessage(peerStream, message, seenBefore);
 
-			if (seenBefore === 0 && message.data) {
+			if (seenBefore === 0 && message.hasData) {
 				this.dispatchEvent(
 					new CustomEvent("data", {
 						detail: message,
@@ -2310,11 +2323,9 @@ export abstract class DirectStream<
 			) {
 				return;
 			}
-			const signers = message.header.signatures!.publicKeys.map((x) =>
-				x.hashcode(),
-			);
+			const signers = [...getDeliveryHopTrace(message.header.mode)];
 
-			await this.publishMessage(
+			void this.publishMessage(
 				this.publicKey,
 				await new ACK({
 					messageIdToAcknowledge: message.id,
@@ -2331,15 +2342,15 @@ export abstract class DirectStream<
 								(message.header.mode instanceof AcknowledgeAnyWhere ||
 									message.header.mode instanceof AcknowledgeDelivery) &&
 								seenBefore === 0 &&
-								!message.header.signatures!.publicKeys.find((x) =>
-									this.prunedConnectionsCache?.has(x.hashcode()),
+								!signers.find((x) =>
+									this.prunedConnectionsCache?.has(x),
 								)
 									? new MultiAddrinfo(
 											this.components.addressManager
 											.getAddresses()
 											.map((x) => x.toString()),
 									)
-								: undefined,
+									: undefined,
 					}),
 				}).sign(this.sign),
 				[peerStream],
@@ -2353,11 +2364,7 @@ export abstract class DirectStream<
 		messageBytes: Uint8ArrayList | Uint8Array,
 		message: DataMessage,
 	) {
-		const seenBefore = await this.modifySeenCache(
-			messageBytes instanceof Uint8ArrayList
-				? messageBytes.subarray()
-				: messageBytes,
-		);
+		const seenBefore = await this.modifySeenCache(messageBytes);
 
 		return this.onDataMessage(from, peerStream, message, seenBefore);
 	}
@@ -2372,7 +2379,8 @@ export abstract class DirectStream<
 			messageBytes instanceof Uint8Array
 				? messageBytes
 				: messageBytes.subarray(),
-			(bytes) => sha256Base64(bytes),
+			(bytes) =>
+				sha256Base64(bytes instanceof Uint8Array ? bytes : bytes.subarray()),
 		);
 
 		if (seenBefore > 0) {
@@ -2565,8 +2573,10 @@ export abstract class DirectStream<
 			}
 		}
 
+		setDeliveryOriginHop(mode, this.publicKeyHash);
+
 		const message = new DataMessage({
-			data: data instanceof Uint8ArrayList ? data.subarray() : data,
+			data,
 			header: new MessageHeader({
 				id: options.id,
 				mode,
@@ -2579,7 +2589,7 @@ export abstract class DirectStream<
 
 		// TODO allow messages to also be sent unsigned (signaturePolicy property)
 
-		await message.sign(this.sign);
+		await this.signDataMessage(message);
 		if (options.extraSigners) {
 			for (const signer of options.extraSigners) {
 				await message.sign(signer);
@@ -2631,6 +2641,17 @@ export abstract class DirectStream<
 		return message.id;
 	}
 
+	private async signDataMessage(message: DataMessage) {
+		const signature = await this.signPreparedSha256(
+			await message.getPreparedSignableBytes(PreHash.SHA_256),
+		);
+		const signatures = message.header.signatures;
+		message.header.signatures = new Signatures(
+			signatures ? [...signatures.signatures, signature] : [signature],
+		);
+		return message;
+	}
+
 	public async relayMessage(
 		from: PublicSignKey,
 		message: Message,
@@ -2638,11 +2659,8 @@ export abstract class DirectStream<
 	) {
 		if (this.canRelayMessage) {
 			if (message instanceof DataMessage) {
-				if (
-					message.header.mode instanceof AcknowledgeDelivery ||
-					message.header.mode instanceof AcknowledgeAnyWhere
-				) {
-					await message.sign(this.sign);
+				if (isAcknowledgedDeliveryMode(message.header.mode)) {
+					appendDeliveryHop(message.header.mode, this.publicKeyHash);
 				}
 			}
 			if (deliveryModeHasReceiver(message.header.mode)) {
@@ -2814,9 +2832,7 @@ export abstract class DirectStream<
 						fastestNodesReached,
 					);
 					const msgMeta = `msgType=${message.constructor.name} dataBytes=${
-						message instanceof DataMessage
-							? (message.data?.byteLength ?? 0)
-							: 0
+						message instanceof DataMessage ? message.dataByteLength : 0
 					} relayed=${relayed ? 1 : 0}`;
 					deliveryDeferredPromise.reject(
 						new DeliveryError(
@@ -2989,8 +3005,7 @@ export abstract class DirectStream<
 			const bytes = message.bytes();
 
 			if (!isRelayed) {
-				const bytesArray = bytes instanceof Uint8Array ? bytes : bytes.subarray();
-				await this.modifySeenCache(bytesArray);
+				await this.modifySeenCache(bytes);
 			}
 
 			/**
@@ -3089,21 +3104,17 @@ export abstract class DirectStream<
 							if (recipient === from.hashcode()) continue; // never send back to previous hop
 							const stream = this.peers.get(recipient);
 							if (!stream) continue;
-							if (
-								message.header.signatures?.publicKeys.find(
-									(x) => x.hashcode() === recipient,
-								)
-							) {
+							if (hasDeliveryHop(message.header.mode, recipient)) {
 								continue; // recipient already signed/seen this message
-								}
-								message.header.mode.to = [recipient];
-								promises.push(
-									this.waitForPeerWrite(
-										stream,
-										message.bytes(),
-										message.header.priority,
-									),
-								);
+							}
+							message.header.mode.to = [recipient];
+							promises.push(
+								this.waitForPeerWrite(
+									stream,
+									message.bytes(),
+									message.header.priority,
+								),
+							);
 							}
 						message.header.mode.to = originalTo;
 						if (promises.length > 0) {
@@ -3134,18 +3145,20 @@ export abstract class DirectStream<
 				if (id.publicKey.equals(from)) {
 					continue;
 				}
-				// Dont send message back to any of the signers (they have already seen the message)
+				// Dont send message back to any peer already present in the path.
 				if (
 					message.header.signatures?.publicKeys.find((x) =>
 						x.equals(id.publicKey),
-					)
+					) ||
+					hasDeliveryHop(message.header.mode, id.publicKey.hashcode())
 				) {
 					continue;
-					}
-
-					sentOnce = true;
-					promises.push(this.waitForPeerWrite(id, bytes, message.header.priority));
 				}
+				sentOnce = true;
+				promises.push(
+					this.waitForPeerWrite(id, bytes, message.header.priority),
+				);
+			}
 			await Promise.all(promises);
 
 			if (!sentOnce) {

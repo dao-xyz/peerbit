@@ -48,6 +48,19 @@ export const checkDecodeBlock = async (
 	const cidObject =
 		typeof expectedCID === "string" ? cidifyString(expectedCID) : expectedCID;
 	const codec = options.codec || (codecCodes as any)[cidObject.code];
+	if (codec?.code === raw.code) {
+		const hasher = options?.hasher || defaultHasher;
+		const digest = await hasher.digest(bytes);
+		const resolved = CID.create(cidObject.version, raw.code, digest);
+		if (!resolved.equals(cidObject)) {
+			throw new Error("CID does not match");
+		}
+		return {
+			bytes,
+			cid: resolved,
+			value: bytes,
+		} as Block<Uint8Array, typeof raw.code, number, 1>;
+	}
 	const block = await decode({
 		bytes,
 		codec,
@@ -114,9 +127,15 @@ export const createBlock = async (
 };
 
 export const calculateRawCid = async (bytes: Uint8Array) => {
-	const block = await createBlock(bytes, "raw");
+	const digest = await defaultHasher.digest(bytes);
+	const cid = CID.createV1(raw.code, digest);
+	const block = {
+		bytes,
+		cid,
+		value: bytes,
+	} as Block<Uint8Array, typeof raw.code, number, 1>;
 	return {
 		block,
-		cid: stringifyCid(block.cid),
+		cid: stringifyCid(cid),
 	};
 };

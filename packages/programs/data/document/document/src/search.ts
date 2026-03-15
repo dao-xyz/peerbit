@@ -197,6 +197,7 @@ export type RemoteQueryOptions<Q, R, D> = RPCRequestAllOptions<Q, R> & {
 	replicate?: boolean;
 	minAge?: number;
 	throwOnMissing?: boolean;
+	retryMissingResponses?: boolean;
 	strategy?: "fallback";
 	domain?:
 		| {
@@ -404,6 +405,7 @@ const introduceEntries = async <
 	RPCResponse<types.Results<types.ResultTypeFromRequest<R, T, I>>>[]
 > => {
 	const results: RPCResponse<types.Results<any>>[] = [];
+	const replicatedHeads = new Set<string>();
 	for (const response of responses) {
 		if (!response.from) {
 			logger.error("Missing from for response");
@@ -416,7 +418,27 @@ const introduceEntries = async <
 					: r.init(indexedType),
 			);
 			if (typeof options?.remote !== "boolean" && options?.remote?.replicate) {
-				await sync(queryRequest, response.response);
+				const uniqueResults = response.response.results.filter((result) => {
+					const head =
+						result instanceof types.ResultIndexedValue &&
+						result.entries.length > 0
+							? result.entries[0]!.hash
+							: result.context.head;
+					if (replicatedHeads.has(head)) {
+						return false;
+					}
+					replicatedHeads.add(head);
+					return true;
+				});
+				if (uniqueResults.length > 0) {
+					await sync(
+						queryRequest,
+						new types.Results({
+							results: uniqueResults,
+							kept: response.response.kept,
+						}),
+					);
+				}
 			}
 			options?.onResponse &&
 				(await options.onResponse(response.response, response.from!)); // TODO fix types
@@ -523,6 +545,19 @@ export type CanReadIndexed<I> = (
 export type WithContext<I> = {
 	__context: types.Context;
 } & I;
+
+export const INDEX_CONTEXT_SHAPE = {
+	__context: {
+		created: true,
+		modified: true,
+		head: true,
+		gid: true,
+		size: true,
+	},
+} as const;
+
+export type IndexedContextOnly<I extends Record<string, any>> =
+	indexerTypes.ReturnTypeFromShape<WithContext<I>, typeof INDEX_CONTEXT_SHAPE>;
 
 export type WithIndexed<T, I> = {
 	// experimental, used to quickly get the indexed representation
@@ -1534,10 +1569,18 @@ export class DocumentIndex<
 		value: T,
 		id: indexerTypes.IdKey,
 		entry: Entry<Operation>,
-		existing: indexerTypes.IndexedResult<WithContext<I>> | null | undefined,
+		existing:
+			| indexerTypes.IndexedResult<WithContext<I>>
+			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
+			| null
+			| undefined,
 	): Promise<{ context: types.Context; indexable: I }> {
 		const existingDefined =
-			existing === undefined ? await this.index.get(id) : existing;
+			existing === undefined
+				? await this.index.get(id, {
+						shape: INDEX_CONTEXT_SHAPE,
+					})
+				: existing;
 		const context = new types.Context({
 			created:
 				existingDefined?.value.__context.created ||
@@ -1547,13 +1590,16 @@ export class DocumentIndex<
 			gid: entry.meta.gid,
 			size: entry.payload.byteLength,
 		});
-		return this.putWithContext(value, id, context);
+		return this.putWithContext(value, id, context, {
+			replace: existingDefined != null,
+		});
 	}
 
 	public async putWithContext(
 		value: T,
 		id: indexerTypes.IdKey,
 		context: types.Context,
+		options?: { replace?: boolean },
 	): Promise<{ context: types.Context; indexable: I }> {
 		const idString = id.primitive;
 		if (
@@ -1582,7 +1628,7 @@ export class DocumentIndex<
 
 		coerceWithContext(value, context);
 
-		await this.index.put(wrappedValueToIndex);
+		await this.index.put(wrappedValueToIndex, undefined, options);
 		return { context, indexable: valueToIndex };
 	}
 
@@ -2580,17 +2626,29 @@ export class DocumentIndex<
 		options?: O,
 	): Promise<ValueTypeFromRequest<Resolve, T, I>[]> {
 		// Set fetch to search size, or max value (default to max u32 (4294967295))
-			const coercedRequest = coerceQuery(
-				queryRequest,
-				options,
-				this.compatibility,
-			);
-			coercedRequest.fetch = coercedRequest.fetch ?? 0xffffffff;
+		const coercedRequest = coerceQuery(
+			queryRequest,
+			options,
+			this.compatibility,
+		);
+		coercedRequest.fetch = coercedRequest.fetch ?? 0xffffffff;
 
-			// Use an iterator so large results respect message size limits.
-			const iterator = this.iterate<Resolve>(coercedRequest, options);
+		const searchOptions =
+			typeof options?.remote === "object" &&
+			options.remote.retryMissingResponses === undefined
+				? ({
+						...options,
+						remote: {
+							...options.remote,
+							retryMissingResponses: false,
+						},
+					} as O)
+				: options;
 
-			const allResults: ValueTypeFromRequest<Resolve, T, I>[] = [];
+		// Use an iterator so large results respect message size limits.
+		const iterator = this.iterate<Resolve>(coercedRequest, searchOptions);
+
+		const allResults: ValueTypeFromRequest<Resolve, T, I>[] = [];
 
 		while (
 			iterator.done() !== true &&
@@ -2870,6 +2928,10 @@ export class DocumentIndex<
 		) {
 			queryRequestCoerced.replicate = true;
 		}
+		const retryMissingResponseGroups =
+			typeof options?.remote === "object"
+				? options.remote.retryMissingResponses ?? true
+				: true;
 
 		indexIteratorLogger.trace("Iterate with options", {
 			query: queryRequestCoerced,
@@ -3216,6 +3278,9 @@ export class DocumentIndex<
 					},
 					onMissingResponses: (error) => {
 						missingResponses = true;
+						if (!retryMissingResponseGroups) {
+							return;
+						}
 						const missingGroups = (error as MissingResponsesError & {
 							missingGroups?: string[][];
 						}).missingGroups;
@@ -3242,7 +3307,7 @@ export class DocumentIndex<
 				fetchOptions?.fetchedFirstForRemote,
 			);
 
-			if (missingResponses) {
+			if (missingResponses && retryMissingResponseGroups) {
 				hasMore = true;
 				unsetDone();
 			}

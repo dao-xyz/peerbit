@@ -100,7 +100,13 @@ export interface Index<T extends Record<string, any>, NestedType = any> {
 		id: IdKey,
 		options?: { shape: Shape },
 	): MaybePromise<IndexedResult<T> | undefined>;
-	put(value: T, id?: IdKey): MaybePromise<void>;
+	put(
+		value: T,
+		id?: IdKey,
+		options?: {
+			replace?: boolean;
+		},
+	): MaybePromise<void>;
 	del(query: DeleteOptions): MaybePromise<IdKey[]>;
 	sum(query: SumOptions): MaybePromise<bigint | number>;
 	count(query?: CountOptions): MaybePromise<number>;
@@ -109,6 +115,7 @@ export interface Index<T extends Record<string, any>, NestedType = any> {
 		options?: { shape?: S; reference?: boolean },
 	): IndexIterator<T, S>;
 	getSize(): MaybePromise<number>;
+	persisted(): MaybePromise<boolean>;
 	start(): MaybePromise<void>;
 	stop(): MaybePromise<void>;
 }
@@ -174,6 +181,7 @@ export interface Indices {
 		properties: IndexEngineInitProperties<T, NestedType>,
 	): MaybePromise<Index<T, NestedType>>;
 	scope(name: string): MaybePromise<Indices>;
+	persisted(): MaybePromise<boolean>;
 	start(): MaybePromise<void>;
 	stop(): MaybePromise<void>;
 	drop(): MaybePromise<void>;

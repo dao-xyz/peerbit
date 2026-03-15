@@ -43,9 +43,12 @@ import {
 	type CanSearch,
 	DocumentIndex,
 	type GetOptions,
+	type IndexedContextOnly,
+	INDEX_CONTEXT_SHAPE,
 	type PrefetchOptions,
 	type ReachScope,
 	type TransformOptions,
+	type WithContext,
 	type WithIndexedContext,
 	coerceWithContext,
 	coerceWithIndexed,
@@ -174,6 +177,33 @@ export class Documents<
 
 	get index(): DocumentIndex<T, I, D> {
 		return this._index;
+	}
+
+	private getLocalIndexedContext(
+		key: indexerTypes.IdKey,
+	): Promise<indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined> {
+		return this._index.index.get(key, {
+			shape: INDEX_CONTEXT_SHAPE,
+		}) as Promise<
+			indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined
+		>;
+	}
+
+	private getExistingContext(
+		existing:
+			| ResultIndexedValue<WithContext<I>>
+			| indexerTypes.IndexedResult<WithContext<I>>
+			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
+			| null
+			| undefined,
+	): indexerTypes.ReturnTypeFromShape<
+		WithContext<I>,
+		typeof INDEX_CONTEXT_SHAPE
+	>["__context"]
+		| undefined {
+		return existing instanceof ResultIndexedValue
+			? existing.context
+			: existing?.value.__context;
 	}
 
 	get changes() {
@@ -453,20 +483,23 @@ export class Documents<
 
 				const key = indexerTypes.toId(keyValue);
 
-				const existingDocument = (
-					await this.index.getDetailed(key, {
-						resolve: false,
-						local: true,
-						remote: this.immutable ? { strategy: "fallback" } : false,
-					})
-				)?.[0]?.results[0];
-				if (existingDocument && existingDocument.context.head !== entry.hash) {
+				const existingDocument = this.immutable
+					? (
+							await this.index.getDetailed(key, {
+								resolve: false,
+								local: true,
+								remote: { strategy: "fallback" },
+							})
+						)?.[0]?.results[0]
+					: await this.getLocalIndexedContext(key);
+				const existingContext = this.getExistingContext(existingDocument);
+				if (existingContext && existingContext.head !== entry.hash) {
 					//  econd condition can false if we reset the operation log, while not  resetting the index. For example when doing .recover
 					if (this.immutable) {
 						// key already exist but pick the oldest entry
 						// this is because we can not overwrite same id if immutable
 						if (
-							existingDocument.context.created <
+							existingContext.created <
 							entry.meta.clock.timestamp.wallTime
 						) {
 							return false;
@@ -485,7 +518,7 @@ export class Documents<
 							}
 
 							const prevEntry = await this.log.log.entryIndex.get(
-								existingDocument.context.head,
+								existingContext.head,
 							);
 							if (!prevEntry) {
 								logger.error(
@@ -510,19 +543,26 @@ export class Documents<
 				if (entry.meta.next.length !== 1) {
 					return false;
 				}
-				const existingDocument = (
-					await this.index.getDetailed(operation.key, {
-						resolve: false,
-						local: true,
-						remote: this.immutable,
-					})
-				)?.[0]?.results[0];
+				const existingDocument = this.immutable
+					? (
+							await this.index.getDetailed(operation.key, {
+								resolve: false,
+								local: true,
+								remote: true,
+							})
+						)?.[0]?.results[0]
+					: await this.getLocalIndexedContext(
+							operation.key instanceof indexerTypes.IdKey
+								? operation.key
+								: indexerTypes.toId(operation.key),
+						);
+				const existingHead = this.getExistingContext(existingDocument)?.head;
 
-				if (!existingDocument) {
+				if (!existingHead) {
 					// already deleted
 					return coerceDeleteOperation(operation); // assume ok
 				}
-				let doc = await this.log.log.get(existingDocument.context.head);
+				let doc = await this.log.log.get(existingHead);
 				if (!doc) {
 					logger.error("Failed to find Document from head");
 					return false;
@@ -560,7 +600,6 @@ export class Documents<
 
 		// type check the key
 		indexerTypes.checkId(keyValue);
-
 		const ser = serialize(doc);
 		if (ser.length > MAX_BATCH_SIZE) {
 			throw new Error(
@@ -570,17 +609,18 @@ export class Documents<
 			);
 		}
 
-		const existingDocument = options?.unique
+		const existingHead = options?.unique
 			? undefined
-			: (
-					await this._index.getDetailed(keyValue, {
-						resolve: false,
-						local: true,
-						remote: options?.checkRemote
-							? { replicate: options?.replicate }
-							: false, // only query remote if we know they exist
-					})
-				)?.[0]?.results[0];
+			: options?.checkRemote
+				? (
+						await this._index.getDetailed(keyValue, {
+							resolve: false,
+							local: true,
+							remote: { replicate: options?.replicate },
+						})
+					)?.[0]?.results[0]?.context.head
+				: (await this.getLocalIndexedContext(indexerTypes.toId(keyValue)))
+						?.value.__context.head;
 
 		let operation: PutOperation | PutWithKeyOperation;
 		if (this.compatibility === 6) {
@@ -601,9 +641,7 @@ export class Documents<
 		const appended = await this.log.append(operation, {
 			...options,
 			meta: {
-				next: existingDocument
-					? [await this._resolveEntry(existingDocument.context.head)]
-					: [],
+				next: existingHead ? [await this._resolveEntry(existingHead)] : [],
 				...options?.meta,
 			},
 			canAppend: (entry) => {
@@ -732,7 +770,7 @@ export class Documents<
 					// if no casual ordering is used, use timestamps to order docs
 					let existing = reference?.unique
 						? null
-						: (await this._index.index.get(key)) || null;
+						: (await this.getLocalIndexedContext(key)) || null;
 					if (!this.strictHistory && existing) {
 						// if immutable use oldest, else use newest
 						let shouldIgnoreChange = this.immutable

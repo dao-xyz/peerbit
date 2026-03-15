@@ -199,12 +199,21 @@ export const verifySignatureSecp256k1 = async (
 	data: Uint8Array,
 ): Promise<boolean> => {
 	const hashedData = await prehashFn(data, signature.prehash);
+	return verifySignatureSecp256k1Prepared(signature, hashedData);
+};
+
+export const verifySignatureSecp256k1Prepared = (
+	signature: SignatureWithKey,
+	preparedData: Uint8Array,
+): Promise<boolean> => {
 	const signerKey = recoverPublicKeyFromSignature(
-		arrayify(hashedData),
+		arrayify(preparedData),
 		decoder.decode(signature.signature),
 	);
-	return equals(
+	return Promise.resolve(
+		equals(
 		signerKey,
 		(signature.publicKey as Secp256k1PublicKey).publicKey,
+		),
 	);
 };

@@ -1,11 +1,28 @@
 import DB from "better-sqlite3";
 import fs from "fs";
+import type { SQLitePragmaOptions } from "./sqlite3-messages.worker.js";
 import type {
 	Database as IDatabase,
 	Statement as IStatement,
 } from "./types.js";
 
-let create = async (directory?: string) => {
+const applyPragmas = (db: DB.Database, pragmas?: SQLitePragmaOptions) => {
+	db.pragma("journal_mode = WAL");
+	db.pragma("foreign_keys = on");
+	db.pragma(`synchronous = ${(pragmas?.synchronous ?? "FULL").toUpperCase()}`);
+	if (pragmas?.lockingMode) {
+		db.pragma(`locking_mode = ${pragmas.lockingMode.toUpperCase()}`);
+	}
+	if (pragmas?.tempStore && pragmas.tempStore !== "DEFAULT") {
+		db.pragma(`temp_store = ${pragmas.tempStore.toUpperCase()}`);
+	}
+	db.defaultSafeIntegers(true);
+};
+
+let create = async (
+	directory?: string,
+	options?: { pragmas?: SQLitePragmaOptions },
+) => {
 	let db: DB.Database | undefined = undefined;
 	let statements: Map<string, IStatement> = new Map();
 	let dbFileName: string;
@@ -50,10 +67,7 @@ let create = async (directory?: string) => {
 			});
 		}
 
-		// TODO this test makes things faster, but for benchmarking it might yield wierd results where some runs are faster than others
-		db.pragma("journal_mode = WAL");
-		db.pragma("foreign_keys = on");
-		db.defaultSafeIntegers(true);
+		applyPragmas(db, options?.pragmas);
 	};
 
 	return {

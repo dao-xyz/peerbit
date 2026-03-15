@@ -70,6 +70,7 @@ export type LogProperties<T> = {
 	keychain?: CryptoKeychain;
 	encoding?: Encoding<T>;
 	clock?: LamportClock;
+	appendDurability?: AppendDurability;
 	sortFn?: Sorting.SortFn;
 	trim?: TrimOptions;
 	canAppend?: CanAppend<T>;
@@ -81,7 +82,11 @@ export type LogProperties<T> = {
 
 export type LogOptions<T> = LogProperties<T> & LogEvents<T> & MemoryProperties;
 
+export type AppendDurability = "strict" | "buffered";
+
 export type AppendOptions<T> = {
+	durability?: AppendDurability;
+	deferIndexWrite?: boolean;
 	meta?: {
 		type?: EntryType;
 		gidSeed?: Uint8Array;
@@ -159,6 +164,7 @@ export class Log<T> {
 	private _closeController!: AbortController;
 	private _loadedOnce = false;
 	private _indexer!: Indices;
+	private _appendDurability!: AppendDurability;
 	private _joining!: Map<string, Promise<any>>; // entry hashes that are currently joining into this log
 	private _sortFn!: Sorting.SortFn;
 
@@ -227,6 +233,11 @@ export class Log<T> {
 			resolveRemotePeers,
 		});
 		await this._entryIndex.init();
+		this._appendDurability =
+			options.appendDurability ??
+			((await this._entryIndex.properties.index.persisted())
+				? "strict"
+				: "buffered");
 		/* 	this._values = new Values(this._entryIndex, this._sortFn); */
 
 		this._trim = new Trim(
@@ -562,6 +573,11 @@ export class Log<T> {
 			unique: true,
 			isHead: true,
 			toMultiHash: false,
+			deferIndexWrite:
+				options.deferIndexWrite ??
+				(options.durability
+					? options.durability === "buffered"
+					: this._appendDurability === "buffered"),
 		});
 
 		const pendingDeletes: (
@@ -681,17 +697,33 @@ export class Log<T> {
 			for (const element of entries) references.set(element.hash, element);
 		} else if (Array.isArray(entriesOrLog)) {
 			if (entriesOrLog.length === 0) return;
+			const existingHashes = options?.reset
+				? new Set<string>()
+				: await this.entryIndex.hasMany(
+						entriesOrLog.map((element) =>
+							typeof element === "string"
+								? element
+								: element instanceof Entry
+									? element.hash
+									: element instanceof ShallowEntry
+										? element.hash
+										: element.entry.hash,
+						),
+				  );
 
 			entries = [];
 			for (const element of entriesOrLog) {
 				if (element instanceof Entry) {
+					if (existingHashes.has(element.hash)) {
+						continue;
+					}
 					entries.push(element);
 					references.set(element.hash, element);
 					continue;
 				}
 
 				if (typeof element === "string") {
-					if ((await this.entryIndex.getShallow(element)) != null && !options?.reset) {
+					if (existingHashes.has(element)) {
 						continue; // already in log
 					}
 
@@ -709,10 +741,7 @@ export class Log<T> {
 				}
 
 				if (element instanceof ShallowEntry) {
-					if (
-						(await this.entryIndex.getShallow(element.hash)) != null &&
-						!options?.reset
-					) {
+					if (existingHashes.has(element.hash)) {
 						continue; // already in log
 					}
 
@@ -1063,6 +1092,7 @@ export class Log<T> {
 		// Don't return early here if closed = true, because "load" might create processes that needs to be closed
 		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
 		this._closeController.abort();
+		await this._entryIndex.flushPendingWrites();
 		await this._indexer?.stop?.();
 		this._indexer = undefined as any;
 		this._loadedOnce = false;

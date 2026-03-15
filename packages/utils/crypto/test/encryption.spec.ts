@@ -2,6 +2,7 @@ import { expect } from "chai";
 import {
 	DecryptedThing,
 	X25519Keypair,
+	randomBytes,
 	createDecrypterFromKeyResolver,
 	createLocalEncryptProvider,
 } from "../src/index.js";
@@ -62,6 +63,22 @@ describe("encryption", function () {
 
 		const decryptedFromEncrypted2 = await encrypted.decrypt(receiverKey2);
 		expect(decryptedFromEncrypted2._data).to.deep.equal(data);
+	});
+
+	it("reuses symmetric envelope hash for a provider", async () => {
+		const key = randomBytes(32);
+		const provider = createLocalEncryptProvider(key);
+
+		const encrypted1 = await new DecryptedThing({
+			data: new Uint8Array([1, 2, 3]),
+		}).encrypt(provider, { type: "hash" });
+		const encrypted2 = await new DecryptedThing({
+			data: new Uint8Array([4, 5, 6]),
+		}).encrypt(provider, { type: "hash" });
+
+		expect((encrypted1 as any)._keyexchange.hash).to.deep.equal(
+			(encrypted2 as any)._keyexchange.hash,
+		);
 	});
 
 	// TODO feat

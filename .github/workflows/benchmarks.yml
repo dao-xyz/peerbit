@@ -63,38 +63,61 @@ jobs:
             const wantAll = argv.includes('all');
             const wantSharedLog =
               wantAll || argv.includes('shared-log') || argv.includes('sharedlog') || argv.includes('shared');
-            const wantDocument = wantAll || argv.includes('document') || argv.includes('doc');
+            const wantTransport =
+              wantAll ||
+              argv.includes('transport') ||
+              argv.includes('stream') ||
+              argv.includes('transfer') ||
+              argv.includes('ack');
+            const wantDocument =
+              wantAll ||
+              argv.includes('document') ||
+              argv.includes('doc') ||
+              argv.includes('ingest') ||
+              argv.includes('file-ingest');
 
             const touchedSharedLog = filenames.some(
               (p) =>
                 p.startsWith('packages/programs/data/shared-log/') ||
                 p.startsWith('packages/utils/rateless-iblt/'),
             );
-            const touchedDocument = filenames.some((p) => p.startsWith('packages/programs/data/document/'));
+            const touchedIngestStack = filenames.some(
+              (p) =>
+                p.startsWith('packages/programs/data/document/') ||
+                p.startsWith('packages/programs/data/shared-log/') ||
+                p.startsWith('packages/log/') ||
+                p.startsWith('packages/transport/stream/') ||
+                p.startsWith('packages/transport/stream-interface/') ||
+                p.startsWith('packages/transport/blocks/') ||
+                p.startsWith('packages/transport/blocks-interface/') ||
+                p.startsWith('packages/utils/indexer/') ||
+                p.startsWith('packages/utils/crypto/'),
+            );
+            const touchedTransport = filenames.some(
+              (p) =>
+                p.startsWith('packages/transport/stream/') ||
+                p.startsWith('packages/transport/stream-interface/') ||
+                p.startsWith('packages/utils/crypto/'),
+            );
 
             const runSharedLog = wantSharedLog || (!hasArgs && touchedSharedLog);
-            const runDocument = wantDocument || (!hasArgs && touchedDocument);
+            const runTransport = wantTransport || (!hasArgs && touchedTransport);
+            const runDocument = wantDocument || (!hasArgs && touchedIngestStack);
 
             core.setOutput('run_shared_log', runSharedLog ? 'true' : 'false');
+            core.setOutput('run_transport', runTransport ? 'true' : 'false');
             core.setOutput('run_document', runDocument ? 'true' : 'false');
 
             const selected = [];
             if (runSharedLog) selected.push('shared-log');
+            if (runTransport) selected.push('transport');
             if (runDocument) selected.push('document');
             core.setOutput('selected', selected.join(',') || 'none');
             core.setOutput('mode', hasArgs ? 'manual' : 'auto');
             core.setOutput('args', argv.join(' '));
 
-            const runAny = runSharedLog || runDocument;
+            const runAny = runSharedLog || runTransport || runDocument;
             core.setOutput('run_any', runAny ? 'true' : 'false');
-
-            let buildFilter = '';
-            if (runDocument) {
-              buildFilter = '@peerbit/document...';
-            } else if (runSharedLog) {
-              buildFilter = '@peerbit/shared-log...';
-            }
-            core.setOutput('build_filter', buildFilter);
 
       - name: Skip forked PRs
         if: steps.pr.outputs.same_repo != 'true'
@@ -145,12 +168,30 @@ jobs:
       - name: Build (base)
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
         working-directory: bench-base
-        run: pnpm --filter ${{ steps.pr.outputs.build_filter }} run build
+        run: |
+          if [ "${{ steps.pr.outputs.run_shared_log }}" = "true" ]; then
+            pnpm --filter @peerbit/shared-log... run build
+          fi
+          if [ "${{ steps.pr.outputs.run_transport }}" = "true" ]; then
+            pnpm --filter @peerbit/stream... run build
+          fi
+          if [ "${{ steps.pr.outputs.run_document }}" = "true" ]; then
+            pnpm --filter @peerbit/document... run build
+          fi
 
       - name: Build (head)
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
         working-directory: bench-head
-        run: pnpm --filter ${{ steps.pr.outputs.build_filter }} run build
+        run: |
+          if [ "${{ steps.pr.outputs.run_shared_log }}" = "true" ]; then
+            pnpm --filter @peerbit/shared-log... run build
+          fi
+          if [ "${{ steps.pr.outputs.run_transport }}" = "true" ]; then
+            pnpm --filter @peerbit/stream... run build
+          fi
+          if [ "${{ steps.pr.outputs.run_document }}" = "true" ]; then
+            pnpm --filter @peerbit/document... run build
+          fi
 
       - name: Run shared-log benchmarks (base)
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
@@ -202,12 +243,41 @@ jobs:
           BENCH_JSON: "1"
           DOC_WARMUP: "2"
           DOC_ITERATIONS: "10"
+          FILE_INGEST_WARMUP: "1"
+          FILE_INGEST_ITERATIONS: "3"
+          FILE_INGEST_CHUNKS: "24"
+          FILE_INGEST_CHUNK_BYTES: "262144"
+          FILE_INGEST_READY_TIMEOUT_MS: "30000"
         run: |
           mkdir -p "$GITHUB_WORKSPACE/bench-results/base"
           if [ -f ./benchmark/document-put.ts ]; then
             node --loader ts-node/esm ./benchmark/document-put.ts > "$GITHUB_WORKSPACE/bench-results/base/document-put.json"
           else
             echo "document-put benchmark not present in base; skipping."
+          fi
+          if [ -f ./benchmark/file-ingest.ts ]; then
+            node --loader ts-node/esm ./benchmark/file-ingest.ts > "$GITHUB_WORKSPACE/bench-results/base/file-ingest.json"
+          else
+            echo "file-ingest benchmark not present in base; skipping."
+          fi
+
+      - name: Run transport benchmarks (base)
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_transport == 'true'
+        working-directory: bench-base/packages/transport/stream
+        env:
+          NODE_OPTIONS: --no-warnings
+          BENCH_JSON: "1"
+          CHUNK_TRANSFER_WARMUP: "1"
+          CHUNK_TRANSFER_ITERATIONS: "3"
+          CHUNK_TRANSFER_CHUNKS: "24"
+          CHUNK_TRANSFER_CHUNK_BYTES: "262144"
+          CHUNK_TRANSFER_TIMEOUT_MS: "30000"
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/bench-results/base"
+          if [ -f ./benchmark/chunk-transfer.ts ]; then
+            node ./dist/benchmark/chunk-transfer.js > "$GITHUB_WORKSPACE/bench-results/base/chunk-transfer.json"
+          else
+            echo "chunk-transfer benchmark not present in base; skipping."
           fi
 
       - name: Run document benchmarks (head)
@@ -218,12 +288,41 @@ jobs:
           BENCH_JSON: "1"
           DOC_WARMUP: "2"
           DOC_ITERATIONS: "10"
+          FILE_INGEST_WARMUP: "1"
+          FILE_INGEST_ITERATIONS: "3"
+          FILE_INGEST_CHUNKS: "24"
+          FILE_INGEST_CHUNK_BYTES: "262144"
+          FILE_INGEST_READY_TIMEOUT_MS: "30000"
         run: |
           mkdir -p "$GITHUB_WORKSPACE/bench-results/head"
           if [ -f ./benchmark/document-put.ts ]; then
             node --loader ts-node/esm ./benchmark/document-put.ts > "$GITHUB_WORKSPACE/bench-results/head/document-put.json"
           else
             echo "document-put benchmark not present in head; skipping."
+          fi
+          if [ -f ./benchmark/file-ingest.ts ]; then
+            node --loader ts-node/esm ./benchmark/file-ingest.ts > "$GITHUB_WORKSPACE/bench-results/head/file-ingest.json"
+          else
+            echo "file-ingest benchmark not present in head; skipping."
+          fi
+
+      - name: Run transport benchmarks (head)
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_transport == 'true'
+        working-directory: bench-head/packages/transport/stream
+        env:
+          NODE_OPTIONS: --no-warnings
+          BENCH_JSON: "1"
+          CHUNK_TRANSFER_WARMUP: "1"
+          CHUNK_TRANSFER_ITERATIONS: "3"
+          CHUNK_TRANSFER_CHUNKS: "24"
+          CHUNK_TRANSFER_CHUNK_BYTES: "262144"
+          CHUNK_TRANSFER_TIMEOUT_MS: "30000"
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/bench-results/head"
+          if [ -f ./benchmark/chunk-transfer.ts ]; then
+            node ./dist/benchmark/chunk-transfer.js > "$GITHUB_WORKSPACE/bench-results/head/chunk-transfer.json"
+          else
+            echo "chunk-transfer benchmark not present in head; skipping."
           fi
 
       - name: Comment results
@@ -270,9 +369,28 @@ jobs:
                 base: 'bench-results/base/document-put.json',
                 head: 'bench-results/head/document-put.json',
               },
+              {
+                title: 'transport: multi-hop chunk transfer',
+                base: 'bench-results/base/chunk-transfer.json',
+                head: 'bench-results/head/chunk-transfer.json',
+              },
+              {
+                title: 'document: chunked file-ingest',
+                base: 'bench-results/base/file-ingest.json',
+                head: 'bench-results/head/file-ingest.json',
+              },
             ];
 
-            const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
+            const readJson = (file) => {
+              try {
+                return JSON.parse(fs.readFileSync(file, 'utf8'));
+              } catch (error) {
+                return {
+                  tasks: [],
+                  __parseError: error instanceof Error ? error.message : String(error),
+                };
+              }
+            };
 
             const format = (value, digits = 3) => {
               if (value === null || value === undefined || Number.isNaN(value)) return '-';
@@ -339,6 +457,13 @@ jobs:
               const headJson = headExists ? readJson(suite.head) : { tasks: [] };
               body += `### ${suite.title}\n\n`;
               body += formatSuite(baseJson, headJson);
+              if (baseJson.__parseError || headJson.__parseError) {
+                body += '\n\n';
+                body += [
+                  baseJson.__parseError ? `base parse error: ${baseJson.__parseError}` : null,
+                  headJson.__parseError ? `head parse error: ${headJson.__parseError}` : null,
+                ].filter(Boolean).join(' • ');
+              }
               body += `\n\n`;
               includedSuites += 1;
             }

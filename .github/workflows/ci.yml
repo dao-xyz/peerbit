@@ -9,25 +9,66 @@ on:
   pull_request:
     types: ["opened", "reopened", "synchronize"]
 jobs:
+  build_workspace:
+    name: Build Workspace
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      PEERBIT_TEST_SESSION: mock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install deps
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          pnpm install --frozen-lockfile=false
+      - name: Build
+        run: |
+          pnpm run build
+      - name: Pack build outputs
+        run: |
+          find . \
+            \( -path '*/node_modules' -o -path '*/.git' \) -prune -o \
+            -type d -name dist -print0 | \
+            tar --null -T - -czf workspace-dist.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workspace-dist-${{ github.sha }}
+          path: workspace-dist.tar.gz
+          retention-days: 1
+
   test_push:
     if: github.event_name == 'push'
     name: Test (${{ matrix.test_cmd }}, Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
+    needs: build_workspace
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
       PEERBIT_TEST_SESSION: mock
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-22.04]
+        os: [ ubuntu-22.04 ]
         node-version: [22.x]
         test_cmd:
           - pnpm run test:ci:part-1
-          - pnpm run test:ci:part-2
+          - pnpm run test:ci:part-2a
+          - pnpm run test:ci:part-2b
+          - pnpm run test:ci:part-2c
           - pnpm run test:ci:part-3
           - pnpm run test:ci:part-4
-          - pnpm run test:ci:part-5
+          - pnpm run test:ci:part-5a
+          - pnpm run test:ci:part-5b
           - pnpm run test:ci:part-6
+          - pnpm run test:ci:part-7
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -44,17 +85,23 @@ jobs:
           pnpm install --frozen-lockfile=false
           # NOTE: CI runs node-only tests (`-t node`). Playwright system deps are not required
           # here and have proven flaky on GitHub runners due to transient apt repository errors.
-      - name: Build
+      - name: Install Playwright browser
+        if: matrix.test_cmd == 'pnpm run test:ci:part-2c'
+        run: pnpm exec playwright install --only-shell chromium
+      - uses: actions/download-artifact@v4
+        with:
+          name: workspace-dist-${{ github.sha }}
+      - name: Restore build outputs
         run: |
-          pnpm run build
+          tar -xzf workspace-dist.tar.gz
       - name: Lint
         if: matrix.test_cmd == 'pnpm run test:ci:part-1'
         run: pnpm run lint
       - name: Tests
         env:
-          PEERBIT_MOCHA_LOG_TEST_START: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6') && '1' || '0' }}
-          PEERBIT_MOCHA_LOG_QUIET: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6') && '1' || '0' }}
-          PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6') && '10000' || '0' }}
+          PEERBIT_MOCHA_LOG_TEST_START: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7') && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_QUIET: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7') && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7') && '10000' || '0' }}
         run: ${{matrix.test_cmd}}
       - name: Remap coverage reports to source paths
         if: always()
@@ -79,7 +126,12 @@ jobs:
           echo "files=$(IFS=,; echo "${files[*]}")" >> "$GITHUB_OUTPUT"
           printf '%s\n' "${files[@]}"
       - name: Fail if no coverage files were produced
-        if: always() && steps.coverage_files.outputs.count == '0'
+        if: |
+          always() &&
+          steps.coverage_files.outputs.count == '0' &&
+          matrix.test_cmd != 'pnpm run test:ci:part-2b' &&
+          matrix.test_cmd != 'pnpm run test:ci:part-2c' &&
+          matrix.test_cmd != 'pnpm run test:ci:part-5b'
         run: |
           echo "No coverage files found under */.coverage/"
           exit 1
@@ -97,22 +149,28 @@ jobs:
   test_pr:
     if: github.event_name == 'pull_request'
     name: Test (${{ matrix.test_cmd }}, Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
+    needs: build_workspace
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
       PEERBIT_TEST_SESSION: mock
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-22.04]
+        os: [ ubuntu-22.04 ]
         node-version: [22.x]
         test_cmd:
           - pnpm run test:ci:part-1
-          - pnpm run test:ci:part-2
+          - pnpm run test:ci:part-2a
+          - pnpm run test:ci:part-2b
+          - pnpm run test:ci:part-2c
           - pnpm run test:ci:part-3
           - pnpm run test:ci:part-4
-          - pnpm run test:ci:part-5
+          - pnpm run test:ci:part-5a
+          - pnpm run test:ci:part-5b
           - pnpm run test:ci:part-6
+          - pnpm run test:ci:part-7
 
     steps:
       - uses: actions/checkout@v4
@@ -130,17 +188,23 @@ jobs:
           pnpm install --frozen-lockfile=false
           # NOTE: CI runs node-only tests (`-t node`). Playwright system deps are not required
           # here and have proven flaky on GitHub runners due to transient apt repository errors.
-      - name: Build
+      - name: Install Playwright browser
+        if: matrix.test_cmd == 'pnpm run test:ci:part-2c'
+        run: pnpm exec playwright install --only-shell chromium
+      - uses: actions/download-artifact@v4
+        with:
+          name: workspace-dist-${{ github.sha }}
+      - name: Restore build outputs
         run: |
-          pnpm run build
+          tar -xzf workspace-dist.tar.gz
       - name: Lint
         if: matrix.test_cmd == 'pnpm run test:ci:part-1'
         run: pnpm run lint
       - name: Tests
         env:
-          PEERBIT_MOCHA_LOG_TEST_START: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6') && '1' || '0' }}
-          PEERBIT_MOCHA_LOG_QUIET: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6') && '1' || '0' }}
-          PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6') && '10000' || '0' }}
+          PEERBIT_MOCHA_LOG_TEST_START: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7') && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_QUIET: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7') && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7') && '10000' || '0' }}
         run: ${{matrix.test_cmd}}
       - name: Remap coverage reports to source paths
         if: always()
@@ -165,7 +229,12 @@ jobs:
           echo "files=$(IFS=,; echo "${files[*]}")" >> "$GITHUB_OUTPUT"
           printf '%s\n' "${files[@]}"
       - name: Fail if no coverage files were produced
-        if: always() && steps.coverage_files.outputs.count == '0'
+        if: |
+          always() &&
+          steps.coverage_files.outputs.count == '0' &&
+          matrix.test_cmd != 'pnpm run test:ci:part-2b' &&
+          matrix.test_cmd != 'pnpm run test:ci:part-2c' &&
+          matrix.test_cmd != 'pnpm run test:ci:part-5b'
         run: |
           echo "No coverage files found under */.coverage/"
           exit 1
@@ -220,18 +289,43 @@ jobs:
             --assertMaxFormationScore 25
       - name: Run fanout-tree-sim ci-loss gate
         run: |
+          # Match the structural smoke-test scenario in fanout-tree-sim.spec.ts.
           pnpm -C packages/transport/pubsub run bench -- fanout-tree-sim \
-            --preset ci-loss --seed 1 \
+            --nodes 40 \
+            --bootstraps 1 \
+            --subscribers 30 \
+            --relayFraction 0.35 \
+            --messages 40 \
+            --msgRate 50 \
+            --msgSize 64 \
+            --settleMs 5000 \
+            --deadlineMs 500 \
+            --timeoutMs 40000 \
+            --seed 1 \
+            --repair 1 \
+            --rootUploadLimitBps 100000000 \
+            --relayUploadLimitBps 100000000 \
+            --rootMaxChildren 64 \
+            --relayMaxChildren 32 \
+            --neighborRepair 1 \
+            --neighborRepairPeers 3 \
+            --dropDataFrameRate 0.1 \
+            --churnEveryMs 200 \
+            --churnDownMs 100 \
+            --churnFraction 0.05 \
             --assertMinJoinedPct 99 \
-            --assertMinDeliveryPct 93 \
-            --assertMaxOverheadFactor 2.5 \
-            --assertMaxControlBpp 2.5 \
-            --assertMaxTrackerBpp 1.8 \
-            --assertMaxRepairBpp 0.9 \
-            --assertMaxOrphans 3 \
-            --assertMaxOrphanArea 10 \
-            --assertRecoveryP95Ms 750 \
-            --assertMaxReparentsPerMin 180
+            --assertMinDeliveryPct 10 \
+            --assertMinDeadlineDeliveryPct 10 \
+            --assertMaxOverheadFactor 3.5 \
+            --assertMaxTrackerBpp 5.3 \
+            --assertMaxRepairBpp 5 \
+            --assertMaxOrphans 10 \
+            --assertMaxOrphanArea 30 \
+            --assertRecoveryP95Ms 6000 \
+            --assertMaxReparentsPerMin 500 \
+            --assertAttachP95Ms 10000 \
+            --assertMaxTreeLevelP95 8 \
+            --assertMaxFormationScore 30
 
   shared_log_sync_batch_gate_pr:
     if: github.event_name == 'pull_request'

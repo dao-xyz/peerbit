@@ -28,6 +28,31 @@ describe(`countAssignedHeads`, function () {
 		expect(await db1.log.countAssignedHeads()).to.eq(1);
 	});
 
+	it("backfills deferred head coordinates when replication is enabled later", async () => {
+		let db1 = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: false,
+			},
+		});
+
+		const added = await db1.add("hello", {
+			replicate: false,
+			target: "none",
+		});
+
+		expect(await db1.log.entryCoordinatesIndex.count()).to.eq(0);
+
+		await db1.log.replicate({ factor: 1 }, { reset: true });
+
+		await waitForResolved(async () =>
+			expect(await db1.log.entryCoordinatesIndex.count()).to.eq(1),
+		);
+		expect(await db1.log.countAssignedHeads()).to.eq(1);
+		expect(
+			(await db1.log.entryCoordinatesIndex.iterate().all())[0].value.hash,
+		).to.eq(added.entry.hash);
+	});
+
 	it("partial", async () => {
 		let db1 = await session.peers[0].open(new EventStore<string, any>(), {
 			args: {

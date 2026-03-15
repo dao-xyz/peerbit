@@ -1,4 +1,5 @@
 import {
+	BinaryWriter,
 	deserialize,
 	field,
 	fixedArray,
@@ -9,11 +10,13 @@ import {
 } from "@dao-xyz/borsh";
 import type { PeerId } from "@libp2p/interface";
 import {
+	PreHash,
 	PublicSignKey,
 	SignatureWithKey,
+	prehashFn,
 	randomBytes,
 	toBase64,
-	verify,
+	verifyPrepared,
 } from "@peerbit/crypto";
 import { Uint8ArrayList } from "uint8arraylist";
 import { type PeerRefs, coercePeerRefsToHashes } from "./keys.js";
@@ -48,6 +51,35 @@ export const deliveryModeHasReceiver = (
 
 export abstract class DeliveryMode {}
 
+export const isAcknowledgedDeliveryMode = (
+	mode: DeliveryMode,
+): mode is AcknowledgeDelivery | AcknowledgeAnyWhere =>
+	mode instanceof AcknowledgeDelivery || mode instanceof AcknowledgeAnyWhere;
+
+export const getDeliveryHopTrace = (mode: DeliveryMode): string[] =>
+	isAcknowledgedDeliveryMode(mode) ? mode.hops : [];
+
+export const hasDeliveryHop = (mode: DeliveryMode, hash: string) =>
+	isAcknowledgedDeliveryMode(mode) && mode.hops.includes(hash);
+
+export const setDeliveryOriginHop = (mode: DeliveryMode, hash: string) => {
+	if (isAcknowledgedDeliveryMode(mode)) {
+		mode.hops = [hash];
+	}
+	return mode;
+};
+
+export const appendDeliveryHop = (mode: DeliveryMode, hash: string) => {
+	if (!isAcknowledgedDeliveryMode(mode)) {
+		return mode;
+	}
+	if (mode.hops.includes(hash)) {
+		return mode;
+	}
+	mode.hops = [...mode.hops, hash];
+	return mode;
+};
+
 /**
  * when you just want to deliver at paths, but does not expect acknowledgement
  */
@@ -77,7 +109,14 @@ export class AcknowledgeDelivery extends DeliveryMode {
 	@field({ type: "u8" })
 	redundancy: number;
 
-	constructor(properties: { to: PeerRefs; redundancy: number }) {
+	@field({ type: vec("string") })
+	hops: string[];
+
+	constructor(properties: {
+		to: PeerRefs;
+		redundancy: number;
+		hops?: string[];
+	}) {
 		super();
 		const to = coercePeerRefsToHashes(properties.to);
 		if (to.length === 0) {
@@ -87,6 +126,7 @@ export class AcknowledgeDelivery extends DeliveryMode {
 		}
 		this.to = to;
 		this.redundancy = properties.redundancy;
+		this.hops = properties.hops ?? [];
 	}
 }
 
@@ -101,9 +141,13 @@ export class AcknowledgeAnyWhere extends DeliveryMode {
 	@field({ type: "u8" })
 	redundancy: number;
 
-	constructor(properties: { redundancy: number }) {
+	@field({ type: vec("string") })
+	hops: string[];
+
+	constructor(properties: { redundancy: number; hops?: string[] }) {
 		super();
 		this.redundancy = properties.redundancy;
+		this.hops = properties.hops ?? [];
 	}
 }
 
@@ -274,6 +318,47 @@ export class MessageHeader<T extends DeliveryMode = DeliveryMode> {
 		return this._origin;
 	}
 
+	writeBytes(
+		writer: BinaryWriter,
+		properties: { includeMode: boolean; includeSignatures: boolean },
+	) {
+		writer.u8(0);
+		BinaryWriter.uint8ArrayFixed(this._id, writer);
+		writer.u64(this.timestamp);
+		writer.u64(this.session);
+		writer.u64(this.expires);
+		if (this.priority != null) {
+			writer.u8(1);
+			writer.u32(this.priority);
+		} else {
+			writer.u8(0);
+		}
+		if (this.responsePriority != null) {
+			writer.u8(1);
+			writer.u32(this.responsePriority);
+		} else {
+			writer.u8(0);
+		}
+		if (this._origin != null) {
+			writer.u8(1);
+			serialize(this._origin, writer);
+		} else {
+			writer.u8(0);
+		}
+		if (properties.includeMode && this.mode != null) {
+			writer.u8(1);
+			serialize(this.mode, writer);
+		} else {
+			writer.u8(0);
+		}
+		if (properties.includeSignatures && this.signatures != null) {
+			writer.u8(1);
+			serialize(this.signatures, writer);
+		} else {
+			writer.u8(0);
+		}
+	}
+
 	verify() {
 		return this.expires >= +new Date();
 	}
@@ -283,24 +368,29 @@ interface WithHeader {
 	header: MessageHeader;
 }
 
-const sign = async <T extends WithHeader>(
-	obj: T,
-	signer: (bytes: Uint8Array) => Promise<SignatureWithKey> | SignatureWithKey,
-): Promise<T> => {
+const serializeUnsigned = (obj: WithHeader): Uint8Array => {
 	const mode = obj.header.mode;
 	obj.header.mode = undefined as any;
 	const signatures = obj.header.signatures;
 	obj.header.signatures = undefined;
 	const bytes = serialize(obj);
-	// reassign properties if some other process expects them
 	obj.header.signatures = signatures;
 	obj.header.mode = mode;
+	return bytes;
+};
+
+const sign = async <T extends WithHeader>(
+	obj: T,
+	signer: (bytes: Uint8Array) => Promise<SignatureWithKey> | SignatureWithKey,
+): Promise<T> => {
+	const bytes =
+		obj instanceof Message ? obj.getSignableBytes() : serializeUnsigned(obj);
+	const signatures = obj.header.signatures;
 
 	const signature = await signer(bytes);
 	obj.header.signatures = new Signatures(
 		signatures ? [...signatures.signatures, signature] : [signature],
 	);
-	obj.header.mode = mode;
 	return obj;
 };
 
@@ -312,15 +402,22 @@ const verifyMultiSig = async (
 	if (!signatures || signatures.signatures.length === 0) {
 		return !expectSignatures;
 	}
-	const to = message.header.mode;
-	message.header.mode = undefined as any;
-	message.header.signatures = undefined;
-	const bytes = serialize(message);
-	message.header.mode = to;
-	message.header.signatures = signatures;
+	const bytes =
+		message instanceof Message
+			? message.getSignableBytes()
+			: serializeUnsigned(message);
+	const preparedByPrehash = new Map<number, Uint8Array>();
 
 	for (const signature of signatures.signatures) {
-		if (!(await verify(signature, bytes))) {
+		let prepared = preparedByPrehash.get(signature.prehash);
+		if (!prepared) {
+			prepared =
+				signature.prehash === PreHash.NONE
+					? bytes
+					: await prehashFn(bytes, signature.prehash);
+			preparedByPrehash.set(signature.prehash, prepared);
+		}
+		if (!(await verifyPrepared(signature, prepared))) {
 			return false;
 		}
 	}
@@ -328,6 +425,9 @@ const verifyMultiSig = async (
 };
 
 export abstract class Message<T extends DeliveryMode = DeliveryMode> {
+	protected _cachedSignableBytes?: Uint8Array;
+	protected _cachedPreparedSignableBytes?: Map<number, Uint8Array>;
+
 	static from(bytes: Uint8ArrayList) {
 		if (bytes.get(0) === DATA_VARIANT) {
 			// Data
@@ -349,6 +449,30 @@ export abstract class Message<T extends DeliveryMode = DeliveryMode> {
 	): Promise<this> {
 		return sign(this, signer);
 	}
+
+	getSignableBytes(): Uint8Array {
+		return (
+			this._cachedSignableBytes ??
+			(this._cachedSignableBytes = serializeUnsigned(this))
+		);
+	}
+
+	async getPreparedSignableBytes(prehash: PreHash): Promise<Uint8Array> {
+		if (prehash === PreHash.NONE) {
+			return this.getSignableBytes();
+		}
+		let prepared = this._cachedPreparedSignableBytes?.get(prehash);
+		if (prepared) {
+			return prepared;
+		}
+		prepared = await prehashFn(this.getSignableBytes(), prehash);
+		if (!this._cachedPreparedSignableBytes) {
+			this._cachedPreparedSignableBytes = new Map();
+		}
+		this._cachedPreparedSignableBytes.set(prehash, prepared);
+		return prepared;
+	}
+
 	abstract bytes(): Uint8ArrayList | Uint8Array;
 	/* abstract equals(other: Message): boolean; */
 	_verified: boolean;
@@ -364,6 +488,139 @@ export abstract class Message<T extends DeliveryMode = DeliveryMode> {
 
 // I pack data with this message
 const DATA_VARIANT = 0;
+
+const readU8At = (bytes: Uint8ArrayList, offset: number) => bytes.get(offset);
+
+const readU32LEAt = (bytes: Uint8ArrayList, offset: number) =>
+	bytes.getUint32(offset, true);
+
+const skipBorshBytes = (bytes: Uint8ArrayList, offset: number) => {
+	const length = readU32LEAt(bytes, offset);
+	return offset + 4 + length;
+};
+
+const skipBorshString = (bytes: Uint8ArrayList, offset: number) =>
+	skipBorshBytes(bytes, offset);
+
+const skipStringVec = (bytes: Uint8ArrayList, offset: number) => {
+	const length = readU32LEAt(bytes, offset);
+	offset += 4;
+	for (let i = 0; i < length; i++) {
+		offset = skipBorshString(bytes, offset);
+	}
+	return offset;
+};
+
+const skipPeerInfo = (bytes: Uint8ArrayList, offset: number) => {
+	const variant = readU8At(bytes, offset);
+	offset += 1;
+	if (variant === 0) {
+		return skipStringVec(bytes, offset);
+	}
+	throw new Error(`Unsupported peer info variant: ${variant}`);
+};
+
+const skipDeliveryMode = (bytes: Uint8ArrayList, offset: number) => {
+	const variant = readU8At(bytes, offset);
+	offset += 1;
+	if (variant === 0) {
+		offset = skipStringVec(bytes, offset);
+		return offset + 1;
+	}
+	if (variant === 1) {
+		offset = skipStringVec(bytes, offset);
+		offset += 1;
+		return skipStringVec(bytes, offset);
+	}
+	if (variant === 5) {
+		offset += 1;
+		return skipStringVec(bytes, offset);
+	}
+	if (variant === 3) {
+		return skipStringVec(bytes, offset);
+	}
+	if (variant === 4) {
+		return offset;
+	}
+	throw new Error(`Unsupported delivery mode variant: ${variant}`);
+};
+
+const skipPublicSignKey = (bytes: Uint8ArrayList, offset: number) => {
+	const variant = readU8At(bytes, offset);
+	offset += 1;
+	if (variant === 0) {
+		return offset + 32;
+	}
+	if (variant === 1) {
+		return offset + 33;
+	}
+	throw new Error(`Unsupported public sign key variant: ${variant}`);
+};
+
+const skipSignatureWithKey = (bytes: Uint8ArrayList, offset: number) => {
+	const variant = readU8At(bytes, offset);
+	if (variant !== 0) {
+		throw new Error(`Unsupported signature variant: ${variant}`);
+	}
+	offset += 1;
+	offset = skipBorshBytes(bytes, offset);
+	offset = skipPublicSignKey(bytes, offset);
+	return offset + 1;
+};
+
+const skipSignatures = (bytes: Uint8ArrayList, offset: number) => {
+	const variant = readU8At(bytes, offset);
+	if (variant !== 0) {
+		throw new Error(`Unsupported signatures variant: ${variant}`);
+	}
+	offset += 1;
+	const length = readU8At(bytes, offset);
+	offset += 1;
+	for (let i = 0; i < length; i++) {
+		offset = skipSignatureWithKey(bytes, offset);
+	}
+	return offset;
+};
+
+const getDataMessageDataFlagOffset = (bytes: Uint8ArrayList) => {
+	let offset = 0;
+	if (readU8At(bytes, offset) !== DATA_VARIANT) {
+		throw new Error("Unsupported");
+	}
+	offset += 1;
+	if (readU8At(bytes, offset) !== 0) {
+		throw new Error("Unsupported message header variant");
+	}
+	offset += 1;
+	offset += ID_LENGTH;
+	offset += 8 * 3;
+	if (readU8At(bytes, offset) === 1) {
+		offset += 5;
+	} else {
+		offset += 1;
+	}
+	if (readU8At(bytes, offset) === 1) {
+		offset += 5;
+	} else {
+		offset += 1;
+	}
+	if (readU8At(bytes, offset) === 1) {
+		offset = skipPeerInfo(bytes, offset + 1);
+	} else {
+		offset += 1;
+	}
+	if (readU8At(bytes, offset) === 1) {
+		offset = skipDeliveryMode(bytes, offset + 1);
+	} else {
+		offset += 1;
+	}
+	if (readU8At(bytes, offset) === 1) {
+		offset = skipSignatures(bytes, offset + 1);
+	} else {
+		offset += 1;
+	}
+	return offset;
+};
 
 @variant(DATA_VARIANT)
 export class DataMessage<
@@ -383,10 +640,15 @@ export class DataMessage<
 	@field({ type: option(Uint8Array) })
 	private _data?: Uint8Array;
 
-	constructor(properties: { header: MessageHeader<T>; data?: Uint8Array }) {
+	private _dataBytes?: Uint8Array | Uint8ArrayList;
+
+	constructor(properties: {
+		header: MessageHeader<T>;
+		data?: Uint8Array | Uint8ArrayList;
+	}) {
 		super();
-		this._data = properties.data;
 		this._header = properties.header;
+		this.setDataSource(properties.data);
 	}
 
 	get id(): Uint8Array {
@@ -398,20 +660,81 @@ export class DataMessage<
 	}
 
 	get data(): Uint8Array | undefined {
+		if (this._data == null && this._dataBytes instanceof Uint8ArrayList) {
+			this._data = this._dataBytes.subarray();
+		}
 		return this._data;
+	}
+
+	get dataByteLength(): number {
+		return this._dataBytes?.byteLength ?? this._data?.byteLength ?? 0;
+	}
+
+	get hasData(): boolean {
+		return this.dataByteLength > 0;
 	}
 
 	/** Manually ser/der for performance gains */
 	bytes() {
-		return serialize(this);
+		return this.serializeBytes({
+			includeMode: true,
+			includeSignatures: true,
+		});
+	}
+
+	override getSignableBytes(): Uint8Array {
+		return (
+			this._cachedSignableBytes ??
+			(this._cachedSignableBytes = this.serializeBytes({
+				includeMode: false,
+				includeSignatures: false,
+			}).subarray())
+		);
+	}
+
+	private setDataSource(data?: Uint8Array | Uint8ArrayList) {
+		this._dataBytes = data;
+		this._data = data instanceof Uint8Array ? data : undefined;
+		this._cachedSignableBytes = undefined;
+		this._cachedPreparedSignableBytes = undefined;
+	}
+
+	private serializeBytes(properties: {
+		includeMode: boolean;
+		includeSignatures: boolean;
+	}) {
+		const writer = new BinaryWriter();
+		writer.u8(DATA_VARIANT);
+		this._header.writeBytes(writer, properties);
+		const data = this._dataBytes ?? this._data;
+		if (data != null) {
+			writer.u8(1);
+			writer.u32(data.byteLength);
+			return new Uint8ArrayList(writer.finalize(), data);
+		} else {
+			writer.u8(0);
+		}
+		return writer.finalize();
 	}
 
 	static from(bytes: Uint8ArrayList): DataMessage {
-		if (bytes.get(0) !== 0) {
-			throw new Error("Unsupported");
+		const dataFlagOffset = getDataMessageDataFlagOffset(bytes);
+		const hasData = readU8At(bytes, dataFlagOffset) === 1;
+		const headerOnlyBytes = hasData
+			? (() => {
+					const prefix = bytes.subarray(0, dataFlagOffset);
+					const out = new Uint8Array(prefix.byteLength + 1);
+					out.set(prefix, 0);
+					out[prefix.byteLength] = 0;
+					return out;
+				})()
+			: bytes.subarray();
+		const ret = deserialize(headerOnlyBytes, DataMessage);
+		if (hasData) {
+			const dataLength = readU32LEAt(bytes, dataFlagOffset + 1);
+			const dataStart = dataFlagOffset + 5;
+			ret.setDataSource(bytes.sublist(dataStart, dataStart + dataLength));
 		}
-		const arr = bytes.subarray();
-		const ret = deserialize(arr, DataMessage);
 		return ret;
 	}
 }

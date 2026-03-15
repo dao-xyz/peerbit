@@ -49,6 +49,14 @@ export abstract class Entry<T> {
 	abstract getPayloadValue(): Promise<T> | T;
 	abstract toSignable(): Entry<T>;
 
+	getSignableBytes(): Uint8Array {
+		return serialize(this.toSignable());
+	}
+
+	getStorageBytes(): Uint8Array {
+		return serialize(this);
+	}
+
 	async getPublicKeys(): Promise<PublicSignKey[]> {
 		const signatures = await this.getSignatures();
 		return signatures.map((s) => s.publicKey);
@@ -76,7 +84,7 @@ export abstract class Entry<T> {
 			throw new Error("Expected hash to be missing");
 		}
 
-		const bytes = serialize(entry);
+		const bytes = entry.getStorageBytes();
 		entry.size = bytes.length;
 		return store.put(bytes);
 	}

@@ -9,12 +9,13 @@ import { type Multiaddr } from "@multiformats/multiaddr";
 import { Cache } from "@peerbit/cache";
 import {
 	Ed25519Keypair,
+	PreHash,
 	type PublicSignKey,
 	randomBytes,
 } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import {
-	type ACK,
+	ACK,
 	AcknowledgeAnyWhere,
 	AcknowledgeDelivery,
 	AnyWhere,
@@ -304,6 +305,81 @@ const service = (s: TestSessionStream, i: number, service: string) =>
 	(s.peers[i].services as any)[service];
 
 describe("streams", function () {
+	describe("signing", () => {
+		let session: TestSessionStream;
+
+		beforeEach(async () => {
+			session = await disconnected(1);
+		});
+
+		afterEach(async () => {
+			await session.stop();
+		});
+
+		it("creates stream messages with sha256-prehashed signatures", async () => {
+			const message = await stream(session, 0).createMessage(
+				new Uint8Array([1, 2, 3]),
+				{
+					mode: new AcknowledgeAnyWhere({ redundancy: 1 }),
+				},
+			);
+
+			expect(message.header.signatures?.signatures).to.have.length(1);
+			expect(message.header.signatures?.signatures[0]?.prehash).to.equal(
+				PreHash.SHA_256,
+			);
+			expect(message.header.mode).to.be.instanceOf(AcknowledgeAnyWhere);
+			expect((message.header.mode as AcknowledgeAnyWhere).hops).to.deep.equal([
+				stream(session, 0).publicKeyHash,
+			]);
+			expect(await message.verify(true)).to.equal(true);
+		});
+
+		it("relays acknowledged messages by extending the hop trace instead of adding signatures", async () => {
+			await session.stop();
+			session = await disconnected(3, {
+				services: {
+					directstream: (c) =>
+						new TestDirectStream(c, {
+							connectionManager: false,
+						}),
+				},
+			});
+			await connectLine(session);
+
+			const relay = session.peers[1].services.directstream;
+			const writes = collectDataWrites(relay);
+			const recipient = createMetrics(session.peers[2].services.directstream);
+
+			await session.peers[0].services.directstream.publish(
+				new Uint8Array([4, 5, 6]),
+				{
+					mode: new AcknowledgeDelivery({
+						to: [session.peers[2].peerId],
+						redundancy: 1,
+					}),
+				},
+			);
+
+			await waitForResolved(() => expect(recipient.received).to.have.length(1));
+			await waitForResolved(() =>
+				expect(writes.get(session.peers[2].services.directstream.publicKeyHash))
+					.to.have.length(1),
+			);
+
+			const forwarded = writes.get(
+				session.peers[2].services.directstream.publicKeyHash,
+			)?.[0];
+			expect(forwarded).to.be.instanceOf(DataMessage);
+			expect(forwarded?.header.signatures?.signatures).to.have.length(1);
+			expect(forwarded?.header.mode).to.be.instanceOf(AcknowledgeDelivery);
+			expect((forwarded?.header.mode as AcknowledgeDelivery).hops).to.deep.equal([
+				session.peers[0].services.directstream.publicKeyHash,
+				session.peers[1].services.directstream.publicKeyHash,
+			]);
+		});
+	});
+
 	describe("mode", () => {
 		const data = new Uint8Array([1, 2, 3]);
 
@@ -512,6 +588,51 @@ describe("streams", function () {
 				);
 				expect(streams[2].received).to.have.length(1);
 				expect(streams[1].received).to.be.empty;
+			});
+
+			it("dispatches data before an acknowledged send finishes writing the ack", async () => {
+				const receiver = streams[2].stream;
+				const originalPublishMessage = receiver.publishMessage.bind(receiver);
+				const ackStarted = pDefer<void>();
+				const releaseAck = pDefer<void>();
+				let dataDelivered = false;
+				let publishResolved = false;
+				const onData = () => {
+					dataDelivered = true;
+				};
+				receiver.addEventListener("data", onData as EventListener);
+
+				receiver.publishMessage = (async (...args: Parameters<typeof originalPublishMessage>) => {
+					const [, message] = args;
+					if (message instanceof ACK) {
+						ackStarted.resolve();
+						await releaseAck.promise;
+					}
+					return originalPublishMessage(...args);
+				}) as typeof receiver.publishMessage;
+
+				try {
+					const publishPromise = streams[0].stream
+						.publish(data, {
+							mode: new AcknowledgeDelivery({
+								redundancy: 1,
+								to: [streams[2].stream.components.peerId],
+							}),
+						})
+						.then(() => {
+							publishResolved = true;
+						});
+
+					await ackStarted.promise;
+					await waitForResolved(() => expect(dataDelivered).to.be.true);
+					expect(publishResolved).to.be.false;
+
+					releaseAck.resolve();
+					await publishPromise;
+				} finally {
+					receiver.publishMessage = originalPublishMessage;
+					receiver.removeEventListener("data", onData as EventListener);
+				}
 			});
 
 				it("1->3 still works even if routing is missing", async () => {

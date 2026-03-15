@@ -65,7 +65,10 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 		return this;
 	}
 
-	async get(id: types.IdKey): Promise<types.IndexedResult<T> | undefined> {
+	async get(
+		id: types.IdKey,
+		_options?: { shape: types.Shape },
+	): Promise<types.IndexedResult<T> | undefined> {
 		const value = this._index.get(id.primitive);
 		if (!value) {
 			return;
@@ -79,6 +82,7 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 	put(
 		value: T,
 		id = types.toId(types.extractFieldValue(value, this.indexByArr)),
+		_options?: { replace?: boolean },
 	): void {
 		this._index.set(id.primitive, { id, value });
 	}
@@ -95,6 +99,10 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 
 	getSize(): number | Promise<number> {
 		return this._index.size;
+	}
+
+	persisted(): boolean {
+		return false;
 	}
 
 	iterator() {
@@ -557,6 +565,10 @@ export class HashmapIndices implements types.Indices {
 			this.scopes.set(name, scope);
 		}
 		return scope;
+	}
+
+	persisted(): boolean {
+		return false;
 	}
 
 	async start(): Promise<void> {

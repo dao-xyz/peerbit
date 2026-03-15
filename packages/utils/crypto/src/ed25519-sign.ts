@@ -32,19 +32,22 @@ export const verifySignatureEd25519 = async (
 	let res = false;
 	try {
 		const hashedData = await prehashFn(data, signature.prehash);
-
-		/* 	return crypto.verify(null, hashedData, publicKey.keyObject, signature); */ // Sodium seems faster
-		const verified = sodium.crypto_sign_verify_detached(
-			signature.signature,
-			hashedData,
-			(signature.publicKey as Ed25519PublicKey).publicKey,
-		);
-		res = verified;
+		res = verifySignatureEd25519Prepared(signature, hashedData);
 	} catch (error) {
 		return false;
 	}
 	return res;
 };
+
+export const verifySignatureEd25519Prepared = (
+	signature: SignatureWithKey,
+	preparedData: Uint8Array,
+) =>
+	sodium.crypto_sign_verify_detached(
+		signature.signature,
+		preparedData,
+		(signature.publicKey as Ed25519PublicKey).publicKey,
+	);
 
 const DER_PREFIX = Buffer.from([
 	48, 46, 2, 1, 0, 48, 5, 6, 3, 43, 101, 112, 4, 34, 4, 32,

@@ -5,6 +5,7 @@
  *   pnpm -C packages/transport/stream run bench -- directstream-sim --nodes 500 --degree 6
  *   pnpm -C packages/transport/stream run bench -- topology-sim --nodes 2000 --degree 4
  *   pnpm -C packages/transport/stream run bench -- transfer
+ *   pnpm -C packages/transport/stream run bench -- chunk-transfer
  */
 
 const argv = process.argv.slice(2);
@@ -21,12 +22,14 @@ const usage = () => {
 			"Benchmarks:",
 			"  directstream-sim  in-memory DirectStream network sim",
 			"  topology-sim      discrete-event topology/routing sim",
-			"  transfer          small real-libp2p throughput microbench",
+			"  transfer          real-libp2p transfer throughput bench",
+			"  chunk-transfer    chunked multi-hop transfer bench",
 			"",
 			"Examples:",
 			"  pnpm -C packages/transport/stream run bench -- directstream-sim --nodes 500 --degree 6",
 			"  pnpm -C packages/transport/stream run bench -- topology-sim --nodes 2000 --degree 4",
-			"  pnpm -C packages/transport/stream run bench -- transfer",
+			"  pnpm -C packages/transport/stream run bench -- transfer --sizes 262144,1048576 --mode both",
+			"  pnpm -C packages/transport/stream run bench -- chunk-transfer",
 		].join("\n"),
 	);
 };
@@ -45,6 +48,9 @@ switch (bench) {
 		break;
 	case "transfer":
 		await import("./transfer.js");
+		break;
+	case "chunk-transfer":
+		await import("./chunk-transfer.js");
 		break;
 	default:
 		usage();

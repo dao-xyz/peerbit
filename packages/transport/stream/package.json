@@ -51,6 +51,8 @@
 	},
 	"scripts": {
 		"bench": "TS_NODE_PROJECT=../../../tsconfig.json node --loader ts-node/esm ./benchmark/index.ts",
+		"bench:chunk-transfer": "pnpm run build && node ./dist/benchmark/chunk-transfer.js",
+		"bench:transfer": "pnpm run build && node ./dist/benchmark/transfer.js",
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
 		"test": "aegir test --target node",

@@ -58,6 +58,13 @@ export class StoreWithCustomDomain extends Program {
 	}
 }
 
+const getSortedReplicationSegments = async (
+	store: StoreWithCustomDomain,
+) =>
+	(await store.docs.log.getMyReplicationSegments())
+		.map((x) => [x.start1, x.end1].map(Number))
+		.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+
 describe("domain", () => {
 	describe("search replicate", function () {
 		this.retries(2);
@@ -168,11 +175,7 @@ describe("domain", () => {
 		});
 
 		it("will join with multiple segments when not sorting by mergeable property", async () => {
-			expect(
-				(await store.docs.log.getMyReplicationSegments()).map((x) =>
-					[x.start1, x.end1].map(Number),
-				),
-			).to.deep.equal([[1, 2]]);
+			expect(await getSortedReplicationSegments(store)).to.deep.equal([[1, 2]]);
 			const resultsWithRemoteRightDomain = await store.docs.index.search(
 				new SearchRequest(),
 				{
@@ -192,11 +195,7 @@ describe("domain", () => {
 			);
 
 			expect(resultsWithRemoteRightDomain).to.have.length(3);
-			expect(
-				(await store.docs.log.getMyReplicationSegments()).map((x) =>
-					[x.start1, x.end1].map(Number),
-				),
-			).to.deep.equal([
+			expect(await getSortedReplicationSegments(store)).to.deep.equal([
 				[1, 2],
 				[2, 3],
 				[3, 4],
@@ -204,11 +203,7 @@ describe("domain", () => {
 		});
 
 		it("will join by separate segments when not sorting by non mergeable property", async () => {
-			expect(
-				(await store.docs.log.getMyReplicationSegments()).map((x) =>
-					[x.start1, x.end1].map(Number),
-				),
-			).to.deep.equal([[1, 2]]);
+			expect(await getSortedReplicationSegments(store)).to.deep.equal([[1, 2]]);
 			const resultsWithRemoteRightDomain = await store.docs.index.search(
 				new SearchRequest({ sort: [new Sort({ key: ["property"] })] }),
 				{
@@ -228,11 +223,7 @@ describe("domain", () => {
 			);
 
 			expect(resultsWithRemoteRightDomain).to.have.length(3);
-			expect(
-				(await store.docs.log.getMyReplicationSegments()).map((x) =>
-					[x.start1, x.end1].map(Number),
-				),
-			).to.deep.equal([
+			expect(await getSortedReplicationSegments(store)).to.deep.equal([
 				[1, 2],
 				[2, 4],
 			]);

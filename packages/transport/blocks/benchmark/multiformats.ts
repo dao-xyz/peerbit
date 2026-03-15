@@ -1,5 +1,6 @@
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import {
+	calculateRawCid,
 	checkDecodeBlock,
 	cidifyString,
 	codecMap,
@@ -88,6 +89,23 @@ for (const size of sizes) {
 				}
 				deferred.resolve();
 			}
+		},
+	});
+
+	suite.add("peerbit raw cid fast-path, size: " + size / 1e3 + "kb", {
+		defer: true,
+		async: true,
+		fn: async (deferred: any) => {
+			const rng = getSample(size);
+			const cid = await calculateRawCid(rng);
+			const checked = await checkDecodeBlock(cid.cid, rng, {
+				hasher: sha256,
+				codec,
+			});
+			if (!checked) {
+				throw new Error("Not verified");
+			}
+			deferred.resolve();
 		},
 	});
 
