@@ -233,6 +233,9 @@ export type WithExtraSigners = {
 	) => Promise<SignatureWithKey> | SignatureWithKey)[];
 };
 
+// Control-path responses like ACKs should be able to cut through congested data lanes.
+export const ACK_CONTROL_PRIORITY = 3;
+
 const getDefaultPriorityFromMode = (mode: DeliveryMode) => {
 	if (mode instanceof SilentDelivery) {
 		return 0;
@@ -248,9 +251,19 @@ const getDefaultPriorityFromMode = (mode: DeliveryMode) => {
 		return 1;
 	}
 	if (mode instanceof TracedDelivery) {
-		return 1;
+		return ACK_CONTROL_PRIORITY;
 	}
 	throw new Error("Unexpected mode: " + mode.constructor.name);
+};
+
+const getDefaultResponsePriorityFromMode = (mode: DeliveryMode) => {
+	if (
+		mode instanceof AcknowledgeAnyWhere ||
+		mode instanceof AcknowledgeDelivery
+	) {
+		return ACK_CONTROL_PRIORITY;
+	}
+	return undefined;
 };
 
 @variant(0)
@@ -307,7 +320,10 @@ export class MessageHeader<T extends DeliveryMode = DeliveryMode> {
 			properties.priority != null
 				? properties.priority
 				: getDefaultPriorityFromMode(this.mode);
-		this.responsePriority = properties.responsePriority;
+		this.responsePriority =
+			properties.responsePriority != null
+				? properties.responsePriority
+				: getDefaultResponsePriorityFromMode(this.mode);
 	}
 
 	get id() {

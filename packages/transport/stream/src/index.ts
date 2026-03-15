@@ -30,6 +30,7 @@ import {
 import type { SignatureWithKey } from "@peerbit/crypto";
 import {
 	ACK,
+	ACK_CONTROL_PRIORITY,
 	AcknowledgeAnyWhere,
 	AcknowledgeDelivery,
 	AnyWhere,
@@ -47,8 +48,10 @@ import {
 	appendDeliveryHop,
 	coercePeerRefsToHashes,
 	deliveryModeHasReceiver,
+	getMessageExpiresAt,
 	getMsgId,
 	getDeliveryHopTrace,
+	getResponsePriorityFromMessage,
 	hasDeliveryHop,
 	isAcknowledgedDeliveryMode,
 	setDeliveryOriginHop,
@@ -2334,6 +2337,8 @@ export abstract class DirectStream<
 					header: new MessageHeader({
 						mode: new TracedDelivery(signers),
 						session: this.session,
+						priority: getResponsePriorityFromMessage(message),
+						expires: getMessageExpiresAt(message),
 
 							// include our origin for route-learning/dialer hints (best-effort privacy/anti-spam control):
 							// only include once (seenBefore=0) and only if we have not recently pruned
@@ -2501,6 +2506,8 @@ export abstract class DirectStream<
 						to: remotes,
 						redundancy: DEFAULT_SILENT_MESSAGE_REDUDANCY,
 					}),
+					priority: ACK_CONTROL_PRIORITY,
+					responsePriority: ACK_CONTROL_PRIORITY,
 				});
 				return true;
 			} catch (e: any) {

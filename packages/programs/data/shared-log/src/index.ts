@@ -49,6 +49,7 @@ import {
 } from "@peerbit/pubsub-interface";
 import { RPC, type RequestContext } from "@peerbit/rpc";
 import {
+	ACK_CONTROL_PRIORITY,
 	AcknowledgeDelivery,
 	AnyWhere,
 	createRequestTransportContext,
@@ -3649,7 +3650,8 @@ export class SharedLog<
 			// triggering large segment snapshots just to prove liveness.
 			await this.rpc.send(new ReplicationPingMessage(), {
 				mode: new AcknowledgeDelivery({ redundancy: 1, to: [publicKey] }),
-				priority: 1,
+				priority: ACK_CONTROL_PRIORITY,
+				responsePriority: ACK_CONTROL_PRIORITY,
 			});
 			this.markReplicatorActivity(peerHash);
 			this._replicatorLivenessFailures.delete(peerHash);
@@ -3658,6 +3660,15 @@ export class SharedLog<
 			if (isNotStartedError(error as Error)) {
 				return;
 			}
+		}
+
+		// Relay-backed prod paths can keep a peer subscribed/reachable even if an
+		// ACKed liveness ping gets delayed or dropped under load. Treat observed
+		// topic presence as a positive liveness signal before evicting the peer.
+		if (await this.confirmReplicatorSubscriberPresence(peerHash)) {
+			this.markReplicatorActivity(peerHash);
+			this._replicatorLivenessFailures.delete(peerHash);
+			return;
 		}
 
 		const failures = (this._replicatorLivenessFailures.get(peerHash) ?? 0) + 1;
@@ -3673,6 +3684,24 @@ export class SharedLog<
 		}
 
 		await this.evictReplicatorFromLiveness(peerHash, publicKey);
+	}
+
+	private async confirmReplicatorSubscriberPresence(peerHash: string) {
+		try {
+			await waitForSubscribers(this.node, peerHash, this.rpc.topic, {
+				signal: this._closeController.signal,
+				timeout: Math.max(
+					1_000,
+					Math.min(5_000, Math.floor(this.waitForReplicatorTimeout / 4)),
+				),
+			});
+			return true;
+		} catch (error) {
+			if (isNotStartedError(error as Error)) {
+				return false;
+			}
+			return false;
+		}
 	}
 
 	async getMemoryUsage() {
