@@ -3636,6 +3636,77 @@ describe("join/leave", () => {
 			abortContoller.abort(new Error("Done"));
 		});
 
+		it("routes ACKs back through a congested reverse path on the control lane", async () => {
+			session = await disconnected(3, {
+				streamMuxers: [yamux()],
+				services: {
+					directstream: (c) =>
+						new TestDirectStream(c, {
+							connectionManager: { dialer: false, pruner: false },
+						}),
+				},
+			});
+			await connectLine(session);
+
+			await session.peers[0].services.directstream.publish(new Uint8Array(0), {
+				to: [session.peers[2].peerId],
+			});
+			await session.peers[2].services.directstream.publish(new Uint8Array(0), {
+				to: [session.peers[0].peerId],
+			});
+
+			const receiver = session.peers[0].services.directstream;
+			const receiverMetrics = createMetrics(receiver);
+			resetMetrics([receiverMetrics]);
+
+			const originalOnData = receiver.onDataMessage.bind(receiver);
+			const abortController = new AbortController();
+			const lag = 200;
+			receiver.onDataMessage = async (from, peerStreams, message, options) => {
+				if (message.header.priority === 1) {
+					try {
+						await delay(lag, { signal: abortController.signal });
+					} catch (err) {
+						// ignore cancellation
+					}
+				}
+				return originalOnData(from, peerStreams, message, options);
+			};
+
+			const congestingCount = 100;
+			const congestingWrites: Promise<Uint8Array | undefined>[] = [];
+			for (let i = 0; i < congestingCount; i++) {
+				congestingWrites.push(
+					session.peers[2].services.directstream.publish(randomBytes(5e2), {
+						mode: new SilentDelivery({
+							to: [session.peers[0].peerId],
+							redundancy: 1,
+						}),
+						priority: 1,
+					}),
+				);
+			}
+
+			await delay(50);
+
+			const t0 = +new Date();
+			try {
+				await session.peers[0].services.directstream.publish(randomBytes(1e3), {
+					mode: new AcknowledgeDelivery({
+						to: [session.peers[2].peerId],
+						redundancy: 1,
+					}),
+				});
+			} finally {
+				abortController.abort(new Error("Done"));
+				receiver.onDataMessage = originalOnData;
+			}
+
+			expect(+new Date() - t0).lessThan(5000);
+			expect(receiverMetrics.received.length).lessThan(congestingCount / 4);
+			await Promise.allSettled(congestingWrites);
+		});
+
 		it("applies node-wide outbound backpressure while reserving total priority capacity", async () => {
 			session = await disconnected(1, {
 				services: {

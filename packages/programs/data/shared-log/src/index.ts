@@ -49,6 +49,7 @@ import {
 } from "@peerbit/pubsub-interface";
 import { RPC, type RequestContext } from "@peerbit/rpc";
 import {
+	ACK_CONTROL_PRIORITY,
 	AcknowledgeDelivery,
 	AnyWhere,
 	createRequestTransportContext,
@@ -3649,7 +3650,8 @@ export class SharedLog<
 			// triggering large segment snapshots just to prove liveness.
 			await this.rpc.send(new ReplicationPingMessage(), {
 				mode: new AcknowledgeDelivery({ redundancy: 1, to: [publicKey] }),
-				priority: 1,
+				priority: ACK_CONTROL_PRIORITY,
+				responsePriority: ACK_CONTROL_PRIORITY,
 			});
 			this.markReplicatorActivity(peerHash);
 			this._replicatorLivenessFailures.delete(peerHash);

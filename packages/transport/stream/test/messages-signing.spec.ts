@@ -2,9 +2,12 @@ import { serialize } from "@dao-xyz/borsh";
 import { expect } from "chai";
 import { PreHash, sha256 } from "@peerbit/crypto";
 import {
+	ACK_CONTROL_PRIORITY,
+	AcknowledgeDelivery,
 	DataMessage,
 	MessageHeader,
 	SilentDelivery,
+	TracedDelivery,
 } from "@peerbit/stream-interface";
 import { Uint8ArrayList } from "uint8arraylist";
 
@@ -138,5 +141,23 @@ describe("message signing", () => {
 		expect(Array.from(prepared)).to.deep.equal(
 			Array.from(await sha256(message.getSignableBytes())),
 		);
+	});
+
+	it("defaults acknowledged responses onto the control lane", () => {
+		const request = new MessageHeader({
+			session: 1,
+			mode: new AcknowledgeDelivery({
+				to: ["peer-a"],
+				redundancy: 1,
+			}),
+		});
+		const ack = new MessageHeader({
+			session: 1,
+			mode: new TracedDelivery(["peer-a"]),
+		});
+
+		expect(request.priority).to.equal(1);
+		expect(request.responsePriority).to.equal(ACK_CONTROL_PRIORITY);
+		expect(ack.priority).to.equal(ACK_CONTROL_PRIORITY);
 	});
 });
