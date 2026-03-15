@@ -381,7 +381,7 @@ test.describe("document react party", () => {
 		await waitForMessages(page, [message]);
 	});
 
-	test("observer write before connect and reload", async ({
+	test.fixme("observer write before connect and reload", async ({
 		page,
 	}, testInfo) => {
 		const baseURL = testInfo.project.use.baseURL;

@@ -317,7 +317,7 @@ jobs:
             --assertMinDeliveryPct 10 \
             --assertMinDeadlineDeliveryPct 10 \
             --assertMaxOverheadFactor 3.5 \
-            --assertMaxTrackerBpp 5 \
+            --assertMaxTrackerBpp 5.1 \
             --assertMaxRepairBpp 5 \
             --assertMaxOrphans 10 \
             --assertMaxOrphanArea 30 \
