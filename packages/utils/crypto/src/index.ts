@@ -2,6 +2,8 @@ import libsodium from "libsodium-wrappers";
 
 export * from "./key.js";
 export * from "./ed25519.js";
+// Keep signature helpers on the root entrypoint because downstream packages
+// import verifyPrepared via "@peerbit/crypto".
 export * from "./signature.js";
 export * from "./sepc256k1.js";
 export * from "./x25519.js";
