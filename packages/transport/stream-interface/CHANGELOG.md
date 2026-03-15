@@ -66,6 +66,14 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [6.0.4](https://github.com/dao-xyz/peerbit/compare/stream-interface-v6.0.3...stream-interface-v6.0.4) (2026-03-15)
+
+
+### Bug Fixes
+
+* **stream-interface:** normalize foreign signatures before serialize ([3d780a7](https://github.com/dao-xyz/peerbit/commit/3d780a708dd71176fc46eb7f5f9f2a443ed85323))
+* **stream-interface:** normalize foreign signatures before serialize ([f91b676](https://github.com/dao-xyz/peerbit/commit/f91b67644d3fa816d6b592beaa83f4a0f2e0c051))
+
 ## [6.0.3](https://github.com/dao-xyz/peerbit/compare/stream-interface-v6.0.2...stream-interface-v6.0.3) (2026-03-15)
 
 
