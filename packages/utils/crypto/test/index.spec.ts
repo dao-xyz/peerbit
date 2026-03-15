@@ -22,6 +22,7 @@ import {
 	verify,
 	verifySignatureSecp256k1,
 } from "../src/index.js";
+import * as cryptoRoot from "../src/index.js";
 import { PreHash } from "../src/prehash.js";
 
 describe("Ed25519", () => {
@@ -89,6 +90,15 @@ describe("Ed25519", () => {
 				data.reverse(),
 			);
 			expect(isNotVerified).to.be.false;
+		});
+
+		it("exports verifyPrepared from the root entrypoint", async () => {
+			const keypair = await Ed25519Keypair.create();
+			const data = new Uint8Array([1, 2, 3]);
+			const signature = await keypair.sign(data, PreHash.SHA_256);
+			expect(cryptoRoot.verifyPrepared).to.be.a("function");
+			const prepared = await cryptoRoot.prehashFn(data, signature.prehash);
+			expect(await cryptoRoot.verifyPrepared(signature, prepared)).to.be.true;
 		});
 	});
 
