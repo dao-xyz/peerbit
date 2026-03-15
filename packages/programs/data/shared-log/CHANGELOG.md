@@ -389,6 +389,29 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.0.10](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.9...shared-log-v13.0.10) (2026-03-15)
+
+
+### Bug Fixes
+
+* stabilize relay liveness and prioritize ACK control traffic ([#661](https://github.com/dao-xyz/peerbit/issues/661)) ([590af40](https://github.com/dao-xyz/peerbit/commit/590af40823c12c2137d6b94bc65eb12438866190))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.9
+    * @peerbit/program bumped to 6.0.6
+    * @peerbit/rpc bumped to 6.0.9
+    * @peerbit/blocks bumped to 4.0.4
+    * @peerbit/blocks-interface bumped to 2.0.2
+    * @peerbit/pubsub bumped to 5.0.4
+    * @peerbit/pubsub-interface bumped to 5.0.3
+    * @peerbit/stream-interface bumped to 6.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.9
+
 ## [13.0.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.8...shared-log-v13.0.9) (2026-03-15)
 
 

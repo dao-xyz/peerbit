@@ -66,6 +66,13 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [6.0.2](https://github.com/dao-xyz/peerbit/compare/stream-interface-v6.0.1...stream-interface-v6.0.2) (2026-03-15)
+
+
+### Bug Fixes
+
+* stabilize relay liveness and prioritize ACK control traffic ([#661](https://github.com/dao-xyz/peerbit/issues/661)) ([590af40](https://github.com/dao-xyz/peerbit/commit/590af40823c12c2137d6b94bc65eb12438866190))
+
 ## [6.0.1](https://github.com/dao-xyz/peerbit/compare/stream-interface-v6.0.0...stream-interface-v6.0.1) (2026-03-08)
 
 

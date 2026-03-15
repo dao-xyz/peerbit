@@ -313,6 +313,18 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [5.0.9](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.0.8...peerbit-v5.0.9) (2026-03-15)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped to 6.0.6
+    * @peerbit/blocks bumped to 4.0.4
+    * @peerbit/pubsub bumped to 5.0.4
+    * @peerbit/stream-interface bumped to 6.0.2
+
 ## [5.0.8](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.0.7...peerbit-v5.0.8) (2026-03-15)
 
 
