@@ -73,6 +73,10 @@ class NoopIndices implements Indices {
 		return this;
 	}
 
+	persisted(): boolean {
+		return false;
+	}
+
 	async start(): Promise<void> {
 		await this.store.open();
 	}
