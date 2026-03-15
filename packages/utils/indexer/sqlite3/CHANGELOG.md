@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.0.1](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v3.0.0...indexer-sqlite3-v3.0.1) (2026-03-15)
+
+
+### Refactors
+
+* **indexer-sqlite3:** rename SQLiteIndex class ([dac5207](https://github.com/dao-xyz/peerbit/commit/dac520749b2057635debc81266d86132960585d1))
+* **indexer-sqlite3:** rename SQLiteIndex class ([b0e963a](https://github.com/dao-xyz/peerbit/commit/b0e963ab907f043c818977cd636d6ad15fd39a49))
+
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v2.1.2...indexer-sqlite3-v3.0.0) (2026-03-04)
 
 
