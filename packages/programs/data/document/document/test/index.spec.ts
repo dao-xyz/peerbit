@@ -4796,6 +4796,10 @@ describe("index", () => {
 				});
 
 				it("outOfOrder mode=drop can collect dropped items", async function () {
+					// Under full CI load, push iterators can briefly yield empty batches. Drain the
+					// in-order items first so the iterator frontier is established before inserting
+					// the late item, and bound the wait on the callback so the suite cannot hang.
+					this.timeout(80_000);
 					session = await TestSession.disconnected(3);
 					await session.connect([
 						[session.peers[0], session.peers[1]],
@@ -4851,11 +4855,38 @@ describe("index", () => {
 					try {
 						await writer.docs.put(new Document({ id: "2" }));
 						await writer.docs.put(new Document({ id: "3" }));
-						await iterator.next(10);
+						const seen = new Set<string>();
+						const start = Date.now();
+						while (
+							Date.now() - start < 10_000 &&
+							(!seen.has("2") || !seen.has("3"))
+						) {
+							const batch = await iterator.next(10);
+							for (const doc of batch) {
+								seen.add(doc.id);
+							}
+							if (!seen.has("2") || !seen.has("3")) {
+								await delay(50);
+							}
+						}
+						expect([...seen]).to.include("2");
+						expect([...seen]).to.include("3");
+
+						await waitForResolved(
+							async () => expect(await iterator.pending()).to.equal(0),
+							{ timeout: 10_000, delayInterval: 50 },
+						);
 
 						await writer.docs.put(new Document({ id: "1" }));
 
-						await latePromise.promise;
+						await Promise.race([
+							latePromise.promise,
+							delay(20_000).then(() => {
+								throw new Error(
+									"Timed out waiting for outOfOrder(drop) handler",
+								);
+							}),
+						]);
 						expect(collected?.length).to.equal(1);
 						expect(
 							collected?.[0]?.value?.id || collected?.[0]?.indexed?.id,
