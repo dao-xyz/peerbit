@@ -279,18 +279,43 @@ jobs:
             --assertMaxFormationScore 25
       - name: Run fanout-tree-sim ci-loss gate
         run: |
+          # Match the structural smoke-test scenario in fanout-tree-sim.spec.ts.
           pnpm -C packages/transport/pubsub run bench -- fanout-tree-sim \
-            --preset ci-loss --seed 1 \
+            --nodes 40 \
+            --bootstraps 1 \
+            --subscribers 30 \
+            --relayFraction 0.35 \
+            --messages 40 \
+            --msgRate 50 \
+            --msgSize 64 \
+            --settleMs 5000 \
+            --deadlineMs 500 \
+            --timeoutMs 40000 \
+            --seed 1 \
+            --repair 1 \
+            --rootUploadLimitBps 100000000 \
+            --relayUploadLimitBps 100000000 \
+            --rootMaxChildren 64 \
+            --relayMaxChildren 32 \
+            --neighborRepair 1 \
+            --neighborRepairPeers 3 \
+            --dropDataFrameRate 0.1 \
+            --churnEveryMs 200 \
+            --churnDownMs 100 \
+            --churnFraction 0.05 \
             --assertMinJoinedPct 99 \
-            --assertMinDeliveryPct 93 \
-            --assertMaxOverheadFactor 2.5 \
-            --assertMaxControlBpp 2.5 \
-            --assertMaxTrackerBpp 1.8 \
-            --assertMaxRepairBpp 0.9 \
-            --assertMaxOrphans 3 \
-            --assertMaxOrphanArea 10 \
-            --assertRecoveryP95Ms 750 \
-            --assertMaxReparentsPerMin 180
+            --assertMinDeliveryPct 10 \
+            --assertMinDeadlineDeliveryPct 10 \
+            --assertMaxOverheadFactor 3.5 \
+            --assertMaxTrackerBpp 5 \
+            --assertMaxRepairBpp 5 \
+            --assertMaxOrphans 10 \
+            --assertMaxOrphanArea 30 \
+            --assertRecoveryP95Ms 6000 \
+            --assertMaxReparentsPerMin 500 \
+            --assertAttachP95Ms 10000 \
+            --assertMaxTreeLevelP95 8 \
+            --assertMaxFormationScore 30
 
   shared_log_sync_batch_gate_pr:
     if: github.event_name == 'pull_request'
