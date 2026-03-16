@@ -131,4 +131,34 @@ describe("bootstrap", () => {
 			dialStub.restore();
 		}
 	});
+
+	it("throws when bootstrapping with no addresses", async () => {
+		await expect(peer.bootstrap([])).to.be.rejectedWith(
+			"Failed to find any addresses to dial",
+		);
+	});
+
+	it("throws when no bootstrap peer can be reached", async function () {
+		this.timeout(180_000);
+		const unreachable =
+			"/ip4/127.0.0.1/tcp/1/ws/p2p/12D3KooWUnreachablePeer111111111111111111111111111111";
+		await expect(peer.bootstrap([unreachable])).to.be.rejectedWith(
+			"Failed to succefully dial any bootstrap node",
+		);
+	});
+
+	it("hosts shard roots when this peer is itself a bootstrap candidate", async () => {
+		const selfAddress = peer.getMultiaddrs()[0]!.toString();
+		const dialStub = sinon.stub(peer, "dial").resolves(true);
+		const hostRootsSpy = sinon.stub(peer.services.pubsub, "hostShardRootsNow");
+
+		try {
+			const result = await peer.bootstrap([selfAddress]);
+			expect(result.connectedPeerIds).to.include(peer.peerId.toString());
+			expect(hostRootsSpy.called).to.equal(true);
+		} finally {
+			dialStub.restore();
+			hostRootsSpy.restore();
+		}
+	});
 });
