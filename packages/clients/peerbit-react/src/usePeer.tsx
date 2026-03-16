@@ -32,6 +32,31 @@ const storageLog = log.newScope("storage");
 const clientLog = log.newScope("client");
 const bootstrapLog = log.newScope("bootstrap");
 
+const extractBootstrapPeerId = (address: string | Multiaddr): string | undefined => {
+	const value = typeof address === "string" ? address : address.toString();
+	const match = value.match(/\/(?:p2p|ipfs)\/([^/]+)(?:\/|$)/);
+	return match?.[1];
+};
+
+const hasBootstrapConnection = (
+	peer: PeerbitLike,
+	bootstrapPeerIds: Set<string>,
+): boolean => {
+	if (bootstrapPeerIds.size === 0) {
+		return false;
+	}
+
+	const connections = (peer as any)?.libp2p?.getConnections?.() ?? [];
+	for (const connection of connections) {
+		const remotePeer = connection?.remotePeer?.toString?.();
+		if (remotePeer && bootstrapPeerIds.has(remotePeer)) {
+			return true;
+		}
+	}
+
+	return false;
+};
+
 const isInStandaloneMode = () =>
 	window.matchMedia("(display-mode: standalone)").matches ||
 	((window.navigator as unknown as Record<string, unknown>)["standalone"] ??
@@ -283,7 +308,7 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 			const [
 				{ detectIncognito },
 				sodiumModule,
-				{ Peerbit },
+				{ Peerbit, resolveBootstrapAddresses },
 				{ noise },
 				{ yamux },
 				{ webSockets },
@@ -416,6 +441,7 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 			);
 
 			const connectFn = async () => {
+				let bootstrapTargets: (Multiaddr | string)[] = [];
 				try {
 					const network = nodeOptions.network;
 					if (
@@ -423,6 +449,7 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 						(network as any)?.bootstrap !== undefined
 					) {
 						const list = (network as any).bootstrap as (Multiaddr | string)[];
+						bootstrapTargets = list;
 						if (list.length === 0) {
 							bootstrapLog("offline: skipping relay dialing");
 						} else {
@@ -446,27 +473,42 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 						const localAddress =
 							"/ip4/127.0.0.1/tcp/8002/ws/p2p/" +
 							(await (await fetch("http://localhost:8082/peer/id")).text());
+						bootstrapTargets = [localAddress];
 						bootstrapLog("dialing local address", localAddress);
 						await created.dial(localAddress);
 					} else {
-						await created.bootstrap?.();
+						const resolvedBootstrapAddresses =
+							(await resolveBootstrapAddresses?.()) ?? [];
+						bootstrapTargets = resolvedBootstrapAddresses;
+						await created.bootstrap?.(resolvedBootstrapAddresses);
 					}
 					setConnectionState("connected");
 				} catch (err: any) {
-					const connectionCount =
-						(created as any)?.libp2p?.getConnections?.()?.length ?? 0;
+					const bootstrapPeerIds = new Set(
+						bootstrapTargets
+							.map((address) => extractBootstrapPeerId(address))
+							.filter((address): address is string => !!address),
+					);
 					if (unmounted) {
 						bootstrapLog("ignoring bootstrap failure after unmount", {
 							error: err?.message ?? String(err),
-							connectionCount,
+							bootstrapPeerIds: [...bootstrapPeerIds],
 						});
 						return;
 					}
-					if (connectionCount > 0) {
-						bootstrapLog("ignoring bootstrap failure with active connection", {
+					if (
+						hasBootstrapConnection(
+							created as unknown as PeerbitLike,
+							bootstrapPeerIds,
+						)
+					) {
+						bootstrapLog(
+							"ignoring bootstrap failure with active bootstrap connection",
+							{
 							error: err?.message ?? String(err),
-							connectionCount,
-						});
+								bootstrapPeerIds: [...bootstrapPeerIds],
+							},
+						);
 						setConnectionState("connected");
 						return;
 					}

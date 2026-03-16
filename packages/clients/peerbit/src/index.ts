@@ -1,4 +1,5 @@
 export * from "./peer.js";
+export * from "./bootstrap.js";
 export {
 	createLibp2pExtended,
 	type Libp2pExtendServices,
