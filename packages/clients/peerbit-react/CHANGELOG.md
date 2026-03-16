@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.1.0](https://github.com/dao-xyz/peerbit/compare/react-v1.0.11...react-v1.1.0) (2026-03-16)
+
+
+### Features
+
+* **react:** surface partial bootstrap failures as warnings ([46378d3](https://github.com/dao-xyz/peerbit/commit/46378d3a888fdfcbdc091e95d18604ed0816dbd8))
+
+
+### Bug Fixes
+
+* **react:** require bootstrap peer before suppressing errors ([094f550](https://github.com/dao-xyz/peerbit/commit/094f5500b13f3670329cd9f6be205e0bccce21bf))
+* **react:** suppress stale bootstrap failures ([3aab097](https://github.com/dao-xyz/peerbit/commit/3aab097ee956b1ddb219f26a47b1b734a988df2c))
+* **react:** suppress stale bootstrap failures ([4405d17](https://github.com/dao-xyz/peerbit/commit/4405d175785c244cabe9bb07a7d32df745e1ed4e))
+
+
+### Refactors
+
+* **bootstrap:** parse peer ids with multiaddr components ([83426b5](https://github.com/dao-xyz/peerbit/commit/83426b5f2d1a77e25094b0889a2c1e5e2486c49f))
+* **bootstrap:** trim warning failure payload ([dd01fb3](https://github.com/dao-xyz/peerbit/commit/dd01fb34adc138dd598370d4ce1b7819d62b269b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped to 5.1.0
+
 ## [1.0.11](https://github.com/dao-xyz/peerbit/compare/react-v1.0.10...react-v1.0.11) (2026-03-15)
 
 
