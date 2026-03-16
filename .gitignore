@@ -18,6 +18,7 @@ keystore-test
 nginx_secrets
 nginx
 coverage
+**/.coverage/
 /test-results/
 /playwright-report/
 /playwright/.cache/
