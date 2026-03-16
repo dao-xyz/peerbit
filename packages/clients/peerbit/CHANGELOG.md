@@ -313,6 +313,26 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [5.1.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.0.11...peerbit-v5.1.0) (2026-03-16)
+
+
+### Features
+
+* **react:** surface partial bootstrap failures as warnings ([46378d3](https://github.com/dao-xyz/peerbit/commit/46378d3a888fdfcbdc091e95d18604ed0816dbd8))
+
+
+### Bug Fixes
+
+* **ci:** remap coverage per file ([170de3e](https://github.com/dao-xyz/peerbit/commit/170de3ead1dae51ee9b7b1d938edd27638dea554))
+* **react:** require bootstrap peer before suppressing errors ([094f550](https://github.com/dao-xyz/peerbit/commit/094f5500b13f3670329cd9f6be205e0bccce21bf))
+* **react:** suppress stale bootstrap failures ([3aab097](https://github.com/dao-xyz/peerbit/commit/3aab097ee956b1ddb219f26a47b1b734a988df2c))
+
+
+### Refactors
+
+* **bootstrap:** parse peer ids with multiaddr components ([83426b5](https://github.com/dao-xyz/peerbit/commit/83426b5f2d1a77e25094b0889a2c1e5e2486c49f))
+* **bootstrap:** trim warning failure payload ([dd01fb3](https://github.com/dao-xyz/peerbit/commit/dd01fb34adc138dd598370d4ce1b7819d62b269b))
+
 ## [5.0.11](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.0.10...peerbit-v5.0.11) (2026-03-15)
 
 
