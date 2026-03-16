@@ -1,4 +1,5 @@
 import { expect } from "chai";
+import sinon from "sinon";
 import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
 import { identify } from "@libp2p/identify";
@@ -96,5 +97,38 @@ describe("bootstrap", () => {
 
 		expect(result.connectedPeerIds).to.include(bootstrapPeer.peerId.toString());
 		expect(result.failures).to.deep.equal([]);
+	});
+
+	it("reports unknown-address failures without a bootstrap peer id", async function () {
+		this.timeout(180_000);
+		const unknown = "/dns4/node-a.peerchecker.com/tcp/1/ws";
+		const originalDial = peer.dial.bind(peer);
+		const dialStub = sinon
+			.stub(peer, "dial")
+			.callsFake(async (address, ...args: any[]) => {
+				const value =
+					typeof address === "string" ? address : (address as any).toString();
+				if (value === unknown) {
+					throw "forced-string-reason";
+				}
+				return await (originalDial as any)(address, ...args);
+			});
+
+		try {
+			const result = await peer.bootstrap([
+				...bootstrapPeer.getMultiaddrs().map((addr) => addr.toString()),
+				unknown,
+			]);
+
+			expect(result.connectedPeerIds).to.include(bootstrapPeer.peerId.toString());
+			expect(result.failures).to.deep.equal([
+				{
+					peerId: undefined,
+					reason: "forced-string-reason",
+				},
+			]);
+		} finally {
+			dialStub.restore();
+		}
 	});
 });

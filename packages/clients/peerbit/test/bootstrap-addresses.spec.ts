@@ -1,4 +1,5 @@
 import { expect } from "chai";
+import { multiaddr } from "@multiformats/multiaddr";
 import {
 	getBootstrapPeerId,
 	resolveBootstrapAddresses,
@@ -69,5 +70,17 @@ describe("getBootstrapPeerId", () => {
 	it("returns undefined for addresses without a p2p component", () => {
 		expect(getBootstrapPeerId("/dns4/node-a.peerchecker.com/tcp/4003/wss")).to.be
 			.undefined;
+	});
+
+	it("extracts the peer id from a Multiaddr instance", () => {
+		expect(
+			getBootstrapPeerId(
+				multiaddr("/dns4/node-a.peerchecker.com/tcp/4003/wss/p2p/12D3KooB"),
+			),
+		).to.equal("12D3KooB");
+	});
+
+	it("returns undefined for malformed bootstrap addresses", () => {
+		expect(getBootstrapPeerId("definitely-not-a-multiaddr")).to.be.undefined;
 	});
 });
