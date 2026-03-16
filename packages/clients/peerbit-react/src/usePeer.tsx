@@ -402,6 +402,10 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 			});
 
 			newPeer = created as unknown as PeerbitLike;
+			closePeer = () => {
+				keepAliveRef.current = false;
+				void (created as any)?.stop?.().catch(() => {});
+			};
 
 			(window as any).__peerInfo = {
 				peerHash: created?.identity?.publicKey?.hashcode?.(),
@@ -449,6 +453,23 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 					}
 					setConnectionState("connected");
 				} catch (err: any) {
+					const connectionCount =
+						(created as any)?.libp2p?.getConnections?.()?.length ?? 0;
+					if (unmounted) {
+						bootstrapLog("ignoring bootstrap failure after unmount", {
+							error: err?.message ?? String(err),
+							connectionCount,
+						});
+						return;
+					}
+					if (connectionCount > 0) {
+						bootstrapLog("ignoring bootstrap failure with active connection", {
+							error: err?.message ?? String(err),
+							connectionCount,
+						});
+						setConnectionState("connected");
+						return;
+					}
 					console.error("Failed to bootstrap:", err);
 					setConnectionState("failed");
 				}

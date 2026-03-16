@@ -525,6 +525,9 @@ importers:
       '@types/react':
         specifier: ^18.3.11
         version: 18.3.26
+      '@types/react-dom':
+        specifier: ^18.3.5
+        version: 18.3.7(@types/react@18.3.26)
       '@vitest/coverage-v8':
         specifier: ^4.0.12
         version: 4.0.12(vitest@4.0.12(@types/debug@4.1.12)(@types/node@22.19.1)(happy-dom@20.0.10)(jiti@2.6.1)(jsdom@26.1.0)(lightningcss@1.30.2)(terser@5.44.1)(yaml@2.8.1))
@@ -534,6 +537,9 @@ importers:
       node-localstorage:
         specifier: ^3.0.5
         version: 3.0.5
+      react-dom:
+        specifier: ^19.1.0
+        version: 19.2.0(react@19.2.0)
       sinon:
         specifier: ^21.0.0
         version: 21.0.0
