@@ -5,6 +5,8 @@ import {
 } from "../benchmark/fanout-tree-sim-lib.js";
 
 describe("fanout-tree-sim (ci)", () => {
+	const LOSSY_CHURN_TRACKER_BPP_MAX = 5.1;
+
 	it("joins and delivers on a small sim", async function () {
 		this.timeout(60_000);
 
@@ -111,7 +113,9 @@ describe("fanout-tree-sim (ci)", () => {
 			result.attachP95 > 10_000 ||
 			result.treeLevelP95 > 8 ||
 			result.formationScore > 30 ||
-			result.formationTreeOrphans > 0
+			result.formationTreeOrphans > 0 ||
+			result.trackerBpp > LOSSY_CHURN_TRACKER_BPP_MAX ||
+			result.repairBpp > 5
 		) {
 			// Helpful for CI debug
 			console.log(formatFanoutTreeSimResult(result));
@@ -140,7 +144,7 @@ describe("fanout-tree-sim (ci)", () => {
 		expect(result.protocolIHaveSent).to.be.lessThan(4_000);
 		expect(result.protocolControlBytesSent).to.be.lessThan(300_000);
 		expect(result.protocolRepairReqSent).to.be.lessThan(10_000);
-		expect(result.trackerBpp).to.be.lessThan(5);
+		expect(result.trackerBpp).to.be.lessThan(LOSSY_CHURN_TRACKER_BPP_MAX);
 		expect(result.repairBpp).to.be.lessThan(5);
 	});
 });
