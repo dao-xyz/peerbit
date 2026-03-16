@@ -15,9 +15,7 @@ const RESULT_FILE = process.env.PW_RESULT_FILE;
 const READY_TIMEOUT_MS = Number(process.env.PW_READY_TIMEOUT_MS || "180000");
 const SAMPLE_MS = Number(process.env.PW_SAMPLE_MS || "15000");
 const SAMPLE_COUNT = Number(process.env.PW_SAMPLE_COUNT || "4");
-const TARGET_SEEDERS = Number(
-	process.env.PW_TARGET_SEEDERS || (MODE === "adaptive" ? "2" : "1"),
-);
+const TARGET_SEEDERS = Number(process.env.PW_TARGET_SEEDERS || "2");
 
 if (!["local", "remote"].includes(NETWORK_MODE)) {
 	throw new Error(`Unsupported PW_NETWORK_MODE='${NETWORK_MODE}'`);
