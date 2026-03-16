@@ -80,6 +80,17 @@ export type DialOptions = {
 	signal?: AbortSignal;
 };
 
+export type BootstrapFailure = {
+	peerId?: string;
+	label: string[];
+	reason: string;
+};
+
+export type BootstrapResult = {
+	connectedPeerIds: string[];
+	failures: BootstrapFailure[];
+};
+
 const isLibp2pInstance = (libp2p: Libp2pExtended | ClientCreateOptions) =>
 	!!(libp2p as Libp2p).getMultiaddrs;
 
@@ -605,16 +616,23 @@ export class Peerbit implements ProgramClient {
 			throw lastError ?? new Error("Failed to dial bootstrap peer");
 		};
 
-		const dialTasks: Array<{ label: string[]; promise: Promise<boolean> }> = [];
+		const dialTasks: Array<{
+			label: string[];
+			peerId?: string;
+			promise: Promise<boolean>;
+		}> = [];
 		for (const list of byPeerId.values()) {
+			const peerId = getBootstrapPeerId(list[0]!);
 			dialTasks.push({
 				label: list.map((x) => (typeof x === "string" ? x : x.toString())),
+				peerId,
 				promise: dialPeer(list),
 			});
 		}
 		for (const a of unknown) {
 			dialTasks.push({
 				label: [typeof a === "string" ? a : a.toString()],
+				peerId: getBootstrapPeerId(a),
 				promise: this.dial(typeof a === "string" ? multiaddr(a) : a, {
 					dialTimeoutMs,
 					readiness: "connection",
@@ -624,10 +642,23 @@ export class Peerbit implements ProgramClient {
 
 		const settled = await Promise.allSettled(dialTasks.map((t) => t.promise));
 		let once = false;
+		const connectedPeerIds = new Set<string>();
+		const failures: BootstrapFailure[] = [];
 		for (const [i, result] of settled.entries()) {
 			if (result.status === "fulfilled") {
 				once = true;
+				if (dialTasks[i]?.peerId) {
+					connectedPeerIds.add(dialTasks[i]!.peerId!);
+				}
 			} else {
+				failures.push({
+					peerId: dialTasks[i]?.peerId,
+					label: dialTasks[i]?.label ?? [],
+					reason:
+						result.reason instanceof Error
+							? result.reason.message
+							: String(result.reason),
+				});
 				logger.error(
 					"Failed to dial bootstrap address(s): " +
 						JSON.stringify(dialTasks[i]?.label ?? []) +
@@ -639,6 +670,11 @@ export class Peerbit implements ProgramClient {
 		if (!once) {
 			throw new Error("Failed to succefully dial any bootstrap node");
 		}
+
+		const bootstrapResult: BootstrapResult = {
+			connectedPeerIds: [...connectedPeerIds],
+			failures,
+		};
 
 		// Seed deterministic topic-root candidates for shard root resolution.
 		//
@@ -704,6 +740,8 @@ export class Peerbit implements ProgramClient {
 				}
 			}
 		}
+
+		return bootstrapResult;
 	}
 
 	/**

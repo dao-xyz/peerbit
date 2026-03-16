@@ -72,4 +72,29 @@ describe("bootstrap", () => {
 			}
 		},
 	);
+
+	it("reports partial failures when one bootstrap peer is reachable and another is not", async function () {
+		this.timeout(180_000);
+		const unreachable = `/ip4/127.0.0.1/tcp/1/ws/p2p/12D3KooWUnreachablePeer111111111111111111111111111111`;
+		const result = await peer.bootstrap([
+			...bootstrapPeer.getMultiaddrs().map((addr) => addr.toString()),
+			unreachable,
+		]);
+
+		expect(result.connectedPeerIds).to.include(bootstrapPeer.peerId.toString());
+		expect(result.failures).to.have.length(1);
+		expect(result.failures[0]?.peerId).to.equal(
+			"12D3KooWUnreachablePeer111111111111111111111111111111",
+		);
+	});
+
+	it("does not report a failure when a fallback address for the same bootstrap peer succeeds", async function () {
+		this.timeout(180_000);
+		const valid = bootstrapPeer.getMultiaddrs()[0]!.toString();
+		const invalidSamePeer = `/ip4/127.0.0.1/tcp/1/ws/p2p/${bootstrapPeer.peerId.toString()}`;
+		const result = await peer.bootstrap([invalidSamePeer, valid]);
+
+		expect(result.connectedPeerIds).to.include(bootstrapPeer.peerId.toString());
+		expect(result.failures).to.deep.equal([]);
+	});
 });

@@ -80,7 +80,15 @@ export type PeerbitLike = {
 	) => Promise<void>;
 	start: () => Promise<void>;
 	stop: () => Promise<void>;
-	bootstrap?: (addresses?: string[] | Multiaddr[]) => Promise<void>;
+	bootstrap?: (
+		addresses?: string[] | Multiaddr[],
+	) => Promise<
+		| void
+		| {
+				connectedPeerIds?: string[];
+				failures?: { peerId?: string; label: string[]; reason: string }[];
+		  }
+	>;
 	open: <S extends Program<any>>(
 		storeOrAddress: S | Address | string,
 		options?: CanonicalOpenOptions<S>,
@@ -144,6 +152,7 @@ export type IPeerContext = {
 	persisted?: boolean;
 	tabIndex?: number;
 	error?: Error;
+	warning?: { type: "bootstrap-partial"; message: string; failures: string[] };
 	canonical?: {
 		client: CanonicalClient;
 	};
@@ -203,6 +212,9 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 		React.useState<ConnectionStatus>("disconnected");
 	const [tabIndex, setTabIndex] = React.useState<number | undefined>(undefined);
 	const [error, setError] = React.useState<Error | undefined>(undefined);
+	const [warning, setWarning] = React.useState<
+		IPeerContext["warning"] | undefined
+	>(undefined);
 
 	const memo = React.useMemo<IPeerContext>(() => {
 		return {
@@ -214,6 +226,7 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 			persisted,
 			tabIndex,
 			error,
+			warning,
 			canonical: canonicalClient ? { client: canonicalClient } : undefined,
 		};
 	}, [
@@ -226,6 +239,7 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 		promise,
 		runtime,
 		tabIndex,
+		warning,
 	]);
 
 	React.useEffect(() => {
@@ -239,6 +253,7 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 		setConnectionState("connecting");
 		setLoading(true);
 		setError(undefined);
+		setWarning(undefined);
 
 		const fn = async () => {
 			if (selected.runtime === "canonical") {
@@ -438,6 +453,13 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 				let bootstrapTargets: (Multiaddr | string)[] = [];
 				try {
 					const network = nodeOptions.network;
+					let bootstrapResult:
+						| void
+						| {
+								connectedPeerIds?: string[];
+								failures?: { peerId?: string; label: string[]; reason: string }[];
+						  }
+						| undefined = undefined;
 					if (
 						typeof network !== "string" &&
 						(network as any)?.bootstrap !== undefined
@@ -449,7 +471,7 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 						} else {
 							if (typeof created.bootstrap === "function") {
 								bootstrapLog("bootstrapping explicit addresses", list);
-								await created.bootstrap(
+								bootstrapResult = await created.bootstrap(
 									list.map((addr) =>
 										typeof addr === "string" ? addr : addr.toString(),
 									),
@@ -470,15 +492,39 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 						bootstrapTargets = [localAddress];
 						bootstrapLog("dialing local address", localAddress);
 						await created.dial(localAddress);
-					} else {
-						const resolvedBootstrapAddresses =
-							(await resolveBootstrapAddresses?.()) ?? [];
-						bootstrapTargets = resolvedBootstrapAddresses;
-						await created.bootstrap?.(resolvedBootstrapAddresses);
-					}
-					setConnectionState("connected");
-				} catch (err: any) {
-					const bootstrapPeerIds = new Set(
+						} else {
+							const resolvedBootstrapAddresses =
+								(await resolveBootstrapAddresses?.()) ?? [];
+							bootstrapTargets = resolvedBootstrapAddresses;
+							bootstrapResult =
+								await created.bootstrap?.(resolvedBootstrapAddresses);
+						}
+						if ((bootstrapResult?.failures?.length ?? 0) > 0) {
+							const failureSummaries = bootstrapResult!.failures!.map((failure) => {
+								const target =
+									failure.peerId ??
+									(failure.label.length === 1
+										? failure.label[0]!
+										: failure.label.join(", "));
+								return `${target}: ${failure.reason}`;
+							});
+							const message =
+								`Connected to ${bootstrapResult?.connectedPeerIds?.length ?? 0} bootstrap peer(s), ` +
+								`but failed to reach ${bootstrapResult?.failures?.length ?? 0} peer(s)`;
+							bootstrapLog("bootstrap partial warning", {
+								connectedPeerIds: bootstrapResult?.connectedPeerIds ?? [],
+								failures: failureSummaries,
+							});
+							console.warn(message, failureSummaries);
+							setWarning({
+								type: "bootstrap-partial",
+								message,
+								failures: failureSummaries,
+							});
+						}
+						setConnectionState("connected");
+					} catch (err: any) {
+						const bootstrapPeerIds = new Set(
 						bootstrapTargets
 							.map((address) => getBootstrapPeerId(address))
 							.filter((address): address is string => !!address),

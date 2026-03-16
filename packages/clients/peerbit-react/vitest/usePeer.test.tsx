@@ -81,7 +81,12 @@ const createFakeKeypair = () =>
 	}) as any;
 
 const createPeerInstance = (options?: {
-	bootstrap?: () => Promise<void>;
+	bootstrap?: () => Promise<
+		void | {
+			connectedPeerIds?: string[];
+			failures?: { peerId?: string; label: string[]; reason: string }[];
+		}
+	>;
 	stop?: () => Promise<void>;
 	connectionPeers?: string[];
 }) =>
@@ -111,10 +116,12 @@ const createPeerInstance = (options?: {
 	}) as any;
 
 const StatusView = () => {
-	const { status, loading } = usePeer();
+	const { status, loading, warning } = usePeer();
 	return (
 		<div data-testid="status">
-			{loading ? `loading:${status}` : status}
+			{loading
+				? `loading:${status}`
+				: `${status}${warning ? `|warning:${warning.failures.length}` : ""}`}
 		</div>
 	);
 };
@@ -123,12 +130,14 @@ describe("PeerProvider bootstrap handling", () => {
 	let container: HTMLDivElement;
 	let root: ReactDOM.Root;
 	let consoleError: ReturnType<typeof vi.spyOn>;
+	let consoleWarn: ReturnType<typeof vi.spyOn>;
 
 	beforeEach(() => {
 		container = document.createElement("div");
 		document.body.appendChild(container);
 		root = ReactDOM.createRoot(container);
 		consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+		consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
 		mocks.create.mockReset();
 	});
 
@@ -138,6 +147,7 @@ describe("PeerProvider bootstrap handling", () => {
 		});
 		container.remove();
 		consoleError.mockRestore();
+		consoleWarn.mockRestore();
 	});
 
 	it("ignores bootstrap failures after unmount", async () => {
@@ -253,9 +263,58 @@ describe("PeerProvider bootstrap handling", () => {
 				() => container.querySelector("[data-testid='status']")?.textContent === "failed",
 			);
 
-			expect(consoleError).toHaveBeenCalledWith(
-				"Failed to bootstrap:",
-				expect.any(Error),
+		expect(consoleError).toHaveBeenCalledWith(
+			"Failed to bootstrap:",
+			expect.any(Error),
+		);
+	});
+
+	it("surfaces partial bootstrap failures as a non-blocking warning", async () => {
+		mocks.create.mockResolvedValue(
+			createPeerInstance({
+				connectionPeers: ["12D3KooW-bootstrap"],
+				bootstrap: async () => ({
+					connectedPeerIds: ["12D3KooW-bootstrap"],
+					failures: [
+						{
+							peerId: "12D3KooW-other",
+							label: ["/dns4/other.peer/tcp/4003/wss/p2p/12D3KooW-other"],
+							reason: "dial timeout",
+						},
+					],
+				}),
+			}),
+		);
+
+		await act(async () => {
+			root.render(
+				<PeerProvider
+					config={{
+						runtime: "node",
+						network: "remote",
+						waitForConnected: true,
+						inMemory: true,
+						keypair: createFakeKeypair(),
+					}}
+				>
+					<StatusView />
+				</PeerProvider>,
 			);
 		});
+
+		await waitFor(
+			() =>
+				container.querySelector("[data-testid='status']")?.textContent ===
+				"connected|warning:1",
+		);
+
+		expect(consoleError).not.toHaveBeenCalledWith(
+			"Failed to bootstrap:",
+			expect.anything(),
+		);
+		expect(consoleWarn).toHaveBeenCalledWith(
+			expect.stringContaining("Connected to 1 bootstrap peer"),
+			expect.arrayContaining([expect.stringContaining("dial timeout")]),
+		);
+	});
 	});
