@@ -1,5 +1,9 @@
 import { expect } from "chai";
-import { resolveBootstrapAddresses } from "../src/bootstrap.js";
+import { multiaddr } from "@multiformats/multiaddr";
+import {
+	getBootstrapPeerId,
+	resolveBootstrapAddresses,
+} from "../src/bootstrap.js";
 
 describe("resolveBootstrapAddresses", () => {
 	const originalFetch = globalThis.fetch;
@@ -51,5 +55,32 @@ describe("resolveBootstrapAddresses", () => {
 		expect(requested).to.deep.equal([
 			"https://bootstrap.peerbit.org/bootstrap-4.env",
 		]);
+	});
+});
+
+describe("getBootstrapPeerId", () => {
+	it("extracts the p2p component using multiaddr parsing", () => {
+		expect(
+			getBootstrapPeerId(
+				"/dns4/node-a.peerchecker.com/tcp/4003/wss/p2p/12D3KooA",
+			),
+		).to.equal("12D3KooA");
+	});
+
+	it("returns undefined for addresses without a p2p component", () => {
+		expect(getBootstrapPeerId("/dns4/node-a.peerchecker.com/tcp/4003/wss")).to.be
+			.undefined;
+	});
+
+	it("extracts the peer id from a Multiaddr instance", () => {
+		expect(
+			getBootstrapPeerId(
+				multiaddr("/dns4/node-a.peerchecker.com/tcp/4003/wss/p2p/12D3KooB"),
+			),
+		).to.equal("12D3KooB");
+	});
+
+	it("returns undefined for malformed bootstrap addresses", () => {
+		expect(getBootstrapPeerId("definitely-not-a-multiaddr")).to.be.undefined;
 	});
 });

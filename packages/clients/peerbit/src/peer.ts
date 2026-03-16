@@ -40,7 +40,7 @@ import type { Libp2p } from "libp2p";
 import sodium from "libsodium-wrappers";
 import path from "path-browserify";
 import { concat } from "uint8arrays";
-import { resolveBootstrapAddresses } from "./bootstrap.js";
+import { getBootstrapPeerId, resolveBootstrapAddresses } from "./bootstrap.js";
 import {
 	type Libp2pCreateOptions as ClientCreateOptions,
 	type Libp2pExtended,
@@ -78,6 +78,16 @@ export type DialOptions = {
 	serviceWaitTimeoutMs?: number;
 	readiness?: DialReadiness;
 	signal?: AbortSignal;
+};
+
+export type BootstrapFailure = {
+	peerId?: string;
+	reason: string;
+};
+
+export type BootstrapResult = {
+	connectedPeerIds: string[];
+	failures: BootstrapFailure[];
 };
 
 const isLibp2pInstance = (libp2p: Libp2pExtended | ClientCreateOptions) =>
@@ -554,12 +564,6 @@ export class Peerbit implements ProgramClient {
 			throw new Error("Failed to find any addresses to dial");
 		}
 
-		const extractPeerId = (a: string | Multiaddr): string | undefined => {
-			const s = typeof a === "string" ? a : a.toString();
-			const m = s.match(/\/(?:p2p|ipfs)\/([^/]+)(?:\/|$)/);
-			return m?.[1];
-		};
-
 		// Keep fanout bootstrap config aligned with peer bootstrap config so fanout
 		// channels can join via the same rendezvous nodes.
 		try {
@@ -574,7 +578,7 @@ export class Peerbit implements ProgramClient {
 		const byPeerId = new Map<string, (string | Multiaddr)[]>();
 		const unknown: (string | Multiaddr)[] = [];
 		for (const a of _addresses) {
-			const pid = extractPeerId(a as any);
+			const pid = getBootstrapPeerId(a);
 			if (!pid) {
 				unknown.push(a);
 				continue;
@@ -611,16 +615,23 @@ export class Peerbit implements ProgramClient {
 			throw lastError ?? new Error("Failed to dial bootstrap peer");
 		};
 
-		const dialTasks: Array<{ label: string[]; promise: Promise<boolean> }> = [];
+		const dialTasks: Array<{
+			label: string[];
+			peerId?: string;
+			promise: Promise<boolean>;
+		}> = [];
 		for (const list of byPeerId.values()) {
+			const peerId = getBootstrapPeerId(list[0]!);
 			dialTasks.push({
 				label: list.map((x) => (typeof x === "string" ? x : x.toString())),
+				peerId,
 				promise: dialPeer(list),
 			});
 		}
 		for (const a of unknown) {
 			dialTasks.push({
 				label: [typeof a === "string" ? a : a.toString()],
+				peerId: getBootstrapPeerId(a),
 				promise: this.dial(typeof a === "string" ? multiaddr(a) : a, {
 					dialTimeoutMs,
 					readiness: "connection",
@@ -630,10 +641,22 @@ export class Peerbit implements ProgramClient {
 
 		const settled = await Promise.allSettled(dialTasks.map((t) => t.promise));
 		let once = false;
+		const connectedPeerIds = new Set<string>();
+		const failures: BootstrapFailure[] = [];
 		for (const [i, result] of settled.entries()) {
 			if (result.status === "fulfilled") {
 				once = true;
+				if (dialTasks[i]?.peerId) {
+					connectedPeerIds.add(dialTasks[i]!.peerId!);
+				}
 			} else {
+				failures.push({
+					peerId: dialTasks[i]?.peerId,
+					reason:
+						result.reason instanceof Error
+							? result.reason.message
+							: String(result.reason),
+				});
 				logger.error(
 					"Failed to dial bootstrap address(s): " +
 						JSON.stringify(dialTasks[i]?.label ?? []) +
@@ -645,6 +668,11 @@ export class Peerbit implements ProgramClient {
 		if (!once) {
 			throw new Error("Failed to succefully dial any bootstrap node");
 		}
+
+		const bootstrapResult: BootstrapResult = {
+			connectedPeerIds: [...connectedPeerIds],
+			failures,
+		};
 
 		// Seed deterministic topic-root candidates for shard root resolution.
 		//
@@ -660,7 +688,7 @@ export class Peerbit implements ProgramClient {
 		if (planes.length > 0) {
 			const bootstrapPeerIds = new Set<string>();
 			for (const a of _addresses) {
-				const pid = extractPeerId(a as any);
+				const pid = getBootstrapPeerId(a);
 				if (pid) bootstrapPeerIds.add(pid);
 			}
 
@@ -710,6 +738,8 @@ export class Peerbit implements ProgramClient {
 				}
 			}
 		}
+
+		return bootstrapResult;
 	}
 
 	/**

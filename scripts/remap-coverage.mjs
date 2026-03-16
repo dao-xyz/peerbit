@@ -32,45 +32,47 @@ const findCoverageFiles = (dir, out = []) => {
 	return out;
 };
 
-const registerSourceMaps = (coverageMap, sourceMapStore) => {
-	let mapCount = 0;
+const remapCoverageFile = async (coverageFile) => {
+	const raw = JSON.parse(fs.readFileSync(coverageFile, "utf8"));
+	const coverageMap = createCoverageMap(raw);
+	const remappedCoverage = createCoverageMap({});
+	let registeredMaps = 0;
+	let skippedMaps = 0;
+	let remapFailed = false;
+
 	for (const coveredFile of coverageMap.files()) {
+		const singleCoverage = createCoverageMap({
+			[coveredFile]: coverageMap.fileCoverageFor(coveredFile).toJSON(),
+		});
 		if (
 			!coveredFile.endsWith(".js") &&
 			!coveredFile.endsWith(".cjs") &&
 			!coveredFile.endsWith(".mjs")
 		) {
+			remappedCoverage.merge(singleCoverage);
 			continue;
 		}
+
 		const sourceMapPath = `${coveredFile}.map`;
-		if (!fs.existsSync(sourceMapPath)) continue;
+		if (!fs.existsSync(sourceMapPath)) {
+			remappedCoverage.merge(singleCoverage);
+			continue;
+		}
+
 		try {
 			const rawMap = JSON.parse(fs.readFileSync(sourceMapPath, "utf8"));
+			const sourceMapStore = createSourceMapStore();
 			sourceMapStore.registerMap(coveredFile, rawMap);
-			mapCount += 1;
+			const transformed = await sourceMapStore.transformCoverage(singleCoverage);
+			remappedCoverage.merge(transformed);
+			registeredMaps += 1;
 		} catch (error) {
+			skippedMaps += 1;
 			console.warn(
-				`Warning: failed to read source map ${toRepoRelativePath(sourceMapPath)}: ${error.message}`,
+				`Warning: skipping invalid source map ${toRepoRelativePath(sourceMapPath)}: ${error.message}`,
 			);
+			remappedCoverage.merge(singleCoverage);
 		}
-	}
-	return mapCount;
-};
-
-const remapCoverageFile = async (coverageFile) => {
-	const raw = JSON.parse(fs.readFileSync(coverageFile, "utf8"));
-	const coverageMap = createCoverageMap(raw);
-	const sourceMapStore = createSourceMapStore();
-	const registeredMaps = registerSourceMaps(coverageMap, sourceMapStore);
-	let remappedCoverage = coverageMap;
-	let remapFailed = false;
-	try {
-		remappedCoverage = await sourceMapStore.transformCoverage(coverageMap);
-	} catch (error) {
-		remapFailed = true;
-		console.warn(
-			`Warning: source-map remap failed for ${toRepoRelativePath(coverageFile)} (${error.message}), using original coverage paths`,
-		);
 	}
 
 	const output = {};
@@ -93,6 +95,7 @@ const remapCoverageFile = async (coverageFile) => {
 		filesIn: coverageMap.files().length,
 		filesOut: remappedCoverage.files().length,
 		sourceMaps: registeredMaps,
+		skippedMaps,
 		remapFailed,
 	};
 };
@@ -113,7 +116,7 @@ const main = async () => {
 				[
 					`Remapped ${toRepoRelativePath(result.coverageFile)} -> ${toRepoRelativePath(result.outFile)}`,
 					`(files ${result.filesIn} -> ${result.filesOut}`,
-					`source maps: ${result.sourceMaps}${result.remapFailed ? ", fallback: original paths" : ""})`,
+					`source maps: ${result.sourceMaps}${result.skippedMaps ? `, skipped: ${result.skippedMaps}` : ""}${result.remapFailed ? ", fallback: original paths" : ""})`,
 				].join(" "),
 			);
 		} catch (error) {
