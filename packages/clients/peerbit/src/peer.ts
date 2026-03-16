@@ -40,7 +40,7 @@ import type { Libp2p } from "libp2p";
 import sodium from "libsodium-wrappers";
 import path from "path-browserify";
 import { concat } from "uint8arrays";
-import { resolveBootstrapAddresses } from "./bootstrap.js";
+import { getBootstrapPeerId, resolveBootstrapAddresses } from "./bootstrap.js";
 import {
 	type Libp2pCreateOptions as ClientCreateOptions,
 	type Libp2pExtended,
@@ -554,12 +554,6 @@ export class Peerbit implements ProgramClient {
 			throw new Error("Failed to find any addresses to dial");
 		}
 
-		const extractPeerId = (a: string | Multiaddr): string | undefined => {
-			const s = typeof a === "string" ? a : a.toString();
-			const m = s.match(/\/(?:p2p|ipfs)\/([^/]+)(?:\/|$)/);
-			return m?.[1];
-		};
-
 		// Keep fanout bootstrap config aligned with peer bootstrap config so fanout
 		// channels can join via the same rendezvous nodes.
 		try {
@@ -574,7 +568,7 @@ export class Peerbit implements ProgramClient {
 		const byPeerId = new Map<string, (string | Multiaddr)[]>();
 		const unknown: (string | Multiaddr)[] = [];
 		for (const a of _addresses) {
-			const pid = extractPeerId(a as any);
+			const pid = getBootstrapPeerId(a);
 			if (!pid) {
 				unknown.push(a);
 				continue;
@@ -660,7 +654,7 @@ export class Peerbit implements ProgramClient {
 		if (planes.length > 0) {
 			const bootstrapPeerIds = new Set<string>();
 			for (const a of _addresses) {
-				const pid = extractPeerId(a as any);
+				const pid = getBootstrapPeerId(a);
 				if (pid) bootstrapPeerIds.add(pid);
 			}
 

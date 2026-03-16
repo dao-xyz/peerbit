@@ -32,12 +32,6 @@ const storageLog = log.newScope("storage");
 const clientLog = log.newScope("client");
 const bootstrapLog = log.newScope("bootstrap");
 
-const extractBootstrapPeerId = (address: string | Multiaddr): string | undefined => {
-	const value = typeof address === "string" ? address : address.toString();
-	const match = value.match(/\/(?:p2p|ipfs)\/([^/]+)(?:\/|$)/);
-	return match?.[1];
-};
-
 const hasBootstrapConnection = (
 	peer: PeerbitLike,
 	bootstrapPeerIds: Set<string>,
@@ -308,7 +302,7 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 			const [
 				{ detectIncognito },
 				sodiumModule,
-				{ Peerbit, resolveBootstrapAddresses },
+				{ Peerbit, getBootstrapPeerId, resolveBootstrapAddresses },
 				{ noise },
 				{ yamux },
 				{ webSockets },
@@ -486,7 +480,7 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 				} catch (err: any) {
 					const bootstrapPeerIds = new Set(
 						bootstrapTargets
-							.map((address) => extractBootstrapPeerId(address))
+							.map((address) => getBootstrapPeerId(address))
 							.filter((address): address is string => !!address),
 					);
 					if (unmounted) {

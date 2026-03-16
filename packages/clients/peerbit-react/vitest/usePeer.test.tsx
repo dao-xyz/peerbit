@@ -8,6 +8,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => {
 	return {
 		create: vi.fn(),
+		getBootstrapPeerId: vi.fn((address: string) =>
+			address.includes("/p2p/12D3KooW-bootstrap")
+				? "12D3KooW-bootstrap"
+				: address.includes("/p2p/12D3KooW-unrelated")
+					? "12D3KooW-unrelated"
+					: undefined,
+		),
 		resolveBootstrapAddresses: vi.fn(async () => [
 			"/dns4/bootstrap.peerbit.org/tcp/4003/wss/p2p/12D3KooW-bootstrap",
 		]),
@@ -31,6 +38,7 @@ vi.mock("peerbit", () => ({
 	Peerbit: {
 		create: mocks.create,
 	},
+	getBootstrapPeerId: mocks.getBootstrapPeerId,
 	resolveBootstrapAddresses: mocks.resolveBootstrapAddresses,
 }));
 
