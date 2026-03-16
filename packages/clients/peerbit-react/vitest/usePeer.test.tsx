@@ -84,7 +84,7 @@ const createPeerInstance = (options?: {
 	bootstrap?: () => Promise<
 		void | {
 			connectedPeerIds?: string[];
-			failures?: { peerId?: string; label: string[]; reason: string }[];
+			failures?: { peerId?: string; reason: string }[];
 		}
 	>;
 	stop?: () => Promise<void>;
@@ -278,7 +278,6 @@ describe("PeerProvider bootstrap handling", () => {
 					failures: [
 						{
 							peerId: "12D3KooW-other",
-							label: ["/dns4/other.peer/tcp/4003/wss/p2p/12D3KooW-other"],
 							reason: "dial timeout",
 						},
 					],

@@ -86,7 +86,7 @@ export type PeerbitLike = {
 		| void
 		| {
 				connectedPeerIds?: string[];
-				failures?: { peerId?: string; label: string[]; reason: string }[];
+				failures?: { peerId?: string; reason: string }[];
 		  }
 	>;
 	open: <S extends Program<any>>(
@@ -457,7 +457,7 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 						| void
 						| {
 								connectedPeerIds?: string[];
-								failures?: { peerId?: string; label: string[]; reason: string }[];
+								failures?: { peerId?: string; reason: string }[];
 						  }
 						| undefined = undefined;
 					if (
@@ -501,11 +501,7 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 						}
 						if ((bootstrapResult?.failures?.length ?? 0) > 0) {
 							const failureSummaries = bootstrapResult!.failures!.map((failure) => {
-								const target =
-									failure.peerId ??
-									(failure.label.length === 1
-										? failure.label[0]!
-										: failure.label.join(", "));
+								const target = failure.peerId ?? "unknown bootstrap target";
 								return `${target}: ${failure.reason}`;
 							});
 							const message =

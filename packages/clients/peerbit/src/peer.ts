@@ -82,7 +82,6 @@ export type DialOptions = {
 
 export type BootstrapFailure = {
 	peerId?: string;
-	label: string[];
 	reason: string;
 };
 
@@ -653,7 +652,6 @@ export class Peerbit implements ProgramClient {
 			} else {
 				failures.push({
 					peerId: dialTasks[i]?.peerId,
-					label: dialTasks[i]?.label ?? [],
 					reason:
 						result.reason instanceof Error
 							? result.reason.message
