@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/any-store",
-	"version": "2.2.6",
+	"version": "2.2.7",
 	"description": "Level with lazy transactions",
 	"sideEffects": false,
 	"type": "module",
