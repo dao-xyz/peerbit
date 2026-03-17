@@ -66,6 +66,13 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [6.0.6](https://github.com/dao-xyz/peerbit/compare/stream-interface-v6.0.5...stream-interface-v6.0.6) (2026-03-17)
+
+
+### Bug Fixes
+
+* **stream-interface:** accept structural public keys ([7804d37](https://github.com/dao-xyz/peerbit/commit/7804d370161a7634155f252539736c83ef657fa2))
+
 ## [6.0.5](https://github.com/dao-xyz/peerbit/compare/stream-interface-v6.0.4...stream-interface-v6.0.5) (2026-03-17)
 
 
