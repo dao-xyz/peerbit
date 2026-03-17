@@ -199,6 +199,83 @@ describe("replicator liveness", () => {
 		}
 	});
 
+	it("keeps a replicator when the broader subscriber view still sees it", async () => {
+		session = await TestSession.disconnectedMock(3);
+		await session.connect([
+			[session.peers[0], session.peers[2]],
+			[session.peers[1], session.peers[2]],
+		]);
+
+		const store = new EventStore<string, any>();
+		const db0 = await session.peers[0].open(store, {
+			args: {
+				replicate: { factor: 1 },
+				replicas: { min: 2 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		await session.peers[1].open(store.clone(), {
+			args: {
+				replicate: { factor: 1 },
+				replicas: { min: 2 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+
+		const peerHash = session.peers[1].identity.publicKey.hashcode();
+		await waitForResolved(
+			async () => expect((await db0.log.getReplicators()).size).to.equal(2),
+			{ timeout: 20_000, delayInterval: 100 },
+		);
+
+		const pubsub = session.peers[0].services.pubsub as any;
+		const originalGetSubscribers = pubsub.getSubscribers.bind(pubsub);
+		const originalGetTopicSubscribers = (db0.log as any)._getTopicSubscribers.bind(
+			db0.log,
+		);
+		const originalSend = db0.log.rpc.send.bind(db0.log.rpc);
+		let pingFailuresLeft = 2;
+		let failRecoveryRequests = true;
+		pubsub.getSubscribers = async (topic: string) => {
+			if (topic === db0.log.rpc.topic) {
+				return [];
+			}
+			return originalGetSubscribers(topic);
+		};
+		(db0.log as any)._getTopicSubscribers = async (topic: string) => {
+			if (topic === db0.log.rpc.topic) {
+				return [session.peers[1].identity.publicKey];
+			}
+			return originalGetTopicSubscribers(topic);
+		};
+		db0.log.rpc.send = async (message: any, options: any) => {
+			if (message instanceof ReplicationPingMessage && pingFailuresLeft-- > 0) {
+				throw new Error("synthetic ping miss");
+			}
+			if (
+				failRecoveryRequests &&
+				message instanceof RequestReplicationInfoMessage
+			) {
+				throw new Error("synthetic replication-info miss");
+			}
+			return originalSend(message, options);
+		};
+
+		try {
+			(db0.log as any).markReplicatorActivity(peerHash, Date.now() - 60_000);
+			await (db0.log as any).probeReplicatorLiveness(peerHash);
+			(db0.log as any).markReplicatorActivity(peerHash, Date.now() - 60_000);
+			await (db0.log as any).probeReplicatorLiveness(peerHash);
+
+			failRecoveryRequests = false;
+			expect((await db0.log.getReplicators()).size).to.equal(2);
+		} finally {
+			pubsub.getSubscribers = originalGetSubscribers;
+			(db0.log as any)._getTopicSubscribers = originalGetTopicSubscribers;
+			db0.log.rpc.send = originalSend;
+		}
+	});
+
 	it("can relearn a liveness-evicted replicator from later replication info", async () => {
 		session = await TestSession.connected(2);
 

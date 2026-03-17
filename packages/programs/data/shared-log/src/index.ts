@@ -3688,6 +3688,17 @@ export class SharedLog<
 
 	private async confirmReplicatorSubscriberPresence(peerHash: string) {
 		try {
+			const subscribers = await this._getTopicSubscribers(this.rpc.topic);
+			if (subscribers?.some((subscriber) => subscriber.hashcode() === peerHash)) {
+				return true;
+			}
+		} catch (error) {
+			if (isNotStartedError(error as Error)) {
+				return false;
+			}
+		}
+
+		try {
 			await waitForSubscribers(this.node, peerHash, this.rpc.topic, {
 				signal: this._closeController.signal,
 				timeout: Math.max(
