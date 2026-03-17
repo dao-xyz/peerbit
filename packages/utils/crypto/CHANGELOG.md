@@ -61,6 +61,14 @@
   * dependencies
     * @peerbit/cache bumped from ^2.0.5 to ^2.0.6
 
+## [3.1.0](https://github.com/dao-xyz/peerbit/compare/crypto-v3.0.1...crypto-v3.1.0) (2026-03-17)
+
+
+### Features
+
+* **crypto:** expose incremental sha256 hasher ([fbed28c](https://github.com/dao-xyz/peerbit/commit/fbed28c3a5717e30128ccc731789b5cd6dca80f6))
+* **crypto:** expose incremental sha256 hasher ([21a70eb](https://github.com/dao-xyz/peerbit/commit/21a70eb6de5bb644179dc5a3d52f56fb2bf7286d))
+
 ## [3.0.1](https://github.com/dao-xyz/peerbit/compare/crypto-v3.0.0...crypto-v3.0.1) (2026-03-15)
 
 

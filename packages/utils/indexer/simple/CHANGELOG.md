@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.5](https://github.com/dao-xyz/peerbit/compare/indexer-simple-v1.2.4...indexer-simple-v1.2.5) (2026-03-17)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-interface bumped to 3.0.2
+  * devDependencies
+    * @peerbit/indexer-tests bumped to 3.0.2
+
 ## [1.2.4](https://github.com/dao-xyz/peerbit/compare/indexer-simple-v1.2.3...indexer-simple-v1.2.4) (2026-03-15)
 
 
