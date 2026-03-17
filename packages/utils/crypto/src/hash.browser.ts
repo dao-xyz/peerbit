@@ -1,6 +1,27 @@
 import { SHA256 } from "@stablelib/sha256";
 import { toBase64 } from "./utils.js";
 
+export interface IncrementalSHA256 {
+	update(bytes: Uint8Array): IncrementalSHA256;
+	digest(): Uint8Array;
+}
+
+class StableLibIncrementalSHA256 implements IncrementalSHA256 {
+	private readonly hash = new SHA256();
+
+	update(bytes: Uint8Array): IncrementalSHA256 {
+		this.hash.update(bytes);
+		return this;
+	}
+
+	digest(): Uint8Array {
+		return this.hash.digest();
+	}
+}
+
+export const createSHA256 = (): IncrementalSHA256 =>
+	new StableLibIncrementalSHA256();
+
 export const sha256Base64 = async (bytes: Uint8Array): Promise<string> =>
 	toBase64(await sha256(bytes));
 export const sha256Base64Sync = (bytes: Uint8Array): string =>

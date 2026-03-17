@@ -2,6 +2,8 @@ import { expect } from "chai";
 import sodium from "libsodium-wrappers";
 import { equals } from "uint8arrays";
 import {
+	createSHA256,
+	createSHA256 as createSHA256Browser,
 	sha256,
 	sha256Base64,
 	sha256Base64 as sha256Base64Browser,
@@ -35,5 +37,16 @@ describe("hash", () => {
 		const data = new Uint8Array([1, 2, 3]);
 		expect(sha256Base64Sync(data)).equal(sha256Base64SyncBrowser(data));
 		expect(sha256Base64Sync(data)).equal(await sha256Base64Browser(data));
+	});
+
+	it("createSHA256", async () => {
+		const data = new Uint8Array([1, 2, 3, 4, 5, 6]);
+		const left = createSHA256().update(data.subarray(0, 3)).update(data.subarray(3)).digest();
+		const right = createSHA256Browser()
+			.update(data.subarray(0, 3))
+			.update(data.subarray(3))
+			.digest();
+		expect(equals(left, right)).to.be.true;
+		expect(equals(left, await sha256(data))).to.be.true;
 	});
 });
