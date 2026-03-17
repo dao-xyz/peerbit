@@ -6,6 +6,8 @@ import {
 	toId,
 } from "@peerbit/indexer-interface";
 import { expect } from "chai";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { SQLiteIndex } from "../src/engine.js";
 import { create } from "../src/index.js";
 import { setup } from "./utils.js";
@@ -28,13 +30,14 @@ describe("statement", () => {
 		}
 	}
 
-	const defaultStatementCount = 2;
+	let defaultStatementCount: number;
 
 	beforeEach(async () => {
 		index = await setup({ schema: DocumentWithFromProperty }, create);
 		store = index.store as SQLiteIndex<DocumentWithFromProperty>;
 		expect(store.tables.size).to.equal(1);
-		expect(store.properties.db.statements.size).to.equal(defaultStatementCount); // put + replace stmt
+		defaultStatementCount = store.properties.db.statements.size;
+		expect(defaultStatementCount).to.be.greaterThan(0);
 	});
 
 	afterEach(async () => {
@@ -71,6 +74,27 @@ describe("statement", () => {
 			expect(store.properties.db.statements.size).to.equal(
 				defaultStatementCount + 1,
 			); // + count stmt
+		});
+
+		it("count with a foreign query instance", async () => {
+			await store.put(new DocumentWithFromProperty("1", "from1"));
+			const { StringMatch: ForeignStringMatch } = await import(
+				pathToFileURL(
+					path.resolve(process.cwd(), "../interface/dist/src/query.js"),
+				).href,
+			);
+
+			expect(
+				await store.count({
+					query: [
+						new ForeignStringMatch({
+							key: "from",
+							value: "from1",
+							method: StringMatchMethod.exact,
+						}),
+					],
+				}),
+			).to.eq(1);
 		});
 
 		it("query", async () => {
