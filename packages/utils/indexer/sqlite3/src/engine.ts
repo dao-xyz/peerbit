@@ -12,6 +12,8 @@ import {
 	MissingFieldError,
 	type Table,
 	buildJoin,
+	coerceLocalQueries,
+	coerceLocalSorts,
 	convertCountRequestToQuery,
 	convertDeleteRequestToQuery,
 	convertFromSQLType,
@@ -582,8 +584,8 @@ export class SQLiteIndex<T extends Record<string, any>>
 		let sqlFetch: string | undefined = undefined;
 
 		const normalizedQuery = new PlannableQuery({
-			query: types.toQuery(request?.query),
-			sort: request?.sort,
+			query: coerceLocalQueries(request?.query),
+			sort: coerceLocalSorts(request?.sort),
 		});
 		let planningScope: ReturnType<QueryPlanner["scope"]>;
 

@@ -58,6 +58,53 @@ export type BindableValue =
 let JSON_GROUP_ARRAY = "json_group_array";
 let JSON_OBJECT = "distinct json_object";
 
+const coerceLocalQuery = (query: types.Query): types.Query => {
+	if (query instanceof types.Query) {
+		return query;
+	}
+	return deserialize(serialize(query), types.Query);
+};
+
+export const coerceLocalQueries = (
+	query?:
+		| types.Query[]
+		| types.Query
+		| Record<string, string | number | bigint | Uint8Array | boolean | null | undefined>,
+): types.Query[] => {
+	if (!query) {
+		return [];
+	}
+	if (Array.isArray(query)) {
+		return query.map((entry) => coerceLocalQuery(entry));
+	}
+	if (query instanceof types.Query) {
+		return [query];
+	}
+	try {
+		return [coerceLocalQuery(query as unknown as types.Query)];
+	} catch {
+		return types.toQuery(query).map((entry) => coerceLocalQuery(entry));
+	}
+};
+
+export const coerceLocalSorts = (
+	sort?: types.Sort[] | types.Sort,
+): types.Sort[] | types.Sort | undefined => {
+	if (!sort) {
+		return undefined;
+	}
+	if (Array.isArray(sort)) {
+		return sort.map((entry) =>
+			entry instanceof types.Sort
+				? entry
+				: deserialize(serialize(entry), types.Sort),
+		);
+	}
+	return sort instanceof types.Sort
+		? sort
+		: deserialize(serialize(sort), types.Sort);
+};
+
 export const u64ToI64 = (u64: bigint | number) => {
 	return (typeof u64 === "number" ? BigInt(u64) : u64) - 9223372036854775808n;
 };
@@ -1521,7 +1568,7 @@ export const convertDeleteRequestToQuery = (
 ): { sql: string; bindable: any[] } => {
 	const { query, bindable } = convertRequestToQuery(
 		"delete",
-		{ query: types.toQuery(request.query) },
+		{ query: coerceLocalQueries(request.query) },
 		tables,
 		table,
 	);
@@ -1538,7 +1585,7 @@ export const convertSumRequestToQuery = (
 ): { sql: string; bindable: any[] } => {
 	const { query, bindable } = convertRequestToQuery(
 		"sum",
-		{ query: types.toQuery(request.query), key: request.key },
+		{ query: coerceLocalQueries(request.query), key: request.key },
 		tables,
 		table,
 	);
@@ -1563,7 +1610,7 @@ export const convertCountRequestToQuery = (
 ): { sql: string; bindable: any[] } => {
 	const { query, bindable } = convertRequestToQuery(
 		"count",
-		{ query: request?.query ? types.toQuery(request.query) : undefined },
+		{ query: coerceLocalQueries(request?.query) },
 		tables,
 		table,
 	);
@@ -1645,6 +1692,12 @@ export const convertSearchRequestToQuery = (
 		planner?: PlanningSession;
 	},
 ): { sql: string; bindable: any[] } => {
+	const normalizedRequest = request
+		? {
+				query: coerceLocalQueries(request.query),
+				sort: coerceLocalSorts(request.sort),
+			}
+		: undefined;
 	let unionBuilder = "";
 	let orderByClause: string = "";
 
@@ -1659,7 +1712,7 @@ export const convertSearchRequestToQuery = (
 
 		try {
 			const { orderByBuilder } = buildOrderBy(
-				request?.sort,
+				normalizedRequest?.sort,
 				tables,
 				table,
 				joins,
@@ -1689,7 +1742,7 @@ export const convertSearchRequestToQuery = (
 
 		const selectQuery = generateSelectQuery(table, selects);
 
-		for (const flattenRequest of flattenQuery(request)) {
+		for (const flattenRequest of flattenQuery(normalizedRequest)) {
 			try {
 				const { query, bindable } = convertRequestToQuery(
 					"iterate",
@@ -1799,7 +1852,7 @@ const convertRequestToQuery = <
 
 	getOrSetRootTable(joinBuilder, table);
 
-	const coercedQuery = types.toQuery(request?.query);
+	const coercedQuery = coerceLocalQueries(request?.query);
 	if (coercedQuery.length === 1) {
 		const { where, bindable } = convertQueryToSQLQuery(
 			coercedQuery[0],
