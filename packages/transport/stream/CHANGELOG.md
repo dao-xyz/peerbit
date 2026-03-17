@@ -43,6 +43,20 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [5.0.6](https://github.com/dao-xyz/peerbit/compare/stream-v5.0.5...stream-v5.0.6) (2026-03-17)
+
+
+### Bug Fixes
+
+* **stream-interface:** accept structural public keys ([7804d37](https://github.com/dao-xyz/peerbit/commit/7804d370161a7634155f252539736c83ef657fa2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream-interface bumped to 6.0.6
+
 ## [5.0.5](https://github.com/dao-xyz/peerbit/compare/stream-v5.0.4...stream-v5.0.5) (2026-03-17)
 
 
