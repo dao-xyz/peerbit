@@ -389,6 +389,14 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.0.14](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.13...shared-log-v13.0.14) (2026-03-17)
+
+
+### Bug Fixes
+
+* **shared-log:** keep visible replicators during liveness churn ([f9d52c7](https://github.com/dao-xyz/peerbit/commit/f9d52c7a9376f5567794c6d6f2b16135fcd30e2b))
+* **shared-log:** keep visible replicators during liveness churn ([f0e5012](https://github.com/dao-xyz/peerbit/commit/f0e501276e2f03092ffa066e56485ffde7e08658))
+
 ## [13.0.13](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.12...shared-log-v13.0.13) (2026-03-16)
 
 
