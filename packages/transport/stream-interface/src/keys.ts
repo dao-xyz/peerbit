@@ -8,8 +8,15 @@ export type PeerRefs =
 	| Set<string>
 	| IterableIterator<PeerRef>;
 
+const isPublicSignKeyLike = (value: unknown): value is PublicSignKey =>
+	value instanceof PublicSignKey ||
+	(!!value &&
+		typeof value === "object" &&
+		typeof (value as PublicSignKey).hashcode === "function" &&
+		(value as PublicSignKey).bytes instanceof Uint8Array);
+
 export const coercePeerRefToHash = (to: PeerRef) => {
-	return to instanceof PublicSignKey
+	return isPublicSignKeyLike(to)
 		? to.hashcode()
 		: typeof to === "string"
 			? to
@@ -19,7 +26,7 @@ export const coercePeerRefToHash = (to: PeerRef) => {
 export const coercePeerRefsToHashes = (tos: PeerRefs) => {
 	if (
 		isPeerId(tos) ||
-		tos instanceof PublicSignKey ||
+		isPublicSignKeyLike(tos) ||
 		typeof tos === "string"
 	) {
 		return [coercePeerRefToHash(tos)];
