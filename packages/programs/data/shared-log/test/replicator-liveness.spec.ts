@@ -1,3 +1,4 @@
+import type { PublicSignKey } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -6,6 +7,17 @@ import {
 	RequestReplicationInfoMessage,
 } from "../src/replication.js";
 import { EventStore } from "./utils/stores/index.js";
+
+type LivenessTestStore = EventStore<string, any>;
+type LivenessTestHooks = {
+	probeReplicatorLiveness(peerHash: string): Promise<void>;
+	markReplicatorActivity(peerHash: string, now?: number): void;
+	_getTopicSubscribers(topic: string): Promise<PublicSignKey[] | undefined>;
+	confirmReplicatorSubscriberPresence(peerHash: string): Promise<boolean>;
+};
+
+const getLivenessTestHooks = (store: LivenessTestStore): LivenessTestHooks =>
+	store.log as unknown as LivenessTestHooks;
 
 describe("replicator liveness", () => {
 	let session: TestSession;
@@ -86,10 +98,12 @@ describe("replicator liveness", () => {
 			{ timeout: 20_000, delayInterval: 100 },
 		);
 
+		const hooks = getLivenessTestHooks(db0);
 		const originalSend = db0.log.rpc.send.bind(db0.log.rpc);
 		let pingFailuresLeft = 1;
 		let failRecoveryRequests = true;
-		db0.log.rpc.send = async (message: any, _options: any) => {
+		db0.log.rpc.send = async (...args: Parameters<typeof originalSend>) => {
+			const [message] = args;
 			if (message instanceof ReplicationPingMessage && pingFailuresLeft-- > 0) {
 				throw new Error("synthetic ping miss");
 			}
@@ -99,15 +113,15 @@ describe("replicator liveness", () => {
 			) {
 				throw new Error("synthetic replication-info miss");
 			}
-			return originalSend(message, _options);
+			return originalSend(...args);
 		};
 
 		try {
-			await (db0.log as any).probeReplicatorLiveness(peerHash);
+			await hooks.probeReplicatorLiveness(peerHash);
 			expect((await db0.log.getReplicators()).size).to.equal(2);
 
 			failRecoveryRequests = false;
-			await (db0.log as any).probeReplicatorLiveness(peerHash);
+			await hooks.probeReplicatorLiveness(peerHash);
 			expect((await db0.log.getReplicators()).size).to.equal(2);
 		} finally {
 			db0.log.rpc.send = originalSend;
@@ -137,18 +151,20 @@ describe("replicator liveness", () => {
 			{ timeout: 20_000, delayInterval: 100 },
 		);
 
+		const hooks = getLivenessTestHooks(db0);
 		const originalSend = db0.log.rpc.send.bind(db0.log.rpc);
 		let pingAttempts = 0;
-		db0.log.rpc.send = async (message: any, options: any) => {
+		db0.log.rpc.send = async (...args: Parameters<typeof originalSend>) => {
+			const [message] = args;
 			if (message instanceof ReplicationPingMessage) {
 				pingAttempts++;
 			}
-			return originalSend(message, options);
+			return originalSend(...args);
 		};
 
 		try {
-			(db0.log as any).markReplicatorActivity(peerHash);
-			await (db0.log as any).probeReplicatorLiveness(peerHash);
+			hooks.markReplicatorActivity(peerHash);
+			await hooks.probeReplicatorLiveness(peerHash);
 			expect(pingAttempts).to.equal(0);
 			expect((await db0.log.getReplicators()).size).to.equal(2);
 		} finally {
@@ -179,22 +195,102 @@ describe("replicator liveness", () => {
 			{ timeout: 20_000, delayInterval: 100 },
 		);
 
+		const hooks = getLivenessTestHooks(db0);
 		const originalSend = db0.log.rpc.send.bind(db0.log.rpc);
 		let pingFailuresLeft = 2;
-		db0.log.rpc.send = async (message: any, options: any) => {
+		db0.log.rpc.send = async (...args: Parameters<typeof originalSend>) => {
+			const [message] = args;
 			if (message instanceof ReplicationPingMessage && pingFailuresLeft-- > 0) {
 				throw new Error("synthetic ping miss");
 			}
-			return originalSend(message, options);
+			return originalSend(...args);
 		};
 
 		try {
-			(db0.log as any).markReplicatorActivity(peerHash, Date.now() - 60_000);
-			await (db0.log as any).probeReplicatorLiveness(peerHash);
-			(db0.log as any).markReplicatorActivity(peerHash, Date.now() - 60_000);
-			await (db0.log as any).probeReplicatorLiveness(peerHash);
+			hooks.markReplicatorActivity(peerHash, Date.now() - 60_000);
+			await hooks.probeReplicatorLiveness(peerHash);
+			hooks.markReplicatorActivity(peerHash, Date.now() - 60_000);
+			await hooks.probeReplicatorLiveness(peerHash);
 			expect((await db0.log.getReplicators()).size).to.equal(2);
 		} finally {
+			db0.log.rpc.send = originalSend;
+		}
+	});
+
+	it("keeps a replicator when the broader subscriber view still sees it", async () => {
+		session = await TestSession.disconnectedMock(3);
+		await session.connect([
+			[session.peers[0], session.peers[2]],
+			[session.peers[1], session.peers[2]],
+		]);
+
+		const store = new EventStore<string, any>();
+		const db0 = await session.peers[0].open(store, {
+			args: {
+				replicate: { factor: 1 },
+				replicas: { min: 2 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		await session.peers[1].open(store.clone(), {
+			args: {
+				replicate: { factor: 1 },
+				replicas: { min: 2 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+
+		const peerHash = session.peers[1].identity.publicKey.hashcode();
+		await waitForResolved(
+			async () => expect((await db0.log.getReplicators()).size).to.equal(2),
+			{ timeout: 20_000, delayInterval: 100 },
+		);
+
+		const hooks = getLivenessTestHooks(db0);
+		const pubsub = session.peers[0].services.pubsub;
+		const originalGetSubscribers = pubsub.getSubscribers.bind(pubsub);
+		const originalGetTopicSubscribers =
+			hooks._getTopicSubscribers.bind(hooks);
+		const originalSend = db0.log.rpc.send.bind(db0.log.rpc);
+		let pingFailuresLeft = 2;
+		let failRecoveryRequests = true;
+		pubsub.getSubscribers = (topic: string) => {
+			if (topic === db0.log.rpc.topic) {
+				return [];
+			}
+			return originalGetSubscribers(topic);
+		};
+		hooks._getTopicSubscribers = async (topic: string) => {
+			if (topic === db0.log.rpc.topic) {
+				return [session.peers[1].identity.publicKey];
+			}
+			return originalGetTopicSubscribers(topic);
+		};
+		db0.log.rpc.send = async (...args: Parameters<typeof originalSend>) => {
+			const [message] = args;
+			if (message instanceof ReplicationPingMessage && pingFailuresLeft-- > 0) {
+				throw new Error("synthetic ping miss");
+			}
+			if (
+				failRecoveryRequests &&
+				message instanceof RequestReplicationInfoMessage
+			) {
+				throw new Error("synthetic replication-info miss");
+			}
+			return originalSend(...args);
+		};
+
+		try {
+			hooks.markReplicatorActivity(peerHash, Date.now() - 60_000);
+			await hooks.probeReplicatorLiveness(peerHash);
+			hooks.markReplicatorActivity(peerHash, Date.now() - 60_000);
+			await hooks.probeReplicatorLiveness(peerHash);
+
+			failRecoveryRequests = false;
+			expect((await db0.log.getReplicators()).size).to.equal(2);
+		} finally {
+			pubsub.getSubscribers = originalGetSubscribers;
+			hooks._getTopicSubscribers = originalGetTopicSubscribers;
 			db0.log.rpc.send = originalSend;
 		}
 	});
@@ -238,12 +334,14 @@ describe("replicator liveness", () => {
 			{ timeout: 20_000, delayInterval: 100 },
 		);
 
+		const hooks = getLivenessTestHooks(db0);
 		const originalSend = db0.log.rpc.send.bind(db0.log.rpc);
-		const originalConfirmSubscriberPresence = (db0.log as any)
-			.confirmReplicatorSubscriberPresence.bind(db0.log);
+		const originalConfirmSubscriberPresence =
+			hooks.confirmReplicatorSubscriberPresence.bind(hooks);
 		let pingFailuresLeft = 2;
 		let failRecoveryRequests = true;
-		db0.log.rpc.send = async (message: any, _options: any) => {
+		db0.log.rpc.send = async (...args: Parameters<typeof originalSend>) => {
+			const [message] = args;
 			if (message instanceof ReplicationPingMessage && pingFailuresLeft-- > 0) {
 				throw new Error("synthetic ping miss");
 			}
@@ -253,15 +351,15 @@ describe("replicator liveness", () => {
 			) {
 				throw new Error("synthetic replication-info miss");
 			}
-			return originalSend(message, _options);
+			return originalSend(...args);
 		};
-		(db0.log as any).confirmReplicatorSubscriberPresence = async () => false;
+		hooks.confirmReplicatorSubscriberPresence = async () => false;
 
 		try {
-			(db0.log as any).markReplicatorActivity(peerHash, Date.now() - 60_000);
-			await (db0.log as any).probeReplicatorLiveness(peerHash);
-			(db0.log as any).markReplicatorActivity(peerHash, Date.now() - 60_000);
-			await (db0.log as any).probeReplicatorLiveness(peerHash);
+			hooks.markReplicatorActivity(peerHash, Date.now() - 60_000);
+			await hooks.probeReplicatorLiveness(peerHash);
+			hooks.markReplicatorActivity(peerHash, Date.now() - 60_000);
+			await hooks.probeReplicatorLiveness(peerHash);
 
 			await waitForResolved(
 				async () => expect((await db0.log.getReplicators()).size).to.equal(1),
@@ -270,7 +368,7 @@ describe("replicator liveness", () => {
 			expect(leaveEvents).to.deep.equal([peerHash]);
 
 			failRecoveryRequests = false;
-			(db0.log as any).confirmReplicatorSubscriberPresence =
+			hooks.confirmReplicatorSubscriberPresence =
 				originalConfirmSubscriberPresence;
 			await db1.log.replicate({ factor: 1 }, { reset: true });
 
@@ -286,7 +384,7 @@ describe("replicator liveness", () => {
 			);
 		} finally {
 			db0.log.rpc.send = originalSend;
-			(db0.log as any).confirmReplicatorSubscriberPresence =
+			hooks.confirmReplicatorSubscriberPresence =
 				originalConfirmSubscriberPresence;
 		}
 	});
