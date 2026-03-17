@@ -1030,17 +1030,31 @@ describe("streams", function () {
 						Error,
 					);
 
-				await delay(1500);
+					const publicKey = session.peers[0].services.directstream.publicKey;
+					const structuralKey = {
+						bytes: publicKey.bytes,
+						hashcode: () => publicKey.hashcode(),
+						toPeerId: () => publicKey.toPeerId(),
+					} as unknown as typeof publicKey;
 
-				expect(receivedData).to.have.length(0);
-				await session.peers[0].services.directstream.publish(undefined, {
-					mode: new AcknowledgeAnyWhere({ redundancy: 1 }),
-				});
+					expect(
+						new AcknowledgeDelivery({
+							to: [structuralKey],
+							redundancy: 1,
+						}).to,
+					).to.deep.equal([publicKey.hashcode()]);
 
-				await waitForResolved(() =>
-					expect(receivedMessages).to.deep.equal([undefined]),
-				);
-				await waitForResolved(() => expect(receivedData).to.deep.equal([]));
+					await delay(1500);
+
+					expect(receivedData).to.have.length(0);
+					await session.peers[0].services.directstream.publish(undefined, {
+						mode: new AcknowledgeAnyWhere({ redundancy: 1 }),
+					});
+
+					await waitForResolved(() =>
+						expect(receivedMessages).to.deep.equal([undefined]),
+					);
+					await waitForResolved(() => expect(receivedData).to.deep.equal([]));
 			});
 
 			it("send to only self will throw", async () => {
