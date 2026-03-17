@@ -1,4 +1,4 @@
-import { randomBytes } from "@peerbit/crypto";
+import { type PublicSignKey, randomBytes } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -87,6 +87,38 @@ describe("events", () => {
 		);
 
 		expect(responseMap.get(entryHash)).to.be.undefined;
+	});
+
+	it("accepts structural public keys when removing replicators", async () => {
+		session = await TestSession.connected(2);
+
+		const db1 = await session.peers[0].open(new EventStore(), {
+			args: { replicate: 1 },
+		});
+		const peerKey = session.peers[1].identity.publicKey as PublicSignKey & {
+			publicKey?: Uint8Array;
+		};
+		const foreignKey = {
+			publicKey: peerKey.publicKey,
+			hashcode: () => peerKey.hashcode(),
+			toString: () => peerKey.toString(),
+			get bytes() {
+				return peerKey.bytes;
+			},
+		} as unknown as PublicSignKey;
+
+		const changes: string[] = [];
+		db1.log.events.addEventListener("replication:change", (event) => {
+			changes.push(event.detail.publicKey.hashcode());
+		});
+
+		await (
+			db1.log as unknown as {
+				removeReplicator(key: PublicSignKey): Promise<void>;
+			}
+		).removeReplicator(foreignKey);
+
+		expect(changes).to.deep.equal([peerKey.hashcode()]);
 	});
 
 	it("replicate:join not emitted on update", async () => {

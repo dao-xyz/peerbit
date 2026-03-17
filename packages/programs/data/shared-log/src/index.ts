@@ -4,7 +4,9 @@ import { cidifyString } from "@peerbit/blocks-interface";
 import { Cache } from "@peerbit/cache";
 import {
 	AccessError,
+	Ed25519PublicKey,
 	PublicSignKey,
+	Secp256k1PublicKey,
 	getPublicKeyFromPeerId,
 	sha256Base64Sync,
 	sha256Sync,
@@ -159,6 +161,46 @@ import type {
 import { RatelessIBLTSynchronizer } from "./sync/rateless-iblt.js";
 import { SimpleSyncronizer } from "./sync/simple.js";
 import { groupByGid } from "./utils.js";
+
+const toLocalPublicSignKey = (
+	key: PublicSignKey | string,
+): PublicSignKey | undefined => {
+	if (typeof key === "string") {
+		return undefined;
+	}
+	if (key instanceof PublicSignKey) {
+		return key;
+	}
+
+	try {
+		return deserialize(serialize(key), PublicSignKey);
+	} catch {
+		const publicKey = (key as { publicKey?: unknown }).publicKey;
+		const publicKeyBytes =
+			publicKey instanceof Uint8Array
+				? publicKey
+				: ArrayBuffer.isView(publicKey)
+					? new Uint8Array(
+							publicKey.buffer,
+							publicKey.byteOffset,
+							publicKey.byteLength,
+						)
+					: undefined;
+
+		if (publicKeyBytes?.byteLength === 32) {
+			return new Ed25519PublicKey({
+				publicKey: new Uint8Array(publicKeyBytes),
+			});
+		}
+		if (publicKeyBytes?.byteLength === 33) {
+			return new Secp256k1PublicKey({
+				publicKey: new Uint8Array(publicKeyBytes),
+			});
+		}
+
+		return undefined;
+	}
+};
 
 export {
 	type ReplicationDomain,
@@ -1905,10 +1947,11 @@ export class SharedLog<
 		}
 
 		if (options?.noEvent !== true) {
-			if (key instanceof PublicSignKey) {
+			const publicKey = toLocalPublicSignKey(key);
+			if (publicKey) {
 				this.events.dispatchEvent(
 					new CustomEvent<ReplicationChangeEvent>("replication:change", {
-						detail: { publicKey: key },
+						detail: { publicKey },
 					}),
 				);
 			} else {
