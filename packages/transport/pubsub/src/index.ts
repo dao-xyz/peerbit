@@ -255,7 +255,10 @@ export class TopicControlPlane
 	private readonly shardCount: number;
 	private readonly shardTopicPrefix: string;
 	private readonly hostShards: boolean;
-	private readonly shardRootCache = new Map<string, string>();
+	private readonly shardRootCache = new Map<
+		string,
+		{ root: string; authoritative: boolean }
+	>();
 	private readonly shardTopicCache = new Map<string, string>();
 	private readonly shardRefCounts = new Map<string, number>();
 	private readonly pinnedShards = new Set<string>();
@@ -932,12 +935,39 @@ export class TopicControlPlane
 		return shardTopic;
 	}
 
+	private async resolveTopicRootState(
+		topic: string,
+	): Promise<{ root?: string; authoritative: boolean }> {
+		const tracked = await this.topicRootControlPlane.resolveTrackedTopicRoot(topic);
+		if (tracked) {
+			return { root: tracked, authoritative: true };
+		}
+
+		const resolvedThroughPeers = await this.resolveTopicRootThroughPeers(topic);
+		if (resolvedThroughPeers) {
+			return { root: resolvedThroughPeers, authoritative: true };
+		}
+
+		const deterministic = this.topicRootControlPlane.resolveDeterministicTopicRoot(topic);
+		if (
+			deterministic === this.publicKeyHash &&
+			this.autoTopicRootCandidates &&
+			this.getConnectedTopicRootTrackers().length > 0
+		) {
+			for (let attempt = 0; attempt < 8; attempt++) {
+				await delay(150 * (attempt < 4 ? 1 : 2));
+				const retried = await this.resolveTopicRootThroughPeers(topic);
+				if (retried) {
+					return { root: retried, authoritative: true };
+				}
+			}
+		}
+
+		return { root: deterministic, authoritative: false };
+	}
+
 	public async resolveTopicRoot(topic: string): Promise<string | undefined> {
-		return (
-			(await this.topicRootControlPlane.resolveTrackedTopicRoot(topic)) ??
-			(await this.resolveTopicRootThroughPeers(topic)) ??
-			this.topicRootControlPlane.resolveDeterministicTopicRoot(topic)
-		);
+		return (await this.resolveTopicRootState(topic)).root;
 	}
 
 	private async resolveShardRoot(shardTopic: string): Promise<string> {
@@ -948,16 +978,26 @@ export class TopicControlPlane
 			this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured();
 		}
 
+		const hasConnectedTrackers = this.getConnectedTopicRootTrackers().length > 0;
 		const cached = this.shardRootCache.get(shardTopic);
-		if (cached) return cached;
-		const resolved = await this.resolveTopicRoot(shardTopic);
-		if (!resolved) {
+		if (cached && (cached.authoritative || !hasConnectedTrackers)) {
+			return cached.root;
+		}
+		const resolved = await this.resolveTopicRootState(shardTopic);
+		if (!resolved.root) {
 			throw new Error(
 				`No root resolved for shard topic ${shardTopic}. Configure TopicRootControlPlane candidates/resolver/trackers, or dial/bootstrap a peer that can resolve shard roots.`,
 			);
 		}
-		this.shardRootCache.set(shardTopic, resolved);
-		return resolved;
+		if (resolved.authoritative || !hasConnectedTrackers) {
+			this.shardRootCache.set(shardTopic, resolved as {
+				root: string;
+				authoritative: boolean;
+			});
+		} else {
+			this.shardRootCache.delete(shardTopic);
+		}
+		return resolved.root;
 	}
 
 	private getConnectedTopicRootTrackers(): PeerStreams[] {
@@ -1048,10 +1088,21 @@ export class TopicControlPlane
 	private async resolveTopicRootThroughPeers(
 		topic: string,
 	): Promise<string | undefined> {
-		for (const peer of this.getConnectedTopicRootTrackers()) {
-			const resolved = await this.queryTopicRootFromPeer(peer, topic);
-			if (resolved) {
-				return resolved;
+		const peers = this.getConnectedTopicRootTrackers();
+		if (peers.length === 0) {
+			return undefined;
+		}
+
+		for (let attempt = 0; attempt < 3; attempt++) {
+			for (const peer of peers) {
+				const resolved = await this.queryTopicRootFromPeer(peer, topic);
+				if (resolved) {
+					return resolved;
+				}
+			}
+
+			if (attempt < 2) {
+				await delay(150 * (attempt + 1));
 			}
 		}
 		return undefined;
