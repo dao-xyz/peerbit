@@ -780,6 +780,10 @@ export class Peerbit implements ProgramClient {
 
 	public async fanoutResolveRoot(topic: string): Promise<string> {
 		const servicesAny: any = this.services as any;
+		const resolvedViaPubsub = await servicesAny?.pubsub?.resolveTopicRoot?.(topic);
+		if (resolvedViaPubsub) {
+			return resolvedViaPubsub;
+		}
 		const topicRootControlPlane =
 			servicesAny?.fanout?.topicRootControlPlane ||
 			servicesAny?.pubsub?.topicRootControlPlane;

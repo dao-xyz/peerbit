@@ -118,7 +118,9 @@ const DEFAULT_PUBSUB_SHARD_COUNT = 256;
 const PUBSUB_SHARD_COUNT_HARD_CAP = 16_384;
 const DEFAULT_PUBSUB_SHARD_TOPIC_PREFIX = "/peerbit/pubsub-shard/1/";
 const AUTO_TOPIC_ROOT_CANDIDATES_MAX = 64;
-const DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS = 1_000;
+// Topic-root queries may need to wait for the responder to finish opening an
+// outbound stream back to the requester after an inbound-only dial.
+const DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS = 12_000;
 
 const DEFAULT_PUBSUB_FANOUT_CHANNEL_OPTIONS: Omit<
 	FanoutTreeChannelOptions,
@@ -930,6 +932,14 @@ export class TopicControlPlane
 		return shardTopic;
 	}
 
+	public async resolveTopicRoot(topic: string): Promise<string | undefined> {
+		return (
+			(await this.topicRootControlPlane.resolveTrackedTopicRoot(topic)) ??
+			(await this.resolveTopicRootThroughPeers(topic)) ??
+			this.topicRootControlPlane.resolveDeterministicTopicRoot(topic)
+		);
+	}
+
 	private async resolveShardRoot(shardTopic: string): Promise<string> {
 		// If someone configured topic-root candidates externally (e.g. TestSession router
 		// selection or Peerbit.bootstrap) after this peer entered auto mode, disable auto
@@ -940,10 +950,7 @@ export class TopicControlPlane
 
 		const cached = this.shardRootCache.get(shardTopic);
 		if (cached) return cached;
-		const resolved =
-			(await this.topicRootControlPlane.resolveTrackedTopicRoot(shardTopic)) ??
-			(await this.resolveTopicRootThroughPeers(shardTopic)) ??
-			this.topicRootControlPlane.resolveDeterministicTopicRoot(shardTopic);
+		const resolved = await this.resolveTopicRoot(shardTopic);
 		if (!resolved) {
 			throw new Error(
 				`No root resolved for shard topic ${shardTopic}. Configure TopicRootControlPlane candidates/resolver/trackers, or dial/bootstrap a peer that can resolve shard roots.`,
