@@ -548,16 +548,6 @@ export class TopicControlPlane
 		return peer;
 	}
 
-	protected override async _removePeer(
-		publicKey: PublicSignKey,
-	): Promise<PeerStreams | undefined> {
-		const removed = await super._removePeer(publicKey);
-		if (removed) {
-			this.maybePruneAutoTopicRootCandidate(publicKey.hashcode());
-		}
-		return removed;
-	}
-
 	private maybeDisableAutoTopicRootCandidatesIfExternallyConfigured(): boolean {
 		if (!this.autoTopicRootCandidates) return false;
 
@@ -1801,7 +1791,6 @@ export class TopicControlPlane
 
 	public override onPeerUnreachable(publicKeyHash: string) {
 		super.onPeerUnreachable(publicKeyHash);
-		this.maybePruneAutoTopicRootCandidate(publicKeyHash);
 		const key = this.peerKeyHashToPublicKey.get(publicKeyHash);
 		if (!key) {
 			return;
@@ -1825,38 +1814,6 @@ export class TopicControlPlane
 				.announcePeerUnavailable(publicKeyHash, batches)
 				.catch(logErrorIfStarted);
 		}
-	}
-
-	private maybePruneAutoTopicRootCandidate(peerHash: string): boolean {
-		if (!this.autoTopicRootCandidates) return false;
-		if (!peerHash || peerHash === this.publicKeyHash) return false;
-
-		if (this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured()) {
-			return false;
-		}
-
-		const managed = this.autoTopicRootCandidateSet;
-		if (!managed?.has(peerHash)) {
-			return false;
-		}
-
-		const before = this.topicRootControlPlane.getTopicRootCandidates();
-		managed.delete(peerHash);
-		const next = this.normalizeAutoTopicRootCandidates([...managed]);
-		if (
-			before.length === next.length &&
-			before.every((candidate, index) => candidate === next[index])
-		) {
-			return false;
-		}
-
-		this.autoTopicRootCandidateSet = new Set(next);
-		this.topicRootControlPlane.setTopicRootCandidates(next);
-		this.shardRootCache.clear();
-		this.scheduleReconcileShardOverlays();
-		this.scheduleHostOwnedShardRoots();
-		this.scheduleAutoTopicRootCandidatesBroadcast();
-		return true;
 	}
 
 	private collectSubscriptionState(peerHash: string) {
