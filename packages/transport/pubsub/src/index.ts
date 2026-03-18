@@ -17,6 +17,8 @@ import {
 	SubscriptionData,
 	SubscriptionEvent,
 	TopicRootCandidates,
+	TopicRootQuery,
+	TopicRootQueryResponse,
 	UnsubcriptionEvent,
 	type UnsubscriptionReason,
 	Unsubscribe,
@@ -116,6 +118,7 @@ const DEFAULT_PUBSUB_SHARD_COUNT = 256;
 const PUBSUB_SHARD_COUNT_HARD_CAP = 16_384;
 const DEFAULT_PUBSUB_SHARD_TOPIC_PREFIX = "/peerbit/pubsub-shard/1/";
 const AUTO_TOPIC_ROOT_CANDIDATES_MAX = 64;
+const DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS = 1_000;
 
 const DEFAULT_PUBSUB_FANOUT_CHANNEL_OPTIONS: Omit<
 	FanoutTreeChannelOptions,
@@ -297,6 +300,15 @@ export class TopicControlPlane
 			idleCloseTimeout?: ReturnType<typeof setTimeout>;
 		}
 	>();
+	private pendingTopicRootQueries = new Map<
+		number,
+		{
+			topic: string;
+			resolve: (root: string | undefined) => void;
+			timer: ReturnType<typeof setTimeout>;
+		}
+	>();
+	private nextTopicRootQueryId = 1;
 
 	constructor(
 		components: TopicControlPlaneComponents,
@@ -489,6 +501,11 @@ export class TopicControlPlane
 		this.shardTopicCache.clear();
 		this.shardRefCounts.clear();
 		this.pinnedShards.clear();
+		for (const pending of this.pendingTopicRootQueries.values()) {
+			clearTimeout(pending.timer);
+			pending.resolve(undefined);
+		}
+		this.pendingTopicRootQueries.clear();
 
 		this.debounceSubscribeAggregator.close();
 		this.debounceUnsubscribeAggregator.close();
@@ -529,6 +546,16 @@ export class TopicControlPlane
 			this.scheduleAutoTopicRootCandidatesBroadcast([peer]);
 		}
 		return peer;
+	}
+
+	protected override async _removePeer(
+		publicKey: PublicSignKey,
+	): Promise<PeerStreams | undefined> {
+		const removed = await super._removePeer(publicKey);
+		if (removed) {
+			this.maybePruneAutoTopicRootCandidate(publicKey.hashcode());
+		}
+		return removed;
 	}
 
 	private maybeDisableAutoTopicRootCandidatesIfExternallyConfigured(): boolean {
@@ -924,14 +951,113 @@ export class TopicControlPlane
 		const cached = this.shardRootCache.get(shardTopic);
 		if (cached) return cached;
 		const resolved =
-			await this.topicRootControlPlane.resolveTopicRoot(shardTopic);
+			(await this.topicRootControlPlane.resolveTrackedTopicRoot(shardTopic)) ??
+			(await this.resolveTopicRootThroughPeers(shardTopic)) ??
+			this.topicRootControlPlane.resolveDeterministicTopicRoot(shardTopic);
 		if (!resolved) {
 			throw new Error(
-				`No root resolved for shard topic ${shardTopic}. Configure TopicRootControlPlane candidates/resolver/trackers.`,
+				`No root resolved for shard topic ${shardTopic}. Configure TopicRootControlPlane candidates/resolver/trackers, or dial/bootstrap a peer that can resolve shard roots.`,
 			);
 		}
 		this.shardRootCache.set(shardTopic, resolved);
 		return resolved;
+	}
+
+	private getConnectedTopicRootTrackers(): PeerStreams[] {
+		return [...this.peers.values()]
+			.filter((peer) => peer.isReadable || peer.isWritable)
+			.sort((a, b) =>
+				a.publicKey.hashcode() < b.publicKey.hashcode()
+					? -1
+					: a.publicKey.hashcode() > b.publicKey.hashcode()
+						? 1
+						: 0,
+			);
+	}
+
+	private nextTopicRootRequestIdValue() {
+		let requestId = this.nextTopicRootQueryId >>> 0;
+		do {
+			requestId = requestId === 0 ? 1 : requestId;
+			this.nextTopicRootQueryId = ((requestId + 1) >>> 0) || 1;
+			if (!this.pendingTopicRootQueries.has(requestId)) {
+				return requestId;
+			}
+			requestId = this.nextTopicRootQueryId >>> 0;
+		} while (true);
+	}
+
+	private async sendDirectControlMessage(
+		peer: PeerStreams,
+		pubsubMessage: PubSubMessage,
+	) {
+		const embedded = await this.createMessage(toUint8Array(pubsubMessage.bytes()), {
+			mode: new SilentDelivery({
+				to: [peer.publicKey.hashcode()],
+				redundancy: 1,
+			}),
+			priority: 1,
+			skipRecipientValidation: true,
+		} as any);
+		await this.publishMessage(this.publicKey, embedded, [peer]);
+	}
+
+	private resolvePendingTopicRootQuery(
+		message: TopicRootQueryResponse,
+	): boolean {
+		const pending = this.pendingTopicRootQueries.get(message.requestId);
+		if (!pending || pending.topic !== message.topic) {
+			return false;
+		}
+		this.pendingTopicRootQueries.delete(message.requestId);
+		clearTimeout(pending.timer);
+		pending.resolve(message.root);
+		return true;
+	}
+
+	private async queryTopicRootFromPeer(
+		peer: PeerStreams,
+		topic: string,
+	): Promise<string | undefined> {
+		if (!this.started || this.stopping) return undefined;
+
+		const requestId = this.nextTopicRootRequestIdValue();
+		const responsePromise = new Promise<string | undefined>((resolve) => {
+			const timer = setTimeout(() => {
+				this.pendingTopicRootQueries.delete(requestId);
+				resolve(undefined);
+			}, DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS);
+			timer.unref?.();
+			this.pendingTopicRootQueries.set(requestId, { topic, resolve, timer });
+		});
+
+		try {
+			await this.sendDirectControlMessage(
+				peer,
+				new TopicRootQuery({ requestId, topic }),
+			);
+		} catch {
+			const pending = this.pendingTopicRootQueries.get(requestId);
+			if (pending) {
+				this.pendingTopicRootQueries.delete(requestId);
+				clearTimeout(pending.timer);
+				pending.resolve(undefined);
+			}
+		}
+
+		return responsePromise;
+	}
+
+	private async resolveTopicRootThroughPeers(
+		topic: string,
+	): Promise<string | undefined> {
+		for (const peer of this.getConnectedTopicRootTrackers()) {
+			const resolved = await this.queryTopicRootFromPeer(peer, topic);
+			if (resolved) {
+				return resolved;
+			}
+		}
+		return undefined;
 	}
 
 	private async ensureFanoutChannel(
@@ -1675,6 +1801,7 @@ export class TopicControlPlane
 
 	public override onPeerUnreachable(publicKeyHash: string) {
 		super.onPeerUnreachable(publicKeyHash);
+		this.maybePruneAutoTopicRootCandidate(publicKeyHash);
 		const key = this.peerKeyHashToPublicKey.get(publicKeyHash);
 		if (!key) {
 			return;
@@ -1698,6 +1825,38 @@ export class TopicControlPlane
 				.announcePeerUnavailable(publicKeyHash, batches)
 				.catch(logErrorIfStarted);
 		}
+	}
+
+	private maybePruneAutoTopicRootCandidate(peerHash: string): boolean {
+		if (!this.autoTopicRootCandidates) return false;
+		if (!peerHash || peerHash === this.publicKeyHash) return false;
+
+		if (this.maybeDisableAutoTopicRootCandidatesIfExternallyConfigured()) {
+			return false;
+		}
+
+		const managed = this.autoTopicRootCandidateSet;
+		if (!managed?.has(peerHash)) {
+			return false;
+		}
+
+		const before = this.topicRootControlPlane.getTopicRootCandidates();
+		managed.delete(peerHash);
+		const next = this.normalizeAutoTopicRootCandidates([...managed]);
+		if (
+			before.length === next.length &&
+			before.every((candidate, index) => candidate === next[index])
+		) {
+			return false;
+		}
+
+		this.autoTopicRootCandidateSet = new Set(next);
+		this.topicRootControlPlane.setTopicRootCandidates(next);
+		this.shardRootCache.clear();
+		this.scheduleReconcileShardOverlays();
+		this.scheduleHostOwnedShardRoots();
+		this.scheduleAutoTopicRootCandidatesBroadcast();
+		return true;
 	}
 
 	private collectSubscriptionState(peerHash: string) {
@@ -1884,12 +2043,33 @@ export class TopicControlPlane
 	private async processDirectPubSubMessage(input: {
 		pubsubMessage: PubSubMessage;
 		message: DataMessage;
+		stream: PeerStreams;
 	}): Promise<void> {
-		const { pubsubMessage, message } = input;
+		const { pubsubMessage, message, stream } = input;
 
 		if (pubsubMessage instanceof TopicRootCandidates) {
 			// Used only to converge deterministic shard-root candidates in auto mode.
 			this.mergeAutoTopicRootCandidatesFromPeer(pubsubMessage.candidates);
+			return;
+		}
+
+		if (pubsubMessage instanceof TopicRootQuery) {
+			const root = await this.topicRootControlPlane.resolveCanonicalTopicRoot(
+				pubsubMessage.topic,
+			);
+			await this.sendDirectControlMessage(
+				stream,
+				new TopicRootQueryResponse({
+					requestId: pubsubMessage.requestId,
+					topic: pubsubMessage.topic,
+					root,
+				}),
+			).catch(() => {});
+			return;
+		}
+
+		if (pubsubMessage instanceof TopicRootQueryResponse) {
+			this.resolvePendingTopicRootQuery(pubsubMessage);
 			return;
 		}
 
@@ -2149,7 +2329,9 @@ export class TopicControlPlane
 		// messages. All membership/control traffic is shard-only.
 		if (
 			!(pubsubMessage instanceof PubSubData) &&
-			!(pubsubMessage instanceof TopicRootCandidates)
+			!(pubsubMessage instanceof TopicRootCandidates) &&
+			!(pubsubMessage instanceof TopicRootQuery) &&
+			!(pubsubMessage instanceof TopicRootQueryResponse)
 		) {
 			return true;
 		}
@@ -2176,7 +2358,11 @@ export class TopicControlPlane
 			if ((await this.verifyAndProcess(message)) === false) return false;
 			await this.maybeAcknowledgeMessage(stream, message, seenBefore);
 			if (seenBefore === 0) {
-				await this.processDirectPubSubMessage({ pubsubMessage, message });
+				await this.processDirectPubSubMessage({
+					pubsubMessage,
+					message,
+					stream,
+				});
 			}
 		}
 

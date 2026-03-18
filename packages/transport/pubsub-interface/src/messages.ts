@@ -1,4 +1,11 @@
-import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
+import {
+	deserialize,
+	field,
+	option,
+	serialize,
+	variant,
+	vec,
+} from "@dao-xyz/borsh";
 import { Uint8ArrayList } from "uint8arraylist";
 
 export abstract class PubSubMessage {
@@ -25,6 +32,14 @@ export abstract class PubSubMessage {
 
 		if (first === 5) {
 			return PeerUnavailable.from(bytes);
+		}
+
+		if (first === 6) {
+			return TopicRootQuery.from(bytes);
+		}
+
+		if (first === 7) {
+			return TopicRootQueryResponse.from(bytes);
 		}
 
 		throw new Error("Unsupported");
@@ -250,6 +265,80 @@ export class PeerUnavailable extends PubSubMessage {
 		const ret = deserialize(
 			bytes instanceof Uint8Array ? bytes : bytes.subarray(),
 			PeerUnavailable,
+		);
+		if (bytes instanceof Uint8ArrayList) {
+			ret._serialized = bytes;
+		}
+		return ret;
+	}
+}
+
+@variant(6)
+export class TopicRootQuery extends PubSubMessage {
+	@field({ type: "u32" })
+	requestId: number;
+
+	@field({ type: "string" })
+	topic: string;
+
+	constructor(options: { requestId: number; topic: string }) {
+		super();
+		this.requestId = options.requestId;
+		this.topic = options.topic;
+	}
+
+	private _serialized!: Uint8ArrayList;
+
+	bytes() {
+		if (this._serialized) {
+			return this._serialized;
+		}
+		return serialize(this);
+	}
+
+	static from(bytes: Uint8Array | Uint8ArrayList): TopicRootQuery {
+		const ret = deserialize(
+			bytes instanceof Uint8Array ? bytes : bytes.subarray(),
+			TopicRootQuery,
+		);
+		if (bytes instanceof Uint8ArrayList) {
+			ret._serialized = bytes;
+		}
+		return ret;
+	}
+}
+
+@variant(7)
+export class TopicRootQueryResponse extends PubSubMessage {
+	@field({ type: "u32" })
+	requestId: number;
+
+	@field({ type: "string" })
+	topic: string;
+
+	@field({ type: option("string") })
+	root?: string;
+
+	constructor(options: { requestId: number; topic: string; root?: string }) {
+		super();
+		this.requestId = options.requestId;
+		this.topic = options.topic;
+		this.root = options.root;
+	}
+
+	private _serialized!: Uint8ArrayList;
+
+	bytes() {
+		if (this._serialized) {
+			return this._serialized;
+		}
+		return serialize(this);
+	}
+
+	static from(bytes: Uint8Array | Uint8ArrayList): TopicRootQueryResponse {
+		const ret = deserialize(
+			bytes instanceof Uint8Array ? bytes : bytes.subarray(),
+			TopicRootQueryResponse,
 		);
 		if (bytes instanceof Uint8ArrayList) {
 			ret._serialized = bytes;

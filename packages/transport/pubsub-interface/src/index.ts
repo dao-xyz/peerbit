@@ -176,4 +176,14 @@ export interface PubSub
 	): MaybePromise<Uint8Array | undefined>;
 }
 
-export * from "./messages.js";
+export {
+	GetSubscribers,
+	PeerUnavailable,
+	PubSubData,
+	PubSubMessage,
+	Subscribe,
+	TopicRootCandidates,
+	TopicRootQuery,
+	TopicRootQueryResponse,
+	Unsubscribe,
+} from "./messages.js";

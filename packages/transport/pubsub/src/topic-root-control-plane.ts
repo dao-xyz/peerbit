@@ -135,11 +135,30 @@ export class TopicRootControlPlane {
 		return [...this.trackers];
 	}
 
-	public resolveTopicRoot(topic: string) {
-		return this.resolveWithTrackers(topic);
+	public resolveLocalTopicRoot(topic: string) {
+		return this.directory.resolveLocal(topic);
 	}
 
-	private async resolveWithTrackers(topic: string): Promise<string | undefined> {
+	public resolveDeterministicTopicRoot(topic: string) {
+		return this.directory.resolveDeterministicCandidate(topic);
+	}
+
+	public resolveCanonicalTopicRoot(topic: string) {
+		return this.directory.resolveRoot(topic);
+	}
+
+	public resolveTrackedTopicRoot(topic: string) {
+		return this.resolveWithTrackers(topic, false);
+	}
+
+	public resolveTopicRoot(topic: string) {
+		return this.resolveWithTrackers(topic, true);
+	}
+
+	private async resolveWithTrackers(
+		topic: string,
+		fallbackToDeterministic = true,
+	): Promise<string | undefined> {
 		const local = await this.directory.resolveLocal(topic);
 		if (local) {
 			return local;
@@ -155,6 +174,8 @@ export class TopicRootControlPlane {
 				// ignore tracker failures and continue with remaining trackers
 			}
 		}
-		return this.directory.resolveDeterministicCandidate(topic);
+		return fallbackToDeterministic
+			? this.directory.resolveDeterministicCandidate(topic)
+			: undefined;
 	}
 }

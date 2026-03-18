@@ -476,6 +476,18 @@ export class Peerbit implements ProgramClient {
 				dialSignal ? ({ signal: dialSignal } as any) : undefined,
 			);
 
+			try {
+				const bootstrapAddrs = (Array.isArray(maddress)
+					? maddress
+					: [maddress]
+				).filter((addr): addr is Multiaddr => Boolean(addr));
+				if (bootstrapAddrs.length > 0) {
+					(this.libp2p.services as any).fanout?.addBootstraps?.(bootstrapAddrs);
+				}
+			} catch {
+				// ignore if fanout service is not present/overridden
+			}
+
 			const publicKey = Ed25519PublicKey.fromPeerId(connection.remotePeer);
 			const peerHash = publicKey.hashcode();
 

@@ -262,4 +262,28 @@ describe("pubsub (subscribe race regressions)", function () {
 			{ timeout: 20_000, delayInterval: 100 },
 		);
 	});
+
+	it("resolves shard roots through a dialed gateway without explicit candidates", async function () {
+		this.timeout(120_000);
+
+		const TOPIC = "dial-gateway-root-tracker-discovery";
+		session = await createDisconnectedSessionWithPerPeerRoots(3);
+
+		const a = session.peers[0]!.services.pubsub;
+		const gateway = session.peers[1]!.services.pubsub;
+		const root = session.peers[2]!.services.pubsub;
+
+		await session.peers[0]!.dial(session.peers[1]!.getMultiaddrs()[0]!);
+		await session.peers[1]!.dial(session.peers[2]!.getMultiaddrs()[0]!);
+
+		await waitForNeighbour(a, gateway);
+		await waitForNeighbour(gateway, root);
+
+		const shardTopic = `/peerbit/pubsub-shard/1/${topicHash32(TOPIC) % 16}`;
+		gateway.setTopicRootCandidates([root.publicKeyHash]);
+		root.setTopicRootCandidates([root.publicKeyHash]);
+
+		const resolvedRoot = await (a as any).resolveShardRoot(shardTopic);
+		expect(resolvedRoot).to.equal(root.publicKeyHash);
+	});
 });
