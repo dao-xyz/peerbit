@@ -108,6 +108,13 @@
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
     * @peerbit/stream-interface bumped from ^5.0.1 to ^5.0.2
 
+## [5.1.0](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v5.0.7...pubsub-interface-v5.1.0) (2026-03-18)
+
+
+### Features
+
+* **pubsub:** resolve shard roots through dialed peers ([#683](https://github.com/dao-xyz/peerbit/issues/683)) ([881a0a3](https://github.com/dao-xyz/peerbit/commit/881a0a312b3b5b29f0226f154176c58e8152169f))
+
 ## [5.0.7](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v5.0.6...pubsub-interface-v5.0.7) (2026-03-17)
 
 
