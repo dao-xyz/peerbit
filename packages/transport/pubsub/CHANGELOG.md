@@ -188,6 +188,20 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [5.1.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.0.8...pubsub-v5.1.0) (2026-03-18)
+
+
+### Features
+
+* **pubsub:** resolve shard roots through dialed peers ([#683](https://github.com/dao-xyz/peerbit/issues/683)) ([881a0a3](https://github.com/dao-xyz/peerbit/commit/881a0a312b3b5b29f0226f154176c58e8152169f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/pubsub-interface bumped to 5.1.0
+
 ## [5.0.8](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.0.7...pubsub-v5.0.8) (2026-03-17)
 
 
