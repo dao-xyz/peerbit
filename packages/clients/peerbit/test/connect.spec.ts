@@ -84,6 +84,63 @@ describe(`dial`, function () {
 			expect([...received!]).to.deep.equal([7, 8, 9]);
 		});
 
+		it("treats dialed peers as fanout trackers for gateway joins", async function () {
+			this.timeout(60_000);
+
+			const leaf = await Peerbit.create();
+			const gateway = await Peerbit.create();
+			const root = await Peerbit.create();
+
+			try {
+				await gateway.dial(root.getMultiaddrs()[0]!);
+				await root.dial(gateway.getMultiaddrs()[0]!);
+				await leaf.dial(gateway.getMultiaddrs()[0]!);
+
+				gateway.services.pubsub.setTopicRootCandidates([
+					root.services.fanout.publicKeyHash,
+				]);
+				root.services.pubsub.setTopicRootCandidates([
+					root.services.fanout.publicKeyHash,
+				]);
+
+				const topic = "fanout-topic-via-dialed-gateway";
+				const rootChannel = root.fanoutChannel(topic);
+				rootChannel.openAsRoot({
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 8,
+					repair: true,
+				});
+
+				const resolvedRoot = await leaf.fanoutResolveRoot(topic);
+				expect(resolvedRoot).to.equal(root.services.fanout.publicKeyHash);
+
+				const leafChannel = leaf.fanoutChannel(topic, resolvedRoot);
+				await leafChannel.join(
+					{
+						msgRate: 10,
+						msgSize: 64,
+						uploadLimitBps: 0,
+						maxChildren: 0,
+						repair: true,
+					},
+					{ timeoutMs: 20_000 },
+				);
+
+				let received: Uint8Array | undefined;
+				leafChannel.addEventListener("data", (ev: any) => {
+					received = ev.detail.payload;
+				});
+
+				await rootChannel.publish(new Uint8Array([4, 5, 6]));
+				await waitForResolved(() => expect(received).to.exist);
+				expect([...received!]).to.deep.equal([4, 5, 6]);
+			} finally {
+				await Promise.all([leaf, gateway, root].map((client) => client.stop()));
+			}
+		});
+
 		it("waits for fanout by default when fanout service is present", async () => {
 			const originalWaitFor = clients[0].services.fanout.waitFor.bind(
 				clients[0].services.fanout,

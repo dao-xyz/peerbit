@@ -476,6 +476,18 @@ export class Peerbit implements ProgramClient {
 				dialSignal ? ({ signal: dialSignal } as any) : undefined,
 			);
 
+			try {
+				const bootstrapAddrs = (Array.isArray(maddress)
+					? maddress
+					: [maddress]
+				).filter((addr): addr is Multiaddr => Boolean(addr));
+				if (bootstrapAddrs.length > 0) {
+					(this.libp2p.services as any).fanout?.addBootstraps?.(bootstrapAddrs);
+				}
+			} catch {
+				// ignore if fanout service is not present/overridden
+			}
+
 			const publicKey = Ed25519PublicKey.fromPeerId(connection.remotePeer);
 			const peerHash = publicKey.hashcode();
 
@@ -768,6 +780,10 @@ export class Peerbit implements ProgramClient {
 
 	public async fanoutResolveRoot(topic: string): Promise<string> {
 		const servicesAny: any = this.services as any;
+		const resolvedViaPubsub = await servicesAny?.pubsub?.resolveTopicRoot?.(topic);
+		if (resolvedViaPubsub) {
+			return resolvedViaPubsub;
+		}
 		const topicRootControlPlane =
 			servicesAny?.fanout?.topicRootControlPlane ||
 			servicesAny?.pubsub?.topicRootControlPlane;

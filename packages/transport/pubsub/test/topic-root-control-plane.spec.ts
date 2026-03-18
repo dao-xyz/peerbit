@@ -51,6 +51,9 @@ describe("topic-root-control-plane", () => {
 		});
 
 		expect(await controlPlane.resolveTopicRoot("rpc")).to.equal("peer-tracker");
+		expect(await controlPlane.resolveTrackedTopicRoot("rpc")).to.equal(
+			"peer-tracker",
+		);
 	});
 
 	it("ignores failing trackers and falls back", async () => {
@@ -66,6 +69,8 @@ describe("topic-root-control-plane", () => {
 		});
 
 		expect(await controlPlane.resolveTopicRoot("rpc")).to.equal("peer-a");
+		expect(await controlPlane.resolveTrackedTopicRoot("rpc")).to.equal(undefined);
+		expect(await controlPlane.resolveCanonicalTopicRoot("rpc")).to.equal("peer-a");
 	});
 
 	it("can be injected into TopicControlPlane", async () => {

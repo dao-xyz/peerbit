@@ -1493,6 +1493,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			.filter((a) => Boolean(a));
 	}
 
+	public addBootstraps(addrs: Array<string | Multiaddr>) {
+		const merged = new Map(this.bootstraps.map((addr) => [addr.toString(), addr]));
+		for (const addr of addrs) {
+			const multiaddrValue = typeof addr === "string" ? multiaddr(addr) : addr;
+			merged.set(multiaddrValue.toString(), multiaddrValue);
+		}
+		this.bootstraps = [...merged.values()];
+	}
+
 	private touchTrackerNamespace(suffixKey: string, now = Date.now()) {
 		if (!suffixKey) return;
 		// LRU touch
@@ -4102,7 +4111,6 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 		const bootstraps = this.getBootstrapsForChannel(ch);
 		if (bootstraps.length === 0) return;
-
 		const peers = await this.ensureBootstrapPeers(
 			bootstraps,
 			ch.bootstrapDialTimeoutMs,
@@ -4691,8 +4699,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 								const rootNeighbor = Boolean(
 									rootPeer && rootPeer.isReadable && rootPeer.isWritable,
 								);
+								const bootstrapHint =
+									bootstrapsCount === 0 && !rootNeighbor
+										? " No fanout bootstraps are configured for this channel, and the root is not a direct neighbor. If this peer reached the network via a bootstrap or relay node, initialize it with Peerbit.bootstrap(...) instead of Peerbit.dial(...), or configure FanoutTree.setBootstraps(...) before joining sharded topics."
+										: "";
 								throw new Error(
-									`fanout join timed out after ${timeoutMs}ms (topic=${ch.id.topic} root=${ch.id.root} self=${this.publicKeyHash} rootNeighbor=${rootNeighbor} peers=${this.peers.size} bootstraps=${bootstrapsCount})`,
+									`fanout join timed out after ${timeoutMs}ms (topic=${ch.id.topic} root=${ch.id.root} self=${this.publicKeyHash} rootNeighbor=${rootNeighbor} peers=${this.peers.size} bootstraps=${bootstrapsCount}).${bootstrapHint}`,
 								);
 							}
 
