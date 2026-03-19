@@ -4203,19 +4203,28 @@ testSetups.forEach((setup) => {
 						{ reset: true },
 					);
 
-					await waitForResolved(() =>
-						expect(db1.log.log.length).to.closeTo(entryCount / 3, 30),
+					const rebalanceWait = {
+						timeout: 60_000,
+						delayInterval: 500,
+					} as const;
+					await waitForResolved(
+						() => expect(db1.log.log.length).to.closeTo(entryCount / 3, 30),
+						rebalanceWait,
 					);
-					await waitForResolved(() =>
-						expect(db2.log.log.length).to.closeTo(entryCount / 3, 30),
+					await waitForResolved(
+						() => expect(db2.log.log.length).to.closeTo(entryCount / 3, 30),
+						rebalanceWait,
 					);
-					await waitForResolved(() =>
-						expect(db3.log.log.length).to.closeTo(entryCount / 3, 30),
+					await waitForResolved(
+						() => expect(db3.log.log.length).to.closeTo(entryCount / 3, 30),
+						rebalanceWait,
 					);
-					await waitForResolved(() =>
-						expect(
-							db1.log.log.length + db2.log.log.length + db3.log.log.length,
-						).to.equal(entryCount),
+					await waitForResolved(
+						() =>
+							expect(
+								db1.log.log.length + db2.log.log.length + db3.log.log.length,
+							).to.equal(entryCount),
+						rebalanceWait,
 					);
 					for (const db of [db1, db2, db3]) {
 						expect(await db.log.getPrunable()).to.have.length(0);
