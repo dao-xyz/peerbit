@@ -982,6 +982,57 @@ describe("streams", function () {
 				).rejectedWith(DeliveryError);
 				expect(session.peers[0].services.directstream.pending).to.be.false;
 			});
+
+			it("does not emit unhandledRejection before callers await delivery timeouts", async () => {
+				session = await connected(2, {
+					services: {
+						directstream: (components) =>
+							new TestDirectStream(components, {
+								seekTimeout: 50,
+							}),
+					},
+				});
+
+				await waitForNeighbour(
+					session.peers[0].services.directstream,
+					session.peers[1].services.directstream,
+				);
+
+				const unhandledRejections: unknown[] = [];
+				const onUnhandledRejection = (reason: unknown) => {
+					unhandledRejections.push(reason);
+				};
+				process.on("unhandledRejection", onUnhandledRejection);
+
+				const originalMaybeAcknowledge =
+					session.peers[1].services.directstream.maybeAcknowledgeMessage.bind(
+						session.peers[1].services.directstream,
+					);
+				session.peers[1].services.directstream.maybeAcknowledgeMessage =
+					async () => {};
+
+				try {
+					const publishPromise = session.peers[0].services.directstream.publish(
+						new Uint8Array([1, 2, 3]),
+						{
+							mode: new AcknowledgeDelivery({
+								redundancy: 1,
+								to: [session.peers[1].services.directstream.publicKey],
+							}),
+						},
+					);
+
+					await delay(150);
+					await expect(publishPromise).to.be.rejectedWith(DeliveryError);
+					await delay(0);
+
+					expect(unhandledRejections).to.have.length(0);
+				} finally {
+					session.peers[1].services.directstream.maybeAcknowledgeMessage =
+						originalMaybeAcknowledge;
+					process.removeListener("unhandledRejection", onUnhandledRejection);
+				}
+			});
 		});
 
 		describe("self referencing", () => {

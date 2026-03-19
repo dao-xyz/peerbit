@@ -2607,7 +2607,18 @@ export abstract class DirectStream<
 	/**
 	 * Publishes messages to all peers
 	 */
-	async publish(
+	public publish(
+		data: Uint8Array | Uint8ArrayList | undefined,
+		options: PublishOptions = {
+			mode: new AcknowledgeAnyWhere({
+				redundancy: DEFAULT_SEEK_MESSAGE_REDUDANCY,
+			}),
+		},
+	): Promise<Uint8Array | undefined> {
+		return this.attachDeliveryPromiseHandler(this._publish(data, options));
+	}
+
+	private async _publish(
 		data: Uint8Array | Uint8ArrayList | undefined,
 		options: PublishOptions = {
 			mode: new AcknowledgeAnyWhere({
@@ -2724,6 +2735,13 @@ export abstract class DirectStream<
 		return `deliveryState peers=${this.peers.size} routesLocal=${this.routes.count()} routesAll=${this.routes.countAll()} targets=[${sampled.join(";")}]${more > 0 ? ` (+${more} more)` : ""}`;
 	}
 
+	private attachDeliveryPromiseHandler<T>(promise: Promise<T>): Promise<T> {
+		// Delivery failures are returned to callers, but must not briefly appear
+		// as unhandled rejections before the caller has a chance to await/catch them.
+		void promise.catch((): undefined => undefined);
+		return promise;
+	}
+
 	private async createDeliveryPromise(
 		from: PublicSignKey,
 		message: DataMessage | Goodbye,
@@ -2732,7 +2750,7 @@ export abstract class DirectStream<
 	): Promise<{ promise: Promise<void> }> {
 		if (message.header.mode instanceof AnyWhere) {
 			return {
-				promise: Promise.resolve(),
+				promise: this.attachDeliveryPromiseHandler(Promise.resolve()),
 			};
 		}
 
@@ -2765,12 +2783,13 @@ export abstract class DirectStream<
 		const haveReceivers = messageToSet.size > 0;
 
 		if (haveReceivers && this.peers.size === 0) {
-			return {
-				promise: Promise.reject(
-					new DeliveryError(
-						"Cannnot deliver message to peers because there are no peers to deliver to",
-					),
+			const promise = Promise.reject(
+				new DeliveryError(
+					"Cannnot deliver message to peers because there are no peers to deliver to",
 				),
+			);
+			return {
+				promise: this.attachDeliveryPromiseHandler(promise),
 			};
 		}
 
@@ -2899,8 +2918,12 @@ export abstract class DirectStream<
 			return false;
 		};
 
+		const deliveryPromise = this.attachDeliveryPromiseHandler(
+			deliveryDeferredPromise.promise,
+		);
+
 		this._ackCallbacks.set(idString, {
-			promise: deliveryDeferredPromise.promise,
+			promise: deliveryPromise,
 			callback: (ack: ACK, messageThrough, messageFrom) => {
 				const messageTarget = ack.header.signatures!.publicKeys[0];
 				const messageTargetHash = messageTarget.hashcode();
@@ -2962,10 +2985,22 @@ export abstract class DirectStream<
 				deliveryDeferredPromise.resolve();
 			},
 		});
-		return deliveryDeferredPromise;
+		return { promise: deliveryPromise };
 	}
 
-	public async publishMessage(
+	public publishMessage(
+		from: PublicSignKey,
+		message: Message,
+		to?: PeerStreams[] | Map<string, PeerStreams>,
+		relayed?: boolean,
+		signal?: AbortSignal,
+	): Promise<void> {
+		return this.attachDeliveryPromiseHandler(
+			this._publishMessage(from, message, to, relayed, signal),
+		);
+	}
+
+	private async _publishMessage(
 		from: PublicSignKey,
 		message: Message,
 		to?: PeerStreams[] | Map<string, PeerStreams>,
