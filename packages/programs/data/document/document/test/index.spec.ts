@@ -5100,7 +5100,20 @@ describe("index", () => {
 						// even if pending reports 0 after a drop, we should still be able to fetch buffered in-order items
 						expect(pendingBefore).to.be.at.least(0);
 
-						const next = await iterator.next(2);
+						const next = await waitForResolved(
+							async () => {
+								const batch = await iterator.next(2);
+								if (batch.map((x) => x.id).join(",") !== "3") {
+									throw new Error(
+										`Expected buffered in-order item '3', got [${batch
+											.map((x) => x.id)
+											.join(",")}]`,
+									);
+								}
+								return batch;
+							},
+							{ timeout: 10_000, delayInterval: 50 },
+						);
 						expect(next.map((x) => x.id)).to.deep.equal(["3"]);
 					} finally {
 						await iterator.close();
