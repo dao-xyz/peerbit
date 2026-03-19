@@ -26,7 +26,6 @@ import {
 	type DirectStreamComponents,
 	type DirectStreamOptions,
 	type PeerStreams,
-	dontThrowIfDeliveryError,
 } from "@peerbit/stream";
 import {
 	AcknowledgeAnyWhere,
@@ -665,9 +664,7 @@ export class TopicControlPlane
 			priority: 1,
 			skipRecipientValidation: true,
 		} as any);
-		await this.publishMessage(this.publicKey, embedded, streams).catch(
-			dontThrowIfDeliveryError,
-		);
+		await this.publishMessageMaybe(this.publicKey, embedded, streams);
 	}
 
 	private mergeAutoTopicRootCandidatesFromPeer(candidates: string[]): boolean {
@@ -1385,7 +1382,7 @@ export class TopicControlPlane
 					await this.ensureFanoutChannel(shardTopic, { ephemeral: true });
 					const st = this.fanoutChannels.get(shardTopic);
 					if (st) {
-						void st.channel.publish(toUint8Array(embedded.bytes())).catch(() => {});
+						void st.channel.publishMaybe(toUint8Array(embedded.bytes()));
 						this.touchFanoutChannel(shardTopic);
 					}
 				} catch {
@@ -1415,7 +1412,7 @@ export class TopicControlPlane
 			await this.ensureFanoutChannel(shardTopic, { ephemeral: true });
 			const st = this.fanoutChannels.get(shardTopic);
 			if (st) {
-				void st.channel.publish(toUint8Array(embedded.bytes())).catch(() => {});
+				void st.channel.publishMaybe(toUint8Array(embedded.bytes()));
 				this.touchFanoutChannel(shardTopic);
 			}
 		} catch {
@@ -1519,7 +1516,7 @@ export class TopicControlPlane
 							timeoutMs: 5_000,
 						});
 					} catch {
-						await st.channel.publish(payload);
+						await st.channel.publishMaybe(payload);
 					}
 				} else {
 					await st.channel.publish(payload);
@@ -1874,11 +1871,7 @@ export class TopicControlPlane
 		} catch {
 			// ignore and fall back
 		}
-		try {
-			await st.channel.publish(payload);
-		} catch {
-			// ignore
-		}
+			await st.channel.publishMaybe(payload);
 	}
 
 	private async processDirectPubSubMessage(input: {
