@@ -25,6 +25,7 @@ import {
 	InvalidMessageError,
 	Message,
 	MessageHeader,
+	NotStartedError,
 	SilentDelivery,
 	getMsgId,
 } from "@peerbit/stream-interface";
@@ -2542,6 +2543,100 @@ describe("streams", function () {
 					expect(alive).to.equal(false);
 				} finally {
 					sender.publish = originalPublish;
+				}
+			});
+
+			it("does not emit unhandledRejection when a publish aborts before being awaited", async () => {
+				const isolated = await disconnected(1, {
+					services: {
+						directstream: (c) =>
+							new TestDirectStream(c, { connectionManager: false }),
+					},
+				});
+
+				const unhandled: unknown[] = [];
+				const onUnhandledRejection = (reason: unknown) => {
+					unhandled.push(reason);
+				};
+
+				process.on("unhandledRejection", onUnhandledRejection);
+
+				try {
+					const writer = stream(isolated, 0) as TestDirectStream;
+					const remoteKey = await Ed25519Keypair.create();
+					const peer = writer.addPeer(
+						{ toString: () => "late-peer" } as PeerId,
+						remoteKey.publicKey,
+						"/test/0.0.0",
+						"conn-late",
+					);
+
+					const publishPromise = writer.publish(crypto.randomBytes(32), {
+						mode: new AcknowledgeDelivery({
+							redundancy: 1,
+							to: [remoteKey.publicKey.hashcode()],
+						}),
+					});
+
+					await delay(50);
+					await peer.close();
+					await delay(50);
+
+					expect(unhandled).to.deep.equal([]);
+
+					let rejection: any;
+					await publishPromise.catch((error) => {
+						rejection = error;
+					});
+					expect(rejection).to.be.instanceOf(Error);
+				} finally {
+					process.off("unhandledRejection", onUnhandledRejection);
+					await isolated.stop();
+				}
+			});
+
+			it("publishMaybe returns false for delivery errors and still throws internal errors", async () => {
+				const isolated = await disconnected(1, {
+					services: {
+						directstream: (c) =>
+							new TestDirectStream(c, { connectionManager: false }),
+					},
+				});
+				let stopped = false;
+
+				try {
+					const writer = stream(isolated, 0) as TestDirectStream;
+					const remoteKey = await Ed25519Keypair.create();
+					const peer = writer.addPeer(
+						{ toString: () => "late-peer" } as PeerId,
+						remoteKey.publicKey,
+						"/test/0.0.0",
+						"conn-late",
+					);
+
+					const deliveryFailed = writer.publishMaybe(crypto.randomBytes(32), {
+						mode: new AcknowledgeDelivery({
+							redundancy: 1,
+							to: [remoteKey.publicKey.hashcode()],
+						}),
+					});
+
+					await delay(50);
+					await peer.close();
+					await expect(deliveryFailed).to.eventually.equal(false);
+
+					await isolated.stop();
+					stopped = true;
+
+					await expect(
+						writer.publishMaybe(crypto.randomBytes(32), {
+							mode: new AnyWhere(),
+						}),
+					).rejectedWith(NotStartedError);
+				} finally {
+					if (!stopped) {
+						await isolated.stop();
+					}
 				}
 			});
 		});

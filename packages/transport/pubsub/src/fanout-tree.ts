@@ -3142,6 +3142,20 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		await this._sendControl(ch.parent, encodePublishProxy(ch.id.key, payload));
 	}
 
+	public async publishToChannelMaybe(
+		topic: string,
+		root: string,
+		payload: Uint8Array,
+	): Promise<boolean> {
+		try {
+			await this.publishToChannel(topic, root, payload);
+			return true;
+		} catch (error) {
+			dontThrowIfDeliveryError(error);
+			return false;
+		}
+	}
+
 	private waitForChannelAttachment(ch: ChannelState, timeoutMs: number): Promise<void> {
 		if (ch.isRoot || ch.parent) return Promise.resolve();
 		const ms = Math.max(0, Math.floor(timeoutMs));
@@ -3386,7 +3400,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			mode: new AnyWhere(),
 			priority: CONTROL_PRIORITY,
 		} as any);
-		await this.publishMessage(this.publicKey, message, [stream]).catch(dontThrowIfDeliveryError);
+		await this.publishMessageMaybe(this.publicKey, message, [stream]);
 	}
 
 	private async _sendControlMany(to: string[], bytes: Uint8Array) {
@@ -3400,7 +3414,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			mode: new AnyWhere(),
 			priority: CONTROL_PRIORITY,
 		} as any);
-		await this.publishMessage(this.publicKey, message, streams).catch(dontThrowIfDeliveryError);
+		await this.publishMessageMaybe(this.publicKey, message, streams);
 	}
 
 	private refillUploadTokens(ch: ChannelState, now = Date.now()) {
