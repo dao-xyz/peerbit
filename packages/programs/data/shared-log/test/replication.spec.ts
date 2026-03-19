@@ -2200,9 +2200,17 @@ testSetups.forEach((setup) => {
 					);
 
 					await db2.close();
+					await waitForResolved(
+						async () => expect((await db1.log.getReplicators()).size).to.equal(1),
+						replicationCatchupWait,
+					);
 
 					// Merge the new peer into the same sharded pubsub root-candidate set.
 					await session.connect([[session.peers[0], session.peers[1], session.peers[2]]]);
+					await db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
+						timeout: replicationCatchupWait.timeout,
+						roleAge: 0,
+					});
 
 					await waitForResolved(
 						() => expect(db3.log.log.length).to.eq(entryCount),
