@@ -2976,14 +2976,6 @@ export class DocumentIndex<
 			return controller;
 		};
 		let totalFetchedCounter = 0;
-		let lastValueInOrder:
-			| {
-					indexed: WithContext<I>;
-					value: types.ResultTypeFromRequest<R, T, I> | I;
-					from: PublicSignKey;
-					context: types.Context;
-			  }
-			| undefined = undefined;
 		let lastDeliveredIndexed: WithContext<I> | undefined;
 
 		const peerBuffers = (): {
@@ -3678,7 +3670,6 @@ export class DocumentIndex<
 				),
 			);
 
-			lastValueInOrder = results[0] || lastValueInOrder;
 			const pendingMoreResults = n < results.length; // check if there are more results to fetch, before splicing
 			const batch = results.splice(0, n);
 			const hasMore = !fetchedAll || pendingMoreResults;
@@ -4414,28 +4405,17 @@ export class DocumentIndex<
 						if (onLateResultsQueue || onLateResultsDrop) {
 							const pending = peerBufferMap.get(hash)?.buffer;
 							if (pending && pending.length > 0) {
-								if (lastValueInOrder) {
-									const pendingWithLast = [...pending.flat(), lastValueInOrder];
-									const results = pendingWithLast.sort((a, b) =>
-										indexerTypes.extractSortCompare(
-											a.indexed,
-											b.indexed,
-											queryRequestCoerced.sort,
-										),
+								if (lastDeliveredIndexed) {
+									const lateItems = pending.filter(
+										(item) =>
+											compareIndexed(item.indexed, lastDeliveredIndexed) < 0,
 									);
-
-									const lateResults = results.findIndex(
-										(x) => x === lastValueInOrder,
-									);
-									if (lateResults > 0) {
-										const lateItems =
-											outOfOrderMode === "queue"
-												? results.slice(
-														0,
-														Math.min(lateResults, results.length),
-													)
-												: undefined;
-										notifyLateResults?.(lateResults, pk, lateItems);
+									if (lateItems.length > 0) {
+										notifyLateResults?.(
+											lateItems.length,
+											pk,
+											outOfOrderMode === "queue" ? lateItems : undefined,
+										);
 									}
 								} else {
 									notifyLateResults?.(
