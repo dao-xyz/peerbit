@@ -4406,9 +4406,9 @@ export class DocumentIndex<
 							const pending = peerBufferMap.get(hash)?.buffer;
 							if (pending && pending.length > 0) {
 								if (lastDeliveredIndexed) {
+									const delivered = lastDeliveredIndexed;
 									const lateItems = pending.filter(
-										(item) =>
-											compareIndexed(item.indexed, lastDeliveredIndexed) < 0,
+										(item) => compareIndexed(item.indexed, delivered) < 0,
 									);
 									if (lateItems.length > 0) {
 										notifyLateResults?.(
