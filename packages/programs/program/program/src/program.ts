@@ -569,6 +569,11 @@ export abstract class Program<
 		};
 		rememberProvidedKeys(other);
 
+		// Seed a current subscriber snapshot after reachability is established so callers
+		// don't depend solely on edge-triggered subscribe events or follow-up snapshot
+		// requests to observe peers that were already ready.
+		await this.seedPeerTopicsSnapshot(allTopics);
+
 		// Prefer a direct neighbour stream when available. This avoids cases where
 		// peers are "reachable" via the routing table but we haven't established
 		// a writable protocol stream yet (initial control-plane gossip can be dropped).
