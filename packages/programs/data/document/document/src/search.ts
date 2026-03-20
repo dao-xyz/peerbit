@@ -3657,8 +3657,25 @@ export class DocumentIndex<
 				return [];
 			}
 
-			// TODO everything below is not very optimized
-			const fetchedAll = await fetchAtLeast(n);
+			const bufferedBeforeFetch = peerBuffers().length;
+			const localHash = this.node.identity.publicKey.hashcode();
+			const hasBufferedRemoteResults = [...peerBufferMap.entries()].some(
+				([peerHash, peerBuffer]) =>
+					peerHash !== localHash && peerBuffer.buffer.length > 0,
+			);
+			const preferBufferedResults =
+				first &&
+				bufferedBeforeFetch > 0 &&
+				pushUpdates !== undefined &&
+				hasBufferedRemoteResults;
+
+			// In live-update mode, returning already-buffered results is better than
+			// blocking on an eager remote top-up for the full requested batch size.
+			// This keeps `next(n)` responsive when a late push/update arrives while a
+			// remote iterator has no more immediate items to collect.
+			const fetchedAll = preferBufferedResults
+				? false
+				: await fetchAtLeast(n);
 
 			// get n next top entries, shift and pull more results
 			const peerBuffersArr = peerBuffers();
