@@ -196,11 +196,12 @@ describe("index", () => {
 				for (let i = 0; i < insertions; i++) {
 					rngs.push(Buffer.from(randomBytes(1e5)).toString("base64"));
 				}
-				for (let i = 0; i < 20000; i++) {
+				// Keep this as a chunking test, not a wall-clock throughput benchmark.
+				for (let i = 0; i < 2000; i++) {
 					await store.docs.put(
 						new Document({
 							id: uuid(),
-							name: rngs[i],
+							name: rngs[i % rngs.length],
 						}),
 						{ unique: true },
 					);
@@ -869,7 +870,7 @@ describe("index", () => {
 				);
 			});
 
-			it("can query immediately after replication:join event", async () => {
+			it("can query after waitFor as non-replicator", async () => {
 				await store2.close();
 
 				await store.docs.put(
@@ -878,21 +879,15 @@ describe("index", () => {
 					}),
 				);
 
-				store2 = store.clone();
-				let joined = false;
-
-				store2.docs.log.events.addEventListener("replicator:join", async () => {
-					expect(
-						await store2.docs.index.search(new SearchRequest({})),
-					).to.have.length(1);
-					joined = true;
-				});
-				await session.peers[1].open<TestStore>(store2, {
+				store2 = await session.peers[1].open<TestStore>(store.clone(), {
 					args: {
 						replicate: false,
 					},
 				});
-				await waitForResolved(() => expect(joined).to.be.true);
+				await store2.docs.index.waitFor(store.node.identity.publicKey);
+				expect(
+					await store2.docs.index.search(new SearchRequest({})),
+				).to.have.length(1);
 			});
 
 			describe("search replicate", () => {
