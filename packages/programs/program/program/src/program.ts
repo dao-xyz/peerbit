@@ -544,6 +544,30 @@ export abstract class Program<
 			throw new Error("Program has no topics, cannot get ready");
 		}
 		const pubsub = this.node.services.pubsub;
+		const providedKeysByHash = new Map<string, PublicSignKey>();
+		const rememberProvidedKey = (ref: unknown) => {
+			if (ref instanceof PublicSignKey) {
+				providedKeysByHash.set(ref.hashcode(), ref);
+			}
+		};
+		const rememberProvidedKeys = (refs: PeerRefs) => {
+			if (refs instanceof PublicSignKey || typeof refs === "string") {
+				rememberProvidedKey(refs);
+				return;
+			}
+			if (refs instanceof Array || refs instanceof Set) {
+				for (const ref of refs) {
+					rememberProvidedKey(ref);
+				}
+				return;
+			}
+			if (typeof (refs as Iterable<unknown>)?.[Symbol.iterator] === "function") {
+				for (const ref of refs as Iterable<unknown>) {
+					rememberProvidedKey(ref);
+				}
+			}
+		};
+		rememberProvidedKeys(other);
 
 		// Prefer a direct neighbour stream when available. This avoids cases where
 		// peers are "reachable" via the routing table but we haven't established
@@ -568,18 +592,21 @@ export abstract class Program<
 			string,
 			Promise<PublicSignKey | undefined>
 		>();
-		const resolvePublicKey = (
-			hash: string,
-		): Promise<PublicSignKey | undefined> => {
-			let existing = publicKeyByHash.get(hash);
-			if (!existing) {
-				existing = Promise.resolve(pubsub.getPublicKey(hash)).catch(
-					(): PublicSignKey | undefined => undefined,
-				);
-				publicKeyByHash.set(hash, existing);
-			}
-			return existing;
-		};
+			const resolvePublicKey = (
+				hash: string,
+			): Promise<PublicSignKey | undefined> => {
+				let existing = publicKeyByHash.get(hash);
+				if (!existing) {
+					const providedKey = providedKeysByHash.get(hash);
+					existing = providedKey
+						? Promise.resolve(providedKey)
+						: Promise.resolve(pubsub.getPublicKey(hash)).catch(
+								(): PublicSignKey | undefined => undefined,
+							);
+					publicKeyByHash.set(hash, existing);
+				}
+				return existing;
+			};
 		const requestSubscriberSnapshots = (hash: string): void => {
 			const now = Date.now();
 			const last = lastRequestAtByPeer.get(hash) ?? 0;
