@@ -4697,6 +4697,66 @@ describe("index", () => {
 					}
 				});
 
+				it("manual close tears down remote push iterators with zero pending items", async function () {
+					this.timeout(30_000);
+					session = await TestSession.connected(2);
+
+					const base = new TestStore({ docs: new Documents<Document>() });
+					const replicator = await session.peers[0].open(base, {
+						args: {
+							replicate: { factor: 1 },
+						},
+					});
+					const reader = await session.peers[1].open(base.clone(), {
+						args: { replicate: false },
+					});
+
+					let iterator:
+						| Awaited<ReturnType<typeof reader.docs.index.iterate>>
+						| undefined;
+					let iteratorClosed = false;
+					try {
+						await reader.docs.index.waitFor(replicator.node.identity.publicKey);
+						iterator = reader.docs.index.iterate(
+							{ sort: { key: "id", direction: SortDirection.ASC } },
+							{
+								closePolicy: "manual",
+								remote: {
+									wait: { timeout: 5e3, behavior: "keep-open" },
+									reach: {
+										discover: [replicator.node.identity.publicKey],
+										eager: true,
+									},
+								},
+								updates: { push: true, merge: true },
+							},
+						);
+
+						const initial = await iterator.next(1);
+						expect(initial).to.have.length(0);
+						await waitForResolved(
+							() =>
+								expect(replicator.docs.index.countIteratorsInProgress).to.equal(1),
+							{ timeout: 10_000 },
+						);
+
+						await iterator.close();
+						iteratorClosed = true;
+
+						await waitForResolved(
+							() =>
+								expect(replicator.docs.index.countIteratorsInProgress).to.equal(0),
+							{ timeout: 10_000 },
+						);
+					} finally {
+						if (iterator && !iteratorClosed) {
+							await iterator.close();
+						}
+						await reader.close();
+						await replicator.close();
+					}
+				});
+
 				it("push streams drop out-of-order updates and emit onOutOfOrder", async function () {
 					session = await TestSession.disconnected(3);
 					await session.connect([
@@ -4893,6 +4953,107 @@ describe("index", () => {
 							async () => expect(await iterator.pending()).to.equal(0),
 							{ timeout: 10_000 },
 						);
+						const next = await iterator.next(1);
+						expect(next).to.have.length(0);
+					} finally {
+						await iterator.close();
+						await reader.close();
+						await writer.close();
+						await replicator.close();
+					}
+				});
+
+				it("outOfOrder mode=drop can collect dropped remote items without local merge", async function () {
+					this.timeout(80_000);
+					session = await TestSession.disconnected(3);
+					await session.connect([
+						[session.peers[0], session.peers[1]],
+						[session.peers[1], session.peers[2]],
+					]);
+
+					const base = new TestStore({ docs: new Documents<Document>() });
+					const replicator = await session.peers[1].open(base, {
+						args: { replicate: { factor: 1 } },
+					});
+					const writer = await session.peers[0].open(base.clone(), {
+						args: { replicate: false },
+					});
+					const reader = await session.peers[2].open(base.clone(), {
+						args: { replicate: false },
+					});
+
+					await reader.docs.index.waitFor(replicator.node.identity.publicKey);
+					await writer.docs.index.waitFor(replicator.node.identity.publicKey);
+
+					const latePromise = pDefer<void>();
+					let collected:
+						| {
+								indexed: any;
+								context: Context;
+								from: any;
+								value?: any;
+						  }[]
+						| undefined;
+
+					const iterator = reader.docs.index.iterate(
+						{ sort: { key: "id", direction: SortDirection.ASC } },
+						{
+							closePolicy: "manual",
+							remote: {
+								wait: { timeout: 5e3, behavior: "keep-open" },
+								reach: {
+									discover: [replicator.node.identity.publicKey],
+									eager: true,
+								},
+							},
+							outOfOrder: {
+								mode: "drop",
+								handle: async (_evt, helpers) => {
+									collected = await helpers.collect();
+									latePromise.resolve();
+								},
+							},
+							updates: { push: true, merge: false },
+						},
+					);
+
+					try {
+						await writer.docs.put(new Document({ id: "2" }));
+						await writer.docs.put(new Document({ id: "3" }));
+						const seen = new Set<string>();
+						const start = Date.now();
+						while (
+							Date.now() - start < 10_000 &&
+							(!seen.has("2") || !seen.has("3"))
+						) {
+							const batch = await iterator.next(10);
+							for (const doc of batch) {
+								seen.add(doc.id);
+							}
+							if (!seen.has("2") || !seen.has("3")) {
+								await delay(50);
+							}
+						}
+						expect([...seen]).to.include("2");
+						expect([...seen]).to.include("3");
+
+						await writer.docs.put(new Document({ id: "1" }));
+
+						await Promise.race([
+							latePromise.promise,
+							delay(20_000).then(() => {
+								throw new Error(
+									"Timed out waiting for outOfOrder(drop) handler without local merge",
+								);
+							}),
+						]);
+						expect(collected?.length).to.equal(1);
+						expect(
+							collected?.[0]?.value?.id || collected?.[0]?.indexed?.id,
+						).to.equal("1");
+						expect(collected?.[0]?.value?.__context).to.exist;
+						expect(collected?.[0]?.value?.__indexed).to.exist;
+
 						const next = await iterator.next(1);
 						expect(next).to.have.length(0);
 					} finally {
