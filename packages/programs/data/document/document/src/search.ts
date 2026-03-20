@@ -737,6 +737,7 @@ export class DocumentIndex<
 			resolveResults?: boolean;
 			pushMode?: types.PushUpdatesMode;
 			pushInFlight?: boolean;
+			pendingAdded?: WithIndexedContext<T, I>[];
 		}
 	>;
 	private iteratorKeepAliveTimers?: Map<string, ReturnType<typeof setTimeout>>;
@@ -853,14 +854,16 @@ export class DocumentIndex<
 		}
 
 		for (const [_iteratorId, queue] of this._resultQueue) {
-			if (
-				!queue.pushMode ||
-				queue.pushMode !== types.PushUpdatesMode.STREAM ||
-				queue.pushInFlight
-			) {
+			if (!queue.pushMode || queue.pushMode !== types.PushUpdatesMode.STREAM) {
 				continue;
 			}
 			if (!(queue.fromQuery instanceof types.IterationRequest)) {
+				continue;
+			}
+			if (queue.pushInFlight) {
+				queue.pendingAdded = queue.pendingAdded
+					? [...queue.pendingAdded, ...added]
+					: [...added];
 				continue;
 			}
 			queue.pushInFlight = true;
@@ -868,44 +871,51 @@ export class DocumentIndex<
 				const resolveFlag =
 					queue.resolveResults ??
 					resolvesDocuments(queue.fromQuery as AnyIterationRequest);
-				const batches: types.Result[] = [];
-				const queued = await this.drainQueuedResults(queue.queue, resolveFlag);
-				if (queued.length) {
-					batches.push(...queued);
-				}
-				// TODO drain only up to the changed document instead of flushing the entire queue
-				const matches = await this.updateResults(
-					[],
-					{ added },
-					{
-						query: queue.fromQuery.query,
-						sort: queue.fromQuery.sort,
-					},
-					resolveFlag,
-				);
-				if (matches.length) {
-					const wrapped = await this.wrapPushResults(matches, resolveFlag);
-					if (wrapped.length) {
-						batches.push(...wrapped);
+				let pendingAdded = added;
+				do {
+					const batches: types.Result[] = [];
+					const queued = await this.drainQueuedResults(
+						queue.queue,
+						resolveFlag,
+					);
+					if (queued.length) {
+						batches.push(...queued);
 					}
-				}
-				if (!batches.length) {
-					continue;
-				}
-				const pushMessage = new types.PredictedSearchRequest({
-					id: queue.fromQuery.id,
-					request: queue.fromQuery,
-					results: new types.Results({
-						results: batches,
-						kept: 0n,
-					}),
-				});
-				await this._query.send(pushMessage, {
-					mode: new SilentDelivery({
-						to: [queue.from],
-						redundancy: 1,
-					}),
-				});
+					// TODO drain only up to the changed document instead of flushing the entire queue
+					const matches = await this.updateResults(
+						[],
+						{ added: pendingAdded },
+						{
+							query: queue.fromQuery.query,
+							sort: queue.fromQuery.sort,
+						},
+						resolveFlag,
+					);
+					if (matches.length) {
+						const wrapped = await this.wrapPushResults(matches, resolveFlag);
+						if (wrapped.length) {
+							batches.push(...wrapped);
+						}
+					}
+					if (batches.length) {
+						const pushMessage = new types.PredictedSearchRequest({
+							id: queue.fromQuery.id,
+							request: queue.fromQuery,
+							results: new types.Results({
+								results: batches,
+								kept: 0n,
+							}),
+						});
+						await this._query.send(pushMessage, {
+							mode: new SilentDelivery({
+								to: [queue.from],
+								redundancy: 1,
+							}),
+						});
+					}
+					pendingAdded = queue.pendingAdded ?? [];
+					queue.pendingAdded = undefined;
+				} while (pendingAdded.length > 0);
 			} catch (error) {
 				logger.error("Failed to push iterator update", error);
 			} finally {
