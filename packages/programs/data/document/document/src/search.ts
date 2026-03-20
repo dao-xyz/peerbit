@@ -3818,14 +3818,19 @@ export class DocumentIndex<
 			let close = async () => {
 				cleanupAndDone();
 
-				// send close to remote (only peers that actually served results / had an active buffer)
+				// Keep-open iterators can still have active remote state even when
+				// their pending count has already drained to zero.
 				const closeRequest = new types.CloseIteratorRequest({
 					id: queryRequestCoerced.id,
 				});
 				const selfHash = this.node.identity.publicKey.hashcode();
-				const remotePeers = [...peerBufferMap.entries()]
-					.filter(([peer, buffer]) => peer !== selfHash && buffer.kept > 0)
-					.map(([peer]) => peer);
+				const remotePeers = keepRemoteAlive
+					? [...peerBufferMap.keys()].filter((peer) => peer !== selfHash)
+					: [...peerBufferMap.entries()]
+							.filter(
+								([peer, buffer]) => peer !== selfHash && buffer.kept > 0,
+							)
+							.map(([peer]) => peer);
 				peerBufferMap.clear();
 				await Promise.allSettled(
 					remotePeers.map((peer) =>
@@ -4050,8 +4055,7 @@ export class DocumentIndex<
 					return;
 				}
 
-				const collectLateItems =
-					outOfOrderMode !== "drop" && !!notifyLateResults;
+				const collectLateItems = !!notifyLateResults;
 				const lateResults = collectLateItems
 					? ([] as {
 							indexed: WithContext<I>;
@@ -4143,11 +4147,7 @@ export class DocumentIndex<
 				}
 
 				if (lateCount > 0) {
-					notifyLateResults?.(
-						lateCount,
-						from,
-						collectLateItems ? lateResults : undefined,
-					);
+					notifyLateResults?.(lateCount, from, lateResults);
 				}
 
 				peerBufferMap.set(peerHash, {
@@ -4480,18 +4480,10 @@ export class DocumentIndex<
 										(item) => compareIndexed(item.indexed, delivered) < 0,
 									);
 									if (lateItems.length > 0) {
-										notifyLateResults?.(
-											lateItems.length,
-											pk,
-											outOfOrderMode === "queue" ? lateItems : undefined,
-										);
+										notifyLateResults?.(lateItems.length, pk, lateItems);
 									}
 								} else {
-									notifyLateResults?.(
-										pending.length,
-										pk,
-										outOfOrderMode === "queue" ? pending : undefined,
-									);
+									notifyLateResults?.(pending.length, pk, pending);
 								}
 							}
 						}
