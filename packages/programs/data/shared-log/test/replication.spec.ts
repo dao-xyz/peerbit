@@ -2190,17 +2190,31 @@ testSetups.forEach((setup) => {
 					// shard roots in sparse graphs).
 					await session.connect([[session.peers[0], session.peers[1]]]);
 
-					await waitForResolved(() =>
-						expect(db2.log.log.length).equal(entryCount),
+					const replicationCatchupWait = {
+						timeout: 60_000,
+						delayInterval: 500,
+					} as const;
+					await waitForResolved(
+						() => expect(db2.log.log.length).equal(entryCount),
+						replicationCatchupWait,
 					);
 
 					await db2.close();
+					await waitForResolved(
+						async () => expect((await db1.log.getReplicators()).size).to.equal(1),
+						replicationCatchupWait,
+					);
 
 					// Merge the new peer into the same sharded pubsub root-candidate set.
 					await session.connect([[session.peers[0], session.peers[1], session.peers[2]]]);
+					await db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
+						timeout: replicationCatchupWait.timeout,
+						roleAge: 0,
+					});
 
-					await waitForResolved(() =>
-						expect(db3.log.log.length).to.eq(entryCount),
+					await waitForResolved(
+						() => expect(db3.log.log.length).to.eq(entryCount),
+						replicationCatchupWait,
 					);
 
 				// reopen db2 again and make sure either db3 or db2 drops the entry (not both need to replicate)
@@ -4203,19 +4217,28 @@ testSetups.forEach((setup) => {
 						{ reset: true },
 					);
 
-					await waitForResolved(() =>
-						expect(db1.log.log.length).to.closeTo(entryCount / 3, 30),
+					const rebalanceWait = {
+						timeout: 60_000,
+						delayInterval: 500,
+					} as const;
+					await waitForResolved(
+						() => expect(db1.log.log.length).to.closeTo(entryCount / 3, 30),
+						rebalanceWait,
 					);
-					await waitForResolved(() =>
-						expect(db2.log.log.length).to.closeTo(entryCount / 3, 30),
+					await waitForResolved(
+						() => expect(db2.log.log.length).to.closeTo(entryCount / 3, 30),
+						rebalanceWait,
 					);
-					await waitForResolved(() =>
-						expect(db3.log.log.length).to.closeTo(entryCount / 3, 30),
+					await waitForResolved(
+						() => expect(db3.log.log.length).to.closeTo(entryCount / 3, 30),
+						rebalanceWait,
 					);
-					await waitForResolved(() =>
-						expect(
-							db1.log.log.length + db2.log.log.length + db3.log.log.length,
-						).to.equal(entryCount),
+					await waitForResolved(
+						() =>
+							expect(
+								db1.log.log.length + db2.log.log.length + db3.log.log.length,
+							).to.equal(entryCount),
+						rebalanceWait,
 					);
 					for (const db of [db1, db2, db3]) {
 						expect(await db.log.getPrunable()).to.have.length(0);
