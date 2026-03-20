@@ -775,15 +775,46 @@ export class DocumentIndex<
 		const results: types.Result[] = [];
 		for (const match of matches) {
 			if (resolve) {
-				const doc = match as WithContext<T>;
-				const indexedValue = await this.transformer(doc as T, doc.__context);
-				const wrappedIndexed = coerceWithContext(indexedValue, doc.__context);
+				if (match instanceof this.documentType) {
+					const doc = match as WithContext<T>;
+					const indexedValue = await this.transformer(doc as T, doc.__context);
+					const wrappedIndexed = coerceWithContext(indexedValue, doc.__context);
+					results.push(
+						new types.ResultValue({
+							context: doc.__context,
+							value: doc as T,
+							source: serialize(doc as T),
+							indexed: wrappedIndexed,
+						}),
+					);
+					continue;
+				}
+
+				const indexed = match as WithContext<I>;
+				const resolved = await this.resolveDocument({
+					indexed,
+					head: indexed.__context.head,
+				});
+
+				if (resolved) {
+					results.push(
+						new types.ResultValue({
+							context: indexed.__context,
+							value: resolved.value,
+							source: serialize(resolved.value),
+							indexed,
+						}),
+					);
+					continue;
+				}
+
+				const head = await this._log.log.get(indexed.__context.head);
 				results.push(
-					new types.ResultValue({
-						context: doc.__context,
-						value: doc as T,
-						source: serialize(doc as T),
-						indexed: wrappedIndexed,
+					new types.ResultIndexedValue({
+						context: indexed.__context,
+						source: serialize(indexed as I),
+						indexed: indexed as I,
+						entries: head ? [head] : [],
 					}),
 				);
 			} else {
@@ -821,13 +852,25 @@ export class DocumentIndex<
 					indexed: entry.value,
 					head: entry.value.__context.head,
 				});
-				if (!value) continue;
+				if (value) {
+					results.push(
+						new types.ResultValue({
+							context: entry.value.__context,
+							value: value.value,
+							source: serialize(value.value),
+							indexed: indexedUnwrapped,
+						}),
+					);
+					continue;
+				}
+
+				const head = await this._log.log.get(entry.value.__context.head);
 				results.push(
-					new types.ResultValue({
+					new types.ResultIndexedValue({
 						context: entry.value.__context,
-						value: value.value,
-						source: serialize(value.value),
+						source: serialize(indexedUnwrapped),
 						indexed: indexedUnwrapped,
+						entries: head ? [head] : [],
 					}),
 				);
 			} else {
@@ -889,7 +932,7 @@ export class DocumentIndex<
 							query: queue.fromQuery.query,
 							sort: queue.fromQuery.sort,
 						},
-						resolveFlag,
+						false,
 					);
 					if (matches.length) {
 						const wrapped = await this.wrapPushResults(matches, resolveFlag);
