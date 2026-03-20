@@ -3664,7 +3664,6 @@ export class DocumentIndex<
 					peerHash !== localHash && peerBuffer.buffer.length > 0,
 			);
 			const preferBufferedResults =
-				first &&
 				bufferedBeforeFetch > 0 &&
 				pushUpdates !== undefined &&
 				hasBufferedRemoteResults;
