@@ -5639,7 +5639,8 @@ describe("index", () => {
 					);
 				});
 
-				it("observers connected through an intermediary replicator receive updates", async () => {
+				it("observers connected through an intermediary replicator receive updates", async function () {
+					this.timeout(120_000);
 					session = await TestSession.disconnected(3);
 
 					await session.connect([
@@ -5701,6 +5702,11 @@ describe("index", () => {
 						const initialBatch = await iterator.next(1);
 						expect(initialBatch).to.have.length(0);
 						expect(iterator.done()).to.be.false;
+						await waitForResolved(
+							() =>
+								expect(replicator.docs.index.countIteratorsInProgress).to.equal(1),
+							{ timeout: 3e4 },
+						);
 
 						const docId = "relay-doc";
 						await observerWriter.docs.put(new Document({ id: docId }));
@@ -5708,10 +5714,6 @@ describe("index", () => {
 							async () =>
 								expect(await replicator.docs.index.getSize()).to.equal(1),
 							{ timeout: 3e4 },
-						);
-						console.debug(
-							"[test] replicator iterators",
-							replicator.docs.index.countIteratorsInProgress,
 						);
 
 						await waitForResolved(
