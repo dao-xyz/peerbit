@@ -457,11 +457,24 @@ export class TestSession {
 		}
 
 	async connect(groups?: ProgramClient[][]) {
+		const dialGroups = groups ?? ([this._peers] as unknown as ProgramClient[][]);
 		await this.session.connect(groups?.map((x) => x.map((y) => y)));
 		this.connectedGroups = groups
 			? groups.map((group) => new Set(group as Peerbit[]))
 			: [new Set(this._peers)];
 		await this.configureFanoutShardRoots();
+		for (const group of dialGroups) {
+			if (!group || group.length < 2) continue;
+			await waitForPeersStreams(
+				...group.map((x) => x.services.blocks as any as DirectStream<any>),
+			);
+			await waitForPeersStreams(
+				...group.map((x) => x.services.pubsub as any as DirectStream<any>),
+			);
+			await waitForPeersStreams(
+				...group.map((x) => (x.services as any).fanout as any as DirectStream<any>),
+			);
+		}
 		return;
 	}
 
