@@ -12,10 +12,6 @@ import {
 import type { Indices, Index, IndexEngineInitProperties } from "@peerbit/indexer-interface";
 import { type ProgramClient } from "@peerbit/program";
 import { FanoutTree, TopicControlPlane, TopicRootControlPlane } from "@peerbit/pubsub";
-import {
-	type DirectStream,
-	waitForNeighbour as waitForPeersStreams,
-} from "@peerbit/stream";
 import { type Libp2pOptions } from "libp2p";
 import path from "path";
 import {
@@ -465,15 +461,29 @@ export class TestSession {
 		await this.configureFanoutShardRoots();
 		for (const group of dialGroups) {
 			if (!group || group.length < 2) continue;
-			await waitForPeersStreams(
-				...group.map((x) => x.services.blocks as any as DirectStream<any>),
-			);
-			await waitForPeersStreams(
-				...group.map((x) => x.services.pubsub as any as DirectStream<any>),
-			);
-			await waitForPeersStreams(
-				...group.map((x) => (x.services as any).fanout as any as DirectStream<any>),
-			);
+			for (const peer of group) {
+				const peerHash = (peer as any).identity.publicKey.hashcode();
+				await Promise.all(
+					group
+						.filter((other) => other !== peer)
+						.map(async (other) => {
+							await Promise.all([
+								(other as any).services.blocks.waitFor(peerHash, {
+									target: "neighbor",
+									timeout: 10_000,
+								}),
+								(other as any).services.pubsub.waitFor(peerHash, {
+									target: "neighbor",
+									timeout: 10_000,
+								}),
+								(other as any).services.fanout.waitFor(peerHash, {
+									target: "neighbor",
+									timeout: 10_000,
+								}),
+							]);
+						}),
+				);
+			}
 		}
 		return;
 	}
