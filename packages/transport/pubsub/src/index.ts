@@ -1651,6 +1651,21 @@ export class TopicControlPlane
 		return hints;
 	}
 
+	private async sendDirectControlMessage(
+		peer: PeerStreams,
+		pubsubMessage: PubSubMessage,
+	) {
+		const embedded = await this.createMessage(toUint8Array(pubsubMessage.bytes()), {
+			mode: new SilentDelivery({
+				to: [peer.publicKey.hashcode()],
+				redundancy: 1,
+			}),
+			priority: 1,
+			skipRecipientValidation: true,
+		} as any);
+		await this.publishMessage(this.publicKey, embedded, [peer]);
+	}
+
 	async requestSubscribers(
 		topic: string | string[],
 		to?: PublicSignKey,
@@ -1672,10 +1687,16 @@ export class TopicControlPlane
 
 		await Promise.all(
 			[...byShard.entries()].map(async ([shardTopic, userTopics]) => {
+				const msg = new GetSubscribers({ topics: userTopics });
+				const directPeer = to ? this.peers.get(to.hashcode()) : undefined;
+				if (directPeer) {
+					await this.sendDirectControlMessage(directPeer, msg);
+					return;
+				}
+
 				const persistent = (this.shardRefCounts.get(shardTopic) ?? 0) > 0;
 				await this.ensureFanoutChannel(shardTopic, { ephemeral: !persistent });
 
-				const msg = new GetSubscribers({ topics: userTopics });
 				const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
 					mode: new AnyWhere(),
 					priority: 1,
@@ -2058,9 +2079,10 @@ export class TopicControlPlane
 	private async processDirectPubSubMessage(input: {
 		pubsubMessage: PubSubMessage;
 		message: DataMessage;
+		from: PublicSignKey;
 		stream: PeerStreams;
 	}): Promise<void> {
-		const { pubsubMessage, message, stream } = input;
+		const { pubsubMessage, message, from, stream } = input;
 
 		if (pubsubMessage instanceof TopicRootCandidates) {
 			// Used only to converge deterministic shard-root candidates in auto mode.
@@ -2085,6 +2107,83 @@ export class TopicControlPlane
 
 		if (pubsubMessage instanceof TopicRootQueryResponse) {
 			this.resolvePendingTopicRootQuery(pubsubMessage);
+			return;
+		}
+
+		if (pubsubMessage instanceof Subscribe) {
+			const sender = from;
+			const senderKey = sender.hashcode();
+			const relevantTopics = pubsubMessage.topics.filter((t) =>
+				this.isTrackedTopic(t),
+			);
+
+			if (
+				relevantTopics.length > 0 &&
+				this.subscriptionMessageIsLatest(message, pubsubMessage, relevantTopics)
+			) {
+				const changed: string[] = [];
+				for (const topic of relevantTopics) {
+					const peers = this.topics.get(topic);
+					if (!peers) continue;
+					this.initializePeer(sender);
+
+					const existing = peers.get(senderKey);
+					if (!existing || existing.session < message.header.session) {
+						peers.delete(senderKey);
+						peers.set(
+							senderKey,
+							new SubscriptionData({
+								session: message.header.session,
+								timestamp: message.header.timestamp,
+								publicKey: sender,
+							}),
+						);
+						changed.push(topic);
+					} else {
+						peers.delete(senderKey);
+						peers.set(senderKey, existing);
+					}
+
+					if (!existing) {
+						this.peerToTopic.get(senderKey)!.add(topic);
+					}
+					this.pruneTopicSubscribers(topic);
+				}
+
+				if (changed.length > 0) {
+					this.dispatchEvent(
+						new CustomEvent<SubscriptionEvent>("subscribe", {
+							detail: new SubscriptionEvent(sender, changed),
+						}),
+					);
+				}
+			}
+
+			if (pubsubMessage.requestSubscribers) {
+				const overlap = this.getSubscriptionOverlap(pubsubMessage.topics);
+				if (overlap.length > 0) {
+					await this.sendDirectControlMessage(
+						stream,
+						new Subscribe({
+							topics: overlap,
+							requestSubscribers: false,
+						}),
+					);
+				}
+			}
+			return;
+		}
+
+		if (pubsubMessage instanceof GetSubscribers) {
+			const overlap = this.getSubscriptionOverlap(pubsubMessage.topics);
+			if (overlap.length === 0) return;
+			await this.sendDirectControlMessage(
+				stream,
+				new Subscribe({
+					topics: overlap,
+					requestSubscribers: false,
+				}),
+			);
 			return;
 		}
 
@@ -2340,12 +2439,14 @@ export class TopicControlPlane
 			return super.onDataMessage(from, stream, message, seenBefore);
 		}
 
-		// DirectStream only supports targeted pubsub data and a small set of utility
-		// messages. All membership/control traffic is shard-only.
+		// DirectStream supports targeted pubsub data plus targeted subscriber snapshot
+		// traffic used by Program.waitFor() when a peer is already connected directly.
 		if (
 			!(pubsubMessage instanceof PubSubData) &&
 			!(pubsubMessage instanceof TopicRootCandidates) &&
 			!(pubsubMessage instanceof TopicRootQuery) &&
+			!(pubsubMessage instanceof GetSubscribers) &&
+			!(pubsubMessage instanceof Subscribe)
 			!(pubsubMessage instanceof TopicRootQueryResponse)
 		) {
 			return true;
@@ -2376,6 +2477,7 @@ export class TopicControlPlane
 				await this.processDirectPubSubMessage({
 					pubsubMessage,
 					message,
+					from,
 					stream,
 				});
 			}
