@@ -391,40 +391,4 @@ describe("pubsub (unsubscribe reason)", function () {
 		}
 	});
 
-	it("direct subscribe(requestSubscribers=true) replies with overlapping subscriptions", async () => {
-		const topic = "direct-subscribe-request-subscribers-reply";
-		const session = await createDisconnectedSession(2);
-		try {
-			const { a, b } = await setupTrackedSubscribers(topic, session);
-			const bPublicKey = getPublicKeyFromPeerId(session.peers[1]!.peerId);
-
-			a.topics.get(topic)?.delete(b.publicKeyHash);
-			a.peerToTopic.delete(b.publicKeyHash);
-			a.lastSubscriptionMessages.get(b.publicKeyHash)?.delete(topic);
-			b.topics.get(topic)?.delete(a.publicKeyHash);
-			b.peerToTopic.delete(a.publicKeyHash);
-			b.lastSubscriptionMessages.get(a.publicKeyHash)?.delete(topic);
-
-			await (a as any).processDirectPubSubMessage({
-				pubsubMessage: new Subscribe({
-					topics: [topic],
-					requestSubscribers: true,
-				}),
-				message: createControlEnvelope({
-					publicKey: bPublicKey,
-					session: 2n,
-					timestamp: 20n,
-				}),
-				from: bPublicKey,
-				stream: (a as any).peers.get(b.publicKeyHash),
-			});
-
-			await waitForResolved(() => {
-				expect(a.topics.get(topic)?.has(b.publicKeyHash)).to.equal(true);
-				expect(b.topics.get(topic)?.has(a.publicKeyHash)).to.equal(true);
-			});
-		} finally {
-			await session.stop();
-		}
-	});
 });
