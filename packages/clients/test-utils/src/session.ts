@@ -625,24 +625,6 @@ export class TestSession {
 	) {
 		const session = await TestSession.disconnectedMock(n, options);
 		await session.connect();
-		// TODO types
-		await waitForPeersStreams(
-			...session.peers.map(
-				(x) => x.services.blocks as any as DirectStream<any>,
-			),
-		);
-		// Sharded pubsub/fanout uses its own DirectStream protocols; ensure those
-		// neighbor streams are established before tests start opening programs.
-		await waitForPeersStreams(
-			...session.peers.map(
-				(x) => x.services.pubsub as any as DirectStream<any>,
-			),
-		);
-		await waitForPeersStreams(
-			...session.peers.map(
-				(x) => (x.services as any).fanout as any as DirectStream<any>,
-			),
-		);
 		return session;
 	}
 
@@ -690,24 +672,6 @@ export class TestSession {
 	static async connected(n: number, options?: CreateOptions | CreateOptions[]) {
 		const session = await TestSession.disconnected(n, options);
 		await session.connect();
-		// TODO types
-		await waitForPeersStreams(
-			...session.peers.map(
-				(x) => x.services.blocks as any as DirectStream<any>,
-			),
-		);
-		// Sharded pubsub/fanout uses its own DirectStream protocols; ensure those
-		// neighbor streams are established before tests start opening programs.
-		await waitForPeersStreams(
-			...session.peers.map(
-				(x) => x.services.pubsub as any as DirectStream<any>,
-			),
-		);
-		await waitForPeersStreams(
-			...session.peers.map(
-				(x) => (x.services as any).fanout as any as DirectStream<any>,
-			),
-		);
 		return session;
 	}
 
