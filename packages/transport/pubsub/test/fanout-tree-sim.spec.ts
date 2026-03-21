@@ -5,7 +5,7 @@ import {
 } from "../benchmark/fanout-tree-sim-lib.js";
 
 describe("fanout-tree-sim (ci)", () => {
-	const LOSSY_CHURN_TRACKER_BPP_MAX = 5.1;
+	const LOSSY_CHURN_TRACKER_BYTES_MAX = 150_000;
 
 	it("joins and delivers on a small sim", async function () {
 		this.timeout(60_000);
@@ -114,7 +114,7 @@ describe("fanout-tree-sim (ci)", () => {
 			result.treeLevelP95 > 8 ||
 			result.formationScore > 30 ||
 			result.formationTreeOrphans > 0 ||
-			result.trackerBpp > LOSSY_CHURN_TRACKER_BPP_MAX ||
+			result.protocolControlBytesSentTracker > LOSSY_CHURN_TRACKER_BYTES_MAX ||
 			result.repairBpp > 5
 		) {
 			// Helpful for CI debug
@@ -144,7 +144,12 @@ describe("fanout-tree-sim (ci)", () => {
 		expect(result.protocolIHaveSent).to.be.lessThan(4_000);
 		expect(result.protocolControlBytesSent).to.be.lessThan(300_000);
 		expect(result.protocolRepairReqSent).to.be.lessThan(10_000);
-		expect(result.trackerBpp).to.be.lessThan(LOSSY_CHURN_TRACKER_BPP_MAX);
+		// In the lossy/churny smoke test, delivered payload fluctuates by design, so
+		// trackerBpp is noisier than the underlying tracker-byte volume. Gate the
+		// structural scenario on tracker control bytes directly instead.
+		expect(result.protocolControlBytesSentTracker).to.be.lessThan(
+			LOSSY_CHURN_TRACKER_BYTES_MAX,
+		);
 		expect(result.repairBpp).to.be.lessThan(5);
 	});
 });
