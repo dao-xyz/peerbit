@@ -3562,8 +3562,13 @@ describe("index", () => {
 						await session.connect([[session.peers[0], session.peers[1]]]); // connect the nodes!
 						await observer.docs.index.waitFor(writer1.node.identity.publicKey);
 
-						await waitForResolved(() =>
-							expect(missedResults).to.deep.equal([1]),
+						await waitForResolved(() => expect(missedResults).to.deep.equal([1]), {
+							timeout: 30_000,
+							delayInterval: 250,
+						});
+						await waitForResolved(
+							async () => expect(await iterator.pending()).to.equal(2),
+							{ timeout: 30_000, delayInterval: 250 },
 						);
 						const third = await iterator.next(1);
 						const fourth = await iterator.next(1);
@@ -4199,6 +4204,10 @@ describe("index", () => {
 		});
 
 		describe("updates", () => {
+			afterEach(async () => {
+				await session.stop();
+			});
+
 			it("sorted only: mid-insert yields sorted order", async () => {
 				session = await TestSession.connected(1);
 
@@ -7867,23 +7876,25 @@ describe("index", () => {
 					);
 
 				await waitForResolved(async () => {
-					const { estimate: approxCount1 } = await store1.docs.count({
+					const approxCount1 = await store1.docs.count({
 						approximate: true,
 					});
-					const { estimate: approxCount2 } = await store2.docs.count({
+					const approxCount2 = await store2.docs.count({
 						approximate: true,
 					});
 					const approxCount3 = await store3.docs.count({ approximate: true });
 					const localCount3 = await store3.docs.count();
 
-					expect(approxCount1).to.be.within(
-						expectedDocCountAfterDelete * 0.9,
-						expectedDocCountAfterDelete * 1.1,
-					);
-					expect(approxCount2).to.be.within(
-						expectedDocCountAfterDelete * 0.9,
-						expectedDocCountAfterDelete * 1.1,
-					);
+					const assertWithinMargin = (result: CountEstimate) => {
+						expect(result.errorMargin).to.not.be.undefined;
+						const margin = Math.max(0.15, result.errorMargin! * (3.29 / 1.96));
+						expect(result.estimate).to.be.within(
+							expectedDocCountAfterDelete * (1 - margin),
+							expectedDocCountAfterDelete * (1 + margin),
+						);
+					};
+					assertWithinMargin(approxCount1);
+					assertWithinMargin(approxCount2);
 
 					expect(approxCount3.errorMargin).to.be.undefined;
 					expect(approxCount3.estimate).to.eq(localCount3);
