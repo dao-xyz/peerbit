@@ -151,7 +151,10 @@ jobs:
     name: Test (${{ matrix.test_cmd }}, Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
     needs: build_workspace
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # PR `part-2a` can run a few minutes slower than the corresponding push job on
+    # GitHub-hosted runners. Give the PR matrix enough headroom to finish instead
+    # of being cancelled at 30 minutes after all tests have effectively passed.
+    timeout-minutes: 45
     env:
       PEERBIT_TEST_SESSION: mock
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
