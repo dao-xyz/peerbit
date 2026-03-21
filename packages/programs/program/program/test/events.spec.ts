@@ -394,6 +394,34 @@ describe("events", () => {
 				baseSubscribeListeners,
 			);
 		});
+
+		it("emits join when a peer is discovered from subscriber snapshots", async () => {
+			const peer2 = await creatMockPeer(state);
+			const p = await peer.open(new TestProgramWithTopics());
+			const peer2Hash = peer2.identity.publicKey.hashcode();
+			const allTopics = [...p.getTopics(), ...p.subprogram.nested.getTopics()];
+			const joinEvents: string[] = [];
+			p.events.addEventListener("join", (event) => {
+				joinEvents.push(event.detail.hashcode());
+			});
+
+			(peer.services.pubsub as any).waitFor = async () => [peer2Hash];
+			(peer.services.pubsub as any).topics = new Map(
+				allTopics.map(
+					(topic): [string, Map<string, { publicKey: typeof peer2.identity.publicKey }>] => [
+						topic,
+						new Map([[peer2Hash, { publicKey: peer2.identity.publicKey }]]),
+					],
+				),
+			);
+			(peer.services.pubsub as any).getSubscribers = (): string[] => [];
+
+			const ready = await p.waitFor(peer2.identity.publicKey);
+			expect(ready).to.deep.equal([peer2Hash]);
+			expect(joinEvents).to.deep.equal([peer2Hash]);
+
+			await peer2.stop();
+		});
 	});
 
 	// TODO test if for example 50 % of programs are open, what is the expected join/leave events???
