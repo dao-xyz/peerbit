@@ -422,6 +422,65 @@ describe("events", () => {
 
 			await peer2.stop();
 		});
+
+		it("uses provided Set peer keys when snapshot membership has no embedded public key", async () => {
+			const peer2 = await creatMockPeer(state);
+			const p = await peer.open(new TestProgramWithTopics());
+			const peer2Hash = peer2.identity.publicKey.hashcode();
+			const allTopics = [...p.getTopics(), ...p.subprogram.nested.getTopics()];
+			const joinEvents: string[] = [];
+			p.events.addEventListener("join", (event) => {
+				joinEvents.push(event.detail.hashcode());
+			});
+
+			(peer.services.pubsub as any).waitFor = async () => [peer2Hash];
+			(peer.services.pubsub as any).topics = new Map(
+				allTopics.map((topic) => [topic, new Map([[peer2Hash, {}]])]),
+			);
+			(peer.services.pubsub as any).getSubscribers = (): string[] => [];
+			(peer.services.pubsub as any).getPublicKey = () => {
+				throw new Error("waitFor should reuse the provided peer key");
+			};
+
+			const ready = await p.waitFor(
+				new Set([peer2.identity.publicKey as any]) as any,
+			);
+			expect(ready).to.deep.equal([peer2Hash]);
+			expect(joinEvents).to.deep.equal([peer2Hash]);
+
+			await peer2.stop();
+		});
+
+		it("uses provided iterable peer keys when snapshot membership has no embedded public key", async () => {
+			const peer2 = await creatMockPeer(state);
+			const p = await peer.open(new TestProgramWithTopics());
+			const peer2Hash = peer2.identity.publicKey.hashcode();
+			const allTopics = [...p.getTopics(), ...p.subprogram.nested.getTopics()];
+			const joinEvents: string[] = [];
+			p.events.addEventListener("join", (event) => {
+				joinEvents.push(event.detail.hashcode());
+			});
+
+			(peer.services.pubsub as any).waitFor = async () => [peer2Hash];
+			(peer.services.pubsub as any).topics = new Map(
+				allTopics.map((topic) => [topic, new Map([[peer2Hash, {}]])]),
+			);
+			(peer.services.pubsub as any).getSubscribers = (): string[] => [];
+			(peer.services.pubsub as any).getPublicKey = () => {
+				throw new Error("waitFor should reuse the provided peer key");
+			};
+
+			const providedPeers = {
+				*[Symbol.iterator]() {
+					yield peer2.identity.publicKey;
+				},
+			};
+			const ready = await p.waitFor(providedPeers as any);
+			expect(ready).to.deep.equal([peer2Hash]);
+			expect(joinEvents).to.deep.equal([peer2Hash]);
+
+			await peer2.stop();
+		});
 	});
 
 	// TODO test if for example 50 % of programs are open, what is the expected join/leave events???

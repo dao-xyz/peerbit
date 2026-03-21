@@ -4204,6 +4204,10 @@ describe("index", () => {
 		});
 
 		describe("updates", () => {
+			afterEach(async () => {
+				await session.stop();
+			});
+
 			it("sorted only: mid-insert yields sorted order", async () => {
 				session = await TestSession.connected(1);
 
@@ -6075,6 +6079,102 @@ describe("index", () => {
 					} finally {
 						processQueryStub.restore();
 						await iterator?.close();
+						await session.stop();
+					}
+				});
+
+				it("wrapPushResults returns indexed values when resolve=true cannot resolve pushed matches", async () => {
+					session = await TestSession.connected(1);
+
+					const store = new TestStore<Indexable>({
+						docs: new Documents<Document, Indexable>(),
+					});
+
+					await session.peers[0].open(store, {
+						args: {
+							replicate: { factor: 1 },
+							index: {
+								type: Indexable,
+								transform: (doc) => new Indexable(doc),
+								includeIndexed: true,
+							},
+						},
+					});
+
+					const doc = new Document({ id: "fallback-wrap", name: "theta" });
+					await store.docs.put(doc);
+					const context = (doc as any).__context;
+					const indexed = Object.assign(new Indexable(doc), {
+						__context: context,
+					});
+					const resolveStub = sinon
+						.stub(store.docs.index as any, "resolveDocument")
+						.resolves(undefined);
+
+					try {
+						const results = await (store.docs.index as any).wrapPushResults(
+							[indexed],
+							true,
+						);
+						expect(results).to.have.length(1);
+						expect(results[0]).to.be.instanceOf(ResultIndexedValue);
+						expect((results[0] as ResultIndexedValue<Indexable>).indexed).to.equal(
+							indexed,
+						);
+						expect((results[0] as ResultIndexedValue<Indexable>).entries).to.have.length(
+							1,
+						);
+					} finally {
+						resolveStub.restore();
+						await session.stop();
+					}
+				});
+
+				it("drainQueuedResults keeps unresolved queued indexed matches as indexed results", async () => {
+					session = await TestSession.connected(1);
+
+					const store = new TestStore<Indexable>({
+						docs: new Documents<Document, Indexable>(),
+					});
+
+					await session.peers[0].open(store, {
+						args: {
+							replicate: { factor: 1 },
+							index: {
+								type: Indexable,
+								transform: (doc) => new Indexable(doc),
+								includeIndexed: true,
+							},
+						},
+					});
+
+					const doc = new Document({ id: "fallback-queue", name: "lambda" });
+					await store.docs.put(doc);
+					const context = (doc as any).__context;
+					const indexed = Object.assign(new Indexable(doc), {
+						__context: context,
+					});
+					const resolveStub = sinon
+						.stub(store.docs.index as any, "resolveDocument")
+						.resolves(undefined);
+					const queue = [{ id: doc.id, value: indexed }];
+
+					try {
+						const results = await (store.docs.index as any).drainQueuedResults(
+							queue,
+							true,
+						);
+						expect(queue).to.have.length(0);
+						expect(results).to.have.length(1);
+						expect(results[0]).to.be.instanceOf(ResultIndexedValue);
+						expect(
+							(results[0] as ResultIndexedValue<Indexable>).indexed,
+						).to.be.instanceOf(Indexable);
+						expect((results[0] as ResultIndexedValue<Indexable>).entries).to.have.length(
+							1,
+						);
+					} finally {
+						resolveStub.restore();
 						await session.stop();
 					}
 				});
