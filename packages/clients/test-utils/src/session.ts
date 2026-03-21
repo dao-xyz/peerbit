@@ -158,6 +158,29 @@ type SessionLike = {
 	stop(): Promise<any>;
 };
 
+type NeighborReadyServices = Pick<Peerbit["services"], "blocks" | "pubsub" | "fanout">;
+type NeighborReadyClient = ProgramClient & { services: NeighborReadyServices };
+
+const waitForNeighborServices = async (
+	services: NeighborReadyServices,
+	peerHash: string,
+) => {
+	await Promise.all([
+		services.blocks.waitFor(peerHash, {
+			target: "neighbor",
+			timeout: 10_000,
+		}),
+		services.pubsub.waitFor(peerHash, {
+			target: "neighbor",
+			timeout: 10_000,
+		}),
+		services.fanout.waitFor(peerHash, {
+			target: "neighbor",
+			timeout: 10_000,
+		}),
+	]);
+};
+
 const mulberry32 = (seed: number) => {
 	let t = seed >>> 0;
 	return () => {
@@ -461,27 +484,13 @@ export class TestSession {
 		await this.configureFanoutShardRoots();
 		for (const group of dialGroups) {
 			if (!group || group.length < 2) continue;
-			for (const peer of group) {
-				const peerHash = (peer as any).identity.publicKey.hashcode();
+			const readyGroup = group as NeighborReadyClient[];
+			for (const peer of readyGroup) {
+				const peerHash = peer.identity.publicKey.hashcode();
 				await Promise.all(
-					group
+					readyGroup
 						.filter((other) => other !== peer)
-						.map(async (other) => {
-							await Promise.all([
-								(other as any).services.blocks.waitFor(peerHash, {
-									target: "neighbor",
-									timeout: 10_000,
-								}),
-								(other as any).services.pubsub.waitFor(peerHash, {
-									target: "neighbor",
-									timeout: 10_000,
-								}),
-								(other as any).services.fanout.waitFor(peerHash, {
-									target: "neighbor",
-									timeout: 10_000,
-								}),
-							]);
-						}),
+						.map((other) => waitForNeighborServices(other.services, peerHash)),
 				);
 			}
 		}
@@ -573,20 +582,7 @@ export class TestSession {
 
 						// Also wait for the reverse direction to be fully established; some
 						// protocols require a writable stream on both sides to reply.
-						await Promise.all([
-							other.services.pubsub.waitFor(peerHash, {
-								target: "neighbor",
-								timeout: 10_000,
-							}),
-							other.services.blocks.waitFor(peerHash, {
-								target: "neighbor",
-								timeout: 10_000,
-							}),
-							other.services.fanout.waitFor(peerHash, {
-								target: "neighbor",
-								timeout: 10_000,
-							}),
-						]);
+						await waitForNeighborServices(other.services, peerHash);
 					}),
 				);
 
