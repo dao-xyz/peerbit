@@ -737,6 +737,7 @@ export class DocumentIndex<
 			resolveResults?: boolean;
 			pushMode?: types.PushUpdatesMode;
 			pushInFlight?: boolean;
+			pendingAdded?: WithIndexedContext<T, I>[];
 		}
 	>;
 	private iteratorKeepAliveTimers?: Map<string, ReturnType<typeof setTimeout>>;
@@ -774,15 +775,46 @@ export class DocumentIndex<
 		const results: types.Result[] = [];
 		for (const match of matches) {
 			if (resolve) {
-				const doc = match as WithContext<T>;
-				const indexedValue = await this.transformer(doc as T, doc.__context);
-				const wrappedIndexed = coerceWithContext(indexedValue, doc.__context);
+				if (match instanceof this.documentType) {
+					const doc = match as WithContext<T>;
+					const indexedValue = await this.transformer(doc as T, doc.__context);
+					const wrappedIndexed = coerceWithContext(indexedValue, doc.__context);
+					results.push(
+						new types.ResultValue({
+							context: doc.__context,
+							value: doc as T,
+							source: serialize(doc as T),
+							indexed: wrappedIndexed,
+						}),
+					);
+					continue;
+				}
+
+				const indexed = match as WithContext<I>;
+				const resolved = await this.resolveDocument({
+					indexed,
+					head: indexed.__context.head,
+				});
+
+				if (resolved) {
+					results.push(
+						new types.ResultValue({
+							context: indexed.__context,
+							value: resolved.value,
+							source: serialize(resolved.value),
+							indexed,
+						}),
+					);
+					continue;
+				}
+
+				const head = await this._log.log.get(indexed.__context.head);
 				results.push(
-					new types.ResultValue({
-						context: doc.__context,
-						value: doc as T,
-						source: serialize(doc as T),
-						indexed: wrappedIndexed,
+					new types.ResultIndexedValue({
+						context: indexed.__context,
+						source: serialize(indexed as I),
+						indexed: indexed as I,
+						entries: head ? [head] : [],
 					}),
 				);
 			} else {
@@ -820,13 +852,25 @@ export class DocumentIndex<
 					indexed: entry.value,
 					head: entry.value.__context.head,
 				});
-				if (!value) continue;
+				if (value) {
+					results.push(
+						new types.ResultValue({
+							context: entry.value.__context,
+							value: value.value,
+							source: serialize(value.value),
+							indexed: indexedUnwrapped,
+						}),
+					);
+					continue;
+				}
+
+				const head = await this._log.log.get(entry.value.__context.head);
 				results.push(
-					new types.ResultValue({
+					new types.ResultIndexedValue({
 						context: entry.value.__context,
-						value: value.value,
-						source: serialize(value.value),
+						source: serialize(indexedUnwrapped),
 						indexed: indexedUnwrapped,
+						entries: head ? [head] : [],
 					}),
 				);
 			} else {
@@ -853,14 +897,16 @@ export class DocumentIndex<
 		}
 
 		for (const [_iteratorId, queue] of this._resultQueue) {
-			if (
-				!queue.pushMode ||
-				queue.pushMode !== types.PushUpdatesMode.STREAM ||
-				queue.pushInFlight
-			) {
+			if (!queue.pushMode || queue.pushMode !== types.PushUpdatesMode.STREAM) {
 				continue;
 			}
 			if (!(queue.fromQuery instanceof types.IterationRequest)) {
+				continue;
+			}
+			if (queue.pushInFlight) {
+				queue.pendingAdded = queue.pendingAdded
+					? [...queue.pendingAdded, ...added]
+					: [...added];
 				continue;
 			}
 			queue.pushInFlight = true;
@@ -868,44 +914,51 @@ export class DocumentIndex<
 				const resolveFlag =
 					queue.resolveResults ??
 					resolvesDocuments(queue.fromQuery as AnyIterationRequest);
-				const batches: types.Result[] = [];
-				const queued = await this.drainQueuedResults(queue.queue, resolveFlag);
-				if (queued.length) {
-					batches.push(...queued);
-				}
-				// TODO drain only up to the changed document instead of flushing the entire queue
-				const matches = await this.updateResults(
-					[],
-					{ added },
-					{
-						query: queue.fromQuery.query,
-						sort: queue.fromQuery.sort,
-					},
-					resolveFlag,
-				);
-				if (matches.length) {
-					const wrapped = await this.wrapPushResults(matches, resolveFlag);
-					if (wrapped.length) {
-						batches.push(...wrapped);
+				let pendingAdded = added;
+				do {
+					const batches: types.Result[] = [];
+					const queued = await this.drainQueuedResults(
+						queue.queue,
+						resolveFlag,
+					);
+					if (queued.length) {
+						batches.push(...queued);
 					}
-				}
-				if (!batches.length) {
-					continue;
-				}
-				const pushMessage = new types.PredictedSearchRequest({
-					id: queue.fromQuery.id,
-					request: queue.fromQuery,
-					results: new types.Results({
-						results: batches,
-						kept: 0n,
-					}),
-				});
-				await this._query.send(pushMessage, {
-					mode: new SilentDelivery({
-						to: [queue.from],
-						redundancy: 1,
-					}),
-				});
+					// TODO drain only up to the changed document instead of flushing the entire queue
+					const matches = await this.updateResults(
+						[],
+						{ added: pendingAdded },
+						{
+							query: queue.fromQuery.query,
+							sort: queue.fromQuery.sort,
+						},
+						false,
+					);
+					if (matches.length) {
+						const wrapped = await this.wrapPushResults(matches, resolveFlag);
+						if (wrapped.length) {
+							batches.push(...wrapped);
+						}
+					}
+					if (batches.length) {
+						const pushMessage = new types.PredictedSearchRequest({
+							id: queue.fromQuery.id,
+							request: queue.fromQuery,
+							results: new types.Results({
+								results: batches,
+								kept: 0n,
+							}),
+						});
+						await this._query.send(pushMessage, {
+							mode: new SilentDelivery({
+								to: [queue.from],
+								redundancy: 1,
+							}),
+						});
+					}
+					pendingAdded = queue.pendingAdded ?? [];
+					queue.pendingAdded = undefined;
+				} while (pendingAdded.length > 0);
 			} catch (error) {
 				logger.error("Failed to push iterator update", error);
 			} finally {
@@ -2976,14 +3029,6 @@ export class DocumentIndex<
 			return controller;
 		};
 		let totalFetchedCounter = 0;
-		let lastValueInOrder:
-			| {
-					indexed: WithContext<I>;
-					value: types.ResultTypeFromRequest<R, T, I> | I;
-					from: PublicSignKey;
-					context: types.Context;
-			  }
-			| undefined = undefined;
 		let lastDeliveredIndexed: WithContext<I> | undefined;
 
 		const peerBuffers = (): {
@@ -3665,8 +3710,24 @@ export class DocumentIndex<
 				return [];
 			}
 
-			// TODO everything below is not very optimized
-			const fetchedAll = await fetchAtLeast(n);
+			const bufferedBeforeFetch = peerBuffers().length;
+			const localHash = this.node.identity.publicKey.hashcode();
+			const hasBufferedRemoteResults = [...peerBufferMap.entries()].some(
+				([peerHash, peerBuffer]) =>
+					peerHash !== localHash && peerBuffer.buffer.length > 0,
+			);
+			const preferBufferedResults =
+				bufferedBeforeFetch > 0 &&
+				pushUpdates !== undefined &&
+				hasBufferedRemoteResults;
+
+			// In live-update mode, returning already-buffered results is better than
+			// blocking on an eager remote top-up for the full requested batch size.
+			// This keeps `next(n)` responsive when a late push/update arrives while a
+			// remote iterator has no more immediate items to collect.
+			const fetchedAll = preferBufferedResults
+				? false
+				: await fetchAtLeast(n);
 
 			// get n next top entries, shift and pull more results
 			const peerBuffersArr = peerBuffers();
@@ -3678,7 +3739,6 @@ export class DocumentIndex<
 				),
 			);
 
-			lastValueInOrder = results[0] || lastValueInOrder;
 			const pendingMoreResults = n < results.length; // check if there are more results to fetch, before splicing
 			const batch = results.splice(0, n);
 			const hasMore = !fetchedAll || pendingMoreResults;
@@ -3758,14 +3818,19 @@ export class DocumentIndex<
 			let close = async () => {
 				cleanupAndDone();
 
-				// send close to remote (only peers that actually served results / had an active buffer)
+				// Keep-open iterators can still have active remote state even when
+				// their pending count has already drained to zero.
 				const closeRequest = new types.CloseIteratorRequest({
 					id: queryRequestCoerced.id,
 				});
 				const selfHash = this.node.identity.publicKey.hashcode();
-				const remotePeers = [...peerBufferMap.entries()]
-					.filter(([peer, buffer]) => peer !== selfHash && buffer.kept > 0)
-					.map(([peer]) => peer);
+				const remotePeers = keepRemoteAlive
+					? [...peerBufferMap.keys()].filter((peer) => peer !== selfHash)
+					: [...peerBufferMap.entries()]
+							.filter(
+								([peer, buffer]) => peer !== selfHash && buffer.kept > 0,
+							)
+							.map(([peer]) => peer);
 				peerBufferMap.clear();
 				await Promise.allSettled(
 					remotePeers.map((peer) =>
@@ -3990,8 +4055,7 @@ export class DocumentIndex<
 					return;
 				}
 
-				const collectLateItems =
-					outOfOrderMode !== "drop" && !!notifyLateResults;
+				const collectLateItems = !!notifyLateResults;
 				const lateResults = collectLateItems
 					? ([] as {
 							indexed: WithContext<I>;
@@ -4083,11 +4147,7 @@ export class DocumentIndex<
 				}
 
 				if (lateCount > 0) {
-					notifyLateResults?.(
-						lateCount,
-						from,
-						collectLateItems ? lateResults : undefined,
-					);
+					notifyLateResults?.(lateCount, from, lateResults);
 				}
 
 				peerBufferMap.set(peerHash, {
@@ -4414,35 +4474,16 @@ export class DocumentIndex<
 						if (onLateResultsQueue || onLateResultsDrop) {
 							const pending = peerBufferMap.get(hash)?.buffer;
 							if (pending && pending.length > 0) {
-								if (lastValueInOrder) {
-									const pendingWithLast = [...pending.flat(), lastValueInOrder];
-									const results = pendingWithLast.sort((a, b) =>
-										indexerTypes.extractSortCompare(
-											a.indexed,
-											b.indexed,
-											queryRequestCoerced.sort,
-										),
+								if (lastDeliveredIndexed) {
+									const delivered = lastDeliveredIndexed;
+									const lateItems = pending.filter(
+										(item) => compareIndexed(item.indexed, delivered) < 0,
 									);
-
-									const lateResults = results.findIndex(
-										(x) => x === lastValueInOrder,
-									);
-									if (lateResults > 0) {
-										const lateItems =
-											outOfOrderMode === "queue"
-												? results.slice(
-														0,
-														Math.min(lateResults, results.length),
-													)
-												: undefined;
-										notifyLateResults?.(lateResults, pk, lateItems);
+									if (lateItems.length > 0) {
+										notifyLateResults?.(lateItems.length, pk, lateItems);
 									}
 								} else {
-									notifyLateResults?.(
-										pending.length,
-										pk,
-										outOfOrderMode === "queue" ? pending : undefined,
-									);
+									notifyLateResults?.(pending.length, pk, pending);
 								}
 							}
 						}

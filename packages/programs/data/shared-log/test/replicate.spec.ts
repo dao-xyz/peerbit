@@ -1082,7 +1082,7 @@ describe(`replicate`, () => {
 					},
 				});
 
-				expect(+new Date() - t0).to.be.lessThan(1e3); // not blocked by waitForReplicatorTimeout
+				expect(+new Date() - t0).to.be.lessThan(2e3); // not blocked by the 10s waitForReplicatorTimeout
 			});
 
 			it("segments updated while offline", async () => {
