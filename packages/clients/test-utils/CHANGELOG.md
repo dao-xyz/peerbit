@@ -400,6 +400,32 @@
   * dependencies
     * peerbit bumped from 4.0.6 to 4.0.7
 
+## [3.0.16](https://github.com/dao-xyz/peerbit/compare/test-utils-v3.0.15...test-utils-v3.0.16) (2026-03-22)
+
+
+### Bug Fixes
+
+* **program:** emit joins for snapshot-discovered peers ([0c0603d](https://github.com/dao-xyz/peerbit/commit/0c0603d4f0eb9877e32c5de37b43f52ddf259aaf))
+* **test-utils:** remove stale stream wait calls ([7accb14](https://github.com/dao-xyz/peerbit/commit/7accb14ef24fde1cadd537d3234f3332cf1474d5))
+* **test-utils:** wait for neighbor streams by peer hash ([298052a](https://github.com/dao-xyz/peerbit/commit/298052a07f794ed49363748a882542098cc19cb4))
+
+
+### Refactors
+
+* **test-utils:** minimize neighbor wait cleanup ([6ec42f5](https://github.com/dao-xyz/peerbit/commit/6ec42f5ae1ba3a3c7815a0ff9cbd58171a92ad6c))
+* **test-utils:** type neighbor readiness waits ([7a04384](https://github.com/dao-xyz/peerbit/commit/7a043842cbb10caeed4c52dd5c4e1850da82c2ff))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped to 5.2.1
+    * @peerbit/blocks bumped to 4.0.9
+    * @peerbit/program bumped to 6.0.12
+    * @peerbit/pubsub bumped to 5.1.1
+    * @peerbit/stream bumped to 5.0.7
+
 ## [3.0.15](https://github.com/dao-xyz/peerbit/compare/test-utils-v3.0.14...test-utils-v3.0.15) (2026-03-18)
 
 

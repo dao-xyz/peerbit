@@ -202,6 +202,29 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [6.0.12](https://github.com/dao-xyz/peerbit/compare/program-v6.0.11...program-v6.0.12) (2026-03-22)
+
+
+### Bug Fixes
+
+* **program:** emit joins for snapshot-discovered peers ([0c0603d](https://github.com/dao-xyz/peerbit/commit/0c0603d4f0eb9877e32c5de37b43f52ddf259aaf))
+* **program:** preserve explicit peer keys in waitFor ([49103d7](https://github.com/dao-xyz/peerbit/commit/49103d7e9390df2e7ae3f978b10037fd7f416c0a))
+* **program:** seed subscriber snapshot in waitFor ([d3e7c35](https://github.com/dao-xyz/peerbit/commit/d3e7c357a8714e4ca231044d3659d24dfe8202e0))
+
+
+### Refactors
+
+* **program:** clarify waitFor key caching ([d6fd270](https://github.com/dao-xyz/peerbit/commit/d6fd2705d5ba1669998c1d7a1c332474c53fc850))
+* **program:** clarify waitFor key caching ([96c6698](https://github.com/dao-xyz/peerbit/commit/96c66985484629c61ed9080bade005396cd839d9))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks bumped to 4.0.9
+    * @peerbit/pubsub bumped to 5.1.1
+
 ## [6.0.11](https://github.com/dao-xyz/peerbit/compare/program-v6.0.10...program-v6.0.11) (2026-03-18)
 
 
