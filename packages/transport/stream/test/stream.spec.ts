@@ -2639,6 +2639,57 @@ describe("streams", function () {
 					}
 				}
 			});
+
+			it("publishMessageMaybe returns false for delivery errors and still throws internal errors", async () => {
+				const isolated = await disconnected(1, {
+					services: {
+						directstream: (c) =>
+							new TestDirectStream(c, { connectionManager: false }),
+					},
+				});
+				let stopped = false;
+
+				try {
+					const writer = stream(isolated, 0) as TestDirectStream;
+					const remoteKey = await Ed25519Keypair.create();
+					const peer = writer.addPeer(
+						{ toString: () => "late-peer" } as PeerId,
+						remoteKey.publicKey,
+						"/test/0.0.0",
+						"conn-late",
+					);
+
+					const deliveryMessage = await writer.createMessage(crypto.randomBytes(32), {
+						mode: new AcknowledgeDelivery({
+							redundancy: 1,
+							to: [remoteKey.publicKey.hashcode()],
+						}),
+					});
+					const deliveryFailed = writer.publishMessageMaybe(
+						writer.publicKey,
+						deliveryMessage,
+						[peer],
+					);
+
+					await delay(50);
+					await peer.close();
+					await expect(deliveryFailed).to.eventually.equal(false);
+
+					await isolated.stop();
+					stopped = true;
+
+					const internalMessage = await writer.createMessage(crypto.randomBytes(32), {
+						mode: new AnyWhere(),
+					});
+					await expect(
+						writer.publishMessageMaybe(writer.publicKey, internalMessage),
+					).rejectedWith(NotStartedError);
+				} finally {
+					if (!stopped) {
+						await isolated.stop();
+					}
+				}
+			});
 		});
 
 		describe("limits", () => {

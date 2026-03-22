@@ -2747,12 +2747,12 @@ export abstract class DirectStream<
 		return `deliveryState peers=${this.peers.size} routesLocal=${this.routes.count()} routesAll=${this.routes.countAll()} targets=[${sampled.join(";")}]${more > 0 ? ` (+${more} more)` : ""}`;
 	}
 
-	private createDeliveryPromise(
+	private async createDeliveryPromise(
 		from: PublicSignKey,
 		message: DataMessage | Goodbye,
 		relayed?: boolean,
 		signal?: AbortSignal,
-	): { promise: Promise<void> } {
+	): Promise<{ promise: Promise<void> }> {
 		if (message.header.mode instanceof AnyWhere) {
 			return {
 				promise: Promise.resolve(),
@@ -2988,57 +2988,55 @@ export abstract class DirectStream<
 		return deliveryDeferredPromise;
 	}
 
-	public publishMessage(
+	public async publishMessage(
 		from: PublicSignKey,
 		message: Message,
 		to?: PeerStreams[] | Map<string, PeerStreams>,
 		relayed?: boolean,
 		signal?: AbortSignal,
 	): Promise<void> {
-		return markPromiseHandled(
-			(async () => {
-				if (this.stopping || !this.started) {
-					throw new NotStartedError();
-				}
+		if (this.stopping || !this.started) {
+			throw new NotStartedError();
+		}
 
-				const isRelayed = relayed ?? from.hashcode() !== this.publicKeyHash;
-				let delivereyPromise: Promise<void> | undefined = undefined as any;
-				let ackCallbackId: string | undefined;
+		const isRelayed = relayed ?? from.hashcode() !== this.publicKeyHash;
+		let delivereyPromise: Promise<void> | undefined = undefined as any;
+		let ackCallbackId: string | undefined;
 
-				if (
-					(!message.header.signatures ||
-						message.header.signatures.publicKeys.length === 0) &&
-					message instanceof DataMessage &&
-					message.header.mode instanceof SilentDelivery === false
-				) {
-					throw new Error("Missing signature");
-				}
+		if (
+			(!message.header.signatures ||
+				message.header.signatures.publicKeys.length === 0) &&
+			message instanceof DataMessage &&
+			message.header.mode instanceof SilentDelivery === false
+		) {
+			throw new Error("Missing signature");
+		}
 
-				/**
-				 * Logic for handling acknowledge messages when we receive them (later)
-				 */
+		/**
+		 * Logic for handling acknowledge messages when we receive them (later)
+		 */
 
-				if (
-					(message instanceof DataMessage || message instanceof Goodbye) &&
-					(message.header.mode instanceof AcknowledgeDelivery ||
-						message.header.mode instanceof AcknowledgeAnyWhere)
-				) {
-					const deliveryDeferredPromise = this.createDeliveryPromise(
-						from,
-						message,
-						isRelayed,
-						signal,
-					);
-					delivereyPromise = deliveryDeferredPromise.promise;
-					ackCallbackId = toBase64(message.id);
-				}
+		if (
+			(message instanceof DataMessage || message instanceof Goodbye) &&
+			(message.header.mode instanceof AcknowledgeDelivery ||
+				message.header.mode instanceof AcknowledgeAnyWhere)
+		) {
+			const deliveryDeferredPromise = await this.createDeliveryPromise(
+				from,
+				message,
+				isRelayed,
+				signal,
+			);
+			delivereyPromise = deliveryDeferredPromise.promise;
+			ackCallbackId = toBase64(message.id);
+		}
 
-				try {
-					const bytes = message.bytes();
+		try {
+			const bytes = message.bytes();
 
-					if (!isRelayed) {
-						await this.modifySeenCache(bytes);
-					}
+			if (!isRelayed) {
+				await this.modifySeenCache(bytes);
+			}
 
 			/**
 			 * For non SEEKing message delivery modes, use routing
@@ -3071,24 +3069,20 @@ export abstract class DirectStream<
 						for (const [neighbour, _distantPeers] of fanout) {
 							const stream = this.peers.get(neighbour);
 							if (!stream) continue;
-								if (message.header.mode instanceof SilentDelivery) {
-									message.header.mode.to = [..._distantPeers.keys()];
-									promises.push(
-										this.waitForPeerWrite(
-											stream,
-											message.bytes(),
-											message.header.priority,
-										),
-									);
-								} else {
-									promises.push(
-										this.waitForPeerWrite(
-											stream,
-											bytes,
-											message.header.priority,
-										),
-									);
-								}
+							if (message.header.mode instanceof SilentDelivery) {
+								message.header.mode.to = [..._distantPeers.keys()];
+								promises.push(
+									this.waitForPeerWrite(
+										stream,
+										message.bytes(),
+										message.header.priority,
+									),
+								);
+							} else {
+								promises.push(
+									this.waitForPeerWrite(stream, bytes, message.header.priority),
+								);
+							}
 							usedNeighbours.add(neighbour);
 						}
 						if (message.header.mode instanceof SilentDelivery) {
@@ -3107,18 +3101,14 @@ export abstract class DirectStream<
 							for (const [neighbour, stream] of this.peers) {
 								if (usedNeighbours.size >= message.header.mode.redundancy) {
 									break;
-									}
-									if (usedNeighbours.has(neighbour)) continue;
-									usedNeighbours.add(neighbour);
-									promises.push(
-										this.waitForPeerWrite(
-											stream,
-											bytes,
-											message.header.priority,
-										),
-									);
 								}
+								if (usedNeighbours.has(neighbour)) continue;
+								usedNeighbours.add(neighbour);
+								promises.push(
+									this.waitForPeerWrite(stream, bytes, message.header.priority),
+								);
 							}
+						}
 
 						await Promise.all(promises);
 						return delivereyPromise;
@@ -3147,7 +3137,7 @@ export abstract class DirectStream<
 									message.header.priority,
 								),
 							);
-							}
+						}
 						message.header.mode.to = originalTo;
 						if (promises.length > 0) {
 							await Promise.all(promises);
@@ -3187,9 +3177,7 @@ export abstract class DirectStream<
 					continue;
 				}
 				sentOnce = true;
-				promises.push(
-					this.waitForPeerWrite(id, bytes, message.header.priority),
-				);
+				promises.push(this.waitForPeerWrite(id, bytes, message.header.priority));
 			}
 			await Promise.all(promises);
 
@@ -3201,18 +3189,16 @@ export abstract class DirectStream<
 				}
 			}
 
-					return delivereyPromise;
-				} catch (error) {
-					// If message fanout/write fails before publishMessage returns its delivery
-					// promise, clear any ACK callback to avoid late timer rejections leaking as
-					// unhandled rejections in fire-and-forget call paths.
-					if (ackCallbackId) {
-						this._ackCallbacks.get(ackCallbackId)?.clear();
-					}
-					throw error;
-				}
-			})(),
-		);
+			return delivereyPromise;
+		} catch (error) {
+			// If message fanout/write fails before publishMessage returns its delivery
+			// promise, clear any ACK callback to avoid late timer rejections leaking as
+			// unhandled rejections in fire-and-forget call paths.
+			if (ackCallbackId) {
+				this._ackCallbacks.get(ackCallbackId)?.clear();
+			}
+			throw error;
+		}
 	}
 
 	public async publishMessageMaybe(
