@@ -1651,21 +1651,6 @@ export class TopicControlPlane
 		return hints;
 	}
 
-	private async sendDirectControlMessage(
-		peer: PeerStreams,
-		pubsubMessage: PubSubMessage,
-	) {
-		const embedded = await this.createMessage(toUint8Array(pubsubMessage.bytes()), {
-			mode: new SilentDelivery({
-				to: [peer.publicKey.hashcode()],
-				redundancy: 1,
-			}),
-			priority: 1,
-			skipRecipientValidation: true,
-		} as any);
-		await this.publishMessage(this.publicKey, embedded, [peer]);
-	}
-
 	async requestSubscribers(
 		topic: string | string[],
 		to?: PublicSignKey,
@@ -2446,7 +2431,7 @@ export class TopicControlPlane
 			!(pubsubMessage instanceof TopicRootCandidates) &&
 			!(pubsubMessage instanceof TopicRootQuery) &&
 			!(pubsubMessage instanceof GetSubscribers) &&
-			!(pubsubMessage instanceof Subscribe)
+			!(pubsubMessage instanceof Subscribe) &&
 			!(pubsubMessage instanceof TopicRootQueryResponse)
 		) {
 			return true;
