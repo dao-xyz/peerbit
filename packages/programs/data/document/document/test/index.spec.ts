@@ -5747,6 +5747,114 @@ describe("index", () => {
 					await iterator.close();
 				});
 
+				it("drains pendingAdded when a second push arrives during an in-flight remote send", async function () {
+					this.timeout(60_000);
+					session = await TestSession.connected(2);
+
+					const base = new TestStore({ docs: new Documents<Document>() });
+					const replicator = await session.peers[0].open(base, {
+						args: {
+							replicate: { factor: 1 },
+						},
+					});
+					const reader = await session.peers[1].open(base.clone(), {
+						args: { replicate: false },
+					});
+
+					let iterator:
+						| Awaited<ReturnType<typeof reader.docs.index.iterate>>
+						| undefined;
+					const predictedBatchSizes: number[] = [];
+					const firstPushStarted = pDefer<void>();
+					const releaseFirstPush = pDefer<void>();
+					let blockedFirstPush = false;
+					const originalSend = replicator.docs.index._query.send;
+					const sendFn = originalSend.bind(replicator.docs.index._query);
+					const firstId = `pending-added-${Date.now()}-1`;
+					const secondId = `pending-added-${Date.now()}-2`;
+
+					try {
+						await reader.docs.index.waitFor(replicator.node.identity.publicKey);
+						iterator = reader.docs.index.iterate(
+							{ sort: { key: "id", direction: SortDirection.ASC } },
+							{
+								closePolicy: "manual",
+								remote: {
+									wait: { timeout: 5e3, behavior: "keep-open" },
+									reach: {
+										discover: [replicator.node.identity.publicKey],
+										eager: true,
+									},
+								},
+								updates: { push: true, merge: true },
+							},
+						);
+
+						const initial = await iterator.next(1);
+						expect(initial).to.have.length(0);
+						await waitForResolved(
+							() =>
+								expect(replicator.docs.index.countIteratorsInProgress).to.equal(1),
+							{ timeout: 10_000 },
+						);
+
+						replicator.docs.index._query.send = async (request: any, options: any) => {
+							if (request instanceof PredictedSearchRequest) {
+								const predictedRequest =
+									request as PredictedSearchRequest<any>;
+								const predictedResults = predictedRequest.results as Results<any>;
+								predictedBatchSizes.push(predictedResults.results.length);
+								if (!blockedFirstPush) {
+									blockedFirstPush = true;
+									firstPushStarted.resolve();
+									await releaseFirstPush.promise;
+								}
+							}
+							return sendFn(request, options);
+						};
+
+						const firstPut = replicator.docs.put(new Document({ id: firstId }));
+						await firstPushStarted.promise;
+
+						const secondPut = replicator.docs.put(new Document({ id: secondId }));
+						await waitForResolved(
+							() => {
+								const queued = [
+									...(replicator.docs.index as any)._resultQueue.values(),
+								];
+								expect(
+									queued.some(
+										(queue: any) =>
+											queue.pushInFlight === true &&
+											queue.pendingAdded?.some(
+												(doc: Document) => doc.id === secondId,
+											),
+									),
+								).to.be.true;
+							},
+							{ timeout: 10_000 },
+						);
+
+						releaseFirstPush.resolve();
+						await Promise.all([firstPut, secondPut]);
+
+						await waitForResolved(
+							async () => expect(await iterator!.pending()).to.equal(2),
+							{ timeout: 10_000 },
+						);
+
+						const batch = await iterator.next(2);
+						expect(batch.map((doc) => doc.id)).to.deep.equal([firstId, secondId]);
+						expect(predictedBatchSizes).to.deep.equal([1, 1]);
+					} finally {
+						releaseFirstPush.resolve();
+						replicator.docs.index._query.send = originalSend;
+						await iterator?.close();
+						await reader.close();
+						await replicator.close();
+					}
+				});
+
 				it("fires onBatch for initial and live update batches", async () => {
 					session = await TestSession.connected(1);
 
