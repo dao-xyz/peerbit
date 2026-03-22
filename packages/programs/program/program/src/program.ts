@@ -547,30 +547,33 @@ export abstract class Program<
 			throw new Error("Program has no topics, cannot get ready");
 		}
 		const pubsub = this.node.services.pubsub;
-		const providedKeysByHash = new Map<string, PublicSignKey>();
-		const rememberProvidedKey = (ref: unknown) => {
-			if (ref instanceof PublicSignKey) {
-				providedKeysByHash.set(ref.hashcode(), ref);
-			}
-		};
-		const rememberProvidedKeys = (refs: PeerRefs) => {
+		const collectProvidedPublicKeys = (refs: PeerRefs): Map<string, PublicSignKey> => {
+			const providedPublicKeysByHash = new Map<string, PublicSignKey>();
+			const rememberPublicKey = (ref: unknown) => {
+				if (ref instanceof PublicSignKey) {
+					providedPublicKeysByHash.set(ref.hashcode(), ref);
+				}
+			};
+
 			if (refs instanceof PublicSignKey || typeof refs === "string") {
-				rememberProvidedKey(refs);
-				return;
+				rememberPublicKey(refs);
+				return providedPublicKeysByHash;
 			}
 			if (refs instanceof Array || refs instanceof Set) {
 				for (const ref of refs) {
-					rememberProvidedKey(ref);
+					rememberPublicKey(ref);
 				}
-				return;
+				return providedPublicKeysByHash;
 			}
 			if (typeof (refs as Iterable<unknown>)?.[Symbol.iterator] === "function") {
 				for (const ref of refs as Iterable<unknown>) {
-					rememberProvidedKey(ref);
+					rememberPublicKey(ref);
 				}
 			}
+
+			return providedPublicKeysByHash;
 		};
-		rememberProvidedKeys(other);
+		const providedKeysByHash = collectProvidedPublicKeys(other);
 
 		// Seed a current subscriber snapshot after reachability is established so callers
 		// don't depend solely on edge-triggered subscribe events or follow-up snapshot
@@ -596,32 +599,32 @@ export abstract class Program<
 		// snapshots while waiting, but rate-limit to avoid fanout in larger overlays.
 		const REQUEST_MIN_INTERVAL_MS = 500;
 		const lastRequestAtByPeer = new Map<string, number>();
-		const publicKeyByHash = new Map<
+		const publicKeyPromisesByHash = new Map<
 			string,
 			Promise<PublicSignKey | undefined>
 		>();
-			const resolvePublicKey = (
-				hash: string,
-			): Promise<PublicSignKey | undefined> => {
-				let existing = publicKeyByHash.get(hash);
-				if (!existing) {
-					const providedKey = providedKeysByHash.get(hash);
-					existing = providedKey
-						? Promise.resolve(providedKey)
-						: Promise.resolve(pubsub.getPublicKey(hash)).catch(
-								(): PublicSignKey | undefined => undefined,
-							);
-					publicKeyByHash.set(hash, existing);
-				}
-				return existing;
-			};
+		const getPublicKeyForHash = (
+			hash: string,
+		): Promise<PublicSignKey | undefined> => {
+			let existing = publicKeyPromisesByHash.get(hash);
+			if (!existing) {
+				const providedKey = providedKeysByHash.get(hash);
+				existing = providedKey
+					? Promise.resolve(providedKey)
+					: Promise.resolve(pubsub.getPublicKey(hash)).catch(
+							(): PublicSignKey | undefined => undefined,
+						);
+				publicKeyPromisesByHash.set(hash, existing);
+			}
+			return existing;
+		};
 		const requestSubscriberSnapshots = (hash: string): void => {
 			const now = Date.now();
 			const last = lastRequestAtByPeer.get(hash) ?? 0;
 			if (now - last < REQUEST_MIN_INTERVAL_MS) return;
 			lastRequestAtByPeer.set(hash, now);
 
-			void resolvePublicKey(hash).then((publicKey) => {
+			void getPublicKeyForHash(hash).then((publicKey) => {
 				for (const topic of allTopics) {
 					void Promise.resolve(
 						pubsub.requestSubscribers(topic, publicKey),
@@ -705,6 +708,11 @@ export abstract class Program<
 			this.events.addEventListener("close", closeListener, { once: true });
 			this.events.addEventListener("drop", dropListener, { once: true });
 
+			type PubSubTopicIndex = {
+				topics?: Map<string, Map<string, { publicKey: PublicSignKey }>>;
+			};
+			const pubsubTopicIndex = pubsub as PubSubTopicIndex;
+
 			const isPeerReady = async (hash: string) => {
 				const cached = this._peerTopicsByHash?.get(hash);
 				if (cached && this.peerHasAllTopics(cached, allTopics)) {
@@ -714,7 +722,6 @@ export abstract class Program<
 				// Subscription events are edge-triggered: we may have missed earlier subscribe
 				// events (e.g. if they arrived during program open). Fall back to best-effort
 				// pubsub snapshots to avoid false timeouts.
-				const pubsubAny = this.node.services.pubsub as any;
 				let key: PublicSignKey | undefined = providedKeysByHash.get(hash);
 				const observedTopics: string[] = [];
 				const recordObservedTopics = () => {
@@ -726,9 +733,7 @@ export abstract class Program<
 
 				for (const topic of allTopics) {
 					// Fast path for TopicControlPlane: O(1) membership check without allocations.
-					const topicPeers:
-						| Map<string, { publicKey: PublicSignKey }>
-						| undefined = pubsubAny?.topics?.get?.(topic);
+					const topicPeers = pubsubTopicIndex.topics?.get(topic);
 					if (topicPeers?.has?.(hash)) {
 						key ||= topicPeers.get(hash)?.publicKey;
 						observedTopics.push(topic);
