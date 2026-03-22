@@ -100,6 +100,10 @@ export class FanoutChannel extends EventTarget {
 		return this.fanout.publishToChannel(this.topic, this.root, payload);
 	}
 
+	public publishMaybe(payload: Uint8Array) {
+		return this.fanout.publishToChannelMaybe(this.topic, this.root, payload);
+	}
+
 	public getPeerHashes(options?: { includeSelf?: boolean }) {
 		return this.fanout.getChannelPeerHashes(this.topic, this.root, options);
 	}

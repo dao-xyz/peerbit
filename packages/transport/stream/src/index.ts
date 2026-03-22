@@ -108,6 +108,11 @@ export const dontThrowIfDeliveryError = (e: any) => {
 	throw e;
 };
 
+const markPromiseHandled = <T>(promise: Promise<T>): Promise<T> => {
+	promise.catch(() => {});
+	return promise;
+};
+
 const logError = (e?: any) => {
 	if (e?.message === "Cannot push value onto an ended pushable") {
 		return; // ignore since we are trying to push to a closed stream
@@ -1860,7 +1865,7 @@ export abstract class DirectStream<
 			this.removePeerFromRoutes(peerKeyHash, true);
 
 			if (dependent.length > 0) {
-				await this.publishMessage(
+				await this.publishMessageMaybe(
 					this.publicKey,
 					await new Goodbye({
 						leaving: [peerKeyHash],
@@ -1869,7 +1874,7 @@ export abstract class DirectStream<
 							mode: new SilentDelivery({ to: dependent, redundancy: 2 }),
 						}),
 					}).sign(this.sign),
-				).catch(dontThrowIfDeliveryError);
+				);
 			}
 
 			// Best-effort liveness probe; never let background probe failures crash callers.
@@ -2328,7 +2333,7 @@ export abstract class DirectStream<
 			}
 			const signers = [...getDeliveryHopTrace(message.header.mode)];
 
-			void this.publishMessage(
+			void this.publishMessageMaybe(
 				this.publicKey,
 				await new ACK({
 					messageIdToAcknowledge: message.id,
@@ -2359,7 +2364,7 @@ export abstract class DirectStream<
 					}),
 				}).sign(this.sign),
 				[peerStream],
-			).catch(dontThrowIfDeliveryError);
+			);
 		}
 	}
 
@@ -2414,12 +2419,12 @@ export abstract class DirectStream<
 		// relay ACK ?
 		// send exactly backwards same route we got this message
 		if (nextStream) {
-			await this.publishMessage(
+			await this.publishMessageMaybe(
 				this.publicKey,
 				message,
 				[nextStream],
 				true,
-			).catch(dontThrowIfDeliveryError);
+			);
 		} else {
 			if (myIndex !== 0) {
 				// TODO should we throw something, or log?
@@ -2475,9 +2480,7 @@ export abstract class DirectStream<
 			message.header.mode = new SilentDelivery({ to: newTo, redundancy: 1 });
 
 			if (message.header.mode.to.length > 0) {
-				await this.publishMessage(publicKey, message, undefined, true).catch(
-					dontThrowIfDeliveryError,
-				);
+				await this.publishMessageMaybe(publicKey, message, undefined, true);
 			}
 		}
 
@@ -2607,7 +2610,7 @@ export abstract class DirectStream<
 	/**
 	 * Publishes messages to all peers
 	 */
-	async publish(
+	publish(
 		data: Uint8Array | Uint8ArrayList | undefined,
 		options: PublishOptions = {
 			mode: new AcknowledgeAnyWhere({
@@ -2615,37 +2618,58 @@ export abstract class DirectStream<
 			}),
 		},
 	): Promise<Uint8Array | undefined> {
-		if (!this.started) {
-			throw new NotStartedError();
-		}
-
-		const message = await this.createMessage(data, options);
-		const withTo = (options as WithTo).to;
-		const withMode = (options as WithMode).mode;
-
-		let to: PeerStreams[] | undefined = undefined;
-		if (withTo && withMode) {
-			// a special case where we want to pick neighbours to send to aswell as delivery recipents
-			to = [];
-			for (const peer of withTo) {
-				const toHash =
-					typeof peer === "string"
-						? peer
-						: peer instanceof PublicSignKey
-							? peer.hashcode()
-							: getPublicKeyFromPeerId(peer).hashcode();
-				const stream = this.peers.get(toHash);
-				if (stream) {
-					to.push(stream);
-				} else {
-					warn(`Peer ${peer} not found in peers, skipping neighbor selection`);
-					to = undefined;
-					break;
+		return markPromiseHandled(
+			(async () => {
+				if (!this.started) {
+					throw new NotStartedError();
 				}
-			}
+
+				const message = await this.createMessage(data, options);
+				const withTo = (options as WithTo).to;
+				const withMode = (options as WithMode).mode;
+
+				let to: PeerStreams[] | undefined = undefined;
+				if (withTo && withMode) {
+					// a special case where we want to pick neighbours to send to aswell as delivery recipents
+					to = [];
+					for (const peer of withTo) {
+						const toHash =
+							typeof peer === "string"
+								? peer
+								: peer instanceof PublicSignKey
+									? peer.hashcode()
+									: getPublicKeyFromPeerId(peer).hashcode();
+						const stream = this.peers.get(toHash);
+						if (stream) {
+							to.push(stream);
+						} else {
+							warn(`Peer ${peer} not found in peers, skipping neighbor selection`);
+							to = undefined;
+							break;
+						}
+					}
+				}
+				await this.publishMessage(this.publicKey, message, to);
+				return message.id;
+			})(),
+		);
+	}
+
+	public async publishMaybe(
+		data: Uint8Array | Uint8ArrayList | undefined,
+		options: PublishOptions = {
+			mode: new AcknowledgeAnyWhere({
+				redundancy: DEFAULT_SEEK_MESSAGE_REDUDANCY,
+			}),
+		},
+	): Promise<boolean> {
+		try {
+			await this.publish(data, options);
+			return true;
+		} catch (error) {
+			dontThrowIfDeliveryError(error);
+			return false;
 		}
-		await this.publishMessage(this.publicKey, message, to);
-		return message.id;
 	}
 
 	private async signDataMessage(message: DataMessage) {
@@ -2679,9 +2703,8 @@ export abstract class DirectStream<
 				}
 			}
 
-			return this.publishMessage(from, message, to, true).catch(
-				dontThrowIfDeliveryError,
-			);
+			await this.publishMessageMaybe(from, message, to, true);
+			return;
 		} else {
 			logger.trace("Received a message to relay but canRelayMessage is false");
 		}
@@ -3046,24 +3069,20 @@ export abstract class DirectStream<
 						for (const [neighbour, _distantPeers] of fanout) {
 							const stream = this.peers.get(neighbour);
 							if (!stream) continue;
-								if (message.header.mode instanceof SilentDelivery) {
-									message.header.mode.to = [..._distantPeers.keys()];
-									promises.push(
-										this.waitForPeerWrite(
-											stream,
-											message.bytes(),
-											message.header.priority,
-										),
-									);
-								} else {
-									promises.push(
-										this.waitForPeerWrite(
-											stream,
-											bytes,
-											message.header.priority,
-										),
-									);
-								}
+							if (message.header.mode instanceof SilentDelivery) {
+								message.header.mode.to = [..._distantPeers.keys()];
+								promises.push(
+									this.waitForPeerWrite(
+										stream,
+										message.bytes(),
+										message.header.priority,
+									),
+								);
+							} else {
+								promises.push(
+									this.waitForPeerWrite(stream, bytes, message.header.priority),
+								);
+							}
 							usedNeighbours.add(neighbour);
 						}
 						if (message.header.mode instanceof SilentDelivery) {
@@ -3082,18 +3101,14 @@ export abstract class DirectStream<
 							for (const [neighbour, stream] of this.peers) {
 								if (usedNeighbours.size >= message.header.mode.redundancy) {
 									break;
-									}
-									if (usedNeighbours.has(neighbour)) continue;
-									usedNeighbours.add(neighbour);
-									promises.push(
-										this.waitForPeerWrite(
-											stream,
-											bytes,
-											message.header.priority,
-										),
-									);
 								}
+								if (usedNeighbours.has(neighbour)) continue;
+								usedNeighbours.add(neighbour);
+								promises.push(
+									this.waitForPeerWrite(stream, bytes, message.header.priority),
+								);
 							}
+						}
 
 						await Promise.all(promises);
 						return delivereyPromise;
@@ -3122,7 +3137,7 @@ export abstract class DirectStream<
 									message.header.priority,
 								),
 							);
-							}
+						}
 						message.header.mode.to = originalTo;
 						if (promises.length > 0) {
 							await Promise.all(promises);
@@ -3162,9 +3177,7 @@ export abstract class DirectStream<
 					continue;
 				}
 				sentOnce = true;
-				promises.push(
-					this.waitForPeerWrite(id, bytes, message.header.priority),
-				);
+				promises.push(this.waitForPeerWrite(id, bytes, message.header.priority));
 			}
 			await Promise.all(promises);
 
@@ -3185,6 +3198,22 @@ export abstract class DirectStream<
 				this._ackCallbacks.get(ackCallbackId)?.clear();
 			}
 			throw error;
+		}
+	}
+
+	public async publishMessageMaybe(
+		from: PublicSignKey,
+		message: Message,
+		to?: PeerStreams[] | Map<string, PeerStreams>,
+		relayed?: boolean,
+		signal?: AbortSignal,
+	): Promise<boolean> {
+		try {
+			await this.publishMessage(from, message, to, relayed, signal);
+			return true;
+		} catch (error) {
+			dontThrowIfDeliveryError(error);
+			return false;
 		}
 	}
 
