@@ -188,6 +188,23 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [5.1.1](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.1.0...pubsub-v5.1.1) (2026-03-22)
+
+
+### Bug Fixes
+
+* **program:** emit joins for snapshot-discovered peers ([0c0603d](https://github.com/dao-xyz/peerbit/commit/0c0603d4f0eb9877e32c5de37b43f52ddf259aaf))
+* **pubsub:** resolve rebase conflict with shard root queries ([9c8dae8](https://github.com/dao-xyz/peerbit/commit/9c8dae88240ea87373ebf44463555710e0f41818))
+* **stream:** add publishMaybe for tolerated delivery errors ([5366f65](https://github.com/dao-xyz/peerbit/commit/5366f65c99d8091ca93fe23c582579dd2f928335))
+* **stream:** add publishMaybe for tolerated delivery errors ([4933cf2](https://github.com/dao-xyz/peerbit/commit/4933cf21f149f2ee4f93dd1a0b770dca0f65139d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped to 5.0.7
+
 ## [5.1.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.0.8...pubsub-v5.1.0) (2026-03-18)
 
 
