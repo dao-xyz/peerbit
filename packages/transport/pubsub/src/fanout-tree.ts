@@ -264,6 +264,22 @@ export type FanoutTreeJoinOptions = {
 	trackerQueryIntervalMs?: number;
 
 	/**
+	 * Min interval between parent-improvement checks while already attached.
+	 *
+	 * Set to `0` to preserve the current stability-first behavior where a healthy
+	 * parent is only replaced after disconnect/staleness/kick.
+	 */
+	parentUpgradeIntervalMs?: number;
+
+	/**
+	 * Restrict proactive parent upgrades to leaves (nodes with no children).
+	 *
+	 * Defaults to `true` so parent improvement can be evaluated without
+	 * introducing relay churn higher in the tree.
+	 */
+	parentUpgradeLeafOnly?: boolean;
+
+	/**
 	 * Max number of join candidates to try per retry "round".
 	 *
 	 * This prevents a long tail of sequential JOIN_REQ timeouts from blocking
@@ -1326,14 +1342,15 @@ type ChannelState = {
 	cachedBootstrapPeers: string[];
 	lastBootstrapEnsureAt: number;
 
-			announceIntervalMs: number;
-			announceTtlMs: number;
-			lastAnnouncedAt: number;
-			peerHintMaxEntries: number;
-			peerHintTtlMs: number;
-			routeCacheMaxEntries: number;
-			routeCacheTtlMs: number;
-		announceLoop?: Promise<void>;
+	announceIntervalMs: number;
+	announceTtlMs: number;
+	lastAnnouncedAt: number;
+	peerHintMaxEntries: number;
+	peerHintTtlMs: number;
+	routeCacheMaxEntries: number;
+	routeCacheTtlMs: number;
+	loopAbortController: AbortController;
+	announceLoop?: Promise<void>;
 	repairLoop?: Promise<void>;
 	meshLoop?: Promise<void>;
 	joinLoop?: Promise<void>;
@@ -2133,6 +2150,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			peerHintTtlMs,
 			routeCacheMaxEntries,
 			routeCacheTtlMs,
+			loopAbortController: new AbortController(),
 			trackerQueryIntervalMs: 2_000,
 			cachedTrackerCandidates: [],
 			lastTrackerQueryAt: 0,
@@ -2246,6 +2264,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (!ch) return;
 		if (ch.closed) return;
 		ch.closed = true;
+		ch.loopAbortController.abort();
 
 		// If a join is in-flight, surface that it won't complete.
 		try {
@@ -2290,6 +2309,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		this.trackerBySuffixKey.delete(id.suffixKey);
 
 		await Promise.all(pendingSends);
+		await Promise.allSettled(
+			[ch.joinLoop, ch.announceLoop, ch.repairLoop, ch.meshLoop].filter(
+				(loop): loop is Promise<void> => Boolean(loop),
+			),
+		);
 	}
 
 	public getChannelStats(topic: string, root: string):
@@ -4149,7 +4173,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	}
 
 	private async _announceLoop(ch: ChannelState): Promise<void> {
-		const signal = this.closeController.signal;
+		const signal = anySignal([this.closeController.signal, ch.loopAbortController.signal]);
 		for (;;) {
 			if (signal.aborted || ch.closed) return;
 			try {
@@ -4163,12 +4187,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				// ignore
 			}
 			const sleepMs = ch.announceIntervalMs > 0 ? ch.announceIntervalMs : 1_000;
-			await delay(sleepMs);
+			await delay(sleepMs, { signal }).catch(() => {});
 		}
 	}
 
 	private async _repairLoop(ch: ChannelState): Promise<void> {
-		const signal = this.closeController.signal;
+		const signal = anySignal([this.closeController.signal, ch.loopAbortController.signal]);
 		for (;;) {
 			if (signal.aborted || ch.closed) return;
 			try {
@@ -4178,7 +4202,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 			const activeMs = ch.repairIntervalMs > 0 ? ch.repairIntervalMs : 200;
 			const sleepMs = ch.missingSeqs.size > 0 ? activeMs : Math.max(activeMs, 1_000);
-			await delay(sleepMs);
+			await delay(sleepMs, { signal }).catch(() => {});
 		}
 	}
 
@@ -4354,11 +4378,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 		}
 
-		private async _meshLoop(ch: ChannelState): Promise<void> {
-			const signal = this.closeController.signal;
-			let lastRefreshAt = 0;
-			for (;;) {
-				if (signal.aborted || ch.closed) return;
+	private async _meshLoop(ch: ChannelState): Promise<void> {
+		const signal = anySignal([this.closeController.signal, ch.loopAbortController.signal]);
+		let lastRefreshAt = 0;
+		for (;;) {
+			if (signal.aborted || ch.closed) return;
 
 				const now = Date.now();
 				try {
@@ -4381,7 +4405,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				(v) => v > 0,
 			);
 			const sleepMs = intervals.length > 0 ? Math.min(...intervals) : 500;
-			await delay(Math.max(50, sleepMs));
+			await delay(Math.max(50, sleepMs), { signal }).catch(() => {});
 		}
 	}
 
@@ -4600,6 +4624,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			0,
 			Math.floor(joinOpts.candidateCooldownMs ?? 2_000),
 		);
+		const parentUpgradeIntervalMs = Math.max(
+			0,
+			Math.floor(joinOpts.parentUpgradeIntervalMs ?? 0),
+		);
+		const parentUpgradeLeafOnly = joinOpts.parentUpgradeLeafOnly !== false;
 		const candidateScoringModeRaw = joinOpts.candidateScoringMode ?? "ranked-shuffle";
 		const candidateScoringMode: "ranked-shuffle" | "ranked-strict" | "weighted" =
 			candidateScoringModeRaw === "ranked-strict" ||
@@ -4617,9 +4646,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const start = Date.now();
 		const cooldownUntilByHash = new Map<string, number>();
 		const combinedSignal = joinOpts.signal
-			? anySignal([this.closeController.signal, joinOpts.signal])
-			: this.closeController.signal;
+			? anySignal([this.closeController.signal, ch.loopAbortController.signal, joinOpts.signal])
+			: anySignal([this.closeController.signal, ch.loopAbortController.signal]);
 		const signal = combinedSignal as AbortSignal & { clear?: () => void };
+		let lastParentUpgradeCheckAt = 0;
 
 			try {
 				for (;;) {
@@ -4692,8 +4722,30 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 								}
 								ch.pendingRouteProxy.clear();
 								void this.kickChildren(ch).catch(() => {});
-								await delay(retryMs);
+								await delay(retryMs, { signal });
 								continue;
+							}
+
+							if (
+								parentUpgradeIntervalMs > 0 &&
+								ch.level > 1 &&
+								(!parentUpgradeLeafOnly || ch.children.size === 0)
+							) {
+								const now = Date.now();
+								const due =
+									lastParentUpgradeCheckAt === 0 ||
+									now - lastParentUpgradeCheckAt >= parentUpgradeIntervalMs;
+								if (due) {
+									lastParentUpgradeCheckAt = now;
+									await this.maybeImproveParent(ch, {
+										signal,
+										candidateShuffleTopK,
+										candidateScoringMode,
+										candidateScoringWeights,
+										joinAttemptsPerRound,
+										joinReqTimeoutMs,
+									});
+								}
 							}
 
 						if (!ch.joinedOnce) ch.joinedOnce = createDeferred();
@@ -4701,7 +4753,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						ch.joinedAtLeastOnce = true;
 						// Once attached, we don't need a fast retry cadence; keep polling coarse to
 						// avoid excessive timers when simulating many nodes in one process.
-						await delay(Math.max(retryMs, 1_000));
+						await delay(Math.max(retryMs, 1_000), { signal });
 						continue;
 					}
 
@@ -4897,10 +4949,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							retryMs,
 							trackerQueryIntervalMs > 0 ? trackerQueryIntervalMs : retryMs,
 						);
-							await delay(Math.max(1, Math.min(waitMs, capMs)));
+							await delay(Math.max(1, Math.min(waitMs, capMs)), { signal });
 							continue;
 						}
-						await delay(retryMs);
+						await delay(retryMs, { signal });
 						continue;
 					}
 
@@ -5135,11 +5187,254 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							}
 							continue;
 						}
-						await delay(retryMs);
+						await delay(retryMs, { signal });
 					}
 				} finally {
 					signal.clear?.();
 			}
+	}
+
+	private async maybeImproveParent(
+		ch: ChannelState,
+		options: {
+			signal: AbortSignal;
+			candidateShuffleTopK: number;
+			candidateScoringMode: "ranked-shuffle" | "ranked-strict" | "weighted";
+			candidateScoringWeights: {
+				level: number;
+				freeSlots: number;
+				connected: number;
+				bidPerByte: number;
+				source: number;
+			};
+			joinAttemptsPerRound: number;
+			joinReqTimeoutMs: number;
+		},
+	): Promise<boolean> {
+		const currentParent = ch.parent;
+		if (!currentParent || ch.closed || ch.isRoot || ch.level <= 1) return false;
+		const isDirectNeighbor = (hash: string) => {
+			const peer = this.peers.get(hash);
+			if (!peer) return false;
+			try {
+				const conns = this.components.connectionManager.getConnections(peer.peerId) as
+					| Connection[]
+					| undefined;
+				return (conns?.length ?? 0) > 0;
+			} catch {
+				return peer.isReadable || peer.isWritable;
+			}
+		};
+
+		const candidatesByHash = new Map<
+			string,
+			{
+				hash: string;
+				addrs: Multiaddr[];
+				level: number;
+				freeSlots: number;
+				bidPerByte: number;
+				source: number;
+			}
+		>();
+
+		const upsertCandidate = (c: {
+			hash: string;
+			addrs: Multiaddr[];
+			level: number;
+			freeSlots: number;
+			bidPerByte: number;
+			source: number;
+		}) => {
+			const prev = candidatesByHash.get(c.hash);
+			if (!prev) {
+				candidatesByHash.set(c.hash, { ...c });
+				return;
+			}
+			if (prev.addrs.length === 0 && c.addrs.length > 0) prev.addrs = c.addrs;
+			prev.level = Math.min(prev.level, c.level);
+			prev.freeSlots = Math.max(prev.freeSlots, c.freeSlots);
+			prev.bidPerByte = Math.max(prev.bidPerByte, c.bidPerByte);
+			prev.source = Math.min(prev.source, c.source);
+		};
+
+		if (ch.id.root !== this.publicKeyHash && isDirectNeighbor(ch.id.root)) {
+			upsertCandidate({
+				hash: ch.id.root,
+				addrs: [],
+				level: 0,
+				freeSlots: Number.MAX_SAFE_INTEGER,
+				bidPerByte: 0,
+				source: -1,
+			});
+		}
+
+		for (const c of ch.cachedTrackerCandidates) {
+			if (c.hash === this.publicKeyHash) continue;
+			if (!isDirectNeighbor(c.hash)) continue;
+			if (c.freeSlots <= 0) continue;
+			upsertCandidate({
+				hash: c.hash,
+				addrs: c.addrs,
+				level: c.level,
+				freeSlots: c.freeSlots,
+				bidPerByte: c.bidPerByte,
+				source: 0,
+			});
+		}
+
+		let connectedFallbackAdded = 0;
+		const connectedFallbackMax = 64;
+		for (const h of this.peers.keys()) {
+			if (h === this.publicKeyHash) continue;
+			if (!isDirectNeighbor(h)) continue;
+			upsertCandidate({
+				hash: h,
+				addrs: [],
+				level: 0xffff,
+				freeSlots: 0,
+				bidPerByte: 0,
+				source: 2,
+			});
+			connectedFallbackAdded += 1;
+			if (connectedFallbackAdded >= connectedFallbackMax) break;
+		}
+
+		let ordered = [...candidatesByHash.values()]
+			.filter(
+				(c) =>
+					c.hash !== this.publicKeyHash &&
+					c.hash !== currentParent &&
+					c.level + 1 < ch.level,
+			)
+			.sort((a, b) => {
+				if (a.level !== b.level) return a.level - b.level;
+				if (a.freeSlots !== b.freeSlots) return b.freeSlots - a.freeSlots;
+				if (a.bidPerByte !== b.bidPerByte) return b.bidPerByte - a.bidPerByte;
+				if (a.source !== b.source) return a.source - b.source;
+				return a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0;
+			});
+
+		if (ordered.length === 0) return false;
+
+		if (options.candidateScoringMode === "ranked-shuffle") {
+			if (options.candidateShuffleTopK > 0 && ordered.length > 1) {
+				const k = Math.min(options.candidateShuffleTopK, ordered.length);
+				for (let i = k - 1; i > 0; i--) {
+					const j = Math.floor(this.random() * (i + 1));
+					const tmp = ordered[i]!;
+					ordered[i] = ordered[j]!;
+					ordered[j] = tmp;
+				}
+			}
+		} else if (options.candidateScoringMode === "weighted") {
+			const wLevel = Number.isFinite(options.candidateScoringWeights.level)
+				? Math.max(0, options.candidateScoringWeights.level)
+				: 0;
+			const wSlots = Number.isFinite(options.candidateScoringWeights.freeSlots)
+				? Math.max(0, options.candidateScoringWeights.freeSlots)
+				: 0;
+			const wConnected = Number.isFinite(options.candidateScoringWeights.connected)
+				? Math.max(0, options.candidateScoringWeights.connected)
+				: 0;
+			const wBid = Number.isFinite(options.candidateScoringWeights.bidPerByte)
+				? Math.max(0, options.candidateScoringWeights.bidPerByte)
+				: 0;
+			const wSource = Number.isFinite(options.candidateScoringWeights.source)
+				? Math.max(0, options.candidateScoringWeights.source)
+				: 0;
+
+			const k =
+				options.candidateShuffleTopK > 0
+					? Math.min(options.candidateShuffleTopK, ordered.length)
+					: 0;
+			if (k > 1) {
+				const head = ordered.slice(0, k);
+				const tail = ordered.slice(k);
+
+				const weightOf = (c: (typeof head)[number]) => {
+					const level = Math.max(0, Math.floor(c.level));
+					const freeSlots = Math.max(0, Math.floor(c.freeSlots));
+					const bidPerByte = Math.max(0, Math.floor(c.bidPerByte));
+					const source = Math.max(0, Math.floor(c.source));
+					const connected = Boolean(this.peers.get(c.hash));
+
+					let weight = 1;
+					if (wLevel > 0) weight *= 1 / (1 + wLevel * level);
+					if (wSlots > 0) weight *= 1 + wSlots * freeSlots;
+					if (wConnected > 0 && connected) weight *= 1 + wConnected;
+					if (wBid > 0) weight *= 1 + wBid * bidPerByte;
+					if (wSource > 0) weight *= 1 / (1 + wSource * source);
+					return weight;
+				};
+
+				const out: typeof head = [];
+				const remaining = [...head];
+				while (remaining.length > 0) {
+					let sum = 0;
+					const weights: number[] = new Array(remaining.length);
+					for (let i = 0; i < remaining.length; i++) {
+						const w = weightOf(remaining[i]!);
+						const v = Number.isFinite(w) ? Math.max(0, w) : 0;
+						weights[i] = v;
+						sum += v;
+					}
+					if (sum <= 0) {
+						out.push(...remaining);
+						break;
+					}
+
+					let r = this.random() * sum;
+					let pick = 0;
+					for (; pick < weights.length; pick++) {
+						r -= weights[pick]!;
+						if (r <= 0) break;
+					}
+					if (pick >= remaining.length) pick = remaining.length - 1;
+					out.push(remaining[pick]!);
+					remaining.splice(pick, 1);
+				}
+
+				ordered = out.concat(tail);
+			}
+		}
+
+		let attempts = 0;
+		for (const candidate of ordered) {
+			if (options.signal.aborted) break;
+			if (attempts >= options.joinAttemptsPerRound) break;
+			attempts += 1;
+
+			if (!isDirectNeighbor(candidate.hash)) continue;
+
+			const previousParent = ch.parent;
+			const reqId = (this.random() * 0xffffffff) >>> 0;
+			const res = await this.tryJoinOnce(
+				ch,
+				candidate.hash,
+				reqId,
+				options.joinReqTimeoutMs,
+				options.signal,
+				{ allowReplace: true },
+			);
+
+			if (res.ok) {
+				const newParent = ch.parent;
+				if (
+					previousParent &&
+					newParent &&
+					newParent !== previousParent
+				) {
+					void this._sendControl(previousParent, encodeLeave(ch.id.key)).catch(
+						() => {},
+					);
+					return true;
+				}
+				return false;
+			}
+		}
+
+		return false;
 	}
 
 	private async tryJoinOnce(
@@ -5148,8 +5443,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		reqId: number,
 		timeoutMs: number,
 		signal: AbortSignal,
+		options?: { allowReplace?: boolean },
 	): Promise<JoinAttemptResult> {
-		if (ch.parent) return { ok: true };
+		if (ch.parent && options?.allowReplace !== true) return { ok: true };
 		if (!this.peers.get(parentHash)) return { ok: false, timedOut: true };
 		const p = new Promise<JoinAttemptResult>((resolve) => {
 			ch.pendingJoin.set(reqId, { resolve });
