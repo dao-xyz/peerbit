@@ -1,8 +1,59 @@
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { expect } from "chai";
 import {
 	formatFanoutTreeSimResult,
-	runFanoutTreeSim,
+	type FanoutTreeSimParams,
+	type FanoutTreeSimResult,
 } from "../benchmark/fanout-tree-sim-lib.js";
+
+const execFileAsync = promisify(execFile);
+
+const resolveSimRunnerPath = () => {
+	const currentDir = dirname(fileURLToPath(import.meta.url));
+	const candidates = [
+		resolve(currentDir, "fanout-tree-sim.runner.js"),
+		resolve(currentDir, "../dist/test/fanout-tree-sim.runner.js"),
+	];
+	for (const candidate of candidates) {
+		if (existsSync(candidate)) return candidate;
+	}
+	throw new Error(
+		`Unable to locate fanout-tree sim runner. Tried: ${candidates.join(", ")}`,
+	);
+};
+
+const runFanoutTreeSimIsolated = async (
+	params: Partial<FanoutTreeSimParams>,
+): Promise<FanoutTreeSimResult> => {
+	const runner = resolveSimRunnerPath();
+	const { stdout, stderr } = await execFileAsync(
+		process.execPath,
+		[runner, JSON.stringify(params)],
+		{
+			maxBuffer: 16 * 1024 * 1024,
+			env: process.env,
+		},
+	);
+
+	const trimmed = stdout.trim();
+	if (!trimmed) {
+		throw new Error(
+			`FanoutTreeSim runner produced no stdout${stderr ? `\n${stderr.trim()}` : ""}`,
+		);
+	}
+
+	try {
+		return JSON.parse(trimmed) as FanoutTreeSimResult;
+	} catch (error: any) {
+		throw new Error(
+			`Failed to parse FanoutTreeSim runner output as JSON: ${error?.message ?? String(error)}\n${trimmed}${stderr ? `\n${stderr.trim()}` : ""}`,
+		);
+	}
+};
 
 describe("fanout-tree-sim (ci)", () => {
 	const LOSSY_CHURN_TRACKER_BYTES_MAX = 150_000;
@@ -10,7 +61,7 @@ describe("fanout-tree-sim (ci)", () => {
 	it("joins and delivers on a small sim", async function () {
 		this.timeout(60_000);
 
-		const result = await runFanoutTreeSim({
+		const result = await runFanoutTreeSimIsolated({
 			nodes: 25,
 			bootstraps: 1,
 			subscribers: 20,
@@ -69,7 +120,7 @@ describe("fanout-tree-sim (ci)", () => {
 			this.timeout(90_000);
 			this.retries(1);
 
-			const result = await runFanoutTreeSim({
+			const result = await runFanoutTreeSimIsolated({
 				nodes: 40,
 				bootstraps: 1,
 				subscribers: 30,

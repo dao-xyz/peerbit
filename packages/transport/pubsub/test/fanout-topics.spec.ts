@@ -12,6 +12,36 @@ import { expect } from "chai";
 import { FanoutTree, TopicControlPlane, TopicRootControlPlane } from "../src/index.js";
 
 describe("pubsub (fanout topics)", function () {
+	const createSessionServices = (
+		topicRootControlPlane: TopicRootControlPlane,
+		getOrCreateFanout: (c: any) => FanoutTree,
+		options?: {
+			pubsub?: Partial<ConstructorParameters<typeof TopicControlPlane>[1]>;
+		},
+	) => ({
+		services: {
+			fanout: (c: any) => getOrCreateFanout(c),
+			pubsub: (c: any) =>
+				new TopicControlPlane(c, {
+					canRelayMessage: true,
+					connectionManager: false,
+					topicRootControlPlane,
+					fanout: getOrCreateFanout(c),
+					shardCount: 16,
+					// Make join tests fast/deterministic.
+					fanoutJoin: {
+						timeoutMs: 10_000,
+						retryMs: 50,
+						bootstrapEnsureIntervalMs: 200,
+						trackerQueryIntervalMs: 200,
+						joinReqTimeoutMs: 1_000,
+						trackerQueryTimeoutMs: 1_000,
+					},
+					...(options?.pubsub || {}),
+				}),
+		},
+	});
+
 	const createSession = async (
 		peerCount: number,
 		options?: {
@@ -35,29 +65,10 @@ describe("pubsub (fanout topics)", function () {
 		};
 
 		const session: TestSession<{ pubsub: TopicControlPlane; fanout: FanoutTree }> =
-			await TestSession.connected(peerCount, {
-				services: {
-					fanout: (c) => getOrCreateFanout(c),
-						pubsub: (c) =>
-							new TopicControlPlane(c, {
-								canRelayMessage: true,
-								connectionManager: false,
-								topicRootControlPlane,
-								fanout: getOrCreateFanout(c),
-								shardCount: DEFAULT_SHARD_COUNT,
-								// Make join tests fast/deterministic.
-								fanoutJoin: {
-									timeoutMs: 10_000,
-									retryMs: 50,
-								bootstrapEnsureIntervalMs: 200,
-								trackerQueryIntervalMs: 200,
-								joinReqTimeoutMs: 1_000,
-								trackerQueryTimeoutMs: 1_000,
-							},
-							...(options?.pubsub || {}),
-						}),
-				},
-			});
+			await TestSession.connected(
+				peerCount,
+				createSessionServices(topicRootControlPlane, getOrCreateFanout, options),
+			);
 
 		const configureBootstraps = (trackerIndices: number[]) => {
 			const addrs: any[] = [];
@@ -68,8 +79,8 @@ describe("pubsub (fanout topics)", function () {
 				const self = new Set(peer.getMultiaddrs().map((a) => a.toString()));
 				const filtered = addrs.filter((a) => !self.has(a.toString()));
 				peer.services.fanout.setBootstraps(filtered);
-				}
-			};
+			}
+		};
 
 		const configureShards = async (routerIndices: number[]) => {
 			const candidates = routerIndices.map(
@@ -118,28 +129,7 @@ describe("pubsub (fanout topics)", function () {
 		return TestSession.disconnected<{
 			pubsub: TopicControlPlane;
 			fanout: FanoutTree;
-		}>(peerCount, {
-			services: {
-				fanout: (c) => getOrCreateFanout(c),
-				pubsub: (c) =>
-					new TopicControlPlane(c, {
-						canRelayMessage: true,
-						connectionManager: false,
-						topicRootControlPlane,
-						fanout: getOrCreateFanout(c),
-						shardCount: DEFAULT_SHARD_COUNT,
-						fanoutJoin: {
-							timeoutMs: 10_000,
-							retryMs: 50,
-							bootstrapEnsureIntervalMs: 200,
-							trackerQueryIntervalMs: 200,
-							joinReqTimeoutMs: 1_000,
-							trackerQueryTimeoutMs: 1_000,
-						},
-						...(options?.pubsub || {}),
-					}),
-			},
-		});
+		}>(peerCount, createSessionServices(topicRootControlPlane, getOrCreateFanout, options));
 	};
 
 	const topicHash32 = (topic: string) => {
@@ -566,6 +556,102 @@ describe("pubsub (fanout topics)", function () {
 			await delay(250);
 			expect(receivedByRoot).to.have.length(2);
 		} finally {
+			await session.stop();
+		}
+	});
+
+	it("can proactively reparent to the root when a late direct edge becomes available", async () => {
+		const session = await createDisconnectedSession(3, {
+			pubsub: {
+				fanoutJoin: {
+					parentUpgradeIntervalMs: 200,
+				},
+			},
+		});
+		const rootPeer = session.peers[0]!;
+		const relayPeer = session.peers[1]!;
+		const publisherPeer = session.peers[2]!;
+		const publisherFanout = publisherPeer.services.pubsub.fanout as any;
+		const originalPublisherDial = publisherPeer.dial.bind(publisherPeer);
+		const originalSendControl = publisherFanout._sendControl.bind(publisherFanout);
+
+		try {
+			const topic = "fanout-direct-reparent-to-root";
+			const root = rootPeer.services.pubsub;
+			const relay = relayPeer.services.pubsub;
+			const publisher = publisherPeer.services.pubsub;
+			const rootHash = root.publicKeyHash;
+			const relayHash = relay.publicKeyHash;
+			const shardTopic = (root as any).getShardTopicForUserTopic(topic);
+			const rootAddrs = new Set(rootPeer.getMultiaddrs().map((a) => a.toString()));
+			let allowDirectRootTraffic = false;
+			publisherPeer.dial = (async (addrs: any) => {
+				const list = Array.isArray(addrs) ? addrs : [addrs];
+				if (
+					!allowDirectRootTraffic &&
+					list.some((addr) => rootAddrs.has(addr.toString()))
+				) {
+					throw new Error("blocked direct root dial");
+				}
+				return originalPublisherDial(addrs as any);
+			}) as typeof publisherPeer.dial;
+			publisherFanout._sendControl = (async (to: string, bytes: Uint8Array) => {
+				if (!allowDirectRootTraffic && to === rootHash) {
+					return;
+				}
+				return originalSendControl(to, bytes);
+			}) as typeof publisherFanout._sendControl;
+
+			await session.connect([
+				[rootPeer, relayPeer],
+				[relayPeer, publisherPeer],
+			]);
+
+			const relayBootstraps = relayPeer.getMultiaddrs();
+			for (const peer of session.peers) {
+				const self = new Set(peer!.getMultiaddrs().map((a) => a.toString()));
+				peer!.services.fanout.setBootstraps(
+					relayBootstraps.filter((a) => !self.has(a.toString())),
+				);
+			}
+
+			for (const peer of session.peers) {
+				peer!.services.pubsub.setTopicRootCandidates([rootHash]);
+			}
+			await root.hostShardRootsNow();
+
+			await root.subscribe(topic);
+			await relay.subscribe(topic);
+			await waitForResolved(() => {
+				const relayStats = relay.fanout.getChannelStats(shardTopic, rootHash);
+				expect(relayStats?.parent).to.equal(rootHash);
+			});
+			await publisher.subscribe(topic);
+
+			await waitForResolved(() => {
+				const stats = publisher.fanout.getChannelStats(shardTopic, rootHash);
+				expect(stats?.parent).to.equal(relayHash);
+			});
+
+			allowDirectRootTraffic = true;
+			await session.connect([[rootPeer, publisherPeer]]);
+			await waitForResolved(() =>
+				expect(root.peers.has(publisher.publicKeyHash)).to.equal(true),
+			);
+			await waitForResolved(() =>
+				expect(publisher.peers.has(rootHash)).to.equal(true),
+			);
+
+			await waitForResolved(() => {
+				const statsAfterDirect = publisher.fanout.getChannelStats(
+					shardTopic,
+					rootHash,
+				);
+				expect(statsAfterDirect?.parent).to.equal(rootHash);
+			});
+		} finally {
+			publisherFanout._sendControl = originalSendControl;
+			publisherPeer.dial = originalPublisherDial;
 			await session.stop();
 		}
 	});
