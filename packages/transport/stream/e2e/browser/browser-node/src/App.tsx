@@ -34,10 +34,26 @@ const client = await createLibp2p<{ stream: TestDirectStream; identify: any }>({
 	connectionEncrypters: [noise()],
 });
 let receivedData = 0;
+
 // expose hooks for automated tests
 (globalThis as any).streamClient = client;
 (globalThis as any).sendTestData = () =>
 	client.services.stream.publish(new Uint8Array([1, 2, 3, 4]));
+(globalThis as any).sendPayload = async (
+	totalBytes: number,
+) => {
+	let remaining = totalBytes;
+	const chunkSize = 32 * 1024;
+
+	while (remaining > 0) {
+		const chunk = new Uint8Array(Math.min(chunkSize, remaining));
+		chunk.fill(remaining % 251);
+		await client.services.stream.publish(chunk);
+		remaining -= chunk.length;
+		await new Promise((resolve) => setTimeout(resolve, 0));
+	}
+};
+(globalThis as any).getReceivedData = () => receivedData;
 
 export const App = () => {
 	const queryParameters = new URLSearchParams(window.location.search);
@@ -76,12 +92,15 @@ export const App = () => {
 			receivedData += d.detail.bytes().length;
 			forceUpdate();
 		});
-		const interval = setInterval(() => {
-			client.services.stream.publish(new Uint8Array([1, 2, 3]));
-		}, 1000);
+		const autoPublish = queryParameters.get("autopublish") !== "0";
+		const interval = autoPublish
+			? setInterval(() => {
+					client.services.stream.publish(new Uint8Array([1, 2, 3]));
+				}, 1000)
+			: undefined;
 
 		return () => {
-			clearInterval(interval);
+			interval && clearInterval(interval);
 		};
 	}, []);
 	return (
