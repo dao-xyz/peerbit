@@ -3,8 +3,16 @@ import * as findUp from "find-up";
 import fs from "fs";
 import { createRequire } from "module";
 import path from "path";
+import { fileURLToPath } from "url";
 
-const root = path.dirname(await findUp.findUp(".git", { type: "directory" }));
+const configDir = path.dirname(fileURLToPath(import.meta.url));
+const gitEntry =
+	(await findUp.findUp(".git", { cwd: configDir, type: "directory" })) ??
+	(await findUp.findUp(".git", { cwd: configDir, type: "file" }));
+if (!gitEntry) {
+	throw new Error("Failed to locate repository root from any-store/.aegir.js");
+}
+const root = path.dirname(path.resolve(gitEntry));
 const resolverFromRoot = createRequire(path.join(root, "package.json"));
 const resolverFromLocal = createRequire(import.meta.url);
 

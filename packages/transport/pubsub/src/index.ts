@@ -2164,7 +2164,6 @@ export class TopicControlPlane
 			);
 			return;
 		}
-
 		if (pubsubMessage instanceof PubSubData) {
 			this.dispatchEvent(
 				new CustomEvent("data", {
@@ -2417,8 +2416,8 @@ export class TopicControlPlane
 			return super.onDataMessage(from, stream, message, seenBefore);
 		}
 
-		// DirectStream supports targeted pubsub data plus targeted subscriber snapshot
-		// traffic used by Program.waitFor() when a peer is already connected directly.
+		// DirectStream supports targeted pubsub data plus a small set of control
+		// messages used for topic-root discovery and direct subscriber snapshots.
 		if (
 			!(pubsubMessage instanceof PubSubData) &&
 			!(pubsubMessage instanceof TopicRootCandidates) &&

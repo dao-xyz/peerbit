@@ -12,6 +12,10 @@ import {
 import type { Indices, Index, IndexEngineInitProperties } from "@peerbit/indexer-interface";
 import { type ProgramClient } from "@peerbit/program";
 import { FanoutTree, TopicControlPlane, TopicRootControlPlane } from "@peerbit/pubsub";
+import {
+	type DirectStream,
+	waitForNeighbour as waitForPeersStreams,
+} from "@peerbit/stream";
 import { type Libp2pOptions } from "libp2p";
 import path from "path";
 import {
@@ -25,6 +29,16 @@ import { InMemoryNetwork, InMemorySession } from "./inmemory-libp2p.js";
 export type LibP2POptions = Libp2pOptions<Libp2pExtendServices>;
 
 type CreateOptions = { libp2p?: Libp2pCreateOptions; directory?: string };
+
+type FanoutCapableServices = ProgramClient["services"] & {
+	fanout: DirectStream<unknown>;
+};
+
+const asDirectStream = (service: unknown): DirectStream<unknown> =>
+	service as DirectStream<unknown>;
+
+const getFanoutStream = (client: ProgramClient): DirectStream<unknown> =>
+	(client.services as FanoutCapableServices).fanout;
 
 export type InMemoryPeerbitSessionOptions = {
 	/**
@@ -629,6 +643,18 @@ export class TestSession {
 	) {
 		const session = await TestSession.disconnectedMock(n, options);
 		await session.connect();
+		// TODO types
+		await waitForPeersStreams(
+			...session.peers.map((x) => asDirectStream(x.services.blocks)),
+		);
+		// Sharded pubsub/fanout uses its own DirectStream protocols; ensure those
+		// neighbor streams are established before tests start opening programs.
+		await waitForPeersStreams(
+			...session.peers.map((x) => asDirectStream(x.services.pubsub)),
+		);
+		await waitForPeersStreams(
+			...session.peers.map((x) => getFanoutStream(x)),
+		);
 		return session;
 	}
 
@@ -676,6 +702,18 @@ export class TestSession {
 	static async connected(n: number, options?: CreateOptions | CreateOptions[]) {
 		const session = await TestSession.disconnected(n, options);
 		await session.connect();
+		// TODO types
+		await waitForPeersStreams(
+			...session.peers.map((x) => asDirectStream(x.services.blocks)),
+		);
+		// Sharded pubsub/fanout uses its own DirectStream protocols; ensure those
+		// neighbor streams are established before tests start opening programs.
+		await waitForPeersStreams(
+			...session.peers.map((x) => asDirectStream(x.services.pubsub)),
+		);
+		await waitForPeersStreams(
+			...session.peers.map((x) => getFanoutStream(x)),
+		);
 		return session;
 	}
 

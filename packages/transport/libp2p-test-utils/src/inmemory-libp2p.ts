@@ -21,6 +21,11 @@ type Topology = {
 	notifyOnLimitedConnection?: boolean;
 };
 
+type LifecycleService = {
+	start?: () => Promise<void> | void;
+	stop?: () => Promise<void> | void;
+};
+
 export type InMemoryNetworkMetrics = {
 	dials: number;
 	connectionsOpened: number;
@@ -1083,17 +1088,19 @@ export class InMemoryLibp2p<TServices extends Record<string, unknown> = {}> {
 	async start(): Promise<void> {
 		if (this.status === "started") return;
 		this.status = "started";
+		const services = Object.values(this.services as Record<string, LifecycleService>);
 		await Promise.all(
-			Object.values(this.services as any).map((svc: any) => svc?.start?.()),
+			services.map((svc) => svc?.start?.()),
 		);
 	}
 
 	async stop(): Promise<void> {
 		if (this.status === "stopped") return;
 		this.status = "stopped";
+		const services = Object.values(this.services as Record<string, LifecycleService>);
 
 		await Promise.all(
-			Object.values(this.services as any).map((svc: any) => svc?.stop?.()),
+			services.map((svc) => svc?.stop?.()),
 		);
 
 		const conns = this.runtime.connectionManager.getConnections();

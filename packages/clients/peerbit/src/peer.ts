@@ -417,7 +417,7 @@ export class Peerbit implements ProgramClient {
 		return this.libp2p.peerId;
 	}
 
-	get services() {
+	get services(): Libp2pExtended["services"] {
 		return this.libp2p.services;
 	}
 
@@ -482,7 +482,7 @@ export class Peerbit implements ProgramClient {
 					: [maddress]
 				).filter((addr): addr is Multiaddr => Boolean(addr));
 				if (bootstrapAddrs.length > 0) {
-					(this.libp2p.services as any).fanout?.addBootstraps?.(bootstrapAddrs);
+					this.libp2p.services.fanout.addBootstraps(bootstrapAddrs);
 				}
 			} catch {
 				// ignore if fanout service is not present/overridden
@@ -520,13 +520,7 @@ export class Peerbit implements ProgramClient {
 			await waitForNeighbor("Blocks", this.libp2p.services.blocks);
 
 			if (resolvedReadiness === "services-and-fanout") {
-				const fanoutService = (this.libp2p.services as any).fanout;
-				if (!fanoutService?.waitFor) {
-					throw new Error(
-						"Failed to dial peer. Not available on Fanout (service missing)",
-					);
-				}
-				await waitForNeighbor("Fanout", fanoutService);
+				await waitForNeighbor("Fanout", this.libp2p.services.fanout);
 			}
 
 			return true;
@@ -693,9 +687,8 @@ export class Peerbit implements ProgramClient {
 		//
 		// We therefore constrain candidates to the bootstrap peerIds we were asked
 		// to dial (and that we successfully connected to).
-		const servicesAny: any = this.libp2p.services as any;
-		const fanoutPlane = servicesAny?.fanout?.topicRootControlPlane;
-		const pubsubPlane = servicesAny?.pubsub?.topicRootControlPlane;
+		const fanoutPlane = this.libp2p.services.fanout.topicRootControlPlane;
+		const pubsubPlane = this.libp2p.services.pubsub.topicRootControlPlane;
 		const planes = [...new Set([fanoutPlane, pubsubPlane].filter(Boolean))];
 		if (planes.length > 0) {
 			const bootstrapPeerIds = new Set<string>();
@@ -729,7 +722,7 @@ export class Peerbit implements ProgramClient {
 				const list = [...candidates];
 				// Prefer the pubsub helper so we also disable its auto-candidate mode.
 				try {
-					(this.services.pubsub as any)?.setTopicRootCandidates?.(list);
+					this.services.pubsub.setTopicRootCandidates(list);
 				} catch {
 					// ignore
 				}
@@ -779,14 +772,17 @@ export class Peerbit implements ProgramClient {
 	}
 
 	public async fanoutResolveRoot(topic: string): Promise<string> {
-		const servicesAny: any = this.services as any;
-		const resolvedViaPubsub = await servicesAny?.pubsub?.resolveTopicRoot?.(topic);
+		const resolvedViaPubsub = await (
+			this.services.pubsub as typeof this.services.pubsub & {
+				resolveTopicRoot?: (topic: string) => Promise<string | undefined>;
+			}
+		).resolveTopicRoot?.(topic);
 		if (resolvedViaPubsub) {
 			return resolvedViaPubsub;
 		}
 		const topicRootControlPlane =
-			servicesAny?.fanout?.topicRootControlPlane ||
-			servicesAny?.pubsub?.topicRootControlPlane;
+			this.services.fanout.topicRootControlPlane ||
+			this.services.pubsub.topicRootControlPlane;
 		const resolved = await topicRootControlPlane?.resolveTopicRoot?.(topic);
 		if (!resolved) {
 			throw new Error(

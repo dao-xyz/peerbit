@@ -1,4 +1,5 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
+import type { FanoutTree, TopicControlPlane } from "@peerbit/pubsub";
 import { AbortError, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { ClosedError, type ProgramClient } from "../src/index.js";
@@ -13,6 +14,14 @@ import { creatMockPeer, createLibp2pPeer } from "./utils.js";
 describe("events", () => {
 	let client1: ProgramClient, client2: ProgramClient;
 
+	type EventTestServices = ProgramClient["services"] & {
+		fanout: Pick<FanoutTree, "waitFor">;
+		pubsub: Pick<TopicControlPlane, "hostShardRootsNow">;
+	};
+
+	const getEventTestServices = (client: ProgramClient): EventTestServices =>
+		client.services as EventTestServices;
+
 	beforeEach(async () => {
 		client1 = await createLibp2pPeer();
 		client2 = await createLibp2pPeer();
@@ -21,18 +30,18 @@ describe("events", () => {
 		await client1.dial(client2.getMultiaddrs());
 		// Establish fanout protocol streams so the join loop has candidates without
 		// relying on bootstrap trackers (these tests use only two peers).
-		await (client1.services as any).fanout.waitFor(client2.identity.publicKey, {
+		await getEventTestServices(client1).fanout.waitFor(client2.identity.publicKey, {
 			target: "neighbor",
 			timeout: 10_000,
 		});
-		await (client2.services as any).fanout.waitFor(client1.identity.publicKey, {
+		await getEventTestServices(client2).fanout.waitFor(client1.identity.publicKey, {
 			target: "neighbor",
 			timeout: 10_000,
 		});
 		// Ensure shard roots are hosted even if the root peer is not subscribed to a
 		// particular topic (tests open different programs/topics on different peers).
-		await (client1.services as any).pubsub.hostShardRootsNow();
-		await (client2.services as any).pubsub.hostShardRootsNow();
+		await getEventTestServices(client1).pubsub.hostShardRootsNow();
+		await getEventTestServices(client2).pubsub.hostShardRootsNow();
 	});
 
 	afterEach(async () => {

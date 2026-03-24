@@ -1,4 +1,5 @@
 import { keys } from "@libp2p/crypto";
+import type { FanoutTree } from "@peerbit/pubsub";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -11,6 +12,13 @@ import {
 } from "../src/replication.js";
 import { RequestMaybeSync, SimpleSyncronizer } from "../src/sync/simple.js";
 import { EventStore } from "./utils/stores/event-store.js";
+
+type JoinPeerServices = TestSession["peers"][number]["services"] & {
+	fanout: Pick<FanoutTree, "waitFor">;
+};
+
+const getJoinServices = (peer: TestSession["peers"][number]): JoinPeerServices =>
+	peer.services as JoinPeerServices;
 
 describe("join", () => {
 	let session: TestSession;
@@ -71,9 +79,9 @@ describe("join", () => {
 			await session.peers[1].services.pubsub.waitFor(session.peers[2].peerId);
 			await session.peers[2].services.pubsub.waitFor(session.peers[1].peerId);
 
-			const fanout0: any = (session.peers[0].services as any).fanout;
-			const fanout1: any = (session.peers[1].services as any).fanout;
-			const fanout2: any = (session.peers[2].services as any).fanout;
+			const fanout0 = getJoinServices(session.peers[0]).fanout;
+			const fanout1 = getJoinServices(session.peers[1]).fanout;
+			const fanout2 = getJoinServices(session.peers[2]).fanout;
 			await fanout0.waitFor(session.peers[1].peerId);
 			await fanout1.waitFor(session.peers[0].peerId);
 			await fanout1.waitFor(session.peers[2].peerId);
