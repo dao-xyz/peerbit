@@ -6,7 +6,9 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const configDir = path.dirname(fileURLToPath(import.meta.url));
-const gitEntry = await findUp.findUp(".git", { cwd: configDir });
+const gitEntry =
+	(await findUp.findUp(".git", { cwd: configDir, type: "directory" })) ??
+	(await findUp.findUp(".git", { cwd: configDir, type: "file" }));
 if (!gitEntry) {
 	throw new Error("Failed to locate repository root from any-store/.aegir.js");
 }
