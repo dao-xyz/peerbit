@@ -1,8 +1,10 @@
 // get monorepo root location using esm and .git folder
 import * as findUp from "find-up";
 import path from "path";
+import { fileURLToPath } from "url";
 
-const gitEntry = await findUp.findUp(".git");
+const configDir = path.dirname(fileURLToPath(import.meta.url));
+const gitEntry = await findUp.findUp(".git", { cwd: configDir });
 if (!gitEntry) {
 	throw new Error("Failed to locate repository root from .aegir.js");
 }

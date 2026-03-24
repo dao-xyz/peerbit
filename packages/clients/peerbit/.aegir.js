@@ -3,8 +3,10 @@ import * as findUp from "find-up";
 import fs from "fs";
 import { createRequire } from "module";
 import path from "path";
+import { fileURLToPath } from "url";
 
-const gitEntry = await findUp.findUp(".git");
+const configDir = path.dirname(fileURLToPath(import.meta.url));
+const gitEntry = await findUp.findUp(".git", { cwd: configDir });
 if (!gitEntry) {
 	throw new Error("Failed to locate repository root from peerbit/.aegir.js");
 }
