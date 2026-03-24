@@ -300,9 +300,17 @@ const disconnected = async (
 };
 
 const stream = (s: TestSessionStream, i: number): TestDirectStream =>
-	service(s, i, "directstream") as TestDirectStream;
-const service = (s: TestSessionStream, i: number, service: string) =>
-	(s.peers[i].services as any)[service];
+	service<TestDirectStream>(s, i, "directstream");
+const service = <
+	TService = unknown,
+	TKey extends keyof TestSessionStream["peers"][number]["services"] | "directstream2" =
+		keyof TestSessionStream["peers"][number]["services"] | "directstream2",
+>(
+	s: TestSessionStream,
+	i: number,
+	serviceName: TKey,
+) =>
+	(s.peers[i].services as Record<string, unknown>)[serviceName] as TService;
 
 describe("streams", function () {
 	describe("signing", () => {
@@ -4624,10 +4632,10 @@ describe("multistream", () => {
 		await session.stop();
 	});
 
-	it("can setup multiple streams at once", async () => {
-		await waitFor(() => !!stream(session, 0).peers.size);
-		await waitFor(() => !!stream(session, 1).peers.size);
-		await waitFor(() => !!service(session, 0, "directstream2").peers.size);
-		await waitFor(() => !!service(session, 1, "directstream2").peers.size);
-	});
+		it("can setup multiple streams at once", async () => {
+			await waitFor(() => !!stream(session, 0).peers.size);
+			await waitFor(() => !!stream(session, 1).peers.size);
+			await waitFor(() => !!service<TestDirectStream>(session, 0, "directstream2").peers.size);
+			await waitFor(() => !!service<TestDirectStream>(session, 1, "directstream2").peers.size);
+		});
 });

@@ -78,6 +78,15 @@ import {
 	debouncedAccumulatorMap,
 } from "./debounce.js";
 import { NoPeersError } from "./errors.js";
+
+type SharedLogServicesWithFanout = {
+	fanout?: FanoutTree;
+};
+
+const getSharedLogFanoutService = (
+	services: unknown,
+): FanoutTree | undefined =>
+	(services as SharedLogServicesWithFanout).fanout;
 import {
 	EntryWithRefs,
 	ExchangeHeadsMessage,
@@ -802,7 +811,7 @@ export class SharedLog<
 			return;
 		}
 
-		const fanoutService = (this.node.services as any).fanout;
+		const fanoutService = getSharedLogFanoutService(this.node.services);
 		if (!fanoutService) {
 			throw new Error(
 				`Fanout is configured for shared-log topic ${this.topic}, but no fanout service is available on this client`,
@@ -811,7 +820,7 @@ export class SharedLog<
 
 		const resolvedRoot =
 			options.root ??
-			(await (fanoutService as any)?.topicRootControlPlane?.resolveTopicRoot?.(
+			(await fanoutService?.topicRootControlPlane?.resolveTopicRoot?.(
 				this.topic,
 			));
 		if (!resolvedRoot) {
@@ -1345,7 +1354,7 @@ export class SharedLog<
 	private async _resolvePublicKeyFromHash(
 		hash: string,
 	): Promise<PublicSignKey | undefined> {
-		const fanoutService = (this.node.services as any).fanout;
+		const fanoutService = getSharedLogFanoutService(this.node.services);
 		return (
 			fanoutService?.getPublicKey?.(hash) ??
 			this.node.services.pubsub.getPublicKey(hash)
@@ -1386,7 +1395,7 @@ export class SharedLog<
 
 		// Best-effort provider discovery (bounded). This requires bootstrap trackers.
 		try {
-			const fanoutService = (this.node.services as any).fanout;
+			const fanoutService = getSharedLogFanoutService(this.node.services);
 			if (fanoutService?.queryProviders) {
 				const ns = `shared-log|${this.topic}`;
 				const seed = hashToSeed32(topic);
@@ -2397,7 +2406,7 @@ export class SharedLog<
 				// Provider discovery keep-alive (best-effort). This enables bounded targeted fetches
 				// without relying on any global subscriber list.
 				try {
-					const fanoutService = (this.node.services as any).fanout;
+					const fanoutService = getSharedLogFanoutService(this.node.services);
 					if (fanoutService?.provide && !this._providerHandle) {
 						this._providerHandle = fanoutService.provide(`shared-log|${this.topic}`, {
 							ttlMs: 120_000,
@@ -3005,7 +3014,7 @@ export class SharedLog<
 		const storage = await this.node.storage.sublevel(id);
 
 		const localBlocks = await new AnyBlockStore(await storage.sublevel("blocks"));
-		const fanoutService = (this.node.services as any).fanout as FanoutTree | undefined;
+		const fanoutService = getSharedLogFanoutService(this.node.services);
 		const blockProviderNamespace = (cid: string) => `cid:${cid}`;
 		this.remoteBlocks = new RemoteBlocks({
 			local: localBlocks,

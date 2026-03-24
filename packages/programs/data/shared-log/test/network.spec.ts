@@ -1,4 +1,5 @@
 // Include test utilities
+import type { FanoutTree, TopicControlPlane } from "@peerbit/pubsub";
 import { TestSession } from "@peerbit/test-utils";
 import { waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -12,17 +13,30 @@ describe(`network`, () => {
 	let session: TestSession;
 	let db1: EventStore<string, any>, db2: EventStore<string, any>;
 
+	type RelayNetworkServices = TestSession["peers"][number]["services"] & {
+		fanout: Pick<FanoutTree, "topicRootControlPlane">;
+		pubsub: Pick<
+			TopicControlPlane,
+			"publicKeyHash" | "hostShardRootsNow" | "topicRootControlPlane"
+		>;
+	};
+
+	const getRelayNetworkServices = (
+		peer: TestSession["peers"][number],
+	): RelayNetworkServices => peer.services as RelayNetworkServices;
+
 	const forceRelayShardRoots = async (
 		currentSession: TestSession,
 		relayIndex: number,
 	) => {
-		const relayHash = (currentSession.peers[relayIndex].services as any).pubsub
-			.publicKeyHash as string | undefined;
+		const relayHash =
+			getRelayNetworkServices(currentSession.peers[relayIndex]).pubsub
+				.publicKeyHash;
 		expect(relayHash, "relayHash").to.be.a("string");
-		for (const peer of currentSession.peers as any[]) {
-			const servicesAny: any = peer.services;
-			const fanoutPlane = servicesAny?.fanout?.topicRootControlPlane;
-			const pubsubPlane = servicesAny?.pubsub?.topicRootControlPlane;
+		for (const peer of currentSession.peers) {
+			const services = getRelayNetworkServices(peer);
+			const fanoutPlane = services.fanout.topicRootControlPlane;
+			const pubsubPlane = services.pubsub.topicRootControlPlane;
 			const planes = [...new Set([fanoutPlane, pubsubPlane].filter(Boolean))];
 			for (const plane of planes) {
 				try {
@@ -32,7 +46,9 @@ describe(`network`, () => {
 				}
 			}
 		}
-		await (currentSession.peers[relayIndex].services as any).pubsub.hostShardRootsNow();
+		await getRelayNetworkServices(
+			currentSession.peers[relayIndex],
+		).pubsub.hostShardRootsNow();
 	};
 
 	after(async () => {});

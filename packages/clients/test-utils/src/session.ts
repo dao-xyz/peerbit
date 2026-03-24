@@ -30,6 +30,16 @@ export type LibP2POptions = Libp2pOptions<Libp2pExtendServices>;
 
 type CreateOptions = { libp2p?: Libp2pCreateOptions; directory?: string };
 
+type FanoutCapableServices = ProgramClient["services"] & {
+	fanout: DirectStream<unknown>;
+};
+
+const asDirectStream = (service: unknown): DirectStream<unknown> =>
+	service as DirectStream<unknown>;
+
+const getFanoutStream = (client: ProgramClient): DirectStream<unknown> =>
+	(client.services as FanoutCapableServices).fanout;
+
 export type InMemoryPeerbitSessionOptions = {
 	/**
 	 * Create a sparse underlay graph by default (recommended for large n).
@@ -604,21 +614,15 @@ export class TestSession {
 		await session.connect();
 		// TODO types
 		await waitForPeersStreams(
-			...session.peers.map(
-				(x) => x.services.blocks as any as DirectStream<any>,
-			),
+			...session.peers.map((x) => asDirectStream(x.services.blocks)),
 		);
 		// Sharded pubsub/fanout uses its own DirectStream protocols; ensure those
 		// neighbor streams are established before tests start opening programs.
 		await waitForPeersStreams(
-			...session.peers.map(
-				(x) => x.services.pubsub as any as DirectStream<any>,
-			),
+			...session.peers.map((x) => asDirectStream(x.services.pubsub)),
 		);
 		await waitForPeersStreams(
-			...session.peers.map(
-				(x) => (x.services as any).fanout as any as DirectStream<any>,
-			),
+			...session.peers.map((x) => getFanoutStream(x)),
 		);
 		return session;
 	}
@@ -669,21 +673,15 @@ export class TestSession {
 		await session.connect();
 		// TODO types
 		await waitForPeersStreams(
-			...session.peers.map(
-				(x) => x.services.blocks as any as DirectStream<any>,
-			),
+			...session.peers.map((x) => asDirectStream(x.services.blocks)),
 		);
 		// Sharded pubsub/fanout uses its own DirectStream protocols; ensure those
 		// neighbor streams are established before tests start opening programs.
 		await waitForPeersStreams(
-			...session.peers.map(
-				(x) => x.services.pubsub as any as DirectStream<any>,
-			),
+			...session.peers.map((x) => asDirectStream(x.services.pubsub)),
 		);
 		await waitForPeersStreams(
-			...session.peers.map(
-				(x) => (x.services as any).fanout as any as DirectStream<any>,
-			),
+			...session.peers.map((x) => getFanoutStream(x)),
 		);
 		return session;
 	}

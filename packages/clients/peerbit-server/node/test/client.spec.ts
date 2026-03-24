@@ -6,6 +6,10 @@ import { create } from "../src/peerbit.js";
 
 describe("client", () => {
 	let client: ProgramClient;
+	type RelayAwareClient = ProgramClient & {
+		services: ProgramClient["services"] & { relay?: unknown };
+	};
+
 	afterEach(async () => {
 		await client?.stop();
 	});
@@ -20,6 +24,6 @@ describe("client", () => {
 		).to.be.instanceOf(AnyBlockStore);
 		expect((client.services.blocks as any)["canRelayMessage"]).equal(true);
 		expect((client.services.pubsub as any)["canRelayMessage"]).equal(true);
-		expect((client.services as any)["relay"]).to.exist;
+		expect((client as RelayAwareClient).services.relay).to.exist;
 	});
 });

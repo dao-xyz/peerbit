@@ -4,6 +4,7 @@ import {
 	DataMessage,
 	SilentDelivery,
 } from "@peerbit/stream-interface";
+import type { FanoutTree } from "@peerbit/pubsub";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -11,6 +12,14 @@ import pDefer from "p-defer";
 import { ExchangeHeadsMessage } from "../src/exchange-heads.js";
 import { NoPeersError } from "../src/index.js";
 import { EventStore } from "./utils/stores/index.js";
+
+type DeliveryPeerServices = TestSession["peers"][number]["services"] & {
+	fanout: FanoutTree;
+};
+
+const getDeliveryServices = (
+	peer: TestSession["peers"][number],
+): DeliveryPeerServices => peer.services as DeliveryPeerServices;
 
 describe("append delivery options", () => {
 	let session: TestSession;
@@ -178,7 +187,7 @@ describe("append delivery options", () => {
 
 		const remoteHash = session.peers[1].identity.publicKey.hashcode();
 
-		const root = (session.peers[0].services as any).fanout.publicKeyHash as string;
+		const root = getDeliveryServices(session.peers[0]).fanout.publicKeyHash;
 		const fanout = {
 			root,
 			channel: {
@@ -250,9 +259,11 @@ describe("append delivery options", () => {
 		const gate = pDefer<void>();
 		const ackAttempted = pDefer<void>();
 
-		const remoteFanout: any = (session.peers[1].services as any).fanout;
+		const remoteFanout = getDeliveryServices(session.peers[1]).fanout;
 		const originalPublishMessage = remoteFanout.publishMessage.bind(remoteFanout);
-		remoteFanout.publishMessage = async (...args: any[]) => {
+		remoteFanout.publishMessage = async (
+			...args: Parameters<typeof remoteFanout.publishMessage>
+		) => {
 			const message = args[1];
 			if (message instanceof DataMessage) {
 				const raw: any = message.data;
@@ -302,7 +313,7 @@ describe("append delivery options", () => {
 	it("throws when delivery options are used with target=all", async () => {
 		session = await TestSession.connected(2);
 
-		const root = (session.peers[0].services as any).fanout.publicKeyHash as string;
+		const root = getDeliveryServices(session.peers[0]).fanout.publicKeyHash;
 		const fanout = {
 			root,
 			channel: {
@@ -344,7 +355,7 @@ describe("append delivery options", () => {
 	it("uses fanout data plane for target=all when configured", async () => {
 		session = await TestSession.connected(2);
 
-		const root = (session.peers[0].services as any).fanout.publicKeyHash as string;
+		const root = getDeliveryServices(session.peers[0]).fanout.publicKeyHash;
 		const fanout = {
 			root,
 			channel: {
@@ -393,13 +404,13 @@ describe("append delivery options", () => {
 		it("resolves fanout root via topic-root-control-plane when root is omitted", async () => {
 			session = await TestSession.connected(2);
 
-			const writerRoot = (session.peers[0].services as any).fanout.publicKeyHash as string;
+			const writerRoot = getDeliveryServices(session.peers[0]).fanout.publicKeyHash;
 			// Configure a deterministic root for this log topic without mutating the
 			// pubsub shard-root candidate set (which can otherwise break RPC delivery).
 			const store = new EventStore<string, any>();
 			const topic = store.log.topic;
 			for (const peer of session.peers) {
-				const plane: any = (peer.services as any)?.fanout?.topicRootControlPlane;
+				const plane = getDeliveryServices(peer).fanout.topicRootControlPlane;
 				expect(plane, "expected fanout to expose topicRootControlPlane").to.exist;
 				plane.setTopicRoot(topic, writerRoot);
 				expect(await plane.resolveTopicRoot(topic)).to.equal(writerRoot);
@@ -461,7 +472,7 @@ describe("append delivery options", () => {
 	it("does not fall back to rpc on target=all when a fanout member drops", async () => {
 		session = await TestSession.connected(3);
 
-		const root = (session.peers[0].services as any).fanout.publicKeyHash as string;
+		const root = getDeliveryServices(session.peers[0]).fanout.publicKeyHash;
 		const fanout = {
 			root,
 			channel: {
@@ -525,7 +536,7 @@ describe("append delivery options", () => {
 	it("does not fall back to rpc when fanout publish fails", async () => {
 		session = await TestSession.connected(2);
 
-		const root = (session.peers[0].services as any).fanout.publicKeyHash as string;
+		const root = getDeliveryServices(session.peers[0]).fanout.publicKeyHash;
 		const fanout = {
 			root,
 			channel: {

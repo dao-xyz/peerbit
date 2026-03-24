@@ -1,8 +1,17 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
+import type { FanoutTree } from "@peerbit/pubsub";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { EventStore } from "./utils/stores/index.js";
+
+type ObserverPeerServices = TestSession["peers"][number]["services"] & {
+	fanout: Pick<FanoutTree, "publicKeyHash" | "waitFor">;
+};
+
+const getObserverServices = (
+	peer: TestSession["peers"][number],
+): ObserverPeerServices => peer.services as ObserverPeerServices;
 
 const waitForSparseNeighborStreams = async (
 	session: TestSession,
@@ -25,9 +34,9 @@ const waitForSparseNeighborStreams = async (
 		timeout,
 	});
 
-	const fanout0: any = (session.peers[0].services as any).fanout;
-	const fanout1: any = (session.peers[1].services as any).fanout;
-	const fanout2: any = (session.peers[2].services as any).fanout;
+	const fanout0 = getObserverServices(session.peers[0]).fanout;
+	const fanout1 = getObserverServices(session.peers[1]).fanout;
+	const fanout2 = getObserverServices(session.peers[2]).fanout;
 	await fanout0.waitFor(session.peers[1].peerId, {
 		target: "neighbor",
 		timeout,
@@ -140,7 +149,7 @@ describe("observer", () => {
 		const s = new EventStore<string, any>();
 		const createStore = () => deserialize(serialize(s), EventStore);
 		const fanout = {
-			root: (session.peers[0].services as any).fanout.publicKeyHash as string,
+			root: getObserverServices(session.peers[0]).fanout.publicKeyHash,
 			channel: {
 				msgRate: 10,
 				msgSize: 256,

@@ -44,7 +44,7 @@ import {
 } from "@peerbit/indexer-interface";
 import { Entry, Log, createEntry } from "@peerbit/log";
 import { ClosedError, Program } from "@peerbit/program";
-import type { TopicControlPlane } from "@peerbit/pubsub";
+import type { FanoutTree, TopicControlPlane } from "@peerbit/pubsub";
 import { MissingResponsesError, RPCMessage, ResponseV0 } from "@peerbit/rpc";
 import {
 	AbsoluteReplicas,
@@ -58,6 +58,13 @@ import { expect } from "chai";
 import pDefer, { type DeferredPromise } from "p-defer";
 import sinon from "sinon";
 import { v4 as uuid } from "uuid";
+
+const getDocumentTestFanout = (peer: TestSession["peers"][number]) =>
+	(
+		peer.services as TestSession["peers"][number]["services"] & {
+			fanout: Pick<FanoutTree, "publicKeyHash">;
+		}
+	).fanout;
 import { createDocumentDomain } from "../src/domain.js";
 import type { DocumentsChange } from "../src/events.js";
 import MostCommonQueryPredictor from "../src/most-common-query-predictor.js";
@@ -2918,7 +2925,7 @@ describe("index", () => {
 					await stores[2].close();
 					await stores[0].docs.log.replicate(false);
 					const fanout = {
-						root: (session.peers[1].services as any).fanout.publicKeyHash as string,
+						root: getDocumentTestFanout(session.peers[1]).publicKeyHash,
 						channel: {
 							msgRate: 10,
 							msgSize: 256,
