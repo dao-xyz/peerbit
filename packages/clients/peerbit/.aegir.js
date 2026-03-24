@@ -4,7 +4,11 @@ import fs from "fs";
 import { createRequire } from "module";
 import path from "path";
 
-const root = path.dirname(await findUp.findUp(".git", { type: "directory" }));
+const gitEntry = await findUp.findUp(".git");
+if (!gitEntry) {
+	throw new Error("Failed to locate repository root from peerbit/.aegir.js");
+}
+const root = path.dirname(path.resolve(gitEntry));
 const resolverFromRoot = createRequire(path.join(root, "package.json"));
 const resolverFromLocal = createRequire(import.meta.url);
 

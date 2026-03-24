@@ -2,7 +2,11 @@
 import * as findUp from "find-up";
 import path from "path";
 
-const root = path.dirname(await findUp.findUp(".git", { type: "directory" }));
+const gitEntry = await findUp.findUp(".git");
+if (!gitEntry) {
+	throw new Error("Failed to locate repository root from .aegir.js");
+}
+const root = path.dirname(path.resolve(gitEntry));
 
 export default {
 	// global options
