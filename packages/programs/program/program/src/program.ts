@@ -355,20 +355,19 @@ export abstract class Program<
 				if (!subscribers || subscribers.length === 0) continue;
 				for (const subscriber of subscribers) {
 					this.recordPeerSubscription(subscriber, [topic]);
+					this.emitJoinIfReady(subscriber);
 				}
 			}
 		})();
 		return this._seedPeerTopicsFromSubscribers;
 	}
-	private _emitJoinNetworkEvents(s: SubscriptionEvent) {
+	private emitJoinIfReady(from: PublicSignKey) {
 		const allTopics = this.getAllTopicsIncludingThis();
 		if (allTopics.length === 0) {
-			return; // this is important (see events.spec.ts)
+			return;
 		}
 
-		this.recordPeerSubscription(s.from, s.topics);
-
-		const fromHash = s.from.hashcode();
+		const fromHash = from.hashcode();
 		if (this.emittedEventsFor.has(fromHash)) {
 			return;
 		}
@@ -378,7 +377,11 @@ export abstract class Program<
 		if (!this.peerHasAllTopics(entry, allTopics)) return;
 
 		this.emittedEventsFor.add(fromHash);
-		this.events.dispatchEvent(new CustomEvent("join", { detail: s.from }));
+		this.events.dispatchEvent(new CustomEvent("join", { detail: from }));
+	}
+	private _emitJoinNetworkEvents(s: SubscriptionEvent) {
+		this.recordPeerSubscription(s.from, s.topics);
+		this.emitJoinIfReady(s.from);
 	}
 
 	private _emitLeaveNetworkEvents(s: UnsubcriptionEvent) {
@@ -544,6 +547,38 @@ export abstract class Program<
 			throw new Error("Program has no topics, cannot get ready");
 		}
 		const pubsub = this.node.services.pubsub;
+		const collectProvidedPublicKeys = (refs: PeerRefs): Map<string, PublicSignKey> => {
+			const providedPublicKeysByHash = new Map<string, PublicSignKey>();
+			const rememberPublicKey = (ref: unknown) => {
+				if (ref instanceof PublicSignKey) {
+					providedPublicKeysByHash.set(ref.hashcode(), ref);
+				}
+			};
+
+			if (refs instanceof PublicSignKey || typeof refs === "string") {
+				rememberPublicKey(refs);
+				return providedPublicKeysByHash;
+			}
+			if (refs instanceof Array || refs instanceof Set) {
+				for (const ref of refs) {
+					rememberPublicKey(ref);
+				}
+				return providedPublicKeysByHash;
+			}
+			if (typeof (refs as Iterable<unknown>)?.[Symbol.iterator] === "function") {
+				for (const ref of refs as Iterable<unknown>) {
+					rememberPublicKey(ref);
+				}
+			}
+
+			return providedPublicKeysByHash;
+		};
+		const providedKeysByHash = collectProvidedPublicKeys(other);
+
+		// Seed a current subscriber snapshot after reachability is established so callers
+		// don't depend solely on edge-triggered subscribe events or follow-up snapshot
+		// requests to observe peers that were already ready.
+		await this.seedPeerTopicsSnapshot(allTopics);
 
 		// Prefer a direct neighbour stream when available. This avoids cases where
 		// peers are "reachable" via the routing table but we haven't established
@@ -564,19 +599,22 @@ export abstract class Program<
 		// snapshots while waiting, but rate-limit to avoid fanout in larger overlays.
 		const REQUEST_MIN_INTERVAL_MS = 500;
 		const lastRequestAtByPeer = new Map<string, number>();
-		const publicKeyByHash = new Map<
+		const publicKeyPromisesByHash = new Map<
 			string,
 			Promise<PublicSignKey | undefined>
 		>();
-		const resolvePublicKey = (
+		const getPublicKeyForHash = (
 			hash: string,
 		): Promise<PublicSignKey | undefined> => {
-			let existing = publicKeyByHash.get(hash);
+			let existing = publicKeyPromisesByHash.get(hash);
 			if (!existing) {
-				existing = Promise.resolve(pubsub.getPublicKey(hash)).catch(
-					(): PublicSignKey | undefined => undefined,
-				);
-				publicKeyByHash.set(hash, existing);
+				const providedKey = providedKeysByHash.get(hash);
+				existing = providedKey
+					? Promise.resolve(providedKey)
+					: Promise.resolve(pubsub.getPublicKey(hash)).catch(
+							(): PublicSignKey | undefined => undefined,
+						);
+				publicKeyPromisesByHash.set(hash, existing);
 			}
 			return existing;
 		};
@@ -586,7 +624,7 @@ export abstract class Program<
 			if (now - last < REQUEST_MIN_INTERVAL_MS) return;
 			lastRequestAtByPeer.set(hash, now);
 
-			void resolvePublicKey(hash).then((publicKey) => {
+			void getPublicKeyForHash(hash).then((publicKey) => {
 				for (const topic of allTopics) {
 					void Promise.resolve(
 						pubsub.requestSubscribers(topic, publicKey),
@@ -670,6 +708,11 @@ export abstract class Program<
 			this.events.addEventListener("close", closeListener, { once: true });
 			this.events.addEventListener("drop", dropListener, { once: true });
 
+			type PubSubTopicIndex = {
+				topics?: Map<string, Map<string, { publicKey: PublicSignKey }>>;
+			};
+			const pubsubTopicIndex = pubsub as PubSubTopicIndex;
+
 			const isPeerReady = async (hash: string) => {
 				const cached = this._peerTopicsByHash?.get(hash);
 				if (cached && this.peerHasAllTopics(cached, allTopics)) {
@@ -679,35 +722,41 @@ export abstract class Program<
 				// Subscription events are edge-triggered: we may have missed earlier subscribe
 				// events (e.g. if they arrived during program open). Fall back to best-effort
 				// pubsub snapshots to avoid false timeouts.
-				const pubsubAny = this.node.services.pubsub as any;
-				let key: PublicSignKey | undefined;
+				let key: PublicSignKey | undefined = providedKeysByHash.get(hash);
+				const observedTopics: string[] = [];
+				const recordObservedTopics = () => {
+					if (key && observedTopics.length > 0) {
+						this.recordPeerSubscription(key, observedTopics);
+						this.emitJoinIfReady(key);
+					}
+				};
 
 				for (const topic of allTopics) {
 					// Fast path for TopicControlPlane: O(1) membership check without allocations.
-					const topicPeers:
-						| Map<string, { publicKey: PublicSignKey }>
-						| undefined = pubsubAny?.topics?.get?.(topic);
+					const topicPeers = pubsubTopicIndex.topics?.get(topic);
 					if (topicPeers?.has?.(hash)) {
 						key ||= topicPeers.get(hash)?.publicKey;
+						observedTopics.push(topic);
 						continue;
 					}
 
 					const subscribers =
 						await this.node.services.pubsub.getSubscribers(topic);
 					if (!subscribers || subscribers.length === 0) {
+						recordObservedTopics();
 						return false;
 					}
 					const found = subscribers.find((x) => x.hashcode() === hash);
 					if (!found) {
+						recordObservedTopics();
 						return false;
 					}
 					key ||= found;
+					observedTopics.push(topic);
 				}
 
-				if (key) {
-					this.recordPeerSubscription(key, allTopics);
-				}
-				return true;
+				recordObservedTopics();
+				return observedTopics.length === allTopics.length;
 			};
 
 			const checkReady = async () => {

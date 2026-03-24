@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.4](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v3.0.3...indexer-sqlite3-v3.0.4) (2026-03-18)
+
+
+### Bug Fixes
+
+* **indexer-sqlite3:** coerce structural query instances ([47409ee](https://github.com/dao-xyz/peerbit/commit/47409eed03aa560b4b8e448d0d638822d78d5afc))
+
 ## [3.0.3](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v3.0.2...indexer-sqlite3-v3.0.3) (2026-03-17)
 
 

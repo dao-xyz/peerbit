@@ -456,6 +456,53 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [13.0.18](https://github.com/dao-xyz/peerbit/compare/document-v13.0.17...document-v13.0.18) (2026-03-22)
+
+
+### Bug Fixes
+
+* **document:** avoid blocking next on remote top-up ([03daab1](https://github.com/dao-xyz/peerbit/commit/03daab1346d85444319b9c689fc96b365dce66d0))
+* **document:** close keep-open iterators correctly ([37f4138](https://github.com/dao-xyz/peerbit/commit/37f4138d89c66aad53662cd8919e488f997b5c4a))
+* **document:** coalesce queued push updates ([6947aa8](https://github.com/dao-xyz/peerbit/commit/6947aa83038db8f840482d7296d53b809d5f34e9))
+* **document:** fall back to indexed relay push results ([df09f70](https://github.com/dao-xyz/peerbit/commit/df09f706bdcd6527afe1daefd752c84578640ae8))
+* **document:** narrow delivered frontier in join handler ([5ef4a27](https://github.com/dao-xyz/peerbit/commit/5ef4a2778ae5ea37a4db547ac4995eb5a3b2ccf5))
+* **document:** return buffered remote updates without waiting ([9c3d7ef](https://github.com/dao-xyz/peerbit/commit/9c3d7effb54e9d298fc89162092af6a616793cb2))
+* **document:** use delivered frontier for late join detection ([f586abe](https://github.com/dao-xyz/peerbit/commit/f586abea48538e0438a5cf9c7ac39e0c887ff218))
+* **program:** emit joins for snapshot-discovered peers ([0c0603d](https://github.com/dao-xyz/peerbit/commit/0c0603d4f0eb9877e32c5de37b43f52ddf259aaf))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.16
+    * @peerbit/pubsub bumped to 5.1.1
+    * @peerbit/program bumped to 6.0.12
+    * @peerbit/rpc bumped to 6.0.16
+    * @peerbit/shared-log bumped to 13.0.18
+    * @peerbit/document-interface bumped to 3.2.21
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.16
+    * peerbit bumped to 5.2.1
+
+## [13.0.17](https://github.com/dao-xyz/peerbit/compare/document-v13.0.16...document-v13.0.17) (2026-03-18)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.15
+    * @peerbit/pubsub bumped to 5.1.0
+    * @peerbit/program bumped to 6.0.11
+    * @peerbit/rpc bumped to 6.0.15
+    * @peerbit/shared-log bumped to 13.0.17
+    * @peerbit/indexer-sqlite3 bumped to 3.0.4
+    * @peerbit/document-interface bumped to 3.2.20
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.15
+    * peerbit bumped to 5.2.0
+
 ## [13.0.16](https://github.com/dao-xyz/peerbit/compare/document-v13.0.15...document-v13.0.16) (2026-03-17)
 
 

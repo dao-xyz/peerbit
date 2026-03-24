@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/log",
-	"version": "6.0.14",
+	"version": "6.0.16",
 	"description": "Append-only log CRDT",
 	"author": "dao.xyz",
 	"license": "MIT",

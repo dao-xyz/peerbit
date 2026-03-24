@@ -313,6 +313,33 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [5.2.1](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.2.0...peerbit-v5.2.1) (2026-03-22)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped to 6.0.12
+    * @peerbit/blocks bumped to 4.0.9
+    * @peerbit/pubsub bumped to 5.1.1
+
+## [5.2.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.1.2...peerbit-v5.2.0) (2026-03-18)
+
+
+### Features
+
+* **pubsub:** resolve shard roots through dialed peers ([#683](https://github.com/dao-xyz/peerbit/issues/683)) ([881a0a3](https://github.com/dao-xyz/peerbit/commit/881a0a312b3b5b29f0226f154176c58e8152169f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-sqlite3 bumped to 3.0.4
+    * @peerbit/program bumped to 6.0.11
+    * @peerbit/pubsub bumped to 5.1.0
+
 ## [5.1.2](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.1.1...peerbit-v5.1.2) (2026-03-17)
 
 

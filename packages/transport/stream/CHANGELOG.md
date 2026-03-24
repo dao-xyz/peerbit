@@ -43,6 +43,14 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [5.0.7](https://github.com/dao-xyz/peerbit/compare/stream-v5.0.6...stream-v5.0.7) (2026-03-22)
+
+
+### Bug Fixes
+
+* **stream:** add publishMaybe for tolerated delivery errors ([5366f65](https://github.com/dao-xyz/peerbit/commit/5366f65c99d8091ca93fe23c582579dd2f928335))
+* **stream:** add publishMaybe for tolerated delivery errors ([4933cf2](https://github.com/dao-xyz/peerbit/commit/4933cf21f149f2ee4f93dd1a0b770dca0f65139d))
+
 ## [5.0.6](https://github.com/dao-xyz/peerbit/compare/stream-v5.0.5...stream-v5.0.6) (2026-03-17)
 
 

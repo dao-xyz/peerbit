@@ -28,7 +28,6 @@ import {
 	type DirectStreamComponents,
 	type DirectStreamOptions,
 	type PeerStreams,
-	dontThrowIfDeliveryError,
 } from "@peerbit/stream";
 import {
 	AcknowledgeAnyWhere,
@@ -687,9 +686,7 @@ export class TopicControlPlane
 			priority: 1,
 			skipRecipientValidation: true,
 		} as any);
-		await this.publishMessage(this.publicKey, embedded, streams).catch(
-			dontThrowIfDeliveryError,
-		);
+		await this.publishMessageMaybe(this.publicKey, embedded, streams);
 	}
 
 	private mergeAutoTopicRootCandidatesFromPeer(candidates: string[]): boolean {
@@ -1559,7 +1556,7 @@ export class TopicControlPlane
 					await this.ensureFanoutChannel(shardTopic, { ephemeral: true });
 					const st = this.fanoutChannels.get(shardTopic);
 					if (st) {
-						void st.channel.publish(toUint8Array(embedded.bytes())).catch(() => {});
+						void st.channel.publishMaybe(toUint8Array(embedded.bytes()));
 						this.touchFanoutChannel(shardTopic);
 					}
 				} catch {
@@ -1589,7 +1586,7 @@ export class TopicControlPlane
 			await this.ensureFanoutChannel(shardTopic, { ephemeral: true });
 			const st = this.fanoutChannels.get(shardTopic);
 			if (st) {
-				void st.channel.publish(toUint8Array(embedded.bytes())).catch(() => {});
+				void st.channel.publishMaybe(toUint8Array(embedded.bytes()));
 				this.touchFanoutChannel(shardTopic);
 			}
 		} catch {
@@ -1672,10 +1669,16 @@ export class TopicControlPlane
 
 		await Promise.all(
 			[...byShard.entries()].map(async ([shardTopic, userTopics]) => {
+				const msg = new GetSubscribers({ topics: userTopics });
+				const directPeer = to ? this.peers.get(to.hashcode()) : undefined;
+				if (directPeer) {
+					await this.sendDirectControlMessage(directPeer, msg);
+					return;
+				}
+
 				const persistent = (this.shardRefCounts.get(shardTopic) ?? 0) > 0;
 				await this.ensureFanoutChannel(shardTopic, { ephemeral: !persistent });
 
-				const msg = new GetSubscribers({ topics: userTopics });
 				const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
 					mode: new AnyWhere(),
 					priority: 1,
@@ -1693,7 +1696,7 @@ export class TopicControlPlane
 							timeoutMs: 5_000,
 						});
 					} catch {
-						await st.channel.publish(payload);
+						await st.channel.publishMaybe(payload);
 					}
 				} else {
 					await st.channel.publish(payload);
@@ -2048,19 +2051,16 @@ export class TopicControlPlane
 		} catch {
 			// ignore and fall back
 		}
-		try {
-			await st.channel.publish(payload);
-		} catch {
-			// ignore
-		}
+			await st.channel.publishMaybe(payload);
 	}
 
 	private async processDirectPubSubMessage(input: {
 		pubsubMessage: PubSubMessage;
 		message: DataMessage;
+		from: PublicSignKey;
 		stream: PeerStreams;
 	}): Promise<void> {
-		const { pubsubMessage, message, stream } = input;
+		const { pubsubMessage, message, from, stream } = input;
 
 		if (pubsubMessage instanceof TopicRootCandidates) {
 			// Used only to converge deterministic shard-root candidates in auto mode.
@@ -2088,6 +2088,82 @@ export class TopicControlPlane
 			return;
 		}
 
+		if (pubsubMessage instanceof Subscribe) {
+			const sender = from;
+			const senderKey = sender.hashcode();
+			const relevantTopics = pubsubMessage.topics.filter((t) =>
+				this.isTrackedTopic(t),
+			);
+
+			if (
+				relevantTopics.length > 0 &&
+				this.subscriptionMessageIsLatest(message, pubsubMessage, relevantTopics)
+			) {
+				const changed: string[] = [];
+				for (const topic of relevantTopics) {
+					const peers = this.topics.get(topic);
+					if (!peers) continue;
+					this.initializePeer(sender);
+
+					const existing = peers.get(senderKey);
+					if (!existing || existing.session < message.header.session) {
+						peers.delete(senderKey);
+						peers.set(
+							senderKey,
+							new SubscriptionData({
+								session: message.header.session,
+								timestamp: message.header.timestamp,
+								publicKey: sender,
+							}),
+						);
+						changed.push(topic);
+					} else {
+						peers.delete(senderKey);
+						peers.set(senderKey, existing);
+					}
+
+					if (!existing) {
+						this.peerToTopic.get(senderKey)!.add(topic);
+					}
+					this.pruneTopicSubscribers(topic);
+				}
+
+				if (changed.length > 0) {
+					this.dispatchEvent(
+						new CustomEvent<SubscriptionEvent>("subscribe", {
+							detail: new SubscriptionEvent(sender, changed),
+						}),
+					);
+				}
+			}
+
+			if (pubsubMessage.requestSubscribers) {
+				const overlap = this.getSubscriptionOverlap(pubsubMessage.topics);
+				if (overlap.length > 0) {
+					await this.sendDirectControlMessage(
+						stream,
+						new Subscribe({
+							topics: overlap,
+							requestSubscribers: false,
+						}),
+					);
+				}
+			}
+			return;
+		}
+
+		if (pubsubMessage instanceof GetSubscribers) {
+			const overlap = this.getSubscriptionOverlap(pubsubMessage.topics);
+			if (overlap.length === 0) return;
+			await this.sendDirectControlMessage(
+				stream,
+				new Subscribe({
+					topics: overlap,
+					requestSubscribers: false,
+				}),
+			);
+			return;
+		}
 		if (pubsubMessage instanceof PubSubData) {
 			this.dispatchEvent(
 				new CustomEvent("data", {
@@ -2340,12 +2416,14 @@ export class TopicControlPlane
 			return super.onDataMessage(from, stream, message, seenBefore);
 		}
 
-		// DirectStream only supports targeted pubsub data and a small set of utility
-		// messages. All membership/control traffic is shard-only.
+		// DirectStream supports targeted pubsub data plus a small set of control
+		// messages used for topic-root discovery and direct subscriber snapshots.
 		if (
 			!(pubsubMessage instanceof PubSubData) &&
 			!(pubsubMessage instanceof TopicRootCandidates) &&
 			!(pubsubMessage instanceof TopicRootQuery) &&
+			!(pubsubMessage instanceof GetSubscribers) &&
+			!(pubsubMessage instanceof Subscribe) &&
 			!(pubsubMessage instanceof TopicRootQueryResponse)
 		) {
 			return true;
@@ -2376,6 +2454,7 @@ export class TopicControlPlane
 				await this.processDirectPubSubMessage({
 					pubsubMessage,
 					message,
+					from,
 					stream,
 				});
 			}

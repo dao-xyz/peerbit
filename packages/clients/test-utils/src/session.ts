@@ -467,11 +467,40 @@ export class TestSession {
 		}
 
 	async connect(groups?: ProgramClient[][]) {
+		const dialGroups = groups ?? ([this._peers] as unknown as ProgramClient[][]);
 		await this.session.connect(groups?.map((x) => x.map((y) => y)));
 		this.connectedGroups = groups
 			? groups.map((group) => new Set(group as Peerbit[]))
 			: [new Set(this._peers)];
 		await this.configureFanoutShardRoots();
+		for (const group of dialGroups) {
+			if (!group || group.length < 2) continue;
+			for (const peer of group) {
+				const peerHash = peer.identity.publicKey.hashcode();
+				await Promise.all(
+					group
+						.filter((other) => other !== peer)
+						.map(async (other) => {
+							const services = other.services as ProgramClient["services"] &
+								Pick<Peerbit["services"], "fanout">;
+							await Promise.all([
+								services.blocks.waitFor(peerHash, {
+									target: "neighbor",
+									timeout: 10_000,
+								}),
+								services.pubsub.waitFor(peerHash, {
+									target: "neighbor",
+									timeout: 10_000,
+								}),
+								services.fanout.waitFor(peerHash, {
+									target: "neighbor",
+									timeout: 10_000,
+								}),
+							]);
+						}),
+				);
+			}
+		}
 		return;
 	}
 
@@ -560,16 +589,18 @@ export class TestSession {
 
 						// Also wait for the reverse direction to be fully established; some
 						// protocols require a writable stream on both sides to reply.
+						const services = other.services as ProgramClient["services"] &
+							Pick<Peerbit["services"], "fanout">;
 						await Promise.all([
-							other.services.pubsub.waitFor(peerHash, {
+							services.blocks.waitFor(peerHash, {
 								target: "neighbor",
 								timeout: 10_000,
 							}),
-							other.services.blocks.waitFor(peerHash, {
+							services.pubsub.waitFor(peerHash, {
 								target: "neighbor",
 								timeout: 10_000,
 							}),
-							other.services.fanout.waitFor(peerHash, {
+							services.fanout.waitFor(peerHash, {
 								target: "neighbor",
 								timeout: 10_000,
 							}),
