@@ -1415,6 +1415,75 @@ describe("streams", function () {
 							streams[1].messages.filter((x) => x instanceof DataMessage),
 						).to.have.length(1); // because there is a direct route to 2 from 0 so no point more message should arrive here
 					});
+
+					it("uses the upgraded direct route for targeted silent delivery without relay duplicates", async () => {
+						await session.connect([[session.peers[0], session.peers[1]]]);
+						await session.connect([[session.peers[1], session.peers[2]]]);
+						await waitForResolved(() =>
+							expect(session.peers[1].services.directstream.peers.size).equal(
+								2,
+							),
+						);
+
+						// Warm the indirect route first so the sender has already learned how to reach peer 2.
+						await session.peers[0].services.directstream.publish(
+							new Uint8Array([0]),
+							{
+								mode: new AcknowledgeDelivery({
+									to: [session.peers[2].peerId],
+									redundancy: 1,
+								}),
+							},
+						);
+						await waitForResolved(() =>
+							expect(streams[2].received).to.have.length(1),
+						);
+						expect(
+							streams[1].messages.filter((x) => x instanceof DataMessage),
+						).to.have.length(1);
+
+						await session.connect([[session.peers[0], session.peers[2]]]);
+						await waitForResolved(() =>
+							expect(session.peers[0].services.directstream.peers.size).equal(
+								2,
+							),
+						);
+						await waitForResolved(() =>
+							expect(session.peers[2].services.directstream.peers.size).equal(
+								2,
+							),
+						);
+
+						resetMetrics(streams);
+						const writes = streams.map((x) => collectDataWrites(x.stream));
+						const payload = randomBytes(1024);
+
+						await session.peers[0].services.directstream.publish(payload, {
+							mode: new SilentDelivery({
+								to: [session.peers[2].peerId],
+								redundancy: 1,
+							}),
+						});
+
+						await waitForResolved(() =>
+							expect(streams[2].received).to.have.length(1),
+						);
+						await delay(250);
+
+						expect(streams[0].received).to.be.empty;
+						expect(streams[1].received).to.be.empty;
+						expect(streams[1].messages.filter((x) => x instanceof DataMessage))
+							.to.be.empty;
+						expect(getWritesCount(writes[0])).equal(1);
+						expect(getWritesCount(writes[1])).equal(0);
+						expect(getWritesCount(writes[2])).equal(0);
+
+						const delivered = streams[2].received[0];
+						expect(delivered.data).to.not.equal(undefined);
+						expect(equals(delivered.data!, payload)).to.be.true;
+						const deliveredId = await getMsgId(serialize(delivered));
+						expect(streams[2].processed.get(deliveredId)).equal(1);
+					});
 				});
 
 				describe("1->3", () => {

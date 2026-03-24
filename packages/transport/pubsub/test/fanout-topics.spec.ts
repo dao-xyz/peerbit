@@ -7,7 +7,7 @@ import {
 	type DataEvent as PubSubDataEvent,
 } from "@peerbit/pubsub-interface";
 import { SilentDelivery } from "@peerbit/stream-interface";
-import { waitForResolved } from "@peerbit/time";
+import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { FanoutTree, TopicControlPlane, TopicRootControlPlane } from "../src/index.js";
 
@@ -91,6 +91,55 @@ describe("pubsub (fanout topics)", function () {
 			shardCount: DEFAULT_SHARD_COUNT,
 			shardTopicPrefix: "/peerbit/pubsub-shard/1/",
 		};
+	};
+
+	const createDisconnectedSession = async (
+		peerCount: number,
+		options?: {
+			pubsub?: Partial<ConstructorParameters<typeof TopicControlPlane>[1]>;
+		},
+	) => {
+		const DEFAULT_SHARD_COUNT = 16;
+		const topicRootControlPlane = new TopicRootControlPlane();
+		const fanoutByHash = new Map<string, FanoutTree>();
+		const getOrCreateFanout = (c: any) => {
+			const hash = getPublicKeyFromPeerId(c.peerId).hashcode();
+			let fanout = fanoutByHash.get(hash);
+			if (!fanout) {
+				fanout = new FanoutTree(c, {
+					connectionManager: false,
+					topicRootControlPlane,
+				});
+				fanoutByHash.set(hash, fanout);
+			}
+			return fanout;
+		};
+
+		return TestSession.disconnected<{
+			pubsub: TopicControlPlane;
+			fanout: FanoutTree;
+		}>(peerCount, {
+			services: {
+				fanout: (c) => getOrCreateFanout(c),
+				pubsub: (c) =>
+					new TopicControlPlane(c, {
+						canRelayMessage: true,
+						connectionManager: false,
+						topicRootControlPlane,
+						fanout: getOrCreateFanout(c),
+						shardCount: DEFAULT_SHARD_COUNT,
+						fanoutJoin: {
+							timeoutMs: 10_000,
+							retryMs: 50,
+							bootstrapEnsureIntervalMs: 200,
+							trackerQueryIntervalMs: 200,
+							joinReqTimeoutMs: 1_000,
+							trackerQueryTimeoutMs: 1_000,
+						},
+						...(options?.pubsub || {}),
+					}),
+			},
+		});
 	};
 
 	const topicHash32 = (topic: string) => {
@@ -433,6 +482,89 @@ describe("pubsub (fanout topics)", function () {
 			});
 
 			await pendingSubscribe;
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("keeps single topic delivery after adding a direct connection to an already-joined shard root", async () => {
+		const session = await createDisconnectedSession(3);
+
+		try {
+			const topic = "fanout-direct-upgrade-to-root";
+			const root = session.peers[0]!.services.pubsub;
+			const publisher = session.peers[2]!.services.pubsub;
+			const rootHash = root.publicKeyHash;
+			const publisherHash = publisher.publicKeyHash;
+
+			await session.connect([
+				[session.peers[0], session.peers[1]],
+				[session.peers[1], session.peers[2]],
+			]);
+
+			const relayBootstraps = session.peers[1]!.getMultiaddrs();
+			for (const peer of session.peers) {
+				const self = new Set(peer!.getMultiaddrs().map((a) => a.toString()));
+				peer!.services.fanout.setBootstraps(
+					relayBootstraps.filter((a) => !self.has(a.toString())),
+				);
+			}
+
+			for (const peer of session.peers) {
+				peer!.services.pubsub.setTopicRootCandidates([rootHash]);
+			}
+			await root.hostShardRootsNow();
+
+			const receivedByRoot: Uint8Array[] = [];
+			const receivedByPublisher: Uint8Array[] = [];
+			root.addEventListener("data", (ev: any) => {
+				const detail = ev.detail as PubSubDataEvent;
+				if (!detail?.data?.topics?.includes?.(topic)) return;
+				receivedByRoot.push(detail.data.data);
+			});
+			publisher.addEventListener("data", (ev: any) => {
+				const detail = ev.detail as PubSubDataEvent;
+				if (!detail?.data?.topics?.includes?.(topic)) return;
+				receivedByPublisher.push(detail.data.data);
+			});
+
+			await Promise.all([root.subscribe(topic), publisher.subscribe(topic)]);
+
+			await waitForResolved(() => {
+				const shardTopic = (root as any).getShardTopicForUserTopic(topic);
+				expect(Boolean((root as any).fanoutChannels?.get(shardTopic))).to.equal(
+					true,
+				);
+				expect(
+					Boolean((publisher as any).fanoutChannels?.get(shardTopic)),
+				).to.equal(true);
+			});
+
+			const firstPayload = randomBytes(256);
+			await publisher.publish(firstPayload, { topics: [topic] });
+
+			await waitForResolved(() => expect(receivedByRoot).to.have.length(1));
+			expect([...receivedByRoot[0]!]).to.deep.equal([...firstPayload]);
+			expect(receivedByPublisher).to.have.length(0);
+			await delay(250);
+			expect(receivedByRoot).to.have.length(1);
+
+			await session.connect([[session.peers[0], session.peers[2]]]);
+			await waitForResolved(() =>
+				expect(root.peers.has(publisherHash)).to.equal(true),
+			);
+			await waitForResolved(() =>
+				expect(publisher.peers.has(rootHash)).to.equal(true),
+			);
+
+			const secondPayload = randomBytes(256);
+			await publisher.publish(secondPayload, { topics: [topic] });
+
+			await waitForResolved(() => expect(receivedByRoot).to.have.length(2));
+			expect([...receivedByRoot[1]!]).to.deep.equal([...secondPayload]);
+			expect(receivedByPublisher).to.have.length(0);
+			await delay(250);
+			expect(receivedByRoot).to.have.length(2);
 		} finally {
 			await session.stop();
 		}
