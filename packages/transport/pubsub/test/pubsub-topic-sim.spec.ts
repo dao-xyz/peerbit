@@ -1,14 +1,65 @@
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { expect } from "chai";
 import {
 	formatPubsubTopicSimResult,
-	runPubsubTopicSim,
+	type PubsubTopicSimParams,
+	type PubsubTopicSimResult,
 } from "../benchmark/pubsub-topic-sim-lib.js";
+
+const execFileAsync = promisify(execFile);
+
+const resolveSimRunnerPath = () => {
+	const currentDir = dirname(fileURLToPath(import.meta.url));
+	const candidates = [
+		resolve(currentDir, "pubsub-topic-sim.runner.js"),
+		resolve(currentDir, "../dist/test/pubsub-topic-sim.runner.js"),
+	];
+	for (const candidate of candidates) {
+		if (existsSync(candidate)) return candidate;
+	}
+	throw new Error(
+		`Unable to locate pubsub-topic sim runner. Tried: ${candidates.join(", ")}`,
+	);
+};
+
+const runPubsubTopicSimIsolated = async (
+	params: Partial<PubsubTopicSimParams>,
+): Promise<PubsubTopicSimResult> => {
+	const runner = resolveSimRunnerPath();
+	const { stdout, stderr } = await execFileAsync(
+		process.execPath,
+		[runner, JSON.stringify(params)],
+		{
+			maxBuffer: 16 * 1024 * 1024,
+			env: process.env,
+		},
+	);
+
+	const trimmed = stdout.trim();
+	if (!trimmed) {
+		throw new Error(
+			`PubsubTopicSim runner produced no stdout${stderr ? `\n${stderr.trim()}` : ""}`,
+		);
+	}
+
+	try {
+		return JSON.parse(trimmed) as PubsubTopicSimResult;
+	} catch (error: any) {
+		throw new Error(
+			`Failed to parse PubsubTopicSim runner output as JSON: ${error?.message ?? String(error)}\n${trimmed}${stderr ? `\n${stderr.trim()}` : ""}`,
+		);
+	}
+};
 
 describe("pubsub-topic-sim (ci)", () => {
 	it("delivers on a small sim", async function () {
 		this.timeout(60_000);
 
-		const result = await runPubsubTopicSim({
+		const result = await runPubsubTopicSimIsolated({
 			nodes: 20,
 			degree: 4,
 			writerIndex: 0,
@@ -43,7 +94,7 @@ describe("pubsub-topic-sim (ci)", () => {
 	it("remains mostly connected under mild churn", async function () {
 		this.timeout(90_000);
 
-		const result = await runPubsubTopicSim({
+		const result = await runPubsubTopicSimIsolated({
 			nodes: 25,
 			degree: 6,
 			writerIndex: 0,
