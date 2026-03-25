@@ -15,7 +15,299 @@ const createFanoutTestSession = (n: number) =>
 		},
 	});
 
+type ImproveCandidate = {
+	hash: string;
+	addrs: [];
+	level: number;
+	freeSlots: number;
+	bidPerByte: number;
+};
+
+type ImproveChannel = {
+	parent: string;
+	closed: boolean;
+	isRoot: boolean;
+	level: number;
+	id: { root: string; key: Uint8Array };
+	cachedTrackerCandidates: ImproveCandidate[];
+	children: Map<string, { bidPerByte: number }>;
+};
+
+type ImproveOptions = {
+	signal: AbortSignal;
+	candidateShuffleTopK: number;
+	candidateScoringMode: "ranked-shuffle" | "ranked-strict" | "weighted";
+	candidateScoringWeights: {
+		level: number;
+		freeSlots: number;
+		connected: number;
+		bidPerByte: number;
+		source: number;
+	};
+	joinAttemptsPerRound: number;
+	joinReqTimeoutMs: number;
+};
+
+type ImproveContext = {
+	publicKeyHash: string;
+	peers: Map<string, { peerId: string; isReadable: boolean; isWritable: boolean }>;
+	components: {
+		connectionManager: {
+			getConnections: (peerId: string) => unknown[];
+		};
+	};
+	random: () => number;
+	tryJoinOnce: (
+		ch: ImproveChannel,
+		parentHash: string,
+		reqId: number,
+		joinReqTimeoutMs: number,
+		signal: AbortSignal,
+		options?: { allowReplace?: boolean },
+	) => Promise<{ ok: boolean }>;
+	_sendControl: (to: string, payload: Uint8Array) => Promise<void>;
+};
+
+const maybeImproveParent = Reflect.get(FanoutTree.prototype, "maybeImproveParent") as (
+	this: ImproveContext,
+	ch: ImproveChannel,
+	options: ImproveOptions,
+) => Promise<boolean>;
+
+const createImproveChannel = (
+	overrides: Partial<ImproveChannel> = {},
+): ImproveChannel => ({
+	parent: "relay",
+	closed: false,
+	isRoot: false,
+	level: 4,
+	id: { root: "root", key: new Uint8Array([1, 2, 3]) },
+	cachedTrackerCandidates: [],
+	children: new Map(),
+	...overrides,
+});
+
+const runMaybeImproveParent = async (args: {
+	peerHashes: string[];
+	cachedTrackerCandidates?: ImproveCandidate[];
+	channelOverrides?: Partial<ImproveChannel>;
+	getConnections?: (peerId: string) => unknown[];
+	random?: () => number;
+	options?: Partial<ImproveOptions>;
+	tryJoinOnce?: ImproveContext["tryJoinOnce"];
+}) => {
+	const attempts: string[] = [];
+	const ch = createImproveChannel({
+		cachedTrackerCandidates: args.cachedTrackerCandidates ?? [],
+		...args.channelOverrides,
+	});
+	const ctx: ImproveContext = {
+		publicKeyHash: "self",
+		peers: new Map(
+			args.peerHashes.map((hash) => [
+				hash,
+				{
+					peerId: hash,
+					isReadable: true,
+					isWritable: false,
+				},
+			]),
+		),
+		components: {
+			connectionManager: {
+				getConnections:
+					args.getConnections ??
+					((peerId) => (args.peerHashes.includes(peerId) ? [{}] : [])),
+			},
+		},
+		random: args.random ?? (() => 0),
+		tryJoinOnce: async (
+			channel,
+			parentHash,
+			reqId,
+			joinReqTimeoutMs,
+			signal,
+			options,
+		) => {
+			attempts.push(parentHash);
+			return (
+				args.tryJoinOnce?.(
+					channel,
+					parentHash,
+					reqId,
+					joinReqTimeoutMs,
+					signal,
+					options,
+				) ?? { ok: false }
+			);
+		},
+		_sendControl: async () => {},
+	};
+
+	const result = await maybeImproveParent.call(ctx, ch, {
+		signal: new AbortController().signal,
+		candidateShuffleTopK: 0,
+		candidateScoringMode: "ranked-strict",
+		candidateScoringWeights: {
+			level: 1,
+			freeSlots: 1,
+			connected: 1,
+			bidPerByte: 1,
+			source: 1,
+		},
+		joinAttemptsPerRound: 8,
+		joinReqTimeoutMs: 1_000,
+		...args.options,
+	});
+
+	return { attempts, result, ch };
+};
+
 describe("fanout-tree", () => {
+	it("falls back to peer readability when connection lookup throws", async () => {
+		const { attempts, result, ch } = await runMaybeImproveParent({
+			peerHashes: ["root", "relay"],
+			getConnections: () => {
+				throw new Error("boom");
+			},
+			tryJoinOnce: async (channel, parentHash) => {
+				channel.parent = parentHash;
+				return { ok: true };
+			},
+		});
+
+		expect(result).to.equal(true);
+		expect(attempts).to.deep.equal(["root"]);
+		expect(ch.parent).to.equal("root");
+	});
+
+	it("orders ranked candidates by free slots, bid, source and hash", async () => {
+		const byFreeSlots = await runMaybeImproveParent({
+			peerHashes: ["relay", "slot-low", "slot-high"],
+			cachedTrackerCandidates: [
+				{ hash: "slot-low", addrs: [], level: 1, freeSlots: 1, bidPerByte: 0 },
+				{ hash: "slot-high", addrs: [], level: 1, freeSlots: 2, bidPerByte: 0 },
+			],
+			tryJoinOnce: async () => ({ ok: false }),
+		});
+		expect(byFreeSlots.attempts[0]).to.equal("slot-high");
+
+		const byBid = await runMaybeImproveParent({
+			peerHashes: ["relay", "bid-low", "bid-high"],
+			cachedTrackerCandidates: [
+				{ hash: "bid-low", addrs: [], level: 1, freeSlots: 2, bidPerByte: 1 },
+				{ hash: "bid-high", addrs: [], level: 1, freeSlots: 2, bidPerByte: 2 },
+			],
+			tryJoinOnce: async () => ({ ok: false }),
+		});
+		expect(byBid.attempts[0]).to.equal("bid-high");
+
+		const bySource = await runMaybeImproveParent({
+			peerHashes: ["root", "relay", "tracker-root"],
+			cachedTrackerCandidates: [
+				{
+					hash: "tracker-root",
+					addrs: [],
+					level: 0,
+					freeSlots: Number.MAX_SAFE_INTEGER,
+					bidPerByte: 0,
+				},
+			],
+			tryJoinOnce: async () => ({ ok: false }),
+		});
+		expect(bySource.attempts[0]).to.equal("root");
+
+		const byHash = await runMaybeImproveParent({
+			peerHashes: ["relay", "alpha", "beta"],
+			cachedTrackerCandidates: [
+				{ hash: "beta", addrs: [], level: 1, freeSlots: 1, bidPerByte: 0 },
+				{ hash: "alpha", addrs: [], level: 1, freeSlots: 1, bidPerByte: 0 },
+			],
+			tryJoinOnce: async () => ({ ok: false }),
+		});
+		expect(byHash.attempts[0]).to.equal("alpha");
+	});
+
+	it("shuffles top ranked candidates when parent upgrades use ranked-shuffle", async () => {
+		const { attempts, result } = await runMaybeImproveParent({
+			peerHashes: ["relay", "alpha", "beta"],
+			cachedTrackerCandidates: [
+				{ hash: "alpha", addrs: [], level: 1, freeSlots: 1, bidPerByte: 0 },
+				{ hash: "beta", addrs: [], level: 1, freeSlots: 1, bidPerByte: 0 },
+			],
+			random: () => 0,
+			options: {
+				candidateScoringMode: "ranked-shuffle",
+				candidateShuffleTopK: 2,
+			},
+			tryJoinOnce: async () => ({ ok: false }),
+		});
+
+		expect(result).to.equal(false);
+		expect(attempts.slice(0, 2)).to.deep.equal(["beta", "alpha"]);
+	});
+
+	it("supports weighted parent-upgrade candidate selection", async () => {
+		const { attempts, result } = await runMaybeImproveParent({
+			peerHashes: ["relay", "weighted-a", "weighted-b"],
+			cachedTrackerCandidates: [
+				{
+					hash: "weighted-a",
+					addrs: [],
+					level: 1,
+					freeSlots: 4,
+					bidPerByte: 1,
+				},
+				{
+					hash: "weighted-b",
+					addrs: [],
+					level: 2,
+					freeSlots: 1,
+					bidPerByte: 0,
+				},
+			],
+			random: () => 0.999,
+			options: {
+				candidateScoringMode: "weighted",
+				candidateShuffleTopK: 2,
+			},
+			tryJoinOnce: async () => ({ ok: false }),
+		});
+
+		expect(result).to.equal(false);
+		expect(attempts).to.have.length(2);
+		expect(new Set(attempts)).to.deep.equal(new Set(["weighted-a", "weighted-b"]));
+	});
+
+	it("falls back to the existing weighted order when all candidate weights collapse", async () => {
+		const { attempts, result } = await runMaybeImproveParent({
+			peerHashes: ["relay", "nan-a", "nan-b"],
+			cachedTrackerCandidates: [
+				{ hash: "nan-a", addrs: [], level: 1, freeSlots: Number.NaN, bidPerByte: 0 },
+				{ hash: "nan-b", addrs: [], level: 1, freeSlots: Number.NaN, bidPerByte: 0 },
+			],
+			options: {
+				candidateScoringMode: "weighted",
+				candidateShuffleTopK: 2,
+			},
+			tryJoinOnce: async () => ({ ok: false }),
+		});
+
+		expect(result).to.equal(false);
+		expect(attempts.slice(0, 2)).to.deep.equal(["nan-a", "nan-b"]);
+	});
+
+	it("returns false when a join succeeds without actually replacing the parent", async () => {
+		const { attempts, result, ch } = await runMaybeImproveParent({
+			peerHashes: ["root", "relay"],
+			tryJoinOnce: async () => ({ ok: true }),
+		});
+
+		expect(result).to.equal(false);
+		expect(attempts).to.deep.equal(["root"]);
+		expect(ch.parent).to.equal("relay");
+	});
+
 		it("bounds per-channel route token cache (LRU + TTL)", async () => {
 			const session: TestSession<{ fanout: FanoutTree }> =
 				await createFanoutTestSession(1);
