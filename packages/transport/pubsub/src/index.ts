@@ -48,7 +48,6 @@ import {
 	getMsgId,
 } from "@peerbit/stream-interface";
 import { AbortError, TimeoutError, delay } from "@peerbit/time";
-import { anySignal } from "any-signal";
 import { Uint8ArrayList } from "uint8arraylist";
 import { toUint8Array } from "./bytes.js";
 import {
@@ -271,7 +270,6 @@ export class TopicControlPlane
 	private readonly fanoutPublishRequiresSubscribe: boolean;
 	private readonly fanoutPublishIdleCloseMs: number;
 	private readonly fanoutPublishMaxEphemeralChannels: number;
-	private shutdownController = new AbortController();
 
 	// If no shard-root candidates are configured, we fall back to an "auto" mode:
 	// start with `[self]` and expand candidates as underlay peers connect.
@@ -436,9 +434,6 @@ export class TopicControlPlane
 	}
 
 	public override async start() {
-		if (this.shutdownController.signal.aborted) {
-			this.shutdownController = new AbortController();
-		}
 		await this.fanout.start();
 		this._onFanoutPeerUnreachable =
 			this._onFanoutPeerUnreachable ||
@@ -458,21 +453,13 @@ export class TopicControlPlane
 	}
 
 	public override async stop() {
-		this.stopping = true;
-		this.shutdownController.abort(new AbortError("PubSub stopping"));
-		const fanoutChannelStates = [...this.fanoutChannels.values()];
-		const pendingFanoutJoins = fanoutChannelStates.map((state) => state.join);
-		const pendingBackground = [
-			this.reconcileShardOverlaysInFlight,
-			this.hostOwnedShardRootsInFlight,
-		].filter((promise): promise is Promise<void> => Boolean(promise));
 		if (this._onFanoutPeerUnreachable) {
 			this.fanout.removeEventListener(
 				"fanout:peer-unreachable",
 				this._onFanoutPeerUnreachable as any,
 			);
 		}
-		for (const st of fanoutChannelStates) {
+		for (const st of this.fanoutChannels.values()) {
 			if (st.idleCloseTimeout) clearTimeout(st.idleCloseTimeout);
 			try {
 				st.channel.removeEventListener("data", st.onData as any);
@@ -522,7 +509,6 @@ export class TopicControlPlane
 
 		this.debounceSubscribeAggregator.close();
 		this.debounceUnsubscribeAggregator.close();
-		await Promise.allSettled([...pendingFanoutJoins, ...pendingBackground]);
 		return super.stop();
 	}
 
@@ -768,7 +754,7 @@ export class TopicControlPlane
 	}
 
 	private async reconcileShardOverlays() {
-		if (!this.started || this.stopping) return;
+		if (!this.started) return;
 
 		const byShard = new Map<string, string[]>();
 		for (const topic of this.subscriptions.keys()) {
@@ -1148,10 +1134,7 @@ export class TopicControlPlane
 			signal?: AbortSignal;
 		},
 	): Promise<void> {
-		if (!this.started || this.stopping) throw new NotStartedError();
-		const combinedSignal = options?.signal
-			? anySignal([options.signal, this.shutdownController.signal])
-			: this.shutdownController.signal;
+		if (!this.started) throw new NotStartedError();
 		const t = shardTopic.toString();
 		const pin = options?.pin === true;
 		const wantEphemeral = options?.ephemeral === true;
@@ -1172,12 +1155,12 @@ export class TopicControlPlane
 					this.scheduleFanoutIdleClose(t);
 				}
 				if (pin) this.pinnedShards.add(t);
-				await withAbort(existing.join, combinedSignal);
+				await withAbort(existing.join, options?.signal);
 				return;
 			}
 
 			// Root mapping changed (candidate set updated): migrate to the new overlay.
-			await withAbort(this.closeFanoutChannel(t, { force: true }), combinedSignal);
+			await withAbort(this.closeFanoutChannel(t, { force: true }), options?.signal);
 		}
 
 		root = root ?? (await this.resolveShardRoot(t));
@@ -1294,10 +1277,9 @@ export class TopicControlPlane
 					} catch {
 						// ignore
 					}
-				const joinOpts = {
-					...(this.fanoutJoinOptions ?? {}),
-					signal: combinedSignal,
-				};
+				const joinOpts = options?.signal
+					? { ...(this.fanoutJoinOptions ?? {}), signal: options.signal }
+					: this.fanoutJoinOptions;
 				await channel.join(this.fanoutNodeChannelOptions, joinOpts);
 			} catch (error) {
 				try {
@@ -1344,11 +1326,7 @@ export class TopicControlPlane
 		if (wantEphemeral) {
 			this.evictEphemeralFanoutChannels(t);
 		}
-		try {
-			await withAbort(join, combinedSignal);
-		} finally {
-			(combinedSignal as AbortSignal & { clear?: () => void }).clear?.();
-		}
+		await withAbort(join, options?.signal);
 	}
 
 	private async closeFanoutChannel(
@@ -1384,7 +1362,7 @@ export class TopicControlPlane
 	}
 
 	public async hostShardRootsNow() {
-		if (!this.started || this.stopping) throw new NotStartedError();
+		if (!this.started) throw new NotStartedError();
 		const joins: Promise<void>[] = [];
 		for (let i = 0; i < this.shardCount; i++) {
 			const shardTopic = `${this.shardTopicPrefix}${i}`;
@@ -1404,7 +1382,7 @@ export class TopicControlPlane
 	}
 
 	private async _subscribe(topics: { key: string; counter: number }[]) {
-		if (!this.started || this.stopping) throw new NotStartedError();
+		if (!this.started) throw new NotStartedError();
 		if (topics.length === 0) return;
 
 		const byShard = new Map<string, string[]>();
@@ -1501,7 +1479,7 @@ export class TopicControlPlane
 	}
 
 	private async _announceUnsubscribe(topics: { key: string; counter: number }[]) {
-		if (!this.started || this.stopping) throw new NotStartedError();
+		if (!this.started) throw new NotStartedError();
 
 		const byShard = new Map<string, string[]>();
 		for (const { key: topic } of topics) {
