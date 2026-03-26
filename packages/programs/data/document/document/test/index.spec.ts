@@ -4925,22 +4925,22 @@ describe("index", () => {
 					try {
 						await writer.docs.put(new Document({ id: "2" }));
 						await writer.docs.put(new Document({ id: "3" }));
-						const seen = new Set<string>();
-						const start = Date.now();
-						while (
-							Date.now() - start < 10_000 &&
-							(!seen.has("2") || !seen.has("3"))
-						) {
-							const batch = await iterator.next(10);
-							for (const doc of batch) {
-								seen.add(doc.id);
-							}
-							if (!seen.has("2") || !seen.has("3")) {
-								await delay(50);
-							}
-						}
-						expect([...seen]).to.include("2");
-						expect([...seen]).to.include("3");
+						const initialIds: string[] = [];
+						const initialIdSet = new Set<string>();
+						await waitForResolved(
+							async () => {
+								const batch = await iterator.next(10);
+								for (const doc of batch) {
+									if (initialIdSet.has(doc.id)) {
+										continue;
+									}
+									initialIdSet.add(doc.id);
+									initialIds.push(doc.id);
+								}
+								expect(initialIds).to.deep.equal(["2", "3"]);
+							},
+							{ timeout: 10_000 },
+						);
 
 						await waitForResolved(
 							async () => expect(await iterator.pending()).to.equal(0),
