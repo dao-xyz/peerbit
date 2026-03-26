@@ -458,12 +458,18 @@ importers:
       '@dao-xyz/borsh':
         specifier: 6.0.1
         version: 6.0.1
+      '@libp2p/circuit-relay-v2':
+        specifier: ^4.1.0
+        version: 4.1.1
       '@libp2p/crypto':
         specifier: ^5.1.10
         version: 5.1.13
       '@libp2p/interface':
         specifier: ^3.1.0
         version: 3.1.0
+      '@libp2p/webrtc':
+        specifier: ^6.0.3
+        version: 6.0.9(react-native@0.82.1(@babel/core@7.28.5)(@types/react@18.3.26)(react@19.2.0))
       '@libp2p/websockets':
         specifier: ^10.1.0
         version: 10.1.1
@@ -13772,6 +13778,45 @@ snapshots:
       uint8arraylist: 2.4.8
       uint8arrays: 5.1.0
 
+  '@libp2p/webrtc@6.0.9(react-native@0.82.1(@babel/core@7.28.5)(@types/react@18.3.26)(react@19.2.0))':
+    dependencies:
+      '@chainsafe/is-ip': 2.1.0
+      '@chainsafe/libp2p-noise': 17.0.0
+      '@libp2p/crypto': 5.1.13
+      '@libp2p/interface': 3.1.0
+      '@libp2p/interface-internal': 3.0.8
+      '@libp2p/keychain': 6.0.8
+      '@libp2p/peer-id': 6.0.4
+      '@libp2p/utils': 7.0.8
+      '@multiformats/multiaddr': 13.0.1
+      '@multiformats/multiaddr-matcher': 3.0.1
+      '@peculiar/webcrypto': 1.5.0
+      '@peculiar/x509': 1.14.0
+      detect-browser: 5.3.0
+      get-port: 7.1.0
+      interface-datastore: 9.0.2
+      it-length-prefixed: 10.0.1
+      it-protobuf-stream: 2.0.3
+      it-pushable: 3.2.3
+      it-stream-types: 2.0.2
+      main-event: 1.0.1
+      multiformats: 13.4.1
+      node-datachannel: 0.29.0
+      p-defer: 4.0.1
+      p-event: 7.0.0
+      p-timeout: 7.0.1
+      p-wait-for: 6.0.0
+      progress-events: 1.0.1
+      protons-runtime: 5.6.0
+      race-signal: 2.0.0
+      react-native-webrtc: 124.0.7(react-native@0.82.1(@babel/core@7.28.5)(@types/react@18.3.26)(react@19.2.0))
+      uint8-varint: 2.0.4
+      uint8arraylist: 2.4.8
+      uint8arrays: 5.1.0
+    transitivePeerDependencies:
+      - react-native
+      - supports-color
+
   '@libp2p/webrtc@6.0.9(react-native@0.82.1(@babel/core@7.28.5)(@types/react@19.2.4)(react@19.2.0))':
     dependencies:
       '@chainsafe/is-ip': 2.1.0
@@ -14240,6 +14285,15 @@ snapshots:
   '@react-native/js-polyfills@0.82.1': {}
 
   '@react-native/normalize-colors@0.82.1': {}
+
+  '@react-native/virtualized-lists@0.82.1(@types/react@18.3.26)(react-native@0.82.1(@babel/core@7.28.5)(@types/react@18.3.26)(react@19.2.0))(react@19.2.0)':
+    dependencies:
+      invariant: 2.2.4
+      nullthrows: 1.1.1
+      react: 19.2.0
+      react-native: 0.82.1(@babel/core@7.28.5)(@types/react@18.3.26)(react@19.2.0)
+    optionalDependencies:
+      '@types/react': 18.3.26
 
   '@react-native/virtualized-lists@0.82.1(@types/react@19.2.4)(react-native@0.82.1(@babel/core@7.28.5)(@types/react@19.2.4)(react@19.2.0))(react@19.2.0)':
     dependencies:
@@ -21198,6 +21252,15 @@ snapshots:
       - '@babel/core'
       - supports-color
 
+  react-native-webrtc@124.0.7(react-native@0.82.1(@babel/core@7.28.5)(@types/react@18.3.26)(react@19.2.0)):
+    dependencies:
+      base64-js: 1.5.1
+      debug: 4.3.4
+      event-target-shim: 6.0.2
+      react-native: 0.82.1(@babel/core@7.28.5)(@types/react@18.3.26)(react@19.2.0)
+    transitivePeerDependencies:
+      - supports-color
+
   react-native-webrtc@124.0.7(react-native@0.82.1(@babel/core@7.28.5)(@types/react@19.2.4)(react@19.2.0)):
     dependencies:
       base64-js: 1.5.1
@@ -21206,6 +21269,54 @@ snapshots:
       react-native: 0.82.1(@babel/core@7.28.5)(@types/react@19.2.4)(react@19.2.0)
     transitivePeerDependencies:
       - supports-color
+
+  react-native@0.82.1(@babel/core@7.28.5)(@types/react@18.3.26)(react@19.2.0):
+    dependencies:
+      '@jest/create-cache-key-function': 29.7.0
+      '@react-native/assets-registry': 0.82.1
+      '@react-native/codegen': 0.82.1(@babel/core@7.28.5)
+      '@react-native/community-cli-plugin': 0.82.1
+      '@react-native/gradle-plugin': 0.82.1
+      '@react-native/js-polyfills': 0.82.1
+      '@react-native/normalize-colors': 0.82.1
+      '@react-native/virtualized-lists': 0.82.1(@types/react@18.3.26)(react-native@0.82.1(@babel/core@7.28.5)(@types/react@18.3.26)(react@19.2.0))(react@19.2.0)
+      abort-controller: 3.0.0
+      anser: 1.4.10
+      ansi-regex: 5.0.1
+      babel-jest: 29.7.0(@babel/core@7.28.5)
+      babel-plugin-syntax-hermes-parser: 0.32.0
+      base64-js: 1.5.1
+      commander: 12.1.0
+      flow-enums-runtime: 0.0.6
+      glob: 7.2.3
+      hermes-compiler: 0.0.0
+      invariant: 2.2.4
+      jest-environment-node: 29.7.0
+      memoize-one: 5.2.1
+      metro-runtime: 0.83.3
+      metro-source-map: 0.83.3
+      nullthrows: 1.1.1
+      pretty-format: 29.7.0
+      promise: 8.3.0
+      react: 19.2.0
+      react-devtools-core: 6.1.5
+      react-refresh: 0.14.2
+      regenerator-runtime: 0.13.11
+      scheduler: 0.26.0
+      semver: 7.7.3
+      stacktrace-parser: 0.1.11
+      whatwg-fetch: 3.6.20
+      ws: 6.2.3
+      yargs: 17.7.2
+    optionalDependencies:
+      '@types/react': 18.3.26
+    transitivePeerDependencies:
+      - '@babel/core'
+      - '@react-native-community/cli'
+      - '@react-native/metro-config'
+      - bufferutil
+      - supports-color
+      - utf-8-validate
 
   react-native@0.82.1(@babel/core@7.28.5)(@types/react@19.2.4)(react@19.2.0):
     dependencies:
