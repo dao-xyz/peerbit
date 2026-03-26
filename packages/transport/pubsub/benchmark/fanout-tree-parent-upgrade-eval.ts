@@ -4,7 +4,7 @@ import {
 	type FanoutTreeSimResult,
 } from "./fanout-tree-sim-lib.js";
 
-type EvalScenarioName = "mild" | "tight";
+type EvalScenarioName = "mild" | "tight" | "live-like";
 type EvalMode = "off" | "on";
 
 type MetricKey =
@@ -34,7 +34,7 @@ const HELP_TEXT = [
 	"Runs an A/B fanout-tree simulation sweep with parent upgrades disabled and enabled.",
 	"",
 	"Args:",
-	"  --scenario NAME     scenario to run (mild|tight|all, default: all)",
+	"  --scenario NAME     scenario to run (mild|tight|live-like|all, default: all)",
 	"  --seeds LIST        comma-separated seeds (default: 1,2,3)",
 	"  --parentUpgradeIntervalMs MS  upgrade interval for the enabled variant (default: 200)",
 	"  --parentUpgradeLeafOnly 0|1   restrict upgrades to leaves (default: 1)",
@@ -105,6 +105,36 @@ const SCENARIOS: Record<EvalScenarioName, Partial<FanoutTreeSimParams>> = {
 		churnDownMs: 120,
 		churnFraction: 0.04,
 	},
+	"live-like": {
+		nodes: 120,
+		bootstraps: 3,
+		bootstrapMaxPeers: 1,
+		subscribers: 90,
+		relayFraction: 0.25,
+		messages: 180,
+		msgRate: 30,
+		msgSize: 1024,
+		settleMs: 2_000,
+		deadlineMs: 2_000,
+		timeoutMs: 120_000,
+		allowKick: true,
+		bidPerByteRelay: 1,
+		bidPerByteLeaf: 0,
+		repair: true,
+		repairMaxBackfillMessages: 60,
+		neighborRepair: true,
+		neighborRepairPeers: 3,
+		joinPhases: true,
+		joinPhaseSettleMs: 2_000,
+		rootUploadLimitBps: 20_000_000,
+		relayUploadLimitBps: 10_000_000,
+		rootMaxChildren: 64,
+		relayMaxChildren: 32,
+		dropDataFrameRate: 0.01,
+		churnEveryMs: 2_000,
+		churnDownMs: 1_000,
+		churnFraction: 0.01,
+	},
 };
 
 const avg = (rows: FanoutTreeSimResult[], metric: MetricKey) =>
@@ -126,7 +156,9 @@ const parseArgs = () => {
 
 	const scenarioArg = readArg("--scenario") ?? "all";
 	if (scenarioArg !== "all" && !(scenarioArg in SCENARIOS)) {
-		throw new Error(`Unknown scenario '${scenarioArg}'. Expected mild, tight, or all.`);
+		throw new Error(
+			`Unknown scenario '${scenarioArg}'. Expected mild, tight, live-like, or all.`,
+		);
 	}
 
 	const seedsArg = readArg("--seeds") ?? "1,2,3";
