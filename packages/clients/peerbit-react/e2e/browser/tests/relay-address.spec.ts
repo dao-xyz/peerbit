@@ -6,7 +6,7 @@ let bootstrapAddr: string;
 let baseURL: string;
 
 test.describe("relay addresses", () => {
-	test.beforeEach(async ({}, testInfo) => {
+	test.beforeEach(async (_args, testInfo) => {
 		baseURL =
 			testInfo.project.use.baseURL?.toString() ||
 			process.env.PLAYWRIGHT_BASE_URL ||
