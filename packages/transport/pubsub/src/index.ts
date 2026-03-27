@@ -1082,6 +1082,30 @@ export class TopicControlPlane
 		return responsePromise;
 	}
 
+	private async resolveQueryableTopicRoot(
+		topic: string,
+	): Promise<string | undefined> {
+		const root = await this.topicRootControlPlane.resolveCanonicalTopicRoot(topic);
+		if (root !== this.publicKeyHash) {
+			return root;
+		}
+		if (!topic.startsWith(this.shardTopicPrefix)) {
+			return root;
+		}
+
+		try {
+			await this.ensureFanoutChannel(topic, { pin: true, root });
+			return root;
+		} catch (error) {
+			warn(
+				`Failed to host shard root ${topic} before answering root query: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+			return undefined;
+		}
+	}
+
 	private async resolveTopicRootThroughPeers(
 		topic: string,
 	): Promise<string | undefined> {
@@ -2069,9 +2093,7 @@ export class TopicControlPlane
 		}
 
 		if (pubsubMessage instanceof TopicRootQuery) {
-			const root = await this.topicRootControlPlane.resolveCanonicalTopicRoot(
-				pubsubMessage.topic,
-			);
+			const root = await this.resolveQueryableTopicRoot(pubsubMessage.topic);
 			await this.sendDirectControlMessage(
 				stream,
 				new TopicRootQueryResponse({

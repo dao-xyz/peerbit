@@ -280,10 +280,51 @@ describe("pubsub (subscribe race regressions)", function () {
 		await waitForNeighbour(gateway, root);
 
 		const shardTopic = `/peerbit/pubsub-shard/1/${topicHash32(TOPIC) % 16}`;
+		a.setTopicRootCandidates([]);
 		gateway.setTopicRootCandidates([root.publicKeyHash]);
 		root.setTopicRootCandidates([root.publicKeyHash]);
 
 		const resolvedRoot = await (a as any).resolveShardRoot(shardTopic);
 		expect(resolvedRoot).to.equal(root.publicKeyHash);
+	});
+
+	it("hosts a shard before answering a direct root query for itself", async function () {
+		this.timeout(120_000);
+
+		const TOPIC = "dial-query-opens-missing-shard-root";
+		session = await createDisconnectedSessionWithPerPeerRoots(2);
+
+		const leaf = session.peers[0]!.services.pubsub;
+		const root = session.peers[1]!.services.pubsub;
+
+		await session.peers[0]!.dial(session.peers[1]!.getMultiaddrs()[0]!);
+		await waitForNeighbour(leaf, root);
+
+		const shardTopic = `/peerbit/pubsub-shard/1/${topicHash32(TOPIC) % 16}`;
+		leaf.setTopicRootCandidates([]);
+		root.setTopicRootCandidates([root.publicKeyHash]);
+
+		await waitForResolved(
+			() => {
+				expect((root as any).fanoutChannels.get(shardTopic)).to.exist;
+			},
+			{ timeout: 20_000, delayInterval: 100 },
+		);
+		await (root as any).closeFanoutChannel(shardTopic, { force: true });
+		expect((root as any).fanoutChannels.get(shardTopic)).to.not.exist;
+
+		const resolvedRoot = await (leaf as any).resolveShardRoot(shardTopic);
+		expect(resolvedRoot).to.equal(root.publicKeyHash);
+
+		await waitForResolved(
+			() => {
+				const rootChannel = (root as any).fanoutChannels.get(shardTopic);
+				expect(rootChannel, `expected root to host ${shardTopic}`).to.exist;
+				expect(rootChannel.root).to.equal(root.publicKeyHash);
+			},
+			{ timeout: 20_000, delayInterval: 100 },
+		);
+
+		await leaf.subscribe(TOPIC);
 	});
 });
