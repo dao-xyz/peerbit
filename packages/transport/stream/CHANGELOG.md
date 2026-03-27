@@ -43,6 +43,25 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [5.0.8](https://github.com/dao-xyz/peerbit/compare/stream-v5.0.7...stream-v5.0.8) (2026-03-27)
+
+
+### Bug Fixes
+
+* **pubsub:** resolve shard roots through dialed peers ([3131c0a](https://github.com/dao-xyz/peerbit/commit/3131c0ac0e98ee8366a9bcea2ba4f1b435697ad2))
+
+
+### Refactors
+
+* remove typed service any-casts ([ece47a1](https://github.com/dao-xyz/peerbit/commit/ece47a1d7bce849e034b95a7714d193e1eaff5f4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped to 3.0.3
+
 ## [5.0.7](https://github.com/dao-xyz/peerbit/compare/stream-v5.0.6...stream-v5.0.7) (2026-03-22)
 
 

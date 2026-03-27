@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.1.5](https://github.com/dao-xyz/peerbit/compare/react-v1.1.4...react-v1.1.5) (2026-03-27)
+
+
+### Bug Fixes
+
+* **react:** restore browser relay and webrtc transports ([5d0a44d](https://github.com/dao-xyz/peerbit/commit/5d0a44d8557e7551c4cf2e5384b13c77b68e11da))
+* **react:** restore browser relay and webrtc transports ([84de5f7](https://github.com/dao-xyz/peerbit/commit/84de5f7020a08946dc832a060dea7899a83fe133))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/canonical-client bumped to 1.1.16
+    * @peerbit/program-react bumped to 0.4.16
+    * @peerbit/program bumped to 6.0.13
+    * peerbit bumped to 5.2.2
+
 ## [1.1.4](https://github.com/dao-xyz/peerbit/compare/react-v1.1.3...react-v1.1.4) (2026-03-22)
 
 

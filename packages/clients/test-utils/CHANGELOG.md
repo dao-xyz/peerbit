@@ -400,6 +400,32 @@
   * dependencies
     * peerbit bumped from 4.0.6 to 4.0.7
 
+## [3.0.17](https://github.com/dao-xyz/peerbit/compare/test-utils-v3.0.16...test-utils-v3.0.17) (2026-03-27)
+
+
+### Bug Fixes
+
+* **pubsub:** resolve shard roots through dialed peers ([3131c0a](https://github.com/dao-xyz/peerbit/commit/3131c0ac0e98ee8366a9bcea2ba4f1b435697ad2))
+
+
+### Refactors
+
+* remove typed service any-casts ([ece47a1](https://github.com/dao-xyz/peerbit/commit/ece47a1d7bce849e034b95a7714d193e1eaff5f4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped to 2.2.8
+    * @peerbit/libp2p-test-utils bumped to 3.0.3
+    * peerbit bumped to 5.2.2
+    * @peerbit/blocks bumped to 4.0.10
+    * @peerbit/keychain bumped to 1.2.8
+    * @peerbit/program bumped to 6.0.13
+    * @peerbit/pubsub bumped to 5.1.2
+    * @peerbit/stream bumped to 5.0.8
+
 ## [3.0.16](https://github.com/dao-xyz/peerbit/compare/test-utils-v3.0.15...test-utils-v3.0.16) (2026-03-22)
 
 
