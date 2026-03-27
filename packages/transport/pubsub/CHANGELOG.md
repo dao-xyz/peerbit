@@ -188,6 +188,14 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [5.1.3](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.1.2...pubsub-v5.1.3) (2026-03-27)
+
+
+### Bug Fixes
+
+* **pubsub:** host shard roots before advertising them ([9b9155a](https://github.com/dao-xyz/peerbit/commit/9b9155aec0df5e4a67ba56b4018ef7ca025e932c))
+* **pubsub:** host shard roots before advertising them ([4b86411](https://github.com/dao-xyz/peerbit/commit/4b8641187e79e84df72e997ae3b83755ad835e58))
+
 ## [5.1.2](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.1.1...pubsub-v5.1.2) (2026-03-27)
 
 
