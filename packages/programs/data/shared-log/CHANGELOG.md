@@ -389,6 +389,34 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.0.19](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.18...shared-log-v13.0.19) (2026-03-27)
+
+
+### Bug Fixes
+
+* **pubsub:** resolve shard roots through dialed peers ([3131c0a](https://github.com/dao-xyz/peerbit/commit/3131c0ac0e98ee8366a9bcea2ba4f1b435697ad2))
+
+
+### Refactors
+
+* remove typed service any-casts ([ece47a1](https://github.com/dao-xyz/peerbit/commit/ece47a1d7bce849e034b95a7714d193e1eaff5f4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.17
+    * @peerbit/program bumped to 6.0.13
+    * @peerbit/rpc bumped to 6.0.17
+    * @peerbit/any-store bumped to 2.2.8
+    * @peerbit/blocks bumped to 4.0.10
+    * @peerbit/blocks-interface bumped to 2.0.7
+    * @peerbit/indexer-sqlite3 bumped to 3.0.5
+    * @peerbit/pubsub bumped to 5.1.2
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.17
+
 ## [13.0.18](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.17...shared-log-v13.0.18) (2026-03-22)
 
 

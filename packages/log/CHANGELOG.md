@@ -368,6 +368,21 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [6.0.17](https://github.com/dao-xyz/peerbit/compare/log-v6.0.16...log-v6.0.17) (2026-03-27)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped to 2.2.8
+    * @peerbit/blocks bumped to 4.0.10
+    * @peerbit/blocks-interface bumped to 2.0.7
+    * @peerbit/indexer-sqlite3 bumped to 3.0.5
+    * @peerbit/keychain bumped to 1.2.8
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.17
+
 ## [6.0.16](https://github.com/dao-xyz/peerbit/compare/log-v6.0.15...log-v6.0.16) (2026-03-22)
 
 

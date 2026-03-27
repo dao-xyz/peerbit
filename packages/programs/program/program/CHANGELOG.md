@@ -202,6 +202,29 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [6.0.13](https://github.com/dao-xyz/peerbit/compare/program-v6.0.12...program-v6.0.13) (2026-03-27)
+
+
+### Bug Fixes
+
+* **pubsub:** resolve shard roots through dialed peers ([3131c0a](https://github.com/dao-xyz/peerbit/commit/3131c0ac0e98ee8366a9bcea2ba4f1b435697ad2))
+
+
+### Refactors
+
+* remove typed service any-casts ([ece47a1](https://github.com/dao-xyz/peerbit/commit/ece47a1d7bce849e034b95a7714d193e1eaff5f4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/keychain bumped to 1.2.8
+    * @peerbit/blocks-interface bumped to 2.0.7
+    * @peerbit/libp2p-test-utils bumped to 3.0.3
+    * @peerbit/blocks bumped to 4.0.10
+    * @peerbit/pubsub bumped to 5.1.2
+
 ## [6.0.12](https://github.com/dao-xyz/peerbit/compare/program-v6.0.11...program-v6.0.12) (2026-03-22)
 
 

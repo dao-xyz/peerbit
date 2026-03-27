@@ -33,6 +33,16 @@
   * dependencies
     * @peerbit/crypto bumped from ^2.1.7 to ^2.2.0
 
+## [2.2.8](https://github.com/dao-xyz/peerbit/compare/any-store-v2.2.7...any-store-v2.2.8) (2026-03-27)
+
+
+### Bug Fixes
+
+* anchor aegir root lookup to config path ([708a7bc](https://github.com/dao-xyz/peerbit/commit/708a7bc9ba5c2d3ce3830ce1c52382bb5f3a9239))
+* **pubsub:** resolve shard roots through dialed peers ([3131c0a](https://github.com/dao-xyz/peerbit/commit/3131c0ac0e98ee8366a9bcea2ba4f1b435697ad2))
+* support file and directory git roots in aegir ([20b8404](https://github.com/dao-xyz/peerbit/commit/20b84044710a92633d14df4c2e6bb13b1a11a7f8))
+* support git worktrees in aegir configs ([6e184da](https://github.com/dao-xyz/peerbit/commit/6e184da2528df6bbf216fc688176ea91a47c761a))
+
 ## [2.2.7](https://github.com/dao-xyz/peerbit/compare/any-store-v2.2.6...any-store-v2.2.7) (2026-03-17)
 
 
