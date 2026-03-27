@@ -321,6 +321,8 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 				{ noise },
 				{ yamux },
 				{ webSockets },
+				{ circuitRelayTransport },
+				{ webRTC },
 				{ keys },
 			] = await Promise.all([
 				import("detectincognitojs"),
@@ -329,6 +331,8 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 				import("@chainsafe/libp2p-noise"),
 				import("@chainsafe/libp2p-yamux"),
 				import("@libp2p/websockets"),
+				import("@libp2p/circuit-relay-v2"),
+				import("@libp2p/webrtc"),
 				import("@libp2p/crypto"),
 			]);
 
@@ -416,19 +420,28 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 			const created = await Peerbit.create({
 				libp2p: {
 					privateKey,
-					addresses: { listen: [] },
 					streamMuxers: [yamux()],
 					connectionEncrypters: [noise()],
 					connectionManager: { maxConnections: 100 },
 					connectionMonitor: { enabled: false },
 					...(nodeOptions.network === "local"
 						? {
+								addresses: { listen: [] },
 								connectionGater: { denyDialMultiaddr: () => false },
 								transports: [webSockets({})],
 							}
 						: {
+								addresses: {
+									listen: ["/webrtc", "/p2p-circuit"],
+								},
 								connectionGater: { denyDialMultiaddr: () => false },
-								transports: [webSockets()],
+								transports: [
+									webSockets(),
+									circuitRelayTransport({
+										reservationCompletionTimeout: 5_000,
+									}),
+									webRTC({}),
+								],
 							}),
 				},
 				directory,

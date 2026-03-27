@@ -1031,11 +1031,47 @@ const DocumentBenchmarkStatus = ({
 const PeerInfo = () => {
 	const { peer, loading, status, error } = usePeer();
 	const [peerHash, setPeerHash] = React.useState<string | undefined>(undefined);
+	const [multiaddrs, setMultiaddrs] = React.useState<string[]>([]);
+	const [connections, setConnections] = React.useState<string[]>([]);
 
 	React.useEffect(() => {
 		if (peer?.identity?.publicKey?.hashcode) {
 			setPeerHash(peer.identity.publicKey.hashcode());
 		}
+	}, [peer]);
+
+	React.useEffect(() => {
+		if (!peer) {
+			setMultiaddrs([]);
+			setConnections([]);
+			return;
+		}
+
+		const update = () => {
+			const libp2pPeer = peer as unknown as {
+				libp2p?: {
+					getConnections?: () => { remoteAddr?: { toString: () => string } }[];
+				};
+			};
+			setMultiaddrs(
+				peer
+					.getMultiaddrs()
+					.map((addr) => addr.toString())
+					.sort(),
+			);
+			setConnections(
+				(libp2pPeer.libp2p?.getConnections?.() ?? [])
+					.map((connection) => connection.remoteAddr?.toString() ?? "")
+					.filter(Boolean)
+					.sort(),
+			);
+		};
+
+		update();
+		const timer = window.setInterval(update, 500);
+		return () => {
+			window.clearInterval(timer);
+		};
 	}, [peer]);
 
 	return (
@@ -1046,6 +1082,8 @@ const PeerInfo = () => {
 			<div data-testid="status">status: {status}</div>
 			<div data-testid="loading">loading: {loading ? "yes" : "no"}</div>
 			<div data-testid="peer-hash">{peerHash ?? "no-peer"}</div>
+			<div data-testid="multiaddrs">{multiaddrs.join(",")}</div>
+			<div data-testid="connections">{connections.join(",")}</div>
 			{error ? <div data-testid="error">{error.message}</div> : null}
 		</div>
 	);
