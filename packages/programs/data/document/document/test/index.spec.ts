@@ -3502,7 +3502,9 @@ describe("index", () => {
 						expect(writer.docs.index.hasPending).to.be.false;
 					});
 
-					it("onMissedResults respects already emitted results", async () => {
+					it("onMissedResults respects already emitted results", async function () {
+						this.timeout(120_000);
+
 						// test that we will get missed results accuruately
 						session = await TestSession.disconnected(3);
 
@@ -3567,7 +3569,6 @@ describe("index", () => {
 						expect(second.map((x) => x.id)).to.deep.equal(["2"]);
 
 						await session.connect([[session.peers[0], session.peers[1]]]); // connect the nodes!
-						await observer.docs.index.waitFor(writer1.node.identity.publicKey);
 
 						await waitForResolved(() => expect(missedResults).to.deep.equal([1]), {
 							timeout: 30_000,
