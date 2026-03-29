@@ -3165,6 +3165,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		return new Promise<void>((resolve, reject) => {
 			let done = false;
 			let timer: ReturnType<typeof setTimeout> | undefined;
+			const resolveIfAttached = () => {
+				if (!ch.parent) return false;
+				cleanup();
+				resolve();
+				return true;
+			};
 			const cleanup = () => {
 				if (done) return;
 				done = true;
@@ -3193,15 +3199,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				if (!d) return;
 				if (d.topic !== ch.id.topic) return;
 				if (d.root !== ch.id.root) return;
-				if (!ch.parent) return;
-				cleanup();
-				resolve();
+				resolveIfAttached();
 			};
 
 			if (signal.aborted) return onAbort();
 			this.addEventListener("fanout:joined", onJoined as any);
 			signal.addEventListener("abort", onAbort, { once: true });
+			if (resolveIfAttached()) return;
 			timer = setTimeout(() => {
+				if (resolveIfAttached()) return;
 				cleanup();
 				reject(
 					new Error(

@@ -125,6 +125,70 @@ describe("fanout-tree", () => {
 			}
 		});
 
+		it("does not miss channel attachment when parent appears during join-listener setup", async () => {
+			const session: TestSession<{ fanout: FanoutTree }> =
+				await createFanoutTestSession(1);
+
+			try {
+				const fanout = session.peers[0].services.fanout as any;
+				const waitForChannelAttachment = fanout.waitForChannelAttachment.bind(fanout) as (
+					ch: any,
+					timeoutMs: number,
+				) => Promise<void>;
+				const ch = {
+					isRoot: false,
+					parent: undefined as string | undefined,
+					id: { topic: "attachment-race", root: "root" },
+				};
+
+				const originalAddEventListener = fanout.addEventListener.bind(fanout);
+				fanout.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: AddEventListenerOptions | boolean) => {
+					const result = originalAddEventListener(type, listener, options);
+					if (type === "fanout:joined") {
+						ch.parent = "parent";
+					}
+					return result;
+				}) as typeof fanout.addEventListener;
+
+				try {
+					await waitForChannelAttachment(ch, 25);
+				} finally {
+					fanout.addEventListener = originalAddEventListener;
+				}
+
+				expect(ch.parent).to.equal("parent");
+			} finally {
+				await session.stop();
+			}
+		});
+
+		it("accepts parent attachment that becomes visible before timeout even without a join event", async () => {
+			const session: TestSession<{ fanout: FanoutTree }> =
+				await createFanoutTestSession(1);
+
+			try {
+				const fanout = session.peers[0].services.fanout as any;
+				const waitForChannelAttachment = fanout.waitForChannelAttachment.bind(fanout) as (
+					ch: any,
+					timeoutMs: number,
+				) => Promise<void>;
+				const ch = {
+					isRoot: false,
+					parent: undefined as string | undefined,
+					id: { topic: "attachment-timeout-fallback", root: "root" },
+				};
+
+				setTimeout(() => {
+					ch.parent = "parent";
+				}, 5);
+
+				await waitForChannelAttachment(ch, 25);
+				expect(ch.parent).to.equal("parent");
+			} finally {
+				await session.stop();
+			}
+		});
+
 	it("forms a small tree and delivers data", async () => {
 		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
 
