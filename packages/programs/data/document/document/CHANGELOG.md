@@ -456,6 +456,28 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [13.0.21](https://github.com/dao-xyz/peerbit/compare/document-v13.0.20...document-v13.0.21) (2026-03-29)
+
+
+### Bug Fixes
+
+* **pubsub:** avoid missed attachment races ([7a5582c](https://github.com/dao-xyz/peerbit/commit/7a5582cd9b63417cd7cdf22e28cc0b8179683d11))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.19
+    * @peerbit/pubsub bumped to 5.1.4
+    * @peerbit/program bumped to 6.0.15
+    * @peerbit/rpc bumped to 6.0.19
+    * @peerbit/shared-log bumped to 13.0.21
+    * @peerbit/document-interface bumped to 3.2.24
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.19
+    * peerbit bumped to 5.2.4
+
 ## [13.0.20](https://github.com/dao-xyz/peerbit/compare/document-v13.0.19...document-v13.0.20) (2026-03-27)
 
 
