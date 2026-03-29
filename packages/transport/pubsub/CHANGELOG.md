@@ -188,6 +188,14 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [5.1.4](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.1.3...pubsub-v5.1.4) (2026-03-29)
+
+
+### Bug Fixes
+
+* **pubsub:** avoid missed attachment races ([7a5582c](https://github.com/dao-xyz/peerbit/commit/7a5582cd9b63417cd7cdf22e28cc0b8179683d11))
+* **pubsub:** avoid missed attachment races ([d7eadd7](https://github.com/dao-xyz/peerbit/commit/d7eadd70e996c5b714bb84166d4666905da5f9e3))
+
 ## [5.1.3](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.1.2...pubsub-v5.1.3) (2026-03-27)
 
 
