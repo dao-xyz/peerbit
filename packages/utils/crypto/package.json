@@ -63,24 +63,24 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"devDependencies": {
-		"@types/libsodium-wrappers": "^0.7.14",
-		"uint8arrays": "^5.1.0",
 		"@types/elliptic": "^6.4.18",
-		"multiformats": "^13.4.1"
+		"@types/libsodium-wrappers": "^0.7.14",
+		"multiformats": "^13.4.2",
+		"uint8arrays": "^5.1.0"
 	},
 	"dependencies": {
-		"@peerbit/cache": "workspace:*",
 		"@dao-xyz/borsh": "^6.0.0",
-		"@stablelib/sha256": "^2.0.1",
-		"@ethersproject/wallet": "^5.8.0",
-		"@ethersproject/strings": "^5.7.0",
 		"@ethersproject/bytes": "^5.7.0",
-		"@libp2p/crypto": "^5.1.10",
-		"@libp2p/interface": "^3.1.0",
-		"@libp2p/peer-id": "^6.0.1",
+		"@ethersproject/strings": "^5.7.0",
+		"@ethersproject/wallet": "^5.8.0",
+		"@libp2p/crypto": "^5.1.14",
+		"@libp2p/interface": "^3.1.1",
+		"@libp2p/peer-id": "^6.0.5",
+		"@peerbit/cache": "workspace:*",
 		"@protobufjs/utf8": "^1.1.0",
-		"js-sha3": "^0.9.3",
+		"@stablelib/sha256": "^2.0.1",
 		"elliptic": "^6.6.1",
+		"js-sha3": "^0.9.3",
 		"libsodium-wrappers": "0.7.15"
 	}
 }

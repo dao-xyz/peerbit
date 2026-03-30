@@ -49,7 +49,7 @@
 		"access": "public"
 	},
 	"dependencies": {
-		"@libp2p/logger": "^6.2.1"
+		"@libp2p/logger": "^6.2.3"
 	},
 	"scripts": {
 		"clean": "aegir clean",
