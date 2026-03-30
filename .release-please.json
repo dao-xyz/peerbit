@@ -24,6 +24,11 @@
 			"hidden": false
 		},
 		{
+			"type": "chore",
+			"section": "Chores",
+			"hidden": true
+		},
+		{
 			"type": "refactor",
 			"section": "Refactors",
 			"hidden": false
