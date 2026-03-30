@@ -11,6 +11,7 @@ import os from "os";
 import path from "path";
 import fs from "fs";
 import { createStore } from "@peerbit/any-store";
+import type { AnyStore } from "@peerbit/any-store-interface";
 import { AnyBlockStore } from "../src/any-blockstore.js";
 
 describe("@peerbit/blocks — shutdown race", () => {
@@ -37,6 +38,36 @@ describe("@peerbit/blocks — shutdown race", () => {
 		// Late replication write — should not throw.
 		const lateCid = await store.put(data);
 		expect(lateCid).to.exist;
+	});
+
+	it("put() before start() should still throw for an unopened store", async () => {
+		const unopenedStore: AnyStore = {
+			status: () => "closed",
+			close: async () => {},
+			open: async () => {},
+			get: async () => undefined,
+			put: async () => {
+				const error = new Error("Database is not open");
+				(error as any).code = "LEVEL_DATABASE_NOT_OPEN";
+				throw error;
+			},
+			del: async () => {},
+			sublevel: async () => unopenedStore,
+			iterator: () => ({
+				[Symbol.asyncIterator]: async function* () {},
+			}),
+			clear: async () => {},
+			size: async () => 0,
+			persisted: async () => true,
+		};
+		const store = new AnyBlockStore(unopenedStore);
+
+		try {
+			await store.put(new Uint8Array([5, 6, 7, 8]));
+			expect.fail("Expected put() to throw on an unopened store");
+		} catch (error: any) {
+			expect(error.code).to.equal("LEVEL_DATABASE_NOT_OPEN");
+		}
 	});
 
 	it("get() after stop() should not throw (baseline check)", async () => {

@@ -75,9 +75,12 @@ export class AnyBlockStore implements Blocks {
 		try {
 			await this._store.put(put.cid, bbytes);
 		} catch (error: any) {
+			const status = await this._store.status();
 			if (
 				typeof error?.code === "string" &&
-				error.code === "LEVEL_DATABASE_NOT_OPEN"
+				error.code === "LEVEL_DATABASE_NOT_OPEN" &&
+				this._closeController?.signal.aborted === true &&
+				(status === "closing" || status === "closed")
 			) {
 				return put.cid;
 			}
