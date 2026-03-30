@@ -1684,7 +1684,7 @@ export class DocumentIndex<
 		try {
 			await this.index.put(wrappedValueToIndex, undefined, options);
 		} catch (error) {
-			if (error instanceof indexerTypes.NotStartedError) {
+			if (error instanceof indexerTypes.NotStartedError && this.closed) {
 				return { context, indexable: valueToIndex };
 			}
 			throw error;

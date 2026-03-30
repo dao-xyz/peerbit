@@ -10,6 +10,7 @@
 
 import { field, variant } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
+import * as indexerTypes from "@peerbit/indexer-interface";
 import { Documents } from "../src/program.js";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
@@ -125,5 +126,26 @@ describe("@peerbit/document — shutdown race", () => {
 
 		await store1.close();
 		await store0.close();
+	});
+
+	it("put() should still surface NotStartedError while the store is open", async () => {
+		session = await TestSession.connected(1);
+
+		const store = await session.peers[0].open(new TestStore());
+		const index = store.documents.index as any;
+		const originalPut = index.put.bind(store.documents.index);
+		index.put = async () => {
+			throw new indexerTypes.NotStartedError();
+		};
+
+		try {
+			await expect(
+				store.documents.put(
+					new TestDocument({ id: "doc-open", name: "still-throws" }),
+				),
+			).to.be.rejectedWith(indexerTypes.NotStartedError);
+		} finally {
+			index.put = originalPut;
+		}
 	});
 });
