@@ -54,6 +54,20 @@
   * devDependencies
     * @peerbit/time bumped from 2.0.5 to 2.0.6
 
+## [3.0.4](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v3.0.3...libp2p-test-utils-v3.0.4) (2026-03-30)
+
+
+### Bug Fixes
+
+* **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 3.1.1
+
 ## [3.0.3](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v3.0.2...libp2p-test-utils-v3.0.3) (2026-03-27)
 
 

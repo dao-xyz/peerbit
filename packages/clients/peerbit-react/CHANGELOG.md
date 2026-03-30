@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.1.8](https://github.com/dao-xyz/peerbit/compare/react-v1.1.7...react-v1.1.8) (2026-03-30)
+
+
+### Bug Fixes
+
+* **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/canonical-client bumped to 1.1.19
+    * @peerbit/crypto bumped to 3.1.1
+    * @peerbit/indexer-interface bumped to 3.0.3
+    * @peerbit/logger bumped to 2.0.1
+    * @peerbit/program bumped to 6.0.16
+    * @peerbit/program-react bumped to 0.4.19
+    * peerbit bumped to 5.2.5
+
 ## [1.1.7](https://github.com/dao-xyz/peerbit/compare/react-v1.1.6...react-v1.1.7) (2026-03-29)
 
 

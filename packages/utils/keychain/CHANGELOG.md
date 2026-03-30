@@ -111,6 +111,21 @@
     * @peerbit/crypto bumped from ^2.1.7 to ^2.2.0
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [1.2.9](https://github.com/dao-xyz/peerbit/compare/keychain-v1.2.8...keychain-v1.2.9) (2026-03-30)
+
+
+### Bug Fixes
+
+* **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped to 2.2.9
+    * @peerbit/crypto bumped to 3.1.1
+
 ## [1.2.8](https://github.com/dao-xyz/peerbit/compare/keychain-v1.2.7...keychain-v1.2.8) (2026-03-27)
 
 
