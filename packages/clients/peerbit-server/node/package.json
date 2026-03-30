@@ -4,7 +4,8 @@
 	"author": "dao.xyz",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/dao-xyz/peerbit"
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/clients/peerbit-server/node"
 	},
 	"license": "Apache-2.0",
 	"type": "module",
@@ -109,5 +110,9 @@
 	"optionalDependencies": {
 		"@aws-sdk/client-ec2": "^3.390.0",
 		"@aws-sdk/client-route-53": "^3.391.0"
-	}
+	},
+	"bugs": {
+		"url": "https://github.com/dao-xyz/peerbit/issues"
+	},
+	"homepage": "https://github.com/dao-xyz/peerbit#readme"
 }

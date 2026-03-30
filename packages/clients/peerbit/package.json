@@ -53,7 +53,8 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/dao-xyz/peerbit"
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/clients/peerbit"
 	},
 	"engines": {
 		"node": ">=18"
@@ -126,5 +127,9 @@
 		"ipfs",
 		"p2p",
 		"peer-to-peer"
-	]
+	],
+	"bugs": {
+		"url": "https://github.com/dao-xyz/peerbit/issues"
+	},
+	"homepage": "https://github.com/dao-xyz/peerbit#readme"
 }

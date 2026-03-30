@@ -63,5 +63,14 @@
 		"@libp2p/keychain": "^6.0.11",
 		"@peerbit/any-store": "workspace:*",
 		"@peerbit/crypto": "workspace:*"
-	}
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/utils/keychain"
+	},
+	"bugs": {
+		"url": "https://github.com/dao-xyz/peerbit/issues"
+	},
+	"homepage": "https://github.com/dao-xyz/peerbit#readme"
 }

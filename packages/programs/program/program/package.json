@@ -76,5 +76,14 @@
 		"@peerbit/time": "workspace:*",
 		"multiformats": "^13.4.2",
 		"p-queue": "^8.0.1"
-	}
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/programs/program/program"
+	},
+	"bugs": {
+		"url": "https://github.com/dao-xyz/peerbit/issues"
+	},
+	"homepage": "https://github.com/dao-xyz/peerbit#readme"
 }

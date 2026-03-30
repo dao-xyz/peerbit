@@ -56,7 +56,8 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/dao-xyz/peerbit"
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/clients/canonical/client"
 	},
 	"engines": {
 		"node": ">=18"
@@ -86,5 +87,9 @@
 		"canonical",
 		"worker",
 		"sharedworker"
-	]
+	],
+	"bugs": {
+		"url": "https://github.com/dao-xyz/peerbit/issues"
+	},
+	"homepage": "https://github.com/dao-xyz/peerbit#readme"
 }

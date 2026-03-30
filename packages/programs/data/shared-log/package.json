@@ -91,5 +91,14 @@
 		"@types/libsodium-wrappers": "^0.7.14",
 		"@types/pidusage": "^2.0.5",
 		"uuid": "^10.0.0"
-	}
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/programs/data/shared-log"
+	},
+	"bugs": {
+		"url": "https://github.com/dao-xyz/peerbit/issues"
+	},
+	"homepage": "https://github.com/dao-xyz/peerbit#readme"
 }

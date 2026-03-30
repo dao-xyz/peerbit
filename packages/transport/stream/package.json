@@ -64,7 +64,8 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/dao-xyz/peerbit.git"
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/transport/stream"
 	},
 	"keywords": [
 		"peerbit"

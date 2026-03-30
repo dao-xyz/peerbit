@@ -82,5 +82,14 @@
 		"elliptic": "^6.6.1",
 		"js-sha3": "^0.9.3",
 		"libsodium-wrappers": "0.7.15"
-	}
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/utils/crypto"
+	},
+	"bugs": {
+		"url": "https://github.com/dao-xyz/peerbit/issues"
+	},
+	"homepage": "https://github.com/dao-xyz/peerbit#readme"
 }
