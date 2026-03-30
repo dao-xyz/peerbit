@@ -60,7 +60,7 @@
 	"license": "MIT",
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",
-		"@libp2p/interface": "^3.1.0",
+		"@libp2p/interface": "^3.1.1",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/document": "workspace:*",
 		"@peerbit/log": "workspace:*",
@@ -69,8 +69,8 @@
 		"uint8arrays": "^5.1.0"
 	},
 	"devDependencies": {
-		"@peerbit/time": "workspace:*",
 		"@ethersproject/wallet": "^5.8.0",
-		"@peerbit/test-utils": "workspace:*"
+		"@peerbit/test-utils": "workspace:*",
+		"@peerbit/time": "workspace:*"
 	}
 }

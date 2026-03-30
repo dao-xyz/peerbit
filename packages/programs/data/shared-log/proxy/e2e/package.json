@@ -11,17 +11,17 @@
 		"test:cov": "playwright test --config playwright.config.ts"
 	},
 	"dependencies": {
-		"buffer": "^6.0.3",
 		"@dao-xyz/borsh": "^6.0.0",
 		"@dao-xyz/borsh-rpc": "^2.0.5",
-		"@libp2p/websockets": "^10.1.0",
+		"@libp2p/websockets": "^10.1.7",
 		"@peerbit/canonical-client": "workspace:*",
 		"@peerbit/canonical-host": "workspace:*",
 		"@peerbit/canonical-transport": "workspace:*",
 		"@peerbit/indexer-simple": "workspace:*",
 		"@peerbit/program": "workspace:*",
 		"@peerbit/shared-log": "workspace:*",
-		"@peerbit/shared-log-proxy": "workspace:*"
+		"@peerbit/shared-log-proxy": "workspace:*",
+		"buffer": "^6.0.3"
 	},
 	"devDependencies": {
 		"@peerbit/any-store-opfs": "workspace:*",

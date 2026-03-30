@@ -71,7 +71,7 @@
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",
-		"@libp2p/peer-id": "^6.0.1",
+		"@libp2p/peer-id": "^6.0.5",
 		"@peerbit/canonical-transport": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
 		"peerbit": "workspace:*"

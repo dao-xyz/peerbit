@@ -79,9 +79,9 @@
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",
+		"@ipld/dag-cbor": "^9.2.1",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/stream-interface": "workspace:*",
-		"@ipld/dag-cbor": "^9.2.1",
-		"multiformats": "^13.4.1"
+		"multiformats": "^13.4.2"
 	}
 }
