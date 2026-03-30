@@ -146,16 +146,16 @@ export class SQLiteIndex<T extends Record<string, any>>
 	primaryKeyString!: string;
 	planner: QueryPlanner;
 	private scopeString?: string;
-	private _rootTables!: Table[];
-	private _tables!: Map<string, Table>;
-	private _cursor!: Map<
+	private _rootTables: Table[] = [];
+	private _tables: Map<string, Table> = new Map();
+	private _cursor: Map<
 		string,
 		{
 			fetch: (amount: number) => Promise<IndexedResult[]>;
 			/* countStatement: Statement; */
 			expire: number;
 		}
-	>; // TODO choose limit better
+	> = new Map(); // TODO choose limit better
 	private cursorPruner: ReturnType<typeof setInterval> | undefined;
 
 	iteratorTimeout: number;
@@ -191,23 +191,27 @@ export class SQLiteIndex<T extends Record<string, any>>
 		return this.properties.persisted ?? true;
 	}
 
+	private static readonly _emptyTables = new Map<string, Table>();
+	private static readonly _emptyRootTables: Table[] = [];
+	private static readonly _emptyCursor = new Map();
+
 	get tables() {
 		if (this.closed) {
-			throw new types.NotStartedError();
+			return SQLiteIndex._emptyTables;
 		}
 		return this._tables;
 	}
 
 	get rootTables() {
 		if (this.closed) {
-			throw new types.NotStartedError();
+			return SQLiteIndex._emptyRootTables;
 		}
 		return this._rootTables;
 	}
 
 	get cursor() {
 		if (this.closed) {
-			throw new types.NotStartedError();
+			return SQLiteIndex._emptyCursor;
 		}
 		return this._cursor;
 	}
@@ -370,10 +374,12 @@ export class SQLiteIndex<T extends Record<string, any>>
 
 		await this.clearStatements();
 
-		this._tables.clear();
+		this._tables?.clear();
 
-		for (const [k, _v] of this._cursor) {
-			await this.clearupIterator(k);
+		if (this._cursor) {
+			for (const [k, _v] of this._cursor) {
+				await this.clearupIterator(k);
+			}
 		}
 
 		await this.planner.stop();
@@ -391,7 +397,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 
 		const status = await this.properties.db.status?.();
 		if (status === "closed") {
-			this._tables.clear();
+			this._tables?.clear();
 			return;
 		}
 
@@ -400,14 +406,18 @@ export class SQLiteIndex<T extends Record<string, any>>
 		// drop root table and cascade
 		// drop table faster by dropping constraints first
 
-		for (const table of this._rootTables) {
-			await this.properties.db.exec(`drop table if exists ${table.name}`);
+		if (this._rootTables) {
+			for (const table of this._rootTables) {
+				await this.properties.db.exec(`drop table if exists ${table.name}`);
+			}
 		}
 
-		this._tables.clear();
+		this._tables?.clear();
 
-		for (const [k, _v] of this._cursor) {
-			await this.clearupIterator(k);
+		if (this._cursor) {
+			for (const [k, _v] of this._cursor) {
+				await this.clearupIterator(k);
+			}
 		}
 		await this.planner.stop();
 	}
@@ -458,7 +468,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 				};
 			} catch (error) {
 				if (this.closed) {
-					throw new types.NotStartedError();
+					return undefined;
 				}
 				throw error;
 			}
@@ -471,6 +481,9 @@ export class SQLiteIndex<T extends Record<string, any>>
 		_id?: any,
 		options?: { replace?: boolean },
 	): Promise<void> {
+		if (this.closed) {
+			return undefined;
+		}
 		return this.withWriteBarrier(async () => {
 			const classOfValue = value.constructor as Constructor<T>;
 			return insert(
