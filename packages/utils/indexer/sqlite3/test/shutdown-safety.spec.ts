@@ -187,4 +187,29 @@ describe("@peerbit/indexer-sqlite3 — shutdown safety", () => {
 			expect(result).to.equal(undefined);
 		}
 	});
+
+	it("iterate should return a dead iterator when closed without tracking cursors", async () => {
+		const index = new SQLiteIndex<Document>({
+			scope: [],
+			db,
+			schema: Document,
+		});
+		index.init({ indexBy: ["key"], schema: Document });
+		await index.start();
+		await index.stop();
+
+		const iterator = index.iterate();
+
+		expect(index.cursor.size).to.equal(0);
+		expect(index.cursorCount).to.equal(0);
+		expect(await iterator.pending()).to.equal(0);
+		expect(await iterator.next(1)).to.deep.equal([]);
+		expect(await iterator.all()).to.deep.equal([]);
+		expect(iterator.done()).to.equal(true);
+
+		await iterator.close();
+
+		expect(index.cursor.size).to.equal(0);
+		expect(index.cursorCount).to.equal(0);
+	});
 });

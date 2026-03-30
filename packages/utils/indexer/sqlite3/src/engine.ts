@@ -579,6 +579,16 @@ export class SQLiteIndex<T extends Record<string, any>>
 		request?: types.IterateOptions,
 		options?: { shape?: S; reference?: boolean },
 	): types.IndexIterator<T, S> {
+		if (this.closed) {
+			return {
+				all: async () => [],
+				close: async () => undefined,
+				done: () => true,
+				next: async () => [],
+				pending: async () => 0,
+			};
+		}
+
 		// create a sql statement where the offset and the limit id dynamic and can be updated
 		// TODO don't use offset but sort and limit 'next' calls by the last value of the sort
 
@@ -886,7 +896,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 	}
 
 	get cursorCount(): number {
-		return this.cursor.size;
+		return this.closed ? 0 : this._cursor.size;
 	}
 }
 
