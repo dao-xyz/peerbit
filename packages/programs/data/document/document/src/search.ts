@@ -1681,7 +1681,14 @@ export class DocumentIndex<
 
 		coerceWithContext(value, context);
 
-		await this.index.put(wrappedValueToIndex, undefined, options);
+		try {
+			await this.index.put(wrappedValueToIndex, undefined, options);
+		} catch (error) {
+			if (error instanceof indexerTypes.NotStartedError) {
+				return { context, indexable: valueToIndex };
+			}
+			throw error;
+		}
 		return { context, indexable: valueToIndex };
 	}
 
