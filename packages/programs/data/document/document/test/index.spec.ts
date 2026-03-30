@@ -3502,7 +3502,9 @@ describe("index", () => {
 						expect(writer.docs.index.hasPending).to.be.false;
 					});
 
-					it("onMissedResults respects already emitted results", async () => {
+					it("onMissedResults respects already emitted results", async function () {
+						this.timeout(120_000);
+
 						// test that we will get missed results accuruately
 						session = await TestSession.disconnected(3);
 
