@@ -313,6 +313,31 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [5.2.5](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.2.4...peerbit-v5.2.5) (2026-03-30)
+
+
+### Bug Fixes
+
+* **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped to 2.2.9
+    * @peerbit/any-store-opfs bumped to 1.1.7
+    * @peerbit/blocks bumped to 4.0.11
+    * @peerbit/crypto bumped to 3.1.1
+    * @peerbit/indexer-interface bumped to 3.0.3
+    * @peerbit/indexer-simple bumped to 1.2.6
+    * @peerbit/indexer-sqlite3 bumped to 3.0.6
+    * @peerbit/keychain bumped to 1.2.9
+    * @peerbit/logger bumped to 2.0.1
+    * @peerbit/program bumped to 6.0.16
+    * @peerbit/pubsub bumped to 5.1.5
+    * @peerbit/stream-interface bumped to 6.0.7
+
 ## [5.2.4](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.2.3...peerbit-v5.2.4) (2026-03-29)
 
 

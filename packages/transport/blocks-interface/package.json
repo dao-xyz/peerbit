@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/blocks-interface",
-	"version": "2.0.7",
+	"version": "2.0.8",
 	"description": "Block store streaming",
 	"type": "module",
 	"sideEffects": false,
