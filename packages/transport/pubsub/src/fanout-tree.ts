@@ -3151,6 +3151,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			await this.publishToChannel(topic, root, payload);
 			return true;
 		} catch (error) {
+			if (
+				error instanceof Error &&
+				error.message.startsWith("Channel not open:")
+			) {
+				return false;
+			}
 			dontThrowIfDeliveryError(error);
 			return false;
 		}
