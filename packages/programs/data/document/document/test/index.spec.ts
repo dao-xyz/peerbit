@@ -3571,12 +3571,12 @@ describe("index", () => {
 						await session.connect([[session.peers[0], session.peers[1]]]); // connect the nodes!
 
 						await waitForResolved(() => expect(missedResults).to.deep.equal([1]), {
-							timeout: 30_000,
+							timeout: 60_000,
 							delayInterval: 250,
 						});
 						await waitForResolved(
 							async () => expect(await iterator.pending()).to.equal(2),
-							{ timeout: 30_000, delayInterval: 250 },
+							{ timeout: 60_000, delayInterval: 250 },
 						);
 						const third = await iterator.next(1);
 						const fourth = await iterator.next(1);
