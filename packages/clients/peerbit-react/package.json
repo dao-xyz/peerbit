@@ -85,5 +85,14 @@
 		"vitest": "^4.0.12"
 	},
 	"author": "dao.xyz",
-	"license": "MIT"
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/clients/peerbit-react"
+	},
+	"bugs": {
+		"url": "https://github.com/dao-xyz/peerbit/issues"
+	},
+	"homepage": "https://github.com/dao-xyz/peerbit#readme"
 }

@@ -90,5 +90,14 @@
 		"peerbit": "workspace:*",
 		"pidusage": "^4.0.1",
 		"uuid": "^10.0.0"
-	}
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/programs/data/document/document"
+	},
+	"bugs": {
+		"url": "https://github.com/dao-xyz/peerbit/issues"
+	},
+	"homepage": "https://github.com/dao-xyz/peerbit#readme"
 }

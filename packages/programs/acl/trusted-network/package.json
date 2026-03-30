@@ -72,5 +72,14 @@
 		"@ethersproject/wallet": "^5.8.0",
 		"@peerbit/test-utils": "workspace:*",
 		"@peerbit/time": "workspace:*"
-	}
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/programs/acl/trusted-network"
+	},
+	"bugs": {
+		"url": "https://github.com/dao-xyz/peerbit/issues"
+	},
+	"homepage": "https://github.com/dao-xyz/peerbit#readme"
 }

@@ -67,7 +67,8 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/dao-xyz/peerbit"
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/clients/test-utils"
 	},
 	"engines": {
 		"node": ">=16.15.1"
@@ -99,5 +100,9 @@
 	},
 	"localMaintainers": [
 		"dao.xyz"
-	]
+	],
+	"bugs": {
+		"url": "https://github.com/dao-xyz/peerbit/issues"
+	},
+	"homepage": "https://github.com/dao-xyz/peerbit#readme"
 }
