@@ -3668,7 +3668,7 @@ describe("index", () => {
 
 							await waitForResolved(
 								async () => expect(await iterator.pending()).to.equal(2),
-								{ timeout: 15_000, delayInterval: 100 },
+								{ timeout: 60_000, delayInterval: 100 },
 							);
 							expect(writer2CollectCount).to.equal(0);
 

@@ -3018,6 +3018,18 @@ export class DocumentIndex<
 		});
 
 		let fetchPromise: Promise<any> | undefined = undefined;
+		let fetchesInFlight = 0;
+		const trackFetch = <T>(promise: Promise<T>): Promise<T> => {
+			fetchesInFlight++;
+			return promise.finally(() => {
+				fetchesInFlight--;
+			});
+		};
+		const setFetchPromise = <T>(promise: Promise<T>): Promise<T> => {
+			const tracked = trackFetch(promise);
+			fetchPromise = tracked;
+			return tracked;
+		};
 		const peerBufferMap: Map<
 			string,
 			{
@@ -3404,19 +3416,19 @@ export class DocumentIndex<
 
 			if (!first) {
 				first = true;
-				fetchPromise = fetchFirst(n);
-				return fetchPromise;
+				return setFetchPromise(fetchFirst(n));
 			}
 
 			if (pendingMissingResponseRetryPeers.size > 0) {
 				const retryTargets = [...pendingMissingResponseRetryPeers];
 				pendingMissingResponseRetryPeers.clear();
-				fetchPromise = fetchFirst(n, {
-					from: retryTargets,
-					// retries for missing groups should not be suppressed by first-fetch dedupe
-					fetchedFirstForRemote: undefined,
-				});
-				return fetchPromise;
+				return setFetchPromise(
+					fetchFirst(n, {
+						from: retryTargets,
+						// retries for missing groups should not be suppressed by first-fetch dedupe
+						fetchedFirstForRemote: undefined,
+					}),
+				);
 			}
 
 			const promises: Promise<any>[] = [];
@@ -3722,9 +3734,11 @@ export class DocumentIndex<
 					resultsLeft += peerBufferMap.get(peer)?.kept || 0;
 				}
 			}
-			return (fetchPromise = Promise.all(promises).then(() => {
-				return resultsLeft === 0; // 0 results left to fetch and 0 pending results
-			}));
+			return setFetchPromise(
+				Promise.all(promises).then(() => {
+					return resultsLeft === 0; // 0 results left to fetch and 0 pending results
+				}),
+			);
 		};
 
 		const next = async (n: number) => {
@@ -4502,8 +4516,6 @@ export class DocumentIndex<
 				joinFetchesInFlight += missing.length;
 
 				try {
-					await fetchPromise; // ensure fetches in flight are done
-
 					const unresolved = missing.filter((hash) => {
 						if (peerBufferMap.has(hash)) return false;
 						if (fetchedFirstForRemote!.has(hash)) return false;
@@ -4514,11 +4526,13 @@ export class DocumentIndex<
 						return false;
 					}
 
-					fetchPromise = fetchFirst(totalFetchedCounter, {
-						from: unresolved,
-						fetchedFirstForRemote,
-					});
-					await fetchPromise;
+					const lateJoinFetchPromise = trackFetch(
+						fetchFirst(totalFetchedCounter, {
+							from: unresolved,
+							fetchedFirstForRemote,
+						}),
+					);
+					await lateJoinFetchPromise;
 
 					if (onLateResultsQueue || onLateResultsDrop) {
 						for (const hash of unresolved) {
@@ -4623,7 +4637,27 @@ export class DocumentIndex<
 				};
 
 				try {
+					let pendingTotal = countPending();
+					if (remoteWaitActive && first) {
+						if (pendingTotal === 0) {
+							await fetchLateJoinPeers();
+							pendingTotal = countPending();
+						}
+
+						const shouldPrimePending =
+							!done &&
+							keepRemoteAlive &&
+							(!pushUpdates || !first) &&
+							pendingTotal === 0 &&
+							joinFetchesInFlight === 0;
+						if (shouldPrimePending && fetchesInFlight === 0) {
+							await fetchAtLeast(1);
+						}
+						return countPending();
+					}
+
 					await fetchPromise;
+					pendingTotal = countPending();
 					// In push-update mode, remotes will stream new results proactively.
 					// After the iterator has been primed (`first === true`), calling
 					// `fetchAtLeast(1)` from `pending()` can double-count by pulling from
@@ -4635,18 +4669,13 @@ export class DocumentIndex<
 					// enough to avoid starving late joins behind unrelated long-poll collects,
 					// while preserving the existing "pull one more" behavior when there is
 					// nothing buffered yet.
-					const pendingTotal = countPending();
 					const shouldPrimePending =
 						!done &&
 						keepRemoteAlive &&
 						(!pushUpdates || !first) &&
 						pendingTotal === 0 &&
 						!(remoteWaitActive && first && joinFetchesInFlight > 0);
-					const fetchedLateJoin =
-						remoteWaitActive && first && pendingTotal === 0
-							? await fetchLateJoinPeers()
-							: false;
-					if (shouldPrimePending && !fetchedLateJoin) {
+					if (shouldPrimePending) {
 						await fetchAtLeast(1);
 					}
 				} catch (error) {
