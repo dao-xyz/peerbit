@@ -4487,13 +4487,17 @@ export class DocumentIndex<
 			updateDeferred = pDefer<void>();
 			const lateJoinFetchesInFlight = new Set<string>();
 
-			fetchLateJoinPeers = async (
-				candidateHashes?: Iterable<string>,
-				candidateKeys?: Map<string, PublicSignKey>,
-			) => {
-				if (done || totalFetchedCounter === 0) {
-					return false;
-				}
+				fetchLateJoinPeers = async (
+					candidateHashes?: Iterable<string>,
+					candidateKeys?: Map<string, PublicSignKey>,
+				) => {
+					if (totalFetchedCounter === 0) {
+						return false;
+					}
+
+					if (done) {
+						unsetDone();
+					}
 
 				const selfHash = this.node.identity.publicKey.hashcode();
 				const hashes = candidateHashes
