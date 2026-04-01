@@ -3896,6 +3896,7 @@ export class DocumentIndex<
 		let joinFetchesInFlight = 0;
 
 		let updateDeferred: ReturnType<typeof pDefer> | undefined;
+		const updateWaiters = new Set<ReturnType<typeof pDefer<void>>>();
 		const onLateResultsQueue =
 			options?.outOfOrder?.mode === "queue" &&
 			typeof options?.outOfOrder?.handle === "function"
@@ -4011,9 +4012,20 @@ export class DocumentIndex<
 				runNotify(reason);
 			}
 			updateDeferred?.resolve();
+			for (const waiter of updateWaiters) {
+				waiter.resolve();
+			}
+			updateWaiters.clear();
 		};
 		const _waitForUpdate = () =>
 			updateDeferred ? updateDeferred.promise : Promise.resolve();
+		const waitForAnyUpdate = () => {
+			const waiter = pDefer<void>();
+			updateWaiters.add(waiter);
+			return waiter.promise.finally(() => {
+				updateWaiters.delete(waiter);
+			});
+		};
 
 		// ---------------- Live updates wiring (sorted-only with optional filter) ----------------
 		const updateCallbacks = updateCallbacksRaw;
@@ -4500,18 +4512,56 @@ export class DocumentIndex<
 					}
 
 				const selfHash = this.node.identity.publicKey.hashcode();
+				const knownCandidateKeys = candidateKeys
+					? new Map(candidateKeys)
+					: new Map<string, PublicSignKey>();
 				const hashes = candidateHashes
 					? [...candidateHashes]
-					: [...(await this._log.getReplicators())];
-
-				const missing = hashes.filter((hash) => {
+					: [...(await this._log.getReplicators()).keys()];
+				let missing = hashes.filter((hash) => {
 					if (hash === selfHash) return false;
 					if (peerBufferMap.has(hash)) return false;
 					if (fetchedFirstForRemote!.has(hash)) return false;
 					if (lateJoinFetchesInFlight.has(hash)) return false;
 					return true;
 				});
-
+				if (missing.length === 0 && !candidateHashes) {
+					const connectedPeers = (this.node.services.pubsub as any)?.peers as
+						| Map<string, unknown>
+						| undefined;
+					if (connectedPeers?.size) {
+						const connectedCandidates = [...connectedPeers.keys()].filter(
+							(hash) =>
+								hash !== selfHash &&
+								!hashes.includes(hash) &&
+								!peerBufferMap.has(hash) &&
+								!fetchedFirstForRemote!.has(hash) &&
+								!lateJoinFetchesInFlight.has(hash),
+						);
+						if (connectedCandidates.length > 0) {
+							const discovered = await Promise.all(
+								connectedCandidates.slice(0, 8).map(async (hash) => {
+									const pk = await this.node.services.pubsub.getPublicKey(hash);
+									if (!pk) {
+										return undefined;
+									}
+									try {
+										await this._log.waitForReplicator(pk, {
+											signal: ensureController().signal,
+											eager: true,
+											timeout: 250,
+										});
+										knownCandidateKeys.set(hash, pk);
+										return hash;
+									} catch {
+										return undefined;
+									}
+								}),
+							);
+							missing = discovered.filter((hash): hash is string => !!hash);
+						}
+					}
+				}
 				if (missing.length === 0) {
 					return false;
 				}
@@ -4537,6 +4587,11 @@ export class DocumentIndex<
 						}),
 					);
 					await lateJoinFetchPromise;
+					for (const hash of unresolved) {
+						if (!peerBufferMap.has(hash)) {
+							fetchedFirstForRemote?.delete(hash);
+						}
+					}
 
 					if (onLateResultsQueue || onLateResultsDrop) {
 						for (const hash of unresolved) {
@@ -4545,7 +4600,7 @@ export class DocumentIndex<
 								continue;
 							}
 
-							const peer = candidateKeys?.get(hash);
+							const peer = knownCandidateKeys.get(hash);
 							if (lastDeliveredIndexed) {
 								const delivered = lastDeliveredIndexed;
 								const lateItems = pending.filter(
@@ -4655,7 +4710,14 @@ export class DocumentIndex<
 							pendingTotal === 0 &&
 							joinFetchesInFlight === 0;
 						if (shouldPrimePending && fetchesInFlight === 0) {
-							await fetchAtLeast(1);
+							const primePending = fetchAtLeast(1).catch((error) => {
+								warn("Failed to prime keep-open iterator pending state", error);
+							});
+							if (remoteWaitActive) {
+								await Promise.race([primePending, waitForAnyUpdate()]);
+							} else {
+								await primePending;
+							}
 						}
 						return countPending();
 					}
