@@ -3147,10 +3147,22 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		root: string,
 		payload: Uint8Array,
 	): Promise<boolean> {
+		const id = this.getChannelId(topic, root);
+		const ch = this.channelsBySuffixKey.get(id.suffixKey);
+		if (!ch || ch.closed) {
+			return false;
+		}
+
 		try {
 			await this.publishToChannel(topic, root, payload);
 			return true;
 		} catch (error) {
+			if (
+				error instanceof Error &&
+				error.message.startsWith(`Channel not open: ${topic} (${root})`)
+			) {
+				return false;
+			}
 			dontThrowIfDeliveryError(error);
 			return false;
 		}
