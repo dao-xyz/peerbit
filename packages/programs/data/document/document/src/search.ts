@@ -2300,8 +2300,7 @@ export class DocumentIndex<
 		onPeer: (pk: PublicSignKey) => Promise<void> | void;
 	}): () => void {
 		const active = new Set<string>();
-		const listener = async (e: { detail: PublicSignKey }) => {
-			const pk = e.detail;
+		const handlePeer = async (pk: PublicSignKey) => {
 			const hash = pk.hashcode();
 			if (hash === this.node.identity.publicKey.hashcode()) return;
 			if (params.signal?.aborted) return;
@@ -2323,8 +2322,35 @@ export class DocumentIndex<
 			}
 		};
 
-		this._query.events.addEventListener("join", listener);
-		return () => this._query.events.removeEventListener("join", listener);
+		const onQueryJoin = (e: { detail: PublicSignKey }) => {
+			void handlePeer(e.detail);
+		};
+		const onReplicatorEvent = (e: {
+			detail: { publicKey: PublicSignKey };
+		}) => {
+			void handlePeer(e.detail.publicKey);
+		};
+
+		this._query.events.addEventListener("join", onQueryJoin);
+		this._log?.events?.addEventListener("replicator:join", onReplicatorEvent);
+		this._log?.events?.addEventListener("replicator:mature", onReplicatorEvent);
+		this._log?.events?.addEventListener("replication:change", onReplicatorEvent);
+
+		return () => {
+			this._query.events.removeEventListener("join", onQueryJoin);
+			this._log?.events?.removeEventListener(
+				"replicator:join",
+				onReplicatorEvent,
+			);
+			this._log?.events?.removeEventListener(
+				"replicator:mature",
+				onReplicatorEvent,
+			);
+			this._log?.events?.removeEventListener(
+				"replication:change",
+				onReplicatorEvent,
+			);
+		};
 	}
 
 	processCloseIteratorRequest(
@@ -2992,6 +3018,18 @@ export class DocumentIndex<
 		});
 
 		let fetchPromise: Promise<any> | undefined = undefined;
+		let fetchesInFlight = 0;
+		const trackFetch = <T>(promise: Promise<T>): Promise<T> => {
+			fetchesInFlight++;
+			return promise.finally(() => {
+				fetchesInFlight--;
+			});
+		};
+		const setFetchPromise = <T>(promise: Promise<T>): Promise<T> => {
+			const tracked = trackFetch(promise);
+			fetchPromise = tracked;
+			return tracked;
+		};
 		const peerBufferMap: Map<
 			string,
 			{
@@ -3378,19 +3416,19 @@ export class DocumentIndex<
 
 			if (!first) {
 				first = true;
-				fetchPromise = fetchFirst(n);
-				return fetchPromise;
+				return setFetchPromise(fetchFirst(n));
 			}
 
 			if (pendingMissingResponseRetryPeers.size > 0) {
 				const retryTargets = [...pendingMissingResponseRetryPeers];
 				pendingMissingResponseRetryPeers.clear();
-				fetchPromise = fetchFirst(n, {
-					from: retryTargets,
-					// retries for missing groups should not be suppressed by first-fetch dedupe
-					fetchedFirstForRemote: undefined,
-				});
-				return fetchPromise;
+				return setFetchPromise(
+					fetchFirst(n, {
+						from: retryTargets,
+						// retries for missing groups should not be suppressed by first-fetch dedupe
+						fetchedFirstForRemote: undefined,
+					}),
+				);
 			}
 
 			const promises: Promise<any>[] = [];
@@ -3696,9 +3734,11 @@ export class DocumentIndex<
 					resultsLeft += peerBufferMap.get(peer)?.kept || 0;
 				}
 			}
-			return (fetchPromise = Promise.all(promises).then(() => {
-				return resultsLeft === 0; // 0 results left to fetch and 0 pending results
-			}));
+			return setFetchPromise(
+				Promise.all(promises).then(() => {
+					return resultsLeft === 0; // 0 results left to fetch and 0 pending results
+				}),
+			);
 		};
 
 		const next = async (n: number) => {
@@ -3853,8 +3893,10 @@ export class DocumentIndex<
 		const pendingMissingResponseRetryPeers = new Set<string>();
 		const missingResponseRetryAttempts = new Map<string, number>();
 		const maxMissingResponseRetryAttempts = 2;
+		let joinFetchesInFlight = 0;
 
 		let updateDeferred: ReturnType<typeof pDefer> | undefined;
+		const updateWaiters = new Set<ReturnType<typeof pDefer<void>>>();
 		const onLateResultsQueue =
 			options?.outOfOrder?.mode === "queue" &&
 			typeof options?.outOfOrder?.handle === "function"
@@ -3970,9 +4012,20 @@ export class DocumentIndex<
 				runNotify(reason);
 			}
 			updateDeferred?.resolve();
+			for (const waiter of updateWaiters) {
+				waiter.resolve();
+			}
+			updateWaiters.clear();
 		};
 		const _waitForUpdate = () =>
 			updateDeferred ? updateDeferred.promise : Promise.resolve();
+		const waitForAnyUpdate = () => {
+			const waiter = pDefer<void>();
+			updateWaiters.add(waiter);
+			return waiter.promise.finally(() => {
+				updateWaiters.delete(waiter);
+			});
+		};
 
 		// ---------------- Live updates wiring (sorted-only with optional filter) ----------------
 		const updateCallbacks = updateCallbacksRaw;
@@ -4435,11 +4488,143 @@ export class DocumentIndex<
 		const keepRemoteWaitOpen =
 			!!remoteConfig?.wait &&
 			remoteWaitBehavior === "keep-open";
+		let fetchLateJoinPeers = async (
+			_candidateHashes?: Iterable<string>,
+			_candidateKeys?: Map<string, PublicSignKey>,
+		) => false;
 
 		if (keepRemoteWaitOpen) {
 			// was used to account for missed results when a peer joins; omitted in this minimal handler
 
 			updateDeferred = pDefer<void>();
+			const lateJoinFetchesInFlight = new Set<string>();
+
+				fetchLateJoinPeers = async (
+					candidateHashes?: Iterable<string>,
+					candidateKeys?: Map<string, PublicSignKey>,
+				) => {
+					if (totalFetchedCounter === 0) {
+						return false;
+					}
+
+					if (done) {
+						unsetDone();
+					}
+
+				const selfHash = this.node.identity.publicKey.hashcode();
+				const knownCandidateKeys = candidateKeys
+					? new Map(candidateKeys)
+					: new Map<string, PublicSignKey>();
+				const hashes = candidateHashes
+					? [...candidateHashes]
+					: [...(await this._log.getReplicators()).keys()];
+				let missing = hashes.filter((hash) => {
+					if (hash === selfHash) return false;
+					if (peerBufferMap.has(hash)) return false;
+					if (fetchedFirstForRemote!.has(hash)) return false;
+					if (lateJoinFetchesInFlight.has(hash)) return false;
+					return true;
+				});
+				if (missing.length === 0 && !candidateHashes) {
+					const connectedPeers = (this.node.services.pubsub as any)?.peers as
+						| Map<string, unknown>
+						| undefined;
+					if (connectedPeers?.size) {
+						const connectedCandidates = [...connectedPeers.keys()].filter(
+							(hash) =>
+								hash !== selfHash &&
+								!hashes.includes(hash) &&
+								!peerBufferMap.has(hash) &&
+								!fetchedFirstForRemote!.has(hash) &&
+								!lateJoinFetchesInFlight.has(hash),
+						);
+						if (connectedCandidates.length > 0) {
+							const discovered = await Promise.all(
+								connectedCandidates.slice(0, 8).map(async (hash) => {
+									const pk = await this.node.services.pubsub.getPublicKey(hash);
+									if (!pk) {
+										return undefined;
+									}
+									try {
+										await this._log.waitForReplicator(pk, {
+											signal: ensureController().signal,
+											eager: true,
+											timeout: 250,
+										});
+										knownCandidateKeys.set(hash, pk);
+										return hash;
+									} catch {
+										return undefined;
+									}
+								}),
+							);
+							missing = discovered.filter((hash): hash is string => !!hash);
+						}
+					}
+				}
+				if (missing.length === 0) {
+					return false;
+				}
+
+				missing.forEach((hash) => lateJoinFetchesInFlight.add(hash));
+				joinFetchesInFlight += missing.length;
+
+				try {
+					const unresolved = missing.filter((hash) => {
+						if (peerBufferMap.has(hash)) return false;
+						if (fetchedFirstForRemote!.has(hash)) return false;
+						return true;
+					});
+
+					if (unresolved.length === 0) {
+						return false;
+					}
+
+					const lateJoinFetchPromise = trackFetch(
+						fetchFirst(totalFetchedCounter, {
+							from: unresolved,
+							fetchedFirstForRemote,
+						}),
+					);
+					await lateJoinFetchPromise;
+					for (const hash of unresolved) {
+						if (!peerBufferMap.has(hash)) {
+							fetchedFirstForRemote?.delete(hash);
+						}
+					}
+
+					if (onLateResultsQueue || onLateResultsDrop) {
+						for (const hash of unresolved) {
+							const pending = peerBufferMap.get(hash)?.buffer;
+							if (!pending || pending.length === 0) {
+								continue;
+							}
+
+							const peer = knownCandidateKeys.get(hash);
+							if (lastDeliveredIndexed) {
+								const delivered = lastDeliveredIndexed;
+								const lateItems = pending.filter(
+									(item) => compareIndexed(item.indexed, delivered) < 0,
+								);
+								if (lateItems.length > 0) {
+									notifyLateResults?.(lateItems.length, peer, lateItems);
+								}
+							} else {
+								notifyLateResults?.(pending.length, peer, pending);
+							}
+						}
+					}
+
+					if (!pendingBatchReason) {
+						pendingBatchReason = "join";
+					}
+					signalUpdate("join");
+					return true;
+				} finally {
+					missing.forEach((hash) => lateJoinFetchesInFlight.delete(hash));
+					joinFetchesInFlight -= missing.length;
+				}
+			};
 
 			const waitForTime = remoteWaitPolicy?.timeout;
 
@@ -4462,36 +4647,7 @@ export class DocumentIndex<
 				onPeer: async (pk) => {
 					if (done) return;
 					const hash = pk.hashcode();
-					await fetchPromise; // ensure fetches in flight are done
-					if (peerBufferMap.has(hash)) return;
-					if (fetchedFirstForRemote!.has(hash)) return;
-					if (totalFetchedCounter > 0) {
-						fetchPromise = fetchFirst(totalFetchedCounter, {
-							from: [hash],
-							fetchedFirstForRemote,
-						});
-						await fetchPromise;
-						if (onLateResultsQueue || onLateResultsDrop) {
-							const pending = peerBufferMap.get(hash)?.buffer;
-							if (pending && pending.length > 0) {
-								if (lastDeliveredIndexed) {
-									const delivered = lastDeliveredIndexed;
-									const lateItems = pending.filter(
-										(item) => compareIndexed(item.indexed, delivered) < 0,
-									);
-									if (lateItems.length > 0) {
-										notifyLateResults?.(lateItems.length, pk, lateItems);
-									}
-								} else {
-									notifyLateResults?.(pending.length, pk, pending);
-								}
-							}
-						}
-					}
-					if (!pendingBatchReason) {
-						pendingBatchReason = "join";
-					}
-					signalUpdate("join");
+					await fetchLateJoinPeers([hash], new Map([[hash, pk]]));
 				},
 			});
 			const cleanupDefault = cleanup;
@@ -4531,27 +4687,68 @@ export class DocumentIndex<
 			next,
 			done: doneFn,
 			pending: async () => {
+				const countPending = () => {
+					let total = 0;
+					for (const buffer of peerBufferMap.values()) {
+						total += buffer.kept + buffer.buffer.length;
+					}
+					return total;
+				};
+
 				try {
+					let pendingTotal = countPending();
+					if (remoteWaitActive && first) {
+						if (pendingTotal === 0) {
+							await fetchLateJoinPeers();
+							pendingTotal = countPending();
+						}
+
+						const shouldPrimePending =
+							!done &&
+							keepRemoteAlive &&
+							(!pushUpdates || !first) &&
+							pendingTotal === 0 &&
+							joinFetchesInFlight === 0;
+						if (shouldPrimePending && fetchesInFlight === 0) {
+							const primePending = fetchAtLeast(1).catch((error) => {
+								warn("Failed to prime keep-open iterator pending state", error);
+							});
+							if (remoteWaitActive) {
+								await Promise.race([primePending, waitForAnyUpdate()]);
+							} else {
+								await primePending;
+							}
+						}
+						return countPending();
+					}
+
 					await fetchPromise;
+					pendingTotal = countPending();
 					// In push-update mode, remotes will stream new results proactively.
 					// After the iterator has been primed (`first === true`), calling
 					// `fetchAtLeast(1)` from `pending()` can double-count by pulling from
 					// the remote iterator while we also have pushed results buffered locally.
 					//
-					// We still need to prime the iterator at least once so `pending()` is meaningful
-					// even before the first `next(...)` call.
-					if (!done && keepRemoteAlive && (!pushUpdates || !first)) {
+					// In keep-open remote-wait mode, we also avoid starting another remote
+					// collect while a late-join fetch is already in flight or when we already
+					// have buffered results to report. This keeps `pending()` observational
+					// enough to avoid starving late joins behind unrelated long-poll collects,
+					// while preserving the existing "pull one more" behavior when there is
+					// nothing buffered yet.
+					const shouldPrimePending =
+						!done &&
+						keepRemoteAlive &&
+						(!pushUpdates || !first) &&
+						pendingTotal === 0 &&
+						!(remoteWaitActive && first && joinFetchesInFlight > 0);
+					if (shouldPrimePending) {
 						await fetchAtLeast(1);
 					}
 				} catch (error) {
 					warn("Failed to refresh iterator pending state", error);
 				}
 
-				let total = 0;
-				for (const buffer of peerBufferMap.values()) {
-					total += buffer.kept + buffer.buffer.length;
-				}
-				return total;
+				return countPending();
 			},
 			all: async () => {
 				drain = true;

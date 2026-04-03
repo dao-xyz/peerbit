@@ -3587,6 +3587,104 @@ describe("index", () => {
 						expect(fourth.map((x) => x.id)).to.deep.equal(["1"]);
 					});
 
+					it("pending does not block late joins behind keep-open collects", async function () {
+						this.timeout(120_000);
+
+						session = await TestSession.disconnected(3);
+
+						const store = new TestStore({
+							docs: new Documents<Document>(),
+						});
+
+						const observer = await session.peers[0].open(store, {
+							args: {
+								replicate: false,
+							},
+						});
+
+						const writer1 = await session.peers[1].open(store.clone(), {
+							args: {
+								replicate: {
+									factor: 1,
+								},
+							},
+						});
+
+						const writer2 = await session.peers[2].open(store.clone(), {
+							args: {
+								replicate: {
+									factor: 1,
+								},
+							},
+						});
+
+						await writer1.docs.put(new Document({ id: "1" }));
+						await writer1.docs.put(new Document({ id: "4" }));
+
+						await writer2.docs.put(new Document({ id: "2" }));
+						await writer2.docs.put(new Document({ id: "3" }));
+
+						await session.connect([[session.peers[0], session.peers[2]]]);
+						await observer.docs.index.waitFor(writer2.node.identity.publicKey);
+
+						const iterator = observer.docs.index.iterate(
+							{ sort: new Sort({ key: "id", direction: SortDirection.DESC }) },
+							{
+								remote: {
+									wait: {
+										timeout: 1e4,
+									},
+									reach: {
+										eager: true,
+									},
+								},
+							},
+						);
+
+						const first = await iterator.next(1);
+						const second = await iterator.next(1);
+						expect(first.map((x) => x.id)).to.deep.equal(["3"]);
+						expect(second.map((x) => x.id)).to.deep.equal(["2"]);
+
+						const writer2Hash = writer2.node.identity.publicKey.hashcode();
+						let writer2CollectCount = 0;
+						const originalRequest =
+							observer.docs.index._query.request.bind(observer.docs.index._query);
+
+						observer.docs.index._query.request = async (request, options) => {
+							if (
+								request instanceof CollectNextRequest &&
+								(options?.mode as SilentDelivery | undefined)?.to?.includes(
+									writer2Hash,
+								)
+							) {
+								writer2CollectCount++;
+							}
+							return originalRequest(request, options);
+						};
+
+						try {
+							await session.connect([[session.peers[0], session.peers[1]]]);
+
+							await waitForResolved(
+								async () => expect(await iterator.pending()).to.equal(2),
+								{ timeout: 60_000, delayInterval: 100 },
+							);
+							expect(writer2CollectCount).to.equal(0);
+
+							const third = await iterator.next(1);
+							const fourth = await iterator.next(1);
+							expect(third.map((x) => x.id)).to.deep.equal(["4"]);
+							expect(fourth.map((x) => x.id)).to.deep.equal(["1"]);
+						} finally {
+							observer.docs.index._query.request = originalRequest;
+							await iterator.close();
+							await observer.close();
+							await writer1.close();
+							await writer2.close();
+						}
+					});
+
 					it("it will not wait for previous replicator if it can handle joining", async () => {
 						let directory = "./tmp/test-iterate-joining/" + new Date();
 						session = await TestSession.connected(2, [
