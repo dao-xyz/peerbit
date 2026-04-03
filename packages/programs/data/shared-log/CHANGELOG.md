@@ -392,6 +392,11 @@
 ## [13.0.23](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.22...shared-log-v13.0.23) (2026-04-03)
 
 
+### Bug Fixes
+
+* **document:** recover late joins in keep-open iterators ([11bd86d](https://github.com/dao-xyz/peerbit/commit/11bd86d2836c863d355b96fec859949bff372e97))
+
+
 ### Dependencies
 
 * The following workspace dependencies were updated
