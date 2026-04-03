@@ -459,6 +459,15 @@
 ## [13.0.23](https://github.com/dao-xyz/peerbit/compare/document-v13.0.22...document-v13.0.23) (2026-04-03)
 
 
+### Bug Fixes
+
+* **document:** harden keep-open late join recovery ([2319033](https://github.com/dao-xyz/peerbit/commit/231903303fe4c7ef066a156489bb13cf43356513))
+* **document:** recover late joins in keep-open iterators ([11bd86d](https://github.com/dao-xyz/peerbit/commit/11bd86d2836c863d355b96fec859949bff372e97))
+* **document:** recover late joins in keep-open iterators ([296b2b7](https://github.com/dao-xyz/peerbit/commit/296b2b74cc19132c406725b1811526f98b31fb1f))
+* **document:** reopen keep-open iterators for late joins ([617f24b](https://github.com/dao-xyz/peerbit/commit/617f24ba37344385dbf7f9e420d32669ac5b91e6))
+* **document:** unblock late-join pending checks ([4f4f7ec](https://github.com/dao-xyz/peerbit/commit/4f4f7ece35a72f49ade71c74d500c9dd5afe141d))
+
+
 ### Dependencies
 
 * The following workspace dependencies were updated
