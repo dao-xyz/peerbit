@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/canonical-client",
-	"version": "1.1.18",
+	"version": "1.1.20",
 	"description": "Client helpers for connecting to a Peerbit canonical runtime",
 	"author": "dao.xyz",
 	"license": "MIT",
@@ -56,21 +56,21 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/dao-xyz/peerbit"
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/clients/canonical/client"
 	},
 	"engines": {
 		"node": ">=18"
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",
-		"@libp2p/interface": "^3.1.0",
-		"@libp2p/peer-id": "^6.0.1",
+		"@libp2p/interface": "^3.1.1",
+		"@libp2p/peer-id": "^6.0.5",
 		"@multiformats/multiaddr": "^13.0.1",
 		"@peerbit/canonical-transport": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/program": "workspace:*"
 	},
-	"devDependencies": {},
 	"scripts": {
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
@@ -87,5 +87,9 @@
 		"canonical",
 		"worker",
 		"sharedworker"
-	]
+	],
+	"bugs": {
+		"url": "https://github.com/dao-xyz/peerbit/issues"
+	},
+	"homepage": "https://github.com/dao-xyz/peerbit#readme"
 }

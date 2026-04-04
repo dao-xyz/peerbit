@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/stream-interface",
-	"version": "6.0.6",
+	"version": "6.0.7",
 	"description": "Block store streaming",
 	"sideEffects": false,
 	"type": "module",
@@ -59,7 +59,8 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/dao-xyz/peerbit.git"
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/transport/stream-interface"
 	},
 	"keywords": [
 		"peerbit"
@@ -75,8 +76,8 @@
 	],
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",
-		"@libp2p/interface": "^3.1.0",
-		"uint8arraylist": "^2.4.8",
-		"@peerbit/crypto": "workspace:*"
+		"@libp2p/interface": "^3.1.1",
+		"@peerbit/crypto": "workspace:*",
+		"uint8arraylist": "^2.4.8"
 	}
 }

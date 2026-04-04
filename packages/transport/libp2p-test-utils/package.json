@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/libp2p-test-utils",
-	"version": "3.0.3",
+	"version": "3.0.4",
 	"description": "Test utils for Peerbit",
 	"sideEffects": false,
 	"type": "module",
@@ -54,7 +54,8 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/dao-xyz/peerbit"
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/transport/libp2p-test-utils"
 	},
 	"engines": {
 		"node": ">=16.15.1"
@@ -62,19 +63,19 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@multiformats/multiaddr": "^13.0.1",
-		"@libp2p/interface": "^3.1.0",
-		"@libp2p/tcp": "^11.0.2",
-		"@libp2p/webrtc": "^6.0.3",
-		"@libp2p/websockets": "^10.1.0",
-		"@libp2p/identify": "^4.0.2",
-		"@libp2p/circuit-relay-v2": "^4.1.0",
 		"@chainsafe/libp2p-noise": "^17.0.0",
-		"@chainsafe/libp2p-yamux": "^8.0.0",
+		"@chainsafe/libp2p-yamux": "^8.0.1",
+		"@libp2p/circuit-relay-v2": "^4.1.7",
+		"@libp2p/identify": "^4.0.14",
+		"@libp2p/interface": "^3.1.1",
+		"@libp2p/tcp": "^11.0.14",
+		"@libp2p/webrtc": "^6.0.15",
+		"@libp2p/websockets": "^10.1.7",
+		"@multiformats/multiaddr": "^13.0.1",
 		"@peerbit/crypto": "workspace:*",
 		"it-pushable": "^3.1.4",
-		"libsodium-wrappers": "^0.7.15",
-		"libp2p": "^3.1.0"
+		"libp2p": "^3.1.7",
+		"libsodium-wrappers": "^0.7.15"
 	},
 	"scripts": {
 		"clean": "aegir clean",
@@ -84,10 +85,14 @@
 		"test:cov": "aegir test -t node --cov"
 	},
 	"devDependencies": {
-		"@types/libsodium-wrappers": "^0.7.14",
-		"@peerbit/time": "workspace:*"
+		"@peerbit/time": "workspace:*",
+		"@types/libsodium-wrappers": "^0.7.14"
 	},
 	"localMaintainers": [
 		"dao.xyz"
-	]
+	],
+	"bugs": {
+		"url": "https://github.com/dao-xyz/peerbit/issues"
+	},
+	"homepage": "https://github.com/dao-xyz/peerbit#readme"
 }

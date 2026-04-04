@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.1.20](https://github.com/dao-xyz/peerbit/compare/canonical-client-v1.1.19...canonical-client-v1.1.20) (2026-04-03)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped to 6.0.17
+
+## [1.1.19](https://github.com/dao-xyz/peerbit/compare/canonical-client-v1.1.18...canonical-client-v1.1.19) (2026-03-30)
+
+
+### Bug Fixes
+
+* **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 3.1.1
+    * @peerbit/program bumped to 6.0.16
+
 ## [1.1.18](https://github.com/dao-xyz/peerbit/compare/canonical-client-v1.1.17...canonical-client-v1.1.18) (2026-03-29)
 
 

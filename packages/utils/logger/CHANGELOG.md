@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.1](https://github.com/dao-xyz/peerbit/compare/logger-v2.0.0...logger-v2.0.1) (2026-03-30)
+
+
+### Bug Fixes
+
+* **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/logger-v1.0.4...logger-v2.0.0) (2025-11-25)
 
 

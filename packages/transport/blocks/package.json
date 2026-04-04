@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/blocks",
-	"version": "4.0.10",
+	"version": "4.0.11",
 	"description": "Block store streaming",
 	"type": "module",
 	"types": "./dist/src/index.d.ts",
@@ -60,7 +60,8 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/dao-xyz/peerbit.git"
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/transport/blocks"
 	},
 	"keywords": [
 		"peerbit"
@@ -79,20 +80,20 @@
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",
-		"@libp2p/interface": "^3.1.0",
-		"@libp2p/tcp": "^11.0.2",
-		"@libp2p/websockets": "^10.1.0",
+		"@ipld/dag-cbor": "^9.2.1",
+		"@libp2p/interface": "^3.1.1",
+		"@libp2p/tcp": "^11.0.14",
+		"@libp2p/websockets": "^10.1.7",
 		"@peerbit/any-store": "workspace:*",
 		"@peerbit/any-store-interface": "workspace:*",
+		"@peerbit/blocks-interface": "workspace:*",
 		"@peerbit/cache": "workspace:*",
+		"@peerbit/crypto": "workspace:*",
 		"@peerbit/logger": "workspace:*",
 		"@peerbit/stream": "workspace:*",
 		"@peerbit/stream-interface": "workspace:*",
 		"@peerbit/time": "workspace:*",
-		"@peerbit/blocks-interface": "workspace:*",
-		"@peerbit/crypto": "workspace:*",
-		"@ipld/dag-cbor": "^9.2.1",
-		"multiformats": "^13.4.1",
+		"multiformats": "^13.4.2",
 		"p-defer": "^4.0.0",
 		"p-queue": "^8.0.1",
 		"uint8arrays": "^5.1.0"

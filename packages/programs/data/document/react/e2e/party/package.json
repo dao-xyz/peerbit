@@ -12,7 +12,7 @@
 		"test:cov": "playwright test --config playwright.config.ts"
 	},
 	"dependencies": {
-		"@libp2p/websockets": "^10.1.0",
+		"@libp2p/websockets": "^10.1.7",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/document": "workspace:*",
 		"@peerbit/document-react": "workspace:*",

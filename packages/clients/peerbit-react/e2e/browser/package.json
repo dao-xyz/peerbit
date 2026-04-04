@@ -10,7 +10,7 @@
 		"test:e2e": "pnpm build && playwright test"
 	},
 	"dependencies": {
-		"@libp2p/websockets": "^10.1.0",
+		"@libp2p/websockets": "^10.1.7",
 		"@peerbit/any-store-opfs": "workspace:*",
 		"@peerbit/canonical-host": "workspace:*",
 		"@peerbit/document": "workspace:*",

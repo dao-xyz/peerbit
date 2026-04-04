@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/test-utils",
-	"version": "3.0.19",
+	"version": "3.0.21",
 	"description": "Test utils for Peerbit",
 	"sideEffects": false,
 	"type": "module",
@@ -67,7 +67,8 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/dao-xyz/peerbit"
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/clients/test-utils"
 	},
 	"engines": {
 		"node": ">=16.15.1"
@@ -75,29 +76,33 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@libp2p/interface": "^3.1.0",
+		"@chainsafe/libp2p-yamux": "^8.0.1",
+		"@libp2p/interface": "^3.1.1",
 		"@multiformats/multiaddr": "^13.0.1",
-		"it-pushable": "^3.1.4",
-		"libsodium-wrappers": "^0.7.15",
 		"@peerbit/any-store": "workspace:*",
+		"@peerbit/blocks": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/indexer-interface": "workspace:*",
-		"@peerbit/libp2p-test-utils": "workspace:*",
-		"peerbit": "workspace:*",
-		"@chainsafe/libp2p-yamux": "^8.0.0",
-		"@peerbit/blocks": "workspace:*",
 		"@peerbit/keychain": "workspace:*",
+		"@peerbit/libp2p-test-utils": "workspace:*",
 		"@peerbit/program": "workspace:*",
 		"@peerbit/pubsub": "workspace:*",
 		"@peerbit/stream": "workspace:*",
-		"libp2p": "^3.1.0",
+		"it-pushable": "^3.1.4",
+		"libp2p": "^3.1.7",
+		"libsodium-wrappers": "^0.7.15",
+		"peerbit": "workspace:*",
 		"tty-table": "^4.2.1"
 	},
 	"devDependencies": {
-		"@types/libsodium-wrappers": "^0.7.14",
-		"@peerbit/time": "workspace:*"
+		"@peerbit/time": "workspace:*",
+		"@types/libsodium-wrappers": "^0.7.14"
 	},
 	"localMaintainers": [
 		"dao.xyz"
-	]
+	],
+	"bugs": {
+		"url": "https://github.com/dao-xyz/peerbit/issues"
+	},
+	"homepage": "https://github.com/dao-xyz/peerbit#readme"
 }

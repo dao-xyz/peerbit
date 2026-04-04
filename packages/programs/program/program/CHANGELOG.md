@@ -202,6 +202,38 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [6.0.17](https://github.com/dao-xyz/peerbit/compare/program-v6.0.16...program-v6.0.17) (2026-04-03)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/pubsub bumped to 5.1.6
+
+## [6.0.16](https://github.com/dao-xyz/peerbit/compare/program-v6.0.15...program-v6.0.16) (2026-03-30)
+
+
+### Bug Fixes
+
+* **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks bumped to 4.0.11
+    * @peerbit/blocks-interface bumped to 2.0.8
+    * @peerbit/crypto bumped to 3.1.1
+    * @peerbit/indexer-interface bumped to 3.0.3
+    * @peerbit/keychain bumped to 1.2.9
+    * @peerbit/libp2p-test-utils bumped to 3.0.4
+    * @peerbit/logger bumped to 2.0.1
+    * @peerbit/pubsub bumped to 5.1.5
+    * @peerbit/pubsub-interface bumped to 5.1.1
+    * @peerbit/stream-interface bumped to 6.0.7
+
 ## [6.0.15](https://github.com/dao-xyz/peerbit/compare/program-v6.0.14...program-v6.0.15) (2026-03-29)
 
 
