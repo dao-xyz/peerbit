@@ -194,6 +194,23 @@
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
     * @peerbit/stream-interface bumped from ^5.0.1 to ^5.0.2
 
+## [2.0.8](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v2.0.7...blocks-interface-v2.0.8) (2026-03-30)
+
+
+### Bug Fixes
+
+* **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 3.1.1
+    * @peerbit/stream-interface bumped to 6.0.7
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped to 3.0.4
+
 ## [2.0.7](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v2.0.6...blocks-interface-v2.0.7) (2026-03-27)
 
 

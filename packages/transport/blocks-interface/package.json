@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/blocks-interface",
-	"version": "2.0.7",
+	"version": "2.0.8",
 	"description": "Block store streaming",
 	"type": "module",
 	"sideEffects": false,
@@ -60,7 +60,8 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/dao-xyz/peerbit.git"
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/transport/blocks-interface"
 	},
 	"keywords": [
 		"peerbit"
@@ -79,9 +80,9 @@
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",
+		"@ipld/dag-cbor": "^9.2.1",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/stream-interface": "workspace:*",
-		"@ipld/dag-cbor": "^9.2.1",
-		"multiformats": "^13.4.1"
+		"multiformats": "^13.4.2"
 	}
 }

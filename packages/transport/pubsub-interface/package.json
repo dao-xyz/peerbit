@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/pubsub-interface",
-	"version": "5.1.0",
+	"version": "5.1.1",
 	"description": "Block store streaming",
 	"type": "module",
 	"types": "./dist/src/index.d.ts",
@@ -59,7 +59,8 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/dao-xyz/peerbit.git"
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/transport/pubsub-interface"
 	},
 	"keywords": [
 		"peerbit"
@@ -75,9 +76,9 @@
 	],
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",
+		"@libp2p/interface": "^3.1.1",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/stream-interface": "workspace:*",
-		"@libp2p/interface": "^3.1.0",
 		"uint8arraylist": "^2.4.8"
 	}
 }

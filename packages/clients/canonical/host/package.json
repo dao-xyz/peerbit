@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/canonical-host",
-	"version": "1.0.24",
+	"version": "1.0.26",
 	"description": "Peerbit canonical runtime host implementation (worker/server)",
 	"author": "dao.xyz",
 	"license": "MIT",
@@ -64,14 +64,15 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/dao-xyz/peerbit"
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/clients/canonical/host"
 	},
 	"engines": {
 		"node": ">=18"
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",
-		"@libp2p/peer-id": "^6.0.1",
+		"@libp2p/peer-id": "^6.0.5",
 		"@peerbit/canonical-transport": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
 		"peerbit": "workspace:*"
@@ -95,5 +96,9 @@
 		"canonical",
 		"worker",
 		"sharedworker"
-	]
+	],
+	"bugs": {
+		"url": "https://github.com/dao-xyz/peerbit/issues"
+	},
+	"homepage": "https://github.com/dao-xyz/peerbit#readme"
 }

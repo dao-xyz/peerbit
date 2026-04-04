@@ -188,6 +188,34 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [5.1.6](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.1.5...pubsub-v5.1.6) (2026-04-03)
+
+
+### Bug Fixes
+
+* **pubsub:** tolerate closed channels in maybe publish ([3277917](https://github.com/dao-xyz/peerbit/commit/3277917bb10a419c7d04886737c071d07baf7817))
+* **pubsub:** tolerate closed channels in maybe publish ([a195954](https://github.com/dao-xyz/peerbit/commit/a1959545b8cff0377c816500747be566a9879e16))
+
+## [5.1.5](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.1.4...pubsub-v5.1.5) (2026-03-30)
+
+
+### Bug Fixes
+
+* **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 3.1.1
+    * @peerbit/logger bumped to 2.0.1
+    * @peerbit/pubsub-interface bumped to 5.1.1
+    * @peerbit/stream bumped to 5.0.9
+    * @peerbit/stream-interface bumped to 6.0.7
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped to 3.0.4
+
 ## [5.1.4](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.1.3...pubsub-v5.1.4) (2026-03-29)
 
 

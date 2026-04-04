@@ -566,6 +566,40 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [6.0.23](https://github.com/dao-xyz/peerbit/compare/trusted-network-v6.0.22...trusted-network-v6.0.23) (2026-04-03)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 13.0.23
+    * @peerbit/log bumped to 6.0.21
+    * @peerbit/program bumped to 6.0.17
+    * @peerbit/shared-log bumped to 13.0.23
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.21
+
+## [6.0.22](https://github.com/dao-xyz/peerbit/compare/trusted-network-v6.0.21...trusted-network-v6.0.22) (2026-03-30)
+
+
+### Bug Fixes
+
+* **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 3.1.1
+    * @peerbit/document bumped to 13.0.22
+    * @peerbit/log bumped to 6.0.20
+    * @peerbit/program bumped to 6.0.16
+    * @peerbit/shared-log bumped to 13.0.22
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.20
+
 ## [6.0.21](https://github.com/dao-xyz/peerbit/compare/trusted-network-v6.0.20...trusted-network-v6.0.21) (2026-03-29)
 
 

@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/log",
-	"version": "6.0.19",
+	"version": "6.0.21",
 	"description": "Append-only log CRDT",
 	"author": "dao.xyz",
 	"license": "MIT",
@@ -66,28 +66,28 @@
 		"@peerbit/blocks-interface": "workspace:*",
 		"@peerbit/cache": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
-		"@peerbit/indexer-sqlite3": "workspace:*",
 		"@peerbit/indexer-interface": "workspace:*",
 		"@peerbit/indexer-simple": "workspace:*",
+		"@peerbit/indexer-sqlite3": "workspace:*",
 		"@peerbit/keychain": "workspace:*",
+		"@peerbit/logger": "workspace:*",
 		"@peerbit/pubsub-interface": "workspace:*",
 		"@peerbit/stream-interface": "workspace:*",
-		"@peerbit/logger": "workspace:*",
 		"@peerbit/time": "workspace:*",
+		"libp2p": "^3.1.7",
 		"libsodium-wrappers": "0.7.15",
-		"libp2p": "^3.1.0",
-		"pidusage": "^4.0.1",
 		"p-queue": "^8.0.1",
 		"path-browserify": "^1.0.1",
+		"pidusage": "^4.0.1",
 		"pino": "^9.4.0",
-		"uuid": "^10.0.0",
-		"uint8arrays": "^5.1.0"
+		"uint8arrays": "^5.1.0",
+		"uuid": "^10.0.0"
 	},
 	"devDependencies": {
 		"@peerbit/test-utils": "workspace:*",
 		"@types/libsodium-wrappers": "^0.7.14",
-		"@types/pidusage": "^2.0.5",
 		"@types/path-browserify": "^1.0.2",
+		"@types/pidusage": "^2.0.5",
 		"assert": "^2.0.0",
 		"json-stringify-deterministic": "^1.0.7",
 		"tty-table": "^4.2.1"
@@ -116,5 +116,14 @@
 	},
 	"localMaintainers": [
 		"dao.xyz"
-	]
+	],
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git",
+		"directory": "packages/log"
+	},
+	"bugs": {
+		"url": "https://github.com/dao-xyz/peerbit/issues"
+	},
+	"homepage": "https://github.com/dao-xyz/peerbit#readme"
 }

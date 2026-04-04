@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.0.26](https://github.com/dao-xyz/peerbit/compare/canonical-host-v1.0.25...canonical-host-v1.0.26) (2026-04-03)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped to 5.2.6
+  * devDependencies
+    * @peerbit/canonical-client bumped to 1.1.20
+
+## [1.0.25](https://github.com/dao-xyz/peerbit/compare/canonical-host-v1.0.24...canonical-host-v1.0.25) (2026-03-30)
+
+
+### Bug Fixes
+
+* **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 3.1.1
+    * peerbit bumped to 5.2.5
+  * devDependencies
+    * @peerbit/canonical-client bumped to 1.1.19
+
 ## [1.0.24](https://github.com/dao-xyz/peerbit/compare/canonical-host-v1.0.23...canonical-host-v1.0.24) (2026-03-29)
 
 
