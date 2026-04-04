@@ -4510,31 +4510,56 @@ export class DocumentIndex<
 			_candidateKeys?: Map<string, PublicSignKey>,
 		) => false;
 
-		if (keepRemoteWaitOpen) {
-			// was used to account for missed results when a peer joins; omitted in this minimal handler
+			if (keepRemoteWaitOpen) {
+				// was used to account for missed results when a peer joins; omitted in this minimal handler
 
-			updateDeferred = pDefer<void>();
-			const lateJoinFetchesInFlight = new Set<string>();
-
-				fetchLateJoinPeers = async (
-					candidateHashes?: Iterable<string>,
-					candidateKeys?: Map<string, PublicSignKey>,
-				) => {
-					if (totalFetchedCounter === 0) {
-						return false;
+				updateDeferred = pDefer<void>();
+				const lateJoinFetchesInFlight = new Set<string>();
+				const shouldIgnoreLateJoinFetchError = (error: unknown) => {
+					if (
+						this.closed ||
+						ensureController().signal.aborted ||
+						error instanceof ClosedError ||
+						error instanceof AbortError
+					) {
+						return true;
 					}
+					return (
+						error instanceof Error &&
+						error.message.trim().toLowerCase() === "closed"
+					);
+				};
 
-					if (done) {
-						unsetDone();
+					fetchLateJoinPeers = async (
+						candidateHashes?: Iterable<string>,
+						candidateKeys?: Map<string, PublicSignKey>,
+					) => {
+						if (totalFetchedCounter === 0) {
+							return false;
+						}
+						if (this.closed || ensureController().signal.aborted) {
+							return false;
+						}
+
+						if (done) {
+							unsetDone();
+						}
+
+					const selfHash = this.node.identity.publicKey.hashcode();
+					const knownCandidateKeys = candidateKeys
+						? new Map(candidateKeys)
+						: new Map<string, PublicSignKey>();
+					let hashes: string[];
+					try {
+						hashes = candidateHashes
+							? [...candidateHashes]
+							: [...(await this._log.getReplicators()).keys()];
+					} catch (error) {
+						if (shouldIgnoreLateJoinFetchError(error)) {
+							return false;
+						}
+						throw error;
 					}
-
-				const selfHash = this.node.identity.publicKey.hashcode();
-				const knownCandidateKeys = candidateKeys
-					? new Map(candidateKeys)
-					: new Map<string, PublicSignKey>();
-				const hashes = candidateHashes
-					? [...candidateHashes]
-					: [...(await this._log.getReplicators()).keys()];
 				let missing = hashes.filter((hash) => {
 					if (hash === selfHash) return false;
 					if (peerBufferMap.has(hash)) return false;
@@ -4597,16 +4622,23 @@ export class DocumentIndex<
 						return false;
 					}
 
-					const lateJoinFetchPromise = trackFetch(
-						fetchFirst(totalFetchedCounter, {
-							from: unresolved,
-							fetchedFirstForRemote,
-						}),
-					);
-					await lateJoinFetchPromise;
-					for (const hash of unresolved) {
-						if (!peerBufferMap.has(hash)) {
-							fetchedFirstForRemote?.delete(hash);
+						const lateJoinFetchPromise = trackFetch(
+							fetchFirst(totalFetchedCounter, {
+								from: unresolved,
+								fetchedFirstForRemote,
+							}),
+						);
+						try {
+							await lateJoinFetchPromise;
+						} catch (error) {
+							if (shouldIgnoreLateJoinFetchError(error)) {
+								return false;
+							}
+							throw error;
+						}
+						for (const hash of unresolved) {
+							if (!peerBufferMap.has(hash)) {
+								fetchedFirstForRemote?.delete(hash);
 						}
 					}
 
