@@ -3735,7 +3735,24 @@ export class DocumentIndex<
 				}
 			}
 			return setFetchPromise(
-				Promise.all(promises).then(() => {
+				Promise.all(promises).then(async () => {
+					if (keepRemoteWaitOpen && resultsLeft === 0) {
+						const bufferedAfterCollect = peerBuffers().length;
+						const hasObservedResults = visited.size > 0;
+						// When the initial cover drains before satisfying the requested batch,
+						// probe any already-known replicators we have not queried yet instead of
+						// waiting only for a future join/update event.
+						if (
+							hasObservedResults &&
+							bufferedAfterCollect < n &&
+							joinFetchesInFlight === 0
+						) {
+							const recoveredLatePeers = await fetchLateJoinPeers();
+							if (recoveredLatePeers) {
+								return false;
+							}
+						}
+					}
 					return resultsLeft === 0; // 0 results left to fetch and 0 pending results
 				}),
 			);

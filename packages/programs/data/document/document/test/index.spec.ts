@@ -2429,6 +2429,142 @@ describe("index", () => {
 						{ timeout: 120_000, delayInterval: 200 },
 					);
 				});
+
+				it("keep-open search recovers existing replicators outside the initial cover", async function () {
+					this.timeout(180_000);
+					const store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					const store1 = await session.peers[0].open(store.clone(), {
+						args: {
+							replicate: {
+								factor: 0.111,
+							},
+							replicas: {
+								min: 1,
+							},
+							timeUntilRoleMaturity: 0,
+						},
+					});
+
+					const store2 = await session.peers[1].open(store.clone(), {
+						args: {
+							replicate: {
+								factor: 0.1,
+							},
+							replicas: {
+								min: 1,
+							},
+							timeUntilRoleMaturity: 0,
+						},
+					});
+
+					const store3 = await session.peers[2].open(store.clone(), {
+						args: {
+							replicate: {
+								factor: 0.2,
+							},
+							replicas: {
+								min: 1,
+							},
+							timeUntilRoleMaturity: 0,
+						},
+					});
+
+					const stores = [store1, store2, store3];
+					try {
+						const peers = session.peers.map((peer) => peer.identity.publicKey);
+
+						for (let i = 0; i < stores.length; i++) {
+							for (let j = 0; j < peers.length; j++) {
+								if (i === j) {
+									continue;
+								}
+								await stores[i].docs.log.waitForReplicator(peers[j]);
+							}
+						}
+
+						const count = 300;
+						for (let i = 0; i < count; i++) {
+							await store1.docs.put(
+								new Document({
+									id: i.toString(),
+									data: randomBytes(10),
+								}),
+							);
+						}
+
+						let searcher:
+							| { store: (typeof stores)[number]; length: number }
+							| undefined;
+						let forcedRemote:
+							| { store: (typeof stores)[number]; length: number }
+							| undefined;
+						await waitForResolved(
+							async () => {
+								const candidates = stores
+									.map((candidate) => ({
+										store: candidate,
+										length: candidate.docs.log.log.length,
+									}))
+									.sort((a, b) => a.length - b.length);
+								for (const candidateSearcher of candidates) {
+									for (const candidateRemote of candidates) {
+										if (candidateSearcher.store === candidateRemote.store) {
+											continue;
+										}
+										if (
+											candidateSearcher.length > 0 &&
+											candidateRemote.length > 0 &&
+											candidateSearcher.length + candidateRemote.length < count
+										) {
+											searcher = candidateSearcher;
+											forcedRemote = candidateRemote;
+											return;
+										}
+									}
+								}
+								throw new Error("Did not find a partial cover pair");
+							},
+							{ timeout: 60_000, delayInterval: 200 },
+						);
+						if (!searcher || !forcedRemote) {
+							throw new Error("Did not find a partial cover pair");
+						}
+
+						const forcedHash = forcedRemote.store.node.identity.publicKey.hashcode();
+						const originalGetCover = searcher.store.docs.log.getCover.bind(
+							searcher.store.docs.log,
+						);
+						(searcher.store.docs.log.getCover as typeof searcher.store.docs.log.getCover) = (async (
+							properties,
+							options,
+						) => {
+							await originalGetCover(properties as any, options);
+							return [forcedHash];
+						}) as typeof searcher.store.docs.log.getCover;
+
+						try {
+							const collected = await searcher.store.docs.index.search(
+								new SearchRequest({ fetch: count }),
+								{
+									remote: {
+										throwOnMissing: true,
+										timeout: 30_000,
+										wait: { timeout: 30_000, behavior: "keep-open" },
+									},
+								},
+							);
+							expect(collected).to.have.length(count);
+						} finally {
+							(
+								searcher.store.docs.log.getCover as typeof searcher.store.docs.log.getCover
+							) = originalGetCover as typeof searcher.store.docs.log.getCover;
+						}
+					} finally {
+						await Promise.allSettled(stores.map((opened) => opened.close()));
+					}
+				});
 			});
 
 			describe("concurrency", () => {
