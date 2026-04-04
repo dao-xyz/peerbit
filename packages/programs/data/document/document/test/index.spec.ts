@@ -2429,6 +2429,142 @@ describe("index", () => {
 						{ timeout: 120_000, delayInterval: 200 },
 					);
 				});
+
+				it("keep-open search recovers existing replicators outside the initial cover", async function () {
+					this.timeout(180_000);
+					const store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					const store1 = await session.peers[0].open(store.clone(), {
+						args: {
+							replicate: {
+								factor: 0.111,
+							},
+							replicas: {
+								min: 1,
+							},
+							timeUntilRoleMaturity: 0,
+						},
+					});
+
+					const store2 = await session.peers[1].open(store.clone(), {
+						args: {
+							replicate: {
+								factor: 0.1,
+							},
+							replicas: {
+								min: 1,
+							},
+							timeUntilRoleMaturity: 0,
+						},
+					});
+
+					const store3 = await session.peers[2].open(store.clone(), {
+						args: {
+							replicate: {
+								factor: 0.2,
+							},
+							replicas: {
+								min: 1,
+							},
+							timeUntilRoleMaturity: 0,
+						},
+					});
+
+					const stores = [store1, store2, store3];
+					try {
+						const peers = session.peers.map((peer) => peer.identity.publicKey);
+
+						for (let i = 0; i < stores.length; i++) {
+							for (let j = 0; j < peers.length; j++) {
+								if (i === j) {
+									continue;
+								}
+								await stores[i].docs.log.waitForReplicator(peers[j]);
+							}
+						}
+
+						const count = 300;
+						for (let i = 0; i < count; i++) {
+							await store1.docs.put(
+								new Document({
+									id: i.toString(),
+									data: randomBytes(10),
+								}),
+							);
+						}
+
+						let searcher:
+							| { store: (typeof stores)[number]; length: number }
+							| undefined;
+						let forcedRemote:
+							| { store: (typeof stores)[number]; length: number }
+							| undefined;
+						await waitForResolved(
+							async () => {
+								const candidates = stores
+									.map((candidate) => ({
+										store: candidate,
+										length: candidate.docs.log.log.length,
+									}))
+									.sort((a, b) => a.length - b.length);
+								for (const candidateSearcher of candidates) {
+									for (const candidateRemote of candidates) {
+										if (candidateSearcher.store === candidateRemote.store) {
+											continue;
+										}
+										if (
+											candidateSearcher.length > 0 &&
+											candidateRemote.length > 0 &&
+											candidateSearcher.length + candidateRemote.length < count
+										) {
+											searcher = candidateSearcher;
+											forcedRemote = candidateRemote;
+											return;
+										}
+									}
+								}
+								throw new Error("Did not find a partial cover pair");
+							},
+							{ timeout: 60_000, delayInterval: 200 },
+						);
+						if (!searcher || !forcedRemote) {
+							throw new Error("Did not find a partial cover pair");
+						}
+
+						const forcedHash = forcedRemote.store.node.identity.publicKey.hashcode();
+						const originalGetCover = searcher.store.docs.log.getCover.bind(
+							searcher.store.docs.log,
+						);
+						(searcher.store.docs.log.getCover as typeof searcher.store.docs.log.getCover) = (async (
+							properties,
+							options,
+						) => {
+							await originalGetCover(properties as any, options);
+							return [forcedHash];
+						}) as typeof searcher.store.docs.log.getCover;
+
+						try {
+							const collected = await searcher.store.docs.index.search(
+								new SearchRequest({ fetch: count }),
+								{
+									remote: {
+										throwOnMissing: true,
+										timeout: 30_000,
+										wait: { timeout: 30_000, behavior: "keep-open" },
+									},
+								},
+							);
+							expect(collected).to.have.length(count);
+						} finally {
+							(
+								searcher.store.docs.log.getCover as typeof searcher.store.docs.log.getCover
+							) = originalGetCover as typeof searcher.store.docs.log.getCover;
+						}
+					} finally {
+						await Promise.allSettled(stores.map((opened) => opened.close()));
+					}
+				});
 			});
 
 			describe("concurrency", () => {
@@ -3678,6 +3814,395 @@ describe("index", () => {
 							expect(fourth.map((x) => x.id)).to.deep.equal(["1"]);
 						} finally {
 							observer.docs.index._query.request = originalRequest;
+							await iterator.close();
+							await observer.close();
+							await writer1.close();
+							await writer2.close();
+						}
+					});
+
+					it("pending ignores closed replicator refresh after iterator progress", async function () {
+						this.timeout(120_000);
+
+						session = await TestSession.disconnected(3);
+
+						const store = new TestStore({
+							docs: new Documents<Document>(),
+						});
+
+						const observer = await session.peers[0].open(store, {
+							args: {
+								replicate: false,
+							},
+						});
+
+						const writer2 = await session.peers[2].open(store.clone(), {
+							args: {
+								replicate: {
+									factor: 1,
+								},
+							},
+						});
+
+						await writer2.docs.put(new Document({ id: "2" }));
+
+						await session.connect([[session.peers[0], session.peers[2]]]);
+						await observer.docs.index.waitFor(writer2.node.identity.publicKey);
+
+						const iterator = observer.docs.index.iterate(
+							{ sort: new Sort({ key: "id", direction: SortDirection.DESC }) },
+							{
+								remote: {
+									wait: {
+										timeout: 1e4,
+									},
+									reach: {
+										eager: true,
+									},
+								},
+							},
+						);
+
+						const first = await iterator.next(1);
+						expect(first.map((x) => x.id)).to.deep.equal(["2"]);
+
+						const originalGetReplicators =
+							observer.docs.log.getReplicators.bind(observer.docs.log);
+						(
+							observer.docs.log.getReplicators as typeof observer.docs.log.getReplicators
+						) = (async () => {
+							throw new Error("closed");
+						}) as typeof observer.docs.log.getReplicators;
+
+						try {
+							expect(await iterator.pending()).to.equal(0);
+							expect(await iterator.next(1)).to.deep.equal([]);
+						} finally {
+							(
+								observer.docs.log.getReplicators as typeof observer.docs.log.getReplicators
+							) = originalGetReplicators as typeof observer.docs.log.getReplicators;
+							await iterator.close();
+							await observer.close();
+							await writer2.close();
+						}
+					});
+
+					it("pending tolerates unexpected replicator refresh errors after iterator progress", async function () {
+						this.timeout(120_000);
+
+						session = await TestSession.disconnected(3);
+
+						const store = new TestStore({
+							docs: new Documents<Document>(),
+						});
+
+						const observer = await session.peers[0].open(store, {
+							args: {
+								replicate: false,
+							},
+						});
+
+						const writer2 = await session.peers[2].open(store.clone(), {
+							args: {
+								replicate: {
+									factor: 1,
+								},
+							},
+						});
+
+						await writer2.docs.put(new Document({ id: "2" }));
+
+						await session.connect([[session.peers[0], session.peers[2]]]);
+						await observer.docs.index.waitFor(writer2.node.identity.publicKey);
+
+						const iterator = observer.docs.index.iterate(
+							{ sort: new Sort({ key: "id", direction: SortDirection.DESC }) },
+							{
+								remote: {
+									wait: {
+										timeout: 1e4,
+									},
+									reach: {
+										eager: true,
+									},
+								},
+							},
+						);
+
+						const first = await iterator.next(1);
+						expect(first.map((x) => x.id)).to.deep.equal(["2"]);
+
+						const originalGetReplicators =
+							observer.docs.log.getReplicators.bind(observer.docs.log);
+						(
+							observer.docs.log.getReplicators as typeof observer.docs.log.getReplicators
+						) = (async () => {
+							throw new Error("unexpected refresh failure");
+						}) as typeof observer.docs.log.getReplicators;
+
+						try {
+							expect(await iterator.pending()).to.equal(0);
+						} finally {
+							(
+								observer.docs.log.getReplicators as typeof observer.docs.log.getReplicators
+							) = originalGetReplicators as typeof observer.docs.log.getReplicators;
+							await iterator.close();
+							await observer.close();
+							await writer2.close();
+						}
+					});
+
+					it("keep-open search recovers connected peers missing from replicator refresh", async function () {
+						this.timeout(120_000);
+
+						session = await TestSession.disconnected(3);
+
+						const store = new TestStore({
+							docs: new Documents<Document>(),
+						});
+
+						const observer = await session.peers[0].open(store, {
+							args: {
+								replicate: false,
+							},
+						});
+
+						const writer1 = await session.peers[1].open(store.clone(), {
+							args: {
+								replicate: {
+									factor: 1,
+								},
+							},
+						});
+
+						const writer2 = await session.peers[2].open(store.clone(), {
+							args: {
+								replicate: {
+									factor: 1,
+								},
+							},
+						});
+
+						await writer1.docs.put(new Document({ id: "1" }));
+						await writer1.docs.put(new Document({ id: "4" }));
+						await writer2.docs.put(new Document({ id: "2" }));
+						await writer2.docs.put(new Document({ id: "3" }));
+
+						await session.connect([[session.peers[0], session.peers[2]]]);
+						await observer.docs.index.waitFor(writer2.node.identity.publicKey);
+
+						const writer1Hash = writer1.node.identity.publicKey.hashcode();
+						const originalGetReplicators =
+							observer.docs.log.getReplicators.bind(observer.docs.log);
+						(
+							observer.docs.log.getReplicators as typeof observer.docs.log.getReplicators
+						) = (async () => {
+							const replicators = await originalGetReplicators();
+							replicators.delete(writer1Hash);
+							return replicators;
+						}) as typeof observer.docs.log.getReplicators;
+
+						const lateResults: number[] = [];
+						const iterator = observer.docs.index.iterate(
+							{ sort: new Sort({ key: "id", direction: SortDirection.DESC }) },
+							{
+								remote: {
+									wait: {
+										timeout: 1e4,
+									},
+									reach: {
+										eager: true,
+									},
+								},
+								outOfOrder: {
+									handle: ({ amount }: { amount: number }) => {
+										lateResults.push(amount);
+									},
+								},
+							},
+						);
+
+						const first = await iterator.next(1);
+						const second = await iterator.next(1);
+						expect(first.map((x) => x.id)).to.deep.equal(["3"]);
+						expect(second.map((x) => x.id)).to.deep.equal(["2"]);
+
+						try {
+							await session.connect([[session.peers[0], session.peers[1]]]);
+							await waitForResolved(
+								async () => expect(await iterator.pending()).to.equal(2),
+								{ timeout: 60_000, delayInterval: 100 },
+							);
+							const third = await iterator.next(1);
+							const fourth = await iterator.next(1);
+							expect(third.map((x) => x.id)).to.deep.equal(["4"]);
+							expect(fourth.map((x) => x.id)).to.deep.equal(["1"]);
+							expect(lateResults).to.deep.equal([1]);
+						} finally {
+							(
+								observer.docs.log.getReplicators as typeof observer.docs.log.getReplicators
+							) = originalGetReplicators as typeof observer.docs.log.getReplicators;
+							await iterator.close();
+							await observer.close();
+							await writer1.close();
+							await writer2.close();
+						}
+					});
+
+					it("pending ignores closed late-join fetch requests after progress", async function () {
+						this.timeout(120_000);
+
+						session = await TestSession.disconnected(3);
+
+						const store = new TestStore({
+							docs: new Documents<Document>(),
+						});
+
+						const observer = await session.peers[0].open(store, {
+							args: {
+								replicate: false,
+							},
+						});
+
+						const writer1 = await session.peers[1].open(store.clone(), {
+							args: {
+								replicate: {
+									factor: 1,
+								},
+							},
+						});
+
+						const writer2 = await session.peers[2].open(store.clone(), {
+							args: {
+								replicate: {
+									factor: 1,
+								},
+							},
+						});
+
+						await writer1.docs.put(new Document({ id: "1" }));
+						await writer2.docs.put(new Document({ id: "2" }));
+
+						await session.connect([[session.peers[0], session.peers[2]]]);
+						await observer.docs.index.waitFor(writer2.node.identity.publicKey);
+
+						const iterator = observer.docs.index.iterate(
+							{ sort: new Sort({ key: "id", direction: SortDirection.DESC }) },
+							{
+								remote: {
+									wait: {
+										timeout: 1e4,
+									},
+									reach: {
+										eager: true,
+									},
+								},
+							},
+						);
+
+						const first = await iterator.next(1);
+						expect(first.map((x) => x.id)).to.deep.equal(["2"]);
+
+						const writer1Hash = writer1.node.identity.publicKey.hashcode();
+						const originalQueryCommence = observer.docs.index["queryCommence"].bind(
+							observer.docs.index,
+						);
+						observer.docs.index["queryCommence"] = async (request, options) => {
+							const remoteFrom =
+								typeof options?.remote === "object" ? options.remote.from : undefined;
+							if (remoteFrom?.includes(writer1Hash)) {
+								throw new ClosedError();
+							}
+							return originalQueryCommence(request, options);
+						};
+
+						try {
+							await session.connect([[session.peers[0], session.peers[1]]]);
+							expect(await iterator.pending()).to.equal(0);
+							expect(await iterator.next(1)).to.deep.equal([]);
+						} finally {
+							observer.docs.index["queryCommence"] =
+								originalQueryCommence as typeof observer.docs.index["queryCommence"];
+							await iterator.close();
+							await observer.close();
+							await writer1.close();
+							await writer2.close();
+						}
+					});
+
+					it("pending tolerates unexpected late-join fetch errors after progress", async function () {
+						this.timeout(120_000);
+
+						session = await TestSession.disconnected(3);
+
+						const store = new TestStore({
+							docs: new Documents<Document>(),
+						});
+
+						const observer = await session.peers[0].open(store, {
+							args: {
+								replicate: false,
+							},
+						});
+
+						const writer1 = await session.peers[1].open(store.clone(), {
+							args: {
+								replicate: {
+									factor: 1,
+								},
+							},
+						});
+
+						const writer2 = await session.peers[2].open(store.clone(), {
+							args: {
+								replicate: {
+									factor: 1,
+								},
+							},
+						});
+
+						await writer1.docs.put(new Document({ id: "1" }));
+						await writer2.docs.put(new Document({ id: "2" }));
+
+						await session.connect([[session.peers[0], session.peers[2]]]);
+						await observer.docs.index.waitFor(writer2.node.identity.publicKey);
+
+						const iterator = observer.docs.index.iterate(
+							{ sort: new Sort({ key: "id", direction: SortDirection.DESC }) },
+							{
+								remote: {
+									wait: {
+										timeout: 1e4,
+									},
+									reach: {
+										eager: true,
+									},
+								},
+							},
+						);
+
+						const first = await iterator.next(1);
+						expect(first.map((x) => x.id)).to.deep.equal(["2"]);
+
+						const writer1Hash = writer1.node.identity.publicKey.hashcode();
+						const originalQueryCommence = observer.docs.index["queryCommence"].bind(
+							observer.docs.index,
+						);
+						observer.docs.index["queryCommence"] = async (request, options) => {
+							const remoteFrom =
+								typeof options?.remote === "object" ? options.remote.from : undefined;
+							if (remoteFrom?.includes(writer1Hash)) {
+								throw new Error("unexpected late-join failure");
+							}
+							return originalQueryCommence(request, options);
+						};
+
+						try {
+							await session.connect([[session.peers[0], session.peers[1]]]);
+							expect(await iterator.pending()).to.equal(0);
+						} finally {
+							observer.docs.index["queryCommence"] =
+								originalQueryCommence as typeof observer.docs.index["queryCommence"];
 							await iterator.close();
 							await observer.close();
 							await writer1.close();
