@@ -141,6 +141,33 @@ testSetups.forEach((setup) => {
 			const sampleSize = 200; // must be < 255
 			const largeEntryCount = 1000;
 
+			const countActiveCheckedPruneRetries = (
+				...dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[]
+			) => {
+				return dbs.reduce((total, db) => {
+					const retries = ((db.log as any)._checkedPruneRetries ??
+						new Map()) as Map<string, { timer?: NodeJS.Timeout }>;
+					const active = [...retries.values()].filter((state) => state?.timer)
+						.length;
+					return total + active;
+				}, 0);
+			};
+
+			const waitForPruneQuiesced = async (
+				...dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[]
+			) => {
+				await Promise.all(
+					dbs.map((db) => db.log.waitForPruned({ timeout: 120_000 })),
+				);
+				await waitForResolved(
+					() => expect(countActiveCheckedPruneRetries(...dbs)).to.equal(0),
+					{
+						timeout: 120_000,
+						delayInterval: 250,
+					},
+				);
+			};
+
 			it("will not have any prunable after balance", async () => {
 				const store = new EventStore<string, any>();
 
@@ -182,10 +209,7 @@ testSetups.forEach((setup) => {
 					waitForConverged(() => db2.log.log.length),
 				]);
 
-				await Promise.all([
-					db1.log.waitForPruned({ timeout: 60_000 }),
-					db2.log.waitForPruned({ timeout: 60_000 }),
-				]);
+				await waitForPruneQuiesced(db1, db2);
 
 				await waitForResolved(
 					async () => {
