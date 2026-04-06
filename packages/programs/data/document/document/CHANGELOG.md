@@ -456,6 +456,14 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [13.0.24](https://github.com/dao-xyz/peerbit/compare/document-v13.0.23...document-v13.0.24) (2026-04-06)
+
+
+### Bug Fixes
+
+* **document:** ignore close during late join recovery ([6f3579c](https://github.com/dao-xyz/peerbit/commit/6f3579c075068988e2d1a57dc59111fdefbf8a91))
+* **document:** recover missing peers during keep-open search ([29cc753](https://github.com/dao-xyz/peerbit/commit/29cc7536976f94568abd5cec999e723bb9364a31))
+
 ## [13.0.23](https://github.com/dao-xyz/peerbit/compare/document-v13.0.22...document-v13.0.23) (2026-04-03)
 
 
