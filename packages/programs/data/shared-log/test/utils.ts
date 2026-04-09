@@ -174,16 +174,18 @@ export const checkBounded = async (
 		); // TODO make this a parameter
 	};
 
-	for (const db of dbs) {
-		try {
-			await waitForResolved(() => checkConverged(db), {
-				timeout: 25000,
-				delayInterval: 2500,
-			});
-		} catch (error) {
-			throw new Error("Log length did not converge");
-		}
-	}
+	await Promise.all(
+		dbs.map(async (db) => {
+			try {
+				await waitForResolved(() => checkConverged(db), {
+					timeout: 25000,
+					delayInterval: 2500,
+				});
+			} catch (error) {
+				throw new Error("Log length did not converge");
+			}
+		}),
+	);
 
 	await checkReplicas(
 		dbs,
@@ -191,37 +193,43 @@ export const checkBounded = async (
 		entryCount,
 	);
 
-	for (const db of dbs) {
-		try {
-			await waitForResolved(
-				() => expect(db.log.log.length).greaterThanOrEqual(entryCount * lower),
-				boundWaitOpts,
-			);
-		} catch (error) {
-			await dbgLogs(dbs.map((x) => x.log));
-			throw new Error(
-				"Log did not reach lower bound length of " +
-					entryCount * lower +
-					" got " +
-					db.log.log.length,
-			);
-		}
+	await Promise.all(
+		dbs.map(async (db) => {
+			try {
+				await waitForResolved(
+					() => expect(db.log.log.length).greaterThanOrEqual(entryCount * lower),
+					boundWaitOpts,
+				);
+			} catch (error) {
+				await dbgLogs(dbs.map((x) => x.log));
+				throw new Error(
+					"Log did not reach lower bound length of " +
+						entryCount * lower +
+						" got " +
+						db.log.log.length,
+				);
+			}
+		}),
+	);
 
-		try {
-			await waitForResolved(
-				() => expect(db.log.log.length).lessThanOrEqual(entryCount * higher),
-				boundWaitOpts,
-			);
-		} catch (error) {
-			await dbgLogs(dbs.map((x) => x.log));
-			throw new Error(
-				"Log did not conform to upper bound length of " +
-					entryCount * higher +
-					" got " +
-					db.log.log.length,
-			);
-		}
-	}
+	await Promise.all(
+		dbs.map(async (db) => {
+			try {
+				await waitForResolved(
+					() => expect(db.log.log.length).lessThanOrEqual(entryCount * higher),
+					boundWaitOpts,
+				);
+			} catch (error) {
+				await dbgLogs(dbs.map((x) => x.log));
+				throw new Error(
+					"Log did not conform to upper bound length of " +
+						entryCount * higher +
+						" got " +
+						db.log.log.length,
+				);
+			}
+		}),
+	);
 };
 
 export const checkReplicas = async (
