@@ -6188,8 +6188,14 @@ export class SharedLog<
 					}
 				}
 			}
+		const hasAdaptiveStorageLimit =
+			this._isAdaptiveReplicating &&
+			this.replicationController?.maxMemoryLimit != null;
 		const useJoinWarmupFastPath =
-			!forceFreshDelivery && warmupPeers.size > 0 && !hasSelfWarmupChange;
+			!forceFreshDelivery &&
+			warmupPeers.size > 0 &&
+			!hasSelfWarmupChange &&
+			!hasAdaptiveStorageLimit;
 		const immediateRebalanceChanges = useJoinWarmupFastPath
 			? changes.filter(
 					(change) =>
@@ -6383,7 +6389,7 @@ export class SharedLog<
 				if (forceFreshDelivery) {
 					// Removed/shrunk ranges still need the authoritative background pass.
 					this.scheduleRepairSweep({ forceFreshDelivery, addedPeers });
-				} else if (addedPeers.size > 0) {
+				} else if (useJoinWarmupFastPath) {
 					// Pure join warmup uses the cheap immediate maybe-missing dispatch above,
 					// then defers the authoritative sweep so it does not compete with the
 					// write burst itself.
@@ -6400,6 +6406,11 @@ export class SharedLog<
 					}, 250);
 					timer.unref?.();
 					this._repairRetryTimers.add(timer);
+				} else if (addedPeers.size > 0) {
+					this.scheduleRepairSweep({
+						forceFreshDelivery: false,
+						addedPeers,
+					});
 				}
 
 			for (const target of [...uncheckedDeliver.keys()]) {
