@@ -1504,33 +1504,40 @@ testSetups.forEach((setup) => {
 								await db2.add(data, { meta: { next: [] } });
 							}
 
-								await waitForResolved(
-									async () =>
-										expect(
-											Math.abs(memoryLimit - (await db1.log.getMemoryUsage())),
-										).lessThan((memoryLimit / 100) * 12),
+							const waitForMemoryUsageToSettle = async (
+								db: EventStore<string, ReplicationDomainHash<any>>,
+							) => {
+								await waitForConverged(
+									async () => (await db.log.getMemoryUsage()) / 1e3,
 									{
-										timeout: 20 * 1000,
+										timeout: 40 * 1000,
+										tests: 3,
+										interval: 1000,
+										delta: 2,
 									},
-								); // allow a bit more slack under suite load
+								);
+							};
 
-								await waitForResolved(async () =>
-									expect(
-										Math.abs(memoryLimit * 2 - (await db2.log.getMemoryUsage())),
-									).lessThan(((memoryLimit * 2) / 100) * 12),
-								); // allow a bit more slack under suite load
+							await Promise.all([
+								waitForMemoryUsageToSettle(db1),
+								waitForMemoryUsageToSettle(db2),
+							]);
 
-								await waitForResolved(async () =>
+							await waitForResolved(
+								async () =>
 									expect(
 										Math.abs(memoryLimit - (await db1.log.getMemoryUsage())),
 									).lessThan((memoryLimit / 100) * 12),
-								); // allow a bit more slack under suite load
+								{
+									timeout: 20 * 1000,
+								},
+							); // allow a bit more slack under suite load
 
-								await waitForResolved(async () =>
-									expect(
-										Math.abs(memoryLimit * 2 - (await db2.log.getMemoryUsage())),
-									).lessThan(((memoryLimit * 2) / 100) * 12),
-								); // allow a bit more slack under suite load
+							await waitForResolved(async () =>
+								expect(
+									Math.abs(memoryLimit * 2 - (await db2.log.getMemoryUsage())),
+								).lessThan(((memoryLimit * 2) / 100) * 12),
+							); // allow a bit more slack under suite load
 							});
 
 						it("greatly limited", async () => {
