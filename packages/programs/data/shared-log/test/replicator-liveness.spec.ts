@@ -19,7 +19,7 @@ type LivenessTestHooks = {
 const getLivenessTestHooks = (store: LivenessTestStore): LivenessTestHooks =>
 	store.log as unknown as LivenessTestHooks;
 
-describe("replicator liveness", () => {
+describe("waitForReplicator liveness", () => {
 	let session: TestSession;
 
 	afterEach(async () => {
