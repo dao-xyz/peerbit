@@ -1,14 +1,70 @@
 import { TestSession } from "@peerbit/test-utils";
 import { TimeoutError, delay } from "@peerbit/time";
 import { expect } from "chai";
-import { RequestReplicationInfoMessage } from "../src/replication.js";
+import sinon from "sinon";
+import {
+	AbsoluteReplicas,
+	encodeReplicas,
+	RequestReplicationInfoMessage,
+} from "../src/replication.js";
+import { checkBounded } from "./utils.js";
 import { EventStore } from "./utils/stores/index.js";
 
 describe("waitForReplicator", () => {
 	let session: TestSession;
 	let db: EventStore<string, any>;
+	let clock: sinon.SinonFakeTimers | undefined;
+
+	const createFakeBoundedDb = (options: {
+		id: string;
+		length: number | (() => number);
+		hash?: string;
+	}) => {
+		const entry = {
+			hash: options.hash ?? "entry-1",
+			meta: { data: encodeReplicas(new AbsoluteReplicas(1)), gid: "gid-1" },
+		};
+
+		const currentLength = () =>
+			typeof options.length === "function" ? options.length() : options.length;
+
+		return {
+			log: {
+				replicas: {
+					min: new AbsoluteReplicas(1),
+					max: new AbsoluteReplicas(1),
+				},
+				node: {
+					identity: {
+						publicKey: {
+							hashcode: () => options.id,
+						},
+					},
+				},
+				syncronizer: {
+					syncInFlight: new Set<string>(),
+				},
+				_gidPeersHistory: new Map(),
+				getAllReplicationSegments: async () => [],
+				getPrunable: async () => [],
+				createCoordinates: async () => [],
+				log: {
+					get length() {
+						return currentLength();
+					},
+					toArray: async () => [entry],
+					blocks: {
+						has: async () => true,
+					},
+					has: async () => true,
+				},
+			},
+		};
+	};
 
 	afterEach(async () => {
+		clock?.restore();
+		clock = undefined;
 		if (db && db.closed === false) {
 			await db.drop();
 		}
@@ -83,6 +139,52 @@ describe("waitForReplicator", () => {
 		} finally {
 			(db.log as any).findLeaders = originalFindLeaders;
 		}
+	});
+
+	it("covers checkBounded success with parallel waits", async () => {
+		clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
+		const db1 = createFakeBoundedDb({ id: "db-1", length: 1, hash: "entry-1" });
+		const db2 = createFakeBoundedDb({ id: "db-2", length: 1, hash: "entry-1" });
+
+		const promise = checkBounded(1, 1, 1, db1 as any, db2 as any);
+		await clock.tickAsync(1_000);
+		await promise;
+	});
+
+	it("covers checkBounded convergence failure", async () => {
+		clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
+		const db = createFakeBoundedDb({
+			id: "db-converge",
+			length: () => {
+				throw new Error("forced-length-read-error");
+			},
+		});
+
+		const promise = checkBounded(1, 1, 1, db as any);
+		await clock.tickAsync(120_000);
+		await expect(promise).to.be.rejectedWith("Log length did not converge");
+	});
+
+	it("covers checkBounded lower-bound failure reporting", async () => {
+		clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
+		const db = createFakeBoundedDb({ id: "db-lower", length: 0 });
+
+		const promise = checkBounded(1, 1, 1, db as any);
+		await clock.tickAsync(120_000);
+		await expect(promise).to.be.rejectedWith(
+			"Log did not reach lower bound length of 1 got 0",
+		);
+	});
+
+	it("covers checkBounded upper-bound failure reporting", async () => {
+		clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
+		const db = createFakeBoundedDb({ id: "db-upper", length: 2 });
+
+		const promise = checkBounded(1, 0, 1, db as any);
+		await clock.tickAsync(120_000);
+		await expect(promise).to.be.rejectedWith(
+			"Log did not conform to upper bound length of 1 got 2",
+		);
 	});
 
 });
