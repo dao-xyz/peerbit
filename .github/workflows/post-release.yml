@@ -55,27 +55,38 @@ jobs:
     steps:
       - name: Checkout peerbit
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect released server version change
+        id: server
+        run: |
+          version=$(node -p "JSON.parse(require('node:fs').readFileSync('packages/clients/peerbit-server/node/package.json','utf8')).version")
+          previous=$(git show HEAD^:packages/clients/peerbit-server/node/package.json 2>/dev/null | node -e "let data=''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (chunk) => data += chunk); process.stdin.on('end', () => { if (!data.trim()) process.exit(1); process.stdout.write(JSON.parse(data).version); });" || true)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
+          if [ -n "$previous" ] && [ "$previous" = "$version" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Server version unchanged at $version; skipping bootstrap rollout PR."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Detected server release change: ${previous:-<none>} -> $version"
+          fi
 
       - name: Resolve bootstrap PR auth
+        if: ${{ steps.server.outputs.changed == 'true' }}
         id: auth
         env:
           BOOTSTRAP_PR_TOKEN: ${{ secrets.PEERBIT_BOOTSTRAP_PR_TOKEN }}
         run: |
           if [ -z "$BOOTSTRAP_PR_TOKEN" ]; then
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "PEERBIT_BOOTSTRAP_PR_TOKEN is required when @peerbit/server changes" >&2
+            exit 1
           fi
           echo "enabled=true" >> "$GITHUB_OUTPUT"
 
-      - name: Read released server version
-        if: ${{ steps.auth.outputs.enabled == 'true' }}
-        id: server
-        run: |
-          version=$(node -p "JSON.parse(require('node:fs').readFileSync('packages/clients/peerbit-server/node/package.json','utf8')).version")
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
       - name: Checkout peerbit-bootstrap
-        if: ${{ steps.auth.outputs.enabled == 'true' }}
+        if: ${{ steps.server.outputs.changed == 'true' && steps.auth.outputs.enabled == 'true' }}
         uses: actions/checkout@v4
         with:
           repository: dao-xyz/peerbit-bootstrap
@@ -83,12 +94,12 @@ jobs:
           path: peerbit-bootstrap
 
       - name: Sync rollout target
-        if: ${{ steps.auth.outputs.enabled == 'true' }}
+        if: ${{ steps.server.outputs.changed == 'true' && steps.auth.outputs.enabled == 'true' }}
         run: |
           node tools/sync-bootstrap-rollout.mjs peerbit-bootstrap "${{ steps.server.outputs.version }}"
 
       - name: Create bootstrap rollout pull request
-        if: ${{ steps.auth.outputs.enabled == 'true' }}
+        if: ${{ steps.server.outputs.changed == 'true' && steps.auth.outputs.enabled == 'true' }}
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.PEERBIT_BOOTSTRAP_PR_TOKEN }}
