@@ -1231,34 +1231,55 @@ testSetups.forEach((setup) => {
 
 							await delay(db1.log.timeUntilRoleMaturity + 1000);
 
-							await waitForConverged(
-								async () => {
-									const diff = Math.abs(
-										(await db2.log.calculateMyTotalParticipation()) -
-											(await db1.log.calculateMyTotalParticipation()),
-									);
+							const waitForMemoryUsageToSettle = async (
+								db: EventStore<string, ReplicationDomainHash<any>>,
+							) => {
+								await waitForConverged(
+									async () => (await db.log.getMemoryUsage()) / 1e3,
+									{
+										timeout: 40 * 1000,
+										tests: 3,
+										interval: 1000,
+										delta: 2,
+									},
+								);
+							};
 
-									// Match the same precision used by "inserting half limited".
-									// Under full-suite load, participation can oscillate at ~1% granularity.
-									return Math.round(diff * 50);
-								},
-								{
-									// Rebalancing under memory limits can take longer under full-suite load
-									// (GC + lots of timers). Allow more time to stabilize.
-									timeout: 120 * 1000,
-									tests: 3,
-									interval: 1000,
-									delta: 1,
-								},
-							);
+							try {
+								await waitForConverged(
+									async () => {
+										const diff = Math.abs(
+											(await db2.log.calculateMyTotalParticipation()) -
+												(await db1.log.calculateMyTotalParticipation()),
+										);
 
-							await waitForResolved(
-								async () =>
-									expect(
-										Math.abs(memoryLimit - (await db2.log.getMemoryUsage())),
-									).lessThan((memoryLimit / 100) * 10), // 10% error at most
-								{ timeout: 20 * 1000, delayInterval: 1000 },
-							); // 10% error at most
+										// Match the same precision used by "inserting half limited".
+										// Under full-suite load, participation can oscillate at ~1% granularity.
+										return Math.round(diff * 50);
+									},
+									{
+										// Rebalancing under memory limits can take longer under full-suite load
+										// (GC + lots of timers). Allow more time to stabilize.
+										timeout: 120 * 1000,
+										tests: 3,
+										interval: 1000,
+										delta: 1,
+									},
+								);
+
+								await waitForMemoryUsageToSettle(db2);
+
+								await waitForResolved(
+									async () =>
+										expect(
+											Math.abs(memoryLimit - (await db2.log.getMemoryUsage())),
+										).lessThan((memoryLimit / 100) * 12),
+									{ timeout: 20 * 1000, delayInterval: 1000 },
+								); // allow a bit more slack after settling under full-suite load
+							} catch (error) {
+								await dbgLogs([db1.log, db2.log]);
+								throw error;
+							}
 						});
 
 						it("underflow limited", async () => {
