@@ -495,6 +495,7 @@ const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE = 0.01;
 const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_CPU_LIMIT = 0.005;
 const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_MEMORY_LIMIT = 0.001;
 const RECALCULATE_PARTICIPATION_RELATIVE_DENOMINATOR_FLOOR = 1e-3;
+const TOPIC_SUBSCRIBERS_CACHE_TTL_MS = 250;
 const ADAPTIVE_REBALANCE_IDLE_INTERVAL_MULTIPLIER = 5;
 const ADAPTIVE_REBALANCE_MIN_IDLE_AFTER_LOCAL_APPEND_MS = 10_000;
 
@@ -752,6 +753,10 @@ export class SharedLog<
 	private _repairSweepRunning!: boolean;
 	private _repairSweepForceFreshPending!: boolean;
 	private _repairSweepAddedPeersPending!: Set<string>;
+	private _topicSubscribersCache!: Map<
+		string,
+		{ expiresAt: number; keys: PublicSignKey[] }
+	>;
 
 	// regular distribution checks
 	private distributeQueue?: PQueue;
@@ -1364,14 +1369,26 @@ export class SharedLog<
 	private async _getTopicSubscribers(
 		topic: string,
 	): Promise<PublicSignKey[] | undefined> {
+		const cached = this._topicSubscribersCache.get(topic);
+		if (cached && cached.expiresAt > Date.now()) {
+			return cached.keys.slice();
+		}
+
 		const maxPeers = 64;
+		const cache = (keys: PublicSignKey[]) => {
+			this._topicSubscribersCache.set(topic, {
+				expiresAt: Date.now() + TOPIC_SUBSCRIBERS_CACHE_TTL_MS,
+				keys,
+			});
+			return keys.slice();
+		};
 
 		// Prefer the bounded peer set we already know from the fanout overlay.
 		if (this._fanoutChannel && (topic === this.topic || topic === this.rpc.topic)) {
 			const hashes = this._fanoutChannel
 				.getPeerHashes({ includeSelf: false })
 				.slice(0, maxPeers);
-			if (hashes.length === 0) return [];
+			if (hashes.length === 0) return cache([]);
 
 			const keys = await Promise.all(
 				hashes.map((hash) => this._resolvePublicKeyFromHash(hash)),
@@ -1387,7 +1404,7 @@ export class SharedLog<
 				seen.add(hash);
 				uniqueKeys.push(key);
 			}
-			return uniqueKeys;
+			return cache(uniqueKeys);
 		}
 
 		const selfHash = this.node.identity.publicKey.hashcode();
@@ -1444,7 +1461,7 @@ export class SharedLog<
 			}
 		}
 
-		if (hashes.length === 0) return [];
+		if (hashes.length === 0) return cache([]);
 
 		const uniqueHashes: string[] = [];
 		const seen = new Set<string>();
@@ -1465,7 +1482,14 @@ export class SharedLog<
 			if (hash === selfHash) continue;
 			uniqueKeys.push(key);
 		}
-		return uniqueKeys;
+		return cache(uniqueKeys);
+	}
+
+	private invalidateTopicSubscribersCache(...topics: (string | undefined)[]) {
+		for (const topic of topics) {
+			if (!topic) continue;
+			this._topicSubscribersCache.delete(topic);
+		}
 	}
 
 	// @deprecated
@@ -2934,6 +2958,7 @@ export class SharedLog<
 		this._repairSweepRunning = false;
 		this._repairSweepForceFreshPending = false;
 		this._repairSweepAddedPeersPending = new Set();
+		this._topicSubscribersCache = new Map();
 		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
 		this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
 
@@ -3958,39 +3983,40 @@ export class SharedLog<
 		this.coordinateToHash.clear();
 		this.recentlyRebalanced.clear();
 		this.uniqueReplicators.clear();
-			this._closeController.abort();
+		this._topicSubscribersCache.clear();
+		this._closeController.abort();
 
-			clearInterval(this.interval);
-			this.stopReplicatorLivenessSweep();
+		clearInterval(this.interval);
+		this.stopReplicatorLivenessSweep();
 
-			this.node.services.pubsub.removeEventListener(
-				"subscribe",
-				this._onSubscriptionFn,
+		this.node.services.pubsub.removeEventListener(
+			"subscribe",
+			this._onSubscriptionFn,
 		);
 
 		this.node.services.pubsub.removeEventListener(
 			"unsubscribe",
 			this._onUnsubscriptionFn,
 		);
-			for (const timer of this._repairRetryTimers) {
-				clearTimeout(timer);
-			}
-			this._repairRetryTimers.clear();
-			this._recentRepairDispatch.clear();
-			this._repairSweepRunning = false;
-			this._repairSweepForceFreshPending = false;
-			this._repairSweepAddedPeersPending.clear();
+		for (const timer of this._repairRetryTimers) {
+			clearTimeout(timer);
+		}
+		this._repairRetryTimers.clear();
+		this._recentRepairDispatch.clear();
+		this._repairSweepRunning = false;
+		this._repairSweepForceFreshPending = false;
+		this._repairSweepAddedPeersPending.clear();
 
 		for (const [_k, v] of this._pendingDeletes) {
 			v.clear();
 			v.promise.resolve(); // TODO or reject?
 		}
-			for (const [_k, v] of this._pendingIHave) {
-				v.clear();
-			}
-			for (const [_k, v] of this._checkedPruneRetries) {
-				if (v.timer) clearTimeout(v.timer);
-			}
+		for (const [_k, v] of this._pendingIHave) {
+			v.clear();
+		}
+		for (const [_k, v] of this._checkedPruneRetries) {
+			if (v.timer) clearTimeout(v.timer);
+		}
 
 		await this.remoteBlocks.stop();
 		this._pendingDeletes.clear();
@@ -6450,6 +6476,7 @@ export class SharedLog<
 		if (!prev || prev < now) {
 			this.latestReplicationInfoMessage.set(fromHash, now);
 		}
+		this.invalidateTopicSubscribersCache(this.topic, this.rpc.topic);
 
 		return this.handleSubscriptionChange(
 			evt.detail.from,
@@ -6470,6 +6497,7 @@ export class SharedLog<
 
 		this.remoteBlocks.onReachable(evt.detail.from);
 		this._replicationInfoBlockedPeers.delete(evt.detail.from.hashcode());
+		this.invalidateTopicSubscribersCache(this.topic, this.rpc.topic);
 
 		await this.handleSubscriptionChange(
 			evt.detail.from,
