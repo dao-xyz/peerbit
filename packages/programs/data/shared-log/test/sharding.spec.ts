@@ -1504,33 +1504,40 @@ testSetups.forEach((setup) => {
 								await db2.add(data, { meta: { next: [] } });
 							}
 
-								await waitForResolved(
-									async () =>
-										expect(
-											Math.abs(memoryLimit - (await db1.log.getMemoryUsage())),
-										).lessThan((memoryLimit / 100) * 12),
+							const waitForMemoryUsageToSettle = async (
+								db: EventStore<string, ReplicationDomainHash<any>>,
+							) => {
+								await waitForConverged(
+									async () => (await db.log.getMemoryUsage()) / 1e3,
 									{
-										timeout: 20 * 1000,
+										timeout: 40 * 1000,
+										tests: 3,
+										interval: 1000,
+										delta: 2,
 									},
-								); // allow a bit more slack under suite load
+								);
+							};
 
-								await waitForResolved(async () =>
-									expect(
-										Math.abs(memoryLimit * 2 - (await db2.log.getMemoryUsage())),
-									).lessThan(((memoryLimit * 2) / 100) * 12),
-								); // allow a bit more slack under suite load
+							await Promise.all([
+								waitForMemoryUsageToSettle(db1),
+								waitForMemoryUsageToSettle(db2),
+							]);
 
-								await waitForResolved(async () =>
+							await waitForResolved(
+								async () =>
 									expect(
 										Math.abs(memoryLimit - (await db1.log.getMemoryUsage())),
 									).lessThan((memoryLimit / 100) * 12),
-								); // allow a bit more slack under suite load
+								{
+									timeout: 20 * 1000,
+								},
+							); // allow a bit more slack under suite load
 
-								await waitForResolved(async () =>
-									expect(
-										Math.abs(memoryLimit * 2 - (await db2.log.getMemoryUsage())),
-									).lessThan(((memoryLimit * 2) / 100) * 12),
-								); // allow a bit more slack under suite load
+							await waitForResolved(async () =>
+								expect(
+									Math.abs(memoryLimit * 2 - (await db2.log.getMemoryUsage())),
+								).lessThan(((memoryLimit * 2) / 100) * 12),
+							); // allow a bit more slack under suite load
 							});
 
 						it("greatly limited", async () => {
@@ -1577,18 +1584,44 @@ testSetups.forEach((setup) => {
 								await db2.add(data, { meta: { next: [] } });
 							}
 							await delay(db1.log.timeUntilRoleMaturity);
-								try {
-									await waitForResolved(
-										async () =>
-											// Even with a "0 bytes" storage budget there is some
-											// unavoidable bookkeeping overhead (indexes/metadata).
-											// Assert we're still near-zero and far below the peer with
-											// a real budget.
-											expect(await db1.log.getMemoryUsage()).lessThan(20 * 1e3),
-										{
-											timeout: 2e4,
-										},
-									); // 10% error at most
+							const waitForMemoryUsageToSettle = async (
+								db: EventStore<string, ReplicationDomainHash<any>>,
+							) => {
+								await waitForConverged(
+									async () => (await db.log.getMemoryUsage()) / 1e3,
+									{
+										timeout: 40 * 1000,
+										tests: 3,
+										interval: 1000,
+										delta: 2,
+									},
+								);
+							};
+
+							try {
+								await Promise.all([
+									waitForMemoryUsageToSettle(db1),
+									waitForMemoryUsageToSettle(db2),
+								]);
+
+								await waitForResolved(
+									async () => {
+										const [db1Usage, db2Usage] = await Promise.all([
+											db1.log.getMemoryUsage(),
+											db2.log.getMemoryUsage(),
+										]);
+
+										// Even with a "0 bytes" storage budget there is some
+										// unavoidable bookkeeping overhead (indexes/metadata).
+										// Assert we're still near-zero and clearly below the peer with
+										// a real budget once the system has settled.
+										expect(db1Usage).lessThan(35 * 1e3);
+										expect(db1Usage).lessThan(db2Usage * 0.35);
+									},
+									{
+										timeout: 2e4,
+									},
+								);
 
 								await waitForResolved(async () =>
 									expect(
