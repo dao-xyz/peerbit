@@ -1492,6 +1492,10 @@ export class SharedLog<
 		}
 	}
 
+	private invalidateSharedLogTopicSubscribersCache() {
+		this.invalidateTopicSubscribersCache(this.topic, this.rpc.topic);
+	}
+
 	// @deprecated
 	private async getRole() {
 		const segments = await this.getMyReplicationSegments();
@@ -6476,7 +6480,7 @@ export class SharedLog<
 		if (!prev || prev < now) {
 			this.latestReplicationInfoMessage.set(fromHash, now);
 		}
-		this.invalidateTopicSubscribersCache(this.topic, this.rpc.topic);
+		this.invalidateSharedLogTopicSubscribersCache();
 
 		return this.handleSubscriptionChange(
 			evt.detail.from,
@@ -6497,7 +6501,7 @@ export class SharedLog<
 
 		this.remoteBlocks.onReachable(evt.detail.from);
 		this._replicationInfoBlockedPeers.delete(evt.detail.from.hashcode());
-		this.invalidateTopicSubscribersCache(this.topic, this.rpc.topic);
+		this.invalidateSharedLogTopicSubscribersCache();
 
 		await this.handleSubscriptionChange(
 			evt.detail.from,
