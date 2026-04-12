@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.0.24](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.23...shared-log-v13.0.24) (2026-04-12)
+
+
+### Refactors
+
+* **shared-log:** centralize subscriber cache invalidation ([#720](https://github.com/dao-xyz/peerbit/issues/720)) ([f734c9a](https://github.com/dao-xyz/peerbit/commit/f734c9a551a5414ab506ab6b047c7e5cc8b44d00))
+
 ## [13.0.23](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.22...shared-log-v13.0.23) (2026-04-03)
 
 
