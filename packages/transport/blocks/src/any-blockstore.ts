@@ -72,7 +72,20 @@ export class AnyBlockStore implements Blocks {
 		const put =
 			bytes instanceof Uint8Array ? await calculateRawCid(bytes) : bytes;
 		const bbytes = put.block.bytes;
-		await this._store.put(put.cid, bbytes);
+		try {
+			await this._store.put(put.cid, bbytes);
+		} catch (error: any) {
+			const status = await this._store.status();
+			if (
+				typeof error?.code === "string" &&
+				error.code === "LEVEL_DATABASE_NOT_OPEN" &&
+				this._closeController?.signal.aborted === true &&
+				(status === "closing" || status === "closed")
+			) {
+				return put.cid;
+			}
+			throw error;
+		}
 		return put.cid;
 	}
 
