@@ -2667,15 +2667,16 @@ export class SharedLog<
 
 				const iterator = this.entryCoordinatesIndex.iterate({});
 				try {
-					while (!this.closed && !iterator.done()) {
-						const entries = await iterator.next(REPAIR_SWEEP_ENTRY_BATCH_SIZE);
-						for (const entry of entries) {
-							const entryReplicated = entry.value;
-							const currentPeers = await this.findLeaders(
-								entryReplicated.coordinates,
-								entryReplicated,
-								{ roleAge: 0 },
-							);
+						while (!this.closed && !iterator.done()) {
+							const entries = await iterator.next(REPAIR_SWEEP_ENTRY_BATCH_SIZE);
+							for (const entry of entries) {
+								const entryReplicated = entry.value;
+								const knownPeers = this._gidPeersHistory.get(entryReplicated.gid);
+								const currentPeers = await this.findLeaders(
+									entryReplicated.coordinates,
+									entryReplicated,
+									{ roleAge: 0 },
+								);
 							if (forceFreshDelivery) {
 								for (const [currentPeer] of currentPeers) {
 									if (currentPeer === this.node.identity.publicKey.hashcode()) {
@@ -2684,14 +2685,14 @@ export class SharedLog<
 									queueEntryForTarget(currentPeer, entryReplicated);
 								}
 							}
-							if (addedPeers.size > 0) {
-								for (const peer of addedPeers) {
-									if (currentPeers.has(peer)) {
-										queueEntryForTarget(peer, entryReplicated);
+								if (addedPeers.size > 0) {
+									for (const peer of addedPeers) {
+										if (currentPeers.has(peer) && !knownPeers?.has(peer)) {
+											queueEntryForTarget(peer, entryReplicated);
+										}
 									}
 								}
 							}
-						}
 					}
 				} finally {
 					await iterator.close();
@@ -4888,6 +4889,23 @@ export class SharedLog<
 			options?.replicate &&
 			typeof options.replicate !== "boolean" &&
 			options.replicate.assumeSynced;
+		const seedAssumeSyncedPeerHistory = async (entry: Entry<T>) => {
+			if (!assumeSynced) {
+				return;
+			}
+
+			const minReplicas = decodeReplicas(entry).getValue(this);
+			const leaders = await this.findLeaders(
+				await this.createCoordinates(entry, minReplicas),
+				entry,
+				{
+					roleAge: 0,
+					persist: false,
+				},
+			);
+
+			this.addPeersToGidPeerHistory(entry.meta.gid, leaders.keys());
+		};
 		const persistCoordinate = async (entry: Entry<T>) => {
 			const minReplicas = decodeReplicas(entry).getValue(this);
 			const leaders = await this.findLeaders(
@@ -4928,6 +4946,12 @@ export class SharedLog<
 
 		if (options?.replicate) {
 			let messageToSend: AddedReplicationSegmentMessage | undefined = undefined;
+
+			if (assumeSynced) {
+				for (const entry of entriesToReplicate) {
+					await seedAssumeSyncedPeerHistory(entry);
+				}
+			}
 
 			await this.replicate(entriesToReplicate, {
 				rebalance: assumeSynced ? false : true,
