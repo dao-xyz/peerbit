@@ -1563,28 +1563,9 @@ testSetups.forEach((setup) => {
 								await db2.add(data, { meta: { next: [] } });
 							}
 
-							const waitForMemoryUsageToSettle = async (
-								db: EventStore<string, ReplicationDomainHash<any>>,
-							) => {
-								await waitForConverged(
-									async () => (await db.log.getMemoryUsage()) / 1e3,
-									{
-										timeout: 40 * 1000,
-										tests: 3,
-										interval: 1000,
-										delta: 2,
-									},
-								);
-							};
-
 							await waitForParticipationToSettle(db1, db2);
 
 							await waitForDistributionQuiesced(db1, db2);
-
-							await Promise.all([
-								waitForMemoryUsageToSettle(db1),
-								waitForMemoryUsageToSettle(db2),
-							]);
 
 							await waitForDistributionQuiesced(db1, db2);
 
