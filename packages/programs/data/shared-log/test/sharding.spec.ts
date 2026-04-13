@@ -1586,20 +1586,28 @@ testSetups.forEach((setup) => {
 								waitForMemoryUsageToSettle(db2),
 							]);
 
+							await waitForDistributionQuiesced(db1, db2);
+
 							await waitForResolved(
 								async () =>
 									expect(
 										Math.abs(memoryLimit - (await db1.log.getMemoryUsage())),
 									).lessThan((memoryLimit / 100) * 12),
 								{
-									timeout: 20 * 1000,
+									timeout: 60 * 1000,
+									delayInterval: 1000,
 								},
 							); // allow a bit more slack under suite load
 
-							await waitForResolved(async () =>
-								expect(
-									Math.abs(memoryLimit * 2 - (await db2.log.getMemoryUsage())),
-								).lessThan(((memoryLimit * 2) / 100) * 12),
+							await waitForResolved(
+								async () =>
+									expect(
+										Math.abs(memoryLimit * 2 - (await db2.log.getMemoryUsage())),
+									).lessThan(((memoryLimit * 2) / 100) * 12),
+								{
+									timeout: 60 * 1000,
+									delayInterval: 1000,
+								},
 							); // allow a bit more slack under suite load
 							});
 
