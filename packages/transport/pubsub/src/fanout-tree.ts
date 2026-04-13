@@ -335,6 +335,17 @@ export type FanoutProviderQueryOptions = {
 	bootstrapMaxPeers?: number;
 };
 
+export type FanoutProviderWatchOptions = {
+	want?: number;
+	signal?: AbortSignal;
+	onProviders: (providers: FanoutProviderCandidate[]) => void;
+	bootstrap?: Array<string | Multiaddr>;
+	bootstrapDialTimeoutMs?: number;
+	bootstrapMaxPeers?: number;
+	ttlMs?: number;
+	renewIntervalMs?: number;
+};
+
 export type FanoutProviderHandle = {
 	close: () => void;
 };
@@ -447,6 +458,10 @@ export interface FanoutTreeEvents extends StreamEvents {
 	"fanout:unicast": CustomEvent<FanoutTreeUnicastEvent>;
 	"fanout:joined": CustomEvent<{ topic: string; root: string; parent: string }>;
 	"fanout:kicked": CustomEvent<{ topic: string; root: string; from: string }>;
+	"fanout:provider": CustomEvent<{
+		namespace: string;
+		providers: FanoutProviderCandidate[];
+	}>;
 	"fanout:peer-unreachable": CustomEvent<{
 		topic: string;
 		root: string;
@@ -520,6 +535,9 @@ const MSG_TRACKER_FEEDBACK = 33;
 const MSG_PROVIDER_ANNOUNCE = 34;
 const MSG_PROVIDER_QUERY = 35;
 const MSG_PROVIDER_REPLY = 36;
+const MSG_PROVIDER_SUBSCRIBE = 37;
+const MSG_PROVIDER_UNSUBSCRIBE = 38;
+const MSG_PROVIDER_NOTIFY = 39;
 
 const JOIN_REJECT_NOT_ATTACHED = 1;
 const JOIN_REJECT_NO_CAPACITY = 2;
@@ -1081,6 +1099,12 @@ type ProviderEntry = {
 	expiresAt: number;
 };
 
+type ProviderWatchRegistration = {
+	hash: string;
+	want: number;
+	expiresAt: number;
+};
+
 type ProviderAnnounceState = {
 	id: ProviderNamespaceId;
 	ttlMs: number;
@@ -1089,6 +1113,21 @@ type ProviderAnnounceState = {
 	bootstrapDialTimeoutMs: number;
 	bootstrapMaxPeers: number;
 	closed: boolean;
+	loop?: Promise<void>;
+};
+
+type ProviderWatchState = {
+	id: ProviderNamespaceId;
+	want: number;
+	ttlMs: number;
+	renewIntervalMs: number;
+	bootstrapOverride?: Multiaddr[];
+	bootstrapDialTimeoutMs: number;
+	bootstrapMaxPeers: number;
+	onProviders: (providers: FanoutProviderCandidate[]) => void;
+	signal?: AbortSignal;
+	closed: boolean;
+	trackerPeers: string[];
 	loop?: Promise<void>;
 };
 
@@ -1137,13 +1176,9 @@ const encodeProviderQuery = (
 	return buf;
 };
 
-const encodeProviderReply = (
-	namespaceKey: Uint8Array,
-	reqId: number,
-	entries: ProviderEntry[],
-) => {
+const encodeProviderEntries = (entries: ProviderEntry[]) => {
 	const count = Math.max(0, Math.min(255, entries.length));
-	let bytes = 1 + 32 + 4 + 1;
+	let bytes = 1;
 	const encoded: Array<{ hashBytes: Uint8Array; addrs: Uint8Array[] }> = [];
 	for (let i = 0; i < count; i++) {
 		const e = entries[i]!;
@@ -1155,6 +1190,16 @@ const encodeProviderReply = (
 		for (const a of addrs) bytes += 2 + a.length;
 		encoded.push({ hashBytes, addrs });
 	}
+	return { bytes, encoded };
+};
+
+const encodeProviderReply = (
+	namespaceKey: Uint8Array,
+	reqId: number,
+	entries: ProviderEntry[],
+) => {
+	const { bytes: entryBytes, encoded } = encodeProviderEntries(entries);
+	let bytes = 1 + 32 + 4 + entryBytes;
 
 	const buf = new Uint8Array(bytes);
 	buf[0] = MSG_PROVIDER_REPLY;
@@ -1175,6 +1220,90 @@ const encodeProviderReply = (
 		}
 	}
 	return buf;
+};
+
+const encodeProviderSubscribe = (
+	namespaceKey: Uint8Array,
+	want: number,
+	ttlMs: number,
+) => {
+	const buf = new Uint8Array(1 + 32 + 2 + 4);
+	buf[0] = MSG_PROVIDER_SUBSCRIBE;
+	buf.set(namespaceKey, 1);
+	writeU16BE(buf, 33, clampU16(want));
+	writeU32BE(buf, 35, Math.max(0, Math.floor(ttlMs)) >>> 0);
+	return buf;
+};
+
+const encodeProviderUnsubscribe = (namespaceKey: Uint8Array) => {
+	const buf = new Uint8Array(1 + 32);
+	buf[0] = MSG_PROVIDER_UNSUBSCRIBE;
+	buf.set(namespaceKey, 1);
+	return buf;
+};
+
+const encodeProviderNotify = (
+	namespaceKey: Uint8Array,
+	entries: ProviderEntry[],
+) => {
+	const { bytes: entryBytes, encoded } = encodeProviderEntries(entries);
+	let bytes = 1 + 32 + entryBytes;
+
+	const buf = new Uint8Array(bytes);
+	buf[0] = MSG_PROVIDER_NOTIFY;
+	buf.set(namespaceKey, 1);
+	buf[33] = Math.max(0, Math.min(255, encoded.length)) & 0xff;
+	let offset = 34;
+	for (const e of encoded) {
+		buf[offset++] = e.hashBytes.length & 0xff;
+		buf.set(e.hashBytes, offset);
+		offset += e.hashBytes.length;
+		buf[offset++] = Math.max(0, Math.min(255, e.addrs.length)) & 0xff;
+		for (const a of e.addrs) {
+			writeU16BE(buf, offset, a.length);
+			offset += 2;
+			buf.set(a, offset);
+			offset += a.length;
+		}
+	}
+	return buf;
+};
+
+const decodeProviderEntries = (
+	data: Uint8Array,
+	offsetStart: number,
+	maxCount: number,
+) => {
+	let offset = offsetStart;
+	const providers: FanoutProviderCandidate[] = [];
+	const limit = Math.min(maxCount, 255);
+	for (let i = 0; i < limit; i++) {
+		if (offset + 1 > data.length) break;
+		const hashLen = data[offset++]!;
+		if (offset + hashLen > data.length) break;
+		const hash = textDecoder.decode(data.subarray(offset, offset + hashLen));
+		offset += hashLen;
+		if (offset + 1 > data.length) break;
+		const addrCount = data[offset++]!;
+		const addrs: Multiaddr[] = [];
+		const addrMax = Math.min(addrCount, 16);
+		for (let j = 0; j < addrMax; j++) {
+			if (offset + 2 > data.length) break;
+			const len = readU16BE(data, offset);
+			offset += 2;
+			if (offset + len > data.length) break;
+			const bytes = data.subarray(offset, offset + len);
+			offset += len;
+			try {
+				addrs.push(multiaddr(bytes));
+			} catch {
+				// ignore invalid
+			}
+		}
+		if (!hash) continue;
+		providers.push({ hash, addrs });
+	}
+	return { providers, offset };
 };
 
 type ChildInfo = { bidPerByte: number };
@@ -1433,6 +1562,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	private trackerNamespaceLru = new Map<string, number>();
 	private providerBySuffixKey = new Map<string, Map<string, ProviderEntry>>();
 	private providerNamespaceLru = new Map<string, number>();
+	private providerNamespaceBySuffixKey = new Map<string, string>();
+	private providerWatchersBySuffixKey = new Map<
+		string,
+		Map<string, ProviderWatchRegistration>
+	>();
+	private providerWatchesBySuffixKey = new Map<string, Set<ProviderWatchState>>();
 	private underlayPeerDisconnectHandler?: (ev: any) => void;
 	private pendingProviderQueryBySuffixKey = new Map<
 		string,
@@ -1533,6 +1668,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			if (!oldest) break;
 			this.providerNamespaceLru.delete(oldest);
 			this.providerBySuffixKey.delete(oldest);
+			this.providerNamespaceBySuffixKey.delete(oldest);
 			this.pendingProviderQueryBySuffixKey.delete(oldest);
 		}
 	}
@@ -1546,10 +1682,134 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 	}
 
+	private pruneProviderWatchersIfEmpty(suffixKey: string) {
+		const watchers = this.providerWatchersBySuffixKey.get(suffixKey);
+		if (watchers && watchers.size === 0) {
+			this.providerWatchersBySuffixKey.delete(suffixKey);
+		}
+	}
+
+	private getProviderCandidatesFromCache(
+		id: ProviderNamespaceId,
+		options?: { now?: number; want?: number },
+	): FanoutProviderCandidate[] {
+		const now = options?.now ?? Date.now();
+		const cached: FanoutProviderCandidate[] = [];
+		const byPeer = this.providerBySuffixKey.get(id.suffixKey);
+		if (byPeer) {
+			for (const [hash, e] of byPeer) {
+				if (e.expiresAt <= now) {
+					byPeer.delete(hash);
+					continue;
+				}
+				if (hash === this.publicKeyHash) continue;
+				const addrs: Multiaddr[] = [];
+				for (const a of e.addrs) {
+					try {
+						addrs.push(multiaddr(a));
+					} catch {
+						// ignore invalid
+					}
+				}
+				cached.push({ hash, addrs });
+				if (options?.want && cached.length >= options.want) break;
+			}
+			this.pruneProviderNamespaceIfEmpty(id.suffixKey);
+		}
+		return cached;
+	}
+
+	private rememberProviderCandidates(
+		id: ProviderNamespaceId,
+		candidates: FanoutProviderCandidate[],
+		expiresAt: number,
+	) {
+		if (candidates.length === 0) return;
+		let cache = this.providerBySuffixKey.get(id.suffixKey);
+		if (!cache) {
+			cache = new Map<string, ProviderEntry>();
+			this.providerBySuffixKey.set(id.suffixKey, cache);
+		}
+		for (const c of candidates) {
+			cache.delete(c.hash);
+			cache.set(c.hash, {
+				hash: c.hash,
+				addrs: c.addrs.map((a) => a.bytes),
+				expiresAt,
+			});
+		}
+		while (cache.size > PROVIDER_DIRECTORY_MAX_ENTRIES) {
+			const oldest = cache.keys().next().value as string | undefined;
+			if (!oldest) break;
+			cache.delete(oldest);
+		}
+		this.touchProviderNamespace(id.suffixKey);
+	}
+
+	private emitProviderUpdate(
+		id: ProviderNamespaceId,
+		providers: FanoutProviderCandidate[],
+	) {
+		if (providers.length === 0) return;
+		this.dispatchEvent(
+			new CustomEvent("fanout:provider", {
+				detail: { namespace: id.namespace, providers },
+			}),
+		);
+		const localWatches = this.providerWatchesBySuffixKey.get(id.suffixKey);
+		if (!localWatches || localWatches.size === 0) return;
+		for (const watch of localWatches) {
+			if (watch.closed) continue;
+			try {
+				watch.onProviders(providers.slice(0, watch.want));
+			} catch {
+				// ignore consumer callback failures
+			}
+		}
+	}
+
+	private async publishProviderWatchUpdate(id: ProviderNamespaceId) {
+		const watchers = this.providerWatchersBySuffixKey.get(id.suffixKey);
+		if (!watchers || watchers.size === 0) return;
+		const now = Date.now();
+		const cached = this.getProviderCandidatesFromCache(id, { now });
+		const byPeer = new Map(watchers);
+		for (const [hash, watch] of byPeer) {
+			if (watch.expiresAt <= now) {
+				watchers.delete(hash);
+				continue;
+			}
+			const entries = cached
+				.filter((candidate) => candidate.hash !== hash)
+				.slice(0, Math.max(1, watch.want))
+				.map((candidate) => ({
+					hash: candidate.hash,
+					addrs: candidate.addrs.map((a) => a.bytes),
+					expiresAt: now + 60_000,
+				}));
+			void this._sendControl(hash, encodeProviderNotify(id.key, entries)).catch(
+				dontThrowIfDeliveryError,
+			);
+		}
+		this.pruneProviderWatchersIfEmpty(id.suffixKey);
+	}
+
 	private getProviderNamespaceId(namespace: string): ProviderNamespaceId {
 		const key = sha256Sync(textEncoder.encode(`provider|${namespace}`));
 		const suffixKey = toBase64(key.subarray(0, 24));
+		this.providerNamespaceBySuffixKey.set(suffixKey, namespace);
 		return { namespace, key, suffixKey };
+	}
+
+	private getProviderNamespaceIdFromKey(
+		key: Uint8Array,
+		suffixKey = toBase64(key.subarray(0, 24)),
+	): ProviderNamespaceId {
+		return {
+			namespace: this.providerNamespaceBySuffixKey.get(suffixKey) ?? "",
+			key,
+			suffixKey,
+		};
 	}
 
 	public provide(
@@ -1770,27 +2030,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				return connected.concat(unconnected).slice(0, want);
 			};
 
-			const cached: FanoutProviderCandidate[] = [];
-			const byPeer = this.providerBySuffixKey.get(id.suffixKey);
-			if (byPeer) {
-				for (const [hash, e] of byPeer) {
-					if (e.expiresAt <= now) {
-						byPeer.delete(hash);
-						continue;
-					}
-					if (hash === this.publicKeyHash) continue;
-					const addrs: Multiaddr[] = [];
-					for (const a of e.addrs) {
-						try {
-							addrs.push(multiaddr(a));
-						} catch {
-							// ignore invalid
-						}
-					}
-					cached.push({ hash, addrs });
-				}
-				this.pruneProviderNamespaceIfEmpty(id.suffixKey);
-			}
+			const cached = this.getProviderCandidatesFromCache(id, { now });
 
 			// If the cache is warm, avoid tracker queries on hot paths.
 			if (cached.length >= want) {
@@ -1876,29 +2116,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 			// Cache (best-effort) to avoid repeated tracker lookups.
 			if (cacheTtlMs > 0) {
-				const exp = Date.now() + cacheTtlMs;
-				let cache = this.providerBySuffixKey.get(id.suffixKey);
-				if (!cache) {
-					cache = new Map<string, ProviderEntry>();
-					this.providerBySuffixKey.set(id.suffixKey, cache);
-				}
-				for (const c of deduped) {
-					cache.delete(c.hash);
-					cache.set(c.hash, {
-						hash: c.hash,
-						addrs: c.addrs.map((a) => a.bytes),
-						expiresAt: exp,
-					});
-				}
-				while (cache.size > PROVIDER_DIRECTORY_MAX_ENTRIES) {
-					const oldest = cache.keys().next().value as string | undefined;
-					if (!oldest) break;
-					cache.delete(oldest);
-				}
-				this.touchProviderNamespace(id.suffixKey);
+				this.rememberProviderCandidates(id, deduped, Date.now() + cacheTtlMs);
 			}
 
-			return orderCandidates(deduped);
+			const ordered = orderCandidates(deduped);
+			if (ordered.length > 0) {
+				this.emitProviderUpdate(id, ordered);
+			}
+			return ordered;
 		} finally {
 			(signal as any)?.clear?.();
 		}
@@ -1910,6 +2135,134 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	): Promise<string[]> {
 		const candidates = await this.queryProviderCandidates(namespace, options);
 		return candidates.map((c) => c.hash);
+	}
+
+	public watchProviders(
+		namespace: string,
+		options: FanoutProviderWatchOptions,
+	): FanoutProviderHandle {
+		if (!this.started) {
+			throw new Error("FanoutTree must be started before watching providers");
+		}
+
+		const id = this.getProviderNamespaceId(namespace);
+		const ttlMs = Math.max(1_000, Math.floor(options.ttlMs ?? 10_000));
+		const renewIntervalMs = Math.max(
+			250,
+			Math.min(
+				ttlMs,
+				Math.floor(options.renewIntervalMs ?? Math.max(500, ttlMs / 2)),
+			),
+		);
+		const watch: ProviderWatchState = {
+			id,
+			want: Math.max(1, Math.floor(options.want ?? 8)),
+			ttlMs,
+			renewIntervalMs,
+			bootstrapOverride:
+				options.bootstrap && options.bootstrap.length > 0
+					? options.bootstrap
+							.map((a) => (typeof a === "string" ? multiaddr(a) : a))
+							.filter((a) => Boolean(a))
+					: undefined,
+			bootstrapDialTimeoutMs: Math.max(
+				0,
+				Math.floor(options.bootstrapDialTimeoutMs ?? 2_000),
+			),
+			bootstrapMaxPeers: Math.max(
+				0,
+				Math.floor(options.bootstrapMaxPeers ?? 0),
+			),
+			onProviders: options.onProviders,
+			signal: options.signal,
+			closed: false,
+			trackerPeers: [],
+		};
+
+		let localWatches = this.providerWatchesBySuffixKey.get(id.suffixKey);
+		if (!localWatches) {
+			localWatches = new Set<ProviderWatchState>();
+			this.providerWatchesBySuffixKey.set(id.suffixKey, localWatches);
+		}
+		localWatches.add(watch);
+
+		const cached = this.getProviderCandidatesFromCache(id, {
+			want: watch.want,
+		});
+		if (cached.length > 0) {
+			queueMicrotask(() => {
+				if (watch.closed) return;
+				try {
+					watch.onProviders(cached.slice(0, watch.want));
+				} catch {
+					// ignore consumer callback failures
+				}
+			});
+		}
+
+		const close = () => {
+			if (watch.closed) return;
+			watch.closed = true;
+			localWatches?.delete(watch);
+			if (localWatches && localWatches.size === 0) {
+				this.providerWatchesBySuffixKey.delete(id.suffixKey);
+			}
+			for (const trackerHash of watch.trackerPeers) {
+				void this._sendControl(
+					trackerHash,
+					encodeProviderUnsubscribe(id.key),
+				).catch(dontThrowIfDeliveryError);
+			}
+			watch.trackerPeers = [];
+		};
+
+		const onAbort = () => close();
+		watch.signal?.addEventListener("abort", onAbort, { once: true });
+
+		const loopSignal = watch.signal
+			? anySignal([this.closeController.signal, watch.signal])
+			: this.closeController.signal;
+
+		watch.loop = (async () => {
+			for (;;) {
+				if (watch.closed || loopSignal.aborted) return;
+				try {
+					const bootstraps = watch.bootstrapOverride ?? this.bootstraps;
+					const trackerPeers =
+						bootstraps.length > 0
+							? await this.ensureBootstrapPeers(
+									bootstraps,
+									watch.bootstrapDialTimeoutMs,
+									loopSignal,
+									watch.bootstrapMaxPeers,
+								)
+							: [];
+					watch.trackerPeers = trackerPeers;
+					for (const trackerHash of trackerPeers) {
+						void this._sendControl(
+							trackerHash,
+							encodeProviderSubscribe(id.key, watch.want, watch.ttlMs),
+						).catch(dontThrowIfDeliveryError);
+					}
+				} catch (error) {
+					if (
+						error instanceof AbortError ||
+						(error && typeof error === "object" && "name" in error && error.name === "AbortError")
+					) {
+						return;
+					}
+				}
+				await delay(watch.renewIntervalMs, { signal: loopSignal }).catch(() => {});
+			}
+		})();
+
+		void watch.loop.finally(() => {
+			watch.signal?.removeEventListener("abort", onAbort);
+			close();
+			(loopSignal as any)?.clear?.();
+		});
+
+		return { close };
 	}
 
 	public getChannelId(topic: string, root: string): FanoutTreeChannelId {
@@ -3325,6 +3678,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			case MSG_PROVIDER_ANNOUNCE:
 			case MSG_PROVIDER_QUERY:
 			case MSG_PROVIDER_REPLY:
+			case MSG_PROVIDER_SUBSCRIBE:
+			case MSG_PROVIDER_UNSUBSCRIBE:
+			case MSG_PROVIDER_NOTIFY:
 				m.controlBytesSentTracker += sentBytes;
 				break;
 			default:
@@ -3388,6 +3744,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			case MSG_PROVIDER_ANNOUNCE:
 			case MSG_PROVIDER_QUERY:
 			case MSG_PROVIDER_REPLY:
+			case MSG_PROVIDER_SUBSCRIBE:
+			case MSG_PROVIDER_UNSUBSCRIBE:
+			case MSG_PROVIDER_NOTIFY:
 				m.controlBytesReceivedTracker += bytesReceived;
 				break;
 			default:
@@ -5228,7 +5587,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				kind === MSG_TRACKER_FEEDBACK ||
 				kind === MSG_PROVIDER_ANNOUNCE ||
 				kind === MSG_PROVIDER_QUERY ||
-				kind === MSG_PROVIDER_REPLY
+				kind === MSG_PROVIDER_REPLY ||
+				kind === MSG_PROVIDER_SUBSCRIBE ||
+				kind === MSG_PROVIDER_UNSUBSCRIBE ||
+				kind === MSG_PROVIDER_NOTIFY
 			) {
 				if (data.length < 1 + 32) return false;
 				const channelKey = data.subarray(1, 33);
@@ -5398,6 +5760,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 				if (kind === MSG_PROVIDER_ANNOUNCE) {
 					if (data.length < 1 + 32 + 4 + 1) return false;
+					const providerId = this.getProviderNamespaceIdFromKey(channelKey, suffixKey);
 					const ttlMs = readU32BE(data, 33);
 					const addrCount = data[37]!;
 					let offset = 38;
@@ -5442,6 +5805,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					if (ttl === 0) {
 						byPeer.delete(fromHash);
 						this.pruneProviderNamespaceIfEmpty(suffixKey);
+						this.emitProviderUpdate(
+							providerId,
+							this.getProviderCandidatesFromCache(providerId, { now }),
+						);
+						await this.publishProviderWatchUpdate(providerId);
 						return true;
 					}
 
@@ -5458,6 +5826,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						byPeer.delete(oldest);
 					}
 					this.pruneProviderNamespaceIfEmpty(suffixKey);
+					this.emitProviderUpdate(
+						providerId,
+						this.getProviderCandidatesFromCache(providerId, { now }),
+					);
+					await this.publishProviderWatchUpdate(providerId);
 					return true;
 				}
 
@@ -5511,6 +5884,34 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				return true;
 			}
 
+				if (kind === MSG_PROVIDER_SUBSCRIBE) {
+					if (data.length < 1 + 32 + 2 + 4) return false;
+				const want = Math.max(1, readU16BE(data, 33));
+				const ttlMs = Math.min(120_000, Math.max(1_000, readU32BE(data, 35)));
+				const now = Date.now();
+				let watchers = this.providerWatchersBySuffixKey.get(suffixKey);
+				if (!watchers) {
+					watchers = new Map<string, ProviderWatchRegistration>();
+					this.providerWatchersBySuffixKey.set(suffixKey, watchers);
+				}
+				watchers.set(fromHash, {
+					hash: fromHash,
+					want,
+					expiresAt: now + ttlMs,
+				});
+				await this.publishProviderWatchUpdate(
+					this.getProviderNamespaceIdFromKey(channelKey, suffixKey),
+				);
+				return true;
+			}
+
+			if (kind === MSG_PROVIDER_UNSUBSCRIBE) {
+				const watchers = this.providerWatchersBySuffixKey.get(suffixKey);
+				watchers?.delete(fromHash);
+				this.pruneProviderWatchersIfEmpty(suffixKey);
+				return true;
+			}
+
 			if (kind === MSG_PROVIDER_REPLY) {
 				if (data.length < 1 + 32 + 4 + 1) return false;
 				const reqId = readU32BE(data, 33);
@@ -5521,59 +5922,41 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				pendingByReq!.delete(reqId);
 
 				const count = data[37]!;
-				let offset = 38;
-				const candidates: FanoutProviderCandidate[] = [];
-				const max = Math.min(count, 255);
-
 				const now = Date.now();
 				this.touchProviderNamespace(suffixKey, now);
-				let cache = this.providerBySuffixKey.get(suffixKey);
-				if (!cache) {
-					cache = new Map<string, ProviderEntry>();
-					this.providerBySuffixKey.set(suffixKey, cache);
-				}
-
-				for (let i = 0; i < max; i++) {
-					if (offset + 1 > data.length) break;
-					const hashLen = data[offset++]!;
-					if (offset + hashLen > data.length) break;
-					const hash = textDecoder.decode(data.subarray(offset, offset + hashLen));
-					offset += hashLen;
-					if (offset + 1 > data.length) break;
-					const addrCount = data[offset++]!;
-					const addrs: Multiaddr[] = [];
-					const addrBytes: Uint8Array[] = [];
-					const addrMax = Math.min(addrCount, 16);
-					for (let j = 0; j < addrMax; j++) {
-						if (offset + 2 > data.length) break;
-						const len = readU16BE(data, offset);
-						offset += 2;
-						if (offset + len > data.length) break;
-						const bytes = data.subarray(offset, offset + len);
-						offset += len;
-						addrBytes.push(bytes);
-						try {
-							addrs.push(multiaddr(bytes));
-						} catch {
-							// ignore invalid multiaddrs
-						}
-					}
-					candidates.push({ hash, addrs });
-					cache.delete(hash);
-					cache.set(hash, {
-						hash,
-						addrs: addrBytes,
-						expiresAt: now + 60_000,
-					});
-				}
-				while (cache.size > PROVIDER_DIRECTORY_MAX_ENTRIES) {
-					const oldest = cache.keys().next().value as string | undefined;
-					if (!oldest) break;
-					cache.delete(oldest);
-				}
+				const { providers: candidates } = decodeProviderEntries(data, 38, count);
+				this.rememberProviderCandidates(
+					this.getProviderNamespaceIdFromKey(channelKey, suffixKey),
+					candidates,
+					now + 60_000,
+				);
 				this.pruneProviderNamespaceIfEmpty(suffixKey);
-
+				if (candidates.length > 0) {
+					this.emitProviderUpdate(
+						this.getProviderNamespaceIdFromKey(channelKey, suffixKey),
+						candidates,
+					);
+				}
 				pending.resolve(candidates);
+				return true;
+			}
+
+			if (kind === MSG_PROVIDER_NOTIFY) {
+				if (data.length < 1 + 32 + 1) return false;
+				const count = data[33]!;
+				const now = Date.now();
+				const { providers } = decodeProviderEntries(data, 34, count);
+				this.rememberProviderCandidates(
+					this.getProviderNamespaceIdFromKey(channelKey, suffixKey),
+					providers,
+					now + 60_000,
+				);
+				if (providers.length > 0) {
+					this.emitProviderUpdate(
+						this.getProviderNamespaceIdFromKey(channelKey, suffixKey),
+						providers,
+					);
+				}
 				return true;
 			}
 

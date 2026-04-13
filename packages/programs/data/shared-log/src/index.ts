@@ -3078,6 +3078,18 @@ export class SharedLog<
 					})) ?? []
 				);
 			},
+			watchProviders: fanoutService
+				? (cid, opts) =>
+						fanoutService.watchProviders(blockProviderNamespace(cid), {
+							signal: opts.signal,
+							want: 8,
+							ttlMs: 10_000,
+							renewIntervalMs: 5_000,
+							bootstrapMaxPeers: 2,
+							onProviders: (providers) =>
+								opts.onProviders(providers.map((provider) => provider.hash)),
+						})
+				: undefined,
 			onPut: async (cid) => {
 				// Best-effort directory announce for "get without remote.from" workflows.
 				try {

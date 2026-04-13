@@ -31,6 +31,13 @@ export class DirectBlock extends DirectStream implements IBlocks {
 				cid: string,
 				options?: { signal?: AbortSignal },
 			) => Promise<string[] | undefined> | string[] | undefined;
+			watchProviders?: (
+				cid: string,
+				options: {
+					signal?: AbortSignal;
+					onProviders: (providers: string[]) => void;
+				},
+			) => void | { close: () => void } | (() => void);
 			onPut?: (cid: string) => Promise<void> | void;
 			providerCache?:
 				| boolean
@@ -90,6 +97,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			publicKey: this.publicKey,
 			eagerBlocks: options?.eagerBlocks,
 			resolveProviders: options?.resolveProviders ?? defaultResolveProviders,
+			watchProviders: options?.watchProviders,
 			onPut: options?.onPut,
 			providerCache: options?.providerCache,
 			requeryOnReachable: options?.requeryOnReachable,
