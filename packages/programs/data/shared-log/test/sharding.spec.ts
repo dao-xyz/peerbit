@@ -168,6 +168,56 @@ testSetups.forEach((setup) => {
 				);
 			};
 
+			const countActiveRepairSweepWork = (
+				...dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[]
+			) => {
+				return dbs.reduce((total, db) => {
+					const log = db.log as any;
+					const pendingPeers = ((log._repairSweepAddedPeersPending ??
+						new Set()) as Set<string>).size;
+					return (
+						total +
+						pendingPeers +
+						(log._repairSweepForceFreshPending ? 1 : 0) +
+						(log._repairSweepRunning ? 1 : 0)
+					);
+				}, 0);
+			};
+
+			const waitForDistributionQuiesced = async (
+				...dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[]
+			) => {
+				await waitForPruneQuiesced(...dbs);
+				await waitForResolved(
+					() => expect(countActiveRepairSweepWork(...dbs)).to.equal(0),
+					{
+						timeout: 120_000,
+						delayInterval: 250,
+					},
+				);
+			};
+
+			const waitForParticipationToSettle = async (
+				...dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[]
+			) => {
+				await Promise.all(
+					dbs.map((db) =>
+						waitForConverged(
+							async () =>
+								Math.round(
+									(await db.log.calculateMyTotalParticipation()) * 100,
+								),
+							{
+								timeout: 120_000,
+								tests: 3,
+								interval: 1_000,
+								delta: 1,
+							},
+						),
+					),
+				);
+			};
+
 			it("will not have any prunable after balance", async () => {
 				const store = new EventStore<string, any>();
 
@@ -1175,17 +1225,19 @@ testSetups.forEach((setup) => {
 								delta: 1,
 							});
 
-								await waitForResolved(
-									async () => {
-										const memoryUsage = await db2.log.getMemoryUsage();
-										const tolerance = Math.max((memoryLimit / 100) * 5, 10_000);
-										expect(
-											Math.abs(memoryLimit - memoryUsage),
-											`memoryUsage=${memoryUsage} memoryLimit=${memoryLimit}`,
-										).lessThan(tolerance);
-									},
-									{ timeout: 30 * 1000 },
-								);
+							await waitForDistributionQuiesced(db1, db2);
+
+							await waitForResolved(
+								async () => {
+									const memoryUsage = await db2.log.getMemoryUsage();
+									const tolerance = Math.max((memoryLimit / 100) * 5, 10_000);
+									expect(
+										Math.abs(memoryLimit - memoryUsage),
+										`memoryUsage=${memoryUsage} memoryLimit=${memoryLimit}`,
+									).lessThan(tolerance);
+								},
+								{ timeout: 30 * 1000 },
+							);
 						});
 
 						it("joining half limited", async () => {
@@ -1231,20 +1283,6 @@ testSetups.forEach((setup) => {
 
 							await delay(db1.log.timeUntilRoleMaturity + 1000);
 
-							const waitForMemoryUsageToSettle = async (
-								db: EventStore<string, ReplicationDomainHash<any>>,
-							) => {
-								await waitForConverged(
-									async () => (await db.log.getMemoryUsage()) / 1e3,
-									{
-										timeout: 40 * 1000,
-										tests: 3,
-										interval: 1000,
-										delta: 2,
-									},
-								);
-							};
-
 							try {
 								await waitForConverged(
 									async () => {
@@ -1267,14 +1305,14 @@ testSetups.forEach((setup) => {
 									},
 								);
 
-								await waitForMemoryUsageToSettle(db2);
+								await waitForDistributionQuiesced(db1, db2);
 
 								await waitForResolved(
 									async () =>
 										expect(
 											Math.abs(memoryLimit - (await db2.log.getMemoryUsage())),
 										).lessThan((memoryLimit / 100) * 12),
-									{ timeout: 20 * 1000, delayInterval: 1000 },
+									{ timeout: 60 * 1000, delayInterval: 1000 },
 								); // allow a bit more slack after settling under full-suite load
 							} catch (error) {
 								await dbgLogs([db1.log, db2.log]);
@@ -1538,6 +1576,10 @@ testSetups.forEach((setup) => {
 									},
 								);
 							};
+
+							await waitForParticipationToSettle(db1, db2);
+
+							await waitForDistributionQuiesced(db1, db2);
 
 							await Promise.all([
 								waitForMemoryUsageToSettle(db1),
