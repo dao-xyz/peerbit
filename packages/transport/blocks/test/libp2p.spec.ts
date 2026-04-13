@@ -167,6 +167,40 @@ describe("transport", function () {
 		expect(new Uint8Array(read!)).to.deep.equal(data);
 	});
 
+	it("rechecks provider discovery quickly while a get is already waiting", async () => {
+		let providersReady = false;
+		session = await TestSession.connected(2, {
+			services: {
+				blocks: (c) =>
+					new DirectBlock(c, {
+						resolveProviders: () =>
+							providersReady ? [store(session, 0).publicKeyHash] : [],
+					}),
+			},
+		});
+
+		await store(session, 0).start();
+		await store(session, 1).start();
+		await waitForNeighbour(store(session, 0), store(session, 1));
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store(session, 0).put(data);
+		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
+
+		const startedAt = Date.now();
+		const readPromise = store(session, 1).get(cid, {
+			remote: { timeout: 10_000 },
+		});
+
+		setTimeout(() => {
+			providersReady = true;
+		}, 250);
+
+		const read = await readPromise;
+		expect(new Uint8Array(read!)).to.deep.equal(data);
+		expect(Date.now() - startedAt).to.be.lessThan(3_000);
+	});
+
 	it("can recover when explicit providers are stale but resolver knows a better peer", async () => {
 		session = await TestSession.disconnected(3, {
 			services: {
