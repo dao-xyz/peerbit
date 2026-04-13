@@ -524,12 +524,16 @@ export class RemoteBlocks implements IBlocks {
 
 			let requeryCount = 0;
 			const maxRequests = Math.max(1, this.maxRequeryOnReachable);
-			const retryIntervalMs = Math.max(
+			const requestRetryIntervalMs = Math.max(
 				1_000,
 				Math.min(
 					5_000,
 					Math.floor((options.timeout ?? 30_000) / Math.max(2, maxRequests)),
 				),
+			);
+			const providerDiscoveryRetryIntervalMs = Math.max(
+				250,
+				Math.min(1_000, Math.floor(requestRetryIntervalMs / 2)),
 			);
 			let retryTimeout: ReturnType<typeof setTimeout> | undefined;
 			const refreshProviders = async (force = false) => {
@@ -580,6 +584,10 @@ export class RemoteBlocks implements IBlocks {
 					clearTimeout(retryTimeout);
 				}
 				if (requeryCount >= maxRequests) return;
+				const retryIntervalMs =
+					providers.length > 0
+						? requestRetryIntervalMs
+						: providerDiscoveryRetryIntervalMs;
 				retryTimeout = setTimeout(() => {
 					if (!this._resolvers.has(cidString)) return;
 					tryPublishRequest({ refreshProviders: true })
