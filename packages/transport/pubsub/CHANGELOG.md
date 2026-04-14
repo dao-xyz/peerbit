@@ -188,6 +188,14 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [5.2.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.1.6...pubsub-v5.2.0) (2026-04-14)
+
+
+### Features
+
+* **blocks:** wake pending gets from provider watches ([ffc0f93](https://github.com/dao-xyz/peerbit/commit/ffc0f9322056d466034c467ebf82a0b08cdd5c93))
+* **blocks:** wake pending reads from provider watches ([0720fe5](https://github.com/dao-xyz/peerbit/commit/0720fe5f0c810f0aa256cd97794b171448b2bdcb))
+
 ## [5.1.6](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.1.5...pubsub-v5.1.6) (2026-04-03)
 
 
