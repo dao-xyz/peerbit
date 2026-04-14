@@ -167,6 +167,36 @@ describe("transport", function () {
 		expect(new Uint8Array(read!)).to.deep.equal(data);
 	});
 
+	it("can wake an in-flight get from watchProviders before retry polling", async () => {
+		session = await TestSession.connected(2, {
+			services: {
+				blocks: (c) =>
+					new DirectBlock(c, {
+						resolveProviders: () => [],
+						watchProviders: (_cid, { onProviders }) => {
+							const timer = setTimeout(() => {
+								onProviders([store(session, 0).publicKeyHash]);
+							}, 50);
+							return () => clearTimeout(timer);
+						},
+					}),
+			},
+		});
+
+		await store(session, 0).start();
+		await store(session, 1).start();
+		await waitForNeighbour(store(session, 0), store(session, 1));
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store(session, 0).put(data);
+		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
+
+		const read = await store(session, 1).get(cid, {
+			remote: { timeout: 200 },
+		});
+		expect(new Uint8Array(read!)).to.deep.equal(data);
+	});
+
 	it("rechecks provider discovery quickly while a get is already waiting", async () => {
 		let providersReady = false;
 		session = await TestSession.connected(2, {

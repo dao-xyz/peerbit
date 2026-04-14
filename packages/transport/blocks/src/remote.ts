@@ -107,6 +107,21 @@ export class RemoteBlocks implements IBlocks {
 				options?: { signal?: AbortSignal },
 			) => Promise<string[] | undefined> | string[] | undefined;
 			/**
+			 * Optional push-based provider watcher used to wake pending remote reads as soon as
+			 * provider availability changes.
+			 *
+			 * This complements `resolveProviders` with an event-first path. Implementations may
+			 * still rely on best-effort discovery internally, but should invoke `onProviders`
+			 * promptly when new candidates become known.
+			 */
+			watchProviders?: (
+				cid: string,
+				options: {
+					signal?: AbortSignal;
+					onProviders: (providers: string[]) => void;
+				},
+			) => void | { close: () => void } | (() => void);
+			/**
 			 * Optional hook called after a block is stored locally (best-effort).
 			 *
 			 * Intended for wiring in discovery/provider announcements without coupling
@@ -536,6 +551,10 @@ export class RemoteBlocks implements IBlocks {
 				Math.min(1_000, Math.floor(requestRetryIntervalMs / 2)),
 			);
 			let retryTimeout: ReturnType<typeof setTimeout> | undefined;
+			let stopWatchingProviders:
+				| void
+				| (() => void)
+				| { close: () => void };
 			const refreshProviders = async (force = false) => {
 				if (!canResolveLater) return;
 				if (!force && explicitFrom.length > 0) return;
@@ -614,6 +633,23 @@ export class RemoteBlocks implements IBlocks {
 				);
 			};
 
+			if (canResolveLater && explicitFrom.length === 0 && this.options.watchProviders) {
+				stopWatchingProviders = this.options.watchProviders(cidString, {
+					signal: options.signal,
+					onProviders: (nextProviders) => {
+						if (!this._resolvers.has(cidString)) return;
+						const normalized = this.normalizeProviderHints(nextProviders);
+						if (normalized.length === 0) return;
+						this.rememberProviderHints(cidString, normalized);
+						providers = this.normalizeProviderHints([...providers, ...normalized]);
+						for (const provider of normalized) {
+							attemptedProviders.add(provider);
+						}
+						tryPublishRequest().catch(dontThrowIfDeliveryError);
+					},
+				});
+			}
+
 			this._events.addEventListener("peer:reachable", publishOnNewPeers);
 			this._events.addEventListener("providers:hints", publishOnProviderHints);
 			try {
@@ -628,6 +664,11 @@ export class RemoteBlocks implements IBlocks {
 				this._readFromPeersPromises.delete(cidString);
 				this._events.removeEventListener("peer:reachable", publishOnNewPeers);
 				this._events.removeEventListener("providers:hints", publishOnProviderHints);
+				if (typeof stopWatchingProviders === "function") {
+					stopWatchingProviders();
+				} else if (stopWatchingProviders) {
+					stopWatchingProviders?.close();
+				}
 			}
 		} else {
 			const result = await promise;
