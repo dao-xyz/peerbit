@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/blocks",
-	"version": "4.0.11",
+	"version": "4.1.0",
 	"description": "Block store streaming",
 	"type": "module",
 	"types": "./dist/src/index.d.ts",

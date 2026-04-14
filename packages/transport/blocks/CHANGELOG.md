@@ -279,6 +279,19 @@
     * @peerbit/blocks-interface bumped from 1.2.18 to 1.2.19
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [4.1.0](https://github.com/dao-xyz/peerbit/compare/blocks-v4.0.11...blocks-v4.1.0) (2026-04-14)
+
+
+### Features
+
+* **blocks:** wake pending gets from provider watches ([ffc0f93](https://github.com/dao-xyz/peerbit/commit/ffc0f9322056d466034c467ebf82a0b08cdd5c93))
+* **blocks:** wake pending reads from provider watches ([0720fe5](https://github.com/dao-xyz/peerbit/commit/0720fe5f0c810f0aa256cd97794b171448b2bdcb))
+
+
+### Bug Fixes
+
+* **blocks:** retry provider discovery sooner for pending gets ([#724](https://github.com/dao-xyz/peerbit/issues/724)) ([8aa1702](https://github.com/dao-xyz/peerbit/commit/8aa1702074204ce11aee94674adc3c4deb3aade5))
+
 ## [4.0.11](https://github.com/dao-xyz/peerbit/compare/blocks-v4.0.10...blocks-v4.0.11) (2026-03-30)
 
 
