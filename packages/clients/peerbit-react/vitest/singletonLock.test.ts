@@ -23,13 +23,14 @@ describe("FastMutex singleton semantics", () => {
 
 	it("allows same-session to reacquire the singleton lock when replaceIfSameClient is true", async () => {
 		const key = "localId-singleton";
+		const timeout = 1000;
 
 		const fm1 = new FastMutex({
 			localStorage,
 			clientId: "session-1",
 			// Use a generous timeout to avoid timing flakiness on busy CI runners,
-			// while still asserting that replaceIfSameClient is fast relative to the timeout.
-			timeout: 1000,
+			// while still asserting that replaceIfSameClient stays well below timeout.
+			timeout,
 		});
 
 		// First acquire and keep the lock alive
@@ -38,11 +39,20 @@ describe("FastMutex singleton semantics", () => {
 
 		// Reacquire from the same client with replaceIfSameClient
 		const start = Date.now();
-		await fm1.lock(key, () => true, { replaceIfSameClient: true });
+		const reacquire = await fm1.lock(key, () => true, {
+			replaceIfSameClient: true,
+		});
 		const elapsed = Date.now() - start;
 
-		// Should not time out and should be fast (no retry loop / contention).
-		expect(elapsed).to.be.lessThan(250);
+		// Same-session replacement should not enter the retry or contention paths.
+		expect(reacquire).to.deep.equal({
+			restartCount: 0,
+			contentionCount: 0,
+			locksLost: 0,
+		});
+		// Keep a wall-clock guard, but tie it to the configured timeout instead of
+		// a fixed absolute number that is too sensitive to busy CI runners.
+		expect(elapsed).to.be.lessThan(timeout / 2);
 		expect(fm1.isLocked(key)).to.be.true;
 
 		fm1.release(key);

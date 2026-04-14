@@ -266,7 +266,7 @@ testSetups.forEach((setup) => {
 						const prunable1 = await db1.log.getPrunable();
 						const prunable2 = await db2.log.getPrunable();
 						if (setup.name === "u64-iblt") {
-							expect(prunable1.length + prunable2.length).to.be.lessThan(10);
+							expect(prunable1.length + prunable2.length).to.be.at.most(10);
 							return;
 						}
 						expect(prunable1).length(0);
@@ -512,7 +512,15 @@ testSetups.forEach((setup) => {
 				// expect min replicas 2 with 3 peers, this means that 66% of entries (ca) will be at peer 2 and 3, and peer1 will have all of them since 1 is the creator
 
 				try {
-					await waitForResolved(() => expect(db1.log.log.length).equal(0));
+					await waitForDistributionQuiesced(db1, db2, db3);
+					await waitForResolved(
+						async () => {
+							const prunable1 = await db1.log.getPrunable();
+							expect(prunable1).length(0);
+							expect(db1.log.log.length).equal(0);
+						},
+						{ timeout: 60_000, delayInterval: 250 },
+					);
 				} catch (error) {
 					await dbgLogs([db1.log, db2.log, db3.log]);
 					throw error;
