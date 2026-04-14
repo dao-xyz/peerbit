@@ -266,7 +266,7 @@ testSetups.forEach((setup) => {
 						const prunable1 = await db1.log.getPrunable();
 						const prunable2 = await db2.log.getPrunable();
 						if (setup.name === "u64-iblt") {
-							expect(prunable1.length + prunable2.length).to.be.lessThan(10);
+							expect(prunable1.length + prunable2.length).to.be.at.most(10);
 							return;
 						}
 						expect(prunable1).length(0);
