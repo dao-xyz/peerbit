@@ -3283,31 +3283,34 @@ export class SharedLog<
 		}
 
 		// Open for communcation
-		await this.rpc.open({
-			queryType: TransportMessage,
-			responseType: TransportMessage,
-			responseHandler: (query, context) => this.onMessage(query, context),
-			topic: this.topic,
-		});
-
 		this._onSubscriptionFn =
 			this._onSubscriptionFn || this._onSubscription.bind(this);
-		await this.node.services.pubsub.addEventListener(
-			"subscribe",
-			this._onSubscriptionFn,
-		);
-
 		this._onUnsubscriptionFn =
 			this._onUnsubscriptionFn || this._onUnsubscription.bind(this);
-		await this.node.services.pubsub.addEventListener(
-			"unsubscribe",
-			this._onUnsubscriptionFn,
-		);
+		await Promise.all([
+			this.rpc.open({
+				queryType: TransportMessage,
+				responseType: TransportMessage,
+				responseHandler: (query, context) => this.onMessage(query, context),
+				topic: this.topic,
+			}),
+			this.node.services.pubsub.addEventListener(
+				"subscribe",
+				this._onSubscriptionFn,
+			),
+			this.node.services.pubsub.addEventListener(
+				"unsubscribe",
+				this._onUnsubscriptionFn,
+			),
+		]);
 
-		await this._openFanoutChannel(options?.fanout);
-
-		// mark all our replicaiton ranges as "new", this would allow other peers to understand that we recently reopend our database and might need some sync and warmup
-		await this.updateTimestampOfOwnedReplicationRanges(); // TODO do we need to do this before subscribing?
+		const fanoutOpenPromise = this._openFanoutChannel(options?.fanout);
+		// Mark previously-owned replication ranges as "new" only when they already exist.
+		// Fresh opens have nothing to touch here, so skip the extra scan/write entirely.
+		const updateOwnedReplicationPromise = hasIndexedReplicationInfo
+			? this.updateTimestampOfOwnedReplicationRanges()
+			: Promise.resolve();
+		await Promise.all([fanoutOpenPromise, updateOwnedReplicationPromise]);
 
 		// if we had a previous session with replication info, and new replication info dictates that we unreplicate
 		// we should do that. Otherwise if options is a unreplication we dont need to do anything because
