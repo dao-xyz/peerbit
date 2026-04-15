@@ -3041,7 +3041,10 @@ export class SharedLog<
 		this.pendingMaturity = new Map();
 
 		const id = sha256Base64Sync(this.log.id);
-		const storage = await this.node.storage.sublevel(id);
+		const [storage, logScope] = await Promise.all([
+			this.node.storage.sublevel(id),
+			this.node.indexer.scope(id),
+		]);
 
 		const localBlocks = await new AnyBlockStore(await storage.sublevel("blocks"));
 		const fanoutService = getSharedLogFanoutService(this.node.services);
@@ -3104,10 +3107,11 @@ export class SharedLog<
 			},
 		});
 
-		await this.remoteBlocks.start();
-
-		const logScope = await this.node.indexer.scope(id);
-		const replicationIndex = await logScope.scope("replication");
+		const remoteBlocksStartPromise = this.remoteBlocks.start();
+		const [replicationIndex, logIndex] = await Promise.all([
+			logScope.scope("replication"),
+			logScope.scope("log"),
+		]);
 		this._replicationRangeIndex = await replicationIndex.init({
 			schema: this.indexableDomain.constructorRange,
 		});
@@ -3116,7 +3120,7 @@ export class SharedLog<
 			schema: this.indexableDomain.constructorEntry,
 		});
 
-		const logIndex = await logScope.scope("log");
+		await remoteBlocksStartPromise;
 
 		const hasIndexedReplicationInfo =
 			(await this.replicationIndex.count({
@@ -3279,47 +3283,50 @@ export class SharedLog<
 		}
 
 		// Open for communcation
-		await this.rpc.open({
-			queryType: TransportMessage,
-			responseType: TransportMessage,
-			responseHandler: (query, context) => this.onMessage(query, context),
-			topic: this.topic,
-		});
-
 		this._onSubscriptionFn =
 			this._onSubscriptionFn || this._onSubscription.bind(this);
-		await this.node.services.pubsub.addEventListener(
-			"subscribe",
-			this._onSubscriptionFn,
-		);
-
 		this._onUnsubscriptionFn =
 			this._onUnsubscriptionFn || this._onUnsubscription.bind(this);
-		await this.node.services.pubsub.addEventListener(
-			"unsubscribe",
-			this._onUnsubscriptionFn,
-		);
+		await Promise.all([
+			this.rpc.open({
+				queryType: TransportMessage,
+				responseType: TransportMessage,
+				responseHandler: (query, context) => this.onMessage(query, context),
+				topic: this.topic,
+			}),
+			this.node.services.pubsub.addEventListener(
+				"subscribe",
+				this._onSubscriptionFn,
+			),
+			this.node.services.pubsub.addEventListener(
+				"unsubscribe",
+				this._onUnsubscriptionFn,
+			),
+		]);
 
-		await this.rpc.subscribe();
-		await this._openFanoutChannel(options?.fanout);
-
-		// mark all our replicaiton ranges as "new", this would allow other peers to understand that we recently reopend our database and might need some sync and warmup
-		await this.updateTimestampOfOwnedReplicationRanges(); // TODO do we need to do this before subscribing?
+		const fanoutOpenPromise = this._openFanoutChannel(options?.fanout);
+		// Mark previously-owned replication ranges as "new" only when they already exist.
+		// Fresh opens have nothing to touch here, so skip the extra scan/write entirely.
+		const updateOwnedReplicationPromise = hasIndexedReplicationInfo
+			? this.updateTimestampOfOwnedReplicationRanges()
+			: Promise.resolve();
+		await Promise.all([fanoutOpenPromise, updateOwnedReplicationPromise]);
 
 		// if we had a previous session with replication info, and new replication info dictates that we unreplicate
 		// we should do that. Otherwise if options is a unreplication we dont need to do anything because
 		// we are already unreplicated (as we are just opening)
 
-		let isUnreplicationOptionsDefined = isUnreplicationOptions(
+		const isUnreplicationOptionsDefined = isUnreplicationOptions(
 			options?.replicate,
 		);
 
 		const canResumeReplication =
+			hasIndexedReplicationInfo &&
 			(await isReplicationOptionsDependentOnPreviousState(
 				options?.replicate,
 				this.replicationIndex,
 				this.node.identity.publicKey,
-			)) && hasIndexedReplicationInfo;
+			));
 
 		if (hasIndexedReplicationInfo && isUnreplicationOptionsDefined) {
 			await this.replicate(options?.replicate, { checkDuplicates: true });
