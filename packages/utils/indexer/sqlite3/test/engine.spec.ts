@@ -15,26 +15,55 @@ const createMockStatement = (id: string): Statement => ({
 
 const createMockDatabase = (
 	initialStatus: "open" | "closed" = "open",
-): Database & { executedSql: string[]; openCalls: number } => {
+	withPrepareMany = false,
+): Database & {
+	executedSql: string[];
+	openCalls: number;
+	prepareCalls: number;
+	prepareManyCalls: number;
+} => {
 	const statements = new Map<string, Statement>();
 	const executedSql: string[] = [];
 	let status: "open" | "closed" = initialStatus;
 	let openCalls = 0;
+	let prepareCalls = 0;
+	let prepareManyCalls = 0;
 	return {
 		executedSql,
 		get openCalls() {
 			return openCalls;
 		},
+		get prepareCalls() {
+			return prepareCalls;
+		},
+		get prepareManyCalls() {
+			return prepareManyCalls;
+		},
 		exec: async (sql: string) => {
 			executedSql.push(sql);
 		},
 		prepare: async (sql: string, id?: string) => {
+			prepareCalls++;
 			const statement = createMockStatement(id ?? sql);
 			if (id) {
 				statements.set(id, statement);
 			}
 			return statement;
 		},
+		prepareMany: withPrepareMany
+			? async (definitions) => {
+					prepareManyCalls++;
+					return Promise.all(
+						definitions.map((definition) =>
+							(async () => {
+								const statement = createMockStatement(definition.id);
+								statements.set(definition.id, statement);
+								return statement;
+							})(),
+						),
+					);
+				}
+			: undefined,
 		open: async () => {
 			openCalls++;
 			status = "open";
@@ -125,6 +154,56 @@ describe("engine", () => {
 		await indices.start();
 
 		expect(db.openCalls).to.equal(0);
+	});
+
+	it("prepares root write statements during start when the database lacks prepareMany", async () => {
+		@variant("root")
+		class RootDoc {
+			@id({ type: "string" })
+			id!: string;
+
+			@field({ type: Uint8Array })
+			bytes!: Uint8Array;
+		}
+
+		const db = createMockDatabase("open");
+		const index = new SQLLiteIndex({
+			scope: [],
+			db,
+			schema: RootDoc,
+		}).init({
+			schema: RootDoc,
+		});
+
+		await index.start();
+
+		expect(db.prepareCalls).to.equal(3);
+		expect(db.prepareManyCalls).to.equal(0);
+	});
+
+	it("batches root startup statements when the database supports prepareMany", async () => {
+		@variant("root")
+		class RootDoc {
+			@id({ type: "string" })
+			id!: string;
+
+			@field({ type: Uint8Array })
+			bytes!: Uint8Array;
+		}
+
+		const db = createMockDatabase("open", true);
+		const index = new SQLLiteIndex({
+			scope: [],
+			db,
+			schema: RootDoc,
+		}).init({
+			schema: RootDoc,
+		});
+
+		await index.start();
+
+		expect(db.prepareManyCalls).to.equal(1);
+		expect(db.prepareCalls).to.equal(0);
 	});
 
 	it("opens a root sqlite database when it starts closed", async () => {

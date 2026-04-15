@@ -100,6 +100,15 @@ const createBatchInsertSQL = (table: Table, rows: number) => {
 		.join(", ")};`;
 };
 
+const createInsertReturningSQL = (table: Table) =>
+	`insert into ${table.name}  (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")}) RETURNING ${table.primary};`;
+
+const createInsertKnownIdSQL = (table: Table) =>
+	`insert into ${table.name} (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")});`;
+
+const createReplaceSQL = (table: Table) =>
+	`insert or replace into ${table.name} (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")});`;
+
 const canUseWithoutRowId = (table: Table) => {
 	if (table.inline || table.primary === false || !table.primaryField) {
 		return false;
@@ -265,6 +274,8 @@ export class SQLiteIndex<T extends Record<string, any>>
 		this._rootTables = tables.filter((x) => x.parent == null);
 
 		const allTables = tables;
+		const startupStatements: { id: string; sql: string }[] = [];
+		const startupTableStatements: string[] = [];
 
 		for (const table of allTables) {
 			this._tables.set(table.name, table);
@@ -283,7 +294,28 @@ export class SQLiteIndex<T extends Record<string, any>>
 				? " strict, without rowid"
 				: " strict";
 			const sqlCreateTable = `create table if not exists ${table.name} (${[...table.fields, ...table.constraints].map((s) => s.definition).join(", ")})${tableOptions}`;
-			this.properties.db.exec(sqlCreateTable);
+			startupTableStatements.push(sqlCreateTable);
+
+			startupStatements.push(
+				{
+					id: putStatementKey(table),
+					sql: createInsertReturningSQL(table),
+				},
+				{
+					id: insertKnownIdStatementKey(table),
+					sql: createInsertKnownIdSQL(table),
+				},
+				{
+					id: replaceStatementKey(table),
+					sql: createReplaceSQL(table),
+				},
+			);
+			if (table.parent) {
+				startupStatements.push({
+					id: resolveChildrenStatement(table),
+					sql: selectChildren(table),
+				});
+			}
 
 			/* const fieldsToIndex = table.fields.filter(
 				(field) =>
@@ -318,27 +350,17 @@ export class SQLiteIndex<T extends Record<string, any>>
 				}
 			} */
 
-			// put and return the id
-			let sqlPut = `insert into ${table.name}  (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")}) RETURNING ${table.primary};`;
+		}
 
-			// insert without replace when the caller already knows the id is fresh
-			let sqlInsertKnownId = `insert into ${table.name} (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")});`;
+		if (startupTableStatements.length > 0) {
+			await this.properties.db.exec(startupTableStatements.join(";"));
+		}
 
-			// insert or replace with id already defined
-			let sqlReplace = `insert or replace into ${table.name} (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")});`;
-
-			await this.properties.db.prepare(sqlPut, putStatementKey(table));
-			await this.properties.db.prepare(
-				sqlInsertKnownId,
-				insertKnownIdStatementKey(table),
-			);
-			await this.properties.db.prepare(sqlReplace, replaceStatementKey(table));
-
-			if (table.parent) {
-				await this.properties.db.prepare(
-					selectChildren(table),
-					resolveChildrenStatement(table),
-				);
+		if (this.properties.db.prepareMany) {
+			await this.properties.db.prepareMany(startupStatements);
+		} else {
+			for (const statement of startupStatements) {
+				await this.properties.db.prepare(statement.sql, statement.id);
 			}
 		}
 
@@ -416,12 +438,21 @@ export class SQLiteIndex<T extends Record<string, any>>
 		parentId: any,
 		table: Table,
 	): Promise<any[]> {
-		const stmt = this.properties.db.statements.get(
+		const stmt = await this.getOrPrepareStatement(
 			resolveChildrenStatement(table),
-		)!;
+			selectChildren(table),
+		);
 		const results = await stmt.all([parentId]);
 		await stmt.reset?.();
 		return results;
+	}
+
+	private async getOrPrepareStatement(key: string, sql: string) {
+		const existing = this.properties.db.statements.get(key);
+		if (existing) {
+			return existing;
+		}
+		return this.properties.db.prepare(sql, key);
 	}
 	async get(
 		id: types.IdKey,
@@ -481,9 +512,10 @@ export class SQLiteIndex<T extends Record<string, any>>
 						if (preId != null) {
 							const shouldReplace = options?.replace ?? true;
 							if (!shouldReplace) {
-								statement = this.properties.db.statements.get(
+								statement = await this.getOrPrepareStatement(
 									insertKnownIdStatementKey(table),
-								)!;
+									createInsertKnownIdSQL(table),
+								);
 								try {
 									this.fkMode === "race-tolerant"
 										? await runIgnoreFK(statement, values)
@@ -493,26 +525,29 @@ export class SQLiteIndex<T extends Record<string, any>>
 										throw error;
 									}
 									await statement.reset?.();
-									statement = this.properties.db.statements.get(
+									statement = await this.getOrPrepareStatement(
 										replaceStatementKey(table),
-									)!;
+										createReplaceSQL(table),
+									);
 									this.fkMode === "race-tolerant"
 										? await runIgnoreFK(statement, values)
 										: await statement.run(values);
 								}
 							} else {
-								statement = this.properties.db.statements.get(
+								statement = await this.getOrPrepareStatement(
 									replaceStatementKey(table),
-								)!;
+									createReplaceSQL(table),
+								);
 								this.fkMode === "race-tolerant"
 									? await runIgnoreFK(statement, values)
 									: await statement.run(values);
 							}
 							return preId;
 						} else {
-							statement = this.properties.db.statements.get(
+							statement = await this.getOrPrepareStatement(
 								putStatementKey(table),
-							)!;
+								createInsertReturningSQL(table),
+							);
 							const out =
 								this.fkMode === "race-tolerant"
 									? await getIgnoreFK(statement, values)
