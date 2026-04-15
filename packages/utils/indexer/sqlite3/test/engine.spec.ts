@@ -1,7 +1,7 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { id } from "@peerbit/indexer-interface";
 import { expect } from "chai";
-import { SQLLiteIndex } from "../src/engine.js";
+import { SQLLiteIndex, SQLiteIndices } from "../src/engine.js";
 import type { Database, Statement } from "../src/types.js";
 
 const createMockStatement = (id: string): Statement => ({
@@ -13,11 +13,18 @@ const createMockStatement = (id: string): Statement => ({
 	reset: async () => createMockStatement(id),
 });
 
-const createMockDatabase = (): Database & { executedSql: string[] } => {
+const createMockDatabase = (
+	initialStatus: "open" | "closed" = "open",
+): Database & { executedSql: string[]; openCalls: number } => {
 	const statements = new Map<string, Statement>();
 	const executedSql: string[] = [];
+	let status: "open" | "closed" = initialStatus;
+	let openCalls = 0;
 	return {
 		executedSql,
+		get openCalls() {
+			return openCalls;
+		},
 		exec: async (sql: string) => {
 			executedSql.push(sql);
 		},
@@ -28,10 +35,15 @@ const createMockDatabase = (): Database & { executedSql: string[] } => {
 			}
 			return statement;
 		},
-		open: async () => undefined,
-		close: async () => undefined,
+		open: async () => {
+			openCalls++;
+			status = "open";
+		},
+		close: async () => {
+			status = "closed";
+		},
 		drop: async () => undefined,
-		status: () => "open",
+		status: () => status,
 		statements: {
 			get: (key: string) => statements.get(key),
 			get size() {
@@ -100,5 +112,31 @@ describe("engine", () => {
 				sql.toLowerCase().includes("without rowid"),
 			),
 		).to.equal(false);
+	});
+
+	it("does not reopen a root sqlite database that is already open", async () => {
+		const db = createMockDatabase("open");
+		const indices = new SQLiteIndices({
+			scope: [],
+			db,
+			directory: "repo/test/index",
+		});
+
+		await indices.start();
+
+		expect(db.openCalls).to.equal(0);
+	});
+
+	it("opens a root sqlite database when it starts closed", async () => {
+		const db = createMockDatabase("closed");
+		const indices = new SQLiteIndices({
+			scope: [],
+			db,
+			directory: "repo/test/index",
+		});
+
+		await indices.start();
+
+		expect(db.openCalls).to.equal(1);
 	});
 });

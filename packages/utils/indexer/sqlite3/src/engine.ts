@@ -951,7 +951,10 @@ export class SQLiteIndices implements types.Indices {
 		this.closed = false;
 
 		if (!this.properties.parent) {
-			await this.properties.db.open();
+			const status = await this.properties.db.status();
+			if (status !== "open") {
+				await this.properties.db.open();
+			}
 		}
 
 		for (const scope of this.scopes.values()) {
