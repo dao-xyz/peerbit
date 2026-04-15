@@ -241,10 +241,10 @@ export abstract class Program<
 
 		this._eventOptions = options;
 		this.node = node;
-		const nexts = this.programs;
-		for (const next of nexts) {
-			await next.beforeOpen(node, { ...options, parent: this });
-		}
+		const nexts = [...new Set(this.programs)];
+		await Promise.all(
+			nexts.map((next) => next.beforeOpen(node, { ...options, parent: this })),
+		);
 
 		await this._eventOptions?.onBeforeOpen?.(this);
 		this.closed = false;
@@ -267,10 +267,8 @@ export abstract class Program<
 
 			this.emitEvent(new CustomEvent("open", { detail: this }), true);
 			await this._eventOptions?.onOpen?.(this);
-			const nexts = this.programs;
-			for (const next of nexts) {
-				await next.afterOpen();
-			}
+			const nexts = [...new Set(this.programs)];
+			await Promise.all(nexts.map((next) => next.afterOpen()));
 		}
 	}
 
