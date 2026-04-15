@@ -284,6 +284,79 @@ describe("program", () => {
 				expect(p.closed).to.be.true;
 				expect(p.child.closed).to.be.true;
 			});
+
+			it("opens sibling subprogram lifecycle hooks in parallel", async () => {
+				let beforeOpenInFlight = 0;
+				let maxBeforeOpenInFlight = 0;
+				let afterOpenInFlight = 0;
+				let maxAfterOpenInFlight = 0;
+
+				@variant("parallel-open-child")
+				class ParallelOpenChild extends Program {
+					@field({ type: "u32" })
+					id: number;
+
+					constructor(id: number) {
+						super();
+						this.id = id;
+					}
+
+					override async beforeOpen(
+						node: ProgramClient,
+						options?: any,
+					): Promise<void> {
+						beforeOpenInFlight++;
+						maxBeforeOpenInFlight = Math.max(
+							maxBeforeOpenInFlight,
+							beforeOpenInFlight,
+						);
+						try {
+							await delay(25);
+							await super.beforeOpen(node, options);
+						} finally {
+							beforeOpenInFlight--;
+						}
+					}
+
+					override async open(): Promise<void> {}
+
+					override async afterOpen(): Promise<void> {
+						afterOpenInFlight++;
+						maxAfterOpenInFlight = Math.max(
+							maxAfterOpenInFlight,
+							afterOpenInFlight,
+						);
+						try {
+							await delay(25);
+							await super.afterOpen();
+						} finally {
+							afterOpenInFlight--;
+						}
+					}
+				}
+
+				@variant("parallel-open-parent")
+				class ParallelOpenParent extends Program {
+					@field({ type: ParallelOpenChild })
+					left: ParallelOpenChild;
+
+					@field({ type: ParallelOpenChild })
+					right: ParallelOpenChild;
+
+					constructor() {
+						super();
+						this.left = new ParallelOpenChild(1);
+						this.right = new ParallelOpenChild(2);
+					}
+
+					override async open(): Promise<void> {}
+				}
+
+				await peer.open(new ParallelOpenParent());
+
+				expect(maxBeforeOpenInFlight).to.equal(2);
+				expect(maxAfterOpenInFlight).to.equal(2);
+			});
 		});
 
 		describe("clear", () => {
