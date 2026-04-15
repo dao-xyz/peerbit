@@ -3115,13 +3115,11 @@ export class SharedLog<
 		this._replicationRangeIndex = await replicationIndex.init({
 			schema: this.indexableDomain.constructorRange,
 		});
-
 		this._entryCoordinatesIndex = await replicationIndex.init({
 			schema: this.indexableDomain.constructorEntry,
 		});
 
 		await remoteBlocksStartPromise;
-
 		const hasIndexedReplicationInfo =
 			(await this.replicationIndex.count({
 				query: [
@@ -3379,25 +3377,26 @@ export class SharedLog<
 
 	async afterOpen(): Promise<void> {
 		await super.afterOpen();
+		const existingSubscribersPromise = this._getTopicSubscribers(this.topic);
 
 		// We do this here, because these calls requires this.closed == false
-			void this.pruneOfflineReplicators()
-				.then(() => {
-					this._replicatorsReconciled = true;
-				})
+		void this.pruneOfflineReplicators()
+			.then(() => {
+				this._replicatorsReconciled = true;
+			})
 			.catch((error) => {
 				if (isNotStartedError(error as Error)) {
 					return;
 				}
-					logger.error(error);
-				});
+				logger.error(error);
+			});
 
-			this.startReplicatorLivenessSweep();
+		this.startReplicatorLivenessSweep();
 
-			await this.rebalanceParticipation();
+		await this.rebalanceParticipation();
 
 		// Take into account existing subscription
-		(await this._getTopicSubscribers(this.topic))?.forEach((v) => {
+		(await existingSubscribersPromise)?.forEach((v) => {
 			if (v.equals(this.node.identity.publicKey)) {
 				return;
 			}
