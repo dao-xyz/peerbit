@@ -4,18 +4,25 @@ import { expect } from "chai";
 import { SQLLiteIndex, SQLiteIndices } from "../src/engine.js";
 import type { Database, Statement } from "../src/types.js";
 
-const createMockStatement = (id: string): Statement => ({
+const createMockStatement = (
+	id: string,
+	options?: {
+		get?: () => Promise<any> | any;
+		all?: (values?: any[]) => Promise<any[]> | any[];
+	},
+): Statement => ({
 	id,
-	bind: async () => createMockStatement(id),
+	bind: async () => createMockStatement(id, options),
 	run: async () => undefined,
-	get: async () => undefined,
-	all: async () => [],
-	reset: async () => createMockStatement(id),
+	get: async () => options?.get?.(),
+	all: async (values) => options?.all?.(values) ?? [],
+	reset: async () => createMockStatement(id, options),
 });
 
 const createMockDatabase = (
 	initialStatus: "open" | "closed" = "open",
 	withPrepareMany = false,
+	existingTables: string[] | "requested" = [],
 ): Database & {
 	executedSql: string[];
 	openCalls: number;
@@ -44,7 +51,19 @@ const createMockDatabase = (
 		},
 		prepare: async (sql: string, id?: string) => {
 			prepareCalls++;
-			const statement = createMockStatement(id ?? sql);
+			const statement = sql.includes("sqlite_master")
+				? createMockStatement(id ?? sql, {
+						all: async (values) => {
+							if (existingTables === "requested") {
+								return (values?.slice(1) ?? []).map((name) => ({ name }));
+							}
+							if (existingTables.length > 0) {
+								return existingTables.map((name) => ({ name }));
+							}
+							return [];
+						},
+					})
+				: createMockStatement(id ?? sql);
 			if (id) {
 				statements.set(id, statement);
 			}
@@ -177,7 +196,7 @@ describe("engine", () => {
 
 		await index.start();
 
-		expect(db.prepareCalls).to.equal(3);
+		expect(db.prepareCalls).to.equal(4);
 		expect(db.prepareManyCalls).to.equal(0);
 	});
 
@@ -203,7 +222,37 @@ describe("engine", () => {
 		await index.start();
 
 		expect(db.prepareManyCalls).to.equal(1);
-		expect(db.prepareCalls).to.equal(0);
+		expect(db.prepareCalls).to.equal(1);
+	});
+
+	it("skips root table DDL on start when the schema already exists", async () => {
+		@variant("root")
+		class RootDoc {
+			@id({ type: "string" })
+			id!: string;
+
+			@field({ type: Uint8Array })
+			bytes!: Uint8Array;
+		}
+
+		const db = createMockDatabase("open", true, "requested");
+		const index = new SQLLiteIndex({
+			scope: [],
+			db,
+			schema: RootDoc,
+		}).init({
+			schema: RootDoc,
+		});
+
+		await index.start();
+
+		expect(
+			db.executedSql.some((sql) =>
+				sql.toLowerCase().includes("create table if not exists"),
+			),
+		).to.equal(false);
+		expect(db.prepareManyCalls).to.equal(1);
+		expect(db.prepareCalls).to.equal(1);
 	});
 
 	it("opens a root sqlite database when it starts closed", async () => {

@@ -223,20 +223,35 @@ export class QueryPlanner {
 			beforePrepare: async () => {
 				// create missing indices
 				if (indexCreateCommands != null) {
-					for (const { key, cmd, deferred } of indexCreateCommands) {
+					const commandsToCreate: typeof indexCreateCommands = [];
+					for (const command of indexCreateCommands) {
+						if (this.pendingIndexCreation.has(command.key)) {
+							// TODO is this kind of debouncing needed? how do we end up here?
+							await this.pendingIndexCreation.get(command.key);
+							continue;
+						}
+						commandsToCreate.push(command);
+					}
+					if (commandsToCreate.length > 0) {
+						const creationPromise = Promise.resolve(
+							this.props.exec(
+								commandsToCreate.map((command) => command.cmd).join(";"),
+							),
+						);
+						for (const { key } of commandsToCreate) {
+							this.pendingIndexCreation.set(key, creationPromise);
+						}
 						try {
-							if (this.pendingIndexCreation.has(key)) {
-								// TODO is this kind of debouncing needed? how do we end up here?
-								await this.pendingIndexCreation.get(key);
+							await creationPromise;
+							for (const { key, deferred } of commandsToCreate) {
+								this.pendingIndexCreation.delete(key);
+								deferred.resolve();
 							}
-							const promise = this.props.exec(cmd);
-							this.pendingIndexCreation.set(key, promise);
-							await promise;
-
-							this.pendingIndexCreation.delete(key);
-							deferred.resolve();
 						} catch (error) {
-							deferred.reject(error);
+							for (const { key, deferred } of commandsToCreate) {
+								this.pendingIndexCreation.delete(key);
+								deferred.reject(error);
+							}
 						}
 					}
 				}

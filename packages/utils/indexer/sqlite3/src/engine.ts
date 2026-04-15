@@ -275,7 +275,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 
 		const allTables = tables;
 		const startupStatements: { id: string; sql: string }[] = [];
-		const startupTableStatements: string[] = [];
+		const startupTableStatements = new Map<string, string>();
 
 		for (const table of allTables) {
 			this._tables.set(table.name, table);
@@ -294,7 +294,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 				? " strict, without rowid"
 				: " strict";
 			const sqlCreateTable = `create table if not exists ${table.name} (${[...table.fields, ...table.constraints].map((s) => s.definition).join(", ")})${tableOptions}`;
-			startupTableStatements.push(sqlCreateTable);
+			startupTableStatements.set(table.name, sqlCreateTable);
 
 			startupStatements.push(
 				{
@@ -352,8 +352,17 @@ export class SQLiteIndex<T extends Record<string, any>>
 
 		}
 
-		if (startupTableStatements.length > 0) {
-			await this.properties.db.exec(startupTableStatements.join(";"));
+		if (startupTableStatements.size > 0) {
+			const existingTables = await this.getExistingSQLiteObjects(
+				"table",
+				[...startupTableStatements.keys()],
+			);
+			const missingTableStatements = [...startupTableStatements.entries()]
+				.filter(([tableName]) => !existingTables.has(tableName))
+				.map(([, sql]) => sql);
+			if (missingTableStatements.length > 0) {
+				await this.properties.db.exec(missingTableStatements.join(";"));
+			}
 		}
 
 		if (this.properties.db.prepareMany) {
@@ -374,6 +383,29 @@ export class SQLiteIndex<T extends Record<string, any>>
 		}, this.iteratorTimeout);
 
 		this.closed = false;
+	}
+
+	private async getExistingSQLiteObjects(
+		type: "table" | "index",
+		names: string[],
+	): Promise<Set<string>> {
+		if (names.length === 0) {
+			return new Set();
+		}
+
+		const sql = `select name from sqlite_master where type = ? and name in (${names
+			.map(() => "?")
+			.join(", ")})`;
+		const statement =
+			this.properties.db.statements.get(sql) ||
+			(await this.properties.db.prepare(sql, sql));
+		const rows = await statement.all([type, ...names]);
+		await statement.reset?.();
+		return new Set(
+			(rows as Array<{ name?: string }>)
+				.map((row) => row.name)
+				.filter((name): name is string => typeof name === "string"),
+		);
 	}
 
 	private async clearStatements() {
