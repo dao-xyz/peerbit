@@ -3316,16 +3316,17 @@ export class SharedLog<
 		// we should do that. Otherwise if options is a unreplication we dont need to do anything because
 		// we are already unreplicated (as we are just opening)
 
-		let isUnreplicationOptionsDefined = isUnreplicationOptions(
+		const isUnreplicationOptionsDefined = isUnreplicationOptions(
 			options?.replicate,
 		);
 
 		const canResumeReplication =
+			hasIndexedReplicationInfo &&
 			(await isReplicationOptionsDependentOnPreviousState(
 				options?.replicate,
 				this.replicationIndex,
 				this.node.identity.publicKey,
-			)) && hasIndexedReplicationInfo;
+			));
 
 		if (hasIndexedReplicationInfo && isUnreplicationOptionsDefined) {
 			await this.replicate(options?.replicate, { checkDuplicates: true });
