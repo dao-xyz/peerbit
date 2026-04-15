@@ -3041,7 +3041,10 @@ export class SharedLog<
 		this.pendingMaturity = new Map();
 
 		const id = sha256Base64Sync(this.log.id);
-		const storage = await this.node.storage.sublevel(id);
+		const [storage, logScope] = await Promise.all([
+			this.node.storage.sublevel(id),
+			this.node.indexer.scope(id),
+		]);
 
 		const localBlocks = await new AnyBlockStore(await storage.sublevel("blocks"));
 		const fanoutService = getSharedLogFanoutService(this.node.services);
@@ -3104,10 +3107,11 @@ export class SharedLog<
 			},
 		});
 
-		await this.remoteBlocks.start();
-
-		const logScope = await this.node.indexer.scope(id);
-		const replicationIndex = await logScope.scope("replication");
+		const remoteBlocksStartPromise = this.remoteBlocks.start();
+		const [replicationIndex, logIndex] = await Promise.all([
+			logScope.scope("replication"),
+			logScope.scope("log"),
+		]);
 		this._replicationRangeIndex = await replicationIndex.init({
 			schema: this.indexableDomain.constructorRange,
 		});
@@ -3116,7 +3120,7 @@ export class SharedLog<
 			schema: this.indexableDomain.constructorEntry,
 		});
 
-		const logIndex = await logScope.scope("log");
+		await remoteBlocksStartPromise;
 
 		const hasIndexedReplicationInfo =
 			(await this.replicationIndex.count({
@@ -3300,7 +3304,6 @@ export class SharedLog<
 			this._onUnsubscriptionFn,
 		);
 
-		await this.rpc.subscribe();
 		await this._openFanoutChannel(options?.fanout);
 
 		// mark all our replicaiton ranges as "new", this would allow other peers to understand that we recently reopend our database and might need some sync and warmup
