@@ -295,6 +295,58 @@ describe("waitForReplicator liveness", () => {
 		}
 	});
 
+	it("starts subscriber discovery while rebalancing during open", async () => {
+		session = await TestSession.connected(1);
+
+		const store = new EventStore<string, any>();
+		const hooks = getLivenessTestHooks(store);
+		const originalGetTopicSubscribers =
+			hooks._getTopicSubscribers.bind(hooks);
+		const originalRebalanceParticipation =
+			store.log.rebalanceParticipation.bind(store.log);
+
+		let rebalanceStarted = false;
+		let subscribersStarted = false;
+		let releaseRebalance!: () => void;
+		const rebalanceGate = new Promise<void>((resolve) => {
+			releaseRebalance = resolve;
+		});
+
+		hooks._getTopicSubscribers = async (topic: string) => {
+			subscribersStarted = true;
+			return originalGetTopicSubscribers(topic);
+		};
+		store.log.rebalanceParticipation = async () => {
+			rebalanceStarted = true;
+			await rebalanceGate;
+			return originalRebalanceParticipation();
+		};
+
+		const openPromise = session.peers[0].open(store, {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+
+		try {
+			await waitForResolved(() => expect(rebalanceStarted).to.be.true, {
+				timeout: 5_000,
+				delayInterval: 20,
+			});
+			await waitForResolved(() => expect(subscribersStarted).to.be.true, {
+				timeout: 1_000,
+				delayInterval: 20,
+			});
+		} finally {
+			releaseRebalance();
+			hooks._getTopicSubscribers = originalGetTopicSubscribers;
+			store.log.rebalanceParticipation = originalRebalanceParticipation;
+		}
+
+		await openPromise;
+	});
+
 	it("invalidates cached topic subscribers when the cache is cleared", async () => {
 		session = await TestSession.connected(2);
 
