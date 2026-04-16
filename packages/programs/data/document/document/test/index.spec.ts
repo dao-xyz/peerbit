@@ -868,6 +868,10 @@ describe("index", () => {
 						},
 					},
 				});
+				await Promise.all([
+					store.docs.log.waitForReplicator(store3.node.identity.publicKey),
+					store2.docs.log.waitForReplicator(store3.node.identity.publicKey),
+				]);
 				await store2.docs.log.replicate({ factor: 0 });
 				await waitForResolved(async () =>
 					expect(await store3.docs.index.getSize()).equal(COUNT),
