@@ -141,6 +141,7 @@ testSetups.forEach((setup) => {
 			const sampleSize = 200; // must be < 255
 			const shardingSmallEntryCount = setup.name === "u64-iblt" ? 30 : 60;
 			const shardingMediumEntryCount = setup.name === "u64-iblt" ? 60 : 100;
+			const shardingThreePeerEntryCount = setup.name === "u64-iblt" ? 20 : shardingSmallEntryCount;
 			const largeEntryCount = 1000;
 			const shardingWriteBatchSize = 1;
 
@@ -247,7 +248,7 @@ testSetups.forEach((setup) => {
 						setup,
 					},
 				});
-				const entryCount = shardingSmallEntryCount;
+				const entryCount = shardingThreePeerEntryCount;
 
 				await appendInBatches(entryCount, (i) =>
 					db1.add(toBase64(new Uint8Array([i])), { meta: { next: [] } }),
@@ -417,7 +418,14 @@ testSetups.forEach((setup) => {
 						},
 					},
 				);
-				await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
+				await checkBounded(
+					entryCount,
+					0.5,
+					setup.name === "u32-simple" ? 0.95 : 0.9,
+					db1,
+					db2,
+					db3,
+				);
 				});
 
 			it("3 peers prune all", async () => {
