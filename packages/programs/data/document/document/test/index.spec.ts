@@ -832,6 +832,13 @@ describe("index", () => {
 					},
 				});
 
+				await Promise.all([
+					store.docs.log.waitForReplicator(store3.node.identity.publicKey),
+					store2.docs.log.waitForReplicator(store3.node.identity.publicKey),
+					store3.docs.log.waitForReplicator(store.node.identity.publicKey),
+					store3.docs.log.waitForReplicator(store2.node.identity.publicKey),
+				]);
+
 				await waitForResolved(async () =>
 					expect(await store3.docs.index.getSize()).equal(COUNT),
 				);
@@ -871,7 +878,12 @@ describe("index", () => {
 				await Promise.all([
 					store.docs.log.waitForReplicator(store3.node.identity.publicKey),
 					store2.docs.log.waitForReplicator(store3.node.identity.publicKey),
+					store3.docs.log.waitForReplicator(store.node.identity.publicKey),
+					store3.docs.log.waitForReplicator(store2.node.identity.publicKey),
 				]);
+				await waitForResolved(async () =>
+					expect(await store3.docs.index.getSize()).equal(COUNT),
+				);
 				await store2.docs.log.replicate({ factor: 0 });
 				await waitForResolved(async () =>
 					expect(await store3.docs.index.getSize()).equal(COUNT),
@@ -8021,6 +8033,14 @@ describe("index", () => {
 
 			it("get local first", async () => {
 				await stores[1].docs.log.replicate({ factor: 0.0001 });
+				await Promise.all([
+					stores[0].docs.log.waitForReplicator(
+						stores[1].node.identity.publicKey,
+					),
+					stores[1].docs.log.waitForReplicator(
+						stores[0].node.identity.publicKey,
+					),
+				]);
 				await waitForResolved(() =>
 					expect(stores[1].docs.log.log.length).to.eq(
 						stores[0].docs.log.log.length,

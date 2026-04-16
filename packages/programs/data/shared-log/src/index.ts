@@ -753,6 +753,7 @@ export class SharedLog<
 	private _repairSweepRunning!: boolean;
 	private _repairSweepForceFreshPending!: boolean;
 	private _repairSweepAddedPeersPending!: Set<string>;
+	private _repairSweepOptimisticGidPeersPending!: Map<string, Set<string>>;
 	private _topicSubscribersCache!: Map<
 		string,
 		{ expiresAt: number; keys: PublicSignKey[] }
@@ -2507,6 +2508,15 @@ export class SharedLog<
 		return set;
 	}
 
+	private markRepairSweepOptimisticPeer(gid: string, peer: string) {
+		let peers = this._repairSweepOptimisticGidPeersPending.get(gid);
+		if (!peers) {
+			peers = new Set();
+			this._repairSweepOptimisticGidPeersPending.set(gid, peers);
+		}
+		peers.add(peer);
+	}
+
 	private dispatchMaybeMissingEntries(
 		target: string,
 		entries: Map<string, EntryReplicated<R>>,
@@ -2623,8 +2633,12 @@ export class SharedLog<
 			while (!this.closed) {
 				const forceFreshDelivery = this._repairSweepForceFreshPending;
 				const addedPeers = new Set(this._repairSweepAddedPeersPending);
+				const optimisticGidPeers = new Map(
+					this._repairSweepOptimisticGidPeersPending,
+				);
 				this._repairSweepForceFreshPending = false;
 				this._repairSweepAddedPeersPending.clear();
+				this._repairSweepOptimisticGidPeersPending.clear();
 
 				if (!forceFreshDelivery && addedPeers.size === 0) {
 					return;
@@ -2672,6 +2686,9 @@ export class SharedLog<
 							for (const entry of entries) {
 								const entryReplicated = entry.value;
 								const knownPeers = this._gidPeersHistory.get(entryReplicated.gid);
+								const optimisticPeers = optimisticGidPeers.get(
+									entryReplicated.gid,
+								);
 								const currentPeers = await this.findLeaders(
 									entryReplicated.coordinates,
 									entryReplicated,
@@ -2687,12 +2704,15 @@ export class SharedLog<
 							}
 								if (addedPeers.size > 0) {
 									for (const peer of addedPeers) {
-										// Join warmup updates gid-level peer history optimistically
-										// before the added peer has necessarily received every entry.
-										// The authoritative sweep must not trust that optimistic
-										// history or it can suppress the very resend needed to fill
-										// partial join gaps.
-										if (currentPeers.has(peer)) {
+										// Join warmup records prospective leaders before the peer has
+										// necessarily received every entry. Only those optimistic
+										// assignments should bypass gid peer history; authoritative
+										// sources such as assumeSynced joins should still suppress
+										// redundant maybe-sync traffic.
+										if (
+											currentPeers.has(peer) &&
+											(!knownPeers?.has(peer) || optimisticPeers?.has(peer))
+										) {
 											queueEntryForTarget(peer, entryReplicated);
 										}
 									}
@@ -2968,6 +2988,7 @@ export class SharedLog<
 		this._repairSweepRunning = false;
 		this._repairSweepForceFreshPending = false;
 		this._repairSweepAddedPeersPending = new Set();
+		this._repairSweepOptimisticGidPeersPending = new Map();
 		this._topicSubscribersCache = new Map();
 		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
 		this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
@@ -4034,6 +4055,7 @@ export class SharedLog<
 		this._repairSweepRunning = false;
 		this._repairSweepForceFreshPending = false;
 		this._repairSweepAddedPeersPending.clear();
+		this._repairSweepOptimisticGidPeersPending.clear();
 
 		for (const [_k, v] of this._pendingDeletes) {
 			v.clear();
@@ -6377,6 +6399,12 @@ export class SharedLog<
 							}
 						}
 
+						for (const [peer] of currentPeers) {
+							if (warmupPeers.has(peer)) {
+								this.markRepairSweepOptimisticPeer(entryReplicated.gid, peer);
+							}
+						}
+
 						this.addPeersToGidPeerHistory(
 							entryReplicated.gid,
 							currentPeers.keys(),
@@ -6432,17 +6460,23 @@ export class SharedLog<
 						}
 					}
 
-					if (oldPeersSet) {
-						for (const oldPeer of oldPeersSet) {
-							if (!currentPeers.has(oldPeer)) {
-								this.removePruneRequestSent(entryReplicated.hash);
+						if (oldPeersSet) {
+							for (const oldPeer of oldPeersSet) {
+								if (!currentPeers.has(oldPeer)) {
+									this.removePruneRequestSent(entryReplicated.hash);
+								}
 							}
 						}
-					}
 
-					this.addPeersToGidPeerHistory(
-						entryReplicated.gid,
-						currentPeers.keys(),
+						for (const [peer] of currentPeers) {
+							if (addedPeers.has(peer)) {
+								this.markRepairSweepOptimisticPeer(entryReplicated.gid, peer);
+							}
+						}
+
+						this.addPeersToGidPeerHistory(
+							entryReplicated.gid,
+							currentPeers.keys(),
 						true,
 					);
 
