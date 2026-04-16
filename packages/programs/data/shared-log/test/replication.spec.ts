@@ -36,6 +36,7 @@ import { SimpleSyncronizer } from "../src/sync/simple.js";
 import {
 	type TestSetupConfig,
 	checkBounded,
+	checkReplicas,
 	collectMessages,
 	collectMessagesFn,
 	dbgLogs,
@@ -1675,9 +1676,11 @@ testSetups.forEach((setup) => {
 				))!;
 
 				await db1.waitFor(session.peers[1].peerId);
+				await db1.waitFor(session.peers[2].peerId);
 				await db2.waitFor(session.peers[0].peerId);
 				await db2.waitFor(session.peers[2].peerId);
 				await db3.waitFor(session.peers[0].peerId);
+				await db3.waitFor(session.peers[1].peerId);
 
 				await db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
 					eager: true,
@@ -2263,26 +2266,10 @@ testSetups.forEach((setup) => {
 								},
 							});
 
-							await db2.log.waitForReplicator(session.peers[0].identity.publicKey, {
-								eager: true,
-								timeout: 60_000,
-							});
-							await db2.log.waitForReplicator(session.peers[2].identity.publicKey, {
-								eager: true,
-								timeout: 60_000,
-							});
-							await db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
-								eager: true,
-								timeout: 60_000,
-							});
-							await db3.log.waitForReplicator(session.peers[1].identity.publicKey, {
-								eager: true,
-								timeout: 60_000,
-							});
+							await checkReplicas([db1, db2, db3], 3, entryCount);
 
 							const check = async (store: EventStore<string, any>) => {
 								const entries = await store.log.log.toArray();
-								expect(entries.length).equal(entryCount);
 								let replicated3Times = 0;
 								for (const entry of entries) {
 									if (decodeReplicas(entry).getValue(store.log) === 3) {

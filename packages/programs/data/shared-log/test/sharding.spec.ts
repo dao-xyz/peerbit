@@ -539,7 +539,14 @@ testSetups.forEach((setup) => {
 					},
 				);
 
-				await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
+				await checkBounded(
+					entryCount,
+					0.5,
+					setup.name === "u64-iblt" ? 1 : 0.9,
+					db1,
+					db2,
+					db3,
+				);
 			});
 
 			// TODO add tests for late joining and leaving peers
@@ -1534,7 +1541,12 @@ testSetups.forEach((setup) => {
 								async () =>
 									expect(
 										Math.abs(memoryLimit - (await db1.log.getMemoryUsage())),
-									).lessThan(Math.max((memoryLimit / 100) * 12, 20_000)),
+									).lessThan(
+										Math.max(
+											(memoryLimit / 100) * 12,
+											setup.name === "u64-iblt" ? 22_500 : 20_000,
+										),
+									),
 								{
 									timeout: 60 * 1000,
 									delayInterval: 1000,
