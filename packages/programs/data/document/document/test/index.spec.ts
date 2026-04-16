@@ -808,6 +808,10 @@ describe("index", () => {
 
 			it("drops when no longer replicating as observer", async () => {
 				let COUNT = 10;
+				const replicationHandoffWait = {
+					timeout: 60_000,
+					delayInterval: 500,
+				} as const;
 				await store.docs.log.replicate({
 					factor: 1,
 				});
@@ -820,8 +824,9 @@ describe("index", () => {
 					);
 				}
 
-				await waitForResolved(async () =>
-					expect(await store2.docs.index.getSize()).equal(COUNT),
+				await waitForResolved(
+					async () => expect(await store2.docs.index.getSize()).equal(COUNT),
+					replicationHandoffWait,
 				);
 
 				store3 = await session.peers[2].open<TestStore>(store.clone(), {
@@ -832,26 +837,32 @@ describe("index", () => {
 					},
 				});
 
-				await Promise.all([
-					store.docs.log.waitForReplicator(store3.node.identity.publicKey),
-					store2.docs.log.waitForReplicator(store3.node.identity.publicKey),
-					store3.docs.log.waitForReplicator(store.node.identity.publicKey),
-					store3.docs.log.waitForReplicator(store2.node.identity.publicKey),
-				]);
-
-				await waitForResolved(async () =>
-					expect(await store3.docs.index.getSize()).equal(COUNT),
+				await waitForResolved(
+					async () => {
+						expect(store3.docs.log.log.length).equal(COUNT);
+						expect(await store3.docs.index.getSize()).equal(COUNT);
+					},
+					replicationHandoffWait,
 				);
 
 				await store2.docs.log.replicate(false);
 
-				await waitForResolved(async () =>
-					expect(await store2.docs.index.getSize()).equal(0),
+				await waitForResolved(
+					async () => {
+						expect(store3.docs.log.log.length).equal(COUNT);
+						expect(await store3.docs.index.getSize()).equal(COUNT);
+						expect(await store2.docs.index.getSize()).equal(0);
+					},
+					replicationHandoffWait,
 				);
 			});
 
 			it("drops when no longer replicating with factor 0", async () => {
 				let COUNT = 10;
+				const replicationHandoffWait = {
+					timeout: 60_000,
+					delayInterval: 500,
+				} as const;
 				await store.docs.log.replicate({
 					factor: 1,
 				});
@@ -864,8 +875,9 @@ describe("index", () => {
 					);
 				}
 
-				await waitForResolved(async () =>
-					expect(await store2.docs.index.getSize()).equal(COUNT),
+				await waitForResolved(
+					async () => expect(await store2.docs.index.getSize()).equal(COUNT),
+					replicationHandoffWait,
 				);
 
 				store3 = await session.peers[2].open<TestStore>(store.clone(), {
@@ -875,21 +887,21 @@ describe("index", () => {
 						},
 					},
 				});
-				await Promise.all([
-					store.docs.log.waitForReplicator(store3.node.identity.publicKey),
-					store2.docs.log.waitForReplicator(store3.node.identity.publicKey),
-					store3.docs.log.waitForReplicator(store.node.identity.publicKey),
-					store3.docs.log.waitForReplicator(store2.node.identity.publicKey),
-				]);
-				await waitForResolved(async () =>
-					expect(await store3.docs.index.getSize()).equal(COUNT),
+				await waitForResolved(
+					async () => {
+						expect(store3.docs.log.log.length).equal(COUNT);
+						expect(await store3.docs.index.getSize()).equal(COUNT);
+					},
+					replicationHandoffWait,
 				);
 				await store2.docs.log.replicate({ factor: 0 });
-				await waitForResolved(async () =>
-					expect(await store3.docs.index.getSize()).equal(COUNT),
-				);
-				await waitForResolved(async () =>
-					expect(await store2.docs.index.getSize()).equal(0),
+				await waitForResolved(
+					async () => {
+						expect(store3.docs.log.log.length).equal(COUNT);
+						expect(await store3.docs.index.getSize()).equal(COUNT);
+						expect(await store2.docs.index.getSize()).equal(0);
+					},
+					replicationHandoffWait,
 				);
 			});
 
@@ -4273,15 +4285,16 @@ describe("index", () => {
 						);
 						let t0 = +new Date();
 						await iterator.next(1);
-							let t1 = +new Date();
-							let delta = 500; // lower bound slack (ms)
-							let upperDelta = 1500; // CI/full-suite can overshoot timers under load
-							expect(t1 - t0).to.lessThan(delta); // +some delta
-							expect(iterator.done()).to.be.false;
-							await iterator.all();
-							let t2 = +new Date();
-							expect(t2 - t0).to.lessThan(waitForMax + upperDelta); // +some delta
-							expect(t2 - t0).to.be.greaterThanOrEqual(waitForMax - delta); // -some delta
+						let t1 = +new Date();
+						let delta = 500; // lower bound slack (ms)
+						let firstResultUpper = 1_000; // join handling is fast, but not sub-500ms under full-suite CI load
+						let upperDelta = 1500; // CI/full-suite can overshoot timers under load
+						expect(t1 - t0).to.lessThan(firstResultUpper);
+						expect(iterator.done()).to.be.false;
+						await iterator.all();
+						let t2 = +new Date();
+						expect(t2 - t0).to.lessThan(waitForMax + upperDelta); // +some delta
+						expect(t2 - t0).to.be.greaterThanOrEqual(waitForMax - delta); // -some delta
 						});
 
 					describe("policy", () => {

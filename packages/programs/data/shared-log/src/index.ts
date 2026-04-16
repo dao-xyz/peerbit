@@ -753,7 +753,7 @@ export class SharedLog<
 	private _repairSweepRunning!: boolean;
 	private _repairSweepForceFreshPending!: boolean;
 	private _repairSweepAddedPeersPending!: Set<string>;
-	private _repairSweepOptimisticGidPeersPending!: Map<string, Set<string>>;
+	private _repairSweepOptimisticGidPeersPending!: Map<string, Map<string, number>>;
 	private _topicSubscribersCache!: Map<
 		string,
 		{ expiresAt: number; keys: PublicSignKey[] }
@@ -2511,10 +2511,10 @@ export class SharedLog<
 	private markRepairSweepOptimisticPeer(gid: string, peer: string) {
 		let peers = this._repairSweepOptimisticGidPeersPending.get(gid);
 		if (!peers) {
-			peers = new Set();
+			peers = new Map();
 			this._repairSweepOptimisticGidPeersPending.set(gid, peers);
 		}
-		peers.add(peer);
+		peers.set(peer, (peers.get(peer) || 0) + 1);
 	}
 
 	private dispatchMaybeMissingEntries(
@@ -2633,12 +2633,32 @@ export class SharedLog<
 			while (!this.closed) {
 				const forceFreshDelivery = this._repairSweepForceFreshPending;
 				const addedPeers = new Set(this._repairSweepAddedPeersPending);
-				const optimisticGidPeers = new Map(
-					this._repairSweepOptimisticGidPeersPending,
-				);
+				const optimisticGidPeers = new Map<string, Set<string>>();
+				const optimisticGidPeersConsumed = new Map<string, Map<string, number>>();
+				if (addedPeers.size > 0) {
+					for (const [
+						gid,
+						peerCounts,
+					] of this._repairSweepOptimisticGidPeersPending) {
+						let matchedPeers: Set<string> | undefined;
+						let matchedCounts: Map<string, number> | undefined;
+						for (const [peer, count] of peerCounts) {
+							if (!addedPeers.has(peer)) {
+								continue;
+							}
+							matchedPeers ||= new Set();
+							matchedCounts ||= new Map();
+							matchedPeers.add(peer);
+							matchedCounts.set(peer, count);
+						}
+						if (matchedPeers && matchedCounts) {
+							optimisticGidPeers.set(gid, matchedPeers);
+							optimisticGidPeersConsumed.set(gid, matchedCounts);
+						}
+					}
+				}
 				this._repairSweepForceFreshPending = false;
 				this._repairSweepAddedPeersPending.clear();
-				this._repairSweepOptimisticGidPeersPending.clear();
 
 				if (!forceFreshDelivery && addedPeers.size === 0) {
 					return;
@@ -2681,19 +2701,17 @@ export class SharedLog<
 
 				const iterator = this.entryCoordinatesIndex.iterate({});
 				try {
-						while (!this.closed && !iterator.done()) {
-							const entries = await iterator.next(REPAIR_SWEEP_ENTRY_BATCH_SIZE);
-							for (const entry of entries) {
-								const entryReplicated = entry.value;
-								const knownPeers = this._gidPeersHistory.get(entryReplicated.gid);
-								const optimisticPeers = optimisticGidPeers.get(
-									entryReplicated.gid,
-								);
-								const currentPeers = await this.findLeaders(
-									entryReplicated.coordinates,
-									entryReplicated,
-									{ roleAge: 0 },
-								);
+					while (!this.closed && !iterator.done()) {
+						const entries = await iterator.next(REPAIR_SWEEP_ENTRY_BATCH_SIZE);
+						for (const entry of entries) {
+							const entryReplicated = entry.value;
+							const knownPeers = this._gidPeersHistory.get(entryReplicated.gid);
+							const optimisticPeers = optimisticGidPeers.get(entryReplicated.gid);
+							const currentPeers = await this.findLeaders(
+								entryReplicated.coordinates,
+								entryReplicated,
+								{ roleAge: 0 },
+							);
 							if (forceFreshDelivery) {
 								for (const [currentPeer] of currentPeers) {
 									if (currentPeer === this.node.identity.publicKey.hashcode()) {
@@ -2702,25 +2720,45 @@ export class SharedLog<
 									queueEntryForTarget(currentPeer, entryReplicated);
 								}
 							}
-								if (addedPeers.size > 0) {
-									for (const peer of addedPeers) {
-										// Join warmup records prospective leaders before the peer has
-										// necessarily received every entry. Only those optimistic
-										// assignments should bypass gid peer history; authoritative
-										// sources such as assumeSynced joins should still suppress
-										// redundant maybe-sync traffic.
-										if (
-											currentPeers.has(peer) &&
-											(!knownPeers?.has(peer) || optimisticPeers?.has(peer))
-										) {
-											queueEntryForTarget(peer, entryReplicated);
-										}
+							if (addedPeers.size > 0) {
+								for (const peer of addedPeers) {
+									// Join warmup records prospective leaders before the peer has
+									// necessarily received every entry. Only those optimistic
+									// assignments should bypass gid peer history; authoritative
+									// sources such as assumeSynced joins should still suppress
+									// redundant maybe-sync traffic.
+									if (
+										currentPeers.has(peer) &&
+										(!knownPeers?.has(peer) || optimisticPeers?.has(peer))
+									) {
+										queueEntryForTarget(peer, entryReplicated);
 									}
 								}
 							}
+						}
 					}
 				} finally {
 					await iterator.close();
+				}
+
+				for (const [gid, peerCounts] of optimisticGidPeersConsumed) {
+					const pendingPeerCounts =
+						this._repairSweepOptimisticGidPeersPending.get(gid);
+					if (!pendingPeerCounts) {
+						continue;
+					}
+					for (const [peer, count] of peerCounts) {
+						const current = pendingPeerCounts.get(peer) || 0;
+						const next = current - count;
+						if (next > 0) {
+							pendingPeerCounts.set(peer, next);
+						} else {
+							pendingPeerCounts.delete(peer);
+						}
+					}
+					if (pendingPeerCounts.size === 0) {
+						this._repairSweepOptimisticGidPeersPending.delete(gid);
+					}
 				}
 
 				for (const target of [...pendingByTarget.keys()]) {
