@@ -2191,9 +2191,7 @@ testSetups.forEach((setup) => {
 					// shard roots in sparse graphs).
 					await session.connect([[session.peers[0], session.peers[1]]]);
 
-					await waitForResolved(() =>
-						expect(db2.log.log.length).equal(entryCount),
-					);
+					await checkBounded(entryCount, 1, 1, db1, db2);
 
 					await db2.close();
 					await waitForResolved(async () =>
