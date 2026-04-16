@@ -2250,34 +2250,51 @@ testSetups.forEach((setup) => {
 						it("control per commmit put before join", async () => {
 							const entryCount = 100;
 
-					await init({
-						min: 1,
-						beforeOther: async () => {
-							const value = "hello";
-							for (let i = 0; i < entryCount; i++) {
-								await db1.add(value, {
-									replicas: new AbsoluteReplicas(3),
-									meta: { next: [] },
-								});
-							}
-						},
-					});
+							await init({
+								min: 1,
+								beforeOther: async () => {
+									const value = "hello";
+									for (let i = 0; i < entryCount; i++) {
+										await db1.add(value, {
+											replicas: new AbsoluteReplicas(3),
+											meta: { next: [] },
+										});
+									}
+								},
+							});
 
-						const check = async (store: EventStore<string, any>) => {
-							const entries = await store.log.log.toArray();
-							expect(entries.length).equal(entryCount);
-							let replicated3Times = 0;
-							for (const entry of entries) {
-								if (decodeReplicas(entry).getValue(store.log) === 3) {
-									replicated3Times += 1;
+							await db2.log.waitForReplicator(session.peers[0].identity.publicKey, {
+								eager: true,
+								timeout: 60_000,
+							});
+							await db2.log.waitForReplicator(session.peers[2].identity.publicKey, {
+								eager: true,
+								timeout: 60_000,
+							});
+							await db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
+								eager: true,
+								timeout: 60_000,
+							});
+							await db3.log.waitForReplicator(session.peers[1].identity.publicKey, {
+								eager: true,
+								timeout: 60_000,
+							});
+
+							const check = async (store: EventStore<string, any>) => {
+								const entries = await store.log.log.toArray();
+								expect(entries.length).equal(entryCount);
+								let replicated3Times = 0;
+								for (const entry of entries) {
+									if (decodeReplicas(entry).getValue(store.log) === 3) {
+										replicated3Times += 1;
+									}
 								}
-							}
-							expect(replicated3Times).equal(entryCount);
-						};
+								expect(replicated3Times).equal(entryCount);
+							};
 
-						await waitForResolved(() => check(db2), commitReplicationWait);
-						await waitForResolved(() => check(db3), commitReplicationWait);
-					});
+							await waitForResolved(() => check(db2), commitReplicationWait);
+							await waitForResolved(() => check(db3), commitReplicationWait);
+						});
 
 					it("control per commmit", async () => {
 					const entryCount = 100;
