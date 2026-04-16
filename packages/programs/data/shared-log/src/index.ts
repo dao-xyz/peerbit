@@ -2687,7 +2687,12 @@ export class SharedLog<
 							}
 								if (addedPeers.size > 0) {
 									for (const peer of addedPeers) {
-										if (currentPeers.has(peer) && !knownPeers?.has(peer)) {
+										// Join warmup updates gid-level peer history optimistically
+										// before the added peer has necessarily received every entry.
+										// The authoritative sweep must not trust that optimistic
+										// history or it can suppress the very resend needed to fill
+										// partial join gaps.
+										if (currentPeers.has(peer)) {
 											queueEntryForTarget(peer, entryReplicated);
 										}
 									}
