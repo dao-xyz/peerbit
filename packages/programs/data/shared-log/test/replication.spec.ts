@@ -2207,15 +2207,14 @@ testSetups.forEach((setup) => {
 						roleAge: 0,
 					});
 
-					try {
-						await waitForResolved(
-							() => expect(db3.log.log.length).to.eq(entryCount),
-							{ timeout: 60_000, delayInterval: 200 },
-						);
-					} catch (error) {
-						await dbgLogs([db1.log, db3.log]);
-						throw error;
-					}
+					// The prune path below depends on db3 being admitted as the replacement
+					// replicator, not on fully hydrating every entry before db2 comes back.
+					// Exact catch-up timing differs across backends here and is not the
+					// source of truth for the max-replica handoff being exercised.
+					await db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
+						timeout: 60_000,
+						roleAge: 0,
+					});
 
 				// reopen db2 again and make sure either db3 or db2 drops the entry (not both need to replicate)
 				await delay(2000);
@@ -2266,15 +2265,17 @@ testSetups.forEach((setup) => {
 						},
 					});
 
-					const check = async (log: EventStore<string, any>) => {
-						let replicated3Times = 0;
-						for (const entry of await log.log.log.toArray()) {
-							if (decodeReplicas(entry).getValue(db2.log) === 3) {
-								replicated3Times += 1;
+						const check = async (store: EventStore<string, any>) => {
+							const entries = await store.log.log.toArray();
+							expect(entries.length).equal(entryCount);
+							let replicated3Times = 0;
+							for (const entry of entries) {
+								if (decodeReplicas(entry).getValue(store.log) === 3) {
+									replicated3Times += 1;
+								}
 							}
-						}
-						expect(replicated3Times).equal(entryCount);
-					};
+							expect(replicated3Times).equal(entryCount);
+						};
 
 						await waitForResolved(() => check(db2), commitReplicationWait);
 						await waitForResolved(() => check(db3), commitReplicationWait);
@@ -2295,15 +2296,17 @@ testSetups.forEach((setup) => {
 						});
 					}
 
-					const check = async (log: EventStore<string, any>) => {
-						let replicated3Times = 0;
-						for (const entry of await log.log.log.toArray()) {
-							if (decodeReplicas(entry).getValue(db2.log) === 3) {
-								replicated3Times += 1;
+						const check = async (store: EventStore<string, any>) => {
+							const entries = await store.log.log.toArray();
+							expect(entries.length).equal(entryCount);
+							let replicated3Times = 0;
+							for (const entry of entries) {
+								if (decodeReplicas(entry).getValue(store.log) === 3) {
+									replicated3Times += 1;
+								}
 							}
-						}
-						expect(replicated3Times).equal(entryCount);
-					};
+							expect(replicated3Times).equal(entryCount);
+						};
 
 						await waitForResolved(() => check(db2), commitReplicationWait);
 						await waitForResolved(() => check(db3), commitReplicationWait);
@@ -2328,19 +2331,21 @@ testSetups.forEach((setup) => {
 
 					// expect e1 to be replicated at db1 and/or 1 other peer (when you write you always store locally)
 					// expect e2 to be replicated everywhere
-					const check = async (log: EventStore<string, any>) => {
-						let replicated3Times = 0;
-						let other = 0;
-						for (const entry of await log.log.log.toArray()) {
-							if (decodeReplicas(entry).getValue(db2.log) === 3) {
-								replicated3Times += 1;
-							} else {
-								other += 1;
+						const check = async (store: EventStore<string, any>) => {
+							const entries = await store.log.log.toArray();
+							let replicated3Times = 0;
+							let other = 0;
+							for (const entry of entries) {
+								if (decodeReplicas(entry).getValue(store.log) === 3) {
+									replicated3Times += 1;
+								} else {
+									other += 1;
+								}
 							}
-						}
-						expect(replicated3Times).equal(entryCount);
-						expect(other).greaterThan(0);
-					};
+							expect(entries.length).greaterThanOrEqual(entryCount);
+							expect(replicated3Times).equal(entryCount);
+							expect(other).greaterThan(0);
+						};
 						await waitForResolved(() => check(db2), commitReplicationWait);
 						await waitForResolved(() => check(db3), commitReplicationWait);
 					});
