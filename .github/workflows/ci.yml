@@ -100,7 +100,15 @@ jobs:
           - os: ubuntu-22.04
             node-version: 22.x
             test_cmd: pnpm run test:ci:part-7b
-            timeout_minutes: 35
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-7c
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-7d
+            timeout_minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -131,9 +139,9 @@ jobs:
         run: pnpm run lint
       - name: Tests
         env:
-          PEERBIT_MOCHA_LOG_TEST_START: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7a' || matrix.test_cmd == 'pnpm run test:ci:part-7b') && '1' || '0' }}
-          PEERBIT_MOCHA_LOG_QUIET: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7a' || matrix.test_cmd == 'pnpm run test:ci:part-7b') && '1' || '0' }}
-          PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7a' || matrix.test_cmd == 'pnpm run test:ci:part-7b') && '10000' || '0' }}
+          PEERBIT_MOCHA_LOG_TEST_START: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7a' || matrix.test_cmd == 'pnpm run test:ci:part-7b' || matrix.test_cmd == 'pnpm run test:ci:part-7c' || matrix.test_cmd == 'pnpm run test:ci:part-7d') && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_QUIET: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7a' || matrix.test_cmd == 'pnpm run test:ci:part-7b' || matrix.test_cmd == 'pnpm run test:ci:part-7c' || matrix.test_cmd == 'pnpm run test:ci:part-7d') && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7a' || matrix.test_cmd == 'pnpm run test:ci:part-7b' || matrix.test_cmd == 'pnpm run test:ci:part-7c' || matrix.test_cmd == 'pnpm run test:ci:part-7d') && '10000' || '0' }}
         run: ${{matrix.test_cmd}}
       - name: Remap coverage reports to source paths
         if: always()
@@ -234,7 +242,15 @@ jobs:
           - os: ubuntu-22.04
             node-version: 22.x
             test_cmd: pnpm run test:ci:part-7b
-            timeout_minutes: 35
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-7c
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-7d
+            timeout_minutes: 30
 
     steps:
       - uses: actions/checkout@v4
@@ -266,9 +282,9 @@ jobs:
         run: pnpm run lint
       - name: Tests
         env:
-          PEERBIT_MOCHA_LOG_TEST_START: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7a' || matrix.test_cmd == 'pnpm run test:ci:part-7b') && '1' || '0' }}
-          PEERBIT_MOCHA_LOG_QUIET: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7a' || matrix.test_cmd == 'pnpm run test:ci:part-7b') && '1' || '0' }}
-          PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7a' || matrix.test_cmd == 'pnpm run test:ci:part-7b') && '10000' || '0' }}
+          PEERBIT_MOCHA_LOG_TEST_START: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7a' || matrix.test_cmd == 'pnpm run test:ci:part-7b' || matrix.test_cmd == 'pnpm run test:ci:part-7c' || matrix.test_cmd == 'pnpm run test:ci:part-7d') && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_QUIET: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7a' || matrix.test_cmd == 'pnpm run test:ci:part-7b' || matrix.test_cmd == 'pnpm run test:ci:part-7c' || matrix.test_cmd == 'pnpm run test:ci:part-7d') && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7a' || matrix.test_cmd == 'pnpm run test:ci:part-7b' || matrix.test_cmd == 'pnpm run test:ci:part-7c' || matrix.test_cmd == 'pnpm run test:ci:part-7d') && '10000' || '0' }}
         run: ${{matrix.test_cmd}}
       - name: Remap coverage reports to source paths
         if: always()
