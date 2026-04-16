@@ -49,26 +49,54 @@ jobs:
     name: Test (${{ matrix.test_cmd }}, Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
     needs: build_workspace
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ matrix.test_cmd == 'pnpm run test:ci:part-7' && 45 || 30 }}
     env:
       PEERBIT_TEST_SESSION: mock
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-22.04 ]
-        node-version: [22.x]
-        test_cmd:
-          - pnpm run test:ci:part-1
-          - pnpm run test:ci:part-2a
-          - pnpm run test:ci:part-2b
-          - pnpm run test:ci:part-2c
-          - pnpm run test:ci:part-3
-          - pnpm run test:ci:part-4
-          - pnpm run test:ci:part-5a
-          - pnpm run test:ci:part-5b
-          - pnpm run test:ci:part-6
-          - pnpm run test:ci:part-7
+        include:
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-1
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-2a
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-2b
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-2c
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-3
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-4
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-5a
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-5b
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-6
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-7
+            timeout_minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -151,26 +179,54 @@ jobs:
     name: Test (${{ matrix.test_cmd }}, Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
     needs: build_workspace
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     env:
       PEERBIT_TEST_SESSION: mock
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-22.04 ]
-        node-version: [22.x]
-        test_cmd:
-          - pnpm run test:ci:part-1
-          - pnpm run test:ci:part-2a
-          - pnpm run test:ci:part-2b
-          - pnpm run test:ci:part-2c
-          - pnpm run test:ci:part-3
-          - pnpm run test:ci:part-4
-          - pnpm run test:ci:part-5a
-          - pnpm run test:ci:part-5b
-          - pnpm run test:ci:part-6
-          - pnpm run test:ci:part-7
+        include:
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-1
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-2a
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-2b
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-2c
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-3
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-4
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-5a
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-5b
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-6
+            timeout_minutes: 30
+          - os: ubuntu-22.04
+            node-version: 22.x
+            test_cmd: pnpm run test:ci:part-7
+            timeout_minutes: 45
 
     steps:
       - uses: actions/checkout@v4
