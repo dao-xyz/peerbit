@@ -8026,6 +8026,11 @@ describe("index", () => {
 						stores[0].docs.log.log.length,
 					),
 				);
+				await waitForResolved(async () =>
+					expect(await stores[1].docs.index.getSize()).to.eq(
+						await stores[0].docs.index.getSize(),
+					),
+				);
 
 				const requestSpy = sinon.spy(stores[1].docs.index._query.request);
 				stores[1].docs.index._query.request = requestSpy;

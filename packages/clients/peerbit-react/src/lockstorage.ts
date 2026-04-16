@@ -64,8 +64,49 @@ export class FastMutex {
 			let restartCount = 0;
 			let contentionCount = 0;
 			let locksLost = 0;
+			let settled = false;
+			const pendingRetries = new Set<ReturnType<typeof setTimeout>>();
+
+			const clearPendingRetries = () => {
+				for (const timer of pendingRetries) {
+					clearTimeout(timer);
+				}
+				pendingRetries.clear();
+			};
+
+			const resolveOnce = (value: {
+				restartCount: number;
+				contentionCount: number;
+				locksLost: number;
+			}) => {
+				if (settled) return;
+				settled = true;
+				clearPendingRetries();
+				resolve(value);
+			};
+
+			const rejectOnce = (error: unknown) => {
+				if (settled) return;
+				settled = true;
+				clearPendingRetries();
+				reject(error);
+			};
+
+			const scheduleRetry = (fn: () => void, ms: number) => {
+				if (settled) return;
+				const timer = setTimeout(() => {
+					pendingRetries.delete(timer);
+					if (!settled) {
+						fn();
+					}
+				}, ms);
+				pendingRetries.add(timer);
+			};
 
 			const acquireLock = (key: string) => {
+				if (settled) {
+					return;
+				}
 				// If the option is set and the same client already holds both keys,
 				// update the expiry and resolve immediately.
 				if (options?.replaceIfSameClient) {
@@ -80,7 +121,7 @@ export class FastMutex {
 							this.clientId,
 							key,
 						);
-						return resolve({
+						return resolveOnce({
 							restartCount,
 							contentionCount,
 							locksLost,
@@ -90,7 +131,7 @@ export class FastMutex {
 
 				// Check for overall retries/timeouts.
 				if (restartCount > 1000 || contentionCount > 1000 || locksLost > 1000) {
-					return reject("Failed to resolve lock");
+					return rejectOnce("Failed to resolve lock");
 				}
 				const elapsedTime = Date.now() - acquireStart;
 				if (elapsedTime >= this.timeout) {
@@ -100,7 +141,7 @@ export class FastMutex {
 						this.timeout,
 						this.clientId,
 					);
-					return reject(
+					return rejectOnce(
 						new Error(`Lock could not be acquired within ${this.timeout}ms`),
 					);
 				}
@@ -113,7 +154,7 @@ export class FastMutex {
 				if (lsY) {
 					debug("Lock exists on Y (%s), restarting...", lsY);
 					restartCount++;
-					setTimeout(() => acquireLock(key), 10);
+					scheduleRetry(() => acquireLock(key), 10);
 					return;
 				}
 
@@ -125,7 +166,7 @@ export class FastMutex {
 				if (lsX !== this.clientId) {
 					contentionCount++;
 					debug('Lock contention detected. X="%s"', lsX);
-					setTimeout(() => {
+					scheduleRetry(() => {
 						lsY = this.getItem(y);
 						if (lsY === this.clientId) {
 							debug(
@@ -133,7 +174,7 @@ export class FastMutex {
 								this.clientId,
 								key,
 							);
-							resolve({
+							resolveOnce({
 								restartCount,
 								contentionCount,
 								locksLost,
@@ -147,7 +188,7 @@ export class FastMutex {
 								key,
 								lsY,
 							);
-							setTimeout(() => acquireLock(key), 10);
+							scheduleRetry(() => acquireLock(key), 10);
 						}
 					}, 50);
 					return;
@@ -159,7 +200,7 @@ export class FastMutex {
 					this.clientId,
 					key,
 				);
-				resolve({ restartCount, contentionCount, locksLost });
+				resolveOnce({ restartCount, contentionCount, locksLost });
 			};
 
 			acquireLock(key);
