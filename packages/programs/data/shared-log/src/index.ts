@@ -2724,12 +2724,15 @@ export class SharedLog<
 								for (const peer of addedPeers) {
 									// Join warmup records prospective leaders before the peer has
 									// necessarily received every entry. Only those optimistic
-									// assignments should bypass gid peer history; authoritative
-									// sources such as assumeSynced joins should still suppress
-									// redundant maybe-sync traffic.
+									// assignments should keep retrying even if a later leader
+									// recomputation temporarily drops the peer while it is still
+									// hydrating. Authoritative sources such as assumeSynced joins
+									// should still suppress redundant maybe-sync traffic.
+									const wasOptimisticallyAssigned =
+										optimisticPeers?.has(peer) === true;
 									if (
-										currentPeers.has(peer) &&
-										(!knownPeers?.has(peer) || optimisticPeers?.has(peer))
+										wasOptimisticallyAssigned ||
+										(currentPeers.has(peer) && !knownPeers?.has(peer))
 									) {
 										queueEntryForTarget(peer, entryReplicated);
 									}

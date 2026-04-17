@@ -837,14 +837,6 @@ describe("index", () => {
 					},
 				});
 
-				await waitForResolved(
-					async () => {
-						expect(store3.docs.log.log.length).equal(COUNT);
-						expect(await store3.docs.index.getSize()).equal(COUNT);
-					},
-					replicationHandoffWait,
-				);
-
 				await store2.docs.log.replicate(false);
 
 				await waitForResolved(
@@ -887,13 +879,6 @@ describe("index", () => {
 						},
 					},
 				});
-				await waitForResolved(
-					async () => {
-						expect(store3.docs.log.log.length).equal(COUNT);
-						expect(await store3.docs.index.getSize()).equal(COUNT);
-					},
-					replicationHandoffWait,
-				);
 				await store2.docs.log.replicate({ factor: 0 });
 				await waitForResolved(
 					async () => {
