@@ -2253,36 +2253,42 @@ testSetups.forEach((setup) => {
 							roleAge: 0,
 						} as const;
 
-						const waitForThreePeerReplicatorMesh = async () => {
+						const waitForDb1Replicators = async () => {
 							await Promise.all([
 								db1.log.waitForReplicator(session.peers[1].identity.publicKey, replicatorWait),
 								db1.log.waitForReplicator(session.peers[2].identity.publicKey, replicatorWait),
-								db2.log.waitForReplicator(session.peers[0].identity.publicKey, replicatorWait),
-								db2.log.waitForReplicator(session.peers[2].identity.publicKey, replicatorWait),
-								db3.log.waitForReplicator(session.peers[0].identity.publicKey, replicatorWait),
-								db3.log.waitForReplicator(session.peers[1].identity.publicKey, replicatorWait),
 							]);
 						};
 
 						it("control per commmit put before join", async () => {
 							const entryCount = 100;
 
-						await init({
-							min: 1,
-							beforeOther: async () => {
-								const value = "hello";
-								for (let i = 0; i < entryCount; i++) {
+							await init({
+								min: 1,
+								beforeOther: async () => {
+									const value = "hello";
+									for (let i = 0; i < entryCount; i++) {
 										await db1.add(value, {
 											replicas: new AbsoluteReplicas(3),
 											meta: { next: [] },
 										});
-								}
+									}
 								},
 							});
 
-							await waitForThreePeerReplicatorMesh();
+							await waitForDb1Replicators();
 
 							await db1.log.rebalanceAll({ clearCache: true });
+							await Promise.all([
+								db2.log.waitForReplicator(session.peers[0].identity.publicKey, {
+									timeout: 60_000,
+									eager: true,
+								}),
+								db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
+									timeout: 60_000,
+									eager: true,
+								}),
+							]);
 							await waitForResolved(
 								() => expect(db2.log.log.length).equal(entryCount),
 								commitReplicationWait,
@@ -2294,14 +2300,14 @@ testSetups.forEach((setup) => {
 
 							await checkReplicas([db1, db2, db3], 3, entryCount);
 
-						const check = async (store: EventStore<string, any>) => {
-							const entries = await store.log.log.toArray();
-							expect(entries.length).equal(entryCount);
-							let replicated3Times = 0;
-							for (const entry of entries) {
-								if (decodeReplicas(entry).getValue(store.log) === 3) {
-									replicated3Times += 1;
-								}
+							const check = async (store: EventStore<string, any>) => {
+								const entries = await store.log.log.toArray();
+								expect(entries.length).equal(entryCount);
+								let replicated3Times = 0;
+								for (const entry of entries) {
+									if (decodeReplicas(entry).getValue(store.log) === 3) {
+										replicated3Times += 1;
+									}
 								}
 								expect(replicated3Times).equal(entryCount);
 							};
@@ -2310,42 +2316,42 @@ testSetups.forEach((setup) => {
 							await waitForResolved(() => check(db3), commitReplicationWait);
 						});
 
-					it("control per commmit", async () => {
-					const entryCount = 100;
+						it("control per commmit", async () => {
+							const entryCount = 100;
 
-						await init({
-							min: 1,
+							await init({
+								min: 1,
+							});
+							await waitForDb1Replicators();
+
+							const value = "hello";
+							for (let i = 0; i < entryCount; i++) {
+								await db1.add(value, {
+									replicas: new AbsoluteReplicas(3),
+									meta: { next: [] },
+								});
+							}
+
+							await checkReplicas([db1, db2, db3], 3, entryCount);
 						});
-						await waitForThreePeerReplicatorMesh();
-
-						const value = "hello";
-						for (let i = 0; i < entryCount; i++) {
-						await db1.add(value, {
-							replicas: new AbsoluteReplicas(3),
-							meta: { next: [] },
-						});
-					}
-
-					await checkReplicas([db1, db2, db3], 3, entryCount);
-					});
 
 					it("mixed control per commmit", async () => {
 						await init({ min: 1 });
-						await waitForThreePeerReplicatorMesh();
+						await waitForDb1Replicators();
 
 						const value = "hello";
 
-					const entryCount = 100;
-					for (let i = 0; i < entryCount; i++) {
-						await db1.add(value, {
-							replicas: new AbsoluteReplicas(1),
-							meta: { next: [] },
-						});
-						await db1.add(value, {
-							replicas: new AbsoluteReplicas(3),
-							meta: { next: [] },
-						});
-					}
+						const entryCount = 100;
+						for (let i = 0; i < entryCount; i++) {
+							await db1.add(value, {
+								replicas: new AbsoluteReplicas(1),
+								meta: { next: [] },
+							});
+							await db1.add(value, {
+								replicas: new AbsoluteReplicas(3),
+								meta: { next: [] },
+							});
+						}
 
 					// expect e1 to be replicated at db1 and/or 1 other peer (when you write you always store locally)
 					// expect e2 to be replicated everywhere
