@@ -2200,14 +2200,13 @@ testSetups.forEach((setup) => {
 						roleAge: 0,
 					});
 
-					// The prune path below depends on db3 being admitted as the replacement
-					// replicator, not on fully hydrating every entry before db2 comes back.
-					// Exact catch-up timing differs across backends here and is not the
-					// source of truth for the max-replica handoff being exercised.
-					await db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
-						timeout: 60_000,
-						roleAge: 0,
-					});
+						// db1 should only prune once the replacement replica actually has the
+						// data, not merely because db3 has been admitted as a replicator.
+						await db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
+							timeout: 60_000,
+							roleAge: 0,
+						});
+						await checkBounded(entryCount, 1, 1, db1, db3);
 
 				// reopen db2 again and make sure either db3 or db2 drops the entry (not both need to replicate)
 				await delay(2000);
@@ -2229,9 +2228,7 @@ testSetups.forEach((setup) => {
 				// await db1.log["pruneDebouncedFn"]();
 				//await db1.log.waitForPruned()
 
-				await waitForResolved(() => {
-					expect(db1.log.log.length).to.be.lessThan(entryCount);
-				});
+				await checkReplicas([db1, db2, db3], maxReplicas, entryCount);
 			});
 
 					describe("commit options", () => {

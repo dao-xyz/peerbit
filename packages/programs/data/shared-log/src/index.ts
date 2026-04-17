@@ -1217,7 +1217,10 @@ export class SharedLog<
 				await this._mergeLeadersFromGidReferences(message, minReplicasValue, leaders);
 				const leadersForDelivery = delivery ? new Set(leaders.keys()) : undefined;
 
-				const set = this.addPeersToGidPeerHistory(entry.meta.gid, leaders.keys());
+				// Outbound append delivery only tells us who we intend to send to, not who has
+				// actually stored the entry. Keep this recipient set local so later repair
+				// sweeps can still backfill peers that missed the initial delivery.
+				const set = new Set(leaders.keys());
 				let hasRemotePeers = set.has(selfHash) ? set.size > 1 : set.size > 0;
 				const allowSubscriberFallback =
 					this.syncronizer instanceof SimpleSyncronizer ||
@@ -2523,6 +2526,10 @@ export class SharedLog<
 			this._repairSweepOptimisticGidPeersPending.set(gid, peers);
 		}
 		peers.set(peer, (peers.get(peer) || 0) + 1);
+	}
+
+	private hasPendingRepairSweepOptimisticPeer(gid: string, peer: string) {
+		return (this._repairSweepOptimisticGidPeersPending.get(gid)?.get(peer) || 0) > 0;
 	}
 
 	private dispatchMaybeMissingEntries(
@@ -6458,9 +6465,14 @@ export class SharedLog<
 							}
 						}
 
+						const authoritativePeers = [...currentPeers.keys()].filter(
+							(peer) =>
+								!warmupPeers.has(peer) &&
+								!this.hasPendingRepairSweepOptimisticPeer(entryReplicated.gid, peer),
+						);
 						this.addPeersToGidPeerHistory(
 							entryReplicated.gid,
-							currentPeers.keys(),
+							authoritativePeers,
 							true,
 						);
 
@@ -6527,11 +6539,16 @@ export class SharedLog<
 							}
 						}
 
+						const authoritativePeers = [...currentPeers.keys()].filter(
+							(peer) =>
+								!addedPeers.has(peer) &&
+								!this.hasPendingRepairSweepOptimisticPeer(entryReplicated.gid, peer),
+						);
 						this.addPeersToGidPeerHistory(
 							entryReplicated.gid,
-							currentPeers.keys(),
-						true,
-					);
+							authoritativePeers,
+							true,
+						);
 
 					if (!isLeader) {
 						this.pruneDebouncedFnAddIfNotKeeping({
