@@ -506,6 +506,16 @@ testSetups.forEach((setup) => {
 				// expect min replicas 2 with 3 peers, this means that 66% of entries (ca) will be at peer 2 and 3, and peer1 will have all of them since 1 is the creator
 
 				try {
+					await Promise.all([
+						db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+							timeout: 30_000,
+							roleAge: 0,
+						}),
+						db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
+							timeout: 30_000,
+							roleAge: 0,
+						}),
+					]);
 					await waitForDistributionQuiesced(db1, db2, db3);
 					await waitForResolved(
 						async () => {
@@ -518,8 +528,8 @@ testSetups.forEach((setup) => {
 				} catch (error) {
 					await dbgLogs([db1.log, db2.log, db3.log]);
 					throw error;
-				}
-			});
+					}
+				});
 
 			it("write while joining peers", async () => {
 				const store = new EventStore<string, any>();
@@ -547,7 +557,8 @@ testSetups.forEach((setup) => {
 
 				const entryCount = shardingMediumEntryCount;
 
-				// expect min replicas 2 with 3 peers, this means that 66% of entries (ca) will be at peer 2 and 3, and peer1 will have all of them since 1 is the creator
+				// expect min replicas 2 with 3 peers, this means that 66% of entries (ca)
+				// will be at peer 2 and 3, and peer1 will have all of them since 1 is the creator
 				await appendInBatches(entryCount, (i) =>
 					db1.add(toBase64(new Uint8Array([i])), { meta: { next: [] } }),
 				);
@@ -566,29 +577,41 @@ testSetups.forEach((setup) => {
 				);
 
 				await Promise.all([
+					db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+						timeout: 30_000,
+						roleAge: 0,
+					}),
 					db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
 						timeout: 30_000,
+						roleAge: 0,
+					}),
+					db2.log.waitForReplicator(session.peers[0].identity.publicKey, {
+						timeout: 30_000,
+						roleAge: 0,
 					}),
 					db2.log.waitForReplicator(session.peers[2].identity.publicKey, {
 						timeout: 30_000,
+						roleAge: 0,
 					}),
 					db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
 						timeout: 30_000,
+						roleAge: 0,
 					}),
 					db3.log.waitForReplicator(session.peers[1].identity.publicKey, {
 						timeout: 30_000,
+						roleAge: 0,
 					}),
 				]);
 
-					await checkBounded(
-						entryCount,
-						0.5,
-						setup.name === "u64-iblt" ? 1 : 0.9,
-						db1,
-						db2,
-						db3,
-					);
-				});
+				await checkBounded(
+					entryCount,
+					0.5,
+					setup.name === "u64-iblt" ? 1 : 0.9,
+					db1,
+					db2,
+					db3,
+				);
+			});
 
 			// TODO add tests for late joining and leaving peers
 			it("distributes to joining peers", async () => {
@@ -760,7 +783,10 @@ testSetups.forEach((setup) => {
 					},
 				);
 
-				const entryCount = sampleSize * 3;
+				// This is a correctness test for targeted redistribution repair, not a
+				// throughput test. A smaller set keeps the same topology/repair behavior
+				// while avoiding 5-minute coverage runs in CI.
+				const entryCount = shardingMediumEntryCount * 3;
 				await appendInBatches(entryCount, (i) =>
 					db1.add(toBase64(new Uint8Array([i])), {
 						meta: { next: [] },

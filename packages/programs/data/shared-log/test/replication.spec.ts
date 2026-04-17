@@ -2264,6 +2264,15 @@ testSetups.forEach((setup) => {
 							},
 						});
 
+						await db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+							timeout: 60_000,
+							roleAge: 0,
+						});
+						await db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
+							timeout: 60_000,
+							roleAge: 0,
+						});
+
 						await db1.log.rebalanceAll({ clearCache: true });
 
 						await checkReplicas([db1, db2, db3], 3, entryCount);
