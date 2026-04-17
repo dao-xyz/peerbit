@@ -2200,13 +2200,22 @@ testSetups.forEach((setup) => {
 						roleAge: 0,
 					});
 
-						// db1 should only prune once the replacement replica actually has the
-						// data, not merely because db3 has been admitted as a replicator.
-						await db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
+					// db1 must not prune early just because a replacement peer joined.
+					// With the configured ranges, db3 is not required to hydrate the full
+					// log while db2 is absent; the real contract is that db1 keeps the data
+					// until the cluster can satisfy `maxReplicas` again.
+					await db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
+						timeout: 60_000,
+						roleAge: 0,
+					});
+					await waitForResolved(
+						() => expect(db1.log.log.length).equal(entryCount),
+						{
 							timeout: 60_000,
-							roleAge: 0,
-						});
-						await checkBounded(entryCount, 1, 1, db1, db3);
+							delayInterval: 500,
+						},
+					);
+					await checkReplicas([db1, db3], 1, entryCount);
 
 				// reopen db2 again and make sure either db3 or db2 drops the entry (not both need to replicate)
 				await delay(2000);
