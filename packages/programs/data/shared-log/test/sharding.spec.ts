@@ -418,6 +418,26 @@ testSetups.forEach((setup) => {
 						},
 					},
 				);
+				await Promise.all([
+					db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+						timeout: 30_000,
+					}),
+					db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
+						timeout: 30_000,
+					}),
+					db2.log.waitForReplicator(session.peers[0].identity.publicKey, {
+						timeout: 30_000,
+					}),
+					db2.log.waitForReplicator(session.peers[2].identity.publicKey, {
+						timeout: 30_000,
+					}),
+					db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
+						timeout: 30_000,
+					}),
+					db3.log.waitForReplicator(session.peers[1].identity.publicKey, {
+						timeout: 30_000,
+					}),
+				]);
 				await checkBounded(
 					entryCount,
 					0.5,
