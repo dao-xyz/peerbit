@@ -2579,15 +2579,13 @@ export class SharedLog<
 					? FORCE_FRESH_RETRY_SCHEDULE_MS
 					: [0];
 
-		const run = () => {
+		const run = (useSimpleSync: boolean) => {
 			// For force-fresh churn repair we intentionally bypass rateless IBLT and
-			// use simple hash-based sync. This path is a directed "push these hashes
-			// to that peer" recovery flow; using simple sync here avoids occasional
-			// single-hash gaps seen with IBLT-oriented maybe-sync batches under churn.
-			if (
-				(options?.forceFreshDelivery || options?.preferSimpleSync) &&
-				this.syncronizer instanceof RatelessIBLTSynchronizer
-			) {
+			// use simple hash-based sync. Join-warmup directed retries fall back to
+			// simple sync only after the initial rateless maybe-sync attempt so healthy
+			// catch-up still exercises the rateless StartSync path, while retries can
+			// recover occasional single-hash gaps seen under churn.
+			if (useSimpleSync && this.syncronizer instanceof RatelessIBLTSynchronizer) {
 				return Promise.resolve(
 					this.syncronizer.simple.onMaybeMissingEntries({
 						entries: filteredEntries,
@@ -2604,21 +2602,24 @@ export class SharedLog<
 			).catch((error: any) => logger.error(error));
 		};
 
-		for (const delayMs of retrySchedule) {
+		retrySchedule.forEach((delayMs, index) => {
+			const useSimpleSync =
+				options?.forceFreshDelivery === true ||
+				(options?.preferSimpleSync === true && index > 0);
 			if (delayMs === 0) {
-				void run();
-				continue;
+				void run(useSimpleSync);
+				return;
 			}
 			const timer = setTimeout(() => {
 				this._repairRetryTimers.delete(timer);
 				if (this.closed) {
 					return;
 				}
-				void run();
+				void run(useSimpleSync);
 			}, delayMs);
 			timer.unref?.();
 			this._repairRetryTimers.add(timer);
-		}
+		});
 	}
 
 	private scheduleRepairSweep(options: {
