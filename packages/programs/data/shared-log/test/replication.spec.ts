@@ -2248,6 +2248,22 @@ testSetups.forEach((setup) => {
 							delayInterval: 500,
 						} as const;
 
+						const replicatorWait = {
+							timeout: 60_000,
+							roleAge: 0,
+						} as const;
+
+						const waitForThreePeerReplicatorMesh = async () => {
+							await Promise.all([
+								db1.log.waitForReplicator(session.peers[1].identity.publicKey, replicatorWait),
+								db1.log.waitForReplicator(session.peers[2].identity.publicKey, replicatorWait),
+								db2.log.waitForReplicator(session.peers[0].identity.publicKey, replicatorWait),
+								db2.log.waitForReplicator(session.peers[2].identity.publicKey, replicatorWait),
+								db3.log.waitForReplicator(session.peers[0].identity.publicKey, replicatorWait),
+								db3.log.waitForReplicator(session.peers[1].identity.publicKey, replicatorWait),
+							]);
+						};
+
 						it("control per commmit put before join", async () => {
 							const entryCount = 100;
 
@@ -2261,21 +2277,22 @@ testSetups.forEach((setup) => {
 											meta: { next: [] },
 										});
 								}
-							},
-						});
+								},
+							});
 
-						await db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
-							timeout: 60_000,
-							roleAge: 0,
-						});
-						await db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
-							timeout: 60_000,
-							roleAge: 0,
-						});
+							await waitForThreePeerReplicatorMesh();
 
-						await db1.log.rebalanceAll({ clearCache: true });
+							await db1.log.rebalanceAll({ clearCache: true });
+							await waitForResolved(
+								() => expect(db2.log.log.length).equal(entryCount),
+								commitReplicationWait,
+							);
+							await waitForResolved(
+								() => expect(db3.log.log.length).equal(entryCount),
+								commitReplicationWait,
+							);
 
-						await checkReplicas([db1, db2, db3], 3, entryCount);
+							await checkReplicas([db1, db2, db3], 3, entryCount);
 
 						const check = async (store: EventStore<string, any>) => {
 							const entries = await store.log.log.toArray();
@@ -2296,12 +2313,13 @@ testSetups.forEach((setup) => {
 					it("control per commmit", async () => {
 					const entryCount = 100;
 
-					await init({
-						min: 1,
-					});
+						await init({
+							min: 1,
+						});
+						await waitForThreePeerReplicatorMesh();
 
-					const value = "hello";
-					for (let i = 0; i < entryCount; i++) {
+						const value = "hello";
+						for (let i = 0; i < entryCount; i++) {
 						await db1.add(value, {
 							replicas: new AbsoluteReplicas(3),
 							meta: { next: [] },
@@ -2311,10 +2329,11 @@ testSetups.forEach((setup) => {
 					await checkReplicas([db1, db2, db3], 3, entryCount);
 					});
 
-				it("mixed control per commmit", async () => {
-					await init({ min: 1 });
+					it("mixed control per commmit", async () => {
+						await init({ min: 1 });
+						await waitForThreePeerReplicatorMesh();
 
-					const value = "hello";
+						const value = "hello";
 
 					const entryCount = 100;
 					for (let i = 0; i < entryCount; i++) {
