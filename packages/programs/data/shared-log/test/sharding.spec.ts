@@ -539,15 +539,30 @@ testSetups.forEach((setup) => {
 					},
 				);
 
-				await checkBounded(
-					entryCount,
-					0.5,
-					setup.name === "u64-iblt" ? 1 : 0.9,
-					db1,
-					db2,
-					db3,
-				);
-			});
+				await Promise.all([
+					db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
+						timeout: 30_000,
+					}),
+					db2.log.waitForReplicator(session.peers[2].identity.publicKey, {
+						timeout: 30_000,
+					}),
+					db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
+						timeout: 30_000,
+					}),
+					db3.log.waitForReplicator(session.peers[1].identity.publicKey, {
+						timeout: 30_000,
+					}),
+				]);
+
+					await checkBounded(
+						entryCount,
+						0.5,
+						setup.name === "u64-iblt" ? 1 : 0.9,
+						db1,
+						db2,
+						db3,
+					);
+				});
 
 			// TODO add tests for late joining and leaving peers
 			it("distributes to joining peers", async () => {
@@ -583,9 +598,9 @@ testSetups.forEach((setup) => {
 					}),
 				);
 
-				db3 = await EventStore.open<EventStore<string, any>>(
-					db1.address!,
-					session.peers[2],
+					db3 = await EventStore.open<EventStore<string, any>>(
+						db1.address!,
+						session.peers[2],
 					{
 						args: {
 							replicate: {
@@ -962,11 +977,26 @@ testSetups.forEach((setup) => {
 					},
 				);
 
+				await Promise.all([
+					db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
+						timeout: 30_000,
+					}),
+					db2.log.waitForReplicator(session.peers[2].identity.publicKey, {
+						timeout: 30_000,
+					}),
+					db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
+						timeout: 30_000,
+					}),
+					db3.log.waitForReplicator(session.peers[1].identity.publicKey, {
+						timeout: 30_000,
+					}),
+				]);
+
 				await db2.log.replicate(false);
 
 				await waitForResolved(() => expect(db3.log.log.length).equal(COUNT));
 				await waitForResolved(() => expect(db2.log.log.length).equal(0));
-			});
+				});
 
 			it("drops when no longer replicating with factor 0", async () => {
 				let COUNT = 100;
@@ -1011,10 +1041,24 @@ testSetups.forEach((setup) => {
 						},
 					},
 				);
+				await Promise.all([
+					db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
+						timeout: 30_000,
+					}),
+					db2.log.waitForReplicator(session.peers[2].identity.publicKey, {
+						timeout: 30_000,
+					}),
+					db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
+						timeout: 30_000,
+					}),
+					db3.log.waitForReplicator(session.peers[1].identity.publicKey, {
+						timeout: 30_000,
+					}),
+				]);
 				await db2.log.replicate({ factor: 0 });
 				await waitForResolved(() => expect(db3.log.log.length).equal(COUNT));
 				await waitForResolved(() => expect(db2.log.log.length).equal(0)); // min replicas is set to 2 so, if there are 2 dbs still replicating, this nod should not store any data
-			});
+				});
 
 			describe("distribution", () => {
 				describe("objectives", () => {

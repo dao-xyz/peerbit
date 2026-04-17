@@ -516,7 +516,15 @@ const REPLICATOR_LIVENESS_PROBE_FAILURES_TO_EVICT = 2;
 const FORCE_FRESH_RETRY_SCHEDULE_MS = [
 	0, 1_000, 3_000, 7_000, 15_000, 30_000, 45_000,
 ];
-const JOIN_WARMUP_RETRY_SCHEDULE_MS = [0, 1_000, 3_000, 7_000, 15_000];
+const JOIN_WARMUP_RETRY_SCHEDULE_MS = [
+	0,
+	1_000,
+	3_000,
+	7_000,
+	15_000,
+	30_000,
+	60_000,
+];
 
 const toPositiveInteger = (
 	value: number | undefined,
