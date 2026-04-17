@@ -2532,6 +2532,7 @@ export class SharedLog<
 			bypassRecentDedupe?: boolean;
 			retryScheduleMs?: number[];
 			forceFreshDelivery?: boolean;
+			preferSimpleSync?: boolean;
 		},
 	) {
 		if (entries.size === 0) {
@@ -2584,7 +2585,7 @@ export class SharedLog<
 			// to that peer" recovery flow; using simple sync here avoids occasional
 			// single-hash gaps seen with IBLT-oriented maybe-sync batches under churn.
 			if (
-				options?.forceFreshDelivery &&
+				(options?.forceFreshDelivery || options?.preferSimpleSync) &&
 				this.syncronizer instanceof RatelessIBLTSynchronizer
 			) {
 				return Promise.resolve(
@@ -2672,23 +2673,24 @@ export class SharedLog<
 					return;
 				}
 
-				const pendingByTarget = new Map<string, Map<string, EntryReplicated<any>>>();
-				const flushTarget = (target: string) => {
-					const entries = pendingByTarget.get(target);
-					if (!entries || entries.size === 0) {
-						return;
-					}
-					const isJoinWarmupTarget = addedPeers.has(target);
-					const bypassRecentDedupe = isJoinWarmupTarget || forceFreshDelivery;
-					this.dispatchMaybeMissingEntries(target, entries, {
-						bypassRecentDedupe,
-						retryScheduleMs: isJoinWarmupTarget
-							? JOIN_WARMUP_RETRY_SCHEDULE_MS
-							: undefined,
-						forceFreshDelivery,
-					});
-					pendingByTarget.delete(target);
-				};
+					const pendingByTarget = new Map<string, Map<string, EntryReplicated<any>>>();
+					const flushTarget = (target: string) => {
+						const entries = pendingByTarget.get(target);
+						if (!entries || entries.size === 0) {
+							return;
+						}
+						const isJoinWarmupTarget = addedPeers.has(target);
+						const bypassRecentDedupe = isJoinWarmupTarget || forceFreshDelivery;
+						this.dispatchMaybeMissingEntries(target, entries, {
+							bypassRecentDedupe,
+							retryScheduleMs: isJoinWarmupTarget
+								? JOIN_WARMUP_RETRY_SCHEDULE_MS
+								: undefined,
+							forceFreshDelivery,
+							preferSimpleSync: isJoinWarmupTarget,
+						});
+						pendingByTarget.delete(target);
+					};
 				const queueEntryForTarget = (
 					target: string,
 					entry: EntryReplicated<any>,
@@ -6359,11 +6361,11 @@ export class SharedLog<
 				string,
 				Map<string, EntryReplicated<any>>
 			> = new Map();
-			const flushUncheckedDeliverTarget = (target: string) => {
-				const entries = uncheckedDeliver.get(target);
-				if (!entries || entries.size === 0) {
-					return;
-				}
+				const flushUncheckedDeliverTarget = (target: string) => {
+					const entries = uncheckedDeliver.get(target);
+					if (!entries || entries.size === 0) {
+						return;
+					}
 					const isWarmupTarget = warmupPeers.has(target);
 					const bypassRecentDedupe = isWarmupTarget || forceFreshDelivery;
 					this.dispatchMaybeMissingEntries(target, entries, {
@@ -6372,9 +6374,10 @@ export class SharedLog<
 							? JOIN_WARMUP_RETRY_SCHEDULE_MS
 							: undefined,
 						forceFreshDelivery,
+						preferSimpleSync: isWarmupTarget,
 					});
-				uncheckedDeliver.delete(target);
-			};
+					uncheckedDeliver.delete(target);
+				};
 			const queueUncheckedDeliver = (
 				target: string,
 				entry: EntryReplicated<any>,

@@ -1690,7 +1690,23 @@ testSetups.forEach((setup) => {
 					eager: true,
 					timeout: 60_000,
 				});
-			};
+				await db2.log.waitForReplicator(session.peers[0].identity.publicKey, {
+					eager: true,
+					timeout: 60_000,
+				});
+				await db2.log.waitForReplicator(session.peers[2].identity.publicKey, {
+					eager: true,
+					timeout: 60_000,
+				});
+				await db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
+					eager: true,
+					timeout: 60_000,
+				});
+				await db3.log.waitForReplicator(session.peers[1].identity.publicKey, {
+					eager: true,
+					timeout: 60_000,
+				});
+				};
 
 			beforeEach(async () => {
 				session = await TestSession.connected(3, [

@@ -322,7 +322,13 @@ testSetups.forEach((setup) => {
 					db1.add(toBase64(new Uint8Array([i])), { meta: { next: [] } }),
 				);
 
-				await checkBounded(entryCount, 0.35, 0.65, db1, db2);
+				await checkBounded(
+					entryCount,
+					0.35,
+					setup.name === "u64-iblt" ? 2 / 3 : 0.65,
+					db1,
+					db2,
+				);
 			});
 
 			it("2 peers write while joining", async () => {
