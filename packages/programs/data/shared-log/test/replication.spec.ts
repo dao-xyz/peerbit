@@ -2181,12 +2181,26 @@ testSetups.forEach((setup) => {
 						});
 					}
 
-					// Use TestSession.connect so sharded pubsub/fanout root candidates converge
-					// for this connected component (manual `dial()` can leave peers on different
-					// shard roots in sparse graphs).
-					await session.connect([[session.peers[0], session.peers[1]]]);
+						// Use TestSession.connect so sharded pubsub/fanout root candidates converge
+						// for this connected component (manual `dial()` can leave peers on different
+						// shard roots in sparse graphs).
+						await session.connect([[session.peers[0], session.peers[1]]]);
+						await Promise.all([
+							db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+								timeout: 60_000,
+								roleAge: 0,
+							}),
+							db2.log.waitForReplicator(session.peers[0].identity.publicKey, {
+								timeout: 60_000,
+								roleAge: 0,
+							}),
+						]);
+						await Promise.all([
+							db1.log.rebalanceAll({ clearCache: true }),
+							db2.log.rebalanceAll({ clearCache: true }),
+						]);
 
-					await checkBounded(entryCount, 1, 1, db1, db2);
+						await checkBounded(entryCount, 1, 1, db1, db2);
 
 					await db2.close();
 					await waitForResolved(async () =>
@@ -2278,16 +2292,10 @@ testSetups.forEach((setup) => {
 
 							await waitForDb1Replicators();
 
-							await db1.log.rebalanceAll({ clearCache: true });
 							await Promise.all([
-								db2.log.waitForReplicator(session.peers[0].identity.publicKey, {
-									timeout: 60_000,
-									eager: true,
-								}),
-								db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
-									timeout: 60_000,
-									eager: true,
-								}),
+								db1.log.rebalanceAll({ clearCache: true }),
+								db2.log.rebalanceAll({ clearCache: true }),
+								db3.log.rebalanceAll({ clearCache: true }),
 							]);
 							await waitForResolved(
 								() => expect(db2.log.log.length).equal(entryCount),
