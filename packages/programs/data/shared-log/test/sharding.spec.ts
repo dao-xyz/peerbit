@@ -141,7 +141,7 @@ testSetups.forEach((setup) => {
 			const sampleSize = 200; // must be < 255
 			const shardingSmallEntryCount = setup.name === "u64-iblt" ? 30 : 60;
 			const shardingMediumEntryCount = setup.name === "u64-iblt" ? 60 : 100;
-			const shardingThreePeerEntryCount = setup.name === "u64-iblt" ? 20 : shardingSmallEntryCount;
+			const shardingThreePeerEntryCount = setup.name === "u64-iblt" ? 20 : 40;
 			const largeEntryCount = 1000;
 			const shardingWriteBatchSize = 1;
 
@@ -315,7 +315,7 @@ testSetups.forEach((setup) => {
 					},
 				);
 
-				const entryCount = shardingSmallEntryCount;
+				const entryCount = shardingThreePeerEntryCount;
 
 				// expect min replicas 2 with 3 peers, this means that 66% of entries (ca) will be at peer 2 and 3, and peer1 will have all of them since 1 is the creator
 				await appendInBatches(entryCount, (i) =>
@@ -444,6 +444,12 @@ testSetups.forEach((setup) => {
 						timeout: 30_000,
 					}),
 				]);
+				await Promise.all([
+					db1.log.rebalanceAll({ clearCache: true }),
+					db2.log.rebalanceAll({ clearCache: true }),
+					db3.log.rebalanceAll({ clearCache: true }),
+				]);
+				await waitForDistributionQuiesced(db1, db2, db3);
 				await checkBounded(
 					entryCount,
 					0.5,
