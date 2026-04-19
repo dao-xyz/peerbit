@@ -3572,6 +3572,7 @@ describe("index", () => {
 						expect(second.map((x) => x.id)).to.deep.equal(["2"]);
 
 						await session.connect([[session.peers[0], session.peers[1]]]); // connect the nodes!
+						await observer.docs.index.waitFor(writer1.node.identity.publicKey);
 
 						await waitForResolved(
 							async () => expect(await iterator.pending()).to.equal(2),

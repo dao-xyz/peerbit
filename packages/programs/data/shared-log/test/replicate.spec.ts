@@ -462,7 +462,6 @@ describe(`replicate`, () => {
 
 				expect(db1MinRoleAge - db2MinRoleAge).lessThanOrEqual(1); // db1 sets the minRole age because it is the oldest. So both dbs get same minRole age limit (including some error margin)
 
-				const now = +new Date();
 				const assertOnlyOldestPeersAreMature = async (
 					db: EventStore<string, any>,
 				) => {
@@ -475,8 +474,9 @@ describe(`replicate`, () => {
 							segment.timestamp < min ? segment.timestamp : min,
 						segments[0]!.timestamp,
 					);
+					const syntheticNow = oldestTimestamp + minRoleAge + 1;
 					const maturedHashes = segments
-						.filter((segment) => isMatured(segment, now, minRoleAge))
+						.filter((segment) => isMatured(segment, syntheticNow, minRoleAge))
 						.map((segment) => segment.hash)
 						.sort();
 					const oldestHashes = segments
@@ -488,7 +488,7 @@ describe(`replicate`, () => {
 					expect(
 						isMatured(
 							(await db.log.getMyReplicationSegments())[0],
-							now,
+							syntheticNow,
 							minRoleAge,
 						),
 					).to.equal(
