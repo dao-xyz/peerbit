@@ -103,6 +103,12 @@ class SqliteWorkerHandler {
 				await db.prepare(message.sql, message.id);
 				return statementId;
 			}
+			if (message.type === "prepare-many") {
+				for (const statement of message.statements) {
+					await db.prepare(statement.sql, statement.id);
+				}
+				return message.statements.map((statement) => statement.id);
+			}
 			if (message.type === "close") {
 				await db.close();
 				this.databases.delete(message.databaseId);

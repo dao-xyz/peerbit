@@ -50,6 +50,11 @@ interface Prepare extends Message {
 	sql: string;
 }
 
+interface PrepareMany extends Message {
+	type: "prepare-many";
+	statements: { id: string; sql: string }[];
+}
+
 type Uint8ArrayBase64Type = {
 	type: "uint8array";
 	encoding: "base64";
@@ -204,6 +209,7 @@ export type DatabaseMessages =
 	| CreateDatabase
 	| Exec
 	| Prepare
+	| PrepareMany
 	| Close
 	| Drop
 	| Open

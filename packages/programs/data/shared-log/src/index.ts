@@ -516,7 +516,15 @@ const REPLICATOR_LIVENESS_PROBE_FAILURES_TO_EVICT = 2;
 const FORCE_FRESH_RETRY_SCHEDULE_MS = [
 	0, 1_000, 3_000, 7_000, 15_000, 30_000, 45_000,
 ];
-const JOIN_WARMUP_RETRY_SCHEDULE_MS = [0, 1_000, 3_000, 7_000, 15_000];
+const JOIN_WARMUP_RETRY_SCHEDULE_MS = [
+	0,
+	1_000,
+	3_000,
+	7_000,
+	15_000,
+	30_000,
+	60_000,
+];
 
 const toPositiveInteger = (
 	value: number | undefined,
@@ -753,6 +761,7 @@ export class SharedLog<
 	private _repairSweepRunning!: boolean;
 	private _repairSweepForceFreshPending!: boolean;
 	private _repairSweepAddedPeersPending!: Set<string>;
+	private _repairSweepOptimisticGidPeersPending!: Map<string, Map<string, number>>;
 	private _topicSubscribersCache!: Map<
 		string,
 		{ expiresAt: number; keys: PublicSignKey[] }
@@ -1208,7 +1217,10 @@ export class SharedLog<
 				await this._mergeLeadersFromGidReferences(message, minReplicasValue, leaders);
 				const leadersForDelivery = delivery ? new Set(leaders.keys()) : undefined;
 
-				const set = this.addPeersToGidPeerHistory(entry.meta.gid, leaders.keys());
+				// Outbound append delivery only tells us who we intend to send to, not who has
+				// actually stored the entry. Keep this recipient set local so later repair
+				// sweeps can still backfill peers that missed the initial delivery.
+				const set = new Set(leaders.keys());
 				let hasRemotePeers = set.has(selfHash) ? set.size > 1 : set.size > 0;
 				const allowSubscriberFallback =
 					this.syncronizer instanceof SimpleSyncronizer ||
@@ -2507,6 +2519,19 @@ export class SharedLog<
 		return set;
 	}
 
+	private markRepairSweepOptimisticPeer(gid: string, peer: string) {
+		let peers = this._repairSweepOptimisticGidPeersPending.get(gid);
+		if (!peers) {
+			peers = new Map();
+			this._repairSweepOptimisticGidPeersPending.set(gid, peers);
+		}
+		peers.set(peer, (peers.get(peer) || 0) + 1);
+	}
+
+	private hasPendingRepairSweepOptimisticPeer(gid: string, peer: string) {
+		return (this._repairSweepOptimisticGidPeersPending.get(gid)?.get(peer) || 0) > 0;
+	}
+
 	private dispatchMaybeMissingEntries(
 		target: string,
 		entries: Map<string, EntryReplicated<R>>,
@@ -2514,6 +2539,7 @@ export class SharedLog<
 			bypassRecentDedupe?: boolean;
 			retryScheduleMs?: number[];
 			forceFreshDelivery?: boolean;
+			preferSimpleSync?: boolean;
 		},
 	) {
 		if (entries.size === 0) {
@@ -2560,15 +2586,13 @@ export class SharedLog<
 					? FORCE_FRESH_RETRY_SCHEDULE_MS
 					: [0];
 
-		const run = () => {
+		const run = (useSimpleSync: boolean) => {
 			// For force-fresh churn repair we intentionally bypass rateless IBLT and
-			// use simple hash-based sync. This path is a directed "push these hashes
-			// to that peer" recovery flow; using simple sync here avoids occasional
-			// single-hash gaps seen with IBLT-oriented maybe-sync batches under churn.
-			if (
-				options?.forceFreshDelivery &&
-				this.syncronizer instanceof RatelessIBLTSynchronizer
-			) {
+			// use simple hash-based sync. Join-warmup directed retries fall back to
+			// simple sync only after the initial rateless maybe-sync attempt so healthy
+			// catch-up still exercises the rateless StartSync path, while retries can
+			// recover occasional single-hash gaps seen under churn.
+			if (useSimpleSync && this.syncronizer instanceof RatelessIBLTSynchronizer) {
 				return Promise.resolve(
 					this.syncronizer.simple.onMaybeMissingEntries({
 						entries: filteredEntries,
@@ -2585,21 +2609,24 @@ export class SharedLog<
 			).catch((error: any) => logger.error(error));
 		};
 
-		for (const delayMs of retrySchedule) {
+		retrySchedule.forEach((delayMs, index) => {
+			const useSimpleSync =
+				options?.forceFreshDelivery === true ||
+				(options?.preferSimpleSync === true && index > 0);
 			if (delayMs === 0) {
-				void run();
-				continue;
+				void run(useSimpleSync);
+				return;
 			}
 			const timer = setTimeout(() => {
 				this._repairRetryTimers.delete(timer);
 				if (this.closed) {
 					return;
 				}
-				void run();
+				void run(useSimpleSync);
 			}, delayMs);
 			timer.unref?.();
 			this._repairRetryTimers.add(timer);
-		}
+		});
 	}
 
 	private scheduleRepairSweep(options: {
@@ -2623,6 +2650,30 @@ export class SharedLog<
 			while (!this.closed) {
 				const forceFreshDelivery = this._repairSweepForceFreshPending;
 				const addedPeers = new Set(this._repairSweepAddedPeersPending);
+				const optimisticGidPeers = new Map<string, Set<string>>();
+				const optimisticGidPeersConsumed = new Map<string, Map<string, number>>();
+				if (addedPeers.size > 0) {
+					for (const [
+						gid,
+						peerCounts,
+					] of this._repairSweepOptimisticGidPeersPending) {
+						let matchedPeers: Set<string> | undefined;
+						let matchedCounts: Map<string, number> | undefined;
+						for (const [peer, count] of peerCounts) {
+							if (!addedPeers.has(peer)) {
+								continue;
+							}
+							matchedPeers ||= new Set();
+							matchedCounts ||= new Map();
+							matchedPeers.add(peer);
+							matchedCounts.set(peer, count);
+						}
+						if (matchedPeers && matchedCounts) {
+							optimisticGidPeers.set(gid, matchedPeers);
+							optimisticGidPeersConsumed.set(gid, matchedCounts);
+						}
+					}
+				}
 				this._repairSweepForceFreshPending = false;
 				this._repairSweepAddedPeersPending.clear();
 
@@ -2630,23 +2681,24 @@ export class SharedLog<
 					return;
 				}
 
-				const pendingByTarget = new Map<string, Map<string, EntryReplicated<any>>>();
-				const flushTarget = (target: string) => {
-					const entries = pendingByTarget.get(target);
-					if (!entries || entries.size === 0) {
-						return;
-					}
-					const isJoinWarmupTarget = addedPeers.has(target);
-					const bypassRecentDedupe = isJoinWarmupTarget || forceFreshDelivery;
-					this.dispatchMaybeMissingEntries(target, entries, {
-						bypassRecentDedupe,
-						retryScheduleMs: isJoinWarmupTarget
-							? JOIN_WARMUP_RETRY_SCHEDULE_MS
-							: undefined,
-						forceFreshDelivery,
-					});
-					pendingByTarget.delete(target);
-				};
+					const pendingByTarget = new Map<string, Map<string, EntryReplicated<any>>>();
+					const flushTarget = (target: string) => {
+						const entries = pendingByTarget.get(target);
+						if (!entries || entries.size === 0) {
+							return;
+						}
+						const isJoinWarmupTarget = addedPeers.has(target);
+						const bypassRecentDedupe = isJoinWarmupTarget || forceFreshDelivery;
+						this.dispatchMaybeMissingEntries(target, entries, {
+							bypassRecentDedupe,
+							retryScheduleMs: isJoinWarmupTarget
+								? JOIN_WARMUP_RETRY_SCHEDULE_MS
+								: undefined,
+							forceFreshDelivery,
+							preferSimpleSync: isJoinWarmupTarget,
+						});
+						pendingByTarget.delete(target);
+					};
 				const queueEntryForTarget = (
 					target: string,
 					entry: EntryReplicated<any>,
@@ -2667,16 +2719,17 @@ export class SharedLog<
 
 				const iterator = this.entryCoordinatesIndex.iterate({});
 				try {
-						while (!this.closed && !iterator.done()) {
-							const entries = await iterator.next(REPAIR_SWEEP_ENTRY_BATCH_SIZE);
-							for (const entry of entries) {
-								const entryReplicated = entry.value;
-								const knownPeers = this._gidPeersHistory.get(entryReplicated.gid);
-								const currentPeers = await this.findLeaders(
-									entryReplicated.coordinates,
-									entryReplicated,
-									{ roleAge: 0 },
-								);
+					while (!this.closed && !iterator.done()) {
+						const entries = await iterator.next(REPAIR_SWEEP_ENTRY_BATCH_SIZE);
+						for (const entry of entries) {
+							const entryReplicated = entry.value;
+							const knownPeers = this._gidPeersHistory.get(entryReplicated.gid);
+							const optimisticPeers = optimisticGidPeers.get(entryReplicated.gid);
+							const currentPeers = await this.findLeaders(
+								entryReplicated.coordinates,
+								entryReplicated,
+								{ roleAge: 0 },
+							);
 							if (forceFreshDelivery) {
 								for (const [currentPeer] of currentPeers) {
 									if (currentPeer === this.node.identity.publicKey.hashcode()) {
@@ -2685,17 +2738,48 @@ export class SharedLog<
 									queueEntryForTarget(currentPeer, entryReplicated);
 								}
 							}
-								if (addedPeers.size > 0) {
-									for (const peer of addedPeers) {
-										if (currentPeers.has(peer) && !knownPeers?.has(peer)) {
-											queueEntryForTarget(peer, entryReplicated);
-										}
+							if (addedPeers.size > 0) {
+								for (const peer of addedPeers) {
+									// Join warmup records prospective leaders before the peer has
+									// necessarily received every entry. Only those optimistic
+									// assignments should keep retrying even if a later leader
+									// recomputation temporarily drops the peer while it is still
+									// hydrating. Authoritative sources such as assumeSynced joins
+									// should still suppress redundant maybe-sync traffic.
+									const wasOptimisticallyAssigned =
+										optimisticPeers?.has(peer) === true;
+									if (
+										wasOptimisticallyAssigned ||
+										(currentPeers.has(peer) && !knownPeers?.has(peer))
+									) {
+										queueEntryForTarget(peer, entryReplicated);
 									}
 								}
 							}
+						}
 					}
 				} finally {
 					await iterator.close();
+				}
+
+				for (const [gid, peerCounts] of optimisticGidPeersConsumed) {
+					const pendingPeerCounts =
+						this._repairSweepOptimisticGidPeersPending.get(gid);
+					if (!pendingPeerCounts) {
+						continue;
+					}
+					for (const [peer, count] of peerCounts) {
+						const current = pendingPeerCounts.get(peer) || 0;
+						const next = current - count;
+						if (next > 0) {
+							pendingPeerCounts.set(peer, next);
+						} else {
+							pendingPeerCounts.delete(peer);
+						}
+					}
+					if (pendingPeerCounts.size === 0) {
+						this._repairSweepOptimisticGidPeersPending.delete(gid);
+					}
 				}
 
 				for (const target of [...pendingByTarget.keys()]) {
@@ -2963,6 +3047,7 @@ export class SharedLog<
 		this._repairSweepRunning = false;
 		this._repairSweepForceFreshPending = false;
 		this._repairSweepAddedPeersPending = new Set();
+		this._repairSweepOptimisticGidPeersPending = new Map();
 		this._topicSubscribersCache = new Map();
 		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
 		this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
@@ -4029,6 +4114,7 @@ export class SharedLog<
 		this._repairSweepRunning = false;
 		this._repairSweepForceFreshPending = false;
 		this._repairSweepAddedPeersPending.clear();
+		this._repairSweepOptimisticGidPeersPending.clear();
 
 		for (const [_k, v] of this._pendingDeletes) {
 			v.clear();
@@ -6283,11 +6369,11 @@ export class SharedLog<
 				string,
 				Map<string, EntryReplicated<any>>
 			> = new Map();
-			const flushUncheckedDeliverTarget = (target: string) => {
-				const entries = uncheckedDeliver.get(target);
-				if (!entries || entries.size === 0) {
-					return;
-				}
+				const flushUncheckedDeliverTarget = (target: string) => {
+					const entries = uncheckedDeliver.get(target);
+					if (!entries || entries.size === 0) {
+						return;
+					}
 					const isWarmupTarget = warmupPeers.has(target);
 					const bypassRecentDedupe = isWarmupTarget || forceFreshDelivery;
 					this.dispatchMaybeMissingEntries(target, entries, {
@@ -6296,9 +6382,10 @@ export class SharedLog<
 							? JOIN_WARMUP_RETRY_SCHEDULE_MS
 							: undefined,
 						forceFreshDelivery,
+						preferSimpleSync: isWarmupTarget,
 					});
-				uncheckedDeliver.delete(target);
-			};
+					uncheckedDeliver.delete(target);
+				};
 			const queueUncheckedDeliver = (
 				target: string,
 				entry: EntryReplicated<any>,
@@ -6372,9 +6459,20 @@ export class SharedLog<
 							}
 						}
 
+						for (const [peer] of currentPeers) {
+							if (warmupPeers.has(peer)) {
+								this.markRepairSweepOptimisticPeer(entryReplicated.gid, peer);
+							}
+						}
+
+						const authoritativePeers = [...currentPeers.keys()].filter(
+							(peer) =>
+								!warmupPeers.has(peer) &&
+								!this.hasPendingRepairSweepOptimisticPeer(entryReplicated.gid, peer),
+						);
 						this.addPeersToGidPeerHistory(
 							entryReplicated.gid,
-							currentPeers.keys(),
+							authoritativePeers,
 							true,
 						);
 
@@ -6427,19 +6525,30 @@ export class SharedLog<
 						}
 					}
 
-					if (oldPeersSet) {
-						for (const oldPeer of oldPeersSet) {
-							if (!currentPeers.has(oldPeer)) {
-								this.removePruneRequestSent(entryReplicated.hash);
+						if (oldPeersSet) {
+							for (const oldPeer of oldPeersSet) {
+								if (!currentPeers.has(oldPeer)) {
+									this.removePruneRequestSent(entryReplicated.hash);
+								}
 							}
 						}
-					}
 
-					this.addPeersToGidPeerHistory(
-						entryReplicated.gid,
-						currentPeers.keys(),
-						true,
-					);
+						for (const [peer] of currentPeers) {
+							if (addedPeers.has(peer)) {
+								this.markRepairSweepOptimisticPeer(entryReplicated.gid, peer);
+							}
+						}
+
+						const authoritativePeers = [...currentPeers.keys()].filter(
+							(peer) =>
+								!addedPeers.has(peer) &&
+								!this.hasPendingRepairSweepOptimisticPeer(entryReplicated.gid, peer),
+						);
+						this.addPeersToGidPeerHistory(
+							entryReplicated.gid,
+							authoritativePeers,
+							true,
+						);
 
 					if (!isLeader) {
 						this.pruneDebouncedFnAddIfNotKeeping({

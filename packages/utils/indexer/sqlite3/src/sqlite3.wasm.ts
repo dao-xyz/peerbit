@@ -313,7 +313,10 @@ const create = async (
 				}));
 			poolUtil = activePoolUtil;
 
-			await activePoolUtil.reserveMinimumCapacity(100);
+			// SAH pool capacity persists across sessions, and the default pool is
+			// already sized for a small number of databases plus temp files.
+			// Avoid preallocating a much larger pool on every cold start because it
+			// dominates the initial browser open latency.
 			sqliteDb = new activePoolUtil.OpfsSAHPoolDb(dbFileName);
 		} else {
 			sqliteDb = new sqlite3.oo1.DB(":memory:");

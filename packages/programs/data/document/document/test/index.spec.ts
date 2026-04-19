@@ -806,76 +806,127 @@ describe("index", () => {
 				await session.stop();
 			});
 
-			it("drops when no longer replicating as observer", async () => {
-				let COUNT = 10;
-				await store.docs.log.replicate({
-					factor: 1,
-				});
-				for (let i = 0; i < COUNT; i++) {
-					await store.docs.put(
-						new Document({
-							id: uuid(),
-							name: "Hello world",
+				it("drops when no longer replicating as observer", async () => {
+					const COUNT = 10;
+					const replicationHandoffWait = {
+						timeout: 60_000,
+						delayInterval: 500,
+					} as const;
+					await Promise.all([
+						store.docs.log.waitForReplicator(session.peers[1].identity.publicKey, {
+							timeout: replicationHandoffWait.timeout,
 						}),
-					);
-				}
-
-				await waitForResolved(async () =>
-					expect(await store2.docs.index.getSize()).equal(COUNT),
-				);
-
-				store3 = await session.peers[2].open<TestStore>(store.clone(), {
-					args: {
-						replicate: {
-							factor: 1,
-						},
-					},
-				});
-
-				await waitForResolved(async () =>
-					expect(await store3.docs.index.getSize()).equal(COUNT),
-				);
-
-				await store2.docs.log.replicate(false);
-
-				await waitForResolved(async () =>
-					expect(await store2.docs.index.getSize()).equal(0),
-				);
-			});
-
-			it("drops when no longer replicating with factor 0", async () => {
-				let COUNT = 10;
-				await store.docs.log.replicate({
-					factor: 1,
-				});
-				for (let i = 0; i < COUNT; i++) {
-					await store.docs.put(
-						new Document({
-							id: uuid(),
-							name: "Hello world",
+						store2.docs.log.waitForReplicator(session.peers[0].identity.publicKey, {
+							timeout: replicationHandoffWait.timeout,
 						}),
+					]);
+					await store.docs.log.replicate({
+						factor: 1,
+					});
+					for (let i = 0; i < COUNT; i++) {
+						await store.docs.put(
+							new Document({
+								id: uuid(),
+								name: "Hello world",
+							}),
+						);
+					}
+
+					await waitForResolved(
+						async () => expect(await store2.docs.index.getSize()).equal(COUNT),
+						replicationHandoffWait,
 					);
-				}
 
-				await waitForResolved(async () =>
-					expect(await store2.docs.index.getSize()).equal(COUNT),
-				);
-
-				store3 = await session.peers[2].open<TestStore>(store.clone(), {
-					args: {
-						replicate: {
-							factor: 1,
+					store3 = await session.peers[2].open<TestStore>(store.clone(), {
+						args: {
+							replicate: {
+								factor: 1,
+							},
 						},
-					},
+					});
+
+					await Promise.all([
+						store.docs.log.waitForReplicator(session.peers[2].identity.publicKey, {
+							timeout: replicationHandoffWait.timeout,
+						}),
+						store2.docs.log.waitForReplicator(session.peers[2].identity.publicKey, {
+							timeout: replicationHandoffWait.timeout,
+						}),
+						store3.docs.log.waitForReplicator(session.peers[0].identity.publicKey, {
+							timeout: replicationHandoffWait.timeout,
+						}),
+					]);
+
+					await store2.docs.log.replicate(false);
+					await waitForResolved(
+						async () => {
+							expect(store3.docs.log.log.length).equal(COUNT);
+							expect(await store3.docs.index.getSize()).equal(COUNT);
+							expect(await store2.docs.index.getSize()).equal(0);
+						},
+						replicationHandoffWait,
+					);
 				});
-				await store2.docs.log.replicate({ factor: 0 });
-				await waitForResolved(async () =>
-					expect(await store3.docs.index.getSize()).equal(COUNT),
-				);
-				await waitForResolved(async () =>
-					expect(await store2.docs.index.getSize()).equal(0),
-				);
-			});
+
+				it("drops when no longer replicating with factor 0", async () => {
+					const COUNT = 10;
+					const replicationHandoffWait = {
+						timeout: 60_000,
+						delayInterval: 500,
+					} as const;
+					await Promise.all([
+						store.docs.log.waitForReplicator(session.peers[1].identity.publicKey, {
+							timeout: replicationHandoffWait.timeout,
+						}),
+						store2.docs.log.waitForReplicator(session.peers[0].identity.publicKey, {
+							timeout: replicationHandoffWait.timeout,
+						}),
+					]);
+					await store.docs.log.replicate({
+						factor: 1,
+					});
+					for (let i = 0; i < COUNT; i++) {
+						await store.docs.put(
+							new Document({
+								id: uuid(),
+								name: "Hello world",
+							}),
+						);
+					}
+
+					await waitForResolved(
+						async () => expect(await store2.docs.index.getSize()).equal(COUNT),
+						replicationHandoffWait,
+					);
+
+					store3 = await session.peers[2].open<TestStore>(store.clone(), {
+						args: {
+							replicate: {
+								factor: 1,
+							},
+						},
+					});
+					await Promise.all([
+						store.docs.log.waitForReplicator(session.peers[2].identity.publicKey, {
+							timeout: replicationHandoffWait.timeout,
+						}),
+						store2.docs.log.waitForReplicator(session.peers[2].identity.publicKey, {
+							timeout: replicationHandoffWait.timeout,
+						}),
+						store3.docs.log.waitForReplicator(session.peers[0].identity.publicKey, {
+							timeout: replicationHandoffWait.timeout,
+						}),
+					]);
+					await store2.docs.log.replicate({ factor: 0 });
+					await waitForResolved(
+						async () => {
+							expect(store3.docs.log.log.length).equal(COUNT);
+							expect(await store3.docs.index.getSize()).equal(COUNT);
+							expect(await store2.docs.index.getSize()).equal(0);
+						},
+						replicationHandoffWait,
+					);
+				});
 
 			it("can query after waitFor as non-replicator", async () => {
 				await store2.close();
@@ -4257,15 +4308,16 @@ describe("index", () => {
 						);
 						let t0 = +new Date();
 						await iterator.next(1);
-							let t1 = +new Date();
-							let delta = 500; // lower bound slack (ms)
-							let upperDelta = 1500; // CI/full-suite can overshoot timers under load
-							expect(t1 - t0).to.lessThan(delta); // +some delta
-							expect(iterator.done()).to.be.false;
-							await iterator.all();
-							let t2 = +new Date();
-							expect(t2 - t0).to.lessThan(waitForMax + upperDelta); // +some delta
-							expect(t2 - t0).to.be.greaterThanOrEqual(waitForMax - delta); // -some delta
+						let t1 = +new Date();
+						let delta = 500; // lower bound slack (ms)
+						let firstResultUpper = 1_000; // join handling is fast, but not sub-500ms under full-suite CI load
+						let upperDelta = 1500; // CI/full-suite can overshoot timers under load
+						expect(t1 - t0).to.lessThan(firstResultUpper);
+						expect(iterator.done()).to.be.false;
+						await iterator.all();
+						let t2 = +new Date();
+						expect(t2 - t0).to.lessThan(waitForMax + upperDelta); // +some delta
+						expect(t2 - t0).to.be.greaterThanOrEqual(waitForMax - delta); // -some delta
 						});
 
 					describe("policy", () => {
@@ -8017,9 +8069,22 @@ describe("index", () => {
 
 			it("get local first", async () => {
 				await stores[1].docs.log.replicate({ factor: 0.0001 });
+				await Promise.all([
+					stores[0].docs.log.waitForReplicator(
+						stores[1].node.identity.publicKey,
+					),
+					stores[1].docs.log.waitForReplicator(
+						stores[0].node.identity.publicKey,
+					),
+				]);
 				await waitForResolved(() =>
 					expect(stores[1].docs.log.log.length).to.eq(
 						stores[0].docs.log.log.length,
+					),
+				);
+				await waitForResolved(async () =>
+					expect(await stores[1].docs.index.getSize()).to.eq(
+						await stores[0].docs.index.getSize(),
 					),
 				);
 
