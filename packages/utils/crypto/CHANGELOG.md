@@ -61,6 +61,13 @@
   * dependencies
     * @peerbit/cache bumped from ^2.0.5 to ^2.0.6
 
+## [3.1.1](https://github.com/dao-xyz/peerbit/compare/crypto-v3.1.0...crypto-v3.1.1) (2026-03-30)
+
+
+### Bug Fixes
+
+* **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
+
 ## [3.1.0](https://github.com/dao-xyz/peerbit/compare/crypto-v3.0.1...crypto-v3.1.0) (2026-03-17)
 
 

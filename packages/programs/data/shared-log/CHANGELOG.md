@@ -389,6 +389,81 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.24...shared-log-v13.1.0) (2026-04-14)
+
+
+### Features
+
+* **blocks:** wake pending gets from provider watches ([ffc0f93](https://github.com/dao-xyz/peerbit/commit/ffc0f9322056d466034c467ebf82a0b08cdd5c93))
+* **blocks:** wake pending reads from provider watches ([0720fe5](https://github.com/dao-xyz/peerbit/commit/0720fe5f0c810f0aa256cd97794b171448b2bdcb))
+
+
+### Bug Fixes
+
+* **shared-log:** suppress late maybe-sync after assumeSynced join ([d922e1c](https://github.com/dao-xyz/peerbit/commit/d922e1c5033cf2986bd40fbd881a26ddddf81b8f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks bumped to 4.1.0
+    * @peerbit/log bumped to 6.0.22
+    * @peerbit/program bumped to 6.0.18
+    * @peerbit/pubsub bumped to 5.2.0
+    * @peerbit/rpc bumped to 6.0.22
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.22
+
+## [13.0.24](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.23...shared-log-v13.0.24) (2026-04-12)
+
+
+### Refactors
+
+* **shared-log:** centralize subscriber cache invalidation ([#720](https://github.com/dao-xyz/peerbit/issues/720)) ([f734c9a](https://github.com/dao-xyz/peerbit/commit/f734c9a551a5414ab506ab6b047c7e5cc8b44d00))
+
+## [13.0.23](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.22...shared-log-v13.0.23) (2026-04-03)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.21
+    * @peerbit/program bumped to 6.0.17
+    * @peerbit/pubsub bumped to 5.1.6
+    * @peerbit/rpc bumped to 6.0.21
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.21
+
+## [13.0.22](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.21...shared-log-v13.0.22) (2026-03-30)
+
+
+### Bug Fixes
+
+* **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped to 2.2.9
+    * @peerbit/blocks bumped to 4.0.11
+    * @peerbit/blocks-interface bumped to 2.0.8
+    * @peerbit/crypto bumped to 3.1.1
+    * @peerbit/indexer-interface bumped to 3.0.3
+    * @peerbit/indexer-sqlite3 bumped to 3.0.6
+    * @peerbit/log bumped to 6.0.20
+    * @peerbit/logger bumped to 2.0.1
+    * @peerbit/program bumped to 6.0.16
+    * @peerbit/pubsub bumped to 5.1.5
+    * @peerbit/pubsub-interface bumped to 5.1.1
+    * @peerbit/rpc bumped to 6.0.20
+    * @peerbit/stream-interface bumped to 6.0.7
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.20
+
 ## [13.0.21](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.20...shared-log-v13.0.21) (2026-03-29)
 
 

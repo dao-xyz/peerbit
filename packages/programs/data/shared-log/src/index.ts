@@ -495,6 +495,7 @@ const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE = 0.01;
 const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_CPU_LIMIT = 0.005;
 const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_MEMORY_LIMIT = 0.001;
 const RECALCULATE_PARTICIPATION_RELATIVE_DENOMINATOR_FLOOR = 1e-3;
+const TOPIC_SUBSCRIBERS_CACHE_TTL_MS = 250;
 const ADAPTIVE_REBALANCE_IDLE_INTERVAL_MULTIPLIER = 5;
 const ADAPTIVE_REBALANCE_MIN_IDLE_AFTER_LOCAL_APPEND_MS = 10_000;
 
@@ -752,6 +753,10 @@ export class SharedLog<
 	private _repairSweepRunning!: boolean;
 	private _repairSweepForceFreshPending!: boolean;
 	private _repairSweepAddedPeersPending!: Set<string>;
+	private _topicSubscribersCache!: Map<
+		string,
+		{ expiresAt: number; keys: PublicSignKey[] }
+	>;
 
 	// regular distribution checks
 	private distributeQueue?: PQueue;
@@ -1364,14 +1369,26 @@ export class SharedLog<
 	private async _getTopicSubscribers(
 		topic: string,
 	): Promise<PublicSignKey[] | undefined> {
+		const cached = this._topicSubscribersCache.get(topic);
+		if (cached && cached.expiresAt > Date.now()) {
+			return cached.keys.slice();
+		}
+
 		const maxPeers = 64;
+		const cache = (keys: PublicSignKey[]) => {
+			this._topicSubscribersCache.set(topic, {
+				expiresAt: Date.now() + TOPIC_SUBSCRIBERS_CACHE_TTL_MS,
+				keys,
+			});
+			return keys.slice();
+		};
 
 		// Prefer the bounded peer set we already know from the fanout overlay.
 		if (this._fanoutChannel && (topic === this.topic || topic === this.rpc.topic)) {
 			const hashes = this._fanoutChannel
 				.getPeerHashes({ includeSelf: false })
 				.slice(0, maxPeers);
-			if (hashes.length === 0) return [];
+			if (hashes.length === 0) return cache([]);
 
 			const keys = await Promise.all(
 				hashes.map((hash) => this._resolvePublicKeyFromHash(hash)),
@@ -1387,7 +1404,7 @@ export class SharedLog<
 				seen.add(hash);
 				uniqueKeys.push(key);
 			}
-			return uniqueKeys;
+			return cache(uniqueKeys);
 		}
 
 		const selfHash = this.node.identity.publicKey.hashcode();
@@ -1444,7 +1461,7 @@ export class SharedLog<
 			}
 		}
 
-		if (hashes.length === 0) return [];
+		if (hashes.length === 0) return cache([]);
 
 		const uniqueHashes: string[] = [];
 		const seen = new Set<string>();
@@ -1465,7 +1482,18 @@ export class SharedLog<
 			if (hash === selfHash) continue;
 			uniqueKeys.push(key);
 		}
-		return uniqueKeys;
+		return cache(uniqueKeys);
+	}
+
+	private invalidateTopicSubscribersCache(...topics: (string | undefined)[]) {
+		for (const topic of topics) {
+			if (!topic) continue;
+			this._topicSubscribersCache.delete(topic);
+		}
+	}
+
+	private invalidateSharedLogTopicSubscribersCache() {
+		this.invalidateTopicSubscribersCache(this.topic, this.rpc.topic);
 	}
 
 	// @deprecated
@@ -2639,15 +2667,16 @@ export class SharedLog<
 
 				const iterator = this.entryCoordinatesIndex.iterate({});
 				try {
-					while (!this.closed && !iterator.done()) {
-						const entries = await iterator.next(REPAIR_SWEEP_ENTRY_BATCH_SIZE);
-						for (const entry of entries) {
-							const entryReplicated = entry.value;
-							const currentPeers = await this.findLeaders(
-								entryReplicated.coordinates,
-								entryReplicated,
-								{ roleAge: 0 },
-							);
+						while (!this.closed && !iterator.done()) {
+							const entries = await iterator.next(REPAIR_SWEEP_ENTRY_BATCH_SIZE);
+							for (const entry of entries) {
+								const entryReplicated = entry.value;
+								const knownPeers = this._gidPeersHistory.get(entryReplicated.gid);
+								const currentPeers = await this.findLeaders(
+									entryReplicated.coordinates,
+									entryReplicated,
+									{ roleAge: 0 },
+								);
 							if (forceFreshDelivery) {
 								for (const [currentPeer] of currentPeers) {
 									if (currentPeer === this.node.identity.publicKey.hashcode()) {
@@ -2656,14 +2685,14 @@ export class SharedLog<
 									queueEntryForTarget(currentPeer, entryReplicated);
 								}
 							}
-							if (addedPeers.size > 0) {
-								for (const peer of addedPeers) {
-									if (currentPeers.has(peer)) {
-										queueEntryForTarget(peer, entryReplicated);
+								if (addedPeers.size > 0) {
+									for (const peer of addedPeers) {
+										if (currentPeers.has(peer) && !knownPeers?.has(peer)) {
+											queueEntryForTarget(peer, entryReplicated);
+										}
 									}
 								}
 							}
-						}
 					}
 				} finally {
 					await iterator.close();
@@ -2934,6 +2963,7 @@ export class SharedLog<
 		this._repairSweepRunning = false;
 		this._repairSweepForceFreshPending = false;
 		this._repairSweepAddedPeersPending = new Set();
+		this._topicSubscribersCache = new Map();
 		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
 		this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
 
@@ -3011,7 +3041,10 @@ export class SharedLog<
 		this.pendingMaturity = new Map();
 
 		const id = sha256Base64Sync(this.log.id);
-		const storage = await this.node.storage.sublevel(id);
+		const [storage, logScope] = await Promise.all([
+			this.node.storage.sublevel(id),
+			this.node.indexer.scope(id),
+		]);
 
 		const localBlocks = await new AnyBlockStore(await storage.sublevel("blocks"));
 		const fanoutService = getSharedLogFanoutService(this.node.services);
@@ -3049,6 +3082,18 @@ export class SharedLog<
 					})) ?? []
 				);
 			},
+			watchProviders: fanoutService
+				? (cid, opts) =>
+						fanoutService.watchProviders(blockProviderNamespace(cid), {
+							signal: opts.signal,
+							want: 8,
+							ttlMs: 10_000,
+							renewIntervalMs: 5_000,
+							bootstrapMaxPeers: 2,
+							onProviders: (providers) =>
+								opts.onProviders(providers.map((provider) => provider.hash)),
+						})
+				: undefined,
 			onPut: async (cid) => {
 				// Best-effort directory announce for "get without remote.from" workflows.
 				try {
@@ -3062,20 +3107,19 @@ export class SharedLog<
 			},
 		});
 
-		await this.remoteBlocks.start();
-
-		const logScope = await this.node.indexer.scope(id);
-		const replicationIndex = await logScope.scope("replication");
+		const remoteBlocksStartPromise = this.remoteBlocks.start();
+		const [replicationIndex, logIndex] = await Promise.all([
+			logScope.scope("replication"),
+			logScope.scope("log"),
+		]);
 		this._replicationRangeIndex = await replicationIndex.init({
 			schema: this.indexableDomain.constructorRange,
 		});
-
 		this._entryCoordinatesIndex = await replicationIndex.init({
 			schema: this.indexableDomain.constructorEntry,
 		});
 
-		const logIndex = await logScope.scope("log");
-
+		await remoteBlocksStartPromise;
 		const hasIndexedReplicationInfo =
 			(await this.replicationIndex.count({
 				query: [
@@ -3237,47 +3281,50 @@ export class SharedLog<
 		}
 
 		// Open for communcation
-		await this.rpc.open({
-			queryType: TransportMessage,
-			responseType: TransportMessage,
-			responseHandler: (query, context) => this.onMessage(query, context),
-			topic: this.topic,
-		});
-
 		this._onSubscriptionFn =
 			this._onSubscriptionFn || this._onSubscription.bind(this);
-		await this.node.services.pubsub.addEventListener(
-			"subscribe",
-			this._onSubscriptionFn,
-		);
-
 		this._onUnsubscriptionFn =
 			this._onUnsubscriptionFn || this._onUnsubscription.bind(this);
-		await this.node.services.pubsub.addEventListener(
-			"unsubscribe",
-			this._onUnsubscriptionFn,
-		);
+		await Promise.all([
+			this.rpc.open({
+				queryType: TransportMessage,
+				responseType: TransportMessage,
+				responseHandler: (query, context) => this.onMessage(query, context),
+				topic: this.topic,
+			}),
+			this.node.services.pubsub.addEventListener(
+				"subscribe",
+				this._onSubscriptionFn,
+			),
+			this.node.services.pubsub.addEventListener(
+				"unsubscribe",
+				this._onUnsubscriptionFn,
+			),
+		]);
 
-		await this.rpc.subscribe();
-		await this._openFanoutChannel(options?.fanout);
-
-		// mark all our replicaiton ranges as "new", this would allow other peers to understand that we recently reopend our database and might need some sync and warmup
-		await this.updateTimestampOfOwnedReplicationRanges(); // TODO do we need to do this before subscribing?
+		const fanoutOpenPromise = this._openFanoutChannel(options?.fanout);
+		// Mark previously-owned replication ranges as "new" only when they already exist.
+		// Fresh opens have nothing to touch here, so skip the extra scan/write entirely.
+		const updateOwnedReplicationPromise = hasIndexedReplicationInfo
+			? this.updateTimestampOfOwnedReplicationRanges()
+			: Promise.resolve();
+		await Promise.all([fanoutOpenPromise, updateOwnedReplicationPromise]);
 
 		// if we had a previous session with replication info, and new replication info dictates that we unreplicate
 		// we should do that. Otherwise if options is a unreplication we dont need to do anything because
 		// we are already unreplicated (as we are just opening)
 
-		let isUnreplicationOptionsDefined = isUnreplicationOptions(
+		const isUnreplicationOptionsDefined = isUnreplicationOptions(
 			options?.replicate,
 		);
 
 		const canResumeReplication =
+			hasIndexedReplicationInfo &&
 			(await isReplicationOptionsDependentOnPreviousState(
 				options?.replicate,
 				this.replicationIndex,
 				this.node.identity.publicKey,
-			)) && hasIndexedReplicationInfo;
+			));
 
 		if (hasIndexedReplicationInfo && isUnreplicationOptionsDefined) {
 			await this.replicate(options?.replicate, { checkDuplicates: true });
@@ -3330,25 +3377,26 @@ export class SharedLog<
 
 	async afterOpen(): Promise<void> {
 		await super.afterOpen();
+		const existingSubscribersPromise = this._getTopicSubscribers(this.topic);
 
 		// We do this here, because these calls requires this.closed == false
-			void this.pruneOfflineReplicators()
-				.then(() => {
-					this._replicatorsReconciled = true;
-				})
+		void this.pruneOfflineReplicators()
+			.then(() => {
+				this._replicatorsReconciled = true;
+			})
 			.catch((error) => {
 				if (isNotStartedError(error as Error)) {
 					return;
 				}
-					logger.error(error);
-				});
+				logger.error(error);
+			});
 
-			this.startReplicatorLivenessSweep();
+		this.startReplicatorLivenessSweep();
 
-			await this.rebalanceParticipation();
+		await this.rebalanceParticipation();
 
 		// Take into account existing subscription
-		(await this._getTopicSubscribers(this.topic))?.forEach((v) => {
+		(await existingSubscribersPromise)?.forEach((v) => {
 			if (v.equals(this.node.identity.publicKey)) {
 				return;
 			}
@@ -3958,39 +4006,40 @@ export class SharedLog<
 		this.coordinateToHash.clear();
 		this.recentlyRebalanced.clear();
 		this.uniqueReplicators.clear();
-			this._closeController.abort();
+		this._topicSubscribersCache.clear();
+		this._closeController.abort();
 
-			clearInterval(this.interval);
-			this.stopReplicatorLivenessSweep();
+		clearInterval(this.interval);
+		this.stopReplicatorLivenessSweep();
 
-			this.node.services.pubsub.removeEventListener(
-				"subscribe",
-				this._onSubscriptionFn,
+		this.node.services.pubsub.removeEventListener(
+			"subscribe",
+			this._onSubscriptionFn,
 		);
 
 		this.node.services.pubsub.removeEventListener(
 			"unsubscribe",
 			this._onUnsubscriptionFn,
 		);
-			for (const timer of this._repairRetryTimers) {
-				clearTimeout(timer);
-			}
-			this._repairRetryTimers.clear();
-			this._recentRepairDispatch.clear();
-			this._repairSweepRunning = false;
-			this._repairSweepForceFreshPending = false;
-			this._repairSweepAddedPeersPending.clear();
+		for (const timer of this._repairRetryTimers) {
+			clearTimeout(timer);
+		}
+		this._repairRetryTimers.clear();
+		this._recentRepairDispatch.clear();
+		this._repairSweepRunning = false;
+		this._repairSweepForceFreshPending = false;
+		this._repairSweepAddedPeersPending.clear();
 
 		for (const [_k, v] of this._pendingDeletes) {
 			v.clear();
 			v.promise.resolve(); // TODO or reject?
 		}
-			for (const [_k, v] of this._pendingIHave) {
-				v.clear();
-			}
-			for (const [_k, v] of this._checkedPruneRetries) {
-				if (v.timer) clearTimeout(v.timer);
-			}
+		for (const [_k, v] of this._pendingIHave) {
+			v.clear();
+		}
+		for (const [_k, v] of this._checkedPruneRetries) {
+			if (v.timer) clearTimeout(v.timer);
+		}
 
 		await this.remoteBlocks.stop();
 		this._pendingDeletes.clear();
@@ -4846,6 +4895,23 @@ export class SharedLog<
 			options?.replicate &&
 			typeof options.replicate !== "boolean" &&
 			options.replicate.assumeSynced;
+		const seedAssumeSyncedPeerHistory = async (entry: Entry<T>) => {
+			if (!assumeSynced) {
+				return;
+			}
+
+			const minReplicas = decodeReplicas(entry).getValue(this);
+			const leaders = await this.findLeaders(
+				await this.createCoordinates(entry, minReplicas),
+				entry,
+				{
+					roleAge: 0,
+					persist: false,
+				},
+			);
+
+			this.addPeersToGidPeerHistory(entry.meta.gid, leaders.keys());
+		};
 		const persistCoordinate = async (entry: Entry<T>) => {
 			const minReplicas = decodeReplicas(entry).getValue(this);
 			const leaders = await this.findLeaders(
@@ -4886,6 +4952,12 @@ export class SharedLog<
 
 		if (options?.replicate) {
 			let messageToSend: AddedReplicationSegmentMessage | undefined = undefined;
+
+			if (assumeSynced) {
+				for (const entry of entriesToReplicate) {
+					await seedAssumeSyncedPeerHistory(entry);
+				}
+			}
 
 			await this.replicate(entriesToReplicate, {
 				rebalance: assumeSynced ? false : true,
@@ -5390,6 +5462,7 @@ export class SharedLog<
 		entry: Entry<T> | EntryReplicated<R> | ShallowEntry,
 		options?: {
 			roleAge?: number;
+			candidates?: Iterable<string>;
 			onLeader?: (key: string) => void;
 			// persist even if not leader
 			persist?:
@@ -5433,6 +5506,7 @@ export class SharedLog<
 		},
 		options?: {
 			roleAge?: number;
+			candidates?: Iterable<string>;
 			onLeader?: (key: string) => void;
 			// persist even if not leader
 			persist?:
@@ -5458,6 +5532,7 @@ export class SharedLog<
 		cursors: NumberFromType<R>[],
 		options?: {
 			roleAge?: number;
+			candidates?: Iterable<string>;
 		},
 	): Promise<Map<string, { intersecting: boolean }>> {
 		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge()); // TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
@@ -5467,44 +5542,48 @@ export class SharedLog<
 		// If it is still warming up (for example, only contains self), supplement with
 		// current subscribers until we have enough candidates for this decision.
 		let peerFilter: Set<string> | undefined = undefined;
-		const selfReplicating = await this.isReplicating();
-		if (this.uniqueReplicators.size > 0) {
-			peerFilter = new Set(this.uniqueReplicators);
-			if (selfReplicating) {
-				peerFilter.add(selfHash);
-			} else {
-				peerFilter.delete(selfHash);
-			}
-
-			try {
-				const subscribers = await this._getTopicSubscribers(this.topic);
-				if (subscribers && subscribers.length > 0) {
-					for (const subscriber of subscribers) {
-						peerFilter.add(subscriber.hashcode());
-					}
-					if (selfReplicating) {
-						peerFilter.add(selfHash);
-					} else {
-						peerFilter.delete(selfHash);
-					}
-				}
-			} catch {
-				// Best-effort only; keep current peerFilter.
-			}
+		if (options?.candidates) {
+			peerFilter = new Set(options.candidates);
 		} else {
-			try {
-				const subscribers =
-					(await this._getTopicSubscribers(this.topic)) ?? undefined;
-				if (subscribers && subscribers.length > 0) {
-					peerFilter = new Set(subscribers.map((key) => key.hashcode()));
-					if (selfReplicating) {
-						peerFilter.add(selfHash);
-					} else {
-						peerFilter.delete(selfHash);
-					}
+			const selfReplicating = await this.isReplicating();
+			if (this.uniqueReplicators.size > 0) {
+				peerFilter = new Set(this.uniqueReplicators);
+				if (selfReplicating) {
+					peerFilter.add(selfHash);
+				} else {
+					peerFilter.delete(selfHash);
 				}
-			} catch {
-				// Best-effort only; if pubsub isn't ready, do a full scan.
+
+				try {
+					const subscribers = await this._getTopicSubscribers(this.topic);
+					if (subscribers && subscribers.length > 0) {
+						for (const subscriber of subscribers) {
+							peerFilter.add(subscriber.hashcode());
+						}
+						if (selfReplicating) {
+							peerFilter.add(selfHash);
+						} else {
+							peerFilter.delete(selfHash);
+						}
+					}
+				} catch {
+					// Best-effort only; keep current peerFilter.
+				}
+			} else {
+				try {
+					const subscribers =
+						(await this._getTopicSubscribers(this.topic)) ?? undefined;
+					if (subscribers && subscribers.length > 0) {
+						peerFilter = new Set(subscribers.map((key) => key.hashcode()));
+						if (selfReplicating) {
+							peerFilter.add(selfHash);
+						} else {
+							peerFilter.delete(selfHash);
+						}
+					}
+				} catch {
+					// Best-effort only; if pubsub isn't ready, do a full scan.
+				}
 			}
 		}
 		return getSamples<R>(
@@ -6156,30 +6235,48 @@ export class SharedLog<
 			}
 		}
 
-		const changed = false;
-		const replacedPeers = new Set<string>();
-		for (const change of changes) {
-			if (change.type === "replaced" && change.range.hash !== selfHash) {
-				replacedPeers.add(change.range.hash);
-			}
-		}
-		const addedPeers = new Set<string>();
-		for (const change of changes) {
-			if (change.type === "added" || change.type === "replaced") {
-				const hash = change.range.hash;
-				if (hash !== selfHash) {
-					// Range updates can reassign entries to an existing peer shortly after it
-					// already received a subset. Avoid suppressing legitimate follow-up repair.
-					this._recentRepairDispatch.delete(hash);
+			const changed = false;
+			const addedPeers = new Set<string>();
+			const warmupPeers = new Set<string>();
+			const hasSelfWarmupChange = changes.some(
+				(change) =>
+					change.range.hash === selfHash &&
+					(change.type === "added" || change.type === "replaced"),
+			);
+			for (const change of changes) {
+				if (change.type === "added" || change.type === "replaced") {
+					const hash = change.range.hash;
+					if (hash !== selfHash) {
+						// Range updates can reassign entries to an existing peer shortly after it
+						// already received a subset. Avoid suppressing legitimate follow-up repair.
+						this._recentRepairDispatch.delete(hash);
+					}
+				}
+				if (change.type === "added") {
+					const hash = change.range.hash;
+					if (hash !== selfHash) {
+						addedPeers.add(hash);
+						warmupPeers.add(hash);
+					}
 				}
 			}
-			if (change.type === "added") {
-				const hash = change.range.hash;
-				if (hash !== selfHash && !replacedPeers.has(hash)) {
-					addedPeers.add(hash);
-				}
-			}
-		}
+		const hasAdaptiveStorageLimit =
+			this._isAdaptiveReplicating &&
+			this.replicationController?.maxMemoryLimit != null;
+		const useJoinWarmupFastPath =
+			!forceFreshDelivery &&
+			warmupPeers.size > 0 &&
+			!hasSelfWarmupChange &&
+			!hasAdaptiveStorageLimit;
+		const immediateRebalanceChanges = useJoinWarmupFastPath
+			? changes.filter(
+					(change) =>
+						!(
+							change.range.hash === selfHash &&
+							(change.type === "added" || change.type === "replaced")
+						),
+				)
+			: changes;
 
 		try {
 			const uncheckedDeliver: Map<
@@ -6191,15 +6288,15 @@ export class SharedLog<
 				if (!entries || entries.size === 0) {
 					return;
 				}
-				const isJoinWarmupTarget = addedPeers.has(target);
-				const bypassRecentDedupe = isJoinWarmupTarget || forceFreshDelivery;
-				this.dispatchMaybeMissingEntries(target, entries, {
-					bypassRecentDedupe,
-					retryScheduleMs: isJoinWarmupTarget
-						? JOIN_WARMUP_RETRY_SCHEDULE_MS
-						: undefined,
-					forceFreshDelivery,
-				});
+					const isWarmupTarget = warmupPeers.has(target);
+					const bypassRecentDedupe = isWarmupTarget || forceFreshDelivery;
+					this.dispatchMaybeMissingEntries(target, entries, {
+						bypassRecentDedupe,
+						retryScheduleMs: isWarmupTarget
+							? JOIN_WARMUP_RETRY_SCHEDULE_MS
+							: undefined,
+						forceFreshDelivery,
+					});
 				uncheckedDeliver.delete(target);
 			};
 			const queueUncheckedDeliver = (
@@ -6220,18 +6317,85 @@ export class SharedLog<
 				}
 			};
 
-			for await (const entryReplicated of toRebalance<R>(
-				changes,
-				this.entryCoordinatesIndex,
-				this.recentlyRebalanced,
-				{ forceFresh: forceFreshDelivery },
-			)) {
+				if (immediateRebalanceChanges.length > 0) {
+					for await (const entryReplicated of toRebalance<R>(
+						immediateRebalanceChanges,
+						this.entryCoordinatesIndex,
+						this.recentlyRebalanced,
+						{
+							forceFresh: forceFreshDelivery || useJoinWarmupFastPath,
+						},
+					)) {
 				if (this.closed) {
 					break;
 				}
 
-				let oldPeersSet: Set<string> | undefined;
-				if (!forceFreshDelivery) {
+					if (useJoinWarmupFastPath) {
+						let oldPeersSet: Set<string> | undefined;
+						const gid = entryReplicated.gid;
+						oldPeersSet = gidPeersHistorySnapshot.get(gid);
+						if (!gidPeersHistorySnapshot.has(gid)) {
+							const existing = this._gidPeersHistory.get(gid);
+							oldPeersSet = existing ? new Set(existing) : undefined;
+							gidPeersHistorySnapshot.set(gid, oldPeersSet);
+						}
+
+						for (const target of warmupPeers) {
+							queueUncheckedDeliver(target, entryReplicated);
+						}
+
+						const candidatePeers = new Set<string>([selfHash]);
+						for (const target of warmupPeers) {
+							candidatePeers.add(target);
+						}
+						if (oldPeersSet) {
+							for (const oldPeer of oldPeersSet) {
+								candidatePeers.add(oldPeer);
+							}
+						}
+
+						const currentPeers = await this.findLeaders(
+							entryReplicated.coordinates,
+							entryReplicated,
+							{
+								roleAge: 0,
+								candidates: candidatePeers,
+								persist: false,
+							},
+						);
+
+						if (oldPeersSet) {
+							for (const oldPeer of oldPeersSet) {
+								if (!currentPeers.has(oldPeer)) {
+									this.removePruneRequestSent(entryReplicated.hash);
+								}
+							}
+						}
+
+						this.addPeersToGidPeerHistory(
+							entryReplicated.gid,
+							currentPeers.keys(),
+							true,
+						);
+
+						if (!currentPeers.has(selfHash)) {
+							this.pruneDebouncedFnAddIfNotKeeping({
+								key: entryReplicated.hash,
+								value: { entry: entryReplicated, leaders: currentPeers },
+							});
+
+							this.responseToPruneDebouncedFn.delete(entryReplicated.hash);
+						} else {
+							this.pruneDebouncedFn.delete(entryReplicated.hash);
+							await this._pendingDeletes
+								.get(entryReplicated.hash)
+								?.reject(new Error("Failed to delete, is leader again"));
+							this.removePruneRequestSent(entryReplicated.hash);
+						}
+						continue;
+					}
+
+					let oldPeersSet: Set<string> | undefined;
 					const gid = entryReplicated.gid;
 					oldPeersSet = gidPeersHistorySnapshot.get(gid);
 					if (!gidPeersHistorySnapshot.has(gid)) {
@@ -6239,18 +6403,18 @@ export class SharedLog<
 						oldPeersSet = existing ? new Set(existing) : undefined;
 						gidPeersHistorySnapshot.set(gid, oldPeersSet);
 					}
-				}
-				let isLeader = false;
 
-				let currentPeers = await this.findLeaders(
-					entryReplicated.coordinates,
-					entryReplicated,
-					{
-						// we do this to make sure new replicators get data even though they are not mature so they can figure out if they want to replicate more or less
-						// TODO make this smarter because if a new replicator is not mature and want to replicate too much data the syncing overhead can be bad
-						roleAge: 0,
-					},
-				);
+					let isLeader = false;
+					const currentPeers = await this.findLeaders(
+						entryReplicated.coordinates,
+						entryReplicated,
+						{
+							// We do this to make sure new replicators get data even though
+							// they are not mature so they can figure out if they want to
+							// replicate more or less.
+							roleAge: 0,
+						},
+					);
 
 					for (const [currentPeer] of currentPeers) {
 						if (currentPeer === this.node.identity.publicKey.hashcode()) {
@@ -6263,41 +6427,63 @@ export class SharedLog<
 						}
 					}
 
-				if (oldPeersSet) {
-					for (const oldPeer of oldPeersSet) {
-						if (!currentPeers.has(oldPeer)) {
-							this.removePruneRequestSent(entryReplicated.hash);
+					if (oldPeersSet) {
+						for (const oldPeer of oldPeersSet) {
+							if (!currentPeers.has(oldPeer)) {
+								this.removePruneRequestSent(entryReplicated.hash);
+							}
 						}
 					}
+
+					this.addPeersToGidPeerHistory(
+						entryReplicated.gid,
+						currentPeers.keys(),
+						true,
+					);
+
+					if (!isLeader) {
+						this.pruneDebouncedFnAddIfNotKeeping({
+							key: entryReplicated.hash,
+							value: { entry: entryReplicated, leaders: currentPeers },
+						});
+
+						this.responseToPruneDebouncedFn.delete(entryReplicated.hash); // don't allow others to prune because of expecting me to replicating this entry
+					} else {
+						this.pruneDebouncedFn.delete(entryReplicated.hash);
+						await this._pendingDeletes
+							.get(entryReplicated.hash)
+							?.reject(new Error("Failed to delete, is leader again"));
+						this.removePruneRequestSent(entryReplicated.hash);
+					}
+				}
 				}
 
-				this.addPeersToGidPeerHistory(
-					entryReplicated.gid,
-					currentPeers.keys(),
-					true,
-				);
-
-				if (!isLeader) {
-					this.pruneDebouncedFnAddIfNotKeeping({
-						key: entryReplicated.hash,
-						value: { entry: entryReplicated, leaders: currentPeers },
+				if (forceFreshDelivery) {
+					// Removed/shrunk ranges still need the authoritative background pass.
+					this.scheduleRepairSweep({ forceFreshDelivery, addedPeers });
+				} else if (useJoinWarmupFastPath) {
+					// Pure join warmup uses the cheap immediate maybe-missing dispatch above,
+					// then defers the authoritative sweep so it does not compete with the
+					// write burst itself.
+					const peers = new Set(addedPeers);
+					const timer = setTimeout(() => {
+						this._repairRetryTimers.delete(timer);
+						if (this.closed) {
+							return;
+						}
+						this.scheduleRepairSweep({
+							forceFreshDelivery: false,
+							addedPeers: peers,
+						});
+					}, 250);
+					timer.unref?.();
+					this._repairRetryTimers.add(timer);
+				} else if (addedPeers.size > 0) {
+					this.scheduleRepairSweep({
+						forceFreshDelivery: false,
+						addedPeers,
 					});
-
-					this.responseToPruneDebouncedFn.delete(entryReplicated.hash); // don't allow others to prune because of expecting me to replicating this entry
-				} else {
-					this.pruneDebouncedFn.delete(entryReplicated.hash);
-					await this._pendingDeletes
-						.get(entryReplicated.hash)
-						?.reject(new Error("Failed to delete, is leader again"));
-					this.removePruneRequestSent(entryReplicated.hash);
 				}
-			}
-
-			if (forceFreshDelivery || addedPeers.size > 0) {
-				// Schedule a coalesced background sweep for churn/join windows instead of
-				// scanning the whole index synchronously on each replication change.
-				this.scheduleRepairSweep({ forceFreshDelivery, addedPeers });
-			}
 
 			for (const target of [...uncheckedDeliver.keys()]) {
 				flushUncheckedDeliverTarget(target);
@@ -6336,6 +6522,7 @@ export class SharedLog<
 		if (!prev || prev < now) {
 			this.latestReplicationInfoMessage.set(fromHash, now);
 		}
+		this.invalidateSharedLogTopicSubscribersCache();
 
 		return this.handleSubscriptionChange(
 			evt.detail.from,
@@ -6356,6 +6543,7 @@ export class SharedLog<
 
 		this.remoteBlocks.onReachable(evt.detail.from);
 		this._replicationInfoBlockedPeers.delete(evt.detail.from.hashcode());
+		this.invalidateSharedLogTopicSubscribersCache();
 
 		await this.handleSubscriptionChange(
 			evt.detail.from,

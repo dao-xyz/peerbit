@@ -462,48 +462,39 @@ describe(`replicate`, () => {
 
 				expect(db1MinRoleAge - db2MinRoleAge).lessThanOrEqual(1); // db1 sets the minRole age because it is the oldest. So both dbs get same minRole age limit (including some error margin)
 
-				const assertOnlyOldestPeersAreMature = async (
-					db: EventStore<string, any>,
-				) => {
-					const minRoleAge = await db.log.getDefaultMinRoleAge();
-					const segments = (await db.log.replicationIndex.iterate().all()).map(
-						(x) => x.value,
-					);
-					const oldestTimestamp = segments.reduce(
-						(min, segment) =>
-							segment.timestamp < min ? segment.timestamp : min,
-						segments[0]!.timestamp,
-					);
-					const syntheticNow = Number(oldestTimestamp) + minRoleAge + 1;
-					const maturedHashes = segments
-						.filter((segment) => isMatured(segment, syntheticNow, minRoleAge))
-						.map((segment) => segment.hash)
-						.sort();
-					const oldestHashes = segments
-						.filter((segment) => segment.timestamp === oldestTimestamp)
-						.map((segment) => segment.hash)
-						.sort();
+				const db1SelfRange = (await db1.log.getMyReplicationSegments())[0];
+				const db2SelfRange = (await db2.log.getMyReplicationSegments())[0];
+				const db1ProbeNow = Number(db2SelfRange.timestamp) + db1MinRoleAge - 1;
 
-					expect(maturedHashes).to.deep.equal(oldestHashes);
-					expect(
-						isMatured(
-							(await db.log.getMyReplicationSegments())[0],
-							syntheticNow,
-							minRoleAge,
-						),
-					).to.equal(
-						oldestHashes.includes(db.node.identity.publicKey.hashcode()),
-					);
-				};
+				// Mature because if "first"
+				let selfMatured = isMatured(
+					db1SelfRange,
+					db1ProbeNow,
+					db1MinRoleAge,
+				);
+				expect(selfMatured).to.be.true;
 
-				await waitForResolved(
-					async () => assertOnlyOldestPeersAreMature(db1),
-					{ timeout: 60_000, delayInterval: 250 },
+				expect(
+					(await db1.log.replicationIndex.iterate().all())
+						.map((x) => x.value)
+						.filter((x) => isMatured(x, db1ProbeNow, db1MinRoleAge))
+						.map((x) => x.hash),
+				).to.deep.equal([db1.node.identity.publicKey.hashcode()]);
+
+				// assume other nodes except me are mature if they open before me
+				const db2ProbeNow = Number(db2SelfRange.timestamp) + db2MinRoleAge - 1;
+				selfMatured = isMatured(
+					db2SelfRange,
+					db2ProbeNow,
+					db2MinRoleAge,
 				);
-				await waitForResolved(
-					async () => assertOnlyOldestPeersAreMature(db2),
-					{ timeout: 60_000, delayInterval: 250 },
-				);
+				expect(selfMatured).to.be.false;
+
+				expect(
+					(await db2.log.replicationIndex.iterate().all())
+						.map((x) => x.value)
+						.map((x) => isMatured(x, db2ProbeNow, db2MinRoleAge)),
+				).to.have.members([false, true]);
 			});
 
 			// TODO more tests for behaviours of getDefaultMinRoleAge

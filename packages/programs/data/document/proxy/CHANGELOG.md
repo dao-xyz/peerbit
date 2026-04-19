@@ -1,5 +1,70 @@
 # Changelog
 
+## [2.0.26](https://github.com/dao-xyz/peerbit/compare/document-proxy-v2.0.25...document-proxy-v2.0.26) (2026-04-14)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/canonical-client bumped to 1.1.21
+    * @peerbit/canonical-host bumped to 1.0.27
+    * @peerbit/document bumped to 13.0.26
+    * @peerbit/document-interface bumped to 3.2.27
+    * @peerbit/program bumped to 6.0.18
+    * @peerbit/shared-log-proxy bumped to 2.0.25
+
+## [2.0.25](https://github.com/dao-xyz/peerbit/compare/document-proxy-v2.0.24...document-proxy-v2.0.25) (2026-04-12)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 13.0.25
+    * @peerbit/shared-log-proxy bumped to 2.0.24
+
+## [2.0.24](https://github.com/dao-xyz/peerbit/compare/document-proxy-v2.0.23...document-proxy-v2.0.24) (2026-04-06)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 13.0.24
+
+## [2.0.23](https://github.com/dao-xyz/peerbit/compare/document-proxy-v2.0.22...document-proxy-v2.0.23) (2026-04-03)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/canonical-client bumped to 1.1.20
+    * @peerbit/canonical-host bumped to 1.0.26
+    * @peerbit/document bumped to 13.0.23
+    * @peerbit/document-interface bumped to 3.2.26
+    * @peerbit/program bumped to 6.0.17
+    * @peerbit/shared-log-proxy bumped to 2.0.23
+
+## [2.0.22](https://github.com/dao-xyz/peerbit/compare/document-proxy-v2.0.21...document-proxy-v2.0.22) (2026-03-30)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/canonical-client bumped to 1.1.19
+    * @peerbit/canonical-host bumped to 1.0.25
+    * @peerbit/document bumped to 13.0.22
+    * @peerbit/document-interface bumped to 3.2.25
+    * @peerbit/indexer-interface bumped to 3.0.3
+    * @peerbit/program bumped to 6.0.16
+    * @peerbit/shared-log-proxy bumped to 2.0.22
+    * @peerbit/stream-interface bumped to 6.0.7
+  * devDependencies
+    * @peerbit/crypto bumped to 3.1.1
+
 ## [2.0.21](https://github.com/dao-xyz/peerbit/compare/document-proxy-v2.0.20...document-proxy-v2.0.21) (2026-03-29)
 
 

@@ -1,5 +1,74 @@
 # @peerbit/document-react
 
+## [1.0.26](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.25...document-react-v1.0.26) (2026-04-14)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 13.0.26
+    * @peerbit/react bumped to 1.1.10
+  * devDependencies
+    * @peerbit/program bumped to 6.0.18
+    * @peerbit/test-utils bumped to 3.0.22
+    * @peerbit/shared-log bumped to 13.1.0
+    * peerbit bumped to 5.2.7
+
+## [1.0.25](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.24...document-react-v1.0.25) (2026-04-12)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 13.0.25
+  * devDependencies
+    * @peerbit/shared-log bumped to 13.0.24
+
+## [1.0.24](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.23...document-react-v1.0.24) (2026-04-06)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 13.0.24
+
+## [1.0.23](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.22...document-react-v1.0.23) (2026-04-03)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 13.0.23
+    * @peerbit/react bumped to 1.1.9
+  * devDependencies
+    * @peerbit/program bumped to 6.0.17
+    * @peerbit/test-utils bumped to 3.0.21
+    * @peerbit/shared-log bumped to 13.0.23
+    * peerbit bumped to 5.2.6
+
+## [1.0.22](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.21...document-react-v1.0.22) (2026-03-30)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 13.0.22
+    * @peerbit/indexer-interface bumped to 3.0.3
+    * @peerbit/react bumped to 1.1.8
+    * @peerbit/logger bumped to 2.0.1
+  * devDependencies
+    * @peerbit/blocks-interface bumped to 2.0.8
+    * @peerbit/indexer-simple bumped to 1.2.6
+    * @peerbit/program bumped to 6.0.16
+    * @peerbit/test-utils bumped to 3.0.20
+    * @peerbit/shared-log bumped to 13.0.22
+    * peerbit bumped to 5.2.5
+
 ## [1.0.21](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.20...document-react-v1.0.21) (2026-03-29)
 
 

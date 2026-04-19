@@ -3285,12 +3285,14 @@ testSetups.forEach((setup) => {
 					}); */
 
 					await waitForResolved(() => {
-						// TODO should better be the assert statement above
-						const sumPruneLength = prune2
-							.getCalls()
-							.map((x) => [...x.args[0].values()])
-							.reduce((acc, x) => acc + x.length, 0);
-						expect(sumPruneLength).to.be.closeTo(entryCount / 4, 15); // a quarter of the entries should be pruned becuse the range [0, 0.75] will be owned by db1 and [0.75, 1] will be owned by db2
+						// A single logical prune can be retried across multiple convergence
+						// batches. Count unique hashes instead of summing raw batch lengths.
+						const uniquePruned = new Set(
+							prune2
+								.getCalls()
+								.flatMap((x) => [...(x.args[0] as Map<string, unknown>).keys()]),
+						);
+						expect(uniquePruned.size).to.be.closeTo(entryCount / 4, 15); // a quarter of the entries should be pruned because the range [0, 0.75] will be owned by db1 and [0.75, 1] will be owned by db2
 					});
 
 					// TODO assert some kind of findLeaders callCount ?

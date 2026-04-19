@@ -19,7 +19,7 @@ type LivenessTestHooks = {
 const getLivenessTestHooks = (store: LivenessTestStore): LivenessTestHooks =>
 	store.log as unknown as LivenessTestHooks;
 
-describe("replicator liveness", () => {
+describe("waitForReplicator liveness", () => {
 	let session: TestSession;
 
 	afterEach(async () => {
@@ -292,6 +292,116 @@ describe("replicator liveness", () => {
 			pubsub.getSubscribers = originalGetSubscribers;
 			hooks._getTopicSubscribers = originalGetTopicSubscribers;
 			db0.log.rpc.send = originalSend;
+		}
+	});
+
+	it("starts subscriber discovery while rebalancing during open", async () => {
+		session = await TestSession.connected(1);
+
+		const store = new EventStore<string, any>();
+		const hooks = getLivenessTestHooks(store);
+		const originalGetTopicSubscribers =
+			hooks._getTopicSubscribers.bind(hooks);
+		const originalRebalanceParticipation =
+			store.log.rebalanceParticipation.bind(store.log);
+
+		let rebalanceStarted = false;
+		let subscribersStarted = false;
+		let releaseRebalance!: () => void;
+		const rebalanceGate = new Promise<void>((resolve) => {
+			releaseRebalance = resolve;
+		});
+
+		hooks._getTopicSubscribers = async (topic: string) => {
+			subscribersStarted = true;
+			return originalGetTopicSubscribers(topic);
+		};
+		store.log.rebalanceParticipation = async () => {
+			rebalanceStarted = true;
+			await rebalanceGate;
+			return originalRebalanceParticipation();
+		};
+
+		const openPromise = session.peers[0].open(store, {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+
+		try {
+			await waitForResolved(() => expect(rebalanceStarted).to.be.true, {
+				timeout: 5_000,
+				delayInterval: 20,
+			});
+			await waitForResolved(() => expect(subscribersStarted).to.be.true, {
+				timeout: 1_000,
+				delayInterval: 20,
+			});
+		} finally {
+			releaseRebalance();
+			hooks._getTopicSubscribers = originalGetTopicSubscribers;
+			store.log.rebalanceParticipation = originalRebalanceParticipation;
+		}
+
+		await openPromise;
+	});
+
+	it("invalidates cached topic subscribers when the cache is cleared", async () => {
+		session = await TestSession.connected(2);
+
+		const store = new EventStore<string, any>();
+		const db0 = await session.peers[0].open(store, {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		await session.peers[1].open(store.clone(), {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+
+		const peerHash = session.peers[1].identity.publicKey.hashcode();
+		const hooks = getLivenessTestHooks(db0);
+		const syntheticTopic = `${db0.log.topic}/synthetic-cache`;
+		const pubsub = session.peers[0].services.pubsub;
+		const originalGetSubscribers = pubsub.getSubscribers.bind(pubsub);
+
+		pubsub.getSubscribers = ((topic: string) => {
+			if (topic === syntheticTopic) {
+				return [peerHash];
+			}
+			return originalGetSubscribers(topic);
+		}) as typeof pubsub.getSubscribers;
+
+		try {
+			const cachedHashes = (await hooks._getTopicSubscribers(syntheticTopic))?.map(
+				(key) => key.hashcode(),
+			);
+			expect(cachedHashes).to.include(peerHash);
+			expect((db0.log as any)._topicSubscribersCache.has(syntheticTopic)).to.be
+				.true;
+
+			pubsub.getSubscribers = ((topic: string) => {
+				if (topic === syntheticTopic) {
+					return [];
+				}
+				return originalGetSubscribers(topic);
+			}) as typeof pubsub.getSubscribers;
+
+			const stillCached = (await hooks._getTopicSubscribers(syntheticTopic))?.map(
+				(key) => key.hashcode(),
+			);
+			expect(stillCached).to.include(peerHash);
+
+			(db0.log as any).invalidateTopicSubscribersCache(syntheticTopic);
+			expect((db0.log as any)._topicSubscribersCache.has(syntheticTopic)).to.be
+				.false;
+		} finally {
+			pubsub.getSubscribers = originalGetSubscribers;
 		}
 	});
 
