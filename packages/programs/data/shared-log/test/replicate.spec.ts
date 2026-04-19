@@ -474,7 +474,7 @@ describe(`replicate`, () => {
 							segment.timestamp < min ? segment.timestamp : min,
 						segments[0]!.timestamp,
 					);
-					const syntheticNow = oldestTimestamp + minRoleAge + 1;
+					const syntheticNow = Number(oldestTimestamp) + minRoleAge + 1;
 					const maturedHashes = segments
 						.filter((segment) => isMatured(segment, syntheticNow, minRoleAge))
 						.map((segment) => segment.hash)

@@ -3574,12 +3574,22 @@ describe("index", () => {
 						await session.connect([[session.peers[0], session.peers[1]]]); // connect the nodes!
 						await observer.docs.index.waitFor(writer1.node.identity.publicKey);
 
-						await waitForResolved(
-							async () => expect(await iterator.pending()).to.equal(2),
+						const third = await waitForResolved(
+							async () => {
+								const next = await iterator.next(1);
+								expect(next.map((x) => x.id)).to.deep.equal(["4"]);
+								return next;
+							},
 							{ timeout: 60_000, delayInterval: 250 },
 						);
-						const third = await iterator.next(1);
-						const fourth = await iterator.next(1);
+						const fourth = await waitForResolved(
+							async () => {
+								const next = await iterator.next(1);
+								expect(next.map((x) => x.id)).to.deep.equal(["1"]);
+								return next;
+							},
+							{ timeout: 60_000, delayInterval: 250 },
+						);
 
 						if (missedResults.length > 0) {
 							expect(missedResults).to.deep.equal([1]);
