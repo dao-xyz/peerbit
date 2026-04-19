@@ -189,6 +189,72 @@ describe("fanout-tree", () => {
 			}
 		});
 
+		it("returns false when maybe-publishing to a channel that is not open", async () => {
+			const session: TestSession<{ fanout: FanoutTree }> =
+				await createFanoutTestSession(1);
+
+			try {
+				const fanout = session.peers[0].services.fanout;
+				const ok = await fanout.publishToChannelMaybe(
+					"missing-channel",
+					fanout.publicKeyHash,
+					new Uint8Array([1]),
+				);
+				expect(ok).to.equal(false);
+			} finally {
+				await session.stop();
+			}
+		});
+
+		it("returns false for late channel-close races on maybe-publish but still rethrows unexpected errors", async () => {
+			const session: TestSession<{ fanout: FanoutTree }> =
+				await createFanoutTestSession(1);
+
+			try {
+				const fanout = session.peers[0].services.fanout;
+				const topic = "maybe-publish-close-race";
+				const root = fanout.publicKeyHash;
+
+				fanout.openChannel(topic, root, {
+					role: "root",
+					msgRate: 1,
+					msgSize: 8,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 1,
+					repair: false,
+				});
+
+				const originalPublishToChannel =
+					fanout.publishToChannel.bind(fanout);
+
+				try {
+					fanout.publishToChannel = (async () => {
+						throw new Error(`Channel not open: ${topic} (${root})`);
+					}) as typeof fanout.publishToChannel;
+
+					const ok = await fanout.publishToChannelMaybe(
+						topic,
+						root,
+						new Uint8Array([1]),
+					);
+					expect(ok).to.equal(false);
+
+					fanout.publishToChannel = (async () => {
+						throw new Error("unexpected publish failure");
+					}) as typeof fanout.publishToChannel;
+
+					await expect(
+						fanout.publishToChannelMaybe(topic, root, new Uint8Array([1])),
+					).to.be.rejectedWith("unexpected publish failure");
+				} finally {
+					fanout.publishToChannel =
+						originalPublishToChannel as typeof fanout.publishToChannel;
+				}
+			} finally {
+				await session.stop();
+			}
+		});
+
 	it("forms a small tree and delivers data", async () => {
 		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
 
