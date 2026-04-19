@@ -4,9 +4,11 @@ coverage:
       default:
         target: auto
         # Workspace-sharded uploads can drift the aggregate project percentage more than
-        # the changed-line signal for small, well-tested fixes. Keep patch coverage strict
-        # and allow modest project movement without blocking unrelated changes.
-        threshold: 2%
+        # the changed-line signal for small, well-tested fixes. We also intentionally
+        # keep the heaviest performance-sensitive shared-log shard out of PR coverage.
+        # Keep patch coverage strict and allow modest project movement without blocking
+        # unrelated changes.
+        threshold: 5%
         informational: false
     patch:
       default:
