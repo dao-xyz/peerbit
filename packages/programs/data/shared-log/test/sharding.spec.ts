@@ -666,9 +666,9 @@ testSetups.forEach((setup) => {
 					}),
 				);
 
-					db3 = await EventStore.open<EventStore<string, any>>(
-						db1.address!,
-						session.peers[2],
+				db3 = await EventStore.open<EventStore<string, any>>(
+					db1.address!,
+					session.peers[2],
 					{
 						args: {
 							replicate: {
@@ -678,6 +678,8 @@ testSetups.forEach((setup) => {
 						},
 					},
 				);
+				await waitForParticipationToSettle(db1, db2, db3);
+				await waitForDistributionQuiesced(db1, db2, db3);
 				await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
 			});
 
