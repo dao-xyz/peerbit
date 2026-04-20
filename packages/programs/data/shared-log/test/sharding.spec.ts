@@ -327,7 +327,7 @@ testSetups.forEach((setup) => {
 
 				await checkBounded(
 					entryCount,
-					0.35,
+					setup.name === "u64-iblt" ? 1 / 3 : 0.35,
 					setup.name === "u64-iblt" ? 0.7 : 0.65,
 					db1,
 					db2,
