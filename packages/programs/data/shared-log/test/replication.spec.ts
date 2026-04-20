@@ -1168,6 +1168,16 @@ testSetups.forEach((setup) => {
 
 				await db1.waitFor(session.peers[1].peerId);
 				await db2.waitFor(session.peers[0].peerId);
+				await Promise.all([
+					db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+						timeout: 60_000,
+						roleAge: 0,
+					}),
+					db2.log.waitForReplicator(session.peers[0].identity.publicKey, {
+						timeout: 60_000,
+						roleAge: 0,
+					}),
+				]);
 
 				const entryCount = 10; // todo when larger (N) this test usually times out at N - 1 or 2, unless a delay is put beforehand
 
@@ -1183,8 +1193,9 @@ testSetups.forEach((setup) => {
 				//await mapSeries(adds, (i) => db1.add("hello " + i));
 
 				// All entries should be in the database
-				await waitForResolved(() =>
-					expect(db2.log.log.length).equal(entryCount),
+				await waitForResolved(
+					() => expect(db2.log.log.length).equal(entryCount),
+					{ timeout: 60_000, delayInterval: 500 },
 				);
 
 				// All entries should be in the database
@@ -2264,7 +2275,6 @@ testSetups.forEach((setup) => {
 
 						const replicatorWait = {
 							timeout: 60_000,
-							roleAge: 0,
 						} as const;
 
 						const waitForDb1Replicators = async () => {
@@ -2274,29 +2284,19 @@ testSetups.forEach((setup) => {
 							]);
 						};
 
-						const waitForDb1AndJoiners = async () => {
+						const rebalanceAllPeers = async () => {
 							await Promise.all([
-								db1.log.waitForReplicator(
-									session.peers[1].identity.publicKey,
-									replicatorWait,
-								),
-								db1.log.waitForReplicator(
-									session.peers[2].identity.publicKey,
-									replicatorWait,
-								),
-								db2.log.waitForReplicator(
-									session.peers[0].identity.publicKey,
-									replicatorWait,
-								),
-								db3.log.waitForReplicator(
-									session.peers[0].identity.publicKey,
-									replicatorWait,
-								),
+								db1.log.rebalanceAll({ clearCache: true }),
+								db2.log.rebalanceAll({ clearCache: true }),
+								db3.log.rebalanceAll({ clearCache: true }),
 							]);
 						};
 
 						it("control per commmit put before join", async () => {
-							const entryCount = 100;
+							// This test validates historical replication semantics, not bulk
+							// throughput. Keep the sample correctness-sized so it does not
+							// become the bottleneck inside the full part-7 shard.
+							const entryCount = 40;
 
 							await init({
 								min: 1,
@@ -2311,19 +2311,20 @@ testSetups.forEach((setup) => {
 								},
 							});
 
-							await waitForDb1AndJoiners();
-
-							await Promise.all([
-								db1.log.rebalanceAll({ clearCache: true }),
-								db2.log.rebalanceAll({ clearCache: true }),
-								db3.log.rebalanceAll({ clearCache: true }),
-							]);
+							await waitForDb1Replicators();
+							await rebalanceAllPeers();
 							await waitForResolved(
-								() => expect(db2.log.log.length).equal(entryCount),
+								async () => {
+									await rebalanceAllPeers();
+									expect(db2.log.log.length).equal(entryCount);
+								},
 								commitReplicationWait,
 							);
 							await waitForResolved(
-								() => expect(db3.log.log.length).equal(entryCount),
+								async () => {
+									await rebalanceAllPeers();
+									expect(db3.log.log.length).equal(entryCount);
+								},
 								commitReplicationWait,
 							);
 

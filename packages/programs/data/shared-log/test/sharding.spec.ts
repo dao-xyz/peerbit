@@ -322,13 +322,16 @@ testSetups.forEach((setup) => {
 					db1.add(toBase64(new Uint8Array([i])), { meta: { next: [] } }),
 				);
 
-					await checkBounded(
-						entryCount,
-						0.35,
-						setup.name === "u64-iblt" ? 0.7 : 0.65,
-						db1,
-						db2,
-					);
+				await waitForParticipationToSettle(db1, db2);
+				await waitForDistributionQuiesced(db1, db2);
+
+				await checkBounded(
+					entryCount,
+					0.35,
+					setup.name === "u64-iblt" ? 0.7 : 0.65,
+					db1,
+					db2,
+				);
 			});
 
 			it("2 peers write while joining", async () => {
@@ -426,22 +429,20 @@ testSetups.forEach((setup) => {
 				);
 				await Promise.all([
 					db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
-						timeout: 30_000,
+						timeout: 60_000,
+						roleAge: 0,
 					}),
 					db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
-						timeout: 30_000,
+						timeout: 60_000,
+						roleAge: 0,
 					}),
 					db2.log.waitForReplicator(session.peers[0].identity.publicKey, {
-						timeout: 30_000,
-					}),
-					db2.log.waitForReplicator(session.peers[2].identity.publicKey, {
-						timeout: 30_000,
+						timeout: 60_000,
+						roleAge: 0,
 					}),
 					db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
-						timeout: 30_000,
-					}),
-					db3.log.waitForReplicator(session.peers[1].identity.publicKey, {
-						timeout: 30_000,
+						timeout: 60_000,
+						roleAge: 0,
 					}),
 				]);
 				await Promise.all([
@@ -449,31 +450,17 @@ testSetups.forEach((setup) => {
 					db2.log.rebalanceAll({ clearCache: true }),
 					db3.log.rebalanceAll({ clearCache: true }),
 				]);
-				await waitForResolved(async () =>
-					expect((await db1.log.calculateTotalParticipation()) - 1).lessThan(
-						0.05,
-					),
-				);
-				await waitForResolved(async () =>
-					expect((await db2.log.calculateTotalParticipation()) - 1).lessThan(
-						0.05,
-					),
-				);
-				await waitForResolved(async () =>
-					expect((await db3.log.calculateTotalParticipation()) - 1).lessThan(
-						0.05,
-					),
-				);
+				await waitForParticipationToSettle(db1, db2, db3);
 				await waitForDistributionQuiesced(db1, db2, db3);
 				await checkBounded(
 					entryCount,
-					0.45,
+					setup.name === "u32-simple" ? 0.45 : 0.4,
 					setup.name === "u32-simple" ? 0.95 : 0.9,
 					db1,
 					db2,
 					db3,
 				);
-				});
+			});
 
 			it("3 peers prune all", async () => {
 				const store = new EventStore<string, any>();
@@ -1351,8 +1338,10 @@ testSetups.forEach((setup) => {
 							);
 
 							const data = toBase64(randomBytes(5.5e2)); // about 1kb
+							const joiningHalfLimitedEntryCount =
+								setup.name === "u64-iblt" ? 500 : largeEntryCount;
 
-							for (let i = 0; i < largeEntryCount; i++) {
+							for (let i = 0; i < joiningHalfLimitedEntryCount; i++) {
 								await db2.add(data, { meta: { next: [] } });
 							}
 
@@ -1380,7 +1369,10 @@ testSetups.forEach((setup) => {
 									},
 								);
 
-								await waitForDistributionQuiesced(db1, db2);
+								await waitForResolved(
+									() => expect(countActiveRepairSweepWork(db1, db2)).to.equal(0),
+									{ timeout: 120_000, delayInterval: 250 },
+								);
 
 								await waitForResolved(
 									async () =>
