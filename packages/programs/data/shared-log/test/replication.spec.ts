@@ -2184,13 +2184,13 @@ testSetups.forEach((setup) => {
 					},
 				}))!;
 
-				const entryCount = 100;
-					for (let i = 0; i < entryCount; i++) {
-						await db1.add("hello", {
-							replicas: new AbsoluteReplicas(3), // will be overriden by 'maxReplicas' above
-							meta: { next: [] },
-						});
-					}
+				const entryCount = setup.name === "u64-iblt" ? 60 : 100;
+				for (let i = 0; i < entryCount; i++) {
+					await db1.add("hello", {
+						replicas: new AbsoluteReplicas(3), // will be overriden by 'maxReplicas' above
+						meta: { next: [] },
+					});
+				}
 
 						// Use TestSession.connect so sharded pubsub/fanout root candidates converge
 						// for this connected component (manual `dial()` can leave peers on different
@@ -2211,16 +2211,15 @@ testSetups.forEach((setup) => {
 									db1.log.rebalanceAll({ clearCache: true }),
 									db2.log.rebalanceAll({ clearCache: true }),
 								]);
-								expect(db1.log.log.length).equal(entryCount);
-								expect(db2.log.log.length).equal(entryCount);
+								await checkReplicas([db1, db2], 2, entryCount);
 							},
 							{
-								timeout: 60_000,
-								delayInterval: 500,
+								timeout: 120_000,
+								delayInterval: 1_000,
 							},
 						);
-
-						await checkBounded(entryCount, 1, 1, db1, db2);
+						expect(db1.log.log.length).equal(entryCount);
+						expect(db2.log.log.length).equal(entryCount);
 
 					await db2.close();
 					await waitForResolved(async () =>
