@@ -131,7 +131,8 @@ jobs:
           steps.coverage_files.outputs.count == '0' &&
           matrix.test_cmd != 'pnpm run test:ci:part-2b' &&
           matrix.test_cmd != 'pnpm run test:ci:part-2c' &&
-          matrix.test_cmd != 'pnpm run test:ci:part-5b'
+          matrix.test_cmd != 'pnpm run test:ci:part-5b' &&
+          matrix.test_cmd != 'pnpm run test:ci:part-7'
         run: |
           echo "No coverage files found under */.coverage/"
           exit 1
@@ -234,7 +235,8 @@ jobs:
           steps.coverage_files.outputs.count == '0' &&
           matrix.test_cmd != 'pnpm run test:ci:part-2b' &&
           matrix.test_cmd != 'pnpm run test:ci:part-2c' &&
-          matrix.test_cmd != 'pnpm run test:ci:part-5b'
+          matrix.test_cmd != 'pnpm run test:ci:part-5b' &&
+          matrix.test_cmd != 'pnpm run test:ci:part-7'
         run: |
           echo "No coverage files found under */.coverage/"
           exit 1

@@ -3681,7 +3681,10 @@ describe("index", () => {
 
 						await session.connect([[session.peers[0], session.peers[2]]]); // connect the nodes!
 
-						await observer.docs.index.waitFor(writer2.node.identity.publicKey);
+						await observer.docs.log.waitForReplicator(
+							writer2.node.identity.publicKey,
+							{ eager: true },
+						);
 
 						const iterator = observer.docs.index.iterate(
 							{ sort: new Sort({ key: "id", direction: SortDirection.DESC }) }, // 4, 3, 2, 1
@@ -3708,13 +3711,27 @@ describe("index", () => {
 						expect(second.map((x) => x.id)).to.deep.equal(["2"]);
 
 						await session.connect([[session.peers[0], session.peers[1]]]); // connect the nodes!
+						await observer.docs.log.waitForReplicator(
+							writer1.node.identity.publicKey,
+							{ eager: true },
+						);
 
-						await waitForResolved(
-							async () => expect(await iterator.pending()).to.equal(2),
+						const third = await waitForResolved(
+							async () => {
+								const next = await iterator.next(1);
+								expect(next.map((x) => x.id)).to.deep.equal(["4"]);
+								return next;
+							},
 							{ timeout: 60_000, delayInterval: 250 },
 						);
-						const third = await iterator.next(1);
-						const fourth = await iterator.next(1);
+						const fourth = await waitForResolved(
+							async () => {
+								const next = await iterator.next(1);
+								expect(next.map((x) => x.id)).to.deep.equal(["1"]);
+								return next;
+							},
+							{ timeout: 60_000, delayInterval: 250 },
+						);
 
 						if (missedResults.length > 0) {
 							expect(missedResults).to.deep.equal([1]);
