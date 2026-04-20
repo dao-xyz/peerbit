@@ -2199,17 +2199,26 @@ testSetups.forEach((setup) => {
 						await Promise.all([
 							db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
 								timeout: 60_000,
-								roleAge: 0,
 							}),
 							db2.log.waitForReplicator(session.peers[0].identity.publicKey, {
 								timeout: 60_000,
-								roleAge: 0,
 							}),
 						]);
-						await Promise.all([
-							db1.log.rebalanceAll({ clearCache: true }),
-							db2.log.rebalanceAll({ clearCache: true }),
-						]);
+
+						await waitForResolved(
+							async () => {
+								await Promise.all([
+									db1.log.rebalanceAll({ clearCache: true }),
+									db2.log.rebalanceAll({ clearCache: true }),
+								]);
+								expect(db1.log.log.length).equal(entryCount);
+								expect(db2.log.log.length).equal(entryCount);
+							},
+							{
+								timeout: 60_000,
+								delayInterval: 500,
+							},
+						);
 
 						await checkBounded(entryCount, 1, 1, db1, db2);
 
