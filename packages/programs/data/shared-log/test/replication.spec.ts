@@ -2274,6 +2274,27 @@ testSetups.forEach((setup) => {
 							]);
 						};
 
+						const waitForDb1AndJoiners = async () => {
+							await Promise.all([
+								db1.log.waitForReplicator(
+									session.peers[1].identity.publicKey,
+									replicatorWait,
+								),
+								db1.log.waitForReplicator(
+									session.peers[2].identity.publicKey,
+									replicatorWait,
+								),
+								db2.log.waitForReplicator(
+									session.peers[0].identity.publicKey,
+									replicatorWait,
+								),
+								db3.log.waitForReplicator(
+									session.peers[0].identity.publicKey,
+									replicatorWait,
+								),
+							]);
+						};
+
 						it("control per commmit put before join", async () => {
 							const entryCount = 100;
 
@@ -2290,7 +2311,7 @@ testSetups.forEach((setup) => {
 								},
 							});
 
-							await waitForDb1Replicators();
+							await waitForDb1AndJoiners();
 
 							await Promise.all([
 								db1.log.rebalanceAll({ clearCache: true }),

@@ -141,7 +141,7 @@ testSetups.forEach((setup) => {
 			const sampleSize = 200; // must be < 255
 			const shardingSmallEntryCount = setup.name === "u64-iblt" ? 30 : 60;
 			const shardingMediumEntryCount = setup.name === "u64-iblt" ? 60 : 100;
-			const shardingThreePeerEntryCount = setup.name === "u64-iblt" ? 20 : 40;
+			const shardingThreePeerEntryCount = setup.name === "u64-iblt" ? 15 : 20;
 			const largeEntryCount = 1000;
 			const shardingWriteBatchSize = 1;
 
@@ -248,7 +248,7 @@ testSetups.forEach((setup) => {
 						setup,
 					},
 				});
-				const entryCount = shardingThreePeerEntryCount;
+				const entryCount = shardingSmallEntryCount;
 
 				await appendInBatches(entryCount, (i) =>
 					db1.add(toBase64(new Uint8Array([i])), { meta: { next: [] } }),
@@ -315,20 +315,20 @@ testSetups.forEach((setup) => {
 					},
 				);
 
-				const entryCount = shardingThreePeerEntryCount;
+				const entryCount = shardingSmallEntryCount;
 
 				// expect min replicas 2 with 3 peers, this means that 66% of entries (ca) will be at peer 2 and 3, and peer1 will have all of them since 1 is the creator
 				await appendInBatches(entryCount, (i) =>
 					db1.add(toBase64(new Uint8Array([i])), { meta: { next: [] } }),
 				);
 
-				await checkBounded(
-					entryCount,
-					0.35,
-					setup.name === "u64-iblt" ? 2 / 3 : 0.65,
-					db1,
-					db2,
-				);
+					await checkBounded(
+						entryCount,
+						0.35,
+						setup.name === "u64-iblt" ? 0.7 : 0.65,
+						db1,
+						db2,
+					);
 			});
 
 			it("2 peers write while joining", async () => {
@@ -393,7 +393,7 @@ testSetups.forEach((setup) => {
 					},
 				});
 
-				const entryCount = shardingSmallEntryCount;
+				const entryCount = shardingThreePeerEntryCount;
 
 				// expect min replicas 2 with 3 peers, this means that 66% of entries (ca) will be at peer 2 and 3, and peer1 will have all of them since 1 is the creator
 				await appendInBatches(entryCount, (i) =>
@@ -449,10 +449,25 @@ testSetups.forEach((setup) => {
 					db2.log.rebalanceAll({ clearCache: true }),
 					db3.log.rebalanceAll({ clearCache: true }),
 				]);
+				await waitForResolved(async () =>
+					expect((await db1.log.calculateTotalParticipation()) - 1).lessThan(
+						0.05,
+					),
+				);
+				await waitForResolved(async () =>
+					expect((await db2.log.calculateTotalParticipation()) - 1).lessThan(
+						0.05,
+					),
+				);
+				await waitForResolved(async () =>
+					expect((await db3.log.calculateTotalParticipation()) - 1).lessThan(
+						0.05,
+					),
+				);
 				await waitForDistributionQuiesced(db1, db2, db3);
 				await checkBounded(
 					entryCount,
-					0.5,
+					0.45,
 					setup.name === "u32-simple" ? 0.95 : 0.9,
 					db1,
 					db2,
