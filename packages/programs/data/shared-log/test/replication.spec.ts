@@ -2337,6 +2337,16 @@ testSetups.forEach((setup) => {
 								}
 								expect(replicated3Times).equal(entryCount);
 							};
+							const getJoinRepairDispatches = () => {
+								return [db1, db2, db3].reduce((sum, store) => {
+									const metrics = (store.log as any)._repairMetrics;
+									return (
+										sum +
+										(metrics?.["join-warmup"]?.dispatches ?? 0) +
+										(metrics?.["join-authoritative"]?.dispatches ?? 0)
+									);
+								}, 0);
+							};
 
 							await waitForResolved(async () => {
 								// The contract here is historical replication metadata, not whether
@@ -2351,6 +2361,10 @@ testSetups.forEach((setup) => {
 								// proves whether the pre-join history converged correctly.
 								await check(db3);
 							}, commitReplicationWait);
+							// This focused regression keeps the product-side self-heal path under
+							// coverage: late historical backfill must now come from SharedLog's own
+							// join repair dispatches, not from a test-driven `rebalanceAll()`.
+							expect(getJoinRepairDispatches()).greaterThan(0);
 						});
 
 						it("control per commmit", async () => {

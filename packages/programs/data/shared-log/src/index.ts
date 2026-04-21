@@ -513,7 +513,7 @@ const REPLICATOR_LIVENESS_PROBE_FAILURES_TO_EVICT = 2;
 // Churn/join repair can race with pruning and transient missed sync requests under
 // heavy event-loop load. Keep retries alive with a longer tail so reassigned
 // entries are retried after short bursts and slower recovery windows.
-const FORCE_FRESH_RETRY_SCHEDULE_MS = [
+const CHURN_REPAIR_RETRY_SCHEDULE_MS = [
 	0, 1_000, 3_000, 7_000, 15_000, 30_000, 45_000,
 ];
 const JOIN_WARMUP_RETRY_SCHEDULE_MS = [
@@ -525,7 +525,78 @@ const JOIN_WARMUP_RETRY_SCHEDULE_MS = [
 	30_000,
 	60_000,
 ];
+const JOIN_AUTHORITATIVE_RETRY_SCHEDULE_MS = [
+	0,
+	1_000,
+	3_000,
+	7_000,
+	15_000,
+	30_000,
+	60_000,
+];
 const JOIN_AUTHORITATIVE_REPAIR_DELAY_MS = 2_000;
+
+type RepairDispatchMode = "join-warmup" | "join-authoritative" | "churn";
+type RepairTransportMode = "rateless" | "simple";
+type RepairMetricBucket = {
+	dispatches: number;
+	entries: number;
+	ratelessFirstPasses: number;
+	simpleFallbackPasses: number;
+};
+type RepairMetrics = Record<RepairDispatchMode, RepairMetricBucket>;
+
+const REPAIR_DISPATCH_MODES: RepairDispatchMode[] = [
+	"join-warmup",
+	"join-authoritative",
+	"churn",
+];
+
+const createRepairMetricBucket = (): RepairMetricBucket => ({
+	dispatches: 0,
+	entries: 0,
+	ratelessFirstPasses: 0,
+	simpleFallbackPasses: 0,
+});
+
+const createRepairMetrics = (): RepairMetrics => ({
+	"join-warmup": createRepairMetricBucket(),
+	"join-authoritative": createRepairMetricBucket(),
+	churn: createRepairMetricBucket(),
+});
+
+const createRepairPendingPeersByMode = () =>
+	new Map<RepairDispatchMode, Set<string>>(
+		REPAIR_DISPATCH_MODES.map((mode) => [mode, new Set<string>()]),
+	);
+
+const cloneRepairPendingPeersByMode = (
+	pending: Map<RepairDispatchMode, Set<string>>,
+) =>
+	new Map<RepairDispatchMode, Set<string>>(
+		REPAIR_DISPATCH_MODES.map((mode) => [mode, new Set(pending.get(mode) ?? [])]),
+	);
+
+const getRepairRetrySchedule = (mode: RepairDispatchMode) => {
+	switch (mode) {
+		case "join-warmup":
+			return JOIN_WARMUP_RETRY_SCHEDULE_MS;
+		case "join-authoritative":
+			return JOIN_AUTHORITATIVE_RETRY_SCHEDULE_MS;
+		case "churn":
+			return CHURN_REPAIR_RETRY_SCHEDULE_MS;
+	}
+};
+
+const getRepairTransportForAttempt = (
+	mode: RepairDispatchMode,
+	attemptIndex: number,
+): RepairTransportMode => {
+	if (mode === "churn") {
+		return "simple";
+	}
+	return attemptIndex === 0 ? "rateless" : "simple";
+};
 
 const toPositiveInteger = (
 	value: number | undefined,
@@ -760,11 +831,12 @@ export class SharedLog<
 	private _repairRetryTimers!: Set<ReturnType<typeof setTimeout>>;
 	private _recentRepairDispatch!: Map<string, Map<string, number>>;
 	private _repairSweepRunning!: boolean;
-	private _repairSweepForceFreshPending!: boolean;
-	private _repairSweepAddedPeersPending!: Set<string>;
+	private _repairSweepPendingModes!: Set<RepairDispatchMode>;
+	private _repairSweepPendingPeersByMode!: Map<RepairDispatchMode, Set<string>>;
 	private _repairSweepOptimisticGidPeersPending!: Map<string, Map<string, number>>;
 	private _joinAuthoritativeRepairTimer?: ReturnType<typeof setTimeout>;
 	private _joinAuthoritativeRepairPeers!: Set<string>;
+	private _repairMetrics!: RepairMetrics;
 	private _topicSubscribersCache!: Map<
 		string,
 		{ expiresAt: number; keys: PublicSignKey[] }
@@ -2538,11 +2610,10 @@ export class SharedLog<
 	private dispatchMaybeMissingEntries(
 		target: string,
 		entries: Map<string, EntryReplicated<R>>,
-		options?: {
+		options: {
+			mode: RepairDispatchMode;
 			bypassRecentDedupe?: boolean;
 			retryScheduleMs?: number[];
-			forceFreshDelivery?: boolean;
-			preferSimpleSync?: boolean;
 		},
 	) {
 		if (entries.size === 0) {
@@ -2562,10 +2633,10 @@ export class SharedLog<
 		}
 
 		const filteredEntries =
-			options?.bypassRecentDedupe === true
+			options.bypassRecentDedupe === true
 				? new Map(entries)
 				: new Map<string, EntryReplicated<any>>();
-		if (options?.bypassRecentDedupe !== true) {
+		if (options.bypassRecentDedupe !== true) {
 			for (const [hash, entry] of entries) {
 				const prev = recentlyDispatchedByHash.get(hash);
 				if (prev != null && now - prev <= RECENT_REPAIR_DISPATCH_TTL_MS) {
@@ -2582,20 +2653,26 @@ export class SharedLog<
 		if (filteredEntries.size === 0) {
 			return;
 		}
-		const retrySchedule =
-			options?.retryScheduleMs && options.retryScheduleMs.length > 0
-				? options.retryScheduleMs
-				: options?.forceFreshDelivery
-					? FORCE_FRESH_RETRY_SCHEDULE_MS
-					: [0];
 
-		const run = (useSimpleSync: boolean) => {
-			// For force-fresh churn repair we intentionally bypass rateless IBLT and
-			// use simple hash-based sync. Join-warmup directed retries fall back to
-			// simple sync only after the initial rateless maybe-sync attempt so healthy
-			// catch-up still exercises the rateless StartSync path, while retries can
-			// recover occasional single-hash gaps seen under churn.
-			if (useSimpleSync && this.syncronizer instanceof RatelessIBLTSynchronizer) {
+		const retrySchedule =
+			options.retryScheduleMs && options.retryScheduleMs.length > 0
+				? options.retryScheduleMs
+				: getRepairRetrySchedule(options.mode);
+		const bucket = this._repairMetrics[options.mode];
+		bucket.dispatches += 1;
+		bucket.entries += filteredEntries.size;
+
+		const run = (transport: RepairTransportMode) => {
+			if (transport === "simple") {
+				bucket.simpleFallbackPasses += 1;
+			} else {
+				bucket.ratelessFirstPasses += 1;
+			}
+
+			if (
+				transport === "simple" &&
+				this.syncronizer instanceof RatelessIBLTSynchronizer
+			) {
 				return Promise.resolve(
 					this.syncronizer.simple.onMaybeMissingEntries({
 						entries: filteredEntries,
@@ -2613,11 +2690,9 @@ export class SharedLog<
 		};
 
 		retrySchedule.forEach((delayMs, index) => {
-			const useSimpleSync =
-				options?.forceFreshDelivery === true ||
-				(options?.preferSimpleSync === true && index > 0);
+			const transport = getRepairTransportForAttempt(options.mode, index);
 			if (delayMs === 0) {
-				void run(useSimpleSync);
+				void run(transport);
 				return;
 			}
 			const timer = setTimeout(() => {
@@ -2625,22 +2700,23 @@ export class SharedLog<
 				if (this.closed) {
 					return;
 				}
-				void run(useSimpleSync);
+				void run(transport);
 			}, delayMs);
-			timer.unref?.();
+		timer.unref?.();
 			this._repairRetryTimers.add(timer);
 		});
 	}
 
 	private scheduleRepairSweep(options: {
-		forceFreshDelivery: boolean;
-		addedPeers: Set<string>;
+		mode: RepairDispatchMode;
+		peers?: Iterable<string>;
 	}) {
-		if (options.forceFreshDelivery) {
-			this._repairSweepForceFreshPending = true;
-		}
-		for (const peer of options.addedPeers) {
-			this._repairSweepAddedPeersPending.add(peer);
+		this._repairSweepPendingModes.add(options.mode);
+		const pendingPeers = this._repairSweepPendingPeersByMode.get(options.mode);
+		if (pendingPeers) {
+			for (const peer of options.peers ?? []) {
+				pendingPeers.add(peer);
+			}
 		}
 		if (!this._repairSweepRunning && !this.closed) {
 			this._repairSweepRunning = true;
@@ -2681,8 +2757,8 @@ export class SharedLog<
 			// delayed authoritative pass for the added peers so late join backfill does not
 			// depend on an explicit `rebalanceAll()` from tests or callers.
 			this.scheduleRepairSweep({
-				forceFreshDelivery: true,
-				addedPeers: pendingPeers,
+				mode: "join-authoritative",
+				peers: pendingPeers,
 			});
 		}, JOIN_AUTHORITATIVE_REPAIR_DELAY_MS);
 		timer.unref?.();
@@ -2693,19 +2769,39 @@ export class SharedLog<
 	private async runRepairSweep() {
 		try {
 			while (!this.closed) {
-				const forceFreshDelivery = this._repairSweepForceFreshPending;
-				const addedPeers = new Set(this._repairSweepAddedPeersPending);
-				const optimisticGidPeers = new Map<string, Set<string>>();
-				const optimisticGidPeersConsumed = new Map<string, Map<string, number>>();
-				if (addedPeers.size > 0) {
-					for (const [
-						gid,
-						peerCounts,
-					] of this._repairSweepOptimisticGidPeersPending) {
+				const pendingModes = new Set(this._repairSweepPendingModes);
+				const pendingPeersByMode = cloneRepairPendingPeersByMode(
+					this._repairSweepPendingPeersByMode,
+				);
+				this._repairSweepPendingModes.clear();
+				for (const peers of this._repairSweepPendingPeersByMode.values()) {
+					peers.clear();
+				}
+
+				if (pendingModes.size === 0) {
+					return;
+				}
+
+				const optimisticGidPeersByMode = new Map<
+					RepairDispatchMode,
+					Map<string, Set<string>>
+				>();
+				const optimisticGidPeersConsumedByMode = new Map<
+					RepairDispatchMode,
+					Map<string, Map<string, number>>
+				>();
+				for (const mode of pendingModes) {
+					const modePeers = pendingPeersByMode.get(mode);
+					if (!modePeers || modePeers.size === 0) {
+						continue;
+					}
+					const optimisticGidPeers = new Map<string, Set<string>>();
+					const optimisticGidPeersConsumed = new Map<string, Map<string, number>>();
+					for (const [gid, peerCounts] of this._repairSweepOptimisticGidPeersPending) {
 						let matchedPeers: Set<string> | undefined;
 						let matchedCounts: Map<string, number> | undefined;
 						for (const [peer, count] of peerCounts) {
-							if (!addedPeers.has(peer)) {
+							if (!modePeers.has(peer)) {
 								continue;
 							}
 							matchedPeers ||= new Set();
@@ -2718,47 +2814,45 @@ export class SharedLog<
 							optimisticGidPeersConsumed.set(gid, matchedCounts);
 						}
 					}
-				}
-				this._repairSweepForceFreshPending = false;
-				this._repairSweepAddedPeersPending.clear();
-
-				if (!forceFreshDelivery && addedPeers.size === 0) {
-					return;
+					if (optimisticGidPeers.size > 0) {
+						optimisticGidPeersByMode.set(mode, optimisticGidPeers);
+						optimisticGidPeersConsumedByMode.set(mode, optimisticGidPeersConsumed);
+					}
 				}
 
-					const pendingByTarget = new Map<string, Map<string, EntryReplicated<any>>>();
-					const flushTarget = (target: string) => {
-						const entries = pendingByTarget.get(target);
-						if (!entries || entries.size === 0) {
-							return;
-						}
-						const isJoinWarmupTarget = addedPeers.has(target);
-						const bypassRecentDedupe = isJoinWarmupTarget || forceFreshDelivery;
-						this.dispatchMaybeMissingEntries(target, entries, {
-							bypassRecentDedupe,
-							retryScheduleMs: isJoinWarmupTarget
-								? JOIN_WARMUP_RETRY_SCHEDULE_MS
-								: undefined,
-							forceFreshDelivery,
-							preferSimpleSync: isJoinWarmupTarget,
-						});
-						pendingByTarget.delete(target);
-					};
+				const pendingByMode = new Map<
+					RepairDispatchMode,
+					Map<string, Map<string, EntryReplicated<any>>>
+				>(REPAIR_DISPATCH_MODES.map((mode) => [mode, new Map()]));
+				const flushTarget = (mode: RepairDispatchMode, target: string) => {
+					const targets = pendingByMode.get(mode);
+					const entries = targets?.get(target);
+					if (!entries || entries.size === 0) {
+						return;
+					}
+					this.dispatchMaybeMissingEntries(target, entries, {
+						bypassRecentDedupe: true,
+						mode,
+					});
+					targets?.delete(target);
+				};
 				const queueEntryForTarget = (
+					mode: RepairDispatchMode,
 					target: string,
 					entry: EntryReplicated<any>,
 				) => {
-					let set = pendingByTarget.get(target);
+					const targets = pendingByMode.get(mode)!;
+					let set = targets.get(target);
 					if (!set) {
 						set = new Map();
-						pendingByTarget.set(target, set);
+						targets.set(target, set);
 					}
 					if (set.has(entry.hash)) {
 						return;
 					}
 					set.set(entry.hash, entry);
 					if (set.size >= this.repairSweepTargetBufferSize) {
-						flushTarget(target);
+						flushTarget(mode, target);
 					}
 				};
 
@@ -2768,36 +2862,37 @@ export class SharedLog<
 						const entries = await iterator.next(REPAIR_SWEEP_ENTRY_BATCH_SIZE);
 						for (const entry of entries) {
 							const entryReplicated = entry.value;
-							const knownPeers = this._gidPeersHistory.get(entryReplicated.gid);
-							const optimisticPeers = optimisticGidPeers.get(entryReplicated.gid);
+							const gid = entryReplicated.gid;
+							const knownPeers = this._gidPeersHistory.get(gid);
 							const currentPeers = await this.findLeaders(
 								entryReplicated.coordinates,
 								entryReplicated,
 								{ roleAge: 0 },
 							);
-							if (forceFreshDelivery) {
+
+							if (pendingModes.has("churn")) {
 								for (const [currentPeer] of currentPeers) {
 									if (currentPeer === this.node.identity.publicKey.hashcode()) {
 										continue;
 									}
-									queueEntryForTarget(currentPeer, entryReplicated);
+									queueEntryForTarget("churn", currentPeer, entryReplicated);
 								}
 							}
-							if (addedPeers.size > 0) {
-								for (const peer of addedPeers) {
-									// Join warmup records prospective leaders before the peer has
-									// necessarily received every entry. Only those optimistic
-									// assignments should keep retrying even if a later leader
-									// recomputation temporarily drops the peer while it is still
-									// hydrating. Authoritative sources such as assumeSynced joins
-									// should still suppress redundant maybe-sync traffic.
+
+							for (const mode of pendingModes) {
+								const modePeers = pendingPeersByMode.get(mode);
+								if (!modePeers || modePeers.size === 0) {
+									continue;
+								}
+								const optimisticPeers = optimisticGidPeersByMode.get(mode)?.get(gid);
+								for (const peer of modePeers) {
 									const wasOptimisticallyAssigned =
 										optimisticPeers?.has(peer) === true;
 									if (
 										wasOptimisticallyAssigned ||
 										(currentPeers.has(peer) && !knownPeers?.has(peer))
 									) {
-										queueEntryForTarget(peer, entryReplicated);
+										queueEntryForTarget(mode, peer, entryReplicated);
 									}
 								}
 							}
@@ -2807,28 +2902,32 @@ export class SharedLog<
 					await iterator.close();
 				}
 
-				for (const [gid, peerCounts] of optimisticGidPeersConsumed) {
-					const pendingPeerCounts =
-						this._repairSweepOptimisticGidPeersPending.get(gid);
-					if (!pendingPeerCounts) {
-						continue;
-					}
-					for (const [peer, count] of peerCounts) {
-						const current = pendingPeerCounts.get(peer) || 0;
-						const next = current - count;
-						if (next > 0) {
-							pendingPeerCounts.set(peer, next);
-						} else {
-							pendingPeerCounts.delete(peer);
+				for (const [mode, optimisticGidPeersConsumed] of optimisticGidPeersConsumedByMode) {
+					for (const [gid, peerCounts] of optimisticGidPeersConsumed) {
+						const pendingPeerCounts =
+							this._repairSweepOptimisticGidPeersPending.get(gid);
+						if (!pendingPeerCounts) {
+							continue;
 						}
-					}
-					if (pendingPeerCounts.size === 0) {
-						this._repairSweepOptimisticGidPeersPending.delete(gid);
+						for (const [peer, count] of peerCounts) {
+							const current = pendingPeerCounts.get(peer) || 0;
+							const next = current - count;
+							if (next > 0) {
+								pendingPeerCounts.set(peer, next);
+							} else {
+								pendingPeerCounts.delete(peer);
+							}
+						}
+						if (pendingPeerCounts.size === 0) {
+							this._repairSweepOptimisticGidPeersPending.delete(gid);
+						}
 					}
 				}
 
-				for (const target of [...pendingByTarget.keys()]) {
-					flushTarget(target);
+				for (const [mode, targets] of pendingByMode) {
+					for (const target of [...targets.keys()]) {
+						flushTarget(mode, target);
+					}
 				}
 			}
 		} catch (error: any) {
@@ -2837,11 +2936,7 @@ export class SharedLog<
 			}
 		} finally {
 			this._repairSweepRunning = false;
-			if (
-				!this.closed &&
-				(this._repairSweepForceFreshPending ||
-					this._repairSweepAddedPeersPending.size > 0)
-			) {
+			if (!this.closed && this._repairSweepPendingModes.size > 0) {
 				this._repairSweepRunning = true;
 				void this.runRepairSweep();
 			}
@@ -3090,11 +3185,12 @@ export class SharedLog<
 		this._repairRetryTimers = new Set();
 		this._recentRepairDispatch = new Map();
 		this._repairSweepRunning = false;
-		this._repairSweepForceFreshPending = false;
-		this._repairSweepAddedPeersPending = new Set();
+		this._repairSweepPendingModes = new Set();
+		this._repairSweepPendingPeersByMode = createRepairPendingPeersByMode();
 		this._repairSweepOptimisticGidPeersPending = new Map();
 		this._joinAuthoritativeRepairTimer = undefined;
 		this._joinAuthoritativeRepairPeers = new Set();
+		this._repairMetrics = createRepairMetrics();
 		this._topicSubscribersCache = new Map();
 		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
 		this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
@@ -4159,8 +4255,10 @@ export class SharedLog<
 		this._repairRetryTimers.clear();
 		this._recentRepairDispatch.clear();
 		this._repairSweepRunning = false;
-		this._repairSweepForceFreshPending = false;
-		this._repairSweepAddedPeersPending.clear();
+		this._repairSweepPendingModes.clear();
+		for (const peers of this._repairSweepPendingPeersByMode.values()) {
+			peers.clear();
+		}
 		this._repairSweepOptimisticGidPeersPending.clear();
 		if (this._joinAuthoritativeRepairTimer) {
 			clearTimeout(this._joinAuthoritativeRepairTimer);
@@ -6427,14 +6525,20 @@ export class SharedLog<
 						return;
 					}
 					const isWarmupTarget = warmupPeers.has(target);
-					const bypassRecentDedupe = isWarmupTarget || forceFreshDelivery;
+					const mode: RepairDispatchMode = forceFreshDelivery
+						? "churn"
+						: isWarmupTarget
+							? "join-warmup"
+							: "join-authoritative";
 					this.dispatchMaybeMissingEntries(target, entries, {
-						bypassRecentDedupe,
-						retryScheduleMs: isWarmupTarget
-							? JOIN_WARMUP_RETRY_SCHEDULE_MS
-							: undefined,
-						forceFreshDelivery,
-						preferSimpleSync: isWarmupTarget,
+						bypassRecentDedupe: isWarmupTarget || forceFreshDelivery,
+						mode,
+						retryScheduleMs:
+							mode === "join-warmup"
+								? JOIN_WARMUP_RETRY_SCHEDULE_MS
+								: mode === "join-authoritative"
+									? [0]
+									: undefined,
 					});
 					uncheckedDeliver.delete(target);
 				};
@@ -6621,7 +6725,10 @@ export class SharedLog<
 
 				if (forceFreshDelivery) {
 					// Removed/shrunk ranges still need the authoritative background pass.
-					this.scheduleRepairSweep({ forceFreshDelivery, addedPeers });
+					this.scheduleRepairSweep({
+						mode: "churn",
+						peers: addedPeers,
+					});
 				} else if (useJoinWarmupFastPath) {
 					// Pure join warmup uses the cheap immediate maybe-missing dispatch above,
 					// then defers the authoritative sweep so it does not compete with the
@@ -6633,16 +6740,16 @@ export class SharedLog<
 							return;
 						}
 						this.scheduleRepairSweep({
-							forceFreshDelivery: false,
-							addedPeers: peers,
+							mode: "join-warmup",
+							peers,
 						});
 					}, 250);
 					timer.unref?.();
 					this._repairRetryTimers.add(timer);
 				} else if (addedPeers.size > 0) {
 					this.scheduleRepairSweep({
-						forceFreshDelivery: false,
-						addedPeers,
+						mode: "join-authoritative",
+						peers: addedPeers,
 					});
 				}
 

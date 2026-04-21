@@ -192,14 +192,12 @@ testSetups.forEach((setup) => {
 			) => {
 				return dbs.reduce((total, db) => {
 					const log = db.log as any;
-					const pendingPeers = ((log._repairSweepAddedPeersPending ??
+					const pendingModes = ((log._repairSweepPendingModes ??
 						new Set()) as Set<string>).size;
-					return (
-						total +
-						pendingPeers +
-						(log._repairSweepForceFreshPending ? 1 : 0) +
-						(log._repairSweepRunning ? 1 : 0)
-					);
+					const pendingPeers = [...
+						((log._repairSweepPendingPeersByMode ?? new Map()).values() as Iterable<Set<string>>),
+					].reduce((sum, peers) => sum + peers.size, 0);
+					return total + pendingModes + pendingPeers + (log._repairSweepRunning ? 1 : 0);
 				}, 0);
 			};
 
