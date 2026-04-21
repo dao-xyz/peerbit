@@ -12,6 +12,13 @@ coverage:
         informational: false
     patch:
       default:
-        target: auto
+        # Patch coverage should gate changed production code, not the large shared-log
+        # test-suite churn in performance/stability PRs. The heaviest shared-log shard
+        # intentionally runs without coverage in PR CI, so counting changed test files
+        # here creates persistent false negatives. Restrict the patch signal to source
+        # files and require that signal to stay high.
+        target: 90%
         threshold: 0%
         informational: false
+        paths:
+          - "packages/**/src"

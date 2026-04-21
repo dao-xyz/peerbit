@@ -162,6 +162,29 @@ describe("QueryPlanner", () => {
 		await perform1;
 		await perform2;
 	});
+
+	it("batches new index permutations into one exec", async () => {
+		let executed: string[] = [];
+
+		const planner = new QueryPlanner({
+			exec: async (query: string) => {
+				executed.push(query);
+			},
+		});
+		const query = new PlannableQuery({ query: [] });
+		const scope = planner.scope(query);
+
+		scope.resolveIndex("table", ["field1", "field2"]);
+		await scope.beforePrepare();
+
+		expect(executed).to.have.length(1);
+		expect(executed[0]).to.contain(
+			"create index if not exists table_index_field1_field2",
+		);
+		expect(executed[0]).to.contain(
+			"create index if not exists table_index_field2_field1",
+		);
+	});
 });
 
 const generatorAsList = <T>(gen: Generator<T>) => {

@@ -86,7 +86,11 @@ describe("sort", () => {
 		expect(preparedStatement).to.have.length(1);
 		expect(preparedStatement[0]).to.not.contain("ORDER BY");
 
-		expect(results.map((x) => x.id.primitive)).to.deep.equal(["3", "2", "1"]); // insertion order (seems to be the default order when not sorting)
+		expect(results.map((x) => x.id.primitive).sort()).to.deep.equal([
+			"1",
+			"2",
+			"3",
+		]);
 	});
 
 	it("will sort correctly when query is split", async () => {

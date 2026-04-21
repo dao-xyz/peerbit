@@ -311,6 +311,39 @@ class ProxyDatabase implements IDatabase {
 		return statement;
 	}
 
+	async prepareMany(statements: { sql: string; id: string }[]) {
+		if (statements.length === 0) {
+			return [];
+		}
+
+		const missing = statements.filter(
+			(statement) => !this.statements.get(statement.id),
+		);
+		if (missing.length > 0) {
+			const statementIds = await this.send<string[]>({
+				type: "prepare-many",
+				statements: missing,
+				id: uuid(),
+				databaseId: this.databaseId,
+			});
+
+			for (const [index, statementId] of statementIds.entries()) {
+				const definition = missing[index];
+				const statement = new ProxyStatement(
+					this.send.bind(this),
+					this.databaseId,
+					statementId,
+					definition.sql,
+					this.options,
+				);
+				this.statements.set(statementId, statement);
+				this.statements.set(definition.id, statement);
+			}
+		}
+
+		return statements.map((statement) => this.statements.get(statement.id)!);
+	}
+
 	async open() {
 		return this.send({ type: "open", id: uuid(), databaseId: this.databaseId });
 	}
