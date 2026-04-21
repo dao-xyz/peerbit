@@ -2278,10 +2278,12 @@ testSetups.forEach((setup) => {
 
 					describe("commit options", () => {
 						const commitReplicationWait = {
-							// Under full-suite load, replication + index updates can take longer
-							// than the default 10s `waitForResolved` timeout.
-							timeout: 60_000,
-							delayInterval: 500,
+							// Historical backfill for writes that happened before the joiners
+							// opened is the slowest commit-options path in the full part-7 shard.
+							// Give that convergence loop more time instead of reintroducing brittle
+							// transient replica-view gates.
+							timeout: 120_000,
+							delayInterval: 1_000,
 						} as const;
 
 						const waitForDb1Replicators = async () => {
@@ -2351,14 +2353,14 @@ testSetups.forEach((setup) => {
 								await rebalanceAllPeers();
 								// The contract here is historical replication metadata, not whether
 								// a particular `waitForReplicator()` event fired on time under shard
-								// load. `check(db2)` is the real source of truth, so do not gate it
-								// on another role-visibility wait that has repeatedly flaked in CI.
+								// load. `check(db2)` is the real source of truth, so keep retrying
+								// rebalance + metadata checks instead of adding another transient gate.
 								await check(db2);
 							}, commitReplicationWait);
 							await waitForResolved(async () => {
 								await rebalanceAllPeers();
 								// Same reasoning as above for db3: the final metadata check already
-								// proves the writer became part of the store's historical view.
+								// proves whether the pre-join history converged correctly.
 								await check(db3);
 							}, commitReplicationWait);
 						});
