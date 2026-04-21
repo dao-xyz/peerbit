@@ -2323,9 +2323,10 @@ testSetups.forEach((setup) => {
 							});
 
 							await waitForDb1Replicators();
-							await rebalanceAllPeers();
-
-							await checkReplicas([db1, db2, db3], 3, entryCount);
+							await waitForResolved(async () => {
+								await rebalanceAllPeers();
+								await checkReplicas([db1, db2, db3], 3, entryCount);
+							}, commitReplicationWait);
 
 							const check = async (store: EventStore<string, any>) => {
 								const entries = await store.log.log.toArray();
@@ -2339,8 +2340,14 @@ testSetups.forEach((setup) => {
 								expect(replicated3Times).equal(entryCount);
 							};
 
-							await waitForResolved(() => check(db2), commitReplicationWait);
-							await waitForResolved(() => check(db3), commitReplicationWait);
+							await waitForResolved(async () => {
+								await rebalanceAllPeers();
+								await check(db2);
+							}, commitReplicationWait);
+							await waitForResolved(async () => {
+								await rebalanceAllPeers();
+								await check(db3);
+							}, commitReplicationWait);
 						});
 
 						it("control per commmit", async () => {
