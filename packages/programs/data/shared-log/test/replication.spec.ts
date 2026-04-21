@@ -2285,6 +2285,7 @@ testSetups.forEach((setup) => {
 						} as const;
 
 						const replicatorWait = {
+							eager: true,
 							timeout: 60_000,
 						} as const;
 
@@ -2292,6 +2293,14 @@ testSetups.forEach((setup) => {
 							await Promise.all([
 								db1.log.waitForReplicator(session.peers[1].identity.publicKey, replicatorWait),
 								db1.log.waitForReplicator(session.peers[2].identity.publicKey, replicatorWait),
+							]);
+						};
+
+						const waitForHistoricalReplicationMesh = async () => {
+							await Promise.all([
+								waitForDb1Replicators(),
+								db2.log.waitForReplicator(session.peers[0].identity.publicKey, replicatorWait),
+								db3.log.waitForReplicator(session.peers[0].identity.publicKey, replicatorWait),
 							]);
 						};
 
@@ -2322,7 +2331,7 @@ testSetups.forEach((setup) => {
 								},
 							});
 
-							await waitForDb1Replicators();
+							await waitForHistoricalReplicationMesh();
 							await waitForResolved(async () => {
 								await rebalanceAllPeers();
 								await checkReplicas([db1, db2, db3], 3, entryCount);
