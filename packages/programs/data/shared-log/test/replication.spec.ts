@@ -2296,14 +2296,6 @@ testSetups.forEach((setup) => {
 							]);
 						};
 
-						const waitForHistoricalReplicationMesh = async () => {
-							await Promise.all([
-								waitForDb1Replicators(),
-								db2.log.waitForReplicator(session.peers[0].identity.publicKey, replicatorWait),
-								db3.log.waitForReplicator(session.peers[0].identity.publicKey, replicatorWait),
-							]);
-						};
-
 						const rebalanceAllPeers = async () => {
 							await Promise.all([
 								db1.log.rebalanceAll({ clearCache: true }),
@@ -2331,7 +2323,11 @@ testSetups.forEach((setup) => {
 								},
 							});
 
-							await waitForHistoricalReplicationMesh();
+							// Historical replication only needs the writer to know that the two
+							// joiners are mature replicators before we start forcing rebalance.
+							// Requiring the full 3-peer mesh here is stronger than the product
+							// contract and has repeatedly flaked in the full part-7 shard.
+							await waitForDb1Replicators();
 							await waitForResolved(async () => {
 								await rebalanceAllPeers();
 								await checkReplicas([db1, db2, db3], 3, entryCount);
@@ -2351,10 +2347,16 @@ testSetups.forEach((setup) => {
 
 							await waitForResolved(async () => {
 								await rebalanceAllPeers();
+								// By the time we assert per-store historical metadata, the joining
+								// replica must have observed the writer as an active replicator.
+								// Waiting here keeps the precondition aligned with the final check
+								// instead of blocking earlier on full-mesh role visibility.
+								await db2.log.waitForReplicator(session.peers[0].identity.publicKey, replicatorWait);
 								await check(db2);
 							}, commitReplicationWait);
 							await waitForResolved(async () => {
 								await rebalanceAllPeers();
+								await db3.log.waitForReplicator(session.peers[0].identity.publicKey, replicatorWait);
 								await check(db3);
 							}, commitReplicationWait);
 						});
