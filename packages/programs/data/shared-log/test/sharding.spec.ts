@@ -452,10 +452,23 @@ testSetups.forEach((setup) => {
 				]);
 				await waitForParticipationToSettle(db1, db2, db3);
 				await waitForDistributionQuiesced(db1, db2, db3);
-				// This small u64 sample is a correctness check for 3-peer convergence, not an
-				// exact fairness benchmark. The creator can legitimately still retain all 15
-				// entries after redistribution settles, so do not enforce a stricter upper
-				// bound than the full sample size here.
+				if (setup.name === "u64-iblt") {
+					// For the tiny 15-entry u64 sample, raw per-store length caps are too coarse:
+					// one entry changes the percentage by ~6.7%. Use participation closeness as
+					// the fairness signal, then keep the bounded replica check for actual data
+					// presence. That preserves the redistribution contract without overfitting to
+					// one discrete sample layout.
+					const participationWaitOpts = { timeout: 60_000, delayInterval: 500 } as const;
+					await Promise.all([db1, db2, db3].map((db) =>
+						waitForResolved(
+							async () =>
+								expect(Math.abs((await db.log.calculateTotalParticipation()) - 1)).lessThan(
+									0.25,
+								),
+							participationWaitOpts,
+						),
+					));
+				}
 				await checkBounded(
 					entryCount,
 					setup.name === "u32-simple" ? 0.35 : 0.4,
