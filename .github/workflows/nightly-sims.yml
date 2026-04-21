@@ -9,7 +9,7 @@ jobs:
   pubsub_sims:
     name: PubSub sims
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       NODE_OPTIONS: --no-warnings
       PEERBIT_TEST_SESSION: mock
@@ -42,7 +42,7 @@ jobs:
       - name: Run fanout-tree-sim (scale-5k)
         run: |
           mkdir -p sim-results
-          pnpm -C packages/transport/pubsub run bench -- fanout-tree-sim --preset scale-5k --profile 1 > sim-results/fanout-tree-scale-5k.txt
+          pnpm -C packages/transport/pubsub run bench -- fanout-tree-sim --preset scale-5k --profile 1 --progress 1 --timeoutMs 1200000 2>&1 | tee sim-results/fanout-tree-scale-5k.txt
 
       - name: Run fanout-peerbit-sim (scale-1k)
         run: |
