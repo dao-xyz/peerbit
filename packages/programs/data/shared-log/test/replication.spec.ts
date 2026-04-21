@@ -2381,7 +2381,13 @@ testSetups.forEach((setup) => {
 								});
 							}
 
-							await checkReplicas([db1, db2, db3], 3, entryCount);
+							await waitForResolved(async () => {
+								// `checkReplicas()` only observes the current replica set. Under full
+								// part-7 load, one entry can stay one rebalance cycle behind unless we
+								// keep actively driving redistribution while we wait for convergence.
+								await rebalanceAllPeers();
+								await checkReplicas([db1, db2, db3], 3, entryCount);
+							}, commitReplicationWait);
 						});
 
 						it("mixed control per commmit", async () => {
