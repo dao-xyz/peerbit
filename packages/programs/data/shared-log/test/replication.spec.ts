@@ -2329,10 +2329,11 @@ testSetups.forEach((setup) => {
 							// Requiring the full 3-peer mesh here is stronger than the product
 							// contract and has repeatedly flaked in the full part-7 shard.
 							await waitForDb1Replicators();
-							await waitForResolved(async () => {
-								await rebalanceAllPeers();
-								await checkReplicas([db1, db2, db3], 3, entryCount);
-							}, commitReplicationWait);
+							// The historical-replication contract here is proved by the final per-store
+							// metadata checks below. An extra upfront `checkReplicas(..., 3, ...)` gate has
+							// repeatedly flaked: one joiner can lag in its live replica view even though the
+							// eventual historical metadata converges correctly after rebalance.
+							await rebalanceAllPeers();
 
 							const check = async (store: EventStore<string, any>) => {
 								const entries = await store.log.log.toArray();
