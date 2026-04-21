@@ -2299,14 +2299,6 @@ testSetups.forEach((setup) => {
 							]);
 						};
 
-						const rebalanceAllPeers = async () => {
-							await Promise.all([
-								db1.log.rebalanceAll({ clearCache: true }),
-								db2.log.rebalanceAll({ clearCache: true }),
-								db3.log.rebalanceAll({ clearCache: true }),
-							]);
-						};
-
 						it("control per commmit put before join", async () => {
 							// This test validates historical replication semantics, not bulk
 							// throughput. Keep the sample correctness-sized so it does not
@@ -2327,15 +2319,12 @@ testSetups.forEach((setup) => {
 							});
 
 							// Historical replication only needs the writer to know that the two
-							// joiners are mature replicators before we start forcing rebalance.
-							// Requiring the full 3-peer mesh here is stronger than the product
-							// contract and has repeatedly flaked in the full part-7 shard.
+							// joiners are mature replicators before we start checking the final
+							// per-store metadata contract.
 							await waitForDb1Replicators();
-							// The historical-replication contract here is proved by the final per-store
-							// metadata checks below. An extra upfront `checkReplicas(..., 3, ...)` gate has
-							// repeatedly flaked: one joiner can lag in its live replica view even though the
-							// eventual historical metadata converges correctly after rebalance.
-							await rebalanceAllPeers();
+							// SharedLog now schedules its own delayed authoritative join repair.
+							// Keep this test on the real contract instead of forcing a manual
+							// `rebalanceAll()` from the test itself.
 
 							const check = async (store: EventStore<string, any>) => {
 								const entries = await store.log.log.toArray();
@@ -2350,15 +2339,14 @@ testSetups.forEach((setup) => {
 							};
 
 							await waitForResolved(async () => {
-								await rebalanceAllPeers();
 								// The contract here is historical replication metadata, not whether
 								// a particular `waitForReplicator()` event fired on time under shard
-								// load. `check(db2)` is the real source of truth, so keep retrying
-								// rebalance + metadata checks instead of adding another transient gate.
+								// load. `check(db2)` is the real source of truth, and the runtime
+								// should self-heal missed pre-join backfill without a test-driven
+								// `rebalanceAll()` loop.
 								await check(db2);
 							}, commitReplicationWait);
 							await waitForResolved(async () => {
-								await rebalanceAllPeers();
 								// Same reasoning as above for db3: the final metadata check already
 								// proves whether the pre-join history converged correctly.
 								await check(db3);
@@ -2382,10 +2370,9 @@ testSetups.forEach((setup) => {
 							}
 
 							await waitForResolved(async () => {
-								// `checkReplicas()` only observes the current replica set. Under full
-								// part-7 load, one entry can stay one rebalance cycle behind unless we
-								// keep actively driving redistribution while we wait for convergence.
-								await rebalanceAllPeers();
+								// `checkReplicas()` only observes the current replica set. The runtime
+								// should now drive the missing join/backfill repair on its own, so this
+								// test no longer forces redistribution with `rebalanceAll()`.
 								await checkReplicas([db1, db2, db3], 3, entryCount);
 							}, commitReplicationWait);
 						});

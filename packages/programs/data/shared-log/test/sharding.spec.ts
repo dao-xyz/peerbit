@@ -689,15 +689,9 @@ testSetups.forEach((setup) => {
 						},
 					},
 				);
-				// A late join needs one explicit rebalance pass before the bounded
-				// distribution checks become stable under shard load. Without it, the
-				// u64 path can stay one redistribution cycle behind even though the
-				// final contract is otherwise healthy.
-				await Promise.all([
-					db1.log.rebalanceAll({ clearCache: true }),
-					db2.log.rebalanceAll({ clearCache: true }),
-					db3.log.rebalanceAll({ clearCache: true }),
-				]);
+				// The runtime now schedules a delayed authoritative repair pass for late
+				// joiners. Keep this test on settle/quiesce only so it verifies the
+				// product path instead of forcing a manual rebalance from the test.
 				await waitForParticipationToSettle(db1, db2, db3);
 				await waitForDistributionQuiesced(db1, db2, db3);
 				await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);

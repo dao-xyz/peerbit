@@ -525,6 +525,7 @@ const JOIN_WARMUP_RETRY_SCHEDULE_MS = [
 	30_000,
 	60_000,
 ];
+const JOIN_AUTHORITATIVE_REPAIR_DELAY_MS = 2_000;
 
 const toPositiveInteger = (
 	value: number | undefined,
@@ -762,6 +763,8 @@ export class SharedLog<
 	private _repairSweepForceFreshPending!: boolean;
 	private _repairSweepAddedPeersPending!: Set<string>;
 	private _repairSweepOptimisticGidPeersPending!: Map<string, Map<string, number>>;
+	private _joinAuthoritativeRepairTimer?: ReturnType<typeof setTimeout>;
+	private _joinAuthoritativeRepairPeers!: Set<string>;
 	private _topicSubscribersCache!: Map<
 		string,
 		{ expiresAt: number; keys: PublicSignKey[] }
@@ -2645,6 +2648,48 @@ export class SharedLog<
 		}
 	}
 
+	private scheduleJoinAuthoritativeRepair(peers: Set<string>) {
+		if (this.closed || peers.size === 0) {
+			return;
+		}
+
+		for (const peer of peers) {
+			this._joinAuthoritativeRepairPeers.add(peer);
+		}
+
+		if (this._joinAuthoritativeRepairTimer) {
+			return;
+		}
+
+		const timer = setTimeout(() => {
+			this._repairRetryTimers.delete(timer);
+			if (this._joinAuthoritativeRepairTimer === timer) {
+				this._joinAuthoritativeRepairTimer = undefined;
+			}
+			if (this.closed) {
+				return;
+			}
+
+			const pendingPeers = new Set(this._joinAuthoritativeRepairPeers);
+			this._joinAuthoritativeRepairPeers.clear();
+			if (pendingPeers.size === 0) {
+				return;
+			}
+
+			// The cheap join warmup path can still leave one historical entry behind if the
+			// first maybe-sync sweep runs before the new peer has fully hydrated. Schedule one
+			// delayed authoritative pass for the added peers so late join backfill does not
+			// depend on an explicit `rebalanceAll()` from tests or callers.
+			this.scheduleRepairSweep({
+				forceFreshDelivery: true,
+				addedPeers: pendingPeers,
+			});
+		}, JOIN_AUTHORITATIVE_REPAIR_DELAY_MS);
+		timer.unref?.();
+		this._repairRetryTimers.add(timer);
+		this._joinAuthoritativeRepairTimer = timer;
+	}
+
 	private async runRepairSweep() {
 		try {
 			while (!this.closed) {
@@ -3048,6 +3093,8 @@ export class SharedLog<
 		this._repairSweepForceFreshPending = false;
 		this._repairSweepAddedPeersPending = new Set();
 		this._repairSweepOptimisticGidPeersPending = new Map();
+		this._joinAuthoritativeRepairTimer = undefined;
+		this._joinAuthoritativeRepairPeers = new Set();
 		this._topicSubscribersCache = new Map();
 		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
 		this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
@@ -4115,6 +4162,11 @@ export class SharedLog<
 		this._repairSweepForceFreshPending = false;
 		this._repairSweepAddedPeersPending.clear();
 		this._repairSweepOptimisticGidPeersPending.clear();
+		if (this._joinAuthoritativeRepairTimer) {
+			clearTimeout(this._joinAuthoritativeRepairTimer);
+			this._joinAuthoritativeRepairTimer = undefined;
+		}
+		this._joinAuthoritativeRepairPeers.clear();
 
 		for (const [_k, v] of this._pendingDeletes) {
 			v.clear();
@@ -6592,6 +6644,10 @@ export class SharedLog<
 						forceFreshDelivery: false,
 						addedPeers,
 					});
+				}
+
+				if (!forceFreshDelivery && addedPeers.size > 0) {
+					this.scheduleJoinAuthoritativeRepair(addedPeers);
 				}
 
 			for (const target of [...uncheckedDeliver.keys()]) {
