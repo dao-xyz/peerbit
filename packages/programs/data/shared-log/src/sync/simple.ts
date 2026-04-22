@@ -58,6 +58,17 @@ export class RequestMaybeSyncCoordinate extends TransportMessage {
 	}
 }
 
+@variant([0, 6])
+export class ConfirmEntriesMessage extends TransportMessage {
+	@field({ type: vec("string") })
+	hashes: string[];
+
+	constructor(props: { hashes: string[] }) {
+		super();
+		this.hashes = props.hashes;
+	}
+}
+
 const getHashesFromSymbols = async (
 	symbols: bigint[],
 	entryIndex: Index<EntryReplicated<any>, any>,

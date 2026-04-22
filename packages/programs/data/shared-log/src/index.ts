@@ -168,7 +168,7 @@ import type {
 	Syncronizer,
 } from "./sync/index.js";
 import { RatelessIBLTSynchronizer } from "./sync/rateless-iblt.js";
-import { SimpleSyncronizer } from "./sync/simple.js";
+import { ConfirmEntriesMessage, SimpleSyncronizer } from "./sync/simple.js";
 import { groupByGid } from "./utils.js";
 
 const toLocalPublicSignKey = (
@@ -536,9 +536,9 @@ const JOIN_AUTHORITATIVE_RETRY_SCHEDULE_MS = [
 ];
 const APPEND_BACKFILL_RETRY_SCHEDULE_MS = [0, 1_000, 3_000, 7_000];
 const JOIN_AUTHORITATIVE_REPAIR_DELAY_MS = 2_000;
-const JOIN_AUTHORITATIVE_REPAIR_RESCAN_DELAY_MS = 5_000;
 const APPEND_BACKFILL_DELAY_MS = 500;
 const ASSUME_SYNCED_REPAIR_SUPPRESSION_MS = 5_000;
+const REPAIR_CONFIRMATION_HASH_BATCH_SIZE = 1_024;
 
 type RepairDispatchMode =
 	| "join-warmup"
@@ -585,6 +585,17 @@ const cloneRepairPendingPeersByMode = (
 ) =>
 	new Map<RepairDispatchMode, Set<string>>(
 		REPAIR_DISPATCH_MODES.map((mode) => [mode, new Set(pending.get(mode) ?? [])]),
+	);
+
+const createRepairFrontierByMode = () =>
+	new Map<
+		RepairDispatchMode,
+		Map<string, Map<string, EntryReplicated<any>>>
+	>(REPAIR_DISPATCH_MODES.map((mode) => [mode, new Map()]));
+
+const createRepairActiveTargetsByMode = () =>
+	new Map<RepairDispatchMode, Set<string>>(
+		REPAIR_DISPATCH_MODES.map((mode) => [mode, new Set()]),
 	);
 
 const getRepairRetrySchedule = (mode: RepairDispatchMode) => {
@@ -845,6 +856,11 @@ export class SharedLog<
 	private _repairSweepRunning!: boolean;
 	private _repairSweepPendingModes!: Set<RepairDispatchMode>;
 	private _repairSweepPendingPeersByMode!: Map<RepairDispatchMode, Set<string>>;
+	private _repairFrontierByMode!: Map<
+		RepairDispatchMode,
+		Map<string, Map<string, EntryReplicated<R>>>
+	>;
+	private _repairFrontierActiveTargetsByMode!: Map<RepairDispatchMode, Set<string>>;
 	private _repairSweepOptimisticGidPeersPending!: Map<string, Map<string, number>>;
 	private _joinAuthoritativeRepairTimer?: ReturnType<typeof setTimeout>;
 	private _joinAuthoritativeRepairPeers!: Set<string>;
@@ -2133,6 +2149,7 @@ export class SharedLog<
 		// Keep local sync/prune state consistent even when a peer disappears
 		// through replication-info updates without a topic unsubscribe event.
 		this.removePeerFromGidPeerHistory(keyHash);
+		this.removeRepairFrontierTarget(keyHash);
 		this._recentRepairDispatch.delete(keyHash);
 		if (!isMe) {
 			this.syncronizer.onPeerDisconnected(keyHash);
@@ -2664,6 +2681,238 @@ export class SharedLog<
 		return this._assumeSyncedRepairSuppressedUntil > Date.now();
 	}
 
+	private isFrontierTrackedRepairMode(mode: RepairDispatchMode) {
+		return mode !== "join-warmup";
+	}
+
+	private async sleepTracked(delayMs: number) {
+		if (delayMs <= 0) {
+			return;
+		}
+		await new Promise<void>((resolve) => {
+			const timer = setTimeout(() => {
+				this._repairRetryTimers.delete(timer);
+				resolve();
+			}, delayMs);
+			timer.unref?.();
+			this._repairRetryTimers.add(timer);
+		});
+	}
+
+	private queueRepairFrontierEntries(
+		mode: RepairDispatchMode,
+		target: string,
+		entries: Map<string, EntryReplicated<R>>,
+	) {
+		let targets = this._repairFrontierByMode.get(mode);
+		if (!targets) {
+			targets = new Map();
+			this._repairFrontierByMode.set(mode, targets);
+		}
+		let pending = targets.get(target);
+		if (!pending) {
+			pending = new Map();
+			targets.set(target, pending);
+		}
+		for (const [hash, entry] of entries) {
+			pending.set(hash, entry);
+		}
+	}
+
+	private clearRepairFrontierHashes(target: string, hashes: Iterable<string>) {
+		const hashList = [...hashes];
+		if (hashList.length === 0) {
+			return;
+		}
+		for (const mode of REPAIR_DISPATCH_MODES) {
+			const pending = this._repairFrontierByMode.get(mode)?.get(target);
+			if (!pending) {
+				continue;
+			}
+			for (const hash of hashList) {
+				pending.delete(hash);
+			}
+			if (pending.size === 0) {
+				this._repairFrontierByMode.get(mode)?.delete(target);
+			}
+		}
+	}
+
+	private removeRepairFrontierTarget(target: string) {
+		for (const mode of REPAIR_DISPATCH_MODES) {
+			this._repairFrontierByMode.get(mode)?.delete(target);
+			this._repairFrontierActiveTargetsByMode.get(mode)?.delete(target);
+		}
+	}
+
+	private async sendRepairConfirmation(
+		target: PublicSignKey,
+		hashes: Iterable<string>,
+	) {
+		const uniqueHashes = [...new Set(hashes)];
+		for (let i = 0; i < uniqueHashes.length; i += REPAIR_CONFIRMATION_HASH_BATCH_SIZE) {
+			const chunk = uniqueHashes.slice(
+				i,
+				i + REPAIR_CONFIRMATION_HASH_BATCH_SIZE,
+			);
+			await this.rpc.send(new ConfirmEntriesMessage({ hashes: chunk }), {
+				priority: 1,
+				mode: new SilentDelivery({ to: [target], redundancy: 1 }),
+			});
+		}
+	}
+
+	private async sendMaybeMissingEntriesNow(
+		target: string,
+		entries: Map<string, EntryReplicated<R>>,
+		options: {
+			mode: RepairDispatchMode;
+			transport: RepairTransportMode;
+			bypassRecentDedupe?: boolean;
+		},
+	) {
+		if (entries.size === 0) {
+			return;
+		}
+
+		const now = Date.now();
+		let recentlyDispatchedByHash = this._recentRepairDispatch.get(target);
+		if (!recentlyDispatchedByHash) {
+			recentlyDispatchedByHash = new Map();
+			this._recentRepairDispatch.set(target, recentlyDispatchedByHash);
+		}
+		for (const [hash, ts] of recentlyDispatchedByHash) {
+			if (now - ts > RECENT_REPAIR_DISPATCH_TTL_MS) {
+				recentlyDispatchedByHash.delete(hash);
+			}
+		}
+
+		const filteredEntries =
+			options.bypassRecentDedupe === true
+				? new Map(entries)
+				: new Map<string, EntryReplicated<any>>();
+		if (options.bypassRecentDedupe !== true) {
+			for (const [hash, entry] of entries) {
+				const prev = recentlyDispatchedByHash.get(hash);
+				if (prev != null && now - prev <= RECENT_REPAIR_DISPATCH_TTL_MS) {
+					continue;
+				}
+				recentlyDispatchedByHash.set(hash, now);
+				filteredEntries.set(hash, entry);
+			}
+		} else {
+			for (const hash of entries.keys()) {
+				recentlyDispatchedByHash.set(hash, now);
+			}
+		}
+		if (filteredEntries.size === 0) {
+			return;
+		}
+
+		const bucket = this._repairMetrics[options.mode];
+		bucket.dispatches += 1;
+		bucket.entries += filteredEntries.size;
+		if (options.transport === "simple") {
+			bucket.simpleFallbackPasses += 1;
+		} else {
+			bucket.ratelessFirstPasses += 1;
+		}
+
+		if (
+			options.transport === "simple" &&
+			this.syncronizer instanceof RatelessIBLTSynchronizer
+		) {
+			await Promise.resolve(
+				this.syncronizer.simple.onMaybeMissingEntries({
+					entries: filteredEntries,
+					targets: [target],
+				}),
+			).catch((error: any) => logger.error(error));
+			return;
+		}
+
+		await Promise.resolve(
+			this.syncronizer.onMaybeMissingEntries({
+				entries: filteredEntries,
+				targets: [target],
+			}),
+		).catch((error: any) => logger.error(error));
+	}
+
+	private ensureRepairFrontierRunner(
+		mode: RepairDispatchMode,
+		target: string,
+		retryScheduleMs?: number[],
+	) {
+		const activeTargets = this._repairFrontierActiveTargetsByMode.get(mode);
+		if (!activeTargets || activeTargets.has(target) || this.closed) {
+			return;
+		}
+		activeTargets.add(target);
+		const retrySchedule =
+			retryScheduleMs && retryScheduleMs.length > 0
+				? retryScheduleMs
+				: getRepairRetrySchedule(mode);
+		const steadyStateDelay =
+			retrySchedule.length > 1
+				? Math.max(1, retrySchedule[retrySchedule.length - 1] - retrySchedule[retrySchedule.length - 2])
+				: Math.max(retrySchedule[0] || 1_000, 1_000);
+
+		void (async () => {
+			let attemptIndex = 0;
+			try {
+				for (;;) {
+					if (this.closed) {
+						return;
+					}
+					const pending = this._repairFrontierByMode.get(mode)?.get(target);
+					if (!pending || pending.size === 0) {
+						return;
+					}
+
+					if (
+						(mode === "join-warmup" || mode === "join-authoritative") &&
+						this.isAssumeSyncedRepairSuppressed()
+					) {
+						await this.sleepTracked(
+							Math.max(250, this._assumeSyncedRepairSuppressedUntil - Date.now()),
+						);
+						continue;
+					}
+
+					await this.sendMaybeMissingEntriesNow(target, pending, {
+						mode,
+						transport: getRepairTransportForAttempt(mode, attemptIndex),
+						bypassRecentDedupe: true,
+					});
+
+					const remaining = this._repairFrontierByMode.get(mode)?.get(target);
+					if (!remaining || remaining.size === 0) {
+						return;
+					}
+
+					const waitMs =
+						attemptIndex + 1 < retrySchedule.length
+							? Math.max(0, retrySchedule[attemptIndex + 1] - retrySchedule[attemptIndex])
+							: steadyStateDelay;
+					attemptIndex = Math.min(attemptIndex + 1, retrySchedule.length - 1);
+					await this.sleepTracked(waitMs);
+				}
+			} finally {
+				activeTargets.delete(target);
+				if (
+					!this.closed &&
+					(this._repairFrontierByMode.get(mode)?.get(target)?.size || 0) > 0
+				) {
+					this.ensureRepairFrontierRunner(mode, target, retryScheduleMs);
+				}
+			}
+		})().catch((error: any) => {
+			activeTargets.delete(target);
+			logger.error(error);
+		});
+	}
+
 	private flushAppendBackfill() {
 		if (this._appendBackfillPendingByTarget.size === 0) {
 			return;
@@ -2716,6 +2965,16 @@ export class SharedLog<
 		},
 	) {
 		if (entries.size === 0) {
+			return;
+		}
+
+		if (this.isFrontierTrackedRepairMode(options.mode)) {
+			this.queueRepairFrontierEntries(options.mode, target, entries);
+			this.ensureRepairFrontierRunner(
+				options.mode,
+				target,
+				options.retryScheduleMs,
+			);
 			return;
 		}
 
@@ -2809,7 +3068,7 @@ export class SharedLog<
 				}
 				void run(transport);
 			}, delayMs);
-		timer.unref?.();
+			timer.unref?.();
 			this._repairRetryTimers.add(timer);
 		});
 	}
@@ -2863,29 +3122,13 @@ export class SharedLog<
 				return;
 			}
 
-			// The cheap join warmup path can still leave entries behind in two windows:
-			// historical entries that were present before the join, and live writes that land
-			// while the new peer is still becoming authoritative. Run one delayed scan, then
-			// one follow-up rescan, so this recovery stays join-scoped instead of pushing more
-			// work onto the hot append path.
+			// Historical backfill should be seeded once from the authoritative join sweep.
+			// Any live writes that land after the join transition are tracked separately by
+			// the append-backfill frontier and clear on explicit receipt confirmation.
 			this.scheduleRepairSweep({
 				mode: "join-authoritative",
 				peers: pendingPeers,
 			});
-
-			const followUpPeers = new Set(pendingPeers);
-			const followUpTimer = setTimeout(() => {
-				this._repairRetryTimers.delete(followUpTimer);
-				if (this.closed || this.isAssumeSyncedRepairSuppressed()) {
-					return;
-				}
-				this.scheduleRepairSweep({
-					mode: "join-authoritative",
-					peers: followUpPeers,
-				});
-			}, JOIN_AUTHORITATIVE_REPAIR_RESCAN_DELAY_MS);
-			followUpTimer.unref?.();
-			this._repairRetryTimers.add(followUpTimer);
 		}, JOIN_AUTHORITATIVE_REPAIR_DELAY_MS);
 		timer.unref?.();
 		this._repairRetryTimers.add(timer);
@@ -2955,6 +3198,9 @@ export class SharedLog<
 					const entries = targets?.get(target);
 					if (!entries || entries.size === 0) {
 						return;
+					}
+					if (mode === "join-authoritative" || mode === "churn") {
+						this._repairFrontierByMode.get(mode)?.set(target, new Map(entries));
 					}
 					this.dispatchMaybeMissingEntries(target, entries, {
 						bypassRecentDedupe: true,
@@ -3052,6 +3298,17 @@ export class SharedLog<
 						}
 						if (pendingPeerCounts.size === 0) {
 							this._repairSweepOptimisticGidPeersPending.delete(gid);
+						}
+					}
+				}
+
+				for (const mode of pendingModes) {
+					if (mode !== "join-authoritative" && mode !== "churn") {
+						continue;
+					}
+					for (const target of pendingPeersByMode.get(mode) ?? []) {
+						if ((pendingByMode.get(mode)?.get(target)?.size || 0) === 0) {
+							this._repairFrontierByMode.get(mode)?.delete(target);
 						}
 					}
 				}
@@ -3320,6 +3577,11 @@ export class SharedLog<
 		this._repairSweepRunning = false;
 		this._repairSweepPendingModes = new Set();
 		this._repairSweepPendingPeersByMode = createRepairPendingPeersByMode();
+		this._repairFrontierByMode = createRepairFrontierByMode() as Map<
+			RepairDispatchMode,
+			Map<string, Map<string, EntryReplicated<R>>>
+		>;
+		this._repairFrontierActiveTargetsByMode = createRepairActiveTargetsByMode();
 		this._repairSweepOptimisticGidPeersPending = new Map();
 		this._joinAuthoritativeRepairTimer = undefined;
 		this._joinAuthoritativeRepairPeers = new Set();
@@ -4401,6 +4663,12 @@ export class SharedLog<
 			this._joinAuthoritativeRepairTimer = undefined;
 		}
 		this._joinAuthoritativeRepairPeers.clear();
+		for (const targets of this._repairFrontierByMode.values()) {
+			targets.clear();
+		}
+		for (const targets of this._repairFrontierActiveTargetsByMode.values()) {
+			targets.clear();
+		}
 		if (this._appendBackfillTimer) {
 			clearTimeout(this._appendBackfillTimer);
 			this._appendBackfillTimer = undefined;
@@ -4588,6 +4856,7 @@ export class SharedLog<
 
 				if (heads) {
 					const filteredHeads: EntryWithRefs<any>[] = [];
+					const confirmedHashes = new Set<string>();
 					for (const head of heads) {
 						if (!(await this.log.has(head.entry.hash))) {
 							head.entry.init({
@@ -4596,10 +4865,15 @@ export class SharedLog<
 								encoding: this.log.encoding,
 							});
 							filteredHeads.push(head);
+						} else {
+							confirmedHashes.add(head.entry.hash);
 						}
 					}
 
 					if (filteredHeads.length === 0) {
+						if (confirmedHashes.size > 0 && !context.from.equals(this.node.identity.publicKey)) {
+							await this.sendRepairConfirmation(context.from!, confirmedHashes);
+						}
 						return;
 					}
 					const groupedByGid = await groupByGid(filteredHeads);
@@ -4734,6 +5008,9 @@ export class SharedLog<
 
 							if (toMerge.length > 0) {
 								await this.log.join(toMerge);
+								for (const merged of toMerge) {
+									confirmedHashes.add(merged.hash);
+								}
 
 								toDelete?.map((x) =>
 									// TODO types
@@ -4780,6 +5057,9 @@ export class SharedLog<
 						promises.push(fn()); // we do this concurrently since waitForIsLeader might be a blocking operation for some entries
 					}
 					await Promise.all(promises);
+					if (confirmedHashes.size > 0 && !context.from.equals(this.node.identity.publicKey)) {
+						await this.sendRepairConfirmation(context.from!, confirmedHashes);
+					}
 				}
 			} else if (msg instanceof RequestIPrune) {
 				const hasAndIsLeader: string[] = [];
@@ -4901,6 +5181,9 @@ export class SharedLog<
 				for (const hash of msg.hashes) {
 					this._pendingDeletes.get(hash)?.resolve(context.from.hashcode());
 				}
+			} else if (msg instanceof ConfirmEntriesMessage) {
+				this.clearRepairFrontierHashes(context.from.hashcode(), msg.hashes);
+				return;
 			} else if (await this.syncronizer.onMessage(msg, context)) {
 				return; // the syncronizer has handled the message
 			} else if (msg instanceof BlocksMessage) {
