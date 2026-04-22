@@ -536,6 +536,7 @@ const JOIN_AUTHORITATIVE_RETRY_SCHEDULE_MS = [
 ];
 const APPEND_BACKFILL_RETRY_SCHEDULE_MS = [0, 1_000, 3_000, 7_000];
 const JOIN_AUTHORITATIVE_REPAIR_DELAY_MS = 2_000;
+const JOIN_AUTHORITATIVE_REPAIR_RESCAN_DELAY_MS = 5_000;
 const APPEND_BACKFILL_DELAY_MS = 500;
 const ASSUME_SYNCED_REPAIR_SUPPRESSION_MS = 5_000;
 
@@ -2862,14 +2863,29 @@ export class SharedLog<
 				return;
 			}
 
-			// The cheap join warmup path can still leave one historical entry behind if the
-			// first maybe-sync sweep runs before the new peer has fully hydrated. Schedule one
-			// delayed authoritative pass for the added peers so late join backfill does not
-			// depend on an explicit `rebalanceAll()` from tests or callers.
+			// The cheap join warmup path can still leave entries behind in two windows:
+			// historical entries that were present before the join, and live writes that land
+			// while the new peer is still becoming authoritative. Run one delayed scan, then
+			// one follow-up rescan, so this recovery stays join-scoped instead of pushing more
+			// work onto the hot append path.
 			this.scheduleRepairSweep({
 				mode: "join-authoritative",
 				peers: pendingPeers,
 			});
+
+			const followUpPeers = new Set(pendingPeers);
+			const followUpTimer = setTimeout(() => {
+				this._repairRetryTimers.delete(followUpTimer);
+				if (this.closed || this.isAssumeSyncedRepairSuppressed()) {
+					return;
+				}
+				this.scheduleRepairSweep({
+					mode: "join-authoritative",
+					peers: followUpPeers,
+				});
+			}, JOIN_AUTHORITATIVE_REPAIR_RESCAN_DELAY_MS);
+			followUpTimer.unref?.();
+			this._repairRetryTimers.add(followUpTimer);
 		}, JOIN_AUTHORITATIVE_REPAIR_DELAY_MS);
 		timer.unref?.();
 		this._repairRetryTimers.add(timer);
