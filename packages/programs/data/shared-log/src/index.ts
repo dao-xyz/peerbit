@@ -611,6 +611,30 @@ const getRepairRetrySchedule = (mode: RepairDispatchMode) => {
 	}
 };
 
+const resolveRepairRetrySchedule = (
+	mode: RepairDispatchMode,
+	override?: number[],
+	trackedFrontier = false,
+) => {
+	const fallback = getRepairRetrySchedule(mode);
+	if (!override || override.length === 0) {
+		return fallback;
+	}
+	if (
+		trackedFrontier &&
+		override.length === 1 &&
+		override[0] === 0 &&
+		fallback.length > 1
+	) {
+		// A tracked frontier with only an immediate retry would otherwise stay on
+		// attempt 0 forever, which means rateless-only retries and no sparse-tail
+		// simple fallback. Keep the immediate seed, then continue with the normal
+		// tracked repair schedule.
+		return [0, ...fallback.slice(1)];
+	}
+	return override;
+};
+
 const getRepairTransportForAttempt = (
 	mode: RepairDispatchMode,
 	attemptIndex: number,
@@ -2849,10 +2873,11 @@ export class SharedLog<
 			return;
 		}
 		activeTargets.add(target);
-		const retrySchedule =
-			retryScheduleMs && retryScheduleMs.length > 0
-				? retryScheduleMs
-				: getRepairRetrySchedule(mode);
+		const retrySchedule = resolveRepairRetrySchedule(
+			mode,
+			retryScheduleMs,
+			this.isFrontierTrackedRepairMode(mode),
+		);
 		const steadyStateDelay =
 			retrySchedule.length > 1
 				? Math.max(1, retrySchedule[retrySchedule.length - 1] - retrySchedule[retrySchedule.length - 2])
@@ -3020,10 +3045,11 @@ export class SharedLog<
 			return;
 		}
 
-		const retrySchedule =
-			options.retryScheduleMs && options.retryScheduleMs.length > 0
-				? options.retryScheduleMs
-				: getRepairRetrySchedule(options.mode);
+		const retrySchedule = resolveRepairRetrySchedule(
+			options.mode,
+			options.retryScheduleMs,
+			this.isFrontierTrackedRepairMode(options.mode),
+		);
 		const bucket = this._repairMetrics[options.mode];
 		bucket.dispatches += 1;
 		bucket.entries += filteredEntries.size;
