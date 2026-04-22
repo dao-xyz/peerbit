@@ -31,8 +31,18 @@ import {
 	decodeReplicas,
 	maxReplicas,
 } from "../src/replication.js";
-import { RatelessIBLTSynchronizer } from "../src/sync/rateless-iblt.js";
-import { SimpleSyncronizer } from "../src/sync/simple.js";
+import {
+	MoreSymbols,
+	RatelessIBLTSynchronizer,
+	RequestMoreSymbols,
+	StartSync,
+} from "../src/sync/rateless-iblt.js";
+import {
+	ConfirmEntriesMessage,
+	RequestMaybeSync,
+	ResponseMaybeSync,
+	SimpleSyncronizer,
+} from "../src/sync/simple.js";
 import {
 	type TestSetupConfig,
 	checkBounded,
@@ -43,6 +53,7 @@ import {
 	getReceivedHeads,
 	getUnionSize,
 	slowDownMessage,
+	slowDownMessagesWithSeed,
 	slowDownSend,
 	waitForConverged,
 } from "./utils.js";
@@ -2308,6 +2319,63 @@ testSetups.forEach((setup) => {
 							]);
 						};
 
+						const repairChaosRules = [
+							{
+								type: ExchangeHeadsMessage,
+								minDelayMs: 40,
+								maxDelayMs: 180,
+								probability: 0.45,
+							},
+							{
+								type: RequestMaybeSync,
+								minDelayMs: 30,
+								maxDelayMs: 140,
+								probability: 0.35,
+							},
+							{
+								type: ResponseMaybeSync,
+								minDelayMs: 30,
+								maxDelayMs: 140,
+								probability: 0.35,
+							},
+							{
+								type: ConfirmEntriesMessage,
+								minDelayMs: 20,
+								maxDelayMs: 120,
+								probability: 0.3,
+							},
+							{
+								type: StartSync,
+								minDelayMs: 30,
+								maxDelayMs: 160,
+								probability: 0.25,
+							},
+							{
+								type: MoreSymbols,
+								minDelayMs: 20,
+								maxDelayMs: 120,
+								probability: 0.25,
+							},
+							{
+								type: RequestMoreSymbols,
+								minDelayMs: 20,
+								maxDelayMs: 120,
+								probability: 0.25,
+							},
+							{
+								type: AddedReplicationSegmentMessage,
+								minDelayMs: 25,
+								maxDelayMs: 140,
+								probability: 0.25,
+							},
+							{
+								type: AllReplicatingSegmentsMessage,
+								minDelayMs: 25,
+								maxDelayMs: 140,
+								probability: 0.25,
+							},
+						] as const;
+
 						it("control per commmit put before join", async () => {
 							// This test validates historical replication semantics, not bulk
 							// throughput. Keep the sample correctness-sized so it does not
@@ -2374,6 +2442,64 @@ testSetups.forEach((setup) => {
 							// coverage: late historical backfill must now come from SharedLog's own
 							// join repair dispatches, not from a test-driven `rebalanceAll()`.
 							expect(getJoinRepairDispatches()).greaterThan(0);
+						});
+
+						it("control per commmit put before join converges under deterministic delayed repair traffic", async () => {
+							const entryCount = 40;
+							const chaosAbort = new AbortController();
+
+							try {
+								await init({
+									min: 1,
+									beforeOther: async () => {
+										slowDownMessagesWithSeed(
+											db1.log,
+											repairChaosRules,
+											setup.name === "u64-iblt" ? 9_731 : 9_711,
+											chaosAbort.signal,
+										);
+										const value = "hello";
+										for (let i = 0; i < entryCount; i++) {
+											await db1.add(value, {
+												replicas: new AbsoluteReplicas(3),
+												meta: { next: [] },
+											});
+										}
+									},
+								});
+
+								slowDownMessagesWithSeed(
+									db2.log,
+									repairChaosRules,
+									setup.name === "u64-iblt" ? 9_732 : 9_712,
+									chaosAbort.signal,
+								);
+								slowDownMessagesWithSeed(
+									db3.log,
+									repairChaosRules,
+									setup.name === "u64-iblt" ? 9_733 : 9_713,
+									chaosAbort.signal,
+								);
+
+								await waitForDb1Replicators();
+
+								const check = async (store: EventStore<string, any>) => {
+									const entries = await store.log.log.toArray();
+									expect(entries.length).equal(entryCount);
+									let replicated3Times = 0;
+									for (const entry of entries) {
+										if (decodeReplicas(entry).getValue(store.log) === 3) {
+											replicated3Times += 1;
+										}
+									}
+									expect(replicated3Times).equal(entryCount);
+								};
+
+								await waitForResolved(() => check(db2), commitReplicationWait);
+								await waitForResolved(() => check(db3), commitReplicationWait);
+							} finally {
+								chaosAbort.abort();
+							}
 						});
 
 						it("control per commmit put before join keeps the full authoritative repair frontier across sweep flushes", async () => {

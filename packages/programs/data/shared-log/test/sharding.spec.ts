@@ -5,18 +5,36 @@ import { TestSession } from "@peerbit/test-utils";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import sinon from "sinon";
+import { ExchangeHeadsMessage } from "../src/exchange-heads.js";
 import {
 	type ReplicationDomainHash,
 	createReplicationDomainHash,
 } from "../src/replication-domain-hash.js";
-import { AbsoluteReplicas } from "../src/replication.js";
-import { RatelessIBLTSynchronizer } from "../src/sync/rateless-iblt.js";
-import { SimpleSyncronizer } from "../src/sync/simple.js";
+import {
+	AbsoluteReplicas,
+	AddedReplicationSegmentMessage,
+	AllReplicatingSegmentsMessage,
+} from "../src/replication.js";
+import {
+	MoreSymbols,
+	RatelessIBLTSynchronizer,
+	RequestMoreSymbols,
+	StartSync,
+} from "../src/sync/rateless-iblt.js";
+import {
+	ConfirmEntriesMessage,
+	RequestMaybeSync,
+	ResponseMaybeSync,
+	SimpleSyncronizer,
+} from "../src/sync/simple.js";
 import {
 	type TestSetupConfig,
 	checkBounded,
 	checkIfSetupIsUsed,
+	checkReplicas,
 	dbgLogs,
+	getUnionSize,
+	slowDownMessagesWithSeed,
 	waitForConverged,
 } from "./utils.js";
 import { EventStore } from "./utils/stores/event-store.js";
@@ -233,6 +251,26 @@ testSetups.forEach((setup) => {
 						),
 					),
 				);
+			};
+
+			const countIdleUnderReplicatedEntries = async (
+				minReplicas: number,
+				...dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[]
+			) => {
+				const replicasByHash = new Map<string, number>();
+				for (const db of dbs) {
+					for (const entry of await db.log.log.toArray()) {
+						replicasByHash.set(
+							entry.hash,
+							(replicasByHash.get(entry.hash) || 0) + 1,
+						);
+					}
+				}
+				return [...replicasByHash.entries()].filter(
+					([hash, replicas]) =>
+						replicas < minReplicas &&
+						dbs.every((db) => db.log.syncronizer.syncInFlight.has(hash) === false),
+				).length;
 			};
 
 			it("will not have any prunable after balance", async () => {
@@ -635,6 +673,218 @@ testSetups.forEach((setup) => {
 					db3,
 				);
 			});
+
+			(setup.name === "u64-iblt" ? it : it.skip)(
+				"survives deterministic delayed join and leave churn",
+				async () => {
+					const chaosSeed = 7331;
+					const chaosAbort = new AbortController();
+					const chaosRules = [
+						{
+							type: ExchangeHeadsMessage,
+							minDelayMs: 40,
+							maxDelayMs: 180,
+							probability: 0.45,
+						},
+						{
+							type: RequestMaybeSync,
+							minDelayMs: 30,
+							maxDelayMs: 140,
+							probability: 0.35,
+						},
+						{
+							type: ResponseMaybeSync,
+							minDelayMs: 30,
+							maxDelayMs: 140,
+							probability: 0.35,
+						},
+						{
+							type: ConfirmEntriesMessage,
+							minDelayMs: 20,
+							maxDelayMs: 120,
+							probability: 0.3,
+						},
+						{
+							type: StartSync,
+							minDelayMs: 30,
+							maxDelayMs: 160,
+							probability: 0.25,
+						},
+						{
+							type: MoreSymbols,
+							minDelayMs: 20,
+							maxDelayMs: 120,
+							probability: 0.25,
+						},
+						{
+							type: RequestMoreSymbols,
+							minDelayMs: 20,
+							maxDelayMs: 120,
+							probability: 0.25,
+						},
+						{
+							type: AddedReplicationSegmentMessage,
+							minDelayMs: 25,
+							maxDelayMs: 140,
+							probability: 0.25,
+						},
+						{
+							type: AllReplicatingSegmentsMessage,
+							minDelayMs: 25,
+							maxDelayMs: 140,
+							probability: 0.25,
+						},
+					] as const;
+					const applyChaos = (
+						store: EventStore<string, ReplicationDomainHash<any>>,
+						offset: number,
+					) =>
+						slowDownMessagesWithSeed(
+							store.log,
+							chaosRules,
+							chaosSeed + offset,
+							chaosAbort.signal,
+						);
+					const args = {
+						replicas: {
+							min: 2,
+						},
+						timeUntilRoleMaturity: 1_000,
+						waitForPruneDelay: 100,
+						setup,
+					} as const;
+					const entryCount = 36;
+					const replacementLowerBound = Math.max(4, Math.floor(entryCount * 0.2));
+
+					db1 = await session.peers[0].open(new EventStore<string, any>(), {
+						args: {
+							replicate: {
+								offset: 0,
+							},
+							...args,
+						},
+					});
+					applyChaos(db1, 1);
+
+					db2 = await EventStore.open<EventStore<string, any>>(
+						db1.address!,
+						session.peers[1],
+						{
+							args: {
+								replicate: {
+									offset: 0.3333,
+								},
+								...args,
+							},
+						},
+					);
+					applyChaos(db2, 2);
+
+					await appendInBatches(12, (i) =>
+						db1.add(`seed-a-${i}`, { meta: { next: [] } }),
+					);
+
+					db3 = await EventStore.open<EventStore<string, any>>(
+						db1.address!,
+						session.peers[2],
+						{
+							args: {
+								replicate: {
+									offset: 0.6666,
+								},
+								...args,
+							},
+						},
+					);
+					applyChaos(db3, 3);
+
+					await appendInBatches(12, (i) =>
+						db1.add(`seed-b-${i}`, { meta: { next: [] } }),
+					);
+
+					await db2.close();
+
+					await appendInBatches(6, (i) =>
+						db1.add(`seed-c-${i}`, { meta: { next: [] } }),
+					);
+
+					db4 = await EventStore.open<EventStore<string, any>>(
+						db1.address!,
+						session.peers[3],
+						{
+							args: {
+								replicate: {
+									offset: 0.3333,
+								},
+								...args,
+							},
+						},
+					);
+					applyChaos(db4, 4);
+
+					await appendInBatches(6, (i) =>
+						db1.add(`seed-d-${i}`, { meta: { next: [] } }),
+					);
+
+					chaosAbort.abort();
+
+					await Promise.all([
+						db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
+							timeout: 60_000,
+							roleAge: 0,
+						}),
+						db1.log.waitForReplicator(session.peers[3].identity.publicKey, {
+							timeout: 60_000,
+							roleAge: 0,
+						}),
+						db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
+							timeout: 60_000,
+							roleAge: 0,
+						}),
+						db3.log.waitForReplicator(session.peers[3].identity.publicKey, {
+							timeout: 60_000,
+							roleAge: 0,
+						}),
+						db4.log.waitForReplicator(session.peers[0].identity.publicKey, {
+							timeout: 60_000,
+							roleAge: 0,
+						}),
+						db4.log.waitForReplicator(session.peers[2].identity.publicKey, {
+							timeout: 60_000,
+							roleAge: 0,
+						}),
+					]);
+
+					await waitForParticipationToSettle(db1, db3, db4);
+					await waitForDistributionQuiesced(db1, db3, db4);
+					await waitForResolved(
+						async () =>
+							expect(await getUnionSize([db1, db3, db4], entryCount)).equal(
+								entryCount,
+							),
+						{ timeout: 60_000, delayInterval: 500 },
+					);
+					await checkReplicas([db1, db3, db4], 2, entryCount);
+					await waitForResolved(
+						async () =>
+							expect(await countIdleUnderReplicatedEntries(2, db1, db3, db4)).equal(
+								0,
+							),
+						{ timeout: 60_000, delayInterval: 500 },
+					);
+					await waitForResolved(
+						() => {
+							expect(db3.log.log.length).greaterThanOrEqual(
+								replacementLowerBound,
+							);
+							expect(db4.log.log.length).greaterThanOrEqual(
+								replacementLowerBound,
+							);
+						},
+						{ timeout: 60_000, delayInterval: 500 },
+					);
+				},
+			);
 
 			// TODO add tests for late joining and leaving peers
 			it("distributes to joining peers", async () => {
