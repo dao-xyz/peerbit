@@ -534,9 +534,15 @@ const JOIN_AUTHORITATIVE_RETRY_SCHEDULE_MS = [
 	30_000,
 	60_000,
 ];
+const APPEND_BACKFILL_RETRY_SCHEDULE_MS = [0, 1_000, 3_000, 7_000];
 const JOIN_AUTHORITATIVE_REPAIR_DELAY_MS = 2_000;
+const APPEND_BACKFILL_DELAY_MS = 500;
 
-type RepairDispatchMode = "join-warmup" | "join-authoritative" | "churn";
+type RepairDispatchMode =
+	| "join-warmup"
+	| "join-authoritative"
+	| "append-backfill"
+	| "churn";
 type RepairTransportMode = "rateless" | "simple";
 type RepairMetricBucket = {
 	dispatches: number;
@@ -549,6 +555,7 @@ type RepairMetrics = Record<RepairDispatchMode, RepairMetricBucket>;
 const REPAIR_DISPATCH_MODES: RepairDispatchMode[] = [
 	"join-warmup",
 	"join-authoritative",
+	"append-backfill",
 	"churn",
 ];
 
@@ -562,6 +569,7 @@ const createRepairMetricBucket = (): RepairMetricBucket => ({
 const createRepairMetrics = (): RepairMetrics => ({
 	"join-warmup": createRepairMetricBucket(),
 	"join-authoritative": createRepairMetricBucket(),
+	"append-backfill": createRepairMetricBucket(),
 	churn: createRepairMetricBucket(),
 });
 
@@ -583,6 +591,8 @@ const getRepairRetrySchedule = (mode: RepairDispatchMode) => {
 			return JOIN_WARMUP_RETRY_SCHEDULE_MS;
 		case "join-authoritative":
 			return JOIN_AUTHORITATIVE_RETRY_SCHEDULE_MS;
+		case "append-backfill":
+			return APPEND_BACKFILL_RETRY_SCHEDULE_MS;
 		case "churn":
 			return CHURN_REPAIR_RETRY_SCHEDULE_MS;
 	}
@@ -836,6 +846,8 @@ export class SharedLog<
 	private _repairSweepOptimisticGidPeersPending!: Map<string, Map<string, number>>;
 	private _joinAuthoritativeRepairTimer?: ReturnType<typeof setTimeout>;
 	private _joinAuthoritativeRepairPeers!: Set<string>;
+	private _appendBackfillTimer?: ReturnType<typeof setTimeout>;
+	private _appendBackfillPendingByTarget!: Map<string, Map<string, EntryReplicated<R>>>;
 	private _repairMetrics!: RepairMetrics;
 	private _topicSubscribersCache!: Map<
 		string,
@@ -1271,6 +1283,7 @@ export class SharedLog<
 
 		private async _appendDeliverToReplicators(
 			entry: Entry<T>,
+			coordinates: NumberFromType<R>[],
 			minReplicasValue: number,
 			leaders: Map<string, any>,
 			selfHash: string,
@@ -1288,6 +1301,12 @@ export class SharedLog<
 					? { timeoutMs: delivery.timeout, signal: delivery.signal }
 					: undefined;
 
+			const entryReplicatedForRepair = this.createEntryReplicatedForRepair({
+				entry,
+				coordinates,
+				leaders: leaders as Map<string, { intersecting: boolean }>,
+				replicas: minReplicasValue,
+			});
 			for await (const message of createExchangeHeadsMessages(this.log, [entry])) {
 				await this._mergeLeadersFromGidReferences(message, minReplicasValue, leaders);
 				const leadersForDelivery = delivery ? new Set(leaders.keys()) : undefined;
@@ -1355,6 +1374,7 @@ export class SharedLog<
 
 				const ackTo: string[] = [];
 				let silentTo: string[] | undefined;
+				const repairTargets = new Set<string>();
 				// Default delivery semantics: require enough remote ACKs to reach the requested
 				// replication degree (local append counts as 1).
 				const defaultMinAcks = Math.max(0, minReplicasValue - 1);
@@ -1366,6 +1386,7 @@ export class SharedLog<
 				);
 
 				for (const peer of orderedRemoteRecipients) {
+					repairTargets.add(peer);
 					if (ackTo.length < ackLimit) {
 						ackTo.push(peer);
 					} else {
@@ -1404,6 +1425,12 @@ export class SharedLog<
 					})
 					.catch((error) => logger.error(error));
 			}
+				for (const peer of repairTargets) {
+					// Direct append delivery is intentionally optimistic. Queue one delayed,
+					// batched maybe-sync pass for the intended recipients so stable 3-peer
+					// append workloads do not depend on perfect first-try delivery ordering.
+					this.queueAppendBackfill(peer, entryReplicatedForRepair);
+				}
 		}
 
 		if (pending.length > 0) {
@@ -2607,6 +2634,71 @@ export class SharedLog<
 		return (this._repairSweepOptimisticGidPeersPending.get(gid)?.get(peer) || 0) > 0;
 	}
 
+	private createEntryReplicatedForRepair(properties: {
+		entry: Entry<T>;
+		coordinates: NumberFromType<R>[];
+		leaders: Map<string, { intersecting: boolean }>;
+		replicas: number;
+	}) {
+		const assignedToRangeBoundary = shouldAssignToRangeBoundary(
+			properties.leaders,
+			properties.replicas,
+		);
+		const cidObject = cidifyString(properties.entry.hash);
+		const hashNumber = this.indexableDomain.numbers.bytesToNumber(
+			cidObject.multihash.digest,
+		);
+		return new this.indexableDomain.constructorEntry({
+			assignedToRangeBoundary,
+			coordinates: properties.coordinates,
+			meta: properties.entry.meta,
+			hash: properties.entry.hash,
+			hashNumber,
+		});
+	}
+
+	private flushAppendBackfill() {
+		if (this._appendBackfillPendingByTarget.size === 0) {
+			return;
+		}
+		const pending = this._appendBackfillPendingByTarget;
+		this._appendBackfillPendingByTarget = new Map();
+		for (const [target, entries] of pending) {
+			this.dispatchMaybeMissingEntries(target, entries, {
+				mode: "append-backfill",
+			});
+		}
+	}
+
+	private queueAppendBackfill(target: string, entry: EntryReplicated<R>) {
+		let entries = this._appendBackfillPendingByTarget.get(target);
+		if (!entries) {
+			entries = new Map();
+			this._appendBackfillPendingByTarget.set(target, entries);
+		}
+		entries.set(entry.hash, entry);
+		if (entries.size >= this.repairSweepTargetBufferSize) {
+			this.flushAppendBackfill();
+			return;
+		}
+		if (this._appendBackfillTimer || this.closed) {
+			return;
+		}
+		const timer = setTimeout(() => {
+			this._repairRetryTimers.delete(timer);
+			if (this._appendBackfillTimer === timer) {
+				this._appendBackfillTimer = undefined;
+			}
+			if (this.closed) {
+				return;
+			}
+			this.flushAppendBackfill();
+		}, APPEND_BACKFILL_DELAY_MS);
+		timer.unref?.();
+		this._repairRetryTimers.add(timer);
+		this._appendBackfillTimer = timer;
+	}
+
 	private dispatchMaybeMissingEntries(
 		target: string,
 		entries: Map<string, EntryReplicated<R>>,
@@ -2888,10 +2980,16 @@ export class SharedLog<
 								for (const peer of modePeers) {
 									const wasOptimisticallyAssigned =
 										optimisticPeers?.has(peer) === true;
-									if (
-										wasOptimisticallyAssigned ||
-										(currentPeers.has(peer) && !knownPeers?.has(peer))
-									) {
+									const shouldQueue =
+										mode === "join-authoritative"
+											? currentPeers.has(peer)
+											: wasOptimisticallyAssigned ||
+											  (currentPeers.has(peer) && !knownPeers?.has(peer));
+									if (shouldQueue) {
+										// Authoritative join repair must not trust partial gid peer history,
+										// otherwise a late joiner can get stuck with a partial historical
+										// backfill forever. Once we enter the authoritative pass, queue every
+										// entry whose current leader set still includes the added peer.
 										queueEntryForTarget(mode, peer, entryReplicated);
 									}
 								}
@@ -3128,6 +3226,7 @@ export class SharedLog<
 			} else {
 				await this._appendDeliverToReplicators(
 					result.entry,
+					coordinates,
 					minReplicasValue,
 					leaders,
 					selfHash,
@@ -3190,6 +3289,8 @@ export class SharedLog<
 		this._repairSweepOptimisticGidPeersPending = new Map();
 		this._joinAuthoritativeRepairTimer = undefined;
 		this._joinAuthoritativeRepairPeers = new Set();
+		this._appendBackfillTimer = undefined;
+		this._appendBackfillPendingByTarget = new Map();
 		this._repairMetrics = createRepairMetrics();
 		this._topicSubscribersCache = new Map();
 		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
@@ -4265,6 +4366,11 @@ export class SharedLog<
 			this._joinAuthoritativeRepairTimer = undefined;
 		}
 		this._joinAuthoritativeRepairPeers.clear();
+		if (this._appendBackfillTimer) {
+			clearTimeout(this._appendBackfillTimer);
+			this._appendBackfillTimer = undefined;
+		}
+		this._appendBackfillPendingByTarget.clear();
 
 		for (const [_k, v] of this._pendingDeletes) {
 			v.clear();
