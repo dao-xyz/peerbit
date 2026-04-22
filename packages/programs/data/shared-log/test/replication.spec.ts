@@ -2382,6 +2382,7 @@ testSetups.forEach((setup) => {
 							let joinWarmupEntriesSuppressed = 0;
 							let joinAuthoritativeDispatches = 0;
 							let dispatchStub: sinon.SinonStub | undefined;
+							let sendStub: sinon.SinonStub | undefined;
 
 							try {
 								await init({
@@ -2406,34 +2407,47 @@ testSetups.forEach((setup) => {
 													joinWarmupEntriesSuppressed += entries.size;
 													return;
 												}
+												return originalDispatch(target, entries, options);
+											});
+
+										// Keep the regression focused on frontier bookkeeping. Suppress the
+										// actual join-authoritative send so receipt confirmations cannot clear
+										// the frontier before we inspect it. The old bug left only the last
+										// flushed chunk in the frontier when the sweep buffer rolled over.
+										sendStub = sinon
+											.stub(db1.log as any, "sendMaybeMissingEntriesNow")
+											.callsFake((...args: unknown[]) => {
+												const [_target, _entries, options] = args as [string, Map<string, any>, { mode?: string }];
 												if (options?.mode === "join-authoritative") {
 													joinAuthoritativeDispatches += 1;
 												}
-												return originalDispatch(target, entries, options);
+												return Promise.resolve();
 											});
 									},
 								});
 
 								await waitForDb1Replicators();
 
-								const check = async (store: EventStore<string, any>) => {
-									const entries = await store.log.log.toArray();
-									expect(entries.length).equal(entryCount);
-								};
+								const joiner1 = session.peers[1].identity.publicKey.hashcode();
+								const joiner2 = session.peers[2].identity.publicKey.hashcode();
+								const getFrontierSize = (target: string) =>
+									((db1.log as any)._repairFrontierByMode
+										?.get("join-authoritative")
+										?.get(target) as Map<string, any> | undefined)?.size ?? 0;
 
 								await waitForResolved(async () => {
-									await check(db2);
-								}, commitReplicationWait);
-								await waitForResolved(async () => {
-									await check(db3);
+									expect(getFrontierSize(joiner1)).equal(entryCount);
+									expect(getFrontierSize(joiner2)).equal(entryCount);
 								}, commitReplicationWait);
 
 								// This regression forces authoritative repair to span multiple buffered
 								// flushes. The old bug overwrote the pending frontier with the last
-								// flushed batch, which left a late joiner stuck with a partial history.
+								// flushed batch, which left a late joiner stuck with only a trailing
+								// subset of the historical backfill.
 								expect(joinWarmupEntriesSuppressed).greaterThan(repairSweepTargetBufferSize);
 								expect(joinAuthoritativeDispatches).greaterThan(1);
 							} finally {
+								sendStub?.restore();
 								dispatchStub?.restore();
 							}
 						});
