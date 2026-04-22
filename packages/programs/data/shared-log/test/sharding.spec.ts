@@ -33,8 +33,10 @@ import {
 	checkIfSetupIsUsed,
 	checkReplicas,
 	dbgLogs,
+	getDeterministicTestSeed,
 	getUnionSize,
 	slowDownMessagesWithSeed,
+	slowDownPubSubWritesWithSeed,
 	waitForConverged,
 } from "./utils.js";
 import { EventStore } from "./utils/stores/event-store.js";
@@ -677,7 +679,7 @@ testSetups.forEach((setup) => {
 			(setup.name === "u64-iblt" ? it : it.skip)(
 				"survives deterministic delayed join and leave churn",
 				async () => {
-					const chaosSeed = 7331;
+					const chaosSeed = getDeterministicTestSeed("PEERBIT_SHARED_LOG_CHAOS_SEED", 7_331);
 					const chaosAbort = new AbortController();
 					const chaosRules = [
 						{
@@ -883,6 +885,180 @@ testSetups.forEach((setup) => {
 						},
 						{ timeout: 60_000, delayInterval: 500 },
 					);
+				},
+			);
+
+			(setup.name === "u64-iblt" ? it : it.skip)(
+				"survives deterministic pubsub join and leave churn",
+				async () => {
+					const chaosSeed = getDeterministicTestSeed(
+						"PEERBIT_SHARED_LOG_CHAOS_SEED",
+						27_331,
+					);
+					const chaosAbort = new AbortController();
+					const args = {
+						replicas: {
+							min: 2,
+						},
+						timeUntilRoleMaturity: 1_000,
+						waitForPruneDelay: 100,
+						setup,
+					} as const;
+					const entryCount = 36;
+					const replacementLowerBound = Math.max(4, Math.floor(entryCount * 0.2));
+
+					try {
+						slowDownPubSubWritesWithSeed(
+							session.peers[0],
+							chaosSeed,
+							{ minDelayMs: 15, maxDelayMs: 90, probability: 0.35 },
+							chaosAbort.signal,
+						);
+						slowDownPubSubWritesWithSeed(
+							session.peers[1],
+							chaosSeed + 1,
+							{ minDelayMs: 15, maxDelayMs: 90, probability: 0.35 },
+							chaosAbort.signal,
+						);
+						slowDownPubSubWritesWithSeed(
+							session.peers[2],
+							chaosSeed + 2,
+							{ minDelayMs: 15, maxDelayMs: 90, probability: 0.35 },
+							chaosAbort.signal,
+						);
+						slowDownPubSubWritesWithSeed(
+							session.peers[3],
+							chaosSeed + 3,
+							{ minDelayMs: 15, maxDelayMs: 90, probability: 0.35 },
+							chaosAbort.signal,
+						);
+
+						db1 = await session.peers[0].open(new EventStore<string, any>(), {
+							args: {
+								replicate: {
+									offset: 0,
+								},
+								...args,
+							},
+						});
+
+						db2 = await EventStore.open<EventStore<string, any>>(
+							db1.address!,
+							session.peers[1],
+							{
+								args: {
+									replicate: {
+										offset: 0.3333,
+									},
+									...args,
+								},
+							},
+						);
+
+						await appendInBatches(12, (i) =>
+							db1.add(`seed-a-${i}`, { meta: { next: [] } }),
+						);
+
+						db3 = await EventStore.open<EventStore<string, any>>(
+							db1.address!,
+							session.peers[2],
+							{
+								args: {
+									replicate: {
+										offset: 0.6666,
+									},
+									...args,
+								},
+							},
+						);
+
+						await appendInBatches(12, (i) =>
+							db1.add(`seed-b-${i}`, { meta: { next: [] } }),
+						);
+
+						await db2.close();
+
+						await appendInBatches(6, (i) =>
+							db1.add(`seed-c-${i}`, { meta: { next: [] } }),
+						);
+
+						db4 = await EventStore.open<EventStore<string, any>>(
+							db1.address!,
+							session.peers[3],
+							{
+								args: {
+									replicate: {
+										offset: 0.3333,
+									},
+									...args,
+								},
+							},
+						);
+
+						await appendInBatches(6, (i) =>
+							db1.add(`seed-d-${i}`, { meta: { next: [] } }),
+						);
+
+						chaosAbort.abort();
+
+						await Promise.all([
+							db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
+								timeout: 60_000,
+								roleAge: 0,
+							}),
+							db1.log.waitForReplicator(session.peers[3].identity.publicKey, {
+								timeout: 60_000,
+								roleAge: 0,
+							}),
+							db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
+								timeout: 60_000,
+								roleAge: 0,
+							}),
+							db3.log.waitForReplicator(session.peers[3].identity.publicKey, {
+								timeout: 60_000,
+								roleAge: 0,
+							}),
+							db4.log.waitForReplicator(session.peers[0].identity.publicKey, {
+								timeout: 60_000,
+								roleAge: 0,
+							}),
+							db4.log.waitForReplicator(session.peers[2].identity.publicKey, {
+								timeout: 60_000,
+								roleAge: 0,
+							}),
+						]);
+
+						await waitForParticipationToSettle(db1, db3, db4);
+						await waitForDistributionQuiesced(db1, db3, db4);
+						await waitForResolved(
+							async () =>
+								expect(await getUnionSize([db1, db3, db4], entryCount)).equal(
+									entryCount,
+								),
+							{ timeout: 60_000, delayInterval: 500 },
+						);
+						await checkReplicas([db1, db3, db4], 2, entryCount);
+						await waitForResolved(
+							async () =>
+								expect(await countIdleUnderReplicatedEntries(2, db1, db3, db4)).equal(
+									0,
+								),
+							{ timeout: 60_000, delayInterval: 500 },
+						);
+						await waitForResolved(
+							() => {
+								expect(db3.log.log.length).greaterThanOrEqual(
+									replacementLowerBound,
+								);
+								expect(db4.log.log.length).greaterThanOrEqual(
+									replacementLowerBound,
+								);
+							},
+							{ timeout: 60_000, delayInterval: 500 },
+						);
+					} finally {
+						chaosAbort.abort();
+					}
 				},
 			);
 

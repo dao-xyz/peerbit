@@ -88,6 +88,18 @@ export const slowDownMessage = (
 	};
 };
 
+export const getDeterministicTestSeed = (
+	envKey: string,
+	fallback: number,
+) => {
+	const value = process.env[envKey];
+	if (value == null || value === "") {
+		return fallback;
+	}
+	const parsed = Number.parseInt(value, 10);
+	return Number.isFinite(parsed) ? parsed : fallback;
+};
+
 const createSeededRandom = (seed: number) => {
 	let state = seed >>> 0;
 	return () => {
@@ -104,6 +116,13 @@ export type SeededMessageDelayRule = {
 	maxDelayMs?: number;
 	probability?: number;
 };
+export type SeededPubSubWriteDelayOptions = {
+	minDelayMs: number;
+	maxDelayMs?: number;
+	probability?: number;
+	matchPeer?: (peer: { publicKey: PublicSignKey }) => boolean;
+};
+
 
 export const slowDownMessagesWithSeed = (
 	log: SharedLog<any, any>,
@@ -137,6 +156,45 @@ export const slowDownMessagesWithSeed = (
 		}
 		return sendFn(msg, options);
 	};
+};
+
+
+export const slowDownPubSubWritesWithSeed = (
+	from: ProgramClient,
+	seed: number,
+	options: SeededPubSubWriteDelayOptions,
+	abortSignal?: AbortSignal,
+) => {
+	const pubsub = from.services.pubsub as TopicControlPlane;
+	let peerOffset = 0;
+	for (const [_key, peer] of pubsub.peers) {
+		const random = createSeededRandom(seed + peerOffset++);
+		const writeFn = peer.write.bind(peer);
+		peer.write = async (msg, priority) => {
+			const canDelay = abortSignal ? abortSignal.aborted === false : true;
+			if (
+				canDelay &&
+				(options.matchPeer == null || options.matchPeer(peer)) &&
+				random() <= (options.probability ?? 1)
+			) {
+				const maxDelayMs = Math.max(
+					options.maxDelayMs ?? options.minDelayMs,
+					options.minDelayMs,
+				);
+				const delayMs =
+					options.minDelayMs +
+					Math.floor(random() * (maxDelayMs - options.minDelayMs + 1));
+				try {
+					await delay(delayMs, { signal: abortSignal });
+				} catch (error) {
+					// Abort just means "stop delaying new pubsub writes now".
+				}
+			}
+			if (peer.rawOutboundStreams?.length > 0) {
+				return writeFn(msg, priority);
+			}
+		};
+	}
 };
 
 export const getReceivedHeads = (

@@ -50,10 +50,12 @@ import {
 	collectMessages,
 	collectMessagesFn,
 	dbgLogs,
+	getDeterministicTestSeed,
 	getReceivedHeads,
 	getUnionSize,
 	slowDownMessage,
 	slowDownMessagesWithSeed,
+	slowDownPubSubWritesWithSeed,
 	slowDownSend,
 	waitForConverged,
 } from "./utils.js";
@@ -2447,6 +2449,10 @@ testSetups.forEach((setup) => {
 						it("control per commmit put before join converges under deterministic delayed repair traffic", async () => {
 							const entryCount = 40;
 							const chaosAbort = new AbortController();
+							const chaosSeed = getDeterministicTestSeed(
+								"PEERBIT_SHARED_LOG_CHAOS_SEED",
+								setup.name === "u64-iblt" ? 9_731 : 9_711,
+							);
 
 							try {
 								await init({
@@ -2471,13 +2477,13 @@ testSetups.forEach((setup) => {
 								slowDownMessagesWithSeed(
 									db2.log,
 									repairChaosRules,
-									setup.name === "u64-iblt" ? 9_732 : 9_712,
+									chaosSeed + 1,
 									chaosAbort.signal,
 								);
 								slowDownMessagesWithSeed(
 									db3.log,
 									repairChaosRules,
-									setup.name === "u64-iblt" ? 9_733 : 9_713,
+									chaosSeed + 2,
 									chaosAbort.signal,
 								);
 
@@ -2501,6 +2507,71 @@ testSetups.forEach((setup) => {
 								chaosAbort.abort();
 							}
 						});
+
+						(setup.name === "u64-iblt" ? it : it.skip)(
+							"control per commmit put before join converges under deterministic pubsub chaos",
+							async () => {
+								const entryCount = 40;
+								const chaosAbort = new AbortController();
+								const chaosSeed = getDeterministicTestSeed(
+									"PEERBIT_SHARED_LOG_CHAOS_SEED",
+									17_331,
+								);
+
+								try {
+									slowDownPubSubWritesWithSeed(
+										session.peers[0],
+										chaosSeed,
+										{ minDelayMs: 15, maxDelayMs: 90, probability: 0.35 },
+										chaosAbort.signal,
+									);
+									slowDownPubSubWritesWithSeed(
+										session.peers[1],
+										chaosSeed + 1,
+										{ minDelayMs: 15, maxDelayMs: 90, probability: 0.35 },
+										chaosAbort.signal,
+									);
+									slowDownPubSubWritesWithSeed(
+										session.peers[2],
+										chaosSeed + 2,
+										{ minDelayMs: 15, maxDelayMs: 90, probability: 0.35 },
+										chaosAbort.signal,
+									);
+
+									await init({
+										min: 1,
+										beforeOther: async () => {
+											const value = "hello";
+											for (let i = 0; i < entryCount; i++) {
+												await db1.add(value, {
+													replicas: new AbsoluteReplicas(3),
+													meta: { next: [] },
+												});
+											}
+										},
+									});
+
+									await waitForDb1Replicators();
+
+									const check = async (store: EventStore<string, any>) => {
+										const entries = await store.log.log.toArray();
+										expect(entries.length).equal(entryCount);
+										let replicated3Times = 0;
+										for (const entry of entries) {
+											if (decodeReplicas(entry).getValue(store.log) === 3) {
+												replicated3Times += 1;
+											}
+										}
+										expect(replicated3Times).equal(entryCount);
+									};
+
+									await waitForResolved(() => check(db2), commitReplicationWait);
+									await waitForResolved(() => check(db3), commitReplicationWait);
+								} finally {
+									chaosAbort.abort();
+								}
+							},
+						);
 
 						it("control per commmit put before join keeps the full authoritative repair frontier across sweep flushes", async () => {
 							const entryCount = 40;

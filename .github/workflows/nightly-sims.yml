@@ -62,3 +62,53 @@ jobs:
         with:
           name: nightly-sims-${{ github.run_id }}
           path: sim-results
+
+
+  shared_log_chaos:
+    name: SharedLog chaos
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      NODE_OPTIONS: --no-warnings
+      PEERBIT_TEST_SESSION: mock
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install deps
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          pnpm install --frozen-lockfile=false
+
+      - name: Build test-utils workspace
+        run: |
+          pnpm --filter @peerbit/test-utils... run build
+
+      - name: Build shared-log workspace
+        run: |
+          pnpm --filter @peerbit/shared-log... run build
+
+      - name: Run deterministic SharedLog chaos seeds
+        run: |
+          mkdir -p sim-results
+          set -euo pipefail
+          for seed in 7331 9331 11331 13331 15331 17331; do
+            echo "Running shared-log chaos seed ${seed}"
+            PEERBIT_SHARED_LOG_CHAOS_SEED=$seed pnpm run test:shared-log:chaos 2>&1 | tee "sim-results/shared-log-chaos-seed-${seed}.txt"
+          done
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-shared-log-chaos-${{ github.run_id }}
+          path: sim-results
