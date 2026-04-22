@@ -2175,21 +2175,6 @@ testSetups.forEach((setup) => {
 					},
 				}))!;
 
-				db3 = (await session.peers[2].open(db1.clone(), {
-					args: {
-						replicas: {
-							min: minReplicas,
-							max: maxReplicas,
-						},
-						replicate: {
-							offset: 0.666,
-							factor: 0.333,
-						},
-						setup,
-						timeUntilRoleMaturity: 0,
-					},
-				}))!;
-
 				// This test checks replica handoff correctness, not bulk replication throughput.
 				// Keep the sample size small enough that full-shard CI load does not dominate the
 				// result and mask the actual invariant under test.
@@ -2234,6 +2219,24 @@ testSetups.forEach((setup) => {
 					await waitForResolved(async () =>
 						expect((await db1.log.getReplicators()).size).to.equal(1),
 					);
+
+					// Open the replacement peer only when it actually joins. Opening it earlier can
+					// leak an inactive third replica into the convergence path and make this test
+					// depend on transport timing instead of the prune/handoff contract.
+					db3 = (await session.peers[2].open(db1.clone(), {
+						args: {
+							replicas: {
+								min: minReplicas,
+								max: maxReplicas,
+							},
+							replicate: {
+								offset: 0.666,
+								factor: 0.333,
+							},
+							setup,
+							timeUntilRoleMaturity: 0,
+						},
+					}))!;
 
 					// Merge the new peer into the same sharded pubsub root-candidate set.
 					await session.connect([[session.peers[0], session.peers[1], session.peers[2]]]);

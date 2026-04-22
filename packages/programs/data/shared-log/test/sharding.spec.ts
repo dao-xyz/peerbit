@@ -369,16 +369,11 @@ testSetups.forEach((setup) => {
 					db1.add(toBase64(new Uint8Array([i])), { meta: { next: [] } }),
 				);
 
-				await waitForResolved(async () =>
-					expect((await db1.log.calculateTotalParticipation()) - 1).lessThan(
-						0.05,
-					),
-				);
-				await waitForResolved(async () =>
-					expect((await db2.log.calculateTotalParticipation()) - 1).lessThan(
-						0.05,
-					),
-				);
+				// Participation can report "full" while redistribution is still in flight.
+				// The bounded assertion is about the settled final split, so wait for the
+				// actual distribution helpers instead of sampling the transient join state.
+				await waitForParticipationToSettle(db1, db2);
+				await waitForDistributionQuiesced(db1, db2);
 				await checkBounded(entryCount, 0.3, 0.7, db1, db2);
 			});
 
