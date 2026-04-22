@@ -537,6 +537,7 @@ const JOIN_AUTHORITATIVE_RETRY_SCHEDULE_MS = [
 const APPEND_BACKFILL_RETRY_SCHEDULE_MS = [0, 1_000, 3_000, 7_000];
 const JOIN_AUTHORITATIVE_REPAIR_DELAY_MS = 2_000;
 const APPEND_BACKFILL_DELAY_MS = 500;
+const ASSUME_SYNCED_REPAIR_SUPPRESSION_MS = 5_000;
 
 type RepairDispatchMode =
 	| "join-warmup"
@@ -846,6 +847,7 @@ export class SharedLog<
 	private _repairSweepOptimisticGidPeersPending!: Map<string, Map<string, number>>;
 	private _joinAuthoritativeRepairTimer?: ReturnType<typeof setTimeout>;
 	private _joinAuthoritativeRepairPeers!: Set<string>;
+	private _assumeSyncedRepairSuppressedUntil!: number;
 	private _appendBackfillTimer?: ReturnType<typeof setTimeout>;
 	private _appendBackfillPendingByTarget!: Map<string, Map<string, EntryReplicated<R>>>;
 	private _repairMetrics!: RepairMetrics;
@@ -2657,6 +2659,10 @@ export class SharedLog<
 		});
 	}
 
+	private isAssumeSyncedRepairSuppressed() {
+		return this._assumeSyncedRepairSuppressedUntil > Date.now();
+	}
+
 	private flushAppendBackfill() {
 		if (this._appendBackfillPendingByTarget.size === 0) {
 			return;
@@ -2746,6 +2752,14 @@ export class SharedLog<
 			return;
 		}
 
+		if (
+			(options.mode === "join-warmup" ||
+				options.mode === "join-authoritative") &&
+			this.isAssumeSyncedRepairSuppressed()
+		) {
+			return;
+		}
+
 		const retrySchedule =
 			options.retryScheduleMs && options.retryScheduleMs.length > 0
 				? options.retryScheduleMs
@@ -2823,6 +2837,10 @@ export class SharedLog<
 
 		for (const peer of peers) {
 			this._joinAuthoritativeRepairPeers.add(peer);
+		}
+
+		if (this.isAssumeSyncedRepairSuppressed()) {
+			return;
 		}
 
 		if (this._joinAuthoritativeRepairTimer) {
@@ -3289,6 +3307,7 @@ export class SharedLog<
 		this._repairSweepOptimisticGidPeersPending = new Map();
 		this._joinAuthoritativeRepairTimer = undefined;
 		this._joinAuthoritativeRepairPeers = new Set();
+		this._assumeSyncedRepairSuppressedUntil = 0;
 		this._appendBackfillTimer = undefined;
 		this._appendBackfillPendingByTarget = new Map();
 		this._repairMetrics = createRepairMetrics();
@@ -5296,6 +5315,11 @@ export class SharedLog<
 			let messageToSend: AddedReplicationSegmentMessage | undefined = undefined;
 
 			if (assumeSynced) {
+				// `assumeSynced` is an explicit contract that this join should trust the
+				// supplied history and avoid initiating outbound repair while the local
+				// replication ranges settle.
+				this._assumeSyncedRepairSuppressedUntil =
+					Date.now() + ASSUME_SYNCED_REPAIR_SUPPRESSION_MS;
 				for (const entry of entriesToReplicate) {
 					await seedAssumeSyncedPeerHistory(entry);
 				}
@@ -6580,6 +6604,7 @@ export class SharedLog<
 			const changed = false;
 			const addedPeers = new Set<string>();
 			const warmupPeers = new Set<string>();
+			const churnRepairPeers = new Set<string>();
 			const hasSelfWarmupChange = changes.some(
 				(change) =>
 					change.range.hash === selfHash &&
@@ -6652,6 +6677,7 @@ export class SharedLog<
 				target: string,
 				entry: EntryReplicated<any>,
 			) => {
+				churnRepairPeers.add(target);
 				let set = uncheckedDeliver.get(target);
 				if (!set) {
 					set = new Map();
@@ -6830,10 +6856,12 @@ export class SharedLog<
 				}
 
 				if (forceFreshDelivery) {
-					// Removed/shrunk ranges still need the authoritative background pass.
+					// Pure leave/shrink churn can have zero `addedPeers`, but the peers that
+					// received redistributed entries still need a follow-up repair pass if the
+					// immediate maybe-sync misses one entry.
 					this.scheduleRepairSweep({
 						mode: "churn",
-						peers: addedPeers,
+						peers: churnRepairPeers,
 					});
 				} else if (useJoinWarmupFastPath) {
 					// Pure join warmup uses the cheap immediate maybe-missing dispatch above,
