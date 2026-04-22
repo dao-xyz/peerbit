@@ -1638,7 +1638,11 @@ testSetups.forEach((setup) => {
 				min: number;
 				max?: number;
 				beforeOther?: () => Promise<any> | void;
+				beforeOpenJoiners?: () => Promise<any> | void;
 				waitForPruneDelay?: number;
+				sync?: {
+					repairSweepTargetBufferSize?: number;
+				};
 			}) => {
 				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
@@ -1646,11 +1650,13 @@ testSetups.forEach((setup) => {
 						replicate: false,
 						timeUntilRoleMaturity: 1000,
 						setup,
+						sync: props.sync,
 						waitForPruneDelay: props?.waitForPruneDelay || 5e3,
 					},
 				});
 
 				await props.beforeOther?.();
+				await props.beforeOpenJoiners?.();
 				db2 = (await EventStore.open<EventStore<string, any>>(
 					db1.address!,
 					session.peers[1],
@@ -2365,6 +2371,68 @@ testSetups.forEach((setup) => {
 							// coverage: late historical backfill must now come from SharedLog's own
 							// join repair dispatches, not from a test-driven `rebalanceAll()`.
 							expect(getJoinRepairDispatches()).greaterThan(0);
+						});
+
+						it("control per commmit put before join keeps the full authoritative repair frontier across sweep flushes", async () => {
+							const entryCount = 40;
+							const repairSweepTargetBufferSize = 8;
+							let joinWarmupEntriesSuppressed = 0;
+							let joinAuthoritativeDispatches = 0;
+							let dispatchStub: sinon.SinonStub | undefined;
+
+							try {
+								await init({
+									min: 1,
+									sync: { repairSweepTargetBufferSize },
+									beforeOther: async () => {
+										const value = "hello";
+										for (let i = 0; i < entryCount; i++) {
+											await db1.add(value, {
+												replicas: new AbsoluteReplicas(3),
+												meta: { next: [] },
+											});
+										}
+									},
+									beforeOpenJoiners: () => {
+										const originalDispatch = (db1.log as any).dispatchMaybeMissingEntries.bind(db1.log);
+										dispatchStub = sinon
+											.stub(db1.log as any, "dispatchMaybeMissingEntries")
+											.callsFake((...args: any[]) => {
+												const [target, entries, options] = args as [string, Map<string, any>, { mode?: string }];
+												if (options?.mode === "join-warmup") {
+													joinWarmupEntriesSuppressed += entries.size;
+													return;
+												}
+												if (options?.mode === "join-authoritative") {
+													joinAuthoritativeDispatches += 1;
+												}
+												return originalDispatch(target, entries, options);
+											});
+									},
+								});
+
+								await waitForDb1Replicators();
+
+								const check = async (store: EventStore<string, any>) => {
+									const entries = await store.log.log.toArray();
+									expect(entries.length).equal(entryCount);
+								};
+
+								await waitForResolved(async () => {
+									await check(db2);
+								}, commitReplicationWait);
+								await waitForResolved(async () => {
+									await check(db3);
+								}, commitReplicationWait);
+
+								// This regression forces authoritative repair to span multiple buffered
+								// flushes. The old bug overwrote the pending frontier with the last
+								// flushed batch, which left a late joiner stuck with a partial history.
+								expect(joinWarmupEntriesSuppressed).greaterThan(repairSweepTargetBufferSize);
+								expect(joinAuthoritativeDispatches).greaterThan(1);
+							} finally {
+								dispatchStub?.restore();
+							}
 						});
 
 						it("control per commmit", async () => {
