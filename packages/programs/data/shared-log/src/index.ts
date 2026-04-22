@@ -3193,14 +3193,18 @@ export class SharedLog<
 					RepairDispatchMode,
 					Map<string, Map<string, EntryReplicated<any>>>
 				>(REPAIR_DISPATCH_MODES.map((mode) => [mode, new Map()]));
+				const nextFrontierByMode = new Map<
+					RepairDispatchMode,
+					Map<string, Map<string, EntryReplicated<any>>>
+				>([
+					["join-authoritative", new Map()],
+					["churn", new Map()],
+				]);
 				const flushTarget = (mode: RepairDispatchMode, target: string) => {
 					const targets = pendingByMode.get(mode);
 					const entries = targets?.get(target);
 					if (!entries || entries.size === 0) {
 						return;
-					}
-					if (mode === "join-authoritative" || mode === "churn") {
-						this._repairFrontierByMode.get(mode)?.set(target, new Map(entries));
 					}
 					this.dispatchMaybeMissingEntries(target, entries, {
 						bypassRecentDedupe: true,
@@ -3213,6 +3217,15 @@ export class SharedLog<
 					target: string,
 					entry: EntryReplicated<any>,
 				) => {
+					const sweepTargets = nextFrontierByMode.get(mode);
+					if (sweepTargets) {
+						let sweepSet = sweepTargets.get(target);
+						if (!sweepSet) {
+							sweepSet = new Map();
+							sweepTargets.set(target, sweepSet);
+						}
+						sweepSet.set(entry.hash, entry);
+					}
 					const targets = pendingByMode.get(mode)!;
 					let set = targets.get(target);
 					if (!set) {
@@ -3306,9 +3319,14 @@ export class SharedLog<
 					if (mode !== "join-authoritative" && mode !== "churn") {
 						continue;
 					}
+					const nextTargets = nextFrontierByMode.get(mode) ?? new Map();
+					const frontierTargets = this._repairFrontierByMode.get(mode);
 					for (const target of pendingPeersByMode.get(mode) ?? []) {
-						if ((pendingByMode.get(mode)?.get(target)?.size || 0) === 0) {
-							this._repairFrontierByMode.get(mode)?.delete(target);
+						const replacement = nextTargets.get(target);
+						if (replacement && replacement.size > 0) {
+							frontierTargets?.set(target, replacement);
+						} else {
+							frontierTargets?.delete(target);
 						}
 					}
 				}
