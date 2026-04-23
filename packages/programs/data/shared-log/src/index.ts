@@ -6946,6 +6946,7 @@ export class SharedLog<
 
 			const changed = false;
 			const addedPeers = new Set<string>();
+			const authoritativeRepairPeers = new Set<string>();
 			const warmupPeers = new Set<string>();
 			const churnRepairPeers = new Set<string>();
 			const hasSelfWarmupChange = changes.some(
@@ -6957,6 +6958,10 @@ export class SharedLog<
 				if (change.type === "added" || change.type === "replaced") {
 					const hash = change.range.hash;
 					if (hash !== selfHash) {
+						// Existing peers can widen/shift ranges after the initial join. If we
+						// only rescan on first-seen "added", late authoritative range updates can
+						// leave historical backfill permanently partial under load.
+						authoritativeRepairPeers.add(hash);
 						// Range updates can reassign entries to an existing peer shortly after it
 						// already received a subset. Avoid suppressing legitimate follow-up repair.
 						this._recentRepairDispatch.delete(hash);
@@ -7223,15 +7228,15 @@ export class SharedLog<
 					}, 250);
 					timer.unref?.();
 					this._repairRetryTimers.add(timer);
-				} else if (addedPeers.size > 0) {
+				} else if (authoritativeRepairPeers.size > 0) {
 					this.scheduleRepairSweep({
 						mode: "join-authoritative",
-						peers: addedPeers,
+						peers: authoritativeRepairPeers,
 					});
 				}
 
-				if (!forceFreshDelivery && addedPeers.size > 0) {
-					this.scheduleJoinAuthoritativeRepair(addedPeers);
+				if (!forceFreshDelivery && authoritativeRepairPeers.size > 0) {
+					this.scheduleJoinAuthoritativeRepair(authoritativeRepairPeers);
 				}
 
 			for (const target of [...uncheckedDeliver.keys()]) {
