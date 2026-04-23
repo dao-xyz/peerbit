@@ -918,6 +918,69 @@ testSetups.forEach((setup) => {
 						);
 					});
 				});
+
+				it("retries simple sync when first response is dropped", async () => {
+					const entryCount = 32;
+					for (let i = 0; i < entryCount; i++) {
+						await db1.add(`hello-${i}`, { meta: { next: [] } });
+					}
+
+					db2 = (await EventStore.open<EventStore<string, any>>(
+						db1.address!,
+						session.peers[1],
+						{
+							args: {
+								replicate: false,
+								keep: () => true,
+								setup,
+							},
+						},
+					))!;
+
+					await db1.waitFor(session.peers[1].peerId);
+					await db2.waitFor(session.peers[0].peerId);
+
+					let dropped = 0;
+					let responseMaybeSyncMessages = 0;
+					const sendFn = db2.log.rpc.send.bind(db2.log.rpc);
+					db2.log.rpc.send = async (msg: any, options: any) => {
+						if (msg instanceof ResponseMaybeSync) {
+							responseMaybeSyncMessages += 1;
+							if (dropped === 0) {
+								dropped += 1;
+								return;
+							}
+						}
+						return sendFn(msg, options);
+					};
+
+					try {
+						const entries = new Map<string, any>();
+						for (const entry of await db1.log.log.toArray()) {
+							entries.set(entry.hash, entry);
+						}
+
+						const target = session.peers[1].identity.publicKey.hashcode();
+						const sync =
+							db1.log.syncronizer instanceof RatelessIBLTSynchronizer
+								? db1.log.syncronizer.simple
+								: db1.log.syncronizer;
+
+						await sync.onMaybeMissingEntries({
+							entries,
+							targets: [target],
+						});
+
+						await waitForResolved(
+							() => expect(db2.log.log.length).equal(entryCount),
+							{ timeout: 45_000, delayInterval: 500 },
+						);
+						expect(dropped).to.equal(1);
+						expect(responseMaybeSyncMessages).greaterThanOrEqual(2);
+					} finally {
+						db2.log.rpc.send = sendFn;
+					}
+				});
 			});
 		});
 
