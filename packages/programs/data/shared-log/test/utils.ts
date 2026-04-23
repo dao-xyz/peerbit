@@ -110,6 +110,16 @@ const createSeededRandom = (seed: number) => {
 	};
 };
 
+const hashStringToUint32 = (value: string) => {
+	// FNV-1a 32-bit
+	let hash = 0x811c9dc5;
+	for (let index = 0; index < value.length; index++) {
+		hash ^= value.charCodeAt(index);
+		hash = Math.imul(hash, 0x01000193);
+	}
+	return hash >>> 0;
+};
+
 export type SeededMessageDelayRule = {
 	type: Constructor<TransportMessage>;
 	minDelayMs: number;
@@ -166,9 +176,14 @@ export const slowDownPubSubWritesWithSeed = (
 	abortSignal?: AbortSignal,
 ) => {
 	const pubsub = from.services.pubsub as TopicControlPlane;
-	let peerOffset = 0;
-	for (const [_key, peer] of pubsub.peers) {
-		const random = createSeededRandom(seed + peerOffset++);
+	const peers = [...pubsub.peers.values()].sort((a, b) =>
+		a.publicKey.hashcode().localeCompare(b.publicKey.hashcode()),
+	);
+	for (const peer of peers) {
+		// Tie randomness to the peer identity, not Map iteration order.
+		const random = createSeededRandom(
+			(seed ^ hashStringToUint32(peer.publicKey.hashcode())) >>> 0,
+		);
 		const writeFn = peer.write.bind(peer);
 		peer.write = async (msg, priority) => {
 			const canDelay = abortSignal ? abortSignal.aborted === false : true;
@@ -190,8 +205,32 @@ export const slowDownPubSubWritesWithSeed = (
 					// Abort just means "stop delaying new pubsub writes now".
 				}
 			}
-			if (peer.rawOutboundStreams?.length > 0) {
-				return writeFn(msg, priority);
+			// Avoid silently dropping pubsub writes just because a new direct stream
+			// hasn't fully initialized yet. This chaos helper is about jitter, not loss.
+			const deadline = Date.now() + 30_000;
+			for (;;) {
+				try {
+					return writeFn(msg, priority);
+				} catch (error: any) {
+					const message = String(error?.message ?? "");
+					const noWritable = message.includes("No writable connection");
+					if (!noWritable) {
+						throw error;
+					}
+					if (abortSignal?.aborted) {
+						throw error;
+					}
+					if (Date.now() >= deadline) {
+						throw new Error(
+							`Timed out waiting for pubsub writable stream to ${peer.publicKey.hashcode()}`,
+						);
+					}
+					try {
+						await delay(10, { signal: abortSignal });
+					} catch (error) {
+						throw error;
+					}
+				}
 			}
 		};
 	}
