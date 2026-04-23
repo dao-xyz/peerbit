@@ -30,16 +30,17 @@ import { FastMutex } from "../src/lockstorage.ts";
 
 describe("FastMutex", () => {
 	let sandbox: sinon.SinonSandbox;
+	let localStorage: nodelocalstorage.LocalStorage;
 
 	beforeAll(() => {
-		var LocalStorage = nodelocalstorage!.LocalStorage;
-		var localStorage = new LocalStorage("./tmp/FastMutex");
+		const LocalStorage = nodelocalstorage!.LocalStorage;
+		localStorage = new LocalStorage("./tmp/FastMutex");
 		localStorage.clear();
-		globalThis.localStorage = localStorage;
+		globalThis.localStorage = localStorage as any;
 	});
 
 	afterAll(() => {
-		globalThis.localStorage.clear();
+		localStorage.clear();
 	});
 
 	beforeEach(() => {

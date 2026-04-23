@@ -8,16 +8,18 @@ import { FastMutex } from "../src/lockstorage.ts";
 import { getAllKeyPairs, getFreeKeypair, releaseKey } from "../src/utils.ts";
 
 describe("getKeypair", () => {
+	let localStorage: nodelocalstorage.LocalStorage;
+
 	beforeAll(async () => {
 		await sodium.ready;
 
-		var LocalStorage = nodelocalstorage.LocalStorage;
-		var localStorage = new LocalStorage("./tmp/getKeypair");
-		globalThis.localStorage = localStorage;
+		const LocalStorage = nodelocalstorage.LocalStorage;
+		localStorage = new LocalStorage("./tmp/getKeypair");
+		globalThis.localStorage = localStorage as any;
 	});
 
 	afterAll(() => {
-		globalThis.localStorage.clear();
+		localStorage.clear();
 	});
 
 	it("can aquire multiple keypairs", async () => {
