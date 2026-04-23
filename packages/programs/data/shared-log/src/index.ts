@@ -3365,6 +3365,22 @@ export class SharedLog<
 					const frontierTargets = this._repairFrontierByMode.get(mode);
 					for (const target of pendingPeersByMode.get(mode) ?? []) {
 						const replacement = nextTargets.get(target);
+						if (mode === "join-authoritative") {
+							// Authoritative join repair is receipt-driven: a later sweep can have a
+							// narrower transient leader view, but it must not forget unconfirmed
+							// hashes that were already queued for this joiner.
+							if (replacement && replacement.size > 0) {
+								const existing = frontierTargets?.get(target);
+								if (existing && existing.size > 0) {
+									for (const [hash, entry] of replacement) {
+										existing.set(hash, entry);
+									}
+								} else {
+									frontierTargets?.set(target, replacement);
+								}
+							}
+							continue;
+						}
 						if (replacement && replacement.size > 0) {
 							frontierTargets?.set(target, replacement);
 						} else {

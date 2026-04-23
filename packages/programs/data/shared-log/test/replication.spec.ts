@@ -2732,6 +2732,87 @@ testSetups.forEach((setup) => {
 							}
 						});
 
+						it("control per commmit put before join preserves pending authoritative frontier across partial follow-up sweeps", async () => {
+							const entryCount = 24;
+							const repairSweepTargetBufferSize = 8;
+							let partialSweepActive = false;
+							let partialFindCalls = 0;
+							let dispatchStub: sinon.SinonStub | undefined;
+							let sendStub: sinon.SinonStub | undefined;
+							let findLeadersStub: sinon.SinonStub | undefined;
+
+							try {
+								await init({
+									min: 1,
+									sync: { repairSweepTargetBufferSize },
+									beforeOther: async () => {
+										const value = "hello";
+										for (let i = 0; i < entryCount; i++) {
+											await db1.add(value, {
+												replicas: new AbsoluteReplicas(3),
+												meta: { next: [] },
+											});
+										}
+									},
+									beforeOpenJoiners: () => {
+										const originalDispatch = (db1.log as any).dispatchMaybeMissingEntries.bind(db1.log);
+										dispatchStub = sinon
+											.stub(db1.log as any, "dispatchMaybeMissingEntries")
+											.callsFake((...args: any[]) => {
+												const [target, entries, options] = args as [string, Map<string, any>, { mode?: string }];
+												if (options?.mode === "join-warmup") {
+													return;
+												}
+												return originalDispatch(target, entries, options);
+											});
+
+										sendStub = sinon
+											.stub(db1.log as any, "sendMaybeMissingEntriesNow")
+											.callsFake(() => Promise.resolve());
+
+										const originalFindLeaders = (db1.log as any).findLeaders.bind(db1.log);
+										findLeadersStub = sinon
+											.stub(db1.log as any, "findLeaders")
+											.callsFake((...args: any[]) => {
+												if (partialSweepActive) {
+													partialFindCalls += 1;
+													return Promise.resolve(new Map());
+												}
+												return originalFindLeaders(...args);
+											});
+									},
+								});
+
+								await waitForDb1Replicators();
+
+								const joiner = session.peers[1].identity.publicKey.hashcode();
+								const getFrontierSize = () =>
+									((db1.log as any)._repairFrontierByMode
+										?.get("join-authoritative")
+										?.get(joiner) as Map<string, any> | undefined)?.size ?? 0;
+
+								await waitForResolved(async () => {
+									expect(getFrontierSize()).equal(entryCount);
+								}, commitReplicationWait);
+
+								partialSweepActive = true;
+								(db1.log as any).scheduleRepairSweep({
+									mode: "join-authoritative",
+									peers: new Set([joiner]),
+								});
+
+								await waitForResolved(async () => {
+									expect(partialFindCalls).greaterThan(0);
+								}, commitReplicationWait);
+
+								expect(getFrontierSize()).equal(entryCount);
+							} finally {
+								findLeadersStub?.restore();
+								sendStub?.restore();
+								dispatchStub?.restore();
+							}
+						});
+
 						it("control per commmit", async () => {
 							const entryCount = 100;
 
