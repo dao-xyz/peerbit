@@ -1352,7 +1352,10 @@ export class SharedLog<
 			});
 			for await (const message of createExchangeHeadsMessages(this.log, [entry])) {
 				await this._mergeLeadersFromGidReferences(message, minReplicasValue, leaders);
-				const leadersForDelivery = delivery ? new Set(leaders.keys()) : undefined;
+				const authoritativeRecipients = new Set(leaders.keys());
+				const leadersForDelivery = delivery
+					? new Set(authoritativeRecipients)
+					: undefined;
 
 				// Outbound append delivery only tells us who we intend to send to, not who has
 				// actually stored the entry. Keep this recipient set local so later repair
@@ -1388,14 +1391,15 @@ export class SharedLog<
 			}
 
 				if (!delivery) {
-					for (const peer of set) {
+					for (const peer of authoritativeRecipients) {
 						if (peer === selfHash) {
 							continue;
 						}
 						// Default live append delivery is still optimistic. If one remote misses
 						// the initial heads exchange and the caller did not opt into explicit
 						// delivery acks, we still need a targeted backfill source of truth for the
-						// intended recipients or one entry can get stuck at 2/3 replicas forever.
+						// authoritative recipients or one entry can get stuck at 2/3 replicas
+						// forever. Best-effort fallback subscribers are not repair-worthy.
 						this.queueAppendBackfill(peer, entryReplicatedForRepair);
 					}
 					this.rpc
@@ -1439,7 +1443,9 @@ export class SharedLog<
 				);
 
 				for (const peer of orderedRemoteRecipients) {
-					repairTargets.add(peer);
+					if (authoritativeRecipients.has(peer)) {
+						repairTargets.add(peer);
+					}
 					if (ackTo.length < ackLimit) {
 						ackTo.push(peer);
 					} else {
