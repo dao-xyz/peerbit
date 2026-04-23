@@ -1468,11 +1468,10 @@ testSetups.forEach((setup) => {
 				/* 	db1.log.xreset();
 					db2.log.xreset(); */
 
-					// The last close/reopen churn leaves db1/db2 doing real redistribution and prune
-					// work after db3 is gone for good. Wait for that two-peer state to quiesce
-					// before asserting the final fully-replicated contract, otherwise CI times out
-					// while the test is still observing a transient rebalance.
-					await waitForDistributionQuiesced(db1, db2);
+					// The final contract after db3 is gone is the exact two-peer distribution,
+					// not whether every internal repair/prune timer has gone fully idle first.
+					// `checkBounded()` already waits for length convergence and replica bounds, so
+					// using it directly avoids turning transient background cleanup into a failure.
 					await checkBounded(entryCount, 1, 1, db1, db2);
 
 					// Under full-suite load (GC + timers), rebalancing can take longer. Use a

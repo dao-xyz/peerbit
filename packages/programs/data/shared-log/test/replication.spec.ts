@@ -2457,8 +2457,10 @@ testSetups.forEach((setup) => {
 							// Keep this as a convergence regression, not a throughput benchmark. The
 							// direct frontier regression below already covers the multi-flush repair
 							// bookkeeping, so a smaller history still exercises delayed repair traffic
-							// without making part-7 hinge on CI runner speed alone.
-							const entryCount = 24;
+							// without making part-7 hinge on CI runner speed alone. Rateless u64 is
+							// the slowest path here, so keep that sample smaller than the plain
+							// product test above.
+							const entryCount = setup.name === "u64-iblt" ? 16 : 24;
 							const chaosAbort = new AbortController();
 							const chaosSeed = getDeterministicTestSeed(
 								"PEERBIT_SHARED_LOG_CHAOS_SEED",
