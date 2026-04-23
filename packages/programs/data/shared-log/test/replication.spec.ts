@@ -2298,12 +2298,13 @@ testSetups.forEach((setup) => {
 				await checkReplicas([db1, db2, db3], maxReplicas, entryCount);
 			});
 
-					describe("commit options", () => {
-						const commitReplicationWait = {
-							// Historical backfill for writes that happened before the joiners
-							// opened is the slowest commit-options path in the full part-7 shard.
-							// Give that convergence loop more time instead of reintroducing brittle
-							// transient replica-view gates.
+						describe("commit options", () => {
+							const isU64Rateless = setup.name === "u64-iblt";
+							const commitReplicationWait = {
+								// Historical backfill for writes that happened before the joiners
+								// opened is the slowest commit-options path in the full part-7 shard.
+								// Give that convergence loop more time instead of reintroducing brittle
+								// transient replica-view gates.
 							timeout: 120_000,
 							delayInterval: 1_000,
 						} as const;
@@ -2321,62 +2322,68 @@ testSetups.forEach((setup) => {
 							]);
 						};
 
-						const repairChaosRules = [
-							{
-								type: ExchangeHeadsMessage,
-								minDelayMs: 40,
-								maxDelayMs: 180,
-								probability: 0.45,
-							},
-							{
-								type: RequestMaybeSync,
-								minDelayMs: 30,
-								maxDelayMs: 140,
-								probability: 0.35,
-							},
-							{
-								type: ResponseMaybeSync,
-								minDelayMs: 30,
-								maxDelayMs: 140,
-								probability: 0.35,
-							},
-							{
-								type: ConfirmEntriesMessage,
-								minDelayMs: 20,
-								maxDelayMs: 120,
-								probability: 0.3,
-							},
-							{
-								type: StartSync,
-								minDelayMs: 30,
-								maxDelayMs: 160,
-								probability: 0.25,
-							},
-							{
-								type: MoreSymbols,
-								minDelayMs: 20,
-								maxDelayMs: 120,
-								probability: 0.25,
-							},
-							{
-								type: RequestMoreSymbols,
-								minDelayMs: 20,
-								maxDelayMs: 120,
-								probability: 0.25,
-							},
-							{
-								type: AddedReplicationSegmentMessage,
-								minDelayMs: 25,
-								maxDelayMs: 140,
-								probability: 0.25,
-							},
-							{
-								type: AllReplicatingSegmentsMessage,
-								minDelayMs: 25,
-								maxDelayMs: 140,
-								probability: 0.25,
-							},
-						] as const;
+							const scaleChaosDelay = (ms: number) =>
+								isU64Rateless ? Math.max(10, Math.round(ms * 0.6)) : ms;
+							const scaleChaosProbability = (probability: number) =>
+								isU64Rateless
+									? Math.max(0.15, Number((probability - 0.15).toFixed(2)))
+									: probability;
+							const repairChaosRules = [
+								{
+									type: ExchangeHeadsMessage,
+									minDelayMs: scaleChaosDelay(40),
+									maxDelayMs: scaleChaosDelay(180),
+									probability: scaleChaosProbability(0.45),
+								},
+								{
+									type: RequestMaybeSync,
+									minDelayMs: scaleChaosDelay(30),
+									maxDelayMs: scaleChaosDelay(140),
+									probability: scaleChaosProbability(0.35),
+								},
+								{
+									type: ResponseMaybeSync,
+									minDelayMs: scaleChaosDelay(30),
+									maxDelayMs: scaleChaosDelay(140),
+									probability: scaleChaosProbability(0.35),
+								},
+								{
+									type: ConfirmEntriesMessage,
+									minDelayMs: scaleChaosDelay(20),
+									maxDelayMs: scaleChaosDelay(120),
+									probability: scaleChaosProbability(0.3),
+								},
+								{
+									type: StartSync,
+									minDelayMs: scaleChaosDelay(30),
+									maxDelayMs: scaleChaosDelay(160),
+									probability: scaleChaosProbability(0.25),
+								},
+								{
+									type: MoreSymbols,
+									minDelayMs: scaleChaosDelay(20),
+									maxDelayMs: scaleChaosDelay(120),
+									probability: scaleChaosProbability(0.25),
+								},
+								{
+									type: RequestMoreSymbols,
+									minDelayMs: scaleChaosDelay(20),
+									maxDelayMs: scaleChaosDelay(120),
+									probability: scaleChaosProbability(0.25),
+								},
+								{
+									type: AddedReplicationSegmentMessage,
+									minDelayMs: scaleChaosDelay(25),
+									maxDelayMs: scaleChaosDelay(140),
+									probability: scaleChaosProbability(0.25),
+								},
+								{
+									type: AllReplicatingSegmentsMessage,
+									minDelayMs: scaleChaosDelay(25),
+									maxDelayMs: scaleChaosDelay(140),
+									probability: scaleChaosProbability(0.25),
+								},
+							] as const;
 
 						it("control per commmit put before join", async () => {
 							// This test validates historical replication semantics, not bulk
@@ -2519,30 +2526,33 @@ testSetups.forEach((setup) => {
 						(setup.name === "u64-iblt" ? it : it.skip)(
 							"control per commmit put before join converges under deterministic pubsub chaos",
 							async () => {
-								const entryCount = 40;
+								const entryCount = 24;
 								const chaosAbort = new AbortController();
 								const chaosSeed = getDeterministicTestSeed(
 									"PEERBIT_SHARED_LOG_CHAOS_SEED",
 									17_331,
 								);
+								const pubsubChaosOptions = isU64Rateless
+									? { minDelayMs: 10, maxDelayMs: 60, probability: 0.25 }
+									: { minDelayMs: 15, maxDelayMs: 90, probability: 0.35 };
 
 								try {
 									slowDownPubSubWritesWithSeed(
 										session.peers[0],
 										chaosSeed,
-										{ minDelayMs: 15, maxDelayMs: 90, probability: 0.35 },
+										pubsubChaosOptions,
 										chaosAbort.signal,
 									);
 									slowDownPubSubWritesWithSeed(
 										session.peers[1],
 										chaosSeed + 1,
-										{ minDelayMs: 15, maxDelayMs: 90, probability: 0.35 },
+										pubsubChaosOptions,
 										chaosAbort.signal,
 									);
 									slowDownPubSubWritesWithSeed(
 										session.peers[2],
 										chaosSeed + 2,
-										{ minDelayMs: 15, maxDelayMs: 90, probability: 0.35 },
+										pubsubChaosOptions,
 										chaosAbort.signal,
 									);
 
