@@ -1388,6 +1388,16 @@ export class SharedLog<
 			}
 
 				if (!delivery) {
+					for (const peer of set) {
+						if (peer === selfHash) {
+							continue;
+						}
+						// Default live append delivery is still optimistic. If one remote misses
+						// the initial heads exchange and the caller did not opt into explicit
+						// delivery acks, we still need a targeted backfill source of truth for the
+						// intended recipients or one entry can get stuck at 2/3 replicas forever.
+						this.queueAppendBackfill(peer, entryReplicatedForRepair);
+					}
 					this.rpc
 						.send(message, {
 							mode: isLeader
