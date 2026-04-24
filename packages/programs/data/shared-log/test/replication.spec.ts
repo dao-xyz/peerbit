@@ -2813,6 +2813,108 @@ testSetups.forEach((setup) => {
 							}
 						});
 
+						it("control per commmit put before join widens authoritative frontier on later sweeps", async () => {
+							const entryCount = 24;
+							const repairSweepTargetBufferSize = 8;
+							let partialSweepActive = true;
+							let partialSweepQueued = 0;
+							const partialAllowedHashes = new Set<string>();
+							let dispatchStub: sinon.SinonStub | undefined;
+							let sendStub: sinon.SinonStub | undefined;
+							let findLeadersStub: sinon.SinonStub | undefined;
+
+							try {
+								await init({
+									min: 1,
+									sync: { repairSweepTargetBufferSize },
+									beforeOther: async () => {
+										const value = "hello";
+										for (let i = 0; i < entryCount; i++) {
+											await db1.add(value, {
+												replicas: new AbsoluteReplicas(3),
+												meta: { next: [] },
+											});
+										}
+									},
+									beforeOpenJoiners: () => {
+										const joiner = session.peers[1].identity.publicKey.hashcode();
+										const originalDispatch = (db1.log as any).dispatchMaybeMissingEntries.bind(db1.log);
+										dispatchStub = sinon
+											.stub(db1.log as any, "dispatchMaybeMissingEntries")
+											.callsFake((...args: any[]) => {
+												const [target, entries, options] = args as [string, Map<string, any>, { mode?: string }];
+												if (options?.mode === "join-warmup") {
+													return;
+												}
+												if (
+													options?.mode === "join-authoritative" &&
+													target === joiner
+												) {
+													partialSweepQueued += entries.size;
+												}
+												return originalDispatch(target, entries, options);
+											});
+
+										sendStub = sinon
+											.stub(db1.log as any, "sendMaybeMissingEntriesNow")
+											.callsFake(() => Promise.resolve());
+
+										const originalFindLeaders = (db1.log as any).findLeaders.bind(db1.log);
+										findLeadersStub = sinon
+											.stub(db1.log as any, "findLeaders")
+											.callsFake(async (...args: any[]) => {
+												const leaders = await originalFindLeaders(...args);
+												if (!partialSweepActive) {
+													return leaders;
+												}
+												const entry = args[1] as { hash?: string };
+												if (!entry?.hash) {
+													return leaders;
+												}
+												if (partialAllowedHashes.size < Math.floor(entryCount / 2)) {
+													partialAllowedHashes.add(entry.hash);
+													return leaders;
+												}
+												if (!partialAllowedHashes.has(entry.hash)) {
+													const narrowed = new Map(leaders);
+													narrowed.delete(joiner);
+													return narrowed;
+												}
+												return leaders;
+											});
+									},
+								});
+
+								await waitForDb1Replicators();
+
+								const joiner = session.peers[1].identity.publicKey.hashcode();
+								const getFrontierSize = () =>
+									((db1.log as any)._repairFrontierByMode
+										?.get("join-authoritative")
+										?.get(joiner) as Map<string, any> | undefined)?.size ?? 0;
+
+								await waitForResolved(async () => {
+									expect(getFrontierSize()).greaterThan(0);
+									expect(getFrontierSize()).lessThan(entryCount);
+								}, commitReplicationWait);
+
+								partialSweepActive = false;
+								(db1.log as any).scheduleRepairSweep({
+									mode: "join-authoritative",
+									peers: new Set([joiner]),
+								});
+
+								await waitForResolved(async () => {
+									expect(getFrontierSize()).equal(entryCount);
+								}, commitReplicationWait);
+								expect(partialSweepQueued).greaterThan(0);
+							} finally {
+								findLeadersStub?.restore();
+								sendStub?.restore();
+								dispatchStub?.restore();
+							}
+						});
+
 						it("control per commmit", async () => {
 							const entryCount = 100;
 

@@ -536,6 +536,12 @@ const JOIN_AUTHORITATIVE_RETRY_SCHEDULE_MS = [
 ];
 const APPEND_BACKFILL_RETRY_SCHEDULE_MS = [0, 1_000, 3_000, 7_000];
 const JOIN_AUTHORITATIVE_REPAIR_DELAY_MS = 2_000;
+const JOIN_AUTHORITATIVE_REPAIR_SWEEP_DELAYS_MS = [
+	JOIN_AUTHORITATIVE_REPAIR_DELAY_MS,
+	7_000,
+	15_000,
+	30_000,
+];
 const APPEND_BACKFILL_DELAY_MS = 500;
 const ASSUME_SYNCED_REPAIR_SUPPRESSION_MS = 5_000;
 const REPAIR_CONFIRMATION_HASH_BATCH_SIZE = 1_024;
@@ -886,8 +892,11 @@ export class SharedLog<
 	>;
 	private _repairFrontierActiveTargetsByMode!: Map<RepairDispatchMode, Set<string>>;
 	private _repairSweepOptimisticGidPeersPending!: Map<string, Map<string, number>>;
-	private _joinAuthoritativeRepairTimer?: ReturnType<typeof setTimeout>;
-	private _joinAuthoritativeRepairPeers!: Set<string>;
+	private _joinAuthoritativeRepairTimersByDelay!: Map<
+		number,
+		ReturnType<typeof setTimeout>
+	>;
+	private _joinAuthoritativeRepairPeersByDelay!: Map<number, Set<string>>;
 	private _assumeSyncedRepairSuppressedUntil!: number;
 	private _appendBackfillTimer?: ReturnType<typeof setTimeout>;
 	private _appendBackfillPendingByTarget!: Map<string, Map<string, EntryReplicated<R>>>;
@@ -3137,44 +3146,47 @@ export class SharedLog<
 			return;
 		}
 
-		for (const peer of peers) {
-			this._joinAuthoritativeRepairPeers.add(peer);
-		}
-
-		if (this.isAssumeSyncedRepairSuppressed()) {
-			return;
-		}
-
-		if (this._joinAuthoritativeRepairTimer) {
-			return;
-		}
-
-		const timer = setTimeout(() => {
-			this._repairRetryTimers.delete(timer);
-			if (this._joinAuthoritativeRepairTimer === timer) {
-				this._joinAuthoritativeRepairTimer = undefined;
+		for (const delayMs of JOIN_AUTHORITATIVE_REPAIR_SWEEP_DELAYS_MS) {
+			let pendingPeers = this._joinAuthoritativeRepairPeersByDelay.get(delayMs);
+			if (!pendingPeers) {
+				pendingPeers = new Set();
+				this._joinAuthoritativeRepairPeersByDelay.set(delayMs, pendingPeers);
 			}
-			if (this.closed) {
-				return;
+			for (const peer of peers) {
+				pendingPeers.add(peer);
 			}
 
-			const pendingPeers = new Set(this._joinAuthoritativeRepairPeers);
-			this._joinAuthoritativeRepairPeers.clear();
-			if (pendingPeers.size === 0) {
-				return;
+			if (this._joinAuthoritativeRepairTimersByDelay.has(delayMs)) {
+				continue;
 			}
 
-			// Historical backfill should be seeded once from the authoritative join sweep.
-			// Any live writes that land after the join transition are tracked separately by
-			// the append-backfill frontier and clear on explicit receipt confirmation.
-			this.scheduleRepairSweep({
-				mode: "join-authoritative",
-				peers: pendingPeers,
-			});
-		}, JOIN_AUTHORITATIVE_REPAIR_DELAY_MS);
-		timer.unref?.();
-		this._repairRetryTimers.add(timer);
-		this._joinAuthoritativeRepairTimer = timer;
+			const timer = setTimeout(() => {
+				this._repairRetryTimers.delete(timer);
+				this._joinAuthoritativeRepairTimersByDelay.delete(delayMs);
+				if (this.closed) {
+					return;
+				}
+
+				const peersForSweep = new Set(
+					this._joinAuthoritativeRepairPeersByDelay.get(delayMs) ?? [],
+				);
+				this._joinAuthoritativeRepairPeersByDelay.delete(delayMs);
+				if (peersForSweep.size === 0) {
+					return;
+				}
+
+				// A joiner's leader view can still be partial on the first delayed pass
+				// under pubsub jitter. Bounded per-peer rescans widen the authoritative
+				// frontier without adding per-append sweeps.
+				this.scheduleRepairSweep({
+					mode: "join-authoritative",
+					peers: peersForSweep,
+				});
+			}, delayMs);
+			timer.unref?.();
+			this._repairRetryTimers.add(timer);
+			this._joinAuthoritativeRepairTimersByDelay.set(delayMs, timer);
+		}
 	}
 
 	private async runRepairSweep() {
@@ -3659,8 +3671,8 @@ export class SharedLog<
 		>;
 		this._repairFrontierActiveTargetsByMode = createRepairActiveTargetsByMode();
 		this._repairSweepOptimisticGidPeersPending = new Map();
-		this._joinAuthoritativeRepairTimer = undefined;
-		this._joinAuthoritativeRepairPeers = new Set();
+		this._joinAuthoritativeRepairTimersByDelay = new Map();
+		this._joinAuthoritativeRepairPeersByDelay = new Map();
 		this._assumeSyncedRepairSuppressedUntil = 0;
 		this._appendBackfillTimer = undefined;
 		this._appendBackfillPendingByTarget = new Map();
@@ -4734,11 +4746,11 @@ export class SharedLog<
 			peers.clear();
 		}
 		this._repairSweepOptimisticGidPeersPending.clear();
-		if (this._joinAuthoritativeRepairTimer) {
-			clearTimeout(this._joinAuthoritativeRepairTimer);
-			this._joinAuthoritativeRepairTimer = undefined;
+		for (const timer of this._joinAuthoritativeRepairTimersByDelay.values()) {
+			clearTimeout(timer);
 		}
-		this._joinAuthoritativeRepairPeers.clear();
+		this._joinAuthoritativeRepairTimersByDelay.clear();
+		this._joinAuthoritativeRepairPeersByDelay.clear();
 		for (const targets of this._repairFrontierByMode.values()) {
 			targets.clear();
 		}
