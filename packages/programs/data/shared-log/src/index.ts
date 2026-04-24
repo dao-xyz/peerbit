@@ -3247,6 +3247,28 @@ export class SharedLog<
 					RepairDispatchMode,
 					Map<string, Map<string, EntryReplicated<any>>>
 				>(REPAIR_DISPATCH_MODES.map((mode) => [mode, new Map()]));
+				const fullReplicaRepairCandidates = new Set<string>([
+					this.node.identity.publicKey.hashcode(),
+				]);
+				for (const peer of this.uniqueReplicators) {
+					fullReplicaRepairCandidates.add(peer);
+				}
+				for (const peers of pendingPeersByMode.values()) {
+					for (const peer of peers) {
+						fullReplicaRepairCandidates.add(peer);
+					}
+				}
+				try {
+					for (const subscriber of (await this._getTopicSubscribers(this.topic)) ?? []) {
+						fullReplicaRepairCandidates.add(subscriber.hashcode());
+					}
+				} catch {
+					// Best-effort only; pending repair peers still keep the join path safe.
+				}
+				const fullReplicaRepairCandidateCount = Math.max(
+					1,
+					fullReplicaRepairCandidates.size,
+				);
 				const nextFrontierByMode = new Map<
 					RepairDispatchMode,
 					Map<string, Map<string, EntryReplicated<any>>>
@@ -3303,6 +3325,8 @@ export class SharedLog<
 							const entryReplicated = entry.value;
 							const gid = entryReplicated.gid;
 							const knownPeers = this._gidPeersHistory.get(gid);
+							const requestedReplicas =
+								decodeReplicas(entryReplicated).getValue(this);
 							const currentPeers = await this.findLeaders(
 								entryReplicated.coordinates,
 								entryReplicated,
@@ -3327,9 +3351,13 @@ export class SharedLog<
 								for (const peer of modePeers) {
 									const wasOptimisticallyAssigned =
 										optimisticPeers?.has(peer) === true;
+									const isCoveredByFullReplicaRepair =
+										mode === "join-authoritative" &&
+										fullReplicaRepairCandidates.has(peer) &&
+										requestedReplicas >= fullReplicaRepairCandidateCount;
 									const shouldQueue =
 										mode === "join-authoritative"
-											? currentPeers.has(peer)
+											? currentPeers.has(peer) || isCoveredByFullReplicaRepair
 											: wasOptimisticallyAssigned ||
 											  (currentPeers.has(peer) && !knownPeers?.has(peer));
 									if (shouldQueue) {

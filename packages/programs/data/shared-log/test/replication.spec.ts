@@ -2813,12 +2813,9 @@ testSetups.forEach((setup) => {
 							}
 						});
 
-						it("control per commmit put before join widens authoritative frontier on later sweeps", async () => {
+						it("control per commmit put before join queues full-replica history despite empty transient leader view", async () => {
 							const entryCount = 24;
 							const repairSweepTargetBufferSize = 8;
-							let partialSweepActive = true;
-							let partialSweepQueued = 0;
-							const partialAllowedHashes = new Set<string>();
 							let dispatchStub: sinon.SinonStub | undefined;
 							let sendStub: sinon.SinonStub | undefined;
 							let findLeadersStub: sinon.SinonStub | undefined;
@@ -2837,7 +2834,80 @@ testSetups.forEach((setup) => {
 										}
 									},
 									beforeOpenJoiners: () => {
+										const originalDispatch = (db1.log as any).dispatchMaybeMissingEntries.bind(db1.log);
+										dispatchStub = sinon
+											.stub(db1.log as any, "dispatchMaybeMissingEntries")
+											.callsFake((...args: any[]) => {
+												const [_target, _entries, options] = args as [string, Map<string, any>, { mode?: string }];
+												if (options?.mode === "join-warmup") {
+													return;
+												}
+												return originalDispatch(...args);
+											});
+
+										sendStub = sinon
+											.stub(db1.log as any, "sendMaybeMissingEntriesNow")
+											.callsFake(() => Promise.resolve());
+
+										findLeadersStub = sinon
+											.stub(db1.log as any, "findLeaders")
+											.callsFake(() => Promise.resolve(new Map()));
+									},
+								});
+
+								await waitForDb1Replicators();
+
+								const joiner1 = session.peers[1].identity.publicKey.hashcode();
+								const joiner2 = session.peers[2].identity.publicKey.hashcode();
+								const getFrontierSize = (target: string) =>
+									((db1.log as any)._repairFrontierByMode
+										?.get("join-authoritative")
+										?.get(target) as Map<string, any> | undefined)?.size ?? 0;
+
+								await waitForResolved(async () => {
+									expect(getFrontierSize(joiner1)).equal(entryCount);
+									expect(getFrontierSize(joiner2)).equal(entryCount);
+								}, commitReplicationWait);
+							} finally {
+								findLeadersStub?.restore();
+								sendStub?.restore();
+								dispatchStub?.restore();
+							}
+						});
+
+						it("control per commmit put before join widens authoritative frontier on later sweeps", async () => {
+							const entryCount = 24;
+							const repairSweepTargetBufferSize = 8;
+							let partialSweepActive = true;
+							let partialSweepQueued = 0;
+							const partialAllowedHashes = new Set<string>();
+							let dispatchStub: sinon.SinonStub | undefined;
+							let sendStub: sinon.SinonStub | undefined;
+							let findLeadersStub: sinon.SinonStub | undefined;
+							let subscribersStub: sinon.SinonStub | undefined;
+
+							try {
+								await init({
+									min: 1,
+									sync: { repairSweepTargetBufferSize },
+									beforeOther: async () => {
+										const value = "hello";
+										for (let i = 0; i < entryCount; i++) {
+											await db1.add(value, {
+												replicas: new AbsoluteReplicas(3),
+												meta: { next: [] },
+											});
+										}
+									},
+									beforeOpenJoiners: () => {
 										const joiner = session.peers[1].identity.publicKey.hashcode();
+										const originalGetTopicSubscribers = (db1.log as any)._getTopicSubscribers.bind(db1.log);
+										subscribersStub = sinon
+											.stub(db1.log as any, "_getTopicSubscribers")
+											.callsFake(async (...args: any[]) => [
+												...(await originalGetTopicSubscribers(...args)),
+												{ hashcode: () => "synthetic-full-replica-candidate" },
+											]);
 										const originalDispatch = (db1.log as any).dispatchMaybeMissingEntries.bind(db1.log);
 										dispatchStub = sinon
 											.stub(db1.log as any, "dispatchMaybeMissingEntries")
@@ -2909,6 +2979,7 @@ testSetups.forEach((setup) => {
 								}, commitReplicationWait);
 								expect(partialSweepQueued).greaterThan(0);
 							} finally {
+								subscribersStub?.restore();
 								findLeadersStub?.restore();
 								sendStub?.restore();
 								dispatchStub?.restore();
