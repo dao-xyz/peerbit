@@ -468,6 +468,7 @@ export type SharedLogOptions<
 	waitForReplicatorRequestMaxAttempts?: number;
 	waitForPruneDelay?: number;
 	distributionDebounceTime?: number;
+	strictFullReplicaFallback?: boolean;
 	compatibility?: number;
 	domain?: ReplicationDomainConstructor<D>;
 	eagerBlocks?: boolean | { cacheSize?: number };
@@ -6444,9 +6445,11 @@ export class SharedLog<
 	): Promise<Map<string, { intersecting: boolean }> | undefined> {
 		const now = Date.now();
 		const leaders = new Map<string, { intersecting: boolean }>();
+		const includeStrict =
+			this._logProperties?.strictFullReplicaFallback !== false;
 		const iterator = this.replicationIndex.iterate(
 			{},
-			{ shape: { hash: true, timestamp: true } },
+			{ shape: { hash: true, timestamp: true, mode: true } },
 		);
 
 		try {
@@ -6461,6 +6464,9 @@ export class SharedLog<
 						continue;
 					}
 					if (!isMatured(range, now, roleAge)) {
+						continue;
+					}
+					if (range.mode === ReplicationIntent.Strict && !includeStrict) {
 						continue;
 					}
 					leaders.set(range.hash, { intersecting: true });

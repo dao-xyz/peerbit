@@ -342,6 +342,7 @@ export class Documents<
 			waitForReplicatorTimeout: options?.waitForReplicatorTimeout,
 			waitForPruneDelay: options?.waitForPruneDelay,
 			distributionDebounceTime: options?.distributionDebounceTime,
+			strictFullReplicaFallback: false,
 			domain: (options?.domain
 				? (log: any) => options.domain!(this)
 				: undefined) as any, /// TODO types,
