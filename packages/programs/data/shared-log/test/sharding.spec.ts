@@ -2117,15 +2117,18 @@ testSetups.forEach((setup) => {
 							await waitForDistributionQuiesced(db1, db2);
 
 							await waitForResolved(
-								async () =>
+								async () => {
+									const memoryUsage = await db1.log.getMemoryUsage();
 									expect(
-										Math.abs(memoryLimit - (await db1.log.getMemoryUsage())),
+										Math.abs(memoryLimit - memoryUsage),
+										`db1 memory=${memoryUsage}`,
 									).lessThan(
 										Math.max(
 											(memoryLimit / 100) * 12,
 											setup.name === "u64-iblt" ? 25_000 : 20_000,
 										),
-									),
+									);
+								},
 								{
 									timeout: 60 * 1000,
 									delayInterval: 1000,

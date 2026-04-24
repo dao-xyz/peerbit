@@ -893,6 +893,7 @@ export class SharedLog<
 	>;
 	private _repairFrontierActiveTargetsByMode!: Map<RepairDispatchMode, Set<string>>;
 	private _repairSweepOptimisticGidPeersPending!: Map<string, Map<string, number>>;
+	private _entryKnownPeers!: Map<string, Set<string>>;
 	private _joinAuthoritativeRepairTimersByDelay!: Map<
 		number,
 		ReturnType<typeof setTimeout>
@@ -2679,6 +2680,7 @@ export class SharedLog<
 			for (const key of this._gidPeersHistory.keys()) {
 				this.removePeerFromGidPeerHistory(publicKeyHash, key);
 			}
+			this.removePeerFromEntryKnownPeers(publicKeyHash);
 		}
 	}
 
@@ -2701,6 +2703,43 @@ export class SharedLog<
 			set.add(key);
 		}
 		return set;
+	}
+
+	private markEntriesKnownByPeer(hashes: Iterable<string>, peer: string) {
+		for (const hash of hashes) {
+			let peers = this._entryKnownPeers.get(hash);
+			if (!peers) {
+				peers = new Set();
+				this._entryKnownPeers.set(hash, peers);
+			}
+			peers.add(peer);
+		}
+	}
+
+	private removeEntriesKnownByPeer(hashes: Iterable<string>, peer: string) {
+		for (const hash of hashes) {
+			const peers = this._entryKnownPeers.get(hash);
+			if (!peers) {
+				continue;
+			}
+			peers.delete(peer);
+			if (peers.size === 0) {
+				this._entryKnownPeers.delete(hash);
+			}
+		}
+	}
+
+	private removePeerFromEntryKnownPeers(peer: string) {
+		for (const [hash, peers] of this._entryKnownPeers) {
+			peers.delete(peer);
+			if (peers.size === 0) {
+				this._entryKnownPeers.delete(hash);
+			}
+		}
+	}
+
+	private isEntryKnownByPeer(hash: string, peer: string) {
+		return this._entryKnownPeers.get(hash)?.has(peer) === true;
 	}
 
 	private markRepairSweepOptimisticPeer(gid: string, peer: string) {
@@ -2875,15 +2914,28 @@ export class SharedLog<
 		entries: Map<string, EntryReplicated<R>>,
 		transport: RepairTransportMode,
 	) {
+		const unknownEntries = new Map<string, EntryReplicated<R>>();
+		const knownHashes: string[] = [];
+		for (const [hash, entry] of entries) {
+			if (!this.isEntryKnownByPeer(hash, target)) {
+				unknownEntries.set(hash, entry);
+			} else {
+				knownHashes.push(hash);
+			}
+		}
+		this.clearRepairFrontierHashes(target, knownHashes);
+		if (unknownEntries.size === 0) {
+			return;
+		}
 		if (transport === "simple") {
 			// Fallback repair should not depend on the target completing the
 			// RequestMaybeSync -> ResponseMaybeSync round trip.
-			await this.pushRepairEntries(target, entries);
+			await this.pushRepairEntries(target, unknownEntries);
 			return;
 		}
 
 		await this.syncronizer.onMaybeMissingEntries({
-			entries,
+			entries: unknownEntries,
 			targets: [target],
 		});
 	}
@@ -3395,6 +3447,9 @@ export class SharedLog<
 								}
 								const optimisticPeers = optimisticGidPeersByMode.get(mode)?.get(gid);
 								for (const peer of modePeers) {
+									if (this.isEntryKnownByPeer(entryReplicated.hash, peer)) {
+										continue;
+									}
 									const wasOptimisticallyAssigned =
 										optimisticPeers?.has(peer) === true;
 									const isCoveredByFullReplicaRepair =
@@ -3421,7 +3476,7 @@ export class SharedLog<
 					await iterator.close();
 				}
 
-				for (const [mode, optimisticGidPeersConsumed] of optimisticGidPeersConsumedByMode) {
+				for (const [, optimisticGidPeersConsumed] of optimisticGidPeersConsumedByMode) {
 					for (const [gid, peerCounts] of optimisticGidPeersConsumed) {
 						const pendingPeerCounts =
 							this._repairSweepOptimisticGidPeersPending.get(gid);
@@ -3500,9 +3555,89 @@ export class SharedLog<
 			entry: Entry<T> | ShallowEntry | EntryReplicated<R>;
 			leaders: Map<string, any>;
 		};
-	}) {
-		if (!this.keep || !(await this.keep(args.value.entry))) {
-			return this.pruneDebouncedFn.add(args);
+	}): Promise<boolean> {
+		if (this.keep && (await this.keep(args.value.entry))) {
+			return false;
+		}
+		void this.pruneDebouncedFn.add(args);
+		return true;
+	}
+
+	private async pruneJoinedEntriesNoLongerLed(entries: Entry<T>[]) {
+		const selfHash = this.node.identity.publicKey.hashcode();
+		for (const entry of entries) {
+			if (this.closed || this._pendingDeletes.has(entry.hash)) {
+				continue;
+			}
+
+			const leaders = await this.findLeadersFromEntry(
+				entry,
+				decodeReplicas(entry).getValue(this),
+				{ roleAge: 0 },
+			);
+
+			if (leaders.has(selfHash)) {
+				this.pruneDebouncedFn.delete(entry.hash);
+				continue;
+			}
+
+			if (leaders.size === 0) {
+				continue;
+			}
+
+			await this.pruneDebouncedFnAddIfNotKeeping({
+				key: entry.hash,
+				value: { entry, leaders },
+			});
+			this.responseToPruneDebouncedFn.delete(entry.hash);
+		}
+	}
+
+	private async pruneIndexedEntriesNoLongerLed() {
+		const selfHash = this.node.identity.publicKey.hashcode();
+		const iterator = this.entryCoordinatesIndex.iterate({});
+		let enqueuedPrune = false;
+		try {
+			while (!this.closed && !iterator.done()) {
+				const entries = await iterator.next(REPAIR_SWEEP_ENTRY_BATCH_SIZE);
+				for (const entry of entries) {
+					const entryReplicated = entry.value;
+					if (this.closed || this._pendingDeletes.has(entryReplicated.hash)) {
+						continue;
+					}
+
+					const leaders = await this.findLeaders(
+						entryReplicated.coordinates,
+						entryReplicated,
+						{ roleAge: 0 },
+					);
+
+					if (leaders.has(selfHash)) {
+						this.pruneDebouncedFn.delete(entryReplicated.hash);
+						await this._pendingDeletes
+							.get(entryReplicated.hash)
+							?.reject(new Error("Failed to delete, is leader again"));
+						this.removePruneRequestSent(entryReplicated.hash);
+						continue;
+					}
+
+					if (leaders.size === 0) {
+						continue;
+					}
+
+					enqueuedPrune =
+						(await this.pruneDebouncedFnAddIfNotKeeping({
+							key: entryReplicated.hash,
+							value: { entry: entryReplicated, leaders },
+						})) || enqueuedPrune;
+					this.responseToPruneDebouncedFn.delete(entryReplicated.hash);
+				}
+			}
+		} finally {
+			await iterator.close();
+		}
+		if (enqueuedPrune && !this.closed) {
+			await this.pruneDebouncedFn.flush();
 		}
 	}
 
@@ -3746,6 +3881,7 @@ export class SharedLog<
 		>;
 		this._repairFrontierActiveTargetsByMode = createRepairActiveTargetsByMode();
 		this._repairSweepOptimisticGidPeersPending = new Map();
+		this._entryKnownPeers = new Map();
 		this._joinAuthoritativeRepairTimersByDelay = new Map();
 		this._joinAuthoritativeRepairPeersByDelay = new Map();
 		this._assumeSyncedRepairSuppressedUntil = 0;
@@ -4821,6 +4957,7 @@ export class SharedLog<
 			peers.clear();
 		}
 		this._repairSweepOptimisticGidPeersPending.clear();
+		this._entryKnownPeers.clear();
 		for (const timer of this._joinAuthoritativeRepairTimersByDelay.values()) {
 			clearTimeout(timer);
 		}
@@ -5035,6 +5172,7 @@ export class SharedLog<
 
 					if (filteredHeads.length === 0) {
 						if (confirmedHashes.size > 0 && !context.from.equals(this.node.identity.publicKey)) {
+							this.markEntriesKnownByPeer(confirmedHashes, context.from.hashcode());
 							await this.sendRepairConfirmation(context.from!, confirmedHashes);
 						}
 						return;
@@ -5170,10 +5308,15 @@ export class SharedLog<
 							}
 
 							if (toMerge.length > 0) {
+								this.markEntriesKnownByPeer(
+									toMerge.map((entry) => entry.hash),
+									context.from!.hashcode(),
+								);
 								await this.log.join(toMerge);
 								for (const merged of toMerge) {
 									confirmedHashes.add(merged.hash);
 								}
+								await this.pruneJoinedEntriesNoLongerLed(toMerge);
 
 								toDelete?.map((x) =>
 									// TODO types
@@ -5221,6 +5364,7 @@ export class SharedLog<
 					}
 					await Promise.all(promises);
 					if (confirmedHashes.size > 0 && !context.from.equals(this.node.identity.publicKey)) {
+						this.markEntriesKnownByPeer(confirmedHashes, context.from.hashcode());
 						await this.sendRepairConfirmation(context.from!, confirmedHashes);
 					}
 				}
@@ -5230,6 +5374,7 @@ export class SharedLog<
 
 				for (const hash of msg.hashes) {
 					this.removePruneRequestSent(hash, from);
+					this.removeEntriesKnownByPeer([hash], from);
 
 					// if we expect the remote to be owner of this entry because we are to prune ourselves, then we need to remove the remote
 					// this is due to that the remote has previously indicated to be a replicator to help us prune but now has changed their mind
@@ -5345,6 +5490,7 @@ export class SharedLog<
 					this._pendingDeletes.get(hash)?.resolve(context.from.hashcode());
 				}
 			} else if (msg instanceof ConfirmEntriesMessage) {
+				this.markEntriesKnownByPeer(msg.hashes, context.from.hashcode());
 				this.clearRepairFrontierHashes(context.from.hashcode(), msg.hashes);
 				return;
 			} else if (await this.syncronizer.onMessage(msg, context)) {
@@ -7129,7 +7275,18 @@ export class SharedLog<
 					change.range.hash === selfHash &&
 					(change.type === "added" || change.type === "replaced"),
 			);
+			const hasSelfRangeRemoval = changes.some(
+				(change) =>
+					change.range.hash === selfHash &&
+					(change.type === "removed" || change.type === "replaced"),
+			);
 			for (const change of changes) {
+				if (
+					change.range.hash !== selfHash &&
+					(change.type === "removed" || change.type === "replaced")
+				) {
+					this.removePeerFromEntryKnownPeers(change.range.hash);
+				}
 				if (change.type === "added" || change.type === "replaced") {
 					const hash = change.range.hash;
 					if (hash !== selfHash) {
@@ -7224,85 +7381,85 @@ export class SharedLog<
 							forceFresh: forceFreshDelivery || useJoinWarmupFastPath,
 						},
 					)) {
-				if (this.closed) {
-					break;
-				}
-
-					if (useJoinWarmupFastPath) {
-						let oldPeersSet: Set<string> | undefined;
-						const gid = entryReplicated.gid;
-						oldPeersSet = gidPeersHistorySnapshot.get(gid);
-						if (!gidPeersHistorySnapshot.has(gid)) {
-							const existing = this._gidPeersHistory.get(gid);
-							oldPeersSet = existing ? new Set(existing) : undefined;
-							gidPeersHistorySnapshot.set(gid, oldPeersSet);
+						if (this.closed) {
+							break;
 						}
 
-						for (const target of warmupPeers) {
-							queueUncheckedDeliver(target, entryReplicated);
-						}
-
-						const candidatePeers = new Set<string>([selfHash]);
-						for (const target of warmupPeers) {
-							candidatePeers.add(target);
-						}
-						if (oldPeersSet) {
-							for (const oldPeer of oldPeersSet) {
-								candidatePeers.add(oldPeer);
+						if (useJoinWarmupFastPath) {
+							let oldPeersSet: Set<string> | undefined;
+							const gid = entryReplicated.gid;
+							oldPeersSet = gidPeersHistorySnapshot.get(gid);
+							if (!gidPeersHistorySnapshot.has(gid)) {
+								const existing = this._gidPeersHistory.get(gid);
+								oldPeersSet = existing ? new Set(existing) : undefined;
+								gidPeersHistorySnapshot.set(gid, oldPeersSet);
 							}
-						}
 
-						const currentPeers = await this.findLeaders(
-							entryReplicated.coordinates,
-							entryReplicated,
-							{
-								roleAge: 0,
-								candidates: candidatePeers,
-								persist: false,
-							},
-						);
+							for (const target of warmupPeers) {
+								queueUncheckedDeliver(target, entryReplicated);
+							}
 
-						if (oldPeersSet) {
-							for (const oldPeer of oldPeersSet) {
-								if (!currentPeers.has(oldPeer)) {
-									this.removePruneRequestSent(entryReplicated.hash);
+							const candidatePeers = new Set<string>([selfHash]);
+							for (const target of warmupPeers) {
+								candidatePeers.add(target);
+							}
+							if (oldPeersSet) {
+								for (const oldPeer of oldPeersSet) {
+									candidatePeers.add(oldPeer);
 								}
 							}
-						}
 
-						for (const [peer] of currentPeers) {
-							if (warmupPeers.has(peer)) {
-								this.markRepairSweepOptimisticPeer(entryReplicated.gid, peer);
+							const currentPeers = await this.findLeaders(
+								entryReplicated.coordinates,
+								entryReplicated,
+								{
+									roleAge: 0,
+									candidates: candidatePeers,
+									persist: false,
+								},
+							);
+
+							if (oldPeersSet) {
+								for (const oldPeer of oldPeersSet) {
+									if (!currentPeers.has(oldPeer)) {
+										this.removePruneRequestSent(entryReplicated.hash);
+									}
+								}
 							}
+
+							for (const [peer] of currentPeers) {
+								if (warmupPeers.has(peer)) {
+									this.markRepairSweepOptimisticPeer(entryReplicated.gid, peer);
+								}
+							}
+
+							const authoritativePeers = [...currentPeers.keys()].filter(
+								(peer) =>
+									!warmupPeers.has(peer) &&
+									!this.hasPendingRepairSweepOptimisticPeer(entryReplicated.gid, peer),
+							);
+							this.addPeersToGidPeerHistory(
+								entryReplicated.gid,
+								authoritativePeers,
+								true,
+							);
+
+							if (!currentPeers.has(selfHash)) {
+								this.pruneDebouncedFnAddIfNotKeeping({
+									key: entryReplicated.hash,
+									value: { entry: entryReplicated, leaders: currentPeers },
+								});
+
+								this.responseToPruneDebouncedFn.delete(entryReplicated.hash);
+							} else {
+								this.pruneDebouncedFn.delete(entryReplicated.hash);
+								await this._pendingDeletes
+									.get(entryReplicated.hash)
+									?.reject(new Error("Failed to delete, is leader again"));
+								this.removePruneRequestSent(entryReplicated.hash);
+							}
+							continue;
 						}
-
-						const authoritativePeers = [...currentPeers.keys()].filter(
-							(peer) =>
-								!warmupPeers.has(peer) &&
-								!this.hasPendingRepairSweepOptimisticPeer(entryReplicated.gid, peer),
-						);
-						this.addPeersToGidPeerHistory(
-							entryReplicated.gid,
-							authoritativePeers,
-							true,
-						);
-
-						if (!currentPeers.has(selfHash)) {
-							this.pruneDebouncedFnAddIfNotKeeping({
-								key: entryReplicated.hash,
-								value: { entry: entryReplicated, leaders: currentPeers },
-							});
-
-							this.responseToPruneDebouncedFn.delete(entryReplicated.hash);
-						} else {
-							this.pruneDebouncedFn.delete(entryReplicated.hash);
-							await this._pendingDeletes
-								.get(entryReplicated.hash)
-								?.reject(new Error("Failed to delete, is leader again"));
-							this.removePruneRequestSent(entryReplicated.hash);
-						}
-						continue;
-					}
 
 					let oldPeersSet: Set<string> | undefined;
 					const gid = entryReplicated.gid;
@@ -7376,6 +7533,10 @@ export class SharedLog<
 						this.removePruneRequestSent(entryReplicated.hash);
 					}
 				}
+				}
+
+				if (this._isAdaptiveReplicating && hasSelfRangeRemoval) {
+					await this.pruneIndexedEntriesNoLongerLed();
 				}
 
 				if (forceFreshDelivery) {
@@ -7518,6 +7679,13 @@ export class SharedLog<
 
 				if (!dynamicRange) {
 					return; // not allowed to replicate
+				}
+
+				if (
+					this.replicationController.maxMemoryLimit != null &&
+					usedMemory > this.replicationController.maxMemoryLimit
+				) {
+					await this.pruneIndexedEntriesNoLongerLed();
 				}
 
 				const peersSize = (await peers.getSize()) || 1;
