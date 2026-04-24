@@ -212,13 +212,15 @@ describe("FastMutex", () => {
 	it("should throw if lock is never acquired after set time period", async () => {
 		const fm1 = new FastMutex({ localStorage: localStorage, timeout: 50 });
 		const fm2 = new FastMutex({ localStorage: localStorage, timeout: 50 });
-		await fm1.lock("timeoutTest");
+		await fm1.lock("timeoutTest", () => true);
 		const start = Date.now();
 		let threw = false;
 		try {
 			await fm2.lock("timeoutTest");
 		} catch (e) {
 			threw = true;
+		} finally {
+			fm1.release("timeoutTest");
 		}
 		const elapsed = Date.now() - start;
 		expect(threw).to.be.true;
