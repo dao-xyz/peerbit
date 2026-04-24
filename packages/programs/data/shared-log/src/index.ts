@@ -2806,8 +2806,14 @@ export class SharedLog<
 		const candidates = new Set<string>([
 			this.node.identity.publicKey.hashcode(),
 		]);
-		for (const peer of this.uniqueReplicators) {
-			candidates.add(peer);
+		try {
+			for (const peer of await this.getReplicators()) {
+				candidates.add(peer);
+			}
+		} catch {
+			for (const peer of this.uniqueReplicators) {
+				candidates.add(peer);
+			}
 		}
 		for (const peer of extraPeers ?? []) {
 			candidates.add(peer);

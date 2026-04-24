@@ -2835,6 +2835,9 @@ testSetups.forEach((setup) => {
 										}
 									},
 									beforeOpenJoiners: () => {
+										(db1.log as any).uniqueReplicators.add(
+											"synthetic-stale-replicator",
+										);
 										const originalGetTopicSubscribers = (db1.log as any)._getTopicSubscribers.bind(db1.log);
 										subscribersStub = sinon
 											.stub(db1.log as any, "_getTopicSubscribers")
@@ -2894,6 +2897,7 @@ testSetups.forEach((setup) => {
 							let dispatchStub: sinon.SinonStub | undefined;
 							let sendStub: sinon.SinonStub | undefined;
 							let findLeadersStub: sinon.SinonStub | undefined;
+							let fullReplicaCandidatesStub: sinon.SinonStub | undefined;
 
 							try {
 								await init({
@@ -2910,12 +2914,18 @@ testSetups.forEach((setup) => {
 									},
 									beforeOpenJoiners: () => {
 										const joiner = session.peers[1].identity.publicKey.hashcode();
-										(db1.log as any).uniqueReplicators.add(
-											"synthetic-full-replica-candidate",
-										);
-										(db1.log as any).uniqueReplicators.add(
-											"synthetic-full-replica-candidate-2",
-										);
+										fullReplicaCandidatesStub = sinon
+											.stub(db1.log as any, "getFullReplicaRepairCandidates")
+											.callsFake(async (...args: any[]) => {
+												const extraPeers = args[0] as Iterable<string> | undefined;
+												const candidates = new Set<string>([
+													session.peers[0].identity.publicKey.hashcode(),
+													...(extraPeers ?? []),
+													"synthetic-full-replica-candidate",
+													"synthetic-full-replica-candidate-2",
+												]);
+												return candidates;
+											});
 										const originalDispatch = (db1.log as any).dispatchMaybeMissingEntries.bind(db1.log);
 										dispatchStub = sinon
 											.stub(db1.log as any, "dispatchMaybeMissingEntries")
@@ -2987,6 +2997,7 @@ testSetups.forEach((setup) => {
 								}, commitReplicationWait);
 								expect(partialSweepQueued).greaterThan(0);
 							} finally {
+								fullReplicaCandidatesStub?.restore();
 								findLeadersStub?.restore();
 								sendStub?.restore();
 								dispatchStub?.restore();
