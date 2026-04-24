@@ -2819,6 +2819,7 @@ testSetups.forEach((setup) => {
 							let dispatchStub: sinon.SinonStub | undefined;
 							let sendStub: sinon.SinonStub | undefined;
 							let findLeadersStub: sinon.SinonStub | undefined;
+							let subscribersStub: sinon.SinonStub | undefined;
 
 							try {
 								await init({
@@ -2834,6 +2835,14 @@ testSetups.forEach((setup) => {
 										}
 									},
 									beforeOpenJoiners: () => {
+										const originalGetTopicSubscribers = (db1.log as any)._getTopicSubscribers.bind(db1.log);
+										subscribersStub = sinon
+											.stub(db1.log as any, "_getTopicSubscribers")
+											.callsFake(async (...args: any[]) => [
+												...(await originalGetTopicSubscribers(...args)),
+												{ hashcode: () => "synthetic-stale-subscriber" },
+											]);
+
 										const originalDispatch = (db1.log as any).dispatchMaybeMissingEntries.bind(db1.log);
 										dispatchStub = sinon
 											.stub(db1.log as any, "dispatchMaybeMissingEntries")
@@ -2870,6 +2879,7 @@ testSetups.forEach((setup) => {
 								}, commitReplicationWait);
 							} finally {
 								findLeadersStub?.restore();
+								subscribersStub?.restore();
 								sendStub?.restore();
 								dispatchStub?.restore();
 							}
@@ -2884,7 +2894,6 @@ testSetups.forEach((setup) => {
 							let dispatchStub: sinon.SinonStub | undefined;
 							let sendStub: sinon.SinonStub | undefined;
 							let findLeadersStub: sinon.SinonStub | undefined;
-							let subscribersStub: sinon.SinonStub | undefined;
 
 							try {
 								await init({
@@ -2901,13 +2910,12 @@ testSetups.forEach((setup) => {
 									},
 									beforeOpenJoiners: () => {
 										const joiner = session.peers[1].identity.publicKey.hashcode();
-										const originalGetTopicSubscribers = (db1.log as any)._getTopicSubscribers.bind(db1.log);
-										subscribersStub = sinon
-											.stub(db1.log as any, "_getTopicSubscribers")
-											.callsFake(async (...args: any[]) => [
-												...(await originalGetTopicSubscribers(...args)),
-												{ hashcode: () => "synthetic-full-replica-candidate" },
-											]);
+										(db1.log as any).uniqueReplicators.add(
+											"synthetic-full-replica-candidate",
+										);
+										(db1.log as any).uniqueReplicators.add(
+											"synthetic-full-replica-candidate-2",
+										);
 										const originalDispatch = (db1.log as any).dispatchMaybeMissingEntries.bind(db1.log);
 										dispatchStub = sinon
 											.stub(db1.log as any, "dispatchMaybeMissingEntries")
@@ -2979,7 +2987,6 @@ testSetups.forEach((setup) => {
 								}, commitReplicationWait);
 								expect(partialSweepQueued).greaterThan(0);
 							} finally {
-								subscribersStub?.restore();
 								findLeadersStub?.restore();
 								sendStub?.restore();
 								dispatchStub?.restore();

@@ -3291,7 +3291,9 @@ export class SharedLog<
 					}
 				}
 				const fullReplicaRepairCandidates =
-					await this.getFullReplicaRepairCandidates(pendingRepairPeers);
+					await this.getFullReplicaRepairCandidates(pendingRepairPeers, {
+						includeSubscribers: false,
+					});
 				const fullReplicaRepairCandidateCount = Math.max(
 					1,
 					fullReplicaRepairCandidates.size,
