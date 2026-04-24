@@ -3621,9 +3621,7 @@ export class SharedLog<
 				value: { entry: result.entry, leaders },
 			});
 		}
-		if (!this._isAdaptiveReplicating) {
-			this.rebalanceParticipationDebounced?.call();
-		}
+		this.rebalanceParticipationDebounced?.call();
 
 		return result;
 	}
