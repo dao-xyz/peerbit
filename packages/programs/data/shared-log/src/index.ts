@@ -2854,6 +2854,39 @@ export class SharedLog<
 		}
 	}
 
+	private async pushRepairEntries(
+		target: string,
+		entries: Map<string, EntryReplicated<R>>,
+	) {
+		for await (const message of createExchangeHeadsMessages(
+			this.log,
+			[...entries.keys()],
+		)) {
+			await this.rpc.send(message, {
+				priority: 1,
+				mode: new SilentDelivery({ to: [target], redundancy: 1 }),
+			});
+		}
+	}
+
+	private async sendRepairEntriesWithTransport(
+		target: string,
+		entries: Map<string, EntryReplicated<R>>,
+		transport: RepairTransportMode,
+	) {
+		if (transport === "simple") {
+			// Fallback repair should not depend on the target completing the
+			// RequestMaybeSync -> ResponseMaybeSync round trip.
+			await this.pushRepairEntries(target, entries);
+			return;
+		}
+
+		await this.syncronizer.onMaybeMissingEntries({
+			entries,
+			targets: [target],
+		});
+	}
+
 	private async sendMaybeMissingEntriesNow(
 		target: string,
 		entries: Map<string, EntryReplicated<R>>,
@@ -2910,24 +2943,12 @@ export class SharedLog<
 			bucket.ratelessFirstPasses += 1;
 		}
 
-		if (
-			options.transport === "simple" &&
-			this.syncronizer instanceof RatelessIBLTSynchronizer
-		) {
-			await Promise.resolve(
-				this.syncronizer.simple.onMaybeMissingEntries({
-					entries: filteredEntries,
-					targets: [target],
-				}),
-			).catch((error: any) => logger.error(error));
-			return;
-		}
-
 		await Promise.resolve(
-			this.syncronizer.onMaybeMissingEntries({
-				entries: filteredEntries,
-				targets: [target],
-			}),
+			this.sendRepairEntriesWithTransport(
+				target,
+				filteredEntries,
+				options.transport,
+			),
 		).catch((error: any) => logger.error(error));
 	}
 
@@ -3129,23 +3150,12 @@ export class SharedLog<
 				bucket.ratelessFirstPasses += 1;
 			}
 
-			if (
-				transport === "simple" &&
-				this.syncronizer instanceof RatelessIBLTSynchronizer
-			) {
-				return Promise.resolve(
-					this.syncronizer.simple.onMaybeMissingEntries({
-						entries: filteredEntries,
-						targets: [target],
-					}),
-				).catch((error: any) => logger.error(error));
-			}
-
 			return Promise.resolve(
-				this.syncronizer.onMaybeMissingEntries({
-					entries: filteredEntries,
-					targets: [target],
-				}),
+				this.sendRepairEntriesWithTransport(
+					target,
+					filteredEntries,
+					transport,
+				),
 			).catch((error: any) => logger.error(error));
 		};
 
@@ -3678,13 +3688,16 @@ export class SharedLog<
 			}
 		}
 
-		if (!isLeader && !this.shouldDelayAdaptiveRebalance()) {
+		const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
+		if (!isLeader && !delayAdaptiveRebalance) {
 			this.pruneDebouncedFnAddIfNotKeeping({
 				key: result.entry.hash,
 				value: { entry: result.entry, leaders },
 			});
 		}
-		this.rebalanceParticipationDebounced?.call();
+		if (!delayAdaptiveRebalance) {
+			this.rebalanceParticipationDebounced?.call();
+		}
 
 		return result;
 	}
@@ -6400,6 +6413,18 @@ export class SharedLog<
 				}
 			}
 		}
+
+		if (!options?.candidates) {
+			const fullReplicaLeaders = await this.findFullReplicaLeaders(
+				cursors.length,
+				roleAge,
+				peerFilter,
+			);
+			if (fullReplicaLeaders) {
+				return fullReplicaLeaders;
+			}
+		}
+
 		return getSamples<R>(
 			cursors,
 			this.replicationIndex,
@@ -6410,6 +6435,45 @@ export class SharedLog<
 				uniqueReplicators: peerFilter,
 			},
 		);
+	}
+
+	private async findFullReplicaLeaders(
+		replicas: number,
+		roleAge: number,
+		peerFilter?: Set<string>,
+	): Promise<Map<string, { intersecting: boolean }> | undefined> {
+		const now = Date.now();
+		const leaders = new Map<string, { intersecting: boolean }>();
+		const iterator = this.replicationIndex.iterate(
+			{},
+			{ shape: { hash: true, timestamp: true } },
+		);
+
+		try {
+			for (;;) {
+				const batch = await iterator.next(64);
+				if (batch.length === 0) {
+					break;
+				}
+				for (const result of batch) {
+					const range = result.value;
+					if (peerFilter && !peerFilter.has(range.hash)) {
+						continue;
+					}
+					if (!isMatured(range, now, roleAge)) {
+						continue;
+					}
+					leaders.set(range.hash, { intersecting: true });
+					if (leaders.size > replicas) {
+						return undefined;
+					}
+				}
+			}
+		} finally {
+			await iterator.close();
+		}
+
+		return leaders.size > 0 ? leaders : undefined;
 	}
 
 	async findLeadersFromEntry(

@@ -2656,6 +2656,70 @@ testSetups.forEach((setup) => {
 							},
 						);
 
+						(setup.name === "u64-iblt" ? it : it.skip)(
+							"control per commmit put before join repairs when joiner request responses are dropped",
+							async () => {
+								const entryCount = 12;
+								let dispatchStub: sinon.SinonStub | undefined;
+								let droppedResponses = 0;
+								let db3SendStub: sinon.SinonStub | undefined;
+
+								try {
+									await init({
+										min: 1,
+										beforeOther: async () => {
+											const value = "hello";
+											for (let i = 0; i < entryCount; i++) {
+												await db1.add(value, {
+													replicas: new AbsoluteReplicas(3),
+													meta: { next: [] },
+												});
+											}
+										},
+										beforeOpenJoiners: () => {
+											dispatchStub = sinon
+												.stub(db1.log as any, "dispatchMaybeMissingEntries")
+												.callsFake(() => undefined);
+										},
+									});
+
+									await waitForDb1Replicators();
+									dispatchStub?.restore();
+									dispatchStub = undefined;
+
+									const originalDb3Send = db3.log.rpc.send.bind(db3.log.rpc);
+									db3SendStub = sinon
+										.stub(db3.log.rpc, "send")
+										.callsFake((msg: any, options: any) => {
+											if (msg instanceof ResponseMaybeSync) {
+												droppedResponses += 1;
+												return Promise.resolve();
+											}
+											return originalDb3Send(msg, options);
+										});
+
+									(db1.log as any).scheduleRepairSweep({
+										mode: "join-authoritative",
+										peers: new Set([
+											session.peers[2].identity.publicKey.hashcode(),
+										]),
+									});
+
+									await waitForResolved(async () => {
+										const entries = await db3.log.log.toArray();
+										expect(entries.length).equal(entryCount);
+										for (const entry of entries) {
+											expect(decodeReplicas(entry).getValue(db3.log)).equal(3);
+										}
+									}, commitReplicationWait);
+									expect(droppedResponses).greaterThan(0);
+								} finally {
+									db3SendStub?.restore();
+									dispatchStub?.restore();
+								}
+							},
+						);
+
 						it("control per commmit put before join keeps the full authoritative repair frontier across sweep flushes", async () => {
 							const entryCount = 40;
 							const repairSweepTargetBufferSize = 8;
