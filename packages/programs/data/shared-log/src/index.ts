@@ -1354,7 +1354,9 @@ export class SharedLog<
 					: undefined;
 
 			const fullReplicaDeliveryCandidates =
-				await this.getFullReplicaRepairCandidates();
+				await this.getFullReplicaRepairCandidates(undefined, {
+					includeSubscribers: false,
+				});
 			if (minReplicasValue >= Math.max(1, fullReplicaDeliveryCandidates.size)) {
 				for (const peer of fullReplicaDeliveryCandidates) {
 					if (!leaders.has(peer)) {
@@ -2797,7 +2799,10 @@ export class SharedLog<
 		}
 	}
 
-	private async getFullReplicaRepairCandidates(extraPeers?: Iterable<string>) {
+	private async getFullReplicaRepairCandidates(
+		extraPeers?: Iterable<string>,
+		options?: { includeSubscribers?: boolean },
+	) {
 		const candidates = new Set<string>([
 			this.node.identity.publicKey.hashcode(),
 		]);
@@ -2807,12 +2812,14 @@ export class SharedLog<
 		for (const peer of extraPeers ?? []) {
 			candidates.add(peer);
 		}
-		try {
-			for (const subscriber of (await this._getTopicSubscribers(this.topic)) ?? []) {
-				candidates.add(subscriber.hashcode());
+		if (options?.includeSubscribers !== false) {
+			try {
+				for (const subscriber of (await this._getTopicSubscribers(this.topic)) ?? []) {
+					candidates.add(subscriber.hashcode());
+				}
+			} catch {
+				// Best-effort only; explicit repair peers still keep the path safe.
 			}
-		} catch {
-			// Best-effort only; explicit repair peers still keep the path safe.
 		}
 		return candidates;
 	}
