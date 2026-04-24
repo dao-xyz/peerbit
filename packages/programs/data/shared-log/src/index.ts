@@ -1353,6 +1353,16 @@ export class SharedLog<
 					? { timeoutMs: delivery.timeout, signal: delivery.signal }
 					: undefined;
 
+			const fullReplicaDeliveryCandidates =
+				await this.getFullReplicaRepairCandidates();
+			if (minReplicasValue >= Math.max(1, fullReplicaDeliveryCandidates.size)) {
+				for (const peer of fullReplicaDeliveryCandidates) {
+					if (!leaders.has(peer)) {
+						leaders.set(peer, { intersecting: true });
+					}
+				}
+			}
+
 			const entryReplicatedForRepair = this.createEntryReplicatedForRepair({
 				entry,
 				coordinates,
@@ -2787,6 +2797,26 @@ export class SharedLog<
 		}
 	}
 
+	private async getFullReplicaRepairCandidates(extraPeers?: Iterable<string>) {
+		const candidates = new Set<string>([
+			this.node.identity.publicKey.hashcode(),
+		]);
+		for (const peer of this.uniqueReplicators) {
+			candidates.add(peer);
+		}
+		for (const peer of extraPeers ?? []) {
+			candidates.add(peer);
+		}
+		try {
+			for (const subscriber of (await this._getTopicSubscribers(this.topic)) ?? []) {
+				candidates.add(subscriber.hashcode());
+			}
+		} catch {
+			// Best-effort only; explicit repair peers still keep the path safe.
+		}
+		return candidates;
+	}
+
 	private removeRepairFrontierTarget(target: string) {
 		for (const mode of REPAIR_DISPATCH_MODES) {
 			this._repairFrontierByMode.get(mode)?.delete(target);
@@ -3247,24 +3277,14 @@ export class SharedLog<
 					RepairDispatchMode,
 					Map<string, Map<string, EntryReplicated<any>>>
 				>(REPAIR_DISPATCH_MODES.map((mode) => [mode, new Map()]));
-				const fullReplicaRepairCandidates = new Set<string>([
-					this.node.identity.publicKey.hashcode(),
-				]);
-				for (const peer of this.uniqueReplicators) {
-					fullReplicaRepairCandidates.add(peer);
-				}
+				const pendingRepairPeers = new Set<string>();
 				for (const peers of pendingPeersByMode.values()) {
 					for (const peer of peers) {
-						fullReplicaRepairCandidates.add(peer);
+						pendingRepairPeers.add(peer);
 					}
 				}
-				try {
-					for (const subscriber of (await this._getTopicSubscribers(this.topic)) ?? []) {
-						fullReplicaRepairCandidates.add(subscriber.hashcode());
-					}
-				} catch {
-					// Best-effort only; pending repair peers still keep the join path safe.
-				}
+				const fullReplicaRepairCandidates =
+					await this.getFullReplicaRepairCandidates(pendingRepairPeers);
 				const fullReplicaRepairCandidateCount = Math.max(
 					1,
 					fullReplicaRepairCandidates.size,

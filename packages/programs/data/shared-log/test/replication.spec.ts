@@ -3010,6 +3010,52 @@ testSetups.forEach((setup) => {
 							}, commitReplicationWait);
 						});
 
+						it("control per commmit queues full-replica live append backfill despite partial leader view", async () => {
+							const entryCount = 12;
+							await init({ min: 1 });
+							await waitForDb1Replicators();
+
+							const omittedPeer = session.peers[2].identity.publicKey.hashcode();
+							let omittedPeerBackfills = 0;
+							let findLeadersStub: sinon.SinonStub | undefined;
+							let queueAppendBackfillStub: sinon.SinonStub | undefined;
+
+							try {
+								const originalFindLeaders = (db1.log as any).findLeaders.bind(db1.log);
+								findLeadersStub = sinon
+									.stub(db1.log as any, "findLeaders")
+									.callsFake(async (...args: any[]) => {
+										const leaders = new Map(await originalFindLeaders(...args));
+										leaders.delete(omittedPeer);
+										return leaders;
+									});
+
+								const originalQueueAppendBackfill = (db1.log as any).queueAppendBackfill.bind(db1.log);
+								queueAppendBackfillStub = sinon
+									.stub(db1.log as any, "queueAppendBackfill")
+									.callsFake((...args: unknown[]) => {
+										const [target, entry] = args as [string, any];
+										if (target === omittedPeer) {
+											omittedPeerBackfills += 1;
+										}
+										return originalQueueAppendBackfill(target, entry);
+									});
+
+								const value = "hello";
+								for (let i = 0; i < entryCount; i++) {
+									await db1.add(value, {
+										replicas: new AbsoluteReplicas(3),
+										meta: { next: [] },
+									});
+								}
+
+								expect(omittedPeerBackfills).equal(entryCount);
+							} finally {
+								queueAppendBackfillStub?.restore();
+								findLeadersStub?.restore();
+							}
+						});
+
 						it("mixed control per commmit", async () => {
 							await init({ min: 1 });
 							await waitForDb1Replicators();
