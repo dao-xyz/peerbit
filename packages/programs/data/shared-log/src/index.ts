@@ -6013,9 +6013,14 @@ export class SharedLog<
 				clear();
 				// `waitForReplicator()` is typically used as a precondition before join/replicate
 				// flows. A replicator can become mature and enqueue a debounced rebalance
-				// (`replicationChangeDebounceFn`) slightly later. Flush here so callers don't
-				// observe a "late" rebalance after the wait resolves.
-				await this.replicationChangeDebounceFn?.flush?.();
+				// (`replicationChangeDebounceFn`) slightly later. Kick the flush, but do not
+				// make membership waits depend on all rebalance work finishing; callers that
+				// need settled distribution already wait for that explicitly.
+				this.replicationChangeDebounceFn?.flush?.().catch((error: any) => {
+					if (!isNotStartedError(error)) {
+						logger.error(error?.toString?.() ?? String(error));
+					}
+				});
 				deferred.resolve();
 			};
 

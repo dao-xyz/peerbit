@@ -289,7 +289,9 @@ testSetups.forEach((setup) => {
 				const entryCount = shardingSmallEntryCount;
 
 				await appendInBatches(entryCount, (i) =>
-					db1.add(toBase64(new Uint8Array([i])), { meta: { next: [] } }),
+					db1.add(toBase64(new Uint8Array([i])), {
+						meta: { next: [], gidSeed: new Uint8Array([i]) },
+					}),
 				);
 				db2 = await EventStore.open<EventStore<string, any>>(
 					db1.address!,
@@ -357,7 +359,9 @@ testSetups.forEach((setup) => {
 
 				// expect min replicas 2 with 3 peers, this means that 66% of entries (ca) will be at peer 2 and 3, and peer1 will have all of them since 1 is the creator
 				await appendInBatches(entryCount, (i) =>
-					db1.add(toBase64(new Uint8Array([i])), { meta: { next: [] } }),
+					db1.add(toBase64(new Uint8Array([i])), {
+						meta: { next: [], gidSeed: new Uint8Array([i]) },
+					}),
 				);
 
 				await waitForParticipationToSettle(db1, db2);
@@ -915,31 +919,41 @@ testSetups.forEach((setup) => {
 						setup,
 					} as const;
 					const entryCount = 36;
+					const cleanupPubSubChaos: (() => Promise<void>)[] = [];
+					const flushPubSubChaos = async () => {
+						chaosAbort.abort();
+						const cleanupFns = cleanupPubSubChaos.splice(0).reverse();
+						for (const cleanup of cleanupFns) {
+							await cleanup();
+						}
+					};
 
 					try {
-						slowDownPubSubWritesWithSeed(
-							session.peers[0],
-							chaosSeed,
-							{ minDelayMs: 15, maxDelayMs: 90, probability: 0.35 },
-							chaosAbort.signal,
-						);
-						slowDownPubSubWritesWithSeed(
-							session.peers[1],
-							chaosSeed + 1,
-							{ minDelayMs: 15, maxDelayMs: 90, probability: 0.35 },
-							chaosAbort.signal,
-						);
-						slowDownPubSubWritesWithSeed(
-							session.peers[2],
-							chaosSeed + 2,
-							{ minDelayMs: 15, maxDelayMs: 90, probability: 0.35 },
-							chaosAbort.signal,
-						);
-						slowDownPubSubWritesWithSeed(
-							session.peers[3],
-							chaosSeed + 3,
-							{ minDelayMs: 15, maxDelayMs: 90, probability: 0.35 },
-							chaosAbort.signal,
+						cleanupPubSubChaos.push(
+							slowDownPubSubWritesWithSeed(
+								session.peers[0],
+								chaosSeed,
+								{ minDelayMs: 15, maxDelayMs: 90, probability: 0.35 },
+								chaosAbort.signal,
+							),
+							slowDownPubSubWritesWithSeed(
+								session.peers[1],
+								chaosSeed + 1,
+								{ minDelayMs: 15, maxDelayMs: 90, probability: 0.35 },
+								chaosAbort.signal,
+							),
+							slowDownPubSubWritesWithSeed(
+								session.peers[2],
+								chaosSeed + 2,
+								{ minDelayMs: 15, maxDelayMs: 90, probability: 0.35 },
+								chaosAbort.signal,
+							),
+							slowDownPubSubWritesWithSeed(
+								session.peers[3],
+								chaosSeed + 3,
+								{ minDelayMs: 15, maxDelayMs: 90, probability: 0.35 },
+								chaosAbort.signal,
+							),
 						);
 
 						db1 = await session.peers[0].open(new EventStore<string, any>(), {
@@ -1008,7 +1022,7 @@ testSetups.forEach((setup) => {
 							db1.add(`seed-d-${i}`, { meta: { next: [] } }),
 						);
 
-						chaosAbort.abort();
+						await flushPubSubChaos();
 
 						await Promise.all([
 							db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
@@ -1072,7 +1086,7 @@ testSetups.forEach((setup) => {
 							{ timeout: 60_000, delayInterval: 500 },
 						);
 					} finally {
-						chaosAbort.abort();
+						await flushPubSubChaos();
 					}
 				},
 			);

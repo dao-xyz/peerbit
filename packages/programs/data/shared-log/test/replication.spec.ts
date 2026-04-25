@@ -2600,25 +2600,35 @@ testSetups.forEach((setup) => {
 								const pubsubChaosOptions = isU64Rateless
 									? { minDelayMs: 10, maxDelayMs: 60, probability: 0.25 }
 									: { minDelayMs: 15, maxDelayMs: 90, probability: 0.35 };
+								const cleanupPubSubChaos: (() => Promise<void>)[] = [];
+								const flushPubSubChaos = async () => {
+									chaosAbort.abort();
+									const cleanupFns = cleanupPubSubChaos.splice(0).reverse();
+									for (const cleanup of cleanupFns) {
+										await cleanup();
+									}
+								};
 
 								try {
-									slowDownPubSubWritesWithSeed(
-										session.peers[0],
-										chaosSeed,
-										pubsubChaosOptions,
-										chaosAbort.signal,
-									);
-									slowDownPubSubWritesWithSeed(
-										session.peers[1],
-										chaosSeed + 1,
-										pubsubChaosOptions,
-										chaosAbort.signal,
-									);
-									slowDownPubSubWritesWithSeed(
-										session.peers[2],
-										chaosSeed + 2,
-										pubsubChaosOptions,
-										chaosAbort.signal,
+									cleanupPubSubChaos.push(
+										slowDownPubSubWritesWithSeed(
+											session.peers[0],
+											chaosSeed,
+											pubsubChaosOptions,
+											chaosAbort.signal,
+										),
+										slowDownPubSubWritesWithSeed(
+											session.peers[1],
+											chaosSeed + 1,
+											pubsubChaosOptions,
+											chaosAbort.signal,
+										),
+										slowDownPubSubWritesWithSeed(
+											session.peers[2],
+											chaosSeed + 2,
+											pubsubChaosOptions,
+											chaosAbort.signal,
+										),
 									);
 
 									await init({
@@ -2633,6 +2643,8 @@ testSetups.forEach((setup) => {
 											}
 										},
 									});
+
+									await flushPubSubChaos();
 
 									await waitForDb1Replicators();
 
@@ -2651,7 +2663,7 @@ testSetups.forEach((setup) => {
 									await waitForResolved(() => check(db2), commitReplicationWait);
 									await waitForResolved(() => check(db3), commitReplicationWait);
 								} finally {
-									chaosAbort.abort();
+									await flushPubSubChaos();
 								}
 							},
 						);

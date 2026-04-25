@@ -179,13 +179,41 @@ export const slowDownPubSubWritesWithSeed = (
 	const peers = [...pubsub.peers.values()].sort((a, b) =>
 		a.publicKey.hashcode().localeCompare(b.publicKey.hashcode()),
 	);
+	const restoreFns: (() => Promise<void>)[] = [];
 	for (const peer of peers) {
 		// Tie randomness to the peer identity, not Map iteration order.
 		const random = createSeededRandom(
 			(seed ^ hashStringToUint32(peer.publicKey.hashcode())) >>> 0,
 		);
 		const writeFn = peer.write.bind(peer);
-		peer.write = async (msg, priority) => {
+		type PubSubWriteArgs = Parameters<typeof peer.write>;
+		const pendingWrites = new Set<Promise<void>>();
+		const writeFailures: any[] = [];
+		const retryWrite = async (
+			msg: PubSubWriteArgs[0],
+			priority: PubSubWriteArgs[1],
+		) => {
+			const deadline = Date.now() + 30_000;
+			for (;;) {
+				try {
+					writeFn(msg, priority);
+					return;
+				} catch (error: any) {
+					const message = String(error?.message ?? "");
+					const noWritable = message.includes("No writable connection");
+					if (!noWritable || abortSignal?.aborted) {
+						throw error;
+					}
+					if (Date.now() >= deadline) {
+						throw new Error(
+							`Timed out waiting for pubsub writable stream to ${peer.publicKey.hashcode()}`,
+						);
+					}
+					await delay(10, { signal: abortSignal });
+				}
+			}
+		};
+		peer.write = (msg, priority) => {
 			const canDelay = abortSignal ? abortSignal.aborted === false : true;
 			if (
 				canDelay &&
@@ -199,41 +227,40 @@ export const slowDownPubSubWritesWithSeed = (
 				const delayMs =
 					options.minDelayMs +
 					Math.floor(random() * (maxDelayMs - options.minDelayMs + 1));
-				try {
-					await delay(delayMs, { signal: abortSignal });
-				} catch (error) {
-					// Abort just means "stop delaying new pubsub writes now".
-				}
-			}
-			// Avoid silently dropping pubsub writes just because a new direct stream
-			// hasn't fully initialized yet. This chaos helper is about jitter, not loss.
-			const deadline = Date.now() + 30_000;
-			for (;;) {
-				try {
-					return writeFn(msg, priority);
-				} catch (error: any) {
-					const message = String(error?.message ?? "");
-					const noWritable = message.includes("No writable connection");
-					if (!noWritable) {
-						throw error;
-					}
-					if (abortSignal?.aborted) {
-						throw error;
-					}
-					if (Date.now() >= deadline) {
-						throw new Error(
-							`Timed out waiting for pubsub writable stream to ${peer.publicKey.hashcode()}`,
-						);
-					}
+				const pending = (async () => {
 					try {
-						await delay(10, { signal: abortSignal });
+						await delay(delayMs, { signal: abortSignal });
 					} catch (error) {
-						throw error;
+						// Abort just means "stop delaying new pubsub writes now".
 					}
-				}
+					await retryWrite(msg, priority);
+				})()
+					.catch((error) => {
+						if (!abortSignal?.aborted) {
+							writeFailures.push(error);
+						}
+					})
+					.finally(() => {
+						pendingWrites.delete(pending);
+					});
+				pendingWrites.add(pending);
+				return;
 			}
+			return writeFn(msg, priority);
 		};
+		restoreFns.push(async () => {
+			peer.write = writeFn;
+			await Promise.allSettled([...pendingWrites]);
+			if (writeFailures.length > 0) {
+				throw writeFailures[0];
+			}
+		});
 	}
+	return async () => {
+		for (const restore of restoreFns) {
+			await restore();
+		}
+	};
 };
 
 export const getReceivedHeads = (
