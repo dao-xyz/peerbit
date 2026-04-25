@@ -31,10 +31,8 @@ import {
 	type TestSetupConfig,
 	checkBounded,
 	checkIfSetupIsUsed,
-	checkReplicas,
 	dbgLogs,
 	getDeterministicTestSeed,
-	getUnionSize,
 	slowDownMessagesWithSeed,
 	slowDownPubSubWritesWithSeed,
 	waitForConverged,
@@ -273,6 +271,38 @@ testSetups.forEach((setup) => {
 						replicas < minReplicas &&
 						dbs.every((db) => db.log.syncronizer.syncInFlight.has(hash) === false),
 				).length;
+			};
+			const waitForChurnReplicationSettled = async (
+				dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[],
+				minReplicas: number,
+				expectedUnionSize: number,
+			) => {
+				await waitForResolved(
+					async () => {
+						const replicasByHash = new Map<string, number>();
+						for (const db of dbs) {
+							expect(db.log.log.length).greaterThan(0);
+							for (const entry of await db.log.log.toArray()) {
+								expect(await db.log.log.blocks.has(entry.hash)).to.be.true;
+								replicasByHash.set(
+									entry.hash,
+									(replicasByHash.get(entry.hash) || 0) + 1,
+								);
+							}
+						}
+						expect(replicasByHash.size).equal(expectedUnionSize);
+						for (const [hash, replicas] of replicasByHash) {
+							expect(replicas, `replicas for ${hash}`).greaterThanOrEqual(
+								minReplicas,
+							);
+							expect(replicas, `replicas for ${hash}`).lessThanOrEqual(dbs.length);
+						}
+						expect(
+							await countIdleUnderReplicatedEntries(minReplicas, ...dbs),
+						).equal(0);
+					},
+					{ timeout: 180_000, delayInterval: 500 },
+				);
 			};
 
 			it("will not have any prunable after balance", async () => {
@@ -870,35 +900,10 @@ testSetups.forEach((setup) => {
 						}),
 					]);
 
-					await waitForParticipationToSettle(db1, db3, db4);
 					// This churn regression is about settled redistribution correctness, not
 					// whether every prune/rebalance timer reaches a totally idle state under
 					// adversarial delayed traffic on a loaded runner.
-					await waitForResolved(
-						async () =>
-							expect(await getUnionSize([db1, db3, db4], entryCount)).equal(
-								entryCount,
-							),
-						{ timeout: 60_000, delayInterval: 500 },
-					);
-					await checkReplicas([db1, db3, db4], 2, entryCount);
-					await waitForResolved(
-						async () =>
-							expect(await countIdleUnderReplicatedEntries(2, db1, db3, db4)).equal(
-								0,
-							),
-						{ timeout: 60_000, delayInterval: 500 },
-					);
-					await waitForResolved(
-						() => {
-							// This is only a replacement-peer participation check after adversarial
-							// delayed churn. The exact union and replica invariants above already
-							// prove correctness, so this final assertion only needs to show that the
-							// replacement peer did receive redistributed history at all.
-							expect(db4.log.log.length).greaterThan(0);
-						},
-						{ timeout: 60_000, delayInterval: 500 },
-					);
+					await waitForChurnReplicationSettled([db1, db3, db4], 2, entryCount);
 				},
 			);
 
@@ -1051,40 +1056,11 @@ testSetups.forEach((setup) => {
 							}),
 						]);
 
-						await waitForParticipationToSettle(db1, db3, db4);
 						// Same contract as the delayed-message churn case above: the settled
 						// union, replica floor, and lack of idle under-replication are the
 						// source of truth. Full internal quiescence is stronger than necessary
 						// and remains timing-sensitive under seeded pubsub jitter.
-						await waitForResolved(
-							async () =>
-								expect(await getUnionSize([db1, db3, db4], entryCount)).equal(
-									entryCount,
-								),
-							{ timeout: 60_000, delayInterval: 500 },
-						);
-						await checkReplicas([db1, db3, db4], 2, entryCount);
-						await waitForResolved(
-							async () =>
-								expect(await countIdleUnderReplicatedEntries(2, db1, db3, db4)).equal(
-									0,
-								),
-							{ timeout: 60_000, delayInterval: 500 },
-						);
-						await waitForResolved(
-							() => {
-								// This churn case is a correctness regression, not a fairness
-								// benchmark. Under bundled load and seeded pubsub jitter, one
-								// replacement peer can temporarily receive a much smaller share of
-								// a 36-entry sample even though the settled contract is already met:
-								// full union preserved, replica floor satisfied, and no idle
-								// under-replicated entries. The signal we need here is simply that
-								// both replacement peers participate in the final distribution.
-								expect(db3.log.log.length).greaterThan(0);
-								expect(db4.log.log.length).greaterThan(0);
-							},
-							{ timeout: 60_000, delayInterval: 500 },
-						);
+						await waitForChurnReplicationSettled([db1, db3, db4], 2, entryCount);
 					} finally {
 						await flushPubSubChaos();
 					}

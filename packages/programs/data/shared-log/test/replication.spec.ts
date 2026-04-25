@@ -1031,7 +1031,7 @@ testSetups.forEach((setup) => {
 				}
 				const message1 = collectMessages(db1.log);
 
-				let db2 = db1.clone();
+				db2 = db1.clone();
 
 				// start to collect messages before opening the second db so we don't miss any
 				const { messages: message2, fn } = collectMessagesFn(db2.log);
