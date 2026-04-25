@@ -19,12 +19,14 @@ import {
 	EntryReplicatedU32,
 	EntryReplicatedU64,
 	ReplicationIntent,
+	type ReplicationChange,
 	type ReplicationRangeIndexable,
 	ReplicationRangeIndexableU32,
 	ReplicationRangeIndexableU64,
 	appromixateCoverage,
 	calculateCoverage,
 	countCoveringRangesSameOwner,
+	debounceAggregationChanges,
 	getAdjecentSameOwner,
 	getCoverSet as getCoverSetGeneric,
 	getDistance,
@@ -2645,6 +2647,89 @@ resolutions.forEach((resolution) => {
 
 			describe("toRebalance", () => {
 				const rotations = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1];
+
+				it("preserves multiple replaced ranges in one debounce window", async () => {
+					const emitted: ReplicationChange<ReplicationRangeIndexable<R>>[][] = [];
+					let releaseFirstRun: () => void = undefined!;
+					const firstRunStarted = new Promise<void>((resolve) => {
+						releaseFirstRun = resolve;
+					});
+					const debounce = debounceAggregationChanges<
+						ReplicationRangeIndexable<R>
+					>(async (changes) => {
+						emitted.push(changes);
+						if (emitted.length === 1) {
+							await firstRunStarted;
+						}
+					}, 1_000);
+					const blocker = createReplicationRangeFromNormalized({
+						publicKey: a,
+						offset: 0.8,
+						width: 0.1,
+						timestamp: 0n,
+					});
+					const first = createReplicationRangeFromNormalized({
+						publicKey: a,
+						offset: 0,
+						width: 0.6,
+						timestamp: 1n,
+					});
+					const second = createReplicationRangeFromNormalized({
+						id: first.id,
+						publicKey: a,
+						offset: 0,
+						width: 0.3,
+						timestamp: 2n,
+					});
+					const current = createReplicationRangeFromNormalized({
+						id: first.id,
+						publicKey: a,
+						offset: 0,
+						width: 0.1,
+						timestamp: 3n,
+					});
+
+					debounce.add({
+						range: blocker,
+						type: "added",
+						timestamp: blocker.timestamp,
+					});
+					debounce.add({
+						range: first,
+						type: "replaced",
+						timestamp: first.timestamp,
+					});
+					debounce.add({
+						range: second,
+						type: "replaced",
+						timestamp: second.timestamp,
+					});
+					debounce.add({
+						range: current,
+						type: "added",
+						timestamp: current.timestamp,
+					});
+					releaseFirstRun();
+					await debounce.invoke();
+
+					const changes = emitted[1];
+					expect(
+						changes
+							.filter((change) => change.type === "replaced")
+							.map(
+								(change) =>
+									Math.round(change.range.widthNormalized * 1e6) / 1e6,
+							),
+					).to.deep.equal([0.6, 0.3]);
+					expect(
+						changes
+							.filter((change) => change.type === "added")
+							.map(
+								(change) =>
+									Math.round(change.range.widthNormalized * 1e6) / 1e6,
+							),
+					).to.deep.equal([0.1]);
+				});
 
 				const consumeAllFromAsyncIterator = async (
 					iter: AsyncIterable<EntryReplicated<R>>,

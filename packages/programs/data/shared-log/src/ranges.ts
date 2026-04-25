@@ -2568,7 +2568,15 @@ export const debounceAggregationChanges = <
 					// Keep different change types for the same segment id. In particular, range
 					// updates produce a `replaced` + `added` pair; collapsing by id would drop the
 					// "removed" portion and prevent correct rebalancing/pruning.
-					const key = `${change.type}:${change.range.idString}`;
+					//
+					// Preserve each distinct replaced range as well. Adaptive replication can
+					// shrink a segment several times before the debounced rebalance runs; if we
+					// keep only the newest `replaced` range, entries from earlier wider ranges are
+					// never revisited and can stay resident after they become prunable.
+					const key =
+						change.type === "replaced"
+							? `${change.type}:${change.range.idString}:${change.range.rangeHash}`
+							: `${change.type}:${change.range.idString}`;
 					const prev = aggregated.get(key);
 					if (prev) {
 						if (prev.range.timestamp < change.range.timestamp) {

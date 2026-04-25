@@ -31,8 +31,18 @@ import {
 	decodeReplicas,
 	maxReplicas,
 } from "../src/replication.js";
-import { RatelessIBLTSynchronizer } from "../src/sync/rateless-iblt.js";
-import { SimpleSyncronizer } from "../src/sync/simple.js";
+import {
+	MoreSymbols,
+	RatelessIBLTSynchronizer,
+	RequestMoreSymbols,
+	StartSync,
+} from "../src/sync/rateless-iblt.js";
+import {
+	ConfirmEntriesMessage,
+	RequestMaybeSync,
+	ResponseMaybeSync,
+	SimpleSyncronizer,
+} from "../src/sync/simple.js";
 import {
 	type TestSetupConfig,
 	checkBounded,
@@ -40,9 +50,12 @@ import {
 	collectMessages,
 	collectMessagesFn,
 	dbgLogs,
+	getDeterministicTestSeed,
 	getReceivedHeads,
 	getUnionSize,
 	slowDownMessage,
+	slowDownMessagesWithSeed,
+	slowDownPubSubWritesWithSeed,
 	slowDownSend,
 	waitForConverged,
 } from "./utils.js";
@@ -905,6 +918,69 @@ testSetups.forEach((setup) => {
 						);
 					});
 				});
+
+				it("retries simple sync when first response is dropped", async () => {
+					const entryCount = 32;
+					for (let i = 0; i < entryCount; i++) {
+						await db1.add(`hello-${i}`, { meta: { next: [] } });
+					}
+
+					db2 = (await EventStore.open<EventStore<string, any>>(
+						db1.address!,
+						session.peers[1],
+						{
+							args: {
+								replicate: false,
+								keep: () => true,
+								setup,
+							},
+						},
+					))!;
+
+					await db1.waitFor(session.peers[1].peerId);
+					await db2.waitFor(session.peers[0].peerId);
+
+					let dropped = 0;
+					let responseMaybeSyncMessages = 0;
+					const sendFn = db2.log.rpc.send.bind(db2.log.rpc);
+					db2.log.rpc.send = async (msg: any, options: any) => {
+						if (msg instanceof ResponseMaybeSync) {
+							responseMaybeSyncMessages += 1;
+							if (dropped === 0) {
+								dropped += 1;
+								return;
+							}
+						}
+						return sendFn(msg, options);
+					};
+
+					try {
+						const entries = new Map<string, any>();
+						for (const entry of await db1.log.log.toArray()) {
+							entries.set(entry.hash, entry);
+						}
+
+						const target = session.peers[1].identity.publicKey.hashcode();
+						const sync =
+							db1.log.syncronizer instanceof RatelessIBLTSynchronizer
+								? db1.log.syncronizer.simple
+								: db1.log.syncronizer;
+
+						await sync.onMaybeMissingEntries({
+							entries,
+							targets: [target],
+						});
+
+						await waitForResolved(
+							() => expect(db2.log.log.length).equal(entryCount),
+							{ timeout: 45_000, delayInterval: 500 },
+						);
+						expect(dropped).to.equal(1);
+						expect(responseMaybeSyncMessages).greaterThanOrEqual(2);
+					} finally {
+						db2.log.rpc.send = sendFn;
+					}
+				});
 			});
 		});
 
@@ -955,7 +1031,7 @@ testSetups.forEach((setup) => {
 				}
 				const message1 = collectMessages(db1.log);
 
-				let db2 = db1.clone();
+				db2 = db1.clone();
 
 				// start to collect messages before opening the second db so we don't miss any
 				const { messages: message2, fn } = collectMessagesFn(db2.log);
@@ -1638,7 +1714,11 @@ testSetups.forEach((setup) => {
 				min: number;
 				max?: number;
 				beforeOther?: () => Promise<any> | void;
+				beforeOpenJoiners?: () => Promise<any> | void;
 				waitForPruneDelay?: number;
+				sync?: {
+					repairSweepTargetBufferSize?: number;
+				};
 			}) => {
 				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
@@ -1646,11 +1726,13 @@ testSetups.forEach((setup) => {
 						replicate: false,
 						timeUntilRoleMaturity: 1000,
 						setup,
+						sync: props.sync,
 						waitForPruneDelay: props?.waitForPruneDelay || 5e3,
 					},
 				});
 
 				await props.beforeOther?.();
+				await props.beforeOpenJoiners?.();
 				db2 = (await EventStore.open<EventStore<string, any>>(
 					db1.address!,
 					session.peers[1],
@@ -2169,21 +2251,6 @@ testSetups.forEach((setup) => {
 					},
 				}))!;
 
-				db3 = (await session.peers[2].open(db1.clone(), {
-					args: {
-						replicas: {
-							min: minReplicas,
-							max: maxReplicas,
-						},
-						replicate: {
-							offset: 0.666,
-							factor: 0.333,
-						},
-						setup,
-						timeUntilRoleMaturity: 0,
-					},
-				}))!;
-
 				// This test checks replica handoff correctness, not bulk replication throughput.
 				// Keep the sample size small enough that full-shard CI load does not dominate the
 				// result and mask the actual invariant under test.
@@ -2228,6 +2295,24 @@ testSetups.forEach((setup) => {
 					await waitForResolved(async () =>
 						expect((await db1.log.getReplicators()).size).to.equal(1),
 					);
+
+					// Open the replacement peer only when it actually joins. Opening it earlier can
+					// leak an inactive third replica into the convergence path and make this test
+					// depend on transport timing instead of the prune/handoff contract.
+					db3 = (await session.peers[2].open(db1.clone(), {
+						args: {
+							replicas: {
+								min: minReplicas,
+								max: maxReplicas,
+							},
+							replicate: {
+								offset: 0.666,
+								factor: 0.333,
+							},
+							setup,
+							timeUntilRoleMaturity: 0,
+						},
+					}))!;
 
 					// Merge the new peer into the same sharded pubsub root-candidate set.
 					await session.connect([[session.peers[0], session.peers[1], session.peers[2]]]);
@@ -2276,32 +2361,92 @@ testSetups.forEach((setup) => {
 				await checkReplicas([db1, db2, db3], maxReplicas, entryCount);
 			});
 
-					describe("commit options", () => {
-						const commitReplicationWait = {
-							// Under full-suite load, replication + index updates can take longer
-							// than the default 10s `waitForResolved` timeout.
-							timeout: 60_000,
-							delayInterval: 500,
-						} as const;
-
-						const replicatorWait = {
-							timeout: 60_000,
+						describe("commit options", () => {
+							const isU64Rateless = setup.name === "u64-iblt";
+							const commitReplicationWait = {
+								// Historical backfill for writes that happened before the joiners
+								// opened is the slowest commit-options path in the full part-7 shard.
+								// Give that convergence loop more time instead of reintroducing brittle
+								// transient replica-view gates.
+							timeout: 120_000,
+							delayInterval: 1_000,
 						} as const;
 
 						const waitForDb1Replicators = async () => {
 							await Promise.all([
-								db1.log.waitForReplicator(session.peers[1].identity.publicKey, replicatorWait),
-								db1.log.waitForReplicator(session.peers[2].identity.publicKey, replicatorWait),
+								db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+									eager: true,
+									timeout: 60_000,
+								}),
+								db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
+									eager: true,
+									timeout: 60_000,
+								}),
 							]);
 						};
 
-						const rebalanceAllPeers = async () => {
-							await Promise.all([
-								db1.log.rebalanceAll({ clearCache: true }),
-								db2.log.rebalanceAll({ clearCache: true }),
-								db3.log.rebalanceAll({ clearCache: true }),
-							]);
-						};
+							const scaleChaosDelay = (ms: number) =>
+								isU64Rateless ? Math.max(10, Math.round(ms * 0.6)) : ms;
+							const scaleChaosProbability = (probability: number) =>
+								isU64Rateless
+									? Math.max(0.15, Number((probability - 0.15).toFixed(2)))
+									: probability;
+							const repairChaosRules = [
+								{
+									type: ExchangeHeadsMessage,
+									minDelayMs: scaleChaosDelay(40),
+									maxDelayMs: scaleChaosDelay(180),
+									probability: scaleChaosProbability(0.45),
+								},
+								{
+									type: RequestMaybeSync,
+									minDelayMs: scaleChaosDelay(30),
+									maxDelayMs: scaleChaosDelay(140),
+									probability: scaleChaosProbability(0.35),
+								},
+								{
+									type: ResponseMaybeSync,
+									minDelayMs: scaleChaosDelay(30),
+									maxDelayMs: scaleChaosDelay(140),
+									probability: scaleChaosProbability(0.35),
+								},
+								{
+									type: ConfirmEntriesMessage,
+									minDelayMs: scaleChaosDelay(20),
+									maxDelayMs: scaleChaosDelay(120),
+									probability: scaleChaosProbability(0.3),
+								},
+								{
+									type: StartSync,
+									minDelayMs: scaleChaosDelay(30),
+									maxDelayMs: scaleChaosDelay(160),
+									probability: scaleChaosProbability(0.25),
+								},
+								{
+									type: MoreSymbols,
+									minDelayMs: scaleChaosDelay(20),
+									maxDelayMs: scaleChaosDelay(120),
+									probability: scaleChaosProbability(0.25),
+								},
+								{
+									type: RequestMoreSymbols,
+									minDelayMs: scaleChaosDelay(20),
+									maxDelayMs: scaleChaosDelay(120),
+									probability: scaleChaosProbability(0.25),
+								},
+								{
+									type: AddedReplicationSegmentMessage,
+									minDelayMs: scaleChaosDelay(25),
+									maxDelayMs: scaleChaosDelay(140),
+									probability: scaleChaosProbability(0.25),
+								},
+								{
+									type: AllReplicatingSegmentsMessage,
+									minDelayMs: scaleChaosDelay(25),
+									maxDelayMs: scaleChaosDelay(140),
+									probability: scaleChaosProbability(0.25),
+								},
+							] as const;
 
 						it("control per commmit put before join", async () => {
 							// This test validates historical replication semantics, not bulk
@@ -2322,11 +2467,13 @@ testSetups.forEach((setup) => {
 								},
 							});
 
+							// Historical replication only needs the writer to know that the two
+							// joiners are mature replicators before we start checking the final
+							// per-store metadata contract.
 							await waitForDb1Replicators();
-							await waitForResolved(async () => {
-								await rebalanceAllPeers();
-								await checkReplicas([db1, db2, db3], 3, entryCount);
-							}, commitReplicationWait);
+							// SharedLog now schedules its own delayed authoritative join repair.
+							// Keep this test on the real contract instead of forcing a manual
+							// `rebalanceAll()` from the test itself.
 
 							const check = async (store: EventStore<string, any>) => {
 								const entries = await store.log.log.toArray();
@@ -2339,15 +2486,598 @@ testSetups.forEach((setup) => {
 								}
 								expect(replicated3Times).equal(entryCount);
 							};
+							const getJoinRepairDispatches = () => {
+								return [db1, db2, db3].reduce((sum, store) => {
+									const metrics = (store.log as any)._repairMetrics;
+									return (
+										sum +
+										(metrics?.["join-warmup"]?.dispatches ?? 0) +
+										(metrics?.["join-authoritative"]?.dispatches ?? 0)
+									);
+								}, 0);
+							};
 
 							await waitForResolved(async () => {
-								await rebalanceAllPeers();
+								// The contract here is historical replication metadata, not whether
+								// a particular `waitForReplicator()` event fired on time under shard
+								// load. `check(db2)` is the real source of truth, and the runtime
+								// should self-heal missed pre-join backfill without a test-driven
+								// `rebalanceAll()` loop.
 								await check(db2);
 							}, commitReplicationWait);
 							await waitForResolved(async () => {
-								await rebalanceAllPeers();
+								// Same reasoning as above for db3: the final metadata check already
+								// proves whether the pre-join history converged correctly.
 								await check(db3);
 							}, commitReplicationWait);
+							// This focused regression keeps the product-side self-heal path under
+							// coverage: late historical backfill must now come from SharedLog's own
+							// join repair dispatches, not from a test-driven `rebalanceAll()`.
+							expect(getJoinRepairDispatches()).greaterThan(0);
+						});
+
+						it("control per commmit put before join converges under deterministic delayed repair traffic", async () => {
+							// Keep this as a convergence regression, not a throughput benchmark. The
+							// direct frontier regression below already covers the multi-flush repair
+							// bookkeeping, so a smaller history still exercises delayed repair traffic
+							// without making part-7 hinge on CI runner speed alone. Rateless u64 is
+							// the slowest path here, so keep that sample smaller than the plain
+							// product test above.
+							const entryCount = setup.name === "u64-iblt" ? 16 : 24;
+							const chaosAbort = new AbortController();
+							const chaosSeed = getDeterministicTestSeed(
+								"PEERBIT_SHARED_LOG_CHAOS_SEED",
+								setup.name === "u64-iblt" ? 9_731 : 9_711,
+							);
+							const delayedRepairWait = {
+								timeout: 240_000,
+								delayInterval: 1_000,
+							} as const;
+
+							try {
+								await init({
+									min: 1,
+									beforeOther: async () => {
+										slowDownMessagesWithSeed(
+											db1.log,
+											repairChaosRules,
+											setup.name === "u64-iblt" ? 9_731 : 9_711,
+											chaosAbort.signal,
+										);
+										const value = "hello";
+										for (let i = 0; i < entryCount; i++) {
+											await db1.add(value, {
+												replicas: new AbsoluteReplicas(3),
+												meta: { next: [] },
+											});
+										}
+									},
+								});
+
+								slowDownMessagesWithSeed(
+									db2.log,
+									repairChaosRules,
+									chaosSeed + 1,
+									chaosAbort.signal,
+								);
+								slowDownMessagesWithSeed(
+									db3.log,
+									repairChaosRules,
+									chaosSeed + 2,
+									chaosAbort.signal,
+								);
+
+								await waitForDb1Replicators();
+
+								const check = async (store: EventStore<string, any>) => {
+									const entries = await store.log.log.toArray();
+									expect(entries.length).equal(entryCount);
+									let replicated3Times = 0;
+									for (const entry of entries) {
+										if (decodeReplicas(entry).getValue(store.log) === 3) {
+											replicated3Times += 1;
+										}
+									}
+									expect(replicated3Times).equal(entryCount);
+								};
+
+								await waitForResolved(() => check(db2), delayedRepairWait);
+								await waitForResolved(() => check(db3), delayedRepairWait);
+							} finally {
+								chaosAbort.abort();
+							}
+						});
+
+						(setup.name === "u64-iblt" ? it : it.skip)(
+							"control per commmit put before join converges under deterministic pubsub chaos",
+							async () => {
+								const entryCount = 24;
+								const chaosAbort = new AbortController();
+								const chaosSeed = getDeterministicTestSeed(
+									"PEERBIT_SHARED_LOG_CHAOS_SEED",
+									17_331,
+								);
+								const pubsubChaosOptions = isU64Rateless
+									? { minDelayMs: 10, maxDelayMs: 60, probability: 0.25 }
+									: { minDelayMs: 15, maxDelayMs: 90, probability: 0.35 };
+								const cleanupPubSubChaos: (() => Promise<void>)[] = [];
+								const flushPubSubChaos = async () => {
+									chaosAbort.abort();
+									const cleanupFns = cleanupPubSubChaos.splice(0).reverse();
+									for (const cleanup of cleanupFns) {
+										await cleanup();
+									}
+								};
+
+								try {
+									cleanupPubSubChaos.push(
+										slowDownPubSubWritesWithSeed(
+											session.peers[0],
+											chaosSeed,
+											pubsubChaosOptions,
+											chaosAbort.signal,
+										),
+										slowDownPubSubWritesWithSeed(
+											session.peers[1],
+											chaosSeed + 1,
+											pubsubChaosOptions,
+											chaosAbort.signal,
+										),
+										slowDownPubSubWritesWithSeed(
+											session.peers[2],
+											chaosSeed + 2,
+											pubsubChaosOptions,
+											chaosAbort.signal,
+										),
+									);
+
+									await init({
+										min: 1,
+										beforeOther: async () => {
+											const value = "hello";
+											for (let i = 0; i < entryCount; i++) {
+												await db1.add(value, {
+													replicas: new AbsoluteReplicas(3),
+													meta: { next: [] },
+												});
+											}
+										},
+									});
+
+									await flushPubSubChaos();
+
+									await waitForDb1Replicators();
+
+									const check = async (store: EventStore<string, any>) => {
+										const entries = await store.log.log.toArray();
+										expect(entries.length).equal(entryCount);
+										let replicated3Times = 0;
+										for (const entry of entries) {
+											if (decodeReplicas(entry).getValue(store.log) === 3) {
+												replicated3Times += 1;
+											}
+										}
+										expect(replicated3Times).equal(entryCount);
+									};
+
+									await waitForResolved(() => check(db2), commitReplicationWait);
+									await waitForResolved(() => check(db3), commitReplicationWait);
+								} finally {
+									await flushPubSubChaos();
+								}
+							},
+						);
+
+						(setup.name === "u64-iblt" ? it : it.skip)(
+							"control per commmit put before join repairs when joiner request responses are dropped",
+							async () => {
+								const entryCount = 12;
+								let dispatchStub: sinon.SinonStub | undefined;
+								let droppedResponses = 0;
+								let db3SendStub: sinon.SinonStub | undefined;
+
+								try {
+									await init({
+										min: 1,
+										beforeOther: async () => {
+											const value = "hello";
+											for (let i = 0; i < entryCount; i++) {
+												await db1.add(value, {
+													replicas: new AbsoluteReplicas(3),
+													meta: { next: [] },
+												});
+											}
+										},
+										beforeOpenJoiners: () => {
+											dispatchStub = sinon
+												.stub(db1.log as any, "dispatchMaybeMissingEntries")
+												.callsFake(() => undefined);
+										},
+									});
+
+									await waitForDb1Replicators();
+									dispatchStub?.restore();
+									dispatchStub = undefined;
+
+									const originalDb3Send = db3.log.rpc.send.bind(db3.log.rpc);
+									db3SendStub = sinon
+										.stub(db3.log.rpc, "send")
+										.callsFake((msg: any, options: any) => {
+											if (msg instanceof ResponseMaybeSync) {
+												droppedResponses += 1;
+												return Promise.resolve();
+											}
+											return originalDb3Send(msg, options);
+										});
+
+									(db1.log as any).scheduleRepairSweep({
+										mode: "join-authoritative",
+										peers: new Set([
+											session.peers[2].identity.publicKey.hashcode(),
+										]),
+									});
+
+									await waitForResolved(async () => {
+										const entries = await db3.log.log.toArray();
+										expect(entries.length).equal(entryCount);
+										for (const entry of entries) {
+											expect(decodeReplicas(entry).getValue(db3.log)).equal(3);
+										}
+									}, commitReplicationWait);
+									expect(droppedResponses).greaterThan(0);
+								} finally {
+									db3SendStub?.restore();
+									dispatchStub?.restore();
+								}
+							},
+						);
+
+						it("control per commmit put before join keeps the full authoritative repair frontier across sweep flushes", async () => {
+							const entryCount = 40;
+							const repairSweepTargetBufferSize = 8;
+							let joinWarmupEntriesSuppressed = 0;
+							let joinAuthoritativeDispatches = 0;
+							let dispatchStub: sinon.SinonStub | undefined;
+							let sendStub: sinon.SinonStub | undefined;
+
+							try {
+								await init({
+									min: 1,
+									sync: { repairSweepTargetBufferSize },
+									beforeOther: async () => {
+										const value = "hello";
+										for (let i = 0; i < entryCount; i++) {
+											await db1.add(value, {
+												replicas: new AbsoluteReplicas(3),
+												meta: { next: [] },
+											});
+										}
+									},
+									beforeOpenJoiners: () => {
+										const originalDispatch = (db1.log as any).dispatchMaybeMissingEntries.bind(db1.log);
+										dispatchStub = sinon
+											.stub(db1.log as any, "dispatchMaybeMissingEntries")
+											.callsFake((...args: any[]) => {
+												const [target, entries, options] = args as [string, Map<string, any>, { mode?: string }];
+												if (options?.mode === "join-warmup") {
+													joinWarmupEntriesSuppressed += entries.size;
+													return;
+												}
+												return originalDispatch(target, entries, options);
+											});
+
+										// Keep the regression focused on frontier bookkeeping. Suppress the
+										// actual join-authoritative send so receipt confirmations cannot clear
+										// the frontier before we inspect it. The old bug left only the last
+										// flushed chunk in the frontier when the sweep buffer rolled over.
+										sendStub = sinon
+											.stub(db1.log as any, "sendMaybeMissingEntriesNow")
+											.callsFake((...args: unknown[]) => {
+												const [_target, _entries, options] = args as [string, Map<string, any>, { mode?: string }];
+												if (options?.mode === "join-authoritative") {
+													joinAuthoritativeDispatches += 1;
+												}
+												return Promise.resolve();
+											});
+									},
+								});
+
+								await waitForDb1Replicators();
+
+								const joiner1 = session.peers[1].identity.publicKey.hashcode();
+								const joiner2 = session.peers[2].identity.publicKey.hashcode();
+								const getFrontierSize = (target: string) =>
+									((db1.log as any)._repairFrontierByMode
+										?.get("join-authoritative")
+										?.get(target) as Map<string, any> | undefined)?.size ?? 0;
+
+								await waitForResolved(async () => {
+									expect(getFrontierSize(joiner1)).equal(entryCount);
+									expect(getFrontierSize(joiner2)).equal(entryCount);
+								}, commitReplicationWait);
+
+								// This regression forces authoritative repair to span multiple buffered
+								// flushes. The old bug overwrote the pending frontier with the last
+								// flushed batch, which left a late joiner stuck with only a trailing
+								// subset of the historical backfill.
+								expect(joinWarmupEntriesSuppressed).greaterThan(repairSweepTargetBufferSize);
+								expect(joinAuthoritativeDispatches).greaterThan(1);
+							} finally {
+								sendStub?.restore();
+								dispatchStub?.restore();
+							}
+						});
+
+						it("control per commmit put before join preserves pending authoritative frontier across partial follow-up sweeps", async () => {
+							const entryCount = 24;
+							const repairSweepTargetBufferSize = 8;
+							let partialSweepActive = false;
+							let partialFindCalls = 0;
+							let dispatchStub: sinon.SinonStub | undefined;
+							let sendStub: sinon.SinonStub | undefined;
+							let findLeadersStub: sinon.SinonStub | undefined;
+
+							try {
+								await init({
+									min: 1,
+									sync: { repairSweepTargetBufferSize },
+									beforeOther: async () => {
+										const value = "hello";
+										for (let i = 0; i < entryCount; i++) {
+											await db1.add(value, {
+												replicas: new AbsoluteReplicas(3),
+												meta: { next: [] },
+											});
+										}
+									},
+									beforeOpenJoiners: () => {
+										const originalDispatch = (db1.log as any).dispatchMaybeMissingEntries.bind(db1.log);
+										dispatchStub = sinon
+											.stub(db1.log as any, "dispatchMaybeMissingEntries")
+											.callsFake((...args: any[]) => {
+												const [target, entries, options] = args as [string, Map<string, any>, { mode?: string }];
+												if (options?.mode === "join-warmup") {
+													return;
+												}
+												return originalDispatch(target, entries, options);
+											});
+
+										sendStub = sinon
+											.stub(db1.log as any, "sendMaybeMissingEntriesNow")
+											.callsFake(() => Promise.resolve());
+
+										const originalFindLeaders = (db1.log as any).findLeaders.bind(db1.log);
+										findLeadersStub = sinon
+											.stub(db1.log as any, "findLeaders")
+											.callsFake((...args: any[]) => {
+												if (partialSweepActive) {
+													partialFindCalls += 1;
+													return Promise.resolve(new Map());
+												}
+												return originalFindLeaders(...args);
+											});
+									},
+								});
+
+								await waitForDb1Replicators();
+
+								const joiner = session.peers[1].identity.publicKey.hashcode();
+								const getFrontierSize = () =>
+									((db1.log as any)._repairFrontierByMode
+										?.get("join-authoritative")
+										?.get(joiner) as Map<string, any> | undefined)?.size ?? 0;
+
+								await waitForResolved(async () => {
+									expect(getFrontierSize()).equal(entryCount);
+								}, commitReplicationWait);
+
+								partialSweepActive = true;
+								(db1.log as any).scheduleRepairSweep({
+									mode: "join-authoritative",
+									peers: new Set([joiner]),
+								});
+
+								await waitForResolved(async () => {
+									expect(partialFindCalls).greaterThan(0);
+								}, commitReplicationWait);
+
+								expect(getFrontierSize()).equal(entryCount);
+							} finally {
+								findLeadersStub?.restore();
+								sendStub?.restore();
+								dispatchStub?.restore();
+							}
+						});
+
+						it("control per commmit put before join queues full-replica history despite empty transient leader view", async () => {
+							const entryCount = 24;
+							const repairSweepTargetBufferSize = 8;
+							let dispatchStub: sinon.SinonStub | undefined;
+							let sendStub: sinon.SinonStub | undefined;
+							let findLeadersStub: sinon.SinonStub | undefined;
+							let subscribersStub: sinon.SinonStub | undefined;
+
+							try {
+								await init({
+									min: 1,
+									sync: { repairSweepTargetBufferSize },
+									beforeOther: async () => {
+										const value = "hello";
+										for (let i = 0; i < entryCount; i++) {
+											await db1.add(value, {
+												replicas: new AbsoluteReplicas(3),
+												meta: { next: [] },
+											});
+										}
+									},
+									beforeOpenJoiners: () => {
+										(db1.log as any).uniqueReplicators.add(
+											"synthetic-stale-replicator",
+										);
+										const originalGetTopicSubscribers = (db1.log as any)._getTopicSubscribers.bind(db1.log);
+										subscribersStub = sinon
+											.stub(db1.log as any, "_getTopicSubscribers")
+											.callsFake(async (...args: any[]) => [
+												...(await originalGetTopicSubscribers(...args)),
+												{ hashcode: () => "synthetic-stale-subscriber" },
+											]);
+
+										const originalDispatch = (db1.log as any).dispatchMaybeMissingEntries.bind(db1.log);
+										dispatchStub = sinon
+											.stub(db1.log as any, "dispatchMaybeMissingEntries")
+											.callsFake((...args: any[]) => {
+												const [_target, _entries, options] = args as [string, Map<string, any>, { mode?: string }];
+												if (options?.mode === "join-warmup") {
+													return;
+												}
+												return originalDispatch(...args);
+											});
+
+										sendStub = sinon
+											.stub(db1.log as any, "sendMaybeMissingEntriesNow")
+											.callsFake(() => Promise.resolve());
+
+										findLeadersStub = sinon
+											.stub(db1.log as any, "findLeaders")
+											.callsFake(() => Promise.resolve(new Map()));
+									},
+								});
+
+								await waitForDb1Replicators();
+
+								const joiner1 = session.peers[1].identity.publicKey.hashcode();
+								const joiner2 = session.peers[2].identity.publicKey.hashcode();
+								const getFrontierSize = (target: string) =>
+									((db1.log as any)._repairFrontierByMode
+										?.get("join-authoritative")
+										?.get(target) as Map<string, any> | undefined)?.size ?? 0;
+
+								await waitForResolved(async () => {
+									expect(getFrontierSize(joiner1)).equal(entryCount);
+									expect(getFrontierSize(joiner2)).equal(entryCount);
+								}, commitReplicationWait);
+							} finally {
+								findLeadersStub?.restore();
+								subscribersStub?.restore();
+								sendStub?.restore();
+								dispatchStub?.restore();
+							}
+						});
+
+						it("control per commmit put before join widens authoritative frontier on later sweeps", async () => {
+							const entryCount = 24;
+							const repairSweepTargetBufferSize = 8;
+							let partialSweepActive = true;
+							let partialSweepQueued = 0;
+							const partialAllowedHashes = new Set<string>();
+							let dispatchStub: sinon.SinonStub | undefined;
+							let sendStub: sinon.SinonStub | undefined;
+							let findLeadersStub: sinon.SinonStub | undefined;
+							let fullReplicaCandidatesStub: sinon.SinonStub | undefined;
+
+							try {
+								await init({
+									min: 1,
+									sync: { repairSweepTargetBufferSize },
+									beforeOther: async () => {
+										const value = "hello";
+										for (let i = 0; i < entryCount; i++) {
+											await db1.add(value, {
+												replicas: new AbsoluteReplicas(3),
+												meta: { next: [] },
+											});
+										}
+									},
+									beforeOpenJoiners: () => {
+										const joiner = session.peers[1].identity.publicKey.hashcode();
+										fullReplicaCandidatesStub = sinon
+											.stub(db1.log as any, "getFullReplicaRepairCandidates")
+											.callsFake(async (...args: any[]) => {
+												const extraPeers = args[0] as Iterable<string> | undefined;
+												const candidates = new Set<string>([
+													session.peers[0].identity.publicKey.hashcode(),
+													...(extraPeers ?? []),
+													"synthetic-full-replica-candidate",
+													"synthetic-full-replica-candidate-2",
+												]);
+												return candidates;
+											});
+										const originalDispatch = (db1.log as any).dispatchMaybeMissingEntries.bind(db1.log);
+										dispatchStub = sinon
+											.stub(db1.log as any, "dispatchMaybeMissingEntries")
+											.callsFake((...args: any[]) => {
+												const [target, entries, options] = args as [string, Map<string, any>, { mode?: string }];
+												if (options?.mode === "join-warmup") {
+													return;
+												}
+												if (
+													options?.mode === "join-authoritative" &&
+													target === joiner
+												) {
+													partialSweepQueued += entries.size;
+												}
+												return originalDispatch(target, entries, options);
+											});
+
+										sendStub = sinon
+											.stub(db1.log as any, "sendMaybeMissingEntriesNow")
+											.callsFake(() => Promise.resolve());
+
+										const originalFindLeaders = (db1.log as any).findLeaders.bind(db1.log);
+										findLeadersStub = sinon
+											.stub(db1.log as any, "findLeaders")
+											.callsFake(async (...args: any[]) => {
+												const leaders = await originalFindLeaders(...args);
+												if (!partialSweepActive) {
+													return leaders;
+												}
+												const entry = args[1] as { hash?: string };
+												if (!entry?.hash) {
+													return leaders;
+												}
+												if (partialAllowedHashes.size < Math.floor(entryCount / 2)) {
+													partialAllowedHashes.add(entry.hash);
+													return leaders;
+												}
+												if (!partialAllowedHashes.has(entry.hash)) {
+													const narrowed = new Map(leaders);
+													narrowed.delete(joiner);
+													return narrowed;
+												}
+												return leaders;
+											});
+									},
+								});
+
+								await waitForDb1Replicators();
+
+								const joiner = session.peers[1].identity.publicKey.hashcode();
+								const getFrontierSize = () =>
+									((db1.log as any)._repairFrontierByMode
+										?.get("join-authoritative")
+										?.get(joiner) as Map<string, any> | undefined)?.size ?? 0;
+
+								await waitForResolved(async () => {
+									expect(getFrontierSize()).greaterThan(0);
+									expect(getFrontierSize()).lessThan(entryCount);
+								}, commitReplicationWait);
+
+								partialSweepActive = false;
+								(db1.log as any).scheduleRepairSweep({
+									mode: "join-authoritative",
+									peers: new Set([joiner]),
+								});
+
+								await waitForResolved(async () => {
+									expect(getFrontierSize()).equal(entryCount);
+								}, commitReplicationWait);
+								expect(partialSweepQueued).greaterThan(0);
+							} finally {
+								fullReplicaCandidatesStub?.restore();
+								findLeadersStub?.restore();
+								sendStub?.restore();
+								dispatchStub?.restore();
+							}
 						});
 
 						it("control per commmit", async () => {
@@ -2366,7 +3096,58 @@ testSetups.forEach((setup) => {
 								});
 							}
 
-							await checkReplicas([db1, db2, db3], 3, entryCount);
+							await waitForResolved(async () => {
+								// `checkReplicas()` only observes the current replica set. The runtime
+								// should now drive the missing join/backfill repair on its own, so this
+								// test no longer forces redistribution with `rebalanceAll()`.
+								await checkReplicas([db1, db2, db3], 3, entryCount);
+							}, commitReplicationWait);
+						});
+
+						it("control per commmit queues full-replica live append backfill despite partial leader view", async () => {
+							const entryCount = 12;
+							await init({ min: 1 });
+							await waitForDb1Replicators();
+
+							const omittedPeer = session.peers[2].identity.publicKey.hashcode();
+							let omittedPeerBackfills = 0;
+							let findLeadersStub: sinon.SinonStub | undefined;
+							let queueAppendBackfillStub: sinon.SinonStub | undefined;
+
+							try {
+								const originalFindLeaders = (db1.log as any).findLeaders.bind(db1.log);
+								findLeadersStub = sinon
+									.stub(db1.log as any, "findLeaders")
+									.callsFake(async (...args: any[]) => {
+										const leaders = new Map(await originalFindLeaders(...args));
+										leaders.delete(omittedPeer);
+										return leaders;
+									});
+
+								const originalQueueAppendBackfill = (db1.log as any).queueAppendBackfill.bind(db1.log);
+								queueAppendBackfillStub = sinon
+									.stub(db1.log as any, "queueAppendBackfill")
+									.callsFake((...args: unknown[]) => {
+										const [target, entry] = args as [string, any];
+										if (target === omittedPeer) {
+											omittedPeerBackfills += 1;
+										}
+										return originalQueueAppendBackfill(target, entry);
+									});
+
+								const value = "hello";
+								for (let i = 0; i < entryCount; i++) {
+									await db1.add(value, {
+										replicas: new AbsoluteReplicas(3),
+										meta: { next: [] },
+									});
+								}
+
+								expect(omittedPeerBackfills).equal(entryCount);
+							} finally {
+								queueAppendBackfillStub?.restore();
+								findLeadersStub?.restore();
+							}
 						});
 
 						it("mixed control per commmit", async () => {

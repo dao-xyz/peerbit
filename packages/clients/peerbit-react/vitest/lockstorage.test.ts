@@ -30,16 +30,17 @@ import { FastMutex } from "../src/lockstorage.ts";
 
 describe("FastMutex", () => {
 	let sandbox: sinon.SinonSandbox;
+	let localStorage: nodelocalstorage.LocalStorage;
 
 	beforeAll(() => {
-		var LocalStorage = nodelocalstorage!.LocalStorage;
-		var localStorage = new LocalStorage("./tmp/FastMutex");
+		const LocalStorage = nodelocalstorage!.LocalStorage;
+		localStorage = new LocalStorage("./tmp/FastMutex");
 		localStorage.clear();
-		globalThis.localStorage = localStorage;
+		globalThis.localStorage = localStorage as any;
 	});
 
 	afterAll(() => {
-		globalThis.localStorage.clear();
+		localStorage.clear();
 	});
 
 	beforeEach(() => {
@@ -209,15 +210,25 @@ describe("FastMutex", () => {
 	});
 
 	it("should throw if lock is never acquired after set time period", async () => {
-		const fm1 = new FastMutex({ localStorage: localStorage, timeout: 50 });
-		const fm2 = new FastMutex({ localStorage: localStorage, timeout: 50 });
-		await fm1.lock("timeoutTest");
+		const holderTimeout = 2_000;
+		const waiterTimeout = 100;
+		const fm1 = new FastMutex({
+			localStorage: localStorage,
+			timeout: holderTimeout,
+		});
+		const fm2 = new FastMutex({
+			localStorage: localStorage,
+			timeout: waiterTimeout,
+		});
+		await fm1.lock("timeoutTest", () => true);
 		const start = Date.now();
 		let threw = false;
 		try {
 			await fm2.lock("timeoutTest");
 		} catch (e) {
 			threw = true;
+		} finally {
+			fm1.release("timeoutTest");
 		}
 		const elapsed = Date.now() - start;
 		expect(threw).to.be.true;

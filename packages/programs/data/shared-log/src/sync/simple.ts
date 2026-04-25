@@ -58,6 +58,17 @@ export class RequestMaybeSyncCoordinate extends TransportMessage {
 	}
 }
 
+@variant([0, 6])
+export class ConfirmEntriesMessage extends TransportMessage {
+	@field({ type: vec("string") })
+	hashes: string[];
+
+	constructor(props: { hashes: string[] }) {
+		super();
+		this.hashes = props.hashes;
+	}
+}
+
 const getHashesFromSymbols = async (
 	symbols: bigint[],
 	entryIndex: Index<EntryReplicated<any>, any>,
@@ -109,6 +120,10 @@ const SESSION_POLL_INTERVAL_MS = 100;
 const DEFAULT_MAX_HASHES_PER_MESSAGE = 1_024;
 const DEFAULT_MAX_COORDINATES_PER_MESSAGE = 1_024;
 const DEFAULT_MAX_CONVERGENT_TRACKED_HASHES = 4_096;
+// Retry missing entry requests when the first response was lost (for example, due to
+// pubsub stream warmup). Keep it coarse-grained so we do not hammer the network under
+// large historical backfills.
+const SIMPLE_SYNC_RETRY_AFTER_MS = 10_000;
 
 const createDeferred = <T>() => {
 	let resolve!: (value: T | PromiseLike<T>) => void;
@@ -612,7 +627,14 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				options?.skipCheck ||
 				!(await this.checkHasCoordinateOrHash(coordinateOrHash))
 			) {
-				this.syncInFlightQueue.set(coordinateOrHash, []);
+				// Track the initial sender so we can retry if the first request is lost.
+				this.syncInFlightQueue.set(coordinateOrHash, [from]);
+				let inverted = this.syncInFlightQueueInverted.get(from.hashcode());
+				if (!inverted) {
+					inverted = new Set();
+					this.syncInFlightQueueInverted.set(from.hashcode(), inverted);
+				}
+				inverted.add(coordinateOrHash);
 				requestHashes.push(coordinateOrHash); // request immediately (first time we have seen this hash)
 			}
 		}
@@ -688,6 +710,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 
 			const requestHashes: SyncableKey[] = [];
 			const from: Set<string> = new Set();
+			const now = Date.now();
 			for (const [key, value] of this.syncInFlightQueue) {
 				if (this.closed) {
 					return;
@@ -696,26 +719,32 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				const has = await this.checkHasCoordinateOrHash(key);
 
 				if (!has) {
-					// TODO test that this if statement actually does anymeaningfull
-					if (value.length > 0) {
+					if (value.length === 0) {
+						// No remaining peers to ask; drop the pending key to avoid leaking.
+						this.clearSyncProcessKey(key);
+						continue;
+					}
+
+					// Ask one peer per key per loop. If a previous request is still considered
+					// "recent", wait until the retry window elapses.
+					const candidate = value[0]!;
+					const publicKeyHash = candidate.hashcode();
+					const inflightTimestamp = this.syncInFlight
+						.get(publicKeyHash)
+						?.get(key)?.timestamp;
+					if (
+						inflightTimestamp == null ||
+						now - inflightTimestamp >= SIMPLE_SYNC_RETRY_AFTER_MS
+					) {
 						requestHashes.push(key);
-						const publicKeyHash = value.shift()!.hashcode();
 						from.add(publicKeyHash);
-						const invertedSet =
-							this.syncInFlightQueueInverted.get(publicKeyHash);
-						if (invertedSet) {
-							if (invertedSet.delete(key)) {
-								if (invertedSet.size === 0) {
-									this.syncInFlightQueueInverted.delete(publicKeyHash);
-								}
-							}
+						if (value.length > 1) {
+							// Rotate for fairness across multiple possible sources.
+							value.push(value.shift()!);
 						}
 					}
-					if (value.length === 0) {
-						this.syncInFlightQueue.delete(key); // no-one more to ask for this entry
-					}
 				} else {
-					this.syncInFlightQueue.delete(key);
+					this.clearSyncProcessKey(key);
 				}
 			}
 
@@ -761,21 +790,25 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		return this.clearSyncProcess(hash);
 	}
 
-	private clearSyncProcess(hash: string) {
-		const inflight = this.syncInFlightQueue.get(hash);
+	private clearSyncProcessKey(key: SyncableKey) {
+		const inflight = this.syncInFlightQueue.get(key);
 		if (inflight) {
-			for (const key of inflight) {
-				const map = this.syncInFlightQueueInverted.get(key.hashcode());
+			for (const peer of inflight) {
+				const map = this.syncInFlightQueueInverted.get(peer.hashcode());
 				if (map) {
-					map.delete(hash);
+					map.delete(key);
 					if (map.size === 0) {
-						this.syncInFlightQueueInverted.delete(key.hashcode());
+						this.syncInFlightQueueInverted.delete(peer.hashcode());
 					}
 				}
 			}
 
-			this.syncInFlightQueue.delete(hash);
+			this.syncInFlightQueue.delete(key);
 		}
+	}
+
+	private clearSyncProcess(hash: string) {
+		this.clearSyncProcessKey(hash);
 	}
 
 	onPeerDisconnected(key: PublicSignKey | string): Promise<void> | void {

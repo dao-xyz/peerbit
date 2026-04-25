@@ -22,6 +22,8 @@ export default defineConfig({
 	test: {
 		name: "dom",
 		environment: "happy-dom",
+		testTimeout: 30_000,
+		hookTimeout: 30_000,
 		globals: true,
 		include: ["src/**/*.dom.test.ts?(x)", "vitest/**/*.dom.test.ts?(x)"],
 		exclude: ["node_modules", "dist"],

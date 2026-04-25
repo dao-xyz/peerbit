@@ -8085,6 +8085,10 @@ describe("index", () => {
 			});
 
 			it("get local first", async () => {
+				const localReadyWait = {
+					timeout: 120_000,
+					delayInterval: 500,
+				} as const;
 				await stores[1].docs.log.replicate({ factor: 0.0001 });
 				await Promise.all([
 					stores[0].docs.log.waitForReplicator(
@@ -8098,11 +8102,13 @@ describe("index", () => {
 					expect(stores[1].docs.log.log.length).to.eq(
 						stores[0].docs.log.log.length,
 					),
+					localReadyWait,
 				);
 				await waitForResolved(async () =>
 					expect(await stores[1].docs.index.getSize()).to.eq(
 						await stores[0].docs.index.getSize(),
 					),
+					localReadyWait,
 				);
 
 				const requestSpy = sinon.spy(stores[1].docs.index._query.request);

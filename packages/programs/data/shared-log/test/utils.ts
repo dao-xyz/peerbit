@@ -88,6 +88,159 @@ export const slowDownMessage = (
 	};
 };
 
+export const getDeterministicTestSeed = (
+	envKey: string,
+	fallback: number,
+) => {
+	const value = process.env[envKey];
+	if (value == null || value === "") {
+		return fallback;
+	}
+	const parsed = Number.parseInt(value, 10);
+	return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const createSeededRandom = (seed: number) => {
+	let state = seed >>> 0;
+	return () => {
+		state = (state + 0x6d2b79f5) >>> 0;
+		let t = Math.imul(state ^ (state >>> 15), 1 | state);
+		t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+	};
+};
+
+const hashStringToUint32 = (value: string) => {
+	// FNV-1a 32-bit
+	let hash = 0x811c9dc5;
+	for (let index = 0; index < value.length; index++) {
+		hash ^= value.charCodeAt(index);
+		hash = Math.imul(hash, 0x01000193);
+	}
+	return hash >>> 0;
+};
+
+export type SeededMessageDelayRule = {
+	type: Constructor<TransportMessage>;
+	minDelayMs: number;
+	maxDelayMs?: number;
+	probability?: number;
+};
+export type SeededPubSubWriteDelayOptions = {
+	minDelayMs: number;
+	maxDelayMs?: number;
+	probability?: number;
+	matchPeer?: (peer: { publicKey: PublicSignKey }) => boolean;
+};
+
+
+export const slowDownMessagesWithSeed = (
+	log: SharedLog<any, any>,
+	rules: readonly SeededMessageDelayRule[],
+	seed: number,
+	abortSignal?: AbortSignal,
+) => {
+	const random = createSeededRandom(seed);
+	const sendFn = log.rpc.send.bind(log.rpc);
+	log.rpc.send = async (msg, options) => {
+		const canDelay = abortSignal ? abortSignal.aborted === false : true;
+		if (canDelay) {
+			for (const rule of rules) {
+				if (msg.constructor?.name !== rule.type?.name) {
+					continue;
+				}
+				if (random() > (rule.probability ?? 1)) {
+					break;
+				}
+				const maxDelayMs = Math.max(rule.maxDelayMs ?? rule.minDelayMs, rule.minDelayMs);
+				const delayMs =
+					rule.minDelayMs +
+					Math.floor(random() * (maxDelayMs - rule.minDelayMs + 1));
+				try {
+					await delay(delayMs, { signal: abortSignal });
+				} catch (error) {
+					// Abort just means "stop delaying new messages now".
+				}
+				break;
+			}
+		}
+		return sendFn(msg, options);
+	};
+};
+
+
+export const slowDownPubSubWritesWithSeed = (
+	from: ProgramClient,
+	seed: number,
+	options: SeededPubSubWriteDelayOptions,
+	abortSignal?: AbortSignal,
+) => {
+	const pubsub = from.services.pubsub as TopicControlPlane;
+	const peers = [...pubsub.peers.values()].sort((a, b) =>
+		a.publicKey.hashcode().localeCompare(b.publicKey.hashcode()),
+	);
+	const restoreFns: (() => Promise<void>)[] = [];
+	for (const peer of peers) {
+		// Tie randomness to the peer identity, not Map iteration order.
+		const random = createSeededRandom(
+			(seed ^ hashStringToUint32(peer.publicKey.hashcode())) >>> 0,
+		);
+		const waitForWriteFn = peer.waitForWrite.bind(peer);
+		const pendingWrites = new Set<Promise<void>>();
+		const writeFailures: any[] = [];
+		peer.waitForWrite = (bytes, priority, signal) => {
+			const canDelay = abortSignal ? abortSignal.aborted === false : true;
+			if (
+				canDelay &&
+				(options.matchPeer == null || options.matchPeer(peer)) &&
+				random() <= (options.probability ?? 1)
+			) {
+				const maxDelayMs = Math.max(
+					options.maxDelayMs ?? options.minDelayMs,
+					options.minDelayMs,
+				);
+				const delayMs =
+					options.minDelayMs +
+					Math.floor(random() * (maxDelayMs - options.minDelayMs + 1));
+				const pending = (async () => {
+					try {
+						await delay(delayMs, { signal: abortSignal });
+					} catch (error) {
+						// Abort just means "stop delaying new pubsub writes now".
+					}
+					await waitForWriteFn(bytes, priority, signal);
+				})();
+				pending.then(
+					() => {
+						pendingWrites.delete(pending);
+					},
+					(error) => {
+						pendingWrites.delete(pending);
+						if (!abortSignal?.aborted) {
+							writeFailures.push(error);
+						}
+					},
+				);
+				pendingWrites.add(pending);
+				return pending;
+			}
+			return waitForWriteFn(bytes, priority, signal);
+		};
+		restoreFns.push(async () => {
+			peer.waitForWrite = waitForWriteFn;
+			await Promise.allSettled([...pendingWrites]);
+			if (writeFailures.length > 0) {
+				throw writeFailures[0];
+			}
+		});
+	}
+	return async () => {
+		for (const restore of restoreFns) {
+			await restore();
+		}
+	};
+};
+
 export const getReceivedHeads = (
 	messages: [TransportMessage, PublicSignKey][],
 ): EntryWithRefs<any>[] => {
@@ -173,6 +326,19 @@ export const checkBounded = async (
 			Math.max(Math.round(Math.max(a, db.log.log.length) * 0.01), 1)
 		); // TODO make this a parameter
 	};
+
+	await waitForResolved(
+		async () => {
+			const union = new Set<string>();
+			for (const db of dbs) {
+				for (const value of await db.log.log.toArray()) {
+					union.add(value.hash);
+				}
+			}
+			expect(union.size).equal(entryCount);
+		},
+		boundWaitOpts,
+	);
 
 	await Promise.all(
 		dbs.map(async (db) => {

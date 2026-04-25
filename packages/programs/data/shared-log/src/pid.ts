@@ -49,9 +49,14 @@ export class PIDReplicationController {
 		let errorMemory = 0;
 
 		if (this.maxMemoryLimit != null) {
+			// Treat the configured storage limit as a ceiling, not the exact control
+			// target. A small reserve prevents discrete entry sizes and delayed checked
+			// prunes from repeatedly settling just above the hard budget.
+			const effectiveMemoryLimit =
+				this.maxMemoryLimit > 0 ? this.maxMemoryLimit * 0.95 : 0;
 			errorMemory =
 				currentFactor > 0 && memoryUsage > 0
-					? Math.max(Math.min(1, this.maxMemoryLimit / estimatedTotalSize), 0) -
+					? Math.max(Math.min(1, effectiveMemoryLimit / estimatedTotalSize), 0) -
 						currentFactor
 					: 0;
 			// Math.max(Math.min((this.maxMemoryLimit - memoryUsage) / 100e5, 1), -1)// Math.min(Math.max((this.maxMemoryLimit - memoryUsage, 0) / 10e5, 0), 1);
@@ -99,7 +104,7 @@ export class PIDReplicationController {
 		// TODO make these self-optimizing
 
 		let totalError: number;
-		const errorMemoryFactor = 0.9;
+		let errorMemoryFactor = 0.9;
 		const errorBalanceFactor = 0.6;
 
 		totalError =
@@ -108,6 +113,21 @@ export class PIDReplicationController {
 
 		// Computer is getting too full?
 		if (errorMemory < 0) {
+			if (
+				this.maxMemoryLimit != null &&
+				this.maxMemoryLimit > 0 &&
+				coverageDeficit > 0
+			) {
+				// When the ring is materially under-covered, shrinking a memory-limited
+				// range can increase gap-boundary assignments and make local memory usage
+				// worse, not better. Let the coverage term dominate until the floor is
+				// restored, while preserving the hard shrink behavior for zero-capacity peers.
+				errorMemoryFactor = Math.max(
+					0.2,
+					errorMemoryFactor -
+						0.7 * Math.min(1, coverageDeficit / 0.25),
+				);
+			}
 			totalError =
 				errorMemory * errorMemoryFactor + totalError * (1 - errorMemoryFactor);
 		}
