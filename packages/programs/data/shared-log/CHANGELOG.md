@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.1.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.0...shared-log-v13.1.1) (2026-04-25)
+
+
+### Bug Fixes
+
+* **shared-log:** self-heal late-join backfill ([b7828a6](https://github.com/dao-xyz/peerbit/commit/b7828a68619d87b557e3e341e09f682a5fc366e0))
+
 ## [13.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.24...shared-log-v13.1.0) (2026-04-14)
 
 
