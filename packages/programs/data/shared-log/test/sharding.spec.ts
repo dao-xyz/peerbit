@@ -1763,6 +1763,8 @@ testSetups.forEach((setup) => {
 
 							await delay(db1.log.timeUntilRoleMaturity + 1000);
 
+							await waitForParticipationToSettle(db1, db2);
+
 							await waitForDistributionQuiesced(db1, db2);
 
 							await waitForResolved(

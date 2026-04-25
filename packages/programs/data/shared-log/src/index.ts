@@ -5169,10 +5169,16 @@ export class SharedLog<
 							confirmedHashes.add(head.entry.hash);
 						}
 					}
+					const fromIsSelf = context.from.equals(this.node.identity.publicKey);
+					if (!fromIsSelf) {
+						this.markEntriesKnownByPeer(
+							heads.map((head) => head.entry.hash),
+							context.from.hashcode(),
+						);
+					}
 
 					if (filteredHeads.length === 0) {
-						if (confirmedHashes.size > 0 && !context.from.equals(this.node.identity.publicKey)) {
-							this.markEntriesKnownByPeer(confirmedHashes, context.from.hashcode());
+						if (confirmedHashes.size > 0 && !fromIsSelf) {
 							await this.sendRepairConfirmation(context.from!, confirmedHashes);
 						}
 						return;
