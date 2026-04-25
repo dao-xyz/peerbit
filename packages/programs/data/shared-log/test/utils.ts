@@ -185,35 +185,10 @@ export const slowDownPubSubWritesWithSeed = (
 		const random = createSeededRandom(
 			(seed ^ hashStringToUint32(peer.publicKey.hashcode())) >>> 0,
 		);
-		const writeFn = peer.write.bind(peer);
-		type PubSubWriteArgs = Parameters<typeof peer.write>;
+		const waitForWriteFn = peer.waitForWrite.bind(peer);
 		const pendingWrites = new Set<Promise<void>>();
 		const writeFailures: any[] = [];
-		const retryWrite = async (
-			msg: PubSubWriteArgs[0],
-			priority: PubSubWriteArgs[1],
-		) => {
-			const deadline = Date.now() + 30_000;
-			for (;;) {
-				try {
-					writeFn(msg, priority);
-					return;
-				} catch (error: any) {
-					const message = String(error?.message ?? "");
-					const noWritable = message.includes("No writable connection");
-					if (!noWritable || abortSignal?.aborted) {
-						throw error;
-					}
-					if (Date.now() >= deadline) {
-						throw new Error(
-							`Timed out waiting for pubsub writable stream to ${peer.publicKey.hashcode()}`,
-						);
-					}
-					await delay(10, { signal: abortSignal });
-				}
-			}
-		};
-		peer.write = (msg, priority) => {
+		peer.waitForWrite = (bytes, priority, signal) => {
 			const canDelay = abortSignal ? abortSignal.aborted === false : true;
 			if (
 				canDelay &&
@@ -233,23 +208,26 @@ export const slowDownPubSubWritesWithSeed = (
 					} catch (error) {
 						// Abort just means "stop delaying new pubsub writes now".
 					}
-					await retryWrite(msg, priority);
-				})()
-					.catch((error) => {
+					await waitForWriteFn(bytes, priority, signal);
+				})();
+				pending.then(
+					() => {
+						pendingWrites.delete(pending);
+					},
+					(error) => {
+						pendingWrites.delete(pending);
 						if (!abortSignal?.aborted) {
 							writeFailures.push(error);
 						}
-					})
-					.finally(() => {
-						pendingWrites.delete(pending);
-					});
+					},
+				);
 				pendingWrites.add(pending);
-				return;
+				return pending;
 			}
-			return writeFn(msg, priority);
+			return waitForWriteFn(bytes, priority, signal);
 		};
 		restoreFns.push(async () => {
-			peer.write = writeFn;
+			peer.waitForWrite = waitForWriteFn;
 			await Promise.allSettled([...pendingWrites]);
 			if (writeFailures.length > 0) {
 				throw writeFailures[0];
