@@ -327,6 +327,19 @@ export const checkBounded = async (
 		); // TODO make this a parameter
 	};
 
+	await waitForResolved(
+		async () => {
+			const union = new Set<string>();
+			for (const db of dbs) {
+				for (const value of await db.log.log.toArray()) {
+					union.add(value.hash);
+				}
+			}
+			expect(union.size).equal(entryCount);
+		},
+		boundWaitOpts,
+	);
+
 	await Promise.all(
 		dbs.map(async (db) => {
 			try {

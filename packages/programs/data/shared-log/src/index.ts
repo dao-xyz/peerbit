@@ -2913,11 +2913,12 @@ export class SharedLog<
 		target: string,
 		entries: Map<string, EntryReplicated<R>>,
 		transport: RepairTransportMode,
+		options?: { bypassKnownPeers?: boolean },
 	) {
 		const unknownEntries = new Map<string, EntryReplicated<R>>();
 		const knownHashes: string[] = [];
 		for (const [hash, entry] of entries) {
-			if (!this.isEntryKnownByPeer(hash, target)) {
+			if (options?.bypassKnownPeers || !this.isEntryKnownByPeer(hash, target)) {
 				unknownEntries.set(hash, entry);
 			} else {
 				knownHashes.push(hash);
@@ -3001,6 +3002,7 @@ export class SharedLog<
 				target,
 				filteredEntries,
 				options.transport,
+				{ bypassKnownPeers: options.mode === "churn" },
 			),
 		).catch((error: any) => logger.error(error));
 	}
@@ -3208,6 +3210,7 @@ export class SharedLog<
 					target,
 					filteredEntries,
 					transport,
+					{ bypassKnownPeers: options.mode === "churn" },
 				),
 			).catch((error: any) => logger.error(error));
 		};
