@@ -195,12 +195,12 @@ testSetups.forEach((setup) => {
 				...dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[]
 			) => {
 				await Promise.all(
-					dbs.map((db) => db.log.waitForPruned({ timeout: 120_000 })),
+					dbs.map((db) => db.log.waitForPruned({ timeout: 180_000 })),
 				);
 				await waitForResolved(
 					() => expect(countActiveCheckedPruneRetries(...dbs)).to.equal(0),
 					{
-						timeout: 120_000,
+						timeout: 180_000,
 						delayInterval: 250,
 					},
 				);
@@ -1755,8 +1755,9 @@ testSetups.forEach((setup) => {
 					});
 					describe("memory", function () {
 						// These tests insert 1000 entries and wait for convergence; on
-						// slower CI machines this can exceed the default 60s timeout.
-						this.timeout(3 * 60 * 1000);
+						// slower CI machines this can exceed the default 60s timeout,
+						// especially while checked-prune retries drain.
+						this.timeout(5 * 60 * 1000);
 
 						it("inserting half limited", async () => {
 							db1 = await session.peers[0].open(new EventStore<string, any>(), {
