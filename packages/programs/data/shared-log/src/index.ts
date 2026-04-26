@@ -88,6 +88,7 @@ const getSharedLogFanoutService = (
 ): FanoutTree | undefined =>
 	(services as SharedLogServicesWithFanout).fanout;
 import {
+	EXCHANGE_HEADS_REPAIR_HINT,
 	EntryWithRefs,
 	ExchangeHeadsMessage,
 	RequestIPrune,
@@ -2902,6 +2903,7 @@ export class SharedLog<
 			this.log,
 			[...entries.keys()],
 		)) {
+			message.reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
 			await this.rpc.send(message, {
 				priority: 1,
 				mode: new SilentDelivery({ to: [target], redundancy: 1 }),
@@ -5150,6 +5152,8 @@ export class SharedLog<
 				 */
 
 				const { heads } = msg;
+				const isRepairHint =
+					(msg.reserved[0] & EXCHANGE_HEADS_REPAIR_HINT) !== 0;
 
 				logger.trace(
 					`${this.node.identity.publicKey.hashcode()}: Recieved heads: ${
@@ -5271,7 +5275,13 @@ export class SharedLog<
 							let maybeDelete: EntryWithRefs<any>[][] | undefined;
 							let toMerge: Entry<any>[] = [];
 							let toDelete: Entry<any>[] | undefined;
-							if (isLeader) {
+							// Targeted repair is sent only to peers the sender currently believes
+							// should store the entry. Accept it while local membership catches up;
+							// the normal checked-prune path below can still remove it if this peer
+							// truly no longer owns the entry.
+							const acceptsTargetedRepair = isRepairHint && fromIsLeader;
+							const keepAsLeader = isLeader || acceptsTargetedRepair;
+							if (keepAsLeader) {
 								for (const entry of entries) {
 									this.pruneDebouncedFn.delete(entry.entry.hash);
 									this.removePruneRequestSent(entry.entry.hash);
@@ -5292,7 +5302,7 @@ export class SharedLog<
 							}
 
 							outer: for (const entry of entries) {
-								if (isLeader || (await this.keep?.(entry.entry))) {
+								if (keepAsLeader || (await this.keep?.(entry.entry))) {
 									toMerge.push(entry.entry);
 								} else {
 									for (const ref of entry.gidRefrences) {

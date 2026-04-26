@@ -7,6 +7,9 @@ import { TransportMessage } from "./message.js";
 const logger = loggerFn("peerbit:shared-log:exchange-heads");
 const warn = logger.newScope("warn");
 
+// Stored in the reserved bytes so older peers ignore the hint.
+export const EXCHANGE_HEADS_REPAIR_HINT = 1;
+
 /**
  * This thing allows use to faster sync since we can provide
  * references that can be read concurrently to
