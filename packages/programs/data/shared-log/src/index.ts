@@ -5274,6 +5274,7 @@ export class SharedLog<
 
 							let maybeDelete: EntryWithRefs<any>[][] | undefined;
 							let toMerge: Entry<any>[] = [];
+							let toPersist: Entry<any>[] = [];
 							let toDelete: Entry<any>[] | undefined;
 							// Targeted repair is sent only to peers the sender currently believes
 							// should store the entry. Accept it while local membership catches up;
@@ -5304,6 +5305,7 @@ export class SharedLog<
 							outer: for (const entry of entries) {
 								if (keepAsLeader || (await this.keep?.(entry.entry))) {
 									toMerge.push(entry.entry);
+									toPersist.push(entry.entry);
 								} else {
 									for (const ref of entry.gidRefrences) {
 										const map = await this.log.entryIndex.getHeads(ref).all();
@@ -5332,6 +5334,16 @@ export class SharedLog<
 									context.from!.hashcode(),
 								);
 								await this.log.join(toMerge);
+								// Network joins bypass SharedLog.join(), but churn repair scans
+								// the coordinate index to redistribute entries after membership changes.
+								for (const entry of toPersist) {
+									const replicas = decodeReplicas(entry).getValue(this);
+									await this.findLeaders(
+										await this.createCoordinates(entry, replicas),
+										entry,
+										{ roleAge: 0, persist: {} },
+									);
+								}
 								for (const merged of toMerge) {
 									confirmedHashes.add(merged.hash);
 								}

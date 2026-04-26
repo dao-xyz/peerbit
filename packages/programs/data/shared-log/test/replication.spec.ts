@@ -1102,6 +1102,37 @@ testSetups.forEach((setup) => {
 					expect(new Set(dataMessages1.map((x) => x.entry.hash)).size).to.be.lessThan(2);
 				});
 
+				it("indexes entries received through network sync", async () => {
+					db1 = await session.peers[0].open(new EventStore<string, any>(), {
+						args: {
+							setup,
+						},
+					});
+					db1.log.replicate({ factor: 1 });
+					const count = 16;
+					for (let i = 0; i < count; i++) {
+						await db1.add("hello-index-" + i, { meta: { next: [] } });
+					}
+
+					db2 = (await EventStore.open<EventStore<string, any>>(
+						db1.address!,
+						session.peers[1],
+						{
+							args: {
+								replicate: {
+									factor: 1,
+								},
+								setup,
+							},
+						},
+					))!;
+
+					await waitForResolved(() => expect(db2.log.log.length).equal(count));
+					await waitForResolved(async () =>
+						expect(await db2.log.entryCoordinatesIndex.getSize()).equal(count),
+					);
+				});
+
 			it("only sends entries once, 2 peers fixed, write after open", async () => {
 				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
