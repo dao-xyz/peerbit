@@ -56,8 +56,10 @@ export class PIDReplicationController {
 				this.maxMemoryLimit > 0 ? this.maxMemoryLimit * 0.95 : 0;
 			errorMemory =
 				currentFactor > 0 && memoryUsage > 0
-					? Math.max(Math.min(1, effectiveMemoryLimit / estimatedTotalSize), 0) -
-						currentFactor
+					? Math.max(
+							Math.min(1, effectiveMemoryLimit / estimatedTotalSize),
+							0,
+						) - currentFactor
 					: 0;
 			// Math.max(Math.min((this.maxMemoryLimit - memoryUsage) / 100e5, 1), -1)// Math.min(Math.max((this.maxMemoryLimit - memoryUsage, 0) / 10e5, 0), 1);
 		}
@@ -76,9 +78,7 @@ export class PIDReplicationController {
 		// is material. This avoids oscillations around `totalFactor ~= 1`.
 		const coverageDeficit = Math.max(0, errorCoverageUnmodified); // ~= max(0, 1 - totalFactor)
 		const negativeBalanceScale =
-			coverageDeficit <= 0
-				? 1
-				: 1 - Math.min(1, coverageDeficit / 0.1); // full clamp at 10% deficit
+			coverageDeficit <= 0 ? 1 : 1 - Math.min(1, coverageDeficit / 0.1); // full clamp at 10% deficit
 		const errorFromEvenForBalance =
 			errorFromEven >= 0 ? errorFromEven : errorFromEven * negativeBalanceScale;
 
@@ -124,8 +124,7 @@ export class PIDReplicationController {
 				// restored, while preserving the hard shrink behavior for zero-capacity peers.
 				errorMemoryFactor = Math.max(
 					0.2,
-					errorMemoryFactor -
-						0.7 * Math.min(1, coverageDeficit / 0.25),
+					errorMemoryFactor - 0.7 * Math.min(1, coverageDeficit / 0.25),
 				);
 			}
 			totalError =
@@ -158,7 +157,19 @@ export class PIDReplicationController {
 
 		// Calculate the new replication factor
 		const change = pTerm + iTerm + dTerm;
-		const newFactor = currentFactor + change;
+		let newFactor = currentFactor + change;
+
+		if (this.maxCPUUsage != null && this.maxMemoryLimit == null) {
+			// CPU pressure may shed surplus replicas, but it must not create a
+			// coverage gap where the network no longer has one full copy.
+			const coverageSurplus = Math.max(0, totalFactor - 1);
+			if (newFactor < currentFactor) {
+				newFactor =
+					coverageSurplus <= 0
+						? currentFactor
+						: Math.max(newFactor, currentFactor - coverageSurplus);
+			}
+		}
 
 		// Update state for the next iteration
 		this.prevError = totalError;

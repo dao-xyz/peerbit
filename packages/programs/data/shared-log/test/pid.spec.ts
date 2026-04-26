@@ -75,7 +75,7 @@ describe("PIDReplicationController", () => {
 			expect(f).equal(0);
 		});
 
-		it("ignores balance if cpu usage is max", () => {
+		it("does not deepen coverage gaps when cpu usage is max", () => {
 			const controller = new PIDReplicationController("", { cpu: { max: 0 } });
 			let cpuUsage = 1;
 			let f = 1;
@@ -88,10 +88,24 @@ describe("PIDReplicationController", () => {
 					cpuUsage,
 				});
 			}
-			expect(f).equal(0);
+			expect(f).equal(1);
 		});
 
-		it("respects cpu limit", () => {
+		it("sheds only surplus replication when cpu usage is max", () => {
+			const controller = new PIDReplicationController("", { cpu: { max: 0 } });
+			const f = controller.step({
+				currentFactor: 0.75,
+				memoryUsage: 0,
+				totalFactor: 1.25,
+				peerCount: 2,
+				cpuUsage: 1,
+			});
+
+			expect(f).to.be.lessThan(0.75);
+			expect(f).to.be.at.least(0.5);
+		});
+
+		it("respects cpu limit while preserving coverage", () => {
 			const controller = new PIDReplicationController("", {
 				cpu: { max: 0.5 },
 			});
@@ -107,13 +121,14 @@ describe("PIDReplicationController", () => {
 			expect(f).to.be.within(0.49, 0.51);
 			cpuUsage = 0.6;
 			f = controller.step({
-				currentFactor: f,
+				currentFactor: 0.75,
 				memoryUsage: 0,
-				totalFactor: 1,
+				totalFactor: 1.25,
 				peerCount: 2,
 				cpuUsage,
 			});
-			expect(f).lessThan(0.5);
+			expect(f).lessThan(0.75);
+			expect(f).to.be.at.least(0.5);
 		});
 	});
 });

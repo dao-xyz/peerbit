@@ -184,8 +184,9 @@ testSetups.forEach((setup) => {
 				return dbs.reduce((total, db) => {
 					const retries = ((db.log as any)._checkedPruneRetries ??
 						new Map()) as Map<string, { timer?: NodeJS.Timeout }>;
-					const active = [...retries.values()].filter((state) => state?.timer)
-						.length;
+					const active = [...retries.values()].filter(
+						(state) => state?.timer,
+					).length;
 					return total + active;
 				}, 0);
 			};
@@ -210,12 +211,20 @@ testSetups.forEach((setup) => {
 			) => {
 				return dbs.reduce((total, db) => {
 					const log = db.log as any;
-					const pendingModes = ((log._repairSweepPendingModes ??
-						new Set()) as Set<string>).size;
-					const pendingPeers = [...
-						((log._repairSweepPendingPeersByMode ?? new Map()).values() as Iterable<Set<string>>),
+					const pendingModes = (
+						(log._repairSweepPendingModes ?? new Set()) as Set<string>
+					).size;
+					const pendingPeers = [
+						...((
+							log._repairSweepPendingPeersByMode ?? new Map()
+						).values() as Iterable<Set<string>>),
 					].reduce((sum, peers) => sum + peers.size, 0);
-					return total + pendingModes + pendingPeers + (log._repairSweepRunning ? 1 : 0);
+					return (
+						total +
+						pendingModes +
+						pendingPeers +
+						(log._repairSweepRunning ? 1 : 0)
+					);
 				}, 0);
 			};
 
@@ -269,7 +278,9 @@ testSetups.forEach((setup) => {
 				return [...replicasByHash.entries()].filter(
 					([hash, replicas]) =>
 						replicas < minReplicas &&
-						dbs.every((db) => db.log.syncronizer.syncInFlight.has(hash) === false),
+						dbs.every(
+							(db) => db.log.syncronizer.syncInFlight.has(hash) === false,
+						),
 				).length;
 			};
 			const waitForChurnReplicationSettled = async (
@@ -295,7 +306,9 @@ testSetups.forEach((setup) => {
 							expect(replicas, `replicas for ${hash}`).greaterThanOrEqual(
 								minReplicas,
 							);
-							expect(replicas, `replicas for ${hash}`).lessThanOrEqual(dbs.length);
+							expect(replicas, `replicas for ${hash}`).lessThanOrEqual(
+								dbs.length,
+							);
 						}
 						expect(
 							await countIdleUnderReplicatedEntries(minReplicas, ...dbs),
@@ -536,10 +549,12 @@ testSetups.forEach((setup) => {
 					// extra polling loop on exact participation closeness can hang in CI even when
 					// the final sharding shape is acceptable. Check the fairness signal once after
 					// quiescence instead of turning it into another long-running precondition.
-					const participations = await Promise.all([db1, db2, db3].map((db) =>
-						db.log.calculateTotalParticipation(),
-					));
-					expect(Math.max(...participations) - Math.min(...participations)).lessThan(0.35);
+					const participations = await Promise.all(
+						[db1, db2, db3].map((db) => db.log.calculateTotalParticipation()),
+					);
+					expect(
+						Math.max(...participations) - Math.min(...participations),
+					).lessThan(0.35);
 				}
 				await checkBounded(
 					entryCount,
@@ -625,8 +640,8 @@ testSetups.forEach((setup) => {
 				} catch (error) {
 					await dbgLogs([db1.log, db2.log, db3.log]);
 					throw error;
-					}
-				});
+				}
+			});
 
 			it("write while joining peers", async () => {
 				const store = new EventStore<string, any>();
@@ -722,7 +737,9 @@ testSetups.forEach((setup) => {
 							db2,
 							db3,
 						);
-						expect(await countIdleUnderReplicatedEntries(2, db1, db2, db3)).equal(0);
+						expect(
+							await countIdleUnderReplicatedEntries(2, db1, db2, db3),
+						).equal(0);
 					},
 					{ timeout: 120_000, delayInterval: 500 },
 				);
@@ -731,7 +748,10 @@ testSetups.forEach((setup) => {
 			(setup.name === "u64-iblt" ? it : it.skip)(
 				"survives deterministic delayed join and leave churn",
 				async () => {
-					const chaosSeed = getDeterministicTestSeed("PEERBIT_SHARED_LOG_CHAOS_SEED", 7_331);
+					const chaosSeed = getDeterministicTestSeed(
+						"PEERBIT_SHARED_LOG_CHAOS_SEED",
+						7_331,
+					);
 					const chaosAbort = new AbortController();
 					const chaosRules = [
 						{
@@ -1068,7 +1088,11 @@ testSetups.forEach((setup) => {
 						// union, replica floor, and lack of idle under-replication are the
 						// source of truth. Full internal quiescence is stronger than necessary
 						// and remains timing-sensitive under seeded pubsub jitter.
-						await waitForChurnReplicationSettled([db1, db3, db4], 2, entryCount);
+						await waitForChurnReplicationSettled(
+							[db1, db3, db4],
+							2,
+							entryCount,
+						);
 					} finally {
 						await flushPubSubChaos();
 					}
@@ -1128,7 +1152,9 @@ testSetups.forEach((setup) => {
 				await waitForResolved(
 					async () => {
 						await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
-						expect(await countIdleUnderReplicatedEntries(2, db1, db2, db3)).equal(0);
+						expect(
+							await countIdleUnderReplicatedEntries(2, db1, db2, db3),
+						).equal(0);
 					},
 					{ timeout: 120_000, delayInterval: 500 },
 				);
@@ -1336,14 +1362,14 @@ testSetups.forEach((setup) => {
 			});
 
 			it("handles peer joining and leaving multiple times", async () => {
-					db1 = await session.peers[0].open(new EventStore<string, any>(), {
-						args: {
-							replicate: {
-								offset: 0,
-							},
-							setup,
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						replicate: {
+							offset: 0,
 						},
-					});
+						setup,
+					},
+				});
 
 				db2 = await EventStore.open<EventStore<string, any>>(
 					db1.address!,
@@ -1377,14 +1403,8 @@ testSetups.forEach((setup) => {
 					setup.name === "u64-iblt"
 						? shardingSmallEntryCount
 						: shardingMediumEntryCount;
-				const initialLowerBound =
-					setup.name === "u64-iblt"
-						? 14 / 30
-						: 0.5;
-				const initialUpperBound =
-					setup.name === "u64-iblt"
-						? 14 / 15
-						: 0.9;
+				const initialLowerBound = setup.name === "u64-iblt" ? 14 / 30 : 0.5;
+				const initialUpperBound = setup.name === "u64-iblt" ? 14 / 15 : 0.9;
 
 				await appendInBatches(entryCount, (i) =>
 					db1.add(toBase64(new Uint8Array(i)), {
@@ -1426,15 +1446,15 @@ testSetups.forEach((setup) => {
 
 				await delay(300);
 
-					await session.peers[2].open(db3, {
-						args: {
-							replicate: {
-								offset: 0.66666,
-							},
-							setup,
+				await session.peers[2].open(db3, {
+					args: {
+						replicate: {
+							offset: 0.66666,
 						},
-						});
-						await db3.close();
+						setup,
+					},
+				});
+				await db3.close();
 				/* 	await session.peers[2].open(db3, {
 						args: {
 							replicate: {
@@ -1466,30 +1486,33 @@ testSetups.forEach((setup) => {
 				/* 	db1.log.xreset();
 					db2.log.xreset(); */
 
-					// The final contract after db3 is gone is the exact two-peer distribution,
-					// not whether every internal repair/prune timer has gone fully idle first.
-					// `checkBounded()` already waits for length convergence and replica bounds, so
-					// using it directly avoids turning transient background cleanup into a failure.
-					await checkBounded(entryCount, 1, 1, db1, db2);
+				// The final contract after db3 is gone is the exact two-peer distribution,
+				// not whether every internal repair/prune timer has gone fully idle first.
+				// `checkBounded()` already waits for length convergence and replica bounds, so
+				// using it directly avoids turning transient background cleanup into a failure.
+				await checkBounded(entryCount, 1, 1, db1, db2);
 
-					// Under full-suite load (GC + timers), rebalancing can take longer. Use a
-					// larger window with slower polling to avoid flakiness.
-					const participationWaitOpts = { timeout: 60_000, delayInterval: 500 } as const;
-						await waitForResolved(
-							async () =>
-								expect((await db1.log.calculateTotalParticipation()) - 1).lessThan(
-									0.25,
-								),
-							participationWaitOpts,
-						);
-						await waitForResolved(
-							async () =>
-								expect((await db2.log.calculateTotalParticipation()) - 1).lessThan(
-									0.25,
-								),
-							participationWaitOpts,
-						);
-				});
+				// Under full-suite load (GC + timers), rebalancing can take longer. Use a
+				// larger window with slower polling to avoid flakiness.
+				const participationWaitOpts = {
+					timeout: 60_000,
+					delayInterval: 500,
+				} as const;
+				await waitForResolved(
+					async () =>
+						expect((await db1.log.calculateTotalParticipation()) - 1).lessThan(
+							0.25,
+						),
+					participationWaitOpts,
+				);
+				await waitForResolved(
+					async () =>
+						expect((await db2.log.calculateTotalParticipation()) - 1).lessThan(
+							0.25,
+						),
+					participationWaitOpts,
+				);
+			});
 
 			it("drops when no longer replicating as observer", async () => {
 				let COUNT = 10;
@@ -1553,7 +1576,7 @@ testSetups.forEach((setup) => {
 
 				await waitForResolved(() => expect(db3.log.log.length).equal(COUNT));
 				await waitForResolved(() => expect(db2.log.log.length).equal(0));
-				});
+			});
 
 			it("drops when no longer replicating with factor 0", async () => {
 				let COUNT = 100;
@@ -1615,12 +1638,12 @@ testSetups.forEach((setup) => {
 				await db2.log.replicate({ factor: 0 });
 				await waitForResolved(() => expect(db3.log.log.length).equal(COUNT));
 				await waitForResolved(() => expect(db2.log.log.length).equal(0)); // min replicas is set to 2 so, if there are 2 dbs still replicating, this nod should not store any data
-				});
+			});
 
 			describe("distribution", () => {
 				describe("objectives", () => {
 					describe("cpu", () => {
-						it("no cpu usage allowed", async () => {
+						it("no cpu surplus allowed", async () => {
 							db1 = await session.peers[0].open(new EventStore<string, any>(), {
 								args: {
 									replicate: true,
@@ -1658,9 +1681,18 @@ testSetups.forEach((setup) => {
 
 							await delay(3e3);
 
-							await waitForResolved(async () =>
-								expect(await db2.log.calculateMyTotalParticipation()).equal(0),
-							); // because the CPU error from fixed usage (0.5) is always greater than max (0)
+							await waitForResolved(async () => {
+								const db1Participation =
+									await db1.log.calculateMyTotalParticipation();
+								const db2Participation =
+									await db2.log.calculateMyTotalParticipation();
+
+								// CPU pressure should shed surplus work, but it must not collapse
+								// material coverage. The different sharding backends approximate
+								// ranges differently, so keep the exact floor invariant in pid.spec.
+								expect(db1Participation + db2Participation).within(0.85, 1.05);
+								expect(db2Participation).lessThan(0.5);
+							});
 						});
 
 						it("below limit", async () => {
@@ -1840,7 +1872,8 @@ testSetups.forEach((setup) => {
 								// fully settle is stricter than the behavior under test and flakes
 								// under full-shard CI load.
 								await waitForResolved(
-									() => expect(countActiveRepairSweepWork(db1, db2)).to.equal(0),
+									() =>
+										expect(countActiveRepairSweepWork(db1, db2)).to.equal(0),
 									{ timeout: 120_000, delayInterval: 250 },
 								);
 
@@ -2044,25 +2077,25 @@ testSetups.forEach((setup) => {
 
 							const data = toBase64(randomBytes(5.5e2)); // about 1kb
 
-								for (let i = 0; i < 100; i++) {
-									// insert 1mb
-									await db2.add(data, { meta: { next: [] } });
-								}
+							for (let i = 0; i < 100; i++) {
+								// insert 1mb
+								await db2.add(data, { meta: { next: [] } });
+							}
 
-								// Under full-suite load (GC + lots of timers), rebalancing can take
-								// longer than the default waitForResolved timeout (10s).
-								await waitForResolved(
-									async () => {
-										expect(
-											await db1.log.calculateMyTotalParticipation(),
-										).to.be.within(0.45, 0.55);
-										expect(
-											await db2.log.calculateMyTotalParticipation(),
-										).to.be.within(0.45, 0.55);
-									},
-									{ timeout: 30 * 1000, delayInterval: 250 },
-								);
-							});
+							// Under full-suite load (GC + lots of timers), rebalancing can take
+							// longer than the default waitForResolved timeout (10s).
+							await waitForResolved(
+								async () => {
+									expect(
+										await db1.log.calculateMyTotalParticipation(),
+									).to.be.within(0.45, 0.55);
+									expect(
+										await db2.log.calculateMyTotalParticipation(),
+									).to.be.within(0.45, 0.55);
+								},
+								{ timeout: 30 * 1000, delayInterval: 250 },
+							);
+						});
 
 						it("unequally limited", async () => {
 							const memoryLimit = 100 * 1e3;
@@ -2138,14 +2171,16 @@ testSetups.forEach((setup) => {
 							await waitForResolved(
 								async () =>
 									expect(
-										Math.abs(memoryLimit * 2 - (await db2.log.getMemoryUsage())),
+										Math.abs(
+											memoryLimit * 2 - (await db2.log.getMemoryUsage()),
+										),
 									).lessThan(((memoryLimit * 2) / 100) * 12),
 								{
 									timeout: 60 * 1000,
 									delayInterval: 1000,
 								},
 							); // allow a bit more slack under suite load
-							});
+						});
 
 						it("greatly limited", async () => {
 							const memoryLimit = 100 * 1e3;
@@ -2281,27 +2316,30 @@ testSetups.forEach((setup) => {
 							try {
 								// Rebalancing to an even split can drift beyond 10s under
 								// full-suite load (GC + timer pressure).
-								await waitForResolved(async () => {
-									const [p1, p2] = await Promise.all([
-										db1.log.calculateMyTotalParticipation(),
-										db2.log.calculateMyTotalParticipation(),
-									]);
-									expect(
-										p1,
-										`db1 participation=${p1}, db2 participation=${p2}`,
-									).to.be.within(0.4, 0.6);
-									expect(
-										p2,
-										`db1 participation=${p1}, db2 participation=${p2}`,
-									).to.be.within(0.4, 0.6);
-								}, { timeout: 30 * 1000, delayInterval: 250 });
+								await waitForResolved(
+									async () => {
+										const [p1, p2] = await Promise.all([
+											db1.log.calculateMyTotalParticipation(),
+											db2.log.calculateMyTotalParticipation(),
+										]);
+										expect(
+											p1,
+											`db1 participation=${p1}, db2 participation=${p2}`,
+										).to.be.within(0.4, 0.6);
+										expect(
+											p2,
+											`db1 participation=${p1}, db2 participation=${p2}`,
+										).to.be.within(0.4, 0.6);
+									},
+									{ timeout: 30 * 1000, delayInterval: 250 },
+								);
 							} catch (error) {
 								await dbgLogs([db1.log, db2.log]);
 								throw error;
 							}
 						});
-						});
 					});
+				});
 
 				describe("mixed", () => {
 					it("1 limited, 2 factor", async () => {
