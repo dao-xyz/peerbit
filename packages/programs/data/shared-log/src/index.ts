@@ -5396,7 +5396,11 @@ export class SharedLog<
 					const indexedEntry = await this.log.entryIndex.getShallow(hash);
 					let isLeader = false;
 
-					if (indexedEntry) {
+					if (
+						indexedEntry &&
+						!this._pendingDeletes.has(hash) &&
+						(await this.log.blocks.has(hash))
+					) {
 						this.removePeerFromGidPeerHistory(
 							context.from!.hashcode(),
 							indexedEntry!.value.meta.gid,

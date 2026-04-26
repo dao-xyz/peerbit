@@ -3582,6 +3582,85 @@ testSetups.forEach((setup) => {
 				await expectPromise;
 			});
 
+			it("does not confirm checked prune from a shallow-only entry", async () => {
+				let min = 1;
+				let max = 1;
+				const respondToIHaveTimeout = 500;
+
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						replicas: {
+							min,
+							max,
+						},
+						replicate: false,
+						timeUntilRoleMaturity: 0,
+						setup,
+					},
+				});
+
+				db2 = await EventStore.open<EventStore<string, any>>(
+					db1.address!,
+					session.peers[1],
+					{
+						args: {
+							replicas: {
+								min,
+								max,
+							},
+							replicate: {
+								factor: 1,
+							},
+							respondToIHaveTimeout,
+							timeUntilRoleMaturity: 0,
+							setup,
+						},
+					},
+				);
+
+				const onMessageFn = db2.log.onMessage.bind(db2.log);
+				db2.log.rpc["_responseHandler"] = async (msg: any, cxt: any) => {
+					if (msg instanceof ExchangeHeadsMessage) {
+						return;
+					}
+					return onMessageFn(msg, cxt);
+				};
+
+				const { entry } = await db1.add("hello", { meta: { next: [] } });
+				await (db2.log.log.entryIndex as any).properties.index.put(
+					entry.toShallow(true),
+				);
+				expect(await db2.log.log.blocks.has(entry.hash)).to.be.false;
+
+				const prunePromise = expect(
+					Promise.all(
+						db1.log.prune(
+							new Map([
+								[
+									entry.hash,
+									{
+										entry: entry,
+										leaders: new Set([
+											db2.node.identity.publicKey.hashcode(),
+										]),
+									},
+								],
+							]),
+							{ timeout: 1000 },
+						),
+					),
+				).rejectedWith("Timeout");
+
+				await waitForResolved(() =>
+					expect(db2.log["_pendingIHave"].size).equal(1),
+				);
+				await prunePromise;
+				await delay(respondToIHaveTimeout + 250);
+				await waitForResolved(() =>
+					expect(db2.log["_pendingIHave"].size).equal(0),
+				);
+			});
+
 			it("does not get blocked by slow sends", async () => {
 				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
