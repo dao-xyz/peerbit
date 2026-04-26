@@ -2241,10 +2241,7 @@ testSetups.forEach((setup) => {
 							};
 
 							try {
-								await Promise.all([
-									waitForMemoryUsageToSettle(db1),
-									waitForMemoryUsageToSettle(db2),
-								]);
+								await waitForMemoryUsageToSettle(db2);
 
 								await waitForResolved(
 									async () => {
