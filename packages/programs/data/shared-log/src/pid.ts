@@ -1,3 +1,5 @@
+const MIN_MEMORY_HEADROOM_BALANCE_SCALER = 0.25;
+
 export class PIDReplicationController {
 	integral!: number;
 	prevError!: number;
@@ -65,7 +67,7 @@ export class PIDReplicationController {
 		}
 
 		const errorCoverageUnmodified = Math.min(1 - totalFactor, 1);
-		const errorCoverage =
+		let errorCoverage =
 			(this.maxMemoryLimit ? 1 - Math.sqrt(Math.abs(errorMemory)) : 1) *
 			errorCoverageUnmodified;
 
@@ -82,8 +84,22 @@ export class PIDReplicationController {
 		const errorFromEvenForBalance =
 			errorFromEven >= 0 ? errorFromEven : errorFromEven * negativeBalanceScale;
 
+		const hasMemoryHeadroom =
+			this.maxMemoryLimit != null && this.maxMemoryLimit > 0 && errorMemory > 0;
+		if (hasMemoryHeadroom && errorFromEvenForBalance > 0) {
+			// Coverage surplus often means another peer has not pruned yet. Do not let
+			// that transient surplus cancel a constrained peer that is still below an
+			// even share and has storage headroom to take more work.
+			errorCoverage = Math.max(errorCoverage, 0);
+		}
+
 		const balanceErrorScaler = this.maxMemoryLimit
-			? Math.abs(errorMemory)
+			? hasMemoryHeadroom
+				? Math.max(
+						Math.abs(errorMemory),
+						MIN_MEMORY_HEADROOM_BALANCE_SCALER,
+					)
+				: Math.abs(errorMemory)
 			: 1 - Math.abs(errorCoverage);
 
 		// Balance should be symmetric (allow negative error) so a peer can *reduce*

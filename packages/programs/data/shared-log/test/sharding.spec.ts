@@ -1855,21 +1855,32 @@ testSetups.forEach((setup) => {
 
 							await delay(db1.log.timeUntilRoleMaturity + 1000);
 
-							await waitForParticipationToSettle(db1, db2);
+							const assertMemoryNearLimit = async () => {
+								const memoryUsage = await db2.log.getMemoryUsage();
+								const tolerance = Math.max((memoryLimit / 100) * 12, 10_000);
+								expect(
+									Math.abs(memoryLimit - memoryUsage),
+									`memoryUsage=${memoryUsage} memoryLimit=${memoryLimit}`,
+								).lessThan(tolerance);
+							};
 
-							await waitForDistributionQuiesced(db1, db2);
-
-							await waitForResolved(
-								async () => {
-									const memoryUsage = await db2.log.getMemoryUsage();
-									const tolerance = Math.max((memoryLimit / 100) * 12, 10_000);
-									expect(
-										Math.abs(memoryLimit - memoryUsage),
-										`memoryUsage=${memoryUsage} memoryLimit=${memoryLimit}`,
-									).lessThan(tolerance);
-								},
-								{ timeout: 60 * 1000, delayInterval: 1000 },
-							);
+							try {
+								// The contract here is the storage objective, not an idle PID
+								// curve. Under u64/IBLT the participation range can keep making
+								// small corrective moves while memory is already within target.
+								await waitForResolved(assertMemoryNearLimit, {
+									timeout: 180_000,
+									delayInterval: 1000,
+								});
+								await waitForDistributionQuiesced(db1, db2);
+								await waitForResolved(assertMemoryNearLimit, {
+									timeout: 120_000,
+									delayInterval: 1000,
+								});
+							} catch (error) {
+								await dbgLogs([db1.log, db2.log]);
+								throw error;
+							}
 						});
 
 						it("joining half limited", async () => {

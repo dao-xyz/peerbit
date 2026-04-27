@@ -131,4 +131,37 @@ describe("PIDReplicationController", () => {
 			expect(f).to.be.at.least(0.5);
 		});
 	});
+
+	describe("memory", () => {
+		it("uses storage headroom to recover toward an even share during transient surplus", () => {
+			const controller = new PIDReplicationController("", {
+				storage: { max: 100_000 },
+			});
+			const f = controller.step({
+				currentFactor: 0.07,
+				memoryUsage: 45_540,
+				totalFactor: 1.06,
+				peerCount: 2,
+				cpuUsage: undefined,
+			});
+
+			expect(f).to.be.greaterThan(0.1);
+			expect(f).to.be.lessThan(0.5);
+		});
+
+		it("does not grow past an even share just because storage is available", () => {
+			const controller = new PIDReplicationController("", {
+				storage: { max: 100_000 },
+			});
+			const f = controller.step({
+				currentFactor: 0.5,
+				memoryUsage: 45_540,
+				totalFactor: 1,
+				peerCount: 2,
+				cpuUsage: undefined,
+			});
+
+			expect(f).to.be.within(0.49, 0.51);
+		});
+	});
 });
