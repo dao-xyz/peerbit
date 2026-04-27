@@ -1254,7 +1254,7 @@ testSetups.forEach((setup) => {
 				await checkBounded(entryCount, 1, 1, db1, db2);
 			});
 
-			it("repairs redistributed entry when maybe-sync misses one hash on peer leave", async function () {
+			it("repairs redistributed entry when churn repair misses one hash on peer leave", async function () {
 				if (setup.name !== "u64-iblt") {
 					this.skip();
 				}
@@ -1363,32 +1363,29 @@ testSetups.forEach((setup) => {
 				const leavingDb = candidate!.leaving;
 				const targetHash = targetDb.node.identity.publicKey.hashcode();
 
-				const sync = sourceDb.log.syncronizer as {
-					onMaybeMissingEntries: (properties: {
-						entries: Map<string, any>;
-						targets: string[];
-					}) => Promise<void>;
+				const sourceLog = sourceDb.log as unknown as {
+					pushRepairEntries: (
+						target: string,
+						entries: Map<string, any>,
+					) => Promise<void>;
 				};
-				const originalOnMaybeMissingEntries =
-					sync.onMaybeMissingEntries.bind(sync);
+				const originalPushRepairEntries =
+					sourceLog.pushRepairEntries.bind(sourceDb.log);
 				let droppedCandidateHash = false;
 
-				sync.onMaybeMissingEntries = async (properties) => {
+				sourceLog.pushRepairEntries = async (target, entries) => {
 					if (
 						candidateHash &&
 						!droppedCandidateHash &&
-						properties.targets.includes(targetHash) &&
-						properties.entries.has(candidateHash)
+						target === targetHash &&
+						entries.has(candidateHash)
 					) {
 						droppedCandidateHash = true;
-						const filtered = new Map(properties.entries);
+						const filtered = new Map(entries);
 						filtered.delete(candidateHash);
-						return originalOnMaybeMissingEntries({
-							...properties,
-							entries: filtered,
-						});
+						return originalPushRepairEntries(target, filtered);
 					}
-					return originalOnMaybeMissingEntries(properties);
+					return originalPushRepairEntries(target, entries);
 				};
 
 				try {
@@ -1407,7 +1404,7 @@ testSetups.forEach((setup) => {
 						async () =>
 							expect(
 								droppedCandidateHash,
-								"expected the repair path to drop the selected hash once",
+								"expected the churn repair path to drop the selected hash once",
 							).to.be.true,
 						{
 							timeout: 30_000,
@@ -1426,7 +1423,7 @@ testSetups.forEach((setup) => {
 
 					await checkBounded(entryCount, 1, 1, sourceDb, targetDb);
 				} finally {
-					sync.onMaybeMissingEntries = originalOnMaybeMissingEntries;
+					sourceLog.pushRepairEntries = originalPushRepairEntries;
 				}
 			});
 
