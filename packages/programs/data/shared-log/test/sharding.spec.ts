@@ -1353,13 +1353,16 @@ testSetups.forEach((setup) => {
 				};
 				const originalOnMaybeMissingEntries =
 					sync.onMaybeMissingEntries.bind(sync);
+				let droppedCandidateHash = false;
 
 				sync.onMaybeMissingEntries = async (properties) => {
 					if (
 						candidateHash &&
+						!droppedCandidateHash &&
 						properties.targets.includes(targetHash) &&
 						properties.entries.has(candidateHash)
 					) {
+						droppedCandidateHash = true;
 						const filtered = new Map(properties.entries);
 						filtered.delete(candidateHash);
 						return originalOnMaybeMissingEntries({
@@ -1381,6 +1384,18 @@ testSetups.forEach((setup) => {
 							expect(await targetDb.log.replicationIndex?.getSize()).equal(2),
 						),
 					]);
+
+					await waitForResolved(
+						async () =>
+							expect(
+								droppedCandidateHash,
+								"expected the repair path to drop the selected hash once",
+							).to.be.true,
+						{
+							timeout: 30_000,
+							delayInterval: 500,
+						},
+					);
 
 					await waitForResolved(
 						async () =>
