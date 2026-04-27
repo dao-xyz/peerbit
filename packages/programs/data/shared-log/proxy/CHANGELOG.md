@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.0.27](https://github.com/dao-xyz/peerbit/compare/shared-log-proxy-v2.0.26...shared-log-proxy-v2.0.27) (2026-04-27)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.23
+    * @peerbit/shared-log bumped to 13.1.2
+
 ## [2.0.26](https://github.com/dao-xyz/peerbit/compare/shared-log-proxy-v2.0.25...shared-log-proxy-v2.0.26) (2026-04-25)
 
 

@@ -389,6 +389,21 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.1.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.1...shared-log-v13.1.2) (2026-04-27)
+
+
+### Bug Fixes
+
+* **shared-log:** preserve adaptive replication coverage ([e1e44d8](https://github.com/dao-xyz/peerbit/commit/e1e44d83bf988a09e39eb621afc2c1e5312608d6))
+* **shared-log:** recover memory-limited adaptive replicas ([0cd22cf](https://github.com/dao-xyz/peerbit/commit/0cd22cf9ab2f8b58a02c61d128733c01412989a5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.23
+
 ## [13.1.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.0...shared-log-v13.1.1) (2026-04-25)
 
 
