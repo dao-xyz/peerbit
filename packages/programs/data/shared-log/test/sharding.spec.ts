@@ -1292,24 +1292,60 @@ testSetups.forEach((setup) => {
 				);
 				await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
 
-				const db2Hash = db2.node.identity.publicKey.hashcode();
-				let candidateHash: string | undefined;
-				for (const entry of await db1.log.log.toArray()) {
-					if (await db2.log.log.has(entry.hash)) {
-						continue;
-					}
-					if (!(await db3.log.log.has(entry.hash))) {
-						continue;
-					}
-					candidateHash = entry.hash;
-					break;
-				}
-				expect(
-					candidateHash,
-					"expected entry that requires redistribution to surviving peer",
-				).to.be.a("string");
+				const stores = [db1, db2, db3] as const;
+				let candidate:
+					| {
+							hash: string;
+							source: EventStore<string, any>;
+							target: EventStore<string, any>;
+							leaving: EventStore<string, any>;
+					  }
+					| undefined;
 
-				const sync = db1.log.syncronizer as {
+				await waitForResolved(
+					async () => {
+						const ownersByHash = new Map<
+							string,
+							Set<EventStore<string, any>>
+						>();
+						for (const store of stores) {
+							for (const entry of await store.log.log.toArray()) {
+								let owners = ownersByHash.get(entry.hash);
+								if (!owners) {
+									owners = new Set();
+									ownersByHash.set(entry.hash, owners);
+								}
+								owners.add(store);
+							}
+						}
+
+						for (const [hash, owners] of ownersByHash) {
+							if (owners.size !== 2) {
+								continue;
+							}
+							const target = stores.find((store) => !owners.has(store));
+							if (!target) {
+								continue;
+							}
+							const [source, leaving] = [...owners];
+							candidate = { hash, source, target, leaving };
+							return;
+						}
+
+						expect.fail(
+							"expected entry that requires redistribution to a surviving peer",
+						);
+					},
+					{ timeout: 60_000, delayInterval: 500 },
+				);
+
+				const candidateHash = candidate!.hash;
+				const sourceDb = candidate!.source;
+				const targetDb = candidate!.target;
+				const leavingDb = candidate!.leaving;
+				const targetHash = targetDb.node.identity.publicKey.hashcode();
+
+				const sync = sourceDb.log.syncronizer as {
 					onMaybeMissingEntries: (properties: {
 						entries: Map<string, any>;
 						targets: string[];
@@ -1321,7 +1357,7 @@ testSetups.forEach((setup) => {
 				sync.onMaybeMissingEntries = async (properties) => {
 					if (
 						candidateHash &&
-						properties.targets.includes(db2Hash) &&
+						properties.targets.includes(targetHash) &&
 						properties.entries.has(candidateHash)
 					) {
 						const filtered = new Map(properties.entries);
@@ -1335,27 +1371,27 @@ testSetups.forEach((setup) => {
 				};
 
 				try {
-					await db3.close();
+					await leavingDb.close();
 
 					await Promise.all([
 						waitForResolved(async () =>
-							expect(await db1.log.replicationIndex?.getSize()).equal(2),
+							expect(await sourceDb.log.replicationIndex?.getSize()).equal(2),
 						),
 						waitForResolved(async () =>
-							expect(await db2.log.replicationIndex?.getSize()).equal(2),
+							expect(await targetDb.log.replicationIndex?.getSize()).equal(2),
 						),
 					]);
 
 					await waitForResolved(
 						async () =>
-							expect(await db2.log.log.has(candidateHash!)).to.be.true,
+							expect(await targetDb.log.log.has(candidateHash)).to.be.true,
 						{
 							timeout: 30_000,
 							delayInterval: 500,
 						},
 					);
 
-					await checkBounded(entryCount, 1, 1, db1, db2);
+					await checkBounded(entryCount, 1, 1, sourceDb, targetDb);
 				} finally {
 					sync.onMaybeMissingEntries = originalOnMaybeMissingEntries;
 				}
