@@ -74,8 +74,8 @@ testSetups.forEach((setup) => {
 				db3: EventStore<string, ReplicationDomainHash<any>>,
 				db4: EventStore<string, ReplicationDomainHash<any>>;
 
-			before(async () => {
-				session = await TestSession.connected(4, [
+			const createSession = () =>
+				TestSession.connected(4, [
 					{
 						libp2p: {
 							privateKey: keys.privateKeyFromRaw(
@@ -130,6 +130,14 @@ testSetups.forEach((setup) => {
 						},
 					},
 				]);
+
+			const resetSession = async () => {
+				await session?.stop();
+				session = await createSession();
+			};
+
+			before(async () => {
+				session = await createSession();
 			});
 
 			afterEach(async () => {
@@ -748,6 +756,7 @@ testSetups.forEach((setup) => {
 			(setup.name === "u64-iblt" ? it : it.skip)(
 				"survives deterministic delayed join and leave churn",
 				async () => {
+					await resetSession();
 					const chaosSeed = getDeterministicTestSeed(
 						"PEERBIT_SHARED_LOG_CHAOS_SEED",
 						7_331,
@@ -829,115 +838,124 @@ testSetups.forEach((setup) => {
 					} as const;
 					const entryCount = 36;
 
-					db1 = await session.peers[0].open(new EventStore<string, any>(), {
-						args: {
-							replicate: {
-								offset: 0,
-							},
-							...args,
-						},
-					});
-					applyChaos(db1, 1);
-
-					db2 = await EventStore.open<EventStore<string, any>>(
-						db1.address!,
-						session.peers[1],
-						{
+					try {
+						db1 = await session.peers[0].open(new EventStore<string, any>(), {
 							args: {
 								replicate: {
-									offset: 0.3333,
+									offset: 0,
 								},
 								...args,
 							},
-						},
-					);
-					applyChaos(db2, 2);
+						});
+						applyChaos(db1, 1);
 
-					await appendInBatches(12, (i) =>
-						db1.add(`seed-a-${i}`, { meta: { next: [] } }),
-					);
-
-					db3 = await EventStore.open<EventStore<string, any>>(
-						db1.address!,
-						session.peers[2],
-						{
-							args: {
-								replicate: {
-									offset: 0.6666,
+						db2 = await EventStore.open<EventStore<string, any>>(
+							db1.address!,
+							session.peers[1],
+							{
+								args: {
+									replicate: {
+										offset: 0.3333,
+									},
+									...args,
 								},
-								...args,
 							},
-						},
-					);
-					applyChaos(db3, 3);
+						);
+						applyChaos(db2, 2);
 
-					await appendInBatches(12, (i) =>
-						db1.add(`seed-b-${i}`, { meta: { next: [] } }),
-					);
+						await appendInBatches(12, (i) =>
+							db1.add(`seed-a-${i}`, { meta: { next: [] } }),
+						);
 
-					await db2.close();
-
-					await appendInBatches(6, (i) =>
-						db1.add(`seed-c-${i}`, { meta: { next: [] } }),
-					);
-
-					db4 = await EventStore.open<EventStore<string, any>>(
-						db1.address!,
-						session.peers[3],
-						{
-							args: {
-								replicate: {
-									offset: 0.3333,
+						db3 = await EventStore.open<EventStore<string, any>>(
+							db1.address!,
+							session.peers[2],
+							{
+								args: {
+									replicate: {
+										offset: 0.6666,
+									},
+									...args,
 								},
-								...args,
 							},
-						},
-					);
-					applyChaos(db4, 4);
+						);
+						applyChaos(db3, 3);
 
-					await appendInBatches(6, (i) =>
-						db1.add(`seed-d-${i}`, { meta: { next: [] } }),
-					);
+						await appendInBatches(12, (i) =>
+							db1.add(`seed-b-${i}`, { meta: { next: [] } }),
+						);
 
-					chaosAbort.abort();
+						await db2.close();
 
-					await Promise.all([
-						db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
-							timeout: 60_000,
-							roleAge: 0,
-						}),
-						db1.log.waitForReplicator(session.peers[3].identity.publicKey, {
-							timeout: 60_000,
-							roleAge: 0,
-						}),
-						db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
-							timeout: 60_000,
-							roleAge: 0,
-						}),
-						db3.log.waitForReplicator(session.peers[3].identity.publicKey, {
-							timeout: 60_000,
-							roleAge: 0,
-						}),
-						db4.log.waitForReplicator(session.peers[0].identity.publicKey, {
-							timeout: 60_000,
-							roleAge: 0,
-						}),
-						db4.log.waitForReplicator(session.peers[2].identity.publicKey, {
-							timeout: 60_000,
-							roleAge: 0,
-						}),
-					]);
+						await appendInBatches(6, (i) =>
+							db1.add(`seed-c-${i}`, { meta: { next: [] } }),
+						);
 
-					// This churn regression is about settled redistribution correctness, not
-					// whether every prune/rebalance timer reaches a totally idle state under
-					// adversarial delayed traffic on a loaded runner.
-					await waitForChurnReplicationSettled([db1, db3, db4], 2, entryCount);
+						db4 = await EventStore.open<EventStore<string, any>>(
+							db1.address!,
+							session.peers[3],
+							{
+								args: {
+									replicate: {
+										offset: 0.3333,
+									},
+									...args,
+								},
+							},
+						);
+						applyChaos(db4, 4);
+
+						await appendInBatches(6, (i) =>
+							db1.add(`seed-d-${i}`, { meta: { next: [] } }),
+						);
+
+						chaosAbort.abort();
+
+						await Promise.all([
+							db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
+								timeout: 60_000,
+								roleAge: 0,
+							}),
+							db1.log.waitForReplicator(session.peers[3].identity.publicKey, {
+								timeout: 60_000,
+								roleAge: 0,
+							}),
+							db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
+								timeout: 60_000,
+								roleAge: 0,
+							}),
+							db3.log.waitForReplicator(session.peers[3].identity.publicKey, {
+								timeout: 60_000,
+								roleAge: 0,
+							}),
+							db4.log.waitForReplicator(session.peers[0].identity.publicKey, {
+								timeout: 60_000,
+								roleAge: 0,
+							}),
+							db4.log.waitForReplicator(session.peers[2].identity.publicKey, {
+								timeout: 60_000,
+								roleAge: 0,
+							}),
+						]);
+
+						// This churn regression is about settled redistribution correctness, not
+						// whether every prune/rebalance timer reaches a totally idle state under
+						// adversarial delayed traffic on a loaded runner.
+						await waitForChurnReplicationSettled(
+							[db1, db3, db4],
+							2,
+							entryCount,
+						);
+					} finally {
+						chaosAbort.abort();
+					}
 				},
 			);
 
 			(setup.name === "u64-iblt" ? it : it.skip)(
 				"survives deterministic pubsub join and leave churn",
 				async () => {
+					await resetSession();
 					const chaosSeed = getDeterministicTestSeed(
 						"PEERBIT_SHARED_LOG_CHAOS_SEED",
 						27_331,
