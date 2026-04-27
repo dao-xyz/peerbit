@@ -368,6 +368,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [6.0.23](https://github.com/dao-xyz/peerbit/compare/log-v6.0.22...log-v6.0.23) (2026-04-27)
+
+
+### Bug Fixes
+
+* **shared-log:** preserve adaptive replication coverage ([e1e44d8](https://github.com/dao-xyz/peerbit/commit/e1e44d83bf988a09e39eb621afc2c1e5312608d6))
+
 ## [6.0.22](https://github.com/dao-xyz/peerbit/compare/log-v6.0.21...log-v6.0.22) (2026-04-14)
 
 

@@ -1,5 +1,16 @@
 # @peerbit/document-react
 
+## [1.0.28](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.27...document-react-v1.0.28) (2026-04-27)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 13.0.28
+  * devDependencies
+    * @peerbit/shared-log bumped to 13.1.2
+
 ## [1.0.27](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.26...document-react-v1.0.27) (2026-04-25)
 
 
