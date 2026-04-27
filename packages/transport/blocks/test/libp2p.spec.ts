@@ -297,6 +297,96 @@ describe("transport", function () {
 		expect(new Uint8Array(read!)).to.deep.equal(data);
 	});
 
+	it("widens an in-flight read when a later caller supplies a better explicit provider", async () => {
+		session = await TestSession.disconnected(3, {
+			services: {
+				blocks: (c) =>
+					new DirectBlock(c, {
+						resolveProviders: () => [],
+						requeryOnReachable: 1,
+					}),
+			},
+		});
+
+		await store(session, 0).start();
+		await store(session, 1).start();
+		await store(session, 2).start();
+
+		await session.connect([[session.peers[0], session.peers[1]]]);
+		await waitForNeighbour(store(session, 0), store(session, 1));
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store(session, 0).put(data);
+		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
+
+		const requesterRemoteBlocks = (store(session, 1) as any)[
+			"remoteBlocks"
+		] as RemoteBlocks;
+		const providerRemoteBlocks = (store(session, 0) as any)[
+			"remoteBlocks"
+		] as RemoteBlocks;
+		const originalRequesterPublish = requesterRemoteBlocks.options.publish;
+		const originalProviderPublish = providerRemoteBlocks.options.publish;
+		let requestsToProvider = 0;
+		const staleRequestSeen = pDefer<void>();
+
+		requesterRemoteBlocks.options.publish = async (message: any, options: any) => {
+			if (message instanceof BlockRequest) {
+				const to = (options?.mode as any)?.to ?? [];
+				if (to.includes(store(session, 2).publicKeyHash)) {
+					staleRequestSeen.resolve();
+				}
+				if (to.includes(store(session, 0).publicKeyHash)) {
+					requestsToProvider++;
+					await providerRemoteBlocks.onMessage(message, {
+						from: store(session, 1).publicKeyHash,
+					});
+				}
+				return;
+			}
+			return originalRequesterPublish(message, options);
+		};
+
+		providerRemoteBlocks.options.publish = async (message: any, options: any) => {
+			if (message instanceof BlockResponse) {
+				const to = (options?.to ?? (options?.mode as any)?.to ?? []) as string[];
+				if (to.includes(store(session, 1).publicKeyHash)) {
+					await requesterRemoteBlocks.onMessage(message, {
+						from: store(session, 0).publicKeyHash,
+					});
+				}
+				return;
+			}
+			return originalProviderPublish(message, options);
+		};
+
+		try {
+			const staleRead = store(session, 1).get(cid, {
+				remote: {
+					timeout: 5_000,
+					from: [store(session, 2).publicKeyHash],
+				},
+			});
+
+			await staleRequestSeen.promise;
+
+			const widenedRead = store(session, 1).get(cid, {
+				remote: {
+					timeout: 5_000,
+					from: [store(session, 0).publicKeyHash],
+				},
+			});
+
+			const read = await widenedRead;
+			expect(new Uint8Array(read!)).to.deep.equal(data);
+			expect(new Uint8Array((await staleRead)!)).to.deep.equal(data);
+			expect(requestsToProvider).to.equal(1);
+		} finally {
+			requesterRemoteBlocks.options.publish = originalRequesterPublish;
+			providerRemoteBlocks.options.publish = originalProviderPublish;
+		}
+	});
+
 	it("probes additional explicit providers when the first candidate does not answer", async () => {
 		session = await TestSession.disconnected(3, {
 			services: { blocks: (c) => new DirectBlock(c) },
