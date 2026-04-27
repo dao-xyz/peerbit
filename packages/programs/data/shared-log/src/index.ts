@@ -88,6 +88,7 @@ const getSharedLogFanoutService = (
 ): FanoutTree | undefined =>
 	(services as SharedLogServicesWithFanout).fanout;
 import {
+	EXCHANGE_HEADS_REPAIR_HINT,
 	EntryWithRefs,
 	ExchangeHeadsMessage,
 	RequestIPrune,
@@ -2902,6 +2903,7 @@ export class SharedLog<
 			this.log,
 			[...entries.keys()],
 		)) {
+			message.reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
 			await this.rpc.send(message, {
 				priority: 1,
 				mode: new SilentDelivery({ to: [target], redundancy: 1 }),
@@ -5150,6 +5152,8 @@ export class SharedLog<
 				 */
 
 				const { heads } = msg;
+				const isRepairHint =
+					(msg.reserved[0] & EXCHANGE_HEADS_REPAIR_HINT) !== 0;
 
 				logger.trace(
 					`${this.node.identity.publicKey.hashcode()}: Recieved heads: ${
@@ -5270,8 +5274,15 @@ export class SharedLog<
 
 							let maybeDelete: EntryWithRefs<any>[][] | undefined;
 							let toMerge: Entry<any>[] = [];
+							let toPersist: Entry<any>[] = [];
 							let toDelete: Entry<any>[] | undefined;
-							if (isLeader) {
+							// Targeted repair is sent only to peers the sender currently believes
+							// should store the entry. Accept it while local membership catches up;
+							// the normal checked-prune path below can still remove it if this peer
+							// truly no longer owns the entry.
+							const acceptsTargetedRepair = isRepairHint && fromIsLeader;
+							const keepAsLeader = isLeader || acceptsTargetedRepair;
+							if (keepAsLeader) {
 								for (const entry of entries) {
 									this.pruneDebouncedFn.delete(entry.entry.hash);
 									this.removePruneRequestSent(entry.entry.hash);
@@ -5292,8 +5303,9 @@ export class SharedLog<
 							}
 
 							outer: for (const entry of entries) {
-								if (isLeader || (await this.keep?.(entry.entry))) {
+								if (keepAsLeader || (await this.keep?.(entry.entry))) {
 									toMerge.push(entry.entry);
+									toPersist.push(entry.entry);
 								} else {
 									for (const ref of entry.gidRefrences) {
 										const map = await this.log.entryIndex.getHeads(ref).all();
@@ -5322,6 +5334,16 @@ export class SharedLog<
 									context.from!.hashcode(),
 								);
 								await this.log.join(toMerge);
+								// Network joins bypass SharedLog.join(), but churn repair scans
+								// the coordinate index to redistribute entries after membership changes.
+								for (const entry of toPersist) {
+									const replicas = decodeReplicas(entry).getValue(this);
+									await this.findLeaders(
+										await this.createCoordinates(entry, replicas),
+										entry,
+										{ roleAge: 0, persist: {} },
+									);
+								}
 								for (const merged of toMerge) {
 									confirmedHashes.add(merged.hash);
 								}
@@ -5396,7 +5418,11 @@ export class SharedLog<
 					const indexedEntry = await this.log.entryIndex.getShallow(hash);
 					let isLeader = false;
 
-					if (indexedEntry) {
+					if (
+						indexedEntry &&
+						!this._pendingDeletes.has(hash) &&
+						(await this.log.blocks.has(hash))
+					) {
 						this.removePeerFromGidPeerHistory(
 							context.from!.hashcode(),
 							indexedEntry!.value.meta.gid,

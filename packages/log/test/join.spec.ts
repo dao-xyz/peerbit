@@ -1057,6 +1057,55 @@ describe("join", function () {
 
 				expect(log2.length).equal(0);
 			});
+
+			it("does not reject join when a hash head has a transient delivery failure", async () => {
+				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]));
+
+				const fromMultihashStub = sinon
+					.stub(Entry, "fromMultihash")
+					.callsFake(async (store, hash, options) => {
+						if (hash === a1.hash) {
+							const error = new Error(
+								"Failed to get message test delivery acknowledges from all nodes (0/1)",
+							);
+							error.name = "DeliveryError";
+							throw error;
+						}
+						return fromMultihashOrg(store, hash, options);
+					});
+
+				try {
+					await log2.join([a1.hash]);
+				} finally {
+					fromMultihashStub.restore();
+				}
+
+				expect(log2.length).equal(0);
+			});
+
+			it("does not reject join when a shallow head has a transient stream failure", async () => {
+				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]));
+
+				const fromMultihashStub = sinon
+					.stub(Entry, "fromMultihash")
+					.callsFake(async (store, hash, options) => {
+						if (hash === a1.hash) {
+							throw {
+								name: "StreamStateError",
+								message: "fanout channel closed",
+							};
+						}
+						return fromMultihashOrg(store, hash, options);
+					});
+
+				try {
+					await log2.join([a1.toShallow(true)]);
+				} finally {
+					fromMultihashStub.restore();
+				}
+
+				expect(log2.length).equal(0);
+			});
 		});
 
 		// TODO move this into the prune test file

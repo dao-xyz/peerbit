@@ -1,6 +1,10 @@
 import { deserialize, field, fixedArray, variant } from "@dao-xyz/borsh";
 import { type AnyStore } from "@peerbit/any-store";
-import { type Blocks, type GetOptions, cidifyString } from "@peerbit/blocks-interface";
+import {
+	type Blocks,
+	type GetOptions,
+	cidifyString,
+} from "@peerbit/blocks-interface";
 import {
 	type Identity,
 	SignatureWithKey,
@@ -37,12 +41,30 @@ import { Trim, type TrimOptions } from "./trim.js";
 
 const { LastWriteWins } = Sorting;
 
+const getErrorName = (error: unknown) =>
+	typeof (error as { name?: unknown })?.name === "string"
+		? (error as { name: string }).name
+		: undefined;
+
+const getErrorMessage = (error: unknown) =>
+	error instanceof Error
+		? error.message
+		: typeof error === "string"
+			? error
+			: typeof (error as { message?: unknown })?.message === "string"
+				? (error as { message: string }).message
+				: String(error);
+
 const isRecoverableJoinResolveError = (error: unknown): boolean => {
-	const message =
-		error instanceof Error ? error.message : typeof error === "string" ? error : "";
+	const name = getErrorName(error);
+	const message = getErrorMessage(error);
 	return (
 		message.includes("Failed to resolve block") ||
-		(error instanceof Error && error.name === "AbortError")
+		message.includes("Failed to load entry from head") ||
+		message.includes("Message did not have any valid receivers") ||
+		name === "AbortError" ||
+		name === "DeliveryError" ||
+		name === "StreamStateError"
 	);
 };
 
@@ -407,7 +429,7 @@ export class Log<T> {
 						type: "full",
 						remote: options.remote,
 						ignoreMissing: true, // always return undefined instead of throwing errors on missing entries
-				  }
+					}
 				: { type: "full", ignoreMissing: true },
 		);
 	}
@@ -677,7 +699,9 @@ export class Log<T> {
 
 			let from: string[] | undefined;
 			try {
-				from = await this.entryIndex.properties.resolveRemotePeers?.(hash, { signal });
+				from = await this.entryIndex.properties.resolveRemotePeers?.(hash, {
+					signal,
+				});
 			} catch {
 				from = undefined;
 			}
@@ -709,7 +733,7 @@ export class Log<T> {
 										? element.hash
 										: element.entry.hash,
 						),
-				  );
+					);
 
 			entries = [];
 			for (const element of entriesOrLog) {
@@ -727,14 +751,25 @@ export class Log<T> {
 						continue; // already in log
 					}
 
-					const from = await resolveRemoteFrom(element, this._closeController.signal);
-					const entry = await Entry.fromMultihash<T>(this._storage, element, {
-						remote: {
-							timeout: remote.timeout,
-							signal: remote.signal,
-							...(from && from.length > 0 ? { from } : {}),
-						},
-					});
+					const from = await resolveRemoteFrom(
+						element,
+						this._closeController.signal,
+					);
+					let entry: Entry<T>;
+					try {
+						entry = await Entry.fromMultihash<T>(this._storage, element, {
+							remote: {
+								timeout: remote.timeout,
+								signal: remote.signal,
+								...(from && from.length > 0 ? { from } : {}),
+							},
+						});
+					} catch (error) {
+						if (isRecoverableJoinResolveError(error)) {
+							continue;
+						}
+						throw error;
+					}
 					entries.push(entry);
 					references.set(entry.hash, entry);
 					continue;
@@ -749,13 +784,21 @@ export class Log<T> {
 						element.hash,
 						this._closeController.signal,
 					);
-					const entry = await Entry.fromMultihash<T>(this._storage, element.hash, {
-						remote: {
-							timeout: remote.timeout,
-							signal: remote.signal,
-							...(from && from.length > 0 ? { from } : {}),
-						},
-					});
+					let entry: Entry<T>;
+					try {
+						entry = await Entry.fromMultihash<T>(this._storage, element.hash, {
+							remote: {
+								timeout: remote.timeout,
+								signal: remote.signal,
+								...(from && from.length > 0 ? { from } : {}),
+							},
+						});
+					} catch (error) {
+						if (isRecoverableJoinResolveError(error)) {
+							continue;
+						}
+						throw error;
+					}
 					entries.push(entry);
 					references.set(entry.hash, entry);
 					continue;
@@ -838,7 +881,10 @@ export class Log<T> {
 			throw new Error("Unexpected");
 		}
 
-		if ((await this.entryIndex.getShallow(entry.hash)) != null && !options.reset) {
+		if (
+			(await this.entryIndex.getShallow(entry.hash)) != null &&
+			!options.reset
+		) {
 			return false;
 		}
 
