@@ -389,6 +389,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.1.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.2...shared-log-v13.1.3) (2026-04-28)
+
+
+### Bug Fixes
+
+* **blocks:** widen in-flight provider hints ([a4416b7](https://github.com/dao-xyz/peerbit/commit/a4416b752783bb4dd199f72d263916416e49c39f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks bumped to 4.1.1
+    * @peerbit/log bumped to 6.0.24
+    * @peerbit/program bumped to 6.0.19
+    * @peerbit/rpc bumped to 6.0.23
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.23
+
 ## [13.1.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.1...shared-log-v13.1.2) (2026-04-27)
 
 

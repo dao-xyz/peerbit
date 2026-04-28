@@ -279,6 +279,14 @@
     * @peerbit/blocks-interface bumped from 1.2.18 to 1.2.19
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [4.1.1](https://github.com/dao-xyz/peerbit/compare/blocks-v4.1.0...blocks-v4.1.1) (2026-04-28)
+
+
+### Bug Fixes
+
+* **blocks:** widen in-flight provider hints ([a4416b7](https://github.com/dao-xyz/peerbit/commit/a4416b752783bb4dd199f72d263916416e49c39f))
+* **blocks:** widen in-flight provider hints ([6d55e98](https://github.com/dao-xyz/peerbit/commit/6d55e984442229d7afb814cb24f7e336e8c69362))
+
 ## [4.1.0](https://github.com/dao-xyz/peerbit/compare/blocks-v4.0.11...blocks-v4.1.0) (2026-04-14)
 
 

@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/clock-service",
-	"version": "3.2.52",
+	"version": "3.2.53",
 	"description": "Clock signing",
 	"type": "module",
 	"sideEffects": false,

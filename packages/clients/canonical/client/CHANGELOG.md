@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.22](https://github.com/dao-xyz/peerbit/compare/canonical-client-v1.1.21...canonical-client-v1.1.22) (2026-04-28)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped to 6.0.19
+
 ## [1.1.21](https://github.com/dao-xyz/peerbit/compare/canonical-client-v1.1.20...canonical-client-v1.1.21) (2026-04-14)
 
 
