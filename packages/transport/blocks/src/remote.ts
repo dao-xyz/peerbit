@@ -63,6 +63,11 @@ type BlockMessageContext = {
 	transport?: RequestTransportContext;
 };
 
+type InFlightRead = {
+	promise: Promise<Block<any, any, any, 1> | undefined>;
+	addProviders: (providers: string[]) => void;
+};
+
 export class RemoteBlocks implements IBlocks {
 	localStore: BlockStore;
 
@@ -78,10 +83,7 @@ export class RemoteBlocks implements IBlocks {
 	private readonly maxRequeryOnReachable: number;
 
 	private _loadFetchQueue: PQueue;
-	private _readFromPeersPromises: Map<
-		string,
-		Promise<Block<any, any, any, 1> | undefined> | undefined
-	>;
+	private _readFromPeersPromises: Map<string, InFlightRead>;
 	_open = false;
 	private _events: TypedEventEmitter<{
 		"peer:reachable": CustomEvent<PublicSignKey>;
@@ -498,10 +500,10 @@ export class RemoteBlocks implements IBlocks {
 			this.rememberProviderHints(cidString, providers);
 		}
 
-		let promise = this._readFromPeersPromises.get(cidString);
-		if (!promise) {
-			const attemptedProviders = new Set<string>(providers);
-			promise = new Promise<Block<any, any, any, 1> | undefined>(
+		let inFlight = this._readFromPeersPromises.get(cidString);
+		if (!inFlight) {
+			let publishAdditionalProviders: (providers: string[]) => void = () => {};
+			const promise = new Promise<Block<any, any, any, 1> | undefined>(
 				(resolve, reject) => {
 					let timeoutCallback: ReturnType<typeof setTimeout> | undefined;
 					const abortHandler = () => {
@@ -535,8 +537,6 @@ export class RemoteBlocks implements IBlocks {
 				},
 			);
 
-			this._readFromPeersPromises.set(cidString, promise);
-
 			let requeryCount = 0;
 			const maxRequests = Math.max(1, this.maxRequeryOnReachable);
 			const requestRetryIntervalMs = Math.max(
@@ -564,23 +564,25 @@ export class RemoteBlocks implements IBlocks {
 				});
 				if (resolved.length > 0) {
 					providers = this.normalizeProviderHints([...providers, ...resolved]);
-					for (const provider of providers) {
-						attemptedProviders.add(provider);
-					}
 				}
 			};
-			const tryPublishRequest = async (properties?: { refreshProviders?: boolean }) => {
-				if (requeryCount >= maxRequests) return;
+			const tryPublishRequest = async (properties?: {
+				refreshProviders?: boolean;
+				force?: boolean;
+				providers?: string[];
+			}) => {
+				if (requeryCount >= maxRequests && !properties?.force) return;
 				if (providers.length === 0 || properties?.refreshProviders) {
 					await refreshProviders(properties?.refreshProviders === true);
 				}
 				if (providers.length === 0) return;
 				try {
 					const expiresAt = Date.now() + (options.timeout ?? 30_000);
-					const requestProviders = this.pickRequestBatch(
-						providers,
-						requeryCount,
-					);
+					const requestProviders =
+						properties?.providers && properties.providers.length > 0
+							? this.normalizeProviderHints(properties.providers)
+							: this.pickRequestBatch(providers, requeryCount);
+					if (requestProviders.length === 0) return;
 					await this.options.publish(
 						new BlockRequest(cidString),
 						{
@@ -598,6 +600,36 @@ export class RemoteBlocks implements IBlocks {
 					dontThrowIfDeliveryError(e);
 				}
 			};
+			publishAdditionalProviders = (nextProviders: string[]) => {
+				if (!this._resolvers.has(cidString)) return;
+				const requestProviders = this.normalizeProviderHints(nextProviders);
+				if (requestProviders.length === 0) return;
+				const merged = this.normalizeProviderHints([
+					...requestProviders,
+					...providers,
+				]);
+				if (merged.length === 0) return;
+				let changed = merged.length !== providers.length;
+				if (!changed) {
+					for (let i = 0; i < merged.length; i++) {
+						if (merged[i] !== providers[i]) {
+							changed = true;
+							break;
+						}
+					}
+				}
+				if (!changed) return;
+				providers = merged;
+				tryPublishRequest({ force: true, providers: requestProviders }).catch(
+					dontThrowIfDeliveryError,
+				);
+			};
+			inFlight = {
+				promise,
+				addProviders: (nextProviders) => publishAdditionalProviders(nextProviders),
+			};
+			this._readFromPeersPromises.set(cidString, inFlight);
+
 			const scheduleRetry = () => {
 				if (retryTimeout) {
 					clearTimeout(retryTimeout);
@@ -625,10 +657,9 @@ export class RemoteBlocks implements IBlocks {
 			};
 
 			const publishOnProviderHints = (ev: CustomEvent<{ cid: string }>) => {
-				if (requeryCount >= maxRequests) return;
 				if (!ev?.detail?.cid) return;
 				if (ev.detail.cid !== cidString) return;
-				tryPublishRequest({ refreshProviders: true }).catch(
+				tryPublishRequest({ refreshProviders: true, force: true }).catch(
 					dontThrowIfDeliveryError,
 				);
 			};
@@ -642,10 +673,9 @@ export class RemoteBlocks implements IBlocks {
 						if (normalized.length === 0) return;
 						this.rememberProviderHints(cidString, normalized);
 						providers = this.normalizeProviderHints([...providers, ...normalized]);
-						for (const provider of normalized) {
-							attemptedProviders.add(provider);
-						}
-						tryPublishRequest().catch(dontThrowIfDeliveryError);
+						tryPublishRequest({ force: true, providers: normalized }).catch(
+							dontThrowIfDeliveryError,
+						);
 					},
 				});
 			}
@@ -671,7 +701,10 @@ export class RemoteBlocks implements IBlocks {
 				}
 			}
 		} else {
-			const result = await promise;
+			if (providers.length > 0) {
+				inFlight.addProviders(providers);
+			}
+			const result = await inFlight.promise;
 			return result?.bytes;
 		}
 	}
