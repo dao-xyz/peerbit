@@ -15,8 +15,10 @@ import {
 	TrustedNetwork,
 	createIdentityGraphStore,
 	getFromByTo,
+	getFromByToLocalOnly,
 	getPathGenerator,
 	getToByFrom,
+	getToByFromLocalOnly,
 } from "../src/index.js";
 
 const createIdentity = async () => {
@@ -89,19 +91,19 @@ describe("index", () => {
 			await store.relationGraph.put(bc);
 
 			// Get relations one by one
-			const trustingC = await getFromByTo.resolve(c, store.relationGraph);
+			const trustingC = await getFromByToLocalOnly.resolve(c, store.relationGraph);
 			expect(trustingC).to.have.length(1);
 			expect(trustingC[0].id).to.deep.equal(bc.id);
 
-			const bIsTrusting = await getToByFrom.resolve(b, store.relationGraph);
+			const bIsTrusting = await getToByFromLocalOnly.resolve(b, store.relationGraph);
 			expect(bIsTrusting).to.have.length(1);
 			expect(bIsTrusting[0].id).to.deep.equal(bc.id);
 
-			const trustingB = await getFromByTo.resolve(b, store.relationGraph);
+			const trustingB = await getFromByToLocalOnly.resolve(b, store.relationGraph);
 			expect(trustingB).to.have.length(1);
 			expect(trustingB[0].id).to.deep.equal(ab.id);
 
-			const aIsTrusting = await getToByFrom.resolve(a, store.relationGraph);
+			const aIsTrusting = await getToByFromLocalOnly.resolve(a, store.relationGraph);
 			expect(aIsTrusting).to.have.length(1);
 			expect(aIsTrusting[0].id).to.deep.equal(ab.id);
 
@@ -110,7 +112,7 @@ describe("index", () => {
 			for await (const relation of getPathGenerator(
 				c,
 				store.relationGraph,
-				getFromByTo,
+				getFromByToLocalOnly,
 			)) {
 				relationsFromGeneratorFromByTo.push(relation);
 			}
@@ -122,7 +124,7 @@ describe("index", () => {
 			for await (const relation of getPathGenerator(
 				a,
 				store.relationGraph,
-				getToByFrom,
+				getToByFromLocalOnly,
 			)) {
 				relationsFromGeneratorToByFrom.push(relation);
 			}
@@ -147,12 +149,12 @@ describe("index", () => {
 
 			await store.relationGraph.put(ab);
 
-			let trustingB = await getFromByTo.resolve(b, store.relationGraph);
+			let trustingB = await getFromByToLocalOnly.resolve(b, store.relationGraph);
 			expect(trustingB).to.have.length(1);
 			expect(trustingB[0].id).to.deep.equal(ab.id);
 
 			await store.relationGraph.del(ab.id);
-			trustingB = await getFromByTo.resolve(b, store.relationGraph);
+			trustingB = await getFromByToLocalOnly.resolve(b, store.relationGraph);
 			expect(trustingB).to.be.empty;
 		});
 
