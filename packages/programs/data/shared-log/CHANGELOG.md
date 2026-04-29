@@ -389,6 +389,28 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.1.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.3...shared-log-v13.1.4) (2026-04-29)
+
+
+### Bug Fixes
+
+* **shared-log:** merge direct peers into subscriber discovery ([68c178e](https://github.com/dao-xyz/peerbit/commit/68c178e90dc77c306d7f5a719f705f267d4db936))
+* **shared-log:** merge direct peers into subscriber discovery ([cc5d363](https://github.com/dao-xyz/peerbit/commit/cc5d3636485658028bdb4ab7ef66e9de05253037))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks bumped to 4.1.2
+    * @peerbit/blocks-interface bumped to 2.0.9
+    * @peerbit/log bumped to 6.0.25
+    * @peerbit/program bumped to 6.0.20
+    * @peerbit/pubsub bumped to 5.2.1
+    * @peerbit/rpc bumped to 6.0.24
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.24
+
 ## [13.1.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.2...shared-log-v13.1.3) (2026-04-28)
 
 

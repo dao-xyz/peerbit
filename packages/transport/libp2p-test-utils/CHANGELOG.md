@@ -54,6 +54,13 @@
   * devDependencies
     * @peerbit/time bumped from 2.0.5 to 2.0.6
 
+## [3.0.5](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v3.0.4...libp2p-test-utils-v3.0.5) (2026-04-29)
+
+
+### Bug Fixes
+
+* **test-utils:** release in-memory streams on close ([ee77cb6](https://github.com/dao-xyz/peerbit/commit/ee77cb629dd54921c56781cc489af019158dd86f))
+
 ## [3.0.4](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v3.0.3...libp2p-test-utils-v3.0.4) (2026-03-30)
 
 
