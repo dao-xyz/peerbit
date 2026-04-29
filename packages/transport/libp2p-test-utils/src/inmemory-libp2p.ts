@@ -183,6 +183,7 @@ class InMemoryStream extends EventTarget {
 	private readonly recordSend?: (encodedFrame: Uint8Array) => void;
 	private readonly shouldDrop?: (encodedFrame: Uint8Array) => boolean;
 	private readonly recordDrop?: (encodedFrame: Uint8Array) => void;
+	private readonly onClose?: (stream: InMemoryStream) => void;
 
 	constructor(opts: {
 		id: string;
@@ -192,6 +193,7 @@ class InMemoryStream extends EventTarget {
 		recordSend?: (encodedFrame: Uint8Array) => void;
 		shouldDrop?: (encodedFrame: Uint8Array) => boolean;
 		recordDrop?: (encodedFrame: Uint8Array) => void;
+		onClose?: (stream: InMemoryStream) => void;
 		rxDelayMs?: number;
 	}) {
 		super();
@@ -201,6 +203,7 @@ class InMemoryStream extends EventTarget {
 		this.recordSend = opts.recordSend;
 		this.shouldDrop = opts.shouldDrop;
 		this.recordDrop = opts.recordDrop;
+		this.onClose = opts.onClose;
 		this.rxDelayMs = opts.rxDelayMs ?? 0;
 		this.highWaterMark = opts.highWaterMarkBytes ?? 256 * 1024;
 		this.lowWaterMark = Math.floor(this.highWaterMark / 2);
@@ -253,6 +256,7 @@ class InMemoryStream extends EventTarget {
 
 			const remote = this.peer;
 			if (!remote) throw new Error("Missing remote stream endpoint");
+			if (remote.closed) throw new Error("Remote stream endpoint is closed");
 			remote.bufferedBytes += frame.byteLength;
 			remote.inbound.push(frame);
 			if (remote.bufferedBytes > remote.highWaterMark) {
@@ -283,6 +287,9 @@ class InMemoryStream extends EventTarget {
 		if (!remote) {
 			throw new Error("Missing remote stream endpoint");
 		}
+		if (remote.closed) {
+			throw new Error("Remote stream endpoint is closed");
+		}
 		remote.bufferedBytes += data.byteLength;
 		remote.inbound.push(data);
 		if (remote.bufferedBytes > remote.highWaterMark) {
@@ -293,17 +300,23 @@ class InMemoryStream extends EventTarget {
 	}
 
 	abort(_err?: any): void {
-		if (this.closed) return;
-		this.closed = true;
-		try {
-			this.inbound.end();
-		} catch {}
-		this.dispatchEvent(new Event("close"));
+		this.closeLocal();
+		this.peer?.closeLocal();
 	}
 
 	close(_opts?: AbortOptions): Promise<void> {
 		this.abort();
 		return Promise.resolve();
+	}
+
+	private closeLocal(): void {
+		if (this.closed) return;
+		this.closed = true;
+		try {
+			this.inbound.end();
+		} catch {}
+		this.onClose?.(this);
+		this.dispatchEvent(new Event("close"));
 	}
 }
 
@@ -362,6 +375,11 @@ class InMemoryConnection {
 		this.pair = pair;
 	}
 
+	_removeStream(stream: Stream) {
+		const index = this.streams.indexOf(stream);
+		if (index !== -1) this.streams.splice(index, 1);
+	}
+
 	async newStream(
 		protocols: string | string[],
 		opts?: { signal?: AbortSignal; negotiateFully?: boolean },
@@ -402,6 +420,7 @@ class InMemoryConnection {
 			recordSend: this.recordSend,
 			shouldDrop: this.shouldDrop,
 			recordDrop: this.recordDrop,
+			onClose: (stream) => this._removeStream(stream as any),
 			highWaterMarkBytes: this.streamHighWaterMarkBytes,
 		});
 		const inbound = new InMemoryStream({
@@ -409,6 +428,7 @@ class InMemoryConnection {
 			protocol,
 			direction: "inbound",
 			highWaterMarkBytes: this.streamHighWaterMarkBytes,
+			onClose: (stream) => remoteConn._removeStream(stream as any),
 			rxDelayMs: this.streamRxDelayMs,
 		});
 
@@ -441,7 +461,7 @@ class InMemoryConnection {
 		if (this.status !== "open") return;
 		this.status = "closed";
 		this.timeline.close = Date.now();
-		for (const s of this.streams) {
+		for (const s of [...this.streams]) {
 			try {
 				s.close?.();
 			} catch {}
