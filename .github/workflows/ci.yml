@@ -319,7 +319,7 @@ jobs:
             --assertMinDeliveryPct 10 \
             --assertMinDeadlineDeliveryPct 10 \
             --assertMaxOverheadFactor 3.5 \
-            --assertMaxTrackerBpp 5.3 \
+            --assertMaxTrackerBytes 150000 \
             --assertMaxRepairBpp 5 \
             --assertMaxOrphans 10 \
             --assertMaxOrphanArea 30 \

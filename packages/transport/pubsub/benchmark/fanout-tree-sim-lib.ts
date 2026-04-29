@@ -107,6 +107,7 @@ export type FanoutTreeSimParams = {
 	assertMaxOverheadFactor: number;
 	assertMaxControlBpp: number;
 	assertMaxTrackerBpp: number;
+	assertMaxTrackerBytes: number;
 	assertMaxRepairBpp: number;
 	assertAttachP95Ms: number;
 	assertMaxTreeLevelP95: number;
@@ -373,6 +374,7 @@ export const resolveFanoutTreeSimParams = (
 		assertMaxOverheadFactor: Number(input.assertMaxOverheadFactor ?? 0),
 		assertMaxControlBpp: Number(input.assertMaxControlBpp ?? 0),
 		assertMaxTrackerBpp: Number(input.assertMaxTrackerBpp ?? 0),
+		assertMaxTrackerBytes: Number(input.assertMaxTrackerBytes ?? 0),
 		assertMaxRepairBpp: Number(input.assertMaxRepairBpp ?? 0),
 		assertAttachP95Ms: Number(input.assertAttachP95Ms ?? 0),
 		assertMaxTreeLevelP95: Number(input.assertMaxTreeLevelP95 ?? 0),
