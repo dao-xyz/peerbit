@@ -2451,6 +2451,7 @@ export class DocumentIndex<
 				const isDefaultDomainArgs =
 					!("range" in coverProps) &&
 					(!("args" in coverProps) || (coverProps as any).args == null);
+				const remoteWasExplicit = options?.remote != null;
 
 				let replicatorGroups = options?.remote?.from
 					? options?.remote?.from
@@ -2461,10 +2462,10 @@ export class DocumentIndex<
 							signal: options?.signal,
 						});
 
-					// Cold start: cover can be temporarily empty/self-only while replication metadata
-					// converges. For remote search, it's sometimes better to at least try currently
-					// connected peers, but only if we have evidence that a remote replicator exists.
-					if (!options?.remote?.from && isDefaultDomainArgs) {
+					// Cold start: cover can be temporarily self-only while replication metadata
+					// converges. For explicit remote searches, query bounded connected peers
+					// instead of waiting for replicator metadata to catch up.
+					if (!options?.remote?.from && isDefaultDomainArgs && remoteWasExplicit) {
 						const selfHash = this.node.identity.publicKey.hashcode();
 						const remoteCount = replicatorGroups.filter((h) => h !== selfHash).length;
 						if (remoteCount === 0) {
@@ -2474,25 +2475,7 @@ export class DocumentIndex<
 
 							// If the cover is explicitly empty (no shards), don't override it unless
 							// the caller requested waiting for joins (e.g. get(waitFor)).
-							if (!waitEnabled && !coverIsSelfOnly) {
-								// no-op
-							} else {
-							let hasKnownRemoteReplicator = false;
-							if (!waitEnabled) {
-								try {
-									const replicators = await this._log.getReplicators();
-									for (const hash of replicators.keys()) {
-										if (hash !== selfHash) {
-											hasKnownRemoteReplicator = true;
-											break;
-										}
-									}
-								} catch {
-									// Best-effort only.
-								}
-							}
-
-							if (waitEnabled || hasKnownRemoteReplicator) {
+							if (waitEnabled || coverIsSelfOnly) {
 								const peerMap: Map<string, unknown> | undefined = (this.node.services
 									.pubsub as any)?.peers;
 								if (peerMap?.keys) {
@@ -2509,7 +2492,6 @@ export class DocumentIndex<
 									}
 								}
 							}
-						}
 						}
 					}
 

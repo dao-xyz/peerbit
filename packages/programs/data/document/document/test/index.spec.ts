@@ -3626,6 +3626,61 @@ describe("index", () => {
 							expect(writer.docs.index.hasPending).to.be.false;
 					});
 
+					it("remote search queries connected peers while replicator metadata is self-only", async function () {
+						this.timeout(120_000);
+
+						const { observer, writer } = await writerObserverSetup();
+						const document = new Document({ id: "connected-peer-self-only" });
+						await writer.docs.put(document);
+
+						await session.connect();
+						await observer.docs.index.waitFor(writer.node.identity.publicKey);
+
+						const writerHash = writer.node.identity.publicKey.hashcode();
+						await waitForResolved(
+							async () => {
+								const peers = (session.peers[0].services.pubsub as TopicControlPlane)
+									.peers;
+								expect(peers.has(writerHash)).to.equal(true);
+							},
+							{ timeout: 30_000, delayInterval: 100 },
+						);
+
+						const selfHash = observer.node.identity.publicKey.hashcode();
+						const originalGetCover = observer.docs.log.getCover.bind(
+							observer.docs.log,
+						);
+						const originalGetReplicators =
+							observer.docs.log.getReplicators.bind(observer.docs.log);
+
+						(observer.docs.log.getCover as typeof observer.docs.log.getCover) =
+							(async () => [selfHash]) as typeof observer.docs.log.getCover;
+						(
+							observer.docs.log.getReplicators as typeof observer.docs.log.getReplicators
+						) = (async () => {
+							const replicators = await originalGetReplicators();
+							for (const hash of [...replicators.keys()]) {
+								if (hash !== selfHash) {
+									replicators.delete(hash);
+								}
+							}
+							return replicators;
+						}) as typeof observer.docs.log.getReplicators;
+
+						try {
+							const result = await observer.docs.index.get(toId(document.id), {
+								remote: { throwOnMissing: false },
+							});
+							expect(result?.id).to.equal(document.id);
+						} finally {
+							(observer.docs.log.getCover as typeof observer.docs.log.getCover) =
+								originalGetCover as typeof observer.docs.log.getCover;
+							(
+								observer.docs.log.getReplicators as typeof observer.docs.log.getReplicators
+							) = originalGetReplicators as typeof observer.docs.log.getReplicators;
+						}
+					});
+
 					it("late join will not re-open iterator", async () => {
 						session = await TestSession.disconnected(2);
 
