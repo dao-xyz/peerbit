@@ -1066,7 +1066,7 @@ testSetups.forEach((setup) => {
 							setup,
 						},
 					});
-				db1.log.replicate({ factor: 1 });
+				await db1.log.replicate({ factor: 1 });
 				let count = 1000;
 				for (let i = 0; i < count; i++) {
 					await db1.add("hello " + i, { meta: { next: [] } });
@@ -1108,7 +1108,7 @@ testSetups.forEach((setup) => {
 							setup,
 						},
 					});
-					db1.log.replicate({ factor: 1 });
+					await db1.log.replicate({ factor: 1 });
 					const count = 16;
 					for (let i = 0; i < count; i++) {
 						await db1.add("hello-index-" + i, { meta: { next: [] } });
