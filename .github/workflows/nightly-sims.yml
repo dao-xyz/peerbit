@@ -41,15 +41,18 @@ jobs:
 
       - name: Run fanout-tree-sim (scale-5k)
         run: |
+          set -euo pipefail
           mkdir -p sim-results
           pnpm -C packages/transport/pubsub run bench -- fanout-tree-sim --preset scale-5k --profile 1 --progress 1 --timeoutMs 1200000 2>&1 | tee sim-results/fanout-tree-scale-5k.txt
 
       - name: Run fanout-peerbit-sim (scale-1k)
         run: |
+          set -euo pipefail
           pnpm -C packages/clients/test-utils run bench -- fanout-peerbit-sim --preset scale-1k --seed 1 > sim-results/fanout-peerbit-scale-1k.txt
 
       - name: Run DirectSub topic-sim (500 nodes)
         run: |
+          set -euo pipefail
           pnpm -C packages/transport/pubsub run bench -- topic-sim \
             --nodes 500 --degree 6 --subscribers 400 \
             --messages 50 --msgSize 256 --intervalMs 0 \
