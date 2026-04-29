@@ -326,6 +326,39 @@ testSetups.forEach((setup) => {
 				);
 			};
 
+			it("uses direct pubsub peers when the fanout subscriber snapshot is empty", async () => {
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						setup,
+					},
+				});
+				db2 = await EventStore.open<EventStore<string, any>>(
+					db1.address!,
+					session.peers[1],
+					{
+						args: {
+							setup,
+						},
+					},
+				);
+
+				const log = db1.log as any;
+				const originalFanoutChannel = log._fanoutChannel;
+				log._fanoutChannel = {
+					getPeerHashes: () => [],
+				};
+				log._topicSubscribersCache.clear();
+				try {
+					const subscribers = await log._getTopicSubscribers(db1.log.topic);
+					expect(subscribers.map((key: any) => key.hashcode())).to.include(
+						session.peers[1].identity.publicKey.hashcode(),
+					);
+				} finally {
+					log._fanoutChannel = originalFanoutChannel;
+					log._topicSubscribersCache.clear();
+				}
+			});
+
 			it("will not have any prunable after balance", async () => {
 				const store = new EventStore<string, any>();
 

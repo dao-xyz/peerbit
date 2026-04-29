@@ -1580,67 +1580,54 @@ export class SharedLog<
 			return keys.slice();
 		};
 
-		// Prefer the bounded peer set we already know from the fanout overlay.
-		if (this._fanoutChannel && (topic === this.topic || topic === this.rpc.topic)) {
-			const hashes = this._fanoutChannel
-				.getPeerHashes({ includeSelf: false })
-				.slice(0, maxPeers);
-			if (hashes.length === 0) return cache([]);
-
-			const keys = await Promise.all(
-				hashes.map((hash) => this._resolvePublicKeyFromHash(hash)),
-			);
-			const uniqueKeys: PublicSignKey[] = [];
-			const seen = new Set<string>();
-			const selfHash = this.node.identity.publicKey.hashcode();
-			for (const key of keys) {
-				if (!key) continue;
-				const hash = key.hashcode();
-				if (hash === selfHash) continue;
-				if (seen.has(hash)) continue;
-				seen.add(hash);
-				uniqueKeys.push(key);
-			}
-			return cache(uniqueKeys);
-		}
-
 		const selfHash = this.node.identity.publicKey.hashcode();
-		const hashes: string[] = [];
-
-		// Best-effort provider discovery (bounded). This requires bootstrap trackers.
-		try {
-			const fanoutService = getSharedLogFanoutService(this.node.services);
-			if (fanoutService?.queryProviders) {
-				const ns = `shared-log|${this.topic}`;
-				const seed = hashToSeed32(topic);
-				const providers: string[] = await fanoutService.queryProviders(ns, {
-					want: maxPeers,
-					seed,
-				});
-				for (const h of providers ?? []) {
-					if (!h || h === selfHash) continue;
-					hashes.push(h);
-					if (hashes.length >= maxPeers) break;
-				}
+		const hashes = new Set<string>();
+		const keysByHash = new Map<string, PublicSignKey>();
+		const addHash = (hash: string | undefined) => {
+			if (!hash || hash === selfHash || keysByHash.has(hash)) {
+				return;
 			}
-		} catch {
-			// Best-effort only.
+			hashes.add(hash);
+		};
+		const addKey = (key: PublicSignKey | undefined) => {
+			if (!key) {
+				return;
+			}
+			const hash = key.hashcode();
+			if (hash === selfHash) {
+				return;
+			}
+			hashes.delete(hash);
+			keysByHash.set(hash, key);
+		};
+
+		// Fanout is a useful hint, but it can lag direct pubsub connectivity. Keep
+		// collecting other local views instead of treating an empty fanout snapshot as
+		// authoritative absence.
+		if (this._fanoutChannel && (topic === this.topic || topic === this.rpc.topic)) {
+			for (const hash of this._fanoutChannel.getPeerHashes({
+				includeSelf: false,
+			})) {
+				addHash(hash);
+				if (hashes.size + keysByHash.size >= maxPeers) break;
+			}
 		}
 
-		// Next, use already-connected peer streams (bounded and cheap).
-		const peerMap: Map<string, unknown> | undefined = (this.node.services.pubsub as any)
-			?.peers;
-		if (peerMap?.keys) {
-			for (const h of peerMap.keys()) {
-				if (!h || h === selfHash) continue;
-				hashes.push(h);
-				if (hashes.length >= maxPeers) break;
+		// Already-connected peer streams are cheap and are the strongest local signal
+		// when fanout/provider membership is stale.
+		const peerMap: Map<string, { publicKey?: PublicSignKey }> | undefined = (this.node
+			.services.pubsub as any)?.peers;
+		if (peerMap?.entries) {
+			for (const [hash, peer] of peerMap.entries()) {
+				addKey(peer?.publicKey);
+				addHash(hash);
+				if (hashes.size + keysByHash.size >= maxPeers) break;
 			}
 		}
 
-		// Finally, fall back to libp2p connections (e.g. bootstrap peers) without requiring
-		// any global topic membership view.
-		if (hashes.length < maxPeers) {
+		// Libp2p connections cover bootstrap/direct peers even before a higher-level
+		// topic subscriber snapshot has converged.
+		if (hashes.size + keysByHash.size < maxPeers) {
 			const connectionManager = (this.node.services.pubsub as any)?.components
 				?.connectionManager;
 			const connections = connectionManager?.getConnections?.() ?? [];
@@ -1648,38 +1635,48 @@ export class SharedLog<
 				const peerId = conn?.remotePeer;
 				if (!peerId) continue;
 				try {
-					const h = getPublicKeyFromPeerId(peerId).hashcode();
-					if (!h || h === selfHash) continue;
-					hashes.push(h);
-					if (hashes.length >= maxPeers) break;
+					addKey(getPublicKeyFromPeerId(peerId));
+					if (hashes.size + keysByHash.size >= maxPeers) break;
 				} catch {
 					// Best-effort only.
 				}
 			}
 		}
 
-		if (hashes.length === 0) return cache([]);
-
-		const uniqueHashes: string[] = [];
-		const seen = new Set<string>();
-		for (const h of hashes) {
-			if (seen.has(h)) continue;
-			seen.add(h);
-			uniqueHashes.push(h);
-			if (uniqueHashes.length >= maxPeers) break;
+		// Best-effort provider discovery (bounded). This requires bootstrap trackers.
+		if (hashes.size + keysByHash.size < maxPeers) {
+			try {
+				const fanoutService = getSharedLogFanoutService(this.node.services);
+				if (fanoutService?.queryProviders) {
+					const ns = `shared-log|${this.topic}`;
+					const seed = hashToSeed32(topic);
+					const providers: string[] = await fanoutService.queryProviders(ns, {
+						want: maxPeers - keysByHash.size - hashes.size,
+						seed,
+					});
+					for (const hash of providers ?? []) {
+						addHash(hash);
+						if (hashes.size + keysByHash.size >= maxPeers) break;
+					}
+				}
+			} catch {
+				// Best-effort only.
+			}
 		}
 
-		const keys = await Promise.all(
-			uniqueHashes.map((hash) => this._resolvePublicKeyFromHash(hash)),
+		if (hashes.size === 0 && keysByHash.size === 0) return cache([]);
+
+		const unresolvedHashes = [...hashes].slice(
+			0,
+			Math.max(0, maxPeers - keysByHash.size),
 		);
-		const uniqueKeys: PublicSignKey[] = [];
+		const keys = await Promise.all(
+			unresolvedHashes.map((hash) => this._resolvePublicKeyFromHash(hash)),
+		);
 		for (const key of keys) {
-			if (!key) continue;
-			const hash = key.hashcode();
-			if (hash === selfHash) continue;
-			uniqueKeys.push(key);
+			addKey(key);
 		}
-		return cache(uniqueKeys);
+		return cache([...keysByHash.values()].slice(0, maxPeers));
 	}
 
 	private invalidateTopicSubscribersCache(...topics: (string | undefined)[]) {
