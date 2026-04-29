@@ -359,6 +359,60 @@ testSetups.forEach((setup) => {
 				}
 			});
 
+			it("uses indexed peers when the leader peer filter is temporarily underfilled", async () => {
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						replicate: { offset: 0, factor: 0.5 },
+						replicas: {
+							min: new AbsoluteReplicas(1),
+							max: new AbsoluteReplicas(1),
+						},
+						setup,
+						timeUntilRoleMaturity: 0,
+					},
+				});
+				db2 = await EventStore.open<EventStore<string, any>>(
+					db1.address!,
+					session.peers[1],
+					{
+						args: {
+							replicate: { offset: 0.5, factor: 0.5 },
+							replicas: {
+								min: new AbsoluteReplicas(1),
+								max: new AbsoluteReplicas(1),
+							},
+							setup,
+							timeUntilRoleMaturity: 0,
+						},
+					},
+				);
+
+				await waitForResolved(async () =>
+					expect(await db2.log.replicationIndex.count()).to.equal(2),
+				);
+
+				const log = db2.log as any;
+				const originalUniqueReplicators = log.uniqueReplicators;
+				const db1Hash = db1.log.node.identity.publicKey.hashcode();
+				const db2Hash = db2.log.node.identity.publicKey.hashcode();
+				const subscribers = sinon
+					.stub(log, "_getTopicSubscribers")
+					.resolves([]);
+
+				log.uniqueReplicators = new Set([db2Hash]);
+				log._topicSubscribersCache.clear();
+				try {
+					const cursor = db2.log.indexableDomain.numbers.denormalize(0.25);
+					const leaders = await log._findLeaders([cursor], { roleAge: 0 });
+					expect([...leaders.keys()]).to.include(db1Hash);
+					expect([...leaders.keys()]).to.not.include(db2Hash);
+				} finally {
+					subscribers.restore();
+					log.uniqueReplicators = originalUniqueReplicators;
+					log._topicSubscribersCache.clear();
+				}
+			});
+
 			it("will not have any prunable after balance", async () => {
 				const store = new EventStore<string, any>();
 

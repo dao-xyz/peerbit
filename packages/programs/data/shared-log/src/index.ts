@@ -6553,10 +6553,11 @@ export class SharedLog<
 		// If it is still warming up (for example, only contains self), supplement with
 		// current subscribers until we have enough candidates for this decision.
 		let peerFilter: Set<string> | undefined = undefined;
+		let selfReplicating = false;
 		if (options?.candidates) {
 			peerFilter = new Set(options.candidates);
 		} else {
-			const selfReplicating = await this.isReplicating();
+			selfReplicating = await this.isReplicating();
 			if (this.uniqueReplicators.size > 0) {
 				peerFilter = new Set(this.uniqueReplicators);
 				if (selfReplicating) {
@@ -6599,6 +6600,17 @@ export class SharedLog<
 		}
 
 		if (!options?.candidates) {
+			// Reachability snapshots can briefly under-report peers. Do not let that
+			// turn a known mature indexed range into a false self-only full replica.
+			peerFilter = await this.includeIndexedLeaderCandidatesWhenUnderfilled(
+				peerFilter,
+				roleAge,
+				cursors.length,
+				selfReplicating,
+			);
+		}
+
+		if (!options?.candidates) {
 			const fullReplicaLeaders = await this.findFullReplicaLeaders(
 				cursors.length,
 				roleAge,
@@ -6619,6 +6631,47 @@ export class SharedLog<
 				uniqueReplicators: peerFilter,
 			},
 		);
+	}
+
+	private async includeIndexedLeaderCandidatesWhenUnderfilled(
+		peerFilter: Set<string> | undefined,
+		roleAge: number,
+		replicas: number,
+		selfReplicating: boolean,
+	): Promise<Set<string> | undefined> {
+		if (!peerFilter || peerFilter.size > replicas) {
+			return peerFilter;
+		}
+
+		const selfHash = this.node.identity.publicKey.hashcode();
+		const now = Date.now();
+		const iterator = this.replicationIndex.iterate(
+			{},
+			{ shape: { hash: true, timestamp: true }, reference: true },
+		);
+
+		try {
+			for (;;) {
+				const batch = await iterator.next(64);
+				if (batch.length === 0) {
+					break;
+				}
+				for (const result of batch) {
+					const range = result.value;
+					if (range.hash === selfHash && !selfReplicating) {
+						continue;
+					}
+					if (!isMatured(range, now, roleAge)) {
+						continue;
+					}
+					peerFilter.add(range.hash);
+				}
+			}
+		} finally {
+			await iterator.close();
+		}
+
+		return peerFilter;
 	}
 
 	private async findFullReplicaLeaders(
