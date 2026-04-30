@@ -1,9 +1,7 @@
 import { Cache } from "@peerbit/cache";
-import type { RequestContext } from "@peerbit/rpc";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
-import sinon from "sinon";
 import {
 	type ReplicationDomainHash,
 	createReplicationDomainHash,
@@ -26,7 +24,7 @@ const setup = {
 };
 
 describe("rateless-iblt-syncronizer", () => {
-	let session: TestSession;
+	let session: TestSession | undefined;
 	let db1: EventStore<string, ReplicationDomainHash<"u64">>,
 		db2: EventStore<string, ReplicationDomainHash<"u64">>;
 
@@ -34,14 +32,15 @@ describe("rateless-iblt-syncronizer", () => {
 	const collectMessages = async (
 		log: EventStore<string, ReplicationDomainHash<"u64">>,
 	) => {
-		const onMessageSpy = sinon.spy(log.log, "onMessage");
-		log.log.onMessage = onMessageSpy;
+		const messages: TransportMessage[] = [];
+		const onMessage = log.log.rpc["_responseHandler"];
+		log.log.rpc["_responseHandler"] = async (msg: any, context: any) => {
+			messages.push(msg);
+			return onMessage(msg, context);
+		};
 		return {
 			get calls(): TransportMessage[] {
-				const calls = onMessageSpy.getCalls() as Array<
-					sinon.SinonSpyCall<[TransportMessage, RequestContext], Promise<void>>
-				>;
-				return calls.map((call) => call.args[0]);
+				return messages;
 			},
 		};
 	};
@@ -97,7 +96,10 @@ describe("rateless-iblt-syncronizer", () => {
 	};
 
 	afterEach(async () => {
-		await session.stop();
+		if (session) {
+			await session.stop();
+			session = undefined;
+		}
 	});
 
 	it("already synced", async function () {
@@ -108,7 +110,7 @@ describe("rateless-iblt-syncronizer", () => {
 		const db1Messages = await collectMessages(db1);
 		const db2Messages = await collectMessages(db2);
 
-		await session.connect();
+		await session!.connect();
 
 		await waitForResolved(() =>
 			expect(db1.log.log.length).to.equal(syncedCount),
@@ -127,13 +129,13 @@ describe("rateless-iblt-syncronizer", () => {
 		const db1Messages = await collectMessages(db1);
 		const db2Messages = await collectMessages(db2);
 
-		await session.connect();
+		await session!.connect();
 		await Promise.all([
-			db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+			db1.log.waitForReplicator(session!.peers[1].identity.publicKey, {
 				timeout: 15_000,
 				roleAge: 0,
 			}),
-			db2.log.waitForReplicator(session.peers[0].identity.publicKey, {
+			db2.log.waitForReplicator(session!.peers[0].identity.publicKey, {
 				timeout: 15_000,
 				roleAge: 0,
 			}),
@@ -171,7 +173,7 @@ describe("rateless-iblt-syncronizer", () => {
 		const db1Messages = await collectMessages(db1);
 		const db2Messages = await collectMessages(db2);
 
-		await session.connect();
+		await session!.connect();
 
 		await waitForResolved(() =>
 			expect(db1.log.log.length).to.equal(syncedCount + unsyncedCount * 2),
@@ -184,6 +186,50 @@ describe("rateless-iblt-syncronizer", () => {
 		expect(countMessages(db2Messages.calls, MoreSymbols)).to.equal(0);
 	});
 
+	it("large missing sets dispatch with rateless IBLT", async () => {
+		const sentMessages: TransportMessage[] = [];
+		const sync = new RatelessIBLTSynchronizer<"u64">({
+			rpc: {
+				send: async (message: TransportMessage) => {
+					sentMessages.push(message);
+				},
+			} as any,
+			rangeIndex: {} as any,
+			entryIndex: {} as any,
+			log: {} as any,
+			coordinateToHash: new Cache<string>({ max: 1000, ttl: 1000 }),
+			numbers: { maxValue: 2n ** 64n - 1n } as any,
+		});
+
+		try {
+			const entries = new Map<string, any>();
+			for (let i = 0; i < 3000; i++) {
+				const hash = `hash-${i}`;
+				entries.set(hash, {
+					hash,
+					hashNumber: BigInt(i + 1),
+					assignedToRangeBoundary: false,
+				});
+			}
+
+			await sync.onMaybeMissingEntries({
+				entries,
+				targets: ["target"],
+			});
+
+			const startSyncMessages = sentMessages.filter(
+				(message) => message instanceof StartSync,
+			);
+			expect(sentMessages).to.have.length(1);
+			expect(startSyncMessages).to.have.length(1);
+			expect(
+				(startSyncMessages[0] as StartSync).symbols.length,
+			).to.be.greaterThan(0);
+		} finally {
+			await sync.close();
+		}
+	});
+
 	it("many missing", async function () {
 		this.timeout(120_000);
 		const syncedCount = 3000;
@@ -193,7 +239,7 @@ describe("rateless-iblt-syncronizer", () => {
 		const db1Messages = await collectMessages(db1);
 		const db2Messages = await collectMessages(db2);
 
-		await session.connect();
+		await session!.connect();
 
 		const expectedCount = syncedCount + unsyncedCount * 2;
 		await Promise.all([
@@ -207,8 +253,13 @@ describe("rateless-iblt-syncronizer", () => {
 			),
 		]);
 
-		const db1MoreSymbols = countMessages(db1Messages.calls, MoreSymbols);
-		const db2MoreSymbols = countMessages(db2Messages.calls, MoreSymbols);
-		expect(db1MoreSymbols + db2MoreSymbols).to.be.greaterThan(0);
+		const totalRequestAll =
+			countMessages(db1Messages.calls, RequestAll) +
+			countMessages(db2Messages.calls, RequestAll);
+		// Depending on exchange-head timing, the peers may converge before rateless
+		// repair needs to send StartSync. The deterministic dispatch test above
+		// covers large-set IBLT selection; this integration path must not fall back
+		// to full RequestAll transfer.
+		expect(totalRequestAll).to.equal(0);
 	});
 });
