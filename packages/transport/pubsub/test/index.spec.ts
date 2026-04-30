@@ -1,9 +1,38 @@
 import { AbortError, TimeoutError } from "@peerbit/time";
 import { expect } from "chai";
+import { runInNewContext } from "node:vm";
 import sinon from "sinon";
-import { waitForSubscribers } from "../src/index.js";
+import { normalizeUint8Array } from "../src/bytes.js";
+import { toUint8Array, waitForSubscribers } from "../src/index.js";
 
 describe("pubsub", function () {
+	describe("byte normalization", () => {
+		it("materializes list-like byte sources without relying on Uint8ArrayList identity", () => {
+			const payload = new Uint8Array([1, 2, 3]);
+			const listLike = {
+				byteLength: payload.byteLength,
+				subarray: () => payload,
+			};
+
+			expect(toUint8Array(listLike)).to.equal(payload);
+		});
+
+		it("normalizes cross-realm and view-backed bytes to local Uint8Array", () => {
+			const foreignBytes = runInNewContext("new Uint8Array([4, 5, 6])");
+			const normalizedForeign = normalizeUint8Array(foreignBytes);
+
+			expect(normalizedForeign).to.be.instanceOf(Uint8Array);
+			expect([...normalizedForeign!]).to.deep.equal([4, 5, 6]);
+
+			const backing = new Uint8Array([0, 7, 8, 0]);
+			const view = new DataView(backing.buffer, 1, 2);
+			const normalizedView = normalizeUint8Array(view);
+
+			expect(normalizedView).to.be.instanceOf(Uint8Array);
+			expect([...normalizedView!]).to.deep.equal([7, 8]);
+		});
+	});
+
 	describe("waitForSubscribers", () => {
 		let clock: ReturnType<typeof sinon.useFakeTimers>;
 

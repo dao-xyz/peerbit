@@ -17,6 +17,7 @@ import {
 import { AbortError, TimeoutError, delay } from "@peerbit/time";
 import { anySignal } from "any-signal";
 import { Uint8ArrayList } from "uint8arraylist";
+import { normalizeUint8Array, toUint8Array } from "./bytes.js";
 import { TopicRootControlPlane } from "./topic-root-control-plane.js";
 
 export type FanoutTreeChannelId = {
@@ -4830,8 +4831,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			const out: Uint8Array[] = [];
 			for (const a of addresses) {
 				const ma: any = a?.multiaddr ?? a;
-				const bytes: Uint8Array | undefined = ma?.bytes;
-				if (!(bytes instanceof Uint8Array)) continue;
+				const bytes = normalizeUint8Array(ma?.bytes);
+				if (!bytes) continue;
 				out.push(bytes);
 				if (out.length >= JOIN_REJECT_REDIRECT_ADDR_MAX) break;
 			}
@@ -5559,7 +5560,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	) {
 		const ignore = this.shouldIgnore(message, seenBefore);
 		const raw = message.data as Uint8ArrayList | Uint8Array | undefined;
-		const data = raw instanceof Uint8ArrayList ? raw.subarray() : raw;
+		const data = raw ? toUint8Array(raw) : undefined;
 		if (!data || data.length === 0) return false;
 
 			const kind = data[0]!;
@@ -5639,8 +5640,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						const addresses: any[] = Array.isArray(peer?.addresses) ? peer.addresses : [];
 						for (const a of addresses) {
 							const ma: any = a?.multiaddr ?? a;
-							const bytes: Uint8Array | undefined = ma?.bytes;
-							if (bytes instanceof Uint8Array) addrs.push(bytes);
+							const bytes = normalizeUint8Array(ma?.bytes);
+							if (bytes) addrs.push(bytes);
 							if (addrs.length >= 16) break;
 						}
 					} catch {
@@ -5784,8 +5785,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 								: [];
 							for (const a of addresses) {
 								const ma: any = a?.multiaddr ?? a;
-								const bytes: Uint8Array | undefined = ma?.bytes;
-								if (bytes instanceof Uint8Array) addrs.push(bytes);
+								const bytes = normalizeUint8Array(ma?.bytes);
+								if (bytes) addrs.push(bytes);
 								if (addrs.length >= 16) break;
 							}
 						} catch {
