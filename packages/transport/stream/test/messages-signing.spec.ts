@@ -179,6 +179,30 @@ describe("message signing", () => {
 		expect(Array.from(decoded.data!)).to.deep.equal(Array.from(payload));
 	});
 
+	it("materializes payloads from list-like byte sources", () => {
+		const payload = new Uint8Array([31, 32, 33, 34]);
+		const decoded = new DataMessage({
+			header: new MessageHeader({
+				session: 1,
+				mode: new SilentDelivery({
+					to: ["peer-a"],
+					redundancy: 1,
+				}),
+			}),
+			data: payload,
+		});
+		const decodedAny = decoded as any;
+
+		decodedAny._data = undefined;
+		decodedAny._dataBytes = {
+			byteLength: payload.byteLength,
+			subarray: () => payload,
+		};
+
+		expect(decoded.hasData).to.equal(true);
+		expect(Array.from(decoded.data!)).to.deep.equal(Array.from(payload));
+	});
+
 	it("caches prepared signable sha256 bytes for a data-message", async () => {
 		const message = new DataMessage({
 			header: new MessageHeader({

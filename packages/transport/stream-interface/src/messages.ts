@@ -715,7 +715,7 @@ export class DataMessage<
 	}
 
 	get data(): Uint8Array | undefined {
-		if (this._data == null && this._dataBytes instanceof Uint8ArrayList) {
+		if (this._data == null && this._dataBytes != null) {
 			this._data = this._dataBytes.subarray();
 		}
 		return this._data;
