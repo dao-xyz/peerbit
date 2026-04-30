@@ -313,6 +313,23 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [5.2.11](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.2.10...peerbit-v5.2.11) (2026-04-30)
+
+
+### Bug Fixes
+
+* **stream:** materialize list-like message payloads ([#749](https://github.com/dao-xyz/peerbit/issues/749)) ([2464485](https://github.com/dao-xyz/peerbit/commit/246448591b7437c4597ae712cdce0eb00eff20dc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks bumped to 4.1.3
+    * @peerbit/program bumped to 6.0.22
+    * @peerbit/pubsub bumped to 5.2.3
+    * @peerbit/stream-interface bumped to 6.0.8
+
 ## [5.2.10](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.2.9...peerbit-v5.2.10) (2026-04-30)
 
 

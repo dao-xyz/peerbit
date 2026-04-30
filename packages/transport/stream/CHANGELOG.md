@@ -43,6 +43,20 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [5.0.11](https://github.com/dao-xyz/peerbit/compare/stream-v5.0.10...stream-v5.0.11) (2026-04-30)
+
+
+### Bug Fixes
+
+* **stream:** materialize list-like message payloads ([#749](https://github.com/dao-xyz/peerbit/issues/749)) ([2464485](https://github.com/dao-xyz/peerbit/commit/246448591b7437c4597ae712cdce0eb00eff20dc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream-interface bumped to 6.0.8
+
 ## [5.0.10](https://github.com/dao-xyz/peerbit/compare/stream-v5.0.9...stream-v5.0.10) (2026-04-29)
 
 

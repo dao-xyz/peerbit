@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/document-react",
-	"version": "1.0.31",
+	"version": "1.0.32",
 	"description": "React hooks for @peerbit/document",
 	"sideEffects": false,
 	"type": "module",
