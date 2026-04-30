@@ -687,16 +687,12 @@ describe(`replicate`, () => {
 				const store = new EventStore<string, any>();
 
 				let domain = createReplicationDomainHash("u32");
-
-				let startFactor = 500000;
+				const startFactor = 500000;
 				let startOffset = 0;
+
 				const db1 = await session.peers[0].open(store.clone(), {
 					args: {
-						replicate: {
-							factor: startFactor,
-							offset: startOffset,
-							normalized: false,
-						},
+						replicate: false,
 						domain,
 					},
 				});
@@ -712,19 +708,28 @@ describe(`replicate`, () => {
 					db: EventStore<string, any>,
 					entry: Entry<any>,
 				) => {
-					const offset = await db.log.domain.fromEntry(added.entry);
+					const offset = await db.log.domain.fromEntry(entry);
 					const ranges = await db.log.replicationIndex
 						.iterate({ sort: new Sort({ key: ["start1"] }) })
 						.all();
 					expect(ranges).to.have.length(2);
 
-					const rangeStart = ranges[0].value.toReplicationRange();
-					expect(rangeStart.offset).to.be.eq(startOffset);
-					expect(rangeStart.factor).to.equal(startFactor);
+					const replicationRanges = ranges.map((x) =>
+						x.value.toReplicationRange(),
+					);
+					const rangeStart = replicationRanges.find(
+						(range) => range.factor === startFactor,
+					);
+					expect(rangeStart, "fixed range").to.exist;
+					expect(rangeStart!.offset).to.be.eq(startOffset);
+					expect(rangeStart!.factor).to.equal(startFactor);
 
-					const rangeEntry = ranges[1].value.toReplicationRange();
-					expect(rangeEntry.offset).to.be.closeTo(offset, 0.0001);
-					expect(rangeEntry.factor).to.equal(1); // mininum unit of length
+					const rangeEntry = replicationRanges.find(
+						(range) => range.factor === 1,
+					);
+					expect(rangeEntry, "entry range").to.exist;
+					expect(rangeEntry!.offset).to.be.closeTo(offset, 0.0001);
+					expect(rangeEntry!.factor).to.equal(1); // mininum unit of length
 				};
 
 				const checkUnreplication = async (db: EventStore<string, any>) => {
@@ -739,6 +744,17 @@ describe(`replicate`, () => {
 				};
 
 				const added = await db1.add("data", { replicate: true });
+				const entryOffset = Number(await db1.log.domain.fromEntry(added.entry));
+				const maxOffset = Number(db1.log.indexableDomain.numbers.maxValue);
+				startOffset =
+					entryOffset + startFactor + 1 < maxOffset
+						? entryOffset + 1
+						: entryOffset - startFactor - 1;
+				await db1.log.replicate({
+					factor: startFactor,
+					offset: startOffset,
+					normalized: false,
+				});
 
 				await checkReplication(db1, added.entry);
 				await waitForResolved(async () => checkReplication(db2, added.entry));

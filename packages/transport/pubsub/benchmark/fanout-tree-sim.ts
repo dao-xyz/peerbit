@@ -86,6 +86,7 @@ const HELP_TEXT = [
 	"  --assertMaxOverheadFactor X   max data overhead factor vs ideal tree (default: 0, off)",
 	"  --assertMaxControlBpp X       max control bytes per payload byte delivered (default: 0, off)",
 	"  --assertMaxTrackerBpp X       max tracker bytes per payload byte delivered (default: 0, off)",
+	"  --assertMaxTrackerBytes N     max tracker control bytes sent (default: 0, off)",
 	"  --assertMaxRepairBpp X        max repair bytes per payload byte delivered (default: 0, off)",
 	"  --assertAttachP95Ms MS        max p95 time-to-attach since join start (default: 0, off)",
 	"  --assertMaxTreeLevelP95 N     max p95 tree depth/level (default: 0, off)",
@@ -349,6 +350,7 @@ const ARG_SPECS: ArgSpec[] = [
 	},
 	{ flag: "--assertMaxControlBpp", key: "assertMaxControlBpp", parse: parseNumber },
 	{ flag: "--assertMaxTrackerBpp", key: "assertMaxTrackerBpp", parse: parseNumber },
+	{ flag: "--assertMaxTrackerBytes", key: "assertMaxTrackerBytes", parse: parseNumber },
 	{ flag: "--assertMaxRepairBpp", key: "assertMaxRepairBpp", parse: parseNumber },
 	{ flag: "--assertAttachP95Ms", key: "assertAttachP95Ms", parse: parseNumber },
 	{ flag: "--assertMaxTreeLevelP95", key: "assertMaxTreeLevelP95", parse: parseNumber },
@@ -409,6 +411,7 @@ type AssertionParam =
 	| "assertMaxOverheadFactor"
 	| "assertMaxControlBpp"
 	| "assertMaxTrackerBpp"
+	| "assertMaxTrackerBytes"
 	| "assertMaxRepairBpp"
 	| "assertAttachP95Ms"
 	| "assertMaxTreeLevelP95"
@@ -476,6 +479,12 @@ const ASSERTION_SPECS: AssertionSpec[] = [
 		mode: "max",
 		value: (result) => result.trackerBpp,
 		formatActual: (value) => value.toFixed(4),
+	},
+	{
+		param: "assertMaxTrackerBytes",
+		label: "protocolControlBytesSentTracker",
+		mode: "max",
+		value: (result) => result.protocolControlBytesSentTracker,
 	},
 	{
 		param: "assertMaxRepairBpp",
