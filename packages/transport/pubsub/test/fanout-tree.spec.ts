@@ -1,5 +1,5 @@
 import { TestSession } from "@peerbit/libp2p-test-utils";
-import { delay, waitForResolved } from "@peerbit/time";
+import { TimeoutError, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { FanoutChannel, FanoutTree } from "../src/index.js";
 
@@ -184,6 +184,31 @@ describe("fanout-tree", () => {
 
 				await waitForChannelAttachment(ch, 25);
 				expect(ch.parent).to.equal("parent");
+			} finally {
+				await session.stop();
+			}
+		});
+
+		it("reports attachment waits as delivery timeouts", async () => {
+			const session: TestSession<{ fanout: FanoutTree }> =
+				await createFanoutTestSession(1);
+
+			try {
+				const fanout = session.peers[0].services.fanout as any;
+				const waitForChannelAttachment = fanout.waitForChannelAttachment.bind(fanout) as (
+					ch: any,
+					timeoutMs: number,
+				) => Promise<void>;
+				const ch = {
+					isRoot: false,
+					parent: undefined as string | undefined,
+					id: { topic: "attachment-timeout", root: "root" },
+				};
+
+				await expect(waitForChannelAttachment(ch, 5)).to.be.rejectedWith(
+					TimeoutError,
+					"fanout proxy publish timed out waiting for attachment",
+				);
 			} finally {
 				await session.stop();
 			}

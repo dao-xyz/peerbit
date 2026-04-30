@@ -3576,7 +3576,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				if (resolveIfAttached()) return;
 				cleanup();
 				reject(
-					new Error(
+					new TimeoutError(
 						`fanout proxy publish timed out waiting for attachment (topic=${ch.id.topic} root=${ch.id.root} self=${this.publicKeyHash})`,
 					),
 				);
