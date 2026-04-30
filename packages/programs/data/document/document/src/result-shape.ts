@@ -10,7 +10,11 @@ const isResultLike = (
 	context: unknown;
 	entries?: unknown;
 	init: (type: unknown) => void;
-} => isObject(value) && "context" in value && typeof value.init === "function";
+} =>
+	isObject(value) &&
+	"_source" in value &&
+	"context" in value &&
+	typeof value.init === "function";
 
 export const isResultIndexedValue = <I>(
 	value: unknown,

@@ -7665,11 +7665,11 @@ export class SharedLog<
 				flushUncheckedDeliverTarget(target);
 			}
 
-			if (changes.length > 0) {
-				// A replication topology update can make already-indexed local heads
+			if (this._isAdaptiveReplicating && hasSelfRangeRemoval) {
+				// Adaptive shrink/replacement can make already-indexed local heads
 				// prunable even when the incremental rebalance scan missed them under
-				// churn or timing pressure. Re-scan the local coordinate index so checked
-				// prune work is enqueued before callers wait for the distribution to idle.
+				// churn or timing pressure. Re-scan after repair dispatches are flushed
+				// so checked prune work is enqueued before callers wait for idle.
 				await this.pruneIndexedEntriesNoLongerLed();
 			}
 

@@ -1,4 +1,4 @@
-import { field, serialize, variant } from "@dao-xyz/borsh";
+import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import {
 	Context,
 	ResultIndexedValue,
@@ -18,8 +18,12 @@ class Document {
 	@field({ type: "string" })
 	id: string;
 
-	constructor(properties: { id: string }) {
+	@field({ type: "string" })
+	body: string;
+
+	constructor(properties: { id: string; body: string }) {
 		this.id = properties.id;
+		this.body = properties.body;
 	}
 }
 
@@ -44,14 +48,17 @@ const context = new Context({
 describe("result shape guards", () => {
 	it("classifies result values by shape across package identity boundaries", () => {
 		const local = new ResultValue({
-			source: serialize(new Document({ id: "1" })),
+			source: serialize(new Document({ id: "1", body: "manifest" })),
 			context,
 		});
 		const foreign: any = {
-			_source: serialize(new Document({ id: "2" })),
+			_source: serialize(new Document({ id: "2", body: "remote manifest" })),
 			context,
 			init(type: unknown) {
 				this._type = type;
+			},
+			get value() {
+				return deserialize(this._source, this._type);
 			},
 		};
 
@@ -66,6 +73,8 @@ describe("result shape guards", () => {
 		);
 
 		expect(foreign._type).to.equal(Document);
+		expect(foreign.value).to.be.instanceOf(Document);
+		expect(foreign.value.body).to.equal("remote manifest");
 	});
 
 	it("classifies indexed results and result batches by shape", () => {
@@ -82,14 +91,26 @@ describe("result shape guards", () => {
 			init(type: unknown) {
 				this._type = type;
 			},
+			get value() {
+				return deserialize(this._source, this._type);
+			},
 		};
 		const foreignResults = {
 			results: [foreignIndexed],
 			kept: 0n,
 		};
+		const entryBearingNonResult = {
+			context,
+			entries: [],
+			init() {
+				// This looks similar to a result but is missing the serialized
+				// source field that ResultIndexedValue carries.
+			},
+		};
 
 		expect(isResultIndexedValue(indexed)).to.be.true;
 		expect(isResultIndexedValue(foreignIndexed)).to.be.true;
+		expect(isResultIndexedValue(entryBearingNonResult)).to.be.false;
 		expect(isResultValue(foreignIndexed)).to.be.false;
 		expect(isResults(new Results({ results: [indexed], kept: 0n }))).to.be.true;
 		expect(isResults(foreignResults)).to.be.true;
@@ -101,5 +122,6 @@ describe("result shape guards", () => {
 		);
 
 		expect(foreignIndexed._type).to.equal(IndexedDocument);
+		expect(foreignIndexed.value).to.be.instanceOf(IndexedDocument);
 	});
 });
