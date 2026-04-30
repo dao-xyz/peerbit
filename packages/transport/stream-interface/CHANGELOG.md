@@ -66,6 +66,13 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [6.0.8](https://github.com/dao-xyz/peerbit/compare/stream-interface-v6.0.7...stream-interface-v6.0.8) (2026-04-30)
+
+
+### Bug Fixes
+
+* **stream:** materialize list-like message payloads ([#749](https://github.com/dao-xyz/peerbit/issues/749)) ([2464485](https://github.com/dao-xyz/peerbit/commit/246448591b7437c4597ae712cdce0eb00eff20dc))
+
 ## [6.0.7](https://github.com/dao-xyz/peerbit/compare/stream-interface-v6.0.6...stream-interface-v6.0.7) (2026-03-30)
 
 
