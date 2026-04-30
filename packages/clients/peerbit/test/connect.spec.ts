@@ -18,9 +18,13 @@ describe(`dial`, function () {
 	if (isNode) {
 		it("waits for blocks", async () => {
 			const cid = await clients[0].services.blocks.put(new Uint8Array([1]));
-			await clients[0].dial(clients[1].getMultiaddrs()[0]);
+			await clients[1].dial(clients[0].getMultiaddrs()[0]);
 			expect(
-				new Uint8Array((await clients[0].services.blocks.get(cid))!),
+				new Uint8Array(
+					(await clients[1].services.blocks.get(cid, {
+						remote: { timeout: 10_000 },
+					}))!,
+				),
 			).to.deep.equal(new Uint8Array([1]));
 		});
 
