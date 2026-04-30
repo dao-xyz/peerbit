@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.0.30](https://github.com/dao-xyz/peerbit/compare/any-store-proxy-v1.0.29...any-store-proxy-v1.0.30) (2026-04-30)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/canonical-client bumped to 1.1.24
+    * @peerbit/canonical-host bumped to 1.0.30
+
 ## [1.0.29](https://github.com/dao-xyz/peerbit/compare/any-store-proxy-v1.0.28...any-store-proxy-v1.0.29) (2026-04-29)
 
 

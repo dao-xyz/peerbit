@@ -389,6 +389,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.1.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.4...shared-log-v13.1.5) (2026-04-30)
+
+
+### Bug Fixes
+
+* **shared-log:** widen underfilled leader filters ([#748](https://github.com/dao-xyz/peerbit/issues/748)) ([dd690f7](https://github.com/dao-xyz/peerbit/commit/dd690f7386eb69928ecb11faa817e58b36256d4b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.26
+    * @peerbit/program bumped to 6.0.21
+    * @peerbit/pubsub bumped to 5.2.2
+    * @peerbit/rpc bumped to 6.0.25
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.25
+
 ## [13.1.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.3...shared-log-v13.1.4) (2026-04-29)
 
 

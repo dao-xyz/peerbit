@@ -188,6 +188,13 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [5.2.2](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.2.1...pubsub-v5.2.2) (2026-04-30)
+
+
+### Bug Fixes
+
+* **shared-log:** widen underfilled leader filters ([#748](https://github.com/dao-xyz/peerbit/issues/748)) ([dd690f7](https://github.com/dao-xyz/peerbit/commit/dd690f7386eb69928ecb11faa817e58b36256d4b))
+
 ## [5.2.1](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.2.0...pubsub-v5.2.1) (2026-04-29)
 
 
