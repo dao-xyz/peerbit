@@ -188,6 +188,13 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [5.2.4](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.2.3...pubsub-v5.2.4) (2026-04-30)
+
+
+### Bug Fixes
+
+* **pubsub:** normalize byte sources across package boundaries ([#751](https://github.com/dao-xyz/peerbit/issues/751)) ([9092c6c](https://github.com/dao-xyz/peerbit/commit/9092c6c36485358911af43eec51587d56134a80d))
+
 ## [5.2.3](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.2.2...pubsub-v5.2.3) (2026-04-30)
 
 

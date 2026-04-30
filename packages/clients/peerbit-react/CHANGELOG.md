@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.15](https://github.com/dao-xyz/peerbit/compare/react-v1.1.14...react-v1.1.15) (2026-04-30)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/canonical-client bumped to 1.1.26
+    * @peerbit/program bumped to 6.0.23
+    * @peerbit/program-react bumped to 0.4.26
+    * peerbit bumped to 5.2.12
+
 ## [1.1.14](https://github.com/dao-xyz/peerbit/compare/react-v1.1.13...react-v1.1.14) (2026-04-30)
 
 
