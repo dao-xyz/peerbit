@@ -49,6 +49,7 @@ import {
 } from "@peerbit/stream-interface";
 import { AbortError, TimeoutError, delay } from "@peerbit/time";
 import { Uint8ArrayList } from "uint8arraylist";
+import { toUint8Array } from "./bytes.js";
 import {
 	type DebouncedAccumulatorCounterMap,
 	debouncedAccumulatorSetCounter,
@@ -65,9 +66,7 @@ import { TopicRootControlPlane } from "./topic-root-control-plane.js";
 export * from "./fanout-tree.js";
 export * from "./fanout-channel.js";
 export * from "./topic-root-control-plane.js";
-
-export const toUint8Array = (arr: Uint8ArrayList | Uint8Array) =>
-	arr instanceof Uint8ArrayList ? arr.subarray() : arr;
+export { toUint8Array } from "./bytes.js";
 
 export const logger = loggerFn("peerbit:transport:topic-control-plane");
 const warn = logger.newScope("warn");
