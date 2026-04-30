@@ -566,6 +566,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [6.0.31](https://github.com/dao-xyz/peerbit/compare/trusted-network-v6.0.30...trusted-network-v6.0.31) (2026-04-30)
+
+
+### Bug Fixes
+
+* **document:** query connected peers during cold-start search ([#746](https://github.com/dao-xyz/peerbit/issues/746)) ([d508740](https://github.com/dao-xyz/peerbit/commit/d5087409dffcf05c62eab450ad3cbeaec0733693))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 13.0.31
+    * @peerbit/log bumped to 6.0.26
+    * @peerbit/program bumped to 6.0.21
+    * @peerbit/shared-log bumped to 13.1.5
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.25
+
 ## [6.0.30](https://github.com/dao-xyz/peerbit/compare/trusted-network-v6.0.29...trusted-network-v6.0.30) (2026-04-29)
 
 
