@@ -188,6 +188,13 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [5.2.5](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.2.4...pubsub-v5.2.5) (2026-04-30)
+
+
+### Bug Fixes
+
+* **pubsub:** classify fanout attachment timeout ([f81e673](https://github.com/dao-xyz/peerbit/commit/f81e6739d41f9809000e4273ef24cd1938ca4ce3))
+
 ## [5.2.4](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.2.3...pubsub-v5.2.4) (2026-04-30)
 
 
