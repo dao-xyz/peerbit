@@ -97,11 +97,18 @@ const warn = logger.newScope("warn");
 
 export { BandwidthTracker }; // might be useful for others
 
+const getErrorName = (e: any): string | undefined =>
+	e?.name ?? e?.constructor?.name;
+
 export const dontThrowIfDeliveryError = (e: any) => {
+	const errorName = getErrorName(e);
 	if (
 		e instanceof DeliveryError ||
 		e instanceof TimeoutError ||
-		e instanceof AbortError
+		e instanceof AbortError ||
+		errorName === "DeliveryError" ||
+		errorName === "TimeoutError" ||
+		errorName === "AbortError"
 	) {
 		return;
 	}
