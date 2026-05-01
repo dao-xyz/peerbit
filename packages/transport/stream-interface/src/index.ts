@@ -63,8 +63,19 @@ export interface PublicKeyFromHashResolver {
 export class NotStartedError extends Error {
 	constructor() {
 		super("Not started");
+		this.name = "NotStartedError";
 	}
 }
 
-export class DeliveryError extends Error {}
-export class InvalidMessageError extends Error {}
+export class DeliveryError extends Error {
+	constructor(message?: string) {
+		super(message);
+		this.name = "DeliveryError";
+	}
+}
+export class InvalidMessageError extends Error {
+	constructor(message?: string) {
+		super(message);
+		this.name = "InvalidMessageError";
+	}
+}
