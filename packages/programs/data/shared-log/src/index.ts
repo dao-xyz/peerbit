@@ -7625,10 +7625,6 @@ export class SharedLog<
 				}
 				}
 
-				if (this._isAdaptiveReplicating && hasSelfRangeRemoval) {
-					await this.pruneIndexedEntriesNoLongerLed();
-				}
-
 				if (forceFreshDelivery) {
 					// Pure leave/shrink churn can have zero `addedPeers`, but the peers that
 					// received redistributed entries still need a follow-up repair pass if the
@@ -7667,6 +7663,14 @@ export class SharedLog<
 
 			for (const target of [...uncheckedDeliver.keys()]) {
 				flushUncheckedDeliverTarget(target);
+			}
+
+			if (this._isAdaptiveReplicating && hasSelfRangeRemoval) {
+				// Adaptive shrink/replacement can make already-indexed local heads
+				// prunable even when the incremental rebalance scan missed them under
+				// churn or timing pressure. Re-scan after repair dispatches are flushed
+				// so checked prune work is enqueued before callers wait for idle.
+				await this.pruneIndexedEntriesNoLongerLed();
 			}
 
 			return changed;

@@ -6,7 +6,10 @@ import {
 	variant,
 } from "@dao-xyz/borsh";
 import { AccessError, SignatureWithKey } from "@peerbit/crypto";
-import { NotFoundError, ResultIndexedValue } from "@peerbit/document-interface";
+import {
+	NotFoundError,
+	type ResultIndexedValue,
+} from "@peerbit/document-interface";
 import type { QueryCacheOptions } from "@peerbit/indexer-cache";
 import * as indexerTypes from "@peerbit/indexer-interface";
 import {
@@ -38,13 +41,14 @@ import {
 	isDeleteOperation,
 	isPutOperation,
 } from "./operation.js";
+import { isResultIndexedValue } from "./result-shape.js";
 import {
 	type CanRead,
 	type CanSearch,
 	DocumentIndex,
 	type GetOptions,
-	type IndexedContextOnly,
 	INDEX_CONTEXT_SHAPE,
+	type IndexedContextOnly,
 	type PrefetchOptions,
 	type ReachScope,
 	type TransformOptions,
@@ -196,12 +200,13 @@ export class Documents<
 			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
 			| null
 			| undefined,
-	): indexerTypes.ReturnTypeFromShape<
-		WithContext<I>,
-		typeof INDEX_CONTEXT_SHAPE
-	>["__context"]
+	):
+		| indexerTypes.ReturnTypeFromShape<
+				WithContext<I>,
+				typeof INDEX_CONTEXT_SHAPE
+		  >["__context"]
 		| undefined {
-		return existing instanceof ResultIndexedValue
+		return isResultIndexedValue(existing)
 			? existing.context
 			: existing?.value.__context;
 	}
@@ -268,7 +273,7 @@ export class Documents<
 					results.results
 						.flat()
 						.map((x) =>
-							x instanceof ResultIndexedValue && x.entries.length > 0
+							isResultIndexedValue(x) && x.entries.length > 0
 								? x.entries[0]
 								: x.context.head,
 						),
@@ -499,10 +504,7 @@ export class Documents<
 					if (this.immutable) {
 						// key already exist but pick the oldest entry
 						// this is because we can not overwrite same id if immutable
-						if (
-							existingContext.created <
-							entry.meta.clock.timestamp.wallTime
-						) {
+						if (existingContext.created < entry.meta.clock.timestamp.wallTime) {
 							return false;
 						}
 
