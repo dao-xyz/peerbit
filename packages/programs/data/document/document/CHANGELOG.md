@@ -456,6 +456,21 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [13.0.35](https://github.com/dao-xyz/peerbit/compare/document-v13.0.34...document-v13.0.35) (2026-05-01)
+
+
+### Bug Fixes
+
+* **document:** classify remote results by shape ([6afe1c2](https://github.com/dao-xyz/peerbit/commit/6afe1c2e5814a4f2e47f11b30360fb7bb1905f09))
+* **document:** classify remote results by shape ([60b18c4](https://github.com/dao-xyz/peerbit/commit/60b18c454e1ecf95deec69af5c4580d837192333))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped to 13.1.9
+
 ## [13.0.34](https://github.com/dao-xyz/peerbit/compare/document-v13.0.33...document-v13.0.34) (2026-04-30)
 
 

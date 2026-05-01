@@ -389,6 +389,14 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.1.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.8...shared-log-v13.1.9) (2026-05-01)
+
+
+### Bug Fixes
+
+* **document:** classify remote results by shape ([6afe1c2](https://github.com/dao-xyz/peerbit/commit/6afe1c2e5814a4f2e47f11b30360fb7bb1905f09))
+* **shared-log:** prune stale heads after topology changes ([89e20a2](https://github.com/dao-xyz/peerbit/commit/89e20a2e0b4050aefdf15c77b499e76b9f600618))
+
 ## [13.1.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.7...shared-log-v13.1.8) (2026-04-30)
 
 
