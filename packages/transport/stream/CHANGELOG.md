@@ -43,6 +43,21 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [5.0.12](https://github.com/dao-xyz/peerbit/compare/stream-v5.0.11...stream-v5.0.12) (2026-05-01)
+
+
+### Bug Fixes
+
+* **stream:** stabilize delivery error identity ([2d32ba7](https://github.com/dao-xyz/peerbit/commit/2d32ba7c388e7dda5ee4eec10bc776bca45fba31))
+* **stream:** stabilize delivery error identity ([e65fbb2](https://github.com/dao-xyz/peerbit/commit/e65fbb2b9be00fa14393d3c39bd4a4e6ac62349a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream-interface bumped to 6.0.9
+
 ## [5.0.11](https://github.com/dao-xyz/peerbit/compare/stream-v5.0.10...stream-v5.0.11) (2026-04-30)
 
 
