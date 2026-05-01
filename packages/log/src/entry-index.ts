@@ -654,7 +654,9 @@ export class EntryIndex<T> {
 			} else if (coercedOptions?.ignoreMissing !== true) {
 				throw new Error("Failed to load entry from head with hash: " + k);
 			}
-			this.cache.add(k, mem ?? undefined);
+			if (mem) {
+				this.cache.add(k, mem);
+			}
 		}
 		return mem ? mem : undefined;
 		/* }

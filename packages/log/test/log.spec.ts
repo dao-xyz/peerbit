@@ -99,6 +99,40 @@ describe("properties", function () {
 			assert.deepStrictEqual(entry, undefined);
 		});
 
+		it("rechecks storage after a previous miss", async () => {
+			const sourceStore = new AnyBlockStore();
+			const targetStore = new AnyBlockStore();
+			await Promise.all([sourceStore.start(), targetStore.start()]);
+
+			const sourceLog = new Log<string>();
+			const targetLog = new Log<string>();
+			try {
+				await sourceLog.open(sourceStore, signKey, {
+					encoding: JSON_ENCODING,
+				});
+				await targetLog.open(targetStore, signKey, {
+					encoding: JSON_ENCODING,
+				});
+
+				const { entry } = await sourceLog.append("late");
+				const encodedEntry = await sourceStore.get(entry.hash);
+				expect(encodedEntry).to.exist;
+
+				expect(await targetLog.get(entry.hash)).to.equal(undefined);
+				expect(await targetStore.put(encodedEntry!)).to.equal(entry.hash);
+
+				const resolved = await targetLog.get(entry.hash);
+				expect(await resolved?.getPayloadValue()).to.equal("late");
+			} finally {
+				await Promise.all([
+					sourceLog.close(),
+					targetLog.close(),
+					sourceStore.stop(),
+					targetStore.stop(),
+				]);
+			}
+		});
+
 		it("does not fetch from remotes by if missing block by default", async () => {
 			const storeGetFn = store.get.bind(store);
 			let remoteFetchOptions: any = undefined;
