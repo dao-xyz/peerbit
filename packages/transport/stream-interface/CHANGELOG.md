@@ -66,6 +66,14 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [6.0.9](https://github.com/dao-xyz/peerbit/compare/stream-interface-v6.0.8...stream-interface-v6.0.9) (2026-05-01)
+
+
+### Bug Fixes
+
+* **stream:** stabilize delivery error identity ([2d32ba7](https://github.com/dao-xyz/peerbit/commit/2d32ba7c388e7dda5ee4eec10bc776bca45fba31))
+* **stream:** stabilize delivery error identity ([e65fbb2](https://github.com/dao-xyz/peerbit/commit/e65fbb2b9be00fa14393d3c39bd4a4e6ac62349a))
+
 ## [6.0.8](https://github.com/dao-xyz/peerbit/compare/stream-interface-v6.0.7...stream-interface-v6.0.8) (2026-04-30)
 
 

@@ -1,5 +1,21 @@
 # @peerbit/document-react
 
+## [1.0.37](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.36...document-react-v1.0.37) (2026-05-01)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 13.0.37
+    * @peerbit/react bumped to 1.1.17
+  * devDependencies
+    * @peerbit/blocks-interface bumped to 2.0.11
+    * @peerbit/program bumped to 6.0.25
+    * @peerbit/test-utils bumped to 3.0.29
+    * @peerbit/shared-log bumped to 13.1.11
+    * peerbit bumped to 5.2.14
+
 ## [1.0.36](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.35...document-react-v1.0.36) (2026-05-01)
 
 

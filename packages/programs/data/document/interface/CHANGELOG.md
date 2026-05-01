@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.2.36](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.35...document-interface-v3.2.36) (2026-05-01)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.31
+
 ## [3.2.35](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.34...document-interface-v3.2.35) (2026-05-01)
 
 
