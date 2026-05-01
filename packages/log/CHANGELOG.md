@@ -368,6 +368,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [6.0.30](https://github.com/dao-xyz/peerbit/compare/log-v6.0.29...log-v6.0.30) (2026-05-01)
+
+
+### Bug Fixes
+
+* **log:** do not cache missing entries ([#758](https://github.com/dao-xyz/peerbit/issues/758)) ([c517247](https://github.com/dao-xyz/peerbit/commit/c51724731496b9bc700b0e6af571288816c62aaf))
+
 ## [6.0.29](https://github.com/dao-xyz/peerbit/compare/log-v6.0.28...log-v6.0.29) (2026-04-30)
 
 

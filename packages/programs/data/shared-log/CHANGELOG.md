@@ -389,6 +389,15 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.1.10](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.9...shared-log-v13.1.10) (2026-05-01)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.30
+
 ## [13.1.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.8...shared-log-v13.1.9) (2026-05-01)
 
 
