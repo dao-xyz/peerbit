@@ -161,9 +161,17 @@ const maybeCopyFrontendCerts = async ({
 const instrumentFileShareFrontend = async (frontendRoot) => {
 	const dropPath = path.join(frontendRoot, "src", "Drop.tsx");
 	let contents = await fsp.readFile(dropPath, "utf8");
+	const hasExistingBenchmarkHook =
+		contents.includes("__peerbitFileShareTestHooks") &&
+		contents.includes("setReplicationRole") &&
+		contents.includes("getDiagnostics");
+	const hasExistingUpdateListStats =
+		contents.includes("__peerbitFileShareBenchmarkStats") &&
+		contents.includes("updateListStats") &&
+		contents.includes("updateListCalls.push(updateListStats)");
 	if (
-		contents.includes(DROP_HOOK_MARKER) &&
-		contents.includes(DROP_UPDATE_LIST_MARKER)
+		(contents.includes(DROP_HOOK_MARKER) || hasExistingBenchmarkHook) &&
+		(contents.includes(DROP_UPDATE_LIST_MARKER) || hasExistingUpdateListStats)
 	) {
 		return;
 	}
