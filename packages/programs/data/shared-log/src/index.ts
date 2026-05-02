@@ -3568,7 +3568,7 @@ export class SharedLog<
 	private async pruneJoinedEntriesNoLongerLed(entries: Entry<T>[]) {
 		const selfHash = this.node.identity.publicKey.hashcode();
 		for (const entry of entries) {
-			if (this.closed || this._pendingDeletes.has(entry.hash)) {
+			if (this.closed) {
 				continue;
 			}
 
@@ -3580,6 +3580,13 @@ export class SharedLog<
 
 			if (leaders.has(selfHash)) {
 				this.pruneDebouncedFn.delete(entry.hash);
+				await this._pendingDeletes
+					.get(entry.hash)
+					?.reject(new Error("Failed to delete, is leader again"));
+				continue;
+			}
+
+			if (this._pendingDeletes.has(entry.hash)) {
 				continue;
 			}
 
@@ -3604,7 +3611,7 @@ export class SharedLog<
 				const entries = await iterator.next(REPAIR_SWEEP_ENTRY_BATCH_SIZE);
 				for (const entry of entries) {
 					const entryReplicated = entry.value;
-					if (this.closed || this._pendingDeletes.has(entryReplicated.hash)) {
+					if (this.closed) {
 						continue;
 					}
 
@@ -3620,6 +3627,10 @@ export class SharedLog<
 							.get(entryReplicated.hash)
 							?.reject(new Error("Failed to delete, is leader again"));
 						this.removePruneRequestSent(entryReplicated.hash);
+						continue;
+					}
+
+					if (this._pendingDeletes.has(entryReplicated.hash)) {
 						continue;
 					}
 
