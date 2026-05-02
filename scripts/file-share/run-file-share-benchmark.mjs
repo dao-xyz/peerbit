@@ -7,6 +7,7 @@ import {
 	copyTemplate,
 	defaultExamplesDest,
 	defaultExamplesSource,
+	defaultFileShareLocalPackages,
 	ensureExamplesAssetPackageLinks,
 	overlayInstalledPackages,
 	parseArgs,
@@ -50,8 +51,6 @@ const REMOTE_NETWORK_DEFAULTS = {
 	viteMode: "staging",
 	viteConfig: "vite.config.remote.ts",
 };
-
-const DEFAULT_LOCAL_PACKAGES = ["@peerbit/shared-log"];
 
 const getScenarioConfig = (scenario) => {
 	const config = SCENARIOS[scenario];
@@ -162,9 +161,17 @@ const maybeCopyFrontendCerts = async ({
 const instrumentFileShareFrontend = async (frontendRoot) => {
 	const dropPath = path.join(frontendRoot, "src", "Drop.tsx");
 	let contents = await fsp.readFile(dropPath, "utf8");
+	const hasExistingBenchmarkHook =
+		contents.includes("__peerbitFileShareTestHooks") &&
+		contents.includes("setReplicationRole") &&
+		contents.includes("getDiagnostics");
+	const hasExistingUpdateListStats =
+		contents.includes("__peerbitFileShareBenchmarkStats") &&
+		contents.includes("updateListStats") &&
+		contents.includes("updateListCalls.push(updateListStats)");
 	if (
-		contents.includes(DROP_HOOK_MARKER) &&
-		contents.includes(DROP_UPDATE_LIST_MARKER)
+		(contents.includes(DROP_HOOK_MARKER) || hasExistingBenchmarkHook) &&
+		(contents.includes(DROP_UPDATE_LIST_MARKER) || hasExistingUpdateListStats)
 	) {
 		return;
 	}
@@ -595,7 +602,7 @@ const main = async () => {
 			? []
 			: localPackagesArg === "all"
 				? undefined
-				: (localPackagesArg ?? DEFAULT_LOCAL_PACKAGES.join(","))
+				: (localPackagesArg ?? defaultFileShareLocalPackages.join(","))
 						.split(",")
 						.map((value) => value.trim())
 						.filter(Boolean);

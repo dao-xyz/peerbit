@@ -1,6 +1,7 @@
 import {
 	defaultExamplesDest,
 	defaultExamplesSource,
+	defaultFileShareLocalPackages,
 	parseArgs,
 	prepareExamplesRepo,
 	repoRoot,
@@ -17,7 +18,7 @@ Options:
   --dest <path>              output directory (default: ${defaultExamplesDest()})
   --peerbit-root <path>      peerbit workspace root (default: ${repoRoot})
   --integration-mode <mode>  one of none, link, overlay (default: overlay)
-  --local-packages <csv>     package names to link/overlay (default: @peerbit/shared-log)
+  --local-packages <csv>     package names to link/overlay (default: ${defaultFileShareLocalPackages.join(",")}; use "all" for every installed local package)
   --fresh                    delete the destination before cloning
   --install                  run pnpm install in the prepared checkout
 `);
@@ -33,10 +34,12 @@ const main = async () => {
 	const localPackages =
 		integrationMode === "none"
 			? []
-			: (args["local-packages"] ?? "@peerbit/shared-log")
-					.split(",")
-					.map((value) => value.trim())
-					.filter(Boolean);
+			: args["local-packages"] === "all"
+				? undefined
+				: (args["local-packages"] ?? defaultFileShareLocalPackages.join(","))
+						.split(",")
+						.map((value) => value.trim())
+						.filter(Boolean);
 
 	const prepared = await prepareExamplesRepo({
 		source: args.source,

@@ -27,7 +27,6 @@ import {
 	type RequestTransportContext,
 	SilentDelivery,
 	type WithExtraSigners,
-	deliveryModeHasReceiver,
 } from "@peerbit/stream-interface";
 import { AbortError, TimeoutError } from "@peerbit/time";
 import pDefer, { type DeferredPromise } from "p-defer";
@@ -64,6 +63,19 @@ const createValueResolver = <T>(
 	} else {
 		return (decrypted) => decrypted.getValue(type as AbstractType<T>);
 	}
+};
+
+const getExpectedResponders = (
+	mode: PubSubPublishOptions["mode"] | undefined,
+): Set<string> | undefined => {
+	const to = (mode as { to?: unknown } | undefined)?.to;
+	if (!Array.isArray(to) || to.length === 0) {
+		return undefined;
+	}
+	const responders = to.filter(
+		(value): value is string => typeof value === "string",
+	);
+	return responders.length > 0 ? new Set(responders) : undefined;
 };
 
 export type ResponseEvent<R> = {
@@ -341,6 +353,18 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 		expectedResponders?: Set<string>,
 		options?: RPCRequestOptions<R>,
 	) {
+		const expectedResponseHash =
+			expectedResponders && response.from
+				? response.from.hashcode()
+				: undefined;
+		if (
+			expectedResponseHash &&
+			expectedResponders.has(expectedResponseHash) &&
+			responders.has(expectedResponseHash)
+		) {
+			return;
+		}
+
 		this.events.dispatchEvent(
 			new CustomEvent("response", {
 				detail: response,
@@ -470,10 +494,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 		this.events.addEventListener("close", closeListener);
 		this.events.addEventListener("drop", dropListener);
 
-		const expectedResponders =
-			options?.mode && deliveryModeHasReceiver(options.mode)
-				? new Set(options.mode.to)
-				: undefined;
+		const expectedResponders = getExpectedResponders(options?.mode);
 
 		const responders = new Set<string>();
 

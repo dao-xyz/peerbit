@@ -1852,6 +1852,7 @@ export class DocumentIndex<
 						);
 					} else {
 						missingValues = true;
+						set.results[i] = undefined as any;
 					}
 				}
 
@@ -2074,8 +2075,11 @@ export class DocumentIndex<
 			} else {
 				const context = result.value.__context;
 				const head = await this._log.log.get(context.head);
-				// assume remote peer will start to replicate (TODO is this ideal?)
 				if (replicateIndexFlag) {
+					if (!head) {
+						continue;
+					}
+					// assume remote peer will start to replicate (TODO is this ideal?)
 					this._log.addPeersToGidPeerHistory(context.gid, [from.hashcode()]);
 				}
 
@@ -2527,11 +2531,17 @@ export class DocumentIndex<
 
 				let extraPromises: Promise<void>[] | undefined = undefined;
 
+				const seenRemoteHashes = new Set<string>();
 				const groupHashes: string[][] = replicatorGroups
 					.filter((hash) => {
 						if (hash === this.node.identity.publicKey.hashcode()) {
 							return false;
 						}
+
+						if (seenRemoteHashes.has(hash)) {
+							return false;
+						}
+						seenRemoteHashes.add(hash);
 
 						if (fetchFirstForRemote?.has(hash)) {
 							// we already fetched this one for remote, no need to do it again
@@ -3825,7 +3835,7 @@ export class DocumentIndex<
 				coercedBatch = (
 					await Promise.all(
 						batch.map(async (x) => {
-							const withContext = coerceWithContext(
+							const resolved =
 								x.value instanceof this.documentType
 									? x.value
 									: (
@@ -3833,9 +3843,11 @@ export class DocumentIndex<
 												head: x.context.head,
 												indexed: x.indexed,
 											})
-										)?.value,
-								x.context,
-							);
+										)?.value;
+							if (!resolved) {
+								return undefined;
+							}
+							const withContext = coerceWithContext(resolved, x.context);
 							const withIndexed = coerceWithIndexed(withContext, x.indexed);
 							return withIndexed;
 						}),

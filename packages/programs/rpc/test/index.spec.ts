@@ -201,6 +201,45 @@ describe("rpc", () => {
 			);
 		});
 
+		it("ignores duplicate responses from an expected responder", () => {
+			const from = responder.node.identity.publicKey;
+			const allResults: RPCResponse<Body>[] = [];
+			const responders = new Set<string>();
+			const expectedResponders = new Set<string>([from.hashcode()]);
+			const deferred = {
+				resolve: sinon.spy(),
+				reject: sinon.spy(),
+				promise: Promise.resolve(),
+			};
+			const onResponse = sinon.spy();
+			const decoded = {
+				response: new Body({ arr: new Uint8Array([1, 2, 3]) }),
+				from,
+				message: undefined as any,
+			};
+
+			(reader.query as any).handleDecodedResponse(
+				decoded,
+				deferred,
+				allResults,
+				responders,
+				expectedResponders,
+				{ onResponse },
+			);
+			(reader.query as any).handleDecodedResponse(
+				decoded,
+				deferred,
+				allResults,
+				responders,
+				expectedResponders,
+				{ onResponse },
+			);
+
+			expect(allResults).to.have.length(1);
+			expect(onResponse.calledOnce).to.be.true;
+			expect(deferred.resolve.calledOnce).to.be.true;
+		});
+
 		it("custom signer", async () => {
 			const requestEventFromResponder: CustomEvent<RequestEvent<Body>>[] = [];
 			const responseEventsFromResponder: CustomEvent<ResponseEvent<Body>>[] =

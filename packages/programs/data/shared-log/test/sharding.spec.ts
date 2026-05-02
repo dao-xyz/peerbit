@@ -270,6 +270,53 @@ testSetups.forEach((setup) => {
 				);
 			};
 
+			it("cancels pending checked prune when local peer leads again", async () => {
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						replicate: {
+							offset: 0,
+						},
+						replicas: {
+							min: new AbsoluteReplicas(1),
+							max: new AbsoluteReplicas(1),
+						},
+						setup,
+						timeUntilRoleMaturity: 0,
+					},
+				});
+
+				const { entry } = await db1.add("hello", { meta: { next: [] } });
+				await waitForResolved(
+					async () => expect(await db1.log.entryCoordinatesIndex.count()).eq(1),
+					{ timeout: 10_000, delayInterval: 100 },
+				);
+
+				const log = db1.log as any;
+				const seedPendingDelete = () => {
+					let rejected: Error | undefined;
+					log._pendingDeletes.set(entry.hash, {
+						promise: { promise: new Promise<void>(() => {}) },
+						clear: () => log._pendingDeletes.delete(entry.hash),
+						resolve: () => {},
+						reject: (reason: Error) => {
+							rejected = reason;
+							log._pendingDeletes.delete(entry.hash);
+						},
+					});
+					return () => rejected;
+				};
+
+				let rejected = seedPendingDelete();
+				await log.pruneJoinedEntriesNoLongerLed([entry]);
+				expect(rejected()?.message).equal("Failed to delete, is leader again");
+				expect(log._pendingDeletes.has(entry.hash)).false;
+
+				rejected = seedPendingDelete();
+				await log.pruneIndexedEntriesNoLongerLed();
+				expect(rejected()?.message).equal("Failed to delete, is leader again");
+				expect(log._pendingDeletes.has(entry.hash)).false;
+			});
+
 			const countIdleUnderReplicatedEntries = async (
 				minReplicas: number,
 				...dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[]
@@ -291,7 +338,7 @@ testSetups.forEach((setup) => {
 						),
 				).length;
 			};
-			const waitForChurnReplicationSettled = async (
+			const waitForReplicationCoverageSettled = async (
 				dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[],
 				minReplicas: number,
 				expectedUnionSize: number,
@@ -503,7 +550,7 @@ testSetups.forEach((setup) => {
 				);
 
 				await waitForParticipationToSettle(db1, db2);
-				await waitForDistributionQuiesced(db1, db2);
+				await waitForReplicationCoverageSettled([db1, db2], 1, entryCount);
 
 				await checkBounded(
 					entryCount,
@@ -555,10 +602,10 @@ testSetups.forEach((setup) => {
 				);
 
 				// Participation can report "full" while redistribution is still in flight.
-				// The bounded assertion is about the settled final split, so wait for the
-				// actual distribution helpers instead of sampling the transient join state.
+				// The bounded assertion is about the settled final split, so wait for
+				// coverage rather than raw repair-sweep idleness.
 				await waitForParticipationToSettle(db1, db2);
-				await waitForDistributionQuiesced(db1, db2);
+				await waitForReplicationCoverageSettled([db1, db2], 1, entryCount);
 				// The 30-entry u64 sample can land one or two entries outside a strict
 				// 30/70 split while still preserving the full union and replica floor.
 				await checkBounded(
@@ -637,9 +684,9 @@ testSetups.forEach((setup) => {
 					db3.log.rebalanceAll({ clearCache: true }),
 				]);
 				await waitForParticipationToSettle(db1, db2, db3);
-				await waitForDistributionQuiesced(db1, db2, db3);
+				await waitForReplicationCoverageSettled([db1, db2, db3], 2, entryCount);
 				if (setup.name === "u64-iblt") {
-					// `waitForParticipationToSettle()` and `waitForDistributionQuiesced()` already
+					// `waitForParticipationToSettle()` and coverage checks already
 					// give the redistribution time to settle. An extra polling loop on exact
 					// participation closeness can hang in CI even when the final sharding shape is
 					// acceptable. Check the fairness signal once after quiescence instead of turning
@@ -1028,7 +1075,7 @@ testSetups.forEach((setup) => {
 						// This churn regression is about settled redistribution correctness, not
 						// whether every prune/rebalance timer reaches a totally idle state under
 						// adversarial delayed traffic on a loaded runner.
-						await waitForChurnReplicationSettled(
+						await waitForReplicationCoverageSettled(
 							[db1, db3, db4],
 							2,
 							entryCount,
@@ -1193,7 +1240,7 @@ testSetups.forEach((setup) => {
 						// union, replica floor, and lack of idle under-replication are the
 						// source of truth. Full internal quiescence is stronger than necessary
 						// and remains timing-sensitive under seeded pubsub jitter.
-						await waitForChurnReplicationSettled(
+						await waitForReplicationCoverageSettled(
 							[db1, db3, db4],
 							2,
 							entryCount,
@@ -1566,7 +1613,10 @@ testSetups.forEach((setup) => {
 				);
 
 				await waitForParticipationToSettle(db1, db2, db3);
-				await waitForDistributionQuiesced(db1, db2, db3);
+				// Join repair may still have receipt-driven follow-up sweeps queued under
+				// full-shard load. The correctness contract here is settled coverage and
+				// distribution before churn starts, not total internal repair idleness.
+				await waitForReplicationCoverageSettled([db1, db2, db3], 2, entryCount);
 
 				// This first three-peer bound is only a coarse fairness check before the close/reopen
 				// churn below. With a 30-entry u64 sample, one entry is 3.3%, so allowing 14/30 to

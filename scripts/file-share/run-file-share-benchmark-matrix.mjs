@@ -6,6 +6,7 @@ import path from "node:path";
 import {
 	defaultExamplesDest,
 	defaultExamplesSource,
+	defaultFileShareLocalPackages,
 	parseArgs,
 	repoRoot,
 	run,
@@ -500,7 +501,8 @@ const main = async () => {
 	const mode = args.mode ?? "both";
 	const scenario = args.scenario ?? "upload";
 	const integrationMode = args["integration-mode"] ?? "overlay";
-	const localPackages = args["local-packages"] ?? "@peerbit/shared-log";
+	const localPackages =
+		args["local-packages"] ?? defaultFileShareLocalPackages.join(",");
 	const network = args.network ?? "local";
 	const uploadTimeoutMs = args["upload-timeout-ms"];
 	const postUploadMonitorMs = args["post-upload-monitor-ms"];

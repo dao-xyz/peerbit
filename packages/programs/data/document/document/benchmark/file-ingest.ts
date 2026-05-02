@@ -6,6 +6,7 @@ import { delay } from "@peerbit/time";
 import {
 	Documents,
 	SearchRequest,
+	SearchRequestIndexed,
 	StringMatch,
 	type SetupOptions,
 } from "../src/index.js";
@@ -45,6 +46,27 @@ type Task = {
 };
 
 const modes = ["adaptive", "fixed1"] as const satisfies readonly BenchMode[];
+const argv = process.argv.slice(2);
+const hasFlag = (name: string) => argv.includes(name);
+const getArg = (name: string) => {
+	const index = argv.indexOf(name);
+	if (index === -1) {
+		return undefined;
+	}
+	return argv[index + 1];
+};
+const modeArg = getArg("--mode");
+const selectedModes: readonly BenchMode[] =
+	modeArg == null
+		? modes
+		: modes.includes(modeArg as BenchMode)
+			? [modeArg as BenchMode]
+			: (() => {
+					throw new Error(
+						`Invalid --mode '${modeArg}'. Expected one of: ${modes.join(", ")}`,
+					);
+				})();
+const outputJson = process.env.BENCH_JSON === "1" || hasFlag("--json");
 const envInt = (name: string, fallback: number) => {
 	const value = process.env[name];
 	if (value == null) {
@@ -276,6 +298,7 @@ const waitForObserverReady = async (
 	upload: Awaited<ReturnType<typeof uploadChunkedFile>>,
 	expectedChunks: number,
 	startedAt: number,
+	debugPeers?: Record<string, string>,
 ) => {
 	const deadline = startedAt + readyTimeoutMs;
 	let entryPolls = 0;
@@ -286,6 +309,13 @@ const waitForObserverReady = async (
 	let finalManifestEntryKnownMs: number | undefined;
 	let chunkEntriesKnownMs: number | undefined;
 	let manifestReadyMs: number | undefined;
+	let lastKnownChunkEntries = 0;
+	let lastManifestFound = false;
+	let lastManifestReady = false;
+	let lastChunkResults = 0;
+	let lastChunkResponses: string[] = [];
+	const labelPeer = (hash: string | undefined) =>
+		hash ? (debugPeers?.[hash] ?? hash) : "unknown";
 
 	while (performance.now() < deadline) {
 		entryPolls += 1;
@@ -311,6 +341,8 @@ const waitForObserverReady = async (
 				}
 				remainingChunkEntries -= 1;
 			}
+			lastKnownChunkEntries =
+				upload.chunkEntryHashes.length - remainingChunkEntries;
 			if (remainingChunkEntries === 0) {
 				chunkEntriesKnownMs = performance.now() - startedAt;
 			}
@@ -330,11 +362,14 @@ const waitForObserverReady = async (
 		);
 		manifestSearchMs += performance.now() - manifestSearchStartedAt;
 		const manifest = manifests[0] as FileRecord | undefined;
+		lastManifestFound = manifest != null;
+		lastManifestReady = manifest?.ready === true;
 
 		if (manifest?.ready) {
 			manifestReadyMs ??= performance.now() - startedAt;
 			chunkPolls += 1;
 			const chunkSearchStartedAt = performance.now();
+			const chunkResponses: string[] = [];
 			const chunkResults = await observer.files.index.search(
 				new SearchRequest({
 					query: new StringMatch({
@@ -343,9 +378,20 @@ const waitForObserverReady = async (
 					}),
 					fetch: 0xffffffff,
 				}),
-				queryOptions,
+				{
+					...queryOptions,
+					onResponse: (response: any, from: any) => {
+						chunkResponses.push(
+							`${labelPeer(from?.hashcode?.())}:results=${
+								response?.results?.length ?? "?"
+							},kept=${response?.kept?.toString?.() ?? "?"}`,
+						);
+					},
+				} as any,
 			);
 			chunkSearchMs += performance.now() - chunkSearchStartedAt;
+			lastChunkResults = chunkResults.length;
+			lastChunkResponses = chunkResponses;
 			if (chunkResults.length === expectedChunks) {
 				return {
 					finalManifestEntryKnownMs:
@@ -367,9 +413,33 @@ const waitForObserverReady = async (
 	}
 
 	throw new Error(
-		`Timed out waiting for observer readiness for upload ${upload.uploadId}`,
+		`Timed out waiting for observer readiness for upload ${upload.uploadId}. ` +
+			`progress finalManifestEntryKnown=${finalManifestEntryKnownMs != null}, ` +
+			`chunkEntriesKnown=${lastKnownChunkEntries}/${upload.chunkEntryHashes.length}, ` +
+			`manifestFound=${lastManifestFound}, manifestReady=${lastManifestReady}, ` +
+			`chunkResults=${lastChunkResults}/${expectedChunks}, ` +
+			`chunkResponses=[${lastChunkResponses.join(";")}], ` +
+			`entryPolls=${entryPolls}, manifestPolls=${manifestPolls}, chunkPolls=${chunkPolls}`,
 	);
 };
+
+const countLocalChunks = async (store: FileStore, uploadId: string) =>
+	(
+		await store.files.index.search(
+			new SearchRequestIndexed({
+				query: new StringMatch({
+					key: "parentId",
+					value: uploadId,
+				}),
+				fetch: 0xffffffff,
+			}),
+			{
+				local: true,
+				remote: false,
+				resolve: false,
+			} as any,
+		)
+	).length;
 
 const waitForReplicationSetup = async (
 	writer: FileStore,
@@ -448,12 +518,38 @@ const runIteration = async (
 		);
 		const writerCompleteMs = performance.now() - startedAt;
 
-		const observerProgress = await waitForObserverReady(
-			observer,
-			upload,
-			payloadChunks.length,
-			startedAt,
-		);
+		let observerProgress: Awaited<ReturnType<typeof waitForObserverReady>>;
+		try {
+			observerProgress = await waitForObserverReady(
+				observer,
+				upload,
+				payloadChunks.length,
+				startedAt,
+				{
+					[writer.node.identity.publicKey.hashcode()]: "writer",
+					[seeder.node.identity.publicKey.hashcode()]: "seeder",
+					[observer.node.identity.publicKey.hashcode()]: "observer",
+				},
+			);
+		} catch (error) {
+			const counts = await Promise.allSettled([
+				countLocalChunks(writer, upload.uploadId),
+				countLocalChunks(seeder, upload.uploadId),
+				countLocalChunks(observer, upload.uploadId),
+			]);
+			const [writerChunks, seederChunks, observerChunks] = counts.map(
+				(result) =>
+					result.status === "fulfilled"
+						? String(result.value)
+						: `error:${result.reason?.message ?? result.reason}`,
+			);
+			const detail = `localChunks writer=${writerChunks}, seeder=${seederChunks}, observer=${observerChunks}`;
+			if (error instanceof Error) {
+				error.message = `${error.message}. ${detail}`;
+				throw error;
+			}
+			throw new Error(`${String(error)}. ${detail}`);
+		}
 
 		return {
 			writerCompleteMs,
@@ -514,7 +610,7 @@ const runMode = async (mode: BenchMode, payloadChunks: Uint8Array[]) => {
 
 const payloadChunks = makePayloadChunks();
 const results = await Promise.all(
-	modes.map(async (mode) => ({
+	selectedModes.map(async (mode) => ({
 		mode,
 		samples: await runMode(mode, payloadChunks),
 	})),
@@ -708,7 +804,7 @@ const output = {
 	},
 };
 
-if (process.env.BENCH_JSON === "1") {
+if (outputJson) {
 	await new Promise<void>((resolve, reject) => {
 		process.stdout.write(JSON.stringify(output, null, 2), (error) => {
 			if (error) {
