@@ -389,6 +389,26 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.1.12](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.11...shared-log-v13.1.12) (2026-05-02)
+
+
+### Bug Fixes
+
+* stabilize file-share large transfer paths ([#762](https://github.com/dao-xyz/peerbit/issues/762)) ([66116f4](https://github.com/dao-xyz/peerbit/commit/66116f432279f4ed5e9b32abab041fa89ad3e22e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks bumped to 4.1.5
+    * @peerbit/log bumped to 6.0.32
+    * @peerbit/program bumped to 6.0.26
+    * @peerbit/pubsub bumped to 5.2.7
+    * @peerbit/rpc bumped to 6.0.30
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.30
+
 ## [13.1.11](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.10...shared-log-v13.1.11) (2026-05-01)
 
 
