@@ -2759,10 +2759,11 @@ export abstract class DirectStream<
 		message: DataMessage | Goodbye,
 		relayed?: boolean,
 		signal?: AbortSignal,
-	): Promise<{ promise: Promise<void> }> {
+	): Promise<{ promise: Promise<void>; startTimeout: () => void }> {
 		if (message.header.mode instanceof AnyWhere) {
 			return {
 				promise: Promise.resolve(),
+				startTimeout: () => {},
 			};
 		}
 
@@ -2772,6 +2773,7 @@ export abstract class DirectStream<
 		if (existing) {
 			return {
 				promise: existing.promise,
+				startTimeout: () => {},
 			};
 		}
 
@@ -2801,6 +2803,7 @@ export abstract class DirectStream<
 						"Cannnot deliver message to peers because there are no peers to deliver to",
 					),
 				),
+				startTimeout: () => {},
 			};
 		}
 
@@ -2836,7 +2839,13 @@ export abstract class DirectStream<
 		onUnreachable && this.addEventListener("peer:unreachable", onUnreachable);
 
 		let onAbort: (() => void) | undefined;
+		let timeout: ReturnType<typeof setTimeout> | undefined;
+		let cleared = false;
 		const clear = () => {
+			if (cleared) {
+				return;
+			}
+			cleared = true;
 			timeout && clearTimeout(timeout);
 			onUnreachable &&
 				this.removeEventListener("peer:unreachable", onUnreachable);
@@ -2844,7 +2853,11 @@ export abstract class DirectStream<
 			onAbort && signal?.removeEventListener("abort", onAbort);
 		};
 
-			const timeout = setTimeout(async () => {
+		const startTimeout = () => {
+			if (cleared || timeout) {
+				return;
+			}
+			timeout = setTimeout(async () => {
 				clear();
 
 			let hasAll = true;
@@ -2886,6 +2899,7 @@ export abstract class DirectStream<
 				deliveryDeferredPromise.resolve();
 			}
 			}, this.seekTimeout);
+		};
 
 		if (signal) {
 			onAbort = () => {
@@ -2992,7 +3006,10 @@ export abstract class DirectStream<
 				deliveryDeferredPromise.resolve();
 			},
 		});
-		return deliveryDeferredPromise;
+		return {
+			promise: deliveryDeferredPromise.promise,
+			startTimeout,
+		};
 	}
 
 	public async publishMessage(
@@ -3008,6 +3025,7 @@ export abstract class DirectStream<
 
 		const isRelayed = relayed ?? from.hashcode() !== this.publicKeyHash;
 		let delivereyPromise: Promise<void> | undefined = undefined as any;
+		let startDeliveryTimeout: (() => void) | undefined;
 		let ackCallbackId: string | undefined;
 
 		if (
@@ -3035,6 +3053,7 @@ export abstract class DirectStream<
 				signal,
 			);
 			delivereyPromise = deliveryDeferredPromise.promise;
+			startDeliveryTimeout = deliveryDeferredPromise.startTimeout;
 			ackCallbackId = toBase64(message.id);
 		}
 
@@ -3057,6 +3076,7 @@ export abstract class DirectStream<
 				) {
 					if (message.header.mode.to.length === 0) {
 						// we definitely know that we should not forward the message anywhere
+						startDeliveryTimeout?.();
 						return delivereyPromise;
 					}
 
@@ -3118,6 +3138,7 @@ export abstract class DirectStream<
 						}
 
 						await Promise.all(promises);
+						startDeliveryTimeout?.();
 						return delivereyPromise;
 					}
 
@@ -3149,6 +3170,7 @@ export abstract class DirectStream<
 						if (promises.length > 0) {
 							await Promise.all(promises);
 						}
+						startDeliveryTimeout?.();
 						return delivereyPromise;
 					}
 				}
@@ -3162,6 +3184,7 @@ export abstract class DirectStream<
 				(peers instanceof Map && peers.size === 0)
 			) {
 				logger.trace("No peers to send to");
+				startDeliveryTimeout?.();
 				return delivereyPromise;
 			}
 
@@ -3187,6 +3210,7 @@ export abstract class DirectStream<
 				promises.push(this.waitForPeerWrite(id, bytes, message.header.priority));
 			}
 			await Promise.all(promises);
+			startDeliveryTimeout?.();
 
 			if (!sentOnce) {
 				// If the caller provided an explicit peer list, treat "no valid receivers" as an error

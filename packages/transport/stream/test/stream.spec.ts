@@ -2785,21 +2785,73 @@ describe("streams", function () {
 		afterEach(async () => {
 			await session.stop();
 		});
-		it("max message size", async () => {
-			await expect(
-				session.peers[0].services.directstream.publish(
-					new Uint8Array(1e7 + 1001),
+			it("max message size", async () => {
+				await expect(
+					session.peers[0].services.directstream.publish(
+						new Uint8Array(1e7 + 1001),
 					{
 						mode: new AcknowledgeDelivery({
 							to: [session.peers[1].services.directstream.publicKeyHash],
 							redundancy: 1,
 						}),
 					},
-				),
-			).rejectedWith(/^Message too large/);
+					),
+				).rejectedWith(/^Message too large/);
+			});
+
+			it("delivers 512 KiB acknowledged direct messages", async () => {
+				const payload = new Uint8Array(512 * 1024);
+				const received = pDefer<void>();
+				stream(session, 1).addEventListener(
+					"data",
+					(event) => {
+						const message = event.detail;
+						if (message.dataByteLength === payload.byteLength) {
+							received.resolve();
+						}
+					},
+					{ once: true },
+				);
+
+				await stream(session, 0).publish(payload, {
+					mode: new AcknowledgeDelivery({
+						to: [stream(session, 1).publicKeyHash],
+						redundancy: 1,
+					}),
+				});
+				await received.promise;
+			});
+
+			it("delivers sustained 512 KiB acknowledged direct messages", async function () {
+				this.timeout(120_000);
+
+				const payload = new Uint8Array(512 * 1024);
+				const count = 1_000;
+				const received = pDefer<void>();
+				let receivedCount = 0;
+
+				stream(session, 1).addEventListener("data", (event) => {
+					const message = event.detail;
+					if (message.dataByteLength === payload.byteLength) {
+						receivedCount += 1;
+						if (receivedCount === count) {
+							received.resolve();
+						}
+					}
+				});
+
+				for (let i = 0; i < count; i++) {
+					await stream(session, 0).publish(payload, {
+						mode: new AcknowledgeDelivery({
+							to: [stream(session, 1).publicKeyHash],
+							redundancy: 1,
+						}),
+					});
+				}
+				await received.promise;
+			});
 		});
 	});
-});
 
 // TODO test that messages are not sent backward, triangles etc
 
