@@ -7,6 +7,7 @@ import {
 	copyTemplate,
 	defaultExamplesDest,
 	defaultExamplesSource,
+	defaultFileShareLocalPackages,
 	ensureExamplesAssetPackageLinks,
 	overlayInstalledPackages,
 	parseArgs,
@@ -50,8 +51,6 @@ const REMOTE_NETWORK_DEFAULTS = {
 	viteMode: "staging",
 	viteConfig: "vite.config.remote.ts",
 };
-
-const DEFAULT_LOCAL_PACKAGES = ["@peerbit/shared-log"];
 
 const getScenarioConfig = (scenario) => {
 	const config = SCENARIOS[scenario];
@@ -595,7 +594,7 @@ const main = async () => {
 			? []
 			: localPackagesArg === "all"
 				? undefined
-				: (localPackagesArg ?? DEFAULT_LOCAL_PACKAGES.join(","))
+				: (localPackagesArg ?? defaultFileShareLocalPackages.join(","))
 						.split(",")
 						.map((value) => value.trim())
 						.filter(Boolean);

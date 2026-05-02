@@ -24,6 +24,18 @@ export const defaultExamplesDest = () => {
 	return path.join(parent, "peerbit-examples-local-peerbit");
 };
 
+export const defaultFileShareLocalPackages = [
+	"peerbit",
+	"@peerbit/document",
+	"@peerbit/shared-log",
+	"@peerbit/stream",
+	"@peerbit/react",
+	"@peerbit/crypto",
+	"@peerbit/trusted-network",
+	"@peerbit/vite",
+	"@peerbit/test-utils",
+];
+
 const BOOLEAN_ARGS = new Set([
 	"fresh",
 	"install",
@@ -375,6 +387,7 @@ export const overlayInstalledPackages = async ({
 	peerbitRoot = repoRoot,
 	packageNames,
 }) => {
+	const skipMissing = !Array.isArray(packageNames);
 	const localPackages = await collectLocalPeerbitPackages(peerbitRoot, {
 		names: packageNames,
 	});
@@ -384,6 +397,9 @@ export const overlayInstalledPackages = async ({
 			packageName,
 		});
 		if (!fs.existsSync(installedPackagePath)) {
+			if (skipMissing) {
+				continue;
+			}
 			throw new Error(
 				`Cannot overlay ${packageName}: missing installed package at ${installedPackagePath}`,
 			);
