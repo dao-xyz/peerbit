@@ -852,9 +852,10 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 							allMissingSymbolsInRemote.push(missingSymbol);
 						}
 
-						this.simple.queueSync(allMissingSymbolsInRemote, context.from!, {
-							skipCheck: true,
-						});
+						// The IBLT decoder is based on a local snapshot. Entries can arrive via
+						// overlapping repair before we issue the follow-up simple request, so
+						// re-check local presence to avoid stale duplicate bounce-back.
+						this.simple.queueSync(allMissingSymbolsInRemote, context.from!);
 						obj.free();
 						return true;
 					};

@@ -13,6 +13,7 @@ import {
 	RequestAll,
 	StartSync,
 } from "../src/sync/rateless-iblt.js";
+import { RequestMaybeSyncCoordinate } from "../src/sync/simple.js";
 import { EventStore } from "./utils/stores/index.js";
 
 const setup = {
@@ -225,6 +226,61 @@ describe("rateless-iblt-syncronizer", () => {
 			expect(
 				(startSyncMessages[0] as StartSync).symbols.length,
 			).to.be.greaterThan(0);
+		} finally {
+			await sync.close();
+		}
+	});
+
+	it("skips decoded remote symbols that are already present locally", async () => {
+		const sentMessages: TransportMessage[] = [];
+		let localPresenceChecks = 0;
+		const sync = new RatelessIBLTSynchronizer<"u64">({
+			rpc: {
+				send: async (message: TransportMessage) => {
+					sentMessages.push(message);
+				},
+			} as any,
+			rangeIndex: {} as any,
+			entryIndex: {
+				count: async () => {
+					localPresenceChecks += 1;
+					return 1;
+				},
+			} as any,
+			log: { has: async () => false } as any,
+			coordinateToHash: new Cache<string>({ max: 1000, ttl: 1000 }),
+			numbers: { maxValue: 2n ** 64n - 1n } as any,
+		});
+
+		(sync as any).getLocalDecoderForRange = async () => ({
+			add_coded_symbol: () => {},
+			try_decode: () => {},
+			decoded: () => true,
+			get_remote_symbols: () => [42n],
+			free: () => {},
+		});
+
+		try {
+			await sync.onMessage(
+				new StartSync({
+					from: 0n,
+					to: 100n,
+					symbols: [{ count: 0n, hash: 0n, symbol: 0n } as any],
+				}),
+				{
+					from: {
+						hashcode: () => "peer-a",
+						equals: () => false,
+					},
+				} as any,
+			);
+
+			await waitForResolved(() => expect(localPresenceChecks).to.equal(1));
+			expect(
+				sentMessages.some(
+					(message) => message instanceof RequestMaybeSyncCoordinate,
+				),
+			).to.equal(false);
 		} finally {
 			await sync.close();
 		}
