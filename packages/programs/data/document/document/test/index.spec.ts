@@ -2863,6 +2863,44 @@ describe("index", () => {
 					);
 				});
 
+				it("does not advertise stale indexed rows as replicable", async () => {
+					const store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await session.peers[0].open(store, {
+						args: {
+							replicate: {
+								factor: 1,
+							},
+							replicas: {
+								min: 1,
+							},
+							timeUntilRoleMaturity: 0,
+						},
+					});
+
+					const put = await store.docs.put(new Document({ id: "stale" }));
+					expect(await store.docs.index.getSize()).to.eq(1);
+
+					await store.docs.log.log.blocks.rm(put.entry.hash);
+					(store.docs.log.log.entryIndex as any).cache.del(put.entry.hash);
+
+					const response = await store.docs.index.processQuery(
+						new SearchRequestIndexed({
+							query: new StringMatch({
+								key: "id",
+								value: "stale",
+							}),
+							fetch: 1,
+							replicate: true,
+						}),
+						session.peers[1].identity.publicKey,
+						false,
+					);
+
+					expect(response.results).to.have.length(0);
+				});
+
 				it("will not keep if undefined", async () => {
 					const store = new TestStore({
 						docs: new Documents<Document>(),
@@ -6872,6 +6910,66 @@ describe("index", () => {
 					});
 
 					await check(store, undefined, true);
+				});
+
+				it("drops unresolved indexed placeholders when resolving iterator batches", async () => {
+					session = await TestSession.connected(1);
+
+					const store = new TestStore<Indexable>({
+						docs: new Documents<Document, Indexable>(),
+					});
+
+					await session.peers[0].open(store, {
+						args: {
+							replicate: { factor: 1 },
+							index: {
+								type: Indexable,
+								transform: (doc) => new Indexable(doc),
+							},
+						},
+					});
+
+					const doc = new Document({ id: "unresolved", name: "omega" });
+					const put = await store.docs.put(doc);
+					const indexed = Object.assign(new Indexable(doc), {
+						__context: (doc as any).__context,
+					});
+					const results = new Results({
+						results: [
+							new ResultIndexedValue({
+								context: (doc as any).__context,
+								source: serialize(indexed),
+								indexed,
+								entries: [put.entry],
+							}),
+						],
+						kept: 0n,
+					});
+					const queryCommenceStub = sinon
+						.stub(store.docs.index as any, "queryCommence")
+						.callsFake(async (_query: any, options: any) => {
+							await options?.onResponse?.(results, store.node.identity.publicKey);
+							return [results];
+						});
+					const resolveStub = sinon
+						.stub(store.docs.index as any, "resolveDocument")
+						.resolves(undefined);
+					let iterator: ReturnType<typeof store.docs.index.iterate> | undefined;
+
+					try {
+						iterator = store.docs.index.iterate(
+							{},
+							{ remote: { replicate: true } },
+						);
+
+						const batch = await iterator.next(1);
+						expect(batch).to.have.length(0);
+					} finally {
+						queryCommenceStub.restore();
+						resolveStub.restore();
+						await iterator?.close();
+						await session.stop();
+					}
 				});
 
 					it("returns documents even if indexed representation arrives first", async () => {
