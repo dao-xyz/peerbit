@@ -400,6 +400,19 @@
   * dependencies
     * peerbit bumped from 4.0.6 to 4.0.7
 
+## [3.0.31](https://github.com/dao-xyz/peerbit/compare/test-utils-v3.0.30...test-utils-v3.0.31) (2026-05-03)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks bumped to 4.1.6
+    * @peerbit/program bumped to 6.0.27
+    * @peerbit/pubsub bumped to 5.2.8
+    * @peerbit/stream bumped to 5.0.14
+    * peerbit bumped to 5.2.16
+
 ## [3.0.30](https://github.com/dao-xyz/peerbit/compare/test-utils-v3.0.29...test-utils-v3.0.30) (2026-05-02)
 
 

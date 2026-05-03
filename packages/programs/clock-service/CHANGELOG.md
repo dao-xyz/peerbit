@@ -655,6 +655,21 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [3.2.63](https://github.com/dao-xyz/peerbit/compare/clock-service-v3.2.62...clock-service-v3.2.63) (2026-05-03)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped to 6.0.33
+    * @peerbit/program bumped to 6.0.27
+    * @peerbit/shared-log bumped to 13.1.13
+    * @peerbit/rpc bumped to 6.0.31
+    * @peerbit/trusted-network bumped to 6.0.39
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.31
+
 ## [3.2.62](https://github.com/dao-xyz/peerbit/compare/clock-service-v3.2.61...clock-service-v3.2.62) (2026-05-02)
 
 
