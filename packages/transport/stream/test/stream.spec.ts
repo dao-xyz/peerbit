@@ -2672,6 +2672,64 @@ describe("streams", function () {
 				}
 			});
 
+			it("does not emit unhandledRejection when delivery aborts before publishMessage returns", async () => {
+				const isolated = await disconnected(1, {
+					services: {
+						directstream: (c) =>
+							new TestDirectStream(c, {
+								connectionManager: false,
+							}),
+					},
+				});
+
+				const unhandled: unknown[] = [];
+				const onUnhandledRejection = (reason: unknown) => {
+					unhandled.push(reason);
+				};
+
+				process.on("unhandledRejection", onUnhandledRejection);
+
+				try {
+					const writer = stream(isolated, 0) as TestDirectStream;
+					const remoteKey = await Ed25519Keypair.create();
+					const peer = writer.addPeer(
+						{ toString: () => "blocked-peer" } as PeerId,
+						remoteKey.publicKey,
+						"/test/0.0.0",
+						"conn-blocked",
+					);
+					peer.waitForWrite = async () => {
+						await delay(100);
+					};
+
+					const message = await writer.createMessage(crypto.randomBytes(32), {
+						mode: new AcknowledgeDelivery({
+							redundancy: 1,
+							to: [remoteKey.publicKey.hashcode()],
+						}),
+					});
+					const abortController = new AbortController();
+					const publishPromise = writer.publishMessage(
+						writer.publicKey,
+						message,
+						[peer],
+						undefined,
+						abortController.signal,
+					);
+					publishPromise.catch(() => {});
+
+					await delay(10);
+					abortController.abort(new Error("intentional test abort"));
+					await delay(25);
+					expect(unhandled).to.deep.equal([]);
+
+					await publishPromise.catch(() => {});
+				} finally {
+					process.off("unhandledRejection", onUnhandledRejection);
+					await isolated.stop();
+				}
+			});
+
 			it("publishMaybe returns false for delivery errors and still throws internal errors", async () => {
 				const isolated = await disconnected(1, {
 					services: {

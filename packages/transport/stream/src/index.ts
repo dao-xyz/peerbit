@@ -2798,9 +2798,11 @@ export abstract class DirectStream<
 
 		if (haveReceivers && this.peers.size === 0) {
 			return {
-				promise: Promise.reject(
-					new DeliveryError(
-						"Cannnot deliver message to peers because there are no peers to deliver to",
+				promise: markPromiseHandled(
+					Promise.reject(
+						new DeliveryError(
+							"Cannnot deliver message to peers because there are no peers to deliver to",
+						),
 					),
 				),
 				startTimeout: () => {},
@@ -2808,6 +2810,7 @@ export abstract class DirectStream<
 		}
 
 		const deliveryDeferredPromise = pDefer<void>();
+		markPromiseHandled(deliveryDeferredPromise.promise);
 
 		if (!haveReceivers) {
 			deliveryDeferredPromise.resolve(); // we dont know how many answer to expect, just resolve immediately

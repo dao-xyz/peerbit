@@ -25,6 +25,7 @@ coverage
 references
 .npmrc
 .env.github
+.envrc
 
 # Supabase local secrets (do not commit)
 .env.supabase
