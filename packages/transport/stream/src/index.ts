@@ -3106,11 +3106,17 @@ export abstract class DirectStream<
 										stream,
 										message.bytes(),
 										message.header.priority,
+										signal,
 									),
 								);
 							} else {
 								promises.push(
-									this.waitForPeerWrite(stream, bytes, message.header.priority),
+									this.waitForPeerWrite(
+										stream,
+										bytes,
+										message.header.priority,
+										signal,
+									),
 								);
 							}
 							usedNeighbours.add(neighbour);
@@ -3135,7 +3141,12 @@ export abstract class DirectStream<
 								if (usedNeighbours.has(neighbour)) continue;
 								usedNeighbours.add(neighbour);
 								promises.push(
-									this.waitForPeerWrite(stream, bytes, message.header.priority),
+									this.waitForPeerWrite(
+										stream,
+										bytes,
+										message.header.priority,
+										signal,
+									),
 								);
 							}
 						}
@@ -3166,6 +3177,7 @@ export abstract class DirectStream<
 									stream,
 									message.bytes(),
 									message.header.priority,
+									signal,
 								),
 							);
 						}
@@ -3210,7 +3222,9 @@ export abstract class DirectStream<
 					continue;
 				}
 				sentOnce = true;
-				promises.push(this.waitForPeerWrite(id, bytes, message.header.priority));
+				promises.push(
+					this.waitForPeerWrite(id, bytes, message.header.priority, signal),
+				);
 			}
 			await Promise.all(promises);
 			startDeliveryTimeout?.();

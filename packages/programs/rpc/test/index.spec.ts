@@ -240,6 +240,38 @@ describe("rpc", () => {
 			expect(deferred.resolve.calledOnce).to.be.true;
 		});
 
+		it("bounds slow publishes by the request timeout", async () => {
+			let observedSignal: AbortSignal | undefined;
+			const publishStub = sinon
+				.stub(reader.node.services.pubsub, "publish")
+				.callsFake((_data, options?: { signal?: AbortSignal }) => {
+					observedSignal = options?.signal;
+					return new Promise<Uint8Array | undefined>((_resolve, reject) => {
+						observedSignal?.addEventListener(
+							"abort",
+							() => {
+								reject(observedSignal?.reason ?? new AbortError("Aborted"));
+							},
+							{ once: true },
+						);
+					});
+				});
+
+			try {
+				const started = Date.now();
+				const result = await reader.query.request(
+					new Body({ arr: new Uint8Array([1, 2, 3]) }),
+					{ timeout: 25 },
+				);
+
+				expect(result).to.deep.equal([]);
+				expect(observedSignal?.aborted).to.be.true;
+				expect(Date.now() - started).to.be.lessThan(1_000);
+			} finally {
+				publishStub.restore();
+			}
+		});
+
 		it("custom signer", async () => {
 			const requestEventFromResponder: CustomEvent<RequestEvent<Body>>[] = [];
 			const responseEventsFromResponder: CustomEvent<ResponseEvent<Body>>[] =
