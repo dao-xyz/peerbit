@@ -29,7 +29,13 @@ import {
 	SilentDelivery,
 	getMsgId,
 } from "@peerbit/stream-interface";
-import { TimeoutError, delay, waitFor, waitForResolved } from "@peerbit/time";
+import {
+	AbortError,
+	TimeoutError,
+	delay,
+	waitFor,
+	waitForResolved,
+} from "@peerbit/time";
 import { expect } from "chai";
 import crypto from "crypto";
 import { type Libp2pOptions, createLibp2p } from "libp2p";
@@ -2726,6 +2732,70 @@ describe("streams", function () {
 					await publishPromise.catch(() => {});
 				} finally {
 					process.off("unhandledRejection", onUnhandledRejection);
+					await isolated.stop();
+				}
+			});
+
+			it("passes publish abort signals into queued peer writes", async () => {
+				const isolated = await disconnected(1, {
+					services: {
+						directstream: (c) =>
+							new TestDirectStream(c, {
+								connectionManager: false,
+							}),
+					},
+				});
+
+				try {
+					const writer = stream(isolated, 0) as TestDirectStream;
+					const remoteKey = await Ed25519Keypair.create();
+					const peer = writer.addPeer(
+						{ toString: () => "blocked-peer" } as PeerId,
+						remoteKey.publicKey,
+						"/test/0.0.0",
+						"conn-blocked",
+					);
+
+					let observedSignal: AbortSignal | undefined;
+					peer.waitForWrite = async (_bytes, _priority, signal) => {
+						observedSignal = signal;
+						return new Promise<void>((_resolve, reject) => {
+							signal?.addEventListener(
+								"abort",
+								() => reject(signal.reason ?? new AbortError("Aborted")),
+								{ once: true },
+							);
+						});
+					};
+
+					const message = await writer.createMessage(crypto.randomBytes(32), {
+						mode: new AcknowledgeDelivery({
+							redundancy: 1,
+							to: [remoteKey.publicKey.hashcode()],
+						}),
+					});
+					const abortController = new AbortController();
+					const started = Date.now();
+					const publishPromise = writer.publishMessage(
+						writer.publicKey,
+						message,
+						[peer],
+						undefined,
+						abortController.signal,
+					);
+
+					await delay(10);
+					abortController.abort(new AbortError("intentional test abort"));
+
+					let rejection: unknown;
+					await publishPromise.catch((error) => {
+						rejection = error;
+					});
+
+					expect(observedSignal).to.equal(abortController.signal);
+					expect(rejection).to.be.instanceOf(Error);
+					expect(Date.now() - started).to.be.lessThan(1_000);
+				} finally {
 					await isolated.stop();
 				}
 			});
