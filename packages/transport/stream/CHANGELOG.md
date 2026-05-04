@@ -43,6 +43,14 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [5.0.15](https://github.com/dao-xyz/peerbit/compare/stream-v5.0.14...stream-v5.0.15) (2026-05-04)
+
+
+### Bug Fixes
+
+* **rpc:** bound requests during slow publish ([743644a](https://github.com/dao-xyz/peerbit/commit/743644a727d25c5c935104cdde8369d2aa09845a))
+* **rpc:** bound requests during slow publish ([beaec62](https://github.com/dao-xyz/peerbit/commit/beaec624304042384cb341247445acfeeadd5fd6))
+
 ## [5.0.14](https://github.com/dao-xyz/peerbit/compare/stream-v5.0.13...stream-v5.0.14) (2026-05-03)
 
 

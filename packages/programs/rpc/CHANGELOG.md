@@ -417,6 +417,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [6.0.32](https://github.com/dao-xyz/peerbit/compare/rpc-v6.0.31...rpc-v6.0.32) (2026-05-04)
+
+
+### Bug Fixes
+
+* **rpc:** bound requests during slow publish ([743644a](https://github.com/dao-xyz/peerbit/commit/743644a727d25c5c935104cdde8369d2aa09845a))
+* **rpc:** bound requests during slow publish ([beaec62](https://github.com/dao-xyz/peerbit/commit/beaec624304042384cb341247445acfeeadd5fd6))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped to 6.0.28
+    * @peerbit/pubsub bumped to 5.2.9
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.32
+
 ## [6.0.31](https://github.com/dao-xyz/peerbit/compare/rpc-v6.0.30...rpc-v6.0.31) (2026-05-03)
 
 
