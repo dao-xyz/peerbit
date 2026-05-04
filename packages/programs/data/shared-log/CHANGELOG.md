@@ -389,6 +389,14 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.1.14](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.13...shared-log-v13.1.14) (2026-05-04)
+
+
+### Bug Fixes
+
+* **shared-log:** cancel stale checked prune on local leadership ([e5e5ce9](https://github.com/dao-xyz/peerbit/commit/e5e5ce9c9765fee1751583943f061e9159cbb908))
+* **shared-log:** cancel stale checked prune on local leadership ([36b6d25](https://github.com/dao-xyz/peerbit/commit/36b6d2525d15f7a8f2ad2ca38c641979ad8bd09e))
+
 ## [13.1.13](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.12...shared-log-v13.1.13) (2026-05-03)
 
 

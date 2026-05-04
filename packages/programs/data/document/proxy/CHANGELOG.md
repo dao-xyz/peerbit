@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.0.40](https://github.com/dao-xyz/peerbit/compare/document-proxy-v2.0.39...document-proxy-v2.0.40) (2026-05-04)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped to 13.0.40
+    * @peerbit/shared-log-proxy bumped to 2.0.39
+
 ## [2.0.39](https://github.com/dao-xyz/peerbit/compare/document-proxy-v2.0.38...document-proxy-v2.0.39) (2026-05-03)
 
 
