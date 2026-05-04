@@ -241,6 +241,12 @@ export { MAX_U32, MAX_U64, type NumberFromType };
 export const logger = loggerFn("peerbit:shared-log");
 const warn = logger.newScope("warn");
 
+type CheckedPruneLeaderMap = Map<string, { intersecting: boolean }>;
+type CheckedPruneEntry<T, R extends "u32" | "u64"> =
+	| Entry<T>
+	| ShallowEntry
+	| EntryReplicated<R>;
+
 const getLatestEntry = (
 	entries: (ShallowOrFullEntry<any> | EntryWithRefs<any>)[],
 ) => {
@@ -859,8 +865,8 @@ export class SharedLog<
 
 	// A fn for debouncing the calls for pruning
 	pruneDebouncedFn!: DebouncedAccumulatorMap<{
-		entry: Entry<T> | ShallowEntry | EntryReplicated<R>;
-		leaders: Map<string, any>;
+		entry: CheckedPruneEntry<T, R>;
+		leaders: CheckedPruneLeaderMap;
 	}>;
 	private responseToPruneDebouncedFn!: ReturnType<
 		typeof debounceAccumulator<
@@ -3554,8 +3560,8 @@ export class SharedLog<
 	private async pruneDebouncedFnAddIfNotKeeping(args: {
 		key: string;
 		value: {
-			entry: Entry<T> | ShallowEntry | EntryReplicated<R>;
-			leaders: Map<string, any>;
+			entry: CheckedPruneEntry<T, R>;
+			leaders: CheckedPruneLeaderMap;
 		};
 	}): Promise<boolean> {
 		if (this.keep && (await this.keep(args.value.entry))) {
@@ -3563,6 +3569,75 @@ export class SharedLog<
 		}
 		void this.pruneDebouncedFn.add(args);
 		return true;
+	}
+
+	private async cancelCheckedPruneForLocalLeader(hash: string) {
+		this.pruneDebouncedFn.delete(hash);
+		this.clearCheckedPruneRetry(hash);
+		this.removePruneRequestSent(hash);
+		this._requestIPruneResponseReplicatorSet.delete(hash);
+		await this._pendingDeletes
+			.get(hash)
+			?.reject(new Error("Failed to delete, is leader again"));
+	}
+
+	private hasActiveCheckedPruneWork(hash: string) {
+		return (
+			this._pendingDeletes.has(hash) ||
+			this._requestIPruneSent.has(hash) ||
+			this._requestIPruneResponseReplicatorSet.has(hash) ||
+			this._checkedPruneRetries.has(hash)
+		);
+	}
+
+	private async resolveCheckedPruneLeaders(args: {
+		hash: string;
+		entry: CheckedPruneEntry<T, R>;
+		leaders: CheckedPruneLeaderMap;
+		selfReplicating?: boolean;
+	}): Promise<{
+		leaders: CheckedPruneLeaderMap;
+		localLeader: boolean;
+	}> {
+		const selfHash = this.node.identity.publicKey.hashcode();
+		if (args.leaders.has(selfHash)) {
+			if (args.selfReplicating === false) {
+				return { leaders: args.leaders, localLeader: false };
+			}
+			if (args.selfReplicating == null && !(await this.isReplicating())) {
+				return { leaders: args.leaders, localLeader: false };
+			}
+			return { leaders: args.leaders, localLeader: true };
+		}
+
+		if (!this.hasActiveCheckedPruneWork(args.hash)) {
+			return { leaders: args.leaders, localLeader: false };
+		}
+
+		if (args.selfReplicating === false) {
+			return { leaders: args.leaders, localLeader: false };
+		}
+		if (args.selfReplicating == null && !(await this.isReplicating())) {
+			return { leaders: args.leaders, localLeader: false };
+		}
+
+		try {
+			const currentLeaders = await this.findLeadersFromEntry(
+				args.entry,
+				decodeReplicas(args.entry).getValue(this),
+			);
+			if (currentLeaders.size > 0) {
+				return {
+					leaders: currentLeaders,
+					localLeader: currentLeaders.has(selfHash),
+				};
+			}
+		} catch {
+			// Best-effort only. If the fresh check fails, keep the original prune
+			// decision instead of hiding a legitimately prunable entry.
+		}
+
+		return { leaders: args.leaders, localLeader: false };
 	}
 
 	private async pruneJoinedEntriesNoLongerLed(entries: Entry<T>[]) {
@@ -3579,10 +3654,7 @@ export class SharedLog<
 			);
 
 			if (leaders.has(selfHash)) {
-				this.pruneDebouncedFn.delete(entry.hash);
-				await this._pendingDeletes
-					.get(entry.hash)
-					?.reject(new Error("Failed to delete, is leader again"));
+				await this.cancelCheckedPruneForLocalLeader(entry.hash);
 				continue;
 			}
 
@@ -3622,11 +3694,7 @@ export class SharedLog<
 					);
 
 					if (leaders.has(selfHash)) {
-						this.pruneDebouncedFn.delete(entryReplicated.hash);
-						await this._pendingDeletes
-							.get(entryReplicated.hash)
-							?.reject(new Error("Failed to delete, is leader again"));
-						this.removePruneRequestSent(entryReplicated.hash);
+						await this.cancelCheckedPruneForLocalLeader(entryReplicated.hash);
 						continue;
 					}
 
@@ -3663,8 +3731,8 @@ export class SharedLog<
 	}
 
 	private scheduleCheckedPruneRetry(args: {
-		entry: EntryReplicated<R> | ShallowOrFullEntry<any>;
-		leaders: Map<string, unknown> | Set<string>;
+		entry: CheckedPruneEntry<T, R>;
+		leaders: CheckedPruneLeaderMap | Set<string>;
 	}) {
 		if (this.closed) return;
 		if (this._pendingDeletes.has(args.entry.hash)) return;
@@ -3694,7 +3762,7 @@ export class SharedLog<
 			if (this.closed) return;
 			if (this._pendingDeletes.has(hash)) return;
 
-			let leadersMap: Map<string, any> | undefined;
+			let leadersMap: CheckedPruneLeaderMap | undefined;
 			try {
 				const replicas = decodeReplicas(args.entry).getValue(this);
 				leadersMap = await this.findLeadersFromEntry(args.entry, replicas, {
@@ -3704,27 +3772,27 @@ export class SharedLog<
 				// Best-effort only.
 			}
 
-				if (!leadersMap || leadersMap.size === 0) {
-					if (args.leaders instanceof Map) {
-						leadersMap = args.leaders as any;
-					} else {
-						leadersMap = new Map<string, any>();
-						for (const k of args.leaders) {
-							leadersMap.set(k, { intersecting: true });
-						}
+			if (!leadersMap || leadersMap.size === 0) {
+				if (args.leaders instanceof Map) {
+					leadersMap = args.leaders;
+				} else {
+					leadersMap = new Map<string, { intersecting: boolean }>();
+					for (const k of args.leaders) {
+						leadersMap.set(k, { intersecting: true });
 					}
 				}
+			}
 
-				try {
-					const leadersForRetry = leadersMap ?? new Map<string, any>();
-					await this.pruneDebouncedFnAddIfNotKeeping({
-						key: hash,
-						// TODO types
-						value: { entry: args.entry as any, leaders: leadersForRetry },
-					});
-				} catch {
-					// Best-effort only; pruning will be re-attempted on future changes.
-				}
+			try {
+				const leadersForRetry =
+					leadersMap ?? new Map<string, { intersecting: boolean }>();
+				await this.pruneDebouncedFnAddIfNotKeeping({
+					key: hash,
+					value: { entry: args.entry, leaders: leadersForRetry },
+				});
+			} catch {
+				// Best-effort only; pruning will be re-attempted on future changes.
+			}
 		}, delayMs);
 		state.timer.unref?.();
 		this._checkedPruneRetries.set(hash, state);
@@ -4084,8 +4152,34 @@ export class SharedLog<
 		);
 
 		this.pruneDebouncedFn = debouncedAccumulatorMap(
-			(map) => {
-				this.prune(map);
+			async (map) => {
+				const current = new Map<
+					string,
+					{
+						entry: CheckedPruneEntry<T, R>;
+						leaders: CheckedPruneLeaderMap;
+					}
+				>();
+				const selfReplicating = await this.isReplicating();
+				for (const [hash, value] of map) {
+					const checkedPruneLeaders = await this.resolveCheckedPruneLeaders({
+						hash,
+						entry: value.entry,
+						leaders: value.leaders,
+						selfReplicating,
+					});
+					if (checkedPruneLeaders.localLeader) {
+						await this.cancelCheckedPruneForLocalLeader(hash);
+						continue;
+					}
+					current.set(hash, {
+						...value,
+						leaders: checkedPruneLeaders.leaders,
+					});
+				}
+				if (current.size > 0) {
+					this.prune(current);
+				}
 			},
 			PRUNE_DEBOUNCE_INTERVAL, // TODO make this dynamic on the number of replicators
 			(into, from) => {
@@ -6943,8 +7037,8 @@ export class SharedLog<
 		entries: Map<
 			string,
 			{
-				entry: EntryReplicated<R> | ShallowOrFullEntry<any>;
-				leaders: Map<string, unknown> | Set<string>;
+				entry: CheckedPruneEntry<T, R>;
+				leaders: CheckedPruneLeaderMap | Set<string>;
 			}
 		>,
 			options?: { timeout?: number; unchecked?: boolean },
@@ -7553,11 +7647,7 @@ export class SharedLog<
 
 								this.responseToPruneDebouncedFn.delete(entryReplicated.hash);
 							} else {
-								this.pruneDebouncedFn.delete(entryReplicated.hash);
-								await this._pendingDeletes
-									.get(entryReplicated.hash)
-									?.reject(new Error("Failed to delete, is leader again"));
-								this.removePruneRequestSent(entryReplicated.hash);
+								await this.cancelCheckedPruneForLocalLeader(entryReplicated.hash);
 							}
 							continue;
 						}
@@ -7627,11 +7717,7 @@ export class SharedLog<
 
 						this.responseToPruneDebouncedFn.delete(entryReplicated.hash); // don't allow others to prune because of expecting me to replicating this entry
 					} else {
-						this.pruneDebouncedFn.delete(entryReplicated.hash);
-						await this._pendingDeletes
-							.get(entryReplicated.hash)
-							?.reject(new Error("Failed to delete, is leader again"));
-						this.removePruneRequestSent(entryReplicated.hash);
+						await this.cancelCheckedPruneForLocalLeader(entryReplicated.hash);
 					}
 				}
 				}

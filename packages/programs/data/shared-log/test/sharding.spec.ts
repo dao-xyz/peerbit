@@ -60,6 +60,32 @@ export const testSetups: TestSetupConfig<any>[] = [
 	},
 ];
 
+type CheckedPrunePendingDelete = {
+	promise: { promise: Promise<void> };
+	clear: () => void;
+	resolve: () => void;
+	reject: (reason: Error) => void;
+};
+
+type CheckedPruneLocalLeaderTestLog<E> = {
+	_pendingDeletes: Map<string, CheckedPrunePendingDelete>;
+	pruneJoinedEntriesNoLongerLed: (entries: E[]) => Promise<void>;
+	pruneIndexedEntriesNoLongerLed: () => Promise<void>;
+};
+
+type CheckedPruneDebounceTestLog<E> = {
+	_pendingDeletes: Map<string, CheckedPrunePendingDelete>;
+	_requestIPruneSent: { has: (hash: string) => boolean };
+	pruneDebouncedFnAddIfNotKeeping: (args: {
+		key: string;
+		value: {
+			entry: E;
+			leaders: Map<string, { intersecting: boolean }>;
+		};
+	}) => Promise<boolean>;
+	pruneDebouncedFn: { flush: () => Promise<void> };
+};
+
 testSetups.forEach((setup) => {
 	describe(setup.name, () => {
 		describe(`sharding`, function () {
@@ -271,19 +297,22 @@ testSetups.forEach((setup) => {
 			};
 
 			it("cancels pending checked prune when local peer leads again", async () => {
-				db1 = await session.peers[0].open(new EventStore<string, any>(), {
-					args: {
-						replicate: {
-							offset: 0,
+				db1 = await session.peers[0].open(
+					new EventStore<string, ReplicationDomainHash<any>>(),
+					{
+						args: {
+							replicate: {
+								offset: 0,
+							},
+							replicas: {
+								min: new AbsoluteReplicas(1),
+								max: new AbsoluteReplicas(1),
+							},
+							setup,
+							timeUntilRoleMaturity: 0,
 						},
-						replicas: {
-							min: new AbsoluteReplicas(1),
-							max: new AbsoluteReplicas(1),
-						},
-						setup,
-						timeUntilRoleMaturity: 0,
 					},
-				});
+				);
 
 				const { entry } = await db1.add("hello", { meta: { next: [] } });
 				await waitForResolved(
@@ -291,7 +320,9 @@ testSetups.forEach((setup) => {
 					{ timeout: 10_000, delayInterval: 100 },
 				);
 
-				const log = db1.log as any;
+				const log = db1.log as unknown as CheckedPruneLocalLeaderTestLog<
+					typeof entry
+				>;
 				const seedPendingDelete = () => {
 					let rejected: Error | undefined;
 					log._pendingDeletes.set(entry.hash, {
@@ -315,6 +346,59 @@ testSetups.forEach((setup) => {
 				await log.pruneIndexedEntriesNoLongerLed();
 				expect(rejected()?.message).equal("Failed to delete, is leader again");
 				expect(log._pendingDeletes.has(entry.hash)).false;
+			});
+
+			it("cancels existing checked prune state when debounced ownership is stale", async () => {
+				db1 = await session.peers[0].open(
+					new EventStore<string, ReplicationDomainHash<any>>(),
+					{
+						args: {
+							replicate: {
+								offset: 0,
+							},
+							replicas: {
+								min: new AbsoluteReplicas(1),
+								max: new AbsoluteReplicas(1),
+							},
+							setup,
+							timeUntilRoleMaturity: 0,
+						},
+					},
+				);
+
+				const { entry } = await db1.add("hello", { meta: { next: [] } });
+				await waitForResolved(
+					async () => expect(await db1.log.entryCoordinatesIndex.count()).eq(1),
+					{ timeout: 10_000, delayInterval: 100 },
+				);
+
+				const log = db1.log as unknown as CheckedPruneDebounceTestLog<
+					typeof entry
+				>;
+				const staleRemoteLeader =
+					session.peers[1].identity.publicKey.hashcode();
+				let rejected: Error | undefined;
+				log._pendingDeletes.set(entry.hash, {
+					promise: { promise: new Promise<void>(() => {}) },
+					clear: () => log._pendingDeletes.delete(entry.hash),
+					resolve: () => {},
+					reject: (reason: Error) => {
+						rejected = reason;
+						log._pendingDeletes.delete(entry.hash);
+					},
+				});
+				await log.pruneDebouncedFnAddIfNotKeeping({
+					key: entry.hash,
+					value: {
+						entry,
+						leaders: new Map([[staleRemoteLeader, { intersecting: true }]]),
+					},
+				});
+				await log.pruneDebouncedFn.flush();
+
+				expect(rejected?.message).equal("Failed to delete, is leader again");
+				expect(log._pendingDeletes.has(entry.hash)).false;
+				expect(log._requestIPruneSent.has(entry.hash)).false;
 			});
 
 			const countIdleUnderReplicatedEntries = async (
