@@ -452,6 +452,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [6.0.32](https://github.com/dao-xyz/peerbit/compare/server-v6.0.31...server-v6.0.32) (2026-05-04)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks bumped to 4.1.7
+    * @peerbit/program bumped to 6.0.28
+    * @peerbit/pubsub bumped to 5.2.9
+    * peerbit bumped to 5.2.17
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.32
+
 ## [6.0.31](https://github.com/dao-xyz/peerbit/compare/server-v6.0.30...server-v6.0.31) (2026-05-03)
 
 
