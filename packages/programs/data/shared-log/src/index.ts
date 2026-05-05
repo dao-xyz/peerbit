@@ -70,7 +70,7 @@ import {
 } from "@peerbit/time";
 import pDefer, { type DeferredPromise } from "p-defer";
 import PQueue from "p-queue";
-import { concat } from "uint8arrays";
+import { concat, fromString } from "uint8arrays";
 import { BlocksMessage } from "./blocks.js";
 import { type CPUUsage, CPUUsageIntervalLag } from "./cpu.js";
 import {
@@ -2065,6 +2065,14 @@ export class SharedLog<
 			) => void;
 		},
 	) {
+		const entryRangeId = (entry: Entry<T>) =>
+			sha256Sync(
+				concat([
+					this.log.id,
+					fromString(entry.hash),
+					fromString(this.node.identity.publicKey.hashcode()),
+				]),
+			);
 		let range:
 			| ReplicationRangeMessage<any>[]
 			| ReplicationOptions<R>
@@ -2074,6 +2082,7 @@ export class SharedLog<
 			range = rangeOrEntry;
 		} else if (rangeOrEntry instanceof Entry) {
 			range = {
+				id: entryRangeId(rangeOrEntry),
 				factor: 1,
 				offset: await this.domain.fromEntry(rangeOrEntry),
 				normalized: false,
@@ -2084,6 +2093,7 @@ export class SharedLog<
 			for (const entry of rangeOrEntry) {
 				if (entry instanceof Entry) {
 					ranges.push({
+						id: entryRangeId(entry),
 						factor: 1,
 						offset: await this.domain.fromEntry(entry),
 						normalized: false,
@@ -6072,7 +6082,7 @@ export class SharedLog<
 
 			await this.replicate(entriesToReplicate, {
 				rebalance: assumeSynced ? false : true,
-				checkDuplicates: true,
+				checkDuplicates: assumeSynced ? false : true,
 				mergeSegments:
 					typeof options.replicate !== "boolean" && options.replicate
 						? options.replicate.mergeSegments

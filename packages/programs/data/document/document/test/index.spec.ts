@@ -8237,6 +8237,41 @@ describe("index", () => {
 				expect((getRemote as any)["__indexed"]).to.exist;
 			});
 
+			it("uses indexed requests for replicated resolved remote get", async () => {
+				const processQuerySpy = sinon.spy(
+					stores[0].docs.index,
+					"processQuery",
+				);
+				try {
+					const getRemote = await stores[1].docs.index.get("1", {
+						remote: { replicate: true },
+					});
+
+					expect(getRemote!.name).to.eq("name1");
+					expect(getRemote.__indexed).to.be.instanceOf(Indexable);
+
+					const searchRequests = processQuerySpy
+						.getCalls()
+						.map((call) => call.args[0])
+						.filter(
+							(request) =>
+								request instanceof SearchRequest ||
+								request instanceof SearchRequestIndexed,
+						);
+
+					expect(
+						searchRequests.some(
+							(request) => request instanceof SearchRequestIndexed,
+						),
+					).to.be.true;
+					expect(
+						searchRequests.some((request) => request instanceof SearchRequest),
+					).to.be.false;
+				} finally {
+					processQuerySpy.restore();
+				}
+			});
+
 			it("get local first", async () => {
 				const localReadyWait = {
 					timeout: 120_000,
