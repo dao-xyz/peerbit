@@ -2148,7 +2148,8 @@ export abstract class DirectStream<
 				decodedMessage = Message.from(message);
 				priority = decodedMessage.header.priority ?? 0;
 			} catch {
-				// Let processMessage keep the existing decode warning/ignore behavior.
+				// This is only a best-effort priority peek. processMessage()
+				// performs the authoritative decode and logs invalid frames.
 			}
 			//	logger.trace("messages from " + from);
 			await this.queue
