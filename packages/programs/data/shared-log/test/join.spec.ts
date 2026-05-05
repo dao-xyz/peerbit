@@ -561,6 +561,15 @@ describe("join", () => {
 		expect(syncMessagesSent).to.be.false;
 		expect(rebalanced).to.be.false;
 
+		const replicationSegmentsAfterFirstJoin =
+			await db2.log.replicationIndex.getSize();
+		await db2.log.join([e1.entry], {
+			replicate: { mergeSegments: true, assumeSynced: true },
+		});
+		expect(await db2.log.replicationIndex.getSize()).to.equal(
+			replicationSegmentsAfterFirstJoin,
+		);
+
 		// checkl that no rebalance occurs
 	});
 

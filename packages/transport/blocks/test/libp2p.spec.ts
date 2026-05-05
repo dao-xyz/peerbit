@@ -697,6 +697,32 @@ describe("transport", function () {
 		expect(t2 - t1 < 3100);
 	});
 
+	it("honors shorter caller timeout when reusing an in-flight get", async () => {
+		session = await TestSession.connected(2, {
+			services: { blocks: (c) => new DirectBlock(c) },
+		});
+		await waitForNeighbour(store(session, 0), store(session, 1));
+
+		const missingCid = "zb3we1BmfxpFg6bCXmrsuEo8JuQrGEf7RyFBdRxEHLuqc4CSr";
+		const firstRead = store(session, 0)
+			.get(missingCid, {
+				remote: { timeout: 1000, from: [store(session, 1).publicKeyHash] },
+			})
+			.catch((): undefined => undefined);
+
+		await delay(25);
+
+		const t1 = +new Date();
+		const secondRead = await store(session, 0).get(missingCid, {
+			remote: { timeout: 100, from: [store(session, 1).publicKeyHash] },
+		});
+		const t2 = +new Date();
+
+		expect(secondRead).equal(undefined);
+		expect(t2 - t1).to.be.lessThan(500);
+		await firstRead;
+	});
+
 	it("iterate", async () => {
 		session = await TestSession.disconnected(1, {
 			services: { blocks: (c) => new DirectBlock(c) },

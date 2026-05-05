@@ -23,6 +23,7 @@ import type { SortFn } from "./log-sorting.js";
 import { logger as baseLogger } from "./logger.js";
 
 const log = baseLogger.newScope("entry-index");
+const LOG_ENTRY_REMOTE_READ_PRIORITY = 2;
 
 export type ResultsIterator<T> = {
 	close: () => void | Promise<void>;
@@ -43,6 +44,7 @@ type ResolveFullyOptions =
 						signal?: AbortSignal;
 						timeout?: number;
 						from?: string[];
+						priority?: number;
 				  }
 				| boolean;
 			ignoreMissing?: boolean;
@@ -52,6 +54,44 @@ export type MaybeResolveOptions =
 	| false
 	| ResolveFullyOptions
 	| ResolveShapeOptions;
+
+type RemoteReadOptionsWithPriority = {
+	remote?:
+		| {
+				replicate?: boolean;
+				signal?: AbortSignal;
+				timeout?: number;
+				from?: string[];
+				priority?: number;
+		  }
+		| boolean;
+};
+
+const withDefaultRemoteReadPriority = <
+	O extends RemoteReadOptionsWithPriority | undefined,
+>(
+	options: O,
+): O => {
+	if (!options?.remote) {
+		return options;
+	}
+	if (options.remote === true) {
+		return {
+			...options,
+			remote: { priority: LOG_ENTRY_REMOTE_READ_PRIORITY },
+		} as O;
+	}
+	if (options.remote.priority != null) {
+		return options;
+	}
+	return {
+		...options,
+		remote: {
+			...options.remote,
+			priority: LOG_ENTRY_REMOTE_READ_PRIORITY,
+		},
+	} as O;
+};
 export type ReturnTypeFromResolveOptions<
 	R extends MaybeResolveOptions,
 	T,
@@ -672,6 +712,7 @@ export class EntryIndex<T> {
 						replicate?: boolean;
 						timeout?: number;
 						from?: string[];
+						priority?: number;
 				  }
 				| boolean;
 		},
@@ -706,7 +747,10 @@ export class EntryIndex<T> {
 			}
 		}
 
-		const value = await this.properties.store.get(k, coercedOptions);
+		const value = await this.properties.store.get(
+			k,
+			withDefaultRemoteReadPriority(coercedOptions),
+		);
 		if (value) {
 			const entry = deserialize(value, Entry);
 			entry.size = value.length;

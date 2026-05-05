@@ -68,6 +68,10 @@ type InFlightRead = {
 	addProviders: (providers: string[]) => void;
 };
 
+type RemoteReadOptions = Exclude<GetOptions["remote"], boolean | undefined> & {
+	hasher?: any;
+};
+
 export class RemoteBlocks implements IBlocks {
 	localStore: BlockStore;
 
@@ -453,13 +457,7 @@ export class RemoteBlocks implements IBlocks {
 	private async _readFromPeers(
 		cidString: string,
 		cidObject: CID,
-		options: {
-			signal?: AbortSignal;
-			timeout?: number;
-			hasher?: any;
-			from?: string[];
-			priority?: number;
-		} = {},
+		options: RemoteReadOptions = {},
 	): Promise<Uint8Array | undefined> {
 		const codec = (codecCodes as any)[cidObject.code];
 
@@ -704,9 +702,53 @@ export class RemoteBlocks implements IBlocks {
 			if (providers.length > 0) {
 				inFlight.addProviders(providers);
 			}
-			const result = await inFlight.promise;
-			return result?.bytes;
+			return this.waitForInFlightRead(inFlight, options);
 		}
+	}
+
+	private waitForInFlightRead(
+		inFlight: InFlightRead,
+		options: RemoteReadOptions,
+	): Promise<Uint8Array | undefined> {
+		if (options.timeout == null && options.signal == null) {
+			return inFlight.promise.then((result) => result?.bytes);
+		}
+
+		return new Promise((resolve, reject) => {
+			let settled = false;
+			let timeout: ReturnType<typeof setTimeout> | undefined;
+
+			const cleanup = () => {
+				if (timeout) clearTimeout(timeout);
+				options.signal?.removeEventListener("abort", abort);
+			};
+			const finish = (callback: () => void) => {
+				if (settled) return;
+				settled = true;
+				cleanup();
+				callback();
+			};
+			const abort = () => {
+				finish(() => reject(new AbortError()));
+			};
+
+			if (options.signal?.aborted) {
+				abort();
+				return;
+			}
+
+			if (options.timeout != null) {
+				timeout = setTimeout(() => {
+					finish(() => resolve(undefined));
+				}, Math.max(0, options.timeout));
+			}
+			options.signal?.addEventListener("abort", abort, { once: true });
+
+			inFlight.promise.then(
+				(result) => finish(() => resolve(result?.bytes)),
+				(error) => finish(() => reject(error)),
+			);
+		});
 	}
 
 	async stop(): Promise<void> {

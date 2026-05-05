@@ -1756,6 +1756,19 @@ export class DocumentIndex<
 		let requestClazz = resolve
 			? types.SearchRequest
 			: types.SearchRequestIndexed;
+		const wantsReplication =
+			coercedOptions?.remote &&
+			typeof coercedOptions.remote !== "boolean" &&
+			coercedOptions.remote.replicate;
+		if (
+			resolve &&
+			wantsReplication &&
+			(this.compatibility == null || this.compatibility > 8)
+		) {
+			// SearchRequest cannot carry entries, so a replicated resolved get would
+			// fetch the value and then fetch the entry again during sync.
+			requestClazz = types.SearchRequestIndexed;
+		}
 		if (key instanceof Uint8Array) {
 			const request = new requestClazz({
 				query: [
