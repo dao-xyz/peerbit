@@ -81,6 +81,31 @@ describe("priority lanes", () => {
 		await streams.close();
 	});
 
+	it("does not permanently stall when a stream misses drain", async () => {
+		const keypair = await Ed25519Keypair.create();
+		const streams = new PeerStreams({
+			peerId: { toString: () => "test-peer" } as unknown as PeerId,
+			publicKey: keypair.publicKey,
+			protocol: "/test",
+			connId: "test-conn",
+		});
+
+		const outbound = new TestOutboundStream();
+		await streams.attachOutboundStream(outbound as any);
+
+		streams.write(new Uint8Array([1]), 0);
+		await waitForResolved(() =>
+			expect(outbound.sentPayloads).to.deep.equal([1]),
+		);
+
+		streams.write(new Uint8Array([200]), 3);
+		await waitForResolved(() =>
+			expect(outbound.sentPayloads).to.deep.equal([1, 200]),
+		);
+
+		await streams.close();
+	});
+
 	it("applies backpressure to bulk writes while reserving capacity for higher priority traffic", async () => {
 		const keypair = await Ed25519Keypair.create();
 		const streams = new PeerStreams({

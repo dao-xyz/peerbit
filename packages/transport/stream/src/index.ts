@@ -139,6 +139,7 @@ const waitForDrain = async (
 		const cleanup = () => {
 			if (done) return;
 			done = true;
+			clearTimeout(fallbackTimer);
 			stream.removeEventListener("drain", onDrain);
 			stream.removeEventListener("close", onClose);
 			signal?.removeEventListener("abort", onAbort);
@@ -157,6 +158,9 @@ const waitForDrain = async (
 			const err = detail?.error ?? (event as any)?.error;
 			reject(err ?? new Error("Stream closed"));
 		};
+		// Some libp2p streams can return backpressure without later emitting drain.
+		// Do not let a missed drain permanently stall higher-priority traffic.
+		const fallbackTimer = setTimeout(onDrain, 250);
 		stream.addEventListener("drain", onDrain, { once: true });
 		stream.addEventListener("close", onClose, { once: true });
 		signal?.addEventListener("abort", onAbort, { once: true });
@@ -2138,15 +2142,28 @@ export abstract class DirectStream<
 		// logger.trace("rpc from " + from + ", " + this.peerIdStr);
 
 		if (message.length > 0) {
+			let decodedMessage: Message | undefined;
+			let priority = 0;
+			try {
+				decodedMessage = Message.from(message);
+				priority = decodedMessage.header.priority ?? 0;
+			} catch {
+				// Let processMessage keep the existing decode warning/ignore behavior.
+			}
 			//	logger.trace("messages from " + from);
 			await this.queue
 				.add(async () => {
 					try {
-						await this.processMessage(from, peerStreams, message);
+						await this.processMessage(
+							from,
+							peerStreams,
+							message,
+							decodedMessage,
+						);
 					} catch (err: any) {
 						logger.error(err);
 					}
-				})
+				}, { priority })
 				.catch(logError);
 		}
 
@@ -2172,15 +2189,16 @@ export abstract class DirectStream<
 		from: PublicSignKey,
 		peerStream: PeerStreams,
 		msg: Uint8ArrayList,
+		decodedMessage?: Message,
 	) {
 		if (!this.started) {
 			return;
 		}
 
 		// Ensure the message is valid before processing it
-		let message: Message | undefined;
+		let message: Message | undefined = decodedMessage;
 		try {
-			message = Message.from(msg);
+			message ??= Message.from(msg);
 		} catch (error) {
 			warn(error, "Failed to decode message frame from", from.hashcode());
 			return;
