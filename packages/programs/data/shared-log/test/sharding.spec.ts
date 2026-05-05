@@ -1589,6 +1589,51 @@ testSetups.forEach((setup) => {
 				};
 				const originalPushRepairEntries =
 					sourceLog.pushRepairEntries.bind(sourceDb.log);
+
+				// Regression for the CI failure mode: an underfilled churn sweep must
+				// not replace a receipt-driven frontier and forget an unconfirmed hash.
+				const sourceLogInternals = sourceDb.log as any;
+				const candidateIndexEntry = (
+					await sourceLogInternals.entryCoordinatesIndex
+						.iterate({ query: { hash: candidateHash } })
+						.all()
+				)[0]?.value;
+				expect(candidateIndexEntry).to.exist;
+				const churnFrontier =
+					sourceLogInternals._repairFrontierByMode.get("churn");
+				churnFrontier.set(
+					targetHash,
+					new Map([[candidateHash, candidateIndexEntry]]),
+				);
+				const pendingChurnPeers =
+					sourceLogInternals._repairSweepPendingPeersByMode.get("churn");
+				const originalEntryCoordinateIterate =
+					sourceLogInternals.entryCoordinatesIndex.iterate.bind(
+						sourceLogInternals.entryCoordinatesIndex,
+					);
+				sourceLogInternals.entryCoordinatesIndex.iterate = () => ({
+					close: async () => undefined,
+					done: () => true,
+					next: async () => [],
+				});
+				try {
+					sourceLogInternals._repairSweepPendingModes.add("churn");
+					pendingChurnPeers.add(targetHash);
+					sourceLogInternals._repairSweepRunning = true;
+					await sourceLogInternals.runRepairSweep();
+					expect(
+						churnFrontier.get(targetHash)?.has(candidateHash),
+						"churn repair frontier should keep unconfirmed hashes across underfilled sweeps",
+					).to.be.true;
+				} finally {
+					sourceLogInternals.entryCoordinatesIndex.iterate =
+						originalEntryCoordinateIterate;
+					churnFrontier.delete(targetHash);
+					pendingChurnPeers.delete(targetHash);
+					sourceLogInternals._repairSweepPendingModes.delete("churn");
+					sourceLogInternals._repairSweepRunning = false;
+				}
+
 				let droppedCandidateHash = false;
 
 				sourceLog.pushRepairEntries = async (target, entries) => {

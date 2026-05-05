@@ -320,6 +320,79 @@ const service = <
 	(s.peers[i].services as Record<string, unknown>)[serviceName] as TService;
 
 describe("streams", function () {
+	it("processes queued inbound messages by transport priority", async () => {
+		const session = await disconnected(2);
+		try {
+			const sender = stream(session, 0);
+			const receiver = stream(session, 1);
+			receiver.queue.concurrency = 1;
+
+			const processed: number[] = [];
+			const firstLowStarted = pDefer<void>();
+			const releaseFirstLow = pDefer<void>();
+			let lowMessagesStarted = 0;
+
+			(receiver as any).processMessage = async (
+				_from: PublicSignKey,
+				_peerStream: PeerStreams,
+				msg: Uint8ArrayList,
+				decoded?: Message,
+			) => {
+				const message = decoded ?? Message.from(msg);
+				const priority = message.header.priority ?? 0;
+				processed.push(priority);
+
+				if (priority === 0) {
+					lowMessagesStarted++;
+					if (lowMessagesStarted === 1) {
+						firstLowStarted.resolve();
+						await releaseFirstLow.promise;
+					}
+				}
+			};
+
+			const create = (priority: number, byte: number) =>
+				sender.createMessage(new Uint8Array([byte]), {
+					mode: new SilentDelivery({
+						to: [receiver.publicKeyHash],
+						redundancy: 1,
+					}),
+					priority,
+				});
+			const asList = (bytes: Uint8Array | Uint8ArrayList) =>
+				bytes instanceof Uint8ArrayList ? bytes : new Uint8ArrayList(bytes);
+
+			const lowMessages = await Promise.all([
+				create(0, 1),
+				create(0, 2),
+				create(0, 3),
+			]);
+			const lowPromises = lowMessages.map((message) =>
+				receiver.processRpc(
+					sender.publicKey,
+					{} as PeerStreams,
+					asList(message.bytes()),
+				),
+			);
+
+			await firstLowStarted.promise;
+			const highMessage = await create(3, 200);
+			const highPromise = receiver.processRpc(
+				sender.publicKey,
+				{} as PeerStreams,
+				asList(highMessage.bytes()),
+			);
+
+			await delay(0);
+			releaseFirstLow.resolve();
+			await Promise.all([...lowPromises, highPromise]);
+
+			expect(processed).to.deep.equal([0, 3, 0, 0]);
+		} finally {
+			await session.stop();
+		}
+	});
+
 	describe("signing", () => {
 		let session: TestSessionStream;
 
