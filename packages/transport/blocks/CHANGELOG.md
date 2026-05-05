@@ -279,6 +279,20 @@
     * @peerbit/blocks-interface bumped from 1.2.18 to 1.2.19
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [4.1.8](https://github.com/dao-xyz/peerbit/compare/blocks-v4.1.7...blocks-v4.1.8) (2026-05-05)
+
+
+### Bug Fixes
+
+* improve remote reads under contention ([db27286](https://github.com/dao-xyz/peerbit/commit/db27286a7b91a9ec9d53babb7cd48e2c9e58d0b9))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped to 5.0.16
+
 ## [4.1.7](https://github.com/dao-xyz/peerbit/compare/blocks-v4.1.6...blocks-v4.1.7) (2026-05-04)
 
 

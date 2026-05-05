@@ -389,6 +389,28 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.1.16](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.15...shared-log-v13.1.16) (2026-05-05)
+
+
+### Bug Fixes
+
+* improve remote reads under contention ([db27286](https://github.com/dao-xyz/peerbit/commit/db27286a7b91a9ec9d53babb7cd48e2c9e58d0b9))
+* prevent stream priority stalls under backpressure ([c0a7308](https://github.com/dao-xyz/peerbit/commit/c0a7308237573f6128de99c2a12eb1ee07a84ba5))
+* **shared-log:** preserve churn repair frontier ([e1c061f](https://github.com/dao-xyz/peerbit/commit/e1c061fd9df283f559bac0785eb7301794d1a208))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks bumped to 4.1.8
+    * @peerbit/log bumped to 6.0.35
+    * @peerbit/program bumped to 6.0.29
+    * @peerbit/pubsub bumped to 5.2.10
+    * @peerbit/rpc bumped to 6.0.33
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.33
+
 ## [13.1.15](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.14...shared-log-v13.1.15) (2026-05-04)
 
 
