@@ -43,6 +43,19 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [5.0.16](https://github.com/dao-xyz/peerbit/compare/stream-v5.0.15...stream-v5.0.16) (2026-05-05)
+
+
+### Bug Fixes
+
+* prevent stream priority stalls under backpressure ([c0a7308](https://github.com/dao-xyz/peerbit/commit/c0a7308237573f6128de99c2a12eb1ee07a84ba5))
+* prevent stream priority stalls under backpressure ([679da82](https://github.com/dao-xyz/peerbit/commit/679da820e712a4ef9f9791b9cc98379ad0417b02))
+
+
+### Documentation
+
+* **stream:** clarify priority peek decode fallback ([0d38b80](https://github.com/dao-xyz/peerbit/commit/0d38b80c4959526ff21ef1ca5d6749e43750b5ec))
+
 ## [5.0.15](https://github.com/dao-xyz/peerbit/compare/stream-v5.0.14...stream-v5.0.15) (2026-05-04)
 
 

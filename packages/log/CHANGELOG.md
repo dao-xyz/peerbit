@@ -368,6 +368,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [6.0.35](https://github.com/dao-xyz/peerbit/compare/log-v6.0.34...log-v6.0.35) (2026-05-05)
+
+
+### Bug Fixes
+
+* improve remote reads under contention ([db27286](https://github.com/dao-xyz/peerbit/commit/db27286a7b91a9ec9d53babb7cd48e2c9e58d0b9))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks bumped to 4.1.8
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.33
+
 ## [6.0.34](https://github.com/dao-xyz/peerbit/compare/log-v6.0.33...log-v6.0.34) (2026-05-04)
 
 
