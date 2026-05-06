@@ -16,11 +16,17 @@ import {
 	Query,
 	Sort,
 	StringMatch,
+	StringMatchMethod,
 	UnsignedIntegerValue,
 } from "@peerbit/indexer-interface";
 import { hrtime } from "@peerbit/time";
 import pDefer, { type DeferredPromise } from "p-defer";
 import { escapeColumnName } from "./schema.js";
+
+type IndexColumn = {
+	name: string;
+	collation?: "NOCASE";
+};
 
 export interface QueryIndexPlanner {
 	// assumes withing a query, each index can be picked independently. For example if we are to join two tables, we can pick the best index for each table
@@ -33,6 +39,7 @@ export interface QueryIndexPlanner {
 				avg: number;
 				times: number[];
 				indexKey: string;
+				columns: IndexColumn[];
 				created: () => boolean;
 				creationPromiseDeferred: DeferredPromise<void>;
 			}[];
@@ -43,12 +50,18 @@ export interface QueryIndexPlanner {
 type StmtStats = Map<string, QueryIndexPlanner>;
 
 const getSortedNameKey = (tableName: string, names: string[]) =>
-	[tableName, ...names.sort()].join(",");
-const createIndexKey = (tableName: string, fields: string[]) =>
-	`${tableName}_index_${fields.map((x) => x).join("_")}`;
+	[tableName, ...[...names].sort()].join(",");
+const getIndexColumnKey = (field: IndexColumn) =>
+	`${field.name}${field.collation ? `_collate_${field.collation.toLowerCase()}` : ""}`;
+const createIndexKey = (tableName: string, fields: IndexColumn[]) =>
+	`${tableName}_index_${fields.map((x) => getIndexColumnKey(x).replace(/[^a-zA-Z0-9_]/g, "_")).join("_")}`;
+const createIndexColumnSQL = (field: IndexColumn) =>
+	`${escapeColumnName(field.name)}${field.collation ? ` COLLATE ${field.collation}` : ""}`;
 
 const HALF_MAX_U32 = 2147483647; // rounded down
 const HALF_MAX_U64 = 9223372036854775807n; // rounded down
+const PARENT_TABLE_ID = "__parent_id";
+const AMBIGUOUS_CHILD_FORCE_AFTER_USES = 6_000;
 
 export const flattenQuery = function* (props?: {
 	query: Query[];
@@ -194,7 +207,16 @@ export class QueryPlanner {
 	pendingIndexCreation: Map<string, Promise<void>> = new Map();
 
 	constructor(
-		readonly props: { exec: (query: string) => Promise<any> | any },
+		readonly props: {
+			exec: (query: string) => Promise<any> | any;
+			/**
+			 * INDEXED BY is a hard SQLite requirement, not a hint. Keep the legacy
+			 * forced-index behavior by default and allow callers to disable it once
+			 * their query shapes have been verified against SQLite's own planner.
+			 */
+			forceIndexes?: boolean;
+			optimizeAfterCreate?: boolean;
+		},
 	) {}
 
 	async stop() {
@@ -219,7 +241,11 @@ export class QueryPlanner {
 			| undefined = undefined;
 		let pickedIndexKeys: Map<string, string> = new Map(); // index key to column names key
 		let indexCreationPromiseToAwait: Promise<void>[] = [];
+		let forceIndex = this.props.forceIndexes !== false;
 		return {
+			get forceIndex() {
+				return forceIndex;
+			},
 			beforePrepare: async () => {
 				// create missing indices
 				if (indexCreateCommands != null) {
@@ -235,7 +261,12 @@ export class QueryPlanner {
 					if (commandsToCreate.length > 0) {
 						const creationPromise = Promise.resolve(
 							this.props.exec(
-								commandsToCreate.map((command) => command.cmd).join(";"),
+								[
+									...commandsToCreate.map((command) => command.cmd),
+									...(this.props.optimizeAfterCreate === false
+										? []
+										: ["PRAGMA optimize"]),
+								].join(";"),
 							),
 						);
 						for (const { key } of commandsToCreate) {
@@ -265,6 +296,8 @@ export class QueryPlanner {
 				await Promise.all(indexCreationPromiseToAwait);
 			},
 			resolveIndex: (tableName: string, columns: string[]): string => {
+				forceIndex = this.props.forceIndexes !== false;
+
 				// first we figure out whether we want to reuse the fastest index or try a new one
 				// only assume we either do forward or backward column order for now (not all n! permutations)
 				const sortedNameKey = getSortedNameKey(tableName, columns);
@@ -277,11 +310,10 @@ export class QueryPlanner {
 				}
 
 				if (indexStats.results.length === 0) {
-					// create both forward and backward permutations
-					const permutations = generatePermutations(columns);
-					for (const columns of permutations) {
+					const candidates = generateIndexCandidates(query, columns);
+					for (const columns of candidates) {
 						const indexKey = createIndexKey(tableName, columns);
-						const command = `create index if not exists ${indexKey} on ${tableName} (${columns.map((n) => escapeColumnName(n)).join(", ")})`;
+						const command = `create index if not exists ${indexKey} on ${tableName} (${columns.map((n) => createIndexColumnSQL(n)).join(", ")})`;
 
 						let deferred = pDefer<void>();
 						(indexCreateCommands || (indexCreateCommands = [])).push({
@@ -299,10 +331,25 @@ export class QueryPlanner {
 							times: [],
 							avg: -1, // setting -1 will force the first time to be the fastest (i.e. new indices are always tested once)
 							indexKey,
+							columns,
 							created: () => created,
 							creationPromiseDeferred: deferred,
 						});
 					}
+				}
+
+				const isAmbiguousChildPredicate =
+					query.sort.length === 0 &&
+					columns.includes(PARENT_TABLE_ID) &&
+					columns.length > 1;
+				if (isAmbiguousChildPredicate) {
+					const totalUses = indexStats.results.reduce(
+						(sum, result) => sum + result.used,
+						0,
+					);
+					forceIndex =
+						this.props.forceIndexes !== false &&
+						totalUses >= AMBIGUOUS_CHILD_FORCE_AFTER_USES;
 				}
 
 				// find the fastest index
@@ -352,9 +399,172 @@ export class QueryPlanner {
 	}
 }
 
-const generatePermutations = (list: string[]) => {
-	if (list.length === 1) return [list];
-	return [list, [...list].reverse()];
+const queryKeyToColumnName = (key: string[]) => {
+	if (key.length > 2) {
+		return `${key.slice(0, -1).join("_")}__${key[key.length - 1]}`;
+	}
+	return key.join("__");
+};
+
+const pushUniqueColumn = (list: IndexColumn[], column: IndexColumn) => {
+	const key = getIndexColumnKey(column);
+	if (!list.some((x) => getIndexColumnKey(x) === key)) {
+		list.push(column);
+	}
+};
+
+const pushColumns = (target: IndexColumn[], columns: IndexColumn[]) => {
+	for (const column of columns) {
+		pushUniqueColumn(target, column);
+	}
+};
+
+const getIndexableQueryColumns = (
+	query: Query[],
+	availableColumns: Set<string>,
+) => {
+	const equality: IndexColumn[] = [];
+	const range: IndexColumn[] = [];
+
+	const visit = (item: Query, path: string[] = []) => {
+		if (item instanceof And) {
+			for (const condition of item.and) {
+				visit(condition, path);
+			}
+			return;
+		}
+		if (item instanceof Or) {
+			for (const condition of item.or) {
+				visit(condition, path);
+			}
+			return;
+		}
+		if (item instanceof Not) {
+			return;
+		}
+		if (item instanceof Nested) {
+			for (const condition of item.query) {
+				visit(condition, [...path, ...item.path]);
+			}
+			return;
+		}
+
+		let key: string[] | undefined;
+		let target: IndexColumn[] | undefined;
+		let collation: IndexColumn["collation"] | undefined;
+		if (item instanceof IntegerCompare) {
+			key = item.key;
+			target = item.compare === Compare.Equal ? equality : range;
+		} else if (item instanceof StringMatch) {
+			key = item.key;
+			if (item.method === StringMatchMethod.contains) {
+				return;
+			}
+			target = item.method === StringMatchMethod.exact ? equality : range;
+			collation = item.caseInsensitive ? "NOCASE" : undefined;
+		} else if (
+			item instanceof ByteMatchQuery ||
+			item instanceof BoolQuery ||
+			item instanceof IsNull
+		) {
+			key = item.key;
+			target = equality;
+		}
+
+		if (!key || !target) {
+			return;
+		}
+		const columnName = queryKeyToColumnName([...path, ...key]);
+		if (availableColumns.has(columnName)) {
+			pushUniqueColumn(target, { name: columnName, collation });
+		}
+	};
+
+	for (const item of query) {
+		visit(item);
+	}
+
+	return { equality, range };
+};
+
+const getSortableColumns = (sort: Sort[], availableColumns: Set<string>) => {
+	const out: IndexColumn[] = [];
+	for (const item of sort) {
+		const columnName = queryKeyToColumnName(item.key);
+		if (availableColumns.has(columnName)) {
+			pushUniqueColumn(out, { name: columnName });
+		}
+	}
+	return out;
+};
+
+const normalizeCandidate = (columns: IndexColumn[]) => {
+	const out: IndexColumn[] = [];
+	pushColumns(out, columns);
+	return out;
+};
+
+const generateIndexCandidates = (query: PlannableQuery, columns: string[]) => {
+	if (columns.length === 0) {
+		return [];
+	}
+
+	const availableColumns = new Set(columns);
+	const { equality, range } = getIndexableQueryColumns(
+		query.query,
+		availableColumns,
+	);
+	const sort = getSortableColumns(query.sort, availableColumns);
+	const join = availableColumns.has(PARENT_TABLE_ID)
+		? [{ name: PARENT_TABLE_ID }]
+		: [];
+	const knownColumnNames = new Set(
+		[...join, ...equality, ...range, ...sort].map((x) => x.name),
+	);
+	const remaining = columns
+		.filter((column) => !knownColumnNames.has(column))
+		.map((name) => ({ name }));
+
+	const candidates: IndexColumn[][] = [];
+	const pushCandidate = (...parts: IndexColumn[][]) => {
+		const candidate = normalizeCandidate(parts.flat());
+		if (
+			candidate.length > 0 &&
+			!candidates.some(
+				(existing) =>
+					existing.map(getIndexColumnKey).join(",") ===
+					candidate.map(getIndexColumnKey).join(","),
+			)
+		) {
+			candidates.push(candidate);
+		}
+	};
+
+	if (sort.length > 0 && range.length > 0) {
+		pushCandidate(join, equality, sort, range, remaining);
+		pushCandidate(join, equality, range, sort, remaining);
+	} else if (sort.length > 0) {
+		pushCandidate(join, equality, sort, range, remaining);
+	} else {
+		if (join.length > 0 && (equality.length > 0 || range.length > 0)) {
+			pushCandidate(equality, range, join, remaining);
+		}
+		pushCandidate(join, equality, range, remaining);
+	}
+
+	if (join.length > 0 && (equality.length > 0 || range.length > 0)) {
+		if (sort.length > 0 && range.length > 0) {
+			pushCandidate(equality, sort, range, join, remaining);
+			pushCandidate(equality, range, sort, join, remaining);
+		} else if (sort.length > 0) {
+			pushCandidate(equality, range, sort, join, remaining);
+		}
+	}
+
+	pushCandidate(columns.map((name) => ({ name })));
+	pushCandidate([...columns].reverse().map((name) => ({ name })));
+
+	return candidates;
 };
 /* const generatePermutations = (list: string[]) => {
 	const results: string[][] = [];

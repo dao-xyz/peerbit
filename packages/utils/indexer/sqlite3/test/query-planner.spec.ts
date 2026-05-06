@@ -163,7 +163,7 @@ describe("QueryPlanner", () => {
 		await perform2;
 	});
 
-	it("batches new index permutations into one exec", async () => {
+	it("batches new index candidates into one exec", async () => {
 		let executed: string[] = [];
 
 		const planner = new QueryPlanner({
@@ -181,9 +181,91 @@ describe("QueryPlanner", () => {
 		expect(executed[0]).to.contain(
 			"create index if not exists table_index_field1_field2",
 		);
+		expect(executed[0]).to.contain("PRAGMA optimize");
+	});
+
+	it("orders candidates by equality, sort, and range semantics", async () => {
+		let executed: string[] = [];
+
+		const planner = new QueryPlanner({
+			exec: async (query: string) => {
+				executed.push(query);
+			},
+		});
+		const query = new PlannableQuery({
+			query: [
+				new IntegerCompare({
+					key: "a",
+					compare: Compare.Equal,
+					value: 1,
+				}),
+				new IntegerCompare({
+					key: "b",
+					compare: Compare.GreaterOrEqual,
+					value: 0,
+				}),
+			],
+			sort: new Sort({ key: "c", direction: SortDirection.ASC }),
+		});
+		const scope = planner.scope(query);
+
+		scope.resolveIndex("table", ["c", "a", "b"]);
+		await scope.beforePrepare();
+
+		expect(executed).to.have.length(1);
 		expect(executed[0]).to.contain(
-			"create index if not exists table_index_field2_field1",
+			"create index if not exists table_index_a_c_b",
 		);
+		expect(executed[0]).to.contain(
+			"create index if not exists table_index_a_b_c",
+		);
+	});
+
+	it("does not mutate resolved column order while building stats keys", async () => {
+		const planner = new QueryPlanner({
+			exec: async () => {},
+		});
+		const query = new PlannableQuery({ query: [] });
+		const scope = planner.scope(query);
+		const columns = ["field2", "field1"];
+
+		scope.resolveIndex("table", columns);
+
+		expect(columns).to.deep.equal(["field2", "field1"]);
+	});
+
+	it("keeps hard INDEXED BY compatibility mode by default", async () => {
+		const defaultPlanner = new QueryPlanner({
+			exec: async () => {},
+		});
+		const relaxedPlanner = new QueryPlanner({
+			exec: async () => {},
+			forceIndexes: false,
+		});
+
+		const defaultScope = defaultPlanner.scope(new PlannableQuery({ query: [] }));
+		const relaxedScope = relaxedPlanner.scope(new PlannableQuery({ query: [] }));
+
+		expect(defaultScope.forceIndex).to.equal(true);
+		expect(relaxedScope.forceIndex).to.equal(false);
+	});
+
+	it("relaxes ambiguous child-table predicates until the index has warmed", async () => {
+		const planner = new QueryPlanner({
+			exec: async () => {},
+		});
+		const scope = planner.scope(new PlannableQuery({ query: [] }));
+
+		scope.resolveIndex("child", ["__parent_id", "value"]);
+		expect(scope.forceIndex).to.equal(false);
+
+		scope.resolveIndex("root", ["value"]);
+		expect(scope.forceIndex).to.equal(true);
+
+		for (let i = 0; i < 6_000; i++) {
+			scope.resolveIndex("child", ["__parent_id", "value"]);
+		}
+		expect(scope.forceIndex).to.equal(true);
 	});
 });
 
