@@ -72,6 +72,32 @@ describe("riblt", () => {
 		expect(cost).to.equal(2);
 	});
 
+	it("diff (batched coded symbols)", async () => {
+		const aliceSymbols = [1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n];
+		const bobSymbols = [1n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n, 11n];
+
+		const encoder = new EncoderWrapper();
+		encoder.add_symbols(BigUint64Array.from(aliceSymbols));
+
+		const decoder = new DecoderWrapper();
+		decoder.add_symbols(BigUint64Array.from(bobSymbols));
+
+		const codedSymbols = encoder.produce_next_coded_symbols(2);
+		expect(codedSymbols).to.be.instanceOf(BigUint64Array);
+		expect(codedSymbols.length).to.equal(6);
+		expect(decoder.add_coded_symbols_and_try_decode(codedSymbols)).to.equal(
+			true,
+		);
+
+		const remoteSymbols = decoder.get_remote_symbol_values();
+		const localSymbols = decoder.get_local_symbol_values();
+
+		expect(remoteSymbols).to.be.instanceOf(BigUint64Array);
+		expect(localSymbols).to.be.instanceOf(BigUint64Array);
+		expect(Array.from(remoteSymbols)).to.deep.equal([2n]);
+		expect(Array.from(localSymbols)).to.deep.equal([11n]);
+	});
+
 	it("no diff", async () => {
 		const aliceSymbols = [1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n];
 		const bobSymbols = [1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n];

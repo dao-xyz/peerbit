@@ -36,6 +36,32 @@ impl Symbol for MyU64 {
 
 pub type IdentityU64 = u64;
 
+const CODED_SYMBOL_WORDS: usize = 3;
+
+fn coded_symbol_from_flat(
+    flat: &[u64],
+    offset: usize,
+) -> Result<CodedSymbol<IdentityU64>, JsValue> {
+    let count = flat[offset];
+    if count > i64::MAX as u64 {
+        return Err(JsValue::from_str("Invalid coded symbol count"));
+    }
+    Ok(CodedSymbol {
+        count: count as i64,
+        hash: flat[offset + 1],
+        symbol: flat[offset + 2],
+    })
+}
+
+fn validate_flat_coded_symbols(symbols: &[u64]) -> Result<(), JsValue> {
+    if symbols.len() % CODED_SYMBOL_WORDS != 0 {
+        return Err(JsValue::from_str(
+            "Expected coded symbols flat array length to be a multiple of 3",
+        ));
+    }
+    Ok(())
+}
+
 #[wasm_bindgen]
 pub struct EncoderWrapper {
     encoder: Encoder<IdentityU64>,
@@ -82,6 +108,17 @@ impl EncoderWrapper {
         JsValue::from(obj)
     }
 
+    pub fn produce_next_coded_symbols(&mut self, count: usize) -> Vec<u64> {
+        let mut symbols = Vec::with_capacity(count * CODED_SYMBOL_WORDS);
+        for _ in 0..count {
+            let coded_symbol = self.encoder.produce_next_coded_symbol();
+            symbols.push(coded_symbol.count as u64);
+            symbols.push(coded_symbol.hash);
+            symbols.push(coded_symbol.symbol);
+        }
+        symbols
+    }
+
     pub fn reset(&mut self) {
         self.encoder.reset();
     }
@@ -118,6 +155,12 @@ impl DecoderWrapper {
         self.decoder.add_symbol(&my_symbol);
     }
 
+    pub fn add_symbols(&mut self, symbols: Vec<u64>) {
+        for symbol in symbols.iter() {
+            self.decoder.add_symbol(symbol);
+        }
+    }
+
     pub fn add_coded_symbol(&mut self, coded_symbol_js: &JsValue) {
         // Extract symbol, hash, and count from JsValue
         let symbol_js =
@@ -135,6 +178,34 @@ impl DecoderWrapper {
         };
 
         self.decoder.add_coded_symbol(&coded_symbol);
+    }
+
+    pub fn add_coded_symbols(&mut self, symbols: Vec<u64>) -> Result<(), JsValue> {
+        validate_flat_coded_symbols(&symbols)?;
+        for offset in (0..symbols.len()).step_by(CODED_SYMBOL_WORDS) {
+            let coded_symbol = coded_symbol_from_flat(&symbols, offset)?;
+            self.decoder.add_coded_symbol(&coded_symbol);
+        }
+        Ok(())
+    }
+
+    pub fn add_coded_symbols_and_try_decode(&mut self, symbols: Vec<u64>) -> Result<bool, JsValue> {
+        validate_flat_coded_symbols(&symbols)?;
+        for offset in (0..symbols.len()).step_by(CODED_SYMBOL_WORDS) {
+            let coded_symbol = coded_symbol_from_flat(&symbols, offset)?;
+            self.decoder.add_coded_symbol(&coded_symbol);
+            match self.decoder.try_decode() {
+                Ok(_) => {
+                    if self.decoder.decoded() {
+                        return Ok(true);
+                    }
+                }
+                Err(Error::InvalidDegree) => {}
+                Err(Error::InvalidSize) => return Err(JsValue::from_str("Invalid size")),
+                Err(Error::DecodeFailed) => return Err(JsValue::from_str("Decode failed")),
+            }
+        }
+        Ok(self.decoder.decoded())
     }
 
     pub fn try_decode(&mut self) -> Result<(), JsValue> {
@@ -164,6 +235,14 @@ impl DecoderWrapper {
         array
     }
 
+    pub fn get_remote_symbol_values(&self) -> Vec<u64> {
+        self.decoder
+            .get_remote_symbols()
+            .iter()
+            .map(|sym| sym.symbol)
+            .collect()
+    }
+
     pub fn get_local_symbols(&self) -> Array {
         let symbols = self.decoder.get_local_symbols();
         let array = Array::new();
@@ -171,6 +250,14 @@ impl DecoderWrapper {
             array.push(&JsValue::from(sym.symbol));
         }
         array
+    }
+
+    pub fn get_local_symbol_values(&self) -> Vec<u64> {
+        self.decoder
+            .get_local_symbols()
+            .iter()
+            .map(|sym| sym.symbol)
+            .collect()
     }
 
     pub fn reset(&mut self) {

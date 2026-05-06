@@ -54,6 +54,108 @@ class SymbolSerialized implements SSymbol {
 	}
 }
 
+const CODED_SYMBOL_WORDS = 3;
+
+type RibltSymbolAdder = {
+	add_symbol: (symbol: bigint) => void;
+	add_symbols?: (symbols: BigUint64Array) => void;
+};
+
+type BatchEncoderWrapper = EncoderWrapper & {
+	produce_next_coded_symbols?: (count: number) => BigUint64Array;
+};
+
+type BatchDecoderWrapper = DecoderWrapper & {
+	add_symbols?: (symbols: BigUint64Array) => void;
+	add_coded_symbols_and_try_decode?: (symbols: BigUint64Array) => boolean;
+	get_remote_symbol_values?: () => BigUint64Array;
+};
+
+const addSymbolsToRiblt = (
+	target: RibltSymbolAdder,
+	symbols: Iterable<NumberOrBigint> | BigUint64Array,
+) => {
+	if (
+		typeof BigUint64Array !== "undefined" &&
+		typeof target.add_symbols === "function"
+	) {
+		target.add_symbols(
+			symbols instanceof BigUint64Array
+				? symbols
+				: BigUint64Array.from(symbols, coerceBigInt),
+		);
+		return;
+	}
+
+	for (const symbol of symbols) {
+		target.add_symbol(coerceBigInt(symbol));
+	}
+};
+
+const serializedSymbolsFromFlat = (
+	flat: BigUint64Array,
+): SymbolSerialized[] => {
+	if (flat.length % CODED_SYMBOL_WORDS !== 0) {
+		throw new Error("Invalid RIBLT coded symbol batch");
+	}
+
+	const symbols: SymbolSerialized[] = [];
+	for (let i = 0; i < flat.length; i += CODED_SYMBOL_WORDS) {
+		symbols.push(
+			new SymbolSerialized({
+				count: flat[i],
+				hash: flat[i + 1],
+				symbol: flat[i + 2],
+			}),
+		);
+	}
+	return symbols;
+};
+
+const produceNextSerializedSymbols = (
+	encoder: EncoderWrapper,
+	count: number,
+): SymbolSerialized[] => {
+	const produceBatch = (encoder as BatchEncoderWrapper)
+		.produce_next_coded_symbols;
+	if (typeof BigUint64Array !== "undefined" && produceBatch) {
+		return serializedSymbolsFromFlat(produceBatch.call(encoder, count));
+	}
+
+	const symbols: SymbolSerialized[] = [];
+	for (let i = 0; i < count; i++) {
+		symbols.push(new SymbolSerialized(encoder.produce_next_coded_symbol()));
+	}
+	return symbols;
+};
+
+const flatFromCodedSymbols = (
+	symbols: readonly (SSymbol | SymbolSerialized)[],
+): BigUint64Array => {
+	const flat = new BigUint64Array(symbols.length * CODED_SYMBOL_WORDS);
+	for (let i = 0; i < symbols.length; i++) {
+		const offset = i * CODED_SYMBOL_WORDS;
+		const symbol = symbols[i];
+		flat[offset] = coerceBigInt(symbol.count);
+		flat[offset + 1] = coerceBigInt(symbol.hash);
+		flat[offset + 2] = coerceBigInt(symbol.symbol);
+	}
+	return flat;
+};
+
+const getRemoteSymbolValues = (decoder: DecoderWrapper): bigint[] => {
+	const getBatch = (decoder as BatchDecoderWrapper).get_remote_symbol_values;
+	if (typeof BigUint64Array !== "undefined" && getBatch) {
+		return Array.from(getBatch.call(decoder));
+	}
+
+	const symbols: bigint[] = [];
+	for (const missingSymbol of decoder.get_remote_symbols()) {
+		symbols.push(coerceBigInt(missingSymbol));
+	}
+	return symbols;
+};
+
 const getSyncIdString = (message: { syncId: Uint8Array }) => {
 	return toBase64(message.syncId);
 };
@@ -271,7 +373,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			encoder: EncoderWrapper;
 			timeout: ReturnType<typeof setTimeout>;
 			refresh: () => void;
-			next: (message: { lastSeqNo: bigint }) => SSymbol[];
+			next: (message: { lastSeqNo: bigint }) => SymbolSerialized[];
 			free: () => void;
 		}
 	>;
@@ -696,16 +798,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 
 		const startSync = new StartSync({ from: start, to: end, symbols: [] });
 		const encoder = new EncoderWrapper();
-		if (
-			typeof BigUint64Array !== "undefined" &&
-			sortedEntries instanceof BigUint64Array
-		) {
-			encoder.add_symbols(sortedEntries);
-		} else {
-			for (const entry of sortedEntries) {
-				encoder.add_symbol(coerceBigInt(entry));
-			}
-		}
+		addSymbolsToRiblt(encoder, sortedEntries);
 
 		// For smaller sets, the original `sqrt(n)` heuristic can occasionally under-provision
 		// low-degree symbols early, causing an unnecessary `MoreSymbols` round-trip. Use a
@@ -714,11 +807,9 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			Math.sqrt(allCoordinatesToSyncWithIblt.length),
 		); // TODO choose better
 		initialSymbols = Math.max(64, initialSymbols);
-		for (let i = 0; i < initialSymbols; i++) {
-			startSync.symbols.push(
-				new SymbolSerialized(encoder.produce_next_coded_symbol()),
-			);
-		}
+		startSync.symbols.push(
+			...produceNextSerializedSymbols(encoder, initialSymbols),
+		);
 
 		const clear = () => {
 			encoder.free();
@@ -743,18 +834,14 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				}
 				obj.timeout = createTimeout();
 			},
-			next: (properties: { lastSeqNo: bigint }): SSymbol[] => {
+			next: (properties: { lastSeqNo: bigint }): SymbolSerialized[] => {
 				if (properties.lastSeqNo <= lastSeqNo) {
 					return [];
 				}
 				lastSeqNo++;
 				obj.refresh(); // TODO use timestamp instead and collective pruning/refresh
 
-				let result: SSymbol[] = [];
-				for (let i = 0; i < nextBatch; i++) {
-					result.push(encoder.produce_next_coded_symbol());
-				}
-				return result;
+				return produceNextSerializedSymbols(encoder, nextBatch);
 			},
 			free: clear,
 			outgoing: properties.entries,
@@ -847,10 +934,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 							return false;
 						}
 
-						const allMissingSymbolsInRemote: bigint[] = [];
-						for (const missingSymbol of decoder.get_remote_symbols()) {
-							allMissingSymbolsInRemote.push(missingSymbol);
-						}
+						const allMissingSymbolsInRemote = getRemoteSymbolValues(decoder);
 
 						// The IBLT decoder is based on a local snapshot. Entries can arrive via
 						// overlapping repair before we issue the follow-up simple request, so
@@ -870,6 +954,23 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 						}
 
 						lastSeqNo = symbolMessage.seqNo;
+
+						const addBatchAndDecode:
+							| ((symbols: BigUint64Array) => boolean)
+							| undefined = (decoder as BatchDecoderWrapper)
+							.add_coded_symbols_and_try_decode;
+						if (typeof BigUint64Array !== "undefined" && addBatchAndDecode) {
+							if (
+								addBatchAndDecode.call(
+									decoder,
+									flatFromCodedSymbols(symbolMessage.symbols),
+								) &&
+								finalizeIfDecoded()
+							) {
+								return true;
+							}
+							continue;
+						}
 
 						for (const symbol of symbolMessage.symbols) {
 							const normalizedSymbol =
@@ -965,7 +1066,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				new MoreSymbols({
 					lastSeqNo: message.lastSeqNo,
 					syncId: message.syncId,
-					symbols: obj.next(message).map((x) => new SymbolSerialized(x)),
+					symbols: obj.next(message),
 				}),
 				{
 					mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
