@@ -1,3 +1,4 @@
+import { deserialize, serialize } from "@dao-xyz/borsh";
 import { Cache } from "@peerbit/cache";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
@@ -6,7 +7,7 @@ import {
 	type ReplicationDomainHash,
 	createReplicationDomainHash,
 } from "../src/index.js";
-import type { TransportMessage } from "../src/message.js";
+import { TransportMessage } from "../src/message.js";
 import {
 	MoreSymbols,
 	RatelessIBLTSynchronizer,
@@ -52,6 +53,52 @@ describe("rateless-iblt-syncronizer", () => {
 	) => {
 		return messages.filter((x) => x instanceof type).length;
 	};
+
+	it("roundtrips coded symbol batches through existing transport variants", () => {
+		const symbols = [
+			{ count: 1n, hash: 2n, symbol: 3n },
+			{ count: 4n, hash: 5n, symbol: 6n },
+		];
+		const expectedFlat = [1n, 2n, 3n, 4n, 5n, 6n];
+
+		const startSyncBytes = serialize(
+			new StartSync({ from: 7n, to: 11n, symbols }),
+		);
+		const emptyStartSyncBytes = serialize(
+			new StartSync({ from: 7n, to: 11n, symbols: [] }),
+		);
+		expect(startSyncBytes.length - emptyStartSyncBytes.length).to.equal(48);
+		const startSync = deserialize(startSyncBytes, TransportMessage);
+		expect(startSync).to.be.instanceOf(StartSync);
+		expect((startSync as StartSync).symbols.length).to.equal(symbols.length);
+		expect(Array.from((startSync as StartSync).symbols.toFlat())).to.deep.equal(
+			expectedFlat,
+		);
+
+		const moreSymbolsBytes = serialize(
+			new MoreSymbols({
+				syncId: new Uint8Array(32).fill(1),
+				lastSeqNo: 1n,
+				symbols,
+			}),
+		);
+		const emptyMoreSymbolsBytes = serialize(
+			new MoreSymbols({
+				syncId: new Uint8Array(32).fill(1),
+				lastSeqNo: 1n,
+				symbols: [],
+			}),
+		);
+		expect(moreSymbolsBytes.length - emptyMoreSymbolsBytes.length).to.equal(48);
+		const moreSymbols = deserialize(moreSymbolsBytes, TransportMessage);
+		expect(moreSymbols).to.be.instanceOf(MoreSymbols);
+		expect((moreSymbols as MoreSymbols).symbols.length).to.equal(
+			symbols.length,
+		);
+		expect(
+			Array.from((moreSymbols as MoreSymbols).symbols.toFlat()),
+		).to.deep.equal(expectedFlat);
+	});
 
 	const setupLogs = async (
 		syncedCount: number,
