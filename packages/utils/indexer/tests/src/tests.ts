@@ -134,6 +134,14 @@ const assertIteratorIsDone = async (iterator: IndexIterator<any, any>) => {
 	expect(iterator.done()).to.be.true;
 };
 
+const assertClosedIterator = async (iterator: IndexIterator<any, any>) => {
+	expect(await iterator.pending()).to.equal(0);
+	expect(await iterator.next(1)).to.deep.equal([]);
+	expect(await iterator.all()).to.deep.equal([]);
+	expect(iterator.done()).to.equal(true);
+	await iterator.close();
+};
+
 export const tests = (
 	createIndicies: (directory?: string) => Indices | Promise<Indices>,
 	type: "transient" | "persist" = "transient",
@@ -297,6 +305,53 @@ export const tests = (
 			await indices?.drop?.();
 		});
 
+		describe("lifecycle", () => {
+			it("returns no-op defaults from public APIs after stop", async () => {
+				const { store, indices } = await setup({ schema: Document });
+				await store.put(
+					new Document({
+						id: "closed",
+						name: "closed",
+						number: 10n,
+						tags: ["closed"],
+					}),
+				);
+				expect(await store.getSize()).to.equal(1);
+
+				const openIterator = store.iterate();
+
+				await indices.stop();
+
+				expect(await store.get(toId("closed"))).to.equal(undefined);
+				expect(
+					await store.put(
+						new Document({
+							id: "late",
+							name: "late",
+							number: 1n,
+							tags: ["late"],
+						}),
+					),
+				).to.equal(undefined);
+				expect(
+					await store.del({
+						query: new StringMatch({
+							key: "id",
+							value: "closed",
+							method: StringMatchMethod.exact,
+							caseInsensitive: false,
+						}),
+					}),
+				).to.deep.equal([]);
+				expect(await store.count()).to.equal(0);
+				expect(await store.getSize()).to.equal(0);
+				expect(await store.sum({ key: "number" })).to.equal(0);
+
+				await assertClosedIterator(store.iterate());
+				await assertClosedIterator(openIterator);
+			});
+		});
+
 		describe("indexBy", () => {
 			const testIndex = async (
 				store: Index<any, any>,
@@ -367,12 +422,12 @@ export const tests = (
 					try {
 						await store.put(doc);
 					} catch (error) {
-							expect(error).to.haveOwnProperty(
-								"message",
-								"Unexpected index key: undefined, expected: string, number, bigint, Uint8Array or ArrayBufferView",
-							);
-						}
-					});
+						expect(error).to.haveOwnProperty(
+							"message",
+							"Unexpected index key: undefined, expected: string, number, bigint, Uint8Array or ArrayBufferView",
+						);
+					}
+				});
 
 				it("index by another property", async () => {
 					const { store } = await setup({

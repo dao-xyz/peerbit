@@ -91,6 +91,10 @@ export type IndexIterator<
 	close: () => MaybePromise<void>;
 };
 
+/**
+ * Public data APIs on a stopped index are shutdown-tolerant: they should not
+ * throw because the index is closed, and should instead return neutral results.
+ */
 export interface Index<T extends Record<string, any>, NestedType = any> {
 	init(
 		properties: IndexEngineInitProperties<T, NestedType>,

@@ -91,7 +91,9 @@ async function getIgnoreFK(stmt: Statement, values: any[]) {
 }
 
 const createBatchInsertSQL = (table: Table, rows: number) => {
-	const columns = table.fields.map((field) => escapeColumnName(field.name)).join(", ");
+	const columns = table.fields
+		.map((field) => escapeColumnName(field.name))
+		.join(", ");
 	const rowPlaceholder = `(${table.fields.map(() => "?").join(", ")})`;
 	return `insert into ${table.name} (${columns}) VALUES ${Array.from({
 		length: rows,
@@ -203,6 +205,43 @@ export class SQLiteIndex<T extends Record<string, any>>
 	private static readonly _emptyTables = new Map<string, Table>();
 	private static readonly _emptyRootTables: Table[] = [];
 	private static readonly _emptyCursor = new Map();
+
+	private static closedIterator<
+		T extends Record<string, any>,
+		S extends Shape | undefined,
+	>(): types.IndexIterator<T, S> {
+		return {
+			all: async () => [],
+			close: async () => undefined,
+			done: () => true,
+			next: async () => [],
+			pending: async () => 0,
+		};
+	}
+
+	private async ifOpen<R>(fallback: R, fn: () => Promise<R>): Promise<R> {
+		if (this.closed) {
+			return fallback;
+		}
+		try {
+			return await fn();
+		} catch (error) {
+			if (this.closed) {
+				return fallback;
+			}
+			throw error;
+		}
+	}
+
+	private async withWriteIfOpen<R>(
+		fallback: R,
+		fn: () => Promise<R>,
+	): Promise<R> {
+		if (this.closed) {
+			return fallback;
+		}
+		return this.withWriteBarrier(() => this.ifOpen(fallback, fn));
+	}
 
 	get tables() {
 		if (this.closed) {
@@ -499,13 +538,13 @@ export class SQLiteIndex<T extends Record<string, any>>
 		id: types.IdKey,
 		options?: { shape: Shape },
 	): Promise<IndexedResult<T> | undefined> {
-		for (const table of this._rootTables) {
-			const { join: joinMap, selects } = selectAllFieldsFromTable(
-				table,
-				options?.shape,
-			);
-			const sql = `${generateSelectQuery(table, selects)} ${buildJoin(joinMap).join} where ${table.name}.${this.primaryKeyString} = ? limit 1`;
-			try {
+		return this.ifOpen(undefined, async () => {
+			for (const table of this._rootTables) {
+				const { join: joinMap, selects } = selectAllFieldsFromTable(
+					table,
+					options?.shape,
+				);
+				const sql = `${generateSelectQuery(table, selects)} ${buildJoin(joinMap).join} where ${table.name}.${this.primaryKeyString} = ? limit 1`;
 				const stmt = await this.properties.db.prepare(sql, sql);
 				const rows = await stmt.get([
 					table.primaryField?.from?.type
@@ -528,14 +567,9 @@ export class SQLiteIndex<T extends Record<string, any>>
 					)) as unknown as T,
 					id,
 				};
-			} catch (error) {
-				if (this.closed) {
-					return undefined;
-				}
-				throw error;
 			}
-		}
-		return undefined;
+			return undefined;
+		});
 	}
 
 	async put(
@@ -543,10 +577,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 		_id?: any,
 		options?: { replace?: boolean },
 	): Promise<void> {
-		if (this.closed) {
-			return undefined;
-		}
-		return this.withWriteBarrier(async () => {
+		return this.withWriteIfOpen(undefined, async () => {
 			const classOfValue = value.constructor as Constructor<T>;
 			return insert(
 				async (values, table) => {
@@ -646,13 +677,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 		options?: { shape?: S; reference?: boolean },
 	): types.IndexIterator<T, S> {
 		if (this.closed) {
-			return {
-				all: async () => [],
-				close: async () => undefined,
-				done: () => true,
-				next: async () => [],
-				pending: async () => 0,
-			};
+			return SQLiteIndex.closedIterator<T, S>();
 		}
 
 		// create a sql statement where the offset and the limit id dynamic and can be updated
@@ -680,92 +705,111 @@ export class SQLiteIndex<T extends Record<string, any>>
 
 		/* let totalCount: undefined | number = undefined; */
 		const fetch = async (amount: number | "all") => {
-			kept = undefined;
-			if (!once) {
-				planningScope = this.planner.scope(normalizedQuery);
-
-				let { sql, bindable: toBind } = convertSearchRequestToQuery(
-					normalizedQuery,
-					this.tables,
-					this._rootTables,
-					{
-						planner: planningScope,
-						shape: options?.shape,
-						fetchAll: amount === "all", // if we are to fetch all, we dont need stable sorting
-					},
-				);
-
-				sqlFetch = sql;
-				bindable = toBind;
-
-				await planningScope.beforePrepare();
-
-				stmt = await this.properties.db.prepare(sqlFetch, sqlFetch);
-
-				// Bump timeout timer
-				iterator.expire = Date.now() + this.iteratorTimeout;
-			}
-
-			once = true;
-
-			const allResults = await planningScope.perform(async () => {
-				const allResults: Record<string, any>[] = await stmt.all([
-					...bindable,
-					...(amount !== "all" ? [amount, offset] : []),
-				]);
-				return allResults;
-			});
-
-			/* const allResults: Record<string, any>[] = await stmt.all([
-				...bindable,
-				...(amount !== "all" ? [amount, 
-					offset] : [])
-			]);
-	*/
-			let results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] =
-				await Promise.all(
-					allResults.map(async (row: any) => {
-						let selectedTable = this._rootTables.find(
-							(table) =>
-								row[getTablePrefixedField(table, this.primaryKeyString)] !=
-								null,
-						)!;
-
-						const value = await resolveInstanceFromValue<T, S>(
-							row,
-							this.tables,
-							selectedTable,
-							this.resolveDependencies.bind(this),
-							true,
-							options?.shape,
-						);
-
-						return {
-							value,
-							id: types.toId(
-								convertFromSQLType(
-									row[
-										getTablePrefixedField(selectedTable, this.primaryKeyString)
-									],
-									selectedTable.primaryField!.from!.type,
-								),
-							),
-						};
-					}),
-				);
-
-			offset += results.length;
-
-			/* const uniqueIds = new Set(results.map((x) => x.id.primitive));
-			if (uniqueIds.size !== results.length) {
-				throw new Error("Duplicate ids in result set");
-			} */
-
-			if (amount === "all" || results.length < amount) {
+			const closeAsDone = () => {
+				once = true;
 				hasMore = false;
-				await this.clearupIterator(requestId);
+				kept = 0;
+				return [] as IndexedResult<types.ReturnTypeFromShape<T, S>>[];
+			};
+			if (this.closed) {
+				return closeAsDone();
 			}
-			return results;
+			try {
+				kept = undefined;
+				if (!once) {
+					planningScope = this.planner.scope(normalizedQuery);
+
+					let { sql, bindable: toBind } = convertSearchRequestToQuery(
+						normalizedQuery,
+						this.tables,
+						this._rootTables,
+						{
+							planner: planningScope,
+							shape: options?.shape,
+							fetchAll: amount === "all", // if we are to fetch all, we dont need stable sorting
+						},
+					);
+
+					sqlFetch = sql;
+					bindable = toBind;
+
+					await planningScope.beforePrepare();
+
+					stmt = await this.properties.db.prepare(sqlFetch, sqlFetch);
+
+					// Bump timeout timer
+					iterator.expire = Date.now() + this.iteratorTimeout;
+				}
+
+				once = true;
+
+				const allResults = await planningScope.perform(async () => {
+					const allResults: Record<string, any>[] = await stmt.all([
+						...bindable,
+						...(amount !== "all" ? [amount, offset] : []),
+					]);
+					return allResults;
+				});
+
+				/* const allResults: Record<string, any>[] = await stmt.all([
+					...bindable,
+					...(amount !== "all" ? [amount,
+						offset] : [])
+				]);
+		*/
+				let results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] =
+					await Promise.all(
+						allResults.map(async (row: any) => {
+							let selectedTable = this._rootTables.find(
+								(table) =>
+									row[getTablePrefixedField(table, this.primaryKeyString)] !=
+									null,
+							)!;
+
+							const value = await resolveInstanceFromValue<T, S>(
+								row,
+								this.tables,
+								selectedTable,
+								this.resolveDependencies.bind(this),
+								true,
+								options?.shape,
+							);
+
+							return {
+								value,
+								id: types.toId(
+									convertFromSQLType(
+										row[
+											getTablePrefixedField(
+												selectedTable,
+												this.primaryKeyString,
+											)
+										],
+										selectedTable.primaryField!.from!.type,
+									),
+								),
+							};
+						}),
+					);
+
+				offset += results.length;
+
+				/* const uniqueIds = new Set(results.map((x) => x.id.primitive));
+				if (uniqueIds.size !== results.length) {
+					throw new Error("Duplicate ids in result set");
+				} */
+
+				if (amount === "all" || results.length < amount) {
+					hasMore = false;
+					await this.clearupIterator(requestId);
+				}
+				return results;
+			} catch (error) {
+				if (this.closed) {
+					return closeAsDone();
+				}
+				throw error;
+			}
 		};
 
 		const iterator = {
@@ -790,12 +834,19 @@ export class SQLiteIndex<T extends Record<string, any>>
 				return results;
 			},
 			close: () => {
+				once = true;
 				hasMore = false;
 				kept = 0;
 				this.clearupIterator(requestId);
 			},
 			next: (amount: number) => fetch(amount),
 			pending: async () => {
+				if (this.closed) {
+					once = true;
+					hasMore = false;
+					kept = 0;
+					return 0;
+				}
 				if (!hasMore) {
 					return 0;
 				}
@@ -823,19 +874,21 @@ export class SQLiteIndex<T extends Record<string, any>>
 	}
 
 	async getSize(): Promise<number> {
-		if (this.tables.size === 0) {
-			return 0;
-		}
+		return this.ifOpen(0, async () => {
+			if (this.tables.size === 0) {
+				return 0;
+			}
 
-		/* const stmt = await this.properties.db.prepare(`select count(*) as total from ${this.rootTableName}`);
-		const result = await stmt.get()
-		stmt.finalize?.();
-		return result.total as number */
-		return this.count();
+			/* const stmt = await this.properties.db.prepare(`select count(*) as total from ${this.rootTableName}`);
+			const result = await stmt.get()
+			stmt.finalize?.();
+			return result.total as number */
+			return this.count();
+		});
 	}
 
 	async del(query: types.DeleteOptions): Promise<types.IdKey[]> {
-		return this.withWriteBarrier(async () => {
+		return this.withWriteIfOpen([], async () => {
 			let ret: types.IdKey[] = [];
 			let once = false;
 			let lastError: Error | undefined = undefined;
@@ -891,96 +944,100 @@ export class SQLiteIndex<T extends Record<string, any>>
 	}
 
 	async sum(query: types.SumOptions): Promise<number | bigint> {
-		let ret: number | bigint | undefined = undefined;
-		let once = false;
-		let lastError: Error | undefined = undefined;
+		return this.ifOpen(0, async () => {
+			let ret: number | bigint | undefined = undefined;
+			let once = false;
+			let lastError: Error | undefined = undefined;
 
-		let inlinedName = getInlineTableFieldName(query.key);
-		for (const table of this._rootTables) {
-			try {
-				if (table.fields.find((x) => x.name === inlinedName) == null) {
-					lastError = new MissingFieldError(
-						"Missing field: " +
-							(Array.isArray(query.key) ? query.key : [query.key]).join("."),
-					);
-					continue;
-				}
-
-				const planningScope = this.planner.scope(
-					new PlannableQuery({
-						query: coerceLocalQueries(query.query),
-					}),
-				);
-				const { sql, bindable } = convertSumRequestToQuery(
-					query,
-					this.tables,
-					table,
-					{
-						planner: planningScope,
-					},
-				);
-				await planningScope.beforePrepare();
-				const stmt = await this.properties.db.prepare(sql, sql);
-				const result = await planningScope.perform(async () =>
-					stmt.get(bindable),
-				);
-				if (result != null) {
-					const value = result.sum as number;
-
-					if (ret == null) {
-						ret = value;
-					} else {
-						ret += value;
+			let inlinedName = getInlineTableFieldName(query.key);
+			for (const table of this._rootTables) {
+				try {
+					if (table.fields.find((x) => x.name === inlinedName) == null) {
+						lastError = new MissingFieldError(
+							"Missing field: " +
+								(Array.isArray(query.key) ? query.key : [query.key]).join("."),
+						);
+						continue;
 					}
-					once = true;
+
+					const planningScope = this.planner.scope(
+						new PlannableQuery({
+							query: coerceLocalQueries(query.query),
+						}),
+					);
+					const { sql, bindable } = convertSumRequestToQuery(
+						query,
+						this.tables,
+						table,
+						{
+							planner: planningScope,
+						},
+					);
+					await planningScope.beforePrepare();
+					const stmt = await this.properties.db.prepare(sql, sql);
+					const result = await planningScope.perform(async () =>
+						stmt.get(bindable),
+					);
+					if (result != null) {
+						const value = result.sum as number;
+
+						if (ret == null) {
+							ret = value;
+						} else {
+							ret += value;
+						}
+						once = true;
+					}
+				} catch (error) {
+					if (error instanceof MissingFieldError) {
+						lastError = error;
+						continue;
+					}
+					throw error;
 				}
-			} catch (error) {
-				if (error instanceof MissingFieldError) {
-					lastError = error;
-					continue;
-				}
-				throw error;
 			}
-		}
 
-		if (!once) {
-			throw lastError!;
-		}
+			if (!once) {
+				throw lastError!;
+			}
 
-		return ret != null ? ret : 0;
+			return ret != null ? ret : 0;
+		});
 	}
 
 	async count(request?: types.CountOptions): Promise<number> {
-		let ret: number = 0;
-		let once = false;
-		let lastError: Error | undefined = undefined;
-		for (const table of this._rootTables) {
-			try {
-				const { sql, bindable } = convertCountRequestToQuery(
-					request,
-					this.tables,
-					table,
-				);
-				const stmt = await this.properties.db.prepare(sql, sql);
-				const result = await stmt.get(bindable);
-				if (result != null) {
-					ret += Number(result.count);
-					once = true;
-				}
-			} catch (error) {
-				if (error instanceof MissingFieldError) {
-					lastError = error;
-					continue;
-				}
+		return this.ifOpen(0, async () => {
+			let ret: number = 0;
+			let once = false;
+			let lastError: Error | undefined = undefined;
+			for (const table of this._rootTables) {
+				try {
+					const { sql, bindable } = convertCountRequestToQuery(
+						request,
+						this.tables,
+						table,
+					);
+					const stmt = await this.properties.db.prepare(sql, sql);
+					const result = await stmt.get(bindable);
+					if (result != null) {
+						ret += Number(result.count);
+						once = true;
+					}
+				} catch (error) {
+					if (error instanceof MissingFieldError) {
+						lastError = error;
+						continue;
+					}
 
-				throw error;
+					throw error;
+				}
 			}
-		}
 
-		if (!once) {
-			throw lastError!;
-		}
-		return ret;
+			if (!once) {
+				throw lastError!;
+			}
+			return ret;
+		});
 	}
 
 	get cursorCount(): number {
