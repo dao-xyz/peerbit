@@ -7,15 +7,15 @@
  * rejection. The fix catches NotStartedError in putWithContext() and returns
  * gracefully.
  */
-
 import { field, variant } from "@dao-xyz/borsh";
-import { Program } from "@peerbit/program";
+import { Context } from "@peerbit/document-interface";
 import * as indexerTypes from "@peerbit/indexer-interface";
-import { Documents } from "../src/program.js";
+import { Program } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { v4 as uuid } from "uuid";
+import { Documents } from "../src/program.js";
 
 @variant(0)
 class TestDocument {
@@ -56,50 +56,39 @@ describe("@peerbit/document — shutdown race", () => {
 		await session?.stop();
 	});
 
-	it("putWithContext() should not throw NotStartedError when index is stopped during replication", async () => {
-		session = await TestSession.connected(2);
+	it("putWithContext() should ignore NotStartedError after the document index is closed", async () => {
+		session = await TestSession.connected(1);
 
-		const unhandledErrors: Error[] = [];
-		const processHandler = (reason: unknown) => {
-			unhandledErrors.push(
-				reason instanceof Error ? reason : new Error(String(reason)),
-			);
+		const store = await session.peers[0].open(new TestStore());
+		const documentIndex = store.documents.index;
+		const backingIndex = documentIndex.index as any;
+		const originalPut = backingIndex.put.bind(backingIndex);
+		backingIndex.put = async () => {
+			throw new indexerTypes.NotStartedError();
 		};
-		process.on("unhandledRejection", processHandler);
+
+		await store.close();
+
+		const context = new Context({
+			created: 1n,
+			modified: 1n,
+			head: "closed-head",
+			gid: "closed-gid",
+			size: 0,
+		});
 
 		try {
-			const store0 = await session.peers[0].open(new TestStore());
-			const store1: TestStore = await session.peers[1].open(store0.clone());
-
-			await store0.documents.waitFor(
-				store1.documents.node.identity.publicKey,
-			);
-			await store1.documents.waitFor(
-				store0.documents.node.identity.publicKey,
+			const result = await documentIndex.putWithContext(
+				new TestDocument({ id: "doc-closed", name: "closed" }),
+				indexerTypes.toId("doc-closed"),
+				context,
 			);
 
-			await store0.documents.put(
-				new TestDocument({ id: "doc-1", name: "hello" }),
-			);
-
-			// Brief delay then close — race the replication write
-			await new Promise((r) => setTimeout(r, 100));
-			await store1.close();
-
-			// Allow lingering async callbacks to settle
-			await new Promise((r) => setTimeout(r, 500));
-
-			const notStartedErrors = unhandledErrors.filter(
-				(e) =>
-					e?.constructor?.name === "NotStartedError" ||
-					e?.message?.includes("Not started"),
-			);
-			expect(
-				notStartedErrors,
-				"Expected no unhandled NotStartedError rejections",
-			).to.have.lengthOf(0);
+			expect(documentIndex.closed).to.equal(true);
+			expect(result.context).to.equal(context);
+			expect(result.indexable.id).to.equal("doc-closed");
 		} finally {
-			process.removeListener("unhandledRejection", processHandler);
+			backingIndex.put = originalPut;
 		}
 	});
 
@@ -109,12 +98,8 @@ describe("@peerbit/document — shutdown race", () => {
 		const store0 = await session.peers[0].open(new TestStore());
 		const store1: TestStore = await session.peers[1].open(store0.clone());
 
-		await store0.documents.waitFor(
-			store1.documents.node.identity.publicKey,
-		);
-		await store1.documents.waitFor(
-			store0.documents.node.identity.publicKey,
-		);
+		await store0.documents.waitFor(store1.documents.node.identity.publicKey);
+		await store1.documents.waitFor(store0.documents.node.identity.publicKey);
 
 		await store0.documents.put(
 			new TestDocument({ id: "doc-2", name: "world" }),
@@ -132,9 +117,9 @@ describe("@peerbit/document — shutdown race", () => {
 		session = await TestSession.connected(1);
 
 		const store = await session.peers[0].open(new TestStore());
-		const index = store.documents.index as any;
-		const originalPut = index.put.bind(store.documents.index);
-		index.put = async () => {
+		const backingIndex = store.documents.index.index as any;
+		const originalPut = backingIndex.put.bind(backingIndex);
+		backingIndex.put = async () => {
 			throw new indexerTypes.NotStartedError();
 		};
 
@@ -145,7 +130,7 @@ describe("@peerbit/document — shutdown race", () => {
 				),
 			).to.be.rejectedWith(indexerTypes.NotStartedError);
 		} finally {
-			index.put = originalPut;
+			backingIndex.put = originalPut;
 		}
 	});
 });
