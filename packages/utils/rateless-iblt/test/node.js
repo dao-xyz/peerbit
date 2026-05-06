@@ -98,6 +98,60 @@ describe("riblt", () => {
 		expect(Array.from(localSymbols)).to.deep.equal([11n]);
 	});
 
+	it("prepares an encoder from unsorted symbols", async () => {
+		const symbols = [10n, 1n, 3n, 8n];
+		const encoder = new EncoderWrapper();
+		const range = encoder.add_symbols_sorted_and_find_range(
+			BigUint64Array.from(symbols),
+			11n,
+		);
+
+		expect(range).to.be.instanceOf(BigUint64Array);
+		expect(Array.from(range)).to.deep.equal([8n, 3n]);
+
+		const decoder = new DecoderWrapper();
+		decoder.add_symbols(BigUint64Array.from(symbols));
+		expect(
+			decoder.add_coded_symbols_and_try_decode(
+				encoder.produce_next_coded_symbols(1),
+			),
+		).to.equal(true);
+		expect(Array.from(decoder.get_remote_symbol_values())).to.deep.equal([]);
+		expect(Array.from(decoder.get_local_symbol_values())).to.deep.equal([]);
+
+		const single = new EncoderWrapper();
+		expect(
+			Array.from(
+				single.add_symbols_sorted_and_find_range(
+					BigUint64Array.from([11n]),
+					11n,
+				),
+			),
+		).to.deep.equal([11n, 0n]);
+	});
+
+	it("prepares an encoder and produces coded symbols", async () => {
+		const symbols = [10n, 1n, 3n, 8n];
+		const encoder = new EncoderWrapper();
+		const prepared = encoder.add_symbols_sorted_find_range_and_produce(
+			BigUint64Array.from(symbols),
+			11n,
+			1,
+		);
+
+		expect(prepared).to.be.instanceOf(BigUint64Array);
+		expect(prepared.length).to.equal(5);
+		expect(Array.from(prepared.subarray(0, 2))).to.deep.equal([8n, 3n]);
+
+		const decoder = new DecoderWrapper();
+		decoder.add_symbols(BigUint64Array.from(symbols));
+		expect(decoder.add_coded_symbols_and_try_decode(prepared.subarray(2))).to.equal(
+			true,
+		);
+		expect(Array.from(decoder.get_remote_symbol_values())).to.deep.equal([]);
+		expect(Array.from(decoder.get_local_symbol_values())).to.deep.equal([]);
+	});
+
 	it("no diff", async () => {
 		const aliceSymbols = [1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n];
 		const bobSymbols = [1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n];

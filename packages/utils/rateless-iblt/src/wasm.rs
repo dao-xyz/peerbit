@@ -62,6 +62,50 @@ fn validate_flat_coded_symbols(symbols: &[u64]) -> Result<(), JsValue> {
     Ok(())
 }
 
+fn smallest_wrapping_range_from_sorted_symbols(symbols: &[u64], max_value: u64) -> (u64, u64) {
+    let mut largest_gap = 0u64;
+    let mut largest_gap_index = 0usize;
+
+    for i in 0..symbols.len() {
+        let current = symbols[i];
+        let next = symbols[(i + 1) % symbols.len()];
+        let gap = if next >= current {
+            next - current
+        } else {
+            max_value - current + next
+        };
+
+        if gap > largest_gap {
+            largest_gap = gap;
+            largest_gap_index = i;
+        }
+    }
+
+    let start_index = (largest_gap_index + 1) % symbols.len();
+    let end_index = largest_gap_index;
+    let start = symbols[start_index];
+    let mut end = symbols[end_index];
+
+    if end == start {
+        end = if end >= max_value { 0 } else { end + 1 };
+    }
+
+    (start, end)
+}
+
+fn push_next_coded_symbols(
+    encoder: &mut Encoder<IdentityU64>,
+    output: &mut Vec<u64>,
+    count: usize,
+) {
+    for _ in 0..count {
+        let coded_symbol = encoder.produce_next_coded_symbol();
+        output.push(coded_symbol.count as u64);
+        output.push(coded_symbol.hash);
+        output.push(coded_symbol.symbol);
+    }
+}
+
 #[wasm_bindgen]
 pub struct EncoderWrapper {
     encoder: Encoder<IdentityU64>,
@@ -87,6 +131,47 @@ impl EncoderWrapper {
         }
     }
 
+    pub fn add_symbols_sorted_and_find_range(
+        &mut self,
+        mut symbols: Vec<u64>,
+        max_value: u64,
+    ) -> Result<Vec<u64>, JsValue> {
+        if symbols.is_empty() {
+            return Err(JsValue::from_str("Expected at least one RIBLT symbol"));
+        }
+
+        symbols.sort_unstable();
+        let (start, end) = smallest_wrapping_range_from_sorted_symbols(&symbols, max_value);
+        for symbol in symbols.iter() {
+            self.encoder.add_symbol(symbol);
+        }
+
+        Ok(vec![start, end])
+    }
+
+    pub fn add_symbols_sorted_find_range_and_produce(
+        &mut self,
+        mut symbols: Vec<u64>,
+        max_value: u64,
+        count: usize,
+    ) -> Result<Vec<u64>, JsValue> {
+        if symbols.is_empty() {
+            return Err(JsValue::from_str("Expected at least one RIBLT symbol"));
+        }
+
+        symbols.sort_unstable();
+        let (start, end) = smallest_wrapping_range_from_sorted_symbols(&symbols, max_value);
+        for symbol in symbols.iter() {
+            self.encoder.add_symbol(symbol);
+        }
+
+        let mut output = Vec::with_capacity(2 + count * CODED_SYMBOL_WORDS);
+        output.push(start);
+        output.push(end);
+        push_next_coded_symbols(&mut self.encoder, &mut output, count);
+        Ok(output)
+    }
+
     pub fn produce_next_coded_symbol(&mut self) -> JsValue {
         let coded_symbol = self.encoder.produce_next_coded_symbol();
         let symbol_u64 = coded_symbol.symbol;
@@ -110,12 +195,7 @@ impl EncoderWrapper {
 
     pub fn produce_next_coded_symbols(&mut self, count: usize) -> Vec<u64> {
         let mut symbols = Vec::with_capacity(count * CODED_SYMBOL_WORDS);
-        for _ in 0..count {
-            let coded_symbol = self.encoder.produce_next_coded_symbol();
-            symbols.push(coded_symbol.count as u64);
-            symbols.push(coded_symbol.hash);
-            symbols.push(coded_symbol.symbol);
-        }
+        push_next_coded_symbols(&mut self.encoder, &mut symbols, count);
         symbols
     }
 

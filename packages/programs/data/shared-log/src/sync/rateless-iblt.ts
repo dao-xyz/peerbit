@@ -65,6 +65,18 @@ type BatchEncoderWrapper = EncoderWrapper & {
 	produce_next_coded_symbols?: (count: number) => BigUint64Array;
 };
 
+type StartSyncEncoderWrapper = EncoderWrapper & {
+	add_symbols_sorted_and_find_range?: (
+		symbols: BigUint64Array,
+		maxValue: bigint,
+	) => BigUint64Array;
+	add_symbols_sorted_find_range_and_produce?: (
+		symbols: BigUint64Array,
+		maxValue: bigint,
+		count: number,
+	) => BigUint64Array;
+};
+
 type BatchDecoderWrapper = DecoderWrapper & {
 	add_symbols?: (symbols: BigUint64Array) => void;
 	add_coded_symbols_and_try_decode?: (symbols: BigUint64Array) => boolean;
@@ -154,6 +166,121 @@ const getRemoteSymbolValues = (decoder: DecoderWrapper): bigint[] => {
 		symbols.push(coerceBigInt(missingSymbol));
 	}
 	return symbols;
+};
+
+const prepareStartSyncEncoder = (
+	coordinates: readonly bigint[],
+	maxValue: NumberOrBigint,
+	initialSymbolCount: number,
+): {
+	encoder: EncoderWrapper;
+	start: bigint;
+	end: bigint;
+	initialSymbols?: SymbolSerialized[];
+} => {
+	const encoder = new EncoderWrapper();
+	let complete = false;
+	try {
+		const prepareAndProduceNative = (encoder as StartSyncEncoderWrapper)
+			.add_symbols_sorted_find_range_and_produce;
+		if (typeof BigUint64Array !== "undefined" && prepareAndProduceNative) {
+			const prepared = prepareAndProduceNative.call(
+				encoder,
+				BigUint64Array.from(coordinates),
+				coerceBigInt(maxValue),
+				initialSymbolCount,
+			);
+			if (
+				prepared.length < 2 ||
+				(prepared.length - 2) % CODED_SYMBOL_WORDS !== 0
+			) {
+				throw new Error("Invalid RIBLT prepared encoder result");
+			}
+			complete = true;
+			return {
+				encoder,
+				start: prepared[0],
+				end: prepared[1],
+				initialSymbols: serializedSymbolsFromFlat(prepared.subarray(2)),
+			};
+		}
+
+		const prepareNative = (encoder as StartSyncEncoderWrapper)
+			.add_symbols_sorted_and_find_range;
+		if (typeof BigUint64Array !== "undefined" && prepareNative) {
+			const range = prepareNative.call(
+				encoder,
+				BigUint64Array.from(coordinates),
+				coerceBigInt(maxValue),
+			);
+			if (range.length !== 2) {
+				throw new Error("Invalid RIBLT range result");
+			}
+			complete = true;
+			return { encoder, start: range[0], end: range[1] };
+		}
+
+		let sortedEntries: bigint[] | BigUint64Array;
+		if (typeof BigUint64Array !== "undefined") {
+			const typed = new BigUint64Array(coordinates.length);
+			for (let i = 0; i < coordinates.length; i++) {
+				typed[i] = coordinates[i];
+			}
+			typed.sort();
+			sortedEntries = typed;
+		} else {
+			sortedEntries = [...coordinates].sort((a, b) => {
+				if (a > b) {
+					return 1;
+				} else if (a < b) {
+					return -1;
+				} else {
+					return 0;
+				}
+			});
+		}
+
+		// assume sorted, and find the largest gap
+		let largestGap = 0n;
+		let largestGapIndex = 0;
+		for (let i = 0; i < sortedEntries.length; i++) {
+			const current = sortedEntries[i];
+			const next = sortedEntries[(i + 1) % sortedEntries.length];
+			const gap =
+				next >= current
+					? next - current
+					: coerceBigInt(maxValue) - current + next;
+			if (gap > largestGap) {
+				largestGap = gap;
+				largestGapIndex = i;
+			}
+		}
+
+		const smallestRangeStartIndex =
+			(largestGapIndex + 1) % sortedEntries.length;
+		const smallestRangeEndIndex = largestGapIndex; /// === (smallRangeStartIndex + 1) % sortedEntries.length
+		let smallestRangeStart = sortedEntries[smallestRangeStartIndex];
+		let smallestRangeEnd = sortedEntries[smallestRangeEndIndex];
+		let start: bigint, end: bigint;
+		if (smallestRangeEnd === smallestRangeStart) {
+			start = smallestRangeEnd;
+			end = smallestRangeEnd + 1n;
+			if (end > maxValue) {
+				end = 0n;
+			}
+		} else {
+			start = smallestRangeStart;
+			end = smallestRangeEnd;
+		}
+
+		addSymbolsToRiblt(encoder, sortedEntries);
+		complete = true;
+		return { encoder, start, end };
+	} finally {
+		if (!complete) {
+			encoder.free();
+		}
+	}
 };
 
 const getSyncIdString = (message: { syncId: Uint8Array }) => {
@@ -743,73 +870,26 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 
 		await ribltReady;
 
-		let sortedEntries: bigint[] | BigUint64Array;
-		if (typeof BigUint64Array !== "undefined") {
-			const typed = new BigUint64Array(allCoordinatesToSyncWithIblt.length);
-			for (let i = 0; i < allCoordinatesToSyncWithIblt.length; i++) {
-				typed[i] = allCoordinatesToSyncWithIblt[i];
-			}
-			typed.sort();
-			sortedEntries = typed;
-		} else {
-			sortedEntries = allCoordinatesToSyncWithIblt.sort((a, b) => {
-				if (a > b) {
-					return 1;
-				} else if (a < b) {
-					return -1;
-				} else {
-					return 0;
-				}
-			});
-		}
-
-		// assume sorted, and find the largest gap
-		let largestGap = 0n;
-		let largestGapIndex = 0;
-		for (let i = 0; i < sortedEntries.length; i++) {
-			const current = sortedEntries[i];
-			const next = sortedEntries[(i + 1) % sortedEntries.length];
-			const gap =
-				next >= current
-					? next - current
-					: coerceBigInt(this.properties.numbers.maxValue) - current + next;
-			if (gap > largestGap) {
-				largestGap = gap;
-				largestGapIndex = i;
-			}
-		}
-
-		const smallestRangeStartIndex =
-			(largestGapIndex + 1) % sortedEntries.length;
-		const smallestRangeEndIndex = largestGapIndex; /// === (smallRangeStartIndex + 1) % sortedEntries.length
-		let smallestRangeStart = sortedEntries[smallestRangeStartIndex];
-		let smallestRangeEnd = sortedEntries[smallestRangeEndIndex];
-		let start: bigint, end: bigint;
-		if (smallestRangeEnd === smallestRangeStart) {
-			start = smallestRangeEnd;
-			end = smallestRangeEnd + 1n;
-			if (end > this.properties.numbers.maxValue) {
-				end = 0n;
-			}
-		} else {
-			start = smallestRangeStart;
-			end = smallestRangeEnd;
-		}
-
-		const startSync = new StartSync({ from: start, to: end, symbols: [] });
-		const encoder = new EncoderWrapper();
-		addSymbolsToRiblt(encoder, sortedEntries);
-
 		// For smaller sets, the original `sqrt(n)` heuristic can occasionally under-provision
 		// low-degree symbols early, causing an unnecessary `MoreSymbols` round-trip. Use a
 		// small floor to make small-delta syncs more reliable without affecting large-n behavior.
-		let initialSymbols = Math.round(
+		let initialSymbolCount = Math.round(
 			Math.sqrt(allCoordinatesToSyncWithIblt.length),
 		); // TODO choose better
-		initialSymbols = Math.max(64, initialSymbols);
-		startSync.symbols.push(
-			...produceNextSerializedSymbols(encoder, initialSymbols),
+		initialSymbolCount = Math.max(64, initialSymbolCount);
+		const { encoder, start, end, initialSymbols } = prepareStartSyncEncoder(
+			allCoordinatesToSyncWithIblt,
+			this.properties.numbers.maxValue,
+			initialSymbolCount,
 		);
+
+		const startSync = new StartSync({
+			from: start,
+			to: end,
+			symbols:
+				initialSymbols ??
+				produceNextSerializedSymbols(encoder, initialSymbolCount),
+		});
 
 		const clear = () => {
 			encoder.free();
