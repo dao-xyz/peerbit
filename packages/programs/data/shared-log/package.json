@@ -54,6 +54,7 @@
 		"build": "aegir build --no-bundle",
 		"benchmark:adaptive-ingest": "node --loader ts-node/esm ./benchmark/adaptive-ingest.ts",
 		"benchmark:join-backfill-repair": "node --loader ts-node/esm ./benchmark/join-backfill-repair.ts",
+		"benchmark:sync-phase-profile": "node --loader ts-node/esm ./benchmark/sync-phase-profile.ts",
 		"test": "aegir test --target node",
 		"lint": "aegir lint",
 		"test:cov": "aegir test -t node --cov"
@@ -68,6 +69,7 @@
 		"@peerbit/blocks-interface": "workspace:*",
 		"@peerbit/cache": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
+		"@peerbit/diagnostics": "workspace:*",
 		"@peerbit/indexer-interface": "workspace:*",
 		"@peerbit/indexer-sqlite3": "workspace:*",
 		"@peerbit/log": "workspace:*",
