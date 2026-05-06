@@ -459,8 +459,19 @@ const buildEncoderOrDecoderFromRange = async <
 		return false;
 	}
 
-	for (const entry of entries) {
-		encoder.add_symbol(coerceBigInt(entry.value.hashNumber));
+	if (
+		typeof BigUint64Array !== "undefined" &&
+		typeof (encoder as RibltSymbolAdder).add_symbols === "function"
+	) {
+		const symbols = new BigUint64Array(entries.length);
+		for (let i = 0; i < entries.length; i++) {
+			symbols[i] = coerceBigInt(entries[i].value.hashNumber);
+		}
+		addSymbolsToRiblt(encoder as RibltSymbolAdder, symbols);
+	} else {
+		for (const entry of entries) {
+			encoder.add_symbol(coerceBigInt(entry.value.hashNumber));
+		}
 	}
 	return encoder as E;
 };
