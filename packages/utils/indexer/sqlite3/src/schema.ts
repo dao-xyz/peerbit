@@ -1565,12 +1565,18 @@ export const convertDeleteRequestToQuery = (
 	request: types.DeleteOptions,
 	tables: Map<string, Table>,
 	table: Table,
+	options?: {
+		planner?: PlanningSession;
+	},
 ): { sql: string; bindable: any[] } => {
 	const { query, bindable } = convertRequestToQuery(
 		"delete",
 		{ query: coerceLocalQueries(request.query) },
 		tables,
 		table,
+		undefined,
+		[],
+		options,
 	);
 	return {
 		sql: `DELETE FROM ${table.name} WHERE ${table.name}.${table.primary} IN (SELECT ${table.primary} from ${table.name} ${query}) returning ${table.primary}`,
@@ -1582,12 +1588,18 @@ export const convertSumRequestToQuery = (
 	request: types.SumOptions,
 	tables: Map<string, Table>,
 	table: Table,
+	options?: {
+		planner?: PlanningSession;
+	},
 ): { sql: string; bindable: any[] } => {
 	const { query, bindable } = convertRequestToQuery(
 		"sum",
 		{ query: coerceLocalQueries(request.query), key: request.key },
 		tables,
 		table,
+		undefined,
+		[],
+		options,
 	);
 
 	const inlineName = getInlineTableFieldName(request.key);
@@ -1983,10 +1995,15 @@ const _buildJoin = (
 			table.table.primary !== false &&
 			usedColumns.length === 1 &&
 			usedColumns[0] === table.table.primary;
-		indexedBy =
-			options?.planner && !usesImplicitPrimaryKeyIndex
-				? ` INDEXED BY ${options.planner.resolveIndex(table.table.name, usedColumns)} `
-				: "";
+		if (options?.planner && !usesImplicitPrimaryKeyIndex) {
+			const indexKey = options.planner.resolveIndex(
+				table.table.name,
+				usedColumns,
+			);
+			indexedBy = options.planner.forceIndex ? ` INDEXED BY ${indexKey} ` : "";
+		} else {
+			indexedBy = "";
+		}
 	}
 
 	if (table.type !== "root") {

@@ -65,7 +65,8 @@
 		"test:browser": "aegir clean && aegir test -t browser",
 		"test:node": "aegir clean && aegir test -t node",
 		"lint": "aegir lint",
-		"test:cov": "aegir test -t node --cov"
+		"test:cov": "aegir test -t node --cov",
+		"bench:query-planner": "node --loader ts-node/esm ./benchmark/query-planner.ts"
 	},
 	"author": "dao.xyz",
 	"license": "MIT",

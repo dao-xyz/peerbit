@@ -349,7 +349,6 @@ export class SQLiteIndex<T extends Record<string, any>>
 					}
 				}
 			} */
-
 		}
 
 		if (startupTableStatements.size > 0) {
@@ -819,13 +818,24 @@ export class SQLiteIndex<T extends Record<string, any>>
 			let lastError: Error | undefined = undefined;
 			for (const table of this._rootTables) {
 				try {
+					const planningScope = this.planner.scope(
+						new PlannableQuery({
+							query: coerceLocalQueries(query.query),
+						}),
+					);
 					const { sql, bindable } = convertDeleteRequestToQuery(
 						query,
 						this.tables,
 						table,
+						{
+							planner: planningScope,
+						},
 					);
+					await planningScope.beforePrepare();
 					const stmt = await this.properties.db.prepare(sql, sql);
-					const results: any[] = await stmt.all(bindable);
+					const results: any[] = await planningScope.perform(async () =>
+						stmt.all(bindable),
+					);
 
 					// TODO types
 					for (const result of results) {
@@ -873,13 +883,24 @@ export class SQLiteIndex<T extends Record<string, any>>
 					continue;
 				}
 
+				const planningScope = this.planner.scope(
+					new PlannableQuery({
+						query: coerceLocalQueries(query.query),
+					}),
+				);
 				const { sql, bindable } = convertSumRequestToQuery(
 					query,
 					this.tables,
 					table,
+					{
+						planner: planningScope,
+					},
 				);
+				await planningScope.beforePrepare();
 				const stmt = await this.properties.db.prepare(sql, sql);
-				const result = await stmt.get(bindable);
+				const result = await planningScope.perform(async () =>
+					stmt.get(bindable),
+				);
 				if (result != null) {
 					const value = result.sum as number;
 

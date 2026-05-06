@@ -1019,16 +1019,14 @@ export class Log<T> {
 		skipFirst = false,
 	) {
 		const toDelete = await this.prepareDeleteRecursively(from, skipFirst);
-		const promises = toDelete.map(async (x) => {
-			const removed = await x.fn();
-			if (removed) {
-				return removed;
+		const removedEntries: ShallowEntry[] = [];
+		for (const x of toDelete) {
+			const removedEntry = await x.fn();
+			if (removedEntry) {
+				removedEntries.push(removedEntry);
 			}
-			return undefined;
-		});
-
-		const results = Promise.all(promises);
-		return (await results).filter((x) => x) as ShallowEntry[];
+		}
+		return removedEntries;
 	}
 
 	/// TODO simplify methods below

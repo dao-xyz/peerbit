@@ -13,7 +13,9 @@ import { keys } from "@libp2p/crypto";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import { spawn } from "node:child_process";
 import { performance } from "node:perf_hooks";
+import { fileURLToPath } from "node:url";
 import { createReplicationDomainHash, type ReplicationDomainHash } from "../src/index.js";
 import {
 	MoreSymbols,
@@ -303,36 +305,95 @@ const assertMaxMeanByBatch = parseBatchThresholdMap(
 	process.env.SWEEP_ASSERT_MAX_MEAN_MS,
 );
 
-const tasks: BatchTask[] = [];
+const runBatchTasks = async (sizes: number[]) => {
+	const tasks: BatchTask[] = [];
 
-for (const batchSize of batchSizes) {
-	let counterTotals = createEmptyCounters();
-	const samples: number[] = [];
-	const totalRuns = warmupRuns + measuredRuns;
+	for (const batchSize of sizes) {
+		let counterTotals = createEmptyCounters();
+		const samples: number[] = [];
+		const totalRuns = warmupRuns + measuredRuns;
 
-	for (let run = 0; run < totalRuns; run++) {
-		const result = await runCatchup({ batchSize, entryCount, timeoutMs });
-		if (run < warmupRuns) {
-			continue;
+		for (let run = 0; run < totalRuns; run++) {
+			const result = await runCatchup({ batchSize, entryCount, timeoutMs });
+			if (run < warmupRuns) {
+				continue;
+			}
+			samples.push(result.catchupMs);
+			counterTotals = mergeCounters(counterTotals, result.counters);
 		}
-		samples.push(result.catchupMs);
-		counterTotals = mergeCounters(counterTotals, result.counters);
+
+		const meanMs = mean(samples);
+		tasks.push({
+			name: `repairSweepTargetBufferSize=${batchSize}`,
+			batchSize,
+			mean_ms: meanMs,
+			hz: meanMs > 0 ? 1000 / meanMs : 0,
+			rme: null,
+			samples: samples.length,
+			startSyncTotal: counterTotals.startSync,
+			moreSymbolsTotal: counterTotals.moreSymbols,
+			requestAllTotal: counterTotals.requestAll,
+			requestMaybeSyncTotal: counterTotals.requestMaybeSync,
+			requestMaybeSyncCoordinateTotal: counterTotals.requestMaybeSyncCoordinate,
+		});
 	}
 
-	const meanMs = mean(samples);
-	tasks.push({
-		name: `repairSweepTargetBufferSize=${batchSize}`,
-		batchSize,
-		mean_ms: meanMs,
-		hz: meanMs > 0 ? 1000 / meanMs : 0,
-		rme: null,
-		samples: samples.length,
-		startSyncTotal: counterTotals.startSync,
-		moreSymbolsTotal: counterTotals.moreSymbols,
-		requestAllTotal: counterTotals.requestAll,
-		requestMaybeSyncTotal: counterTotals.requestMaybeSync,
-		requestMaybeSyncCoordinateTotal: counterTotals.requestMaybeSyncCoordinate,
+	return tasks;
+};
+
+const runIsolatedBatchTask = async (batchSize: number): Promise<BatchTask> => {
+	// Fixed-key test sessions can leave transport work in-process; isolate
+	// batches while keeping the parent responsible for combined assertions.
+	const child = spawn(
+		process.execPath,
+		[...process.execArgv, fileURLToPath(import.meta.url)],
+		{
+			env: {
+				...process.env,
+				BENCH_JSON: "1",
+				SWEEP_BATCH_SIZES: String(batchSize),
+				SWEEP_ISOLATED_CHILD: "1",
+				SWEEP_ASSERT_MAX_RATIO: "",
+				SWEEP_ASSERT_REQUIRE_STARTSYNC_FOR_BATCH_GTE: "",
+				SWEEP_ASSERT_MAX_MEAN_MS: "",
+			},
+			stdio: ["ignore", "pipe", "inherit"],
+		},
+	);
+
+	let stdout = "";
+	child.stdout.setEncoding("utf8");
+	child.stdout.on("data", (chunk) => {
+		stdout += chunk;
 	});
+
+	const code = await new Promise<number | null>((resolve) => {
+		child.on("close", resolve);
+	});
+	if (code !== 0) {
+		throw new Error(
+			`sync-batch-sweep child for batch ${batchSize} exited with ${code}`,
+		);
+	}
+
+	const output = JSON.parse(stdout) as { tasks: BatchTask[] };
+	if (output.tasks.length !== 1) {
+		throw new Error(
+			`Expected one task from batch ${batchSize}, got ${output.tasks.length}`,
+		);
+	}
+	return output.tasks[0];
+};
+
+const tasks: BatchTask[] =
+	process.env.SWEEP_ISOLATED_CHILD === "1" || batchSizes.length <= 1
+		? await runBatchTasks(batchSizes)
+		: [];
+
+if (process.env.SWEEP_ISOLATED_CHILD !== "1" && batchSizes.length > 1) {
+	for (const batchSize of batchSizes) {
+		tasks.push(await runIsolatedBatchTask(batchSize));
+	}
 }
 
 const failures: string[] = [];
@@ -406,4 +467,8 @@ if (failures.length > 0) {
 	throw new Error(
 		`sync-batch-sweep assertions failed:\n- ${failures.join("\n- ")}`,
 	);
+}
+
+if (process.env.SWEEP_ISOLATED_CHILD === "1") {
+	process.exit(0);
 }
