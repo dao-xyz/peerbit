@@ -14,6 +14,7 @@ import {
 	AbsoluteReplicas,
 	AddedReplicationSegmentMessage,
 	AllReplicatingSegmentsMessage,
+	RequestReplicationInfoMessage,
 } from "../src/replication.js";
 import {
 	MoreSymbols,
@@ -296,6 +297,26 @@ testSetups.forEach((setup) => {
 				);
 			};
 
+			const waitForReplicationIndexes = async (
+				expectedSize: number,
+				...dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[]
+			) => {
+				await Promise.all(
+					dbs.map((db) =>
+						waitForResolved(
+							async () =>
+								expect(await db.log.replicationIndex.getSize()).to.equal(
+									expectedSize,
+								),
+							{
+								timeout: 120_000,
+								delayInterval: 500,
+							},
+						),
+					),
+				);
+			};
+
 			it("cancels pending checked prune when local peer leads again", async () => {
 				db1 = await session.peers[0].open(
 					new EventStore<string, ReplicationDomainHash<any>>(),
@@ -541,6 +562,42 @@ testSetups.forEach((setup) => {
 					subscribers.restore();
 					log.uniqueReplicators = originalUniqueReplicators;
 					log._topicSubscribersCache.clear();
+				}
+			});
+
+			it("keeps requesting replication info through the replicator wait window", async () => {
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						setup,
+						timeUntilRoleMaturity: 0,
+						waitForReplicatorRequestIntervalMs: 50,
+						waitForReplicatorTimeout: 300,
+					},
+				});
+
+				const log = db1.log as any;
+				const remoteKey = session.peers[1].identity.publicKey;
+				let requestCount = 0;
+				const send = sinon.stub(log.rpc, "send").callsFake((message: any) => {
+					if (message instanceof RequestReplicationInfoMessage) {
+						requestCount += 1;
+					}
+					return Promise.resolve();
+				});
+
+				try {
+					await log.handleSubscriptionChange(remoteKey, [db1.log.topic], true);
+
+					await waitForResolved(
+						() => expect(requestCount).to.be.greaterThan(3),
+						{
+							timeout: 1_000,
+							delayInterval: 25,
+						},
+					);
+				} finally {
+					log.cancelReplicationInfoRequests(remoteKey.hashcode());
+					send.restore();
 				}
 			});
 
@@ -1724,6 +1781,7 @@ testSetups.forEach((setup) => {
 						},
 					},
 				);
+				await waitForReplicationIndexes(3, db1, db2, db3);
 
 				// This test verifies repeated join/leave convergence, not throughput. Keep the
 				// u64 sample correctness-sized so the final leave/rebalance path is what we are
@@ -1787,6 +1845,7 @@ testSetups.forEach((setup) => {
 					},
 				});
 				await db3.close();
+				await waitForReplicationIndexes(2, db1, db2);
 				/* 	await session.peers[2].open(db3, {
 						args: {
 							replicate: {

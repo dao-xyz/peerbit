@@ -454,6 +454,8 @@ const getSyncIdString = (message: { syncId: Uint8Array }) => {
 const DEFAULT_CONVERGENT_REPAIR_TIMEOUT_MS = 30_000;
 const DEFAULT_CONVERGENT_RETRY_INTERVALS_MS = [0, 1_000, 3_000, 7_000];
 const DEFAULT_MAX_CONVERGENT_TRACKED_HASHES = 4_096;
+const MIN_MORE_SYMBOLS_BATCH_SIZE = 64;
+const MAX_MORE_SYMBOLS_BATCH_SIZE = 1_024;
 
 @variant([3, 0])
 export class StartSync extends TransportMessage {
@@ -1071,7 +1073,16 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		};
 
 		let lastSeqNo = -1n;
-		let nextBatch = 1e4;
+		// Keep follow-up symbol payloads bounded. Each symbol is serialized as an
+		// object with three bigint fields, so very large batches can dominate heap under
+		// concurrent churn even though the native RIBLT encoder itself is compact.
+		const nextBatch = Math.max(
+			MIN_MORE_SYMBOLS_BATCH_SIZE,
+			Math.min(
+				MAX_MORE_SYMBOLS_BATCH_SIZE,
+				Math.ceil(allCoordinatesToSyncWithIblt.length / 4),
+			),
+		);
 		const obj = {
 			encoder,
 			timeout: createTimeout(),

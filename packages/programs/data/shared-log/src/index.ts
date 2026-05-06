@@ -6892,11 +6892,12 @@ export class SharedLog<
 		this._replicationInfoRequestByPeer.set(peerHash, state);
 
 		const intervalMs = Math.max(50, this.waitForReplicatorRequestIntervalMs);
-		const maxAttempts = Math.min(
-			5,
+		const maxAttempts =
 			this.waitForReplicatorRequestMaxAttempts ??
+			Math.max(
 				WAIT_FOR_REPLICATOR_REQUEST_MIN_ATTEMPTS,
-		);
+				Math.ceil(this.waitForReplicatorTimeout / intervalMs),
+			);
 
 		const tick = () => {
 			if (this.closed || this._closeController.signal.aborted) {
