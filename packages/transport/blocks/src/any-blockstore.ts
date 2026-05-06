@@ -20,7 +20,7 @@ export class AnyBlockStore implements Blocks {
 	private _store: AnyStore;
 	private _opening: Promise<any>;
 	private _onClose: (() => any) | undefined;
-	private _closeController: AbortController;
+	private _closeController?: AbortController;
 	constructor(store: AnyStore = createStore()) {
 		this._store = store;
 	}
@@ -82,6 +82,10 @@ export class AnyBlockStore implements Blocks {
 				this._closeController?.signal.aborted === true &&
 				(status === "closing" || status === "closed")
 			) {
+				// Late replication writes can outlive shutdown. At this point the
+				// backing store is intentionally closing, so report the deterministic
+				// CID while discarding the write instead of leaking an unhandled
+				// LevelDB rejection.
 				return put.cid;
 			}
 			throw error;
