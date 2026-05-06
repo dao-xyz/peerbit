@@ -201,6 +201,13 @@ export type ReachScope = {
 
 export type RemoteQueryOptions<Q, R, D> = RPCRequestAllOptions<Q, R> & {
 	replicate?: boolean;
+	/**
+	 * When `replicate` is true, wait for local replication bookkeeping before
+	 * resolving query results. Defaults to true for existing sync semantics. Set
+	 * to false for foreground reads that should return once remote results arrive
+	 * while caching those results locally in the background.
+	 */
+	waitForReplication?: boolean;
 	minAge?: number;
 	throwOnMissing?: boolean;
 	retryMissingResponses?: boolean;
@@ -216,6 +223,24 @@ export type RemoteQueryOptions<Q, R, D> = RPCRequestAllOptions<Q, R> & {
 	reach?: ReachScope;
 	/** WHEN are we allowed to proceed? Quorum semantics over a chosen group. */
 	wait?: WaitPolicy;
+};
+
+type RemoteReplicationOptions = {
+	replicate?: boolean;
+	waitForReplication?: boolean;
+};
+
+const shouldReplicateRemoteResults = (
+	remote?: boolean | RemoteReplicationOptions,
+): boolean => typeof remote !== "boolean" && remote?.replicate === true;
+
+const shouldWaitForRemoteReplication = (
+	remote?: boolean | RemoteReplicationOptions,
+): boolean => {
+	if (typeof remote === "boolean" || remote?.replicate !== true) {
+		return false;
+	}
+	return remote.waitForReplication !== false;
 };
 
 export type QueryOptions<T, I, D, Resolve extends boolean | undefined> = {
@@ -327,8 +352,7 @@ const coerceQuery = <Resolve extends boolean | undefined>(
 	| types.SearchRequest
 	| types.SearchRequestIndexed
 	| types.IterationRequest => {
-	const replicate =
-		typeof options?.remote !== "boolean" ? options?.remote?.replicate : false;
+	const replicate = shouldReplicateRemoteResults(options?.remote);
 	const shouldResolve = options?.resolve !== false;
 	const useLegacyRequests = compatibility != null && compatibility <= 9;
 
@@ -421,7 +445,7 @@ const introduceEntries = async <
 			response.response.results.forEach((r) =>
 				initializeResultType(r, documentType, indexedType),
 			);
-			if (typeof options?.remote !== "boolean" && options?.remote?.replicate) {
+			if (shouldReplicateRemoteResults(options?.remote)) {
 				const uniqueResults = response.response.results.filter((result) => {
 					const resultWithContext = result as
 						| types.ResultValue<T>
@@ -438,13 +462,23 @@ const introduceEntries = async <
 					return true;
 				});
 				if (uniqueResults.length > 0) {
-					await sync(
+					const syncPromise = sync(
 						queryRequest,
 						new types.Results({
 							results: uniqueResults,
 							kept: response.response.kept,
 						}),
 					);
+					if (shouldWaitForRemoteReplication(options?.remote)) {
+						await syncPromise;
+					} else {
+						void syncPromise.catch((error) => {
+							logger.error(
+								"Failed to replicate remote query results in the background",
+								error,
+							);
+						});
+					}
 				}
 			}
 			options?.onResponse &&

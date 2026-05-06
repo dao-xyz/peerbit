@@ -1225,6 +1225,141 @@ describe("index", () => {
 						}
 					});
 
+					it("waits for replicated remote search sync by default", async () => {
+						stores[0] = await session.peers[0].open<TestStore>(
+							new TestStore({ docs: new Documents() }),
+							{
+								args: {
+									replicate: true,
+								},
+							},
+						);
+
+						stores[1] = await session.peers[1].open<TestStore>(
+							stores[0].clone(),
+							{
+								args: {
+									replicate: false,
+								},
+							},
+						);
+
+						await stores[0].docs.put(new Document({ id: "sync-wait" }));
+						await stores[1].docs.index.waitFor(
+							stores[0].node.identity.publicKey,
+						);
+
+						const joinStarted = pDefer<void>();
+						const joinGate = pDefer<void>();
+						const originalJoin = stores[1].docs.log.join.bind(
+							stores[1].docs.log,
+						);
+						const joinStub = sinon
+							.stub(stores[1].docs.log, "join")
+							.callsFake(async (entries, options) => {
+								joinStarted.resolve();
+								await joinGate.promise;
+								return originalJoin(entries, options);
+							});
+
+						try {
+							let resolvedBeforeJoin = false;
+							const searchPromise = stores[1].docs.index
+								.search(
+									new SearchRequest({
+										query: [],
+									}),
+									{ remote: { replicate: true } },
+								)
+								.then((results) => {
+									resolvedBeforeJoin = true;
+									return results;
+								});
+
+							await joinStarted.promise;
+							await delay(50);
+							expect(resolvedBeforeJoin).equal(false);
+
+							joinGate.resolve();
+							const results = await searchPromise;
+							expect(results).to.have.length(1);
+						} finally {
+							joinGate.resolve();
+							joinStub.restore();
+						}
+					});
+
+					it("can replicate remote search results without blocking foreground results", async () => {
+						stores[0] = await session.peers[0].open<TestStore>(
+							new TestStore({ docs: new Documents() }),
+							{
+								args: {
+									replicate: true,
+								},
+							},
+						);
+
+						stores[1] = await session.peers[1].open<TestStore>(
+							stores[0].clone(),
+							{
+								args: {
+									replicate: false,
+								},
+							},
+						);
+
+						await stores[0].docs.put(new Document({ id: "async-sync" }));
+						await stores[1].docs.index.waitFor(
+							stores[0].node.identity.publicKey,
+						);
+
+						const joinStarted = pDefer<void>();
+						const joinGate = pDefer<void>();
+						const originalJoin = stores[1].docs.log.join.bind(
+							stores[1].docs.log,
+						);
+						const joinStub = sinon
+							.stub(stores[1].docs.log, "join")
+							.callsFake(async (entries, options) => {
+								joinStarted.resolve();
+								await joinGate.promise;
+								return originalJoin(entries, options);
+							});
+
+						try {
+							const timeout = Symbol("timeout");
+							const searchPromise = stores[1].docs.index.search(
+								new SearchRequest({
+									query: [],
+								}),
+								{
+									remote: {
+										replicate: true,
+										waitForReplication: false,
+									},
+								},
+							);
+
+							await joinStarted.promise;
+							const resultOrTimeout = await Promise.race([
+								searchPromise,
+								delay(50).then(() => timeout),
+							]);
+							expect(resultOrTimeout).to.not.equal(timeout);
+							expect(resultOrTimeout).to.have.length(1);
+
+							joinGate.resolve();
+							const results = await searchPromise;
+							expect(results).to.have.length(1);
+							await waitForResolved(async () =>
+								expect(await stores[1].docs.index.getSize()).equal(1),
+							);
+						} finally {
+							joinGate.resolve();
+							joinStub.restore();
+						}
+					});
+
 					it("iterate replicate", async () => {
 						stores[0] = await session.peers[0].open<TestStore>(
 							new TestStore({ docs: new Documents() }),
