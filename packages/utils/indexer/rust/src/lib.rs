@@ -2,6 +2,7 @@ use indexmap::IndexMap;
 use js_sys::Array;
 use wasm_bindgen::prelude::*;
 
+pub mod planner;
 pub mod storage;
 
 #[cfg(not(target_arch = "wasm32"))]
