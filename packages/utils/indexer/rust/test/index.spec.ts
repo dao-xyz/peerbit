@@ -1,6 +1,8 @@
-import { field } from "@dao-xyz/borsh";
+import { field, vec } from "@dao-xyz/borsh";
 import {
 	And,
+	Compare,
+	IntegerCompare,
 	Or,
 	Sort,
 	StringMatch,
@@ -28,6 +30,19 @@ class BridgeDocument {
 	}
 }
 
+class BridgeArrayDocument {
+	@id({ type: "string" })
+	id: string;
+
+	@field({ type: vec("u32") })
+	numbers: number[];
+
+	constructor(id: string, numbers: number[]) {
+		this.id = id;
+		this.numbers = numbers;
+	}
+}
+
 describe("all", () => {
 	tests(create, "persist", {
 		shapingSupported: false,
@@ -42,7 +57,7 @@ describe("all", () => {
 });
 
 describe("native planner bridge", () => {
-	it("uses supported native candidates with residual predicates", async () => {
+	it("evaluates exact and contains predicates in native rust", async () => {
 		const indices = create();
 		await indices.start();
 		const index = await indices.init({ schema: BridgeDocument });
@@ -67,7 +82,36 @@ describe("native planner bridge", () => {
 		await indices.drop();
 	});
 
-	it("falls back safely when an or branch is not native", async () => {
+	it("keeps array and predicates scoped to the same native element", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeArrayDocument });
+		await index.put(new BridgeArrayDocument("a", [1]));
+		await index.put(new BridgeArrayDocument("b", [2]));
+		await index.put(new BridgeArrayDocument("c", [0, 3]));
+
+		const results = await index
+			.iterate({
+				query: new And([
+					new IntegerCompare({
+						key: "numbers",
+						compare: Compare.Less,
+						value: 2,
+					}),
+					new IntegerCompare({
+						key: "numbers",
+						compare: Compare.GreaterOrEqual,
+						value: 1,
+					}),
+				]),
+			})
+			.all();
+
+		expect(results.map((result) => result.value.id)).to.deep.equal(["a"]);
+		await indices.drop();
+	});
+
+	it("evaluates string or predicates in native rust", async () => {
 		const indices = create();
 		await indices.start();
 		const index = await indices.init({ schema: BridgeDocument });

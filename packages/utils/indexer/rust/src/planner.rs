@@ -70,7 +70,22 @@ impl From<Vec<u8>> for FieldValue {
 #[derive(Clone, Debug, Default)]
 pub struct DocumentFields {
     scalars: HashMap<FieldPath, Vec<FieldValue>>,
+    scoped_scalars: Vec<ScopedScalar>,
     vectors: HashMap<FieldPath, Vec<f32>>,
+}
+
+#[derive(Clone, Debug)]
+struct ScopedScalar {
+    scope: u32,
+    path: FieldPath,
+    value: FieldValue,
+}
+
+#[derive(Debug)]
+enum QueryMatch {
+    Matched(RoaringBitmap),
+    False,
+    Undefined,
 }
 
 impl DocumentFields {
@@ -89,10 +104,23 @@ impl DocumentFields {
     }
 
     pub fn insert_scalar(&mut self, path: impl Into<FieldPath>, value: impl Into<FieldValue>) {
+        self.insert_scoped_scalar(0, path, value);
+    }
+
+    pub fn insert_scoped_scalar(
+        &mut self,
+        scope: u32,
+        path: impl Into<FieldPath>,
+        value: impl Into<FieldValue>,
+    ) {
+        let path = path.into();
+        let value = value.into();
         self.scalars
-            .entry(path.into())
+            .entry(path.clone())
             .or_default()
-            .push(value.into());
+            .push(value.clone());
+        self.scoped_scalars
+            .push(ScopedScalar { scope, path, value });
     }
 
     pub fn insert_vector(&mut self, path: impl Into<FieldPath>, value: Vec<f32>) {
@@ -129,9 +157,25 @@ pub enum Query {
         compare: Compare,
         value: FieldValue,
     },
+    StringMatch {
+        field: FieldPath,
+        value: String,
+        method: StringMatchMethod,
+        case_insensitive: bool,
+    },
+    IsNull {
+        field: FieldPath,
+    },
     And(Vec<Query>),
     Or(Vec<Query>),
     Not(Box<Query>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StringMatchMethod {
+    Exact,
+    Prefix,
+    Contains,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -280,6 +324,18 @@ impl NativeQueryIndex {
                 compare,
                 value,
             } => self.range_candidates(field, *compare, value),
+            Query::StringMatch {
+                field,
+                value,
+                method: StringMatchMethod::Exact,
+                case_insensitive: false,
+            } => self
+                .exact
+                .get(field)
+                .and_then(|values| values.get(&FieldValue::String(value.clone())))
+                .cloned()
+                .unwrap_or_default(),
+            Query::StringMatch { .. } | Query::IsNull { .. } => self.all_docs.clone(),
             Query::And(queries) => self.and_candidates(queries),
             Query::Or(queries) => self.or_candidates(queries),
             Query::Not(query) => &self.all_docs - &self.candidates(query),
@@ -287,7 +343,7 @@ impl NativeQueryIndex {
     }
 
     pub fn count(&self, query: &Query) -> u64 {
-        self.candidates(query).len()
+        self.matching_doc_ids(query).len()
     }
 
     pub fn search(&self, query: &Query, sort: &[SortField], limit: Option<usize>) -> Vec<String> {
@@ -302,8 +358,8 @@ impl NativeQueryIndex {
         limit: Option<usize>,
     ) -> Vec<String> {
         if sort.is_empty() {
-            let candidates = self.candidates(query);
-            let iter = candidates.iter().skip(offset);
+            let matches = self.matching_doc_ids(query);
+            let iter = matches.iter().skip(offset);
             if let Some(limit) = limit {
                 return iter
                     .take(limit)
@@ -315,7 +371,7 @@ impl NativeQueryIndex {
                 .collect();
         }
 
-        let mut doc_ids: Vec<_> = self.candidates(query).iter().collect();
+        let mut doc_ids: Vec<_> = self.matching_doc_ids(query).iter().collect();
         doc_ids.sort_by(|left, right| self.compare_docs(*left, *right, sort));
         let doc_ids = doc_ids.into_iter().skip(offset);
         if let Some(limit) = limit {
@@ -327,6 +383,133 @@ impl NativeQueryIndex {
         doc_ids
             .filter_map(|doc_id| self.internal_to_external.get(&doc_id).cloned())
             .collect()
+    }
+
+    fn matching_doc_ids(&self, query: &Query) -> RoaringBitmap {
+        let mut matches = RoaringBitmap::new();
+        for doc_id in self.candidates(query).iter() {
+            if self.matches_doc(doc_id, query) {
+                matches.insert(doc_id);
+            }
+        }
+        matches
+    }
+
+    fn matches_doc(&self, doc_id: DocId, query: &Query) -> bool {
+        match self.evaluate_doc(doc_id, query) {
+            QueryMatch::Matched(scopes) => !scopes.is_empty(),
+            QueryMatch::False | QueryMatch::Undefined => false,
+        }
+    }
+
+    fn evaluate_doc(&self, doc_id: DocId, query: &Query) -> QueryMatch {
+        let Some(document) = self.documents.get(&doc_id) else {
+            return QueryMatch::Undefined;
+        };
+        self.evaluate_query(document, query)
+    }
+
+    fn evaluate_query(&self, document: &DocumentFields, query: &Query) -> QueryMatch {
+        match query {
+            Query::All => QueryMatch::Matched(root_scope()),
+            Query::Exact { field, value } => {
+                self.matching_field_scopes(document, field, |field_value| field_value == value)
+            }
+            Query::Range {
+                field,
+                compare,
+                value,
+            } => self.matching_field_scopes(document, field, |field_value| {
+                compare_range_values(field_value, *compare, value)
+            }),
+            Query::StringMatch {
+                field,
+                value,
+                method,
+                case_insensitive,
+            } => self.matching_field_scopes(document, field, |field_value| {
+                matches_string_value(field_value, value, *method, *case_insensitive)
+            }),
+            Query::IsNull { field } => {
+                if document
+                    .scoped_scalars
+                    .iter()
+                    .any(|fact| fact.path == *field)
+                {
+                    QueryMatch::False
+                } else {
+                    QueryMatch::Matched(root_scope())
+                }
+            }
+            Query::And(queries) => {
+                let mut scopes = root_scope();
+                for query in queries {
+                    match self.evaluate_query(document, query) {
+                        QueryMatch::Matched(next) => {
+                            scopes = and_scope_sets(&scopes, &next);
+                            if scopes.is_empty() {
+                                return QueryMatch::False;
+                            }
+                        }
+                        QueryMatch::False => return QueryMatch::False,
+                        QueryMatch::Undefined => return QueryMatch::Undefined,
+                    }
+                }
+                QueryMatch::Matched(scopes)
+            }
+            Query::Or(queries) => {
+                let mut scopes = RoaringBitmap::new();
+                let mut saw_undefined = false;
+                for query in queries {
+                    match self.evaluate_query(document, query) {
+                        QueryMatch::Matched(next) => scopes |= next,
+                        QueryMatch::False => {}
+                        QueryMatch::Undefined => saw_undefined = true,
+                    }
+                }
+                if scopes.is_empty() {
+                    if saw_undefined {
+                        QueryMatch::Undefined
+                    } else {
+                        QueryMatch::False
+                    }
+                } else {
+                    QueryMatch::Matched(scopes)
+                }
+            }
+            Query::Not(query) => match self.evaluate_query(document, query) {
+                QueryMatch::Matched(scopes) if !scopes.is_empty() => QueryMatch::False,
+                QueryMatch::Matched(_) | QueryMatch::False => QueryMatch::Matched(root_scope()),
+                QueryMatch::Undefined => QueryMatch::Undefined,
+            },
+        }
+    }
+
+    fn matching_field_scopes(
+        &self,
+        document: &DocumentFields,
+        field: &str,
+        predicate: impl Fn(&FieldValue) -> bool,
+    ) -> QueryMatch {
+        let mut scopes = RoaringBitmap::new();
+        let mut field_present = false;
+        for fact in &document.scoped_scalars {
+            if fact.path == field {
+                field_present = true;
+                if predicate(&fact.value) {
+                    scopes.insert(fact.scope);
+                }
+            }
+        }
+        if scopes.is_empty() {
+            if field_present {
+                QueryMatch::False
+            } else {
+                QueryMatch::Undefined
+            }
+        } else {
+            QueryMatch::Matched(scopes)
+        }
     }
 
     pub fn vector_search(
@@ -500,6 +683,75 @@ impl NativeQueryIndex {
             .get(&doc_id)
             .and_then(|document| document.scalar_values(path))
             .and_then(|values| values.first())
+    }
+}
+
+fn root_scope() -> RoaringBitmap {
+    let mut scopes = RoaringBitmap::new();
+    scopes.insert(0);
+    scopes
+}
+
+fn and_scope_sets(left: &RoaringBitmap, right: &RoaringBitmap) -> RoaringBitmap {
+    let mut result = RoaringBitmap::new();
+    if left.contains(0) {
+        result |= right;
+    }
+    if right.contains(0) {
+        result |= left;
+    }
+    let mut left_scoped = left.clone();
+    left_scoped.remove(0);
+    let mut right_scoped = right.clone();
+    right_scoped.remove(0);
+    result |= left_scoped & right_scoped;
+    result
+}
+
+fn compare_range_values(left: &FieldValue, compare: Compare, right: &FieldValue) -> bool {
+    match (left, right) {
+        (FieldValue::I64(left), FieldValue::I64(right)) => {
+            compare_ordering(left.cmp(right), compare)
+        }
+        (FieldValue::U64(left), FieldValue::U64(right)) => {
+            compare_ordering(left.cmp(right), compare)
+        }
+        _ => false,
+    }
+}
+
+fn compare_ordering(ordering: Ordering, compare: Compare) -> bool {
+    match compare {
+        Compare::Equal => ordering == Ordering::Equal,
+        Compare::Less => ordering == Ordering::Less,
+        Compare::LessOrEqual => ordering != Ordering::Greater,
+        Compare::Greater => ordering == Ordering::Greater,
+        Compare::GreaterOrEqual => ordering != Ordering::Less,
+    }
+}
+
+fn matches_string_value(
+    field_value: &FieldValue,
+    query: &str,
+    method: StringMatchMethod,
+    case_insensitive: bool,
+) -> bool {
+    let FieldValue::String(value) = field_value else {
+        return false;
+    };
+    if case_insensitive {
+        let value = value.to_lowercase();
+        let query = query.to_lowercase();
+        return matches_string(&value, &query, method);
+    }
+    matches_string(value, query, method)
+}
+
+fn matches_string(value: &str, query: &str, method: StringMatchMethod) -> bool {
+    match method {
+        StringMatchMethod::Exact => value == query,
+        StringMatchMethod::Prefix => value.starts_with(query),
+        StringMatchMethod::Contains => value.contains(query),
     }
 }
 

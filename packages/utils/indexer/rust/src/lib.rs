@@ -3,6 +3,7 @@ use indexmap::IndexMap;
 use js_sys::Array;
 use planner::{
     Compare, DocumentFields, FieldValue, NativeQueryIndex, Query, SortDirection, SortField,
+    StringMatchMethod,
 };
 use wasm_bindgen::prelude::*;
 
@@ -146,6 +147,7 @@ struct DocumentFieldsDto {
 
 #[derive(BorshDeserialize)]
 struct FieldFactDto {
+    scope: u32,
     field: String,
     value: FieldValueDto,
 }
@@ -187,6 +189,15 @@ enum QueryDto {
     Not {
         query: Box<QueryDto>,
     },
+    StringMatch {
+        field: String,
+        value: String,
+        method: StringMatchMethodDto,
+        case_insensitive: bool,
+    },
+    IsNull {
+        field: String,
+    },
 }
 
 // Enum declaration order is part of the TS/Rust bridge ABI.
@@ -218,12 +229,20 @@ enum SortDirectionDto {
     Desc,
 }
 
+// Enum declaration order is part of the TS/Rust bridge ABI.
+#[derive(Clone, Copy, BorshDeserialize)]
+enum StringMatchMethodDto {
+    Exact,
+    Prefix,
+    Contains,
+}
+
 fn decode_document_fields(fields_bytes: &[u8]) -> Result<DocumentFields, JsValue> {
     let payload = DocumentFieldsDto::try_from_slice(fields_bytes).map_err(js_error)?;
     ensure_bridge_version(payload.version)?;
     let mut fields = DocumentFields::new();
     for fact in payload.facts {
-        fields.insert_scalar(fact.field, FieldValue::from(fact.value));
+        fields.insert_scoped_scalar(fact.scope, fact.field, FieldValue::from(fact.value));
     }
     Ok(fields)
 }
@@ -269,6 +288,18 @@ impl TryFrom<QueryDto> for Query {
             QueryDto::And { queries } => Query::And(decode_queries(queries)?),
             QueryDto::Or { queries } => Query::Or(decode_queries(queries)?),
             QueryDto::Not { query } => Query::Not(Box::new((*query).try_into()?)),
+            QueryDto::StringMatch {
+                field,
+                value,
+                method,
+                case_insensitive,
+            } => Query::StringMatch {
+                field,
+                value,
+                method: method.into(),
+                case_insensitive,
+            },
+            QueryDto::IsNull { field } => Query::IsNull { field },
         })
     }
 }
@@ -301,6 +332,16 @@ impl From<SortDirectionDto> for SortDirection {
         match value {
             SortDirectionDto::Asc => SortDirection::Asc,
             SortDirectionDto::Desc => SortDirection::Desc,
+        }
+    }
+}
+
+impl From<StringMatchMethodDto> for StringMatchMethod {
+    fn from(value: StringMatchMethodDto) -> Self {
+        match value {
+            StringMatchMethodDto::Exact => StringMatchMethod::Exact,
+            StringMatchMethodDto::Prefix => StringMatchMethod::Prefix,
+            StringMatchMethodDto::Contains => StringMatchMethod::Contains,
         }
     }
 }

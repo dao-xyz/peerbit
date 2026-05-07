@@ -45,6 +45,7 @@ type NativeValue =
 	| { type: "string"; value: string };
 
 type NativeFieldFact = {
+	scope: number;
 	field: string;
 	value: NativeValue;
 };
@@ -60,7 +61,15 @@ type NativeQuerySpec =
 	  }
 	| { op: "and"; queries: NativeQuerySpec[] }
 	| { op: "or"; queries: NativeQuerySpec[] }
-	| { op: "not"; query: NativeQuerySpec };
+	| { op: "not"; query: NativeQuerySpec }
+	| {
+			op: "string";
+			field: string;
+			value: string;
+			method: "exact" | "prefix" | "contains";
+			caseInsensitive: boolean;
+	  }
+	| { op: "is_null"; field: string };
 
 type NativeQueryCompileResult = {
 	spec: NativeQuerySpec;
@@ -90,6 +99,8 @@ const enum NativeQueryTag {
 	And = 3,
 	Or = 4,
 	Not = 5,
+	StringMatch = 6,
+	IsNull = 7,
 }
 
 const enum NativeCompareTag {
@@ -98,6 +109,12 @@ const enum NativeCompareTag {
 	GreaterOrEqual = 2,
 	Less = 3,
 	LessOrEqual = 4,
+}
+
+const enum NativeStringMatchMethodTag {
+	Exact = 0,
+	Prefix = 1,
+	Contains = 2,
 }
 
 let wasmModulePromise: Promise<WasmModule> | undefined;
@@ -187,11 +204,20 @@ const scalarToNativeValue = (value: any): NativeValue | undefined => {
 	return undefined;
 };
 
+type NativeFactCollectorState = {
+	seen: WeakSet<object>;
+	nextScope: number;
+};
+
 const collectNativeFieldFacts = (
 	value: any,
 	path: string[] = [],
 	facts: NativeFieldFact[] = [],
-	seen: WeakSet<object> = new WeakSet(),
+	state: NativeFactCollectorState = {
+		seen: new WeakSet(),
+		nextScope: 1,
+	},
+	scope = 0,
 ): NativeFieldFact[] => {
 	if (value instanceof Uint8Array || ArrayBuffer.isView(value)) {
 		if (path.length > 0) {
@@ -200,11 +226,14 @@ const collectNativeFieldFacts = (
 					? value
 					: new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
 			facts.push({
+				scope,
 				field: nativeFieldKey(path),
 				value: { type: "string", value: bytesToNativeString(bytes) },
 			});
 			for (const byte of bytes) {
+				const byteScope = state.nextScope++;
 				facts.push({
+					scope: byteScope,
 					field: nativeFieldKey(path),
 					value: { type: "u64", value: byte.toString() },
 				});
@@ -216,7 +245,7 @@ const collectNativeFieldFacts = (
 	const nativeValue = scalarToNativeValue(value);
 	if (nativeValue) {
 		if (path.length > 0) {
-			facts.push({ field: nativeFieldKey(path), value: nativeValue });
+			facts.push({ scope, field: nativeFieldKey(path), value: nativeValue });
 		}
 		return facts;
 	}
@@ -224,20 +253,20 @@ const collectNativeFieldFacts = (
 	if (!value || typeof value !== "object") {
 		return facts;
 	}
-	if (seen.has(value)) {
+	if (state.seen.has(value)) {
 		return facts;
 	}
-	seen.add(value);
+	state.seen.add(value);
 
 	if (Array.isArray(value)) {
 		for (const item of value) {
-			collectNativeFieldFacts(item, path, facts, seen);
+			collectNativeFieldFacts(item, path, facts, state, state.nextScope++);
 		}
 		return facts;
 	}
 
 	for (const [key, child] of Object.entries(value)) {
-		collectNativeFieldFacts(child, [...path, key], facts, seen);
+		collectNativeFieldFacts(child, [...path, key], facts, state, scope);
 	}
 	return facts;
 };
@@ -273,6 +302,19 @@ const nativeCompareTag = (compare: "eq" | "gt" | "gte" | "lt" | "lte") => {
 			return NativeCompareTag.Less;
 		case "lte":
 			return NativeCompareTag.LessOrEqual;
+	}
+};
+
+const nativeStringMatchMethodTag = (
+	method: "exact" | "prefix" | "contains",
+) => {
+	switch (method) {
+		case "exact":
+			return NativeStringMatchMethodTag.Exact;
+		case "prefix":
+			return NativeStringMatchMethodTag.Prefix;
+		case "contains":
+			return NativeStringMatchMethodTag.Contains;
 	}
 };
 
@@ -334,6 +376,17 @@ const writeNativeQuerySpec = (
 			writer.u8(NativeQueryTag.Not);
 			writeNativeQuerySpec(writer, query.query);
 			return;
+		case "string":
+			writer.u8(NativeQueryTag.StringMatch);
+			writer.string(query.field);
+			writer.string(query.value);
+			writer.u8(nativeStringMatchMethodTag(query.method));
+			writer.bool(query.caseInsensitive);
+			return;
+		case "is_null":
+			writer.u8(NativeQueryTag.IsNull);
+			writer.string(query.field);
+			return;
 	}
 };
 
@@ -356,6 +409,7 @@ const encodeNativeFieldFacts = (facts: NativeFieldFact[]): Uint8Array => {
 	writer.u8(BRIDGE_VERSION);
 	writer.u32(facts.length);
 	for (const fact of facts) {
+		writer.u32(fact.scope);
 		writer.string(fact.field);
 		writeNativeValue(writer, fact.value);
 	}
@@ -364,33 +418,30 @@ const encodeNativeFieldFacts = (facts: NativeFieldFact[]): Uint8Array => {
 
 const compileNativeQueries = (
 	queries: types.Query[],
-): NativeQueryCompileResult => {
+): NativeQueryCompileResult | undefined => {
 	return compileNativeAnd(queries);
 };
 
 const compileNativeAnd = (
 	queries: types.Query[],
-): NativeQueryCompileResult => {
+): NativeQueryCompileResult | undefined => {
 	const compiled: NativeQuerySpec[] = [];
-	let exact = true;
 
 	for (const query of queries) {
 		const next = compileNativeQuery(query);
-		if (next) {
-			compiled.push(next.spec);
-			exact &&= next.exact;
-		} else {
-			exact = false;
+		if (!next) {
+			return;
 		}
+		compiled.push(next.spec);
 	}
 
 	if (compiled.length === 0) {
-		return { spec: { op: "all" }, exact: false };
+		return { spec: { op: "all" }, exact: true };
 	}
 	if (compiled.length === 1) {
-		return { spec: compiled[0], exact };
+		return { spec: compiled[0], exact: true };
 	}
-	return { spec: { op: "and", queries: compiled }, exact };
+	return { spec: { op: "and", queries: compiled }, exact: true };
 };
 
 const compileNativeQuery = (
@@ -401,21 +452,19 @@ const compileNativeQuery = (
 	}
 	if (query instanceof types.Or) {
 		const compiled: NativeQuerySpec[] = [];
-		let exact = true;
 		for (const child of query.or) {
 			const next = compileNativeQuery(child);
 			if (!next) {
-				return { spec: { op: "all" }, exact: false };
+				return;
 			}
 			compiled.push(next.spec);
-			exact &&= next.exact;
 		}
-		return { spec: { op: "or", queries: compiled }, exact };
+		return { spec: { op: "or", queries: compiled }, exact: true };
 	}
 	if (query instanceof types.Not) {
 		const child = compileNativeQuery(query.not);
-		if (!child?.exact) {
-			return { spec: { op: "all" }, exact: false };
+		if (!child) {
+			return;
 		}
 		return { spec: { op: "not", query: child.spec }, exact: true };
 	}
@@ -430,17 +479,18 @@ const compileNativeQuery = (
 		};
 	}
 	if (query instanceof types.StringMatch) {
-		if (
-			query.method !== types.StringMatchMethod.exact ||
-			query.caseInsensitive !== false
-		) {
-			return;
-		}
 		return {
 			spec: {
-				op: "exact",
+				op: "string",
 				field: nativeFieldKey(query.key),
-				value: { type: "string", value: query.value },
+				value: query.value,
+				method:
+					query.method === types.StringMatchMethod.exact
+						? "exact"
+						: query.method === types.StringMatchMethod.prefix
+							? "prefix"
+							: "contains",
+				caseInsensitive: query.caseInsensitive,
 			},
 			exact: true,
 		};
@@ -480,27 +530,16 @@ const compileNativeQuery = (
 			exact: true,
 		};
 	}
+	if (query instanceof types.IsNull) {
+		return {
+			spec: {
+				op: "is_null",
+				field: nativeFieldKey(query.key),
+			},
+			exact: true,
+		};
+	}
 	return;
-};
-
-const canSkipResidualForNativeQuery = (queryCoerced: types.Query[]): boolean => {
-	if (queryCoerced.length !== 1) {
-		return false;
-	}
-	const query = queryCoerced[0];
-	if (query instanceof types.BoolQuery || query instanceof types.ByteMatchQuery) {
-		return true;
-	}
-	if (query instanceof types.StringMatch) {
-		return (
-			query.method === types.StringMatchMethod.exact &&
-			query.caseInsensitive === false
-		);
-	}
-	if (query instanceof types.IntegerCompare) {
-		return nativeIntegerValue(query.value.value) != null;
-	}
-	return false;
 };
 
 const getBatchFromResults = <T extends Record<string, any>>(
@@ -712,7 +751,11 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			}
 		}
 
-		const nativeCandidates = this.getNativeCandidates(queryCoerced);
+		const nativeResults = this.getNativeCandidates(queryCoerced);
+		if (nativeResults) {
+			return nativeResults;
+		}
+
 		const indexedDocuments = await this.queryDocuments(
 			async (doc) => {
 				const innerHits = new Map();
@@ -723,7 +766,6 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				}
 				return true;
 			},
-			nativeCandidates,
 		);
 
 		return indexedDocuments;
@@ -1102,7 +1144,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			return;
 		}
 		const compiled = compileNativeQueries(queryCoerced);
-		if (compiled.spec.op === "all") {
+		if (!compiled || compiled.spec.op === "all") {
 			return;
 		}
 		return compiled;
@@ -1116,7 +1158,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			return;
 		}
 		const compiled = this.getNativePlan(queryCoerced);
-		if (!compiled?.exact || !canSkipResidualForNativeQuery(queryCoerced)) {
+		if (!compiled?.exact) {
 			return;
 		}
 		return { compiled, offset: 0 };
@@ -1124,7 +1166,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 
 	private countNativeExact(queryCoerced: types.Query[]): number | undefined {
 		const compiled = this.getNativePlan(queryCoerced);
-		if (!compiled?.exact || !canSkipResidualForNativeQuery(queryCoerced)) {
+		if (!compiled?.exact) {
 			return;
 		}
 		return this.countNativePlan(compiled);
