@@ -1,7 +1,7 @@
 import { deserialize, serialize, type AbstractType } from "@dao-xyz/borsh";
 import * as types from "@peerbit/indexer-interface";
 
-type NativeFsPromises = typeof import("fs/promises");
+type NativeFs = typeof import("fs");
 
 type SyncAccessHandle = {
 	getSize?: () => number;
@@ -36,6 +36,7 @@ export type PersistenceDurability = "normal" | "strict";
 
 export type PersistenceOptions = {
 	durability?: PersistenceDurability;
+	compactAfterOperations?: number;
 };
 
 const SNAPSHOT_MAGIC = new TextEncoder().encode("PBRIDXS1");
@@ -358,11 +359,11 @@ const replaySnapshotAndJournal = <T extends Record<string, any>>(
 class NativeSnapshotFile implements SnapshotFile {
 	readonly persisted = true;
 	private operations = 0;
-	private journalHandle?: Awaited<ReturnType<NativeFsPromises["open"]>>;
+	private journalHandle?: number;
 	private journalInitialized = false;
 
 	constructor(
-		readonly fs: NativeFsPromises,
+		readonly fs: NativeFs,
 		readonly snapshotPath: string,
 		readonly journalPath: string,
 		readonly tempSnapshotPath: string,
@@ -404,18 +405,18 @@ class NativeSnapshotFile implements SnapshotFile {
 		await this.closeJournal();
 		const bytes = encodeSnapshot(values, schema);
 		const dir = this.snapshotPath.slice(0, this.snapshotPath.lastIndexOf("/"));
-		await this.fs.mkdir(dir, { recursive: true });
-		const handle = await this.fs.open(this.tempSnapshotPath, "w");
+		this.fs.mkdirSync(dir, { recursive: true });
+		const handle = this.fs.openSync(this.tempSnapshotPath, "w");
 		try {
-			await handle.writeFile(bytes);
-			await handle.sync();
+			this.writeAllSync(handle, bytes);
+			this.fs.fsyncSync(handle);
 		} finally {
-			await handle.close();
+			this.fs.closeSync(handle);
 		}
-		await this.fs.rename(this.tempSnapshotPath, this.snapshotPath);
-		await this.syncDirectory(dir);
-		await this.fs.rm(this.journalPath, { force: true });
-		await this.syncDirectory(dir);
+		this.fs.renameSync(this.tempSnapshotPath, this.snapshotPath);
+		this.syncDirectory(dir);
+		this.fs.rmSync(this.journalPath, { force: true });
+		this.syncDirectory(dir);
 		this.operations = 0;
 	}
 
@@ -425,9 +426,9 @@ class NativeSnapshotFile implements SnapshotFile {
 
 	async remove(): Promise<void> {
 		await this.closeJournal();
-		await this.fs.rm(this.snapshotPath, { force: true });
-		await this.fs.rm(this.journalPath, { force: true });
-		await this.fs.rm(this.tempSnapshotPath, { force: true });
+		this.fs.rmSync(this.snapshotPath, { force: true });
+		this.fs.rmSync(this.journalPath, { force: true });
+		this.fs.rmSync(this.tempSnapshotPath, { force: true });
 	}
 
 	private async readSnapshot<T extends Record<string, any>>(
@@ -455,7 +456,7 @@ class NativeSnapshotFile implements SnapshotFile {
 		| { ok: false; missing: boolean; error: unknown }
 	> {
 		try {
-			const bytes = await this.fs.readFile(path);
+			const bytes = this.fs.readFileSync(path);
 			return { ok: true, values: decodeSnapshot(new Uint8Array(bytes), schema) };
 		} catch (error: any) {
 			if (error?.code === "ENOENT") {
@@ -465,23 +466,23 @@ class NativeSnapshotFile implements SnapshotFile {
 		}
 	}
 
-	private async syncDirectory(path: string): Promise<void> {
-		let handle:
-			| Awaited<ReturnType<NativeFsPromises["open"]>>
-			| undefined;
+	private syncDirectory(path: string): void {
+		let handle: number | undefined;
 		try {
-			handle = await this.fs.open(path, "r");
-			await handle.sync();
+			handle = this.fs.openSync(path, "r");
+			this.fs.fsyncSync(handle);
 		} catch {
 			// Directory fsync is best-effort because not every platform allows it.
 		} finally {
-			await handle?.close();
+			if (handle !== undefined) {
+				this.fs.closeSync(handle);
+			}
 		}
 	}
 
 	private async readOptional(path: string): Promise<Uint8Array> {
 		try {
-			return new Uint8Array(await this.fs.readFile(path));
+			return new Uint8Array(this.fs.readFileSync(path));
 		} catch (error: any) {
 			if (error?.code === "ENOENT") {
 				return new Uint8Array();
@@ -493,46 +494,60 @@ class NativeSnapshotFile implements SnapshotFile {
 	private async appendRecord(payload: Uint8Array): Promise<void> {
 		const handle = await this.getJournalHandle();
 		if (!this.journalInitialized) {
-			await handle.write(JOURNAL_MAGIC);
+			this.writeAllSync(handle, JOURNAL_MAGIC);
 			this.journalInitialized = true;
 		}
-		await handle.write(encodeJournalRecord(payload));
+		this.writeAllSync(handle, encodeJournalRecord(payload));
 		if (this.durability === "strict") {
-			await handle.sync();
+			this.fs.fsyncSync(handle);
 		}
 		this.operations++;
 	}
 
-	private async getJournalHandle(): Promise<
-		Awaited<ReturnType<NativeFsPromises["open"]>>
-	> {
-		if (this.journalHandle) {
+	private async getJournalHandle(): Promise<number> {
+		if (this.journalHandle !== undefined) {
 			return this.journalHandle;
 		}
 		const dir = this.journalPath.slice(0, this.journalPath.lastIndexOf("/"));
-		await this.fs.mkdir(dir, { recursive: true });
+		this.fs.mkdirSync(dir, { recursive: true });
 		let size = 0;
 		try {
-			size = (await this.fs.stat(this.journalPath)).size;
+			size = this.fs.statSync(this.journalPath).size;
 		} catch (error: any) {
 			if (error?.code !== "ENOENT") {
 				throw error;
 			}
 		}
 		this.journalInitialized = size > 0;
-		this.journalHandle = await this.fs.open(this.journalPath, "a");
+		this.journalHandle = this.fs.openSync(this.journalPath, "a");
 		return this.journalHandle;
 	}
 
 	private async closeJournal(): Promise<void> {
-		if (!this.journalHandle) {
+		if (this.journalHandle === undefined) {
 			return;
 		}
 		try {
-			await this.journalHandle.close();
+			this.fs.closeSync(this.journalHandle);
 		} finally {
 			this.journalHandle = undefined;
 			this.journalInitialized = false;
+		}
+	}
+
+	private writeAllSync(fd: number, bytes: Uint8Array): void {
+		let offset = 0;
+		while (offset < bytes.byteLength) {
+			const written = this.fs.writeSync(
+				fd,
+				bytes,
+				offset,
+				bytes.byteLength - offset,
+			);
+			if (written <= 0) {
+				throw new Error("Failed to write rust index persistence record");
+			}
+			offset += written;
 		}
 	}
 }
@@ -760,8 +775,8 @@ export const createSnapshotFile = async (
 	// first persistence slice index-scoped rather than schema-name-scoped.
 
 	if (isNode()) {
-		const fsPromises = "fs/promises";
-		const fs = (await import(fsPromises)) as NativeFsPromises;
+		const fsModule = "fs";
+		const fs = (await import(fsModule)) as NativeFs;
 		const basePath = [
 			directory.replace(/\/$/, ""),
 			...encodedPath,

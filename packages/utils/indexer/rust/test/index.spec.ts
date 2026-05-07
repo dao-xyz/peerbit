@@ -461,6 +461,34 @@ describe("native planner bridge", () => {
 		}
 	});
 
+	it("compacts the journal after the configured operation threshold", async function () {
+		if (!isNodeRuntime()) {
+			this.skip();
+		}
+		const { directory, join, readFile, rm, stat } =
+			await loadNodePersistenceHelpers();
+		const indices = create(directory, {
+			persistence: { compactAfterOperations: 1 },
+		});
+		try {
+			await indices.start();
+			const index = await indices.init({ schema: BridgeDocument });
+			await index.put(new BridgeDocument("a", "peerbit", "snapshot"));
+
+			const indexDirectory = join(directory, "id");
+			await stat(join(indexDirectory, "index.bin"));
+			try {
+				await readFile(join(indexDirectory, "index.wal"));
+				throw new Error("Expected journal to be removed after compaction");
+			} catch (error: any) {
+				expect(error?.code).to.equal("ENOENT");
+			}
+		} finally {
+			await indices.drop();
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
 	it("recovers a compacted temp snapshot when the primary snapshot is torn", async function () {
 		if (!isNodeRuntime()) {
 			this.skip();
