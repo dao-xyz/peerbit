@@ -24,6 +24,7 @@ import type {
 	SyncableKey,
 	Syncronizer,
 } from "./index.js";
+import { emitSyncProfileDuration, syncProfileStart } from "./profile.js";
 
 @variant([0, 1])
 export class RequestMaybeSync extends TransportMessage {
@@ -451,7 +452,8 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		);
 		const allHashes = this.getPrioritizedHashes(properties.entries);
 		const trackedHashes =
-			mode === "convergent" && allHashes.length > this.maxConvergentTrackedHashes
+			mode === "convergent" &&
+			allHashes.length > this.maxConvergentTrackedHashes
 				? allHashes.slice(0, this.maxConvergentTrackedHashes)
 				: allHashes;
 		const truncated = trackedHashes.length < allHashes.length;
@@ -489,7 +491,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				cancel: () => {
 					// no-op
 				},
-				};
+			};
 		}
 
 		// For capped convergent sessions, still dispatch the full set once so large
@@ -522,25 +524,38 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		};
 	}
 
-	onMaybeMissingEntries(properties: {
+	async onMaybeMissingEntries(properties: {
 		entries: Map<string, EntryReplicated<R>>;
 		targets: string[];
 	}): Promise<void> {
+		const profile = this.syncOptions?.profile;
+		const startedAt = syncProfileStart(profile);
 		const hashes = this.getPrioritizedHashes(properties.entries);
 		const chunks = this.chunk(hashes, this.maxHashesPerMessage);
-		return chunks.reduce(
-			(promise, chunk) =>
-				promise.then(() =>
-					this.rpc.send(new RequestMaybeSync({ hashes: chunk }), {
-						priority: 1,
-						mode: new SilentDelivery({
-							to: properties.targets,
-							redundancy: 1,
+		try {
+			await chunks.reduce(
+				(promise, chunk) =>
+					promise.then(() =>
+						this.rpc.send(new RequestMaybeSync({ hashes: chunk }), {
+							priority: 1,
+							mode: new SilentDelivery({
+								to: properties.targets,
+								redundancy: 1,
+							}),
 						}),
-					}),
-				),
-			Promise.resolve(),
-		);
+					),
+				Promise.resolve(),
+			);
+		} finally {
+			if (profile) {
+				emitSyncProfileDuration(profile, startedAt, {
+					name: "simple.onMaybeMissingEntries",
+					entries: hashes.length,
+					messages: chunks.length,
+					targets: properties.targets.length,
+				});
+			}
+		}
 	}
 
 	async onMessage(
@@ -555,29 +570,70 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			// TODO perhaps send less messages to more receivers for performance reasons?
 			// TODO wait for previous send to target before trying to send more?
 
-			for await (const message of createExchangeHeadsMessages(
-				this.log,
-				msg.hashes,
-			)) {
-				await this.rpc.send(message, {
-					mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
-				});
+			const profile = this.syncOptions?.profile;
+			const startedAt = syncProfileStart(profile);
+			let messages = 0;
+			try {
+				for await (const message of createExchangeHeadsMessages(
+					this.log,
+					msg.hashes,
+				)) {
+					messages += 1;
+					await this.rpc.send(message, {
+						mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
+					});
+				}
+			} finally {
+				if (profile) {
+					emitSyncProfileDuration(profile, startedAt, {
+						name: "simple.exchangeHeads",
+						entries: msg.hashes.length,
+						messages,
+						targets: 1,
+						details: { source: "responseMaybeSync" },
+					});
+				}
 			}
 			return true;
 		} else if (msg instanceof RequestMaybeSyncCoordinate) {
+			const profile = this.syncOptions?.profile;
+			const lookupStartedAt = syncProfileStart(profile);
 			const hashes = await getHashesFromSymbols(
 				msg.hashNumbers,
 				this.entryIndex,
 				this.coordinateToHash,
 			);
-			for await (const message of createExchangeHeadsMessages(
-				this.log,
-				hashes,
-			)) {
-				await this.rpc.send(message, {
-					mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
-					// dont set priority 1 here because this will block other messages that should higher priority
+			if (profile) {
+				emitSyncProfileDuration(profile, lookupStartedAt, {
+					name: "simple.coordinateLookup",
+					entries: hashes.size,
+					symbols: msg.hashNumbers.length,
 				});
+			}
+
+			const exchangeStartedAt = syncProfileStart(profile);
+			let messages = 0;
+			try {
+				for await (const message of createExchangeHeadsMessages(
+					this.log,
+					hashes,
+				)) {
+					messages += 1;
+					await this.rpc.send(message, {
+						mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
+						// dont set priority 1 here because this will block other messages that should higher priority
+					});
+				}
+			} finally {
+				if (profile) {
+					emitSyncProfileDuration(profile, exchangeStartedAt, {
+						name: "simple.exchangeHeads",
+						entries: hashes.size,
+						messages,
+						targets: 1,
+						details: { source: "requestMaybeSyncCoordinate" },
+					});
+				}
 			}
 
 			return true;
@@ -610,84 +666,128 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		options?: { skipCheck?: boolean },
 	) {
 		const requestHashes: SyncableKey[] = [];
+		const profile = this.syncOptions?.profile;
+		const startedAt = syncProfileStart(profile);
 
-		for (const coordinateOrHash of keys) {
-			const inFlight = this.syncInFlightQueue.get(coordinateOrHash);
-			if (inFlight) {
-				if (!inFlight.find((x) => x.hashcode() === from.hashcode())) {
-					inFlight.push(from);
+		try {
+			for (const coordinateOrHash of keys) {
+				const inFlight = this.syncInFlightQueue.get(coordinateOrHash);
+				if (inFlight) {
+					if (!inFlight.find((x) => x.hashcode() === from.hashcode())) {
+						inFlight.push(from);
+						let inverted = this.syncInFlightQueueInverted.get(from.hashcode());
+						if (!inverted) {
+							inverted = new Set();
+							this.syncInFlightQueueInverted.set(from.hashcode(), inverted);
+						}
+						inverted.add(coordinateOrHash);
+					}
+				} else if (
+					options?.skipCheck ||
+					!(await this.checkHasCoordinateOrHash(coordinateOrHash))
+				) {
+					// Track the initial sender so we can retry if the first request is lost.
+					this.syncInFlightQueue.set(coordinateOrHash, [from]);
 					let inverted = this.syncInFlightQueueInverted.get(from.hashcode());
 					if (!inverted) {
 						inverted = new Set();
 						this.syncInFlightQueueInverted.set(from.hashcode(), inverted);
 					}
 					inverted.add(coordinateOrHash);
+					requestHashes.push(coordinateOrHash); // request immediately (first time we have seen this hash)
 				}
-			} else if (
-				options?.skipCheck ||
-				!(await this.checkHasCoordinateOrHash(coordinateOrHash))
-			) {
-				// Track the initial sender so we can retry if the first request is lost.
-				this.syncInFlightQueue.set(coordinateOrHash, [from]);
-				let inverted = this.syncInFlightQueueInverted.get(from.hashcode());
-				if (!inverted) {
-					inverted = new Set();
-					this.syncInFlightQueueInverted.set(from.hashcode(), inverted);
-				}
-				inverted.add(coordinateOrHash);
-				requestHashes.push(coordinateOrHash); // request immediately (first time we have seen this hash)
+			}
+
+			requestHashes.length > 0 &&
+				(await this.requestSync(requestHashes, [from!.hashcode()]));
+		} finally {
+			if (profile) {
+				emitSyncProfileDuration(profile, startedAt, {
+					name: "simple.queueSync",
+					entries: keys.length,
+					targets: 1,
+					details: {
+						requested: requestHashes.length,
+						skipCheck: options?.skipCheck === true,
+					},
+				});
 			}
 		}
-
-		requestHashes.length > 0 &&
-			(await this.requestSync(requestHashes, [from!.hashcode()]));
 	}
 
 	private async requestSync(hashes: SyncableKey[], to: Set<string> | string[]) {
 		if (hashes.length === 0) {
 			return;
 		}
+		const profile = this.syncOptions?.profile;
+		const startedAt = syncProfileStart(profile);
+		let coordinateMessages = 0;
+		let stringMessages = 0;
+		let coordinateHashCount = 0;
+		let stringHashCount = 0;
 
-		const now = +new Date();
-		for (const node of to) {
-			let map = this.syncInFlight.get(node);
-			if (!map) {
-				map = new Map();
-				this.syncInFlight.set(node, map);
+		try {
+			const now = +new Date();
+			for (const node of to) {
+				let map = this.syncInFlight.get(node);
+				if (!map) {
+					map = new Map();
+					this.syncInFlight.set(node, map);
+				}
+				for (const hash of hashes) {
+					map.set(hash, { timestamp: now });
+				}
 			}
+
+			const coordinateHashes: bigint[] = [];
+			const stringHashes: string[] = [];
 			for (const hash of hashes) {
-				map.set(hash, { timestamp: now });
+				if (typeof hash === "bigint") {
+					coordinateHashes.push(hash);
+				} else {
+					stringHashes.push(hash);
+				}
 			}
-		}
+			coordinateHashCount = coordinateHashes.length;
+			stringHashCount = stringHashes.length;
 
-		const coordinateHashes: bigint[] = [];
-		const stringHashes: string[] = [];
-		for (const hash of hashes) {
-			if (typeof hash === "bigint") {
-				coordinateHashes.push(hash);
-			} else {
-				stringHashes.push(hash);
+			if (coordinateHashes.length > 0) {
+				const chunks = this.chunk(
+					coordinateHashes,
+					this.maxCoordinatesPerMessage,
+				);
+				coordinateMessages = chunks.length;
+				for (const chunk of chunks) {
+					await this.rpc.send(
+						new RequestMaybeSyncCoordinate({ hashNumbers: chunk }),
+						{
+							mode: new SilentDelivery({ to, redundancy: 1 }),
+							priority: 1,
+						},
+					);
+				}
 			}
-		}
-
-		if (coordinateHashes.length > 0) {
-			const chunks = this.chunk(coordinateHashes, this.maxCoordinatesPerMessage);
-			for (const chunk of chunks) {
-				await this.rpc.send(
-					new RequestMaybeSyncCoordinate({ hashNumbers: chunk }),
-					{
+			if (stringHashes.length > 0) {
+				const chunks = this.chunk(stringHashes, this.maxHashesPerMessage);
+				stringMessages = chunks.length;
+				for (const chunk of chunks) {
+					await this.rpc.send(new ResponseMaybeSync({ hashes: chunk }), {
 						mode: new SilentDelivery({ to, redundancy: 1 }),
 						priority: 1,
-					},
-				);
+					});
+				}
 			}
-		}
-		if (stringHashes.length > 0) {
-			const chunks = this.chunk(stringHashes, this.maxHashesPerMessage);
-			for (const chunk of chunks) {
-				await this.rpc.send(new ResponseMaybeSync({ hashes: chunk }), {
-					mode: new SilentDelivery({ to, redundancy: 1 }),
-					priority: 1,
+		} finally {
+			if (profile) {
+				emitSyncProfileDuration(profile, startedAt, {
+					name: "simple.requestSync",
+					entries: hashes.length,
+					messages: coordinateMessages + stringMessages,
+					targets: Array.isArray(to) ? to.length : to.size,
+					details: {
+						coordinateHashes: coordinateHashCount,
+						stringHashes: stringHashCount,
+					},
 				});
 			}
 		}

@@ -1625,6 +1625,9 @@ importers:
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../../utils/crypto
+      '@peerbit/diagnostics':
+        specifier: workspace:*
+        version: link:../../../utils/diagnostics
       '@peerbit/indexer-interface':
         specifier: workspace:*
         version: link:../../../utils/indexer/interface
@@ -2478,6 +2481,8 @@ importers:
       '@peerbit/time':
         specifier: workspace:*
         version: link:../time
+
+  packages/utils/diagnostics: {}
 
   packages/utils/crypto:
     dependencies:

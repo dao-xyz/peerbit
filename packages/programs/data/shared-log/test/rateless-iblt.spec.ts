@@ -236,6 +236,7 @@ describe("rateless-iblt-syncronizer", () => {
 
 	it("large missing sets dispatch with rateless IBLT", async () => {
 		const sentMessages: TransportMessage[] = [];
+		const profileEvents: { name: string }[] = [];
 		const sync = new RatelessIBLTSynchronizer<"u64">({
 			rpc: {
 				send: async (message: TransportMessage) => {
@@ -247,6 +248,7 @@ describe("rateless-iblt-syncronizer", () => {
 			log: {} as any,
 			coordinateToHash: new Cache<string>({ max: 1000, ttl: 1000 }),
 			numbers: { maxValue: 2n ** 64n - 1n } as any,
+			sync: { profile: (event) => profileEvents.push(event) },
 		});
 
 		try {
@@ -273,6 +275,9 @@ describe("rateless-iblt-syncronizer", () => {
 			expect(
 				(startSyncMessages[0] as StartSync).symbols.length,
 			).to.be.greaterThan(0);
+			const profileNames = profileEvents.map((event) => event.name);
+			expect(profileNames).to.include("rateless.prepareStartSyncEncoder");
+			expect(profileNames).to.include("rateless.onMaybeMissingEntries");
 		} finally {
 			await sync.close();
 		}

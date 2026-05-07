@@ -45,6 +45,7 @@ packages:
   - packages/utils/build-assets
   - packages/utils/time
   - packages/utils/cache
+  - packages/utils/diagnostics
   - packages/utils/logger
   - packages/utils/keychain
   - packages/utils/indexer/*

@@ -33,6 +33,12 @@ import type {
 	SynchronizerComponents,
 	Syncronizer,
 } from "./index.js";
+import {
+	type SyncProfileFn,
+	emitSyncProfileDuration,
+	emitSyncProfileEvent,
+	syncProfileStart,
+} from "./profile.js";
 import { SimpleSyncronizer } from "./simple.js";
 
 export const logger = loggerFn("peerbit:shared-log:rateless");
@@ -590,11 +596,13 @@ const buildEncoderOrDecoderFromRange = async <
 	},
 	entryIndex: Index<EntryReplicated<D>>,
 	type: T,
+	profile?: SyncProfileFn,
 ): Promise<E | false> => {
 	await ribltReady;
 	const encoder =
 		type === "encoder" ? new EncoderWrapper() : new DecoderWrapper();
 
+	const rangeQueryStartedAt = syncProfileStart(profile);
 	const entries = await entryIndex
 		.iterate(
 			{
@@ -614,11 +622,19 @@ const buildEncoderOrDecoderFromRange = async <
 			},
 		)
 		.all();
+	if (profile) {
+		emitSyncProfileDuration(profile, rangeQueryStartedAt, {
+			name: "rateless.rangeQuery",
+			entries: entries.length,
+			details: { type },
+		});
+	}
 
 	if (entries.length === 0) {
 		return false;
 	}
 
+	const addSymbolsStartedAt = syncProfileStart(profile);
 	if (
 		typeof BigUint64Array !== "undefined" &&
 		typeof (encoder as RibltSymbolAdder).add_symbols === "function"
@@ -632,6 +648,14 @@ const buildEncoderOrDecoderFromRange = async <
 		for (const entry of entries) {
 			encoder.add_symbol(coerceBigInt(entry.value.hashNumber));
 		}
+	}
+	if (profile) {
+		emitSyncProfileDuration(profile, addSymbolsStartedAt, {
+			name: "rateless.rangeAddSymbols",
+			entries: entries.length,
+			symbols: entries.length,
+			details: { type },
+		});
 	}
 	return encoder as E;
 };
@@ -709,8 +733,11 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		}
 
 		let index = 0;
-		const scored: { entry: EntryReplicated<D>; index: number; priority: number }[] =
-			[];
+		const scored: {
+			entry: EntryReplicated<D>;
+			index: number;
+			priority: number;
+		}[] = [];
 		for (const entry of entries.values()) {
 			const priorityValue = priorityFn(entry);
 			scored.push({
@@ -737,7 +764,9 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			1,
 			Math.floor(properties.timeoutMs ?? DEFAULT_CONVERGENT_REPAIR_TIMEOUT_MS),
 		);
-		const retryIntervalsMs = this.normalizeRetryIntervals(properties.retryIntervalsMs);
+		const retryIntervalsMs = this.normalizeRetryIntervals(
+			properties.retryIntervalsMs,
+		);
 		const trackedLimit = this.maxConvergentTrackedHashes;
 		const requestedHashes = [...properties.entries.keys()];
 		const requestedHashesTracked = requestedHashes.slice(0, trackedLimit);
@@ -887,19 +916,39 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		start2: NumberOrBigint;
 		end2: NumberOrBigint;
 	}): Promise<DecoderWrapper | false> {
+		const profile = this.properties.sync?.profile;
 		const key = this.localRangeEncoderCacheKey(ranges);
 		const cached = this.localRangeEncoderCache.get(key);
 		if (cached && cached.version === this.localRangeEncoderCacheVersion) {
+			const startedAt = syncProfileStart(profile);
 			cached.lastUsed = Date.now();
-			return this.decoderFromCachedEncoder(cached.encoder);
+			try {
+				return this.decoderFromCachedEncoder(cached.encoder);
+			} finally {
+				if (profile) {
+					emitSyncProfileDuration(profile, startedAt, {
+						name: "rateless.localDecoder",
+						cacheHit: true,
+					});
+				}
+			}
 		}
 
+		const startedAt = syncProfileStart(profile);
 		const encoder = (await buildEncoderOrDecoderFromRange(
 			ranges,
 			this.properties.entryIndex,
 			"encoder",
+			profile,
 		)) as EncoderWrapper | false;
 		if (!encoder) {
+			if (profile) {
+				emitSyncProfileDuration(profile, startedAt, {
+					name: "rateless.localDecoder",
+					cacheHit: false,
+					entries: 0,
+				});
+			}
 			return false;
 		}
 
@@ -933,13 +982,24 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			this.localRangeEncoderCache.delete(oldestKey);
 		}
 
-		return this.decoderFromCachedEncoder(encoder);
+		try {
+			return this.decoderFromCachedEncoder(encoder);
+		} finally {
+			if (profile) {
+				emitSyncProfileDuration(profile, startedAt, {
+					name: "rateless.localDecoder",
+					cacheHit: false,
+				});
+			}
+		}
 	}
 
 	async onMaybeMissingEntries(properties: {
 		entries: Map<string, EntryReplicated<D>>;
 		targets: string[];
 	}): Promise<void> {
+		const profile = this.properties.sync?.profile;
+		const startedAt = syncProfileStart(profile);
 		// NOTE: this method is best-effort dispatch, not a per-hash convergence API.
 		// It may require follow-up repair rounds under churn/loss to fully close all gaps.
 		// Strategy:
@@ -954,13 +1014,33 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 
 		// Small batch => use simple synchronizer entirely
 		if (properties.entries.size <= minSyncIbltSize) {
-			await this.simple.onMaybeMissingEntries({
-				entries: properties.entries,
-				targets: properties.targets,
-			});
+			if (profile) {
+				emitSyncProfileEvent(profile, {
+					name: "rateless.dispatchMode",
+					entries: properties.entries.size,
+					targets: properties.targets.length,
+					details: { mode: "simple-small" },
+				});
+			}
+			try {
+				await this.simple.onMaybeMissingEntries({
+					entries: properties.entries,
+					targets: properties.targets,
+				});
+			} finally {
+				if (profile) {
+					emitSyncProfileDuration(profile, startedAt, {
+						name: "rateless.onMaybeMissingEntries",
+						entries: properties.entries.size,
+						targets: properties.targets.length,
+						details: { mode: "simple-small" },
+					});
+				}
+			}
 			return;
 		}
 
+		const selectStartedAt = syncProfileStart(profile);
 		const nonBoundaryEntries: EntryReplicated<D>[] = [];
 		for (const entry of properties.entries.values()) {
 			if (entry.assignedToRangeBoundary) {
@@ -1035,7 +1115,34 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			}
 		}
 
+		if (profile) {
+			emitSyncProfileDuration(profile, selectStartedAt, {
+				name: "rateless.selectEntries",
+				entries: properties.entries.size,
+				symbols: allCoordinatesToSyncWithIblt.length,
+				targets: properties.targets.length,
+				details: {
+					naiveEntries: entriesToSyncNaively.size,
+					priority: priorityFn != null,
+				},
+			});
+		}
+
 		if (allCoordinatesToSyncWithIblt.length === 0) {
+			if (profile) {
+				emitSyncProfileEvent(profile, {
+					name: "rateless.dispatchMode",
+					entries: properties.entries.size,
+					targets: properties.targets.length,
+					details: { mode: "simple-only" },
+				});
+				emitSyncProfileDuration(profile, startedAt, {
+					name: "rateless.onMaybeMissingEntries",
+					entries: properties.entries.size,
+					targets: properties.targets.length,
+					details: { mode: "simple-only" },
+				});
+			}
 			return;
 		}
 
@@ -1048,25 +1155,47 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			Math.sqrt(allCoordinatesToSyncWithIblt.length),
 		); // TODO choose better
 		initialSymbolCount = Math.max(64, initialSymbolCount);
+		const prepareStartedAt = syncProfileStart(profile);
 		const { encoder, start, end, initialSymbols } = prepareStartSyncEncoder(
 			allCoordinatesToSyncWithIblt,
 			this.properties.numbers.maxValue,
 			initialSymbolCount,
 		);
+		if (profile) {
+			emitSyncProfileDuration(profile, prepareStartedAt, {
+				name: "rateless.prepareStartSyncEncoder",
+				entries: allCoordinatesToSyncWithIblt.length,
+				symbols: initialSymbols?.length,
+				details: {
+					initialSymbolCount,
+					includesInitialSymbols: initialSymbols != null,
+				},
+			});
+		}
+
+		let startSyncSymbols = initialSymbols;
+		if (!startSyncSymbols) {
+			const produceStartedAt = syncProfileStart(profile);
+			startSyncSymbols = produceNextCodedSymbols(encoder, initialSymbolCount);
+			if (profile) {
+				emitSyncProfileDuration(profile, produceStartedAt, {
+					name: "rateless.produceStartSyncSymbols",
+					symbols: startSyncSymbols.length,
+				});
+			}
+		}
 
 		const startSync = new StartSync({
 			from: start,
 			to: end,
-			symbols:
-				initialSymbols ?? produceNextCodedSymbols(encoder, initialSymbolCount),
+			symbols: startSyncSymbols,
 		});
+		const syncId = getSyncIdString(startSync);
 
 		const clear = () => {
 			encoder.free();
-			clearTimeout(
-				this.outgoingSyncProcesses.get(getSyncIdString(startSync))?.timeout,
-			);
-			this.outgoingSyncProcesses.delete(getSyncIdString(startSync));
+			clearTimeout(this.outgoingSyncProcesses.get(syncId)?.timeout);
+			this.outgoingSyncProcesses.delete(syncId);
 		};
 		const createTimeout = () => {
 			return setTimeout(clear, 1e4); // TODO arg
@@ -1100,23 +1229,79 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				lastSeqNo++;
 				obj.refresh(); // TODO use timestamp instead and collective pruning/refresh
 
-				return produceNextCodedSymbols(encoder, nextBatch);
+				const produceStartedAt = syncProfileStart(profile);
+				const symbols = produceNextCodedSymbols(encoder, nextBatch);
+				if (profile) {
+					emitSyncProfileDuration(profile, produceStartedAt, {
+						name: "rateless.produceMoreSymbols",
+						syncId,
+						symbols: symbols.length,
+					});
+				}
+				return symbols;
 			},
 			free: clear,
 			outgoing: properties.entries,
 		};
 
-		this.outgoingSyncProcesses.set(getSyncIdString(startSync), obj);
-		this.simple.rpc.send(startSync, {
+		this.outgoingSyncProcesses.set(syncId, obj);
+		if (profile) {
+			emitSyncProfileEvent(profile, {
+				name: "rateless.dispatchMode",
+				entries: properties.entries.size,
+				symbols: startSyncSymbols.length,
+				targets: properties.targets.length,
+				syncId,
+				details: { mode: "rateless" },
+			});
+		}
+		const sendStartedAt = syncProfileStart(profile);
+		const sendResult = this.simple.rpc.send(startSync, {
 			mode: new SilentDelivery({ to: properties.targets, redundancy: 1 }),
 			priority: 1,
 		});
+		if (profile) {
+			void Promise.resolve(sendResult).then(
+				() =>
+					emitSyncProfileDuration(profile, sendStartedAt, {
+						name: "rateless.sendStartSync",
+						messages: 1,
+						symbols: startSyncSymbols.length,
+						targets: properties.targets.length,
+						syncId,
+					}),
+				() =>
+					emitSyncProfileDuration(profile, sendStartedAt, {
+						name: "rateless.sendStartSync",
+						messages: 1,
+						symbols: startSyncSymbols.length,
+						targets: properties.targets.length,
+						syncId,
+						details: { rejected: true },
+					}),
+			);
+		}
+		if (profile) {
+			emitSyncProfileDuration(profile, startedAt, {
+				name: "rateless.onMaybeMissingEntries",
+				entries: properties.entries.size,
+				messages: 1,
+				symbols: startSyncSymbols.length,
+				targets: properties.targets.length,
+				details: {
+					mode: "rateless",
+					ibltEntries: allCoordinatesToSyncWithIblt.length,
+					naiveEntries: entriesToSyncNaively.size,
+				},
+			});
+		}
 	}
 
 	async onMessage(
 		message: TransportMessage,
 		context: RequestContext,
 	): Promise<boolean> {
+		const profile = this.properties.sync?.profile;
 		if (message instanceof StartSync) {
 			const syncId = getSyncIdString(message);
 			if (this.ingoingSyncProcesses.has(syncId)) {
@@ -1130,14 +1315,23 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			this.startedOrCompletedSynchronizations.add(syncId);
 
 			const wrapped = message.end < message.start;
+			const decoderStartedAt = syncProfileStart(profile);
 			const decoder = await this.getLocalDecoderForRange({
 				start1: message.start,
 				end1: wrapped ? this.properties.numbers.maxValue : message.end,
 				start2: 0n,
 				end2: wrapped ? message.end : 0n,
 			});
+			if (profile) {
+				emitSyncProfileDuration(profile, decoderStartedAt, {
+					name: "rateless.getLocalDecoderForRange",
+					syncId,
+					details: { wrapped, found: decoder !== false },
+				});
+			}
 
 			if (!decoder) {
+				const sendStartedAt = syncProfileStart(profile);
 				await this.simple.rpc.send(
 					new RequestAll({
 						syncId: message.syncId,
@@ -1147,6 +1341,14 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 						priority: 1,
 					},
 				);
+				if (profile) {
+					emitSyncProfileDuration(profile, sendStartedAt, {
+						name: "rateless.sendRequestAll",
+						messages: 1,
+						targets: 1,
+						syncId,
+					});
+				}
 				return true;
 			}
 
@@ -1193,7 +1395,16 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 							return false;
 						}
 
+						const remoteStartedAt = syncProfileStart(profile);
 						const allMissingSymbolsInRemote = getRemoteSymbolValues(decoder);
+						if (profile) {
+							emitSyncProfileDuration(profile, remoteStartedAt, {
+								name: "rateless.remoteSymbols",
+								entries: allMissingSymbolsInRemote.length,
+								symbols: allMissingSymbolsInRemote.length,
+								syncId,
+							});
+						}
 
 						// The IBLT decoder is based on a local snapshot. Entries can arrive via
 						// overlapping repair before we issue the follow-up simple request, so
@@ -1219,19 +1430,36 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 							| undefined = (decoder as BatchDecoderWrapper)
 							.add_coded_symbols_and_try_decode;
 						if (typeof BigUint64Array !== "undefined" && addBatchAndDecode) {
-							if (
-								addBatchAndDecode.call(
-									decoder,
-									flatFromCodedSymbols(symbolMessage.symbols),
-								) &&
-								finalizeIfDecoded()
-							) {
+							const flatStartedAt = syncProfileStart(profile);
+							const flatSymbols = flatFromCodedSymbols(symbolMessage.symbols);
+							if (profile) {
+								emitSyncProfileDuration(profile, flatStartedAt, {
+									name: "rateless.symbolBatchToFlat",
+									symbols: flatSymbols.length / CODED_SYMBOL_WORDS,
+									syncId,
+								});
+							}
+
+							const decodeStartedAt = syncProfileStart(profile);
+							const decoded = addBatchAndDecode.call(decoder, flatSymbols);
+							if (profile) {
+								emitSyncProfileDuration(profile, decodeStartedAt, {
+									name: "rateless.decodeBatch",
+									symbols: flatSymbols.length / CODED_SYMBOL_WORDS,
+									syncId,
+									details: { decoded },
+								});
+							}
+							if (decoded && finalizeIfDecoded()) {
 								return true;
 							}
 							continue;
 						}
 
+						const decodeLoopStartedAt = syncProfileStart(profile);
+						let symbolsProcessed = 0;
 						for (const symbol of CodedSymbolBatch.from(symbolMessage.symbols)) {
+							symbolsProcessed += 1;
 							const normalizedSymbol =
 								symbol instanceof SymbolSerialized
 									? symbol
@@ -1260,6 +1488,13 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 								throw error;
 							}
 						}
+						if (profile) {
+							emitSyncProfileDuration(profile, decodeLoopStartedAt, {
+								name: "rateless.decodeSymbolLoop",
+								symbols: symbolsProcessed,
+								syncId,
+							});
+						}
 					}
 					return false;
 				},
@@ -1277,6 +1512,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			}
 
 			// not done, request more symbols
+			const sendStartedAt = syncProfileStart(profile);
 			await this.simple.rpc.send(
 				new RequestMoreSymbols({
 					lastSeqNo: 0n,
@@ -1287,10 +1523,19 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 					priority: 1,
 				},
 			);
+			if (profile) {
+				emitSyncProfileDuration(profile, sendStartedAt, {
+					name: "rateless.sendRequestMoreSymbols",
+					messages: 1,
+					targets: 1,
+					syncId,
+				});
+			}
 
 			return true;
 		} else if (message instanceof MoreSymbols) {
-			const obj = this.ingoingSyncProcesses.get(getSyncIdString(message));
+			const syncId = getSyncIdString(message);
+			const obj = this.ingoingSyncProcesses.get(syncId);
 			if (!obj) {
 				return true;
 			}
@@ -1304,7 +1549,8 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 
 			// we are not done
 
-			this.simple.rpc.send(
+			const sendStartedAt = syncProfileStart(profile);
+			const sendResult = this.simple.rpc.send(
 				new RequestMoreSymbols({
 					lastSeqNo: message.seqNo,
 					syncId: message.syncId,
@@ -1314,24 +1560,55 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 					priority: 1,
 				},
 			);
+			if (profile) {
+				void Promise.resolve(sendResult).then(
+					() =>
+						emitSyncProfileDuration(profile, sendStartedAt, {
+							name: "rateless.sendRequestMoreSymbols",
+							messages: 1,
+							targets: 1,
+							syncId,
+						}),
+					() =>
+						emitSyncProfileDuration(profile, sendStartedAt, {
+							name: "rateless.sendRequestMoreSymbols",
+							messages: 1,
+							targets: 1,
+							syncId,
+							details: { rejected: true },
+						}),
+				);
+			}
 
 			return true;
 		} else if (message instanceof RequestMoreSymbols) {
-			const obj = this.outgoingSyncProcesses.get(getSyncIdString(message));
+			const syncId = getSyncIdString(message);
+			const obj = this.outgoingSyncProcesses.get(syncId);
 			if (!obj) {
 				return true;
 			}
+			const symbols = obj.next(message);
+			const sendStartedAt = syncProfileStart(profile);
 			await this.properties.rpc.send(
 				new MoreSymbols({
 					lastSeqNo: message.lastSeqNo,
 					syncId: message.syncId,
-					symbols: obj.next(message),
+					symbols,
 				}),
 				{
 					mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
 					priority: 1,
 				},
 			);
+			if (profile) {
+				emitSyncProfileDuration(profile, sendStartedAt, {
+					name: "rateless.sendMoreSymbols",
+					messages: 1,
+					symbols: symbols.length,
+					targets: 1,
+					syncId,
+				});
+			}
 			return true;
 		} else if (message instanceof RequestAll) {
 			const p = this.outgoingSyncProcesses.get(getSyncIdString(message));

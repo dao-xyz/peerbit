@@ -7,6 +7,9 @@ import type { EntryWithRefs } from "../exchange-heads.js";
 import type { Numbers } from "../integers.js";
 import type { TransportMessage } from "../message.js";
 import type { EntryReplicated, ReplicationRangeIndexable } from "../ranges.js";
+import type { SyncProfileFn } from "./profile.js";
+
+export type { SyncProfileEvent, SyncProfileFn } from "./profile.js";
 
 export type SyncPriorityFn<R extends "u32" | "u64"> = (
 	entry: EntryReplicated<R>,
@@ -48,6 +51,12 @@ export type SyncOptions<R extends "u32" | "u64"> = {
 	 * Larger values reduce orchestration overhead but increase per-target memory.
 	 */
 	repairSweepTargetBufferSize?: number;
+
+	/**
+	 * Optional profiling callback. It is only invoked when provided, and should
+	 * avoid blocking because it runs inside sync hot paths.
+	 */
+	profile?: SyncProfileFn;
 };
 
 export type SynchronizerComponents<R extends "u32" | "u64"> = {
