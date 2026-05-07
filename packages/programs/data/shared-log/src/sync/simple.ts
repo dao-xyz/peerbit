@@ -121,6 +121,9 @@ const SESSION_POLL_INTERVAL_MS = 100;
 const DEFAULT_MAX_HASHES_PER_MESSAGE = 1_024;
 const DEFAULT_MAX_COORDINATES_PER_MESSAGE = 1_024;
 const DEFAULT_MAX_CONVERGENT_TRACKED_HASHES = 4_096;
+// Keep convergence sync above the default/background lane. Dropping it to
+// priority 0 lets repair traffic starve behind foreground work and breaks liveness.
+export const SYNC_MESSAGE_PRIORITY = 1;
 // Retry missing entry requests when the first response was lost (for example, due to
 // pubsub stream warmup). Keep it coarse-grained so we do not hammer the network under
 // large historical backfills.
@@ -556,7 +559,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				(promise, chunk) =>
 					promise.then(() =>
 						this.rpc.send(new RequestMaybeSync({ hashes: chunk }), {
-							priority: 1,
+							priority: SYNC_MESSAGE_PRIORITY,
 							mode: new SilentDelivery({
 								to: properties.targets,
 								redundancy: 1,
@@ -779,7 +782,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 						new RequestMaybeSyncCoordinate({ hashNumbers: chunk }),
 						{
 							mode: new SilentDelivery({ to, redundancy: 1 }),
-							priority: 1,
+							priority: SYNC_MESSAGE_PRIORITY,
 						},
 					);
 				}
@@ -790,7 +793,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				for (const chunk of chunks) {
 					await this.rpc.send(new ResponseMaybeSync({ hashes: chunk }), {
 						mode: new SilentDelivery({ to, redundancy: 1 }),
-						priority: 1,
+						priority: SYNC_MESSAGE_PRIORITY,
 					});
 				}
 			}

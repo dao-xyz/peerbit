@@ -5,6 +5,7 @@ import {
 	RequestMaybeSync,
 	RequestMaybeSyncCoordinate,
 	ResponseMaybeSync,
+	SYNC_MESSAGE_PRIORITY,
 	SimpleSyncronizer,
 } from "../src/sync/simple.js";
 
@@ -35,6 +36,7 @@ describe("sync-chunking", () => {
 		expect(send.callCount).to.equal(3);
 		const sentHashes = send.getCalls().map((call) => {
 			const message = call.args[0];
+			expect(call.args[1].priority).to.equal(SYNC_MESSAGE_PRIORITY);
 			expect(message).to.be.instanceOf(RequestMaybeSync);
 			return (message as RequestMaybeSync).hashes;
 		});
@@ -67,6 +69,7 @@ describe("sync-chunking", () => {
 		expect(send.callCount).to.equal(3);
 		const sentCoordinates = send.getCalls().map((call) => {
 			const message = call.args[0];
+			expect(call.args[1].priority).to.equal(SYNC_MESSAGE_PRIORITY);
 			expect(message).to.be.instanceOf(RequestMaybeSyncCoordinate);
 			return (message as RequestMaybeSyncCoordinate).hashNumbers;
 		});
@@ -94,6 +97,10 @@ describe("sync-chunking", () => {
 
 		const sentHashMessages = send
 			.getCalls()
+			.filter((call) => {
+				expect(call.args[1].priority).to.equal(SYNC_MESSAGE_PRIORITY);
+				return true;
+			})
 			.map((call) => call.args[0])
 			.filter((message) => message instanceof ResponseMaybeSync);
 		expect(sentHashMessages).to.have.length(1);
