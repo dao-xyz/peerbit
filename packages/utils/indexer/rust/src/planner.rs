@@ -93,6 +93,14 @@ impl DocumentFields {
         Self::default()
     }
 
+    pub fn with_scalar_capacity(capacity: usize) -> Self {
+        Self {
+            scalars: HashMap::with_capacity(capacity),
+            scoped_scalars: Vec::with_capacity(capacity),
+            vectors: HashMap::new(),
+        }
+    }
+
     pub fn with_scalar(mut self, path: impl Into<FieldPath>, value: impl Into<FieldValue>) -> Self {
         self.insert_scalar(path, value);
         self
@@ -284,11 +292,24 @@ impl NativeQueryIndex {
     }
 
     pub fn put(&mut self, id: impl Into<String>, fields: DocumentFields) {
-        self.apply_batch(IndexBatch::new().put(id, fields));
+        let external_id = id.into();
+        let doc_id = match self.external_to_internal.get(&external_id).copied() {
+            Some(doc_id) => {
+                self.remove_document_fields(doc_id);
+                doc_id
+            }
+            None => self.allocate_doc_id(external_id),
+        };
+        self.index_document(doc_id, &fields);
+        self.documents.insert(doc_id, fields);
+        self.all_docs.insert(doc_id);
+        self.generation += 1;
     }
 
     pub fn delete(&mut self, id: impl Into<String>) {
-        self.apply_batch(IndexBatch::new().delete(id));
+        if self.remove_external(&id.into()) {
+            self.generation += 1;
+        }
     }
 
     pub fn apply_batch(&mut self, batch: IndexBatch) -> u64 {

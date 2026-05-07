@@ -286,19 +286,6 @@ fn sum_to_js(sum: SumResult) -> Array {
 
 const BRIDGE_VERSION: u8 = 1;
 
-#[derive(BorshDeserialize)]
-struct DocumentFieldsDto {
-    version: u8,
-    facts: Vec<FieldFactDto>,
-}
-
-#[derive(BorshDeserialize)]
-struct FieldFactDto {
-    scope: u32,
-    field: String,
-    value: FieldValueDto,
-}
-
 // Enum declaration order is part of the TS/Rust bridge ABI.
 #[derive(Clone, BorshDeserialize)]
 enum FieldValueDto {
@@ -384,13 +371,91 @@ enum StringMatchMethodDto {
     Contains,
 }
 
-fn decode_document_fields(fields_bytes: &[u8]) -> Result<DocumentFields, JsValue> {
-    let payload = DocumentFieldsDto::try_from_slice(fields_bytes).map_err(js_error)?;
-    ensure_bridge_version(payload.version)?;
-    let mut fields = DocumentFields::new();
-    for fact in payload.facts {
-        fields.insert_scoped_scalar(fact.scope, fact.field, FieldValue::from(fact.value));
+struct BridgeReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> BridgeReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
     }
+
+    fn finish(&self) -> Result<(), JsValue> {
+        if self.offset == self.bytes.len() {
+            Ok(())
+        } else {
+            Err(js_error("Trailing bytes in bridge payload"))
+        }
+    }
+
+    fn read_u8(&mut self) -> Result<u8, JsValue> {
+        let bytes = self.read_exact(1)?;
+        Ok(bytes[0])
+    }
+
+    fn read_u32(&mut self) -> Result<u32, JsValue> {
+        let mut bytes = [0u8; 4];
+        bytes.copy_from_slice(self.read_exact(4)?);
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn read_i64(&mut self) -> Result<i64, JsValue> {
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(self.read_exact(8)?);
+        Ok(i64::from_le_bytes(bytes))
+    }
+
+    fn read_u64(&mut self) -> Result<u64, JsValue> {
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(self.read_exact(8)?);
+        Ok(u64::from_le_bytes(bytes))
+    }
+
+    fn read_string(&mut self) -> Result<String, JsValue> {
+        let len = self.read_u32()? as usize;
+        let bytes = self.read_exact(len)?;
+        String::from_utf8(bytes.to_vec()).map_err(js_error)
+    }
+
+    fn read_field_value(&mut self) -> Result<FieldValue, JsValue> {
+        Ok(match self.read_u8()? {
+            0 => match self.read_u8()? {
+                0 => FieldValue::Bool(false),
+                1 => FieldValue::Bool(true),
+                value => return Err(js_error(format!("Invalid bridge bool value {value}"))),
+            },
+            1 => FieldValue::I64(self.read_i64()?),
+            2 => FieldValue::U64(self.read_u64()?),
+            3 => FieldValue::String(self.read_string()?),
+            tag => return Err(js_error(format!("Unknown bridge field value tag {tag}"))),
+        })
+    }
+
+    fn read_exact(&mut self, len: usize) -> Result<&'a [u8], JsValue> {
+        let Some(end) = self.offset.checked_add(len) else {
+            return Err(js_error("Bridge payload offset overflow"));
+        };
+        let Some(bytes) = self.bytes.get(self.offset..end) else {
+            return Err(js_error("Unexpected end of bridge payload"));
+        };
+        self.offset = end;
+        Ok(bytes)
+    }
+}
+
+fn decode_document_fields(fields_bytes: &[u8]) -> Result<DocumentFields, JsValue> {
+    let mut reader = BridgeReader::new(fields_bytes);
+    ensure_bridge_version(reader.read_u8()?)?;
+    let fact_count = reader.read_u32()? as usize;
+    let mut fields = DocumentFields::with_scalar_capacity(fact_count);
+    for _ in 0..fact_count {
+        let scope = reader.read_u32()?;
+        let field = reader.read_string()?;
+        let value = reader.read_field_value()?;
+        fields.insert_scoped_scalar(scope, field, value);
+    }
+    reader.finish()?;
     Ok(fields)
 }
 

@@ -1,4 +1,14 @@
-import { BinaryWriter, deserialize, serialize } from "@dao-xyz/borsh";
+import {
+	BinaryWriter,
+	FixedArrayKind,
+	OptionKind,
+	StringType,
+	VecKind,
+	deserialize,
+	getSchemasBottomUp,
+	serialize,
+	type FieldType,
+} from "@dao-xyz/borsh";
 import * as types from "@peerbit/indexer-interface";
 import {
 	createSnapshotFile,
@@ -47,11 +57,15 @@ type NativeValue =
 	| { type: "i64"; value: number | bigint }
 	| { type: "u64"; value: number | bigint }
 	| { type: "string"; value: string };
+type NativeIntegerValue = Extract<
+	NativeValue,
+	{ type: "i64" } | { type: "u64" }
+>;
 
-type NativeFieldFact = {
-	scope: number;
+type NativeFieldCursor = {
 	field: string;
-	value: NativeValue;
+	fieldBytes: Uint8Array;
+	arrayFieldBytes: Uint8Array;
 };
 
 type NativeQuerySpec =
@@ -202,6 +216,17 @@ const appendNativeFieldKey = (
 const nativeArrayElementFieldKeyFromFieldKey = (field: string): string =>
 	`[${JSON.stringify("\u0000array")},${field.slice(1)}`;
 
+const nativeFieldCursor = (field: string): NativeFieldCursor => ({
+	field,
+	fieldBytes: getNativeFieldBytes(field),
+	arrayFieldBytes: getNativeFieldBytes(nativeArrayElementFieldKeyFromFieldKey(field)),
+});
+
+const appendNativeFieldCursor = (
+	parent: NativeFieldCursor | undefined,
+	key: string,
+): NativeFieldCursor => nativeFieldCursor(appendNativeFieldKey(parent?.field, key));
+
 const bytesToNativeString = (bytes: Uint8Array): string => {
 	let hex = "";
 	for (const byte of bytes) {
@@ -210,7 +235,9 @@ const bytesToNativeString = (bytes: Uint8Array): string => {
 	return `\u0000bytes:${hex}`;
 };
 
-const nativeIntegerValue = (value: number | bigint): NativeValue | undefined => {
+const nativeIntegerValue = (
+	value: number | bigint,
+): NativeIntegerValue | undefined => {
 	if (typeof value === "bigint") {
 		if (value >= 0n && value <= 18446744073709551615n) {
 			return { type: "u64", value };
@@ -228,108 +255,21 @@ const nativeIntegerValue = (value: number | bigint): NativeValue | undefined => 
 		: { type: "i64", value };
 };
 
-const scalarToNativeValue = (value: any): NativeValue | undefined => {
-	if (typeof value === "boolean") {
-		return { type: "bool", value };
-	}
-	if (typeof value === "string") {
-		return { type: "string", value };
-	}
-	if (typeof value === "number" || typeof value === "bigint") {
-		return nativeIntegerValue(value);
-	}
-	if (value instanceof Uint8Array || ArrayBuffer.isView(value)) {
-		const bytes =
-			value instanceof Uint8Array
-				? value
-				: new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-		return { type: "string", value: bytesToNativeString(bytes) };
-	}
-	return undefined;
-};
-
 type NativeFactCollectorState = {
-	seen: WeakSet<object>;
+	seen?: WeakSet<object>;
 	nextScope: number;
 };
 
-const collectNativeFieldFacts = (
-	value: any,
-	field: string | undefined = undefined,
-	facts: NativeFieldFact[] = [],
-	state: NativeFactCollectorState = {
-		seen: new WeakSet(),
-		nextScope: 1,
-	},
-	scope = 0,
-): NativeFieldFact[] => {
-	if (value instanceof Uint8Array || ArrayBuffer.isView(value)) {
-		if (field) {
-			const bytes =
-				value instanceof Uint8Array
-					? value
-					: new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-			facts.push({
-				scope,
-				field,
-				value: { type: "string", value: bytesToNativeString(bytes) },
-			});
-			for (const byte of bytes) {
-				const byteScope = state.nextScope++;
-				facts.push({
-					scope: byteScope,
-					field,
-					value: { type: "u64", value: byte },
-				});
-			}
-		}
-		return facts;
+const markNativeFieldSeen = (
+	state: NativeFactCollectorState,
+	value: object,
+): boolean => {
+	const seen = (state.seen ??= new WeakSet());
+	if (seen.has(value)) {
+		return false;
 	}
-
-	const nativeValue = scalarToNativeValue(value);
-	if (nativeValue) {
-		if (field) {
-			facts.push({ scope, field, value: nativeValue });
-		}
-		return facts;
-	}
-
-	if (!value || typeof value !== "object") {
-		return facts;
-	}
-	if (state.seen.has(value)) {
-		return facts;
-	}
-	state.seen.add(value);
-
-	if (Array.isArray(value)) {
-		for (const item of value) {
-			const itemScope = state.nextScope++;
-			if (field) {
-				facts.push({
-					scope: itemScope,
-					field: nativeArrayElementFieldKeyFromFieldKey(field),
-					value: { type: "bool", value: true },
-				});
-			}
-			collectNativeFieldFacts(item, field, facts, state, itemScope);
-		}
-		return facts;
-	}
-
-	for (const key in value) {
-		if (!Object.prototype.hasOwnProperty.call(value, key)) {
-			continue;
-		}
-		collectNativeFieldFacts(
-			value[key],
-			appendNativeFieldKey(field, key),
-			facts,
-			state,
-			scope,
-		);
-	}
-	return facts;
+	seen.add(value);
+	return true;
 };
 
 const compareToNative = (
@@ -485,12 +425,6 @@ const encodeNativeSort = (sort: NativeSortField[] = []): Uint8Array => {
 	return writer.finalize();
 };
 
-type EncodedNativeFieldFact = {
-	fact: NativeFieldFact;
-	fieldBytes: Uint8Array;
-	stringBytes?: Uint8Array;
-};
-
 const writeUint32 = (
 	view: DataView,
 	offset: number,
@@ -520,63 +454,438 @@ const writeBytes = (
 	return offset + bytes.byteLength;
 };
 
-const encodeNativeFieldFacts = (facts: NativeFieldFact[]): Uint8Array => {
-	const encodedFacts: EncodedNativeFieldFact[] = [];
-	let totalSize = 1 + 4;
-	for (const fact of facts) {
-		const encoded: EncodedNativeFieldFact = {
-			fact,
-			fieldBytes: getNativeFieldBytes(fact.field),
-		};
-		totalSize += 4 + 4 + encoded.fieldBytes.byteLength + 1;
-		switch (fact.value.type) {
-			case "bool":
-				totalSize += 1;
-				break;
-			case "i64":
-			case "u64":
-				totalSize += 8;
-				break;
-			case "string":
-				encoded.stringBytes = textEncoder.encode(fact.value.value);
-				totalSize += 4 + encoded.stringBytes.byteLength;
-				break;
-		}
-		encodedFacts.push(encoded);
+class NativeFieldWriter {
+	private output: Uint8Array;
+	private view: DataView;
+	private offset = 5;
+	private facts = 0;
+
+	constructor(initialSize = 256) {
+		this.output = new Uint8Array(initialSize);
+		this.view = new DataView(this.output.buffer);
+		this.output[0] = BRIDGE_VERSION;
 	}
 
-	const output = new Uint8Array(totalSize);
-	const view = new DataView(output.buffer, output.byteOffset, output.byteLength);
-	let offset = 0;
-	output[offset++] = BRIDGE_VERSION;
-	offset = writeUint32(view, offset, encodedFacts.length);
-	for (const { fact, fieldBytes, stringBytes } of encodedFacts) {
-		offset = writeUint32(view, offset, fact.scope);
-		offset = writeBytes(output, view, offset, fieldBytes);
-		switch (fact.value.type) {
-			case "bool":
-				output[offset++] = NativeValueTag.Bool;
-				output[offset++] = fact.value.value ? 1 : 0;
-				break;
-			case "i64":
-				output[offset++] = NativeValueTag.I64;
-				offset = writeUint64(
-					view,
-					offset,
-					BigInt.asUintN(64, BigInt(fact.value.value)),
-				);
-				break;
-			case "u64":
-				output[offset++] = NativeValueTag.U64;
-				offset = writeUint64(view, offset, fact.value.value);
-				break;
-			case "string":
-				output[offset++] = NativeValueTag.String;
-				offset = writeBytes(output, view, offset, stringBytes!);
-				break;
-		}
+	writeBool(scope: number, fieldBytes: Uint8Array, value: boolean): void {
+		this.writeHeader(scope, fieldBytes, NativeValueTag.Bool, 1);
+		this.output[this.offset++] = value ? 1 : 0;
 	}
-	return output;
+
+	writeI64(scope: number, fieldBytes: Uint8Array, value: number | bigint): void {
+		this.writeHeader(scope, fieldBytes, NativeValueTag.I64, 8);
+		this.offset = writeUint64(
+			this.view,
+			this.offset,
+			BigInt.asUintN(64, BigInt(value)),
+		);
+	}
+
+	writeU64(scope: number, fieldBytes: Uint8Array, value: number | bigint): void {
+		this.writeHeader(scope, fieldBytes, NativeValueTag.U64, 8);
+		this.offset = writeUint64(this.view, this.offset, value);
+	}
+
+	writeString(scope: number, fieldBytes: Uint8Array, value: string): void {
+		this.writeStringBytes(scope, fieldBytes, textEncoder.encode(value));
+	}
+
+	writeStringBytes(
+		scope: number,
+		fieldBytes: Uint8Array,
+		valueBytes: Uint8Array,
+	): void {
+		this.writeHeader(
+			scope,
+			fieldBytes,
+			NativeValueTag.String,
+			4 + valueBytes.byteLength,
+		);
+		this.offset = writeBytes(this.output, this.view, this.offset, valueBytes);
+	}
+
+	finish(): Uint8Array {
+		this.view.setUint32(1, this.facts, true);
+		return this.output.subarray(0, this.offset);
+	}
+
+	private writeHeader(
+		scope: number,
+		fieldBytes: Uint8Array,
+		tag: NativeValueTag,
+		valueSize: number,
+	): void {
+		this.ensure(4 + 4 + fieldBytes.byteLength + 1 + valueSize);
+		this.offset = writeUint32(this.view, this.offset, scope);
+		this.offset = writeBytes(this.output, this.view, this.offset, fieldBytes);
+		this.output[this.offset++] = tag;
+		this.facts++;
+	}
+
+	private ensure(extra: number): void {
+		const needed = this.offset + extra;
+		if (needed <= this.output.byteLength) {
+			return;
+		}
+		let nextSize = this.output.byteLength;
+		while (nextSize < needed) {
+			nextSize *= 2;
+		}
+		const next = new Uint8Array(nextSize);
+		next.set(this.output);
+		this.output = next;
+		this.view = new DataView(this.output.buffer);
+	}
+}
+
+type NativeFieldEncoder<T extends Record<string, any>> = (value: T) => Uint8Array;
+type NativeFieldValueWriterFn = (
+	value: any,
+	writer: NativeFieldWriter,
+	state: NativeFactCollectorState,
+	scope: number,
+) => void;
+type NativeFieldValueWriter = NativeFieldValueWriterFn & { needsSeen: boolean };
+
+const nativeFieldValueWriter = (
+	write: NativeFieldValueWriterFn,
+	needsSeen = false,
+): NativeFieldValueWriter => Object.assign(write, { needsSeen });
+
+const writeNativeIntegerFact = (
+	writer: NativeFieldWriter,
+	scope: number,
+	fieldBytes: Uint8Array,
+	value: number | bigint,
+): void => {
+	const nativeValue = nativeIntegerValue(value);
+	if (!nativeValue) {
+		return;
+	}
+	if (nativeValue.type === "u64") {
+		writer.writeU64(scope, fieldBytes, nativeValue.value);
+	} else {
+		writer.writeI64(scope, fieldBytes, nativeValue.value);
+	}
+};
+
+const writeNativeScalarFact = (
+	writer: NativeFieldWriter,
+	scope: number,
+	fieldBytes: Uint8Array,
+	value: any,
+): void => {
+	if (typeof value === "boolean") {
+		writer.writeBool(scope, fieldBytes, value);
+		return;
+	}
+	if (typeof value === "string") {
+		writer.writeString(scope, fieldBytes, value);
+		return;
+	}
+	if (typeof value === "number" || typeof value === "bigint") {
+		writeNativeIntegerFact(writer, scope, fieldBytes, value);
+	}
+};
+
+const writeNativeBytesFacts = (
+	writer: NativeFieldWriter,
+	state: NativeFactCollectorState,
+	scope: number,
+	fieldBytes: Uint8Array,
+	value: any,
+): void => {
+	if (!(value instanceof Uint8Array || ArrayBuffer.isView(value))) {
+		return;
+	}
+	const bytes =
+		value instanceof Uint8Array
+			? value
+			: new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+	writer.writeString(scope, fieldBytes, bytesToNativeString(bytes));
+	for (const byte of bytes) {
+		writer.writeU64(state.nextScope++, fieldBytes, byte);
+	}
+};
+
+const writeNativeFieldsGeneric = (
+	value: any,
+	cursor: NativeFieldCursor | undefined,
+	writer: NativeFieldWriter,
+	state: NativeFactCollectorState,
+	scope: number,
+): void => {
+	if (value instanceof Uint8Array || ArrayBuffer.isView(value)) {
+		if (cursor) {
+			writeNativeBytesFacts(writer, state, scope, cursor.fieldBytes, value);
+		}
+		return;
+	}
+
+	if (
+		typeof value === "boolean" ||
+		typeof value === "string" ||
+		typeof value === "number" ||
+		typeof value === "bigint"
+	) {
+		if (cursor) {
+			writeNativeScalarFact(writer, scope, cursor.fieldBytes, value);
+		}
+		return;
+	}
+
+	if (!value || typeof value !== "object") {
+		return;
+	}
+	if (!markNativeFieldSeen(state, value)) {
+		return;
+	}
+
+	if (Array.isArray(value)) {
+		for (const item of value) {
+			const itemScope = state.nextScope++;
+			if (cursor) {
+				writer.writeBool(itemScope, cursor.arrayFieldBytes, true);
+			}
+			writeNativeFieldsGeneric(item, cursor, writer, state, itemScope);
+		}
+		return;
+	}
+
+	for (const key in value) {
+		if (!Object.prototype.hasOwnProperty.call(value, key)) {
+			continue;
+		}
+		writeNativeFieldsGeneric(
+			value[key],
+			appendNativeFieldCursor(cursor, key),
+			writer,
+			state,
+			scope,
+		);
+	}
+};
+
+const encodeNativeFieldsGeneric = <T extends Record<string, any>>(
+	value: T,
+): Uint8Array => {
+	const writer = new NativeFieldWriter();
+	writeNativeFieldsGeneric(
+		value,
+		undefined,
+		writer,
+		{ nextScope: 1 },
+		0,
+	);
+	return writer.finish();
+};
+
+const integerFieldTypes = new Set([
+	"u8",
+	"u16",
+	"u32",
+	"u64",
+	"u128",
+	"u256",
+	"u512",
+	"i8",
+	"i16",
+	"i32",
+	"i64",
+]);
+
+const compileNativeFieldEncoder = <T extends Record<string, any>>(
+	schema: Function,
+): NativeFieldEncoder<T> => {
+	const objectWriterCache = new WeakMap<
+		Function,
+		Map<string, NativeFieldValueWriter | undefined>
+	>();
+
+	const getObjectWriter = (
+		ctor: Function,
+		cursor: NativeFieldCursor | undefined,
+	): NativeFieldValueWriter | undefined => {
+		let byPrefix = objectWriterCache.get(ctor);
+		if (!byPrefix) {
+			byPrefix = new Map();
+			objectWriterCache.set(ctor, byPrefix);
+		}
+		const prefix = cursor?.field ?? "";
+		if (byPrefix.has(prefix)) {
+			return byPrefix.get(prefix);
+		}
+
+		// Break recursive schemas by falling back to the generic walker for
+		// recursive edges. The common path still gets a fully compiled writer.
+		byPrefix.set(prefix, undefined);
+		let schemas: ReturnType<typeof getSchemasBottomUp>;
+		try {
+			schemas = getSchemasBottomUp(ctor);
+		} catch {
+			return undefined;
+		}
+		if (!schemas?.length) {
+			return undefined;
+		}
+
+		const fields: Array<{
+			key: string;
+			write: NativeFieldValueWriter;
+		}> = [];
+		for (const nextSchema of schemas) {
+			for (const field of nextSchema.fields) {
+				fields.push({
+					key: field.key,
+					write: compileFieldValueWriter(
+						field.type,
+						appendNativeFieldCursor(cursor, field.key),
+						getObjectWriter,
+					),
+				});
+			}
+		}
+		const needsSeen = fields.some((field) => field.write.needsSeen);
+
+		const objectWriter = nativeFieldValueWriter((value, writer, state, scope) => {
+			if (!value || typeof value !== "object") {
+				return;
+			}
+			if (needsSeen && !markNativeFieldSeen(state, value)) {
+				return;
+			}
+			for (const field of fields) {
+				field.write(value[field.key], writer, state, scope);
+			}
+		}, needsSeen);
+		byPrefix.set(prefix, objectWriter);
+		return objectWriter;
+	};
+
+	const rootWriter = getObjectWriter(schema, undefined);
+	if (!rootWriter) {
+		return encodeNativeFieldsGeneric;
+	}
+
+	return (value: T) => {
+		const writer = new NativeFieldWriter();
+		rootWriter(value, writer, { nextScope: 1 }, 0);
+		return writer.finish();
+	};
+};
+
+const compileFieldValueWriter = (
+	fieldType: FieldType,
+	cursor: NativeFieldCursor,
+	getObjectWriter: (
+		ctor: Function,
+		cursor: NativeFieldCursor | undefined,
+	) => NativeFieldValueWriter | undefined,
+): NativeFieldValueWriter => {
+	if (fieldType instanceof OptionKind) {
+		const writeElement = compileFieldValueWriter(
+			fieldType.elementType,
+			cursor,
+			getObjectWriter,
+		);
+		return nativeFieldValueWriter((value, writer, state, scope) => {
+			if (value != null) {
+				writeElement(value, writer, state, scope);
+			}
+		}, writeElement.needsSeen);
+	}
+
+	if (fieldType instanceof VecKind || fieldType instanceof FixedArrayKind) {
+		if (fieldType.elementType === "u8") {
+			return nativeFieldValueWriter((value, writer, state, scope) =>
+				writeNativeBytesFacts(writer, state, scope, cursor.fieldBytes, value),
+			);
+		}
+		const writeElement = compileFieldValueWriter(
+			fieldType.elementType,
+			cursor,
+			getObjectWriter,
+		);
+		return nativeFieldValueWriter((value, writer, state, scope) => {
+			if (!Array.isArray(value)) {
+				return;
+			}
+			if (!markNativeFieldSeen(state, value)) {
+				return;
+			}
+			for (const item of value) {
+				const itemScope = state.nextScope++;
+				writer.writeBool(itemScope, cursor.arrayFieldBytes, true);
+				writeElement(item, writer, state, itemScope);
+			}
+		}, true);
+	}
+
+	if (fieldType === Uint8Array) {
+		return nativeFieldValueWriter((value, writer, state, scope) =>
+			writeNativeBytesFacts(writer, state, scope, cursor.fieldBytes, value),
+		);
+	}
+
+	if (fieldType instanceof StringType) {
+		return nativeFieldValueWriter((value, writer, _state, scope) => {
+			if (typeof value === "string") {
+				writer.writeString(scope, cursor.fieldBytes, value);
+			}
+		});
+	}
+
+	if (typeof fieldType === "string") {
+		if (fieldType === "bool") {
+			return nativeFieldValueWriter((value, writer, _state, scope) => {
+				if (typeof value === "boolean") {
+					writer.writeBool(scope, cursor.fieldBytes, value);
+				}
+			});
+		}
+		if (fieldType === "string") {
+			return nativeFieldValueWriter((value, writer, _state, scope) => {
+				if (typeof value === "string") {
+					writer.writeString(scope, cursor.fieldBytes, value);
+				}
+			});
+		}
+		if (integerFieldTypes.has(fieldType)) {
+			return nativeFieldValueWriter((value, writer, _state, scope) => {
+				if (typeof value === "number" || typeof value === "bigint") {
+					writeNativeIntegerFact(writer, scope, cursor.fieldBytes, value);
+				}
+			});
+		}
+		return nativeFieldValueWriter((value, writer, _state, scope) =>
+			writeNativeScalarFact(writer, scope, cursor.fieldBytes, value),
+		);
+	}
+
+	if (typeof fieldType === "function") {
+		return nativeFieldValueWriter((value, writer, state, scope) => {
+			if (!value || typeof value !== "object") {
+				return;
+			}
+			const ctor =
+				typeof value.constructor === "function" && value.constructor !== Object
+					? value.constructor
+					: fieldType;
+			const objectWriter =
+				getObjectWriter(ctor, cursor) ??
+				(ctor === fieldType ? undefined : getObjectWriter(fieldType, cursor));
+			if (objectWriter) {
+				objectWriter(value, writer, state, scope);
+			} else {
+				writeNativeFieldsGeneric(value, cursor, writer, state, scope);
+			}
+		}, true);
+	}
+
+	return nativeFieldValueWriter(
+		(value, writer, state, scope) =>
+			writeNativeFieldsGeneric(value, cursor, writer, state, scope),
+		true,
+	);
 };
 
 const decodeNativeSum = ([kind, value]: [NativeSumKind, string]): number | bigint => {
@@ -763,6 +1072,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	private native?: NativeRustIndex<T>;
 	private indexByArr!: string[];
 	private properties!: types.IndexEngineInitProperties<T, NestedType>;
+	private fieldEncoder!: NativeFieldEncoder<T>;
 	private persistQueue: Promise<void> = Promise.resolve();
 	private mutationQueue: Promise<void> = Promise.resolve();
 
@@ -792,6 +1102,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 
 		const wasm = await loadWasm();
 		this.native = new wasm.NativeRustIndex<T>();
+		this.fieldEncoder = compileNativeFieldEncoder(properties.schema);
 		this.snapshotFile = await createSnapshotFile(
 			this.directory,
 			this.path,
@@ -827,20 +1138,34 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		id = types.toId(types.extractFieldValue(value, this.indexByArr)),
 		_options?: { replace?: boolean },
 	): Promise<void> {
+		if (!this.snapshotFile) {
+			this.putNativeDocument(keyToStoreKey(id), id, value);
+			return;
+		}
 		await this.enqueueMutation(async () => {
 			const storeKey = keyToStoreKey(id);
-			const fields = encodeNativeFieldFacts(collectNativeFieldFacts(value));
-			if (this.snapshotFile) {
-				await this.appendPut(storeKey, value);
-			}
+			const fields = this.fieldEncoder(value);
+			await this.appendPut(storeKey, value);
 			this.getNative().put(storeKey, id, value, fields);
-			if (this.snapshotFile) {
-				await this.compactIfNeeded();
-			}
+			await this.compactIfNeeded();
 		});
 	}
 
 	async del(query: types.DeleteOptions): Promise<types.IdKey[]> {
+		if (!this.snapshotFile) {
+			const compiled = this.requireNativePlan(types.toQuery(query.query), {
+				allowAll: true,
+			});
+			const deletedEntries = this.getNativeCandidatesForPlan({
+				compiled,
+				sort: [],
+				offset: 0,
+			});
+			if (deletedEntries.length > 0) {
+				this.getNative().delete_matching(encodeNativeQuerySpec(compiled.spec));
+			}
+			return deletedEntries.map((entry) => entry.id);
+		}
 		return this.enqueueMutation(async () => {
 			const compiled = this.requireNativePlan(types.toQuery(query.query), {
 				allowAll: true,
@@ -851,15 +1176,11 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				offset: 0,
 			});
 			if (deletedEntries.length > 0) {
-				if (this.snapshotFile) {
-					await this.appendDeletes(
-						deletedEntries.map((entry) => keyToStoreKey(entry.id)),
-					);
-				}
+				await this.appendDeletes(
+					deletedEntries.map((entry) => keyToStoreKey(entry.id)),
+				);
 				this.getNative().delete_matching(encodeNativeQuerySpec(compiled.spec));
-				if (this.snapshotFile) {
-					await this.compactIfNeeded();
-				}
+				await this.compactIfNeeded();
 			}
 			return deletedEntries.map((entry) => entry.id);
 		});
@@ -1047,7 +1368,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			storeKey,
 			id,
 			value,
-			encodeNativeFieldFacts(collectNativeFieldFacts(value)),
+			this.fieldEncoder(value),
 		);
 	}
 
