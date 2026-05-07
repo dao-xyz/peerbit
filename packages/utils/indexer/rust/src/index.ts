@@ -1,6 +1,14 @@
 import { BinaryWriter, deserialize, serialize } from "@dao-xyz/borsh";
 import * as types from "@peerbit/indexer-interface";
-import { createSnapshotFile, type SnapshotFile } from "./persistence.js";
+import {
+	createSnapshotFile,
+	type PersistenceOptions,
+	type SnapshotFile,
+} from "./persistence.js";
+
+export type RustIndexerOptions = {
+	persistence?: PersistenceOptions;
+};
 
 type NativeRustIndex<T extends Record<string, any>> = {
 	put: (
@@ -647,6 +655,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	constructor(
 		private readonly directory?: string,
 		private readonly path: string[] = [],
+		private readonly options: RustIndexerOptions = {},
 	) {}
 
 	async init(properties: types.IndexEngineInitProperties<T, NestedType>) {
@@ -673,6 +682,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			this.directory,
 			this.path,
 			this.indexByArr,
+			this.options.persistence,
 		);
 		if (this.snapshotFile) {
 			for (const value of (await this.snapshotFile.read(properties.schema)) as T[]) {
@@ -999,6 +1009,7 @@ export class RustIndices implements types.Indices {
 	constructor(
 		private readonly directory?: string,
 		private readonly path: string[] = [],
+		private readonly options: RustIndexerOptions = {},
 	) {
 		this.scopes = new Map();
 		this.closed = true;
@@ -1013,7 +1024,11 @@ export class RustIndices implements types.Indices {
 		if (existingIndex) {
 			return existingIndex.index as RustIndex<T, NestedType>;
 		}
-		const index = new RustIndex<T, NestedType>(this.directory, this.path);
+		const index = new RustIndex<T, NestedType>(
+			this.directory,
+			this.path,
+			this.options,
+		);
 		this.indices.push({ schema: properties.schema, index });
 		await index.init(properties);
 
@@ -1027,7 +1042,11 @@ export class RustIndices implements types.Indices {
 	async scope(name: string): Promise<types.Indices> {
 		let scope = this.scopes.get(name);
 		if (!scope) {
-			scope = new RustIndices(this.directory, [...this.path, name]);
+			scope = new RustIndices(
+				this.directory,
+				[...this.path, name],
+				this.options,
+			);
 			if (!this.closed) {
 				await scope.start();
 			}
@@ -1075,5 +1094,6 @@ export class RustIndices implements types.Indices {
 	}
 }
 
-const create = (directory?: string) => new RustIndices(directory);
+const create = (directory?: string, options?: RustIndexerOptions) =>
+	new RustIndices(directory, [], options);
 export { create };

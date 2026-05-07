@@ -32,6 +32,12 @@ export type SnapshotFile = {
 	persisted: true;
 };
 
+export type PersistenceDurability = "normal" | "strict";
+
+export type PersistenceOptions = {
+	durability?: PersistenceDurability;
+};
+
 const SNAPSHOT_MAGIC = new TextEncoder().encode("PBRIDXS1");
 const JOURNAL_MAGIC = new TextEncoder().encode("PBRIDXW1");
 const SNAPSHOT_FILE_NAME = "index.bin";
@@ -361,6 +367,7 @@ class NativeSnapshotFile implements SnapshotFile {
 		readonly journalPath: string,
 		readonly tempSnapshotPath: string,
 		readonly indexBy: string[],
+		readonly durability: PersistenceDurability,
 	) {}
 
 	async read<T extends Record<string, any>>(
@@ -490,7 +497,9 @@ class NativeSnapshotFile implements SnapshotFile {
 			this.journalInitialized = true;
 		}
 		await handle.write(encodeJournalRecord(payload));
-		await handle.sync();
+		if (this.durability === "strict") {
+			await handle.sync();
+		}
 		this.operations++;
 	}
 
@@ -538,6 +547,7 @@ class OpfsSnapshotFile implements SnapshotFile {
 		readonly journalFileName: string,
 		readonly tempSnapshotFileName: string,
 		readonly indexBy: string[],
+		readonly durability: PersistenceDurability,
 	) {}
 
 	private async getDirectory(create: boolean): Promise<FileSystemDirectoryHandle> {
@@ -700,7 +710,9 @@ class OpfsSnapshotFile implements SnapshotFile {
 					offset += JOURNAL_MAGIC.byteLength;
 				}
 				access.write(record, { at: offset });
-				access.flush();
+				if (this.durability === "strict") {
+					access.flush();
+				}
 			} finally {
 				access.close();
 			}
@@ -736,10 +748,12 @@ export const createSnapshotFile = async (
 	directory: string | undefined,
 	path: string[],
 	indexBy: string[],
+	options: PersistenceOptions = {},
 ): Promise<SnapshotFile | undefined> => {
 	if (!directory) {
 		return undefined;
 	}
+	const durability = options.durability ?? "normal";
 	const encodedPath = [...path, ...indexBy].map(encodePathPart);
 	// The current indexer API can reopen a persisted index with a narrower
 	// variant schema than the one it was originally populated with. Keep the
@@ -758,6 +772,7 @@ export const createSnapshotFile = async (
 			[basePath, JOURNAL_FILE_NAME].join("/"),
 			[basePath, SNAPSHOT_TEMP_FILE_NAME].join("/"),
 			indexBy,
+			durability,
 		);
 	}
 
@@ -767,5 +782,6 @@ export const createSnapshotFile = async (
 		JOURNAL_FILE_NAME,
 		SNAPSHOT_TEMP_FILE_NAME,
 		indexBy,
+		durability,
 	);
 };
