@@ -1,4 +1,4 @@
-import { field, vec } from "@dao-xyz/borsh";
+import { field, variant, vec } from "@dao-xyz/borsh";
 import {
 	And,
 	BoolQuery,
@@ -44,6 +44,7 @@ const stringBenchmark = async (
 	createIndicies: (directory?: string) => Indices | Promise<Indices>,
 	type: "transient" | "persist" = "transient",
 ) => {
+	@variant("benchmark_string_document")
 	class StringDocument {
 		@id({ type: "string" })
 		id: string;
@@ -122,6 +123,7 @@ const boolQueryBenchmark = async (
 	createIndicies: (directory?: string) => Indices | Promise<Indices>,
 	type: "transient" | "persist" = "transient",
 ) => {
+	@variant("benchmark_bool_query_document")
 	class BoolQueryDocument {
 		@id({ type: "string" })
 		id: string;
@@ -205,6 +207,7 @@ const inequalityBenchmark = async (
 	createIndicies: (directory?: string) => Indices | Promise<Indices>,
 	type: "transient" | "persist" = "transient",
 ) => {
+	@variant("benchmark_number_query_document")
 	class NumberQueryDocument {
 		@id({ type: "string" })
 		id: string;
@@ -296,6 +299,7 @@ const getBenchmark = async (
 	createIndicies: (directory?: string) => Indices | Promise<Indices>,
 	type: "transient" | "persist" = "transient",
 ) => {
+	@variant("benchmark_get_bool_query_document")
 	class BoolQueryDocument {
 		@id({ type: "string" })
 		id: string;
@@ -359,6 +363,7 @@ const nestedBoolQueryBenchmark = async (
 	createIndicies: (directory?: string) => Indices | Promise<Indices>,
 	type: "transient" | "persist" = "transient",
 ) => {
+	@variant("benchmark_nested_bool_value")
 	class Nested {
 		@field({ type: "bool" })
 		bool: boolean;
@@ -368,6 +373,7 @@ const nestedBoolQueryBenchmark = async (
 		}
 	}
 
+	@variant("benchmark_nested_bool_query_document")
 	class NestedBoolQueryDocument {
 		@id({ type: "string" })
 		id: string;
@@ -438,6 +444,7 @@ const shapedQueryBenchmark = async (
 	createIndicies: (directory?: string) => Indices | Promise<Indices>,
 	type: "transient" | "persist" = "transient",
 ) => {
+	@variant("benchmark_shaped_nested_bool_value")
 	class Nested {
 		@field({ type: "bool" })
 		bool: boolean;
@@ -447,6 +454,7 @@ const shapedQueryBenchmark = async (
 		}
 	}
 
+	@variant("benchmark_shaped_nested_bool_query_document")
 	class NestedBoolQueryDocument {
 		@id({ type: "string" })
 		id: string;
@@ -533,6 +541,7 @@ const multiFieldQueryBenchmark = async (
 	createIndicies: (directory?: string) => Indices | Promise<Indices>,
 	type: "transient" | "persist" = "transient",
 ) => {
+	@variant("benchmark_replication_range_indexable_u32")
 	class ReplicationRangeIndexableU32 {
 		@id({ type: "string" })
 		id: string;
