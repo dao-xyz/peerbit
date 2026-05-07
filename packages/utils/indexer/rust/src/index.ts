@@ -5,7 +5,9 @@ import { createSnapshotFile, type SnapshotFile } from "./persistence.js";
 type NativeIndexStore<T extends Record<string, any>> = {
 	put: (key: string, id: types.IdKey, value: T) => void;
 	get: (key: string) => [types.IdKey, T] | undefined;
+	get_many: (keys: string[]) => Array<[types.IdKey, T]>;
 	delete: (key: string) => boolean;
+	delete_many: (keys: string[]) => Array<[types.IdKey, T]>;
 	clear: () => void;
 	len: () => number;
 	entries: () => Array<[types.IdKey, T]>;
@@ -720,16 +722,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		const storeKeys = this.getPlanner().delete_matching(
 			encodeNativeQuerySpec(compiled.spec),
 		);
-		const deleted: types.IdKey[] = [];
-		for (const storeKey of storeKeys) {
-			const doc = this.getStore().get(storeKey);
-			if (!doc) {
-				continue;
-			}
-			if (this.getStore().delete(storeKey)) {
-				deleted.push(doc[0]);
-			}
-		}
+		const deleted = this.getStore()
+			.delete_many(storeKeys)
+			.map((entry) => entry[0]);
 		if (deleted.length > 0) {
 			this.markDirty();
 		}
@@ -899,7 +894,6 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	private getNativeCandidatesForPlan(
 		page: NativeCandidatePage,
 	): types.IndexedValue<T>[] {
-		const results: types.IndexedValue<T>[] = [];
 		const queryBytes = encodeNativeQuerySpec(page.compiled.spec);
 		const sortBytes = encodeNativeSort(page.sort);
 		const storeKeys =
@@ -911,13 +905,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 						page.offset,
 						page.limit,
 					);
-		for (const storeKey of storeKeys) {
-			const value = this.getStore().get(storeKey);
-			if (value) {
-				results.push({ id: value[0], value: value[1] });
-			}
-		}
-		return results;
+		return this.getStore()
+			.get_many(storeKeys)
+			.map((value) => ({ id: value[0], value: value[1] }));
 	}
 
 	private indexNativeDocument(storeKey: string, value: T): void {

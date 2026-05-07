@@ -43,8 +43,34 @@ impl NativeIndexStore {
         }
     }
 
+    pub fn get_many(&self, keys: Array) -> Array {
+        let entries = Array::new();
+        for key in keys.iter() {
+            let Some(key) = key.as_string() else {
+                continue;
+            };
+            if let Some(entry) = self.entries.get(&key) {
+                entries.push(&entry_to_js(entry));
+            }
+        }
+        entries
+    }
+
     pub fn delete(&mut self, key: &str) -> bool {
         self.entries.shift_remove(key).is_some()
+    }
+
+    pub fn delete_many(&mut self, keys: Array) -> Array {
+        let entries = Array::new();
+        for key in keys.iter() {
+            let Some(key) = key.as_string() else {
+                continue;
+            };
+            if let Some(entry) = self.entries.shift_remove(&key) {
+                entries.push(&entry_to_js(&entry));
+            }
+        }
+        entries
     }
 
     pub fn clear(&mut self) {
