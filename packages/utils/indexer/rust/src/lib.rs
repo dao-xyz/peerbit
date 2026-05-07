@@ -2,8 +2,8 @@ use borsh::BorshDeserialize;
 use indexmap::IndexMap;
 use js_sys::Array;
 use planner::{
-    Compare, DocumentFields, FieldValue, NativeQueryIndex, Query, SortDirection, SortField,
-    StringMatchMethod, SumResult,
+    Compare, DocumentFields, FieldPath, FieldValue, NativeQueryIndex, Query, SortDirection,
+    SortField, StringMatchMethod, SumResult,
 };
 use wasm_bindgen::prelude::*;
 
@@ -160,9 +160,12 @@ impl NativeQueryPlanner {
         Ok(self.index.count(&query) as usize)
     }
 
-    pub fn sum(&self, query_bytes: Vec<u8>, field: String) -> Result<Array, JsValue> {
+    pub fn sum(&self, query_bytes: Vec<u8>, field: u32) -> Result<Array, JsValue> {
         let query = decode_query(&query_bytes)?;
-        let sum = self.index.sum(&query, &field).map_err(js_error)?;
+        let sum = self
+            .index
+            .sum(&query, FieldPath::Id(field))
+            .map_err(js_error)?;
         Ok(sum_to_js(sum))
     }
 
@@ -246,7 +249,7 @@ impl NativeRustIndex {
         self.planner.count(query_bytes)
     }
 
-    pub fn sum(&self, query_bytes: Vec<u8>, field: String) -> Result<Array, JsValue> {
+    pub fn sum(&self, query_bytes: Vec<u8>, field: u32) -> Result<Array, JsValue> {
         self.planner.sum(query_bytes, field)
     }
 
@@ -306,11 +309,11 @@ struct QueryPayloadDto {
 enum QueryDto {
     All,
     Exact {
-        field: String,
+        field: u32,
         value: FieldValueDto,
     },
     Range {
-        field: String,
+        field: u32,
         compare: CompareDto,
         value: FieldValueDto,
     },
@@ -324,13 +327,13 @@ enum QueryDto {
         query: Box<QueryDto>,
     },
     StringMatch {
-        field: String,
+        field: u32,
         value: String,
         method: StringMatchMethodDto,
         case_insensitive: bool,
     },
     IsNull {
-        field: String,
+        field: u32,
     },
 }
 
@@ -352,7 +355,7 @@ struct SortPayloadDto {
 
 #[derive(BorshDeserialize)]
 struct SortFieldDto {
-    field: String,
+    field: u32,
     direction: SortDirectionDto,
 }
 
@@ -451,7 +454,7 @@ fn decode_document_fields(fields_bytes: &[u8]) -> Result<DocumentFields, JsValue
     let mut fields = DocumentFields::with_scalar_capacity(fact_count);
     for _ in 0..fact_count {
         let scope = reader.read_u32()?;
-        let field = reader.read_string()?;
+        let field = reader.read_u32()?;
         let value = reader.read_field_value()?;
         fields.insert_scoped_scalar(scope, field, value);
     }
@@ -472,7 +475,7 @@ fn decode_sort(sort_bytes: &[u8]) -> Result<Vec<SortField>, JsValue> {
         .fields
         .into_iter()
         .map(|field| SortField {
-            field: field.field,
+            field: FieldPath::Id(field.field),
             direction: field.direction.into(),
         })
         .collect())
@@ -485,7 +488,7 @@ impl TryFrom<QueryDto> for Query {
         Ok(match value {
             QueryDto::All => Query::All,
             QueryDto::Exact { field, value } => Query::Exact {
-                field,
+                field: FieldPath::Id(field),
                 value: value.into(),
             },
             QueryDto::Range {
@@ -493,7 +496,7 @@ impl TryFrom<QueryDto> for Query {
                 compare,
                 value,
             } => Query::Range {
-                field,
+                field: FieldPath::Id(field),
                 compare: compare.into(),
                 value: value.into(),
             },
@@ -506,12 +509,14 @@ impl TryFrom<QueryDto> for Query {
                 method,
                 case_insensitive,
             } => Query::StringMatch {
-                field,
+                field: FieldPath::Id(field),
                 value,
                 method: method.into(),
                 case_insensitive,
             },
-            QueryDto::IsNull { field } => Query::IsNull { field },
+            QueryDto::IsNull { field } => Query::IsNull {
+                field: FieldPath::Id(field),
+            },
         })
     }
 }

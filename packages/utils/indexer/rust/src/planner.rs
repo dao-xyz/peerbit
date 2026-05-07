@@ -4,7 +4,36 @@ use std::collections::{BTreeMap, HashMap};
 use std::ops::Bound::{Excluded, Unbounded};
 
 pub type DocId = u32;
-pub type FieldPath = String;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum FieldPath {
+    Id(u32),
+    Name(String),
+}
+
+impl From<u32> for FieldPath {
+    fn from(value: u32) -> Self {
+        Self::Id(value)
+    }
+}
+
+impl From<String> for FieldPath {
+    fn from(value: String) -> Self {
+        Self::Name(value)
+    }
+}
+
+impl From<&String> for FieldPath {
+    fn from(value: &String) -> Self {
+        Self::Name(value.clone())
+    }
+}
+
+impl From<&str> for FieldPath {
+    fn from(value: &str) -> Self {
+        Self::Name(value.to_string())
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FieldValue {
@@ -135,11 +164,11 @@ impl DocumentFields {
         self.vectors.insert(path.into(), value);
     }
 
-    pub fn scalar_values(&self, path: &str) -> Option<&[FieldValue]> {
+    pub fn scalar_values(&self, path: &FieldPath) -> Option<&[FieldValue]> {
         self.scalars.get(path).map(Vec::as_slice)
     }
 
-    pub fn vector(&self, path: &str) -> Option<&[f32]> {
+    pub fn vector(&self, path: &FieldPath) -> Option<&[f32]> {
         self.vectors.get(path).map(Vec::as_slice)
     }
 }
@@ -379,10 +408,11 @@ impl NativeQueryIndex {
         self.matching_doc_ids(query).len()
     }
 
-    pub fn sum(&self, query: &Query, field: &str) -> Result<SumResult, String> {
+    pub fn sum(&self, query: &Query, field: impl Into<FieldPath>) -> Result<SumResult, String> {
+        let field = field.into();
         let mut result = SumResult::None;
         for doc_id in self.matching_doc_ids(query).iter() {
-            let Some(value) = self.first_scalar(doc_id, field) else {
+            let Some(value) = self.first_scalar(doc_id, &field) else {
                 continue;
             };
             result.add(value)?;
@@ -550,13 +580,13 @@ impl NativeQueryIndex {
     fn matching_field_scopes(
         &self,
         document: &DocumentFields,
-        field: &str,
+        field: &FieldPath,
         predicate: impl Fn(&FieldValue) -> bool,
     ) -> QueryMatch {
         let mut scopes = RoaringBitmap::new();
         let mut field_present = false;
         for fact in &document.scoped_scalars {
-            if fact.path == field {
+            if fact.path == *field {
                 field_present = true;
                 if predicate(&fact.value) {
                     scopes.insert(fact.scope);
@@ -720,7 +750,12 @@ impl NativeQueryIndex {
         result
     }
 
-    fn range_candidates(&self, field: &str, compare: Compare, value: &FieldValue) -> RoaringBitmap {
+    fn range_candidates(
+        &self,
+        field: &FieldPath,
+        compare: Compare,
+        value: &FieldValue,
+    ) -> RoaringBitmap {
         if let Some(value) = value.as_i64() {
             return range_i64_candidates(self.range_i64.get(field), compare, value);
         }
@@ -746,7 +781,7 @@ impl NativeQueryIndex {
         left.cmp(&right)
     }
 
-    fn first_scalar(&self, doc_id: DocId, path: &str) -> Option<&FieldValue> {
+    fn first_scalar(&self, doc_id: DocId, path: &FieldPath) -> Option<&FieldValue> {
         self.documents
             .get(&doc_id)
             .and_then(|document| document.scalar_values(path))
@@ -978,7 +1013,7 @@ impl NativeQueryIndex {
 
     fn collect_missing_sorted_docs(
         &self,
-        field: &str,
+        field: &FieldPath,
         query: &Query,
         offset: usize,
         limit: usize,
@@ -1023,7 +1058,7 @@ impl NativeQueryIndex {
         result.len() < limit
     }
 
-    fn insert_sort_value(&mut self, path: &str, value: &FieldValue, doc_id: DocId) {
+    fn insert_sort_value(&mut self, path: &FieldPath, value: &FieldValue, doc_id: DocId) {
         match value {
             FieldValue::Bool(value) => {
                 insert_into_ordered_index(&mut self.sort_bool, path, *value, doc_id)
@@ -1043,7 +1078,7 @@ impl NativeQueryIndex {
         }
     }
 
-    fn remove_sort_value(&mut self, path: &str, value: &FieldValue, doc_id: DocId) {
+    fn remove_sort_value(&mut self, path: &FieldPath, value: &FieldValue, doc_id: DocId) {
         match value {
             FieldValue::Bool(value) => {
                 remove_from_ordered_index(&mut self.sort_bool, path, value, doc_id)
@@ -1243,7 +1278,7 @@ fn union_bitmaps<'a>(bitmaps: impl Iterator<Item = &'a RoaringBitmap>) -> Roarin
 
 fn remove_from_exact(
     index: &mut HashMap<FieldPath, HashMap<FieldValue, RoaringBitmap>>,
-    path: &str,
+    path: &FieldPath,
     value: &FieldValue,
     doc_id: DocId,
 ) {
@@ -1256,7 +1291,7 @@ fn remove_from_exact(
 
 fn remove_from_range_i64(
     index: &mut HashMap<FieldPath, BTreeMap<i64, RoaringBitmap>>,
-    path: &str,
+    path: &FieldPath,
     value: i64,
     doc_id: DocId,
 ) {
@@ -1269,7 +1304,7 @@ fn remove_from_range_i64(
 
 fn remove_from_range_u64(
     index: &mut HashMap<FieldPath, BTreeMap<u64, RoaringBitmap>>,
-    path: &str,
+    path: &FieldPath,
     value: u64,
     doc_id: DocId,
 ) {
@@ -1282,12 +1317,12 @@ fn remove_from_range_u64(
 
 fn insert_into_ordered_index<T: Ord>(
     index: &mut HashMap<FieldPath, BTreeMap<T, RoaringBitmap>>,
-    path: &str,
+    path: &FieldPath,
     value: T,
     doc_id: DocId,
 ) {
     index
-        .entry(path.to_string())
+        .entry(path.clone())
         .or_default()
         .entry(value)
         .or_default()
@@ -1296,7 +1331,7 @@ fn insert_into_ordered_index<T: Ord>(
 
 fn remove_from_ordered_index<T: Ord>(
     index: &mut HashMap<FieldPath, BTreeMap<T, RoaringBitmap>>,
-    path: &str,
+    path: &FieldPath,
     value: &T,
     doc_id: DocId,
 ) {
@@ -1395,35 +1430,35 @@ mod tests {
         let point = 250;
         let query = Query::And(vec![
             Query::Exact {
-                field: "mode".to_string(),
+                field: "mode".into(),
                 value: FieldValue::U64(1),
             },
             Query::Range {
-                field: "timestamp".to_string(),
+                field: "timestamp".into(),
                 compare: Compare::Less,
                 value: FieldValue::U64(300),
             },
             Query::Or(vec![
                 Query::And(vec![
                     Query::Range {
-                        field: "start1".to_string(),
+                        field: "start1".into(),
                         compare: Compare::LessOrEqual,
                         value: FieldValue::U64(point),
                     },
                     Query::Range {
-                        field: "end1".to_string(),
+                        field: "end1".into(),
                         compare: Compare::Greater,
                         value: FieldValue::U64(point),
                     },
                 ]),
                 Query::And(vec![
                     Query::Range {
-                        field: "start2".to_string(),
+                        field: "start2".into(),
                         compare: Compare::LessOrEqual,
                         value: FieldValue::U64(point),
                     },
                     Query::Range {
-                        field: "end2".to_string(),
+                        field: "end2".into(),
                         compare: Compare::Greater,
                         value: FieldValue::U64(point),
                     },
@@ -1456,11 +1491,11 @@ mod tests {
 
         let results = index.search(
             &Query::Exact {
-                field: "group".to_string(),
+                field: "group".into(),
                 value: FieldValue::String("left".to_string()),
             },
             &[SortField {
-                field: "timestamp".to_string(),
+                field: "timestamp".into(),
                 direction: SortDirection::Desc,
             }],
             Some(2),
@@ -1482,7 +1517,7 @@ mod tests {
         index.put("c", DocumentFields::new().with_scalar("title", "charlie"));
 
         let sort = [SortField {
-            field: "title".to_string(),
+            field: "title".into(),
             direction: SortDirection::Asc,
         }];
 
@@ -1517,7 +1552,7 @@ mod tests {
             index.search(
                 &Query::All,
                 &[SortField {
-                    field: "sort".to_string(),
+                    field: "sort".into(),
                     direction: SortDirection::Asc,
                 }],
                 None,
@@ -1528,7 +1563,7 @@ mod tests {
             index.search_page(
                 &Query::All,
                 &[SortField {
-                    field: "sort".to_string(),
+                    field: "sort".into(),
                     direction: SortDirection::Desc,
                 }],
                 1,
@@ -1561,7 +1596,7 @@ mod tests {
         );
 
         let query = Query::Exact {
-            field: "group".to_string(),
+            field: "group".into(),
             value: FieldValue::String("left".to_string()),
         };
 
@@ -1581,7 +1616,7 @@ mod tests {
         }
 
         let query = Query::Exact {
-            field: "even".to_string(),
+            field: "even".into(),
             value: FieldValue::Bool(true),
         };
 
@@ -1634,7 +1669,7 @@ mod tests {
         assert_eq!(
             index.search(
                 &Query::Exact {
-                    field: "status".to_string(),
+                    field: "status".into(),
                     value: FieldValue::String("draft".to_string()),
                 },
                 &[],
@@ -1645,7 +1680,7 @@ mod tests {
         assert_eq!(
             index.search(
                 &Query::Exact {
-                    field: "status".to_string(),
+                    field: "status".into(),
                     value: FieldValue::String("published".to_string()),
                 },
                 &[],
@@ -1679,11 +1714,11 @@ mod tests {
 
         let results = index.vector_search(
             &Query::Exact {
-                field: "published".to_string(),
+                field: "published".into(),
                 value: FieldValue::Bool(true),
             },
             &VectorSort {
-                field: "embedding".to_string(),
+                field: "embedding".into(),
                 query: vec![1.0, 0.0],
                 metric: VectorMetric::Cosine,
             },

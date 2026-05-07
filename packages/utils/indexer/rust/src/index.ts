@@ -42,7 +42,7 @@ type NativeRustIndex<T extends Record<string, any>> = {
 		limit: number,
 	) => Array<[types.IdKey, T]>;
 	count: (query: Uint8Array) => number;
-	sum: (query: Uint8Array, field: string) => [NativeSumKind, string];
+	sum: (query: Uint8Array, field: number) => [NativeSumKind, string];
 	delete_matching: (query: Uint8Array) => Array<[types.IdKey, T]>;
 };
 
@@ -64,16 +64,16 @@ type NativeIntegerValue = Extract<
 
 type NativeFieldCursor = {
 	field: string;
-	fieldBytes: Uint8Array;
-	arrayFieldBytes: Uint8Array;
+	fieldId: number;
+	arrayFieldId: number;
 };
 
 type NativeQuerySpec =
 	| { op: "all" }
-	| { op: "exact"; field: string; value: NativeValue }
+	| { op: "exact"; field: number; value: NativeValue }
 	| {
 			op: "range";
-			field: string;
+			field: number;
 			compare: "eq" | "gt" | "gte" | "lt" | "lte";
 			value: NativeValue;
 	  }
@@ -82,12 +82,12 @@ type NativeQuerySpec =
 	| { op: "not"; query: NativeQuerySpec }
 	| {
 			op: "string";
-			field: string;
+			field: number;
 			value: string;
 			method: "exact" | "prefix" | "contains";
 			caseInsensitive: boolean;
 	  }
-	| { op: "is_null"; field: string };
+	| { op: "is_null"; field: number };
 
 type NativeQueryCompileResult = {
 	spec: NativeQuerySpec;
@@ -95,7 +95,7 @@ type NativeQueryCompileResult = {
 };
 
 type NativeSortField = {
-	field: string;
+	field: number;
 	direction: "asc" | "desc";
 };
 
@@ -150,16 +150,6 @@ const enum NativeSortDirectionTag {
 }
 
 const textEncoder = new TextEncoder();
-const nativeFieldBytes = new Map<string, Uint8Array>();
-
-const getNativeFieldBytes = (field: string): Uint8Array => {
-	let bytes = nativeFieldBytes.get(field);
-	if (!bytes) {
-		bytes = textEncoder.encode(field);
-		nativeFieldBytes.set(field, bytes);
-	}
-	return bytes;
-};
 
 let wasmModulePromise: Promise<WasmModule> | undefined;
 let wasmInitialized = false;
@@ -216,16 +206,39 @@ const appendNativeFieldKey = (
 const nativeArrayElementFieldKeyFromFieldKey = (field: string): string =>
 	`[${JSON.stringify("\u0000array")},${field.slice(1)}`;
 
-const nativeFieldCursor = (field: string): NativeFieldCursor => ({
+type NativeFieldDictionary = {
+	id: (field: string) => number;
+};
+
+const createNativeFieldDictionary = (): NativeFieldDictionary => {
+	const ids = new Map<string, number>();
+	return {
+		id: (field: string) => {
+			let id = ids.get(field);
+			if (id == null) {
+				id = ids.size;
+				ids.set(field, id);
+			}
+			return id;
+		},
+	};
+};
+
+const nativeFieldCursor = (
+	dictionary: NativeFieldDictionary,
+	field: string,
+): NativeFieldCursor => ({
 	field,
-	fieldBytes: getNativeFieldBytes(field),
-	arrayFieldBytes: getNativeFieldBytes(nativeArrayElementFieldKeyFromFieldKey(field)),
+	fieldId: dictionary.id(field),
+	arrayFieldId: dictionary.id(nativeArrayElementFieldKeyFromFieldKey(field)),
 });
 
 const appendNativeFieldCursor = (
+	dictionary: NativeFieldDictionary,
 	parent: NativeFieldCursor | undefined,
 	key: string,
-): NativeFieldCursor => nativeFieldCursor(appendNativeFieldKey(parent?.field, key));
+): NativeFieldCursor =>
+	nativeFieldCursor(dictionary, appendNativeFieldKey(parent?.field, key));
 
 const bytesToNativeString = (bytes: Uint8Array): string => {
 	let hex = "";
@@ -359,12 +372,12 @@ const writeNativeQuerySpec = (
 			return;
 		case "exact":
 			writer.u8(NativeQueryTag.Exact);
-			writer.string(query.field);
+			writer.u32(query.field);
 			writeNativeValue(writer, query.value);
 			return;
 		case "range":
 			writer.u8(NativeQueryTag.Range);
-			writer.string(query.field);
+			writer.u32(query.field);
 			writer.u8(nativeCompareTag(query.compare));
 			writeNativeValue(writer, query.value);
 			return;
@@ -388,14 +401,14 @@ const writeNativeQuerySpec = (
 			return;
 		case "string":
 			writer.u8(NativeQueryTag.StringMatch);
-			writer.string(query.field);
+			writer.u32(query.field);
 			writer.string(query.value);
 			writer.u8(nativeStringMatchMethodTag(query.method));
 			writer.bool(query.caseInsensitive);
 			return;
 		case "is_null":
 			writer.u8(NativeQueryTag.IsNull);
-			writer.string(query.field);
+			writer.u32(query.field);
 			return;
 	}
 };
@@ -407,9 +420,22 @@ const encodeNativeQuerySpec = (query: NativeQuerySpec): Uint8Array => {
 	return writer.finalize();
 };
 
-const nativeSortFields = (sort?: types.Sort | types.Sort[]): NativeSortField[] =>
+const nativeFieldId = (
+	dictionary: NativeFieldDictionary,
+	path: string[],
+): number => dictionary.id(nativeFieldKey(path));
+
+const nativeArrayElementFieldId = (
+	dictionary: NativeFieldDictionary,
+	path: string[],
+): number => dictionary.id(nativeArrayElementFieldKey(path));
+
+const nativeSortFields = (
+	dictionary: NativeFieldDictionary,
+	sort?: types.Sort | types.Sort[],
+): NativeSortField[] =>
 	types.toSort(sort).map((field) => ({
-		field: nativeFieldKey(field.key),
+		field: nativeFieldId(dictionary, field.key),
 		direction:
 			field.direction === types.SortDirection.ASC ? "asc" : "desc",
 	}));
@@ -419,7 +445,7 @@ const encodeNativeSort = (sort: NativeSortField[] = []): Uint8Array => {
 	writer.u8(BRIDGE_VERSION);
 	writer.u32(sort.length);
 	for (const field of sort) {
-		writer.string(field.field);
+		writer.u32(field.field);
 		writer.u8(nativeSortDirectionTag(field.direction));
 	}
 	return writer.finalize();
@@ -466,13 +492,13 @@ class NativeFieldWriter {
 		this.output[0] = BRIDGE_VERSION;
 	}
 
-	writeBool(scope: number, fieldBytes: Uint8Array, value: boolean): void {
-		this.writeHeader(scope, fieldBytes, NativeValueTag.Bool, 1);
+	writeBool(scope: number, fieldId: number, value: boolean): void {
+		this.writeHeader(scope, fieldId, NativeValueTag.Bool, 1);
 		this.output[this.offset++] = value ? 1 : 0;
 	}
 
-	writeI64(scope: number, fieldBytes: Uint8Array, value: number | bigint): void {
-		this.writeHeader(scope, fieldBytes, NativeValueTag.I64, 8);
+	writeI64(scope: number, fieldId: number, value: number | bigint): void {
+		this.writeHeader(scope, fieldId, NativeValueTag.I64, 8);
 		this.offset = writeUint64(
 			this.view,
 			this.offset,
@@ -480,23 +506,23 @@ class NativeFieldWriter {
 		);
 	}
 
-	writeU64(scope: number, fieldBytes: Uint8Array, value: number | bigint): void {
-		this.writeHeader(scope, fieldBytes, NativeValueTag.U64, 8);
+	writeU64(scope: number, fieldId: number, value: number | bigint): void {
+		this.writeHeader(scope, fieldId, NativeValueTag.U64, 8);
 		this.offset = writeUint64(this.view, this.offset, value);
 	}
 
-	writeString(scope: number, fieldBytes: Uint8Array, value: string): void {
-		this.writeStringBytes(scope, fieldBytes, textEncoder.encode(value));
+	writeString(scope: number, fieldId: number, value: string): void {
+		this.writeStringBytes(scope, fieldId, textEncoder.encode(value));
 	}
 
 	writeStringBytes(
 		scope: number,
-		fieldBytes: Uint8Array,
+		fieldId: number,
 		valueBytes: Uint8Array,
 	): void {
 		this.writeHeader(
 			scope,
-			fieldBytes,
+			fieldId,
 			NativeValueTag.String,
 			4 + valueBytes.byteLength,
 		);
@@ -510,13 +536,13 @@ class NativeFieldWriter {
 
 	private writeHeader(
 		scope: number,
-		fieldBytes: Uint8Array,
+		fieldId: number,
 		tag: NativeValueTag,
 		valueSize: number,
 	): void {
-		this.ensure(4 + 4 + fieldBytes.byteLength + 1 + valueSize);
+		this.ensure(4 + 4 + 1 + valueSize);
 		this.offset = writeUint32(this.view, this.offset, scope);
-		this.offset = writeBytes(this.output, this.view, this.offset, fieldBytes);
+		this.offset = writeUint32(this.view, this.offset, fieldId);
 		this.output[this.offset++] = tag;
 		this.facts++;
 	}
@@ -554,7 +580,7 @@ const nativeFieldValueWriter = (
 const writeNativeIntegerFact = (
 	writer: NativeFieldWriter,
 	scope: number,
-	fieldBytes: Uint8Array,
+	fieldId: number,
 	value: number | bigint,
 ): void => {
 	const nativeValue = nativeIntegerValue(value);
@@ -562,28 +588,28 @@ const writeNativeIntegerFact = (
 		return;
 	}
 	if (nativeValue.type === "u64") {
-		writer.writeU64(scope, fieldBytes, nativeValue.value);
+		writer.writeU64(scope, fieldId, nativeValue.value);
 	} else {
-		writer.writeI64(scope, fieldBytes, nativeValue.value);
+		writer.writeI64(scope, fieldId, nativeValue.value);
 	}
 };
 
 const writeNativeScalarFact = (
 	writer: NativeFieldWriter,
 	scope: number,
-	fieldBytes: Uint8Array,
+	fieldId: number,
 	value: any,
 ): void => {
 	if (typeof value === "boolean") {
-		writer.writeBool(scope, fieldBytes, value);
+		writer.writeBool(scope, fieldId, value);
 		return;
 	}
 	if (typeof value === "string") {
-		writer.writeString(scope, fieldBytes, value);
+		writer.writeString(scope, fieldId, value);
 		return;
 	}
 	if (typeof value === "number" || typeof value === "bigint") {
-		writeNativeIntegerFact(writer, scope, fieldBytes, value);
+		writeNativeIntegerFact(writer, scope, fieldId, value);
 	}
 };
 
@@ -591,7 +617,7 @@ const writeNativeBytesFacts = (
 	writer: NativeFieldWriter,
 	state: NativeFactCollectorState,
 	scope: number,
-	fieldBytes: Uint8Array,
+	fieldId: number,
 	value: any,
 ): void => {
 	if (!(value instanceof Uint8Array || ArrayBuffer.isView(value))) {
@@ -601,22 +627,23 @@ const writeNativeBytesFacts = (
 		value instanceof Uint8Array
 			? value
 			: new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-	writer.writeString(scope, fieldBytes, bytesToNativeString(bytes));
+	writer.writeString(scope, fieldId, bytesToNativeString(bytes));
 	for (const byte of bytes) {
-		writer.writeU64(state.nextScope++, fieldBytes, byte);
+		writer.writeU64(state.nextScope++, fieldId, byte);
 	}
 };
 
 const writeNativeFieldsGeneric = (
 	value: any,
 	cursor: NativeFieldCursor | undefined,
+	dictionary: NativeFieldDictionary,
 	writer: NativeFieldWriter,
 	state: NativeFactCollectorState,
 	scope: number,
 ): void => {
 	if (value instanceof Uint8Array || ArrayBuffer.isView(value)) {
 		if (cursor) {
-			writeNativeBytesFacts(writer, state, scope, cursor.fieldBytes, value);
+			writeNativeBytesFacts(writer, state, scope, cursor.fieldId, value);
 		}
 		return;
 	}
@@ -628,7 +655,7 @@ const writeNativeFieldsGeneric = (
 		typeof value === "bigint"
 	) {
 		if (cursor) {
-			writeNativeScalarFact(writer, scope, cursor.fieldBytes, value);
+			writeNativeScalarFact(writer, scope, cursor.fieldId, value);
 		}
 		return;
 	}
@@ -644,9 +671,9 @@ const writeNativeFieldsGeneric = (
 		for (const item of value) {
 			const itemScope = state.nextScope++;
 			if (cursor) {
-				writer.writeBool(itemScope, cursor.arrayFieldBytes, true);
+				writer.writeBool(itemScope, cursor.arrayFieldId, true);
 			}
-			writeNativeFieldsGeneric(item, cursor, writer, state, itemScope);
+			writeNativeFieldsGeneric(item, cursor, dictionary, writer, state, itemScope);
 		}
 		return;
 	}
@@ -657,7 +684,8 @@ const writeNativeFieldsGeneric = (
 		}
 		writeNativeFieldsGeneric(
 			value[key],
-			appendNativeFieldCursor(cursor, key),
+			appendNativeFieldCursor(dictionary, cursor, key),
+			dictionary,
 			writer,
 			state,
 			scope,
@@ -667,11 +695,13 @@ const writeNativeFieldsGeneric = (
 
 const encodeNativeFieldsGeneric = <T extends Record<string, any>>(
 	value: T,
+	dictionary: NativeFieldDictionary,
 ): Uint8Array => {
 	const writer = new NativeFieldWriter();
 	writeNativeFieldsGeneric(
 		value,
 		undefined,
+		dictionary,
 		writer,
 		{ nextScope: 1 },
 		0,
@@ -695,6 +725,7 @@ const integerFieldTypes = new Set([
 
 const compileNativeFieldEncoder = <T extends Record<string, any>>(
 	schema: Function,
+	dictionary: NativeFieldDictionary,
 ): NativeFieldEncoder<T> => {
 	const objectWriterCache = new WeakMap<
 		Function,
@@ -738,8 +769,9 @@ const compileNativeFieldEncoder = <T extends Record<string, any>>(
 					key: field.key,
 					write: compileFieldValueWriter(
 						field.type,
-						appendNativeFieldCursor(cursor, field.key),
+						appendNativeFieldCursor(dictionary, cursor, field.key),
 						getObjectWriter,
+						dictionary,
 					),
 				});
 			}
@@ -763,7 +795,7 @@ const compileNativeFieldEncoder = <T extends Record<string, any>>(
 
 	const rootWriter = getObjectWriter(schema, undefined);
 	if (!rootWriter) {
-		return encodeNativeFieldsGeneric;
+		return (value: T) => encodeNativeFieldsGeneric(value, dictionary);
 	}
 
 	return (value: T) => {
@@ -780,12 +812,14 @@ const compileFieldValueWriter = (
 		ctor: Function,
 		cursor: NativeFieldCursor | undefined,
 	) => NativeFieldValueWriter | undefined,
+	dictionary: NativeFieldDictionary,
 ): NativeFieldValueWriter => {
 	if (fieldType instanceof OptionKind) {
 		const writeElement = compileFieldValueWriter(
 			fieldType.elementType,
 			cursor,
 			getObjectWriter,
+			dictionary,
 		);
 		return nativeFieldValueWriter((value, writer, state, scope) => {
 			if (value != null) {
@@ -797,13 +831,14 @@ const compileFieldValueWriter = (
 	if (fieldType instanceof VecKind || fieldType instanceof FixedArrayKind) {
 		if (fieldType.elementType === "u8") {
 			return nativeFieldValueWriter((value, writer, state, scope) =>
-				writeNativeBytesFacts(writer, state, scope, cursor.fieldBytes, value),
+				writeNativeBytesFacts(writer, state, scope, cursor.fieldId, value),
 			);
 		}
 		const writeElement = compileFieldValueWriter(
 			fieldType.elementType,
 			cursor,
 			getObjectWriter,
+			dictionary,
 		);
 		return nativeFieldValueWriter((value, writer, state, scope) => {
 			if (!Array.isArray(value)) {
@@ -814,7 +849,7 @@ const compileFieldValueWriter = (
 			}
 			for (const item of value) {
 				const itemScope = state.nextScope++;
-				writer.writeBool(itemScope, cursor.arrayFieldBytes, true);
+				writer.writeBool(itemScope, cursor.arrayFieldId, true);
 				writeElement(item, writer, state, itemScope);
 			}
 		}, true);
@@ -822,14 +857,14 @@ const compileFieldValueWriter = (
 
 	if (fieldType === Uint8Array) {
 		return nativeFieldValueWriter((value, writer, state, scope) =>
-			writeNativeBytesFacts(writer, state, scope, cursor.fieldBytes, value),
+			writeNativeBytesFacts(writer, state, scope, cursor.fieldId, value),
 		);
 	}
 
 	if (fieldType instanceof StringType) {
 		return nativeFieldValueWriter((value, writer, _state, scope) => {
 			if (typeof value === "string") {
-				writer.writeString(scope, cursor.fieldBytes, value);
+				writer.writeString(scope, cursor.fieldId, value);
 			}
 		});
 	}
@@ -838,26 +873,26 @@ const compileFieldValueWriter = (
 		if (fieldType === "bool") {
 			return nativeFieldValueWriter((value, writer, _state, scope) => {
 				if (typeof value === "boolean") {
-					writer.writeBool(scope, cursor.fieldBytes, value);
+					writer.writeBool(scope, cursor.fieldId, value);
 				}
 			});
 		}
 		if (fieldType === "string") {
 			return nativeFieldValueWriter((value, writer, _state, scope) => {
 				if (typeof value === "string") {
-					writer.writeString(scope, cursor.fieldBytes, value);
+					writer.writeString(scope, cursor.fieldId, value);
 				}
 			});
 		}
 		if (integerFieldTypes.has(fieldType)) {
 			return nativeFieldValueWriter((value, writer, _state, scope) => {
 				if (typeof value === "number" || typeof value === "bigint") {
-					writeNativeIntegerFact(writer, scope, cursor.fieldBytes, value);
+					writeNativeIntegerFact(writer, scope, cursor.fieldId, value);
 				}
 			});
 		}
 		return nativeFieldValueWriter((value, writer, _state, scope) =>
-			writeNativeScalarFact(writer, scope, cursor.fieldBytes, value),
+			writeNativeScalarFact(writer, scope, cursor.fieldId, value),
 		);
 	}
 
@@ -876,14 +911,14 @@ const compileFieldValueWriter = (
 			if (objectWriter) {
 				objectWriter(value, writer, state, scope);
 			} else {
-				writeNativeFieldsGeneric(value, cursor, writer, state, scope);
+				writeNativeFieldsGeneric(value, cursor, dictionary, writer, state, scope);
 			}
 		}, true);
 	}
 
 	return nativeFieldValueWriter(
 		(value, writer, state, scope) =>
-			writeNativeFieldsGeneric(value, cursor, writer, state, scope),
+			writeNativeFieldsGeneric(value, cursor, dictionary, writer, state, scope),
 		true,
 	);
 };
@@ -907,19 +942,21 @@ const describeNativeQueries = (queries: types.Query[]) =>
 
 const compileNativeQueries = (
 	queries: types.Query[],
+	dictionary: NativeFieldDictionary,
 	prefix: string[] = [],
 ): NativeQueryCompileResult | undefined => {
-	return compileNativeAnd(queries, prefix);
+	return compileNativeAnd(queries, dictionary, prefix);
 };
 
 const compileNativeAnd = (
 	queries: types.Query[],
+	dictionary: NativeFieldDictionary,
 	prefix: string[] = [],
 ): NativeQueryCompileResult | undefined => {
 	const compiled: NativeQuerySpec[] = [];
 
 	for (const query of queries) {
-		const next = compileNativeQuery(query, prefix);
+		const next = compileNativeQuery(query, dictionary, prefix);
 		if (!next) {
 			return;
 		}
@@ -937,15 +974,16 @@ const compileNativeAnd = (
 
 const compileNativeQuery = (
 	query: types.Query,
+	dictionary: NativeFieldDictionary,
 	prefix: string[] = [],
 ): NativeQueryCompileResult | undefined => {
 	if (query instanceof types.And) {
-		return compileNativeAnd(query.and, prefix);
+		return compileNativeAnd(query.and, dictionary, prefix);
 	}
 	if (query instanceof types.Or) {
 		const compiled: NativeQuerySpec[] = [];
 		for (const child of query.or) {
-			const next = compileNativeQuery(child, prefix);
+			const next = compileNativeQuery(child, dictionary, prefix);
 			if (!next) {
 				return;
 			}
@@ -954,7 +992,7 @@ const compileNativeQuery = (
 		return { spec: { op: "or", queries: compiled }, exact: true };
 	}
 	if (query instanceof types.Not) {
-		const child = compileNativeQuery(query.not, prefix);
+		const child = compileNativeQuery(query.not, dictionary, prefix);
 		if (!child) {
 			return;
 		}
@@ -962,13 +1000,13 @@ const compileNativeQuery = (
 	}
 	if (query instanceof types.Nested) {
 		const nestedPath = [...prefix, ...query.path];
-		const nested = compileNativeAnd(query.query, nestedPath);
+		const nested = compileNativeAnd(query.query, dictionary, nestedPath);
 		if (!nested) {
 			return;
 		}
 		const arrayElementMarker: NativeQuerySpec = {
 			op: "exact",
-			field: nativeArrayElementFieldKey(nestedPath),
+			field: nativeArrayElementFieldId(dictionary, nestedPath),
 			value: { type: "bool", value: true },
 		};
 		if (nested.spec.op === "all") {
@@ -983,7 +1021,7 @@ const compileNativeQuery = (
 		return {
 			spec: {
 				op: "exact",
-				field: nativeFieldKey([...prefix, ...query.key]),
+				field: nativeFieldId(dictionary, [...prefix, ...query.key]),
 				value: { type: "bool", value: query.value },
 			},
 			exact: true,
@@ -993,7 +1031,7 @@ const compileNativeQuery = (
 		return {
 			spec: {
 				op: "string",
-				field: nativeFieldKey([...prefix, ...query.key]),
+				field: nativeFieldId(dictionary, [...prefix, ...query.key]),
 				value: query.value,
 				method:
 					query.method === types.StringMatchMethod.exact
@@ -1010,7 +1048,7 @@ const compileNativeQuery = (
 		return {
 			spec: {
 				op: "exact",
-				field: nativeFieldKey([...prefix, ...query.key]),
+				field: nativeFieldId(dictionary, [...prefix, ...query.key]),
 				value: { type: "string", value: bytesToNativeString(query.value) },
 			},
 			exact: true,
@@ -1025,7 +1063,7 @@ const compileNativeQuery = (
 			return {
 				spec: {
 					op: "exact",
-					field: nativeFieldKey([...prefix, ...query.key]),
+					field: nativeFieldId(dictionary, [...prefix, ...query.key]),
 					value,
 				},
 				exact: true,
@@ -1034,7 +1072,7 @@ const compileNativeQuery = (
 		return {
 			spec: {
 				op: "range",
-				field: nativeFieldKey([...prefix, ...query.key]),
+				field: nativeFieldId(dictionary, [...prefix, ...query.key]),
 				compare: compareToNative(query.compare),
 				value,
 			},
@@ -1048,7 +1086,7 @@ const compileNativeQuery = (
 		return {
 			spec: {
 				op: "is_null",
-				field: nativeFieldKey(query.key),
+				field: nativeFieldId(dictionary, query.key),
 			},
 			exact: true,
 		};
@@ -1072,6 +1110,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	private native?: NativeRustIndex<T>;
 	private indexByArr!: string[];
 	private properties!: types.IndexEngineInitProperties<T, NestedType>;
+	private fieldDictionary!: NativeFieldDictionary;
 	private fieldEncoder!: NativeFieldEncoder<T>;
 	private persistQueue: Promise<void> = Promise.resolve();
 	private mutationQueue: Promise<void> = Promise.resolve();
@@ -1102,7 +1141,11 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 
 		const wasm = await loadWasm();
 		this.native = new wasm.NativeRustIndex<T>();
-		this.fieldEncoder = compileNativeFieldEncoder(properties.schema);
+		this.fieldDictionary = createNativeFieldDictionary();
+		this.fieldEncoder = compileNativeFieldEncoder(
+			properties.schema,
+			this.fieldDictionary,
+		);
 		this.snapshotFile = await createSnapshotFile(
 			this.directory,
 			this.path,
@@ -1217,7 +1260,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		const compiled = this.requireNativePlan(types.toQuery(query.query), {
 			allowAll: true,
 		});
-		const field = nativeFieldKey(Array.isArray(query.key) ? query.key : [query.key]);
+		const field = nativeFieldId(
+			this.fieldDictionary,
+			Array.isArray(query.key) ? query.key : [query.key],
+		);
 		return decodeNativeSum(
 			this.getNative().sum(encodeNativeQuerySpec(compiled.spec), field),
 		);
@@ -1294,7 +1340,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		queryCoerced: types.Query[],
 		options?: { allowAll?: boolean },
 	): NativeQueryCompileResult | undefined {
-		const compiled = compileNativeQueries(queryCoerced);
+		const compiled = compileNativeQueries(queryCoerced, this.fieldDictionary);
 		if (!compiled || (compiled.spec.op === "all" && !options?.allowAll)) {
 			return;
 		}
@@ -1324,7 +1370,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}
 		return {
 			compiled,
-			sort: nativeSortFields(query?.sort),
+			sort: nativeSortFields(this.fieldDictionary, query?.sort),
 			offset: 0,
 		};
 	}
