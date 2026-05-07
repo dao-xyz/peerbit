@@ -352,6 +352,8 @@ const replaySnapshotAndJournal = <T extends Record<string, any>>(
 class NativeSnapshotFile implements SnapshotFile {
 	readonly persisted = true;
 	private operations = 0;
+	private journalHandle?: Awaited<ReturnType<NativeFsPromises["open"]>>;
+	private journalInitialized = false;
 
 	constructor(
 		readonly fs: NativeFsPromises,
@@ -392,6 +394,7 @@ class NativeSnapshotFile implements SnapshotFile {
 		values: T[],
 		schema: AbstractType<T>,
 	): Promise<void> {
+		await this.closeJournal();
 		const bytes = encodeSnapshot(values, schema);
 		const dir = this.snapshotPath.slice(0, this.snapshotPath.lastIndexOf("/"));
 		await this.fs.mkdir(dir, { recursive: true });
@@ -414,6 +417,7 @@ class NativeSnapshotFile implements SnapshotFile {
 	}
 
 	async remove(): Promise<void> {
+		await this.closeJournal();
 		await this.fs.rm(this.snapshotPath, { force: true });
 		await this.fs.rm(this.journalPath, { force: true });
 		await this.fs.rm(this.tempSnapshotPath, { force: true });
@@ -480,6 +484,22 @@ class NativeSnapshotFile implements SnapshotFile {
 	}
 
 	private async appendRecord(payload: Uint8Array): Promise<void> {
+		const handle = await this.getJournalHandle();
+		if (!this.journalInitialized) {
+			await handle.write(JOURNAL_MAGIC);
+			this.journalInitialized = true;
+		}
+		await handle.write(encodeJournalRecord(payload));
+		await handle.sync();
+		this.operations++;
+	}
+
+	private async getJournalHandle(): Promise<
+		Awaited<ReturnType<NativeFsPromises["open"]>>
+	> {
+		if (this.journalHandle) {
+			return this.journalHandle;
+		}
 		const dir = this.journalPath.slice(0, this.journalPath.lastIndexOf("/"));
 		await this.fs.mkdir(dir, { recursive: true });
 		let size = 0;
@@ -490,17 +510,21 @@ class NativeSnapshotFile implements SnapshotFile {
 				throw error;
 			}
 		}
-		const handle = await this.fs.open(this.journalPath, "a");
-		try {
-			if (size === 0) {
-				await handle.write(JOURNAL_MAGIC);
-			}
-			await handle.write(encodeJournalRecord(payload));
-			await handle.sync();
-		} finally {
-			await handle.close();
+		this.journalInitialized = size > 0;
+		this.journalHandle = await this.fs.open(this.journalPath, "a");
+		return this.journalHandle;
+	}
+
+	private async closeJournal(): Promise<void> {
+		if (!this.journalHandle) {
+			return;
 		}
-		this.operations++;
+		try {
+			await this.journalHandle.close();
+		} finally {
+			this.journalHandle = undefined;
+			this.journalInitialized = false;
+		}
 	}
 }
 
