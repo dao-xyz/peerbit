@@ -171,6 +171,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 
 	iteratorTimeout: number;
 	closed: boolean = true;
+	private state: "closed" | "open" | "closing" = "closed";
 	private fkMode: FKMode;
 
 	id: string;
@@ -220,13 +221,14 @@ export class SQLiteIndex<T extends Record<string, any>>
 	}
 
 	private async ifOpen<R>(fallback: R, fn: () => Promise<R>): Promise<R> {
-		if (this.closed) {
+		if (this.isClosing()) {
 			return fallback;
 		}
+		this.assertOpen();
 		try {
 			return await fn();
 		} catch (error) {
-			if (this.closed) {
+			if (this.isClosing()) {
 				return fallback;
 			}
 			throw error;
@@ -237,10 +239,36 @@ export class SQLiteIndex<T extends Record<string, any>>
 		fallback: R,
 		fn: () => Promise<R>,
 	): Promise<R> {
-		if (this.closed) {
+		if (this.isClosing()) {
 			return fallback;
 		}
+		this.assertOpen();
 		return this.withWriteBarrier(() => this.ifOpen(fallback, fn));
+	}
+
+	private assertOpen() {
+		if (this.state !== "open") {
+			throw new types.NotStartedError();
+		}
+	}
+
+	private isClosing() {
+		return this.state === "closing";
+	}
+
+	private setClosing() {
+		this.state = "closing";
+		this.closed = true;
+	}
+
+	private setClosed() {
+		this.state = "closed";
+		this.closed = true;
+	}
+
+	private setOpen() {
+		this.state = "open";
+		this.closed = false;
 	}
 
 	get tables() {
@@ -291,8 +319,11 @@ export class SQLiteIndex<T extends Record<string, any>>
 	}
 
 	async start(): Promise<void> {
-		if (this.closed === false) {
+		if (this.state === "open") {
 			return;
+		}
+		if (this.state === "closing") {
+			throw new types.NotStartedError();
 		}
 
 		if (this.primaryKeyArr == null || this.primaryKeyArr.length === 0) {
@@ -395,10 +426,9 @@ export class SQLiteIndex<T extends Record<string, any>>
 		}
 
 		if (startupTableStatements.size > 0) {
-			const existingTables = await this.getExistingSQLiteObjects(
-				"table",
-				[...startupTableStatements.keys()],
-			);
+			const existingTables = await this.getExistingSQLiteObjects("table", [
+				...startupTableStatements.keys(),
+			]);
 			const missingTableStatements = [...startupTableStatements.entries()]
 				.filter(([tableName]) => !existingTables.has(tableName))
 				.map(([, sql]) => sql);
@@ -424,7 +454,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 			}
 		}, this.iteratorTimeout);
 
-		this.closed = false;
+		this.setOpen();
 	}
 
 	private async getExistingSQLiteObjects(
@@ -458,60 +488,80 @@ export class SQLiteIndex<T extends Record<string, any>>
 	}
 
 	async stop(): Promise<void> {
-		if (this.closed) {
+		if (this.state === "closed") {
 			return;
 		}
-		this.closed = true;
-		clearInterval(this.cursorPruner!);
-
-		await this.clearStatements();
-
-		this._tables?.clear();
-
-		if (this._cursor) {
-			for (const [k, _v] of this._cursor) {
-				await this.clearupIterator(k);
-			}
+		if (this.state === "closing") {
+			await this._writeBarrier.catch(() => undefined);
+			return;
 		}
+		this.setClosing();
 
-		await this.planner.stop();
+		try {
+			clearInterval(this.cursorPruner!);
+
+			await this._writeBarrier.catch(() => undefined);
+
+			await this.clearStatements();
+
+			this._tables?.clear();
+
+			if (this._cursor) {
+				for (const [k, _v] of this._cursor) {
+					await this.clearupIterator(k);
+				}
+			}
+
+			await this.planner.stop();
+		} finally {
+			this.setClosed();
+		}
 	}
 
 	async drop(): Promise<void> {
-		if (!this.closed) {
-			this.closed = true;
+		const wasOpen = this.state === "open";
+		if (wasOpen) {
+			this.setClosing();
 		}
 
-		if (this.cursorPruner != null) {
-			clearInterval(this.cursorPruner);
-			this.cursorPruner = undefined;
-		}
+		try {
+			if (this.cursorPruner != null) {
+				clearInterval(this.cursorPruner);
+				this.cursorPruner = undefined;
+			}
 
-		const status = await this.properties.db.status?.();
-		if (status === "closed") {
+			if (wasOpen) {
+				await this._writeBarrier.catch(() => undefined);
+			}
+
+			const status = await this.properties.db.status?.();
+			if (status === "closed") {
+				this._tables?.clear();
+				return;
+			}
+
+			await this.clearStatements();
+
+			// drop root table and cascade
+			// drop table faster by dropping constraints first
+
+			if (this._rootTables) {
+				for (const table of this._rootTables) {
+					await this.properties.db.exec(`drop table if exists ${table.name}`);
+				}
+			}
+
 			this._tables?.clear();
-			return;
-		}
 
-		await this.clearStatements();
-
-		// drop root table and cascade
-		// drop table faster by dropping constraints first
-
-		if (this._rootTables) {
-			for (const table of this._rootTables) {
-				await this.properties.db.exec(`drop table if exists ${table.name}`);
+			if (this._cursor) {
+				for (const [k, _v] of this._cursor) {
+					await this.clearupIterator(k);
+				}
 			}
+			await this.planner.stop();
+		} finally {
+			this.setClosed();
 		}
-
-		this._tables?.clear();
-
-		if (this._cursor) {
-			for (const [k, _v] of this._cursor) {
-				await this.clearupIterator(k);
-			}
-		}
-		await this.planner.stop();
 	}
 
 	private async resolveDependencies(
@@ -676,9 +726,10 @@ export class SQLiteIndex<T extends Record<string, any>>
 		request?: types.IterateOptions,
 		options?: { shape?: S; reference?: boolean },
 	): types.IndexIterator<T, S> {
-		if (this.closed) {
+		if (this.isClosing()) {
 			return SQLiteIndex.closedIterator<T, S>();
 		}
+		this.assertOpen();
 
 		// create a sql statement where the offset and the limit id dynamic and can be updated
 		// TODO don't use offset but sort and limit 'next' calls by the last value of the sort
@@ -711,9 +762,10 @@ export class SQLiteIndex<T extends Record<string, any>>
 				kept = 0;
 				return [] as IndexedResult<types.ReturnTypeFromShape<T, S>>[];
 			};
-			if (this.closed) {
+			if (this.isClosing()) {
 				return closeAsDone();
 			}
+			this.assertOpen();
 			try {
 				kept = undefined;
 				if (!once) {
@@ -805,7 +857,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 				}
 				return results;
 			} catch (error) {
-				if (this.closed) {
+				if (this.isClosing()) {
 					return closeAsDone();
 				}
 				throw error;
@@ -841,12 +893,13 @@ export class SQLiteIndex<T extends Record<string, any>>
 			},
 			next: (amount: number) => fetch(amount),
 			pending: async () => {
-				if (this.closed) {
+				if (this.isClosing()) {
 					once = true;
 					hasMore = false;
 					kept = 0;
 					return 0;
 				}
+				this.assertOpen();
 				if (!hasMore) {
 					return 0;
 				}
@@ -859,7 +912,12 @@ export class SQLiteIndex<T extends Record<string, any>>
 				hasMore = kept > 0;
 				return kept;
 			},
-			done: () => (once ? !hasMore : undefined),
+			done: () => {
+				if (this.isClosing()) {
+					return true;
+				}
+				return once ? !hasMore : undefined;
+			},
 		};
 	}
 

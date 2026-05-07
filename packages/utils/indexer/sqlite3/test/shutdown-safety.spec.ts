@@ -5,12 +5,12 @@
  * 1. Getters throw NotStartedError after close (should return empty defaults)
  * 2. Fields uninitialized before init() (backing fields are undefined)
  * 3. stop() and drop() crash on undefined fields
- * 4. put() throws NotStartedError when closed (should return undefined)
+ * 4. Late calls during active shutdown should be no-ops, but calls after
+ *    shutdown completes should throw NotStartedError
  */
-
-import { expect } from "chai";
 import { field, variant } from "@dao-xyz/borsh";
-import { id, NotStartedError } from "@peerbit/indexer-interface";
+import { NotStartedError, id, toId } from "@peerbit/indexer-interface";
+import { expect } from "chai";
 import { SQLiteIndex } from "../src/engine.js";
 import type { Database, Statement } from "../src/types.js";
 
@@ -39,7 +39,19 @@ const createMockStatement = (sid: string): Statement => ({
 	reset: async () => createMockStatement(sid),
 });
 
-const createMockDatabase = (): Database => {
+const expectNotStarted = async (fn: () => any) => {
+	try {
+		await fn();
+	} catch (error) {
+		expect(error).to.be.instanceOf(NotStartedError);
+		return;
+	}
+	expect.fail("Expected NotStartedError");
+};
+
+const createMockDatabase = (options?: {
+	status?: () => Promise<"open" | "closed"> | "open" | "closed";
+}): Database => {
 	const statements = new Map<string, Statement>();
 	return {
 		exec: async (sql: string) => {},
@@ -53,7 +65,7 @@ const createMockDatabase = (): Database => {
 		open: async () => undefined,
 		close: async () => undefined,
 		drop: async () => undefined,
-		status: () => "open",
+		status: options?.status ?? (() => "open"),
 		statements: {
 			get: (k: string) => statements.get(k),
 			get size() {
@@ -148,6 +160,7 @@ describe("@peerbit/indexer-sqlite3 — shutdown safety", () => {
 			db,
 			schema: Document,
 		});
+		(index2 as any).state = "open";
 		(index2 as any).closed = false;
 		try {
 			await index2.stop();
@@ -158,8 +171,7 @@ describe("@peerbit/indexer-sqlite3 — shutdown safety", () => {
 		}
 	});
 
-	// Bug 4: put() throws NotStartedError when closed
-	it("put should return undefined when closed, not throw NotStartedError", async () => {
+	it("public APIs should throw NotStartedError after close completes", async () => {
 		const index = new SQLiteIndex<Document>({
 			scope: [],
 			db,
@@ -171,24 +183,33 @@ describe("@peerbit/indexer-sqlite3 — shutdown safety", () => {
 		await index.stop();
 
 		const lateDoc = new Document({ key: "b", value: "world" });
-		let result: any;
-		let threw = false;
-		try {
-			result = await index.put(lateDoc);
-		} catch (err) {
-			threw = true;
-			expect(err).to.not.be.instanceOf(
-				NotStartedError,
-				"put() after close should not throw NotStartedError; it should return undefined",
-			);
-		}
-
-		if (!threw) {
-			expect(result).to.equal(undefined);
-		}
+		await expectNotStarted(() => index.put(lateDoc));
+		await expectNotStarted(() => index.get(toId("b")));
+		await expectNotStarted(() =>
+			index.del({ query: { key: "b" } as Record<string, any> }),
+		);
+		await expectNotStarted(() => index.count());
+		await expectNotStarted(() => index.getSize());
+		await expectNotStarted(() => index.sum({ key: "value" }));
+		expect(() => index.iterate()).to.throw(NotStartedError);
 	});
 
-	it("iterate should return a dead iterator when closed without tracking cursors", async () => {
+	it("public APIs should return neutral results while close is in progress", async () => {
+		let resolveStatus!: (status: "open") => void;
+		let statusCalled!: () => void;
+		const statusStarted = new Promise<void>((resolve) => {
+			statusCalled = resolve;
+		});
+		const status = new Promise<"open">((resolve) => {
+			resolveStatus = resolve;
+		});
+		db = createMockDatabase({
+			status: () => {
+				statusCalled();
+				return status;
+			},
+		});
+
 		const index = new SQLiteIndex<Document>({
 			scope: [],
 			db,
@@ -196,8 +217,20 @@ describe("@peerbit/indexer-sqlite3 — shutdown safety", () => {
 		});
 		index.init({ indexBy: ["key"], schema: Document });
 		await index.start();
-		await index.stop();
 
+		const stopPromise = index.stop();
+		await statusStarted;
+
+		expect(
+			await index.put(new Document({ key: "b", value: "world" })),
+		).to.equal(undefined);
+		expect(await index.get(toId("b"))).to.equal(undefined);
+		expect(
+			await index.del({ query: { key: "b" } as Record<string, any> }),
+		).to.deep.equal([]);
+		expect(await index.count()).to.equal(0);
+		expect(await index.getSize()).to.equal(0);
+		expect(await index.sum({ key: "value" })).to.equal(0);
 		const iterator = index.iterate();
 
 		expect(index.cursor.size).to.equal(0);
@@ -211,5 +244,12 @@ describe("@peerbit/indexer-sqlite3 — shutdown safety", () => {
 
 		expect(index.cursor.size).to.equal(0);
 		expect(index.cursorCount).to.equal(0);
+
+		resolveStatus("open");
+		await stopPromise;
+
+		await expectNotStarted(() =>
+			index.put(new Document({ key: "c", value: "closed" })),
+		);
 	});
 });

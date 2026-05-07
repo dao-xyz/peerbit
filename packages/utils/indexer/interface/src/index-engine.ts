@@ -92,8 +92,9 @@ export type IndexIterator<
 };
 
 /**
- * Public data APIs on a stopped index are shutdown-tolerant: they should not
- * throw because the index is closed, and should instead return neutral results.
+ * Public data APIs require an open index and should throw NotStartedError after
+ * the index is fully stopped. Implementations may return neutral results only
+ * while stop/drop is actively closing resources.
  */
 export interface Index<T extends Record<string, any>, NestedType = any> {
 	init(

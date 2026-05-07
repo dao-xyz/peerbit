@@ -21,6 +21,7 @@ import {
 	IsNull,
 	type IterateOptions,
 	Not,
+	NotStartedError,
 	Or,
 	Query,
 	type Shape,
@@ -134,12 +135,14 @@ const assertIteratorIsDone = async (iterator: IndexIterator<any, any>) => {
 	expect(iterator.done()).to.be.true;
 };
 
-const assertClosedIterator = async (iterator: IndexIterator<any, any>) => {
-	expect(await iterator.pending()).to.equal(0);
-	expect(await iterator.next(1)).to.deep.equal([]);
-	expect(await iterator.all()).to.deep.equal([]);
-	expect(iterator.done()).to.equal(true);
-	await iterator.close();
+const expectNotStarted = async (fn: () => any) => {
+	try {
+		await fn();
+	} catch (error) {
+		expect(error).to.be.instanceOf(NotStartedError);
+		return;
+	}
+	expect.fail("Expected NotStartedError");
 };
 
 export const tests = (
@@ -306,7 +309,7 @@ export const tests = (
 		});
 
 		describe("lifecycle", () => {
-			it("returns no-op defaults from public APIs after stop", async () => {
+			it("throws from public data APIs after stop has completed", async () => {
 				const { store, indices } = await setup({ schema: Document });
 				await store.put(
 					new Document({
@@ -322,9 +325,9 @@ export const tests = (
 
 				await indices.stop();
 
-				expect(await store.get(toId("closed"))).to.equal(undefined);
-				expect(
-					await store.put(
+				await expectNotStarted(() => store.get(toId("closed")));
+				await expectNotStarted(() =>
+					store.put(
 						new Document({
 							id: "late",
 							name: "late",
@@ -332,9 +335,9 @@ export const tests = (
 							tags: ["late"],
 						}),
 					),
-				).to.equal(undefined);
-				expect(
-					await store.del({
+				);
+				await expectNotStarted(() =>
+					store.del({
 						query: new StringMatch({
 							key: "id",
 							value: "closed",
@@ -342,13 +345,15 @@ export const tests = (
 							caseInsensitive: false,
 						}),
 					}),
-				).to.deep.equal([]);
-				expect(await store.count()).to.equal(0);
-				expect(await store.getSize()).to.equal(0);
-				expect(await store.sum({ key: "number" })).to.equal(0);
-
-				await assertClosedIterator(store.iterate());
-				await assertClosedIterator(openIterator);
+				);
+				await expectNotStarted(() => store.count());
+				await expectNotStarted(() => store.getSize());
+				await expectNotStarted(() => store.sum({ key: "number" }));
+				await expectNotStarted(() => store.iterate());
+				await expectNotStarted(() => openIterator.next(1));
+				await expectNotStarted(() => openIterator.pending());
+				await expectNotStarted(() => openIterator.all());
+				await openIterator.close();
 			});
 		});
 
