@@ -1,0 +1,15 @@
+import { tests } from "@peerbit/indexer-tests";
+import { create } from "../src/index.js";
+
+describe("all", () => {
+	tests(create, "persist", {
+		shapingSupported: false,
+		u64SumSupported: true,
+		iteratorsMutable: false,
+	});
+	tests(create, "transient", {
+		shapingSupported: false,
+		u64SumSupported: true,
+		iteratorsMutable: false,
+	});
+});

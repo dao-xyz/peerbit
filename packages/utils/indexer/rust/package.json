@@ -1,0 +1,72 @@
+{
+	"name": "@peerbit/indexer-rust",
+	"version": "0.0.0",
+	"description": "Rust-backed indexer for document stores",
+	"sideEffects": [
+		"./dist/wasm/indexer_rust.js"
+	],
+	"type": "module",
+	"types": "./dist/src/index.d.ts",
+	"typesVersions": {
+		"*": {
+			"*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			],
+			"src/*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			]
+		}
+	},
+	"files": [
+		"src",
+		"dist",
+		"!dist/test",
+		"!**/*.tsbuildinfo"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/src/index.d.ts",
+			"import": "./dist/src/index.js"
+		}
+	},
+	"eslintConfig": {
+		"extends": "peerbit",
+		"parserOptions": {
+			"project": true,
+			"sourceType": "module"
+		},
+		"ignorePatterns": [
+			"!.aegir.js",
+			"test/ts-use",
+			"*.d.ts"
+		]
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"benchmark": "npm run build && node ./dist/benchmark/index.js",
+		"clean": "aegir clean && shx rm -rf ./wasm && cargo clean",
+		"build": "aegir build --no-bundle && wasm-pack build --target web --out-dir dist/wasm --out-name indexer_rust && shx rm -rf ./dist/wasm/.gitignore ./dist/wasm/package.json && shx rm -rf ./wasm && shx cp -r ./dist/wasm ./wasm",
+		"test": "cargo test && npm run build && aegir test",
+		"lint": "cargo fmt --check && pnpm exec eslint --config ../../../../eslint.config.js \"src/**/*.ts\" \"test/**/*.ts\" \"benchmark/**/*.ts\"",
+		"test:cov": "aegir test -t node --cov"
+	},
+	"author": "dao.xyz",
+	"license": "MIT",
+	"dependencies": {
+		"@dao-xyz/borsh": "^6.0.0",
+		"@peerbit/indexer-interface": "workspace:*",
+		"@peerbit/logger": "workspace:*",
+		"uint8arrays": "^5.1.0"
+	},
+	"devDependencies": {
+		"@peerbit/indexer-tests": "workspace:*"
+	}
+}
