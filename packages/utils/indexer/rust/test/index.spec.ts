@@ -5,6 +5,7 @@ import {
 	IntegerCompare,
 	Or,
 	Sort,
+	SortDirection,
 	StringMatch,
 	StringMatchMethod,
 	id,
@@ -168,6 +169,57 @@ describe("native planner bridge", () => {
 		]);
 		expect(iterator.done()).to.equal(true);
 		expect(await iterator.pending()).to.equal(0);
+
+		await indices.drop();
+	});
+
+	it("pages sorted native candidates in rust", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocument });
+		await index.put(new BridgeDocument("a", "peerbit", "delta"));
+		await index.put(new BridgeDocument("b", "peerbit", "alpha"));
+		await index.put(new BridgeDocument("c", "other", "zero"));
+		await index.put(new BridgeDocument("d", "peerbit", "charlie"));
+		await index.put(new BridgeDocument("e", "peerbit", "bravo"));
+
+		const iterator = index.iterate({
+			query: new StringMatch({ key: "tag", value: "peerbit" }),
+			sort: new Sort({ key: "title" }),
+		});
+
+		expect(await iterator.pending()).to.equal(4);
+		expect((await iterator.next(2)).map((result) => result.value.id)).to.deep.equal([
+			"b",
+			"e",
+		]);
+		expect(iterator.done()).to.equal(false);
+		expect((await iterator.next(2)).map((result) => result.value.id)).to.deep.equal([
+			"d",
+			"a",
+		]);
+		expect(iterator.done()).to.equal(true);
+
+		const allIterator = index.iterate({
+			sort: new Sort({ key: "title" }),
+		});
+		expect((await allIterator.next(5)).map((result) => result.value.id)).to.deep.equal([
+			"b",
+			"e",
+			"d",
+			"a",
+			"c",
+		]);
+		expect(allIterator.done()).to.equal(true);
+
+		const descIterator = index.iterate({
+			sort: new Sort({ key: "title", direction: SortDirection.DESC }),
+		});
+		expect((await descIterator.next(3)).map((result) => result.value.id)).to.deep.equal([
+			"c",
+			"a",
+			"d",
+		]);
 
 		await indices.drop();
 	});

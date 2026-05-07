@@ -247,6 +247,11 @@ pub struct NativeQueryIndex {
     exact: HashMap<FieldPath, HashMap<FieldValue, RoaringBitmap>>,
     range_i64: HashMap<FieldPath, BTreeMap<i64, RoaringBitmap>>,
     range_u64: HashMap<FieldPath, BTreeMap<u64, RoaringBitmap>>,
+    sort_bool: HashMap<FieldPath, BTreeMap<bool, RoaringBitmap>>,
+    sort_i64: HashMap<FieldPath, BTreeMap<i64, RoaringBitmap>>,
+    sort_u64: HashMap<FieldPath, BTreeMap<u64, RoaringBitmap>>,
+    sort_string: HashMap<FieldPath, BTreeMap<String, RoaringBitmap>>,
+    sort_bytes: HashMap<FieldPath, BTreeMap<Vec<u8>, RoaringBitmap>>,
     vectors: HashMap<FieldPath, HashMap<DocId, Vec<f32>>>,
 }
 
@@ -369,6 +374,10 @@ impl NativeQueryIndex {
             return iter
                 .filter_map(|doc_id| self.internal_to_external.get(&doc_id).cloned())
                 .collect();
+        }
+
+        if let Some(page) = self.search_index_sorted_page(query, sort, offset, limit) {
+            return page;
         }
 
         let mut doc_ids: Vec<_> = self.matching_doc_ids(query).iter().collect();
@@ -574,6 +583,9 @@ impl NativeQueryIndex {
             return;
         };
         for (path, values) in fields.scalars {
+            if let Some(value) = values.first() {
+                self.remove_sort_value(&path, value, doc_id);
+            }
             for value in values {
                 remove_from_exact(&mut self.exact, &path, &value, doc_id);
                 if let Some(value) = value.as_i64() {
@@ -592,6 +604,9 @@ impl NativeQueryIndex {
 
     fn index_document(&mut self, doc_id: DocId, fields: &DocumentFields) {
         for (path, values) in &fields.scalars {
+            if let Some(value) = values.first() {
+                self.insert_sort_value(path, value, doc_id);
+            }
             for value in values {
                 self.exact
                     .entry(path.clone())
@@ -683,6 +698,316 @@ impl NativeQueryIndex {
             .get(&doc_id)
             .and_then(|document| document.scalar_values(path))
             .and_then(|values| values.first())
+    }
+
+    fn search_index_sorted_page(
+        &self,
+        query: &Query,
+        sort: &[SortField],
+        offset: usize,
+        limit: Option<usize>,
+    ) -> Option<Vec<String>> {
+        if sort.len() != 1 {
+            return None;
+        }
+
+        let sort = &sort[0];
+        let limit = limit.unwrap_or(usize::MAX);
+        if limit == 0 {
+            return Some(Vec::new());
+        }
+
+        let mut result = Vec::new();
+        let mut skipped = 0;
+        let mut seen = RoaringBitmap::new();
+        let mut has_ordered_index = false;
+
+        if sort.direction == SortDirection::Desc
+            && !self.collect_missing_sorted_docs(
+                &sort.field,
+                query,
+                offset,
+                limit,
+                &mut skipped,
+                &mut seen,
+                &mut result,
+            )
+        {
+            return Some(result);
+        }
+
+        match sort.direction {
+            SortDirection::Asc => {
+                has_ordered_index |= self.collect_sort_index_docs(
+                    self.sort_bool.get(&sort.field),
+                    false,
+                    query,
+                    offset,
+                    limit,
+                    &mut skipped,
+                    &mut seen,
+                    &mut result,
+                );
+                has_ordered_index |= self.collect_sort_index_docs(
+                    self.sort_i64.get(&sort.field),
+                    false,
+                    query,
+                    offset,
+                    limit,
+                    &mut skipped,
+                    &mut seen,
+                    &mut result,
+                );
+                has_ordered_index |= self.collect_sort_index_docs(
+                    self.sort_u64.get(&sort.field),
+                    false,
+                    query,
+                    offset,
+                    limit,
+                    &mut skipped,
+                    &mut seen,
+                    &mut result,
+                );
+                has_ordered_index |= self.collect_sort_index_docs(
+                    self.sort_string.get(&sort.field),
+                    false,
+                    query,
+                    offset,
+                    limit,
+                    &mut skipped,
+                    &mut seen,
+                    &mut result,
+                );
+                has_ordered_index |= self.collect_sort_index_docs(
+                    self.sort_bytes.get(&sort.field),
+                    false,
+                    query,
+                    offset,
+                    limit,
+                    &mut skipped,
+                    &mut seen,
+                    &mut result,
+                );
+            }
+            SortDirection::Desc => {
+                has_ordered_index |= self.collect_sort_index_docs(
+                    self.sort_bytes.get(&sort.field),
+                    true,
+                    query,
+                    offset,
+                    limit,
+                    &mut skipped,
+                    &mut seen,
+                    &mut result,
+                );
+                has_ordered_index |= self.collect_sort_index_docs(
+                    self.sort_string.get(&sort.field),
+                    true,
+                    query,
+                    offset,
+                    limit,
+                    &mut skipped,
+                    &mut seen,
+                    &mut result,
+                );
+                has_ordered_index |= self.collect_sort_index_docs(
+                    self.sort_u64.get(&sort.field),
+                    true,
+                    query,
+                    offset,
+                    limit,
+                    &mut skipped,
+                    &mut seen,
+                    &mut result,
+                );
+                has_ordered_index |= self.collect_sort_index_docs(
+                    self.sort_i64.get(&sort.field),
+                    true,
+                    query,
+                    offset,
+                    limit,
+                    &mut skipped,
+                    &mut seen,
+                    &mut result,
+                );
+                has_ordered_index |= self.collect_sort_index_docs(
+                    self.sort_bool.get(&sort.field),
+                    true,
+                    query,
+                    offset,
+                    limit,
+                    &mut skipped,
+                    &mut seen,
+                    &mut result,
+                );
+            }
+        }
+
+        if !has_ordered_index {
+            return None;
+        }
+        if result.len() >= limit {
+            return Some(result);
+        }
+
+        if sort.direction == SortDirection::Asc {
+            self.collect_missing_sorted_docs(
+                &sort.field,
+                query,
+                offset,
+                limit,
+                &mut skipped,
+                &mut seen,
+                &mut result,
+            );
+        }
+
+        Some(result)
+    }
+
+    fn collect_sort_index_docs<T: Ord>(
+        &self,
+        index: Option<&BTreeMap<T, RoaringBitmap>>,
+        reverse: bool,
+        query: &Query,
+        offset: usize,
+        limit: usize,
+        skipped: &mut usize,
+        seen: &mut RoaringBitmap,
+        result: &mut Vec<String>,
+    ) -> bool {
+        let Some(index) = index else {
+            return false;
+        };
+        if reverse {
+            self.collect_index_sorted_docs(
+                index.values().rev(),
+                query,
+                offset,
+                limit,
+                skipped,
+                seen,
+                result,
+            );
+        } else {
+            self.collect_index_sorted_docs(
+                index.values(),
+                query,
+                offset,
+                limit,
+                skipped,
+                seen,
+                result,
+            );
+        }
+        true
+    }
+
+    fn collect_index_sorted_docs<'a>(
+        &self,
+        bitmaps: impl Iterator<Item = &'a RoaringBitmap>,
+        query: &Query,
+        offset: usize,
+        limit: usize,
+        skipped: &mut usize,
+        seen: &mut RoaringBitmap,
+        result: &mut Vec<String>,
+    ) -> bool {
+        for bitmap in bitmaps {
+            for doc_id in bitmap.iter() {
+                if !self.collect_sorted_doc(doc_id, query, offset, limit, skipped, seen, result) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn collect_missing_sorted_docs(
+        &self,
+        field: &str,
+        query: &Query,
+        offset: usize,
+        limit: usize,
+        skipped: &mut usize,
+        seen: &mut RoaringBitmap,
+        result: &mut Vec<String>,
+    ) -> bool {
+        for doc_id in self.all_docs.iter() {
+            if self.first_scalar(doc_id, field).is_some() {
+                continue;
+            }
+            if !self.collect_sorted_doc(doc_id, query, offset, limit, skipped, seen, result) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn collect_sorted_doc(
+        &self,
+        doc_id: DocId,
+        query: &Query,
+        offset: usize,
+        limit: usize,
+        skipped: &mut usize,
+        seen: &mut RoaringBitmap,
+        result: &mut Vec<String>,
+    ) -> bool {
+        if result.len() >= limit {
+            return false;
+        }
+        if !seen.insert(doc_id) || !self.matches_doc(doc_id, query) {
+            return true;
+        }
+        if *skipped < offset {
+            *skipped += 1;
+            return true;
+        }
+        if let Some(id) = self.internal_to_external.get(&doc_id) {
+            result.push(id.clone());
+        }
+        result.len() < limit
+    }
+
+    fn insert_sort_value(&mut self, path: &str, value: &FieldValue, doc_id: DocId) {
+        match value {
+            FieldValue::Bool(value) => {
+                insert_into_ordered_index(&mut self.sort_bool, path, *value, doc_id)
+            }
+            FieldValue::I64(value) => {
+                insert_into_ordered_index(&mut self.sort_i64, path, *value, doc_id)
+            }
+            FieldValue::U64(value) => {
+                insert_into_ordered_index(&mut self.sort_u64, path, *value, doc_id)
+            }
+            FieldValue::String(value) => {
+                insert_into_ordered_index(&mut self.sort_string, path, value.clone(), doc_id)
+            }
+            FieldValue::Bytes(value) => {
+                insert_into_ordered_index(&mut self.sort_bytes, path, value.clone(), doc_id)
+            }
+        }
+    }
+
+    fn remove_sort_value(&mut self, path: &str, value: &FieldValue, doc_id: DocId) {
+        match value {
+            FieldValue::Bool(value) => {
+                remove_from_ordered_index(&mut self.sort_bool, path, value, doc_id)
+            }
+            FieldValue::I64(value) => {
+                remove_from_ordered_index(&mut self.sort_i64, path, value, doc_id)
+            }
+            FieldValue::U64(value) => {
+                remove_from_ordered_index(&mut self.sort_u64, path, value, doc_id)
+            }
+            FieldValue::String(value) => {
+                remove_from_ordered_index(&mut self.sort_string, path, value, doc_id)
+            }
+            FieldValue::Bytes(value) => {
+                remove_from_ordered_index(&mut self.sort_bytes, path, value, doc_id)
+            }
+        }
     }
 }
 
@@ -839,6 +1164,33 @@ fn remove_from_range_u64(
 ) {
     if let Some(values) = index.get_mut(path) {
         if let Some(bitmap) = values.get_mut(&value) {
+            bitmap.remove(doc_id);
+        }
+    }
+}
+
+fn insert_into_ordered_index<T: Ord>(
+    index: &mut HashMap<FieldPath, BTreeMap<T, RoaringBitmap>>,
+    path: &str,
+    value: T,
+    doc_id: DocId,
+) {
+    index
+        .entry(path.to_string())
+        .or_default()
+        .entry(value)
+        .or_default()
+        .insert(doc_id);
+}
+
+fn remove_from_ordered_index<T: Ord>(
+    index: &mut HashMap<FieldPath, BTreeMap<T, RoaringBitmap>>,
+    path: &str,
+    value: &T,
+    doc_id: DocId,
+) {
+    if let Some(values) = index.get_mut(path) {
+        if let Some(bitmap) = values.get_mut(value) {
             bitmap.remove(doc_id);
         }
     }
@@ -1004,6 +1356,75 @@ mod tests {
         );
 
         assert_eq!(results, vec!["c", "d"]);
+    }
+
+    #[test]
+    fn sorted_pages_use_first_scalar_values() {
+        let mut index = NativeQueryIndex::new();
+        index.put(
+            "a",
+            DocumentFields::new()
+                .with_scalar("title", "delta")
+                .with_scalar("title", "aardvark"),
+        );
+        index.put("b", DocumentFields::new().with_scalar("title", "bravo"));
+        index.put("c", DocumentFields::new().with_scalar("title", "charlie"));
+
+        let sort = [SortField {
+            field: "title".to_string(),
+            direction: SortDirection::Asc,
+        }];
+
+        assert_eq!(
+            index.search_page(&Query::All, &sort, 0, None),
+            vec!["b", "c", "a"]
+        );
+        assert_eq!(index.search_page(&Query::All, &sort, 1, Some(1)), vec!["c"]);
+        assert_eq!(
+            index.search_page(&Query::All, &sort, 0, Some(0)),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn sorted_pages_match_mixed_scalar_and_missing_order() {
+        let mut index = NativeQueryIndex::new();
+        index.put(
+            "missing",
+            DocumentFields::new().with_scalar("group", "left"),
+        );
+        index.put("bool", DocumentFields::new().with_scalar("sort", false));
+        index.put("i64", DocumentFields::new().with_scalar("sort", -1_i64));
+        index.put("u64", DocumentFields::new().with_scalar("sort", 2_u64));
+        index.put("string", DocumentFields::new().with_scalar("sort", "alpha"));
+        index.put(
+            "bytes",
+            DocumentFields::new().with_scalar("sort", vec![1_u8, 2_u8]),
+        );
+
+        assert_eq!(
+            index.search(
+                &Query::All,
+                &[SortField {
+                    field: "sort".to_string(),
+                    direction: SortDirection::Asc,
+                }],
+                None,
+            ),
+            vec!["bool", "i64", "u64", "string", "bytes", "missing"]
+        );
+        assert_eq!(
+            index.search_page(
+                &Query::All,
+                &[SortField {
+                    field: "sort".to_string(),
+                    direction: SortDirection::Desc,
+                }],
+                1,
+                Some(3),
+            ),
+            vec!["bytes", "string", "u64"]
+        );
     }
 
     #[test]

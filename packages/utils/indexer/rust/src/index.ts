@@ -76,8 +76,14 @@ type NativeQueryCompileResult = {
 	exact: boolean;
 };
 
+type NativeSortField = {
+	field: string;
+	direction: "asc" | "desc";
+};
+
 type NativeCandidatePage = {
 	compiled: NativeQueryCompileResult;
+	sort: NativeSortField[];
 	offset: number;
 	limit?: number;
 };
@@ -115,6 +121,11 @@ const enum NativeStringMatchMethodTag {
 	Exact = 0,
 	Prefix = 1,
 	Contains = 2,
+}
+
+const enum NativeSortDirectionTag {
+	Asc = 0,
+	Desc = 1,
 }
 
 let wasmModulePromise: Promise<WasmModule> | undefined;
@@ -318,6 +329,15 @@ const nativeStringMatchMethodTag = (
 	}
 };
 
+const nativeSortDirectionTag = (direction: "asc" | "desc") => {
+	switch (direction) {
+		case "asc":
+			return NativeSortDirectionTag.Asc;
+		case "desc":
+			return NativeSortDirectionTag.Desc;
+	}
+};
+
 const writeNativeValue = (writer: BinaryWriter, value: NativeValue): void => {
 	switch (value.type) {
 		case "bool":
@@ -397,10 +417,21 @@ const encodeNativeQuerySpec = (query: NativeQuerySpec): Uint8Array => {
 	return writer.finalize();
 };
 
-const encodeNativeSort = (): Uint8Array => {
+const nativeSortFields = (sort?: types.Sort | types.Sort[]): NativeSortField[] =>
+	types.toSort(sort).map((field) => ({
+		field: nativeFieldKey(field.key),
+		direction:
+			field.direction === types.SortDirection.ASC ? "asc" : "desc",
+	}));
+
+const encodeNativeSort = (sort: NativeSortField[] = []): Uint8Array => {
 	const writer = new BinaryWriter();
 	writer.u8(BRIDGE_VERSION);
-	writer.u32(0);
+	writer.u32(sort.length);
+	for (const field of sort) {
+		writer.string(field.field);
+		writer.u8(nativeSortDirectionTag(field.direction));
+	}
 	return writer.finalize();
 };
 
@@ -806,6 +837,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				}
 				const batch = this.getNativeCandidatesForPlan({
 					compiled: nativePagePlan.compiled,
+					sort: nativePagePlan.sort,
 					offset,
 					limit: wanted,
 				});
@@ -818,7 +850,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				all: async () => fetch(Infinity),
 				next: (n: number) => fetch(n),
 				done: () => done,
-				pending: async () => Math.max(0, getTotal() - offset),
+				pending: async () => (done ? 0 : Math.max(0, getTotal() - offset)),
 				close: () => {
 					done = true;
 				},
@@ -1134,17 +1166,18 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		if (!compiled) {
 			return;
 		}
-		return this.getNativeCandidatesForPlan({ compiled, offset: 0 });
+		return this.getNativeCandidatesForPlan({ compiled, sort: [], offset: 0 });
 	}
 
 	private getNativePlan(
 		queryCoerced: types.Query[],
+		options?: { allowAll?: boolean },
 	): NativeQueryCompileResult | undefined {
-		if (!this.planner || queryCoerced.length === 0) {
+		if (!this.planner) {
 			return;
 		}
 		const compiled = compileNativeQueries(queryCoerced);
-		if (!compiled || compiled.spec.op === "all") {
+		if (!compiled || (compiled.spec.op === "all" && !options?.allowAll)) {
 			return;
 		}
 		return compiled;
@@ -1154,14 +1187,15 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		queryCoerced: types.Query[],
 		query?: types.IterateOptions,
 	): NativeCandidatePage | undefined {
-		if (query?.sort) {
-			return;
-		}
-		const compiled = this.getNativePlan(queryCoerced);
+		const compiled = this.getNativePlan(queryCoerced, { allowAll: true });
 		if (!compiled?.exact) {
 			return;
 		}
-		return { compiled, offset: 0 };
+		return {
+			compiled,
+			sort: nativeSortFields(query?.sort),
+			offset: 0,
+		};
 	}
 
 	private countNativeExact(queryCoerced: types.Query[]): number | undefined {
@@ -1186,7 +1220,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	): types.IndexedValue<T>[] {
 		const results: types.IndexedValue<T>[] = [];
 		const queryBytes = encodeNativeQuerySpec(page.compiled.spec);
-		const sortBytes = encodeNativeSort();
+		const sortBytes = encodeNativeSort(page.sort);
 		const storeKeys =
 			page.limit == null
 				? this.planner!.query(queryBytes, sortBytes)
