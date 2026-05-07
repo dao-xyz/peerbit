@@ -87,6 +87,7 @@ type NativeCandidatePage = {
 };
 
 const BRIDGE_VERSION = 1;
+const JOURNAL_COMPACT_AFTER_OPERATIONS = 1024;
 
 // Keep bridge enum tags in sync with the Rust Borsh DTO declaration order.
 const enum NativeValueTag {
@@ -641,8 +642,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	private indexByArr!: string[];
 	private properties!: types.IndexEngineInitProperties<T, NestedType>;
 	private persistQueue: Promise<void> = Promise.resolve();
-	private dirtyVersion = 0;
-	private persistedVersion = 0;
+	private mutationQueue: Promise<void> = Promise.resolve();
 
 	constructor(
 		private readonly directory?: string,
@@ -675,7 +675,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			this.indexByArr,
 		);
 		if (this.snapshotFile) {
-			for (const value of await this.snapshotFile.read(properties.schema)) {
+			for (const value of (await this.snapshotFile.read(properties.schema)) as T[]) {
 				const id = types.toId(types.extractFieldValue(value, this.indexByArr));
 				const storeKey = keyToStoreKey(id);
 				this.putNativeDocument(storeKey, id, value);
@@ -703,22 +703,34 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		id = types.toId(types.extractFieldValue(value, this.indexByArr)),
 		_options?: { replace?: boolean },
 	): Promise<void> {
-		const storeKey = keyToStoreKey(id);
-		this.putNativeDocument(storeKey, id, value);
-		this.markDirty();
+		await this.enqueueMutation(async () => {
+			const storeKey = keyToStoreKey(id);
+			const fields = encodeNativeFieldFacts(collectNativeFieldFacts(value));
+			await this.appendPut(storeKey, value);
+			this.getNative().put(storeKey, id, value, fields);
+			await this.compactIfNeeded();
+		});
 	}
 
 	async del(query: types.DeleteOptions): Promise<types.IdKey[]> {
-		const compiled = this.requireNativePlan(types.toQuery(query.query), {
-			allowAll: true,
+		return this.enqueueMutation(async () => {
+			const compiled = this.requireNativePlan(types.toQuery(query.query), {
+				allowAll: true,
+			});
+			const deletedEntries = this.getNativeCandidatesForPlan({
+				compiled,
+				sort: [],
+				offset: 0,
+			});
+			if (deletedEntries.length > 0) {
+				await this.appendDeletes(
+					deletedEntries.map((entry) => keyToStoreKey(entry.id)),
+				);
+				this.getNative().delete_matching(encodeNativeQuerySpec(compiled.spec));
+				await this.compactIfNeeded();
+			}
+			return deletedEntries.map((entry) => entry.id);
 		});
-		const deleted = this.getNative()
-			.delete_matching(encodeNativeQuerySpec(compiled.spec))
-			.map((entry) => entry[0]);
-		if (deleted.length > 0) {
-			this.markDirty();
-		}
-		return deleted;
 	}
 
 	getSize(): number {
@@ -738,12 +750,13 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	async stop(): Promise<void> {
-		await this.persistSnapshot();
+		await this.mutationQueue;
+		await this.compactPersistence();
 	}
 
 	async drop(): Promise<void> {
+		await this.mutationQueue;
 		this.native?.clear();
-		this.persistedVersion = this.dirtyVersion;
 		await this.snapshotFile?.remove();
 	}
 
@@ -921,36 +934,60 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		return this.native;
 	}
 
-	private async persistSnapshot(): Promise<void> {
-		if (
-			!this.snapshotFile ||
-			!this.native ||
-			this.persistedVersion === this.dirtyVersion
-		) {
-			return;
-		}
-		const version = this.dirtyVersion;
-		const persist = async () => {
-			if (this.persistedVersion >= version) {
-				return;
-			}
-			await this.snapshotFile!.write(
-				this.snapshot().map((entry) => entry.value),
-				this.properties.schema,
-			);
-		};
-		const next = this.persistQueue.then(persist, persist);
-		this.persistQueue = next.then(
-			() => {
-				this.persistedVersion = Math.max(this.persistedVersion, version);
-			},
+	private enqueueMutation<R>(work: () => Promise<R>): Promise<R> {
+		const next = this.mutationQueue.then(work, work);
+		this.mutationQueue = next.then(
+			() => undefined,
 			() => undefined,
 		);
-		await next;
+		return next;
 	}
 
-	private markDirty(): void {
-		this.dirtyVersion++;
+	private enqueuePersistence(work: () => Promise<void>): Promise<void> {
+		if (!this.snapshotFile) {
+			return Promise.resolve();
+		}
+		const next = this.persistQueue.then(work, work);
+		this.persistQueue = next.then(
+			() => undefined,
+			() => undefined,
+		);
+		return next;
+	}
+
+	private appendPut(storeKey: string, value: T): Promise<void> {
+		return this.enqueuePersistence(() =>
+			this.snapshotFile!.appendPut(storeKey, value, this.properties.schema),
+		);
+	}
+
+	private appendDeletes(storeKeys: string[]): Promise<void> {
+		return this.enqueuePersistence(async () => {
+			for (const storeKey of storeKeys) {
+				await this.snapshotFile!.appendDelete(storeKey);
+			}
+		});
+	}
+
+	private async compactIfNeeded(): Promise<void> {
+		if (
+			this.snapshotFile &&
+			this.snapshotFile.pendingOperations() >= JOURNAL_COMPACT_AFTER_OPERATIONS
+		) {
+			await this.compactPersistence();
+		}
+	}
+
+	private async compactPersistence(): Promise<void> {
+		if (!this.snapshotFile || !this.native) {
+			return;
+		}
+		await this.enqueuePersistence(() =>
+			this.snapshotFile!.compact(
+				this.snapshot().map((entry) => entry.value),
+				this.properties.schema,
+			),
+		);
 	}
 }
 

@@ -7,11 +7,22 @@ Experimental Rust-backed indexer package for the Peerbit indexer interface.
 - Rust/WASM owns the ordered key/value entry store.
 - `src/planner.rs` contains the first native query planner core: typed query AST, bitmap set operations, scalar sorting, batch updates, and vector ranking.
 - The TypeScript adapter implements the existing `@peerbit/indexer-interface` query semantics.
-- Persistent snapshots work on Node.js through the native filesystem and in browsers through OPFS.
+- Persistence uses a compacted snapshot plus an incremental operation journal. Node.js writes through the native filesystem and browser builds write through OPFS.
 - The same conformance suite runs in transient and persistent mode across Node.js, browser, and webworker targets.
 
 This package does not use SQLite, `libsqlite3-sys`, libSQL, or Turso yet. It is the package and persistence boundary for moving more index work native without coupling that decision to the higher Peerbit modules.
 
 ## Performance direction
 
-The current package benchmark is mostly a baseline. Point lookups and writes are cheap, but scan-heavy field queries still run through the TypeScript evaluator until the adapter is wired into the native planner. Real improvements for shared-log style multi-field/range queries require moving query planning and secondary indexes into `src/planner.rs` or a backend behind the same typed planner boundary.
+The current package benchmark is mostly a baseline for product integration. Point lookups and writes are cheap, and supported field queries now route through the native planner. The next performance proof should compare explicit `@peerbit/indexer-rust` usage against simple/sqlite in document and shared-log style workloads.
+
+## Durability model
+
+Persistent indexes keep two primary files per scope/index:
+
+- `index.bin`: compacted, checksummed Borsh snapshot of the current values.
+- `index.wal`: append-only operation journal containing checksummed put/delete records.
+
+Each successful persistent `put` or `del` appends and flushes its journal record before the operation resolves. Reopening the index loads `index.bin` and replays `index.wal`, so committed writes do not depend on a clean `stop()`. `stop()` compacts the current state back into `index.bin` and removes the journal. Long-running indexes also compact after enough journaled operations to keep startup replay bounded. Compaction writes `index.bin.tmp` first; startup can recover from that temp snapshot if a primary snapshot write is torn before the journal is removed.
+
+On Node.js the journal uses filesystem append plus file sync, with best-effort directory sync around compaction. In browsers it uses OPFS, preferring `createSyncAccessHandle()` when available and falling back to writable files otherwise.

@@ -88,6 +88,40 @@ class BridgeNestedDocument {
 	}
 }
 
+const isNodeRuntime = () =>
+	Boolean(
+		(
+			globalThis as {
+				process?: { versions?: { node?: string } };
+			}
+		).process?.versions?.node,
+	);
+
+const loadNodePersistenceHelpers = async () => {
+	const fsPromises = "fs/promises";
+	const osModule = "os";
+	const pathModule = "path";
+	const { mkdtemp, readFile, rm, stat, writeFile } = (await import(
+		fsPromises
+	)) as typeof import("fs/promises");
+	const { tmpdir } = (await import(osModule)) as typeof import("os");
+	const { join } = (await import(pathModule)) as typeof import("path");
+	const directory = await mkdtemp(join(tmpdir(), "peerbit-indexer-rust-"));
+	return { directory, join, readFile, rm, stat, writeFile };
+};
+
+const createPersistenceDirectory = (): string =>
+	`peerbit-indexer-rust-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+const removeNodeDirectoryIfNeeded = async (directory: string): Promise<void> => {
+	if (!isNodeRuntime()) {
+		return;
+	}
+	const fsPromises = "fs/promises";
+	const { rm } = (await import(fsPromises)) as typeof import("fs/promises");
+	await rm(directory, { recursive: true, force: true });
+};
+
 describe("all", () => {
 	tests(create, "persist", {
 		shapingSupported: false,
@@ -336,5 +370,126 @@ describe("native planner bridge", () => {
 		]);
 
 		await indices.drop();
+	});
+
+	it("replays durable puts before the writer is stopped", async () => {
+		const directory = createPersistenceDirectory();
+		const writer = create(directory);
+		const reader = create(directory);
+		try {
+			await writer.start();
+			const writerIndex = await writer.init({ schema: BridgeDocument });
+			await writerIndex.put(new BridgeDocument("a", "peerbit", "durable put"));
+
+			await reader.start();
+			const readerIndex = await reader.init({ schema: BridgeDocument });
+			const result = await readerIndex
+				.iterate({
+					query: new StringMatch({ key: "tag", value: "peerbit" }),
+				})
+				.all();
+
+			expect(result.map((entry) => entry.value.id)).to.deep.equal(["a"]);
+		} finally {
+			await writer.drop();
+			await reader.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
+	it("replays durable deletes before the writer is stopped", async () => {
+		const directory = createPersistenceDirectory();
+		const writer = create(directory);
+		const reader = create(directory);
+		try {
+			await writer.start();
+			const writerIndex = await writer.init({ schema: BridgeDocument });
+			await writerIndex.put(new BridgeDocument("a", "peerbit", "delete me"));
+			await writerIndex.put(new BridgeDocument("b", "other", "keep me"));
+			await writerIndex.del({
+				query: new StringMatch({ key: "tag", value: "peerbit" }),
+			});
+
+			await reader.start();
+			const readerIndex = await reader.init({ schema: BridgeDocument });
+			const result = await readerIndex.iterate().all();
+
+			expect(result.map((entry) => entry.value.id)).to.deep.equal(["b"]);
+		} finally {
+			await writer.drop();
+			await reader.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
+	it("compacts the journal into a snapshot on stop", async function () {
+		if (!isNodeRuntime()) {
+			this.skip();
+		}
+		const { directory, join, readFile, rm, stat } =
+			await loadNodePersistenceHelpers();
+		const indices = create(directory);
+		try {
+			await indices.start();
+			const index = await indices.init({ schema: BridgeDocument });
+			await index.put(new BridgeDocument("a", "peerbit", "snapshot"));
+
+			const indexDirectory = join(directory, "id");
+			expect((await stat(join(indexDirectory, "index.wal"))).size).to.be.greaterThan(
+				0,
+			);
+
+			await indices.stop();
+
+			await stat(join(indexDirectory, "index.bin"));
+			try {
+				await readFile(join(indexDirectory, "index.wal"));
+				throw new Error("Expected journal to be removed after compaction");
+			} catch (error: any) {
+				expect(error?.code).to.equal("ENOENT");
+			}
+
+			const reopened = create(directory);
+			await reopened.start();
+			const reopenedIndex = await reopened.init({ schema: BridgeDocument });
+			const result = await reopenedIndex.iterate().all();
+			expect(result.map((entry) => entry.value.id)).to.deep.equal(["a"]);
+			await reopened.drop();
+		} finally {
+			await indices.drop();
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("recovers a compacted temp snapshot when the primary snapshot is torn", async function () {
+		if (!isNodeRuntime()) {
+			this.skip();
+		}
+		const { directory, join, readFile, rm, writeFile } =
+			await loadNodePersistenceHelpers();
+		const indices = create(directory);
+		let reopened: ReturnType<typeof create> | undefined;
+		try {
+			await indices.start();
+			const index = await indices.init({ schema: BridgeDocument });
+			await index.put(new BridgeDocument("a", "peerbit", "recoverable"));
+			await indices.stop();
+
+			const indexDirectory = join(directory, "id");
+			const snapshotPath = join(indexDirectory, "index.bin");
+			const snapshotBytes = await readFile(snapshotPath);
+			await writeFile(join(indexDirectory, "index.bin.tmp"), snapshotBytes);
+			await writeFile(snapshotPath, snapshotBytes.subarray(0, 8));
+
+			reopened = create(directory);
+			await reopened.start();
+			const reopenedIndex = await reopened.init({ schema: BridgeDocument });
+			const result = await reopenedIndex.iterate().all();
+			expect(result.map((entry) => entry.value.id)).to.deep.equal(["a"]);
+		} finally {
+			await reopened?.drop();
+			await indices.drop();
+			await rm(directory, { recursive: true, force: true });
+		}
 	});
 });
