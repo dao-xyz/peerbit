@@ -16,10 +16,48 @@ type NativeIndexStore<T extends Record<string, any>> = {
 	entries: () => Array<[types.IdKey, T]>;
 };
 
+type NativeQueryPlanner = {
+	put_document: (id: string, fieldsJson: string) => void;
+	delete_document: (id: string) => void;
+	clear: () => void;
+	len: () => number;
+	query: (queryJson: string, sortJson: string) => string[];
+};
+
 type WasmModule = {
 	default: (input?: unknown) => Promise<unknown>;
 	initSync: (input?: unknown) => unknown;
 	NativeIndexStore: new <T extends Record<string, any>>() => NativeIndexStore<T>;
+	NativeQueryPlanner: new () => NativeQueryPlanner;
+};
+
+type NativeValue =
+	| { type: "bool"; value: boolean }
+	| { type: "i64"; value: string }
+	| { type: "u64"; value: string }
+	| { type: "string"; value: string };
+
+type NativeFieldFact = {
+	field: string;
+	value: NativeValue;
+};
+
+type NativeQuerySpec =
+	| { op: "all" }
+	| { op: "exact"; field: string; value: NativeValue }
+	| {
+			op: "range";
+			field: string;
+			compare: "eq" | "gt" | "gte" | "lt" | "lte";
+			value: NativeValue;
+	  }
+	| { op: "and"; queries: NativeQuerySpec[] }
+	| { op: "or"; queries: NativeQuerySpec[] }
+	| { op: "not"; query: NativeQuerySpec };
+
+type NativeQueryCompileResult = {
+	spec: NativeQuerySpec;
+	exact: boolean;
 };
 
 let wasmModulePromise: Promise<WasmModule> | undefined;
@@ -61,6 +99,249 @@ const keyToStoreKey = (id: types.IdKey): string => {
 	return `${typeof key}:${key.toString()}`;
 };
 
+const nativeFieldKey = (path: string[]): string => JSON.stringify(path);
+
+const bytesToNativeString = (bytes: Uint8Array): string => {
+	let hex = "";
+	for (const byte of bytes) {
+		hex += byte.toString(16).padStart(2, "0");
+	}
+	return `\u0000bytes:${hex}`;
+};
+
+const nativeIntegerValue = (value: number | bigint): NativeValue | undefined => {
+	if (typeof value === "bigint") {
+		if (value >= 0n && value <= 18446744073709551615n) {
+			return { type: "u64", value: value.toString() };
+		}
+		if (value >= -9223372036854775808n && value <= 9223372036854775807n) {
+			return { type: "i64", value: value.toString() };
+		}
+		return undefined;
+	}
+	if (!Number.isSafeInteger(value)) {
+		return undefined;
+	}
+	return value >= 0
+		? { type: "u64", value: value.toString() }
+		: { type: "i64", value: value.toString() };
+};
+
+const scalarToNativeValue = (value: any): NativeValue | undefined => {
+	if (typeof value === "boolean") {
+		return { type: "bool", value };
+	}
+	if (typeof value === "string") {
+		return { type: "string", value };
+	}
+	if (typeof value === "number" || typeof value === "bigint") {
+		return nativeIntegerValue(value);
+	}
+	if (value instanceof Uint8Array || ArrayBuffer.isView(value)) {
+		const bytes =
+			value instanceof Uint8Array
+				? value
+				: new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+		return { type: "string", value: bytesToNativeString(bytes) };
+	}
+	return undefined;
+};
+
+const collectNativeFieldFacts = (
+	value: any,
+	path: string[] = [],
+	facts: NativeFieldFact[] = [],
+	seen: WeakSet<object> = new WeakSet(),
+): NativeFieldFact[] => {
+	if (value instanceof Uint8Array || ArrayBuffer.isView(value)) {
+		if (path.length > 0) {
+			const bytes =
+				value instanceof Uint8Array
+					? value
+					: new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+			facts.push({
+				field: nativeFieldKey(path),
+				value: { type: "string", value: bytesToNativeString(bytes) },
+			});
+			for (const byte of bytes) {
+				facts.push({
+					field: nativeFieldKey(path),
+					value: { type: "u64", value: byte.toString() },
+				});
+			}
+		}
+		return facts;
+	}
+
+	const nativeValue = scalarToNativeValue(value);
+	if (nativeValue) {
+		if (path.length > 0) {
+			facts.push({ field: nativeFieldKey(path), value: nativeValue });
+		}
+		return facts;
+	}
+
+	if (!value || typeof value !== "object") {
+		return facts;
+	}
+	if (seen.has(value)) {
+		return facts;
+	}
+	seen.add(value);
+
+	if (Array.isArray(value)) {
+		for (const item of value) {
+			collectNativeFieldFacts(item, path, facts, seen);
+		}
+		return facts;
+	}
+
+	for (const [key, child] of Object.entries(value)) {
+		collectNativeFieldFacts(child, [...path, key], facts, seen);
+	}
+	return facts;
+};
+
+const compareToNative = (
+	compare: types.Compare,
+): "eq" | "gt" | "gte" | "lt" | "lte" => {
+	switch (compare) {
+		case types.Compare.Equal:
+			return "eq";
+		case types.Compare.Greater:
+			return "gt";
+		case types.Compare.GreaterOrEqual:
+			return "gte";
+		case types.Compare.Less:
+			return "lt";
+		case types.Compare.LessOrEqual:
+			return "lte";
+		default:
+			throw new Error("Unexpected compare");
+	}
+};
+
+const compileNativeQueries = (
+	queries: types.Query[],
+): NativeQueryCompileResult => {
+	return compileNativeAnd(queries);
+};
+
+const compileNativeAnd = (
+	queries: types.Query[],
+): NativeQueryCompileResult => {
+	const compiled: NativeQuerySpec[] = [];
+	let exact = true;
+
+	for (const query of queries) {
+		const next = compileNativeQuery(query);
+		if (next) {
+			compiled.push(next.spec);
+			exact &&= next.exact;
+		} else {
+			exact = false;
+		}
+	}
+
+	if (compiled.length === 0) {
+		return { spec: { op: "all" }, exact: false };
+	}
+	if (compiled.length === 1) {
+		return { spec: compiled[0], exact };
+	}
+	return { spec: { op: "and", queries: compiled }, exact };
+};
+
+const compileNativeQuery = (
+	query: types.Query,
+): NativeQueryCompileResult | undefined => {
+	if (query instanceof types.And) {
+		return compileNativeAnd(query.and);
+	}
+	if (query instanceof types.Or) {
+		const compiled: NativeQuerySpec[] = [];
+		let exact = true;
+		for (const child of query.or) {
+			const next = compileNativeQuery(child);
+			if (!next) {
+				return { spec: { op: "all" }, exact: false };
+			}
+			compiled.push(next.spec);
+			exact &&= next.exact;
+		}
+		return { spec: { op: "or", queries: compiled }, exact };
+	}
+	if (query instanceof types.Not) {
+		const child = compileNativeQuery(query.not);
+		if (!child?.exact) {
+			return { spec: { op: "all" }, exact: false };
+		}
+		return { spec: { op: "not", query: child.spec }, exact: true };
+	}
+	if (query instanceof types.BoolQuery) {
+		return {
+			spec: {
+				op: "exact",
+				field: nativeFieldKey(query.key),
+				value: { type: "bool", value: query.value },
+			},
+			exact: true,
+		};
+	}
+	if (query instanceof types.StringMatch) {
+		if (
+			query.method !== types.StringMatchMethod.exact ||
+			query.caseInsensitive !== false
+		) {
+			return;
+		}
+		return {
+			spec: {
+				op: "exact",
+				field: nativeFieldKey(query.key),
+				value: { type: "string", value: query.value },
+			},
+			exact: true,
+		};
+	}
+	if (query instanceof types.ByteMatchQuery) {
+		return {
+			spec: {
+				op: "exact",
+				field: nativeFieldKey(query.key),
+				value: { type: "string", value: bytesToNativeString(query.value) },
+			},
+			exact: true,
+		};
+	}
+	if (query instanceof types.IntegerCompare) {
+		const value = nativeIntegerValue(query.value.value);
+		if (!value) {
+			return;
+		}
+		if (query.compare === types.Compare.Equal) {
+			return {
+				spec: {
+					op: "exact",
+					field: nativeFieldKey(query.key),
+					value,
+				},
+				exact: true,
+			};
+		}
+		return {
+			spec: {
+				op: "range",
+				field: nativeFieldKey(query.key),
+				compare: compareToNative(query.compare),
+				value,
+			},
+			exact: true,
+		};
+	}
+	return;
+};
+
 const getBatchFromResults = <T extends Record<string, any>>(
 	results: types.IndexedValue<T>[],
 	wantedSize: number,
@@ -90,6 +371,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 {
 	private snapshotFile?: SnapshotFile;
 	private store?: NativeIndexStore<T>;
+	private planner?: NativeQueryPlanner;
 	private indexByArr!: string[];
 	private properties!: types.IndexEngineInitProperties<T, NestedType>;
 	private persistQueue: Promise<void> = Promise.resolve();
@@ -121,6 +403,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 
 		const wasm = await loadWasm();
 		this.store = new wasm.NativeIndexStore<T>();
+		this.planner = new wasm.NativeQueryPlanner();
 		this.snapshotFile = await createSnapshotFile(
 			this.directory,
 			this.path,
@@ -129,7 +412,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		if (this.snapshotFile) {
 			for (const value of await this.snapshotFile.read(properties.schema)) {
 				const id = types.toId(types.extractFieldValue(value, this.indexByArr));
-				this.store.put(keyToStoreKey(id), id, value);
+				const storeKey = keyToStoreKey(id);
+				this.store.put(storeKey, id, value);
+				this.indexNativeDocument(storeKey, value);
 			}
 		}
 		return this;
@@ -154,14 +439,18 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		id = types.toId(types.extractFieldValue(value, this.indexByArr)),
 		_options?: { replace?: boolean },
 	): Promise<void> {
-		this.getStore().put(keyToStoreKey(id), id, value);
+		const storeKey = keyToStoreKey(id);
+		this.getStore().put(storeKey, id, value);
+		this.indexNativeDocument(storeKey, value);
 		this.markDirty();
 	}
 
 	async del(query: types.DeleteOptions): Promise<types.IdKey[]> {
 		const deleted: types.IdKey[] = [];
 		for (const doc of await this.queryAll(query)) {
-			if (this.getStore().delete(keyToStoreKey(doc.id))) {
+			const storeKey = keyToStoreKey(doc.id);
+			if (this.getStore().delete(storeKey)) {
+				this.planner?.delete_document(storeKey);
 				deleted.push(doc.id);
 			}
 		}
@@ -193,6 +482,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 
 	async drop(): Promise<void> {
 		this.store?.clear();
+		this.planner?.clear();
 		this.persistedVersion = this.dirtyVersion;
 		await this.snapshotFile?.remove();
 	}
@@ -253,15 +543,19 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			}
 		}
 
-		const indexedDocuments = await this.queryDocuments(async (doc) => {
-			const innerHits = new Map();
-			for (const f of queryCoerced) {
-				if (!(await this.handleQueryObject(f, doc.value, innerHits))) {
-					return false;
+		const nativeCandidates = this.getNativeCandidates(queryCoerced);
+		const indexedDocuments = await this.queryDocuments(
+			async (doc) => {
+				const innerHits = new Map();
+				for (const f of queryCoerced) {
+					if (!(await this.handleQueryObject(f, doc.value, innerHits))) {
+						return false;
+					}
 				}
-			}
-			return true;
-		});
+				return true;
+			},
+			nativeCandidates,
+		);
 
 		return indexedDocuments;
 	}
@@ -561,14 +855,46 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 
 	private async queryDocuments(
 		filter: (doc: types.IndexedValue<T>) => Promise<boolean>,
+		documents = this.snapshot(),
 	): Promise<types.IndexedValue<T>[]> {
 		const results: types.IndexedValue<T>[] = [];
-		for (const value of this.snapshot()) {
+		for (const value of documents) {
 			if (await filter(value)) {
 				results.push(value);
 			}
 		}
 		return results;
+	}
+
+	private getNativeCandidates(
+		queryCoerced: types.Query[],
+	): types.IndexedValue<T>[] | undefined {
+		if (!this.planner || queryCoerced.length === 0) {
+			return;
+		}
+		const compiled = compileNativeQueries(queryCoerced);
+		if (compiled.spec.op === "all") {
+			return;
+		}
+
+		const results: types.IndexedValue<T>[] = [];
+		for (const storeKey of this.planner.query(
+			JSON.stringify(compiled.spec),
+			"[]",
+		)) {
+			const value = this.getStore().get(storeKey);
+			if (value) {
+				results.push({ id: value[0], value: value[1] });
+			}
+		}
+		return results;
+	}
+
+	private indexNativeDocument(storeKey: string, value: T): void {
+		this.planner?.put_document(
+			storeKey,
+			JSON.stringify(collectNativeFieldFacts(value)),
+		);
 	}
 
 	private snapshot(): types.IndexedValue<T>[] {

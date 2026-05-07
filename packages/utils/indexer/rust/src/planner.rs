@@ -223,6 +223,10 @@ impl NativeQueryIndex {
         self.documents.is_empty()
     }
 
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
     pub fn put(&mut self, id: impl Into<String>, fields: DocumentFields) {
         self.apply_batch(IndexBatch::new().put(id, fields));
     }
