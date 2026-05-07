@@ -1,4 +1,4 @@
-import { deserialize, serialize } from "@dao-xyz/borsh";
+import { BinaryWriter, deserialize, serialize } from "@dao-xyz/borsh";
 import * as types from "@peerbit/indexer-interface";
 import { logger as loggerFn } from "@peerbit/logger";
 import { equals } from "uint8arrays";
@@ -17,11 +17,11 @@ type NativeIndexStore<T extends Record<string, any>> = {
 };
 
 type NativeQueryPlanner = {
-	put_document: (id: string, fieldsJson: string) => void;
+	put_document: (id: string, fields: Uint8Array) => void;
 	delete_document: (id: string) => void;
 	clear: () => void;
 	len: () => number;
-	query: (queryJson: string, sortJson: string) => string[];
+	query: (query: Uint8Array, sort: Uint8Array) => string[];
 };
 
 type WasmModule = {
@@ -59,6 +59,33 @@ type NativeQueryCompileResult = {
 	spec: NativeQuerySpec;
 	exact: boolean;
 };
+
+const BRIDGE_VERSION = 1;
+
+// Keep bridge enum tags in sync with the Rust Borsh DTO declaration order.
+const enum NativeValueTag {
+	Bool = 0,
+	I64 = 1,
+	U64 = 2,
+	String = 3,
+}
+
+const enum NativeQueryTag {
+	All = 0,
+	Exact = 1,
+	Range = 2,
+	And = 3,
+	Or = 4,
+	Not = 5,
+}
+
+const enum NativeCompareTag {
+	Equal = 0,
+	Greater = 1,
+	GreaterOrEqual = 2,
+	Less = 3,
+	LessOrEqual = 4,
+}
 
 let wasmModulePromise: Promise<WasmModule> | undefined;
 let wasmInitialized = false;
@@ -219,6 +246,107 @@ const compareToNative = (
 		default:
 			throw new Error("Unexpected compare");
 	}
+};
+
+const nativeCompareTag = (compare: "eq" | "gt" | "gte" | "lt" | "lte") => {
+	switch (compare) {
+		case "eq":
+			return NativeCompareTag.Equal;
+		case "gt":
+			return NativeCompareTag.Greater;
+		case "gte":
+			return NativeCompareTag.GreaterOrEqual;
+		case "lt":
+			return NativeCompareTag.Less;
+		case "lte":
+			return NativeCompareTag.LessOrEqual;
+	}
+};
+
+const writeNativeValue = (writer: BinaryWriter, value: NativeValue): void => {
+	switch (value.type) {
+		case "bool":
+			writer.u8(NativeValueTag.Bool);
+			writer.bool(value.value);
+			return;
+		case "i64":
+			writer.u8(NativeValueTag.I64);
+			writer.u64(BigInt.asUintN(64, BigInt(value.value)));
+			return;
+		case "u64":
+			writer.u8(NativeValueTag.U64);
+			writer.u64(BigInt(value.value));
+			return;
+		case "string":
+			writer.u8(NativeValueTag.String);
+			writer.string(value.value);
+			return;
+	}
+};
+
+const writeNativeQuerySpec = (
+	writer: BinaryWriter,
+	query: NativeQuerySpec,
+): void => {
+	switch (query.op) {
+		case "all":
+			writer.u8(NativeQueryTag.All);
+			return;
+		case "exact":
+			writer.u8(NativeQueryTag.Exact);
+			writer.string(query.field);
+			writeNativeValue(writer, query.value);
+			return;
+		case "range":
+			writer.u8(NativeQueryTag.Range);
+			writer.string(query.field);
+			writer.u8(nativeCompareTag(query.compare));
+			writeNativeValue(writer, query.value);
+			return;
+		case "and":
+			writer.u8(NativeQueryTag.And);
+			writer.u32(query.queries.length);
+			for (const child of query.queries) {
+				writeNativeQuerySpec(writer, child);
+			}
+			return;
+		case "or":
+			writer.u8(NativeQueryTag.Or);
+			writer.u32(query.queries.length);
+			for (const child of query.queries) {
+				writeNativeQuerySpec(writer, child);
+			}
+			return;
+		case "not":
+			writer.u8(NativeQueryTag.Not);
+			writeNativeQuerySpec(writer, query.query);
+			return;
+	}
+};
+
+const encodeNativeQuerySpec = (query: NativeQuerySpec): Uint8Array => {
+	const writer = new BinaryWriter();
+	writer.u8(BRIDGE_VERSION);
+	writeNativeQuerySpec(writer, query);
+	return writer.finalize();
+};
+
+const encodeNativeSort = (): Uint8Array => {
+	const writer = new BinaryWriter();
+	writer.u8(BRIDGE_VERSION);
+	writer.u32(0);
+	return writer.finalize();
+};
+
+const encodeNativeFieldFacts = (facts: NativeFieldFact[]): Uint8Array => {
+	const writer = new BinaryWriter();
+	writer.u8(BRIDGE_VERSION);
+	writer.u32(facts.length);
+	for (const fact of facts) {
+		writer.string(fact.field);
+		writeNativeValue(writer, fact.value);
+	}
+	return writer.finalize();
 };
 
 const compileNativeQueries = (
@@ -879,8 +1007,8 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 
 		const results: types.IndexedValue<T>[] = [];
 		for (const storeKey of this.planner.query(
-			JSON.stringify(compiled.spec),
-			"[]",
+			encodeNativeQuerySpec(compiled.spec),
+			encodeNativeSort(),
 		)) {
 			const value = this.getStore().get(storeKey);
 			if (value) {
@@ -893,7 +1021,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	private indexNativeDocument(storeKey: string, value: T): void {
 		this.planner?.put_document(
 			storeKey,
-			JSON.stringify(collectNativeFieldFacts(value)),
+			encodeNativeFieldFacts(collectNativeFieldFacts(value)),
 		);
 	}
 

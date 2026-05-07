@@ -9,11 +9,10 @@ description = "Rust-backed index storage for Peerbit"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+borsh = { version = "1.5", features = ["derive"] }
 indexmap = "2.7.1"
 js-sys = "0.3.80"
 roaring = "0.11.4"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
 wasm-bindgen = "0.2.103"
 
 [package.metadata.wasm-pack.profile.release]

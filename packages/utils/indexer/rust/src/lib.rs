@@ -1,9 +1,9 @@
+use borsh::BorshDeserialize;
 use indexmap::IndexMap;
 use js_sys::Array;
 use planner::{
     Compare, DocumentFields, FieldValue, NativeQueryIndex, Query, SortDirection, SortField,
 };
-use serde::Deserialize;
 use wasm_bindgen::prelude::*;
 
 pub mod planner;
@@ -92,8 +92,8 @@ impl NativeQueryPlanner {
         self.index.len()
     }
 
-    pub fn put_document(&mut self, id: String, fields_json: String) -> Result<(), JsValue> {
-        let fields = decode_document_fields(&fields_json)?;
+    pub fn put_document(&mut self, id: String, fields_bytes: Vec<u8>) -> Result<(), JsValue> {
+        let fields = decode_document_fields(&fields_bytes)?;
         self.index.put(id, fields);
         Ok(())
     }
@@ -102,9 +102,9 @@ impl NativeQueryPlanner {
         self.index.delete(id);
     }
 
-    pub fn query(&self, query_json: String, sort_json: String) -> Result<Array, JsValue> {
-        let query = decode_query(&query_json)?;
-        let sort = decode_sort(&sort_json)?;
+    pub fn query(&self, query_bytes: Vec<u8>, sort_bytes: Vec<u8>) -> Result<Array, JsValue> {
+        let query = decode_query(&query_bytes)?;
+        let sort = decode_sort(&sort_bytes)?;
         let ids = self.index.search(&query, &sort, None);
         let out = Array::new();
         for id in ids {
@@ -114,102 +114,115 @@ impl NativeQueryPlanner {
     }
 }
 
-#[derive(Deserialize)]
+const BRIDGE_VERSION: u8 = 1;
+
+#[derive(BorshDeserialize)]
+struct DocumentFieldsDto {
+    version: u8,
+    facts: Vec<FieldFactDto>,
+}
+
+#[derive(BorshDeserialize)]
 struct FieldFactDto {
     field: String,
     value: FieldValueDto,
 }
 
-#[derive(Deserialize)]
-#[serde(tag = "type", content = "value")]
+// Enum declaration order is part of the TS/Rust bridge ABI.
+#[derive(Clone, BorshDeserialize)]
 enum FieldValueDto {
-    #[serde(rename = "bool")]
     Bool(bool),
-    #[serde(rename = "i64")]
-    I64(String),
-    #[serde(rename = "u64")]
-    U64(String),
-    #[serde(rename = "string")]
+    I64(i64),
+    U64(u64),
     String(String),
 }
 
-#[derive(Deserialize)]
-#[serde(tag = "op")]
+#[derive(BorshDeserialize)]
+struct QueryPayloadDto {
+    version: u8,
+    query: QueryDto,
+}
+
+// Enum declaration order is part of the TS/Rust bridge ABI.
+#[derive(Clone, BorshDeserialize)]
 enum QueryDto {
-    #[serde(rename = "all")]
     All,
-    #[serde(rename = "exact")]
-    Exact { field: String, value: FieldValueDto },
-    #[serde(rename = "range")]
+    Exact {
+        field: String,
+        value: FieldValueDto,
+    },
     Range {
         field: String,
         compare: CompareDto,
         value: FieldValueDto,
     },
-    #[serde(rename = "and")]
-    And { queries: Vec<QueryDto> },
-    #[serde(rename = "or")]
-    Or { queries: Vec<QueryDto> },
-    #[serde(rename = "not")]
-    Not { query: Box<QueryDto> },
+    And {
+        queries: Vec<QueryDto>,
+    },
+    Or {
+        queries: Vec<QueryDto>,
+    },
+    Not {
+        query: Box<QueryDto>,
+    },
 }
 
-#[derive(Clone, Copy, Deserialize)]
+// Enum declaration order is part of the TS/Rust bridge ABI.
+#[derive(Clone, Copy, BorshDeserialize)]
 enum CompareDto {
-    #[serde(rename = "eq")]
     Equal,
-    #[serde(rename = "gt")]
     Greater,
-    #[serde(rename = "gte")]
     GreaterOrEqual,
-    #[serde(rename = "lt")]
     Less,
-    #[serde(rename = "lte")]
     LessOrEqual,
 }
 
-#[derive(Deserialize)]
+#[derive(BorshDeserialize)]
+struct SortPayloadDto {
+    version: u8,
+    fields: Vec<SortFieldDto>,
+}
+
+#[derive(BorshDeserialize)]
 struct SortFieldDto {
     field: String,
     direction: SortDirectionDto,
 }
 
-#[derive(Deserialize)]
+// Enum declaration order is part of the TS/Rust bridge ABI.
+#[derive(BorshDeserialize)]
 enum SortDirectionDto {
-    #[serde(rename = "asc")]
     Asc,
-    #[serde(rename = "desc")]
     Desc,
 }
 
-fn decode_document_fields(fields_json: &str) -> Result<DocumentFields, JsValue> {
-    let facts: Vec<FieldFactDto> = serde_json::from_str(fields_json).map_err(js_error)?;
+fn decode_document_fields(fields_bytes: &[u8]) -> Result<DocumentFields, JsValue> {
+    let payload = DocumentFieldsDto::try_from_slice(fields_bytes).map_err(js_error)?;
+    ensure_bridge_version(payload.version)?;
     let mut fields = DocumentFields::new();
-    for fact in facts {
-        fields.insert_scalar(fact.field, decode_field_value(fact.value)?);
+    for fact in payload.facts {
+        fields.insert_scalar(fact.field, FieldValue::from(fact.value));
     }
     Ok(fields)
 }
 
-fn decode_query(query_json: &str) -> Result<Query, JsValue> {
-    let query: QueryDto = serde_json::from_str(query_json).map_err(js_error)?;
-    query.try_into()
+fn decode_query(query_bytes: &[u8]) -> Result<Query, JsValue> {
+    let payload = QueryPayloadDto::try_from_slice(query_bytes).map_err(js_error)?;
+    ensure_bridge_version(payload.version)?;
+    payload.query.try_into()
 }
 
-fn decode_sort(sort_json: &str) -> Result<Vec<SortField>, JsValue> {
-    let fields: Vec<SortFieldDto> = serde_json::from_str(sort_json).map_err(js_error)?;
-    fields
+fn decode_sort(sort_bytes: &[u8]) -> Result<Vec<SortField>, JsValue> {
+    let payload = SortPayloadDto::try_from_slice(sort_bytes).map_err(js_error)?;
+    ensure_bridge_version(payload.version)?;
+    Ok(payload
+        .fields
         .into_iter()
-        .map(|field| {
-            Ok(SortField {
-                field: field.field,
-                direction: match field.direction {
-                    SortDirectionDto::Asc => SortDirection::Asc,
-                    SortDirectionDto::Desc => SortDirection::Desc,
-                },
-            })
+        .map(|field| SortField {
+            field: field.field,
+            direction: field.direction.into(),
         })
-        .collect()
+        .collect())
 }
 
 impl TryFrom<QueryDto> for Query {
@@ -220,7 +233,7 @@ impl TryFrom<QueryDto> for Query {
             QueryDto::All => Query::All,
             QueryDto::Exact { field, value } => Query::Exact {
                 field,
-                value: decode_field_value(value)?,
+                value: value.into(),
             },
             QueryDto::Range {
                 field,
@@ -229,12 +242,23 @@ impl TryFrom<QueryDto> for Query {
             } => Query::Range {
                 field,
                 compare: compare.into(),
-                value: decode_field_value(value)?,
+                value: value.into(),
             },
             QueryDto::And { queries } => Query::And(decode_queries(queries)?),
             QueryDto::Or { queries } => Query::Or(decode_queries(queries)?),
             QueryDto::Not { query } => Query::Not(Box::new((*query).try_into()?)),
         })
+    }
+}
+
+impl From<FieldValueDto> for FieldValue {
+    fn from(value: FieldValueDto) -> Self {
+        match value {
+            FieldValueDto::Bool(value) => FieldValue::Bool(value),
+            FieldValueDto::I64(value) => FieldValue::I64(value),
+            FieldValueDto::U64(value) => FieldValue::U64(value),
+            FieldValueDto::String(value) => FieldValue::String(value),
+        }
     }
 }
 
@@ -250,16 +274,26 @@ impl From<CompareDto> for Compare {
     }
 }
 
+impl From<SortDirectionDto> for SortDirection {
+    fn from(value: SortDirectionDto) -> Self {
+        match value {
+            SortDirectionDto::Asc => SortDirection::Asc,
+            SortDirectionDto::Desc => SortDirection::Desc,
+        }
+    }
+}
+
 fn decode_queries(queries: Vec<QueryDto>) -> Result<Vec<Query>, JsValue> {
     queries.into_iter().map(Query::try_from).collect()
 }
 
-fn decode_field_value(value: FieldValueDto) -> Result<FieldValue, JsValue> {
-    match value {
-        FieldValueDto::Bool(value) => Ok(FieldValue::Bool(value)),
-        FieldValueDto::I64(value) => value.parse::<i64>().map(FieldValue::I64).map_err(js_error),
-        FieldValueDto::U64(value) => value.parse::<u64>().map(FieldValue::U64).map_err(js_error),
-        FieldValueDto::String(value) => Ok(FieldValue::String(value)),
+fn ensure_bridge_version(version: u8) -> Result<(), JsValue> {
+    if version == BRIDGE_VERSION {
+        Ok(())
+    } else {
+        Err(js_error(format!(
+            "Unsupported bridge payload version {version}"
+        )))
     }
 }
 
