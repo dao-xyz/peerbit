@@ -615,6 +615,9 @@ impl NativeQueryIndex {
         };
         let mut scored = Vec::new();
         for doc_id in self.candidates(filter).iter() {
+            if !self.matches_doc(doc_id, filter) {
+                continue;
+            }
             let Some(vector) = vectors.get(&doc_id) else {
                 continue;
             };
@@ -726,20 +729,11 @@ impl NativeQueryIndex {
         if queries.is_empty() {
             return self.all_docs.clone();
         }
-        let mut candidate_sets: Vec<_> =
-            queries.iter().map(|query| self.candidates(query)).collect();
-        candidate_sets.sort_by_key(RoaringBitmap::len);
-        let mut iter = candidate_sets.into_iter();
-        let Some(mut result) = iter.next() else {
-            return RoaringBitmap::new();
-        };
-        for candidate in iter {
-            result &= candidate;
-            if result.is_empty() {
-                break;
-            }
-        }
-        result
+        queries
+            .iter()
+            .min_by_key(|query| self.estimated_candidate_len(query))
+            .map(|query| self.candidates(query))
+            .unwrap_or_default()
     }
 
     fn or_candidates(&self, queries: &[Query]) -> RoaringBitmap {
@@ -763,6 +757,64 @@ impl NativeQueryIndex {
             return range_u64_candidates(self.range_u64.get(field), compare, value);
         }
         RoaringBitmap::new()
+    }
+
+    fn estimated_candidate_len(&self, query: &Query) -> u64 {
+        match query {
+            Query::All => self.all_docs.len(),
+            Query::Exact { field, value } => self
+                .exact
+                .get(field)
+                .and_then(|values| values.get(value))
+                .map(RoaringBitmap::len)
+                .unwrap_or(0),
+            Query::Range {
+                field,
+                compare,
+                value,
+            } => self.estimated_range_candidate_len(field, *compare, value),
+            Query::StringMatch {
+                field,
+                value,
+                method: StringMatchMethod::Exact,
+                case_insensitive: false,
+            } => self
+                .exact
+                .get(field)
+                .and_then(|values| values.get(&FieldValue::String(value.clone())))
+                .map(RoaringBitmap::len)
+                .unwrap_or(0),
+            Query::And(queries) => queries
+                .iter()
+                .map(|query| self.estimated_candidate_len(query))
+                .min()
+                .unwrap_or_else(|| self.all_docs.len()),
+            Query::Or(queries) => queries
+                .iter()
+                .map(|query| self.estimated_candidate_len(query))
+                .fold(0_u64, u64::saturating_add)
+                .min(self.all_docs.len()),
+            Query::Not(query) => self
+                .all_docs
+                .len()
+                .saturating_sub(self.estimated_candidate_len(query)),
+            Query::StringMatch { .. } | Query::IsNull { .. } => self.all_docs.len(),
+        }
+    }
+
+    fn estimated_range_candidate_len(
+        &self,
+        field: &FieldPath,
+        compare: Compare,
+        value: &FieldValue,
+    ) -> u64 {
+        if let Some(value) = value.as_i64() {
+            return estimate_i64_range_len(self.range_i64.get(field), compare, value);
+        }
+        if let Some(value) = value.as_u64() {
+            return estimate_u64_range_len(self.range_u64.get(field), compare, value);
+        }
+        0
     }
 
     fn compare_docs(&self, left: DocId, right: DocId, sort: &[SortField]) -> Ordering {
@@ -1247,6 +1299,32 @@ fn range_i64_candidates(
     }
 }
 
+fn estimate_i64_range_len(
+    index: Option<&BTreeMap<i64, RoaringBitmap>>,
+    compare: Compare,
+    value: i64,
+) -> u64 {
+    let Some(index) = index else {
+        return 0;
+    };
+    if compare == Compare::Equal {
+        return index.get(&value).map(RoaringBitmap::len).unwrap_or(0);
+    }
+    let Some((&min, _)) = index.iter().next() else {
+        return 0;
+    };
+    let Some((&max, _)) = index.iter().next_back() else {
+        return 0;
+    };
+    estimate_ordered_range_len(
+        index.len() as u64,
+        min as i128,
+        max as i128,
+        value as i128,
+        compare,
+    )
+}
+
 fn range_u64_candidates(
     index: Option<&BTreeMap<u64, RoaringBitmap>>,
     compare: Compare,
@@ -1266,6 +1344,94 @@ fn range_u64_candidates(
         ),
         Compare::GreaterOrEqual => union_bitmaps(index.range(value..).map(|(_, bitmap)| bitmap)),
     }
+}
+
+fn estimate_u64_range_len(
+    index: Option<&BTreeMap<u64, RoaringBitmap>>,
+    compare: Compare,
+    value: u64,
+) -> u64 {
+    let Some(index) = index else {
+        return 0;
+    };
+    if compare == Compare::Equal {
+        return index.get(&value).map(RoaringBitmap::len).unwrap_or(0);
+    }
+    let Some((&min, _)) = index.iter().next() else {
+        return 0;
+    };
+    let Some((&max, _)) = index.iter().next_back() else {
+        return 0;
+    };
+    estimate_ordered_range_len(
+        index.len() as u64,
+        min as i128,
+        max as i128,
+        value as i128,
+        compare,
+    )
+}
+
+fn estimate_ordered_range_len(
+    distinct_values: u64,
+    min: i128,
+    max: i128,
+    value: i128,
+    compare: Compare,
+) -> u64 {
+    if distinct_values == 0 {
+        return 0;
+    }
+    if min == max {
+        return if compare_ordering(min.cmp(&value), compare) {
+            distinct_values
+        } else {
+            0
+        };
+    }
+
+    let span = (max - min + 1) as u128;
+    let distinct_values = distinct_values as u128;
+    let estimate = match compare {
+        Compare::Equal => unreachable!("equal range estimates are resolved from exact keys"),
+        Compare::Less => {
+            if value <= min {
+                0
+            } else if value > max {
+                distinct_values
+            } else {
+                ((value - min) as u128 * distinct_values) / span
+            }
+        }
+        Compare::LessOrEqual => {
+            if value < min {
+                0
+            } else if value >= max {
+                distinct_values
+            } else {
+                (((value - min) as u128 + 1) * distinct_values) / span
+            }
+        }
+        Compare::Greater => {
+            if value >= max {
+                0
+            } else if value < min {
+                distinct_values
+            } else {
+                ((max - value) as u128 * distinct_values) / span
+            }
+        }
+        Compare::GreaterOrEqual => {
+            if value > max {
+                0
+            } else if value <= min {
+                distinct_values
+            } else {
+                (((max - value) as u128 + 1) * distinct_values) / span
+            }
+        }
+    };
+    estimate.min(u64::MAX as u128) as u64
 }
 
 fn union_bitmaps<'a>(bitmaps: impl Iterator<Item = &'a RoaringBitmap>) -> RoaringBitmap {
@@ -1470,6 +1636,56 @@ mod tests {
             index.search(&query, &[], None),
             vec!["doc-142", "doc-145", "doc-148", "doc-241", "doc-244", "doc-247", "doc-250"]
         );
+    }
+
+    #[test]
+    fn multi_field_range_or_uses_selective_candidate_seeds() {
+        let mut index = NativeQueryIndex::new();
+        let doc_count = 1_000_u64;
+        for i in 0..doc_count {
+            index.put(
+                format!("doc-{i}"),
+                DocumentFields::new()
+                    .with_scalar("start1", i)
+                    .with_scalar("end1", i + 1)
+                    .with_scalar("start2", i + 2)
+                    .with_scalar("end2", i + 3),
+            );
+        }
+
+        let mut branches = Vec::new();
+        for point in [10, doc_count - 4] {
+            branches.push(Query::And(vec![
+                Query::Range {
+                    field: "start1".into(),
+                    compare: Compare::LessOrEqual,
+                    value: FieldValue::U64(point),
+                },
+                Query::Range {
+                    field: "end1".into(),
+                    compare: Compare::Greater,
+                    value: FieldValue::U64(point),
+                },
+            ]));
+            branches.push(Query::And(vec![
+                Query::Range {
+                    field: "start2".into(),
+                    compare: Compare::LessOrEqual,
+                    value: FieldValue::U64(point),
+                },
+                Query::Range {
+                    field: "end2".into(),
+                    compare: Compare::Greater,
+                    value: FieldValue::U64(point),
+                },
+            ]));
+        }
+        let query = Query::Or(branches);
+
+        assert!(index.candidates(&query).len() < 32);
+        let mut results = index.search(&query, &[], None);
+        results.sort();
+        assert_eq!(results, vec!["doc-10", "doc-8", "doc-994", "doc-996"]);
     }
 
     #[test]
@@ -1697,26 +1913,43 @@ mod tests {
             "a",
             DocumentFields::new()
                 .with_scalar("published", true)
+                .with_scalar("score", 10_u64)
                 .with_vector("embedding", vec![1.0, 0.0]),
         );
         index.put(
             "b",
             DocumentFields::new()
                 .with_scalar("published", false)
+                .with_scalar("score", 10_u64)
                 .with_vector("embedding", vec![0.9, 0.1]),
         );
         index.put(
             "c",
             DocumentFields::new()
                 .with_scalar("published", true)
+                .with_scalar("score", 1_u64)
                 .with_vector("embedding", vec![0.0, 1.0]),
+        );
+        index.put(
+            "d",
+            DocumentFields::new()
+                .with_scalar("published", true)
+                .with_scalar("score", 0_u64)
+                .with_vector("embedding", vec![0.99, 0.01]),
         );
 
         let results = index.vector_search(
-            &Query::Exact {
-                field: "published".into(),
-                value: FieldValue::Bool(true),
-            },
+            &Query::And(vec![
+                Query::Exact {
+                    field: "published".into(),
+                    value: FieldValue::Bool(true),
+                },
+                Query::Range {
+                    field: "score".into(),
+                    compare: Compare::Greater,
+                    value: FieldValue::U64(0),
+                },
+            ]),
             &VectorSort {
                 field: "embedding".into(),
                 query: vec![1.0, 0.0],
