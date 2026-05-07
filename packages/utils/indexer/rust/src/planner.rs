@@ -210,6 +210,13 @@ pub struct ScoredDocument {
     pub score: f32,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SumResult {
+    None,
+    I64(i128),
+    U64(u128),
+}
+
 #[derive(Default)]
 pub struct IndexBatch {
     deletes: Vec<String>,
@@ -349,6 +356,31 @@ impl NativeQueryIndex {
 
     pub fn count(&self, query: &Query) -> u64 {
         self.matching_doc_ids(query).len()
+    }
+
+    pub fn sum(&self, query: &Query, field: &str) -> Result<SumResult, String> {
+        let mut result = SumResult::None;
+        for doc_id in self.matching_doc_ids(query).iter() {
+            let Some(value) = self.first_scalar(doc_id, field) else {
+                continue;
+            };
+            result.add(value)?;
+        }
+        Ok(result)
+    }
+
+    pub fn delete_matching(&mut self, query: &Query) -> Vec<String> {
+        let ids: Vec<_> = self
+            .matching_doc_ids(query)
+            .iter()
+            .filter_map(|doc_id| self.internal_to_external.get(&doc_id).cloned())
+            .collect();
+        let mut batch = IndexBatch::new();
+        for id in &ids {
+            batch = batch.delete(id.clone());
+        }
+        self.apply_batch(batch);
+        ids
     }
 
     pub fn search(&self, query: &Query, sort: &[SortField], limit: Option<usize>) -> Vec<String> {
@@ -1011,6 +1043,64 @@ impl NativeQueryIndex {
     }
 }
 
+impl SumResult {
+    fn add(&mut self, value: &FieldValue) -> Result<(), String> {
+        match value {
+            FieldValue::I64(value) => self.add_i64(*value as i128),
+            FieldValue::U64(value) => self.add_u64(*value as u128),
+            FieldValue::Bool(_) | FieldValue::String(_) | FieldValue::Bytes(_) => Ok(()),
+        }
+    }
+
+    fn add_i64(&mut self, value: i128) -> Result<(), String> {
+        match self {
+            Self::None => {
+                *self = Self::I64(value);
+                Ok(())
+            }
+            Self::I64(sum) => {
+                *sum = sum
+                    .checked_add(value)
+                    .ok_or_else(|| "native i64 sum overflow".to_string())?;
+                Ok(())
+            }
+            Self::U64(sum) => {
+                let signed_sum = i128::try_from(*sum)
+                    .map_err(|_| "native sum cannot mix large u64 values with i64".to_string())?;
+                *self = Self::I64(
+                    signed_sum
+                        .checked_add(value)
+                        .ok_or_else(|| "native mixed sum overflow".to_string())?,
+                );
+                Ok(())
+            }
+        }
+    }
+
+    fn add_u64(&mut self, value: u128) -> Result<(), String> {
+        match self {
+            Self::None => {
+                *self = Self::U64(value);
+                Ok(())
+            }
+            Self::U64(sum) => {
+                *sum = sum
+                    .checked_add(value)
+                    .ok_or_else(|| "native u64 sum overflow".to_string())?;
+                Ok(())
+            }
+            Self::I64(sum) => {
+                let signed_value = i128::try_from(value)
+                    .map_err(|_| "native sum cannot mix large u64 values with i64".to_string())?;
+                *sum = sum
+                    .checked_add(signed_value)
+                    .ok_or_else(|| "native mixed sum overflow".to_string())?;
+                Ok(())
+            }
+        }
+    }
+}
+
 fn root_scope() -> RoaringBitmap {
     let mut scopes = RoaringBitmap::new();
     scopes.insert(0);
@@ -1262,7 +1352,7 @@ fn vector_distance(left: &[f32], right: &[f32], metric: VectorMetric) -> f32 {
 mod tests {
     use super::{
         Compare, DocumentFields, FieldValue, IndexBatch, NativeQueryIndex, Query, SortDirection,
-        SortField, VectorMetric, VectorSort,
+        SortField, SumResult, VectorMetric, VectorSort,
     };
 
     #[test]
@@ -1425,6 +1515,38 @@ mod tests {
             ),
             vec!["bytes", "string", "u64"]
         );
+    }
+
+    #[test]
+    fn sums_and_deletes_matching_docs() {
+        let mut index = NativeQueryIndex::new();
+        index.put(
+            "a",
+            DocumentFields::new()
+                .with_scalar("group", "left")
+                .with_scalar("value", 1_u64),
+        );
+        index.put(
+            "b",
+            DocumentFields::new()
+                .with_scalar("group", "right")
+                .with_scalar("value", 2_u64),
+        );
+        index.put(
+            "c",
+            DocumentFields::new()
+                .with_scalar("group", "left")
+                .with_scalar("value", 3_u64),
+        );
+
+        let query = Query::Exact {
+            field: "group".to_string(),
+            value: FieldValue::String("left".to_string()),
+        };
+
+        assert_eq!(index.sum(&query, "value").unwrap(), SumResult::U64(4));
+        assert_eq!(index.delete_matching(&query), vec!["a", "c"]);
+        assert_eq!(index.search(&Query::All, &[], None), vec!["b"]);
     }
 
     #[test]

@@ -1,11 +1,6 @@
 import { BinaryWriter, deserialize, serialize } from "@dao-xyz/borsh";
 import * as types from "@peerbit/indexer-interface";
-import { logger as loggerFn } from "@peerbit/logger";
-import { equals } from "uint8arrays";
 import { createSnapshotFile, type SnapshotFile } from "./persistence.js";
-
-const logger = loggerFn("peerbit:indexer:rust");
-const warn = logger.newScope("warn");
 
 type NativeIndexStore<T extends Record<string, any>> = {
 	put: (key: string, id: types.IdKey, value: T) => void;
@@ -29,6 +24,8 @@ type NativeQueryPlanner = {
 		limit: number,
 	) => string[];
 	count: (query: Uint8Array) => number;
+	sum: (query: Uint8Array, field: string) => [NativeSumKind, string];
+	delete_matching: (query: Uint8Array) => string[];
 };
 
 type WasmModule = {
@@ -80,6 +77,8 @@ type NativeSortField = {
 	field: string;
 	direction: "asc" | "desc";
 };
+
+type NativeSumKind = "none" | "i64" | "u64";
 
 type NativeCandidatePage = {
 	compiled: NativeQueryCompileResult;
@@ -168,6 +167,9 @@ const keyToStoreKey = (id: types.IdKey): string => {
 };
 
 const nativeFieldKey = (path: string[]): string => JSON.stringify(path);
+
+const nativeArrayElementFieldKey = (path: string[]): string =>
+	JSON.stringify(["\u0000array", ...path]);
 
 const bytesToNativeString = (bytes: Uint8Array): string => {
 	let hex = "";
@@ -271,7 +273,15 @@ const collectNativeFieldFacts = (
 
 	if (Array.isArray(value)) {
 		for (const item of value) {
-			collectNativeFieldFacts(item, path, facts, state, state.nextScope++);
+			const itemScope = state.nextScope++;
+			if (path.length > 0) {
+				facts.push({
+					scope: itemScope,
+					field: nativeArrayElementFieldKey(path),
+					value: { type: "bool", value: true },
+				});
+			}
+			collectNativeFieldFacts(item, path, facts, state, itemScope);
 		}
 		return facts;
 	}
@@ -447,19 +457,38 @@ const encodeNativeFieldFacts = (facts: NativeFieldFact[]): Uint8Array => {
 	return writer.finalize();
 };
 
+const decodeNativeSum = ([kind, value]: [NativeSumKind, string]): number | bigint => {
+	if (kind === "none") {
+		return 0;
+	}
+	const sum = BigInt(value);
+	if (
+		sum >= BigInt(Number.MIN_SAFE_INTEGER) &&
+		sum <= BigInt(Number.MAX_SAFE_INTEGER)
+	) {
+		return Number(sum);
+	}
+	return sum;
+};
+
+const describeNativeQueries = (queries: types.Query[]) =>
+	queries.map((query) => query.constructor.name).join(", ") || "All";
+
 const compileNativeQueries = (
 	queries: types.Query[],
+	prefix: string[] = [],
 ): NativeQueryCompileResult | undefined => {
-	return compileNativeAnd(queries);
+	return compileNativeAnd(queries, prefix);
 };
 
 const compileNativeAnd = (
 	queries: types.Query[],
+	prefix: string[] = [],
 ): NativeQueryCompileResult | undefined => {
 	const compiled: NativeQuerySpec[] = [];
 
 	for (const query of queries) {
-		const next = compileNativeQuery(query);
+		const next = compileNativeQuery(query, prefix);
 		if (!next) {
 			return;
 		}
@@ -477,14 +506,15 @@ const compileNativeAnd = (
 
 const compileNativeQuery = (
 	query: types.Query,
+	prefix: string[] = [],
 ): NativeQueryCompileResult | undefined => {
 	if (query instanceof types.And) {
-		return compileNativeAnd(query.and);
+		return compileNativeAnd(query.and, prefix);
 	}
 	if (query instanceof types.Or) {
 		const compiled: NativeQuerySpec[] = [];
 		for (const child of query.or) {
-			const next = compileNativeQuery(child);
+			const next = compileNativeQuery(child, prefix);
 			if (!next) {
 				return;
 			}
@@ -493,17 +523,36 @@ const compileNativeQuery = (
 		return { spec: { op: "or", queries: compiled }, exact: true };
 	}
 	if (query instanceof types.Not) {
-		const child = compileNativeQuery(query.not);
+		const child = compileNativeQuery(query.not, prefix);
 		if (!child) {
 			return;
 		}
 		return { spec: { op: "not", query: child.spec }, exact: true };
 	}
+	if (query instanceof types.Nested) {
+		const nestedPath = [...prefix, ...query.path];
+		const nested = compileNativeAnd(query.query, nestedPath);
+		if (!nested) {
+			return;
+		}
+		const arrayElementMarker: NativeQuerySpec = {
+			op: "exact",
+			field: nativeArrayElementFieldKey(nestedPath),
+			value: { type: "bool", value: true },
+		};
+		if (nested.spec.op === "all") {
+			return { spec: arrayElementMarker, exact: true };
+		}
+		return {
+			spec: { op: "and", queries: [arrayElementMarker, nested.spec] },
+			exact: true,
+		};
+	}
 	if (query instanceof types.BoolQuery) {
 		return {
 			spec: {
 				op: "exact",
-				field: nativeFieldKey(query.key),
+				field: nativeFieldKey([...prefix, ...query.key]),
 				value: { type: "bool", value: query.value },
 			},
 			exact: true,
@@ -513,7 +562,7 @@ const compileNativeQuery = (
 		return {
 			spec: {
 				op: "string",
-				field: nativeFieldKey(query.key),
+				field: nativeFieldKey([...prefix, ...query.key]),
 				value: query.value,
 				method:
 					query.method === types.StringMatchMethod.exact
@@ -530,7 +579,7 @@ const compileNativeQuery = (
 		return {
 			spec: {
 				op: "exact",
-				field: nativeFieldKey(query.key),
+				field: nativeFieldKey([...prefix, ...query.key]),
 				value: { type: "string", value: bytesToNativeString(query.value) },
 			},
 			exact: true,
@@ -545,7 +594,7 @@ const compileNativeQuery = (
 			return {
 				spec: {
 					op: "exact",
-					field: nativeFieldKey(query.key),
+					field: nativeFieldKey([...prefix, ...query.key]),
 					value,
 				},
 				exact: true,
@@ -554,7 +603,7 @@ const compileNativeQuery = (
 		return {
 			spec: {
 				op: "range",
-				field: nativeFieldKey(query.key),
+				field: nativeFieldKey([...prefix, ...query.key]),
 				compare: compareToNative(query.compare),
 				value,
 			},
@@ -562,6 +611,9 @@ const compileNativeQuery = (
 		};
 	}
 	if (query instanceof types.IsNull) {
+		if (prefix.length > 0) {
+			return;
+		}
 		return {
 			spec: {
 				op: "is_null",
@@ -571,21 +623,6 @@ const compileNativeQuery = (
 		};
 	}
 	return;
-};
-
-const getBatchFromResults = <T extends Record<string, any>>(
-	results: types.IndexedValue<T>[],
-	wantedSize: number,
-) => {
-	const batch: types.IndexedValue<T>[] = [];
-	for (const result of results) {
-		batch.push(result);
-		if (wantedSize <= batch.length) {
-			break;
-		}
-	}
-	results.splice(0, batch.length);
-	return batch;
 };
 
 const cloneResults = <T>(
@@ -677,12 +714,20 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	async del(query: types.DeleteOptions): Promise<types.IdKey[]> {
+		const compiled = this.requireNativePlan(types.toQuery(query.query), {
+			allowAll: true,
+		});
+		const storeKeys = this.getPlanner().delete_matching(
+			encodeNativeQuerySpec(compiled.spec),
+		);
 		const deleted: types.IdKey[] = [];
-		for (const doc of await this.queryAll(query)) {
-			const storeKey = keyToStoreKey(doc.id);
+		for (const storeKey of storeKeys) {
+			const doc = this.getStore().get(storeKey);
+			if (!doc) {
+				continue;
+			}
 			if (this.getStore().delete(storeKey)) {
-				this.planner?.delete_document(storeKey);
-				deleted.push(doc.id);
+				deleted.push(doc[0]);
 			}
 		}
 		if (deleted.length > 0) {
@@ -719,23 +764,13 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	async sum(query: types.SumOptions): Promise<number | bigint> {
-		let sum: undefined | number | bigint = undefined;
-		outer: for (const doc of await this.queryAll(query)) {
-			let value: any = doc.value;
-			for (const path of Array.isArray(query.key) ? query.key : [query.key]) {
-				value = value[path];
-				if (!value) {
-					continue outer;
-				}
-			}
-
-			if (typeof value === "number") {
-				sum = ((sum as unknown as number) || 0) + value;
-			} else if (typeof value === "bigint") {
-				sum = ((sum as unknown as bigint) || 0n) + value;
-			}
-		}
-		return sum != null ? sum : 0;
+		const compiled = this.requireNativePlan(types.toQuery(query.query), {
+			allowAll: true,
+		});
+		const field = nativeFieldKey(Array.isArray(query.key) ? query.key : [query.key]);
+		return decodeNativeSum(
+			this.getPlanner().sum(encodeNativeQuerySpec(compiled.spec), field),
+		);
 	}
 
 	async count(query?: types.CountOptions): Promise<number> {
@@ -743,442 +778,88 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		if (queryCoerced.length === 0) {
 			return this.getSize();
 		}
-		const nativeCount = this.countNativeExact(queryCoerced);
-		if (nativeCount != null) {
-			return nativeCount;
-		}
-		return (await this.queryAll(query)).length;
-	}
-
-	private async queryAll(
-		query?:
-			| types.IterateOptions
-			| types.DeleteOptions
-			| types.CountOptions
-			| types.SumOptions,
-	): Promise<types.IndexedValue<T>[]> {
-		const queryCoerced = types.toQuery(query?.query);
-		if (
-			queryCoerced.length === 1 &&
-			(queryCoerced[0] instanceof types.ByteMatchQuery ||
-				queryCoerced[0] instanceof types.StringMatch) &&
-			types.stringArraysEquals(queryCoerced[0].key, this.indexByArr)
-		) {
-			const firstQuery = queryCoerced[0];
-			if (firstQuery instanceof types.ByteMatchQuery) {
-				const doc = this.getStore().get(
-					keyToStoreKey(types.toId(firstQuery.value)),
-				);
-				return doc ? [{ id: doc[0], value: doc[1] }] : [];
-			} else if (
-				firstQuery instanceof types.StringMatch &&
-				firstQuery.method === types.StringMatchMethod.exact &&
-				firstQuery.caseInsensitive === false
-			) {
-				const doc = this.getStore().get(
-					keyToStoreKey(types.toId(firstQuery.value)),
-				);
-				return doc ? [{ id: doc[0], value: doc[1] }] : [];
-			}
-		}
-
-		const nativeResults = this.getNativeCandidates(queryCoerced);
-		if (nativeResults) {
-			return nativeResults;
-		}
-
-		const indexedDocuments = await this.queryDocuments(
-			async (doc) => {
-				const innerHits = new Map();
-				for (const f of queryCoerced) {
-					if (!(await this.handleQueryObject(f, doc.value, innerHits))) {
-						return false;
-					}
-				}
-				return true;
-			},
+		return this.countNativePlan(
+			this.requireNativePlan(queryCoerced, { allowAll: true }),
 		);
-
-		return indexedDocuments;
 	}
 
 	iterate<S extends types.Shape | undefined>(
 		query?: types.IterateOptions,
 		properties?: { shape?: S; reference?: boolean },
 	): types.IndexIterator<T, S> {
-		const nativePagePlan = this.getNativePagePlan(types.toQuery(query?.query), query);
-		if (nativePagePlan) {
-			let done: boolean | undefined = undefined;
-			let offset = 0;
-			let total: number | undefined;
-			const getTotal = () =>
-				(total ??= this.countNativePlan(nativePagePlan.compiled) ?? 0);
-			const clonePage = (batch: types.IndexedValue<T>[]) =>
-				(properties?.reference
-					? batch
-					: cloneResults(batch, this.properties.schema)) as types.IndexedResults<
-					types.ReturnTypeFromShape<T, S>
-				>;
-
-			const fetch = async (
-				n: number,
-			): Promise<types.IndexedResults<types.ReturnTypeFromShape<T, S>>> => {
-				if (done) {
-					return [];
-				}
-				const remaining = getTotal() - offset;
-				const wanted = Math.max(
-					0,
-					Math.min(Number.isFinite(n) ? Math.floor(n) : remaining, remaining),
-				);
-				if (wanted === 0) {
-					done = remaining === 0;
-					return [];
-				}
-				const batch = this.getNativeCandidatesForPlan({
-					compiled: nativePagePlan.compiled,
-					sort: nativePagePlan.sort,
-					offset,
-					limit: wanted,
-				});
-				offset += batch.length;
-				done = offset >= getTotal();
-				return clonePage(batch);
-			};
-
-			return {
-				all: async () => fetch(Infinity),
-				next: (n: number) => fetch(n),
-				done: () => done,
-				pending: async () => (done ? 0 : Math.max(0, getTotal() - offset)),
-				close: () => {
-					done = true;
-				},
-			};
-		}
-
+		const nativePagePlan = this.requireNativePagePlan(
+			types.toQuery(query?.query),
+			query,
+		);
 		let done: boolean | undefined = undefined;
-		let queue:
-			| {
-					arr: types.IndexedValue<T>[];
-					reference: boolean | undefined;
-			  }
-			| undefined = undefined;
+		let offset = 0;
+		let total: number | undefined;
+		const getTotal = () =>
+			(total ??= this.countNativePlan(nativePagePlan.compiled) ?? 0);
+		const clonePage = (batch: types.IndexedValue<T>[]) =>
+			(properties?.reference
+				? batch
+				: cloneResults(batch, this.properties.schema)) as types.IndexedResults<
+				types.ReturnTypeFromShape<T, S>
+			>;
+
 		const fetch = async (
 			n: number,
 		): Promise<types.IndexedResults<types.ReturnTypeFromShape<T, S>>> => {
-			if (!queue && !done) {
-				const indexedDocuments = await this.queryAll(query);
-				if (indexedDocuments.length > 1) {
-					if (query?.sort) {
-						const sortArr = Array.isArray(query.sort)
-							? query.sort
-							: [query.sort];
-						sortArr.length > 0 &&
-							indexedDocuments.sort((a, b) =>
-								types.extractSortCompare(a.value, b.value, sortArr),
-							);
-					}
-				}
-
-				if (indexedDocuments.length > 0) {
-					queue = {
-						arr: indexedDocuments,
-						reference: properties?.reference,
-					};
-					done = false;
-				} else {
-					done = true;
-				}
-			}
-			if (queue && queue.arr.length <= n) {
-				done = true;
-			}
-
-			if (!queue) {
+			if (done) {
 				return [];
 			}
-
-			const batch = getBatchFromResults<T>(queue.arr, n);
-
-			return (
-				queue.reference ? batch : cloneResults(batch, this.properties.schema)
-			) as types.IndexedResults<types.ReturnTypeFromShape<T, S>>;
+			const remaining = getTotal() - offset;
+			const wanted = Math.max(
+				0,
+				Math.min(Number.isFinite(n) ? Math.floor(n) : remaining, remaining),
+			);
+			if (wanted === 0) {
+				done = remaining === 0;
+				return [];
+			}
+			const batch = this.getNativeCandidatesForPlan({
+				compiled: nativePagePlan.compiled,
+				sort: nativePagePlan.sort,
+				offset,
+				limit: wanted,
+			});
+			offset += batch.length;
+			done = offset >= getTotal();
+			return clonePage(batch);
 		};
 
 		return {
-			all: async () => {
-				const results = await fetch(Infinity);
-				return results;
-			},
+			all: async () => fetch(Infinity),
 			next: (n: number) => fetch(n),
 			done: () => done,
-			pending: async () => {
-				if (done == null) {
-					await fetch(0);
-				}
-				return done ? 0 : (queue?.arr.length ?? 0);
-			},
+			pending: async () => (done ? 0 : Math.max(0, getTotal() - offset)),
 			close: () => {
 				done = true;
-				queue = undefined;
 			},
 		};
-	}
-
-	private async handleFieldQuery(
-		f: types.StateFieldQuery,
-		obj: any,
-		skipKeys: number,
-		innerHits: Map<string, any[] | false>,
-		buildInnerHits = true,
-	): Promise<boolean | undefined> {
-		const handleArrayResults = async (
-			path: string[],
-			obj: any[] | Uint8Array,
-			skipKeys: number,
-		): Promise<boolean> => {
-			const pathKey = buildInnerHits ? path.join(".") : undefined;
-			const innerHitsValue = pathKey ? innerHits.get(pathKey) : undefined;
-			if (pathKey && innerHitsValue === false) {
-				return false;
-			}
-
-			const fromInnerHits = pathKey;
-			const objArr =
-				fromInnerHits && innerHitsValue && (innerHitsValue as []).length > 0
-					? (innerHitsValue as any[])
-					: obj;
-			const newInnerHits: any[] | undefined = fromInnerHits ? [] : undefined;
-			for (const element of objArr!) {
-				if (await this.handleFieldQuery(f, element, skipKeys, innerHits)) {
-					if (!buildInnerHits) {
-						return true;
-					}
-					newInnerHits!.push(element);
-				}
-			}
-			if (!fromInnerHits) {
-				return false;
-			}
-
-			if (newInnerHits!.length === 0) {
-				innerHits.set(pathKey!, false);
-				return false;
-			}
-
-			innerHits.set(pathKey!, newInnerHits!);
-			return true;
-		};
-
-		if (
-			Array.isArray(obj) ||
-			(obj instanceof Uint8Array && f instanceof types.ByteMatchQuery === false)
-		) {
-			return handleArrayResults(f.key, obj, skipKeys);
-		}
-
-		for (let i = skipKeys; i < f.key.length; i++) {
-			obj = obj[f.key[i]];
-			if (
-				Array.isArray(obj) ||
-				(obj instanceof Uint8Array &&
-					f instanceof types.ByteMatchQuery === false)
-			) {
-				return handleArrayResults(f.key.slice(0, i + 1), obj, i + 1);
-			}
-			if (this.properties.nested?.match(obj)) {
-				const queryCloned = f.clone();
-				queryCloned.key.splice(0, i + 1);
-				const results = await this.properties.nested.iterate(obj, {
-					query: [queryCloned],
-				});
-				return results.length > 0 ? true : false;
-			}
-		}
-
-		if (f instanceof types.IsNull) {
-			if (obj == null) {
-				return true;
-			}
-			return false;
-		}
-
-		if (obj == null) {
-			return undefined;
-		}
-
-		if (f instanceof types.StringMatch) {
-			let compare = f.value;
-			if (f.caseInsensitive) {
-				compare = compare.toLowerCase();
-			}
-
-			if (this.handleStringMatch(f, compare, obj)) {
-				return true;
-			}
-			return false;
-		} else if (f instanceof types.ByteMatchQuery) {
-			if (obj instanceof Uint8Array === false) {
-				if (types.stringArraysEquals(f.key, this.indexByArr)) {
-					return f.valueString === obj;
-				}
-				return false;
-			}
-			return equals(obj as Uint8Array, f.value);
-		} else if (f instanceof types.IntegerCompare) {
-			const value: bigint | number = obj as any as bigint | number;
-
-			if (typeof value !== "bigint" && typeof value !== "number") {
-				return false;
-			}
-			return types.compare(value, f.compare, f.value.value);
-		} else if (f instanceof types.BoolQuery) {
-			return obj === f.value;
-		}
-		warn("Unsupported query type: " + f.constructor.name);
-		return false;
-	}
-
-	private async handleQueryObject(
-		f: types.Query,
-		value: Record<string, any> | T,
-		innerHits: Map<string, any[]>,
-		skipKeys = 0,
-	): Promise<{ result: true; innerHits: any[] } | boolean | undefined> {
-		if (f instanceof types.StateFieldQuery) {
-			return this.handleFieldQuery(f, value as T, skipKeys, innerHits);
-		} else if (f instanceof types.Nested) {
-			let arr = value;
-
-			for (let i = skipKeys; i < f.path.length; i++) {
-				arr = arr[f.path[i]];
-			}
-
-			if (!Array.isArray(arr)) {
-				throw new Error("Nested field is not an array");
-			}
-
-			const newSkipKeys = skipKeys + f.path.length;
-			outer: for (const element of arr) {
-				for (const query of f.query) {
-					if (
-						!(await this.handleQueryObject(
-							query,
-							element,
-							innerHits,
-							newSkipKeys,
-						))
-					) {
-						continue outer;
-					}
-				}
-				return true;
-			}
-			return false;
-		} else if (f instanceof types.LogicalQuery) {
-			if (f instanceof types.And) {
-				for (const and of f.and) {
-					const ret = await this.handleQueryObject(
-						and,
-						value,
-						innerHits,
-						skipKeys,
-					);
-					if (!ret) {
-						return ret;
-					}
-				}
-				return true;
-			}
-
-			if (f instanceof types.Or) {
-				for (const or of f.or) {
-					const innerHits = new Map();
-					const ret = await this.handleQueryObject(
-						or,
-						value,
-						innerHits,
-						skipKeys,
-					);
-					if (ret === true) {
-						return true;
-					} else if (ret === undefined) {
-						return undefined;
-					}
-				}
-				return false;
-			}
-			if (f instanceof types.Not) {
-				const ret = await this.handleQueryObject(
-					f.not,
-					value,
-					innerHits,
-					skipKeys,
-				);
-				if (ret === undefined) {
-					return undefined;
-				}
-				return !ret;
-			}
-		}
-
-		logger("Unsupported query type: " + f.constructor.name);
-		return false;
-	}
-
-	private handleStringMatch(f: types.StringMatch, compare: string, fv: string) {
-		if (typeof fv !== "string") {
-			return false;
-		}
-		if (f.caseInsensitive) {
-			fv = fv.toLowerCase();
-		}
-		if (f.method === types.StringMatchMethod.exact) {
-			return fv === compare;
-		}
-		if (f.method === types.StringMatchMethod.prefix) {
-			return fv.startsWith(compare);
-		}
-		if (f.method === types.StringMatchMethod.contains) {
-			return fv.includes(compare);
-		}
-		throw new Error("Unsupported");
-	}
-
-	private async queryDocuments(
-		filter: (doc: types.IndexedValue<T>) => Promise<boolean>,
-		documents = this.snapshot(),
-	): Promise<types.IndexedValue<T>[]> {
-		const results: types.IndexedValue<T>[] = [];
-		for (const value of documents) {
-			if (await filter(value)) {
-				results.push(value);
-			}
-		}
-		return results;
-	}
-
-	private getNativeCandidates(
-		queryCoerced: types.Query[],
-	): types.IndexedValue<T>[] | undefined {
-		const compiled = this.getNativePlan(queryCoerced);
-		if (!compiled) {
-			return;
-		}
-		return this.getNativeCandidatesForPlan({ compiled, sort: [], offset: 0 });
 	}
 
 	private getNativePlan(
 		queryCoerced: types.Query[],
 		options?: { allowAll?: boolean },
 	): NativeQueryCompileResult | undefined {
-		if (!this.planner) {
-			return;
-		}
 		const compiled = compileNativeQueries(queryCoerced);
 		if (!compiled || (compiled.spec.op === "all" && !options?.allowAll)) {
 			return;
+		}
+		return compiled;
+	}
+
+	private requireNativePlan(
+		queryCoerced: types.Query[],
+		options?: { allowAll?: boolean },
+	): NativeQueryCompileResult {
+		const compiled = this.getNativePlan(queryCoerced, options);
+		if (!compiled) {
+			throw new Error(
+				`Query is not supported by the native Rust indexer: ${describeNativeQueries(queryCoerced)}`,
+			);
 		}
 		return compiled;
 	}
@@ -1198,21 +879,21 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		};
 	}
 
-	private countNativeExact(queryCoerced: types.Query[]): number | undefined {
-		const compiled = this.getNativePlan(queryCoerced);
-		if (!compiled?.exact) {
-			return;
+	private requireNativePagePlan(
+		queryCoerced: types.Query[],
+		query?: types.IterateOptions,
+	): NativeCandidatePage {
+		const page = this.getNativePagePlan(queryCoerced, query);
+		if (!page) {
+			throw new Error(
+				`Query is not supported by the native Rust indexer: ${describeNativeQueries(queryCoerced)}`,
+			);
 		}
-		return this.countNativePlan(compiled);
+		return page;
 	}
 
-	private countNativePlan(
-		compiled: NativeQueryCompileResult,
-	): number | undefined {
-		if (!this.planner) {
-			return;
-		}
-		return this.planner.count(encodeNativeQuerySpec(compiled.spec));
+	private countNativePlan(compiled: NativeQueryCompileResult): number {
+		return this.getPlanner().count(encodeNativeQuerySpec(compiled.spec));
 	}
 
 	private getNativeCandidatesForPlan(
@@ -1223,8 +904,13 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		const sortBytes = encodeNativeSort(page.sort);
 		const storeKeys =
 			page.limit == null
-				? this.planner!.query(queryBytes, sortBytes)
-				: this.planner!.query_page(queryBytes, sortBytes, page.offset, page.limit);
+				? this.getPlanner().query(queryBytes, sortBytes)
+				: this.getPlanner().query_page(
+						queryBytes,
+						sortBytes,
+						page.offset,
+						page.limit,
+					);
 		for (const storeKey of storeKeys) {
 			const value = this.getStore().get(storeKey);
 			if (value) {
@@ -1235,7 +921,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	private indexNativeDocument(storeKey: string, value: T): void {
-		this.planner?.put_document(
+		this.getPlanner().put_document(
 			storeKey,
 			encodeNativeFieldFacts(collectNativeFieldFacts(value)),
 		);
@@ -1254,6 +940,13 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			throw new Error("Index has not been initialized");
 		}
 		return this.store;
+	}
+
+	private getPlanner(): NativeQueryPlanner {
+		if (!this.planner) {
+			throw new Error("Index has not been initialized");
+		}
+		return this.planner;
 	}
 
 	private async persistSnapshot(): Promise<void> {

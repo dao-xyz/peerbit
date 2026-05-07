@@ -3,7 +3,7 @@ use indexmap::IndexMap;
 use js_sys::Array;
 use planner::{
     Compare, DocumentFields, FieldValue, NativeQueryIndex, Query, SortDirection, SortField,
-    StringMatchMethod,
+    StringMatchMethod, SumResult,
 };
 use wasm_bindgen::prelude::*;
 
@@ -127,12 +127,43 @@ impl NativeQueryPlanner {
         let query = decode_query(&query_bytes)?;
         Ok(self.index.count(&query) as usize)
     }
+
+    pub fn sum(&self, query_bytes: Vec<u8>, field: String) -> Result<Array, JsValue> {
+        let query = decode_query(&query_bytes)?;
+        let sum = self.index.sum(&query, &field).map_err(js_error)?;
+        Ok(sum_to_js(sum))
+    }
+
+    pub fn delete_matching(&mut self, query_bytes: Vec<u8>) -> Result<Array, JsValue> {
+        let query = decode_query(&query_bytes)?;
+        let ids = self.index.delete_matching(&query);
+        Ok(ids_to_js(ids))
+    }
 }
 
 fn ids_to_js(ids: Vec<String>) -> Array {
     let out = Array::new();
     for id in ids {
         out.push(&JsValue::from_str(&id));
+    }
+    out
+}
+
+fn sum_to_js(sum: SumResult) -> Array {
+    let out = Array::new();
+    match sum {
+        SumResult::None => {
+            out.push(&JsValue::from_str("none"));
+            out.push(&JsValue::from_str("0"));
+        }
+        SumResult::I64(value) => {
+            out.push(&JsValue::from_str("i64"));
+            out.push(&JsValue::from_str(&value.to_string()));
+        }
+        SumResult::U64(value) => {
+            out.push(&JsValue::from_str("u64"));
+            out.push(&JsValue::from_str(&value.to_string()));
+        }
     }
     out
 }

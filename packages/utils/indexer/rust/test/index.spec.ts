@@ -3,6 +3,7 @@ import {
 	And,
 	Compare,
 	IntegerCompare,
+	Nested,
 	Or,
 	Sort,
 	SortDirection,
@@ -44,6 +45,49 @@ class BridgeArrayDocument {
 	}
 }
 
+class BridgeMetricDocument {
+	@id({ type: "string" })
+	id: string;
+
+	@field({ type: "string" })
+	tag: string;
+
+	@field({ type: "u32" })
+	value: number;
+
+	constructor(id: string, tag: string, value: number) {
+		this.id = id;
+		this.tag = tag;
+		this.value = value;
+	}
+}
+
+class BridgeNestedItem {
+	@field({ type: "string" })
+	tag: string;
+
+	@field({ type: "u32" })
+	score: number;
+
+	constructor(tag: string, score: number) {
+		this.tag = tag;
+		this.score = score;
+	}
+}
+
+class BridgeNestedDocument {
+	@id({ type: "string" })
+	id: string;
+
+	@field({ type: vec(BridgeNestedItem) })
+	items: BridgeNestedItem[];
+
+	constructor(id: string, items: BridgeNestedItem[]) {
+		this.id = id;
+		this.items = items;
+	}
+}
+
 describe("all", () => {
 	tests(create, "persist", {
 		shapingSupported: false,
@@ -58,6 +102,21 @@ describe("all", () => {
 });
 
 describe("native planner bridge", () => {
+	it("does not expose the previous typescript query fallback evaluator", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocument });
+
+		expect((index as unknown as Record<string, unknown>).handleFieldQuery).to.equal(
+			undefined,
+		);
+		expect((index as unknown as Record<string, unknown>).handleQueryObject).to.equal(
+			undefined,
+		);
+
+		await indices.drop();
+	});
+
 	it("evaluates exact and contains predicates in native rust", async () => {
 		const indices = create();
 		await indices.start();
@@ -80,6 +139,61 @@ describe("native planner bridge", () => {
 			.all();
 
 		expect(results.map((result) => result.value.id)).to.deep.equal(["a"]);
+		await indices.drop();
+	});
+
+	it("evaluates explicit nested queries in native rust", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeNestedDocument });
+		await index.put(
+			new BridgeNestedDocument("a", [
+				new BridgeNestedItem("left", 1),
+				new BridgeNestedItem("right", 3),
+			]),
+		);
+		await index.put(
+			new BridgeNestedDocument("b", [new BridgeNestedItem("left", 4)]),
+		);
+		await index.put(
+			new BridgeNestedDocument("c", [new BridgeNestedItem("right", 5)]),
+		);
+
+		const query = new Nested({
+			path: "items",
+			query: [
+				new StringMatch({ key: "tag", value: "left" }),
+				new IntegerCompare({
+					key: "score",
+					compare: Compare.Greater,
+					value: 2,
+				}),
+			],
+		});
+		const results = await index.iterate({ query }).all();
+
+		expect(results.map((result) => result.value.id)).to.deep.equal(["b"]);
+		expect(await index.count({ query })).to.equal(1);
+		await indices.drop();
+	});
+
+	it("sums and deletes through native rust queries", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeMetricDocument });
+		await index.put(new BridgeMetricDocument("a", "peerbit", 1));
+		await index.put(new BridgeMetricDocument("b", "other", 2));
+		await index.put(new BridgeMetricDocument("c", "peerbit", 3));
+
+		const query = new StringMatch({ key: "tag", value: "peerbit" });
+		expect(await index.sum({ key: "value" })).to.equal(6);
+		expect(await index.sum({ key: "value", query })).to.equal(4);
+
+		const deleted = await index.del({ query });
+		expect(deleted.map((id) => id.primitive)).to.deep.equal(["a", "c"]);
+		expect(await index.count()).to.equal(1);
+		expect(await index.sum({ key: "value" })).to.equal(2);
+
 		await indices.drop();
 	});
 
