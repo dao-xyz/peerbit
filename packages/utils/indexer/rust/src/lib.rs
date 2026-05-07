@@ -44,16 +44,8 @@ impl NativeIndexStore {
     }
 
     pub fn get_many(&self, keys: Array) -> Array {
-        let entries = Array::new();
-        for key in keys.iter() {
-            let Some(key) = key.as_string() else {
-                continue;
-            };
-            if let Some(entry) = self.entries.get(&key) {
-                entries.push(&entry_to_js(entry));
-            }
-        }
-        entries
+        let keys: Vec<_> = keys.iter().filter_map(|key| key.as_string()).collect();
+        self.entries_for_keys(&keys)
     }
 
     pub fn delete(&mut self, key: &str) -> bool {
@@ -61,16 +53,8 @@ impl NativeIndexStore {
     }
 
     pub fn delete_many(&mut self, keys: Array) -> Array {
-        let entries = Array::new();
-        for key in keys.iter() {
-            let Some(key) = key.as_string() else {
-                continue;
-            };
-            if let Some(entry) = self.entries.shift_remove(&key) {
-                entries.push(&entry_to_js(&entry));
-            }
-        }
-        entries
+        let keys: Vec<_> = keys.iter().filter_map(|key| key.as_string()).collect();
+        self.delete_keys(&keys)
     }
 
     pub fn clear(&mut self) {
@@ -85,6 +69,28 @@ impl NativeIndexStore {
         let entries = Array::new();
         for entry in self.entries.values() {
             entries.push(&entry_to_js(entry));
+        }
+        entries
+    }
+}
+
+impl NativeIndexStore {
+    fn entries_for_keys(&self, keys: &[String]) -> Array {
+        let entries = Array::new();
+        for key in keys {
+            if let Some(entry) = self.entries.get(key) {
+                entries.push(&entry_to_js(entry));
+            }
+        }
+        entries
+    }
+
+    fn delete_keys(&mut self, keys: &[String]) -> Array {
+        let entries = Array::new();
+        for key in keys {
+            if let Some(entry) = self.entries.shift_remove(key) {
+                entries.push(&entry_to_js(&entry));
+            }
         }
         entries
     }
@@ -164,6 +170,90 @@ impl NativeQueryPlanner {
         let query = decode_query(&query_bytes)?;
         let ids = self.index.delete_matching(&query);
         Ok(ids_to_js(ids))
+    }
+}
+
+#[wasm_bindgen]
+pub struct NativeRustIndex {
+    store: NativeIndexStore,
+    planner: NativeQueryPlanner,
+}
+
+#[wasm_bindgen]
+impl NativeRustIndex {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> NativeRustIndex {
+        NativeRustIndex {
+            store: NativeIndexStore::new(),
+            planner: NativeQueryPlanner::new(),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.store.clear();
+        self.planner.clear();
+    }
+
+    pub fn len(&self) -> usize {
+        self.store.len()
+    }
+
+    pub fn put(
+        &mut self,
+        key: String,
+        id: JsValue,
+        value: JsValue,
+        fields_bytes: Vec<u8>,
+    ) -> Result<(), JsValue> {
+        let fields = decode_document_fields(&fields_bytes)?;
+        self.store.put(key.clone(), id, value);
+        self.planner.index.put(key, fields);
+        Ok(())
+    }
+
+    pub fn get(&self, key: &str) -> JsValue {
+        self.store.get(key)
+    }
+
+    pub fn entries(&self) -> Array {
+        self.store.entries()
+    }
+
+    pub fn query(&self, query_bytes: Vec<u8>, sort_bytes: Vec<u8>) -> Result<Array, JsValue> {
+        let query = decode_query(&query_bytes)?;
+        let sort = decode_sort(&sort_bytes)?;
+        let keys = self.planner.index.search(&query, &sort, None);
+        Ok(self.store.entries_for_keys(&keys))
+    }
+
+    pub fn query_page(
+        &self,
+        query_bytes: Vec<u8>,
+        sort_bytes: Vec<u8>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Array, JsValue> {
+        let query = decode_query(&query_bytes)?;
+        let sort = decode_sort(&sort_bytes)?;
+        let keys = self
+            .planner
+            .index
+            .search_page(&query, &sort, offset, Some(limit));
+        Ok(self.store.entries_for_keys(&keys))
+    }
+
+    pub fn count(&self, query_bytes: Vec<u8>) -> Result<usize, JsValue> {
+        self.planner.count(query_bytes)
+    }
+
+    pub fn sum(&self, query_bytes: Vec<u8>, field: String) -> Result<Array, JsValue> {
+        self.planner.sum(query_bytes, field)
+    }
+
+    pub fn delete_matching(&mut self, query_bytes: Vec<u8>) -> Result<Array, JsValue> {
+        let query = decode_query(&query_bytes)?;
+        let keys = self.planner.index.delete_matching(&query);
+        Ok(self.store.delete_keys(&keys))
     }
 }
 

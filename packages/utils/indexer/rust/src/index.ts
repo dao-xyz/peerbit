@@ -2,39 +2,36 @@ import { BinaryWriter, deserialize, serialize } from "@dao-xyz/borsh";
 import * as types from "@peerbit/indexer-interface";
 import { createSnapshotFile, type SnapshotFile } from "./persistence.js";
 
-type NativeIndexStore<T extends Record<string, any>> = {
-	put: (key: string, id: types.IdKey, value: T) => void;
+type NativeRustIndex<T extends Record<string, any>> = {
+	put: (
+		key: string,
+		id: types.IdKey,
+		value: T,
+		fields: Uint8Array,
+	) => void;
 	get: (key: string) => [types.IdKey, T] | undefined;
-	get_many: (keys: string[]) => Array<[types.IdKey, T]>;
-	delete: (key: string) => boolean;
-	delete_many: (keys: string[]) => Array<[types.IdKey, T]>;
 	clear: () => void;
 	len: () => number;
 	entries: () => Array<[types.IdKey, T]>;
-};
-
-type NativeQueryPlanner = {
-	put_document: (id: string, fields: Uint8Array) => void;
-	delete_document: (id: string) => void;
-	clear: () => void;
-	len: () => number;
-	query: (query: Uint8Array, sort: Uint8Array) => string[];
+	query: (
+		query: Uint8Array,
+		sort: Uint8Array,
+	) => Array<[types.IdKey, T]>;
 	query_page: (
 		query: Uint8Array,
 		sort: Uint8Array,
 		offset: number,
 		limit: number,
-	) => string[];
+	) => Array<[types.IdKey, T]>;
 	count: (query: Uint8Array) => number;
 	sum: (query: Uint8Array, field: string) => [NativeSumKind, string];
-	delete_matching: (query: Uint8Array) => string[];
+	delete_matching: (query: Uint8Array) => Array<[types.IdKey, T]>;
 };
 
 type WasmModule = {
 	default: (input?: unknown) => Promise<unknown>;
 	initSync: (input?: unknown) => unknown;
-	NativeIndexStore: new <T extends Record<string, any>>() => NativeIndexStore<T>;
-	NativeQueryPlanner: new () => NativeQueryPlanner;
+	NativeRustIndex: new <T extends Record<string, any>>() => NativeRustIndex<T>;
 };
 
 type NativeValue =
@@ -640,8 +637,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	implements types.Index<T, NestedType>
 {
 	private snapshotFile?: SnapshotFile;
-	private store?: NativeIndexStore<T>;
-	private planner?: NativeQueryPlanner;
+	private native?: NativeRustIndex<T>;
 	private indexByArr!: string[];
 	private properties!: types.IndexEngineInitProperties<T, NestedType>;
 	private persistQueue: Promise<void> = Promise.resolve();
@@ -672,8 +668,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}
 
 		const wasm = await loadWasm();
-		this.store = new wasm.NativeIndexStore<T>();
-		this.planner = new wasm.NativeQueryPlanner();
+		this.native = new wasm.NativeRustIndex<T>();
 		this.snapshotFile = await createSnapshotFile(
 			this.directory,
 			this.path,
@@ -683,8 +678,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			for (const value of await this.snapshotFile.read(properties.schema)) {
 				const id = types.toId(types.extractFieldValue(value, this.indexByArr));
 				const storeKey = keyToStoreKey(id);
-				this.store.put(storeKey, id, value);
-				this.indexNativeDocument(storeKey, value);
+				this.putNativeDocument(storeKey, id, value);
 			}
 		}
 		return this;
@@ -694,7 +688,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		id: types.IdKey,
 		_options?: { shape: types.Shape },
 	): types.IndexedResult<T> | undefined {
-		const value = this.getStore().get(keyToStoreKey(id));
+		const value = this.getNative().get(keyToStoreKey(id));
 		if (!value) {
 			return;
 		}
@@ -710,8 +704,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		_options?: { replace?: boolean },
 	): Promise<void> {
 		const storeKey = keyToStoreKey(id);
-		this.getStore().put(storeKey, id, value);
-		this.indexNativeDocument(storeKey, value);
+		this.putNativeDocument(storeKey, id, value);
 		this.markDirty();
 	}
 
@@ -719,11 +712,8 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		const compiled = this.requireNativePlan(types.toQuery(query.query), {
 			allowAll: true,
 		});
-		const storeKeys = this.getPlanner().delete_matching(
-			encodeNativeQuerySpec(compiled.spec),
-		);
-		const deleted = this.getStore()
-			.delete_many(storeKeys)
+		const deleted = this.getNative()
+			.delete_matching(encodeNativeQuerySpec(compiled.spec))
 			.map((entry) => entry[0]);
 		if (deleted.length > 0) {
 			this.markDirty();
@@ -732,7 +722,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	getSize(): number {
-		return this.getStore().len();
+		return this.getNative().len();
 	}
 
 	persisted(): boolean {
@@ -752,8 +742,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	async drop(): Promise<void> {
-		this.store?.clear();
-		this.planner?.clear();
+		this.native?.clear();
 		this.persistedVersion = this.dirtyVersion;
 		await this.snapshotFile?.remove();
 	}
@@ -764,7 +753,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		});
 		const field = nativeFieldKey(Array.isArray(query.key) ? query.key : [query.key]);
 		return decodeNativeSum(
-			this.getPlanner().sum(encodeNativeQuerySpec(compiled.spec), field),
+			this.getNative().sum(encodeNativeQuerySpec(compiled.spec), field),
 		);
 	}
 
@@ -888,7 +877,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	private countNativePlan(compiled: NativeQueryCompileResult): number {
-		return this.getPlanner().count(encodeNativeQuerySpec(compiled.spec));
+		return this.getNative().count(encodeNativeQuerySpec(compiled.spec));
 	}
 
 	private getNativeCandidatesForPlan(
@@ -896,53 +885,46 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	): types.IndexedValue<T>[] {
 		const queryBytes = encodeNativeQuerySpec(page.compiled.spec);
 		const sortBytes = encodeNativeSort(page.sort);
-		const storeKeys =
+		const results =
 			page.limit == null
-				? this.getPlanner().query(queryBytes, sortBytes)
-				: this.getPlanner().query_page(
+				? this.getNative().query(queryBytes, sortBytes)
+				: this.getNative().query_page(
 						queryBytes,
 						sortBytes,
 						page.offset,
 						page.limit,
 					);
-		return this.getStore()
-			.get_many(storeKeys)
-			.map((value) => ({ id: value[0], value: value[1] }));
+		return results.map((value) => ({ id: value[0], value: value[1] }));
 	}
 
-	private indexNativeDocument(storeKey: string, value: T): void {
-		this.getPlanner().put_document(
+	private putNativeDocument(storeKey: string, id: types.IdKey, value: T): void {
+		this.getNative().put(
 			storeKey,
+			id,
+			value,
 			encodeNativeFieldFacts(collectNativeFieldFacts(value)),
 		);
 	}
 
 	private snapshot(): types.IndexedValue<T>[] {
-		return this.getStore()
+		return this.getNative()
 			.entries()
 			.map((entry) => {
 				return { id: entry[0], value: entry[1] };
 			});
 	}
 
-	private getStore(): NativeIndexStore<T> {
-		if (!this.store) {
+	private getNative(): NativeRustIndex<T> {
+		if (!this.native) {
 			throw new Error("Index has not been initialized");
 		}
-		return this.store;
-	}
-
-	private getPlanner(): NativeQueryPlanner {
-		if (!this.planner) {
-			throw new Error("Index has not been initialized");
-		}
-		return this.planner;
+		return this.native;
 	}
 
 	private async persistSnapshot(): Promise<void> {
 		if (
 			!this.snapshotFile ||
-			!this.store ||
+			!this.native ||
 			this.persistedVersion === this.dirtyVersion
 		) {
 			return;
