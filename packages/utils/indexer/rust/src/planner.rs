@@ -286,16 +286,45 @@ impl NativeQueryIndex {
         }
     }
 
+    pub fn count(&self, query: &Query) -> u64 {
+        self.candidates(query).len()
+    }
+
     pub fn search(&self, query: &Query, sort: &[SortField], limit: Option<usize>) -> Vec<String> {
-        let mut doc_ids: Vec<_> = self.candidates(query).iter().collect();
-        if !sort.is_empty() {
-            doc_ids.sort_by(|left, right| self.compare_docs(*left, *right, sort));
+        self.search_page(query, sort, 0, limit)
+    }
+
+    pub fn search_page(
+        &self,
+        query: &Query,
+        sort: &[SortField],
+        offset: usize,
+        limit: Option<usize>,
+    ) -> Vec<String> {
+        if sort.is_empty() {
+            let candidates = self.candidates(query);
+            let iter = candidates.iter().skip(offset);
+            if let Some(limit) = limit {
+                return iter
+                    .take(limit)
+                    .filter_map(|doc_id| self.internal_to_external.get(&doc_id).cloned())
+                    .collect();
+            }
+            return iter
+                .filter_map(|doc_id| self.internal_to_external.get(&doc_id).cloned())
+                .collect();
         }
+
+        let mut doc_ids: Vec<_> = self.candidates(query).iter().collect();
+        doc_ids.sort_by(|left, right| self.compare_docs(*left, *right, sort));
+        let doc_ids = doc_ids.into_iter().skip(offset);
         if let Some(limit) = limit {
-            doc_ids.truncate(limit);
+            return doc_ids
+                .take(limit)
+                .filter_map(|doc_id| self.internal_to_external.get(&doc_id).cloned())
+                .collect();
         }
         doc_ids
-            .into_iter()
             .filter_map(|doc_id| self.internal_to_external.get(&doc_id).cloned())
             .collect()
     }
@@ -723,6 +752,32 @@ mod tests {
         );
 
         assert_eq!(results, vec!["c", "d"]);
+    }
+
+    #[test]
+    fn counts_and_pages_candidates_without_materializing_all_ids() {
+        let mut index = NativeQueryIndex::new();
+        for i in 0..10_u64 {
+            index.put(
+                format!("doc-{i}"),
+                DocumentFields::new().with_scalar("even", i % 2 == 0),
+            );
+        }
+
+        let query = Query::Exact {
+            field: "even".to_string(),
+            value: FieldValue::Bool(true),
+        };
+
+        assert_eq!(index.count(&query), 5);
+        assert_eq!(
+            index.search_page(&query, &[], 1, Some(2)),
+            vec!["doc-2", "doc-4"]
+        );
+        assert_eq!(
+            index.search_page(&query, &[], 5, Some(2)),
+            Vec::<String>::new()
+        );
     }
 
     #[test]

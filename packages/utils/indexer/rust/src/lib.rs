@@ -106,12 +106,34 @@ impl NativeQueryPlanner {
         let query = decode_query(&query_bytes)?;
         let sort = decode_sort(&sort_bytes)?;
         let ids = self.index.search(&query, &sort, None);
-        let out = Array::new();
-        for id in ids {
-            out.push(&JsValue::from_str(&id));
-        }
-        Ok(out)
+        Ok(ids_to_js(ids))
     }
+
+    pub fn query_page(
+        &self,
+        query_bytes: Vec<u8>,
+        sort_bytes: Vec<u8>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Array, JsValue> {
+        let query = decode_query(&query_bytes)?;
+        let sort = decode_sort(&sort_bytes)?;
+        let ids = self.index.search_page(&query, &sort, offset, Some(limit));
+        Ok(ids_to_js(ids))
+    }
+
+    pub fn count(&self, query_bytes: Vec<u8>) -> Result<usize, JsValue> {
+        let query = decode_query(&query_bytes)?;
+        Ok(self.index.count(&query) as usize)
+    }
+}
+
+fn ids_to_js(ids: Vec<String>) -> Array {
+    let out = Array::new();
+    for id in ids {
+        out.push(&JsValue::from_str(&id));
+    }
+    out
 }
 
 const BRIDGE_VERSION: u8 = 1;

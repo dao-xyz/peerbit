@@ -22,6 +22,13 @@ type NativeQueryPlanner = {
 	clear: () => void;
 	len: () => number;
 	query: (query: Uint8Array, sort: Uint8Array) => string[];
+	query_page: (
+		query: Uint8Array,
+		sort: Uint8Array,
+		offset: number,
+		limit: number,
+	) => string[];
+	count: (query: Uint8Array) => number;
 };
 
 type WasmModule = {
@@ -58,6 +65,12 @@ type NativeQuerySpec =
 type NativeQueryCompileResult = {
 	spec: NativeQuerySpec;
 	exact: boolean;
+};
+
+type NativeCandidatePage = {
+	compiled: NativeQueryCompileResult;
+	offset: number;
+	limit?: number;
 };
 
 const BRIDGE_VERSION = 1;
@@ -470,6 +483,26 @@ const compileNativeQuery = (
 	return;
 };
 
+const canSkipResidualForNativeQuery = (queryCoerced: types.Query[]): boolean => {
+	if (queryCoerced.length !== 1) {
+		return false;
+	}
+	const query = queryCoerced[0];
+	if (query instanceof types.BoolQuery || query instanceof types.ByteMatchQuery) {
+		return true;
+	}
+	if (query instanceof types.StringMatch) {
+		return (
+			query.method === types.StringMatchMethod.exact &&
+			query.caseInsensitive === false
+		);
+	}
+	if (query instanceof types.IntegerCompare) {
+		return nativeIntegerValue(query.value.value) != null;
+	}
+	return false;
+};
+
 const getBatchFromResults = <T extends Record<string, any>>(
 	results: types.IndexedValue<T>[],
 	wantedSize: number,
@@ -636,6 +669,14 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	async count(query?: types.CountOptions): Promise<number> {
+		const queryCoerced = types.toQuery(query?.query);
+		if (queryCoerced.length === 0) {
+			return this.getSize();
+		}
+		const nativeCount = this.countNativeExact(queryCoerced);
+		if (nativeCount != null) {
+			return nativeCount;
+		}
 		return (await this.queryAll(query)).length;
 	}
 
@@ -692,6 +733,56 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		query?: types.IterateOptions,
 		properties?: { shape?: S; reference?: boolean },
 	): types.IndexIterator<T, S> {
+		const nativePagePlan = this.getNativePagePlan(types.toQuery(query?.query), query);
+		if (nativePagePlan) {
+			let done: boolean | undefined = undefined;
+			let offset = 0;
+			let total: number | undefined;
+			const getTotal = () =>
+				(total ??= this.countNativePlan(nativePagePlan.compiled) ?? 0);
+			const clonePage = (batch: types.IndexedValue<T>[]) =>
+				(properties?.reference
+					? batch
+					: cloneResults(batch, this.properties.schema)) as types.IndexedResults<
+					types.ReturnTypeFromShape<T, S>
+				>;
+
+			const fetch = async (
+				n: number,
+			): Promise<types.IndexedResults<types.ReturnTypeFromShape<T, S>>> => {
+				if (done) {
+					return [];
+				}
+				const remaining = getTotal() - offset;
+				const wanted = Math.max(
+					0,
+					Math.min(Number.isFinite(n) ? Math.floor(n) : remaining, remaining),
+				);
+				if (wanted === 0) {
+					done = remaining === 0;
+					return [];
+				}
+				const batch = this.getNativeCandidatesForPlan({
+					compiled: nativePagePlan.compiled,
+					offset,
+					limit: wanted,
+				});
+				offset += batch.length;
+				done = offset >= getTotal();
+				return clonePage(batch);
+			};
+
+			return {
+				all: async () => fetch(Infinity),
+				next: (n: number) => fetch(n),
+				done: () => done,
+				pending: async () => Math.max(0, getTotal() - offset),
+				close: () => {
+					done = true;
+				},
+			};
+		}
+
 		let done: boolean | undefined = undefined;
 		let queue:
 			| {
@@ -997,6 +1088,16 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	private getNativeCandidates(
 		queryCoerced: types.Query[],
 	): types.IndexedValue<T>[] | undefined {
+		const compiled = this.getNativePlan(queryCoerced);
+		if (!compiled) {
+			return;
+		}
+		return this.getNativeCandidatesForPlan({ compiled, offset: 0 });
+	}
+
+	private getNativePlan(
+		queryCoerced: types.Query[],
+	): NativeQueryCompileResult | undefined {
 		if (!this.planner || queryCoerced.length === 0) {
 			return;
 		}
@@ -1004,12 +1105,51 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		if (compiled.spec.op === "all") {
 			return;
 		}
+		return compiled;
+	}
 
+	private getNativePagePlan(
+		queryCoerced: types.Query[],
+		query?: types.IterateOptions,
+	): NativeCandidatePage | undefined {
+		if (query?.sort) {
+			return;
+		}
+		const compiled = this.getNativePlan(queryCoerced);
+		if (!compiled?.exact || !canSkipResidualForNativeQuery(queryCoerced)) {
+			return;
+		}
+		return { compiled, offset: 0 };
+	}
+
+	private countNativeExact(queryCoerced: types.Query[]): number | undefined {
+		const compiled = this.getNativePlan(queryCoerced);
+		if (!compiled?.exact || !canSkipResidualForNativeQuery(queryCoerced)) {
+			return;
+		}
+		return this.countNativePlan(compiled);
+	}
+
+	private countNativePlan(
+		compiled: NativeQueryCompileResult,
+	): number | undefined {
+		if (!this.planner) {
+			return;
+		}
+		return this.planner.count(encodeNativeQuerySpec(compiled.spec));
+	}
+
+	private getNativeCandidatesForPlan(
+		page: NativeCandidatePage,
+	): types.IndexedValue<T>[] {
 		const results: types.IndexedValue<T>[] = [];
-		for (const storeKey of this.planner.query(
-			encodeNativeQuerySpec(compiled.spec),
-			encodeNativeSort(),
-		)) {
+		const queryBytes = encodeNativeQuerySpec(page.compiled.spec);
+		const sortBytes = encodeNativeSort();
+		const storeKeys =
+			page.limit == null
+				? this.planner!.query(queryBytes, sortBytes)
+				: this.planner!.query_page(queryBytes, sortBytes, page.offset, page.limit);
+		for (const storeKey of storeKeys) {
 			const value = this.getStore().get(storeKey);
 			if (value) {
 				results.push({ id: value[0], value: value[1] });

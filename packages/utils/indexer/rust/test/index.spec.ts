@@ -96,4 +96,35 @@ describe("native planner bridge", () => {
 		]);
 		await indices.drop();
 	});
+
+	it("pages exact native candidates without materializing the full result", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocument });
+		await index.put(new BridgeDocument("a", "peerbit", "native index"));
+		await index.put(new BridgeDocument("b", "peerbit", "native bridge"));
+		await index.put(new BridgeDocument("c", "other", "typescript fallback"));
+		await index.put(new BridgeDocument("d", "peerbit", "native count"));
+		await index.put(new BridgeDocument("e", "peerbit", "native page"));
+
+		const query = new StringMatch({ key: "tag", value: "peerbit" });
+		expect(await index.count({ query })).to.equal(4);
+
+		const iterator = index.iterate({ query });
+		expect(await iterator.pending()).to.equal(4);
+		expect((await iterator.next(2)).map((result) => result.value.id)).to.deep.equal([
+			"a",
+			"b",
+		]);
+		expect(iterator.done()).to.equal(false);
+		expect(await iterator.pending()).to.equal(2);
+		expect((await iterator.next(2)).map((result) => result.value.id)).to.deep.equal([
+			"d",
+			"e",
+		]);
+		expect(iterator.done()).to.equal(true);
+		expect(await iterator.pending()).to.equal(0);
+
+		await indices.drop();
+	});
 });
