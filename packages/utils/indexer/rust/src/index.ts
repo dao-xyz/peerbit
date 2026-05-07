@@ -210,14 +210,30 @@ type NativeFieldDictionary = {
 	id: (field: string) => number;
 };
 
+const nativeFieldHash = (field: string): number => {
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < field.length; i++) {
+		hash = Math.imul(hash ^ field.charCodeAt(i), 0x01000193);
+	}
+	return hash >>> 0;
+};
+
 const createNativeFieldDictionary = (): NativeFieldDictionary => {
 	const ids = new Map<string, number>();
+	const fields = new Map<number, string>();
 	return {
 		id: (field: string) => {
 			let id = ids.get(field);
 			if (id == null) {
-				id = ids.size;
+				id = nativeFieldHash(field);
+				const existing = fields.get(id);
+				if (existing != null && existing !== field) {
+					throw new Error(
+						`Native Rust indexer field id collision between ${existing} and ${field}`,
+					);
+				}
 				ids.set(field, id);
+				fields.set(id, field);
 			}
 			return id;
 		},
