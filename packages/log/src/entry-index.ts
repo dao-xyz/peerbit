@@ -64,8 +64,27 @@ export type NativeLogGraph = {
 	clear: () => void;
 	heads: (gid?: string) => string[];
 	headEntries: (gid?: string) => SortableEntry[];
+	joinHeadEntries: (gid?: string) => NativeLogJoinEntry[];
 	countHasNext: (next: string, excludeHash?: string) => number;
 	shadowedGids: (gid: string, next: string[], excludeHash?: string) => string[];
+	planJoin: (
+		hash: string,
+		next: string[],
+		type: number,
+		reset?: boolean,
+	) => JoinPlan;
+};
+
+export type JoinPlan = {
+	skip: boolean;
+	missingParents: string[];
+};
+
+export type NativeLogJoinEntry = SortableEntry & {
+	meta: SortableEntry["meta"] & {
+		type: EntryType;
+		next: string[];
+	};
 };
 
 type ResolveFullyOptions =
@@ -260,6 +279,21 @@ export class EntryIndex<T> {
 			return undefined;
 		}
 		return this.properties.nativeGraph.graph.headEntries(gid);
+	}
+
+	getJoinHeads(gid?: string): Promise<NativeLogJoinEntry[]> {
+		if (this.properties.nativeGraph?.useHeads) {
+			return Promise.resolve(
+				this.properties.nativeGraph.graph.joinHeadEntries(gid),
+			);
+		}
+		return this.getHeads(gid, {
+			type: "shape",
+			shape: {
+				hash: true,
+				meta: { type: true, next: true, gid: true, clock: true },
+			},
+		}).all() as Promise<NativeLogJoinEntry[]>;
 	}
 
 	getHasNext<R extends MaybeResolveOptions>(
@@ -512,6 +546,34 @@ export class EntryIndex<T> {
 
 	async getMany(k: string[], options?: ResolveFullyOptions) {
 		return this.resolveMany(k, options);
+	}
+
+	async planJoin(
+		entry: Pick<Entry<T>, "hash" | "meta">,
+		reset?: boolean,
+	): Promise<JoinPlan> {
+		if (this.properties.nativeGraph) {
+			return this.properties.nativeGraph.graph.planJoin(
+				entry.hash,
+				entry.meta.next,
+				entry.meta.type,
+				reset === true,
+			);
+		}
+		if (!reset && (await this.getShallow(entry.hash)) != null) {
+			return { skip: true, missingParents: [] };
+		}
+		if (entry.meta.type === EntryType.CUT) {
+			return { skip: false, missingParents: [] };
+		}
+
+		const missingParents: string[] = [];
+		for (const next of entry.meta.next) {
+			if (reset || (await this.getShallow(next)) == null) {
+				missingParents.push(next);
+			}
+		}
+		return { skip: false, missingParents };
 	}
 
 	async getShallow(k: string) {

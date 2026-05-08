@@ -110,6 +110,52 @@ describe("native graph", () => {
 		}
 	});
 
+	it("plans recursive joins through the native graph", async () => {
+		const source = new Log<Uint8Array>();
+		const target = new Log<Uint8Array>();
+
+		await source.open(store, signKey, { nativeGraph: true });
+		await target.open(store, signKey, { nativeGraph: true });
+
+		const { entry: present } = await source.append(new Uint8Array([1]), {
+			meta: { next: [] },
+		});
+		await target.join([present]);
+
+		const { entry: missing } = await source.append(new Uint8Array([2]), {
+			meta: { next: [] },
+		});
+		const { entry: merge } = await source.append(new Uint8Array([3]), {
+			meta: { next: [present, missing] },
+		});
+
+		const nativeGraph = target.entryIndex.properties.nativeGraph!.graph;
+		const planJoinSpy = sinon.spy(nativeGraph, "planJoin");
+		const getShallowSpy = sinon.spy(target.entryIndex, "getShallow");
+		try {
+			await target.join([merge]);
+
+			expect(planJoinSpy.callCount).greaterThan(0);
+			expect(planJoinSpy.firstCall.args).to.deep.equal([
+				merge.hash,
+				[present.hash, missing.hash],
+				merge.meta.type,
+				false,
+			]);
+			expect(planJoinSpy.firstCall.returnValue).to.deep.equal({
+				skip: false,
+				missingParents: [missing.hash],
+			});
+			expect(getShallowSpy.callCount).equal(0);
+			expect(await target.toArray()).to.have.length(3);
+		} finally {
+			getShallowSpy.restore();
+			planJoinSpy.restore();
+			await source.close();
+			await target.close();
+		}
+	});
+
 	it("keeps gid removal behavior when joins use the native graph mirror", async () => {
 		const source = new Log<Uint8Array>();
 		const target = new Log<Uint8Array>();
