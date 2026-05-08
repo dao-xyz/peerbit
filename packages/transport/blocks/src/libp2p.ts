@@ -130,6 +130,10 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		return this.remoteBlocks.put(bytes);
 	}
 
+	async putMany(blocks: Uint8Array[]): Promise<string[]> {
+		return this.remoteBlocks.putMany(blocks);
+	}
+
 	async has(cid: string) {
 		return this.remoteBlocks.has(cid);
 	}
@@ -140,12 +144,23 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		return this.remoteBlocks.get(cid, options);
 	}
 
+	async getMany(
+		cids: string[],
+		options?: GetOptions | undefined,
+	): Promise<Array<Uint8Array | undefined>> {
+		return this.remoteBlocks.getMany(cids, options);
+	}
+
 	hintProviders(cid: string, providers: string[]) {
 		this.remoteBlocks.hintProviders(cid, providers);
 	}
 
 	async rm(cid: string) {
 		return this.remoteBlocks.rm(cid);
+	}
+
+	async rmMany(cids: string[]) {
+		return this.remoteBlocks.rmMany(cids);
 	}
 
 	async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {

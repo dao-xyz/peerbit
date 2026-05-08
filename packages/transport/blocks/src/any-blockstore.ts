@@ -2,6 +2,7 @@ import { createStore } from "@peerbit/any-store";
 import { type AnyStore } from "@peerbit/any-store-interface";
 import {
 	type Blocks,
+	type GetOptions,
 	calculateRawCid,
 	cidifyString,
 	codecCodes,
@@ -25,6 +26,27 @@ export class AnyBlockStore implements Blocks {
 		this._store = store;
 	}
 
+	private async decodeStoredBytes(
+		cid: string,
+		bytes: Uint8Array,
+		options?: { hasher?: any },
+	): Promise<Uint8Array> {
+		const cidObject = cidifyString(cid);
+		if (
+			cidObject.code === raw.code &&
+			(options?.hasher == null || options.hasher === defaultHasher)
+		) {
+			return bytes;
+		}
+		const codec = (codecCodes as any)[cidObject.code];
+		const block = await decode({
+			bytes,
+			codec,
+			hasher: options?.hasher || defaultHasher,
+		});
+		return (block as Block<Uint8Array, any, any, any>).bytes;
+	}
+
 	async get(
 		cid: string,
 		options?: {
@@ -36,31 +58,48 @@ export class AnyBlockStore implements Blocks {
 			};
 		},
 	): Promise<Uint8Array | undefined> {
-		const cidObject = cidifyString(cid);
 		try {
 			const bytes = await this._store.get(cid);
 			if (!bytes) {
 				return undefined;
 			}
-			if (
-				cidObject.code === raw.code &&
-				(options?.hasher == null || options.hasher === defaultHasher)
-			) {
-				return bytes;
-			}
-			const codec = (codecCodes as any)[cidObject.code];
-			const block = await decode({
-				bytes,
-				codec,
-				hasher: options?.hasher || defaultHasher,
-			});
-			return (block as Block<Uint8Array, any, any, any>).bytes;
+			return this.decodeStoredBytes(cid, bytes, options);
 		} catch (error: any) {
 			if (
 				typeof error?.code === "string" &&
 				error?.code?.indexOf("LEVEL_NOT_FOUND") !== -1
 			) {
 				return undefined;
+			}
+			throw error;
+		}
+	}
+
+	async getMany(
+		cids: string[],
+		options?: GetOptions & { hasher?: any },
+	): Promise<Array<Uint8Array | undefined>> {
+		const store = this._store as AnyStore & {
+			getMany?: (keys: string[]) => Promise<Array<Uint8Array | undefined>>;
+		};
+		try {
+			if (typeof store.getMany === "function") {
+				const values = await store.getMany(cids);
+				return Promise.all(
+					values.map((bytes, index) =>
+						bytes
+							? this.decodeStoredBytes(cids[index]!, bytes, options)
+							: undefined,
+					),
+				);
+			}
+			return Promise.all(cids.map((cid) => this.get(cid, options as any)));
+		} catch (error: any) {
+			if (
+				typeof error?.code === "string" &&
+				error?.code?.indexOf("LEVEL_NOT_FOUND") !== -1
+			) {
+				return Promise.all(cids.map((cid) => this.get(cid, options as any)));
 			}
 			throw error;
 		}
@@ -127,6 +166,17 @@ export class AnyBlockStore implements Blocks {
 
 	async rm(cid: string): Promise<void> {
 		await this._store.del(cid);
+	}
+
+	async rmMany(cids: string[]): Promise<number> {
+		const store = this._store as AnyStore & {
+			delMany?: (keys: string[]) => Promise<number>;
+		};
+		if (typeof store.delMany === "function") {
+			return store.delMany(cids);
+		}
+		await Promise.all(cids.map((cid) => this._store.del(cid)));
+		return cids.length;
 	}
 
 	async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {
