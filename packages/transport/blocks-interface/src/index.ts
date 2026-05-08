@@ -22,6 +22,9 @@ export interface Blocks extends WaitForPeer {
 	put(
 		data: Uint8Array | { block: Block<any, any, any, any>; cid: string },
 	): MaybePromise<string>;
+	putMany?(
+		data: Array<Uint8Array | { block: Block<any, any, any, any>; cid: string }>,
+	): MaybePromise<string[]>;
 	has(cid: string): MaybePromise<boolean>;
 	get(cid: string, options?: GetOptions): MaybePromise<Uint8Array | undefined>;
 	/**

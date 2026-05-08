@@ -1,5 +1,9 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
-import { type Blocks, type GetOptions } from "@peerbit/blocks-interface";
+import {
+	type Blocks,
+	type GetOptions,
+	calculateRawCid,
+} from "@peerbit/blocks-interface";
 import type { PublicSignKey, SignatureWithKey } from "@peerbit/crypto";
 import type { CryptoKeychain } from "@peerbit/keychain";
 import { LamportClock as Clock } from "./clock.js";
@@ -10,6 +14,9 @@ import type { Payload } from "./payload.js";
 
 export type CanAppend<T> = (canAppend: Entry<T>) => Promise<boolean> | boolean;
 export type ShallowOrFullEntry<T> = ShallowEntry | Entry<T>;
+export type PreparedEntryBlock = Awaited<ReturnType<typeof calculateRawCid>>;
+
+const preparedEntryBlocks = new WeakMap<object, PreparedEntryBlock>();
 
 interface Meta {
 	clock: Clock;
@@ -87,6 +94,26 @@ export abstract class Entry<T> {
 		const bytes = entry.getStorageBytes();
 		entry.size = bytes.length;
 		return store.put(bytes);
+	}
+
+	static async prepareMultihash<T>(entry: Entry<T>): Promise<string> {
+		if (entry.hash) {
+			throw new Error("Expected hash to be missing");
+		}
+
+		const bytes = entry.getStorageBytes();
+		entry.size = bytes.length;
+		const prepared = await calculateRawCid(bytes);
+		preparedEntryBlocks.set(entry, prepared);
+		return prepared.cid;
+	}
+
+	static takePreparedBlock<T>(entry: Entry<T>): PreparedEntryBlock | undefined {
+		const prepared = preparedEntryBlocks.get(entry);
+		if (prepared) {
+			preparedEntryBlocks.delete(entry);
+		}
+		return prepared;
 	}
 
 	static fromMultihash = async <T>(

@@ -10,6 +10,7 @@ import {
 	type DataMessage,
 	type WaitForPeersFn,
 } from "@peerbit/stream-interface";
+import type { Block } from "multiformats/block";
 import { AnyBlockStore } from "./any-blockstore.js";
 import { BlockMessage, RemoteBlocks } from "./remote.js";
 
@@ -126,11 +127,17 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			this.remoteBlocks.onReachable(evt.detail);
 	}
 
-	async put(bytes: Uint8Array): Promise<string> {
+	async put(
+		bytes: Uint8Array | { block: Block<any, any, any, any>; cid: string },
+	): Promise<string> {
 		return this.remoteBlocks.put(bytes);
 	}
 
-	async putMany(blocks: Uint8Array[]): Promise<string[]> {
+	async putMany(
+		blocks: Array<
+			Uint8Array | { block: Block<any, any, any, any>; cid: string }
+		>,
+	): Promise<string[]> {
 		return this.remoteBlocks.putMany(blocks);
 	}
 

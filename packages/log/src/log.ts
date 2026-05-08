@@ -33,7 +33,12 @@ import { ShallowEntry } from "./entry-shallow.js";
 import { EntryType } from "./entry-type.js";
 import { type EncryptionTemplateMaybeEncrypted, EntryV0 } from "./entry-v0.js";
 import { type EntryWithRefs } from "./entry-with-refs.js";
-import { type CanAppend, Entry, type ShallowOrFullEntry } from "./entry.js";
+import {
+	type CanAppend,
+	Entry,
+	type PreparedEntryBlock,
+	type ShallowOrFullEntry,
+} from "./entry.js";
 import { findUniques } from "./find-uniques.js";
 import * as LogError from "./log-errors.js";
 import * as Sorting from "./log-sorting.js";
@@ -41,6 +46,13 @@ import type { Payload } from "./payload.js";
 import { Trim, type TrimOptions } from "./trim.js";
 
 const { LastWriteWins } = Sorting;
+
+type BlocksWithPutMany = Blocks & {
+	putMany?: (blocks: PreparedEntryBlock[]) => Promise<string[]> | string[];
+};
+
+const hasPutMany = (storage: Blocks): storage is BlocksWithPutMany =>
+	typeof (storage as BlocksWithPutMany).putMany === "function";
 
 const getErrorName = (error: unknown) =>
 	typeof (error as { name?: unknown })?.name === "string"
@@ -602,14 +614,20 @@ export class Log<T> {
 			| PendingDelete<T>
 			| { entry: Entry<T>; fn: undefined }
 		)[] = [];
+		const deferBlockStore = hasPutMany(this._storage);
 
 		for (const item of data) {
-			const entry = await this.createAppendEntry(item, options, nexts);
+			const entry = await this.createAppendEntry(item, options, nexts, {
+				deferStore: deferBlockStore,
+			});
 			entries.push(entry);
 			nexts = [entry];
 		}
 
 		await this.joinMissingNexts(entries[0]!, initialNexts);
+		if (deferBlockStore) {
+			await this.putAppendEntryBlocks(entries);
+		}
 		await this.putAppendEntries(entries, options);
 
 		for (const entry of entries) {
@@ -668,6 +686,9 @@ export class Log<T> {
 		data: T,
 		options: AppendOptions<T>,
 		nexts: Sorting.SortableEntry[],
+		storeOptions?: {
+			deferStore?: boolean;
+		},
 	): Promise<Entry<T>> {
 		const clock = new Clock({
 			id: this._identity.publicKey.bytes,
@@ -696,6 +717,7 @@ export class Log<T> {
 					}
 				: undefined,
 			canAppend: options.canAppend || this._canAppend,
+			deferStore: storeOptions?.deferStore,
 		});
 
 		if (!entry.hash) {
@@ -744,7 +766,10 @@ export class Log<T> {
 		});
 	}
 
-	private async putAppendEntries(entries: Entry<T>[], options: AppendOptions<T>) {
+	private async putAppendEntries(
+		entries: Entry<T>[],
+		options: AppendOptions<T>,
+	) {
 		await this.entryIndex.putAppendBatch(entries, {
 			unique: true,
 			deferIndexWrite:
@@ -753,6 +778,27 @@ export class Log<T> {
 					? options.durability === "buffered"
 					: this._appendDurability === "buffered"),
 		});
+	}
+
+	private async putAppendEntryBlocks(entries: Entry<T>[]) {
+		const blocks: PreparedEntryBlock[] = [];
+		for (const entry of entries) {
+			const prepared = Entry.takePreparedBlock(entry);
+			if (!prepared) {
+				throw new Error("Missing prepared entry block");
+			}
+			blocks.push(prepared);
+		}
+
+		const cids = await (this._storage as BlocksWithPutMany).putMany!(blocks);
+		if (cids.length !== blocks.length) {
+			throw new Error("Unexpected block batch result length");
+		}
+		for (let i = 0; i < cids.length; i++) {
+			if (cids[i] !== blocks[i].cid) {
+				throw new Error("Unexpected block batch cid");
+			}
+		}
 	}
 
 	async remove(
