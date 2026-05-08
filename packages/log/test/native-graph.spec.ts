@@ -111,6 +111,53 @@ describe("native graph", () => {
 		}
 	});
 
+	it("serves shaped native graph heads without index reads", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+		const { entry } = await log.append(new Uint8Array([1]), {
+			meta: { next: [], data: new Uint8Array([7, 8]) },
+		});
+
+		const indexGetSpy = sinon.spy(log.entryIndex.properties.index, "get");
+		const indexIterateSpy = sinon.spy(
+			log.entryIndex.properties.index,
+			"iterate",
+		);
+		const nativeGraph = log.entryIndex.properties.nativeGraph!.graph;
+		const headsSpy = sinon.spy(nativeGraph, "heads");
+		const headDataEntriesSpy = sinon.spy(nativeGraph, "headDataEntries");
+		try {
+			const hashes = await log.entryIndex
+				.getHeads(undefined, { type: "shape", shape: { hash: true } })
+				.all();
+			const data = await log.entryIndex
+				.getHeads(undefined, {
+					type: "shape",
+					shape: { hash: true, meta: { data: true } },
+				})
+				.all();
+
+			expect(hashes).to.deep.equal([{ hash: entry.hash }]);
+			expect(data).to.have.length(1);
+			expect(data[0]!.hash).equal(entry.hash);
+			expect([...data[0]!.meta.data!]).to.deep.equal([7, 8]);
+			expect(headsSpy.callCount).equal(1);
+			expect(headDataEntriesSpy.callCount).equal(1);
+			expect(indexGetSpy.callCount).equal(0);
+			expect(indexIterateSpy.callCount).equal(0);
+		} finally {
+			headDataEntriesSpy.restore();
+			headsSpy.restore();
+			indexIterateSpy.restore();
+			indexGetSpy.restore();
+			await log.close();
+		}
+	});
+
 	it("plans recursive joins through the native graph", async () => {
 		const source = new Log<Uint8Array>();
 		const target = new Log<Uint8Array>();
