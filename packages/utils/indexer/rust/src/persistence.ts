@@ -735,6 +735,11 @@ class OpfsSnapshotFile implements SnapshotFile {
 			return;
 		}
 
+		if (await this.tryAppendWithWritableStream(fileHandle, record)) {
+			this.operations++;
+			return;
+		}
+
 		const existing = await this.readOptional(this.journalFileName);
 		await this.writeFile(
 			this.journalFileName,
@@ -744,6 +749,39 @@ class OpfsSnapshotFile implements SnapshotFile {
 			]),
 		);
 		this.operations++;
+	}
+
+	private async tryAppendWithWritableStream(
+		fileHandle: FileSystemFileHandle,
+		record: Uint8Array,
+	): Promise<boolean> {
+		let writable: FileSystemWritableFileStream | undefined;
+		try {
+			const size = (await fileHandle.getFile()).size;
+			writable = await fileHandle.createWritable({ keepExistingData: true });
+			let offset = size;
+			if (size === 0) {
+				await writable.write({
+					type: "write",
+					position: offset,
+					data: JOURNAL_MAGIC,
+				});
+				offset += JOURNAL_MAGIC.byteLength;
+			}
+			await writable.write({ type: "write", position: offset, data: record });
+			await writable.close();
+			return true;
+		} catch (error: any) {
+			try {
+				await writable?.abort();
+			} catch {
+				// Ignore abort failures; preserve the original append error.
+			}
+			if (!(error instanceof TypeError)) {
+				throw error;
+			}
+			return false;
+		}
 	}
 
 	private async removeEntry(fileName: string): Promise<void> {
