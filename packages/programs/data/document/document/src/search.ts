@@ -4349,6 +4349,7 @@ export class DocumentIndex<
 					indexBy: this.indexBy,
 					nested: this.nestedProperties,
 				});
+				await index.start();
 				return index;
 			};
 
@@ -4927,6 +4928,7 @@ export class DocumentIndex<
 			indexBy: this.indexBy,
 			nested: this.nestedProperties,
 		});
+		await temporaryIndex.start();
 		for (const value of intoIndexable) {
 			temporaryIndex.put(value);
 		}
