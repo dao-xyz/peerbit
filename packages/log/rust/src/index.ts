@@ -49,6 +49,7 @@ export type NativeJoinCutCheck = {
 type NativeLogIndexHandle = {
 	clear: () => void;
 	len: () => number;
+	payload_size_sum: () => number;
 	has: (hash: string) => boolean;
 	has_many: (hashes: string[]) => string[];
 	put: (
@@ -139,6 +140,10 @@ export class LogGraphIndex {
 
 	get length(): number {
 		return this.native.len();
+	}
+
+	payloadSizeSum(): number {
+		return this.native.payload_size_sum();
 	}
 
 	has(hash: string): boolean {

@@ -78,6 +78,7 @@ export type NativeLogGraph = {
 		hashes: Iterable<string>,
 		skipFirst?: boolean,
 	) => string[];
+	payloadSizeSum: () => number;
 	countHasNext: (next: string, excludeHash?: string) => number;
 	shadowedGids: (gid: string, next: string[], excludeHash?: string) => string[];
 	planJoin: (
@@ -897,6 +898,9 @@ export class EntryIndex<T> {
 	}
 
 	async getMemoryUsage() {
+		if (this.properties.nativeGraph) {
+			return this.properties.nativeGraph.graph.payloadSizeSum();
+		}
 		const indexed =
 			(await this.properties.index.sum({ key: "payloadSize" })) || 0;
 		const pending = [...this.pendingIndexWrites.values()].reduce(

@@ -130,6 +130,17 @@ describe("native log graph index", () => {
 		expect([...index.hasMany(["missing", "a", "c"])]).to.deep.equal(["a", "c"]);
 	});
 
+	it("sums payload sizes", async () => {
+		const index = await createLogGraphIndex();
+		index.put({ ...entry("a", "g", [], 1n), payloadSize: 7 });
+		index.put({ ...entry("b", "g", [], 2n), payloadSize: 9 });
+
+		expect(index.payloadSizeSum()).to.equal(16);
+
+		index.delete("a");
+		expect(index.payloadSizeSum()).to.equal(9);
+	});
+
 	it("returns child join entries for cut recursion", async () => {
 		const index = await createLogGraphIndex();
 		index.put(entry("a", "g", [], 1n));

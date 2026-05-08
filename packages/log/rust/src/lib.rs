@@ -65,6 +65,7 @@ pub struct LogGraphIndex {
     entries: IndexMap<String, LogIndexEntry>,
     children: HashMap<String, IndexSet<String>>,
     query: NativeQueryIndex,
+    payload_size_total: u64,
 }
 
 impl LogGraphIndex {
@@ -76,6 +77,10 @@ impl LogGraphIndex {
         self.entries.len()
     }
 
+    pub fn payload_size_sum(&self) -> u64 {
+        self.payload_size_total
+    }
+
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -84,6 +89,7 @@ impl LogGraphIndex {
         self.entries.clear();
         self.children.clear();
         self.query.clear();
+        self.payload_size_total = 0;
     }
 
     pub fn has(&self, hash: &str) -> bool {
@@ -110,8 +116,10 @@ impl LogGraphIndex {
         let hash = entry.hash.clone();
         let demotes_nexts = entry.entry_type != ENTRY_TYPE_CUT;
         let nexts = entry.next.clone();
+        let payload_size = entry.payload_size as u64;
 
         self.entries.insert(hash.clone(), entry);
+        self.payload_size_total += payload_size;
         self.reindex(&hash);
 
         for next in nexts {
@@ -129,6 +137,9 @@ impl LogGraphIndex {
     pub fn delete(&mut self, hash: &str) -> Option<LogIndexEntry> {
         let entry = self.entries.shift_remove(hash)?;
         self.query.delete(hash);
+        self.payload_size_total = self
+            .payload_size_total
+            .saturating_sub(entry.payload_size as u64);
 
         for next in &entry.next {
             if let Some(children) = self.children.get_mut(next) {
@@ -399,6 +410,10 @@ impl NativeLogIndex {
         self.inner.len()
     }
 
+    pub fn payload_size_sum(&self) -> f64 {
+        self.inner.payload_size_sum() as f64
+    }
+
     pub fn has(&self, hash: &str) -> bool {
         self.inner.has(hash)
     }
@@ -621,6 +636,36 @@ mod tests {
         assert_eq!(index.heads(None), vec!["a", "b", "c"]);
         assert_eq!(index.heads(Some("one")), vec!["a", "b"]);
         assert_eq!(index.heads(Some("two")), vec!["c"]);
+    }
+
+    #[test]
+    fn sums_payload_sizes() {
+        let mut index = LogGraphIndex::new();
+        index.put(LogIndexEntry::new(
+            "a",
+            "one",
+            Vec::new(),
+            APPEND,
+            1,
+            0,
+            7,
+            true,
+        ));
+        index.put(LogIndexEntry::new(
+            "b",
+            "one",
+            Vec::new(),
+            APPEND,
+            2,
+            0,
+            9,
+            true,
+        ));
+
+        assert_eq!(index.payload_size_sum(), 16);
+
+        index.delete("a");
+        assert_eq!(index.payload_size_sum(), 9);
     }
 
     #[test]

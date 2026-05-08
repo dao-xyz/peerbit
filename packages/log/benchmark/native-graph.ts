@@ -357,4 +357,15 @@ for (const nativeGraph of [false, true]) {
 	await store.stop();
 }
 
+for (const nativeGraph of [false, true]) {
+	const { log, store } = await createHeadsLog(nativeGraph);
+	rows.push(
+		await measure("getMemoryUsage()", nativeGraph, async () => {
+			await log.entryIndex.getMemoryUsage();
+		}),
+	);
+	await log.close();
+	await store.stop();
+}
+
 console.table(rows);
