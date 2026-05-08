@@ -89,12 +89,17 @@ export type MemoryProperties = {
 	indexer?: Indices;
 };
 
+export type NativeGraphOptions = {
+	heads?: boolean;
+	optional?: boolean;
+};
+
 export type LogProperties<T> = {
 	keychain?: CryptoKeychain;
 	encoding?: Encoding<T>;
 	clock?: LamportClock;
 	appendDurability?: AppendDurability;
-	nativeGraph?: boolean | { heads?: boolean };
+	nativeGraph?: boolean | NativeGraphOptions;
 	sortFn?: Sorting.SortFn;
 	trim?: TrimOptions;
 	canAppend?: CanAppend<T>;
@@ -245,9 +250,12 @@ export class Log<T> {
 			throw new Error("Id not set");
 		}
 
+		const nativeGraphOption = options.nativeGraph;
 		const nativeGraph =
-			options.nativeGraph &&
+			nativeGraphOption &&
 			(await (async () => {
+				const nativeGraphOptions =
+					typeof nativeGraphOption === "object" ? nativeGraphOption : undefined;
 				let createLogGraphIndex: () => Promise<NativeLogGraph>;
 				try {
 					({ createLogGraphIndex } = (await import(
@@ -255,19 +263,19 @@ export class Log<T> {
 					)) as {
 						createLogGraphIndex: () => Promise<NativeLogGraph>;
 					});
+					const headsRequested = nativeGraphOptions?.heads !== false;
+					return {
+						graph: await createLogGraphIndex(),
+						useHeads: headsRequested && this._sortFn === LastWriteWins,
+					};
 				} catch {
+					if (nativeGraphOptions?.optional === true) {
+						return undefined;
+					}
 					throw new Error(
 						"Log nativeGraph requires @peerbit/log-rust to be installed and built",
 					);
 				}
-				const headsRequested =
-					typeof options.nativeGraph === "object"
-						? options.nativeGraph.heads !== false
-						: true;
-				return {
-					graph: await createLogGraphIndex(),
-					useHeads: headsRequested && this._sortFn === LastWriteWins,
-				};
 			})());
 
 		this._entryIndex = new EntryIndex({
