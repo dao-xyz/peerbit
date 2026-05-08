@@ -63,9 +63,16 @@ type Libp2pOptions = {
 	libp2p?: Libp2pExtended | (PartialLibp2pCreateOptions & { peerId?: never });
 };
 type SimpleLibp2pOptions = { relay?: boolean };
+export type StoreFactory = (directory?: string) => AnyStore;
+export type StorageCreateOptions = {
+	storeFactory?: StoreFactory;
+	blocksStoreFactory?: StoreFactory;
+	keychainStoreFactory?: StoreFactory;
+};
 export type CreateInstanceOptions = (SimpleLibp2pOptions | Libp2pOptions) & {
 	directory?: string;
 	indexer?: (directory?: string) => Promise<Indices> | Indices;
+	storage?: StorageCreateOptions;
 } & OptionalCreateOptions;
 
 export type DialReadiness =
@@ -95,9 +102,9 @@ const isLibp2pInstance = (libp2p: Libp2pExtended | ClientCreateOptions) =>
 
 const createCache = async (
 	directory: string | undefined,
-	options?: { reset?: boolean },
+	options?: { reset?: boolean; storeFactory?: StoreFactory },
 ) => {
-	const cache = createStore(directory);
+	const cache = (options?.storeFactory ?? createStore)(directory);
 
 	// "Wake up" the caches if they need it
 	if (cache) await cache.open();
@@ -157,9 +164,16 @@ export class Peerbit implements ProgramClient {
 
 		const directory = options.directory;
 		const hasDir = directory != null;
+		const storageOptions = options.storage;
+		const storeFactory = storageOptions?.storeFactory ?? createStore;
+		const blocksStoreFactory =
+			storageOptions?.blocksStoreFactory ?? storageOptions?.storeFactory;
+		const keychainStoreFactory =
+			storageOptions?.keychainStoreFactory ?? storageOptions?.storeFactory;
 
 		const storage = await createCache(
 			directory != null ? path.join(directory, "/cache") : undefined,
+			{ storeFactory },
 		);
 		const indexerFn =
 			options.indexer ||
@@ -201,7 +215,7 @@ export class Peerbit implements ProgramClient {
 					"Invalid libp2p option 'peerId'. libp2p derives the peer id from 'privateKey', so pass 'privateKey' to control identity.",
 				);
 			}
-			const store = createStore(keychainDirectory);
+			const store = (keychainStoreFactory ?? storeFactory)(keychainDirectory);
 			await store.open();
 
 			const cryptoKeychain = new DefaultCryptoKeychain({
@@ -314,7 +328,8 @@ export class Peerbit implements ProgramClient {
 
 						blocksService = new DirectBlock(c, {
 							canRelayMessage: asRelay,
-							directory: blocksDirectory,
+							directory: blocksStoreFactory ? undefined : blocksDirectory,
+							localStore: blocksStoreFactory?.(blocksDirectory),
 							resolveProviders,
 							onPut: async (cid) => {
 								// Best-effort directory announce for "get without remote.from" workflows.
