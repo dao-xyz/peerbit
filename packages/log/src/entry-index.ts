@@ -58,6 +58,12 @@ type NativeLogEntry = {
 	};
 };
 
+type NativeJoinCutCheck = {
+	gid: string;
+	wallTime: bigint | number | string;
+	logical?: number;
+};
+
 export type NativeLogGraph = {
 	put: (entry: NativeLogEntry) => void;
 	delete: (hash: string) => boolean;
@@ -72,12 +78,15 @@ export type NativeLogGraph = {
 		next: string[],
 		type: number,
 		reset?: boolean,
+		cutCheck?: NativeJoinCutCheck,
 	) => JoinPlan;
 };
 
 export type JoinPlan = {
 	skip: boolean;
 	missingParents: string[];
+	cutChecked: boolean;
+	coveredByCut: boolean;
 };
 
 export type NativeLogJoinEntry = SortableEntry & {
@@ -553,18 +562,36 @@ export class EntryIndex<T> {
 		reset?: boolean,
 	): Promise<JoinPlan> {
 		if (this.properties.nativeGraph) {
+			const cutCheck = this.properties.nativeGraph.useHeads
+				? {
+						gid: entry.meta.gid,
+						wallTime: entry.meta.clock.timestamp.wallTime,
+						logical: entry.meta.clock.timestamp.logical,
+					}
+				: undefined;
 			return this.properties.nativeGraph.graph.planJoin(
 				entry.hash,
 				entry.meta.next,
 				entry.meta.type,
 				reset === true,
+				cutCheck,
 			);
 		}
 		if (!reset && (await this.getShallow(entry.hash)) != null) {
-			return { skip: true, missingParents: [] };
+			return {
+				skip: true,
+				missingParents: [],
+				cutChecked: false,
+				coveredByCut: false,
+			};
 		}
 		if (entry.meta.type === EntryType.CUT) {
-			return { skip: false, missingParents: [] };
+			return {
+				skip: false,
+				missingParents: [],
+				cutChecked: false,
+				coveredByCut: false,
+			};
 		}
 
 		const missingParents: string[] = [];
@@ -573,7 +600,12 @@ export class EntryIndex<T> {
 				missingParents.push(next);
 			}
 		}
-		return { skip: false, missingParents };
+		return {
+			skip: false,
+			missingParents,
+			cutChecked: false,
+			coveredByCut: false,
+		};
 	}
 
 	async getShallow(k: string) {

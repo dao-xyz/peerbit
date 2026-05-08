@@ -1,6 +1,7 @@
 import { AnyBlockStore } from "@peerbit/blocks";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { HashmapIndices } from "@peerbit/indexer-simple";
+import { EntryType } from "../src/entry-type.js";
 import { type Entry } from "../src/entry.js";
 import { Log } from "../src/log.js";
 
@@ -187,6 +188,55 @@ const measureWideJoin = async (nativeGraph: boolean): Promise<BenchRow> => {
 
 for (const nativeGraph of [false, true]) {
 	rows.push(await measureWideJoin(nativeGraph));
+}
+
+const measureCutCoveredJoin = async (
+	nativeGraph: boolean,
+): Promise<BenchRow> => {
+	const sourceStore = new AnyBlockStore();
+	const targetStore = new AnyBlockStore();
+	await sourceStore.start();
+	await targetStore.start();
+	const source = new Log<Uint8Array>();
+	const target = new Log<Uint8Array>();
+	await source.open(sourceStore, key, {
+		appendDurability: "strict",
+		indexer: new HashmapIndices(),
+		nativeGraph,
+	});
+	await target.open(targetStore, key, {
+		appendDurability: "strict",
+		indexer: new HashmapIndices(),
+		nativeGraph,
+	});
+	const { entry: old } = await source.append(new Uint8Array([1]), {
+		meta: { next: [] },
+	});
+	await target.append(new Uint8Array([2]), {
+		meta: { type: EntryType.CUT, next: [old] },
+	});
+
+	const started = performance.now();
+	for (let i = 0; i < iterations; i++) {
+		await target.join([old]);
+	}
+	const elapsed = performance.now() - started;
+	await source.close();
+	await target.close();
+	await sourceStore.stop();
+	await targetStore.stop();
+	return {
+		name: "join cut-covered skip",
+		nativeGraph,
+		entries: 1,
+		iterations,
+		elapsedMs: Math.round(elapsed),
+		opsPerSecond: Math.round((iterations / elapsed) * 1000),
+	};
+};
+
+for (const nativeGraph of [false, true]) {
+	rows.push(await measureCutCoveredJoin(nativeGraph));
 }
 
 for (const nativeGraph of [false, true]) {

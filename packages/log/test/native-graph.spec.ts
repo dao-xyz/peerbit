@@ -3,6 +3,7 @@ import { Ed25519Keypair } from "@peerbit/crypto";
 import { HashmapIndices } from "@peerbit/indexer-simple";
 import { expect } from "chai";
 import sinon from "sinon";
+import { EntryType } from "../src/entry-type.js";
 import { Log } from "../src/log.js";
 
 describe("native graph", () => {
@@ -136,15 +137,18 @@ describe("native graph", () => {
 			await target.join([merge]);
 
 			expect(planJoinSpy.callCount).greaterThan(0);
-			expect(planJoinSpy.firstCall.args).to.deep.equal([
+			expect(planJoinSpy.firstCall.args.slice(0, 4)).to.deep.equal([
 				merge.hash,
 				[present.hash, missing.hash],
 				merge.meta.type,
 				false,
 			]);
+			expect(planJoinSpy.firstCall.args[4]).to.include({ gid: merge.meta.gid });
 			expect(planJoinSpy.firstCall.returnValue).to.deep.equal({
 				skip: false,
 				missingParents: [missing.hash],
+				cutChecked: true,
+				coveredByCut: false,
 			});
 			expect(getShallowSpy.callCount).equal(0);
 			expect(await target.toArray()).to.have.length(3);
@@ -153,6 +157,50 @@ describe("native graph", () => {
 			planJoinSpy.restore();
 			await source.close();
 			await target.close();
+		}
+	});
+
+	it("checks cut-covered joins in the native plan", async () => {
+		const sourceStore = new AnyBlockStore();
+		const targetStore = new AnyBlockStore();
+		const source = new Log<Uint8Array>();
+		const target = new Log<Uint8Array>();
+
+		await sourceStore.start();
+		await targetStore.start();
+		await source.open(sourceStore, signKey, { nativeGraph: true });
+		await target.open(targetStore, signKey, { nativeGraph: true });
+
+		const { entry: old } = await source.append(new Uint8Array([1]), {
+			meta: { next: [] },
+		});
+		await target.append(new Uint8Array([2]), {
+			meta: { type: EntryType.CUT, next: [old] },
+		});
+
+		const nativeGraph = target.entryIndex.properties.nativeGraph!.graph;
+		const planJoinSpy = sinon.spy(nativeGraph, "planJoin");
+		const joinHeadEntriesSpy = sinon.spy(nativeGraph, "joinHeadEntries");
+		const verifySpy = sinon.spy(old, "verifySignatures");
+		try {
+			await target.join([old], { verifySignatures: true });
+
+			expect(planJoinSpy.firstCall.returnValue).to.include({
+				skip: false,
+				cutChecked: true,
+				coveredByCut: true,
+			});
+			expect(verifySpy.callCount).equal(1);
+			expect(joinHeadEntriesSpy.callCount).equal(0);
+			expect(await target.has(old.hash)).to.equal(false);
+		} finally {
+			verifySpy.restore();
+			joinHeadEntriesSpy.restore();
+			planJoinSpy.restore();
+			await source.close();
+			await target.close();
+			await sourceStore.stop();
+			await targetStore.stop();
 		}
 	});
 
