@@ -424,6 +424,8 @@ describe("events", () => {
 
 			await delay(3e3);
 			await store1.close();
+			let waitForRoleAge = 3e3;
+			let t0 = Date.now();
 			store1 = await session.peers[0].open(store1, {
 				args: {
 					replicate: {
@@ -435,17 +437,15 @@ describe("events", () => {
 				},
 			});
 
-			let waitForRoleAge = 3e3;
-			let t0 = Date.now();
 			await store1.log.waitForReplicators({
 				roleAge: waitForRoleAge,
 				timeout: 1e4,
 				waitForNewPeers: true, // prevent waitForReplicators from resolving immediately
 			});
 			let t1 = Date.now();
-			// Allow some timer jitter across environments/CI
+			// Restart warmup starts during reopen, before waitForReplicators is called.
 			expect(t1 - t0).to.be.greaterThanOrEqual(waitForRoleAge - 250);
-			expect(t1 - t0).to.be.lessThan(waitForRoleAge + 3e3);
+			expect(t1 - t0).to.be.lessThan(waitForRoleAge + 5e3);
 		});
 
 		it("will wait joining replicator role age", async () => {
