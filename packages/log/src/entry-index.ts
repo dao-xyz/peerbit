@@ -1,5 +1,5 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
-import { type Blocks } from "@peerbit/blocks-interface";
+import { type Blocks, type GetOptions } from "@peerbit/blocks-interface";
 import { Cache } from "@peerbit/cache";
 import type { PublicSignKey } from "@peerbit/crypto";
 import {
@@ -19,7 +19,7 @@ import {
 import type { ShallowEntry } from "./entry-shallow.js";
 import { EntryType } from "./entry-type.js";
 import { Entry, type ShallowOrFullEntry } from "./entry.js";
-import type { SortableEntry, SortFn } from "./log-sorting.js";
+import type { SortFn, SortableEntry } from "./log-sorting.js";
 import { logger as baseLogger } from "./logger.js";
 
 const log = baseLogger.newScope("entry-index");
@@ -35,6 +35,13 @@ export type ResultsIterator<T> = {
 const ENTRY_CACHE_MAX_SIZE = 10; // TODO as param for log
 const DEFERRED_INDEX_FLUSH_IDLE_MS = 250;
 const NATIVE_GRAPH_REBUILD_BATCH_SIZE = 512;
+
+type BlocksWithGetMany = Blocks & {
+	getMany?: (
+		cids: string[],
+		options?: GetOptions,
+	) => Promise<Array<Uint8Array | undefined>> | Array<Uint8Array | undefined>;
+};
 
 type NativeLogEntry = {
 	hash: string;
@@ -58,11 +65,7 @@ export type NativeLogGraph = {
 	heads: (gid?: string) => string[];
 	headEntries: (gid?: string) => SortableEntry[];
 	countHasNext: (next: string, excludeHash?: string) => number;
-	shadowedGids: (
-		gid: string,
-		next: string[],
-		excludeHash?: string,
-	) => string[];
+	shadowedGids: (gid: string, next: string[], excludeHash?: string) => string[];
 };
 
 type ResolveFullyOptions =
@@ -122,6 +125,16 @@ const withDefaultRemoteReadPriority = <
 			priority: LOG_ENTRY_REMOTE_READ_PRIORITY,
 		},
 	} as O;
+};
+
+const canBatchResolveFromStore = (
+	store: Blocks,
+	options?: ResolveFullyOptions,
+): store is BlocksWithGetMany => {
+	if (typeof (store as BlocksWithGetMany).getMany !== "function") {
+		return false;
+	}
+	return typeof options !== "object" || !options.remote;
 };
 export type ReturnTypeFromResolveOptions<
 	R extends MaybeResolveOptions,
@@ -330,13 +343,10 @@ export class EntryIndex<T> {
 			hashes: string[],
 		): Promise<ReturnTypeFromResolveOptions<R, T>[]> => {
 			if (resolveInFull) {
-				const resolved = await Promise.all(
-					hashes.map((hash) => this.resolve(hash, resolveInFullOptions)),
-				);
-				return resolved.filter((entry) => !!entry) as ReturnTypeFromResolveOptions<
-					R,
-					T
-				>[];
+				const resolved = await this.resolveMany(hashes, resolveInFullOptions);
+				return resolved.filter(
+					(entry) => !!entry,
+				) as ReturnTypeFromResolveOptions<R, T>[];
 			}
 
 			const shallow = await Promise.all(
@@ -387,7 +397,9 @@ export class EntryIndex<T> {
 			? ({ hash: true } as const)
 			: ((options as { shape: Shape })?.shape as Shape);
 
-		let iteratorRef: ReturnType<typeof this.properties.index.iterate> | undefined;
+		let iteratorRef:
+			| ReturnType<typeof this.properties.index.iterate>
+			| undefined;
 		let iteratorPromise:
 			| Promise<ReturnType<typeof this.properties.index.iterate>>
 			| undefined;
@@ -422,8 +434,9 @@ export class EntryIndex<T> {
 			}>,
 		): Promise<ReturnTypeFromResolveOptions<R, T>[]> => {
 			if (resolveInFull) {
-				const maybeResolved = await Promise.all(
-					results.map((x) => this.resolve(x.value.hash, resolveInFullOptions)),
+				const maybeResolved = await this.resolveMany(
+					results.map((x) => x.value.hash),
+					resolveInFullOptions,
 				);
 				return maybeResolved.filter((x) => !!x) as ReturnTypeFromResolveOptions<
 					R,
@@ -495,6 +508,10 @@ export class EntryIndex<T> {
 
 	async get(k: string, options?: ResolveFullyOptions) {
 		return this.resolve(k, options);
+	}
+
+	async getMany(k: string[], options?: ResolveFullyOptions) {
+		return this.resolveMany(k, options);
 	}
 
 	async getShallow(k: string) {
@@ -753,7 +770,9 @@ export class EntryIndex<T> {
 			(sum, entry) => sum + (entry.payloadSize || 0),
 			0,
 		);
-		return typeof indexed === "bigint" ? indexed + BigInt(pending) : indexed + pending;
+		return typeof indexed === "bigint"
+			? indexed + BigInt(pending)
+			: indexed + pending;
 	}
 
 	private async privateUpdateNextHeadProperty(
@@ -946,7 +965,63 @@ export class EntryIndex<T> {
 		}
 		return mem ? mem : undefined;
 		/* }
-		return undefined; */
+			return undefined; */
+	}
+
+	private async resolveMany(
+		hashes: string[],
+		options?: ResolveFullyOptions,
+	): Promise<Array<Entry<T> | undefined>> {
+		if (hashes.length === 0) {
+			return [];
+		}
+		if (!canBatchResolveFromStore(this.properties.store, options)) {
+			return Promise.all(hashes.map((hash) => this.resolve(hash, options)));
+		}
+
+		const coercedOptions = typeof options === "object" ? options : undefined;
+		const resolved: Array<Entry<T> | undefined> = new Array(hashes.length);
+		const missingHashes: string[] = [];
+		const missingPositions: number[] = [];
+
+		for (let i = 0; i < hashes.length; i++) {
+			const hash = hashes[i]!;
+			const mem = this.cache.get(hash);
+			if (mem !== undefined) {
+				resolved[i] = mem ? mem : undefined;
+				continue;
+			}
+			missingHashes.push(hash);
+			missingPositions.push(i);
+		}
+
+		if (missingHashes.length === 0) {
+			return resolved;
+		}
+
+		const values = await this.properties.store.getMany!(
+			missingHashes,
+			withDefaultRemoteReadPriority(coercedOptions),
+		);
+		for (let i = 0; i < values.length; i++) {
+			const hash = missingHashes[i]!;
+			const value = values[i];
+			if (!value) {
+				if (coercedOptions?.ignoreMissing !== true) {
+					throw new Error("Failed to load entry from head with hash: " + hash);
+				}
+				continue;
+			}
+
+			const entry = deserialize(value, Entry) as Entry<T>;
+			this.properties.init(entry);
+			entry.hash = hash;
+			entry.size = value.length;
+			this.cache.add(hash, entry);
+			resolved[missingPositions[i]!] = entry;
+		}
+
+		return resolved;
 	}
 
 	private async resolveFromStore(

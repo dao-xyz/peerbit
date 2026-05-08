@@ -27,6 +27,10 @@ export interface Blocks extends WaitForPeer {
 	): MaybePromise<string[]>;
 	has(cid: string): MaybePromise<boolean>;
 	get(cid: string, options?: GetOptions): MaybePromise<Uint8Array | undefined>;
+	getMany?(
+		cids: string[],
+		options?: GetOptions,
+	): MaybePromise<Array<Uint8Array | undefined>>;
 	/**
 	 * Best-effort provider hints for `get(..., { remote: true })` without explicit `remote.from`.
 	 *

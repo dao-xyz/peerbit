@@ -150,12 +150,27 @@ export const allEntriesWithUniqueGids = async (
 			curr = nexts;
 		}
 	}
-	const value = [
-		...(await Promise.all(
-			[...map.values()].map((x) =>
-				x instanceof Entry ? x : log.entryIndex.get(x.hash),
-			),
-		)),
-	].filter((x) => !!x) as Entry<any>[];
-	return value;
+	const values = [...map.values()];
+	const resolved: Array<Entry<any> | undefined> = new Array(values.length);
+	const unresolvedHashes: string[] = [];
+	const unresolvedPositions: number[] = [];
+	for (let i = 0; i < values.length; i++) {
+		const value = values[i]!;
+		if (value instanceof Entry) {
+			resolved[i] = value;
+			continue;
+		}
+		unresolvedHashes.push(value.hash);
+		unresolvedPositions.push(i);
+	}
+	if (unresolvedHashes.length > 0) {
+		const entries = await log.entryIndex.getMany(unresolvedHashes, {
+			type: "full",
+			ignoreMissing: true,
+		});
+		for (let i = 0; i < entries.length; i++) {
+			resolved[unresolvedPositions[i]!] = entries[i];
+		}
+	}
+	return resolved.filter((x) => !!x) as Entry<any>[];
 };
