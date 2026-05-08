@@ -324,6 +324,25 @@ export class RemoteBlocks implements IBlocks {
 		return cid;
 	}
 
+	async putMany(
+		blocks: Array<Uint8Array | { block: Block<any, any, any, any>; cid: string }>,
+	): Promise<string[]> {
+		if (!this.localStore) {
+			throw new Error("Local store not set");
+		}
+		const cids = await this.localStore.putMany(blocks);
+		await Promise.all(
+			cids.map(async (cid) => {
+				try {
+					await this.options.onPut?.(cid);
+				} catch {
+					// ignore best-effort hooks
+				}
+			}),
+		);
+		return cids;
+	}
+
 	async has(cid: string) {
 		return this.localStore.has(cid);
 	}
@@ -351,6 +370,16 @@ export class RemoteBlocks implements IBlocks {
 		return value;
 	}
 
+	async getMany(
+		cids: string[],
+		options?: GetOptions | undefined,
+	): Promise<Array<Uint8Array | undefined>> {
+		if (!options?.remote) {
+			return this.localStore.getMany(cids, options);
+		}
+		return Promise.all(cids.map((cid) => this.get(cid, options)));
+	}
+
 	hintProviders(cid: string, providers: string[]) {
 		const cidString = stringifyCid(cid);
 		this.rememberProviderHints(cidString, providers);
@@ -361,6 +390,10 @@ export class RemoteBlocks implements IBlocks {
 
 	async rm(cid: string) {
 		await this.localStore?.rm(cid);
+	}
+
+	async rmMany(cids: string[]) {
+		await this.localStore?.rmMany(cids);
 	}
 
 	async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {

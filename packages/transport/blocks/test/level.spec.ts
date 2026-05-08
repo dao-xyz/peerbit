@@ -1,4 +1,5 @@
 import { expect } from "chai";
+import { createStore as createRustStore } from "@peerbit/any-store-rust";
 import { equals } from "uint8arrays";
 import { AnyBlockStore } from "../src/any-blockstore.js";
 
@@ -51,5 +52,20 @@ describe(`level`, function () {
 		expect(cids).to.have.length(2);
 		expect(await store.get(cids[0])).to.deep.equal(datas[0]);
 		expect(await store.get(cids[1])).to.deep.equal(datas[1]);
+	});
+
+	it("gets and removes many blocks through store batch helpers", async () => {
+		store = new AnyBlockStore(createRustStore());
+		await store.start();
+		const datas = [new Uint8Array([0]), new Uint8Array([1, 2])];
+		const cids = await store.putMany(datas);
+
+		expect(await store.getMany([...cids, "missing"])).to.deep.equal([
+			datas[0],
+			datas[1],
+			undefined,
+		]);
+		expect(await store.rmMany([cids[0], "missing"])).to.equal(1);
+		expect(await store.getMany(cids)).to.deep.equal([undefined, datas[1]]);
 	});
 });
