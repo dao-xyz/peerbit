@@ -100,6 +100,19 @@ describe("native log graph index", () => {
 		]);
 	});
 
+	it("returns shaped head metadata", async () => {
+		const index = await createLogGraphIndex();
+		index.put({
+			...entry("a", "one", [], 1n),
+			data: new Uint8Array([7, 8, 9]),
+		});
+
+		const heads = index.headDataEntries("one");
+		expect(heads).to.have.length(1);
+		expect(heads[0]!.hash).equal("a");
+		expect([...(heads[0]!.meta.data ?? [])]).to.deep.equal([7, 8, 9]);
+	});
+
 	it("does not demote nexts for cut entries", async () => {
 		const index = await createLogGraphIndex();
 		index.put(entry("a", "g", [], 1n));

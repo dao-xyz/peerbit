@@ -1,5 +1,5 @@
 use indexmap::{IndexMap, IndexSet};
-use js_sys::Array;
+use js_sys::{Array, Uint8Array};
 use peerbit_indexer_rust::planner::{
     DocumentFields, FieldValue, NativeQueryIndex, Query, SortDirection, SortField,
 };
@@ -26,6 +26,7 @@ pub struct LogIndexEntry {
     pub logical: u32,
     pub payload_size: u32,
     pub head: bool,
+    pub data: Option<Vec<u8>>,
 }
 
 impl LogIndexEntry {
@@ -39,6 +40,30 @@ impl LogIndexEntry {
         payload_size: u32,
         head: bool,
     ) -> Self {
+        Self::new_with_data(
+            hash,
+            gid,
+            next,
+            entry_type,
+            wall_time,
+            logical,
+            payload_size,
+            head,
+            None,
+        )
+    }
+
+    pub fn new_with_data(
+        hash: impl Into<String>,
+        gid: impl Into<String>,
+        next: Vec<String>,
+        entry_type: u8,
+        wall_time: u64,
+        logical: u32,
+        payload_size: u32,
+        head: bool,
+        data: Option<Vec<u8>>,
+    ) -> Self {
         Self {
             hash: hash.into(),
             gid: gid.into(),
@@ -48,6 +73,7 @@ impl LogIndexEntry {
             logical,
             payload_size,
             head,
+            data,
         }
     }
 }
@@ -170,6 +196,10 @@ impl LogGraphIndex {
             .into_iter()
             .filter_map(|hash| self.entries.get(&hash).cloned())
             .collect()
+    }
+
+    pub fn head_data_entries(&self, gid: Option<&str>) -> Vec<LogIndexEntry> {
+        self.head_entries(gid)
     }
 
     pub fn head_join_entries(&self, gid: Option<&str>) -> Vec<LogIndexEntry> {
@@ -433,9 +463,10 @@ impl NativeLogIndex {
         logical: u32,
         payload_size: u32,
         head: bool,
+        data: JsValue,
     ) -> Result<(), JsValue> {
         let next = strings_from_array(next)?;
-        self.inner.put(LogIndexEntry::new(
+        self.inner.put(LogIndexEntry::new_with_data(
             hash,
             gid,
             next,
@@ -444,6 +475,7 @@ impl NativeLogIndex {
             logical,
             payload_size,
             head,
+            optional_bytes_from_js(data),
         ));
         Ok(())
     }
@@ -458,6 +490,10 @@ impl NativeLogIndex {
 
     pub fn head_entries(&self, gid: Option<String>) -> Array {
         log_entries_to_rows(self.inner.head_entries(gid.as_deref()))
+    }
+
+    pub fn head_data_entries(&self, gid: Option<String>) -> Array {
+        log_data_entries_to_rows(self.inner.head_data_entries(gid.as_deref()))
     }
 
     pub fn head_join_entries(&self, gid: Option<String>) -> Array {
@@ -545,6 +581,13 @@ fn strings_to_array(values: Vec<String>) -> Array {
     out
 }
 
+fn optional_bytes_from_js(value: JsValue) -> Option<Vec<u8>> {
+    if value.is_undefined() || value.is_null() {
+        return None;
+    }
+    Some(Uint8Array::new(&value).to_vec())
+}
+
 fn log_entries_to_rows(values: Vec<LogIndexEntry>) -> Array {
     let out = Array::new();
     for entry in values {
@@ -553,6 +596,20 @@ fn log_entries_to_rows(values: Vec<LogIndexEntry>) -> Array {
         row.push(&JsValue::from_str(&entry.gid));
         row.push(&JsValue::from_str(&entry.wall_time.to_string()));
         row.push(&JsValue::from_f64(entry.logical as f64));
+        out.push(&row);
+    }
+    out
+}
+
+fn log_data_entries_to_rows(values: Vec<LogIndexEntry>) -> Array {
+    let out = Array::new();
+    for entry in values {
+        let row = Array::new();
+        row.push(&JsValue::from_str(&entry.hash));
+        match entry.data {
+            Some(data) => row.push(&Uint8Array::from(data.as_slice())),
+            None => row.push(&JsValue::UNDEFINED),
+        };
         out.push(&row);
     }
     out

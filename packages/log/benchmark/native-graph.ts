@@ -347,6 +347,35 @@ for (const nativeGraph of [false, true]) {
 }
 
 for (const nativeGraph of [false, true]) {
+	const { log, store } = await createHeadsLog(nativeGraph);
+	rows.push(
+		await measure("getHeads(hash shape).all()", nativeGraph, async () => {
+			await log.entryIndex
+				.getHeads(undefined, { type: "shape", shape: { hash: true } })
+				.all();
+		}),
+	);
+	await log.close();
+	await store.stop();
+}
+
+for (const nativeGraph of [false, true]) {
+	const { log, store } = await createHeadsLog(nativeGraph);
+	rows.push(
+		await measure("getHeads(data shape).all()", nativeGraph, async () => {
+			await log.entryIndex
+				.getHeads(undefined, {
+					type: "shape",
+					shape: { hash: true, meta: { data: true } },
+				})
+				.all();
+		}),
+	);
+	await log.close();
+	await store.stop();
+}
+
+for (const nativeGraph of [false, true]) {
 	const { log, rootHash, store } = await createChainLog(nativeGraph);
 	rows.push(
 		await measure("countHasNext(root)", nativeGraph, async () => {

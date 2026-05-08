@@ -5,6 +5,7 @@ export type NativeLogEntry = {
 	type: number;
 	head?: boolean;
 	payloadSize?: number;
+	data?: Uint8Array;
 	clock: {
 		timestamp: {
 			wallTime: bigint | number | string;
@@ -30,6 +31,13 @@ export type NativeLogJoinEntry = NativeLogHeadEntry & {
 	meta: NativeLogHeadEntry["meta"] & {
 		type: number;
 		next: string[];
+	};
+};
+
+export type NativeLogHeadDataEntry = {
+	hash: string;
+	meta: {
+		data?: Uint8Array;
 	};
 };
 
@@ -61,10 +69,12 @@ type NativeLogIndexHandle = {
 		logical: number,
 		payloadSize: number,
 		head: boolean,
+		data?: Uint8Array,
 	) => void;
 	delete: (hash: string) => boolean;
 	heads: (gid?: string) => string[];
 	head_entries: (gid?: string) => unknown[];
+	head_data_entries: (gid?: string) => unknown[];
 	head_join_entries: (gid?: string) => unknown[];
 	child_join_entries: (hash: string) => unknown[];
 	plan_delete_recursively: (hashes: string[], skipFirst: boolean) => string[];
@@ -164,6 +174,7 @@ export class LogGraphIndex {
 			entry.clock.timestamp.logical ?? 0,
 			entry.payloadSize ?? 0,
 			entry.head ?? true,
+			entry.data,
 		);
 	}
 
@@ -193,6 +204,18 @@ export class LogGraphIndex {
 							logical,
 						},
 					},
+				},
+			};
+		});
+	}
+
+	headDataEntries(gid?: string): NativeLogHeadDataEntry[] {
+		return this.native.head_data_entries(gid).map((row) => {
+			const [hash, data] = row as [string, Uint8Array | undefined];
+			return {
+				hash,
+				meta: {
+					data,
 				},
 			};
 		});
