@@ -143,6 +143,47 @@ describe("append", function () {
 		putSpy.restore();
 	});
 
+	it("appendMany appends a local chain with one coalesced change", async () => {
+		const log = new Log<Uint8Array>();
+		const changes: any[] = [];
+		await log.open(store, signKey, {
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+			onChange: (change) => {
+				changes.push(change);
+			},
+		});
+		const root = (
+			await log.append(new Uint8Array([0]), { meta: { next: [] } })
+		).entry;
+		changes.length = 0;
+
+		const iterateSpy = sinon.spy(log.entryIndex.properties.index, "iterate");
+		const result = await log.appendMany([
+			new Uint8Array([1]),
+			new Uint8Array([2]),
+			new Uint8Array([3]),
+		]);
+
+		expect(result.entries).to.have.length(3);
+		expect(result.entries[0].meta.next).to.deep.equal([root.hash]);
+		expect(result.entries[1].meta.next).to.deep.equal([result.entries[0].hash]);
+		expect(result.entries[2].meta.next).to.deep.equal([result.entries[1].hash]);
+		expect((await log.getHeads().all()).map((head) => head.hash)).to.deep.equal([
+			result.entries[2].hash,
+		]);
+		expect(changes).to.have.length(1);
+		expect(changes[0].added.map((added: any) => added.head)).to.deep.equal([
+			false,
+			false,
+			true,
+		]);
+		expect(iterateSpy.callCount).equal(0);
+
+		iterateSpy.restore();
+		await log.close();
+	});
+
 	describe("append 100 items to a log", () => {
 		const amount = 100;
 
