@@ -113,6 +113,79 @@ test.describe("any-store-rust OPFS", () => {
 		});
 	});
 
+	test("persists batched mutations across worker reloads", async ({
+		page,
+	}, testInfo) => {
+		await page.goto("/");
+		await expect(page.getByTestId("status")).toHaveText("ready");
+
+		const directory = testDirectory(testInfo.workerIndex);
+		const entries = Array.from({ length: 128 }, (_, index) => [
+			`batch-${index}`,
+			`value-${index}`,
+		] as [string, string]);
+
+		const putElapsedMs = await page.evaluate(
+			async ({ directory, entries }) => {
+				const api = (window as any).__rustAnyStoreTest;
+				await api.request({ op: "open", directory });
+				const started = performance.now();
+				await api.request({ op: "putMany", entries });
+				const elapsed = performance.now() - started;
+				await api.request({ op: "close" });
+				await api.restartWorker();
+				return elapsed;
+			},
+			{ directory, entries },
+		);
+		expect(putElapsedMs).toBeGreaterThan(0);
+
+		await page.evaluate(async (directory) => {
+			const api = (window as any).__rustAnyStoreTest;
+			await api.request({ op: "open", directory });
+		}, directory);
+		expect(
+			await page.evaluate((keys) => {
+				const api = (window as any).__rustAnyStoreTest;
+				return api.request({ op: "getMany", keys });
+			}, entries.map(([key]) => key)),
+		).toEqual(entries.map(([, value]) => value));
+		expect(
+			await page.evaluate((keys) => {
+				const api = (window as any).__rustAnyStoreTest;
+				return api.request({ op: "delMany", keys });
+			}, entries.slice(0, 16).map(([key]) => key)),
+		).toBe(16);
+		await page.evaluate(async () => {
+			const api = (window as any).__rustAnyStoreTest;
+			await api.request({ op: "close" });
+			await api.restartWorker();
+		});
+
+		await page.evaluate(async (directory) => {
+			const api = (window as any).__rustAnyStoreTest;
+			await api.request({ op: "open", directory });
+		}, directory);
+		expect(
+			await page.evaluate((keys) => {
+				const api = (window as any).__rustAnyStoreTest;
+				return api.request({ op: "getMany", keys });
+			}, entries.slice(0, 20).map(([key]) => key)),
+		).toEqual([
+			...Array.from({ length: 16 }, () => undefined),
+			"value-16",
+			"value-17",
+			"value-18",
+			"value-19",
+		]);
+
+		await page.evaluate(async () => {
+			const api = (window as any).__rustAnyStoreTest;
+			await api.request({ op: "clear" });
+			await api.request({ op: "close" });
+		});
+	});
+
 	test("falls back when the newest manifest points at an incomplete checkpoint", async ({
 		page,
 	}, testInfo) => {

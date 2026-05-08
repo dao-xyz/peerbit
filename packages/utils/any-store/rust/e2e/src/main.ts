@@ -2,6 +2,8 @@ type WorkerRequest =
 	| { op: "open"; directory: string }
 	| { op: "close" | "listKeys" | "size" | "clear" }
 	| { op: "put" | "get" | "del" | "writeOpfsFile"; key: string; value?: string }
+	| { op: "putMany"; entries: [string, string][] }
+	| { op: "getMany" | "delMany"; keys: string[] }
 	| { op: "subPut" | "subGet"; level: string; key: string; value?: string };
 
 type WorkerResponse =
