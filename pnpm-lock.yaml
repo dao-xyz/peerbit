@@ -370,6 +370,9 @@ importers:
       '@peerbit/any-store-opfs':
         specifier: workspace:*
         version: link:../../utils/any-store/opfs
+      '@peerbit/any-store-rust':
+        specifier: workspace:*
+        version: link:../../utils/any-store/rust
       '@peerbit/blocks':
         specifier: workspace:*
         version: link:../../transport/blocks
@@ -382,6 +385,9 @@ importers:
       '@peerbit/indexer-interface':
         specifier: workspace:*
         version: link:../../utils/indexer/interface
+      '@peerbit/indexer-rust':
+        specifier: workspace:*
+        version: link:../../utils/indexer/rust
       '@peerbit/indexer-simple':
         specifier: workspace:*
         version: link:../../utils/indexer/simple
@@ -1007,10 +1013,6 @@ importers:
       uuid:
         specifier: ^10.0.0
         version: 10.0.0
-    optionalDependencies:
-      '@peerbit/log-rust':
-        specifier: workspace:*
-        version: link:rust
     devDependencies:
       '@peerbit/test-utils':
         specifier: workspace:*
@@ -1033,6 +1035,10 @@ importers:
       tty-table:
         specifier: ^4.2.1
         version: 4.2.3
+    optionalDependencies:
+      '@peerbit/log-rust':
+        specifier: workspace:*
+        version: link:rust
 
   packages/log/rust: {}
 

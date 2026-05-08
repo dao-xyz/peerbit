@@ -1,11 +1,14 @@
 /* eslint-disable @typescript-eslint/no-unused-expressions */
 import { keys } from "@libp2p/crypto";
 import { createStore } from "@peerbit/any-store";
+import { RustAnyStore } from "@peerbit/any-store-rust";
 import { Ed25519Keypair } from "@peerbit/crypto";
+import { RustIndices } from "@peerbit/indexer-rust";
 import { expect } from "chai";
 import path from "path";
 import { v4 as uuid } from "uuid";
 import { Peerbit } from "../src/peer.js";
+import { createRustPeerbitOptions } from "../src/rust.js";
 
 describe("Create", function () {
 	describe("with db", function () {
@@ -57,6 +60,26 @@ describe("Create", function () {
 		expect(directories).to.include(path.join(clientDirectory, "/cache"));
 		expect(directories).to.include(path.join(clientDirectory, "/keychain"));
 		expect(directories).to.include(path.join(clientDirectory, "/blocks"));
+		await client.stop();
+	});
+
+	it("can create with the rust storage preset", async () => {
+		const clientDirectory = path.join(
+			"tmp",
+			"peerbit",
+			"tests",
+			"create-rust-preset-" + uuid(),
+		);
+		const client = await Peerbit.create({
+			directory: clientDirectory,
+			...createRustPeerbitOptions(),
+		});
+
+		expect(client.storage).to.be.instanceOf(RustAnyStore);
+		expect(client.indexer).to.be.instanceOf(RustIndices);
+		expect(await client.storage.persisted()).to.be.true;
+		expect(await client.indexer.persisted()).to.be.true;
+		expect(await client.libp2p.services.blocks.persisted()).to.be.true;
 		await client.stop();
 	});
 
