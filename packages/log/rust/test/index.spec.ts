@@ -55,6 +55,30 @@ describe("native log graph index", () => {
 		expect(index.heads("two")).to.deep.equal(["c"]);
 	});
 
+	it("returns sortable head metadata for append planning", async () => {
+		const index = await createLogGraphIndex();
+		index.put(entry("b", "one", [], 2n));
+		index.put(entry("a", "one", [], 1n));
+		index.put(entry("c", "two", [], 3n));
+
+		expect(index.headEntries("one")).to.deep.equal([
+			{
+				hash: "a",
+				meta: {
+					gid: "one",
+					clock: { timestamp: { wallTime: 1n, logical: 0 } },
+				},
+			},
+			{
+				hash: "b",
+				meta: {
+					gid: "one",
+					clock: { timestamp: { wallTime: 2n, logical: 0 } },
+				},
+			},
+		]);
+	});
+
 	it("does not demote nexts for cut entries", async () => {
 		const index = await createLogGraphIndex();
 		index.put(entry("a", "g", [], 1n));

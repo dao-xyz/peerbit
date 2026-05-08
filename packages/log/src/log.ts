@@ -568,6 +568,7 @@ export class Log<T> {
 
 		const nexts: Sorting.SortableEntry[] =
 			options.meta?.next ||
+			this.entryIndex.getHeadsForAppend() ||
 			(await this.entryIndex
 				.getHeads(undefined, { type: "shape", shape: Sorting.ENTRY_SORT_SHAPE })
 				.all());
