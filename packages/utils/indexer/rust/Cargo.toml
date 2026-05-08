@@ -1,0 +1,19 @@
+[package]
+name = "peerbit_indexer_rust"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+description = "Rust-backed index storage for Peerbit"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+borsh = { version = "1.5", features = ["derive"] }
+indexmap = "2.7.1"
+js-sys = "0.3.80"
+roaring = "0.11.4"
+wasm-bindgen = "0.2.103"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
