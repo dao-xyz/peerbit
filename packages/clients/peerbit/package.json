@@ -34,6 +34,10 @@
 		".": {
 			"types": "./dist/src/index.d.ts",
 			"import": "./dist/src/index.js"
+		},
+		"./rust": {
+			"types": "./dist/src/rust.d.ts",
+			"import": "./dist/src/rust.js"
 		}
 	},
 	"eslintConfig": {
@@ -78,10 +82,12 @@
 		"@multiformats/multiaddr": "^13.0.1",
 		"@peerbit/any-store": "workspace:*",
 		"@peerbit/any-store-opfs": "workspace:*",
+		"@peerbit/any-store-rust": "workspace:*",
 		"@peerbit/blocks": "workspace:*",
 		"@peerbit/build-assets": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/indexer-interface": "workspace:*",
+		"@peerbit/indexer-rust": "workspace:*",
 		"@peerbit/indexer-simple": "workspace:*",
 		"@peerbit/indexer-sqlite3": "workspace:*",
 		"@peerbit/keychain": "workspace:*",
