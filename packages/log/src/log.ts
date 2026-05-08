@@ -596,6 +596,7 @@ export class Log<T> {
 		}
 
 		let nexts = await this.getNextsForAppend(options);
+		const initialNexts = nexts;
 		const entries: Entry<T>[] = [];
 		const pendingDeletes: (
 			| PendingDelete<T>
@@ -604,12 +605,16 @@ export class Log<T> {
 
 		for (const item of data) {
 			const entry = await this.createAppendEntry(item, options, nexts);
-			await this.joinMissingNexts(entry, nexts);
-			await this.putAppendEntry(entry, options);
-			pendingDeletes.push(...(await this.processEntry(entry)));
-			entry.init({ encoding: this._encoding, keychain: this._keychain });
 			entries.push(entry);
 			nexts = [entry];
+		}
+
+		await this.joinMissingNexts(entries[0]!, initialNexts);
+		await this.putAppendEntries(entries, options);
+
+		for (const entry of entries) {
+			pendingDeletes.push(...(await this.processEntry(entry)));
+			entry.init({ encoding: this._encoding, keychain: this._keychain });
 		}
 
 		const trimmed = await this.trim(options?.trim);
@@ -731,6 +736,17 @@ export class Log<T> {
 			unique: true,
 			isHead: true,
 			toMultiHash: false,
+			deferIndexWrite:
+				options.deferIndexWrite ??
+				(options.durability
+					? options.durability === "buffered"
+					: this._appendDurability === "buffered"),
+		});
+	}
+
+	private async putAppendEntries(entries: Entry<T>[], options: AppendOptions<T>) {
+		await this.entryIndex.putAppendBatch(entries, {
+			unique: true,
 			deferIndexWrite:
 				options.deferIndexWrite ??
 				(options.durability

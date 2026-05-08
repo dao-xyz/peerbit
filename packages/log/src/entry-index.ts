@@ -631,21 +631,7 @@ export class EntryIndex<T> {
 				this.properties.nativeGraph?.graph.put(toNativeLogEntry(shallowEntry));
 
 				// check if gids has been shadowed, by query all nexts that have a different gid
-				if (this.properties.onGidRemoved && entry.meta.next.length > 0) {
-					const shadowedGids: Set<string> = this.properties.nativeGraph
-						? new Set<string>(
-								this.properties.nativeGraph.graph.shadowedGids(
-									entry.meta.gid,
-									entry.meta.next,
-									entry.hash,
-								),
-							)
-						: await this.findShadowedGids(entry);
-
-					if (shadowedGids.size > 0) {
-						this.properties.onGidRemoved?.([...shadowedGids]);
-					}
-				}
+				await this.notifyShadowedGids(entry);
 
 				// mark all next entries as not heads
 				await this.privateUpdateNextHeadProperty(entry, false);
@@ -656,6 +642,74 @@ export class EntryIndex<T> {
 			this.insertionPromises.set(entry.hash, promise);
 			return promise;
 		}
+	}
+
+	async putAppendBatch(
+		entries: Entry<any>[],
+		properties: {
+			unique: boolean;
+			deferIndexWrite?: boolean;
+		},
+	) {
+		if (entries.length === 0) {
+			return;
+		}
+		if (entries.length === 1) {
+			return this.put(entries[0], {
+				unique: properties.unique,
+				isHead: true,
+				toMultiHash: false,
+				deferIndexWrite: properties.deferIndexWrite,
+			});
+		}
+
+		for (const entry of entries) {
+			if (!entry.hash) {
+				throw new Error("Missing hash");
+			}
+			const existingPromise = this.insertionPromises.get(entry.hash);
+			if (existingPromise) {
+				await existingPromise;
+			}
+		}
+
+		const promise = (async () => {
+			const batchHashes = new Set(entries.map((entry) => entry.hash));
+			const externalNexts = new Set<string>();
+			for (let i = 0; i < entries.length; i++) {
+				const entry = entries[i];
+				const isHead = i === entries.length - 1;
+				if (properties.unique === true || !(await this.has(entry.hash))) {
+					this._length++;
+				}
+
+				this.cache.add(entry.hash, entry);
+				const shallowEntry = entry.toShallow(isHead);
+				await this.properties.index.put(shallowEntry);
+				this.properties.nativeGraph?.graph.put(toNativeLogEntry(shallowEntry));
+				await this.notifyShadowedGids(entry);
+
+				for (const next of entry.meta.next) {
+					if (!batchHashes.has(next)) {
+						externalNexts.add(next);
+					}
+				}
+			}
+
+			if (externalNexts.size > 0) {
+				await this.privateUpdateNextHeadHashes([...externalNexts], false);
+			}
+		})().finally(() => {
+			for (const entry of entries) {
+				this.insertionPromises.delete(entry.hash);
+			}
+		});
+
+		for (const entry of entries) {
+			this.insertionPromises.set(entry.hash, promise);
+		}
+
+		return promise;
 	}
 
 	async delete(k: string, from?: Entry<any> | ShallowEntry) {
@@ -711,7 +765,11 @@ export class EntryIndex<T> {
 			return;
 		}
 
-		for (const next of from.meta.next) {
+		await this.privateUpdateNextHeadHashes(from.meta.next, isHead);
+	}
+
+	private async privateUpdateNextHeadHashes(nexts: string[], isHead: boolean) {
+		for (const next of nexts) {
 			const pending = this.pendingIndexWrites.get(next);
 			const indexedEntry = pending
 				? { id: toId(next), value: pending }
@@ -739,6 +797,25 @@ export class EntryIndex<T> {
 					await this.properties.index.put(indexedEntry.value);
 				}
 			}
+		}
+	}
+
+	private async notifyShadowedGids(entry: Entry<any>) {
+		if (!this.properties.onGidRemoved || entry.meta.next.length === 0) {
+			return;
+		}
+		const shadowedGids: Set<string> = this.properties.nativeGraph
+			? new Set<string>(
+					this.properties.nativeGraph.graph.shadowedGids(
+						entry.meta.gid,
+						entry.meta.next,
+						entry.hash,
+					),
+				)
+			: await this.findShadowedGids(entry);
+
+		if (shadowedGids.size > 0) {
+			this.properties.onGidRemoved([...shadowedGids]);
 		}
 	}
 
