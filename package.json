@@ -22,6 +22,7 @@
 		"packages/transport/pubsub-interface",
 		"packages/transport/libp2p-test-utils",
 		"packages/log",
+		"packages/log/rust",
 		"packages/clients/peerbit-react",
 		"packages/clients/peerbit",
 		"packages/clients/canonical/transport",

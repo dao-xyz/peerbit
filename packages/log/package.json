@@ -70,7 +70,6 @@
 		"@peerbit/indexer-simple": "workspace:*",
 		"@peerbit/indexer-sqlite3": "workspace:*",
 		"@peerbit/keychain": "workspace:*",
-		"@peerbit/log-rust": "workspace:*",
 		"@peerbit/logger": "workspace:*",
 		"@peerbit/pubsub-interface": "workspace:*",
 		"@peerbit/stream-interface": "workspace:*",
@@ -85,6 +84,7 @@
 		"uuid": "^10.0.0"
 	},
 	"devDependencies": {
+		"@peerbit/log-rust": "workspace:*",
 		"@peerbit/test-utils": "workspace:*",
 		"@types/libsodium-wrappers": "^0.7.14",
 		"@types/path-browserify": "^1.0.2",

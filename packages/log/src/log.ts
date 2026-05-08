@@ -25,6 +25,7 @@ import { type Encoding, NO_ENCODING } from "./encoding.js";
 import {
 	EntryIndex,
 	type MaybeResolveOptions,
+	type NativeLogGraph,
 	type ResultsIterator,
 	type ReturnTypeFromResolveOptions,
 } from "./entry-index.js";
@@ -247,7 +248,18 @@ export class Log<T> {
 		const nativeGraph =
 			options.nativeGraph &&
 			(await (async () => {
-				const { createLogGraphIndex } = await import("@peerbit/log-rust");
+				let createLogGraphIndex: () => Promise<NativeLogGraph>;
+				try {
+					({ createLogGraphIndex } = (await import(
+						["@peerbit", "log-rust"].join("/")
+					)) as {
+						createLogGraphIndex: () => Promise<NativeLogGraph>;
+					});
+				} catch {
+					throw new Error(
+						"Log nativeGraph requires @peerbit/log-rust to be installed and built",
+					);
+				}
 				const headsRequested =
 					typeof options.nativeGraph === "object"
 						? options.nativeGraph.heads !== false

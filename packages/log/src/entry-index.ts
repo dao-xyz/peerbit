@@ -16,7 +16,6 @@ import {
 	StringMatchMethod,
 	toId,
 } from "@peerbit/indexer-interface";
-import type { LogGraphIndex, NativeLogEntry } from "@peerbit/log-rust";
 import type { ShallowEntry } from "./entry-shallow.js";
 import { EntryType } from "./entry-type.js";
 import { Entry, type ShallowOrFullEntry } from "./entry.js";
@@ -36,6 +35,35 @@ export type ResultsIterator<T> = {
 const ENTRY_CACHE_MAX_SIZE = 10; // TODO as param for log
 const DEFERRED_INDEX_FLUSH_IDLE_MS = 250;
 const NATIVE_GRAPH_REBUILD_BATCH_SIZE = 512;
+
+type NativeLogEntry = {
+	hash: string;
+	gid: string;
+	next: string[];
+	type: number;
+	head?: boolean;
+	payloadSize?: number;
+	clock: {
+		timestamp: {
+			wallTime: bigint | number | string;
+			logical?: number;
+		};
+	};
+};
+
+export type NativeLogGraph = {
+	put: (entry: NativeLogEntry) => void;
+	delete: (hash: string) => boolean;
+	clear: () => void;
+	heads: (gid?: string) => string[];
+	countHasNext: (next: string, excludeHash?: string) => number;
+	shadowedGids: (
+		gid: string,
+		next: string[],
+		excludeHash?: string,
+	) => string[];
+};
+
 type ResolveFullyOptions =
 	| true
 	| {
@@ -121,7 +149,7 @@ export class EntryIndex<T> {
 			sort: SortFn;
 			onGidRemoved?: (gid: string[]) => Promise<void> | void;
 			nativeGraph?: {
-				graph: LogGraphIndex;
+				graph: NativeLogGraph;
 				useHeads: boolean;
 			};
 			resolveRemotePeers?: (
