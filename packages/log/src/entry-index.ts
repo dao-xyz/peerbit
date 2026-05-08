@@ -50,6 +50,7 @@ type NativeLogEntry = {
 	type: number;
 	head?: boolean;
 	payloadSize?: number;
+	data?: Uint8Array;
 	clock: {
 		timestamp: {
 			wallTime: bigint | number | string;
@@ -71,6 +72,7 @@ export type NativeLogGraph = {
 	delete: (hash: string) => boolean;
 	clear: () => void;
 	heads: (gid?: string) => string[];
+	headDataEntries: (gid?: string) => NativeLogHeadDataEntry[];
 	headEntries: (gid?: string) => SortableEntry[];
 	joinHeadEntries: (gid?: string) => NativeLogJoinEntry[];
 	childJoinEntries: (hash: string) => NativeLogJoinEntry[];
@@ -101,6 +103,13 @@ export type NativeLogJoinEntry = SortableEntry & {
 	meta: SortableEntry["meta"] & {
 		type: EntryType;
 		next: string[];
+	};
+};
+
+export type NativeLogHeadDataEntry = {
+	hash: string;
+	meta: {
+		data?: Uint8Array;
 	};
 };
 
@@ -270,6 +279,22 @@ export class EntryIndex<T> {
 		resolve: R = false as R,
 	): ResultsIterator<ReturnTypeFromResolveOptions<R, T>> {
 		if (this.properties.nativeGraph?.useHeads) {
+			const shape = getResolveShape(resolve);
+			if (shape && isHeadHashOnlyShape(shape)) {
+				return this.iterateNativeProjected(
+					() =>
+						this.properties
+							.nativeGraph!.graph.heads(gid)
+							.map((hash) => ({ hash })),
+					shape,
+				) as ResultsIterator<ReturnTypeFromResolveOptions<R, T>>;
+			}
+			if (shape && isHeadDataShape(shape)) {
+				return this.iterateNativeProjected(
+					() => this.properties.nativeGraph!.graph.headDataEntries(gid),
+					shape,
+				) as ResultsIterator<ReturnTypeFromResolveOptions<R, T>>;
+			}
 			return this.iterateNativeHashes(
 				() => this.properties.nativeGraph!.graph.heads(gid),
 				resolve,
@@ -450,6 +475,44 @@ export class EntryIndex<T> {
 			},
 			all: async () => {
 				const all = await getHashes();
+				const remaining = all.slice(offset);
+				offset = all.length;
+				complete = true;
+				return coerce(remaining);
+			},
+		};
+	}
+
+	private iterateNativeProjected<TValue>(
+		values: () => TValue[],
+		shape: Shape,
+	): ResultsIterator<unknown> {
+		let valuesPromise: Promise<TValue[]> | undefined;
+		let offset = 0;
+		let complete = false;
+
+		const getValues = async () => {
+			if (!valuesPromise) {
+				valuesPromise = this.flushPendingWrites().then(() => values());
+			}
+			return valuesPromise;
+		};
+
+		const coerce = (values: TValue[]) =>
+			values.map((value) => projectShape(value, shape));
+
+		return {
+			close: () => undefined,
+			done: () => complete,
+			next: async (amount: number) => {
+				const all = await getValues();
+				const batch = all.slice(offset, offset + amount);
+				offset += batch.length;
+				complete = offset >= all.length;
+				return coerce(batch);
+			},
+			all: async () => {
+				const all = await getValues();
 				const remaining = all.slice(offset);
 				offset = all.length;
 				complete = true;
@@ -1225,6 +1288,7 @@ const toNativeLogEntry = (entry: ShallowEntry): NativeLogEntry => ({
 	type: entry.meta.type,
 	head: entry.head,
 	payloadSize: entry.payloadSize,
+	data: entry.meta.data,
 	clock: {
 		timestamp: {
 			wallTime: entry.meta.clock.timestamp.wallTime,
@@ -1232,6 +1296,32 @@ const toNativeLogEntry = (entry: ShallowEntry): NativeLogEntry => ({
 		},
 	},
 });
+
+const getResolveShape = (options: MaybeResolveOptions | undefined) =>
+	options && options !== true && options.type === "shape"
+		? options.shape
+		: undefined;
+
+const isHeadHashOnlyShape = (shape: Shape) => {
+	const keys = Object.keys(shape);
+	return keys.length === 1 && shape.hash === true;
+};
+
+const isHeadDataShape = (shape: Shape) => {
+	const keys = Object.keys(shape);
+	if (keys.some((key) => key !== "hash" && key !== "meta")) {
+		return false;
+	}
+	if (shape.hash !== undefined && shape.hash !== true) {
+		return false;
+	}
+	const meta = shape.meta as Shape | undefined;
+	if (!meta || typeof meta !== "object") {
+		return false;
+	}
+	const metaKeys = Object.keys(meta);
+	return metaKeys.length === 1 && meta.data === true;
+};
 
 const projectShape = (value: any, shape: Shape): any => {
 	const out: any = {};

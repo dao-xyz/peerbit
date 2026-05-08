@@ -5368,9 +5368,12 @@ export class SharedLog<
 								from: context.from!,
 							});
 
-							const headsWithGid = await this.log.entryIndex
-								.getHeads(gid)
-								.all();
+							const headsWithGid = (await this.log.entryIndex
+								.getHeads(gid, {
+									type: "shape",
+									shape: { meta: { data: true } },
+								})
+								.all()) as { meta: { data?: Uint8Array } }[];
 
 							const latestEntry = getLatestEntry(entries)!;
 
@@ -5475,7 +5478,12 @@ export class SharedLog<
 									toPersist.push(entry.entry);
 								} else {
 									for (const ref of entry.gidRefrences) {
-										const map = await this.log.entryIndex.getHeads(ref).all();
+										const map = await this.log.entryIndex
+											.getHeads(ref, {
+												type: "shape",
+												shape: { hash: true },
+											})
+											.all();
 										if (map && map.length > 0) {
 											toMerge.push(entry.entry);
 											(toDelete || (toDelete = [])).push(entry.entry);
@@ -5528,9 +5536,12 @@ export class SharedLog<
 
 							if (maybeDelete) {
 								for (const entries of maybeDelete as EntryWithRefs<any>[][]) {
-									const headsWithGid = await this.log.entryIndex
-										.getHeads(entries[0].entry.meta.gid)
-										.all();
+									const headsWithGid = (await this.log.entryIndex
+										.getHeads(entries[0].entry.meta.gid, {
+											type: "shape",
+											shape: { meta: { data: true } },
+										})
+										.all()) as { meta: { data?: Uint8Array } }[];
 									if (headsWithGid && headsWithGid.length > 0) {
 										const minReplicas = maxReplicas(
 											this,
