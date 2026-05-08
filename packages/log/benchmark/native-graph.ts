@@ -16,6 +16,9 @@ const entries = Number(process.env.PEERBIT_LOG_NATIVE_GRAPH_ENTRIES ?? 1_000);
 const iterations = Number(
 	process.env.PEERBIT_LOG_NATIVE_GRAPH_ITERATIONS ?? 1_000,
 );
+const appendEntries = Number(
+	process.env.PEERBIT_LOG_NATIVE_GRAPH_APPEND_ENTRIES ?? 1_000,
+);
 
 const key = await Ed25519Keypair.create();
 
@@ -77,6 +80,58 @@ const measure = async (
 };
 
 const rows: BenchRow[] = [];
+
+const measureAppend = async (
+	name: string,
+	nativeGraph: boolean,
+	fn: (log: Log<Uint8Array>) => Promise<void>,
+): Promise<BenchRow> => {
+	const store = new AnyBlockStore();
+	await store.start();
+	const log = new Log<Uint8Array>();
+	await log.open(store, key, {
+		appendDurability: "strict",
+		indexer: new HashmapIndices(),
+		nativeGraph,
+	});
+	await log.append(new Uint8Array([0]), { meta: { next: [] } });
+	const started = performance.now();
+	await fn(log);
+	const elapsed = performance.now() - started;
+	await log.close();
+	await store.stop();
+	return {
+		name,
+		nativeGraph,
+		entries: appendEntries,
+		iterations: appendEntries,
+		elapsedMs: Math.round(elapsed),
+		opsPerSecond: Math.round((appendEntries / elapsed) * 1000),
+	};
+};
+
+for (const nativeGraph of [false, true]) {
+	rows.push(
+		await measureAppend("append loop auto-next", nativeGraph, async (log) => {
+			for (let i = 0; i < appendEntries; i++) {
+				await log.append(new Uint8Array([i & 0xff]));
+			}
+		}),
+	);
+}
+
+for (const nativeGraph of [false, true]) {
+	rows.push(
+		await measureAppend("appendMany auto-next", nativeGraph, async (log) => {
+			await log.appendMany(
+				Array.from(
+					{ length: appendEntries },
+					(_, index) => new Uint8Array([index & 0xff]),
+				),
+			);
+		}),
+	);
+}
 
 for (const nativeGraph of [false, true]) {
 	const { log, store } = await createHeadsLog(nativeGraph);
