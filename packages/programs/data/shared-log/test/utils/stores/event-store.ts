@@ -164,6 +164,16 @@ export class EventStore<
 		);
 	}
 
+	addMany(data: T[], options?: SharedAppendOptions<Operation<T>>) {
+		return this.log.appendMany(
+			data.map((value) => ({
+				op: "ADD",
+				value,
+			})),
+			options,
+		);
+	}
+
 	async get(hash: string) {
 		return (await this.iterator({ gte: hash, limit: 1 })).collect()[0];
 	}

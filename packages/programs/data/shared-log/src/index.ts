@@ -3812,6 +3812,56 @@ export class SharedLog<
 			this.markLocalAppendActivity();
 		}
 
+		const { appendOptions, minReplicasValue } =
+			this.createLogAppendOptions(options);
+		const result = await this.log.append(data, appendOptions);
+		await this.processLocalAppend(result.entry, result.removed, options, {
+			minReplicasValue,
+		});
+		return result;
+	}
+
+	async appendMany(
+		data: T[],
+		options?: SharedAppendOptions<T> | undefined,
+	): Promise<{
+		entries: Entry<T>[];
+		removed: ShallowOrFullEntry<T>[];
+	}> {
+		if (data.length === 0) {
+			return { entries: [], removed: [] };
+		}
+		if (this._isAdaptiveReplicating) {
+			this.markLocalAppendActivity();
+		}
+
+		const { appendOptions, minReplicasValue } =
+			this.createLogAppendOptions(options);
+		const result = await this.log.appendMany(data, appendOptions);
+		const deferHeadCoordinatePersistence =
+			this.shouldDeferHeadCoordinatePersistence(options);
+
+		if (deferHeadCoordinatePersistence) {
+			await this.deleteCoordinatesForHashes([
+				...result.entries.flatMap((entry) => entry.meta.next),
+				...result.removed.map((entry) => entry.hash),
+			]);
+			return result;
+		}
+
+		for (const entry of result.entries) {
+			await this.processLocalAppend(entry, [], options, {
+				minReplicasValue,
+				deferHeadCoordinatePersistence: false,
+			});
+		}
+		return result;
+	}
+
+	private createLogAppendOptions(options?: SharedAppendOptions<T>): {
+		appendOptions: AppendOptions<T>;
+		minReplicasValue: number;
+	} {
 		const appendOptions: AppendOptions<T> = { ...options };
 		const minReplicas = this.getClampedReplicas(
 			options?.replicas
@@ -3846,31 +3896,44 @@ export class SharedLog<
 				return options.onChange!(change);
 			};
 		}
-		const result = await this.log.append(data, appendOptions);
+
+		return { appendOptions, minReplicasValue };
+	}
+
+	private async processLocalAppend(
+		entry: Entry<T>,
+		removed: ShallowOrFullEntry<T>[],
+		options: SharedAppendOptions<T> | undefined,
+		properties: {
+			minReplicasValue: number;
+			deferHeadCoordinatePersistence?: boolean;
+		},
+	) {
 		const deferHeadCoordinatePersistence =
-			result.entry.meta.type !== EntryType.CUT &&
-			this.shouldDeferHeadCoordinatePersistence(options);
+			properties.deferHeadCoordinatePersistence ??
+			(entry.meta.type !== EntryType.CUT &&
+				this.shouldDeferHeadCoordinatePersistence(options));
 
 		if (options?.replicate) {
-			await this.replicate(result.entry, { checkDuplicates: true });
+			await this.replicate(entry, { checkDuplicates: true });
 		}
 
 		if (deferHeadCoordinatePersistence) {
 			await this.deleteCoordinatesForHashes([
-				...result.entry.meta.next,
-				...result.removed.map((entry) => entry.hash),
+				...entry.meta.next,
+				...removed.map((entry) => entry.hash),
 			]);
-			return result;
+			return;
 		}
 
 		const coordinates = await this.createCoordinates(
-			result.entry,
-			minReplicasValue,
+			entry,
+			properties.minReplicasValue,
 		);
 
 		const selfHash = this.node.identity.publicKey.hashcode();
 		let isLeader = false;
-		let leaders = await this.findLeaders(coordinates, result.entry, {
+		let leaders = await this.findLeaders(coordinates, entry, {
 			persist: {},
 			onLeader: (key) => {
 				isLeader = isLeader || selfHash === key;
@@ -3894,12 +3957,12 @@ export class SharedLog<
 			}
 
 			if (target === "all") {
-				await this._appendDeliverToAllFanout(result.entry);
+				await this._appendDeliverToAllFanout(entry);
 			} else {
 				await this._appendDeliverToReplicators(
-					result.entry,
+					entry,
 					coordinates,
-					minReplicasValue,
+					properties.minReplicasValue,
 					leaders,
 					selfHash,
 					isLeader,
@@ -3911,15 +3974,13 @@ export class SharedLog<
 		const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
 		if (!isLeader && !delayAdaptiveRebalance) {
 			this.pruneDebouncedFnAddIfNotKeeping({
-				key: result.entry.hash,
-				value: { entry: result.entry, leaders },
+				key: entry.hash,
+				value: { entry, leaders },
 			});
 		}
 		if (!delayAdaptiveRebalance) {
 			this.rebalanceParticipationDebounced?.call();
 		}
-
-		return result;
 	}
 
 	async open(options?: Args<T, D, R>): Promise<void> {
