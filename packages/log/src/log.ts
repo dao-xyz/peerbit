@@ -554,90 +554,10 @@ export class Log<T> {
 		data: T,
 		options: AppendOptions<T> = {},
 	): Promise<{ entry: Entry<T>; removed: ShallowOrFullEntry<T>[] }> {
-		// Update the clock (find the latest clock)
-		if (options.meta?.next) {
-			for (const n of options.meta.next) {
-				if (!n.hash)
-					throw new Error(
-						"Expecting nexts to already be saved. missing hash for one or more entries",
-					);
-			}
-		}
-
-		/* await this.load({ reload: false }); */
-
-		const nexts: Sorting.SortableEntry[] =
-			options.meta?.next ||
-			this.entryIndex.getHeadsForAppend() ||
-			(await this.entryIndex
-				.getHeads(undefined, { type: "shape", shape: Sorting.ENTRY_SORT_SHAPE })
-				.all());
-
-		// Calculate max time for log/graph
-		const clock = new Clock({
-			id: this._identity.publicKey.bytes,
-			timestamp: options?.meta?.timestamp || this._hlc.now(),
-		});
-
-		const entry = await EntryV0.create<T>({
-			store: this._storage,
-			identity: options.identity || this._identity,
-			signers: options.signers,
-			data,
-			meta: {
-				clock,
-				type: options.meta?.type,
-				gidSeed: options.meta?.gidSeed,
-				data: options.meta?.data,
-				next: nexts,
-			},
-
-			encoding: this._encoding,
-			encryption: options.encryption
-				? {
-						keypair: options.encryption.keypair,
-						receiver: {
-							...options.encryption.receiver,
-						},
-					}
-				: undefined,
-			canAppend: options.canAppend || this._canAppend,
-		});
-
-		if (!entry.hash) {
-			throw new Error("Unexpected");
-		}
-
-		if (entry.meta.type !== EntryType.CUT) {
-			for (const e of nexts) {
-				if (!(await this.has(e.hash))) {
-					let entry: Entry<any>;
-					if (e instanceof Entry) {
-						entry = e;
-					} else {
-						let resolved = await this.entryIndex.get(e.hash);
-						if (!resolved) {
-							// eslint-disable-next-line no-console
-							console.warn("Unexpected missing entry when joining", e.hash);
-							continue;
-						}
-						entry = resolved;
-					}
-					await this.join([entry]);
-				}
-			}
-		}
-
-		await this.entryIndex.put(entry, {
-			unique: true,
-			isHead: true,
-			toMultiHash: false,
-			deferIndexWrite:
-				options.deferIndexWrite ??
-				(options.durability
-					? options.durability === "buffered"
-					: this._appendDurability === "buffered"),
-		});
+		const nexts = await this.getNextsForAppend(options);
+		const entry = await this.createAppendEntry(data, options, nexts);
+		await this.joinMissingNexts(entry, nexts);
+		await this.putAppendEntry(entry, options);
 
 		const pendingDeletes: (
 			| PendingDelete<T>
@@ -662,6 +582,161 @@ export class Log<T> {
 		await (options?.onChange || this._onChange)?.(changes);
 		await Promise.all(pendingDeletes.map((x) => x.fn?.()));
 		return { entry, removed };
+	}
+
+	async appendMany(
+		data: T[],
+		options: AppendOptions<T> = {},
+	): Promise<{ entries: Entry<T>[]; removed: ShallowOrFullEntry<T>[] }> {
+		if (data.length === 0) {
+			return { entries: [], removed: [] };
+		}
+		if (options.meta?.type === EntryType.CUT) {
+			throw new Error("appendMany does not support CUT entries");
+		}
+
+		let nexts = await this.getNextsForAppend(options);
+		const entries: Entry<T>[] = [];
+		const pendingDeletes: (
+			| PendingDelete<T>
+			| { entry: Entry<T>; fn: undefined }
+		)[] = [];
+
+		for (const item of data) {
+			const entry = await this.createAppendEntry(item, options, nexts);
+			await this.joinMissingNexts(entry, nexts);
+			await this.putAppendEntry(entry, options);
+			pendingDeletes.push(...(await this.processEntry(entry)));
+			entry.init({ encoding: this._encoding, keychain: this._keychain });
+			entries.push(entry);
+			nexts = [entry];
+		}
+
+		const trimmed = await this.trim(options?.trim);
+		if (trimmed) {
+			for (const entry of trimmed) {
+				pendingDeletes.push({ entry, fn: undefined });
+			}
+		}
+
+		const removed = pendingDeletes.map((x) => x.entry);
+		const changes: Change<T> = {
+			added: entries.map((entry, index) => ({
+				head: index === entries.length - 1,
+				entry,
+			})),
+			removed,
+		};
+
+		await (options?.onChange || this._onChange)?.(changes);
+		await Promise.all(pendingDeletes.map((x) => x.fn?.()));
+		return { entries, removed };
+	}
+
+	private validateExplicitNexts(options: AppendOptions<T>) {
+		if (!options.meta?.next) {
+			return;
+		}
+		for (const n of options.meta.next) {
+			if (!n.hash) {
+				throw new Error(
+					"Expecting nexts to already be saved. missing hash for one or more entries",
+				);
+			}
+		}
+	}
+
+	private async getNextsForAppend(
+		options: AppendOptions<T>,
+	): Promise<Sorting.SortableEntry[]> {
+		this.validateExplicitNexts(options);
+		return (
+			options.meta?.next ||
+			this.entryIndex.getHeadsForAppend() ||
+			(await this.entryIndex
+				.getHeads(undefined, { type: "shape", shape: Sorting.ENTRY_SORT_SHAPE })
+				.all())
+		);
+	}
+
+	private async createAppendEntry(
+		data: T,
+		options: AppendOptions<T>,
+		nexts: Sorting.SortableEntry[],
+	): Promise<Entry<T>> {
+		const clock = new Clock({
+			id: this._identity.publicKey.bytes,
+			timestamp: options?.meta?.timestamp || this._hlc.now(),
+		});
+
+		const entry = await EntryV0.create<T>({
+			store: this._storage,
+			identity: options.identity || this._identity,
+			signers: options.signers,
+			data,
+			meta: {
+				clock,
+				type: options.meta?.type,
+				gidSeed: options.meta?.gidSeed,
+				data: options.meta?.data,
+				next: nexts,
+			},
+			encoding: this._encoding,
+			encryption: options.encryption
+				? {
+						keypair: options.encryption.keypair,
+						receiver: {
+							...options.encryption.receiver,
+						},
+					}
+				: undefined,
+			canAppend: options.canAppend || this._canAppend,
+		});
+
+		if (!entry.hash) {
+			throw new Error("Unexpected");
+		}
+		return entry;
+	}
+
+	private async joinMissingNexts(
+		entry: Entry<T>,
+		nexts: Sorting.SortableEntry[],
+	) {
+		if (entry.meta.type === EntryType.CUT) {
+			return;
+		}
+		for (const e of nexts) {
+			if (await this.has(e.hash)) {
+				continue;
+			}
+			let nextEntry: Entry<any>;
+			if (e instanceof Entry) {
+				nextEntry = e;
+			} else {
+				const resolved = await this.entryIndex.get(e.hash);
+				if (!resolved) {
+					// eslint-disable-next-line no-console
+					console.warn("Unexpected missing entry when joining", e.hash);
+					continue;
+				}
+				nextEntry = resolved;
+			}
+			await this.join([nextEntry]);
+		}
+	}
+
+	private async putAppendEntry(entry: Entry<T>, options: AppendOptions<T>) {
+		await this.entryIndex.put(entry, {
+			unique: true,
+			isHead: true,
+			toMultiHash: false,
+			deferIndexWrite:
+				options.deferIndexWrite ??
+				(options.durability
+					? options.durability === "buffered"
+					: this._appendDurability === "buffered"),
+		});
 	}
 
 	async remove(
