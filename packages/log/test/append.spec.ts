@@ -147,6 +147,7 @@ describe("append", function () {
 		const log = new Log<Uint8Array>();
 		const changes: any[] = [];
 		await log.open(store, signKey, {
+			appendDurability: "strict",
 			indexer: new HashmapIndices(),
 			nativeGraph: true,
 			onChange: (change) => {
@@ -159,6 +160,7 @@ describe("append", function () {
 		changes.length = 0;
 
 		const iterateSpy = sinon.spy(log.entryIndex.properties.index, "iterate");
+		const putSpy = sinon.spy(log.entryIndex.properties.index, "put");
 		const result = await log.appendMany([
 			new Uint8Array([1]),
 			new Uint8Array([2]),
@@ -179,8 +181,10 @@ describe("append", function () {
 			true,
 		]);
 		expect(iterateSpy.callCount).equal(0);
+		expect(putSpy.callCount).equal(result.entries.length + 1);
 
 		iterateSpy.restore();
+		putSpy.restore();
 		await log.close();
 	});
 
