@@ -412,6 +412,7 @@ export class EntryV0<T>
 		encoding?: Encoding<T>;
 		canAppend?: CanAppend<T>;
 		encryption?: EntryEncryption;
+		deferStore?: boolean;
 		identity: Identity;
 		signers?: ((
 			data: Uint8Array,
@@ -570,7 +571,9 @@ export class EntryV0<T>
 		}
 
 		// Append hash
-		entry.hash = await Entry.toMultihash(properties.store, entry);
+		entry.hash = properties.deferStore
+			? await Entry.prepareMultihash(entry)
+			: await Entry.toMultihash(properties.store, entry);
 
 		entry.init({ encoding: properties.encoding });
 
