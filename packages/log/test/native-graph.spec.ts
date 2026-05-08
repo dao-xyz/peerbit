@@ -202,6 +202,28 @@ describe("native graph", () => {
 		}
 	});
 
+	it("reads memory usage from the native graph", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+		const indexSumSpy = sinon.spy(log.entryIndex.properties.index, "sum");
+		const nativeGraph = log.entryIndex.properties.nativeGraph!.graph;
+		const payloadSizeSumSpy = sinon.spy(nativeGraph, "payloadSizeSum");
+		try {
+			await log.append(new Uint8Array([1, 2, 3]), { meta: { next: [] } });
+
+			expect(await log.entryIndex.getMemoryUsage()).greaterThan(0);
+			expect(payloadSizeSumSpy.callCount).equal(1);
+			expect(indexSumSpy.callCount).equal(0);
+		} finally {
+			payloadSizeSumSpy.restore();
+			indexSumSpy.restore();
+			await log.close();
+		}
+	});
+
 	it("plans cut recursion deletes in the native graph", async () => {
 		const log = new Log<Uint8Array>();
 		await log.open(store, signKey, {
