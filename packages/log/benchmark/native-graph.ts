@@ -240,6 +240,52 @@ for (const nativeGraph of [false, true]) {
 	rows.push(await measureDuplicateJoinArray(nativeGraph));
 }
 
+const measureCutRecursiveDelete = async (
+	nativeGraph: boolean,
+): Promise<BenchRow> => {
+	const store = new AnyBlockStore();
+	await store.start();
+	const log = new Log<Uint8Array>();
+	await log.open(store, key, {
+		appendDurability: "strict",
+		indexer: new HashmapIndices(),
+		nativeGraph,
+	});
+
+	let previous = (
+		await log.append(new Uint8Array([0]), {
+			meta: { next: [] },
+		})
+	).entry;
+	for (let i = 1; i < joinParents; i++) {
+		previous = (
+			await log.append(new Uint8Array([i & 0xff]), {
+				meta: { next: [previous] },
+			})
+		).entry;
+	}
+
+	const started = performance.now();
+	await log.append(new Uint8Array([0xff]), {
+		meta: { type: EntryType.CUT, next: [previous] },
+	});
+	const elapsed = performance.now() - started;
+	await log.close();
+	await store.stop();
+	return {
+		name: "cut recursive child scan",
+		nativeGraph,
+		entries: joinParents,
+		iterations: joinParents,
+		elapsedMs: Math.round(elapsed),
+		opsPerSecond: Math.round((joinParents / elapsed) * 1000),
+	};
+};
+
+for (const nativeGraph of [false, true]) {
+	rows.push(await measureCutRecursiveDelete(nativeGraph));
+}
+
 const measureCutCoveredJoin = async (
 	nativeGraph: boolean,
 ): Promise<BenchRow> => {
