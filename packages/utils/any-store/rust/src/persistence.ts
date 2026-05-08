@@ -13,6 +13,18 @@ const SNAPSHOT_FILE_NAME = "store.bin";
 const SNAPSHOT_TEMP_FILE_NAME = "store.bin.tmp";
 const JOURNAL_FILE_NAME = "store.wal";
 const SUBLEVEL_DIRECTORY_NAME = "sublevels";
+const MANIFEST_A_FILE_NAME = "manifest-a.json";
+const MANIFEST_B_FILE_NAME = "manifest-b.json";
+
+type CheckpointManifest = {
+	epoch: number;
+	snapshot: string;
+	journal: string;
+};
+
+type ActiveManifest = CheckpointManifest & {
+	slot: typeof MANIFEST_A_FILE_NAME | typeof MANIFEST_B_FILE_NAME;
+};
 
 const encodePathPart = (part: string): string =>
 	encodeURIComponent(part).replace(/[!'()*]/g, (char) =>
@@ -33,9 +45,64 @@ const isNotFoundError = (error: unknown): boolean =>
 const sleep = (ms: number): Promise<void> =>
 	new Promise((resolve) => setTimeout(resolve, ms));
 
+const checksumString = (value: string): string => {
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < value.length; i++) {
+		hash ^= value.charCodeAt(i);
+		hash = Math.imul(hash, 0x01000193);
+	}
+	return (hash >>> 0).toString(16).padStart(8, "0");
+};
+
+const manifestPayload = (manifest: CheckpointManifest): string =>
+	JSON.stringify({
+		epoch: manifest.epoch,
+		snapshot: manifest.snapshot,
+		journal: manifest.journal,
+	});
+
+const encodeManifest = (manifest: CheckpointManifest): Uint8Array => {
+	const payload = manifestPayload(manifest);
+	return new TextEncoder().encode(
+		JSON.stringify({ payload: JSON.parse(payload), checksum: checksumString(payload) }),
+	);
+};
+
+const decodeManifest = (
+	bytes: Uint8Array,
+	slot: ActiveManifest["slot"],
+): ActiveManifest | undefined => {
+	try {
+		const decoded = JSON.parse(new TextDecoder().decode(bytes)) as {
+			payload?: CheckpointManifest;
+			checksum?: string;
+		};
+		if (!decoded.payload || typeof decoded.checksum !== "string") {
+			return undefined;
+		}
+		const payload = manifestPayload(decoded.payload);
+		if (checksumString(payload) !== decoded.checksum) {
+			return undefined;
+		}
+		if (
+			!Number.isSafeInteger(decoded.payload.epoch) ||
+			decoded.payload.epoch < 0 ||
+			typeof decoded.payload.snapshot !== "string" ||
+			typeof decoded.payload.journal !== "string"
+		) {
+			return undefined;
+		}
+		return { ...decoded.payload, slot };
+	} catch {
+		return undefined;
+	}
+};
+
 const readNodeFileIfExists = async (path: string): Promise<Uint8Array | undefined> => {
 	const fsPromises = "fs/promises";
-	const { readFile } = (await import(fsPromises)) as typeof import("fs/promises");
+	const { readFile } = (await import(
+		/* @vite-ignore */ fsPromises
+	)) as typeof import("fs/promises");
 	try {
 		return new Uint8Array(await readFile(path));
 	} catch (error) {
@@ -70,7 +137,9 @@ class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 	): Promise<void> {
 		await this.ensureLevelDirectory();
 		const fsPromises = "fs/promises";
-		const { open, stat } = (await import(fsPromises)) as typeof import("fs/promises");
+		const { open, stat } = (await import(
+			/* @vite-ignore */ fsPromises
+		)) as typeof import("fs/promises");
 		if (!this.journalHandle) {
 			const path = await this.journalPath();
 			this.journalHandle = await open(path, "a+");
@@ -94,7 +163,9 @@ class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 		await this.close();
 		await this.ensureLevelDirectory();
 		const fsPromises = "fs/promises";
-		const { rename, writeFile } = (await import(fsPromises)) as typeof import("fs/promises");
+		const { rename, writeFile } = (await import(
+			/* @vite-ignore */ fsPromises
+		)) as typeof import("fs/promises");
 		const tempPath = await this.snapshotTempPath();
 		await writeFile(tempPath, snapshot);
 		await rename(tempPath, await this.snapshotPath());
@@ -104,7 +175,9 @@ class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 
 	async removeSublevels(): Promise<void> {
 		const fsPromises = "fs/promises";
-		const { rm } = (await import(fsPromises)) as typeof import("fs/promises");
+		const { rm } = (await import(
+			/* @vite-ignore */ fsPromises
+		)) as typeof import("fs/promises");
 		await rm(await this.sublevelsDirectory(), { recursive: true, force: true });
 	}
 
@@ -119,13 +192,15 @@ class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 
 	private async ensureLevelDirectory(): Promise<void> {
 		const fsPromises = "fs/promises";
-		const { mkdir } = (await import(fsPromises)) as typeof import("fs/promises");
+		const { mkdir } = (await import(
+			/* @vite-ignore */ fsPromises
+		)) as typeof import("fs/promises");
 		await mkdir(await this.levelDirectory(), { recursive: true });
 	}
 
 	private async levelDirectory(): Promise<string> {
 		const pathModule = "path";
-		const path = (await import(pathModule)) as typeof import("path");
+		const path = (await import(/* @vite-ignore */ pathModule)) as typeof import("path");
 		let current = this.rootDirectory;
 		for (const part of this.level) {
 			current = path.join(
@@ -139,25 +214,25 @@ class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 
 	private async sublevelsDirectory(): Promise<string> {
 		const pathModule = "path";
-		const path = (await import(pathModule)) as typeof import("path");
+		const path = (await import(/* @vite-ignore */ pathModule)) as typeof import("path");
 		return path.join(await this.levelDirectory(), SUBLEVEL_DIRECTORY_NAME);
 	}
 
 	private async snapshotPath(): Promise<string> {
 		const pathModule = "path";
-		const path = (await import(pathModule)) as typeof import("path");
+		const path = (await import(/* @vite-ignore */ pathModule)) as typeof import("path");
 		return path.join(await this.levelDirectory(), SNAPSHOT_FILE_NAME);
 	}
 
 	private async snapshotTempPath(): Promise<string> {
 		const pathModule = "path";
-		const path = (await import(pathModule)) as typeof import("path");
+		const path = (await import(/* @vite-ignore */ pathModule)) as typeof import("path");
 		return path.join(await this.levelDirectory(), SNAPSHOT_TEMP_FILE_NAME);
 	}
 
 	private async journalPath(): Promise<string> {
 		const pathModule = "path";
-		const path = (await import(pathModule)) as typeof import("path");
+		const path = (await import(/* @vite-ignore */ pathModule)) as typeof import("path");
 		return path.join(await this.levelDirectory(), JOURNAL_FILE_NAME);
 	}
 }
@@ -165,15 +240,31 @@ class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 class OpfsPersistenceBackend implements RustAnyStorePersistenceBackend {
 	private journalHandle?: FileSystemSyncAccessHandle;
 	private journalOffset?: number;
+	private journalFileName?: string;
+	private activeManifest?: ActiveManifest;
+	private manifestLoaded = false;
 
 	constructor(private readonly directory: FileSystemDirectoryHandle) {}
 
 	async readSnapshot(): Promise<Uint8Array | undefined> {
-		return this.readFileIfExists(SNAPSHOT_FILE_NAME);
+		await this.ensureManifestLoaded();
+		if (!this.activeManifest) {
+			return this.readFileIfExists(SNAPSHOT_FILE_NAME);
+		}
+		const snapshot = await this.readFileIfExists(this.activeManifest.snapshot);
+		if (!snapshot) {
+			throw new Error(
+				`OPFS checkpoint snapshot missing: ${this.activeManifest.snapshot}`,
+			);
+		}
+		return snapshot;
 	}
 
 	async readJournal(): Promise<Uint8Array | undefined> {
-		const journal = await this.readFileIfExists(JOURNAL_FILE_NAME);
+		await this.ensureManifestLoaded();
+		const journalFile = this.activeManifest?.journal ?? JOURNAL_FILE_NAME;
+		const journal = await this.readFileIfExists(journalFile);
+		this.journalFileName = journalFile;
 		if (journal) {
 			this.journalOffset = journal.byteLength;
 		}
@@ -184,11 +275,17 @@ class OpfsPersistenceBackend implements RustAnyStorePersistenceBackend {
 		record: Uint8Array,
 		durability: PersistenceDurability,
 	): Promise<void> {
+		await this.ensureManifestLoaded();
+		const journalFile = this.activeManifest?.journal ?? JOURNAL_FILE_NAME;
+		if (this.journalHandle && this.journalFileName !== journalFile) {
+			await this.close();
+		}
 		if (!this.journalHandle) {
-			const file = await this.directory.getFileHandle(JOURNAL_FILE_NAME, {
+			const file = await this.directory.getFileHandle(journalFile, {
 				create: true,
 			});
 			this.journalHandle = await createSyncAccessHandle(file);
+			this.journalFileName = journalFile;
 			this.journalOffset ??= this.journalHandle.getSize();
 		}
 		const offset = this.journalOffset ?? 0;
@@ -201,16 +298,27 @@ class OpfsPersistenceBackend implements RustAnyStorePersistenceBackend {
 
 	async writeSnapshot(snapshot: Uint8Array): Promise<void> {
 		await this.close();
-		const moved = await this.tryWriteSnapshotWithMove(snapshot);
-		if (moved) {
-			await this.writeFile(JOURNAL_FILE_NAME, new Uint8Array(), true);
-			this.journalOffset = 0;
-		} else {
-			// Without an atomic OPFS move/replace primitive the WAL remains the
-			// source of truth. Replaying a longer WAL is slower than risking a
-			// torn checkpoint that shadows valid journal records.
-			this.journalOffset = undefined;
-		}
+		await this.ensureManifestLoaded();
+		const previous = this.activeManifest;
+		const epoch = (previous?.epoch ?? 0) + 1;
+		const next: ActiveManifest = {
+			epoch,
+			snapshot: `snapshot-${epoch}.bin`,
+			journal: `journal-${epoch}.wal`,
+			slot:
+				previous?.slot === MANIFEST_A_FILE_NAME
+					? MANIFEST_B_FILE_NAME
+					: MANIFEST_A_FILE_NAME,
+		};
+
+		await this.writeFile(next.snapshot, snapshot, true);
+		await this.writeFile(next.journal, new Uint8Array(), true);
+		await this.writeFile(next.slot, encodeManifest(next), true);
+
+		this.activeManifest = next;
+		this.journalFileName = next.journal;
+		this.journalOffset = 0;
+		await this.cleanupCheckpoints(previous, next);
 	}
 
 	async removeSublevels(): Promise<void> {
@@ -223,6 +331,7 @@ class OpfsPersistenceBackend implements RustAnyStorePersistenceBackend {
 		}
 		const handle = this.journalHandle;
 		this.journalHandle = undefined;
+		this.journalFileName = undefined;
 		handle.close();
 	}
 
@@ -254,32 +363,6 @@ class OpfsPersistenceBackend implements RustAnyStorePersistenceBackend {
 		await this.writeHandle(file, bytes, flush);
 	}
 
-	private async tryWriteSnapshotWithMove(snapshot: Uint8Array): Promise<boolean> {
-		const tempFile = await this.directory.getFileHandle(SNAPSHOT_TEMP_FILE_NAME, {
-			create: true,
-		});
-		await this.writeHandle(tempFile, snapshot, true);
-		const movable = tempFile as FileSystemFileHandle & {
-			move?: (
-				targetOrName: FileSystemDirectoryHandle | string,
-				name?: string,
-			) => Promise<void>;
-		};
-		if (typeof movable.move !== "function") {
-			await this.removeEntryIfExists(SNAPSHOT_TEMP_FILE_NAME);
-			return false;
-		}
-		try {
-			await movable.move(this.directory, SNAPSHOT_FILE_NAME);
-		} catch (error) {
-			if (!(error instanceof TypeError)) {
-				throw error;
-			}
-			await movable.move(SNAPSHOT_FILE_NAME);
-		}
-		return true;
-	}
-
 	private async writeHandle(
 		file: FileSystemFileHandle,
 		bytes: Uint8Array,
@@ -295,6 +378,65 @@ class OpfsPersistenceBackend implements RustAnyStorePersistenceBackend {
 		} finally {
 			handle.close();
 		}
+	}
+
+	private async ensureManifestLoaded(): Promise<void> {
+		if (this.manifestLoaded) {
+			return;
+		}
+		const manifests = await Promise.all([
+			this.readManifest(MANIFEST_A_FILE_NAME),
+			this.readManifest(MANIFEST_B_FILE_NAME),
+		]);
+		const candidates = manifests
+			.filter((manifest): manifest is ActiveManifest => manifest != null)
+			.sort((a, b) => b.epoch - a.epoch);
+		for (const manifest of candidates) {
+			if (
+				(await this.fileExists(manifest.snapshot)) &&
+				(await this.fileExists(manifest.journal))
+			) {
+				this.activeManifest = manifest;
+				break;
+			}
+		}
+		this.manifestLoaded = true;
+	}
+
+	private async readManifest(
+		slot: ActiveManifest["slot"],
+	): Promise<ActiveManifest | undefined> {
+		const bytes = await this.readFileIfExists(slot);
+		return bytes ? decodeManifest(bytes, slot) : undefined;
+	}
+
+	private async fileExists(name: string): Promise<boolean> {
+		try {
+			await this.directory.getFileHandle(name);
+			return true;
+		} catch (error) {
+			if (isNotFoundError(error)) {
+				return false;
+			}
+			throw error;
+		}
+	}
+
+	private async cleanupCheckpoints(
+		previous: ActiveManifest | undefined,
+		current: ActiveManifest,
+	): Promise<void> {
+		await Promise.allSettled([
+			this.removeEntryIfExists(SNAPSHOT_FILE_NAME),
+			this.removeEntryIfExists(SNAPSHOT_TEMP_FILE_NAME),
+			this.removeEntryIfExists(JOURNAL_FILE_NAME),
+			previous?.snapshot && previous.snapshot !== current.snapshot
+				? this.removeEntryIfExists(previous.snapshot)
+				: Promise.resolve(),
+			previous?.journal && previous.journal !== current.journal
+				? this.removeEntryIfExists(previous.journal)
+				: Promise.resolve(),
+		]);
 	}
 
 	private async removeEntryIfExists(name: string, recursive = false): Promise<void> {
