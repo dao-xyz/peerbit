@@ -1,2 +1,4 @@
 /target
 /wasm
+/test-results
+/playwright-report

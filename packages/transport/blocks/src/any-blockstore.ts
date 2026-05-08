@@ -93,6 +93,27 @@ export class AnyBlockStore implements Blocks {
 		return put.cid;
 	}
 
+	async putMany(
+		blocks: Array<Uint8Array | { block: Block<any, any, any, any>; cid: string }>,
+	): Promise<string[]> {
+		const puts = await Promise.all(
+			blocks.map((bytes) =>
+				bytes instanceof Uint8Array ? calculateRawCid(bytes) : bytes,
+			),
+		);
+		const store = this._store as AnyStore & {
+			putMany?: (entries: Iterable<readonly [string, Uint8Array]>) => Promise<void>;
+		};
+		if (typeof store.putMany === "function") {
+			await store.putMany(puts.map((put) => [put.cid, put.block.bytes] as const));
+		} else {
+			for (const put of puts) {
+				await this._store.put(put.cid, put.block.bytes);
+			}
+		}
+		return puts.map((put) => put.cid);
+	}
+
 	async rm(cid: string): Promise<void> {
 		await this._store.del(cid);
 	}

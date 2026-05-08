@@ -41,4 +41,15 @@ describe(`level`, function () {
 
 		expect(allKeys.size).equal(2);
 	});
+
+	it("puts many blocks", async () => {
+		store = new AnyBlockStore();
+		await store.start();
+		const datas = [new Uint8Array([0]), new Uint8Array([1, 2])];
+		const cids = await store.putMany(datas);
+
+		expect(cids).to.have.length(2);
+		expect(await store.get(cids[0])).to.deep.equal(datas[0]);
+		expect(await store.get(cids[1])).to.deep.equal(datas[1]);
+	});
 });

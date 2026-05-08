@@ -54,8 +54,10 @@
 		"benchmark": "npm run build && node ./dist/benchmark/index.js",
 		"clean": "aegir clean && shx rm -rf ./wasm && cargo clean",
 		"build": "aegir build --no-bundle && wasm-pack build --target web --out-dir dist/wasm --out-name any_store_rust && shx rm -rf ./dist/wasm/.gitignore ./dist/wasm/package.json && shx rm -rf ./wasm && shx cp -r ./dist/wasm ./wasm",
+		"e2e:dev": "vite --config e2e/vite.config.ts",
+		"test:e2e": "npm run build && playwright test --config e2e/playwright.config.ts",
 		"test": "cargo test && npm run build && aegir test -t node",
-		"lint": "cargo fmt --check && pnpm exec eslint --config ../../../../eslint.config.js \"src/**/*.ts\" \"test/**/*.ts\" \"benchmark/**/*.ts\"",
+		"lint": "cargo fmt --check && pnpm exec eslint --config ../../../../eslint.config.js \"src/**/*.ts\" \"test/**/*.ts\" \"benchmark/**/*.ts\" \"e2e/**/*.ts\"",
 		"test:cov": "aegir test -t node --cov"
 	},
 	"author": "dao.xyz",
@@ -64,6 +66,8 @@
 		"@peerbit/any-store-interface": "workspace:*"
 	},
 	"devDependencies": {
-		"@peerbit/any-store": "workspace:*"
+		"@peerbit/any-store": "workspace:*",
+		"@playwright/test": "^1.47.0",
+		"vite": "^7.1.7"
 	}
 }
