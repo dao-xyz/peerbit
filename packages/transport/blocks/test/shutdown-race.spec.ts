@@ -40,6 +40,20 @@ describe("@peerbit/blocks — shutdown race", () => {
 		expect(lateCid).to.exist;
 	});
 
+	it("putMany() after stop() should not throw LEVEL_DATABASE_NOT_OPEN", async () => {
+		const store = new AnyBlockStore(createStore(tmpDir));
+		await store.start();
+
+		const data = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])];
+		const cids = await store.putMany(data);
+		expect(cids).to.have.length(2);
+
+		await store.stop();
+
+		const lateCids = await store.putMany(data);
+		expect(lateCids).to.deep.equal(cids);
+	});
+
 	it("put() before start() should still throw for an unopened store", async () => {
 		const unopenedStore: AnyStore = {
 			status: () => "closed",
