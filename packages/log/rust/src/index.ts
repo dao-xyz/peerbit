@@ -26,6 +26,18 @@ export type NativeLogHeadEntry = {
 	};
 };
 
+export type NativeLogJoinEntry = NativeLogHeadEntry & {
+	meta: NativeLogHeadEntry["meta"] & {
+		type: number;
+		next: string[];
+	};
+};
+
+export type NativeJoinPlan = {
+	skip: boolean;
+	missingParents: string[];
+};
+
 type NativeLogIndexHandle = {
 	clear: () => void;
 	len: () => number;
@@ -43,6 +55,7 @@ type NativeLogIndexHandle = {
 	delete: (hash: string) => boolean;
 	heads: (gid?: string) => string[];
 	head_entries: (gid?: string) => unknown[];
+	head_join_entries: (gid?: string) => unknown[];
 	children: (hash: string) => string[];
 	count_has_next: (next: string, excludeHash?: string) => number;
 	shadowed_gids: (
@@ -50,6 +63,12 @@ type NativeLogIndexHandle = {
 		next: string[],
 		excludeHash?: string,
 	) => string[];
+	plan_join: (
+		hash: string,
+		next: string[],
+		type: number,
+		reset: boolean,
+	) => [boolean, string[]];
 };
 
 type WasmModule = {
@@ -69,11 +88,14 @@ const loadWasm = async (): Promise<WasmModule> => {
 
 	const wasm = await wasmModulePromise;
 	if (!wasmInitialized) {
-		const processLike = (globalThis as { process?: { versions?: { node?: string } } })
-			.process;
+		const processLike = (
+			globalThis as { process?: { versions?: { node?: string } } }
+		).process;
 		if (processLike?.versions?.node) {
 			const fsPromises = "fs/promises";
-			const { readFile } = (await import(fsPromises)) as typeof import("fs/promises");
+			const { readFile } = (await import(
+				fsPromises
+			)) as typeof import("fs/promises");
 			const bytes = await readFile(
 				new URL("../wasm/log_rust_bg.wasm", import.meta.url),
 			);
@@ -153,6 +175,33 @@ export class LogGraphIndex {
 		});
 	}
 
+	joinHeadEntries(gid?: string): NativeLogJoinEntry[] {
+		return this.native.head_join_entries(gid).map((row) => {
+			const [hash, gid, wallTime, logical, type, next] = row as [
+				string,
+				string,
+				string,
+				number,
+				number,
+				string[],
+			];
+			return {
+				hash,
+				meta: {
+					gid,
+					type,
+					next,
+					clock: {
+						timestamp: {
+							wallTime: BigInt(wallTime),
+							logical,
+						},
+					},
+				},
+			};
+		});
+	}
+
 	children(hash: string): string[] {
 		return this.native.children(hash);
 	}
@@ -163,6 +212,21 @@ export class LogGraphIndex {
 
 	shadowedGids(gid: string, next: string[], excludeHash?: string): string[] {
 		return this.native.shadowed_gids(gid, next, excludeHash);
+	}
+
+	planJoin(
+		hash: string,
+		next: string[],
+		type: number,
+		reset = false,
+	): NativeJoinPlan {
+		const [skip, missingParents] = this.native.plan_join(
+			hash,
+			next,
+			type,
+			reset,
+		);
+		return { skip, missingParents };
 	}
 }
 

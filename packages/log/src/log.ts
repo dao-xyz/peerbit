@@ -1055,10 +1055,8 @@ export class Log<T> {
 			throw new Error("Unexpected");
 		}
 
-		if (
-			(await this.entryIndex.getShallow(entry.hash)) != null &&
-			!options.reset
-		) {
+		const joinPlan = await this.entryIndex.planJoin(entry, options.reset);
+		if (joinPlan.skip) {
 			return false;
 		}
 
@@ -1070,9 +1068,9 @@ export class Log<T> {
 			}
 		}
 
-		const headsWithGid: JoinableEntry[] = await this.entryIndex
-			.getHeads(entry.meta.gid, { type: "shape", shape: ENTRY_JOIN_SHAPE })
-			.all();
+		const headsWithGid: JoinableEntry[] = await this.entryIndex.getJoinHeads(
+			entry.meta.gid,
+		);
 		if (headsWithGid) {
 			for (const v of headsWithGid) {
 				// TODO second argument should be a time compare instead? what about next nexts?
@@ -1095,13 +1093,10 @@ export class Log<T> {
 			const parents: Array<{ hash: string; entry?: Entry<T> }> = [];
 			const unresolvedParentHashes: string[] = [];
 
-			for (const a of entry.meta.next) {
+			for (const a of joinPlan.missingParents) {
 				const prev = this._joining.get(a);
 				if (prev) {
 					await prev;
-					continue;
-				}
-				if ((await this.entryIndex.getShallow(a)) != null && !options.reset) {
 					continue;
 				}
 
@@ -1131,9 +1126,6 @@ export class Log<T> {
 				const prev = this._joining.get(a);
 				if (prev) {
 					await prev;
-					continue;
-				}
-				if ((await this.entryIndex.getShallow(a)) != null && !options.reset) {
 					continue;
 				}
 
