@@ -585,10 +585,6 @@ export class EntryIndex<T> {
 	}
 
 	async has(k: string) {
-		let mem = this.cache.get(k);
-		if (mem) {
-			return true;
-		}
 		if (this.pendingIndexWrites.has(k)) {
 			return true;
 		}
@@ -603,7 +599,7 @@ export class EntryIndex<T> {
 		const existing = new Set<string>();
 		const missing: string[] = [];
 		for (const hash of new Set([...hashes].filter(Boolean))) {
-			if (this.cache.get(hash) || this.pendingIndexWrites.has(hash)) {
+			if (this.pendingIndexWrites.has(hash)) {
 				existing.add(hash);
 				continue;
 			}
