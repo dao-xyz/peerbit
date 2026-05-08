@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-expressions */
 import { keys } from "@libp2p/crypto";
+import { createStore } from "@peerbit/any-store";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { expect } from "chai";
 import path from "path";
@@ -33,6 +34,30 @@ describe("Create", function () {
 		it("block storage exist at path", async () => {
 			expect(await client.libp2p.services.blocks.persisted()).to.be.true;
 		});
+	});
+
+	it("can create with a local store factory", async () => {
+		const clientDirectory = path.join(
+			"tmp",
+			"peerbit",
+			"tests",
+			"create-store-factory-" + uuid(),
+		);
+		const directories: string[] = [];
+		const client = await Peerbit.create({
+			directory: clientDirectory,
+			storage: {
+				storeFactory: (directory) => {
+					directories.push(directory ?? "");
+					return createStore(directory);
+				},
+			},
+		});
+
+		expect(directories).to.include(path.join(clientDirectory, "/cache"));
+		expect(directories).to.include(path.join(clientDirectory, "/keychain"));
+		expect(directories).to.include(path.join(clientDirectory, "/blocks"));
+		await client.stop();
 	});
 
 	it("can create with privateKey", async () => {
