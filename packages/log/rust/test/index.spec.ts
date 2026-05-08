@@ -129,18 +129,56 @@ describe("native log graph index", () => {
 		expect(index.planJoin("b", ["a", "missing"], APPEND)).to.deep.equal({
 			skip: false,
 			missingParents: ["missing"],
+			cutChecked: false,
+			coveredByCut: false,
 		});
 		expect(index.planJoin("a", [], APPEND)).to.deep.equal({
 			skip: true,
 			missingParents: [],
+			cutChecked: false,
+			coveredByCut: false,
 		});
 		expect(index.planJoin("a", [], APPEND, true)).to.deep.equal({
 			skip: false,
 			missingParents: [],
+			cutChecked: false,
+			coveredByCut: false,
 		});
 		expect(index.planJoin("cut", ["missing"], CUT)).to.deep.equal({
 			skip: false,
 			missingParents: [],
+			cutChecked: false,
+			coveredByCut: false,
+		});
+	});
+
+	it("plans cut-covered joins", async () => {
+		const index = await createLogGraphIndex();
+		index.put(entry("cut", "g", ["old"], 2n, CUT));
+
+		expect(
+			index.planJoin("old", ["missing"], APPEND, false, {
+				gid: "g",
+				wallTime: 1n,
+				logical: 0,
+			}),
+		).to.deep.equal({
+			skip: false,
+			missingParents: [],
+			cutChecked: true,
+			coveredByCut: true,
+		});
+		expect(
+			index.planJoin("new", ["missing"], APPEND, false, {
+				gid: "g",
+				wallTime: 3n,
+				logical: 0,
+			}),
+		).to.deep.equal({
+			skip: false,
+			missingParents: ["missing"],
+			cutChecked: true,
+			coveredByCut: false,
 		});
 	});
 });

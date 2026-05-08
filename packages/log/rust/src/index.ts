@@ -36,6 +36,14 @@ export type NativeLogJoinEntry = NativeLogHeadEntry & {
 export type NativeJoinPlan = {
 	skip: boolean;
 	missingParents: string[];
+	cutChecked: boolean;
+	coveredByCut: boolean;
+};
+
+export type NativeJoinCutCheck = {
+	gid: string;
+	wallTime: bigint | number | string;
+	logical?: number;
 };
 
 type NativeLogIndexHandle = {
@@ -68,7 +76,10 @@ type NativeLogIndexHandle = {
 		next: string[],
 		type: number,
 		reset: boolean,
-	) => [boolean, string[]];
+		gid?: string,
+		wallTime?: bigint,
+		logical?: number,
+	) => [boolean, string[], boolean, boolean];
 };
 
 type WasmModule = {
@@ -219,14 +230,19 @@ export class LogGraphIndex {
 		next: string[],
 		type: number,
 		reset = false,
+		cutCheck?: NativeJoinCutCheck,
 	): NativeJoinPlan {
-		const [skip, missingParents] = this.native.plan_join(
-			hash,
-			next,
-			type,
-			reset,
-		);
-		return { skip, missingParents };
+		const [skip, missingParents, cutChecked, coveredByCut] =
+			this.native.plan_join(
+				hash,
+				next,
+				type,
+				reset,
+				cutCheck?.gid,
+				cutCheck ? BigInt(cutCheck.wallTime) : undefined,
+				cutCheck ? (cutCheck.logical ?? 0) : undefined,
+			);
+		return { skip, missingParents, cutChecked, coveredByCut };
 	}
 }
 

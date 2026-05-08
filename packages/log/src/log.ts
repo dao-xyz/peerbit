@@ -1068,10 +1068,14 @@ export class Log<T> {
 			}
 		}
 
-		const headsWithGid: JoinableEntry[] = await this.entryIndex.getJoinHeads(
-			entry.meta.gid,
-		);
-		if (headsWithGid) {
+		if (joinPlan.coveredByCut) {
+			return false;
+		}
+
+		if (!joinPlan.cutChecked) {
+			const headsWithGid: JoinableEntry[] = await this.entryIndex.getJoinHeads(
+				entry.meta.gid,
+			);
 			for (const v of headsWithGid) {
 				// TODO second argument should be a time compare instead? what about next nexts?
 				// and check the cut entry is newer than the current 'entry'
