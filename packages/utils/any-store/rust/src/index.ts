@@ -1,4 +1,8 @@
 import { type AnyStore } from "@peerbit/any-store-interface";
+import {
+	createPersistenceBackend,
+	type RustAnyStorePersistenceBackend,
+} from "./persistence.js";
 
 type NativeAnyStore = {
 	get(key: string): Uint8Array | undefined;
@@ -41,11 +45,6 @@ export type RustAnyStoreOptions = {
 
 type StoreStatus = "opening" | "open" | "closing" | "closed";
 
-const SNAPSHOT_FILE_NAME = "store.bin";
-const SNAPSHOT_TEMP_FILE_NAME = "store.bin.tmp";
-const JOURNAL_FILE_NAME = "store.wal";
-const SUBLEVEL_DIRECTORY_NAME = "sublevels";
-
 let wasmModulePromise: Promise<WasmModule> | undefined;
 let wasmInitialized = false;
 
@@ -77,43 +76,20 @@ const loadWasm = async (): Promise<WasmModule> => {
 	return wasm;
 };
 
-const isNodeRuntime = () =>
-	Boolean((globalThis as { process?: { versions?: { node?: string } } }).process
-		?.versions?.node);
-
-const encodePathPart = (part: string): string =>
-	encodeURIComponent(part).replace(/[!'()*]/g, (char) =>
-		`%${char.charCodeAt(0).toString(16).toUpperCase()}`,
-	);
-
 const copyBytes = (bytes: Uint8Array): Uint8Array =>
 	new Uint8Array(bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
 		? bytes
 		: bytes.slice());
 
-const readFileIfExists = async (path: string): Promise<Uint8Array | undefined> => {
-	const fsPromises = "fs/promises";
-	const { readFile } = (await import(fsPromises)) as typeof import("fs/promises");
-	try {
-		return new Uint8Array(await readFile(path));
-	} catch (error: any) {
-		if (error?.code === "ENOENT") {
-			return undefined;
-		}
-		throw error;
-	}
-};
-
 export class RustAnyStore implements AnyStore {
 	private native?: NativeAnyStore;
+	private persistence?: RustAnyStorePersistenceBackend;
 	private openPromise?: Promise<void>;
 	private mutationQueue: Promise<unknown> = Promise.resolve();
 	private journalQueue: Promise<unknown> = Promise.resolve();
 	private journalError?: unknown;
 	private children = new Map<string, RustAnyStore>();
 	private _status: StoreStatus = "closed";
-	private journalHandle?: import("fs/promises").FileHandle;
-	private journalOffset?: number;
 
 	constructor(
 		readonly directory?: string,
@@ -136,12 +112,13 @@ export class RustAnyStore implements AnyStore {
 		this.openPromise = this.openInternal()
 			.then(() => {
 				this._status = "open";
-				})
-				.catch((error) => {
-					this._status = "closed";
-					this.native = undefined;
-					throw error;
-				})
+			})
+			.catch((error) => {
+				this._status = "closed";
+				this.native = undefined;
+				this.persistence = undefined;
+				throw error;
+			})
 			.finally(() => {
 				this.openPromise = undefined;
 			});
@@ -158,10 +135,11 @@ export class RustAnyStore implements AnyStore {
 		for (const child of this.children.values()) {
 			await child.close();
 		}
-		await this.closeJournalHandle();
 		if (this.native && this.directory && this.options.compactOnClose !== false) {
 			await this.compact();
 		}
+		await this.persistence?.close();
+		this.persistence = undefined;
 		this.native = undefined;
 		this._status = "closed";
 	}
@@ -308,19 +286,15 @@ export class RustAnyStore implements AnyStore {
 		if (!this.directory) {
 			return;
 		}
-		if (!isNodeRuntime()) {
-			throw new Error("@peerbit/any-store-rust persistent stores currently require Node");
-		}
 		const native = this.journaledNative(this.native);
-		await this.ensureLevelDirectory();
-		const snapshot = await readFileIfExists(await this.snapshotPath());
+		this.persistence = await createPersistenceBackend(this.directory, this.level);
+		const snapshot = await this.persistence.readSnapshot();
 		if (snapshot && snapshot.byteLength > 0) {
 			native.load_snapshot(snapshot);
 		}
-		const journal = await readFileIfExists(await this.journalPath());
+		const journal = await this.persistence.readJournal();
 		if (journal && journal.byteLength > 0) {
 			native.apply_journal(journal);
-			this.journalOffset = journal.byteLength;
 		}
 	}
 
@@ -357,43 +331,23 @@ export class RustAnyStore implements AnyStore {
 		}
 		const journaled = this.journaledNative(native);
 		await this.waitForJournal();
-		await this.closeJournalHandle();
-		await this.ensureLevelDirectory();
-		const fsPromises = "fs/promises";
-		const { rename, writeFile } = (await import(fsPromises)) as typeof import("fs/promises");
-		const tempPath = await this.snapshotTempPath();
-		await writeFile(tempPath, journaled.snapshot());
-		await rename(tempPath, await this.snapshotPath());
-		await writeFile(await this.journalPath(), new Uint8Array());
-		this.journalOffset = 0;
-	}
-
-	private async appendJournal(record: Uint8Array): Promise<void> {
-		await this.ensureLevelDirectory();
-		const fsPromises = "fs/promises";
-		const { open, stat } = (await import(fsPromises)) as typeof import("fs/promises");
-		if (!this.journalHandle) {
-			const path = await this.journalPath();
-			this.journalHandle = await open(path, "a+");
-			if (this.journalOffset == null) {
-				try {
-					this.journalOffset = (await stat(path)).size;
-				} catch {
-					this.journalOffset = 0;
-				}
-			}
+		if (!this.persistence) {
+			throw new Error("RustAnyStore persistence backend is not open");
 		}
-		const offset = this.journalOffset ?? 0;
-		await this.journalHandle.write(record, 0, record.byteLength, offset);
-		this.journalOffset = offset + record.byteLength;
-		if (this.options.durability === "strict") {
-			await this.journalHandle.sync();
-		}
+		await this.persistence.writeSnapshot(journaled.snapshot());
 	}
 
 	private recordJournal(record: Uint8Array): Promise<void> {
 		const write = this.journalQueue
-			.then(() => this.appendJournal(record))
+			.then(() => {
+				if (!this.persistence) {
+					throw new Error("RustAnyStore persistence backend is not open");
+				}
+				return this.persistence.appendJournal(
+					record,
+					this.options.durability ?? "normal",
+				);
+			})
 			.catch((error) => {
 				this.journalError = error;
 				throw error;
@@ -412,66 +366,8 @@ export class RustAnyStore implements AnyStore {
 		}
 	}
 
-	private async closeJournalHandle(): Promise<void> {
-		if (!this.journalHandle) {
-			return;
-		}
-		const handle = this.journalHandle;
-		this.journalHandle = undefined;
-		await handle.close();
-	}
-
-	private async ensureLevelDirectory(): Promise<void> {
-		const fsPromises = "fs/promises";
-		const { mkdir } = (await import(fsPromises)) as typeof import("fs/promises");
-		await mkdir(await this.levelDirectory(), { recursive: true });
-	}
-
 	private async removeSublevelsDirectory(): Promise<void> {
-		const fsPromises = "fs/promises";
-		const { rm } = (await import(fsPromises)) as typeof import("fs/promises");
-		await rm(await this.sublevelsDirectory(), { recursive: true, force: true });
-	}
-
-	private async levelDirectory(): Promise<string> {
-		if (!this.directory) {
-			throw new Error("RustAnyStore has no persistence directory");
-		}
-		const pathModule = "path";
-		const path = (await import(pathModule)) as typeof import("path");
-		let current = this.directory;
-		for (const part of this.level) {
-			current = path.join(
-				current,
-				SUBLEVEL_DIRECTORY_NAME,
-				encodePathPart(part),
-			);
-		}
-		return current;
-	}
-
-	private async sublevelsDirectory(): Promise<string> {
-		const pathModule = "path";
-		const path = (await import(pathModule)) as typeof import("path");
-		return path.join(await this.levelDirectory(), SUBLEVEL_DIRECTORY_NAME);
-	}
-
-	private async snapshotPath(): Promise<string> {
-		const pathModule = "path";
-		const path = (await import(pathModule)) as typeof import("path");
-		return path.join(await this.levelDirectory(), SNAPSHOT_FILE_NAME);
-	}
-
-	private async snapshotTempPath(): Promise<string> {
-		const pathModule = "path";
-		const path = (await import(pathModule)) as typeof import("path");
-		return path.join(await this.levelDirectory(), SNAPSHOT_TEMP_FILE_NAME);
-	}
-
-	private async journalPath(): Promise<string> {
-		const pathModule = "path";
-		const path = (await import(pathModule)) as typeof import("path");
-		return path.join(await this.levelDirectory(), JOURNAL_FILE_NAME);
+		await this.persistence?.removeSublevels();
 	}
 }
 
