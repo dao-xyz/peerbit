@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { createLogGraphIndex, type NativeLogEntry } from "../src/index.js";
+import { type NativeLogEntry, createLogGraphIndex } from "../src/index.js";
 
 const APPEND = 0;
 const CUT = 1;
@@ -77,6 +77,27 @@ describe("native log graph index", () => {
 				},
 			},
 		]);
+
+		expect(index.joinHeadEntries("one")).to.deep.equal([
+			{
+				hash: "a",
+				meta: {
+					gid: "one",
+					type: APPEND,
+					next: [],
+					clock: { timestamp: { wallTime: 1n, logical: 0 } },
+				},
+			},
+			{
+				hash: "b",
+				meta: {
+					gid: "one",
+					type: APPEND,
+					next: [],
+					clock: { timestamp: { wallTime: 2n, logical: 0 } },
+				},
+			},
+		]);
 	});
 
 	it("does not demote nexts for cut entries", async () => {
@@ -99,5 +120,27 @@ describe("native log graph index", () => {
 
 		index.put(entry("c", "other", ["a"], 2n));
 		expect(index.shadowedGids("new", ["a"], "b")).to.deep.equal([]);
+	});
+
+	it("plans joins with missing parents", async () => {
+		const index = await createLogGraphIndex();
+		index.put(entry("a", "g", [], 1n));
+
+		expect(index.planJoin("b", ["a", "missing"], APPEND)).to.deep.equal({
+			skip: false,
+			missingParents: ["missing"],
+		});
+		expect(index.planJoin("a", [], APPEND)).to.deep.equal({
+			skip: true,
+			missingParents: [],
+		});
+		expect(index.planJoin("a", [], APPEND, true)).to.deep.equal({
+			skip: false,
+			missingParents: [],
+		});
+		expect(index.planJoin("cut", ["missing"], CUT)).to.deep.equal({
+			skip: false,
+			missingParents: [],
+		});
 	});
 });

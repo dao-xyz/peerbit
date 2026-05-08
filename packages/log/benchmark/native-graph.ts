@@ -1,6 +1,7 @@
 import { AnyBlockStore } from "@peerbit/blocks";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { HashmapIndices } from "@peerbit/indexer-simple";
+import { type Entry } from "../src/entry.js";
 import { Log } from "../src/log.js";
 
 type BenchRow = {
@@ -18,6 +19,9 @@ const iterations = Number(
 );
 const appendEntries = Number(
 	process.env.PEERBIT_LOG_NATIVE_GRAPH_APPEND_ENTRIES ?? 1_000,
+);
+const joinParents = Number(
+	process.env.PEERBIT_LOG_NATIVE_GRAPH_JOIN_PARENTS ?? entries,
 );
 
 const key = await Ed25519Keypair.create();
@@ -131,6 +135,58 @@ for (const nativeGraph of [false, true]) {
 			);
 		}),
 	);
+}
+
+const measureWideJoin = async (nativeGraph: boolean): Promise<BenchRow> => {
+	const store = new AnyBlockStore();
+	await store.start();
+	const source = new Log<Uint8Array>();
+	const target = new Log<Uint8Array>();
+	await source.open(store, key, {
+		appendDurability: "strict",
+		indexer: new HashmapIndices(),
+		nativeGraph,
+	});
+	await target.open(store, key, {
+		appendDurability: "strict",
+		indexer: new HashmapIndices(),
+		nativeGraph,
+	});
+
+	const parents: Entry<Uint8Array>[] = [];
+	for (let i = 0; i < joinParents; i++) {
+		parents.push(
+			(
+				await source.append(new Uint8Array([i & 0xff]), {
+					meta: { next: [] },
+				})
+			).entry,
+		);
+	}
+
+	await target.join(parents.slice(0, Math.floor(joinParents / 2)));
+	const { entry: merge } = await source.append(new Uint8Array([0xff]), {
+		meta: { next: parents },
+	});
+
+	const started = performance.now();
+	await target.join([merge]);
+	const elapsed = performance.now() - started;
+	await source.close();
+	await target.close();
+	await store.stop();
+	return {
+		name: "join wide merge parent planning",
+		nativeGraph,
+		entries: joinParents,
+		iterations: joinParents,
+		elapsedMs: Math.round(elapsed),
+		opsPerSecond: Math.round((joinParents / elapsed) * 1000),
+	};
+};
+
+for (const nativeGraph of [false, true]) {
+	rows.push(await measureWideJoin(nativeGraph));
 }
 
 for (const nativeGraph of [false, true]) {

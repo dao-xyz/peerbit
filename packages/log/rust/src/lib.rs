@@ -52,6 +52,12 @@ impl LogIndexEntry {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JoinPlan {
+    pub skip: bool,
+    pub missing_parents: Vec<String>,
+}
+
 #[derive(Default)]
 pub struct LogGraphIndex {
     entries: IndexMap<String, LogIndexEntry>,
@@ -145,6 +151,10 @@ impl LogGraphIndex {
             .collect()
     }
 
+    pub fn head_join_entries(&self, gid: Option<&str>) -> Vec<LogIndexEntry> {
+        self.head_entries(gid)
+    }
+
     pub fn children(&self, hash: &str) -> Vec<String> {
         self.children
             .get(hash)
@@ -184,6 +194,30 @@ impl LogGraphIndex {
             }
         }
         shadowed.into_iter().collect()
+    }
+
+    pub fn plan_join(&self, hash: &str, nexts: &[String], entry_type: u8, reset: bool) -> JoinPlan {
+        if !reset && self.has(hash) {
+            return JoinPlan {
+                skip: true,
+                missing_parents: Vec::new(),
+            };
+        }
+
+        let missing_parents = if entry_type == ENTRY_TYPE_CUT {
+            Vec::new()
+        } else {
+            nexts
+                .iter()
+                .filter(|next| reset || !self.has(next))
+                .cloned()
+                .collect()
+        };
+
+        JoinPlan {
+            skip: false,
+            missing_parents,
+        }
     }
 
     fn set_head(&mut self, hash: &str, head: bool) {
@@ -317,6 +351,10 @@ impl NativeLogIndex {
         log_entries_to_rows(self.inner.head_entries(gid.as_deref()))
     }
 
+    pub fn head_join_entries(&self, gid: Option<String>) -> Array {
+        log_join_entries_to_rows(self.inner.head_join_entries(gid.as_deref()))
+    }
+
     pub fn children(&self, hash: &str) -> Array {
         strings_to_array(self.inner.children(hash))
     }
@@ -337,6 +375,19 @@ impl NativeLogIndex {
             &next,
             exclude_hash.as_deref(),
         )))
+    }
+
+    pub fn plan_join(
+        &self,
+        hash: &str,
+        next: Array,
+        entry_type: u8,
+        reset: bool,
+    ) -> Result<Array, JsValue> {
+        let next = strings_from_array(next)?;
+        Ok(join_plan_to_row(
+            self.inner.plan_join(hash, &next, entry_type, reset),
+        ))
     }
 }
 
@@ -378,9 +429,31 @@ fn log_entries_to_rows(values: Vec<LogIndexEntry>) -> Array {
     out
 }
 
+fn log_join_entries_to_rows(values: Vec<LogIndexEntry>) -> Array {
+    let out = Array::new();
+    for entry in values {
+        let row = Array::new();
+        row.push(&JsValue::from_str(&entry.hash));
+        row.push(&JsValue::from_str(&entry.gid));
+        row.push(&JsValue::from_str(&entry.wall_time.to_string()));
+        row.push(&JsValue::from_f64(entry.logical as f64));
+        row.push(&JsValue::from_f64(entry.entry_type as f64));
+        row.push(&strings_to_array(entry.next));
+        out.push(&row);
+    }
+    out
+}
+
+fn join_plan_to_row(plan: JoinPlan) -> Array {
+    let row = Array::new();
+    row.push(&JsValue::from_bool(plan.skip));
+    row.push(&strings_to_array(plan.missing_parents));
+    row
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{LogGraphIndex, LogIndexEntry};
+    use super::{JoinPlan, LogGraphIndex, LogIndexEntry};
 
     const APPEND: u8 = 0;
     const CUT: u8 = 1;
@@ -452,6 +525,27 @@ mod tests {
     }
 
     #[test]
+    fn returns_head_join_entries_for_cut_checks() {
+        let mut index = LogGraphIndex::new();
+        index.put(LogIndexEntry::new(
+            "cut",
+            "one",
+            vec!["a".to_string()],
+            CUT,
+            2,
+            0,
+            1,
+            true,
+        ));
+
+        let heads = index.head_join_entries(Some("one"));
+        assert_eq!(heads.len(), 1);
+        assert_eq!(heads[0].hash, "cut");
+        assert_eq!(heads[0].entry_type, CUT);
+        assert_eq!(heads[0].next, vec!["a".to_string()]);
+    }
+
+    #[test]
     fn cut_entries_do_not_demote_their_nexts() {
         let mut index = LogGraphIndex::new();
         index.put(entry("a", "g", &[], 1));
@@ -471,6 +565,46 @@ mod tests {
 
         assert!(index.delete("cut").is_some());
         assert_eq!(index.heads(None), vec!["a"]);
+    }
+
+    #[test]
+    fn plans_join_missing_parents() {
+        let mut index = LogGraphIndex::new();
+        index.put(entry("a", "g", &[], 1));
+
+        assert_eq!(
+            index.plan_join(
+                "b",
+                &["a".to_string(), "missing".to_string()],
+                APPEND,
+                false
+            ),
+            JoinPlan {
+                skip: false,
+                missing_parents: vec!["missing".to_string()]
+            }
+        );
+        assert_eq!(
+            index.plan_join("a", &[], APPEND, false),
+            JoinPlan {
+                skip: true,
+                missing_parents: Vec::new()
+            }
+        );
+        assert_eq!(
+            index.plan_join("a", &[], APPEND, true),
+            JoinPlan {
+                skip: false,
+                missing_parents: Vec::new()
+            }
+        );
+        assert_eq!(
+            index.plan_join("cut", &["missing".to_string()], CUT, false),
+            JoinPlan {
+                skip: false,
+                missing_parents: Vec::new()
+            }
+        );
     }
 
     #[test]
