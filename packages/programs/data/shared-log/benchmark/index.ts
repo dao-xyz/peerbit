@@ -1,4 +1,5 @@
 import { deserialize, field, option, serialize, variant } from "@dao-xyz/borsh";
+import { createStore as createRustStore } from "@peerbit/any-store-rust";
 import { type ProgramClient } from "@peerbit/program";
 import { Program } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
@@ -7,8 +8,8 @@ import { Bench } from "tinybench";
 import { v4 as uuid } from "uuid";
 import { type Args, SharedLog } from "../src/index.js";
 
-// Run with "node --loader ts-node/esm ./benchmark/index.ts"
-// put x 5,843 ops/sec ±4.50% (367 runs sampled)
+// Run with:
+//   SHARED_LOG_STORE=both pnpm --filter @peerbit/shared-log run benchmark:append-storage
 
 @variant("document")
 class Document {
@@ -53,40 +54,57 @@ class TestStore extends Program<Args<Document, any>> {
 	}
 }
 
+type StoreMode = "level" | "rust";
+
+const storeMode = (process.env.SHARED_LOG_STORE ?? "level") as StoreMode | "both";
+const modes: StoreMode[] =
+	storeMode === "both" ? ["level", "rust"] : [storeMode === "rust" ? "rust" : "level"];
 const peersCount = 1;
-const session = await TestSession.connected(peersCount);
-
-const store = new TestStore({
-	logs: new SharedLog<Document, any>({
-		id: new Uint8Array(32),
-	}),
-});
-
-const client: ProgramClient = session.peers[0];
-await client.open<TestStore>(store, {
-	args: {
-		replicate: {
-			factor: 1,
-		},
-		trim: { type: "length" as const, to: 100 },
-	},
-});
-
-const suite = new Bench({ name: "put" });
-
 const bytes = crypto.randomBytes(1200);
+const rows = [];
 
-suite.add("put", async () => {
-	const doc = new Document({
-		id: uuid(),
-		name: "hello",
-		number: 1n,
-		bytes,
+for (const mode of modes) {
+	const session = await TestSession.connected(peersCount, {
+		storage:
+			mode === "rust"
+				? {
+						storeFactory: createRustStore,
+					}
+				: undefined,
 	});
-	await store.logs.append(doc, { meta: { next: [] } });
-});
 
-await suite.run();
-console.table(suite.table());
-await store.drop();
-await session.stop();
+	const store = new TestStore({
+		logs: new SharedLog<Document, any>({
+			id: new Uint8Array(32),
+		}),
+	});
+
+	const client: ProgramClient = session.peers[0];
+	await client.open<TestStore>(store, {
+		args: {
+			replicate: {
+				factor: 1,
+			},
+			trim: { type: "length" as const, to: 100 },
+		},
+	});
+
+	const suite = new Bench({ name: `${mode} put` });
+
+	suite.add(`${mode} put`, async () => {
+		const doc = new Document({
+			id: uuid(),
+			name: "hello",
+			number: 1n,
+			bytes,
+		});
+		await store.logs.append(doc, { meta: { next: [] } });
+	});
+
+	await suite.run();
+	rows.push(...suite.table());
+	await store.drop();
+	await session.stop();
+}
+
+console.table(rows);
