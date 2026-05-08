@@ -1092,6 +1092,8 @@ export class Log<T> {
 				options.remote && typeof options.remote === "object"
 					? options.remote
 					: undefined;
+			const parents: Array<{ hash: string; entry?: Entry<T> }> = [];
+			const unresolvedParentHashes: string[] = [];
 
 			for (const a of entry.meta.next) {
 				const prev = this._joining.get(a);
@@ -1103,18 +1105,50 @@ export class Log<T> {
 					continue;
 				}
 
-				const from = await options.resolveRemoteFrom?.(a, remote?.signal);
-				let nested: Entry<T>;
+				const referenced = options.references?.get(a);
+				parents.push({ hash: a, entry: referenced });
+				if (!referenced) {
+					unresolvedParentHashes.push(a);
+				}
+			}
+
+			const localParents =
+				unresolvedParentHashes.length > 0
+					? await this.entryIndex.getMany(unresolvedParentHashes, {
+							type: "full",
+							ignoreMissing: true,
+						})
+					: [];
+			const localParentByHash = new Map<string, Entry<T>>();
+			for (const parent of localParents) {
+				if (parent) {
+					localParentByHash.set(parent.hash, parent);
+				}
+			}
+
+			for (const parent of parents) {
+				const a = parent.hash;
+				const prev = this._joining.get(a);
+				if (prev) {
+					await prev;
+					continue;
+				}
+				if ((await this.entryIndex.getShallow(a)) != null && !options.reset) {
+					continue;
+				}
+
+				let nested = parent.entry ?? localParentByHash.get(a);
 				try {
-					nested =
-						options.references?.get(a) ??
-						(await Entry.fromMultihash<T>(this._storage, a, {
+					if (!nested) {
+						const from = await options.resolveRemoteFrom?.(a, remote?.signal);
+						nested = await Entry.fromMultihash<T>(this._storage, a, {
 							remote: {
 								timeout: remote?.timeout,
 								signal: remote?.signal,
 								...(from && from.length > 0 ? { from } : {}),
 							},
-						}));
+						});
+					}
 				} catch (error) {
 					if (isRecoverableJoinResolveError(error)) {
 						return false;
