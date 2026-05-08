@@ -1,0 +1,69 @@
+{
+	"name": "@peerbit/any-store-rust",
+	"version": "0.0.0",
+	"description": "Rust-backed AnyStore implementation for Peerbit",
+	"sideEffects": [
+		"./dist/wasm/any_store_rust.js"
+	],
+	"type": "module",
+	"types": "./dist/src/index.d.ts",
+	"typesVersions": {
+		"*": {
+			"*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			],
+			"src/*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			]
+		}
+	},
+	"files": [
+		"src",
+		"dist",
+		"!dist/test",
+		"!**/*.tsbuildinfo"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/src/index.d.ts",
+			"import": "./dist/src/index.js"
+		}
+	},
+	"eslintConfig": {
+		"extends": "peerbit",
+		"parserOptions": {
+			"project": true,
+			"sourceType": "module"
+		},
+		"ignorePatterns": [
+			"!.aegir.js",
+			"test/ts-use",
+			"*.d.ts"
+		]
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"benchmark": "npm run build && node ./dist/benchmark/index.js",
+		"clean": "aegir clean && shx rm -rf ./wasm && cargo clean",
+		"build": "aegir build --no-bundle && wasm-pack build --target web --out-dir dist/wasm --out-name any_store_rust && shx rm -rf ./dist/wasm/.gitignore ./dist/wasm/package.json && shx rm -rf ./wasm && shx cp -r ./dist/wasm ./wasm",
+		"test": "cargo test && npm run build && aegir test -t node",
+		"lint": "cargo fmt --check && pnpm exec eslint --config ../../../../eslint.config.js \"src/**/*.ts\" \"test/**/*.ts\" \"benchmark/**/*.ts\"",
+		"test:cov": "aegir test -t node --cov"
+	},
+	"author": "dao.xyz",
+	"license": "MIT",
+	"dependencies": {
+		"@peerbit/any-store-interface": "workspace:*"
+	},
+	"devDependencies": {
+		"@peerbit/any-store": "workspace:*"
+	}
+}
