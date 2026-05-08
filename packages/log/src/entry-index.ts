@@ -19,7 +19,7 @@ import {
 import type { ShallowEntry } from "./entry-shallow.js";
 import { EntryType } from "./entry-type.js";
 import { Entry, type ShallowOrFullEntry } from "./entry.js";
-import type { SortFn } from "./log-sorting.js";
+import type { SortableEntry, SortFn } from "./log-sorting.js";
 import { logger as baseLogger } from "./logger.js";
 
 const log = baseLogger.newScope("entry-index");
@@ -56,6 +56,7 @@ export type NativeLogGraph = {
 	delete: (hash: string) => boolean;
 	clear: () => void;
 	heads: (gid?: string) => string[];
+	headEntries: (gid?: string) => SortableEntry[];
 	countHasNext: (next: string, excludeHash?: string) => number;
 	shadowedGids: (
 		gid: string,
@@ -239,6 +240,13 @@ export class EntryIndex<T> {
 			);
 		}
 		return this.iterate(query, undefined, resolve);
+	}
+
+	getHeadsForAppend(gid?: string): SortableEntry[] | undefined {
+		if (!this.properties.nativeGraph?.useHeads) {
+			return undefined;
+		}
+		return this.properties.nativeGraph.graph.headEntries(gid);
 	}
 
 	getHasNext<R extends MaybeResolveOptions>(

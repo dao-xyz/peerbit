@@ -40,6 +40,32 @@ describe("native graph", () => {
 		await log.close();
 	});
 
+	it("plans auto-next append from the native graph before flushing buffered heads", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+		const putSpy = sinon.spy(log.entryIndex.properties.index, "put");
+
+		await log.append(new Uint8Array([1]), { meta: { next: [] } });
+		expect(putSpy.callCount).equal(0);
+
+		let putsBeforeEntryStorage: number | undefined;
+		await log.append(new Uint8Array([2]), {
+			canAppend: () => {
+				putsBeforeEntryStorage = putSpy.callCount;
+				return true;
+			},
+		});
+
+		expect(putsBeforeEntryStorage).equal(0);
+		expect(putSpy.callCount).greaterThan(0);
+
+		putSpy.restore();
+		await log.close();
+	});
+
 	it("rebuilds the native graph from the persistent entry index on open", async () => {
 		const indexer = new HashmapIndices();
 		const first = new Log<Uint8Array>();

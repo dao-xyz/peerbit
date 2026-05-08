@@ -13,6 +13,19 @@ export type NativeLogEntry = {
 	};
 };
 
+export type NativeLogHeadEntry = {
+	hash: string;
+	meta: {
+		gid: string;
+		clock: {
+			timestamp: {
+				wallTime: bigint;
+				logical: number;
+			};
+		};
+	};
+};
+
 type NativeLogIndexHandle = {
 	clear: () => void;
 	len: () => number;
@@ -29,6 +42,7 @@ type NativeLogIndexHandle = {
 	) => void;
 	delete: (hash: string) => boolean;
 	heads: (gid?: string) => string[];
+	head_entries: (gid?: string) => unknown[];
 	children: (hash: string) => string[];
 	count_has_next: (next: string, excludeHash?: string) => number;
 	shadowed_gids: (
@@ -114,6 +128,29 @@ export class LogGraphIndex {
 
 	heads(gid?: string): string[] {
 		return this.native.heads(gid);
+	}
+
+	headEntries(gid?: string): NativeLogHeadEntry[] {
+		return this.native.head_entries(gid).map((row) => {
+			const [hash, gid, wallTime, logical] = row as [
+				string,
+				string,
+				string,
+				number,
+			];
+			return {
+				hash,
+				meta: {
+					gid,
+					clock: {
+						timestamp: {
+							wallTime: BigInt(wallTime),
+							logical,
+						},
+					},
+				},
+			};
+		});
 	}
 
 	children(hash: string): string[] {
