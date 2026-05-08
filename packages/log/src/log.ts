@@ -1255,8 +1255,7 @@ export class Log<T> {
 			}
 
 			for (const next of entry.meta.next) {
-				const nextFromNext = this.entryIndex.getHasNext(next);
-				const entriesThatHasNext = await nextFromNext.all();
+				const entriesThatHasNext = await this.entryIndex.getJoinChildren(next);
 
 				// if there are no entries which is not of "CUT" type, we can safely delete the next entry
 				// figureately speaking, these means where are cutting all branches to a stem, so we can delete the stem as well
