@@ -172,6 +172,41 @@ impl LogGraphIndex {
             .collect()
     }
 
+    pub fn plan_delete_recursively(&self, from: &[String], skip_first: bool) -> Vec<String> {
+        let mut stack = from.to_vec();
+        let mut visited = IndexSet::new();
+        let mut delete_hashes = IndexSet::new();
+        let mut counter = 0;
+
+        while let Some(hash) = stack.pop() {
+            if !visited.insert(hash.clone()) {
+                continue;
+            }
+            let Some(entry) = self.entries.get(&hash) else {
+                counter += 1;
+                continue;
+            };
+
+            let skip = counter == 0 && skip_first;
+            if !skip {
+                delete_hashes.insert(hash.clone());
+            }
+
+            for next in &entry.next {
+                let has_alternative_next = self
+                    .child_join_entries(next)
+                    .into_iter()
+                    .any(|child| child.entry_type != ENTRY_TYPE_CUT && child.hash != entry.hash);
+                if !has_alternative_next && self.entries.contains_key(next) {
+                    stack.push(next.clone());
+                }
+            }
+            counter += 1;
+        }
+
+        delete_hashes.into_iter().collect()
+    }
+
     pub fn children(&self, hash: &str) -> Vec<String> {
         self.children
             .get(hash)
@@ -418,6 +453,13 @@ impl NativeLogIndex {
         log_join_entries_to_rows(self.inner.child_join_entries(hash))
     }
 
+    pub fn plan_delete_recursively(&self, from: Array, skip_first: bool) -> Result<Array, JsValue> {
+        let from = strings_from_array(from)?;
+        Ok(strings_to_array(
+            self.inner.plan_delete_recursively(&from, skip_first),
+        ))
+    }
+
     pub fn children(&self, hash: &str) -> Array {
         strings_to_array(self.inner.children(hash))
     }
@@ -653,6 +695,51 @@ mod tests {
         assert_eq!(children[0].entry_type, APPEND);
         assert_eq!(children[1].hash, "cut");
         assert_eq!(children[1].entry_type, CUT);
+    }
+
+    #[test]
+    fn plans_recursive_cut_deletes() {
+        let mut index = LogGraphIndex::new();
+        index.put(entry("root", "g", &[], 1));
+        index.put(entry("child", "g", &["root"], 2));
+        index.put(LogIndexEntry::new(
+            "cut",
+            "g",
+            vec!["child".to_string()],
+            CUT,
+            3,
+            0,
+            1,
+            true,
+        ));
+
+        assert_eq!(
+            index.plan_delete_recursively(&["cut".to_string()], true),
+            vec!["child".to_string(), "root".to_string()]
+        );
+    }
+
+    #[test]
+    fn recursive_cut_delete_plan_keeps_alternative_branches() {
+        let mut index = LogGraphIndex::new();
+        index.put(entry("root", "g", &[], 1));
+        index.put(entry("child", "g", &["root"], 2));
+        index.put(entry("sibling", "g", &["root"], 3));
+        index.put(LogIndexEntry::new(
+            "cut",
+            "g",
+            vec!["child".to_string()],
+            CUT,
+            4,
+            0,
+            1,
+            true,
+        ));
+
+        assert_eq!(
+            index.plan_delete_recursively(&["cut".to_string()], true),
+            vec!["child".to_string()]
+        );
     }
 
     #[test]

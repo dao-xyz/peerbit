@@ -1240,7 +1240,22 @@ export class Log<T> {
 			| { hash: string; meta: { next: string[] } }[],
 		skipFirst = false,
 	) {
-		const stack = Array.isArray(from) ? [...from] : [from];
+		const entries = Array.isArray(from) ? [...from] : [from];
+		const nativeDeletePlan = this.entryIndex.planDeleteRecursively(
+			entries,
+			skipFirst,
+		);
+		if (nativeDeletePlan) {
+			const toDelete: PendingDelete<T>[] = [];
+			for (const hash of nativeDeletePlan) {
+				const deleteFn = await this.prepareDelete(hash);
+				deleteFn.entry &&
+					toDelete.push({ entry: deleteFn.entry, fn: deleteFn.fn });
+			}
+			return toDelete;
+		}
+
+		const stack = entries;
 		const promises: (Promise<void> | void)[] = [];
 		let counter = 0;
 		const toDelete: PendingDelete<T>[] = [];

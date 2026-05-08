@@ -144,6 +144,28 @@ describe("native log graph index", () => {
 		]);
 	});
 
+	it("plans recursive cut deletes", async () => {
+		const index = await createLogGraphIndex();
+		index.put(entry("root", "g", [], 1n));
+		index.put(entry("child", "g", ["root"], 2n));
+		index.put(entry("cut", "g", ["child"], 3n, CUT));
+
+		expect(index.planDeleteRecursively(["cut"], true)).to.deep.equal([
+			"child",
+			"root",
+		]);
+
+		const branched = await createLogGraphIndex();
+		branched.put(entry("root", "g", [], 1n));
+		branched.put(entry("child", "g", ["root"], 2n));
+		branched.put(entry("sibling", "g", ["root"], 3n));
+		branched.put(entry("cut", "g", ["child"], 4n, CUT));
+
+		expect(branched.planDeleteRecursively(["cut"], true)).to.deep.equal([
+			"child",
+		]);
+	});
+
 	it("plans joins with missing parents", async () => {
 		const index = await createLogGraphIndex();
 		index.put(entry("a", "g", [], 1n));
