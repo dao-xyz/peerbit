@@ -6,6 +6,8 @@ type WorkerRequest = {
 	directory?: string;
 	level?: string;
 	key?: string;
+	keys?: string[];
+	entries?: [string, string][];
 	value?: string;
 };
 
@@ -85,6 +87,19 @@ const handle = async (message: WorkerRequest): Promise<unknown> => {
 	if (message.op === "del") {
 		await requireStore().del(message.key!);
 		return undefined;
+	}
+	if (message.op === "putMany") {
+		await requireStore().putMany(
+			message.entries!.map(([key, value]) => [key, encoder.encode(value)]),
+		);
+		return undefined;
+	}
+	if (message.op === "getMany") {
+		const values = await requireStore().getMany(message.keys!);
+		return values.map((bytes) => (bytes ? decoder.decode(bytes) : undefined));
+	}
+	if (message.op === "delMany") {
+		return requireStore().delMany(message.keys!);
 	}
 	if (message.op === "subPut") {
 		const sublevel = await getSublevel(message.level!);
