@@ -460,6 +460,7 @@ export type SharedLogOptions<
 		: "u32",
 > = {
 	appendDurability?: LogProperties<T>["appendDurability"];
+	nativeGraph?: LogProperties<T>["nativeGraph"];
 	replicate?: ReplicationOptions<R>;
 	replicas?: ReplicationLimitsOptions;
 	respondToIHaveTimeout?: number;
@@ -4258,6 +4259,7 @@ export class SharedLog<
 					maxPeers: 8,
 				}),
 			...this._logProperties,
+			nativeGraph: this._logProperties?.nativeGraph ?? { optional: true },
 			onChange: async (change) => {
 				await this.onChange(change);
 				return this._logProperties?.onChange?.(change);

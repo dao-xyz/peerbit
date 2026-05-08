@@ -1007,10 +1007,11 @@ importers:
       uuid:
         specifier: ^10.0.0
         version: 10.0.0
-    devDependencies:
+    optionalDependencies:
       '@peerbit/log-rust':
         specifier: workspace:*
         version: link:rust
+    devDependencies:
       '@peerbit/test-utils':
         specifier: workspace:*
         version: link:../clients/test-utils
