@@ -122,6 +122,14 @@ describe("native log graph index", () => {
 		expect(index.shadowedGids("new", ["a"], "b")).to.deep.equal([]);
 	});
 
+	it("batches membership checks", async () => {
+		const index = await createLogGraphIndex();
+		index.put(entry("a", "g", [], 1n));
+		index.put(entry("c", "g", [], 3n));
+
+		expect([...index.hasMany(["missing", "a", "c"])]).to.deep.equal(["a", "c"]);
+	});
+
 	it("plans joins with missing parents", async () => {
 		const index = await createLogGraphIndex();
 		index.put(entry("a", "g", [], 1n));

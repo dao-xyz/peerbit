@@ -50,6 +50,7 @@ type NativeLogIndexHandle = {
 	clear: () => void;
 	len: () => number;
 	has: (hash: string) => boolean;
+	has_many: (hashes: string[]) => string[];
 	put: (
 		hash: string,
 		gid: string,
@@ -140,6 +141,10 @@ export class LogGraphIndex {
 
 	has(hash: string): boolean {
 		return this.native.has(hash);
+	}
+
+	hasMany(hashes: Iterable<string>): Set<string> {
+		return new Set(this.native.has_many([...hashes]));
 	}
 
 	put(entry: NativeLogEntry): void {

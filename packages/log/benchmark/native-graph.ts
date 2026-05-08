@@ -190,6 +190,56 @@ for (const nativeGraph of [false, true]) {
 	rows.push(await measureWideJoin(nativeGraph));
 }
 
+const measureDuplicateJoinArray = async (
+	nativeGraph: boolean,
+): Promise<BenchRow> => {
+	const store = new AnyBlockStore();
+	await store.start();
+	const source = new Log<Uint8Array>();
+	const target = new Log<Uint8Array>();
+	await source.open(store, key, {
+		appendDurability: "strict",
+		indexer: new HashmapIndices(),
+		nativeGraph,
+	});
+	await target.open(store, key, {
+		appendDurability: "strict",
+		indexer: new HashmapIndices(),
+		nativeGraph,
+	});
+
+	const existing: Entry<Uint8Array>[] = [];
+	for (let i = 0; i < joinParents; i++) {
+		existing.push(
+			(
+				await source.append(new Uint8Array([i & 0xff]), {
+					meta: { next: [] },
+				})
+			).entry,
+		);
+	}
+	await target.join(existing);
+
+	const started = performance.now();
+	await target.join(existing);
+	const elapsed = performance.now() - started;
+	await source.close();
+	await target.close();
+	await store.stop();
+	return {
+		name: "join duplicate array membership",
+		nativeGraph,
+		entries: joinParents,
+		iterations: joinParents,
+		elapsedMs: Math.round(elapsed),
+		opsPerSecond: Math.round((joinParents / elapsed) * 1000),
+	};
+};
+
+for (const nativeGraph of [false, true]) {
+	rows.push(await measureDuplicateJoinArray(nativeGraph));
+}
+
 const measureCutCoveredJoin = async (
 	nativeGraph: boolean,
 ): Promise<BenchRow> => {

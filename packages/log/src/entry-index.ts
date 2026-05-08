@@ -66,6 +66,8 @@ type NativeJoinCutCheck = {
 };
 
 export type NativeLogGraph = {
+	has: (hash: string) => boolean;
+	hasMany: (hashes: Iterable<string>) => Set<string>;
 	put: (entry: NativeLogEntry) => void;
 	delete: (hash: string) => boolean;
 	clear: () => void;
@@ -618,6 +620,9 @@ export class EntryIndex<T> {
 	}
 
 	async has(k: string) {
+		if (this.properties.nativeGraph) {
+			return this.properties.nativeGraph.graph.has(k);
+		}
 		if (this.pendingIndexWrites.has(k)) {
 			return true;
 		}
@@ -628,6 +633,11 @@ export class EntryIndex<T> {
 	}
 
 	async hasMany(hashes: Iterable<string>) {
+		if (this.properties.nativeGraph) {
+			return this.properties.nativeGraph.graph.hasMany(
+				new Set([...hashes].filter(Boolean)),
+			);
+		}
 		const batchSize = 64;
 		const existing = new Set<string>();
 		const missing: string[] = [];
