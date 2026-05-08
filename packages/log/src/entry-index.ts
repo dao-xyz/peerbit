@@ -74,6 +74,10 @@ export type NativeLogGraph = {
 	headEntries: (gid?: string) => SortableEntry[];
 	joinHeadEntries: (gid?: string) => NativeLogJoinEntry[];
 	childJoinEntries: (hash: string) => NativeLogJoinEntry[];
+	planDeleteRecursively: (
+		hashes: Iterable<string>,
+		skipFirst?: boolean,
+	) => string[];
 	countHasNext: (next: string, excludeHash?: string) => number;
 	shadowedGids: (gid: string, next: string[], excludeHash?: string) => string[];
 	planJoin: (
@@ -321,6 +325,19 @@ export class EntryIndex<T> {
 				meta: { type: true, next: true, gid: true, clock: true },
 			},
 		}).all() as Promise<NativeLogJoinEntry[]>;
+	}
+
+	planDeleteRecursively(
+		from: Iterable<{ hash: string }>,
+		skipFirst = false,
+	): string[] | undefined {
+		if (!this.properties.nativeGraph) {
+			return undefined;
+		}
+		return this.properties.nativeGraph.graph.planDeleteRecursively(
+			[...from].map((entry) => entry.hash),
+			skipFirst,
+		);
 	}
 
 	getHasNext<R extends MaybeResolveOptions>(

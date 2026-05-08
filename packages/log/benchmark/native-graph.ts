@@ -273,7 +273,7 @@ const measureCutRecursiveDelete = async (
 	await log.close();
 	await store.stop();
 	return {
-		name: "cut recursive child scan",
+		name: "cut recursive delete plan",
 		nativeGraph,
 		entries: joinParents,
 		iterations: joinParents,
