@@ -971,6 +971,9 @@ importers:
       '@peerbit/keychain':
         specifier: workspace:*
         version: link:../utils/keychain
+      '@peerbit/log-rust':
+        specifier: workspace:*
+        version: link:rust
       '@peerbit/logger':
         specifier: workspace:*
         version: link:../utils/logger

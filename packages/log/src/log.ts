@@ -93,6 +93,7 @@ export type LogProperties<T> = {
 	encoding?: Encoding<T>;
 	clock?: LamportClock;
 	appendDurability?: AppendDurability;
+	nativeGraph?: boolean | { heads?: boolean };
 	sortFn?: Sorting.SortFn;
 	trim?: TrimOptions;
 	canAppend?: CanAppend<T>;
@@ -243,10 +244,25 @@ export class Log<T> {
 			throw new Error("Id not set");
 		}
 
+		const nativeGraph =
+			options.nativeGraph &&
+			(await (async () => {
+				const { createLogGraphIndex } = await import("@peerbit/log-rust");
+				const headsRequested =
+					typeof options.nativeGraph === "object"
+						? options.nativeGraph.heads !== false
+						: true;
+				return {
+					graph: await createLogGraphIndex(),
+					useHeads: headsRequested && this._sortFn === LastWriteWins,
+				};
+			})());
+
 		this._entryIndex = new EntryIndex({
 			store: this._storage,
 			init: (e) => e.init(this),
 			onGidRemoved,
+			nativeGraph: nativeGraph || undefined,
 			index: await (
 				await this._indexer.scope("heads")
 			).init({ schema: ShallowEntry }),
