@@ -202,7 +202,7 @@ describe("native graph", () => {
 		}
 	});
 
-	it("scans cut recursion children in the native graph", async () => {
+	it("plans cut recursion deletes in the native graph", async () => {
 		const log = new Log<Uint8Array>();
 		await log.open(store, signKey, {
 			indexer: new HashmapIndices(),
@@ -221,20 +221,27 @@ describe("native graph", () => {
 		).entry;
 
 		const nativeGraph = log.entryIndex.properties.nativeGraph!.graph;
-		const childJoinEntriesSpy = sinon.spy(nativeGraph, "childJoinEntries");
+		const planDeleteRecursivelySpy = sinon.spy(
+			nativeGraph,
+			"planDeleteRecursively",
+		);
 		const iterateSpy = sinon.spy(log.entryIndex.properties.index, "iterate");
 		try {
 			await log.append(new Uint8Array([3]), {
 				meta: { type: EntryType.CUT, next: [child] },
 			});
 
-			expect(childJoinEntriesSpy.callCount).greaterThan(0);
+			expect(planDeleteRecursivelySpy.callCount).equal(1);
+			expect(planDeleteRecursivelySpy.firstCall.returnValue).to.deep.equal([
+				child.hash,
+				root.hash,
+			]);
 			expect(iterateSpy.callCount).equal(0);
 			expect(await log.has(root.hash)).to.equal(false);
 			expect(await log.has(child.hash)).to.equal(false);
 		} finally {
 			iterateSpy.restore();
-			childJoinEntriesSpy.restore();
+			planDeleteRecursivelySpy.restore();
 			await log.close();
 		}
 	});

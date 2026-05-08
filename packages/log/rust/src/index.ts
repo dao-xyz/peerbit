@@ -66,6 +66,7 @@ type NativeLogIndexHandle = {
 	head_entries: (gid?: string) => unknown[];
 	head_join_entries: (gid?: string) => unknown[];
 	child_join_entries: (hash: string) => unknown[];
+	plan_delete_recursively: (hashes: string[], skipFirst: boolean) => string[];
 	children: (hash: string) => string[];
 	count_has_next: (next: string, excludeHash?: string) => number;
 	shadowed_gids: (
@@ -244,6 +245,10 @@ export class LogGraphIndex {
 				},
 			};
 		});
+	}
+
+	planDeleteRecursively(hashes: Iterable<string>, skipFirst = false): string[] {
+		return this.native.plan_delete_recursively([...hashes], skipFirst);
 	}
 
 	children(hash: string): string[] {
