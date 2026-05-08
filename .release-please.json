@@ -70,6 +70,7 @@
 		"packages/utils/any-store/interface": {},
 		"packages/utils/any-store/opfs": {},
 		"packages/utils/any-store/proxy": {},
+		"packages/utils/any-store/rust": {},
 		"packages/utils/cache": {},
 		"packages/utils/time": {},
 		"packages/utils/logger": {},
