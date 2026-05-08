@@ -138,6 +138,13 @@ impl LogGraphIndex {
         self.query.search(&query, &head_sort(), None)
     }
 
+    pub fn head_entries(&self, gid: Option<&str>) -> Vec<LogIndexEntry> {
+        self.heads(gid)
+            .into_iter()
+            .filter_map(|hash| self.entries.get(&hash).cloned())
+            .collect()
+    }
+
     pub fn children(&self, hash: &str) -> Vec<String> {
         self.children
             .get(hash)
@@ -306,6 +313,10 @@ impl NativeLogIndex {
         strings_to_array(self.inner.heads(gid.as_deref()))
     }
 
+    pub fn head_entries(&self, gid: Option<String>) -> Array {
+        log_entries_to_rows(self.inner.head_entries(gid.as_deref()))
+    }
+
     pub fn children(&self, hash: &str) -> Array {
         strings_to_array(self.inner.children(hash))
     }
@@ -350,6 +361,19 @@ fn strings_to_array(values: Vec<String>) -> Array {
     let out = Array::new();
     for value in values {
         out.push(&JsValue::from_str(&value));
+    }
+    out
+}
+
+fn log_entries_to_rows(values: Vec<LogIndexEntry>) -> Array {
+    let out = Array::new();
+    for entry in values {
+        let row = Array::new();
+        row.push(&JsValue::from_str(&entry.hash));
+        row.push(&JsValue::from_str(&entry.gid));
+        row.push(&JsValue::from_str(&entry.wall_time.to_string()));
+        row.push(&JsValue::from_f64(entry.logical as f64));
+        out.push(&row);
     }
     out
 }
@@ -408,6 +432,23 @@ mod tests {
         assert_eq!(index.heads(None), vec!["a", "b", "c"]);
         assert_eq!(index.heads(Some("one")), vec!["a", "b"]);
         assert_eq!(index.heads(Some("two")), vec!["c"]);
+    }
+
+    #[test]
+    fn returns_head_entries_for_append_planning() {
+        let mut index = LogGraphIndex::new();
+        index.put(entry("b", "one", &[], 2));
+        index.put(entry("a", "one", &[], 1));
+        index.put(entry("c", "two", &[], 3));
+
+        let heads = index.head_entries(Some("one"));
+        assert_eq!(heads.len(), 2);
+        assert_eq!(heads[0].hash, "a");
+        assert_eq!(heads[0].gid, "one");
+        assert_eq!(heads[0].wall_time, 1);
+        assert_eq!(heads[1].hash, "b");
+        assert_eq!(heads[1].gid, "one");
+        assert_eq!(heads[1].wall_time, 2);
     }
 
     #[test]
