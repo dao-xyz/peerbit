@@ -65,6 +65,7 @@ type NativeLogIndexHandle = {
 	heads: (gid?: string) => string[];
 	head_entries: (gid?: string) => unknown[];
 	head_join_entries: (gid?: string) => unknown[];
+	child_join_entries: (hash: string) => unknown[];
 	children: (hash: string) => string[];
 	count_has_next: (next: string, excludeHash?: string) => number;
 	shadowed_gids: (
@@ -193,6 +194,33 @@ export class LogGraphIndex {
 
 	joinHeadEntries(gid?: string): NativeLogJoinEntry[] {
 		return this.native.head_join_entries(gid).map((row) => {
+			const [hash, gid, wallTime, logical, type, next] = row as [
+				string,
+				string,
+				string,
+				number,
+				number,
+				string[],
+			];
+			return {
+				hash,
+				meta: {
+					gid,
+					type,
+					next,
+					clock: {
+						timestamp: {
+							wallTime: BigInt(wallTime),
+							logical,
+						},
+					},
+				},
+			};
+		});
+	}
+
+	childJoinEntries(hash: string): NativeLogJoinEntry[] {
+		return this.native.child_join_entries(hash).map((row) => {
 			const [hash, gid, wallTime, logical, type, next] = row as [
 				string,
 				string,

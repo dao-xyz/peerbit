@@ -130,6 +130,20 @@ describe("native log graph index", () => {
 		expect([...index.hasMany(["missing", "a", "c"])]).to.deep.equal(["a", "c"]);
 	});
 
+	it("returns child join entries for cut recursion", async () => {
+		const index = await createLogGraphIndex();
+		index.put(entry("a", "g", [], 1n));
+		index.put(entry("b", "g", ["a"], 2n));
+		index.put(entry("cut", "g", ["a"], 3n, CUT));
+
+		expect(
+			index.childJoinEntries("a").map((entry) => [entry.hash, entry.meta.type]),
+		).to.deep.equal([
+			["b", APPEND],
+			["cut", CUT],
+		]);
+	});
+
 	it("plans joins with missing parents", async () => {
 		const index = await createLogGraphIndex();
 		index.put(entry("a", "g", [], 1n));

@@ -165,6 +165,13 @@ impl LogGraphIndex {
         self.head_entries(gid)
     }
 
+    pub fn child_join_entries(&self, hash: &str) -> Vec<LogIndexEntry> {
+        self.children(hash)
+            .into_iter()
+            .filter_map(|child_hash| self.entries.get(&child_hash).cloned())
+            .collect()
+    }
+
     pub fn children(&self, hash: &str) -> Vec<String> {
         self.children
             .get(hash)
@@ -407,6 +414,10 @@ impl NativeLogIndex {
         log_join_entries_to_rows(self.inner.head_join_entries(gid.as_deref()))
     }
 
+    pub fn child_join_entries(&self, hash: &str) -> Array {
+        log_join_entries_to_rows(self.inner.child_join_entries(hash))
+    }
+
     pub fn children(&self, hash: &str) -> Array {
         strings_to_array(self.inner.children(hash))
     }
@@ -618,6 +629,30 @@ mod tests {
         assert_eq!(heads[0].hash, "cut");
         assert_eq!(heads[0].entry_type, CUT);
         assert_eq!(heads[0].next, vec!["a".to_string()]);
+    }
+
+    #[test]
+    fn returns_child_join_entries_for_cut_recursion() {
+        let mut index = LogGraphIndex::new();
+        index.put(entry("a", "g", &[], 1));
+        index.put(entry("b", "g", &["a"], 2));
+        index.put(LogIndexEntry::new(
+            "cut",
+            "g",
+            vec!["a".to_string()],
+            CUT,
+            3,
+            0,
+            1,
+            true,
+        ));
+
+        let children = index.child_join_entries("a");
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0].hash, "b");
+        assert_eq!(children[0].entry_type, APPEND);
+        assert_eq!(children[1].hash, "cut");
+        assert_eq!(children[1].entry_type, CUT);
     }
 
     #[test]

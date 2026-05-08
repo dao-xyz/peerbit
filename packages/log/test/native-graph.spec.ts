@@ -202,6 +202,43 @@ describe("native graph", () => {
 		}
 	});
 
+	it("scans cut recursion children in the native graph", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+
+		const root = (
+			await log.append(new Uint8Array([1]), {
+				meta: { next: [] },
+			})
+		).entry;
+		const child = (
+			await log.append(new Uint8Array([2]), {
+				meta: { next: [root] },
+			})
+		).entry;
+
+		const nativeGraph = log.entryIndex.properties.nativeGraph!.graph;
+		const childJoinEntriesSpy = sinon.spy(nativeGraph, "childJoinEntries");
+		const iterateSpy = sinon.spy(log.entryIndex.properties.index, "iterate");
+		try {
+			await log.append(new Uint8Array([3]), {
+				meta: { type: EntryType.CUT, next: [child] },
+			});
+
+			expect(childJoinEntriesSpy.callCount).greaterThan(0);
+			expect(iterateSpy.callCount).equal(0);
+			expect(await log.has(root.hash)).to.equal(false);
+			expect(await log.has(child.hash)).to.equal(false);
+		} finally {
+			iterateSpy.restore();
+			childJoinEntriesSpy.restore();
+			await log.close();
+		}
+	});
+
 	it("checks cut-covered joins in the native plan", async () => {
 		const sourceStore = new AnyBlockStore();
 		const targetStore = new AnyBlockStore();

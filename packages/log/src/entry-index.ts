@@ -73,6 +73,7 @@ export type NativeLogGraph = {
 	heads: (gid?: string) => string[];
 	headEntries: (gid?: string) => SortableEntry[];
 	joinHeadEntries: (gid?: string) => NativeLogJoinEntry[];
+	childJoinEntries: (hash: string) => NativeLogJoinEntry[];
 	countHasNext: (next: string, excludeHash?: string) => number;
 	shadowedGids: (gid: string, next: string[], excludeHash?: string) => string[];
 	planJoin: (
@@ -299,6 +300,21 @@ export class EntryIndex<T> {
 			);
 		}
 		return this.getHeads(gid, {
+			type: "shape",
+			shape: {
+				hash: true,
+				meta: { type: true, next: true, gid: true, clock: true },
+			},
+		}).all() as Promise<NativeLogJoinEntry[]>;
+	}
+
+	getJoinChildren(next: string): Promise<NativeLogJoinEntry[]> {
+		if (this.properties.nativeGraph) {
+			return Promise.resolve(
+				this.properties.nativeGraph.graph.childJoinEntries(next),
+			);
+		}
+		return this.getHasNext(next, {
 			type: "shape",
 			shape: {
 				hash: true,
