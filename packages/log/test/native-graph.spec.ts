@@ -160,6 +160,48 @@ describe("native graph", () => {
 		}
 	});
 
+	it("checks joined array membership in the native graph", async () => {
+		const source = new Log<Uint8Array>();
+		const target = new Log<Uint8Array>();
+
+		await source.open(store, signKey, { nativeGraph: true });
+		await target.open(store, signKey, {
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+
+		const present = (
+			await source.append(new Uint8Array([1]), {
+				meta: { next: [] },
+			})
+		).entry;
+		const missing = (
+			await source.append(new Uint8Array([2]), {
+				meta: { next: [] },
+			})
+		).entry;
+		await target.join([present]);
+
+		const nativeGraph = target.entryIndex.properties.nativeGraph!.graph;
+		const hasManySpy = sinon.spy(nativeGraph, "hasMany");
+		const iterateSpy = sinon.spy(target.entryIndex.properties.index, "iterate");
+		try {
+			await target.join([present, missing]);
+
+			expect(hasManySpy.callCount).equal(1);
+			expect(hasManySpy.firstCall.args[0]).to.deep.equal(
+				new Set([present.hash, missing.hash]),
+			);
+			expect(iterateSpy.callCount).equal(0);
+			expect(await target.toArray()).to.have.length(2);
+		} finally {
+			iterateSpy.restore();
+			hasManySpy.restore();
+			await source.close();
+			await target.close();
+		}
+	});
+
 	it("checks cut-covered joins in the native plan", async () => {
 		const sourceStore = new AnyBlockStore();
 		const targetStore = new AnyBlockStore();
