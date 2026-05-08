@@ -28,7 +28,11 @@ import { InMemoryNetwork, InMemorySession } from "./inmemory-libp2p.js";
 
 export type LibP2POptions = Libp2pOptions<Libp2pExtendServices>;
 
-type CreateOptions = { libp2p?: Libp2pCreateOptions; directory?: string };
+type CreateOptions = {
+	libp2p?: Libp2pCreateOptions;
+	directory?: string;
+	indexer?: (directory?: string) => Promise<Indices> | Indices;
+};
 
 type FanoutCapableServices = ProgramClient["services"] & {
 	fanout: DirectStream<unknown>;
@@ -808,8 +812,16 @@ export class TestSession {
 			(await Promise.all(
 				session.peers.map((x, ix) =>
 					Array.isArray(options)
-						? Peerbit.create({ libp2p: x, directory: options[ix]?.directory })
-						: Peerbit.create({ libp2p: x, directory: options?.directory }),
+						? Peerbit.create({
+								libp2p: x,
+								directory: options[ix]?.directory,
+								indexer: options[ix]?.indexer,
+							})
+						: Peerbit.create({
+								libp2p: x,
+								directory: options?.directory,
+								indexer: options?.indexer,
+							}),
 				),
 			)) as Peerbit[],
 		);

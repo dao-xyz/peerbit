@@ -91,6 +91,7 @@
 		"uint8arrays": "^5.1.0"
 	},
 	"devDependencies": {
+		"@peerbit/indexer-rust": "workspace:*",
 		"@peerbit/test-utils": "workspace:*",
 		"@types/libsodium-wrappers": "^0.7.14",
 		"@types/pidusage": "^2.0.5",

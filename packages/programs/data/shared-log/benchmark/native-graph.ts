@@ -1,4 +1,5 @@
 import { deserialize, field, option, serialize, variant } from "@dao-xyz/borsh";
+import { create as createRustIndexer } from "@peerbit/indexer-rust";
 import { type ProgramClient, Program } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import crypto from "crypto";
@@ -6,9 +7,11 @@ import { performance } from "node:perf_hooks";
 import { type Args, SharedLog } from "../src/index.js";
 
 type Scenario = "auto-next" | "explicit-root-next";
+type IndexerMode = "default" | "rust";
 
 type BenchRow = {
 	scenario: Scenario;
+	indexer: IndexerMode;
 	nativeGraph: boolean;
 	entries: number;
 	run: number;
@@ -41,6 +44,22 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 		}
 	}
 	return scenarios as Scenario[];
+};
+
+const parseIndexers = (value: string | undefined): IndexerMode[] => {
+	if (!value) {
+		return ["default", "rust"];
+	}
+	const indexers = value
+		.split(",")
+		.map((x) => x.trim())
+		.filter(Boolean);
+	for (const indexer of indexers) {
+		if (indexer !== "default" && indexer !== "rust") {
+			throw new Error(`Unknown indexer '${indexer}'`);
+		}
+	}
+	return indexers as IndexerMode[];
 };
 
 @variant("shared_log_native_graph_bench_document")
@@ -97,6 +116,9 @@ const payloadBytes = parsePositiveInteger(
 const scenarios = parseScenarios(
 	process.env.PEERBIT_SHARED_LOG_NATIVE_GRAPH_SCENARIOS,
 );
+const indexers = parseIndexers(
+	process.env.PEERBIT_SHARED_LOG_NATIVE_GRAPH_INDEXERS,
+);
 
 const createDocument = (index: number, bytes: Uint8Array) =>
 	new BenchDocument({
@@ -105,8 +127,11 @@ const createDocument = (index: number, bytes: Uint8Array) =>
 		bytes,
 	});
 
-const openStore = async (nativeGraph: boolean) => {
-	const session = await TestSession.connected(1);
+const openStore = async (nativeGraph: boolean, indexer: IndexerMode) => {
+	const session = await TestSession.connected(
+		1,
+		indexer === "rust" ? { indexer: createRustIndexer } : undefined,
+	);
 	const store = new BenchStore({
 		logs: new SharedLog<BenchDocument, any>({
 			id: new Uint8Array(32),
@@ -127,10 +152,11 @@ const openStore = async (nativeGraph: boolean) => {
 
 const runScenario = async (
 	scenario: Scenario,
+	indexer: IndexerMode,
 	nativeGraph: boolean,
 	run: number,
 ): Promise<BenchRow> => {
-	const { session, store } = await openStore(nativeGraph);
+	const { session, store } = await openStore(nativeGraph, indexer);
 	const bytes = crypto.randomBytes(payloadBytes);
 	try {
 		const started = performance.now();
@@ -144,6 +170,7 @@ const runScenario = async (
 		const elapsed = performance.now() - started;
 		return {
 			scenario,
+			indexer,
 			nativeGraph,
 			entries,
 			run,
@@ -158,33 +185,42 @@ const runScenario = async (
 
 const rows: BenchRow[] = [];
 for (const scenario of scenarios) {
-	for (const nativeGraph of [false, true]) {
-		for (let run = 0; run < runs; run++) {
-			rows.push(await runScenario(scenario, nativeGraph, run));
+	for (const indexer of indexers) {
+		for (const nativeGraph of [false, true]) {
+			for (let run = 0; run < runs; run++) {
+				rows.push(await runScenario(scenario, indexer, nativeGraph, run));
+			}
 		}
 	}
 }
 
 const aggregateRows = [...new Set(rows.map((row) => row.scenario))].flatMap(
 	(scenario) =>
-		[false, true].map((nativeGraph) => {
-			const samples = rows.filter(
-				(row) => row.scenario === scenario && row.nativeGraph === nativeGraph,
-			);
-			const meanMs =
-				samples.reduce((sum, row) => sum + row.elapsedMs, 0) / samples.length;
-			const meanOps =
-				samples.reduce((sum, row) => sum + row.opsPerSecond, 0) /
-				samples.length;
-			return {
-				scenario,
-				nativeGraph,
-				entries,
-				runs: samples.length,
-				meanMs: Math.round(meanMs),
-				meanOpsPerSecond: Math.round(meanOps),
-			};
-		}),
+		indexers.flatMap((indexer) =>
+			[false, true].map((nativeGraph) => {
+				const samples = rows.filter(
+					(row) =>
+						row.scenario === scenario &&
+						row.indexer === indexer &&
+						row.nativeGraph === nativeGraph,
+				);
+				const meanMs =
+					samples.reduce((sum, row) => sum + row.elapsedMs, 0) /
+					samples.length;
+				const meanOps =
+					samples.reduce((sum, row) => sum + row.opsPerSecond, 0) /
+					samples.length;
+				return {
+					scenario,
+					indexer,
+					nativeGraph,
+					entries,
+					runs: samples.length,
+					meanMs: Math.round(meanMs),
+					meanOpsPerSecond: Math.round(meanOps),
+				};
+			}),
+		),
 );
 
 console.table(aggregateRows);

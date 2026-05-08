@@ -1688,6 +1688,9 @@ importers:
         specifier: ^5.1.0
         version: 5.1.0
     devDependencies:
+      '@peerbit/indexer-rust':
+        specifier: workspace:*
+        version: link:../../../utils/indexer/rust
       '@peerbit/test-utils':
         specifier: workspace:*
         version: link:../../../clients/test-utils
