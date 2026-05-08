@@ -43,6 +43,7 @@
 		"packages/transport/stream-interface": {},
 		"packages/transport/libp2p-test-utils": {},
 		"packages/log": {},
+		"packages/log/rust": {},
 		"packages/clients/canonical/client": {},
 		"packages/clients/canonical/host": {},
 		"packages/clients/canonical/transport": {},
@@ -78,6 +79,7 @@
 		"packages/utils/indexer/sqlite3": {},
 		"packages/utils/indexer/tests": {},
 		"packages/utils/indexer/interface": {},
+		"packages/utils/indexer/rust": {},
 		"packages/utils/rateless-iblt": {},
 		"packages/utils/build-assets": {}
 	}
