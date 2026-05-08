@@ -17,9 +17,10 @@ preserves the existing `AnyStore` API surface.
   into the same WASM package, but persistent redb storage is intentionally gated
   until a byte-range Node/OPFS backend is implemented.
 
-The OPFS backend is conservative: when the browser does not expose an atomic
-move/replace primitive for checkpoints, it keeps the WAL as the source of truth
-instead of truncating it behind a potentially torn snapshot.
+The OPFS backend uses two manifest slots with checksums for checkpoints. A new
+snapshot and empty journal are flushed before the inactive manifest slot is
+updated, so a torn manifest write falls back to the previous valid checkpoint
+instead of shadowing committed WAL records.
 
 `RustAnyStore` also exposes `putMany`, `getMany`, and `delMany` as opt-in batch
 helpers. They are not part of the shared `AnyStore` interface yet, but they let
