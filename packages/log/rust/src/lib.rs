@@ -56,6 +56,8 @@ impl LogIndexEntry {
 pub struct JoinPlan {
     pub skip: bool,
     pub missing_parents: Vec<String>,
+    pub cut_checked: bool,
+    pub covered_by_cut: bool,
 }
 
 #[derive(Default)]
@@ -196,15 +198,36 @@ impl LogGraphIndex {
         shadowed.into_iter().collect()
     }
 
-    pub fn plan_join(&self, hash: &str, nexts: &[String], entry_type: u8, reset: bool) -> JoinPlan {
+    pub fn plan_join(
+        &self,
+        hash: &str,
+        nexts: &[String],
+        entry_type: u8,
+        reset: bool,
+        gid: Option<&str>,
+        wall_time: Option<u64>,
+        logical: Option<u32>,
+    ) -> JoinPlan {
+        let cut_checked = gid.is_some() && wall_time.is_some() && logical.is_some();
         if !reset && self.has(hash) {
             return JoinPlan {
                 skip: true,
                 missing_parents: Vec::new(),
+                cut_checked,
+                covered_by_cut: false,
             };
         }
 
+        let covered_by_cut = match (gid, wall_time, logical) {
+            (Some(gid), Some(wall_time), Some(logical)) => {
+                self.covered_by_cut(hash, gid, wall_time, logical)
+            }
+            _ => false,
+        };
+
         let missing_parents = if entry_type == ENTRY_TYPE_CUT {
+            Vec::new()
+        } else if covered_by_cut {
             Vec::new()
         } else {
             nexts
@@ -217,7 +240,17 @@ impl LogGraphIndex {
         JoinPlan {
             skip: false,
             missing_parents,
+            cut_checked,
+            covered_by_cut,
         }
+    }
+
+    fn covered_by_cut(&self, hash: &str, gid: &str, wall_time: u64, logical: u32) -> bool {
+        self.head_entries(Some(gid)).into_iter().any(|entry| {
+            entry.entry_type == ENTRY_TYPE_CUT
+                && entry.next.iter().any(|next| next == hash)
+                && compare_clock(wall_time, logical, &entry).is_lt()
+        })
     }
 
     fn set_head(&mut self, hash: &str, head: bool) {
@@ -286,6 +319,12 @@ fn head_sort() -> [SortField; 3] {
             direction: SortDirection::Asc,
         },
     ]
+}
+
+fn compare_clock(wall_time: u64, logical: u32, other: &LogIndexEntry) -> std::cmp::Ordering {
+    wall_time
+        .cmp(&other.wall_time)
+        .then_with(|| logical.cmp(&other.logical))
 }
 
 #[wasm_bindgen]
@@ -383,11 +422,20 @@ impl NativeLogIndex {
         next: Array,
         entry_type: u8,
         reset: bool,
+        gid: Option<String>,
+        wall_time: Option<u64>,
+        logical: Option<u32>,
     ) -> Result<Array, JsValue> {
         let next = strings_from_array(next)?;
-        Ok(join_plan_to_row(
-            self.inner.plan_join(hash, &next, entry_type, reset),
-        ))
+        Ok(join_plan_to_row(self.inner.plan_join(
+            hash,
+            &next,
+            entry_type,
+            reset,
+            gid.as_deref(),
+            wall_time,
+            logical,
+        )))
     }
 }
 
@@ -448,6 +496,8 @@ fn join_plan_to_row(plan: JoinPlan) -> Array {
     let row = Array::new();
     row.push(&JsValue::from_bool(plan.skip));
     row.push(&strings_to_array(plan.missing_parents));
+    row.push(&JsValue::from_bool(plan.cut_checked));
+    row.push(&JsValue::from_bool(plan.covered_by_cut));
     row
 }
 
@@ -577,32 +627,101 @@ mod tests {
                 "b",
                 &["a".to_string(), "missing".to_string()],
                 APPEND,
-                false
+                false,
+                None,
+                None,
+                None
             ),
             JoinPlan {
                 skip: false,
-                missing_parents: vec!["missing".to_string()]
+                missing_parents: vec!["missing".to_string()],
+                cut_checked: false,
+                covered_by_cut: false
             }
         );
         assert_eq!(
-            index.plan_join("a", &[], APPEND, false),
+            index.plan_join("a", &[], APPEND, false, None, None, None),
             JoinPlan {
                 skip: true,
-                missing_parents: Vec::new()
+                missing_parents: Vec::new(),
+                cut_checked: false,
+                covered_by_cut: false
             }
         );
         assert_eq!(
-            index.plan_join("a", &[], APPEND, true),
+            index.plan_join("a", &[], APPEND, true, None, None, None),
             JoinPlan {
                 skip: false,
-                missing_parents: Vec::new()
+                missing_parents: Vec::new(),
+                cut_checked: false,
+                covered_by_cut: false
             }
         );
         assert_eq!(
-            index.plan_join("cut", &["missing".to_string()], CUT, false),
+            index.plan_join(
+                "cut",
+                &["missing".to_string()],
+                CUT,
+                false,
+                None,
+                None,
+                None
+            ),
             JoinPlan {
                 skip: false,
-                missing_parents: Vec::new()
+                missing_parents: Vec::new(),
+                cut_checked: false,
+                covered_by_cut: false
+            }
+        );
+    }
+
+    #[test]
+    fn plans_join_cut_coverage() {
+        let mut index = LogGraphIndex::new();
+        index.put(LogIndexEntry::new(
+            "cut",
+            "g",
+            vec!["old".to_string()],
+            CUT,
+            2,
+            0,
+            1,
+            true,
+        ));
+
+        assert_eq!(
+            index.plan_join(
+                "old",
+                &["missing".to_string()],
+                APPEND,
+                false,
+                Some("g"),
+                Some(1),
+                Some(0)
+            ),
+            JoinPlan {
+                skip: false,
+                missing_parents: Vec::new(),
+                cut_checked: true,
+                covered_by_cut: true
+            }
+        );
+        assert_eq!(
+            index.plan_join(
+                "new",
+                &["missing".to_string()],
+                APPEND,
+                false,
+                Some("g"),
+                Some(3),
+                Some(0)
+            ),
+            JoinPlan {
+                skip: false,
+                missing_parents: vec!["missing".to_string()],
+                cut_checked: true,
+                covered_by_cut: false
             }
         );
     }
