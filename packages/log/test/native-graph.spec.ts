@@ -31,9 +31,9 @@ describe("native graph", () => {
 		});
 
 		expect(putSpy.callCount).equal(0);
-		expect((await log.getHeads().all()).map((head) => head.hash)).to.deep.equal([
-			entry.hash,
-		]);
+		expect((await log.getHeads().all()).map((head) => head.hash)).to.deep.equal(
+			[entry.hash],
+		);
 		expect(putSpy.callCount).equal(1);
 
 		putSpy.restore();
@@ -80,10 +80,34 @@ describe("native graph", () => {
 
 		const reopened = new Log<Uint8Array>();
 		await reopened.open(store, signKey, { indexer, nativeGraph: true });
-		expect((await reopened.getHeads().all()).map((entry) => entry.hash)).to.deep.equal([
-			head.hash,
-		]);
+		expect(
+			(await reopened.getHeads().all()).map((entry) => entry.hash),
+		).to.deep.equal([head.hash]);
 		await reopened.close();
+	});
+
+	it("resolves full native graph heads with one block batch read", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+		const entryCount = 12;
+		for (let i = 0; i < entryCount; i++) {
+			await log.append(new Uint8Array([i]), { meta: { next: [] } });
+		}
+
+		const getManySpy = sinon.spy(store, "getMany");
+		try {
+			const heads = await log.getHeads(true).all();
+			expect(heads).to.have.length(entryCount);
+			expect(getManySpy.callCount).equal(1);
+			expect(getManySpy.firstCall.args[0]).to.have.length(2);
+		} finally {
+			getManySpy.restore();
+			await log.close();
+		}
 	});
 
 	it("keeps gid removal behavior when joins use the native graph mirror", async () => {
@@ -107,8 +131,11 @@ describe("native graph", () => {
 
 		expect(gidsRemoved).to.have.length(1);
 		expect(gidsRemoved[0]).to.have.length(1);
-		expect(await target.entryIndex.countHasNext((await source.getHeads().all())[0].hash))
-			.to.equal(1);
+		expect(
+			await target.entryIndex.countHasNext(
+				(await source.getHeads().all())[0].hash,
+			),
+		).to.equal(1);
 
 		await source.close();
 		await target.close();
