@@ -1030,6 +1030,8 @@ importers:
         specifier: ^4.2.1
         version: 4.2.3
 
+  packages/log/rust: {}
+
   packages/programs/acl/identity-access-controller:
     dependencies:
       '@dao-xyz/borsh':
@@ -2482,8 +2484,6 @@ importers:
         specifier: workspace:*
         version: link:../time
 
-  packages/utils/diagnostics: {}
-
   packages/utils/crypto:
     dependencies:
       '@dao-xyz/borsh':
@@ -2538,6 +2538,8 @@ importers:
       uint8arrays:
         specifier: ^5.1.0
         version: 5.1.0
+
+  packages/utils/diagnostics: {}
 
   packages/utils/indexer/cached-index:
     dependencies:
