@@ -75,13 +75,7 @@ export class AnyBlockStore implements Blocks {
 		try {
 			await this._store.put(put.cid, bbytes);
 		} catch (error: any) {
-			const status = await this._store.status();
-			if (
-				typeof error?.code === "string" &&
-				error.code === "LEVEL_DATABASE_NOT_OPEN" &&
-				this._closeController?.signal.aborted === true &&
-				(status === "closing" || status === "closed")
-			) {
+			if (await this.isClosingStorePutError(error)) {
 				// Late replication writes can outlive shutdown. At this point the
 				// backing store is intentionally closing, so report the deterministic
 				// CID while discarding the write instead of leaking an unhandled
@@ -104,14 +98,31 @@ export class AnyBlockStore implements Blocks {
 		const store = this._store as AnyStore & {
 			putMany?: (entries: Iterable<readonly [string, Uint8Array]>) => Promise<void>;
 		};
-		if (typeof store.putMany === "function") {
-			await store.putMany(puts.map((put) => [put.cid, put.block.bytes] as const));
-		} else {
-			for (const put of puts) {
-				await this._store.put(put.cid, put.block.bytes);
+		try {
+			if (typeof store.putMany === "function") {
+				await store.putMany(puts.map((put) => [put.cid, put.block.bytes] as const));
+			} else {
+				for (const put of puts) {
+					await this._store.put(put.cid, put.block.bytes);
+				}
 			}
+		} catch (error: any) {
+			if (await this.isClosingStorePutError(error)) {
+				return puts.map((put) => put.cid);
+			}
+			throw error;
 		}
 		return puts.map((put) => put.cid);
+	}
+
+	private async isClosingStorePutError(error: any): Promise<boolean> {
+		const status = await this._store.status();
+		return (
+			typeof error?.code === "string" &&
+			error.code === "LEVEL_DATABASE_NOT_OPEN" &&
+			this._closeController?.signal.aborted === true &&
+			(status === "closing" || status === "closed")
+		);
 	}
 
 	async rm(cid: string): Promise<void> {

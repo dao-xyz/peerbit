@@ -24,7 +24,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		components: DirectBlockComponents,
 		options?: {
 			directory?: string;
-			store?: AnyStore;
+			localStore?: AnyStore;
 			canRelayMessage?: boolean;
 			localTimeout?: number;
 			messageProcessingConcurrency?: number;
@@ -51,6 +51,10 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			requeryOnReachable?: number;
 		},
 	) {
+		if (options?.directory && options.localStore) {
+			throw new Error("DirectBlock options cannot include both directory and localStore");
+		}
+
 		super(components, ["/peerbit/direct-block/1.0.0"], {
 			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
 			canRelayMessage: options?.canRelayMessage ?? true,
@@ -91,7 +95,9 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			return out;
 		};
 		this.remoteBlocks = new RemoteBlocks({
-			local: new AnyBlockStore(options?.store ?? createStore(options?.directory)),
+			local: new AnyBlockStore(
+				options?.localStore ?? createStore(options?.directory),
+			),
 			publish: (message, options) => this.publish(serialize(message), options),
 			localTimeout: options?.localTimeout || 1000,
 			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
