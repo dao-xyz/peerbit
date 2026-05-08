@@ -161,31 +161,50 @@ describe("append", function () {
 
 		const iterateSpy = sinon.spy(log.entryIndex.properties.index, "iterate");
 		const putSpy = sinon.spy(log.entryIndex.properties.index, "put");
-		const result = await log.appendMany([
-			new Uint8Array([1]),
-			new Uint8Array([2]),
-			new Uint8Array([3]),
-		]);
+		const blockPutSpy = sinon.spy(store, "put");
+		const blockPutManySpy = sinon.spy(store, "putMany");
 
-		expect(result.entries).to.have.length(3);
-		expect(result.entries[0].meta.next).to.deep.equal([root.hash]);
-		expect(result.entries[1].meta.next).to.deep.equal([result.entries[0].hash]);
-		expect(result.entries[2].meta.next).to.deep.equal([result.entries[1].hash]);
-		expect((await log.getHeads().all()).map((head) => head.hash)).to.deep.equal([
-			result.entries[2].hash,
-		]);
-		expect(changes).to.have.length(1);
-		expect(changes[0].added.map((added: any) => added.head)).to.deep.equal([
-			false,
-			false,
-			true,
-		]);
-		expect(iterateSpy.callCount).equal(0);
-		expect(putSpy.callCount).equal(result.entries.length + 1);
+		try {
+			const result = await log.appendMany([
+				new Uint8Array([1]),
+				new Uint8Array([2]),
+				new Uint8Array([3]),
+			]);
 
-		iterateSpy.restore();
-		putSpy.restore();
-		await log.close();
+			expect(result.entries).to.have.length(3);
+			expect(result.entries[0].meta.next).to.deep.equal([root.hash]);
+			expect(result.entries[1].meta.next).to.deep.equal([
+				result.entries[0].hash,
+			]);
+			expect(result.entries[2].meta.next).to.deep.equal([
+				result.entries[1].hash,
+			]);
+			for (const entry of result.entries) {
+				expect((await log.get(entry.hash))?.hash).equal(entry.hash);
+			}
+			expect(
+				(await log.getHeads().all()).map((head) => head.hash),
+			).to.deep.equal([result.entries[2].hash]);
+			expect(changes).to.have.length(1);
+			expect(changes[0].added.map((added: any) => added.head)).to.deep.equal([
+				false,
+				false,
+				true,
+			]);
+			expect(iterateSpy.callCount).equal(0);
+			expect(putSpy.callCount).equal(result.entries.length + 1);
+			expect(blockPutSpy.callCount).equal(0);
+			expect(blockPutManySpy.callCount).equal(1);
+			expect(blockPutManySpy.firstCall.args[0]).to.have.length(
+				result.entries.length,
+			);
+		} finally {
+			iterateSpy.restore();
+			putSpy.restore();
+			blockPutSpy.restore();
+			blockPutManySpy.restore();
+			await log.close();
+		}
 	});
 
 	describe("append 100 items to a log", () => {

@@ -26,6 +26,7 @@ export const createEntry = async <T>(properties: {
 	encoding?: Encoding<T>;
 	canAppend?: CanAppend<T>;
 	encryption?: EntryEncryption;
+	deferStore?: boolean;
 	identity: Identity;
 	signers?: ((
 		data: Uint8Array,
