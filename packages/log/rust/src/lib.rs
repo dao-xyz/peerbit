@@ -90,6 +90,14 @@ impl LogGraphIndex {
         self.entries.contains_key(hash)
     }
 
+    pub fn has_many(&self, hashes: &[String]) -> Vec<String> {
+        hashes
+            .iter()
+            .filter(|hash| self.has(hash))
+            .cloned()
+            .collect()
+    }
+
     pub fn get(&self, hash: &str) -> Option<&LogIndexEntry> {
         self.entries.get(hash)
     }
@@ -353,6 +361,11 @@ impl NativeLogIndex {
         self.inner.has(hash)
     }
 
+    pub fn has_many(&self, hashes: Array) -> Result<Array, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        Ok(strings_to_array(self.inner.has_many(&hashes)))
+    }
+
     pub fn put(
         &mut self,
         hash: String,
@@ -555,6 +568,18 @@ mod tests {
         assert_eq!(index.heads(None), vec!["a", "b", "c"]);
         assert_eq!(index.heads(Some("one")), vec!["a", "b"]);
         assert_eq!(index.heads(Some("two")), vec!["c"]);
+    }
+
+    #[test]
+    fn batches_membership_checks() {
+        let mut index = LogGraphIndex::new();
+        index.put(entry("a", "one", &[], 1));
+        index.put(entry("c", "one", &[], 3));
+
+        assert_eq!(
+            index.has_many(&["missing".to_string(), "a".to_string(), "c".to_string()]),
+            vec!["a".to_string(), "c".to_string()]
+        );
     }
 
     #[test]
