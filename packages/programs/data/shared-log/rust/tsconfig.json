@@ -4,5 +4,5 @@
 		"outDir": "dist",
 		"checkJs": false
 	},
-	"include": ["src", "test"]
+	"include": ["src", "test", "benchmark"]
 }
