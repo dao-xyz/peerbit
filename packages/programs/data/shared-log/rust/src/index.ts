@@ -54,6 +54,16 @@ export type LeaderPlan = {
 	leaders: Map<string, LeaderSample>;
 };
 
+export type LeaderBatchInput = {
+	cursors: Iterable<bigint | number | string>;
+	replicas: number;
+};
+
+export type LeaderGidBatchInput = {
+	gid: string;
+	replicas: number;
+};
+
 type NativeRangePlannerHandle = {
 	len: () => number;
 	clear: () => void;
@@ -89,6 +99,18 @@ type NativeRangePlannerHandle = {
 		fullReplicaFallback: boolean,
 		includeStrictFullReplica: boolean,
 	) => unknown[];
+	find_leaders_batch: (
+		cursorBatches: string[][],
+		replicaCounts: number[],
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => unknown[];
 	find_leaders_for_gid: (
 		gid: string,
 		replicas: number,
@@ -113,6 +135,18 @@ type NativeRangePlannerHandle = {
 		fullReplicaFallback: boolean,
 		includeStrictFullReplica: boolean,
 	) => [unknown[], unknown[]];
+	plan_leaders_for_gids_batch: (
+		gids: string[],
+		replicaCounts: number[],
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => unknown[];
 	get_full_replica_leaders: (
 		replicas: number,
 		roleAgeMs: number,
@@ -257,14 +291,17 @@ export class SharedLogRangePlanner {
 		return rowsToSamples(rows);
 	}
 
-	findLeaders(
-		cursors: Iterable<bigint | number | string>,
-		replicas: number,
-		options?: FindLeaderOptions,
-	): Map<string, LeaderSample> {
-		const rows = this.native.find_leaders(
-			[...cursors].map(asIntegerString),
-			replicas,
+	private findLeaderArguments(options?: FindLeaderOptions): [
+		number,
+		string,
+		string[] | undefined,
+		boolean,
+		string,
+		boolean,
+		boolean,
+		boolean,
+	] {
+		return [
 			options?.roleAge ?? 0,
 			asIntegerString(options?.now ?? Date.now()),
 			options?.peerFilter ? [...options.peerFilter] : undefined,
@@ -273,8 +310,39 @@ export class SharedLogRangePlanner {
 			options?.selfReplicating === true,
 			options?.fullReplicaFallback === true,
 			options?.includeStrictFullReplica !== false,
+		];
+	}
+
+	findLeaders(
+		cursors: Iterable<bigint | number | string>,
+		replicas: number,
+		options?: FindLeaderOptions,
+	): Map<string, LeaderSample> {
+		const rows = this.native.find_leaders(
+			[...cursors].map(asIntegerString),
+			replicas,
+			...this.findLeaderArguments(options),
 		);
 		return rowsToSamples(rows);
+	}
+
+	findLeadersBatch(
+		items: Iterable<LeaderBatchInput>,
+		options?: FindLeaderOptions,
+	): Array<Map<string, LeaderSample>> {
+		const cursorBatches: string[][] = [];
+		const replicaCounts: number[] = [];
+		for (const item of items) {
+			cursorBatches.push([...item.cursors].map(asIntegerString));
+			replicaCounts.push(item.replicas);
+		}
+
+		const rows = this.native.find_leaders_batch(
+			cursorBatches,
+			replicaCounts,
+			...this.findLeaderArguments(options),
+		);
+		return rows.map((row) => rowsToSamples(row as unknown[]));
 	}
 
 	findLeadersForGid(
@@ -285,14 +353,7 @@ export class SharedLogRangePlanner {
 		const rows = this.native.find_leaders_for_gid(
 			gid,
 			replicas,
-			options?.roleAge ?? 0,
-			asIntegerString(options?.now ?? Date.now()),
-			options?.peerFilter ? [...options.peerFilter] : undefined,
-			options?.expandPeerFilter === true,
-			options?.selfHash ?? "",
-			options?.selfReplicating === true,
-			options?.fullReplicaFallback === true,
-			options?.includeStrictFullReplica !== false,
+			...this.findLeaderArguments(options),
 		);
 		return rowsToSamples(rows);
 	}
@@ -305,19 +366,37 @@ export class SharedLogRangePlanner {
 		const [coordinateRows, leaderRows] = this.native.plan_leaders_for_gid(
 			gid,
 			replicas,
-			options?.roleAge ?? 0,
-			asIntegerString(options?.now ?? Date.now()),
-			options?.peerFilter ? [...options.peerFilter] : undefined,
-			options?.expandPeerFilter === true,
-			options?.selfHash ?? "",
-			options?.selfReplicating === true,
-			options?.fullReplicaFallback === true,
-			options?.includeStrictFullReplica !== false,
+			...this.findLeaderArguments(options),
 		);
 		return {
 			coordinates: rowsToNumbers(this.resolution, coordinateRows),
 			leaders: rowsToSamples(leaderRows),
 		};
+	}
+
+	planLeadersForGidsBatch(
+		items: Iterable<LeaderGidBatchInput>,
+		options?: FindLeaderOptions,
+	): LeaderPlan[] {
+		const gids: string[] = [];
+		const replicaCounts: number[] = [];
+		for (const item of items) {
+			gids.push(item.gid);
+			replicaCounts.push(item.replicas);
+		}
+
+		const rows = this.native.plan_leaders_for_gids_batch(
+			gids,
+			replicaCounts,
+			...this.findLeaderArguments(options),
+		);
+		return rows.map((row) => {
+			const [coordinateRows, leaderRows] = row as [unknown[], unknown[]];
+			return {
+				coordinates: rowsToNumbers(this.resolution, coordinateRows),
+				leaders: rowsToSamples(leaderRows),
+			};
+		});
 	}
 
 	getFullReplicaLeaders(
