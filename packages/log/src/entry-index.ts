@@ -43,6 +43,10 @@ type BlocksWithGetMany = Blocks & {
 	) => Promise<Array<Uint8Array | undefined>> | Array<Uint8Array | undefined>;
 };
 
+type IndexWithPutBatch<T extends Record<string, any>> = Index<T> & {
+	putBatch?: (values: T[]) => Promise<void> | void;
+};
+
 type NativeLogEntry = {
 	hash: string;
 	gid: string;
@@ -946,6 +950,10 @@ export class EntryIndex<T> {
 		const promise = (async () => {
 			const batchHashes = new Set(entries.map((entry) => entry.hash));
 			const externalNexts = new Set<string>();
+			const putBatch =
+				!this.properties.onGidRemoved &&
+				(this.properties.index as IndexWithPutBatch<ShallowEntry>).putBatch;
+			const shallowEntries: ShallowEntry[] = [];
 			for (let i = 0; i < entries.length; i++) {
 				const entry = entries[i];
 				const isHead = i === entries.length - 1;
@@ -955,14 +963,29 @@ export class EntryIndex<T> {
 
 				this.cache.add(entry.hash, entry);
 				const shallowEntry = entry.toShallow(isHead);
-				await this.properties.index.put(shallowEntry);
-				this.properties.nativeGraph?.graph.put(toNativeLogEntry(shallowEntry));
-				await this.notifyShadowedGids(entry);
+				if (putBatch) {
+					shallowEntries.push(shallowEntry);
+				} else {
+					await this.properties.index.put(shallowEntry);
+					this.properties.nativeGraph?.graph.put(
+						toNativeLogEntry(shallowEntry),
+					);
+					await this.notifyShadowedGids(entry);
+				}
 
 				for (const next of entry.meta.next) {
 					if (!batchHashes.has(next)) {
 						externalNexts.add(next);
 					}
+				}
+			}
+
+			if (putBatch) {
+				await putBatch.call(this.properties.index, shallowEntries);
+				for (const shallowEntry of shallowEntries) {
+					this.properties.nativeGraph?.graph.put(
+						toNativeLogEntry(shallowEntry),
+					);
 				}
 			}
 

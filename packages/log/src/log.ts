@@ -636,7 +636,6 @@ export class Log<T> {
 		await this.putAppendEntries(entries, options);
 
 		for (const entry of entries) {
-			pendingDeletes.push(...(await this.processEntry(entry)));
 			entry.init({ encoding: this._encoding, keychain: this._keychain });
 		}
 

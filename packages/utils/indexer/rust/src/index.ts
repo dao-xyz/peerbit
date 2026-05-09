@@ -1210,6 +1210,44 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		});
 	}
 
+	async putBatch(values: T[]): Promise<void> {
+		if (values.length === 0) {
+			return;
+		}
+		if (!this.snapshotFile) {
+			for (const value of values) {
+				const id = types.toId(types.extractFieldValue(value, this.indexByArr));
+				this.putNativeDocument(keyToStoreKey(id), id, value);
+			}
+			return;
+		}
+
+		await this.enqueueMutation(async () => {
+			const prepared = values.map((value) => {
+				const id = types.toId(types.extractFieldValue(value, this.indexByArr));
+				return {
+					fields: this.fieldEncoder(value),
+					id,
+					storeKey: keyToStoreKey(id),
+					value,
+				};
+			});
+			await this.enqueuePersistence(async () => {
+				for (const item of prepared) {
+					await this.snapshotFile!.appendPut(
+						item.storeKey,
+						item.value,
+						this.properties.schema,
+					);
+				}
+			});
+			for (const item of prepared) {
+				this.getNative().put(item.storeKey, item.id, item.value, item.fields);
+			}
+			await this.compactIfNeeded();
+		});
+	}
+
 	async del(query: types.DeleteOptions): Promise<types.IdKey[]> {
 		if (!this.snapshotFile) {
 			const compiled = this.requireNativePlan(types.toQuery(query.query), {
