@@ -139,6 +139,42 @@ type WasmModule = {
 		signaturePublicKey: Uint8Array,
 		prehash: number,
 	) => Uint8Array;
+	encode_entry_v0_storage_with_cid: (
+		clockId: Uint8Array,
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		signature: Uint8Array,
+		signaturePublicKey: Uint8Array,
+		prehash: number,
+	) => [Uint8Array, string];
+	encode_entry_v0_signable_batch: (
+		clockIds: Uint8Array[],
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gids: string[],
+		nexts: string[][],
+		types: Uint8Array,
+		metaDatas: Array<Uint8Array | undefined>,
+		payloadDatas: Uint8Array[],
+	) => Uint8Array[];
+	encode_entry_v0_storage_batch_with_cids: (
+		clockIds: Uint8Array[],
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gids: string[],
+		nexts: string[][],
+		types: Uint8Array,
+		metaDatas: Array<Uint8Array | undefined>,
+		payloadDatas: Uint8Array[],
+		signatures: Uint8Array[],
+		signaturePublicKeys: Uint8Array[],
+		prehashes: Uint8Array,
+	) => Array<[Uint8Array, string]>;
 	calculate_raw_cid_v1: (bytes: Uint8Array) => string;
 };
 
@@ -429,6 +465,43 @@ export type EntryV0StorageEncodeInput = EntryV0EncodeInput & {
 	prehash?: number;
 };
 
+export type EntryV0EncodedStorage = {
+	bytes: Uint8Array;
+	cid: string;
+};
+
+const entryColumns = (inputs: EntryV0EncodeInput[]) => {
+	const clockIds = new Array<Uint8Array>(inputs.length);
+	const wallTimes = new BigUint64Array(inputs.length);
+	const logicals = new Uint32Array(inputs.length);
+	const gids = new Array<string>(inputs.length);
+	const nexts = new Array<string[]>(inputs.length);
+	const types = new Uint8Array(inputs.length);
+	const metaDatas = new Array<Uint8Array | undefined>(inputs.length);
+	const payloadDatas = new Array<Uint8Array>(inputs.length);
+	for (let i = 0; i < inputs.length; i++) {
+		const input = inputs[i]!;
+		clockIds[i] = input.clockId;
+		wallTimes[i] = BigInt(input.wallTime);
+		logicals[i] = input.logical ?? 0;
+		gids[i] = input.gid;
+		nexts[i] = input.next ?? [];
+		types[i] = input.type ?? 0;
+		metaDatas[i] = input.metaData;
+		payloadDatas[i] = input.payloadData;
+	}
+	return {
+		clockIds,
+		wallTimes,
+		logicals,
+		gids,
+		nexts,
+		types,
+		metaDatas,
+		payloadDatas,
+	};
+};
+
 export const encodeEntryV0Signable = async (
 	input: EntryV0EncodeInput,
 ): Promise<Uint8Array> => {
@@ -442,6 +515,26 @@ export const encodeEntryV0Signable = async (
 		input.type ?? 0,
 		input.metaData,
 		input.payloadData,
+	);
+};
+
+export const encodeEntryV0SignableBatch = async (
+	inputs: EntryV0EncodeInput[],
+): Promise<Uint8Array[]> => {
+	if (inputs.length === 0) {
+		return [];
+	}
+	const wasm = await loadWasm();
+	const columns = entryColumns(inputs);
+	return wasm.encode_entry_v0_signable_batch(
+		columns.clockIds,
+		columns.wallTimes,
+		columns.logicals,
+		columns.gids,
+		columns.nexts,
+		columns.types,
+		columns.metaDatas,
+		columns.payloadDatas,
 	);
 };
 
@@ -462,6 +555,60 @@ export const encodeEntryV0Storage = async (
 		input.signaturePublicKey,
 		input.prehash ?? 0,
 	);
+};
+
+export const encodeEntryV0StorageWithCid = async (
+	input: EntryV0StorageEncodeInput,
+): Promise<EntryV0EncodedStorage> => {
+	const wasm = await loadWasm();
+	const [bytes, cid] = wasm.encode_entry_v0_storage_with_cid(
+		input.clockId,
+		BigInt(input.wallTime),
+		input.logical ?? 0,
+		input.gid,
+		input.next ?? [],
+		input.type ?? 0,
+		input.metaData,
+		input.payloadData,
+		input.signature,
+		input.signaturePublicKey,
+		input.prehash ?? 0,
+	);
+	return { bytes, cid };
+};
+
+export const encodeEntryV0StorageBatchWithCids = async (
+	inputs: EntryV0StorageEncodeInput[],
+): Promise<EntryV0EncodedStorage[]> => {
+	if (inputs.length === 0) {
+		return [];
+	}
+	const wasm = await loadWasm();
+	const columns = entryColumns(inputs);
+	const signatures = new Array<Uint8Array>(inputs.length);
+	const signaturePublicKeys = new Array<Uint8Array>(inputs.length);
+	const prehashes = new Uint8Array(inputs.length);
+	for (let i = 0; i < inputs.length; i++) {
+		const input = inputs[i]!;
+		signatures[i] = input.signature;
+		signaturePublicKeys[i] = input.signaturePublicKey;
+		prehashes[i] = input.prehash ?? 0;
+	}
+	return wasm
+		.encode_entry_v0_storage_batch_with_cids(
+			columns.clockIds,
+			columns.wallTimes,
+			columns.logicals,
+			columns.gids,
+			columns.nexts,
+			columns.types,
+			columns.metaDatas,
+			columns.payloadDatas,
+			signatures,
+			signaturePublicKeys,
+			prehashes,
+		)
+		.map(([bytes, cid]) => ({ bytes, cid }));
 };
 
 export const calculateRawCidV1 = async (bytes: Uint8Array): Promise<string> => {
