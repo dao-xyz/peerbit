@@ -3,6 +3,7 @@ import {
 	type NativeLogEntry,
 	calculateRawCidV1,
 	createLogGraphIndex,
+	createNativeLogBlockStore,
 	encodeEntryV0Signable,
 	encodeEntryV0SignableBatch,
 	encodeEntryV0Storage,
@@ -546,5 +547,44 @@ describe("native EntryV0 encoding", () => {
 			expect(prepared.payloadBytes.byteLength).greaterThan(0);
 			expect(prepared.signatureBytes.byteLength).greaterThan(0);
 		}
+	});
+
+	it("commits prepared plain entry blocks and graph rows natively", async () => {
+		const privateKey = fromHex(
+			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+		);
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const index = await createLogGraphIndex();
+		const blockStore = await createNativeLogBlockStore();
+		index.put(entry("root", "chain-gid", [], 10n));
+
+		const chain = await index.prepareEntryV0PlainChainCommit(
+			{
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+				wallTimes: [11n, 12n, 13n],
+				gid: "chain-gid",
+				initialNext: ["root"],
+				payloadDatas: [
+					new Uint8Array([1]),
+					new Uint8Array([2]),
+					new Uint8Array([3]),
+				],
+			},
+			blockStore,
+		);
+
+		expect(chain).to.have.length(3);
+		expect(index.heads()).to.deep.equal([chain![2]!.cid]);
+		expect(index.children("root")).to.deep.equal([chain![0]!.cid]);
+		expect(await blockStore.get(chain![0]!.cid)).to.deep.equal(chain![0]!.bytes);
+		expect(await blockStore.get(chain![1]!.cid)).to.deep.equal(chain![1]!.bytes);
+		expect(await blockStore.get(chain![2]!.cid)).to.deep.equal(chain![2]!.bytes);
+		expect(await blockStore.size()).to.equal(
+			chain!.reduce((sum, prepared) => sum + prepared.bytes.byteLength, 0),
+		);
 	});
 });

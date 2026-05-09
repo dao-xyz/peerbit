@@ -65,6 +65,10 @@ type NativeEntryV0Graph = {
 	prepareEntryV0PlainChainAndPut?(
 		input: NativePlainChainInput,
 	): Promise<NativePreparedPlainEntry[]>;
+	prepareEntryV0PlainChainCommit?(
+		input: NativePlainChainInput,
+		blockStore: unknown,
+	): Promise<NativePreparedPlainEntry[] | undefined>;
 };
 
 type NativeEntryV0Encoder = {
@@ -523,6 +527,7 @@ export class EntryV0<T>
 		deferStore: boolean;
 		cachePreparedEntries?: boolean;
 		nativeGraph?: NativeEntryV0Graph;
+		nativeBlockStore?: unknown;
 	}): Promise<Entry<T>[] | undefined> {
 		return (await EntryV0.createPlainAppendChainBatch(properties))?.entries;
 	}
@@ -542,6 +547,7 @@ export class EntryV0<T>
 		deferStore: boolean;
 		cachePreparedEntries?: boolean;
 		nativeGraph?: NativeEntryV0Graph;
+		nativeBlockStore?: unknown;
 	}): Promise<PreparedAppendChain<T> | undefined> {
 		if (!properties.deferStore) {
 			return undefined;
@@ -616,8 +622,6 @@ export class EntryV0<T>
 					encoding: properties.encoding,
 				}),
 		);
-		const nativePrepareAndPut =
-			properties.nativeGraph?.prepareEntryV0PlainChainAndPut;
 		const nativePlainChainInput: NativePlainChainInput = {
 			clockId: properties.identity.publicKey.bytes,
 			privateKey: properties.identity.privateKey.privateKey,
@@ -630,10 +634,27 @@ export class EntryV0<T>
 			metaDatas: payloads.map(() => properties.meta?.data),
 			payloadDatas: payloads.map((payload) => payload.data),
 		};
-		const prepared = await (nativePrepareAndPut
-			? nativePrepareAndPut.call(properties.nativeGraph, nativePlainChainInput)
-			: nativeEncoder.prepareEntryV0PlainChain(nativePlainChainInput));
-		const nativeGraphUpdated = !!nativePrepareAndPut;
+		const nativeCommit = properties.nativeGraph?.prepareEntryV0PlainChainCommit;
+		let nativeBlocksCommitted = false;
+		let prepared = nativeCommit
+			? await nativeCommit.call(
+					properties.nativeGraph,
+					nativePlainChainInput,
+					properties.nativeBlockStore,
+				)
+			: undefined;
+		if (prepared) {
+			nativeBlocksCommitted = true;
+		} else {
+			const nativePrepareAndPut =
+				properties.nativeGraph?.prepareEntryV0PlainChainAndPut;
+			prepared = await (nativePrepareAndPut
+				? nativePrepareAndPut.call(properties.nativeGraph, nativePlainChainInput)
+				: nativeEncoder.prepareEntryV0PlainChain(nativePlainChainInput));
+		}
+		const nativeGraphUpdated =
+			nativeBlocksCommitted ||
+			!!properties.nativeGraph?.prepareEntryV0PlainChainAndPut;
 
 		const entries: PreparedAppendChain<T>["entries"] = [];
 		const blocks: PreparedAppendChain<T>["blocks"] = [];
@@ -739,6 +760,7 @@ export class EntryV0<T>
 			shallowEntries,
 			nativeEntries,
 			nativeGraphUpdated,
+			nativeBlocksCommitted,
 		};
 	}
 
