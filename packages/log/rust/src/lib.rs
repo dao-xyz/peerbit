@@ -191,6 +191,14 @@ impl LogGraphIndex {
         self.query.search(&query, &head_sort(), None)
     }
 
+    pub fn has_head(&self, gid: Option<&str>) -> bool {
+        let query = match gid {
+            Some(gid) => Query::And(vec![head_query(), gid_query(gid)]),
+            None => head_query(),
+        };
+        self.query.count(&query) > 0
+    }
+
     pub fn head_entries(&self, gid: Option<&str>) -> Vec<LogIndexEntry> {
         self.heads(gid)
             .into_iter()
@@ -497,6 +505,10 @@ impl NativeLogIndex {
         strings_to_array(self.inner.heads(gid.as_deref()))
     }
 
+    pub fn has_head(&self, gid: Option<String>) -> bool {
+        self.inner.has_head(gid.as_deref())
+    }
+
     pub fn head_entries(&self, gid: Option<String>) -> Array {
         log_entries_to_rows(self.inner.head_entries(gid.as_deref()))
     }
@@ -717,6 +729,10 @@ mod tests {
         assert_eq!(index.heads(None), vec!["a", "b", "c"]);
         assert_eq!(index.heads(Some("one")), vec!["a", "b"]);
         assert_eq!(index.heads(Some("two")), vec!["c"]);
+        assert!(index.has_head(None));
+        assert!(index.has_head(Some("one")));
+        assert!(index.has_head(Some("two")));
+        assert!(!index.has_head(Some("missing")));
     }
 
     #[test]

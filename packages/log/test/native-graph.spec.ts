@@ -198,6 +198,33 @@ describe("native graph", () => {
 		}
 	});
 
+	it("checks head existence in the native graph", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+		await log.append(new Uint8Array([1]), { meta: { next: [] } });
+
+		const indexIterateSpy = sinon.spy(
+			log.entryIndex.properties.index,
+			"iterate",
+		);
+		const nativeGraph = log.entryIndex.properties.nativeGraph!.graph;
+		const hasHeadSpy = sinon.spy(nativeGraph, "hasHead");
+		try {
+			expect(await log.entryIndex.hasHead()).equal(true);
+			expect(await log.entryIndex.hasHead("missing")).equal(false);
+			expect(hasHeadSpy.callCount).equal(2);
+			expect(indexIterateSpy.callCount).equal(0);
+		} finally {
+			hasHeadSpy.restore();
+			indexIterateSpy.restore();
+			await log.close();
+		}
+	});
+
 	it("plans recursive joins through the native graph", async () => {
 		const source = new Log<Uint8Array>();
 		const target = new Log<Uint8Array>();

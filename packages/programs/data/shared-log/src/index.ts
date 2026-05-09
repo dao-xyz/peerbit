@@ -4940,6 +4940,20 @@ export class SharedLog<
 		return maxReplicas(this, headsWithGid.values());
 	}
 
+	private async hasHeadForGid(gid: string) {
+		const nativeHasHead = await this.log.entryIndex.hasHead(gid);
+		if (nativeHasHead != null) {
+			return nativeHasHead;
+		}
+		const heads = await this.log.entryIndex
+			.getHeads(gid, {
+				type: "shape",
+				shape: { hash: true },
+			})
+			.all();
+		return heads.length > 0;
+	}
+
 	get topic() {
 		return this.log.idString;
 	}
@@ -5493,13 +5507,7 @@ export class SharedLog<
 									toPersist.push(entry.entry);
 								} else {
 									for (const ref of entry.gidRefrences) {
-										const map = await this.log.entryIndex
-											.getHeads(ref, {
-												type: "shape",
-												shape: { hash: true },
-											})
-											.all();
-										if (map && map.length > 0) {
+										if (await this.hasHeadForGid(ref)) {
 											toMerge.push(entry.entry);
 											(toDelete || (toDelete = [])).push(entry.entry);
 											continue outer;

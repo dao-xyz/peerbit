@@ -62,6 +62,10 @@ describe("native log graph index", () => {
 		expect(index.heads()).to.deep.equal(["a", "b", "c"]);
 		expect(index.heads("one")).to.deep.equal(["a", "b"]);
 		expect(index.heads("two")).to.deep.equal(["c"]);
+		expect(index.hasHead()).equal(true);
+		expect(index.hasHead("one")).equal(true);
+		expect(index.hasHead("two")).equal(true);
+		expect(index.hasHead("missing")).equal(false);
 	});
 
 	it("returns sortable head metadata for append planning", async () => {

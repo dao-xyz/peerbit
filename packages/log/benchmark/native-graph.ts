@@ -121,6 +121,17 @@ const measure = async (
 
 const rows: BenchRow[] = [];
 
+const hasHead = async (log: Log<Uint8Array>) => {
+	const nativeHasHead = await log.entryIndex.hasHead();
+	if (nativeHasHead != null) {
+		return nativeHasHead;
+	}
+	const heads = await log.entryIndex
+		.getHeads(undefined, { type: "shape", shape: { hash: true } })
+		.all();
+	return heads.length > 0;
+};
+
 const getMaxHeadDataU32 = async (log: Log<Uint8Array>) => {
 	const nativeMax = await log.entryIndex.getMaxHeadDataU32();
 	if (nativeMax != null) {
@@ -409,6 +420,17 @@ for (const nativeGraph of [false, true]) {
 			await log.entryIndex
 				.getHeads(undefined, { type: "shape", shape: { hash: true } })
 				.all();
+		}),
+	);
+	await log.close();
+	await store.stop();
+}
+
+for (const nativeGraph of [false, true]) {
+	const { log, store } = await createHeadsLog(nativeGraph);
+	rows.push(
+		await measure("hasHead()", nativeGraph, async () => {
+			await hasHead(log);
 		}),
 	);
 	await log.close();

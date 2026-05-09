@@ -73,6 +73,7 @@ type NativeLogIndexHandle = {
 	) => void;
 	delete: (hash: string) => boolean;
 	heads: (gid?: string) => string[];
+	has_head: (gid?: string) => boolean;
 	head_entries: (gid?: string) => unknown[];
 	head_data_entries: (gid?: string) => unknown[];
 	max_head_data_u32: (gid?: string) => number | undefined;
@@ -185,6 +186,10 @@ export class LogGraphIndex {
 
 	heads(gid?: string): string[] {
 		return this.native.heads(gid);
+	}
+
+	hasHead(gid?: string): boolean {
+		return this.native.has_head(gid);
 	}
 
 	headEntries(gid?: string): NativeLogHeadEntry[] {
