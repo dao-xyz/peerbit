@@ -38,6 +38,35 @@ import { equals } from "./utils.js";
 const log = baseLogger.newScope("entry-v0");
 const traceLogger = log.trace as typeof log & { enabled?: boolean };
 
+type NativePlainChainInput = {
+	clockId: Uint8Array;
+	privateKey: Uint8Array;
+	publicKey: Uint8Array;
+	wallTimes: Array<bigint | number | string>;
+	logicals?: number[];
+	gid: string;
+	initialNext?: string[];
+	type?: number;
+	metaDatas?: Array<Uint8Array | undefined>;
+	payloadDatas: Uint8Array[];
+};
+
+type NativePreparedPlainEntry = {
+	bytes: Uint8Array;
+	cid: string;
+	signature: Uint8Array;
+	next: string[];
+	metaBytes: Uint8Array;
+	payloadBytes: Uint8Array;
+	signatureBytes: Uint8Array;
+};
+
+type NativeEntryV0Graph = {
+	prepareEntryV0PlainChainAndPut?(
+		input: NativePlainChainInput,
+	): Promise<NativePreparedPlainEntry[]>;
+};
+
 type NativeEntryV0Encoder = {
 	encodeEntryV0Signable(input: {
 		clockId: Uint8Array;
@@ -75,28 +104,9 @@ type NativeEntryV0Encoder = {
 		signaturePublicKey: Uint8Array;
 		prehash?: number;
 	}): Promise<{ bytes: Uint8Array; cid: string }>;
-	prepareEntryV0PlainChain?(input: {
-		clockId: Uint8Array;
-		privateKey: Uint8Array;
-		publicKey: Uint8Array;
-		wallTimes: Array<bigint | number | string>;
-		logicals?: number[];
-		gid: string;
-		initialNext?: string[];
-		type?: number;
-		metaDatas?: Array<Uint8Array | undefined>;
-		payloadDatas: Uint8Array[];
-	}): Promise<
-		Array<{
-			bytes: Uint8Array;
-			cid: string;
-			signature: Uint8Array;
-			next: string[];
-			metaBytes: Uint8Array;
-			payloadBytes: Uint8Array;
-			signatureBytes: Uint8Array;
-		}>
-	>;
+	prepareEntryV0PlainChain?(
+		input: NativePlainChainInput,
+	): Promise<NativePreparedPlainEntry[]>;
 	calculateRawCidV1(bytes: Uint8Array): Promise<string>;
 };
 
@@ -512,6 +522,7 @@ export class EntryV0<T>
 		identity: Identity;
 		deferStore: boolean;
 		cachePreparedEntries?: boolean;
+		nativeGraph?: NativeEntryV0Graph;
 	}): Promise<Entry<T>[] | undefined> {
 		return (await EntryV0.createPlainAppendChainBatch(properties))?.entries;
 	}
@@ -530,6 +541,7 @@ export class EntryV0<T>
 		identity: Identity;
 		deferStore: boolean;
 		cachePreparedEntries?: boolean;
+		nativeGraph?: NativeEntryV0Graph;
 	}): Promise<PreparedAppendChain<T> | undefined> {
 		if (!properties.deferStore) {
 			return undefined;
@@ -604,7 +616,9 @@ export class EntryV0<T>
 					encoding: properties.encoding,
 				}),
 		);
-		const prepared = await nativeEncoder.prepareEntryV0PlainChain({
+		const nativePrepareAndPut =
+			properties.nativeGraph?.prepareEntryV0PlainChainAndPut;
+		const nativePlainChainInput: NativePlainChainInput = {
 			clockId: properties.identity.publicKey.bytes,
 			privateKey: properties.identity.privateKey.privateKey,
 			publicKey: properties.identity.publicKey.publicKey,
@@ -615,12 +629,17 @@ export class EntryV0<T>
 			type: entryType,
 			metaDatas: payloads.map(() => properties.meta?.data),
 			payloadDatas: payloads.map((payload) => payload.data),
-		});
+		};
+		const prepared = await (nativePrepareAndPut
+			? nativePrepareAndPut.call(properties.nativeGraph, nativePlainChainInput)
+			: nativeEncoder.prepareEntryV0PlainChain(nativePlainChainInput));
+		const nativeGraphUpdated = !!nativePrepareAndPut;
 
 		const entries: PreparedAppendChain<T>["entries"] = [];
 		const blocks: PreparedAppendChain<T>["blocks"] = [];
 		const shallowEntries: PreparedAppendChain<T>["shallowEntries"] = [];
-		const nativeEntries: PreparedAppendChain<T>["nativeEntries"] = [];
+		const nativeEntries: NonNullable<PreparedAppendChain<T>["nativeEntries"]> =
+			[];
 
 		for (let index = 0; index < prepared.length; index++) {
 			const preparedEntry = prepared[index]!;
@@ -682,32 +701,45 @@ export class EntryV0<T>
 					type: meta.type,
 				}),
 			});
-			const nativeEntry = {
-				hash: entry.hash,
-				gid: meta.gid,
-				next: meta.next,
-				type: meta.type,
-				head: index === prepared.length - 1,
-				payloadSize: payload.byteLength,
-				data: meta.data,
-				clock: {
-					timestamp: {
-						wallTime: meta.clock.timestamp.wallTime,
-						logical: meta.clock.timestamp.logical,
-					},
-				},
-			};
+			const nativeEntry =
+				nativeGraphUpdated && properties.cachePreparedEntries === false
+					? undefined
+					: {
+							hash: entry.hash,
+							gid: meta.gid,
+							next: meta.next,
+							type: meta.type,
+							head: index === prepared.length - 1,
+							payloadSize: payload.byteLength,
+							data: meta.data,
+							clock: {
+								timestamp: {
+									wallTime: meta.clock.timestamp.wallTime,
+									logical: meta.clock.timestamp.logical,
+								},
+							},
+						};
 			if (properties.cachePreparedEntries !== false) {
 				Entry.prepareShallowEntry(entry, shallowEntry);
-				Entry.prepareNativeLogEntry(entry, nativeEntry);
+				Entry.prepareNativeLogEntry(entry, nativeEntry!);
 			}
-			entry.init({ encoding: properties.encoding });
+			if (properties.cachePreparedEntries !== false) {
+				entry.init({ encoding: properties.encoding });
+			}
 			entries.push(entry);
 			blocks.push(preparedBlock);
 			shallowEntries.push(shallowEntry);
-			nativeEntries.push(nativeEntry);
+			if (nativeEntry) {
+				nativeEntries.push(nativeEntry);
+			}
 		}
-		return { entries, blocks, shallowEntries, nativeEntries };
+		return {
+			entries,
+			blocks,
+			shallowEntries,
+			nativeEntries,
+			nativeGraphUpdated,
+		};
 	}
 
 	static async create<T>(properties: {

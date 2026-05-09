@@ -92,6 +92,18 @@ type NativeLogIndexHandle = {
 		payloadSizes: Uint32Array,
 		datas: Array<Uint8Array | undefined>,
 	) => void;
+	prepare_entry_v0_plain_chain_and_put: (
+		clockId: Uint8Array,
+		privateKey: Uint8Array,
+		publicKey: Uint8Array,
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gid: string,
+		initialNext: string[],
+		type: number,
+		metaDatas: Array<Uint8Array | undefined>,
+		payloadDatas: Uint8Array[],
+	) => EntryV0PreparedPlainEntryRow[];
 	delete: (hash: string) => boolean;
 	heads: (gid?: string) => string[];
 	has_head: (gid?: string) => boolean;
@@ -201,17 +213,7 @@ type WasmModule = {
 		type: number,
 		metaDatas: Array<Uint8Array | undefined>,
 		payloadDatas: Uint8Array[],
-	) => Array<
-		[
-			Uint8Array,
-			string,
-			Uint8Array,
-			string[],
-			Uint8Array,
-			Uint8Array,
-			Uint8Array,
-		]
-	>;
+	) => EntryV0PreparedPlainEntryRow[];
 	calculate_raw_cid_v1: (bytes: Uint8Array) => string;
 };
 
@@ -356,6 +358,31 @@ export class LogGraphIndex {
 			logicals,
 			payloadSizes,
 			datas,
+		);
+	}
+
+	prepareEntryV0PlainChainAndPut(
+		input: EntryV0PlainChainInput,
+	): Promise<EntryV0PreparedPlainEntry[]> {
+		const columns = plainChainInputColumns(input);
+		if (!columns) {
+			return Promise.resolve([]);
+		}
+		return Promise.resolve(
+			preparedPlainEntryRows(
+				this.native.prepare_entry_v0_plain_chain_and_put(
+					input.clockId,
+					input.privateKey,
+					input.publicKey,
+					columns.wallTimes,
+					columns.logicals,
+					input.gid,
+					input.initialNext ?? [],
+					input.type ?? 0,
+					columns.metaDatas,
+					input.payloadDatas,
+				),
+			),
 		);
 	}
 
@@ -558,6 +585,59 @@ export type EntryV0PreparedPlainEntry = EntryV0EncodedStorage & {
 	signatureBytes: Uint8Array;
 };
 
+type EntryV0PreparedPlainEntryRow = [
+	Uint8Array,
+	string,
+	Uint8Array,
+	string[],
+	Uint8Array,
+	Uint8Array,
+	Uint8Array,
+];
+
+const plainChainInputColumns = (input: EntryV0PlainChainInput) => {
+	if (input.payloadDatas.length === 0) {
+		return undefined;
+	}
+	if (input.wallTimes.length !== input.payloadDatas.length) {
+		throw new Error("Expected equal column lengths");
+	}
+	const wallTimes = new BigUint64Array(input.wallTimes.length);
+	const logicals = new Uint32Array(input.payloadDatas.length);
+	const metaDatas = new Array<Uint8Array | undefined>(
+		input.payloadDatas.length,
+	);
+	for (let i = 0; i < input.payloadDatas.length; i++) {
+		wallTimes[i] = BigInt(input.wallTimes[i]!);
+		logicals[i] = input.logicals?.[i] ?? 0;
+		metaDatas[i] = input.metaDatas?.[i];
+	}
+	return { wallTimes, logicals, metaDatas };
+};
+
+const preparedPlainEntryRows = (
+	rows: EntryV0PreparedPlainEntryRow[],
+): EntryV0PreparedPlainEntry[] =>
+	rows.map(
+		([
+			bytes,
+			cid,
+			signature,
+			next,
+			metaBytes,
+			payloadBytes,
+			signatureBytes,
+		]) => ({
+			bytes,
+			cid,
+			signature,
+			next,
+			metaBytes,
+			payloadBytes,
+			signatureBytes,
+		}),
+	);
+
 const entryColumns = (inputs: EntryV0EncodeInput[]) => {
 	const clockIds = new Array<Uint8Array>(inputs.length);
 	const wallTimes = new BigUint64Array(inputs.length);
@@ -711,55 +791,25 @@ export const encodeEntryV0StorageBatchWithCids = async (
 export const prepareEntryV0PlainChain = async (
 	input: EntryV0PlainChainInput,
 ): Promise<EntryV0PreparedPlainEntry[]> => {
-	if (input.payloadDatas.length === 0) {
+	const columns = plainChainInputColumns(input);
+	if (!columns) {
 		return [];
 	}
-	if (input.wallTimes.length !== input.payloadDatas.length) {
-		throw new Error("Expected equal column lengths");
-	}
 	const wasm = await loadWasm();
-	const wallTimes = new BigUint64Array(input.wallTimes.length);
-	const logicals = new Uint32Array(input.payloadDatas.length);
-	const metaDatas = new Array<Uint8Array | undefined>(
-		input.payloadDatas.length,
-	);
-	for (let i = 0; i < input.payloadDatas.length; i++) {
-		wallTimes[i] = BigInt(input.wallTimes[i]!);
-		logicals[i] = input.logicals?.[i] ?? 0;
-		metaDatas[i] = input.metaDatas?.[i];
-	}
-	return wasm
-		.prepare_entry_v0_plain_chain(
+	return preparedPlainEntryRows(
+		wasm.prepare_entry_v0_plain_chain(
 			input.clockId,
 			input.privateKey,
 			input.publicKey,
-			wallTimes,
-			logicals,
+			columns.wallTimes,
+			columns.logicals,
 			input.gid,
 			input.initialNext ?? [],
 			input.type ?? 0,
-			metaDatas,
+			columns.metaDatas,
 			input.payloadDatas,
-		)
-		.map(
-			([
-				bytes,
-				cid,
-				signature,
-				next,
-				metaBytes,
-				payloadBytes,
-				signatureBytes,
-			]) => ({
-				bytes,
-				cid,
-				signature,
-				next,
-				metaBytes,
-				payloadBytes,
-				signatureBytes,
-			}),
-		);
+		),
+	);
 };
 
 export const calculateRawCidV1 = async (bytes: Uint8Array): Promise<string> => {
