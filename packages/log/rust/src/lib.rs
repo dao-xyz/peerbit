@@ -199,6 +199,10 @@ impl LogGraphIndex {
         self.query.count(&query) > 0
     }
 
+    pub fn has_any_head(&self, gids: &[String]) -> bool {
+        gids.iter().any(|gid| self.has_head(Some(gid)))
+    }
+
     pub fn head_entries(&self, gid: Option<&str>) -> Vec<LogIndexEntry> {
         self.heads(gid)
             .into_iter()
@@ -509,6 +513,11 @@ impl NativeLogIndex {
         self.inner.has_head(gid.as_deref())
     }
 
+    pub fn has_any_head(&self, gids: Array) -> Result<bool, JsValue> {
+        let gids = strings_from_array(gids)?;
+        Ok(self.inner.has_any_head(&gids))
+    }
+
     pub fn head_entries(&self, gid: Option<String>) -> Array {
         log_entries_to_rows(self.inner.head_entries(gid.as_deref()))
     }
@@ -733,6 +742,8 @@ mod tests {
         assert!(index.has_head(Some("one")));
         assert!(index.has_head(Some("two")));
         assert!(!index.has_head(Some("missing")));
+        assert!(index.has_any_head(&["missing".to_string(), "two".to_string()]));
+        assert!(!index.has_any_head(&["missing".to_string()]));
     }
 
     #[test]

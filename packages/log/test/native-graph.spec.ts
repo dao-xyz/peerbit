@@ -205,7 +205,9 @@ describe("native graph", () => {
 			indexer: new HashmapIndices(),
 			nativeGraph: true,
 		});
-		await log.append(new Uint8Array([1]), { meta: { next: [] } });
+		const { entry } = await log.append(new Uint8Array([1]), {
+			meta: { next: [] },
+		});
 
 		const indexIterateSpy = sinon.spy(
 			log.entryIndex.properties.index,
@@ -213,12 +215,19 @@ describe("native graph", () => {
 		);
 		const nativeGraph = log.entryIndex.properties.nativeGraph!.graph;
 		const hasHeadSpy = sinon.spy(nativeGraph, "hasHead");
+		const hasAnyHeadSpy = sinon.spy(nativeGraph, "hasAnyHead");
 		try {
 			expect(await log.entryIndex.hasHead()).equal(true);
 			expect(await log.entryIndex.hasHead("missing")).equal(false);
+			expect(
+				await log.entryIndex.hasAnyHead(["missing", entry.meta.gid]),
+			).equal(true);
+			expect(await log.entryIndex.hasAnyHead(["missing"])).equal(false);
 			expect(hasHeadSpy.callCount).equal(2);
+			expect(hasAnyHeadSpy.callCount).equal(2);
 			expect(indexIterateSpy.callCount).equal(0);
 		} finally {
+			hasAnyHeadSpy.restore();
 			hasHeadSpy.restore();
 			indexIterateSpy.restore();
 			await log.close();
