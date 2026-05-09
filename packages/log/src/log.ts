@@ -623,35 +623,12 @@ export class Log<T> {
 			| { entry: Entry<T>; fn: undefined }
 		)[] = [];
 		const deferBlockStore = hasPutMany(this._storage);
-
-		const nativeAppendChain =
-			deferBlockStore &&
-			!options.encryption &&
-			!options.signers &&
-			!(options.canAppend || this._hasCustomCanAppend) &&
-			!options.meta?.timestamp
-				? await EntryV0.createPlainAppendChainBatch<T>({
-						data,
-						meta: {
-							clocks: () =>
-								data.map(
-									() =>
-										new Clock({
-											id: this._identity.publicKey.bytes,
-											timestamp: this._hlc.now(),
-										}),
-								),
-							type: options.meta?.type,
-							gidSeed: options.meta?.gidSeed,
-							data: options.meta?.data,
-							next: nexts,
-						},
-						encoding: this._encoding,
-						identity: options.identity || this._identity,
-						deferStore: deferBlockStore,
-						cachePreparedEntries: false,
-					})
-				: undefined;
+		const nativeAppendChain = await this.createNativePlainAppendChain(
+			data,
+			options,
+			nexts,
+			deferBlockStore,
+		);
 
 		if (nativeAppendChain) {
 			entries.push(...nativeAppendChain.entries);
@@ -666,16 +643,23 @@ export class Log<T> {
 			}
 		}
 
-		await this.joinMissingNexts(entries[0]!, initialNexts);
-		if (deferBlockStore) {
-			await this.putAppendEntryBlocks(entries, nativeAppendChain?.blocks);
+		try {
+			await this.joinMissingNexts(entries[0]!, initialNexts);
+			if (deferBlockStore) {
+				await this.putAppendEntryBlocks(entries, nativeAppendChain?.blocks);
+			}
+			await this.putAppendEntries(
+				entries,
+				options,
+				initialNexts.map((entry) => entry.hash),
+				nativeAppendChain,
+			);
+		} catch (error) {
+			if (nativeAppendChain?.nativeGraphUpdated) {
+				this.rollbackNativeAppendGraph(entries);
+			}
+			throw error;
 		}
-		await this.putAppendEntries(
-			entries,
-			options,
-			initialNexts.map((entry) => entry.hash),
-			nativeAppendChain,
-		);
 
 		for (const entry of entries) {
 			entry.init({ encoding: this._encoding, keychain: this._keychain });
@@ -700,6 +684,64 @@ export class Log<T> {
 		await (options?.onChange || this._onChange)?.(changes);
 		await Promise.all(pendingDeletes.map((x) => x.fn?.()));
 		return { entries, removed };
+	}
+
+	private createNativePlainAppendChain(
+		data: T[],
+		options: AppendOptions<T>,
+		nexts: Sorting.SortableEntry[],
+		deferBlockStore: boolean,
+	): Promise<PreparedAppendChain<T> | undefined> {
+		if (
+			!deferBlockStore ||
+			options.encryption ||
+			options.signers ||
+			options.canAppend ||
+			this._hasCustomCanAppend ||
+			options.meta?.timestamp ||
+			options.meta?.type === EntryType.CUT ||
+			data.length < 2
+		) {
+			return Promise.resolve(undefined);
+		}
+
+		const nativeGraph =
+			!this.entryIndex.properties.onGidRemoved &&
+			this.entryIndex.properties.nativeGraph?.graph.prepareEntryV0PlainChainAndPut
+				? this.entryIndex.properties.nativeGraph.graph
+				: undefined;
+		return EntryV0.createPlainAppendChainBatch<T>({
+			data,
+			meta: {
+				clocks: () =>
+					data.map(
+						() =>
+							new Clock({
+								id: this._identity.publicKey.bytes,
+								timestamp: this._hlc.now(),
+							}),
+					),
+				type: options.meta?.type,
+				gidSeed: options.meta?.gidSeed,
+				data: options.meta?.data,
+				next: nexts,
+			},
+			encoding: this._encoding,
+			identity: options.identity || this._identity,
+			deferStore: deferBlockStore,
+			cachePreparedEntries: false,
+			nativeGraph,
+		});
+	}
+
+	private rollbackNativeAppendGraph(entries: Entry<T>[]) {
+		const graph = this.entryIndex.properties.nativeGraph?.graph;
+		if (!graph) {
+			return;
+		}
+		for (let i = entries.length - 1; i >= 0; i--) {
+			graph.delete(entries[i]!.hash);
+		}
 	}
 
 	private validateExplicitNexts(options: AppendOptions<T>) {
@@ -829,6 +871,7 @@ export class Log<T> {
 					? {
 							shallowEntries: preparedAppendChain.shallowEntries,
 							nativeEntries: preparedAppendChain.nativeEntries,
+							nativeGraphUpdated: preparedAppendChain.nativeGraphUpdated,
 						}
 					: undefined,
 			deferIndexWrite:

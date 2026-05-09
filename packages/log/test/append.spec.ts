@@ -171,6 +171,10 @@ describe("append", function () {
 			log.entryIndex.properties.nativeGraph!.graph,
 			"putAppendChain",
 		);
+		const nativePrepareAndPutSpy = sinon.spy(
+			log.entryIndex.properties.nativeGraph!.graph,
+			"prepareEntryV0PlainChainAndPut",
+		);
 		const preparedBlockSpy = sinon.spy(Entry, "takePreparedBlock");
 		const preparedShallowSpy = sinon.spy(Entry, "takePreparedShallowEntry");
 		const preparedNativeSpy = sinon.spy(Entry, "takePreparedNativeLogEntry");
@@ -212,10 +216,11 @@ describe("append", function () {
 				result.entries.length,
 			);
 			expect(shallowSpy.callCount).equal(0);
-			expect(nativeAppendChainSpy.callCount).equal(1);
-			expect(nativeAppendChainSpy.firstCall.args[0]).to.have.length(
+			expect(nativePrepareAndPutSpy.callCount).equal(1);
+			expect(nativePrepareAndPutSpy.firstCall.args[0].payloadDatas).to.have.length(
 				result.entries.length,
 			);
+			expect(nativeAppendChainSpy.callCount).equal(0);
 			expect(preparedBlockSpy.callCount).equal(0);
 			expect(preparedShallowSpy.callCount).equal(0);
 			expect(preparedNativeSpy.callCount).equal(0);
@@ -227,9 +232,40 @@ describe("append", function () {
 			blockPutManySpy.restore();
 			shallowSpy.restore();
 			nativeAppendChainSpy.restore();
+			nativePrepareAndPutSpy.restore();
 			preparedBlockSpy.restore();
 			preparedShallowSpy.restore();
 			preparedNativeSpy.restore();
+			await log.close();
+		}
+	});
+
+	it("rolls back native graph when prepared appendMany block write fails", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+		const root = (
+			await log.append(new Uint8Array([0]), { meta: { next: [] } })
+		).entry;
+		const graph = log.entryIndex.properties.nativeGraph!.graph;
+		const blockPutManyStub = sinon
+			.stub(store, "putMany")
+			.rejects(new Error("boom"));
+
+		try {
+			await expect(
+				log.appendMany([new Uint8Array([1]), new Uint8Array([2])]),
+			).rejectedWith("boom");
+			expect(blockPutManyStub.callCount).equal(1);
+			expect((await log.getHeads().all()).map((head) => head.hash)).to.deep.equal(
+				[root.hash],
+			);
+			expect(graph.length).equal(1);
+		} finally {
+			blockPutManyStub.restore();
 			await log.close();
 		}
 	});

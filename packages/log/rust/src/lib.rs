@@ -1,21 +1,10 @@
 use ed25519_dalek::{Signer, SigningKey};
 use indexmap::{IndexMap, IndexSet};
 use js_sys::{Array, BigUint64Array, Uint32Array, Uint8Array};
-use peerbit_indexer_rust::planner::{
-    DocumentFields, FieldValue, NativeQueryIndex, Query, SortDirection, SortField,
-};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use wasm_bindgen::prelude::*;
 
-const FIELD_HASH: u32 = 1;
-const FIELD_GID: u32 = 2;
-const FIELD_HEAD: u32 = 3;
-const FIELD_TYPE: u32 = 4;
-const FIELD_NEXT: u32 = 5;
-const FIELD_WALL_TIME: u32 = 6;
-const FIELD_LOGICAL: u32 = 7;
-const FIELD_PAYLOAD_SIZE: u32 = 8;
 const ENTRY_TYPE_CUT: u8 = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -92,7 +81,7 @@ pub struct JoinPlan {
 pub struct LogGraphIndex {
     entries: IndexMap<String, LogIndexEntry>,
     children: HashMap<String, IndexSet<String>>,
-    query: NativeQueryIndex,
+    heads: IndexSet<String>,
     payload_size_total: u64,
 }
 
@@ -116,7 +105,7 @@ impl LogGraphIndex {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.children.clear();
-        self.query.clear();
+        self.heads.clear();
         self.payload_size_total = 0;
     }
 
@@ -145,10 +134,15 @@ impl LogGraphIndex {
         let demotes_nexts = entry.entry_type != ENTRY_TYPE_CUT;
         let nexts = entry.next.clone();
         let payload_size = entry.payload_size as u64;
+        let head = entry.head;
 
         self.entries.insert(hash.clone(), entry);
         self.payload_size_total += payload_size;
-        self.reindex(&hash);
+        if head {
+            self.heads.insert(hash.clone());
+        } else {
+            self.heads.shift_remove(&hash);
+        }
 
         for next in nexts {
             self.children
@@ -168,9 +162,41 @@ impl LogGraphIndex {
         }
     }
 
+    pub fn put_append_chain(&mut self, entries: Vec<LogIndexEntry>, initial_next: &[String]) {
+        let Some(first) = entries.first() else {
+            return;
+        };
+        let demotes_initial_nexts = first.entry_type != ENTRY_TYPE_CUT;
+
+        for entry in entries {
+            let hash = entry.hash.clone();
+            let nexts = entry.next.clone();
+            let payload_size = entry.payload_size as u64;
+            let head = entry.head;
+
+            self.entries.insert(hash.clone(), entry);
+            self.payload_size_total += payload_size;
+            if head {
+                self.heads.insert(hash.clone());
+            } else {
+                self.heads.shift_remove(&hash);
+            }
+
+            for next in nexts {
+                self.children.entry(next).or_default().insert(hash.clone());
+            }
+        }
+
+        if demotes_initial_nexts {
+            for next in initial_next {
+                self.set_head(next, false);
+            }
+        }
+    }
+
     pub fn delete(&mut self, hash: &str) -> Option<LogIndexEntry> {
         let entry = self.entries.shift_remove(hash)?;
-        self.query.delete(hash);
+        self.heads.shift_remove(hash);
         self.payload_size_total = self
             .payload_size_total
             .saturating_sub(entry.payload_size as u64);
@@ -192,19 +218,21 @@ impl LogGraphIndex {
     }
 
     pub fn heads(&self, gid: Option<&str>) -> Vec<String> {
-        let query = match gid {
-            Some(gid) => Query::And(vec![head_query(), gid_query(gid)]),
-            None => head_query(),
-        };
-        self.query.search(&query, &head_sort(), None)
+        self.head_entries(gid)
+            .into_iter()
+            .map(|entry| entry.hash)
+            .collect()
     }
 
     pub fn has_head(&self, gid: Option<&str>) -> bool {
-        let query = match gid {
-            Some(gid) => Query::And(vec![head_query(), gid_query(gid)]),
-            None => head_query(),
-        };
-        self.query.count(&query) > 0
+        match gid {
+            Some(gid) => self
+                .heads
+                .iter()
+                .filter_map(|hash| self.entries.get(hash))
+                .any(|entry| entry.gid == gid),
+            None => !self.heads.is_empty(),
+        }
     }
 
     pub fn has_any_head(&self, gids: &[String]) -> bool {
@@ -219,10 +247,21 @@ impl LogGraphIndex {
     }
 
     pub fn head_entries(&self, gid: Option<&str>) -> Vec<LogIndexEntry> {
-        self.heads(gid)
-            .into_iter()
-            .filter_map(|hash| self.entries.get(&hash).cloned())
-            .collect()
+        let mut entries: Vec<_> = self
+            .heads
+            .iter()
+            .filter_map(|hash| self.entries.get(hash))
+            .filter(|entry| match gid {
+                Some(gid) => entry.gid == gid,
+                None => true,
+            })
+            .cloned()
+            .collect();
+        entries.sort_by(|left, right| {
+            compare_clock(left.wall_time, left.logical, right)
+                .then_with(|| left.hash.cmp(&right.hash))
+        });
+        entries
     }
 
     pub fn head_data_entries(&self, gid: Option<&str>) -> Vec<LogIndexEntry> {
@@ -416,64 +455,12 @@ impl LogGraphIndex {
             return;
         }
         entry.head = head;
-        self.reindex(hash);
+        if head {
+            self.heads.insert(hash.to_string());
+        } else {
+            self.heads.shift_remove(hash);
+        }
     }
-
-    fn reindex(&mut self, hash: &str) {
-        let Some(entry) = self.entries.get(hash) else {
-            return;
-        };
-        self.query.put(hash.to_string(), fields_for_entry(entry));
-    }
-}
-
-fn fields_for_entry(entry: &LogIndexEntry) -> DocumentFields {
-    let mut fields = DocumentFields::with_scalar_capacity(8 + entry.next.len());
-    fields.insert_scalar(FIELD_HASH, FieldValue::String(entry.hash.clone()));
-    fields.insert_scalar(FIELD_GID, FieldValue::String(entry.gid.clone()));
-    fields.insert_scalar(FIELD_HEAD, FieldValue::Bool(entry.head));
-    fields.insert_scalar(FIELD_TYPE, FieldValue::U64(entry.entry_type as u64));
-    fields.insert_scalar(FIELD_WALL_TIME, FieldValue::U64(entry.wall_time));
-    fields.insert_scalar(FIELD_LOGICAL, FieldValue::U64(entry.logical as u64));
-    fields.insert_scalar(
-        FIELD_PAYLOAD_SIZE,
-        FieldValue::U64(entry.payload_size as u64),
-    );
-    for next in &entry.next {
-        fields.insert_scalar(FIELD_NEXT, FieldValue::String(next.clone()));
-    }
-    fields
-}
-
-fn head_query() -> Query {
-    Query::Exact {
-        field: FIELD_HEAD.into(),
-        value: FieldValue::Bool(true),
-    }
-}
-
-fn gid_query(gid: &str) -> Query {
-    Query::Exact {
-        field: FIELD_GID.into(),
-        value: FieldValue::String(gid.to_string()),
-    }
-}
-
-fn head_sort() -> [SortField; 3] {
-    [
-        SortField {
-            field: FIELD_WALL_TIME.into(),
-            direction: SortDirection::Asc,
-        },
-        SortField {
-            field: FIELD_LOGICAL.into(),
-            direction: SortDirection::Asc,
-        },
-        SortField {
-            field: FIELD_HASH.into(),
-            direction: SortDirection::Asc,
-        },
-    ]
 }
 
 fn compare_clock(wall_time: u64, logical: u32, other: &LogIndexEntry) -> std::cmp::Ordering {
@@ -617,7 +604,8 @@ impl NativeLogIndex {
             }
         }
 
-        let mut next = strings_from_array(initial_next)?;
+        let initial_nexts = strings_from_array(initial_next)?;
+        let mut next = initial_nexts.clone();
         let mut entries = Vec::with_capacity(len as usize);
         for i in 0..len {
             let hash = required_string_from_array(&hashes, i)?;
@@ -634,8 +622,37 @@ impl NativeLogIndex {
             ));
             next = vec![hash];
         }
-        self.inner.put_many(entries);
+        self.inner.put_append_chain(entries, &initial_nexts);
         Ok(())
+    }
+
+    pub fn prepare_entry_v0_plain_chain_and_put(
+        &mut self,
+        clock_id: Uint8Array,
+        private_key: Uint8Array,
+        public_key: Uint8Array,
+        wall_times: BigUint64Array,
+        logicals: Uint32Array,
+        gid: String,
+        initial_next: Array,
+        entry_type: u8,
+        meta_datas: Array,
+        payload_datas: Array,
+    ) -> Result<Array, JsValue> {
+        let (rows, entries, initial_nexts) = prepare_entry_v0_plain_chain_rows(
+            clock_id,
+            private_key,
+            public_key,
+            wall_times,
+            logicals,
+            gid,
+            initial_next,
+            entry_type,
+            meta_datas,
+            payload_datas,
+        )?;
+        self.inner.put_append_chain(entries, &initial_nexts);
+        Ok(rows)
     }
 
     pub fn delete(&mut self, hash: &str) -> bool {
@@ -955,8 +972,7 @@ pub fn encode_entry_v0_storage_batch_with_cids(
     Ok(out)
 }
 
-#[wasm_bindgen]
-pub fn prepare_entry_v0_plain_chain(
+fn prepare_entry_v0_plain_chain_rows(
     clock_id: Uint8Array,
     private_key: Uint8Array,
     public_key: Uint8Array,
@@ -967,7 +983,7 @@ pub fn prepare_entry_v0_plain_chain(
     entry_type: u8,
     meta_datas: Array,
     payload_datas: Array,
-) -> Result<Array, JsValue> {
+) -> Result<(Array, Vec<LogIndexEntry>, Vec<String>), JsValue> {
     let len = payload_datas.length();
     if meta_datas.length() != len || wall_times.length() != len || logicals.length() != len {
         return Err(JsValue::from_str("Expected equal column lengths"));
@@ -978,9 +994,12 @@ pub fn prepare_entry_v0_plain_chain(
     let public_key = public_key.to_vec();
     let signing_key = validate_ed25519_keypair(&private_key, &public_key)?;
 
-    let mut next = strings_from_array(initial_next)?;
+    let initial_nexts = strings_from_array(initial_next)?;
+    let mut next = initial_nexts.clone();
     let out = Array::new();
+    let mut entries = Vec::with_capacity(len as usize);
     for i in 0..len {
+        let payload_data = required_bytes_from_array(&payload_datas, i, "payload")?;
         let input = EntryV0EncodeInput {
             clock_id: clock_id.clone(),
             wall_time: wall_times.get_index(i),
@@ -989,7 +1008,7 @@ pub fn prepare_entry_v0_plain_chain(
             next: next.clone(),
             entry_type,
             meta_data: optional_bytes_from_js(meta_datas.get(i)),
-            payload_data: required_bytes_from_array(&payload_datas, i, "payload")?,
+            payload_data,
         };
         let meta = encode_meta(&input);
         let payload = encode_payload(&input.payload_data);
@@ -1008,15 +1027,54 @@ pub fn prepare_entry_v0_plain_chain(
         row.push(&Uint8Array::from(storage.as_slice()));
         row.push(&JsValue::from_str(&cid));
         row.push(&Uint8Array::from(signature.as_slice()));
-        row.push(&strings_to_array(next));
+        row.push(&strings_to_array(next.clone()));
         row.push(&Uint8Array::from(meta.as_slice()));
         row.push(&Uint8Array::from(payload.as_slice()));
         row.push(&Uint8Array::from(signature_with_key.as_slice()));
         out.push(&row);
+        entries.push(LogIndexEntry::new_with_data(
+            cid.clone(),
+            gid.clone(),
+            next.clone(),
+            entry_type,
+            input.wall_time,
+            input.logical,
+            input.payload_data.len() as u32,
+            i + 1 == len,
+            input.meta_data.clone(),
+        ));
 
         next = vec![cid];
     }
-    Ok(out)
+    Ok((out, entries, initial_nexts))
+}
+
+#[wasm_bindgen]
+pub fn prepare_entry_v0_plain_chain(
+    clock_id: Uint8Array,
+    private_key: Uint8Array,
+    public_key: Uint8Array,
+    wall_times: BigUint64Array,
+    logicals: Uint32Array,
+    gid: String,
+    initial_next: Array,
+    entry_type: u8,
+    meta_datas: Array,
+    payload_datas: Array,
+) -> Result<Array, JsValue> {
+    Ok(prepare_entry_v0_plain_chain_rows(
+        clock_id,
+        private_key,
+        public_key,
+        wall_times,
+        logicals,
+        gid,
+        initial_next,
+        entry_type,
+        meta_datas,
+        payload_datas,
+    )?
+    .0)
 }
 
 #[wasm_bindgen]
@@ -1453,6 +1511,25 @@ mod tests {
         assert!(index.delete("c").is_some());
         assert_eq!(index.heads(None), vec!["a"]);
         assert_eq!(index.count_has_next("a", None), 0);
+    }
+
+    #[test]
+    fn puts_append_chain_without_promoting_internal_heads() {
+        let mut index = LogGraphIndex::new();
+        index.put(entry("root", "g", &[], 1));
+        index.put_append_chain(
+            vec![
+                LogIndexEntry::new("a", "g", vec!["root".to_string()], APPEND, 2, 0, 1, false),
+                LogIndexEntry::new("b", "g", vec!["a".to_string()], APPEND, 3, 0, 1, false),
+                LogIndexEntry::new("c", "g", vec!["b".to_string()], APPEND, 4, 0, 1, true),
+            ],
+            &["root".to_string()],
+        );
+
+        assert_eq!(index.heads(None), vec!["c"]);
+        assert_eq!(index.children("root"), vec!["a"]);
+        assert_eq!(index.children("a"), vec!["b"]);
+        assert_eq!(index.children("b"), vec!["c"]);
     }
 
     #[test]
