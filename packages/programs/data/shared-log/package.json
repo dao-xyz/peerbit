@@ -81,6 +81,7 @@
 		"@peerbit/pubsub-interface": "workspace:*",
 		"@peerbit/riblt": "workspace:*",
 		"@peerbit/rpc": "workspace:*",
+		"@peerbit/shared-log-rust": "workspace:*",
 		"@peerbit/stream-interface": "workspace:*",
 		"@peerbit/time": "workspace:*",
 		"json-stringify-deterministic": "^1.0.7",
