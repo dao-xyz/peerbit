@@ -74,6 +74,13 @@ export type AppendEntryPlan = EntryAssignmentPlan & {
 	delivery: AppendDeliveryPlan;
 };
 
+export type AppendEntryBatchInput = {
+	entryHash: string;
+	gid: string;
+	nextHashes?: Iterable<string>;
+	replicas: number;
+};
+
 export type LeaderBatchInput = {
 	cursors: Iterable<bigint | number | string>;
 	replicas: number;
@@ -340,6 +347,33 @@ type NativeSharedLogStateHandle = {
 		boolean,
 		[boolean, boolean, boolean, string[], string[], string[], string[], string[]],
 	];
+	plan_append_for_gids_batch: (
+		entryHashes: string[],
+		gids: string[],
+		nextHashBatches: string[][],
+		replicaCounts: number[],
+		fullReplicaCandidates: string[],
+		fallbackRecipients: string[],
+		deliverySelfHash: string,
+		deliveryEnabled: boolean,
+		reliabilityAck: boolean,
+		minAcks: number | undefined,
+		requireRecipients: boolean,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => [
+		unknown[],
+		unknown[],
+		boolean,
+		boolean,
+		[boolean, boolean, boolean, string[], string[], string[], string[], string[]],
+	][];
 	plan_repair_dispatch_for_entries: (
 		entryHashes: string[],
 		entryGids: string[],
@@ -982,6 +1016,54 @@ export class SharedLogNativeState {
 			assignedToRangeBoundary,
 			delivery: appendDeliveryPlanFromRow(delivery),
 		};
+	}
+
+	planAppendForGidsBatch(
+		input: {
+			entries: Iterable<AppendEntryBatchInput>;
+			fullReplicaCandidates?: Iterable<string>;
+			fallbackRecipients?: Iterable<string>;
+			selfHash: string;
+			deliveryEnabled: boolean;
+			reliabilityAck: boolean;
+			minAcks?: number;
+			requireRecipients: boolean;
+		},
+		options?: FindLeaderOptions,
+	): AppendEntryPlan[] {
+		const entries = [...input.entries];
+		const rows = this.native.plan_append_for_gids_batch(
+			entries.map((entry) => entry.entryHash),
+			entries.map((entry) => entry.gid),
+			entries.map((entry) => (entry.nextHashes ? [...entry.nextHashes] : [])),
+			entries.map((entry) => entry.replicas),
+			input.fullReplicaCandidates ? [...input.fullReplicaCandidates] : [],
+			input.fallbackRecipients ? [...input.fallbackRecipients] : [],
+			input.selfHash,
+			input.deliveryEnabled,
+			input.reliabilityAck,
+			input.minAcks,
+			input.requireRecipients,
+			...findLeaderArguments({
+				...options,
+				selfHash: input.selfHash,
+			}),
+		);
+		return rows.map(
+			([
+				coordinateRows,
+				leaderRows,
+				isLeader,
+				assignedToRangeBoundary,
+				delivery,
+			]) => ({
+				coordinates: rowsToNumbers(this.resolution, coordinateRows),
+				leaders: rowsToSamples(leaderRows),
+				isLeader,
+				assignedToRangeBoundary,
+				delivery: appendDeliveryPlanFromRow(delivery),
+			}),
+		);
 	}
 
 	planRepairDispatchForEntries(

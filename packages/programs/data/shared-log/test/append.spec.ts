@@ -74,4 +74,30 @@ describe("append", () => {
 			true,
 		]);
 	});
+
+	it("appendMany plans local append assignments in one native batch", async () => {
+		session = await TestSession.disconnected(1);
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: false,
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		const nativeState = (store.log as any)._nativeSharedLogState;
+		expect(nativeState).to.exist;
+		const batchSpy = sinon.spy(nativeState, "planAppendForGidsBatch");
+		const singleSpy = sinon.spy(nativeState, "planAppendForGid");
+		try {
+			await store.addMany(["a", "b", "c"], {
+				delivery: false,
+				replicate: false,
+			});
+
+			expect(batchSpy.callCount).equal(1);
+			expect(singleSpy.callCount).equal(0);
+		} finally {
+			batchSpy.restore();
+			singleSpy.restore();
+		}
+	});
 });

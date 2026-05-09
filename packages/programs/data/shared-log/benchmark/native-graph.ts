@@ -8,7 +8,11 @@ import { performance } from "node:perf_hooks";
 import { createExchangeHeadsMessages } from "../src/exchange-heads.js";
 import { type Args, SharedLog } from "../src/index.js";
 
-type Scenario = "auto-next" | "explicit-root-next" | "exchange-head-refs";
+type Scenario =
+	| "auto-next"
+	| "append-many"
+	| "explicit-root-next"
+	| "exchange-head-refs";
 type IndexerMode = "default" | "rust";
 
 type BenchRow = {
@@ -34,7 +38,12 @@ const parsePositiveInteger = (value: string | undefined, fallback: number) => {
 
 const parseScenarios = (value: string | undefined): Scenario[] => {
 	if (!value) {
-		return ["auto-next", "explicit-root-next", "exchange-head-refs"];
+		return [
+			"auto-next",
+			"append-many",
+			"explicit-root-next",
+			"exchange-head-refs",
+		];
 	}
 	const scenarios = value
 		.split(",")
@@ -43,6 +52,7 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 	for (const scenario of scenarios) {
 		if (
 			scenario !== "auto-next" &&
+			scenario !== "append-many" &&
 			scenario !== "explicit-root-next" &&
 			scenario !== "exchange-head-refs"
 		) {
@@ -210,12 +220,20 @@ const runScenario = async (
 		}
 
 		const started = performance.now();
-		for (let i = 0; i < entries; i++) {
-			await store.logs.append(createDocument(i, bytes), {
-				...(scenario === "explicit-root-next"
-					? { meta: { next: [] } }
-					: undefined),
-			});
+		if (scenario === "append-many") {
+			await store.logs.appendMany(
+				Array.from({ length: entries }, (_, index) =>
+					createDocument(index, bytes),
+				),
+			);
+		} else {
+			for (let i = 0; i < entries; i++) {
+				await store.logs.append(createDocument(i, bytes), {
+					...(scenario === "explicit-root-next"
+						? { meta: { next: [] } }
+						: undefined),
+				});
+			}
 		}
 		const elapsed = performance.now() - started;
 		return {

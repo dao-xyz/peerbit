@@ -3965,10 +3965,21 @@ export class SharedLog<
 			return result;
 		}
 
-		for (const entry of result.entries) {
+		const nativeAppendPlans =
+			options?.replicate === true
+				? undefined
+				: await this.planNativeAppendEntries(
+						result.entries,
+						minReplicasValue,
+						options?.delivery,
+						options,
+					);
+		for (let i = 0; i < result.entries.length; i++) {
+			const entry = result.entries[i]!;
 			await this.processLocalAppend(entry, [], options, {
 				minReplicasValue,
 				deferHeadCoordinatePersistence: false,
+				nativeAppendPlan: nativeAppendPlans?.[i],
 			});
 		}
 		return result;
@@ -4056,6 +4067,56 @@ export class SharedLog<
 		};
 	}
 
+	private async planNativeAppendEntries(
+		entries: Entry<T>[],
+		replicas: number,
+		deliveryArg: false | true | DeliveryOptions | undefined,
+		options: SharedAppendOptions<T> | undefined,
+	): Promise<NativeAppendEntryPlan<R>[] | undefined> {
+		const target = options?.target;
+		if (
+			target === "all" ||
+			target === "none" ||
+			!this._nativeSharedLogState ||
+			entries.length === 0 ||
+			!entries.every((entry) => this.canPlanNativeHashGid(entry))
+		) {
+			return undefined;
+		}
+
+		const context = await this.createLeaderSelectionContext();
+		const fullReplicaDeliveryCandidates =
+			await this.getFullReplicaRepairCandidates(undefined, {
+				includeSubscribers: false,
+			});
+		const { delivery, reliability, requireRecipients, minAcks } =
+			this._parseDeliveryOptions(deliveryArg);
+		const plans = this._nativeSharedLogState.planAppendForGidsBatch(
+			{
+				entries: entries.map((entry) => ({
+					entryHash: entry.hash,
+					gid: entry.meta.gid,
+					nextHashes: entry.meta.next,
+					replicas,
+				})),
+				fullReplicaCandidates: fullReplicaDeliveryCandidates,
+				selfHash: context.selfHash,
+				deliveryEnabled: !!delivery,
+				reliabilityAck: reliability === "ack",
+				minAcks,
+				requireRecipients,
+			},
+			this.createNativeLeaderOptions(context),
+		);
+		return plans.map((plan) => ({
+			coordinates: plan.coordinates as NumberFromType<R>[],
+			leaders: plan.leaders,
+			isLeader: plan.isLeader,
+			assignedToRangeBoundary: plan.assignedToRangeBoundary,
+			delivery: plan.delivery,
+		}));
+	}
+
 	private async processLocalAppend(
 		entry: Entry<T>,
 		removed: ShallowOrFullEntry<T>[],
@@ -4063,6 +4124,7 @@ export class SharedLog<
 		properties: {
 			minReplicasValue: number;
 			deferHeadCoordinatePersistence?: boolean;
+			nativeAppendPlan?: NativeAppendEntryPlan<R>;
 		},
 	) {
 		const deferHeadCoordinatePersistence =
@@ -4086,13 +4148,14 @@ export class SharedLog<
 		const target = options?.target;
 		const deliveryArg = options?.delivery;
 		const nativeAppendPlan =
-			target !== "all" && target !== "none"
+			properties.nativeAppendPlan ??
+			(target !== "all" && target !== "none"
 				? await this.planNativeAppendEntry(
 						entry,
 						properties.minReplicasValue,
 						deliveryArg,
 					)
-				: undefined;
+				: undefined);
 		let coordinates: NumberFromType<R>[];
 		let leaders: LeaderMap;
 		let isLeader: boolean;
