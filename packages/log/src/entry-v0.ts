@@ -37,6 +37,66 @@ import { equals } from "./utils.js";
 const log = baseLogger.newScope("entry-v0");
 const traceLogger = log.trace as typeof log & { enabled?: boolean };
 
+type NativeEntryV0Encoder = {
+	encodeEntryV0Signable(input: {
+		clockId: Uint8Array;
+		wallTime: bigint;
+		logical?: number;
+		gid: string;
+		next?: string[];
+		type?: number;
+		metaData?: Uint8Array;
+		payloadData: Uint8Array;
+	}): Promise<Uint8Array>;
+	encodeEntryV0Storage(input: {
+		clockId: Uint8Array;
+		wallTime: bigint;
+		logical?: number;
+		gid: string;
+		next?: string[];
+		type?: number;
+		metaData?: Uint8Array;
+		payloadData: Uint8Array;
+		signature: Uint8Array;
+		signaturePublicKey: Uint8Array;
+		prehash?: number;
+	}): Promise<Uint8Array>;
+	calculateRawCidV1(bytes: Uint8Array): Promise<string>;
+};
+
+let nativeEntryV0EncoderPromise:
+	| Promise<NativeEntryV0Encoder | undefined>
+	| undefined;
+
+const loadNativeEntryV0Encoder = async () => {
+	if (!nativeEntryV0EncoderPromise) {
+		nativeEntryV0EncoderPromise = (async () => {
+			try {
+				const mod = (await import(["@peerbit", "log-rust"].join("/"))) as {
+					encodeEntryV0Signable?: NativeEntryV0Encoder["encodeEntryV0Signable"];
+					encodeEntryV0Storage?: NativeEntryV0Encoder["encodeEntryV0Storage"];
+					calculateRawCidV1?: NativeEntryV0Encoder["calculateRawCidV1"];
+				};
+				if (
+					!mod.encodeEntryV0Signable ||
+					!mod.encodeEntryV0Storage ||
+					!mod.calculateRawCidV1
+				) {
+					return undefined;
+				}
+				return {
+					encodeEntryV0Signable: mod.encodeEntryV0Signable,
+					encodeEntryV0Storage: mod.encodeEntryV0Storage,
+					calculateRawCidV1: mod.calculateRawCidV1,
+				};
+			} catch {
+				return undefined;
+			}
+		})();
+	}
+	return nativeEntryV0EncoderPromise;
+};
+
 export type MaybeEncryptionPublicKey =
 	| X25519PublicKey
 	| X25519PublicKey[]
@@ -506,12 +566,13 @@ export class EntryV0<T>
 				properties.meta?.gid ||
 				(await EntryV0.createGid(properties.meta?.gidSeed));
 		}
+		const entryType = properties.meta?.type ?? EntryType.APPEND;
 
 		const metadataEncrypted = await maybeEncrypt(
 			new Meta({
 				clock,
 				gid: gid!,
-				type: properties.meta?.type ?? EntryType.APPEND,
+				type: entryType,
 				data: properties.meta?.data,
 				next: nextHashes,
 			}),
@@ -524,6 +585,21 @@ export class EntryV0<T>
 			properties.encryption?.keypair,
 			properties.encryption?.receiver.payload,
 		);
+		const nativeEncoder = properties.encryption
+			? undefined
+			: await loadNativeEntryV0Encoder();
+		const nativePlainInput = nativeEncoder
+			? {
+					clockId: clock.id,
+					wallTime: clock.timestamp.wallTime,
+					logical: clock.timestamp.logical,
+					gid: gid!,
+					next: nextHashes,
+					type: entryType,
+					metaData: properties.meta?.data,
+					payloadData: payloadToSave.data,
+				}
+			: undefined;
 
 		// Sign id, encrypted payload, clock, nexts, refs
 		const entry: EntryV0<T> = new EntryV0<T>({
@@ -533,7 +609,10 @@ export class EntryV0<T>
 			createdLocally: true,
 		});
 
-		const signableBytes = entry.getSignableBytes();
+		const signableBytes =
+			nativeEncoder && nativePlainInput
+				? await nativeEncoder.encodeEntryV0Signable(nativePlainInput)
+				: entry.getSignableBytes();
 		let signatures = properties.signers
 			? properties.signers.length === 1
 				? [await properties.signers[0]!(signableBytes)]
@@ -570,10 +649,48 @@ export class EntryV0<T>
 			throw new AccessError("Not allowed to append");
 		}
 
+		let nativeStorage:
+			| {
+					bytes: Uint8Array;
+					cid: string;
+			  }
+			| undefined;
+		if (
+			nativeEncoder &&
+			nativePlainInput &&
+			!properties.canAppend &&
+			signatures.length === 1 &&
+			signatures[0]!.publicKey instanceof Ed25519PublicKey
+		) {
+			const storageBytes = await nativeEncoder.encodeEntryV0Storage({
+				...nativePlainInput,
+				signature: signatures[0]!.signature,
+				signaturePublicKey: signatures[0]!.publicKey.publicKey,
+				prehash: signatures[0]!.prehash,
+			});
+			nativeStorage = {
+				bytes: storageBytes,
+				cid: await nativeEncoder.calculateRawCidV1(storageBytes),
+			};
+		}
+
 		// Append hash
 		entry.hash = properties.deferStore
-			? await Entry.prepareMultihash(entry)
-			: await Entry.toMultihash(properties.store, entry);
+			? nativeStorage
+				? Entry.prepareMultihashBytes(
+						entry,
+						nativeStorage.bytes,
+						nativeStorage.cid,
+					)
+				: await Entry.prepareMultihash(entry)
+			: nativeStorage
+				? await Entry.toMultihashBytes(
+						properties.store,
+						entry,
+						nativeStorage.bytes,
+						nativeStorage.cid,
+					)
+				: await Entry.toMultihash(properties.store, entry);
 
 		entry.init({ encoding: properties.encoding });
 
