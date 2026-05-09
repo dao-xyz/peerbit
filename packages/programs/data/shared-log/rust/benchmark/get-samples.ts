@@ -144,6 +144,49 @@ const getFullReplicaLeadersTs = async (
 	return leaders.size > 0 ? leaders : undefined;
 };
 
+const includeMaturedPeersTs = async (
+	sharedLog: Awaited<ReturnType<typeof loadSharedLog>>,
+	index: RangeIndex,
+	peerFilter: Set<string> | undefined,
+	replicas: number,
+	roleAge: number,
+	selfHash: string,
+	selfReplicating: boolean,
+) => {
+	if (!peerFilter || peerFilter.size > replicas) {
+		return peerFilter;
+	}
+
+	const now = Date.now();
+	const iterator = index.iterate(
+		{},
+		{ shape: { hash: true, timestamp: true }, reference: true },
+	);
+
+	try {
+		for (;;) {
+			const batch = await iterator.next(64);
+			if (batch.length === 0) {
+				break;
+			}
+			for (const result of batch) {
+				const range = result.value;
+				if (range.hash === selfHash && !selfReplicating) {
+					continue;
+				}
+				if (!sharedLog.isMatured(range, now, roleAge)) {
+					continue;
+				}
+				peerFilter.add(range.hash);
+			}
+		}
+	} finally {
+		await iterator.close();
+	}
+
+	return peerFilter;
+};
+
 const runResolution = async (resolution: Resolution): Promise<BenchResult[]> => {
 	const sharedLog = await loadSharedLog();
 	const numbers = sharedLog.createNumbers(resolution);
@@ -330,6 +373,59 @@ const runResolution = async (resolution: Resolution): Promise<BenchResult[]> => 
 
 			rows.push({
 				scenario: `full replica scan (${resolution}, ${ranges.length} ranges)`,
+				tsOpsPerSecond: format(ts.opsPerSecond),
+				tsMeanMs: format(ts.meanMs),
+				nativeOpsPerSecond: format(native.opsPerSecond),
+				nativeMeanMs: format(native.meanMs),
+				speedup: `${format(native.opsPerSecond / ts.opsPerSecond)}x`,
+			});
+		} finally {
+			await indices.stop();
+		}
+	}
+
+	{
+		const ranges = fullReplicaRanges();
+		const indices = await createIndex();
+		const index = await indices.init({ schema: RangeClass });
+		await indices.start();
+		const planner = await createRangePlanner(resolution);
+
+		for (const range of ranges) {
+			await index.put(range);
+			planner.put(toNativeRange(range));
+		}
+
+		try {
+			const ts = await benchmark(100, async () => {
+				const peers = await includeMaturedPeersTs(
+					sharedLog,
+					index as unknown as RangeIndex,
+					new Set([peerHashes[0]]),
+					1,
+					0,
+					"peer-self",
+					true,
+				);
+				if (!peers || peers.size <= 1) {
+					throw new Error("Expected TypeScript peer filter expansion");
+				}
+			});
+
+			const native = await benchmark(10_000, () => {
+				const peers = planner.includeMaturedPeers(new Set([peerHashes[0]]), 1, {
+					now: Date.now(),
+					roleAge: 0,
+					selfHash: "peer-self",
+					selfReplicating: true,
+				});
+				if (!peers || peers.size <= 1) {
+					throw new Error("Expected native peer filter expansion");
+				}
+			});
+
+			rows.push({
+				scenario: `peer filter fill (${resolution}, ${ranges.length} ranges)`,
 				tsOpsPerSecond: format(ts.opsPerSecond),
 				tsMeanMs: format(ts.meanMs),
 				nativeOpsPerSecond: format(native.opsPerSecond),

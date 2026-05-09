@@ -382,6 +382,31 @@ impl RangePlanner {
         )
     }
 
+    pub fn include_matured_peers(
+        &self,
+        peer_filter: Option<IndexSet<String>>,
+        replicas: usize,
+        options: &SampleOptions,
+        self_hash: &str,
+        include_self: bool,
+    ) -> Option<Vec<String>> {
+        let mut peers = peer_filter?;
+        if peers.len() > replicas {
+            return Some(peers.into_iter().collect());
+        }
+
+        for (hash, stats) in self.peer_ranges.iter() {
+            if !include_self && hash == self_hash {
+                continue;
+            }
+            if stats.has_matured_range(options.now, options.role_age_ms, true) {
+                peers.insert(hash.clone());
+            }
+        }
+
+        Some(peers.into_iter().collect())
+    }
+
     fn include_range(
         &self,
         range: &ReplicationRange,
@@ -673,6 +698,37 @@ impl NativeRangePlanner {
             },
         )
     }
+
+    pub fn include_matured_peers(
+        &self,
+        peer_filter: JsValue,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        include_self: bool,
+    ) -> Result<JsValue, JsValue> {
+        let options = SampleOptions {
+            role_age_ms: if role_age_ms <= 0.0 {
+                0
+            } else {
+                role_age_ms.floor() as u64
+            },
+            now: parse_u64(&now)?,
+            ..Default::default()
+        };
+        let Some(peers) = self.inner.include_matured_peers(
+            optional_string_set(peer_filter)?.map(IndexSet::from_iter),
+            replicas,
+            &options,
+            &self_hash,
+            include_self,
+        ) else {
+            return Ok(JsValue::UNDEFINED);
+        };
+
+        Ok(strings_to_array(peers).into())
+    }
 }
 
 impl Default for NativeRangePlanner {
@@ -708,6 +764,14 @@ fn optional_string_set(value: JsValue) -> Result<Option<Vec<String>>, JsValue> {
     Ok(Some(strings_from_array(Array::from(&value))?))
 }
 
+fn strings_to_array(values: Vec<String>) -> Array {
+    let out = Array::new();
+    for value in values {
+        out.push(&JsValue::from_str(&value));
+    }
+    out
+}
+
 fn samples_to_rows(samples: Vec<LeaderSample>) -> Array {
     let out = Array::new();
     for sample in samples {
@@ -722,6 +786,7 @@ fn samples_to_rows(samples: Vec<LeaderSample>) -> Array {
 #[cfg(test)]
 mod tests {
     use super::{RangePlanner, ReplicationRange, SampleOptions};
+    use indexmap::IndexSet;
 
     #[test]
     fn returns_intersecting_leader() {
@@ -997,5 +1062,61 @@ mod tests {
 
         assert_eq!(leaders.len(), 1);
         assert_eq!(leaders[0].hash, "peer-a");
+    }
+
+    #[test]
+    fn include_matured_peers_expands_underfilled_filters() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new(
+            "a", "peer-a", 0, 10, 20, 10, 20, 10, 0,
+        ));
+        planner.put(ReplicationRange::new(
+            "b", "peer-b", 0, 30, 40, 30, 40, 10, 1,
+        ));
+        planner.put(ReplicationRange::new(
+            "c", "peer-c", 950, 50, 60, 50, 60, 10, 0,
+        ));
+
+        let peers = planner
+            .include_matured_peers(
+                Some(IndexSet::from_iter(["peer-a".to_string()])),
+                1,
+                &SampleOptions {
+                    now: 1_000,
+                    role_age_ms: 100,
+                    ..Default::default()
+                },
+                "peer-self",
+                true,
+            )
+            .expect("peers");
+
+        assert_eq!(peers, vec!["peer-a".to_string(), "peer-b".to_string()]);
+    }
+
+    #[test]
+    fn include_matured_peers_skips_self_when_not_replicating() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new(
+            "a", "peer-a", 0, 10, 20, 10, 20, 10, 0,
+        ));
+        planner.put(ReplicationRange::new(
+            "b", "peer-b", 0, 30, 40, 30, 40, 10, 0,
+        ));
+
+        let peers = planner
+            .include_matured_peers(
+                Some(IndexSet::from_iter(["peer-a".to_string()])),
+                1,
+                &SampleOptions {
+                    now: 1_000,
+                    ..Default::default()
+                },
+                "peer-b",
+                false,
+            )
+            .expect("peers");
+
+        assert_eq!(peers, vec!["peer-a".to_string()]);
     }
 }

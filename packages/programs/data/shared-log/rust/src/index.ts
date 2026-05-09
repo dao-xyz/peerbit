@@ -27,6 +27,13 @@ export type FullReplicaLeaderOptions = {
 	peerFilter?: Iterable<string>;
 };
 
+export type MaturedPeerOptions = {
+	roleAge?: number;
+	now?: bigint | number | string;
+	selfHash: string;
+	selfReplicating: boolean;
+};
+
 export type LeaderSample = {
 	intersecting: boolean;
 };
@@ -60,6 +67,14 @@ type NativeRangePlannerHandle = {
 		now: string,
 		includeStrict: boolean,
 		peerFilter?: string[],
+	) => unknown[] | undefined;
+	include_matured_peers: (
+		peerFilter: string[] | undefined,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		includeSelf: boolean,
 	) => unknown[] | undefined;
 };
 
@@ -185,6 +200,22 @@ export class SharedLogRangePlanner {
 			options?.peerFilter ? [...options.peerFilter] : undefined,
 		);
 		return rows ? rowsToSamples(rows) : undefined;
+	}
+
+	includeMaturedPeers(
+		peerFilter: Iterable<string> | undefined,
+		replicas: number,
+		options: MaturedPeerOptions,
+	): Set<string> | undefined {
+		const peers = this.native.include_matured_peers(
+			peerFilter ? [...peerFilter] : undefined,
+			replicas,
+			options.roleAge ?? 0,
+			asIntegerString(options.now ?? Date.now()),
+			options.selfHash,
+			options.selfReplicating,
+		);
+		return peers ? new Set(peers as string[]) : undefined;
 	}
 }
 

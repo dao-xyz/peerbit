@@ -6920,12 +6920,23 @@ export class SharedLog<
 		if (!options?.candidates) {
 			// Reachability snapshots can briefly under-report peers. Do not let that
 			// turn a known mature indexed range into a false self-only full replica.
-			peerFilter = await this.includeIndexedLeaderCandidatesWhenUnderfilled(
-				peerFilter,
-				roleAge,
-				cursors.length,
-				selfReplicating,
-			);
+			peerFilter =
+				this._nativeRangePlanner?.includeMaturedPeers(
+					peerFilter,
+					cursors.length,
+					{
+						roleAge,
+						now: Date.now(),
+						selfHash,
+						selfReplicating,
+					},
+				) ??
+				(await this.includeIndexedLeaderCandidatesWhenUnderfilled(
+					peerFilter,
+					roleAge,
+					cursors.length,
+					selfReplicating,
+				));
 		}
 
 		if (!options?.candidates) {
