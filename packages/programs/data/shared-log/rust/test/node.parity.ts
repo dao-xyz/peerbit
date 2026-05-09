@@ -1,3 +1,5 @@
+import { BinaryWriter } from "@dao-xyz/borsh";
+import { sha256 } from "@peerbit/crypto";
 import { create as createIndices } from "@peerbit/indexer-sqlite3";
 import { expect } from "chai";
 import {
@@ -18,6 +20,7 @@ type AnyRange = {
 	mode: number;
 };
 type SharedLogModules = {
+	bytesToNumber: (resolution: Resolution) => (bytes: Uint8Array) => number | bigint;
 	createNumbers: (resolution: Resolution) => any;
 	denormalizer: (resolution: Resolution) => (value: number) => number | bigint;
 	ReplicationIntent: {
@@ -45,11 +48,12 @@ const loadSharedLog = async (): Promise<SharedLogModules> => {
 	if (!sharedLog) {
 		const integersPath = "../../../dist/src/integers.js";
 		const rangesPath = "../../../dist/src/ranges.js";
-		const [{ createNumbers, denormalizer }, ranges] = await Promise.all([
+		const [{ bytesToNumber, createNumbers, denormalizer }, ranges] = await Promise.all([
 			import(integersPath),
 			import(rangesPath),
 		]);
 		sharedLog = {
+			bytesToNumber,
 			createNumbers,
 			denormalizer,
 			ReplicationIntent: ranges.ReplicationIntent,
@@ -116,6 +120,16 @@ const toNativeRange = (range: AnyRange): NativeReplicationRange => ({
 const mapEntries = (map: Map<string, { intersecting: boolean }>) =>
 	[...map.entries()];
 
+const hashGidCursor = async (resolution: Resolution, gid: string) => {
+	if (!sharedLog) {
+		throw new Error("Shared log modules are not loaded");
+	}
+	const writer = new BinaryWriter();
+	writer.string(gid);
+	const digest = await sha256(writer.finalize());
+	return sharedLog.bytesToNumber(resolution)(digest);
+};
+
 const expectNativeParity = async (
 	resolution: Resolution,
 	properties: {
@@ -178,6 +192,16 @@ describe("native shared-log range planner parity", () => {
 			const modules = await loadSharedLog();
 			numbers = modules.createNumbers(resolution);
 			denormalize = modules.denormalizer(resolution);
+		});
+
+		it(`matches TypeScript hash-domain coordinate creation for ${resolution}`, async () => {
+			const planner = await createRangePlanner(resolution);
+			const gid = `native-coordinate-${resolution}`;
+			const cursor = await hashGidCursor(resolution, gid);
+
+			expect(planner.getGidCoordinates(gid, 3)).to.deep.equal(
+				numbers.getGrid(cursor, 3),
+			);
 		});
 
 		it(`matches TypeScript fallback ordering for ${resolution}`, async () => {
