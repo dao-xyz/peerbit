@@ -4954,6 +4954,23 @@ export class SharedLog<
 		return heads.length > 0;
 	}
 
+	private async hasAnyHeadForGids(gids: string[]) {
+		const uniqueGids = [...new Set(gids.filter(Boolean))];
+		if (uniqueGids.length === 0) {
+			return false;
+		}
+		const nativeHasHead = await this.log.entryIndex.hasAnyHead(uniqueGids);
+		if (nativeHasHead != null) {
+			return nativeHasHead;
+		}
+		for (const gid of uniqueGids) {
+			if (await this.hasHeadForGid(gid)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	get topic() {
 		return this.log.idString;
 	}
@@ -5506,12 +5523,10 @@ export class SharedLog<
 									toMerge.push(entry.entry);
 									toPersist.push(entry.entry);
 								} else {
-									for (const ref of entry.gidRefrences) {
-										if (await this.hasHeadForGid(ref)) {
-											toMerge.push(entry.entry);
-											(toDelete || (toDelete = [])).push(entry.entry);
-											continue outer;
-										}
+									if (await this.hasAnyHeadForGids(entry.gidRefrences)) {
+										toMerge.push(entry.entry);
+										(toDelete || (toDelete = [])).push(entry.entry);
+										continue outer;
 									}
 								}
 
