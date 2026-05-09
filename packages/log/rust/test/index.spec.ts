@@ -8,6 +8,8 @@ import {
 	encodeEntryV0Storage,
 	encodeEntryV0StorageBatchWithCids,
 	encodeEntryV0StorageWithCid,
+	prepareEntryV0PlainChain,
+	signEd25519,
 } from "../src/index.js";
 
 const APPEND = 0;
@@ -357,6 +359,24 @@ describe("native log graph index", () => {
 });
 
 describe("native EntryV0 encoding", () => {
+	it("signs Ed25519 bytes with the expected RFC 8032 test vector", async () => {
+		expect([
+			...(await signEd25519({
+				privateKey: fromHex(
+					"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+				),
+				publicKey: fromHex(
+					"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+				),
+				data: new Uint8Array(),
+			})),
+		]).to.deep.equal([
+			...fromHex(
+				"e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+			),
+		]);
+	});
+
 	it("matches TS/Borsh signable, storage, and raw CID bytes", async () => {
 		const clockId = bytes(33, 1);
 		const publicKeyBytes = bytes(32, 64);
@@ -476,5 +496,39 @@ describe("native EntryV0 encoding", () => {
 			...fromHex(TS_BORSH_ENTRY_V0_FIXTURE.withMeta.storage),
 		]);
 		expect(storage[0]!.cid).to.equal(TS_BORSH_ENTRY_V0_FIXTURE.withMeta.cid);
+	});
+
+	it("prepares a hash-linked plain entry chain natively", async () => {
+		const privateKey = fromHex(
+			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+		);
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const chain = await prepareEntryV0PlainChain({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			wallTimes: [11n, 12n, 13n],
+			gid: "chain-gid",
+			initialNext: ["root"],
+			payloadDatas: [
+				new Uint8Array([1]),
+				new Uint8Array([2]),
+				new Uint8Array([3]),
+			],
+		});
+
+		expect(chain).to.have.length(3);
+		expect(chain[0]!.next).to.deep.equal(["root"]);
+		expect(chain[1]!.next).to.deep.equal([chain[0]!.cid]);
+		expect(chain[2]!.next).to.deep.equal([chain[1]!.cid]);
+		for (const prepared of chain) {
+			expect(prepared.cid).to.equal(await calculateRawCidV1(prepared.bytes));
+			expect(prepared.signature).to.have.length(64);
+			expect(prepared.metaBytes.byteLength).greaterThan(0);
+			expect(prepared.payloadBytes.byteLength).greaterThan(0);
+			expect(prepared.signatureBytes.byteLength).greaterThan(0);
+		}
 	});
 });
