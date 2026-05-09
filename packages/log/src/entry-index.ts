@@ -56,11 +56,34 @@ type NativeJoinCutCheck = {
 };
 
 export type NativeLogGraph = {
+	readonly length: number;
 	has: (hash: string) => boolean;
 	hasMany: (hashes: Iterable<string>) => Set<string>;
 	put: (entry: NativeLogEntry) => void;
 	putBatch?: (entries: NativeLogEntry[]) => void;
 	putAppendChain?: (entries: NativeLogEntry[]) => void;
+	prepareEntryV0PlainChainAndPut?: (input: {
+		clockId: Uint8Array;
+		privateKey: Uint8Array;
+		publicKey: Uint8Array;
+		wallTimes: Array<bigint | number | string>;
+		logicals?: number[];
+		gid: string;
+		initialNext?: string[];
+		type?: number;
+		metaDatas?: Array<Uint8Array | undefined>;
+		payloadDatas: Uint8Array[];
+	}) => Promise<
+		Array<{
+			bytes: Uint8Array;
+			cid: string;
+			signature: Uint8Array;
+			next: string[];
+			metaBytes: Uint8Array;
+			payloadBytes: Uint8Array;
+			signatureBytes: Uint8Array;
+		}>
+	>;
 	delete: (hash: string) => boolean;
 	clear: () => void;
 	heads: (gid?: string) => string[];
@@ -919,6 +942,7 @@ export class EntryIndex<T> {
 			prepared?: {
 				shallowEntries: ShallowEntry[];
 				nativeEntries?: NativeLogEntry[];
+				nativeGraphUpdated?: boolean;
 			};
 			deferIndexWrite?: boolean;
 		},
@@ -956,7 +980,9 @@ export class EntryIndex<T> {
 			const putBatch =
 				!this.properties.onGidRemoved && this.properties.index.putBatch;
 			const shallowEntries: ShallowEntry[] = [];
+			const nativeGraphUpdated = properties.prepared?.nativeGraphUpdated === true;
 			const nativeGraphPutAppendChain =
+				!nativeGraphUpdated &&
 				!this.properties.onGidRemoved &&
 				properties.externalNextHashes &&
 				this.properties.nativeGraph?.graph.putAppendChain
@@ -965,6 +991,7 @@ export class EntryIndex<T> {
 						)
 					: undefined;
 			const nativeGraphPutBatch =
+				!nativeGraphUpdated &&
 				!this.properties.onGidRemoved && this.properties.nativeGraph?.graph.putBatch
 					? this.properties.nativeGraph.graph.putBatch.bind(
 							this.properties.nativeGraph.graph,
@@ -992,6 +1019,7 @@ export class EntryIndex<T> {
 					preparedNativeEntry.head = isHead;
 				}
 				const nativeEntry =
+					!nativeGraphUpdated &&
 					this.properties.nativeGraph &&
 					(preparedNativeEntry ??
 						Entry.takePreparedNativeLogEntry(entry, isHead) ??
