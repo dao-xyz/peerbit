@@ -23,8 +23,10 @@ import {
 } from "@peerbit/indexer-interface";
 import {
 	type NativeReplicationRange,
+	type SharedLogNativeState,
 	type SharedLogRangePlanner,
 	createRangePlanner,
+	createSharedLogState,
 } from "@peerbit/shared-log-rust";
 import {
 	type AppendOptions,
@@ -811,12 +813,13 @@ export class SharedLog<
 	private _replicationRangeIndex!: Index<ReplicationRangeIndexable<R>>;
 	private _entryCoordinatesIndex!: Index<EntryReplicated<R>>;
 	private _nativeRangePlanner?: SharedLogRangePlanner;
-		private coordinateToHash!: Cache<string>;
-		private recentlyRebalanced!: Cache<string>;
+	private _nativeSharedLogState?: SharedLogNativeState;
+	private coordinateToHash!: Cache<string>;
+	private recentlyRebalanced!: Cache<string>;
 
-		uniqueReplicators!: Set<string>;
-		private _replicatorJoinEmitted!: Set<string>;
-		private _replicatorsReconciled!: boolean;
+	uniqueReplicators!: Set<string>;
+	private _replicatorJoinEmitted!: Set<string>;
+	private _replicatorsReconciled!: boolean;
 
 	/* private _totalParticipation!: number; */
 
@@ -1812,6 +1815,7 @@ export class SharedLog<
 		if (values.length === 0) {
 			return;
 		}
+		this._nativeSharedLogState?.deleteEntryCoordinatesBatch(values);
 		await this.entryCoordinatesIndex.del({
 			query:
 				values.length === 1
@@ -2735,6 +2739,7 @@ export class SharedLog<
 	}
 
 	private removePeerFromGidPeerHistory(publicKeyHash: string, gid?: string) {
+		this._nativeSharedLogState?.removeGidPeer(publicKeyHash, gid);
 		if (gid) {
 			const gidMap = this._gidPeersHistory.get(gid);
 			if (gidMap) {
@@ -2752,11 +2757,18 @@ export class SharedLog<
 		}
 	}
 
+	private deleteGidPeerHistory(gid: string) {
+		this._nativeSharedLogState?.deleteGidPeers(gid);
+		this._gidPeersHistory.delete(gid);
+	}
+
 	addPeersToGidPeerHistory(
 		gid: string,
 		publicKeys: Iterable<string>,
 		reset?: boolean,
 	) {
+		const publicKeyArray = [...publicKeys];
+		this._nativeSharedLogState?.addGidPeers(gid, publicKeyArray, reset === true);
 		let set = this._gidPeersHistory.get(gid);
 		if (!set) {
 			set = new Set();
@@ -2767,14 +2779,16 @@ export class SharedLog<
 			}
 		}
 
-		for (const key of publicKeys) {
+		for (const key of publicKeyArray) {
 			set.add(key);
 		}
 		return set;
 	}
 
 	private markEntriesKnownByPeer(hashes: Iterable<string>, peer: string) {
-		for (const hash of hashes) {
+		const hashArray = [...hashes];
+		this._nativeSharedLogState?.markEntriesKnownByPeer(hashArray, peer);
+		for (const hash of hashArray) {
 			let peers = this._entryKnownPeers.get(hash);
 			if (!peers) {
 				peers = new Set();
@@ -2785,7 +2799,9 @@ export class SharedLog<
 	}
 
 	private removeEntriesKnownByPeer(hashes: Iterable<string>, peer: string) {
-		for (const hash of hashes) {
+		const hashArray = [...hashes];
+		this._nativeSharedLogState?.removeEntriesKnownByPeer(hashArray, peer);
+		for (const hash of hashArray) {
 			const peers = this._entryKnownPeers.get(hash);
 			if (!peers) {
 				continue;
@@ -2798,6 +2814,7 @@ export class SharedLog<
 	}
 
 	private removePeerFromEntryKnownPeers(peer: string) {
+		this._nativeSharedLogState?.removePeerFromEntryKnownPeers(peer);
 		for (const [hash, peers] of this._entryKnownPeers) {
 			peers.delete(peer);
 			if (peers.size === 0) {
@@ -4481,15 +4498,18 @@ export class SharedLog<
 	}
 
 	private putNativeReplicationRange(range: ReplicationRangeIndexable<R>): void {
-		this._nativeRangePlanner?.put(this.toNativeReplicationRange(range));
+		const nativeRange = this.toNativeReplicationRange(range);
+		this._nativeRangePlanner?.put(nativeRange);
+		this._nativeSharedLogState?.put(nativeRange);
 	}
 
 	private deleteNativeReplicationRange(range: ReplicationRangeIndexable<R>): void {
 		this._nativeRangePlanner?.delete(range.idString);
+		this._nativeSharedLogState?.delete(range.idString);
 	}
 
 	private async hydrateNativeRangePlanner(
-		planner: SharedLogRangePlanner,
+		planner: Pick<SharedLogRangePlanner, "clear" | "put">,
 	): Promise<void> {
 		planner.clear();
 		const iterator = this.replicationIndex.iterate();
@@ -4508,18 +4528,50 @@ export class SharedLog<
 		}
 	}
 
+	private async hydrateNativeSharedLogState(
+		state: SharedLogNativeState,
+	): Promise<void> {
+		state.clearEntryCoordinates();
+		const iterator = this.entryCoordinatesIndex.iterate({});
+		try {
+			for (;;) {
+				const batch = await iterator.next(256);
+				if (batch.length === 0) {
+					break;
+				}
+				for (const result of batch) {
+					state.putEntryCoordinates(
+						result.value.hash,
+						result.value.coordinates,
+					);
+				}
+			}
+		} finally {
+			await iterator.close();
+		}
+	}
+
 	private async openNativeRangePlanner(
 		options: SharedLogOptions<T, D, R>["nativeRangePlanner"],
 	): Promise<void> {
 		this._nativeRangePlanner = undefined;
+		this._nativeSharedLogState = undefined;
 		if (options === false) {
 			return;
 		}
 
 		try {
-			const planner = await createRangePlanner(this.domain.resolution);
-			await this.hydrateNativeRangePlanner(planner);
+			const [planner, state] = await Promise.all([
+				createRangePlanner(this.domain.resolution),
+				createSharedLogState(this.domain.resolution),
+			]);
+			await Promise.all([
+				this.hydrateNativeRangePlanner(planner),
+				this.hydrateNativeRangePlanner(state),
+			]);
+			await this.hydrateNativeSharedLogState(state);
 			this._nativeRangePlanner = planner;
+			this._nativeSharedLogState = state;
 		} catch (error) {
 			if (options?.optional === false) {
 				throw error;
@@ -5289,6 +5341,7 @@ export class SharedLog<
 		}
 		this._repairSweepOptimisticGidPeersPending.clear();
 		this._entryKnownPeers.clear();
+		this._nativeSharedLogState?.clearEntryKnownPeers();
 		for (const timer of this._joinAuthoritativeRepairTimersByDelay.values()) {
 			clearTimeout(timer);
 		}
@@ -5323,6 +5376,7 @@ export class SharedLog<
 		this._checkedPruneRetries.clear();
 		this.latestReplicationInfoMessage.clear();
 		this._gidPeersHistory.clear();
+		this._nativeSharedLogState?.clearGidPeers();
 		this._requestIPruneSent.clear();
 		this._requestIPruneResponseReplicatorSet.clear();
 		// Cancel any pending debounced timers so they can't fire after we've torn down
@@ -5338,6 +5392,7 @@ export class SharedLog<
 		this._replicationRangeIndex = undefined as any;
 		this._entryCoordinatesIndex = undefined as any;
 		this._nativeRangePlanner = undefined;
+		this._nativeSharedLogState = undefined;
 
 		this.cpuUsage?.stop?.();
 		/* this._totalParticipation = 0; */
@@ -6748,12 +6803,19 @@ export class SharedLog<
 				hashNumber,
 			}),
 		);
+		this._nativeSharedLogState?.putEntryCoordinates(
+			properties.entry.hash,
+			properties.coordinates,
+		);
 
 		for (const coordinate of properties.coordinates) {
 			this.coordinateToHash.add(coordinate, properties.entry.hash);
 		}
 
 		if (properties.entry.meta.next.length > 0) {
+			this._nativeSharedLogState?.deleteEntryCoordinatesBatch(
+				properties.entry.meta.next,
+			);
 			await this.entryCoordinatesIndex.del({
 				query: new Or(
 					properties.entry.meta.next.map(
@@ -6765,6 +6827,7 @@ export class SharedLog<
 	}
 
 	private async deleteCoordinates(properties: { hash: string }) {
+		this._nativeSharedLogState?.deleteEntryCoordinates(properties.hash);
 		await this.entryCoordinatesIndex.del({ query: properties });
 	}
 
@@ -7306,7 +7369,7 @@ export class SharedLog<
 			}
 		};
 
-		if (this._nativeRangePlanner) {
+		if (this._nativeSharedLogState) {
 			const pendingPeersByMode = new Map<string, Iterable<string>>();
 			const optimisticPeersByMode = new Map<
 				string,
@@ -7328,15 +7391,13 @@ export class SharedLog<
 			}
 
 			const context = await this.createLeaderSelectionContext({ roleAge: 0 });
-			const nativePlan = this._nativeRangePlanner.planRepairDispatchForEntries(
+			const nativePlan = this._nativeSharedLogState.planRepairDispatchForEntries(
 				{
 					entries: properties.entries.map((entry, i) => ({
 						hash: entry.hash,
 						gid: entry.gid,
 						requestedReplicas: properties.requestedReplicasBatch[i]!,
 						coordinates: entry.coordinates,
-						knownGidPeers: this._gidPeersHistory.get(entry.gid),
-						knownEntryPeers: this._entryKnownPeers.get(entry.hash),
 					})),
 					pendingModes: properties.pendingModes,
 					pendingPeersByMode,
@@ -7415,11 +7476,23 @@ export class SharedLog<
 			candidates?: Iterable<string>;
 		},
 	): Promise<Map<string, { intersecting: boolean }> | undefined> {
-		if (!this._nativeRangePlanner) {
+		if (!this._nativeSharedLogState && !this._nativeRangePlanner) {
 			return undefined;
 		}
 
 		const context = await this.createLeaderSelectionContext(options);
+		if (this._nativeSharedLogState) {
+			return this._nativeSharedLogState.planLeadersForGid(
+				gid,
+				replicas,
+				this.createNativeLeaderOptions(context, options),
+			).leaders;
+		}
+
+		if (!this._nativeRangePlanner) {
+			return undefined;
+		}
+
 		return this._nativeRangePlanner.findLeadersForGid(
 			gid,
 			replicas,
@@ -7441,12 +7514,12 @@ export class SharedLog<
 		  }
 		| undefined
 	> {
-		if (!this._nativeRangePlanner) {
+		const planner = this._nativeSharedLogState ?? this._nativeRangePlanner;
+		if (!planner) {
 			return undefined;
 		}
-
 		const context = await this.createLeaderSelectionContext(options);
-		return this._nativeRangePlanner.planLeadersForGid(
+		return planner.planLeadersForGid(
 			gid,
 			replicas,
 			this.createNativeLeaderOptions(context, options),
@@ -7684,10 +7757,10 @@ export class SharedLog<
 			}
 		>,
 			options?: { timeout?: number; unchecked?: boolean },
-		): Promise<any>[] {
+			): Promise<any>[] {
 		if (options?.unchecked) {
 			return [...entries.values()].map((x) => {
-				this._gidPeersHistory.delete(x.entry.meta.gid);
+				this.deleteGidPeerHistory(x.entry.meta.gid);
 				this.removePruneRequestSent(x.entry.hash);
 				this._requestIPruneResponseReplicatorSet.delete(x.entry.hash);
 				return this.log.remove(x.entry, {
@@ -7769,14 +7842,14 @@ export class SharedLog<
 				clearTimeout(timeout);
 			};
 
-				const resolve = () => {
-					clear();
-					this.clearCheckedPruneRetry(entry.hash);
-					cleanupTimer.push(
-						setTimeout(async () => {
-							this._gidPeersHistory.delete(entry.meta.gid);
-							this.removePruneRequestSent(entry.hash);
-						this._requestIPruneResponseReplicatorSet.delete(entry.hash);
+					const resolve = () => {
+						clear();
+						this.clearCheckedPruneRetry(entry.hash);
+						cleanupTimer.push(
+							setTimeout(async () => {
+								this.deleteGidPeerHistory(entry.meta.gid);
+								this.removePruneRequestSent(entry.hash);
+							this._requestIPruneResponseReplicatorSet.delete(entry.hash);
 
 						if (
 							await this.isLeader({
@@ -7797,13 +7870,13 @@ export class SharedLog<
 							.then(() => {
 								deferredPromise.resolve();
 							})
-							.catch((e) => {
-								deferredPromise.reject(e);
-							})
-							.finally(async () => {
-								this._gidPeersHistory.delete(entry.meta.gid);
-								this.removePruneRequestSent(entry.hash);
-								this._requestIPruneResponseReplicatorSet.delete(entry.hash);
+								.catch((e) => {
+									deferredPromise.reject(e);
+								})
+								.finally(async () => {
+									this.deleteGidPeerHistory(entry.meta.gid);
+									this.removePruneRequestSent(entry.hash);
+									this._requestIPruneResponseReplicatorSet.delete(entry.hash);
 								// TODO in the case we become leader again here we need to re-add the entry
 
 								if (
@@ -8038,6 +8111,7 @@ export class SharedLog<
 	async rebalanceAll(options?: { clearCache?: boolean }) {
 		if (options?.clearCache) {
 			this._gidPeersHistory.clear();
+			this._nativeSharedLogState?.clearGidPeers();
 		}
 
 		const timestamp = BigInt(+new Date());
