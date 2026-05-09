@@ -99,6 +99,8 @@ type NativeRangePlannerHandle = {
 		selfHash: string,
 		includeSelf: boolean,
 	) => unknown[] | undefined;
+	get_grid: (from: string, count: number) => unknown[];
+	get_gid_coordinates: (gid: string, count: number) => unknown[];
 };
 
 type WasmModule = {
@@ -160,14 +162,29 @@ const rowsToSamples = (rows: unknown[]): Map<string, LeaderSample> => {
 	return out;
 };
 
+const rowsToNumbers = (
+	resolution: RangeResolution,
+	rows: unknown[],
+): Array<number | bigint> =>
+	rows.map((row) => {
+		const value = row as string;
+		return resolution === "u64" ? BigInt(value) : Number(value);
+	});
+
 export class SharedLogRangePlanner {
-	private constructor(private readonly native: NativeRangePlannerHandle) {}
+	private constructor(
+		private readonly native: NativeRangePlannerHandle,
+		private readonly resolution: RangeResolution,
+	) {}
 
 	static async create(
 		resolution: RangeResolution,
 	): Promise<SharedLogRangePlanner> {
 		const wasm = await loadWasm();
-		return new SharedLogRangePlanner(new wasm.NativeRangePlanner(resolution));
+		return new SharedLogRangePlanner(
+			new wasm.NativeRangePlanner(resolution),
+			resolution,
+		);
 	}
 
 	get length(): number {
@@ -259,6 +276,23 @@ export class SharedLogRangePlanner {
 			options.selfReplicating,
 		);
 		return peers ? new Set(peers as string[]) : undefined;
+	}
+
+	getGrid(
+		from: bigint | number | string,
+		count: number,
+	): Array<number | bigint> {
+		return rowsToNumbers(
+			this.resolution,
+			this.native.get_grid(asIntegerString(from), count),
+		);
+	}
+
+	getGidCoordinates(gid: string, count: number): Array<number | bigint> {
+		return rowsToNumbers(
+			this.resolution,
+			this.native.get_gid_coordinates(gid, count),
+		);
 	}
 }
 

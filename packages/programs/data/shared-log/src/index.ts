@@ -6658,12 +6658,29 @@ export class SharedLog<
 		entry: ShallowOrFullEntry<any> | EntryReplicated<R> | NumberFromType<R>,
 		minReplicas: number,
 	) {
+		if (
+			typeof entry !== "number" &&
+			typeof entry !== "bigint" &&
+			this.domain.type === "hash"
+		) {
+			const nativeCoordinates = this._nativeRangePlanner?.getGidCoordinates(
+				entry.meta.gid,
+				minReplicas,
+			) as NumberFromType<R>[] | undefined;
+			if (nativeCoordinates) {
+				return nativeCoordinates;
+			}
+		}
+
 		const cursor =
 			typeof entry === "number" || typeof entry === "bigint"
 				? entry
 				: await this.domain.fromEntry(entry);
-		const out = this.indexableDomain.numbers.getGrid(cursor, minReplicas);
-		return out;
+		const nativeGrid = this._nativeRangePlanner?.getGrid(
+			cursor,
+			minReplicas,
+		) as NumberFromType<R>[] | undefined;
+		return nativeGrid ?? this.indexableDomain.numbers.getGrid(cursor, minReplicas);
 	}
 
 	private async getCoordinates(entry: { hash: string }) {
