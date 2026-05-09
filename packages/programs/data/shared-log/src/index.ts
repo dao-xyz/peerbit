@@ -5385,8 +5385,11 @@ export class SharedLog<
 				if (heads) {
 					const filteredHeads: EntryWithRefs<any>[] = [];
 					const confirmedHashes = new Set<string>();
+					const existingHashes = await this.log.hasMany(
+						heads.map((head) => head.entry.hash),
+					);
 					for (const head of heads) {
-						if (!(await this.log.has(head.entry.hash))) {
+						if (!existingHashes.has(head.entry.hash)) {
 							head.entry.init({
 								// we need to init because we perhaps need to decrypt gid
 								keychain: this.log.keychain,

@@ -55,13 +55,15 @@ const createHeadsLog = async (nativeGraph: boolean) => {
 		nativeGraph,
 	});
 	let gid: string | undefined;
+	const hashes: string[] = [];
 	for (let i = 0; i < entries; i++) {
 		const { entry } = await log.append(new Uint8Array([i & 0xff]), {
 			meta: { next: [] },
 		});
 		gid ??= entry.meta.gid;
+		hashes.push(entry.hash);
 	}
-	return { log, store, gid: gid! };
+	return { log, store, gid: gid!, hashes };
 };
 
 const createReplicaHeadsLog = async (nativeGraph: boolean) => {
@@ -107,9 +109,10 @@ const measure = async (
 	name: string,
 	nativeGraph: boolean,
 	fn: () => Promise<void>,
+	measureIterations = iterations,
 ): Promise<BenchRow> => {
 	const started = performance.now();
-	for (let i = 0; i < iterations; i++) {
+	for (let i = 0; i < measureIterations; i++) {
 		await fn();
 	}
 	const elapsed = performance.now() - started;
@@ -117,9 +120,9 @@ const measure = async (
 		name,
 		nativeGraph,
 		entries,
-		iterations,
+		iterations: measureIterations,
 		elapsedMs: Math.round(elapsed),
-		opsPerSecond: Math.round((iterations / elapsed) * 1000),
+		opsPerSecond: Math.round((measureIterations / elapsed) * 1000),
 	};
 };
 
@@ -447,11 +450,21 @@ for (const nativeGraph of [false, true]) {
 }
 
 for (const nativeGraph of [false, true]) {
-	const { log, store, gid } = await createHeadsLog(nativeGraph);
+	const { log, store, gid, hashes } = await createHeadsLog(nativeGraph);
 	rows.push(
 		await measure("hasHead()", nativeGraph, async () => {
 			await hasHead(log);
 		}),
+	);
+	rows.push(
+		await measure(
+			"hasMany(incoming heads)",
+			nativeGraph,
+			async () => {
+				await log.hasMany(hashes);
+			},
+			Math.min(iterations, 100),
+		),
 	);
 	rows.push(
 		await measure("hasAnyHead(refs)", nativeGraph, async () => {
