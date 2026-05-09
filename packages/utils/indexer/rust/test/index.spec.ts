@@ -176,6 +176,35 @@ describe("native planner bridge", () => {
 		await indices.drop();
 	});
 
+	it("applies puts in a native batch", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocument });
+		const batchIndex = index as typeof index & {
+			putBatch: (values: BridgeDocument[]) => Promise<void>;
+		};
+
+		await batchIndex.putBatch([
+			new BridgeDocument("a", "peerbit", "native index"),
+			new BridgeDocument("b", "peerbit", "batch put"),
+			new BridgeDocument("c", "other", "separate"),
+		]);
+
+		const results = await index
+			.iterate({
+				query: new StringMatch({
+					key: "tag",
+					value: "peerbit",
+					method: StringMatchMethod.exact,
+				}),
+				sort: [new Sort({ key: "id", direction: SortDirection.ASC })],
+			})
+			.all();
+		expect(results.map((result) => result.value.id)).to.deep.equal(["a", "b"]);
+
+		await indices.drop();
+	});
+
 	it("evaluates explicit nested queries in native rust", async () => {
 		const indices = create();
 		await indices.start();
