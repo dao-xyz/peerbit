@@ -64,6 +64,46 @@ export type LeaderGidBatchInput = {
 	replicas: number;
 };
 
+export type RepairDispatchBatchEntry = {
+	hash: string;
+	gid: string;
+	requestedReplicas: number;
+	currentLeaders: Iterable<string>;
+	knownGidPeers?: Iterable<string>;
+	knownEntryPeers?: Iterable<string>;
+};
+
+export type RepairDispatchEntryPlanBatchEntry = {
+	hash: string;
+	gid: string;
+	requestedReplicas: number;
+	coordinates: Iterable<bigint | number | string>;
+	knownGidPeers?: Iterable<string>;
+	knownEntryPeers?: Iterable<string>;
+};
+
+export type RepairDispatchPlanInput = {
+	entries: Iterable<RepairDispatchBatchEntry>;
+	pendingModes: Iterable<string>;
+	pendingPeersByMode: ReadonlyMap<string, Iterable<string>>;
+	optimisticPeersByMode?: ReadonlyMap<
+		string,
+		ReadonlyMap<string, Iterable<string>>
+	>;
+	fullReplicaRepairCandidates?: Iterable<string>;
+	fullReplicaRepairCandidateCount: number;
+	selfHash: string;
+};
+
+export type RepairDispatchEntryPlanInput = Omit<
+	RepairDispatchPlanInput,
+	"entries"
+> & {
+	entries: Iterable<RepairDispatchEntryPlanBatchEntry>;
+};
+
+export type RepairDispatchPlan = Map<string, Map<string, string[]>>;
+
 type NativeRangePlannerHandle = {
 	len: () => number;
 	clear: () => void;
@@ -138,6 +178,41 @@ type NativeRangePlannerHandle = {
 	plan_leaders_for_gids_batch: (
 		gids: string[],
 		replicaCounts: number[],
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => unknown[];
+	plan_repair_dispatch: (
+		entryHashes: string[],
+		entryGids: string[],
+		entryRequestedReplicas: number[],
+		currentLeaderBatches: string[][],
+		knownGidPeerBatches: string[][],
+		knownEntryPeerBatches: string[][],
+		pendingModes: string[],
+		pendingPeersByMode: string[][],
+		optimisticPeersByMode: string[][][],
+		fullReplicaRepairCandidates: string[],
+		fullReplicaRepairCandidateCount: number,
+		selfHash: string,
+	) => unknown[];
+	plan_repair_dispatch_for_entries: (
+		entryHashes: string[],
+		entryGids: string[],
+		entryRequestedReplicas: number[],
+		entryCoordinateBatches: string[][],
+		knownGidPeerBatches: string[][],
+		knownEntryPeerBatches: string[][],
+		pendingModes: string[],
+		pendingPeersByMode: string[][],
+		optimisticPeersByMode: string[][][],
+		fullReplicaRepairCandidates: string[],
+		fullReplicaRepairCandidateCount: number,
 		roleAgeMs: number,
 		now: string,
 		peerFilter: string[] | undefined,
@@ -397,6 +472,100 @@ export class SharedLogRangePlanner {
 				leaders: rowsToSamples(leaderRows),
 			};
 		});
+	}
+
+	planRepairDispatchBatch(input: RepairDispatchPlanInput): RepairDispatchPlan {
+		const entries = [...input.entries];
+		const pendingModes = [...input.pendingModes];
+		const rows = this.native.plan_repair_dispatch(
+			entries.map((entry) => entry.hash),
+			entries.map((entry) => entry.gid),
+			entries.map((entry) => entry.requestedReplicas),
+			entries.map((entry) => [...entry.currentLeaders]),
+			entries.map((entry) =>
+				entry.knownGidPeers ? [...entry.knownGidPeers] : [],
+			),
+			entries.map((entry) =>
+				entry.knownEntryPeers ? [...entry.knownEntryPeers] : [],
+			),
+			pendingModes,
+			pendingModes.map((mode) => [
+				...(input.pendingPeersByMode.get(mode) ?? []),
+			]),
+			pendingModes.map((mode) => {
+				const optimisticByGid = input.optimisticPeersByMode?.get(mode);
+				return entries.map((entry) => [
+					...(optimisticByGid?.get(entry.gid) ?? []),
+				]);
+			}),
+			input.fullReplicaRepairCandidates
+				? [...input.fullReplicaRepairCandidates]
+				: [],
+			input.fullReplicaRepairCandidateCount,
+			input.selfHash,
+		);
+
+		const plan: RepairDispatchPlan = new Map();
+		for (const row of rows) {
+			const [mode, target, hashes] = row as [string, string, string[]];
+			let targets = plan.get(mode);
+			if (!targets) {
+				targets = new Map();
+				plan.set(mode, targets);
+			}
+			targets.set(target, hashes);
+		}
+		return plan;
+	}
+
+	planRepairDispatchForEntries(
+		input: RepairDispatchEntryPlanInput,
+		options?: FindLeaderOptions,
+	): RepairDispatchPlan {
+		const entries = [...input.entries];
+		const pendingModes = [...input.pendingModes];
+		const rows = this.native.plan_repair_dispatch_for_entries(
+			entries.map((entry) => entry.hash),
+			entries.map((entry) => entry.gid),
+			entries.map((entry) => entry.requestedReplicas),
+			entries.map((entry) => [...entry.coordinates].map(asIntegerString)),
+			entries.map((entry) =>
+				entry.knownGidPeers ? [...entry.knownGidPeers] : [],
+			),
+			entries.map((entry) =>
+				entry.knownEntryPeers ? [...entry.knownEntryPeers] : [],
+			),
+			pendingModes,
+			pendingModes.map((mode) => [
+				...(input.pendingPeersByMode.get(mode) ?? []),
+			]),
+			pendingModes.map((mode) => {
+				const optimisticByGid = input.optimisticPeersByMode?.get(mode);
+				return entries.map((entry) => [
+					...(optimisticByGid?.get(entry.gid) ?? []),
+				]);
+			}),
+			input.fullReplicaRepairCandidates
+				? [...input.fullReplicaRepairCandidates]
+				: [],
+			input.fullReplicaRepairCandidateCount,
+			...this.findLeaderArguments({
+				...options,
+				selfHash: input.selfHash,
+			}),
+		);
+
+		const plan: RepairDispatchPlan = new Map();
+		for (const row of rows) {
+			const [mode, target, hashes] = row as [string, string, string[]];
+			let targets = plan.get(mode);
+			if (!targets) {
+				targets = new Map();
+				plan.set(mode, targets);
+			}
+			targets.set(target, hashes);
+		}
+		return plan;
 	}
 
 	getFullReplicaLeaders(
