@@ -636,6 +636,21 @@ export class EntryV0<T>
 				preparedEntry.bytes,
 				preparedEntry.cid,
 			);
+			Entry.prepareShallowEntry(
+				entry,
+				new ShallowEntry({
+					hash: entry.hash,
+					payloadSize: payload.byteLength,
+					head: index === prepared.length - 1,
+					meta: new ShallowMeta({
+						gid: meta.gid,
+						data: meta.data,
+						clock: meta.clock,
+						next: meta.next,
+						type: meta.type,
+					}),
+				}),
+			);
 			entry.init({ encoding: properties.encoding });
 			return entry;
 		});
