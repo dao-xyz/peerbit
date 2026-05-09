@@ -3965,6 +3965,13 @@ export class SharedLog<
 			return result;
 		}
 
+		if (this.canCoalesceLocalAppendMany(result.entries, options)) {
+			await this.processLocalAppendManyCoalesced(result, options, {
+				minReplicasValue,
+			});
+			return result;
+		}
+
 		const nativeAppendPlans =
 			options?.replicate === true
 				? undefined
@@ -3983,6 +3990,56 @@ export class SharedLog<
 			});
 		}
 		return result;
+	}
+
+	private canCoalesceLocalAppendMany(
+		entries: Entry<T>[],
+		options?: SharedAppendOptions<T>,
+	): boolean {
+		if (
+			entries.length <= 1 ||
+			options?.target === "all" ||
+			options?.target === "none" ||
+			options?.replicate === true ||
+			(options?.delivery !== undefined && options.delivery !== false)
+		) {
+			return false;
+		}
+
+		for (let i = 1; i < entries.length; i++) {
+			const previous = entries[i - 1]!;
+			const entry = entries[i]!;
+			if (
+				entry.meta.next.length !== 1 ||
+				entry.meta.next[0] !== previous.hash ||
+				entry.meta.gid !== previous.meta.gid
+			) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private async processLocalAppendManyCoalesced(
+		result: {
+			entries: Entry<T>[];
+			removed: ShallowOrFullEntry<T>[];
+		},
+		options: SharedAppendOptions<T> | undefined,
+		properties: {
+			minReplicasValue: number;
+		},
+	): Promise<void> {
+		const head = result.entries[result.entries.length - 1]!;
+		await this.deleteCoordinatesForHashes([
+			...result.entries[0]!.meta.next,
+			...result.entries.slice(0, -1).map((entry) => entry.hash),
+			...result.removed.map((entry) => entry.hash),
+		]);
+		await this.processLocalAppend(head, result.removed, options, {
+			minReplicasValue: properties.minReplicasValue,
+			deferHeadCoordinatePersistence: false,
+		});
 	}
 
 	private createLogAppendOptions(options?: SharedAppendOptions<T>): {
