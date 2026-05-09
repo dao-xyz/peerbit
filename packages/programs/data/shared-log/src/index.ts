@@ -22,6 +22,11 @@ import {
 	toId,
 } from "@peerbit/indexer-interface";
 import {
+	type NativeReplicationRange,
+	type SharedLogRangePlanner,
+	createRangePlanner,
+} from "@peerbit/shared-log-rust";
+import {
 	type AppendOptions,
 	type Change,
 	Entry,
@@ -467,6 +472,7 @@ export type SharedLogOptions<
 > = {
 	appendDurability?: LogProperties<T>["appendDurability"];
 	nativeGraph?: LogProperties<T>["nativeGraph"];
+	nativeRangePlanner?: false | { optional?: boolean };
 	replicate?: ReplicationOptions<R>;
 	replicas?: ReplicationLimitsOptions;
 	respondToIHaveTimeout?: number;
@@ -785,6 +791,7 @@ export class SharedLog<
 
 	private _replicationRangeIndex!: Index<ReplicationRangeIndexable<R>>;
 	private _entryCoordinatesIndex!: Index<EntryReplicated<R>>;
+	private _nativeRangePlanner?: SharedLogRangePlanner;
 		private coordinateToHash!: Cache<string>;
 		private recentlyRebalanced!: Cache<string>;
 
@@ -2212,6 +2219,9 @@ export class SharedLog<
 			this.uniqueReplicators.delete(keyHash);
 			this._replicatorJoinEmitted.delete(keyHash);
 			await this.replicationIndex.del({ query: { hash: keyHash } });
+			for (const result of deleted) {
+				this.deleteNativeReplicationRange(result.value);
+			}
 
 		await this.updateOldestTimestampFromIndex();
 
@@ -2330,6 +2340,9 @@ export class SharedLog<
 				ranges.map((x) => new ByteMatchQuery({ key: "id", value: x.id })),
 			),
 		});
+		for (const range of ranges) {
+			this.deleteNativeReplicationRange(range);
+		}
 
 		const otherSegmentsIterator = this.replicationIndex.iterate(
 			{ query: { hash: from.hashcode() } },
@@ -2529,6 +2542,7 @@ export class SharedLog<
 					return;
 				} */
 				await this.replicationIndex.put(diff.range);
+				this.putNativeReplicationRange(diff.range);
 
 				if (!reset) {
 					this.oldestOpenTime = Math.min(
@@ -2589,6 +2603,7 @@ export class SharedLog<
 					}
 				}
 			} else if (diff.type === "removed") {
+				this.deleteNativeReplicationRange(diff.range);
 				const pendingFromPeer = this.pendingMaturity.get(diff.range.hash);
 				if (pendingFromPeer) {
 					const prev = pendingFromPeer.get(diff.range.idString);
@@ -4461,6 +4476,7 @@ export class SharedLog<
 		this._entryCoordinatesIndex = await replicationIndex.init({
 			schema: this.indexableDomain.constructorEntry,
 		});
+		await this.openNativeRangePlanner(options?.nativeRangePlanner);
 
 		await remoteBlocksStartPromise;
 		const hasIndexedReplicationInfo =
@@ -4728,6 +4744,74 @@ export class SharedLog<
 		}, RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL);
 	}
 
+	private toNativeReplicationRange(
+		range: ReplicationRangeIndexable<R>,
+	): NativeReplicationRange {
+		return {
+			id: range.idString,
+			hash: range.hash,
+			timestamp: range.timestamp,
+			start1: range.start1,
+			end1: range.end1,
+			start2: range.start2,
+			end2: range.end2,
+			width: range.width,
+			mode: range.mode,
+		};
+	}
+
+	private putNativeReplicationRange(range: ReplicationRangeIndexable<R>): void {
+		this._nativeRangePlanner?.put(this.toNativeReplicationRange(range));
+	}
+
+	private deleteNativeReplicationRange(range: ReplicationRangeIndexable<R>): void {
+		this._nativeRangePlanner?.delete(range.idString);
+	}
+
+	private async hydrateNativeRangePlanner(
+		planner: SharedLogRangePlanner,
+	): Promise<void> {
+		planner.clear();
+		const iterator = this.replicationIndex.iterate();
+		try {
+			for (;;) {
+				const batch = await iterator.next(256);
+				if (batch.length === 0) {
+					break;
+				}
+				for (const result of batch) {
+					planner.put(this.toNativeReplicationRange(result.value));
+				}
+			}
+		} finally {
+			await iterator.close();
+		}
+	}
+
+	private async openNativeRangePlanner(
+		options: SharedLogOptions<T, D, R>["nativeRangePlanner"],
+	): Promise<void> {
+		this._nativeRangePlanner = undefined;
+		if (options === false) {
+			return;
+		}
+
+		try {
+			const planner = await createRangePlanner(this.domain.resolution);
+			await this.hydrateNativeRangePlanner(planner);
+			this._nativeRangePlanner = planner;
+		} catch (error) {
+			if (options?.optional === false) {
+				throw error;
+			}
+			warn(
+				`Native range planner unavailable, falling back to TypeScript getSamples: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+		}
+	}
+
 	private async updateTimestampOfOwnedReplicationRanges(
 		timestamp: number = +new Date(),
 	) {
@@ -4740,6 +4824,7 @@ export class SharedLog<
 		for (const x of all) {
 			x.value.timestamp = bnTimestamp;
 			await this.replicationIndex.put(x.value);
+			this.putNativeReplicationRange(x.value);
 		}
 
 		if (all.length > 0) {
@@ -5515,6 +5600,7 @@ export class SharedLog<
 		]);
 		this._replicationRangeIndex = undefined as any;
 		this._entryCoordinatesIndex = undefined as any;
+		this._nativeRangePlanner = undefined;
 
 		this.cpuUsage?.stop?.();
 		/* this._totalParticipation = 0; */
@@ -7141,6 +7227,15 @@ export class SharedLog<
 			if (fullReplicaLeaders) {
 				return fullReplicaLeaders;
 			}
+		}
+
+		if (this._nativeRangePlanner) {
+			return this._nativeRangePlanner.getSamples(cursors, {
+				roleAge,
+				now: Date.now(),
+				peerFilter,
+				uniqueReplicators: peerFilter,
+			});
 		}
 
 		return getSamples<R>(
