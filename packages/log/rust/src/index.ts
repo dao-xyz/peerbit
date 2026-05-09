@@ -116,6 +116,30 @@ type WasmModule = {
 	default: (input?: unknown) => Promise<unknown>;
 	initSync: (input?: unknown) => unknown;
 	NativeLogIndex: new () => NativeLogIndexHandle;
+	encode_entry_v0_signable: (
+		clockId: Uint8Array,
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+	) => Uint8Array;
+	encode_entry_v0_storage: (
+		clockId: Uint8Array,
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		signature: Uint8Array,
+		signaturePublicKey: Uint8Array,
+		prehash: number,
+	) => Uint8Array;
+	calculate_raw_cid_v1: (bytes: Uint8Array) => string;
 };
 
 let wasmModulePromise: Promise<WasmModule> | undefined;
@@ -387,5 +411,62 @@ export class LogGraphIndex {
 		return { skip, missingParents, cutChecked, coveredByCut };
 	}
 }
+
+export type EntryV0EncodeInput = {
+	clockId: Uint8Array;
+	wallTime: bigint | number | string;
+	logical?: number;
+	gid: string;
+	next?: string[];
+	type?: number;
+	metaData?: Uint8Array;
+	payloadData: Uint8Array;
+};
+
+export type EntryV0StorageEncodeInput = EntryV0EncodeInput & {
+	signature: Uint8Array;
+	signaturePublicKey: Uint8Array;
+	prehash?: number;
+};
+
+export const encodeEntryV0Signable = async (
+	input: EntryV0EncodeInput,
+): Promise<Uint8Array> => {
+	const wasm = await loadWasm();
+	return wasm.encode_entry_v0_signable(
+		input.clockId,
+		BigInt(input.wallTime),
+		input.logical ?? 0,
+		input.gid,
+		input.next ?? [],
+		input.type ?? 0,
+		input.metaData,
+		input.payloadData,
+	);
+};
+
+export const encodeEntryV0Storage = async (
+	input: EntryV0StorageEncodeInput,
+): Promise<Uint8Array> => {
+	const wasm = await loadWasm();
+	return wasm.encode_entry_v0_storage(
+		input.clockId,
+		BigInt(input.wallTime),
+		input.logical ?? 0,
+		input.gid,
+		input.next ?? [],
+		input.type ?? 0,
+		input.metaData,
+		input.payloadData,
+		input.signature,
+		input.signaturePublicKey,
+		input.prehash ?? 0,
+	);
+};
+
+export const calculateRawCidV1 = async (bytes: Uint8Array): Promise<string> => {
+	const wasm = await loadWasm();
+	return wasm.calculate_raw_cid_v1(bytes);
+};
 
 export const createLogGraphIndex = () => LogGraphIndex.create();

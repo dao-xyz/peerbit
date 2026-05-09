@@ -3,6 +3,7 @@ use js_sys::{Array, BigUint64Array, Uint32Array, Uint8Array};
 use peerbit_indexer_rust::planner::{
     DocumentFields, FieldValue, NativeQueryIndex, Query, SortDirection, SortField,
 };
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use wasm_bindgen::prelude::*;
 
@@ -702,6 +703,202 @@ impl Default for NativeLogIndex {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[wasm_bindgen]
+pub fn encode_entry_v0_signable(
+    clock_id: Uint8Array,
+    wall_time: u64,
+    logical: u32,
+    gid: String,
+    next: Array,
+    entry_type: u8,
+    meta_data: JsValue,
+    payload_data: Uint8Array,
+) -> Result<Uint8Array, JsValue> {
+    let next = strings_from_array(next)?;
+    let bytes = encode_entry_v0(
+        EntryV0EncodeInput {
+            clock_id: clock_id.to_vec(),
+            wall_time,
+            logical,
+            gid,
+            next,
+            entry_type,
+            meta_data: optional_bytes_from_js(meta_data),
+            payload_data: payload_data.to_vec(),
+        },
+        None,
+    );
+    Ok(Uint8Array::from(bytes.as_slice()))
+}
+
+#[wasm_bindgen]
+pub fn encode_entry_v0_storage(
+    clock_id: Uint8Array,
+    wall_time: u64,
+    logical: u32,
+    gid: String,
+    next: Array,
+    entry_type: u8,
+    meta_data: JsValue,
+    payload_data: Uint8Array,
+    signature: Uint8Array,
+    signature_public_key: Uint8Array,
+    prehash: u8,
+) -> Result<Uint8Array, JsValue> {
+    if signature.length() != 64 {
+        return Err(JsValue::from_str("Expected Ed25519 signature length 64"));
+    }
+    if signature_public_key.length() != 32 {
+        return Err(JsValue::from_str("Expected Ed25519 public key length 32"));
+    }
+    let next = strings_from_array(next)?;
+    let bytes = encode_entry_v0(
+        EntryV0EncodeInput {
+            clock_id: clock_id.to_vec(),
+            wall_time,
+            logical,
+            gid,
+            next,
+            entry_type,
+            meta_data: optional_bytes_from_js(meta_data),
+            payload_data: payload_data.to_vec(),
+        },
+        Some(SignatureInput {
+            signature: signature.to_vec(),
+            public_key: signature_public_key.to_vec(),
+            prehash,
+        }),
+    );
+    Ok(Uint8Array::from(bytes.as_slice()))
+}
+
+#[wasm_bindgen]
+pub fn calculate_raw_cid_v1(bytes: Uint8Array) -> String {
+    let digest = Sha256::digest(bytes.to_vec());
+    let mut cid = Vec::with_capacity(36);
+    cid.push(0x01); // CIDv1
+    cid.push(0x55); // raw codec
+    cid.push(0x12); // sha2-256 multihash code
+    cid.push(0x20); // 32 byte digest
+    cid.extend_from_slice(&digest);
+    format!("z{}", bs58::encode(cid).into_string())
+}
+
+struct EntryV0EncodeInput {
+    clock_id: Vec<u8>,
+    wall_time: u64,
+    logical: u32,
+    gid: String,
+    next: Vec<String>,
+    entry_type: u8,
+    meta_data: Option<Vec<u8>>,
+    payload_data: Vec<u8>,
+}
+
+struct SignatureInput {
+    signature: Vec<u8>,
+    public_key: Vec<u8>,
+    prehash: u8,
+}
+
+fn encode_entry_v0(input: EntryV0EncodeInput, signature: Option<SignatureInput>) -> Vec<u8> {
+    let meta = encode_meta(&input);
+    let payload = encode_payload(&input.payload_data);
+    let mut out = Vec::new();
+    write_u8(&mut out, 0); // EntryV0 variant
+    write_decrypted_thing(&mut out, &meta);
+    write_decrypted_thing(&mut out, &payload);
+    out.extend_from_slice(&[0, 0, 0, 0]); // reserved
+    match signature {
+        Some(signature) => {
+            write_u8(&mut out, 1);
+            write_signatures(&mut out, signature);
+        }
+        None => write_u8(&mut out, 0),
+    }
+    write_u8(&mut out, 0); // hash option
+    out
+}
+
+fn encode_meta(input: &EntryV0EncodeInput) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_u8(&mut out, 0); // Meta variant
+    write_clock(&mut out, &input.clock_id, input.wall_time, input.logical);
+    write_string(&mut out, &input.gid);
+    write_u32(&mut out, input.next.len() as u32);
+    for next in &input.next {
+        write_string(&mut out, next);
+    }
+    write_u8(&mut out, input.entry_type);
+    match input.meta_data.as_ref() {
+        Some(data) => {
+            write_u8(&mut out, 1);
+            write_bytes(&mut out, data);
+        }
+        None => write_u8(&mut out, 0),
+    }
+    out
+}
+
+fn write_clock(out: &mut Vec<u8>, clock_id: &[u8], wall_time: u64, logical: u32) {
+    write_u8(out, 0); // LamportClock variant
+    write_bytes(out, clock_id);
+    write_u8(out, 0); // Timestamp variant
+    write_u64(out, wall_time);
+    write_u32(out, logical);
+}
+
+fn encode_payload(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_u8(&mut out, 0); // Payload variant
+    write_bytes(&mut out, data);
+    out
+}
+
+fn write_signatures(out: &mut Vec<u8>, signature: SignatureInput) {
+    write_u8(out, 0); // Signatures variant
+    write_u32(out, 1);
+    let signature_with_key = encode_signature_with_key(signature);
+    write_decrypted_thing(out, &signature_with_key);
+}
+
+fn encode_signature_with_key(signature: SignatureInput) -> Vec<u8> {
+    let mut out = Vec::new();
+    write_u8(&mut out, 0); // SignatureWithKey variant
+    write_bytes(&mut out, &signature.signature);
+    write_u8(&mut out, 0); // Ed25519PublicKey variant
+    out.extend_from_slice(&signature.public_key);
+    write_u8(&mut out, signature.prehash);
+    out
+}
+
+fn write_decrypted_thing(out: &mut Vec<u8>, data: &[u8]) {
+    write_u8(out, 0); // MaybeEncrypted variant
+    write_u8(out, 0); // DecryptedThing variant
+    write_bytes(out, data);
+}
+
+fn write_string(out: &mut Vec<u8>, value: &str) {
+    write_bytes(out, value.as_bytes());
+}
+
+fn write_bytes(out: &mut Vec<u8>, value: &[u8]) {
+    write_u32(out, value.len() as u32);
+    out.extend_from_slice(value);
+}
+
+fn write_u8(out: &mut Vec<u8>, value: u8) {
+    out.push(value);
+}
+
+fn write_u32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_u64(out: &mut Vec<u8>, value: u64) {
+    out.extend_from_slice(&value.to_le_bytes());
 }
 
 fn strings_from_array(values: Array) -> Result<Vec<String>, JsValue> {
