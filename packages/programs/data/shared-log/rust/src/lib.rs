@@ -1,6 +1,7 @@
 use indexmap::{IndexMap, IndexSet};
 use js_sys::Array;
-use std::collections::HashSet;
+use std::cmp::Ordering;
+use std::collections::{BTreeSet, HashSet};
 use wasm_bindgen::prelude::*;
 
 const MODE_NON_STRICT: u8 = 0;
@@ -94,6 +95,71 @@ pub struct SampleOptions {
 pub struct RangePlanner {
     resolution: Resolution,
     ranges: IndexMap<String, ReplicationRange>,
+    by_start1: BTreeSet<RangeIndexKey>,
+    by_end2: BTreeSet<RangeIndexKey>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RangeIndexKey {
+    value: u64,
+    timestamp: u64,
+    hash: String,
+    id: String,
+}
+
+impl RangeIndexKey {
+    fn start(range: &ReplicationRange) -> Self {
+        Self {
+            value: range.start1,
+            timestamp: range.timestamp,
+            hash: range.hash.clone(),
+            id: range.id.clone(),
+        }
+    }
+
+    fn end(range: &ReplicationRange) -> Self {
+        Self {
+            value: range.end2,
+            timestamp: range.timestamp,
+            hash: range.hash.clone(),
+            id: range.id.clone(),
+        }
+    }
+
+    fn min_at(value: u64) -> Self {
+        Self {
+            value,
+            timestamp: 0,
+            hash: String::new(),
+            id: String::new(),
+        }
+    }
+
+    fn max_at(value: u64) -> Self {
+        let max_string = char::MAX.to_string();
+        Self {
+            value,
+            timestamp: u64::MAX,
+            hash: max_string.clone(),
+            id: max_string,
+        }
+    }
+}
+
+impl Ord for RangeIndexKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.value
+            .cmp(&other.value)
+            .then_with(|| self.timestamp.cmp(&other.timestamp))
+            .then_with(|| self.hash.cmp(&other.hash))
+            .then_with(|| self.id.cmp(&other.id))
+    }
+}
+
+impl PartialOrd for RangeIndexKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl RangePlanner {
@@ -101,6 +167,8 @@ impl RangePlanner {
         Self {
             resolution: Resolution::from_str(resolution),
             ranges: IndexMap::new(),
+            by_start1: BTreeSet::new(),
+            by_end2: BTreeSet::new(),
         }
     }
 
@@ -114,14 +182,26 @@ impl RangePlanner {
 
     pub fn clear(&mut self) {
         self.ranges.clear();
+        self.by_start1.clear();
+        self.by_end2.clear();
     }
 
     pub fn put(&mut self, range: ReplicationRange) {
+        if let Some(previous) = self.ranges.get(&range.id).cloned() {
+            self.unindex_range(&previous);
+        }
+        self.index_range(&range);
         self.ranges.insert(range.id.clone(), range);
     }
 
     pub fn delete(&mut self, id: &str) -> bool {
-        self.ranges.shift_remove(id).is_some()
+        match self.ranges.swap_remove(id) {
+            Some(range) => {
+                self.unindex_range(&range);
+                true
+            }
+            None => false,
+        }
     }
 
     pub fn get_samples(&self, cursors: &[u64], options: &SampleOptions) -> Vec<LeaderSample> {
@@ -163,8 +243,11 @@ impl RangePlanner {
                 continue;
             }
 
-            let mut closest = self.closest_non_strict(point, options.peer_filter.as_ref());
-            for range in closest.drain(..) {
+            let mut seen_closest_ids = HashSet::new();
+            while let Some(range) =
+                self.closest_non_strict(point, options.peer_filter.as_ref(), &seen_closest_ids)
+            {
+                seen_closest_ids.insert(range.id.clone());
                 unique_visited.insert(range.hash.clone());
                 if !range.is_matured(options.now, options.role_age_ms) {
                     continue;
@@ -199,27 +282,149 @@ impl RangePlanner {
         }
     }
 
+    fn is_fallback_indexed(range: &ReplicationRange) -> bool {
+        range.width > 0 && range.mode == MODE_NON_STRICT
+    }
+
+    fn index_range(&mut self, range: &ReplicationRange) {
+        if Self::is_fallback_indexed(range) {
+            self.by_start1.insert(RangeIndexKey::start(range));
+            self.by_end2.insert(RangeIndexKey::end(range));
+        }
+    }
+
+    fn unindex_range(&mut self, range: &ReplicationRange) {
+        if Self::is_fallback_indexed(range) {
+            self.by_start1.remove(&RangeIndexKey::start(range));
+            self.by_end2.remove(&RangeIndexKey::end(range));
+        }
+    }
+
+    fn candidate_from_key(
+        &self,
+        key: &RangeIndexKey,
+        peer_filter: Option<&HashSet<String>>,
+        seen_ids: &HashSet<String>,
+    ) -> Option<&ReplicationRange> {
+        if seen_ids.contains(&key.id) {
+            return None;
+        }
+        let range = self.ranges.get(&key.id)?;
+        if !self.include_range(range, peer_filter) || range.mode != MODE_NON_STRICT {
+            return None;
+        }
+        Some(range)
+    }
+
+    fn first_candidate_from_keys<'a, I>(
+        &'a self,
+        keys: I,
+        peer_filter: Option<&HashSet<String>>,
+        seen_ids: &HashSet<String>,
+    ) -> Option<&'a ReplicationRange>
+    where
+        I: IntoIterator<Item = &'a RangeIndexKey>,
+    {
+        keys.into_iter()
+            .find_map(|key| self.candidate_from_key(key, peer_filter, seen_ids))
+    }
+
+    fn closest_start_candidate(
+        &self,
+        point: u64,
+        above: bool,
+        peer_filter: Option<&HashSet<String>>,
+        seen_ids: &HashSet<String>,
+    ) -> Option<&ReplicationRange> {
+        if above {
+            self.first_candidate_from_keys(
+                self.by_start1.range(RangeIndexKey::min_at(point)..),
+                peer_filter,
+                seen_ids,
+            )
+            .or_else(|| {
+                self.first_candidate_from_keys(self.by_start1.iter(), peer_filter, seen_ids)
+            })
+        } else {
+            self.first_candidate_from_keys(
+                self.by_start1.range(..=RangeIndexKey::max_at(point)).rev(),
+                peer_filter,
+                seen_ids,
+            )
+            .or_else(|| {
+                self.first_candidate_from_keys(self.by_start1.iter().rev(), peer_filter, seen_ids)
+            })
+        }
+    }
+
+    fn closest_end_candidate(
+        &self,
+        point: u64,
+        above: bool,
+        peer_filter: Option<&HashSet<String>>,
+        seen_ids: &HashSet<String>,
+    ) -> Option<&ReplicationRange> {
+        if above {
+            self.first_candidate_from_keys(
+                self.by_end2.range(RangeIndexKey::min_at(point)..),
+                peer_filter,
+                seen_ids,
+            )
+            .or_else(|| self.first_candidate_from_keys(self.by_end2.iter(), peer_filter, seen_ids))
+        } else {
+            self.first_candidate_from_keys(
+                self.by_end2.range(..=RangeIndexKey::max_at(point)).rev(),
+                peer_filter,
+                seen_ids,
+            )
+            .or_else(|| {
+                self.first_candidate_from_keys(self.by_end2.iter().rev(), peer_filter, seen_ids)
+            })
+        }
+    }
+
     fn closest_non_strict(
         &self,
         point: u64,
         peer_filter: Option<&HashSet<String>>,
-    ) -> Vec<&ReplicationRange> {
+        seen_ids: &HashSet<String>,
+    ) -> Option<&ReplicationRange> {
         let max_value = self.resolution.max_value();
-        let mut ranges: Vec<&ReplicationRange> = self
-            .ranges
-            .values()
-            .filter(|range| self.include_range(range, peer_filter))
-            .filter(|range| range.mode == MODE_NON_STRICT)
-            .collect();
-        ranges.sort_by(|left, right| {
-            closest_distance(left, point, max_value)
-                .cmp(&closest_distance(right, point, max_value))
-                .then_with(|| left.timestamp.cmp(&right.timestamp))
-                .then_with(|| left.hash.cmp(&right.hash))
-                .then_with(|| left.id.cmp(&right.id))
-        });
-        ranges
+        let mut best: Option<&ReplicationRange> = None;
+
+        for range in [
+            self.closest_start_candidate(point, true, peer_filter, seen_ids),
+            self.closest_start_candidate(point, false, peer_filter, seen_ids),
+            self.closest_end_candidate(point, true, peer_filter, seen_ids),
+            self.closest_end_candidate(point, false, peer_filter, seen_ids),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if let Some(previous) = best {
+                if compare_closest(range, previous, point, max_value) == Ordering::Less {
+                    best = Some(range);
+                }
+            } else {
+                best = Some(range);
+            }
+        }
+
+        best
     }
+}
+
+fn compare_closest(
+    left: &ReplicationRange,
+    right: &ReplicationRange,
+    point: u64,
+    max_value: u64,
+) -> Ordering {
+    closest_distance(left, point, max_value)
+        .cmp(&closest_distance(right, point, max_value))
+        .then_with(|| left.timestamp.cmp(&right.timestamp))
+        .then_with(|| left.hash.cmp(&right.hash))
+        .then_with(|| left.id.cmp(&right.id))
 }
 
 fn closest_distance(range: &ReplicationRange, point: u64, max_value: u64) -> u64 {
@@ -465,6 +670,32 @@ mod tests {
 
         assert_eq!(samples.len(), 1);
         assert_eq!(samples[0].hash, "peer-a");
+        assert!(samples[0].intersecting);
+    }
+
+    #[test]
+    fn delete_removes_range_from_sampling() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new(
+            "a", "peer-a", 0, 10, 20, 10, 20, 10, 0,
+        ));
+        planner.put(ReplicationRange::new(
+            "b", "peer-b", 0, 10, 20, 10, 20, 10, 0,
+        ));
+
+        assert!(planner.delete("a"));
+        assert!(!planner.delete("a"));
+
+        let samples = planner.get_samples(
+            &[15],
+            &SampleOptions {
+                now: 1_000,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].hash, "peer-b");
         assert!(samples[0].intersecting);
     }
 }
