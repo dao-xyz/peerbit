@@ -97,6 +97,7 @@ pub struct RangePlanner {
     ranges: IndexMap<String, ReplicationRange>,
     by_start1: BTreeSet<RangeIndexKey>,
     by_end2: BTreeSet<RangeIndexKey>,
+    peer_ranges: IndexMap<String, PeerRangeStats>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -162,6 +163,78 @@ impl PartialOrd for RangeIndexKey {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PeerRangeKey {
+    timestamp: u64,
+    id: String,
+}
+
+impl PeerRangeKey {
+    fn from_range(range: &ReplicationRange) -> Self {
+        Self {
+            timestamp: range.timestamp,
+            id: range.id.clone(),
+        }
+    }
+
+    fn is_matured(&self, now: u64, role_age_ms: u64) -> bool {
+        now >= self.timestamp && now - self.timestamp >= role_age_ms
+    }
+}
+
+impl Ord for PeerRangeKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.timestamp
+            .cmp(&other.timestamp)
+            .then_with(|| self.id.cmp(&other.id))
+    }
+}
+
+impl PartialOrd for PeerRangeKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct PeerRangeStats {
+    all: BTreeSet<PeerRangeKey>,
+    non_strict: BTreeSet<PeerRangeKey>,
+}
+
+impl PeerRangeStats {
+    fn insert(&mut self, range: &ReplicationRange) {
+        let key = PeerRangeKey::from_range(range);
+        self.all.insert(key.clone());
+        if range.mode == MODE_NON_STRICT {
+            self.non_strict.insert(key);
+        }
+    }
+
+    fn remove(&mut self, range: &ReplicationRange) {
+        let key = PeerRangeKey::from_range(range);
+        self.all.remove(&key);
+        if range.mode == MODE_NON_STRICT {
+            self.non_strict.remove(&key);
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.all.is_empty()
+    }
+
+    fn has_matured_range(&self, now: u64, role_age_ms: u64, include_strict: bool) -> bool {
+        let ranges = if include_strict {
+            &self.all
+        } else {
+            &self.non_strict
+        };
+        ranges
+            .first()
+            .is_some_and(|range| range.is_matured(now, role_age_ms))
+    }
+}
+
 impl RangePlanner {
     pub fn new(resolution: &str) -> Self {
         Self {
@@ -169,6 +242,7 @@ impl RangePlanner {
             ranges: IndexMap::new(),
             by_start1: BTreeSet::new(),
             by_end2: BTreeSet::new(),
+            peer_ranges: IndexMap::new(),
         }
     }
 
@@ -184,6 +258,7 @@ impl RangePlanner {
         self.ranges.clear();
         self.by_start1.clear();
         self.by_end2.clear();
+        self.peer_ranges.clear();
     }
 
     pub fn put(&mut self, range: ReplicationRange) {
@@ -268,6 +343,45 @@ impl RangePlanner {
             .collect()
     }
 
+    pub fn get_full_replica_leaders(
+        &self,
+        replicas: usize,
+        options: &SampleOptions,
+        include_strict: bool,
+    ) -> Option<Vec<LeaderSample>> {
+        let mut leaders: IndexSet<String> = IndexSet::new();
+
+        for (hash, stats) in self.peer_ranges.iter() {
+            if let Some(peer_filter) = options.peer_filter.as_ref() {
+                if !peer_filter.contains(hash) {
+                    continue;
+                }
+            }
+            if !stats.has_matured_range(options.now, options.role_age_ms, include_strict) {
+                continue;
+            }
+
+            leaders.insert(hash.clone());
+            if leaders.len() > replicas {
+                return None;
+            }
+        }
+
+        if leaders.is_empty() {
+            return None;
+        }
+
+        Some(
+            leaders
+                .into_iter()
+                .map(|hash| LeaderSample {
+                    hash,
+                    intersecting: true,
+                })
+                .collect(),
+        )
+    }
+
     fn include_range(
         &self,
         range: &ReplicationRange,
@@ -291,12 +405,22 @@ impl RangePlanner {
             self.by_start1.insert(RangeIndexKey::start(range));
             self.by_end2.insert(RangeIndexKey::end(range));
         }
+        self.peer_ranges
+            .entry(range.hash.clone())
+            .or_default()
+            .insert(range);
     }
 
     fn unindex_range(&mut self, range: &ReplicationRange) {
         if Self::is_fallback_indexed(range) {
             self.by_start1.remove(&RangeIndexKey::start(range));
             self.by_end2.remove(&RangeIndexKey::end(range));
+        }
+        if let Some(stats) = self.peer_ranges.get_mut(&range.hash) {
+            stats.remove(range);
+            if stats.is_empty() {
+                self.peer_ranges.swap_remove(&range.hash);
+            }
         }
     }
 
@@ -519,6 +643,36 @@ impl NativeRangePlanner {
         };
         Ok(samples_to_rows(self.inner.get_samples(&cursors, &options)))
     }
+
+    pub fn get_full_replica_leaders(
+        &self,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        include_strict: bool,
+        peer_filter: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        let options = SampleOptions {
+            role_age_ms: if role_age_ms <= 0.0 {
+                0
+            } else {
+                role_age_ms.floor() as u64
+            },
+            now: parse_u64(&now)?,
+            peer_filter: optional_string_set(peer_filter)?.map(HashSet::from_iter),
+            ..Default::default()
+        };
+
+        Ok(
+            match self
+                .inner
+                .get_full_replica_leaders(replicas, &options, include_strict)
+            {
+                Some(leaders) => samples_to_rows(leaders).into(),
+                None => JsValue::UNDEFINED,
+            },
+        )
+    }
 }
 
 impl Default for NativeRangePlanner {
@@ -697,5 +851,151 @@ mod tests {
         assert_eq!(samples.len(), 1);
         assert_eq!(samples[0].hash, "peer-b");
         assert!(samples[0].intersecting);
+    }
+
+    #[test]
+    fn returns_full_replica_leaders_when_under_replica_count() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new(
+            "a", "peer-a", 0, 10, 20, 10, 20, 10, 0,
+        ));
+        planner.put(ReplicationRange::new(
+            "b", "peer-b", 0, 30, 40, 30, 40, 10, 0,
+        ));
+
+        let leaders = planner
+            .get_full_replica_leaders(
+                2,
+                &SampleOptions {
+                    now: 1_000,
+                    ..Default::default()
+                },
+                true,
+            )
+            .expect("leaders");
+
+        assert_eq!(leaders.len(), 2);
+        assert_eq!(leaders[0].hash, "peer-a");
+        assert_eq!(leaders[1].hash, "peer-b");
+        assert!(leaders.iter().all(|leader| leader.intersecting));
+    }
+
+    #[test]
+    fn rejects_full_replica_leaders_when_over_replica_count() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new(
+            "a", "peer-a", 0, 10, 20, 10, 20, 10, 0,
+        ));
+        planner.put(ReplicationRange::new(
+            "b", "peer-b", 0, 30, 40, 30, 40, 10, 0,
+        ));
+
+        assert!(planner
+            .get_full_replica_leaders(
+                1,
+                &SampleOptions {
+                    now: 1_000,
+                    ..Default::default()
+                },
+                true,
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn full_replica_leaders_honor_filters_maturity_and_strict_mode() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new(
+            "a", "peer-a", 0, 10, 20, 10, 20, 10, 0,
+        ));
+        planner.put(ReplicationRange::new(
+            "b", "peer-b", 0, 30, 40, 30, 40, 10, 1,
+        ));
+        planner.put(ReplicationRange::new(
+            "c", "peer-c", 950, 50, 60, 50, 60, 10, 0,
+        ));
+
+        let leaders = planner
+            .get_full_replica_leaders(
+                3,
+                &SampleOptions {
+                    now: 1_000,
+                    role_age_ms: 100,
+                    peer_filter: Some(
+                        [
+                            "peer-a".to_string(),
+                            "peer-b".to_string(),
+                            "peer-c".to_string(),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    ..Default::default()
+                },
+                false,
+            )
+            .expect("leaders");
+
+        assert_eq!(leaders.len(), 1);
+        assert_eq!(leaders[0].hash, "peer-a");
+        assert!(leaders[0].intersecting);
+    }
+
+    #[test]
+    fn full_replica_leaders_track_delete_and_replace() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new(
+            "a", "peer-a", 0, 10, 20, 10, 20, 10, 0,
+        ));
+        planner.put(ReplicationRange::new(
+            "b", "peer-b", 0, 30, 40, 30, 40, 10, 0,
+        ));
+
+        assert!(planner
+            .get_full_replica_leaders(
+                1,
+                &SampleOptions {
+                    now: 1_000,
+                    ..Default::default()
+                },
+                true,
+            )
+            .is_none());
+
+        assert!(planner.delete("b"));
+        let leaders = planner
+            .get_full_replica_leaders(
+                1,
+                &SampleOptions {
+                    now: 1_000,
+                    ..Default::default()
+                },
+                true,
+            )
+            .expect("leaders after delete");
+
+        assert_eq!(leaders.len(), 1);
+        assert_eq!(leaders[0].hash, "peer-a");
+
+        planner.put(ReplicationRange::new(
+            "b", "peer-b", 0, 30, 40, 30, 40, 10, 0,
+        ));
+        planner.put(ReplicationRange::new(
+            "b", "peer-b", 0, 30, 40, 30, 40, 10, 1,
+        ));
+
+        let leaders = planner
+            .get_full_replica_leaders(
+                1,
+                &SampleOptions {
+                    now: 1_000,
+                    ..Default::default()
+                },
+                false,
+            )
+            .expect("leaders after replace");
+
+        assert_eq!(leaders.len(), 1);
+        assert_eq!(leaders[0].hash, "peer-a");
     }
 }

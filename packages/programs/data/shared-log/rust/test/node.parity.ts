@@ -269,6 +269,68 @@ describe("native shared-log range planner parity", () => {
 			});
 		});
 
+		it(`matches TypeScript fallback after filtered endpoint candidates for ${resolution}`, async () => {
+			const ranges = [
+				createRange(resolution, {
+					id: 1,
+					hash: "peer-a",
+					offset: 0.49,
+					width: 0.01,
+				}),
+				createRange(resolution, {
+					id: 2,
+					hash: "peer-b",
+					offset: 0.51,
+					width: 0.01,
+				}),
+				createRange(resolution, {
+					id: 3,
+					hash: "peer-c",
+					offset: 0.8,
+					width: 0.01,
+				}),
+			];
+
+			await expectNativeParity(resolution, {
+				ranges,
+				cursors: [denormalize(0.5)],
+				options: {
+					peerFilter: new Set(["peer-c"]),
+				},
+			});
+		});
+
+		it(`matches TypeScript fallback tie-breaking for ${resolution}`, async () => {
+			const ranges = [
+				createRange(resolution, {
+					id: 1,
+					hash: "peer-c",
+					offset: 0.49,
+					width: 0.01,
+					timestamp: 1n,
+				}),
+				createRange(resolution, {
+					id: 2,
+					hash: "peer-b",
+					offset: 0.49,
+					width: 0.01,
+					timestamp: 0n,
+				}),
+				createRange(resolution, {
+					id: 3,
+					hash: "peer-a",
+					offset: 0.49,
+					width: 0.01,
+					timestamp: 0n,
+				}),
+			];
+
+			await expectNativeParity(resolution, {
+				ranges,
+				cursors: numbers.getGrid(denormalize(0.5), 2),
+			});
+		});
+
 		it(`matches TypeScript only-intersecting behavior for ${resolution}`, async () => {
 			const ranges = [
 				createRange(resolution, {

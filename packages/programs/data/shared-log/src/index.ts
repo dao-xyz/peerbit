@@ -6929,11 +6929,19 @@ export class SharedLog<
 		}
 
 		if (!options?.candidates) {
-			const fullReplicaLeaders = await this.findFullReplicaLeaders(
-				cursors.length,
-				roleAge,
-				peerFilter,
-			);
+			const fullReplicaLeaders = this._nativeRangePlanner
+				? this._nativeRangePlanner.getFullReplicaLeaders(cursors.length, {
+						roleAge,
+						now: Date.now(),
+						includeStrict:
+							this._logProperties?.strictFullReplicaFallback !== false,
+						peerFilter,
+					})
+				: await this.findFullReplicaLeaders(
+						cursors.length,
+						roleAge,
+						peerFilter,
+					);
 			if (fullReplicaLeaders) {
 				return fullReplicaLeaders;
 			}
