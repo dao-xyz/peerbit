@@ -69,6 +69,11 @@ export type AppendDeliveryPlan = {
 	authoritativeRecipients: string[];
 };
 
+export type AppendEntryPlan = EntryAssignmentPlan & {
+	isLeader: boolean;
+	delivery: AppendDeliveryPlan;
+};
+
 export type LeaderBatchInput = {
 	cursors: Iterable<bigint | number | string>;
 	replicas: number;
@@ -308,6 +313,33 @@ type NativeSharedLogStateHandle = {
 		minAcks: number | undefined,
 		requireRecipients: boolean,
 	) => [boolean, boolean, boolean, string[], string[], string[], string[], string[]];
+	plan_append_for_gid: (
+		entryHash: string,
+		gid: string,
+		nextHashes: string[],
+		replicas: number,
+		fullReplicaCandidates: string[],
+		fallbackRecipients: string[],
+		deliverySelfHash: string,
+		deliveryEnabled: boolean,
+		reliabilityAck: boolean,
+		minAcks: number | undefined,
+		requireRecipients: boolean,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => [
+		unknown[],
+		unknown[],
+		boolean,
+		boolean,
+		[boolean, boolean, boolean, string[], string[], string[], string[], string[]],
+	];
 	plan_repair_dispatch_for_entries: (
 		entryHashes: string[],
 		entryGids: string[],
@@ -907,6 +939,49 @@ export class SharedLogNativeState {
 				input.requireRecipients,
 			),
 		);
+	}
+
+	planAppendForGid(
+		input: {
+			entryHash: string;
+			gid: string;
+			nextHashes?: Iterable<string>;
+			replicas: number;
+			fullReplicaCandidates?: Iterable<string>;
+			fallbackRecipients?: Iterable<string>;
+			selfHash: string;
+			deliveryEnabled: boolean;
+			reliabilityAck: boolean;
+			minAcks?: number;
+			requireRecipients: boolean;
+		},
+		options?: FindLeaderOptions,
+	): AppendEntryPlan {
+		const [coordinateRows, leaderRows, isLeader, assignedToRangeBoundary, delivery] =
+			this.native.plan_append_for_gid(
+				input.entryHash,
+				input.gid,
+				input.nextHashes ? [...input.nextHashes] : [],
+				input.replicas,
+				input.fullReplicaCandidates ? [...input.fullReplicaCandidates] : [],
+				input.fallbackRecipients ? [...input.fallbackRecipients] : [],
+				input.selfHash,
+				input.deliveryEnabled,
+				input.reliabilityAck,
+				input.minAcks,
+				input.requireRecipients,
+				...findLeaderArguments({
+					...options,
+					selfHash: input.selfHash,
+				}),
+			);
+		return {
+			coordinates: rowsToNumbers(this.resolution, coordinateRows),
+			leaders: rowsToSamples(leaderRows),
+			isLeader,
+			assignedToRangeBoundary,
+			delivery: appendDeliveryPlanFromRow(delivery),
+		};
 	}
 
 	planRepairDispatchForEntries(

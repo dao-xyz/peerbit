@@ -428,6 +428,75 @@ describe("native shared-log range planner", () => {
 		).to.equal(true);
 	});
 
+	it("plans append assignment and delivery in one native state call", async () => {
+		const state = await createSharedLogState("u32");
+		const ranges = [
+			range({ id: "a", hash: "peer-self", start1: 0, end1: 10 }),
+			range({ id: "b", hash: "peer-a", start1: 20, end1: 30 }),
+		];
+		for (const item of ranges) {
+			state.put(item);
+		}
+		state.putEntryCoordinates("old-head", [1, 2]);
+
+		const leaderOptions = {
+			now: 1_000,
+			selfHash: "peer-self",
+			selfReplicating: true,
+			fullReplicaFallback: true,
+		};
+		const assignment = state.planEntryAssignmentForGid(
+			"entry-gid",
+			2,
+			leaderOptions,
+		);
+		const expandedLeaders = state.planAppendLeadersForDelivery(
+			assignment.leaders,
+			["peer-self", "peer-c"],
+			2,
+		);
+		const delivery = state.planAppendDelivery({
+			leaders: expandedLeaders,
+			fallbackRecipients: ["peer-fallback"],
+			minReplicas: 2,
+			selfHash: "peer-self",
+			isLeader: assignment.leaders.has("peer-self"),
+			deliveryEnabled: true,
+			reliabilityAck: true,
+			minAcks: 1,
+			requireRecipients: true,
+		});
+
+		const plan = state.planAppendForGid(
+			{
+				entryHash: "new-head",
+				gid: "entry-gid",
+				nextHashes: ["old-head"],
+				replicas: 2,
+				fullReplicaCandidates: ["peer-self", "peer-c"],
+				fallbackRecipients: ["peer-fallback"],
+				selfHash: "peer-self",
+				deliveryEnabled: true,
+				reliabilityAck: true,
+				minAcks: 1,
+				requireRecipients: true,
+			},
+			leaderOptions,
+		);
+
+		expect(plan).to.deep.equal({
+			coordinates: assignment.coordinates,
+			leaders: expandedLeaders,
+			isLeader: assignment.leaders.has("peer-self"),
+			assignedToRangeBoundary: assignment.assignedToRangeBoundary,
+			delivery,
+		});
+		expect(state.getEntryCoordinates("new-head")).to.deep.equal(
+			assignment.coordinates,
+		);
+		expect(state.getEntryCoordinates("old-head")).to.equal(undefined);
+	});
+
 	it("plans repair dispatch targets in one native batch", async () => {
 		const planner = await createRangePlanner("u32");
 

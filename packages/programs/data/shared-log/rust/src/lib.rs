@@ -850,6 +850,14 @@ struct AppendDeliveryPlan {
     authoritative_recipients: Vec<String>,
 }
 
+struct AppendEntryPlan {
+    coordinates: Vec<u64>,
+    leaders: Vec<LeaderSample>,
+    is_leader: bool,
+    assigned_to_range_boundary: bool,
+    delivery: AppendDeliveryPlan,
+}
+
 fn expand_append_leaders(
     leaders: Vec<LeaderSample>,
     full_replica_candidates: Vec<String>,
@@ -975,6 +983,16 @@ fn append_delivery_plan_to_row(plan: AppendDeliveryPlan) -> Array {
     out.push(&strings_to_array(plan.silent_to));
     out.push(&strings_to_array(plan.repair_targets));
     out.push(&strings_to_array(plan.authoritative_recipients));
+    out
+}
+
+fn append_entry_plan_to_row(plan: AppendEntryPlan, resolution: Resolution) -> Array {
+    let out = Array::new();
+    out.push(&numbers_to_rows(plan.coordinates, resolution));
+    out.push(&samples_to_rows(plan.leaders));
+    out.push(&JsValue::from_bool(plan.is_leader));
+    out.push(&JsValue::from_bool(plan.assigned_to_range_boundary));
+    out.push(&append_delivery_plan_to_row(plan.delivery));
     out
 }
 
@@ -1876,6 +1894,79 @@ impl NativeSharedLogState {
             optional_usize(min_acks)?,
             require_recipients,
         )))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_append_for_gid(
+        &mut self,
+        entry_hash: String,
+        gid: String,
+        next_hashes: Array,
+        replicas: usize,
+        full_replica_candidates: Array,
+        fallback_recipients: Array,
+        delivery_self_hash: String,
+        delivery_enabled: bool,
+        reliability_ack: bool,
+        min_acks: JsValue,
+        require_recipients: bool,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let next_hashes = strings_from_array(next_hashes)?;
+        let full_replica_candidates = strings_from_array(full_replica_candidates)?;
+        let fallback_recipients = strings_from_array(fallback_recipients)?;
+        let min_acks = optional_usize(min_acks)?;
+        let coordinates = self.inner.range_planner.get_gid_coordinates(&gid, replicas);
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
+        let leaders = self.inner.range_planner.find_leaders(
+            &coordinates,
+            replicas,
+            &options,
+            expand_peer_filter,
+            &self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        );
+        let is_leader = leaders.iter().any(|leader| leader.hash == self_hash);
+        let assigned_to_range_boundary = should_assign_to_range_boundary(&leaders, replicas);
+
+        self.inner
+            .entry_coordinates
+            .insert(entry_hash, coordinates.clone());
+        for next_hash in next_hashes {
+            self.inner.entry_coordinates.remove(&next_hash);
+        }
+
+        let delivery_leaders = expand_append_leaders(leaders, full_replica_candidates, replicas);
+        let delivery = plan_append_delivery(
+            delivery_leaders.clone(),
+            fallback_recipients,
+            replicas,
+            delivery_self_hash,
+            is_leader,
+            delivery_enabled,
+            reliability_ack,
+            min_acks,
+            require_recipients,
+        );
+        Ok(append_entry_plan_to_row(
+            AppendEntryPlan {
+                coordinates,
+                leaders: delivery_leaders,
+                is_leader,
+                assigned_to_range_boundary,
+                delivery,
+            },
+            self.inner.range_planner.resolution,
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
