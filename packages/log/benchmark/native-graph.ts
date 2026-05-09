@@ -155,6 +155,18 @@ const hasAnyHead = async (log: Log<Uint8Array>, gids: string[]) => {
 	return false;
 };
 
+const hasAnyHeadBatch = async (log: Log<Uint8Array>, gidSets: string[][]) => {
+	const nativeHasHeads = await log.entryIndex.hasAnyHeadBatch(gidSets);
+	if (nativeHasHeads != null) {
+		return nativeHasHeads;
+	}
+	const out: boolean[] = [];
+	for (const gids of gidSets) {
+		out.push(await hasAnyHead(log, gids));
+	}
+	return out;
+};
+
 const getMaxHeadDataU32 = async (log: Log<Uint8Array>) => {
 	const nativeMax = await log.entryIndex.getMaxHeadDataU32();
 	if (nativeMax != null) {
@@ -469,6 +481,11 @@ for (const nativeGraph of [false, true]) {
 	rows.push(
 		await measure("hasAnyHead(refs)", nativeGraph, async () => {
 			await hasAnyHead(log, ["missing", gid]);
+		}),
+	);
+	rows.push(
+		await measure("hasAnyHeadBatch(refs)", nativeGraph, async () => {
+			await hasAnyHeadBatch(log, [["missing"], ["missing", gid], [gid]]);
 		}),
 	);
 	await log.close();

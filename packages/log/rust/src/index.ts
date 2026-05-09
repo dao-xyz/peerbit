@@ -75,6 +75,7 @@ type NativeLogIndexHandle = {
 	heads: (gid?: string) => string[];
 	has_head: (gid?: string) => boolean;
 	has_any_head: (gids: string[]) => boolean;
+	has_any_head_batch: (gidSets: string[][]) => boolean[];
 	head_entries: (gid?: string) => unknown[];
 	head_data_entries: (gid?: string) => unknown[];
 	max_head_data_u32: (gid?: string) => number | undefined;
@@ -195,6 +196,12 @@ export class LogGraphIndex {
 
 	hasAnyHead(gids: Iterable<string>): boolean {
 		return this.native.has_any_head([...gids]);
+	}
+
+	hasAnyHeadBatch(gidSets: Iterable<Iterable<string>>): boolean[] {
+		return this.native.has_any_head_batch(
+			[...gidSets].map((gids) => [...gids]),
+		);
 	}
 
 	headEntries(gid?: string): NativeLogHeadEntry[] {

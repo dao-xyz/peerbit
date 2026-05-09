@@ -74,6 +74,7 @@ export type NativeLogGraph = {
 	heads: (gid?: string) => string[];
 	hasHead: (gid?: string) => boolean;
 	hasAnyHead: (gids: Iterable<string>) => boolean;
+	hasAnyHeadBatch: (gidSets: Iterable<Iterable<string>>) => boolean[];
 	headDataEntries: (gid?: string) => NativeLogHeadDataEntry[];
 	maxHeadDataU32: (gid?: string) => number | undefined;
 	headEntries: (gid?: string) => SortableEntry[];
@@ -344,6 +345,22 @@ export class EntryIndex<T> {
 		}
 		await this.flushPendingWrites();
 		return this.properties.nativeGraph.graph.hasAnyHead(uniqueGids);
+	}
+
+	async hasAnyHeadBatch(
+		gidSets: Iterable<Iterable<string>>,
+	): Promise<boolean[] | undefined> {
+		if (!this.properties.nativeGraph?.useHeads) {
+			return undefined;
+		}
+		const normalized = [...gidSets].map(
+			(gids) => new Set([...gids].filter(Boolean)),
+		);
+		if (normalized.length === 0) {
+			return [];
+		}
+		await this.flushPendingWrites();
+		return this.properties.nativeGraph.graph.hasAnyHeadBatch(normalized);
 	}
 
 	async getMaxHeadDataU32(gid?: string): Promise<number | undefined> {

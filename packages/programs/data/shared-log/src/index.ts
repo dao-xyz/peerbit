@@ -4971,6 +4971,18 @@ export class SharedLog<
 		return false;
 	}
 
+	private async hasAnyHeadForGidSets(gidSets: string[][]) {
+		const nativeHasHeads = await this.log.entryIndex.hasAnyHeadBatch(gidSets);
+		if (nativeHasHeads != null) {
+			return nativeHasHeads;
+		}
+		const out: boolean[] = [];
+		for (const gids of gidSets) {
+			out.push(await this.hasAnyHeadForGids(gids));
+		}
+		return out;
+	}
+
 	get topic() {
 		return this.log.idString;
 	}
@@ -5501,6 +5513,11 @@ export class SharedLog<
 							// truly no longer owns the entry.
 							const acceptsTargetedRepair = isRepairHint && fromIsLeader;
 							const keepAsLeader = isLeader || acceptsTargetedRepair;
+							const gidReferenceHeads = keepAsLeader
+								? undefined
+								: await this.hasAnyHeadForGidSets(
+										entries.map((entry) => entry.gidRefrences),
+									);
 							if (keepAsLeader) {
 								for (const entry of entries) {
 									this.pruneDebouncedFn.delete(entry.entry.hash);
@@ -5521,12 +5538,13 @@ export class SharedLog<
 								}
 							}
 
-							outer: for (const entry of entries) {
+							outer: for (let i = 0; i < entries.length; i++) {
+								const entry = entries[i]!;
 								if (keepAsLeader || (await this.keep?.(entry.entry))) {
 									toMerge.push(entry.entry);
 									toPersist.push(entry.entry);
 								} else {
-									if (await this.hasAnyHeadForGids(entry.gidRefrences)) {
+									if (gidReferenceHeads?.[i]) {
 										toMerge.push(entry.entry);
 										(toDelete || (toDelete = [])).push(entry.entry);
 										continue outer;
