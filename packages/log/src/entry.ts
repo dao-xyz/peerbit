@@ -3,6 +3,7 @@ import {
 	type Blocks,
 	type GetOptions,
 	calculateRawCid,
+	cidifyString,
 } from "@peerbit/blocks-interface";
 import type { PublicSignKey, SignatureWithKey } from "@peerbit/crypto";
 import type { CryptoKeychain } from "@peerbit/keychain";
@@ -17,6 +18,18 @@ export type ShallowOrFullEntry<T> = ShallowEntry | Entry<T>;
 export type PreparedEntryBlock = Awaited<ReturnType<typeof calculateRawCid>>;
 
 const preparedEntryBlocks = new WeakMap<object, PreparedEntryBlock>();
+
+const preparedEntryBlockFromBytes = (
+	bytes: Uint8Array,
+	cid: string,
+): PreparedEntryBlock => ({
+	block: {
+		bytes,
+		cid: cidifyString(cid),
+		value: bytes,
+	} as PreparedEntryBlock["block"],
+	cid,
+});
 
 interface Meta {
 	clock: Clock;
@@ -106,6 +119,34 @@ export abstract class Entry<T> {
 		const prepared = await calculateRawCid(bytes);
 		preparedEntryBlocks.set(entry, prepared);
 		return prepared.cid;
+	}
+
+	static prepareMultihashBytes<T>(
+		entry: Entry<T>,
+		bytes: Uint8Array,
+		cid: string,
+	): string {
+		if (entry.hash) {
+			throw new Error("Expected hash to be missing");
+		}
+
+		entry.size = bytes.length;
+		preparedEntryBlocks.set(entry, preparedEntryBlockFromBytes(bytes, cid));
+		return cid;
+	}
+
+	static toMultihashBytes<T>(
+		store: Blocks,
+		entry: Entry<T>,
+		bytes: Uint8Array,
+		cid: string,
+	): Promise<string> | string {
+		if (entry.hash) {
+			throw new Error("Expected hash to be missing");
+		}
+
+		entry.size = bytes.length;
+		return store.put(preparedEntryBlockFromBytes(bytes, cid));
 	}
 
 	static takePreparedBlock<T>(entry: Entry<T>): PreparedEntryBlock | undefined {
