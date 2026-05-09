@@ -25,6 +25,7 @@ import { type Encoding, NO_ENCODING } from "./encoding.js";
 import {
 	EntryIndex,
 	type MaybeResolveOptions,
+	type NativeLogGraph,
 	type ResultsIterator,
 	type ReturnTypeFromResolveOptions,
 } from "./entry-index.js";
@@ -93,6 +94,7 @@ export type LogProperties<T> = {
 	encoding?: Encoding<T>;
 	clock?: LamportClock;
 	appendDurability?: AppendDurability;
+	nativeGraph?: boolean | { heads?: boolean };
 	sortFn?: Sorting.SortFn;
 	trim?: TrimOptions;
 	canAppend?: CanAppend<T>;
@@ -243,10 +245,36 @@ export class Log<T> {
 			throw new Error("Id not set");
 		}
 
+		const nativeGraph =
+			options.nativeGraph &&
+			(await (async () => {
+				let createLogGraphIndex: () => Promise<NativeLogGraph>;
+				try {
+					({ createLogGraphIndex } = (await import(
+						["@peerbit", "log-rust"].join("/")
+					)) as {
+						createLogGraphIndex: () => Promise<NativeLogGraph>;
+					});
+				} catch {
+					throw new Error(
+						"Log nativeGraph requires @peerbit/log-rust to be installed and built",
+					);
+				}
+				const headsRequested =
+					typeof options.nativeGraph === "object"
+						? options.nativeGraph.heads !== false
+						: true;
+				return {
+					graph: await createLogGraphIndex(),
+					useHeads: headsRequested && this._sortFn === LastWriteWins,
+				};
+			})());
+
 		this._entryIndex = new EntryIndex({
 			store: this._storage,
 			init: (e) => e.init(this),
 			onGidRemoved,
+			nativeGraph: nativeGraph || undefined,
 			index: await (
 				await this._indexer.scope("heads")
 			).init({ schema: ShallowEntry }),

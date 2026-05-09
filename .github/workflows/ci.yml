@@ -28,6 +28,7 @@ jobs:
       - name: Install deps
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
       - name: Build
         run: |
@@ -56,7 +57,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-22.04 ]
+        os: [ubuntu-22.04]
         node-version: [22.x]
         test_cmd:
           - pnpm run test:ci:part-1
@@ -68,7 +69,11 @@ jobs:
           - pnpm run test:ci:part-5a
           - pnpm run test:ci:part-5b
           - pnpm run test:ci:part-6
-          - pnpm run test:ci:part-7
+          - pnpm run test:ci:part-7a
+          - pnpm run test:ci:part-7b
+          - pnpm run test:ci:part-7c
+          - pnpm run test:ci:part-7d
+          - pnpm run test:ci:part-7e
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -82,6 +87,7 @@ jobs:
       - name: Install deps
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
           # NOTE: CI runs node-only tests (`-t node`). Playwright system deps are not required
           # here and have proven flaky on GitHub runners due to transient apt repository errors.
@@ -99,9 +105,9 @@ jobs:
         run: pnpm run lint
       - name: Tests
         env:
-          PEERBIT_MOCHA_LOG_TEST_START: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7') && '1' || '0' }}
-          PEERBIT_MOCHA_LOG_QUIET: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7') && '1' || '0' }}
-          PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7') && '10000' || '0' }}
+          PEERBIT_MOCHA_LOG_TEST_START: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || startsWith(matrix.test_cmd, 'pnpm run test:ci:part-7')) && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_QUIET: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || startsWith(matrix.test_cmd, 'pnpm run test:ci:part-7')) && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || startsWith(matrix.test_cmd, 'pnpm run test:ci:part-7')) && '10000' || '0' }}
         run: ${{matrix.test_cmd}}
       - name: Remap coverage reports to source paths
         if: always()
@@ -132,7 +138,7 @@ jobs:
           matrix.test_cmd != 'pnpm run test:ci:part-2b' &&
           matrix.test_cmd != 'pnpm run test:ci:part-2c' &&
           matrix.test_cmd != 'pnpm run test:ci:part-5b' &&
-          matrix.test_cmd != 'pnpm run test:ci:part-7'
+          !startsWith(matrix.test_cmd, 'pnpm run test:ci:part-7')
         run: |
           echo "No coverage files found under */.coverage/"
           exit 1
@@ -159,7 +165,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-22.04 ]
+        os: [ubuntu-22.04]
         node-version: [22.x]
         test_cmd:
           - pnpm run test:ci:part-1
@@ -171,7 +177,11 @@ jobs:
           - pnpm run test:ci:part-5a
           - pnpm run test:ci:part-5b
           - pnpm run test:ci:part-6
-          - pnpm run test:ci:part-7
+          - pnpm run test:ci:part-7a
+          - pnpm run test:ci:part-7b
+          - pnpm run test:ci:part-7c
+          - pnpm run test:ci:part-7d
+          - pnpm run test:ci:part-7e
 
     steps:
       - uses: actions/checkout@v4
@@ -186,6 +196,7 @@ jobs:
       - name: Install deps
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
           # NOTE: CI runs node-only tests (`-t node`). Playwright system deps are not required
           # here and have proven flaky on GitHub runners due to transient apt repository errors.
@@ -203,9 +214,9 @@ jobs:
         run: pnpm run lint
       - name: Tests
         env:
-          PEERBIT_MOCHA_LOG_TEST_START: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7') && '1' || '0' }}
-          PEERBIT_MOCHA_LOG_QUIET: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7') && '1' || '0' }}
-          PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || matrix.test_cmd == 'pnpm run test:ci:part-7') && '10000' || '0' }}
+          PEERBIT_MOCHA_LOG_TEST_START: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || startsWith(matrix.test_cmd, 'pnpm run test:ci:part-7')) && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_QUIET: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || startsWith(matrix.test_cmd, 'pnpm run test:ci:part-7')) && '1' || '0' }}
+          PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || startsWith(matrix.test_cmd, 'pnpm run test:ci:part-7')) && '10000' || '0' }}
         run: ${{matrix.test_cmd}}
       - name: Remap coverage reports to source paths
         if: always()
@@ -236,7 +247,7 @@ jobs:
           matrix.test_cmd != 'pnpm run test:ci:part-2b' &&
           matrix.test_cmd != 'pnpm run test:ci:part-2c' &&
           matrix.test_cmd != 'pnpm run test:ci:part-5b' &&
-          matrix.test_cmd != 'pnpm run test:ci:part-7'
+          !startsWith(matrix.test_cmd, 'pnpm run test:ci:part-7')
         run: |
           echo "No coverage files found under */.coverage/"
           exit 1
@@ -272,6 +283,7 @@ jobs:
       - name: Install deps
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
       - name: Build pubsub workspace
         run: |
@@ -358,6 +370,7 @@ jobs:
       - name: Install deps
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
       - name: Build shared-log workspace
         run: |

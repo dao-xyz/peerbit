@@ -1008,6 +1008,9 @@ importers:
         specifier: ^10.0.0
         version: 10.0.0
     devDependencies:
+      '@peerbit/log-rust':
+        specifier: workspace:*
+        version: link:rust
       '@peerbit/test-utils':
         specifier: workspace:*
         version: link:../clients/test-utils
@@ -1029,6 +1032,8 @@ importers:
       tty-table:
         specifier: ^4.2.1
         version: 4.2.3
+
+  packages/log/rust: {}
 
   packages/programs/acl/identity-access-controller:
     dependencies:
@@ -1683,6 +1688,9 @@ importers:
         specifier: ^5.1.0
         version: 5.1.0
     devDependencies:
+      '@peerbit/indexer-rust':
+        specifier: workspace:*
+        version: link:../../../utils/indexer/rust
       '@peerbit/test-utils':
         specifier: workspace:*
         version: link:../../../clients/test-utils
@@ -2482,8 +2490,6 @@ importers:
         specifier: workspace:*
         version: link:../time
 
-  packages/utils/diagnostics: {}
-
   packages/utils/crypto:
     dependencies:
       '@dao-xyz/borsh':
@@ -2538,6 +2544,8 @@ importers:
       uint8arrays:
         specifier: ^5.1.0
         version: 5.1.0
+
+  packages/utils/diagnostics: {}
 
   packages/utils/indexer/cached-index:
     dependencies:

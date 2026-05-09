@@ -54,6 +54,7 @@
 		"build": "aegir build --no-bundle",
 		"benchmark:adaptive-ingest": "node --loader ts-node/esm ./benchmark/adaptive-ingest.ts",
 		"benchmark:join-backfill-repair": "node --loader ts-node/esm ./benchmark/join-backfill-repair.ts",
+		"benchmark:native-graph": "node --loader ts-node/esm ./benchmark/native-graph.ts",
 		"benchmark:sync-phase-profile": "node --loader ts-node/esm ./benchmark/sync-phase-profile.ts",
 		"test": "aegir test --target node",
 		"lint": "aegir lint",
@@ -90,6 +91,7 @@
 		"uint8arrays": "^5.1.0"
 	},
 	"devDependencies": {
+		"@peerbit/indexer-rust": "workspace:*",
 		"@peerbit/test-utils": "workspace:*",
 		"@types/libsodium-wrappers": "^0.7.14",
 		"@types/pidusage": "^2.0.5",

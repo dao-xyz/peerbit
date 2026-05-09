@@ -34,6 +34,36 @@ export type ResultsIterator<T> = {
 
 const ENTRY_CACHE_MAX_SIZE = 10; // TODO as param for log
 const DEFERRED_INDEX_FLUSH_IDLE_MS = 250;
+const NATIVE_GRAPH_REBUILD_BATCH_SIZE = 512;
+
+type NativeLogEntry = {
+	hash: string;
+	gid: string;
+	next: string[];
+	type: number;
+	head?: boolean;
+	payloadSize?: number;
+	clock: {
+		timestamp: {
+			wallTime: bigint | number | string;
+			logical?: number;
+		};
+	};
+};
+
+export type NativeLogGraph = {
+	put: (entry: NativeLogEntry) => void;
+	delete: (hash: string) => boolean;
+	clear: () => void;
+	heads: (gid?: string) => string[];
+	countHasNext: (next: string, excludeHash?: string) => number;
+	shadowedGids: (
+		gid: string,
+		next: string[],
+		excludeHash?: string,
+	) => string[];
+};
+
 type ResolveFullyOptions =
 	| true
 	| {
@@ -118,6 +148,10 @@ export class EntryIndex<T> {
 			index: Index<ShallowEntry>;
 			sort: SortFn;
 			onGidRemoved?: (gid: string[]) => Promise<void> | void;
+			nativeGraph?: {
+				graph: NativeLogGraph;
+				useHeads: boolean;
+			};
 			resolveRemotePeers?: (
 				hash: string,
 				options?: { signal?: AbortSignal },
@@ -185,6 +219,13 @@ export class EntryIndex<T> {
 		gid?: string,
 		resolve: R = false as R,
 	): ResultsIterator<ReturnTypeFromResolveOptions<R, T>> {
+		if (this.properties.nativeGraph?.useHeads) {
+			return this.iterateNativeHashes(
+				() => this.properties.nativeGraph!.graph.heads(gid),
+				resolve,
+			);
+		}
+
 		const query: Query[] = [];
 		query.push(new BoolQuery({ key: "head", value: true }));
 		if (gid) {
@@ -224,6 +265,9 @@ export class EntryIndex<T> {
 		excludeHash: string | undefined = undefined,
 	) {
 		await this.flushPendingWrites();
+		if (this.properties.nativeGraph) {
+			return this.properties.nativeGraph.graph.countHasNext(next, excludeHash);
+		}
 		const query: Query[] = [
 			new StringMatch({
 				key: ["meta", "next"],
@@ -245,6 +289,76 @@ export class EntryIndex<T> {
 			);
 		}
 		return this.properties.index.count({ query });
+	}
+
+	private iterateNativeHashes<R extends MaybeResolveOptions>(
+		hashes: () => string[],
+		options?: R,
+	): ResultsIterator<ReturnTypeFromResolveOptions<R, T>> {
+		const resolveInFull = options
+			? options === true
+				? true
+				: options.type === "full"
+			: false;
+		const resolveInFullOptions: ResolveFullyOptions | undefined = resolveInFull
+			? (options as ResolveFullyOptions)
+			: undefined;
+		const shape = !resolveInFull
+			? ((options as { shape?: Shape } | undefined)?.shape as Shape | undefined)
+			: undefined;
+
+		let hashPromise: Promise<string[]> | undefined;
+		let offset = 0;
+		let complete = false;
+
+		const getHashes = async () => {
+			if (!hashPromise) {
+				hashPromise = this.flushPendingWrites().then(() => hashes());
+			}
+			return hashPromise;
+		};
+
+		const coerce = async (
+			hashes: string[],
+		): Promise<ReturnTypeFromResolveOptions<R, T>[]> => {
+			if (resolveInFull) {
+				const resolved = await Promise.all(
+					hashes.map((hash) => this.resolve(hash, resolveInFullOptions)),
+				);
+				return resolved.filter((entry) => !!entry) as ReturnTypeFromResolveOptions<
+					R,
+					T
+				>[];
+			}
+
+			const shallow = await Promise.all(
+				hashes.map((hash) => this.getShallow(hash)),
+			);
+			return shallow
+				.filter((entry) => !!entry)
+				.map((entry) =>
+					shape ? projectShape(entry.value, shape) : entry.value,
+				) as ReturnTypeFromResolveOptions<R, T>[];
+		};
+
+		return {
+			close: () => undefined,
+			done: () => complete,
+			next: async (amount: number) => {
+				const all = await getHashes();
+				const batch = all.slice(offset, offset + amount);
+				offset += batch.length;
+				complete = offset >= all.length;
+				return coerce(batch);
+			},
+			all: async () => {
+				const all = await getHashes();
+				const remaining = all.slice(offset);
+				offset = all.length;
+				complete = true;
+				return coerce(remaining);
+			},
+		};
 	}
 
 	iterate<R extends MaybeResolveOptions>(
@@ -506,46 +620,19 @@ export class EntryIndex<T> {
 					await this.flushPendingWrites(entry.meta.next);
 					await this.properties.index.put(shallowEntry);
 				}
+				this.properties.nativeGraph?.graph.put(toNativeLogEntry(shallowEntry));
 
 				// check if gids has been shadowed, by query all nexts that have a different gid
 				if (this.properties.onGidRemoved && entry.meta.next.length > 0) {
-					let nextMatches: Query[] = [];
-
-					for (const next of entry.meta.next) {
-						nextMatches.push(
-							new StringMatch({
-								key: ["hash"],
-								value: next,
-								caseInsensitive: false,
-								method: StringMatchMethod.exact,
-							}),
-						);
-					}
-
-					const nextsWithOthersGids: { hash: string; meta: { gid: string } }[] =
-						await this.iterate(
-							[
-								new Or(nextMatches),
-								new Not(
-									new StringMatch({
-										key: ["meta", "gid"],
-										value: entry.meta.gid,
-									}),
+					const shadowedGids: Set<string> = this.properties.nativeGraph
+						? new Set<string>(
+								this.properties.nativeGraph.graph.shadowedGids(
+									entry.meta.gid,
+									entry.meta.next,
+									entry.hash,
 								),
-							],
-							undefined,
-							{ type: "shape", shape: { hash: true, meta: { gid: true } } },
-						).all();
-
-					let shadowedGids = new Set<string>();
-					for (const next of nextsWithOthersGids) {
-						// check that this entry is not referenced by other
-						const nexts = await this.countHasNext(next.hash, entry.hash);
-						if (nexts > 0) {
-							continue;
-						}
-						shadowedGids.add(next.meta.gid);
-					}
+							)
+						: await this.findShadowedGids(entry);
 
 					if (shadowedGids.size > 0) {
 						this.properties.onGidRemoved?.([...shadowedGids]);
@@ -579,6 +666,7 @@ export class EntryIndex<T> {
 			this.pendingIndexWrites.delete(k);
 			await this.properties.store.rm(k);
 			this._length--;
+			this.properties.nativeGraph?.graph.delete(k);
 			await this.privateUpdateNextHeadProperty(from, true);
 			return from;
 		}
@@ -588,6 +676,7 @@ export class EntryIndex<T> {
 
 		if (deleted.length > 0) {
 			this._length -= deleted.length;
+			this.properties.nativeGraph?.graph.delete(k);
 
 			// mark all next entries as new heads
 			await this.privateUpdateNextHeadProperty(from, true);
@@ -661,6 +750,7 @@ export class EntryIndex<T> {
 		}
 		await this.properties.index.drop();
 		await this.properties.index.start();
+		this.properties.nativeGraph?.graph.clear();
 		this.cache.clear();
 		this._length = 0;
 	}
@@ -676,7 +766,78 @@ export class EntryIndex<T> {
 		this.clearPendingIndexFlushTimer();
 		this.pendingIndexWrites.clear();
 		this._length = await this.properties.index.getSize();
+		await this.rebuildNativeGraph();
 		this.initialied = true;
+	}
+
+	private async rebuildNativeGraph() {
+		if (!this.properties.nativeGraph) {
+			return;
+		}
+		const graph = this.properties.nativeGraph.graph;
+		graph.clear();
+		const iterator = this.properties.index.iterate(
+			{ query: [] },
+			{
+				shape: {
+					hash: true,
+					meta: { clock: true, gid: true, next: true, type: true },
+					payloadSize: true,
+					head: true,
+				},
+			},
+		);
+		try {
+			while (!iterator.done()) {
+				const results = await iterator.next(NATIVE_GRAPH_REBUILD_BATCH_SIZE);
+				for (const result of results) {
+					graph.put(toNativeLogEntry(result.value));
+				}
+			}
+		} finally {
+			await iterator.close();
+		}
+	}
+
+	private async findShadowedGids(entry: Entry<any>) {
+		let nextMatches: Query[] = [];
+
+		for (const next of entry.meta.next) {
+			nextMatches.push(
+				new StringMatch({
+					key: ["hash"],
+					value: next,
+					caseInsensitive: false,
+					method: StringMatchMethod.exact,
+				}),
+			);
+		}
+
+		const nextsWithOthersGids: { hash: string; meta: { gid: string } }[] =
+			await this.iterate(
+				[
+					new Or(nextMatches),
+					new Not(
+						new StringMatch({
+							key: ["meta", "gid"],
+							value: entry.meta.gid,
+						}),
+					),
+				],
+				undefined,
+				{ type: "shape", shape: { hash: true, meta: { gid: true } } },
+			).all();
+
+		let shadowedGids = new Set<string>();
+		for (const next of nextsWithOthersGids) {
+			// check that this entry is not referenced by other
+			const nexts = await this.countHasNext(next.hash, entry.hash);
+			if (nexts > 0) {
+				continue;
+			}
+			shadowedGids.add(next.meta.gid);
+		}
+		return shadowedGids;
 	}
 
 	private async resolve(
@@ -759,3 +920,30 @@ export class EntryIndex<T> {
 		return null;
 	}
 }
+
+const toNativeLogEntry = (entry: ShallowEntry): NativeLogEntry => ({
+	hash: entry.hash,
+	gid: entry.meta.gid,
+	next: entry.meta.next,
+	type: entry.meta.type,
+	head: entry.head,
+	payloadSize: entry.payloadSize,
+	clock: {
+		timestamp: {
+			wallTime: entry.meta.clock.timestamp.wallTime,
+			logical: entry.meta.clock.timestamp.logical,
+		},
+	},
+});
+
+const projectShape = (value: any, shape: Shape): any => {
+	const out: any = {};
+	for (const [key, selector] of Object.entries(shape)) {
+		if (selector === true) {
+			out[key] = value?.[key];
+		} else if (selector && typeof selector === "object") {
+			out[key] = projectShape(value?.[key], selector as Shape);
+		}
+	}
+	return out;
+};
