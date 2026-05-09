@@ -54,10 +54,14 @@ const createHeadsLog = async (nativeGraph: boolean) => {
 		indexer: new HashmapIndices(),
 		nativeGraph,
 	});
+	let gid: string | undefined;
 	for (let i = 0; i < entries; i++) {
-		await log.append(new Uint8Array([i & 0xff]), { meta: { next: [] } });
+		const { entry } = await log.append(new Uint8Array([i & 0xff]), {
+			meta: { next: [] },
+		});
+		gid ??= entry.meta.gid;
 	}
-	return { log, store };
+	return { log, store, gid: gid! };
 };
 
 const createReplicaHeadsLog = async (nativeGraph: boolean) => {
@@ -130,6 +134,22 @@ const hasHead = async (log: Log<Uint8Array>) => {
 		.getHeads(undefined, { type: "shape", shape: { hash: true } })
 		.all();
 	return heads.length > 0;
+};
+
+const hasAnyHead = async (log: Log<Uint8Array>, gids: string[]) => {
+	const nativeHasHead = await log.entryIndex.hasAnyHead(gids);
+	if (nativeHasHead != null) {
+		return nativeHasHead;
+	}
+	for (const gid of gids) {
+		const heads = await log.entryIndex
+			.getHeads(gid, { type: "shape", shape: { hash: true } })
+			.all();
+		if (heads.length > 0) {
+			return true;
+		}
+	}
+	return false;
 };
 
 const getMaxHeadDataU32 = async (log: Log<Uint8Array>) => {
@@ -427,10 +447,15 @@ for (const nativeGraph of [false, true]) {
 }
 
 for (const nativeGraph of [false, true]) {
-	const { log, store } = await createHeadsLog(nativeGraph);
+	const { log, store, gid } = await createHeadsLog(nativeGraph);
 	rows.push(
 		await measure("hasHead()", nativeGraph, async () => {
 			await hasHead(log);
+		}),
+	);
+	rows.push(
+		await measure("hasAnyHead(refs)", nativeGraph, async () => {
+			await hasAnyHead(log, ["missing", gid]);
 		}),
 	);
 	await log.close();
