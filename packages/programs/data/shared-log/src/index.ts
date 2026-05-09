@@ -22,6 +22,7 @@ import {
 	toId,
 } from "@peerbit/indexer-interface";
 import {
+	type AppendDeliveryPlan,
 	type NativeReplicationRange,
 	type SharedLogNativeState,
 	type SharedLogRangePlanner,
@@ -279,6 +280,10 @@ type EntryLeaderPlan<R extends "u32" | "u64"> = {
 	leaders: LeaderMap;
 	isLeader: boolean;
 	assignedToRangeBoundary?: boolean;
+};
+
+type NativeAppendEntryPlan<R extends "u32" | "u64"> = EntryLeaderPlan<R> & {
+	delivery: AppendDeliveryPlan;
 };
 
 type EntryLeaderBatchItem<R extends "u32" | "u64"> = {
@@ -1394,6 +1399,7 @@ export class SharedLog<
 			selfHash: string,
 			isLeader: boolean,
 			deliveryArg: false | true | DeliveryOptions | undefined,
+			nativeDeliveryPlan?: AppendDeliveryPlan,
 		) {
 			const { delivery, reliability, requireRecipients, minAcks, wrap } =
 				this._parseDeliveryOptions(deliveryArg);
@@ -1406,14 +1412,16 @@ export class SharedLog<
 					? { timeoutMs: delivery.timeout, signal: delivery.signal }
 					: undefined;
 
-			const fullReplicaDeliveryCandidates =
-				await this.getFullReplicaRepairCandidates(undefined, {
-					includeSubscribers: false,
-				});
-			if (minReplicasValue >= Math.max(1, fullReplicaDeliveryCandidates.size)) {
-				for (const peer of fullReplicaDeliveryCandidates) {
-					if (!leaders.has(peer)) {
-						leaders.set(peer, { intersecting: true });
+			if (!nativeDeliveryPlan) {
+				const fullReplicaDeliveryCandidates =
+					await this.getFullReplicaRepairCandidates(undefined, {
+						includeSubscribers: false,
+					});
+				if (minReplicasValue >= Math.max(1, fullReplicaDeliveryCandidates.size)) {
+					for (const peer of fullReplicaDeliveryCandidates) {
+						if (!leaders.has(peer)) {
+							leaders.set(peer, { intersecting: true });
+						}
 					}
 				}
 			}
@@ -1425,7 +1433,69 @@ export class SharedLog<
 				replicas: minReplicasValue,
 			});
 			for await (const message of createExchangeHeadsMessages(this.log, [entry])) {
+				const leaderCountBeforeReferenceMerge = leaders.size;
 				await this._mergeLeadersFromGidReferences(message, minReplicasValue, leaders);
+				const canUseNativeDeliveryPlan =
+					!!nativeDeliveryPlan &&
+					nativeDeliveryPlan.hasRemoteRecipients &&
+					leaders.size === leaderCountBeforeReferenceMerge;
+				if (canUseNativeDeliveryPlan) {
+					if (!delivery) {
+						for (const peer of nativeDeliveryPlan.repairTargets) {
+							this.queueAppendBackfill(peer, entryReplicatedForRepair);
+						}
+						this.rpc
+							.send(message, {
+								mode: nativeDeliveryPlan.defaultSendSilent
+									? new SilentDelivery({
+											redundancy: 1,
+											to: nativeDeliveryPlan.sendTo,
+										})
+									: new AcknowledgeDelivery({
+											redundancy: 1,
+											to: nativeDeliveryPlan.sendTo,
+										}),
+							})
+							.catch((error) => logger.error(error));
+						continue;
+					}
+
+					if (requireRecipients && nativeDeliveryPlan.noPeerError) {
+						throw new NoPeersError(this.rpc.topic);
+					}
+
+					if (nativeDeliveryPlan.ackTo.length > 0) {
+						const payload = serialize(message);
+						for (const peer of nativeDeliveryPlan.ackTo) {
+							track(
+								(async () => {
+									await this._sendAckWithUnifiedHints({
+										peer,
+										message,
+										payload,
+										fanoutUnicastOptions,
+									});
+								})(),
+							);
+						}
+					}
+
+					if (nativeDeliveryPlan.silentTo.length > 0) {
+						this.rpc
+							.send(message, {
+								mode: new SilentDelivery({
+									redundancy: 1,
+									to: nativeDeliveryPlan.silentTo,
+								}),
+							})
+							.catch((error) => logger.error(error));
+					}
+					for (const peer of nativeDeliveryPlan.repairTargets) {
+						this.queueAppendBackfill(peer, entryReplicatedForRepair);
+					}
+					continue;
+				}
+
 				const authoritativeRecipients = new Set(leaders.keys());
 				const leadersForDelivery = delivery
 					? new Set(authoritativeRecipients)
@@ -3946,6 +4016,46 @@ export class SharedLog<
 		return { appendOptions, minReplicasValue };
 	}
 
+	private async planNativeAppendEntry(
+		entry: Entry<T>,
+		replicas: number,
+		deliveryArg: false | true | DeliveryOptions | undefined,
+	): Promise<NativeAppendEntryPlan<R> | undefined> {
+		if (!this._nativeSharedLogState || !this.canPlanNativeHashGid(entry)) {
+			return undefined;
+		}
+
+		const context = await this.createLeaderSelectionContext();
+		const fullReplicaDeliveryCandidates =
+			await this.getFullReplicaRepairCandidates(undefined, {
+				includeSubscribers: false,
+			});
+		const { delivery, reliability, requireRecipients, minAcks } =
+			this._parseDeliveryOptions(deliveryArg);
+		const plan = this._nativeSharedLogState.planAppendForGid(
+			{
+				entryHash: entry.hash,
+				gid: entry.meta.gid,
+				nextHashes: entry.meta.next,
+				replicas,
+				fullReplicaCandidates: fullReplicaDeliveryCandidates,
+				selfHash: context.selfHash,
+				deliveryEnabled: !!delivery,
+				reliabilityAck: reliability === "ack",
+				minAcks,
+				requireRecipients,
+			},
+			this.createNativeLeaderOptions(context),
+		);
+		return {
+			coordinates: plan.coordinates as NumberFromType<R>[],
+			leaders: plan.leaders,
+			isLeader: plan.isLeader,
+			assignedToRangeBoundary: plan.assignedToRangeBoundary,
+			delivery: plan.delivery,
+		};
+	}
+
 	private async processLocalAppend(
 		entry: Entry<T>,
 		removed: ShallowOrFullEntry<T>[],
@@ -3973,17 +4083,44 @@ export class SharedLog<
 		}
 
 		const selfHash = this.node.identity.publicKey.hashcode();
-		const {
-			coordinates,
-			leaders,
-			isLeader,
-		} = await this.planEntryLeaders(entry, properties.minReplicasValue, {
-			persist: {},
-		});
+		const target = options?.target;
+		const deliveryArg = options?.delivery;
+		const nativeAppendPlan =
+			target !== "all" && target !== "none"
+				? await this.planNativeAppendEntry(
+						entry,
+						properties.minReplicasValue,
+						deliveryArg,
+					)
+				: undefined;
+		let coordinates: NumberFromType<R>[];
+		let leaders: LeaderMap;
+		let isLeader: boolean;
+		let nativeDeliveryPlan: AppendDeliveryPlan | undefined;
+		if (nativeAppendPlan) {
+			coordinates = nativeAppendPlan.coordinates;
+			leaders = nativeAppendPlan.leaders;
+			isLeader = nativeAppendPlan.isLeader;
+			nativeDeliveryPlan = nativeAppendPlan.delivery;
+			await this.persistCoordinate({
+				leaders,
+				coordinates,
+				replicas: coordinates.length,
+				entry,
+				assignedToRangeBoundary: nativeAppendPlan.assignedToRangeBoundary,
+				commitNative: false,
+			});
+		} else {
+			({ coordinates, leaders, isLeader } = await this.planEntryLeaders(
+				entry,
+				properties.minReplicasValue,
+				{
+					persist: {},
+				},
+			));
+		}
 
 		if (options?.target !== "none") {
-			const target = options?.target;
-			const deliveryArg = options?.delivery;
 			const hasDelivery = !(deliveryArg === undefined || deliveryArg === false);
 
 			if (target === "all" && hasDelivery) {
@@ -4008,6 +4145,7 @@ export class SharedLog<
 					selfHash,
 					isLeader,
 					deliveryArg,
+					nativeDeliveryPlan,
 				);
 			}
 		}
@@ -6778,6 +6916,7 @@ export class SharedLog<
 		replicas: number;
 		prev?: EntryReplicated<R>;
 		assignedToRangeBoundary?: boolean;
+		commitNative?: boolean;
 	}) {
 		const assignedToRangeBoundary =
 			properties.assignedToRangeBoundary ??
@@ -6804,11 +6943,13 @@ export class SharedLog<
 				hashNumber,
 			}),
 		);
-		this._nativeSharedLogState?.commitEntryCoordinates(
-			properties.entry.hash,
-			properties.coordinates,
-			properties.entry.meta.next,
-		);
+		if (properties.commitNative !== false) {
+			this._nativeSharedLogState?.commitEntryCoordinates(
+				properties.entry.hash,
+				properties.coordinates,
+				properties.entry.meta.next,
+			);
+		}
 
 		for (const coordinate of properties.coordinates) {
 			this.coordinateToHash.add(coordinate, properties.entry.hash);
