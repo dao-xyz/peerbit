@@ -322,10 +322,9 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			return;
 		}
 		for (const state of session.targets.values()) {
-			for (const hash of [...state.unresolved]) {
-				if (await this.log.has(hash)) {
-					state.unresolved.delete(hash);
-				}
+			const resolved = await this.log.hasMany(state.unresolved);
+			for (const hash of resolved) {
+				state.unresolved.delete(hash);
 			}
 		}
 	}
