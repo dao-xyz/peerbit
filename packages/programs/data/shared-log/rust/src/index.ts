@@ -58,6 +58,17 @@ export type EntryAssignmentPlan = LeaderPlan & {
 	assignedToRangeBoundary: boolean;
 };
 
+export type AppendDeliveryPlan = {
+	hasRemoteRecipients: boolean;
+	noPeerError: boolean;
+	defaultSendSilent: boolean;
+	sendTo: string[];
+	ackTo: string[];
+	silentTo: string[];
+	repairTargets: string[];
+	authoritativeRecipients: string[];
+};
+
 export type LeaderBatchInput = {
 	cursors: Iterable<bigint | number | string>;
 	replicas: number;
@@ -281,6 +292,22 @@ type NativeSharedLogStateHandle = {
 		fullReplicaFallback: boolean,
 		includeStrictFullReplica: boolean,
 	) => [unknown[], unknown[], boolean];
+	plan_append_leaders_for_delivery: (
+		leaders: unknown[],
+		fullReplicaCandidates: string[],
+		minReplicas: number,
+	) => unknown[];
+	plan_append_delivery: (
+		leaders: unknown[],
+		fallbackRecipients: string[],
+		minReplicas: number,
+		selfHash: string,
+		isLeader: boolean,
+		deliveryEnabled: boolean,
+		reliabilityAck: boolean,
+		minAcks: number | undefined,
+		requireRecipients: boolean,
+	) => [boolean, boolean, boolean, string[], string[], string[], string[], string[]];
 	plan_repair_dispatch_for_entries: (
 		entryHashes: string[],
 		entryGids: string[],
@@ -404,6 +431,31 @@ const rowsToRepairDispatchPlan = (rows: unknown[]): RepairDispatchPlan => {
 	}
 	return plan;
 };
+
+const samplesToRows = (leaders: ReadonlyMap<string, LeaderSample>): unknown[] =>
+	[...leaders].map(([hash, sample]) => [hash, sample.intersecting]);
+
+const appendDeliveryPlanFromRow = (
+	row: [
+		boolean,
+		boolean,
+		boolean,
+		string[],
+		string[],
+		string[],
+		string[],
+		string[],
+	],
+): AppendDeliveryPlan => ({
+	hasRemoteRecipients: row[0],
+	noPeerError: row[1],
+	defaultSendSilent: row[2],
+	sendTo: row[3],
+	ackTo: row[4],
+	silentTo: row[5],
+	repairTargets: row[6],
+	authoritativeRecipients: row[7],
+});
 
 export class SharedLogRangePlanner {
 	private constructor(
@@ -815,6 +867,46 @@ export class SharedLogNativeState {
 			leaders: rowsToSamples(leaderRows),
 			assignedToRangeBoundary,
 		};
+	}
+
+	planAppendLeadersForDelivery(
+		leaders: ReadonlyMap<string, LeaderSample>,
+		fullReplicaCandidates: Iterable<string>,
+		minReplicas: number,
+	): Map<string, LeaderSample> {
+		return rowsToSamples(
+			this.native.plan_append_leaders_for_delivery(
+				samplesToRows(leaders),
+				[...fullReplicaCandidates],
+				minReplicas,
+			),
+		);
+	}
+
+	planAppendDelivery(input: {
+		leaders: ReadonlyMap<string, LeaderSample>;
+		fallbackRecipients?: Iterable<string>;
+		minReplicas: number;
+		selfHash: string;
+		isLeader: boolean;
+		deliveryEnabled: boolean;
+		reliabilityAck: boolean;
+		minAcks?: number;
+		requireRecipients: boolean;
+	}): AppendDeliveryPlan {
+		return appendDeliveryPlanFromRow(
+			this.native.plan_append_delivery(
+				samplesToRows(input.leaders),
+				input.fallbackRecipients ? [...input.fallbackRecipients] : [],
+				input.minReplicas,
+				input.selfHash,
+				input.isLeader,
+				input.deliveryEnabled,
+				input.reliabilityAck,
+				input.minAcks,
+				input.requireRecipients,
+			),
+		);
 	}
 
 	planRepairDispatchForEntries(
