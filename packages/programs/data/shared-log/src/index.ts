@@ -3492,54 +3492,28 @@ export class SharedLog<
 					while (!this.closed && !iterator.done()) {
 						const entries = await iterator.next(REPAIR_SWEEP_ENTRY_BATCH_SIZE);
 						const entryReplicatedBatch = entries.map((entry) => entry.value);
-						const currentPeersBatch =
-							await this.findEntryReplicatedLeaderBatch(entryReplicatedBatch, {
-								roleAge: 0,
+						const requestedReplicasBatch = entryReplicatedBatch.map((entry) =>
+							decodeReplicas(entry).getValue(this),
+						);
+						const repairDispatchPlan = await this.planRepairDispatchBatch({
+							entries: entryReplicatedBatch,
+							requestedReplicasBatch,
+							pendingModes,
+							pendingPeersByMode,
+							optimisticGidPeersByMode,
+							fullReplicaRepairCandidates,
+							fullReplicaRepairCandidateCount,
+							selfHash: this.node.identity.publicKey.hashcode(),
 						});
-						for (let i = 0; i < entryReplicatedBatch.length; i++) {
-							const entryReplicated = entryReplicatedBatch[i]!;
-							const currentPeers = currentPeersBatch[i]!;
-							const gid = entryReplicated.gid;
-							const knownPeers = this._gidPeersHistory.get(gid);
-							const requestedReplicas =
-								decodeReplicas(entryReplicated).getValue(this);
-
-							if (pendingModes.has("churn")) {
-								for (const [currentPeer] of currentPeers) {
-									if (currentPeer === this.node.identity.publicKey.hashcode()) {
-										continue;
-									}
-									queueEntryForTarget("churn", currentPeer, entryReplicated);
-								}
-							}
-
-							for (const mode of pendingModes) {
-								const modePeers = pendingPeersByMode.get(mode);
-								if (!modePeers || modePeers.size === 0) {
-									continue;
-								}
-								const optimisticPeers = optimisticGidPeersByMode.get(mode)?.get(gid);
-								for (const peer of modePeers) {
-									if (this.isEntryKnownByPeer(entryReplicated.hash, peer)) {
-										continue;
-									}
-									const wasOptimisticallyAssigned =
-										optimisticPeers?.has(peer) === true;
-									const isCoveredByFullReplicaRepair =
-										mode === "join-authoritative" &&
-										fullReplicaRepairCandidates.has(peer) &&
-										requestedReplicas >= fullReplicaRepairCandidateCount;
-									const shouldQueue =
-										mode === "join-authoritative"
-											? currentPeers.has(peer) || isCoveredByFullReplicaRepair
-											: wasOptimisticallyAssigned ||
-											  (currentPeers.has(peer) && !knownPeers?.has(peer));
-									if (shouldQueue) {
-										// Authoritative join repair must not trust partial gid peer history,
-										// otherwise a late joiner can get stuck with a partial historical
-										// backfill forever. Once we enter the authoritative pass, queue every
-										// entry whose current leader set still includes the added peer.
-										queueEntryForTarget(mode, peer, entryReplicated);
+						const entriesByHash = new Map(
+							entryReplicatedBatch.map((entry) => [entry.hash, entry]),
+						);
+						for (const [mode, targets] of repairDispatchPlan) {
+							for (const [target, hashes] of targets) {
+								for (const hash of hashes) {
+									const entry = entriesByHash.get(hash);
+									if (entry) {
+										queueEntryForTarget(mode, target, entry);
 									}
 								}
 							}
@@ -7299,6 +7273,138 @@ export class SharedLog<
 			leaders.push(await this._findLeaders(entry.coordinates, options));
 		}
 		return leaders;
+	}
+
+	private async planRepairDispatchBatch(properties: {
+		entries: EntryReplicated<R>[];
+		requestedReplicasBatch: number[];
+		pendingModes: Set<RepairDispatchMode>;
+		pendingPeersByMode: Map<RepairDispatchMode, Set<string>>;
+		optimisticGidPeersByMode: Map<RepairDispatchMode, Map<string, Set<string>>>;
+		fullReplicaRepairCandidates: Set<string>;
+		fullReplicaRepairCandidateCount: number;
+		selfHash: string;
+	}): Promise<Map<RepairDispatchMode, Map<string, string[]>>> {
+		const add = (
+			plan: Map<RepairDispatchMode, Map<string, string[]>>,
+			mode: RepairDispatchMode,
+			target: string,
+			hash: string,
+		) => {
+			let targets = plan.get(mode);
+			if (!targets) {
+				targets = new Map();
+				plan.set(mode, targets);
+			}
+			let hashes = targets.get(target);
+			if (!hashes) {
+				hashes = [];
+				targets.set(target, hashes);
+			}
+			if (!hashes.includes(hash)) {
+				hashes.push(hash);
+			}
+		};
+
+		if (this._nativeRangePlanner) {
+			const pendingPeersByMode = new Map<string, Iterable<string>>();
+			const optimisticPeersByMode = new Map<
+				string,
+				Map<string, Iterable<string>>
+			>();
+			for (const mode of properties.pendingModes) {
+				pendingPeersByMode.set(
+					mode,
+					properties.pendingPeersByMode.get(mode) ?? [],
+				);
+				const optimisticByGid = properties.optimisticGidPeersByMode.get(mode);
+				if (optimisticByGid) {
+					const optimisticEntries = new Map<string, Iterable<string>>();
+					for (const [gid, peers] of optimisticByGid) {
+						optimisticEntries.set(gid, peers);
+					}
+					optimisticPeersByMode.set(mode, optimisticEntries);
+				}
+			}
+
+			const context = await this.createLeaderSelectionContext({ roleAge: 0 });
+			const nativePlan = this._nativeRangePlanner.planRepairDispatchForEntries(
+				{
+					entries: properties.entries.map((entry, i) => ({
+						hash: entry.hash,
+						gid: entry.gid,
+						requestedReplicas: properties.requestedReplicasBatch[i]!,
+						coordinates: entry.coordinates,
+						knownGidPeers: this._gidPeersHistory.get(entry.gid),
+						knownEntryPeers: this._entryKnownPeers.get(entry.hash),
+					})),
+					pendingModes: properties.pendingModes,
+					pendingPeersByMode,
+					optimisticPeersByMode,
+					fullReplicaRepairCandidates: properties.fullReplicaRepairCandidates,
+					fullReplicaRepairCandidateCount:
+						properties.fullReplicaRepairCandidateCount,
+					selfHash: properties.selfHash,
+				},
+				this.createNativeLeaderOptions(context),
+			);
+
+			const plan = new Map<RepairDispatchMode, Map<string, string[]>>();
+			for (const [mode, targets] of nativePlan) {
+				plan.set(mode as RepairDispatchMode, targets);
+			}
+			return plan;
+		}
+
+		const currentPeersBatch = await this.findEntryReplicatedLeaderBatch(
+			properties.entries,
+			{ roleAge: 0 },
+		);
+		const plan = new Map<RepairDispatchMode, Map<string, string[]>>();
+		for (let i = 0; i < properties.entries.length; i++) {
+			const entry = properties.entries[i]!;
+			const currentPeers = currentPeersBatch[i]!;
+			const requestedReplicas = properties.requestedReplicasBatch[i]!;
+			const knownPeers = this._gidPeersHistory.get(entry.gid);
+
+			if (properties.pendingModes.has("churn")) {
+				for (const [currentPeer] of currentPeers) {
+					if (currentPeer !== properties.selfHash) {
+						add(plan, "churn", currentPeer, entry.hash);
+					}
+				}
+			}
+
+			for (const mode of properties.pendingModes) {
+				const modePeers = properties.pendingPeersByMode.get(mode);
+				if (!modePeers || modePeers.size === 0) {
+					continue;
+				}
+				const optimisticPeers = properties.optimisticGidPeersByMode
+					.get(mode)
+					?.get(entry.gid);
+				for (const peer of modePeers) {
+					if (this.isEntryKnownByPeer(entry.hash, peer)) {
+						continue;
+					}
+					const wasOptimisticallyAssigned =
+						optimisticPeers?.has(peer) === true;
+					const isCoveredByFullReplicaRepair =
+						mode === "join-authoritative" &&
+						properties.fullReplicaRepairCandidates.has(peer) &&
+						requestedReplicas >= properties.fullReplicaRepairCandidateCount;
+					const shouldQueue =
+						mode === "join-authoritative"
+							? currentPeers.has(peer) || isCoveredByFullReplicaRepair
+							: wasOptimisticallyAssigned ||
+							  (currentPeers.has(peer) && !knownPeers?.has(peer));
+					if (shouldQueue) {
+						add(plan, mode, peer, entry.hash);
+					}
+				}
+			}
+		}
+		return plan;
 	}
 
 	private async _findLeadersFromHashGid(
