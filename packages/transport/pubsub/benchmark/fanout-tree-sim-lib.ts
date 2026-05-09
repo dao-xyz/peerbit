@@ -82,6 +82,8 @@ export type FanoutTreeSimParams = {
 	joinReqTimeoutMs: number;
 	candidateShuffleTopK: number;
 	candidateScoringMode: "ranked-shuffle" | "ranked-strict" | "weighted";
+	parentUpgradeIntervalMs: number;
+	parentUpgradeLeafOnly: boolean;
 	bootstrapEnsureIntervalMs: number;
 	trackerQueryIntervalMs: number;
 	joinAttemptsPerRound: number;
@@ -174,6 +176,7 @@ export type FanoutTreeSimResult = {
 	reparentDisconnectTotal: number;
 	reparentStaleTotal: number;
 	reparentKickedTotal: number;
+	reparentUpgradeTotal: number;
 
 	treeMaxLevel: number;
 	treeLevelP95: number;
@@ -349,6 +352,8 @@ export const resolveFanoutTreeSimParams = (
 			input.candidateScoringMode === "ranked-shuffle"
 				? input.candidateScoringMode
 				: "ranked-shuffle",
+		parentUpgradeIntervalMs: Number(input.parentUpgradeIntervalMs ?? 0),
+		parentUpgradeLeafOnly: Boolean(input.parentUpgradeLeafOnly ?? true),
 		bootstrapEnsureIntervalMs: Number(input.bootstrapEnsureIntervalMs ?? -1),
 		trackerQueryIntervalMs: Number(input.trackerQueryIntervalMs ?? -1),
 		joinAttemptsPerRound: Number(input.joinAttemptsPerRound ?? -1),
@@ -409,7 +414,7 @@ export const formatFanoutTreeSimResult = (r: FanoutTreeSimResult) => {
 				: `deadline=off${p.maxDataAgeMs > 0 ? ` maxAgeMs=${p.maxDataAgeMs}` : ""}`,
 			`latencyMs p50=${r.latencyP50.toFixed(1)} p95=${r.latencyP95.toFixed(1)} p99=${r.latencyP99.toFixed(1)} max=${r.latencyMax.toFixed(1)}`,
 			`drops: forward total=${r.droppedForwardsTotal} max=${r.droppedForwardsMax} node=${r.droppedForwardsMaxNode ?? "-"} stale total=${r.staleForwardsDroppedTotal} max=${r.staleForwardsDroppedMax} node=${r.staleForwardsDroppedMaxNode ?? "-"} write total=${r.dataWriteDropsTotal} max=${r.dataWriteDropsMax} node=${r.dataWriteDropsMaxNode ?? "-"}`,
-			`reparent: disconnect=${r.reparentDisconnectTotal} stale=${r.reparentStaleTotal} kicked=${r.reparentKickedTotal}`,
+			`reparent: disconnect=${r.reparentDisconnectTotal} stale=${r.reparentStaleTotal} kicked=${r.reparentKickedTotal} upgrade=${r.reparentUpgradeTotal}`,
 			`tree: maxLevel=${r.treeMaxLevel} p95Level=${r.treeLevelP95.toFixed(1)} avgLevel=${r.treeLevelAvg.toFixed(2)} orphans=${r.treeOrphans} rootChildren=${r.treeRootChildren} children(p95/max)=${r.treeChildrenP95.toFixed(1)}/${r.treeChildrenMax}`,
 			`upload: max=${r.maxUploadBps} B/s (${r.maxUploadFracPct.toFixed(1)}% of cap) node=${r.maxUploadNode ?? "-"}`,
 			`stream: queuedBytes total=${r.streamQueuedBytesTotal} max=${r.streamQueuedBytesMax} p95=${r.streamQueuedBytesP95.toFixed(0)} node=${r.streamQueuedBytesMaxNode ?? "-"} lanes=${r.streamQueuedBytesByLane.join(",")}`,
@@ -676,19 +681,21 @@ export const runFanoutTreeSim = async (
 								? { neighborRepairBurstMs: params.neighborRepairBurstMs }
 								: {}),
 						},
-								{
-									timeoutMs: Math.max(10_000, Math.min(120_000, timeoutMs || 120_000)),
-									...(params.maxDataAgeMs > 0 ? { staleAfterMs: params.maxDataAgeMs } : {}),
-									...(params.joinReqTimeoutMs >= 0
-										? { joinReqTimeoutMs: params.joinReqTimeoutMs }
-										: {}),
-									...(params.candidateShuffleTopK >= 0
-									? { candidateShuffleTopK: params.candidateShuffleTopK }
-									: {}),
-									candidateScoringMode: params.candidateScoringMode,
-								...(params.bootstrapEnsureIntervalMs >= 0
-									? { bootstrapEnsureIntervalMs: params.bootstrapEnsureIntervalMs }
-									: {}),
+						{
+							timeoutMs: Math.max(10_000, Math.min(120_000, timeoutMs || 120_000)),
+							...(params.maxDataAgeMs > 0 ? { staleAfterMs: params.maxDataAgeMs } : {}),
+							...(params.joinReqTimeoutMs >= 0
+								? { joinReqTimeoutMs: params.joinReqTimeoutMs }
+								: {}),
+							...(params.candidateShuffleTopK >= 0
+								? { candidateShuffleTopK: params.candidateShuffleTopK }
+								: {}),
+							candidateScoringMode: params.candidateScoringMode,
+							parentUpgradeIntervalMs: params.parentUpgradeIntervalMs,
+							parentUpgradeLeafOnly: params.parentUpgradeLeafOnly,
+							...(params.bootstrapEnsureIntervalMs >= 0
+								? { bootstrapEnsureIntervalMs: params.bootstrapEnsureIntervalMs }
+								: {}),
 								...(params.trackerQueryIntervalMs >= 0
 									? { trackerQueryIntervalMs: params.trackerQueryIntervalMs }
 									: {}),
@@ -898,6 +905,7 @@ export const runFanoutTreeSim = async (
 			let churnedPeersTotal = 0;
 			const wantsMaintenance =
 				(params.churnEveryMs > 0 && params.churnDownMs > 0 && params.churnFraction > 0) ||
+				params.parentUpgradeIntervalMs > 0 ||
 				params.assertMaxOrphans > 0 ||
 				params.assertMaxOrphanArea > 0 ||
 				params.assertRecoveryP95Ms > 0 ||
@@ -1181,7 +1189,10 @@ export const runFanoutTreeSim = async (
 					const m = p.services.fanout.getChannelMetrics(params.topic, rootId);
 					reparentBaselineByHash.set(
 						nodeHash,
-						m.reparentDisconnect + m.reparentStale + m.reparentKicked,
+						m.reparentDisconnect +
+							m.reparentStale +
+							m.reparentKicked +
+							m.reparentUpgrade,
 					);
 				}
 			}
@@ -1228,7 +1239,11 @@ export const runFanoutTreeSim = async (
 				for (const p of session.peers) {
 					const nodeHash = p.services.fanout.publicKeyHash;
 					const m = p.services.fanout.getChannelMetrics(params.topic, rootId);
-					const total = m.reparentDisconnect + m.reparentStale + m.reparentKicked;
+					const total =
+						m.reparentDisconnect +
+						m.reparentStale +
+						m.reparentKicked +
+						m.reparentUpgrade;
 					const base = reparentBaselineByHash.get(nodeHash) ?? 0;
 					const delta = Math.max(0, total - base);
 					maintReparentsTotal += delta;
@@ -1372,6 +1387,7 @@ export const runFanoutTreeSim = async (
 					let reparentDisconnectTotal = 0;
 					let reparentStaleTotal = 0;
 					let reparentKickedTotal = 0;
+					let reparentUpgradeTotal = 0;
 					let earningsTotal = 0;
 					const earningsByHash = new Map<string, number>();
 
@@ -1391,6 +1407,7 @@ export const runFanoutTreeSim = async (
 						reparentDisconnectTotal += m.reparentDisconnect;
 						reparentStaleTotal += m.reparentStale;
 						reparentKickedTotal += m.reparentKicked;
+						reparentUpgradeTotal += m.reparentUpgrade;
 						earningsTotal += m.earnings;
 						earningsByHash.set(nodeHash, m.earnings);
 						protocolControlSends += m.controlSends;
@@ -1495,6 +1512,7 @@ export const runFanoutTreeSim = async (
 						reparentDisconnectTotal,
 						reparentStaleTotal,
 						reparentKickedTotal,
+						reparentUpgradeTotal,
 						treeMaxLevel,
 						treeLevelP95,
 						treeLevelAvg,

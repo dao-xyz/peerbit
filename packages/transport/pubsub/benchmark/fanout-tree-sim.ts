@@ -67,6 +67,8 @@ const HELP_TEXT = [
 	"  --joinReqTimeoutMs MS         join request timeout per candidate (default: 2000)",
 	"  --candidateShuffleTopK N      shuffle only within top K candidates (default: 8)",
 	"  --candidateScoringMode MODE   join scoring (ranked-shuffle|ranked-strict|weighted, default: ranked-shuffle)",
+	"  --parentUpgradeIntervalMs MS  min interval between proactive parent-upgrade checks (default: 0, off)",
+	"  --parentUpgradeLeafOnly 0|1   restrict proactive parent upgrades to leaves (default: 1)",
 	"  --bootstrapEnsureIntervalMs MS  min interval between bootstrap re-dials (-1 = FanoutTree default)",
 	"  --trackerQueryIntervalMs MS     min interval between tracker queries (-1 = FanoutTree default)",
 	"  --joinAttemptsPerRound N        max join candidates tried per retry round (-1 = FanoutTree default)",
@@ -319,6 +321,12 @@ const ARG_SPECS: ArgSpec[] = [
 	{ flag: "--joinReqTimeoutMs", key: "joinReqTimeoutMs", parse: parseNumber },
 	{ flag: "--candidateShuffleTopK", key: "candidateShuffleTopK", parse: parseNumber },
 	{ flag: "--candidateScoringMode", key: "candidateScoringMode", parse: parseString },
+	{
+		flag: "--parentUpgradeIntervalMs",
+		key: "parentUpgradeIntervalMs",
+		parse: parseNumber,
+	},
+	{ flag: "--parentUpgradeLeafOnly", key: "parentUpgradeLeafOnly", parse: parseBool01("1") },
 	{
 		flag: "--bootstrapEnsureIntervalMs",
 		key: "bootstrapEnsureIntervalMs",

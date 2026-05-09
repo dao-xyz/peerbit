@@ -18,29 +18,33 @@ describe("pubsub (fanout topics)", function () {
 		options?: {
 			pubsub?: Partial<ConstructorParameters<typeof TopicControlPlane>[1]>;
 		},
-	) => ({
-		services: {
-			fanout: (c: any) => getOrCreateFanout(c),
-			pubsub: (c: any) =>
-				new TopicControlPlane(c, {
-					canRelayMessage: true,
-					connectionManager: false,
-					topicRootControlPlane,
-					fanout: getOrCreateFanout(c),
-					shardCount: 16,
-					// Make join tests fast/deterministic.
-					fanoutJoin: {
-						timeoutMs: 10_000,
-						retryMs: 50,
-						bootstrapEnsureIntervalMs: 200,
-						trackerQueryIntervalMs: 200,
-						joinReqTimeoutMs: 1_000,
-						trackerQueryTimeoutMs: 1_000,
-					},
-					...(options?.pubsub || {}),
-				}),
-		},
-	});
+	) => {
+		const { fanoutJoin, ...pubsubOptions } = options?.pubsub ?? {};
+		return {
+			services: {
+				fanout: (c: any) => getOrCreateFanout(c),
+				pubsub: (c: any) =>
+					new TopicControlPlane(c, {
+						canRelayMessage: true,
+						connectionManager: false,
+						topicRootControlPlane,
+						fanout: getOrCreateFanout(c),
+						shardCount: 16,
+						// Make join tests fast/deterministic.
+						fanoutJoin: {
+							timeoutMs: 10_000,
+							retryMs: 50,
+							bootstrapEnsureIntervalMs: 200,
+							trackerQueryIntervalMs: 200,
+							joinReqTimeoutMs: 1_000,
+							trackerQueryTimeoutMs: 1_000,
+							...(fanoutJoin ?? {}),
+						},
+						...pubsubOptions,
+					}),
+			},
+		};
+	};
 
 	const createSession = async (
 		peerCount: number,
@@ -560,14 +564,23 @@ describe("pubsub (fanout topics)", function () {
 		}
 	});
 
-	it("can proactively reparent to the root when a late direct edge becomes available", async () => {
-		const session = await createDisconnectedSession(3, {
-			pubsub: {
-				fanoutJoin: {
-					parentUpgradeIntervalMs: 200,
-				},
-			},
-		});
+	const runLateDirectRootScenario = async (options: {
+		topic: string;
+		parentUpgradeIntervalMs?: number;
+		expectedParentAfterDirect: "relay" | "root";
+	}) => {
+		const session = await createDisconnectedSession(
+			3,
+			options.parentUpgradeIntervalMs === undefined
+				? undefined
+				: {
+						pubsub: {
+							fanoutJoin: {
+								parentUpgradeIntervalMs: options.parentUpgradeIntervalMs,
+							},
+						},
+					},
+		);
 		const rootPeer = session.peers[0]!;
 		const relayPeer = session.peers[1]!;
 		const publisherPeer = session.peers[2]!;
@@ -576,7 +589,7 @@ describe("pubsub (fanout topics)", function () {
 		const originalSendControl = publisherFanout._sendControl.bind(publisherFanout);
 
 		try {
-			const topic = "fanout-direct-reparent-to-root";
+			const topic = options.topic;
 			const root = rootPeer.services.pubsub;
 			const relay = relayPeer.services.pubsub;
 			const publisher = publisherPeer.services.pubsub;
@@ -632,6 +645,9 @@ describe("pubsub (fanout topics)", function () {
 				const stats = publisher.fanout.getChannelStats(shardTopic, rootHash);
 				expect(stats?.parent).to.equal(relayHash);
 			});
+			expect(
+				publisher.fanout.getChannelMetrics(shardTopic, rootHash).reparentUpgrade,
+			).to.equal(0);
 
 			allowDirectRootTraffic = true;
 			await session.connect([[rootPeer, publisherPeer]]);
@@ -642,17 +658,44 @@ describe("pubsub (fanout topics)", function () {
 				expect(publisher.peers.has(rootHash)).to.equal(true),
 			);
 
-			await waitForResolved(() => {
-				const statsAfterDirect = publisher.fanout.getChannelStats(
-					shardTopic,
-					rootHash,
-				);
-				expect(statsAfterDirect?.parent).to.equal(rootHash);
-			});
+			if (options.expectedParentAfterDirect === "root") {
+				await waitForResolved(() => {
+					const statsAfterDirect = publisher.fanout.getChannelStats(
+						shardTopic,
+						rootHash,
+					);
+					expect(statsAfterDirect?.parent).to.equal(rootHash);
+				});
+				expect(
+					publisher.fanout.getChannelMetrics(shardTopic, rootHash).reparentUpgrade,
+				).to.be.greaterThan(0);
+			} else {
+				await delay(700);
+				const statsAfterDirect = publisher.fanout.getChannelStats(shardTopic, rootHash);
+				expect(statsAfterDirect?.parent).to.equal(relayHash);
+				expect(
+					publisher.fanout.getChannelMetrics(shardTopic, rootHash).reparentUpgrade,
+				).to.equal(0);
+			}
 		} finally {
 			publisherFanout._sendControl = originalSendControl;
 			publisherPeer.dial = originalPublisherDial;
 			await session.stop();
 		}
+	};
+
+	it("keeps a relay parent after a late direct root edge when parent upgrades are disabled", async () => {
+		await runLateDirectRootScenario({
+			topic: "fanout-direct-no-reparent-to-root",
+			expectedParentAfterDirect: "relay",
+		});
+	});
+
+	it("can proactively reparent to the root when a late direct edge becomes available", async () => {
+		await runLateDirectRootScenario({
+			topic: "fanout-direct-reparent-to-root",
+			parentUpgradeIntervalMs: 200,
+			expectedParentAfterDirect: "root",
+		});
 	});
 });
