@@ -54,6 +54,10 @@ export type LeaderPlan = {
 	leaders: Map<string, LeaderSample>;
 };
 
+export type EntryAssignmentPlan = LeaderPlan & {
+	assignedToRangeBoundary: boolean;
+};
+
 export type LeaderBatchInput = {
 	cursors: Iterable<bigint | number | string>;
 	replicas: number;
@@ -248,6 +252,12 @@ type NativeSharedLogStateHandle = {
 	delete: NativeRangePlannerHandle["delete"];
 	put_entry_coordinates: (hash: string, coordinates: string[]) => void;
 	delete_entry_coordinates: (hash: string) => boolean;
+	get_entry_coordinates: (hash: string) => unknown[] | undefined;
+	commit_entry_coordinates: (
+		hash: string,
+		coordinates: string[],
+		nextHashes: string[],
+	) => void;
 	delete_entry_coordinates_batch: (hashes: string[]) => void;
 	clear_entry_coordinates: () => void;
 	add_gid_peers: (gid: string, peers: string[], reset: boolean) => number;
@@ -259,6 +269,18 @@ type NativeSharedLogStateHandle = {
 	remove_peer_from_entry_known_peers: (peer: string) => void;
 	clear_entry_known_peers: () => void;
 	plan_entry_leaders_for_gid: NativeRangePlannerHandle["plan_leaders_for_gid"];
+	plan_entry_assignment_for_gid: (
+		gid: string,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => [unknown[], unknown[], boolean];
 	plan_repair_dispatch_for_entries: (
 		entryHashes: string[],
 		entryGids: string[],
@@ -699,6 +721,23 @@ export class SharedLogNativeState {
 		return this.native.delete_entry_coordinates(hash);
 	}
 
+	getEntryCoordinates(hash: string): Array<number | bigint> | undefined {
+		const coordinates = this.native.get_entry_coordinates(hash);
+		return coordinates ? rowsToNumbers(this.resolution, coordinates) : undefined;
+	}
+
+	commitEntryCoordinates(
+		hash: string,
+		coordinates: Iterable<bigint | number | string>,
+		nextHashes: Iterable<string>,
+	): void {
+		this.native.commit_entry_coordinates(
+			hash,
+			[...coordinates].map(asIntegerString),
+			[...nextHashes],
+		);
+	}
+
 	deleteEntryCoordinatesBatch(hashes: Iterable<string>): void {
 		this.native.delete_entry_coordinates_batch([...hashes]);
 	}
@@ -757,6 +796,24 @@ export class SharedLogNativeState {
 		return {
 			coordinates: rowsToNumbers(this.resolution, coordinateRows),
 			leaders: rowsToSamples(leaderRows),
+		};
+	}
+
+	planEntryAssignmentForGid(
+		gid: string,
+		replicas: number,
+		options?: FindLeaderOptions,
+	): EntryAssignmentPlan {
+		const [coordinateRows, leaderRows, assignedToRangeBoundary] =
+			this.native.plan_entry_assignment_for_gid(
+				gid,
+				replicas,
+				...findLeaderArguments(options),
+			);
+		return {
+			coordinates: rowsToNumbers(this.resolution, coordinateRows),
+			leaders: rowsToSamples(leaderRows),
+			assignedToRangeBoundary,
 		};
 	}
 
