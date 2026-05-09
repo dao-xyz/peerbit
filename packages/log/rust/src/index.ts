@@ -75,6 +75,7 @@ type NativeLogIndexHandle = {
 	heads: (gid?: string) => string[];
 	head_entries: (gid?: string) => unknown[];
 	head_data_entries: (gid?: string) => unknown[];
+	max_head_data_u32: (gid?: string) => number | undefined;
 	head_join_entries: (gid?: string) => unknown[];
 	child_join_entries: (hash: string) => unknown[];
 	plan_delete_recursively: (hashes: string[], skipFirst: boolean) => string[];
@@ -219,6 +220,10 @@ export class LogGraphIndex {
 				},
 			};
 		});
+	}
+
+	maxHeadDataU32(gid?: string): number | undefined {
+		return this.native.max_head_data_u32(gid);
 	}
 
 	joinHeadEntries(gid?: string): NativeLogJoinEntry[] {

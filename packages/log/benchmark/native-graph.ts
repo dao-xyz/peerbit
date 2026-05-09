@@ -27,6 +27,24 @@ const joinParents = Number(
 
 const key = await Ed25519Keypair.create();
 
+const absoluteReplicaData = (value: number) =>
+	new Uint8Array([
+		0,
+		value & 0xff,
+		(value >>> 8) & 0xff,
+		(value >>> 16) & 0xff,
+		(value >>> 24) & 0xff,
+	]);
+
+const decodeAbsoluteReplicaData = (data?: Uint8Array) => {
+	if (!data || data.length !== 5 || data[0] !== 0) {
+		return undefined;
+	}
+	return (
+		(data[1]! | (data[2]! << 8) | (data[3]! << 16) | (data[4]! << 24)) >>> 0
+	);
+};
+
 const createHeadsLog = async (nativeGraph: boolean) => {
 	const store = new AnyBlockStore();
 	await store.start();
@@ -38,6 +56,23 @@ const createHeadsLog = async (nativeGraph: boolean) => {
 	});
 	for (let i = 0; i < entries; i++) {
 		await log.append(new Uint8Array([i & 0xff]), { meta: { next: [] } });
+	}
+	return { log, store };
+};
+
+const createReplicaHeadsLog = async (nativeGraph: boolean) => {
+	const store = new AnyBlockStore();
+	await store.start();
+	const log = new Log<Uint8Array>();
+	await log.open(store, key, {
+		appendDurability: "strict",
+		indexer: new HashmapIndices(),
+		nativeGraph,
+	});
+	for (let i = 0; i < entries; i++) {
+		await log.append(new Uint8Array([i & 0xff]), {
+			meta: { next: [], data: absoluteReplicaData((i % 8) + 1) },
+		});
 	}
 	return { log, store };
 };
@@ -85,6 +120,27 @@ const measure = async (
 };
 
 const rows: BenchRow[] = [];
+
+const getMaxHeadDataU32 = async (log: Log<Uint8Array>) => {
+	const nativeMax = await log.entryIndex.getMaxHeadDataU32();
+	if (nativeMax != null) {
+		return nativeMax;
+	}
+	const heads = (await log.entryIndex
+		.getHeads(undefined, {
+			type: "shape",
+			shape: { meta: { data: true } },
+		})
+		.all()) as { meta: { data?: Uint8Array } }[];
+	let max = 0;
+	for (const head of heads) {
+		const value = decodeAbsoluteReplicaData(head.meta.data);
+		if (value != null) {
+			max = Math.max(max, value);
+		}
+	}
+	return max;
+};
 
 const measureAppend = async (
 	name: string,
@@ -360,7 +416,7 @@ for (const nativeGraph of [false, true]) {
 }
 
 for (const nativeGraph of [false, true]) {
-	const { log, store } = await createHeadsLog(nativeGraph);
+	const { log, store } = await createReplicaHeadsLog(nativeGraph);
 	rows.push(
 		await measure("getHeads(data shape).all()", nativeGraph, async () => {
 			await log.entryIndex
@@ -369,6 +425,17 @@ for (const nativeGraph of [false, true]) {
 					shape: { hash: true, meta: { data: true } },
 				})
 				.all();
+		}),
+	);
+	await log.close();
+	await store.stop();
+}
+
+for (const nativeGraph of [false, true]) {
+	const { log, store } = await createReplicaHeadsLog(nativeGraph);
+	rows.push(
+		await measure("getMaxHeadDataU32()", nativeGraph, async () => {
+			await getMaxHeadDataU32(log);
 		}),
 	);
 	await log.close();

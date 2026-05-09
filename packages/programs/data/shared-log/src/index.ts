@@ -4917,6 +4917,29 @@ export class SharedLog<
 		/* ((await this.log.entryIndex?.getMemoryUsage()) || 0) */ // + (await this.log.blocks.size())
 	}
 
+	private clampReplicas(value: number) {
+		const lower = this.replicas.min?.getValue(this) || 1;
+		const higher = this.replicas.max?.getValue(this) ?? Number.MAX_SAFE_INTEGER;
+		return Math.max(Math.min(higher, value), lower);
+	}
+
+	private async getMaxReplicasFromHeads(gid: string) {
+		const nativeMax = await this.log.entryIndex.getMaxHeadDataU32(gid);
+		if (nativeMax != null) {
+			return this.clampReplicas(nativeMax);
+		}
+		const headsWithGid = (await this.log.entryIndex
+			.getHeads(gid, {
+				type: "shape",
+				shape: { meta: { data: true } },
+			})
+			.all()) as { meta: { data?: Uint8Array } }[];
+		if (headsWithGid.length === 0) {
+			return undefined;
+		}
+		return maxReplicas(this, headsWithGid.values());
+	}
+
 	get topic() {
 		return this.log.idString;
 	}
@@ -5368,19 +5391,11 @@ export class SharedLog<
 								from: context.from!,
 							});
 
-							const headsWithGid = (await this.log.entryIndex
-								.getHeads(gid, {
-									type: "shape",
-									shape: { meta: { data: true } },
-								})
-								.all()) as { meta: { data?: Uint8Array } }[];
-
 							const latestEntry = getLatestEntry(entries)!;
 
 							const maxReplicasFromHead =
-								headsWithGid && headsWithGid.length > 0
-									? maxReplicas(this, [...headsWithGid.values()])
-									: this.replicas.min.getValue(this);
+								(await this.getMaxReplicasFromHeads(gid)) ??
+								this.replicas.min.getValue(this);
 
 							const maxReplicasFromNewEntries = maxReplicas(
 								this,
@@ -5536,18 +5551,10 @@ export class SharedLog<
 
 							if (maybeDelete) {
 								for (const entries of maybeDelete as EntryWithRefs<any>[][]) {
-									const headsWithGid = (await this.log.entryIndex
-										.getHeads(entries[0].entry.meta.gid, {
-											type: "shape",
-											shape: { meta: { data: true } },
-										})
-										.all()) as { meta: { data?: Uint8Array } }[];
-									if (headsWithGid && headsWithGid.length > 0) {
-										const minReplicas = maxReplicas(
-											this,
-											headsWithGid.values(),
-										);
-
+									const minReplicas = await this.getMaxReplicasFromHeads(
+										entries[0].entry.meta.gid,
+									);
+									if (minReplicas != null) {
 										const isLeader = await this.isLeader({
 											entry: entries[0].entry,
 											replicas: minReplicas,

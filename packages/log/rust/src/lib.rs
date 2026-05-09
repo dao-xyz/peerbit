@@ -202,6 +202,15 @@ impl LogGraphIndex {
         self.head_entries(gid)
     }
 
+    pub fn max_head_data_u32(&self, gid: Option<&str>) -> Option<u32> {
+        let mut max = None;
+        for entry in self.head_data_entries(gid) {
+            let value = decode_absolute_replica_data_u32(entry.data.as_deref())?;
+            max = Some(max.map_or(value, |current: u32| current.max(value)));
+        }
+        max
+    }
+
     pub fn head_join_entries(&self, gid: Option<&str>) -> Vec<LogIndexEntry> {
         self.head_entries(gid)
     }
@@ -496,6 +505,13 @@ impl NativeLogIndex {
         log_data_entries_to_rows(self.inner.head_data_entries(gid.as_deref()))
     }
 
+    pub fn max_head_data_u32(&self, gid: Option<String>) -> JsValue {
+        self.inner
+            .max_head_data_u32(gid.as_deref())
+            .map(|value| JsValue::from_f64(value as f64))
+            .unwrap_or(JsValue::UNDEFINED)
+    }
+
     pub fn head_join_entries(&self, gid: Option<String>) -> Array {
         log_join_entries_to_rows(self.inner.head_join_entries(gid.as_deref()))
     }
@@ -586,6 +602,14 @@ fn optional_bytes_from_js(value: JsValue) -> Option<Vec<u8>> {
         return None;
     }
     Some(Uint8Array::new(&value).to_vec())
+}
+
+fn decode_absolute_replica_data_u32(data: Option<&[u8]>) -> Option<u32> {
+    let data = data?;
+    if data.len() != 5 || data[0] != 0 {
+        return None;
+    }
+    Some(u32::from_le_bytes([data[1], data[2], data[3], data[4]]))
 }
 
 fn log_entries_to_rows(values: Vec<LogIndexEntry>) -> Array {
