@@ -61,6 +61,19 @@ type NativeEntryV0Encoder = {
 		signaturePublicKey: Uint8Array;
 		prehash?: number;
 	}): Promise<Uint8Array>;
+	encodeEntryV0StorageWithCid?(input: {
+		clockId: Uint8Array;
+		wallTime: bigint;
+		logical?: number;
+		gid: string;
+		next?: string[];
+		type?: number;
+		metaData?: Uint8Array;
+		payloadData: Uint8Array;
+		signature: Uint8Array;
+		signaturePublicKey: Uint8Array;
+		prehash?: number;
+	}): Promise<{ bytes: Uint8Array; cid: string }>;
 	calculateRawCidV1(bytes: Uint8Array): Promise<string>;
 };
 
@@ -75,6 +88,7 @@ const loadNativeEntryV0Encoder = async () => {
 				const mod = (await import(["@peerbit", "log-rust"].join("/"))) as {
 					encodeEntryV0Signable?: NativeEntryV0Encoder["encodeEntryV0Signable"];
 					encodeEntryV0Storage?: NativeEntryV0Encoder["encodeEntryV0Storage"];
+					encodeEntryV0StorageWithCid?: NativeEntryV0Encoder["encodeEntryV0StorageWithCid"];
 					calculateRawCidV1?: NativeEntryV0Encoder["calculateRawCidV1"];
 				};
 				if (
@@ -87,6 +101,7 @@ const loadNativeEntryV0Encoder = async () => {
 				return {
 					encodeEntryV0Signable: mod.encodeEntryV0Signable,
 					encodeEntryV0Storage: mod.encodeEntryV0Storage,
+					encodeEntryV0StorageWithCid: mod.encodeEntryV0StorageWithCid,
 					calculateRawCidV1: mod.calculateRawCidV1,
 				};
 			} catch {
@@ -662,16 +677,22 @@ export class EntryV0<T>
 			signatures.length === 1 &&
 			signatures[0]!.publicKey instanceof Ed25519PublicKey
 		) {
-			const storageBytes = await nativeEncoder.encodeEntryV0Storage({
+			const storageInput = {
 				...nativePlainInput,
 				signature: signatures[0]!.signature,
 				signaturePublicKey: signatures[0]!.publicKey.publicKey,
 				prehash: signatures[0]!.prehash,
-			});
-			nativeStorage = {
-				bytes: storageBytes,
-				cid: await nativeEncoder.calculateRawCidV1(storageBytes),
 			};
+			nativeStorage = nativeEncoder.encodeEntryV0StorageWithCid
+				? await nativeEncoder.encodeEntryV0StorageWithCid(storageInput)
+				: await (async () => {
+						const storageBytes =
+							await nativeEncoder.encodeEntryV0Storage(storageInput);
+						return {
+							bytes: storageBytes,
+							cid: await nativeEncoder.calculateRawCidV1(storageBytes),
+						};
+					})();
 		}
 
 		// Append hash

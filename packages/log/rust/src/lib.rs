@@ -747,14 +747,191 @@ pub fn encode_entry_v0_storage(
     signature_public_key: Uint8Array,
     prehash: u8,
 ) -> Result<Uint8Array, JsValue> {
-    if signature.length() != 64 {
-        return Err(JsValue::from_str("Expected Ed25519 signature length 64"));
+    let bytes = encode_entry_v0_storage_vec(
+        clock_id,
+        wall_time,
+        logical,
+        gid,
+        next,
+        entry_type,
+        meta_data,
+        payload_data,
+        signature,
+        signature_public_key,
+        prehash,
+    )?;
+    Ok(Uint8Array::from(bytes.as_slice()))
+}
+
+#[wasm_bindgen]
+pub fn encode_entry_v0_storage_with_cid(
+    clock_id: Uint8Array,
+    wall_time: u64,
+    logical: u32,
+    gid: String,
+    next: Array,
+    entry_type: u8,
+    meta_data: JsValue,
+    payload_data: Uint8Array,
+    signature: Uint8Array,
+    signature_public_key: Uint8Array,
+    prehash: u8,
+) -> Result<Array, JsValue> {
+    let bytes = encode_entry_v0_storage_vec(
+        clock_id,
+        wall_time,
+        logical,
+        gid,
+        next,
+        entry_type,
+        meta_data,
+        payload_data,
+        signature,
+        signature_public_key,
+        prehash,
+    )?;
+    Ok(storage_with_cid_to_row(bytes))
+}
+
+#[wasm_bindgen]
+pub fn encode_entry_v0_signable_batch(
+    clock_ids: Array,
+    wall_times: BigUint64Array,
+    logicals: Uint32Array,
+    gids: Array,
+    nexts: Array,
+    entry_types: Uint8Array,
+    meta_datas: Array,
+    payload_datas: Array,
+) -> Result<Array, JsValue> {
+    let len = clock_ids.length();
+    validate_entry_batch_lengths(
+        len,
+        &gids,
+        &nexts,
+        &meta_datas,
+        &payload_datas,
+        &wall_times,
+        &logicals,
+        &entry_types,
+    )?;
+
+    let out = Array::new();
+    for i in 0..len {
+        let input = entry_input_from_batch(
+            i,
+            &clock_ids,
+            &wall_times,
+            &logicals,
+            &gids,
+            &nexts,
+            &entry_types,
+            &meta_datas,
+            &payload_datas,
+        )?;
+        let bytes = encode_entry_v0(input, None);
+        out.push(&Uint8Array::from(bytes.as_slice()));
     }
-    if signature_public_key.length() != 32 {
-        return Err(JsValue::from_str("Expected Ed25519 public key length 32"));
+    Ok(out)
+}
+
+#[wasm_bindgen]
+pub fn encode_entry_v0_storage_batch_with_cids(
+    clock_ids: Array,
+    wall_times: BigUint64Array,
+    logicals: Uint32Array,
+    gids: Array,
+    nexts: Array,
+    entry_types: Uint8Array,
+    meta_datas: Array,
+    payload_datas: Array,
+    signatures: Array,
+    signature_public_keys: Array,
+    prehashes: Uint8Array,
+) -> Result<Array, JsValue> {
+    let len = clock_ids.length();
+    validate_entry_batch_lengths(
+        len,
+        &gids,
+        &nexts,
+        &meta_datas,
+        &payload_datas,
+        &wall_times,
+        &logicals,
+        &entry_types,
+    )?;
+    for values in [&signatures, &signature_public_keys] {
+        if values.length() != len {
+            return Err(JsValue::from_str("Expected equal column lengths"));
+        }
     }
+    if prehashes.length() != len {
+        return Err(JsValue::from_str("Expected equal column lengths"));
+    }
+
+    let out = Array::new();
+    for i in 0..len {
+        let input = entry_input_from_batch(
+            i,
+            &clock_ids,
+            &wall_times,
+            &logicals,
+            &gids,
+            &nexts,
+            &entry_types,
+            &meta_datas,
+            &payload_datas,
+        )?;
+        let signature = required_bytes_from_array(&signatures, i, "signature")?;
+        let public_key = required_bytes_from_array(&signature_public_keys, i, "public key")?;
+        validate_signature_lengths(&signature, &public_key)?;
+        let bytes = encode_entry_v0(
+            input,
+            Some(SignatureInput {
+                signature,
+                public_key,
+                prehash: prehashes.get_index(i),
+            }),
+        );
+        out.push(&storage_with_cid_to_row(bytes));
+    }
+    Ok(out)
+}
+
+#[wasm_bindgen]
+pub fn calculate_raw_cid_v1(bytes: Uint8Array) -> String {
+    calculate_raw_cid_v1_from_bytes(&bytes.to_vec())
+}
+
+fn calculate_raw_cid_v1_from_bytes(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut cid = Vec::with_capacity(36);
+    cid.push(0x01); // CIDv1
+    cid.push(0x55); // raw codec
+    cid.push(0x12); // sha2-256 multihash code
+    cid.push(0x20); // 32 byte digest
+    cid.extend_from_slice(&digest);
+    format!("z{}", bs58::encode(cid).into_string())
+}
+
+fn encode_entry_v0_storage_vec(
+    clock_id: Uint8Array,
+    wall_time: u64,
+    logical: u32,
+    gid: String,
+    next: Array,
+    entry_type: u8,
+    meta_data: JsValue,
+    payload_data: Uint8Array,
+    signature: Uint8Array,
+    signature_public_key: Uint8Array,
+    prehash: u8,
+) -> Result<Vec<u8>, JsValue> {
+    let signature = signature.to_vec();
+    let public_key = signature_public_key.to_vec();
+    validate_signature_lengths(&signature, &public_key)?;
     let next = strings_from_array(next)?;
-    let bytes = encode_entry_v0(
+    Ok(encode_entry_v0(
         EntryV0EncodeInput {
             clock_id: clock_id.to_vec(),
             wall_time,
@@ -766,24 +943,28 @@ pub fn encode_entry_v0_storage(
             payload_data: payload_data.to_vec(),
         },
         Some(SignatureInput {
-            signature: signature.to_vec(),
-            public_key: signature_public_key.to_vec(),
+            signature,
+            public_key,
             prehash,
         }),
-    );
-    Ok(Uint8Array::from(bytes.as_slice()))
+    ))
 }
 
-#[wasm_bindgen]
-pub fn calculate_raw_cid_v1(bytes: Uint8Array) -> String {
-    let digest = Sha256::digest(bytes.to_vec());
-    let mut cid = Vec::with_capacity(36);
-    cid.push(0x01); // CIDv1
-    cid.push(0x55); // raw codec
-    cid.push(0x12); // sha2-256 multihash code
-    cid.push(0x20); // 32 byte digest
-    cid.extend_from_slice(&digest);
-    format!("z{}", bs58::encode(cid).into_string())
+fn validate_signature_lengths(signature: &[u8], public_key: &[u8]) -> Result<(), JsValue> {
+    if signature.len() != 64 {
+        return Err(JsValue::from_str("Expected Ed25519 signature length 64"));
+    }
+    if public_key.len() != 32 {
+        return Err(JsValue::from_str("Expected Ed25519 public key length 32"));
+    }
+    Ok(())
+}
+
+fn storage_with_cid_to_row(bytes: Vec<u8>) -> Array {
+    let row = Array::new();
+    row.push(&Uint8Array::from(bytes.as_slice()));
+    row.push(&JsValue::from_str(&calculate_raw_cid_v1_from_bytes(&bytes)));
+    row
 }
 
 struct EntryV0EncodeInput {
@@ -923,6 +1104,54 @@ fn string_arrays_from_array(values: Array) -> Result<Vec<Vec<String>>, JsValue> 
     Ok(out)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn validate_entry_batch_lengths(
+    len: u32,
+    gids: &Array,
+    nexts: &Array,
+    meta_datas: &Array,
+    payload_datas: &Array,
+    wall_times: &BigUint64Array,
+    logicals: &Uint32Array,
+    entry_types: &Uint8Array,
+) -> Result<(), JsValue> {
+    for values in [gids, nexts, meta_datas, payload_datas] {
+        if values.length() != len {
+            return Err(JsValue::from_str("Expected equal column lengths"));
+        }
+    }
+    for numeric_len in [wall_times.length(), logicals.length(), entry_types.length()] {
+        if numeric_len != len {
+            return Err(JsValue::from_str("Expected equal column lengths"));
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn entry_input_from_batch(
+    index: u32,
+    clock_ids: &Array,
+    wall_times: &BigUint64Array,
+    logicals: &Uint32Array,
+    gids: &Array,
+    nexts: &Array,
+    entry_types: &Uint8Array,
+    meta_datas: &Array,
+    payload_datas: &Array,
+) -> Result<EntryV0EncodeInput, JsValue> {
+    Ok(EntryV0EncodeInput {
+        clock_id: required_bytes_from_array(clock_ids, index, "clock id")?,
+        wall_time: wall_times.get_index(index),
+        logical: logicals.get_index(index),
+        gid: required_string_from_array(gids, index)?,
+        next: strings_from_array(required_array_from_array(nexts, index)?)?,
+        entry_type: entry_types.get_index(index),
+        meta_data: optional_bytes_from_js(meta_datas.get(index)),
+        payload_data: required_bytes_from_array(payload_datas, index, "payload")?,
+    })
+}
+
 fn strings_to_array(values: Vec<String>) -> Array {
     let out = Array::new();
     for value in values {
@@ -943,6 +1172,14 @@ fn required_string_from_array(values: &Array, index: u32) -> Result<String, JsVa
         .get(index)
         .as_string()
         .ok_or_else(|| JsValue::from_str("Expected string field"))
+}
+
+fn required_bytes_from_array(values: &Array, index: u32, field: &str) -> Result<Vec<u8>, JsValue> {
+    let value = values.get(index);
+    if value.is_undefined() || value.is_null() {
+        return Err(JsValue::from_str(&format!("Expected {field} bytes")));
+    }
+    Ok(Uint8Array::new(&value).to_vec())
 }
 
 fn required_array_from_array(values: &Array, index: u32) -> Result<Array, JsValue> {

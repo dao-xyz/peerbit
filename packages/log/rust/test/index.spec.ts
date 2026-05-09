@@ -4,7 +4,10 @@ import {
 	calculateRawCidV1,
 	createLogGraphIndex,
 	encodeEntryV0Signable,
+	encodeEntryV0SignableBatch,
 	encodeEntryV0Storage,
+	encodeEntryV0StorageBatchWithCids,
+	encodeEntryV0StorageWithCid,
 } from "../src/index.js";
 
 const APPEND = 0;
@@ -400,6 +403,24 @@ describe("native EntryV0 encoding", () => {
 		expect(await calculateRawCidV1(nativeStorage)).to.equal(
 			TS_BORSH_ENTRY_V0_FIXTURE.withMeta.cid,
 		);
+		expect(
+			await encodeEntryV0StorageWithCid({
+				clockId,
+				wallTime,
+				logical,
+				gid,
+				next,
+				type: APPEND,
+				metaData,
+				payloadData,
+				signature: signatureBytes,
+				signaturePublicKey: publicKeyBytes,
+				prehash: 0,
+			}),
+		).to.deep.equal({
+			bytes: nativeStorage,
+			cid: TS_BORSH_ENTRY_V0_FIXTURE.withMeta.cid,
+		});
 	});
 
 	it("matches TS/Borsh encoding without optional entry metadata", async () => {
@@ -416,5 +437,44 @@ describe("native EntryV0 encoding", () => {
 				payloadData,
 			})),
 		]).to.deep.equal([...fromHex(TS_BORSH_ENTRY_V0_FIXTURE.noMeta.signable)]);
+	});
+
+	it("batches independent TS/Borsh-compatible encodes", async () => {
+		const withMeta = {
+			clockId: bytes(33, 1),
+			wallTime: 123456789n,
+			logical: 7,
+			gid: "gid-a",
+			next: ["next-a", "next-b"],
+			type: APPEND,
+			metaData: new Uint8Array([9, 8, 7]),
+			payloadData: new Uint8Array([1, 2, 3, 4]),
+		};
+		const noMeta = {
+			clockId: bytes(33, 11),
+			wallTime: 987654321n,
+			gid: "gid-no-meta",
+			payloadData: new Uint8Array([5, 4, 3, 2, 1]),
+		};
+
+		const signables = await encodeEntryV0SignableBatch([withMeta, noMeta]);
+		expect(signables.map((bytes) => [...bytes])).to.deep.equal([
+			[...fromHex(TS_BORSH_ENTRY_V0_FIXTURE.withMeta.signable)],
+			[...fromHex(TS_BORSH_ENTRY_V0_FIXTURE.noMeta.signable)],
+		]);
+
+		const storage = await encodeEntryV0StorageBatchWithCids([
+			{
+				...withMeta,
+				signature: bytes(64, 96),
+				signaturePublicKey: bytes(32, 64),
+				prehash: 0,
+			},
+		]);
+		expect(storage).to.have.length(1);
+		expect([...storage[0]!.bytes]).to.deep.equal([
+			...fromHex(TS_BORSH_ENTRY_V0_FIXTURE.withMeta.storage),
+		]);
+		expect(storage[0]!.cid).to.equal(TS_BORSH_ENTRY_V0_FIXTURE.withMeta.cid);
 	});
 });
