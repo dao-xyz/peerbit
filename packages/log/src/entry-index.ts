@@ -80,6 +80,7 @@ export type NativeLogGraph = {
 	headEntries: (gid?: string) => SortableEntry[];
 	joinHeadEntries: (gid?: string) => NativeLogJoinEntry[];
 	childJoinEntries: (hash: string) => NativeLogJoinEntry[];
+	uniqueReferenceGids: (hash: string) => string[] | undefined;
 	planDeleteRecursively: (
 		hashes: Iterable<string>,
 		skipFirst?: boolean,
@@ -399,6 +400,13 @@ export class EntryIndex<T> {
 				meta: { type: true, next: true, gid: true, clock: true },
 			},
 		}).all() as Promise<NativeLogJoinEntry[]>;
+	}
+
+	getUniqueReferenceGids(hash: string): string[] | undefined {
+		if (!this.properties.nativeGraph) {
+			return undefined;
+		}
+		return this.properties.nativeGraph.graph.uniqueReferenceGids(hash);
 	}
 
 	planDeleteRecursively(
