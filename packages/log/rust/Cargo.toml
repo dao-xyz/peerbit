@@ -9,6 +9,7 @@ description = "Rust-backed log graph index for Peerbit"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+ed25519-dalek = { version = "2.1.1", default-features = false, features = ["fast"] }
 indexmap = "2.7.1"
 js-sys = "0.3.80"
 peerbit_indexer_rust = { path = "../../utils/indexer/rust" }

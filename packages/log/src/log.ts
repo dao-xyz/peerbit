@@ -208,6 +208,7 @@ export class Log<T> {
 	private _appendDurability!: AppendDurability;
 	private _joining!: Map<string, Promise<any>>; // entry hashes that are currently joining into this log
 	private _sortFn!: Sorting.SortFn;
+	private _hasCustomCanAppend = false;
 
 	constructor(properties?: { id?: Uint8Array }) {
 		this._id = properties?.id || randomBytes(32);
@@ -333,6 +334,7 @@ export class Log<T> {
 			}
 			return true;
 		};
+		this._hasCustomCanAppend = !!options?.canAppend;
 
 		this._onChange = options?.onChange;
 		this._closed = false;
@@ -621,12 +623,45 @@ export class Log<T> {
 		)[] = [];
 		const deferBlockStore = hasPutMany(this._storage);
 
-		for (const item of data) {
-			const entry = await this.createAppendEntry(item, options, nexts, {
-				deferStore: deferBlockStore,
-			});
-			entries.push(entry);
-			nexts = [entry];
+		const nativeEntries =
+			deferBlockStore &&
+			!options.encryption &&
+			!options.signers &&
+			!(options.canAppend || this._hasCustomCanAppend) &&
+			!options.meta?.timestamp
+				? await EntryV0.createPlainAppendChain<T>({
+						data,
+						meta: {
+							clocks: () =>
+								data.map(
+									() =>
+										new Clock({
+											id: this._identity.publicKey.bytes,
+											timestamp: this._hlc.now(),
+										}),
+								),
+							type: options.meta?.type,
+							gidSeed: options.meta?.gidSeed,
+							data: options.meta?.data,
+							next: nexts,
+						},
+						encoding: this._encoding,
+						identity: options.identity || this._identity,
+						deferStore: deferBlockStore,
+					})
+				: undefined;
+
+		if (nativeEntries) {
+			entries.push(...nativeEntries);
+			nexts = [entries[entries.length - 1]!];
+		} else {
+			for (const item of data) {
+				const entry = await this.createAppendEntry(item, options, nexts, {
+					deferStore: deferBlockStore,
+				});
+				entries.push(entry);
+				nexts = [entry];
+			}
 		}
 
 		await this.joinMissingNexts(entries[0]!, initialNexts);

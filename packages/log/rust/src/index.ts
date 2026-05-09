@@ -116,6 +116,11 @@ type WasmModule = {
 	default: (input?: unknown) => Promise<unknown>;
 	initSync: (input?: unknown) => unknown;
 	NativeLogIndex: new () => NativeLogIndexHandle;
+	sign_ed25519: (
+		privateKey: Uint8Array,
+		publicKey: Uint8Array,
+		data: Uint8Array,
+	) => Uint8Array;
 	encode_entry_v0_signable: (
 		clockId: Uint8Array,
 		wallTime: bigint,
@@ -175,6 +180,28 @@ type WasmModule = {
 		signaturePublicKeys: Uint8Array[],
 		prehashes: Uint8Array,
 	) => Array<[Uint8Array, string]>;
+	prepare_entry_v0_plain_chain: (
+		clockId: Uint8Array,
+		privateKey: Uint8Array,
+		publicKey: Uint8Array,
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gid: string,
+		initialNext: string[],
+		type: number,
+		metaDatas: Array<Uint8Array | undefined>,
+		payloadDatas: Uint8Array[],
+	) => Array<
+		[
+			Uint8Array,
+			string,
+			Uint8Array,
+			string[],
+			Uint8Array,
+			Uint8Array,
+			Uint8Array,
+		]
+	>;
 	calculate_raw_cid_v1: (bytes: Uint8Array) => string;
 };
 
@@ -470,6 +497,27 @@ export type EntryV0EncodedStorage = {
 	cid: string;
 };
 
+export type EntryV0PlainChainInput = {
+	clockId: Uint8Array;
+	privateKey: Uint8Array;
+	publicKey: Uint8Array;
+	wallTimes: Array<bigint | number | string>;
+	logicals?: number[];
+	gid: string;
+	initialNext?: string[];
+	type?: number;
+	metaDatas?: Array<Uint8Array | undefined>;
+	payloadDatas: Uint8Array[];
+};
+
+export type EntryV0PreparedPlainEntry = EntryV0EncodedStorage & {
+	signature: Uint8Array;
+	next: string[];
+	metaBytes: Uint8Array;
+	payloadBytes: Uint8Array;
+	signatureBytes: Uint8Array;
+};
+
 const entryColumns = (inputs: EntryV0EncodeInput[]) => {
 	const clockIds = new Array<Uint8Array>(inputs.length);
 	const wallTimes = new BigUint64Array(inputs.length);
@@ -500,6 +548,15 @@ const entryColumns = (inputs: EntryV0EncodeInput[]) => {
 		metaDatas,
 		payloadDatas,
 	};
+};
+
+export const signEd25519 = async (input: {
+	privateKey: Uint8Array;
+	publicKey: Uint8Array;
+	data: Uint8Array;
+}): Promise<Uint8Array> => {
+	const wasm = await loadWasm();
+	return wasm.sign_ed25519(input.privateKey, input.publicKey, input.data);
 };
 
 export const encodeEntryV0Signable = async (
@@ -609,6 +666,60 @@ export const encodeEntryV0StorageBatchWithCids = async (
 			prehashes,
 		)
 		.map(([bytes, cid]) => ({ bytes, cid }));
+};
+
+export const prepareEntryV0PlainChain = async (
+	input: EntryV0PlainChainInput,
+): Promise<EntryV0PreparedPlainEntry[]> => {
+	if (input.payloadDatas.length === 0) {
+		return [];
+	}
+	if (input.wallTimes.length !== input.payloadDatas.length) {
+		throw new Error("Expected equal column lengths");
+	}
+	const wasm = await loadWasm();
+	const wallTimes = new BigUint64Array(input.wallTimes.length);
+	const logicals = new Uint32Array(input.payloadDatas.length);
+	const metaDatas = new Array<Uint8Array | undefined>(
+		input.payloadDatas.length,
+	);
+	for (let i = 0; i < input.payloadDatas.length; i++) {
+		wallTimes[i] = BigInt(input.wallTimes[i]!);
+		logicals[i] = input.logicals?.[i] ?? 0;
+		metaDatas[i] = input.metaDatas?.[i];
+	}
+	return wasm
+		.prepare_entry_v0_plain_chain(
+			input.clockId,
+			input.privateKey,
+			input.publicKey,
+			wallTimes,
+			logicals,
+			input.gid,
+			input.initialNext ?? [],
+			input.type ?? 0,
+			metaDatas,
+			input.payloadDatas,
+		)
+		.map(
+			([
+				bytes,
+				cid,
+				signature,
+				next,
+				metaBytes,
+				payloadBytes,
+				signatureBytes,
+			]) => ({
+				bytes,
+				cid,
+				signature,
+				next,
+				metaBytes,
+				payloadBytes,
+				signatureBytes,
+			}),
+		);
 };
 
 export const calculateRawCidV1 = async (bytes: Uint8Array): Promise<string> => {

@@ -1,3 +1,4 @@
+use ed25519_dalek::{Signer, SigningKey};
 use indexmap::{IndexMap, IndexSet};
 use js_sys::{Array, BigUint64Array, Uint32Array, Uint8Array};
 use peerbit_indexer_rust::planner::{
@@ -734,6 +735,16 @@ pub fn encode_entry_v0_signable(
 }
 
 #[wasm_bindgen]
+pub fn sign_ed25519(
+    private_key: Uint8Array,
+    public_key: Uint8Array,
+    data: Uint8Array,
+) -> Result<Uint8Array, JsValue> {
+    let signature = sign_ed25519_raw(&private_key.to_vec(), &public_key.to_vec(), &data.to_vec())?;
+    Ok(Uint8Array::from(signature.as_slice()))
+}
+
+#[wasm_bindgen]
 pub fn encode_entry_v0_storage(
     clock_id: Uint8Array,
     wall_time: u64,
@@ -899,6 +910,70 @@ pub fn encode_entry_v0_storage_batch_with_cids(
 }
 
 #[wasm_bindgen]
+pub fn prepare_entry_v0_plain_chain(
+    clock_id: Uint8Array,
+    private_key: Uint8Array,
+    public_key: Uint8Array,
+    wall_times: BigUint64Array,
+    logicals: Uint32Array,
+    gid: String,
+    initial_next: Array,
+    entry_type: u8,
+    meta_datas: Array,
+    payload_datas: Array,
+) -> Result<Array, JsValue> {
+    let len = payload_datas.length();
+    if meta_datas.length() != len || wall_times.length() != len || logicals.length() != len {
+        return Err(JsValue::from_str("Expected equal column lengths"));
+    }
+
+    let clock_id = clock_id.to_vec();
+    let private_key = private_key.to_vec();
+    let public_key = public_key.to_vec();
+    let signing_key = validate_ed25519_keypair(&private_key, &public_key)?;
+
+    let mut next = strings_from_array(initial_next)?;
+    let out = Array::new();
+    for i in 0..len {
+        let input = EntryV0EncodeInput {
+            clock_id: clock_id.clone(),
+            wall_time: wall_times.get_index(i),
+            logical: logicals.get_index(i),
+            gid: gid.clone(),
+            next: next.clone(),
+            entry_type,
+            meta_data: optional_bytes_from_js(meta_datas.get(i)),
+            payload_data: required_bytes_from_array(&payload_datas, i, "payload")?,
+        };
+        let meta = encode_meta(&input);
+        let payload = encode_payload(&input.payload_data);
+        let signable = encode_entry_v0_parts(&meta, &payload, None);
+        let signature = sign_ed25519_with_key(&signing_key, &signable);
+        let signature_input = SignatureInput {
+            signature: signature.clone(),
+            public_key: public_key.clone(),
+            prehash: 0,
+        };
+        let signature_with_key = encode_signature_with_key(&signature_input);
+        let storage = encode_entry_v0_parts(&meta, &payload, Some(signature_input));
+        let cid = calculate_raw_cid_v1_from_bytes(&storage);
+
+        let row = Array::new();
+        row.push(&Uint8Array::from(storage.as_slice()));
+        row.push(&JsValue::from_str(&cid));
+        row.push(&Uint8Array::from(signature.as_slice()));
+        row.push(&strings_to_array(next));
+        row.push(&Uint8Array::from(meta.as_slice()));
+        row.push(&Uint8Array::from(payload.as_slice()));
+        row.push(&Uint8Array::from(signature_with_key.as_slice()));
+        out.push(&row);
+
+        next = vec![cid];
+    }
+    Ok(out)
+}
+
+#[wasm_bindgen]
 pub fn calculate_raw_cid_v1(bytes: Uint8Array) -> String {
     calculate_raw_cid_v1_from_bytes(&bytes.to_vec())
 }
@@ -987,10 +1062,18 @@ struct SignatureInput {
 fn encode_entry_v0(input: EntryV0EncodeInput, signature: Option<SignatureInput>) -> Vec<u8> {
     let meta = encode_meta(&input);
     let payload = encode_payload(&input.payload_data);
+    encode_entry_v0_parts(&meta, &payload, signature)
+}
+
+fn encode_entry_v0_parts(
+    meta: &[u8],
+    payload: &[u8],
+    signature: Option<SignatureInput>,
+) -> Vec<u8> {
     let mut out = Vec::new();
     write_u8(&mut out, 0); // EntryV0 variant
-    write_decrypted_thing(&mut out, &meta);
-    write_decrypted_thing(&mut out, &payload);
+    write_decrypted_thing(&mut out, meta);
+    write_decrypted_thing(&mut out, payload);
     out.extend_from_slice(&[0, 0, 0, 0]); // reserved
     match signature {
         Some(signature) => {
@@ -1041,11 +1124,11 @@ fn encode_payload(data: &[u8]) -> Vec<u8> {
 fn write_signatures(out: &mut Vec<u8>, signature: SignatureInput) {
     write_u8(out, 0); // Signatures variant
     write_u32(out, 1);
-    let signature_with_key = encode_signature_with_key(signature);
+    let signature_with_key = encode_signature_with_key(&signature);
     write_decrypted_thing(out, &signature_with_key);
 }
 
-fn encode_signature_with_key(signature: SignatureInput) -> Vec<u8> {
+fn encode_signature_with_key(signature: &SignatureInput) -> Vec<u8> {
     let mut out = Vec::new();
     write_u8(&mut out, 0); // SignatureWithKey variant
     write_bytes(&mut out, &signature.signature);
@@ -1053,6 +1136,39 @@ fn encode_signature_with_key(signature: SignatureInput) -> Vec<u8> {
     out.extend_from_slice(&signature.public_key);
     write_u8(&mut out, signature.prehash);
     out
+}
+
+fn sign_ed25519_raw(
+    private_key: &[u8],
+    public_key: &[u8],
+    data: &[u8],
+) -> Result<Vec<u8>, JsValue> {
+    let signing_key = validate_ed25519_keypair(private_key, public_key)?;
+    Ok(sign_ed25519_with_key(&signing_key, data))
+}
+
+fn sign_ed25519_with_key(signing_key: &SigningKey, data: &[u8]) -> Vec<u8> {
+    signing_key.sign(data).to_bytes().to_vec()
+}
+
+fn validate_ed25519_keypair(private_key: &[u8], public_key: &[u8]) -> Result<SigningKey, JsValue> {
+    if private_key.len() != 32 {
+        return Err(JsValue::from_str("Expected Ed25519 private key length 32"));
+    }
+    if public_key.len() != 32 {
+        return Err(JsValue::from_str("Expected Ed25519 public key length 32"));
+    }
+    let signing_key = SigningKey::from_bytes(
+        private_key
+            .try_into()
+            .map_err(|_| JsValue::from_str("Expected Ed25519 private key length 32"))?,
+    );
+    if signing_key.verifying_key().to_bytes().as_slice() != public_key {
+        return Err(JsValue::from_str(
+            "Ed25519 public key does not match private key",
+        ));
+    }
+    Ok(signing_key)
 }
 
 fn write_decrypted_thing(out: &mut Vec<u8>, data: &[u8]) {
