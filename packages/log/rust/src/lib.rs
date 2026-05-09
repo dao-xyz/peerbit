@@ -203,6 +203,13 @@ impl LogGraphIndex {
         gids.iter().any(|gid| self.has_head(Some(gid)))
     }
 
+    pub fn has_any_head_batch(&self, gid_sets: &[Vec<String>]) -> Vec<bool> {
+        gid_sets
+            .iter()
+            .map(|gids| self.has_any_head(gids))
+            .collect()
+    }
+
     pub fn head_entries(&self, gid: Option<&str>) -> Vec<LogIndexEntry> {
         self.heads(gid)
             .into_iter()
@@ -518,6 +525,15 @@ impl NativeLogIndex {
         Ok(self.inner.has_any_head(&gids))
     }
 
+    pub fn has_any_head_batch(&self, gid_sets: Array) -> Result<Array, JsValue> {
+        let gid_sets = string_arrays_from_array(gid_sets)?;
+        let out = Array::new();
+        for value in self.inner.has_any_head_batch(&gid_sets) {
+            out.push(&JsValue::from_bool(value));
+        }
+        Ok(out)
+    }
+
     pub fn head_entries(&self, gid: Option<String>) -> Array {
         log_entries_to_rows(self.inner.head_entries(gid.as_deref()))
     }
@@ -606,6 +622,17 @@ fn strings_from_array(values: Array) -> Result<Vec<String>, JsValue> {
             return Err(JsValue::from_str("Expected string array"));
         };
         out.push(value);
+    }
+    Ok(out)
+}
+
+fn string_arrays_from_array(values: Array) -> Result<Vec<Vec<String>>, JsValue> {
+    let mut out = Vec::with_capacity(values.length() as usize);
+    for value in values.iter() {
+        if !Array::is_array(&value) {
+            return Err(JsValue::from_str("Expected string array array"));
+        }
+        out.push(strings_from_array(Array::from(&value))?);
     }
     Ok(out)
 }
@@ -744,6 +771,14 @@ mod tests {
         assert!(!index.has_head(Some("missing")));
         assert!(index.has_any_head(&["missing".to_string(), "two".to_string()]));
         assert!(!index.has_any_head(&["missing".to_string()]));
+        assert_eq!(
+            index.has_any_head_batch(&[
+                vec!["missing".to_string(), "two".to_string()],
+                vec!["missing".to_string()],
+                Vec::new(),
+            ]),
+            vec![true, false, false],
+        );
     }
 
     #[test]
