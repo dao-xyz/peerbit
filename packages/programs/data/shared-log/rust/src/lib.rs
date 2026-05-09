@@ -1,5 +1,6 @@
 use indexmap::{IndexMap, IndexSet};
 use js_sys::Array;
+use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashSet};
 use wasm_bindgen::prelude::*;
@@ -37,6 +38,13 @@ impl Resolution {
     fn containment_bucket(self, value: u64) -> usize {
         let bucket = (value as u128 * CONTAINMENT_BUCKETS as u128) / self.domain_size();
         (bucket as usize).min(CONTAINMENT_BUCKETS - 1)
+    }
+
+    fn number_from_digest(self, digest: &[u8]) -> u64 {
+        match self {
+            Self::U32 => u32::from_le_bytes(digest[0..4].try_into().expect("sha256 digest")) as u64,
+            Self::U64 => u64::from_le_bytes(digest[0..8].try_into().expect("sha256 digest")),
+        }
     }
 }
 
@@ -404,6 +412,44 @@ impl RangePlanner {
             .map(|peers| IndexSet::from_iter(peers.iter().cloned()));
 
         self.get_samples(cursors, &options)
+    }
+
+    pub fn get_grid(&self, from: u64, count: usize) -> Vec<u64> {
+        if count == 0 {
+            return Vec::new();
+        }
+
+        match self.resolution {
+            Resolution::U32 => {
+                let max = MAX_U32 as f64;
+                (0..count)
+                    .map(|index| {
+                        ((from as f64 + (index as f64 * max) / count as f64).round() as u64)
+                            % MAX_U32
+                    })
+                    .collect()
+            }
+            Resolution::U64 => {
+                let max = MAX_U64 as u128;
+                (0..count)
+                    .map(|index| {
+                        ((from as u128 + (index as u128 * max) / count as u128) % max) as u64
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    pub fn hash_gid(&self, gid: &str) -> u64 {
+        let mut bytes = Vec::with_capacity(4 + gid.len());
+        bytes.extend_from_slice(&(gid.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(gid.as_bytes());
+        let digest = Sha256::digest(bytes);
+        self.resolution.number_from_digest(&digest)
+    }
+
+    pub fn get_gid_coordinates(&self, gid: &str, count: usize) -> Vec<u64> {
+        self.get_grid(self.hash_gid(gid), count)
     }
 
     pub fn get_full_replica_leaders(
@@ -815,6 +861,20 @@ impl NativeRangePlanner {
         )))
     }
 
+    pub fn get_grid(&self, from: String, count: usize) -> Result<Array, JsValue> {
+        Ok(numbers_to_rows(
+            self.inner.get_grid(parse_u64(&from)?, count),
+            self.inner.resolution,
+        ))
+    }
+
+    pub fn get_gid_coordinates(&self, gid: String, count: usize) -> Array {
+        numbers_to_rows(
+            self.inner.get_gid_coordinates(&gid, count),
+            self.inner.resolution,
+        )
+    }
+
     pub fn get_full_replica_leaders(
         &self,
         replicas: usize,
@@ -914,6 +974,17 @@ fn strings_to_array(values: Vec<String>) -> Array {
     let out = Array::new();
     for value in values {
         out.push(&JsValue::from_str(&value));
+    }
+    out
+}
+
+fn numbers_to_rows(values: Vec<u64>, resolution: Resolution) -> Array {
+    let out = Array::new();
+    for value in values {
+        match resolution {
+            Resolution::U32 => out.push(&JsValue::from_f64(value as f64)),
+            Resolution::U64 => out.push(&JsValue::from_str(&value.to_string())),
+        };
     }
     out
 }

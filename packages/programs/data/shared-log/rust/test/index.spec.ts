@@ -277,4 +277,28 @@ describe("native shared-log range planner", () => {
 			new Map([["peer-a", { intersecting: true }]]),
 		);
 	});
+
+	it("creates u32 coordinate grids", async () => {
+		const planner = await createRangePlanner("u32");
+		const max = 4_294_967_295;
+		const from = 100;
+
+		expect(planner.getGrid(from, 3)).to.deep.equal([
+			from,
+			Math.round(from + max / 3) % max,
+			Math.round(from + (2 * max) / 3) % max,
+		]);
+	});
+
+	it("creates u64 coordinate grids", async () => {
+		const planner = await createRangePlanner("u64");
+		const max = 18_446_744_073_709_551_615n;
+		const from = 100n;
+
+		expect(planner.getGrid(from, 3)).to.deep.equal([
+			from,
+			(from + max / 3n) % max,
+			(from + (2n * max) / 3n) % max,
+		]);
+	});
 });
