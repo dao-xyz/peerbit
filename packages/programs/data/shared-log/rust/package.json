@@ -53,9 +53,12 @@
 	"scripts": {
 		"clean": "aegir clean && shx rm -rf ./wasm && cargo clean",
 		"build": "aegir build --no-bundle && wasm-pack build --target web --out-dir dist/wasm --out-name shared_log_rust && shx rm -rf ./dist/wasm/.gitignore ./dist/wasm/package.json && shx rm -rf ./wasm && shx cp -r ./dist/wasm ./wasm",
-		"test": "cargo test && npm run build && aegir test",
+		"test": "cargo test && pnpm --filter @peerbit/shared-log run build && npm run build && aegir test",
 		"lint": "cargo fmt --check && pnpm exec eslint --config ../../../../../eslint.config.js \"src/**/*.ts\" \"test/**/*.ts\""
 	},
 	"author": "dao.xyz",
-	"license": "MIT"
+	"license": "MIT",
+	"devDependencies": {
+		"@peerbit/indexer-sqlite3": "workspace:*"
+	}
 }
