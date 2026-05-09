@@ -1667,6 +1667,9 @@ importers:
       '@peerbit/rpc':
         specifier: workspace:*
         version: link:../../rpc
+      '@peerbit/shared-log-rust':
+        specifier: workspace:*
+        version: link:rust
       '@peerbit/stream-interface':
         specifier: workspace:*
         version: link:../../../transport/stream-interface
