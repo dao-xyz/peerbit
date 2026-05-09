@@ -278,6 +278,7 @@ type EntryLeaderPlan<R extends "u32" | "u64"> = {
 	coordinates: NumberFromType<R>[];
 	leaders: LeaderMap;
 	isLeader: boolean;
+	assignedToRangeBoundary?: boolean;
 };
 
 type EntryLeaderBatchItem<R extends "u32" | "u64"> = {
@@ -6904,17 +6905,17 @@ export class SharedLog<
 			| false;
 		replicas: number;
 		prev?: EntryReplicated<R>;
+		assignedToRangeBoundary?: boolean;
 	}) {
-		let assignedToRangeBoundary = shouldAssignToRangeBoundary(
-			properties.leaders,
-			properties.replicas,
-		);
+		const assignedToRangeBoundary =
+			properties.assignedToRangeBoundary ??
+			shouldAssignToRangeBoundary(properties.leaders, properties.replicas);
 
 		if (
 			properties.prev &&
 			properties.prev.assignedToRangeBoundary === assignedToRangeBoundary
 		) {
-			return; // no change
+			return false; // no change
 		}
 
 		const cidObject = cidifyString(properties.entry.hash);
@@ -6931,9 +6932,10 @@ export class SharedLog<
 				hashNumber,
 			}),
 		);
-		this._nativeSharedLogState?.putEntryCoordinates(
+		this._nativeSharedLogState?.commitEntryCoordinates(
 			properties.entry.hash,
 			properties.coordinates,
+			properties.entry.meta.next,
 		);
 
 		for (const coordinate of properties.coordinates) {
@@ -6941,9 +6943,6 @@ export class SharedLog<
 		}
 
 		if (properties.entry.meta.next.length > 0) {
-			this._nativeSharedLogState?.deleteEntryCoordinatesBatch(
-				properties.entry.meta.next,
-			);
 			await this.entryCoordinatesIndex.del({
 				query: new Or(
 					properties.entry.meta.next.map(
@@ -6952,6 +6951,7 @@ export class SharedLog<
 				),
 			});
 		}
+		return true;
 	}
 
 	private async deleteCoordinates(properties: { hash: string }) {
@@ -7073,6 +7073,7 @@ export class SharedLog<
 				  }
 				| false;
 		},
+		assignedToRangeBoundary?: boolean,
 	): Promise<boolean> {
 		const selfHash = this.node.identity.publicKey.hashcode();
 		const isLeader = leaders.has(selfHash);
@@ -7095,6 +7096,7 @@ export class SharedLog<
 					replicas: cursors.length,
 					entry,
 					prev: options?.persist?.prev,
+					assignedToRangeBoundary,
 				}));
 		}
 
@@ -7108,23 +7110,40 @@ export class SharedLog<
 	): Promise<EntryLeaderPlan<R>> {
 		let coordinates: NumberFromType<R>[];
 		let leaders: LeaderMap;
+		let assignedToRangeBoundary: boolean | undefined;
 
 		if (this.canPlanNativeHashGid(entry)) {
-			const plan = await this._findLeaderPlanFromHashGid(
-				entry.meta.gid,
-				replicas,
-				options,
-			);
+			const plan =
+				(await this._findEntryAssignmentPlanFromHashGid(
+					entry.meta.gid,
+					replicas,
+					options,
+				)) ??
+				(await this._findLeaderPlanFromHashGid(
+					entry.meta.gid,
+					replicas,
+					options,
+				));
 			if (plan) {
 				coordinates = plan.coordinates as NumberFromType<R>[];
 				leaders = plan.leaders;
+				assignedToRangeBoundary =
+					"assignedToRangeBoundary" in plan
+						? (plan.assignedToRangeBoundary as boolean)
+						: undefined;
 				const isLeader = await this.applyLeaderSelection(
 					coordinates,
 					entry,
 					leaders,
 					options,
+					assignedToRangeBoundary,
 				);
-				return { coordinates, leaders, isLeader };
+				return {
+					coordinates,
+					leaders,
+					isLeader,
+					assignedToRangeBoundary,
+				};
 			}
 		}
 
@@ -7648,6 +7667,32 @@ export class SharedLog<
 		}
 		const context = await this.createLeaderSelectionContext(options);
 		return planner.planLeadersForGid(
+			gid,
+			replicas,
+			this.createNativeLeaderOptions(context, options),
+		);
+	}
+
+	private async _findEntryAssignmentPlanFromHashGid(
+		gid: string,
+		replicas: number,
+		options?: {
+			roleAge?: number;
+			candidates?: Iterable<string>;
+		},
+	): Promise<
+		| {
+				coordinates: Array<number | bigint>;
+				leaders: Map<string, { intersecting: boolean }>;
+				assignedToRangeBoundary: boolean;
+		  }
+		| undefined
+	> {
+		if (!this._nativeSharedLogState) {
+			return undefined;
+		}
+		const context = await this.createLeaderSelectionContext(options);
+		return this._nativeSharedLogState.planEntryAssignmentForGid(
 			gid,
 			replicas,
 			this.createNativeLeaderOptions(context, options),
