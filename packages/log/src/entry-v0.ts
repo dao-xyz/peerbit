@@ -29,7 +29,7 @@ import { LamportClock as Clock, HLC, Timestamp } from "./clock.js";
 import { type Encoding, NO_ENCODING } from "./encoding.js";
 import { ShallowEntry, ShallowMeta } from "./entry-shallow.js";
 import { EntryType } from "./entry-type.js";
-import { type CanAppend, Entry } from "./entry.js";
+import { type CanAppend, Entry, type PreparedAppendChain } from "./entry.js";
 import type { SortableEntry } from "./log-sorting.js";
 import { logger as baseLogger } from "./logger.js";
 import { Payload } from "./payload.js";
@@ -511,7 +511,26 @@ export class EntryV0<T>
 		encoding: Encoding<T>;
 		identity: Identity;
 		deferStore: boolean;
+		cachePreparedEntries?: boolean;
 	}): Promise<Entry<T>[] | undefined> {
+		return (await EntryV0.createPlainAppendChainBatch(properties))?.entries;
+	}
+
+	static async createPlainAppendChainBatch<T>(properties: {
+		data: T[];
+		meta?: {
+			clocks: () => Clock[];
+			gid?: string;
+			type?: EntryType;
+			gidSeed?: Uint8Array;
+			data?: Uint8Array;
+			next?: SortableEntry[];
+		};
+		encoding: Encoding<T>;
+		identity: Identity;
+		deferStore: boolean;
+		cachePreparedEntries?: boolean;
+	}): Promise<PreparedAppendChain<T> | undefined> {
 		if (!properties.deferStore) {
 			return undefined;
 		}
@@ -598,7 +617,13 @@ export class EntryV0<T>
 			payloadDatas: payloads.map((payload) => payload.data),
 		});
 
-		return prepared.map((preparedEntry, index) => {
+		const entries: PreparedAppendChain<T>["entries"] = [];
+		const blocks: PreparedAppendChain<T>["blocks"] = [];
+		const shallowEntries: PreparedAppendChain<T>["shallowEntries"] = [];
+		const nativeEntries: PreparedAppendChain<T>["nativeEntries"] = [];
+
+		for (let index = 0; index < prepared.length; index++) {
+			const preparedEntry = prepared[index]!;
 			const meta = new Meta({
 				clock: clocks[index]!,
 				gid: gid!,
@@ -631,27 +656,33 @@ export class EntryV0<T>
 				}),
 				createdLocally: true,
 			});
-			entry.hash = Entry.prepareMultihashBytes(
-				entry,
+			const preparedBlock = Entry.preparedBlockFromBytes(
 				preparedEntry.bytes,
 				preparedEntry.cid,
 			);
-			Entry.prepareShallowEntry(
-				entry,
-				new ShallowEntry({
-					hash: entry.hash,
-					payloadSize: payload.byteLength,
-					head: index === prepared.length - 1,
-					meta: new ShallowMeta({
-						gid: meta.gid,
-						data: meta.data,
-						clock: meta.clock,
-						next: meta.next,
-						type: meta.type,
-					}),
+			if (properties.cachePreparedEntries === false) {
+				entry.hash = preparedEntry.cid;
+				entry.size = preparedEntry.bytes.length;
+			} else {
+				entry.hash = Entry.prepareMultihashBytes(
+					entry,
+					preparedEntry.bytes,
+					preparedEntry.cid,
+				);
+			}
+			const shallowEntry = new ShallowEntry({
+				hash: entry.hash,
+				payloadSize: payload.byteLength,
+				head: index === prepared.length - 1,
+				meta: new ShallowMeta({
+					gid: meta.gid,
+					data: meta.data,
+					clock: meta.clock,
+					next: meta.next,
+					type: meta.type,
 				}),
-			);
-			Entry.prepareNativeLogEntry(entry, {
+			});
+			const nativeEntry = {
 				hash: entry.hash,
 				gid: meta.gid,
 				next: meta.next,
@@ -665,10 +696,18 @@ export class EntryV0<T>
 						logical: meta.clock.timestamp.logical,
 					},
 				},
-			});
+			};
+			if (properties.cachePreparedEntries !== false) {
+				Entry.prepareShallowEntry(entry, shallowEntry);
+				Entry.prepareNativeLogEntry(entry, nativeEntry);
+			}
 			entry.init({ encoding: properties.encoding });
-			return entry;
-		});
+			entries.push(entry);
+			blocks.push(preparedBlock);
+			shallowEntries.push(shallowEntry);
+			nativeEntries.push(nativeEntry);
+		}
+		return { entries, blocks, shallowEntries, nativeEntries };
 	}
 
 	static async create<T>(properties: {
