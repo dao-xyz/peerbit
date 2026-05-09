@@ -18,6 +18,7 @@ export type ShallowOrFullEntry<T> = ShallowEntry | Entry<T>;
 export type PreparedEntryBlock = Awaited<ReturnType<typeof calculateRawCid>>;
 
 const preparedEntryBlocks = new WeakMap<object, PreparedEntryBlock>();
+const preparedShallowEntries = new WeakMap<object, ShallowEntry>();
 
 const preparedEntryBlockFromBytes = (
 	bytes: Uint8Array,
@@ -153,6 +154,22 @@ export abstract class Entry<T> {
 		const prepared = preparedEntryBlocks.get(entry);
 		if (prepared) {
 			preparedEntryBlocks.delete(entry);
+		}
+		return prepared;
+	}
+
+	static prepareShallowEntry<T>(entry: Entry<T>, shallow: ShallowEntry): void {
+		preparedShallowEntries.set(entry, shallow);
+	}
+
+	static takePreparedShallowEntry<T>(
+		entry: Entry<T>,
+		isHead: boolean,
+	): ShallowEntry | undefined {
+		const prepared = preparedShallowEntries.get(entry);
+		if (prepared) {
+			preparedShallowEntries.delete(entry);
+			prepared.head = isHead;
 		}
 		return prepared;
 	}
