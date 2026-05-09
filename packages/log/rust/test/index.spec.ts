@@ -206,6 +206,28 @@ describe("native log graph index", () => {
 		]);
 	});
 
+	it("plans unique reference gids for exchange heads", async () => {
+		const index = await createLogGraphIndex();
+		index.put(entry("root", "root-gid", [], 1n));
+		index.put(entry("same-gid-parent", "root-gid", [], 2n));
+		index.put(entry("side", "side-gid", [], 3n));
+		index.put(entry("branch", "branch-gid", ["root", "side"], 4n));
+		index.put(entry("head", "head-gid", ["branch", "same-gid-parent"], 5n));
+
+		expect(index.uniqueReferenceGids("head")).to.deep.equal([
+			"branch-gid",
+			"root-gid",
+			"side-gid",
+		]);
+		expect(index.uniqueReferenceGids("missing")).to.equal(undefined);
+
+		index.put(entry("cut", "cut-gid", ["head"], 6n, CUT));
+		expect(index.uniqueReferenceGids("cut")).to.deep.equal([]);
+
+		index.put(entry("incomplete", "incomplete-gid", ["not-indexed"], 7n));
+		expect(index.uniqueReferenceGids("incomplete")).to.equal(undefined);
+	});
+
 	it("plans recursive cut deletes", async () => {
 		const index = await createLogGraphIndex();
 		index.put(entry("root", "g", [], 1n));

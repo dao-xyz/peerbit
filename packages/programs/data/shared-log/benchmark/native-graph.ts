@@ -1,12 +1,14 @@
 import { deserialize, field, option, serialize, variant } from "@dao-xyz/borsh";
 import { create as createRustIndexer } from "@peerbit/indexer-rust";
-import { type ProgramClient, Program } from "@peerbit/program";
+import { type Entry } from "@peerbit/log";
+import { Program, type ProgramClient } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import crypto from "crypto";
 import { performance } from "node:perf_hooks";
+import { createExchangeHeadsMessages } from "../src/exchange-heads.js";
 import { type Args, SharedLog } from "../src/index.js";
 
-type Scenario = "auto-next" | "explicit-root-next";
+type Scenario = "auto-next" | "explicit-root-next" | "exchange-head-refs";
 type IndexerMode = "default" | "rust";
 
 type BenchRow = {
@@ -32,14 +34,18 @@ const parsePositiveInteger = (value: string | undefined, fallback: number) => {
 
 const parseScenarios = (value: string | undefined): Scenario[] => {
 	if (!value) {
-		return ["auto-next", "explicit-root-next"];
+		return ["auto-next", "explicit-root-next", "exchange-head-refs"];
 	}
 	const scenarios = value
 		.split(",")
 		.map((x) => x.trim())
 		.filter(Boolean);
 	for (const scenario of scenarios) {
-		if (scenario !== "auto-next" && scenario !== "explicit-root-next") {
+		if (
+			scenario !== "auto-next" &&
+			scenario !== "explicit-root-next" &&
+			scenario !== "exchange-head-refs"
+		) {
 			throw new Error(`Unknown scenario '${scenario}'`);
 		}
 	}
@@ -159,6 +165,50 @@ const runScenario = async (
 	const { session, store } = await openStore(nativeGraph, indexer);
 	const bytes = crypto.randomBytes(payloadBytes);
 	try {
+		if (scenario === "exchange-head-refs") {
+			const parents: Entry<BenchDocument>[] = [];
+			for (let i = 0; i < entries; i++) {
+				parents.push(
+					(
+						await store.logs.append(createDocument(i, bytes), {
+							meta: { next: [] },
+							replicate: false,
+							target: "none",
+						})
+					).entry,
+				);
+			}
+			const { entry: head } = await store.logs.append(
+				createDocument(entries, bytes),
+				{
+					meta: { next: parents },
+					replicate: false,
+					target: "none",
+				},
+			);
+
+			let emittedHeads = 0;
+			const started = performance.now();
+			for await (const message of createExchangeHeadsMessages(store.logs.log, [
+				head,
+			])) {
+				emittedHeads += message.heads.length;
+			}
+			if (emittedHeads === 0) {
+				throw new Error("Expected at least one exchange head message");
+			}
+			const elapsed = performance.now() - started;
+			return {
+				scenario,
+				indexer,
+				nativeGraph,
+				entries,
+				run,
+				elapsedMs: Math.round(elapsed),
+				opsPerSecond: Math.round((entries / elapsed) * 1000),
+			};
+		}
+
 		const started = performance.now();
 		for (let i = 0; i < entries; i++) {
 			await store.logs.append(createDocument(i, bytes), {
@@ -205,8 +255,7 @@ const aggregateRows = [...new Set(rows.map((row) => row.scenario))].flatMap(
 						row.nativeGraph === nativeGraph,
 				);
 				const meanMs =
-					samples.reduce((sum, row) => sum + row.elapsedMs, 0) /
-					samples.length;
+					samples.reduce((sum, row) => sum + row.elapsedMs, 0) / samples.length;
 				const meanOps =
 					samples.reduce((sum, row) => sum + row.opsPerSecond, 0) /
 					samples.length;

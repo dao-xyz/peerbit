@@ -76,13 +76,39 @@ export const createExchangeHeadsMessages = async function* (
 	let size = 0;
 	let current: EntryWithRefs<any>[] = [];
 	const visitedHeads = new Set<string>();
-	for (const fromHead of heads) {
+	const headArray = Array.isArray(heads) ? heads : [...heads];
+	const canUseNativeReferenceGids = headArray.length === 1;
+	for (const fromHead of headArray) {
 		let entry = fromHead instanceof Entry ? fromHead : await log.get(fromHead);
 		if (!entry) {
 			continue; // missing this entry, could be deleted while iterating
 		}
 
 		visitedHeads.add(entry.hash);
+
+		const nativeGidReferences = canUseNativeReferenceGids
+			? log.entryIndex.getUniqueReferenceGids(entry.hash)
+			: undefined;
+		if (nativeGidReferences) {
+			if (nativeGidReferences.length > 1000) {
+				warn("Large refs count: ", nativeGidReferences.length);
+			}
+			current.push(
+				new EntryWithRefs({
+					entry,
+					gidRefrences: nativeGidReferences,
+				}),
+			);
+			size += entry.size;
+			if (size > MAX_EXCHANGE_MESSAGE_SIZE) {
+				size = 0;
+				yield new ExchangeHeadsMessage({
+					heads: current,
+				});
+				current = [];
+			}
+			continue;
+		}
 
 		// TODO eventually we don't want to load all refs
 		// since majority of the old leader would not be interested in these anymore
