@@ -3491,17 +3491,18 @@ export class SharedLog<
 				try {
 					while (!this.closed && !iterator.done()) {
 						const entries = await iterator.next(REPAIR_SWEEP_ENTRY_BATCH_SIZE);
-						for (const entry of entries) {
-							const entryReplicated = entry.value;
+						const entryReplicatedBatch = entries.map((entry) => entry.value);
+						const currentPeersBatch =
+							await this.findEntryReplicatedLeaderBatch(entryReplicatedBatch, {
+								roleAge: 0,
+						});
+						for (let i = 0; i < entryReplicatedBatch.length; i++) {
+							const entryReplicated = entryReplicatedBatch[i]!;
+							const currentPeers = currentPeersBatch[i]!;
 							const gid = entryReplicated.gid;
 							const knownPeers = this._gidPeersHistory.get(gid);
 							const requestedReplicas =
 								decodeReplicas(entryReplicated).getValue(this);
-							const currentPeers = await this.findLeaders(
-								entryReplicated.coordinates,
-								entryReplicated,
-								{ roleAge: 0 },
-							);
 
 							if (pendingModes.has("churn")) {
 								for (const [currentPeer] of currentPeers) {
@@ -6867,6 +6868,28 @@ export class SharedLog<
 		return set;
 	}
 
+	private canPlanNativeEntryLeaderBatch(
+		items: EntryLeaderBatchItem<R>[],
+	): boolean {
+		if (!this._nativeRangePlanner || items.length === 0) {
+			return false;
+		}
+
+		const first = items[0]!;
+		const firstRoleAge = first.options?.roleAge;
+		for (const item of items) {
+			if (
+				!this.canPlanNativeHashGid(item.entry) ||
+				item.options?.candidates ||
+				item.options?.onLeader ||
+				item.options?.roleAge !== firstRoleAge
+			) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	private canPlanNativeHashGid(
 		entry: ShallowOrFullEntry<any> | EntryReplicated<R>,
 	): entry is ShallowOrFullEntry<any> | EntryReplicated<R> {
@@ -6954,8 +6977,40 @@ export class SharedLog<
 	private async planEntryLeaderBatch(
 		items: Iterable<EntryLeaderBatchItem<R>>,
 	): Promise<EntryLeaderPlan<R>[]> {
+		const itemArray = [...items];
+		const firstItem = itemArray[0];
+		if (!firstItem) {
+			return [];
+		}
+
+		if (this.canPlanNativeEntryLeaderBatch(itemArray)) {
+			const context = await this.createLeaderSelectionContext(firstItem.options);
+			const nativePlans = this._nativeRangePlanner!.planLeadersForGidsBatch(
+				itemArray.map((item) => ({
+					gid: item.entry.meta.gid as string,
+					replicas: item.replicas,
+				})),
+				this.createNativeLeaderOptions(context, firstItem.options),
+			);
+			const plans: EntryLeaderPlan<R>[] = [];
+			for (let i = 0; i < itemArray.length; i++) {
+				const item = itemArray[i]!;
+				const nativePlan = nativePlans[i]!;
+				const coordinates = nativePlan.coordinates as NumberFromType<R>[];
+				const leaders = nativePlan.leaders;
+				const isLeader = await this.applyLeaderSelection(
+					coordinates,
+					item.entry,
+					leaders,
+					item.options,
+				);
+				plans.push({ coordinates, leaders, isLeader });
+			}
+			return plans;
+		}
+
 		const plans: EntryLeaderPlan<R>[] = [];
-		for (const item of items) {
+		for (const item of itemArray) {
 			plans.push(
 				await this.planEntryLeaders(item.entry, item.replicas, item.options),
 			);
@@ -7215,6 +7270,35 @@ export class SharedLog<
 		}
 
 		return leaders.size > 0 ? leaders : undefined;
+	}
+
+	private async findEntryReplicatedLeaderBatch(
+		entries: EntryReplicated<R>[],
+		options?: {
+			roleAge?: number;
+			candidates?: Iterable<string>;
+		},
+	): Promise<LeaderMap[]> {
+		if (entries.length === 0) {
+			return [];
+		}
+
+		if (this._nativeRangePlanner) {
+			const context = await this.createLeaderSelectionContext(options);
+			return this._nativeRangePlanner.findLeadersBatch(
+				entries.map((entry) => ({
+					cursors: entry.coordinates,
+					replicas: entry.coordinates.length,
+				})),
+				this.createNativeLeaderOptions(context, options),
+			);
+		}
+
+		const leaders: LeaderMap[] = [];
+		for (const entry of entries) {
+			leaders.push(await this._findLeaders(entry.coordinates, options));
+		}
+		return leaders;
 	}
 
 	private async _findLeadersFromHashGid(

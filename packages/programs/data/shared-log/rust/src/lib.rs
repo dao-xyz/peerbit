@@ -2,7 +2,7 @@ use indexmap::{IndexMap, IndexSet};
 use js_sys::Array;
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use wasm_bindgen::prelude::*;
 
 const MODE_NON_STRICT: u8 = 0;
@@ -381,37 +381,22 @@ impl RangePlanner {
         full_replica_fallback: bool,
         include_strict_full_replica: bool,
     ) -> Vec<LeaderSample> {
-        let mut options = options.clone();
-
-        if expand_peer_filter {
-            options.peer_filter = self
-                .include_matured_peers(
-                    options
-                        .peer_filter
-                        .as_ref()
-                        .map(|peers| IndexSet::from_iter(peers.iter().cloned())),
-                    replicas,
-                    &options,
-                    self_hash,
-                    include_self,
-                )
-                .map(HashSet::from_iter);
-        }
-
-        if full_replica_fallback {
-            if let Some(leaders) =
-                self.get_full_replica_leaders(replicas, &options, include_strict_full_replica)
-            {
-                return leaders;
-            }
-        }
-
-        options.unique_replicators = options
-            .peer_filter
-            .as_ref()
-            .map(|peers| IndexSet::from_iter(peers.iter().cloned()));
-
-        self.get_samples(cursors, &options)
+        let options = prepare_find_leader_options(
+            self,
+            options,
+            replicas,
+            expand_peer_filter,
+            self_hash,
+            include_self,
+        );
+        find_leaders_with_prepared_options(
+            self,
+            cursors,
+            replicas,
+            &options,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )
     }
 
     pub fn get_grid(&self, from: u64, count: usize) -> Vec<u64> {
@@ -740,6 +725,105 @@ fn circular_distance(from: u64, to: u64, max_value: u64) -> u64 {
     diff.min(max_value.saturating_sub(diff))
 }
 
+fn prepare_find_leader_options(
+    planner: &RangePlanner,
+    options: &SampleOptions,
+    replicas: usize,
+    expand_peer_filter: bool,
+    self_hash: &str,
+    include_self: bool,
+) -> SampleOptions {
+    let mut options = options.clone();
+
+    if expand_peer_filter {
+        options.peer_filter = planner
+            .include_matured_peers(
+                options
+                    .peer_filter
+                    .as_ref()
+                    .map(|peers| IndexSet::from_iter(peers.iter().cloned())),
+                replicas,
+                &options,
+                self_hash,
+                include_self,
+            )
+            .map(HashSet::from_iter);
+    }
+
+    options
+}
+
+fn find_leaders_with_prepared_options(
+    planner: &RangePlanner,
+    cursors: &[u64],
+    replicas: usize,
+    options: &SampleOptions,
+    full_replica_fallback: bool,
+    include_strict_full_replica: bool,
+) -> Vec<LeaderSample> {
+    if full_replica_fallback {
+        if let Some(leaders) =
+            planner.get_full_replica_leaders(replicas, options, include_strict_full_replica)
+        {
+            return leaders;
+        }
+    }
+
+    let mut options = options.clone();
+    options.unique_replicators = options
+        .peer_filter
+        .as_ref()
+        .map(|peers| IndexSet::from_iter(peers.iter().cloned()));
+
+    planner.get_samples(cursors, &options)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn find_leaders_with_batch_caches(
+    planner: &RangePlanner,
+    cursors: &[u64],
+    replicas: usize,
+    base_options: &SampleOptions,
+    prepared_options_by_replicas: &mut HashMap<usize, SampleOptions>,
+    full_replica_leaders_by_replicas: &mut HashMap<usize, Option<Vec<LeaderSample>>>,
+    expand_peer_filter: bool,
+    self_hash: &str,
+    include_self: bool,
+    full_replica_fallback: bool,
+    include_strict_full_replica: bool,
+) -> Vec<LeaderSample> {
+    let prepared_options = prepared_options_by_replicas
+        .entry(replicas)
+        .or_insert_with(|| {
+            prepare_find_leader_options(
+                planner,
+                base_options,
+                replicas,
+                expand_peer_filter,
+                self_hash,
+                include_self,
+            )
+        });
+
+    if full_replica_fallback {
+        if let Some(leaders) = full_replica_leaders_by_replicas
+            .entry(replicas)
+            .or_insert_with(|| {
+                planner.get_full_replica_leaders(
+                    replicas,
+                    prepared_options,
+                    include_strict_full_replica,
+                )
+            })
+            .clone()
+        {
+            return leaders;
+        }
+    }
+
+    find_leaders_with_prepared_options(planner, cursors, replicas, prepared_options, false, true)
+}
+
 #[wasm_bindgen]
 pub struct NativeRangePlanner {
     inner: RangePlanner,
@@ -849,6 +933,48 @@ impl NativeRangePlanner {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn find_leaders_batch(
+        &self,
+        cursor_batches: Array,
+        replica_counts: Array,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let cursor_batches = cursor_batches_from_array(cursor_batches)?;
+        let replica_counts = usize_from_array(replica_counts)?;
+        ensure_same_len(cursor_batches.len(), replica_counts.len(), "leader batch")?;
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
+        let mut prepared_options_by_replicas = HashMap::new();
+        let mut full_replica_leaders_by_replicas = HashMap::new();
+        let out = Array::new();
+
+        for (cursors, replicas) in cursor_batches.into_iter().zip(replica_counts) {
+            let leaders = find_leaders_with_batch_caches(
+                &self.inner,
+                &cursors,
+                replicas,
+                &options,
+                &mut prepared_options_by_replicas,
+                &mut full_replica_leaders_by_replicas,
+                expand_peer_filter,
+                &self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            );
+            out.push(&samples_to_rows(leaders));
+        }
+
+        Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn find_leaders_for_gid(
         &self,
         gid: String,
@@ -905,6 +1031,52 @@ impl NativeRangePlanner {
         let out = Array::new();
         out.push(&numbers_to_rows(coordinates, self.inner.resolution));
         out.push(&samples_to_rows(leaders));
+        Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_leaders_for_gids_batch(
+        &self,
+        gids: Array,
+        replica_counts: Array,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let gids = strings_from_array(gids)?;
+        let replica_counts = usize_from_array(replica_counts)?;
+        ensure_same_len(gids.len(), replica_counts.len(), "gid leader batch")?;
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
+        let mut prepared_options_by_replicas = HashMap::new();
+        let mut full_replica_leaders_by_replicas = HashMap::new();
+        let out = Array::new();
+
+        for (gid, replicas) in gids.into_iter().zip(replica_counts) {
+            let coordinates = self.inner.get_gid_coordinates(&gid, replicas);
+            let leaders = find_leaders_with_batch_caches(
+                &self.inner,
+                &coordinates,
+                replicas,
+                &options,
+                &mut prepared_options_by_replicas,
+                &mut full_replica_leaders_by_replicas,
+                expand_peer_filter,
+                &self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            );
+            let row = Array::new();
+            row.push(&numbers_to_rows(coordinates, self.inner.resolution));
+            row.push(&samples_to_rows(leaders));
+            out.push(&row);
+        }
+
         Ok(out)
     }
 
@@ -1013,6 +1185,46 @@ fn strings_from_array(values: Array) -> Result<Vec<String>, JsValue> {
         out.push(value);
     }
     Ok(out)
+}
+
+fn usize_from_array(values: Array) -> Result<Vec<usize>, JsValue> {
+    let mut out = Vec::with_capacity(values.length() as usize);
+    for value in values.iter() {
+        let Some(value) = value.as_f64() else {
+            return Err(JsValue::from_str("Expected number array"));
+        };
+        if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
+            return Err(JsValue::from_str("Expected unsigned integer array"));
+        }
+        out.push(value as usize);
+    }
+    Ok(out)
+}
+
+fn cursor_batches_from_array(values: Array) -> Result<Vec<Vec<u64>>, JsValue> {
+    let mut out = Vec::with_capacity(values.length() as usize);
+    for value in values.iter() {
+        if !Array::is_array(&value) {
+            return Err(JsValue::from_str("Expected cursor batch array"));
+        }
+        out.push(
+            strings_from_array(Array::from(&value))?
+                .into_iter()
+                .map(|value| parse_u64(&value))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+    }
+    Ok(out)
+}
+
+fn ensure_same_len(left: usize, right: usize, label: &str) -> Result<(), JsValue> {
+    if left == right {
+        Ok(())
+    } else {
+        Err(JsValue::from_str(&format!(
+            "Mismatched {label} input lengths"
+        )))
+    }
 }
 
 fn optional_string_set(value: JsValue) -> Result<Option<Vec<String>>, JsValue> {

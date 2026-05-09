@@ -222,6 +222,58 @@ describe("native shared-log range planner", () => {
 		});
 	});
 
+	it("finds persisted-coordinate leaders in one native batch", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
+		planner.put(range({ id: "b", hash: "peer-b", start1: 20, end1: 30 }));
+		planner.put(range({ id: "c", hash: "peer-c", start1: 80, end1: 90 }));
+
+		const items = [
+			{ cursors: [5], replicas: 1 },
+			{ cursors: [50, 75], replicas: 2 },
+		];
+
+		expect(
+			planner.findLeadersBatch(items, {
+				now: 1_000,
+				fullReplicaFallback: true,
+			}),
+		).to.deep.equal(
+			items.map((item) =>
+				planner.findLeaders(item.cursors, item.replicas, {
+					now: 1_000,
+					fullReplicaFallback: true,
+				}),
+			),
+		);
+	});
+
+	it("plans hash gid coordinates and leaders in one native batch", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
+		planner.put(range({ id: "b", hash: "peer-b", start1: 20, end1: 30 }));
+		planner.put(range({ id: "c", hash: "peer-c", start1: 80, end1: 90 }));
+
+		const items = [
+			{ gid: "entry-gid-a", replicas: 1 },
+			{ gid: "entry-gid-b", replicas: 2 },
+		];
+
+		expect(
+			planner.planLeadersForGidsBatch(items, {
+				now: 1_000,
+				fullReplicaFallback: true,
+			}),
+		).to.deep.equal(
+			items.map((item) =>
+				planner.planLeadersForGid(item.gid, item.replicas, {
+					now: 1_000,
+					fullReplicaFallback: true,
+				}),
+			),
+		);
+	});
+
 	it("expands peer filters through the combined native path", async () => {
 		const planner = await createRangePlanner("u32");
 		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
