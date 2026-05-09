@@ -20,6 +20,13 @@ export type SampleOptions = {
 	peerFilter?: Iterable<string>;
 };
 
+export type FullReplicaLeaderOptions = {
+	roleAge?: number;
+	now?: bigint | number | string;
+	includeStrict?: boolean;
+	peerFilter?: Iterable<string>;
+};
+
 export type LeaderSample = {
 	intersecting: boolean;
 };
@@ -47,6 +54,13 @@ type NativeRangePlannerHandle = {
 		uniqueReplicators?: string[],
 		peerFilter?: string[],
 	) => unknown[];
+	get_full_replica_leaders: (
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		includeStrict: boolean,
+		peerFilter?: string[],
+	) => unknown[] | undefined;
 };
 
 type WasmModule = {
@@ -99,6 +113,15 @@ const asIntegerString = (value: bigint | number | string) =>
 			? Math.trunc(value).toString()
 			: value;
 
+const rowsToSamples = (rows: unknown[]): Map<string, LeaderSample> => {
+	const out = new Map<string, LeaderSample>();
+	for (const row of rows) {
+		const [hash, intersecting] = row as [string, boolean];
+		out.set(hash, { intersecting });
+	}
+	return out;
+};
+
 export class SharedLogRangePlanner {
 	private constructor(private readonly native: NativeRangePlannerHandle) {}
 
@@ -147,12 +170,21 @@ export class SharedLogRangePlanner {
 			options?.uniqueReplicators ? [...options.uniqueReplicators] : undefined,
 			options?.peerFilter ? [...options.peerFilter] : undefined,
 		);
-		const out = new Map<string, LeaderSample>();
-		for (const row of rows) {
-			const [hash, intersecting] = row as [string, boolean];
-			out.set(hash, { intersecting });
-		}
-		return out;
+		return rowsToSamples(rows);
+	}
+
+	getFullReplicaLeaders(
+		replicas: number,
+		options?: FullReplicaLeaderOptions,
+	): Map<string, LeaderSample> | undefined {
+		const rows = this.native.get_full_replica_leaders(
+			replicas,
+			options?.roleAge ?? 0,
+			asIntegerString(options?.now ?? Date.now()),
+			options?.includeStrict !== false,
+			options?.peerFilter ? [...options.peerFilter] : undefined,
+		);
+		return rows ? rowsToSamples(rows) : undefined;
 	}
 }
 
