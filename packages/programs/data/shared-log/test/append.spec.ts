@@ -89,12 +89,42 @@ describe("append", () => {
 		const singleSpy = sinon.spy(nativeState, "planAppendForGid");
 		try {
 			await store.addMany(["a", "b", "c"], {
-				delivery: false,
+				delivery: true,
 				replicate: false,
 			});
 
 			expect(batchSpy.callCount).equal(1);
 			expect(singleSpy.callCount).equal(0);
+		} finally {
+			batchSpy.restore();
+			singleSpy.restore();
+		}
+	});
+
+	it("appendMany coalesces a local chain to the final shared-log head", async () => {
+		session = await TestSession.disconnected(1);
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: false,
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		const nativeState = (store.log as any)._nativeSharedLogState;
+		expect(nativeState).to.exist;
+		const batchSpy = sinon.spy(nativeState, "planAppendForGidsBatch");
+		const singleSpy = sinon.spy(nativeState, "planAppendForGid");
+		try {
+			const result = await store.addMany(["a", "b", "c"], {
+				replicate: false,
+			});
+
+			expect(batchSpy.callCount).equal(0);
+			expect(singleSpy.callCount).equal(1);
+			const coordinateRows = await store.log.entryCoordinatesIndex
+				.iterate({}, { shape: { hash: true } })
+				.all();
+			expect(coordinateRows).to.have.length(1);
+			expect(coordinateRows[0]!.value.hash).equal(result.entries[2]!.hash);
 		} finally {
 			batchSpy.restore();
 			singleSpy.restore();
