@@ -1,6 +1,7 @@
 import { AnyBlockStore } from "@peerbit/blocks";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { HashmapIndices } from "@peerbit/indexer-simple";
+import { createNativeLogBlockStore } from "@peerbit/log-rust";
 import { EntryType } from "../src/entry-type.js";
 import { type Entry } from "../src/entry.js";
 import { Log } from "../src/log.js";
@@ -26,6 +27,9 @@ const joinParents = Number(
 );
 
 const key = await Ed25519Keypair.create();
+type AppendStore =
+	| AnyBlockStore
+	| Awaited<ReturnType<typeof createNativeLogBlockStore>>;
 
 const absoluteReplicaData = (value: number) =>
 	new Uint8Array([
@@ -192,8 +196,9 @@ const measureAppend = async (
 	name: string,
 	nativeGraph: boolean,
 	fn: (log: Log<Uint8Array>) => Promise<void>,
+	createStore: () => Promise<AppendStore> = async () => new AnyBlockStore(),
 ): Promise<BenchRow> => {
-	const store = new AnyBlockStore();
+	const store = await createStore();
 	await store.start();
 	const log = new Log<Uint8Array>();
 	await log.open(store, key, {
@@ -239,6 +244,22 @@ for (const nativeGraph of [false, true]) {
 		}),
 	);
 }
+
+rows.push(
+	await measureAppend(
+		"appendMany native block commit",
+		true,
+		async (log) => {
+			await log.appendMany(
+				Array.from(
+					{ length: appendEntries },
+					(_, index) => new Uint8Array([index & 0xff]),
+				),
+			);
+		},
+		createNativeLogBlockStore,
+	),
+);
 
 const measureWideJoin = async (nativeGraph: boolean): Promise<BenchRow> => {
 	const store = new AnyBlockStore();

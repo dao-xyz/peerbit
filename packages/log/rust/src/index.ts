@@ -104,6 +104,19 @@ type NativeLogIndexHandle = {
 		metaDatas: Array<Uint8Array | undefined>,
 		payloadDatas: Uint8Array[],
 	) => EntryV0PreparedPlainEntryRow[];
+	prepare_entry_v0_plain_chain_commit_blocks_and_put: (
+		blockStore: NativeLogBlockStoreHandle,
+		clockId: Uint8Array,
+		privateKey: Uint8Array,
+		publicKey: Uint8Array,
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gid: string,
+		initialNext: string[],
+		type: number,
+		metaDatas: Array<Uint8Array | undefined>,
+		payloadDatas: Uint8Array[],
+	) => EntryV0PreparedPlainEntryRow[];
 	delete: (hash: string) => boolean;
 	heads: (gid?: string) => string[];
 	has_head: (gid?: string) => boolean;
@@ -134,10 +147,25 @@ type NativeLogIndexHandle = {
 	) => [boolean, string[], boolean, boolean];
 };
 
+type NativeLogBlockStoreHandle = {
+	get: (key: string) => Uint8Array | undefined;
+	get_many: (keys: string[]) => Array<Uint8Array | undefined>;
+	has: (key: string) => boolean;
+	put: (key: string, value: Uint8Array) => void;
+	put_many: (keys: string[], values: Uint8Array[]) => void;
+	delete: (key: string) => boolean;
+	delete_many: (keys: string[]) => number;
+	clear: () => void;
+	len: () => number;
+	size: () => number;
+	entries: () => Array<[string, Uint8Array]>;
+};
+
 type WasmModule = {
 	default: (input?: unknown) => Promise<unknown>;
 	initSync: (input?: unknown) => unknown;
 	NativeLogIndex: new () => NativeLogIndexHandle;
+	NativeLogBlockStore: new () => NativeLogBlockStoreHandle;
 	sign_ed25519: (
 		privateKey: Uint8Array,
 		publicKey: Uint8Array,
@@ -250,6 +278,25 @@ const loadWasm = async (): Promise<WasmModule> => {
 
 	return wasm;
 };
+
+const copyBytes = (bytes: Uint8Array): Uint8Array =>
+	new Uint8Array(
+		bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+			? bytes
+			: bytes.slice(),
+	);
+
+type BlockInput = Uint8Array | { block: { bytes: Uint8Array }; cid: string };
+
+type NativeLogBlockStoreCarrier = {
+	getNativeLogBlockStoreHandle?: () => NativeLogBlockStoreHandle;
+};
+
+const nativeLogBlockStoreHandle = (
+	store: unknown,
+): NativeLogBlockStoreHandle | undefined =>
+	(store as NativeLogBlockStoreCarrier | undefined)
+		?.getNativeLogBlockStoreHandle?.();
 
 export class LogGraphIndex {
 	private constructor(private readonly native: NativeLogIndexHandle) {}
@@ -371,6 +418,37 @@ export class LogGraphIndex {
 		return Promise.resolve(
 			preparedPlainEntryRows(
 				this.native.prepare_entry_v0_plain_chain_and_put(
+					input.clockId,
+					input.privateKey,
+					input.publicKey,
+					columns.wallTimes,
+					columns.logicals,
+					input.gid,
+					input.initialNext ?? [],
+					input.type ?? 0,
+					columns.metaDatas,
+					input.payloadDatas,
+				),
+			),
+		);
+	}
+
+	prepareEntryV0PlainChainCommit(
+		input: EntryV0PlainChainInput,
+		blockStore: unknown,
+	): Promise<EntryV0PreparedPlainEntry[] | undefined> {
+		const nativeBlockStore = nativeLogBlockStoreHandle(blockStore);
+		if (!nativeBlockStore) {
+			return Promise.resolve(undefined);
+		}
+		const columns = plainChainInputColumns(input);
+		if (!columns) {
+			return Promise.resolve([]);
+		}
+		return Promise.resolve(
+			preparedPlainEntryRows(
+				this.native.prepare_entry_v0_plain_chain_commit_blocks_and_put(
+					nativeBlockStore,
 					input.clockId,
 					input.privateKey,
 					input.publicKey,
@@ -541,6 +619,104 @@ export class LogGraphIndex {
 		return { skip, missingParents, cutChecked, coveredByCut };
 	}
 }
+
+export class NativeLogBlockStore {
+	private statusValue: "open" | "opening" | "closed" | "closing" = "closed";
+
+	private constructor(private readonly native: NativeLogBlockStoreHandle) {}
+
+	static async create(): Promise<NativeLogBlockStore> {
+		const wasm = await loadWasm();
+		return new NativeLogBlockStore(new wasm.NativeLogBlockStore());
+	}
+
+	getNativeLogBlockStoreHandle(): NativeLogBlockStoreHandle {
+		return this.native;
+	}
+
+	async start(): Promise<void> {
+		this.statusValue = "open";
+	}
+
+	async stop(): Promise<void> {
+		this.statusValue = "closed";
+	}
+
+	status(): "open" | "opening" | "closed" | "closing" {
+		return this.statusValue;
+	}
+
+	async put(block: BlockInput): Promise<string> {
+		const cid =
+			block instanceof Uint8Array ? await calculateRawCidV1(block) : block.cid;
+		const bytes = block instanceof Uint8Array ? block : block.block.bytes;
+		this.native.put(cid, copyBytes(bytes));
+		return cid;
+	}
+
+	async putMany(blocks: BlockInput[]): Promise<string[]> {
+		if (blocks.length === 0) {
+			return [];
+		}
+		const cids = new Array<string>(blocks.length);
+		const values = new Array<Uint8Array>(blocks.length);
+		await Promise.all(
+			blocks.map(async (block, index) => {
+				cids[index] =
+					block instanceof Uint8Array ? await calculateRawCidV1(block) : block.cid;
+				values[index] = copyBytes(
+					block instanceof Uint8Array ? block : block.block.bytes,
+				);
+			}),
+		);
+		this.native.put_many(cids, values);
+		return cids;
+	}
+
+	async get(cid: string): Promise<Uint8Array | undefined> {
+		const value = this.native.get(cid);
+		return value == null ? undefined : copyBytes(value);
+	}
+
+	async getMany(cids: string[]): Promise<Array<Uint8Array | undefined>> {
+		return this.native
+			.get_many(cids)
+			.map((value) => (value == null ? undefined : copyBytes(value)));
+	}
+
+	async has(cid: string): Promise<boolean> {
+		return this.native.has(cid);
+	}
+
+	async rm(cid: string): Promise<void> {
+		this.native.delete(cid);
+	}
+
+	async rmMany(cids: string[]): Promise<number> {
+		return this.native.delete_many(cids);
+	}
+
+	async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {
+		for (const [key, value] of this.native.entries()) {
+			yield [key, copyBytes(value)];
+		}
+	}
+
+	async size(): Promise<number> {
+		return this.native.size();
+	}
+
+	persisted(): boolean {
+		return false;
+	}
+
+	waitFor(): Promise<string[]> {
+		return Promise.resolve([]);
+	}
+}
+
+export const createNativeLogBlockStore =
+	async (): Promise<NativeLogBlockStore> => NativeLogBlockStore.create();
 
 export type EntryV0EncodeInput = {
 	clockId: Uint8Array;

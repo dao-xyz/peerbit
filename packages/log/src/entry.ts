@@ -37,6 +37,7 @@ export type PreparedAppendChain<T> = {
 	shallowEntries: ShallowEntry[];
 	nativeEntries?: PreparedNativeLogEntry[];
 	nativeGraphUpdated?: boolean;
+	nativeBlocksCommitted?: boolean;
 };
 
 const preparedEntryBlocks = new WeakMap<object, PreparedEntryBlock>();

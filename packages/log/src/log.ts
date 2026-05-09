@@ -50,6 +50,7 @@ const { LastWriteWins } = Sorting;
 
 type BlocksWithPutMany = Blocks & {
 	putMany?: (blocks: PreparedEntryBlock[]) => Promise<string[]> | string[];
+	rmMany?: (cids: string[]) => Promise<number | void> | number | void;
 };
 
 const hasPutMany = (storage: Blocks): storage is BlocksWithPutMany =>
@@ -645,7 +646,7 @@ export class Log<T> {
 
 		try {
 			await this.joinMissingNexts(entries[0]!, initialNexts);
-			if (deferBlockStore) {
+			if (deferBlockStore && !nativeAppendChain?.nativeBlocksCommitted) {
 				await this.putAppendEntryBlocks(entries, nativeAppendChain?.blocks);
 			}
 			await this.putAppendEntries(
@@ -657,6 +658,9 @@ export class Log<T> {
 		} catch (error) {
 			if (nativeAppendChain?.nativeGraphUpdated) {
 				this.rollbackNativeAppendGraph(entries);
+			}
+			if (nativeAppendChain?.nativeBlocksCommitted) {
+				await this.rollbackNativeAppendBlocks(entries);
 			}
 			throw error;
 		}
@@ -707,7 +711,9 @@ export class Log<T> {
 
 		const nativeGraph =
 			!this.entryIndex.properties.onGidRemoved &&
-			this.entryIndex.properties.nativeGraph?.graph.prepareEntryV0PlainChainAndPut
+			(this.entryIndex.properties.nativeGraph?.graph
+				.prepareEntryV0PlainChainCommit ||
+				this.entryIndex.properties.nativeGraph?.graph.prepareEntryV0PlainChainAndPut)
 				? this.entryIndex.properties.nativeGraph.graph
 				: undefined;
 		return EntryV0.createPlainAppendChainBatch<T>({
@@ -731,6 +737,7 @@ export class Log<T> {
 			deferStore: deferBlockStore,
 			cachePreparedEntries: false,
 			nativeGraph,
+			nativeBlockStore: this._storage,
 		});
 	}
 
@@ -742,6 +749,16 @@ export class Log<T> {
 		for (let i = entries.length - 1; i >= 0; i--) {
 			graph.delete(entries[i]!.hash);
 		}
+	}
+
+	private async rollbackNativeAppendBlocks(entries: Entry<T>[]) {
+		const hashes = entries.map((entry) => entry.hash);
+		const storage = this._storage as BlocksWithPutMany;
+		if (typeof storage.rmMany === "function") {
+			await storage.rmMany(hashes);
+			return;
+		}
+		await Promise.all(hashes.map((hash) => this._storage.rm(hash)));
 	}
 
 	private validateExplicitNexts(options: AppendOptions<T>) {
