@@ -20,6 +20,15 @@ const entry = (
 	clock: { timestamp: { wallTime, logical: 0 } },
 });
 
+const absoluteReplicaData = (value: number) =>
+	new Uint8Array([
+		0,
+		value & 0xff,
+		(value >>> 8) & 0xff,
+		(value >>> 16) & 0xff,
+		(value >>> 24) & 0xff,
+	]);
+
 describe("native log graph index", () => {
 	it("tracks heads and next adjacency", async () => {
 		const index = await createLogGraphIndex();
@@ -104,13 +113,33 @@ describe("native log graph index", () => {
 		const index = await createLogGraphIndex();
 		index.put({
 			...entry("a", "one", [], 1n),
-			data: new Uint8Array([7, 8, 9]),
+			data: absoluteReplicaData(9),
 		});
 
 		const heads = index.headDataEntries("one");
 		expect(heads).to.have.length(1);
 		expect(heads[0]!.hash).equal("a");
-		expect([...(heads[0]!.meta.data ?? [])]).to.deep.equal([7, 8, 9]);
+		expect([...(heads[0]!.meta.data ?? [])]).to.deep.equal([0, 9, 0, 0, 0]);
+	});
+
+	it("computes max u32 from shaped head metadata", async () => {
+		const index = await createLogGraphIndex();
+		index.put({
+			...entry("a", "one", [], 1n),
+			data: absoluteReplicaData(2),
+		});
+		index.put({
+			...entry("b", "one", [], 2n),
+			data: absoluteReplicaData(5),
+		});
+		index.put({
+			...entry("c", "two", [], 3n),
+			data: absoluteReplicaData(9),
+		});
+
+		expect(index.maxHeadDataU32("one")).equal(5);
+		expect(index.maxHeadDataU32("two")).equal(9);
+		expect(index.maxHeadDataU32("missing")).equal(undefined);
 	});
 
 	it("does not demote nexts for cut entries", async () => {

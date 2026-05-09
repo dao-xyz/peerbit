@@ -6,6 +6,15 @@ import sinon from "sinon";
 import { EntryType } from "../src/entry-type.js";
 import { Log } from "../src/log.js";
 
+const absoluteReplicaData = (value: number) =>
+	new Uint8Array([
+		0,
+		value & 0xff,
+		(value >>> 8) & 0xff,
+		(value >>> 16) & 0xff,
+		(value >>> 24) & 0xff,
+	]);
+
 describe("native graph", () => {
 	let store: AnyBlockStore;
 	let signKey: Ed25519Keypair;
@@ -154,6 +163,37 @@ describe("native graph", () => {
 			headsSpy.restore();
 			indexIterateSpy.restore();
 			indexGetSpy.restore();
+			await log.close();
+		}
+	});
+
+	it("computes max head data u32 in the native graph", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+		await log.append(new Uint8Array([1]), {
+			meta: { next: [], data: absoluteReplicaData(2) },
+		});
+		await log.append(new Uint8Array([2]), {
+			meta: { next: [], data: absoluteReplicaData(5) },
+		});
+
+		const indexIterateSpy = sinon.spy(
+			log.entryIndex.properties.index,
+			"iterate",
+		);
+		const nativeGraph = log.entryIndex.properties.nativeGraph!.graph;
+		const maxHeadDataU32Spy = sinon.spy(nativeGraph, "maxHeadDataU32");
+		try {
+			expect(await log.entryIndex.getMaxHeadDataU32()).equal(5);
+			expect(maxHeadDataU32Spy.callCount).equal(1);
+			expect(indexIterateSpy.callCount).equal(0);
+		} finally {
+			maxHeadDataU32Spy.restore();
+			indexIterateSpy.restore();
 			await log.close();
 		}
 	});
