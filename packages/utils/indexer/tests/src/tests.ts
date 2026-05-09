@@ -21,6 +21,7 @@ import {
 	IsNull,
 	type IterateOptions,
 	Not,
+	NotStartedError,
 	Or,
 	Query,
 	type Shape,
@@ -132,6 +133,16 @@ const assertIteratorIsDone = async (iterator: IndexIterator<any, any>) => {
 		throw new Error(`Iterator is not done, got more results`);
 	}
 	expect(iterator.done()).to.be.true;
+};
+
+const expectNotStarted = async (fn: () => any) => {
+	try {
+		await fn();
+	} catch (error) {
+		expect(error).to.be.instanceOf(NotStartedError);
+		return;
+	}
+	expect.fail("Expected NotStartedError");
 };
 
 export const tests = (
@@ -297,6 +308,55 @@ export const tests = (
 			await indices?.drop?.();
 		});
 
+		describe("lifecycle", () => {
+			it("throws from public data APIs after stop has completed", async () => {
+				const { store, indices } = await setup({ schema: Document });
+				await store.put(
+					new Document({
+						id: "closed",
+						name: "closed",
+						number: 10n,
+						tags: ["closed"],
+					}),
+				);
+				expect(await store.getSize()).to.equal(1);
+
+				const openIterator = store.iterate();
+
+				await indices.stop();
+
+				await expectNotStarted(() => store.get(toId("closed")));
+				await expectNotStarted(() =>
+					store.put(
+						new Document({
+							id: "late",
+							name: "late",
+							number: 1n,
+							tags: ["late"],
+						}),
+					),
+				);
+				await expectNotStarted(() =>
+					store.del({
+						query: new StringMatch({
+							key: "id",
+							value: "closed",
+							method: StringMatchMethod.exact,
+							caseInsensitive: false,
+						}),
+					}),
+				);
+				await expectNotStarted(() => store.count());
+				await expectNotStarted(() => store.getSize());
+				await expectNotStarted(() => store.sum({ key: "number" }));
+				await expectNotStarted(() => store.iterate());
+				await expectNotStarted(() => openIterator.next(1));
+				await expectNotStarted(() => openIterator.pending());
+				await expectNotStarted(() => openIterator.all());
+				await openIterator.close();
+			});
+		});
+
 		describe("indexBy", () => {
 			const testIndex = async (
 				store: Index<any, any>,
@@ -367,12 +427,12 @@ export const tests = (
 					try {
 						await store.put(doc);
 					} catch (error) {
-							expect(error).to.haveOwnProperty(
-								"message",
-								"Unexpected index key: undefined, expected: string, number, bigint, Uint8Array or ArrayBufferView",
-							);
-						}
-					});
+						expect(error).to.haveOwnProperty(
+							"message",
+							"Unexpected index key: undefined, expected: string, number, bigint, Uint8Array or ArrayBufferView",
+						);
+					}
+				});
 
 				it("index by another property", async () => {
 					const { store } = await setup({

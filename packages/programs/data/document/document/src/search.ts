@@ -4349,6 +4349,7 @@ export class DocumentIndex<
 					indexBy: this.indexBy,
 					nested: this.nestedProperties,
 				});
+				await index.start();
 				return index;
 			};
 
@@ -4437,8 +4438,9 @@ export class DocumentIndex<
 								Partial<WithIndexed<T, I>>;
 							const indexedCandidate = await toIndexedWithContext(addedValue);
 							if (filterIndex) {
-								filterIndex.drop();
-								filterIndex.put(indexedCandidate);
+								await filterIndex.drop();
+								await filterIndex.start();
+								await filterIndex.put(indexedCandidate);
 								const matches =
 									(
 										await filterIndex
@@ -4927,6 +4929,7 @@ export class DocumentIndex<
 			indexBy: this.indexBy,
 			nested: this.nestedProperties,
 		});
+		await temporaryIndex.start();
 		for (const value of intoIndexable) {
 			temporaryIndex.put(value);
 		}

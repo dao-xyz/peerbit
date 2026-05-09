@@ -34,6 +34,7 @@ const makeDb = async (
 ) => {
 	const raw = new HashmapIndex<Document>();
 	await raw.init({ schema: Document, indexBy: ["id"] });
+	await raw.start();
 	for (let i = 0; i < size; i++) {
 		await raw.put(
 			new Document({ id: i.toString(), content: "#" + i, number: i }),
