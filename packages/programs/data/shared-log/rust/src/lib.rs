@@ -839,6 +839,145 @@ struct RepairDispatchBatch {
     self_hash: String,
 }
 
+struct AppendDeliveryPlan {
+    has_remote_recipients: bool,
+    no_peer_error: bool,
+    default_send_silent: bool,
+    send_to: Vec<String>,
+    ack_to: Vec<String>,
+    silent_to: Vec<String>,
+    repair_targets: Vec<String>,
+    authoritative_recipients: Vec<String>,
+}
+
+fn expand_append_leaders(
+    leaders: Vec<LeaderSample>,
+    full_replica_candidates: Vec<String>,
+    min_replicas: usize,
+) -> Vec<LeaderSample> {
+    let mut expanded = IndexMap::new();
+    for leader in leaders {
+        expanded.insert(leader.hash, leader.intersecting);
+    }
+    if min_replicas >= full_replica_candidates.len().max(1) {
+        for peer in full_replica_candidates {
+            expanded.entry(peer).or_insert(true);
+        }
+    }
+    expanded
+        .into_iter()
+        .map(|(hash, intersecting)| LeaderSample { hash, intersecting })
+        .collect()
+}
+
+fn plan_append_delivery(
+    leaders: Vec<LeaderSample>,
+    fallback_recipients: Vec<String>,
+    min_replicas: usize,
+    self_hash: String,
+    is_leader: bool,
+    delivery_enabled: bool,
+    reliability_ack: bool,
+    min_acks: Option<usize>,
+    require_recipients: bool,
+) -> AppendDeliveryPlan {
+    let authoritative_recipients: Vec<String> =
+        leaders.into_iter().map(|leader| leader.hash).collect();
+    let mut send_set = IndexSet::new();
+    for peer in &authoritative_recipients {
+        send_set.insert(peer.clone());
+    }
+    for peer in fallback_recipients {
+        if peer != self_hash {
+            send_set.insert(peer);
+        }
+    }
+
+    let has_remote_recipients = send_set.iter().any(|peer| peer != &self_hash);
+    if !has_remote_recipients {
+        return AppendDeliveryPlan {
+            has_remote_recipients,
+            no_peer_error: require_recipients,
+            default_send_silent: is_leader,
+            send_to: Vec::new(),
+            ack_to: Vec::new(),
+            silent_to: Vec::new(),
+            repair_targets: Vec::new(),
+            authoritative_recipients,
+        };
+    }
+
+    if !delivery_enabled {
+        let repair_targets = authoritative_recipients
+            .iter()
+            .filter(|peer| *peer != &self_hash)
+            .cloned()
+            .collect();
+        return AppendDeliveryPlan {
+            has_remote_recipients,
+            no_peer_error: false,
+            default_send_silent: is_leader,
+            send_to: send_set.into_iter().collect(),
+            ack_to: Vec::new(),
+            silent_to: Vec::new(),
+            repair_targets,
+            authoritative_recipients,
+        };
+    }
+
+    let authoritative_set: IndexSet<String> = authoritative_recipients.iter().cloned().collect();
+    let ordered_remote_recipients: Vec<String> = send_set
+        .into_iter()
+        .filter(|peer| peer != &self_hash)
+        .collect();
+    let default_min_acks = min_replicas.saturating_sub(1);
+    let ack_limit = if reliability_ack {
+        min_acks.unwrap_or(default_min_acks)
+    } else {
+        0
+    }
+    .min(ordered_remote_recipients.len());
+
+    let mut ack_to = Vec::with_capacity(ack_limit);
+    let mut silent_to =
+        Vec::with_capacity(ordered_remote_recipients.len().saturating_sub(ack_limit));
+    let mut repair_targets = Vec::new();
+    for (index, peer) in ordered_remote_recipients.into_iter().enumerate() {
+        if authoritative_set.contains(&peer) {
+            repair_targets.push(peer.clone());
+        }
+        if index < ack_limit {
+            ack_to.push(peer);
+        } else {
+            silent_to.push(peer);
+        }
+    }
+    let no_peer_error = require_recipients && ack_to.is_empty() && silent_to.is_empty();
+    AppendDeliveryPlan {
+        has_remote_recipients,
+        no_peer_error,
+        default_send_silent: is_leader,
+        send_to: Vec::new(),
+        ack_to,
+        silent_to,
+        repair_targets,
+        authoritative_recipients,
+    }
+}
+
+fn append_delivery_plan_to_row(plan: AppendDeliveryPlan) -> Array {
+    let out = Array::new();
+    out.push(&JsValue::from_bool(plan.has_remote_recipients));
+    out.push(&JsValue::from_bool(plan.no_peer_error));
+    out.push(&JsValue::from_bool(plan.default_send_silent));
+    out.push(&strings_to_array(plan.send_to));
+    out.push(&strings_to_array(plan.ack_to));
+    out.push(&strings_to_array(plan.silent_to));
+    out.push(&strings_to_array(plan.repair_targets));
+    out.push(&strings_to_array(plan.authoritative_recipients));
+    out
+}
+
 fn plan_repair_dispatch_rows(batch: RepairDispatchBatch) -> Result<Array, JsValue> {
     let entry_count = batch.entry_hashes.len();
 
@@ -1700,6 +1839,45 @@ impl NativeSharedLogState {
         Ok(out)
     }
 
+    pub fn plan_append_leaders_for_delivery(
+        &self,
+        leaders: Array,
+        full_replica_candidates: Array,
+        min_replicas: usize,
+    ) -> Result<Array, JsValue> {
+        Ok(samples_to_rows(expand_append_leaders(
+            leader_samples_from_rows(leaders)?,
+            strings_from_array(full_replica_candidates)?,
+            min_replicas,
+        )))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_append_delivery(
+        &self,
+        leaders: Array,
+        fallback_recipients: Array,
+        min_replicas: usize,
+        self_hash: String,
+        is_leader: bool,
+        delivery_enabled: bool,
+        reliability_ack: bool,
+        min_acks: JsValue,
+        require_recipients: bool,
+    ) -> Result<Array, JsValue> {
+        Ok(append_delivery_plan_to_row(plan_append_delivery(
+            leader_samples_from_rows(leaders)?,
+            strings_from_array(fallback_recipients)?,
+            min_replicas,
+            self_hash,
+            is_leader,
+            delivery_enabled,
+            reliability_ack,
+            optional_usize(min_acks)?,
+            require_recipients,
+        )))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn plan_repair_dispatch_for_entries(
         &self,
@@ -1886,6 +2064,19 @@ fn usize_from_array(values: Array) -> Result<Vec<usize>, JsValue> {
     Ok(out)
 }
 
+fn optional_usize(value: JsValue) -> Result<Option<usize>, JsValue> {
+    if value.is_undefined() || value.is_null() {
+        return Ok(None);
+    }
+    let Some(value) = value.as_f64() else {
+        return Err(JsValue::from_str("Expected optional unsigned integer"));
+    };
+    if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
+        return Err(JsValue::from_str("Expected optional unsigned integer"));
+    }
+    Ok(Some(value as usize))
+}
+
 fn cursor_batches_from_array(values: Array) -> Result<Vec<Vec<u64>>, JsValue> {
     let batches = string_batches_from_array(values, "cursor batch array")?;
     let mut out = Vec::with_capacity(batches.len());
@@ -1950,6 +2141,24 @@ fn strings_to_array(values: Vec<String>) -> Array {
         out.push(&JsValue::from_str(&value));
     }
     out
+}
+
+fn leader_samples_from_rows(rows: Array) -> Result<Vec<LeaderSample>, JsValue> {
+    let mut out = Vec::with_capacity(rows.length() as usize);
+    for row in rows.iter() {
+        if !Array::is_array(&row) {
+            return Err(JsValue::from_str("Expected leader sample row"));
+        }
+        let row = Array::from(&row);
+        let Some(hash) = row.get(0).as_string() else {
+            return Err(JsValue::from_str("Expected leader hash string"));
+        };
+        let Some(intersecting) = row.get(1).as_bool() else {
+            return Err(JsValue::from_str("Expected leader intersecting bool"));
+        };
+        out.push(LeaderSample { hash, intersecting });
+    }
+    Ok(out)
 }
 
 fn numbers_to_rows(values: Vec<u64>, resolution: Resolution) -> Array {
