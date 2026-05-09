@@ -71,6 +71,17 @@ type NativeLogIndexHandle = {
 		head: boolean,
 		data?: Uint8Array,
 	) => void;
+	put_many: (
+		hashes: string[],
+		gids: string[],
+		nexts: string[][],
+		types: Uint8Array,
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		payloadSizes: Uint32Array,
+		heads: Uint8Array,
+		datas: Array<Uint8Array | undefined>,
+	) => void;
 	delete: (hash: string) => boolean;
 	heads: (gid?: string) => string[];
 	has_head: (gid?: string) => boolean;
@@ -180,6 +191,44 @@ export class LogGraphIndex {
 			entry.payloadSize ?? 0,
 			entry.head ?? true,
 			entry.data,
+		);
+	}
+
+	putBatch(entries: NativeLogEntry[]): void {
+		if (entries.length === 0) {
+			return;
+		}
+		const hashes = new Array<string>(entries.length);
+		const gids = new Array<string>(entries.length);
+		const nexts = new Array<string[]>(entries.length);
+		const types = new Uint8Array(entries.length);
+		const wallTimes = new BigUint64Array(entries.length);
+		const logicals = new Uint32Array(entries.length);
+		const payloadSizes = new Uint32Array(entries.length);
+		const heads = new Uint8Array(entries.length);
+		const datas = new Array<Uint8Array | undefined>(entries.length);
+		for (let i = 0; i < entries.length; i++) {
+			const entry = entries[i]!;
+			hashes[i] = entry.hash;
+			gids[i] = entry.gid;
+			nexts[i] = entry.next;
+			types[i] = entry.type;
+			wallTimes[i] = BigInt(entry.clock.timestamp.wallTime);
+			logicals[i] = entry.clock.timestamp.logical ?? 0;
+			payloadSizes[i] = entry.payloadSize ?? 0;
+			heads[i] = entry.head === false ? 0 : 1;
+			datas[i] = entry.data;
+		}
+		this.native.put_many(
+			hashes,
+			gids,
+			nexts,
+			types,
+			wallTimes,
+			logicals,
+			payloadSizes,
+			heads,
+			datas,
 		);
 	}
 
