@@ -22,6 +22,15 @@ type RangeLike = {
 	width: number | bigint;
 	mode: number;
 };
+type RangeIndex = {
+	iterate: (
+		query?: unknown,
+		options?: unknown,
+	) => {
+		next: (count?: number) => Promise<Array<{ value: RangeLike }>>;
+		close: () => Promise<void>;
+	};
+};
 
 const loadSharedLog = async () => {
 	const integersPath = "../../../dist/src/integers.js";
@@ -35,7 +44,9 @@ const loadSharedLog = async () => {
 		denormalizer: integers.denormalizer,
 		ReplicationRangeIndexableU32: ranges.ReplicationRangeIndexableU32,
 		ReplicationRangeIndexableU64: ranges.ReplicationRangeIndexableU64,
+		ReplicationIntent: ranges.ReplicationIntent,
 		getSamples: ranges.getSamples,
+		isMatured: ranges.isMatured,
 	};
 };
 
@@ -83,6 +94,54 @@ const benchmark = async (iterations: number, fn: () => Promise<void> | void) => 
 		meanMs: elapsedMs / iterations,
 		opsPerSecond: iterations / (elapsedMs / 1000),
 	};
+};
+
+const getFullReplicaLeadersTs = async (
+	sharedLog: Awaited<ReturnType<typeof loadSharedLog>>,
+	index: RangeIndex,
+	replicas: number,
+	roleAge: number,
+	peerFilter?: Set<string>,
+	includeStrict = true,
+) => {
+	const now = Date.now();
+	const leaders = new Map<string, { intersecting: boolean }>();
+	const iterator = index.iterate(
+		{},
+		{ shape: { hash: true, timestamp: true, mode: true } },
+	);
+
+	try {
+		for (;;) {
+			const batch = await iterator.next(64);
+			if (batch.length === 0) {
+				break;
+			}
+			for (const result of batch) {
+				const range = result.value;
+				if (peerFilter && !peerFilter.has(range.hash)) {
+					continue;
+				}
+				if (!sharedLog.isMatured(range, now, roleAge)) {
+					continue;
+				}
+				if (
+					range.mode === sharedLog.ReplicationIntent.Strict &&
+					!includeStrict
+				) {
+					continue;
+				}
+				leaders.set(range.hash, { intersecting: true });
+				if (leaders.size > replicas) {
+					return undefined;
+				}
+			}
+		}
+	} finally {
+		await iterator.close();
+	}
+
+	return leaders.size > 0 ? leaders : undefined;
 };
 
 const runResolution = async (resolution: Resolution): Promise<BenchResult[]> => {
@@ -134,6 +193,17 @@ const runResolution = async (resolution: Resolution): Promise<BenchResult[]> => 
 			out.push(makeRange(id++, peerHashes[1], 0.4 / 10_000, random()));
 			out.push(makeRange(id++, peerHashes[2], 0.6 / 10_000, random()));
 			out.push(makeRange(id++, peerHashes[2], 0.6 / 10_000, random()));
+		}
+		return out;
+	};
+
+	const fullReplicaRanges = () => {
+		const out: RangeLike[] = [];
+		const random = createRandom(314159265);
+		let id = 1;
+		for (let i = 0; i < 20_000; i++) {
+			out.push(makeRange(id++, peerHashes[0], 0.2 / 20_000, random()));
+			out.push(makeRange(id++, peerHashes[1], 0.4 / 20_000, random()));
 		}
 		return out;
 	};
@@ -212,6 +282,54 @@ const runResolution = async (resolution: Resolution): Promise<BenchResult[]> => 
 
 			rows.push({
 				scenario: `${scenario.name} (${resolution}, ${ranges.length} ranges)`,
+				tsOpsPerSecond: format(ts.opsPerSecond),
+				tsMeanMs: format(ts.meanMs),
+				nativeOpsPerSecond: format(native.opsPerSecond),
+				nativeMeanMs: format(native.meanMs),
+				speedup: `${format(native.opsPerSecond / ts.opsPerSecond)}x`,
+			});
+		} finally {
+			await indices.stop();
+		}
+	}
+
+	{
+		const ranges = fullReplicaRanges();
+		const indices = await createIndex();
+		const index = await indices.init({ schema: RangeClass });
+		await indices.start();
+		const planner = await createRangePlanner(resolution);
+
+		for (const range of ranges) {
+			await index.put(range);
+			planner.put(toNativeRange(range));
+		}
+
+		try {
+			const ts = await benchmark(100, async () => {
+				const leaders = await getFullReplicaLeadersTs(
+					sharedLog,
+					index as unknown as RangeIndex,
+					3,
+					0,
+				);
+				if (!leaders || leaders.size === 0) {
+					throw new Error("Expected TypeScript full-replica leaders");
+				}
+			});
+
+			const native = await benchmark(1_000, () => {
+				const leaders = planner.getFullReplicaLeaders(3, {
+					now: Date.now(),
+					roleAge: 0,
+				});
+				if (!leaders || leaders.size === 0) {
+					throw new Error("Expected native full-replica leaders");
+				}
+			});
+
+			rows.push({
+				scenario: `full replica scan (${resolution}, ${ranges.length} ranges)`,
 				tsOpsPerSecond: format(ts.opsPerSecond),
 				tsMeanMs: format(ts.meanMs),
 				nativeOpsPerSecond: format(native.opsPerSecond),

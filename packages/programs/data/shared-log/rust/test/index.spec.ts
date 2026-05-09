@@ -49,6 +49,61 @@ describe("native shared-log range planner", () => {
 		);
 	});
 
+	it("returns full replica leaders when ranges fit within the replica count", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
+		planner.put(range({ id: "b", hash: "peer-b", start1: 90, end1: 100 }));
+
+		expect(planner.getFullReplicaLeaders(2, { now: 1_000 })).to.deep.equal(
+			new Map([
+				["peer-a", { intersecting: true }],
+				["peer-b", { intersecting: true }],
+			]),
+		);
+	});
+
+	it("skips full replica leaders when ranges exceed the replica count", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
+		planner.put(range({ id: "b", hash: "peer-b", start1: 90, end1: 100 }));
+
+		expect(planner.getFullReplicaLeaders(1, { now: 1_000 })).to.equal(
+			undefined,
+		);
+	});
+
+	it("honors full replica filters, maturity, and strict fallback options", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
+		planner.put(
+			range({
+				id: "b",
+				hash: "peer-b",
+				start1: 20,
+				end1: 30,
+				mode: 1,
+			}),
+		);
+		planner.put(
+			range({
+				id: "c",
+				hash: "peer-c",
+				start1: 40,
+				end1: 50,
+				timestamp: 950n,
+			}),
+		);
+
+		expect(
+			planner.getFullReplicaLeaders(3, {
+				now: 1_000,
+				roleAge: 100,
+				includeStrict: false,
+				peerFilter: ["peer-a", "peer-b", "peer-c"],
+			}),
+		).to.deep.equal(new Map([["peer-a", { intersecting: true }]]));
+	});
+
 	it("honors peer filters and maturity", async () => {
 		const planner = await createRangePlanner("u32");
 		planner.put(range({ id: "a", hash: "peer-a", start1: 10, end1: 20 }));
