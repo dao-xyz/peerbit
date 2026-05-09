@@ -755,7 +755,9 @@ export class Log<T> {
 						},
 					}
 				: undefined,
-			canAppend: options.canAppend || this._canAppend,
+			canAppend:
+				options.canAppend ||
+				(this._hasCustomCanAppend ? this._canAppend : undefined),
 			deferStore: storeOptions?.deferStore,
 		});
 
