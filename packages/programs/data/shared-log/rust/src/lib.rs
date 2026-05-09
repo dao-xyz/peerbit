@@ -1970,6 +1970,108 @@ impl NativeSharedLogState {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn plan_append_for_gids_batch(
+        &mut self,
+        entry_hashes: Array,
+        gids: Array,
+        next_hash_batches: Array,
+        replica_counts: Array,
+        full_replica_candidates: Array,
+        fallback_recipients: Array,
+        delivery_self_hash: String,
+        delivery_enabled: bool,
+        reliability_ack: bool,
+        min_acks: JsValue,
+        require_recipients: bool,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let entry_hashes = strings_from_array(entry_hashes)?;
+        let gids = strings_from_array(gids)?;
+        let next_hash_batches =
+            string_batches_from_array(next_hash_batches, "append next hash batch array")?;
+        let replica_counts = usize_from_array(replica_counts)?;
+        ensure_same_len(entry_hashes.len(), gids.len(), "append entry gid")?;
+        ensure_same_len(
+            entry_hashes.len(),
+            next_hash_batches.len(),
+            "append next hash",
+        )?;
+        ensure_same_len(entry_hashes.len(), replica_counts.len(), "append replica")?;
+
+        let full_replica_candidates = strings_from_array(full_replica_candidates)?;
+        let fallback_recipients = strings_from_array(fallback_recipients)?;
+        let min_acks = optional_usize(min_acks)?;
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
+        let mut prepared_options_by_replicas = HashMap::new();
+        let mut full_replica_leaders_by_replicas = HashMap::new();
+        let out = Array::new();
+
+        for (((entry_hash, gid), next_hashes), replicas) in entry_hashes
+            .into_iter()
+            .zip(gids)
+            .zip(next_hash_batches)
+            .zip(replica_counts)
+        {
+            let coordinates = self.inner.range_planner.get_gid_coordinates(&gid, replicas);
+            let leaders = find_leaders_with_batch_caches(
+                &self.inner.range_planner,
+                &coordinates,
+                replicas,
+                &options,
+                &mut prepared_options_by_replicas,
+                &mut full_replica_leaders_by_replicas,
+                expand_peer_filter,
+                &self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            );
+            let is_leader = leaders.iter().any(|leader| leader.hash == self_hash);
+            let assigned_to_range_boundary = should_assign_to_range_boundary(&leaders, replicas);
+
+            self.inner
+                .entry_coordinates
+                .insert(entry_hash, coordinates.clone());
+            for next_hash in next_hashes {
+                self.inner.entry_coordinates.remove(&next_hash);
+            }
+
+            let delivery_leaders =
+                expand_append_leaders(leaders, full_replica_candidates.clone(), replicas);
+            let delivery = plan_append_delivery(
+                delivery_leaders.clone(),
+                fallback_recipients.clone(),
+                replicas,
+                delivery_self_hash.clone(),
+                is_leader,
+                delivery_enabled,
+                reliability_ack,
+                min_acks,
+                require_recipients,
+            );
+            out.push(&append_entry_plan_to_row(
+                AppendEntryPlan {
+                    coordinates,
+                    leaders: delivery_leaders,
+                    is_leader,
+                    assigned_to_range_boundary,
+                    delivery,
+                },
+                self.inner.range_planner.resolution,
+            ));
+        }
+
+        Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn plan_repair_dispatch_for_entries(
         &self,
         entry_hashes: Array,

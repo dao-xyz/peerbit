@@ -497,6 +497,75 @@ describe("native shared-log range planner", () => {
 		expect(state.getEntryCoordinates("old-head")).to.equal(undefined);
 	});
 
+	it("plans append assignments and delivery in one native state batch", async () => {
+		const singleState = await createSharedLogState("u32");
+		const batchState = await createSharedLogState("u32");
+		const ranges = [
+			range({ id: "a", hash: "peer-self", start1: 0, end1: 10 }),
+			range({ id: "b", hash: "peer-a", start1: 20, end1: 30 }),
+		];
+		for (const item of ranges) {
+			singleState.put(item);
+			batchState.put(item);
+		}
+		singleState.putEntryCoordinates("old-head", [1, 2]);
+		batchState.putEntryCoordinates("old-head", [1, 2]);
+
+		const leaderOptions = {
+			now: 1_000,
+			selfHash: "peer-self",
+			selfReplicating: true,
+			fullReplicaFallback: true,
+		};
+		const entries = [
+			{
+				entryHash: "new-head-a",
+				gid: "entry-gid-a",
+				nextHashes: ["old-head"],
+				replicas: 2,
+			},
+			{
+				entryHash: "new-head-b",
+				gid: "entry-gid-b",
+				nextHashes: ["new-head-a"],
+				replicas: 2,
+			},
+		];
+		const commonInput = {
+			fullReplicaCandidates: ["peer-self", "peer-c"],
+			fallbackRecipients: ["peer-fallback"],
+			selfHash: "peer-self",
+			deliveryEnabled: true,
+			reliabilityAck: true,
+			minAcks: 1,
+			requireRecipients: true,
+		};
+
+		const expected = entries.map((entry) =>
+			singleState.planAppendForGid(
+				{
+					...entry,
+					...commonInput,
+				},
+				leaderOptions,
+			),
+		);
+		const actual = batchState.planAppendForGidsBatch(
+			{
+				entries,
+				...commonInput,
+			},
+			leaderOptions,
+		);
+
+		expect(actual).to.deep.equal(expected);
+		expect(batchState.getEntryCoordinates("old-head")).to.equal(undefined);
+		expect(batchState.getEntryCoordinates("new-head-a")).to.equal(undefined);
+		expect(batchState.getEntryCoordinates("new-head-b")).to.deep.equal(
+			actual[1]!.coordinates,
+		);
+	});
+
 	it("plans repair dispatch targets in one native batch", async () => {
 		const planner = await createRangePlanner("u32");
 
