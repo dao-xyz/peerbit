@@ -107,6 +107,7 @@ export interface Index<T extends Record<string, any>, NestedType = any> {
 			replace?: boolean;
 		},
 	): MaybePromise<void>;
+	putBatch?(values: T[]): MaybePromise<void>;
 	del(query: DeleteOptions): MaybePromise<IdKey[]>;
 	sum(query: SumOptions): MaybePromise<bigint | number>;
 	count(query?: CountOptions): MaybePromise<number>;

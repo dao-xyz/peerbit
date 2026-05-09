@@ -163,6 +163,7 @@ describe("append", function () {
 
 		const iterateSpy = sinon.spy(log.entryIndex.properties.index, "iterate");
 		const putSpy = sinon.spy(log.entryIndex.properties.index, "put");
+		const putBatchSpy = sinon.spy(log.entryIndex.properties.index, "putBatch");
 		const blockPutSpy = sinon.spy(store, "put");
 		const blockPutManySpy = sinon.spy(store, "putMany");
 		const shallowSpy = sinon.spy(EntryV0.prototype, "toShallow");
@@ -202,7 +203,9 @@ describe("append", function () {
 				true,
 			]);
 			expect(iterateSpy.callCount).equal(0);
-			expect(putSpy.callCount).equal(result.entries.length + 1);
+			expect(putSpy.callCount).equal(1);
+			expect(putBatchSpy.callCount).equal(1);
+			expect(putBatchSpy.firstCall.args[0]).to.have.length(result.entries.length);
 			expect(blockPutSpy.callCount).equal(0);
 			expect(blockPutManySpy.callCount).equal(1);
 			expect(blockPutManySpy.firstCall.args[0]).to.have.length(
@@ -219,6 +222,7 @@ describe("append", function () {
 		} finally {
 			iterateSpy.restore();
 			putSpy.restore();
+			putBatchSpy.restore();
 			blockPutSpy.restore();
 			blockPutManySpy.restore();
 			shallowSpy.restore();

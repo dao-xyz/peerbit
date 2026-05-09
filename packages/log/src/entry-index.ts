@@ -47,10 +47,6 @@ type BlocksWithGetMany = Blocks & {
 	) => Promise<Array<Uint8Array | undefined>> | Array<Uint8Array | undefined>;
 };
 
-type IndexWithPutBatch<T extends Record<string, any>> = Index<T> & {
-	putBatch?: (values: T[]) => Promise<void> | void;
-};
-
 type NativeLogEntry = PreparedNativeLogEntry;
 
 type NativeJoinCutCheck = {
@@ -958,8 +954,7 @@ export class EntryIndex<T> {
 				? new Set(entries.map((entry) => entry.hash))
 				: undefined;
 			const putBatch =
-				!this.properties.onGidRemoved &&
-				(this.properties.index as IndexWithPutBatch<ShallowEntry>).putBatch;
+				!this.properties.onGidRemoved && this.properties.index.putBatch;
 			const shallowEntries: ShallowEntry[] = [];
 			const nativeGraphPutAppendChain =
 				!this.properties.onGidRemoved &&
