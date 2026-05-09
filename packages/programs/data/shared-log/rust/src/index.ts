@@ -241,10 +241,50 @@ type NativeRangePlannerHandle = {
 	get_gid_coordinates: (gid: string, count: number) => unknown[];
 };
 
+type NativeSharedLogStateHandle = {
+	len: () => number;
+	clear: () => void;
+	put: NativeRangePlannerHandle["put"];
+	delete: NativeRangePlannerHandle["delete"];
+	put_entry_coordinates: (hash: string, coordinates: string[]) => void;
+	delete_entry_coordinates: (hash: string) => boolean;
+	delete_entry_coordinates_batch: (hashes: string[]) => void;
+	clear_entry_coordinates: () => void;
+	add_gid_peers: (gid: string, peers: string[], reset: boolean) => number;
+	remove_gid_peer: (peer: string, gid?: string) => void;
+	delete_gid_peers: (gid: string) => boolean;
+	clear_gid_peers: () => void;
+	mark_entries_known_by_peer: (hashes: string[], peer: string) => void;
+	remove_entries_known_by_peer: (hashes: string[], peer: string) => void;
+	remove_peer_from_entry_known_peers: (peer: string) => void;
+	clear_entry_known_peers: () => void;
+	plan_entry_leaders_for_gid: NativeRangePlannerHandle["plan_leaders_for_gid"];
+	plan_repair_dispatch_for_entries: (
+		entryHashes: string[],
+		entryGids: string[],
+		entryRequestedReplicas: number[],
+		entryCoordinateBatches: string[][],
+		pendingModes: string[],
+		pendingPeersByMode: string[][],
+		optimisticPeersByMode: string[][][],
+		fullReplicaRepairCandidates: string[],
+		fullReplicaRepairCandidateCount: number,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => unknown[];
+};
+
 type WasmModule = {
 	default: (input?: unknown) => Promise<unknown>;
 	initSync: (input?: unknown) => unknown;
 	NativeRangePlanner: new (resolution: string) => NativeRangePlannerHandle;
+	NativeSharedLogState: new (resolution: string) => NativeSharedLogStateHandle;
 };
 
 let wasmModulePromise: Promise<WasmModule> | undefined;
@@ -309,6 +349,40 @@ const rowsToNumbers = (
 		return resolution === "u64" ? BigInt(value) : Number(value);
 	});
 
+const findLeaderArguments = (options?: FindLeaderOptions): [
+	number,
+	string,
+	string[] | undefined,
+	boolean,
+	string,
+	boolean,
+	boolean,
+	boolean,
+] => [
+	options?.roleAge ?? 0,
+	asIntegerString(options?.now ?? Date.now()),
+	options?.peerFilter ? [...options.peerFilter] : undefined,
+	options?.expandPeerFilter === true,
+	options?.selfHash ?? "",
+	options?.selfReplicating === true,
+	options?.fullReplicaFallback === true,
+	options?.includeStrictFullReplica !== false,
+];
+
+const rowsToRepairDispatchPlan = (rows: unknown[]): RepairDispatchPlan => {
+	const plan: RepairDispatchPlan = new Map();
+	for (const row of rows) {
+		const [mode, target, hashes] = row as [string, string, string[]];
+		let targets = plan.get(mode);
+		if (!targets) {
+			targets = new Map();
+			plan.set(mode, targets);
+		}
+		targets.set(target, hashes);
+	}
+	return plan;
+};
+
 export class SharedLogRangePlanner {
 	private constructor(
 		private readonly native: NativeRangePlannerHandle,
@@ -366,28 +440,6 @@ export class SharedLogRangePlanner {
 		return rowsToSamples(rows);
 	}
 
-	private findLeaderArguments(options?: FindLeaderOptions): [
-		number,
-		string,
-		string[] | undefined,
-		boolean,
-		string,
-		boolean,
-		boolean,
-		boolean,
-	] {
-		return [
-			options?.roleAge ?? 0,
-			asIntegerString(options?.now ?? Date.now()),
-			options?.peerFilter ? [...options.peerFilter] : undefined,
-			options?.expandPeerFilter === true,
-			options?.selfHash ?? "",
-			options?.selfReplicating === true,
-			options?.fullReplicaFallback === true,
-			options?.includeStrictFullReplica !== false,
-		];
-	}
-
 	findLeaders(
 		cursors: Iterable<bigint | number | string>,
 		replicas: number,
@@ -396,7 +448,7 @@ export class SharedLogRangePlanner {
 		const rows = this.native.find_leaders(
 			[...cursors].map(asIntegerString),
 			replicas,
-			...this.findLeaderArguments(options),
+			...findLeaderArguments(options),
 		);
 		return rowsToSamples(rows);
 	}
@@ -415,7 +467,7 @@ export class SharedLogRangePlanner {
 		const rows = this.native.find_leaders_batch(
 			cursorBatches,
 			replicaCounts,
-			...this.findLeaderArguments(options),
+			...findLeaderArguments(options),
 		);
 		return rows.map((row) => rowsToSamples(row as unknown[]));
 	}
@@ -428,7 +480,7 @@ export class SharedLogRangePlanner {
 		const rows = this.native.find_leaders_for_gid(
 			gid,
 			replicas,
-			...this.findLeaderArguments(options),
+			...findLeaderArguments(options),
 		);
 		return rowsToSamples(rows);
 	}
@@ -441,7 +493,7 @@ export class SharedLogRangePlanner {
 		const [coordinateRows, leaderRows] = this.native.plan_leaders_for_gid(
 			gid,
 			replicas,
-			...this.findLeaderArguments(options),
+			...findLeaderArguments(options),
 		);
 		return {
 			coordinates: rowsToNumbers(this.resolution, coordinateRows),
@@ -463,7 +515,7 @@ export class SharedLogRangePlanner {
 		const rows = this.native.plan_leaders_for_gids_batch(
 			gids,
 			replicaCounts,
-			...this.findLeaderArguments(options),
+			...findLeaderArguments(options),
 		);
 		return rows.map((row) => {
 			const [coordinateRows, leaderRows] = row as [unknown[], unknown[]];
@@ -505,17 +557,7 @@ export class SharedLogRangePlanner {
 			input.selfHash,
 		);
 
-		const plan: RepairDispatchPlan = new Map();
-		for (const row of rows) {
-			const [mode, target, hashes] = row as [string, string, string[]];
-			let targets = plan.get(mode);
-			if (!targets) {
-				targets = new Map();
-				plan.set(mode, targets);
-			}
-			targets.set(target, hashes);
-		}
-		return plan;
+		return rowsToRepairDispatchPlan(rows);
 	}
 
 	planRepairDispatchForEntries(
@@ -549,23 +591,13 @@ export class SharedLogRangePlanner {
 				? [...input.fullReplicaRepairCandidates]
 				: [],
 			input.fullReplicaRepairCandidateCount,
-			...this.findLeaderArguments({
+			...findLeaderArguments({
 				...options,
 				selfHash: input.selfHash,
 			}),
 		);
 
-		const plan: RepairDispatchPlan = new Map();
-		for (const row of rows) {
-			const [mode, target, hashes] = row as [string, string, string[]];
-			let targets = plan.get(mode);
-			if (!targets) {
-				targets = new Map();
-				plan.set(mode, targets);
-			}
-			targets.set(target, hashes);
-		}
-		return plan;
+		return rowsToRepairDispatchPlan(rows);
 	}
 
 	getFullReplicaLeaders(
@@ -616,4 +648,151 @@ export class SharedLogRangePlanner {
 	}
 }
 
+export class SharedLogNativeState {
+	private constructor(
+		private readonly native: NativeSharedLogStateHandle,
+		private readonly resolution: RangeResolution,
+	) {}
+
+	static async create(resolution: RangeResolution): Promise<SharedLogNativeState> {
+		const wasm = await loadWasm();
+		return new SharedLogNativeState(
+			new wasm.NativeSharedLogState(resolution),
+			resolution,
+		);
+	}
+
+	get length(): number {
+		return this.native.len();
+	}
+
+	clear(): void {
+		this.native.clear();
+	}
+
+	put(range: NativeReplicationRange): void {
+		this.native.put(
+			range.id,
+			range.hash,
+			asIntegerString(range.timestamp),
+			asIntegerString(range.start1),
+			asIntegerString(range.end1),
+			asIntegerString(range.start2),
+			asIntegerString(range.end2),
+			asIntegerString(range.width),
+			range.mode,
+		);
+	}
+
+	delete(id: string): boolean {
+		return this.native.delete(id);
+	}
+
+	putEntryCoordinates(
+		hash: string,
+		coordinates: Iterable<bigint | number | string>,
+	): void {
+		this.native.put_entry_coordinates(hash, [...coordinates].map(asIntegerString));
+	}
+
+	deleteEntryCoordinates(hash: string): boolean {
+		return this.native.delete_entry_coordinates(hash);
+	}
+
+	deleteEntryCoordinatesBatch(hashes: Iterable<string>): void {
+		this.native.delete_entry_coordinates_batch([...hashes]);
+	}
+
+	clearEntryCoordinates(): void {
+		this.native.clear_entry_coordinates();
+	}
+
+	addGidPeers(
+		gid: string,
+		peers: Iterable<string>,
+		reset = false,
+	): number {
+		return this.native.add_gid_peers(gid, [...peers], reset);
+	}
+
+	removeGidPeer(peer: string, gid?: string): void {
+		this.native.remove_gid_peer(peer, gid);
+	}
+
+	deleteGidPeers(gid: string): boolean {
+		return this.native.delete_gid_peers(gid);
+	}
+
+	clearGidPeers(): void {
+		this.native.clear_gid_peers();
+	}
+
+	markEntriesKnownByPeer(hashes: Iterable<string>, peer: string): void {
+		this.native.mark_entries_known_by_peer([...hashes], peer);
+	}
+
+	removeEntriesKnownByPeer(hashes: Iterable<string>, peer: string): void {
+		this.native.remove_entries_known_by_peer([...hashes], peer);
+	}
+
+	removePeerFromEntryKnownPeers(peer: string): void {
+		this.native.remove_peer_from_entry_known_peers(peer);
+	}
+
+	clearEntryKnownPeers(): void {
+		this.native.clear_entry_known_peers();
+	}
+
+	planLeadersForGid(
+		gid: string,
+		replicas: number,
+		options?: FindLeaderOptions,
+	): LeaderPlan {
+		const [coordinateRows, leaderRows] =
+			this.native.plan_entry_leaders_for_gid(
+				gid,
+				replicas,
+				...findLeaderArguments(options),
+			);
+		return {
+			coordinates: rowsToNumbers(this.resolution, coordinateRows),
+			leaders: rowsToSamples(leaderRows),
+		};
+	}
+
+	planRepairDispatchForEntries(
+		input: RepairDispatchEntryPlanInput,
+		options?: FindLeaderOptions,
+	): RepairDispatchPlan {
+		const entries = [...input.entries];
+		const pendingModes = [...input.pendingModes];
+		const rows = this.native.plan_repair_dispatch_for_entries(
+			entries.map((entry) => entry.hash),
+			entries.map((entry) => entry.gid),
+			entries.map((entry) => entry.requestedReplicas),
+			entries.map((entry) => [...entry.coordinates].map(asIntegerString)),
+			pendingModes,
+			pendingModes.map((mode) => [
+				...(input.pendingPeersByMode.get(mode) ?? []),
+			]),
+			pendingModes.map((mode) => {
+				const optimisticByGid = input.optimisticPeersByMode?.get(mode);
+				return entries.map((entry) => [
+					...(optimisticByGid?.get(entry.gid) ?? []),
+				]);
+			}),
+			input.fullReplicaRepairCandidates
+				? [...input.fullReplicaRepairCandidates]
+				: [],
+			input.fullReplicaRepairCandidateCount,
+			...findLeaderArguments({
+				...options,
+				selfHash: input.selfHash,
+			}),
+		);
+		return rowsToRepairDispatchPlan(rows);
+	}
+}
+
 export const createRangePlanner = SharedLogRangePlanner.create;
+export const createSharedLogState = SharedLogNativeState.create;

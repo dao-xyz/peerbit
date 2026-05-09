@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { createRangePlanner } from "../src/index.js";
+import { createRangePlanner, createSharedLogState } from "../src/index.js";
 
 const range = (properties: {
 	id: string;
@@ -274,6 +274,31 @@ describe("native shared-log range planner", () => {
 		);
 	});
 
+	it("plans hash gid leaders from resident shared-log state", async () => {
+		const planner = await createRangePlanner("u32");
+		const state = await createSharedLogState("u32");
+		const ranges = [
+			range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }),
+			range({ id: "b", hash: "peer-b", start1: 20, end1: 30 }),
+		];
+		for (const item of ranges) {
+			planner.put(item);
+			state.put(item);
+		}
+
+		expect(
+			state.planLeadersForGid("entry-gid", 2, {
+				now: 1_000,
+				fullReplicaFallback: true,
+			}),
+		).to.deep.equal(
+			planner.planLeadersForGid("entry-gid", 2, {
+				now: 1_000,
+				fullReplicaFallback: true,
+			}),
+		);
+	});
+
 	it("plans repair dispatch targets in one native batch", async () => {
 		const planner = await createRangePlanner("u32");
 
@@ -330,6 +355,56 @@ describe("native shared-log range planner", () => {
 						["peer-a", ["entry-a"]],
 						["peer-full", ["entry-a"]],
 					]),
+				],
+			]),
+		);
+	});
+
+	it("plans repair dispatch from resident shared-log state", async () => {
+		const state = await createSharedLogState("u32");
+		state.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
+		state.addGidPeers("gid-known", ["peer-a"]);
+		state.markEntriesKnownByPeer(["entry-known"], "peer-a");
+
+		expect(
+			state.planRepairDispatchForEntries(
+				{
+					entries: [
+						{
+							hash: "entry-known",
+							gid: "gid-fresh",
+							requestedReplicas: 1,
+							coordinates: [5],
+						},
+						{
+							hash: "entry-gid",
+							gid: "gid-known",
+							requestedReplicas: 1,
+							coordinates: [5],
+						},
+						{
+							hash: "entry-fresh",
+							gid: "gid-fresh",
+							requestedReplicas: 1,
+							coordinates: [5],
+						},
+					],
+					pendingModes: ["join-warmup", "join-authoritative"],
+					pendingPeersByMode: new Map([
+						["join-warmup", ["peer-a"]],
+						["join-authoritative", ["peer-a"]],
+					]),
+					fullReplicaRepairCandidateCount: 1,
+					selfHash: "peer-self",
+				},
+				{ now: 1_000 },
+			),
+		).to.deep.equal(
+			new Map([
+				["join-warmup", new Map([["peer-a", ["entry-fresh"]]])],
+				[
+					"join-authoritative",
+					new Map([["peer-a", ["entry-gid", "entry-fresh"]]]),
 				],
 			]),
 		);
