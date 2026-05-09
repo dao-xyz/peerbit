@@ -299,6 +299,44 @@ describe("native shared-log range planner", () => {
 		);
 	});
 
+	it("plans entry assignment metadata from resident shared-log state", async () => {
+		const planner = await createRangePlanner("u32");
+		const state = await createSharedLogState("u32");
+		const ranges = [
+			range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }),
+			range({ id: "b", hash: "peer-b", start1: 20, end1: 30 }),
+		];
+		for (const item of ranges) {
+			planner.put(item);
+			state.put(item);
+		}
+
+		const plan = state.planEntryAssignmentForGid("entry-gid", 2, {
+			now: 1_000,
+			fullReplicaFallback: true,
+		});
+
+		expect(plan).to.deep.equal({
+			...planner.planLeadersForGid("entry-gid", 2, {
+				now: 1_000,
+				fullReplicaFallback: true,
+			}),
+			assignedToRangeBoundary:
+				plan.leaders.size < 2 ||
+				[...plan.leaders.values()].some((leader) => !leader.intersecting),
+		});
+	});
+
+	it("commits entry coordinates to resident shared-log state", async () => {
+		const state = await createSharedLogState("u32");
+		state.putEntryCoordinates("old-head", [1, 2]);
+
+		state.commitEntryCoordinates("new-head", [3, 4], ["old-head"]);
+
+		expect(state.getEntryCoordinates("new-head")).to.deep.equal([3, 4]);
+		expect(state.getEntryCoordinates("old-head")).to.equal(undefined);
+	});
+
 	it("plans repair dispatch targets in one native batch", async () => {
 		const planner = await createRangePlanner("u32");
 

@@ -1481,6 +1481,31 @@ impl NativeSharedLogState {
         self.inner.entry_coordinates.remove(hash).is_some()
     }
 
+    pub fn get_entry_coordinates(&self, hash: &str) -> JsValue {
+        self.inner
+            .entry_coordinates
+            .get(hash)
+            .map(|coordinates| {
+                numbers_to_rows(coordinates.clone(), self.inner.range_planner.resolution).into()
+            })
+            .unwrap_or(JsValue::UNDEFINED)
+    }
+
+    pub fn commit_entry_coordinates(
+        &mut self,
+        hash: String,
+        coordinates: Array,
+        next_hashes: Array,
+    ) -> Result<(), JsValue> {
+        let coordinates = cursor_values_from_array(coordinates)?;
+        let next_hashes = strings_from_array(next_hashes)?;
+        self.inner.entry_coordinates.insert(hash, coordinates);
+        for next_hash in next_hashes {
+            self.inner.entry_coordinates.remove(&next_hash);
+        }
+        Ok(())
+    }
+
     pub fn delete_entry_coordinates_batch(&mut self, hashes: Array) -> Result<(), JsValue> {
         for hash in strings_from_array(hashes)? {
             self.inner.entry_coordinates.remove(&hash);
@@ -1635,6 +1660,43 @@ impl NativeSharedLogState {
             self.inner.range_planner.resolution,
         ));
         out.push(&samples_to_rows(leaders));
+        Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_entry_assignment_for_gid(
+        &self,
+        gid: String,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let coordinates = self.inner.range_planner.get_gid_coordinates(&gid, replicas);
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
+        let leaders = self.inner.range_planner.find_leaders(
+            &coordinates,
+            replicas,
+            &options,
+            expand_peer_filter,
+            &self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        );
+        let assigned_to_range_boundary = should_assign_to_range_boundary(&leaders, replicas);
+        let out = Array::new();
+        out.push(&numbers_to_rows(
+            coordinates,
+            self.inner.range_planner.resolution,
+        ));
+        out.push(&samples_to_rows(leaders));
+        out.push(&JsValue::from_bool(assigned_to_range_boundary));
         Ok(out)
     }
 
@@ -1862,6 +1924,10 @@ fn add_repair_dispatch(
 
 fn contains_string(values: &[String], target: &str) -> bool {
     values.iter().any(|value| value == target)
+}
+
+fn should_assign_to_range_boundary(leaders: &[LeaderSample], min_replicas: usize) -> bool {
+    leaders.len() < min_replicas || leaders.iter().any(|leader| !leader.intersecting)
 }
 
 fn index_set_to_vec(values: &IndexSet<String>) -> Vec<String> {
