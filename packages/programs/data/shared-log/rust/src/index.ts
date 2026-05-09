@@ -34,6 +34,17 @@ export type MaturedPeerOptions = {
 	selfReplicating: boolean;
 };
 
+export type FindLeaderOptions = {
+	roleAge?: number;
+	now?: bigint | number | string;
+	peerFilter?: Iterable<string>;
+	expandPeerFilter?: boolean;
+	selfHash?: string;
+	selfReplicating?: boolean;
+	fullReplicaFallback?: boolean;
+	includeStrictFullReplica?: boolean;
+};
+
 export type LeaderSample = {
 	intersecting: boolean;
 };
@@ -60,6 +71,18 @@ type NativeRangePlannerHandle = {
 		onlyIntersecting: boolean,
 		uniqueReplicators?: string[],
 		peerFilter?: string[],
+	) => unknown[];
+	find_leaders: (
+		cursors: string[],
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
 	) => unknown[];
 	get_full_replica_leaders: (
 		replicas: number,
@@ -184,6 +207,26 @@ export class SharedLogRangePlanner {
 			options?.onlyIntersecting === true,
 			options?.uniqueReplicators ? [...options.uniqueReplicators] : undefined,
 			options?.peerFilter ? [...options.peerFilter] : undefined,
+		);
+		return rowsToSamples(rows);
+	}
+
+	findLeaders(
+		cursors: Iterable<bigint | number | string>,
+		replicas: number,
+		options?: FindLeaderOptions,
+	): Map<string, LeaderSample> {
+		const rows = this.native.find_leaders(
+			[...cursors].map(asIntegerString),
+			replicas,
+			options?.roleAge ?? 0,
+			asIntegerString(options?.now ?? Date.now()),
+			options?.peerFilter ? [...options.peerFilter] : undefined,
+			options?.expandPeerFilter === true,
+			options?.selfHash ?? "",
+			options?.selfReplicating === true,
+			options?.fullReplicaFallback === true,
+			options?.includeStrictFullReplica !== false,
 		);
 		return rowsToSamples(rows);
 	}
