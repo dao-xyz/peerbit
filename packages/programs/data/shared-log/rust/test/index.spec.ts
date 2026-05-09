@@ -150,6 +150,60 @@ describe("native shared-log range planner", () => {
 		).to.deep.equal(new Set(["peer-a"]));
 	});
 
+	it("finds leaders through the combined native path", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
+		planner.put(range({ id: "b", hash: "peer-b", start1: 20, end1: 30 }));
+
+		expect(
+			planner.findLeaders([5], 1, {
+				now: 1_000,
+				peerFilter: ["peer-a"],
+				fullReplicaFallback: false,
+			}),
+		).to.deep.equal(new Map([["peer-a", { intersecting: true }]]));
+	});
+
+	it("uses full replica fallback through the combined native path", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
+		planner.put(range({ id: "b", hash: "peer-b", start1: 20, end1: 30 }));
+
+		expect(
+			planner.findLeaders([50, 75], 2, {
+				now: 1_000,
+				fullReplicaFallback: true,
+			}),
+		).to.deep.equal(
+			new Map([
+				["peer-a", { intersecting: true }],
+				["peer-b", { intersecting: true }],
+			]),
+		);
+	});
+
+	it("expands peer filters through the combined native path", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
+		planner.put(range({ id: "b", hash: "peer-b", start1: 20, end1: 30 }));
+
+		expect(
+			planner.findLeaders([50, 75], 2, {
+				now: 1_000,
+				peerFilter: ["peer-a"],
+				expandPeerFilter: true,
+				selfHash: "peer-self",
+				selfReplicating: true,
+				fullReplicaFallback: true,
+			}),
+		).to.deep.equal(
+			new Map([
+				["peer-a", { intersecting: true }],
+				["peer-b", { intersecting: true }],
+			]),
+		);
+	});
+
 	it("honors peer filters and maturity", async () => {
 		const planner = await createRangePlanner("u32");
 		planner.put(range({ id: "a", hash: "peer-a", start1: 10, end1: 20 }));

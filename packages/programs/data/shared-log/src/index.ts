@@ -6917,54 +6917,40 @@ export class SharedLog<
 			}
 		}
 
-		if (!options?.candidates) {
-			// Reachability snapshots can briefly under-report peers. Do not let that
-			// turn a known mature indexed range into a false self-only full replica.
-			peerFilter =
-				this._nativeRangePlanner?.includeMaturedPeers(
-					peerFilter,
-					cursors.length,
-					{
-						roleAge,
-						now: Date.now(),
-						selfHash,
-						selfReplicating,
-					},
-				) ??
-				(await this.includeIndexedLeaderCandidatesWhenUnderfilled(
-					peerFilter,
-					roleAge,
-					cursors.length,
-					selfReplicating,
-				));
-		}
-
-		if (!options?.candidates) {
-			const fullReplicaLeaders = this._nativeRangePlanner
-				? this._nativeRangePlanner.getFullReplicaLeaders(cursors.length, {
-						roleAge,
-						now: Date.now(),
-						includeStrict:
-							this._logProperties?.strictFullReplicaFallback !== false,
-						peerFilter,
-					})
-				: await this.findFullReplicaLeaders(
-						cursors.length,
-						roleAge,
-						peerFilter,
-					);
-			if (fullReplicaLeaders) {
-				return fullReplicaLeaders;
-			}
-		}
-
 		if (this._nativeRangePlanner) {
-			return this._nativeRangePlanner.getSamples(cursors, {
+			return this._nativeRangePlanner.findLeaders(cursors, cursors.length, {
 				roleAge,
 				now: Date.now(),
 				peerFilter,
-				uniqueReplicators: peerFilter,
+				expandPeerFilter: !options?.candidates,
+				selfHash,
+				selfReplicating,
+				fullReplicaFallback: !options?.candidates,
+				includeStrictFullReplica:
+					this._logProperties?.strictFullReplicaFallback !== false,
 			});
+		}
+
+		if (!options?.candidates) {
+			// Reachability snapshots can briefly under-report peers. Do not let that
+			// turn a known mature indexed range into a false self-only full replica.
+			peerFilter = await this.includeIndexedLeaderCandidatesWhenUnderfilled(
+				peerFilter,
+				roleAge,
+				cursors.length,
+				selfReplicating,
+			);
+		}
+
+		if (!options?.candidates) {
+			const fullReplicaLeaders = await this.findFullReplicaLeaders(
+				cursors.length,
+				roleAge,
+				peerFilter,
+			);
+			if (fullReplicaLeaders) {
+				return fullReplicaLeaders;
+			}
 		}
 
 		return getSamples<R>(

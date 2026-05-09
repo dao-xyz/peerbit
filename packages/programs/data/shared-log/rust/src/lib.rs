@@ -361,6 +361,51 @@ impl RangePlanner {
             .collect()
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn find_leaders(
+        &self,
+        cursors: &[u64],
+        replicas: usize,
+        options: &SampleOptions,
+        expand_peer_filter: bool,
+        self_hash: &str,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Vec<LeaderSample> {
+        let mut options = options.clone();
+
+        if expand_peer_filter {
+            options.peer_filter = self
+                .include_matured_peers(
+                    options
+                        .peer_filter
+                        .as_ref()
+                        .map(|peers| IndexSet::from_iter(peers.iter().cloned())),
+                    replicas,
+                    &options,
+                    self_hash,
+                    include_self,
+                )
+                .map(HashSet::from_iter);
+        }
+
+        if full_replica_fallback {
+            if let Some(leaders) =
+                self.get_full_replica_leaders(replicas, &options, include_strict_full_replica)
+            {
+                return leaders;
+            }
+        }
+
+        options.unique_replicators = options
+            .peer_filter
+            .as_ref()
+            .map(|peers| IndexSet::from_iter(peers.iter().cloned()));
+
+        self.get_samples(cursors, &options)
+    }
+
     pub fn get_full_replica_leaders(
         &self,
         replicas: usize,
@@ -727,6 +772,47 @@ impl NativeRangePlanner {
             peer_filter: optional_string_set(peer_filter)?.map(HashSet::from_iter),
         };
         Ok(samples_to_rows(self.inner.get_samples(&cursors, &options)))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn find_leaders(
+        &self,
+        cursors: Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let cursors = strings_from_array(cursors)?
+            .into_iter()
+            .map(|value| parse_u64(&value))
+            .collect::<Result<Vec<_>, _>>()?;
+        let options = SampleOptions {
+            role_age_ms: if role_age_ms <= 0.0 {
+                0
+            } else {
+                role_age_ms.floor() as u64
+            },
+            now: parse_u64(&now)?,
+            peer_filter: optional_string_set(peer_filter)?.map(HashSet::from_iter),
+            ..Default::default()
+        };
+
+        Ok(samples_to_rows(self.inner.find_leaders(
+            &cursors,
+            replicas,
+            &options,
+            expand_peer_filter,
+            &self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )))
     }
 
     pub fn get_full_replica_leaders(
@@ -1178,5 +1264,66 @@ mod tests {
             .expect("peers");
 
         assert_eq!(peers, vec!["peer-a".to_string()]);
+    }
+
+    #[test]
+    fn find_leaders_combines_filter_fill_full_replica_and_sampling() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new(
+            "a", "peer-a", 0, 10, 20, 10, 20, 10, 0,
+        ));
+        planner.put(ReplicationRange::new(
+            "b", "peer-b", 0, 30, 40, 30, 40, 10, 0,
+        ));
+
+        let leaders = planner.find_leaders(
+            &[50, 75],
+            2,
+            &SampleOptions {
+                now: 1_000,
+                peer_filter: Some(["peer-a".to_string()].into_iter().collect()),
+                ..Default::default()
+            },
+            true,
+            "peer-self",
+            true,
+            true,
+            true,
+        );
+
+        assert_eq!(leaders.len(), 2);
+        assert_eq!(leaders[0].hash, "peer-a");
+        assert_eq!(leaders[1].hash, "peer-b");
+        assert!(leaders.iter().all(|leader| leader.intersecting));
+    }
+
+    #[test]
+    fn find_leaders_respects_candidate_mode_without_fill_or_full_replica() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new(
+            "a", "peer-a", 0, 10, 20, 10, 20, 10, 0,
+        ));
+        planner.put(ReplicationRange::new(
+            "b", "peer-b", 0, 30, 40, 30, 40, 10, 0,
+        ));
+
+        let leaders = planner.find_leaders(
+            &[50],
+            1,
+            &SampleOptions {
+                now: 1_000,
+                peer_filter: Some(["peer-a".to_string()].into_iter().collect()),
+                ..Default::default()
+            },
+            false,
+            "peer-self",
+            true,
+            false,
+            true,
+        );
+
+        assert_eq!(leaders.len(), 1);
+        assert_eq!(leaders[0].hash, "peer-a");
+        assert!(!leaders[0].intersecting);
     }
 }
