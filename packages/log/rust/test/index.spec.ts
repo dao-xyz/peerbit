@@ -1,5 +1,11 @@
 import { expect } from "chai";
-import { type NativeLogEntry, createLogGraphIndex } from "../src/index.js";
+import {
+	type NativeLogEntry,
+	calculateRawCidV1,
+	createLogGraphIndex,
+	encodeEntryV0Signable,
+	encodeEntryV0Storage,
+} from "../src/index.js";
 
 const APPEND = 0;
 const CUT = 1;
@@ -28,6 +34,28 @@ const absoluteReplicaData = (value: number) =>
 		(value >>> 16) & 0xff,
 		(value >>> 24) & 0xff,
 	]);
+
+const bytes = (length: number, offset = 0) =>
+	Uint8Array.from({ length }, (_, index) => (index + offset) & 0xff);
+
+const fromHex = (hex: string) =>
+	Uint8Array.from(
+		hex.match(/.{2}/g)?.map((byte) => Number.parseInt(byte, 16)) ?? [],
+	);
+
+const TS_BORSH_ENTRY_V0_FIXTURE = {
+	withMeta: {
+		signable:
+			"0000005e0000000000210000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20210015cd5b070000000007000000050000006769642d6102000000060000006e6578742d61060000006e6578742d62000103000000090807000009000000000400000001020304000000000000",
+		storage:
+			"0000005e0000000000210000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20210015cd5b070000000007000000050000006769642d6102000000060000006e6578742d61060000006e6578742d62000103000000090807000009000000000400000001020304000000000100010000000000670000000040000000606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f00404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f0000",
+		cid: "zb2rhXpjPn9fDgku56mickZTNbZDfiWmZRy5WDnHjAeLB8Yqa",
+	},
+	noMeta: {
+		signable:
+			"000000490000000000210000000b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b00b168de3a00000000000000000b0000006769642d6e6f2d6d65746100000000000000000a00000000050000000504030201000000000000",
+	},
+};
 
 describe("native log graph index", () => {
 	it("tracks heads and next adjacency", async () => {
@@ -322,5 +350,71 @@ describe("native log graph index", () => {
 			cutChecked: true,
 			coveredByCut: false,
 		});
+	});
+});
+
+describe("native EntryV0 encoding", () => {
+	it("matches TS/Borsh signable, storage, and raw CID bytes", async () => {
+		const clockId = bytes(33, 1);
+		const publicKeyBytes = bytes(32, 64);
+		const signatureBytes = bytes(64, 96);
+		const metaData = new Uint8Array([9, 8, 7]);
+		const payloadData = new Uint8Array([1, 2, 3, 4]);
+		const wallTime = 123456789n;
+		const logical = 7;
+		const gid = "gid-a";
+		const next = ["next-a", "next-b"];
+
+		const nativeSignable = await encodeEntryV0Signable({
+			clockId,
+			wallTime,
+			logical,
+			gid,
+			next,
+			type: APPEND,
+			metaData,
+			payloadData,
+		});
+
+		expect([...nativeSignable]).to.deep.equal([
+			...fromHex(TS_BORSH_ENTRY_V0_FIXTURE.withMeta.signable),
+		]);
+
+		const nativeStorage = await encodeEntryV0Storage({
+			clockId,
+			wallTime,
+			logical,
+			gid,
+			next,
+			type: APPEND,
+			metaData,
+			payloadData,
+			signature: signatureBytes,
+			signaturePublicKey: publicKeyBytes,
+			prehash: 0,
+		});
+
+		expect([...nativeStorage]).to.deep.equal([
+			...fromHex(TS_BORSH_ENTRY_V0_FIXTURE.withMeta.storage),
+		]);
+		expect(await calculateRawCidV1(nativeStorage)).to.equal(
+			TS_BORSH_ENTRY_V0_FIXTURE.withMeta.cid,
+		);
+	});
+
+	it("matches TS/Borsh encoding without optional entry metadata", async () => {
+		const clockId = bytes(33, 11);
+		const payloadData = new Uint8Array([5, 4, 3, 2, 1]);
+		const wallTime = 987654321n;
+		const gid = "gid-no-meta";
+
+		expect([
+			...(await encodeEntryV0Signable({
+				clockId,
+				wallTime,
+				gid,
+				payloadData,
+			})),
+		]).to.deep.equal([...fromHex(TS_BORSH_ENTRY_V0_FIXTURE.noMeta.signable)]);
 	});
 });
