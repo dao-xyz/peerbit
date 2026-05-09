@@ -73,6 +73,7 @@ export type NativeLogGraph = {
 	clear: () => void;
 	heads: (gid?: string) => string[];
 	headDataEntries: (gid?: string) => NativeLogHeadDataEntry[];
+	maxHeadDataU32: (gid?: string) => number | undefined;
 	headEntries: (gid?: string) => SortableEntry[];
 	joinHeadEntries: (gid?: string) => NativeLogJoinEntry[];
 	childJoinEntries: (hash: string) => NativeLogJoinEntry[];
@@ -321,6 +322,14 @@ export class EntryIndex<T> {
 			return undefined;
 		}
 		return this.properties.nativeGraph.graph.headEntries(gid);
+	}
+
+	async getMaxHeadDataU32(gid?: string): Promise<number | undefined> {
+		if (!this.properties.nativeGraph?.useHeads) {
+			return undefined;
+		}
+		await this.flushPendingWrites();
+		return this.properties.nativeGraph.graph.maxHeadDataU32(gid);
 	}
 
 	getJoinHeads(gid?: string): Promise<NativeLogJoinEntry[]> {
