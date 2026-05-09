@@ -309,9 +309,12 @@ describe("native graph", () => {
 		const hasManySpy = sinon.spy(nativeGraph, "hasMany");
 		const iterateSpy = sinon.spy(target.entryIndex.properties.index, "iterate");
 		try {
+			expect(await target.hasMany([present.hash, missing.hash])).to.deep.equal(
+				new Set([present.hash]),
+			);
 			await target.join([present, missing]);
 
-			expect(hasManySpy.callCount).equal(1);
+			expect(hasManySpy.callCount).equal(2);
 			expect(hasManySpy.firstCall.args[0]).to.deep.equal(
 				new Set([present.hash, missing.hash]),
 			);

@@ -386,6 +386,11 @@ export class Log<T> {
 	has(cid: string) {
 		return this._entryIndex.has(cid);
 	}
+
+	hasMany(cids: Iterable<string>) {
+		return this._entryIndex.hasMany(cids);
+	}
+
 	/**
 	 * Get all entries sorted. Don't use this method anywhere where performance matters
 	 */
