@@ -53,6 +53,20 @@ describe("native log graph index", () => {
 		expect(index.countHasNext("a")).to.equal(0);
 	});
 
+	it("tracks heads and next adjacency in native batches", async () => {
+		const index = await createLogGraphIndex();
+		index.putBatch([
+			entry("a", "g", [], 1n),
+			entry("b", "g", ["a"], 2n),
+			entry("c", "g", ["b"], 3n),
+		]);
+
+		expect(index.heads()).to.deep.equal(["c"]);
+		expect(index.children("a")).to.deep.equal(["b"]);
+		expect(index.children("b")).to.deep.equal(["c"]);
+		expect(index.payloadSizeSum()).to.equal(3);
+	});
+
 	it("filters heads by gid and clock order", async () => {
 		const index = await createLogGraphIndex();
 		index.put(entry("b", "one", [], 2n));

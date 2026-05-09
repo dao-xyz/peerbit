@@ -1,5 +1,5 @@
 use indexmap::{IndexMap, IndexSet};
-use js_sys::{Array, Uint8Array};
+use js_sys::{Array, BigUint64Array, Uint32Array, Uint8Array};
 use peerbit_indexer_rust::planner::{
     DocumentFields, FieldValue, NativeQueryIndex, Query, SortDirection, SortField,
 };
@@ -157,6 +157,12 @@ impl LogGraphIndex {
             if demotes_nexts {
                 self.set_head(&next, false);
             }
+        }
+    }
+
+    pub fn put_many(&mut self, entries: Vec<LogIndexEntry>) {
+        for entry in entries {
+            self.put(entry);
         }
     }
 
@@ -536,6 +542,54 @@ impl NativeLogIndex {
         Ok(())
     }
 
+    pub fn put_many(
+        &mut self,
+        hashes: Array,
+        gids: Array,
+        nexts: Array,
+        entry_types: Uint8Array,
+        wall_times: BigUint64Array,
+        logicals: Uint32Array,
+        payload_sizes: Uint32Array,
+        heads: Uint8Array,
+        datas: Array,
+    ) -> Result<(), JsValue> {
+        let len = hashes.length();
+        for values in [&gids, &nexts, &datas] {
+            if values.length() != len {
+                return Err(JsValue::from_str("Expected equal column lengths"));
+            }
+        }
+        for numeric_len in [
+            entry_types.length(),
+            wall_times.length(),
+            logicals.length(),
+            payload_sizes.length(),
+            heads.length(),
+        ] {
+            if numeric_len != len {
+                return Err(JsValue::from_str("Expected equal column lengths"));
+            }
+        }
+
+        let mut entries = Vec::with_capacity(len as usize);
+        for i in 0..len {
+            entries.push(LogIndexEntry::new_with_data(
+                required_string_from_array(&hashes, i)?,
+                required_string_from_array(&gids, i)?,
+                strings_from_array(required_array_from_array(&nexts, i)?)?,
+                entry_types.get_index(i),
+                wall_times.get_index(i),
+                logicals.get_index(i),
+                payload_sizes.get_index(i),
+                heads.get_index(i) != 0,
+                optional_bytes_from_js(datas.get(i)),
+            ));
+        }
+        self.inner.put_many(entries);
+        Ok(())
+    }
+
     pub fn delete(&mut self, hash: &str) -> bool {
         self.inner.delete(hash).is_some()
     }
@@ -685,6 +739,21 @@ fn optional_bytes_from_js(value: JsValue) -> Option<Vec<u8>> {
         return None;
     }
     Some(Uint8Array::new(&value).to_vec())
+}
+
+fn required_string_from_array(values: &Array, index: u32) -> Result<String, JsValue> {
+    values
+        .get(index)
+        .as_string()
+        .ok_or_else(|| JsValue::from_str("Expected string field"))
+}
+
+fn required_array_from_array(values: &Array, index: u32) -> Result<Array, JsValue> {
+    let value = values.get(index);
+    if !Array::is_array(&value) {
+        return Err(JsValue::from_str("Expected array field"));
+    }
+    Ok(Array::from(&value))
 }
 
 fn decode_absolute_replica_data_u32(data: Option<&[u8]>) -> Option<u32> {

@@ -533,14 +533,14 @@ export class EntryV0<T>
 			createdLocally: true,
 		});
 
-		const signers = properties.signers || [
-			properties.identity.sign.bind(properties.identity),
-		];
-
 		const signableBytes = entry.getSignableBytes();
-		let signatures = await Promise.all(
-			signers.map((signer) => signer(signableBytes)),
-		);
+		let signatures = properties.signers
+			? properties.signers.length === 1
+				? [await properties.signers[0]!(signableBytes)]
+				: await Promise.all(
+						properties.signers.map((signer) => signer(signableBytes)),
+					)
+			: [await properties.identity.sign(signableBytes)];
 		signatures = signatures.sort((a, b) => compare(a.signature, b.signature));
 
 		const encryptedSignatures: MaybeEncrypted<SignatureWithKey>[] = [];

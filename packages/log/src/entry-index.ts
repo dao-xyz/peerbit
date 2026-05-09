@@ -73,6 +73,7 @@ export type NativeLogGraph = {
 	has: (hash: string) => boolean;
 	hasMany: (hashes: Iterable<string>) => Set<string>;
 	put: (entry: NativeLogEntry) => void;
+	putBatch?: (entries: NativeLogEntry[]) => void;
 	delete: (hash: string) => boolean;
 	clear: () => void;
 	heads: (gid?: string) => string[];
@@ -954,6 +955,13 @@ export class EntryIndex<T> {
 				!this.properties.onGidRemoved &&
 				(this.properties.index as IndexWithPutBatch<ShallowEntry>).putBatch;
 			const shallowEntries: ShallowEntry[] = [];
+			const nativeGraphPutBatch =
+				!this.properties.onGidRemoved && this.properties.nativeGraph?.graph.putBatch
+					? this.properties.nativeGraph.graph.putBatch.bind(
+							this.properties.nativeGraph.graph,
+						)
+					: undefined;
+			const nativeEntries: NativeLogEntry[] = [];
 			for (let i = 0; i < entries.length; i++) {
 				const entry = entries[i];
 				const isHead = i === entries.length - 1;
@@ -967,10 +975,13 @@ export class EntryIndex<T> {
 					shallowEntries.push(shallowEntry);
 				} else {
 					await this.properties.index.put(shallowEntry);
-					this.properties.nativeGraph?.graph.put(
-						toNativeLogEntry(shallowEntry),
-					);
-					await this.notifyShadowedGids(entry);
+					const nativeEntry = toNativeLogEntry(shallowEntry);
+					if (nativeGraphPutBatch) {
+						nativeEntries.push(nativeEntry);
+					} else {
+						this.properties.nativeGraph?.graph.put(nativeEntry);
+						await this.notifyShadowedGids(entry);
+					}
 				}
 
 				for (const next of entry.meta.next) {
@@ -982,11 +993,16 @@ export class EntryIndex<T> {
 
 			if (putBatch) {
 				await putBatch.call(this.properties.index, shallowEntries);
-				for (const shallowEntry of shallowEntries) {
-					this.properties.nativeGraph?.graph.put(
-						toNativeLogEntry(shallowEntry),
-					);
+				const batchedNativeEntries = shallowEntries.map(toNativeLogEntry);
+				if (nativeGraphPutBatch) {
+					nativeGraphPutBatch(batchedNativeEntries);
+				} else {
+					for (const nativeEntry of batchedNativeEntries) {
+						this.properties.nativeGraph?.graph.put(nativeEntry);
+					}
 				}
+			} else if (nativeGraphPutBatch && nativeEntries.length > 0) {
+				nativeGraphPutBatch(nativeEntries);
 			}
 
 			if (externalNexts.size > 0) {
