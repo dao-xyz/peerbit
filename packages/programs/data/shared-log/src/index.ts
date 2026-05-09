@@ -252,6 +252,38 @@ type CheckedPruneEntry<T, R extends "u32" | "u64"> =
 	| ShallowEntry
 	| EntryReplicated<R>;
 
+type LeaderMap = Map<string, { intersecting: boolean }>;
+
+type LeaderSelectionOptions<R extends "u32" | "u64"> = {
+	roleAge?: number;
+	candidates?: Iterable<string>;
+	onLeader?: (key: string) => void;
+	persist?:
+		| {
+				prev?: EntryReplicated<R>;
+		  }
+		| false;
+};
+
+type WaitForReplicatorsOptions<R extends "u32" | "u64"> =
+	LeaderSelectionOptions<R> & {
+		timeout?: number;
+	};
+
+type WaitForReplicator = { key: string; replicator: boolean };
+
+type EntryLeaderPlan<R extends "u32" | "u64"> = {
+	coordinates: NumberFromType<R>[];
+	leaders: LeaderMap;
+	isLeader: boolean;
+};
+
+type EntryLeaderBatchItem<R extends "u32" | "u64"> = {
+	entry: ShallowOrFullEntry<any> | EntryReplicated<R>;
+	replicas: number;
+	options?: LeaderSelectionOptions<R>;
+};
+
 const getLatestEntry = (
 	entries: (ShallowOrFullEntry<any> | EntryWithRefs<any>)[],
 ) => {
@@ -1805,12 +1837,20 @@ export class SharedLog<
 			await this.deleteCoordinatesForHashes(staleHashes);
 		}
 
+		const missingHeads: EntryLeaderBatchItem<R>[] = [];
 		for (const head of heads) {
 			if (indexedHashes.has(head.hash)) {
 				continue;
 			}
-			const minReplicas = decodeReplicas(head).getValue(this);
-			await this.planEntryLeaders(head, minReplicas, { persist: {} });
+			missingHeads.push({
+				entry: head,
+				replicas: decodeReplicas(head).getValue(this),
+				options: { persist: {} },
+			});
+		}
+
+		if (missingHeads.length > 0) {
+			await this.planEntryLeaderBatch(missingHeads);
 		}
 	}
 
@@ -5532,20 +5572,15 @@ export class SharedLog<
 								maxReplicasFromNewEntries,
 							);
 
-							const cursor = await this.createCoordinates(
-								latestEntry,
-								maxMaxReplicas,
-							);
-
 							const isReplicating = this._isReplicating;
 
 							let isLeader = false;
 							let fromIsLeader = false;
-							let leaders: Map<string, { intersecting: boolean }> | false;
+							let leaders: LeaderMap | false;
 							if (isReplicating) {
-								leaders = await this._waitForReplicators(
-									cursor,
+								leaders = await this._waitForEntryReplicators(
 									latestEntry,
+									maxMaxReplicas,
 									[
 										{
 											key: this.node.identity.publicKey.hashcode(),
@@ -5567,7 +5602,7 @@ export class SharedLog<
 									},
 								);
 							} else {
-								leaders = await this.findLeaders(cursor, latestEntry, {
+								const plan = await this.planEntryLeaders(latestEntry, maxMaxReplicas, {
 									onLeader: (key) => {
 										fromIsLeader =
 											fromIsLeader || context.from!.hashcode() === key;
@@ -5576,6 +5611,7 @@ export class SharedLog<
 											this.node.identity.publicKey.hashcode() === key;
 									},
 								});
+								leaders = plan.leaders;
 							}
 
 							if (this.closed) {
@@ -5735,12 +5771,9 @@ export class SharedLog<
 							indexedEntry!.value.meta.gid,
 						);
 
-						await this._waitForReplicators(
-							await this.createCoordinates(
-								indexedEntry.value,
-								decodeReplicas(indexedEntry.value).getValue(this),
-							),
+						await this._waitForEntryReplicators(
 							indexedEntry.value,
+							decodeReplicas(indexedEntry.value).getValue(this),
 							[
 								{
 									key: this.node.identity.publicKey.hashcode(),
@@ -5793,12 +5826,9 @@ export class SharedLog<
 									);
 									this.removePruneRequestSent(entry.hash, from);
 									let isLeader = false;
-									await this._waitForReplicators(
-										await this.createCoordinates(
-											entry,
-											decodeReplicas(entry).getValue(this),
-										),
+									await this._waitForEntryReplicators(
 										entry,
+										decodeReplicas(entry).getValue(this),
 										[
 											{
 												key: this.node.identity.publicKey.hashcode(),
@@ -6553,19 +6583,46 @@ export class SharedLog<
 	private async _waitForReplicators(
 		cursors: NumberFromType<R>[],
 		entry: Entry<T> | EntryReplicated<R> | ShallowEntry,
-		waitFor: { key: string; replicator: boolean }[],
-		options: {
-			timeout?: number;
-			roleAge?: number;
-			onLeader?: (key: string) => void;
-			// persist even if not leader
-			persist?:
-				| {
-						prev?: EntryReplicated<R>;
-				  }
-				| false;
-		} = { timeout: this.waitForReplicatorTimeout },
-	): Promise<Map<string, { intersecting: boolean }> | false> {
+		waitFor: WaitForReplicator[],
+		options: WaitForReplicatorsOptions<R> = {
+			timeout: this.waitForReplicatorTimeout,
+		},
+	): Promise<LeaderMap | false> {
+		return this.waitForLeaderSelection(waitFor, options, (checkOptions) =>
+			this.findLeaders(cursors, entry, checkOptions),
+		);
+	}
+
+	private async _waitForEntryReplicators(
+		entry: ShallowOrFullEntry<any> | EntryReplicated<R>,
+		replicas: number,
+		waitFor: WaitForReplicator[],
+		options: WaitForReplicatorsOptions<R> = {
+			timeout: this.waitForReplicatorTimeout,
+		},
+	): Promise<LeaderMap | false> {
+		if (this.canPlanNativeHashGid(entry) && this._nativeRangePlanner) {
+			return this.waitForLeaderSelection(waitFor, options, async (checkOptions) => {
+				const plan = await this.planEntryLeaders(entry, replicas, checkOptions);
+				return plan.leaders;
+			});
+		}
+
+		return this._waitForReplicators(
+			await this.createCoordinates(entry, replicas),
+			entry,
+			waitFor,
+			options,
+		);
+	}
+
+	private async waitForLeaderSelection(
+		waitFor: WaitForReplicator[],
+		options: WaitForReplicatorsOptions<R>,
+		checkLeaders: (
+			options: WaitForReplicatorsOptions<R>,
+		) => Promise<LeaderMap>,
+	): Promise<LeaderMap | false> {
 		const timeout = options.timeout ?? this.waitForReplicatorTimeout;
 
 		return new Promise((resolve, reject) => {
@@ -6578,7 +6635,7 @@ export class SharedLog<
 					abortListener,
 				);
 			};
-			const settleResolve = (value: Map<string, { intersecting: boolean }> | false) => {
+			const settleResolve = (value: LeaderMap | false) => {
 				if (settled) return;
 				settled = true;
 				removeListeners();
@@ -6602,7 +6659,7 @@ export class SharedLog<
 
 			const check = async () => {
 				let leaderKeys = new Set<string>();
-				const leaders = await this.findLeaders(cursors, entry, {
+				const leaders = await checkLeaders({
 					...options,
 					onLeader: (key) => {
 						options?.onLeader && options.onLeader(key);
@@ -6819,7 +6876,7 @@ export class SharedLog<
 	private async applyLeaderSelection(
 		cursors: NumberFromType<R>[],
 		entry: Entry<T> | EntryReplicated<R> | ShallowEntry,
-		leaders: Map<string, { intersecting: boolean }>,
+		leaders: LeaderMap,
 		options?: {
 			onLeader?: (key: string) => void;
 			persist?:
@@ -6859,23 +6916,10 @@ export class SharedLog<
 	private async planEntryLeaders(
 		entry: ShallowOrFullEntry<any> | EntryReplicated<R>,
 		replicas: number,
-		options?: {
-			roleAge?: number;
-			candidates?: Iterable<string>;
-			onLeader?: (key: string) => void;
-			persist?:
-				| {
-						prev?: EntryReplicated<R>;
-				  }
-				| false;
-		},
-	): Promise<{
-		coordinates: NumberFromType<R>[];
-		leaders: Map<string, { intersecting: boolean }>;
-		isLeader: boolean;
-	}> {
+		options?: LeaderSelectionOptions<R>,
+	): Promise<EntryLeaderPlan<R>> {
 		let coordinates: NumberFromType<R>[];
-		let leaders: Map<string, { intersecting: boolean }>;
+		let leaders: LeaderMap;
 
 		if (this.canPlanNativeHashGid(entry)) {
 			const plan = await this._findLeaderPlanFromHashGid(
@@ -6905,6 +6949,18 @@ export class SharedLog<
 			options,
 		);
 		return { coordinates, leaders, isLeader };
+	}
+
+	private async planEntryLeaderBatch(
+		items: Iterable<EntryLeaderBatchItem<R>>,
+	): Promise<EntryLeaderPlan<R>[]> {
+		const plans: EntryLeaderPlan<R>[] = [];
+		for (const item of items) {
+			plans.push(
+				await this.planEntryLeaders(item.entry, item.replicas, item.options),
+			);
+		}
+		return plans;
 	}
 
 	async isLeader(
@@ -7587,8 +7643,6 @@ export class SharedLog<
 					deferredPromise.reject(e);
 				};
 
-			let cursor: NumberFromType<R>[] | undefined = undefined;
-
 			// Checked prune requests can legitimately take longer than a fixed 10s:
 			// - The remote may not have the entry yet and will wait up to `_respondToIHaveTimeout`
 			// - Leadership/replicator information may take up to `waitForReplicatorTimeout` to settle
@@ -7628,13 +7682,9 @@ export class SharedLog<
 
 					// TODO is this check necessary
 					if (
-						!(await this._waitForReplicators(
-							cursor ??
-								(cursor = await this.createCoordinates(
-									entry,
-									minReplicasValue,
-								)),
+						!(await this._waitForEntryReplicators(
 							entry,
+							minReplicasValue,
 							[
 								{ key: publicKeyHash, replicator: true },
 								{
