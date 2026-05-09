@@ -72,6 +72,7 @@ export type NativeLogGraph = {
 	delete: (hash: string) => boolean;
 	clear: () => void;
 	heads: (gid?: string) => string[];
+	hasHead: (gid?: string) => boolean;
 	headDataEntries: (gid?: string) => NativeLogHeadDataEntry[];
 	maxHeadDataU32: (gid?: string) => number | undefined;
 	headEntries: (gid?: string) => SortableEntry[];
@@ -322,6 +323,14 @@ export class EntryIndex<T> {
 			return undefined;
 		}
 		return this.properties.nativeGraph.graph.headEntries(gid);
+	}
+
+	async hasHead(gid?: string): Promise<boolean | undefined> {
+		if (!this.properties.nativeGraph?.useHeads) {
+			return undefined;
+		}
+		await this.flushPendingWrites();
+		return this.properties.nativeGraph.graph.hasHead(gid);
 	}
 
 	async getMaxHeadDataU32(gid?: string): Promise<number | undefined> {
