@@ -7,6 +7,7 @@ use wasm_bindgen::prelude::*;
 const MODE_NON_STRICT: u8 = 0;
 const MAX_U32: u64 = u32::MAX as u64;
 const MAX_U64: u64 = u64::MAX;
+const CONTAINMENT_BUCKETS: usize = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Resolution {
@@ -27,6 +28,15 @@ impl Resolution {
             Self::U32 => MAX_U32,
             Self::U64 => MAX_U64,
         }
+    }
+
+    fn domain_size(self) -> u128 {
+        self.max_value() as u128 + 1
+    }
+
+    fn containment_bucket(self, value: u64) -> usize {
+        let bucket = (value as u128 * CONTAINMENT_BUCKETS as u128) / self.domain_size();
+        (bucket as usize).min(CONTAINMENT_BUCKETS - 1)
     }
 }
 
@@ -97,6 +107,7 @@ pub struct RangePlanner {
     ranges: IndexMap<String, ReplicationRange>,
     by_start1: BTreeSet<RangeIndexKey>,
     by_end2: BTreeSet<RangeIndexKey>,
+    containment_buckets: Vec<IndexSet<String>>,
     peer_ranges: IndexMap<String, PeerRangeStats>,
 }
 
@@ -242,6 +253,7 @@ impl RangePlanner {
             ranges: IndexMap::new(),
             by_start1: BTreeSet::new(),
             by_end2: BTreeSet::new(),
+            containment_buckets: vec![IndexSet::new(); CONTAINMENT_BUCKETS],
             peer_ranges: IndexMap::new(),
         }
     }
@@ -258,6 +270,9 @@ impl RangePlanner {
         self.ranges.clear();
         self.by_start1.clear();
         self.by_end2.clear();
+        for bucket in &mut self.containment_buckets {
+            bucket.clear();
+        }
         self.peer_ranges.clear();
     }
 
@@ -285,12 +300,15 @@ impl RangePlanner {
         let mut unique_visited: IndexSet<String> = IndexSet::new();
 
         for (i, point) in cursors.iter().copied().enumerate() {
-            for range in self
-                .ranges
-                .values()
-                .filter(|range| self.include_range(range, options.peer_filter.as_ref()))
-                .filter(|range| range.contains(point))
-            {
+            for id in self.containment_buckets[self.resolution.containment_bucket(point)].iter() {
+                let Some(range) = self.ranges.get(id) else {
+                    continue;
+                };
+                if !self.include_range(range, options.peer_filter.as_ref())
+                    || !range.contains(point)
+                {
+                    continue;
+                }
                 unique_visited.insert(range.hash.clone());
                 match leaders.get_mut(&range.hash) {
                     Some(intersecting) => {
@@ -425,10 +443,17 @@ impl RangePlanner {
         range.width > 0 && range.mode == MODE_NON_STRICT
     }
 
+    fn is_containment_indexed(range: &ReplicationRange) -> bool {
+        range.width > 0
+    }
+
     fn index_range(&mut self, range: &ReplicationRange) {
         if Self::is_fallback_indexed(range) {
             self.by_start1.insert(RangeIndexKey::start(range));
             self.by_end2.insert(RangeIndexKey::end(range));
+        }
+        if Self::is_containment_indexed(range) {
+            self.index_containment_range(range);
         }
         self.peer_ranges
             .entry(range.hash.clone())
@@ -441,11 +466,46 @@ impl RangePlanner {
             self.by_start1.remove(&RangeIndexKey::start(range));
             self.by_end2.remove(&RangeIndexKey::end(range));
         }
+        if Self::is_containment_indexed(range) {
+            self.unindex_containment_range(range);
+        }
         if let Some(stats) = self.peer_ranges.get_mut(&range.hash) {
             stats.remove(range);
             if stats.is_empty() {
                 self.peer_ranges.swap_remove(&range.hash);
             }
+        }
+    }
+
+    fn index_containment_range(&mut self, range: &ReplicationRange) {
+        self.index_containment_interval(&range.id, range.start1, range.end1);
+        self.index_containment_interval(&range.id, range.start2, range.end2);
+    }
+
+    fn unindex_containment_range(&mut self, range: &ReplicationRange) {
+        self.unindex_containment_interval(&range.id, range.start1, range.end1);
+        self.unindex_containment_interval(&range.id, range.start2, range.end2);
+    }
+
+    fn index_containment_interval(&mut self, id: &str, start: u64, end: u64) {
+        if start >= end {
+            return;
+        }
+        let first = self.resolution.containment_bucket(start);
+        let last = self.resolution.containment_bucket(end - 1);
+        for bucket in first..=last {
+            self.containment_buckets[bucket].insert(id.to_string());
+        }
+    }
+
+    fn unindex_containment_interval(&mut self, id: &str, start: u64, end: u64) {
+        if start >= end {
+            return;
+        }
+        let first = self.resolution.containment_bucket(start);
+        let last = self.resolution.containment_bucket(end - 1);
+        for bucket in first..=last {
+            self.containment_buckets[bucket].shift_remove(id);
         }
     }
 
