@@ -31,6 +31,12 @@ export type PreparedNativeLogEntry = {
 		};
 	};
 };
+export type PreparedAppendChain<T> = {
+	entries: Entry<T>[];
+	blocks: PreparedEntryBlock[];
+	shallowEntries: ShallowEntry[];
+	nativeEntries: PreparedNativeLogEntry[];
+};
 
 const preparedEntryBlocks = new WeakMap<object, PreparedEntryBlock>();
 const preparedShallowEntries = new WeakMap<object, ShallowEntry>();
@@ -150,6 +156,10 @@ export abstract class Entry<T> {
 		entry.size = bytes.length;
 		preparedEntryBlocks.set(entry, preparedEntryBlockFromBytes(bytes, cid));
 		return cid;
+	}
+
+	static preparedBlockFromBytes(bytes: Uint8Array, cid: string): PreparedEntryBlock {
+		return preparedEntryBlockFromBytes(bytes, cid);
 	}
 
 	static toMultihashBytes<T>(
