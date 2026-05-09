@@ -651,6 +651,21 @@ export class EntryV0<T>
 					}),
 				}),
 			);
+			Entry.prepareNativeLogEntry(entry, {
+				hash: entry.hash,
+				gid: meta.gid,
+				next: meta.next,
+				type: meta.type,
+				head: index === prepared.length - 1,
+				payloadSize: payload.byteLength,
+				data: meta.data,
+				clock: {
+					timestamp: {
+						wallTime: meta.clock.timestamp.wallTime,
+						logical: meta.clock.timestamp.logical,
+					},
+				},
+			});
 			entry.init({ encoding: properties.encoding });
 			return entry;
 		});

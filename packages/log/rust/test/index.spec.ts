@@ -100,6 +100,22 @@ describe("native log graph index", () => {
 		expect(index.payloadSizeSum()).to.equal(3);
 	});
 
+	it("tracks heads and next adjacency in native append chains", async () => {
+		const index = await createLogGraphIndex();
+		index.put(entry("root", "g", [], 1n));
+		index.putAppendChain([
+			entry("a", "g", ["root"], 2n),
+			entry("b", "g", ["a"], 3n),
+			entry("c", "g", ["b"], 4n),
+		]);
+
+		expect(index.heads()).to.deep.equal(["c"]);
+		expect(index.children("root")).to.deep.equal(["a"]);
+		expect(index.children("a")).to.deep.equal(["b"]);
+		expect(index.children("b")).to.deep.equal(["c"]);
+		expect(index.payloadSizeSum()).to.equal(4);
+	});
+
 	it("filters heads by gid and clock order", async () => {
 		const index = await createLogGraphIndex();
 		index.put(entry("b", "one", [], 2n));

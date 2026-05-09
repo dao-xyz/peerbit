@@ -592,6 +592,52 @@ impl NativeLogIndex {
         Ok(())
     }
 
+    pub fn put_append_chain(
+        &mut self,
+        hashes: Array,
+        gid: String,
+        initial_next: Array,
+        entry_type: u8,
+        wall_times: BigUint64Array,
+        logicals: Uint32Array,
+        payload_sizes: Uint32Array,
+        datas: Array,
+    ) -> Result<(), JsValue> {
+        let len = hashes.length();
+        if datas.length() != len {
+            return Err(JsValue::from_str("Expected equal column lengths"));
+        }
+        for numeric_len in [
+            wall_times.length(),
+            logicals.length(),
+            payload_sizes.length(),
+        ] {
+            if numeric_len != len {
+                return Err(JsValue::from_str("Expected equal column lengths"));
+            }
+        }
+
+        let mut next = strings_from_array(initial_next)?;
+        let mut entries = Vec::with_capacity(len as usize);
+        for i in 0..len {
+            let hash = required_string_from_array(&hashes, i)?;
+            entries.push(LogIndexEntry::new_with_data(
+                hash.clone(),
+                gid.clone(),
+                next.clone(),
+                entry_type,
+                wall_times.get_index(i),
+                logicals.get_index(i),
+                payload_sizes.get_index(i),
+                i + 1 == len,
+                optional_bytes_from_js(datas.get(i)),
+            ));
+            next = vec![hash];
+        }
+        self.inner.put_many(entries);
+        Ok(())
+    }
+
     pub fn delete(&mut self, hash: &str) -> bool {
         self.inner.delete(hash).is_some()
     }
