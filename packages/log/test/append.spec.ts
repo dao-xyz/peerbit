@@ -3,6 +3,7 @@ import { Ed25519Keypair } from "@peerbit/crypto";
 import { HashmapIndices } from "@peerbit/indexer-simple";
 import { expect } from "chai";
 import sinon from "sinon";
+import { EntryV0 } from "../src/entry-v0.js";
 import { EntryType } from "../src/entry-type.js";
 import { Log } from "../src/log.js";
 
@@ -163,6 +164,7 @@ describe("append", function () {
 		const putSpy = sinon.spy(log.entryIndex.properties.index, "put");
 		const blockPutSpy = sinon.spy(store, "put");
 		const blockPutManySpy = sinon.spy(store, "putMany");
+		const shallowSpy = sinon.spy(EntryV0.prototype, "toShallow");
 
 		try {
 			const result = await log.appendMany([
@@ -198,11 +200,13 @@ describe("append", function () {
 			expect(blockPutManySpy.firstCall.args[0]).to.have.length(
 				result.entries.length,
 			);
+			expect(shallowSpy.callCount).equal(0);
 		} finally {
 			iterateSpy.restore();
 			putSpy.restore();
 			blockPutSpy.restore();
 			blockPutManySpy.restore();
+			shallowSpy.restore();
 			await log.close();
 		}
 	});

@@ -889,7 +889,9 @@ export class EntryIndex<T> {
 
 				// add cache after .has check before .has uses the cache
 				this.cache.add(entry.hash, entry);
-				const shallowEntry = entry.toShallow(properties.isHead);
+				const shallowEntry =
+					Entry.takePreparedShallowEntry(entry, properties.isHead) ??
+					entry.toShallow(properties.isHead);
 				const shouldDeferIndexWrite =
 					properties.deferIndexWrite === true &&
 					properties.isHead &&
@@ -970,7 +972,8 @@ export class EntryIndex<T> {
 				}
 
 				this.cache.add(entry.hash, entry);
-				const shallowEntry = entry.toShallow(isHead);
+				const shallowEntry =
+					Entry.takePreparedShallowEntry(entry, isHead) ?? entry.toShallow(isHead);
 				if (putBatch) {
 					shallowEntries.push(shallowEntry);
 				} else {
