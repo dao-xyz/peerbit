@@ -337,6 +337,97 @@ describe("native shared-log range planner", () => {
 		expect(state.getEntryCoordinates("old-head")).to.equal(undefined);
 	});
 
+	it("expands append leaders with full-replica delivery candidates", async () => {
+		const state = await createSharedLogState("u32");
+		const leaders = new Map([["peer-a", { intersecting: false }]]);
+
+		expect(
+			state.planAppendLeadersForDelivery(
+				leaders,
+				["peer-b", "peer-c"],
+				2,
+			),
+		).to.deep.equal(
+			new Map([
+				["peer-a", { intersecting: false }],
+				["peer-b", { intersecting: true }],
+				["peer-c", { intersecting: true }],
+			]),
+		);
+		expect(
+			state.planAppendLeadersForDelivery(
+				leaders,
+				["peer-b", "peer-c"],
+				1,
+			),
+		).to.deep.equal(leaders);
+	});
+
+	it("plans append delivery recipients from native state", async () => {
+		const state = await createSharedLogState("u32");
+		const leaders = new Map([
+			["peer-self", { intersecting: true }],
+			["peer-a", { intersecting: true }],
+		]);
+
+		expect(
+			state.planAppendDelivery({
+				leaders,
+				fallbackRecipients: ["peer-b"],
+				minReplicas: 3,
+				selfHash: "peer-self",
+				isLeader: true,
+				deliveryEnabled: false,
+				reliabilityAck: false,
+				requireRecipients: false,
+			}),
+		).to.deep.equal({
+			hasRemoteRecipients: true,
+			noPeerError: false,
+			defaultSendSilent: true,
+			sendTo: ["peer-self", "peer-a", "peer-b"],
+			ackTo: [],
+			silentTo: [],
+			repairTargets: ["peer-a"],
+			authoritativeRecipients: ["peer-self", "peer-a"],
+		});
+
+		expect(
+			state.planAppendDelivery({
+				leaders,
+				fallbackRecipients: ["peer-b"],
+				minReplicas: 3,
+				selfHash: "peer-self",
+				isLeader: true,
+				deliveryEnabled: true,
+				reliabilityAck: true,
+				minAcks: 1,
+				requireRecipients: true,
+			}),
+		).to.deep.equal({
+			hasRemoteRecipients: true,
+			noPeerError: false,
+			defaultSendSilent: true,
+			sendTo: [],
+			ackTo: ["peer-a"],
+			silentTo: ["peer-b"],
+			repairTargets: ["peer-a"],
+			authoritativeRecipients: ["peer-self", "peer-a"],
+		});
+
+		expect(
+			state.planAppendDelivery({
+				leaders: new Map([["peer-self", { intersecting: true }]]),
+				minReplicas: 1,
+				selfHash: "peer-self",
+				isLeader: true,
+				deliveryEnabled: true,
+				reliabilityAck: true,
+				requireRecipients: true,
+			}).noPeerError,
+		).to.equal(true);
+	});
+
 	it("plans repair dispatch targets in one native batch", async () => {
 		const planner = await createRangePlanner("u32");
 
