@@ -255,6 +255,11 @@ describe("append", function () {
 		).entry;
 
 		const blockPutManySpy = sinon.spy(nativeStore, "putMany");
+		const indexPutSpy = sinon.spy(log.entryIndex.properties.index, "put");
+		const indexPutBatchSpy = sinon.spy(
+			log.entryIndex.properties.index,
+			"putBatch",
+		);
 		const nativeCommitSpy = sinon.spy(
 			log.entryIndex.properties.nativeGraph!.graph,
 			"prepareEntryV0PlainChainCommit",
@@ -285,14 +290,21 @@ describe("append", function () {
 				result.entries.length,
 			);
 			expect(blockPutManySpy.callCount).equal(0);
+			expect(indexPutBatchSpy.callCount).equal(0);
+			expect(indexPutSpy.callCount).equal(1);
 			expect(nativePrepareAndPutSpy.callCount).equal(0);
 			expect(nativeAppendChainSpy.callCount).equal(0);
 			for (const entry of result.entries) {
 				expect(await nativeStore.has(entry.hash)).to.equal(true);
 				expect((await log.get(entry.hash))?.hash).equal(entry.hash);
 			}
+			expect(await log.toArray()).to.have.length(4);
+			expect(indexPutSpy.callCount).equal(1);
+			expect(indexPutBatchSpy.callCount).equal(1);
 		} finally {
 			blockPutManySpy.restore();
+			indexPutSpy.restore();
+			indexPutBatchSpy.restore();
 			nativeCommitSpy.restore();
 			nativePrepareAndPutSpy.restore();
 			nativeAppendChainSpy.restore();
