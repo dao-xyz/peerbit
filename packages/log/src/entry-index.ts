@@ -307,13 +307,26 @@ export class EntryIndex<T> {
 			return;
 		}
 		this.clearPendingIndexFlushTimer();
+		const writes: ShallowEntry[] = [];
 		for (const hash of keys) {
 			const pending = this.pendingIndexWrites.get(hash);
 			if (!pending) {
 				continue;
 			}
-			await this.properties.index.put(pending);
-			this.pendingIndexWrites.delete(hash);
+			writes.push(pending);
+		}
+		if (writes.length === 0) {
+			return;
+		}
+		if (writes.length > 1 && this.properties.index.putBatch) {
+			await this.properties.index.putBatch(writes);
+		} else {
+			for (const write of writes) {
+				await this.properties.index.put(write);
+			}
+		}
+		for (const write of writes) {
+			this.pendingIndexWrites.delete(write.hash);
 		}
 		if (this.pendingIndexWrites.size > 0) {
 			this.schedulePendingIndexWriteFlush();
@@ -373,7 +386,6 @@ export class EntryIndex<T> {
 		if (!this.properties.nativeGraph?.useHeads) {
 			return undefined;
 		}
-		await this.flushPendingWrites();
 		return this.properties.nativeGraph.graph.hasHead(gid);
 	}
 
@@ -385,7 +397,6 @@ export class EntryIndex<T> {
 		if (uniqueGids.size === 0) {
 			return false;
 		}
-		await this.flushPendingWrites();
 		return this.properties.nativeGraph.graph.hasAnyHead(uniqueGids);
 	}
 
@@ -401,7 +412,6 @@ export class EntryIndex<T> {
 		if (normalized.length === 0) {
 			return [];
 		}
-		await this.flushPendingWrites();
 		return this.properties.nativeGraph.graph.hasAnyHeadBatch(normalized);
 	}
 
@@ -409,7 +419,6 @@ export class EntryIndex<T> {
 		if (!this.properties.nativeGraph?.useHeads) {
 			return undefined;
 		}
-		await this.flushPendingWrites();
 		return this.properties.nativeGraph.graph.maxHeadDataU32(gid);
 	}
 
@@ -486,10 +495,10 @@ export class EntryIndex<T> {
 		next: string,
 		excludeHash: string | undefined = undefined,
 	) {
-		await this.flushPendingWrites();
 		if (this.properties.nativeGraph) {
 			return this.properties.nativeGraph.graph.countHasNext(next, excludeHash);
 		}
+		await this.flushPendingWrites();
 		const query: Query[] = [
 			new StringMatch({
 				key: ["meta", "next"],
@@ -535,7 +544,7 @@ export class EntryIndex<T> {
 
 		const getHashes = async () => {
 			if (!hashPromise) {
-				hashPromise = this.flushPendingWrites().then(() => hashes());
+				hashPromise = Promise.resolve(hashes());
 			}
 			return hashPromise;
 		};
@@ -590,7 +599,7 @@ export class EntryIndex<T> {
 
 		const getValues = async () => {
 			if (!valuesPromise) {
-				valuesPromise = this.flushPendingWrites().then(() => values());
+				valuesPromise = Promise.resolve(values());
 			}
 			return valuesPromise;
 		};
@@ -969,6 +978,7 @@ export class EntryIndex<T> {
 				shallowEntries: ShallowEntry[];
 				nativeEntries?: NativeLogEntry[];
 				nativeGraphUpdated?: boolean;
+				nativeBlocksCommitted?: boolean;
 			};
 			deferIndexWrite?: boolean;
 		},
@@ -1007,6 +1017,10 @@ export class EntryIndex<T> {
 				!this.properties.onGidRemoved && this.properties.index.putBatch;
 			const shallowEntries: ShallowEntry[] = [];
 			const nativeGraphUpdated = properties.prepared?.nativeGraphUpdated === true;
+			const nativeCommitOwnsHotIndex =
+				nativeGraphUpdated &&
+				properties.prepared?.nativeBlocksCommitted === true &&
+				!this.properties.onGidRemoved;
 			const nativeGraphPutAppendChain =
 				!nativeGraphUpdated &&
 				!this.properties.onGidRemoved &&
@@ -1040,6 +1054,17 @@ export class EntryIndex<T> {
 					preparedShallowEntry ??
 					Entry.takePreparedShallowEntry(entry, isHead) ??
 					entry.toShallow(isHead);
+				if (nativeCommitOwnsHotIndex) {
+					this.pendingIndexWrites.set(entry.hash, shallowEntry);
+					if (batchHashes) {
+						for (const next of entry.meta.next) {
+							if (!batchHashes.has(next)) {
+								externalNexts.add(next);
+							}
+						}
+					}
+					continue;
+				}
 				const preparedNativeEntry = properties.prepared?.nativeEntries?.[i];
 				if (preparedNativeEntry) {
 					preparedNativeEntry.head = isHead;
@@ -1074,7 +1099,9 @@ export class EntryIndex<T> {
 				}
 			}
 
-			if (putBatch) {
+			if (nativeCommitOwnsHotIndex) {
+				this.schedulePendingIndexWriteFlush();
+			} else if (putBatch) {
 				await putBatch.call(this.properties.index, shallowEntries);
 				if (nativeGraphPutAppendChain) {
 					nativeGraphPutAppendChain(nativeEntries);

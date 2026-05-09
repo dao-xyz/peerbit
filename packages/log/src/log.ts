@@ -889,6 +889,7 @@ export class Log<T> {
 							shallowEntries: preparedAppendChain.shallowEntries,
 							nativeEntries: preparedAppendChain.nativeEntries,
 							nativeGraphUpdated: preparedAppendChain.nativeGraphUpdated,
+							nativeBlocksCommitted: preparedAppendChain.nativeBlocksCommitted,
 						}
 					: undefined,
 			deferIndexWrite:
