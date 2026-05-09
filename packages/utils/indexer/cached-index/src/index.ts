@@ -75,6 +75,17 @@ export class CachedIndex<T extends Record<string, any>, Nested = unknown>
 		await this._cache.refresh();
 	}
 
+	async putBatch(values: T[]) {
+		if (this.origin.putBatch) {
+			await this.origin.putBatch(values);
+		} else {
+			for (const value of values) {
+				await this.origin.put(value);
+			}
+		}
+		await this._cache.refresh();
+	}
+
 	async del(q: DeleteOptions) {
 		const res = await this.origin.del(q);
 		await this._cache.refresh();
