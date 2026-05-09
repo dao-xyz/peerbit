@@ -941,6 +941,44 @@ pub struct NativeRangePlanner {
     inner: RangePlanner,
 }
 
+pub struct SharedLogStateInner {
+    range_planner: RangePlanner,
+    entry_coordinates: HashMap<String, Vec<u64>>,
+    gid_peers: HashMap<String, IndexSet<String>>,
+    entry_known_peers: HashMap<String, IndexSet<String>>,
+}
+
+impl SharedLogStateInner {
+    fn new(resolution: String) -> Self {
+        Self {
+            range_planner: RangePlanner::new(&resolution),
+            entry_coordinates: HashMap::new(),
+            gid_peers: HashMap::new(),
+            entry_known_peers: HashMap::new(),
+        }
+    }
+
+    fn clear_all(&mut self) {
+        self.range_planner.clear();
+        self.entry_coordinates.clear();
+        self.gid_peers.clear();
+        self.entry_known_peers.clear();
+    }
+
+    fn put_range(&mut self, range: ReplicationRange) {
+        self.range_planner.put(range);
+    }
+
+    fn delete_range(&mut self, id: &str) -> bool {
+        self.range_planner.delete(id)
+    }
+}
+
+#[wasm_bindgen]
+pub struct NativeSharedLogState {
+    inner: SharedLogStateInner,
+}
+
 #[wasm_bindgen]
 impl NativeRangePlanner {
     #[wasm_bindgen(constructor)]
@@ -1380,7 +1418,326 @@ impl NativeRangePlanner {
     }
 }
 
+#[wasm_bindgen]
+impl NativeSharedLogState {
+    #[wasm_bindgen(constructor)]
+    pub fn new(resolution: String) -> Self {
+        Self {
+            inner: SharedLogStateInner::new(resolution),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.range_planner.len()
+    }
+
+    pub fn clear(&mut self) {
+        self.inner.clear_all();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn put(
+        &mut self,
+        id: String,
+        hash: String,
+        timestamp: String,
+        start1: String,
+        end1: String,
+        start2: String,
+        end2: String,
+        width: String,
+        mode: u8,
+    ) -> Result<(), JsValue> {
+        self.inner.put_range(ReplicationRange::new(
+            id,
+            hash,
+            parse_u64(&timestamp)?,
+            parse_u64(&start1)?,
+            parse_u64(&end1)?,
+            parse_u64(&start2)?,
+            parse_u64(&end2)?,
+            parse_u64(&width)?,
+            mode,
+        ));
+        Ok(())
+    }
+
+    pub fn delete(&mut self, id: &str) -> bool {
+        self.inner.delete_range(id)
+    }
+
+    pub fn put_entry_coordinates(
+        &mut self,
+        hash: String,
+        coordinates: Array,
+    ) -> Result<(), JsValue> {
+        self.inner
+            .entry_coordinates
+            .insert(hash, cursor_values_from_array(coordinates)?);
+        Ok(())
+    }
+
+    pub fn delete_entry_coordinates(&mut self, hash: &str) -> bool {
+        self.inner.entry_coordinates.remove(hash).is_some()
+    }
+
+    pub fn delete_entry_coordinates_batch(&mut self, hashes: Array) -> Result<(), JsValue> {
+        for hash in strings_from_array(hashes)? {
+            self.inner.entry_coordinates.remove(&hash);
+        }
+        Ok(())
+    }
+
+    pub fn clear_entry_coordinates(&mut self) {
+        self.inner.entry_coordinates.clear();
+    }
+
+    pub fn add_gid_peers(
+        &mut self,
+        gid: String,
+        peers: Array,
+        reset: bool,
+    ) -> Result<usize, JsValue> {
+        let entry = self.inner.gid_peers.entry(gid).or_default();
+        if reset {
+            entry.clear();
+        }
+        for peer in strings_from_array(peers)? {
+            entry.insert(peer);
+        }
+        Ok(entry.len())
+    }
+
+    pub fn remove_gid_peer(&mut self, peer: &str, gid: JsValue) -> Result<(), JsValue> {
+        if gid.is_undefined() || gid.is_null() {
+            let empty_gids: Vec<String> = self
+                .inner
+                .gid_peers
+                .iter_mut()
+                .filter_map(|(gid, peers)| {
+                    peers.shift_remove(peer);
+                    if peers.is_empty() {
+                        Some(gid.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for gid in empty_gids {
+                self.inner.gid_peers.remove(&gid);
+            }
+            return Ok(());
+        }
+
+        let Some(gid) = gid.as_string() else {
+            return Err(JsValue::from_str("Expected optional gid string"));
+        };
+        if let Some(peers) = self.inner.gid_peers.get_mut(&gid) {
+            peers.shift_remove(peer);
+            if peers.is_empty() {
+                self.inner.gid_peers.remove(&gid);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn delete_gid_peers(&mut self, gid: &str) -> bool {
+        self.inner.gid_peers.remove(gid).is_some()
+    }
+
+    pub fn clear_gid_peers(&mut self) {
+        self.inner.gid_peers.clear();
+    }
+
+    pub fn mark_entries_known_by_peer(
+        &mut self,
+        hashes: Array,
+        peer: String,
+    ) -> Result<(), JsValue> {
+        for hash in strings_from_array(hashes)? {
+            self.inner
+                .entry_known_peers
+                .entry(hash)
+                .or_default()
+                .insert(peer.clone());
+        }
+        Ok(())
+    }
+
+    pub fn remove_entries_known_by_peer(
+        &mut self,
+        hashes: Array,
+        peer: &str,
+    ) -> Result<(), JsValue> {
+        for hash in strings_from_array(hashes)? {
+            if let Some(peers) = self.inner.entry_known_peers.get_mut(&hash) {
+                peers.shift_remove(peer);
+                if peers.is_empty() {
+                    self.inner.entry_known_peers.remove(&hash);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn remove_peer_from_entry_known_peers(&mut self, peer: &str) {
+        let empty_hashes: Vec<String> = self
+            .inner
+            .entry_known_peers
+            .iter_mut()
+            .filter_map(|(hash, peers)| {
+                peers.shift_remove(peer);
+                if peers.is_empty() {
+                    Some(hash.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for hash in empty_hashes {
+            self.inner.entry_known_peers.remove(&hash);
+        }
+    }
+
+    pub fn clear_entry_known_peers(&mut self) {
+        self.inner.entry_known_peers.clear();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_entry_leaders_for_gid(
+        &self,
+        gid: String,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let coordinates = self.inner.range_planner.get_gid_coordinates(&gid, replicas);
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
+        let leaders = self.inner.range_planner.find_leaders(
+            &coordinates,
+            replicas,
+            &options,
+            expand_peer_filter,
+            &self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        );
+        let out = Array::new();
+        out.push(&numbers_to_rows(
+            coordinates,
+            self.inner.range_planner.resolution,
+        ));
+        out.push(&samples_to_rows(leaders));
+        Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_repair_dispatch_for_entries(
+        &self,
+        entry_hashes: Array,
+        entry_gids: Array,
+        entry_requested_replicas: Array,
+        entry_coordinate_batches: Array,
+        pending_modes: Array,
+        pending_peers_by_mode: Array,
+        optimistic_peers_by_mode: Array,
+        full_replica_repair_candidates: Array,
+        full_replica_repair_candidate_count: usize,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let entry_hashes = strings_from_array(entry_hashes)?;
+        let entry_gids = strings_from_array(entry_gids)?;
+        let entry_coordinate_batches = cursor_batches_from_array(entry_coordinate_batches)?;
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
+        let mut prepared_options_by_replicas = HashMap::new();
+        let mut full_replica_leaders_by_replicas = HashMap::new();
+        let mut current_leader_batches = Vec::with_capacity(entry_coordinate_batches.len());
+
+        for coordinates in &entry_coordinate_batches {
+            let replicas = coordinates.len();
+            let leaders = find_leaders_with_batch_caches(
+                &self.inner.range_planner,
+                coordinates,
+                replicas,
+                &options,
+                &mut prepared_options_by_replicas,
+                &mut full_replica_leaders_by_replicas,
+                expand_peer_filter,
+                &self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            );
+            current_leader_batches.push(leaders.into_iter().map(|leader| leader.hash).collect());
+        }
+
+        let known_gid_peer_batches = entry_gids
+            .iter()
+            .map(|gid| {
+                self.inner
+                    .gid_peers
+                    .get(gid)
+                    .map(index_set_to_vec)
+                    .unwrap_or_default()
+            })
+            .collect();
+        let known_entry_peer_batches = entry_hashes
+            .iter()
+            .map(|hash| {
+                self.inner
+                    .entry_known_peers
+                    .get(hash)
+                    .map(index_set_to_vec)
+                    .unwrap_or_default()
+            })
+            .collect();
+
+        plan_repair_dispatch_rows(RepairDispatchBatch {
+            entry_hashes,
+            entry_gids,
+            entry_requested_replicas: usize_from_array(entry_requested_replicas)?,
+            current_leader_batches,
+            known_gid_peer_batches,
+            known_entry_peer_batches,
+            pending_modes: strings_from_array(pending_modes)?,
+            pending_peers_by_mode: string_batches_from_array(
+                pending_peers_by_mode,
+                "pending peers by mode",
+            )?,
+            optimistic_peers_by_mode: string_matrix_from_array(
+                optimistic_peers_by_mode,
+                "optimistic peers by mode",
+            )?,
+            full_replica_repair_candidates: HashSet::<String>::from_iter(strings_from_array(
+                full_replica_repair_candidates,
+            )?),
+            full_replica_repair_candidate_count,
+            self_hash,
+        })
+    }
+}
+
 impl Default for NativeRangePlanner {
+    fn default() -> Self {
+        Self::new("u32".to_string())
+    }
+}
+
+impl Default for NativeSharedLogState {
     fn default() -> Self {
         Self::new("u32".to_string())
     }
@@ -1446,6 +1803,13 @@ fn string_matrix_from_array(values: Array, label: &str) -> Result<Vec<Vec<Vec<St
     Ok(out)
 }
 
+fn cursor_values_from_array(values: Array) -> Result<Vec<u64>, JsValue> {
+    strings_from_array(values)?
+        .into_iter()
+        .map(|value| parse_u64(&value))
+        .collect::<Result<Vec<_>, _>>()
+}
+
 fn usize_from_array(values: Array) -> Result<Vec<usize>, JsValue> {
     let mut out = Vec::with_capacity(values.length() as usize);
     for value in values.iter() {
@@ -1498,6 +1862,10 @@ fn add_repair_dispatch(
 
 fn contains_string(values: &[String], target: &str) -> bool {
     values.iter().any(|value| value == target)
+}
+
+fn index_set_to_vec(values: &IndexSet<String>) -> Vec<String> {
+    values.iter().cloned().collect()
 }
 
 fn optional_string_set(value: JsValue) -> Result<Option<Vec<String>>, JsValue> {
