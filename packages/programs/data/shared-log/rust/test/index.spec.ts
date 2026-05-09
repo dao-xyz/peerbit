@@ -104,6 +104,52 @@ describe("native shared-log range planner", () => {
 		).to.deep.equal(new Map([["peer-a", { intersecting: true }]]));
 	});
 
+	it("expands underfilled peer filters with mature indexed peers", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
+		planner.put(
+			range({
+				id: "b",
+				hash: "peer-b",
+				start1: 20,
+				end1: 30,
+				mode: 1,
+			}),
+		);
+		planner.put(
+			range({
+				id: "c",
+				hash: "peer-c",
+				start1: 40,
+				end1: 50,
+				timestamp: 950n,
+			}),
+		);
+
+		expect(
+			planner.includeMaturedPeers(["peer-a"], 1, {
+				now: 1_000,
+				roleAge: 100,
+				selfHash: "peer-self",
+				selfReplicating: true,
+			}),
+		).to.deep.equal(new Set(["peer-a", "peer-b"]));
+	});
+
+	it("does not add self to peer filters when self is not replicating", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
+		planner.put(range({ id: "b", hash: "peer-b", start1: 20, end1: 30 }));
+
+		expect(
+			planner.includeMaturedPeers(["peer-a"], 1, {
+				now: 1_000,
+				selfHash: "peer-b",
+				selfReplicating: false,
+			}),
+		).to.deep.equal(new Set(["peer-a"]));
+	});
+
 	it("honors peer filters and maturity", async () => {
 		const planner = await createRangePlanner("u32");
 		planner.put(range({ id: "a", hash: "peer-a", start1: 10, end1: 20 }));
