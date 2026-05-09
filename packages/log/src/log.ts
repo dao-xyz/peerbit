@@ -668,7 +668,11 @@ export class Log<T> {
 		if (deferBlockStore) {
 			await this.putAppendEntryBlocks(entries);
 		}
-		await this.putAppendEntries(entries, options);
+		await this.putAppendEntries(
+			entries,
+			options,
+			initialNexts.map((entry) => entry.hash),
+		);
 
 		for (const entry of entries) {
 			entry.init({ encoding: this._encoding, keychain: this._keychain });
@@ -810,9 +814,11 @@ export class Log<T> {
 	private async putAppendEntries(
 		entries: Entry<T>[],
 		options: AppendOptions<T>,
+		externalNextHashes: string[],
 	) {
 		await this.entryIndex.putAppendBatch(entries, {
 			unique: true,
+			externalNextHashes,
 			deferIndexWrite:
 				options.deferIndexWrite ??
 				(options.durability

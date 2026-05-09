@@ -925,6 +925,7 @@ export class EntryIndex<T> {
 		entries: Entry<any>[],
 		properties: {
 			unique: boolean;
+			externalNextHashes?: string[];
 			deferIndexWrite?: boolean;
 		},
 	) {
@@ -951,8 +952,13 @@ export class EntryIndex<T> {
 		}
 
 		const promise = (async () => {
-			const batchHashes = new Set(entries.map((entry) => entry.hash));
-			const externalNexts = new Set<string>();
+			const externalNexts = new Set<string>(
+				properties.externalNextHashes ?? [],
+			);
+			const shouldDiscoverExternalNexts = !properties.externalNextHashes;
+			const batchHashes = shouldDiscoverExternalNexts
+				? new Set(entries.map((entry) => entry.hash))
+				: undefined;
 			const putBatch =
 				!this.properties.onGidRemoved &&
 				(this.properties.index as IndexWithPutBatch<ShallowEntry>).putBatch;
@@ -987,9 +993,11 @@ export class EntryIndex<T> {
 					}
 				}
 
-				for (const next of entry.meta.next) {
-					if (!batchHashes.has(next)) {
-						externalNexts.add(next);
+				if (batchHashes) {
+					for (const next of entry.meta.next) {
+						if (!batchHashes.has(next)) {
+							externalNexts.add(next);
+						}
 					}
 				}
 			}
