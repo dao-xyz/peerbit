@@ -920,6 +920,10 @@ export class EntryIndex<T> {
 		properties: {
 			unique: boolean;
 			externalNextHashes?: string[];
+			prepared?: {
+				shallowEntries: ShallowEntry[];
+				nativeEntries?: NativeLogEntry[];
+			};
 			deferIndexWrite?: boolean;
 		},
 	) {
@@ -980,11 +984,22 @@ export class EntryIndex<T> {
 				}
 
 				this.cache.add(entry.hash, entry);
+				const preparedShallowEntry = properties.prepared?.shallowEntries[i];
+				if (preparedShallowEntry) {
+					preparedShallowEntry.head = isHead;
+				}
 				const shallowEntry =
-					Entry.takePreparedShallowEntry(entry, isHead) ?? entry.toShallow(isHead);
+					preparedShallowEntry ??
+					Entry.takePreparedShallowEntry(entry, isHead) ??
+					entry.toShallow(isHead);
+				const preparedNativeEntry = properties.prepared?.nativeEntries?.[i];
+				if (preparedNativeEntry) {
+					preparedNativeEntry.head = isHead;
+				}
 				const nativeEntry =
 					this.properties.nativeGraph &&
-					(Entry.takePreparedNativeLogEntry(entry, isHead) ??
+					(preparedNativeEntry ??
+						Entry.takePreparedNativeLogEntry(entry, isHead) ??
 						toNativeLogEntry(shallowEntry));
 				if (putBatch) {
 					shallowEntries.push(shallowEntry);

@@ -36,6 +36,7 @@ import { type EntryWithRefs } from "./entry-with-refs.js";
 import {
 	type CanAppend,
 	Entry,
+	type PreparedAppendChain,
 	type PreparedEntryBlock,
 	type ShallowOrFullEntry,
 } from "./entry.js";
@@ -623,13 +624,13 @@ export class Log<T> {
 		)[] = [];
 		const deferBlockStore = hasPutMany(this._storage);
 
-		const nativeEntries =
+		const nativeAppendChain =
 			deferBlockStore &&
 			!options.encryption &&
 			!options.signers &&
 			!(options.canAppend || this._hasCustomCanAppend) &&
 			!options.meta?.timestamp
-				? await EntryV0.createPlainAppendChain<T>({
+				? await EntryV0.createPlainAppendChainBatch<T>({
 						data,
 						meta: {
 							clocks: () =>
@@ -648,11 +649,12 @@ export class Log<T> {
 						encoding: this._encoding,
 						identity: options.identity || this._identity,
 						deferStore: deferBlockStore,
+						cachePreparedEntries: false,
 					})
 				: undefined;
 
-		if (nativeEntries) {
-			entries.push(...nativeEntries);
+		if (nativeAppendChain) {
+			entries.push(...nativeAppendChain.entries);
 			nexts = [entries[entries.length - 1]!];
 		} else {
 			for (const item of data) {
@@ -666,12 +668,13 @@ export class Log<T> {
 
 		await this.joinMissingNexts(entries[0]!, initialNexts);
 		if (deferBlockStore) {
-			await this.putAppendEntryBlocks(entries);
+			await this.putAppendEntryBlocks(entries, nativeAppendChain?.blocks);
 		}
 		await this.putAppendEntries(
 			entries,
 			options,
 			initialNexts.map((entry) => entry.hash),
+			nativeAppendChain,
 		);
 
 		for (const entry of entries) {
@@ -815,10 +818,19 @@ export class Log<T> {
 		entries: Entry<T>[],
 		options: AppendOptions<T>,
 		externalNextHashes: string[],
+		preparedAppendChain?: PreparedAppendChain<T>,
 	) {
 		await this.entryIndex.putAppendBatch(entries, {
 			unique: true,
 			externalNextHashes,
+			prepared:
+				preparedAppendChain &&
+				entries.length === preparedAppendChain.entries.length
+					? {
+							shallowEntries: preparedAppendChain.shallowEntries,
+							nativeEntries: preparedAppendChain.nativeEntries,
+						}
+					: undefined,
 			deferIndexWrite:
 				options.deferIndexWrite ??
 				(options.durability
@@ -827,15 +839,20 @@ export class Log<T> {
 		});
 	}
 
-	private async putAppendEntryBlocks(entries: Entry<T>[]) {
-		const blocks: PreparedEntryBlock[] = [];
-		for (const entry of entries) {
-			const prepared = Entry.takePreparedBlock(entry);
-			if (!prepared) {
-				throw new Error("Missing prepared entry block");
-			}
-			blocks.push(prepared);
-		}
+	private async putAppendEntryBlocks(
+		entries: Entry<T>[],
+		preparedBlocks?: PreparedEntryBlock[],
+	) {
+		const blocks =
+			preparedBlocks && preparedBlocks.length === entries.length
+				? preparedBlocks
+				: entries.map((entry) => {
+						const prepared = Entry.takePreparedBlock(entry);
+						if (!prepared) {
+							throw new Error("Missing prepared entry block");
+						}
+						return prepared;
+					});
 
 		const cids = await (this._storage as BlocksWithPutMany).putMany!(blocks);
 		if (cids.length !== blocks.length) {

@@ -3,6 +3,7 @@ import { Ed25519Keypair } from "@peerbit/crypto";
 import { HashmapIndices } from "@peerbit/indexer-simple";
 import { expect } from "chai";
 import sinon from "sinon";
+import { Entry } from "../src/entry.js";
 import { EntryV0 } from "../src/entry-v0.js";
 import { EntryType } from "../src/entry-type.js";
 import { Log } from "../src/log.js";
@@ -169,6 +170,9 @@ describe("append", function () {
 			log.entryIndex.properties.nativeGraph!.graph,
 			"putAppendChain",
 		);
+		const preparedBlockSpy = sinon.spy(Entry, "takePreparedBlock");
+		const preparedShallowSpy = sinon.spy(Entry, "takePreparedShallowEntry");
+		const preparedNativeSpy = sinon.spy(Entry, "takePreparedNativeLogEntry");
 
 		try {
 			const result = await log.appendMany([
@@ -209,6 +213,9 @@ describe("append", function () {
 			expect(nativeAppendChainSpy.firstCall.args[0]).to.have.length(
 				result.entries.length,
 			);
+			expect(preparedBlockSpy.callCount).equal(0);
+			expect(preparedShallowSpy.callCount).equal(0);
+			expect(preparedNativeSpy.callCount).equal(0);
 		} finally {
 			iterateSpy.restore();
 			putSpy.restore();
@@ -216,6 +223,9 @@ describe("append", function () {
 			blockPutManySpy.restore();
 			shallowSpy.restore();
 			nativeAppendChainSpy.restore();
+			preparedBlockSpy.restore();
+			preparedShallowSpy.restore();
+			preparedNativeSpy.restore();
 			await log.close();
 		}
 	});
