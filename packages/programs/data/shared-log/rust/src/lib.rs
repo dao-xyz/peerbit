@@ -807,11 +807,7 @@ impl NativeRangePlanner {
             .map(|value| parse_u64(&value))
             .collect::<Result<Vec<_>, _>>()?;
         let options = SampleOptions {
-            role_age_ms: if role_age_ms <= 0.0 {
-                0
-            } else {
-                role_age_ms.floor() as u64
-            },
+            role_age_ms: role_age_ms_from_f64(role_age_ms),
             now: parse_u64(&now)?,
             only_intersecting,
             unique_replicators: optional_string_set(unique_replicators)?.map(IndexSet::from_iter),
@@ -838,16 +834,7 @@ impl NativeRangePlanner {
             .into_iter()
             .map(|value| parse_u64(&value))
             .collect::<Result<Vec<_>, _>>()?;
-        let options = SampleOptions {
-            role_age_ms: if role_age_ms <= 0.0 {
-                0
-            } else {
-                role_age_ms.floor() as u64
-            },
-            now: parse_u64(&now)?,
-            peer_filter: optional_string_set(peer_filter)?.map(HashSet::from_iter),
-            ..Default::default()
-        };
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
 
         Ok(samples_to_rows(self.inner.find_leaders(
             &cursors,
@@ -876,16 +863,7 @@ impl NativeRangePlanner {
         include_strict_full_replica: bool,
     ) -> Result<Array, JsValue> {
         let coordinates = self.inner.get_gid_coordinates(&gid, replicas);
-        let options = SampleOptions {
-            role_age_ms: if role_age_ms <= 0.0 {
-                0
-            } else {
-                role_age_ms.floor() as u64
-            },
-            now: parse_u64(&now)?,
-            peer_filter: optional_string_set(peer_filter)?.map(HashSet::from_iter),
-            ..Default::default()
-        };
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
         Ok(samples_to_rows(self.inner.find_leaders(
             &coordinates,
             replicas,
@@ -896,6 +874,38 @@ impl NativeRangePlanner {
             full_replica_fallback,
             include_strict_full_replica,
         )))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_leaders_for_gid(
+        &self,
+        gid: String,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let coordinates = self.inner.get_gid_coordinates(&gid, replicas);
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
+        let leaders = self.inner.find_leaders(
+            &coordinates,
+            replicas,
+            &options,
+            expand_peer_filter,
+            &self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        );
+        let out = Array::new();
+        out.push(&numbers_to_rows(coordinates, self.inner.resolution));
+        out.push(&samples_to_rows(leaders));
+        Ok(out)
     }
 
     pub fn get_grid(&self, from: String, count: usize) -> Result<Array, JsValue> {
@@ -920,16 +930,7 @@ impl NativeRangePlanner {
         include_strict: bool,
         peer_filter: JsValue,
     ) -> Result<JsValue, JsValue> {
-        let options = SampleOptions {
-            role_age_ms: if role_age_ms <= 0.0 {
-                0
-            } else {
-                role_age_ms.floor() as u64
-            },
-            now: parse_u64(&now)?,
-            peer_filter: optional_string_set(peer_filter)?.map(HashSet::from_iter),
-            ..Default::default()
-        };
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
 
         Ok(
             match self
@@ -952,11 +953,7 @@ impl NativeRangePlanner {
         include_self: bool,
     ) -> Result<JsValue, JsValue> {
         let options = SampleOptions {
-            role_age_ms: if role_age_ms <= 0.0 {
-                0
-            } else {
-                role_age_ms.floor() as u64
-            },
+            role_age_ms: role_age_ms_from_f64(role_age_ms),
             now: parse_u64(&now)?,
             ..Default::default()
         };
@@ -978,6 +975,27 @@ impl Default for NativeRangePlanner {
     fn default() -> Self {
         Self::new("u32".to_string())
     }
+}
+
+fn role_age_ms_from_f64(value: f64) -> u64 {
+    if value <= 0.0 {
+        0
+    } else {
+        value.floor() as u64
+    }
+}
+
+fn find_leader_options(
+    role_age_ms: f64,
+    now: &str,
+    peer_filter: JsValue,
+) -> Result<SampleOptions, JsValue> {
+    Ok(SampleOptions {
+        role_age_ms: role_age_ms_from_f64(role_age_ms),
+        now: parse_u64(now)?,
+        peer_filter: optional_string_set(peer_filter)?.map(HashSet::from_iter),
+        ..Default::default()
+    })
 }
 
 fn parse_u64(value: &str) -> Result<u64, JsValue> {

@@ -6819,30 +6819,49 @@ export class SharedLog<
 		},
 	): Promise<Map<string, { intersecting: boolean }>> {
 		// we consume a list of coordinates in this method since if we are leader of one coordinate we want to persist all of them
-		let isLeader = false;
-
 		const set = await this._findLeaders(cursors, options);
-		for (const key of set.keys()) {
+		await this.applyLeaderSelection(cursors, entry, set, options);
+		return set;
+	}
+
+	private async applyLeaderSelection(
+		cursors: NumberFromType<R>[],
+		entry: Entry<T> | EntryReplicated<R> | ShallowEntry,
+		leaders: Map<string, { intersecting: boolean }>,
+		options?: {
+			onLeader?: (key: string) => void;
+			persist?:
+				| {
+						prev?: EntryReplicated<R>;
+				  }
+				| false;
+		},
+	): Promise<boolean> {
+		const selfHash = this.node.identity.publicKey.hashcode();
+		const isLeader = leaders.has(selfHash);
+		let shouldPersistLocalLeader = false;
+		for (const key of leaders.keys()) {
 			if (options?.onLeader) {
 				options.onLeader(key);
-				isLeader = isLeader || key === this.node.identity.publicKey.hashcode();
+				shouldPersistLocalLeader = shouldPersistLocalLeader || key === selfHash;
 			}
 		}
 
-		if (options?.persist !== false) {
-			if (isLeader || options?.persist) {
-				!this.closed &&
-					(await this.persistCoordinate({
-						leaders: set,
-						coordinates: cursors,
-						replicas: cursors.length,
-						entry,
-						prev: options?.persist?.prev,
-					}));
-			}
+		if (
+			options?.persist !== false &&
+			(shouldPersistLocalLeader || options?.persist)
+		) {
+			!this.closed &&
+				(await this.persistCoordinate({
+					leaders,
+					coordinates: cursors,
+					replicas: cursors.length,
+					entry,
+					prev: options?.persist?.prev,
+				}));
 		}
 
-		return set;
+		return isLeader;
 	}
 
 	async isLeader(
@@ -6862,6 +6881,25 @@ export class SharedLog<
 				| false;
 		},
 	): Promise<boolean> {
+		if (
+			this.domain.type === "hash" &&
+			typeof properties.entry.meta.gid === "string"
+		) {
+			const plan = await this._findLeaderPlanFromHashGid(
+				properties.entry.meta.gid,
+				properties.replicas,
+				options,
+			);
+			if (plan) {
+				return this.applyLeaderSelection(
+					plan.coordinates as NumberFromType<R>[],
+					properties.entry,
+					plan.leaders,
+					options,
+				);
+			}
+		}
+
 		let cursors: NumberFromType<R>[] = await this.createCoordinates(
 			properties.entry,
 			properties.replicas,
@@ -6944,6 +6982,30 @@ export class SharedLog<
 		};
 	}
 
+	private createNativeLeaderOptions(
+		context: {
+			roleAge: number;
+			selfHash: string;
+			selfReplicating: boolean;
+			peerFilter: Set<string> | undefined;
+		},
+		options?: {
+			candidates?: Iterable<string>;
+		},
+	) {
+		return {
+			roleAge: context.roleAge,
+			now: Date.now(),
+			peerFilter: context.peerFilter,
+			expandPeerFilter: !options?.candidates,
+			selfHash: context.selfHash,
+			selfReplicating: context.selfReplicating,
+			fullReplicaFallback: !options?.candidates,
+			includeStrictFullReplica:
+				this._logProperties?.strictFullReplicaFallback !== false,
+		};
+	}
+
 	private async _findLeaders(
 		cursors: NumberFromType<R>[],
 		options?: {
@@ -6951,25 +7013,12 @@ export class SharedLog<
 			candidates?: Iterable<string>;
 		},
 	): Promise<Map<string, { intersecting: boolean }>> {
-		const {
-			roleAge,
-			selfHash,
-			selfReplicating,
-			peerFilter: initialPeerFilter,
-		} = await this.createLeaderSelectionContext(options);
-		let peerFilter = initialPeerFilter;
+		const context = await this.createLeaderSelectionContext(options);
+		let peerFilter = context.peerFilter;
 
 		if (this._nativeRangePlanner) {
 			return this._nativeRangePlanner.findLeaders(cursors, cursors.length, {
-				roleAge,
-				now: Date.now(),
-				peerFilter,
-				expandPeerFilter: !options?.candidates,
-				selfHash,
-				selfReplicating,
-				fullReplicaFallback: !options?.candidates,
-				includeStrictFullReplica:
-					this._logProperties?.strictFullReplicaFallback !== false,
+				...this.createNativeLeaderOptions(context, options),
 			});
 		}
 
@@ -6978,16 +7027,16 @@ export class SharedLog<
 			// turn a known mature indexed range into a false self-only full replica.
 			peerFilter = await this.includeIndexedLeaderCandidatesWhenUnderfilled(
 				peerFilter,
-				roleAge,
+				context.roleAge,
 				cursors.length,
-				selfReplicating,
+				context.selfReplicating,
 			);
 		}
 
 		if (!options?.candidates) {
 			const fullReplicaLeaders = await this.findFullReplicaLeaders(
 				cursors.length,
-				roleAge,
+				context.roleAge,
 				peerFilter,
 			);
 			if (fullReplicaLeaders) {
@@ -6998,7 +7047,7 @@ export class SharedLog<
 		return getSamples<R>(
 			cursors,
 			this.replicationIndex,
-			roleAge,
+			context.roleAge,
 			this.indexableDomain.numbers,
 			{
 				peerFilter,
@@ -7104,19 +7153,38 @@ export class SharedLog<
 			return undefined;
 		}
 
-		const { roleAge, selfHash, selfReplicating, peerFilter } =
-			await this.createLeaderSelectionContext(options);
-		return this._nativeRangePlanner.findLeadersForGid(gid, replicas, {
-			roleAge,
-			now: Date.now(),
-			peerFilter,
-			expandPeerFilter: !options?.candidates,
-			selfHash,
-			selfReplicating,
-			fullReplicaFallback: !options?.candidates,
-			includeStrictFullReplica:
-				this._logProperties?.strictFullReplicaFallback !== false,
-		});
+		const context = await this.createLeaderSelectionContext(options);
+		return this._nativeRangePlanner.findLeadersForGid(
+			gid,
+			replicas,
+			this.createNativeLeaderOptions(context, options),
+		);
+	}
+
+	private async _findLeaderPlanFromHashGid(
+		gid: string,
+		replicas: number,
+		options?: {
+			roleAge?: number;
+			candidates?: Iterable<string>;
+		},
+	): Promise<
+		| {
+				coordinates: Array<number | bigint>;
+				leaders: Map<string, { intersecting: boolean }>;
+		  }
+		| undefined
+	> {
+		if (!this._nativeRangePlanner) {
+			return undefined;
+		}
+
+		const context = await this.createLeaderSelectionContext(options);
+		return this._nativeRangePlanner.planLeadersForGid(
+			gid,
+			replicas,
+			this.createNativeLeaderOptions(context, options),
+		);
 	}
 
 	async findLeadersFromEntry(
@@ -7126,7 +7194,7 @@ export class SharedLog<
 			roleAge?: number;
 		},
 	): Promise<Map<string, { intersecting: boolean }>> {
-		if (this.domain.type === "hash") {
+		if (this.domain.type === "hash" && typeof entry.meta.gid === "string") {
 			const nativeResult = await this._findLeadersFromHashGid(
 				entry.meta.gid,
 				replicas,
