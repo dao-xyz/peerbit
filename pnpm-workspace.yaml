@@ -33,6 +33,7 @@ packages:
   - packages/programs/transport
   - packages/programs/data/document/*
   - packages/programs/data/*
+  - packages/programs/data/shared-log/rust
   - packages/programs/data/document/react/e2e/party
   - packages/programs/data/document/react/e2e/party/shared
   - packages/programs/data/document/react/e2e/party/browser-node

@@ -1,0 +1,17 @@
+[package]
+name = "peerbit_shared_log_rust"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+description = "Rust-backed shared-log range planner for Peerbit"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+indexmap = "2.7.1"
+js-sys = "0.3.80"
+wasm-bindgen = "0.2.103"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
