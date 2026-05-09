@@ -201,6 +201,27 @@ describe("native shared-log range planner", () => {
 		);
 	});
 
+	it("plans hash gid coordinates and leaders together", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
+		planner.put(range({ id: "b", hash: "peer-b", start1: 20, end1: 30 }));
+
+		const gid = "entry-gid";
+		const coordinates = planner.getGidCoordinates(gid, 2);
+		expect(
+			planner.planLeadersForGid(gid, 2, {
+				now: 1_000,
+				fullReplicaFallback: true,
+			}),
+		).to.deep.equal({
+			coordinates,
+			leaders: planner.findLeaders(coordinates, 2, {
+				now: 1_000,
+				fullReplicaFallback: true,
+			}),
+		});
+	});
+
 	it("expands peer filters through the combined native path", async () => {
 		const planner = await createRangePlanner("u32");
 		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));

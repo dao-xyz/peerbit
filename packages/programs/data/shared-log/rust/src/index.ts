@@ -49,6 +49,11 @@ export type LeaderSample = {
 	intersecting: boolean;
 };
 
+export type LeaderPlan = {
+	coordinates: Array<number | bigint>;
+	leaders: Map<string, LeaderSample>;
+};
+
 type NativeRangePlannerHandle = {
 	len: () => number;
 	clear: () => void;
@@ -96,6 +101,18 @@ type NativeRangePlannerHandle = {
 		fullReplicaFallback: boolean,
 		includeStrictFullReplica: boolean,
 	) => unknown[];
+	plan_leaders_for_gid: (
+		gid: string,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => [unknown[], unknown[]];
 	get_full_replica_leaders: (
 		replicas: number,
 		roleAgeMs: number,
@@ -278,6 +295,29 @@ export class SharedLogRangePlanner {
 			options?.includeStrictFullReplica !== false,
 		);
 		return rowsToSamples(rows);
+	}
+
+	planLeadersForGid(
+		gid: string,
+		replicas: number,
+		options?: FindLeaderOptions,
+	): LeaderPlan {
+		const [coordinateRows, leaderRows] = this.native.plan_leaders_for_gid(
+			gid,
+			replicas,
+			options?.roleAge ?? 0,
+			asIntegerString(options?.now ?? Date.now()),
+			options?.peerFilter ? [...options.peerFilter] : undefined,
+			options?.expandPeerFilter === true,
+			options?.selfHash ?? "",
+			options?.selfReplicating === true,
+			options?.fullReplicaFallback === true,
+			options?.includeStrictFullReplica !== false,
+		);
+		return {
+			coordinates: rowsToNumbers(this.resolution, coordinateRows),
+			leaders: rowsToSamples(leaderRows),
+		};
 	}
 
 	getFullReplicaLeaders(
