@@ -82,6 +82,16 @@ type NativeLogIndexHandle = {
 		heads: Uint8Array,
 		datas: Array<Uint8Array | undefined>,
 	) => void;
+	put_append_chain: (
+		hashes: string[],
+		gid: string,
+		initialNext: string[],
+		type: number,
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		payloadSizes: Uint32Array,
+		datas: Array<Uint8Array | undefined>,
+	) => void;
 	delete: (hash: string) => boolean;
 	heads: (gid?: string) => string[];
 	has_head: (gid?: string) => boolean;
@@ -315,6 +325,36 @@ export class LogGraphIndex {
 			logicals,
 			payloadSizes,
 			heads,
+			datas,
+		);
+	}
+
+	putAppendChain(entries: NativeLogEntry[]): void {
+		if (entries.length === 0) {
+			return;
+		}
+		const first = entries[0]!;
+		const hashes = new Array<string>(entries.length);
+		const wallTimes = new BigUint64Array(entries.length);
+		const logicals = new Uint32Array(entries.length);
+		const payloadSizes = new Uint32Array(entries.length);
+		const datas = new Array<Uint8Array | undefined>(entries.length);
+		for (let i = 0; i < entries.length; i++) {
+			const entry = entries[i]!;
+			hashes[i] = entry.hash;
+			wallTimes[i] = BigInt(entry.clock.timestamp.wallTime);
+			logicals[i] = entry.clock.timestamp.logical ?? 0;
+			payloadSizes[i] = entry.payloadSize ?? 0;
+			datas[i] = entry.data;
+		}
+		this.native.put_append_chain(
+			hashes,
+			first.gid,
+			first.next,
+			first.type,
+			wallTimes,
+			logicals,
+			payloadSizes,
 			datas,
 		);
 	}

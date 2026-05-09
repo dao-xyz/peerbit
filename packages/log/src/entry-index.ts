@@ -19,7 +19,11 @@ import {
 import { FOREGROUND_READ_MESSAGE_PRIORITY } from "@peerbit/stream-interface";
 import type { ShallowEntry } from "./entry-shallow.js";
 import { EntryType } from "./entry-type.js";
-import { Entry, type ShallowOrFullEntry } from "./entry.js";
+import {
+	Entry,
+	type PreparedNativeLogEntry,
+	type ShallowOrFullEntry,
+} from "./entry.js";
 import type { SortFn, SortableEntry } from "./log-sorting.js";
 import { logger as baseLogger } from "./logger.js";
 
@@ -48,21 +52,7 @@ type IndexWithPutBatch<T extends Record<string, any>> = Index<T> & {
 	putBatch?: (values: T[]) => Promise<void> | void;
 };
 
-type NativeLogEntry = {
-	hash: string;
-	gid: string;
-	next: string[];
-	type: number;
-	head?: boolean;
-	payloadSize?: number;
-	data?: Uint8Array;
-	clock: {
-		timestamp: {
-			wallTime: bigint | number | string;
-			logical?: number;
-		};
-	};
-};
+type NativeLogEntry = PreparedNativeLogEntry;
 
 type NativeJoinCutCheck = {
 	gid: string;
@@ -75,6 +65,7 @@ export type NativeLogGraph = {
 	hasMany: (hashes: Iterable<string>) => Set<string>;
 	put: (entry: NativeLogEntry) => void;
 	putBatch?: (entries: NativeLogEntry[]) => void;
+	putAppendChain?: (entries: NativeLogEntry[]) => void;
 	delete: (hash: string) => boolean;
 	clear: () => void;
 	heads: (gid?: string) => string[];
@@ -893,6 +884,9 @@ export class EntryIndex<T> {
 				const shallowEntry =
 					Entry.takePreparedShallowEntry(entry, properties.isHead) ??
 					entry.toShallow(properties.isHead);
+				const nativeEntry =
+					Entry.takePreparedNativeLogEntry(entry, properties.isHead) ??
+					toNativeLogEntry(shallowEntry);
 				const shouldDeferIndexWrite =
 					properties.deferIndexWrite === true &&
 					properties.isHead &&
@@ -906,7 +900,7 @@ export class EntryIndex<T> {
 					await this.flushPendingWrites(entry.meta.next);
 					await this.properties.index.put(shallowEntry);
 				}
-				this.properties.nativeGraph?.graph.put(toNativeLogEntry(shallowEntry));
+				this.properties.nativeGraph?.graph.put(nativeEntry);
 
 				// check if gids has been shadowed, by query all nexts that have a different gid
 				await this.notifyShadowedGids(entry);
@@ -964,6 +958,14 @@ export class EntryIndex<T> {
 				!this.properties.onGidRemoved &&
 				(this.properties.index as IndexWithPutBatch<ShallowEntry>).putBatch;
 			const shallowEntries: ShallowEntry[] = [];
+			const nativeGraphPutAppendChain =
+				!this.properties.onGidRemoved &&
+				properties.externalNextHashes &&
+				this.properties.nativeGraph?.graph.putAppendChain
+					? this.properties.nativeGraph.graph.putAppendChain.bind(
+							this.properties.nativeGraph.graph,
+						)
+					: undefined;
 			const nativeGraphPutBatch =
 				!this.properties.onGidRemoved && this.properties.nativeGraph?.graph.putBatch
 					? this.properties.nativeGraph.graph.putBatch.bind(
@@ -981,16 +983,22 @@ export class EntryIndex<T> {
 				this.cache.add(entry.hash, entry);
 				const shallowEntry =
 					Entry.takePreparedShallowEntry(entry, isHead) ?? entry.toShallow(isHead);
+				const nativeEntry =
+					this.properties.nativeGraph &&
+					(Entry.takePreparedNativeLogEntry(entry, isHead) ??
+						toNativeLogEntry(shallowEntry));
 				if (putBatch) {
 					shallowEntries.push(shallowEntry);
+					nativeEntry && nativeEntries.push(nativeEntry);
 				} else {
 					await this.properties.index.put(shallowEntry);
-					const nativeEntry = toNativeLogEntry(shallowEntry);
-					if (nativeGraphPutBatch) {
-						nativeEntries.push(nativeEntry);
+					if (nativeGraphPutAppendChain || nativeGraphPutBatch) {
+						nativeEntry && nativeEntries.push(nativeEntry);
 					} else {
-						this.properties.nativeGraph?.graph.put(nativeEntry);
-						await this.notifyShadowedGids(entry);
+						if (nativeEntry) {
+							this.properties.nativeGraph?.graph.put(nativeEntry);
+							await this.notifyShadowedGids(entry);
+						}
 					}
 				}
 
@@ -1005,16 +1013,21 @@ export class EntryIndex<T> {
 
 			if (putBatch) {
 				await putBatch.call(this.properties.index, shallowEntries);
-				const batchedNativeEntries = shallowEntries.map(toNativeLogEntry);
-				if (nativeGraphPutBatch) {
-					nativeGraphPutBatch(batchedNativeEntries);
+				if (nativeGraphPutAppendChain) {
+					nativeGraphPutAppendChain(nativeEntries);
+				} else if (nativeGraphPutBatch) {
+					nativeGraphPutBatch(nativeEntries);
 				} else {
-					for (const nativeEntry of batchedNativeEntries) {
+					for (const nativeEntry of nativeEntries) {
 						this.properties.nativeGraph?.graph.put(nativeEntry);
 					}
 				}
-			} else if (nativeGraphPutBatch && nativeEntries.length > 0) {
-				nativeGraphPutBatch(nativeEntries);
+			} else if (nativeEntries.length > 0) {
+				if (nativeGraphPutAppendChain) {
+					nativeGraphPutAppendChain(nativeEntries);
+				} else if (nativeGraphPutBatch) {
+					nativeGraphPutBatch(nativeEntries);
+				}
 			}
 
 			if (externalNexts.size > 0) {
