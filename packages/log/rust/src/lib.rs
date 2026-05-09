@@ -3,7 +3,7 @@ use js_sys::{Array, Uint8Array};
 use peerbit_indexer_rust::planner::{
     DocumentFields, FieldValue, NativeQueryIndex, Query, SortDirection, SortField,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use wasm_bindgen::prelude::*;
 
 const FIELD_HASH: u32 = 1;
@@ -239,6 +239,34 @@ impl LogGraphIndex {
             .into_iter()
             .filter_map(|child_hash| self.entries.get(&child_hash).cloned())
             .collect()
+    }
+
+    pub fn unique_reference_gids(&self, hash: &str) -> Option<Vec<String>> {
+        let entry = self.entries.get(hash)?;
+        if entry.entry_type == ENTRY_TYPE_CUT {
+            return Some(Vec::new());
+        }
+
+        let mut visited_gids = IndexSet::new();
+        visited_gids.insert(entry.gid.clone());
+        let mut out = Vec::new();
+        let mut queue: VecDeque<String> = entry.next.iter().cloned().collect();
+
+        while let Some(next_hash) = queue.pop_front() {
+            let Some(next_entry) = self.entries.get(&next_hash) else {
+                return None;
+            };
+            if !visited_gids.insert(next_entry.gid.clone()) {
+                continue;
+            }
+            out.push(next_entry.gid.clone());
+            if next_entry.entry_type == ENTRY_TYPE_CUT {
+                continue;
+            }
+            queue.extend(next_entry.next.iter().cloned());
+        }
+
+        Some(out)
     }
 
     pub fn plan_delete_recursively(&self, from: &[String], skip_first: bool) -> Vec<String> {
@@ -555,6 +583,13 @@ impl NativeLogIndex {
 
     pub fn child_join_entries(&self, hash: &str) -> Array {
         log_join_entries_to_rows(self.inner.child_join_entries(hash))
+    }
+
+    pub fn unique_reference_gids(&self, hash: &str) -> JsValue {
+        self.inner
+            .unique_reference_gids(hash)
+            .map(|gids| strings_to_array(gids).into())
+            .unwrap_or(JsValue::UNDEFINED)
     }
 
     pub fn plan_delete_recursively(&self, from: Array, skip_first: bool) -> Result<Array, JsValue> {
