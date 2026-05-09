@@ -16,9 +16,25 @@ import type { Payload } from "./payload.js";
 export type CanAppend<T> = (canAppend: Entry<T>) => Promise<boolean> | boolean;
 export type ShallowOrFullEntry<T> = ShallowEntry | Entry<T>;
 export type PreparedEntryBlock = Awaited<ReturnType<typeof calculateRawCid>>;
+export type PreparedNativeLogEntry = {
+	hash: string;
+	gid: string;
+	next: string[];
+	type: number;
+	head?: boolean;
+	payloadSize?: number;
+	data?: Uint8Array;
+	clock: {
+		timestamp: {
+			wallTime: bigint | number | string;
+			logical?: number;
+		};
+	};
+};
 
 const preparedEntryBlocks = new WeakMap<object, PreparedEntryBlock>();
 const preparedShallowEntries = new WeakMap<object, ShallowEntry>();
+const preparedNativeLogEntries = new WeakMap<object, PreparedNativeLogEntry>();
 
 const preparedEntryBlockFromBytes = (
 	bytes: Uint8Array,
@@ -169,6 +185,25 @@ export abstract class Entry<T> {
 		const prepared = preparedShallowEntries.get(entry);
 		if (prepared) {
 			preparedShallowEntries.delete(entry);
+			prepared.head = isHead;
+		}
+		return prepared;
+	}
+
+	static prepareNativeLogEntry<T>(
+		entry: Entry<T>,
+		nativeEntry: PreparedNativeLogEntry,
+	): void {
+		preparedNativeLogEntries.set(entry, nativeEntry);
+	}
+
+	static takePreparedNativeLogEntry<T>(
+		entry: Entry<T>,
+		isHead: boolean,
+	): PreparedNativeLogEntry | undefined {
+		const prepared = preparedNativeLogEntries.get(entry);
+		if (prepared) {
+			preparedNativeLogEntries.delete(entry);
 			prepared.head = isHead;
 		}
 		return prepared;

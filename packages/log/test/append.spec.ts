@@ -165,6 +165,10 @@ describe("append", function () {
 		const blockPutSpy = sinon.spy(store, "put");
 		const blockPutManySpy = sinon.spy(store, "putMany");
 		const shallowSpy = sinon.spy(EntryV0.prototype, "toShallow");
+		const nativeAppendChainSpy = sinon.spy(
+			log.entryIndex.properties.nativeGraph!.graph,
+			"putAppendChain",
+		);
 
 		try {
 			const result = await log.appendMany([
@@ -201,12 +205,17 @@ describe("append", function () {
 				result.entries.length,
 			);
 			expect(shallowSpy.callCount).equal(0);
+			expect(nativeAppendChainSpy.callCount).equal(1);
+			expect(nativeAppendChainSpy.firstCall.args[0]).to.have.length(
+				result.entries.length,
+			);
 		} finally {
 			iterateSpy.restore();
 			putSpy.restore();
 			blockPutSpy.restore();
 			blockPutManySpy.restore();
 			shallowSpy.restore();
+			nativeAppendChainSpy.restore();
 			await log.close();
 		}
 	});
