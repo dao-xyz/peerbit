@@ -824,6 +824,118 @@ fn find_leaders_with_batch_caches(
     find_leaders_with_prepared_options(planner, cursors, replicas, prepared_options, false, true)
 }
 
+struct RepairDispatchBatch {
+    entry_hashes: Vec<String>,
+    entry_gids: Vec<String>,
+    entry_requested_replicas: Vec<usize>,
+    current_leader_batches: Vec<Vec<String>>,
+    known_gid_peer_batches: Vec<Vec<String>>,
+    known_entry_peer_batches: Vec<Vec<String>>,
+    pending_modes: Vec<String>,
+    pending_peers_by_mode: Vec<Vec<String>>,
+    optimistic_peers_by_mode: Vec<Vec<Vec<String>>>,
+    full_replica_repair_candidates: HashSet<String>,
+    full_replica_repair_candidate_count: usize,
+    self_hash: String,
+}
+
+fn plan_repair_dispatch_rows(batch: RepairDispatchBatch) -> Result<Array, JsValue> {
+    let entry_count = batch.entry_hashes.len();
+
+    ensure_same_len(entry_count, batch.entry_gids.len(), "repair entry gid")?;
+    ensure_same_len(
+        entry_count,
+        batch.entry_requested_replicas.len(),
+        "repair entry replica",
+    )?;
+    ensure_same_len(
+        entry_count,
+        batch.current_leader_batches.len(),
+        "repair current leader",
+    )?;
+    ensure_same_len(
+        entry_count,
+        batch.known_gid_peer_batches.len(),
+        "repair known gid peer",
+    )?;
+    ensure_same_len(
+        entry_count,
+        batch.known_entry_peer_batches.len(),
+        "repair known entry peer",
+    )?;
+    ensure_same_len(
+        batch.pending_modes.len(),
+        batch.pending_peers_by_mode.len(),
+        "repair pending peer mode",
+    )?;
+    ensure_same_len(
+        batch.pending_modes.len(),
+        batch.optimistic_peers_by_mode.len(),
+        "repair optimistic mode",
+    )?;
+    for optimistic_entries in &batch.optimistic_peers_by_mode {
+        ensure_same_len(
+            entry_count,
+            optimistic_entries.len(),
+            "repair optimistic entry",
+        )?;
+    }
+
+    let has_churn = batch.pending_modes.iter().any(|mode| mode == "churn");
+    let mut planned: IndexMap<(String, String), IndexSet<String>> = IndexMap::new();
+
+    for i in 0..entry_count {
+        let hash = &batch.entry_hashes[i];
+        let current_leaders = &batch.current_leader_batches[i];
+        let known_gid_peers = &batch.known_gid_peer_batches[i];
+        let known_entry_peers = &batch.known_entry_peer_batches[i];
+
+        if has_churn {
+            for peer in current_leaders {
+                if peer == &batch.self_hash {
+                    continue;
+                }
+                add_repair_dispatch(&mut planned, "churn", peer, hash);
+            }
+        }
+
+        for (mode_index, mode) in batch.pending_modes.iter().enumerate() {
+            let optimistic_peers = &batch.optimistic_peers_by_mode[mode_index][i];
+            for peer in &batch.pending_peers_by_mode[mode_index] {
+                if contains_string(known_entry_peers, peer) {
+                    continue;
+                }
+                let is_current_leader = contains_string(current_leaders, peer);
+                let was_optimistically_assigned = contains_string(optimistic_peers, peer);
+                let is_covered_by_full_replica_repair = mode == "join-authoritative"
+                    && batch.entry_requested_replicas[i]
+                        >= batch.full_replica_repair_candidate_count
+                    && batch.full_replica_repair_candidates.contains(peer.as_str());
+                let should_queue = if mode == "join-authoritative" {
+                    is_current_leader || is_covered_by_full_replica_repair
+                } else {
+                    was_optimistically_assigned
+                        || (is_current_leader && !contains_string(known_gid_peers, peer))
+                };
+
+                if should_queue {
+                    add_repair_dispatch(&mut planned, mode, peer, hash);
+                }
+            }
+        }
+    }
+
+    let out = Array::new();
+    for ((mode, target), hashes) in planned {
+        let row = Array::new();
+        row.push(&JsValue::from_str(&mode));
+        row.push(&JsValue::from_str(&target));
+        row.push(&strings_to_array(hashes.into_iter().collect()));
+        out.push(&row);
+    }
+    Ok(out)
+}
+
 #[wasm_bindgen]
 pub struct NativeRangePlanner {
     inner: RangePlanner,
@@ -1080,6 +1192,131 @@ impl NativeRangePlanner {
         Ok(out)
     }
 
+    pub fn plan_repair_dispatch(
+        &self,
+        entry_hashes: Array,
+        entry_gids: Array,
+        entry_requested_replicas: Array,
+        current_leader_batches: Array,
+        known_gid_peer_batches: Array,
+        known_entry_peer_batches: Array,
+        pending_modes: Array,
+        pending_peers_by_mode: Array,
+        optimistic_peers_by_mode: Array,
+        full_replica_repair_candidates: Array,
+        full_replica_repair_candidate_count: usize,
+        self_hash: String,
+    ) -> Result<Array, JsValue> {
+        plan_repair_dispatch_rows(RepairDispatchBatch {
+            entry_hashes: strings_from_array(entry_hashes)?,
+            entry_gids: strings_from_array(entry_gids)?,
+            entry_requested_replicas: usize_from_array(entry_requested_replicas)?,
+            current_leader_batches: string_batches_from_array(
+                current_leader_batches,
+                "current leader batches",
+            )?,
+            known_gid_peer_batches: string_batches_from_array(
+                known_gid_peer_batches,
+                "known gid peer batches",
+            )?,
+            known_entry_peer_batches: string_batches_from_array(
+                known_entry_peer_batches,
+                "known entry peer batches",
+            )?,
+            pending_modes: strings_from_array(pending_modes)?,
+            pending_peers_by_mode: string_batches_from_array(
+                pending_peers_by_mode,
+                "pending peers by mode",
+            )?,
+            optimistic_peers_by_mode: string_matrix_from_array(
+                optimistic_peers_by_mode,
+                "optimistic peers by mode",
+            )?,
+            full_replica_repair_candidates: HashSet::<String>::from_iter(strings_from_array(
+                full_replica_repair_candidates,
+            )?),
+            full_replica_repair_candidate_count,
+            self_hash,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_repair_dispatch_for_entries(
+        &self,
+        entry_hashes: Array,
+        entry_gids: Array,
+        entry_requested_replicas: Array,
+        entry_coordinate_batches: Array,
+        known_gid_peer_batches: Array,
+        known_entry_peer_batches: Array,
+        pending_modes: Array,
+        pending_peers_by_mode: Array,
+        optimistic_peers_by_mode: Array,
+        full_replica_repair_candidates: Array,
+        full_replica_repair_candidate_count: usize,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let entry_coordinate_batches = cursor_batches_from_array(entry_coordinate_batches)?;
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
+        let mut prepared_options_by_replicas = HashMap::new();
+        let mut full_replica_leaders_by_replicas = HashMap::new();
+        let mut current_leader_batches = Vec::with_capacity(entry_coordinate_batches.len());
+
+        for coordinates in &entry_coordinate_batches {
+            let replicas = coordinates.len();
+            let leaders = find_leaders_with_batch_caches(
+                &self.inner,
+                coordinates,
+                replicas,
+                &options,
+                &mut prepared_options_by_replicas,
+                &mut full_replica_leaders_by_replicas,
+                expand_peer_filter,
+                &self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            );
+            current_leader_batches.push(leaders.into_iter().map(|leader| leader.hash).collect());
+        }
+
+        plan_repair_dispatch_rows(RepairDispatchBatch {
+            entry_hashes: strings_from_array(entry_hashes)?,
+            entry_gids: strings_from_array(entry_gids)?,
+            entry_requested_replicas: usize_from_array(entry_requested_replicas)?,
+            current_leader_batches,
+            known_gid_peer_batches: string_batches_from_array(
+                known_gid_peer_batches,
+                "known gid peer batches",
+            )?,
+            known_entry_peer_batches: string_batches_from_array(
+                known_entry_peer_batches,
+                "known entry peer batches",
+            )?,
+            pending_modes: strings_from_array(pending_modes)?,
+            pending_peers_by_mode: string_batches_from_array(
+                pending_peers_by_mode,
+                "pending peers by mode",
+            )?,
+            optimistic_peers_by_mode: string_matrix_from_array(
+                optimistic_peers_by_mode,
+                "optimistic peers by mode",
+            )?,
+            full_replica_repair_candidates: HashSet::<String>::from_iter(strings_from_array(
+                full_replica_repair_candidates,
+            )?),
+            full_replica_repair_candidate_count,
+            self_hash,
+        })
+    }
+
     pub fn get_grid(&self, from: String, count: usize) -> Result<Array, JsValue> {
         Ok(numbers_to_rows(
             self.inner.get_grid(parse_u64(&from)?, count),
@@ -1187,6 +1424,28 @@ fn strings_from_array(values: Array) -> Result<Vec<String>, JsValue> {
     Ok(out)
 }
 
+fn string_batches_from_array(values: Array, label: &str) -> Result<Vec<Vec<String>>, JsValue> {
+    let mut out = Vec::with_capacity(values.length() as usize);
+    for value in values.iter() {
+        if !Array::is_array(&value) {
+            return Err(JsValue::from_str(&format!("Expected {label}")));
+        }
+        out.push(strings_from_array(Array::from(&value))?);
+    }
+    Ok(out)
+}
+
+fn string_matrix_from_array(values: Array, label: &str) -> Result<Vec<Vec<Vec<String>>>, JsValue> {
+    let mut out = Vec::with_capacity(values.length() as usize);
+    for value in values.iter() {
+        if !Array::is_array(&value) {
+            return Err(JsValue::from_str(&format!("Expected {label}")));
+        }
+        out.push(string_batches_from_array(Array::from(&value), label)?);
+    }
+    Ok(out)
+}
+
 fn usize_from_array(values: Array) -> Result<Vec<usize>, JsValue> {
     let mut out = Vec::with_capacity(values.length() as usize);
     for value in values.iter() {
@@ -1202,13 +1461,11 @@ fn usize_from_array(values: Array) -> Result<Vec<usize>, JsValue> {
 }
 
 fn cursor_batches_from_array(values: Array) -> Result<Vec<Vec<u64>>, JsValue> {
-    let mut out = Vec::with_capacity(values.length() as usize);
-    for value in values.iter() {
-        if !Array::is_array(&value) {
-            return Err(JsValue::from_str("Expected cursor batch array"));
-        }
+    let batches = string_batches_from_array(values, "cursor batch array")?;
+    let mut out = Vec::with_capacity(batches.len());
+    for batch in batches {
         out.push(
-            strings_from_array(Array::from(&value))?
+            batch
                 .into_iter()
                 .map(|value| parse_u64(&value))
                 .collect::<Result<Vec<_>, _>>()?,
@@ -1225,6 +1482,22 @@ fn ensure_same_len(left: usize, right: usize, label: &str) -> Result<(), JsValue
             "Mismatched {label} input lengths"
         )))
     }
+}
+
+fn add_repair_dispatch(
+    planned: &mut IndexMap<(String, String), IndexSet<String>>,
+    mode: &str,
+    target: &str,
+    hash: &str,
+) {
+    planned
+        .entry((mode.to_string(), target.to_string()))
+        .or_default()
+        .insert(hash.to_string());
+}
+
+fn contains_string(values: &[String], target: &str) -> bool {
+    values.iter().any(|value| value == target)
 }
 
 fn optional_string_set(value: JsValue) -> Result<Option<Vec<String>>, JsValue> {

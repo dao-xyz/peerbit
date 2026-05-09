@@ -274,6 +274,101 @@ describe("native shared-log range planner", () => {
 		);
 	});
 
+	it("plans repair dispatch targets in one native batch", async () => {
+		const planner = await createRangePlanner("u32");
+
+		expect(
+			planner.planRepairDispatchBatch({
+				entries: [
+					{
+						hash: "entry-a",
+						gid: "gid-a",
+						requestedReplicas: 2,
+						currentLeaders: ["peer-a", "peer-b"],
+						knownGidPeers: ["peer-b"],
+						knownEntryPeers: ["peer-known"],
+					},
+					{
+						hash: "entry-b",
+						gid: "gid-b",
+						requestedReplicas: 1,
+						currentLeaders: ["peer-self", "peer-c"],
+					},
+				],
+				pendingModes: ["churn", "join-authoritative"],
+				pendingPeersByMode: new Map([
+					["churn", ["peer-a", "peer-c", "peer-optimistic"]],
+					["join-authoritative", ["peer-a", "peer-full", "peer-known"]],
+				]),
+				optimisticPeersByMode: new Map([
+					[
+						"churn",
+						new Map([
+							["gid-a", ["peer-optimistic"]],
+							["gid-b", []],
+						]),
+					],
+				]),
+				fullReplicaRepairCandidates: ["peer-full"],
+				fullReplicaRepairCandidateCount: 2,
+				selfHash: "peer-self",
+			}),
+		).to.deep.equal(
+			new Map([
+				[
+					"churn",
+					new Map([
+						["peer-a", ["entry-a"]],
+						["peer-b", ["entry-a"]],
+						["peer-optimistic", ["entry-a"]],
+						["peer-c", ["entry-b"]],
+					]),
+				],
+				[
+					"join-authoritative",
+					new Map([
+						["peer-a", ["entry-a"]],
+						["peer-full", ["entry-a"]],
+					]),
+				],
+			]),
+		);
+	});
+
+	it("plans repair dispatch from native leader selection", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
+		planner.put(range({ id: "b", hash: "peer-b", start1: 20, end1: 30 }));
+
+		expect(
+			planner.planRepairDispatchForEntries(
+				{
+					entries: [
+						{
+							hash: "entry-a",
+							gid: "gid-a",
+							requestedReplicas: 1,
+							coordinates: [5],
+						},
+					],
+					pendingModes: ["churn", "join-authoritative"],
+					pendingPeersByMode: new Map([
+						["churn", ["peer-a"]],
+						["join-authoritative", ["peer-a", "peer-b"]],
+					]),
+					fullReplicaRepairCandidateCount: 1,
+					selfHash: "peer-self",
+				},
+				{ now: 1_000 },
+			),
+		).to.deep.equal(
+			new Map([
+				["churn", new Map([["peer-a", ["entry-a"]]])],
+				["join-authoritative", new Map([["peer-a", ["entry-a"]]])],
+			]),
+		);
+	});
+
 	it("expands peer filters through the combined native path", async () => {
 		const planner = await createRangePlanner("u32");
 		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
