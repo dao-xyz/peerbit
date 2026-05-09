@@ -19,11 +19,13 @@ const usage = () => {
 			"Benchmarks:",
 			"  topic-sim  in-memory TopicControlPlane topic fanout sim",
 			"  fanout-tree-sim  end-to-end FanoutTree protocol sim (bootstrap tracker join)",
+			"  fanout-tree-parent-upgrade-eval  A/B evidence harness for proactive parent upgrades",
 			"",
 			"Example:",
 			"  pnpm -C packages/transport/pubsub run bench -- topic-sim --nodes 3 --degree 2 --subscribers 2 --messages 5 --msgSize 32 --intervalMs 0 --seed 1 --subscribeModel preseed --timeoutMs 300000",
 			"  pnpm -C packages/transport/pubsub run bench -- topic-sim --nodes 2000 --degree 6 --subscribers 1500 --messages 200",
 			"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-sim --preset live --nodes 2000 --bootstraps 1 --seed 1",
+			"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-eval --scenario ci-small --seeds 1,2,3",
 		].join("\n"),
 	);
 };
@@ -39,6 +41,9 @@ switch (bench) {
 		break;
 	case "fanout-tree-sim":
 		await import("./fanout-tree-sim.js");
+		break;
+	case "fanout-tree-parent-upgrade-eval":
+		await import("./fanout-tree-parent-upgrade-eval.js");
 		break;
 	default:
 		usage();

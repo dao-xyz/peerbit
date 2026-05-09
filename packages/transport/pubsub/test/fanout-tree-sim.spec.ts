@@ -110,10 +110,11 @@ describe("fanout-tree-sim (ci)", () => {
 		expect(result.formationScore).to.be.lessThan(20);
 		expect(result.protocolFetchReqSent).to.equal(0);
 		expect(result.protocolIHaveSent).to.equal(0);
-		expect(result.protocolControlBytesSent).to.be.lessThan(50_000);
-		expect(result.trackerBpp).to.be.lessThan(3);
-		expect(result.repairBpp).to.be.lessThan(0.5);
-		expect(result.droppedForwardsTotal).to.equal(0);
+			expect(result.protocolControlBytesSent).to.be.lessThan(50_000);
+			expect(result.trackerBpp).to.be.lessThan(3);
+			expect(result.repairBpp).to.be.lessThan(0.5);
+			expect(result.reparentUpgradeTotal).to.equal(0);
+			expect(result.droppedForwardsTotal).to.equal(0);
 	});
 
 	it("stays structurally healthy under mild loss + churn", async function () {
@@ -198,9 +199,10 @@ describe("fanout-tree-sim (ci)", () => {
 		// In the lossy/churny smoke test, delivered payload fluctuates by design, so
 		// trackerBpp is noisier than the underlying tracker-byte volume. Gate the
 		// structural scenario on tracker control bytes directly instead.
-		expect(result.protocolControlBytesSentTracker).to.be.lessThan(
-			LOSSY_CHURN_TRACKER_BYTES_MAX,
-		);
-		expect(result.repairBpp).to.be.lessThan(5);
+			expect(result.protocolControlBytesSentTracker).to.be.lessThan(
+				LOSSY_CHURN_TRACKER_BYTES_MAX,
+			);
+			expect(result.repairBpp).to.be.lessThan(5);
+			expect(result.reparentUpgradeTotal).to.equal(0);
+		});
 	});
-});

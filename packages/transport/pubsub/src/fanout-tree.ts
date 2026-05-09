@@ -437,6 +437,7 @@ export type FanoutTreeChannelMetrics = {
 	reparentDisconnect: number;
 	reparentStale: number;
 	reparentKicked: number;
+	reparentUpgrade: number;
 	endSent: number;
 	endReceived: number;
 
@@ -1549,6 +1550,7 @@ const createEmptyMetrics = (): FanoutTreeChannelMetrics => ({
 	reparentDisconnect: 0,
 	reparentStale: 0,
 	reparentKicked: 0,
+	reparentUpgrade: 0,
 	endSent: 0,
 	endReceived: 0,
 	repairReqSent: 0,
@@ -5211,7 +5213,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									now - lastParentUpgradeCheckAt >= parentUpgradeIntervalMs;
 								if (due) {
 									lastParentUpgradeCheckAt = now;
-									await this.maybeImproveParent(ch, {
+									const improved = await this.maybeImproveParent(ch, {
 										signal,
 										candidateShuffleTopK,
 										candidateScoringMode,
@@ -5219,6 +5221,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 										joinAttemptsPerRound,
 										joinReqTimeoutMs,
 									});
+									if (improved) {
+										ch.metrics.reparentUpgrade += 1;
+									}
 								}
 							}
 
