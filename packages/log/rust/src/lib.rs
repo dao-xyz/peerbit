@@ -475,6 +475,110 @@ pub struct NativeLogIndex {
 }
 
 #[wasm_bindgen]
+pub struct NativeLogBlockStore {
+    entries: IndexMap<String, Vec<u8>>,
+    total_size: u64,
+}
+
+#[wasm_bindgen]
+impl NativeLogBlockStore {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            entries: IndexMap::new(),
+            total_size: 0,
+        }
+    }
+
+    pub fn get(&self, key: &str) -> Option<Vec<u8>> {
+        self.entries.get(key).cloned()
+    }
+
+    pub fn get_many(&self, keys: Array) -> Result<Array, JsValue> {
+        let values = Array::new();
+        for key in strings_from_array(keys)? {
+            match self.entries.get(&key) {
+                Some(value) => values.push(&Uint8Array::from(value.as_slice())),
+                None => values.push(&JsValue::UNDEFINED),
+            };
+        }
+        Ok(values)
+    }
+
+    pub fn has(&self, key: &str) -> bool {
+        self.entries.contains_key(key)
+    }
+
+    pub fn put(&mut self, key: String, value: Vec<u8>) {
+        self.put_entry(key, value);
+    }
+
+    pub fn put_many(&mut self, keys: Array, values: Array) -> Result<(), JsValue> {
+        self.put_entries(block_key_values_from_arrays(&keys, &values)?);
+        Ok(())
+    }
+
+    pub fn delete(&mut self, key: &str) -> bool {
+        if let Some((_key, previous)) = self.entries.shift_remove_entry(key) {
+            self.total_size = self.total_size.saturating_sub(previous.len() as u64);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn delete_many(&mut self, keys: Array) -> Result<usize, JsValue> {
+        let mut deleted = 0;
+        for key in strings_from_array(keys)? {
+            if self.delete(&key) {
+                deleted += 1;
+            }
+        }
+        Ok(deleted)
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.total_size = 0;
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn size(&self) -> f64 {
+        self.total_size as f64
+    }
+
+    pub fn entries(&self) -> Array {
+        let entries = Array::new();
+        for (key, value) in &self.entries {
+            let pair = Array::new();
+            pair.push(&JsValue::from_str(key));
+            pair.push(&Uint8Array::from(value.as_slice()));
+            entries.push(&pair);
+        }
+        entries
+    }
+}
+
+impl NativeLogBlockStore {
+    fn put_entry(&mut self, key: String, value: Vec<u8>) {
+        let value_len = value.len() as u64;
+        if let Some(previous) = self.entries.insert(key, value) {
+            self.total_size = self.total_size.saturating_sub(previous.len() as u64);
+        }
+        self.total_size += value_len;
+    }
+
+    fn put_entries(&mut self, entries: Vec<(String, Vec<u8>)>) {
+        for (key, value) in entries {
+            self.put_entry(key, value);
+        }
+    }
+}
+
+#[wasm_bindgen]
 impl NativeLogIndex {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
@@ -639,7 +743,7 @@ impl NativeLogIndex {
         meta_datas: Array,
         payload_datas: Array,
     ) -> Result<Array, JsValue> {
-        let (rows, entries, initial_nexts) = prepare_entry_v0_plain_chain_rows(
+        let (rows, entries, initial_nexts, _blocks) = prepare_entry_v0_plain_chain_rows(
             clock_id,
             private_key,
             public_key,
@@ -651,6 +755,37 @@ impl NativeLogIndex {
             meta_datas,
             payload_datas,
         )?;
+        self.inner.put_append_chain(entries, &initial_nexts);
+        Ok(rows)
+    }
+
+    pub fn prepare_entry_v0_plain_chain_commit_blocks_and_put(
+        &mut self,
+        block_store: &mut NativeLogBlockStore,
+        clock_id: Uint8Array,
+        private_key: Uint8Array,
+        public_key: Uint8Array,
+        wall_times: BigUint64Array,
+        logicals: Uint32Array,
+        gid: String,
+        initial_next: Array,
+        entry_type: u8,
+        meta_datas: Array,
+        payload_datas: Array,
+    ) -> Result<Array, JsValue> {
+        let (rows, entries, initial_nexts, blocks) = prepare_entry_v0_plain_chain_rows(
+            clock_id,
+            private_key,
+            public_key,
+            wall_times,
+            logicals,
+            gid,
+            initial_next,
+            entry_type,
+            meta_datas,
+            payload_datas,
+        )?;
+        block_store.put_entries(blocks);
         self.inner.put_append_chain(entries, &initial_nexts);
         Ok(rows)
     }
@@ -983,7 +1118,15 @@ fn prepare_entry_v0_plain_chain_rows(
     entry_type: u8,
     meta_datas: Array,
     payload_datas: Array,
-) -> Result<(Array, Vec<LogIndexEntry>, Vec<String>), JsValue> {
+) -> Result<
+    (
+        Array,
+        Vec<LogIndexEntry>,
+        Vec<String>,
+        Vec<(String, Vec<u8>)>,
+    ),
+    JsValue,
+> {
     let len = payload_datas.length();
     if meta_datas.length() != len || wall_times.length() != len || logicals.length() != len {
         return Err(JsValue::from_str("Expected equal column lengths"));
@@ -998,6 +1141,7 @@ fn prepare_entry_v0_plain_chain_rows(
     let mut next = initial_nexts.clone();
     let out = Array::new();
     let mut entries = Vec::with_capacity(len as usize);
+    let mut blocks = Vec::with_capacity(len as usize);
     for i in 0..len {
         let payload_data = required_bytes_from_array(&payload_datas, i, "payload")?;
         let input = EntryV0EncodeInput {
@@ -1043,10 +1187,11 @@ fn prepare_entry_v0_plain_chain_rows(
             i + 1 == len,
             input.meta_data.clone(),
         ));
+        blocks.push((cid.clone(), storage));
 
         next = vec![cid];
     }
-    Ok((out, entries, initial_nexts))
+    Ok((out, entries, initial_nexts, blocks))
 }
 
 #[wasm_bindgen]
@@ -1322,6 +1467,23 @@ fn string_arrays_from_array(values: Array) -> Result<Vec<Vec<String>>, JsValue> 
         out.push(strings_from_array(Array::from(&value))?);
     }
     Ok(out)
+}
+
+fn block_key_values_from_arrays(
+    keys: &Array,
+    values: &Array,
+) -> Result<Vec<(String, Vec<u8>)>, JsValue> {
+    if keys.length() != values.length() {
+        return Err(JsValue::from_str("Expected equal column lengths"));
+    }
+    let mut entries = Vec::with_capacity(keys.length() as usize);
+    for index in 0..keys.length() {
+        entries.push((
+            required_string_from_array(keys, index)?,
+            required_bytes_from_array(values, index, "block")?,
+        ));
+    }
+    Ok(entries)
 }
 
 #[allow(clippy::too_many_arguments)]
