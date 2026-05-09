@@ -1549,11 +1549,13 @@ export class SharedLog<
 			const entryFromGid = this.log.entryIndex.getHeads(gidReference, false);
 			for (const gidEntry of await entryFromGid.all()) {
 				let coordinates = await this.getCoordinates(gidEntry);
+				let found: Map<string, { intersecting: boolean }>;
 				if (coordinates == null) {
-					coordinates = await this.createCoordinates(gidEntry, minReplicasValue);
+					found = await this.findLeadersFromEntry(gidEntry, minReplicasValue);
+				} else {
+					found = await this._findLeaders(coordinates);
 				}
 
-				const found = await this._findLeaders(coordinates);
 				for (const [key, value] of found) {
 					leaders.set(key, value);
 				}
@@ -1808,11 +1810,7 @@ export class SharedLog<
 				continue;
 			}
 			const minReplicas = decodeReplicas(head).getValue(this);
-			await this.findLeaders(
-				await this.createCoordinates(head, minReplicas),
-				head,
-				{ persist: {} },
-			);
+			await this.planEntryLeaders(head, minReplicas, { persist: {} });
 		}
 	}
 
@@ -3941,18 +3939,13 @@ export class SharedLog<
 			return;
 		}
 
-		const coordinates = await this.createCoordinates(
-			entry,
-			properties.minReplicasValue,
-		);
-
 		const selfHash = this.node.identity.publicKey.hashcode();
-		let isLeader = false;
-		let leaders = await this.findLeaders(coordinates, entry, {
+		const {
+			coordinates,
+			leaders,
+			isLeader,
+		} = await this.planEntryLeaders(entry, properties.minReplicasValue, {
 			persist: {},
-			onLeader: (key) => {
-				isLeader = isLeader || selfHash === key;
-			},
 		});
 
 		if (options?.target !== "none") {
@@ -5658,11 +5651,10 @@ export class SharedLog<
 								// the coordinate index to redistribute entries after membership changes.
 								for (const entry of toPersist) {
 									const replicas = decodeReplicas(entry).getValue(this);
-									await this.findLeaders(
-										await this.createCoordinates(entry, replicas),
-										entry,
-										{ roleAge: 0, persist: {} },
-									);
+									await this.planEntryLeaders(entry, replicas, {
+										roleAge: 0,
+										persist: {},
+									});
 								}
 								for (const merged of toMerge) {
 									confirmedHashes.add(merged.hash);
@@ -6220,24 +6212,18 @@ export class SharedLog<
 			}
 
 			const minReplicas = decodeReplicas(entry).getValue(this);
-			const leaders = await this.findLeaders(
-				await this.createCoordinates(entry, minReplicas),
-				entry,
-				{
-					roleAge: 0,
-					persist: false,
-				},
-			);
+			const { leaders } = await this.planEntryLeaders(entry, minReplicas, {
+				roleAge: 0,
+				persist: false,
+			});
 
 			this.addPeersToGidPeerHistory(entry.meta.gid, leaders.keys());
 		};
 		const persistCoordinate = async (entry: Entry<T>) => {
 			const minReplicas = decodeReplicas(entry).getValue(this);
-			const leaders = await this.findLeaders(
-				await this.createCoordinates(entry, minReplicas),
-				entry,
-				{ persist: {} },
-			);
+			const { leaders } = await this.planEntryLeaders(entry, minReplicas, {
+				persist: {},
+			});
 
 			if (assumeSynced) {
 				// make sure we dont start to initate syncing process outwards for this entry
@@ -6661,7 +6647,7 @@ export class SharedLog<
 		if (
 			typeof entry !== "number" &&
 			typeof entry !== "bigint" &&
-			this.domain.type === "hash"
+			this.canPlanNativeHashGid(entry)
 		) {
 			const nativeCoordinates = this._nativeRangePlanner?.getGidCoordinates(
 				entry.meta.gid,
@@ -6824,6 +6810,12 @@ export class SharedLog<
 		return set;
 	}
 
+	private canPlanNativeHashGid(
+		entry: ShallowOrFullEntry<any> | EntryReplicated<R>,
+	): entry is ShallowOrFullEntry<any> | EntryReplicated<R> {
+		return this.domain.type === "hash" && typeof entry.meta.gid === "string";
+	}
+
 	private async applyLeaderSelection(
 		cursors: NumberFromType<R>[],
 		entry: Entry<T> | EntryReplicated<R> | ShallowEntry,
@@ -6864,6 +6856,57 @@ export class SharedLog<
 		return isLeader;
 	}
 
+	private async planEntryLeaders(
+		entry: ShallowOrFullEntry<any> | EntryReplicated<R>,
+		replicas: number,
+		options?: {
+			roleAge?: number;
+			candidates?: Iterable<string>;
+			onLeader?: (key: string) => void;
+			persist?:
+				| {
+						prev?: EntryReplicated<R>;
+				  }
+				| false;
+		},
+	): Promise<{
+		coordinates: NumberFromType<R>[];
+		leaders: Map<string, { intersecting: boolean }>;
+		isLeader: boolean;
+	}> {
+		let coordinates: NumberFromType<R>[];
+		let leaders: Map<string, { intersecting: boolean }>;
+
+		if (this.canPlanNativeHashGid(entry)) {
+			const plan = await this._findLeaderPlanFromHashGid(
+				entry.meta.gid,
+				replicas,
+				options,
+			);
+			if (plan) {
+				coordinates = plan.coordinates as NumberFromType<R>[];
+				leaders = plan.leaders;
+				const isLeader = await this.applyLeaderSelection(
+					coordinates,
+					entry,
+					leaders,
+					options,
+				);
+				return { coordinates, leaders, isLeader };
+			}
+		}
+
+		coordinates = await this.createCoordinates(entry, replicas);
+		leaders = await this._findLeaders(coordinates, options);
+		const isLeader = await this.applyLeaderSelection(
+			coordinates,
+			entry,
+			leaders,
+			options,
+		);
+		return { coordinates, leaders, isLeader };
+	}
+
 	async isLeader(
 		properties: {
 			entry: ShallowOrFullEntry<any> | EntryReplicated<R>;
@@ -6881,35 +6924,12 @@ export class SharedLog<
 				| false;
 		},
 	): Promise<boolean> {
-		if (
-			this.domain.type === "hash" &&
-			typeof properties.entry.meta.gid === "string"
-		) {
-			const plan = await this._findLeaderPlanFromHashGid(
-				properties.entry.meta.gid,
-				properties.replicas,
-				options,
-			);
-			if (plan) {
-				return this.applyLeaderSelection(
-					plan.coordinates as NumberFromType<R>[],
-					properties.entry,
-					plan.leaders,
-					options,
-				);
-			}
-		}
-
-		let cursors: NumberFromType<R>[] = await this.createCoordinates(
+		const plan = await this.planEntryLeaders(
 			properties.entry,
 			properties.replicas,
+			options,
 		);
-
-		const leaders = await this.findLeaders(cursors, properties.entry, options);
-		if (leaders.has(this.node.identity.publicKey.hashcode())) {
-			return true;
-		}
-		return false;
+		return plan.isLeader;
 	}
 
 	private async createLeaderSelectionContext(options?: {
@@ -7194,7 +7214,7 @@ export class SharedLog<
 			roleAge?: number;
 		},
 	): Promise<Map<string, { intersecting: boolean }>> {
-		if (this.domain.type === "hash" && typeof entry.meta.gid === "string") {
+		if (this.canPlanNativeHashGid(entry)) {
 			const nativeResult = await this._findLeadersFromHashGid(
 				entry.meta.gid,
 				replicas,
