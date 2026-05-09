@@ -182,6 +182,25 @@ describe("native shared-log range planner", () => {
 		);
 	});
 
+	it("finds hash gid leaders without returning coordinates to TypeScript", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
+		planner.put(range({ id: "b", hash: "peer-b", start1: 20, end1: 30 }));
+
+		const gid = "entry-gid";
+		expect(
+			planner.findLeadersForGid(gid, 2, {
+				now: 1_000,
+				fullReplicaFallback: true,
+			}),
+		).to.deep.equal(
+			planner.findLeaders(planner.getGidCoordinates(gid, 2), 2, {
+				now: 1_000,
+				fullReplicaFallback: true,
+			}),
+		);
+	});
+
 	it("expands peer filters through the combined native path", async () => {
 		const planner = await createRangePlanner("u32");
 		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));

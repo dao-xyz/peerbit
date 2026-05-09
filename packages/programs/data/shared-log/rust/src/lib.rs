@@ -861,6 +861,43 @@ impl NativeRangePlanner {
         )))
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn find_leaders_for_gid(
+        &self,
+        gid: String,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let coordinates = self.inner.get_gid_coordinates(&gid, replicas);
+        let options = SampleOptions {
+            role_age_ms: if role_age_ms <= 0.0 {
+                0
+            } else {
+                role_age_ms.floor() as u64
+            },
+            now: parse_u64(&now)?,
+            peer_filter: optional_string_set(peer_filter)?.map(HashSet::from_iter),
+            ..Default::default()
+        };
+        Ok(samples_to_rows(self.inner.find_leaders(
+            &coordinates,
+            replicas,
+            &options,
+            expand_peer_filter,
+            &self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )))
+    }
+
     pub fn get_grid(&self, from: String, count: usize) -> Result<Array, JsValue> {
         Ok(numbers_to_rows(
             self.inner.get_grid(parse_u64(&from)?, count),

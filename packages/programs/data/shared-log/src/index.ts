@@ -6874,13 +6874,15 @@ export class SharedLog<
 		return false;
 	}
 
-	private async _findLeaders(
-		cursors: NumberFromType<R>[],
-		options?: {
-			roleAge?: number;
-			candidates?: Iterable<string>;
-		},
-	): Promise<Map<string, { intersecting: boolean }>> {
+	private async createLeaderSelectionContext(options?: {
+		roleAge?: number;
+		candidates?: Iterable<string>;
+	}): Promise<{
+		roleAge: number;
+		selfHash: string;
+		selfReplicating: boolean;
+		peerFilter: Set<string> | undefined;
+	}> {
 		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge()); // TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
 		const selfHash = this.node.identity.publicKey.hashcode();
 
@@ -6933,6 +6935,29 @@ export class SharedLog<
 				}
 			}
 		}
+
+		return {
+			roleAge,
+			selfHash,
+			selfReplicating,
+			peerFilter,
+		};
+	}
+
+	private async _findLeaders(
+		cursors: NumberFromType<R>[],
+		options?: {
+			roleAge?: number;
+			candidates?: Iterable<string>;
+		},
+	): Promise<Map<string, { intersecting: boolean }>> {
+		const {
+			roleAge,
+			selfHash,
+			selfReplicating,
+			peerFilter: initialPeerFilter,
+		} = await this.createLeaderSelectionContext(options);
+		let peerFilter = initialPeerFilter;
 
 		if (this._nativeRangePlanner) {
 			return this._nativeRangePlanner.findLeaders(cursors, cursors.length, {
@@ -7067,6 +7092,33 @@ export class SharedLog<
 		return leaders.size > 0 ? leaders : undefined;
 	}
 
+	private async _findLeadersFromHashGid(
+		gid: string,
+		replicas: number,
+		options?: {
+			roleAge?: number;
+			candidates?: Iterable<string>;
+		},
+	): Promise<Map<string, { intersecting: boolean }> | undefined> {
+		if (!this._nativeRangePlanner) {
+			return undefined;
+		}
+
+		const { roleAge, selfHash, selfReplicating, peerFilter } =
+			await this.createLeaderSelectionContext(options);
+		return this._nativeRangePlanner.findLeadersForGid(gid, replicas, {
+			roleAge,
+			now: Date.now(),
+			peerFilter,
+			expandPeerFilter: !options?.candidates,
+			selfHash,
+			selfReplicating,
+			fullReplicaFallback: !options?.candidates,
+			includeStrictFullReplica:
+				this._logProperties?.strictFullReplicaFallback !== false,
+		});
+	}
+
 	async findLeadersFromEntry(
 		entry: ShallowOrFullEntry<any> | EntryReplicated<R>,
 		replicas: number,
@@ -7074,6 +7126,17 @@ export class SharedLog<
 			roleAge?: number;
 		},
 	): Promise<Map<string, { intersecting: boolean }>> {
+		if (this.domain.type === "hash") {
+			const nativeResult = await this._findLeadersFromHashGid(
+				entry.meta.gid,
+				replicas,
+				options,
+			);
+			if (nativeResult) {
+				return nativeResult;
+			}
+		}
+
 		const coordinates = await this.createCoordinates(entry, replicas);
 		const result = await this._findLeaders(coordinates, options);
 		return result;

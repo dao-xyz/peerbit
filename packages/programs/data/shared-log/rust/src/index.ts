@@ -84,6 +84,18 @@ type NativeRangePlannerHandle = {
 		fullReplicaFallback: boolean,
 		includeStrictFullReplica: boolean,
 	) => unknown[];
+	find_leaders_for_gid: (
+		gid: string,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => unknown[];
 	get_full_replica_leaders: (
 		replicas: number,
 		roleAgeMs: number,
@@ -235,6 +247,26 @@ export class SharedLogRangePlanner {
 	): Map<string, LeaderSample> {
 		const rows = this.native.find_leaders(
 			[...cursors].map(asIntegerString),
+			replicas,
+			options?.roleAge ?? 0,
+			asIntegerString(options?.now ?? Date.now()),
+			options?.peerFilter ? [...options.peerFilter] : undefined,
+			options?.expandPeerFilter === true,
+			options?.selfHash ?? "",
+			options?.selfReplicating === true,
+			options?.fullReplicaFallback === true,
+			options?.includeStrictFullReplica !== false,
+		);
+		return rowsToSamples(rows);
+	}
+
+	findLeadersForGid(
+		gid: string,
+		replicas: number,
+		options?: FindLeaderOptions,
+	): Map<string, LeaderSample> {
+		const rows = this.native.find_leaders_for_gid(
+			gid,
 			replicas,
 			options?.roleAge ?? 0,
 			asIntegerString(options?.now ?? Date.now()),
