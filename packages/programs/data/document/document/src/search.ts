@@ -662,6 +662,12 @@ type ContextualIndexPut<I> = {
 	) => Promise<void> | void;
 };
 
+type ContextHeadIndex<I> = {
+	getByContextHead?: (
+		head: string,
+	) => indexerTypes.IndexedResult<WithContext<I>> | undefined;
+};
+
 export const coerceWithContext = <T>(
 	value: T | WithContext<T>,
 	context: types.Context,
@@ -1640,6 +1646,25 @@ export class DocumentIndex<
 		await iterator.close();
 		return one[0];
 	}
+
+	public async getIdentityIndexedByHead(
+		head: string,
+	): Promise<indexerTypes.IndexedResult<WithContext<I>> | undefined> {
+		if (!this.canGetIdentityIndexedByHead()) {
+			return;
+		}
+		return (this.index as ContextHeadIndex<I>).getByContextHead?.(head);
+	}
+
+	public canGetIdentityIndexedByHead(): boolean {
+		return (
+			this.transformerIsIdentity &&
+			this.indexedTypeIsDocumentType &&
+			!this.isProgramValued &&
+			typeof (this.index as ContextHeadIndex<I>).getByContextHead === "function"
+		);
+	}
+
 	public async put(
 		value: T,
 		id: indexerTypes.IdKey,

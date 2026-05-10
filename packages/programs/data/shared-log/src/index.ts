@@ -4095,7 +4095,10 @@ export class SharedLog<
 	async appendLocallyPrepared(
 		data: T,
 		options?: SharedAppendOptions<T> | undefined,
-		properties?: { skipMissingNextJoin?: boolean },
+		properties?: {
+			skipMissingNextJoin?: boolean;
+			resolveTrimmedEntries?: boolean;
+		},
 	): Promise<{
 		entry: Entry<T>;
 		removed: ShallowOrFullEntry<T>[];
@@ -4114,6 +4117,7 @@ export class SharedLog<
 		appendOptions.__peerbitCanAppendAlreadyValidated = true;
 		const result = await this.log.appendLocallyPrepared(data, appendOptions, {
 			skipMissingNextJoin: properties?.skipMissingNextJoin,
+			resolveTrimmedEntries: properties?.resolveTrimmedEntries,
 		});
 		await this.onChange(result.change);
 		await this.processLocalAppend(result.entry, result.removed, options, {
