@@ -79,12 +79,14 @@ const createReplicaHeadsLog = async (nativeGraph: boolean) => {
 		indexer: new HashmapIndices(),
 		nativeGraph,
 	});
+	const gids: string[] = [];
 	for (let i = 0; i < entries; i++) {
-		await log.append(new Uint8Array([i & 0xff]), {
+		const { entry } = await log.append(new Uint8Array([i & 0xff]), {
 			meta: { next: [], data: absoluteReplicaData((i % 8) + 1) },
 		});
+		gids.push(entry.meta.gid);
 	}
-	return { log, store };
+	return { log, store, gids };
 };
 
 const createChainLog = async (nativeGraph: boolean) => {
@@ -171,13 +173,13 @@ const hasAnyHeadBatch = async (log: Log<Uint8Array>, gidSets: string[][]) => {
 	return out;
 };
 
-const getMaxHeadDataU32 = async (log: Log<Uint8Array>) => {
-	const nativeMax = await log.entryIndex.getMaxHeadDataU32();
+const getMaxHeadDataU32 = async (log: Log<Uint8Array>, gid?: string) => {
+	const nativeMax = await log.entryIndex.getMaxHeadDataU32(gid);
 	if (nativeMax != null) {
 		return nativeMax;
 	}
 	const heads = (await log.entryIndex
-		.getHeads(undefined, {
+		.getHeads(gid, {
 			type: "shape",
 			shape: { meta: { data: true } },
 		})
@@ -190,6 +192,21 @@ const getMaxHeadDataU32 = async (log: Log<Uint8Array>) => {
 		}
 	}
 	return max;
+};
+
+const getMaxHeadDataU32Batch = async (
+	log: Log<Uint8Array>,
+	gids: string[],
+) => {
+	const nativeMaxes = await log.entryIndex.getMaxHeadDataU32Batch(gids);
+	if (nativeMaxes != null) {
+		return nativeMaxes;
+	}
+	const out: Array<number | undefined> = [];
+	for (const gid of gids) {
+		out.push(await getMaxHeadDataU32(log, gid));
+	}
+	return out;
 };
 
 const measureAppend = async (
@@ -543,11 +560,35 @@ for (const nativeGraph of [false, true]) {
 }
 
 for (const nativeGraph of [false, true]) {
-	const { log, store } = await createReplicaHeadsLog(nativeGraph);
+	const { log, store, gids } = await createReplicaHeadsLog(nativeGraph);
 	rows.push(
 		await measure("getMaxHeadDataU32()", nativeGraph, async () => {
 			await getMaxHeadDataU32(log);
 		}),
+	);
+	const batchGids = gids.slice(0, Math.min(gids.length, nativeGraph ? 1_000 : 100));
+	const batchIterations = Math.min(iterations, nativeGraph ? 100 : 10);
+	rows.push(
+		await measure(
+			"getMaxHeadDataU32(gids loop)",
+			nativeGraph,
+			async () => {
+				for (const gid of batchGids) {
+					await getMaxHeadDataU32(log, gid);
+				}
+			},
+			batchIterations,
+		),
+	);
+	rows.push(
+		await measure(
+			"getMaxHeadDataU32Batch(gids)",
+			nativeGraph,
+			async () => {
+				await getMaxHeadDataU32Batch(log, batchGids);
+			},
+			batchIterations,
+		),
 	);
 	await log.close();
 	await store.stop();
