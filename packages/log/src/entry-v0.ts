@@ -73,6 +73,7 @@ type NativePreparedPlainEntry = {
 	metaBytes: Uint8Array;
 	payloadBytes: Uint8Array;
 	signatureBytes: Uint8Array;
+	hashDigestBytes?: Uint8Array;
 };
 
 type MaybePromise<T> = T | Promise<T>;
@@ -338,6 +339,7 @@ export class EntryV0<T>
 
 	private _keychain?: CryptoKeychain;
 	private _encoding?: Encoding<T>;
+	private _hashDigestBytes?: Uint8Array;
 
 	constructor(obj: {
 		payload: MaybeEncrypted<Payload<T>>;
@@ -395,6 +397,10 @@ export class EntryV0<T>
 		} catch {
 			return undefined;
 		}
+	}
+
+	getHashDigestBytes(): Uint8Array | undefined {
+		return this._hashDigestBytes;
 	}
 
 	async getClock(): Promise<Clock> {
@@ -849,6 +855,7 @@ export class EntryV0<T>
 					preparedEntry.cid,
 				);
 			}
+			entry._hashDigestBytes = preparedEntry.hashDigestBytes;
 			const shallowEntry = new ShallowEntry({
 				hash: entry.hash,
 				payloadSize: payload.byteLength,

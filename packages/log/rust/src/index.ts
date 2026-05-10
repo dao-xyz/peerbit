@@ -938,6 +938,7 @@ export type EntryV0PreparedPlainEntry = EntryV0EncodedStorage & {
 	metaBytes: Uint8Array;
 	payloadBytes: Uint8Array;
 	signatureBytes: Uint8Array;
+	hashDigestBytes?: Uint8Array;
 };
 
 export type EntryV0CommittedPlainEntry = Omit<
@@ -955,6 +956,7 @@ type EntryV0PreparedPlainEntryRow = [
 	Uint8Array,
 	Uint8Array,
 	Uint8Array,
+	Uint8Array?,
 ];
 
 type EntryV0CommittedPlainEntryRow = [
@@ -965,6 +967,7 @@ type EntryV0CommittedPlainEntryRow = [
 	Uint8Array,
 	Uint8Array,
 	number,
+	Uint8Array?,
 ];
 
 const plainChainInputColumns = (input: EntryV0PlainChainInput) => {
@@ -995,6 +998,7 @@ const preparedPlainEntryRow = ([
 	metaBytes,
 	payloadBytes,
 	signatureBytes,
+	hashDigestBytes,
 ]: EntryV0PreparedPlainEntryRow): EntryV0PreparedPlainEntry => ({
 	bytes,
 	cid,
@@ -1004,6 +1008,7 @@ const preparedPlainEntryRow = ([
 	metaBytes,
 	payloadBytes,
 	signatureBytes,
+	hashDigestBytes,
 });
 
 const preparedPlainEntryRows = (
@@ -1018,6 +1023,7 @@ const committedPlainEntryRow = ([
 	payloadBytes,
 	signatureBytes,
 	byteLength,
+	hashDigestBytes,
 ]: EntryV0CommittedPlainEntryRow): EntryV0CommittedPlainEntry => ({
 	cid,
 	byteLength,
@@ -1026,6 +1032,7 @@ const committedPlainEntryRow = ([
 	metaBytes,
 	payloadBytes,
 	signatureBytes,
+	hashDigestBytes,
 });
 
 const committedPlainEntryRows = (

@@ -491,6 +491,7 @@ type PutAndDeleteIndex<T extends Record<string, any>> = Index<T> & {
 
 type EntryWithMetaBytes = {
 	getMetaBytes?: () => Uint8Array | undefined;
+	getHashDigestBytes?: () => Uint8Array | undefined;
 };
 
 const createIndexableDomainFromResolution = <R extends "u32" | "u64">(
@@ -2949,9 +2950,9 @@ export class SharedLog<
 			properties.leaders,
 			properties.replicas,
 		);
-		const cidObject = cidifyString(properties.entry.hash);
 		const hashNumber = this.indexableDomain.numbers.bytesToNumber(
-			cidObject.multihash.digest,
+			(properties.entry as EntryWithMetaBytes).getHashDigestBytes?.() ??
+				cidifyString(properties.entry.hash).multihash.digest,
 		);
 		return new this.indexableDomain.constructorEntry({
 			assignedToRangeBoundary,
@@ -7173,9 +7174,9 @@ export class SharedLog<
 			return false; // no change
 		}
 
-		const cidObject = cidifyString(properties.entry.hash);
 		const hashNumber = this.indexableDomain.numbers.bytesToNumber(
-			cidObject.multihash.digest,
+			(properties.entry as EntryWithMetaBytes).getHashDigestBytes?.() ??
+				cidifyString(properties.entry.hash).multihash.digest,
 		);
 
 		const coordinateEntry = new this.indexableDomain.constructorEntry({
