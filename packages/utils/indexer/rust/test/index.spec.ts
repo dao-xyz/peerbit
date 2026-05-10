@@ -250,6 +250,35 @@ describe("native planner bridge", () => {
 		await indices.drop();
 	});
 
+	it("coalesces a put and matching deletes through the native index", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocument });
+		const coalescedIndex = index as typeof index & {
+			putAndDelete: (
+				value: BridgeDocument,
+				deleteOptions: { query: StringMatch },
+			) => Promise<ReturnType<typeof toId>[]>;
+		};
+
+		await index.put(new BridgeDocument("a", "stale", "old"));
+		await index.put(new BridgeDocument("b", "keep", "current"));
+		const deleted = await coalescedIndex.putAndDelete(
+			new BridgeDocument("c", "fresh", "new"),
+			{ query: new StringMatch({ key: "tag", value: "stale" }) },
+		);
+
+		expect(deleted.map((id) => id.primitive)).to.deep.equal(["a"]);
+		const results = await index
+			.iterate({
+				sort: [new Sort({ key: "id", direction: SortDirection.ASC })],
+			})
+			.all();
+		expect(results.map((result) => result.value.id)).to.deep.equal(["b", "c"]);
+
+		await indices.drop();
+	});
+
 	it("accepts contextual document puts through the native index hook", async () => {
 		const indices = create();
 		await indices.start();
@@ -616,6 +645,42 @@ describe("native planner bridge", () => {
 			const result = await readerIndex.iterate().all();
 
 			expect(result.map((entry) => entry.value.id)).to.deep.equal(["b"]);
+		} finally {
+			await writer.drop();
+			await reader.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
+	it("replays durable coalesced put and deletes before the writer is stopped", async () => {
+		const directory = createPersistenceDirectory();
+		const writer = create(directory);
+		const reader = create(directory);
+		try {
+			await writer.start();
+			const writerIndex = await writer.init({ schema: BridgeDocument });
+			const coalescedIndex = writerIndex as typeof writerIndex & {
+				putAndDelete: (
+					value: BridgeDocument,
+					deleteOptions: { query: StringMatch },
+				) => Promise<ReturnType<typeof toId>[]>;
+			};
+			await writerIndex.put(new BridgeDocument("a", "stale", "delete me"));
+			await writerIndex.put(new BridgeDocument("b", "other", "keep me"));
+			await coalescedIndex.putAndDelete(
+				new BridgeDocument("c", "fresh", "new"),
+				{ query: new StringMatch({ key: "tag", value: "stale" }) },
+			);
+
+			await reader.start();
+			const readerIndex = await reader.init({ schema: BridgeDocument });
+			const result = await readerIndex
+				.iterate({
+					sort: [new Sort({ key: "id", direction: SortDirection.ASC })],
+				})
+				.all();
+
+			expect(result.map((entry) => entry.value.id)).to.deep.equal(["b", "c"]);
 		} finally {
 			await writer.drop();
 			await reader.drop();
