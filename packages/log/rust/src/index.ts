@@ -116,7 +116,7 @@ type NativeLogIndexHandle = {
 		type: number,
 		metaDatas: Array<Uint8Array | undefined>,
 		payloadDatas: Uint8Array[],
-	) => EntryV0PreparedPlainEntryRow[];
+	) => EntryV0CommittedPlainEntryRow[];
 	delete: (hash: string) => boolean;
 	heads: (gid?: string) => string[];
 	has_head: (gid?: string) => boolean;
@@ -436,7 +436,7 @@ export class LogGraphIndex {
 	prepareEntryV0PlainChainCommit(
 		input: EntryV0PlainChainInput,
 		blockStore: unknown,
-	): Promise<EntryV0PreparedPlainEntry[] | undefined> {
+	): Promise<EntryV0CommittedPlainEntry[] | undefined> {
 		const nativeBlockStore = nativeLogBlockStoreHandle(blockStore);
 		if (!nativeBlockStore) {
 			return Promise.resolve(undefined);
@@ -446,7 +446,7 @@ export class LogGraphIndex {
 			return Promise.resolve([]);
 		}
 		return Promise.resolve(
-			preparedPlainEntryRows(
+			committedPlainEntryRows(
 				this.native.prepare_entry_v0_plain_chain_commit_blocks_and_put(
 					nativeBlockStore,
 					input.clockId,
@@ -754,11 +754,19 @@ export type EntryV0PlainChainInput = {
 };
 
 export type EntryV0PreparedPlainEntry = EntryV0EncodedStorage & {
+	byteLength: number;
 	signature: Uint8Array;
 	next: string[];
 	metaBytes: Uint8Array;
 	payloadBytes: Uint8Array;
 	signatureBytes: Uint8Array;
+};
+
+export type EntryV0CommittedPlainEntry = Omit<
+	EntryV0PreparedPlainEntry,
+	"bytes"
+> & {
+	bytes?: undefined;
 };
 
 type EntryV0PreparedPlainEntryRow = [
@@ -769,6 +777,16 @@ type EntryV0PreparedPlainEntryRow = [
 	Uint8Array,
 	Uint8Array,
 	Uint8Array,
+];
+
+type EntryV0CommittedPlainEntryRow = [
+	string,
+	Uint8Array,
+	string[],
+	Uint8Array,
+	Uint8Array,
+	Uint8Array,
+	number,
 ];
 
 const plainChainInputColumns = (input: EntryV0PlainChainInput) => {
@@ -806,6 +824,30 @@ const preparedPlainEntryRows = (
 		]) => ({
 			bytes,
 			cid,
+			byteLength: bytes.byteLength,
+			signature,
+			next,
+			metaBytes,
+			payloadBytes,
+			signatureBytes,
+		}),
+	);
+
+const committedPlainEntryRows = (
+	rows: EntryV0CommittedPlainEntryRow[],
+): EntryV0CommittedPlainEntry[] =>
+	rows.map(
+		([
+			cid,
+			signature,
+			next,
+			metaBytes,
+			payloadBytes,
+			signatureBytes,
+			byteLength,
+		]) => ({
+			cid,
+			byteLength,
 			signature,
 			next,
 			metaBytes,
