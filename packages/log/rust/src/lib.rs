@@ -332,6 +332,20 @@ impl LogGraphIndex {
             .collect()
     }
 
+    pub fn entry_metadata_batch(
+        &self,
+        hashes: &[String],
+    ) -> Vec<Option<(String, String, Option<Vec<u8>>)>> {
+        hashes
+            .iter()
+            .map(|hash| {
+                self.entries
+                    .get(hash)
+                    .map(|entry| (entry.hash.clone(), entry.gid.clone(), entry.data.clone()))
+            })
+            .collect()
+    }
+
     pub fn unique_reference_gid_rows(&self, hash: &str) -> Option<Vec<(String, String)>> {
         let entry = self.entries.get(hash)?;
         if entry.entry_type == ENTRY_TYPE_CUT {
@@ -1075,6 +1089,13 @@ impl NativeLogIndex {
 
     pub fn child_join_entries(&self, hash: &str) -> Array {
         log_join_entries_to_rows(self.inner.child_join_entries(hash))
+    }
+
+    pub fn entry_metadata_batch(&self, hashes: Array) -> Result<Array, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        Ok(log_optional_entry_metadata_to_rows(
+            self.inner.entry_metadata_batch(&hashes),
+        ))
     }
 
     pub fn unique_reference_gids(&self, hash: &str) -> JsValue {
@@ -2040,6 +2061,27 @@ fn log_join_entries_to_rows(values: Vec<LogIndexEntry>) -> Array {
         row.push(&JsValue::from_f64(entry.logical as f64));
         row.push(&JsValue::from_f64(entry.entry_type as f64));
         row.push(&strings_to_array(entry.next));
+        out.push(&row);
+    }
+    out
+}
+
+fn log_optional_entry_metadata_to_rows(
+    values: Vec<Option<(String, String, Option<Vec<u8>>)>>,
+) -> Array {
+    let out = Array::new();
+    for value in values {
+        let Some((hash, gid, data)) = value else {
+            out.push(&JsValue::UNDEFINED);
+            continue;
+        };
+        let row = Array::new();
+        row.push(&JsValue::from_str(&hash));
+        row.push(&JsValue::from_str(&gid));
+        match data {
+            Some(data) => row.push(&Uint8Array::from(data.as_slice())),
+            None => row.push(&JsValue::UNDEFINED),
+        };
         out.push(&row);
     }
     out
