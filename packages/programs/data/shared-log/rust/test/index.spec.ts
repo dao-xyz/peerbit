@@ -329,9 +329,9 @@ describe("native shared-log range planner", () => {
 
 	it("commits entry coordinates to resident shared-log state", async () => {
 		const state = await createSharedLogState("u32");
-		state.putEntryCoordinates("old-head", [1, 2]);
+		state.putEntryCoordinates("old-head", "old-gid", [1, 2]);
 
-		state.commitEntryCoordinates("new-head", [3, 4], ["old-head"], true);
+		state.commitEntryCoordinates("new-head", "new-gid", [3, 4], ["old-head"], true);
 
 		expect(state.getEntryCoordinates("new-head")).to.deep.equal([3, 4]);
 		expect(state.getEntryCoordinates("old-head")).to.equal(undefined);
@@ -339,8 +339,8 @@ describe("native shared-log range planner", () => {
 
 	it("lists resident entry coordinate hashes", async () => {
 		const state = await createSharedLogState("u32");
-		state.putEntryCoordinates("head-a", [1]);
-		state.putEntryCoordinates("head-b", [2]);
+		state.putEntryCoordinates("head-a", "gid-a", [1]);
+		state.putEntryCoordinates("head-b", "gid-b", [2]);
 		state.deleteEntryCoordinates("head-a");
 
 		expect(state.getEntryCoordinateHashes()).to.deep.equal(["head-b"]);
@@ -348,10 +348,10 @@ describe("native shared-log range planner", () => {
 
 	it("counts resident entry coordinates in owned ranges", async () => {
 		const state = await createSharedLogState("u32");
-		state.putEntryCoordinates("head-a", [5, 100]);
-		state.putEntryCoordinates("head-b", [25]);
-		state.putEntryCoordinates("head-c", [80]);
-		state.putEntryCoordinates("head-d", [95]);
+		state.putEntryCoordinates("head-a", "gid-a", [5, 100]);
+		state.putEntryCoordinates("head-b", "gid-b", [25]);
+		state.putEntryCoordinates("head-c", "gid-c", [80]);
+		state.putEntryCoordinates("head-d", "gid-d", [95]);
 
 		expect(
 			state.countEntryCoordinatesInRanges([
@@ -376,9 +376,9 @@ describe("native shared-log range planner", () => {
 
 	it("counts resident boundary-assigned entries on request", async () => {
 		const state = await createSharedLogState("u32");
-		state.putEntryCoordinates("inside", [5], false);
-		state.putEntryCoordinates("outside", [50], false);
-		state.putEntryCoordinates("boundary", [80], true);
+		state.putEntryCoordinates("inside", "gid-inside", [5], false);
+		state.putEntryCoordinates("outside", "gid-outside", [50], false);
+		state.putEntryCoordinates("boundary", "gid-boundary", [80], true);
 
 		const owned = [range({ id: "a", hash: "peer-a", start1: 0, end1: 10 })];
 		expect(state.countEntryCoordinatesInRanges(owned)).to.equal(1);
@@ -489,7 +489,7 @@ describe("native shared-log range planner", () => {
 		for (const item of ranges) {
 			state.put(item);
 		}
-		state.putEntryCoordinates("old-head", [1, 2]);
+		state.putEntryCoordinates("old-head", "old-gid", [1, 2]);
 
 		const leaderOptions = {
 			now: 1_000,
@@ -560,8 +560,8 @@ describe("native shared-log range planner", () => {
 			singleState.put(item);
 			batchState.put(item);
 		}
-		singleState.putEntryCoordinates("old-head", [1, 2]);
-		batchState.putEntryCoordinates("old-head", [1, 2]);
+		singleState.putEntryCoordinates("old-head", "old-gid", [1, 2]);
+		batchState.putEntryCoordinates("old-head", "old-gid", [1, 2]);
 
 		const leaderOptions = {
 			now: 1_000,
@@ -684,49 +684,64 @@ describe("native shared-log range planner", () => {
 		state.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
 		state.addGidPeers("gid-known", ["peer-a"]);
 		state.markEntriesKnownByPeer(["entry-known"], "peer-a");
+		const entries = [
+			{
+				hash: "entry-known",
+				gid: "gid-fresh",
+				requestedReplicas: 1,
+				coordinates: [5],
+			},
+			{
+				hash: "entry-gid",
+				gid: "gid-known",
+				requestedReplicas: 1,
+				coordinates: [5],
+			},
+			{
+				hash: "entry-fresh",
+				gid: "gid-fresh",
+				requestedReplicas: 1,
+				coordinates: [5],
+			},
+		];
+		for (const entry of entries) {
+			state.putEntryCoordinates(
+				entry.hash,
+				entry.gid,
+				entry.coordinates,
+				false,
+				entry.requestedReplicas,
+			);
+		}
+		const input = {
+			pendingModes: ["join-warmup", "join-authoritative"],
+			pendingPeersByMode: new Map([
+				["join-warmup", ["peer-a"]],
+				["join-authoritative", ["peer-a"]],
+			]),
+			fullReplicaRepairCandidateCount: 1,
+			selfHash: "peer-self",
+		};
+		const expected = new Map([
+			["join-warmup", new Map([["peer-a", ["entry-fresh"]]])],
+			[
+				"join-authoritative",
+				new Map([["peer-a", ["entry-gid", "entry-fresh"]]]),
+			],
+		]);
 
 		expect(
 			state.planRepairDispatchForEntries(
 				{
-					entries: [
-						{
-							hash: "entry-known",
-							gid: "gid-fresh",
-							requestedReplicas: 1,
-							coordinates: [5],
-						},
-						{
-							hash: "entry-gid",
-							gid: "gid-known",
-							requestedReplicas: 1,
-							coordinates: [5],
-						},
-						{
-							hash: "entry-fresh",
-							gid: "gid-fresh",
-							requestedReplicas: 1,
-							coordinates: [5],
-						},
-					],
-					pendingModes: ["join-warmup", "join-authoritative"],
-					pendingPeersByMode: new Map([
-						["join-warmup", ["peer-a"]],
-						["join-authoritative", ["peer-a"]],
-					]),
-					fullReplicaRepairCandidateCount: 1,
-					selfHash: "peer-self",
+					entries,
+					...input,
 				},
 				{ now: 1_000 },
 			),
-		).to.deep.equal(
-			new Map([
-				["join-warmup", new Map([["peer-a", ["entry-fresh"]]])],
-				[
-					"join-authoritative",
-					new Map([["peer-a", ["entry-gid", "entry-fresh"]]]),
-				],
-			]),
-		);
+		).to.deep.equal(expected);
+		expect(
+			state.planRepairDispatchForResidentEntries(input, { now: 1_000 }),
+		).to.deep.equal(expected);
 	});
 
 	it("plans repair dispatch from native leader selection", async () => {

@@ -1100,22 +1100,24 @@ pub struct NativeRangePlanner {
 
 pub struct SharedLogStateInner {
     range_planner: RangePlanner,
-    entry_coordinates: HashMap<String, EntryCoordinateState>,
+    entry_coordinates: IndexMap<String, EntryCoordinateState>,
     gid_peers: HashMap<String, IndexSet<String>>,
     entry_known_peers: HashMap<String, IndexSet<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct EntryCoordinateState {
+    gid: String,
     coordinates: Vec<u64>,
     assigned_to_range_boundary: bool,
+    requested_replicas: usize,
 }
 
 impl SharedLogStateInner {
     fn new(resolution: String) -> Self {
         Self {
             range_planner: RangePlanner::new(&resolution),
-            entry_coordinates: HashMap::new(),
+            entry_coordinates: IndexMap::new(),
             gid_peers: HashMap::new(),
             entry_known_peers: HashMap::new(),
         }
@@ -1632,21 +1634,25 @@ impl NativeSharedLogState {
     pub fn put_entry_coordinates(
         &mut self,
         hash: String,
+        gid: String,
         coordinates: Array,
         assigned_to_range_boundary: bool,
+        requested_replicas: usize,
     ) -> Result<(), JsValue> {
         self.inner.entry_coordinates.insert(
             hash,
             EntryCoordinateState {
+                gid,
                 coordinates: cursor_values_from_array(coordinates)?,
                 assigned_to_range_boundary,
+                requested_replicas,
             },
         );
         Ok(())
     }
 
     pub fn delete_entry_coordinates(&mut self, hash: &str) -> bool {
-        self.inner.entry_coordinates.remove(hash).is_some()
+        self.inner.entry_coordinates.shift_remove(hash).is_some()
     }
 
     pub fn get_entry_coordinates(&self, hash: &str) -> JsValue {
@@ -1670,21 +1676,25 @@ impl NativeSharedLogState {
     pub fn commit_entry_coordinates(
         &mut self,
         hash: String,
+        gid: String,
         coordinates: Array,
         next_hashes: Array,
         assigned_to_range_boundary: bool,
+        requested_replicas: usize,
     ) -> Result<(), JsValue> {
         let coordinates = cursor_values_from_array(coordinates)?;
         let next_hashes = strings_from_array(next_hashes)?;
         self.inner.entry_coordinates.insert(
             hash,
             EntryCoordinateState {
+                gid,
                 coordinates,
                 assigned_to_range_boundary,
+                requested_replicas,
             },
         );
         for next_hash in next_hashes {
-            self.inner.entry_coordinates.remove(&next_hash);
+            self.inner.entry_coordinates.shift_remove(&next_hash);
         }
         Ok(())
     }
@@ -1730,7 +1740,7 @@ impl NativeSharedLogState {
 
     pub fn delete_entry_coordinates_batch(&mut self, hashes: Array) -> Result<(), JsValue> {
         for hash in strings_from_array(hashes)? {
-            self.inner.entry_coordinates.remove(&hash);
+            self.inner.entry_coordinates.shift_remove(&hash);
         }
         Ok(())
     }
@@ -1957,12 +1967,14 @@ impl NativeSharedLogState {
         self.inner.entry_coordinates.insert(
             entry_hash,
             EntryCoordinateState {
+                gid,
                 coordinates: coordinates.clone(),
                 assigned_to_range_boundary,
+                requested_replicas: replicas,
             },
         );
         for next_hash in next_hashes {
-            self.inner.entry_coordinates.remove(&next_hash);
+            self.inner.entry_coordinates.shift_remove(&next_hash);
         }
 
         let out = Array::new();
@@ -2060,12 +2072,14 @@ impl NativeSharedLogState {
         self.inner.entry_coordinates.insert(
             entry_hash,
             EntryCoordinateState {
+                gid,
                 coordinates: coordinates.clone(),
                 assigned_to_range_boundary,
+                requested_replicas: replicas,
             },
         );
         for next_hash in next_hashes {
-            self.inner.entry_coordinates.remove(&next_hash);
+            self.inner.entry_coordinates.shift_remove(&next_hash);
         }
 
         let delivery_leaders = expand_append_leaders(leaders, full_replica_candidates, replicas);
@@ -2162,12 +2176,14 @@ impl NativeSharedLogState {
             self.inner.entry_coordinates.insert(
                 entry_hash,
                 EntryCoordinateState {
+                    gid,
                     coordinates: coordinates.clone(),
                     assigned_to_range_boundary,
+                    requested_replicas: replicas,
                 },
             );
             for next_hash in next_hashes {
-                self.inner.entry_coordinates.remove(&next_hash);
+                self.inner.entry_coordinates.shift_remove(&next_hash);
             }
 
             let delivery_leaders =
@@ -2282,6 +2298,140 @@ impl NativeSharedLogState {
                 optimistic_peers_by_mode,
                 "optimistic peers by mode",
             )?,
+            full_replica_repair_candidates: HashSet::<String>::from_iter(strings_from_array(
+                full_replica_repair_candidates,
+            )?),
+            full_replica_repair_candidate_count,
+            self_hash,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_repair_dispatch_for_resident_entries(
+        &self,
+        pending_modes: Array,
+        pending_peers_by_mode: Array,
+        optimistic_gids_by_mode: Array,
+        optimistic_peers_by_gid_by_mode: Array,
+        full_replica_repair_candidates: Array,
+        full_replica_repair_candidate_count: usize,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let pending_modes = strings_from_array(pending_modes)?;
+        let pending_peers_by_mode =
+            string_batches_from_array(pending_peers_by_mode, "pending peers by mode")?;
+        let optimistic_gids_by_mode =
+            string_batches_from_array(optimistic_gids_by_mode, "optimistic gids by mode")?;
+        let optimistic_peers_by_gid_by_mode =
+            string_matrix_from_array(optimistic_peers_by_gid_by_mode, "optimistic peers by gid")?;
+        ensure_same_len(
+            pending_modes.len(),
+            pending_peers_by_mode.len(),
+            "resident repair pending mode",
+        )?;
+        ensure_same_len(
+            pending_modes.len(),
+            optimistic_gids_by_mode.len(),
+            "resident repair optimistic gid mode",
+        )?;
+        ensure_same_len(
+            pending_modes.len(),
+            optimistic_peers_by_gid_by_mode.len(),
+            "resident repair optimistic peer mode",
+        )?;
+
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
+        let mut prepared_options_by_replicas = HashMap::new();
+        let mut full_replica_leaders_by_replicas = HashMap::new();
+        let entry_count = self.inner.entry_coordinates.len();
+        let mut entry_hashes = Vec::with_capacity(entry_count);
+        let mut entry_gids = Vec::with_capacity(entry_count);
+        let mut entry_requested_replicas = Vec::with_capacity(entry_count);
+        let mut current_leader_batches = Vec::with_capacity(entry_count);
+        let mut known_gid_peer_batches = Vec::with_capacity(entry_count);
+        let mut known_entry_peer_batches = Vec::with_capacity(entry_count);
+        let mut optimistic_by_gid_by_mode = Vec::with_capacity(pending_modes.len());
+
+        for (mode_index, gids) in optimistic_gids_by_mode.iter().enumerate() {
+            let peer_batches = &optimistic_peers_by_gid_by_mode[mode_index];
+            ensure_same_len(
+                gids.len(),
+                peer_batches.len(),
+                "resident repair optimistic gid peer",
+            )?;
+            optimistic_by_gid_by_mode.push(
+                gids.iter()
+                    .cloned()
+                    .zip(peer_batches.iter().cloned())
+                    .collect::<HashMap<_, _>>(),
+            );
+        }
+
+        let mut optimistic_peers_by_mode: Vec<Vec<Vec<String>>> = pending_modes
+            .iter()
+            .map(|_| Vec::with_capacity(entry_count))
+            .collect();
+
+        for (hash, entry) in &self.inner.entry_coordinates {
+            entry_hashes.push(hash.clone());
+            entry_gids.push(entry.gid.clone());
+            entry_requested_replicas.push(entry.requested_replicas);
+
+            let leaders = find_leaders_with_batch_caches(
+                &self.inner.range_planner,
+                &entry.coordinates,
+                entry.coordinates.len(),
+                &options,
+                &mut prepared_options_by_replicas,
+                &mut full_replica_leaders_by_replicas,
+                expand_peer_filter,
+                &self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            );
+            current_leader_batches.push(leaders.into_iter().map(|leader| leader.hash).collect());
+            known_gid_peer_batches.push(
+                self.inner
+                    .gid_peers
+                    .get(&entry.gid)
+                    .map(index_set_to_vec)
+                    .unwrap_or_default(),
+            );
+            known_entry_peer_batches.push(
+                self.inner
+                    .entry_known_peers
+                    .get(hash)
+                    .map(index_set_to_vec)
+                    .unwrap_or_default(),
+            );
+            for (mode_index, optimistic_by_gid) in optimistic_by_gid_by_mode.iter().enumerate() {
+                optimistic_peers_by_mode[mode_index].push(
+                    optimistic_by_gid
+                        .get(&entry.gid)
+                        .cloned()
+                        .unwrap_or_default(),
+                );
+            }
+        }
+
+        plan_repair_dispatch_rows(RepairDispatchBatch {
+            entry_hashes,
+            entry_gids,
+            entry_requested_replicas,
+            current_leader_batches,
+            known_gid_peer_batches,
+            known_entry_peer_batches,
+            pending_modes,
+            pending_peers_by_mode,
+            optimistic_peers_by_mode,
             full_replica_repair_candidates: HashSet::<String>::from_iter(strings_from_array(
                 full_replica_repair_candidates,
             )?),

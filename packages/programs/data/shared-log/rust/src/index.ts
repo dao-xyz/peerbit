@@ -128,6 +128,10 @@ export type RepairDispatchEntryPlanInput = Omit<
 > & {
 	entries: Iterable<RepairDispatchEntryPlanBatchEntry>;
 };
+export type ResidentRepairDispatchPlanInput = Omit<
+	RepairDispatchEntryPlanInput,
+	"entries"
+>;
 
 export type RepairDispatchPlan = Map<string, Map<string, string[]>>;
 
@@ -275,17 +279,21 @@ type NativeSharedLogStateHandle = {
 	delete: NativeRangePlannerHandle["delete"];
 	put_entry_coordinates: (
 		hash: string,
+		gid: string,
 		coordinates: string[],
 		assignedToRangeBoundary: boolean,
+		requestedReplicas: number,
 	) => void;
 	delete_entry_coordinates: (hash: string) => boolean;
 	get_entry_coordinates: (hash: string) => unknown[] | undefined;
 	entry_coordinate_hashes: () => string[];
 	commit_entry_coordinates: (
 		hash: string,
+		gid: string,
 		coordinates: string[],
 		nextHashes: string[],
 		assignedToRangeBoundary: boolean,
+		requestedReplicas: number,
 	) => void;
 	count_entry_coordinates_in_ranges: (
 		start1: string[],
@@ -409,6 +417,22 @@ type NativeSharedLogStateHandle = {
 		pendingModes: string[],
 		pendingPeersByMode: string[][],
 		optimisticPeersByMode: string[][][],
+		fullReplicaRepairCandidates: string[],
+		fullReplicaRepairCandidateCount: number,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => unknown[];
+	plan_repair_dispatch_for_resident_entries: (
+		pendingModes: string[],
+		pendingPeersByMode: string[][],
+		optimisticGidsByMode: string[][],
+		optimisticPeersByGidByMode: string[][][],
 		fullReplicaRepairCandidates: string[],
 		fullReplicaRepairCandidateCount: number,
 		roleAgeMs: number,
@@ -857,13 +881,18 @@ export class SharedLogNativeState {
 
 	putEntryCoordinates(
 		hash: string,
+		gid: string,
 		coordinates: Iterable<bigint | number | string>,
 		assignedToRangeBoundary = false,
+		requestedReplicas?: number,
 	): void {
+		const coordinateRows = [...coordinates].map(asIntegerString);
 		this.native.put_entry_coordinates(
 			hash,
-			[...coordinates].map(asIntegerString),
+			gid,
+			coordinateRows,
 			assignedToRangeBoundary,
+			requestedReplicas ?? coordinateRows.length,
 		);
 	}
 
@@ -882,15 +911,20 @@ export class SharedLogNativeState {
 
 	commitEntryCoordinates(
 		hash: string,
+		gid: string,
 		coordinates: Iterable<bigint | number | string>,
 		nextHashes: Iterable<string>,
 		assignedToRangeBoundary = false,
+		requestedReplicas?: number,
 	): void {
+		const coordinateRows = [...coordinates].map(asIntegerString);
 		this.native.commit_entry_coordinates(
 			hash,
-			[...coordinates].map(asIntegerString),
+			gid,
+			coordinateRows,
 			[...nextHashes],
 			assignedToRangeBoundary,
+			requestedReplicas ?? coordinateRows.length,
 		);
 	}
 
@@ -1182,6 +1216,46 @@ export class SharedLogNativeState {
 					...(optimisticByGid?.get(entry.gid) ?? []),
 				]);
 			}),
+			input.fullReplicaRepairCandidates
+				? [...input.fullReplicaRepairCandidates]
+				: [],
+			input.fullReplicaRepairCandidateCount,
+			...findLeaderArguments({
+				...options,
+				selfHash: input.selfHash,
+			}),
+		);
+		return rowsToRepairDispatchPlan(rows);
+	}
+
+	planRepairDispatchForResidentEntries(
+		input: ResidentRepairDispatchPlanInput,
+		options?: FindLeaderOptions,
+	): RepairDispatchPlan {
+		const pendingModes = [...input.pendingModes];
+		const optimisticGidsByMode: string[][] = [];
+		const optimisticPeersByGidByMode: string[][][] = [];
+		for (const mode of pendingModes) {
+			const optimisticByGid = input.optimisticPeersByMode?.get(mode);
+			const gids: string[] = [];
+			const peersByGid: string[][] = [];
+			if (optimisticByGid) {
+				for (const [gid, peers] of optimisticByGid) {
+					gids.push(gid);
+					peersByGid.push([...peers]);
+				}
+			}
+			optimisticGidsByMode.push(gids);
+			optimisticPeersByGidByMode.push(peersByGid);
+		}
+
+		const rows = this.native.plan_repair_dispatch_for_resident_entries(
+			pendingModes,
+			pendingModes.map((mode) => [
+				...(input.pendingPeersByMode.get(mode) ?? []),
+			]),
+			optimisticGidsByMode,
+			optimisticPeersByGidByMode,
 			input.fullReplicaRepairCandidates
 				? [...input.fullReplicaRepairCandidates]
 				: [],

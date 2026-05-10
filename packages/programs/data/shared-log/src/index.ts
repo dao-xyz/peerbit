@@ -856,6 +856,7 @@ export class SharedLog<
 	private _entryCoordinatesIndex!: Index<EntryReplicated<R>>;
 	private _nativeRangePlanner?: SharedLogRangePlanner;
 	private _nativeSharedLogState?: SharedLogNativeState;
+	private _residentEntryCoordinatesByHash?: Map<string, EntryReplicated<R>>;
 	private coordinateToHash!: Cache<string>;
 	private recentlyRebalanced!: Cache<string>;
 
@@ -1923,6 +1924,11 @@ export class SharedLog<
 			return;
 		}
 		this._nativeSharedLogState?.deleteEntryCoordinatesBatch(values);
+		if (this._residentEntryCoordinatesByHash) {
+			for (const hash of values) {
+				this._residentEntryCoordinatesByHash.delete(hash);
+			}
+		}
 		const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
 			EntryReplicated<R>
 		>;
@@ -3623,40 +3629,62 @@ export class SharedLog<
 					}
 				};
 
-				const iterator = this.entryCoordinatesIndex.iterate({});
-				try {
-					while (!this.closed && !iterator.done()) {
-						const entries = await iterator.next(REPAIR_SWEEP_ENTRY_BATCH_SIZE);
-						const entryReplicatedBatch = entries.map((entry) => entry.value);
-						const requestedReplicasBatch = entryReplicatedBatch.map((entry) =>
-							decodeReplicas(entry).getValue(this),
-						);
-						const repairDispatchPlan = await this.planRepairDispatchBatch({
-							entries: entryReplicatedBatch,
-							requestedReplicasBatch,
-							pendingModes,
-							pendingPeersByMode,
-							optimisticGidPeersByMode,
-							fullReplicaRepairCandidates,
-							fullReplicaRepairCandidateCount,
-							selfHash: this.node.identity.publicKey.hashcode(),
-						});
-						const entriesByHash = new Map(
-							entryReplicatedBatch.map((entry) => [entry.hash, entry]),
-						);
-						for (const [mode, targets] of repairDispatchPlan) {
-							for (const [target, hashes] of targets) {
-								for (const hash of hashes) {
-									const entry = entriesByHash.get(hash);
-									if (entry) {
-										queueEntryForTarget(mode, target, entry);
-									}
+				const residentEntriesByHash = this._residentEntryCoordinatesByHash;
+				if (this._nativeSharedLogState && residentEntriesByHash) {
+					const repairDispatchPlan = await this.planResidentRepairDispatchBatch({
+						pendingModes,
+						pendingPeersByMode,
+						optimisticGidPeersByMode,
+						fullReplicaRepairCandidates,
+						fullReplicaRepairCandidateCount,
+						selfHash: this.node.identity.publicKey.hashcode(),
+					});
+					for (const [mode, targets] of repairDispatchPlan) {
+						for (const [target, hashes] of targets) {
+							for (const hash of hashes) {
+								const entry = residentEntriesByHash.get(hash);
+								if (entry) {
+									queueEntryForTarget(mode, target, entry);
 								}
 							}
 						}
 					}
-				} finally {
-					await iterator.close();
+				} else {
+					const iterator = this.entryCoordinatesIndex.iterate({});
+					try {
+						while (!this.closed && !iterator.done()) {
+							const entries = await iterator.next(REPAIR_SWEEP_ENTRY_BATCH_SIZE);
+							const entryReplicatedBatch = entries.map((entry) => entry.value);
+							const requestedReplicasBatch = entryReplicatedBatch.map((entry) =>
+								decodeReplicas(entry).getValue(this),
+							);
+							const repairDispatchPlan = await this.planRepairDispatchBatch({
+								entries: entryReplicatedBatch,
+								requestedReplicasBatch,
+								pendingModes,
+								pendingPeersByMode,
+								optimisticGidPeersByMode,
+								fullReplicaRepairCandidates,
+								fullReplicaRepairCandidateCount,
+								selfHash: this.node.identity.publicKey.hashcode(),
+							});
+							const entriesByHash = new Map(
+								entryReplicatedBatch.map((entry) => [entry.hash, entry]),
+							);
+							for (const [mode, targets] of repairDispatchPlan) {
+								for (const [target, hashes] of targets) {
+									for (const hash of hashes) {
+										const entry = entriesByHash.get(hash);
+										if (entry) {
+											queueEntryForTarget(mode, target, entry);
+										}
+									}
+								}
+							}
+						}
+					} finally {
+						await iterator.close();
+					}
 				}
 
 				for (const [, optimisticGidPeersConsumed] of optimisticGidPeersConsumedByMode) {
@@ -4934,6 +4962,7 @@ export class SharedLog<
 		state: SharedLogNativeState,
 	): Promise<void> {
 		state.clearEntryCoordinates();
+		this._residentEntryCoordinatesByHash = new Map();
 		const iterator = this.entryCoordinatesIndex.iterate({});
 		try {
 			for (;;) {
@@ -4942,10 +4971,17 @@ export class SharedLog<
 					break;
 				}
 				for (const result of batch) {
+					const requestedReplicas = decodeReplicas(result.value).getValue(this);
 					state.putEntryCoordinates(
 						result.value.hash,
+						result.value.gid,
 						result.value.coordinates,
 						result.value.assignedToRangeBoundary,
+						requestedReplicas,
+					);
+					this._residentEntryCoordinatesByHash.set(
+						result.value.hash,
+						result.value,
 					);
 				}
 			}
@@ -4959,6 +4995,7 @@ export class SharedLog<
 	): Promise<void> {
 		this._nativeRangePlanner = undefined;
 		this._nativeSharedLogState = undefined;
+		this._residentEntryCoordinatesByHash = undefined;
 		if (options === false) {
 			return;
 		}
@@ -4976,6 +5013,7 @@ export class SharedLog<
 			this._nativeRangePlanner = planner;
 			this._nativeSharedLogState = state;
 		} catch (error) {
+			this._residentEntryCoordinatesByHash = undefined;
 			if (options?.optional === false) {
 				throw error;
 			}
@@ -5796,6 +5834,7 @@ export class SharedLog<
 		this._entryCoordinatesIndex = undefined as any;
 		this._nativeRangePlanner = undefined;
 		this._nativeSharedLogState = undefined;
+		this._residentEntryCoordinatesByHash = undefined;
 
 		this.cpuUsage?.stop?.();
 		/* this._totalParticipation = 0; */
@@ -7265,10 +7304,21 @@ export class SharedLog<
 		if (properties.commitNative !== false) {
 			this._nativeSharedLogState?.commitEntryCoordinates(
 				properties.entry.hash,
+				coordinateEntry.gid,
 				properties.coordinates,
 				properties.entry.meta.next,
 				assignedToRangeBoundary,
+				properties.replicas,
 			);
+		}
+		if (this._residentEntryCoordinatesByHash) {
+			this._residentEntryCoordinatesByHash.set(
+				properties.entry.hash,
+				coordinateEntry,
+			);
+			for (const nextHash of nextHashes) {
+				this._residentEntryCoordinatesByHash.delete(nextHash);
+			}
 		}
 
 		for (const coordinate of properties.coordinates) {
@@ -7285,6 +7335,7 @@ export class SharedLog<
 
 	private async deleteCoordinates(properties: { hash: string }) {
 		this._nativeSharedLogState?.deleteEntryCoordinates(properties.hash);
+		this._residentEntryCoordinatesByHash?.delete(properties.hash);
 		const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
 			EntryReplicated<R>
 		>;
@@ -7819,6 +7870,56 @@ export class SharedLog<
 			leaders.push(await this._findLeaders(entry.coordinates, options));
 		}
 		return leaders;
+	}
+
+	private async planResidentRepairDispatchBatch(properties: {
+		pendingModes: Set<RepairDispatchMode>;
+		pendingPeersByMode: Map<RepairDispatchMode, Set<string>>;
+		optimisticGidPeersByMode: Map<RepairDispatchMode, Map<string, Set<string>>>;
+		fullReplicaRepairCandidates: Set<string>;
+		fullReplicaRepairCandidateCount: number;
+		selfHash: string;
+	}): Promise<Map<RepairDispatchMode, Map<string, string[]>>> {
+		const pendingPeersByMode = new Map<string, Iterable<string>>();
+		const optimisticPeersByMode = new Map<
+			string,
+			Map<string, Iterable<string>>
+		>();
+		for (const mode of properties.pendingModes) {
+			pendingPeersByMode.set(
+				mode,
+				properties.pendingPeersByMode.get(mode) ?? [],
+			);
+			const optimisticByGid = properties.optimisticGidPeersByMode.get(mode);
+			if (optimisticByGid) {
+				const optimisticEntries = new Map<string, Iterable<string>>();
+				for (const [gid, peers] of optimisticByGid) {
+					optimisticEntries.set(gid, peers);
+				}
+				optimisticPeersByMode.set(mode, optimisticEntries);
+			}
+		}
+
+		const context = await this.createLeaderSelectionContext({ roleAge: 0 });
+		const nativePlan =
+			this._nativeSharedLogState!.planRepairDispatchForResidentEntries(
+				{
+					pendingModes: properties.pendingModes,
+					pendingPeersByMode,
+					optimisticPeersByMode,
+					fullReplicaRepairCandidates: properties.fullReplicaRepairCandidates,
+					fullReplicaRepairCandidateCount:
+						properties.fullReplicaRepairCandidateCount,
+					selfHash: properties.selfHash,
+				},
+				this.createNativeLeaderOptions(context),
+			);
+
+		const plan = new Map<RepairDispatchMode, Map<string, string[]>>();
+		for (const [mode, targets] of nativePlan) {
+			plan.set(mode as RepairDispatchMode, targets);
+		}
+		return plan;
 	}
 
 	private async planRepairDispatchBatch(properties: {
