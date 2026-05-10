@@ -1,5 +1,5 @@
 import { randomBytes } from "@peerbit/crypto";
-import { Compare, IntegerCompare, Or } from "@peerbit/indexer-interface";
+import { And, Compare, IntegerCompare, Or } from "@peerbit/indexer-interface";
 import { create as createIndex } from "@peerbit/indexer-sqlite3";
 import { LamportClock, Meta } from "@peerbit/log";
 import { createSharedLogState } from "@peerbit/shared-log-rust";
@@ -59,6 +59,14 @@ const symbols = Array.from(
 	{ length: symbolCount },
 	(_, i) => BigInt(((i * 17) % entryCount) + 1),
 );
+const rangeEnd = BigInt(Math.floor(entryCount / 2) + 1);
+const rangeHitCount = Math.floor(entryCount / 2);
+const symbolRange = {
+	start1: 1n,
+	end1: rangeEnd,
+	start2: 0n,
+	end2: 0n,
+};
 
 const lookupViaIndex = async () => {
 	let found = 0;
@@ -95,6 +103,42 @@ const lookupViaNativeState = () => {
 	}
 };
 
+const lookupRangeViaIndex = async () => {
+	const entries = await entryIndex
+		.iterate(
+			{
+				query: new And([
+					new IntegerCompare({
+						key: "hashNumber",
+						compare: Compare.GreaterOrEqual,
+						value: symbolRange.start1,
+					}),
+					new IntegerCompare({
+						key: "hashNumber",
+						compare: Compare.Less,
+						value: symbolRange.end1,
+					}),
+				]),
+			},
+			{ shape: { hash: true, hashNumber: true } },
+		)
+		.all();
+	if (entries.length !== rangeHitCount) {
+		throw new Error(
+			`Expected ${rangeHitCount} index range hits, got ${entries.length}`,
+		);
+	}
+};
+
+const lookupRangeViaNativeState = () => {
+	const result = nativeState.getEntryHashNumbersInRange(symbolRange);
+	if (result.length !== rangeHitCount) {
+		throw new Error(
+			`Expected ${rangeHitCount} native range hits, got ${result.length}`,
+		);
+	}
+};
+
 const suite = new Bench({
 	name: "native-coordinate-symbol-lookup",
 	warmupIterations,
@@ -103,6 +147,8 @@ const suite = new Bench({
 
 suite.add("generic index hashNumber lookup", lookupViaIndex);
 suite.add("native resident hashNumber lookup", lookupViaNativeState);
+suite.add("generic index hashNumber range lookup", lookupRangeViaIndex);
+suite.add("native resident hashNumber range lookup", lookupRangeViaNativeState);
 
 try {
 	await suite.run();
@@ -122,6 +168,7 @@ try {
 					meta: {
 						entryCount,
 						symbolCount,
+						rangeHitCount,
 						queryBatchSize,
 						warmupIterations,
 						iterations,

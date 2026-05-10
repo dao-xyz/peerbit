@@ -290,6 +290,12 @@ type NativeSharedLogStateHandle = {
 	get_entry_coordinates: (hash: string) => unknown[] | undefined;
 	entry_coordinate_hashes: () => string[];
 	entry_hashes_for_hash_numbers: (hashNumbers: string[]) => unknown[];
+	entry_hash_numbers_in_range: (
+		start1: string,
+		end1: string,
+		start2: string,
+		end2: string,
+	) => unknown[];
 	commit_entry_coordinates: (
 		hash: string,
 		gid: string,
@@ -930,6 +936,23 @@ export class SharedLogNativeState {
 			out.set(BigInt(hashNumber), hashes);
 		}
 		return out;
+	}
+
+	getEntryHashNumbersInRange(range: {
+		start1: bigint | number | string;
+		end1: bigint | number | string;
+		start2: bigint | number | string;
+		end2: bigint | number | string;
+	}): bigint[] {
+		return rowsToNumbers(
+			"u64",
+			this.native.entry_hash_numbers_in_range(
+				asIntegerString(range.start1),
+				asIntegerString(range.end1),
+				asIntegerString(range.start2),
+				asIntegerString(range.end2),
+			),
+		) as bigint[];
 	}
 
 	commitEntryCoordinates(
