@@ -130,6 +130,8 @@ export type AppendDurability = "strict" | "buffered";
 export type AppendOptions<T> = {
 	durability?: AppendDurability;
 	deferIndexWrite?: boolean;
+	/** Internal: set only by trusted Peerbit append paths after validation. */
+	__peerbitCanAppendAlreadyValidated?: boolean;
 	meta?: {
 		type?: EntryType;
 		gidSeed?: Uint8Array;
@@ -730,12 +732,14 @@ export class Log<T> {
 		nexts: Sorting.SortableEntry[],
 		deferBlockStore: boolean,
 	): Promise<PreparedAppendChain<T> | undefined> {
+		const canAppendAlreadyValidated =
+			options.__peerbitCanAppendAlreadyValidated === true;
 		if (
 			!deferBlockStore ||
 			options.encryption ||
 			options.signers ||
 			options.canAppend ||
-			this._hasCustomCanAppend ||
+			(this._hasCustomCanAppend && !canAppendAlreadyValidated) ||
 			options.meta?.timestamp ||
 			options.meta?.type === EntryType.CUT
 		) {
@@ -855,8 +859,10 @@ export class Log<T> {
 					}
 				: undefined,
 			canAppend:
-				options.canAppend ||
-				(this._hasCustomCanAppend ? this._canAppend : undefined),
+				options.__peerbitCanAppendAlreadyValidated === true
+					? undefined
+					: options.canAppend ||
+						(this._hasCustomCanAppend ? this._canAppend : undefined),
 			deferStore: storeOptions?.deferStore,
 		});
 

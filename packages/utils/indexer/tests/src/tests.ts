@@ -756,40 +756,6 @@ export const tests = (
 								expect(responses).to.be.empty;
 							});
 						});
-						describe("integer", () => {
-							it("exists", async () => {
-								await setupDefault();
-
-								const responses = await search(store, {
-									query: [
-										new IntegerCompare({
-											key: "data",
-											compare: Compare.Equal,
-											value: 1,
-										}),
-									],
-								});
-								expect(responses).to.have.length(1);
-								expect(responses.map((x) => x.id.primitive)).to.deep.equal([
-									"1",
-								]);
-							});
-
-							it("does not exist", async () => {
-								await setupDefault();
-
-								const responses = await search(store, {
-									query: [
-										new IntegerCompare({
-											key: "data",
-											compare: Compare.Equal,
-											value: 199,
-										}),
-									],
-								});
-								expect(responses).to.be.empty;
-							});
-						});
 					});
 
 					describe("fixed", () => {
@@ -818,40 +784,6 @@ export const tests = (
 										new ByteMatchQuery({
 											key: "data",
 											value: new Uint8Array(32).fill(99),
-										}),
-									],
-								});
-								expect(responses).to.be.empty;
-							});
-						});
-						describe("integer", () => {
-							it("exists", async () => {
-								await setupDefault();
-
-								const responses = await search(store, {
-									query: [
-										new IntegerCompare({
-											key: "data",
-											compare: Compare.Equal,
-											value: 1,
-										}),
-									],
-								});
-								expect(responses).to.have.length(1);
-								expect(responses.map((x) => x.id.primitive)).to.deep.equal([
-									"1",
-								]);
-							});
-
-							it("does not exist", async () => {
-								await setupDefault();
-
-								const responses = await search(store, {
-									query: [
-										new IntegerCompare({
-											key: "data",
-											compare: Compare.Equal,
-											value: 199,
 										}),
 									],
 								});

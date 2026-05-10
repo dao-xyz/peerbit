@@ -641,6 +641,13 @@ export class Documents<
 			});
 		}
 
+		if (
+			operation instanceof PutOperation &&
+			this.canUsePlainPutFastPath(options)
+		) {
+			return this.putPlainFastPath(doc, operation, existingHead, options);
+		}
+
 		const appended = await this.log.append(operation, {
 			...options,
 			meta: {
@@ -651,10 +658,70 @@ export class Documents<
 				return this.canAppend(entry, { document: doc, operation });
 			},
 			onChange: (change) => {
-				return this.handleChanges(change, { document: doc, operation });
+				return this.handleChanges(change, {
+					document: doc,
+					operation,
+					unique: options?.unique,
+				});
 			},
 			replicate: options?.replicate,
 		});
+		this.keepCache?.add(appended.entry.hash);
+		return appended;
+	}
+
+	private canUsePlainPutFastPath(
+		options?: SharedAppendOptions<Operation> & {
+			unique?: boolean;
+			replicate?: boolean;
+			checkRemote?: boolean;
+		},
+	): boolean {
+		return (
+			!this._optionCanPerform &&
+			!this.immutable &&
+			!this.strictHistory &&
+			this.compatibility !== 6 &&
+			!Program.isPrototypeOf(this._clazz) &&
+			!options?.canAppend &&
+			!options?.onChange &&
+			!options?.signers &&
+			!options?.identity &&
+			!options?.encryption &&
+			!options?.trim &&
+			!options?.meta?.type &&
+			!options?.meta?.next &&
+			!options?.meta?.timestamp
+		);
+	}
+
+	private async putPlainFastPath(
+		doc: T,
+		operation: PutOperation,
+		existingHead: string | undefined,
+		options:
+			| (SharedAppendOptions<Operation> & {
+					unique?: boolean;
+					replicate?: boolean;
+					checkRemote?: boolean;
+			  })
+			| undefined,
+	) {
+		const appended = await this.log.appendLocallyValidated(operation, {
+			...options,
+			meta: {
+				next: existingHead ? [await this._resolveEntry(existingHead)] : [],
+				...options?.meta,
+			},
+			replicate: options?.replicate,
+		});
+		await this.handleChanges(
+			{
+				added: [{ head: true, entry: appended.entry }],
+				removed: appended.removed,
+			},
+			{ document: doc, operation, unique: options?.unique },
+		);
 		this.keepCache?.add(appended.entry.hash);
 		return appended;
 	}
@@ -749,16 +816,19 @@ export class Documents<
 			}
 
 			try {
-				const payload =
-					/* item._payload instanceof DecryptedThing
-						? item.payload.getValue(item.encoding)
-						:  */ await item.getPayloadValue(); // TODO implement sync api for resolving entries that does not deep decryption
+				const isReferencedAppendEntry =
+					isAppendOperation &&
+					reference?.operation &&
+					change.added[0]?.entry.hash === item.hash;
+				const payload = isReferencedAppendEntry
+					? reference.operation
+					: /* item._payload instanceof DecryptedThing
+							? item.payload.getValue(item.encoding)
+							:  */ await item.getPayloadValue(); // TODO implement sync api for resolving entries that does not deep decryption
 
 				if (isPutOperation(payload) && !removedSet.has(item.hash)) {
 					let value =
-						(isAppendOperation &&
-							reference?.operation === payload &&
-							reference?.document) ||
+						(isReferencedAppendEntry && reference?.document) ||
 						this.index.valueEncoding.decoder(payload.data);
 
 					// get index key from value

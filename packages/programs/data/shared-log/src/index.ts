@@ -3937,6 +3937,34 @@ export class SharedLog<
 		return result;
 	}
 
+	/** Trusted local append path for callers that already validated the entry. */
+	async appendLocallyValidated(
+		data: T,
+		options?: SharedAppendOptions<T> | undefined,
+	): Promise<{
+		entry: Entry<T>;
+		removed: ShallowOrFullEntry<T>[];
+	}> {
+		if (options?.canAppend || options?.onChange) {
+			throw new Error(
+				"appendLocallyValidated does not accept canAppend or onChange hooks",
+			);
+		}
+		if (this._isAdaptiveReplicating) {
+			this.markLocalAppendActivity();
+		}
+
+		const { appendOptions, minReplicasValue } =
+			this.createLogAppendOptions(options);
+		appendOptions.__peerbitCanAppendAlreadyValidated = true;
+		appendOptions.onChange = (change) => this.onChange(change);
+		const result = await this.log.append(data, appendOptions);
+		await this.processLocalAppend(result.entry, result.removed, options, {
+			minReplicasValue,
+		});
+		return result;
+	}
+
 	async appendMany(
 		data: T[],
 		options?: SharedAppendOptions<T> | undefined,

@@ -18,6 +18,13 @@ import {
 
 export type RustIndexerOptions = {
 	persistence?: PersistenceOptions;
+	/**
+	 * Byte fields always support exact ByteMatch queries. Individual byte facts are
+	 * only indexed up to this length to avoid exploding large blob-like fields.
+	 * Defaults to 0, which disables per-byte facts while preserving exact byte
+	 * matching.
+	 */
+	byteElementIndexLimit?: number;
 };
 
 type NativeRustIndex<T extends Record<string, any>> = {
@@ -110,6 +117,7 @@ type NativeCandidatePage = {
 
 const BRIDGE_VERSION = 1;
 const DEFAULT_JOURNAL_COMPACT_AFTER_OPERATIONS = 64 * 1024;
+const DEFAULT_BYTE_ELEMENT_INDEX_LIMIT = 0;
 
 // Keep bridge enum tags in sync with the Rust Borsh DTO declaration order.
 const enum NativeValueTag {
@@ -635,6 +643,7 @@ const writeNativeBytesFacts = (
 	scope: number,
 	fieldId: number,
 	value: any,
+	byteElementIndexLimit: number,
 ): void => {
 	if (!(value instanceof Uint8Array || ArrayBuffer.isView(value))) {
 		return;
@@ -644,6 +653,9 @@ const writeNativeBytesFacts = (
 			? value
 			: new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
 	writer.writeString(scope, fieldId, bytesToNativeString(bytes));
+	if (bytes.byteLength > byteElementIndexLimit) {
+		return;
+	}
 	for (const byte of bytes) {
 		writer.writeU64(state.nextScope++, fieldId, byte);
 	}
@@ -656,10 +668,18 @@ const writeNativeFieldsGeneric = (
 	writer: NativeFieldWriter,
 	state: NativeFactCollectorState,
 	scope: number,
+	byteElementIndexLimit: number,
 ): void => {
 	if (value instanceof Uint8Array || ArrayBuffer.isView(value)) {
 		if (cursor) {
-			writeNativeBytesFacts(writer, state, scope, cursor.fieldId, value);
+			writeNativeBytesFacts(
+				writer,
+				state,
+				scope,
+				cursor.fieldId,
+				value,
+				byteElementIndexLimit,
+			);
 		}
 		return;
 	}
@@ -689,7 +709,15 @@ const writeNativeFieldsGeneric = (
 			if (cursor) {
 				writer.writeBool(itemScope, cursor.arrayFieldId, true);
 			}
-			writeNativeFieldsGeneric(item, cursor, dictionary, writer, state, itemScope);
+			writeNativeFieldsGeneric(
+				item,
+				cursor,
+				dictionary,
+				writer,
+				state,
+				itemScope,
+				byteElementIndexLimit,
+			);
 		}
 		return;
 	}
@@ -705,6 +733,7 @@ const writeNativeFieldsGeneric = (
 			writer,
 			state,
 			scope,
+			byteElementIndexLimit,
 		);
 	}
 };
@@ -712,6 +741,7 @@ const writeNativeFieldsGeneric = (
 const encodeNativeFieldsGeneric = <T extends Record<string, any>>(
 	value: T,
 	dictionary: NativeFieldDictionary,
+	byteElementIndexLimit: number,
 ): Uint8Array => {
 	const writer = new NativeFieldWriter();
 	writeNativeFieldsGeneric(
@@ -721,6 +751,7 @@ const encodeNativeFieldsGeneric = <T extends Record<string, any>>(
 		writer,
 		{ nextScope: 1 },
 		0,
+		byteElementIndexLimit,
 	);
 	return writer.finish();
 };
@@ -742,7 +773,10 @@ const integerFieldTypes = new Set([
 const compileNativeFieldEncoder = <T extends Record<string, any>>(
 	schema: Function,
 	dictionary: NativeFieldDictionary,
+	options: RustIndexerOptions,
 ): NativeFieldEncoder<T> => {
+	const byteElementIndexLimit =
+		options.byteElementIndexLimit ?? DEFAULT_BYTE_ELEMENT_INDEX_LIMIT;
 	const objectWriterCache = new WeakMap<
 		Function,
 		Map<string, NativeFieldValueWriter | undefined>
@@ -788,6 +822,7 @@ const compileNativeFieldEncoder = <T extends Record<string, any>>(
 						appendNativeFieldCursor(dictionary, cursor, field.key),
 						getObjectWriter,
 						dictionary,
+						byteElementIndexLimit,
 					),
 				});
 			}
@@ -811,7 +846,8 @@ const compileNativeFieldEncoder = <T extends Record<string, any>>(
 
 	const rootWriter = getObjectWriter(schema, undefined);
 	if (!rootWriter) {
-		return (value: T) => encodeNativeFieldsGeneric(value, dictionary);
+		return (value: T) =>
+			encodeNativeFieldsGeneric(value, dictionary, byteElementIndexLimit);
 	}
 
 	return (value: T) => {
@@ -829,6 +865,7 @@ const compileFieldValueWriter = (
 		cursor: NativeFieldCursor | undefined,
 	) => NativeFieldValueWriter | undefined,
 	dictionary: NativeFieldDictionary,
+	byteElementIndexLimit: number,
 ): NativeFieldValueWriter => {
 	if (fieldType instanceof OptionKind) {
 		const writeElement = compileFieldValueWriter(
@@ -836,6 +873,7 @@ const compileFieldValueWriter = (
 			cursor,
 			getObjectWriter,
 			dictionary,
+			byteElementIndexLimit,
 		);
 		return nativeFieldValueWriter((value, writer, state, scope) => {
 			if (value != null) {
@@ -847,7 +885,14 @@ const compileFieldValueWriter = (
 	if (fieldType instanceof VecKind || fieldType instanceof FixedArrayKind) {
 		if (fieldType.elementType === "u8") {
 			return nativeFieldValueWriter((value, writer, state, scope) =>
-				writeNativeBytesFacts(writer, state, scope, cursor.fieldId, value),
+				writeNativeBytesFacts(
+					writer,
+					state,
+					scope,
+					cursor.fieldId,
+					value,
+					byteElementIndexLimit,
+				),
 			);
 		}
 		const writeElement = compileFieldValueWriter(
@@ -855,6 +900,7 @@ const compileFieldValueWriter = (
 			cursor,
 			getObjectWriter,
 			dictionary,
+			byteElementIndexLimit,
 		);
 		return nativeFieldValueWriter((value, writer, state, scope) => {
 			if (!Array.isArray(value)) {
@@ -873,7 +919,14 @@ const compileFieldValueWriter = (
 
 	if (fieldType === Uint8Array) {
 		return nativeFieldValueWriter((value, writer, state, scope) =>
-			writeNativeBytesFacts(writer, state, scope, cursor.fieldId, value),
+			writeNativeBytesFacts(
+				writer,
+				state,
+				scope,
+				cursor.fieldId,
+				value,
+				byteElementIndexLimit,
+			),
 		);
 	}
 
@@ -927,14 +980,30 @@ const compileFieldValueWriter = (
 			if (objectWriter) {
 				objectWriter(value, writer, state, scope);
 			} else {
-				writeNativeFieldsGeneric(value, cursor, dictionary, writer, state, scope);
+				writeNativeFieldsGeneric(
+					value,
+					cursor,
+					dictionary,
+					writer,
+					state,
+					scope,
+					byteElementIndexLimit,
+				);
 			}
 		}, true);
 	}
 
 	return nativeFieldValueWriter(
 		(value, writer, state, scope) =>
-			writeNativeFieldsGeneric(value, cursor, dictionary, writer, state, scope),
+			writeNativeFieldsGeneric(
+				value,
+				cursor,
+				dictionary,
+				writer,
+				state,
+				scope,
+				byteElementIndexLimit,
+			),
 		true,
 	);
 };
@@ -1161,6 +1230,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		this.fieldEncoder = compileNativeFieldEncoder(
 			properties.schema,
 			this.fieldDictionary,
+			this.options,
 		);
 		this.snapshotFile = await createSnapshotFile(
 			this.directory,
