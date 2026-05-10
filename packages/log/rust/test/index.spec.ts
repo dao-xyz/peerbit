@@ -213,6 +213,11 @@ describe("native log graph index", () => {
 		expect(index.maxHeadDataU32("one")).equal(5);
 		expect(index.maxHeadDataU32("two")).equal(9);
 		expect(index.maxHeadDataU32("missing")).equal(undefined);
+		expect(index.maxHeadDataU32Batch(["one", "two", "missing"])).to.deep.equal([
+			5,
+			9,
+			undefined,
+		]);
 	});
 
 	it("does not demote nexts for cut entries", async () => {

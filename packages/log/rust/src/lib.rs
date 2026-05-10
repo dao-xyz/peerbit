@@ -2,7 +2,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use indexmap::{IndexMap, IndexSet};
 use js_sys::{Array, BigUint64Array, Uint32Array, Uint8Array};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use wasm_bindgen::prelude::*;
 
 const ENTRY_TYPE_CUT: u8 = 1;
@@ -289,6 +289,36 @@ impl LogGraphIndex {
             max = Some(max.map_or(value, |current: u32| current.max(value)));
         }
         max
+    }
+
+    pub fn max_head_data_u32_batch(&self, gids: &[String]) -> Vec<Option<u32>> {
+        if gids.is_empty() {
+            return Vec::new();
+        }
+
+        let requested: HashSet<&str> = gids.iter().map(String::as_str).collect();
+        let mut max_by_gid: HashMap<&str, u32> = HashMap::with_capacity(requested.len());
+
+        for hash in &self.heads {
+            let Some(entry) = self.entries.get(hash) else {
+                continue;
+            };
+            let gid = entry.gid.as_str();
+            if !requested.contains(gid) {
+                continue;
+            }
+            let Some(value) = decode_absolute_replica_data_u32(entry.data.as_deref()) else {
+                continue;
+            };
+            max_by_gid
+                .entry(gid)
+                .and_modify(|current| *current = (*current).max(value))
+                .or_insert(value);
+        }
+
+        gids.iter()
+            .map(|gid| max_by_gid.get(gid.as_str()).copied())
+            .collect()
     }
 
     pub fn head_join_entries(&self, gid: Option<&str>) -> Vec<LogIndexEntry> {
@@ -1009,6 +1039,19 @@ impl NativeLogIndex {
             .max_head_data_u32(gid.as_deref())
             .map(|value| JsValue::from_f64(value as f64))
             .unwrap_or(JsValue::UNDEFINED)
+    }
+
+    pub fn max_head_data_u32_batch(&self, gids: Array) -> Result<Array, JsValue> {
+        let gids = strings_from_array(gids)?;
+        let out = Array::new();
+        for value in self.inner.max_head_data_u32_batch(&gids) {
+            out.push(
+                &value
+                    .map(|value| JsValue::from_f64(value as f64))
+                    .unwrap_or(JsValue::UNDEFINED),
+            );
+        }
+        Ok(out)
     }
 
     pub fn head_join_entries(&self, gid: Option<String>) -> Array {
