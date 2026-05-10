@@ -499,6 +499,13 @@ pub struct NativeLogBlockStore {
 }
 
 #[wasm_bindgen]
+pub struct NativeEntryV0PlainBuilder {
+    clock_id: Vec<u8>,
+    public_key: Vec<u8>,
+    signing_key: SigningKey,
+}
+
+#[wasm_bindgen]
 impl NativeLogBlockStore {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
@@ -593,6 +600,25 @@ impl NativeLogBlockStore {
         for (key, value) in entries {
             self.put_entry(key, value);
         }
+    }
+}
+
+#[wasm_bindgen]
+impl NativeEntryV0PlainBuilder {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        clock_id: Uint8Array,
+        private_key: Uint8Array,
+        public_key: Uint8Array,
+    ) -> Result<Self, JsValue> {
+        let private_key = private_key.to_vec();
+        let public_key = public_key.to_vec();
+        let signing_key = validate_ed25519_keypair(&private_key, &public_key)?;
+        Ok(Self {
+            clock_id: clock_id.to_vec(),
+            public_key,
+            signing_key,
+        })
     }
 }
 
@@ -822,6 +848,34 @@ impl NativeLogIndex {
         Ok(row)
     }
 
+    pub fn prepare_entry_v0_plain_entry_and_put_with_builder(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+    ) -> Result<Array, JsValue> {
+        let (row, entry, initial_nexts, _block) = prepare_entry_v0_plain_entry_row_with_signer(
+            &builder.clock_id,
+            &builder.public_key,
+            &builder.signing_key,
+            wall_time,
+            logical,
+            gid,
+            next,
+            entry_type,
+            meta_data,
+            payload_data,
+            true,
+        )?;
+        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        Ok(row)
+    }
+
     pub fn prepare_entry_v0_plain_chain_commit_blocks_and_put(
         &mut self,
         block_store: &mut NativeLogBlockStore,
@@ -872,6 +926,36 @@ impl NativeLogIndex {
             clock_id,
             private_key,
             public_key,
+            wall_time,
+            logical,
+            gid,
+            next,
+            entry_type,
+            meta_data,
+            payload_data,
+            false,
+        )?;
+        block_store.put_entries(vec![block]);
+        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        Ok(row)
+    }
+
+    pub fn prepare_entry_v0_plain_entry_commit_block_and_put_with_builder(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+    ) -> Result<Array, JsValue> {
+        let (row, entry, initial_nexts, block) = prepare_entry_v0_plain_entry_row_with_signer(
+            &builder.clock_id,
+            &builder.public_key,
+            &builder.signing_key,
             wall_time,
             logical,
             gid,
@@ -1319,13 +1403,41 @@ fn prepare_entry_v0_plain_entry_row(
     let private_key = private_key.to_vec();
     let public_key = public_key.to_vec();
     let signing_key = validate_ed25519_keypair(&private_key, &public_key)?;
+    prepare_entry_v0_plain_entry_row_with_signer(
+        &clock_id,
+        &public_key,
+        &signing_key,
+        wall_time,
+        logical,
+        gid,
+        next,
+        entry_type,
+        meta_data,
+        payload_data,
+        include_storage_bytes,
+    )
+}
+
+fn prepare_entry_v0_plain_entry_row_with_signer(
+    clock_id: &[u8],
+    public_key: &[u8],
+    signing_key: &SigningKey,
+    wall_time: u64,
+    logical: u32,
+    gid: String,
+    next: Array,
+    entry_type: u8,
+    meta_data: JsValue,
+    payload_data: Uint8Array,
+    include_storage_bytes: bool,
+) -> Result<(Array, LogIndexEntry, Vec<String>, (String, Vec<u8>)), JsValue> {
     let next = strings_from_array(next)?;
     let payload_data = payload_data.to_vec();
     let meta_data = optional_bytes_from_js(meta_data);
     let payload_size = payload_data.len() as u32;
 
     let input = EntryV0EncodeInput {
-        clock_id,
+        clock_id: clock_id.to_vec(),
         wall_time,
         logical,
         gid: gid.clone(),
@@ -1340,7 +1452,7 @@ fn prepare_entry_v0_plain_entry_row(
     let signature = sign_ed25519_with_key(&signing_key, &signable);
     let signature_input = SignatureInput {
         signature: signature.clone(),
-        public_key: public_key.clone(),
+        public_key: public_key.to_vec(),
         prehash: 0,
     };
     let signature_with_key = encode_signature_with_key(&signature_input);
