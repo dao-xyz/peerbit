@@ -641,6 +641,88 @@ export class Log<T> {
 		return { entry, removed };
 	}
 
+	/**
+	 * Internal trusted local append path for callers that already handled validation
+	 * and want to apply change observers themselves.
+	 */
+	async appendLocallyPrepared(
+		data: T,
+		options: AppendOptions<T> = {},
+		properties?: { skipMissingNextJoin?: boolean },
+	): Promise<{
+		entry: Entry<T>;
+		removed: ShallowOrFullEntry<T>[];
+		change: Change<T>;
+	}> {
+		if (
+			options.canAppend ||
+			options.onChange ||
+			options.meta?.type === EntryType.CUT
+		) {
+			throw new Error(
+				"appendLocallyPrepared only supports trusted plain local appends",
+			);
+		}
+
+		const appendOptions: AppendOptions<T> = {
+			...options,
+			__peerbitCanAppendAlreadyValidated: true,
+		};
+		const nexts = await this.getNextsForAppend(appendOptions);
+		const deferBlockStore = hasPutMany(this._storage);
+		const nativeAppendChain = this.entryIndex.properties.nativeGraph
+			? await this.createNativePlainAppendChain(
+					[data],
+					appendOptions,
+					nexts,
+					deferBlockStore,
+				)
+			: undefined;
+		let entry: Entry<T>;
+		if (nativeAppendChain) {
+			entry = nativeAppendChain.entries[0]!;
+			try {
+				if (!properties?.skipMissingNextJoin) {
+					await this.joinMissingNexts(entry, nexts);
+				}
+				if (deferBlockStore && !nativeAppendChain.nativeBlocksCommitted) {
+					await this.putAppendEntryBlocks([entry], nativeAppendChain.blocks);
+				}
+				await this.putAppendEntries(
+					[entry],
+					appendOptions,
+					nexts.map((next) => next.hash),
+					nativeAppendChain,
+				);
+			} catch (error) {
+				if (nativeAppendChain.nativeGraphUpdated) {
+					this.rollbackNativeAppendGraph([entry]);
+				}
+				if (nativeAppendChain.nativeBlocksCommitted) {
+					await this.rollbackNativeAppendBlocks([entry]);
+				}
+				throw error;
+			}
+		} else {
+			entry = await this.createAppendEntry(data, appendOptions, nexts);
+			if (!properties?.skipMissingNextJoin) {
+				await this.joinMissingNexts(entry, nexts);
+			}
+			await this.putAppendEntry(entry, appendOptions);
+		}
+
+		entry.init({ encoding: this._encoding, keychain: this._keychain });
+
+		const trimmed = await this.trim(appendOptions.trim);
+		const removed = trimmed ?? [];
+		const change: Change<T> = {
+			added: [{ head: true, entry }],
+			removed,
+		};
+
+		return { entry, removed, change };
+	}
+
 	async appendMany(
 		data: T[],
 		options: AppendOptions<T> = {},

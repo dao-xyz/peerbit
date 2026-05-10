@@ -3965,6 +3965,37 @@ export class SharedLog<
 		return result;
 	}
 
+	/** Trusted local append path that lets the shared log own change application. */
+	async appendLocallyPrepared(
+		data: T,
+		options?: SharedAppendOptions<T> | undefined,
+		properties?: { skipMissingNextJoin?: boolean },
+	): Promise<{
+		entry: Entry<T>;
+		removed: ShallowOrFullEntry<T>[];
+	}> {
+		if (options?.canAppend || options?.onChange) {
+			throw new Error(
+				"appendLocallyPrepared does not accept canAppend or onChange hooks",
+			);
+		}
+		if (this._isAdaptiveReplicating) {
+			this.markLocalAppendActivity();
+		}
+
+		const { appendOptions, minReplicasValue } =
+			this.createLogAppendOptions(options);
+		appendOptions.__peerbitCanAppendAlreadyValidated = true;
+		const result = await this.log.appendLocallyPrepared(data, appendOptions, {
+			skipMissingNextJoin: properties?.skipMissingNextJoin,
+		});
+		await this.onChange(result.change);
+		await this.processLocalAppend(result.entry, result.removed, options, {
+			minReplicasValue,
+		});
+		return { entry: result.entry, removed: result.removed };
+	}
+
 	async appendMany(
 		data: T[],
 		options?: SharedAppendOptions<T> | undefined,
