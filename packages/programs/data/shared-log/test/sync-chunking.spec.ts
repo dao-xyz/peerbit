@@ -74,6 +74,35 @@ describe("sync-chunking", () => {
 		expect(sentCoordinates.map((x) => x.length)).to.deep.equal([2, 2, 1]);
 	});
 
+	it("uses native resolver for coordinate queue preflight", async () => {
+		const send = sinon.stub().resolves();
+		const count = sinon.stub().throws(new Error("entry index should not be used"));
+		const resolveHashesForSymbols = sinon
+			.stub()
+			.returns(new Map([[42n, ["head-a"]]]));
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc: { send } as any,
+			entryIndex: { count } as any,
+			log: { has: async () => false } as any,
+			coordinateToHash: new Cache<string>({ max: 10 }),
+			resolveHashesForSymbols,
+		});
+
+		await sync.queueSync(
+			[42n, 7n],
+			{
+				hashcode: () => "peer-a",
+				equals: () => false,
+			} as any,
+		);
+
+		expect(count.called).to.equal(false);
+		expect(resolveHashesForSymbols.firstCall.args[0]).to.deep.equal([42n, 7n]);
+		expect(send.callCount).to.equal(1);
+		expect(send.firstCall.args[0]).to.be.instanceOf(RequestMaybeSyncCoordinate);
+		expect(send.firstCall.args[0].hashNumbers).to.deep.equal([7n]);
+	});
+
 	it("uses native coordinate symbol resolver before index lookup", async () => {
 		const send = sinon.stub().resolves();
 		const iterate = sinon.stub().throws(new Error("entry index should not be used"));
