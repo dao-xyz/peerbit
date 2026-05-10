@@ -988,7 +988,10 @@ export class EntryIndex<T> {
 		if (entries.length === 0) {
 			return;
 		}
-		if (entries.length === 1) {
+		if (
+			entries.length === 1 &&
+			properties.prepared?.nativeGraphUpdated !== true
+		) {
 			return this.put(entries[0], {
 				unique: properties.unique,
 				isHead: true,
