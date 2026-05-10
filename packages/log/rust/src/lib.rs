@@ -1347,7 +1347,7 @@ fn prepare_entry_v0_plain_chain_rows(
         let signature_with_key = encode_signature_with_key(&signature_input);
         let storage = encode_entry_v0_parts(&meta, &payload, Some(signature_input));
         let storage_len = storage.len();
-        let cid = calculate_raw_cid_v1_from_bytes(&storage);
+        let (cid, hash_digest) = calculate_raw_cid_v1_parts(&storage);
 
         let row = Array::new();
         if include_storage_bytes {
@@ -1358,6 +1358,7 @@ fn prepare_entry_v0_plain_chain_rows(
             row.push(&Uint8Array::from(meta.as_slice()));
             row.push(&Uint8Array::from(payload.as_slice()));
             row.push(&Uint8Array::from(signature_with_key.as_slice()));
+            row.push(&Uint8Array::from(hash_digest.as_slice()));
         } else {
             row.push(&JsValue::from_str(&cid));
             row.push(&Uint8Array::from(signature.as_slice()));
@@ -1366,6 +1367,7 @@ fn prepare_entry_v0_plain_chain_rows(
             row.push(&Uint8Array::from(payload.as_slice()));
             row.push(&Uint8Array::from(signature_with_key.as_slice()));
             row.push(&JsValue::from_f64(storage_len as f64));
+            row.push(&Uint8Array::from(hash_digest.as_slice()));
         }
         out.push(&row);
         entries.push(LogIndexEntry::new_with_data(
@@ -1458,7 +1460,7 @@ fn prepare_entry_v0_plain_entry_row_with_signer(
     let signature_with_key = encode_signature_with_key(&signature_input);
     let storage = encode_entry_v0_parts(&meta, &payload, Some(signature_input));
     let storage_len = storage.len();
-    let cid = calculate_raw_cid_v1_from_bytes(&storage);
+    let (cid, hash_digest) = calculate_raw_cid_v1_parts(&storage);
 
     let row = Array::new();
     if include_storage_bytes {
@@ -1469,6 +1471,7 @@ fn prepare_entry_v0_plain_entry_row_with_signer(
         row.push(&Uint8Array::from(meta.as_slice()));
         row.push(&Uint8Array::from(payload.as_slice()));
         row.push(&Uint8Array::from(signature_with_key.as_slice()));
+        row.push(&Uint8Array::from(hash_digest.as_slice()));
     } else {
         row.push(&JsValue::from_str(&cid));
         row.push(&Uint8Array::from(signature.as_slice()));
@@ -1477,6 +1480,7 @@ fn prepare_entry_v0_plain_entry_row_with_signer(
         row.push(&Uint8Array::from(payload.as_slice()));
         row.push(&Uint8Array::from(signature_with_key.as_slice()));
         row.push(&JsValue::from_f64(storage_len as f64));
+        row.push(&Uint8Array::from(hash_digest.as_slice()));
     }
 
     let entry = LogIndexEntry::new_with_data(
@@ -1557,14 +1561,22 @@ pub fn calculate_raw_cid_v1(bytes: Uint8Array) -> String {
 }
 
 fn calculate_raw_cid_v1_from_bytes(bytes: &[u8]) -> String {
+    calculate_raw_cid_v1_parts(bytes).0
+}
+
+fn calculate_raw_cid_v1_parts(bytes: &[u8]) -> (String, [u8; 32]) {
     let digest = Sha256::digest(bytes);
+    let digest_bytes: [u8; 32] = digest.into();
     let mut cid = Vec::with_capacity(36);
     cid.push(0x01); // CIDv1
     cid.push(0x55); // raw codec
     cid.push(0x12); // sha2-256 multihash code
     cid.push(0x20); // 32 byte digest
-    cid.extend_from_slice(&digest);
-    format!("z{}", bs58::encode(cid).into_string())
+    cid.extend_from_slice(&digest_bytes);
+    (
+        format!("z{}", bs58::encode(cid).into_string()),
+        digest_bytes,
+    )
 }
 
 fn encode_entry_v0_storage_vec(
