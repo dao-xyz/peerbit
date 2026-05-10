@@ -60,6 +60,8 @@ type NativeLogIndexHandle = {
 	payload_size_sum: () => number;
 	has: (hash: string) => boolean;
 	has_many: (hashes: string[]) => string[];
+	oldest_hash: () => string | undefined;
+	newest_hash: () => string | undefined;
 	put: (
 		hash: string,
 		gid: string,
@@ -357,6 +359,14 @@ export class LogGraphIndex {
 
 	has(hash: string): boolean {
 		return this.native.has(hash);
+	}
+
+	oldestHash(): string | undefined {
+		return this.native.oldest_hash();
+	}
+
+	newestHash(): string | undefined {
+		return this.native.newest_hash();
 	}
 
 	hasMany(hashes: Iterable<string>): Set<string> {
