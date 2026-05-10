@@ -230,6 +230,32 @@ impl NativeRustIndex {
         Ok(self.store.delete_keys(&keys))
     }
 
+    pub fn put_and_delete_keys(
+        &mut self,
+        key: String,
+        id: JsValue,
+        value: JsValue,
+        fields_bytes: Vec<u8>,
+        keys: Array,
+    ) -> Result<Array, JsValue> {
+        let fields = decode_document_fields(&fields_bytes)?;
+        let keys: Vec<_> = keys.iter().filter_map(|key| key.as_string()).collect();
+        self.store.put(key.clone(), id, value);
+        self.planner.index.put(key, fields);
+        for key in &keys {
+            self.planner.index.delete(key);
+        }
+        Ok(self.store.delete_keys(&keys))
+    }
+
+    pub fn delete_keys(&mut self, keys: Array) -> Array {
+        let keys: Vec<_> = keys.iter().filter_map(|key| key.as_string()).collect();
+        for key in &keys {
+            self.planner.index.delete(key);
+        }
+        self.store.delete_keys(&keys)
+    }
+
     pub fn get(&self, key: &str) -> JsValue {
         self.store.get(key)
     }
