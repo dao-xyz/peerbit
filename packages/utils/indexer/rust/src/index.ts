@@ -1273,6 +1273,20 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		};
 	}
 
+	getByContextHead(head: string): types.IndexedResult<T> | undefined {
+		const result = this.getNative().query_page(
+			encodeNativeQuerySpec({
+				op: "exact",
+				field: nativeFieldId(this.fieldDictionary, ["__context", "head"]),
+				value: { type: "string", value: head },
+			}),
+			encodeNativeSort(),
+			0,
+			1,
+		)[0];
+		return result ? { id: result[0], value: result[1] } : undefined;
+	}
+
 	async put(
 		value: T,
 		id = types.toId(types.extractFieldValue(value, this.indexByArr)),

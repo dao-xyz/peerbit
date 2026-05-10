@@ -82,7 +82,10 @@ export type TrimOptions = TrimCanAppendOption & TrimCondition;
 interface Log<T> {
 	index: EntryIndex<T>;
 	sortFn: SortFn;
-	deleteNode: (node: ShallowEntry) => Promise<Entry<T> | undefined>;
+	deleteNode: (
+		node: ShallowEntry,
+		options?: { resolveDeletedEntry?: boolean },
+	) => Promise<Entry<T> | ShallowEntry | undefined>;
 	getLength(): number;
 }
 export class Trim<T> {
@@ -120,15 +123,16 @@ export class Trim<T> {
 
 	private async trimTask(
 		option: TrimOptions | undefined = this._trim,
-	): Promise<Entry<T>[]> {
+		options?: { resolveDeletedEntries?: boolean },
+	): Promise<(Entry<T> | ShallowEntry)[]> {
 		if (!option) {
 			return [];
 		}
 		if (option.type === "length" && !option.filter?.canTrim) {
-			return this.trimUnfilteredLength(option);
+			return this.trimUnfilteredLength(option, options);
 		}
 		///  TODO Make this method less ugly
-		const deleted: Entry<T>[] = [];
+		const deleted: (Entry<T> | ShallowEntry)[] = [];
 
 		let done: () => Promise<boolean> | boolean;
 		/* 		const valueIterator = this._log.index.query([], this._log.sortFn.sort, false); */
@@ -255,7 +259,9 @@ export class Trim<T> {
 					false,
 				);
 
-				const entry = await this._log.deleteNode(node);
+				const entry = await this._log.deleteNode(node, {
+					resolveDeletedEntry: options?.resolveDeletedEntries,
+				});
 				if (entry) {
 					deleted.push(entry);
 				}
@@ -292,14 +298,15 @@ export class Trim<T> {
 
 	private async trimUnfilteredLength(
 		option: TrimToLengthOption,
-	): Promise<Entry<T>[]> {
+		options?: { resolveDeletedEntries?: boolean },
+	): Promise<(Entry<T> | ShallowEntry)[]> {
 		const to = option.to;
 		const from = option.from ?? to;
 		if (this._log.getLength() < from) {
 			return [];
 		}
 
-		const deleted: Entry<T>[] = [];
+		const deleted: (Entry<T> | ShallowEntry)[] = [];
 		this._canTrimCacheHashBreakpoint.clear();
 		this._canTrimCacheLastNode = undefined;
 		this._trimLastHead = undefined;
@@ -311,7 +318,9 @@ export class Trim<T> {
 			if (!node) {
 				break;
 			}
-			const entry = await this._log.deleteNode(node);
+			const entry = await this._log.deleteNode(node, {
+				resolveDeletedEntry: options?.resolveDeletedEntries,
+			});
 			if (entry) {
 				deleted.push(entry);
 			}
@@ -328,11 +337,14 @@ export class Trim<T> {
 	 */
 	async trim(
 		options: TrimOptions | undefined = this._trim,
-	): Promise<Entry<T>[] | undefined> {
+		properties?: { resolveDeletedEntries?: boolean },
+	): Promise<(Entry<T> | ShallowEntry)[] | undefined> {
 		if (!options) {
 			return;
 		}
-		const result = await this._queue.add(() => this.trimTask(options));
+		const result = await this._queue.add(() =>
+			this.trimTask(options, properties),
+		);
 		if (result instanceof Object) {
 			return result;
 		}

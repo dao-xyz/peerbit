@@ -54,6 +54,7 @@ import {
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { waitFor as _waitForFn, delay, waitForResolved } from "@peerbit/time";
+import { createRustPeerbitOptions } from "peerbit/rust";
 import { expect } from "chai";
 import pDefer, { type DeferredPromise } from "p-defer";
 import sinon from "sinon";
@@ -269,6 +270,68 @@ describe("index", () => {
 				} finally {
 					planEntryLeadersSpy.restore();
 					nativePlanSpy.restore();
+				}
+			});
+
+			it("removes trimmed prepared puts from the document index by head", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: false,
+						log: {
+							trim: { type: "length", to: 1 },
+						},
+					},
+				});
+				const changes: DocumentsChange<Document, Document>[] = [];
+				store.docs.events.addEventListener("change", (evt) => {
+					changes.push(evt.detail);
+				});
+
+				const firstId = uuid();
+				const first = await store.docs.put(
+					new Document({ id: firstId, name: "trimmed" }),
+					{
+						unique: true,
+						replicate: false,
+						target: "none",
+					},
+				);
+
+				const lowerLogGetSpy = sinon.spy(store.docs.log.log, "get");
+				const entryIndexGetSpy = sinon.spy(store.docs.log.log.entryIndex, "get");
+
+				try {
+					await store.docs.put(
+						new Document({ id: uuid(), name: "remaining" }),
+						{
+							unique: true,
+							replicate: false,
+							target: "none",
+						},
+					);
+
+					expect(lowerLogGetSpy.withArgs(first.entry.hash).callCount).equal(0);
+					expect(entryIndexGetSpy.withArgs(first.entry.hash).callCount).equal(
+						0,
+					);
+					expect(await store.docs.get(firstId)).to.be.undefined;
+					expect(changes).to.have.length(2);
+					expect(changes[1].removed.map((doc) => doc.id)).to.deep.equal([
+						firstId,
+					]);
+				} finally {
+					entryIndexGetSpy.restore();
+					lowerLogGetSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
 				}
 			});
 

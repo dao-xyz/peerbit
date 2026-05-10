@@ -318,11 +318,18 @@ export class Log<T> {
 		this._trim = new Trim(
 			{
 				index: this._entryIndex,
-				deleteNode: async (node: ShallowEntry) => {
-					const resolved = await this.get(node.hash);
-					await this._entryIndex.delete(node.hash, node);
+				deleteNode: async (
+					node: ShallowEntry,
+					options?: { resolveDeletedEntry?: boolean },
+				) => {
+					const shouldResolve = options?.resolveDeletedEntry !== false;
+					const resolved = shouldResolve ? await this.get(node.hash) : undefined;
+					const deleted = await this._entryIndex.delete(node.hash, node);
 					await this._storage.rm(node.hash);
-					return resolved;
+					if (!deleted) {
+						return resolved;
+					}
+					return shouldResolve ? resolved : deleted;
 				},
 				sortFn: this._sortFn,
 				getLength: () => this.length,
@@ -618,7 +625,7 @@ export class Log<T> {
 
 		const pendingDeletes: (
 			| PendingDelete<T>
-			| { entry: Entry<T>; fn: undefined }
+			| { entry: ShallowOrFullEntry<T>; fn: undefined }
 		)[] = await this.processEntry(entry);
 
 		entry.init({ encoding: this._encoding, keychain: this._keychain });
@@ -648,7 +655,10 @@ export class Log<T> {
 	async appendLocallyPrepared(
 		data: T,
 		options: AppendOptions<T> = {},
-		properties?: { skipMissingNextJoin?: boolean },
+		properties?: {
+			skipMissingNextJoin?: boolean;
+			resolveTrimmedEntries?: boolean;
+		},
 	): Promise<{
 		entry: Entry<T>;
 		removed: ShallowOrFullEntry<T>[];
@@ -713,7 +723,9 @@ export class Log<T> {
 
 		entry.init({ encoding: this._encoding, keychain: this._keychain });
 
-		const trimmed = await this.trim(appendOptions.trim);
+		const trimmed = await this.trim(appendOptions.trim, {
+			resolveDeletedEntries: properties?.resolveTrimmedEntries,
+		});
 		const removed = trimmed ?? [];
 		const change: Change<T> = {
 			added: [{ head: true, entry }],
@@ -739,7 +751,7 @@ export class Log<T> {
 		const entries: Entry<T>[] = [];
 		const pendingDeletes: (
 			| PendingDelete<T>
-			| { entry: Entry<T>; fn: undefined }
+			| { entry: ShallowOrFullEntry<T>; fn: undefined }
 		)[] = [];
 		const deferBlockStore = hasPutMany(this._storage);
 		const nativeAppendChain = await this.createNativePlainAppendChain(
@@ -1097,8 +1109,11 @@ export class Log<T> {
 		return change;
 	}
 
-	async trim(option: TrimOptions | undefined = this._trim.options) {
-		return this._trim.trim(option);
+	async trim(
+		option: TrimOptions | undefined = this._trim.options,
+		properties?: { resolveDeletedEntries?: boolean },
+	) {
+		return this._trim.trim(option, properties);
 	}
 
 	async join(
@@ -1430,7 +1445,7 @@ export class Log<T> {
 
 		const pendingDeletes: (
 			| PendingDelete<T>
-			| { entry: Entry<T>; fn: undefined }
+			| { entry: ShallowOrFullEntry<T>; fn: undefined }
 		)[] = await this.processEntry(entry);
 		const trimmed = await this.trim(options.trim);
 
