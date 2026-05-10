@@ -184,6 +184,10 @@ describe("index", () => {
 					store.docs.log,
 					"appendLocallyValidated",
 				);
+				const preparedAppendSpy = sinon.spy(
+					store.docs.log,
+					"appendLocallyPrepared",
+				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
 				const localLookupSpy = sinon.spy(
 					store.docs as any,
@@ -198,7 +202,8 @@ describe("index", () => {
 						target: "none",
 					});
 
-					expect(validatedAppendSpy.callCount).equal(1);
+					expect(preparedAppendSpy.callCount).equal(1);
+					expect(validatedAppendSpy.callCount).equal(0);
 					expect(appendSpy.callCount).equal(0);
 					expect(localLookupSpy.callCount).equal(0);
 					expect((await store.docs.get(doc.id))?.name).equal("fast");
@@ -206,6 +211,7 @@ describe("index", () => {
 					expect(changes[0].added[0].__context.head).equal(put.entry.hash);
 				} finally {
 					localLookupSpy.restore();
+					preparedAppendSpy.restore();
 					validatedAppendSpy.restore();
 					appendSpy.restore();
 				}
@@ -223,6 +229,10 @@ describe("index", () => {
 				const validatedAppendSpy = sinon.spy(
 					store.docs.log,
 					"appendLocallyValidated",
+				);
+				const preparedAppendSpy = sinon.spy(
+					store.docs.log,
+					"appendLocallyPrepared",
 				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
 				const localLookupSpy = sinon.spy(
@@ -247,13 +257,15 @@ describe("index", () => {
 						},
 					);
 
-					expect(validatedAppendSpy.callCount).equal(2);
+					expect(preparedAppendSpy.callCount).equal(2);
+					expect(validatedAppendSpy.callCount).equal(0);
 					expect(appendSpy.callCount).equal(0);
 					expect(localLookupSpy.callCount).equal(2);
 					expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
 					expect((await store.docs.get(id))?.name).equal("second");
 				} finally {
 					localLookupSpy.restore();
+					preparedAppendSpy.restore();
 					validatedAppendSpy.restore();
 					appendSpy.restore();
 				}
@@ -274,6 +286,10 @@ describe("index", () => {
 					store.docs.log,
 					"appendLocallyValidated",
 				);
+				const preparedAppendSpy = sinon.spy(
+					store.docs.log,
+					"appendLocallyPrepared",
+				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
 
 				try {
@@ -284,9 +300,11 @@ describe("index", () => {
 					});
 
 					expect(validatedAppendSpy.callCount).equal(0);
+					expect(preparedAppendSpy.callCount).equal(0);
 					expect(appendSpy.callCount).equal(1);
 					expect(canPerform.callCount).equal(1);
 				} finally {
+					preparedAppendSpy.restore();
 					validatedAppendSpy.restore();
 					appendSpy.restore();
 				}

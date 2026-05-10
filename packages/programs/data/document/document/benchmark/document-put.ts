@@ -262,7 +262,19 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				profile,
 				"sharedAppendMs",
 			),
+			patchAsyncMethod(
+				store.docs.log,
+				"appendLocallyPrepared",
+				profile,
+				"sharedAppendMs",
+			),
 			patchAsyncMethod(store.docs.log.log, "append", profile, "logAppendMs"),
+			patchAsyncMethod(
+				store.docs.log.log as any,
+				"appendLocallyPrepared",
+				profile,
+				"logAppendMs",
+			),
 			patchAsyncMethod(
 				store.docs.index,
 				"transformer",

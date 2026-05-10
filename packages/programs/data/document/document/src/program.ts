@@ -742,14 +742,20 @@ export class Documents<
 			  })
 			| undefined,
 	) {
-		const appended = await this.log.appendLocallyValidated(operation, {
-			...options,
-			meta: {
-				next: existingHead ? [await this._resolveEntry(existingHead)] : [],
-				...options?.meta,
+		const appended = await this.log.appendLocallyPrepared(
+			operation,
+			{
+				...options,
+				meta: {
+					next: existingHead ? [await this._resolveEntry(existingHead)] : [],
+					...options?.meta,
+				},
+				replicate: options?.replicate,
 			},
-			replicate: options?.replicate,
-		});
+			{
+				skipMissingNextJoin: !options?.checkRemote,
+			},
+		);
 		if (!options?.unique && existingLocalContext === undefined) {
 			await this.handleChanges(
 				{
