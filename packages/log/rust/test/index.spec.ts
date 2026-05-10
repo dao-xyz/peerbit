@@ -580,11 +580,14 @@ describe("native EntryV0 encoding", () => {
 		expect(chain).to.have.length(3);
 		expect(index.heads()).to.deep.equal([chain![2]!.cid]);
 		expect(index.children("root")).to.deep.equal([chain![0]!.cid]);
-		expect(await blockStore.get(chain![0]!.cid)).to.deep.equal(chain![0]!.bytes);
-		expect(await blockStore.get(chain![1]!.cid)).to.deep.equal(chain![1]!.bytes);
-		expect(await blockStore.get(chain![2]!.cid)).to.deep.equal(chain![2]!.bytes);
+		for (const prepared of chain!) {
+			expect(prepared.bytes).equal(undefined);
+			const stored = await blockStore.get(prepared.cid);
+			expect(stored?.byteLength).equal(prepared.byteLength);
+			expect(await calculateRawCidV1(stored!)).equal(prepared.cid);
+		}
 		expect(await blockStore.size()).to.equal(
-			chain!.reduce((sum, prepared) => sum + prepared.bytes.byteLength, 0),
+			chain!.reduce((sum, prepared) => sum + prepared.byteLength, 0),
 		);
 	});
 });

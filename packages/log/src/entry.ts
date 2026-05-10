@@ -33,7 +33,7 @@ export type PreparedNativeLogEntry = {
 };
 export type PreparedAppendChain<T> = {
 	entries: Entry<T>[];
-	blocks: PreparedEntryBlock[];
+	blocks?: PreparedEntryBlock[];
 	shallowEntries: ShallowEntry[];
 	nativeEntries?: PreparedNativeLogEntry[];
 	nativeGraphUpdated?: boolean;

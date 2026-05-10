@@ -52,8 +52,9 @@ type NativePlainChainInput = {
 };
 
 type NativePreparedPlainEntry = {
-	bytes: Uint8Array;
+	bytes?: Uint8Array;
 	cid: string;
+	byteLength: number;
 	signature: Uint8Array;
 	next: string[];
 	metaBytes: Uint8Array;
@@ -614,25 +615,28 @@ export class EntryV0<T>
 		}
 
 		const entryType = properties.meta?.type ?? EntryType.APPEND;
-		const payloads = properties.data.map(
-			(data) =>
-				new Payload<T>({
-					data: properties.encoding.encoder(data),
-					value: data,
-					encoding: properties.encoding,
-				}),
-		);
+		const wallTimes = new Array<bigint | number | string>(properties.data.length);
+		const logicals = new Array<number>(properties.data.length);
+		const metaDatas = new Array<Uint8Array | undefined>(properties.data.length);
+		const payloadDatas = new Array<Uint8Array>(properties.data.length);
+		for (let i = 0; i < properties.data.length; i++) {
+			const clock = clocks[i]!;
+			wallTimes[i] = clock.timestamp.wallTime;
+			logicals[i] = clock.timestamp.logical;
+			metaDatas[i] = properties.meta?.data;
+			payloadDatas[i] = properties.encoding.encoder(properties.data[i]!);
+		}
 		const nativePlainChainInput: NativePlainChainInput = {
 			clockId: properties.identity.publicKey.bytes,
 			privateKey: properties.identity.privateKey.privateKey,
 			publicKey: properties.identity.publicKey.publicKey,
-			wallTimes: clocks.map((clock) => clock.timestamp.wallTime),
-			logicals: clocks.map((clock) => clock.timestamp.logical),
+			wallTimes,
+			logicals,
 			gid: gid!,
 			initialNext: nextHashes,
 			type: entryType,
-			metaDatas: payloads.map(() => properties.meta?.data),
-			payloadDatas: payloads.map((payload) => payload.data),
+			metaDatas,
+			payloadDatas,
 		};
 		const nativeCommit = properties.nativeGraph?.prepareEntryV0PlainChainCommit;
 		let nativeBlocksCommitted = false;
@@ -657,7 +661,7 @@ export class EntryV0<T>
 			!!properties.nativeGraph?.prepareEntryV0PlainChainAndPut;
 
 		const entries: PreparedAppendChain<T>["entries"] = [];
-		const blocks: PreparedAppendChain<T>["blocks"] = [];
+		const blocks: NonNullable<PreparedAppendChain<T>["blocks"]> = [];
 		const shallowEntries: PreparedAppendChain<T>["shallowEntries"] = [];
 		const nativeEntries: NonNullable<PreparedAppendChain<T>["nativeEntries"]> =
 			[];
@@ -671,7 +675,11 @@ export class EntryV0<T>
 				data: properties.meta?.data,
 				next: preparedEntry.next,
 			});
-			const payload = payloads[index]!;
+			const payload = new Payload<T>({
+				data: payloadDatas[index]!,
+				value: properties.data[index],
+				encoding: properties.encoding,
+			});
 			const signature = new SignatureWithKey({
 				signature: preparedEntry.signature,
 				publicKey: properties.identity.publicKey,
@@ -696,14 +704,17 @@ export class EntryV0<T>
 				}),
 				createdLocally: true,
 			});
-			const preparedBlock = Entry.preparedBlockFromBytes(
-				preparedEntry.bytes,
-				preparedEntry.cid,
-			);
+			const preparedBlock =
+				preparedEntry.bytes && !nativeBlocksCommitted
+					? Entry.preparedBlockFromBytes(preparedEntry.bytes, preparedEntry.cid)
+					: undefined;
 			if (properties.cachePreparedEntries === false) {
 				entry.hash = preparedEntry.cid;
-				entry.size = preparedEntry.bytes.length;
+				entry.size = preparedEntry.byteLength;
 			} else {
+				if (!preparedEntry.bytes) {
+					throw new Error("Missing prepared entry bytes");
+				}
 				entry.hash = Entry.prepareMultihashBytes(
 					entry,
 					preparedEntry.bytes,
@@ -748,7 +759,9 @@ export class EntryV0<T>
 				entry.init({ encoding: properties.encoding });
 			}
 			entries.push(entry);
-			blocks.push(preparedBlock);
+			if (preparedBlock) {
+				blocks.push(preparedBlock);
+			}
 			shallowEntries.push(shallowEntry);
 			if (nativeEntry) {
 				nativeEntries.push(nativeEntry);
@@ -756,7 +769,7 @@ export class EntryV0<T>
 		}
 		return {
 			entries,
-			blocks,
+			blocks: blocks.length > 0 ? blocks : undefined,
 			shallowEntries,
 			nativeEntries,
 			nativeGraphUpdated,

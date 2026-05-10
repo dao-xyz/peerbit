@@ -260,6 +260,7 @@ describe("append", function () {
 			log.entryIndex.properties.index,
 			"putBatch",
 		);
+		const preparedBlockFromBytesSpy = sinon.spy(Entry, "preparedBlockFromBytes");
 		const nativeCommitSpy = sinon.spy(
 			log.entryIndex.properties.nativeGraph!.graph,
 			"prepareEntryV0PlainChainCommit",
@@ -290,6 +291,7 @@ describe("append", function () {
 				result.entries.length,
 			);
 			expect(blockPutManySpy.callCount).equal(0);
+			expect(preparedBlockFromBytesSpy.callCount).equal(0);
 			expect(indexPutBatchSpy.callCount).equal(0);
 			expect(indexPutSpy.callCount).equal(1);
 			expect(nativePrepareAndPutSpy.callCount).equal(0);
@@ -305,6 +307,7 @@ describe("append", function () {
 			blockPutManySpy.restore();
 			indexPutSpy.restore();
 			indexPutBatchSpy.restore();
+			preparedBlockFromBytesSpy.restore();
 			nativeCommitSpy.restore();
 			nativePrepareAndPutSpy.restore();
 			nativeAppendChainSpy.restore();

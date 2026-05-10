@@ -77,6 +77,7 @@ export type NativeLogGraph = {
 		Array<{
 			bytes: Uint8Array;
 			cid: string;
+			byteLength: number;
 			signature: Uint8Array;
 			next: string[];
 			metaBytes: Uint8Array;
@@ -100,8 +101,9 @@ export type NativeLogGraph = {
 		blockStore: unknown,
 	) => Promise<
 		| Array<{
-				bytes: Uint8Array;
+				bytes?: Uint8Array;
 				cid: string;
+				byteLength: number;
 				signature: Uint8Array;
 				next: string[];
 				metaBytes: Uint8Array;
