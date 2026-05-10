@@ -615,6 +615,15 @@ class NativeFieldWriter {
 }
 
 type NativeFieldEncoder<T extends Record<string, any>> = (value: T) => Uint8Array;
+type SharedLogCoordinateNativeFields = {
+	hash: string;
+	hashNumber: number | bigint;
+	gid: string;
+	coordinates: Array<number | bigint>;
+	wallTime: number | bigint;
+	assignedToRangeBoundary: boolean;
+	metaBytes: Uint8Array;
+};
 type NativeFieldValueWriterFn = (
 	value: any,
 	writer: NativeFieldWriter,
@@ -1224,6 +1233,17 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	private properties!: types.IndexEngineInitProperties<T, NestedType>;
 	private fieldDictionary!: NativeFieldDictionary;
 	private fieldEncoder!: NativeFieldEncoder<T>;
+	private byteElementIndexLimit!: number;
+	private sharedLogCoordinateFieldIds?: {
+		hash: number;
+		hashNumber: number;
+		gid: number;
+		coordinates: number;
+		coordinatesArray: number;
+		wallTime: number;
+		assignedToRangeBoundary: number;
+		meta: number;
+	};
 	private persistQueue: Promise<void> = Promise.resolve();
 	private mutationQueue: Promise<void> = Promise.resolve();
 
@@ -1254,6 +1274,8 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		const wasm = await loadWasm();
 		this.native = new wasm.NativeRustIndex<T>();
 		this.fieldDictionary = createNativeFieldDictionary();
+		this.byteElementIndexLimit =
+			this.options.byteElementIndexLimit ?? DEFAULT_BYTE_ELEMENT_INDEX_LIMIT;
 		this.fieldEncoder = compileNativeFieldEncoder(
 			properties.schema,
 			this.fieldDictionary,
@@ -1308,17 +1330,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		id = types.toId(types.extractFieldValue(value, this.indexByArr)),
 		_options?: { replace?: boolean },
 	): Promise<void> {
-		if (!this.snapshotFile) {
-			this.putNativeDocument(keyToStoreKey(id), id, value);
-			return;
-		}
-		await this.enqueueMutation(async () => {
-			const storeKey = keyToStoreKey(id);
-			const fields = this.fieldEncoder(value);
-			await this.appendPut(storeKey, value);
-			this.getNative().put(storeKey, id, value, fields);
-			await this.compactIfNeeded();
-		});
+		await this.putWithEncodedFields(value, id, this.fieldEncoder(value));
 	}
 
 	async putWithContext(
@@ -1409,30 +1421,26 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		deleteIds: Array<types.IdKey | types.Ideable>,
 		id = types.toId(types.extractFieldValue(value, this.indexByArr)),
 	): Promise<types.IdKey[]> {
-		const storeKey = keyToStoreKey(id);
-		const fields = this.fieldEncoder(value);
-		const deleteKeys = deleteIds.map(keyToStoreKey);
-		if (!this.snapshotFile) {
-			return this.getNative()
-				.put_and_delete_keys(storeKey, id, value, fields, deleteKeys)
-				.map((entry) => entry[0]);
-		}
+		return this.putWithEncodedFieldsAndDeleteKeys(
+			value,
+			id,
+			this.fieldEncoder(value),
+			deleteIds.map(keyToStoreKey),
+		);
+	}
 
-		return this.enqueueMutation(async () => {
-			await this.appendPut(storeKey, value);
-			if (deleteKeys.length > 0) {
-				await this.appendDeletes(deleteKeys);
-			}
-			const deletedEntries = this.getNative().put_and_delete_keys(
-				storeKey,
-				id,
-				value,
-				fields,
-				deleteKeys,
-			);
-			await this.compactIfNeeded();
-			return deletedEntries.map((entry) => entry[0]);
-		});
+	async putSharedLogCoordinateAndDeleteIds(
+		value: T,
+		fields: SharedLogCoordinateNativeFields,
+		deleteIds: Array<types.IdKey | types.Ideable> = [],
+		id = types.toId(types.extractFieldValue(value, this.indexByArr)),
+	): Promise<types.IdKey[]> {
+		return this.putWithEncodedFieldsAndDeleteKeys(
+			value,
+			id,
+			this.encodeSharedLogCoordinateFields(fields),
+			deleteIds.map(keyToStoreKey),
+		);
 	}
 
 	async delIds(deleteIds: Array<types.IdKey | types.Ideable>): Promise<types.IdKey[]> {
@@ -1666,6 +1674,105 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 						page.limit,
 					);
 		return results.map((value) => ({ id: value[0], value: value[1] }));
+	}
+
+	private async putWithEncodedFields(
+		value: T,
+		id: types.IdKey,
+		fields: Uint8Array,
+	): Promise<void> {
+		const storeKey = keyToStoreKey(id);
+		if (!this.snapshotFile) {
+			this.getNative().put(storeKey, id, value, fields);
+			return;
+		}
+		await this.enqueueMutation(async () => {
+			await this.appendPut(storeKey, value);
+			this.getNative().put(storeKey, id, value, fields);
+			await this.compactIfNeeded();
+		});
+	}
+
+	private async putWithEncodedFieldsAndDeleteKeys(
+		value: T,
+		id: types.IdKey,
+		fields: Uint8Array,
+		deleteKeys: string[],
+	): Promise<types.IdKey[]> {
+		if (deleteKeys.length === 0) {
+			await this.putWithEncodedFields(value, id, fields);
+			return [];
+		}
+		const storeKey = keyToStoreKey(id);
+		if (!this.snapshotFile) {
+			return this.getNative()
+				.put_and_delete_keys(storeKey, id, value, fields, deleteKeys)
+				.map((entry) => entry[0]);
+		}
+
+		return this.enqueueMutation(async () => {
+			await this.appendPut(storeKey, value);
+			await this.appendDeletes(deleteKeys);
+			const deletedEntries = this.getNative().put_and_delete_keys(
+				storeKey,
+				id,
+				value,
+				fields,
+				deleteKeys,
+			);
+			await this.compactIfNeeded();
+			return deletedEntries.map((entry) => entry[0]);
+		});
+	}
+
+	private getSharedLogCoordinateFieldIds(): NonNullable<
+		RustIndex<T, NestedType>["sharedLogCoordinateFieldIds"]
+	> {
+		return (this.sharedLogCoordinateFieldIds ??= {
+			hash: nativeFieldId(this.fieldDictionary, ["hash"]),
+			hashNumber: nativeFieldId(this.fieldDictionary, ["hashNumber"]),
+			gid: nativeFieldId(this.fieldDictionary, ["gid"]),
+			coordinates: nativeFieldId(this.fieldDictionary, ["coordinates"]),
+			coordinatesArray: nativeArrayElementFieldId(this.fieldDictionary, [
+				"coordinates",
+			]),
+			wallTime: nativeFieldId(this.fieldDictionary, ["wallTime"]),
+			assignedToRangeBoundary: nativeFieldId(this.fieldDictionary, [
+				"assignedToRangeBoundary",
+			]),
+			meta: nativeFieldId(this.fieldDictionary, ["_meta"]),
+		});
+	}
+
+	private encodeSharedLogCoordinateFields(
+		fields: SharedLogCoordinateNativeFields,
+	): Uint8Array {
+		const ids = this.getSharedLogCoordinateFieldIds();
+		const writer = new NativeFieldWriter();
+		const state = { nextScope: 1 };
+		writer.writeString(0, ids.hash, fields.hash);
+		writer.writeU64(0, ids.hashNumber, fields.hashNumber);
+		writer.writeString(0, ids.gid, fields.gid);
+		for (const coordinate of fields.coordinates) {
+			const scope = state.nextScope++;
+			writer.writeBool(scope, ids.coordinatesArray, true);
+			writer.writeU64(scope, ids.coordinates, coordinate);
+		}
+		writer.writeU64(0, ids.wallTime, fields.wallTime);
+		writer.writeBool(
+			0,
+			ids.assignedToRangeBoundary,
+			fields.assignedToRangeBoundary,
+		);
+		writeNativeBytesFacts(
+			writer,
+			state,
+			0,
+			ids.meta,
+			fields.metaBytes,
+			this.byteElementIndexLimit,
+		);
+		return writer.finish();
 	}
 
 	private putNativeDocument(storeKey: string, id: types.IdKey, value: T): void {

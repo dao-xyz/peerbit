@@ -96,6 +96,7 @@ export interface EntryReplicated<R extends "u32" | "u64"> {
 	wallTime: bigint;
 	assignedToRangeBoundary: boolean;
 	get meta(): ShallowMeta;
+	getMetaBytes(): Uint8Array;
 }
 
 export const isEntryReplicated = (x: any): x is EntryReplicated<any> => {
@@ -157,6 +158,10 @@ export class EntryReplicatedU32 implements EntryReplicated<"u32"> {
 		}
 		return this._metaResolved;
 	}
+
+	getMetaBytes(): Uint8Array {
+		return this._meta;
+	}
 }
 
 @variant("entry-u64")
@@ -213,6 +218,10 @@ export class EntryReplicatedU64 implements EntryReplicated<"u64"> {
 			this._metaResolved = deserialize(this._meta, ShallowMeta);
 		}
 		return this._metaResolved;
+	}
+
+	getMetaBytes(): Uint8Array {
+		return this._meta;
 	}
 }
 

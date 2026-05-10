@@ -487,6 +487,20 @@ type PutAndDeleteIndex<T extends Record<string, any>> = Index<T> & {
 		id?: IdKey,
 	) => Promise<unknown> | unknown;
 	delIds?: (deleteIds: Array<IdKey | Ideable>) => Promise<unknown> | unknown;
+	putSharedLogCoordinateAndDeleteIds?: (
+		value: T,
+		fields: {
+			hash: string;
+			hashNumber: NumberFromType<any>;
+			gid: string;
+			coordinates: NumberFromType<any>[];
+			wallTime: bigint;
+			assignedToRangeBoundary: boolean;
+			metaBytes: Uint8Array;
+		},
+		deleteIds?: Array<IdKey | Ideable>,
+		id?: IdKey,
+	) => Promise<unknown> | unknown;
 };
 
 type EntryWithMetaBytes = {
@@ -7179,11 +7193,12 @@ export class SharedLog<
 				cidifyString(properties.entry.hash).multihash.digest,
 		);
 
+		const metaBytes = (properties.entry as EntryWithMetaBytes).getMetaBytes?.();
 		const coordinateEntry = new this.indexableDomain.constructorEntry({
 			assignedToRangeBoundary,
 			coordinates: properties.coordinates,
 			meta: properties.entry.meta,
-			metaBytes: (properties.entry as EntryWithMetaBytes).getMetaBytes?.(),
+			metaBytes,
 			hash: properties.entry.hash,
 			hashNumber,
 		});
@@ -7192,7 +7207,21 @@ export class SharedLog<
 			EntryReplicated<R>
 		>;
 		let deleteNextOptions: DeleteOptions | undefined;
-		if (nextHashes.length > 0 && coordinateIndex.putAndDeleteIds) {
+		if (coordinateIndex.putSharedLogCoordinateAndDeleteIds) {
+			await coordinateIndex.putSharedLogCoordinateAndDeleteIds(
+				coordinateEntry,
+				{
+					hash: coordinateEntry.hash,
+					hashNumber: coordinateEntry.hashNumber,
+					gid: coordinateEntry.gid,
+					coordinates: coordinateEntry.coordinates,
+					wallTime: coordinateEntry.wallTime,
+					assignedToRangeBoundary: coordinateEntry.assignedToRangeBoundary,
+					metaBytes: coordinateEntry.getMetaBytes(),
+				},
+				nextHashes,
+			);
+		} else if (nextHashes.length > 0 && coordinateIndex.putAndDeleteIds) {
 			await coordinateIndex.putAndDeleteIds(coordinateEntry, nextHashes);
 		} else {
 			deleteNextOptions =
