@@ -296,6 +296,7 @@ enum FieldValueDto {
     I64(i64),
     U64(u64),
     String(String),
+    Bytes(Vec<u8>),
 }
 
 #[derive(BorshDeserialize)]
@@ -431,6 +432,10 @@ impl<'a> BridgeReader<'a> {
             1 => FieldValue::I64(self.read_i64()?),
             2 => FieldValue::U64(self.read_u64()?),
             3 => FieldValue::String(self.read_string()?),
+            4 => {
+                let len = self.read_u32()? as usize;
+                FieldValue::Bytes(self.read_exact(len)?.to_vec())
+            }
             tag => return Err(js_error(format!("Unknown bridge field value tag {tag}"))),
         })
     }
@@ -528,6 +533,7 @@ impl From<FieldValueDto> for FieldValue {
             FieldValueDto::I64(value) => FieldValue::I64(value),
             FieldValueDto::U64(value) => FieldValue::U64(value),
             FieldValueDto::String(value) => FieldValue::String(value),
+            FieldValueDto::Bytes(value) => FieldValue::Bytes(value),
         }
     }
 }

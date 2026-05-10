@@ -63,7 +63,8 @@ type NativeValue =
 	| { type: "bool"; value: boolean }
 	| { type: "i64"; value: number | bigint }
 	| { type: "u64"; value: number | bigint }
-	| { type: "string"; value: string };
+	| { type: "string"; value: string }
+	| { type: "bytes"; value: Uint8Array };
 type NativeIntegerValue = Extract<
 	NativeValue,
 	{ type: "i64" } | { type: "u64" }
@@ -125,6 +126,7 @@ const enum NativeValueTag {
 	I64 = 1,
 	U64 = 2,
 	String = 3,
+	Bytes = 4,
 }
 
 const enum NativeQueryTag {
@@ -264,14 +266,6 @@ const appendNativeFieldCursor = (
 ): NativeFieldCursor =>
 	nativeFieldCursor(dictionary, appendNativeFieldKey(parent?.field, key));
 
-const bytesToNativeString = (bytes: Uint8Array): string => {
-	let hex = "";
-	for (const byte of bytes) {
-		hex += byte.toString(16).padStart(2, "0");
-	}
-	return `\u0000bytes:${hex}`;
-};
-
 const nativeIntegerValue = (
 	value: number | bigint,
 ): NativeIntegerValue | undefined => {
@@ -382,6 +376,13 @@ const writeNativeValue = (writer: BinaryWriter, value: NativeValue): void => {
 		case "string":
 			writer.u8(NativeValueTag.String);
 			writer.string(value.value);
+			return;
+		case "bytes":
+			writer.u8(NativeValueTag.Bytes);
+			writer.u32(value.value.byteLength);
+			for (const byte of value.value) {
+				writer.u8(byte);
+			}
 			return;
 	}
 };
@@ -553,6 +554,16 @@ class NativeFieldWriter {
 		this.offset = writeBytes(this.output, this.view, this.offset, valueBytes);
 	}
 
+	writeBytesValue(scope: number, fieldId: number, valueBytes: Uint8Array): void {
+		this.writeHeader(
+			scope,
+			fieldId,
+			NativeValueTag.Bytes,
+			4 + valueBytes.byteLength,
+		);
+		this.offset = writeBytes(this.output, this.view, this.offset, valueBytes);
+	}
+
 	finish(): Uint8Array {
 		this.view.setUint32(1, this.facts, true);
 		return this.output.subarray(0, this.offset);
@@ -652,7 +663,7 @@ const writeNativeBytesFacts = (
 		value instanceof Uint8Array
 			? value
 			: new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-	writer.writeString(scope, fieldId, bytesToNativeString(bytes));
+	writer.writeBytesValue(scope, fieldId, bytes);
 	if (bytes.byteLength > byteElementIndexLimit) {
 		return;
 	}
@@ -1134,7 +1145,7 @@ const compileNativeQuery = (
 			spec: {
 				op: "exact",
 				field: nativeFieldId(dictionary, [...prefix, ...query.key]),
-				value: { type: "string", value: bytesToNativeString(query.value) },
+				value: { type: "bytes", value: query.value },
 			},
 			exact: true,
 		};
