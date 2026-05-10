@@ -304,6 +304,20 @@ type NativeSharedLogStateHandle = {
 		fullReplicaFallback: boolean,
 		includeStrictFullReplica: boolean,
 	) => [unknown[], unknown[], boolean];
+	plan_local_append_for_gid: (
+		entryHash: string,
+		gid: string,
+		nextHashes: string[],
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => [unknown[], unknown[], boolean, boolean];
 	plan_append_leaders_for_delivery: (
 		leaders: unknown[],
 		fullReplicaCandidates: string[],
@@ -931,6 +945,35 @@ export class SharedLogNativeState {
 		return {
 			coordinates: rowsToNumbers(this.resolution, coordinateRows),
 			leaders: rowsToSamples(leaderRows),
+			assignedToRangeBoundary,
+		};
+	}
+
+	planLocalAppendForGid(
+		input: {
+			entryHash: string;
+			gid: string;
+			nextHashes?: Iterable<string>;
+			replicas: number;
+			selfHash: string;
+		},
+		options?: FindLeaderOptions,
+	): EntryAssignmentPlan & { isLeader: boolean } {
+		const [coordinateRows, leaderRows, isLeader, assignedToRangeBoundary] =
+			this.native.plan_local_append_for_gid(
+				input.entryHash,
+				input.gid,
+				input.nextHashes ? [...input.nextHashes] : [],
+				input.replicas,
+				...findLeaderArguments({
+					...options,
+					selfHash: input.selfHash,
+				}),
+			);
+		return {
+			coordinates: rowsToNumbers(this.resolution, coordinateRows),
+			leaders: rowsToSamples(leaderRows),
+			isLeader,
 			assignedToRangeBoundary,
 		};
 	}

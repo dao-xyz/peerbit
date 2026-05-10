@@ -1857,6 +1857,56 @@ impl NativeSharedLogState {
         Ok(out)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_local_append_for_gid(
+        &mut self,
+        entry_hash: String,
+        gid: String,
+        next_hashes: Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let next_hashes = strings_from_array(next_hashes)?;
+        let coordinates = self.inner.range_planner.get_gid_coordinates(&gid, replicas);
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
+        let leaders = self.inner.range_planner.find_leaders(
+            &coordinates,
+            replicas,
+            &options,
+            expand_peer_filter,
+            &self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        );
+        let is_leader = leaders.iter().any(|leader| leader.hash == self_hash);
+        let assigned_to_range_boundary = should_assign_to_range_boundary(&leaders, replicas);
+
+        self.inner
+            .entry_coordinates
+            .insert(entry_hash, coordinates.clone());
+        for next_hash in next_hashes {
+            self.inner.entry_coordinates.remove(&next_hash);
+        }
+
+        let out = Array::new();
+        out.push(&numbers_to_rows(
+            coordinates,
+            self.inner.range_planner.resolution,
+        ));
+        out.push(&samples_to_rows(leaders));
+        out.push(&JsValue::from_bool(is_leader));
+        out.push(&JsValue::from_bool(assigned_to_range_boundary));
+        Ok(out)
+    }
+
     pub fn plan_append_leaders_for_delivery(
         &self,
         leaders: Array,
