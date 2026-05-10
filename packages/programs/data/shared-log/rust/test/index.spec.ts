@@ -337,6 +337,34 @@ describe("native shared-log range planner", () => {
 		expect(state.getEntryCoordinates("old-head")).to.equal(undefined);
 	});
 
+	it("counts resident entry coordinates in owned ranges", async () => {
+		const state = await createSharedLogState("u32");
+		state.putEntryCoordinates("head-a", [5, 100]);
+		state.putEntryCoordinates("head-b", [25]);
+		state.putEntryCoordinates("head-c", [80]);
+		state.putEntryCoordinates("head-d", [95]);
+
+		expect(
+			state.countEntryCoordinatesInRanges([
+				range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }),
+				range({ id: "b", hash: "peer-b", start1: 90, end1: 100 }),
+			]),
+		).to.equal(2);
+
+		expect(
+			state.countEntryCoordinatesInRanges([
+				range({
+					id: "wrap",
+					hash: "peer-wrap",
+					start1: 90,
+					end1: 100,
+					start2: 0,
+					end2: 10,
+				}),
+			]),
+		).to.equal(2);
+	});
+
 	it("expands append leaders with full-replica delivery candidates", async () => {
 		const state = await createSharedLogState("u32");
 		const leaders = new Map([["peer-a", { intersecting: false }]]);
