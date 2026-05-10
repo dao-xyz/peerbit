@@ -23,6 +23,7 @@ import type {
 	RepairSession,
 	RepairSessionMode,
 	RepairSessionResult,
+	HashSymbolResolver,
 	SyncOptions,
 	SyncableKey,
 	Syncronizer,
@@ -77,10 +78,20 @@ const getHashesFromSymbols = async (
 	symbols: bigint[],
 	entryIndex: Index<EntryReplicated<any>, any>,
 	coordinateToHash: Cache<string>,
+	resolveHashesForSymbols?: HashSymbolResolver,
 ) => {
 	let queries: IntegerCompare[] = [];
 	let batchSize = 128; // TODO arg
 	let results = new Set<string>();
+	let missingSymbols: bigint[] = [];
+	const addMissingUnlessCached = (symbol: bigint) => {
+		const fromCache = coordinateToHash.get(symbol);
+		if (fromCache) {
+			results.add(fromCache);
+			return;
+		}
+		missingSymbols.push(symbol);
+	};
 	const handleBatch = async (end = false) => {
 		if (queries.length >= batchSize || (end && queries.length > 0)) {
 			const entries = await entryIndex
@@ -97,16 +108,45 @@ const getHashesFromSymbols = async (
 			}
 		}
 	};
-	for (let i = 0; i < symbols.length; i++) {
-		const fromCache = coordinateToHash.get(symbols[i]);
-		if (fromCache) {
-			results.add(fromCache);
-			continue;
+
+	if (resolveHashesForSymbols) {
+		const resolved = await resolveHashesForSymbols(symbols);
+		if (resolved) {
+			for (const symbol of symbols) {
+				const hashes = resolved.get(symbol);
+				if (!hashes) {
+					addMissingUnlessCached(symbol);
+					continue;
+				}
+				let singleHash: string | undefined;
+				let count = 0;
+				for (const hash of hashes) {
+					results.add(hash);
+					singleHash = hash;
+					count += 1;
+				}
+				if (count === 0) {
+					addMissingUnlessCached(symbol);
+				} else if (count === 1) {
+					coordinateToHash.add(symbol, singleHash!);
+				}
+			}
+		} else {
+			for (const symbol of symbols) {
+				addMissingUnlessCached(symbol);
+			}
 		}
+	} else {
+		for (const symbol of symbols) {
+			addMissingUnlessCached(symbol);
+		}
+	}
+
+	for (const symbol of missingSymbols) {
 		const matchQuery = new IntegerCompare({
 			key: "hashNumber",
 			compare: Compare.Equal,
-			value: symbols[i],
+			value: symbol,
 		});
 
 		queries.push(matchQuery);
@@ -178,6 +218,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	log: Log<any>;
 	entryIndex: Index<EntryReplicated<R>, any>;
 	coordinateToHash: Cache<string>;
+	private resolveHashesForSymbols?: HashSymbolResolver;
 	private syncOptions?: SyncOptions<R>;
 	private isEntryRecentlyKnownByPeer?: (
 		hash: string,
@@ -198,6 +239,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		entryIndex: Index<EntryReplicated<R>, any>;
 		log: Log<any>;
 		coordinateToHash: Cache<string>;
+		resolveHashesForSymbols?: HashSymbolResolver;
 		sync?: SyncOptions<R>;
 		isEntryRecentlyKnownByPeer?: (
 			hash: string,
@@ -212,6 +254,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		this.log = properties.log;
 		this.entryIndex = properties.entryIndex;
 		this.coordinateToHash = properties.coordinateToHash;
+		this.resolveHashesForSymbols = properties.resolveHashesForSymbols;
 		this.syncOptions = properties.sync;
 		this.isEntryRecentlyKnownByPeer = properties.isEntryRecentlyKnownByPeer;
 		this.recentlySentExchangeHeads = new Map();
@@ -683,6 +726,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				msg.hashNumbers,
 				this.entryIndex,
 				this.coordinateToHash,
+				this.resolveHashesForSymbols,
 			);
 			if (profile) {
 				emitSyncProfileDuration(profile, lookupStartedAt, {

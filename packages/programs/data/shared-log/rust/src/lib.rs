@@ -1101,6 +1101,7 @@ pub struct NativeRangePlanner {
 pub struct SharedLogStateInner {
     range_planner: RangePlanner,
     entry_coordinates: IndexMap<String, EntryCoordinateState>,
+    entry_hashes_by_hash_number: HashMap<u64, IndexSet<String>>,
     gid_peers: HashMap<String, IndexSet<String>>,
     entry_known_peers: HashMap<String, IndexSet<String>>,
 }
@@ -1108,6 +1109,7 @@ pub struct SharedLogStateInner {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct EntryCoordinateState {
     gid: String,
+    hash_number: u64,
     coordinates: Vec<u64>,
     assigned_to_range_boundary: bool,
     requested_replicas: usize,
@@ -1118,6 +1120,7 @@ impl SharedLogStateInner {
         Self {
             range_planner: RangePlanner::new(&resolution),
             entry_coordinates: IndexMap::new(),
+            entry_hashes_by_hash_number: HashMap::new(),
             gid_peers: HashMap::new(),
             entry_known_peers: HashMap::new(),
         }
@@ -1126,6 +1129,7 @@ impl SharedLogStateInner {
     fn clear_all(&mut self) {
         self.range_planner.clear();
         self.entry_coordinates.clear();
+        self.entry_hashes_by_hash_number.clear();
         self.gid_peers.clear();
         self.entry_known_peers.clear();
     }
@@ -1136,6 +1140,28 @@ impl SharedLogStateInner {
 
     fn delete_range(&mut self, id: &str) -> bool {
         self.range_planner.delete(id)
+    }
+
+    fn put_entry_coordinate_state(&mut self, hash: String, entry: EntryCoordinateState) {
+        self.delete_entry_coordinate_state(&hash);
+        self.entry_hashes_by_hash_number
+            .entry(entry.hash_number)
+            .or_default()
+            .insert(hash.clone());
+        self.entry_coordinates.insert(hash, entry);
+    }
+
+    fn delete_entry_coordinate_state(&mut self, hash: &str) -> bool {
+        let Some(entry) = self.entry_coordinates.shift_remove(hash) else {
+            return false;
+        };
+        if let Some(hashes) = self.entry_hashes_by_hash_number.get_mut(&entry.hash_number) {
+            hashes.shift_remove(hash);
+            if hashes.is_empty() {
+                self.entry_hashes_by_hash_number.remove(&entry.hash_number);
+            }
+        }
+        true
     }
 }
 
@@ -1635,24 +1661,24 @@ impl NativeSharedLogState {
         &mut self,
         hash: String,
         gid: String,
+        hash_number: String,
         coordinates: Array,
         assigned_to_range_boundary: bool,
         requested_replicas: usize,
     ) -> Result<(), JsValue> {
-        self.inner.entry_coordinates.insert(
-            hash,
-            EntryCoordinateState {
-                gid,
-                coordinates: cursor_values_from_array(coordinates)?,
-                assigned_to_range_boundary,
-                requested_replicas,
-            },
-        );
+        let entry = EntryCoordinateState {
+            gid,
+            hash_number: parse_u64(&hash_number)?,
+            coordinates: cursor_values_from_array(coordinates)?,
+            assigned_to_range_boundary,
+            requested_replicas,
+        };
+        self.inner.put_entry_coordinate_state(hash, entry);
         Ok(())
     }
 
     pub fn delete_entry_coordinates(&mut self, hash: &str) -> bool {
-        self.inner.entry_coordinates.shift_remove(hash).is_some()
+        self.inner.delete_entry_coordinate_state(hash)
     }
 
     pub fn get_entry_coordinates(&self, hash: &str) -> JsValue {
@@ -1673,10 +1699,25 @@ impl NativeSharedLogState {
         strings_to_array(self.inner.entry_coordinates.keys().cloned().collect())
     }
 
+    pub fn entry_hashes_for_hash_numbers(&self, hash_numbers: Array) -> Result<Array, JsValue> {
+        let hash_numbers = cursor_values_from_array(hash_numbers)?;
+        let out = Array::new();
+        for hash_number in hash_numbers {
+            if let Some(hashes) = self.inner.entry_hashes_by_hash_number.get(&hash_number) {
+                let row = Array::new();
+                row.push(&JsValue::from_str(&hash_number.to_string()));
+                row.push(&strings_to_array(hashes.iter().cloned().collect()));
+                out.push(&row);
+            }
+        }
+        Ok(out)
+    }
+
     pub fn commit_entry_coordinates(
         &mut self,
         hash: String,
         gid: String,
+        hash_number: String,
         coordinates: Array,
         next_hashes: Array,
         assigned_to_range_boundary: bool,
@@ -1684,17 +1725,16 @@ impl NativeSharedLogState {
     ) -> Result<(), JsValue> {
         let coordinates = cursor_values_from_array(coordinates)?;
         let next_hashes = strings_from_array(next_hashes)?;
-        self.inner.entry_coordinates.insert(
-            hash,
-            EntryCoordinateState {
-                gid,
-                coordinates,
-                assigned_to_range_boundary,
-                requested_replicas,
-            },
-        );
+        let entry = EntryCoordinateState {
+            gid,
+            hash_number: parse_u64(&hash_number)?,
+            coordinates,
+            assigned_to_range_boundary,
+            requested_replicas,
+        };
+        self.inner.put_entry_coordinate_state(hash, entry);
         for next_hash in next_hashes {
-            self.inner.entry_coordinates.shift_remove(&next_hash);
+            self.inner.delete_entry_coordinate_state(&next_hash);
         }
         Ok(())
     }
@@ -1740,13 +1780,14 @@ impl NativeSharedLogState {
 
     pub fn delete_entry_coordinates_batch(&mut self, hashes: Array) -> Result<(), JsValue> {
         for hash in strings_from_array(hashes)? {
-            self.inner.entry_coordinates.shift_remove(&hash);
+            self.inner.delete_entry_coordinate_state(&hash);
         }
         Ok(())
     }
 
     pub fn clear_entry_coordinates(&mut self) {
         self.inner.entry_coordinates.clear();
+        self.inner.entry_hashes_by_hash_number.clear();
     }
 
     pub fn add_gid_peers(
@@ -1937,6 +1978,7 @@ impl NativeSharedLogState {
         &mut self,
         entry_hash: String,
         gid: String,
+        entry_hash_number: String,
         next_hashes: Array,
         replicas: usize,
         role_age_ms: f64,
@@ -1948,6 +1990,7 @@ impl NativeSharedLogState {
         full_replica_fallback: bool,
         include_strict_full_replica: bool,
     ) -> Result<Array, JsValue> {
+        let entry_hash_number = parse_u64(&entry_hash_number)?;
         let next_hashes = strings_from_array(next_hashes)?;
         let coordinates = self.inner.range_planner.get_gid_coordinates(&gid, replicas);
         let options = find_leader_options(role_age_ms, &now, peer_filter)?;
@@ -1964,17 +2007,18 @@ impl NativeSharedLogState {
         let is_leader = leaders.iter().any(|leader| leader.hash == self_hash);
         let assigned_to_range_boundary = should_assign_to_range_boundary(&leaders, replicas);
 
-        self.inner.entry_coordinates.insert(
+        self.inner.put_entry_coordinate_state(
             entry_hash,
             EntryCoordinateState {
                 gid,
+                hash_number: entry_hash_number,
                 coordinates: coordinates.clone(),
                 assigned_to_range_boundary,
                 requested_replicas: replicas,
             },
         );
         for next_hash in next_hashes {
-            self.inner.entry_coordinates.shift_remove(&next_hash);
+            self.inner.delete_entry_coordinate_state(&next_hash);
         }
 
         let out = Array::new();
@@ -2032,6 +2076,7 @@ impl NativeSharedLogState {
         &mut self,
         entry_hash: String,
         gid: String,
+        entry_hash_number: String,
         next_hashes: Array,
         replicas: usize,
         full_replica_candidates: Array,
@@ -2050,6 +2095,7 @@ impl NativeSharedLogState {
         full_replica_fallback: bool,
         include_strict_full_replica: bool,
     ) -> Result<Array, JsValue> {
+        let entry_hash_number = parse_u64(&entry_hash_number)?;
         let next_hashes = strings_from_array(next_hashes)?;
         let full_replica_candidates = strings_from_array(full_replica_candidates)?;
         let fallback_recipients = strings_from_array(fallback_recipients)?;
@@ -2069,17 +2115,18 @@ impl NativeSharedLogState {
         let is_leader = leaders.iter().any(|leader| leader.hash == self_hash);
         let assigned_to_range_boundary = should_assign_to_range_boundary(&leaders, replicas);
 
-        self.inner.entry_coordinates.insert(
+        self.inner.put_entry_coordinate_state(
             entry_hash,
             EntryCoordinateState {
                 gid,
+                hash_number: entry_hash_number,
                 coordinates: coordinates.clone(),
                 assigned_to_range_boundary,
                 requested_replicas: replicas,
             },
         );
         for next_hash in next_hashes {
-            self.inner.entry_coordinates.shift_remove(&next_hash);
+            self.inner.delete_entry_coordinate_state(&next_hash);
         }
 
         let delivery_leaders = expand_append_leaders(leaders, full_replica_candidates, replicas);
@@ -2111,6 +2158,7 @@ impl NativeSharedLogState {
         &mut self,
         entry_hashes: Array,
         gids: Array,
+        entry_hash_numbers: Array,
         next_hash_batches: Array,
         replica_counts: Array,
         full_replica_candidates: Array,
@@ -2131,10 +2179,16 @@ impl NativeSharedLogState {
     ) -> Result<Array, JsValue> {
         let entry_hashes = strings_from_array(entry_hashes)?;
         let gids = strings_from_array(gids)?;
+        let entry_hash_numbers = cursor_values_from_array(entry_hash_numbers)?;
         let next_hash_batches =
             string_batches_from_array(next_hash_batches, "append next hash batch array")?;
         let replica_counts = usize_from_array(replica_counts)?;
         ensure_same_len(entry_hashes.len(), gids.len(), "append entry gid")?;
+        ensure_same_len(
+            entry_hashes.len(),
+            entry_hash_numbers.len(),
+            "append entry hash number",
+        )?;
         ensure_same_len(
             entry_hashes.len(),
             next_hash_batches.len(),
@@ -2150,9 +2204,10 @@ impl NativeSharedLogState {
         let mut full_replica_leaders_by_replicas = HashMap::new();
         let out = Array::new();
 
-        for (((entry_hash, gid), next_hashes), replicas) in entry_hashes
+        for ((((entry_hash, gid), entry_hash_number), next_hashes), replicas) in entry_hashes
             .into_iter()
             .zip(gids)
+            .zip(entry_hash_numbers)
             .zip(next_hash_batches)
             .zip(replica_counts)
         {
@@ -2173,17 +2228,18 @@ impl NativeSharedLogState {
             let is_leader = leaders.iter().any(|leader| leader.hash == self_hash);
             let assigned_to_range_boundary = should_assign_to_range_boundary(&leaders, replicas);
 
-            self.inner.entry_coordinates.insert(
+            self.inner.put_entry_coordinate_state(
                 entry_hash,
                 EntryCoordinateState {
                     gid,
+                    hash_number: entry_hash_number,
                     coordinates: coordinates.clone(),
                     assigned_to_range_boundary,
                     requested_replicas: replicas,
                 },
             );
             for next_hash in next_hashes {
-                self.inner.entry_coordinates.shift_remove(&next_hash);
+                self.inner.delete_entry_coordinate_state(&next_hash);
             }
 
             let delivery_leaders =

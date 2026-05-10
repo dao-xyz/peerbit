@@ -60,6 +60,13 @@ export type SyncOptions<R extends "u32" | "u64"> = {
 	profile?: SyncProfileFn;
 };
 
+export type HashSymbolResolver = (
+	symbols: bigint[],
+) =>
+	| ReadonlyMap<bigint, Iterable<string>>
+	| undefined
+	| Promise<ReadonlyMap<bigint, Iterable<string>> | undefined>;
+
 export type SynchronizerComponents<R extends "u32" | "u64"> = {
 	rpc: RPC<TransportMessage, TransportMessage>;
 	rangeIndex: Index<ReplicationRangeIndexable<R>, any>;
@@ -67,6 +74,7 @@ export type SynchronizerComponents<R extends "u32" | "u64"> = {
 	log: Log<any>;
 	coordinateToHash: Cache<string>;
 	numbers: Numbers<R>;
+	resolveHashesForSymbols?: HashSymbolResolver;
 	sync?: SyncOptions<R>;
 	isEntryRecentlyKnownByPeer?: (
 		hash: string,
