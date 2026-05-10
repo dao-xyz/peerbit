@@ -1943,13 +1943,17 @@ export class SharedLog<
 	private async ensureCurrentHeadCoordinatesIndexed() {
 		const heads = await this.log.getHeads(true).all();
 		const headsByHash = new Map(heads.map((head) => [head.hash, head]));
-		const indexedHeads = await this.entryCoordinatesIndex
-			.iterate({}, { shape: { hash: true } })
-			.all();
-		const indexedHashes = new Set(indexedHeads.map((entry) => entry.value.hash));
-		const staleHashes = indexedHeads
-			.map((entry) => entry.value.hash)
-			.filter((hash) => !headsByHash.has(hash));
+		const nativeHashes = this._nativeSharedLogState?.getEntryCoordinateHashes();
+		const indexedHashes = nativeHashes
+			? new Set(nativeHashes)
+			: new Set(
+					(
+						await this.entryCoordinatesIndex
+							.iterate({}, { shape: { hash: true } })
+							.all()
+					).map((entry) => entry.value.hash),
+				);
+		const staleHashes = [...indexedHashes].filter((hash) => !headsByHash.has(hash));
 
 		if (staleHashes.length > 0) {
 			await this.deleteCoordinatesForHashes(staleHashes);
@@ -7165,6 +7169,12 @@ export class SharedLog<
 	}
 
 	private async getCoordinates(entry: { hash: string }) {
+		const nativeCoordinates = this._nativeSharedLogState?.getEntryCoordinates(
+			entry.hash,
+		);
+		if (nativeCoordinates) {
+			return nativeCoordinates as NumberFromType<R>[];
+		}
 		const result = await this.entryCoordinatesIndex
 			.iterate({ query: { hash: entry.hash } })
 			.all();

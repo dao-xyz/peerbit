@@ -1663,6 +1663,10 @@ impl NativeSharedLogState {
             .unwrap_or(JsValue::UNDEFINED)
     }
 
+    pub fn entry_coordinate_hashes(&self) -> Array {
+        strings_to_array(self.inner.entry_coordinates.keys().cloned().collect())
+    }
+
     pub fn commit_entry_coordinates(
         &mut self,
         hash: String,

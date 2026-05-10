@@ -280,6 +280,7 @@ type NativeSharedLogStateHandle = {
 	) => void;
 	delete_entry_coordinates: (hash: string) => boolean;
 	get_entry_coordinates: (hash: string) => unknown[] | undefined;
+	entry_coordinate_hashes: () => string[];
 	commit_entry_coordinates: (
 		hash: string,
 		coordinates: string[],
@@ -873,6 +874,10 @@ export class SharedLogNativeState {
 	getEntryCoordinates(hash: string): Array<number | bigint> | undefined {
 		const coordinates = this.native.get_entry_coordinates(hash);
 		return coordinates ? rowsToNumbers(this.resolution, coordinates) : undefined;
+	}
+
+	getEntryCoordinateHashes(): string[] {
+		return this.native.entry_coordinate_hashes();
 	}
 
 	commitEntryCoordinates(
