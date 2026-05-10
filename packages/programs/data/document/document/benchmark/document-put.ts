@@ -16,6 +16,7 @@ import { Documents, type SetupOptions } from "../src/program.js";
 // - DOC_BYTES=1200
 // - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-transient-index
 //   Add "-nonunique" to any scenario name to use default update-safe put semantics.
+// - DOC_PROFILE_DEEP=1 reports lower shared-log/log phase timings.
 // - BENCH_JSON=1
 
 const payloadBytes = Math.max(
@@ -41,6 +42,7 @@ const scenarioNames = (
 
 const scenarioBaseName = (name: string) => name.replace(/-nonunique$/, "");
 const scenarioUsesUniquePuts = (name: string) => !name.endsWith("-nonunique");
+const profileDeep = process.env.DOC_PROFILE_DEEP === "1";
 
 @variant("document")
 class Document {
@@ -85,7 +87,13 @@ type Profile = {
 	serializeMs: number;
 	existingHeadLookupMs: number;
 	sharedAppendMs: number;
+	sharedProcessLocalAppendMs: number;
+	sharedPlanEntryLeadersMs: number;
+	sharedPersistCoordinateMs: number;
 	logAppendMs: number;
+	logCreateNativeAppendChainMs: number;
+	logPutAppendEntriesMs: number;
+	logTrimMs: number;
 	documentIndexPutMs: number;
 	documentIndexTransformMs: number;
 	documentBackendIndexPutMs: number;
@@ -99,11 +107,26 @@ type BenchRow = Profile & {
 	opsPerSecond: number;
 };
 
+const deepProfileKeys = new Set<keyof Profile>([
+	"sharedProcessLocalAppendMs",
+	"sharedPlanEntryLeadersMs",
+	"sharedPersistCoordinateMs",
+	"logCreateNativeAppendChainMs",
+	"logPutAppendEntriesMs",
+	"logTrimMs",
+]);
+
 const emptyProfile = (): Profile => ({
 	serializeMs: 0,
 	existingHeadLookupMs: 0,
 	sharedAppendMs: 0,
+	sharedProcessLocalAppendMs: 0,
+	sharedPlanEntryLeadersMs: 0,
+	sharedPersistCoordinateMs: 0,
 	logAppendMs: 0,
+	logCreateNativeAppendChainMs: 0,
+	logPutAppendEntriesMs: 0,
+	logTrimMs: 0,
 	documentIndexPutMs: 0,
 	documentIndexTransformMs: 0,
 	documentBackendIndexPutMs: 0,
@@ -259,6 +282,41 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				"documentIndexPutMs",
 			),
 		];
+		if (profileDeep) {
+			restores.push(
+				patchAsyncMethod(
+					store.docs.log as any,
+					"processLocalAppend",
+					profile,
+					"sharedProcessLocalAppendMs",
+				),
+				patchAsyncMethod(
+					store.docs.log as any,
+					"planEntryLeaders",
+					profile,
+					"sharedPlanEntryLeadersMs",
+				),
+				patchAsyncMethod(
+					store.docs.log as any,
+					"persistCoordinate",
+					profile,
+					"sharedPersistCoordinateMs",
+				),
+				patchAsyncMethod(
+					store.docs.log.log as any,
+					"createNativePlainAppendChain",
+					profile,
+					"logCreateNativeAppendChainMs",
+				),
+				patchAsyncMethod(
+					store.docs.log.log as any,
+					"putAppendEntries",
+					profile,
+					"logPutAppendEntriesMs",
+				),
+				patchAsyncMethod(store.docs.log.log, "trim", profile, "logTrimMs"),
+			);
+		}
 
 		const serializeStarted = performance.now();
 		for (let i = 0; i < iterations; i++) {
@@ -280,10 +338,12 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 			payloadBytes,
 			opsPerSecond: Math.round((iterations / profile.totalPutMs) * 1000),
 			...Object.fromEntries(
-				Object.entries(profile).map(([key, value]) => [
-					key,
-					Math.round(value * 100) / 100,
-				]),
+				Object.entries(profile)
+					.filter(
+						([key]) =>
+							profileDeep || !deepProfileKeys.has(key as keyof Profile),
+					)
+					.map(([key, value]) => [key, Math.round(value * 100) / 100]),
 			),
 		} as BenchRow;
 	} finally {
@@ -307,6 +367,7 @@ if (process.env.BENCH_JSON === "1") {
 					payloadBytes,
 					warmupIterations,
 					iterations,
+					profileDeep,
 				},
 			},
 			null,

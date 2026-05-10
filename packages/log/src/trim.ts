@@ -124,6 +124,9 @@ export class Trim<T> {
 		if (!option) {
 			return [];
 		}
+		if (option.type === "length" && !option.filter?.canTrim) {
+			return this.trimUnfilteredLength(option);
+		}
 		///  TODO Make this method less ugly
 		const deleted: Entry<T>[] = [];
 
@@ -286,6 +289,39 @@ export class Trim<T> {
 
 		return deleted;
 	}
+
+	private async trimUnfilteredLength(
+		option: TrimToLengthOption,
+	): Promise<Entry<T>[]> {
+		const to = option.to;
+		const from = option.from ?? to;
+		if (this._log.getLength() < from) {
+			return [];
+		}
+
+		const deleted: Entry<T>[] = [];
+		this._canTrimCacheHashBreakpoint.clear();
+		this._canTrimCacheLastNode = undefined;
+		this._trimLastHead = undefined;
+		this._trimLastTail = undefined;
+		this._trimLastSeed = undefined;
+
+		while (this._log.getLength() > to) {
+			const node = await this._log.index.getOldest(false);
+			if (!node) {
+				break;
+			}
+			const entry = await this._log.deleteNode(node);
+			if (entry) {
+				deleted.push(entry);
+			}
+		}
+
+		this._trimLastLength = this._log.getLength();
+		this._trimLastOptions = option;
+		return deleted;
+	}
+
 	/**
 	 * @param options
 	 * @returns deleted entries
