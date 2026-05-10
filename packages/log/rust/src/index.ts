@@ -41,6 +41,12 @@ export type NativeLogHeadDataEntry = {
 	};
 };
 
+export type NativeLogEntryMetadata = {
+	hash: string;
+	gid: string;
+	data?: Uint8Array;
+};
+
 export type NativeJoinPlan = {
 	skip: boolean;
 	missingParents: string[];
@@ -176,6 +182,7 @@ type NativeLogIndexHandle = {
 	max_head_data_u32_batch: (gids: string[]) => Array<number | undefined>;
 	head_join_entries: (gid?: string) => unknown[];
 	child_join_entries: (hash: string) => unknown[];
+	entry_metadata_batch: (hashes: string[]) => unknown[];
 	unique_reference_gids: (hash: string) => string[] | undefined;
 	unique_reference_gid_rows_batch: (
 		hashes: string[],
@@ -748,6 +755,26 @@ export class LogGraphIndex {
 						},
 					},
 				},
+			};
+		});
+	}
+
+	entryMetadataBatch(
+		hashes: Iterable<string>,
+	): Array<NativeLogEntryMetadata | undefined> {
+		return this.native.entry_metadata_batch([...hashes]).map((row) => {
+			if (!row) {
+				return undefined;
+			}
+			const [hash, gid, data] = row as [
+				string,
+				string,
+				Uint8Array | undefined,
+			];
+			return {
+				hash,
+				gid,
+				data,
 			};
 		});
 	}

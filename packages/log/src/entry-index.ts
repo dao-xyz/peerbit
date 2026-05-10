@@ -181,6 +181,9 @@ export type NativeLogGraph = {
 	headEntries: (gid?: string) => SortableEntry[];
 	joinHeadEntries: (gid?: string) => NativeLogJoinEntry[];
 	childJoinEntries: (hash: string) => NativeLogJoinEntry[];
+	entryMetadataBatch?: (
+		hashes: Iterable<string>,
+	) => Array<NativeLogEntryMetadata | undefined>;
 	uniqueReferenceGids: (hash: string) => string[] | undefined;
 	uniqueReferenceGidRowsBatch?: (
 		hashes: Iterable<string>,
@@ -224,6 +227,12 @@ export type NativeLogHeadDataEntry = {
 	};
 };
 
+export type NativeLogEntryMetadata = {
+	hash: string;
+	gid: string;
+	data?: Uint8Array;
+};
+
 type ResolveFullyOptions =
 	| true
 	| {
@@ -239,6 +248,7 @@ type ResolveFullyOptions =
 				| boolean;
 			ignoreMissing?: boolean;
 	  };
+
 type ResolveShapeOptions = { type: "shape"; shape: Shape };
 export type MaybeResolveOptions =
 	| false
@@ -968,6 +978,19 @@ export class EntryIndex<T> {
 			return { id: toId(k), value: pending };
 		}
 		return this.properties.index.get(toId(k));
+	}
+
+	getNativeEntryMetadataBatch(
+		hashes: Iterable<string>,
+	): Array<NativeLogEntryMetadata | undefined> | undefined {
+		if (!this.properties.nativeGraph) {
+			return undefined;
+		}
+		const normalized = [...hashes];
+		if (normalized.length === 0) {
+			return [];
+		}
+		return this.properties.nativeGraph.graph.entryMetadataBatch?.(normalized);
 	}
 
 	async has(k: string) {

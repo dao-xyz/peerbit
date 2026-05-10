@@ -6263,8 +6263,12 @@ export class SharedLog<
 			} else if (msg instanceof RequestIPrune) {
 				const hasAndIsLeader: string[] = [];
 				const from = context.from.hashcode();
+				const nativeEntryMetadata = this._nativeRangePlanner
+					? this.log.entryIndex.getNativeEntryMetadataBatch(msg.hashes)
+					: undefined;
 
-				for (const hash of msg.hashes) {
+				for (let i = 0; i < msg.hashes.length; i++) {
+					const hash = msg.hashes[i]!;
 					this.removePruneRequestSent(hash, from);
 					this.removeEntriesKnownByPeer([hash], from);
 
@@ -6276,35 +6280,57 @@ export class SharedLog<
 						outGoingPrunes.delete(from);
 					}
 
-					const indexedEntry = await this.log.entryIndex.getShallow(hash);
+					const nativeEntry = nativeEntryMetadata?.[i];
+					const indexedEntry = nativeEntry
+						? undefined
+						: await this.log.entryIndex.getShallow(hash);
 					let isLeader = false;
 
 					if (
-						indexedEntry &&
+						(nativeEntry || indexedEntry) &&
 						!this._pendingDeletes.has(hash) &&
 						(await this.log.blocks.has(hash))
 					) {
+						const gid = nativeEntry?.gid ?? indexedEntry!.value.meta.gid;
+						const replicas = decodeReplicas({
+							meta: {
+								data: nativeEntry?.data ?? indexedEntry!.value.meta.data,
+							},
+						}).getValue(this);
+
 						this.removePeerFromGidPeerHistory(
 							context.from!.hashcode(),
-							indexedEntry!.value.meta.gid,
+							gid,
 						);
 
-						await this._waitForEntryReplicators(
-							indexedEntry.value,
-							decodeReplicas(indexedEntry.value).getValue(this),
-							[
-								{
-									key: this.node.identity.publicKey.hashcode(),
-									replicator: true,
-								},
-							],
+						const waitFor: WaitForReplicator[] = [
 							{
-								onLeader: (key) => {
-									isLeader =
-										isLeader || key === this.node.identity.publicKey.hashcode();
-								},
+								key: this.node.identity.publicKey.hashcode(),
+								replicator: true,
 							},
-						);
+						];
+						const waitOptions: WaitForReplicatorsOptions<R> = {
+							onLeader: (key) => {
+								isLeader =
+									isLeader || key === this.node.identity.publicKey.hashcode();
+							},
+						};
+
+						if (nativeEntry) {
+							await this._waitForGidReplicators(
+								gid,
+								replicas,
+								waitFor,
+								waitOptions,
+							);
+						} else {
+							await this._waitForEntryReplicators(
+								indexedEntry!.value,
+								replicas,
+								waitFor,
+								waitOptions,
+							);
+						}
 					}
 
 					if (isLeader) {
@@ -7141,6 +7167,35 @@ export class SharedLog<
 			waitFor,
 			options,
 		);
+	}
+
+	private async _waitForGidReplicators(
+		gid: string,
+		replicas: number,
+		waitFor: WaitForReplicator[],
+		options: WaitForReplicatorsOptions<R> = {
+			timeout: this.waitForReplicatorTimeout,
+		},
+	): Promise<LeaderMap | false> {
+		if (!this._nativeRangePlanner) {
+			return false;
+		}
+		return this.waitForLeaderSelection(waitFor, options, async (checkOptions) => {
+			const plan =
+				(await this._findEntryAssignmentPlanFromHashGid(
+					gid,
+					replicas,
+					checkOptions,
+				)) ??
+				(await this._findLeaderPlanFromHashGid(gid, replicas, checkOptions));
+			if (!plan) {
+				return new Map();
+			}
+			for (const key of plan.leaders.keys()) {
+				checkOptions.onLeader?.(key);
+			}
+			return plan.leaders;
+		});
 	}
 
 	private async waitForLeaderSelection(
