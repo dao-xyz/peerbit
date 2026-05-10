@@ -190,6 +190,25 @@ describe("index", () => {
 					store.docs as any,
 					"getLocalIndexedContext",
 				);
+				const backendIndex = store.docs.index.index as any;
+				const originalBackendPutWithContext = backendIndex.putWithContext;
+				const originalBackendPut = backendIndex.put;
+				const WrappedIndexedType = store.docs.index.wrappedIndexedType;
+				const backendContextPutSpy = sinon.spy(
+					async (
+						value: Document,
+						id: unknown,
+						context: Context,
+						options: unknown,
+					) =>
+						originalBackendPut.call(
+							backendIndex,
+							new WrappedIndexedType(value, context),
+							id,
+							options,
+						),
+				);
+				backendIndex.putWithContext = backendContextPutSpy;
 
 				try {
 					const doc = new Document({ id: uuid(), name: "fast" });
@@ -203,10 +222,16 @@ describe("index", () => {
 					expect(validatedAppendSpy.callCount).equal(0);
 					expect(appendSpy.callCount).equal(0);
 					expect(localLookupSpy.callCount).equal(0);
+					expect(backendContextPutSpy.callCount).equal(1);
 					expect((await store.docs.get(doc.id))?.name).equal("fast");
 					expect(changes).to.have.length(1);
 					expect(changes[0].added[0].__context.head).equal(put.entry.hash);
 				} finally {
+					if (originalBackendPutWithContext) {
+						backendIndex.putWithContext = originalBackendPutWithContext;
+					} else {
+						delete backendIndex.putWithContext;
+					}
 					localLookupSpy.restore();
 					preparedAppendSpy.restore();
 					validatedAppendSpy.restore();

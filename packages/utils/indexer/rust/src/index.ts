@@ -1280,6 +1280,15 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		});
 	}
 
+	async putWithContext(
+		value: Record<string, any>,
+		id: types.IdKey,
+		context: Record<string, any>,
+		options?: { replace?: boolean },
+	): Promise<void> {
+		await this.put(this.createContextualValue(value, context), id, options);
+	}
+
 	async putBatch(values: T[]): Promise<void> {
 		if (values.length === 0) {
 			return;
@@ -1540,6 +1549,18 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			value,
 			this.fieldEncoder(value),
 		);
+	}
+
+	private createContextualValue(
+		value: Record<string, any>,
+		context: Record<string, any>,
+	): T {
+		const wrapped = Object.assign(
+			Object.create((this.properties.schema as any).prototype),
+			value,
+		);
+		wrapped.__context = context;
+		return wrapped as T;
 	}
 
 	private snapshot(): types.IndexedValue<T>[] {

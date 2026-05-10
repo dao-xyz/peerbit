@@ -11,6 +11,7 @@ import {
 	StringMatch,
 	StringMatchMethod,
 	id,
+	toId,
 } from "@peerbit/indexer-interface";
 import { tests } from "@peerbit/indexer-tests";
 import { expect } from "chai";
@@ -60,6 +61,36 @@ class BridgeMetricDocument {
 		this.id = id;
 		this.tag = tag;
 		this.value = value;
+	}
+}
+
+class BridgeContext {
+	@field({ type: "string" })
+	head: string;
+
+	constructor(head: string) {
+		this.head = head;
+	}
+}
+
+class BridgeDocumentWithContext {
+	@id({ type: "string" })
+	id: string;
+
+	@field({ type: "string" })
+	tag: string;
+
+	@field({ type: "string" })
+	title: string;
+
+	@field({ type: BridgeContext })
+	__context: BridgeContext;
+
+	constructor(value: BridgeDocument, context: BridgeContext) {
+		this.id = value.id;
+		this.tag = value.tag;
+		this.title = value.title;
+		this.__context = context;
 	}
 }
 
@@ -215,6 +246,42 @@ describe("native planner bridge", () => {
 			})
 			.all();
 		expect(results.map((result) => result.value.id)).to.deep.equal(["a", "b"]);
+
+		await indices.drop();
+	});
+
+	it("accepts contextual document puts through the native index hook", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocumentWithContext });
+		const contextualIndex = index as typeof index & {
+			putWithContext: (
+				value: BridgeDocument,
+				id: ReturnType<typeof toId>,
+				context: BridgeContext,
+				options?: { replace?: boolean },
+			) => Promise<void>;
+		};
+
+		await contextualIndex.putWithContext(
+			new BridgeDocument("a", "peerbit", "native index"),
+			toId("a"),
+			new BridgeContext("head-a"),
+			{ replace: false },
+		);
+
+		const result = await index.get(toId("a"));
+		expect(result?.value.__context.head).equal("head-a");
+		expect(result?.value.title).equal("native index");
+
+		const indexed = await index
+			.iterate({
+				query: new StringMatch({ key: "tag", value: "peerbit" }),
+			})
+			.all();
+		expect(indexed.map((entry) => entry.value.__context.head)).to.deep.equal([
+			"head-a",
+		]);
 
 		await indices.drop();
 	});

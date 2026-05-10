@@ -653,6 +653,15 @@ type IndexableClass<I> = new (
 	context: types.Context,
 ) => WithContext<I>;
 
+type ContextualIndexPut<I> = {
+	putWithContext?: (
+		value: I,
+		id: indexerTypes.IdKey,
+		context: types.Context,
+		options?: { replace?: boolean },
+	) => Promise<void> | void;
+};
+
 export const coerceWithContext = <T>(
 	value: T | WithContext<T>,
 	context: types.Context,
@@ -1687,17 +1696,24 @@ export class DocumentIndex<
 		const valueToIndex = this.transformerIsIdentity
 			? (value as any as I)
 			: await this.transformer(value, context);
-		const wrappedValueToIndex = new this.wrappedIndexedType(
-			valueToIndex as I,
-			context,
-		);
 
 		coerceWithIndexed(value, valueToIndex);
 
 		coerceWithContext(value, context);
 
 		try {
-			await this.index.put(wrappedValueToIndex, id, options);
+			const contextualPut = this.transformerIsIdentity
+				? (this.index as ContextualIndexPut<I>).putWithContext
+				: undefined;
+			if (contextualPut) {
+				await contextualPut.call(this.index, valueToIndex, id, context, options);
+			} else {
+				const wrappedValueToIndex = new this.wrappedIndexedType(
+					valueToIndex as I,
+					context,
+				);
+				await this.index.put(wrappedValueToIndex, id, options);
+			}
 		} catch (error) {
 			if (error instanceof indexerTypes.NotStartedError && this.closed) {
 				return { context, indexable: valueToIndex };
