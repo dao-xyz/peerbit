@@ -754,6 +754,7 @@ impl NativeLogIndex {
             entry_type,
             meta_datas,
             payload_datas,
+            true,
         )?;
         self.inner.put_append_chain(entries, &initial_nexts);
         Ok(rows)
@@ -784,6 +785,7 @@ impl NativeLogIndex {
             entry_type,
             meta_datas,
             payload_datas,
+            false,
         )?;
         block_store.put_entries(blocks);
         self.inner.put_append_chain(entries, &initial_nexts);
@@ -1118,6 +1120,7 @@ fn prepare_entry_v0_plain_chain_rows(
     entry_type: u8,
     meta_datas: Array,
     payload_datas: Array,
+    include_storage_bytes: bool,
 ) -> Result<
     (
         Array,
@@ -1165,16 +1168,27 @@ fn prepare_entry_v0_plain_chain_rows(
         };
         let signature_with_key = encode_signature_with_key(&signature_input);
         let storage = encode_entry_v0_parts(&meta, &payload, Some(signature_input));
+        let storage_len = storage.len();
         let cid = calculate_raw_cid_v1_from_bytes(&storage);
 
         let row = Array::new();
-        row.push(&Uint8Array::from(storage.as_slice()));
-        row.push(&JsValue::from_str(&cid));
-        row.push(&Uint8Array::from(signature.as_slice()));
-        row.push(&strings_to_array(next.clone()));
-        row.push(&Uint8Array::from(meta.as_slice()));
-        row.push(&Uint8Array::from(payload.as_slice()));
-        row.push(&Uint8Array::from(signature_with_key.as_slice()));
+        if include_storage_bytes {
+            row.push(&Uint8Array::from(storage.as_slice()));
+            row.push(&JsValue::from_str(&cid));
+            row.push(&Uint8Array::from(signature.as_slice()));
+            row.push(&strings_to_array(next.clone()));
+            row.push(&Uint8Array::from(meta.as_slice()));
+            row.push(&Uint8Array::from(payload.as_slice()));
+            row.push(&Uint8Array::from(signature_with_key.as_slice()));
+        } else {
+            row.push(&JsValue::from_str(&cid));
+            row.push(&Uint8Array::from(signature.as_slice()));
+            row.push(&strings_to_array(next.clone()));
+            row.push(&Uint8Array::from(meta.as_slice()));
+            row.push(&Uint8Array::from(payload.as_slice()));
+            row.push(&Uint8Array::from(signature_with_key.as_slice()));
+            row.push(&JsValue::from_f64(storage_len as f64));
+        }
         out.push(&row);
         entries.push(LogIndexEntry::new_with_data(
             cid.clone(),
@@ -1218,6 +1232,7 @@ pub fn prepare_entry_v0_plain_chain(
         entry_type,
         meta_datas,
         payload_datas,
+        true,
     )?
     .0)
 }
