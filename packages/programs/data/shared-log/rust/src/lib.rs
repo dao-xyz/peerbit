@@ -1100,9 +1100,15 @@ pub struct NativeRangePlanner {
 
 pub struct SharedLogStateInner {
     range_planner: RangePlanner,
-    entry_coordinates: HashMap<String, Vec<u64>>,
+    entry_coordinates: HashMap<String, EntryCoordinateState>,
     gid_peers: HashMap<String, IndexSet<String>>,
     entry_known_peers: HashMap<String, IndexSet<String>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct EntryCoordinateState {
+    coordinates: Vec<u64>,
+    assigned_to_range_boundary: bool,
 }
 
 impl SharedLogStateInner {
@@ -1627,10 +1633,15 @@ impl NativeSharedLogState {
         &mut self,
         hash: String,
         coordinates: Array,
+        assigned_to_range_boundary: bool,
     ) -> Result<(), JsValue> {
-        self.inner
-            .entry_coordinates
-            .insert(hash, cursor_values_from_array(coordinates)?);
+        self.inner.entry_coordinates.insert(
+            hash,
+            EntryCoordinateState {
+                coordinates: cursor_values_from_array(coordinates)?,
+                assigned_to_range_boundary,
+            },
+        );
         Ok(())
     }
 
@@ -1642,8 +1653,12 @@ impl NativeSharedLogState {
         self.inner
             .entry_coordinates
             .get(hash)
-            .map(|coordinates| {
-                numbers_to_rows(coordinates.clone(), self.inner.range_planner.resolution).into()
+            .map(|entry| {
+                numbers_to_rows(
+                    entry.coordinates.clone(),
+                    self.inner.range_planner.resolution,
+                )
+                .into()
             })
             .unwrap_or(JsValue::UNDEFINED)
     }
@@ -1653,10 +1668,17 @@ impl NativeSharedLogState {
         hash: String,
         coordinates: Array,
         next_hashes: Array,
+        assigned_to_range_boundary: bool,
     ) -> Result<(), JsValue> {
         let coordinates = cursor_values_from_array(coordinates)?;
         let next_hashes = strings_from_array(next_hashes)?;
-        self.inner.entry_coordinates.insert(hash, coordinates);
+        self.inner.entry_coordinates.insert(
+            hash,
+            EntryCoordinateState {
+                coordinates,
+                assigned_to_range_boundary,
+            },
+        );
         for next_hash in next_hashes {
             self.inner.entry_coordinates.remove(&next_hash);
         }
@@ -1669,6 +1691,7 @@ impl NativeSharedLogState {
         end1: Array,
         start2: Array,
         end2: Array,
+        include_assigned_to_range_boundary: bool,
     ) -> Result<usize, JsValue> {
         let start1 = cursor_values_from_array(start1)?;
         let end1 = cursor_values_from_array(end1)?;
@@ -1679,16 +1702,22 @@ impl NativeSharedLogState {
         ensure_same_len(start1.len(), end2.len(), "coordinate range")?;
 
         let mut count = 0usize;
-        for coordinates in self.inner.entry_coordinates.values() {
-            if coordinates.iter().any(|coordinate| {
-                start1.iter().zip(&end1).zip(start2.iter().zip(&end2)).any(
-                    |((range_start1, range_end1), (range_start2, range_end2))| {
-                        coordinate_in_segment(*coordinate, *range_start1, *range_end1)
-                            || ((*range_start2 != *range_end2)
-                                && coordinate_in_segment(*coordinate, *range_start2, *range_end2))
-                    },
-                )
-            }) {
+        for entry in self.inner.entry_coordinates.values() {
+            if (include_assigned_to_range_boundary && entry.assigned_to_range_boundary)
+                || entry.coordinates.iter().any(|coordinate| {
+                    start1.iter().zip(&end1).zip(start2.iter().zip(&end2)).any(
+                        |((range_start1, range_end1), (range_start2, range_end2))| {
+                            coordinate_in_segment(*coordinate, *range_start1, *range_end1)
+                                || ((*range_start2 != *range_end2)
+                                    && coordinate_in_segment(
+                                        *coordinate,
+                                        *range_start2,
+                                        *range_end2,
+                                    ))
+                        },
+                    )
+                })
+            {
                 count += 1;
             }
         }
@@ -1921,9 +1950,13 @@ impl NativeSharedLogState {
         let is_leader = leaders.iter().any(|leader| leader.hash == self_hash);
         let assigned_to_range_boundary = should_assign_to_range_boundary(&leaders, replicas);
 
-        self.inner
-            .entry_coordinates
-            .insert(entry_hash, coordinates.clone());
+        self.inner.entry_coordinates.insert(
+            entry_hash,
+            EntryCoordinateState {
+                coordinates: coordinates.clone(),
+                assigned_to_range_boundary,
+            },
+        );
         for next_hash in next_hashes {
             self.inner.entry_coordinates.remove(&next_hash);
         }
@@ -2020,9 +2053,13 @@ impl NativeSharedLogState {
         let is_leader = leaders.iter().any(|leader| leader.hash == self_hash);
         let assigned_to_range_boundary = should_assign_to_range_boundary(&leaders, replicas);
 
-        self.inner
-            .entry_coordinates
-            .insert(entry_hash, coordinates.clone());
+        self.inner.entry_coordinates.insert(
+            entry_hash,
+            EntryCoordinateState {
+                coordinates: coordinates.clone(),
+                assigned_to_range_boundary,
+            },
+        );
         for next_hash in next_hashes {
             self.inner.entry_coordinates.remove(&next_hash);
         }
@@ -2118,9 +2155,13 @@ impl NativeSharedLogState {
             let is_leader = leaders.iter().any(|leader| leader.hash == self_hash);
             let assigned_to_range_boundary = should_assign_to_range_boundary(&leaders, replicas);
 
-            self.inner
-                .entry_coordinates
-                .insert(entry_hash, coordinates.clone());
+            self.inner.entry_coordinates.insert(
+                entry_hash,
+                EntryCoordinateState {
+                    coordinates: coordinates.clone(),
+                    assigned_to_range_boundary,
+                },
+            );
             for next_hash in next_hashes {
                 self.inner.entry_coordinates.remove(&next_hash);
             }
