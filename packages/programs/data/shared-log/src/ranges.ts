@@ -131,6 +131,7 @@ export class EntryReplicatedU32 implements EntryReplicated<"u32"> {
 		coordinates: number[];
 		hash: string;
 		meta: Meta;
+		metaBytes?: Uint8Array;
 		assignedToRangeBoundary: boolean;
 		hashNumber: number;
 	}) {
@@ -139,11 +140,13 @@ export class EntryReplicatedU32 implements EntryReplicated<"u32"> {
 		this.gid = properties.meta.gid;
 		this.wallTime = properties.meta.clock.timestamp.wallTime;
 		this.hashNumber = properties.hashNumber;
-		const shallow =
-			properties.meta instanceof Meta
-				? new ShallowMeta(properties.meta)
-				: properties.meta;
-		this._meta = serialize(shallow);
+		this._meta =
+			properties.metaBytes ??
+			serialize(
+				properties.meta instanceof Meta
+					? new ShallowMeta(properties.meta)
+					: properties.meta,
+			);
 		this._metaResolved = properties.meta;
 		this.assignedToRangeBoundary = properties.assignedToRangeBoundary;
 	}
@@ -185,6 +188,7 @@ export class EntryReplicatedU64 implements EntryReplicated<"u64"> {
 		coordinates: bigint[];
 		hash: string;
 		meta: Meta;
+		metaBytes?: Uint8Array;
 		assignedToRangeBoundary: boolean;
 		hashNumber: bigint;
 	}) {
@@ -193,11 +197,13 @@ export class EntryReplicatedU64 implements EntryReplicated<"u64"> {
 		this.hashNumber = properties.hashNumber;
 		this.gid = properties.meta.gid;
 		this.wallTime = properties.meta.clock.timestamp.wallTime;
-		const shallow =
-			properties.meta instanceof Meta
-				? new ShallowMeta(properties.meta)
-				: properties.meta;
-		this._meta = serialize(shallow);
+		this._meta =
+			properties.metaBytes ??
+			serialize(
+				properties.meta instanceof Meta
+					? new ShallowMeta(properties.meta)
+					: properties.meta,
+			);
 		this._metaResolved = properties.meta;
 		this.assignedToRangeBoundary = properties.assignedToRangeBoundary;
 	}

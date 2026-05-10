@@ -465,6 +465,7 @@ interface IndexableDomain<R extends "u32" | "u64"> {
 		coordinates: NumberFromType<R>[];
 		hash: string;
 		meta: Meta;
+		metaBytes?: Uint8Array;
 		assignedToRangeBoundary: boolean;
 		hashNumber: NumberFromType<R>;
 	}) => EntryReplicated<R>;
@@ -484,6 +485,10 @@ type PutAndDeleteIndex<T extends Record<string, any>> = Index<T> & {
 		value: T,
 		deleteOptions: DeleteOptions,
 	) => Promise<unknown> | unknown;
+};
+
+type EntryWithMetaBytes = {
+	getMetaBytes?: () => Uint8Array | undefined;
 };
 
 const createIndexableDomainFromResolution = <R extends "u32" | "u64">(
@@ -3005,6 +3010,7 @@ export class SharedLog<
 			assignedToRangeBoundary,
 			coordinates: properties.coordinates,
 			meta: properties.entry.meta,
+			metaBytes: (properties.entry as EntryWithMetaBytes).getMetaBytes?.(),
 			hash: properties.entry.hash,
 			hashNumber,
 		});
@@ -7446,6 +7452,7 @@ export class SharedLog<
 			assignedToRangeBoundary,
 			coordinates: properties.coordinates,
 			meta: properties.entry.meta,
+			metaBytes: (properties.entry as EntryWithMetaBytes).getMetaBytes?.(),
 			hash: properties.entry.hash,
 			hashNumber,
 		});
