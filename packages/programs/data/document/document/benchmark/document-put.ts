@@ -252,7 +252,12 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				profile,
 				"documentBackendIndexPutMs",
 			),
-			patchAsyncMethod(store.docs.index, "put", profile, "documentIndexPutMs"),
+			patchAsyncMethod(
+				store.docs.index,
+				"putWithContext",
+				profile,
+				"documentIndexPutMs",
+			),
 		];
 
 		const serializeStarted = performance.now();
