@@ -51,6 +51,19 @@ type NativePlainChainInput = {
 	payloadDatas: Uint8Array[];
 };
 
+type NativePlainEntryInput = {
+	clockId: Uint8Array;
+	privateKey: Uint8Array;
+	publicKey: Uint8Array;
+	wallTime: bigint | number | string;
+	logical?: number;
+	gid: string;
+	next?: string[];
+	type?: number;
+	metaData?: Uint8Array;
+	payloadData: Uint8Array;
+};
+
 type NativePreparedPlainEntry = {
 	bytes?: Uint8Array;
 	cid: string;
@@ -66,10 +79,17 @@ type NativeEntryV0Graph = {
 	prepareEntryV0PlainChainAndPut?(
 		input: NativePlainChainInput,
 	): Promise<NativePreparedPlainEntry[]>;
+	prepareEntryV0PlainEntryAndPut?(
+		input: NativePlainEntryInput,
+	): Promise<NativePreparedPlainEntry>;
 	prepareEntryV0PlainChainCommit?(
 		input: NativePlainChainInput,
 		blockStore: unknown,
 	): Promise<NativePreparedPlainEntry[] | undefined>;
+	prepareEntryV0PlainEntryCommit?(
+		input: NativePlainEntryInput,
+		blockStore: unknown,
+	): Promise<NativePreparedPlainEntry | undefined>;
 };
 
 type NativeEntryV0Encoder = {
@@ -112,6 +132,9 @@ type NativeEntryV0Encoder = {
 	prepareEntryV0PlainChain?(
 		input: NativePlainChainInput,
 	): Promise<NativePreparedPlainEntry[]>;
+	prepareEntryV0PlainEntry?(
+		input: NativePlainEntryInput,
+	): Promise<NativePreparedPlainEntry>;
 	calculateRawCidV1(bytes: Uint8Array): Promise<string>;
 };
 
@@ -128,6 +151,7 @@ const loadNativeEntryV0Encoder = async () => {
 					encodeEntryV0Storage?: NativeEntryV0Encoder["encodeEntryV0Storage"];
 					encodeEntryV0StorageWithCid?: NativeEntryV0Encoder["encodeEntryV0StorageWithCid"];
 					prepareEntryV0PlainChain?: NativeEntryV0Encoder["prepareEntryV0PlainChain"];
+					prepareEntryV0PlainEntry?: NativeEntryV0Encoder["prepareEntryV0PlainEntry"];
 					calculateRawCidV1?: NativeEntryV0Encoder["calculateRawCidV1"];
 				};
 				if (
@@ -142,6 +166,7 @@ const loadNativeEntryV0Encoder = async () => {
 					encodeEntryV0Storage: mod.encodeEntryV0Storage,
 					encodeEntryV0StorageWithCid: mod.encodeEntryV0StorageWithCid,
 					prepareEntryV0PlainChain: mod.prepareEntryV0PlainChain,
+					prepareEntryV0PlainEntry: mod.prepareEntryV0PlainEntry,
 					calculateRawCidV1: mod.calculateRawCidV1,
 				};
 			} catch {
@@ -615,56 +640,118 @@ export class EntryV0<T>
 		}
 
 		const entryType = properties.meta?.type ?? EntryType.APPEND;
-		const wallTimes = new Array<bigint | number | string>(properties.data.length);
-		const logicals = new Array<number>(properties.data.length);
-		const metaDatas = new Array<Uint8Array | undefined>(properties.data.length);
-		const payloadDatas = new Array<Uint8Array>(properties.data.length);
-		for (let i = 0; i < properties.data.length; i++) {
-			const clock = clocks[i]!;
-			wallTimes[i] = clock.timestamp.wallTime;
-			logicals[i] = clock.timestamp.logical;
-			metaDatas[i] = properties.meta?.data;
-			payloadDatas[i] = properties.encoding.encoder(properties.data[i]!);
-		}
-		const nativePlainChainInput: NativePlainChainInput = {
-			clockId: properties.identity.publicKey.bytes,
-			privateKey: properties.identity.privateKey.privateKey,
-			publicKey: properties.identity.publicKey.publicKey,
-			wallTimes,
-			logicals,
-			gid: gid!,
-			initialNext: nextHashes,
-			type: entryType,
-			metaDatas,
-			payloadDatas,
-		};
-		const nativeCommit = properties.nativeGraph?.prepareEntryV0PlainChainCommit;
+		const clockId = properties.identity.publicKey.bytes;
+		const privateKey = properties.identity.privateKey.privateKey;
+		const publicKey = properties.identity.publicKey.publicKey;
 		let nativeBlocksCommitted = false;
-		let prepared = nativeCommit
-			? await nativeCommit.call(
-					properties.nativeGraph,
-					nativePlainChainInput,
-					properties.nativeBlockStore,
-				)
-			: undefined;
-		if (prepared) {
-			nativeBlocksCommitted = true;
-		} else {
-			const nativePrepareAndPut =
-				properties.nativeGraph?.prepareEntryV0PlainChainAndPut;
-			prepared = await (nativePrepareAndPut
-				? nativePrepareAndPut.call(properties.nativeGraph, nativePlainChainInput)
-				: nativeEncoder.prepareEntryV0PlainChain(nativePlainChainInput));
+		let nativeGraphUpdated = false;
+		let prepared: NativePreparedPlainEntry[] | undefined;
+		let payloadDatas: Uint8Array[] | undefined;
+		if (properties.data.length === 1) {
+			const clock = clocks[0]!;
+			const payloadData = properties.encoding.encoder(properties.data[0]!);
+			const singleInput: NativePlainEntryInput = {
+				clockId,
+				privateKey,
+				publicKey,
+				wallTime: clock.timestamp.wallTime,
+				logical: clock.timestamp.logical,
+				gid: gid!,
+				next: nextHashes,
+				type: entryType,
+				metaData: properties.meta?.data,
+				payloadData,
+			};
+			const nativeCommit =
+				properties.nativeGraph?.prepareEntryV0PlainEntryCommit;
+			const preparedEntry = nativeCommit
+				? await nativeCommit.call(
+						properties.nativeGraph,
+						singleInput,
+						properties.nativeBlockStore,
+					)
+				: undefined;
+			if (preparedEntry) {
+				nativeBlocksCommitted = true;
+				nativeGraphUpdated = true;
+				prepared = [preparedEntry];
+				payloadDatas = [payloadData];
+			} else {
+				const nativePrepareAndPut =
+					properties.nativeGraph?.prepareEntryV0PlainEntryAndPut;
+				const scalarPreparedEntry = nativePrepareAndPut
+					? await nativePrepareAndPut.call(properties.nativeGraph, singleInput)
+					: nativeEncoder.prepareEntryV0PlainEntry
+						? await nativeEncoder.prepareEntryV0PlainEntry(singleInput)
+						: undefined;
+				if (scalarPreparedEntry) {
+					nativeGraphUpdated = !!nativePrepareAndPut;
+					prepared = [scalarPreparedEntry];
+					payloadDatas = [payloadData];
+				}
+			}
 		}
-		const nativeGraphUpdated =
-			nativeBlocksCommitted ||
-			!!properties.nativeGraph?.prepareEntryV0PlainChainAndPut;
+
+		if (!prepared) {
+			const wallTimes = new Array<bigint | number | string>(
+				properties.data.length,
+			);
+			const logicals = new Array<number>(properties.data.length);
+			const metaDatas = new Array<Uint8Array | undefined>(
+				properties.data.length,
+			);
+			payloadDatas = new Array<Uint8Array>(properties.data.length);
+			for (let i = 0; i < properties.data.length; i++) {
+				const clock = clocks[i]!;
+				wallTimes[i] = clock.timestamp.wallTime;
+				logicals[i] = clock.timestamp.logical;
+				metaDatas[i] = properties.meta?.data;
+				payloadDatas[i] = properties.encoding.encoder(properties.data[i]!);
+			}
+			const nativePlainChainInput: NativePlainChainInput = {
+				clockId,
+				privateKey,
+				publicKey,
+				wallTimes,
+				logicals,
+				gid: gid!,
+				initialNext: nextHashes,
+				type: entryType,
+				metaDatas,
+				payloadDatas,
+			};
+			const nativeCommit = properties.nativeGraph?.prepareEntryV0PlainChainCommit;
+			prepared = nativeCommit
+				? await nativeCommit.call(
+						properties.nativeGraph,
+						nativePlainChainInput,
+						properties.nativeBlockStore,
+					)
+				: undefined;
+			if (prepared) {
+				nativeBlocksCommitted = true;
+				nativeGraphUpdated = true;
+			} else {
+				const nativePrepareAndPut =
+					properties.nativeGraph?.prepareEntryV0PlainChainAndPut;
+				prepared = await (nativePrepareAndPut
+					? nativePrepareAndPut.call(
+							properties.nativeGraph,
+							nativePlainChainInput,
+						)
+					: nativeEncoder.prepareEntryV0PlainChain(nativePlainChainInput));
+				nativeGraphUpdated = !!nativePrepareAndPut;
+			}
+		}
 
 		const entries: PreparedAppendChain<T>["entries"] = [];
 		const blocks: NonNullable<PreparedAppendChain<T>["blocks"]> = [];
 		const shallowEntries: PreparedAppendChain<T>["shallowEntries"] = [];
 		const nativeEntries: NonNullable<PreparedAppendChain<T>["nativeEntries"]> =
 			[];
+		if (!payloadDatas) {
+			throw new Error("Expected payload data for prepared append chain");
+		}
 
 		for (let index = 0; index < prepared.length; index++) {
 			const preparedEntry = prepared[index]!;

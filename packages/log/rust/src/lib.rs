@@ -760,6 +760,36 @@ impl NativeLogIndex {
         Ok(rows)
     }
 
+    pub fn prepare_entry_v0_plain_entry_and_put(
+        &mut self,
+        clock_id: Uint8Array,
+        private_key: Uint8Array,
+        public_key: Uint8Array,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+    ) -> Result<Array, JsValue> {
+        let (row, entry, initial_nexts, _block) = prepare_entry_v0_plain_entry_row(
+            clock_id,
+            private_key,
+            public_key,
+            wall_time,
+            logical,
+            gid,
+            next,
+            entry_type,
+            meta_data,
+            payload_data,
+            true,
+        )?;
+        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        Ok(row)
+    }
+
     pub fn prepare_entry_v0_plain_chain_commit_blocks_and_put(
         &mut self,
         block_store: &mut NativeLogBlockStore,
@@ -790,6 +820,38 @@ impl NativeLogIndex {
         block_store.put_entries(blocks);
         self.inner.put_append_chain(entries, &initial_nexts);
         Ok(rows)
+    }
+
+    pub fn prepare_entry_v0_plain_entry_commit_block_and_put(
+        &mut self,
+        block_store: &mut NativeLogBlockStore,
+        clock_id: Uint8Array,
+        private_key: Uint8Array,
+        public_key: Uint8Array,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+    ) -> Result<Array, JsValue> {
+        let (row, entry, initial_nexts, block) = prepare_entry_v0_plain_entry_row(
+            clock_id,
+            private_key,
+            public_key,
+            wall_time,
+            logical,
+            gid,
+            next,
+            entry_type,
+            meta_data,
+            payload_data,
+            false,
+        )?;
+        block_store.put_entries(vec![block]);
+        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        Ok(row)
     }
 
     pub fn delete(&mut self, hash: &str) -> bool {
@@ -1208,6 +1270,85 @@ fn prepare_entry_v0_plain_chain_rows(
     Ok((out, entries, initial_nexts, blocks))
 }
 
+fn prepare_entry_v0_plain_entry_row(
+    clock_id: Uint8Array,
+    private_key: Uint8Array,
+    public_key: Uint8Array,
+    wall_time: u64,
+    logical: u32,
+    gid: String,
+    next: Array,
+    entry_type: u8,
+    meta_data: JsValue,
+    payload_data: Uint8Array,
+    include_storage_bytes: bool,
+) -> Result<(Array, LogIndexEntry, Vec<String>, (String, Vec<u8>)), JsValue> {
+    let clock_id = clock_id.to_vec();
+    let private_key = private_key.to_vec();
+    let public_key = public_key.to_vec();
+    let signing_key = validate_ed25519_keypair(&private_key, &public_key)?;
+    let next = strings_from_array(next)?;
+    let payload_data = payload_data.to_vec();
+    let meta_data = optional_bytes_from_js(meta_data);
+    let payload_size = payload_data.len() as u32;
+
+    let input = EntryV0EncodeInput {
+        clock_id,
+        wall_time,
+        logical,
+        gid: gid.clone(),
+        next: next.clone(),
+        entry_type,
+        meta_data,
+        payload_data,
+    };
+    let meta = encode_meta(&input);
+    let payload = encode_payload(&input.payload_data);
+    let signable = encode_entry_v0_parts(&meta, &payload, None);
+    let signature = sign_ed25519_with_key(&signing_key, &signable);
+    let signature_input = SignatureInput {
+        signature: signature.clone(),
+        public_key: public_key.clone(),
+        prehash: 0,
+    };
+    let signature_with_key = encode_signature_with_key(&signature_input);
+    let storage = encode_entry_v0_parts(&meta, &payload, Some(signature_input));
+    let storage_len = storage.len();
+    let cid = calculate_raw_cid_v1_from_bytes(&storage);
+
+    let row = Array::new();
+    if include_storage_bytes {
+        row.push(&Uint8Array::from(storage.as_slice()));
+        row.push(&JsValue::from_str(&cid));
+        row.push(&Uint8Array::from(signature.as_slice()));
+        row.push(&strings_to_array(next.clone()));
+        row.push(&Uint8Array::from(meta.as_slice()));
+        row.push(&Uint8Array::from(payload.as_slice()));
+        row.push(&Uint8Array::from(signature_with_key.as_slice()));
+    } else {
+        row.push(&JsValue::from_str(&cid));
+        row.push(&Uint8Array::from(signature.as_slice()));
+        row.push(&strings_to_array(next.clone()));
+        row.push(&Uint8Array::from(meta.as_slice()));
+        row.push(&Uint8Array::from(payload.as_slice()));
+        row.push(&Uint8Array::from(signature_with_key.as_slice()));
+        row.push(&JsValue::from_f64(storage_len as f64));
+    }
+
+    let entry = LogIndexEntry::new_with_data(
+        cid.clone(),
+        gid,
+        next.clone(),
+        entry_type,
+        input.wall_time,
+        input.logical,
+        payload_size,
+        true,
+        input.meta_data.clone(),
+    );
+    Ok((row, entry, next, (cid, storage)))
+}
+
 #[wasm_bindgen]
 pub fn prepare_entry_v0_plain_chain(
     clock_id: Uint8Array,
@@ -1235,6 +1376,35 @@ pub fn prepare_entry_v0_plain_chain(
         true,
     )?
     .0)
+}
+
+#[wasm_bindgen]
+pub fn prepare_entry_v0_plain_entry(
+    clock_id: Uint8Array,
+    private_key: Uint8Array,
+    public_key: Uint8Array,
+    wall_time: u64,
+    logical: u32,
+    gid: String,
+    next: Array,
+    entry_type: u8,
+    meta_data: JsValue,
+    payload_data: Uint8Array,
+) -> Result<Array, JsValue> {
+    let (row, _entry, _initial_nexts, _block) = prepare_entry_v0_plain_entry_row(
+        clock_id,
+        private_key,
+        public_key,
+        wall_time,
+        logical,
+        gid,
+        next,
+        entry_type,
+        meta_data,
+        payload_data,
+        true,
+    )?;
+    Ok(row)
 }
 
 #[wasm_bindgen]

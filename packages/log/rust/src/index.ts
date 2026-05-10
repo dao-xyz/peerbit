@@ -104,6 +104,18 @@ type NativeLogIndexHandle = {
 		metaDatas: Array<Uint8Array | undefined>,
 		payloadDatas: Uint8Array[],
 	) => EntryV0PreparedPlainEntryRow[];
+	prepare_entry_v0_plain_entry_and_put: (
+		clockId: Uint8Array,
+		privateKey: Uint8Array,
+		publicKey: Uint8Array,
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+	) => EntryV0PreparedPlainEntryRow;
 	prepare_entry_v0_plain_chain_commit_blocks_and_put: (
 		blockStore: NativeLogBlockStoreHandle,
 		clockId: Uint8Array,
@@ -117,6 +129,19 @@ type NativeLogIndexHandle = {
 		metaDatas: Array<Uint8Array | undefined>,
 		payloadDatas: Uint8Array[],
 	) => EntryV0CommittedPlainEntryRow[];
+	prepare_entry_v0_plain_entry_commit_block_and_put: (
+		blockStore: NativeLogBlockStoreHandle,
+		clockId: Uint8Array,
+		privateKey: Uint8Array,
+		publicKey: Uint8Array,
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+	) => EntryV0CommittedPlainEntryRow;
 	delete: (hash: string) => boolean;
 	heads: (gid?: string) => string[];
 	has_head: (gid?: string) => boolean;
@@ -242,6 +267,18 @@ type WasmModule = {
 		metaDatas: Array<Uint8Array | undefined>,
 		payloadDatas: Uint8Array[],
 	) => EntryV0PreparedPlainEntryRow[];
+	prepare_entry_v0_plain_entry: (
+		clockId: Uint8Array,
+		privateKey: Uint8Array,
+		publicKey: Uint8Array,
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+	) => EntryV0PreparedPlainEntryRow;
 	calculate_raw_cid_v1: (bytes: Uint8Array) => string;
 };
 
@@ -433,6 +470,27 @@ export class LogGraphIndex {
 		);
 	}
 
+	prepareEntryV0PlainEntryAndPut(
+		input: EntryV0PlainEntryInput,
+	): Promise<EntryV0PreparedPlainEntry> {
+		return Promise.resolve(
+			preparedPlainEntryRow(
+				this.native.prepare_entry_v0_plain_entry_and_put(
+					input.clockId,
+					input.privateKey,
+					input.publicKey,
+					BigInt(input.wallTime),
+					input.logical ?? 0,
+					input.gid,
+					input.next ?? [],
+					input.type ?? 0,
+					input.metaData,
+					input.payloadData,
+				),
+			),
+		);
+	}
+
 	prepareEntryV0PlainChainCommit(
 		input: EntryV0PlainChainInput,
 		blockStore: unknown,
@@ -459,6 +517,33 @@ export class LogGraphIndex {
 					input.type ?? 0,
 					columns.metaDatas,
 					input.payloadDatas,
+				),
+			),
+		);
+	}
+
+	prepareEntryV0PlainEntryCommit(
+		input: EntryV0PlainEntryInput,
+		blockStore: unknown,
+	): Promise<EntryV0CommittedPlainEntry | undefined> {
+		const nativeBlockStore = nativeLogBlockStoreHandle(blockStore);
+		if (!nativeBlockStore) {
+			return Promise.resolve(undefined);
+		}
+		return Promise.resolve(
+			committedPlainEntryRow(
+				this.native.prepare_entry_v0_plain_entry_commit_block_and_put(
+					nativeBlockStore,
+					input.clockId,
+					input.privateKey,
+					input.publicKey,
+					BigInt(input.wallTime),
+					input.logical ?? 0,
+					input.gid,
+					input.next ?? [],
+					input.type ?? 0,
+					input.metaData,
+					input.payloadData,
 				),
 			),
 		);
@@ -753,6 +838,19 @@ export type EntryV0PlainChainInput = {
 	payloadDatas: Uint8Array[];
 };
 
+export type EntryV0PlainEntryInput = {
+	clockId: Uint8Array;
+	privateKey: Uint8Array;
+	publicKey: Uint8Array;
+	wallTime: bigint | number | string;
+	logical?: number;
+	gid: string;
+	next?: string[];
+	type?: number;
+	metaData?: Uint8Array;
+	payloadData: Uint8Array;
+};
+
 export type EntryV0PreparedPlainEntry = EntryV0EncodedStorage & {
 	byteLength: number;
 	signature: Uint8Array;
@@ -809,52 +907,50 @@ const plainChainInputColumns = (input: EntryV0PlainChainInput) => {
 	return { wallTimes, logicals, metaDatas };
 };
 
+const preparedPlainEntryRow = ([
+	bytes,
+	cid,
+	signature,
+	next,
+	metaBytes,
+	payloadBytes,
+	signatureBytes,
+]: EntryV0PreparedPlainEntryRow): EntryV0PreparedPlainEntry => ({
+	bytes,
+	cid,
+	byteLength: bytes.byteLength,
+	signature,
+	next,
+	metaBytes,
+	payloadBytes,
+	signatureBytes,
+});
+
 const preparedPlainEntryRows = (
 	rows: EntryV0PreparedPlainEntryRow[],
-): EntryV0PreparedPlainEntry[] =>
-	rows.map(
-		([
-			bytes,
-			cid,
-			signature,
-			next,
-			metaBytes,
-			payloadBytes,
-			signatureBytes,
-		]) => ({
-			bytes,
-			cid,
-			byteLength: bytes.byteLength,
-			signature,
-			next,
-			metaBytes,
-			payloadBytes,
-			signatureBytes,
-		}),
-	);
+): EntryV0PreparedPlainEntry[] => rows.map(preparedPlainEntryRow);
+
+const committedPlainEntryRow = ([
+	cid,
+	signature,
+	next,
+	metaBytes,
+	payloadBytes,
+	signatureBytes,
+	byteLength,
+]: EntryV0CommittedPlainEntryRow): EntryV0CommittedPlainEntry => ({
+	cid,
+	byteLength,
+	signature,
+	next,
+	metaBytes,
+	payloadBytes,
+	signatureBytes,
+});
 
 const committedPlainEntryRows = (
 	rows: EntryV0CommittedPlainEntryRow[],
-): EntryV0CommittedPlainEntry[] =>
-	rows.map(
-		([
-			cid,
-			signature,
-			next,
-			metaBytes,
-			payloadBytes,
-			signatureBytes,
-			byteLength,
-		]) => ({
-			cid,
-			byteLength,
-			signature,
-			next,
-			metaBytes,
-			payloadBytes,
-			signatureBytes,
-		}),
-	);
+): EntryV0CommittedPlainEntry[] => rows.map(committedPlainEntryRow);
 
 const entryColumns = (inputs: EntryV0EncodeInput[]) => {
 	const clockIds = new Array<Uint8Array>(inputs.length);
@@ -1026,6 +1122,26 @@ export const prepareEntryV0PlainChain = async (
 			input.type ?? 0,
 			columns.metaDatas,
 			input.payloadDatas,
+		),
+	);
+};
+
+export const prepareEntryV0PlainEntry = async (
+	input: EntryV0PlainEntryInput,
+): Promise<EntryV0PreparedPlainEntry> => {
+	const wasm = await loadWasm();
+	return preparedPlainEntryRow(
+		wasm.prepare_entry_v0_plain_entry(
+			input.clockId,
+			input.privateKey,
+			input.publicKey,
+			BigInt(input.wallTime),
+			input.logical ?? 0,
+			input.gid,
+			input.next ?? [],
+			input.type ?? 0,
+			input.metaData,
+			input.payloadData,
 		),
 	);
 };
