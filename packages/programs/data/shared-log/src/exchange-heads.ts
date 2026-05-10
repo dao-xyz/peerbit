@@ -77,9 +77,9 @@ export const createExchangeHeadsMessages = async function* (
 	let current: EntryWithRefs<any>[] = [];
 	const visitedHeads = new Set<string>();
 	const headArray = Array.isArray(heads) ? heads : [...heads];
+	const resolvedHeads = await resolveExchangeHeadEntries(log, headArray);
 	const canUseNativeReferenceGids = headArray.length === 1;
-	for (const fromHead of headArray) {
-		let entry = fromHead instanceof Entry ? fromHead : await log.get(fromHead);
+	for (const entry of resolvedHeads) {
 		if (!entry) {
 			continue; // missing this entry, could be deleted while iterating
 		}
@@ -145,6 +145,38 @@ export const createExchangeHeadsMessages = async function* (
 			heads: current,
 		});
 	}
+};
+
+const resolveExchangeHeadEntries = async (
+	log: Log<any>,
+	headArray: Array<Entry<any> | string>,
+): Promise<Array<Entry<any> | undefined>> => {
+	const resolved: Array<Entry<any> | undefined> = new Array(headArray.length);
+	const hashes: string[] = [];
+	const positions: number[] = [];
+	for (let i = 0; i < headArray.length; i++) {
+		const head = headArray[i]!;
+		if (head instanceof Entry) {
+			resolved[i] = head;
+			continue;
+		}
+		hashes.push(head);
+		positions.push(i);
+	}
+	if (hashes.length === 0) {
+		return resolved;
+	}
+	const entries =
+		hashes.length === 1
+			? [await log.get(hashes[0]!)]
+			: await log.entryIndex.getMany(hashes, {
+					type: "full",
+					ignoreMissing: true,
+				});
+	for (let i = 0; i < entries.length; i++) {
+		resolved[positions[i]!] = entries[i];
+	}
+	return resolved;
 };
 
 export const allEntriesWithUniqueGids = async (
