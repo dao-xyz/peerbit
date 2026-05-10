@@ -144,7 +144,6 @@ export class EntryReplicatedU32 implements EntryReplicated<"u32"> {
 				? new ShallowMeta(properties.meta)
 				: properties.meta;
 		this._meta = serialize(shallow);
-		this._metaResolved = deserialize(this._meta, ShallowMeta);
 		this._metaResolved = properties.meta;
 		this.assignedToRangeBoundary = properties.assignedToRangeBoundary;
 	}
@@ -199,7 +198,6 @@ export class EntryReplicatedU64 implements EntryReplicated<"u64"> {
 				? new ShallowMeta(properties.meta)
 				: properties.meta;
 		this._meta = serialize(shallow);
-		this._metaResolved = deserialize(this._meta, ShallowMeta);
 		this._metaResolved = properties.meta;
 		this.assignedToRangeBoundary = properties.assignedToRangeBoundary;
 	}

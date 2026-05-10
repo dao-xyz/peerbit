@@ -7166,14 +7166,17 @@ export class SharedLog<
 			this.coordinateToHash.add(coordinate, properties.entry.hash);
 		}
 
-		if (properties.entry.meta.next.length > 0) {
-			await this.entryCoordinatesIndex.del({
-				query: new Or(
-					properties.entry.meta.next.map(
-						(x) => new StringMatch({ key: "hash", value: x }),
-					),
-				),
-			});
+		const nextHashes = properties.entry.meta.next;
+		if (nextHashes.length > 0) {
+			await this.entryCoordinatesIndex.del(
+				nextHashes.length === 1
+					? { query: { hash: nextHashes[0] } }
+					: {
+							query: new Or(
+								nextHashes.map((x) => new StringMatch({ key: "hash", value: x })),
+							),
+						},
+			);
 		}
 		return true;
 	}
