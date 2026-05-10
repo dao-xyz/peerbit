@@ -2974,10 +2974,7 @@ export class SharedLog<
 			properties.leaders,
 			properties.replicas,
 		);
-		const hashNumber = this.indexableDomain.numbers.bytesToNumber(
-			(properties.entry as EntryWithMetaBytes).getHashDigestBytes?.() ??
-				cidifyString(properties.entry.hash).multihash.digest,
-		);
+		const hashNumber = this.getEntryHashNumber(properties.entry);
 		return new this.indexableDomain.constructorEntry({
 			assignedToRangeBoundary,
 			coordinates: properties.coordinates,
@@ -4369,6 +4366,7 @@ export class SharedLog<
 			{
 				entryHash: entry.hash,
 				gid: entry.meta.gid,
+				hashNumber: this.getEntryHashNumber(entry),
 				nextHashes: entry.meta.next,
 				replicas,
 				fullReplicaCandidates: fullReplicaDeliveryCandidates,
@@ -4402,6 +4400,7 @@ export class SharedLog<
 			{
 				entryHash: entry.hash,
 				gid: entry.meta.gid,
+				hashNumber: this.getEntryHashNumber(entry),
 				nextHashes: entry.meta.next,
 				replicas,
 				selfHash: context.selfHash,
@@ -4445,6 +4444,7 @@ export class SharedLog<
 				entries: entries.map((entry) => ({
 					entryHash: entry.hash,
 					gid: entry.meta.gid,
+					hashNumber: this.getEntryHashNumber(entry),
 					nextHashes: entry.meta.next,
 					replicas,
 				})),
@@ -4939,6 +4939,9 @@ export class SharedLog<
 			},
 			indexer: logIndex,
 		});
+		const resolveHashesForSymbols = (symbols: bigint[]) =>
+			this._nativeSharedLogState?.getEntryHashesForHashNumbers(symbols);
+
 		if (options?.syncronizer) {
 			this.syncronizer = new options.syncronizer({
 				numbers: this.indexableDomain.numbers,
@@ -4947,6 +4950,7 @@ export class SharedLog<
 				rangeIndex: this._replicationRangeIndex,
 				rpc: this.rpc,
 				coordinateToHash: this.coordinateToHash,
+				resolveHashesForSymbols,
 				sync: options?.sync,
 			});
 		} else {
@@ -4959,6 +4963,7 @@ export class SharedLog<
 					rpc: this.rpc,
 					entryIndex: this.entryCoordinatesIndex,
 					coordinateToHash: this.coordinateToHash,
+					resolveHashesForSymbols,
 					sync: options?.sync,
 				});
 			} else {
@@ -4975,6 +4980,7 @@ export class SharedLog<
 					rangeIndex: this._replicationRangeIndex,
 					rpc: this.rpc,
 					coordinateToHash: this.coordinateToHash,
+					resolveHashesForSymbols,
 					sync: options?.sync,
 				}) as Syncronizer<R>;
 			}
@@ -5110,6 +5116,7 @@ export class SharedLog<
 						result.value.coordinates,
 						result.value.assignedToRangeBoundary,
 						requestedReplicas,
+						result.value.hashNumber,
 					);
 					this._residentEntryCoordinatesByHash.set(
 						result.value.hash,
@@ -7375,10 +7382,7 @@ export class SharedLog<
 			return false; // no change
 		}
 
-		const hashNumber = this.indexableDomain.numbers.bytesToNumber(
-			(properties.entry as EntryWithMetaBytes).getHashDigestBytes?.() ??
-				cidifyString(properties.entry.hash).multihash.digest,
-		);
+		const hashNumber = this.getEntryHashNumber(properties.entry);
 
 		const metaBytes = (properties.entry as EntryWithMetaBytes).getMetaBytes?.();
 		const coordinateEntry = new this.indexableDomain.constructorEntry({
@@ -7437,6 +7441,7 @@ export class SharedLog<
 				properties.entry.meta.next,
 				assignedToRangeBoundary,
 				properties.replicas,
+				coordinateEntry.hashNumber,
 			);
 		}
 		if (this._residentEntryCoordinatesByHash) {
@@ -7574,6 +7579,18 @@ export class SharedLog<
 		entry: ShallowOrFullEntry<any> | EntryReplicated<R>,
 	): entry is ShallowOrFullEntry<any> | EntryReplicated<R> {
 		return this.domain.type === "hash" && typeof entry.meta.gid === "string";
+	}
+
+	private getEntryHashNumber(
+		entry: Entry<T> | ShallowOrFullEntry<any> | EntryReplicated<R>,
+	): NumberFromType<R> {
+		if ("hashNumber" in entry && entry.hashNumber != null) {
+			return entry.hashNumber as NumberFromType<R>;
+		}
+		return this.indexableDomain.numbers.bytesToNumber(
+			(entry as EntryWithMetaBytes).getHashDigestBytes?.() ??
+				cidifyString(entry.hash).multihash.digest,
+		);
 	}
 
 	private async applyLeaderSelection(

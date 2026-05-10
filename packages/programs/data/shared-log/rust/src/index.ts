@@ -77,6 +77,7 @@ export type AppendEntryPlan = EntryAssignmentPlan & {
 export type AppendEntryBatchInput = {
 	entryHash: string;
 	gid: string;
+	hashNumber?: bigint | number | string;
 	nextHashes?: Iterable<string>;
 	replicas: number;
 };
@@ -280,6 +281,7 @@ type NativeSharedLogStateHandle = {
 	put_entry_coordinates: (
 		hash: string,
 		gid: string,
+		hashNumber: string,
 		coordinates: string[],
 		assignedToRangeBoundary: boolean,
 		requestedReplicas: number,
@@ -287,9 +289,11 @@ type NativeSharedLogStateHandle = {
 	delete_entry_coordinates: (hash: string) => boolean;
 	get_entry_coordinates: (hash: string) => unknown[] | undefined;
 	entry_coordinate_hashes: () => string[];
+	entry_hashes_for_hash_numbers: (hashNumbers: string[]) => unknown[];
 	commit_entry_coordinates: (
 		hash: string,
 		gid: string,
+		hashNumber: string,
 		coordinates: string[],
 		nextHashes: string[],
 		assignedToRangeBoundary: boolean,
@@ -328,6 +332,7 @@ type NativeSharedLogStateHandle = {
 	plan_local_append_for_gid: (
 		entryHash: string,
 		gid: string,
+		hashNumber: string,
 		nextHashes: string[],
 		replicas: number,
 		roleAgeMs: number,
@@ -358,6 +363,7 @@ type NativeSharedLogStateHandle = {
 	plan_append_for_gid: (
 		entryHash: string,
 		gid: string,
+		hashNumber: string,
 		nextHashes: string[],
 		replicas: number,
 		fullReplicaCandidates: string[],
@@ -385,6 +391,7 @@ type NativeSharedLogStateHandle = {
 	plan_append_for_gids_batch: (
 		entryHashes: string[],
 		gids: string[],
+		hashNumbers: string[],
 		nextHashBatches: string[][],
 		replicaCounts: number[],
 		fullReplicaCandidates: string[],
@@ -885,11 +892,13 @@ export class SharedLogNativeState {
 		coordinates: Iterable<bigint | number | string>,
 		assignedToRangeBoundary = false,
 		requestedReplicas?: number,
+		hashNumber: bigint | number | string = 0,
 	): void {
 		const coordinateRows = [...coordinates].map(asIntegerString);
 		this.native.put_entry_coordinates(
 			hash,
 			gid,
+			asIntegerString(hashNumber),
 			coordinateRows,
 			assignedToRangeBoundary,
 			requestedReplicas ?? coordinateRows.length,
@@ -909,6 +918,20 @@ export class SharedLogNativeState {
 		return this.native.entry_coordinate_hashes();
 	}
 
+	getEntryHashesForHashNumbers(
+		hashNumbers: Iterable<bigint | number | string>,
+	): Map<bigint, string[]> {
+		const out = new Map<bigint, string[]>();
+		const rows = this.native.entry_hashes_for_hash_numbers(
+			[...hashNumbers].map(asIntegerString),
+		);
+		for (const row of rows) {
+			const [hashNumber, hashes] = row as [string, string[]];
+			out.set(BigInt(hashNumber), hashes);
+		}
+		return out;
+	}
+
 	commitEntryCoordinates(
 		hash: string,
 		gid: string,
@@ -916,11 +939,13 @@ export class SharedLogNativeState {
 		nextHashes: Iterable<string>,
 		assignedToRangeBoundary = false,
 		requestedReplicas?: number,
+		hashNumber: bigint | number | string = 0,
 	): void {
 		const coordinateRows = [...coordinates].map(asIntegerString);
 		this.native.commit_entry_coordinates(
 			hash,
 			gid,
+			asIntegerString(hashNumber),
 			coordinateRows,
 			[...nextHashes],
 			assignedToRangeBoundary,
@@ -1039,6 +1064,7 @@ export class SharedLogNativeState {
 		input: {
 			entryHash: string;
 			gid: string;
+			hashNumber?: bigint | number | string;
 			nextHashes?: Iterable<string>;
 			replicas: number;
 			selfHash: string;
@@ -1049,6 +1075,7 @@ export class SharedLogNativeState {
 			this.native.plan_local_append_for_gid(
 				input.entryHash,
 				input.gid,
+				asIntegerString(input.hashNumber ?? 0),
 				input.nextHashes ? [...input.nextHashes] : [],
 				input.replicas,
 				...findLeaderArguments({
@@ -1108,6 +1135,7 @@ export class SharedLogNativeState {
 		input: {
 			entryHash: string;
 			gid: string;
+			hashNumber?: bigint | number | string;
 			nextHashes?: Iterable<string>;
 			replicas: number;
 			fullReplicaCandidates?: Iterable<string>;
@@ -1124,6 +1152,7 @@ export class SharedLogNativeState {
 			this.native.plan_append_for_gid(
 				input.entryHash,
 				input.gid,
+				asIntegerString(input.hashNumber ?? 0),
 				input.nextHashes ? [...input.nextHashes] : [],
 				input.replicas,
 				input.fullReplicaCandidates ? [...input.fullReplicaCandidates] : [],
@@ -1164,6 +1193,7 @@ export class SharedLogNativeState {
 		const rows = this.native.plan_append_for_gids_batch(
 			entries.map((entry) => entry.entryHash),
 			entries.map((entry) => entry.gid),
+			entries.map((entry) => asIntegerString(entry.hashNumber ?? 0)),
 			entries.map((entry) => (entry.nextHashes ? [...entry.nextHashes] : [])),
 			entries.map((entry) => entry.replicas),
 			input.fullReplicaCandidates ? [...input.fullReplicaCandidates] : [],
