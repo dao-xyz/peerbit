@@ -17,7 +17,11 @@ import {
 	type Change,
 	Entry,
 	EntryType,
+	LamportClock,
+	ShallowEntry,
+	ShallowMeta,
 	type ShallowOrFullEntry,
+	Timestamp,
 	type TrimOptions,
 } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
@@ -742,12 +746,20 @@ export class Documents<
 			  })
 			| undefined,
 	) {
+		const indexedContextNext = existingHead
+			? this.nextFromIndexedContext(existingHead, existingLocalContext)
+			: undefined;
+		const next = existingHead
+			? indexedContextNext
+				? [indexedContextNext]
+				: [await this._resolveEntry(existingHead)]
+			: [];
 		const appended = await this.log.appendLocallyPrepared(
 			operation,
 			{
 				...options,
 				meta: {
-					next: existingHead ? [await this._resolveEntry(existingHead)] : [],
+					next,
 					...options?.meta,
 				},
 				replicate: options?.replicate,
@@ -782,6 +794,36 @@ export class Documents<
 		}
 		this.keepCache?.add(appended.entry.hash);
 		return appended;
+	}
+
+	private nextFromIndexedContext(
+		existingHead: string,
+		existing:
+			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
+			| null
+			| undefined,
+	): ShallowEntry | undefined {
+		const context = existing?.value.__context;
+		if (!context || context.head !== existingHead) {
+			return;
+		}
+		return new ShallowEntry({
+			hash: context.head,
+			head: false,
+			payloadSize: context.size,
+			meta: new ShallowMeta({
+				gid: context.gid,
+				clock: new LamportClock({
+					id: this.log.log.identity.publicKey.bytes,
+					timestamp: new Timestamp({
+						wallTime: context.modified,
+						logical: 0,
+					}),
+				}),
+				next: [],
+				type: EntryType.APPEND,
+			}),
+		});
 	}
 
 	private async handlePreparedPlainPutCommit(properties: {
