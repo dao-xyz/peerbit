@@ -1,6 +1,7 @@
 import { field, vec } from "@dao-xyz/borsh";
 import {
 	And,
+	BoolQuery,
 	ByteMatchQuery,
 	Compare,
 	IntegerCompare,
@@ -104,6 +105,47 @@ class BridgeBytesDocument {
 	constructor(id: string, payload: Uint8Array) {
 		this.id = id;
 		this.payload = payload;
+	}
+}
+
+class BridgeCoordinateDocument {
+	@id({ type: "string" })
+	hash: string;
+
+	@field({ type: "u64" })
+	hashNumber: bigint;
+
+	@field({ type: "string" })
+	gid: string;
+
+	@field({ type: vec("u64") })
+	coordinates: bigint[];
+
+	@field({ type: "u64" })
+	wallTime: bigint;
+
+	@field({ type: "bool" })
+	assignedToRangeBoundary: boolean;
+
+	@field({ type: Uint8Array })
+	_meta: Uint8Array;
+
+	constructor(
+		hash: string,
+		hashNumber: bigint,
+		gid: string,
+		coordinates: bigint[],
+		wallTime: bigint,
+		assignedToRangeBoundary: boolean,
+		meta: Uint8Array,
+	) {
+		this.hash = hash;
+		this.hashNumber = hashNumber;
+		this.gid = gid;
+		this.coordinates = coordinates;
+		this.wallTime = wallTime;
+		this.assignedToRangeBoundary = assignedToRangeBoundary;
+		this._meta = meta;
 	}
 }
 
@@ -323,6 +365,94 @@ describe("native planner bridge", () => {
 		expect(deleted.map((id) => id.primitive)).to.deep.equal(["a"]);
 		const results = await index.iterate().all();
 		expect(results.map((result) => result.value.id)).to.deep.equal(["b"]);
+
+		await indices.drop();
+	});
+
+	it("indexes shared-log coordinate fields through the typed native path", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeCoordinateDocument });
+		const coordinateIndex = index as typeof index & {
+			putSharedLogCoordinateAndDeleteIds: (
+				value: BridgeCoordinateDocument,
+				fields: {
+					hash: string;
+					hashNumber: bigint;
+					gid: string;
+					coordinates: bigint[];
+					wallTime: bigint;
+					assignedToRangeBoundary: boolean;
+					metaBytes: Uint8Array;
+				},
+				deleteIds?: string[],
+			) => Promise<ReturnType<typeof toId>[]>;
+		};
+		const meta = new Uint8Array([1, 2, 3]);
+		const first = new BridgeCoordinateDocument(
+			"a",
+			10n,
+			"gid-a",
+			[4n, 8n],
+			12n,
+			true,
+			meta,
+		);
+		await coordinateIndex.putSharedLogCoordinateAndDeleteIds(first, {
+			hash: first.hash,
+			hashNumber: first.hashNumber,
+			gid: first.gid,
+			coordinates: first.coordinates,
+			wallTime: first.wallTime,
+			assignedToRangeBoundary: first.assignedToRangeBoundary,
+			metaBytes: first._meta,
+		});
+
+		const matches = await index
+			.iterate({
+				query: new And([
+					new StringMatch({ key: "gid", value: "gid-a" }),
+					new IntegerCompare({
+						key: "coordinates",
+						compare: Compare.Equal,
+						value: 8n,
+					}),
+					new BoolQuery({
+						key: "assignedToRangeBoundary",
+						value: true,
+					}),
+					new ByteMatchQuery({ key: "_meta", value: meta }),
+				]),
+			})
+			.all();
+		expect(matches.map((entry) => entry.value.hash)).to.deep.equal(["a"]);
+
+		const second = new BridgeCoordinateDocument(
+			"b",
+			11n,
+			"gid-b",
+			[16n],
+			13n,
+			false,
+			new Uint8Array([4]),
+		);
+		const deleted = await coordinateIndex.putSharedLogCoordinateAndDeleteIds(
+			second,
+			{
+				hash: second.hash,
+				hashNumber: second.hashNumber,
+				gid: second.gid,
+				coordinates: second.coordinates,
+				wallTime: second.wallTime,
+				assignedToRangeBoundary: second.assignedToRangeBoundary,
+				metaBytes: second._meta,
+			},
+			["a"],
+		);
+
+		expect(deleted.map((id) => id.primitive)).to.deep.equal(["a"]);
+		const remaining = await index.iterate().all();
+		expect(remaining.map((entry) => entry.value.hash)).to.deep.equal(["b"]);
 
 		await indices.drop();
 	});
@@ -791,6 +921,67 @@ describe("native planner bridge", () => {
 			const result = await readerIndex.iterate().all();
 
 			expect(result.map((entry) => entry.value.id)).to.deep.equal(["b"]);
+		} finally {
+			await writer.drop();
+			await reader.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
+	it("replays durable shared-log coordinate fields from the typed native path", async () => {
+		const directory = createPersistenceDirectory();
+		const writer = create(directory);
+		const reader = create(directory);
+		try {
+			await writer.start();
+			const writerIndex = await writer.init({ schema: BridgeCoordinateDocument });
+			const coordinateIndex = writerIndex as typeof writerIndex & {
+				putSharedLogCoordinateAndDeleteIds: (
+					value: BridgeCoordinateDocument,
+					fields: {
+						hash: string;
+						hashNumber: bigint;
+						gid: string;
+						coordinates: bigint[];
+						wallTime: bigint;
+						assignedToRangeBoundary: boolean;
+						metaBytes: Uint8Array;
+					},
+					deleteIds?: string[],
+				) => Promise<ReturnType<typeof toId>[]>;
+			};
+			const value = new BridgeCoordinateDocument(
+				"a",
+				10n,
+				"gid-a",
+				[4n, 8n],
+				12n,
+				true,
+				new Uint8Array([1, 2, 3]),
+			);
+			await coordinateIndex.putSharedLogCoordinateAndDeleteIds(value, {
+				hash: value.hash,
+				hashNumber: value.hashNumber,
+				gid: value.gid,
+				coordinates: value.coordinates,
+				wallTime: value.wallTime,
+				assignedToRangeBoundary: value.assignedToRangeBoundary,
+				metaBytes: value._meta,
+			});
+
+			await reader.start();
+			const readerIndex = await reader.init({ schema: BridgeCoordinateDocument });
+			const result = await readerIndex
+				.iterate({
+					query: new IntegerCompare({
+						key: "coordinates",
+						compare: Compare.Equal,
+						value: 8n,
+					}),
+				})
+				.all();
+
+			expect(result.map((entry) => entry.value.hash)).to.deep.equal(["a"]);
 		} finally {
 			await writer.drop();
 			await reader.drop();
