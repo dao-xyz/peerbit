@@ -576,9 +576,43 @@ export class Log<T> {
 		options: AppendOptions<T> = {},
 	): Promise<{ entry: Entry<T>; removed: ShallowOrFullEntry<T>[] }> {
 		const nexts = await this.getNextsForAppend(options);
-		const entry = await this.createAppendEntry(data, options, nexts);
-		await this.joinMissingNexts(entry, nexts);
-		await this.putAppendEntry(entry, options);
+		const deferBlockStore = hasPutMany(this._storage);
+		const nativeAppendChain = this.entryIndex.properties.nativeGraph
+			? await this.createNativePlainAppendChain(
+					[data],
+					options,
+					nexts,
+					deferBlockStore,
+				)
+			: undefined;
+		let entry: Entry<T>;
+		if (nativeAppendChain) {
+			entry = nativeAppendChain.entries[0]!;
+			try {
+				await this.joinMissingNexts(entry, nexts);
+				if (deferBlockStore && !nativeAppendChain.nativeBlocksCommitted) {
+					await this.putAppendEntryBlocks([entry], nativeAppendChain.blocks);
+				}
+				await this.putAppendEntries(
+					[entry],
+					options,
+					nexts.map((next) => next.hash),
+					nativeAppendChain,
+				);
+			} catch (error) {
+				if (nativeAppendChain.nativeGraphUpdated) {
+					this.rollbackNativeAppendGraph([entry]);
+				}
+				if (nativeAppendChain.nativeBlocksCommitted) {
+					await this.rollbackNativeAppendBlocks([entry]);
+				}
+				throw error;
+			}
+		} else {
+			entry = await this.createAppendEntry(data, options, nexts);
+			await this.joinMissingNexts(entry, nexts);
+			await this.putAppendEntry(entry, options);
+		}
 
 		const pendingDeletes: (
 			| PendingDelete<T>
@@ -703,8 +737,7 @@ export class Log<T> {
 			options.canAppend ||
 			this._hasCustomCanAppend ||
 			options.meta?.timestamp ||
-			options.meta?.type === EntryType.CUT ||
-			data.length < 2
+			options.meta?.type === EntryType.CUT
 		) {
 			return Promise.resolve(undefined);
 		}

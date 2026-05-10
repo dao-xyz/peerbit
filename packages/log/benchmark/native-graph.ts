@@ -232,6 +232,19 @@ for (const nativeGraph of [false, true]) {
 	);
 }
 
+rows.push(
+	await measureAppend(
+		"append loop native block commit",
+		true,
+		async (log) => {
+			for (let i = 0; i < appendEntries; i++) {
+				await log.append(new Uint8Array([i & 0xff]));
+			}
+		},
+		createNativeLogBlockStore,
+	),
+);
+
 for (const nativeGraph of [false, true]) {
 	rows.push(
 		await measureAppend("appendMany auto-next", nativeGraph, async (log) => {
