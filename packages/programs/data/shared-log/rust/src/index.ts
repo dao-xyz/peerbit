@@ -273,19 +273,25 @@ type NativeSharedLogStateHandle = {
 	clear: () => void;
 	put: NativeRangePlannerHandle["put"];
 	delete: NativeRangePlannerHandle["delete"];
-	put_entry_coordinates: (hash: string, coordinates: string[]) => void;
+	put_entry_coordinates: (
+		hash: string,
+		coordinates: string[],
+		assignedToRangeBoundary: boolean,
+	) => void;
 	delete_entry_coordinates: (hash: string) => boolean;
 	get_entry_coordinates: (hash: string) => unknown[] | undefined;
 	commit_entry_coordinates: (
 		hash: string,
 		coordinates: string[],
 		nextHashes: string[],
+		assignedToRangeBoundary: boolean,
 	) => void;
 	count_entry_coordinates_in_ranges: (
 		start1: string[],
 		end1: string[],
 		start2: string[],
 		end2: string[],
+		includeAssignedToRangeBoundary: boolean,
 	) => number;
 	delete_entry_coordinates_batch: (hashes: string[]) => void;
 	clear_entry_coordinates: () => void;
@@ -851,8 +857,13 @@ export class SharedLogNativeState {
 	putEntryCoordinates(
 		hash: string,
 		coordinates: Iterable<bigint | number | string>,
+		assignedToRangeBoundary = false,
 	): void {
-		this.native.put_entry_coordinates(hash, [...coordinates].map(asIntegerString));
+		this.native.put_entry_coordinates(
+			hash,
+			[...coordinates].map(asIntegerString),
+			assignedToRangeBoundary,
+		);
 	}
 
 	deleteEntryCoordinates(hash: string): boolean {
@@ -868,11 +879,13 @@ export class SharedLogNativeState {
 		hash: string,
 		coordinates: Iterable<bigint | number | string>,
 		nextHashes: Iterable<string>,
+		assignedToRangeBoundary = false,
 	): void {
 		this.native.commit_entry_coordinates(
 			hash,
 			[...coordinates].map(asIntegerString),
 			[...nextHashes],
+			assignedToRangeBoundary,
 		);
 	}
 
@@ -883,6 +896,7 @@ export class SharedLogNativeState {
 			start2: bigint | number | string;
 			end2: bigint | number | string;
 		}>,
+		options?: { includeAssignedToRangeBoundary?: boolean },
 	): number {
 		const start1: string[] = [];
 		const end1: string[] = [];
@@ -899,6 +913,7 @@ export class SharedLogNativeState {
 			end1,
 			start2,
 			end2,
+			options?.includeAssignedToRangeBoundary === true,
 		);
 	}
 
