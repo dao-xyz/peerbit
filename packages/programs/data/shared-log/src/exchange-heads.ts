@@ -79,7 +79,12 @@ export const createExchangeHeadsMessages = async function* (
 	const headArray = Array.isArray(heads) ? heads : [...heads];
 	const resolvedHeads = await resolveExchangeHeadEntries(log, headArray);
 	const canUseNativeReferenceGids = headArray.length === 1;
-	for (const entry of resolvedHeads) {
+	const nativeReferenceRowsByPosition =
+		canUseNativeReferenceGids === false
+			? getNativeReferenceRowsByPosition(log, resolvedHeads)
+			: undefined;
+	for (let i = 0; i < resolvedHeads.length; i++) {
+		const entry = resolvedHeads[i];
 		if (!entry) {
 			continue; // missing this entry, could be deleted while iterating
 		}
@@ -97,6 +102,36 @@ export const createExchangeHeadsMessages = async function* (
 				new EntryWithRefs({
 					entry,
 					gidRefrences: nativeGidReferences,
+				}),
+			);
+			size += entry.size;
+			if (size > MAX_EXCHANGE_MESSAGE_SIZE) {
+				size = 0;
+				yield new ExchangeHeadsMessage({
+					heads: current,
+				});
+				current = [];
+			}
+			continue;
+		}
+
+		const nativeReferenceRows = nativeReferenceRowsByPosition?.get(i);
+		if (nativeReferenceRows) {
+			const gidRefrences: string[] = [];
+			for (const [hash, gid] of nativeReferenceRows) {
+				if (visitedHeads.has(hash)) {
+					continue;
+				}
+				visitedHeads.add(hash);
+				gidRefrences.push(gid);
+			}
+			if (gidRefrences.length > 1000) {
+				warn("Large refs count: ", gidRefrences.length);
+			}
+			current.push(
+				new EntryWithRefs({
+					entry,
+					gidRefrences,
 				}),
 			);
 			size += entry.size;
@@ -145,6 +180,31 @@ export const createExchangeHeadsMessages = async function* (
 			heads: current,
 		});
 	}
+};
+
+const getNativeReferenceRowsByPosition = (
+	log: Log<any>,
+	resolvedHeads: Array<Entry<any> | undefined>,
+) => {
+	const positions: number[] = [];
+	const hashes: string[] = [];
+	for (let i = 0; i < resolvedHeads.length; i++) {
+		const entry = resolvedHeads[i];
+		if (!entry) {
+			continue;
+		}
+		positions.push(i);
+		hashes.push(entry.hash);
+	}
+	const rows = log.entryIndex.getUniqueReferenceGidRowsBatch(hashes);
+	if (!rows) {
+		return undefined;
+	}
+	const byPosition = new Map<number, Array<[string, string]> | undefined>();
+	for (let i = 0; i < rows.length; i++) {
+		byPosition.set(positions[i]!, rows[i]);
+	}
+	return byPosition;
 };
 
 const resolveExchangeHeadEntries = async (

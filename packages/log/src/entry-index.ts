@@ -182,6 +182,9 @@ export type NativeLogGraph = {
 	joinHeadEntries: (gid?: string) => NativeLogJoinEntry[];
 	childJoinEntries: (hash: string) => NativeLogJoinEntry[];
 	uniqueReferenceGids: (hash: string) => string[] | undefined;
+	uniqueReferenceGidRowsBatch?: (
+		hashes: Iterable<string>,
+	) => Array<Array<[string, string]> | undefined>;
 	planDeleteRecursively: (
 		hashes: Iterable<string>,
 		skipFirst?: boolean,
@@ -552,6 +555,21 @@ export class EntryIndex<T> {
 			return undefined;
 		}
 		return this.properties.nativeGraph.graph.uniqueReferenceGids(hash);
+	}
+
+	getUniqueReferenceGidRowsBatch(
+		hashes: Iterable<string>,
+	): Array<Array<[string, string]> | undefined> | undefined {
+		if (!this.properties.nativeGraph) {
+			return undefined;
+		}
+		const normalized = [...hashes];
+		if (normalized.length === 0) {
+			return [];
+		}
+		return this.properties.nativeGraph.graph.uniqueReferenceGidRowsBatch?.(
+			normalized,
+		);
 	}
 
 	planDeleteRecursively(

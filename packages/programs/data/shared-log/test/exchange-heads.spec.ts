@@ -109,4 +109,77 @@ describe("exchange heads", () => {
 			await log.close();
 		}
 	});
+
+	it("uses native graph reference gids for multi-head messages", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			nativeGraph: true,
+		});
+
+		const { entry: leftRoot } = await log.append(new Uint8Array([1]), {
+			meta: { next: [], gidSeed: new Uint8Array([1]) },
+		});
+		const { entry: leftSide } = await log.append(new Uint8Array([2]), {
+			meta: { next: [], gidSeed: new Uint8Array([2]) },
+		});
+		const { entry: rightRoot } = await log.append(new Uint8Array([3]), {
+			meta: { next: [], gidSeed: new Uint8Array([3]) },
+		});
+		const { entry: rightSide } = await log.append(new Uint8Array([4]), {
+			meta: { next: [], gidSeed: new Uint8Array([4]) },
+		});
+		const { entry: leftHead } = await log.append(new Uint8Array([5]), {
+			meta: { next: [leftRoot, leftSide] },
+		});
+		const { entry: rightHead } = await log.append(new Uint8Array([6]), {
+			meta: { next: [rightRoot, rightSide] },
+		});
+
+		const nativeGraph = log.entryIndex.properties.nativeGraph!.graph;
+		const expectedLeftReferences =
+			nativeGraph.uniqueReferenceGids(leftHead.hash) ?? [];
+		const expectedRightReferences =
+			nativeGraph.uniqueReferenceGids(rightHead.hash) ?? [];
+		expect(expectedLeftReferences).to.not.be.empty;
+		expect(expectedRightReferences).to.not.be.empty;
+		const uniqueReferenceGidRowsBatchSpy = sinon.spy(
+			nativeGraph,
+			"uniqueReferenceGidRowsBatch",
+		);
+		const getShallowSpy = sinon.spy(log.entryIndex, "getShallow");
+		try {
+			const messages = [];
+			for await (const message of createExchangeHeadsMessages(log, [
+				leftHead,
+				rightHead,
+			])) {
+				messages.push(message);
+			}
+
+			expect(messages).to.have.length(1);
+			expect(messages[0]!.heads).to.have.length(2);
+			expect(messages[0]!.heads.map((head) => head.entry.hash)).to.deep.equal([
+				leftHead.hash,
+				rightHead.hash,
+			]);
+			expect(messages[0]!.heads[0]!.gidRefrences).to.deep.equal(
+				expectedLeftReferences,
+			);
+			expect(messages[0]!.heads[1]!.gidRefrences).to.deep.equal(
+				expectedRightReferences,
+			);
+			expect(
+				uniqueReferenceGidRowsBatchSpy.calledOnceWithExactly([
+					leftHead.hash,
+					rightHead.hash,
+				]),
+			).to.equal(true);
+			expect(getShallowSpy.callCount).equal(0);
+		} finally {
+			getShallowSpy.restore();
+			uniqueReferenceGidRowsBatchSpy.restore();
+			await log.close();
+		}
+	});
 });

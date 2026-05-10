@@ -332,7 +332,7 @@ impl LogGraphIndex {
             .collect()
     }
 
-    pub fn unique_reference_gids(&self, hash: &str) -> Option<Vec<String>> {
+    pub fn unique_reference_gid_rows(&self, hash: &str) -> Option<Vec<(String, String)>> {
         let entry = self.entries.get(hash)?;
         if entry.entry_type == ENTRY_TYPE_CUT {
             return Some(Vec::new());
@@ -350,7 +350,7 @@ impl LogGraphIndex {
             if !visited_gids.insert(next_entry.gid.clone()) {
                 continue;
             }
-            out.push(next_entry.gid.clone());
+            out.push((next_hash, next_entry.gid.clone()));
             if next_entry.entry_type == ENTRY_TYPE_CUT {
                 continue;
             }
@@ -358,6 +358,21 @@ impl LogGraphIndex {
         }
 
         Some(out)
+    }
+
+    pub fn unique_reference_gids(&self, hash: &str) -> Option<Vec<String>> {
+        self.unique_reference_gid_rows(hash)
+            .map(|rows| rows.into_iter().map(|(_, gid)| gid).collect())
+    }
+
+    pub fn unique_reference_gid_rows_batch(
+        &self,
+        hashes: &[String],
+    ) -> Vec<Option<Vec<(String, String)>>> {
+        hashes
+            .iter()
+            .map(|hash| self.unique_reference_gid_rows(hash))
+            .collect()
     }
 
     pub fn plan_delete_recursively(&self, from: &[String], skip_first: bool) -> Vec<String> {
@@ -1067,6 +1082,19 @@ impl NativeLogIndex {
             .unique_reference_gids(hash)
             .map(|gids| strings_to_array(gids).into())
             .unwrap_or(JsValue::UNDEFINED)
+    }
+
+    pub fn unique_reference_gid_rows_batch(&self, hashes: Array) -> Result<Array, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        let out = Array::new();
+        for rows in self.inner.unique_reference_gid_rows_batch(&hashes) {
+            out.push(
+                &rows
+                    .map(|rows| reference_gid_rows_to_array(rows).into())
+                    .unwrap_or(JsValue::UNDEFINED),
+            );
+        }
+        Ok(out)
     }
 
     pub fn plan_delete_recursively(&self, from: Array, skip_first: bool) -> Result<Array, JsValue> {
@@ -1922,6 +1950,17 @@ fn strings_to_array(values: Vec<String>) -> Array {
     let out = Array::new();
     for value in values {
         out.push(&JsValue::from_str(&value));
+    }
+    out
+}
+
+fn reference_gid_rows_to_array(values: Vec<(String, String)>) -> Array {
+    let out = Array::new();
+    for (hash, gid) in values {
+        let row = Array::new();
+        row.push(&JsValue::from_str(&hash));
+        row.push(&JsValue::from_str(&gid));
+        out.push(&row);
     }
     out
 }
