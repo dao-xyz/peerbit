@@ -2,7 +2,7 @@ use indexmap::{IndexMap, IndexSet};
 use js_sys::Array;
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use wasm_bindgen::prelude::*;
 
 const MODE_NON_STRICT: u8 = 0;
@@ -1101,7 +1101,7 @@ pub struct NativeRangePlanner {
 pub struct SharedLogStateInner {
     range_planner: RangePlanner,
     entry_coordinates: IndexMap<String, EntryCoordinateState>,
-    entry_hashes_by_hash_number: HashMap<u64, IndexSet<String>>,
+    entry_hashes_by_hash_number: BTreeMap<u64, IndexSet<String>>,
     gid_peers: HashMap<String, IndexSet<String>>,
     entry_known_peers: HashMap<String, IndexSet<String>>,
 }
@@ -1120,7 +1120,7 @@ impl SharedLogStateInner {
         Self {
             range_planner: RangePlanner::new(&resolution),
             entry_coordinates: IndexMap::new(),
-            entry_hashes_by_hash_number: HashMap::new(),
+            entry_hashes_by_hash_number: BTreeMap::new(),
             gid_peers: HashMap::new(),
             entry_known_peers: HashMap::new(),
         }
@@ -1725,17 +1725,23 @@ impl NativeSharedLogState {
         let start2 = parse_u64(&start2)?;
         let end2 = parse_u64(&end2)?;
         let out = Array::new();
-        for (hash_number, hashes) in &self.inner.entry_hashes_by_hash_number {
-            if coordinate_in_segment(*hash_number, start1, end1)
-                || (start2 != end2 && coordinate_in_segment(*hash_number, start2, end2))
-            {
-                let value = JsValue::from_str(&hash_number.to_string());
-                for _ in hashes {
-                    out.push(&value);
-                }
-            }
+        self.push_entry_hash_numbers_in_segment(&out, start1, end1);
+        if start2 != end2 {
+            self.push_entry_hash_numbers_in_segment(&out, start2, end2);
         }
         Ok(out)
+    }
+
+    fn push_entry_hash_numbers_in_segment(&self, out: &Array, start: u64, end: u64) {
+        if start >= end {
+            return;
+        }
+        for (hash_number, hashes) in self.inner.entry_hashes_by_hash_number.range(start..end) {
+            let value = JsValue::from_str(&hash_number.to_string());
+            for _ in hashes {
+                out.push(&value);
+            }
+        }
     }
 
     pub fn commit_entry_coordinates(
