@@ -4809,6 +4809,12 @@ export class SharedLog<
 		});
 		const resolveHashesForSymbols = (symbols: bigint[]) =>
 			this._nativeSharedLogState?.getEntryHashesForHashNumbers(symbols);
+		const resolveHashNumbersInRange = (range: {
+			start1: bigint | number;
+			end1: bigint | number;
+			start2: bigint | number;
+			end2: bigint | number;
+		}) => this._nativeSharedLogState?.getEntryHashNumbersInRange(range);
 
 		if (options?.syncronizer) {
 			this.syncronizer = new options.syncronizer({
@@ -4819,6 +4825,7 @@ export class SharedLog<
 				rpc: this.rpc,
 				coordinateToHash: this.coordinateToHash,
 				resolveHashesForSymbols,
+				resolveHashNumbersInRange,
 				sync: options?.sync,
 			});
 		} else {
@@ -4849,6 +4856,7 @@ export class SharedLog<
 					rpc: this.rpc,
 					coordinateToHash: this.coordinateToHash,
 					resolveHashesForSymbols,
+					resolveHashNumbersInRange,
 					sync: options?.sync,
 				}) as Syncronizer<R>;
 			}

@@ -66,6 +66,16 @@ export type HashSymbolResolver = (
 	| undefined
 	| Promise<ReadonlyMap<bigint, Iterable<string>> | undefined>;
 
+export type HashSymbolRangeResolver = (range: {
+	start1: bigint | number;
+	end1: bigint | number;
+	start2: bigint | number;
+	end2: bigint | number;
+}) =>
+	| Iterable<bigint | number>
+	| undefined
+	| Promise<Iterable<bigint | number> | undefined>;
+
 export type SynchronizerComponents<R extends "u32" | "u64"> = {
 	rpc: RPC<TransportMessage, TransportMessage>;
 	rangeIndex: Index<ReplicationRangeIndexable<R>, any>;
@@ -74,6 +84,7 @@ export type SynchronizerComponents<R extends "u32" | "u64"> = {
 	coordinateToHash: Cache<string>;
 	numbers: Numbers<R>;
 	resolveHashesForSymbols?: HashSymbolResolver;
+	resolveHashNumbersInRange?: HashSymbolRangeResolver;
 	sync?: SyncOptions<R>;
 };
 export type SynchronizerConstructor<R extends "u32" | "u64"> = new (
