@@ -239,6 +239,7 @@ describe("index", () => {
 					store.docs as any,
 					"getLocalIndexedContext",
 				);
+				const lowerLogGetSpy = sinon.spy(store.docs.log.log, "get");
 
 				try {
 					const id = uuid();
@@ -261,10 +262,12 @@ describe("index", () => {
 					expect(validatedAppendSpy.callCount).equal(0);
 					expect(appendSpy.callCount).equal(0);
 					expect(localLookupSpy.callCount).equal(2);
+					expect(lowerLogGetSpy.callCount).equal(0);
 					expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
 					expect((await store.docs.get(id))?.name).equal("second");
 				} finally {
 					localLookupSpy.restore();
+					lowerLogGetSpy.restore();
 					preparedAppendSpy.restore();
 					validatedAppendSpy.restore();
 					appendSpy.restore();
