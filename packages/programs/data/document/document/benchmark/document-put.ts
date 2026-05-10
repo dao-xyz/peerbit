@@ -15,6 +15,7 @@ import { Documents, type SetupOptions } from "../src/program.js";
 // - DOC_ITERATIONS=1000
 // - DOC_BYTES=1200
 // - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-transient-index
+//   Add "-nonunique" to any scenario name to use default update-safe put semantics.
 // - BENCH_JSON=1
 
 const payloadBytes = Math.max(
@@ -37,6 +38,9 @@ const scenarioNames = (
 	.split(",")
 	.map((x) => x.trim())
 	.filter(Boolean);
+
+const scenarioBaseName = (name: string) => name.replace(/-nonunique$/, "");
+const scenarioUsesUniquePuts = (name: string) => !name.endsWith("-nonunique");
 
 @variant("document")
 class Document {
@@ -149,22 +153,23 @@ const patchAsyncMethod = (
 };
 
 const openScenario = async (name: string) => {
+	const baseName = scenarioBaseName(name);
 	const rustOptions =
-		name === "native-block-store" ||
-		name === "rust-peerbit" ||
-		name === "rust-peerbit-transient-index"
+		baseName === "native-block-store" ||
+		baseName === "rust-peerbit" ||
+		baseName === "rust-peerbit-transient-index"
 			? createRustPeerbitOptions()
 			: undefined;
 	const session = await TestSession.connected(1, {
 		...(rustOptions ? { storage: rustOptions.storage } : {}),
 		indexer:
-			name === "simple-index"
+			baseName === "simple-index"
 				? createSimpleIndexer
-				: name === "sqlite-index"
+				: baseName === "sqlite-index"
 					? createSqliteIndexer
-					: name === "rust-peerbit"
+					: baseName === "rust-peerbit"
 						? rustOptions?.indexer
-						: name === "rust-peerbit-transient-index"
+						: baseName === "rust-peerbit-transient-index"
 							? () => rustOptions!.indexer(undefined)
 						: undefined,
 	});
@@ -178,9 +183,9 @@ const openScenario = async (name: string) => {
 				factor: 1,
 			},
 			nativeGraph:
-				name === "native-graph" ||
-				name === "rust-peerbit" ||
-				name === "rust-peerbit-transient-index",
+				baseName === "native-graph" ||
+				baseName === "rust-peerbit" ||
+				baseName === "rust-peerbit-transient-index",
 			log: {
 				trim: { type: "length" as const, to: 100 },
 			},
@@ -197,10 +202,10 @@ const runPuts = async (
 ) => {
 	const canAppend = () => true;
 	const appendOptions = {
-		unique: true,
 		replicate: false,
 		target: "none" as const,
-		...(scenario === "compat-path" ? { canAppend } : {}),
+		...(scenarioUsesUniquePuts(scenario) ? { unique: true } : {}),
+		...(scenarioBaseName(scenario) === "compat-path" ? { canAppend } : {}),
 	};
 	for (let i = 0; i < count; i++) {
 		const doc = createDocument();
