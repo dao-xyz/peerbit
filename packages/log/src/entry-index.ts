@@ -39,6 +39,13 @@ export type ResultsIterator<T> = {
 const ENTRY_CACHE_MAX_SIZE = 10; // TODO as param for log
 const DEFERRED_INDEX_FLUSH_IDLE_MS = 250;
 const NATIVE_GRAPH_REBUILD_BATCH_SIZE = 512;
+const TIMESTAMP_WALL_TIME_KEY = [
+	"meta",
+	"clock",
+	"timestamp",
+	"wallTime",
+];
+const TIMESTAMP_LOGICAL_KEY = ["meta", "clock", "timestamp", "logical"];
 
 type BlocksWithGetMany = Blocks & {
 	getMany?: (
@@ -177,6 +184,8 @@ export type NativeLogGraph = {
 		skipFirst?: boolean,
 	) => string[];
 	payloadSizeSum: () => number;
+	oldestHash?: () => string | undefined;
+	newestHash?: () => string | undefined;
 	countHasNext: (next: string, excludeHash?: string) => number;
 	shadowedGids: (gid: string, next: string[], excludeHash?: string) => string[];
 	planJoin: (
@@ -276,6 +285,26 @@ const canBatchResolveFromStore = (
 		return false;
 	}
 	return typeof options !== "object" || !options.remote;
+};
+
+const sortKeyEquals = (sort: Sort | undefined, key: string[]) =>
+	Array.isArray(sort?.key) &&
+	sort.key.length === key.length &&
+	sort.key.every((part, index) => part === key[index]);
+
+const timestampSortDirection = (sort: Sort[]): SortDirection | undefined => {
+	if (sort.length < 2) {
+		return;
+	}
+	const [wallTime, logical] = sort;
+	if (
+		!sortKeyEquals(wallTime, TIMESTAMP_WALL_TIME_KEY) ||
+		!sortKeyEquals(logical, TIMESTAMP_LOGICAL_KEY) ||
+		wallTime.direction !== logical.direction
+	) {
+		return;
+	}
+	return wallTime.direction;
 };
 export type ReturnTypeFromResolveOptions<
 	R extends MaybeResolveOptions,
@@ -760,6 +789,15 @@ export class EntryIndex<T> {
 		T extends boolean,
 		R = T extends true ? Entry<any> : ShallowEntry,
 	>(resolve?: T): Promise<R | undefined> {
+		const nativeHash = this.getNativeTimestampOrderedHash("oldest");
+		if (nativeHash) {
+			const nativeResult = resolve
+				? await this.resolve(nativeHash)
+				: (await this.getShallow(nativeHash))?.value;
+			if (nativeResult) {
+				return nativeResult as R;
+			}
+		}
 		const iterator = this.iterate([], this.properties.sort.sort, resolve);
 		const results = await iterator.next(1);
 		await iterator.close();
@@ -770,10 +808,37 @@ export class EntryIndex<T> {
 		T extends boolean,
 		R = T extends true ? Entry<any> : ShallowEntry,
 	>(resolve?: T): Promise<R | undefined> {
+		const nativeHash = this.getNativeTimestampOrderedHash("newest");
+		if (nativeHash) {
+			const nativeResult = resolve
+				? await this.resolve(nativeHash)
+				: (await this.getShallow(nativeHash))?.value;
+			if (nativeResult) {
+				return nativeResult as R;
+			}
+		}
 		const iterator = this.iterate([], this.sortReversed, resolve);
 		const results = await iterator.next(1);
 		await iterator.close();
 		return results[0] as R;
+	}
+
+	private getNativeTimestampOrderedHash(
+		position: "oldest" | "newest",
+	): string | undefined {
+		const graph = this.properties.nativeGraph?.graph;
+		if (!graph?.oldestHash || !graph.newestHash) {
+			return;
+		}
+		const direction = timestampSortDirection(this.properties.sort.sort);
+		if (direction == null) {
+			return;
+		}
+		const useNewest =
+			direction === SortDirection.ASC
+				? position === "newest"
+				: position === "oldest";
+		return useNewest ? graph.newestHash() : graph.oldestHash();
 	}
 
 	async getBefore<

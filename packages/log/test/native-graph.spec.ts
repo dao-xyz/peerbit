@@ -360,6 +360,34 @@ describe("native graph", () => {
 		}
 	});
 
+	it("uses the native graph to plan unfiltered length trim", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+			trim: { type: "length", to: 2 },
+		});
+		const nativeGraph = log.entryIndex.properties.nativeGraph!.graph;
+		const oldestHashSpy = sinon.spy(nativeGraph, "oldestHash");
+		const iterateSpy = sinon.spy(log.entryIndex.properties.index, "iterate");
+		try {
+			const first = (await log.append(new Uint8Array([1]), { meta: { next: [] } }))
+				.entry;
+			await log.append(new Uint8Array([2]));
+			await log.append(new Uint8Array([3]));
+
+			expect(oldestHashSpy.callCount).greaterThan(0);
+			expect(iterateSpy.callCount).equal(0);
+			expect(await log.has(first.hash)).equal(false);
+			expect(await log.entryIndex.getOldest()).to.exist;
+		} finally {
+			iterateSpy.restore();
+			oldestHashSpy.restore();
+			await log.close();
+		}
+	});
+
 	it("plans cut recursion deletes in the native graph", async () => {
 		const log = new Log<Uint8Array>();
 		await log.open(store, signKey, {

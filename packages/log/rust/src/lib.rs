@@ -121,6 +121,20 @@ impl LogGraphIndex {
             .collect()
     }
 
+    pub fn oldest_hash(&self) -> Option<String> {
+        self.entries
+            .values()
+            .min_by(|left, right| compare_entry_order(left, right))
+            .map(|entry| entry.hash.clone())
+    }
+
+    pub fn newest_hash(&self) -> Option<String> {
+        self.entries
+            .values()
+            .max_by(|left, right| compare_entry_order(left, right))
+            .map(|entry| entry.hash.clone())
+    }
+
     pub fn get(&self, hash: &str) -> Option<&LogIndexEntry> {
         self.entries.get(hash)
     }
@@ -469,6 +483,10 @@ fn compare_clock(wall_time: u64, logical: u32, other: &LogIndexEntry) -> std::cm
         .then_with(|| logical.cmp(&other.logical))
 }
 
+fn compare_entry_order(left: &LogIndexEntry, right: &LogIndexEntry) -> std::cmp::Ordering {
+    compare_clock(left.wall_time, left.logical, right).then_with(|| left.hash.cmp(&right.hash))
+}
+
 #[wasm_bindgen]
 pub struct NativeLogIndex {
     inner: LogGraphIndex,
@@ -601,6 +619,20 @@ impl NativeLogIndex {
 
     pub fn has(&self, hash: &str) -> bool {
         self.inner.has(hash)
+    }
+
+    pub fn oldest_hash(&self) -> JsValue {
+        self.inner
+            .oldest_hash()
+            .map(|hash| JsValue::from_str(&hash))
+            .unwrap_or(JsValue::UNDEFINED)
+    }
+
+    pub fn newest_hash(&self) -> JsValue {
+        self.inner
+            .newest_hash()
+            .map(|hash| JsValue::from_str(&hash))
+            .unwrap_or(JsValue::UNDEFINED)
     }
 
     pub fn has_many(&self, hashes: Array) -> Result<Array, JsValue> {
@@ -1903,6 +1935,20 @@ mod tests {
             ]),
             vec![true, false, false],
         );
+    }
+
+    #[test]
+    fn returns_oldest_and_newest_hash_by_clock_order() {
+        let mut index = LogGraphIndex::new();
+        index.put(LogIndexEntry::new("b", "g", vec![], APPEND, 2, 0, 1, true));
+        index.put(LogIndexEntry::new("a", "g", vec![], APPEND, 1, 1, 1, true));
+        index.put(LogIndexEntry::new("c", "g", vec![], APPEND, 1, 0, 1, true));
+
+        assert_eq!(index.oldest_hash(), Some("c".to_string()));
+        assert_eq!(index.newest_hash(), Some("b".to_string()));
+
+        index.delete("c");
+        assert_eq!(index.oldest_hash(), Some("a".to_string()));
     }
 
     #[test]

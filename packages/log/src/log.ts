@@ -320,7 +320,7 @@ export class Log<T> {
 				index: this._entryIndex,
 				deleteNode: async (node: ShallowEntry) => {
 					const resolved = await this.get(node.hash);
-					await this._entryIndex.delete(node.hash);
+					await this._entryIndex.delete(node.hash, node);
 					await this._storage.rm(node.hash);
 					return resolved;
 				},
