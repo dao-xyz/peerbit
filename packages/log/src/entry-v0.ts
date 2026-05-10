@@ -389,6 +389,14 @@ export class EntryV0<T>
 		return this.meta;
 	}
 
+	getMetaBytes(): Uint8Array | undefined {
+		try {
+			return this._meta.decrypted._data;
+		} catch {
+			return undefined;
+		}
+	}
+
 	async getClock(): Promise<Clock> {
 		return (await this.getMeta()).clock;
 	}
