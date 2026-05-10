@@ -766,6 +766,7 @@ export class Documents<
 			},
 			{
 				skipMissingNextJoin: !options?.checkRemote,
+				resolveTrimmedEntries: !this._index.canGetIdentityIndexedByHead(),
 			},
 		);
 		if (!options?.unique && existingLocalContext === undefined) {
@@ -886,6 +887,16 @@ export class Documents<
 		}
 
 		for (const removed of properties.removed) {
+			if (
+				!(removed instanceof Entry) &&
+				(await this.collectRemovedDocumentChangeFromIndexedHead(
+					removed.hash,
+					modified,
+					documentsChanged,
+				))
+			) {
+				continue;
+			}
 			const entry =
 				removed instanceof Entry
 					? removed
@@ -910,6 +921,32 @@ export class Documents<
 		this.events.dispatchEvent(
 			new CustomEvent("change", { detail: documentsChanged }),
 		);
+	}
+
+	private async collectRemovedDocumentChangeFromIndexedHead(
+		head: string,
+		modified: Set<string | number | bigint>,
+		documentsChanged: DocumentsChange<T, I>,
+	): Promise<boolean> {
+		const indexed = await this._index.getIdentityIndexedByHead(head);
+		if (!indexed) {
+			return false;
+		}
+
+		const key = indexed.id;
+		if (modified.has(key.primitive)) {
+			return true;
+		}
+
+		const value = coerceWithIndexed(
+			indexed.value as unknown as WithIndexedContext<T, I>,
+			indexed.value as unknown as I,
+		);
+		documentsChanged.removed.push(value);
+
+		await this._index.del(key);
+		modified.add(key.primitive);
+		return true;
 	}
 
 	private async collectRemovedDocumentChange(
