@@ -173,6 +173,7 @@ type NativeLogIndexHandle = {
 	head_entries: (gid?: string) => unknown[];
 	head_data_entries: (gid?: string) => unknown[];
 	max_head_data_u32: (gid?: string) => number | undefined;
+	max_head_data_u32_batch: (gids: string[]) => Array<number | undefined>;
 	head_join_entries: (gid?: string) => unknown[];
 	child_join_entries: (hash: string) => unknown[];
 	unique_reference_gids: (hash: string) => string[] | undefined;
@@ -688,6 +689,10 @@ export class LogGraphIndex {
 
 	maxHeadDataU32(gid?: string): number | undefined {
 		return this.native.max_head_data_u32(gid);
+	}
+
+	maxHeadDataU32Batch(gids: Iterable<string>): Array<number | undefined> {
+		return this.native.max_head_data_u32_batch([...gids]);
 	}
 
 	joinHeadEntries(gid?: string): NativeLogJoinEntry[] {

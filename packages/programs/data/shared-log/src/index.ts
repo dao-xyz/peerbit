@@ -5541,6 +5541,35 @@ export class SharedLog<
 		return maxReplicas(this, headsWithGid.values());
 	}
 
+	private async getMaxReplicasFromHeadsBatch(gids: Iterable<string>) {
+		const uniqueGids = [...new Set([...gids].filter(Boolean))];
+		const out = new Map<string, number | undefined>();
+		if (uniqueGids.length === 0) {
+			return out;
+		}
+
+		const nativeMaxes =
+			await this.log.entryIndex.getMaxHeadDataU32Batch(uniqueGids);
+		if (nativeMaxes != null) {
+			for (let i = 0; i < uniqueGids.length; i++) {
+				const gid = uniqueGids[i]!;
+				const nativeMax = nativeMaxes[i];
+				out.set(
+					gid,
+					nativeMax == null ? undefined : this.clampReplicas(nativeMax),
+				);
+			}
+			return out;
+		}
+
+		await Promise.all(
+			uniqueGids.map(async (gid) => {
+				out.set(gid, await this.getMaxReplicasFromHeads(gid));
+			}),
+		);
+		return out;
+	}
+
 	private async hasHeadForGid(gid: string) {
 		const nativeHasHead = await this.log.entryIndex.hasHead(gid);
 		if (nativeHasHead != null) {
@@ -6033,6 +6062,8 @@ export class SharedLog<
 						return;
 					}
 					const groupedByGid = await groupByGid(filteredHeads);
+					const maxReplicasFromHeadsByGid =
+						await this.getMaxReplicasFromHeadsBatch(groupedByGid.keys());
 					const promises: Promise<void>[] = [];
 
 					for (const [gid, entries] of groupedByGid) {
@@ -6046,7 +6077,7 @@ export class SharedLog<
 							const latestEntry = getLatestEntry(entries)!;
 
 							const maxReplicasFromHead =
-								(await this.getMaxReplicasFromHeads(gid)) ??
+								maxReplicasFromHeadsByGid.get(gid) ??
 								this.replicas.min.getValue(this);
 
 							const maxReplicasFromNewEntries = maxReplicas(

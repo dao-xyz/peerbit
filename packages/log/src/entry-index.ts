@@ -177,6 +177,7 @@ export type NativeLogGraph = {
 	hasAnyHeadBatch: (gidSets: Iterable<Iterable<string>>) => boolean[];
 	headDataEntries: (gid?: string) => NativeLogHeadDataEntry[];
 	maxHeadDataU32: (gid?: string) => number | undefined;
+	maxHeadDataU32Batch?: (gids: Iterable<string>) => Array<number | undefined>;
 	headEntries: (gid?: string) => SortableEntry[];
 	joinHeadEntries: (gid?: string) => NativeLogJoinEntry[];
 	childJoinEntries: (hash: string) => NativeLogJoinEntry[];
@@ -501,6 +502,19 @@ export class EntryIndex<T> {
 			return undefined;
 		}
 		return this.properties.nativeGraph.graph.maxHeadDataU32(gid);
+	}
+
+	async getMaxHeadDataU32Batch(
+		gids: Iterable<string>,
+	): Promise<Array<number | undefined> | undefined> {
+		if (!this.properties.nativeGraph?.useHeads) {
+			return undefined;
+		}
+		const normalized = [...gids];
+		if (normalized.length === 0) {
+			return [];
+		}
+		return this.properties.nativeGraph.graph.maxHeadDataU32Batch?.(normalized);
 	}
 
 	getJoinHeads(gid?: string): Promise<NativeLogJoinEntry[]> {

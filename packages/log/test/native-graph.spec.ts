@@ -174,10 +174,10 @@ describe("native graph", () => {
 			indexer: new HashmapIndices(),
 			nativeGraph: true,
 		});
-		await log.append(new Uint8Array([1]), {
+		const first = await log.append(new Uint8Array([1]), {
 			meta: { next: [], data: absoluteReplicaData(2) },
 		});
-		await log.append(new Uint8Array([2]), {
+		const second = await log.append(new Uint8Array([2]), {
 			meta: { next: [], data: absoluteReplicaData(5) },
 		});
 
@@ -187,11 +187,21 @@ describe("native graph", () => {
 		);
 		const nativeGraph = log.entryIndex.properties.nativeGraph!.graph;
 		const maxHeadDataU32Spy = sinon.spy(nativeGraph, "maxHeadDataU32");
+		const maxHeadDataU32BatchSpy = sinon.spy(nativeGraph, "maxHeadDataU32Batch");
 		try {
 			expect(await log.entryIndex.getMaxHeadDataU32()).equal(5);
+			expect(
+				await log.entryIndex.getMaxHeadDataU32Batch([
+					first.entry.meta.gid,
+					second.entry.meta.gid,
+					"missing",
+				]),
+			).to.deep.equal([2, 5, undefined]);
 			expect(maxHeadDataU32Spy.callCount).equal(1);
+			expect(maxHeadDataU32BatchSpy.callCount).equal(1);
 			expect(indexIterateSpy.callCount).equal(0);
 		} finally {
+			maxHeadDataU32BatchSpy.restore();
 			maxHeadDataU32Spy.restore();
 			indexIterateSpy.restore();
 			await log.close();
