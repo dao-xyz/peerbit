@@ -331,7 +331,7 @@ describe("native shared-log range planner", () => {
 		const state = await createSharedLogState("u32");
 		state.putEntryCoordinates("old-head", [1, 2]);
 
-		state.commitEntryCoordinates("new-head", [3, 4], ["old-head"]);
+		state.commitEntryCoordinates("new-head", [3, 4], ["old-head"], true);
 
 		expect(state.getEntryCoordinates("new-head")).to.deep.equal([3, 4]);
 		expect(state.getEntryCoordinates("old-head")).to.equal(undefined);
@@ -362,6 +362,21 @@ describe("native shared-log range planner", () => {
 					end2: 10,
 				}),
 			]),
+		).to.equal(2);
+	});
+
+	it("counts resident boundary-assigned entries on request", async () => {
+		const state = await createSharedLogState("u32");
+		state.putEntryCoordinates("inside", [5], false);
+		state.putEntryCoordinates("outside", [50], false);
+		state.putEntryCoordinates("boundary", [80], true);
+
+		const owned = [range({ id: "a", hash: "peer-a", start1: 0, end1: 10 })];
+		expect(state.countEntryCoordinatesInRanges(owned)).to.equal(1);
+		expect(
+			state.countEntryCoordinatesInRanges(owned, {
+				includeAssignedToRangeBoundary: true,
+			}),
 		).to.equal(2);
 	});
 

@@ -4941,6 +4941,7 @@ export class SharedLog<
 					state.putEntryCoordinates(
 						result.value.hash,
 						result.value.coordinates,
+						result.value.assignedToRangeBoundary,
 					);
 				}
 			}
@@ -6539,8 +6540,14 @@ export class SharedLog<
 
 	async countAssignedHeads(options?: { strict: boolean }): Promise<number> {
 		const myRanges = await this.getMyReplicationSegments();
-		if (options?.strict && this._nativeSharedLogState) {
-			return this._nativeSharedLogState.countEntryCoordinatesInRanges(myRanges);
+		if (this._nativeSharedLogState) {
+			const includeAssignedToRangeBoundary =
+				options?.strict !== true &&
+				(myRanges.length === 0 ||
+					myRanges.some((range) => range.mode === ReplicationIntent.NonStrict));
+			return this._nativeSharedLogState.countEntryCoordinatesInRanges(myRanges, {
+				includeAssignedToRangeBoundary,
+			});
 		}
 		const query = createAssignedRangesQuery(
 			myRanges.map((x) => {
@@ -7250,6 +7257,7 @@ export class SharedLog<
 				properties.entry.hash,
 				properties.coordinates,
 				properties.entry.meta.next,
+				assignedToRangeBoundary,
 			);
 		}
 
