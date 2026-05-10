@@ -29,6 +29,7 @@ import type {
 	RepairSession,
 	RepairSessionMode,
 	RepairSessionResult,
+	HashSymbolRangeResolver,
 	SyncableKey,
 	SynchronizerComponents,
 	Syncronizer,
@@ -597,40 +598,58 @@ const buildEncoderOrDecoderFromRange = async <
 	entryIndex: Index<EntryReplicated<D>>,
 	type: T,
 	profile?: SyncProfileFn,
+	resolveHashNumbersInRange?: HashSymbolRangeResolver,
 ): Promise<E | false> => {
 	await ribltReady;
 	const encoder =
 		type === "encoder" ? new EncoderWrapper() : new DecoderWrapper();
 
 	const rangeQueryStartedAt = syncProfileStart(profile);
-	const entries = await entryIndex
-		.iterate(
-			{
-				// Range sync for IBLT is done in hashNumber space.
-				query: matchEntriesByHashNumberInRangeQuery({
-					end1: ranges.end1,
-					start1: ranges.start1,
-					end2: ranges.end2,
-					start2: ranges.start2,
-				}),
-			},
-			{
-				shape: {
-					hash: true,
-					hashNumber: true,
+	let hashNumbers: Array<bigint | number> | BigUint64Array | undefined;
+	let source = "index";
+	const resolved = await resolveHashNumbersInRange?.({
+		end1: ranges.end1,
+		start1: ranges.start1,
+		end2: ranges.end2,
+		start2: ranges.start2,
+	});
+	if (resolved) {
+		source = "native";
+		hashNumbers =
+			typeof BigUint64Array !== "undefined" && resolved instanceof BigUint64Array
+				? resolved
+				: [...resolved];
+	} else {
+		const entries = await entryIndex
+			.iterate(
+				{
+					// Range sync for IBLT is done in hashNumber space.
+					query: matchEntriesByHashNumberInRangeQuery({
+						end1: ranges.end1,
+						start1: ranges.start1,
+						end2: ranges.end2,
+						start2: ranges.start2,
+					}),
 				},
-			},
-		)
-		.all();
+				{
+					shape: {
+						hash: true,
+						hashNumber: true,
+					},
+				},
+			)
+			.all();
+		hashNumbers = entries.map((entry) => entry.value.hashNumber);
+	}
 	if (profile) {
 		emitSyncProfileDuration(profile, rangeQueryStartedAt, {
 			name: "rateless.rangeQuery",
-			entries: entries.length,
-			details: { type },
+			entries: hashNumbers.length,
+			details: { type, source },
 		});
 	}
 
-	if (entries.length === 0) {
+	if (hashNumbers.length === 0) {
 		return false;
 	}
 
@@ -639,21 +658,21 @@ const buildEncoderOrDecoderFromRange = async <
 		typeof BigUint64Array !== "undefined" &&
 		typeof (encoder as RibltSymbolAdder).add_symbols === "function"
 	) {
-		const symbols = new BigUint64Array(entries.length);
-		for (let i = 0; i < entries.length; i++) {
-			symbols[i] = coerceBigInt(entries[i].value.hashNumber);
-		}
+		const symbols =
+			hashNumbers instanceof BigUint64Array
+				? hashNumbers
+				: BigUint64Array.from(hashNumbers, coerceBigInt);
 		addSymbolsToRiblt(encoder as RibltSymbolAdder, symbols);
 	} else {
-		for (const entry of entries) {
-			encoder.add_symbol(coerceBigInt(entry.value.hashNumber));
+		for (const hashNumber of hashNumbers) {
+			encoder.add_symbol(coerceBigInt(hashNumber));
 		}
 	}
 	if (profile) {
 		emitSyncProfileDuration(profile, addSymbolsStartedAt, {
 			name: "rateless.rangeAddSymbols",
-			entries: entries.length,
-			symbols: entries.length,
+			entries: hashNumbers.length,
+			symbols: hashNumbers.length,
 			details: { type },
 		});
 	}
@@ -940,6 +959,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			this.properties.entryIndex,
 			"encoder",
 			profile,
+			this.properties.resolveHashNumbersInRange,
 		)) as EncoderWrapper | false;
 		if (!encoder) {
 			if (profile) {

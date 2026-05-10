@@ -1713,6 +1713,31 @@ impl NativeSharedLogState {
         Ok(out)
     }
 
+    pub fn entry_hash_numbers_in_range(
+        &self,
+        start1: String,
+        end1: String,
+        start2: String,
+        end2: String,
+    ) -> Result<Array, JsValue> {
+        let start1 = parse_u64(&start1)?;
+        let end1 = parse_u64(&end1)?;
+        let start2 = parse_u64(&start2)?;
+        let end2 = parse_u64(&end2)?;
+        let out = Array::new();
+        for (hash_number, hashes) in &self.inner.entry_hashes_by_hash_number {
+            if coordinate_in_segment(*hash_number, start1, end1)
+                || (start2 != end2 && coordinate_in_segment(*hash_number, start2, end2))
+            {
+                let value = JsValue::from_str(&hash_number.to_string());
+                for _ in hashes {
+                    out.push(&value);
+                }
+            }
+        }
+        Ok(out)
+    }
+
     pub fn commit_entry_coordinates(
         &mut self,
         hash: String,

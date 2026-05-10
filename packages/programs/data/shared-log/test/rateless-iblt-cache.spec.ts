@@ -41,6 +41,39 @@ describe("rateless-iblt-syncronizer cache", () => {
 		await sync.close();
 	});
 
+	it("builds local range encoder from native hash-number resolver", async () => {
+		const iterate = sinon.stub().throws(new Error("entry index should not be used"));
+		const resolveHashNumbersInRange = sinon.stub().returns([1n, 2n]);
+		const send = sinon.stub().resolves();
+		const sync = new RatelessIBLTSynchronizer<"u64">({
+			rpc: { send } as any,
+			rangeIndex: {} as any,
+			entryIndex: { iterate } as any,
+			log: {} as any,
+			coordinateToHash: new Cache<string>({ max: 10 }),
+			numbers: { maxValue: 2n ** 64n - 1n } as any,
+			resolveHashNumbersInRange,
+		});
+
+		expect(
+			await sync.onMessage(
+				new StartSync({ from: 0n, to: 10n, symbols: [] }),
+				{ from: "p" } as any,
+			),
+		).to.equal(true);
+
+		expect(iterate.called).to.equal(false);
+		expect(resolveHashNumbersInRange.calledOnce).to.equal(true);
+		expect(resolveHashNumbersInRange.firstCall.args[0]).to.deep.equal({
+			start1: 0n,
+			end1: 10n,
+			start2: 0n,
+			end2: 0n,
+		});
+
+		await sync.close();
+	});
+
 	it("invalidates cached range encoder on entry removal", async () => {
 		const iterate = sinon.stub().returns({
 			all: async () => [
