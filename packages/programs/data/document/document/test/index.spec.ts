@@ -222,6 +222,10 @@ describe("index", () => {
 					"appendLocallyValidated",
 				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
+				const localLookupSpy = sinon.spy(
+					store.docs as any,
+					"getLocalIndexedContext",
+				);
 
 				try {
 					const id = uuid();
@@ -242,9 +246,11 @@ describe("index", () => {
 
 					expect(validatedAppendSpy.callCount).equal(2);
 					expect(appendSpy.callCount).equal(0);
+					expect(localLookupSpy.callCount).equal(2);
 					expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
 					expect((await store.docs.get(id))?.name).equal("second");
 				} finally {
+					localLookupSpy.restore();
 					validatedAppendSpy.restore();
 					appendSpy.restore();
 				}
