@@ -1663,6 +1663,38 @@ impl NativeSharedLogState {
         Ok(())
     }
 
+    pub fn count_entry_coordinates_in_ranges(
+        &self,
+        start1: Array,
+        end1: Array,
+        start2: Array,
+        end2: Array,
+    ) -> Result<usize, JsValue> {
+        let start1 = cursor_values_from_array(start1)?;
+        let end1 = cursor_values_from_array(end1)?;
+        let start2 = cursor_values_from_array(start2)?;
+        let end2 = cursor_values_from_array(end2)?;
+        ensure_same_len(start1.len(), end1.len(), "coordinate range")?;
+        ensure_same_len(start1.len(), start2.len(), "coordinate range")?;
+        ensure_same_len(start1.len(), end2.len(), "coordinate range")?;
+
+        let mut count = 0usize;
+        for coordinates in self.inner.entry_coordinates.values() {
+            if coordinates.iter().any(|coordinate| {
+                start1.iter().zip(&end1).zip(start2.iter().zip(&end2)).any(
+                    |((range_start1, range_end1), (range_start2, range_end2))| {
+                        coordinate_in_segment(*coordinate, *range_start1, *range_end1)
+                            || ((*range_start2 != *range_end2)
+                                && coordinate_in_segment(*coordinate, *range_start2, *range_end2))
+                    },
+                )
+            }) {
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
     pub fn delete_entry_coordinates_batch(&mut self, hashes: Array) -> Result<(), JsValue> {
         for hash in strings_from_array(hashes)? {
             self.inner.entry_coordinates.remove(&hash);
@@ -2291,6 +2323,10 @@ fn cursor_values_from_array(values: Array) -> Result<Vec<u64>, JsValue> {
         .into_iter()
         .map(|value| parse_u64(&value))
         .collect::<Result<Vec<_>, _>>()
+}
+
+fn coordinate_in_segment(coordinate: u64, start: u64, end: u64) -> bool {
+    coordinate >= start && coordinate < end
 }
 
 fn usize_from_array(values: Array) -> Result<Vec<usize>, JsValue> {

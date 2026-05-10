@@ -281,6 +281,12 @@ type NativeSharedLogStateHandle = {
 		coordinates: string[],
 		nextHashes: string[],
 	) => void;
+	count_entry_coordinates_in_ranges: (
+		start1: string[],
+		end1: string[],
+		start2: string[],
+		end2: string[],
+	) => number;
 	delete_entry_coordinates_batch: (hashes: string[]) => void;
 	clear_entry_coordinates: () => void;
 	add_gid_peers: (gid: string, peers: string[], reset: boolean) => number;
@@ -867,6 +873,32 @@ export class SharedLogNativeState {
 			hash,
 			[...coordinates].map(asIntegerString),
 			[...nextHashes],
+		);
+	}
+
+	countEntryCoordinatesInRanges(
+		ranges: Iterable<{
+			start1: bigint | number | string;
+			end1: bigint | number | string;
+			start2: bigint | number | string;
+			end2: bigint | number | string;
+		}>,
+	): number {
+		const start1: string[] = [];
+		const end1: string[] = [];
+		const start2: string[] = [];
+		const end2: string[] = [];
+		for (const range of ranges) {
+			start1.push(asIntegerString(range.start1));
+			end1.push(asIntegerString(range.end1));
+			start2.push(asIntegerString(range.start2));
+			end2.push(asIntegerString(range.end2));
+		}
+		return this.native.count_entry_coordinates_in_ranges(
+			start1,
+			end1,
+			start2,
+			end2,
 		);
 	}
 
