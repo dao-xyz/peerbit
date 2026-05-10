@@ -6667,6 +6667,9 @@ export class SharedLog<
 
 	async countAssignedHeads(options?: { strict: boolean }): Promise<number> {
 		const myRanges = await this.getMyReplicationSegments();
+		if (options?.strict && this._nativeSharedLogState) {
+			return this._nativeSharedLogState.countEntryCoordinatesInRanges(myRanges);
+		}
 		const query = createAssignedRangesQuery(
 			myRanges.map((x) => {
 				return { range: x };
