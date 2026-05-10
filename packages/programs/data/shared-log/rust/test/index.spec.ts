@@ -337,6 +337,15 @@ describe("native shared-log range planner", () => {
 		expect(state.getEntryCoordinates("old-head")).to.equal(undefined);
 	});
 
+	it("lists resident entry coordinate hashes", async () => {
+		const state = await createSharedLogState("u32");
+		state.putEntryCoordinates("head-a", [1]);
+		state.putEntryCoordinates("head-b", [2]);
+		state.deleteEntryCoordinates("head-a");
+
+		expect(state.getEntryCoordinateHashes()).to.deep.equal(["head-b"]);
+	});
+
 	it("counts resident entry coordinates in owned ranges", async () => {
 		const state = await createSharedLogState("u32");
 		state.putEntryCoordinates("head-a", [5, 100]);
