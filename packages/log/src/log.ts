@@ -750,7 +750,12 @@ export class Log<T> {
 			!this.entryIndex.properties.onGidRemoved &&
 			(this.entryIndex.properties.nativeGraph?.graph
 				.prepareEntryV0PlainChainCommit ||
-				this.entryIndex.properties.nativeGraph?.graph.prepareEntryV0PlainChainAndPut)
+				this.entryIndex.properties.nativeGraph?.graph
+					.prepareEntryV0PlainEntryCommit ||
+				this.entryIndex.properties.nativeGraph?.graph
+					.prepareEntryV0PlainChainAndPut ||
+				this.entryIndex.properties.nativeGraph?.graph
+					.prepareEntryV0PlainEntryAndPut)
 				? this.entryIndex.properties.nativeGraph.graph
 				: undefined;
 		return EntryV0.createPlainAppendChainBatch<T>({
