@@ -18,6 +18,10 @@ const parsePositiveInt = (value: string | undefined, fallback: number) => {
 
 const entryCount = parsePositiveInt(process.env.COORD_LOOKUP_ENTRIES, 20_000);
 const symbolCount = parsePositiveInt(process.env.COORD_LOOKUP_SYMBOLS, 5_000);
+const preflightSymbolCount = Math.min(
+	symbolCount,
+	parsePositiveInt(process.env.COORD_LOOKUP_PREFLIGHT_SYMBOLS, 500),
+);
 const warmupIterations = parsePositiveInt(process.env.COORD_LOOKUP_WARMUP, 5);
 const iterations = parsePositiveInt(process.env.COORD_LOOKUP_ITERATIONS, 30);
 const queryBatchSize = parsePositiveInt(process.env.COORD_LOOKUP_BATCH, 128);
@@ -59,6 +63,7 @@ const symbols = Array.from(
 	{ length: symbolCount },
 	(_, i) => BigInt(((i * 17) % entryCount) + 1),
 );
+const preflightSymbols = symbols.slice(0, preflightSymbolCount);
 const rangeEnd = BigInt(Math.floor(entryCount / 2) + 1);
 const rangeHitCount = Math.floor(entryCount / 2);
 const symbolRange = {
@@ -139,6 +144,36 @@ const lookupRangeViaNativeState = () => {
 	}
 };
 
+const preflightViaIndexCount = async () => {
+	let found = 0;
+	for (const symbol of preflightSymbols) {
+		if ((await entryIndex.count({ query: { hashNumber: symbol } })) > 0) {
+			found += 1;
+		}
+	}
+	if (found !== preflightSymbols.length) {
+		throw new Error(
+			`Expected ${preflightSymbols.length} index preflight hits, got ${found}`,
+		);
+	}
+};
+
+const preflightViaNativeBatch = () => {
+	const result = nativeState.getEntryHashesForHashNumbers(preflightSymbols);
+	let found = 0;
+	for (const symbol of preflightSymbols) {
+		const hashes = result.get(symbol);
+		if (hashes && hashes.length > 0) {
+			found += 1;
+		}
+	}
+	if (found !== preflightSymbols.length) {
+		throw new Error(
+			`Expected ${preflightSymbols.length} native preflight hits, got ${found}`,
+		);
+	}
+};
+
 const suite = new Bench({
 	name: "native-coordinate-symbol-lookup",
 	warmupIterations,
@@ -149,6 +184,8 @@ suite.add("generic index hashNumber lookup", lookupViaIndex);
 suite.add("native resident hashNumber lookup", lookupViaNativeState);
 suite.add("generic index hashNumber range lookup", lookupRangeViaIndex);
 suite.add("native resident hashNumber range lookup", lookupRangeViaNativeState);
+suite.add("generic index hashNumber preflight count", preflightViaIndexCount);
+suite.add("native resident hashNumber preflight batch", preflightViaNativeBatch);
 
 try {
 	await suite.run();
@@ -168,6 +205,7 @@ try {
 					meta: {
 						entryCount,
 						symbolCount,
+						preflightSymbolCount,
 						rangeHitCount,
 						queryBatchSize,
 						warmupIterations,
