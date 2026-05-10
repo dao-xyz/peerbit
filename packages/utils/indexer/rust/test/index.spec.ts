@@ -1,6 +1,7 @@
 import { field, vec } from "@dao-xyz/borsh";
 import {
 	And,
+	ByteMatchQuery,
 	Compare,
 	IntegerCompare,
 	Nested,
@@ -59,6 +60,19 @@ class BridgeMetricDocument {
 		this.id = id;
 		this.tag = tag;
 		this.value = value;
+	}
+}
+
+class BridgeBytesDocument {
+	@id({ type: "string" })
+	id: string;
+
+	@field({ type: Uint8Array })
+	payload: Uint8Array;
+
+	constructor(id: string, payload: Uint8Array) {
+		this.id = id;
+		this.payload = payload;
 	}
 }
 
@@ -201,6 +215,97 @@ describe("native planner bridge", () => {
 			})
 			.all();
 		expect(results.map((result) => result.value.id)).to.deep.equal(["a", "b"]);
+
+		await indices.drop();
+	});
+
+	it("keeps exact byte matching for large byte arrays without indexing every byte by default", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeBytesDocument });
+		const payload = new Uint8Array(300).fill(7);
+		await index.put(new BridgeBytesDocument("large", payload));
+
+		const exactMatches = await index
+			.iterate({
+				query: new ByteMatchQuery({
+					key: "payload",
+					value: payload,
+				}),
+			})
+			.all();
+		expect(exactMatches.map((result) => result.value.id)).to.deep.equal([
+			"large",
+		]);
+
+		const byteElementMatches = await index
+			.iterate({
+				query: new IntegerCompare({
+					key: "payload",
+					compare: Compare.Equal,
+					value: 7,
+				}),
+			})
+			.all();
+		expect(byteElementMatches).to.be.empty;
+
+		await indices.drop();
+	});
+
+	it("can opt into per-byte indexing for large byte arrays", async () => {
+		const indices = create(undefined, {
+			byteElementIndexLimit: Number.POSITIVE_INFINITY,
+		});
+		await indices.start();
+		const index = await indices.init({ schema: BridgeBytesDocument });
+		const payload = new Uint8Array(300).fill(7);
+		await index.put(new BridgeBytesDocument("large", payload));
+
+		const byteElementMatches = await index
+			.iterate({
+				query: new IntegerCompare({
+					key: "payload",
+					compare: Compare.Equal,
+					value: 7,
+				}),
+			})
+			.all();
+		expect(byteElementMatches.map((result) => result.value.id)).to.deep.equal([
+			"large",
+		]);
+
+		await indices.drop();
+	});
+
+	it("can opt out of per-byte indexing while keeping exact byte matching", async () => {
+		const indices = create(undefined, { byteElementIndexLimit: 0 });
+		await indices.start();
+		const index = await indices.init({ schema: BridgeBytesDocument });
+		const payload = new Uint8Array([7]);
+		await index.put(new BridgeBytesDocument("small", payload));
+
+		const exactMatches = await index
+			.iterate({
+				query: new ByteMatchQuery({
+					key: "payload",
+					value: payload,
+				}),
+			})
+			.all();
+		expect(exactMatches.map((result) => result.value.id)).to.deep.equal([
+			"small",
+		]);
+
+		const byteElementMatches = await index
+			.iterate({
+				query: new IntegerCompare({
+					key: "payload",
+					compare: Compare.Equal,
+					value: 7,
+				}),
+			})
+			.all();
+		expect(byteElementMatches).to.be.empty;
 
 		await indices.drop();
 	});

@@ -43,6 +43,7 @@
 		"packages/programs/clock-service",
 		"packages/programs/transport",
 		"packages/programs/data/*",
+		"packages/programs/data/shared-log/rust",
 		"packages/programs/data/document/*",
 		"packages/programs/data/document/react/e2e/party",
 		"packages/programs/data/document/react/e2e/party/shared",

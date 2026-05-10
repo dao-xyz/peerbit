@@ -685,6 +685,7 @@ export class DocumentIndex<
 
 	// transform options
 	transformer: Transformer<T, I>;
+	private transformerIsIdentity = false;
 
 	// The indexed document wrapped in a context
 	wrappedIndexedType: IndexableClass<I>;
@@ -1085,8 +1086,13 @@ export class DocumentIndex<
 		};
 
 		const transformOptions = properties.transform;
+		const hasTransformFunction =
+			transformOptions != null && isTransformerWithFunction(transformOptions);
+		this.transformerIsIdentity =
+			transformOptions == null ||
+			(!hasTransformFunction && transformOptions.type == null);
 		this.transformer = transformOptions
-			? isTransformerWithFunction(transformOptions)
+			? hasTransformFunction
 				? (obj, context) => transformOptions.transform(obj, context)
 				: transformOptions.type
 					? (obj, context) => new transformOptions.type!(obj, context)
@@ -1678,7 +1684,9 @@ export class DocumentIndex<
 				indexCacheLogger("cache:set:value", { id: idString });
 			}
 		}
-		const valueToIndex = await this.transformer(value, context);
+		const valueToIndex = this.transformerIsIdentity
+			? (value as any as I)
+			: await this.transformer(value, context);
 		const wrappedValueToIndex = new this.wrappedIndexedType(
 			valueToIndex as I,
 			context,
@@ -1689,7 +1697,7 @@ export class DocumentIndex<
 		coerceWithContext(value, context);
 
 		try {
-			await this.index.put(wrappedValueToIndex, undefined, options);
+			await this.index.put(wrappedValueToIndex, id, options);
 		} catch (error) {
 			if (error instanceof indexerTypes.NotStartedError && this.closed) {
 				return { context, indexable: valueToIndex };

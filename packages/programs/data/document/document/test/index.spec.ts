@@ -164,6 +164,125 @@ describe("index", () => {
 				expect(changes[2].removed[0].__indexed).to.exist;
 			});
 
+			it("uses the validated local append path for plain puts", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+					},
+				});
+				const changes: DocumentsChange<Document, Document>[] = [];
+				store.docs.events.addEventListener("change", (evt) => {
+					changes.push(evt.detail);
+				});
+				const validatedAppendSpy = sinon.spy(
+					store.docs.log,
+					"appendLocallyValidated",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+				const localLookupSpy = sinon.spy(
+					store.docs as any,
+					"getLocalIndexedContext",
+				);
+
+				try {
+					const doc = new Document({ id: uuid(), name: "fast" });
+					const put = await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(validatedAppendSpy.callCount).equal(1);
+					expect(appendSpy.callCount).equal(0);
+					expect(localLookupSpy.callCount).equal(0);
+					expect((await store.docs.get(doc.id))?.name).equal("fast");
+					expect(changes).to.have.length(1);
+					expect(changes[0].added[0].__context.head).equal(put.entry.hash);
+				} finally {
+					localLookupSpy.restore();
+					validatedAppendSpy.restore();
+					appendSpy.restore();
+				}
+			});
+
+			it("uses the validated local append path for document updates", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+					},
+				});
+				const validatedAppendSpy = sinon.spy(
+					store.docs.log,
+					"appendLocallyValidated",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+
+				try {
+					const id = uuid();
+					const first = await store.docs.put(
+						new Document({ id, name: "first" }),
+						{
+							replicate: false,
+							target: "none",
+						},
+					);
+					const second = await store.docs.put(
+						new Document({ id, name: "second" }),
+						{
+							replicate: false,
+							target: "none",
+						},
+					);
+
+					expect(validatedAppendSpy.callCount).equal(2);
+					expect(appendSpy.callCount).equal(0);
+					expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
+					expect((await store.docs.get(id))?.name).equal("second");
+				} finally {
+					validatedAppendSpy.restore();
+					appendSpy.restore();
+				}
+			});
+
+			it("keeps custom canPerform puts on the compatibility path", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				const canPerform = sinon.stub().returns(true);
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform,
+					},
+				});
+				const validatedAppendSpy = sinon.spy(
+					store.docs.log,
+					"appendLocallyValidated",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+
+				try {
+					await store.docs.put(new Document({ id: uuid(), name: "compat" }), {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(validatedAppendSpy.callCount).equal(0);
+					expect(appendSpy.callCount).equal(1);
+					expect(canPerform.callCount).equal(1);
+				} finally {
+					validatedAppendSpy.restore();
+					appendSpy.restore();
+				}
+			});
+
 			it("replication degree", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>(),
