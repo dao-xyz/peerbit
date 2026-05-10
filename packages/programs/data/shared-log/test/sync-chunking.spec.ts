@@ -74,6 +74,40 @@ describe("sync-chunking", () => {
 		expect(sentCoordinates.map((x) => x.length)).to.deep.equal([2, 2, 1]);
 	});
 
+	it("uses native coordinate symbol resolver before index lookup", async () => {
+		const send = sinon.stub().resolves();
+		const iterate = sinon.stub().throws(new Error("entry index should not be used"));
+		const rpc = { send } as any;
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc,
+			entryIndex: { iterate } as any,
+			log: {
+				get: async (hash: string) => ({
+					hash,
+					size: 1,
+					meta: { gid: `gid-${hash}` },
+				}),
+				entryIndex: { getUniqueReferenceGids: () => [] },
+			} as any,
+			coordinateToHash: new Cache<string>({ max: 10 }),
+			resolveHashesForSymbols: (symbols) => {
+				expect(symbols).to.deep.equal([42n]);
+				return new Map([[42n, ["head-a"]]]);
+			},
+		});
+
+		await sync.onMessage(
+			new RequestMaybeSyncCoordinate({ hashNumbers: [42n] }),
+			{ from: "peer-a" } as any,
+		);
+
+		expect(iterate.called).to.equal(false);
+		expect(send.callCount).to.equal(1);
+		expect(send.firstCall.args[0].heads.map((x: any) => x.entry.hash)).to.deep.equal([
+			"head-a",
+		]);
+	});
+
 	it("splits mixed hash and coordinate maybe-sync batches by type", async () => {
 		const send = sinon.stub().resolves();
 		const rpc = { send } as any;
