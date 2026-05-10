@@ -66,4 +66,47 @@ describe("exchange heads", () => {
 			await log.close();
 		}
 	});
+
+	it("resolves multiple hash heads in one entry-index batch", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			nativeGraph: true,
+		});
+
+		const { entry: left } = await log.append(new Uint8Array([1]), {
+			meta: { next: [], gidSeed: new Uint8Array([1]) },
+		});
+		const { entry: right } = await log.append(new Uint8Array([2]), {
+			meta: { next: [], gidSeed: new Uint8Array([2]) },
+		});
+
+		const getManySpy = sinon.spy(log.entryIndex, "getMany");
+		const getSpy = sinon.spy(log, "get");
+		try {
+			const messages = [];
+			for await (const message of createExchangeHeadsMessages(log, [
+				left.hash,
+				right.hash,
+			])) {
+				messages.push(message);
+			}
+
+			expect(messages).to.have.length(1);
+			expect(messages[0]!.heads.map((head) => head.entry.hash)).to.deep.equal([
+				left.hash,
+				right.hash,
+			]);
+			expect(getManySpy.calledOnce).to.equal(true);
+			expect(getManySpy.firstCall.args[0]).to.deep.equal([
+				left.hash,
+				right.hash,
+			]);
+			expect(getSpy.callCount).to.equal(0);
+		} finally {
+			getSpy.restore();
+			getManySpy.restore();
+			await log.close();
+		}
+	});
 });
