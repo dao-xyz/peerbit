@@ -34,6 +34,13 @@ type NativeRustIndex<T extends Record<string, any>> = {
 		value: T,
 		fields: Uint8Array,
 	) => void;
+	put_and_delete_matching: (
+		key: string,
+		id: types.IdKey,
+		value: T,
+		fields: Uint8Array,
+		query: Uint8Array,
+	) => Array<[types.IdKey, T]>;
 	get: (key: string) => [types.IdKey, T] | undefined;
 	clear: () => void;
 	len: () => number;
@@ -1311,7 +1318,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		context: Record<string, any>,
 		options?: { replace?: boolean },
 	): Promise<void> {
-		await this.put(this.createContextualValue(value, context), id, options);
+		await this.put(this.asContextualValue(value, context), id, options);
 	}
 
 	async putBatch(values: T[]): Promise<void> {
@@ -1349,6 +1356,42 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				this.getNative().put(item.storeKey, item.id, item.value, item.fields);
 			}
 			await this.compactIfNeeded();
+		});
+	}
+
+	async putAndDelete(
+		value: T,
+		deleteOptions: types.DeleteOptions,
+		id = types.toId(types.extractFieldValue(value, this.indexByArr)),
+	): Promise<types.IdKey[]> {
+		const compiled = this.requireNativePlan(types.toQuery(deleteOptions.query), {
+			allowAll: true,
+		});
+		const storeKey = keyToStoreKey(id);
+		const fields = this.fieldEncoder(value);
+		const queryBytes = encodeNativeQuerySpec(compiled.spec);
+		if (!this.snapshotFile) {
+			return this.getNative()
+				.put_and_delete_matching(storeKey, id, value, fields, queryBytes)
+				.map((entry) => entry[0]);
+		}
+
+		return this.enqueueMutation(async () => {
+			await this.appendPut(storeKey, value);
+			this.getNative().put(storeKey, id, value, fields);
+			const deletedEntries = this.getNativeCandidatesForPlan({
+				compiled,
+				sort: [],
+				offset: 0,
+			});
+			if (deletedEntries.length > 0) {
+				await this.appendDeletes(
+					deletedEntries.map((entry) => keyToStoreKey(entry.id)),
+				);
+				this.getNative().delete_matching(queryBytes);
+			}
+			await this.compactIfNeeded();
+			return deletedEntries.map((entry) => entry.id);
 		});
 	}
 
@@ -1586,6 +1629,16 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 		wrapped.__context = context;
 		return wrapped as T;
+	}
+
+	private asContextualValue(
+		value: Record<string, any>,
+		context: Record<string, any>,
+	): T {
+		if (value.__context === context) {
+			return value as T;
+		}
+		return this.createContextualValue(value, context);
 	}
 
 	private snapshot(): types.IndexedValue<T>[] {

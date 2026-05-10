@@ -14,6 +14,7 @@ import {
 import {
 	And,
 	ByteMatchQuery,
+	type DeleteOptions,
 	type Index,
 	NotStartedError as IndexNotStartedError,
 	Or,
@@ -471,6 +472,13 @@ interface IndexableDomain<R extends "u32" | "u64"> {
 		} & ({ publicKeyHash: string } | { publicKey: PublicSignKey }),
 	) => ReplicationRangeIndexable<R>;
 }
+
+type PutAndDeleteIndex<T extends Record<string, any>> = Index<T> & {
+	putAndDelete?: (
+		value: T,
+		deleteOptions: DeleteOptions,
+	) => Promise<unknown> | unknown;
+};
 
 const createIndexableDomainFromResolution = <R extends "u32" | "u64">(
 	resolution: R,
@@ -7149,15 +7157,32 @@ export class SharedLog<
 			cidObject.multihash.digest,
 		);
 
-		await this.entryCoordinatesIndex.put(
-			new this.indexableDomain.constructorEntry({
-				assignedToRangeBoundary,
-				coordinates: properties.coordinates,
-				meta: properties.entry.meta,
-				hash: properties.entry.hash,
-				hashNumber,
-			}),
-		);
+		const coordinateEntry = new this.indexableDomain.constructorEntry({
+			assignedToRangeBoundary,
+			coordinates: properties.coordinates,
+			meta: properties.entry.meta,
+			hash: properties.entry.hash,
+			hashNumber,
+		});
+		const nextHashes = properties.entry.meta.next;
+		const deleteNextOptions: DeleteOptions | undefined =
+			nextHashes.length === 0
+				? undefined
+				: nextHashes.length === 1
+					? { query: { hash: nextHashes[0] } }
+					: {
+							query: new Or(
+								nextHashes.map((x) => new StringMatch({ key: "hash", value: x })),
+							),
+						};
+		const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
+			EntryReplicated<R>
+		>;
+		if (deleteNextOptions && coordinateIndex.putAndDelete) {
+			await coordinateIndex.putAndDelete(coordinateEntry, deleteNextOptions);
+		} else {
+			await this.entryCoordinatesIndex.put(coordinateEntry);
+		}
 		if (properties.commitNative !== false) {
 			this._nativeSharedLogState?.commitEntryCoordinates(
 				properties.entry.hash,
@@ -7170,16 +7195,9 @@ export class SharedLog<
 			this.coordinateToHash.add(coordinate, properties.entry.hash);
 		}
 
-		const nextHashes = properties.entry.meta.next;
-		if (nextHashes.length > 0) {
+		if (deleteNextOptions && !coordinateIndex.putAndDelete) {
 			await this.entryCoordinatesIndex.del(
-				nextHashes.length === 1
-					? { query: { hash: nextHashes[0] } }
-					: {
-							query: new Or(
-								nextHashes.map((x) => new StringMatch({ key: "hash", value: x })),
-							),
-						},
+				deleteNextOptions,
 			);
 		}
 		return true;

@@ -214,6 +214,22 @@ impl NativeRustIndex {
         Ok(())
     }
 
+    pub fn put_and_delete_matching(
+        &mut self,
+        key: String,
+        id: JsValue,
+        value: JsValue,
+        fields_bytes: Vec<u8>,
+        query_bytes: Vec<u8>,
+    ) -> Result<Array, JsValue> {
+        let fields = decode_document_fields(&fields_bytes)?;
+        let query = decode_query(&query_bytes)?;
+        self.store.put(key.clone(), id, value);
+        self.planner.index.put(key, fields);
+        let keys = self.planner.index.delete_matching(&query);
+        Ok(self.store.delete_keys(&keys))
+    }
+
     pub fn get(&self, key: &str) -> JsValue {
         self.store.get(key)
     }
