@@ -239,6 +239,39 @@ describe("index", () => {
 				}
 			});
 
+			it("uses native shared-log planning for replicated target-none puts", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: { factor: 1 },
+						timeUntilRoleMaturity: 0,
+					},
+				});
+				const nativeState = (store.docs.log as any)._nativeSharedLogState;
+				expect(nativeState).to.exist;
+				const nativePlanSpy = sinon.spy(nativeState, "planLocalAppendForGid");
+				const planEntryLeadersSpy = sinon.spy(
+					store.docs.log as any,
+					"planEntryLeaders",
+				);
+
+				try {
+					await store.docs.put(new Document({ id: uuid(), name: "native" }), {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(nativePlanSpy.callCount).equal(1);
+					expect(planEntryLeadersSpy.callCount).equal(0);
+				} finally {
+					planEntryLeadersSpy.restore();
+					nativePlanSpy.restore();
+				}
+			});
+
 			it("uses the validated local append path for document updates", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>(),
