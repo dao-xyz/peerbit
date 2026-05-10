@@ -22,6 +22,13 @@ const preflightSymbolCount = Math.min(
 	symbolCount,
 	parsePositiveInt(process.env.COORD_LOOKUP_PREFLIGHT_SYMBOLS, 500),
 );
+const rangeHitCount = Math.min(
+	entryCount,
+	parsePositiveInt(
+		process.env.COORD_LOOKUP_RANGE_HITS,
+		Math.floor(entryCount / 2),
+	),
+);
 const warmupIterations = parsePositiveInt(process.env.COORD_LOOKUP_WARMUP, 5);
 const iterations = parsePositiveInt(process.env.COORD_LOOKUP_ITERATIONS, 30);
 const queryBatchSize = parsePositiveInt(process.env.COORD_LOOKUP_BATCH, 128);
@@ -64,8 +71,7 @@ const symbols = Array.from(
 	(_, i) => BigInt(((i * 17) % entryCount) + 1),
 );
 const preflightSymbols = symbols.slice(0, preflightSymbolCount);
-const rangeEnd = BigInt(Math.floor(entryCount / 2) + 1);
-const rangeHitCount = Math.floor(entryCount / 2);
+const rangeEnd = BigInt(rangeHitCount + 1);
 const symbolRange = {
 	start1: 1n,
 	end1: rangeEnd,
