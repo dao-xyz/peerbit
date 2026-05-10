@@ -334,6 +334,10 @@ describe("append", function () {
 			log.entryIndex.properties.nativeGraph!.graph,
 			"prepareEntryV0PlainChainCommit",
 		);
+		const nativeEntryCommitSpy = sinon.spy(
+			log.entryIndex.properties.nativeGraph!.graph,
+			"prepareEntryV0PlainEntryCommit",
+		);
 		const nativePrepareAndPutSpy = sinon.spy(
 			log.entryIndex.properties.nativeGraph!.graph,
 			"prepareEntryV0PlainChainAndPut",
@@ -344,8 +348,11 @@ describe("append", function () {
 				meta: { next: [] },
 			});
 
-			expect(nativeCommitSpy.callCount).equal(1);
-			expect(nativeCommitSpy.firstCall.args[0].payloadDatas).to.have.length(1);
+			expect(nativeEntryCommitSpy.callCount).equal(1);
+			expect(nativeEntryCommitSpy.firstCall.args[0].payloadData).to.deep.equal(
+				new Uint8Array([1]),
+			);
+			expect(nativeCommitSpy.callCount).equal(0);
 			expect(nativePrepareAndPutSpy.callCount).equal(0);
 			expect(blockPutSpy.callCount).equal(0);
 			expect(blockPutManySpy.callCount).equal(0);
@@ -360,6 +367,7 @@ describe("append", function () {
 			blockPutManySpy.restore();
 			preparedBlockFromBytesSpy.restore();
 			nativeCommitSpy.restore();
+			nativeEntryCommitSpy.restore();
 			nativePrepareAndPutSpy.restore();
 			await log.close();
 			await nativeStore.stop();
