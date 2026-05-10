@@ -75,21 +75,23 @@ type NativePreparedPlainEntry = {
 	signatureBytes: Uint8Array;
 };
 
+type MaybePromise<T> = T | Promise<T>;
+
 type NativeEntryV0Graph = {
 	prepareEntryV0PlainChainAndPut?(
 		input: NativePlainChainInput,
-	): Promise<NativePreparedPlainEntry[]>;
+	): MaybePromise<NativePreparedPlainEntry[]>;
 	prepareEntryV0PlainEntryAndPut?(
 		input: NativePlainEntryInput,
-	): Promise<NativePreparedPlainEntry>;
+	): MaybePromise<NativePreparedPlainEntry>;
 	prepareEntryV0PlainChainCommit?(
 		input: NativePlainChainInput,
 		blockStore: unknown,
-	): Promise<NativePreparedPlainEntry[] | undefined>;
+	): MaybePromise<NativePreparedPlainEntry[] | undefined>;
 	prepareEntryV0PlainEntryCommit?(
 		input: NativePlainEntryInput,
 		blockStore: unknown,
-	): Promise<NativePreparedPlainEntry | undefined>;
+	): MaybePromise<NativePreparedPlainEntry | undefined>;
 };
 
 type NativeEntryV0Encoder = {
@@ -141,38 +143,56 @@ type NativeEntryV0Encoder = {
 let nativeEntryV0EncoderPromise:
 	| Promise<NativeEntryV0Encoder | undefined>
 	| undefined;
+let nativeEntryV0EncoderLoaded = false;
+let nativeEntryV0Encoder: NativeEntryV0Encoder | undefined;
 
-const loadNativeEntryV0Encoder = async () => {
+const isPromiseLike = <T>(value: MaybePromise<T>): value is Promise<T> =>
+	!!value && typeof (value as Promise<T>).then === "function";
+
+const nativeEntryV0EncoderFromModule = (mod: {
+	encodeEntryV0Signable?: NativeEntryV0Encoder["encodeEntryV0Signable"];
+	encodeEntryV0Storage?: NativeEntryV0Encoder["encodeEntryV0Storage"];
+	encodeEntryV0StorageWithCid?: NativeEntryV0Encoder["encodeEntryV0StorageWithCid"];
+	prepareEntryV0PlainChain?: NativeEntryV0Encoder["prepareEntryV0PlainChain"];
+	prepareEntryV0PlainEntry?: NativeEntryV0Encoder["prepareEntryV0PlainEntry"];
+	calculateRawCidV1?: NativeEntryV0Encoder["calculateRawCidV1"];
+}): NativeEntryV0Encoder | undefined => {
+	if (
+		!mod.encodeEntryV0Signable ||
+		!mod.encodeEntryV0Storage ||
+		!mod.calculateRawCidV1
+	) {
+		return undefined;
+	}
+	return {
+		encodeEntryV0Signable: mod.encodeEntryV0Signable,
+		encodeEntryV0Storage: mod.encodeEntryV0Storage,
+		encodeEntryV0StorageWithCid: mod.encodeEntryV0StorageWithCid,
+		prepareEntryV0PlainChain: mod.prepareEntryV0PlainChain,
+		prepareEntryV0PlainEntry: mod.prepareEntryV0PlainEntry,
+		calculateRawCidV1: mod.calculateRawCidV1,
+	};
+};
+
+const loadNativeEntryV0Encoder = ():
+	| NativeEntryV0Encoder
+	| undefined
+	| Promise<NativeEntryV0Encoder | undefined> => {
+	if (nativeEntryV0EncoderLoaded) {
+		return nativeEntryV0Encoder;
+	}
 	if (!nativeEntryV0EncoderPromise) {
-		nativeEntryV0EncoderPromise = (async () => {
-			try {
-				const mod = (await import(["@peerbit", "log-rust"].join("/"))) as {
-					encodeEntryV0Signable?: NativeEntryV0Encoder["encodeEntryV0Signable"];
-					encodeEntryV0Storage?: NativeEntryV0Encoder["encodeEntryV0Storage"];
-					encodeEntryV0StorageWithCid?: NativeEntryV0Encoder["encodeEntryV0StorageWithCid"];
-					prepareEntryV0PlainChain?: NativeEntryV0Encoder["prepareEntryV0PlainChain"];
-					prepareEntryV0PlainEntry?: NativeEntryV0Encoder["prepareEntryV0PlainEntry"];
-					calculateRawCidV1?: NativeEntryV0Encoder["calculateRawCidV1"];
-				};
-				if (
-					!mod.encodeEntryV0Signable ||
-					!mod.encodeEntryV0Storage ||
-					!mod.calculateRawCidV1
-				) {
-					return undefined;
-				}
-				return {
-					encodeEntryV0Signable: mod.encodeEntryV0Signable,
-					encodeEntryV0Storage: mod.encodeEntryV0Storage,
-					encodeEntryV0StorageWithCid: mod.encodeEntryV0StorageWithCid,
-					prepareEntryV0PlainChain: mod.prepareEntryV0PlainChain,
-					prepareEntryV0PlainEntry: mod.prepareEntryV0PlainEntry,
-					calculateRawCidV1: mod.calculateRawCidV1,
-				};
-			} catch {
+		nativeEntryV0EncoderPromise = import(["@peerbit", "log-rust"].join("/"))
+			.then((mod) => {
+				nativeEntryV0Encoder = nativeEntryV0EncoderFromModule(mod);
+				nativeEntryV0EncoderLoaded = true;
+				return nativeEntryV0Encoder;
+			})
+			.catch(() => {
+				nativeEntryV0Encoder = undefined;
+				nativeEntryV0EncoderLoaded = true;
 				return undefined;
-			}
-		})();
+			});
 	}
 	return nativeEntryV0EncoderPromise;
 };
@@ -581,7 +601,10 @@ export class EntryV0<T>
 		if (!(properties.identity instanceof Ed25519Keypair)) {
 			return undefined;
 		}
-		const nativeEncoder = await loadNativeEntryV0Encoder();
+		const nativeEncoderValue = loadNativeEntryV0Encoder();
+		const nativeEncoder = isPromiseLike(nativeEncoderValue)
+			? await nativeEncoderValue
+			: nativeEncoderValue;
 		if (!nativeEncoder?.prepareEntryV0PlainChain) {
 			return undefined;
 		}
@@ -664,13 +687,16 @@ export class EntryV0<T>
 			};
 			const nativeCommit =
 				properties.nativeGraph?.prepareEntryV0PlainEntryCommit;
-			const preparedEntry = nativeCommit
-				? await nativeCommit.call(
+			const preparedEntryValue = nativeCommit
+				? nativeCommit.call(
 						properties.nativeGraph,
 						singleInput,
 						properties.nativeBlockStore,
 					)
 				: undefined;
+			const preparedEntry = isPromiseLike(preparedEntryValue)
+				? await preparedEntryValue
+				: preparedEntryValue;
 			if (preparedEntry) {
 				nativeBlocksCommitted = true;
 				nativeGraphUpdated = true;
@@ -679,11 +705,12 @@ export class EntryV0<T>
 			} else {
 				const nativePrepareAndPut =
 					properties.nativeGraph?.prepareEntryV0PlainEntryAndPut;
-				const scalarPreparedEntry = nativePrepareAndPut
-					? await nativePrepareAndPut.call(properties.nativeGraph, singleInput)
-					: nativeEncoder.prepareEntryV0PlainEntry
-						? await nativeEncoder.prepareEntryV0PlainEntry(singleInput)
-						: undefined;
+				const scalarPreparedEntryValue = nativePrepareAndPut
+					? nativePrepareAndPut.call(properties.nativeGraph, singleInput)
+					: nativeEncoder.prepareEntryV0PlainEntry?.(singleInput);
+				const scalarPreparedEntry = isPromiseLike(scalarPreparedEntryValue)
+					? await scalarPreparedEntryValue
+					: scalarPreparedEntryValue;
 				if (scalarPreparedEntry) {
 					nativeGraphUpdated = !!nativePrepareAndPut;
 					prepared = [scalarPreparedEntry];
@@ -721,25 +748,31 @@ export class EntryV0<T>
 				payloadDatas,
 			};
 			const nativeCommit = properties.nativeGraph?.prepareEntryV0PlainChainCommit;
-			prepared = nativeCommit
-				? await nativeCommit.call(
+			const preparedValue = nativeCommit
+				? nativeCommit.call(
 						properties.nativeGraph,
 						nativePlainChainInput,
 						properties.nativeBlockStore,
 					)
 				: undefined;
+			prepared = isPromiseLike(preparedValue)
+				? await preparedValue
+				: preparedValue;
 			if (prepared) {
 				nativeBlocksCommitted = true;
 				nativeGraphUpdated = true;
 			} else {
 				const nativePrepareAndPut =
 					properties.nativeGraph?.prepareEntryV0PlainChainAndPut;
-				prepared = await (nativePrepareAndPut
+				const preparedFallbackValue = nativePrepareAndPut
 					? nativePrepareAndPut.call(
 							properties.nativeGraph,
 							nativePlainChainInput,
 						)
-					: nativeEncoder.prepareEntryV0PlainChain(nativePlainChainInput));
+					: nativeEncoder.prepareEntryV0PlainChain(nativePlainChainInput);
+				prepared = isPromiseLike(preparedFallbackValue)
+					? await preparedFallbackValue
+					: preparedFallbackValue;
 				nativeGraphUpdated = !!nativePrepareAndPut;
 			}
 		}
