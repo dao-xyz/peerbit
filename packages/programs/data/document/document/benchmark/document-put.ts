@@ -316,6 +316,18 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				),
 				patchAsyncMethod(
 					store.docs.log as any,
+					"planNativeLocalAppendEntry",
+					profile,
+					"sharedPlanEntryLeadersMs",
+				),
+				patchAsyncMethod(
+					store.docs.log as any,
+					"planNativeAppendEntry",
+					profile,
+					"sharedPlanEntryLeadersMs",
+				),
+				patchAsyncMethod(
+					store.docs.log as any,
 					"persistCoordinate",
 					profile,
 					"sharedPersistCoordinateMs",

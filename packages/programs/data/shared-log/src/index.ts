@@ -283,7 +283,7 @@ type EntryLeaderPlan<R extends "u32" | "u64"> = {
 };
 
 type NativeAppendEntryPlan<R extends "u32" | "u64"> = EntryLeaderPlan<R> & {
-	delivery: AppendDeliveryPlan;
+	delivery?: AppendDeliveryPlan;
 };
 
 type EntryLeaderBatchItem<R extends "u32" | "u64"> = {
@@ -4183,6 +4183,33 @@ export class SharedLog<
 		};
 	}
 
+	private async planNativeLocalAppendEntry(
+		entry: Entry<T>,
+		replicas: number,
+	): Promise<NativeAppendEntryPlan<R> | undefined> {
+		if (!this._nativeSharedLogState || !this.canPlanNativeHashGid(entry)) {
+			return undefined;
+		}
+
+		const context = await this.createLeaderSelectionContext();
+		const plan = this._nativeSharedLogState.planLocalAppendForGid(
+			{
+				entryHash: entry.hash,
+				gid: entry.meta.gid,
+				nextHashes: entry.meta.next,
+				replicas,
+				selfHash: context.selfHash,
+			},
+			this.createNativeLeaderOptions(context),
+		);
+		return {
+			coordinates: plan.coordinates as NumberFromType<R>[],
+			leaders: plan.leaders,
+			isLeader: plan.isLeader,
+			assignedToRangeBoundary: plan.assignedToRangeBoundary,
+		};
+	}
+
 	private async planNativeAppendEntries(
 		entries: Entry<T>[],
 		replicas: number,
@@ -4263,15 +4290,20 @@ export class SharedLog<
 		const selfHash = this.node.identity.publicKey.hashcode();
 		const target = options?.target;
 		const deliveryArg = options?.delivery;
-		const nativeAppendPlan =
-			properties.nativeAppendPlan ??
-			(target !== "all" && target !== "none"
-				? await this.planNativeAppendEntry(
+		let nativeAppendPlan = properties.nativeAppendPlan;
+		if (!nativeAppendPlan && target !== "all") {
+			nativeAppendPlan =
+				target === "none"
+					? await this.planNativeLocalAppendEntry(
+							entry,
+							properties.minReplicasValue,
+						)
+					: await this.planNativeAppendEntry(
 						entry,
 						properties.minReplicasValue,
 						deliveryArg,
-					)
-				: undefined);
+					);
+		}
 		let coordinates: NumberFromType<R>[];
 		let leaders: LeaderMap;
 		let isLeader: boolean;
