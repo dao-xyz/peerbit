@@ -348,6 +348,39 @@ describe("native graph", () => {
 		}
 	});
 
+	it("batches entry metadata lookups from the native graph", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+		const { entry } = await log.append(new Uint8Array([1]), {
+			meta: { next: [], data: absoluteReplicaData(3) },
+		});
+
+		const nativeGraph = log.entryIndex.properties.nativeGraph!.graph;
+		const entryMetadataBatchSpy = sinon.spy(nativeGraph, "entryMetadataBatch");
+		const indexGetSpy = sinon.spy(log.entryIndex.properties.index, "get");
+		try {
+			const rows = log.entryIndex.getNativeEntryMetadataBatch([
+				"missing",
+				entry.hash,
+			]);
+			expect(rows).to.not.equal(undefined);
+			expect(rows![0]).equal(undefined);
+			expect(rows![1]!.hash).equal(entry.hash);
+			expect(rows![1]!.gid).equal(entry.meta.gid);
+			expect([...(rows![1]!.data ?? [])]).to.deep.equal([0, 3, 0, 0, 0]);
+			expect(entryMetadataBatchSpy.callCount).equal(1);
+			expect(indexGetSpy.callCount).equal(0);
+		} finally {
+			indexGetSpy.restore();
+			entryMetadataBatchSpy.restore();
+			await log.close();
+		}
+	});
+
 	it("reads memory usage from the native graph", async () => {
 		const log = new Log<Uint8Array>();
 		await log.open(store, signKey, {

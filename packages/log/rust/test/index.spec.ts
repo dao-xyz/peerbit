@@ -248,6 +248,14 @@ describe("native log graph index", () => {
 		index.put(entry("c", "g", [], 3n));
 
 		expect([...index.hasMany(["missing", "a", "c"])]).to.deep.equal(["a", "c"]);
+		expect(index.entryMetadataBatch(["missing", "a"])).to.deep.equal([
+			undefined,
+			{
+				hash: "a",
+				gid: "g",
+				data: undefined,
+			},
+		]);
 	});
 
 	it("sums payload sizes", async () => {
