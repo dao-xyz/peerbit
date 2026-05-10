@@ -15,6 +15,8 @@ import {
 	And,
 	ByteMatchQuery,
 	type DeleteOptions,
+	type IdKey,
+	type Ideable,
 	type Index,
 	NotStartedError as IndexNotStartedError,
 	Or,
@@ -479,6 +481,12 @@ type PutAndDeleteIndex<T extends Record<string, any>> = Index<T> & {
 		value: T,
 		deleteOptions: DeleteOptions,
 	) => Promise<unknown> | unknown;
+	putAndDeleteIds?: (
+		value: T,
+		deleteIds: Array<IdKey | Ideable>,
+		id?: IdKey,
+	) => Promise<unknown> | unknown;
+	delIds?: (deleteIds: Array<IdKey | Ideable>) => Promise<unknown> | unknown;
 };
 
 type EntryWithMetaBytes = {
@@ -1900,6 +1908,13 @@ export class SharedLog<
 			return;
 		}
 		this._nativeSharedLogState?.deleteEntryCoordinatesBatch(values);
+		const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
+			EntryReplicated<R>
+		>;
+		if (coordinateIndex.delIds) {
+			await coordinateIndex.delIds(values);
+			return;
+		}
 		await this.entryCoordinatesIndex.del({
 			query:
 				values.length === 1
@@ -7172,23 +7187,30 @@ export class SharedLog<
 			hashNumber,
 		});
 		const nextHashes = properties.entry.meta.next;
-		const deleteNextOptions: DeleteOptions | undefined =
-			nextHashes.length === 0
-				? undefined
-				: nextHashes.length === 1
-					? { query: { hash: nextHashes[0] } }
-					: {
-							query: new Or(
-								nextHashes.map((x) => new StringMatch({ key: "hash", value: x })),
-							),
-						};
 		const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
 			EntryReplicated<R>
 		>;
-		if (deleteNextOptions && coordinateIndex.putAndDelete) {
-			await coordinateIndex.putAndDelete(coordinateEntry, deleteNextOptions);
+		let deleteNextOptions: DeleteOptions | undefined;
+		if (nextHashes.length > 0 && coordinateIndex.putAndDeleteIds) {
+			await coordinateIndex.putAndDeleteIds(coordinateEntry, nextHashes);
 		} else {
-			await this.entryCoordinatesIndex.put(coordinateEntry);
+			deleteNextOptions =
+				nextHashes.length === 0
+					? undefined
+					: nextHashes.length === 1
+						? { query: { hash: nextHashes[0] } }
+						: {
+								query: new Or(
+									nextHashes.map(
+										(x) => new StringMatch({ key: "hash", value: x }),
+									),
+								),
+							};
+			if (deleteNextOptions && coordinateIndex.putAndDelete) {
+				await coordinateIndex.putAndDelete(coordinateEntry, deleteNextOptions);
+			} else {
+				await this.entryCoordinatesIndex.put(coordinateEntry);
+			}
 		}
 		if (properties.commitNative !== false) {
 			this._nativeSharedLogState?.commitEntryCoordinates(
@@ -7212,7 +7234,14 @@ export class SharedLog<
 
 	private async deleteCoordinates(properties: { hash: string }) {
 		this._nativeSharedLogState?.deleteEntryCoordinates(properties.hash);
-		await this.entryCoordinatesIndex.del({ query: properties });
+		const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
+			EntryReplicated<R>
+		>;
+		if (coordinateIndex.delIds) {
+			await coordinateIndex.delIds([properties.hash]);
+		} else {
+			await this.entryCoordinatesIndex.del({ query: properties });
+		}
 	}
 
 	async getDefaultMinRoleAge(): Promise<number> {

@@ -41,6 +41,13 @@ type NativeRustIndex<T extends Record<string, any>> = {
 		fields: Uint8Array,
 		query: Uint8Array,
 	) => Array<[types.IdKey, T]>;
+	put_and_delete_keys: (
+		key: string,
+		id: types.IdKey,
+		value: T,
+		fields: Uint8Array,
+		keys: string[],
+	) => Array<[types.IdKey, T]>;
 	get: (key: string) => [types.IdKey, T] | undefined;
 	clear: () => void;
 	len: () => number;
@@ -58,6 +65,7 @@ type NativeRustIndex<T extends Record<string, any>> = {
 	count: (query: Uint8Array) => number;
 	sum: (query: Uint8Array, field: number) => [NativeSumKind, string];
 	delete_matching: (query: Uint8Array) => Array<[types.IdKey, T]>;
+	delete_keys: (keys: string[]) => Array<[types.IdKey, T]>;
 };
 
 type WasmModule = {
@@ -199,10 +207,11 @@ const loadWasm = async (): Promise<WasmModule> => {
 	return wasm;
 };
 
-const keyToStoreKey = (id: types.IdKey): string => {
-	const key = types.toIdeable(id);
+const keyToStoreKey = (id: types.IdKey | types.Ideable): string => {
+	const idKey = id instanceof types.IdKey ? id : types.toId(id);
+	const key = types.toIdeable(idKey);
 	if (key instanceof Uint8Array || ArrayBuffer.isView(key)) {
-		return `bytes:${id.primitive.toString()}`;
+		return `bytes:${idKey.primitive.toString()}`;
 	}
 	return `${typeof key}:${key.toString()}`;
 };
@@ -1392,6 +1401,55 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			}
 			await this.compactIfNeeded();
 			return deletedEntries.map((entry) => entry.id);
+		});
+	}
+
+	async putAndDeleteIds(
+		value: T,
+		deleteIds: Array<types.IdKey | types.Ideable>,
+		id = types.toId(types.extractFieldValue(value, this.indexByArr)),
+	): Promise<types.IdKey[]> {
+		const storeKey = keyToStoreKey(id);
+		const fields = this.fieldEncoder(value);
+		const deleteKeys = deleteIds.map(keyToStoreKey);
+		if (!this.snapshotFile) {
+			return this.getNative()
+				.put_and_delete_keys(storeKey, id, value, fields, deleteKeys)
+				.map((entry) => entry[0]);
+		}
+
+		return this.enqueueMutation(async () => {
+			await this.appendPut(storeKey, value);
+			if (deleteKeys.length > 0) {
+				await this.appendDeletes(deleteKeys);
+			}
+			const deletedEntries = this.getNative().put_and_delete_keys(
+				storeKey,
+				id,
+				value,
+				fields,
+				deleteKeys,
+			);
+			await this.compactIfNeeded();
+			return deletedEntries.map((entry) => entry[0]);
+		});
+	}
+
+	async delIds(deleteIds: Array<types.IdKey | types.Ideable>): Promise<types.IdKey[]> {
+		const deleteKeys = deleteIds.map(keyToStoreKey);
+		if (deleteKeys.length === 0) {
+			return [];
+		}
+		if (!this.snapshotFile) {
+			return this.getNative()
+				.delete_keys(deleteKeys)
+				.map((entry) => entry[0]);
+		}
+		return this.enqueueMutation(async () => {
+			await this.appendDeletes(deleteKeys);
+			const deletedEntries = this.getNative().delete_keys(deleteKeys);
+			await this.compactIfNeeded();
+			return deletedEntries.map((entry) => entry[0]);
 		});
 	}
 
