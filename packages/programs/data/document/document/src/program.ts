@@ -101,6 +101,16 @@ export type CanPerform<T> = (
 	properties: CanPerformOperations<T>,
 ) => MaybePromise<boolean>;
 
+type PutChangeReference<T, I extends Record<string, any>> = {
+	document: T;
+	operation: PutOperation;
+	unique?: boolean;
+	existing?:
+		| indexerTypes.IndexedResult<IndexedContextOnly<I>>
+		| null
+		| undefined;
+};
+
 type InferR<D> = D extends ReplicationDomain<any, any, infer I> ? I : "u32";
 
 export type SetupOptions<
@@ -612,18 +622,27 @@ export class Documents<
 			);
 		}
 
-		const existingHead = options?.unique
-			? undefined
-			: options?.checkRemote
-				? (
-						await this._index.getDetailed(keyValue, {
-							resolve: false,
-							local: true,
-							remote: { replicate: options?.replicate },
-						})
-					)?.[0]?.results[0]?.context.head
-				: (await this.getLocalIndexedContext(indexerTypes.toId(keyValue)))
-						?.value.__context.head;
+		const key = indexerTypes.toId(keyValue);
+		let existingLocalContext:
+			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
+			| null
+			| undefined;
+		let existingHead: string | undefined;
+		if (!options?.unique) {
+			if (options?.checkRemote) {
+				existingHead = (
+					await this._index.getDetailed(keyValue, {
+						resolve: false,
+						local: true,
+						remote: { replicate: options?.replicate },
+					})
+				)?.[0]?.results[0]?.context.head;
+			} else {
+				existingLocalContext =
+					(await this.getLocalIndexedContext(key)) || null;
+				existingHead = existingLocalContext?.value.__context.head;
+			}
+		}
 
 		let operation: PutOperation | PutWithKeyOperation;
 		if (this.compatibility === 6) {
@@ -645,7 +664,13 @@ export class Documents<
 			operation instanceof PutOperation &&
 			this.canUsePlainPutFastPath(options)
 		) {
-			return this.putPlainFastPath(doc, operation, existingHead, options);
+			return this.putPlainFastPath(
+				doc,
+				operation,
+				existingHead,
+				existingLocalContext,
+				options,
+			);
 		}
 
 		const appended = await this.log.append(operation, {
@@ -662,6 +687,7 @@ export class Documents<
 					document: doc,
 					operation,
 					unique: options?.unique,
+					existing: existingLocalContext,
 				});
 			},
 			replicate: options?.replicate,
@@ -699,6 +725,10 @@ export class Documents<
 		doc: T,
 		operation: PutOperation,
 		existingHead: string | undefined,
+		existingLocalContext:
+			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
+			| null
+			| undefined,
 		options:
 			| (SharedAppendOptions<Operation> & {
 					unique?: boolean;
@@ -720,7 +750,12 @@ export class Documents<
 				added: [{ head: true, entry: appended.entry }],
 				removed: appended.removed,
 			},
-			{ document: doc, operation, unique: options?.unique },
+			{
+				document: doc,
+				operation,
+				unique: options?.unique,
+				existing: existingLocalContext,
+			},
 		);
 		this.keepCache?.add(appended.entry.hash);
 		return appended;
@@ -778,7 +813,7 @@ export class Documents<
 
 	async handleChanges(
 		change: Change<Operation>,
-		reference?: { document: T; operation: PutOperation; unique?: boolean },
+		reference?: PutChangeReference<T, I>,
 	): Promise<void> {
 		logger.trace("handleChanges called", change);
 		const isAppendOperation =
@@ -841,9 +876,12 @@ export class Documents<
 					}
 
 					// if no casual ordering is used, use timestamps to order docs
-					let existing = reference?.unique
-						? null
-						: (await this.getLocalIndexedContext(key)) || null;
+					let existing =
+						reference?.unique || reference?.existing === null
+							? null
+							: isReferencedAppendEntry && reference?.existing !== undefined
+								? reference.existing
+								: (await this.getLocalIndexedContext(key)) || null;
 					if (!this.strictHistory && existing) {
 						// if immutable use oldest, else use newest
 						let shouldIgnoreChange = this.immutable
