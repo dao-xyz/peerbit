@@ -167,6 +167,9 @@ const patchAsyncMethod = (
 	profileKey: keyof Profile,
 ) => {
 	const original = target[key];
+	if (typeof original !== "function") {
+		return () => {};
+	}
 	target[key] = async function patched(this: unknown, ...args: unknown[]) {
 		return time(profile, profileKey, () => original.apply(this, args));
 	};
@@ -248,6 +251,7 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 		await runPuts(store, warmupIterations, name);
 
 		const profile = emptyProfile();
+		const backendIndex = store.docs.index.index as any;
 		const restores = [
 			patchAsyncMethod(
 				store.docs as any,
@@ -282,8 +286,10 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				"documentIndexTransformMs",
 			),
 			patchAsyncMethod(
-				store.docs.index.index,
-				"put",
+				backendIndex,
+				typeof backendIndex.putWithContext === "function"
+					? "putWithContext"
+					: "put",
 				profile,
 				"documentBackendIndexPutMs",
 			),
