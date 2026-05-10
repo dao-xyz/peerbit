@@ -62,6 +62,8 @@ type NativeJoinCutCheck = {
 	logical?: number;
 };
 
+type MaybePromise<T> = T | Promise<T>;
+
 export type NativeLogGraph = {
 	readonly length: number;
 	has: (hash: string) => boolean;
@@ -80,7 +82,7 @@ export type NativeLogGraph = {
 		type?: number;
 		metaDatas?: Array<Uint8Array | undefined>;
 		payloadDatas: Uint8Array[];
-	}) => Promise<
+	}) => MaybePromise<
 		Array<{
 			bytes: Uint8Array;
 			cid: string;
@@ -103,7 +105,7 @@ export type NativeLogGraph = {
 		type?: number;
 		metaData?: Uint8Array;
 		payloadData: Uint8Array;
-	}) => Promise<{
+	}) => MaybePromise<{
 		bytes: Uint8Array;
 		cid: string;
 		byteLength: number;
@@ -127,7 +129,7 @@ export type NativeLogGraph = {
 			payloadDatas: Uint8Array[];
 		},
 		blockStore: unknown,
-	) => Promise<
+	) => MaybePromise<
 		| Array<{
 				bytes?: Uint8Array;
 				cid: string;
@@ -154,7 +156,7 @@ export type NativeLogGraph = {
 			payloadData: Uint8Array;
 		},
 		blockStore: unknown,
-	) => Promise<
+	) => MaybePromise<
 		| {
 				bytes?: Uint8Array;
 				cid: string;

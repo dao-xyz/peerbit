@@ -118,6 +118,16 @@ type NativeLogIndexHandle = {
 		metaData: Uint8Array | undefined,
 		payloadData: Uint8Array,
 	) => EntryV0PreparedPlainEntryRow;
+	prepare_entry_v0_plain_entry_and_put_with_builder: (
+		builder: NativeEntryV0PlainBuilderHandle,
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+	) => EntryV0PreparedPlainEntryRow;
 	prepare_entry_v0_plain_chain_commit_blocks_and_put: (
 		blockStore: NativeLogBlockStoreHandle,
 		clockId: Uint8Array,
@@ -136,6 +146,17 @@ type NativeLogIndexHandle = {
 		clockId: Uint8Array,
 		privateKey: Uint8Array,
 		publicKey: Uint8Array,
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+	) => EntryV0CommittedPlainEntryRow;
+	prepare_entry_v0_plain_entry_commit_block_and_put_with_builder: (
+		builder: NativeEntryV0PlainBuilderHandle,
+		blockStore: NativeLogBlockStoreHandle,
 		wallTime: bigint,
 		logical: number,
 		gid: string,
@@ -188,11 +209,18 @@ type NativeLogBlockStoreHandle = {
 	entries: () => Array<[string, Uint8Array]>;
 };
 
+type NativeEntryV0PlainBuilderHandle = unknown;
+
 type WasmModule = {
 	default: (input?: unknown) => Promise<unknown>;
 	initSync: (input?: unknown) => unknown;
 	NativeLogIndex: new () => NativeLogIndexHandle;
 	NativeLogBlockStore: new () => NativeLogBlockStoreHandle;
+	NativeEntryV0PlainBuilder: new (
+		clockId: Uint8Array,
+		privateKey: Uint8Array,
+		publicKey: Uint8Array,
+	) => NativeEntryV0PlainBuilderHandle;
 	sign_ed25519: (
 		privateKey: Uint8Array,
 		publicKey: Uint8Array,
@@ -325,6 +353,21 @@ const copyBytes = (bytes: Uint8Array): Uint8Array =>
 			: bytes.slice(),
 	);
 
+const bytesEqual = (left: Uint8Array, right: Uint8Array): boolean => {
+	if (left === right) {
+		return true;
+	}
+	if (left.byteLength !== right.byteLength) {
+		return false;
+	}
+	for (let i = 0; i < left.byteLength; i++) {
+		if (left[i] !== right[i]) {
+			return false;
+		}
+	}
+	return true;
+};
+
 type BlockInput = Uint8Array | { block: { bytes: Uint8Array }; cid: string };
 
 type NativeLogBlockStoreCarrier = {
@@ -338,11 +381,48 @@ const nativeLogBlockStoreHandle = (
 		?.getNativeLogBlockStoreHandle?.();
 
 export class LogGraphIndex {
-	private constructor(private readonly native: NativeLogIndexHandle) {}
+	private plainEntryBuilder:
+		| {
+				clockId: Uint8Array;
+				publicKey: Uint8Array;
+				native: NativeEntryV0PlainBuilderHandle;
+		  }
+		| undefined;
+
+	private constructor(
+		private readonly native: NativeLogIndexHandle,
+		private readonly wasm: WasmModule,
+	) {}
 
 	static async create(): Promise<LogGraphIndex> {
 		const wasm = await loadWasm();
-		return new LogGraphIndex(new wasm.NativeLogIndex());
+		return new LogGraphIndex(new wasm.NativeLogIndex(), wasm);
+	}
+
+	private getPlainEntryBuilder(input: {
+		clockId: Uint8Array;
+		privateKey: Uint8Array;
+		publicKey: Uint8Array;
+	}): NativeEntryV0PlainBuilderHandle {
+		const builder = this.plainEntryBuilder;
+		if (
+			builder &&
+			bytesEqual(builder.clockId, input.clockId) &&
+			bytesEqual(builder.publicKey, input.publicKey)
+		) {
+			return builder.native;
+		}
+		const native = new this.wasm.NativeEntryV0PlainBuilder(
+			input.clockId,
+			input.privateKey,
+			input.publicKey,
+		);
+		this.plainEntryBuilder = {
+			clockId: copyBytes(input.clockId),
+			publicKey: copyBytes(input.publicKey),
+			native,
+		};
+		return native;
 	}
 
 	clear(): void {
@@ -457,46 +537,41 @@ export class LogGraphIndex {
 
 	prepareEntryV0PlainChainAndPut(
 		input: EntryV0PlainChainInput,
-	): Promise<EntryV0PreparedPlainEntry[]> {
+	): EntryV0PreparedPlainEntry[] {
 		const columns = plainChainInputColumns(input);
 		if (!columns) {
-			return Promise.resolve([]);
+			return [];
 		}
-		return Promise.resolve(
-			preparedPlainEntryRows(
-				this.native.prepare_entry_v0_plain_chain_and_put(
-					input.clockId,
-					input.privateKey,
-					input.publicKey,
-					columns.wallTimes,
-					columns.logicals,
-					input.gid,
-					input.initialNext ?? [],
-					input.type ?? 0,
-					columns.metaDatas,
-					input.payloadDatas,
-				),
+		return preparedPlainEntryRows(
+			this.native.prepare_entry_v0_plain_chain_and_put(
+				input.clockId,
+				input.privateKey,
+				input.publicKey,
+				columns.wallTimes,
+				columns.logicals,
+				input.gid,
+				input.initialNext ?? [],
+				input.type ?? 0,
+				columns.metaDatas,
+				input.payloadDatas,
 			),
 		);
 	}
 
 	prepareEntryV0PlainEntryAndPut(
 		input: EntryV0PlainEntryInput,
-	): Promise<EntryV0PreparedPlainEntry> {
-		return Promise.resolve(
-			preparedPlainEntryRow(
-				this.native.prepare_entry_v0_plain_entry_and_put(
-					input.clockId,
-					input.privateKey,
-					input.publicKey,
-					BigInt(input.wallTime),
-					input.logical ?? 0,
-					input.gid,
-					input.next ?? [],
-					input.type ?? 0,
-					input.metaData,
-					input.payloadData,
-				),
+	): EntryV0PreparedPlainEntry {
+		const builder = this.getPlainEntryBuilder(input);
+		return preparedPlainEntryRow(
+			this.native.prepare_entry_v0_plain_entry_and_put_with_builder(
+				builder,
+				BigInt(input.wallTime),
+				input.logical ?? 0,
+				input.gid,
+				input.next ?? [],
+				input.type ?? 0,
+				input.metaData,
+				input.payloadData,
 			),
 		);
 	}
@@ -504,30 +579,28 @@ export class LogGraphIndex {
 	prepareEntryV0PlainChainCommit(
 		input: EntryV0PlainChainInput,
 		blockStore: unknown,
-	): Promise<EntryV0CommittedPlainEntry[] | undefined> {
+	): EntryV0CommittedPlainEntry[] | undefined {
 		const nativeBlockStore = nativeLogBlockStoreHandle(blockStore);
 		if (!nativeBlockStore) {
-			return Promise.resolve(undefined);
+			return undefined;
 		}
 		const columns = plainChainInputColumns(input);
 		if (!columns) {
-			return Promise.resolve([]);
+			return [];
 		}
-		return Promise.resolve(
-			committedPlainEntryRows(
-				this.native.prepare_entry_v0_plain_chain_commit_blocks_and_put(
-					nativeBlockStore,
-					input.clockId,
-					input.privateKey,
-					input.publicKey,
-					columns.wallTimes,
-					columns.logicals,
-					input.gid,
-					input.initialNext ?? [],
-					input.type ?? 0,
-					columns.metaDatas,
-					input.payloadDatas,
-				),
+		return committedPlainEntryRows(
+			this.native.prepare_entry_v0_plain_chain_commit_blocks_and_put(
+				nativeBlockStore,
+				input.clockId,
+				input.privateKey,
+				input.publicKey,
+				columns.wallTimes,
+				columns.logicals,
+				input.gid,
+				input.initialNext ?? [],
+				input.type ?? 0,
+				columns.metaDatas,
+				input.payloadDatas,
 			),
 		);
 	}
@@ -535,26 +608,23 @@ export class LogGraphIndex {
 	prepareEntryV0PlainEntryCommit(
 		input: EntryV0PlainEntryInput,
 		blockStore: unknown,
-	): Promise<EntryV0CommittedPlainEntry | undefined> {
+	): EntryV0CommittedPlainEntry | undefined {
 		const nativeBlockStore = nativeLogBlockStoreHandle(blockStore);
 		if (!nativeBlockStore) {
-			return Promise.resolve(undefined);
+			return undefined;
 		}
-		return Promise.resolve(
-			committedPlainEntryRow(
-				this.native.prepare_entry_v0_plain_entry_commit_block_and_put(
-					nativeBlockStore,
-					input.clockId,
-					input.privateKey,
-					input.publicKey,
-					BigInt(input.wallTime),
-					input.logical ?? 0,
-					input.gid,
-					input.next ?? [],
-					input.type ?? 0,
-					input.metaData,
-					input.payloadData,
-				),
+		const builder = this.getPlainEntryBuilder(input);
+		return committedPlainEntryRow(
+			this.native.prepare_entry_v0_plain_entry_commit_block_and_put_with_builder(
+				builder,
+				nativeBlockStore,
+				BigInt(input.wallTime),
+				input.logical ?? 0,
+				input.gid,
+				input.next ?? [],
+				input.type ?? 0,
+				input.metaData,
+				input.payloadData,
 			),
 		);
 	}
