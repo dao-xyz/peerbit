@@ -7,6 +7,7 @@ import {
 } from "@dao-xyz/borsh";
 import { AccessError, SignatureWithKey } from "@peerbit/crypto";
 import {
+	Context,
 	NotFoundError,
 	type ResultIndexedValue,
 } from "@peerbit/document-interface";
@@ -104,6 +105,7 @@ export type CanPerform<T> = (
 type PutChangeReference<T, I extends Record<string, any>> = {
 	document: T;
 	operation: PutOperation;
+	key: indexerTypes.IdKey;
 	unique?: boolean;
 	existing?:
 		| indexerTypes.IndexedResult<IndexedContextOnly<I>>
@@ -666,6 +668,7 @@ export class Documents<
 		) {
 			return this.putPlainFastPath(
 				doc,
+				key,
 				operation,
 				existingHead,
 				existingLocalContext,
@@ -686,6 +689,7 @@ export class Documents<
 				return this.handleChanges(change, {
 					document: doc,
 					operation,
+					key,
 					unique: options?.unique,
 					existing: existingLocalContext,
 				});
@@ -723,6 +727,7 @@ export class Documents<
 
 	private async putPlainFastPath(
 		doc: T,
+		key: indexerTypes.IdKey,
 		operation: PutOperation,
 		existingHead: string | undefined,
 		existingLocalContext:
@@ -745,20 +750,172 @@ export class Documents<
 			},
 			replicate: options?.replicate,
 		});
-		await this.handleChanges(
-			{
-				added: [{ head: true, entry: appended.entry }],
-				removed: appended.removed,
-			},
-			{
+		if (!options?.unique && existingLocalContext === undefined) {
+			await this.handleChanges(
+				{
+					added: [{ head: true, entry: appended.entry }],
+					removed: appended.removed,
+				},
+				{
+					document: doc,
+					operation,
+					key,
+					unique: options?.unique,
+					existing: existingLocalContext,
+				},
+			);
+		} else {
+			await this.handlePreparedPlainPutCommit({
 				document: doc,
-				operation,
+				key,
+				entry: appended.entry,
+				removed: appended.removed,
 				unique: options?.unique,
 				existing: existingLocalContext,
-			},
-		);
+			});
+		}
 		this.keepCache?.add(appended.entry.hash);
 		return appended;
+	}
+
+	private async handlePreparedPlainPutCommit(properties: {
+		document: T;
+		key: indexerTypes.IdKey;
+		entry: Entry<Operation>;
+		removed: ShallowOrFullEntry<Operation>[];
+		unique?: boolean;
+		existing?:
+			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
+			| null
+			| undefined;
+	}): Promise<void> {
+		const documentsChanged: DocumentsChange<T, I> = {
+			added: [],
+			removed: [],
+		};
+		const modified: Set<string | number | bigint> = new Set();
+		const existing =
+			properties.unique || properties.existing === null
+				? null
+				: properties.existing;
+
+		if (!this.strictHistory && existing) {
+			const shouldIgnoreChange = this.immutable
+				? existing.value.__context.modified <
+					properties.entry.meta.clock.timestamp.wallTime
+				: existing.value.__context.modified >
+					properties.entry.meta.clock.timestamp.wallTime;
+			if (shouldIgnoreChange) {
+				modified.add(properties.key.primitive);
+			}
+		}
+
+		if (!modified.has(properties.key.primitive)) {
+			const context = new Context({
+				created:
+					existing?.value.__context.created ||
+					properties.entry.meta.clock.timestamp.wallTime,
+				modified: properties.entry.meta.clock.timestamp.wallTime,
+				head: properties.entry.hash,
+				gid: properties.entry.meta.gid,
+				size: properties.entry.payload.byteLength,
+			});
+			const { indexable } = await this._index.putWithContext(
+				properties.document,
+				properties.key,
+				context,
+				{
+					replace: existing != null,
+				},
+			);
+			documentsChanged.added.push(
+				coerceWithIndexed(
+					coerceWithContext(properties.document, context),
+					indexable,
+				),
+			);
+			modified.add(properties.key.primitive);
+		}
+
+		for (const removed of properties.removed) {
+			const entry =
+				removed instanceof Entry
+					? removed
+					: await this.log.log.entryIndex.get(removed.hash);
+			if (!entry) {
+				continue;
+			}
+			try {
+				await this.collectRemovedDocumentChange(
+					await entry.getPayloadValue(),
+					modified,
+					documentsChanged,
+				);
+			} catch (error) {
+				if (error instanceof AccessError) {
+					continue;
+				}
+				throw error;
+			}
+		}
+
+		this.events.dispatchEvent(
+			new CustomEvent("change", { detail: documentsChanged }),
+		);
+	}
+
+	private async collectRemovedDocumentChange(
+		payload: Operation,
+		modified: Set<string | number | bigint>,
+		documentsChanged: DocumentsChange<T, I>,
+	) {
+		let value: WithIndexedContext<T, I>;
+		let key: indexerTypes.IdKey;
+
+		if (isPutOperation(payload)) {
+			const valueWithoutContext = this.index.valueEncoding.decoder(payload.data);
+			key = indexerTypes.toId(this.idResolver(valueWithoutContext));
+			if (modified.has(key.primitive)) {
+				return;
+			}
+
+			const document = await this._index.get(key, {
+				local: true,
+				remote: false,
+			});
+			if (!document) {
+				return;
+			}
+			value = document;
+		} else if (isDeleteOperation(payload)) {
+			key = coerceDeleteOperation(payload).key;
+			if (modified.has(key.primitive)) {
+				return;
+			}
+			const document = await this._index.get(key, {
+				local: true,
+				remote: false,
+			});
+			if (!document) {
+				return;
+			}
+			value = document;
+		} else {
+			throw new Error("Unexpected");
+		}
+
+		documentsChanged.removed.push(value);
+
+		if (
+			value instanceof Program &&
+			value.closed !== true &&
+			value.parents.includes(this)
+		) {
+			await value.drop(this);
+		}
+
+		await this._index.del(key);
+		modified.add(key.primitive);
 	}
 
 	public async get(
@@ -867,8 +1024,10 @@ export class Documents<
 						this.index.valueEncoding.decoder(payload.data);
 
 					// get index key from value
-					const keyObject = this.idResolver(value);
-					const key = indexerTypes.toId(keyObject);
+					const key =
+						isReferencedAppendEntry && reference?.key
+							? reference.key
+							: indexerTypes.toId(this.idResolver(value));
 
 					// document is already updated with more recent entry
 					if (modified.has(key.primitive)) {
@@ -915,59 +1074,11 @@ export class Documents<
 					isPutOperation(payload) ||
 					removedSet.has(item.hash)
 				) {
-					let value: WithIndexedContext<T, I>;
-					let key: indexerTypes.IdKey;
-
-					if (isPutOperation(payload)) {
-						const valueWithoutContext = this.index.valueEncoding.decoder(
-							payload.data,
-						);
-						key = indexerTypes.toId(this.idResolver(valueWithoutContext));
-						// document is already updated with more recent entry
-						if (modified.has(key.primitive)) {
-							continue;
-						}
-
-						// we try to fetch it anyway, because we need the context for the events
-						const document = await this._index.get(key, {
-							local: true,
-							remote: false,
-						});
-						if (!document) {
-							continue;
-						}
-						value = document;
-					} else if (isDeleteOperation(payload)) {
-						key = coerceDeleteOperation(payload).key;
-						// document is already updated with more recent entry
-						if (modified.has(key.primitive)) {
-							continue;
-						}
-						const document = await this._index.get(key, {
-							local: true,
-							remote: false,
-						});
-						if (!document) {
-							continue;
-						}
-						value = document;
-					} else {
-						throw new Error("Unexpected");
-					}
-
-					documentsChanged.removed.push(value);
-
-					if (
-						value instanceof Program &&
-						value.closed !== true &&
-						value.parents.includes(this)
-					) {
-						await value.drop(this);
-					}
-
-					// update index
-					await this._index.del(key);
-					modified.add(key.primitive);
+					await this.collectRemovedDocumentChange(
+						payload,
+						modified,
+						documentsChanged,
+					);
 				} else {
 					// Unknown operation
 					throw new OperationError("Unknown operation");
