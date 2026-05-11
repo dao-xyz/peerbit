@@ -1500,9 +1500,13 @@ export class EntryIndex<T> {
 				graph?.delete(hash);
 			}
 		}
+		const deletedNexts: string[] = [];
 		for (const node of deleted) {
-			await this.privateUpdateNextHeadProperty(node, true);
+			if (node.meta.type !== EntryType.CUT) {
+				deletedNexts.push(...node.meta.next);
+			}
 		}
+		await this.privateUpdateNextHeadHashes(deletedNexts, true);
 		return deleted;
 	}
 
@@ -1555,8 +1559,19 @@ export class EntryIndex<T> {
 	}
 
 	private async privateUpdateNextHeadHashes(nexts: string[], isHead: boolean) {
-		for (const next of nexts) {
+		const hashes = [...new Set(nexts.filter(Boolean))];
+		if (hashes.length === 0) {
+			return;
+		}
+		const existingNexts =
+			isHead && this.properties.nativeGraph
+				? this.properties.nativeGraph.graph.hasMany(hashes)
+				: undefined;
+		for (const next of hashes) {
 			const pending = this.pendingIndexWrites.get(next);
+			if (!pending && existingNexts && !existingNexts.has(next)) {
+				continue;
+			}
 			const indexedEntry = pending
 				? { id: toId(next), value: pending }
 				: await this.properties.index.get(toId(next));
