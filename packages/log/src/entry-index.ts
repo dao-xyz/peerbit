@@ -1179,6 +1179,7 @@ export class EntryIndex<T> {
 				nativeGraphUpdated?: boolean;
 				nativeBlocksCommitted?: boolean;
 			};
+			heads?: boolean[];
 			deferIndexWrite?: boolean;
 		},
 	) {
@@ -1242,7 +1243,7 @@ export class EntryIndex<T> {
 			const nativeEntries: NativeLogEntry[] = [];
 			for (let i = 0; i < entries.length; i++) {
 				const entry = entries[i];
-				const isHead = i === entries.length - 1;
+				const isHead = properties.heads?.[i] ?? i === entries.length - 1;
 				if (properties.unique === true || !(await this.has(entry.hash))) {
 					this._length++;
 				}
