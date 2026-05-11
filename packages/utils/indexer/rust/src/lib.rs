@@ -242,6 +242,24 @@ impl NativeRustIndex {
         Ok(())
     }
 
+    pub fn put_encoded_parts(
+        &mut self,
+        key: String,
+        id: JsValue,
+        value: JsValue,
+        value_prefix_bytes: Vec<u8>,
+        value_suffix_bytes: Vec<u8>,
+        byte_element_index_limit: usize,
+    ) -> Result<(), JsValue> {
+        let fields = self.extract_encoded_document_fields_from_reader(
+            BridgeReader::from_parts(&value_prefix_bytes, &value_suffix_bytes),
+            byte_element_index_limit,
+        )?;
+        self.store.put(key.clone(), id, value);
+        self.planner.index.put(key, fields);
+        Ok(())
+    }
+
     pub fn put_and_delete_matching(
         &mut self,
         key: String,
@@ -336,11 +354,22 @@ impl NativeRustIndex {
         value_bytes: &[u8],
         byte_element_index_limit: usize,
     ) -> Result<DocumentFields, JsValue> {
+        self.extract_encoded_document_fields_from_reader(
+            BridgeReader::new(value_bytes),
+            byte_element_index_limit,
+        )
+    }
+
+    fn extract_encoded_document_fields_from_reader(
+        &self,
+        reader: BridgeReader,
+        byte_element_index_limit: usize,
+    ) -> Result<DocumentFields, JsValue> {
         let schema_ir = self
             .schema_ir
             .as_ref()
             .ok_or_else(|| js_error("Native schema IR has not been configured"))?;
-        extract_encoded_document_fields(schema_ir, value_bytes, byte_element_index_limit)
+        extract_encoded_document_fields_from_reader(schema_ir, reader, byte_element_index_limit)
     }
 }
 
@@ -583,17 +612,30 @@ impl NativeSchemaNode {
 }
 
 struct BridgeReader<'a> {
-    bytes: &'a [u8],
+    first: &'a [u8],
+    second: &'a [u8],
+    len: usize,
     offset: usize,
+    scratch: Vec<u8>,
 }
 
 impl<'a> BridgeReader<'a> {
     fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, offset: 0 }
+        Self::from_parts(bytes, &[])
+    }
+
+    fn from_parts(first: &'a [u8], second: &'a [u8]) -> Self {
+        Self {
+            first,
+            second,
+            len: first.len() + second.len(),
+            offset: 0,
+            scratch: Vec::new(),
+        }
     }
 
     fn finish(&self) -> Result<(), JsValue> {
-        if self.offset == self.bytes.len() {
+        if self.offset == self.len {
             Ok(())
         } else {
             Err(js_error("Trailing bytes in bridge payload"))
@@ -647,16 +689,59 @@ impl<'a> BridgeReader<'a> {
         })
     }
 
-    fn read_exact(&mut self, len: usize) -> Result<&'a [u8], JsValue> {
+    fn read_exact(&mut self, len: usize) -> Result<&[u8], JsValue> {
         let Some(end) = self.offset.checked_add(len) else {
             return Err(js_error("Bridge payload offset overflow"));
         };
-        let Some(bytes) = self.bytes.get(self.offset..end) else {
+        if end > self.len {
             return Err(js_error("Unexpected end of bridge payload"));
-        };
+        }
+        if len == 0 {
+            return Ok(&[]);
+        }
+        if self.offset < self.first.len() {
+            if end <= self.first.len() {
+                let bytes = &self.first[self.offset..end];
+                self.offset = end;
+                return Ok(bytes);
+            }
+        } else {
+            let start = self.offset - self.first.len();
+            let second_end = end - self.first.len();
+            let bytes = &self.second[start..second_end];
+            self.offset = end;
+            return Ok(bytes);
+        }
+
+        self.scratch.clear();
+        self.scratch.extend_from_slice(&self.first[self.offset..]);
+        self.scratch
+            .extend_from_slice(&self.second[..end - self.first.len()]);
         self.offset = end;
-        Ok(bytes)
+        Ok(&self.scratch)
     }
+}
+
+fn extract_encoded_document_fields_from_reader(
+    schema_ir: &NativeSchemaIr,
+    mut reader: BridgeReader,
+    byte_element_index_limit: usize,
+) -> Result<DocumentFields, JsValue> {
+    let mut fields = DocumentFields::new();
+    let mut state = NativeExtractState {
+        next_scope: 1,
+        byte_element_index_limit,
+    };
+    extract_schema_node(
+        &schema_ir.root,
+        &mut reader,
+        &mut fields,
+        0,
+        &mut state,
+        None,
+    )?;
+    reader.finish()?;
+    Ok(fields)
 }
 
 fn decode_native_schema_ir(schema_ir_bytes: &[u8]) -> Result<NativeSchemaIr, JsValue> {
@@ -726,29 +811,6 @@ impl NativeExtractState {
             .ok_or_else(|| js_error("Native schema extraction scope overflow"))?;
         Ok(scope)
     }
-}
-
-fn extract_encoded_document_fields(
-    schema_ir: &NativeSchemaIr,
-    value_bytes: &[u8],
-    byte_element_index_limit: usize,
-) -> Result<DocumentFields, JsValue> {
-    let mut reader = BridgeReader::new(value_bytes);
-    let mut fields = DocumentFields::new();
-    let mut state = NativeExtractState {
-        next_scope: 1,
-        byte_element_index_limit,
-    };
-    extract_schema_node(
-        &schema_ir.root,
-        &mut reader,
-        &mut fields,
-        0,
-        &mut state,
-        None,
-    )?;
-    reader.finish()?;
-    Ok(fields)
 }
 
 fn extract_schema_node(

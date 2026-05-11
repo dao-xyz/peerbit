@@ -664,12 +664,18 @@ type IndexableClass<I> = new (
 type ContextualPutOptions = {
 	replace?: boolean;
 	encodedValue?: Uint8Array;
+	encodedValueParts?: {
+		prefix: Uint8Array;
+		suffix: Uint8Array;
+	};
 };
 
 const stripEncodedValue = (
 	options: ContextualPutOptions | undefined,
 ): { replace?: boolean } | undefined =>
-	options?.encodedValue ? { replace: options.replace } : options;
+	options?.encodedValue || options?.encodedValueParts
+		? { replace: options.replace }
+		: options;
 
 type ContextualIndexPut<I> = {
 	putWithContext?: (
@@ -1757,7 +1763,7 @@ export class DocumentIndex<
 				? (this.index as ContextualIndexPut<I>).putWithContext
 				: undefined;
 			if (contextualPut) {
-				const encodedValue = this.encodeContextualIndexedValue(
+				const encodedValueParts = this.encodeContextualIndexedValueParts(
 					options?.encodedValue,
 					context,
 				);
@@ -1766,8 +1772,8 @@ export class DocumentIndex<
 					valueToIndex,
 					id,
 					context,
-					encodedValue
-						? { ...options, encodedValue }
+					encodedValueParts
+						? { ...options, encodedValue: undefined, encodedValueParts }
 						: options?.encodedValue
 							? { ...options, encodedValue: undefined }
 							: options,
@@ -1916,17 +1922,19 @@ export class DocumentIndex<
 		if (!options?.encodedValue) {
 			return options;
 		}
-		const encodedValue = this.encodeContextualIndexedValue(
+		const encodedValueParts = this.encodeContextualIndexedValueParts(
 			options.encodedValue,
 			context,
 		);
-		return { ...options, encodedValue };
+		return encodedValueParts
+			? { ...options, encodedValue: undefined, encodedValueParts }
+			: options;
 	}
 
-	private encodeContextualIndexedValue(
+	private encodeContextualIndexedValueParts(
 		encodedValue: Uint8Array | undefined,
 		context: types.Context,
-	): Uint8Array | undefined {
+	): ContextualPutOptions["encodedValueParts"] | undefined {
 		if (
 			!encodedValue ||
 			!this.transformerIsIdentity ||
@@ -1934,7 +1942,10 @@ export class DocumentIndex<
 		) {
 			return;
 		}
-		return concat([encodedValue, serialize(context)]);
+		return {
+			prefix: encodedValue,
+			suffix: serialize(context),
+		};
 	}
 
 	public del(key: indexerTypes.IdKey) {

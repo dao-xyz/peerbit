@@ -42,6 +42,14 @@ type NativeRustIndex<T extends Record<string, any>> = {
 		valueBytes: Uint8Array,
 		byteElementIndexLimit: number,
 	) => void;
+	put_encoded_parts?: (
+		key: string,
+		id: types.IdKey,
+		value: T,
+		valuePrefixBytes: Uint8Array,
+		valueSuffixBytes: Uint8Array,
+		byteElementIndexLimit: number,
+	) => void;
 	put_and_delete_matching: (
 		key: string,
 		id: types.IdKey,
@@ -711,6 +719,17 @@ type SharedLogCoordinateNativeFields = {
 	wallTime: number | bigint;
 	assignedToRangeBoundary: boolean;
 	metaBytes: Uint8Array;
+};
+
+type NativeEncodedValueParts = {
+	prefix: Uint8Array;
+	suffix: Uint8Array;
+};
+
+type NativeEncodedPutOptions = {
+	replace?: boolean;
+	encodedValue?: Uint8Array;
+	encodedValueParts?: NativeEncodedValueParts;
 };
 type NativeFieldValueWriterFn = (
 	value: any,
@@ -1676,9 +1695,17 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		value: Record<string, any>,
 		id: types.IdKey,
 		context: Record<string, any>,
-		options?: { replace?: boolean; encodedValue?: Uint8Array },
+		options?: NativeEncodedPutOptions,
 	): Promise<void> {
 		const contextualValue = this.asContextualValue(value, context);
+		if (options?.encodedValueParts) {
+			await this.putWithEncodedValueParts(
+				contextualValue,
+				id,
+				options.encodedValueParts,
+			);
+			return;
+		}
 		if (options?.encodedValue) {
 			await this.putWithEncodedValue(contextualValue, id, options.encodedValue);
 			return;
@@ -1691,7 +1718,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			value: Record<string, any>;
 			id: types.IdKey;
 			context: Record<string, any>;
-			options?: { replace?: boolean; encodedValue?: Uint8Array };
+			options?: NativeEncodedPutOptions;
 		}>,
 	): Promise<void> {
 		if (values.length === 0) {
@@ -1713,6 +1740,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				value: this.asContextualValue(entry.value, entry.context),
 				id: entry.id,
 				encodedValue: entry.options?.encodedValue,
+				encodedValueParts: entry.options?.encodedValueParts,
 			})),
 		);
 	}
@@ -1734,19 +1762,25 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			value: T;
 			id: types.IdKey;
 			encodedValue?: Uint8Array;
+			encodedValueParts?: NativeEncodedValueParts;
 		}>,
 	): Promise<void> {
 		if (!this.snapshotFile) {
 			for (const entry of values) {
 				const storeKey = keyToStoreKey(entry.id);
 				const encodedValue =
-					entry.encodedValue ?? this.tryNativeEncodedValue(entry.value);
+					entry.encodedValue ??
+					(entry.encodedValueParts
+						? undefined
+						: this.tryNativeEncodedValue(entry.value));
 				if (
 					!this.putNativeDocumentWithPreparedFields(
 						storeKey,
 						entry.id,
 						entry.value,
 						encodedValue,
+						undefined,
+						entry.encodedValueParts,
 					)
 				) {
 					this.getNative().put(
@@ -1763,10 +1797,17 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		await this.enqueueMutation(async () => {
 			const prepared = values.map((entry) => {
 				const encodedValue =
-					entry.encodedValue ?? this.tryNativeEncodedValue(entry.value);
+					entry.encodedValue ??
+					(entry.encodedValueParts
+						? undefined
+						: this.tryNativeEncodedValue(entry.value));
 				return {
 					encodedValue,
-					fields: encodedValue ? undefined : this.fieldEncoder(entry.value),
+					encodedValueParts: entry.encodedValueParts,
+					fields:
+						encodedValue || entry.encodedValueParts
+							? undefined
+							: this.fieldEncoder(entry.value),
 					id: entry.id,
 					storeKey: keyToStoreKey(entry.id),
 					value: entry.value,
@@ -1789,6 +1830,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 						item.value,
 						item.encodedValue,
 						item.fields,
+						item.encodedValueParts,
 					)
 				) {
 					this.getNative().put(
@@ -2279,6 +2321,46 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		});
 	}
 
+	private async putWithEncodedValueParts(
+		value: T,
+		id: types.IdKey,
+		encodedValueParts: NativeEncodedValueParts,
+	): Promise<void> {
+		const storeKey = keyToStoreKey(id);
+		if (!this.snapshotFile) {
+			if (
+				this.putNativeDocumentWithPreparedFields(
+					storeKey,
+					id,
+					value,
+					undefined,
+					undefined,
+					encodedValueParts,
+				)
+			) {
+				return;
+			}
+			this.getNative().put(storeKey, id, value, this.fieldEncoder(value));
+			return;
+		}
+		await this.enqueueMutation(async () => {
+			await this.appendPut(storeKey, value);
+			if (
+				!this.putNativeDocumentWithPreparedFields(
+					storeKey,
+					id,
+					value,
+					undefined,
+					undefined,
+					encodedValueParts,
+				)
+			) {
+				this.getNative().put(storeKey, id, value, this.fieldEncoder(value));
+			}
+			await this.compactIfNeeded();
+		});
+	}
+
 	private async putWithEncodedFieldsAndDeleteKeys(
 		value: T,
 		id: types.IdKey,
@@ -2382,7 +2464,30 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		value: T,
 		encodedValue?: Uint8Array,
 		fields?: Uint8Array,
+		encodedValueParts?: NativeEncodedValueParts,
 	): boolean {
+		if (encodedValueParts) {
+			const native = this.getNative();
+			const putEncodedParts = native.put_encoded_parts;
+			try {
+				if (!putEncodedParts) {
+					return false;
+				}
+				putEncodedParts.call(
+					native,
+					storeKey,
+					id,
+					value,
+					encodedValueParts.prefix,
+					encodedValueParts.suffix,
+					this.nativeByteElementIndexLimit,
+				);
+				return true;
+			} catch {
+				// Fall back to the proven TypeScript fact encoder for schemas whose
+				// Borsh bytes are not covered by the native extractor yet.
+			}
+		}
 		if (encodedValue) {
 			try {
 				this.getNative().put_encoded(
