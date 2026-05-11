@@ -157,7 +157,7 @@ type PlainPutCommitPlan<T, I extends Record<string, any>> = {
 	encodedDocument: Uint8Array;
 	payloadData: Uint8Array;
 	key: indexerTypes.IdKey;
-	operation: PutOperation;
+	operation?: PutOperation;
 	next: Entry<Operation>[] | ShallowEntry[];
 	skipMissingNextJoin: boolean;
 	resolveTrimmedEntries: boolean;
@@ -220,7 +220,6 @@ type NativeDocumentAppendCommitInput<
 	T,
 	I extends Record<string, any>,
 > = NativeDocumentAppendCommitFactsInput<T, I> & {
-	operation: PutOperation;
 	next: Entry<Operation>[] | ShallowEntry[];
 	skipMissingNextJoin: boolean;
 	resolveTrimmedEntries: boolean;
@@ -800,7 +799,9 @@ export class Documents<
 	}
 
 	public async put(doc: T, options?: DocumentPutOptions) {
-		const prepared = this.preparePut(doc);
+		const prepared = this.canUsePlainPutFastPath(options)
+			? this.preparePlainPut(doc)
+			: this.preparePut(doc);
 		let existingLocalContext:
 			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
 			| null
@@ -832,7 +833,11 @@ export class Documents<
 			return this.commitPlainPutPlan(plainPutPlan, options);
 		}
 
-		const appended = await this.log.append(prepared.operation, {
+		const operation =
+			"operation" in prepared
+				? prepared.operation
+				: new PutOperation({ data: prepared.encodedDocument });
+		const appended = await this.log.append(operation, {
 			...options,
 			meta: {
 				next: existingHead ? [await this._resolveEntry(existingHead)] : [],
@@ -841,13 +846,13 @@ export class Documents<
 			canAppend: (entry) => {
 				return this.canAppend(entry, {
 					document: prepared.document,
-					operation: prepared.operation,
+					operation,
 				});
 			},
 			onChange: (change) => {
 				return this.handleChanges(change, {
 					document: prepared.document,
-					operation: prepared.operation,
+					operation,
 					key: prepared.key,
 					unique: options?.unique,
 					existing: existingLocalContext,
@@ -966,7 +971,7 @@ export class Documents<
 	}
 
 	private async createPlainPutCommitPlan(
-		prepared: PreparedPut<T>,
+		prepared: PreparedPut<T> | PreparedPlainPut<T>,
 		existingHead: string | undefined,
 		existingLocalContext:
 			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
@@ -977,7 +982,8 @@ export class Documents<
 			| undefined,
 	): Promise<PlainPutCommitPlan<T, I> | undefined> {
 		if (
-			!(prepared.operation instanceof PutOperation) ||
+			("operation" in prepared &&
+				!(prepared.operation instanceof PutOperation)) ||
 			!this.canUsePlainPutFastPath(options)
 		) {
 			return;
@@ -994,10 +1000,12 @@ export class Documents<
 			document: prepared.document,
 			encodedDocument: prepared.encodedDocument,
 			payloadData:
-				prepared.encodedOperation ??
-				encodePutOperationPayload(prepared.operation.data),
+				"operationPayloadBytes" in prepared
+					? prepared.operationPayloadBytes
+					: (prepared.encodedOperation ??
+						encodePutOperationPayload(prepared.operation.data)),
 			key: prepared.key,
-			operation: prepared.operation,
+			operation: "operation" in prepared ? prepared.operation : undefined,
 			next,
 			skipMissingNextJoin: !options?.checkRemote,
 			resolveTrimmedEntries: !this._index.canGetIdentityIndexedByHead(),
@@ -1028,6 +1036,10 @@ export class Documents<
 			existing: plan.existing,
 		});
 		if (plan.useGenericChangeHandler) {
+			const operation =
+				documentAppendCommit.operation ??
+				plan.operation ??
+				new PutOperation({ data: plan.encodedDocument });
 			await this.handleChanges(
 				{
 					added: [{ head: true, entry: documentAppendCommit.entry }],
@@ -1035,7 +1047,7 @@ export class Documents<
 				},
 				{
 					document: plan.document,
-					operation: plan.operation,
+					operation,
 					key: plan.key,
 					unique: plan.unique,
 					existing: plan.existing,
@@ -1054,22 +1066,30 @@ export class Documents<
 	private async commitNativeDocumentAppend(
 		input: NativeDocumentAppendCommitInput<T, I>,
 	): Promise<DocumentAppendCommitFacts<T, I>> {
-		const appended = await this.log.appendLocallyPrepared(
-			input.operation,
-			{
-				...input.options,
-				meta: {
-					next: input.next,
-					...input.options?.meta,
-				},
-				replicate: input.options?.replicate,
+		const appendOptions = {
+			...input.options,
+			meta: {
+				next: input.next,
+				...input.options?.meta,
 			},
-			{
-				skipMissingNextJoin: input.skipMissingNextJoin,
-				resolveTrimmedEntries: input.resolveTrimmedEntries,
-				payloadData: input.operationPayloadBytes,
-			},
-		);
+			replicate: input.options?.replicate,
+		};
+		const appendProperties = {
+			skipMissingNextJoin: input.skipMissingNextJoin,
+			resolveTrimmedEntries: input.resolveTrimmedEntries,
+			payloadData: input.operationPayloadBytes,
+		};
+		const appended = input.operation
+			? await this.log.appendLocallyPrepared(
+					input.operation,
+					appendOptions,
+					appendProperties,
+				)
+			: await this.log.appendLocallyPreparedPayload(
+					input.operationPayloadBytes,
+					appendOptions,
+					appendProperties,
+				);
 		return this.createDocumentAppendCommitFacts(input, appended);
 	}
 

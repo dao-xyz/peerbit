@@ -189,6 +189,10 @@ describe("index", () => {
 					store.docs.log,
 					"appendLocallyPrepared",
 				);
+				const preparedPayloadAppendSpy = sinon.spy(
+					store.docs.log,
+					"appendLocallyPreparedPayload",
+				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
 				const localLookupSpy = sinon.spy(
 					store.docs as any,
@@ -235,6 +239,7 @@ describe("index", () => {
 					});
 
 					expect(preparedAppendSpy.callCount).equal(1);
+					expect(preparedPayloadAppendSpy.callCount).equal(1);
 					expect(validatedAppendSpy.callCount).equal(0);
 					expect(appendSpy.callCount).equal(0);
 					expect(localLookupSpy.callCount).equal(0);
@@ -257,13 +262,18 @@ describe("index", () => {
 					expect(preparedAppendSpy.getCall(0).args[2]?.payloadData).to.deep.equal(
 						expectedPayloadData,
 					);
+					expect(preparedPayloadAppendSpy.getCall(0).args[0]).to.deep.equal(
+						expectedPayloadData,
+					);
 					const commitPlan = await commitPlanSpy.getCall(0).returnValue;
 					expect(commitPlan.payloadData).to.deep.equal(expectedPayloadData);
+					expect(commitPlan.operation).equal(undefined);
 					const nativeInput = nativeCommitSpy.getCall(0).args[0];
 					expect(nativeInput.documentBytes).to.deep.equal(encodedDocument);
 					expect(nativeInput.operationPayloadBytes).to.deep.equal(
 						expectedPayloadData,
 					);
+					expect(nativeInput.operation).equal(undefined);
 					expect(nativeInput.key.primitive).equal(doc.id);
 					expect(nativeInput.next).to.be.empty;
 					const documentCommit = documentCommitSpy.getCall(0).returnValue;
@@ -322,6 +332,7 @@ describe("index", () => {
 					commitPlanSpy.restore();
 					nativeCommitSpy.restore();
 					documentCommitSpy.restore();
+					preparedPayloadAppendSpy.restore();
 					preparedAppendSpy.restore();
 					validatedAppendSpy.restore();
 					appendSpy.restore();
