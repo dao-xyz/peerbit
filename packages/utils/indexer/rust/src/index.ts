@@ -668,6 +668,10 @@ class NativeSchemaIrWriter {
 	string(value: string): void {
 		const bytes = textEncoder.encode(value);
 		this.u32(bytes.byteLength);
+		this.raw(bytes);
+	}
+
+	raw(bytes: Uint8Array): void {
 		this.ensure(bytes.byteLength);
 		this.output.set(bytes, this.offset);
 		this.offset += bytes.byteLength;
@@ -931,6 +935,32 @@ const encodeNativeSchemaIr = (
 	return writer.finish();
 };
 
+const encodeNativeSchemaVariantPrefix = (
+	schemas: ReturnType<typeof getSchemasBottomUp>,
+): Uint8Array => {
+	const writer = new NativeSchemaIrWriter();
+	for (const schema of schemas) {
+		const variant = schema.variant;
+		if (variant == null) {
+			continue;
+		}
+		if (typeof variant === "string") {
+			writer.string(variant);
+			continue;
+		}
+		if (typeof variant === "number") {
+			writer.u8(variant);
+			continue;
+		}
+		if (Array.isArray(variant)) {
+			for (const part of variant) {
+				writer.u8(part);
+			}
+		}
+	}
+	return writer.finish();
+};
+
 const normalizeNativeByteElementIndexLimit = (limit: number): number => {
 	if (!Number.isFinite(limit)) {
 		return MAX_NATIVE_BYTE_ELEMENT_INDEX_LIMIT;
@@ -963,7 +993,10 @@ const writeNativeSchemaObjectNode = (
 
 	active.add(ctor);
 	const fields = schemas.flatMap((nextSchema) => nextSchema.fields);
+	const variantPrefix = encodeNativeSchemaVariantPrefix(schemas);
 	writer.u8(NativeSchemaNodeTag.Object);
+	writer.u32(variantPrefix.byteLength);
+	writer.raw(variantPrefix);
 	writer.u32(fields.length);
 	for (const field of fields) {
 		const fieldCursor = appendNativeFieldCursor(dictionary, cursor, field.key);
@@ -1599,9 +1632,14 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		value: Record<string, any>,
 		id: types.IdKey,
 		context: Record<string, any>,
-		options?: { replace?: boolean },
+		options?: { replace?: boolean; encodedValue?: Uint8Array },
 	): Promise<void> {
-		await this.put(this.asContextualValue(value, context), id, options);
+		const contextualValue = this.asContextualValue(value, context);
+		if (options?.encodedValue) {
+			await this.putWithEncodedValue(contextualValue, id, options.encodedValue);
+			return;
+		}
+		await this.put(contextualValue, id, options);
 	}
 
 	async putWithContextBatch(
@@ -1609,7 +1647,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			value: Record<string, any>;
 			id: types.IdKey;
 			context: Record<string, any>;
-			options?: { replace?: boolean };
+			options?: { replace?: boolean; encodedValue?: Uint8Array };
 		}>,
 	): Promise<void> {
 		if (values.length === 0) {
@@ -1626,10 +1664,12 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			}
 			return;
 		}
-		await this.putBatch(
-			values.map((entry) =>
-				this.asContextualValue(entry.value, entry.context),
-			),
+		await this.putPreparedBatch(
+			values.map((entry) => ({
+				value: this.asContextualValue(entry.value, entry.context),
+				id: entry.id,
+				encodedValue: entry.options?.encodedValue,
+			})),
 		);
 	}
 
@@ -1637,24 +1677,55 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		if (values.length === 0) {
 			return;
 		}
+		await this.putPreparedBatch(
+			values.map((value) => ({
+				value,
+				id: types.toId(types.extractFieldValue(value, this.indexByArr)),
+			})),
+		);
+	}
+
+	private async putPreparedBatch(
+		values: Array<{
+			value: T;
+			id: types.IdKey;
+			encodedValue?: Uint8Array;
+		}>,
+	): Promise<void> {
 		if (!this.snapshotFile) {
-			for (const value of values) {
-				const id = types.toId(types.extractFieldValue(value, this.indexByArr));
-				this.putNativeDocument(keyToStoreKey(id), id, value);
+			for (const entry of values) {
+				const storeKey = keyToStoreKey(entry.id);
+				const encodedValue =
+					entry.encodedValue ?? this.tryNativeEncodedValue(entry.value);
+				if (
+					!this.putNativeDocumentWithPreparedFields(
+						storeKey,
+						entry.id,
+						entry.value,
+						encodedValue,
+					)
+				) {
+					this.getNative().put(
+						storeKey,
+						entry.id,
+						entry.value,
+						this.fieldEncoder(entry.value),
+					);
+				}
 			}
 			return;
 		}
 
 		await this.enqueueMutation(async () => {
-			const prepared = values.map((value) => {
-				const id = types.toId(types.extractFieldValue(value, this.indexByArr));
-				const encodedValue = this.tryNativeEncodedValue(value);
+			const prepared = values.map((entry) => {
+				const encodedValue =
+					entry.encodedValue ?? this.tryNativeEncodedValue(entry.value);
 				return {
 					encodedValue,
-					fields: encodedValue ? undefined : this.fieldEncoder(value),
-					id,
-					storeKey: keyToStoreKey(id),
-					value,
+					fields: encodedValue ? undefined : this.fieldEncoder(entry.value),
+					id: entry.id,
+					storeKey: keyToStoreKey(entry.id),
+					value: entry.value,
 				};
 			});
 			await this.enqueuePersistence(async () => {
@@ -1667,13 +1738,22 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				}
 			});
 			for (const item of prepared) {
-				this.putNativeDocumentWithPreparedFields(
-					item.storeKey,
-					item.id,
-					item.value,
-					item.encodedValue,
-					item.fields,
-				);
+				if (
+					!this.putNativeDocumentWithPreparedFields(
+						item.storeKey,
+						item.id,
+						item.value,
+						item.encodedValue,
+						item.fields,
+					)
+				) {
+					this.getNative().put(
+						item.storeKey,
+						item.id,
+						item.value,
+						this.fieldEncoder(item.value),
+					);
+				}
 			}
 			await this.compactIfNeeded();
 		});

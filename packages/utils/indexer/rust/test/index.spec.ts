@@ -1,4 +1,4 @@
-import { field, vec } from "@dao-xyz/borsh";
+import { field, variant, vec } from "@dao-xyz/borsh";
 import {
 	And,
 	BoolQuery,
@@ -175,6 +175,34 @@ class BridgeNestedDocument {
 	}
 }
 
+@variant("bridge_variant_item")
+class BridgeVariantNestedItem {
+	@field({ type: "string" })
+	tag: string;
+
+	@field({ type: "u32" })
+	score: number;
+
+	constructor(tag: string, score: number) {
+		this.tag = tag;
+		this.score = score;
+	}
+}
+
+@variant("bridge_variant_document")
+class BridgeVariantNestedDocument {
+	@id({ type: "string" })
+	id: string;
+
+	@field({ type: vec(BridgeVariantNestedItem) })
+	items: BridgeVariantNestedItem[];
+
+	constructor(id: string, items: BridgeVariantNestedItem[]) {
+		this.id = id;
+		this.items = items;
+	}
+}
+
 const isNodeRuntime = () =>
 	Boolean(
 		(
@@ -259,6 +287,45 @@ describe("native planner bridge", () => {
 		);
 		await index.put(
 			new BridgeNestedDocument("b", [new BridgeNestedItem("left", 4)]),
+		);
+
+		const results = await index
+			.iterate({
+				query: new Nested({
+					path: "items",
+					query: [
+						new StringMatch({ key: "tag", value: "left" }),
+						new IntegerCompare({
+							key: "score",
+							compare: Compare.Greater,
+							value: 2,
+						}),
+					],
+				}),
+			})
+			.all();
+
+		expect(results.map((result) => result.value.id)).to.deep.equal(["b"]);
+		await indices.drop();
+	});
+
+	it("indexes borsh variant-prefixed document bytes in native rust", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeVariantNestedDocument });
+		(index as unknown as { fieldEncoder: () => never }).fieldEncoder = () => {
+			throw new Error("TypeScript field encoder should not run");
+		};
+		await index.put(
+			new BridgeVariantNestedDocument("a", [
+				new BridgeVariantNestedItem("left", 1),
+				new BridgeVariantNestedItem("right", 3),
+			]),
+		);
+		await index.put(
+			new BridgeVariantNestedDocument("b", [
+				new BridgeVariantNestedItem("left", 4),
+			]),
 		);
 
 		const results = await index

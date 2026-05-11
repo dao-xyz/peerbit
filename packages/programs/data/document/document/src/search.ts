@@ -653,19 +653,29 @@ type IndexableClass<I> = new (
 	context: types.Context,
 ) => WithContext<I>;
 
+type ContextualPutOptions = {
+	replace?: boolean;
+	encodedValue?: Uint8Array;
+};
+
+const stripEncodedValue = (
+	options: ContextualPutOptions | undefined,
+): { replace?: boolean } | undefined =>
+	options?.encodedValue ? { replace: options.replace } : options;
+
 type ContextualIndexPut<I> = {
 	putWithContext?: (
 		value: I,
 		id: indexerTypes.IdKey,
 		context: types.Context,
-		options?: { replace?: boolean },
+		options?: ContextualPutOptions,
 	) => Promise<void> | void;
 	putWithContextBatch?: (
 		values: Array<{
 			value: I;
 			id: indexerTypes.IdKey;
 			context: types.Context;
-			options?: { replace?: boolean };
+			options?: ContextualPutOptions;
 		}>,
 	) => Promise<void> | void;
 };
@@ -1707,7 +1717,7 @@ export class DocumentIndex<
 		value: T,
 		id: indexerTypes.IdKey,
 		context: types.Context,
-		options?: { replace?: boolean },
+		options?: ContextualPutOptions,
 	): Promise<{ context: types.Context; indexable: I }> {
 		const idString = id.primitive;
 		if (
@@ -1739,13 +1749,31 @@ export class DocumentIndex<
 				? (this.index as ContextualIndexPut<I>).putWithContext
 				: undefined;
 			if (contextualPut) {
-				await contextualPut.call(this.index, valueToIndex, id, context, options);
+				const encodedValue = this.encodeContextualIndexedValue(
+					options?.encodedValue,
+					context,
+				);
+				await contextualPut.call(
+					this.index,
+					valueToIndex,
+					id,
+					context,
+					encodedValue
+						? { ...options, encodedValue }
+						: options?.encodedValue
+							? { ...options, encodedValue: undefined }
+							: options,
+				);
 			} else {
 				const wrappedValueToIndex = new this.wrappedIndexedType(
 					valueToIndex as I,
 					context,
 				);
-				await this.index.put(wrappedValueToIndex, id, options);
+				await this.index.put(
+					wrappedValueToIndex,
+					id,
+					stripEncodedValue(options),
+				);
 			}
 		} catch (error) {
 			if (error instanceof indexerTypes.NotStartedError && this.closed) {
@@ -1761,7 +1789,7 @@ export class DocumentIndex<
 			value: T;
 			id: indexerTypes.IdKey;
 			context: types.Context;
-			options?: { replace?: boolean };
+			options?: ContextualPutOptions;
 		}>,
 	): Promise<Array<{ context: types.Context; indexable: I }>> {
 		if (values.length === 0) {
@@ -1819,7 +1847,10 @@ export class DocumentIndex<
 						value: item.indexable,
 						id: item.id,
 						context: item.context,
-						options: item.options,
+						options: this.withContextualEncodedValue(
+							item.options,
+							item.context,
+						),
 					})),
 				);
 			} else if (
@@ -1843,13 +1874,13 @@ export class DocumentIndex<
 							item.indexable,
 							item.id,
 							item.context,
-							item.options,
+							this.withContextualEncodedValue(item.options, item.context),
 						);
 					} else {
 						await this.index.put(
 							new this.wrappedIndexedType(item.indexable, item.context),
 							item.id,
-							item.options,
+							stripEncodedValue(item.options),
 						);
 					}
 				}
@@ -1868,6 +1899,34 @@ export class DocumentIndex<
 			context: item.context,
 			indexable: item.indexable,
 		}));
+	}
+
+	private withContextualEncodedValue(
+		options: ContextualPutOptions | undefined,
+		context: types.Context,
+	): ContextualPutOptions | undefined {
+		if (!options?.encodedValue) {
+			return options;
+		}
+		const encodedValue = this.encodeContextualIndexedValue(
+			options.encodedValue,
+			context,
+		);
+		return { ...options, encodedValue };
+	}
+
+	private encodeContextualIndexedValue(
+		encodedValue: Uint8Array | undefined,
+		context: types.Context,
+	): Uint8Array | undefined {
+		if (
+			!encodedValue ||
+			!this.transformerIsIdentity ||
+			!this.indexedTypeIsDocumentType
+		) {
+			return;
+		}
+		return concat([encodedValue, serialize(context)]);
 	}
 
 	public del(key: indexerTypes.IdKey) {
