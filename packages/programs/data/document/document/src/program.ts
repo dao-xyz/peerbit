@@ -1191,6 +1191,7 @@ export class Documents<
 			encodedDocument?: Uint8Array;
 			key: indexerTypes.IdKey;
 			context: Context;
+			contextualEncodedValueParts?: ContextualEncodedValueParts;
 		}> = [];
 		for (const put of properties.puts) {
 			if (modified.has(put.key.primitive)) {
@@ -1203,11 +1204,18 @@ export class Documents<
 				gid: put.append.gid,
 				size: put.append.payloadSize,
 			});
+			const contextBytes = encodeContextSuffix(context);
 			putsToIndex.push({
 				document: put.document,
 				encodedDocument: put.encodedDocument,
 				key: put.key,
 				context,
+				contextualEncodedValueParts: put.encodedDocument
+					? {
+							prefix: put.encodedDocument,
+							suffix: contextBytes,
+						}
+					: undefined,
 			});
 			modified.add(put.key.primitive);
 		}
@@ -1218,7 +1226,7 @@ export class Documents<
 				context: put.context,
 				options: {
 					replace: false,
-					encodedValue: put.encodedDocument,
+					encodedValueParts: put.contextualEncodedValueParts,
 				},
 			})),
 		);
