@@ -1386,7 +1386,7 @@ describe("fanout-tree", () => {
 				level: 0,
 				maxChildren: 4,
 				freeSlots: 2,
-				children: 2,
+				children: 0,
 				haveToExclusive: 5,
 				missingSeqs: 0,
 				dataWriteDrops: 0,

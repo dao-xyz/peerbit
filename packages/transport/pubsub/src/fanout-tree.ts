@@ -7189,7 +7189,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				options.candidateShuffleTopK > 0
 					? Math.min(options.candidateShuffleTopK, ordered.length)
 					: 0;
-			if (k > 1) {
+			const hasWeightedSignal =
+				wLevel > 0 || wSlots > 0 || wConnected > 0 || wBid > 0 || wSource > 0;
+			if (k > 1 && hasWeightedSignal) {
 				const head = ordered.slice(0, k);
 				const tail = ordered.slice(k);
 
