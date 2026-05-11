@@ -31,7 +31,17 @@ export type SnapshotFile = {
 		}>,
 		schema: AbstractType<T>,
 	): Promise<void>;
+	appendPutAndDeleteBatch<T extends Record<string, any>>(
+		values: Array<{
+			key: string;
+			value: T;
+			encodedValue?: EncodedValue;
+			deleteKeys?: string[];
+		}>,
+		schema: AbstractType<T>,
+	): Promise<void>;
 	appendDelete(key: string): Promise<void>;
+	appendDeleteBatch(keys: string[]): Promise<void>;
 	compact<T extends Record<string, any>>(
 		values: T[],
 		schema: AbstractType<T>,
@@ -298,6 +308,35 @@ const encodeJournalPayload = <T extends Record<string, any>>(
 	return output;
 };
 
+const encodePutAndDeleteRecords = <T extends Record<string, any>>(
+	values: Array<{
+		key: string;
+		value: T;
+		encodedValue?: EncodedValue;
+		deleteKeys?: string[];
+	}>,
+	schema: AbstractType<T>,
+): Uint8Array[] => {
+	const payloads: Uint8Array[] = [];
+	for (const entry of values) {
+		payloads.push(
+			encodeJournalPayload(
+				JournalOperation.Put,
+				entry.key,
+				schema,
+				entry.value,
+				entry.encodedValue,
+			),
+		);
+		for (const deleteKey of entry.deleteKeys ?? []) {
+			payloads.push(
+				encodeJournalPayload(JournalOperation.Delete, deleteKey),
+			);
+		}
+	}
+	return payloads;
+};
+
 const encodeJournalRecord = (payload: Uint8Array): Uint8Array => {
 	const output = new Uint8Array(8 + payload.byteLength);
 	let offset = 0;
@@ -465,8 +504,26 @@ class NativeSnapshotFile implements SnapshotFile {
 		);
 	}
 
+	async appendPutAndDeleteBatch<T extends Record<string, any>>(
+		values: Array<{
+			key: string;
+			value: T;
+			encodedValue?: EncodedValue;
+			deleteKeys?: string[];
+		}>,
+		schema: AbstractType<T>,
+	): Promise<void> {
+		await this.appendRecords(encodePutAndDeleteRecords(values, schema));
+	}
+
 	async appendDelete(key: string): Promise<void> {
 		await this.appendRecord(encodeJournalPayload(JournalOperation.Delete, key));
+	}
+
+	async appendDeleteBatch(keys: string[]): Promise<void> {
+		await this.appendRecords(
+			keys.map((key) => encodeJournalPayload(JournalOperation.Delete, key)),
+		);
 	}
 
 	async compact<T extends Record<string, any>>(
@@ -709,8 +766,26 @@ class OpfsSnapshotFile implements SnapshotFile {
 		);
 	}
 
+	async appendPutAndDeleteBatch<T extends Record<string, any>>(
+		values: Array<{
+			key: string;
+			value: T;
+			encodedValue?: EncodedValue;
+			deleteKeys?: string[];
+		}>,
+		schema: AbstractType<T>,
+	): Promise<void> {
+		await this.appendRecords(encodePutAndDeleteRecords(values, schema));
+	}
+
 	async appendDelete(key: string): Promise<void> {
 		await this.appendRecord(encodeJournalPayload(JournalOperation.Delete, key));
+	}
+
+	async appendDeleteBatch(keys: string[]): Promise<void> {
+		await this.appendRecords(
+			keys.map((key) => encodeJournalPayload(JournalOperation.Delete, key)),
+		);
 	}
 
 	async compact<T extends Record<string, any>>(

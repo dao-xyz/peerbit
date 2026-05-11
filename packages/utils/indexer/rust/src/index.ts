@@ -1944,18 +1944,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}
 
 		return this.enqueueMutation(async () => {
-			await this.enqueuePersistence(async () => {
-				for (const entry of prepared) {
-					await this.snapshotFile!.appendPut(
-						entry.storeKey,
-						entry.value,
-						this.properties.schema,
-					);
-					for (const deleteKey of entry.deleteKeys) {
-						await this.snapshotFile!.appendDelete(deleteKey);
-					}
-				}
-			});
+			await this.appendPutAndDeletesBatch(prepared);
 			const deletedEntries = prepared.flatMap((entry) =>
 				this.getNative().put_and_delete_keys(
 					entry.storeKey,
@@ -2314,8 +2303,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}
 
 		return this.enqueueMutation(async () => {
-			await this.appendPut(storeKey, value);
-			await this.appendDeletes(deleteKeys);
+			await this.appendPutAndDeletes(storeKey, value, deleteKeys);
 			const deletedEntries = this.getNative().put_and_delete_keys(
 				storeKey,
 				id,
@@ -2577,12 +2565,42 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
+	private appendPutAndDeletes(
+		storeKey: string,
+		value: T,
+		deleteKeys: string[],
+		encodedValue?: EncodedValue,
+	): Promise<void> {
+		return this.appendPutAndDeletesBatch([
+			{ storeKey, value, deleteKeys, encodedValue },
+		]);
+	}
+
+	private appendPutAndDeletesBatch(
+		entries: Array<{
+			storeKey: string;
+			value: T;
+			deleteKeys: string[];
+			encodedValue?: EncodedValue;
+		}>,
+	): Promise<void> {
+		return this.enqueuePersistence(() =>
+			this.snapshotFile!.appendPutAndDeleteBatch(
+				entries.map((entry) => ({
+					key: entry.storeKey,
+					value: entry.value,
+					encodedValue: entry.encodedValue,
+					deleteKeys: entry.deleteKeys,
+				})),
+				this.properties.schema,
+			),
+		);
+	}
+
 	private appendDeletes(storeKeys: string[]): Promise<void> {
-		return this.enqueuePersistence(async () => {
-			for (const storeKey of storeKeys) {
-				await this.snapshotFile!.appendDelete(storeKey);
-			}
-		});
+		return this.enqueuePersistence(() =>
+			this.snapshotFile!.appendDeleteBatch(storeKeys),
+		);
 	}
 
 	private async compactIfNeeded(): Promise<void> {
