@@ -143,6 +143,23 @@ type PreparedPut<T> = {
 	operation: PutOperation | PutWithKeyOperation;
 };
 
+type PlainPutCommitPlan<T, I extends Record<string, any>> = {
+	document: T;
+	encodedDocument: Uint8Array;
+	payloadData: Uint8Array;
+	key: indexerTypes.IdKey;
+	operation: PutOperation;
+	next: Entry<Operation>[] | ShallowEntry[];
+	skipMissingNextJoin: boolean;
+	resolveTrimmedEntries: boolean;
+	useGenericChangeHandler: boolean;
+	unique?: boolean;
+	existing?:
+		| indexerTypes.IndexedResult<IndexedContextOnly<I>>
+		| null
+		| undefined;
+};
+
 type InferR<D> = D extends ReplicationDomain<any, any, infer I> ? I : "u32";
 
 export type SetupOptions<
@@ -697,20 +714,14 @@ export class Documents<
 			}
 		}
 
-		if (
-			prepared.operation instanceof PutOperation &&
-			this.canUsePlainPutFastPath(options)
-		) {
-			return this.putPlainFastPath(
-				prepared.document,
-				prepared.encodedDocument,
-				prepared.encodedOperation,
-				prepared.key,
-				prepared.operation,
-				existingHead,
-				existingLocalContext,
-				options,
-			);
+		const plainPutPlan = await this.createPlainPutCommitPlan(
+			prepared,
+			existingHead,
+			existingLocalContext,
+			options,
+		);
+		if (plainPutPlan) {
+			return this.commitPlainPutPlan(plainPutPlan, options);
 		}
 
 		const appended = await this.log.append(prepared.operation, {
@@ -854,12 +865,8 @@ export class Documents<
 		);
 	}
 
-	private async putPlainFastPath(
-		doc: T,
-		encodedDocument: Uint8Array,
-		encodedOperation: Uint8Array | undefined,
-		key: indexerTypes.IdKey,
-		operation: PutOperation,
+	private async createPlainPutCommitPlan(
+		prepared: PreparedPut<T>,
 		existingHead: string | undefined,
 		existingLocalContext:
 			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
@@ -868,7 +875,13 @@ export class Documents<
 		options:
 			| DocumentPutOptions
 			| undefined,
-	) {
+	): Promise<PlainPutCommitPlan<T, I> | undefined> {
+		if (
+			!(prepared.operation instanceof PutOperation) ||
+			!this.canUsePlainPutFastPath(options)
+		) {
+			return;
+		}
 		const indexedContextNext = existingHead
 			? this.nextFromIndexedContext(existingHead, existingLocalContext)
 			: undefined;
@@ -877,46 +890,69 @@ export class Documents<
 				? [indexedContextNext]
 				: [await this._resolveEntry(existingHead)]
 			: [];
+		return {
+			document: prepared.document,
+			encodedDocument: prepared.encodedDocument,
+			payloadData:
+				prepared.encodedOperation ??
+				encodePutOperationPayload(prepared.operation.data),
+			key: prepared.key,
+			operation: prepared.operation,
+			next,
+			skipMissingNextJoin: !options?.checkRemote,
+			resolveTrimmedEntries: !this._index.canGetIdentityIndexedByHead(),
+			useGenericChangeHandler:
+				!options?.unique && existingLocalContext === undefined,
+			unique: options?.unique,
+			existing: existingLocalContext,
+		};
+	}
+
+	private async commitPlainPutPlan(
+		plan: PlainPutCommitPlan<T, I>,
+		options:
+			| DocumentPutOptions
+			| undefined,
+	) {
 		const appended = await this.log.appendLocallyPrepared(
-			operation,
+			plan.operation,
 			{
 				...options,
 				meta: {
-					next,
+					next: plan.next,
 					...options?.meta,
 				},
 				replicate: options?.replicate,
 			},
 			{
-				skipMissingNextJoin: !options?.checkRemote,
-				resolveTrimmedEntries: !this._index.canGetIdentityIndexedByHead(),
-				payloadData:
-					encodedOperation ?? encodePutOperationPayload(operation.data),
+				skipMissingNextJoin: plan.skipMissingNextJoin,
+				resolveTrimmedEntries: plan.resolveTrimmedEntries,
+				payloadData: plan.payloadData,
 			},
 		);
-		if (!options?.unique && existingLocalContext === undefined) {
+		if (plan.useGenericChangeHandler) {
 			await this.handleChanges(
 				{
 					added: [{ head: true, entry: appended.entry }],
 					removed: appended.removed,
 				},
 				{
-					document: doc,
-					operation,
-					key,
-					unique: options?.unique,
-					existing: existingLocalContext,
+					document: plan.document,
+					operation: plan.operation,
+					key: plan.key,
+					unique: plan.unique,
+					existing: plan.existing,
 				},
 			);
 		} else {
 			await this.handlePreparedPlainPutCommit({
-				document: doc,
-				encodedDocument,
-				key,
+				document: plan.document,
+				encodedDocument: plan.encodedDocument,
+				key: plan.key,
 				entry: appended.entry,
 				removed: appended.removed,
-				unique: options?.unique,
-				existing: existingLocalContext,
+				unique: plan.unique,
+				existing: plan.existing,
 			});
 		}
 		this.keepCache?.add(appended.entry.hash);
