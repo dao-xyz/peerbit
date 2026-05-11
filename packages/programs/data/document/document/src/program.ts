@@ -1282,7 +1282,7 @@ export class Documents<
 		}
 
 		if (!modified.has(commit.key.primitive)) {
-			const { indexable } = await this._index.putWithContext(
+			const indexedDocument = await this._index._putIdentityWithContext(
 				commit.document,
 				commit.key,
 				commit.context,
@@ -1291,12 +1291,25 @@ export class Documents<
 					encodedValueParts: commit.contextualEncodedValueParts,
 				},
 			);
-			documentsChanged.added.push(
-				coerceWithIndexed(
-					coerceWithContext(commit.document, commit.context),
-					indexable,
-				),
-			);
+			if (indexedDocument) {
+				documentsChanged.added.push(indexedDocument);
+			} else {
+				const { indexable } = await this._index.putWithContext(
+					commit.document,
+					commit.key,
+					commit.context,
+					{
+						replace: existing != null,
+						encodedValueParts: commit.contextualEncodedValueParts,
+					},
+				);
+				documentsChanged.added.push(
+					coerceWithIndexed(
+						coerceWithContext(commit.document, commit.context),
+						indexable,
+					),
+				);
+			}
 			modified.add(commit.key.primitive);
 		}
 
@@ -1366,7 +1379,7 @@ export class Documents<
 			});
 			modified.add(put.key.primitive);
 		}
-		const indexed = await this._index.putManyWithContext(
+		const indexedDocuments = await this._index._putManyIdentityWithContext(
 			putsToIndex.map((put) => ({
 				value: put.document,
 				id: put.key,
@@ -1377,12 +1390,30 @@ export class Documents<
 				},
 			})),
 		);
-		for (let i = 0; i < putsToIndex.length; i++) {
-			const put = putsToIndex[i]!;
-			const { indexable } = indexed[i]!;
-			documentsChanged.added.push(
-				coerceWithIndexed(coerceWithContext(put.document, put.context), indexable),
+		if (indexedDocuments) {
+			documentsChanged.added.push(...indexedDocuments);
+		} else {
+			const indexed = await this._index.putManyWithContext(
+				putsToIndex.map((put) => ({
+					value: put.document,
+					id: put.key,
+					context: put.context,
+					options: {
+						replace: false,
+						encodedValueParts: put.contextualEncodedValueParts,
+					},
+				})),
 			);
+			for (let i = 0; i < putsToIndex.length; i++) {
+				const put = putsToIndex[i]!;
+				const { indexable } = indexed[i]!;
+				documentsChanged.added.push(
+					coerceWithIndexed(
+						coerceWithContext(put.document, put.context),
+						indexable,
+					),
+				);
+			}
 		}
 
 		const handledRemovedHeads =
