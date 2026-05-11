@@ -111,6 +111,14 @@ justify flipping the runtime default in this PR, because live lossy/constrained
 flows remain guarded by the data/quiet policy rather than proving safe proactive
 movement during active repair and churn.
 
+`ci-live-stream` covers that guarded live-flow posture directly. It keeps the
+first publish batch active for several seconds, applies the late better-root
+topology while messages and churn are still active, and then requires the
+default-candidate policy to do zero proactive upgrade work: no parent probes, no
+shadow observations, and no proactive reparents. The run must still show
+data/repair/quiet guard skips, so a pass means the policy intentionally stayed
+silent under load rather than merely failing to find candidates.
+
 The most important retune from the wider run is the quiet window:
 `parentUpgradeQuietMs` now defaults to `5000`. A 2s or 3s live-delivery window was
 too permissive under `ci-loss`: the policy could send probes or promote while
@@ -184,6 +192,12 @@ Larger settled-topology pressure run:
 pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-eval --scenario ci-idle-upgrade-large --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
 ```
 
+Long-running live-stream safety run:
+
+```bash
+pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-eval --scenario ci-live-stream --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
+```
+
 Default-candidate suite:
 
 ```bash
@@ -197,6 +211,13 @@ materially regresses. The default evaluator tolerates the greater of `3ms` or
 `--maxSecondBatchLatencyP95DeltaRatio 0.15`, but still requires a promoted
 branch or global p95 latency improvement and still fails larger global
 regressions.
+
+The live-stream run fails strict mode if the default-candidate policy sends any
+parent probes, starts any shadow observations, or performs any proactive
+reparents while the flow is active. It also requires at least one data-guard skip
+and preserves deadline delivery within `--maxLiveDeadlinePctDelta 1`, so the
+evidence is interpreted as "guarded and quiet under load," not topology
+improvement.
 
 Aggressive live-delivery experiment:
 
@@ -296,6 +317,17 @@ Local smoke runs on this branch showed:
   promoted-branch gain about `12.3ms`, average branch coverage about `9.7%`, max
   root-child delta `2`, max root upload delta about `0.02%` of cap, and max `1`
   reparent per peer.
+- `ci-live-stream`, seeds `1,2,3`,
+  `--parentUpgradePreset default-candidate --strict 1`: passed. This scenario
+  exposes late root connectivity during the active 300-message stream while
+  churn is running. The treatment made `0` proactive upgrades, sent `0` parent
+  probes, started `0` shadow observations, and recorded data-guard skips in all
+  seeds (`166`, `171`, `174`). Deadline-delivery deltas were `+1.31`, `-0.44`,
+  and `+0.05` percentage points, within the live-flow material-jitter gate. The
+  aggregate shape was `3/3 no-op`, average control bpp delta about `-1.2%`, max
+  root-child delta `1`, max root upload delta about `0.10%` of cap, and max `4`
+  total maintenance reparents per peer from churn/disconnect handling, not
+  proactive upgrades.
 - The simulator now reports root upload pressure separately from max relay/root
   upload pressure. This matters for streamer-like workloads: root-child fanout
   count is a useful structural signal, but root upload percentage is the direct
@@ -367,6 +399,8 @@ An upgrade mode is only a candidate if it improves or preserves:
 - `treeLevelP95`
 - `formationStretchP95`
 - `deliveredWithinDeadlinePct`
+- for live-stream scenarios, zero proactive probes/shadow starts/reparents
+  while the data guard is active
 - for idle-upgrade scenarios, promoted-branch or global second-batch p95 latency,
   while keeping global second-batch p95 inside the material-regression tolerance
 

@@ -15,6 +15,7 @@ type ScenarioName =
 	| "ci-small"
 	| "ci-loss"
 	| "ci-constrained"
+	| "ci-live-stream"
 	| "ci-idle-upgrade"
 	| "ci-idle-upgrade-large";
 type UpgradeMode = "direct" | "probe" | "shadow";
@@ -56,6 +57,7 @@ type EvalArgs = {
 	streamRxDelayMs: number | undefined;
 	maxCostRatio: number;
 	maxFormationScoreDelta: number;
+	maxLiveDeadlinePctDelta: number;
 	maxSecondBatchLatencyP95DeltaMs: number;
 	maxSecondBatchLatencyP95DeltaRatio: number;
 	maxProbePerUpgrade: number;
@@ -98,7 +100,7 @@ const HELP_TEXT = [
 	"fanout-tree-parent-upgrade-eval.ts",
 	"",
 	"Args:",
-	"  --scenario NAME              scenario to run (ci-small|ci-loss|ci-constrained|ci-idle-upgrade|ci-idle-upgrade-large|all, default: all)",
+	"  --scenario NAME              scenario to run (ci-small|ci-loss|ci-constrained|ci-live-stream|ci-idle-upgrade|ci-idle-upgrade-large|all, default: all)",
 	"  --seeds CSV                  seeds to run for each scenario (default: 1,2,3)",
 	"  --parentUpgradePreset NAME   preset to evaluate (raw|default-candidate, default: raw)",
 	"  --parentUpgradeIntervalMs MS upgrade check interval for treatment run (default: 1000)",
@@ -133,6 +135,7 @@ const HELP_TEXT = [
 	"  --streamRxDelayMs MS          override scenario per-chunk inbound delay in shim",
 	"  --maxCostRatio R             max treatment/base ratio for control/tracker/repair bpp (default: 1.15)",
 	"  --maxFormationScoreDelta N   absolute formation score jitter tolerated (default: 0.05)",
+	"  --maxLiveDeadlinePctDelta N  max live-flow deadline pct jitter tolerated (default: 1)",
 	"  --maxSecondBatchLatencyP95DeltaMs N max idle second-batch p95 latency jitter tolerated (default: 3)",
 	"  --maxSecondBatchLatencyP95DeltaRatio R max idle second-batch p95 latency relative jitter tolerated (default: 0.15)",
 	"  --maxProbePerUpgrade N       max parent probes per successful proactive upgrade (default: 2)",
@@ -213,6 +216,39 @@ const SCENARIOS: Record<ScenarioName, Partial<FanoutTreeSimParams>> = {
 		churnEveryMs: 250,
 		churnDownMs: 125,
 		churnFraction: 0.05,
+	},
+	"ci-live-stream": {
+		nodes: 60,
+		bootstraps: 1,
+		subscribers: 48,
+		relayFraction: 0.5,
+		candidateScoringMode: "weighted",
+		joinConcurrency: 1,
+		joinPhases: true,
+		joinPhaseSettleMs: 500,
+		messages: 300,
+		msgRate: 60,
+		msgSize: 256,
+		streamRxDelayMs: 2,
+		settleMs: 2_000,
+		deadlineMs: 750,
+		timeoutMs: 90_000,
+		trackerQueryIntervalMs: 1_000,
+		repair: true,
+		rootUploadLimitBps: 100_000_000,
+		relayUploadLimitBps: 100_000_000,
+		rootMaxChildren: 3,
+		relayMaxChildren: 4,
+		neighborRepair: true,
+		neighborRepairPeers: 3,
+		dropDataFrameRate: 0,
+		churnEveryMs: 500,
+		churnDownMs: 150,
+		churnFraction: 0.03,
+		lateRootConnectAfterMs: 1_000,
+		lateRootDuringPublish: true,
+		lateRootMaxChildren: 16,
+		lateRootConnectFraction: 0.5,
 	},
 	"ci-idle-upgrade": {
 		nodes: 45,
@@ -302,6 +338,7 @@ const parseScenarios = (value: string | undefined): ScenarioName[] => {
 				part === "ci-small" ||
 				part === "ci-loss" ||
 				part === "ci-constrained" ||
+				part === "ci-live-stream" ||
 				part === "ci-idle-upgrade" ||
 				part === "ci-idle-upgrade-large",
 		);
@@ -419,6 +456,9 @@ const parseArgs = (argv: string[]): EvalArgs => {
 				: Number(get("--streamRxDelayMs")),
 		maxCostRatio: Number(get("--maxCostRatio") ?? 1.15),
 		maxFormationScoreDelta: Number(get("--maxFormationScoreDelta") ?? 0.05),
+		maxLiveDeadlinePctDelta: Number(
+			get("--maxLiveDeadlinePctDelta") ?? 1,
+		),
 		maxSecondBatchLatencyP95DeltaMs: Number(
 			get("--maxSecondBatchLatencyP95DeltaMs") ?? 3,
 		),
@@ -457,6 +497,8 @@ const peerCoveragePct = (result: FanoutTreeSimResult, hashes: string[]) => {
 
 const isIdleUpgradeScenario = (scenario: ScenarioName) =>
 	scenario === "ci-idle-upgrade" || scenario === "ci-idle-upgrade-large";
+const isLiveStreamScenario = (scenario: ScenarioName) =>
+	scenario === "ci-live-stream";
 
 const failIfGreater = (
 	failures: Failure[],
@@ -556,6 +598,37 @@ const evaluateRun = (
 		upgrade.parentProbeReqSentTotal > 0 ||
 		upgrade.parentShadowStartTotal > 0;
 
+	if (isLiveStreamScenario(scenario)) {
+		failIfGreater(
+			failures,
+			"liveParentProbeReqSent",
+			0,
+			upgrade.parentProbeReqSentTotal,
+			0,
+		);
+		failIfGreater(
+			failures,
+			"liveParentShadowStart",
+			0,
+			upgrade.parentShadowStartTotal,
+			0,
+		);
+		failIfGreater(
+			failures,
+			"liveReparentUpgrade",
+			0,
+			upgrade.reparentUpgradeTotal,
+			0,
+		);
+		failIfLess(
+			failures,
+			"liveDataGuardSkips",
+			0,
+			upgrade.reparentUpgradeSkipDataTotal,
+			1,
+		);
+	}
+
 	if (isIdleUpgradeScenario(scenario)) {
 		failIfLess(failures, "idlePromotions", 0, upgrade.reparentUpgradeTotal, 1);
 		failIfLess(failures, "idleUsefulPromotions", 0, usefulPromotions, 1);
@@ -620,6 +693,7 @@ const evaluateRun = (
 
 	if (
 		!isIdleUpgradeScenario(scenario) &&
+		!isLiveStreamScenario(scenario) &&
 		upgrade.reparentUpgradeTotal === 0 &&
 		upgrade.parentProbeReqSentTotal === 0 &&
 		upgrade.parentShadowStartTotal === 0
@@ -657,7 +731,10 @@ const evaluateRun = (
 		"deliveredWithinDeadlinePct",
 		baseline.deliveredWithinDeadlinePct,
 		upgrade.deliveredWithinDeadlinePct,
-		baseline.deliveredWithinDeadlinePct,
+		isLiveStreamScenario(scenario)
+			? baseline.deliveredWithinDeadlinePct -
+				Math.max(0, args.maxLiveDeadlinePctDelta)
+			: baseline.deliveredWithinDeadlinePct,
 	);
 
 	failIfGreater(

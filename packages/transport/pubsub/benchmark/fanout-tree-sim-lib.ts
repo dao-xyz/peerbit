@@ -124,6 +124,7 @@ export type FanoutTreeSimParams = {
 	joinPhases: boolean;
 	joinPhaseSettleMs: number;
 	lateRootConnectAfterMs: number;
+	lateRootDuringPublish: boolean;
 	lateRootMaxChildren: number;
 	lateRootConnectFraction: number;
 
@@ -522,6 +523,7 @@ export const resolveFanoutTreeSimParams = (
 		joinPhases: Boolean(input.joinPhases ?? false),
 		joinPhaseSettleMs: Number(input.joinPhaseSettleMs ?? 2_000),
 		lateRootConnectAfterMs: Number(input.lateRootConnectAfterMs ?? -1),
+		lateRootDuringPublish: Boolean(input.lateRootDuringPublish ?? false),
 		lateRootMaxChildren: Number(input.lateRootMaxChildren ?? 0),
 		lateRootConnectFraction: Number(input.lateRootConnectFraction ?? 1),
 
@@ -1539,6 +1541,65 @@ export const runFanoutTreeSim = async (
 			}
 			const maintenancePromise = maintenanceLoop().catch(() => {});
 			const churnPromise = churnLoop().catch(() => {});
+			const lateAfterMs = Math.max(
+				-1,
+				Math.floor(params.lateRootConnectAfterMs),
+			);
+			let lateRootApplied = false;
+			const applyLateRootTopology = async () => {
+				if (lateRootApplied || lateAfterMs < 0) return;
+				lateRootApplied = true;
+
+				const lateMaxChildren = Math.max(
+					0,
+					Math.floor(params.lateRootMaxChildren),
+				);
+				if (lateMaxChildren > 0) {
+					const id = root.getChannelId(params.topic, rootId);
+					const ch = (root as any).channelsBySuffixKey?.get?.(id.suffixKey);
+					if (ch) {
+						ch.maxChildren = Math.max(ch.maxChildren ?? 0, lateMaxChildren);
+						ch.effectiveMaxChildren = Math.max(
+							ch.effectiveMaxChildren ?? 0,
+							lateMaxChildren,
+						);
+						void (root as any)
+							.announceToTrackers?.(ch, timeoutSignal)
+							?.catch?.(() => {});
+					}
+				}
+
+				const fraction = Math.max(
+					0,
+					Math.min(1, Number(params.lateRootConnectFraction)),
+				);
+				const target = Math.min(
+					joinedSubscriberIndices.length,
+					Math.max(0, Math.ceil(joinedSubscriberIndices.length * fraction)),
+				);
+				for (let i = 0; i < target; i++) {
+					const idx = joinedSubscriberIndices[i]!;
+					if (idx === rootIndex) continue;
+					try {
+						await session.peers[idx]!.dial(
+							session.peers[rootIndex]!.getMultiaddrs(),
+						);
+					} catch {
+						// best-effort late underlay shortcut
+					}
+				}
+			};
+			const lateRootDuringPublishPromise =
+				params.lateRootDuringPublish && lateAfterMs >= 0
+					? (async () => {
+							if (lateAfterMs > 0) {
+								await delay(lateAfterMs, { signal: timeoutSignal });
+							}
+							await applyLateRootTopology();
+						})().catch((error) => {
+							if (!timeoutSignal.aborted) throw error;
+						})
+					: undefined;
 			try {
 				for (let seq = 0; seq < firstBatchMessages; seq++) {
 					if (timeoutSignal.aborted) {
@@ -1557,6 +1618,7 @@ export const runFanoutTreeSim = async (
 				churnController.abort();
 				await churnPromise;
 				churnSignal.clear?.();
+				await lateRootDuringPublishPromise;
 			}
 			let publishDone = Date.now();
 
@@ -1566,53 +1628,15 @@ export const runFanoutTreeSim = async (
 			}
 
 			if (params.settleMs > 0) {
-				const lateAfterMs = Math.max(
-					-1,
-					Math.floor(params.lateRootConnectAfterMs),
-				);
-				if (lateAfterMs >= 0 && lateAfterMs < params.settleMs) {
+				if (
+					!params.lateRootDuringPublish &&
+					lateAfterMs >= 0 &&
+					lateAfterMs < params.settleMs
+				) {
 					if (lateAfterMs > 0) {
 						await delay(lateAfterMs, { signal: timeoutSignal });
 					}
-
-					const lateMaxChildren = Math.max(
-						0,
-						Math.floor(params.lateRootMaxChildren),
-					);
-					if (lateMaxChildren > 0) {
-						const id = root.getChannelId(params.topic, rootId);
-						const ch = (root as any).channelsBySuffixKey?.get?.(id.suffixKey);
-						if (ch) {
-							ch.maxChildren = Math.max(ch.maxChildren ?? 0, lateMaxChildren);
-							ch.effectiveMaxChildren = Math.max(
-								ch.effectiveMaxChildren ?? 0,
-								lateMaxChildren,
-							);
-							void (root as any)
-								.announceToTrackers?.(ch, timeoutSignal)
-								?.catch?.(() => {});
-						}
-					}
-
-					const fraction = Math.max(
-						0,
-						Math.min(1, Number(params.lateRootConnectFraction)),
-					);
-					const target = Math.min(
-						joinedSubscriberIndices.length,
-						Math.max(0, Math.ceil(joinedSubscriberIndices.length * fraction)),
-					);
-					for (let i = 0; i < target; i++) {
-						const idx = joinedSubscriberIndices[i]!;
-						if (idx === rootIndex) continue;
-						try {
-							await session.peers[idx]!.dial(
-								session.peers[rootIndex]!.getMultiaddrs(),
-							);
-						} catch {
-							// best-effort late underlay shortcut
-						}
-					}
+					await applyLateRootTopology();
 
 					const remaining = Math.max(0, params.settleMs - lateAfterMs);
 					if (remaining > 0) {

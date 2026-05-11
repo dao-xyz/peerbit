@@ -66,6 +66,7 @@ const HELP_TEXT = [
 	"  --joinPhases 0|1              join relays first, then leaves (default: 0)",
 	"  --joinPhaseSettleMs MS        wait between join phases (default: 2000)",
 	"  --lateRootConnectAfterMs MS   after publish, connect subscribers directly to root (-1 = off)",
+	"  --lateRootDuringPublish 0|1   apply late root topology during first publish batch (default: 0)",
 	"  --lateRootMaxChildren N       after publish, raise root child capacity (0 = unchanged)",
 	"  --lateRootConnectFraction F   fraction of joined subscribers to connect to root (default: 1)",
 	"  --joinReqTimeoutMs MS         join request timeout per candidate (default: 2000)",
@@ -398,6 +399,11 @@ const ARG_SPECS: ArgSpec[] = [
 		flag: "--lateRootConnectAfterMs",
 		key: "lateRootConnectAfterMs",
 		parse: parseNumber,
+	},
+	{
+		flag: "--lateRootDuringPublish",
+		key: "lateRootDuringPublish",
+		parse: parseBool01("0"),
 	},
 	{
 		flag: "--lateRootMaxChildren",
