@@ -399,6 +399,7 @@ describe("index", () => {
 						.equal(3);
 					expect(appended.entries.every((entry) => entry.meta.next.length === 0))
 						.equal(true);
+					expect(await appended.entries[0]!.verifySignatures()).equal(true);
 					const reloaded = await Entry.fromMultihash<Operation>(
 						store.docs.log.log.blocks,
 						appended.entries[0]!.hash,
