@@ -224,6 +224,21 @@ describe("index", () => {
 					expect(appendSpy.callCount).equal(0);
 					expect(localLookupSpy.callCount).equal(0);
 					expect(backendContextPutSpy.callCount).equal(1);
+					const encodedDocument = serialize(doc);
+					const expectedPayloadData = new Uint8Array(
+						6 + encodedDocument.byteLength,
+					);
+					expectedPayloadData[0] = 0;
+					expectedPayloadData[1] = 3;
+					new DataView(
+						expectedPayloadData.buffer,
+						expectedPayloadData.byteOffset,
+						expectedPayloadData.byteLength,
+					).setUint32(2, encodedDocument.byteLength, true);
+					expectedPayloadData.set(encodedDocument, 6);
+					expect(preparedAppendSpy.getCall(0).args[2]?.payloadData).to.deep.equal(
+						expectedPayloadData,
+					);
 					const backendOptions = backendContextPutSpy.getCall(0).args[3] as
 						| {
 								encodedValue?: Uint8Array;
@@ -232,7 +247,6 @@ describe("index", () => {
 						| undefined;
 					const backendContext = backendContextPutSpy.getCall(0)
 						.args[2] as Context;
-					const encodedDocument = serialize(doc);
 					expect(backendOptions?.encodedValue).equal(undefined);
 					expect(backendOptions?.encodedValueParts?.prefix).to.deep.equal(
 						encodedDocument,

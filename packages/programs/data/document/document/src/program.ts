@@ -107,8 +107,7 @@ export type CanPerform<T> = (
 ) => MaybePromise<boolean>;
 
 const PUT_OPERATION_PREFIX_LENGTH = 6;
-const encodePutOperationPayload = (operation: PutOperation): Uint8Array => {
-	const data = operation.data;
+const encodePutOperationPayload = (data: Uint8Array): Uint8Array => {
 	const encoded = new Uint8Array(PUT_OPERATION_PREFIX_LENGTH + data.byteLength);
 	encoded[0] = 0;
 	encoded[1] = 3;
@@ -138,6 +137,7 @@ type DocumentPutOptions = SharedAppendOptions<Operation> & {
 type PreparedPut<T> = {
 	document: T;
 	encodedDocument: Uint8Array;
+	encodedOperation?: Uint8Array;
 	keyValue: indexerTypes.IdPrimitive;
 	key: indexerTypes.IdKey;
 	operation: PutOperation | PutWithKeyOperation;
@@ -636,32 +636,42 @@ export class Documents<
 	private preparePut(doc: T): PreparedPut<T> {
 		const keyValue = this.idResolver(doc);
 		indexerTypes.checkId(keyValue);
-		const ser = serialize(doc);
-		if (ser.length > MAX_BATCH_SIZE) {
+		let encodedDocument = serialize(doc);
+		if (encodedDocument.length > MAX_BATCH_SIZE) {
 			throw new Error(
 				`Document is too large (${
-					ser.length * 1e-6
+					encodedDocument.length * 1e-6
 				}) mb). Needs to be less than ${MAX_BATCH_SIZE * 1e-6} mb`,
 			);
 		}
 
 		const key = indexerTypes.toId(keyValue);
 		let operation: PutOperation | PutWithKeyOperation;
+		let encodedOperation: Uint8Array | undefined;
 		if (this.compatibility === 6) {
 			if (typeof keyValue === "string") {
 				operation = new PutWithKeyOperation({
 					key: keyValue,
-					data: ser,
+					data: encodedDocument,
 				});
 			} else {
 				throw new Error("Key must be a string in compatibility mode v6");
 			}
 		} else {
+			encodedOperation = encodePutOperationPayload(encodedDocument);
+			encodedDocument = encodedOperation.subarray(PUT_OPERATION_PREFIX_LENGTH);
 			operation = new PutOperation({
-				data: ser,
+				data: encodedDocument,
 			});
 		}
-		return { document: doc, encodedDocument: ser, keyValue, key, operation };
+		return {
+			document: doc,
+			encodedDocument,
+			encodedOperation,
+			keyValue,
+			key,
+			operation,
+		};
 	}
 
 	public async put(doc: T, options?: DocumentPutOptions) {
@@ -694,6 +704,7 @@ export class Documents<
 			return this.putPlainFastPath(
 				prepared.document,
 				prepared.encodedDocument,
+				prepared.encodedOperation,
 				prepared.key,
 				prepared.operation,
 				existingHead,
@@ -760,7 +771,8 @@ export class Documents<
 			{
 				resolveTrimmedEntries: !this._index.canGetIdentityIndexedByHead(),
 				payloadDatas: prepared.map((item) =>
-					encodePutOperationPayload(item.operation as PutOperation),
+					item.encodedOperation ??
+					encodePutOperationPayload((item.operation as PutOperation).data),
 				),
 			},
 		);
@@ -845,6 +857,7 @@ export class Documents<
 	private async putPlainFastPath(
 		doc: T,
 		encodedDocument: Uint8Array,
+		encodedOperation: Uint8Array | undefined,
 		key: indexerTypes.IdKey,
 		operation: PutOperation,
 		existingHead: string | undefined,
@@ -877,6 +890,8 @@ export class Documents<
 			{
 				skipMissingNextJoin: !options?.checkRemote,
 				resolveTrimmedEntries: !this._index.canGetIdentityIndexedByHead(),
+				payloadData:
+					encodedOperation ?? encodePutOperationPayload(operation.data),
 			},
 		);
 		if (!options?.unique && existingLocalContext === undefined) {
