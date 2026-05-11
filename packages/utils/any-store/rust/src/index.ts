@@ -6,6 +6,7 @@ import {
 
 type NativeAnyStore = {
 	get(key: string): Uint8Array | undefined;
+	has_many(keys: string[]): boolean[];
 	put(key: string, value: Uint8Array): void;
 	delete(key: string): boolean;
 	put_many(keys: string[], values: Uint8Array[]): void;
@@ -212,6 +213,11 @@ export class RustAnyStore implements AnyStore {
 		return native
 			.get_many(Array.from(keys))
 			.map((value) => (value == null ? undefined : copyBytes(value)));
+	}
+
+	async hasMany(keys: string[]): Promise<boolean[]> {
+		const native = await this.ensureOpen();
+		return native.has_many(keys);
 	}
 
 	async sublevel(name: string): Promise<AnyStore> {

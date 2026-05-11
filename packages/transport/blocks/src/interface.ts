@@ -13,6 +13,7 @@ export interface BlockStore extends IBlockStore {
 		cids: string[],
 		options?: GetOptions,
 	): Promise<Array<Uint8Array | undefined>>;
+	hasMany(cids: string[]): Promise<boolean[]>;
 	rmMany(cids: string[]): Promise<number | void>;
 	start(): Promise<void>;
 	stop(): Promise<void>;

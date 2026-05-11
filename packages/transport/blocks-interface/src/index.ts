@@ -26,6 +26,13 @@ export interface Blocks extends WaitForPeer {
 		data: Array<Uint8Array | { block: Block<any, any, any, any>; cid: string }>,
 	): MaybePromise<string[]>;
 	has(cid: string): MaybePromise<boolean>;
+	/**
+	 * Return local-storage presence flags aligned with the input CIDs.
+	 *
+	 * This must not perform remote reads; callers use it to replace repeated
+	 * `has(...)` probes without changing block-fetch semantics.
+	 */
+	hasMany?(cids: string[]): MaybePromise<boolean[]>;
 	get(cid: string, options?: GetOptions): MaybePromise<Uint8Array | undefined>;
 	getMany?(
 		cids: string[],

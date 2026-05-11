@@ -65,7 +65,13 @@ describe(`level`, function () {
 			datas[1],
 			undefined,
 		]);
+		expect(await store.hasMany(["missing", ...cids])).to.deep.equal([
+			false,
+			true,
+			true,
+		]);
 		expect(await store.rmMany([cids[0], "missing"])).to.equal(1);
 		expect(await store.getMany(cids)).to.deep.equal([undefined, datas[1]]);
+		expect(await store.hasMany(cids)).to.deep.equal([false, true]);
 	});
 });
