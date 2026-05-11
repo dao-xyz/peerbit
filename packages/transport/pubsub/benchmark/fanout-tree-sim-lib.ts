@@ -227,6 +227,8 @@ export type FanoutTreeSimResult = {
 	reparentKickedTotal: number;
 	publishActiveReparentUpgradeTotal: number;
 	publishActiveReparentUpgradeSkipDataTotal: number;
+	publishActiveReparentUpgradeSkipRepairTotal: number;
+	publishActiveReparentUpgradeSkipQuietTotal: number;
 	publishActiveParentProbeReqSentTotal: number;
 	publishActiveParentShadowStartTotal: number;
 	publishActiveParentShadowPromoteTotal: number;
@@ -599,7 +601,7 @@ export const formatFanoutTreeSimResult = (r: FanoutTreeSimResult) => {
 		`drops: forward total=${r.droppedForwardsTotal} max=${r.droppedForwardsMax} node=${r.droppedForwardsMaxNode ?? "-"} stale total=${r.staleForwardsDroppedTotal} max=${r.staleForwardsDroppedMax} node=${r.staleForwardsDroppedMaxNode ?? "-"} write total=${r.dataWriteDropsTotal} max=${r.dataWriteDropsMax} node=${r.dataWriteDropsMaxNode ?? "-"}`,
 		...(p.lateRootDuringPublish || r.publishActiveReparentUpgradeSkipDataTotal > 0
 			? [
-					`publishActiveParentUpgrade: upgrade=${r.publishActiveReparentUpgradeTotal} dataSkips=${r.publishActiveReparentUpgradeSkipDataTotal} probes=${r.publishActiveParentProbeReqSentTotal} shadowStart=${r.publishActiveParentShadowStartTotal} shadowPromote=${r.publishActiveParentShadowPromoteTotal}`,
+					`publishActiveParentUpgrade: upgrade=${r.publishActiveReparentUpgradeTotal} dataSkips=${r.publishActiveReparentUpgradeSkipDataTotal} repairSkips=${r.publishActiveReparentUpgradeSkipRepairTotal} quietSkips=${r.publishActiveReparentUpgradeSkipQuietTotal} probes=${r.publishActiveParentProbeReqSentTotal} shadowStart=${r.publishActiveParentShadowStartTotal} shadowPromote=${r.publishActiveParentShadowPromoteTotal}`,
 				]
 			: []),
 		`reparent: disconnect=${r.reparentDisconnectTotal} stale=${r.reparentStaleTotal} kicked=${r.reparentKickedTotal} upgrade=${r.reparentUpgradeTotal}`,
@@ -1537,6 +1539,8 @@ export const runFanoutTreeSim = async (
 			const collectParentUpgradeActivity = () => {
 				let reparentUpgrade = 0;
 				let reparentUpgradeSkipData = 0;
+				let reparentUpgradeSkipRepair = 0;
+				let reparentUpgradeSkipQuiet = 0;
 				let parentProbeReqSent = 0;
 				let parentShadowStart = 0;
 				let parentShadowPromote = 0;
@@ -1544,6 +1548,8 @@ export const runFanoutTreeSim = async (
 					const m = p.services.fanout.getChannelMetrics(params.topic, rootId);
 					reparentUpgrade += m.reparentUpgrade;
 					reparentUpgradeSkipData += m.reparentUpgradeSkipData;
+					reparentUpgradeSkipRepair += m.reparentUpgradeSkipRepair;
+					reparentUpgradeSkipQuiet += m.reparentUpgradeSkipQuiet;
 					parentProbeReqSent += m.parentProbeReqSent;
 					parentShadowStart += m.parentShadowStart;
 					parentShadowPromote += m.parentShadowPromote;
@@ -1551,12 +1557,51 @@ export const runFanoutTreeSim = async (
 				return {
 					reparentUpgrade,
 					reparentUpgradeSkipData,
+					reparentUpgradeSkipRepair,
+					reparentUpgradeSkipQuiet,
 					parentProbeReqSent,
 					parentShadowStart,
 					parentShadowPromote,
 				};
 			};
-			let publishActiveParentUpgrade = collectParentUpgradeActivity();
+			const diffParentUpgradeActivity = (
+				after: ReturnType<typeof collectParentUpgradeActivity>,
+				before: ReturnType<typeof collectParentUpgradeActivity>,
+			) => ({
+				reparentUpgrade: Math.max(
+					0,
+					after.reparentUpgrade - before.reparentUpgrade,
+				),
+				reparentUpgradeSkipData: Math.max(
+					0,
+					after.reparentUpgradeSkipData - before.reparentUpgradeSkipData,
+				),
+				reparentUpgradeSkipRepair: Math.max(
+					0,
+					after.reparentUpgradeSkipRepair - before.reparentUpgradeSkipRepair,
+				),
+				reparentUpgradeSkipQuiet: Math.max(
+					0,
+					after.reparentUpgradeSkipQuiet - before.reparentUpgradeSkipQuiet,
+				),
+				parentProbeReqSent: Math.max(
+					0,
+					after.parentProbeReqSent - before.parentProbeReqSent,
+				),
+				parentShadowStart: Math.max(
+					0,
+					after.parentShadowStart - before.parentShadowStart,
+				),
+				parentShadowPromote: Math.max(
+					0,
+					after.parentShadowPromote - before.parentShadowPromote,
+				),
+			});
+			const publishStartParentUpgrade = collectParentUpgradeActivity();
+			let publishActiveParentUpgrade = diffParentUpgradeActivity(
+				publishStartParentUpgrade,
+				publishStartParentUpgrade,
+			);
 			const publishStart = Date.now();
 			let publishActiveMs = 0;
 			if (wantsMaintenance) {
@@ -1648,7 +1693,10 @@ export const runFanoutTreeSim = async (
 				if (firstBatchMessages > 0) {
 					publishActiveMs += Math.max(0, Date.now() - publishStart);
 				}
-				publishActiveParentUpgrade = collectParentUpgradeActivity();
+				publishActiveParentUpgrade = diffParentUpgradeActivity(
+					collectParentUpgradeActivity(),
+					publishStartParentUpgrade,
+				);
 				churnController.abort();
 				await churnPromise;
 				churnSignal.clear?.();
@@ -2155,6 +2203,10 @@ export const runFanoutTreeSim = async (
 					publishActiveParentUpgrade.reparentUpgrade,
 				publishActiveReparentUpgradeSkipDataTotal:
 					publishActiveParentUpgrade.reparentUpgradeSkipData,
+				publishActiveReparentUpgradeSkipRepairTotal:
+					publishActiveParentUpgrade.reparentUpgradeSkipRepair,
+				publishActiveReparentUpgradeSkipQuietTotal:
+					publishActiveParentUpgrade.reparentUpgradeSkipQuiet,
 				publishActiveParentProbeReqSentTotal:
 					publishActiveParentUpgrade.parentProbeReqSent,
 				publishActiveParentShadowStartTotal:

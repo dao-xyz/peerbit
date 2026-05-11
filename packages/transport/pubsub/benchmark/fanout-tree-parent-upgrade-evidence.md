@@ -119,9 +119,11 @@ shadow observations, and no proactive reparents. The run must still show
 data/repair/quiet guard skips, so a pass means the policy intentionally stayed
 silent under load rather than merely failing to find candidates.
 The simulator now snapshots parent-upgrade counters at the end of the active
-publish phase (`publishActiveParentUpgrade`) so this check distinguishes
+publish phase (`publishActiveParentUpgrade`) and reports deltas from the start
+of publishing, so this check distinguishes
 "nothing happened while data was live" from work that might happen later during
-settle time.
+settle time. The active snapshot includes data, repair, and quiet guard skips,
+plus active probes, shadow starts, shadow promotions, and proactive reparents.
 
 The most important retune from the wider run is the quiet window:
 `parentUpgradeQuietMs` now defaults to `5000`. A 2s or 3s live-delivery window was
@@ -328,8 +330,10 @@ Local smoke runs on this branch showed:
   churn is running. The treatment made `0` proactive upgrades, sent `0` parent
   probes, started `0` shadow observations, and the active-publish snapshot also
   reported `0` proactive upgrades, `0` parent probes, and `0` shadow starts.
-  It recorded active data-guard skips in all seeds. Recent local runs saw
-  active data-guard skips around `162-174` depending on timer jitter.
+  It recorded active guard skips in all seeds. Recent local runs show the active
+  skips split across data and repair guards depending on where each peer is in
+  the stream/repair cycle; the important invariant is still `0` active probes
+  and `0` active proactive reparents.
   Deadline-delivery deltas stayed within the `2` percentage-point live-flow
   material-jitter gate. The aggregate shape remains `3/3 no-op`: any total
   maintenance reparents are from churn/disconnect handling, not proactive

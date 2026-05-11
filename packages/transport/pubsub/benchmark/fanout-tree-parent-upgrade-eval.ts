@@ -929,7 +929,7 @@ const printComparison = (
 			`  rootChildren ${baseline.treeRootChildren} -> ${upgrade.treeRootChildren} rootUploadPct ${baseline.rootUploadFracPct.toFixed(2)} -> ${upgrade.rootUploadFracPct.toFixed(2)} proactiveUpgrades=${upgrade.reparentUpgradeTotal} usefulPromotions=${usefulPromotions} treeLevelP95Gain=${treeLevelP95Gain.toFixed(1)} treeLevelAvgGain=${treeLevelAvgGain.toFixed(2)}`,
 			...(hasLivePublishPhase(scenario)
 				? [
-						`  publishActive upgrade=${upgrade.publishActiveReparentUpgradeTotal} dataSkips=${upgrade.publishActiveReparentUpgradeSkipDataTotal} probes=${upgrade.publishActiveParentProbeReqSentTotal} shadowStart=${upgrade.publishActiveParentShadowStartTotal} shadowPromote=${upgrade.publishActiveParentShadowPromoteTotal}`,
+						`  publishActive upgrade=${upgrade.publishActiveReparentUpgradeTotal} dataSkips=${upgrade.publishActiveReparentUpgradeSkipDataTotal} repairSkips=${upgrade.publishActiveReparentUpgradeSkipRepairTotal} quietSkips=${upgrade.publishActiveReparentUpgradeSkipQuietTotal} probes=${upgrade.publishActiveParentProbeReqSentTotal} shadowStart=${upgrade.publishActiveParentShadowStartTotal} shadowPromote=${upgrade.publishActiveParentShadowPromoteTotal}`,
 					]
 				: []),
 			`  skipped leaf=${upgrade.reparentUpgradeSkipLeafTotal} repair=${upgrade.reparentUpgradeSkipRepairTotal} data=${upgrade.reparentUpgradeSkipDataTotal} cooldown=${upgrade.reparentUpgradeSkipCooldownTotal} quiet=${upgrade.reparentUpgradeSkipQuietTotal} budget=${upgrade.reparentUpgradeSkipBudgetTotal} candidateLevel=${upgrade.reparentUpgradeSkipCandidateLevelTotal} candidateSlots=${upgrade.reparentUpgradeSkipCandidateSlotsTotal} candidatePressure=${upgrade.reparentUpgradeSkipCandidatePressureTotal} rootPressure=${upgrade.reparentUpgradeSkipRootPressureTotal}`,
@@ -1035,7 +1035,7 @@ const printAggregateSummary = (samples: SummarySample[]) => {
 	const lines = [
 		"",
 		"parent-upgrade-summary",
-		"scenario mode seeds viable effects upgrades probes activeUpgrades activeProbes treeAvgGainAvg secondBatchP95DeltaAvg/Max promotedBranchGainAvg promotedBranchCoverageAvg controlBppDeltaPctAvg rootChildrenDeltaMax rootUploadPctDeltaMax maxReparents failures",
+		"scenario mode seeds viable effects upgrades probes activeUpgrades activeProbes activeGuardSkips treeAvgGainAvg secondBatchP95DeltaAvg/Max promotedBranchGainAvg promotedBranchCoverageAvg controlBppDeltaPctAvg rootChildrenDeltaMax rootUploadPctDeltaMax maxReparents failures",
 	];
 	for (const group of groups.values()) {
 		const first = group[0]!;
@@ -1121,6 +1121,14 @@ const printAggregateSummary = (samples: SummarySample[]) => {
 				group.reduce(
 					(sum, sample) =>
 						sum + sample.upgrade.publishActiveParentProbeReqSentTotal,
+					0,
+				),
+				group.reduce(
+					(sum, sample) =>
+						sum +
+						sample.upgrade.publishActiveReparentUpgradeSkipDataTotal +
+						sample.upgrade.publishActiveReparentUpgradeSkipRepairTotal +
+						sample.upgrade.publishActiveReparentUpgradeSkipQuietTotal,
 					0,
 				),
 				fmt(avgFinite(treeAvgGains), 2),
