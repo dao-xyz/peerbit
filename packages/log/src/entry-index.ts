@@ -169,6 +169,33 @@ export type NativeLogGraph = {
 		  }
 		| undefined
 	>;
+	prepareEntryV0PlainEntriesCommit?: (
+		input: {
+			clockId: Uint8Array;
+			privateKey: Uint8Array;
+			publicKey: Uint8Array;
+			wallTimes: Array<bigint | number | string>;
+			logicals?: number[];
+			gids: string[];
+			nexts: string[][];
+			type?: number;
+			metaDatas?: Array<Uint8Array | undefined>;
+			payloadDatas: Uint8Array[];
+		},
+		blockStore: unknown,
+	) => MaybePromise<
+		| Array<{
+				bytes?: Uint8Array;
+				cid: string;
+				byteLength: number;
+				signature: Uint8Array;
+				next: string[];
+				metaBytes: Uint8Array;
+				payloadBytes: Uint8Array;
+				signatureBytes: Uint8Array;
+		  }>
+		| undefined
+	>;
 	delete: (hash: string) => boolean;
 	clear: () => void;
 	heads: (gid?: string) => string[];
