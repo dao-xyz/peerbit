@@ -192,6 +192,23 @@ type DocumentAppendCommitFacts<T, I extends Record<string, any>> = {
 		| undefined;
 };
 
+type NativeDocumentAppendCommitInput<T, I extends Record<string, any>> = {
+	document: T;
+	key: indexerTypes.IdKey;
+	operation: PutOperation;
+	documentBytes: Uint8Array;
+	operationPayloadBytes: Uint8Array;
+	next: Entry<Operation>[] | ShallowEntry[];
+	skipMissingNextJoin: boolean;
+	resolveTrimmedEntries: boolean;
+	options?: DocumentPutOptions;
+	unique?: boolean;
+	existing?:
+		| indexerTypes.IndexedResult<IndexedContextOnly<I>>
+		| null
+		| undefined;
+};
+
 type InferR<D> = D extends ReplicationDomain<any, any, infer I> ? I : "u32";
 
 export type SetupOptions<
@@ -946,31 +963,24 @@ export class Documents<
 			| DocumentPutOptions
 			| undefined,
 	) {
-		const appended = await this.log.appendLocallyPrepared(
-			plan.operation,
-			{
-				...options,
-				meta: {
-					next: plan.next,
-					...options?.meta,
-				},
-				replicate: options?.replicate,
-			},
-			{
-				skipMissingNextJoin: plan.skipMissingNextJoin,
-				resolveTrimmedEntries: plan.resolveTrimmedEntries,
-				payloadData: plan.payloadData,
-			},
-		);
-		const documentAppendCommit = this.createDocumentAppendCommitFacts(
-			plan,
-			appended,
-		);
+		const documentAppendCommit = await this.commitNativeDocumentAppend({
+			document: plan.document,
+			key: plan.key,
+			operation: plan.operation,
+			documentBytes: plan.encodedDocument,
+			operationPayloadBytes: plan.payloadData,
+			next: plan.next,
+			skipMissingNextJoin: plan.skipMissingNextJoin,
+			resolveTrimmedEntries: plan.resolveTrimmedEntries,
+			options,
+			unique: plan.unique,
+			existing: plan.existing,
+		});
 		if (plan.useGenericChangeHandler) {
 			await this.handleChanges(
 				{
-					added: [{ head: true, entry: appended.entry }],
-					removed: appended.removed,
+					added: [{ head: true, entry: documentAppendCommit.entry }],
+					removed: documentAppendCommit.removed,
 				},
 				{
 					document: plan.document,
@@ -983,12 +993,37 @@ export class Documents<
 		} else {
 			await this.handlePreparedPlainPutCommit(documentAppendCommit);
 		}
-		this.keepCache?.add(appended.entry.hash);
-		return { entry: appended.entry, removed: appended.removed };
+		this.keepCache?.add(documentAppendCommit.entry.hash);
+		return {
+			entry: documentAppendCommit.entry,
+			removed: documentAppendCommit.removed,
+		};
+	}
+
+	private async commitNativeDocumentAppend(
+		input: NativeDocumentAppendCommitInput<T, I>,
+	): Promise<DocumentAppendCommitFacts<T, I>> {
+		const appended = await this.log.appendLocallyPrepared(
+			input.operation,
+			{
+				...input.options,
+				meta: {
+					next: input.next,
+					...input.options?.meta,
+				},
+				replicate: input.options?.replicate,
+			},
+			{
+				skipMissingNextJoin: input.skipMissingNextJoin,
+				resolveTrimmedEntries: input.resolveTrimmedEntries,
+				payloadData: input.operationPayloadBytes,
+			},
+		);
+		return this.createDocumentAppendCommitFacts(input, appended);
 	}
 
 	private createDocumentAppendCommitFacts(
-		plan: PlainPutCommitPlan<T, I>,
+		input: NativeDocumentAppendCommitInput<T, I>,
 		appended: {
 			entry: Entry<Operation>;
 			removed: ShallowOrFullEntry<Operation>[];
@@ -997,7 +1032,7 @@ export class Documents<
 	): DocumentAppendCommitFacts<T, I> {
 		const append = appended.appendCommit;
 		const existing =
-			plan.unique || plan.existing === null ? null : plan.existing;
+			input.unique || input.existing === null ? null : input.existing;
 		const context = new Context({
 			created: existing?.value.__context.created || append.wallTime,
 			modified: append.wallTime,
@@ -1007,22 +1042,22 @@ export class Documents<
 		});
 		const contextBytes = encodeContextSuffix(context);
 		return {
-			document: plan.document,
-			key: plan.key,
-			operation: plan.operation,
-			encodedDocument: plan.encodedDocument,
-			operationPayloadBytes: plan.payloadData,
+			document: input.document,
+			key: input.key,
+			operation: input.operation,
+			encodedDocument: input.documentBytes,
+			operationPayloadBytes: input.operationPayloadBytes,
 			entry: appended.entry,
 			removed: appended.removed,
 			append,
 			context,
 			contextBytes,
 			contextualEncodedValueParts: {
-				prefix: plan.encodedDocument,
+				prefix: input.documentBytes,
 				suffix: contextBytes,
 			},
-			unique: plan.unique,
-			existing: plan.existing,
+			unique: input.unique,
+			existing: input.existing,
 		};
 	}
 
