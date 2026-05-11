@@ -1771,14 +1771,14 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				};
 			});
 			await this.enqueuePersistence(async () => {
-				for (const item of prepared) {
-					await this.snapshotFile!.appendPut(
-						item.storeKey,
-						item.value,
-						this.properties.schema,
-						item.encodedValueParts ?? item.encodedValue,
-					);
-				}
+				await this.snapshotFile!.appendPutBatch(
+					prepared.map((item) => ({
+						key: item.storeKey,
+						value: item.value,
+						encodedValue: item.encodedValueParts ?? item.encodedValue,
+					})),
+					this.properties.schema,
+				);
 			});
 			for (const item of prepared) {
 				if (
