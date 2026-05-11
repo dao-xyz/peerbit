@@ -1,3 +1,5 @@
+import * as wasmModuleImport from "../wasm/document_rust.js";
+
 export type DocumentContextInput = {
 	created: bigint | number | string;
 	modified: bigint | number | string;
@@ -62,8 +64,9 @@ let wasmInitialized = false;
 
 const loadWasm = async (): Promise<WasmModule> => {
 	if (!wasmModulePromise) {
-		const wasmModulePath = "../wasm/document_rust.js";
-		wasmModulePromise = import(wasmModulePath) as Promise<WasmModule>;
+		wasmModulePromise = Promise.resolve(
+			wasmModuleImport as unknown as WasmModule,
+		);
 	}
 
 	const wasm = await wasmModulePromise;
@@ -74,7 +77,7 @@ const loadWasm = async (): Promise<WasmModule> => {
 		if (processLike?.versions?.node) {
 			const fsPromises = "fs/promises";
 			const { readFile } = (await import(
-				fsPromises
+				/* @vite-ignore */ fsPromises
 			)) as typeof import("fs/promises");
 			const bytes = await readFile(
 				new URL("../wasm/document_rust_bg.wasm", import.meta.url),
