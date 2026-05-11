@@ -438,7 +438,7 @@ describe("native graph", () => {
 		}
 	});
 
-	it("skips missing next index lookups during native length trim", async () => {
+	it("skips next-head lookups during native length trim", async () => {
 		const log = new Log<Uint8Array>();
 		await log.open(store, signKey, {
 			appendDurability: "strict",
@@ -468,7 +468,7 @@ describe("native graph", () => {
 			expect(oldestEntriesSpy.callCount).equal(1);
 			expect(oldestEntriesSpy.firstCall.args[0]).equal(2);
 			expect(log.length).equal(1);
-			expect(hasManySpy.callCount).greaterThan(0);
+			expect(hasManySpy.callCount).equal(0);
 			expect(indexGetSpy.callCount).equal(0);
 		} finally {
 			indexGetSpy.restore();

@@ -734,6 +734,99 @@ type SharedLogCoordinateNativeFields = {
 	metaBytes: Uint8Array;
 };
 
+const sharedLogCoordinateTextEncoder = new TextEncoder();
+const sharedLogCoordinateU32Variant =
+	sharedLogCoordinateTextEncoder.encode("entry-u32");
+const sharedLogCoordinateU64Variant =
+	sharedLogCoordinateTextEncoder.encode("entry-u64");
+
+const sharedLogCoordinateSetU32 = (
+	view: DataView,
+	offset: number,
+	value: number,
+): number => {
+	view.setUint32(offset, value, true);
+	return offset + 4;
+};
+
+const sharedLogCoordinateSetU64 = (
+	view: DataView,
+	offset: number,
+	value: number | bigint,
+): number => {
+	view.setBigUint64(offset, BigInt(value), true);
+	return offset + 8;
+};
+
+const sharedLogCoordinateWriteBytes = (
+	output: Uint8Array,
+	view: DataView,
+	offset: number,
+	bytes: Uint8Array,
+): number => {
+	offset = sharedLogCoordinateSetU32(view, offset, bytes.byteLength);
+	output.set(bytes, offset);
+	return offset + bytes.byteLength;
+};
+
+const encodeSharedLogCoordinateValue = (
+	fields: SharedLogCoordinateNativeFields,
+	useU64: boolean,
+): Uint8Array => {
+	const variantBytes = useU64
+		? sharedLogCoordinateU64Variant
+		: sharedLogCoordinateU32Variant;
+	const hashBytes = sharedLogCoordinateTextEncoder.encode(fields.hash);
+	const gidBytes = sharedLogCoordinateTextEncoder.encode(fields.gid);
+	const numberBytes = useU64 ? 8 : 4;
+	const output = new Uint8Array(
+		4 +
+			variantBytes.byteLength +
+			4 +
+			hashBytes.byteLength +
+			numberBytes +
+			4 +
+			gidBytes.byteLength +
+			4 +
+			numberBytes * fields.coordinates.length +
+			8 +
+			1 +
+			4 +
+			fields.metaBytes.byteLength,
+	);
+	const view = new DataView(output.buffer, output.byteOffset, output.byteLength);
+	let offset = 0;
+	offset = sharedLogCoordinateWriteBytes(output, view, offset, variantBytes);
+	offset = sharedLogCoordinateWriteBytes(output, view, offset, hashBytes);
+	if (useU64) {
+		offset = sharedLogCoordinateSetU64(view, offset, fields.hashNumber);
+	} else {
+		offset = sharedLogCoordinateSetU32(view, offset, Number(fields.hashNumber));
+	}
+	offset = sharedLogCoordinateWriteBytes(output, view, offset, gidBytes);
+	offset = sharedLogCoordinateSetU32(
+		view,
+		offset,
+		fields.coordinates.length,
+	);
+	for (const coordinate of fields.coordinates) {
+		if (useU64) {
+			offset = sharedLogCoordinateSetU64(view, offset, coordinate);
+		} else {
+			offset = sharedLogCoordinateSetU32(view, offset, Number(coordinate));
+		}
+	}
+	offset = sharedLogCoordinateSetU64(view, offset, fields.wallTime);
+	output[offset++] = fields.assignedToRangeBoundary ? 1 : 0;
+	offset = sharedLogCoordinateWriteBytes(
+		output,
+		view,
+		offset,
+		fields.metaBytes,
+	);
+	return output;
+};
+
 type NativeEncodedValueParts = {
 	prefix: Uint8Array;
 	suffix: Uint8Array;
@@ -1903,6 +1996,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			id,
 			this.encodeSharedLogCoordinateFields(fields),
 			deleteIds.map(keyToStoreKey),
+			this.encodeSharedLogCoordinatePersistenceValue(fields),
 		);
 	}
 
@@ -1926,6 +2020,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				storeKey: keyToStoreKey(id),
 				fields: this.encodeSharedLogCoordinateFields(entry.fields),
 				deleteKeys: (entry.deleteIds ?? []).map(keyToStoreKey),
+				encodedValue: this.encodeSharedLogCoordinatePersistenceValue(
+					entry.fields,
+				),
 			};
 		});
 
@@ -2196,6 +2293,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		value: T,
 		id: types.IdKey,
 		fields: Uint8Array,
+		encodedValue?: EncodedValue,
 	): Promise<void> {
 		const storeKey = keyToStoreKey(id);
 		if (!this.snapshotFile) {
@@ -2203,7 +2301,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			return;
 		}
 		await this.enqueueMutation(async () => {
-			await this.appendPut(storeKey, value);
+			await this.appendPut(storeKey, value, encodedValue);
 			this.getNative().put(storeKey, id, value, fields);
 			await this.compactIfNeeded();
 		});
@@ -2290,9 +2388,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		id: types.IdKey,
 		fields: Uint8Array,
 		deleteKeys: string[],
+		encodedValue?: EncodedValue,
 	): Promise<types.IdKey[]> {
 		if (deleteKeys.length === 0) {
-			await this.putWithEncodedFields(value, id, fields);
+			await this.putWithEncodedFields(value, id, fields, encodedValue);
 			return [];
 		}
 		const storeKey = keyToStoreKey(id);
@@ -2303,7 +2402,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}
 
 		return this.enqueueMutation(async () => {
-			await this.appendPutAndDeletes(storeKey, value, deleteKeys);
+			await this.appendPutAndDeletes(storeKey, value, deleteKeys, encodedValue);
 			const deletedEntries = this.getNative().put_and_delete_keys(
 				storeKey,
 				id,
@@ -2333,6 +2432,25 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			]),
 			meta: nativeFieldId(this.fieldDictionary, ["_meta"]),
 		});
+	}
+
+	private encodeSharedLogCoordinatePersistenceValue(
+		fields: SharedLogCoordinateNativeFields,
+	): Uint8Array | undefined {
+		const schemaName = (this.properties.schema as { name?: string }).name;
+		if (
+			schemaName === "EntryReplicatedU32" &&
+			typeof fields.hashNumber !== "bigint"
+		) {
+			return encodeSharedLogCoordinateValue(fields, false);
+		}
+		if (
+			schemaName === "EntryReplicatedU64" &&
+			typeof fields.hashNumber === "bigint"
+		) {
+			return encodeSharedLogCoordinateValue(fields, true);
+		}
+		return undefined;
 	}
 
 	private encodeSharedLogCoordinateFields(

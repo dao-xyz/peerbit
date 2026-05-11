@@ -1485,7 +1485,10 @@ export class EntryIndex<T> {
 		);
 	}
 
-	async deleteMany(from: ShallowEntry[]): Promise<ShallowEntry[]> {
+	async deleteMany(
+		from: ShallowEntry[],
+		options?: { skipNextHeadUpdates?: boolean },
+	): Promise<ShallowEntry[]> {
 		if (from.length === 0) {
 			return [];
 		}
@@ -1574,13 +1577,15 @@ export class EntryIndex<T> {
 				graph?.delete(hash);
 			}
 		}
-		const deletedNexts: string[] = [];
-		for (const node of deleted) {
-			if (node.meta.type !== EntryType.CUT) {
-				deletedNexts.push(...node.meta.next);
+		if (!options?.skipNextHeadUpdates) {
+			const deletedNexts: string[] = [];
+			for (const node of deleted) {
+				if (node.meta.type !== EntryType.CUT) {
+					deletedNexts.push(...node.meta.next);
+				}
 			}
+			await this.privateUpdateNextHeadHashes(deletedNexts, true);
 		}
-		await this.privateUpdateNextHeadHashes(deletedNexts, true);
 		return deleted;
 	}
 
