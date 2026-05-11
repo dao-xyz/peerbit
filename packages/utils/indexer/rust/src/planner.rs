@@ -438,6 +438,17 @@ impl NativeQueryIndex {
         self.search_page(query, sort, 0, limit)
     }
 
+    pub fn exact_first(&self, field: &FieldPath, value: &FieldValue) -> Option<String> {
+        self.exact
+            .get(field)
+            .and_then(|values| values.get(value))
+            .and_then(|matches| {
+                matches
+                    .iter()
+                    .find_map(|doc_id| self.internal_to_external.get(&doc_id).cloned())
+            })
+    }
+
     pub fn search_page(
         &self,
         query: &Query,
