@@ -1084,17 +1084,35 @@ export class Documents<
 			resolveTrimmedEntries: input.resolveTrimmedEntries,
 			payloadData: input.operationPayloadBytes,
 		};
-		const appended = input.operation
-			? await this.log.appendLocallyPrepared(
-					input.operation,
-					appendOptions,
-					appendProperties,
-				)
-			: await this.log.appendLocallyPreparedPayload(
+		let appended: Awaited<ReturnType<typeof this.log.appendLocallyPrepared>>;
+		if (input.operation) {
+			appended = await this.log.appendLocallyPrepared(
+				input.operation,
+				appendOptions,
+				appendProperties,
+			);
+		} else {
+			try {
+				appended = await this.log.appendLocallyPreparedPayload(
 					input.operationPayloadBytes,
 					appendOptions,
 					appendProperties,
 				);
+			} catch (error) {
+				if (
+					!(error instanceof Error) ||
+					error.message !==
+						"appendLocallyPrepared payload-only path requires native append support"
+				) {
+					throw error;
+				}
+				appended = await this.log.appendLocallyPrepared(
+					new PutOperation({ data: input.documentBytes }),
+					appendOptions,
+					appendProperties,
+				);
+			}
+		}
 		return this.createDocumentAppendCommitFacts(input, appended);
 	}
 

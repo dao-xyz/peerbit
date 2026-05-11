@@ -759,6 +759,11 @@ export class Log<T> {
 				throw error;
 			}
 		} else {
+			if (data == null && properties?.payloadData) {
+				throw new Error(
+					"appendLocallyPrepared payload-only path requires native append support",
+				);
+			}
 			entry = await this.createAppendEntry(data, appendOptions, nexts);
 			if (!properties?.skipMissingNextJoin) {
 				await this.joinMissingNexts(entry, nexts);
