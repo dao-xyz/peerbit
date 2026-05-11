@@ -28,12 +28,19 @@ export type RustIndexerOptions = {
 };
 
 type NativeRustIndex<T extends Record<string, any>> = {
-	configure_schema_ir: (schemaIr: Uint8Array) => [number, number];
+	configure_schema_ir: (schemaIr: Uint8Array) => [number, number, number];
 	put: (
 		key: string,
 		id: types.IdKey,
 		value: T,
 		fields: Uint8Array,
+	) => void;
+	put_encoded: (
+		key: string,
+		id: types.IdKey,
+		value: T,
+		valueBytes: Uint8Array,
+		byteElementIndexLimit: number,
 	) => void;
 	put_and_delete_matching: (
 		key: string,
@@ -135,6 +142,7 @@ type NativeCandidatePage = {
 const BRIDGE_VERSION = 1;
 const DEFAULT_JOURNAL_COMPACT_AFTER_OPERATIONS = 64 * 1024;
 const DEFAULT_BYTE_ELEMENT_INDEX_LIMIT = 0;
+const MAX_NATIVE_BYTE_ELEMENT_INDEX_LIMIT = 0xffffffff;
 
 // Keep bridge enum tags in sync with the Rust Borsh DTO declaration order.
 const enum NativeValueTag {
@@ -686,7 +694,11 @@ class NativeSchemaIrWriter {
 }
 
 type NativeFieldEncoder<T extends Record<string, any>> = (value: T) => Uint8Array;
-type NativeSchemaIrStats = { rootFields: number; nodeCount: number };
+type NativeSchemaIrStats = {
+	rootFields: number;
+	nodeCount: number;
+	genericNodes: number;
+};
 type SharedLogCoordinateNativeFields = {
 	hash: string;
 	hashNumber: number | bigint;
@@ -917,6 +929,13 @@ const encodeNativeSchemaIr = (
 	writer.u8(BRIDGE_VERSION);
 	writeNativeSchemaNode(writer, schema, dictionary, undefined, new Set());
 	return writer.finish();
+};
+
+const normalizeNativeByteElementIndexLimit = (limit: number): number => {
+	if (!Number.isFinite(limit)) {
+		return MAX_NATIVE_BYTE_ELEMENT_INDEX_LIMIT;
+	}
+	return Math.max(0, Math.min(MAX_NATIVE_BYTE_ELEMENT_INDEX_LIMIT, Math.floor(limit)));
 };
 
 const writeNativeSchemaObjectNode = (
@@ -1458,8 +1477,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	private properties!: types.IndexEngineInitProperties<T, NestedType>;
 	private fieldDictionary!: NativeFieldDictionary;
 	private fieldEncoder!: NativeFieldEncoder<T>;
+	private nativeEncodedValueEncoder?: NativeFieldEncoder<T>;
 	private nativeSchemaIrStats?: NativeSchemaIrStats;
 	private byteElementIndexLimit!: number;
+	private nativeByteElementIndexLimit!: number;
 	private sharedLogCoordinateFieldIds?: {
 		hash: number;
 		hashNumber: number;
@@ -1502,15 +1523,21 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		this.fieldDictionary = createNativeFieldDictionary();
 		this.byteElementIndexLimit =
 			this.options.byteElementIndexLimit ?? DEFAULT_BYTE_ELEMENT_INDEX_LIMIT;
+		this.nativeByteElementIndexLimit = normalizeNativeByteElementIndexLimit(
+			this.byteElementIndexLimit,
+		);
 		this.fieldEncoder = compileNativeFieldEncoder(
 			properties.schema,
 			this.fieldDictionary,
 			this.options,
 		);
-		const [rootFields, nodeCount] = this.native.configure_schema_ir(
+		const [rootFields, nodeCount, genericNodes] = this.native.configure_schema_ir(
 			encodeNativeSchemaIr(properties.schema, this.fieldDictionary),
 		);
-		this.nativeSchemaIrStats = { rootFields, nodeCount };
+		this.nativeSchemaIrStats = { rootFields, nodeCount, genericNodes };
+		if (genericNodes === 0) {
+			this.nativeEncodedValueEncoder = (value) => serialize(value);
+		}
 		this.snapshotFile = await createSnapshotFile(
 			this.directory,
 			this.path,
@@ -1560,6 +1587,11 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		id = types.toId(types.extractFieldValue(value, this.indexByArr)),
 		_options?: { replace?: boolean },
 	): Promise<void> {
+		const encodedValue = this.tryNativeEncodedValue(value);
+		if (encodedValue) {
+			await this.putWithEncodedValue(value, id, encodedValue);
+			return;
+		}
 		await this.putWithEncodedFields(value, id, this.fieldEncoder(value));
 	}
 
@@ -1616,8 +1648,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		await this.enqueueMutation(async () => {
 			const prepared = values.map((value) => {
 				const id = types.toId(types.extractFieldValue(value, this.indexByArr));
+				const encodedValue = this.tryNativeEncodedValue(value);
 				return {
-					fields: this.fieldEncoder(value),
+					encodedValue,
+					fields: encodedValue ? undefined : this.fieldEncoder(value),
 					id,
 					storeKey: keyToStoreKey(id),
 					value,
@@ -1633,7 +1667,13 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				}
 			});
 			for (const item of prepared) {
-				this.getNative().put(item.storeKey, item.id, item.value, item.fields);
+				this.putNativeDocumentWithPreparedFields(
+					item.storeKey,
+					item.id,
+					item.value,
+					item.encodedValue,
+					item.fields,
+				);
 			}
 			await this.compactIfNeeded();
 		});
@@ -2016,6 +2056,42 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		});
 	}
 
+	private async putWithEncodedValue(
+		value: T,
+		id: types.IdKey,
+		encodedValue: Uint8Array,
+	): Promise<void> {
+		const storeKey = keyToStoreKey(id);
+		if (!this.snapshotFile) {
+			if (
+				this.putNativeDocumentWithPreparedFields(
+					storeKey,
+					id,
+					value,
+					encodedValue,
+				)
+			) {
+				return;
+			}
+			this.getNative().put(storeKey, id, value, this.fieldEncoder(value));
+			return;
+		}
+		await this.enqueueMutation(async () => {
+			await this.appendPut(storeKey, value);
+			if (
+				!this.putNativeDocumentWithPreparedFields(
+					storeKey,
+					id,
+					value,
+					encodedValue,
+				)
+			) {
+				this.getNative().put(storeKey, id, value, this.fieldEncoder(value));
+			}
+			await this.compactIfNeeded();
+		});
+	}
+
 	private async putWithEncodedFieldsAndDeleteKeys(
 		value: T,
 		id: types.IdKey,
@@ -2099,12 +2175,55 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	private putNativeDocument(storeKey: string, id: types.IdKey, value: T): void {
-		this.getNative().put(
-			storeKey,
-			id,
-			value,
-			this.fieldEncoder(value),
-		);
+		const encodedValue = this.tryNativeEncodedValue(value);
+		if (
+			this.putNativeDocumentWithPreparedFields(
+				storeKey,
+				id,
+				value,
+				encodedValue,
+			)
+		) {
+			return;
+		}
+		this.getNative().put(storeKey, id, value, this.fieldEncoder(value));
+	}
+
+	private putNativeDocumentWithPreparedFields(
+		storeKey: string,
+		id: types.IdKey,
+		value: T,
+		encodedValue?: Uint8Array,
+		fields?: Uint8Array,
+	): boolean {
+		if (encodedValue) {
+			try {
+				this.getNative().put_encoded(
+					storeKey,
+					id,
+					value,
+					encodedValue,
+					this.nativeByteElementIndexLimit,
+				);
+				return true;
+			} catch {
+				// Fall back to the proven TypeScript fact encoder for schemas whose
+				// Borsh bytes are not covered by the native extractor yet.
+			}
+		}
+		if (fields) {
+			this.getNative().put(storeKey, id, value, fields);
+			return true;
+		}
+		return false;
+	}
+
+	private tryNativeEncodedValue(value: T): Uint8Array | undefined {
+		try {
+			return this.nativeEncodedValueEncoder?.(value);
+		} catch {
+			return;
+		}
 	}
 
 	private createContextualValue(
