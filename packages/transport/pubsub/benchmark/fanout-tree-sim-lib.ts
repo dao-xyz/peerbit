@@ -225,6 +225,11 @@ export type FanoutTreeSimResult = {
 	reparentDisconnectTotal: number;
 	reparentStaleTotal: number;
 	reparentKickedTotal: number;
+	publishActiveReparentUpgradeTotal: number;
+	publishActiveReparentUpgradeSkipDataTotal: number;
+	publishActiveParentProbeReqSentTotal: number;
+	publishActiveParentShadowStartTotal: number;
+	publishActiveParentShadowPromoteTotal: number;
 	reparentUpgradeTotal: number;
 	upgradedPeerHashes: string[];
 	upgradedBranchPeerHashes: string[];
@@ -592,6 +597,11 @@ export const formatFanoutTreeSimResult = (r: FanoutTreeSimResult) => {
 			: `deadline=off${p.maxDataAgeMs > 0 ? ` maxAgeMs=${p.maxDataAgeMs}` : ""}`,
 		`latencyMs p50=${r.latencyP50.toFixed(1)} p95=${r.latencyP95.toFixed(1)} p99=${r.latencyP99.toFixed(1)} max=${r.latencyMax.toFixed(1)}`,
 		`drops: forward total=${r.droppedForwardsTotal} max=${r.droppedForwardsMax} node=${r.droppedForwardsMaxNode ?? "-"} stale total=${r.staleForwardsDroppedTotal} max=${r.staleForwardsDroppedMax} node=${r.staleForwardsDroppedMaxNode ?? "-"} write total=${r.dataWriteDropsTotal} max=${r.dataWriteDropsMax} node=${r.dataWriteDropsMaxNode ?? "-"}`,
+		...(p.lateRootDuringPublish || r.publishActiveReparentUpgradeSkipDataTotal > 0
+			? [
+					`publishActiveParentUpgrade: upgrade=${r.publishActiveReparentUpgradeTotal} dataSkips=${r.publishActiveReparentUpgradeSkipDataTotal} probes=${r.publishActiveParentProbeReqSentTotal} shadowStart=${r.publishActiveParentShadowStartTotal} shadowPromote=${r.publishActiveParentShadowPromoteTotal}`,
+				]
+			: []),
 		`reparent: disconnect=${r.reparentDisconnectTotal} stale=${r.reparentStaleTotal} kicked=${r.reparentKickedTotal} upgrade=${r.reparentUpgradeTotal}`,
 		`reparentUpgradeSkipped: leaf=${r.reparentUpgradeSkipLeafTotal} repair=${r.reparentUpgradeSkipRepairTotal} data=${r.reparentUpgradeSkipDataTotal} cooldown=${r.reparentUpgradeSkipCooldownTotal} quiet=${r.reparentUpgradeSkipQuietTotal} budget=${r.reparentUpgradeSkipBudgetTotal} candidateLevel=${r.reparentUpgradeSkipCandidateLevelTotal} candidateSlots=${r.reparentUpgradeSkipCandidateSlotsTotal} candidatePressure=${r.reparentUpgradeSkipCandidatePressureTotal} rootPressure=${r.reparentUpgradeSkipRootPressureTotal}`,
 		`parentProbe: req=${r.parentProbeReqSentTotal}/${r.parentProbeReqReceivedTotal} reply=${r.parentProbeReplySentTotal}/${r.parentProbeReplyReceivedTotal} skipped noReply=${r.reparentUpgradeSkipProbeNoReplyTotal} notRooted=${r.reparentUpgradeSkipProbeNotRootedTotal} repair=${r.reparentUpgradeSkipProbeRepairTotal} lag=${r.reparentUpgradeSkipProbeLagTotal} overloaded=${r.reparentUpgradeSkipProbeOverloadedTotal} cooldown=${r.reparentUpgradeSkipProbeCooldownTotal}`,
@@ -1524,6 +1534,29 @@ export const runFanoutTreeSim = async (
 				}
 			};
 
+			const collectParentUpgradeActivity = () => {
+				let reparentUpgrade = 0;
+				let reparentUpgradeSkipData = 0;
+				let parentProbeReqSent = 0;
+				let parentShadowStart = 0;
+				let parentShadowPromote = 0;
+				for (const p of session.peers) {
+					const m = p.services.fanout.getChannelMetrics(params.topic, rootId);
+					reparentUpgrade += m.reparentUpgrade;
+					reparentUpgradeSkipData += m.reparentUpgradeSkipData;
+					parentProbeReqSent += m.parentProbeReqSent;
+					parentShadowStart += m.parentShadowStart;
+					parentShadowPromote += m.parentShadowPromote;
+				}
+				return {
+					reparentUpgrade,
+					reparentUpgradeSkipData,
+					parentProbeReqSent,
+					parentShadowStart,
+					parentShadowPromote,
+				};
+			};
+			let publishActiveParentUpgrade = collectParentUpgradeActivity();
 			const publishStart = Date.now();
 			let publishActiveMs = 0;
 			if (wantsMaintenance) {
@@ -1615,6 +1648,7 @@ export const runFanoutTreeSim = async (
 				if (firstBatchMessages > 0) {
 					publishActiveMs += Math.max(0, Date.now() - publishStart);
 				}
+				publishActiveParentUpgrade = collectParentUpgradeActivity();
 				churnController.abort();
 				await churnPromise;
 				churnSignal.clear?.();
@@ -2117,6 +2151,16 @@ export const runFanoutTreeSim = async (
 				reparentDisconnectTotal,
 				reparentStaleTotal,
 				reparentKickedTotal,
+				publishActiveReparentUpgradeTotal:
+					publishActiveParentUpgrade.reparentUpgrade,
+				publishActiveReparentUpgradeSkipDataTotal:
+					publishActiveParentUpgrade.reparentUpgradeSkipData,
+				publishActiveParentProbeReqSentTotal:
+					publishActiveParentUpgrade.parentProbeReqSent,
+				publishActiveParentShadowStartTotal:
+					publishActiveParentUpgrade.parentShadowStart,
+				publishActiveParentShadowPromoteTotal:
+					publishActiveParentUpgrade.parentShadowPromote,
 				reparentUpgradeTotal,
 				upgradedPeerHashes,
 				upgradedBranchPeerHashes,
