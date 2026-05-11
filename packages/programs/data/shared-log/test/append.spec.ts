@@ -1,4 +1,5 @@
 import { TestSession } from "@peerbit/test-utils";
+import { create as createRustIndexer } from "@peerbit/indexer-rust";
 import { expect } from "chai";
 import sinon from "sinon";
 import { EventStore } from "./utils/stores/index.js";
@@ -156,6 +157,51 @@ describe("append", () => {
 		} finally {
 			batchSpy.restore();
 			singleSpy.restore();
+		}
+	});
+
+	it("coalesces prepared append trim coordinate deletes into the coordinate put", async () => {
+		session = await TestSession.disconnected(1, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity: 0,
+				trim: { type: "length", to: 1 },
+			},
+		});
+		const coordinateIndex = store.log.entryCoordinatesIndex as any;
+		const putDeleteSpy = sinon.spy(
+			coordinateIndex,
+			"putSharedLogCoordinateAndDeleteIds",
+		);
+		const delIdsSpy = sinon.spy(coordinateIndex, "delIds");
+		try {
+			const first = await store.log.appendLocallyPrepared(
+				{ op: "ADD", value: "a" },
+				{
+					replicate: false,
+					target: "none",
+				},
+			);
+			putDeleteSpy.resetHistory();
+			delIdsSpy.resetHistory();
+
+			await store.log.appendLocallyPrepared(
+				{ op: "ADD", value: "b" },
+				{
+					replicate: false,
+					target: "none",
+				},
+			);
+
+			expect(delIdsSpy.callCount).equal(0);
+			expect(putDeleteSpy.callCount).equal(1);
+			expect(putDeleteSpy.firstCall.args[2]).to.deep.equal([first.entry.hash]);
+		} finally {
+			delIdsSpy.restore();
+			putDeleteSpy.restore();
 		}
 	});
 });

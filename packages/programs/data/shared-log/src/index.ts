@@ -1939,12 +1939,7 @@ export class SharedLog<
 		if (values.length === 0) {
 			return;
 		}
-		this._nativeSharedLogState?.deleteEntryCoordinatesBatch(values);
-		if (this._residentEntryCoordinatesByHash) {
-			for (const hash of values) {
-				this._residentEntryCoordinatesByHash.delete(hash);
-			}
-		}
+		this.forgetCoordinateStateForHashes(values);
 		const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
 			EntryReplicated<R>
 		>;
@@ -1960,6 +1955,19 @@ export class SharedLog<
 							values.map((hash) => new StringMatch({ key: "hash", value: hash })),
 						),
 		});
+	}
+
+	private forgetCoordinateStateForHashes(hashes: Iterable<string>) {
+		const values = [...new Set([...hashes].filter(Boolean))];
+		if (values.length === 0) {
+			return;
+		}
+		this._nativeSharedLogState?.deleteEntryCoordinatesBatch(values);
+		if (this._residentEntryCoordinatesByHash) {
+			for (const hash of values) {
+				this._residentEntryCoordinatesByHash.delete(hash);
+			}
+		}
 	}
 
 	private async ensureCurrentHeadCoordinatesIndexed() {
@@ -4084,11 +4092,50 @@ export class SharedLog<
 			resolveTrimmedEntries: properties?.resolveTrimmedEntries,
 			payloadData: properties?.payloadData,
 		});
-		await this.onChange(result.change);
-		await this.processLocalAppend(result.entry, result.removed, options, {
-			minReplicasValue,
-		});
+		let nativeAppendPlan: NativeAppendEntryPlan<R> | undefined;
+		let deferredCoordinateDeleteHashes: string[] | undefined;
+		if (this.canCoalescePreparedAppendCoordinateDeletes(result, options)) {
+			deferredCoordinateDeleteHashes =
+				(await this.applyChange(result.change, {
+					deferCoordinateIndexDeletes: true,
+				})) ?? [];
+			nativeAppendPlan = await this.planNativeLocalAppendEntry(
+				result.entry,
+				minReplicasValue,
+			);
+			if (!nativeAppendPlan) {
+				await this.deleteCoordinatesForHashes(deferredCoordinateDeleteHashes);
+				deferredCoordinateDeleteHashes = undefined;
+			}
+		} else {
+			await this.onChange(result.change);
+		}
+		try {
+			await this.processLocalAppend(result.entry, result.removed, options, {
+				minReplicasValue,
+				nativeAppendPlan,
+				extraCoordinateDeleteHashes: deferredCoordinateDeleteHashes,
+			});
+		} catch (error) {
+			if (deferredCoordinateDeleteHashes) {
+				await this.deleteCoordinatesForHashes(deferredCoordinateDeleteHashes);
+			}
+			throw error;
+		}
 		return { entry: result.entry, removed: result.removed };
+	}
+
+	private canCoalescePreparedAppendCoordinateDeletes(
+		result: { removed: ShallowOrFullEntry<T>[] },
+		options?: SharedAppendOptions<T>,
+	): boolean {
+		return (
+			result.removed.length > 0 &&
+			options?.target === "none" &&
+			options?.replicate !== true &&
+			!this.shouldDeferHeadCoordinatePersistence(options) &&
+			!!this._nativeSharedLogState
+		);
 	}
 
 	async appendLocallyPreparedManyIndependent(
@@ -4550,6 +4597,7 @@ export class SharedLog<
 			minReplicasValue: number;
 			deferHeadCoordinatePersistence?: boolean;
 			nativeAppendPlan?: NativeAppendEntryPlan<R>;
+			extraCoordinateDeleteHashes?: string[];
 		},
 	) {
 		const deferHeadCoordinatePersistence =
@@ -4602,6 +4650,7 @@ export class SharedLog<
 				entry,
 				assignedToRangeBoundary: nativeAppendPlan.assignedToRangeBoundary,
 				commitNative: false,
+				deleteHashes: properties.extraCoordinateDeleteHashes,
 			});
 		} else {
 			({ coordinates, leaders, isLeader } = await this.planEntryLeaders(
@@ -5819,14 +5868,32 @@ export class SharedLog<
 		return this.log.idString;
 	}
 
-	async onChange(change: Change<T>) {
+	async onChange(change: Change<T>): Promise<void> {
+		await this.applyChange(change);
+	}
+
+	private async applyChange(
+		change: Change<T>,
+		options?: { deferCoordinateIndexDeletes?: boolean },
+	): Promise<string[] | undefined> {
+		const deferredCoordinateDeleteHashes: string[] = [];
 		for (const added of change.added) {
 			this.onEntryAdded(added.entry);
 		}
 		for (const removed of change.removed) {
-			await this.deleteCoordinates({ hash: removed.hash });
+			if (options?.deferCoordinateIndexDeletes) {
+				deferredCoordinateDeleteHashes.push(removed.hash);
+			} else {
+				await this.deleteCoordinates({ hash: removed.hash });
+			}
 			this.onEntryRemoved(removed.hash);
 		}
+		if (options?.deferCoordinateIndexDeletes) {
+			this.forgetCoordinateStateForHashes(deferredCoordinateDeleteHashes);
+		}
+		return options?.deferCoordinateIndexDeletes
+			? deferredCoordinateDeleteHashes
+			: undefined;
 	}
 
 	async canAppend(entry: Entry<T>) {
@@ -7579,6 +7646,7 @@ export class SharedLog<
 		prev?: EntryReplicated<R>;
 		assignedToRangeBoundary?: boolean;
 		commitNative?: boolean;
+		deleteHashes?: string[];
 	}) {
 		const prepared = this.createCoordinatePersistenceEntry(properties);
 		if (!prepared) {
@@ -7586,6 +7654,10 @@ export class SharedLog<
 		}
 		const { coordinateEntry, assignedToRangeBoundary } = prepared;
 		const nextHashes = properties.entry.meta.next;
+		const deleteHashes =
+			properties.deleteHashes && properties.deleteHashes.length > 0
+				? [...new Set([...nextHashes, ...properties.deleteHashes])]
+				: nextHashes;
 		const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
 			EntryReplicated<R>
 		>;
@@ -7602,19 +7674,19 @@ export class SharedLog<
 					assignedToRangeBoundary: coordinateEntry.assignedToRangeBoundary,
 					metaBytes: coordinateEntry.getMetaBytes(),
 				},
-				nextHashes,
+				deleteHashes,
 			);
-		} else if (nextHashes.length > 0 && coordinateIndex.putAndDeleteIds) {
-			await coordinateIndex.putAndDeleteIds(coordinateEntry, nextHashes);
+		} else if (deleteHashes.length > 0 && coordinateIndex.putAndDeleteIds) {
+			await coordinateIndex.putAndDeleteIds(coordinateEntry, deleteHashes);
 		} else {
 			deleteNextOptions =
-				nextHashes.length === 0
+				deleteHashes.length === 0
 					? undefined
-					: nextHashes.length === 1
-						? { query: { hash: nextHashes[0] } }
+					: deleteHashes.length === 1
+						? { query: { hash: deleteHashes[0] } }
 						: {
 								query: new Or(
-									nextHashes.map(
+									deleteHashes.map(
 										(x) => new StringMatch({ key: "hash", value: x }),
 									),
 								),
