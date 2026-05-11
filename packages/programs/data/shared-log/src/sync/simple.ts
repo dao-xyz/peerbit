@@ -365,11 +365,26 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			return;
 		}
 		for (const state of session.targets.values()) {
-			const resolved = await this.log.hasMany(state.unresolved);
+			const resolved =
+				typeof this.log.hasMany === "function"
+					? await this.log.hasMany(state.unresolved)
+					: await this.getExistingRepairHashes(state.unresolved);
 			for (const hash of resolved) {
 				state.unresolved.delete(hash);
 			}
 		}
+	}
+
+	private async getExistingRepairHashes(
+		hashes: Iterable<string>,
+	): Promise<Set<string>> {
+		const resolved = new Set<string>();
+		for (const hash of hashes) {
+			if (await this.log.has(hash)) {
+				resolved.add(hash);
+			}
+		}
+		return resolved;
 	}
 
 	private markRepairSessionResolvedHashes(hashes: string[]): void {

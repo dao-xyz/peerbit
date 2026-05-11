@@ -29,23 +29,30 @@ describe("native graph", () => {
 		await store.stop();
 	});
 
-	it("serves heads while preserving buffered index flush behavior", async () => {
+	it("serves heads from the native graph without forcing buffered index flush", async () => {
 		const log = new Log<Uint8Array>();
 		await log.open(store, signKey, {
 			indexer: new HashmapIndices(),
 			nativeGraph: true,
 		});
 		const putSpy = sinon.spy(log.entryIndex.properties.index, "put");
+		const putBatchSpy = sinon.spy(
+			log.entryIndex.properties.index,
+			"putBatch",
+		);
 		const { entry } = await log.append(new Uint8Array([1]), {
 			meta: { next: [] },
 		});
 
 		expect(putSpy.callCount).equal(0);
+		const batchWritesBeforeHeads = putBatchSpy.callCount;
 		expect((await log.getHeads().all()).map((head) => head.hash)).to.deep.equal(
 			[entry.hash],
 		);
-		expect(putSpy.callCount).equal(1);
+		expect(putSpy.callCount).equal(0);
+		expect(putBatchSpy.callCount).equal(batchWritesBeforeHeads);
 
+		putBatchSpy.restore();
 		putSpy.restore();
 		await log.close();
 	});
