@@ -735,6 +735,89 @@ export class Log<T> {
 		return { entry, removed, change };
 	}
 
+	async appendLocallyPreparedManyIndependent(
+		data: T[],
+		options: AppendOptions<T> = {},
+		properties?: {
+			resolveTrimmedEntries?: boolean;
+		},
+	): Promise<
+		| {
+				entries: Entry<T>[];
+				removed: ShallowOrFullEntry<T>[];
+				change: Change<T>;
+		  }
+		| undefined
+	> {
+		if (data.length === 0) {
+			return {
+				entries: [],
+				removed: [],
+				change: { added: [], removed: [] },
+			};
+		}
+		if (
+			options.canAppend ||
+			options.onChange ||
+			options.meta?.type === EntryType.CUT
+		) {
+			throw new Error(
+				"appendLocallyPreparedManyIndependent only supports trusted plain local appends",
+			);
+		}
+
+		const appendOptions: AppendOptions<T> = {
+			...options,
+			__peerbitCanAppendAlreadyValidated: true,
+		};
+		const deferBlockStore = hasPutMany(this._storage);
+		const nativeAppendBatch = await this.createNativePlainAppendEntriesBatch(
+			data,
+			appendOptions,
+			deferBlockStore,
+		);
+		if (!nativeAppendBatch) {
+			return undefined;
+		}
+
+		const entries = nativeAppendBatch.entries;
+		try {
+			if (deferBlockStore && !nativeAppendBatch.nativeBlocksCommitted) {
+				await this.putAppendEntryBlocks(entries, nativeAppendBatch.blocks);
+			}
+			await this.putAppendEntries(
+				entries,
+				appendOptions,
+				[],
+				nativeAppendBatch,
+				entries.map(() => true),
+			);
+		} catch (error) {
+			if (nativeAppendBatch.nativeGraphUpdated) {
+				this.rollbackNativeAppendGraph(entries);
+			}
+			if (nativeAppendBatch.nativeBlocksCommitted) {
+				await this.rollbackNativeAppendBlocks(entries);
+			}
+			throw error;
+		}
+
+		for (const entry of entries) {
+			entry.init({ encoding: this._encoding, keychain: this._keychain });
+		}
+
+		const trimmed = await this.trim(appendOptions.trim, {
+			resolveDeletedEntries: properties?.resolveTrimmedEntries,
+		});
+		const removed = trimmed ?? [];
+		const change: Change<T> = {
+			added: entries.map((entry) => ({ head: true, entry })),
+			removed,
+		};
+
+		return { entries, removed, change };
+	}
+
 	async appendMany(
 		data: T[],
 		options: AppendOptions<T> = {},
@@ -877,6 +960,119 @@ export class Log<T> {
 		});
 	}
 
+	private async createNativePlainAppendEntriesBatch(
+		data: T[],
+		options: AppendOptions<T>,
+		deferBlockStore: boolean,
+	): Promise<PreparedAppendChain<T> | undefined> {
+		const canAppendAlreadyValidated =
+			options.__peerbitCanAppendAlreadyValidated === true;
+		if (
+			!deferBlockStore ||
+			data.length === 0 ||
+			options.encryption ||
+			options.signers ||
+			options.canAppend ||
+			(this._hasCustomCanAppend && !canAppendAlreadyValidated) ||
+			options.meta?.timestamp ||
+			options.meta?.type === EntryType.CUT ||
+			options.meta?.gidSeed ||
+			options.meta?.next
+		) {
+			return undefined;
+		}
+
+		const nativeGraph =
+			!this.entryIndex.properties.onGidRemoved &&
+			this.entryIndex.properties.nativeGraph?.graph
+				? this.entryIndex.properties.nativeGraph.graph
+				: undefined;
+
+		const gids = await Promise.all(
+			data.map(() => Promise.resolve(EntryV0.createGid())),
+		);
+		const clocks = data.map(
+			() =>
+				new Clock({
+					id: this._identity.publicKey.bytes,
+					timestamp: this._hlc.now(),
+				}),
+		);
+		const metaDatas = data.map(() => options.meta?.data);
+		const directBatch = nativeGraph?.prepareEntryV0PlainEntriesCommit
+			? await EntryV0.createPlainAppendEntriesBatch<T>({
+					data,
+					meta: {
+						clocks: () => clocks,
+						gids,
+						nexts: data.map(() => []),
+						type: options.meta?.type,
+						datas: metaDatas,
+					},
+					encoding: this._encoding,
+					identity: options.identity || this._identity,
+					deferStore: deferBlockStore,
+					cachePreparedEntries: false,
+					nativeGraph,
+					nativeBlockStore: this._storage,
+				})
+			: undefined;
+		if (directBatch) {
+			return directBatch;
+		}
+
+		const entries: Entry<T>[] = [];
+		const blocks: PreparedEntryBlock[] = [];
+		const shallowEntries: PreparedAppendChain<T>["shallowEntries"] = [];
+		const nativeEntries: NonNullable<PreparedAppendChain<T>["nativeEntries"]> =
+			[];
+		let nativeGraphUpdated = false;
+		let nativeBlocksCommitted = true;
+		for (let i = 0; i < data.length; i++) {
+			const prepared = await EntryV0.createPlainAppendChainBatch<T>({
+				data: [data[i]!],
+				meta: {
+					clocks: () => [clocks[i]!],
+					gid: gids[i]!,
+					type: options.meta?.type,
+					data: metaDatas[i],
+					next: [],
+				},
+				encoding: this._encoding,
+				identity: options.identity || this._identity,
+				deferStore: deferBlockStore,
+				cachePreparedEntries: false,
+				nativeGraph,
+				nativeBlockStore: this._storage,
+			});
+			if (!prepared) {
+				return undefined;
+			}
+			entries.push(prepared.entries[0]!);
+			if (prepared.blocks) {
+				blocks.push(...prepared.blocks);
+			}
+			shallowEntries.push(...prepared.shallowEntries);
+			if (prepared.nativeEntries) {
+				nativeEntries.push(...prepared.nativeEntries);
+			}
+			nativeGraphUpdated ||= prepared.nativeGraphUpdated === true;
+			nativeBlocksCommitted &&= prepared.nativeBlocksCommitted === true;
+		}
+
+		if (!nativeBlocksCommitted && blocks.length !== entries.length) {
+			return undefined;
+		}
+		return {
+			entries,
+			blocks: blocks.length > 0 ? blocks : undefined,
+			shallowEntries,
+			nativeEntries,
+			nativeGraphUpdated,
+			nativeBlocksCommitted,
+		};
+	}
+
 	private rollbackNativeAppendGraph(entries: Entry<T>[]) {
 		const graph = this.entryIndex.properties.nativeGraph?.graph;
 		if (!graph) {
@@ -1016,10 +1212,12 @@ export class Log<T> {
 		options: AppendOptions<T>,
 		externalNextHashes: string[],
 		preparedAppendChain?: PreparedAppendChain<T>,
+		heads?: boolean[],
 	) {
 		await this.entryIndex.putAppendBatch(entries, {
 			unique: true,
 			externalNextHashes,
+			heads,
 			prepared:
 				preparedAppendChain &&
 				entries.length === preparedAppendChain.entries.length

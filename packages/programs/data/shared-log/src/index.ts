@@ -4073,6 +4073,82 @@ export class SharedLog<
 		return { entry: result.entry, removed: result.removed };
 	}
 
+	async appendLocallyPreparedManyIndependent(
+		data: T[],
+		options?: SharedAppendOptions<T> | undefined,
+		properties?: {
+			resolveTrimmedEntries?: boolean;
+		},
+	): Promise<
+		| {
+				entries: Entry<T>[];
+				removed: ShallowOrFullEntry<T>[];
+		  }
+		| undefined
+	> {
+		if (data.length === 0) {
+			return { entries: [], removed: [] };
+		}
+		if (options?.canAppend || options?.onChange) {
+			throw new Error(
+				"appendLocallyPreparedManyIndependent does not accept canAppend or onChange hooks",
+			);
+		}
+		if (this._isAdaptiveReplicating) {
+			this.markLocalAppendActivity();
+		}
+
+		const { appendOptions, minReplicasValue } =
+			this.createLogAppendOptions(options);
+		appendOptions.__peerbitCanAppendAlreadyValidated = true;
+		const result = await this.log.appendLocallyPreparedManyIndependent(
+			data,
+			appendOptions,
+			{
+				resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+			},
+		);
+		if (!result) {
+			return undefined;
+		}
+
+		await this.onChange(result.change);
+		const deferHeadCoordinatePersistence =
+			this.shouldDeferHeadCoordinatePersistence(options);
+
+		if (deferHeadCoordinatePersistence) {
+			await this.deleteCoordinatesForHashes([
+				...result.entries.flatMap((entry) => entry.meta.next),
+				...result.removed.map((entry) => entry.hash),
+			]);
+			return { entries: result.entries, removed: result.removed };
+		}
+
+		const nativeAppendPlans =
+			options?.replicate === true
+				? undefined
+				: await this.planNativeAppendEntries(
+						result.entries,
+						minReplicasValue,
+						options?.delivery,
+						options,
+					);
+		for (let i = 0; i < result.entries.length; i++) {
+			await this.processLocalAppend(
+				result.entries[i]!,
+				i === result.entries.length - 1 ? result.removed : [],
+				options,
+				{
+					minReplicasValue,
+					deferHeadCoordinatePersistence: false,
+					nativeAppendPlan: nativeAppendPlans?.[i],
+				},
+			);
+		}
+
+		return { entries: result.entries, removed: result.removed };
+	}
+
 	async appendMany(
 		data: T[],
 		options?: SharedAppendOptions<T> | undefined,

@@ -240,6 +240,78 @@ describe("index", () => {
 				}
 			});
 
+			it("uses the independent native prepared batch path for unique putMany", async () => {
+				const rustOptions = createRustPeerbitOptions();
+				const rustSession = await TestSession.connected(
+					1,
+					{ storage: rustOptions.storage },
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: false,
+						nativeGraph: true,
+					},
+				});
+				const changes: DocumentsChange<Document, Document>[] = [];
+				store.docs.events.addEventListener("change", (evt) => {
+					changes.push(evt.detail);
+				});
+				const sharedBatchAppendSpy = sinon.spy(
+					store.docs.log,
+					"appendLocallyPreparedManyIndependent",
+				);
+				const lowerBatchAppendSpy = sinon.spy(
+					store.docs.log.log,
+					"appendLocallyPreparedManyIndependent",
+				);
+				const preparedAppendSpy = sinon.spy(
+					store.docs.log,
+					"appendLocallyPrepared",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+
+				try {
+					const docs = [
+						new Document({ id: uuid(), name: "batch-1" }),
+						new Document({ id: uuid(), name: "batch-2" }),
+						new Document({ id: uuid(), name: "batch-3" }),
+					];
+					const appended = await store.docs.putMany(docs, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(sharedBatchAppendSpy.callCount).equal(1);
+					expect(lowerBatchAppendSpy.callCount).equal(1);
+					expect(preparedAppendSpy.callCount).equal(0);
+					expect(appendSpy.callCount).equal(0);
+					expect(appended.entries).to.have.length(3);
+					expect(new Set(appended.entries.map((entry) => entry.meta.gid)).size)
+						.equal(3);
+					expect(appended.entries.every((entry) => entry.meta.next.length === 0))
+						.equal(true);
+					expect(changes).to.have.length(1);
+					expect(changes[0].added.map((doc) => doc.id)).to.deep.equal(
+						docs.map((doc) => doc.id),
+					);
+					for (const doc of docs) {
+						expect((await store.docs.get(doc.id))?.name).equal(doc.name);
+					}
+				} finally {
+					appendSpy.restore();
+					preparedAppendSpy.restore();
+					lowerBatchAppendSpy.restore();
+					sharedBatchAppendSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
 			it("uses native shared-log planning for replicated target-none puts", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>(),
@@ -428,6 +500,45 @@ describe("index", () => {
 					preparedAppendSpy.restore();
 					validatedAppendSpy.restore();
 					appendSpy.restore();
+				}
+			});
+
+			it("keeps custom canPerform putMany on the compatibility path", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				const canPerform = sinon.stub().returns(true);
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform,
+					},
+				});
+				const batchAppendSpy = sinon.spy(
+					store.docs.log,
+					"appendLocallyPreparedManyIndependent",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+
+				try {
+					await store.docs.putMany(
+						[
+							new Document({ id: uuid(), name: "compat-1" }),
+							new Document({ id: uuid(), name: "compat-2" }),
+						],
+						{
+							unique: true,
+							replicate: false,
+							target: "none",
+						},
+					);
+
+					expect(batchAppendSpy.callCount).equal(0);
+					expect(appendSpy.callCount).equal(2);
+					expect(canPerform.callCount).equal(2);
+				} finally {
+					appendSpy.restore();
+					batchAppendSpy.restore();
 				}
 			});
 

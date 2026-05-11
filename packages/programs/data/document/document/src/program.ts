@@ -108,13 +108,26 @@ export type CanPerform<T> = (
 
 type PutChangeReference<T, I extends Record<string, any>> = {
 	document: T;
-	operation: PutOperation;
+	operation: PutOperation | PutWithKeyOperation;
 	key: indexerTypes.IdKey;
 	unique?: boolean;
 	existing?:
 		| indexerTypes.IndexedResult<IndexedContextOnly<I>>
 		| null
 		| undefined;
+};
+
+type DocumentPutOptions = SharedAppendOptions<Operation> & {
+	unique?: boolean;
+	replicate?: boolean;
+	checkRemote?: boolean;
+};
+
+type PreparedPut<T> = {
+	document: T;
+	keyValue: indexerTypes.IdPrimitive;
+	key: indexerTypes.IdKey;
+	operation: PutOperation | PutWithKeyOperation;
 };
 
 type InferR<D> = D extends ReplicationDomain<any, any, infer I> ? I : "u32";
@@ -607,17 +620,8 @@ export class Documents<
 		}
 	}
 
-	public async put(
-		doc: T,
-		options?: SharedAppendOptions<Operation> & {
-			unique?: boolean;
-			replicate?: boolean;
-			checkRemote?: boolean;
-		},
-	) {
+	private preparePut(doc: T): PreparedPut<T> {
 		const keyValue = this.idResolver(doc);
-
-		// type check the key
 		indexerTypes.checkId(keyValue);
 		const ser = serialize(doc);
 		if (ser.length > MAX_BATCH_SIZE) {
@@ -629,27 +633,6 @@ export class Documents<
 		}
 
 		const key = indexerTypes.toId(keyValue);
-		let existingLocalContext:
-			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
-			| null
-			| undefined;
-		let existingHead: string | undefined;
-		if (!options?.unique) {
-			if (options?.checkRemote) {
-				existingHead = (
-					await this._index.getDetailed(keyValue, {
-						resolve: false,
-						local: true,
-						remote: { replicate: options?.replicate },
-					})
-				)?.[0]?.results[0]?.context.head;
-			} else {
-				existingLocalContext =
-					(await this.getLocalIndexedContext(key)) || null;
-				existingHead = existingLocalContext?.value.__context.head;
-			}
-		}
-
 		let operation: PutOperation | PutWithKeyOperation;
 		if (this.compatibility === 6) {
 			if (typeof keyValue === "string") {
@@ -665,35 +648,63 @@ export class Documents<
 				data: ser,
 			});
 		}
+		return { document: doc, keyValue, key, operation };
+	}
+
+	public async put(doc: T, options?: DocumentPutOptions) {
+		const prepared = this.preparePut(doc);
+		let existingLocalContext:
+			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
+			| null
+			| undefined;
+		let existingHead: string | undefined;
+		if (!options?.unique) {
+			if (options?.checkRemote) {
+				existingHead = (
+					await this._index.getDetailed(prepared.keyValue, {
+						resolve: false,
+						local: true,
+						remote: { replicate: options?.replicate },
+					})
+				)?.[0]?.results[0]?.context.head;
+			} else {
+				existingLocalContext =
+					(await this.getLocalIndexedContext(prepared.key)) || null;
+				existingHead = existingLocalContext?.value.__context.head;
+			}
+		}
 
 		if (
-			operation instanceof PutOperation &&
+			prepared.operation instanceof PutOperation &&
 			this.canUsePlainPutFastPath(options)
 		) {
 			return this.putPlainFastPath(
-				doc,
-				key,
-				operation,
+				prepared.document,
+				prepared.key,
+				prepared.operation,
 				existingHead,
 				existingLocalContext,
 				options,
 			);
 		}
 
-		const appended = await this.log.append(operation, {
+		const appended = await this.log.append(prepared.operation, {
 			...options,
 			meta: {
 				next: existingHead ? [await this._resolveEntry(existingHead)] : [],
 				...options?.meta,
 			},
 			canAppend: (entry) => {
-				return this.canAppend(entry, { document: doc, operation });
+				return this.canAppend(entry, {
+					document: prepared.document,
+					operation: prepared.operation,
+				});
 			},
 			onChange: (change) => {
 				return this.handleChanges(change, {
-					document: doc,
-					operation,
-					key,
+					document: prepared.document,
+					operation: prepared.operation,
+					key: prepared.key,
 					unique: options?.unique,
 					existing: existingLocalContext,
 				});
@@ -704,12 +715,86 @@ export class Documents<
 		return appended;
 	}
 
+	public async putMany(
+		docs: T[],
+		options?: DocumentPutOptions,
+	): Promise<{
+		entries: Entry<Operation>[];
+		removed: ShallowOrFullEntry<Operation>[];
+	}> {
+		if (docs.length === 0) {
+			return { entries: [], removed: [] };
+		}
+		if (!this.canUsePlainPutManyFastPath(options)) {
+			return this.putManySequential(docs, options);
+		}
+
+		const prepared = docs.map((doc) => this.preparePut(doc));
+		if (
+			prepared.some((item) => !(item.operation instanceof PutOperation)) ||
+			this.hasDuplicatePreparedPutKeys(prepared)
+		) {
+			return this.putManySequential(docs, options);
+		}
+
+		const appended = await this.log.appendLocallyPreparedManyIndependent(
+			prepared.map((item) => item.operation as PutOperation),
+			{
+				...options,
+				replicate: options?.replicate,
+			},
+			{
+				resolveTrimmedEntries: !this._index.canGetIdentityIndexedByHead(),
+			},
+		);
+		if (!appended) {
+			return this.putManySequential(docs, options);
+		}
+
+		await this.handlePreparedPlainPutManyCommit({
+			puts: prepared.map((item, index) => ({
+				document: item.document,
+				key: item.key,
+				entry: appended.entries[index]!,
+			})),
+			removed: appended.removed,
+		});
+		for (const entry of appended.entries) {
+			this.keepCache?.add(entry.hash);
+		}
+		return appended;
+	}
+
+	private async putManySequential(
+		docs: T[],
+		options?: DocumentPutOptions,
+	): Promise<{
+		entries: Entry<Operation>[];
+		removed: ShallowOrFullEntry<Operation>[];
+	}> {
+		const entries: Entry<Operation>[] = [];
+		const removed: ShallowOrFullEntry<Operation>[] = [];
+		for (const doc of docs) {
+			const appended = await this.put(doc, options);
+			entries.push(appended.entry);
+			removed.push(...appended.removed);
+		}
+		return { entries, removed };
+	}
+
+	private hasDuplicatePreparedPutKeys(prepared: PreparedPut<T>[]): boolean {
+		const keys = new Set<string | number | bigint>();
+		for (const item of prepared) {
+			if (keys.has(item.key.primitive)) {
+				return true;
+			}
+			keys.add(item.key.primitive);
+		}
+		return false;
+	}
+
 	private canUsePlainPutFastPath(
-		options?: SharedAppendOptions<Operation> & {
-			unique?: boolean;
-			replicate?: boolean;
-			checkRemote?: boolean;
-		},
+		options?: DocumentPutOptions,
 	): boolean {
 		return (
 			!this._optionCanPerform &&
@@ -729,6 +814,16 @@ export class Documents<
 		);
 	}
 
+	private canUsePlainPutManyFastPath(options?: DocumentPutOptions): boolean {
+		return (
+			options?.unique === true &&
+			options?.replicate !== true &&
+			options?.target === "none" &&
+			(options?.delivery === undefined || options.delivery === false) &&
+			this.canUsePlainPutFastPath(options)
+		);
+	}
+
 	private async putPlainFastPath(
 		doc: T,
 		key: indexerTypes.IdKey,
@@ -739,11 +834,7 @@ export class Documents<
 			| null
 			| undefined,
 		options:
-			| (SharedAppendOptions<Operation> & {
-					unique?: boolean;
-					replicate?: boolean;
-					checkRemote?: boolean;
-			  })
+			| DocumentPutOptions
 			| undefined,
 	) {
 		const indexedContextNext = existingHead
@@ -884,6 +975,82 @@ export class Documents<
 				),
 			);
 			modified.add(properties.key.primitive);
+		}
+
+		for (const removed of properties.removed) {
+			if (
+				!(removed instanceof Entry) &&
+				(await this.collectRemovedDocumentChangeFromIndexedHead(
+					removed.hash,
+					modified,
+					documentsChanged,
+				))
+			) {
+				continue;
+			}
+			const entry =
+				removed instanceof Entry
+					? removed
+					: await this.log.log.entryIndex.get(removed.hash);
+			if (!entry) {
+				continue;
+			}
+			try {
+				await this.collectRemovedDocumentChange(
+					await entry.getPayloadValue(),
+					modified,
+					documentsChanged,
+				);
+			} catch (error) {
+				if (error instanceof AccessError) {
+					continue;
+				}
+				throw error;
+			}
+		}
+
+		this.events.dispatchEvent(
+			new CustomEvent("change", { detail: documentsChanged }),
+		);
+	}
+
+	private async handlePreparedPlainPutManyCommit(properties: {
+		puts: {
+			document: T;
+			key: indexerTypes.IdKey;
+			entry: Entry<Operation>;
+		}[];
+		removed: ShallowOrFullEntry<Operation>[];
+	}): Promise<void> {
+		const documentsChanged: DocumentsChange<T, I> = {
+			added: [],
+			removed: [],
+		};
+		const modified: Set<string | number | bigint> = new Set();
+
+		for (const put of properties.puts) {
+			if (modified.has(put.key.primitive)) {
+				continue;
+			}
+			const context = new Context({
+				created: put.entry.meta.clock.timestamp.wallTime,
+				modified: put.entry.meta.clock.timestamp.wallTime,
+				head: put.entry.hash,
+				gid: put.entry.meta.gid,
+				size: put.entry.payload.byteLength,
+			});
+			const { indexable } = await this._index.putWithContext(
+				put.document,
+				put.key,
+				context,
+				{
+					replace: false,
+				},
+			);
+			documentsChanged.added.push(
+				coerceWithIndexed(coerceWithContext(put.document, context), indexable),
+			);
+			modified.add(put.key.primitive);
 		}
 
 		for (const removed of properties.removed) {

@@ -64,6 +64,19 @@ type NativePlainEntryInput = {
 	payloadData: Uint8Array;
 };
 
+type NativePlainEntriesInput = {
+	clockId: Uint8Array;
+	privateKey: Uint8Array;
+	publicKey: Uint8Array;
+	wallTimes: Array<bigint | number | string>;
+	logicals?: number[];
+	gids: string[];
+	nexts: string[][];
+	type?: number;
+	metaDatas?: Array<Uint8Array | undefined>;
+	payloadDatas: Uint8Array[];
+};
+
 type NativePreparedPlainEntry = {
 	bytes?: Uint8Array;
 	cid: string;
@@ -94,18 +107,7 @@ type NativeEntryV0Graph = {
 		blockStore: unknown,
 	): MaybePromise<NativePreparedPlainEntry | undefined>;
 	prepareEntryV0PlainEntriesCommit?(
-		input: {
-			clockId: Uint8Array;
-			privateKey: Uint8Array;
-			publicKey: Uint8Array;
-			wallTimes: Array<bigint | number | string>;
-			logicals?: number[];
-			gids: string[];
-			nexts: string[][];
-			type?: number;
-			metaDatas?: Array<Uint8Array | undefined>;
-			payloadDatas: Uint8Array[];
-		},
+		input: NativePlainEntriesInput,
 		blockStore: unknown,
 	): MaybePromise<NativePreparedPlainEntry[] | undefined>;
 };
@@ -605,6 +607,200 @@ export class EntryV0<T>
 		nativeBlockStore?: unknown;
 	}): Promise<Entry<T>[] | undefined> {
 		return (await EntryV0.createPlainAppendChainBatch(properties))?.entries;
+	}
+
+	static async createPlainAppendEntriesBatch<T>(properties: {
+		data: T[];
+		meta: {
+			clocks: () => Clock[];
+			gids: string[];
+			nexts: SortableEntry[][];
+			type?: EntryType;
+			datas?: Array<Uint8Array | undefined>;
+		};
+		encoding: Encoding<T>;
+		identity: Identity;
+		deferStore: boolean;
+		cachePreparedEntries?: boolean;
+		nativeGraph?: NativeEntryV0Graph;
+		nativeBlockStore?: unknown;
+	}): Promise<PreparedAppendChain<T> | undefined> {
+		if (!properties.deferStore) {
+			return undefined;
+		}
+		if (!(properties.identity instanceof Ed25519Keypair)) {
+			return undefined;
+		}
+		const nativeCommit = properties.nativeGraph?.prepareEntryV0PlainEntriesCommit;
+		if (!nativeCommit) {
+			return undefined;
+		}
+		if (
+			properties.meta.gids.length !== properties.data.length ||
+			properties.meta.nexts.length !== properties.data.length
+		) {
+			throw new Error("Expected one gid and next list per entry");
+		}
+
+		const clocks = properties.meta.clocks();
+		if (clocks.length !== properties.data.length) {
+			throw new Error("Expected one clock per entry");
+		}
+		for (let i = 0; i < clocks.length; i++) {
+			for (const next of properties.meta.nexts[i]!) {
+				if (
+					Timestamp.compare(next.meta.clock.timestamp, clocks[i]!.timestamp) >=
+					0
+				) {
+					throw new Error(
+						"Expecting next(s) to happen before entry, got: " +
+							next.meta.clock.timestamp +
+							" > " +
+							clocks[i]!.timestamp,
+					);
+				}
+			}
+		}
+
+		const payloadDatas = new Array<Uint8Array>(properties.data.length);
+		for (let i = 0; i < properties.data.length; i++) {
+			payloadDatas[i] = properties.encoding.encoder(properties.data[i]!);
+		}
+		const input: NativePlainEntriesInput = {
+			clockId: properties.identity.publicKey.bytes,
+			privateKey: properties.identity.privateKey.privateKey,
+			publicKey: properties.identity.publicKey.publicKey,
+			wallTimes: clocks.map((clock) => clock.timestamp.wallTime),
+			logicals: clocks.map((clock) => clock.timestamp.logical),
+			gids: properties.meta.gids,
+			nexts: properties.meta.nexts.map((nexts) =>
+				nexts.map((next) => next.hash),
+			),
+			type: properties.meta.type,
+			metaDatas: properties.meta.datas,
+			payloadDatas,
+		};
+		const preparedValue = nativeCommit.call(
+			properties.nativeGraph,
+			input,
+			properties.nativeBlockStore,
+		);
+		const prepared = isPromiseLike(preparedValue)
+			? await preparedValue
+			: preparedValue;
+		if (!prepared) {
+			return undefined;
+		}
+		if (prepared.length !== properties.data.length) {
+			throw new Error("Unexpected prepared entry batch length");
+		}
+
+		const entries: PreparedAppendChain<T>["entries"] = [];
+		const shallowEntries: PreparedAppendChain<T>["shallowEntries"] = [];
+		const nativeEntries: NonNullable<PreparedAppendChain<T>["nativeEntries"]> =
+			[];
+		const entryType = properties.meta.type ?? EntryType.APPEND;
+		for (let index = 0; index < prepared.length; index++) {
+			const preparedEntry = prepared[index]!;
+			const meta = new Meta({
+				clock: clocks[index]!,
+				gid: properties.meta.gids[index]!,
+				type: entryType,
+				data: properties.meta.datas?.[index],
+				next: preparedEntry.next,
+			});
+			const payload = new Payload<T>({
+				data: payloadDatas[index]!,
+				value: properties.data[index],
+				encoding: properties.encoding,
+			});
+			const signature = new SignatureWithKey({
+				signature: preparedEntry.signature,
+				publicKey: properties.identity.publicKey,
+				prehash: 0,
+			});
+			const entry = new EntryV0<T>({
+				meta: new DecryptedThing({
+					data: preparedEntry.metaBytes,
+					value: meta,
+				}),
+				payload: new DecryptedThing({
+					data: preparedEntry.payloadBytes,
+					value: payload,
+				}),
+				signatures: new Signatures({
+					signatures: [
+						new DecryptedThing({
+							data: preparedEntry.signatureBytes,
+							value: signature,
+						}),
+					],
+				}),
+				createdLocally: true,
+			});
+			if (properties.cachePreparedEntries === false) {
+				entry.hash = preparedEntry.cid;
+				entry.size = preparedEntry.byteLength;
+			} else {
+				if (!preparedEntry.bytes) {
+					throw new Error("Missing prepared entry bytes");
+				}
+				entry.hash = Entry.prepareMultihashBytes(
+					entry,
+					preparedEntry.bytes,
+					preparedEntry.cid,
+				);
+			}
+			entry._hashDigestBytes = preparedEntry.hashDigestBytes;
+			const shallowEntry = new ShallowEntry({
+				hash: entry.hash,
+				payloadSize: payload.byteLength,
+				head: true,
+				meta: new ShallowMeta({
+					gid: meta.gid,
+					data: meta.data,
+					clock: meta.clock,
+					next: meta.next,
+					type: meta.type,
+				}),
+			});
+			const nativeEntry =
+				properties.cachePreparedEntries === false
+					? undefined
+					: {
+							hash: entry.hash,
+							gid: meta.gid,
+							next: meta.next,
+							type: meta.type,
+							head: true,
+							payloadSize: payload.byteLength,
+							data: meta.data,
+							clock: {
+								timestamp: {
+									wallTime: meta.clock.timestamp.wallTime,
+									logical: meta.clock.timestamp.logical,
+								},
+							},
+						};
+			if (properties.cachePreparedEntries !== false) {
+				Entry.prepareShallowEntry(entry, shallowEntry);
+				Entry.prepareNativeLogEntry(entry, nativeEntry!);
+				entry.init({ encoding: properties.encoding });
+			}
+			entries.push(entry);
+			shallowEntries.push(shallowEntry);
+			if (nativeEntry) {
+				nativeEntries.push(nativeEntry);
+			}
+		}
+
+		return {
+			entries,
+			shallowEntries,
+			nativeEntries,
+			nativeGraphUpdated: true,
+			nativeBlocksCommitted: true,
+		};
 	}
 
 	static async createPlainAppendChainBatch<T>(properties: {

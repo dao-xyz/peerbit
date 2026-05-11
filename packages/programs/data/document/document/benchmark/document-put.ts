@@ -16,6 +16,7 @@ import { Documents, type SetupOptions } from "../src/program.js";
 // - DOC_BYTES=1200
 // - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-transient-index
 //   Add "-nonunique" to any scenario name to use default update-safe put semantics.
+//   Add "-putmany" to any unique scenario name to use one putMany call per measured batch.
 // - DOC_PROFILE_DEEP=1 reports lower shared-log/log phase timings.
 // - BENCH_JSON=1
 
@@ -40,8 +41,10 @@ const scenarioNames = (
 	.map((x) => x.trim())
 	.filter(Boolean);
 
-const scenarioBaseName = (name: string) => name.replace(/-nonunique$/, "");
-const scenarioUsesUniquePuts = (name: string) => !name.endsWith("-nonunique");
+const scenarioBaseName = (name: string) =>
+	name.replace(/-putmany$/, "").replace(/-nonunique$/, "");
+const scenarioUsesUniquePuts = (name: string) => !name.includes("-nonunique");
+const scenarioUsesPutMany = (name: string) => name.endsWith("-putmany");
 const profileDeep = process.env.DOC_PROFILE_DEEP === "1";
 
 @variant("document")
@@ -233,6 +236,17 @@ const runPuts = async (
 		...(scenarioUsesUniquePuts(scenario) ? { unique: true } : {}),
 		...(scenarioBaseName(scenario) === "compat-path" ? { canAppend } : {}),
 	};
+	if (scenarioUsesPutMany(scenario)) {
+		const docs = Array.from({ length: count }, () => createDocument());
+		if (profile) {
+			await time(profile, "totalPutMs", () =>
+				store.docs.putMany(docs, appendOptions),
+			);
+		} else {
+			await store.docs.putMany(docs, appendOptions);
+		}
+		return;
+	}
 	for (let i = 0; i < count; i++) {
 		const doc = createDocument();
 		if (profile) {
@@ -272,10 +286,22 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				profile,
 				"sharedAppendMs",
 			),
+			patchAsyncMethod(
+				store.docs.log as any,
+				"appendLocallyPreparedManyIndependent",
+				profile,
+				"sharedAppendMs",
+			),
 			patchAsyncMethod(store.docs.log.log, "append", profile, "logAppendMs"),
 			patchAsyncMethod(
 				store.docs.log.log as any,
 				"appendLocallyPrepared",
+				profile,
+				"logAppendMs",
+			),
+			patchAsyncMethod(
+				store.docs.log.log as any,
+				"appendLocallyPreparedManyIndependent",
 				profile,
 				"logAppendMs",
 			),
@@ -335,6 +361,12 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				patchAsyncMethod(
 					store.docs.log.log as any,
 					"createNativePlainAppendChain",
+					profile,
+					"logCreateNativeAppendChainMs",
+				),
+				patchAsyncMethod(
+					store.docs.log.log as any,
+					"createNativePlainAppendEntriesBatch",
 					profile,
 					"logCreateNativeAppendChainMs",
 				),
