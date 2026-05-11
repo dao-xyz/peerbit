@@ -185,6 +185,55 @@ describe("append", () => {
 		}
 	});
 
+	it("persists native append coordinate fields from the prepared plan", async () => {
+		session = await TestSession.disconnected(1, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		const coordinateIndex = store.log.entryCoordinatesIndex as any;
+		const putDeleteSpy = sinon.spy(
+			coordinateIndex,
+			"putSharedLogCoordinateAndDeleteIds",
+		);
+		const originalCreate = (store.log as any).createCoordinatePersistenceEntry;
+		const sentinelMetaBytes = new Uint8Array([7, 8, 9]);
+		const createStub = sinon
+			.stub(store.log as any, "createCoordinatePersistenceEntry")
+			.callsFake(function (this: unknown, properties: unknown) {
+				const prepared = originalCreate.call(this, properties);
+				return prepared
+					? {
+							...prepared,
+							fields: {
+								...prepared.fields,
+								metaBytes: sentinelMetaBytes,
+							},
+						}
+					: prepared;
+			});
+		try {
+			await store.log.appendLocallyPrepared(
+				{ op: "ADD", value: "a" },
+				{
+					replicate: false,
+					target: "none",
+				},
+			);
+
+			expect(createStub.callCount).equal(1);
+			expect(putDeleteSpy.callCount).equal(1);
+			expect(putDeleteSpy.firstCall.args[1].metaBytes).equal(sentinelMetaBytes);
+		} finally {
+			createStub.restore();
+			putDeleteSpy.restore();
+		}
+	});
+
 	it("coalesces prepared append trim coordinate deletes into the coordinate put", async () => {
 		session = await TestSession.disconnected(1, {
 			indexer: (directory) => createRustIndexer(directory),
