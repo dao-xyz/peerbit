@@ -1093,22 +1093,18 @@ fn insert_bytes_facts(
     field: u32,
     bytes: Vec<u8>,
 ) -> Result<(), JsValue> {
-    fields.insert_scoped_scalar(
-        scope,
-        FieldPath::Id(field),
-        FieldValue::Bytes(bytes.clone()),
-    );
-    if bytes.len() > state.byte_element_index_limit {
-        return Ok(());
+    let index_byte_elements = bytes.len() <= state.byte_element_index_limit;
+    if index_byte_elements {
+        for byte in bytes.iter().copied() {
+            let byte_scope = state.next_scope()?;
+            fields.insert_scoped_scalar(
+                byte_scope,
+                FieldPath::Id(field),
+                FieldValue::U64(byte as u64),
+            );
+        }
     }
-    for byte in bytes {
-        let byte_scope = state.next_scope()?;
-        fields.insert_scoped_scalar(
-            byte_scope,
-            FieldPath::Id(field),
-            FieldValue::U64(byte as u64),
-        );
-    }
+    fields.insert_scoped_scalar(scope, FieldPath::Id(field), FieldValue::Bytes(bytes));
     Ok(())
 }
 

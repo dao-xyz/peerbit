@@ -884,9 +884,12 @@ export class EntryV0<T>
 							: gid;
 			}
 		} else {
-			gid =
-				properties.meta?.gid ||
-				(await EntryV0.createGid(properties.meta?.gidSeed));
+			if (properties.meta?.gid) {
+				gid = properties.meta.gid;
+			} else {
+				const createdGid = EntryV0.createGid(properties.meta?.gidSeed);
+				gid = isPromiseLike(createdGid) ? await createdGid : createdGid;
+			}
 		}
 
 		const clocks = properties.meta?.clocks();
