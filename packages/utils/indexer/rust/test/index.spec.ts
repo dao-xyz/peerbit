@@ -1,4 +1,4 @@
-import { field, variant, vec } from "@dao-xyz/borsh";
+import { field, serialize, variant, vec } from "@dao-xyz/borsh";
 import {
 	And,
 	BoolQuery,
@@ -591,15 +591,29 @@ describe("native planner bridge", () => {
 				value: BridgeDocument,
 				id: ReturnType<typeof toId>,
 				context: BridgeContext,
-				options?: { replace?: boolean },
+				options?: {
+					replace?: boolean;
+					encodedValueParts?: { prefix: Uint8Array; suffix: Uint8Array };
+				},
 			) => Promise<void>;
 		};
+		(index as unknown as { fieldEncoder: () => never }).fieldEncoder = () => {
+			throw new Error("TypeScript field encoder should not run");
+		};
+		const document = new BridgeDocument("a", "peerbit", "native index");
+		const context = new BridgeContext("head-a");
 
 		await contextualIndex.putWithContext(
-			new BridgeDocument("a", "peerbit", "native index"),
+			document,
 			toId("a"),
-			new BridgeContext("head-a"),
-			{ replace: false },
+			context,
+			{
+				replace: false,
+				encodedValueParts: {
+					prefix: serialize(document),
+					suffix: serialize(context),
+				},
+			},
 		);
 
 		const result = await index.get(toId("a"));
