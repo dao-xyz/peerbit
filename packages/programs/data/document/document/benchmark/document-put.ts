@@ -404,6 +404,12 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				),
 				patchAsyncMethod(
 					store.docs.log as any,
+					"persistPreparedCoordinate",
+					profile,
+					"sharedPersistCoordinateMs",
+				),
+				patchAsyncMethod(
+					store.docs.log as any,
 					"persistCoordinatesBatch",
 					profile,
 					"sharedPersistCoordinateMs",

@@ -4973,18 +4973,29 @@ export class SharedLog<
 			leaders = nativeAppendPlan.leaders;
 			isLeader = nativeAppendPlan.isLeader;
 			nativeDeliveryPlan = nativeAppendPlan.delivery;
-			await this.persistCoordinate({
-				leaders,
-				coordinates,
-				replicas: coordinates.length,
-				entry,
-				assignedToRangeBoundary: nativeAppendPlan.assignedToRangeBoundary,
-				commitNative: false,
-				deleteHashes: properties.extraCoordinateDeleteHashes,
-				hashNumber: nativeAppendPlan.hashNumber,
-				nextHashes: properties.appendFacts?.next,
-				prepared: nativeAppendPlan.preparedCoordinate,
-			});
+			if (properties.appendFacts) {
+				await this.persistPreparedCoordinate({
+					prepared: nativeAppendPlan.preparedCoordinate,
+					hash: properties.appendFacts.hash,
+					nextHashes: properties.appendFacts.next,
+					deleteHashes: properties.extraCoordinateDeleteHashes,
+					coordinates,
+					replicas: coordinates.length,
+					commitNative: false,
+				});
+			} else {
+				await this.persistCoordinate({
+					leaders,
+					coordinates,
+					replicas: coordinates.length,
+					entry,
+					assignedToRangeBoundary: nativeAppendPlan.assignedToRangeBoundary,
+					commitNative: false,
+					deleteHashes: properties.extraCoordinateDeleteHashes,
+					hashNumber: nativeAppendPlan.hashNumber,
+					prepared: nativeAppendPlan.preparedCoordinate,
+				});
+			}
 		} else {
 			({ coordinates, leaders, isLeader } = await this.planEntryLeaders(
 				entry,
@@ -8083,37 +8094,21 @@ export class SharedLog<
 		};
 	}
 
-	private async persistCoordinate(properties: {
+	private async persistPreparedCoordinate(properties: {
+		prepared: PreparedCoordinatePersistence<R>;
+		hash: string;
+		nextHashes: string[];
 		coordinates: NumberFromType<R>[];
-		entry: ShallowOrFullEntry<any> | EntryReplicated<R>;
-		leaders:
-			| Map<
-					string,
-					{
-						intersecting: boolean;
-					}
-			  >
-			| false;
 		replicas: number;
-		prev?: EntryReplicated<R>;
-		assignedToRangeBoundary?: boolean;
 		commitNative?: boolean;
 		deleteHashes?: string[];
-		hashNumber?: NumberFromType<R>;
-		nextHashes?: string[];
-		prepared?: PreparedCoordinatePersistence<R>;
 	}) {
-		const prepared =
-			properties.prepared ?? this.createCoordinatePersistenceEntry(properties);
-		if (!prepared) {
-			return false;
-		}
-		const { coordinateEntry, assignedToRangeBoundary, fields } = prepared;
-		const nextHashes = properties.nextHashes ?? properties.entry.meta.next;
+		const { coordinateEntry, assignedToRangeBoundary, fields } =
+			properties.prepared;
 		const deleteHashes =
 			properties.deleteHashes && properties.deleteHashes.length > 0
-				? [...new Set([...nextHashes, ...properties.deleteHashes])]
-				: nextHashes;
+				? [...new Set([...properties.nextHashes, ...properties.deleteHashes])]
+				: properties.nextHashes;
 		const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
 			EntryReplicated<R>
 		>;
@@ -8147,10 +8142,10 @@ export class SharedLog<
 		}
 		if (properties.commitNative !== false) {
 			this._nativeSharedLogState?.commitEntryCoordinates(
-				properties.entry.hash,
+				properties.hash,
 				coordinateEntry.gid,
 				properties.coordinates,
-				properties.entry.meta.next,
+				properties.nextHashes,
 				assignedToRangeBoundary,
 				properties.replicas,
 				coordinateEntry.hashNumber,
@@ -8158,16 +8153,16 @@ export class SharedLog<
 		}
 		if (this._residentEntryCoordinatesByHash) {
 			this._residentEntryCoordinatesByHash.set(
-				properties.entry.hash,
+				properties.hash,
 				coordinateEntry,
 			);
-			for (const nextHash of nextHashes) {
+			for (const nextHash of properties.nextHashes) {
 				this._residentEntryCoordinatesByHash.delete(nextHash);
 			}
 		}
 
 		for (const coordinate of properties.coordinates) {
-			this.coordinateToHash.add(coordinate, properties.entry.hash);
+			this.coordinateToHash.add(coordinate, properties.hash);
 		}
 
 		if (deleteNextOptions && !coordinateIndex.putAndDelete) {
@@ -8176,6 +8171,42 @@ export class SharedLog<
 			);
 		}
 		return true;
+	}
+
+	private async persistCoordinate(properties: {
+		coordinates: NumberFromType<R>[];
+		entry: ShallowOrFullEntry<any> | EntryReplicated<R>;
+		leaders:
+			| Map<
+					string,
+					{
+						intersecting: boolean;
+					}
+			  >
+			| false;
+		replicas: number;
+		prev?: EntryReplicated<R>;
+		assignedToRangeBoundary?: boolean;
+		commitNative?: boolean;
+		deleteHashes?: string[];
+		hashNumber?: NumberFromType<R>;
+		nextHashes?: string[];
+		prepared?: PreparedCoordinatePersistence<R>;
+	}) {
+		const prepared =
+			properties.prepared ?? this.createCoordinatePersistenceEntry(properties);
+		if (!prepared) {
+			return false;
+		}
+		return this.persistPreparedCoordinate({
+			prepared,
+			hash: properties.entry.hash,
+			nextHashes: properties.nextHashes ?? properties.entry.meta.next,
+			coordinates: properties.coordinates,
+			replicas: properties.replicas,
+			commitNative: properties.commitNative,
+			deleteHashes: properties.deleteHashes,
+		});
 	}
 
 	private async persistCoordinatesBatch(
