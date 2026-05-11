@@ -91,6 +91,7 @@ type Profile = {
 	existingHeadLookupMs: number;
 	sharedAppendMs: number;
 	sharedProcessLocalAppendMs: number;
+	sharedProcessLocalAppendBatchMs: number;
 	sharedPlanEntryLeadersMs: number;
 	sharedPersistCoordinateMs: number;
 	logAppendMs: number;
@@ -112,6 +113,7 @@ type BenchRow = Profile & {
 
 const deepProfileKeys = new Set<keyof Profile>([
 	"sharedProcessLocalAppendMs",
+	"sharedProcessLocalAppendBatchMs",
 	"sharedPlanEntryLeadersMs",
 	"sharedPersistCoordinateMs",
 	"logCreateNativeAppendChainMs",
@@ -124,6 +126,7 @@ const emptyProfile = (): Profile => ({
 	existingHeadLookupMs: 0,
 	sharedAppendMs: 0,
 	sharedProcessLocalAppendMs: 0,
+	sharedProcessLocalAppendBatchMs: 0,
 	sharedPlanEntryLeadersMs: 0,
 	sharedPersistCoordinateMs: 0,
 	logAppendMs: 0,
@@ -350,6 +353,12 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				),
 				patchAsyncMethod(
 					store.docs.log as any,
+					"processLocalAppendManyNativePlanned",
+					profile,
+					"sharedProcessLocalAppendBatchMs",
+				),
+				patchAsyncMethod(
+					store.docs.log as any,
 					"planEntryLeaders",
 					profile,
 					"sharedPlanEntryLeadersMs",
@@ -369,6 +378,12 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				patchAsyncMethod(
 					store.docs.log as any,
 					"persistCoordinate",
+					profile,
+					"sharedPersistCoordinateMs",
+				),
+				patchAsyncMethod(
+					store.docs.log as any,
+					"persistCoordinatesBatch",
 					profile,
 					"sharedPersistCoordinateMs",
 				),

@@ -4411,7 +4411,6 @@ export class SharedLog<
 						);
 		if (
 			nativeAppendPlans &&
-			result.removed.length === 0 &&
 			(await this.processLocalAppendManyNativePlanned(
 				result.entries,
 				options,
