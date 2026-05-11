@@ -292,6 +292,7 @@ type EntryLeaderPlan<R extends "u32" | "u64"> = {
 };
 
 type NativeAppendEntryPlan<R extends "u32" | "u64"> = EntryLeaderPlan<R> & {
+	hashNumber: NumberFromType<R>;
 	delivery?: AppendDeliveryPlan;
 };
 
@@ -4625,6 +4626,7 @@ export class SharedLog<
 					entry,
 					assignedToRangeBoundary: plan.assignedToRangeBoundary,
 					commitNative: false,
+					hashNumber: plan.hashNumber,
 				};
 			}),
 		);
@@ -4702,11 +4704,12 @@ export class SharedLog<
 			});
 		const { delivery, reliability, requireRecipients, minAcks } =
 			this._parseDeliveryOptions(deliveryArg);
+		const hashNumber = this.getEntryHashNumber(entry);
 		const plan = this._nativeSharedLogState.planAppendForGid(
 			{
 				entryHash: entry.hash,
 				gid: entry.meta.gid,
-				hashNumber: this.getEntryHashNumber(entry),
+				hashNumber,
 				nextHashes: entry.meta.next,
 				replicas,
 				fullReplicaCandidates: fullReplicaDeliveryCandidates,
@@ -4723,6 +4726,7 @@ export class SharedLog<
 			leaders: plan.leaders,
 			isLeader: plan.isLeader,
 			assignedToRangeBoundary: plan.assignedToRangeBoundary,
+			hashNumber,
 			delivery: plan.delivery,
 		};
 	}
@@ -4736,11 +4740,12 @@ export class SharedLog<
 		}
 
 		const context = await this.createLeaderSelectionContext();
+		const hashNumber = this.getEntryHashNumber(entry);
 		const plan = this._nativeSharedLogState.planLocalAppendForGid(
 			{
 				entryHash: entry.hash,
 				gid: entry.meta.gid,
-				hashNumber: this.getEntryHashNumber(entry),
+				hashNumber,
 				nextHashes: entry.meta.next,
 				replicas,
 				selfHash: context.selfHash,
@@ -4752,6 +4757,7 @@ export class SharedLog<
 			leaders: plan.leaders,
 			isLeader: plan.isLeader,
 			assignedToRangeBoundary: plan.assignedToRangeBoundary,
+			hashNumber,
 		};
 	}
 
@@ -4768,12 +4774,16 @@ export class SharedLog<
 		}
 
 		const context = await this.createLeaderSelectionContext();
+		const entriesWithHashNumbers = entries.map((entry) => ({
+			entry,
+			hashNumber: this.getEntryHashNumber(entry),
+		}));
 		const plans = this._nativeSharedLogState.planAppendForGidsBatch(
 			{
-				entries: entries.map((entry) => ({
+				entries: entriesWithHashNumbers.map(({ entry, hashNumber }) => ({
 					entryHash: entry.hash,
 					gid: entry.meta.gid,
-					hashNumber: this.getEntryHashNumber(entry),
+					hashNumber,
 					nextHashes: entry.meta.next,
 					replicas,
 				})),
@@ -4785,11 +4795,12 @@ export class SharedLog<
 			},
 			this.createNativeLeaderOptions(context),
 		);
-		return plans.map((plan) => ({
+		return plans.map((plan, index) => ({
 			coordinates: plan.coordinates as NumberFromType<R>[],
 			leaders: plan.leaders,
 			isLeader: plan.isLeader,
 			assignedToRangeBoundary: plan.assignedToRangeBoundary,
+			hashNumber: entriesWithHashNumbers[index]!.hashNumber,
 		}));
 	}
 
@@ -4817,12 +4828,16 @@ export class SharedLog<
 			});
 		const { delivery, reliability, requireRecipients, minAcks } =
 			this._parseDeliveryOptions(deliveryArg);
+		const entriesWithHashNumbers = entries.map((entry) => ({
+			entry,
+			hashNumber: this.getEntryHashNumber(entry),
+		}));
 		const plans = this._nativeSharedLogState.planAppendForGidsBatch(
 			{
-				entries: entries.map((entry) => ({
+				entries: entriesWithHashNumbers.map(({ entry, hashNumber }) => ({
 					entryHash: entry.hash,
 					gid: entry.meta.gid,
-					hashNumber: this.getEntryHashNumber(entry),
+					hashNumber,
 					nextHashes: entry.meta.next,
 					replicas,
 				})),
@@ -4835,11 +4850,12 @@ export class SharedLog<
 			},
 			this.createNativeLeaderOptions(context),
 		);
-		return plans.map((plan) => ({
+		return plans.map((plan, index) => ({
 			coordinates: plan.coordinates as NumberFromType<R>[],
 			leaders: plan.leaders,
 			isLeader: plan.isLeader,
 			assignedToRangeBoundary: plan.assignedToRangeBoundary,
+			hashNumber: entriesWithHashNumbers[index]!.hashNumber,
 			delivery: plan.delivery,
 		}));
 	}
@@ -4906,6 +4922,7 @@ export class SharedLog<
 				assignedToRangeBoundary: nativeAppendPlan.assignedToRangeBoundary,
 				commitNative: false,
 				deleteHashes: properties.extraCoordinateDeleteHashes,
+				hashNumber: nativeAppendPlan.hashNumber,
 			});
 		} else {
 			({ coordinates, leaders, isLeader } = await this.planEntryLeaders(
@@ -7899,6 +7916,7 @@ export class SharedLog<
 		replicas: number;
 		prev?: EntryReplicated<R>;
 		assignedToRangeBoundary?: boolean;
+		hashNumber?: NumberFromType<R>;
 	}): { coordinateEntry: EntryReplicated<R>; assignedToRangeBoundary: boolean } | false {
 		const assignedToRangeBoundary =
 			properties.assignedToRangeBoundary ??
@@ -7918,7 +7936,7 @@ export class SharedLog<
 			meta: properties.entry.meta,
 			metaBytes,
 			hash: properties.entry.hash,
-			hashNumber: this.getEntryHashNumber(properties.entry),
+			hashNumber: properties.hashNumber ?? this.getEntryHashNumber(properties.entry),
 		});
 		return { coordinateEntry, assignedToRangeBoundary };
 	}
@@ -7939,6 +7957,7 @@ export class SharedLog<
 		assignedToRangeBoundary?: boolean;
 		commitNative?: boolean;
 		deleteHashes?: string[];
+		hashNumber?: NumberFromType<R>;
 	}) {
 		const prepared = this.createCoordinatePersistenceEntry(properties);
 		if (!prepared) {
@@ -8038,6 +8057,7 @@ export class SharedLog<
 			prev?: EntryReplicated<R>;
 			assignedToRangeBoundary?: boolean;
 			commitNative?: boolean;
+			hashNumber?: NumberFromType<R>;
 		}>,
 	): Promise<boolean[]> {
 		if (items.length === 0) {

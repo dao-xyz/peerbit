@@ -160,6 +160,31 @@ describe("append", () => {
 		}
 	});
 
+	it("reuses native append plan hash number for coordinate persistence", async () => {
+		session = await TestSession.disconnected(1);
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		expect((store.log as any)._nativeSharedLogState).to.exist;
+		const hashNumberSpy = sinon.spy(store.log as any, "getEntryHashNumber");
+		try {
+			await store.log.appendLocallyPrepared(
+				{ op: "ADD", value: "a" },
+				{
+					replicate: false,
+					target: "none",
+				},
+			);
+
+			expect(hashNumberSpy.callCount).equal(1);
+		} finally {
+			hashNumberSpy.restore();
+		}
+	});
+
 	it("coalesces prepared append trim coordinate deletes into the coordinate put", async () => {
 		session = await TestSession.disconnected(1, {
 			indexer: (directory) => createRustIndexer(directory),
