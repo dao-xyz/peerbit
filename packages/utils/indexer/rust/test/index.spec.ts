@@ -228,11 +228,56 @@ describe("native planner bridge", () => {
 		await indices.start();
 		const index = await indices.init({ schema: BridgeNestedDocument });
 		const { nativeSchemaIrStats: stats } = index as unknown as {
-			nativeSchemaIrStats?: { rootFields: number; nodeCount: number };
+			nativeSchemaIrStats?: {
+				rootFields: number;
+				nodeCount: number;
+				genericNodes: number;
+			};
 		};
 
-		expect(stats).to.deep.equal({ rootFields: 2, nodeCount: 6 });
+		expect(stats).to.deep.equal({
+			rootFields: 2,
+			nodeCount: 6,
+			genericNodes: 0,
+		});
 
+		await indices.drop();
+	});
+
+	it("indexes borsh-encoded document bytes in native rust", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeNestedDocument });
+		(index as unknown as { fieldEncoder: () => never }).fieldEncoder = () => {
+			throw new Error("TypeScript field encoder should not run");
+		};
+		await index.put(
+			new BridgeNestedDocument("a", [
+				new BridgeNestedItem("left", 1),
+				new BridgeNestedItem("right", 3),
+			]),
+		);
+		await index.put(
+			new BridgeNestedDocument("b", [new BridgeNestedItem("left", 4)]),
+		);
+
+		const results = await index
+			.iterate({
+				query: new Nested({
+					path: "items",
+					query: [
+						new StringMatch({ key: "tag", value: "left" }),
+						new IntegerCompare({
+							key: "score",
+							compare: Compare.Greater,
+							value: 2,
+						}),
+					],
+				}),
+			})
+			.all();
+
+		expect(results.map((result) => result.value.id)).to.deep.equal(["b"]);
 		await indices.drop();
 	});
 
