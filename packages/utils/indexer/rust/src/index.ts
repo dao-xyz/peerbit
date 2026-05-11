@@ -1342,6 +1342,35 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		await this.put(this.asContextualValue(value, context), id, options);
 	}
 
+	async putWithContextBatch(
+		values: Array<{
+			value: Record<string, any>;
+			id: types.IdKey;
+			context: Record<string, any>;
+			options?: { replace?: boolean };
+		}>,
+	): Promise<void> {
+		if (values.length === 0) {
+			return;
+		}
+		if (values.some((entry) => entry.options?.replace === true)) {
+			for (const entry of values) {
+				await this.putWithContext(
+					entry.value,
+					entry.id,
+					entry.context,
+					entry.options,
+				);
+			}
+			return;
+		}
+		await this.putBatch(
+			values.map((entry) =>
+				this.asContextualValue(entry.value, entry.context),
+			),
+		);
+	}
+
 	async putBatch(values: T[]): Promise<void> {
 		if (values.length === 0) {
 			return;

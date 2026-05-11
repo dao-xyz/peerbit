@@ -4127,12 +4127,17 @@ export class SharedLog<
 		const nativeAppendPlans =
 			options?.replicate === true
 				? undefined
-				: await this.planNativeAppendEntries(
-						result.entries,
-						minReplicasValue,
-						options?.delivery,
-						options,
-					);
+				: options?.target === "none"
+					? await this.planNativeLocalAppendEntries(
+							result.entries,
+							minReplicasValue,
+						)
+					: await this.planNativeAppendEntries(
+							result.entries,
+							minReplicasValue,
+							options?.delivery,
+							options,
+						);
 		for (let i = 0; i < result.entries.length; i++) {
 			await this.processLocalAppend(
 				result.entries[i]!,
@@ -4187,12 +4192,17 @@ export class SharedLog<
 		const nativeAppendPlans =
 			options?.replicate === true
 				? undefined
-				: await this.planNativeAppendEntries(
-						result.entries,
-						minReplicasValue,
-						options?.delivery,
-						options,
-					);
+				: options?.target === "none"
+					? await this.planNativeLocalAppendEntries(
+							result.entries,
+							minReplicasValue,
+						)
+					: await this.planNativeAppendEntries(
+							result.entries,
+							minReplicasValue,
+							options?.delivery,
+							options,
+						);
 		for (let i = 0; i < result.entries.length; i++) {
 			const entry = result.entries[i]!;
 			await this.processLocalAppend(entry, [], options, {
@@ -4363,6 +4373,44 @@ export class SharedLog<
 			isLeader: plan.isLeader,
 			assignedToRangeBoundary: plan.assignedToRangeBoundary,
 		};
+	}
+
+	private async planNativeLocalAppendEntries(
+		entries: Entry<T>[],
+		replicas: number,
+	): Promise<NativeAppendEntryPlan<R>[] | undefined> {
+		if (
+			!this._nativeSharedLogState ||
+			entries.length === 0 ||
+			!entries.every((entry) => this.canPlanNativeHashGid(entry))
+		) {
+			return undefined;
+		}
+
+		const context = await this.createLeaderSelectionContext();
+		const plans = this._nativeSharedLogState.planAppendForGidsBatch(
+			{
+				entries: entries.map((entry) => ({
+					entryHash: entry.hash,
+					gid: entry.meta.gid,
+					hashNumber: this.getEntryHashNumber(entry),
+					nextHashes: entry.meta.next,
+					replicas,
+				})),
+				fullReplicaCandidates: [],
+				selfHash: context.selfHash,
+				deliveryEnabled: false,
+				reliabilityAck: false,
+				requireRecipients: false,
+			},
+			this.createNativeLeaderOptions(context),
+		);
+		return plans.map((plan) => ({
+			coordinates: plan.coordinates as NumberFromType<R>[],
+			leaders: plan.leaders,
+			isLeader: plan.isLeader,
+			assignedToRangeBoundary: plan.assignedToRangeBoundary,
+		}));
 	}
 
 	private async planNativeAppendEntries(

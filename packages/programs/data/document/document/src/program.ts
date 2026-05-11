@@ -1028,6 +1028,11 @@ export class Documents<
 		};
 		const modified: Set<string | number | bigint> = new Set();
 
+		const putsToIndex: Array<{
+			document: T;
+			key: indexerTypes.IdKey;
+			context: Context;
+		}> = [];
 		for (const put of properties.puts) {
 			if (modified.has(put.key.primitive)) {
 				continue;
@@ -1039,18 +1044,23 @@ export class Documents<
 				gid: put.entry.meta.gid,
 				size: put.entry.payload.byteLength,
 			});
-			const { indexable } = await this._index.putWithContext(
-				put.document,
-				put.key,
-				context,
-				{
-					replace: false,
-				},
-			);
-			documentsChanged.added.push(
-				coerceWithIndexed(coerceWithContext(put.document, context), indexable),
-			);
+			putsToIndex.push({ document: put.document, key: put.key, context });
 			modified.add(put.key.primitive);
+		}
+		const indexed = await this._index.putManyWithContext(
+			putsToIndex.map((put) => ({
+				value: put.document,
+				id: put.key,
+				context: put.context,
+				options: { replace: false },
+			})),
+		);
+		for (let i = 0; i < putsToIndex.length; i++) {
+			const put = putsToIndex[i]!;
+			const { indexable } = indexed[i]!;
+			documentsChanged.added.push(
+				coerceWithIndexed(coerceWithContext(put.document, put.context), indexable),
+			);
 		}
 
 		for (const removed of properties.removed) {
