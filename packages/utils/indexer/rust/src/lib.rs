@@ -488,7 +488,10 @@ enum NativeSchemaNode {
     I64,
     String,
     Uint8Array,
-    Object(Vec<NativeSchemaField>),
+    Object {
+        variant_prefix: Vec<u8>,
+        fields: Vec<NativeSchemaField>,
+    },
     Option(Box<NativeSchemaNode>),
     Vec(Box<NativeSchemaNode>),
     FixedArray {
@@ -508,7 +511,7 @@ impl NativeSchemaIr {
     fn stats(&self) -> NativeSchemaIrStats {
         NativeSchemaIrStats {
             root_fields: match &self.root {
-                NativeSchemaNode::Object(fields) => fields.len(),
+                NativeSchemaNode::Object { fields, .. } => fields.len(),
                 _ => 0,
             },
             node_count: self.root.node_count(),
@@ -520,7 +523,7 @@ impl NativeSchemaIr {
 impl NativeSchemaNode {
     fn node_count(&self) -> usize {
         match self {
-            NativeSchemaNode::Object(fields) => {
+            NativeSchemaNode::Object { fields, .. } => {
                 1 + fields
                     .iter()
                     .map(|field| {
@@ -554,7 +557,7 @@ impl NativeSchemaNode {
 
     fn generic_count(&self) -> usize {
         match self {
-            NativeSchemaNode::Object(fields) => fields
+            NativeSchemaNode::Object { fields, .. } => fields
                 .iter()
                 .map(|field| field.node.generic_count())
                 .sum::<usize>(),
@@ -681,6 +684,8 @@ fn read_native_schema_node(reader: &mut BridgeReader) -> Result<NativeSchemaNode
         12 => NativeSchemaNode::String,
         13 => NativeSchemaNode::Uint8Array,
         14 => {
+            let variant_prefix_len = reader.read_u32()? as usize;
+            let variant_prefix = reader.read_exact(variant_prefix_len)?.to_vec();
             let field_count = reader.read_u32()? as usize;
             let mut fields = Vec::with_capacity(field_count);
             for _ in 0..field_count {
@@ -691,7 +696,10 @@ fn read_native_schema_node(reader: &mut BridgeReader) -> Result<NativeSchemaNode
                     node: read_native_schema_node(reader)?,
                 });
             }
-            NativeSchemaNode::Object(fields)
+            NativeSchemaNode::Object {
+                variant_prefix,
+                fields,
+            }
         }
         15 => NativeSchemaNode::Option(Box::new(read_native_schema_node(reader)?)),
         16 => NativeSchemaNode::Vec(Box::new(read_native_schema_node(reader)?)),
@@ -873,7 +881,16 @@ fn extract_schema_node(
             let bytes = reader.read_exact(len)?.to_vec();
             insert_bytes_facts(fields, state, scope, required_field(field)?, bytes)?;
         }
-        NativeSchemaNode::Object(schema_fields) => {
+        NativeSchemaNode::Object {
+            variant_prefix,
+            fields: schema_fields,
+        } => {
+            if !variant_prefix.is_empty() {
+                let actual = reader.read_exact(variant_prefix.len())?;
+                if actual != variant_prefix.as_slice() {
+                    return Err(js_error("Borsh variant prefix did not match native schema"));
+                }
+            }
             for schema_field in schema_fields {
                 extract_schema_node(
                     &schema_field.node,

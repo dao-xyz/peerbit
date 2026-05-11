@@ -137,6 +137,7 @@ type DocumentPutOptions = SharedAppendOptions<Operation> & {
 
 type PreparedPut<T> = {
 	document: T;
+	encodedDocument: Uint8Array;
 	keyValue: indexerTypes.IdPrimitive;
 	key: indexerTypes.IdKey;
 	operation: PutOperation | PutWithKeyOperation;
@@ -660,7 +661,7 @@ export class Documents<
 				data: ser,
 			});
 		}
-		return { document: doc, keyValue, key, operation };
+		return { document: doc, encodedDocument: ser, keyValue, key, operation };
 	}
 
 	public async put(doc: T, options?: DocumentPutOptions) {
@@ -692,6 +693,7 @@ export class Documents<
 		) {
 			return this.putPlainFastPath(
 				prepared.document,
+				prepared.encodedDocument,
 				prepared.key,
 				prepared.operation,
 				existingHead,
@@ -769,6 +771,7 @@ export class Documents<
 		await this.handlePreparedPlainPutManyCommit({
 			puts: prepared.map((item, index) => ({
 				document: item.document,
+				encodedDocument: item.encodedDocument,
 				key: item.key,
 				entry: appended.entries[index]!,
 			})),
@@ -841,6 +844,7 @@ export class Documents<
 
 	private async putPlainFastPath(
 		doc: T,
+		encodedDocument: Uint8Array,
 		key: indexerTypes.IdKey,
 		operation: PutOperation,
 		existingHead: string | undefined,
@@ -892,6 +896,7 @@ export class Documents<
 		} else {
 			await this.handlePreparedPlainPutCommit({
 				document: doc,
+				encodedDocument,
 				key,
 				entry: appended.entry,
 				removed: appended.removed,
@@ -935,6 +940,7 @@ export class Documents<
 
 	private async handlePreparedPlainPutCommit(properties: {
 		document: T;
+		encodedDocument?: Uint8Array;
 		key: indexerTypes.IdKey;
 		entry: Entry<Operation>;
 		removed: ShallowOrFullEntry<Operation>[];
@@ -981,6 +987,7 @@ export class Documents<
 				context,
 				{
 					replace: existing != null,
+					encodedValue: properties.encodedDocument,
 				},
 			);
 			documentsChanged.added.push(
@@ -1032,6 +1039,7 @@ export class Documents<
 	private async handlePreparedPlainPutManyCommit(properties: {
 		puts: {
 			document: T;
+			encodedDocument?: Uint8Array;
 			key: indexerTypes.IdKey;
 			entry: Entry<Operation>;
 		}[];
@@ -1045,6 +1053,7 @@ export class Documents<
 
 		const putsToIndex: Array<{
 			document: T;
+			encodedDocument?: Uint8Array;
 			key: indexerTypes.IdKey;
 			context: Context;
 		}> = [];
@@ -1059,7 +1068,12 @@ export class Documents<
 				gid: put.entry.meta.gid,
 				size: put.entry.payload.byteLength,
 			});
-			putsToIndex.push({ document: put.document, key: put.key, context });
+			putsToIndex.push({
+				document: put.document,
+				encodedDocument: put.encodedDocument,
+				key: put.key,
+				context,
+			});
 			modified.add(put.key.primitive);
 		}
 		const indexed = await this._index.putManyWithContext(
@@ -1067,7 +1081,10 @@ export class Documents<
 				value: put.document,
 				id: put.key,
 				context: put.context,
-				options: { replace: false },
+				options: {
+					replace: false,
+					encodedValue: put.encodedDocument,
+				},
 			})),
 		);
 		for (let i = 0; i < putsToIndex.length; i++) {
