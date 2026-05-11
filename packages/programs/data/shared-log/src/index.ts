@@ -4316,6 +4316,7 @@ export class SharedLog<
 		properties?: {
 			skipMissingNextJoin?: boolean;
 			resolveTrimmedEntries?: boolean;
+			payloadData?: Uint8Array;
 		},
 	): Promise<{
 		entry: Entry<T>;
@@ -4336,6 +4337,7 @@ export class SharedLog<
 		const result = await this.log.appendLocallyPrepared(data, appendOptions, {
 			skipMissingNextJoin: properties?.skipMissingNextJoin,
 			resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+			payloadData: properties?.payloadData,
 		});
 		await this.onChange(result.change);
 		await this.processLocalAppend(result.entry, result.removed, options, {
