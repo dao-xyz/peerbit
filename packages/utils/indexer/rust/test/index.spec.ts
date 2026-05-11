@@ -1026,6 +1026,115 @@ describe("native planner bridge", () => {
 		}
 	});
 
+	it("replays durable contextual encoded put batches from prepared bytes", async () => {
+		const directory = createPersistenceDirectory();
+		const writer = create(directory, {
+			persistence: { compactAfterOperations: 1000 },
+		});
+		const reader = create(directory, {
+			persistence: { compactAfterOperations: 1000 },
+		});
+		try {
+			await writer.start();
+			const writerIndex = await writer.init({ schema: BridgeDocumentWithContext });
+			const contextualWriter = writerIndex as typeof writerIndex & {
+				putWithContextBatch: (
+					values: Array<{
+						value: BridgeDocument & { __context?: BridgeContext };
+						id: ReturnType<typeof toId>;
+						context: BridgeContext;
+						options?: {
+							replace?: boolean;
+							encodedValueParts?: { prefix: Uint8Array; suffix: Uint8Array };
+						};
+					}>,
+				) => Promise<void>;
+			};
+			(writerIndex as unknown as { fieldEncoder: () => never }).fieldEncoder =
+				() => {
+					throw new Error("TypeScript field encoder should not run");
+				};
+
+			const createJournalValue = (id: string, context: BridgeContext) => {
+				const value = Object.create(
+					BridgeDocumentWithContext.prototype,
+				) as BridgeDocument & { __context?: BridgeContext };
+				Object.defineProperties(value, {
+					id: { value: id, enumerable: true },
+					tag: {
+						get() {
+							throw new Error("journal batch should use prepared bytes");
+						},
+						enumerable: true,
+					},
+					title: {
+						get() {
+							throw new Error("journal batch should use prepared bytes");
+						},
+						enumerable: true,
+					},
+					__context: { value: context, enumerable: true },
+				});
+				return value;
+			};
+
+			const firstContext = new BridgeContext("head-a");
+			const secondContext = new BridgeContext("head-b");
+			await contextualWriter.putWithContextBatch([
+				{
+					value: createJournalValue("a", firstContext),
+					id: toId("a"),
+					context: firstContext,
+					options: {
+						replace: false,
+						encodedValueParts: {
+							prefix: serialize(
+								new BridgeDocument("a", "peerbit", "first durable batch"),
+							),
+							suffix: serialize(firstContext),
+						},
+					},
+				},
+				{
+					value: createJournalValue("b", secondContext),
+					id: toId("b"),
+					context: secondContext,
+					options: {
+						replace: false,
+						encodedValueParts: {
+							prefix: serialize(
+								new BridgeDocument("b", "peerbit", "second durable batch"),
+							),
+							suffix: serialize(secondContext),
+						},
+					},
+				},
+			]);
+
+			await reader.start();
+			const readerIndex = await reader.init({ schema: BridgeDocumentWithContext });
+			const result = await readerIndex
+				.iterate({
+					query: new StringMatch({ key: "tag", value: "peerbit" }),
+					sort: new Sort({ key: "title" }),
+				})
+				.all();
+
+			expect(result.map((entry) => entry.value.title)).to.deep.equal([
+				"first durable batch",
+				"second durable batch",
+			]);
+			expect(result.map((entry) => entry.value.__context.head)).to.deep.equal([
+				"head-a",
+				"head-b",
+			]);
+		} finally {
+			await writer.drop();
+			await reader.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
 	it("replays durable deletes before the writer is stopped", async () => {
 		const directory = createPersistenceDirectory();
 		const writer = create(directory);
