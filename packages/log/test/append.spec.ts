@@ -378,6 +378,93 @@ describe("append", function () {
 		}
 	});
 
+	it("uses single native committed append bookkeeping for prepared append", async () => {
+		const { createNativeLogBlockStore } = await import("@peerbit/log-rust");
+		const nativeStore = await createNativeLogBlockStore();
+		await nativeStore.start();
+		const log = new Log<Uint8Array>();
+		await log.open(nativeStore, signKey, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+
+		const singleNativeAppendSpy = sinon.spy(
+			log.entryIndex as any,
+			"putNativeCommittedAppend",
+		);
+		const appendBatchSpy = sinon.spy(log.entryIndex, "putAppendBatch");
+
+		try {
+			const { entry, removed } = await log.appendLocallyPrepared(
+				new Uint8Array([1]),
+				{
+					meta: { next: [] },
+				},
+			);
+
+			expect(removed).to.be.empty;
+			expect(singleNativeAppendSpy.callCount).equal(1);
+			expect(appendBatchSpy.callCount).equal(0);
+			expect(await nativeStore.has(entry.hash)).to.equal(true);
+			expect((await log.getHeads().all()).map((head) => head.hash)).to.deep.equal([
+				entry.hash,
+			]);
+			expect((await log.get(entry.hash))?.hash).equal(entry.hash);
+		} finally {
+			appendBatchSpy.restore();
+			singleNativeAppendSpy.restore();
+			await log.close();
+			await nativeStore.stop();
+		}
+	});
+
+	it("uses single native committed append bookkeeping after js block commit", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+
+		const singleNativeAppendSpy = sinon.spy(
+			log.entryIndex as any,
+			"putNativeCommittedAppend",
+		);
+		const appendBatchSpy = sinon.spy(log.entryIndex, "putAppendBatch");
+		const blockPutManySpy = sinon.spy(store, "putMany");
+		const nativePrepareAndPutSpy = sinon.spy(
+			log.entryIndex.properties.nativeGraph!.graph,
+			"prepareEntryV0PlainEntryAndPut",
+		);
+
+		try {
+			const { entry, removed } = await log.appendLocallyPrepared(
+				new Uint8Array([1]),
+				{
+					meta: { next: [] },
+				},
+			);
+
+			expect(removed).to.be.empty;
+			expect(nativePrepareAndPutSpy.callCount).equal(1);
+			expect(blockPutManySpy.callCount).equal(1);
+			expect(singleNativeAppendSpy.callCount).equal(1);
+			expect(appendBatchSpy.callCount).equal(0);
+			expect(await blockExists(entry.hash)).to.be.true;
+			expect((await log.getHeads().all()).map((head) => head.hash)).to.deep.equal([
+				entry.hash,
+			]);
+			expect((await log.get(entry.hash))?.hash).equal(entry.hash);
+		} finally {
+			nativePrepareAndPutSpy.restore();
+			blockPutManySpy.restore();
+			appendBatchSpy.restore();
+			singleNativeAppendSpy.restore();
+			await log.close();
+		}
+	});
+
 	it("rolls back native graph when prepared appendMany block write fails", async () => {
 		const log = new Log<Uint8Array>();
 		await log.open(store, signKey, {

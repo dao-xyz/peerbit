@@ -1300,20 +1300,34 @@ export class Log<T> {
 		preparedAppendChain?: PreparedAppendChain<T>,
 		heads?: boolean[],
 	) {
+		const prepared =
+			preparedAppendChain && entries.length === preparedAppendChain.entries.length
+				? {
+						shallowEntries: preparedAppendChain.shallowEntries,
+						nativeEntries: preparedAppendChain.nativeEntries,
+						nativeGraphUpdated: preparedAppendChain.nativeGraphUpdated,
+						nativeBlocksCommitted: preparedAppendChain.nativeBlocksCommitted,
+					}
+				: undefined;
+		if (
+			entries.length === 1 &&
+			prepared?.nativeGraphUpdated === true &&
+			!this.entryIndex.properties.onGidRemoved
+		) {
+			await this.entryIndex.putNativeCommittedAppend(entries[0]!, {
+				unique: true,
+				externalNextHashes,
+				shallowEntry: prepared.shallowEntries[0],
+				isHead: heads?.[0] ?? true,
+			});
+			return;
+		}
+
 		await this.entryIndex.putAppendBatch(entries, {
 			unique: true,
 			externalNextHashes,
 			heads,
-			prepared:
-				preparedAppendChain &&
-				entries.length === preparedAppendChain.entries.length
-					? {
-							shallowEntries: preparedAppendChain.shallowEntries,
-							nativeEntries: preparedAppendChain.nativeEntries,
-							nativeGraphUpdated: preparedAppendChain.nativeGraphUpdated,
-							nativeBlocksCommitted: preparedAppendChain.nativeBlocksCommitted,
-						}
-					: undefined,
+			prepared,
 			deferIndexWrite:
 				options.deferIndexWrite ??
 				(options.durability

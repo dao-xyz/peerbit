@@ -95,9 +95,12 @@ type Profile = {
 	sharedPlanEntryLeadersMs: number;
 	sharedPersistCoordinateMs: number;
 	logAppendMs: number;
+	logGetNextsForAppendMs: number;
 	logCreateNativeAppendChainMs: number;
+	logPutNativeCommittedAppendMs: number;
 	logPutAppendEntriesMs: number;
 	logTrimMs: number;
+	logTrimUnfilteredLengthMs: number;
 	documentIndexPutMs: number;
 	documentIndexTransformMs: number;
 	documentBackendIndexPutMs: number;
@@ -116,9 +119,12 @@ const deepProfileKeys = new Set<keyof Profile>([
 	"sharedProcessLocalAppendBatchMs",
 	"sharedPlanEntryLeadersMs",
 	"sharedPersistCoordinateMs",
+	"logGetNextsForAppendMs",
 	"logCreateNativeAppendChainMs",
+	"logPutNativeCommittedAppendMs",
 	"logPutAppendEntriesMs",
 	"logTrimMs",
+	"logTrimUnfilteredLengthMs",
 ]);
 
 const emptyProfile = (): Profile => ({
@@ -130,9 +136,12 @@ const emptyProfile = (): Profile => ({
 	sharedPlanEntryLeadersMs: 0,
 	sharedPersistCoordinateMs: 0,
 	logAppendMs: 0,
+	logGetNextsForAppendMs: 0,
 	logCreateNativeAppendChainMs: 0,
+	logPutNativeCommittedAppendMs: 0,
 	logPutAppendEntriesMs: 0,
 	logTrimMs: 0,
+	logTrimUnfilteredLengthMs: 0,
 	documentIndexPutMs: 0,
 	documentIndexTransformMs: 0,
 	documentBackendIndexPutMs: 0,
@@ -389,6 +398,12 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				),
 				patchAsyncMethod(
 					store.docs.log.log as any,
+					"getNextsForAppend",
+					profile,
+					"logGetNextsForAppendMs",
+				),
+				patchAsyncMethod(
+					store.docs.log.log as any,
 					"createNativePlainAppendChain",
 					profile,
 					"logCreateNativeAppendChainMs",
@@ -400,12 +415,24 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 					"logCreateNativeAppendChainMs",
 				),
 				patchAsyncMethod(
+					store.docs.log.log.entryIndex as any,
+					"putNativeCommittedAppend",
+					profile,
+					"logPutNativeCommittedAppendMs",
+				),
+				patchAsyncMethod(
 					store.docs.log.log as any,
 					"putAppendEntries",
 					profile,
 					"logPutAppendEntriesMs",
 				),
 				patchAsyncMethod(store.docs.log.log, "trim", profile, "logTrimMs"),
+				patchAsyncMethod(
+					(store.docs.log.log as any)._trim,
+					"trimUnfilteredLength",
+					profile,
+					"logTrimUnfilteredLengthMs",
+				),
 			);
 		}
 
