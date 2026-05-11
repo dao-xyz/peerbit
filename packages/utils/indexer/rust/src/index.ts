@@ -79,6 +79,10 @@ type NativeRustIndex<T extends Record<string, any>> = {
 		offset: number,
 		limit: number,
 	) => Array<[types.IdKey, T]>;
+	query_exact_string_first_batch?: (
+		field: number,
+		values: string[],
+	) => Array<[types.IdKey, T] | undefined>;
 	count: (query: Uint8Array) => number;
 	sum: (query: Uint8Array, field: number) => [NativeSumKind, string];
 	delete_matching: (query: Uint8Array) => Array<[types.IdKey, T]>;
@@ -1633,6 +1637,27 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			1,
 		)[0];
 		return result ? { id: result[0], value: result[1] } : undefined;
+	}
+
+	getByContextHeadBatch(
+		heads: string[],
+	): Array<types.IndexedResult<T> | undefined> {
+		if (heads.length === 0) {
+			return [];
+		}
+		const native = this.getNative();
+		const nativeBatch = native.query_exact_string_first_batch;
+		if (!nativeBatch) {
+			return heads.map((head) => this.getByContextHead(head));
+		}
+		const rows = nativeBatch.call(
+			native,
+			nativeFieldId(this.fieldDictionary, ["__context", "head"]),
+			heads,
+		);
+		return rows.map((result) =>
+			result ? { id: result[0], value: result[1] } : undefined,
+		);
 	}
 
 	async put(

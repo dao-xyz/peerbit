@@ -632,6 +632,72 @@ describe("native planner bridge", () => {
 		await indices.drop();
 	});
 
+	it("batch resolves contextual documents by head through the native index hook", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocumentWithContext });
+		const contextualIndex = index as typeof index & {
+			putWithContextBatch: (
+				values: Array<{
+					value: BridgeDocument;
+					id: ReturnType<typeof toId>;
+					context: BridgeContext;
+					options?: {
+						replace?: boolean;
+						encodedValueParts?: { prefix: Uint8Array; suffix: Uint8Array };
+					};
+				}>,
+			) => Promise<void>;
+			getByContextHeadBatch: (
+				heads: string[],
+			) => Array<
+				| { id: ReturnType<typeof toId>; value: BridgeDocumentWithContext }
+				| undefined
+			>;
+		};
+		const first = new BridgeDocument("a", "peerbit", "first");
+		const second = new BridgeDocument("b", "peerbit", "second");
+		const firstContext = new BridgeContext("head-a");
+		const secondContext = new BridgeContext("head-b");
+		await contextualIndex.putWithContextBatch([
+			{
+				value: first,
+				id: toId("a"),
+				context: firstContext,
+				options: {
+					encodedValueParts: {
+						prefix: serialize(first),
+						suffix: serialize(firstContext),
+					},
+				},
+			},
+			{
+				value: second,
+				id: toId("b"),
+				context: secondContext,
+				options: {
+					encodedValueParts: {
+						prefix: serialize(second),
+						suffix: serialize(secondContext),
+					},
+				},
+			},
+		]);
+
+		const resolved = contextualIndex.getByContextHeadBatch([
+			"head-b",
+			"missing",
+			"head-a",
+		]);
+		expect(resolved.map((entry) => entry?.id.primitive)).to.deep.equal([
+			"b",
+			undefined,
+			"a",
+		]);
+
+		await indices.drop();
+	});
+
 	it("keeps exact byte matching for large byte arrays without indexing every byte by default", async () => {
 		const indices = create();
 		await indices.start();

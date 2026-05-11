@@ -333,6 +333,24 @@ impl NativeRustIndex {
         Ok(self.store.entries_for_keys(&keys))
     }
 
+    pub fn query_exact_string_first_batch(&self, field: u32, values: Array) -> Array {
+        let out = Array::new();
+        let field = FieldPath::Id(field);
+        for value in values.iter() {
+            let entry = value
+                .as_string()
+                .and_then(|value| {
+                    self.planner
+                        .index
+                        .exact_first(&field, &FieldValue::String(value))
+                })
+                .map(|key| self.store.get(&key))
+                .unwrap_or(JsValue::UNDEFINED);
+            out.push(&entry);
+        }
+        out
+    }
+
     pub fn count(&self, query_bytes: Vec<u8>) -> Result<usize, JsValue> {
         self.planner.count(query_bytes)
     }
