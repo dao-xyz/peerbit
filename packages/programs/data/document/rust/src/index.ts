@@ -57,6 +57,7 @@ type WasmModule = {
 };
 
 let wasmModulePromise: Promise<WasmModule> | undefined;
+let wasmModule: WasmModule | undefined;
 let wasmInitialized = false;
 
 const loadWasm = async (): Promise<WasmModule> => {
@@ -89,6 +90,7 @@ const loadWasm = async (): Promise<WasmModule> => {
 		}
 		wasmInitialized = true;
 	}
+	wasmModule = wasm;
 
 	return wasm;
 };
@@ -152,10 +154,10 @@ const toContextPlan = (
 	contextBytes: copyBytes(row[1]),
 });
 
-export const planDocumentContext = async (
+const planDocumentContextWithWasm = (
+	wasm: WasmModule,
 	input: DocumentCommitContextInput,
-): Promise<DocumentCommitContextPlan> => {
-	const wasm = await loadWasm();
+): DocumentCommitContextPlan => {
 	const row = wasm.plan_document_context(
 		asOptionalU64String(input.existingCreated),
 		asU64String(input.modified),
@@ -166,13 +168,13 @@ export const planDocumentContext = async (
 	return toContextPlan(input, row);
 };
 
-export const planDocumentContextBatch = async (
+const planDocumentContextBatchWithWasm = (
+	wasm: WasmModule,
 	inputs: DocumentCommitContextInput[],
-): Promise<DocumentCommitContextPlan[]> => {
+): DocumentCommitContextPlan[] => {
 	if (inputs.length === 0) {
 		return [];
 	}
-	const wasm = await loadWasm();
 	const rows = wasm.plan_document_context_batch(
 		inputs.map((input) => asOptionalU64String(input.existingCreated)),
 		inputs.map((input) => asU64String(input.modified)),
@@ -181,4 +183,37 @@ export const planDocumentContextBatch = async (
 		Uint32Array.from(inputs.map((input) => input.size)),
 	);
 	return rows.map((row, index) => toContextPlan(inputs[index]!, row));
+};
+
+export const tryPlanDocumentContext = (
+	input: DocumentCommitContextInput,
+): DocumentCommitContextPlan | undefined => {
+	return wasmInitialized && wasmModule
+		? planDocumentContextWithWasm(wasmModule, input)
+		: undefined;
+};
+
+export const tryPlanDocumentContextBatch = (
+	inputs: DocumentCommitContextInput[],
+): DocumentCommitContextPlan[] | undefined => {
+	return wasmInitialized && wasmModule
+		? planDocumentContextBatchWithWasm(wasmModule, inputs)
+		: undefined;
+};
+
+export const planDocumentContext = async (
+	input: DocumentCommitContextInput,
+): Promise<DocumentCommitContextPlan> => {
+	const wasm = await loadWasm();
+	return planDocumentContextWithWasm(wasm, input);
+};
+
+export const planDocumentContextBatch = async (
+	inputs: DocumentCommitContextInput[],
+): Promise<DocumentCommitContextPlan[]> => {
+	if (inputs.length === 0) {
+		return [];
+	}
+	const wasm = await loadWasm();
+	return planDocumentContextBatchWithWasm(wasm, inputs);
 };
