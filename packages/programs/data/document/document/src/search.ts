@@ -660,6 +660,14 @@ type ContextualIndexPut<I> = {
 		context: types.Context,
 		options?: { replace?: boolean },
 	) => Promise<void> | void;
+	putWithContextBatch?: (
+		values: Array<{
+			value: I;
+			id: indexerTypes.IdKey;
+			context: types.Context;
+			options?: { replace?: boolean };
+		}>,
+	) => Promise<void> | void;
 };
 
 type ContextHeadIndex<I> = {
@@ -1746,6 +1754,98 @@ export class DocumentIndex<
 			throw error;
 		}
 		return { context, indexable: valueToIndex };
+	}
+
+	public async putManyWithContext(
+		values: Array<{
+			value: T;
+			id: indexerTypes.IdKey;
+			context: types.Context;
+			options?: { replace?: boolean };
+		}>,
+	): Promise<Array<{ context: types.Context; indexable: I }>> {
+		if (values.length === 0) {
+			return [];
+		}
+		const transformed = await Promise.all(
+			values.map(async (item) => {
+				const idString = item.id.primitive;
+				if (this.isProgramValued) {
+					this._resolverProgramCache!.set(idString, item.value);
+					indexCacheLogger("cache:set:program", { id: idString });
+				} else if (this._resolverCache) {
+					this._resolverCache.add(idString, item.value);
+					indexCacheLogger("cache:set:value", { id: idString });
+				}
+				const indexable = this.transformerIsIdentity
+					? (item.value as any as I)
+					: await this.transformer(item.value, item.context);
+				coerceWithIndexed(item.value, indexable);
+				coerceWithContext(item.value, item.context);
+				return { ...item, indexable };
+			}),
+		);
+
+		try {
+			const contextualBatchPut = this.transformerIsIdentity
+				? (this.index as ContextualIndexPut<I>).putWithContextBatch
+				: undefined;
+			if (contextualBatchPut) {
+				await contextualBatchPut.call(
+					this.index,
+					transformed.map((item) => ({
+						value: item.indexable,
+						id: item.id,
+						context: item.context,
+						options: item.options,
+					})),
+				);
+			} else if (
+				transformed.every((item) => item.options?.replace !== true) &&
+				this.index.putBatch
+			) {
+				await this.index.putBatch(
+					transformed.map(
+						(item) =>
+							new this.wrappedIndexedType(item.indexable, item.context),
+					),
+				);
+			} else {
+				const contextualPut = this.transformerIsIdentity
+					? (this.index as ContextualIndexPut<I>).putWithContext
+					: undefined;
+				for (const item of transformed) {
+					if (contextualPut) {
+						await contextualPut.call(
+							this.index,
+							item.indexable,
+							item.id,
+							item.context,
+							item.options,
+						);
+					} else {
+						await this.index.put(
+							new this.wrappedIndexedType(item.indexable, item.context),
+							item.id,
+							item.options,
+						);
+					}
+				}
+			}
+		} catch (error) {
+			if (error instanceof indexerTypes.NotStartedError && this.closed) {
+				return transformed.map((item) => ({
+					context: item.context,
+					indexable: item.indexable,
+				}));
+			}
+			throw error;
+		}
+
+		return transformed.map((item) => ({
+			context: item.context,
+			indexable: item.indexable,
+		}));
 	}
 
 	public del(key: indexerTypes.IdKey) {
