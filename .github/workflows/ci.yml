@@ -378,6 +378,18 @@ jobs:
             --assertAttachP95Ms 10000 \
             --assertMaxTreeLevelP95 8 \
             --assertMaxFormationScore 30
+      - name: Run fanout parent-upgrade multi-writer gate
+        run: |
+          pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval \
+            --scenario ci-multi-live \
+            --seeds 1 \
+            --parentUpgradePreset default-candidate \
+            --strict 1
+          pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval \
+            --scenario ci-multi-idle \
+            --seeds 1 \
+            --parentUpgradePreset default-candidate \
+            --strict 1
 
   shared_log_sync_batch_gate_pr:
     if: github.event_name == 'pull_request'

@@ -13,6 +13,16 @@ import {
 	runWithConcurrency,
 } from "./sim/bench-utils.js";
 
+/**
+ * Shared-network A/B evidence for proactive parent upgrades.
+ *
+ * The single-tree simulator is intentionally kept focused on one root/topic. This
+ * harness creates several writer roots and topics inside one in-memory network so
+ * probes, root reservations, tracker state, subscriber timers, and publish loops
+ * contend in the same process. That is the default-readiness risk this PR needs
+ * to measure: a policy can be quiet for one writer while still multiplying
+ * control-plane pressure across many independent writer trees.
+ */
 class SimFanoutTree extends FanoutTree {
 	constructor(c: any, opts?: any) {
 		super(c, opts);

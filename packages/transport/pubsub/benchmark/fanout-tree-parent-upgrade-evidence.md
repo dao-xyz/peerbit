@@ -276,6 +276,9 @@ stay bounded by successful upgrades, max proactive reparent per peer/channel is
 limits. Global p95 latency is still printed, but the utility gate is the
 changed-branch p95 or global p95 improvement because concurrent writer timers
 can move unrelated p95 samples while the promoted branches improve.
+The PR Fanout Gate runs one-seed `ci-multi-live` and `ci-multi-idle` smoke
+checks; the documented three-seed commands are the stronger review/evidence
+suite.
 
 The evaluator separates `promoted` runs from `guarded` runs. A guarded run sent
 probes but made no parent move, so it is useful as a safety/cost check, not as
