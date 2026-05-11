@@ -353,7 +353,9 @@ let wasmInitialized = false;
 const loadWasm = async (): Promise<WasmModule> => {
 	if (!wasmModulePromise) {
 		const wasmModulePath = "../wasm/log_rust.js";
-		wasmModulePromise = import(wasmModulePath) as Promise<WasmModule>;
+		wasmModulePromise = import(
+			/* @vite-ignore */ wasmModulePath
+		) as Promise<WasmModule>;
 	}
 
 	const wasm = await wasmModulePromise;
@@ -364,7 +366,7 @@ const loadWasm = async (): Promise<WasmModule> => {
 		if (processLike?.versions?.node) {
 			const fsPromises = "fs/promises";
 			const { readFile } = (await import(
-				fsPromises
+				/* @vite-ignore */ fsPromises
 			)) as typeof import("fs/promises");
 			const bytes = await readFile(
 				new URL("../wasm/log_rust_bg.wasm", import.meta.url),

@@ -3675,7 +3675,11 @@ export class SharedLog<
 				};
 
 				const residentEntriesByHash = this._residentEntryCoordinatesByHash;
-				if (this._nativeSharedLogState && residentEntriesByHash) {
+				if (
+					this._nativeSharedLogState &&
+					residentEntriesByHash &&
+					!this.hasCustomFindLeaders()
+				) {
 					const repairDispatchPlan = await this.planResidentRepairDispatchBatch({
 						pendingModes,
 						pendingPeersByMode,
@@ -7501,7 +7505,7 @@ export class SharedLog<
 
 	async countAssignedHeads(options?: { strict: boolean }): Promise<number> {
 		const myRanges = await this.getMyReplicationSegments();
-		if (this._nativeSharedLogState) {
+		if (this._nativeSharedLogState && !this.hasCustomFindLeaders()) {
 			const includeAssignedToRangeBoundary =
 				options?.strict !== true &&
 				(myRanges.length === 0 ||
@@ -9011,7 +9015,7 @@ export class SharedLog<
 			return [];
 		}
 
-		if (this._nativeRangePlanner) {
+		if (this._nativeRangePlanner && !this.hasCustomFindLeaders()) {
 			const context = await this.createLeaderSelectionContext(options);
 			return this._nativeRangePlanner.findLeadersBatch(
 				entries.map((entry) => ({
@@ -9024,9 +9028,13 @@ export class SharedLog<
 
 		const leaders: LeaderMap[] = [];
 		for (const entry of entries) {
-			leaders.push(await this._findLeaders(entry.coordinates, options));
+			leaders.push(await this.findLeaders(entry.coordinates, entry, options));
 		}
 		return leaders;
+	}
+
+	private hasCustomFindLeaders(): boolean {
+		return this.findLeaders !== SharedLog.prototype.findLeaders;
 	}
 
 	private async planResidentRepairDispatchBatch(properties: {
@@ -9110,7 +9118,7 @@ export class SharedLog<
 			}
 		};
 
-		if (this._nativeSharedLogState) {
+		if (this._nativeSharedLogState && !this.hasCustomFindLeaders()) {
 			const pendingPeersByMode = new Map<string, Iterable<string>>();
 			const optimisticPeersByMode = new Map<
 				string,

@@ -200,17 +200,23 @@ const loadNativeEntryV0Encoder = ():
 		return nativeEntryV0Encoder;
 	}
 	if (!nativeEntryV0EncoderPromise) {
-		nativeEntryV0EncoderPromise = import(["@peerbit", "log-rust"].join("/"))
-			.then((mod) => {
-				nativeEntryV0Encoder = nativeEntryV0EncoderFromModule(mod);
-				nativeEntryV0EncoderLoaded = true;
-				return nativeEntryV0Encoder;
-			})
-			.catch(() => {
-				nativeEntryV0Encoder = undefined;
-				nativeEntryV0EncoderLoaded = true;
-				return undefined;
-			});
+		try {
+			nativeEntryV0EncoderPromise = import(["@peerbit", "log-rust"].join("/"))
+				.then((mod) => {
+					nativeEntryV0Encoder = nativeEntryV0EncoderFromModule(mod);
+					nativeEntryV0EncoderLoaded = true;
+					return nativeEntryV0Encoder;
+				})
+				.catch(() => {
+					nativeEntryV0Encoder = undefined;
+					nativeEntryV0EncoderLoaded = true;
+					return undefined;
+				});
+		} catch {
+			nativeEntryV0Encoder = undefined;
+			nativeEntryV0EncoderLoaded = true;
+			return undefined;
+		}
 	}
 	return nativeEntryV0EncoderPromise;
 };

@@ -29,7 +29,7 @@ export default defineConfig({
 	],
 	webServer: [
 		{
-			command: `pnpm --dir ${BROWSER_NODE_DIR} dev -- --host 0.0.0.0 --port ${PORT}`,
+			command: `PARTY_PORT=${PORT} PORT=${PORT} pnpm --dir ${BROWSER_NODE_DIR} dev`,
 			url: BASE_URL,
 			reuseExistingServer: !process.env.CI,
 		},
