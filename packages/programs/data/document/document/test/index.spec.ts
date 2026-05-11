@@ -224,6 +224,17 @@ describe("index", () => {
 					expect(appendSpy.callCount).equal(0);
 					expect(localLookupSpy.callCount).equal(0);
 					expect(backendContextPutSpy.callCount).equal(1);
+					const backendOptions = backendContextPutSpy.getCall(0).args[3] as
+						| { encodedValue?: Uint8Array }
+						| undefined;
+					const encodedDocument = serialize(doc);
+					expect(backendOptions?.encodedValue).instanceOf(Uint8Array);
+					expect(backendOptions!.encodedValue!.byteLength).greaterThan(
+						encodedDocument.byteLength,
+					);
+					expect(
+						backendOptions!.encodedValue!.slice(0, encodedDocument.byteLength),
+					).to.deep.equal(encodedDocument);
 					expect((await store.docs.get(doc.id))?.name).equal("fast");
 					expect(changes).to.have.length(1);
 					expect(changes[0].added[0].__context.head).equal(put.entry.hash);
@@ -394,6 +405,23 @@ describe("index", () => {
 
 					expect(appended.entries).to.have.length(3);
 					expect(documentBackendBatchSpy.callCount).equal(1);
+					const batchValues = documentBackendBatchSpy.getCall(0).args[0] as Array<{
+						options?: { encodedValue?: Uint8Array };
+					}>;
+					expect(batchValues).to.have.length(3);
+					for (let i = 0; i < docs.length; i++) {
+						const encodedDocument = serialize(docs[i]!);
+						expect(batchValues[i]!.options?.encodedValue).instanceOf(Uint8Array);
+						expect(batchValues[i]!.options!.encodedValue!.byteLength).greaterThan(
+							encodedDocument.byteLength,
+						);
+						expect(
+							batchValues[i]!.options!.encodedValue!.slice(
+								0,
+								encodedDocument.byteLength,
+							),
+						).to.deep.equal(encodedDocument);
+					}
 					expect(coordinateBatchSpy.callCount).equal(1);
 					expect(coordinatePutSpy.callCount).equal(0);
 					expect(changes).to.have.length(1);
