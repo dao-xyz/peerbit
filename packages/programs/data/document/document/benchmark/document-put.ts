@@ -347,7 +347,19 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 			),
 			patchAsyncMethod(
 				store.docs.index,
+				"_putIdentityWithContext",
+				profile,
+				"documentIndexPutMs",
+			),
+			patchAsyncMethod(
+				store.docs.index,
 				"putManyWithContext",
+				profile,
+				"documentIndexPutMs",
+			),
+			patchAsyncMethod(
+				store.docs.index,
+				"_putManyIdentityWithContext",
 				profile,
 				"documentIndexPutMs",
 			),

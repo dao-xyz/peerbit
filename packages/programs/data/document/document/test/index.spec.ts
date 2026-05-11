@@ -210,6 +210,11 @@ describe("index", () => {
 					store.docs as any,
 					"createDocumentAppendCommitFacts",
 				);
+				const documentIdentityPutSpy = sinon.spy(
+					store.docs.index,
+					"_putIdentityWithContext",
+				);
+				const documentPutSpy = sinon.spy(store.docs.index, "putWithContext");
 				const backendIndex = store.docs.index.index as any;
 				const originalBackendPutWithContext = backendIndex.putWithContext;
 				const originalBackendPut = backendIndex.put;
@@ -243,10 +248,12 @@ describe("index", () => {
 					expect(validatedAppendSpy.callCount).equal(0);
 					expect(appendSpy.callCount).equal(0);
 					expect(localLookupSpy.callCount).equal(0);
-					expect(commitPlanSpy.callCount).equal(1);
-					expect(nativeCommitSpy.callCount).equal(1);
-					expect(documentCommitSpy.callCount).equal(1);
-					expect(backendContextPutSpy.callCount).equal(1);
+				expect(commitPlanSpy.callCount).equal(1);
+				expect(nativeCommitSpy.callCount).equal(1);
+				expect(documentCommitSpy.callCount).equal(1);
+				expect(documentIdentityPutSpy.callCount).equal(1);
+				expect(documentPutSpy.callCount).equal(0);
+				expect(backendContextPutSpy.callCount).equal(1);
 					const encodedDocument = serialize(doc);
 					const expectedPayloadData = new Uint8Array(
 						6 + encodedDocument.byteLength,
@@ -329,11 +336,13 @@ describe("index", () => {
 						delete backendIndex.putWithContext;
 					}
 					localLookupSpy.restore();
-					commitPlanSpy.restore();
-					nativeCommitSpy.restore();
-					documentCommitSpy.restore();
-					preparedPayloadAppendSpy.restore();
-					preparedAppendSpy.restore();
+				commitPlanSpy.restore();
+				nativeCommitSpy.restore();
+				documentCommitSpy.restore();
+				documentPutSpy.restore();
+				documentIdentityPutSpy.restore();
+				preparedPayloadAppendSpy.restore();
+				preparedAppendSpy.restore();
 					validatedAppendSpy.restore();
 					appendSpy.restore();
 				}
@@ -377,6 +386,10 @@ describe("index", () => {
 				const appendSpy = sinon.spy(store.docs.log, "append");
 				const documentBatchIndexSpy = sinon.spy(
 					store.docs.index,
+					"_putManyIdentityWithContext",
+				);
+				const documentGenericBatchIndexSpy = sinon.spy(
+					store.docs.index,
 					"putManyWithContext",
 				);
 				const documentIndexPutSpy = sinon.spy(
@@ -415,6 +428,7 @@ describe("index", () => {
 					expect(appendSpy.callCount).equal(0);
 					expect(nativeBatchCommitSpy.callCount).equal(1);
 					expect(documentBatchIndexSpy.callCount).equal(1);
+					expect(documentGenericBatchIndexSpy.callCount).equal(1);
 					expect(documentIndexPutSpy.callCount).equal(0);
 					expect(nativeBatchPlanSpy.callCount).equal(1);
 					expect(nativeLocalPlanSpy.callCount).equal(0);
@@ -470,10 +484,11 @@ describe("index", () => {
 					}
 				} finally {
 					nativeBatchPlanSpy.restore();
-					nativeLocalPlanSpy.restore();
-					nativeBatchCommitSpy.restore();
-					documentIndexPutSpy.restore();
-					documentBatchIndexSpy.restore();
+				nativeLocalPlanSpy.restore();
+				nativeBatchCommitSpy.restore();
+				documentIndexPutSpy.restore();
+				documentGenericBatchIndexSpy.restore();
+				documentBatchIndexSpy.restore();
 					appendSpy.restore();
 					preparedAppendSpy.restore();
 					lowerBatchAppendSpy.restore();
