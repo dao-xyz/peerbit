@@ -368,6 +368,10 @@ describe("index", () => {
 					store.docs.index,
 					"putWithContext",
 				);
+				const nativeBatchCommitSpy = sinon.spy(
+					store.docs as any,
+					"commitNativeDocumentAppendMany",
+				);
 				const nativeState = (store.docs.log as any)._nativeSharedLogState;
 				const nativeLocalPlanSpy = sinon.spy(
 					nativeState,
@@ -393,6 +397,7 @@ describe("index", () => {
 					expect(lowerBatchAppendSpy.callCount).equal(1);
 					expect(preparedAppendSpy.callCount).equal(0);
 					expect(appendSpy.callCount).equal(0);
+					expect(nativeBatchCommitSpy.callCount).equal(1);
 					expect(documentBatchIndexSpy.callCount).equal(1);
 					expect(documentIndexPutSpy.callCount).equal(0);
 					expect(nativeBatchPlanSpy.callCount).equal(1);
@@ -403,6 +408,28 @@ describe("index", () => {
 					expect(appended.entries.every((entry) => entry.meta.next.length === 0))
 						.equal(true);
 					expect(await appended.entries[0]!.verifySignatures()).equal(true);
+					const nativeBatchInput = nativeBatchCommitSpy.getCall(0).args[0];
+					expect(nativeBatchInput.puts).to.have.length(docs.length);
+					for (let i = 0; i < docs.length; i++) {
+						const encodedDocument = serialize(docs[i]!);
+						expect(nativeBatchInput.puts[i].documentBytes).to.deep.equal(
+							encodedDocument,
+						);
+						const expectedPayloadData = new Uint8Array(
+							6 + encodedDocument.byteLength,
+						);
+						expectedPayloadData[0] = 0;
+						expectedPayloadData[1] = 3;
+						new DataView(
+							expectedPayloadData.buffer,
+							expectedPayloadData.byteOffset,
+							expectedPayloadData.byteLength,
+						).setUint32(2, encodedDocument.byteLength, true);
+						expectedPayloadData.set(encodedDocument, 6);
+						expect(
+							nativeBatchInput.puts[i].operationPayloadBytes,
+						).to.deep.equal(expectedPayloadData);
+					}
 					const reloaded = await Entry.fromMultihash<Operation>(
 						store.docs.log.log.blocks,
 						appended.entries[0]!.hash,
@@ -428,6 +455,7 @@ describe("index", () => {
 				} finally {
 					nativeBatchPlanSpy.restore();
 					nativeLocalPlanSpy.restore();
+					nativeBatchCommitSpy.restore();
 					documentIndexPutSpy.restore();
 					documentBatchIndexSpy.restore();
 					appendSpy.restore();
