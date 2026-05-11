@@ -67,6 +67,7 @@
 		"@peerbit/cache": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/document-interface": "workspace:*",
+		"@peerbit/document-rust": "workspace:*",
 		"@peerbit/indexer-cache": "workspace:*",
 		"@peerbit/indexer-interface": "workspace:*",
 		"@peerbit/indexer-simple": "workspace:*",
