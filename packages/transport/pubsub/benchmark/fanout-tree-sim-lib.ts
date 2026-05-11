@@ -1,13 +1,18 @@
 import { PreHash, SignatureWithKey } from "@peerbit/crypto";
+import {
+	InMemoryNetwork,
+	InMemorySession,
+} from "@peerbit/libp2p-test-utils/inmemory-libp2p.js";
 import { delay } from "@peerbit/time";
 import { anySignal } from "any-signal";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { FanoutTree } from "../src/index.js";
 import {
-	InMemoryNetwork,
-	InMemorySession,
-} from "@peerbit/libp2p-test-utils/inmemory-libp2p.js";
-import { int, mulberry32, quantile, runWithConcurrency } from "./sim/bench-utils.js";
+	int,
+	mulberry32,
+	quantile,
+	runWithConcurrency,
+} from "./sim/bench-utils.js";
 
 class SimFanoutTree extends FanoutTree {
 	constructor(c: any, opts?: any) {
@@ -41,6 +46,8 @@ export type FanoutTreeSimParams = {
 	relayFraction: number;
 
 	messages: number;
+	secondBatchMessages: number;
+	secondBatchSettleMs: number;
 	msgRate: number;
 	msgSize: number;
 	intervalMs: number;
@@ -84,12 +91,41 @@ export type FanoutTreeSimParams = {
 	candidateScoringMode: "ranked-shuffle" | "ranked-strict" | "weighted";
 	parentUpgradeIntervalMs: number;
 	parentUpgradeLeafOnly: boolean;
+	parentUpgradeMinLevelGain: number;
+	parentUpgradeRootMinLevelGain: number;
+	parentUpgradeRootMinSubtreeGain: number;
+	parentUpgradeNonRootMinLevelGain: number;
+	parentUpgradeMinFreeSlots: number;
+	parentUpgradeRootMinFreeSlots: number;
+	parentUpgradeMaxChildLoadRatio: number;
+	parentUpgradeRootMaxChildLoadRatio: number;
+	parentUpgradeCooldownMs: number;
+	parentUpgradeFailedBackoffMinMs: number;
+	parentUpgradeFailedBackoffMaxMs: number;
+	parentUpgradeQuietMs: number;
+	parentUpgradeRepairQuietMs: number;
+	parentUpgradeMaxPerPeer: number;
+	parentUpgradeRepairGuard: boolean;
+	parentUpgradeDataGuard: boolean;
+	parentUpgradeMode: "direct" | "probe" | "shadow";
+	parentUpgradeVerifyStaleRootCapacity: boolean;
+	parentUpgradeStaleRootProbeProbability: number;
+	parentProbeTimeoutMs: number;
+	parentProbeMaxPerRound: number;
+	parentProbeMaxLagMessages: number;
+	parentProbeRejectCooldownMs: number;
+	parentProbeRejectCooldownMaxMs: number;
+	parentShadowObserveMs: number;
+	parentShadowMinObservations: number;
 	bootstrapEnsureIntervalMs: number;
 	trackerQueryIntervalMs: number;
 	joinAttemptsPerRound: number;
 	candidateCooldownMs: number;
 	joinPhases: boolean;
 	joinPhaseSettleMs: number;
+	lateRootConnectAfterMs: number;
+	lateRootMaxChildren: number;
+	lateRootConnectFraction: number;
 
 	maxLatencySamples: number;
 	profile: boolean;
@@ -158,6 +194,18 @@ export type FanoutTreeSimResult = {
 	deliveredWithinDeadlinePct: number;
 	duplicates: number;
 
+	secondBatchExpected: number;
+	secondBatchDelivered: number;
+	secondBatchDeliveredPct: number;
+	secondBatchDeliveredWithinDeadline: number;
+	secondBatchDeliveredWithinDeadlinePct: number;
+	secondBatchLatencySamples: number;
+	secondBatchLatencyP50: number;
+	secondBatchLatencyP95: number;
+	secondBatchLatencyP99: number;
+	secondBatchLatencyMax: number;
+	secondBatchLatencyP95ByHash: Record<string, number>;
+
 	latencySamples: number;
 	latencyP50: number;
 	latencyP95: number;
@@ -177,6 +225,45 @@ export type FanoutTreeSimResult = {
 	reparentStaleTotal: number;
 	reparentKickedTotal: number;
 	reparentUpgradeTotal: number;
+	upgradedPeerHashes: string[];
+	upgradedBranchPeerHashes: string[];
+	reparentUpgradeSkipLeafTotal: number;
+	reparentUpgradeSkipRepairTotal: number;
+	reparentUpgradeSkipDataTotal: number;
+	reparentUpgradeSkipCooldownTotal: number;
+	reparentUpgradeSkipQuietTotal: number;
+	reparentUpgradeSkipBudgetTotal: number;
+	reparentUpgradeSkipCandidateLevelTotal: number;
+	reparentUpgradeSkipCandidateSlotsTotal: number;
+	reparentUpgradeSkipCandidatePressureTotal: number;
+	reparentUpgradeSkipRootPressureTotal: number;
+	reparentUpgradeSkipProbeNoReplyTotal: number;
+	reparentUpgradeSkipProbeNotRootedTotal: number;
+	reparentUpgradeSkipProbeRepairTotal: number;
+	reparentUpgradeSkipProbeLagTotal: number;
+	reparentUpgradeSkipProbeOverloadedTotal: number;
+	reparentUpgradeSkipProbeCooldownTotal: number;
+	parentProbeReqSentTotal: number;
+	parentProbeReqReceivedTotal: number;
+	parentProbeReplySentTotal: number;
+	parentProbeReplyReceivedTotal: number;
+	parentUpgradeRootReservationCreatedTotal: number;
+	parentUpgradeRootReservationConsumedTotal: number;
+	parentUpgradeRootReservationRejectedTotal: number;
+	parentUpgradeRootReservationMarginRejectedTotal: number;
+	parentUpgradeRootReservationBlockedTotal: number;
+	parentUpgradeRootReservationExpiredTotal: number;
+	parentShadowStartTotal: number;
+	parentShadowObserveTotal: number;
+	parentShadowPromoteTotal: number;
+	parentShadowResetTotal: number;
+	parentShadowRejectNoReplyTotal: number;
+	parentShadowRejectNotRootedTotal: number;
+	parentShadowRejectCapacityTotal: number;
+	parentShadowRejectRepairTotal: number;
+	parentShadowRejectLagTotal: number;
+	parentShadowRejectOverloadedTotal: number;
+	parentShadowRejectLevelTotal: number;
 
 	treeMaxLevel: number;
 	treeLevelP95: number;
@@ -189,6 +276,8 @@ export type FanoutTreeSimResult = {
 	maxUploadBps: number;
 	maxUploadFracPct: number;
 	maxUploadNode?: string;
+	rootUploadBps: number;
+	rootUploadFracPct: number;
 
 	streamQueuedBytesTotal: number;
 	streamQueuedBytesMax: number;
@@ -299,8 +388,15 @@ export const resolveFanoutTreeSimParams = (
 			: msgRate > 0
 				? Math.floor(1000 / msgRate)
 				: 0;
+	const parentUpgradeMaxChildLoadRatio = Number(
+		input.parentUpgradeMaxChildLoadRatio ?? 0.5,
+	);
+	const parentUpgradeRootMaxChildLoadRatio = Number(
+		input.parentUpgradeRootMaxChildLoadRatio ??
+			Math.min(parentUpgradeMaxChildLoadRatio, 0.4),
+	);
 
-		return {
+	return {
 		nodes,
 		rootIndex: Number(input.rootIndex ?? 0),
 		bootstraps,
@@ -309,6 +405,8 @@ export const resolveFanoutTreeSimParams = (
 		relayFraction: Number(input.relayFraction ?? 0.25),
 
 		messages: Number(input.messages ?? 200),
+		secondBatchMessages: Number(input.secondBatchMessages ?? 0),
+		secondBatchSettleMs: Number(input.secondBatchSettleMs ?? 0),
 		msgRate,
 		msgSize: Number(input.msgSize ?? 1024),
 		intervalMs,
@@ -338,13 +436,17 @@ export const resolveFanoutTreeSimParams = (
 		neighborRepairPeers: Number(input.neighborRepairPeers ?? 2),
 		neighborMeshPeers: Number(input.neighborMeshPeers ?? -1),
 		neighborAnnounceIntervalMs: Number(input.neighborAnnounceIntervalMs ?? -1),
-		neighborMeshRefreshIntervalMs: Number(input.neighborMeshRefreshIntervalMs ?? -1),
+		neighborMeshRefreshIntervalMs: Number(
+			input.neighborMeshRefreshIntervalMs ?? -1,
+		),
 		neighborHaveTtlMs: Number(input.neighborHaveTtlMs ?? -1),
 		neighborRepairBudgetBps: Number(input.neighborRepairBudgetBps ?? -1),
 		neighborRepairBurstMs: Number(input.neighborRepairBurstMs ?? -1),
 
 		streamRxDelayMs: Number(input.streamRxDelayMs ?? 0),
-		streamHighWaterMarkBytes: Number(input.streamHighWaterMarkBytes ?? 256 * 1024),
+		streamHighWaterMarkBytes: Number(
+			input.streamHighWaterMarkBytes ?? 256 * 1024,
+		),
 		dialDelayMs: Number(input.dialDelayMs ?? 0),
 		joinConcurrency: Number(input.joinConcurrency ?? 256),
 		joinReqTimeoutMs: Number(input.joinReqTimeoutMs ?? -1),
@@ -357,19 +459,78 @@ export const resolveFanoutTreeSimParams = (
 				: "ranked-shuffle",
 		parentUpgradeIntervalMs: Number(input.parentUpgradeIntervalMs ?? 0),
 		parentUpgradeLeafOnly: Boolean(input.parentUpgradeLeafOnly ?? true),
+		parentUpgradeMinLevelGain: Number(input.parentUpgradeMinLevelGain ?? 1),
+		parentUpgradeRootMinLevelGain: Number(
+			input.parentUpgradeRootMinLevelGain ?? 3,
+		),
+		parentUpgradeRootMinSubtreeGain: Number(
+			input.parentUpgradeRootMinSubtreeGain ??
+				input.parentUpgradeRootMinLevelGain ??
+				3,
+		),
+		parentUpgradeNonRootMinLevelGain: Number(
+			input.parentUpgradeNonRootMinLevelGain ?? 2,
+		),
+		parentUpgradeMinFreeSlots: Number(input.parentUpgradeMinFreeSlots ?? 8),
+		parentUpgradeRootMinFreeSlots: Number(
+			input.parentUpgradeRootMinFreeSlots ??
+				input.parentUpgradeMinFreeSlots ??
+				8,
+		),
+		parentUpgradeMaxChildLoadRatio,
+		parentUpgradeRootMaxChildLoadRatio,
+		parentUpgradeCooldownMs: Number(input.parentUpgradeCooldownMs ?? 5_000),
+		parentUpgradeFailedBackoffMinMs: Number(
+			input.parentUpgradeFailedBackoffMinMs ?? 5_000,
+		),
+		parentUpgradeFailedBackoffMaxMs: Number(
+			input.parentUpgradeFailedBackoffMaxMs ?? 60_000,
+		),
+		parentUpgradeQuietMs: Number(input.parentUpgradeQuietMs ?? 5_000),
+		parentUpgradeRepairQuietMs: Number(
+			input.parentUpgradeRepairQuietMs ?? input.parentUpgradeQuietMs ?? 5_000,
+		),
+		parentUpgradeMaxPerPeer: Number(input.parentUpgradeMaxPerPeer ?? 2),
+		parentUpgradeRepairGuard: Boolean(input.parentUpgradeRepairGuard ?? true),
+		parentUpgradeDataGuard: Boolean(input.parentUpgradeDataGuard ?? true),
+		parentUpgradeMode:
+			input.parentUpgradeMode === "probe" ||
+			input.parentUpgradeMode === "shadow"
+				? input.parentUpgradeMode
+				: "direct",
+		parentUpgradeVerifyStaleRootCapacity: Boolean(
+			input.parentUpgradeVerifyStaleRootCapacity ?? false,
+		),
+		parentUpgradeStaleRootProbeProbability: Number(
+			input.parentUpgradeStaleRootProbeProbability ?? 0.25,
+		),
+		parentProbeTimeoutMs: Number(input.parentProbeTimeoutMs ?? 500),
+		parentProbeMaxPerRound: Number(input.parentProbeMaxPerRound ?? 2),
+		parentProbeMaxLagMessages: Number(input.parentProbeMaxLagMessages ?? 0),
+		parentProbeRejectCooldownMs: Number(
+			input.parentProbeRejectCooldownMs ?? 10_000,
+		),
+		parentProbeRejectCooldownMaxMs: Number(
+			input.parentProbeRejectCooldownMaxMs ?? 60_000,
+		),
+		parentShadowObserveMs: Number(input.parentShadowObserveMs ?? 2_000),
+		parentShadowMinObservations: Number(input.parentShadowMinObservations ?? 2),
 		bootstrapEnsureIntervalMs: Number(input.bootstrapEnsureIntervalMs ?? -1),
 		trackerQueryIntervalMs: Number(input.trackerQueryIntervalMs ?? -1),
 		joinAttemptsPerRound: Number(input.joinAttemptsPerRound ?? -1),
 		candidateCooldownMs: Number(input.candidateCooldownMs ?? -1),
 		joinPhases: Boolean(input.joinPhases ?? false),
-			joinPhaseSettleMs: Number(input.joinPhaseSettleMs ?? 2_000),
+		joinPhaseSettleMs: Number(input.joinPhaseSettleMs ?? 2_000),
+		lateRootConnectAfterMs: Number(input.lateRootConnectAfterMs ?? -1),
+		lateRootMaxChildren: Number(input.lateRootMaxChildren ?? 0),
+		lateRootConnectFraction: Number(input.lateRootConnectFraction ?? 1),
 
-				maxLatencySamples: Number(input.maxLatencySamples ?? 1_000_000),
-				profile: Boolean(input.profile ?? false),
-				progress: Boolean(input.progress ?? false),
-				progressEveryMs: Number(input.progressEveryMs ?? 5_000),
+		maxLatencySamples: Number(input.maxLatencySamples ?? 1_000_000),
+		profile: Boolean(input.profile ?? false),
+		progress: Boolean(input.progress ?? false),
+		progressEveryMs: Number(input.progressEveryMs ?? 5_000),
 
-				dropDataFrameRate: Number(input.dropDataFrameRate ?? 0),
+		dropDataFrameRate: Number(input.dropDataFrameRate ?? 0),
 
 		churnEveryMs: Number(input.churnEveryMs ?? 0),
 		churnDownMs: Number(input.churnDownMs ?? 0),
@@ -377,7 +538,9 @@ export const resolveFanoutTreeSimParams = (
 
 		assertMinJoinedPct: Number(input.assertMinJoinedPct ?? 0),
 		assertMinDeliveryPct: Number(input.assertMinDeliveryPct ?? 0),
-		assertMinDeadlineDeliveryPct: Number(input.assertMinDeadlineDeliveryPct ?? 0),
+		assertMinDeadlineDeliveryPct: Number(
+			input.assertMinDeadlineDeliveryPct ?? 0,
+		),
 		assertMaxUploadFracPct: Number(input.assertMaxUploadFracPct ?? 0),
 		assertMaxOverheadFactor: Number(input.assertMaxOverheadFactor ?? 0),
 		assertMaxControlBpp: Number(input.assertMaxControlBpp ?? 0),
@@ -396,42 +559,56 @@ export const resolveFanoutTreeSimParams = (
 
 export const formatFanoutTreeSimResult = (r: FanoutTreeSimResult) => {
 	const p = r.params;
-		return [
+	return [
 		"fanout-tree-sim",
 		`nodes=${p.nodes} bootstraps=${r.bootstrapCount} bootstrapMaxPeers=${p.bootstrapMaxPeers} subscribers=${r.subscriberCount} relays=${r.relayCount}`,
+		...(p.lateRootConnectAfterMs >= 0
+			? [
+					`lateRoot: afterMs=${p.lateRootConnectAfterMs} maxChildren=${p.lateRootMaxChildren} connectFraction=${p.lateRootConnectFraction}`,
+				]
+			: []),
 		`joined=${r.joinedCount}/${r.subscriberCount} (${r.joinedPct.toFixed(2)}%)`,
 		`join: ${(r.joinMs / 1000).toFixed(3)}s`,
 		`attachMs samples=${r.attachSamples} p50=${r.attachP50.toFixed(1)} p95=${r.attachP95.toFixed(1)} p99=${r.attachP99.toFixed(1)} max=${r.attachMax.toFixed(1)}`,
-			`formationPaths: underlayEdges=${r.formationUnderlayEdges} dist(p95/max)=${r.formationUnderlayDistP95.toFixed(1)}/${r.formationUnderlayDistMax.toFixed(1)} stretch(p95/max)=${r.formationStretchP95.toFixed(2)}/${r.formationStretchMax.toFixed(2)} score=${r.formationScore.toFixed(2)}`,
-			`formationTree: maxLevel=${r.formationTreeMaxLevel} p95Level=${r.formationTreeLevelP95.toFixed(1)} avgLevel=${r.formationTreeLevelAvg.toFixed(2)} orphans=${r.formationTreeOrphans} rootChildren=${r.formationTreeRootChildren} children(p95/max)=${r.formationTreeChildrenP95.toFixed(1)}/${r.formationTreeChildrenMax}`,
-			`publish: ${(r.publishMs / 1000).toFixed(3)}s intervalMs=${p.intervalMs}`,
-				`churn: everyMs=${p.churnEveryMs} downMs=${p.churnDownMs} fraction=${p.churnFraction} events=${r.churnEvents} peers=${r.churnedPeersTotal}`,
-				...(r.maintSamples > 0
-					? [
-							`maintenance: maxOrphans=${r.maintMaxOrphans} orphanArea=${r.maintOrphanArea.toFixed(1)}s recoveryMs p50=${r.maintRecoveryP50Ms.toFixed(1)} p95=${r.maintRecoveryP95Ms.toFixed(1)} reparentsPerMin=${r.maintReparentsPerMin.toFixed(2)} flapMax=${r.maintMaxReparentsPerPeer} driftP95(level/children)=${r.maintLevelP95DriftMax.toFixed(1)}/${r.maintChildrenP95DriftMax.toFixed(1)}`,
-						]
-					: []),
-				`delivered=${r.delivered}/${r.expected} (${r.deliveredPct.toFixed(2)}%) dup=${r.duplicates}`,
-			p.deadlineMs > 0
-				? `deadline=${p.deadlineMs}ms${p.maxDataAgeMs > 0 ? ` maxAgeMs=${p.maxDataAgeMs}` : ""} delivered=${r.deliveredWithinDeadline}/${r.expected} (${r.deliveredWithinDeadlinePct.toFixed(2)}%)`
-				: `deadline=off${p.maxDataAgeMs > 0 ? ` maxAgeMs=${p.maxDataAgeMs}` : ""}`,
-			`latencyMs p50=${r.latencyP50.toFixed(1)} p95=${r.latencyP95.toFixed(1)} p99=${r.latencyP99.toFixed(1)} max=${r.latencyMax.toFixed(1)}`,
-			`drops: forward total=${r.droppedForwardsTotal} max=${r.droppedForwardsMax} node=${r.droppedForwardsMaxNode ?? "-"} stale total=${r.staleForwardsDroppedTotal} max=${r.staleForwardsDroppedMax} node=${r.staleForwardsDroppedMaxNode ?? "-"} write total=${r.dataWriteDropsTotal} max=${r.dataWriteDropsMax} node=${r.dataWriteDropsMaxNode ?? "-"}`,
-			`reparent: disconnect=${r.reparentDisconnectTotal} stale=${r.reparentStaleTotal} kicked=${r.reparentKickedTotal} upgrade=${r.reparentUpgradeTotal}`,
-			`tree: maxLevel=${r.treeMaxLevel} p95Level=${r.treeLevelP95.toFixed(1)} avgLevel=${r.treeLevelAvg.toFixed(2)} orphans=${r.treeOrphans} rootChildren=${r.treeRootChildren} children(p95/max)=${r.treeChildrenP95.toFixed(1)}/${r.treeChildrenMax}`,
-			`upload: max=${r.maxUploadBps} B/s (${r.maxUploadFracPct.toFixed(1)}% of cap) node=${r.maxUploadNode ?? "-"}`,
-			`stream: queuedBytes total=${r.streamQueuedBytesTotal} max=${r.streamQueuedBytesMax} p95=${r.streamQueuedBytesP95.toFixed(0)} node=${r.streamQueuedBytesMaxNode ?? "-"} lanes=${r.streamQueuedBytesByLane.join(",")}`,
+		`formationPaths: underlayEdges=${r.formationUnderlayEdges} dist(p95/max)=${r.formationUnderlayDistP95.toFixed(1)}/${r.formationUnderlayDistMax.toFixed(1)} stretch(p95/max)=${r.formationStretchP95.toFixed(2)}/${r.formationStretchMax.toFixed(2)} score=${r.formationScore.toFixed(2)}`,
+		`formationTree: maxLevel=${r.formationTreeMaxLevel} p95Level=${r.formationTreeLevelP95.toFixed(1)} avgLevel=${r.formationTreeLevelAvg.toFixed(2)} orphans=${r.formationTreeOrphans} rootChildren=${r.formationTreeRootChildren} children(p95/max)=${r.formationTreeChildrenP95.toFixed(1)}/${r.formationTreeChildrenMax}`,
+		`publish: ${(r.publishMs / 1000).toFixed(3)}s intervalMs=${p.intervalMs}`,
+		...(p.secondBatchMessages > 0
+			? [
+					`secondBatch: messages=${p.secondBatchMessages} settleMs=${p.secondBatchSettleMs} delivered=${r.secondBatchDelivered}/${r.secondBatchExpected} (${r.secondBatchDeliveredPct.toFixed(2)}%) deadline=${r.secondBatchDeliveredWithinDeadline}/${r.secondBatchExpected} (${r.secondBatchDeliveredWithinDeadlinePct.toFixed(2)}%) latencyP95=${r.secondBatchLatencyP95.toFixed(1)}`,
+				]
+			: []),
+		`churn: everyMs=${p.churnEveryMs} downMs=${p.churnDownMs} fraction=${p.churnFraction} events=${r.churnEvents} peers=${r.churnedPeersTotal}`,
+		...(r.maintSamples > 0
+			? [
+					`maintenance: maxOrphans=${r.maintMaxOrphans} orphanArea=${r.maintOrphanArea.toFixed(1)}s recoveryMs p50=${r.maintRecoveryP50Ms.toFixed(1)} p95=${r.maintRecoveryP95Ms.toFixed(1)} reparentsPerMin=${r.maintReparentsPerMin.toFixed(2)} flapMax=${r.maintMaxReparentsPerPeer} driftP95(level/children)=${r.maintLevelP95DriftMax.toFixed(1)}/${r.maintChildrenP95DriftMax.toFixed(1)}`,
+				]
+			: []),
+		`delivered=${r.delivered}/${r.expected} (${r.deliveredPct.toFixed(2)}%) dup=${r.duplicates}`,
+		p.deadlineMs > 0
+			? `deadline=${p.deadlineMs}ms${p.maxDataAgeMs > 0 ? ` maxAgeMs=${p.maxDataAgeMs}` : ""} delivered=${r.deliveredWithinDeadline}/${r.expected} (${r.deliveredWithinDeadlinePct.toFixed(2)}%)`
+			: `deadline=off${p.maxDataAgeMs > 0 ? ` maxAgeMs=${p.maxDataAgeMs}` : ""}`,
+		`latencyMs p50=${r.latencyP50.toFixed(1)} p95=${r.latencyP95.toFixed(1)} p99=${r.latencyP99.toFixed(1)} max=${r.latencyMax.toFixed(1)}`,
+		`drops: forward total=${r.droppedForwardsTotal} max=${r.droppedForwardsMax} node=${r.droppedForwardsMaxNode ?? "-"} stale total=${r.staleForwardsDroppedTotal} max=${r.staleForwardsDroppedMax} node=${r.staleForwardsDroppedMaxNode ?? "-"} write total=${r.dataWriteDropsTotal} max=${r.dataWriteDropsMax} node=${r.dataWriteDropsMaxNode ?? "-"}`,
+		`reparent: disconnect=${r.reparentDisconnectTotal} stale=${r.reparentStaleTotal} kicked=${r.reparentKickedTotal} upgrade=${r.reparentUpgradeTotal}`,
+		`reparentUpgradeSkipped: leaf=${r.reparentUpgradeSkipLeafTotal} repair=${r.reparentUpgradeSkipRepairTotal} data=${r.reparentUpgradeSkipDataTotal} cooldown=${r.reparentUpgradeSkipCooldownTotal} quiet=${r.reparentUpgradeSkipQuietTotal} budget=${r.reparentUpgradeSkipBudgetTotal} candidateLevel=${r.reparentUpgradeSkipCandidateLevelTotal} candidateSlots=${r.reparentUpgradeSkipCandidateSlotsTotal} candidatePressure=${r.reparentUpgradeSkipCandidatePressureTotal} rootPressure=${r.reparentUpgradeSkipRootPressureTotal}`,
+		`parentProbe: req=${r.parentProbeReqSentTotal}/${r.parentProbeReqReceivedTotal} reply=${r.parentProbeReplySentTotal}/${r.parentProbeReplyReceivedTotal} skipped noReply=${r.reparentUpgradeSkipProbeNoReplyTotal} notRooted=${r.reparentUpgradeSkipProbeNotRootedTotal} repair=${r.reparentUpgradeSkipProbeRepairTotal} lag=${r.reparentUpgradeSkipProbeLagTotal} overloaded=${r.reparentUpgradeSkipProbeOverloadedTotal} cooldown=${r.reparentUpgradeSkipProbeCooldownTotal}`,
+		`parentRootReservations: created=${r.parentUpgradeRootReservationCreatedTotal} consumed=${r.parentUpgradeRootReservationConsumedTotal} rejected=${r.parentUpgradeRootReservationRejectedTotal} marginRejected=${r.parentUpgradeRootReservationMarginRejectedTotal} blocked=${r.parentUpgradeRootReservationBlockedTotal} expired=${r.parentUpgradeRootReservationExpiredTotal}`,
+		`parentShadow: start=${r.parentShadowStartTotal} observe=${r.parentShadowObserveTotal} promote=${r.parentShadowPromoteTotal} reset=${r.parentShadowResetTotal} reject noReply=${r.parentShadowRejectNoReplyTotal} notRooted=${r.parentShadowRejectNotRootedTotal} capacity=${r.parentShadowRejectCapacityTotal} repair=${r.parentShadowRejectRepairTotal} lag=${r.parentShadowRejectLagTotal} overloaded=${r.parentShadowRejectOverloadedTotal} level=${r.parentShadowRejectLevelTotal}`,
+		`tree: maxLevel=${r.treeMaxLevel} p95Level=${r.treeLevelP95.toFixed(1)} avgLevel=${r.treeLevelAvg.toFixed(2)} orphans=${r.treeOrphans} rootChildren=${r.treeRootChildren} children(p95/max)=${r.treeChildrenP95.toFixed(1)}/${r.treeChildrenMax}`,
+		`upload: max=${r.maxUploadBps} B/s (${r.maxUploadFracPct.toFixed(1)}% of cap) node=${r.maxUploadNode ?? "-"} root=${r.rootUploadBps} B/s (${r.rootUploadFracPct.toFixed(1)}% of cap)`,
+		`stream: queuedBytes total=${r.streamQueuedBytesTotal} max=${r.streamQueuedBytesMax} p95=${r.streamQueuedBytesP95.toFixed(0)} node=${r.streamQueuedBytesMaxNode ?? "-"} lanes=${r.streamQueuedBytesByLane.join(",")}`,
 		`overhead: dataFactor=${r.overheadFactorData.toFixed(3)} (sentPayloadBytes / ideal)`,
-			`economics: earningsTotal=${r.earningsTotal} relayCount=${r.earningsRelayCount} p50=${r.earningsRelayP50} p95=${r.earningsRelayP95} max=${r.earningsRelayMax}`,
-			`protocol: controlBytesSent=${r.protocolControlBytesSent} (join=${r.protocolControlBytesSentJoin} tracker=${r.protocolControlBytesSentTracker} repair=${r.protocolControlBytesSentRepair}) bpp=${r.controlBpp.toFixed(4)} (tracker=${r.trackerBpp.toFixed(4)} repair=${r.repairBpp.toFixed(4)}) dataPayloadBytesSent=${r.protocolDataPayloadBytesSent} fetchReqSent=${r.protocolFetchReqSent} ihaveSent=${r.protocolIHaveSent} tracker(a/q/r/f)=${r.protocolTrackerAnnounceSent}/${r.protocolTrackerQuerySent}/${r.protocolTrackerReplySent}/${r.protocolTrackerFeedbackSent} holeFills=${r.protocolHoleFillsFromNeighbor} routeCache(h/m/x/e)=${r.protocolRouteCacheHits}/${r.protocolRouteCacheMisses}/${r.protocolRouteCacheExpirations}/${r.protocolRouteCacheEvictions} routeProxy(q/t/f)=${r.protocolRouteProxyQueries}/${r.protocolRouteProxyTimeouts}/${r.protocolRouteProxyFanout}`,
-			`network: dials=${r.network.dials} connsOpened=${r.network.connectionsOpened} streamsOpened=${r.network.streamsOpened} framesSent=${r.network.framesSent} bytesSent=${r.network.bytesSent} framesDropped=${r.network.framesDropped} bytesDropped=${r.network.bytesDropped}`,
-			...(r.profile
-				? [
-						`profile: cpuUserMs=${r.profile.cpuUserMs.toFixed(1)} cpuSystemMs=${r.profile.cpuSystemMs.toFixed(1)} rssMb=${r.profile.rssMb.toFixed(1)} heapUsedMb=${r.profile.heapUsedMb.toFixed(1)} eldP95Ms=${r.profile.eventLoopDelayP95Ms.toFixed(2)} eldMaxMs=${r.profile.eventLoopDelayMaxMs.toFixed(2)}`,
-					]
-				: []),
-		].join("\n");
-	};
+		`economics: earningsTotal=${r.earningsTotal} relayCount=${r.earningsRelayCount} p50=${r.earningsRelayP50} p95=${r.earningsRelayP95} max=${r.earningsRelayMax}`,
+		`protocol: controlBytesSent=${r.protocolControlBytesSent} (join=${r.protocolControlBytesSentJoin} tracker=${r.protocolControlBytesSentTracker} repair=${r.protocolControlBytesSentRepair}) bpp=${r.controlBpp.toFixed(4)} (tracker=${r.trackerBpp.toFixed(4)} repair=${r.repairBpp.toFixed(4)}) dataPayloadBytesSent=${r.protocolDataPayloadBytesSent} fetchReqSent=${r.protocolFetchReqSent} ihaveSent=${r.protocolIHaveSent} tracker(a/q/r/f)=${r.protocolTrackerAnnounceSent}/${r.protocolTrackerQuerySent}/${r.protocolTrackerReplySent}/${r.protocolTrackerFeedbackSent} holeFills=${r.protocolHoleFillsFromNeighbor} routeCache(h/m/x/e)=${r.protocolRouteCacheHits}/${r.protocolRouteCacheMisses}/${r.protocolRouteCacheExpirations}/${r.protocolRouteCacheEvictions} routeProxy(q/t/f)=${r.protocolRouteProxyQueries}/${r.protocolRouteProxyTimeouts}/${r.protocolRouteProxyFanout}`,
+		`network: dials=${r.network.dials} connsOpened=${r.network.connectionsOpened} streamsOpened=${r.network.streamsOpened} framesSent=${r.network.framesSent} bytesSent=${r.network.bytesSent} framesDropped=${r.network.framesDropped} bytesDropped=${r.network.bytesDropped}`,
+		...(r.profile
+			? [
+					`profile: cpuUserMs=${r.profile.cpuUserMs.toFixed(1)} cpuSystemMs=${r.profile.cpuSystemMs.toFixed(1)} rssMb=${r.profile.rssMb.toFixed(1)} heapUsedMb=${r.profile.heapUsedMb.toFixed(1)} eldP95Ms=${r.profile.eventLoopDelayP95Ms.toFixed(2)} eldMaxMs=${r.profile.eventLoopDelayMaxMs.toFixed(2)}`,
+				]
+			: []),
+	].join("\n");
+};
 
 export const runFanoutTreeSim = async (
 	input: Partial<FanoutTreeSimParams>,
@@ -469,14 +646,20 @@ export const runFanoutTreeSim = async (
 		0,
 		Math.min(params.nodes - exclude.size, Math.floor(params.subscribers)),
 	);
-	const subscriberIndices = pickDistinct(rng, params.nodes, subscriberCount, exclude);
+	const subscriberIndices = pickDistinct(
+		rng,
+		params.nodes,
+		subscriberCount,
+		exclude,
+	);
 
 	// Ensure we have at least one relay when scale > root fanout.
 	const wantsRelays = subscriberCount > Math.max(0, params.rootMaxChildren);
 	let relayTarget = Math.floor(
 		subscriberCount * Math.max(0, Math.min(1, params.relayFraction)),
 	);
-	if (wantsRelays && relayTarget === 0) relayTarget = Math.min(1, subscriberCount);
+	if (wantsRelays && relayTarget === 0)
+		relayTarget = Math.min(1, subscriberCount);
 
 	const relaySet = new Set<number>();
 	const shuffledSubscribers = [...subscriberIndices].sort(() => rng() - 0.5);
@@ -503,7 +686,9 @@ export const runFanoutTreeSim = async (
 		512,
 		Math.min(
 			2_048,
-			Math.ceil((subscriberIndices.length + 1) / Math.max(1, bootstrapIndices.length)),
+			Math.ceil(
+				(subscriberIndices.length + 1) / Math.max(1, bootstrapIndices.length),
+			),
 		),
 	);
 	const maxConnectionsFor = (index: number) => {
@@ -523,28 +708,31 @@ export const runFanoutTreeSim = async (
 		return 60_000;
 	};
 
-	const session = await InMemorySession.disconnected<{ fanout: FanoutTree }>(params.nodes, {
-		network,
-		basePort: 30_000,
-		services: {
-			fanout: (c) => {
-				const index = parseSimPeerIndex(c?.peerId);
-				return new SimFanoutTree(c, {
-					// Keep sims bounded: limit per-node connections to roughly the fanout degree,
-					// so large networks can run in a single process without OOM.
-					connectionManager: {
-						minConnections: 0,
-						maxConnections: maxConnectionsFor(index),
-						dialer: false,
-						pruner: { interval: 1_000 },
-					},
-					seenCacheMax: seenCacheMaxFor(index),
-					seenCacheTtlMs: seenCacheTtlMsFor(index),
-					random: mulberry32((params.seed >>> 0) ^ index),
-				});
+	const session = await InMemorySession.disconnected<{ fanout: FanoutTree }>(
+		params.nodes,
+		{
+			network,
+			basePort: 30_000,
+			services: {
+				fanout: (c) => {
+					const index = parseSimPeerIndex(c?.peerId);
+					return new SimFanoutTree(c, {
+						// Keep sims bounded: limit per-node connections to roughly the fanout degree,
+						// so large networks can run in a single process without OOM.
+						connectionManager: {
+							minConnections: 0,
+							maxConnections: maxConnectionsFor(index),
+							dialer: false,
+							pruner: { interval: 1_000 },
+						},
+						seenCacheMax: seenCacheMaxFor(index),
+						seenCacheTtlMs: seenCacheTtlMsFor(index),
+						random: mulberry32((params.seed >>> 0) ^ index),
+					});
+				},
 			},
 		},
-	});
+	);
 
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const timeoutController = new AbortController();
@@ -561,13 +749,13 @@ export const runFanoutTreeSim = async (
 			}, timeoutMs);
 		}
 
-			const run = async (): Promise<FanoutTreeSimResult> => {
-				const bootstrapAddrs = bootstrapIndices.flatMap((i) =>
-					session.peers[i]!.getMultiaddrs(),
-				);
-				if (bootstrapAddrs.length === 0) {
-					throw new Error("No bootstrap addrs; pass --bootstraps >= 1");
-				}
+		const run = async (): Promise<FanoutTreeSimResult> => {
+			const bootstrapAddrs = bootstrapIndices.flatMap((i) =>
+				session.peers[i]!.getMultiaddrs(),
+			);
+			if (bootstrapAddrs.length === 0) {
+				throw new Error("No bootstrap addrs; pass --bootstraps >= 1");
+			}
 
 			for (const p of session.peers) {
 				p.services.fanout.setBootstraps(bootstrapAddrs);
@@ -577,15 +765,17 @@ export const runFanoutTreeSim = async (
 			const rootId = root.publicKeyHash;
 
 			// Root opens channel and starts announcing capacity to trackers immediately.
-				root.openChannel(params.topic, rootId, {
-					role: "root",
-					msgRate: params.msgRate,
-					msgSize: params.msgSize,
-					...(params.maxDataAgeMs > 0 ? { maxDataAgeMs: params.maxDataAgeMs } : {}),
-					uploadLimitBps: params.rootUploadLimitBps,
-					maxChildren: params.rootMaxChildren,
-					bidPerByte: params.bidPerByte,
-					allowKick: params.allowKick,
+			root.openChannel(params.topic, rootId, {
+				role: "root",
+				msgRate: params.msgRate,
+				msgSize: params.msgSize,
+				...(params.maxDataAgeMs > 0
+					? { maxDataAgeMs: params.maxDataAgeMs }
+					: {}),
+				uploadLimitBps: params.rootUploadLimitBps,
+				maxChildren: params.rootMaxChildren,
+				bidPerByte: params.bidPerByte,
+				allowKick: params.allowKick,
 				repair: params.repair,
 				repairWindowMessages: params.repairWindowMessages,
 				...(params.repairMaxBackfillMessages >= 0
@@ -602,7 +792,10 @@ export const runFanoutTreeSim = async (
 					? { neighborAnnounceIntervalMs: params.neighborAnnounceIntervalMs }
 					: {}),
 				...(params.neighborMeshRefreshIntervalMs >= 0
-					? { neighborMeshRefreshIntervalMs: params.neighborMeshRefreshIntervalMs }
+					? {
+							neighborMeshRefreshIntervalMs:
+								params.neighborMeshRefreshIntervalMs,
+						}
 					: {}),
 				...(params.neighborHaveTtlMs >= 0
 					? { neighborHaveTtlMs: params.neighborHaveTtlMs }
@@ -615,51 +808,63 @@ export const runFanoutTreeSim = async (
 					: {}),
 			});
 
-				// Join subscribers (bounded concurrency).
-				const joinStart = Date.now();
-				const joined = new Array<boolean>(subscriberIndices.length).fill(false);
-				const attachDurationsByPos = new Array<number>(subscriberIndices.length).fill(-1);
-				let joinCompleted = 0;
-				let joinOk = 0;
-				const progressEveryMs = Math.max(250, Math.floor(params.progressEveryMs || 5_000));
-				let joinProgressTimer: ReturnType<typeof setInterval> | undefined;
-				if (params.progress) {
-					console.log(
-						`[fanout-tree-sim] phase=join subscribers=${subscriberIndices.length} relays=${relaySet.size} joinConcurrency=${params.joinConcurrency}`,
+			// Join subscribers (bounded concurrency).
+			const joinStart = Date.now();
+			const joined = new Array<boolean>(subscriberIndices.length).fill(false);
+			const attachDurationsByPos = new Array<number>(
+				subscriberIndices.length,
+			).fill(-1);
+			let joinCompleted = 0;
+			let joinOk = 0;
+			const progressEveryMs = Math.max(
+				250,
+				Math.floor(params.progressEveryMs || 5_000),
+			);
+			let joinProgressTimer: ReturnType<typeof setInterval> | undefined;
+			if (params.progress) {
+				console.log(
+					`[fanout-tree-sim] phase=join subscribers=${subscriberIndices.length} relays=${relaySet.size} joinConcurrency=${params.joinConcurrency}`,
+				);
+				joinProgressTimer = setInterval(() => {
+					const mu = process.memoryUsage();
+					const rssMb = mu.rss / (1024 * 1024);
+					const heapUsedMb = mu.heapUsed / (1024 * 1024);
+					const openConns = Math.max(
+						0,
+						network.metrics.connectionsOpened -
+							network.metrics.connectionsClosed,
 					);
-					joinProgressTimer = setInterval(() => {
-						const mu = process.memoryUsage();
-						const rssMb = mu.rss / (1024 * 1024);
-						const heapUsedMb = mu.heapUsed / (1024 * 1024);
-						const openConns = Math.max(
-							0,
-							network.metrics.connectionsOpened - network.metrics.connectionsClosed,
-						);
-						console.log(
-							`[fanout-tree-sim] join progress ok=${joinOk}/${subscriberIndices.length} done=${joinCompleted}/${subscriberIndices.length} openConns=${openConns} dials=${network.metrics.dials} streamsOpened=${network.metrics.streamsOpened} rssMb=${rssMb.toFixed(1)} heapUsedMb=${heapUsedMb.toFixed(1)}`,
-						);
-					}, progressEveryMs);
-					joinProgressTimer.unref?.();
-				}
-				const joinOne = async (idx: number): Promise<boolean> => {
-					const node = session.peers[idx]!.services.fanout;
-					const isRelay = relaySet.has(idx);
-					try {
-						await node.joinChannel(
-							params.topic,
-							rootId,
-							{
-								msgRate: params.msgRate,
-								msgSize: params.msgSize,
-								...(params.maxDataAgeMs > 0 ? { maxDataAgeMs: params.maxDataAgeMs } : {}),
-								uploadLimitBps: isRelay ? params.relayUploadLimitBps : 0,
-								maxChildren: isRelay ? params.relayMaxChildren : 0,
-								bidPerByte: isRelay ? params.bidPerByteRelay : params.bidPerByteLeaf,
-								allowKick: params.allowKick,
+					console.log(
+						`[fanout-tree-sim] join progress ok=${joinOk}/${subscriberIndices.length} done=${joinCompleted}/${subscriberIndices.length} openConns=${openConns} dials=${network.metrics.dials} streamsOpened=${network.metrics.streamsOpened} rssMb=${rssMb.toFixed(1)} heapUsedMb=${heapUsedMb.toFixed(1)}`,
+					);
+				}, progressEveryMs);
+				joinProgressTimer.unref?.();
+			}
+			const joinOne = async (idx: number): Promise<boolean> => {
+				const node = session.peers[idx]!.services.fanout;
+				const isRelay = relaySet.has(idx);
+				try {
+					await node.joinChannel(
+						params.topic,
+						rootId,
+						{
+							msgRate: params.msgRate,
+							msgSize: params.msgSize,
+							...(params.maxDataAgeMs > 0
+								? { maxDataAgeMs: params.maxDataAgeMs }
+								: {}),
+							uploadLimitBps: isRelay ? params.relayUploadLimitBps : 0,
+							maxChildren: isRelay ? params.relayMaxChildren : 0,
+							bidPerByte: isRelay
+								? params.bidPerByteRelay
+								: params.bidPerByteLeaf,
+							allowKick: params.allowKick,
 							repair: params.repair,
 							repairWindowMessages: params.repairWindowMessages,
 							...(params.repairMaxBackfillMessages >= 0
-								? { repairMaxBackfillMessages: params.repairMaxBackfillMessages }
+								? {
+										repairMaxBackfillMessages: params.repairMaxBackfillMessages,
+									}
 								: {}),
 							repairIntervalMs: params.repairIntervalMs,
 							repairMaxPerReq: params.repairMaxPerReq,
@@ -669,10 +874,16 @@ export const runFanoutTreeSim = async (
 								? { neighborMeshPeers: params.neighborMeshPeers }
 								: {}),
 							...(params.neighborAnnounceIntervalMs >= 0
-								? { neighborAnnounceIntervalMs: params.neighborAnnounceIntervalMs }
+								? {
+										neighborAnnounceIntervalMs:
+											params.neighborAnnounceIntervalMs,
+									}
 								: {}),
 							...(params.neighborMeshRefreshIntervalMs >= 0
-								? { neighborMeshRefreshIntervalMs: params.neighborMeshRefreshIntervalMs }
+								? {
+										neighborMeshRefreshIntervalMs:
+											params.neighborMeshRefreshIntervalMs,
+									}
 								: {}),
 							...(params.neighborHaveTtlMs >= 0
 								? { neighborHaveTtlMs: params.neighborHaveTtlMs }
@@ -685,8 +896,13 @@ export const runFanoutTreeSim = async (
 								: {}),
 						},
 						{
-							timeoutMs: Math.max(10_000, Math.min(120_000, timeoutMs || 120_000)),
-							...(params.maxDataAgeMs > 0 ? { staleAfterMs: params.maxDataAgeMs } : {}),
+							timeoutMs: Math.max(
+								10_000,
+								Math.min(120_000, timeoutMs || 120_000),
+							),
+							...(params.maxDataAgeMs > 0
+								? { staleAfterMs: params.maxDataAgeMs }
+								: {}),
 							...(params.joinReqTimeoutMs >= 0
 								? { joinReqTimeoutMs: params.joinReqTimeoutMs }
 								: {}),
@@ -696,88 +912,131 @@ export const runFanoutTreeSim = async (
 							candidateScoringMode: params.candidateScoringMode,
 							parentUpgradeIntervalMs: params.parentUpgradeIntervalMs,
 							parentUpgradeLeafOnly: params.parentUpgradeLeafOnly,
+							parentUpgradeMinLevelGain: params.parentUpgradeMinLevelGain,
+							parentUpgradeRootMinLevelGain:
+								params.parentUpgradeRootMinLevelGain,
+							parentUpgradeRootMinSubtreeGain:
+								params.parentUpgradeRootMinSubtreeGain,
+							parentUpgradeNonRootMinLevelGain:
+								params.parentUpgradeNonRootMinLevelGain,
+							parentUpgradeMinFreeSlots: params.parentUpgradeMinFreeSlots,
+							parentUpgradeRootMinFreeSlots:
+								params.parentUpgradeRootMinFreeSlots,
+							parentUpgradeMaxChildLoadRatio:
+								params.parentUpgradeMaxChildLoadRatio,
+							parentUpgradeRootMaxChildLoadRatio:
+								params.parentUpgradeRootMaxChildLoadRatio,
+							parentUpgradeCooldownMs: params.parentUpgradeCooldownMs,
+							parentUpgradeFailedBackoffMinMs:
+								params.parentUpgradeFailedBackoffMinMs,
+							parentUpgradeFailedBackoffMaxMs:
+								params.parentUpgradeFailedBackoffMaxMs,
+							parentUpgradeQuietMs: params.parentUpgradeQuietMs,
+							parentUpgradeRepairQuietMs: params.parentUpgradeRepairQuietMs,
+							parentUpgradeMaxPerPeer: params.parentUpgradeMaxPerPeer,
+							parentUpgradeRepairGuard: params.parentUpgradeRepairGuard,
+							parentUpgradeDataGuard: params.parentUpgradeDataGuard,
+							parentUpgradeMode: params.parentUpgradeMode,
+							parentUpgradeVerifyStaleRootCapacity:
+								params.parentUpgradeVerifyStaleRootCapacity,
+							parentUpgradeStaleRootProbeProbability:
+								params.parentUpgradeStaleRootProbeProbability,
+							parentProbeTimeoutMs: params.parentProbeTimeoutMs,
+							parentProbeMaxPerRound: params.parentProbeMaxPerRound,
+							parentProbeMaxLagMessages: params.parentProbeMaxLagMessages,
+							parentProbeRejectCooldownMs: params.parentProbeRejectCooldownMs,
+							parentProbeRejectCooldownMaxMs:
+								params.parentProbeRejectCooldownMaxMs,
+							parentShadowObserveMs: params.parentShadowObserveMs,
+							parentShadowMinObservations: params.parentShadowMinObservations,
 							...(params.bootstrapEnsureIntervalMs >= 0
-								? { bootstrapEnsureIntervalMs: params.bootstrapEnsureIntervalMs }
+								? {
+										bootstrapEnsureIntervalMs: params.bootstrapEnsureIntervalMs,
+									}
 								: {}),
-								...(params.trackerQueryIntervalMs >= 0
-									? { trackerQueryIntervalMs: params.trackerQueryIntervalMs }
-									: {}),
-								...(params.joinAttemptsPerRound >= 0
-									? { joinAttemptsPerRound: params.joinAttemptsPerRound }
-									: {}),
-								...(params.candidateCooldownMs >= 0
-									? { candidateCooldownMs: params.candidateCooldownMs }
-									: {}),
-								signal: timeoutSignal,
-								bootstrapMaxPeers: params.bootstrapMaxPeers,
-							},
-						);
-							return true;
-					} catch {
-						return false;
-					}
-				};
-
-				const runPhase = async (indices: number[]) => {
-					const tasks = indices.map(
-						(pos) => async () => {
-							const ok = await joinOne(subscriberIndices[pos]!);
-							joined[pos] = ok;
-							if (ok) {
-								joinOk += 1;
-								attachDurationsByPos[pos] = Date.now() - joinStart;
-							}
-							joinCompleted += 1;
-							return ok;
+							...(params.trackerQueryIntervalMs >= 0
+								? { trackerQueryIntervalMs: params.trackerQueryIntervalMs }
+								: {}),
+							...(params.joinAttemptsPerRound >= 0
+								? { joinAttemptsPerRound: params.joinAttemptsPerRound }
+								: {}),
+							...(params.candidateCooldownMs >= 0
+								? { candidateCooldownMs: params.candidateCooldownMs }
+								: {}),
+							signal: timeoutSignal,
+							bootstrapMaxPeers: params.bootstrapMaxPeers,
 						},
 					);
-					await runWithConcurrency(tasks, params.joinConcurrency);
-				};
+					return true;
+				} catch {
+					return false;
+				}
+			};
 
-				try {
-					if (params.joinPhases) {
-						const relayPositions: number[] = [];
-						const leafPositions: number[] = [];
-						for (let i = 0; i < subscriberIndices.length; i++) {
-							const idx = subscriberIndices[i]!;
-							if (relaySet.has(idx)) relayPositions.push(i);
-							else leafPositions.push(i);
-						}
-
-						await runPhase(relayPositions);
-
-						const settleMs = Math.max(0, Math.floor(params.joinPhaseSettleMs));
-						if (settleMs > 0) {
-							await delay(settleMs, { signal: timeoutSignal });
-						}
-
-						await runPhase(leafPositions);
-					} else {
-						await runPhase(subscriberIndices.map((_, i) => i));
+			const runPhase = async (indices: number[]) => {
+				const tasks = indices.map((pos) => async () => {
+					const ok = await joinOne(subscriberIndices[pos]!);
+					joined[pos] = ok;
+					if (ok) {
+						joinOk += 1;
+						attachDurationsByPos[pos] = Date.now() - joinStart;
 					}
-				} finally {
-					if (joinProgressTimer) clearInterval(joinProgressTimer);
-				}
-				const joinDone = Date.now();
-				if (params.progress) {
-					const mu = process.memoryUsage();
-					const rssMb = mu.rss / (1024 * 1024);
-					const heapUsedMb = mu.heapUsed / (1024 * 1024);
-					const openConns = Math.max(
-						0,
-						network.metrics.connectionsOpened - network.metrics.connectionsClosed,
-					);
-					console.log(
-						`[fanout-tree-sim] phase=join_done ok=${joinOk}/${subscriberIndices.length} openConns=${openConns} rssMb=${rssMb.toFixed(1)} heapUsedMb=${heapUsedMb.toFixed(1)} joinMs=${joinDone - joinStart}`,
-					);
-				}
+					joinCompleted += 1;
+					return ok;
+				});
+				await runWithConcurrency(tasks, params.joinConcurrency);
+			};
 
-			const attachDurations = attachDurationsByPos.filter((d) => d >= 0).sort((a, b) => a - b);
+			try {
+				if (params.joinPhases) {
+					const relayPositions: number[] = [];
+					const leafPositions: number[] = [];
+					for (let i = 0; i < subscriberIndices.length; i++) {
+						const idx = subscriberIndices[i]!;
+						if (relaySet.has(idx)) relayPositions.push(i);
+						else leafPositions.push(i);
+					}
+
+					await runPhase(relayPositions);
+
+					const settleMs = Math.max(0, Math.floor(params.joinPhaseSettleMs));
+					if (settleMs > 0) {
+						await delay(settleMs, { signal: timeoutSignal });
+					}
+
+					await runPhase(leafPositions);
+				} else {
+					await runPhase(subscriberIndices.map((_, i) => i));
+				}
+			} finally {
+				if (joinProgressTimer) clearInterval(joinProgressTimer);
+			}
+			const joinDone = Date.now();
+			if (params.progress) {
+				const mu = process.memoryUsage();
+				const rssMb = mu.rss / (1024 * 1024);
+				const heapUsedMb = mu.heapUsed / (1024 * 1024);
+				const openConns = Math.max(
+					0,
+					network.metrics.connectionsOpened - network.metrics.connectionsClosed,
+				);
+				console.log(
+					`[fanout-tree-sim] phase=join_done ok=${joinOk}/${subscriberIndices.length} openConns=${openConns} rssMb=${rssMb.toFixed(1)} heapUsedMb=${heapUsedMb.toFixed(1)} joinMs=${joinDone - joinStart}`,
+				);
+			}
+
+			const attachDurations = attachDurationsByPos
+				.filter((d) => d >= 0)
+				.sort((a, b) => a - b);
 			const attachSamples = attachDurations.length;
-			const attachP50 = attachSamples > 0 ? quantile(attachDurations, 0.5) : NaN;
-			const attachP95 = attachSamples > 0 ? quantile(attachDurations, 0.95) : NaN;
-			const attachP99 = attachSamples > 0 ? quantile(attachDurations, 0.99) : NaN;
-			const attachMax = attachSamples > 0 ? attachDurations[attachSamples - 1]! : NaN;
+			const attachP50 =
+				attachSamples > 0 ? quantile(attachDurations, 0.5) : NaN;
+			const attachP95 =
+				attachSamples > 0 ? quantile(attachDurations, 0.95) : NaN;
+			const attachP99 =
+				attachSamples > 0 ? quantile(attachDurations, 0.99) : NaN;
+			const attachMax =
+				attachSamples > 0 ? attachDurations[attachSamples - 1]! : NaN;
 
 			const joinedHashes = new Set<string>(
 				subscriberIndices
@@ -785,23 +1044,36 @@ export const runFanoutTreeSim = async (
 					.map((i) => session.peers[i]!.services.fanout.publicKeyHash),
 			);
 			const joinedCount = joinedHashes.size;
-			const joinedSubscriberIndices = subscriberIndices.filter((_, i) => joined[i]);
+			const joinedSubscriberIndices = subscriberIndices.filter(
+				(_, i) => joined[i],
+			);
 
 			const computeTreeShapeStats = () => {
 				const levels: number[] = [];
 				const levelByIndex: number[] = new Array(params.nodes).fill(NaN);
+				const childrenByHash = new Map<string, string[]>();
 				const childrenCounts: number[] = [];
 				let treeOrphans = 0;
 				let treeRootChildren = 0;
 				for (let i = 0; i < session.peers.length; i++) {
-					const s = session.peers[i]!.services.fanout.getChannelStats(params.topic, rootId);
+					const hash = session.peers[i]!.services.fanout.publicKeyHash;
+					const s = session.peers[i]!.services.fanout.getChannelStats(
+						params.topic,
+						rootId,
+					);
 					if (!s) continue;
+					if (!childrenByHash.has(hash)) childrenByHash.set(hash, []);
 					if (Number.isFinite(s.level)) {
 						levels.push(s.level);
 						levelByIndex[i] = s.level;
 					}
 					if (s.effectiveMaxChildren > 0) {
 						childrenCounts.push(s.children);
+					}
+					if (s.parent) {
+						const children = childrenByHash.get(s.parent) ?? [];
+						children.push(hash);
+						childrenByHash.set(s.parent, children);
 					}
 					if (s.level === 0) {
 						treeRootChildren = s.children;
@@ -814,11 +1086,15 @@ export const runFanoutTreeSim = async (
 				const treeMaxLevel = levels.length > 0 ? levels[levels.length - 1]! : 0;
 				const treeLevelP95 = levels.length > 0 ? quantile(levels, 0.95) : 0;
 				const treeLevelAvg =
-					levels.length > 0 ? levels.reduce((a, b) => a + b, 0) / levels.length : 0;
+					levels.length > 0
+						? levels.reduce((a, b) => a + b, 0) / levels.length
+						: 0;
 				const treeChildrenP95 =
 					childrenCounts.length > 0 ? quantile(childrenCounts, 0.95) : 0;
 				const treeChildrenMax =
-					childrenCounts.length > 0 ? childrenCounts[childrenCounts.length - 1]! : 0;
+					childrenCounts.length > 0
+						? childrenCounts[childrenCounts.length - 1]!
+						: 0;
 				return {
 					treeMaxLevel,
 					treeLevelP95,
@@ -828,6 +1104,7 @@ export const runFanoutTreeSim = async (
 					treeChildrenMax,
 					treeRootChildren,
 					levelByIndex,
+					childrenByHash,
 				};
 			};
 
@@ -835,7 +1112,10 @@ export const runFanoutTreeSim = async (
 
 			// Underlay (libp2p connection graph) shortest paths, used to spot wasted
 			// open connections that don't contribute to the overlay tree.
-			const underlayAdj: Array<Set<number>> = Array.from({ length: params.nodes }, () => new Set());
+			const underlayAdj: Array<Set<number>> = Array.from(
+				{ length: params.nodes },
+				() => new Set(),
+			);
 			for (let i = 0; i < session.peers.length; i++) {
 				for (const c of session.peers[i]!.getConnections()) {
 					// @ts-ignore - bench shim uses the same field name as real libp2p connections
@@ -869,7 +1149,9 @@ export const runFanoutTreeSim = async (
 				.filter((d) => Number.isFinite(d))
 				.sort((a, b) => a - b);
 			const formationUnderlayDistP95 =
-				formationUnderlayDists.length > 0 ? quantile(formationUnderlayDists, 0.95) : NaN;
+				formationUnderlayDists.length > 0
+					? quantile(formationUnderlayDists, 0.95)
+					: NaN;
 			const formationUnderlayDistMax =
 				formationUnderlayDists.length > 0
 					? formationUnderlayDists[formationUnderlayDists.length - 1]!
@@ -879,15 +1161,24 @@ export const runFanoutTreeSim = async (
 				.map((i) => {
 					const overlay = formationTree.levelByIndex[i]!;
 					const under = underlayDist[i]!;
-					if (!Number.isFinite(overlay) || !Number.isFinite(under) || under <= 0) return NaN;
+					if (
+						!Number.isFinite(overlay) ||
+						!Number.isFinite(under) ||
+						under <= 0
+					)
+						return NaN;
 					return overlay / under;
 				})
 				.filter((x) => Number.isFinite(x))
 				.sort((a, b) => a - b);
 			const formationStretchP95 =
-				formationStretches.length > 0 ? quantile(formationStretches, 0.95) : NaN;
+				formationStretches.length > 0
+					? quantile(formationStretches, 0.95)
+					: NaN;
 			const formationStretchMax =
-				formationStretches.length > 0 ? formationStretches[formationStretches.length - 1]! : NaN;
+				formationStretches.length > 0
+					? formationStretches[formationStretches.length - 1]!
+					: NaN;
 
 			const formationOrphanPct =
 				joinedCount === 0 ? 0 : (100 * formationTree.treeOrphans) / joinedCount;
@@ -901,13 +1192,18 @@ export const runFanoutTreeSim = async (
 				formationStretchPenalty;
 
 			const churnController = new AbortController();
-			const churnSignal = anySignal([timeoutSignal, churnController.signal]) as AbortSignal & {
+			const churnSignal = anySignal([
+				timeoutSignal,
+				churnController.signal,
+			]) as AbortSignal & {
 				clear?: () => void;
 			};
 			let churnEvents = 0;
 			let churnedPeersTotal = 0;
 			const wantsMaintenance =
-				(params.churnEveryMs > 0 && params.churnDownMs > 0 && params.churnFraction > 0) ||
+				(params.churnEveryMs > 0 &&
+					params.churnDownMs > 0 &&
+					params.churnFraction > 0) ||
 				params.parentUpgradeIntervalMs > 0 ||
 				params.assertMaxOrphans > 0 ||
 				params.assertMaxOrphanArea > 0 ||
@@ -933,21 +1229,37 @@ export const runFanoutTreeSim = async (
 			let maintMaxReparentsPerPeer = 0;
 
 			// Delivery tracking
+			const firstBatchMessages = Math.max(0, Math.floor(params.messages));
+			const secondBatchMessages = Math.max(
+				0,
+				Math.floor(params.secondBatchMessages),
+			);
+			const totalMessages = firstBatchMessages + secondBatchMessages;
+			const secondBatchStartSeq = firstBatchMessages;
 			const publishAt = new Map<number, number>();
 			const joinedHashList = [...joinedHashes];
 			const hashToIndex = new Map<string, number>();
 			for (let i = 0; i < joinedHashList.length; i++) {
 				hashToIndex.set(joinedHashList[i]!, i);
 			}
-			const bitsetBytes = Math.ceil(Math.max(0, params.messages) / 8);
-			const receivedBits = joinedHashList.map(() => new Uint8Array(bitsetBytes));
+			const bitsetBytes = Math.ceil(totalMessages / 8);
+			const receivedBits = joinedHashList.map(
+				() => new Uint8Array(bitsetBytes),
+			);
 			const receivedCounts = new Uint32Array(joinedHashList.length);
+			const secondBatchReceivedCounts = new Uint32Array(joinedHashList.length);
 
 			let duplicates = 0;
 			let deliveredWithinDeadline = 0;
 			let deliveredSamples: number[] = [];
+			let secondBatchDeliveredWithinDeadline = 0;
+			let secondBatchDeliveredSamples: number[] = [];
+			const secondBatchDeliveredSamplesByPeer = joinedHashList.map(
+				() => [] as number[],
+			);
 			const sampleCap = Math.max(1, Math.floor(params.maxLatencySamples));
 			let sampleSeen = 0;
+			let secondBatchSampleSeen = 0;
 
 			const makeOnData = (localHash: string) => (ev: any) => {
 				const d = ev?.detail;
@@ -958,7 +1270,7 @@ export const runFanoutTreeSim = async (
 
 				const index = hashToIndex.get(localHash);
 				if (index == null) return; // not joined / not tracked
-				if (seq >= params.messages) return;
+				if (seq >= totalMessages) return;
 
 				const bits = receivedBits[index]!;
 				const byteIndex = seq >>> 3;
@@ -970,6 +1282,9 @@ export const runFanoutTreeSim = async (
 				}
 				bits[byteIndex] |= mask;
 				receivedCounts[index] += 1;
+				if (seq >= secondBatchStartSeq) {
+					secondBatchReceivedCounts[index] += 1;
+				}
 
 				const sentAt = publishAt.get(seq);
 				if (sentAt != null) {
@@ -983,6 +1298,19 @@ export const runFanoutTreeSim = async (
 					} else {
 						const j = int(rng, sampleSeen);
 						if (j < sampleCap) deliveredSamples[j] = latency;
+					}
+					if (seq >= secondBatchStartSeq) {
+						if (params.deadlineMs > 0 && latency <= params.deadlineMs) {
+							secondBatchDeliveredWithinDeadline += 1;
+						}
+						secondBatchDeliveredSamplesByPeer[index]!.push(latency);
+						secondBatchSampleSeen += 1;
+						if (secondBatchDeliveredSamples.length < sampleCap) {
+							secondBatchDeliveredSamples.push(latency);
+						} else {
+							const j = int(rng, secondBatchSampleSeen);
+							if (j < sampleCap) secondBatchDeliveredSamples[j] = latency;
+						}
 					}
 				}
 			};
@@ -1125,7 +1453,8 @@ export const runFanoutTreeSim = async (
 							snap.orphansOnline <= baselineOrphans &&
 							pendingRecoveryStarts.length > 0
 						) {
-							for (const s of pendingRecoveryStarts) recoveryDurations.push(now - s);
+							for (const s of pendingRecoveryStarts)
+								recoveryDurations.push(now - s);
 							pendingRecoveryStarts.length = 0;
 						}
 
@@ -1139,7 +1468,8 @@ export const runFanoutTreeSim = async (
 					}
 					maintDurationMs = Math.max(0, endAt - startAt);
 
-					for (const s of pendingRecoveryStarts) recoveryDurations.push(endAt - s);
+					for (const s of pendingRecoveryStarts)
+						recoveryDurations.push(endAt - s);
 					pendingRecoveryStarts.length = 0;
 				}
 			};
@@ -1162,8 +1492,15 @@ export const runFanoutTreeSim = async (
 					);
 					const chosen = new Set<number>();
 					const maxAttempts = Math.max(10, target * 20);
-					for (let tries = 0; chosen.size < target && tries < maxAttempts; tries++) {
-						const idx = joinedSubscriberIndices[int(rng, joinedSubscriberIndices.length)]!;
+					for (
+						let tries = 0;
+						chosen.size < target && tries < maxAttempts;
+						tries++
+					) {
+						const idx =
+							joinedSubscriberIndices[
+								int(rng, joinedSubscriberIndices.length)
+							]!;
 						const peer = session.peers[idx]!;
 						if (network.isPeerOffline(peer.peerId)) continue;
 						chosen.add(idx);
@@ -1171,21 +1508,22 @@ export const runFanoutTreeSim = async (
 					if (chosen.size === 0) continue;
 
 					churnEvents += 1;
-						churnedPeersTotal += chosen.size;
+					churnedPeersTotal += chosen.size;
 
-						const now = Date.now();
-						if (wantsMaintenance) pendingRecoveryStarts.push(now);
-						await Promise.all(
-							[...chosen].map(async (idx) => {
-								const peer = session.peers[idx]!;
-								network.setPeerOffline(peer.peerId, downMs, now);
+					const now = Date.now();
+					if (wantsMaintenance) pendingRecoveryStarts.push(now);
+					await Promise.all(
+						[...chosen].map(async (idx) => {
+							const peer = session.peers[idx]!;
+							network.setPeerOffline(peer.peerId, downMs, now);
 							await network.disconnectPeer(peer.peerId);
 						}),
 					);
 				}
-				};
+			};
 
 			const publishStart = Date.now();
+			let publishActiveMs = 0;
 			if (wantsMaintenance) {
 				for (const p of session.peers) {
 					const nodeHash = p.services.fanout.publicKeyHash;
@@ -1202,7 +1540,7 @@ export const runFanoutTreeSim = async (
 			const maintenancePromise = maintenanceLoop().catch(() => {});
 			const churnPromise = churnLoop().catch(() => {});
 			try {
-				for (let seq = 0; seq < params.messages; seq++) {
+				for (let seq = 0; seq < firstBatchMessages; seq++) {
 					if (timeoutSignal.aborted) {
 						throw timeoutSignal.reason ?? new Error("fanout-tree-sim aborted");
 					}
@@ -1213,19 +1551,101 @@ export const runFanoutTreeSim = async (
 					}
 				}
 			} finally {
+				if (firstBatchMessages > 0) {
+					publishActiveMs += Math.max(0, Date.now() - publishStart);
+				}
 				churnController.abort();
 				await churnPromise;
 				churnSignal.clear?.();
 			}
-			const publishDone = Date.now();
+			let publishDone = Date.now();
 
 			// Signal end-of-stream so subscribers can detect tail gaps and repair.
-			if (params.repair && params.messages > 0) {
-				await root.publishEnd(params.topic, rootId, params.messages);
+			if (params.repair && firstBatchMessages > 0) {
+				await root.publishEnd(params.topic, rootId, firstBatchMessages);
 			}
 
 			if (params.settleMs > 0) {
-				await delay(params.settleMs, { signal: timeoutSignal });
+				const lateAfterMs = Math.max(
+					-1,
+					Math.floor(params.lateRootConnectAfterMs),
+				);
+				if (lateAfterMs >= 0 && lateAfterMs < params.settleMs) {
+					if (lateAfterMs > 0) {
+						await delay(lateAfterMs, { signal: timeoutSignal });
+					}
+
+					const lateMaxChildren = Math.max(
+						0,
+						Math.floor(params.lateRootMaxChildren),
+					);
+					if (lateMaxChildren > 0) {
+						const id = root.getChannelId(params.topic, rootId);
+						const ch = (root as any).channelsBySuffixKey?.get?.(id.suffixKey);
+						if (ch) {
+							ch.maxChildren = Math.max(ch.maxChildren ?? 0, lateMaxChildren);
+							ch.effectiveMaxChildren = Math.max(
+								ch.effectiveMaxChildren ?? 0,
+								lateMaxChildren,
+							);
+							void (root as any)
+								.announceToTrackers?.(ch, timeoutSignal)
+								?.catch?.(() => {});
+						}
+					}
+
+					const fraction = Math.max(
+						0,
+						Math.min(1, Number(params.lateRootConnectFraction)),
+					);
+					const target = Math.min(
+						joinedSubscriberIndices.length,
+						Math.max(0, Math.ceil(joinedSubscriberIndices.length * fraction)),
+					);
+					for (let i = 0; i < target; i++) {
+						const idx = joinedSubscriberIndices[i]!;
+						if (idx === rootIndex) continue;
+						try {
+							await session.peers[idx]!.dial(
+								session.peers[rootIndex]!.getMultiaddrs(),
+							);
+						} catch {
+							// best-effort late underlay shortcut
+						}
+					}
+
+					const remaining = Math.max(0, params.settleMs - lateAfterMs);
+					if (remaining > 0) {
+						await delay(remaining, { signal: timeoutSignal });
+					}
+				} else {
+					await delay(params.settleMs, { signal: timeoutSignal });
+				}
+			}
+			if (secondBatchMessages > 0) {
+				const secondPublishStart = Date.now();
+				for (let seq = secondBatchStartSeq; seq < totalMessages; seq++) {
+					if (timeoutSignal.aborted) {
+						throw timeoutSignal.reason ?? new Error("fanout-tree-sim aborted");
+					}
+					publishAt.set(seq, Date.now());
+					await root.publishData(params.topic, rootId, payload);
+					if (params.intervalMs > 0) {
+						await delay(params.intervalMs, { signal: timeoutSignal });
+					}
+				}
+				publishDone = Date.now();
+				publishActiveMs += Math.max(0, publishDone - secondPublishStart);
+				if (params.repair) {
+					await root.publishEnd(params.topic, rootId, totalMessages);
+				}
+				const secondSettleMs = Math.max(
+					0,
+					Math.floor(params.secondBatchSettleMs),
+				);
+				if (secondSettleMs > 0) {
+					await delay(secondSettleMs, { signal: timeoutSignal });
+				}
 			}
 			maintenanceController.abort();
 			await maintenancePromise;
@@ -1259,79 +1679,90 @@ export const runFanoutTreeSim = async (
 			const maintOrphanArea = maintOrphanAreaMs / 1_000;
 
 			// Compute delivery
-			const expected = joinedCount * params.messages;
+			const expected = joinedCount * totalMessages;
 			let delivered = 0;
 			for (const c of receivedCounts) delivered += c;
+			const secondBatchExpected = joinedCount * secondBatchMessages;
+			let secondBatchDelivered = 0;
+			for (const c of secondBatchReceivedCounts) secondBatchDelivered += c;
 
 			const joinedPct =
 				subscriberCount === 0 ? 100 : (100 * joinedCount) / subscriberCount;
 			const deliveredPct = expected === 0 ? 100 : (100 * delivered) / expected;
 			const deliveredWithinDeadlinePct =
 				expected === 0 ? 100 : (100 * deliveredWithinDeadline) / expected;
+			const secondBatchDeliveredPct =
+				secondBatchExpected === 0
+					? 100
+					: (100 * secondBatchDelivered) / secondBatchExpected;
+			const secondBatchDeliveredWithinDeadlinePct =
+				secondBatchExpected === 0
+					? 100
+					: (100 * secondBatchDeliveredWithinDeadline) / secondBatchExpected;
 
-				// Internal protocol drops (from upload shaping / overload logic)
-				let droppedForwardsTotal = 0;
-				let droppedForwardsMax = 0;
-				let droppedForwardsMaxNode: string | undefined;
-				for (const p of session.peers) {
-					const s = p.services.fanout.getChannelStats(params.topic, rootId);
-					if (!s) continue;
-					droppedForwardsTotal += s.droppedForwards;
-					if (s.droppedForwards > droppedForwardsMax) {
-						droppedForwardsMax = s.droppedForwards;
-						droppedForwardsMaxNode = p.services.fanout.publicKeyHash;
+			// Internal protocol drops (from upload shaping / overload logic)
+			let droppedForwardsTotal = 0;
+			let droppedForwardsMax = 0;
+			let droppedForwardsMaxNode: string | undefined;
+			for (const p of session.peers) {
+				const s = p.services.fanout.getChannelStats(params.topic, rootId);
+				if (!s) continue;
+				droppedForwardsTotal += s.droppedForwards;
+				if (s.droppedForwards > droppedForwardsMax) {
+					droppedForwardsMax = s.droppedForwards;
+					droppedForwardsMaxNode = p.services.fanout.publicKeyHash;
+				}
+			}
+
+			// Tree shape stats (best-effort)
+			const tree = computeTreeShapeStats();
+			const treeMaxLevel = tree.treeMaxLevel;
+			const treeLevelP95 = tree.treeLevelP95;
+			const treeLevelAvg = tree.treeLevelAvg;
+			const treeOrphans = tree.treeOrphans;
+			const treeChildrenP95 = tree.treeChildrenP95;
+			const treeChildrenMax = tree.treeChildrenMax;
+			const treeRootChildren = tree.treeRootChildren;
+
+			// Stream backpressure stats (queued bytes)
+			const queuedBytesSamples: number[] = [];
+			let streamQueuedBytesTotal = 0;
+			let streamQueuedBytesMax = 0;
+			let streamQueuedBytesMaxNode: string | undefined;
+			for (const p of session.peers) {
+				const q = Math.max(0, Math.floor(p.services.fanout.getQueuedBytes()));
+				streamQueuedBytesTotal += q;
+				queuedBytesSamples.push(q);
+				if (q > streamQueuedBytesMax) {
+					streamQueuedBytesMax = q;
+					streamQueuedBytesMaxNode = p.services.fanout.publicKeyHash;
+				}
+			}
+			queuedBytesSamples.sort((a, b) => a - b);
+			const streamQueuedBytesP95 =
+				queuedBytesSamples.length > 0 ? quantile(queuedBytesSamples, 0.95) : 0;
+
+			const streamQueuedBytesByLane: number[] = [];
+			for (const p of session.peers) {
+				for (const ps of p.services.fanout.peers.values()) {
+					const byLane: number[] =
+						// @ts-ignore - optional debug helper (may not exist in built typings yet)
+						(ps as any).getOutboundQueuedBytesByLane?.() ?? [0, 0, 0, 0];
+					for (let lane = 0; lane < byLane.length; lane++) {
+						streamQueuedBytesByLane[lane] =
+							(streamQueuedBytesByLane[lane] ?? 0) + (byLane[lane] ?? 0);
 					}
 				}
+			}
+			for (let lane = 0; lane < 4; lane++) {
+				streamQueuedBytesByLane[lane] = streamQueuedBytesByLane[lane] ?? 0;
+			}
 
-				// Tree shape stats (best-effort)
-				const tree = computeTreeShapeStats();
-				const treeMaxLevel = tree.treeMaxLevel;
-				const treeLevelP95 = tree.treeLevelP95;
-				const treeLevelAvg = tree.treeLevelAvg;
-				const treeOrphans = tree.treeOrphans;
-				const treeChildrenP95 = tree.treeChildrenP95;
-				const treeChildrenMax = tree.treeChildrenMax;
-				const treeRootChildren = tree.treeRootChildren;
-
-				// Stream backpressure stats (queued bytes)
-				const queuedBytesSamples: number[] = [];
-				let streamQueuedBytesTotal = 0;
-				let streamQueuedBytesMax = 0;
-				let streamQueuedBytesMaxNode: string | undefined;
-				for (const p of session.peers) {
-					const q = Math.max(0, Math.floor(p.services.fanout.getQueuedBytes()));
-					streamQueuedBytesTotal += q;
-					queuedBytesSamples.push(q);
-					if (q > streamQueuedBytesMax) {
-						streamQueuedBytesMax = q;
-						streamQueuedBytesMaxNode = p.services.fanout.publicKeyHash;
-					}
-				}
-				queuedBytesSamples.sort((a, b) => a - b);
-				const streamQueuedBytesP95 =
-					queuedBytesSamples.length > 0 ? quantile(queuedBytesSamples, 0.95) : 0;
-
-				const streamQueuedBytesByLane: number[] = [];
-				for (const p of session.peers) {
-					for (const ps of p.services.fanout.peers.values()) {
-						const byLane: number[] =
-							// @ts-ignore - optional debug helper (may not exist in built typings yet)
-							(ps as any).getOutboundQueuedBytesByLane?.() ?? [0, 0, 0, 0];
-						for (let lane = 0; lane < byLane.length; lane++) {
-							streamQueuedBytesByLane[lane] =
-								(streamQueuedBytesByLane[lane] ?? 0) + (byLane[lane] ?? 0);
-						}
-					}
-				}
-				for (let lane = 0; lane < 4; lane++) {
-					streamQueuedBytesByLane[lane] = streamQueuedBytesByLane[lane] ?? 0;
-				}
-
-				// Peak upload vs cap (best-effort; counts framed bytes, including overhead)
-				const uploadCapByHash = new Map<string, number>();
-				if (params.rootUploadLimitBps > 0) {
-					uploadCapByHash.set(root.publicKeyHash, params.rootUploadLimitBps);
-				}
+			// Peak upload vs cap (best-effort; counts framed bytes, including overhead)
+			const uploadCapByHash = new Map<string, number>();
+			if (params.rootUploadLimitBps > 0) {
+				uploadCapByHash.set(root.publicKeyHash, params.rootUploadLimitBps);
+			}
 			for (let i = 0; i < subscriberIndices.length; i++) {
 				if (!joined[i]) continue;
 				const idx = subscriberIndices[i]!;
@@ -1344,6 +1775,13 @@ export const runFanoutTreeSim = async (
 			let maxUploadFracPct = 0;
 			let maxUploadNode: string | undefined;
 			let maxUploadBps = 0;
+			const rootUploadBps =
+				session.network.peerMetricsByHash.get(root.publicKeyHash)
+					?.maxBytesPerSecond ?? 0;
+			const rootUploadFracPct =
+				params.rootUploadLimitBps > 0
+					? (100 * rootUploadBps) / params.rootUploadLimitBps
+					: 0;
 			for (const [hash, pm] of session.network.peerMetricsByHash) {
 				const cap = uploadCapByHash.get(hash);
 				if (!cap || cap <= 0) continue;
@@ -1356,6 +1794,17 @@ export const runFanoutTreeSim = async (
 			}
 
 			deliveredSamples.sort((a, b) => a - b);
+			secondBatchDeliveredSamples.sort((a, b) => a - b);
+			const secondBatchLatencyP95ByHash: Record<string, number> = {};
+			for (let i = 0; i < joinedHashList.length; i++) {
+				const samples = secondBatchDeliveredSamplesByPeer[i]!;
+				if (samples.length === 0) continue;
+				samples.sort((a, b) => a - b);
+				secondBatchLatencyP95ByHash[joinedHashList[i]!] = quantile(
+					samples,
+					0.95,
+				);
+			}
 
 			let protocolControlSends = 0;
 			let protocolControlBytesSent = 0;
@@ -1384,43 +1833,133 @@ export const runFanoutTreeSim = async (
 			let protocolRouteProxyQueries = 0;
 			let protocolRouteProxyTimeouts = 0;
 			let protocolRouteProxyFanout = 0;
-					let staleForwardsDroppedTotal = 0;
-					let staleForwardsDroppedMax = 0;
-					let staleForwardsDroppedMaxNode: string | undefined;
-					let dataWriteDropsTotal = 0;
-					let dataWriteDropsMax = 0;
-					let dataWriteDropsMaxNode: string | undefined;
-					let reparentDisconnectTotal = 0;
-					let reparentStaleTotal = 0;
-					let reparentKickedTotal = 0;
-					let reparentUpgradeTotal = 0;
-					let earningsTotal = 0;
-					const earningsByHash = new Map<string, number>();
+			let staleForwardsDroppedTotal = 0;
+			let staleForwardsDroppedMax = 0;
+			let staleForwardsDroppedMaxNode: string | undefined;
+			let dataWriteDropsTotal = 0;
+			let dataWriteDropsMax = 0;
+			let dataWriteDropsMaxNode: string | undefined;
+			let reparentDisconnectTotal = 0;
+			let reparentStaleTotal = 0;
+			let reparentKickedTotal = 0;
+			let reparentUpgradeTotal = 0;
+			const upgradedPeerHashes: string[] = [];
+			let reparentUpgradeSkipLeafTotal = 0;
+			let reparentUpgradeSkipRepairTotal = 0;
+			let reparentUpgradeSkipDataTotal = 0;
+			let reparentUpgradeSkipCooldownTotal = 0;
+			let reparentUpgradeSkipQuietTotal = 0;
+			let reparentUpgradeSkipBudgetTotal = 0;
+			let reparentUpgradeSkipCandidateLevelTotal = 0;
+			let reparentUpgradeSkipCandidateSlotsTotal = 0;
+			let reparentUpgradeSkipCandidatePressureTotal = 0;
+			let reparentUpgradeSkipRootPressureTotal = 0;
+			let reparentUpgradeSkipProbeNoReplyTotal = 0;
+			let reparentUpgradeSkipProbeNotRootedTotal = 0;
+			let reparentUpgradeSkipProbeRepairTotal = 0;
+			let reparentUpgradeSkipProbeLagTotal = 0;
+			let reparentUpgradeSkipProbeOverloadedTotal = 0;
+			let reparentUpgradeSkipProbeCooldownTotal = 0;
+			let parentProbeReqSentTotal = 0;
+			let parentProbeReqReceivedTotal = 0;
+			let parentProbeReplySentTotal = 0;
+			let parentProbeReplyReceivedTotal = 0;
+			let parentUpgradeRootReservationCreatedTotal = 0;
+			let parentUpgradeRootReservationConsumedTotal = 0;
+			let parentUpgradeRootReservationRejectedTotal = 0;
+			let parentUpgradeRootReservationMarginRejectedTotal = 0;
+			let parentUpgradeRootReservationBlockedTotal = 0;
+			let parentUpgradeRootReservationExpiredTotal = 0;
+			let parentShadowStartTotal = 0;
+			let parentShadowObserveTotal = 0;
+			let parentShadowPromoteTotal = 0;
+			let parentShadowResetTotal = 0;
+			let parentShadowRejectNoReplyTotal = 0;
+			let parentShadowRejectNotRootedTotal = 0;
+			let parentShadowRejectCapacityTotal = 0;
+			let parentShadowRejectRepairTotal = 0;
+			let parentShadowRejectLagTotal = 0;
+			let parentShadowRejectOverloadedTotal = 0;
+			let parentShadowRejectLevelTotal = 0;
+			let earningsTotal = 0;
+			const earningsByHash = new Map<string, number>();
 
-					for (const p of session.peers) {
-						const nodeHash = p.services.fanout.publicKeyHash;
-						const m = p.services.fanout.getChannelMetrics(params.topic, rootId);
-						staleForwardsDroppedTotal += m.staleForwardsDropped;
-						if (m.staleForwardsDropped > staleForwardsDroppedMax) {
-							staleForwardsDroppedMax = m.staleForwardsDropped;
-							staleForwardsDroppedMaxNode = nodeHash;
-						}
-						dataWriteDropsTotal += m.dataWriteDrops;
-						if (m.dataWriteDrops > dataWriteDropsMax) {
-							dataWriteDropsMax = m.dataWriteDrops;
-							dataWriteDropsMaxNode = nodeHash;
-						}
-						reparentDisconnectTotal += m.reparentDisconnect;
-						reparentStaleTotal += m.reparentStale;
-						reparentKickedTotal += m.reparentKicked;
-						reparentUpgradeTotal += m.reparentUpgrade;
-						earningsTotal += m.earnings;
-						earningsByHash.set(nodeHash, m.earnings);
-						protocolControlSends += m.controlSends;
-						protocolControlBytesSent += m.controlBytesSent;
-						protocolControlBytesSentJoin += m.controlBytesSentJoin;
-						protocolControlBytesSentRepair += m.controlBytesSentRepair;
-						protocolControlBytesSentTracker += m.controlBytesSentTracker;
+			for (const p of session.peers) {
+				const nodeHash = p.services.fanout.publicKeyHash;
+				const m = p.services.fanout.getChannelMetrics(params.topic, rootId);
+				staleForwardsDroppedTotal += m.staleForwardsDropped;
+				if (m.staleForwardsDropped > staleForwardsDroppedMax) {
+					staleForwardsDroppedMax = m.staleForwardsDropped;
+					staleForwardsDroppedMaxNode = nodeHash;
+				}
+				dataWriteDropsTotal += m.dataWriteDrops;
+				if (m.dataWriteDrops > dataWriteDropsMax) {
+					dataWriteDropsMax = m.dataWriteDrops;
+					dataWriteDropsMaxNode = nodeHash;
+				}
+				reparentDisconnectTotal += m.reparentDisconnect;
+				reparentStaleTotal += m.reparentStale;
+				reparentKickedTotal += m.reparentKicked;
+				reparentUpgradeTotal += m.reparentUpgrade;
+				if (m.reparentUpgrade > 0) upgradedPeerHashes.push(nodeHash);
+				reparentUpgradeSkipLeafTotal += m.reparentUpgradeSkipLeaf;
+				reparentUpgradeSkipRepairTotal += m.reparentUpgradeSkipRepair;
+				reparentUpgradeSkipDataTotal += m.reparentUpgradeSkipData;
+				reparentUpgradeSkipCooldownTotal += m.reparentUpgradeSkipCooldown;
+				reparentUpgradeSkipQuietTotal += m.reparentUpgradeSkipQuiet;
+				reparentUpgradeSkipBudgetTotal += m.reparentUpgradeSkipBudget;
+				reparentUpgradeSkipCandidateLevelTotal +=
+					m.reparentUpgradeSkipCandidateLevel;
+				reparentUpgradeSkipCandidateSlotsTotal +=
+					m.reparentUpgradeSkipCandidateSlots;
+				reparentUpgradeSkipCandidatePressureTotal +=
+					m.reparentUpgradeSkipCandidatePressure;
+				reparentUpgradeSkipRootPressureTotal +=
+					m.reparentUpgradeSkipRootPressure;
+				reparentUpgradeSkipProbeNoReplyTotal +=
+					m.reparentUpgradeSkipProbeNoReply;
+				reparentUpgradeSkipProbeNotRootedTotal +=
+					m.reparentUpgradeSkipProbeNotRooted;
+				reparentUpgradeSkipProbeRepairTotal += m.reparentUpgradeSkipProbeRepair;
+				reparentUpgradeSkipProbeLagTotal += m.reparentUpgradeSkipProbeLag;
+				reparentUpgradeSkipProbeOverloadedTotal +=
+					m.reparentUpgradeSkipProbeOverloaded;
+				reparentUpgradeSkipProbeCooldownTotal +=
+					m.reparentUpgradeSkipProbeCooldown;
+				parentProbeReqSentTotal += m.parentProbeReqSent;
+				parentProbeReqReceivedTotal += m.parentProbeReqReceived;
+				parentProbeReplySentTotal += m.parentProbeReplySent;
+				parentProbeReplyReceivedTotal += m.parentProbeReplyReceived;
+				parentUpgradeRootReservationCreatedTotal +=
+					m.parentUpgradeRootReservationCreated;
+				parentUpgradeRootReservationConsumedTotal +=
+					m.parentUpgradeRootReservationConsumed;
+				parentUpgradeRootReservationRejectedTotal +=
+					m.parentUpgradeRootReservationRejected;
+				parentUpgradeRootReservationMarginRejectedTotal +=
+					m.parentUpgradeRootReservationMarginRejected;
+				parentUpgradeRootReservationBlockedTotal +=
+					m.parentUpgradeRootReservationBlocked;
+				parentUpgradeRootReservationExpiredTotal +=
+					m.parentUpgradeRootReservationExpired;
+				parentShadowStartTotal += m.parentShadowStart;
+				parentShadowObserveTotal += m.parentShadowObserve;
+				parentShadowPromoteTotal += m.parentShadowPromote;
+				parentShadowResetTotal += m.parentShadowReset;
+				parentShadowRejectNoReplyTotal += m.parentShadowRejectNoReply;
+				parentShadowRejectNotRootedTotal += m.parentShadowRejectNotRooted;
+				parentShadowRejectCapacityTotal += m.parentShadowRejectCapacity;
+				parentShadowRejectRepairTotal += m.parentShadowRejectRepair;
+				parentShadowRejectLagTotal += m.parentShadowRejectLag;
+				parentShadowRejectOverloadedTotal += m.parentShadowRejectOverloaded;
+				parentShadowRejectLevelTotal += m.parentShadowRejectLevel;
+				earningsTotal += m.earnings;
+				earningsByHash.set(nodeHash, m.earnings);
+				protocolControlSends += m.controlSends;
+				protocolControlBytesSent += m.controlBytesSent;
+				protocolControlBytesSentJoin += m.controlBytesSentJoin;
+				protocolControlBytesSentRepair += m.controlBytesSentRepair;
+				protocolControlBytesSentTracker += m.controlBytesSentTracker;
 				protocolControlReceives += m.controlReceives;
 				protocolControlBytesReceived += m.controlBytesReceived;
 				protocolDataSends += m.dataSends;
@@ -1436,20 +1975,38 @@ export const runFanoutTreeSim = async (
 				protocolTrackerFeedbackSent += m.trackerFeedbackSent;
 				protocolCacheHitsServed += m.cacheHitsServed;
 				protocolHoleFillsFromNeighbor += m.holeFillsFromNeighbor;
-					protocolRouteCacheHits += m.routeCacheHits;
-					protocolRouteCacheMisses += m.routeCacheMisses;
-					protocolRouteCacheExpirations += m.routeCacheExpirations;
-					protocolRouteCacheEvictions += m.routeCacheEvictions;
-					protocolRouteProxyQueries += m.routeProxyQueries;
-					protocolRouteProxyTimeouts += m.routeProxyTimeouts;
-					protocolRouteProxyFanout += m.routeProxyFanout;
+				protocolRouteCacheHits += m.routeCacheHits;
+				protocolRouteCacheMisses += m.routeCacheMisses;
+				protocolRouteCacheExpirations += m.routeCacheExpirations;
+				protocolRouteCacheEvictions += m.routeCacheEvictions;
+				protocolRouteProxyQueries += m.routeProxyQueries;
+				protocolRouteProxyTimeouts += m.routeProxyTimeouts;
+				protocolRouteProxyFanout += m.routeProxyFanout;
+			}
+
+			const upgradedBranchHashSet = new Set<string>();
+			for (const hash of upgradedPeerHashes) {
+				const stack = [hash];
+				while (stack.length > 0) {
+					const next = stack.pop()!;
+					if (upgradedBranchHashSet.has(next)) continue;
+					if (joinedHashes.has(next)) upgradedBranchHashSet.add(next);
+					for (const child of tree.childrenByHash.get(next) ?? []) {
+						stack.push(child);
+					}
 				}
+			}
+			const upgradedBranchPeerHashes = [...upgradedBranchHashSet];
 
 			const relayHashes = [...uploadCapByHash.keys()];
-			const relayEarnings = relayHashes.map((h) => earningsByHash.get(h) ?? 0).sort((a, b) => a - b);
+			const relayEarnings = relayHashes
+				.map((h) => earningsByHash.get(h) ?? 0)
+				.sort((a, b) => a - b);
 			const earningsRelayCount = relayEarnings.length;
-			const earningsRelayP50 = earningsRelayCount > 0 ? quantile(relayEarnings, 0.5) : 0;
-			const earningsRelayP95 = earningsRelayCount > 0 ? quantile(relayEarnings, 0.95) : 0;
+			const earningsRelayP50 =
+				earningsRelayCount > 0 ? quantile(relayEarnings, 0.5) : 0;
+			const earningsRelayP95 =
+				earningsRelayCount > 0 ? quantile(relayEarnings, 0.95) : 0;
 			const earningsRelayMax =
 				earningsRelayCount > 0 ? relayEarnings[relayEarnings.length - 1]! : 0;
 
@@ -1461,7 +2018,9 @@ export const runFanoutTreeSim = async (
 
 			const deliveredPayloadBytes = delivered * Math.max(0, params.msgSize);
 			const controlBpp =
-				deliveredPayloadBytes <= 0 ? 0 : protocolControlBytesSent / deliveredPayloadBytes;
+				deliveredPayloadBytes <= 0
+					? 0
+					: protocolControlBytesSent / deliveredPayloadBytes;
 			const trackerBpp =
 				deliveredPayloadBytes <= 0
 					? 0
@@ -1497,65 +2056,119 @@ export const runFanoutTreeSim = async (
 				formationStretchP95,
 				formationStretchMax,
 				formationScore,
-				publishMs: publishDone - publishStart,
+				publishMs: publishActiveMs,
 				expected,
 				delivered,
 				deliveredPct,
 				deliveredWithinDeadline,
 				deliveredWithinDeadlinePct,
 				duplicates,
+				secondBatchExpected,
+				secondBatchDelivered,
+				secondBatchDeliveredPct,
+				secondBatchDeliveredWithinDeadline,
+				secondBatchDeliveredWithinDeadlinePct,
+				secondBatchLatencySamples: secondBatchDeliveredSamples.length,
+				secondBatchLatencyP50: quantile(secondBatchDeliveredSamples, 0.5),
+				secondBatchLatencyP95: quantile(secondBatchDeliveredSamples, 0.95),
+				secondBatchLatencyP99: quantile(secondBatchDeliveredSamples, 0.99),
+				secondBatchLatencyMax:
+					secondBatchDeliveredSamples[secondBatchDeliveredSamples.length - 1] ??
+					NaN,
+				secondBatchLatencyP95ByHash,
 				latencySamples: deliveredSamples.length,
 				latencyP50: quantile(deliveredSamples, 0.5),
 				latencyP95: quantile(deliveredSamples, 0.95),
 				latencyP99: quantile(deliveredSamples, 0.99),
-					latencyMax: deliveredSamples[deliveredSamples.length - 1] ?? NaN,
-					droppedForwardsTotal,
-					droppedForwardsMax,
-					droppedForwardsMaxNode,
-						staleForwardsDroppedTotal,
-						staleForwardsDroppedMax,
-						staleForwardsDroppedMaxNode,
-						dataWriteDropsTotal,
-						dataWriteDropsMax,
-						dataWriteDropsMaxNode,
-						reparentDisconnectTotal,
-						reparentStaleTotal,
-						reparentKickedTotal,
-						reparentUpgradeTotal,
-						treeMaxLevel,
-						treeLevelP95,
-						treeLevelAvg,
-					treeOrphans,
-					treeChildrenP95,
-					treeChildrenMax,
-					treeRootChildren,
-					maxUploadBps,
-					maxUploadFracPct,
-					maxUploadNode,
-					streamQueuedBytesTotal,
-					streamQueuedBytesMax,
-					streamQueuedBytesP95,
-					streamQueuedBytesMaxNode,
-						streamQueuedBytesByLane,
-						churnEvents,
-						churnedPeersTotal,
-						maintDurationMs,
-						maintSamples,
-						maintMaxOrphans,
-						maintOrphanArea,
-						maintRecoveryCount,
-						maintRecoveryP50Ms,
-						maintRecoveryP95Ms,
-						maintReparentsPerMin,
-						maintMaxReparentsPerPeer,
-						maintLevelP95DriftMax,
-						maintChildrenP95DriftMax,
-						overheadFactorData,
-						controlBpp,
-						trackerBpp,
-					repairBpp,
-					earningsTotal,
-					earningsRelayCount,
+				latencyMax: deliveredSamples[deliveredSamples.length - 1] ?? NaN,
+				droppedForwardsTotal,
+				droppedForwardsMax,
+				droppedForwardsMaxNode,
+				staleForwardsDroppedTotal,
+				staleForwardsDroppedMax,
+				staleForwardsDroppedMaxNode,
+				dataWriteDropsTotal,
+				dataWriteDropsMax,
+				dataWriteDropsMaxNode,
+				reparentDisconnectTotal,
+				reparentStaleTotal,
+				reparentKickedTotal,
+				reparentUpgradeTotal,
+				upgradedPeerHashes,
+				upgradedBranchPeerHashes,
+				reparentUpgradeSkipLeafTotal,
+				reparentUpgradeSkipRepairTotal,
+				reparentUpgradeSkipDataTotal,
+				reparentUpgradeSkipCooldownTotal,
+				reparentUpgradeSkipQuietTotal,
+				reparentUpgradeSkipBudgetTotal,
+				reparentUpgradeSkipCandidateLevelTotal,
+				reparentUpgradeSkipCandidateSlotsTotal,
+				reparentUpgradeSkipCandidatePressureTotal,
+				reparentUpgradeSkipRootPressureTotal,
+				reparentUpgradeSkipProbeNoReplyTotal,
+				reparentUpgradeSkipProbeNotRootedTotal,
+				reparentUpgradeSkipProbeRepairTotal,
+				reparentUpgradeSkipProbeLagTotal,
+				reparentUpgradeSkipProbeOverloadedTotal,
+				reparentUpgradeSkipProbeCooldownTotal,
+				parentProbeReqSentTotal,
+				parentProbeReqReceivedTotal,
+				parentProbeReplySentTotal,
+				parentProbeReplyReceivedTotal,
+				parentUpgradeRootReservationCreatedTotal,
+				parentUpgradeRootReservationConsumedTotal,
+				parentUpgradeRootReservationRejectedTotal,
+				parentUpgradeRootReservationMarginRejectedTotal,
+				parentUpgradeRootReservationBlockedTotal,
+				parentUpgradeRootReservationExpiredTotal,
+				parentShadowStartTotal,
+				parentShadowObserveTotal,
+				parentShadowPromoteTotal,
+				parentShadowResetTotal,
+				parentShadowRejectNoReplyTotal,
+				parentShadowRejectNotRootedTotal,
+				parentShadowRejectCapacityTotal,
+				parentShadowRejectRepairTotal,
+				parentShadowRejectLagTotal,
+				parentShadowRejectOverloadedTotal,
+				parentShadowRejectLevelTotal,
+				treeMaxLevel,
+				treeLevelP95,
+				treeLevelAvg,
+				treeOrphans,
+				treeChildrenP95,
+				treeChildrenMax,
+				treeRootChildren,
+				maxUploadBps,
+				maxUploadFracPct,
+				maxUploadNode,
+				rootUploadBps,
+				rootUploadFracPct,
+				streamQueuedBytesTotal,
+				streamQueuedBytesMax,
+				streamQueuedBytesP95,
+				streamQueuedBytesMaxNode,
+				streamQueuedBytesByLane,
+				churnEvents,
+				churnedPeersTotal,
+				maintDurationMs,
+				maintSamples,
+				maintMaxOrphans,
+				maintOrphanArea,
+				maintRecoveryCount,
+				maintRecoveryP50Ms,
+				maintRecoveryP95Ms,
+				maintReparentsPerMin,
+				maintMaxReparentsPerPeer,
+				maintLevelP95DriftMax,
+				maintChildrenP95DriftMax,
+				overheadFactorData,
+				controlBpp,
+				trackerBpp,
+				repairBpp,
+				earningsTotal,
+				earningsRelayCount,
 				earningsRelayP50,
 				earningsRelayP95,
 				earningsRelayMax,
@@ -1590,64 +2203,66 @@ export const runFanoutTreeSim = async (
 			};
 		};
 
-			const abortPromise =
-				timeoutMs > 0
-					? new Promise<never>((_, reject) => {
-							const onAbort = () => {
-								timeoutSignal.removeEventListener("abort", onAbort);
-								const reason = timeoutSignal.reason;
-								reject(
-									reason instanceof Error
-										? reason
-										: new Error(
-												typeof reason === "string"
-													? reason
-													: "fanout-tree-sim aborted",
-											),
-								);
-							};
-							if (timeoutSignal.aborted) {
-								onAbort();
-								return;
-							}
-							timeoutSignal.addEventListener("abort", onAbort, { once: true });
-						})
-					: undefined;
+		const abortPromise =
+			timeoutMs > 0
+				? new Promise<never>((_, reject) => {
+						const onAbort = () => {
+							timeoutSignal.removeEventListener("abort", onAbort);
+							const reason = timeoutSignal.reason;
+							reject(
+								reason instanceof Error
+									? reason
+									: new Error(
+											typeof reason === "string"
+												? reason
+												: "fanout-tree-sim aborted",
+										),
+							);
+						};
+						if (timeoutSignal.aborted) {
+							onAbort();
+							return;
+						}
+						timeoutSignal.addEventListener("abort", onAbort, { once: true });
+					})
+				: undefined;
 
-			const result = abortPromise ? await Promise.race([run(), abortPromise]) : await run();
+		const result = abortPromise
+			? await Promise.race([run(), abortPromise])
+			: await run();
 
-			if (profileEnabled && profileCpuStart) {
-				try {
-					profileEld?.disable();
-				} catch {
-					// ignore
-				}
-				const cpu = process.cpuUsage(profileCpuStart);
-				const mem = process.memoryUsage();
-				const p95 = profileEld ? profileEld.percentile(95) / 1e6 : 0;
-				const max = profileEld ? profileEld.max / 1e6 : 0;
-				result.profile = {
-					cpuUserMs: cpu.user / 1_000,
-					cpuSystemMs: cpu.system / 1_000,
-					rssMb: mem.rss / 1e6,
-					heapUsedMb: mem.heapUsed / 1e6,
-					eventLoopDelayP95Ms: p95,
-					eventLoopDelayMaxMs: max,
-				};
-			}
-
-			return result;
-		} finally {
-			if (timer) clearTimeout(timer);
+		if (profileEnabled && profileCpuStart) {
 			try {
 				profileEld?.disable();
 			} catch {
 				// ignore
 			}
-			try {
-				await session.stop();
-			} catch {
-				// ignore teardown aborts in the shim
+			const cpu = process.cpuUsage(profileCpuStart);
+			const mem = process.memoryUsage();
+			const p95 = profileEld ? profileEld.percentile(95) / 1e6 : 0;
+			const max = profileEld ? profileEld.max / 1e6 : 0;
+			result.profile = {
+				cpuUserMs: cpu.user / 1_000,
+				cpuSystemMs: cpu.system / 1_000,
+				rssMb: mem.rss / 1e6,
+				heapUsedMb: mem.heapUsed / 1e6,
+				eventLoopDelayP95Ms: p95,
+				eventLoopDelayMaxMs: max,
+			};
+		}
+
+		return result;
+	} finally {
+		if (timer) clearTimeout(timer);
+		try {
+			profileEld?.disable();
+		} catch {
+			// ignore
+		}
+		try {
+			await session.stop();
+		} catch {
+			// ignore teardown aborts in the shim
 		}
 	}
 };

@@ -2,14 +2,18 @@ import { getPublicKeyFromPeerId, randomBytes } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import {
 	PubSubData,
+	type DataEvent as PubSubDataEvent,
 	PubSubMessage,
 	Subscribe,
-	type DataEvent as PubSubDataEvent,
 } from "@peerbit/pubsub-interface";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
-import { FanoutTree, TopicControlPlane, TopicRootControlPlane } from "../src/index.js";
+import {
+	FanoutTree,
+	TopicControlPlane,
+	TopicRootControlPlane,
+} from "../src/index.js";
 
 describe("pubsub (fanout topics)", function () {
 	const createSessionServices = (
@@ -68,11 +72,13 @@ describe("pubsub (fanout topics)", function () {
 			return fanout;
 		};
 
-		const session: TestSession<{ pubsub: TopicControlPlane; fanout: FanoutTree }> =
-			await TestSession.connected(
-				peerCount,
-				createSessionServices(topicRootControlPlane, getOrCreateFanout, options),
-			);
+		const session: TestSession<{
+			pubsub: TopicControlPlane;
+			fanout: FanoutTree;
+		}> = await TestSession.connected(
+			peerCount,
+			createSessionServices(topicRootControlPlane, getOrCreateFanout, options),
+		);
 
 		const configureBootstraps = (trackerIndices: number[]) => {
 			const addrs: any[] = [];
@@ -133,7 +139,10 @@ describe("pubsub (fanout topics)", function () {
 		return TestSession.disconnected<{
 			pubsub: TopicControlPlane;
 			fanout: FanoutTree;
-		}>(peerCount, createSessionServices(topicRootControlPlane, getOrCreateFanout, options));
+		}>(
+			peerCount,
+			createSessionServices(topicRootControlPlane, getOrCreateFanout, options),
+		);
 	};
 
 	const topicHash32 = (topic: string) => {
@@ -146,7 +155,8 @@ describe("pubsub (fanout topics)", function () {
 	};
 
 	it("delivers over sharded fanout (no direct subscription gossip)", async () => {
-		const { session, configureBootstraps, configureShards } = await createSession(4);
+		const { session, configureBootstraps, configureShards } =
+			await createSession(4);
 
 		try {
 			const TOPIC = "fanout-backed-topic";
@@ -164,7 +174,10 @@ describe("pubsub (fanout topics)", function () {
 					try {
 						if (message.data) {
 							const decoded = PubSubMessage.from(message.data);
-							if (decoded instanceof Subscribe && decoded.topics.includes(TOPIC)) {
+							if (
+								decoded instanceof Subscribe &&
+								decoded.topics.includes(TOPIC)
+							) {
 								subscribesByPeer[i] += 1;
 							}
 						}
@@ -192,7 +205,9 @@ describe("pubsub (fanout topics)", function () {
 			}
 
 			const payload = new Uint8Array([1, 2, 3, 4]);
-			await session.peers[2].services.pubsub.publish(payload, { topics: [TOPIC] });
+			await session.peers[2].services.pubsub.publish(payload, {
+				topics: [TOPIC],
+			});
 
 			await waitForResolved(() => {
 				for (const [i, received] of receivedByPeer.entries()) {
@@ -221,7 +236,8 @@ describe("pubsub (fanout topics)", function () {
 	});
 
 	it("exposes unified route hints from directstream and fanout", async () => {
-		const { session, configureBootstraps, configureShards } = await createSession(2);
+		const { session, configureBootstraps, configureShards } =
+			await createSession(2);
 
 		try {
 			const TOPIC = "fanout-route-hints-topic";
@@ -247,7 +263,8 @@ describe("pubsub (fanout topics)", function () {
 	});
 
 	it("preserves publish id/priority/signatures for fanout-backed topics", async () => {
-		const { session, configureBootstraps, configureShards } = await createSession(3);
+		const { session, configureBootstraps, configureShards } =
+			await createSession(3);
 
 		try {
 			const TOPIC = "fanout-signed-topic";
@@ -285,7 +302,9 @@ describe("pubsub (fanout topics)", function () {
 			expect(ev.message.header.priority).to.equal(priority);
 			expect(await ev.message.verify(true)).to.equal(true);
 			expect(
-				ev.message.header.signatures?.publicKeys[0]?.equals(publisher.publicKey),
+				ev.message.header.signatures?.publicKeys[0]?.equals(
+					publisher.publicKey,
+				),
 			).to.equal(true);
 		} finally {
 			await session.stop();
@@ -301,10 +320,10 @@ describe("pubsub (fanout topics)", function () {
 			shardCount,
 			shardTopicPrefix,
 		} = await createSession(4, {
-				pubsub: {
-					fanoutPublishIdleCloseMs,
-				} as any,
-			});
+			pubsub: {
+				fanoutPublishIdleCloseMs,
+			} as any,
+		});
 
 		try {
 			const TOPIC = "fanout-ephemeral-publish-topic";
@@ -336,16 +355,16 @@ describe("pubsub (fanout topics)", function () {
 
 			// Publisher is not subscribed, but should have an ephemeral shard channel right after publish.
 			await waitForResolved(() => {
-				expect(Boolean((publisher as any).fanoutChannels?.get(shardTopic))).to.equal(
-					true,
-				);
+				expect(
+					Boolean((publisher as any).fanoutChannels?.get(shardTopic)),
+				).to.equal(true);
 			});
 
 			// After idle timeout, the ephemeral join should be closed.
 			await waitForResolved(() => {
-				expect(Boolean((publisher as any).fanoutChannels?.get(shardTopic))).to.equal(
-					false,
-				);
+				expect(
+					Boolean((publisher as any).fanoutChannels?.get(shardTopic)),
+				).to.equal(false);
 			});
 		} finally {
 			await session.stop();
@@ -454,7 +473,11 @@ describe("pubsub (fanout topics)", function () {
 			const pendingSubscribe = receiver.subscribe(topic);
 			const payload = new Uint8Array([7, 9, 11, 13]);
 			const strictMessage = await (sender as any).createMessage(
-				new PubSubData({ topics: [topic], data: payload, strict: true }).bytes(),
+				new PubSubData({
+					topics: [topic],
+					data: payload,
+					strict: true,
+				}).bytes(),
 				{
 					mode: new SilentDelivery({
 						to: [receiver.publicKeyHash],
@@ -567,6 +590,11 @@ describe("pubsub (fanout topics)", function () {
 	const runLateDirectRootScenario = async (options: {
 		topic: string;
 		parentUpgradeIntervalMs?: number;
+		parentUpgradeDataGuard?: boolean;
+		parentUpgradeMode?: "direct" | "probe" | "shadow";
+		parentUpgradeRootMinLevelGain?: number;
+		parentShadowObserveMs?: number;
+		parentShadowMinObservations?: number;
 		expectedParentAfterDirect: "relay" | "root";
 	}) => {
 		const session = await createDisconnectedSession(
@@ -577,6 +605,27 @@ describe("pubsub (fanout topics)", function () {
 						pubsub: {
 							fanoutJoin: {
 								parentUpgradeIntervalMs: options.parentUpgradeIntervalMs,
+								...(options.parentUpgradeDataGuard === undefined
+									? {}
+									: { parentUpgradeDataGuard: options.parentUpgradeDataGuard }),
+								...(options.parentUpgradeMode === undefined
+									? {}
+									: { parentUpgradeMode: options.parentUpgradeMode }),
+								...(options.parentUpgradeRootMinLevelGain === undefined
+									? {}
+									: {
+											parentUpgradeRootMinLevelGain:
+												options.parentUpgradeRootMinLevelGain,
+										}),
+								...(options.parentShadowObserveMs === undefined
+									? {}
+									: { parentShadowObserveMs: options.parentShadowObserveMs }),
+								...(options.parentShadowMinObservations === undefined
+									? {}
+									: {
+											parentShadowMinObservations:
+												options.parentShadowMinObservations,
+										}),
 							},
 						},
 					},
@@ -586,7 +635,8 @@ describe("pubsub (fanout topics)", function () {
 		const publisherPeer = session.peers[2]!;
 		const publisherFanout = publisherPeer.services.pubsub.fanout as any;
 		const originalPublisherDial = publisherPeer.dial.bind(publisherPeer);
-		const originalSendControl = publisherFanout._sendControl.bind(publisherFanout);
+		const originalSendControl =
+			publisherFanout._sendControl.bind(publisherFanout);
 
 		try {
 			const topic = options.topic;
@@ -596,7 +646,9 @@ describe("pubsub (fanout topics)", function () {
 			const rootHash = root.publicKeyHash;
 			const relayHash = relay.publicKeyHash;
 			const shardTopic = (root as any).getShardTopicForUserTopic(topic);
-			const rootAddrs = new Set(rootPeer.getMultiaddrs().map((a) => a.toString()));
+			const rootAddrs = new Set(
+				rootPeer.getMultiaddrs().map((a) => a.toString()),
+			);
 			let allowDirectRootTraffic = false;
 			publisherPeer.dial = (async (addrs: any) => {
 				const list = Array.isArray(addrs) ? addrs : [addrs];
@@ -646,7 +698,8 @@ describe("pubsub (fanout topics)", function () {
 				expect(stats?.parent).to.equal(relayHash);
 			});
 			expect(
-				publisher.fanout.getChannelMetrics(shardTopic, rootHash).reparentUpgrade,
+				publisher.fanout.getChannelMetrics(shardTopic, rootHash)
+					.reparentUpgrade,
 			).to.equal(0);
 
 			allowDirectRootTraffic = true;
@@ -667,14 +720,19 @@ describe("pubsub (fanout topics)", function () {
 					expect(statsAfterDirect?.parent).to.equal(rootHash);
 				});
 				expect(
-					publisher.fanout.getChannelMetrics(shardTopic, rootHash).reparentUpgrade,
+					publisher.fanout.getChannelMetrics(shardTopic, rootHash)
+						.reparentUpgrade,
 				).to.be.greaterThan(0);
 			} else {
 				await delay(700);
-				const statsAfterDirect = publisher.fanout.getChannelStats(shardTopic, rootHash);
+				const statsAfterDirect = publisher.fanout.getChannelStats(
+					shardTopic,
+					rootHash,
+				);
 				expect(statsAfterDirect?.parent).to.equal(relayHash);
 				expect(
-					publisher.fanout.getChannelMetrics(shardTopic, rootHash).reparentUpgrade,
+					publisher.fanout.getChannelMetrics(shardTopic, rootHash)
+						.reparentUpgrade,
 				).to.equal(0);
 			}
 		} finally {
@@ -695,6 +753,32 @@ describe("pubsub (fanout topics)", function () {
 		await runLateDirectRootScenario({
 			topic: "fanout-direct-reparent-to-root",
 			parentUpgradeIntervalMs: 200,
+			parentUpgradeDataGuard: false,
+			parentUpgradeRootMinLevelGain: 1,
+			expectedParentAfterDirect: "root",
+		});
+	});
+
+	it("can probe then reparent to the root when a late direct edge becomes available", async () => {
+		await runLateDirectRootScenario({
+			topic: "fanout-probe-reparent-to-root",
+			parentUpgradeIntervalMs: 200,
+			parentUpgradeDataGuard: false,
+			parentUpgradeMode: "probe",
+			parentUpgradeRootMinLevelGain: 1,
+			expectedParentAfterDirect: "root",
+		});
+	});
+
+	it("can shadow-observe then reparent to the root when a late direct edge becomes available", async () => {
+		await runLateDirectRootScenario({
+			topic: "fanout-shadow-reparent-to-root",
+			parentUpgradeIntervalMs: 200,
+			parentUpgradeDataGuard: false,
+			parentUpgradeMode: "shadow",
+			parentUpgradeRootMinLevelGain: 1,
+			parentShadowObserveMs: 0,
+			parentShadowMinObservations: 2,
 			expectedParentAfterDirect: "root",
 		});
 	});

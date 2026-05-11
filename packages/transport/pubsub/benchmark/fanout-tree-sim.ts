@@ -7,13 +7,12 @@
  * - pull repair does not explode (when enabled),
  * without using real sockets/crypto.
  */
-
 import {
+	type FanoutTreeSimParams,
+	type FanoutTreeSimResult,
 	formatFanoutTreeSimResult,
 	resolveFanoutTreeSimParams,
 	runFanoutTreeSim,
-	type FanoutTreeSimParams,
-	type FanoutTreeSimResult,
 } from "./fanout-tree-sim-lib.js";
 
 const HELP_TEXT = [
@@ -28,6 +27,8 @@ const HELP_TEXT = [
 	"  --subscribers N              total subscribers (default: nodes-1-bootstraps)",
 	"  --relayFraction F            fraction of subscribers acting as relays (default: 0.25)",
 	"  --messages M                 messages to publish (default: 200)",
+	"  --secondBatchMessages M      extra messages after settle/late topology (default: 0)",
+	"  --secondBatchSettleMs MS     wait after second batch before measuring (default: 0)",
 	"  --msgRate R                  publish rate (msg/s, default: 30)",
 	"  --msgSize BYTES              payload bytes (default: 1024)",
 	"  --intervalMs MS              override publish interval (default: 0 => derived from msgRate)",
@@ -64,11 +65,40 @@ const HELP_TEXT = [
 	"  --joinConcurrency N           parallel join tasks (default: 256)",
 	"  --joinPhases 0|1              join relays first, then leaves (default: 0)",
 	"  --joinPhaseSettleMs MS        wait between join phases (default: 2000)",
+	"  --lateRootConnectAfterMs MS   after publish, connect subscribers directly to root (-1 = off)",
+	"  --lateRootMaxChildren N       after publish, raise root child capacity (0 = unchanged)",
+	"  --lateRootConnectFraction F   fraction of joined subscribers to connect to root (default: 1)",
 	"  --joinReqTimeoutMs MS         join request timeout per candidate (default: 2000)",
 	"  --candidateShuffleTopK N      shuffle only within top K candidates (default: 8)",
 	"  --candidateScoringMode MODE   join scoring (ranked-shuffle|ranked-strict|weighted, default: ranked-shuffle)",
 	"  --parentUpgradeIntervalMs MS  min interval between proactive parent-upgrade checks (default: 0, off)",
 	"  --parentUpgradeLeafOnly 0|1   restrict proactive parent upgrades to leaves (default: 1)",
+	"  --parentUpgradeMinLevelGain N min tree-level gain for proactive upgrades (default: 1)",
+	"  --parentUpgradeRootMinLevelGain N min tree-level gain for root upgrade targets (default: 3)",
+	"  --parentUpgradeRootMinSubtreeGain N min level-gain times local branch size for root upgrade targets (default: parentUpgradeRootMinLevelGain)",
+	"  --parentUpgradeNonRootMinLevelGain N min tree-level gain for non-root upgrade targets (default: 2)",
+	"  --parentUpgradeMinFreeSlots N min advertised free slots for upgrade targets (default: 8)",
+	"  --parentUpgradeRootMinFreeSlots N min advertised free slots for root upgrade targets (default: parentUpgradeMinFreeSlots)",
+	"  --parentUpgradeMaxChildLoadRatio R max child load ratio after accepting upgrade child (default: 0.5)",
+	"  --parentUpgradeRootMaxChildLoadRatio R max root child load ratio after accepting upgrade child (default: min(parentUpgradeMaxChildLoadRatio, 0.4))",
+	"  --parentUpgradeCooldownMs MS  cooldown after a successful proactive upgrade (default: 5000)",
+	"  --parentUpgradeFailedBackoffMinMs MS initial backoff after failed probe/shadow rounds (default: 5000)",
+	"  --parentUpgradeFailedBackoffMaxMs MS max backoff after failed probe/shadow rounds (default: 60000)",
+	"  --parentUpgradeQuietMs MS     min quiet time since parent data before upgrades (default: 5000)",
+	"  --parentUpgradeRepairQuietMs MS min quiet time since repair before upgrades (default: parentUpgradeQuietMs)",
+	"  --parentUpgradeMaxPerPeer N   max successful proactive upgrades per peer, 0 = unlimited (default: 2)",
+	"  --parentUpgradeRepairGuard 0|1 skip proactive upgrades while missing data (default: 1)",
+	"  --parentUpgradeDataGuard 0|1 wait for finite channel completion before upgrades (default: 1)",
+	"  --parentUpgradeMode MODE      proactive upgrade mode (direct|probe|shadow, default: direct)",
+	"  --parentUpgradeVerifyStaleRootCapacity 0|1 allow shadow probes against tracker-full root (default: 0)",
+	"  --parentUpgradeStaleRootProbeProbability R sample tracker-full root probes per peer (default: 0.25)",
+	"  --parentProbeTimeoutMs MS     timeout for probe-mode parent checks (default: 500)",
+	"  --parentProbeMaxPerRound N    max probe-mode candidates per upgrade check (default: 2)",
+	"  --parentProbeMaxLagMessages N max sequence lag for probe-mode candidates (default: 0)",
+	"  --parentProbeRejectCooldownMs MS cooldown after rejected parent probes (default: 10000)",
+	"  --parentProbeRejectCooldownMaxMs MS max adaptive cooldown after rejected parent probes (default: 60000)",
+	"  --parentShadowObserveMs MS    min healthy shadow observation window before promotion (default: 2000)",
+	"  --parentShadowMinObservations N min successful shadow observations before promotion (default: 2)",
 	"  --bootstrapEnsureIntervalMs MS  min interval between bootstrap re-dials (-1 = FanoutTree default)",
 	"  --trackerQueryIntervalMs MS     min interval between tracker queries (-1 = FanoutTree default)",
 	"  --joinAttemptsPerRound N        max join candidates tried per retry round (-1 = FanoutTree default)",
@@ -278,6 +308,16 @@ const ARG_SPECS: ArgSpec[] = [
 	{ flag: "--subscribers", key: "subscribers", parse: parseNumber },
 	{ flag: "--relayFraction", key: "relayFraction", parse: parseNumber },
 	{ flag: "--messages", key: "messages", parse: parseNumber },
+	{
+		flag: "--secondBatchMessages",
+		key: "secondBatchMessages",
+		parse: parseNumber,
+	},
+	{
+		flag: "--secondBatchSettleMs",
+		key: "secondBatchSettleMs",
+		parse: parseNumber,
+	},
 	{ flag: "--msgRate", key: "msgRate", parse: parseNumber },
 	{ flag: "--msgSize", key: "msgSize", parse: parseNumber },
 	{ flag: "--intervalMs", key: "intervalMs", parse: parseNumber },
@@ -287,54 +327,255 @@ const ARG_SPECS: ArgSpec[] = [
 	{ flag: "--timeoutMs", key: "timeoutMs", parse: parseNumber },
 	{ flag: "--seed", key: "seed", parse: parseNumber },
 	{ flag: "--topic", key: "topic", parse: parseString },
-	{ flag: "--rootUploadLimitBps", key: "rootUploadLimitBps", parse: parseNumber },
+	{
+		flag: "--rootUploadLimitBps",
+		key: "rootUploadLimitBps",
+		parse: parseNumber,
+	},
 	{ flag: "--rootMaxChildren", key: "rootMaxChildren", parse: parseNumber },
-	{ flag: "--relayUploadLimitBps", key: "relayUploadLimitBps", parse: parseNumber },
+	{
+		flag: "--relayUploadLimitBps",
+		key: "relayUploadLimitBps",
+		parse: parseNumber,
+	},
 	{ flag: "--relayMaxChildren", key: "relayMaxChildren", parse: parseNumber },
 	{ flag: "--allowKick", key: "allowKick", parse: parseBool01("0") },
 	{ flag: "--bidPerByte", key: "bidPerByte", parse: parseNumber },
 	{ flag: "--bidPerByteRelay", key: "bidPerByteRelay", parse: parseNumber },
 	{ flag: "--bidPerByteLeaf", key: "bidPerByteLeaf", parse: parseNumber },
 	{ flag: "--repair", key: "repair", parse: parseBool01("1") },
-	{ flag: "--repairWindowMessages", key: "repairWindowMessages", parse: parseNumber },
-	{ flag: "--repairMaxBackfillMessages", key: "repairMaxBackfillMessages", parse: parseNumber },
+	{
+		flag: "--repairWindowMessages",
+		key: "repairWindowMessages",
+		parse: parseNumber,
+	},
+	{
+		flag: "--repairMaxBackfillMessages",
+		key: "repairMaxBackfillMessages",
+		parse: parseNumber,
+	},
 	{ flag: "--repairIntervalMs", key: "repairIntervalMs", parse: parseNumber },
 	{ flag: "--repairMaxPerReq", key: "repairMaxPerReq", parse: parseNumber },
 	{ flag: "--neighborRepair", key: "neighborRepair", parse: parseBool01("0") },
-	{ flag: "--neighborRepairPeers", key: "neighborRepairPeers", parse: parseNumber },
+	{
+		flag: "--neighborRepairPeers",
+		key: "neighborRepairPeers",
+		parse: parseNumber,
+	},
 	{ flag: "--neighborMeshPeers", key: "neighborMeshPeers", parse: parseNumber },
-	{ flag: "--neighborAnnounceIntervalMs", key: "neighborAnnounceIntervalMs", parse: parseNumber },
+	{
+		flag: "--neighborAnnounceIntervalMs",
+		key: "neighborAnnounceIntervalMs",
+		parse: parseNumber,
+	},
 	{
 		flag: "--neighborMeshRefreshIntervalMs",
 		key: "neighborMeshRefreshIntervalMs",
 		parse: parseNumber,
 	},
 	{ flag: "--neighborHaveTtlMs", key: "neighborHaveTtlMs", parse: parseNumber },
-	{ flag: "--neighborRepairBudgetBps", key: "neighborRepairBudgetBps", parse: parseNumber },
-	{ flag: "--neighborRepairBurstMs", key: "neighborRepairBurstMs", parse: parseNumber },
+	{
+		flag: "--neighborRepairBudgetBps",
+		key: "neighborRepairBudgetBps",
+		parse: parseNumber,
+	},
+	{
+		flag: "--neighborRepairBurstMs",
+		key: "neighborRepairBurstMs",
+		parse: parseNumber,
+	},
 	{ flag: "--dialDelayMs", key: "dialDelayMs", parse: parseNumber },
 	{ flag: "--streamRxDelayMs", key: "streamRxDelayMs", parse: parseNumber },
-	{ flag: "--streamHighWaterMarkBytes", key: "streamHighWaterMarkBytes", parse: parseNumber },
+	{
+		flag: "--streamHighWaterMarkBytes",
+		key: "streamHighWaterMarkBytes",
+		parse: parseNumber,
+	},
 	{ flag: "--joinConcurrency", key: "joinConcurrency", parse: parseNumber },
 	{ flag: "--joinPhases", key: "joinPhases", parse: parseBool01("0") },
 	{ flag: "--joinPhaseSettleMs", key: "joinPhaseSettleMs", parse: parseNumber },
+	{
+		flag: "--lateRootConnectAfterMs",
+		key: "lateRootConnectAfterMs",
+		parse: parseNumber,
+	},
+	{
+		flag: "--lateRootMaxChildren",
+		key: "lateRootMaxChildren",
+		parse: parseNumber,
+	},
+	{
+		flag: "--lateRootConnectFraction",
+		key: "lateRootConnectFraction",
+		parse: parseNumber,
+	},
 	{ flag: "--joinReqTimeoutMs", key: "joinReqTimeoutMs", parse: parseNumber },
-	{ flag: "--candidateShuffleTopK", key: "candidateShuffleTopK", parse: parseNumber },
-	{ flag: "--candidateScoringMode", key: "candidateScoringMode", parse: parseString },
+	{
+		flag: "--candidateShuffleTopK",
+		key: "candidateShuffleTopK",
+		parse: parseNumber,
+	},
+	{
+		flag: "--candidateScoringMode",
+		key: "candidateScoringMode",
+		parse: parseString,
+	},
 	{
 		flag: "--parentUpgradeIntervalMs",
 		key: "parentUpgradeIntervalMs",
 		parse: parseNumber,
 	},
-	{ flag: "--parentUpgradeLeafOnly", key: "parentUpgradeLeafOnly", parse: parseBool01("1") },
+	{
+		flag: "--parentUpgradeLeafOnly",
+		key: "parentUpgradeLeafOnly",
+		parse: parseBool01("1"),
+	},
+	{
+		flag: "--parentUpgradeMinLevelGain",
+		key: "parentUpgradeMinLevelGain",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentUpgradeRootMinLevelGain",
+		key: "parentUpgradeRootMinLevelGain",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentUpgradeRootMinSubtreeGain",
+		key: "parentUpgradeRootMinSubtreeGain",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentUpgradeNonRootMinLevelGain",
+		key: "parentUpgradeNonRootMinLevelGain",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentUpgradeMinFreeSlots",
+		key: "parentUpgradeMinFreeSlots",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentUpgradeRootMinFreeSlots",
+		key: "parentUpgradeRootMinFreeSlots",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentUpgradeMaxChildLoadRatio",
+		key: "parentUpgradeMaxChildLoadRatio",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentUpgradeRootMaxChildLoadRatio",
+		key: "parentUpgradeRootMaxChildLoadRatio",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentUpgradeStaleRootProbeProbability",
+		key: "parentUpgradeStaleRootProbeProbability",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentUpgradeCooldownMs",
+		key: "parentUpgradeCooldownMs",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentUpgradeFailedBackoffMinMs",
+		key: "parentUpgradeFailedBackoffMinMs",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentUpgradeFailedBackoffMaxMs",
+		key: "parentUpgradeFailedBackoffMaxMs",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentUpgradeQuietMs",
+		key: "parentUpgradeQuietMs",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentUpgradeRepairQuietMs",
+		key: "parentUpgradeRepairQuietMs",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentUpgradeMaxPerPeer",
+		key: "parentUpgradeMaxPerPeer",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentUpgradeRepairGuard",
+		key: "parentUpgradeRepairGuard",
+		parse: parseBool01("1"),
+	},
+	{
+		flag: "--parentUpgradeDataGuard",
+		key: "parentUpgradeDataGuard",
+		parse: parseBool01("1"),
+	},
+	{ flag: "--parentUpgradeMode", key: "parentUpgradeMode", parse: parseString },
+	{
+		flag: "--parentUpgradeVerifyStaleRootCapacity",
+		key: "parentUpgradeVerifyStaleRootCapacity",
+		parse: parseBool01("0"),
+	},
+	{
+		flag: "--parentProbeTimeoutMs",
+		key: "parentProbeTimeoutMs",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentProbeMaxPerRound",
+		key: "parentProbeMaxPerRound",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentProbeMaxLagMessages",
+		key: "parentProbeMaxLagMessages",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentProbeRejectCooldownMs",
+		key: "parentProbeRejectCooldownMs",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentProbeRejectCooldownMaxMs",
+		key: "parentProbeRejectCooldownMaxMs",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentShadowObserveMs",
+		key: "parentShadowObserveMs",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentShadowMinObservations",
+		key: "parentShadowMinObservations",
+		parse: parseNumber,
+	},
 	{
 		flag: "--bootstrapEnsureIntervalMs",
 		key: "bootstrapEnsureIntervalMs",
 		parse: parseNumber,
 	},
-	{ flag: "--trackerQueryIntervalMs", key: "trackerQueryIntervalMs", parse: parseNumber },
-	{ flag: "--joinAttemptsPerRound", key: "joinAttemptsPerRound", parse: parseNumber },
-	{ flag: "--candidateCooldownMs", key: "candidateCooldownMs", parse: parseNumber },
+	{
+		flag: "--trackerQueryIntervalMs",
+		key: "trackerQueryIntervalMs",
+		parse: parseNumber,
+	},
+	{
+		flag: "--joinAttemptsPerRound",
+		key: "joinAttemptsPerRound",
+		parse: parseNumber,
+	},
+	{
+		flag: "--candidateCooldownMs",
+		key: "candidateCooldownMs",
+		parse: parseNumber,
+	},
 	{ flag: "--maxLatencySamples", key: "maxLatencySamples", parse: parseNumber },
 	{ flag: "--profile", key: "profile", parse: parseBool01("0") },
 	{ flag: "--progress", key: "progress", parse: parseBool01("0") },
@@ -343,33 +584,73 @@ const ARG_SPECS: ArgSpec[] = [
 	{ flag: "--churnEveryMs", key: "churnEveryMs", parse: parseNumber },
 	{ flag: "--churnDownMs", key: "churnDownMs", parse: parseNumber },
 	{ flag: "--churnFraction", key: "churnFraction", parse: parseNumber },
-	{ flag: "--assertMinJoinedPct", key: "assertMinJoinedPct", parse: parseNumber },
-	{ flag: "--assertMinDeliveryPct", key: "assertMinDeliveryPct", parse: parseNumber },
+	{
+		flag: "--assertMinJoinedPct",
+		key: "assertMinJoinedPct",
+		parse: parseNumber,
+	},
+	{
+		flag: "--assertMinDeliveryPct",
+		key: "assertMinDeliveryPct",
+		parse: parseNumber,
+	},
 	{
 		flag: "--assertMinDeadlineDeliveryPct",
 		key: "assertMinDeadlineDeliveryPct",
 		parse: parseNumber,
 	},
-	{ flag: "--assertMaxUploadFracPct", key: "assertMaxUploadFracPct", parse: parseNumber },
+	{
+		flag: "--assertMaxUploadFracPct",
+		key: "assertMaxUploadFracPct",
+		parse: parseNumber,
+	},
 	{
 		flag: "--assertMaxOverheadFactor",
 		key: "assertMaxOverheadFactor",
 		parse: parseNumber,
 	},
-	{ flag: "--assertMaxControlBpp", key: "assertMaxControlBpp", parse: parseNumber },
-	{ flag: "--assertMaxTrackerBpp", key: "assertMaxTrackerBpp", parse: parseNumber },
-	{ flag: "--assertMaxTrackerBytes", key: "assertMaxTrackerBytes", parse: parseNumber },
-	{ flag: "--assertMaxRepairBpp", key: "assertMaxRepairBpp", parse: parseNumber },
+	{
+		flag: "--assertMaxControlBpp",
+		key: "assertMaxControlBpp",
+		parse: parseNumber,
+	},
+	{
+		flag: "--assertMaxTrackerBpp",
+		key: "assertMaxTrackerBpp",
+		parse: parseNumber,
+	},
+	{
+		flag: "--assertMaxTrackerBytes",
+		key: "assertMaxTrackerBytes",
+		parse: parseNumber,
+	},
+	{
+		flag: "--assertMaxRepairBpp",
+		key: "assertMaxRepairBpp",
+		parse: parseNumber,
+	},
 	{ flag: "--assertAttachP95Ms", key: "assertAttachP95Ms", parse: parseNumber },
-	{ flag: "--assertMaxTreeLevelP95", key: "assertMaxTreeLevelP95", parse: parseNumber },
+	{
+		flag: "--assertMaxTreeLevelP95",
+		key: "assertMaxTreeLevelP95",
+		parse: parseNumber,
+	},
 	{
 		flag: "--assertMaxFormationScore",
 		key: "assertMaxFormationScore",
 		parse: parseNumber,
 	},
 	{ flag: "--assertMaxOrphans", key: "assertMaxOrphans", parse: parseNumber },
-	{ flag: "--assertMaxOrphanArea", key: "assertMaxOrphanArea", parse: parseNumber },
-	{ flag: "--assertRecoveryP95Ms", key: "assertRecoveryP95Ms", parse: parseNumber },
+	{
+		flag: "--assertMaxOrphanArea",
+		key: "assertMaxOrphanArea",
+		parse: parseNumber,
+	},
+	{
+		flag: "--assertRecoveryP95Ms",
+		key: "assertRecoveryP95Ms",
+		parse: parseNumber,
+	},
 	{
 		flag: "--assertMaxReparentsPerMin",
 		key: "assertMaxReparentsPerMin",
@@ -396,10 +677,15 @@ const parseArgs = (argv: string[]) => {
 	const explicitOpts: Partial<FanoutTreeSimParams> = {};
 	for (const spec of ARG_SPECS) {
 		if (!has(spec.flag)) continue;
-		(explicitOpts as Record<string, unknown>)[spec.key] = spec.parse(get(spec.flag));
+		(explicitOpts as Record<string, unknown>)[spec.key] = spec.parse(
+			get(spec.flag),
+		);
 	}
 
-	const merged: Partial<FanoutTreeSimParams> = { ...presetOpts, ...explicitOpts };
+	const merged: Partial<FanoutTreeSimParams> = {
+		...presetOpts,
+		...explicitOpts,
+	};
 
 	// Live workloads are deadline-oriented: drop forwarding of stale DATA once it
 	// exceeds the deadline (unless explicitly overridden).
@@ -553,18 +839,29 @@ const ASSERTION_SPECS: AssertionSpec[] = [
 	},
 ];
 
-const runAssertions = (params: FanoutTreeSimParams, result: FanoutTreeSimResult) => {
+const runAssertions = (
+	params: FanoutTreeSimParams,
+	result: FanoutTreeSimResult,
+) => {
 	for (const spec of ASSERTION_SPECS) {
 		const threshold = params[spec.param];
 		if (threshold <= 0) continue;
 		const actual = spec.value(result);
 		const failed =
-			spec.mode === "min" ? actual + 1e-9 < threshold : actual - 1e-9 > threshold;
+			spec.mode === "min"
+				? actual + 1e-9 < threshold
+				: actual - 1e-9 > threshold;
 		if (!failed) continue;
-		const actualText = spec.formatActual ? spec.formatActual(actual) : `${actual}`;
-		const expectedText = spec.formatExpected ? spec.formatExpected(threshold) : `${threshold}`;
+		const actualText = spec.formatActual
+			? spec.formatActual(actual)
+			: `${actual}`;
+		const expectedText = spec.formatExpected
+			? spec.formatExpected(threshold)
+			: `${threshold}`;
 		const operator = spec.mode === "min" ? "<" : ">";
-		console.error(`ASSERT FAILED: ${spec.label} ${actualText} ${operator} ${expectedText}`);
+		console.error(
+			`ASSERT FAILED: ${spec.label} ${actualText} ${operator} ${expectedText}`,
+		);
 		process.exit(2);
 	}
 };
