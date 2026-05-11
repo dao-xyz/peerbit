@@ -2,7 +2,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use indexmap::{IndexMap, IndexSet};
 use js_sys::{Array, BigUint64Array, Uint32Array, Uint8Array};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use wasm_bindgen::prelude::*;
 
 const ENTRY_TYPE_CUT: u8 = 1;
@@ -82,6 +82,7 @@ pub struct LogGraphIndex {
     entries: IndexMap<String, LogIndexEntry>,
     children: HashMap<String, IndexSet<String>>,
     heads: IndexSet<String>,
+    ordered_entries: BTreeSet<(u64, u32, String)>,
     payload_size_total: u64,
 }
 
@@ -106,6 +107,7 @@ impl LogGraphIndex {
         self.entries.clear();
         self.children.clear();
         self.heads.clear();
+        self.ordered_entries.clear();
         self.payload_size_total = 0;
     }
 
@@ -122,27 +124,28 @@ impl LogGraphIndex {
     }
 
     pub fn oldest_hash(&self) -> Option<String> {
-        self.entries
-            .values()
-            .min_by(|left, right| compare_entry_order(left, right))
-            .map(|entry| entry.hash.clone())
+        self.ordered_entries
+            .iter()
+            .next()
+            .map(|(_, _, hash)| hash.clone())
     }
 
     pub fn newest_hash(&self) -> Option<String> {
-        self.entries
-            .values()
-            .max_by(|left, right| compare_entry_order(left, right))
-            .map(|entry| entry.hash.clone())
+        self.ordered_entries
+            .iter()
+            .next_back()
+            .map(|(_, _, hash)| hash.clone())
     }
 
     pub fn oldest_entries(&self, limit: usize) -> Vec<LogIndexEntry> {
         if limit == 0 {
             return Vec::new();
         }
-        let mut entries: Vec<LogIndexEntry> = self.entries.values().cloned().collect();
-        entries.sort_by(compare_entry_order);
-        entries.truncate(limit);
-        entries
+        self.ordered_entries
+            .iter()
+            .take(limit)
+            .filter_map(|(_, _, hash)| self.entries.get(hash).cloned())
+            .collect()
     }
 
     pub fn get(&self, hash: &str) -> Option<&LogIndexEntry> {
@@ -159,8 +162,12 @@ impl LogGraphIndex {
         let nexts = entry.next.clone();
         let payload_size = entry.payload_size as u64;
         let head = entry.head;
+        let wall_time = entry.wall_time;
+        let logical = entry.logical;
 
         self.entries.insert(hash.clone(), entry);
+        self.ordered_entries
+            .insert((wall_time, logical, hash.clone()));
         self.payload_size_total += payload_size;
         if head {
             self.heads.insert(hash.clone());
@@ -197,8 +204,15 @@ impl LogGraphIndex {
             let nexts = entry.next.clone();
             let payload_size = entry.payload_size as u64;
             let head = entry.head;
+            let wall_time = entry.wall_time;
+            let logical = entry.logical;
 
+            if self.entries.contains_key(&hash) {
+                self.delete(&hash);
+            }
             self.entries.insert(hash.clone(), entry);
+            self.ordered_entries
+                .insert((wall_time, logical, hash.clone()));
             self.payload_size_total += payload_size;
             if head {
                 self.heads.insert(hash.clone());
@@ -221,6 +235,8 @@ impl LogGraphIndex {
     pub fn delete(&mut self, hash: &str) -> Option<LogIndexEntry> {
         let entry = self.entries.shift_remove(hash)?;
         self.heads.shift_remove(hash);
+        self.ordered_entries
+            .remove(&(entry.wall_time, entry.logical, entry.hash.clone()));
         self.payload_size_total = self
             .payload_size_total
             .saturating_sub(entry.payload_size as u64);
@@ -560,10 +576,6 @@ fn compare_clock(wall_time: u64, logical: u32, other: &LogIndexEntry) -> std::cm
     wall_time
         .cmp(&other.wall_time)
         .then_with(|| logical.cmp(&other.logical))
-}
-
-fn compare_entry_order(left: &LogIndexEntry, right: &LogIndexEntry) -> std::cmp::Ordering {
-    compare_clock(left.wall_time, left.logical, right).then_with(|| left.hash.cmp(&right.hash))
 }
 
 #[wasm_bindgen]
