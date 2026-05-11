@@ -195,6 +195,10 @@ describe("index", () => {
 					store.docs as any,
 					"createPlainPutCommitPlan",
 				);
+				const documentCommitSpy = sinon.spy(
+					store.docs as any,
+					"createDocumentAppendCommitFacts",
+				);
 				const backendIndex = store.docs.index.index as any;
 				const originalBackendPutWithContext = backendIndex.putWithContext;
 				const originalBackendPut = backendIndex.put;
@@ -228,6 +232,7 @@ describe("index", () => {
 					expect(appendSpy.callCount).equal(0);
 					expect(localLookupSpy.callCount).equal(0);
 					expect(commitPlanSpy.callCount).equal(1);
+					expect(documentCommitSpy.callCount).equal(1);
 					expect(backendContextPutSpy.callCount).equal(1);
 					const encodedDocument = serialize(doc);
 					const expectedPayloadData = new Uint8Array(
@@ -246,6 +251,10 @@ describe("index", () => {
 					);
 					const commitPlan = await commitPlanSpy.getCall(0).returnValue;
 					expect(commitPlan.payloadData).to.deep.equal(expectedPayloadData);
+					const documentCommit = documentCommitSpy.getCall(0).returnValue;
+					expect(documentCommit.operationPayloadBytes).to.deep.equal(
+						expectedPayloadData,
+					);
 					const backendOptions = backendContextPutSpy.getCall(0).args[3] as
 						| {
 								encodedValue?: Uint8Array;
@@ -276,6 +285,12 @@ describe("index", () => {
 					expect(backendOptions?.encodedValueParts?.suffix).to.deep.equal(
 						serialize(backendContext),
 					);
+					expect(documentCommit.contextBytes).to.deep.equal(
+						backendOptions?.encodedValueParts?.suffix,
+					);
+					expect(documentCommit.contextualEncodedValueParts).to.deep.equal(
+						backendOptions?.encodedValueParts,
+					);
 					expect(backendOptions!.encodedValueParts!.suffix.byteLength).greaterThan(
 						0,
 					);
@@ -290,6 +305,7 @@ describe("index", () => {
 					}
 					localLookupSpy.restore();
 					commitPlanSpy.restore();
+					documentCommitSpy.restore();
 					preparedAppendSpy.restore();
 					validatedAppendSpy.restore();
 					appendSpy.restore();

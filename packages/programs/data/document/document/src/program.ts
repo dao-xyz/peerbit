@@ -61,6 +61,7 @@ import {
 	type WithIndexedContext,
 	coerceWithContext,
 	coerceWithIndexed,
+	encodeContextSuffix,
 } from "./search.js";
 
 const logger = loggerFn("peerbit:program:document");
@@ -165,6 +166,30 @@ type LocalAppendCommitFacts = {
 	gid: string;
 	wallTime: bigint;
 	payloadSize: number;
+};
+
+type ContextualEncodedValueParts = {
+	prefix: Uint8Array;
+	suffix: Uint8Array;
+};
+
+type DocumentAppendCommitFacts<T, I extends Record<string, any>> = {
+	document: T;
+	key: indexerTypes.IdKey;
+	operation: PutOperation;
+	encodedDocument: Uint8Array;
+	operationPayloadBytes: Uint8Array;
+	entry: Entry<Operation>;
+	removed: ShallowOrFullEntry<Operation>[];
+	append: LocalAppendCommitFacts;
+	context: Context;
+	contextBytes: Uint8Array;
+	contextualEncodedValueParts: ContextualEncodedValueParts;
+	unique?: boolean;
+	existing?:
+		| indexerTypes.IndexedResult<IndexedContextOnly<I>>
+		| null
+		| undefined;
 };
 
 type InferR<D> = D extends ReplicationDomain<any, any, infer I> ? I : "u32";
@@ -937,6 +962,10 @@ export class Documents<
 				payloadData: plan.payloadData,
 			},
 		);
+		const documentAppendCommit = this.createDocumentAppendCommitFacts(
+			plan,
+			appended,
+		);
 		if (plan.useGenericChangeHandler) {
 			await this.handleChanges(
 				{
@@ -952,19 +981,49 @@ export class Documents<
 				},
 			);
 		} else {
-			await this.handlePreparedPlainPutCommit({
-				document: plan.document,
-				encodedDocument: plan.encodedDocument,
-				key: plan.key,
-				entry: appended.entry,
-				removed: appended.removed,
-				appendCommit: appended.appendCommit,
-				unique: plan.unique,
-				existing: plan.existing,
-			});
+			await this.handlePreparedPlainPutCommit(documentAppendCommit);
 		}
 		this.keepCache?.add(appended.entry.hash);
 		return { entry: appended.entry, removed: appended.removed };
+	}
+
+	private createDocumentAppendCommitFacts(
+		plan: PlainPutCommitPlan<T, I>,
+		appended: {
+			entry: Entry<Operation>;
+			removed: ShallowOrFullEntry<Operation>[];
+			appendCommit: LocalAppendCommitFacts;
+		},
+	): DocumentAppendCommitFacts<T, I> {
+		const append = appended.appendCommit;
+		const existing =
+			plan.unique || plan.existing === null ? null : plan.existing;
+		const context = new Context({
+			created: existing?.value.__context.created || append.wallTime,
+			modified: append.wallTime,
+			head: append.hash,
+			gid: append.gid,
+			size: append.payloadSize,
+		});
+		const contextBytes = encodeContextSuffix(context);
+		return {
+			document: plan.document,
+			key: plan.key,
+			operation: plan.operation,
+			encodedDocument: plan.encodedDocument,
+			operationPayloadBytes: plan.payloadData,
+			entry: appended.entry,
+			removed: appended.removed,
+			append,
+			context,
+			contextBytes,
+			contextualEncodedValueParts: {
+				prefix: plan.encodedDocument,
+				suffix: contextBytes,
+			},
+			unique: plan.unique,
+			existing: plan.existing,
+		};
 	}
 
 	private nextFromIndexedContext(
@@ -997,73 +1056,48 @@ export class Documents<
 		});
 	}
 
-	private async handlePreparedPlainPutCommit(properties: {
-		document: T;
-		encodedDocument?: Uint8Array;
-		key: indexerTypes.IdKey;
-		entry: Entry<Operation>;
-		removed: ShallowOrFullEntry<Operation>[];
-		appendCommit?: LocalAppendCommitFacts;
-		unique?: boolean;
-		existing?:
-			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
-			| null
-			| undefined;
-	}): Promise<void> {
+	private async handlePreparedPlainPutCommit(
+		commit: DocumentAppendCommitFacts<T, I>,
+	): Promise<void> {
 		const documentsChanged: DocumentsChange<T, I> = {
 			added: [],
 			removed: [],
 		};
 		const modified: Set<string | number | bigint> = new Set();
 		const existing =
-			properties.unique || properties.existing === null
-				? null
-				: properties.existing;
+			commit.unique || commit.existing === null ? null : commit.existing;
 
 		if (!this.strictHistory && existing) {
 			const shouldIgnoreChange = this.immutable
 				? existing.value.__context.modified <
-					properties.entry.meta.clock.timestamp.wallTime
+					commit.append.wallTime
 				: existing.value.__context.modified >
-					properties.entry.meta.clock.timestamp.wallTime;
+					commit.append.wallTime;
 			if (shouldIgnoreChange) {
-				modified.add(properties.key.primitive);
+				modified.add(commit.key.primitive);
 			}
 		}
 
-		if (!modified.has(properties.key.primitive)) {
-			const appendCommit = properties.appendCommit;
-			const context = new Context({
-				created:
-					existing?.value.__context.created ||
-					appendCommit?.wallTime ||
-					properties.entry.meta.clock.timestamp.wallTime,
-				modified:
-					appendCommit?.wallTime ||
-					properties.entry.meta.clock.timestamp.wallTime,
-				head: appendCommit?.hash || properties.entry.hash,
-				gid: appendCommit?.gid || properties.entry.meta.gid,
-				size: appendCommit?.payloadSize ?? properties.entry.payload.byteLength,
-			});
+		if (!modified.has(commit.key.primitive)) {
 			const { indexable } = await this._index.putWithContext(
-				properties.document,
-				properties.key,
-				context,
+				commit.document,
+				commit.key,
+				commit.context,
 				{
 					replace: existing != null,
-					encodedValue: properties.encodedDocument,
+					encodedValueParts: commit.contextualEncodedValueParts,
 				},
 			);
 			documentsChanged.added.push(
 				coerceWithIndexed(
-					coerceWithContext(properties.document, context),
+					coerceWithContext(commit.document, commit.context),
 					indexable,
 				),
 			);
-			modified.add(properties.key.primitive);
+			modified.add(commit.key.primitive);
 		}
 
-		for (const removed of properties.removed) {
+		for (const removed of commit.removed) {
 			if (
 				!(removed instanceof Entry) &&
 				(await this.collectRemovedDocumentChangeFromIndexedHead(
