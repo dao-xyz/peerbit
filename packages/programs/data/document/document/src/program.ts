@@ -160,6 +160,13 @@ type PlainPutCommitPlan<T, I extends Record<string, any>> = {
 		| undefined;
 };
 
+type LocalAppendCommitFacts = {
+	hash: string;
+	gid: string;
+	wallTime: bigint;
+	payloadSize: number;
+};
+
 type InferR<D> = D extends ReplicationDomain<any, any, infer I> ? I : "u32";
 
 export type SetupOptions<
@@ -951,12 +958,13 @@ export class Documents<
 				key: plan.key,
 				entry: appended.entry,
 				removed: appended.removed,
+				appendCommit: appended.appendCommit,
 				unique: plan.unique,
 				existing: plan.existing,
 			});
 		}
 		this.keepCache?.add(appended.entry.hash);
-		return appended;
+		return { entry: appended.entry, removed: appended.removed };
 	}
 
 	private nextFromIndexedContext(
@@ -995,6 +1003,7 @@ export class Documents<
 		key: indexerTypes.IdKey;
 		entry: Entry<Operation>;
 		removed: ShallowOrFullEntry<Operation>[];
+		appendCommit?: LocalAppendCommitFacts;
 		unique?: boolean;
 		existing?:
 			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
@@ -1023,14 +1032,18 @@ export class Documents<
 		}
 
 		if (!modified.has(properties.key.primitive)) {
+			const appendCommit = properties.appendCommit;
 			const context = new Context({
 				created:
 					existing?.value.__context.created ||
+					appendCommit?.wallTime ||
 					properties.entry.meta.clock.timestamp.wallTime,
-				modified: properties.entry.meta.clock.timestamp.wallTime,
-				head: properties.entry.hash,
-				gid: properties.entry.meta.gid,
-				size: properties.entry.payload.byteLength,
+				modified:
+					appendCommit?.wallTime ||
+					properties.entry.meta.clock.timestamp.wallTime,
+				head: appendCommit?.hash || properties.entry.hash,
+				gid: appendCommit?.gid || properties.entry.meta.gid,
+				size: appendCommit?.payloadSize ?? properties.entry.payload.byteLength,
 			});
 			const { indexable } = await this._index.putWithContext(
 				properties.document,

@@ -229,6 +229,15 @@ describe("append", () => {
 			expect(fields.metaBytes).to.deep.equal(
 				(result.entry as any).getMetaBytes(),
 			);
+			expect(result.appendCommit.hash).equal(result.entry.hash);
+			expect(result.appendCommit.gid).equal(result.entry.meta.gid);
+			expect(result.appendCommit.wallTime).equal(
+				result.entry.meta.clock.timestamp.wallTime,
+			);
+			expect(result.appendCommit.payloadSize).equal(
+				result.entry.payload.byteLength,
+			);
+			expect(result.appendCommit.coordinateFields).to.deep.equal(fields);
 		} finally {
 			createSpy.restore();
 			putDeleteSpy.restore();

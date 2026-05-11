@@ -254,6 +254,18 @@ describe("index", () => {
 						| undefined;
 					const backendContext = backendContextPutSpy.getCall(0)
 						.args[2] as Context;
+					const appendResult = await preparedAppendSpy.getCall(0).returnValue;
+					const appendCommit = appendResult.appendCommit;
+					expect(appendCommit.hash).equal(put.entry.hash);
+					expect(appendCommit.gid).equal(put.entry.meta.gid);
+					expect(appendCommit.wallTime).equal(
+						put.entry.meta.clock.timestamp.wallTime,
+					);
+					expect(appendCommit.payloadSize).equal(put.entry.payload.byteLength);
+					expect(backendContext.head).equal(appendCommit.hash);
+					expect(backendContext.gid).equal(appendCommit.gid);
+					expect(backendContext.modified).equal(appendCommit.wallTime);
+					expect(backendContext.size).equal(appendCommit.payloadSize);
 					expect(backendOptions?.encodedValue).equal(undefined);
 					expect(backendOptions?.encodedValueParts?.prefix).to.deep.equal(
 						encodedDocument,
