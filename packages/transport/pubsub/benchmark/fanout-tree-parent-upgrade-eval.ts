@@ -17,10 +17,12 @@ type ScenarioName =
 	| "ci-constrained"
 	| "ci-idle-upgrade";
 type UpgradeMode = "direct" | "probe" | "shadow";
+type UpgradePreset = "raw" | "default-candidate";
 
 type EvalArgs = {
 	scenarios: ScenarioName[];
 	seeds: number[];
+	parentUpgradePreset: UpgradePreset;
 	parentUpgradeIntervalMs: number;
 	parentUpgradeLeafOnly: boolean;
 	parentUpgradeMinLevelGain: number;
@@ -54,6 +56,9 @@ type EvalArgs = {
 	maxCostRatio: number;
 	maxFormationScoreDelta: number;
 	maxSecondBatchLatencyP95DeltaMs: number;
+	maxProbePerUpgrade: number;
+	maxRootChildrenDelta: number;
+	maxRootUploadPctDelta: number;
 	maxReparentsPerMin: number;
 	maxReparentsPerPeer: number;
 	maxOrphanAreaRatio: number;
@@ -93,6 +98,7 @@ const HELP_TEXT = [
 	"Args:",
 	"  --scenario NAME              scenario to run (ci-small|ci-loss|ci-constrained|ci-idle-upgrade|all, default: all)",
 	"  --seeds CSV                  seeds to run for each scenario (default: 1,2,3)",
+	"  --parentUpgradePreset NAME   preset to evaluate (raw|default-candidate, default: raw)",
 	"  --parentUpgradeIntervalMs MS upgrade check interval for treatment run (default: 1000)",
 	"  --parentUpgradeLeafOnly 0|1  restrict treatment upgrades to leaves (default: 1)",
 	"  --parentUpgradeMinLevelGain N min tree-level gain for treatment upgrades (default: 2)",
@@ -126,6 +132,9 @@ const HELP_TEXT = [
 	"  --maxCostRatio R             max treatment/base ratio for control/tracker/repair bpp (default: 1.15)",
 	"  --maxFormationScoreDelta N   absolute formation score jitter tolerated (default: 0.05)",
 	"  --maxSecondBatchLatencyP95DeltaMs N max idle second-batch p95 latency jitter tolerated (default: 3)",
+	"  --maxProbePerUpgrade N       max parent probes per successful proactive upgrade (default: 2)",
+	"  --maxRootChildrenDelta N     max root child-count increase over baseline (default: 4, default-candidate: 2)",
+	"  --maxRootUploadPctDelta N    max root upload pct-of-cap increase over baseline (default: 1)",
 	"  --maxReparentsPerMin N       max treatment reparent events per minute (default: 500)",
 	"  --maxReparentsPerPeer N      max treatment reparent events for one peer (default: 20)",
 	"  --maxOrphanAreaRatio R       max treatment/base ratio for orphan area (default: 1.15)",
@@ -279,6 +288,12 @@ const parseArgs = (argv: string[]): EvalArgs => {
 		process.exit(0);
 	}
 
+	const presetRaw = get("--parentUpgradePreset") ?? "raw";
+	if (presetRaw !== "raw" && presetRaw !== "default-candidate") {
+		throw new Error(`Unknown parent upgrade preset: ${presetRaw}`);
+	}
+	const parentUpgradePreset = presetRaw as UpgradePreset;
+	const defaultCandidate = parentUpgradePreset === "default-candidate";
 	const parentUpgradeQuietMs = Number(get("--parentUpgradeQuietMs") ?? 5_000);
 	const parentUpgradeMaxChildLoadRatio = Number(
 		get("--parentUpgradeMaxChildLoadRatio") ?? 0.5,
@@ -287,11 +302,24 @@ const parseArgs = (argv: string[]): EvalArgs => {
 		get("--parentUpgradeRootMaxChildLoadRatio") ??
 			Math.min(parentUpgradeMaxChildLoadRatio, 0.4),
 	);
+	const parentUpgradeModeRaw = get("--parentUpgradeMode");
+	const parentUpgradeMode =
+		parentUpgradeModeRaw === "probe" || parentUpgradeModeRaw === "shadow"
+			? parentUpgradeModeRaw
+			: parentUpgradeModeRaw === "direct"
+				? "direct"
+				: defaultCandidate
+					? "shadow"
+					: "direct";
 	return {
 		scenarios: parseScenarios(get("--scenario")),
 		seeds: parseCsvNumbers(get("--seeds"), [1, 2, 3]),
+		parentUpgradePreset,
 		parentUpgradeIntervalMs: Number(get("--parentUpgradeIntervalMs") ?? 1_000),
-		parentUpgradeLeafOnly: parseBool01(get("--parentUpgradeLeafOnly"), true),
+		parentUpgradeLeafOnly: parseBool01(
+			get("--parentUpgradeLeafOnly"),
+			defaultCandidate ? false : true,
+		),
 		parentUpgradeMinLevelGain: Number(get("--parentUpgradeMinLevelGain") ?? 2),
 		parentUpgradeRootMinLevelGain: Number(
 			get("--parentUpgradeRootMinLevelGain") ?? 3,
@@ -329,14 +357,10 @@ const parseArgs = (argv: string[]): EvalArgs => {
 			true,
 		),
 		parentUpgradeDataGuard: parseBool01(get("--parentUpgradeDataGuard"), true),
-		parentUpgradeMode:
-			get("--parentUpgradeMode") === "probe" ||
-			get("--parentUpgradeMode") === "shadow"
-				? (get("--parentUpgradeMode") as "probe" | "shadow")
-				: "direct",
+		parentUpgradeMode,
 		parentUpgradeVerifyStaleRootCapacity: parseBool01(
 			get("--parentUpgradeVerifyStaleRootCapacity"),
-			false,
+			defaultCandidate,
 		),
 		parentUpgradeStaleRootProbeProbability: Number(
 			get("--parentUpgradeStaleRootProbeProbability") ?? 0.25,
@@ -364,6 +388,11 @@ const parseArgs = (argv: string[]): EvalArgs => {
 		maxSecondBatchLatencyP95DeltaMs: Number(
 			get("--maxSecondBatchLatencyP95DeltaMs") ?? 3,
 		),
+		maxProbePerUpgrade: Number(get("--maxProbePerUpgrade") ?? 2),
+		maxRootChildrenDelta: Number(
+			get("--maxRootChildrenDelta") ?? (defaultCandidate ? 2 : 4),
+		),
+		maxRootUploadPctDelta: Number(get("--maxRootUploadPctDelta") ?? 1),
 		maxReparentsPerMin: Number(get("--maxReparentsPerMin") ?? 500),
 		maxReparentsPerPeer: Number(get("--maxReparentsPerPeer") ?? 20),
 		maxOrphanAreaRatio: Number(get("--maxOrphanAreaRatio") ?? 1.15),
@@ -483,7 +512,7 @@ const evaluateRun = (
 				upgrade.reparentUpgradeTotal > 0
 					? upgrade.parentProbeReqSentTotal / upgrade.reparentUpgradeTotal
 					: Number.POSITIVE_INFINITY,
-				2,
+				args.maxProbePerUpgrade,
 			);
 			failIfGreater(
 				failures,
@@ -627,6 +656,22 @@ const evaluateRun = (
 			? params.lateRootMaxChildren
 			: params.rootMaxChildren,
 	);
+	if (upgradeActivity) {
+		failIfGreater(
+			failures,
+			"rootChildrenDelta",
+			baseline.treeRootChildren,
+			upgrade.treeRootChildren,
+			baseline.treeRootChildren + Math.max(0, args.maxRootChildrenDelta),
+		);
+		failIfGreater(
+			failures,
+			"rootUploadPctDelta",
+			baseline.rootUploadFracPct,
+			upgrade.rootUploadFracPct,
+			baseline.rootUploadFracPct + Math.max(0, args.maxRootUploadPctDelta),
+		);
+	}
 
 	return failures;
 };

@@ -64,6 +64,15 @@ advertised-full root is not probed by every eligible peer at once. These are
 control-plane guards for proactive root upgrades; they do not change ordinary
 tree formation semantics or the disabled-by-default runtime posture.
 
+The evaluator now has an explicit default-candidate preset:
+`--parentUpgradePreset default-candidate`. It evaluates the policy we would
+consider for a later default flip without changing runtime defaults in this PR:
+shadow mode, non-leaf upgrades allowed, stale-root live verification enabled,
+branch-aware root admission, and stricter evidence limits
+(`maxProbePerUpgrade <= 2`, `maxRootChildrenDelta <= 2`, and
+`maxRootUploadPctDelta <= 1` percentage point). This turns "we tried some flags"
+into a named, repeatable default-candidate contract.
+
 Root reservation tokens now also remember the requester's spare-slot margin. A
 token protects only one child slot from overfill, but the root rejects the token
 at `JOIN_REQ` time if intervening joins have reduced free capacity below the
@@ -160,7 +169,13 @@ pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-eval -
 Positive settled-topology run only:
 
 ```bash
-pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-eval --scenario ci-idle-upgrade --seeds 1,2,3,4,5 --parentUpgradeMode shadow --parentUpgradeVerifyStaleRootCapacity 1 --parentUpgradeLeafOnly 0 --parentUpgradeRootMinSubtreeGain 3 --strict 1
+pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-eval --scenario ci-idle-upgrade --seeds 1,2,3,4,5 --parentUpgradePreset default-candidate --strict 1
+```
+
+Default-candidate suite:
+
+```bash
+pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-eval --scenario all --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
 ```
 
 The settled-topology run fails strict mode if p95 second-batch latency
@@ -227,24 +242,35 @@ Local smoke runs on this branch showed:
   stayed guarded with the default data guard and 5s quiet window. The important
   result is safety: lossy/constrained live delivery did not trigger parent
   churn.
+- The stricter default-candidate suite,
+  `--scenario all --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1`,
+  passed. `ci-small`, `ci-loss`, and `ci-constrained` stayed no-op with `0`
+  probes and `0` promotions; `ci-idle-upgrade` promoted in all `3` seeds. The
+  aggregate shape was: `ci-small 3/3 no-op`, `ci-loss 3/3 no-op`,
+  `ci-constrained 3/3 no-op`, and `ci-idle-upgrade 3/3 promoted` with `6`
+  proactive upgrades, `8` probes, average tree-depth gain about `0.10`, average
+  second-batch p95 delta about `-0.7ms`, worst second-batch p95 delta `+1ms`,
+  average promoted-branch gain about `13ms`, max root-child delta `2`, max root
+  upload delta about `0.03%` of cap, and max `1` reparent per peer.
 - Two-phase `ci-idle-upgrade`, seeds `1,2,3,4,5`,
-  `--parentUpgradeMode shadow --parentUpgradeVerifyStaleRootCapacity 1 --parentUpgradeLeafOnly 0 --parentUpgradeRootMinSubtreeGain 3 --strict 1`:
+  `--parentUpgradePreset default-candidate --strict 1`:
   passed. Every seed promoted, kept max `1` reparent per peer, preserved
   deadline delivery at `100%`, and improved average final tree depth. Global
   second-batch p95 deltas were within the explicit `3ms` material-regression
-  tolerance (`-1ms`, `-3ms`, `-2ms`, `0ms`, `-2ms`), while promoted downstream
+  tolerance (`+1ms`, `0ms`, `0ms`, `+2ms`, `-2ms`), while promoted downstream
   branches improved in every seed.
 - The promoted-branch evidence from that run was the important new signal:
-  seed `1` branch p95 `26ms -> 17ms` across `8` peers, seed `2`
-  `35ms -> 28ms` across `12` peers, seed `3` `37ms -> 11ms` across `2` peers,
-  seed `4` `34ms -> 21ms` across `7` peers, and seed `5` `38ms -> 12ms`
+  seed `1` branch p95 `26ms -> 18ms` across `8` peers, seed `2`
+  `34ms -> 30ms` across `12` peers, seed `3` `39ms -> 11ms` across `2` peers,
+  seed `4` `34ms -> 22ms` across `7` peers, and seed `5` `36ms -> 10ms`
   across `2` peers. This is the first multi-seed evidence that the policy is
   doing useful work in the part of the tree it actually changes.
 - The corresponding aggregate shape is: `5/5` viable, `10` proactive upgrades,
   `13` probes, average tree-depth gain about `0.11`, average global
-  second-batch p95 delta about `-1.6ms`, worst global p95 delta `0ms`, average
+  second-batch p95 delta about `+0.2ms`, worst global p95 delta `+2ms`, average
   promoted-branch gain about `16ms`, average branch coverage about `17%`, max
-  root upload delta about `0.02%` of cap, and max `1` reparent per peer.
+  root-child delta `2`, max root upload delta about `0.03%` of cap, and max `1`
+  reparent per peer.
 - The simulator now reports root upload pressure separately from max relay/root
   upload pressure. This matters for streamer-like workloads: root-child fanout
   count is a useful structural signal, but root upload percentage is the direct
@@ -322,11 +348,13 @@ An upgrade mode is only a candidate if it improves or preserves:
 It should be rejected or retuned if it materially worsens:
 
 - `controlBpp`, `trackerBpp`, or `repairBpp`
+- parent probes per successful proactive upgrade
 - `maintReparentsPerMin`
 - `maintMaxReparentsPerPeer`
 - `maintOrphanArea`
-- root fanout pressure
-- root upload pressure
+- root fanout pressure, including root-child growth over baseline
+- root upload pressure, including root upload percentage-point growth over
+  baseline
 
 The current default candidate, if later evidence holds across more seeds and
 larger topologies, is bounded shadow upgrades with data/repair/quiet guards,
