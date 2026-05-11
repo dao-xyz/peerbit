@@ -1091,6 +1091,35 @@ impl NativeLogIndex {
         Ok(rows)
     }
 
+    pub fn prepare_entry_v0_plain_entries_no_next_commit_blocks_and_put_with_builder(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_times: BigUint64Array,
+        logicals: Uint32Array,
+        gids: Array,
+        entry_type: u8,
+        meta_datas: Array,
+        payload_datas: Array,
+    ) -> Result<Array, JsValue> {
+        let (rows, entries, blocks) = prepare_entry_v0_plain_entries_rows_with_signer_inner(
+            &builder.clock_id,
+            &builder.public_key,
+            &builder.signing_key,
+            wall_times,
+            logicals,
+            gids,
+            None,
+            entry_type,
+            meta_datas,
+            payload_datas,
+            false,
+        )?;
+        block_store.put_entries(blocks);
+        self.inner.put_many(entries);
+        Ok(rows)
+    }
+
     pub fn delete(&mut self, hash: &str) -> bool {
         self.inner.delete(hash).is_some()
     }
@@ -1595,6 +1624,34 @@ fn prepare_entry_v0_plain_entry_row_with_signer(
     let next = strings_from_array(next)?;
     let payload_data = payload_data.to_vec();
     let meta_data = optional_bytes_from_js(meta_data);
+    prepare_entry_v0_plain_entry_row_with_signer_parts(
+        clock_id,
+        public_key,
+        signing_key,
+        wall_time,
+        logical,
+        gid,
+        next,
+        entry_type,
+        meta_data,
+        payload_data,
+        include_storage_bytes,
+    )
+}
+
+fn prepare_entry_v0_plain_entry_row_with_signer_parts(
+    clock_id: &[u8],
+    public_key: &[u8],
+    signing_key: &SigningKey,
+    wall_time: u64,
+    logical: u32,
+    gid: String,
+    next: Vec<String>,
+    entry_type: u8,
+    meta_data: Option<Vec<u8>>,
+    payload_data: Vec<u8>,
+    include_storage_bytes: bool,
+) -> Result<(Array, LogIndexEntry, Vec<String>, (String, Vec<u8>)), JsValue> {
     let payload_size = payload_data.len() as u32;
 
     let input = EntryV0EncodeInput {
@@ -1669,9 +1726,42 @@ fn prepare_entry_v0_plain_entries_rows_with_signer(
     payload_datas: Array,
     include_storage_bytes: bool,
 ) -> Result<(Array, Vec<LogIndexEntry>, Vec<(String, Vec<u8>)>), JsValue> {
+    prepare_entry_v0_plain_entries_rows_with_signer_inner(
+        clock_id,
+        public_key,
+        signing_key,
+        wall_times,
+        logicals,
+        gids,
+        Some(nexts),
+        entry_type,
+        meta_datas,
+        payload_datas,
+        include_storage_bytes,
+    )
+}
+
+fn prepare_entry_v0_plain_entries_rows_with_signer_inner(
+    clock_id: &[u8],
+    public_key: &[u8],
+    signing_key: &SigningKey,
+    wall_times: BigUint64Array,
+    logicals: Uint32Array,
+    gids: Array,
+    nexts: Option<Array>,
+    entry_type: u8,
+    meta_datas: Array,
+    payload_datas: Array,
+    include_storage_bytes: bool,
+) -> Result<(Array, Vec<LogIndexEntry>, Vec<(String, Vec<u8>)>), JsValue> {
     let len = payload_datas.length();
-    if gids.length() != len || nexts.length() != len || meta_datas.length() != len {
+    if gids.length() != len || meta_datas.length() != len {
         return Err(JsValue::from_str("Expected equal column lengths"));
+    }
+    if let Some(nexts) = &nexts {
+        if nexts.length() != len {
+            return Err(JsValue::from_str("Expected equal column lengths"));
+        }
     }
     for numeric_len in [wall_times.length(), logicals.length()] {
         if numeric_len != len {
@@ -1684,19 +1774,24 @@ fn prepare_entry_v0_plain_entries_rows_with_signer(
     let mut blocks = Vec::with_capacity(len as usize);
     for i in 0..len {
         let payload_data = required_bytes_from_array(&payload_datas, i, "payload")?;
-        let (row, entry, _initial_nexts, block) = prepare_entry_v0_plain_entry_row_with_signer(
-            clock_id,
-            public_key,
-            signing_key,
-            wall_times.get_index(i),
-            logicals.get_index(i),
-            required_string_from_array(&gids, i)?,
-            required_array_from_array(&nexts, i)?,
-            entry_type,
-            meta_datas.get(i),
-            Uint8Array::from(payload_data.as_slice()),
-            include_storage_bytes,
-        )?;
+        let next = match &nexts {
+            Some(nexts) => strings_from_array(required_array_from_array(nexts, i)?)?,
+            None => Vec::new(),
+        };
+        let (row, entry, _initial_nexts, block) =
+            prepare_entry_v0_plain_entry_row_with_signer_parts(
+                clock_id,
+                public_key,
+                signing_key,
+                wall_times.get_index(i),
+                logicals.get_index(i),
+                required_string_from_array(&gids, i)?,
+                next,
+                entry_type,
+                optional_bytes_from_js(meta_datas.get(i)),
+                payload_data,
+                include_storage_bytes,
+            )?;
         out.push(&row);
         entries.push(entry);
         blocks.push(block);

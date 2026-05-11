@@ -1042,7 +1042,6 @@ export class Log<T> {
 					meta: {
 						clocks: () => clocks,
 						gids,
-						nexts: data.map(() => []),
 						type: options.meta?.type,
 						datas: metaDatas,
 					},
