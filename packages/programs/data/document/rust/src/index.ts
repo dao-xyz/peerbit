@@ -6,6 +6,23 @@ export type DocumentContextInput = {
 	size: number;
 };
 
+export type DocumentCommitContextInput = {
+	existingCreated?: bigint | number | string | null;
+	modified: bigint | number | string;
+	head: string;
+	gid: string;
+	size: number;
+};
+
+export type DocumentCommitContextPlan = {
+	created: bigint;
+	modified: bigint;
+	head: string;
+	gid: string;
+	size: number;
+	contextBytes: Uint8Array;
+};
+
 type WasmModule = {
 	default: (input?: unknown) => Promise<unknown>;
 	initSync: (input?: unknown) => unknown;
@@ -23,6 +40,20 @@ type WasmModule = {
 		gids: string[],
 		sizes: Uint32Array,
 	) => Uint8Array[];
+	plan_document_context: (
+		existingCreated: string | undefined,
+		modified: string,
+		head: string,
+		gid: string,
+		size: number,
+	) => [string, Uint8Array];
+	plan_document_context_batch: (
+		existingCreateds: Array<string | undefined>,
+		modifieds: string[],
+		heads: string[],
+		gids: string[],
+		sizes: Uint32Array,
+	) => Array<[string, Uint8Array]>;
 };
 
 let wasmModulePromise: Promise<WasmModule> | undefined;
@@ -65,6 +96,15 @@ const loadWasm = async (): Promise<WasmModule> => {
 const asU64String = (value: bigint | number | string): string =>
 	typeof value === "bigint" ? value.toString() : String(value);
 
+const asOptionalU64String = (
+	value: bigint | number | string | null | undefined,
+): string | undefined =>
+	value == null
+		? undefined
+		: typeof value === "bigint"
+			? value.toString()
+			: String(value);
+
 const copyBytes = (bytes: Uint8Array): Uint8Array => new Uint8Array(bytes);
 
 export const encodeContextSuffix = async (
@@ -98,4 +138,47 @@ export const encodeContextSuffixBatch = async (
 			Uint32Array.from(contexts.map((context) => context.size)),
 		)
 		.map(copyBytes);
+};
+
+const toContextPlan = (
+	input: DocumentCommitContextInput,
+	row: [string, Uint8Array],
+): DocumentCommitContextPlan => ({
+	created: BigInt(row[0]),
+	modified: BigInt(asU64String(input.modified)),
+	head: input.head,
+	gid: input.gid,
+	size: input.size,
+	contextBytes: copyBytes(row[1]),
+});
+
+export const planDocumentContext = async (
+	input: DocumentCommitContextInput,
+): Promise<DocumentCommitContextPlan> => {
+	const wasm = await loadWasm();
+	const row = wasm.plan_document_context(
+		asOptionalU64String(input.existingCreated),
+		asU64String(input.modified),
+		input.head,
+		input.gid,
+		input.size,
+	);
+	return toContextPlan(input, row);
+};
+
+export const planDocumentContextBatch = async (
+	inputs: DocumentCommitContextInput[],
+): Promise<DocumentCommitContextPlan[]> => {
+	if (inputs.length === 0) {
+		return [];
+	}
+	const wasm = await loadWasm();
+	const rows = wasm.plan_document_context_batch(
+		inputs.map((input) => asOptionalU64String(input.existingCreated)),
+		inputs.map((input) => asU64String(input.modified)),
+		inputs.map((input) => input.head),
+		inputs.map((input) => input.gid),
+		Uint32Array.from(inputs.map((input) => input.size)),
+	);
+	return rows.map((row, index) => toContextPlan(inputs[index]!, row));
 };

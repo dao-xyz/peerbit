@@ -12,8 +12,8 @@ import {
 	type ResultIndexedValue,
 } from "@peerbit/document-interface";
 import {
-	encodeContextSuffix as encodeNativeContextSuffix,
-	encodeContextSuffixBatch as encodeNativeContextSuffixBatch,
+	planDocumentContext,
+	planDocumentContextBatch,
 } from "@peerbit/document-rust";
 import type { QueryCacheOptions } from "@peerbit/indexer-cache";
 import * as indexerTypes from "@peerbit/indexer-interface";
@@ -1138,19 +1138,17 @@ export class Documents<
 		const append = appended.appendCommit;
 		const existing =
 			input.unique || input.existing === null ? null : input.existing;
-		const context = new Context({
-			created: existing?.value.__context.created || append.wallTime,
+		const contextPlan = await planDocumentContext({
+			existingCreated: existing?.value.__context.created,
 			modified: append.wallTime,
 			head: append.hash,
 			gid: append.gid,
 			size: append.payloadSize,
 		});
-		const contextBytes = await encodeNativeContextSuffix(context);
 		return this.createDocumentAppendCommitFactsWithContext(
 			input,
 			appended,
-			context,
-			contextBytes,
+			contextPlan,
 		);
 	}
 
@@ -1164,25 +1162,25 @@ export class Documents<
 			};
 		}>,
 	): Promise<DocumentAppendCommitFacts<T, I>[]> {
-		const contexts = rows.map(({ input, appended }) => {
-			const append = appended.appendCommit;
-			const existing =
-				input.unique || input.existing === null ? null : input.existing;
-			return new Context({
-				created: existing?.value.__context.created || append.wallTime,
-				modified: append.wallTime,
-				head: append.hash,
-				gid: append.gid,
-				size: append.payloadSize,
-			});
-		});
-		const contextBytes = await encodeNativeContextSuffixBatch(contexts);
+		const contextPlans = await planDocumentContextBatch(
+			rows.map(({ input, appended }) => {
+				const append = appended.appendCommit;
+				const existing =
+					input.unique || input.existing === null ? null : input.existing;
+				return {
+					existingCreated: existing?.value.__context.created,
+					modified: append.wallTime,
+					head: append.hash,
+					gid: append.gid,
+					size: append.payloadSize,
+				};
+			}),
+		);
 		return rows.map((row, index) =>
 			this.createDocumentAppendCommitFactsWithContext(
 				row.input,
 				row.appended,
-				contexts[index]!,
-				contextBytes[index]!,
+				contextPlans[index]!,
 			),
 		);
 	}
@@ -1194,10 +1192,17 @@ export class Documents<
 			removed: ShallowOrFullEntry<Operation>[];
 			appendCommit: LocalAppendCommitFacts;
 		},
-		context: Context,
-		contextBytes: Uint8Array,
+		contextPlan: {
+			created: bigint;
+			modified: bigint;
+			head: string;
+			gid: string;
+			size: number;
+			contextBytes: Uint8Array;
+		},
 	): DocumentAppendCommitFacts<T, I> {
 		const append = appended.appendCommit;
+		const context = new Context(contextPlan);
 		return {
 			document: input.document,
 			key: input.key,
@@ -1208,10 +1213,10 @@ export class Documents<
 			removed: appended.removed,
 			append,
 			context,
-			contextBytes,
+			contextBytes: contextPlan.contextBytes,
 			contextualEncodedValueParts: {
 				prefix: input.documentBytes,
-				suffix: contextBytes,
+				suffix: contextPlan.contextBytes,
 			},
 			unique: input.unique,
 			existing: input.existing,
