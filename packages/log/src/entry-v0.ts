@@ -591,6 +591,7 @@ export class EntryV0<T>
 
 	static async createPlainAppendChain<T>(properties: {
 		data: T[];
+		payloadDatas?: Uint8Array[];
 		meta?: {
 			clocks: () => Clock[];
 			gid?: string;
@@ -611,6 +612,7 @@ export class EntryV0<T>
 
 	static async createPlainAppendEntriesBatch<T>(properties: {
 		data: T[];
+		payloadDatas?: Uint8Array[];
 		meta: {
 			clocks: () => Clock[];
 			gids: string[];
@@ -637,7 +639,9 @@ export class EntryV0<T>
 		}
 		if (
 			properties.meta.gids.length !== properties.data.length ||
-			properties.meta.nexts.length !== properties.data.length
+			properties.meta.nexts.length !== properties.data.length ||
+			(properties.payloadDatas &&
+				properties.payloadDatas.length !== properties.data.length)
 		) {
 			throw new Error("Expected one gid and next list per entry");
 		}
@@ -662,10 +666,9 @@ export class EntryV0<T>
 			}
 		}
 
-		const payloadDatas = new Array<Uint8Array>(properties.data.length);
-		for (let i = 0; i < properties.data.length; i++) {
-			payloadDatas[i] = properties.encoding.encoder(properties.data[i]!);
-		}
+		const payloadDatas =
+			properties.payloadDatas ??
+			properties.data.map((data) => properties.encoding.encoder(data));
 		const input: NativePlainEntriesInput = {
 			clockId: properties.identity.publicKey.bytes,
 			privateKey: properties.identity.privateKey.privateKey,
@@ -805,6 +808,7 @@ export class EntryV0<T>
 
 	static async createPlainAppendChainBatch<T>(properties: {
 		data: T[];
+		payloadDatas?: Uint8Array[];
 		meta?: {
 			clocks: () => Clock[];
 			gid?: string;
@@ -897,7 +901,9 @@ export class EntryV0<T>
 		let payloadDatas: Uint8Array[] | undefined;
 		if (properties.data.length === 1) {
 			const clock = clocks[0]!;
-			const payloadData = properties.encoding.encoder(properties.data[0]!);
+			const payloadData =
+				properties.payloadDatas?.[0] ??
+				properties.encoding.encoder(properties.data[0]!);
 			const singleInput: NativePlainEntryInput = {
 				clockId,
 				privateKey,
@@ -952,13 +958,21 @@ export class EntryV0<T>
 			const metaDatas = new Array<Uint8Array | undefined>(
 				properties.data.length,
 			);
-			payloadDatas = new Array<Uint8Array>(properties.data.length);
+			if (
+				properties.payloadDatas &&
+				properties.payloadDatas.length !== properties.data.length
+			) {
+				throw new Error("Expected one payload data value per entry");
+			}
+			payloadDatas = properties.payloadDatas
+				? [...properties.payloadDatas]
+				: new Array<Uint8Array>(properties.data.length);
 			for (let i = 0; i < properties.data.length; i++) {
 				const clock = clocks[i]!;
 				wallTimes[i] = clock.timestamp.wallTime;
 				logicals[i] = clock.timestamp.logical;
 				metaDatas[i] = properties.meta?.data;
-				payloadDatas[i] = properties.encoding.encoder(properties.data[i]!);
+				payloadDatas[i] ??= properties.encoding.encoder(properties.data[i]!);
 			}
 			const nativePlainChainInput: NativePlainChainInput = {
 				clockId,
