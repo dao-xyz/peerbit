@@ -11,6 +11,10 @@ import {
 	NotFoundError,
 	type ResultIndexedValue,
 } from "@peerbit/document-interface";
+import {
+	encodeContextSuffix as encodeNativeContextSuffix,
+	encodeContextSuffixBatch as encodeNativeContextSuffixBatch,
+} from "@peerbit/document-rust";
 import type { QueryCacheOptions } from "@peerbit/indexer-cache";
 import * as indexerTypes from "@peerbit/indexer-interface";
 import {
@@ -61,7 +65,6 @@ import {
 	type WithIndexedContext,
 	coerceWithContext,
 	coerceWithIndexed,
-	encodeContextSuffix,
 } from "./search.js";
 
 const logger = loggerFn("peerbit:program:document");
@@ -1109,27 +1112,29 @@ export class Documents<
 		if (!appended) {
 			return undefined;
 		}
+		const appendInputs = input.puts.map((put, index) => ({
+			input: put,
+			appended: {
+				entry: appended.entries[index]!,
+				removed: [],
+				appendCommit: appended.appendCommits[index]!,
+			},
+		}));
 		return {
 			entries: appended.entries,
 			removed: appended.removed,
-			commits: input.puts.map((put, index) =>
-				this.createDocumentAppendCommitFacts(put, {
-					entry: appended.entries[index]!,
-					removed: [],
-					appendCommit: appended.appendCommits[index]!,
-				}),
-			),
+			commits: await this.createDocumentAppendCommitFactsBatch(appendInputs),
 		};
 	}
 
-	private createDocumentAppendCommitFacts(
+	private async createDocumentAppendCommitFacts(
 		input: NativeDocumentAppendCommitFactsInput<T, I>,
 		appended: {
 			entry: Entry<Operation>;
 			removed: ShallowOrFullEntry<Operation>[];
 			appendCommit: LocalAppendCommitFacts;
 		},
-	): DocumentAppendCommitFacts<T, I> {
+	): Promise<DocumentAppendCommitFacts<T, I>> {
 		const append = appended.appendCommit;
 		const existing =
 			input.unique || input.existing === null ? null : input.existing;
@@ -1140,7 +1145,59 @@ export class Documents<
 			gid: append.gid,
 			size: append.payloadSize,
 		});
-		const contextBytes = encodeContextSuffix(context);
+		const contextBytes = await encodeNativeContextSuffix(context);
+		return this.createDocumentAppendCommitFactsWithContext(
+			input,
+			appended,
+			context,
+			contextBytes,
+		);
+	}
+
+	private async createDocumentAppendCommitFactsBatch(
+		rows: Array<{
+			input: NativeDocumentAppendCommitFactsInput<T, I>;
+			appended: {
+				entry: Entry<Operation>;
+				removed: ShallowOrFullEntry<Operation>[];
+				appendCommit: LocalAppendCommitFacts;
+			};
+		}>,
+	): Promise<DocumentAppendCommitFacts<T, I>[]> {
+		const contexts = rows.map(({ input, appended }) => {
+			const append = appended.appendCommit;
+			const existing =
+				input.unique || input.existing === null ? null : input.existing;
+			return new Context({
+				created: existing?.value.__context.created || append.wallTime,
+				modified: append.wallTime,
+				head: append.hash,
+				gid: append.gid,
+				size: append.payloadSize,
+			});
+		});
+		const contextBytes = await encodeNativeContextSuffixBatch(contexts);
+		return rows.map((row, index) =>
+			this.createDocumentAppendCommitFactsWithContext(
+				row.input,
+				row.appended,
+				contexts[index]!,
+				contextBytes[index]!,
+			),
+		);
+	}
+
+	private createDocumentAppendCommitFactsWithContext(
+		input: NativeDocumentAppendCommitFactsInput<T, I>,
+		appended: {
+			entry: Entry<Operation>;
+			removed: ShallowOrFullEntry<Operation>[];
+			appendCommit: LocalAppendCommitFacts;
+		},
+		context: Context,
+		contextBytes: Uint8Array,
+	): DocumentAppendCommitFacts<T, I> {
+		const append = appended.appendCommit;
 		return {
 			document: input.document,
 			key: input.key,

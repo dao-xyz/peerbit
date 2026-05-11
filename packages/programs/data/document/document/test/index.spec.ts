@@ -273,7 +273,7 @@ describe("index", () => {
 					expect(nativeInput.operation).equal(undefined);
 					expect(nativeInput.key.primitive).equal(doc.id);
 					expect(nativeInput.next).to.be.empty;
-					const documentCommit = documentCommitSpy.getCall(0).returnValue;
+					const documentCommit = await documentCommitSpy.getCall(0).returnValue;
 					expect(documentCommit.operationPayloadBytes).to.deep.equal(
 						expectedPayloadData,
 					);
