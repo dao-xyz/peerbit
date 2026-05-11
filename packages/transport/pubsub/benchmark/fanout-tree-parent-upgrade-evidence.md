@@ -231,6 +231,13 @@ Shared-network multi-writer settled-topology run:
 pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-idle --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
 ```
 
+Larger shared-network scale checks:
+
+```bash
+pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-live --seeds 1 --parentUpgradePreset default-candidate --strict 1 --nodes 80 --writers 8 --subscribersPerTree 56
+pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-idle --seeds 1 --parentUpgradePreset default-candidate --strict 1 --nodes 80 --writers 8 --subscribersPerTree 56
+```
+
 The settled-topology run fails strict mode if p95 second-batch latency
 materially regresses. The default evaluator tolerates the greater of `3ms` or
 `15%` second-batch p95 timing jitter with
@@ -392,6 +399,17 @@ Local smoke runs on this branch showed:
   average control bpp delta about `+3.8%`, per-root child delta max `2`, largest
   per-seed root-child delta sum `8`, max root upload delta about `0.03`
   percentage points, and max `1` proactive reparent per peer/channel.
+- Larger shared-network scale checks, seed `1`, `--nodes 80 --writers 8
+  --subscribersPerTree 56 --parentUpgradePreset default-candidate --strict 1`:
+  passed for both live and idle. The live run joined `448/448` subscriber slots,
+  made `0` proactive upgrades, sent `0` parent probes, started `0` shadow
+  observations, recorded active guard skips on all `8` writer trees, and kept
+  root-child delta at `0`. The idle run also joined `448/448` subscriber slots,
+  promoted all `8` writer trees with `16` proactive upgrades and `32` probes,
+  improved second-batch p95 from `1145ms` to `1004ms`, improved deadline
+  delivery from `79.96%` to `83.81%`, kept max root-child delta at `2`, kept
+  root upload delta around `0.02` percentage points, reduced average control bpp
+  by about `8.8%`, and kept max proactive reparent per peer/channel at `1`.
 - The simulator now reports root upload pressure separately from max relay/root
   upload pressure. This matters for streamer-like workloads: root-child fanout
   count is a useful structural signal, but root upload percentage is the direct
