@@ -302,6 +302,18 @@ type PreparedCoordinatePersistence<R extends "u32" | "u64"> = {
 	fields: SharedLogCoordinateNativeFields<R>;
 };
 
+type PreparedLocalAppendCommit<R extends "u32" | "u64"> = {
+	hash: string;
+	gid: string;
+	next: string[];
+	wallTime: bigint;
+	logical: number;
+	payloadSize: number;
+	metaBytes?: Uint8Array;
+	hashNumber?: NumberFromType<R>;
+	coordinateFields?: SharedLogCoordinateNativeFields<R>;
+};
+
 type NativeAppendEntryPlan<R extends "u32" | "u64"> = EntryLeaderPlan<R> & {
 	hashNumber: NumberFromType<R>;
 	preparedCoordinate: PreparedCoordinatePersistence<R>;
@@ -4077,6 +4089,7 @@ export class SharedLog<
 	): Promise<{
 		entry: Entry<T>;
 		removed: ShallowOrFullEntry<T>[];
+		appendCommit: PreparedLocalAppendCommit<R>;
 	}> {
 		if (options?.canAppend || options?.onChange) {
 			throw new Error(
@@ -4114,18 +4127,26 @@ export class SharedLog<
 			await this.onChange(result.change);
 		}
 		try {
-			await this.processLocalAppend(result.entry, result.removed, options, {
-				minReplicasValue,
-				nativeAppendPlan,
-				extraCoordinateDeleteHashes: deferredCoordinateDeleteHashes,
-			});
+			nativeAppendPlan =
+				(await this.processLocalAppend(result.entry, result.removed, options, {
+					minReplicasValue,
+					nativeAppendPlan,
+					extraCoordinateDeleteHashes: deferredCoordinateDeleteHashes,
+				})) ?? nativeAppendPlan;
 		} catch (error) {
 			if (deferredCoordinateDeleteHashes) {
 				await this.deleteCoordinatesForHashes(deferredCoordinateDeleteHashes);
 			}
 			throw error;
 		}
-		return { entry: result.entry, removed: result.removed };
+		return {
+			entry: result.entry,
+			removed: result.removed,
+			appendCommit: this.createPreparedLocalAppendCommit(
+				result.entry,
+				nativeAppendPlan,
+			),
+		};
 	}
 
 	private canCoalescePreparedAppendCoordinateDeletes(
@@ -4672,7 +4693,7 @@ export class SharedLog<
 			nativeAppendPlan?: NativeAppendEntryPlan<R>;
 			extraCoordinateDeleteHashes?: string[];
 		},
-	) {
+	): Promise<NativeAppendEntryPlan<R> | undefined> {
 		const deferHeadCoordinatePersistence =
 			properties.deferHeadCoordinatePersistence ??
 			(entry.meta.type !== EntryType.CUT &&
@@ -4777,6 +4798,24 @@ export class SharedLog<
 		if (!delayAdaptiveRebalance) {
 			this.rebalanceParticipationDebounced?.call();
 		}
+		return nativeAppendPlan;
+	}
+
+	private createPreparedLocalAppendCommit(
+		entry: Entry<T>,
+		nativeAppendPlan?: NativeAppendEntryPlan<R>,
+	): PreparedLocalAppendCommit<R> {
+		return {
+			hash: entry.hash,
+			gid: entry.meta.gid,
+			next: entry.meta.next,
+			wallTime: entry.meta.clock.timestamp.wallTime,
+			logical: entry.meta.clock.timestamp.logical,
+			payloadSize: entry.payload.byteLength,
+			metaBytes: (entry as EntryWithMetaBytes).getMetaBytes?.(),
+			hashNumber: nativeAppendPlan?.hashNumber,
+			coordinateFields: nativeAppendPlan?.preparedCoordinate.fields,
+		};
 	}
 
 	async open(options?: Args<T, D, R>): Promise<void> {
