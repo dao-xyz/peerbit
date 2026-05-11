@@ -88,7 +88,7 @@ interface Log<T> {
 	) => Promise<Entry<T> | ShallowEntry | undefined>;
 	deleteNodes?: (
 		nodes: ShallowEntry[],
-		options?: { resolveDeletedEntry?: boolean },
+		options?: { resolveDeletedEntry?: boolean; skipNextHeadUpdates?: boolean },
 	) => Promise<(Entry<T> | ShallowEntry)[]>;
 	getLength(): number;
 }
@@ -325,6 +325,9 @@ export class Trim<T> {
 					deleted.push(
 						...(await this._log.deleteNodes(nodes, {
 							resolveDeletedEntry: options?.resolveDeletedEntries,
+							// Oldest-first trim only removes entries whose next links point
+							// further back into the same deleted prefix.
+							skipNextHeadUpdates: true,
 						})),
 					);
 				}
@@ -340,6 +343,9 @@ export class Trim<T> {
 				deleted.push(
 					...(await this._log.deleteNodes(nodes, {
 						resolveDeletedEntry: options?.resolveDeletedEntries,
+						// Oldest-first trim only removes entries whose next links point
+						// further back into the same deleted prefix.
+						skipNextHeadUpdates: true,
 					})),
 				);
 			}

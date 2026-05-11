@@ -93,6 +93,8 @@ type Profile = {
 	sharedProcessLocalAppendMs: number;
 	sharedProcessLocalAppendBatchMs: number;
 	sharedPlanEntryLeadersMs: number;
+	sharedLeaderContextMs: number;
+	sharedCoordinatePrepareMs: number;
 	sharedPersistCoordinateMs: number;
 	logAppendMs: number;
 	logGetNextsForAppendMs: number;
@@ -118,6 +120,8 @@ const deepProfileKeys = new Set<keyof Profile>([
 	"sharedProcessLocalAppendMs",
 	"sharedProcessLocalAppendBatchMs",
 	"sharedPlanEntryLeadersMs",
+	"sharedLeaderContextMs",
+	"sharedCoordinatePrepareMs",
 	"sharedPersistCoordinateMs",
 	"logGetNextsForAppendMs",
 	"logCreateNativeAppendChainMs",
@@ -134,6 +138,8 @@ const emptyProfile = (): Profile => ({
 	sharedProcessLocalAppendMs: 0,
 	sharedProcessLocalAppendBatchMs: 0,
 	sharedPlanEntryLeadersMs: 0,
+	sharedLeaderContextMs: 0,
+	sharedCoordinatePrepareMs: 0,
 	sharedPersistCoordinateMs: 0,
 	logAppendMs: 0,
 	logGetNextsForAppendMs: 0,
@@ -187,6 +193,37 @@ const patchAsyncMethod = (
 	}
 	target[key] = async function patched(this: unknown, ...args: unknown[]) {
 		return time(profile, profileKey, () => original.apply(this, args));
+	};
+	return () => {
+		target[key] = original;
+	};
+};
+
+const timeSync = <T>(
+	profile: Profile,
+	key: keyof Profile,
+	fn: () => T,
+): T => {
+	const started = performance.now();
+	try {
+		return fn();
+	} finally {
+		profile[key] += performance.now() - started;
+	}
+};
+
+const patchSyncMethod = (
+	target: any,
+	key: string,
+	profile: Profile,
+	profileKey: keyof Profile,
+) => {
+	const original = target[key];
+	if (typeof original !== "function") {
+		return () => {};
+	}
+	target[key] = function patched(this: unknown, ...args: unknown[]) {
+		return timeSync(profile, profileKey, () => original.apply(this, args));
 	};
 	return () => {
 		target[key] = original;
@@ -386,6 +423,12 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				),
 				patchAsyncMethod(
 					store.docs.log as any,
+					"createLeaderSelectionContext",
+					profile,
+					"sharedLeaderContextMs",
+				),
+				patchAsyncMethod(
+					store.docs.log as any,
 					"planNativeLocalAppendEntry",
 					profile,
 					"sharedPlanEntryLeadersMs",
@@ -407,6 +450,18 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 					"planNativeAppendFacts",
 					profile,
 					"sharedPlanEntryLeadersMs",
+				),
+				patchSyncMethod(
+					store.docs.log as any,
+					"createCoordinatePersistenceEntryFromNativePlanFacts",
+					profile,
+					"sharedCoordinatePrepareMs",
+				),
+				patchSyncMethod(
+					store.docs.log as any,
+					"createCoordinatePersistenceEntryFromNativePlan",
+					profile,
+					"sharedCoordinatePrepareMs",
 				),
 				patchAsyncMethod(
 					store.docs.log as any,
