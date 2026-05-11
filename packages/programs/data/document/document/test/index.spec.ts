@@ -191,6 +191,10 @@ describe("index", () => {
 					store.docs as any,
 					"getLocalIndexedContext",
 				);
+				const commitPlanSpy = sinon.spy(
+					store.docs as any,
+					"createPlainPutCommitPlan",
+				);
 				const backendIndex = store.docs.index.index as any;
 				const originalBackendPutWithContext = backendIndex.putWithContext;
 				const originalBackendPut = backendIndex.put;
@@ -223,6 +227,7 @@ describe("index", () => {
 					expect(validatedAppendSpy.callCount).equal(0);
 					expect(appendSpy.callCount).equal(0);
 					expect(localLookupSpy.callCount).equal(0);
+					expect(commitPlanSpy.callCount).equal(1);
 					expect(backendContextPutSpy.callCount).equal(1);
 					const encodedDocument = serialize(doc);
 					const expectedPayloadData = new Uint8Array(
@@ -239,6 +244,8 @@ describe("index", () => {
 					expect(preparedAppendSpy.getCall(0).args[2]?.payloadData).to.deep.equal(
 						expectedPayloadData,
 					);
+					const commitPlan = await commitPlanSpy.getCall(0).returnValue;
+					expect(commitPlan.payloadData).to.deep.equal(expectedPayloadData);
 					const backendOptions = backendContextPutSpy.getCall(0).args[3] as
 						| {
 								encodedValue?: Uint8Array;
@@ -270,6 +277,7 @@ describe("index", () => {
 						delete backendIndex.putWithContext;
 					}
 					localLookupSpy.restore();
+					commitPlanSpy.restore();
 					preparedAppendSpy.restore();
 					validatedAppendSpy.restore();
 					appendSpy.restore();
