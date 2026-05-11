@@ -230,6 +230,8 @@ describe("index", () => {
 								encodedValueParts?: { prefix: Uint8Array; suffix: Uint8Array };
 						  }
 						| undefined;
+					const backendContext = backendContextPutSpy.getCall(0)
+						.args[2] as Context;
 					const encodedDocument = serialize(doc);
 					expect(backendOptions?.encodedValue).equal(undefined);
 					expect(backendOptions?.encodedValueParts?.prefix).to.deep.equal(
@@ -237,6 +239,9 @@ describe("index", () => {
 					);
 					expect(backendOptions?.encodedValueParts?.suffix).instanceOf(
 						Uint8Array,
+					);
+					expect(backendOptions?.encodedValueParts?.suffix).to.deep.equal(
+						serialize(backendContext),
 					);
 					expect(backendOptions!.encodedValueParts!.suffix.byteLength).greaterThan(
 						0,
@@ -412,6 +417,7 @@ describe("index", () => {
 					expect(appended.entries).to.have.length(3);
 					expect(documentBackendBatchSpy.callCount).equal(1);
 					const batchValues = documentBackendBatchSpy.getCall(0).args[0] as Array<{
+						context: Context;
 						options?: {
 							encodedValue?: Uint8Array;
 							encodedValueParts?: { prefix: Uint8Array; suffix: Uint8Array };
@@ -427,6 +433,9 @@ describe("index", () => {
 						expect(
 							batchValues[i]!.options?.encodedValueParts?.suffix,
 						).instanceOf(Uint8Array);
+						expect(
+							batchValues[i]!.options?.encodedValueParts?.suffix,
+						).to.deep.equal(serialize(batchValues[i]!.context));
 						expect(
 							batchValues[i]!.options!.encodedValueParts!.suffix.byteLength,
 						).greaterThan(0);

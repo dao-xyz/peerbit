@@ -669,6 +669,44 @@ const stripEncodedValue = (
 		? { replace: options.replace }
 		: options;
 
+const writeU32Le = (target: Uint8Array, offset: number, value: number) => {
+	target[offset] = value & 0xff;
+	target[offset + 1] = (value >>> 8) & 0xff;
+	target[offset + 2] = (value >>> 16) & 0xff;
+	target[offset + 3] = (value >>> 24) & 0xff;
+	return offset + 4;
+};
+
+const writeU64Le = (target: Uint8Array, offset: number, value: bigint) => {
+	let remaining = value;
+	for (let i = 0; i < 8; i++) {
+		target[offset + i] = Number(remaining & 0xffn);
+		remaining >>= 8n;
+	}
+	return offset + 8;
+};
+
+const encodeContextSuffix = (context: types.Context): Uint8Array => {
+	const head = fromString(context.head);
+	const gid = fromString(context.gid);
+	const encoded = new Uint8Array(
+		1 + 8 + 8 + 4 + head.byteLength + 4 + gid.byteLength + 4,
+	);
+	let offset = 0;
+	// Context is @variant(0); keep this byte-for-byte aligned with Borsh.
+	encoded[offset++] = 0;
+	offset = writeU64Le(encoded, offset, context.created);
+	offset = writeU64Le(encoded, offset, context.modified);
+	offset = writeU32Le(encoded, offset, head.byteLength);
+	encoded.set(head, offset);
+	offset += head.byteLength;
+	offset = writeU32Le(encoded, offset, gid.byteLength);
+	encoded.set(gid, offset);
+	offset += gid.byteLength;
+	writeU32Le(encoded, offset, context.size);
+	return encoded;
+};
+
 type ContextualIndexPut<I> = {
 	putWithContext?: (
 		value: I,
@@ -1936,7 +1974,7 @@ export class DocumentIndex<
 		}
 		return {
 			prefix: encodedValue,
-			suffix: serialize(context),
+			suffix: encodeContextSuffix(context),
 		};
 	}
 
