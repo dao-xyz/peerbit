@@ -846,6 +846,7 @@ export class Documents<
 				encodedDocument: item.encodedDocument,
 				key: item.key,
 				entry: appended.entries[index]!,
+				append: appended.appendCommits[index]!,
 			})),
 			removed: appended.removed,
 		});
@@ -1175,6 +1176,7 @@ export class Documents<
 			encodedDocument?: Uint8Array;
 			key: indexerTypes.IdKey;
 			entry: Entry<Operation>;
+			append: LocalAppendCommitFacts;
 		}[];
 		removed: ShallowOrFullEntry<Operation>[];
 	}): Promise<void> {
@@ -1195,11 +1197,11 @@ export class Documents<
 				continue;
 			}
 			const context = new Context({
-				created: put.entry.meta.clock.timestamp.wallTime,
-				modified: put.entry.meta.clock.timestamp.wallTime,
-				head: put.entry.hash,
-				gid: put.entry.meta.gid,
-				size: put.entry.payload.byteLength,
+				created: put.append.wallTime,
+				modified: put.append.wallTime,
+				head: put.append.hash,
+				gid: put.append.gid,
+				size: put.append.payloadSize,
 			});
 			putsToIndex.push({
 				document: put.document,
