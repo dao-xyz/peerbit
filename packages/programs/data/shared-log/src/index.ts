@@ -4349,6 +4349,7 @@ export class SharedLog<
 		options?: SharedAppendOptions<T> | undefined,
 		properties?: {
 			resolveTrimmedEntries?: boolean;
+			payloadDatas?: Uint8Array[];
 		},
 	): Promise<
 		| {
@@ -4377,6 +4378,7 @@ export class SharedLog<
 			appendOptions,
 			{
 				resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+				payloadDatas: properties?.payloadDatas,
 			},
 		);
 		if (!result) {

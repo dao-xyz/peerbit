@@ -106,6 +106,18 @@ export type CanPerform<T> = (
 	properties: CanPerformOperations<T>,
 ) => MaybePromise<boolean>;
 
+const PUT_OPERATION_PREFIX_LENGTH = 6;
+const encodePutOperationPayload = (operation: PutOperation): Uint8Array => {
+	const data = operation.data;
+	const encoded = new Uint8Array(PUT_OPERATION_PREFIX_LENGTH + data.byteLength);
+	encoded[0] = 0;
+	encoded[1] = 3;
+	const view = new DataView(encoded.buffer, encoded.byteOffset, encoded.byteLength);
+	view.setUint32(2, data.byteLength, true);
+	encoded.set(data, PUT_OPERATION_PREFIX_LENGTH);
+	return encoded;
+};
+
 type PutChangeReference<T, I extends Record<string, any>> = {
 	document: T;
 	operation: PutOperation | PutWithKeyOperation;
@@ -745,6 +757,9 @@ export class Documents<
 			},
 			{
 				resolveTrimmedEntries: !this._index.canGetIdentityIndexedByHead(),
+				payloadDatas: prepared.map((item) =>
+					encodePutOperationPayload(item.operation as PutOperation),
+				),
 			},
 		);
 		if (!appended) {
