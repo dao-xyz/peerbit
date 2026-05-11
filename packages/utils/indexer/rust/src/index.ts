@@ -28,6 +28,7 @@ export type RustIndexerOptions = {
 };
 
 type NativeRustIndex<T extends Record<string, any>> = {
+	configure_schema_ir: (schemaIr: Uint8Array) => [number, number];
 	put: (
 		key: string,
 		id: types.IdKey,
@@ -172,6 +173,28 @@ const enum NativeStringMatchMethodTag {
 const enum NativeSortDirectionTag {
 	Asc = 0,
 	Desc = 1,
+}
+
+const enum NativeSchemaNodeTag {
+	Bool = 0,
+	U8 = 1,
+	U16 = 2,
+	U32 = 3,
+	U64 = 4,
+	U128 = 5,
+	U256 = 6,
+	U512 = 7,
+	I8 = 8,
+	I16 = 9,
+	I32 = 10,
+	I64 = 11,
+	String = 12,
+	Uint8Array = 13,
+	Object = 14,
+	Option = 15,
+	Vec = 16,
+	FixedArray = 17,
+	Generic = 18,
 }
 
 const textEncoder = new TextEncoder();
@@ -614,7 +637,56 @@ class NativeFieldWriter {
 	}
 }
 
+class NativeSchemaIrWriter {
+	private output: Uint8Array;
+	private view: DataView;
+	private offset = 0;
+
+	constructor(initialSize = 256) {
+		this.output = new Uint8Array(initialSize);
+		this.view = new DataView(this.output.buffer);
+	}
+
+	u8(value: number): void {
+		this.ensure(1);
+		this.output[this.offset++] = value;
+	}
+
+	u32(value: number): void {
+		this.ensure(4);
+		this.offset = writeUint32(this.view, this.offset, value);
+	}
+
+	string(value: string): void {
+		const bytes = textEncoder.encode(value);
+		this.u32(bytes.byteLength);
+		this.ensure(bytes.byteLength);
+		this.output.set(bytes, this.offset);
+		this.offset += bytes.byteLength;
+	}
+
+	finish(): Uint8Array {
+		return this.output.subarray(0, this.offset);
+	}
+
+	private ensure(extra: number): void {
+		const needed = this.offset + extra;
+		if (needed <= this.output.byteLength) {
+			return;
+		}
+		let nextSize = this.output.byteLength;
+		while (nextSize < needed) {
+			nextSize *= 2;
+		}
+		const next = new Uint8Array(nextSize);
+		next.set(this.output);
+		this.output = next;
+		this.view = new DataView(this.output.buffer);
+	}
+}
+
 type NativeFieldEncoder<T extends Record<string, any>> = (value: T) => Uint8Array;
+type NativeSchemaIrStats = { rootFields: number; nodeCount: number };
 type SharedLogCoordinateNativeFields = {
 	hash: string;
 	hashNumber: number | bigint;
@@ -805,6 +877,159 @@ const integerFieldTypes = new Set([
 	"i32",
 	"i64",
 ]);
+
+const nativeSchemaIntegerNodeTag = (
+	fieldType: string,
+): NativeSchemaNodeTag | undefined => {
+	switch (fieldType) {
+		case "u8":
+			return NativeSchemaNodeTag.U8;
+		case "u16":
+			return NativeSchemaNodeTag.U16;
+		case "u32":
+			return NativeSchemaNodeTag.U32;
+		case "u64":
+			return NativeSchemaNodeTag.U64;
+		case "u128":
+			return NativeSchemaNodeTag.U128;
+		case "u256":
+			return NativeSchemaNodeTag.U256;
+		case "u512":
+			return NativeSchemaNodeTag.U512;
+		case "i8":
+			return NativeSchemaNodeTag.I8;
+		case "i16":
+			return NativeSchemaNodeTag.I16;
+		case "i32":
+			return NativeSchemaNodeTag.I32;
+		case "i64":
+			return NativeSchemaNodeTag.I64;
+		default:
+			return undefined;
+	}
+};
+
+const encodeNativeSchemaIr = (
+	schema: Function,
+	dictionary: NativeFieldDictionary,
+): Uint8Array => {
+	const writer = new NativeSchemaIrWriter();
+	writer.u8(BRIDGE_VERSION);
+	writeNativeSchemaNode(writer, schema, dictionary, undefined, new Set());
+	return writer.finish();
+};
+
+const writeNativeSchemaObjectNode = (
+	writer: NativeSchemaIrWriter,
+	ctor: Function,
+	dictionary: NativeFieldDictionary,
+	cursor: NativeFieldCursor | undefined,
+	active: Set<Function>,
+): void => {
+	if (active.has(ctor)) {
+		writer.u8(NativeSchemaNodeTag.Generic);
+		return;
+	}
+	let schemas: ReturnType<typeof getSchemasBottomUp>;
+	try {
+		schemas = getSchemasBottomUp(ctor);
+	} catch {
+		writer.u8(NativeSchemaNodeTag.Generic);
+		return;
+	}
+	if (!schemas?.length) {
+		writer.u8(NativeSchemaNodeTag.Generic);
+		return;
+	}
+
+	active.add(ctor);
+	const fields = schemas.flatMap((nextSchema) => nextSchema.fields);
+	writer.u8(NativeSchemaNodeTag.Object);
+	writer.u32(fields.length);
+	for (const field of fields) {
+		const fieldCursor = appendNativeFieldCursor(dictionary, cursor, field.key);
+		writer.string(field.key);
+		writer.u32(fieldCursor.fieldId);
+		writer.u32(fieldCursor.arrayFieldId);
+		writeNativeSchemaNode(
+			writer,
+			field.type,
+			dictionary,
+			fieldCursor,
+			active,
+		);
+	}
+	active.delete(ctor);
+};
+
+const writeNativeSchemaNode = (
+	writer: NativeSchemaIrWriter,
+	fieldType: FieldType | Function,
+	dictionary: NativeFieldDictionary,
+	cursor: NativeFieldCursor | undefined,
+	active: Set<Function>,
+): void => {
+	if (fieldType instanceof OptionKind) {
+		writer.u8(NativeSchemaNodeTag.Option);
+		writeNativeSchemaNode(
+			writer,
+			fieldType.elementType,
+			dictionary,
+			cursor,
+			active,
+		);
+		return;
+	}
+
+	if (fieldType instanceof VecKind || fieldType instanceof FixedArrayKind) {
+		if (fieldType instanceof FixedArrayKind) {
+			writer.u8(NativeSchemaNodeTag.FixedArray);
+			writer.u32(fieldType.length);
+		} else {
+			writer.u8(NativeSchemaNodeTag.Vec);
+		}
+		writeNativeSchemaNode(
+			writer,
+			fieldType.elementType,
+			dictionary,
+			cursor,
+			active,
+		);
+		return;
+	}
+
+	if (fieldType === Uint8Array) {
+		writer.u8(NativeSchemaNodeTag.Uint8Array);
+		return;
+	}
+
+	if (fieldType instanceof StringType) {
+		writer.u8(NativeSchemaNodeTag.String);
+		return;
+	}
+
+	if (typeof fieldType === "string") {
+		if (fieldType === "bool") {
+			writer.u8(NativeSchemaNodeTag.Bool);
+			return;
+		}
+		if (fieldType === "string") {
+			writer.u8(NativeSchemaNodeTag.String);
+			return;
+		}
+		writer.u8(
+			nativeSchemaIntegerNodeTag(fieldType) ?? NativeSchemaNodeTag.Generic,
+		);
+		return;
+	}
+
+	if (typeof fieldType === "function") {
+		writeNativeSchemaObjectNode(writer, fieldType, dictionary, cursor, active);
+		return;
+	}
+
+	writer.u8(NativeSchemaNodeTag.Generic);
+};
 
 const compileNativeFieldEncoder = <T extends Record<string, any>>(
 	schema: Function,
@@ -1233,6 +1458,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	private properties!: types.IndexEngineInitProperties<T, NestedType>;
 	private fieldDictionary!: NativeFieldDictionary;
 	private fieldEncoder!: NativeFieldEncoder<T>;
+	private nativeSchemaIrStats?: NativeSchemaIrStats;
 	private byteElementIndexLimit!: number;
 	private sharedLogCoordinateFieldIds?: {
 		hash: number;
@@ -1281,6 +1507,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			this.fieldDictionary,
 			this.options,
 		);
+		const [rootFields, nodeCount] = this.native.configure_schema_ir(
+			encodeNativeSchemaIr(properties.schema, this.fieldDictionary),
+		);
+		this.nativeSchemaIrStats = { rootFields, nodeCount };
 		this.snapshotFile = await createSnapshotFile(
 			this.directory,
 			this.path,

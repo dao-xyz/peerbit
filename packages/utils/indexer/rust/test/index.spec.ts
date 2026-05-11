@@ -223,6 +223,19 @@ describe("all", () => {
 });
 
 describe("native planner bridge", () => {
+	it("hands compiled borsh schema ir to native rust", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeNestedDocument });
+		const { nativeSchemaIrStats: stats } = index as unknown as {
+			nativeSchemaIrStats?: { rootFields: number; nodeCount: number };
+		};
+
+		expect(stats).to.deep.equal({ rootFields: 2, nodeCount: 6 });
+
+		await indices.drop();
+	});
+
 	it("does not expose the previous typescript query fallback evaluator", async () => {
 		const indices = create();
 		await indices.start();

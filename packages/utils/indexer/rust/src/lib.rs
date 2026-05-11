@@ -180,6 +180,7 @@ impl NativeQueryPlanner {
 pub struct NativeRustIndex {
     store: NativeIndexStore,
     planner: NativeQueryPlanner,
+    schema_ir: Option<NativeSchemaIr>,
 }
 
 #[wasm_bindgen]
@@ -189,12 +190,23 @@ impl NativeRustIndex {
         NativeRustIndex {
             store: NativeIndexStore::new(),
             planner: NativeQueryPlanner::new(),
+            schema_ir: None,
         }
     }
 
     pub fn clear(&mut self) {
         self.store.clear();
         self.planner.clear();
+    }
+
+    pub fn configure_schema_ir(&mut self, schema_ir_bytes: Vec<u8>) -> Result<Array, JsValue> {
+        let schema_ir = decode_native_schema_ir(&schema_ir_bytes)?;
+        let stats = schema_ir.stats();
+        self.schema_ir = Some(schema_ir);
+        let out = Array::new();
+        out.push(&JsValue::from_f64(stats.root_fields as f64));
+        out.push(&JsValue::from_f64(stats.node_count as f64));
+        Ok(out)
     }
 
     pub fn len(&self) -> usize {
@@ -417,6 +429,98 @@ enum StringMatchMethodDto {
     Contains,
 }
 
+#[derive(Clone, Debug)]
+struct NativeSchemaIr {
+    root: NativeSchemaNode,
+}
+
+#[derive(Clone, Debug)]
+struct NativeSchemaField {
+    key: String,
+    field: u32,
+    array_field: u32,
+    node: NativeSchemaNode,
+}
+
+#[derive(Clone, Debug)]
+enum NativeSchemaNode {
+    Bool,
+    U8,
+    U16,
+    U32,
+    U64,
+    U128,
+    U256,
+    U512,
+    I8,
+    I16,
+    I32,
+    I64,
+    String,
+    Uint8Array,
+    Object(Vec<NativeSchemaField>),
+    Option(Box<NativeSchemaNode>),
+    Vec(Box<NativeSchemaNode>),
+    FixedArray {
+        length: u32,
+        element: Box<NativeSchemaNode>,
+    },
+    Generic,
+}
+
+struct NativeSchemaIrStats {
+    root_fields: usize,
+    node_count: usize,
+}
+
+impl NativeSchemaIr {
+    fn stats(&self) -> NativeSchemaIrStats {
+        NativeSchemaIrStats {
+            root_fields: match &self.root {
+                NativeSchemaNode::Object(fields) => fields.len(),
+                _ => 0,
+            },
+            node_count: self.root.node_count(),
+        }
+    }
+}
+
+impl NativeSchemaNode {
+    fn node_count(&self) -> usize {
+        match self {
+            NativeSchemaNode::Object(fields) => {
+                1 + fields
+                    .iter()
+                    .map(|field| {
+                        let _ = (&field.key, field.field, field.array_field);
+                        field.node.node_count()
+                    })
+                    .sum::<usize>()
+            }
+            NativeSchemaNode::Option(node) | NativeSchemaNode::Vec(node) => 1 + node.node_count(),
+            NativeSchemaNode::FixedArray { length, element } => {
+                let _ = length;
+                1 + element.node_count()
+            }
+            NativeSchemaNode::Bool
+            | NativeSchemaNode::U8
+            | NativeSchemaNode::U16
+            | NativeSchemaNode::U32
+            | NativeSchemaNode::U64
+            | NativeSchemaNode::U128
+            | NativeSchemaNode::U256
+            | NativeSchemaNode::U512
+            | NativeSchemaNode::I8
+            | NativeSchemaNode::I16
+            | NativeSchemaNode::I32
+            | NativeSchemaNode::I64
+            | NativeSchemaNode::String
+            | NativeSchemaNode::Uint8Array
+            | NativeSchemaNode::Generic => 1,
+        }
+    }
+}
+
 struct BridgeReader<'a> {
     bytes: &'a [u8],
     offset: usize,
@@ -492,6 +596,54 @@ impl<'a> BridgeReader<'a> {
         self.offset = end;
         Ok(bytes)
     }
+}
+
+fn decode_native_schema_ir(schema_ir_bytes: &[u8]) -> Result<NativeSchemaIr, JsValue> {
+    let mut reader = BridgeReader::new(schema_ir_bytes);
+    ensure_bridge_version(reader.read_u8()?)?;
+    let root = read_native_schema_node(&mut reader)?;
+    reader.finish()?;
+    Ok(NativeSchemaIr { root })
+}
+
+fn read_native_schema_node(reader: &mut BridgeReader) -> Result<NativeSchemaNode, JsValue> {
+    Ok(match reader.read_u8()? {
+        0 => NativeSchemaNode::Bool,
+        1 => NativeSchemaNode::U8,
+        2 => NativeSchemaNode::U16,
+        3 => NativeSchemaNode::U32,
+        4 => NativeSchemaNode::U64,
+        5 => NativeSchemaNode::U128,
+        6 => NativeSchemaNode::U256,
+        7 => NativeSchemaNode::U512,
+        8 => NativeSchemaNode::I8,
+        9 => NativeSchemaNode::I16,
+        10 => NativeSchemaNode::I32,
+        11 => NativeSchemaNode::I64,
+        12 => NativeSchemaNode::String,
+        13 => NativeSchemaNode::Uint8Array,
+        14 => {
+            let field_count = reader.read_u32()? as usize;
+            let mut fields = Vec::with_capacity(field_count);
+            for _ in 0..field_count {
+                fields.push(NativeSchemaField {
+                    key: reader.read_string()?,
+                    field: reader.read_u32()?,
+                    array_field: reader.read_u32()?,
+                    node: read_native_schema_node(reader)?,
+                });
+            }
+            NativeSchemaNode::Object(fields)
+        }
+        15 => NativeSchemaNode::Option(Box::new(read_native_schema_node(reader)?)),
+        16 => NativeSchemaNode::Vec(Box::new(read_native_schema_node(reader)?)),
+        17 => NativeSchemaNode::FixedArray {
+            length: reader.read_u32()?,
+            element: Box::new(read_native_schema_node(reader)?),
+        },
+        18 => NativeSchemaNode::Generic,
+        tag => return Err(js_error(format!("Unknown native schema node tag {tag}"))),
+    })
 }
 
 fn decode_document_fields(fields_bytes: &[u8]) -> Result<DocumentFields, JsValue> {
