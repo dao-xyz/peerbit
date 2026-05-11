@@ -686,7 +686,7 @@ const writeU64Le = (target: Uint8Array, offset: number, value: bigint) => {
 	return offset + 8;
 };
 
-const encodeContextSuffix = (context: types.Context): Uint8Array => {
+export const encodeContextSuffix = (context: types.Context): Uint8Array => {
 	const head = fromString(context.head);
 	const gid = fromString(context.gid);
 	const encoded = new Uint8Array(
