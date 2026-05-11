@@ -200,24 +200,12 @@ describe("append", () => {
 			coordinateIndex,
 			"putSharedLogCoordinateAndDeleteIds",
 		);
-		const originalCreate = (store.log as any).createCoordinatePersistenceEntry;
-		const sentinelMetaBytes = new Uint8Array([7, 8, 9]);
-		const createStub = sinon
-			.stub(store.log as any, "createCoordinatePersistenceEntry")
-			.callsFake(function (this: unknown, properties: unknown) {
-				const prepared = originalCreate.call(this, properties);
-				return prepared
-					? {
-							...prepared,
-							fields: {
-								...prepared.fields,
-								metaBytes: sentinelMetaBytes,
-							},
-						}
-					: prepared;
-			});
+		const createSpy = sinon.spy(
+			store.log as any,
+			"createCoordinatePersistenceEntry",
+		);
 		try {
-			await store.log.appendLocallyPrepared(
+			const result = await store.log.appendLocallyPrepared(
 				{ op: "ADD", value: "a" },
 				{
 					replicate: false,
@@ -225,11 +213,24 @@ describe("append", () => {
 				},
 			);
 
-			expect(createStub.callCount).equal(1);
+			expect(createSpy.callCount).equal(0);
 			expect(putDeleteSpy.callCount).equal(1);
-			expect(putDeleteSpy.firstCall.args[1].metaBytes).equal(sentinelMetaBytes);
+			const fields = putDeleteSpy.firstCall.args[1];
+			expect(fields.hash).equal(result.entry.hash);
+			expect(fields.gid).equal(result.entry.meta.gid);
+			expect(fields.hashNumber).equal(
+				(store.log as any).getEntryHashNumber(result.entry),
+			);
+			expect(fields.coordinates).to.deep.equal(
+				(store.log as any)._nativeSharedLogState.getEntryCoordinates(
+					result.entry.hash,
+				),
+			);
+			expect(fields.metaBytes).to.deep.equal(
+				(result.entry as any).getMetaBytes(),
+			);
 		} finally {
-			createStub.restore();
+			createSpy.restore();
 			putDeleteSpy.restore();
 		}
 	});
