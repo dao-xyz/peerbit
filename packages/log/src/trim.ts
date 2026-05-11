@@ -86,6 +86,10 @@ interface Log<T> {
 		node: ShallowEntry,
 		options?: { resolveDeletedEntry?: boolean },
 	) => Promise<Entry<T> | ShallowEntry | undefined>;
+	deleteNodes?: (
+		nodes: ShallowEntry[],
+		options?: { resolveDeletedEntry?: boolean },
+	) => Promise<(Entry<T> | ShallowEntry)[]>;
 	getLength(): number;
 }
 export class Trim<T> {
@@ -313,16 +317,33 @@ export class Trim<T> {
 		this._trimLastTail = undefined;
 		this._trimLastSeed = undefined;
 
-		while (this._log.getLength() > to) {
-			const node = await this._log.index.getOldest(false);
-			if (!node) {
-				break;
+		if (this._log.deleteNodes) {
+			while (this._log.getLength() > to) {
+				const nodes = await this._log.index.getOldestMany(
+					Math.min(this._log.getLength() - to, 512),
+					false,
+				);
+				if (nodes.length === 0) {
+					break;
+				}
+				deleted.push(
+					...(await this._log.deleteNodes(nodes, {
+						resolveDeletedEntry: options?.resolveDeletedEntries,
+					})),
+				);
 			}
-			const entry = await this._log.deleteNode(node, {
-				resolveDeletedEntry: options?.resolveDeletedEntries,
-			});
-			if (entry) {
-				deleted.push(entry);
+		} else {
+			while (this._log.getLength() > to) {
+				const node = await this._log.index.getOldest(false);
+				if (!node) {
+					break;
+				}
+				const entry = await this._log.deleteNode(node, {
+					resolveDeletedEntry: options?.resolveDeletedEntries,
+				});
+				if (entry) {
+					deleted.push(entry);
+				}
 			}
 		}
 
