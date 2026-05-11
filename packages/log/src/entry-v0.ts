@@ -719,11 +719,14 @@ export class EntryV0<T>
 		const entryType = properties.meta.type ?? EntryType.APPEND;
 		for (let index = 0; index < prepared.length; index++) {
 			const preparedEntry = prepared[index]!;
+			const clock = clocks[index]!;
+			const entryGid = properties.meta.gids[index]!;
+			const metaData = properties.meta.datas?.[index];
 			const meta = new Meta({
-				clock: clocks[index]!,
-				gid: properties.meta.gids[index]!,
+				clock,
+				gid: entryGid,
 				type: entryType,
-				data: properties.meta.datas?.[index],
+				data: metaData,
 				next: preparedEntry.next,
 			});
 			const payload = new Payload<T>({
@@ -731,11 +734,14 @@ export class EntryV0<T>
 				value: properties.data[index],
 				encoding: properties.encoding,
 			});
-			const signature = new SignatureWithKey({
-				signature: preparedEntry.signature,
-				publicKey: properties.identity.publicKey,
-				prehash: 0,
-			});
+			const signature =
+				properties.cachePreparedEntries === false
+					? undefined
+					: new SignatureWithKey({
+							signature: preparedEntry.signature,
+							publicKey: properties.identity.publicKey,
+							prehash: 0,
+						});
 			const entry = new EntryV0<T>({
 				meta: new DecryptedThing({
 					data: preparedEntry.metaBytes,
@@ -774,11 +780,11 @@ export class EntryV0<T>
 				payloadSize: payload.byteLength,
 				head: true,
 				meta: new ShallowMeta({
-					gid: meta.gid,
-					data: meta.data,
-					clock: meta.clock,
-					next: meta.next,
-					type: meta.type,
+					gid: entryGid,
+					data: metaData,
+					clock,
+					next: preparedEntry.next,
+					type: entryType,
 				}),
 			});
 			const nativeEntry =
@@ -786,16 +792,16 @@ export class EntryV0<T>
 					? undefined
 					: {
 							hash: entry.hash,
-							gid: meta.gid,
-							next: meta.next,
-							type: meta.type,
+							gid: entryGid,
+							next: preparedEntry.next,
+							type: entryType,
 							head: true,
 							payloadSize: payload.byteLength,
-							data: meta.data,
+							data: metaData,
 							clock: {
 								timestamp: {
-									wallTime: meta.clock.timestamp.wallTime,
-									logical: meta.clock.timestamp.logical,
+									wallTime: clock.timestamp.wallTime,
+									logical: clock.timestamp.logical,
 								},
 							},
 						};
@@ -1041,8 +1047,9 @@ export class EntryV0<T>
 
 		for (let index = 0; index < prepared.length; index++) {
 			const preparedEntry = prepared[index]!;
+			const clock = clocks[index]!;
 			const meta = new Meta({
-				clock: clocks[index]!,
+				clock,
 				gid: gid!,
 				type: entryType,
 				data: properties.meta?.data,
@@ -1053,11 +1060,14 @@ export class EntryV0<T>
 				value: properties.data[index],
 				encoding: properties.encoding,
 			});
-			const signature = new SignatureWithKey({
-				signature: preparedEntry.signature,
-				publicKey: properties.identity.publicKey,
-				prehash: 0,
-			});
+			const signature =
+				properties.cachePreparedEntries === false
+					? undefined
+					: new SignatureWithKey({
+							signature: preparedEntry.signature,
+							publicKey: properties.identity.publicKey,
+							prehash: 0,
+						});
 			const entry = new EntryV0<T>({
 				meta: new DecryptedThing({
 					data: preparedEntry.metaBytes,
@@ -1100,11 +1110,11 @@ export class EntryV0<T>
 				payloadSize: payload.byteLength,
 				head: index === prepared.length - 1,
 				meta: new ShallowMeta({
-					gid: meta.gid,
-					data: meta.data,
-					clock: meta.clock,
-					next: meta.next,
-					type: meta.type,
+					gid: gid!,
+					data: properties.meta?.data,
+					clock,
+					next: preparedEntry.next,
+					type: entryType,
 				}),
 			});
 			const nativeEntry =
@@ -1112,16 +1122,16 @@ export class EntryV0<T>
 					? undefined
 					: {
 							hash: entry.hash,
-							gid: meta.gid,
-							next: meta.next,
-							type: meta.type,
+							gid: gid!,
+							next: preparedEntry.next,
+							type: entryType,
 							head: index === prepared.length - 1,
 							payloadSize: payload.byteLength,
-							data: meta.data,
+							data: properties.meta?.data,
 							clock: {
 								timestamp: {
-									wallTime: meta.clock.timestamp.wallTime,
-									logical: meta.clock.timestamp.logical,
+									wallTime: clock.timestamp.wallTime,
+									logical: clock.timestamp.logical,
 								},
 							},
 						};
