@@ -38,10 +38,33 @@ const cloneResults = <T>(
 export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 	implements types.Index<T, NestedType>
 {
+	private state: "closed" | "open" | "closing" = "closed";
 	private _index!: Map<string | bigint | number, types.IndexedValue<T>>;
 
 	private indexByArr!: string[];
 	private properties!: types.IndexEngineInitProperties<T, NestedType>;
+
+	private closedIterator<
+		S extends types.Shape | undefined,
+	>(): types.IndexIterator<T, S> {
+		return {
+			all: async () => [],
+			next: async () => [],
+			done: () => true,
+			pending: async () => 0,
+			close: async () => undefined,
+		};
+	}
+
+	private assertOpen() {
+		if (this.state !== "open") {
+			throw new types.NotStartedError();
+		}
+	}
+
+	private isClosing() {
+		return this.state === "closing";
+	}
 
 	init(properties: types.IndexEngineInitProperties<T, NestedType>) {
 		this.properties = properties;
@@ -69,6 +92,10 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 		id: types.IdKey,
 		_options?: { shape: types.Shape },
 	): Promise<types.IndexedResult<T> | undefined> {
+		if (this.isClosing()) {
+			return;
+		}
+		this.assertOpen();
 		const value = this._index.get(id.primitive);
 		if (!value) {
 			return;
@@ -79,11 +106,12 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 		};
 	}
 
-	put(
-		value: T,
-		id = types.toId(types.extractFieldValue(value, this.indexByArr)),
-		_options?: { replace?: boolean },
-	): void {
+	put(value: T, id?: types.IdKey, _options?: { replace?: boolean }): void {
+		if (this.isClosing()) {
+			return;
+		}
+		this.assertOpen();
+		id = id ?? types.toId(types.extractFieldValue(value, this.indexByArr));
 		this._index.set(id.primitive, { id, value });
 	}
 
@@ -95,6 +123,10 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	async del(query: types.DeleteOptions): Promise<types.IdKey[]> {
+		if (this.isClosing()) {
+			return [];
+		}
+		this.assertOpen();
 		let deleted: types.IdKey[] = [];
 		for (const doc of await this.queryAll(query)) {
 			if (this._index.delete(doc.id.primitive)) {
@@ -105,6 +137,10 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	getSize(): number | Promise<number> {
+		if (this.isClosing()) {
+			return 0;
+		}
+		this.assertOpen();
 		return this._index.size;
 	}
 
@@ -113,18 +149,33 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	iterator() {
+		if (this.isClosing()) {
+			return new Map<
+				string | bigint | number,
+				types.IndexedValue<T>
+			>().entries();
+		}
+		this.assertOpen();
 		// return a iterator if key value pairs, where the value is the indexed record
 		return this._index.entries();
 	}
 
 	start(): void | Promise<void> {
-		// nothing to do
+		this.state = "open";
 	}
 
-	stop(): void | Promise<void> {}
+	stop(): void | Promise<void> {
+		if (this.state === "closed") {
+			return;
+		}
+		this.state = "closing";
+		this.state = "closed";
+	}
 
 	drop() {
+		this.state = "closing";
 		this._index.clear();
+		this.state = "closed";
 		/* for (const subindex of this.subIndices) {
 			subindex[1].clear()
 		} */
@@ -139,6 +190,10 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 	 */
 
 	async sum(query: types.SumOptions): Promise<number | bigint> {
+		if (this.isClosing()) {
+			return 0;
+		}
+		this.assertOpen();
 		let sum: undefined | number | bigint = undefined;
 		outer: for (const doc of await this.queryAll(query)) {
 			let value: any = doc.value;
@@ -159,6 +214,10 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	async count(query: types.CountOptions): Promise<number> {
+		if (this.isClosing()) {
+			return 0;
+		}
+		this.assertOpen();
 		return (await this.queryAll(query)).length;
 	}
 
@@ -208,6 +267,10 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 		query?: types.IterateOptions,
 		properties?: { shape?: S; reference?: boolean },
 	): types.IndexIterator<T, S> {
+		if (this.isClosing()) {
+			return this.closedIterator<S>();
+		}
+		this.assertOpen();
 		let done: boolean | undefined = undefined;
 		let queue:
 			| {
@@ -218,6 +281,12 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 		const fetch = async (
 			n: number,
 		): Promise<types.IndexedResults<types.ReturnTypeFromShape<T, S>>> => {
+			if (this.isClosing()) {
+				done = true;
+				queue = undefined;
+				return [];
+			}
+			this.assertOpen();
 			if (!queue && !done) {
 				const indexedDocuments = await this.queryAll(query);
 				if (indexedDocuments.length > 1) {
@@ -277,8 +346,14 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 				return results;
 			},
 			next: (n: number) => fetch(n),
-			done: () => done,
+			done: () => (this.isClosing() ? true : done),
 			pending: async () => {
+				if (this.isClosing()) {
+					done = true;
+					queue = undefined;
+					return 0;
+				}
+				this.assertOpen();
 				if (done == null) {
 					await fetch(0);
 				}

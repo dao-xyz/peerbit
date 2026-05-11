@@ -1651,12 +1651,47 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	};
 	private persistQueue: Promise<void> = Promise.resolve();
 	private mutationQueue: Promise<void> = Promise.resolve();
+	private state: "closed" | "open" | "closing" = "closed";
 
 	constructor(
 		private readonly directory?: string,
 		private readonly path: string[] = [],
 		private readonly options: RustIndexerOptions = {},
 	) {}
+
+	private closedIterator<
+		S extends types.Shape | undefined,
+	>(): types.IndexIterator<T, S> {
+		return {
+			all: async () => [],
+			next: async () => [],
+			done: () => true,
+			pending: async () => 0,
+			close: async () => undefined,
+		};
+	}
+
+	private assertOpen() {
+		if (this.state !== "open") {
+			throw new types.NotStartedError();
+		}
+	}
+
+	private isClosing() {
+		return this.state === "closing";
+	}
+
+	private setClosing() {
+		this.state = "closing";
+	}
+
+	private setClosed() {
+		this.state = "closed";
+	}
+
+	private setOpen() {
+		this.state = "open";
+	}
 
 	async init(properties: types.IndexEngineInitProperties<T, NestedType>) {
 		this.properties = properties;
@@ -1716,6 +1751,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		id: types.IdKey,
 		_options?: { shape: types.Shape },
 	): types.IndexedResult<T> | undefined {
+		if (this.isClosing()) {
+			return;
+		}
+		this.assertOpen();
 		const value = this.getNative().get(keyToStoreKey(id));
 		if (!value) {
 			return;
@@ -1763,12 +1802,21 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 
 	async put(
 		value: T,
-		id = types.toId(types.extractFieldValue(value, this.indexByArr)),
+		id?: types.IdKey,
 		_options?: { replace?: boolean },
 	): Promise<void> {
+		if (this.isClosing()) {
+			return;
+		}
+		this.assertOpen();
+		id = id ?? types.toId(types.extractFieldValue(value, this.indexByArr));
 		const encodedValue = this.tryNativeEncodedValue(value);
 		if (encodedValue) {
 			await this.putWithEncodedValue(value, id, encodedValue);
+			return;
+		}
+		if (!this.snapshotFile) {
+			this.putNativeDocument(keyToStoreKey(id), id, value);
 			return;
 		}
 		await this.putWithEncodedFields(value, id, this.fieldEncoder(value));
@@ -2075,6 +2123,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	async del(query: types.DeleteOptions): Promise<types.IdKey[]> {
+		if (this.isClosing()) {
+			return [];
+		}
+		this.assertOpen();
 		if (!this.snapshotFile) {
 			const compiled = this.requireNativePlan(types.toQuery(query.query), {
 				allowAll: true,
@@ -2110,6 +2162,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	getSize(): number {
+		if (this.isClosing()) {
+			return 0;
+		}
+		this.assertOpen();
 		return this.getNative().len();
 	}
 
@@ -2118,25 +2174,57 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	iterator() {
+		if (this.isClosing()) {
+			return [][Symbol.iterator]();
+		}
+		this.assertOpen();
 		return this.snapshot()[Symbol.iterator]();
 	}
 
 	start(): void {
+		if (this.state === "open") {
+			return;
+		}
+		if (this.state === "closing") {
+			throw new types.NotStartedError();
+		}
 		// The wasm module is initialized during init.
+		this.setOpen();
 	}
 
 	async stop(): Promise<void> {
-		await this.mutationQueue;
-		await this.compactPersistence();
+		if (this.state === "closed") {
+			return;
+		}
+		if (this.state === "closing") {
+			await this.mutationQueue.catch(() => undefined);
+			return;
+		}
+		this.setClosing();
+		try {
+			await this.mutationQueue.catch(() => undefined);
+			await this.compactPersistence();
+		} finally {
+			this.setClosed();
+		}
 	}
 
 	async drop(): Promise<void> {
-		await this.mutationQueue;
-		this.native?.clear();
-		await this.snapshotFile?.remove();
+		this.setClosing();
+		try {
+			await this.mutationQueue.catch(() => undefined);
+			this.native?.clear();
+			await this.snapshotFile?.remove();
+		} finally {
+			this.setClosed();
+		}
 	}
 
 	async sum(query: types.SumOptions): Promise<number | bigint> {
+		if (this.isClosing()) {
+			return 0;
+		}
+		this.assertOpen();
 		const compiled = this.requireNativePlan(types.toQuery(query.query), {
 			allowAll: true,
 		});
@@ -2150,6 +2238,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	async count(query?: types.CountOptions): Promise<number> {
+		if (this.isClosing()) {
+			return 0;
+		}
+		this.assertOpen();
 		const queryCoerced = types.toQuery(query?.query);
 		if (queryCoerced.length === 0) {
 			return this.getSize();
@@ -2163,6 +2255,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		query?: types.IterateOptions,
 		properties?: { shape?: S; reference?: boolean },
 	): types.IndexIterator<T, S> {
+		if (this.isClosing()) {
+			return this.closedIterator<S>();
+		}
+		this.assertOpen();
 		const nativePagePlan = this.requireNativePagePlan(
 			types.toQuery(query?.query),
 			query,
@@ -2182,6 +2278,14 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		const fetch = async (
 			n: number,
 		): Promise<types.IndexedResults<types.ReturnTypeFromShape<T, S>>> => {
+			const closeAsDone = () => {
+				done = true;
+				return [] as types.IndexedResults<types.ReturnTypeFromShape<T, S>>;
+			};
+			if (this.isClosing()) {
+				return closeAsDone();
+			}
+			this.assertOpen();
 			if (done) {
 				return [];
 			}
@@ -2208,8 +2312,15 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		return {
 			all: async () => fetch(Infinity),
 			next: (n: number) => fetch(n),
-			done: () => done,
-			pending: async () => (done ? 0 : Math.max(0, getTotal() - offset)),
+			done: () => (this.isClosing() ? true : done),
+			pending: async () => {
+				if (this.isClosing()) {
+					done = true;
+					return 0;
+				}
+				this.assertOpen();
+				return done ? 0 : Math.max(0, getTotal() - offset);
+			},
 			close: () => {
 				done = true;
 			},

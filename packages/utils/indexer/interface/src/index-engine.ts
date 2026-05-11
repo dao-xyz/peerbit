@@ -91,6 +91,11 @@ export type IndexIterator<
 	close: () => MaybePromise<void>;
 };
 
+/**
+ * Public data APIs require an open index and should throw NotStartedError after
+ * the index is fully stopped. Implementations may return neutral results only
+ * while stop/drop is actively closing resources.
+ */
 export interface Index<T extends Record<string, any>, NestedType = any> {
 	init(
 		properties: IndexEngineInitProperties<T, NestedType>,
