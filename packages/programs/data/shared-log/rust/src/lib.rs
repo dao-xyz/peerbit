@@ -851,10 +851,14 @@ struct AppendDeliveryPlan {
 }
 
 struct AppendEntryPlan {
+    hash: String,
+    hash_number: u64,
+    gid: String,
     coordinates: Vec<u64>,
     leaders: Vec<LeaderSample>,
     is_leader: bool,
     assigned_to_range_boundary: bool,
+    requested_replicas: usize,
     delivery: AppendDeliveryPlan,
 }
 
@@ -986,13 +990,41 @@ fn append_delivery_plan_to_row(plan: AppendDeliveryPlan) -> Array {
     out
 }
 
+fn append_coordinate_plan_to_row(
+    hash: &str,
+    hash_number: u64,
+    gid: &str,
+    coordinates: Vec<u64>,
+    assigned_to_range_boundary: bool,
+    requested_replicas: usize,
+    resolution: Resolution,
+) -> Array {
+    let out = Array::new();
+    out.push(&JsValue::from_str(hash));
+    out.push(&number_to_row(hash_number, resolution));
+    out.push(&JsValue::from_str(gid));
+    out.push(&numbers_to_rows(coordinates, resolution));
+    out.push(&JsValue::from_bool(assigned_to_range_boundary));
+    out.push(&JsValue::from_f64(requested_replicas as f64));
+    out
+}
+
 fn append_entry_plan_to_row(plan: AppendEntryPlan, resolution: Resolution) -> Array {
     let out = Array::new();
-    out.push(&numbers_to_rows(plan.coordinates, resolution));
+    out.push(&numbers_to_rows(plan.coordinates.clone(), resolution));
     out.push(&samples_to_rows(plan.leaders));
     out.push(&JsValue::from_bool(plan.is_leader));
     out.push(&JsValue::from_bool(plan.assigned_to_range_boundary));
     out.push(&append_delivery_plan_to_row(plan.delivery));
+    out.push(&append_coordinate_plan_to_row(
+        &plan.hash,
+        plan.hash_number,
+        &plan.gid,
+        plan.coordinates,
+        plan.assigned_to_range_boundary,
+        plan.requested_replicas,
+        resolution,
+    ));
     out
 }
 
@@ -2037,11 +2069,20 @@ impl NativeSharedLogState {
         );
         let is_leader = leaders.iter().any(|leader| leader.hash == self_hash);
         let assigned_to_range_boundary = should_assign_to_range_boundary(&leaders, replicas);
+        let coordinate_plan_row = append_coordinate_plan_to_row(
+            &entry_hash,
+            entry_hash_number,
+            &gid,
+            coordinates.clone(),
+            assigned_to_range_boundary,
+            replicas,
+            self.inner.range_planner.resolution,
+        );
 
         self.inner.put_entry_coordinate_state(
-            entry_hash,
+            entry_hash.clone(),
             EntryCoordinateState {
-                gid,
+                gid: gid.clone(),
                 hash_number: entry_hash_number,
                 coordinates: coordinates.clone(),
                 assigned_to_range_boundary,
@@ -2060,6 +2101,7 @@ impl NativeSharedLogState {
         out.push(&samples_to_rows(leaders));
         out.push(&JsValue::from_bool(is_leader));
         out.push(&JsValue::from_bool(assigned_to_range_boundary));
+        out.push(&coordinate_plan_row);
         Ok(out)
     }
 
@@ -2147,9 +2189,9 @@ impl NativeSharedLogState {
         let assigned_to_range_boundary = should_assign_to_range_boundary(&leaders, replicas);
 
         self.inner.put_entry_coordinate_state(
-            entry_hash,
+            entry_hash.clone(),
             EntryCoordinateState {
-                gid,
+                gid: gid.clone(),
                 hash_number: entry_hash_number,
                 coordinates: coordinates.clone(),
                 assigned_to_range_boundary,
@@ -2174,10 +2216,14 @@ impl NativeSharedLogState {
         );
         Ok(append_entry_plan_to_row(
             AppendEntryPlan {
+                hash: entry_hash,
+                hash_number: entry_hash_number,
+                gid,
                 coordinates,
                 leaders: delivery_leaders,
                 is_leader,
                 assigned_to_range_boundary,
+                requested_replicas: replicas,
                 delivery,
             },
             self.inner.range_planner.resolution,
@@ -2260,9 +2306,9 @@ impl NativeSharedLogState {
             let assigned_to_range_boundary = should_assign_to_range_boundary(&leaders, replicas);
 
             self.inner.put_entry_coordinate_state(
-                entry_hash,
+                entry_hash.clone(),
                 EntryCoordinateState {
-                    gid,
+                    gid: gid.clone(),
                     hash_number: entry_hash_number,
                     coordinates: coordinates.clone(),
                     assigned_to_range_boundary,
@@ -2288,10 +2334,14 @@ impl NativeSharedLogState {
             );
             out.push(&append_entry_plan_to_row(
                 AppendEntryPlan {
+                    hash: entry_hash,
+                    hash_number: entry_hash_number,
+                    gid,
                     coordinates,
                     leaders: delivery_leaders,
                     is_leader,
                     assigned_to_range_boundary,
+                    requested_replicas: replicas,
                     delivery,
                 },
                 self.inner.range_planner.resolution,
@@ -2722,13 +2772,17 @@ fn leader_samples_from_rows(rows: Array) -> Result<Vec<LeaderSample>, JsValue> {
     Ok(out)
 }
 
+fn number_to_row(value: u64, resolution: Resolution) -> JsValue {
+    match resolution {
+        Resolution::U32 => JsValue::from_f64(value as f64),
+        Resolution::U64 => JsValue::from_str(&value.to_string()),
+    }
+}
+
 fn numbers_to_rows(values: Vec<u64>, resolution: Resolution) -> Array {
     let out = Array::new();
     for value in values {
-        match resolution {
-            Resolution::U32 => out.push(&JsValue::from_f64(value as f64)),
-            Resolution::U64 => out.push(&JsValue::from_str(&value.to_string())),
-        };
+        out.push(&number_to_row(value, resolution));
     }
     out
 }

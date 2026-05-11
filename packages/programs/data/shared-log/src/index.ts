@@ -26,6 +26,7 @@ import {
 } from "@peerbit/indexer-interface";
 import {
 	type AppendDeliveryPlan,
+	type NativeAppendCoordinatePlan,
 	type NativeReplicationRange,
 	type SharedLogNativeState,
 	type SharedLogRangePlanner,
@@ -4723,14 +4724,11 @@ export class SharedLog<
 			},
 			this.createNativeLeaderOptions(context),
 		);
-		const coordinates = plan.coordinates as NumberFromType<R>[];
-		const preparedCoordinate = this.createCoordinatePersistenceEntry({
-			leaders: plan.leaders,
-			coordinates,
-			replicas: coordinates.length,
+		const coordinates = plan.coordinate.coordinates as NumberFromType<R>[];
+		const hashNumberFromPlan = plan.coordinate.hashNumber as NumberFromType<R>;
+		const preparedCoordinate = this.createCoordinatePersistenceEntryFromNativePlan({
 			entry,
-			assignedToRangeBoundary: plan.assignedToRangeBoundary,
-			hashNumber,
+			plan: plan.coordinate,
 		});
 		if (!preparedCoordinate) {
 			return undefined;
@@ -4740,7 +4738,7 @@ export class SharedLog<
 			leaders: plan.leaders,
 			isLeader: plan.isLeader,
 			assignedToRangeBoundary: plan.assignedToRangeBoundary,
-			hashNumber,
+			hashNumber: hashNumberFromPlan,
 			preparedCoordinate,
 			delivery: plan.delivery,
 		};
@@ -4767,14 +4765,11 @@ export class SharedLog<
 			},
 			this.createNativeLeaderOptions(context),
 		);
-		const coordinates = plan.coordinates as NumberFromType<R>[];
-		const preparedCoordinate = this.createCoordinatePersistenceEntry({
-			leaders: plan.leaders,
-			coordinates,
-			replicas: coordinates.length,
+		const coordinates = plan.coordinate.coordinates as NumberFromType<R>[];
+		const hashNumberFromPlan = plan.coordinate.hashNumber as NumberFromType<R>;
+		const preparedCoordinate = this.createCoordinatePersistenceEntryFromNativePlan({
 			entry,
-			assignedToRangeBoundary: plan.assignedToRangeBoundary,
-			hashNumber,
+			plan: plan.coordinate,
 		});
 		if (!preparedCoordinate) {
 			return undefined;
@@ -4784,7 +4779,7 @@ export class SharedLog<
 			leaders: plan.leaders,
 			isLeader: plan.isLeader,
 			assignedToRangeBoundary: plan.assignedToRangeBoundary,
-			hashNumber,
+			hashNumber: hashNumberFromPlan,
 			preparedCoordinate,
 		};
 	}
@@ -4826,16 +4821,14 @@ export class SharedLog<
 		const out: NativeAppendEntryPlan<R>[] = [];
 		for (let index = 0; index < plans.length; index++) {
 			const plan = plans[index]!;
-			const { entry, hashNumber } = entriesWithHashNumbers[index]!;
-			const coordinates = plan.coordinates as NumberFromType<R>[];
-			const preparedCoordinate = this.createCoordinatePersistenceEntry({
-				leaders: plan.leaders,
-				coordinates,
-				replicas: coordinates.length,
-				entry,
-				assignedToRangeBoundary: plan.assignedToRangeBoundary,
-				hashNumber,
-			});
+			const { entry } = entriesWithHashNumbers[index]!;
+			const coordinates = plan.coordinate.coordinates as NumberFromType<R>[];
+			const hashNumberFromPlan = plan.coordinate.hashNumber as NumberFromType<R>;
+			const preparedCoordinate =
+				this.createCoordinatePersistenceEntryFromNativePlan({
+					entry,
+					plan: plan.coordinate,
+				});
 			if (!preparedCoordinate) {
 				return undefined;
 			}
@@ -4844,7 +4837,7 @@ export class SharedLog<
 				leaders: plan.leaders,
 				isLeader: plan.isLeader,
 				assignedToRangeBoundary: plan.assignedToRangeBoundary,
-				hashNumber,
+				hashNumber: hashNumberFromPlan,
 				preparedCoordinate,
 			});
 		}
@@ -4900,16 +4893,14 @@ export class SharedLog<
 		const out: NativeAppendEntryPlan<R>[] = [];
 		for (let index = 0; index < plans.length; index++) {
 			const plan = plans[index]!;
-			const { entry, hashNumber } = entriesWithHashNumbers[index]!;
-			const coordinates = plan.coordinates as NumberFromType<R>[];
-			const preparedCoordinate = this.createCoordinatePersistenceEntry({
-				leaders: plan.leaders,
-				coordinates,
-				replicas: coordinates.length,
-				entry,
-				assignedToRangeBoundary: plan.assignedToRangeBoundary,
-				hashNumber,
-			});
+			const { entry } = entriesWithHashNumbers[index]!;
+			const coordinates = plan.coordinate.coordinates as NumberFromType<R>[];
+			const hashNumberFromPlan = plan.coordinate.hashNumber as NumberFromType<R>;
+			const preparedCoordinate =
+				this.createCoordinatePersistenceEntryFromNativePlan({
+					entry,
+					plan: plan.coordinate,
+				});
 			if (!preparedCoordinate) {
 				return undefined;
 			}
@@ -4918,7 +4909,7 @@ export class SharedLog<
 				leaders: plan.leaders,
 				isLeader: plan.isLeader,
 				assignedToRangeBoundary: plan.assignedToRangeBoundary,
-				hashNumber,
+				hashNumber: hashNumberFromPlan,
 				preparedCoordinate,
 				delivery: plan.delivery,
 			});
@@ -8015,6 +8006,52 @@ export class SharedLog<
 				coordinates: coordinateEntry.coordinates,
 				wallTime: coordinateEntry.wallTime,
 				assignedToRangeBoundary: coordinateEntry.assignedToRangeBoundary,
+				metaBytes: coordinateEntry.getMetaBytes(),
+			},
+		};
+	}
+
+	private createCoordinatePersistenceEntryFromNativePlan(properties: {
+		entry: ShallowOrFullEntry<any> | EntryReplicated<R>;
+		plan: NativeAppendCoordinatePlan;
+		prev?: EntryReplicated<R>;
+	}): PreparedCoordinatePersistence<R> | false {
+		if (
+			properties.plan.hash !== properties.entry.hash ||
+			properties.plan.gid !== properties.entry.meta.gid
+		) {
+			return false;
+		}
+
+		const assignedToRangeBoundary = properties.plan.assignedToRangeBoundary;
+		if (
+			properties.prev &&
+			properties.prev.assignedToRangeBoundary === assignedToRangeBoundary
+		) {
+			return false;
+		}
+
+		const coordinates = properties.plan.coordinates as NumberFromType<R>[];
+		const hashNumber = properties.plan.hashNumber as NumberFromType<R>;
+		const metaBytes = (properties.entry as EntryWithMetaBytes).getMetaBytes?.();
+		const coordinateEntry = new this.indexableDomain.constructorEntry({
+			assignedToRangeBoundary,
+			coordinates,
+			meta: properties.entry.meta,
+			metaBytes,
+			hash: properties.plan.hash,
+			hashNumber,
+		});
+		return {
+			coordinateEntry,
+			assignedToRangeBoundary,
+			fields: {
+				hash: properties.plan.hash,
+				hashNumber,
+				gid: properties.plan.gid,
+				coordinates,
+				wallTime: coordinateEntry.wallTime,
+				assignedToRangeBoundary,
 				metaBytes: coordinateEntry.getMetaBytes(),
 			},
 		};
