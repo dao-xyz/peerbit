@@ -1767,8 +1767,15 @@ export class DocumentIndex<
 		if (values.length === 0) {
 			return [];
 		}
-		const transformed = await Promise.all(
-			values.map(async (item) => {
+		let transformed: Array<
+			(typeof values)[number] & {
+				indexable: I;
+			}
+		>;
+		if (this.transformerIsIdentity) {
+			transformed = new Array(values.length);
+			for (let i = 0; i < values.length; i++) {
+				const item = values[i]!;
 				const idString = item.id.primitive;
 				if (this.isProgramValued) {
 					this._resolverProgramCache!.set(idString, item.value);
@@ -1777,14 +1784,29 @@ export class DocumentIndex<
 					this._resolverCache.add(idString, item.value);
 					indexCacheLogger("cache:set:value", { id: idString });
 				}
-				const indexable = this.transformerIsIdentity
-					? (item.value as any as I)
-					: await this.transformer(item.value, item.context);
+				const indexable = item.value as any as I;
 				coerceWithIndexed(item.value, indexable);
 				coerceWithContext(item.value, item.context);
-				return { ...item, indexable };
-			}),
-		);
+				transformed[i] = { ...item, indexable };
+			}
+		} else {
+			transformed = await Promise.all(
+				values.map(async (item) => {
+					const idString = item.id.primitive;
+					if (this.isProgramValued) {
+						this._resolverProgramCache!.set(idString, item.value);
+						indexCacheLogger("cache:set:program", { id: idString });
+					} else if (this._resolverCache) {
+						this._resolverCache.add(idString, item.value);
+						indexCacheLogger("cache:set:value", { id: idString });
+					}
+					const indexable = await this.transformer(item.value, item.context);
+					coerceWithIndexed(item.value, indexable);
+					coerceWithContext(item.value, item.context);
+					return { ...item, indexable };
+				}),
+			);
+		}
 
 		try {
 			const contextualBatchPut = this.transformerIsIdentity
