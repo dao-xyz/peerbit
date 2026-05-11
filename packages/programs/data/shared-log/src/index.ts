@@ -44,6 +44,7 @@ import {
 	Meta,
 	type PreparedAppendFacts,
 	ShallowEntry,
+	ShallowMeta,
 	type ShallowOrFullEntry,
 } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
@@ -492,8 +493,10 @@ interface IndexableDomain<R extends "u32" | "u64"> {
 	constructorEntry: new (properties: {
 		coordinates: NumberFromType<R>[];
 		hash: string;
-		meta: Meta;
+		meta?: Meta | ShallowMeta;
 		metaBytes?: Uint8Array;
+		gid?: string;
+		wallTime?: bigint;
 		assignedToRangeBoundary: boolean;
 		hashNumber: NumberFromType<R>;
 	}) => EntryReplicated<R>;
@@ -4116,8 +4119,8 @@ export class SharedLog<
 				(await this.applyChange(result.change, {
 					deferCoordinateIndexDeletes: true,
 				})) ?? [];
-			nativeAppendPlan = await this.planNativeLocalAppendEntry(
-				result.entry,
+			nativeAppendPlan = await this.planNativeLocalAppendFacts(
+				result.appendFacts,
 				minReplicasValue,
 			);
 			if (!nativeAppendPlan) {
@@ -4131,6 +4134,7 @@ export class SharedLog<
 			nativeAppendPlan =
 				(await this.processLocalAppend(result.entry, result.removed, options, {
 					minReplicasValue,
+					appendFacts: result.appendFacts,
 					nativeAppendPlan,
 					extraCoordinateDeleteHashes: deferredCoordinateDeleteHashes,
 				})) ?? nativeAppendPlan;
@@ -4143,8 +4147,8 @@ export class SharedLog<
 		return {
 			entry: result.entry,
 			removed: result.removed,
-			appendCommit: this.createPreparedLocalAppendCommit(
-				result.entry,
+			appendCommit: this.createPreparedLocalAppendCommitFromFacts(
+				result.appendFacts,
 				nativeAppendPlan,
 			),
 		};
@@ -4518,6 +4522,165 @@ export class SharedLog<
 		return { appendOptions, minReplicasValue };
 	}
 
+	private canPlanNativeAppendFacts(appendFacts: PreparedAppendFacts): boolean {
+		return this.domain.type === "hash" && typeof appendFacts.gid === "string";
+	}
+
+	private getAppendFactsHashNumber(
+		appendFacts: PreparedAppendFacts,
+	): NumberFromType<R> {
+		return this.indexableDomain.numbers.bytesToNumber(
+			appendFacts.hashDigestBytes ?? cidifyString(appendFacts.hash).multihash.digest,
+		);
+	}
+
+	private createCoordinatePersistenceEntryFromNativePlanFacts(properties: {
+		appendFacts: PreparedAppendFacts;
+		plan: NativeAppendCoordinatePlan;
+		prev?: EntryReplicated<R>;
+	}): PreparedCoordinatePersistence<R> | false {
+		if (
+			properties.plan.hash !== properties.appendFacts.hash ||
+			properties.plan.gid !== properties.appendFacts.gid
+		) {
+			return false;
+		}
+
+		const assignedToRangeBoundary = properties.plan.assignedToRangeBoundary;
+		if (
+			properties.prev &&
+			properties.prev.assignedToRangeBoundary === assignedToRangeBoundary
+		) {
+			return false;
+		}
+
+		const coordinates = properties.plan.coordinates as NumberFromType<R>[];
+		const hashNumber = properties.plan.hashNumber as NumberFromType<R>;
+		const coordinateEntry = new this.indexableDomain.constructorEntry({
+			assignedToRangeBoundary,
+			coordinates,
+			metaBytes: properties.appendFacts.metaBytes,
+			gid: properties.appendFacts.gid,
+			wallTime: properties.appendFacts.wallTime,
+			hash: properties.plan.hash,
+			hashNumber,
+		});
+		return {
+			coordinateEntry,
+			assignedToRangeBoundary,
+			fields: {
+				hash: properties.plan.hash,
+				hashNumber,
+				gid: properties.plan.gid,
+				coordinates,
+				wallTime: coordinateEntry.wallTime,
+				assignedToRangeBoundary,
+				metaBytes: coordinateEntry.getMetaBytes(),
+			},
+		};
+	}
+
+	private async planNativeAppendFacts(
+		appendFacts: PreparedAppendFacts,
+		replicas: number,
+		deliveryArg: false | true | DeliveryOptions | undefined,
+	): Promise<NativeAppendEntryPlan<R> | undefined> {
+		if (
+			!this._nativeSharedLogState ||
+			!this.canPlanNativeAppendFacts(appendFacts)
+		) {
+			return undefined;
+		}
+
+		const context = await this.createLeaderSelectionContext();
+		const fullReplicaDeliveryCandidates =
+			await this.getFullReplicaRepairCandidates(undefined, {
+				includeSubscribers: false,
+			});
+		const { delivery, reliability, requireRecipients, minAcks } =
+			this._parseDeliveryOptions(deliveryArg);
+		const hashNumber = this.getAppendFactsHashNumber(appendFacts);
+		const plan = this._nativeSharedLogState.planAppendForGid(
+			{
+				entryHash: appendFacts.hash,
+				gid: appendFacts.gid,
+				hashNumber,
+				nextHashes: appendFacts.next,
+				replicas,
+				fullReplicaCandidates: fullReplicaDeliveryCandidates,
+				selfHash: context.selfHash,
+				deliveryEnabled: !!delivery,
+				reliabilityAck: reliability === "ack",
+				minAcks,
+				requireRecipients,
+			},
+			this.createNativeLeaderOptions(context),
+		);
+		const coordinates = plan.coordinate.coordinates as NumberFromType<R>[];
+		const hashNumberFromPlan = plan.coordinate.hashNumber as NumberFromType<R>;
+		const preparedCoordinate =
+			this.createCoordinatePersistenceEntryFromNativePlanFacts({
+				appendFacts,
+				plan: plan.coordinate,
+			});
+		if (!preparedCoordinate) {
+			return undefined;
+		}
+		return {
+			coordinates,
+			leaders: plan.leaders,
+			isLeader: plan.isLeader,
+			assignedToRangeBoundary: plan.assignedToRangeBoundary,
+			hashNumber: hashNumberFromPlan,
+			preparedCoordinate,
+			delivery: plan.delivery,
+		};
+	}
+
+	private async planNativeLocalAppendFacts(
+		appendFacts: PreparedAppendFacts,
+		replicas: number,
+	): Promise<NativeAppendEntryPlan<R> | undefined> {
+		if (
+			!this._nativeSharedLogState ||
+			!this.canPlanNativeAppendFacts(appendFacts)
+		) {
+			return undefined;
+		}
+
+		const context = await this.createLeaderSelectionContext();
+		const hashNumber = this.getAppendFactsHashNumber(appendFacts);
+		const plan = this._nativeSharedLogState.planLocalAppendForGid(
+			{
+				entryHash: appendFacts.hash,
+				gid: appendFacts.gid,
+				hashNumber,
+				nextHashes: appendFacts.next,
+				replicas,
+				selfHash: context.selfHash,
+			},
+			this.createNativeLeaderOptions(context),
+		);
+		const coordinates = plan.coordinate.coordinates as NumberFromType<R>[];
+		const hashNumberFromPlan = plan.coordinate.hashNumber as NumberFromType<R>;
+		const preparedCoordinate =
+			this.createCoordinatePersistenceEntryFromNativePlanFacts({
+				appendFacts,
+				plan: plan.coordinate,
+			});
+		if (!preparedCoordinate) {
+			return undefined;
+		}
+		return {
+			coordinates,
+			leaders: plan.leaders,
+			isLeader: plan.isLeader,
+			assignedToRangeBoundary: plan.assignedToRangeBoundary,
+			hashNumber: hashNumberFromPlan,
+			preparedCoordinate,
+		};
+	}
+
 	private async planNativeAppendEntry(
 		entry: Entry<T>,
 		replicas: number,
@@ -4750,6 +4913,7 @@ export class SharedLog<
 		options: SharedAppendOptions<T> | undefined,
 		properties: {
 			minReplicasValue: number;
+			appendFacts?: PreparedAppendFacts;
 			deferHeadCoordinatePersistence?: boolean;
 			nativeAppendPlan?: NativeAppendEntryPlan<R>;
 			extraCoordinateDeleteHashes?: string[];
@@ -4766,7 +4930,7 @@ export class SharedLog<
 
 		if (deferHeadCoordinatePersistence) {
 			await this.deleteCoordinatesForHashes([
-				...entry.meta.next,
+				...(properties.appendFacts?.next ?? entry.meta.next),
 				...removed.map((entry) => entry.hash),
 			]);
 			return;
@@ -4779,15 +4943,26 @@ export class SharedLog<
 		if (!nativeAppendPlan && target !== "all") {
 			nativeAppendPlan =
 				target === "none"
-					? await this.planNativeLocalAppendEntry(
-							entry,
-							properties.minReplicasValue,
-						)
-					: await this.planNativeAppendEntry(
-						entry,
-						properties.minReplicasValue,
-						deliveryArg,
-					);
+					? properties.appendFacts
+						? await this.planNativeLocalAppendFacts(
+								properties.appendFacts,
+								properties.minReplicasValue,
+							)
+						: await this.planNativeLocalAppendEntry(
+								entry,
+								properties.minReplicasValue,
+							)
+					: properties.appendFacts
+						? await this.planNativeAppendFacts(
+								properties.appendFacts,
+								properties.minReplicasValue,
+								deliveryArg,
+							)
+						: await this.planNativeAppendEntry(
+								entry,
+								properties.minReplicasValue,
+								deliveryArg,
+							);
 		}
 		let coordinates: NumberFromType<R>[];
 		let leaders: LeaderMap;
@@ -4807,6 +4982,7 @@ export class SharedLog<
 				commitNative: false,
 				deleteHashes: properties.extraCoordinateDeleteHashes,
 				hashNumber: nativeAppendPlan.hashNumber,
+				nextHashes: properties.appendFacts?.next,
 				prepared: nativeAppendPlan.preparedCoordinate,
 			});
 		} else {
@@ -7924,6 +8100,7 @@ export class SharedLog<
 		commitNative?: boolean;
 		deleteHashes?: string[];
 		hashNumber?: NumberFromType<R>;
+		nextHashes?: string[];
 		prepared?: PreparedCoordinatePersistence<R>;
 	}) {
 		const prepared =
@@ -7932,7 +8109,7 @@ export class SharedLog<
 			return false;
 		}
 		const { coordinateEntry, assignedToRangeBoundary, fields } = prepared;
-		const nextHashes = properties.entry.meta.next;
+		const nextHashes = properties.nextHashes ?? properties.entry.meta.next;
 		const deleteHashes =
 			properties.deleteHashes && properties.deleteHashes.length > 0
 				? [...new Set([...nextHashes, ...properties.deleteHashes])]

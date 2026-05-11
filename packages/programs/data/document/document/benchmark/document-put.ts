@@ -380,7 +380,19 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				),
 				patchAsyncMethod(
 					store.docs.log as any,
+					"planNativeLocalAppendFacts",
+					profile,
+					"sharedPlanEntryLeadersMs",
+				),
+				patchAsyncMethod(
+					store.docs.log as any,
 					"planNativeAppendEntry",
+					profile,
+					"sharedPlanEntryLeadersMs",
+				),
+				patchAsyncMethod(
+					store.docs.log as any,
+					"planNativeAppendFacts",
 					profile,
 					"sharedPlanEntryLeadersMs",
 				),

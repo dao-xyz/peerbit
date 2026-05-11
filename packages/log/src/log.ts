@@ -160,8 +160,12 @@ export type PreparedAppendFacts = {
 	next: string[];
 	wallTime: bigint;
 	logical: number;
+	clockId?: Uint8Array;
+	type?: EntryType;
+	metaData?: Uint8Array;
 	payloadSize: number;
 	metaBytes?: Uint8Array;
+	hashDigestBytes?: Uint8Array;
 };
 
 type OnChange<T> = (
@@ -193,6 +197,7 @@ type PendingDelete<T> = {
 
 type EntryWithMetaBytes = {
 	getMetaBytes?: () => Uint8Array | undefined;
+	getHashDigestBytes?: () => Uint8Array | undefined;
 };
 
 @variant(0)
@@ -707,6 +712,7 @@ export class Log<T> {
 		entry: Entry<T>;
 		removed: ShallowOrFullEntry<T>[];
 		change: Change<T>;
+		appendFacts: PreparedAppendFacts;
 	}> {
 		if (
 			options.canAppend ||
@@ -776,8 +782,12 @@ export class Log<T> {
 			added: [{ head: true, entry }],
 			removed,
 		};
+		const appendFacts = this.createPreparedAppendFacts(
+			[entry],
+			nativeAppendChain,
+		)[0]!;
 
-		return { entry, removed, change };
+		return { entry, removed, change, appendFacts };
 	}
 
 	async appendLocallyPreparedManyIndependent(
@@ -884,8 +894,12 @@ export class Log<T> {
 					next: shallowEntry.meta.next,
 					wallTime: shallowEntry.meta.clock.timestamp.wallTime,
 					logical: shallowEntry.meta.clock.timestamp.logical,
+					clockId: shallowEntry.meta.clock.id,
+					type: shallowEntry.meta.type,
+					metaData: shallowEntry.meta.data,
 					payloadSize: shallowEntry.payloadSize,
 					metaBytes: (entry as EntryWithMetaBytes).getMetaBytes?.(),
+					hashDigestBytes: (entry as EntryWithMetaBytes).getHashDigestBytes?.(),
 				};
 			}
 			return {
@@ -894,8 +908,12 @@ export class Log<T> {
 				next: entry.meta.next,
 				wallTime: entry.meta.clock.timestamp.wallTime,
 				logical: entry.meta.clock.timestamp.logical,
+				clockId: entry.meta.clock.id,
+				type: entry.meta.type,
+				metaData: entry.meta.data,
 				payloadSize: entry.payload.byteLength,
 				metaBytes: (entry as EntryWithMetaBytes).getMetaBytes?.(),
+				hashDigestBytes: (entry as EntryWithMetaBytes).getHashDigestBytes?.(),
 			};
 		});
 	}
