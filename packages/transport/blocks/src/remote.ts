@@ -347,6 +347,10 @@ export class RemoteBlocks implements IBlocks {
 		return this.localStore.has(cid);
 	}
 
+	async hasMany(cids: string[]): Promise<boolean[]> {
+		return this.localStore.hasMany(cids);
+	}
+
 	async get(
 		cid: string,
 		options?: GetOptions | undefined,

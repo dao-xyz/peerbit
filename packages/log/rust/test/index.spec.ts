@@ -601,6 +601,10 @@ describe("native EntryV0 encoding", () => {
 		expect(chain).to.have.length(3);
 		expect(index.heads()).to.deep.equal([chain![2]!.cid]);
 		expect(index.children("root")).to.deep.equal([chain![0]!.cid]);
+		expect(await blockStore.hasMany([chain![1]!.cid, "missing"])).to.deep.equal([
+			true,
+			false,
+		]);
 		for (const prepared of chain!) {
 			expect(prepared.bytes).equal(undefined);
 			const stored = await blockStore.get(prepared.cid);

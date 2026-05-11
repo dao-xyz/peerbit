@@ -144,6 +144,9 @@ export class DirectBlock extends DirectStream implements IBlocks {
 	async has(cid: string) {
 		return this.remoteBlocks.has(cid);
 	}
+	async hasMany(cids: string[]): Promise<boolean[]> {
+		return this.remoteBlocks.hasMany(cids);
+	}
 	async get(
 		cid: string,
 		options?: GetOptions | undefined,

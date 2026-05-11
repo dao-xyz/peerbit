@@ -38,6 +38,14 @@ impl NativeAnyStore {
         self.entries.get(key).cloned()
     }
 
+    pub fn has_many(&self, keys: Array) -> Result<Array, JsValue> {
+        let present = Array::new();
+        for key in parse_keys(&keys).map_err(js_error)? {
+            present.push(&JsValue::from_bool(self.entries.contains_key(&key)));
+        }
+        Ok(present)
+    }
+
     pub fn put(&mut self, key: String, value: Vec<u8>) {
         let value_len = value.len();
         if let Some(previous) = self.entries.insert(key, value) {
@@ -382,6 +390,19 @@ impl NativeRedbAnyStore {
             };
         }
         Ok(values)
+    }
+
+    pub fn has_many(&self, keys: Array) -> Result<Array, JsValue> {
+        let keys = parse_keys(&keys).map_err(js_error)?;
+        let txn = self.db.begin_read().map_err(external_error)?;
+        let table = txn.open_table(REDB_TABLE).map_err(external_error)?;
+        let present = Array::new();
+        for key in keys {
+            present.push(&JsValue::from_bool(
+                table.get(key.as_str()).map_err(external_error)?.is_some(),
+            ));
+        }
+        Ok(present)
     }
 
     pub fn put(&mut self, key: String, value: Vec<u8>) -> Result<(), JsValue> {

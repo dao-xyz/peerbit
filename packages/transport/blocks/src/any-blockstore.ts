@@ -186,7 +186,35 @@ export class AnyBlockStore implements Blocks {
 	}
 
 	async has(cid: string) {
-		return !!(await this._store.get(cid));
+		try {
+			return !!(await this._store.get(cid));
+		} catch (error: any) {
+			if (
+				typeof error?.code === "string" &&
+				error?.code?.indexOf("LEVEL_NOT_FOUND") !== -1
+			) {
+				return false;
+			}
+			throw error;
+		}
+	}
+
+	async hasMany(cids: string[]): Promise<boolean[]> {
+		const store = this._store as AnyStore & {
+			getMany?: (
+				keys: string[],
+			) => Promise<Array<Uint8Array | undefined>> | Array<Uint8Array | undefined>;
+			hasMany?: (keys: string[]) => Promise<boolean[]> | boolean[];
+		};
+		if (typeof store.hasMany === "function") {
+			return store.hasMany(cids);
+		}
+		if (typeof store.getMany === "function") {
+			const values = await store.getMany(cids);
+			return values.map((value) => value != null);
+		}
+
+		return Promise.all(cids.map((cid) => this.has(cid)));
 	}
 
 	async start(): Promise<void> {
