@@ -14,6 +14,8 @@ import {
 import {
 	planDocumentContext,
 	planDocumentContextBatch,
+	tryPlanDocumentContext,
+	tryPlanDocumentContextBatch,
 } from "@peerbit/document-rust";
 import type { QueryCacheOptions } from "@peerbit/indexer-cache";
 import * as indexerTypes from "@peerbit/indexer-interface";
@@ -1138,13 +1140,16 @@ export class Documents<
 		const append = appended.appendCommit;
 		const existing =
 			input.unique || input.existing === null ? null : input.existing;
-		const contextPlan = await planDocumentContext({
+		const contextInput = {
 			existingCreated: existing?.value.__context.created,
 			modified: append.wallTime,
 			head: append.hash,
 			gid: append.gid,
 			size: append.payloadSize,
-		});
+		};
+		const contextPlan =
+			tryPlanDocumentContext(contextInput) ??
+			(await planDocumentContext(contextInput));
 		return this.createDocumentAppendCommitFactsWithContext(
 			input,
 			appended,
@@ -1162,20 +1167,21 @@ export class Documents<
 			};
 		}>,
 	): Promise<DocumentAppendCommitFacts<T, I>[]> {
-		const contextPlans = await planDocumentContextBatch(
-			rows.map(({ input, appended }) => {
-				const append = appended.appendCommit;
-				const existing =
-					input.unique || input.existing === null ? null : input.existing;
-				return {
-					existingCreated: existing?.value.__context.created,
-					modified: append.wallTime,
-					head: append.hash,
-					gid: append.gid,
-					size: append.payloadSize,
-				};
-			}),
-		);
+		const contextInputs = rows.map(({ input, appended }) => {
+			const append = appended.appendCommit;
+			const existing =
+				input.unique || input.existing === null ? null : input.existing;
+			return {
+				existingCreated: existing?.value.__context.created,
+				modified: append.wallTime,
+				head: append.hash,
+				gid: append.gid,
+				size: append.payloadSize,
+			};
+		});
+		const contextPlans =
+			tryPlanDocumentContextBatch(contextInputs) ??
+			(await planDocumentContextBatch(contextInputs));
 		return rows.map((row, index) =>
 			this.createDocumentAppendCommitFactsWithContext(
 				row.input,
