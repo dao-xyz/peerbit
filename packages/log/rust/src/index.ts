@@ -171,6 +171,17 @@ type NativeLogIndexHandle = {
 		metaData: Uint8Array | undefined,
 		payloadData: Uint8Array,
 	) => EntryV0CommittedPlainEntryRow;
+	prepare_entry_v0_plain_entries_commit_blocks_and_put_with_builder: (
+		builder: NativeEntryV0PlainBuilderHandle,
+		blockStore: NativeLogBlockStoreHandle,
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gids: string[],
+		nexts: string[][],
+		type: number,
+		metaDatas: Array<Uint8Array | undefined>,
+		payloadDatas: Uint8Array[],
+	) => EntryV0CommittedPlainEntryRow[];
 	delete: (hash: string) => boolean;
 	heads: (gid?: string) => string[];
 	has_head: (gid?: string) => boolean;
@@ -641,6 +652,34 @@ export class LogGraphIndex {
 		);
 	}
 
+	prepareEntryV0PlainEntriesCommit(
+		input: EntryV0PlainEntriesInput,
+		blockStore: unknown,
+	): EntryV0CommittedPlainEntry[] | undefined {
+		const nativeBlockStore = nativeLogBlockStoreHandle(blockStore);
+		if (!nativeBlockStore) {
+			return undefined;
+		}
+		const columns = plainEntriesInputColumns(input);
+		if (!columns) {
+			return [];
+		}
+		const builder = this.getPlainEntryBuilder(input);
+		return committedPlainEntryRows(
+			this.native.prepare_entry_v0_plain_entries_commit_blocks_and_put_with_builder(
+				builder,
+				nativeBlockStore,
+				columns.wallTimes,
+				columns.logicals,
+				input.gids,
+				input.nexts,
+				input.type ?? 0,
+				columns.metaDatas,
+				input.payloadDatas,
+			),
+		);
+	}
+
 	delete(hash: string): boolean {
 		return this.native.delete(hash);
 	}
@@ -982,6 +1021,19 @@ export type EntryV0PlainEntryInput = {
 	payloadData: Uint8Array;
 };
 
+export type EntryV0PlainEntriesInput = {
+	clockId: Uint8Array;
+	privateKey: Uint8Array;
+	publicKey: Uint8Array;
+	wallTimes: Array<bigint | number | string>;
+	logicals?: number[];
+	gids: string[];
+	nexts: string[][];
+	type?: number;
+	metaDatas?: Array<Uint8Array | undefined>;
+	payloadDatas: Uint8Array[];
+};
+
 export type EntryV0PreparedPlainEntry = EntryV0EncodedStorage & {
 	byteLength: number;
 	signature: Uint8Array;
@@ -1026,6 +1078,30 @@ const plainChainInputColumns = (input: EntryV0PlainChainInput) => {
 		return undefined;
 	}
 	if (input.wallTimes.length !== input.payloadDatas.length) {
+		throw new Error("Expected equal column lengths");
+	}
+	const wallTimes = new BigUint64Array(input.wallTimes.length);
+	const logicals = new Uint32Array(input.payloadDatas.length);
+	const metaDatas = new Array<Uint8Array | undefined>(
+		input.payloadDatas.length,
+	);
+	for (let i = 0; i < input.payloadDatas.length; i++) {
+		wallTimes[i] = BigInt(input.wallTimes[i]!);
+		logicals[i] = input.logicals?.[i] ?? 0;
+		metaDatas[i] = input.metaDatas?.[i];
+	}
+	return { wallTimes, logicals, metaDatas };
+};
+
+const plainEntriesInputColumns = (input: EntryV0PlainEntriesInput) => {
+	if (input.payloadDatas.length === 0) {
+		return undefined;
+	}
+	if (
+		input.wallTimes.length !== input.payloadDatas.length ||
+		input.gids.length !== input.payloadDatas.length ||
+		input.nexts.length !== input.payloadDatas.length
+	) {
 		throw new Error("Expected equal column lengths");
 	}
 	const wallTimes = new BigUint64Array(input.wallTimes.length);

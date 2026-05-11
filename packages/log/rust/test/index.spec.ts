@@ -615,4 +615,48 @@ describe("native EntryV0 encoding", () => {
 			chain!.reduce((sum, prepared) => sum + prepared.byteLength, 0),
 		);
 	});
+
+	it("commits independent prepared plain entry batches natively", async () => {
+		const privateKey = fromHex(
+			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+		);
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const index = await createLogGraphIndex();
+		const blockStore = await createNativeLogBlockStore();
+
+		const entries = await index.prepareEntryV0PlainEntriesCommit(
+			{
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+				wallTimes: [11n, 12n, 13n],
+				gids: ["gid-a", "gid-b", "gid-c"],
+				nexts: [[], [], []],
+				payloadDatas: [
+					new Uint8Array([1]),
+					new Uint8Array([2]),
+					new Uint8Array([3]),
+				],
+			},
+			blockStore,
+		);
+
+		expect(entries).to.have.length(3);
+		expect(index.heads().sort()).to.deep.equal(
+			entries!.map((entry) => entry.cid).sort(),
+		);
+		expect(index.heads("gid-a")).to.deep.equal([entries![0]!.cid]);
+		expect(index.heads("gid-b")).to.deep.equal([entries![1]!.cid]);
+		expect(index.heads("gid-c")).to.deep.equal([entries![2]!.cid]);
+		expect(await blockStore.size()).to.equal(
+			entries!.reduce((sum, prepared) => sum + prepared.byteLength, 0),
+		);
+		for (const prepared of entries!) {
+			const stored = await blockStore.get(prepared.cid);
+			expect(stored?.byteLength).equal(prepared.byteLength);
+			expect(await calculateRawCidV1(stored!)).equal(prepared.cid);
+		}
+	});
 });

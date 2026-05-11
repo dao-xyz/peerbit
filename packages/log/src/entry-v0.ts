@@ -93,6 +93,21 @@ type NativeEntryV0Graph = {
 		input: NativePlainEntryInput,
 		blockStore: unknown,
 	): MaybePromise<NativePreparedPlainEntry | undefined>;
+	prepareEntryV0PlainEntriesCommit?(
+		input: {
+			clockId: Uint8Array;
+			privateKey: Uint8Array;
+			publicKey: Uint8Array;
+			wallTimes: Array<bigint | number | string>;
+			logicals?: number[];
+			gids: string[];
+			nexts: string[][];
+			type?: number;
+			metaDatas?: Array<Uint8Array | undefined>;
+			payloadDatas: Uint8Array[];
+		},
+		blockStore: unknown,
+	): MaybePromise<NativePreparedPlainEntry[] | undefined>;
 };
 
 type NativeEntryV0Encoder = {
