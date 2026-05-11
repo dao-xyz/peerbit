@@ -1397,6 +1397,53 @@ export class EntryIndex<T> {
 		return promise;
 	}
 
+	/** @internal */
+	async putNativeCommittedAppend(
+		entry: Entry<any>,
+		properties: {
+			unique: boolean;
+			externalNextHashes: string[];
+			shallowEntry?: ShallowEntry;
+			isHead?: boolean;
+		},
+	) {
+		if (!entry.hash) {
+			throw new Error("Missing hash");
+		}
+		const existingPromise = this.insertionPromises.get(entry.hash);
+		if (existingPromise) {
+			await existingPromise;
+		}
+
+		const promise = (async () => {
+			const isHead = properties.isHead ?? true;
+			if (properties.unique === true || !(await this.has(entry.hash))) {
+				this._length++;
+			}
+
+			this.cache.add(entry.hash, entry);
+			const shallowEntry =
+				properties.shallowEntry ??
+				Entry.takePreparedShallowEntry(entry, isHead) ??
+				entry.toShallow(isHead);
+			shallowEntry.head = isHead;
+			this.pendingIndexWrites.set(entry.hash, shallowEntry);
+			this.schedulePendingIndexWriteFlush();
+
+			if (properties.externalNextHashes.length > 0) {
+				await this.privateUpdateNextHeadHashes(
+					properties.externalNextHashes,
+					false,
+				);
+			}
+		})().finally(() => {
+			this.insertionPromises.delete(entry.hash);
+		});
+
+		this.insertionPromises.set(entry.hash, promise);
+		return promise;
+	}
+
 	async delete(k: string, from?: Entry<any> | ShallowEntry) {
 		this.cache.del(k);
 

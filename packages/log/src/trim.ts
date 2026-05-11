@@ -318,6 +318,17 @@ export class Trim<T> {
 		this._trimLastSeed = undefined;
 
 		if (this._log.deleteNodes) {
+			const overage = this._log.getLength() - to;
+			if (overage > 0) {
+				const nodes = await this._log.index.getOldestMany(overage, false);
+				if (nodes.length > 0) {
+					deleted.push(
+						...(await this._log.deleteNodes(nodes, {
+							resolveDeletedEntry: options?.resolveDeletedEntries,
+						})),
+					);
+				}
+			}
 			while (this._log.getLength() > to) {
 				const nodes = await this._log.index.getOldestMany(
 					Math.min(this._log.getLength() - to, 512),
