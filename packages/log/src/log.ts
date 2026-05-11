@@ -154,6 +154,16 @@ export type AppendOptions<T> = {
 	canAppend?: CanAppend<T>;
 };
 
+export type PreparedAppendFacts = {
+	hash: string;
+	gid: string;
+	next: string[];
+	wallTime: bigint;
+	logical: number;
+	payloadSize: number;
+	metaBytes?: Uint8Array;
+};
+
 type OnChange<T> = (
 	change: Change<T>,
 	reference?: undefined,
@@ -179,6 +189,10 @@ export const ENTRY_JOIN_SHAPE = {
 type PendingDelete<T> = {
 	entry: ShallowOrFullEntry<T>;
 	fn: () => Promise<ShallowEntry | undefined>;
+};
+
+type EntryWithMetaBytes = {
+	getMetaBytes?: () => Uint8Array | undefined;
 };
 
 @variant(0)
@@ -778,6 +792,7 @@ export class Log<T> {
 				entries: Entry<T>[];
 				removed: ShallowOrFullEntry<T>[];
 				change: Change<T>;
+				appendFacts: PreparedAppendFacts[];
 		  }
 		| undefined
 	> {
@@ -786,6 +801,7 @@ export class Log<T> {
 				entries: [],
 				removed: [],
 				change: { added: [], removed: [] },
+				appendFacts: [],
 			};
 		}
 		if (
@@ -847,8 +863,41 @@ export class Log<T> {
 			added: entries.map((entry) => ({ head: true, entry })),
 			removed,
 		};
+		const appendFacts = this.createPreparedAppendFacts(
+			entries,
+			nativeAppendBatch,
+		);
 
-		return { entries, removed, change };
+		return { entries, removed, change, appendFacts };
+	}
+
+	private createPreparedAppendFacts(
+		entries: Entry<T>[],
+		prepared?: PreparedAppendChain<T>,
+	): PreparedAppendFacts[] {
+		return entries.map((entry, index) => {
+			const shallowEntry = prepared?.shallowEntries[index];
+			if (shallowEntry) {
+				return {
+					hash: shallowEntry.hash,
+					gid: shallowEntry.meta.gid,
+					next: shallowEntry.meta.next,
+					wallTime: shallowEntry.meta.clock.timestamp.wallTime,
+					logical: shallowEntry.meta.clock.timestamp.logical,
+					payloadSize: shallowEntry.payloadSize,
+					metaBytes: (entry as EntryWithMetaBytes).getMetaBytes?.(),
+				};
+			}
+			return {
+				hash: entry.hash,
+				gid: entry.meta.gid,
+				next: entry.meta.next,
+				wallTime: entry.meta.clock.timestamp.wallTime,
+				logical: entry.meta.clock.timestamp.logical,
+				payloadSize: entry.payload.byteLength,
+				metaBytes: (entry as EntryWithMetaBytes).getMetaBytes?.(),
+			};
+		});
 	}
 
 	async appendMany(
