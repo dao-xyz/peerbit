@@ -4694,15 +4694,18 @@ export class SharedLog<
 
 		const coordinates = properties.plan.coordinates as NumberFromType<R>[];
 		const hashNumber = properties.plan.hashNumber as NumberFromType<R>;
+		const wallTime = properties.appendFacts.wallTime;
 		const coordinateEntry = new this.indexableDomain.constructorEntry({
 			assignedToRangeBoundary,
 			coordinates,
 			metaBytes: properties.appendFacts.metaBytes,
 			gid: properties.appendFacts.gid,
-			wallTime: properties.appendFacts.wallTime,
+			wallTime,
 			hash: properties.plan.hash,
 			hashNumber,
 		});
+		const metaBytes =
+			properties.appendFacts.metaBytes ?? coordinateEntry.getMetaBytes();
 		return {
 			coordinateEntry,
 			assignedToRangeBoundary,
@@ -4711,9 +4714,9 @@ export class SharedLog<
 				hashNumber,
 				gid: properties.plan.gid,
 				coordinates,
-				wallTime: coordinateEntry.wallTime,
+				wallTime,
 				assignedToRangeBoundary,
-				metaBytes: coordinateEntry.getMetaBytes(),
+				metaBytes,
 			},
 		};
 	}

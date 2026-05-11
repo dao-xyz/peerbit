@@ -353,7 +353,10 @@ export class Log<T> {
 				deleteNodes: this._entryIndex.canDeleteMany()
 					? async (
 							nodes: ShallowEntry[],
-							options?: { resolveDeletedEntry?: boolean },
+							options?: {
+								resolveDeletedEntry?: boolean;
+								skipNextHeadUpdates?: boolean;
+							},
 						) => {
 							if (nodes.length === 0) {
 								return [];
@@ -371,7 +374,9 @@ export class Log<T> {
 									}
 								}
 							}
-							const deleted = await this._entryIndex.deleteMany(nodes);
+							const deleted = await this._entryIndex.deleteMany(nodes, {
+								skipNextHeadUpdates: options?.skipNextHeadUpdates,
+							});
 							return shouldResolve
 								? deleted
 										.map((node) => resolvedByHash.get(node.hash))
