@@ -101,6 +101,20 @@ describe("native log graph index", () => {
 		expect(index.payloadSizeSum()).to.equal(3);
 	});
 
+	it("returns oldest entries by clock order", async () => {
+		const index = await createLogGraphIndex();
+		index.putBatch([
+			entry("b", "g", [], 2n),
+			entry("a", "g", [], 1n),
+			entry("c", "g", [], 1n),
+		]);
+
+		expect(index.oldestEntries(2).map((entry) => entry.hash)).to.deep.equal([
+			"a",
+			"c",
+		]);
+	});
+
 	it("tracks heads and next adjacency in native append chains", async () => {
 		const index = await createLogGraphIndex();
 		index.put(entry("root", "g", [], 1n));
