@@ -1751,6 +1751,109 @@ export class DocumentIndex<
 		);
 	}
 
+	public async _putIdentityWithContext(
+		value: T,
+		id: indexerTypes.IdKey,
+		context: types.Context,
+		options?: ContextualPutOptions,
+	): Promise<WithIndexedContext<T, I> | undefined> {
+		const contextualPut = this.transformerIsIdentity
+			? (this.index as ContextualIndexPut<I>).putWithContext
+			: undefined;
+		if (!contextualPut || this.isProgramValued) {
+			return;
+		}
+		const indexable = value as any as I;
+		const indexedValue = coerceWithIndexed(
+			coerceWithContext(value, context),
+			indexable,
+		);
+		this.cacheResolvedValue(id.primitive, value);
+		try {
+			await contextualPut.call(
+				this.index,
+				indexable,
+				id,
+				context,
+				this.withContextualEncodedValue(options, context),
+			);
+		} catch (error) {
+			if (error instanceof indexerTypes.NotStartedError && this.closed) {
+				return indexedValue;
+			}
+			throw error;
+		}
+		return indexedValue;
+	}
+
+	public async _putManyIdentityWithContext(
+		values: Array<{
+			value: T;
+			id: indexerTypes.IdKey;
+			context: types.Context;
+			options?: ContextualPutOptions;
+		}>,
+	): Promise<WithIndexedContext<T, I>[] | undefined> {
+		if (values.length === 0) {
+			return [];
+		}
+		const contextualPut = this.transformerIsIdentity
+			? (this.index as ContextualIndexPut<I>).putWithContext
+			: undefined;
+		const contextualBatchPut = this.transformerIsIdentity
+			? (this.index as ContextualIndexPut<I>).putWithContextBatch
+			: undefined;
+		if ((!contextualBatchPut && !contextualPut) || this.isProgramValued) {
+			return;
+		}
+
+		const indexedValues = values.map((item) => {
+			const indexable = item.value as any as I;
+			this.cacheResolvedValue(item.id.primitive, item.value);
+			return {
+				indexable,
+				value: coerceWithIndexed(
+					coerceWithContext(item.value, item.context),
+					indexable,
+				),
+			};
+		});
+
+		try {
+			if (contextualBatchPut) {
+				await contextualBatchPut.call(
+					this.index,
+					values.map((item, index) => ({
+						value: indexedValues[index]!.indexable,
+						id: item.id,
+						context: item.context,
+						options: this.withContextualEncodedValue(
+							item.options,
+							item.context,
+						),
+					})),
+				);
+			} else {
+				for (let i = 0; i < values.length; i++) {
+					const item = values[i]!;
+					await contextualPut!.call(
+						this.index,
+						indexedValues[i]!.indexable,
+						item.id,
+						item.context,
+						this.withContextualEncodedValue(item.options, item.context),
+					);
+				}
+			}
+		} catch (error) {
+			if (error instanceof indexerTypes.NotStartedError && this.closed) {
+				return indexedValues.map((item) => item.value);
+			}
+			throw error;
+		}
+		return indexedValues.map((item) => item.value);
+	}
+
 	public async put(
 		value: T,
 		id: indexerTypes.IdKey,
@@ -1788,22 +1891,7 @@ export class DocumentIndex<
 		options?: ContextualPutOptions,
 	): Promise<{ context: types.Context; indexable: I }> {
 		const idString = id.primitive;
-		if (
-			this.isProgramValued /*
-			TODO should we skip caching program value if they are not openend through this db?
-			&&
-			(value as Program).closed === false &&
-			(value as Program).parents.includes(this._log) */
-		) {
-			// TODO make last condition more efficient if there are many docs
-			this._resolverProgramCache!.set(idString, value);
-			indexCacheLogger("cache:set:program", { id: idString });
-		} else {
-			if (this._resolverCache) {
-				this._resolverCache.add(idString, value);
-				indexCacheLogger("cache:set:value", { id: idString });
-			}
-		}
+		this.cacheResolvedValue(idString, value);
 		const valueToIndex = this.transformerIsIdentity
 			? (value as any as I)
 			: await this.transformer(value, context);
@@ -1872,14 +1960,7 @@ export class DocumentIndex<
 			transformed = new Array(values.length);
 			for (let i = 0; i < values.length; i++) {
 				const item = values[i]!;
-				const idString = item.id.primitive;
-				if (this.isProgramValued) {
-					this._resolverProgramCache!.set(idString, item.value);
-					indexCacheLogger("cache:set:program", { id: idString });
-				} else if (this._resolverCache) {
-					this._resolverCache.add(idString, item.value);
-					indexCacheLogger("cache:set:value", { id: idString });
-				}
+				this.cacheResolvedValue(item.id.primitive, item.value);
 				const indexable = item.value as any as I;
 				coerceWithIndexed(item.value, indexable);
 				coerceWithContext(item.value, item.context);
@@ -1888,14 +1969,7 @@ export class DocumentIndex<
 		} else {
 			transformed = await Promise.all(
 				values.map(async (item) => {
-					const idString = item.id.primitive;
-					if (this.isProgramValued) {
-						this._resolverProgramCache!.set(idString, item.value);
-						indexCacheLogger("cache:set:program", { id: idString });
-					} else if (this._resolverCache) {
-						this._resolverCache.add(idString, item.value);
-						indexCacheLogger("cache:set:value", { id: idString });
-					}
+					this.cacheResolvedValue(item.id.primitive, item.value);
 					const indexable = await this.transformer(item.value, item.context);
 					coerceWithIndexed(item.value, indexable);
 					coerceWithContext(item.value, item.context);
@@ -1967,6 +2041,25 @@ export class DocumentIndex<
 			context: item.context,
 			indexable: item.indexable,
 		}));
+	}
+
+	private cacheResolvedValue(
+		id: string | number | bigint,
+		value: T,
+	): void {
+		if (
+			this.isProgramValued /*
+			TODO should we skip caching program value if they are not openend through this db?
+			&&
+			(value as Program).closed === false &&
+			(value as Program).parents.includes(this._log) */
+		) {
+			this._resolverProgramCache!.set(id, value);
+			indexCacheLogger("cache:set:program", { id });
+		} else if (this._resolverCache) {
+			this._resolverCache.add(id, value);
+			indexCacheLogger("cache:set:value", { id });
+		}
 	}
 
 	private withContextualEncodedValue(
