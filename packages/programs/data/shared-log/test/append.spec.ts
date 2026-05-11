@@ -204,6 +204,18 @@ describe("append", () => {
 			store.log as any,
 			"createCoordinatePersistenceEntry",
 		);
+		const createFactsSpy = sinon.spy(
+			store.log as any,
+			"createCoordinatePersistenceEntryFromNativePlanFacts",
+		);
+		const planEntrySpy = sinon.spy(
+			store.log as any,
+			"planNativeLocalAppendEntry",
+		);
+		const planFactsSpy = sinon.spy(
+			store.log as any,
+			"planNativeLocalAppendFacts",
+		);
 		try {
 			const result = await store.log.appendLocallyPrepared(
 				{ op: "ADD", value: "a" },
@@ -214,6 +226,9 @@ describe("append", () => {
 			);
 
 			expect(createSpy.callCount).equal(0);
+			expect(createFactsSpy.callCount).equal(1);
+			expect(planEntrySpy.callCount).equal(0);
+			expect(planFactsSpy.callCount).equal(1);
 			expect(putDeleteSpy.callCount).equal(1);
 			const fields = putDeleteSpy.firstCall.args[1];
 			expect(fields.hash).equal(result.entry.hash);
@@ -239,6 +254,9 @@ describe("append", () => {
 			);
 			expect(result.appendCommit.coordinateFields).to.deep.equal(fields);
 		} finally {
+			planFactsSpy.restore();
+			planEntrySpy.restore();
+			createFactsSpy.restore();
 			createSpy.restore();
 			putDeleteSpy.restore();
 		}

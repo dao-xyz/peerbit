@@ -131,24 +131,33 @@ export class EntryReplicatedU32 implements EntryReplicated<"u32"> {
 	constructor(properties: {
 		coordinates: number[];
 		hash: string;
-		meta: Meta;
+		meta?: Meta | ShallowMeta;
 		metaBytes?: Uint8Array;
+		gid?: string;
+		wallTime?: bigint;
 		assignedToRangeBoundary: boolean;
 		hashNumber: number;
 	}) {
+		if (!properties.meta && !properties.metaBytes) {
+			throw new Error("Expected meta or metaBytes");
+		}
+		if (!properties.meta && (properties.gid == null || properties.wallTime == null)) {
+			throw new Error("Expected gid and wallTime with metaBytes");
+		}
 		this.coordinates = properties.coordinates;
 		this.hash = properties.hash;
-		this.gid = properties.meta.gid;
-		this.wallTime = properties.meta.clock.timestamp.wallTime;
+		this.gid = properties.meta?.gid ?? properties.gid!;
+		this.wallTime =
+			properties.meta?.clock.timestamp.wallTime ?? properties.wallTime!;
 		this.hashNumber = properties.hashNumber;
 		this._meta =
 			properties.metaBytes ??
 			serialize(
 				properties.meta instanceof Meta
 					? new ShallowMeta(properties.meta)
-					: properties.meta,
+					: properties.meta!,
 			);
-		this._metaResolved = properties.meta;
+		this._metaResolved = properties.meta as ShallowMeta;
 		this.assignedToRangeBoundary = properties.assignedToRangeBoundary;
 	}
 
@@ -192,24 +201,33 @@ export class EntryReplicatedU64 implements EntryReplicated<"u64"> {
 	constructor(properties: {
 		coordinates: bigint[];
 		hash: string;
-		meta: Meta;
+		meta?: Meta | ShallowMeta;
 		metaBytes?: Uint8Array;
+		gid?: string;
+		wallTime?: bigint;
 		assignedToRangeBoundary: boolean;
 		hashNumber: bigint;
 	}) {
+		if (!properties.meta && !properties.metaBytes) {
+			throw new Error("Expected meta or metaBytes");
+		}
+		if (!properties.meta && (properties.gid == null || properties.wallTime == null)) {
+			throw new Error("Expected gid and wallTime with metaBytes");
+		}
 		this.coordinates = properties.coordinates;
 		this.hash = properties.hash;
 		this.hashNumber = properties.hashNumber;
-		this.gid = properties.meta.gid;
-		this.wallTime = properties.meta.clock.timestamp.wallTime;
+		this.gid = properties.meta?.gid ?? properties.gid!;
+		this.wallTime =
+			properties.meta?.clock.timestamp.wallTime ?? properties.wallTime!;
 		this._meta =
 			properties.metaBytes ??
 			serialize(
 				properties.meta instanceof Meta
 					? new ShallowMeta(properties.meta)
-					: properties.meta,
+					: properties.meta!,
 			);
-		this._metaResolved = properties.meta;
+		this._metaResolved = properties.meta as ShallowMeta;
 		this.assignedToRangeBoundary = properties.assignedToRangeBoundary;
 	}
 
