@@ -944,6 +944,88 @@ describe("native planner bridge", () => {
 		}
 	});
 
+	it("replays durable contextual encoded puts from prepared bytes", async () => {
+		const directory = createPersistenceDirectory();
+		const writer = create(directory, {
+			persistence: { compactAfterOperations: 1000 },
+		});
+		const reader = create(directory, {
+			persistence: { compactAfterOperations: 1000 },
+		});
+		try {
+			await writer.start();
+			const writerIndex = await writer.init({ schema: BridgeDocumentWithContext });
+			const contextualWriter = writerIndex as typeof writerIndex & {
+				putWithContext: (
+					value: BridgeDocument & { __context?: BridgeContext },
+					id: ReturnType<typeof toId>,
+					context: BridgeContext,
+					options?: {
+						replace?: boolean;
+						encodedValueParts?: { prefix: Uint8Array; suffix: Uint8Array };
+					},
+				) => Promise<void>;
+			};
+			(writerIndex as unknown as { fieldEncoder: () => never }).fieldEncoder =
+				() => {
+					throw new Error("TypeScript field encoder should not run");
+				};
+
+			const encodedDocument = new BridgeDocument(
+				"a",
+				"peerbit",
+				"prepared durable",
+			);
+			const context = new BridgeContext("head-a");
+			const journalValue = Object.create(
+				BridgeDocumentWithContext.prototype,
+			) as BridgeDocument & { __context?: BridgeContext };
+			Object.defineProperties(journalValue, {
+				id: { value: "a", enumerable: true },
+				tag: {
+					get() {
+						throw new Error("journal should use prepared bytes");
+					},
+					enumerable: true,
+				},
+				title: {
+					get() {
+						throw new Error("journal should use prepared bytes");
+					},
+					enumerable: true,
+				},
+				__context: { value: context, enumerable: true },
+			});
+
+			await contextualWriter.putWithContext(journalValue, toId("a"), context, {
+				replace: false,
+				encodedValueParts: {
+					prefix: serialize(encodedDocument),
+					suffix: serialize(context),
+				},
+			});
+
+			await reader.start();
+			const readerIndex = await reader.init({ schema: BridgeDocumentWithContext });
+			const result = await readerIndex.get(toId("a"));
+			expect(result?.value.title).equal("prepared durable");
+			expect(result?.value.__context.head).equal("head-a");
+
+			const indexed = await readerIndex
+				.iterate({
+					query: new StringMatch({ key: "tag", value: "peerbit" }),
+				})
+				.all();
+			expect(indexed.map((entry) => entry.value.__context.head)).to.deep.equal([
+				"head-a",
+			]);
+		} finally {
+			await writer.drop();
+			await reader.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
 	it("replays durable deletes before the writer is stopped", async () => {
 		const directory = createPersistenceDirectory();
 		const writer = create(directory);

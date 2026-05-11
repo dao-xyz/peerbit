@@ -12,6 +12,7 @@ import {
 import * as types from "@peerbit/indexer-interface";
 import {
 	createSnapshotFile,
+	type EncodedValue,
 	type PersistenceOptions,
 	type SnapshotFile,
 } from "./persistence.js";
@@ -1775,6 +1776,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 						item.storeKey,
 						item.value,
 						this.properties.schema,
+						item.encodedValueParts ?? item.encodedValue,
 					);
 				}
 			});
@@ -2199,7 +2201,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			return;
 		}
 		await this.enqueueMutation(async () => {
-			await this.appendPut(storeKey, value);
+			await this.appendPut(storeKey, value, encodedValue);
 			if (
 				!this.putNativeDocumentWithPreparedFields(
 					storeKey,
@@ -2237,7 +2239,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			return;
 		}
 		await this.enqueueMutation(async () => {
-			await this.appendPut(storeKey, value);
+			await this.appendPut(storeKey, value, encodedValueParts);
 			if (
 				!this.putNativeDocumentWithPreparedFields(
 					storeKey,
@@ -2469,9 +2471,18 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		return next;
 	}
 
-	private appendPut(storeKey: string, value: T): Promise<void> {
+	private appendPut(
+		storeKey: string,
+		value: T,
+		encodedValue?: EncodedValue,
+	): Promise<void> {
 		return this.enqueuePersistence(() =>
-			this.snapshotFile!.appendPut(storeKey, value, this.properties.schema),
+			this.snapshotFile!.appendPut(
+				storeKey,
+				value,
+				this.properties.schema,
+				encodedValue,
+			),
 		);
 	}
 
