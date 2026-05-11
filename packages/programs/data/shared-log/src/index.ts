@@ -501,6 +501,22 @@ type PutAndDeleteIndex<T extends Record<string, any>> = Index<T> & {
 		deleteIds?: Array<IdKey | Ideable>,
 		id?: IdKey,
 	) => Promise<unknown> | unknown;
+	putSharedLogCoordinatesAndDeleteIdsBatch?: (
+		values: Array<{
+			value: T;
+			fields: {
+				hash: string;
+				hashNumber: NumberFromType<any>;
+				gid: string;
+				coordinates: NumberFromType<any>[];
+				wallTime: bigint;
+				assignedToRangeBoundary: boolean;
+				metaBytes: Uint8Array;
+			};
+			deleteIds?: Array<IdKey | Ideable>;
+			id?: IdKey;
+		}>,
+	) => Promise<unknown> | unknown;
 };
 
 type EntryWithMetaBytes = {
@@ -4138,6 +4154,19 @@ export class SharedLog<
 							options?.delivery,
 							options,
 						);
+		if (
+			nativeAppendPlans &&
+			result.removed.length === 0 &&
+			(await this.processLocalAppendManyNativePlanned(
+				result.entries,
+				options,
+				{
+					nativeAppendPlans,
+				},
+			))
+		) {
+			return { entries: result.entries, removed: result.removed };
+		}
 		for (let i = 0; i < result.entries.length; i++) {
 			await this.processLocalAppend(
 				result.entries[i]!,
@@ -4262,6 +4291,52 @@ export class SharedLog<
 			minReplicasValue: properties.minReplicasValue,
 			deferHeadCoordinatePersistence: false,
 		});
+	}
+
+	private async processLocalAppendManyNativePlanned(
+		entries: Entry<T>[],
+		options: SharedAppendOptions<T> | undefined,
+		properties: {
+			nativeAppendPlans: NativeAppendEntryPlan<R>[];
+		},
+	): Promise<boolean> {
+		if (
+			entries.length === 0 ||
+			options?.target !== "none" ||
+			options?.replicate === true ||
+			properties.nativeAppendPlans.length !== entries.length
+		) {
+			return false;
+		}
+
+		const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
+		await this.persistCoordinatesBatch(
+			entries.map((entry, index) => {
+				const plan = properties.nativeAppendPlans[index]!;
+				return {
+					leaders: plan.leaders,
+					coordinates: plan.coordinates,
+					replicas: plan.coordinates.length,
+					entry,
+					assignedToRangeBoundary: plan.assignedToRangeBoundary,
+					commitNative: false,
+				};
+			}),
+		);
+
+		if (!delayAdaptiveRebalance) {
+			for (let i = 0; i < entries.length; i++) {
+				const plan = properties.nativeAppendPlans[i]!;
+				if (!plan.isLeader) {
+					this.pruneDebouncedFnAddIfNotKeeping({
+						key: entries[i]!.hash,
+						value: { entry: entries[i]!, leaders: plan.leaders },
+					});
+				}
+			}
+			this.rebalanceParticipationDebounced?.call();
+		}
+		return true;
 	}
 
 	private createLogAppendOptions(options?: SharedAppendOptions<T>): {
@@ -7448,6 +7523,44 @@ export class SharedLog<
 		return result[0].value.coordinates;
 	}
 
+	private createCoordinatePersistenceEntry(properties: {
+		coordinates: NumberFromType<R>[];
+		entry: ShallowOrFullEntry<any> | EntryReplicated<R>;
+		leaders:
+			| Map<
+					string,
+					{
+						intersecting: boolean;
+					}
+			  >
+			| false;
+		replicas: number;
+		prev?: EntryReplicated<R>;
+		assignedToRangeBoundary?: boolean;
+	}): { coordinateEntry: EntryReplicated<R>; assignedToRangeBoundary: boolean } | false {
+		const assignedToRangeBoundary =
+			properties.assignedToRangeBoundary ??
+			shouldAssignToRangeBoundary(properties.leaders, properties.replicas);
+
+		if (
+			properties.prev &&
+			properties.prev.assignedToRangeBoundary === assignedToRangeBoundary
+		) {
+			return false;
+		}
+
+		const metaBytes = (properties.entry as EntryWithMetaBytes).getMetaBytes?.();
+		const coordinateEntry = new this.indexableDomain.constructorEntry({
+			assignedToRangeBoundary,
+			coordinates: properties.coordinates,
+			meta: properties.entry.meta,
+			metaBytes,
+			hash: properties.entry.hash,
+			hashNumber: this.getEntryHashNumber(properties.entry),
+		});
+		return { coordinateEntry, assignedToRangeBoundary };
+	}
+
 	private async persistCoordinate(properties: {
 		coordinates: NumberFromType<R>[];
 		entry: ShallowOrFullEntry<any> | EntryReplicated<R>;
@@ -7464,28 +7577,11 @@ export class SharedLog<
 		assignedToRangeBoundary?: boolean;
 		commitNative?: boolean;
 	}) {
-		const assignedToRangeBoundary =
-			properties.assignedToRangeBoundary ??
-			shouldAssignToRangeBoundary(properties.leaders, properties.replicas);
-
-		if (
-			properties.prev &&
-			properties.prev.assignedToRangeBoundary === assignedToRangeBoundary
-		) {
-			return false; // no change
+		const prepared = this.createCoordinatePersistenceEntry(properties);
+		if (!prepared) {
+			return false;
 		}
-
-		const hashNumber = this.getEntryHashNumber(properties.entry);
-
-		const metaBytes = (properties.entry as EntryWithMetaBytes).getMetaBytes?.();
-		const coordinateEntry = new this.indexableDomain.constructorEntry({
-			assignedToRangeBoundary,
-			coordinates: properties.coordinates,
-			meta: properties.entry.meta,
-			metaBytes,
-			hash: properties.entry.hash,
-			hashNumber,
-		});
+		const { coordinateEntry, assignedToRangeBoundary } = prepared;
 		const nextHashes = properties.entry.meta.next;
 		const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
 			EntryReplicated<R>
@@ -7557,6 +7653,115 @@ export class SharedLog<
 			);
 		}
 		return true;
+	}
+
+	private async persistCoordinatesBatch(
+		items: Array<{
+			coordinates: NumberFromType<R>[];
+			entry: ShallowOrFullEntry<any> | EntryReplicated<R>;
+			leaders:
+				| Map<
+						string,
+						{
+							intersecting: boolean;
+						}
+				  >
+				| false;
+			replicas: number;
+			prev?: EntryReplicated<R>;
+			assignedToRangeBoundary?: boolean;
+			commitNative?: boolean;
+		}>,
+	): Promise<boolean[]> {
+		if (items.length === 0) {
+			return [];
+		}
+
+		const prepared = items.map((item) => ({
+			item,
+			prepared: this.createCoordinatePersistenceEntry(item),
+		}));
+		const changed = prepared.filter(
+			(
+				entry,
+			): entry is {
+				item: (typeof items)[number];
+				prepared: {
+					coordinateEntry: EntryReplicated<R>;
+					assignedToRangeBoundary: boolean;
+				};
+			} => entry.prepared !== false,
+		);
+		if (changed.length === 0) {
+			return items.map(() => false);
+		}
+
+		const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
+			EntryReplicated<R>
+		>;
+		const canUseGenericPutBatch =
+			typeof coordinateIndex.putBatch === "function" &&
+			changed.every(({ item }) => item.entry.meta.next.length === 0);
+
+		if (coordinateIndex.putSharedLogCoordinatesAndDeleteIdsBatch) {
+			await coordinateIndex.putSharedLogCoordinatesAndDeleteIdsBatch(
+				changed.map(({ item, prepared }) => ({
+					value: prepared.coordinateEntry,
+					fields: {
+						hash: prepared.coordinateEntry.hash,
+						hashNumber: prepared.coordinateEntry.hashNumber,
+						gid: prepared.coordinateEntry.gid,
+						coordinates: prepared.coordinateEntry.coordinates,
+						wallTime: prepared.coordinateEntry.wallTime,
+						assignedToRangeBoundary:
+							prepared.coordinateEntry.assignedToRangeBoundary,
+						metaBytes: prepared.coordinateEntry.getMetaBytes(),
+					},
+					deleteIds: item.entry.meta.next,
+				})),
+			);
+		} else if (canUseGenericPutBatch) {
+			await coordinateIndex.putBatch!(
+				changed.map(({ prepared }) => prepared.coordinateEntry),
+			);
+		} else {
+			const results: boolean[] = [];
+			for (const item of items) {
+				results.push(await this.persistCoordinate(item));
+			}
+			return results;
+		}
+
+		for (const { item, prepared } of changed) {
+			if (item.commitNative !== false) {
+				this._nativeSharedLogState?.commitEntryCoordinates(
+					item.entry.hash,
+					prepared.coordinateEntry.gid,
+					item.coordinates,
+					item.entry.meta.next,
+					prepared.assignedToRangeBoundary,
+					item.replicas,
+					prepared.coordinateEntry.hashNumber,
+				);
+			}
+			if (this._residentEntryCoordinatesByHash) {
+				this._residentEntryCoordinatesByHash.set(
+					item.entry.hash,
+					prepared.coordinateEntry,
+				);
+				for (const nextHash of item.entry.meta.next) {
+					this._residentEntryCoordinatesByHash.delete(nextHash);
+				}
+			}
+			for (const coordinate of item.coordinates) {
+				this.coordinateToHash.add(coordinate, item.entry.hash);
+			}
+		}
+
+		const changedHashes = new Set(
+			changed.map(({ prepared }) => prepared.coordinateEntry.hash),
+		);
+		return items.map((item) => changedHashes.has(item.entry.hash));
 	}
 
 	private async deleteCoordinates(properties: { hash: string }) {

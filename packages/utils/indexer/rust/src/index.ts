@@ -1472,6 +1472,70 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
+	async putSharedLogCoordinatesAndDeleteIdsBatch(
+		values: Array<{
+			value: T;
+			fields: SharedLogCoordinateNativeFields;
+			deleteIds?: Array<types.IdKey | types.Ideable>;
+			id?: types.IdKey;
+		}>,
+	): Promise<types.IdKey[]> {
+		if (values.length === 0) {
+			return [];
+		}
+		const prepared = values.map((entry) => {
+			const id =
+				entry.id ?? types.toId(types.extractFieldValue(entry.value, this.indexByArr));
+			return {
+				value: entry.value,
+				id,
+				storeKey: keyToStoreKey(id),
+				fields: this.encodeSharedLogCoordinateFields(entry.fields),
+				deleteKeys: (entry.deleteIds ?? []).map(keyToStoreKey),
+			};
+		});
+
+		if (!this.snapshotFile) {
+			return prepared.flatMap((entry) =>
+				this.getNative()
+					.put_and_delete_keys(
+						entry.storeKey,
+						entry.id,
+						entry.value,
+						entry.fields,
+						entry.deleteKeys,
+					)
+					.map((deleted) => deleted[0]),
+			);
+		}
+
+		return this.enqueueMutation(async () => {
+			await this.enqueuePersistence(async () => {
+				for (const entry of prepared) {
+					await this.snapshotFile!.appendPut(
+						entry.storeKey,
+						entry.value,
+						this.properties.schema,
+					);
+					for (const deleteKey of entry.deleteKeys) {
+						await this.snapshotFile!.appendDelete(deleteKey);
+					}
+				}
+			});
+			const deletedEntries = prepared.flatMap((entry) =>
+				this.getNative().put_and_delete_keys(
+					entry.storeKey,
+					entry.id,
+					entry.value,
+					entry.fields,
+					entry.deleteKeys,
+				),
+			);
+			await this.compactIfNeeded();
+			return deletedEntries.map((entry) => entry[0]);
+		});
+	}
+
 	async delIds(deleteIds: Array<types.IdKey | types.Ideable>): Promise<types.IdKey[]> {
 		const deleteKeys = deleteIds.map(keyToStoreKey);
 		if (deleteKeys.length === 0) {
