@@ -314,6 +314,21 @@ describe("index", () => {
 						.equal(3);
 					expect(appended.entries.every((entry) => entry.meta.next.length === 0))
 						.equal(true);
+					const reloaded = await Entry.fromMultihash<Operation>(
+						store.docs.log.log.blocks,
+						appended.entries[0]!.hash,
+					);
+					reloaded.init({
+						encoding: store.docs.log.log.encoding,
+						keychain: store.docs.log.log.keychain,
+					});
+					const payload = await reloaded.getPayloadValue();
+					expect(payload).instanceOf(PutOperation);
+					expect(
+						store.docs.index.valueEncoding.decoder(
+							(payload as PutOperation).data,
+						).id,
+					).equal(docs[0]!.id);
 					expect(changes).to.have.length(1);
 					expect(changes[0].added.map((doc) => doc.id)).to.deep.equal(
 						docs.map((doc) => doc.id),

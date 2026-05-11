@@ -769,6 +769,7 @@ export class Log<T> {
 		options: AppendOptions<T> = {},
 		properties?: {
 			resolveTrimmedEntries?: boolean;
+			payloadDatas?: Uint8Array[];
 		},
 	): Promise<
 		| {
@@ -804,6 +805,7 @@ export class Log<T> {
 			data,
 			appendOptions,
 			deferBlockStore,
+			properties?.payloadDatas,
 		);
 		if (!nativeAppendBatch) {
 			return undefined;
@@ -993,6 +995,7 @@ export class Log<T> {
 		data: T[],
 		options: AppendOptions<T>,
 		deferBlockStore: boolean,
+		payloadDatas?: Uint8Array[],
 	): Promise<PreparedAppendChain<T> | undefined> {
 		const canAppendAlreadyValidated =
 			options.__peerbitCanAppendAlreadyValidated === true;
@@ -1006,7 +1009,8 @@ export class Log<T> {
 			options.meta?.timestamp ||
 			options.meta?.type === EntryType.CUT ||
 			options.meta?.gidSeed ||
-			options.meta?.next
+			options.meta?.next ||
+			(payloadDatas && payloadDatas.length !== data.length)
 		) {
 			return undefined;
 		}
@@ -1031,6 +1035,7 @@ export class Log<T> {
 		const directBatch = nativeGraph?.prepareEntryV0PlainEntriesCommit
 			? await EntryV0.createPlainAppendEntriesBatch<T>({
 					data,
+					payloadDatas,
 					meta: {
 						clocks: () => clocks,
 						gids,
@@ -1060,6 +1065,7 @@ export class Log<T> {
 		for (let i = 0; i < data.length; i++) {
 			const prepared = await EntryV0.createPlainAppendChainBatch<T>({
 				data: [data[i]!],
+				payloadDatas: payloadDatas ? [payloadDatas[i]!] : undefined,
 				meta: {
 					clocks: () => [clocks[i]!],
 					gid: gids[i]!,
