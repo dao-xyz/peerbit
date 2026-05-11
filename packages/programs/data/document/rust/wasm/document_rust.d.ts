@@ -5,12 +5,18 @@ export function encode_context_suffix(created: string, modified: string, head: s
 
 export function encode_context_suffix_batch(createds: Array<any>, modifieds: Array<any>, heads: Array<any>, gids: Array<any>, sizes: Uint32Array): Array<any>;
 
+export function plan_document_context(existing_created: any, modified: string, head: string, gid: string, size: number): Array<any>;
+
+export function plan_document_context_batch(existing_createds: Array<any>, modifieds: Array<any>, heads: Array<any>, gids: Array<any>, sizes: Uint32Array): Array<any>;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly encode_context_suffix: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
     readonly encode_context_suffix_batch: (a: any, b: any, c: any, d: any, e: any) => [number, number, number];
+    readonly plan_document_context: (a: any, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
+    readonly plan_document_context_batch: (a: any, b: any, c: any, d: any, e: any) => [number, number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;

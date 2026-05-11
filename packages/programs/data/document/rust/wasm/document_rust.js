@@ -39,9 +39,55 @@ export function encode_context_suffix_batch(createds, modifieds, heads, gids, si
     }
     return takeFromExternrefTable0(ret[0]);
 }
+
+/**
+ * @param {any} existing_created
+ * @param {string} modified
+ * @param {string} head
+ * @param {string} gid
+ * @param {number} size
+ * @returns {Array<any>}
+ */
+export function plan_document_context(existing_created, modified, head, gid, size) {
+    const ptr0 = passStringToWasm0(modified, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(head, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(gid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.plan_document_context(existing_created, ptr0, len0, ptr1, len1, ptr2, len2, size);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * @param {Array<any>} existing_createds
+ * @param {Array<any>} modifieds
+ * @param {Array<any>} heads
+ * @param {Array<any>} gids
+ * @param {Uint32Array} sizes
+ * @returns {Array<any>}
+ */
+export function plan_document_context_batch(existing_createds, modifieds, heads, gids, sizes) {
+    const ret = wasm.plan_document_context_batch(existing_createds, modifieds, heads, gids, sizes);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
+        __wbg___wbindgen_is_null_2042690d351e14f0: function(arg0) {
+            const ret = arg0 === null;
+            return ret;
+        },
+        __wbg___wbindgen_is_undefined_35bb9f4c7fd651d5: function(arg0) {
+            const ret = arg0 === undefined;
+            return ret;
+        },
         __wbg___wbindgen_string_get_d109740c0d18f4d7: function(arg0, arg1) {
             const obj = arg1;
             const ret = typeof(obj) === 'string' ? obj : undefined;
