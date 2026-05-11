@@ -130,6 +130,40 @@ export class HLC {
 		return this.update(this.last);
 	}
 
+	nowBatch(count: number): Timestamp[] {
+		if (count <= 0) {
+			return [];
+		}
+		const last = this.last;
+		let wallTime = this.wallTime();
+		const offset = last.wallTime - wallTime;
+		this.validateOffset(offset);
+		let logical: number;
+		if (offset < 0n) {
+			logical = 0;
+		} else {
+			wallTime = last.wallTime;
+			logical = last.logical + 1;
+		}
+
+		const maxWallTime =
+			this.wallTimeUpperBound > 0n ? this.wallTimeUpperBound : UINT64_MAX;
+		const timestamps = new Array<Timestamp>(count);
+		for (let i = 0; i < count; i++) {
+			if (logical > UINT32_MAX) {
+				wallTime += 1n;
+				logical = 0;
+			}
+			if (wallTime > maxWallTime) {
+				throw new WallTimeOverflowError(wallTime, maxWallTime);
+			}
+			timestamps[i] = new Timestamp({ wallTime, logical });
+			logical += 1;
+		}
+		this.last = timestamps[timestamps.length - 1]!;
+		return timestamps;
+	}
+
 	validateOffset(offset: bigint) {
 		if (
 			this.toleratedForwardClockJump > 0n &&

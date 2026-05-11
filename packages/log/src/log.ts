@@ -1022,11 +1022,12 @@ export class Log<T> {
 				: undefined;
 
 		const gids = EntryV0.createGids(data.length);
-		const clocks = data.map(
-			() =>
+		const clockId = this._identity.publicKey.bytes;
+		const clocks = this._hlc.nowBatch(data.length).map(
+			(timestamp) =>
 				new Clock({
-					id: this._identity.publicKey.bytes,
-					timestamp: this._hlc.now(),
+					id: clockId,
+					timestamp,
 				}),
 		);
 		const metaDatas = data.map(() => options.meta?.data);
