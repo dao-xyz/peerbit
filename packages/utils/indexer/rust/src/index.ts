@@ -51,6 +51,14 @@ type NativeRustIndex<T extends Record<string, any>> = {
 		valueSuffixBytes: Uint8Array,
 		byteElementIndexLimit: number,
 	) => void;
+	put_encoded_parts_batch?: (
+		keys: string[],
+		ids: types.IdKey[],
+		values: T[],
+		valuePrefixBytes: Uint8Array[],
+		valueSuffixBytes: Uint8Array[],
+		byteElementIndexLimit: number,
+	) => void;
 	put_and_delete_matching: (
 		key: string,
 		id: types.IdKey,
@@ -1748,6 +1756,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}>,
 	): Promise<void> {
 		if (!this.snapshotFile) {
+			if (this.putNativeDocumentEncodedPartsBatch(values)) {
+				return;
+			}
 			for (const entry of values) {
 				const storeKey = keyToStoreKey(entry.id);
 				const encodedValue =
@@ -1805,6 +1816,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 					this.properties.schema,
 				);
 			});
+			if (this.putNativeDocumentEncodedPartsBatch(prepared)) {
+				await this.compactIfNeeded();
+				return;
+			}
 			for (const item of prepared) {
 				if (
 					!this.putNativeDocumentWithPreparedFields(
@@ -2376,6 +2391,57 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			return;
 		}
 		this.getNative().put(storeKey, id, value, this.fieldEncoder(value));
+	}
+
+	private putNativeDocumentEncodedPartsBatch(
+		values: Array<{
+			value: T;
+			id: types.IdKey;
+			storeKey?: string;
+			encodedValue?: Uint8Array;
+			encodedValueParts?: NativeEncodedValueParts;
+		}>,
+	): boolean {
+		if (values.length === 0) {
+			return false;
+		}
+		const native = this.getNative();
+		const putEncodedPartsBatch = native.put_encoded_parts_batch;
+		if (!putEncodedPartsBatch) {
+			return false;
+		}
+		const keys = new Array<string>(values.length);
+		const ids = new Array<types.IdKey>(values.length);
+		const storedValues = new Array<T>(values.length);
+		const prefixes = new Array<Uint8Array>(values.length);
+		const suffixes = new Array<Uint8Array>(values.length);
+		for (let i = 0; i < values.length; i++) {
+			const entry = values[i]!;
+			if (entry.encodedValue || !entry.encodedValueParts) {
+				return false;
+			}
+			keys[i] = entry.storeKey ?? keyToStoreKey(entry.id);
+			ids[i] = entry.id;
+			storedValues[i] = entry.value;
+			prefixes[i] = entry.encodedValueParts.prefix;
+			suffixes[i] = entry.encodedValueParts.suffix;
+		}
+		try {
+			putEncodedPartsBatch.call(
+				native,
+				keys,
+				ids,
+				storedValues,
+				prefixes,
+				suffixes,
+				this.nativeByteElementIndexLimit,
+			);
+			return true;
+		} catch {
+			// Fall back to the per-entry native call, which already falls back again
+			// to TypeScript field encoding for schemas outside the native extractor.
+			return false;
+		}
 	}
 
 	private putNativeDocumentWithPreparedFields(

@@ -1,6 +1,6 @@
 use borsh::BorshDeserialize;
 use indexmap::IndexMap;
-use js_sys::Array;
+use js_sys::{Array, Uint8Array};
 use planner::{
     Compare, DocumentFields, FieldPath, FieldValue, NativeQueryIndex, Query, SortDirection,
     SortField, StringMatchMethod, SumResult,
@@ -257,6 +257,46 @@ impl NativeRustIndex {
         )?;
         self.store.put(key.clone(), id, value);
         self.planner.index.put(key, fields);
+        Ok(())
+    }
+
+    pub fn put_encoded_parts_batch(
+        &mut self,
+        keys: Array,
+        ids: Array,
+        values: Array,
+        value_prefix_bytes: Array,
+        value_suffix_bytes: Array,
+        byte_element_index_limit: usize,
+    ) -> Result<(), JsValue> {
+        let len = keys.length();
+        if ids.length() != len
+            || values.length() != len
+            || value_prefix_bytes.length() != len
+            || value_suffix_bytes.length() != len
+        {
+            return Err(js_error("Mismatched encoded parts batch lengths"));
+        }
+
+        let mut prepared = Vec::with_capacity(len as usize);
+        for index in 0..len {
+            let key = keys
+                .get(index)
+                .as_string()
+                .ok_or_else(|| js_error("Invalid encoded parts batch key"))?;
+            let prefix = Uint8Array::new(&value_prefix_bytes.get(index)).to_vec();
+            let suffix = Uint8Array::new(&value_suffix_bytes.get(index)).to_vec();
+            let fields = self.extract_encoded_document_fields_from_reader(
+                BridgeReader::from_parts(&prefix, &suffix),
+                byte_element_index_limit,
+            )?;
+            prepared.push((key, ids.get(index), values.get(index), fields));
+        }
+
+        for (key, id, value, fields) in prepared {
+            self.store.put(key.clone(), id, value);
+            self.planner.index.put(key, fields);
+        }
         Ok(())
     }
 
