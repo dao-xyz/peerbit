@@ -4428,11 +4428,12 @@ export class SharedLog<
 		| {
 				entries: Entry<T>[];
 				removed: ShallowOrFullEntry<T>[];
+				appendCommits: PreparedLocalAppendCommit<R>[];
 		  }
 		| undefined
 	> {
 		if (data.length === 0) {
-			return { entries: [], removed: [] };
+			return { entries: [], removed: [], appendCommits: [] };
 		}
 		if (options?.canAppend || options?.onChange) {
 			throw new Error(
@@ -4467,10 +4468,14 @@ export class SharedLog<
 				...result.entries.flatMap((entry) => entry.meta.next),
 				...result.removed.map((entry) => entry.hash),
 			]);
-			return { entries: result.entries, removed: result.removed };
+			return {
+				entries: result.entries,
+				removed: result.removed,
+				appendCommits: this.createPreparedLocalAppendCommits(result.entries),
+			};
 		}
 
-		const nativeAppendPlans =
+		let nativeAppendPlans =
 			options?.replicate === true
 				? undefined
 				: options?.target === "none"
@@ -4494,10 +4499,17 @@ export class SharedLog<
 				},
 			))
 		) {
-			return { entries: result.entries, removed: result.removed };
+			return {
+				entries: result.entries,
+				removed: result.removed,
+				appendCommits: this.createPreparedLocalAppendCommits(
+					result.entries,
+					nativeAppendPlans,
+				),
+			};
 		}
 		for (let i = 0; i < result.entries.length; i++) {
-			await this.processLocalAppend(
+			const processedPlan = await this.processLocalAppend(
 				result.entries[i]!,
 				i === result.entries.length - 1 ? result.removed : [],
 				options,
@@ -4507,9 +4519,20 @@ export class SharedLog<
 					nativeAppendPlan: nativeAppendPlans?.[i],
 				},
 			);
+			if (processedPlan) {
+				nativeAppendPlans ??= [];
+				nativeAppendPlans[i] = processedPlan;
+			}
 		}
 
-		return { entries: result.entries, removed: result.removed };
+		return {
+			entries: result.entries,
+			removed: result.removed,
+			appendCommits: this.createPreparedLocalAppendCommits(
+				result.entries,
+				nativeAppendPlans,
+			),
+		};
 	}
 
 	async appendMany(
@@ -5073,6 +5096,15 @@ export class SharedLog<
 			hashNumber: nativeAppendPlan?.hashNumber,
 			coordinateFields: nativeAppendPlan?.preparedCoordinate.fields,
 		};
+	}
+
+	private createPreparedLocalAppendCommits(
+		entries: Entry<T>[],
+		nativeAppendPlans?: Array<NativeAppendEntryPlan<R> | undefined>,
+	): PreparedLocalAppendCommit<R>[] {
+		return entries.map((entry, index) =>
+			this.createPreparedLocalAppendCommit(entry, nativeAppendPlans?.[index]),
+		);
 	}
 
 	async open(options?: Args<T, D, R>): Promise<void> {
