@@ -320,8 +320,22 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				"documentBackendIndexPutMs",
 			),
 			patchAsyncMethod(
+				backendIndex,
+				typeof backendIndex.putWithContextBatch === "function"
+					? "putWithContextBatch"
+					: "putBatch",
+				profile,
+				"documentBackendIndexPutMs",
+			),
+			patchAsyncMethod(
 				store.docs.index,
 				"putWithContext",
+				profile,
+				"documentIndexPutMs",
+			),
+			patchAsyncMethod(
+				store.docs.index,
+				"putManyWithContext",
 				profile,
 				"documentIndexPutMs",
 			),

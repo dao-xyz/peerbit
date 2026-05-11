@@ -275,6 +275,23 @@ describe("index", () => {
 					"appendLocallyPrepared",
 				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
+				const documentBatchIndexSpy = sinon.spy(
+					store.docs.index,
+					"putManyWithContext",
+				);
+				const documentIndexPutSpy = sinon.spy(
+					store.docs.index,
+					"putWithContext",
+				);
+				const nativeState = (store.docs.log as any)._nativeSharedLogState;
+				const nativeLocalPlanSpy = sinon.spy(
+					nativeState,
+					"planLocalAppendForGid",
+				);
+				const nativeBatchPlanSpy = sinon.spy(
+					nativeState,
+					"planAppendForGidsBatch",
+				);
 
 				try {
 					const docs = [
@@ -284,7 +301,6 @@ describe("index", () => {
 					];
 					const appended = await store.docs.putMany(docs, {
 						unique: true,
-						replicate: false,
 						target: "none",
 					});
 
@@ -292,6 +308,10 @@ describe("index", () => {
 					expect(lowerBatchAppendSpy.callCount).equal(1);
 					expect(preparedAppendSpy.callCount).equal(0);
 					expect(appendSpy.callCount).equal(0);
+					expect(documentBatchIndexSpy.callCount).equal(1);
+					expect(documentIndexPutSpy.callCount).equal(0);
+					expect(nativeBatchPlanSpy.callCount).equal(1);
+					expect(nativeLocalPlanSpy.callCount).equal(0);
 					expect(appended.entries).to.have.length(3);
 					expect(new Set(appended.entries.map((entry) => entry.meta.gid)).size)
 						.equal(3);
@@ -305,6 +325,10 @@ describe("index", () => {
 						expect((await store.docs.get(doc.id))?.name).equal(doc.name);
 					}
 				} finally {
+					nativeBatchPlanSpy.restore();
+					nativeLocalPlanSpy.restore();
+					documentIndexPutSpy.restore();
+					documentBatchIndexSpy.restore();
 					appendSpy.restore();
 					preparedAppendSpy.restore();
 					lowerBatchAppendSpy.restore();
