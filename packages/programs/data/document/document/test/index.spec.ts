@@ -460,6 +460,10 @@ describe("index", () => {
 					backendIndex,
 					"putWithContextBatch",
 				);
+				const encodeContextualPartsSpy = sinon.spy(
+					store.docs.index as any,
+					"encodeContextualIndexedValueParts",
+				);
 				const coordinateIndex = store.docs.log.entryCoordinatesIndex as any;
 				const coordinateBatchSpy = sinon.spy(
 					coordinateIndex,
@@ -504,6 +508,7 @@ describe("index", () => {
 							batchValues[i]!.options!.encodedValueParts!.suffix.byteLength,
 						).greaterThan(0);
 					}
+					expect(encodeContextualPartsSpy.callCount).equal(0);
 					expect(coordinateBatchSpy.callCount).equal(1);
 					expect(coordinatePutSpy.callCount).equal(0);
 					expect(changes).to.have.length(1);
@@ -513,6 +518,7 @@ describe("index", () => {
 				} finally {
 					coordinatePutSpy.restore();
 					coordinateBatchSpy.restore();
+					encodeContextualPartsSpy.restore();
 					documentBackendBatchSpy.restore();
 					await store.close();
 					store = undefined;
