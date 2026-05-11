@@ -4412,6 +4412,23 @@ export class SharedLog<
 		};
 	}
 
+	async appendLocallyPreparedPayloadsManyIndependent(
+		payloadDatas: Uint8Array[],
+		options?: SharedAppendOptions<T> | undefined,
+		properties?: {
+			resolveTrimmedEntries?: boolean;
+		},
+	) {
+		return this.appendLocallyPreparedManyIndependent(
+			new Array(payloadDatas.length) as T[],
+			options,
+			{
+				resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+				payloadDatas,
+			},
+		);
+	}
+
 	async appendMany(
 		data: T[],
 		options?: SharedAppendOptions<T> | undefined,
