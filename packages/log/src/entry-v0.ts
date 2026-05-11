@@ -589,6 +589,19 @@ export class EntryV0<T>
 		return seed ? sha256Base64(seed) : toBase64(randomBytes(32));
 	}
 
+	static createGids(count: number): string[] {
+		if (count === 0) {
+			return [];
+		}
+		const bytes = randomBytes(count * 32);
+		const gids = new Array<string>(count);
+		for (let i = 0; i < count; i++) {
+			const offset = i * 32;
+			gids[i] = toBase64(bytes.subarray(offset, offset + 32));
+		}
+		return gids;
+	}
+
 	static async createPlainAppendChain<T>(properties: {
 		data: T[];
 		payloadDatas?: Uint8Array[];
