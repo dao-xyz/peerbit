@@ -210,6 +210,7 @@ type NativeLogBlockStoreHandle = {
 	get: (key: string) => Uint8Array | undefined;
 	get_many: (keys: string[]) => Array<Uint8Array | undefined>;
 	has: (key: string) => boolean;
+	has_many: (keys: string[]) => boolean[];
 	put: (key: string, value: Uint8Array) => void;
 	put_many: (keys: string[], values: Uint8Array[]) => void;
 	delete: (key: string) => boolean;
@@ -897,6 +898,10 @@ export class NativeLogBlockStore {
 
 	async has(cid: string): Promise<boolean> {
 		return this.native.has(cid);
+	}
+
+	async hasMany(cids: string[]): Promise<boolean[]> {
+		return this.native.has_many(cids);
 	}
 
 	async rm(cid: string): Promise<void> {

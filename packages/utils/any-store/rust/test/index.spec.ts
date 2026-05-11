@@ -67,6 +67,11 @@ describe("@peerbit/any-store-rust", () => {
 			new Uint8Array([2, 3]),
 			undefined,
 		]);
+		expect(await store.hasMany(["c", "a", "b"])).to.deep.equal([
+			false,
+			true,
+			true,
+		]);
 		expect(await store.size()).to.equal(3);
 		expect(await store.delMany(["a", "missing"])).to.equal(1);
 		expect(await collectKeys(store)).to.deep.equal(["b"]);

@@ -6532,6 +6532,7 @@ export class SharedLog<
 				const nativeEntryMetadata = this._nativeRangePlanner
 					? this.log.entryIndex.getNativeEntryMetadataBatch(msg.hashes)
 					: undefined;
+				const presentBlocks = await this.log.blocks.hasMany?.(msg.hashes);
 
 				for (let i = 0; i < msg.hashes.length; i++) {
 					const hash = msg.hashes[i]!;
@@ -6550,7 +6551,9 @@ export class SharedLog<
 
 					if (
 						(nativeEntry || indexedEntry) &&
-						(await this.log.blocks.has(hash))
+						(presentBlocks
+							? presentBlocks[i] === true
+							: await this.log.blocks.has(hash))
 					) {
 						const pendingDelete = this._checkedPrune.getPendingDelete(hash);
 						if (pendingDelete) {

@@ -593,6 +593,14 @@ impl NativeLogBlockStore {
         self.entries.contains_key(key)
     }
 
+    pub fn has_many(&self, keys: Array) -> Result<Array, JsValue> {
+        let present = Array::new();
+        for key in strings_from_array(keys)? {
+            present.push(&JsValue::from_bool(self.entries.contains_key(&key)));
+        }
+        Ok(present)
+    }
+
     pub fn put(&mut self, key: String, value: Vec<u8>) {
         self.put_entry(key, value);
     }
