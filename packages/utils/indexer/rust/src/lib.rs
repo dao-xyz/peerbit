@@ -206,6 +206,7 @@ impl NativeRustIndex {
         let out = Array::new();
         out.push(&JsValue::from_f64(stats.root_fields as f64));
         out.push(&JsValue::from_f64(stats.node_count as f64));
+        out.push(&JsValue::from_f64(stats.generic_nodes as f64));
         Ok(out)
     }
 
@@ -221,6 +222,21 @@ impl NativeRustIndex {
         fields_bytes: Vec<u8>,
     ) -> Result<(), JsValue> {
         let fields = decode_document_fields(&fields_bytes)?;
+        self.store.put(key.clone(), id, value);
+        self.planner.index.put(key, fields);
+        Ok(())
+    }
+
+    pub fn put_encoded(
+        &mut self,
+        key: String,
+        id: JsValue,
+        value: JsValue,
+        value_bytes: Vec<u8>,
+        byte_element_index_limit: usize,
+    ) -> Result<(), JsValue> {
+        let fields =
+            self.extract_encoded_document_fields(&value_bytes, byte_element_index_limit)?;
         self.store.put(key.clone(), id, value);
         self.planner.index.put(key, fields);
         Ok(())
@@ -311,6 +327,20 @@ impl NativeRustIndex {
         let query = decode_query(&query_bytes)?;
         let keys = self.planner.index.delete_matching(&query);
         Ok(self.store.delete_keys(&keys))
+    }
+}
+
+impl NativeRustIndex {
+    fn extract_encoded_document_fields(
+        &self,
+        value_bytes: &[u8],
+        byte_element_index_limit: usize,
+    ) -> Result<DocumentFields, JsValue> {
+        let schema_ir = self
+            .schema_ir
+            .as_ref()
+            .ok_or_else(|| js_error("Native schema IR has not been configured"))?;
+        extract_encoded_document_fields(schema_ir, value_bytes, byte_element_index_limit)
     }
 }
 
@@ -471,6 +501,7 @@ enum NativeSchemaNode {
 struct NativeSchemaIrStats {
     root_fields: usize,
     node_count: usize,
+    generic_nodes: usize,
 }
 
 impl NativeSchemaIr {
@@ -481,6 +512,7 @@ impl NativeSchemaIr {
                 _ => 0,
             },
             node_count: self.root.node_count(),
+            generic_nodes: self.root.generic_count(),
         }
     }
 }
@@ -517,6 +549,32 @@ impl NativeSchemaNode {
             | NativeSchemaNode::String
             | NativeSchemaNode::Uint8Array
             | NativeSchemaNode::Generic => 1,
+        }
+    }
+
+    fn generic_count(&self) -> usize {
+        match self {
+            NativeSchemaNode::Object(fields) => fields
+                .iter()
+                .map(|field| field.node.generic_count())
+                .sum::<usize>(),
+            NativeSchemaNode::Option(node) | NativeSchemaNode::Vec(node) => node.generic_count(),
+            NativeSchemaNode::FixedArray { element, .. } => element.generic_count(),
+            NativeSchemaNode::Generic => 1,
+            NativeSchemaNode::Bool
+            | NativeSchemaNode::U8
+            | NativeSchemaNode::U16
+            | NativeSchemaNode::U32
+            | NativeSchemaNode::U64
+            | NativeSchemaNode::U128
+            | NativeSchemaNode::U256
+            | NativeSchemaNode::U512
+            | NativeSchemaNode::I8
+            | NativeSchemaNode::I16
+            | NativeSchemaNode::I32
+            | NativeSchemaNode::I64
+            | NativeSchemaNode::String
+            | NativeSchemaNode::Uint8Array => 0,
         }
     }
 }
@@ -644,6 +702,299 @@ fn read_native_schema_node(reader: &mut BridgeReader) -> Result<NativeSchemaNode
         18 => NativeSchemaNode::Generic,
         tag => return Err(js_error(format!("Unknown native schema node tag {tag}"))),
     })
+}
+
+struct NativeExtractState {
+    next_scope: u32,
+    byte_element_index_limit: usize,
+}
+
+impl NativeExtractState {
+    fn next_scope(&mut self) -> Result<u32, JsValue> {
+        let scope = self.next_scope;
+        self.next_scope = self
+            .next_scope
+            .checked_add(1)
+            .ok_or_else(|| js_error("Native schema extraction scope overflow"))?;
+        Ok(scope)
+    }
+}
+
+fn extract_encoded_document_fields(
+    schema_ir: &NativeSchemaIr,
+    value_bytes: &[u8],
+    byte_element_index_limit: usize,
+) -> Result<DocumentFields, JsValue> {
+    let mut reader = BridgeReader::new(value_bytes);
+    let mut fields = DocumentFields::new();
+    let mut state = NativeExtractState {
+        next_scope: 1,
+        byte_element_index_limit,
+    };
+    extract_schema_node(
+        &schema_ir.root,
+        &mut reader,
+        &mut fields,
+        0,
+        &mut state,
+        None,
+    )?;
+    reader.finish()?;
+    Ok(fields)
+}
+
+fn extract_schema_node(
+    node: &NativeSchemaNode,
+    reader: &mut BridgeReader,
+    fields: &mut DocumentFields,
+    scope: u32,
+    state: &mut NativeExtractState,
+    field: Option<&NativeSchemaField>,
+) -> Result<(), JsValue> {
+    match node {
+        NativeSchemaNode::Bool => {
+            let value = match reader.read_u8()? {
+                0 => false,
+                1 => true,
+                value => return Err(js_error(format!("Invalid Borsh bool value {value}"))),
+            };
+            insert_scalar(
+                fields,
+                scope,
+                required_field(field)?,
+                FieldValue::Bool(value),
+            );
+        }
+        NativeSchemaNode::U8 => {
+            insert_scalar(
+                fields,
+                scope,
+                required_field(field)?,
+                FieldValue::U64(reader.read_u8()? as u64),
+            );
+        }
+        NativeSchemaNode::U16 => {
+            insert_scalar(
+                fields,
+                scope,
+                required_field(field)?,
+                FieldValue::U64(read_le_u64_with_width(reader, 2)?.unwrap_or_default()),
+            );
+        }
+        NativeSchemaNode::U32 => {
+            insert_scalar(
+                fields,
+                scope,
+                required_field(field)?,
+                FieldValue::U64(reader.read_u32()? as u64),
+            );
+        }
+        NativeSchemaNode::U64 => {
+            insert_scalar(
+                fields,
+                scope,
+                required_field(field)?,
+                FieldValue::U64(reader.read_u64()?),
+            );
+        }
+        NativeSchemaNode::U128 => {
+            if let Some(value) = read_le_u64_with_width(reader, 16)? {
+                insert_scalar(
+                    fields,
+                    scope,
+                    required_field(field)?,
+                    FieldValue::U64(value),
+                );
+            }
+        }
+        NativeSchemaNode::U256 => {
+            if let Some(value) = read_le_u64_with_width(reader, 32)? {
+                insert_scalar(
+                    fields,
+                    scope,
+                    required_field(field)?,
+                    FieldValue::U64(value),
+                );
+            }
+        }
+        NativeSchemaNode::U512 => {
+            if let Some(value) = read_le_u64_with_width(reader, 64)? {
+                insert_scalar(
+                    fields,
+                    scope,
+                    required_field(field)?,
+                    FieldValue::U64(value),
+                );
+            }
+        }
+        NativeSchemaNode::I8 => {
+            insert_scalar(
+                fields,
+                scope,
+                required_field(field)?,
+                FieldValue::I64((reader.read_u8()? as i8) as i64),
+            );
+        }
+        NativeSchemaNode::I16 => {
+            insert_scalar(
+                fields,
+                scope,
+                required_field(field)?,
+                FieldValue::I64(read_le_i64_with_width(reader, 2)?),
+            );
+        }
+        NativeSchemaNode::I32 => {
+            insert_scalar(
+                fields,
+                scope,
+                required_field(field)?,
+                FieldValue::I64(read_le_i64_with_width(reader, 4)?),
+            );
+        }
+        NativeSchemaNode::I64 => {
+            insert_scalar(
+                fields,
+                scope,
+                required_field(field)?,
+                FieldValue::I64(reader.read_i64()?),
+            );
+        }
+        NativeSchemaNode::String => {
+            let value = reader.read_string()?;
+            insert_scalar(
+                fields,
+                scope,
+                required_field(field)?,
+                FieldValue::String(value),
+            );
+        }
+        NativeSchemaNode::Uint8Array => {
+            let len = reader.read_u32()? as usize;
+            let bytes = reader.read_exact(len)?.to_vec();
+            insert_bytes_facts(fields, state, scope, required_field(field)?, bytes)?;
+        }
+        NativeSchemaNode::Object(schema_fields) => {
+            for schema_field in schema_fields {
+                extract_schema_node(
+                    &schema_field.node,
+                    reader,
+                    fields,
+                    scope,
+                    state,
+                    Some(schema_field),
+                )?;
+            }
+        }
+        NativeSchemaNode::Option(child) => match reader.read_u8()? {
+            0 => {}
+            1 => extract_schema_node(child, reader, fields, scope, state, field)?,
+            tag => return Err(js_error(format!("Invalid Borsh option tag {tag}"))),
+        },
+        NativeSchemaNode::Vec(child) if matches!(child.as_ref(), NativeSchemaNode::U8) => {
+            let len = reader.read_u32()? as usize;
+            let bytes = reader.read_exact(len)?.to_vec();
+            insert_bytes_facts(fields, state, scope, required_field(field)?, bytes)?;
+        }
+        NativeSchemaNode::Vec(child) => {
+            let len = reader.read_u32()? as usize;
+            let field = required_schema_field(field)?;
+            for _ in 0..len {
+                let item_scope = state.next_scope()?;
+                insert_scalar(
+                    fields,
+                    item_scope,
+                    field.array_field,
+                    FieldValue::Bool(true),
+                );
+                extract_schema_node(child, reader, fields, item_scope, state, Some(field))?;
+            }
+        }
+        NativeSchemaNode::FixedArray { length, element }
+            if matches!(element.as_ref(), NativeSchemaNode::U8) =>
+        {
+            let bytes = reader.read_exact(*length as usize)?.to_vec();
+            insert_bytes_facts(fields, state, scope, required_field(field)?, bytes)?;
+        }
+        NativeSchemaNode::FixedArray { length, element } => {
+            let field = required_schema_field(field)?;
+            for _ in 0..*length {
+                let item_scope = state.next_scope()?;
+                insert_scalar(
+                    fields,
+                    item_scope,
+                    field.array_field,
+                    FieldValue::Bool(true),
+                );
+                extract_schema_node(element, reader, fields, item_scope, state, Some(field))?;
+            }
+        }
+        NativeSchemaNode::Generic => {
+            return Err(js_error(
+                "Native schema IR contains a generic node that cannot be extracted from Borsh",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn required_schema_field(field: Option<&NativeSchemaField>) -> Result<&NativeSchemaField, JsValue> {
+    field.ok_or_else(|| js_error("Native schema scalar node is missing field metadata"))
+}
+
+fn required_field(field: Option<&NativeSchemaField>) -> Result<u32, JsValue> {
+    Ok(required_schema_field(field)?.field)
+}
+
+fn insert_scalar(fields: &mut DocumentFields, scope: u32, field: u32, value: FieldValue) {
+    fields.insert_scoped_scalar(scope, FieldPath::Id(field), value);
+}
+
+fn insert_bytes_facts(
+    fields: &mut DocumentFields,
+    state: &mut NativeExtractState,
+    scope: u32,
+    field: u32,
+    bytes: Vec<u8>,
+) -> Result<(), JsValue> {
+    fields.insert_scoped_scalar(
+        scope,
+        FieldPath::Id(field),
+        FieldValue::Bytes(bytes.clone()),
+    );
+    if bytes.len() > state.byte_element_index_limit {
+        return Ok(());
+    }
+    for byte in bytes {
+        let byte_scope = state.next_scope()?;
+        fields.insert_scoped_scalar(
+            byte_scope,
+            FieldPath::Id(field),
+            FieldValue::U64(byte as u64),
+        );
+    }
+    Ok(())
+}
+
+fn read_le_u64_with_width(reader: &mut BridgeReader, width: usize) -> Result<Option<u64>, JsValue> {
+    let bytes = reader.read_exact(width)?;
+    let low_width = width.min(8);
+    let mut low = [0u8; 8];
+    low[..low_width].copy_from_slice(&bytes[..low_width]);
+    if bytes.iter().skip(8).any(|byte| *byte != 0) {
+        return Ok(None);
+    }
+    Ok(Some(u64::from_le_bytes(low)))
+}
+
+fn read_le_i64_with_width(reader: &mut BridgeReader, width: usize) -> Result<i64, JsValue> {
+    let bytes = reader.read_exact(width)?;
+    let mut out = if bytes.last().is_some_and(|byte| byte & 0x80 != 0) {
+        [0xffu8; 8]
+    } else {
+        [0u8; 8]
+    };
+    out[..width].copy_from_slice(bytes);
+    Ok(i64::from_le_bytes(out))
 }
 
 fn decode_document_fields(fields_bytes: &[u8]) -> Result<DocumentFields, JsValue> {
