@@ -729,11 +729,15 @@ export class EntryV0<T>
 				data: metaData,
 				next: preparedEntry.next,
 			});
-			const payload = new Payload<T>({
-				data: payloadDatas[index]!,
-				value: properties.data[index],
-				encoding: properties.encoding,
-			});
+			const payloadSize = payloadDatas[index]!.byteLength;
+			const payload =
+				properties.cachePreparedEntries === false
+					? undefined
+					: new Payload<T>({
+							data: payloadDatas[index]!,
+							value: properties.data[index],
+							encoding: properties.encoding,
+						});
 			const signature =
 				properties.cachePreparedEntries === false
 					? undefined
@@ -777,7 +781,7 @@ export class EntryV0<T>
 			entry._hashDigestBytes = preparedEntry.hashDigestBytes;
 			const shallowEntry = new ShallowEntry({
 				hash: entry.hash,
-				payloadSize: payload.byteLength,
+				payloadSize,
 				head: true,
 				meta: new ShallowMeta({
 					gid: entryGid,
@@ -796,7 +800,7 @@ export class EntryV0<T>
 							next: preparedEntry.next,
 							type: entryType,
 							head: true,
-							payloadSize: payload.byteLength,
+							payloadSize,
 							data: metaData,
 							clock: {
 								timestamp: {
@@ -1055,11 +1059,15 @@ export class EntryV0<T>
 				data: properties.meta?.data,
 				next: preparedEntry.next,
 			});
-			const payload = new Payload<T>({
-				data: payloadDatas[index]!,
-				value: properties.data[index],
-				encoding: properties.encoding,
-			});
+			const payloadSize = payloadDatas[index]!.byteLength;
+			const payload =
+				properties.cachePreparedEntries === false
+					? undefined
+					: new Payload<T>({
+							data: payloadDatas[index]!,
+							value: properties.data[index],
+							encoding: properties.encoding,
+						});
 			const signature =
 				properties.cachePreparedEntries === false
 					? undefined
@@ -1107,7 +1115,7 @@ export class EntryV0<T>
 			entry._hashDigestBytes = preparedEntry.hashDigestBytes;
 			const shallowEntry = new ShallowEntry({
 				hash: entry.hash,
-				payloadSize: payload.byteLength,
+				payloadSize,
 				head: index === prepared.length - 1,
 				meta: new ShallowMeta({
 					gid: gid!,
@@ -1126,7 +1134,7 @@ export class EntryV0<T>
 							next: preparedEntry.next,
 							type: entryType,
 							head: index === prepared.length - 1,
-							payloadSize: payload.byteLength,
+							payloadSize,
 							data: properties.meta?.data,
 							clock: {
 								timestamp: {
