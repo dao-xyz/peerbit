@@ -1021,9 +1021,7 @@ export class Log<T> {
 				? this.entryIndex.properties.nativeGraph.graph
 				: undefined;
 
-		const gids = await Promise.all(
-			data.map(() => Promise.resolve(EntryV0.createGid())),
-		);
+		const gids = EntryV0.createGids(data.length);
 		const clocks = data.map(
 			() =>
 				new Clock({
