@@ -23,6 +23,14 @@ export type SnapshotFile = {
 		schema: AbstractType<T>,
 		encodedValue?: EncodedValue,
 	): Promise<void>;
+	appendPutBatch<T extends Record<string, any>>(
+		values: Array<{
+			key: string;
+			value: T;
+			encodedValue?: EncodedValue;
+		}>,
+		schema: AbstractType<T>,
+	): Promise<void>;
 	appendDelete(key: string): Promise<void>;
 	compact<T extends Record<string, any>>(
 		values: T[],
@@ -436,6 +444,27 @@ class NativeSnapshotFile implements SnapshotFile {
 		);
 	}
 
+	async appendPutBatch<T extends Record<string, any>>(
+		values: Array<{
+			key: string;
+			value: T;
+			encodedValue?: EncodedValue;
+		}>,
+		schema: AbstractType<T>,
+	): Promise<void> {
+		await this.appendRecords(
+			values.map((entry) =>
+				encodeJournalPayload(
+					JournalOperation.Put,
+					entry.key,
+					schema,
+					entry.value,
+					entry.encodedValue,
+				),
+			),
+		);
+	}
+
 	async appendDelete(key: string): Promise<void> {
 		await this.appendRecord(encodeJournalPayload(JournalOperation.Delete, key));
 	}
@@ -534,16 +563,25 @@ class NativeSnapshotFile implements SnapshotFile {
 	}
 
 	private async appendRecord(payload: Uint8Array): Promise<void> {
+		await this.appendRecords([payload]);
+	}
+
+	private async appendRecords(payloads: Uint8Array[]): Promise<void> {
+		if (payloads.length === 0) {
+			return;
+		}
 		const handle = await this.getJournalHandle();
 		if (!this.journalInitialized) {
 			this.writeAllSync(handle, JOURNAL_MAGIC);
 			this.journalInitialized = true;
 		}
-		this.writeAllSync(handle, encodeJournalRecord(payload));
+		for (const payload of payloads) {
+			this.writeAllSync(handle, encodeJournalRecord(payload));
+		}
 		if (this.durability === "strict") {
 			this.fs.fsyncSync(handle);
 		}
-		this.operations++;
+		this.operations += payloads.length;
 	}
 
 	private async getJournalHandle(): Promise<number> {
@@ -646,6 +684,27 @@ class OpfsSnapshotFile implements SnapshotFile {
 				schema,
 				value,
 				encodedValue,
+			),
+		);
+	}
+
+	async appendPutBatch<T extends Record<string, any>>(
+		values: Array<{
+			key: string;
+			value: T;
+			encodedValue?: EncodedValue;
+		}>,
+		schema: AbstractType<T>,
+	): Promise<void> {
+		await this.appendRecords(
+			values.map((entry) =>
+				encodeJournalPayload(
+					JournalOperation.Put,
+					entry.key,
+					schema,
+					entry.value,
+					entry.encodedValue,
+				),
 			),
 		);
 	}
@@ -759,11 +818,18 @@ class OpfsSnapshotFile implements SnapshotFile {
 	}
 
 	private async appendRecord(payload: Uint8Array): Promise<void> {
+		await this.appendRecords([payload]);
+	}
+
+	private async appendRecords(payloads: Uint8Array[]): Promise<void> {
+		if (payloads.length === 0) {
+			return;
+		}
 		const directory = await this.getDirectory(true);
 		const fileHandle = (await directory.getFileHandle(this.journalFileName, {
 			create: true,
 		})) as SyncFileHandle;
-		const record = encodeJournalRecord(payload);
+		const records = payloads.map(encodeJournalRecord);
 
 		if (fileHandle.createSyncAccessHandle) {
 			const access = await fileHandle.createSyncAccessHandle();
@@ -775,19 +841,22 @@ class OpfsSnapshotFile implements SnapshotFile {
 					access.write(JOURNAL_MAGIC, { at: offset });
 					offset += JOURNAL_MAGIC.byteLength;
 				}
-				access.write(record, { at: offset });
+				for (const record of records) {
+					access.write(record, { at: offset });
+					offset += record.byteLength;
+				}
 				if (this.durability === "strict") {
 					access.flush();
 				}
 			} finally {
 				access.close();
 			}
-			this.operations++;
+			this.operations += payloads.length;
 			return;
 		}
 
-		if (await this.tryAppendWithWritableStream(fileHandle, record)) {
-			this.operations++;
+		if (await this.tryAppendWithWritableStream(fileHandle, records)) {
+			this.operations += payloads.length;
 			return;
 		}
 
@@ -796,15 +865,15 @@ class OpfsSnapshotFile implements SnapshotFile {
 			this.journalFileName,
 			concatBytes([
 				existing.byteLength === 0 ? JOURNAL_MAGIC : existing,
-				record,
+				...records,
 			]),
 		);
-		this.operations++;
+		this.operations += payloads.length;
 	}
 
 	private async tryAppendWithWritableStream(
 		fileHandle: FileSystemFileHandle,
-		record: Uint8Array,
+		records: Uint8Array[],
 	): Promise<boolean> {
 		let writable: FileSystemWritableFileStream | undefined;
 		try {
@@ -819,7 +888,10 @@ class OpfsSnapshotFile implements SnapshotFile {
 				});
 				offset += JOURNAL_MAGIC.byteLength;
 			}
-			await writable.write({ type: "write", position: offset, data: record });
+			for (const record of records) {
+				await writable.write({ type: "write", position: offset, data: record });
+				offset += record.byteLength;
+			}
 			await writable.close();
 			return true;
 		} catch (error: any) {
