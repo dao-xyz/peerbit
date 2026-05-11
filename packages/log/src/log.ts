@@ -687,6 +687,7 @@ export class Log<T> {
 		properties?: {
 			skipMissingNextJoin?: boolean;
 			resolveTrimmedEntries?: boolean;
+			payloadData?: Uint8Array;
 		},
 	): Promise<{
 		entry: Entry<T>;
@@ -715,6 +716,7 @@ export class Log<T> {
 					appendOptions,
 					nexts,
 					deferBlockStore,
+					properties?.payloadData ? [properties.payloadData] : undefined,
 				)
 			: undefined;
 		let entry: Entry<T>;
@@ -939,6 +941,7 @@ export class Log<T> {
 		options: AppendOptions<T>,
 		nexts: Sorting.SortableEntry[],
 		deferBlockStore: boolean,
+		payloadDatas?: Uint8Array[],
 	): Promise<PreparedAppendChain<T> | undefined> {
 		const canAppendAlreadyValidated =
 			options.__peerbitCanAppendAlreadyValidated === true;
@@ -983,6 +986,7 @@ export class Log<T> {
 				next: nexts,
 			},
 			encoding: this._encoding,
+			payloadDatas,
 			identity: options.identity || this._identity,
 			deferStore: deferBlockStore,
 			cachePreparedEntries: false,
