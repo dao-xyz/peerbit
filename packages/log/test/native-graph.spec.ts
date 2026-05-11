@@ -438,6 +438,42 @@ describe("native graph", () => {
 		}
 	});
 
+	it("skips missing next index lookups during native length trim", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+		const first = (
+			await log.append(new Uint8Array([1]), { meta: { next: [] } })
+		).entry;
+		const second = (await log.append(new Uint8Array([2]))).entry;
+		await log.append(new Uint8Array([3]));
+
+		const nativeGraph = log.entryIndex.properties.nativeGraph!.graph;
+		const hasManySpy = sinon.spy(nativeGraph, "hasMany");
+		const indexGetSpy = sinon.spy(log.entryIndex.properties.index, "get");
+		try {
+			const removed = await log.trim(
+				{ type: "length", to: 1 },
+				{ resolveDeletedEntries: false },
+			);
+
+			expect(removed?.map((entry) => entry.hash)).to.deep.equal([
+				first.hash,
+				second.hash,
+			]);
+			expect(log.length).equal(1);
+			expect(hasManySpy.callCount).greaterThan(0);
+			expect(indexGetSpy.callCount).equal(0);
+		} finally {
+			indexGetSpy.restore();
+			hasManySpy.restore();
+			await log.close();
+		}
+	});
+
 	it("plans cut recursion deletes in the native graph", async () => {
 		const log = new Log<Uint8Array>();
 		await log.open(store, signKey, {
