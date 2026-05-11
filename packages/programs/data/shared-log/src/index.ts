@@ -42,6 +42,7 @@ import {
 	type LogEvents,
 	type LogProperties,
 	Meta,
+	type PreparedAppendFacts,
 	ShallowEntry,
 	type ShallowOrFullEntry,
 } from "@peerbit/log";
@@ -4342,7 +4343,10 @@ export class SharedLog<
 			return {
 				entries: result.entries,
 				removed: result.removed,
-				appendCommits: this.createPreparedLocalAppendCommits(result.entries),
+				appendCommits: this.createPreparedLocalAppendCommitsFromFacts(
+					result.appendFacts,
+					result.entries,
+				),
 			};
 		}
 
@@ -4373,7 +4377,8 @@ export class SharedLog<
 			return {
 				entries: result.entries,
 				removed: result.removed,
-				appendCommits: this.createPreparedLocalAppendCommits(
+				appendCommits: this.createPreparedLocalAppendCommitsFromFacts(
+					result.appendFacts,
 					result.entries,
 					nativeAppendPlans,
 				),
@@ -4399,7 +4404,8 @@ export class SharedLog<
 		return {
 			entries: result.entries,
 			removed: result.removed,
-			appendCommits: this.createPreparedLocalAppendCommits(
+			appendCommits: this.createPreparedLocalAppendCommitsFromFacts(
+				result.appendFacts,
 				result.entries,
 				nativeAppendPlans,
 			),
@@ -4967,6 +4973,23 @@ export class SharedLog<
 		};
 	}
 
+	private createPreparedLocalAppendCommitFromFacts(
+		appendFacts: PreparedAppendFacts,
+		nativeAppendPlan?: NativeAppendEntryPlan<R>,
+	): PreparedLocalAppendCommit<R> {
+		return {
+			hash: appendFacts.hash,
+			gid: appendFacts.gid,
+			next: appendFacts.next,
+			wallTime: appendFacts.wallTime,
+			logical: appendFacts.logical,
+			payloadSize: appendFacts.payloadSize,
+			metaBytes: appendFacts.metaBytes,
+			hashNumber: nativeAppendPlan?.hashNumber,
+			coordinateFields: nativeAppendPlan?.preparedCoordinate.fields,
+		};
+	}
+
 	private createPreparedLocalAppendCommits(
 		entries: Entry<T>[],
 		nativeAppendPlans?: Array<NativeAppendEntryPlan<R> | undefined>,
@@ -4974,6 +4997,22 @@ export class SharedLog<
 		return entries.map((entry, index) =>
 			this.createPreparedLocalAppendCommit(entry, nativeAppendPlans?.[index]),
 		);
+	}
+
+	private createPreparedLocalAppendCommitsFromFacts(
+		appendFacts: PreparedAppendFacts[] | undefined,
+		entries: Entry<T>[],
+		nativeAppendPlans?: Array<NativeAppendEntryPlan<R> | undefined>,
+	): PreparedLocalAppendCommit<R>[] {
+		if (appendFacts && appendFacts.length === entries.length) {
+			return appendFacts.map((facts, index) =>
+				this.createPreparedLocalAppendCommitFromFacts(
+					facts,
+					nativeAppendPlans?.[index],
+				),
+			);
+		}
+		return this.createPreparedLocalAppendCommits(entries, nativeAppendPlans);
 	}
 
 	async open(options?: Args<T, D, R>): Promise<void> {

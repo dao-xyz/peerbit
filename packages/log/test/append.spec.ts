@@ -283,6 +283,9 @@ describe("append", function () {
 
 			expect(result.entries).to.have.length(3);
 			expect(result.entries[0].meta.next).to.deep.equal([root.hash]);
+			expect(await result.entries[0].getPayloadValue()).to.deep.equal(
+				new Uint8Array([1]),
+			);
 			expect(
 				(await log.getHeads().all()).map((head) => head.hash),
 			).to.deep.equal([result.entries[2].hash]);
@@ -357,6 +360,7 @@ describe("append", function () {
 			expect(blockPutSpy.callCount).equal(0);
 			expect(blockPutManySpy.callCount).equal(0);
 			expect(preparedBlockFromBytesSpy.callCount).equal(0);
+			expect(await entry.getPayloadValue()).to.deep.equal(new Uint8Array([1]));
 			expect(await nativeStore.has(entry.hash)).to.equal(true);
 			expect((await log.getHeads().all()).map((head) => head.hash)).to.deep.equal([
 				entry.hash,
