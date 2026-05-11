@@ -68,6 +68,7 @@ type NativeLogIndexHandle = {
 	has_many: (hashes: string[]) => string[];
 	oldest_hash: () => string | undefined;
 	newest_hash: () => string | undefined;
+	delete_many: (hashes: string[]) => number;
 	put: (
 		hash: string,
 		gid: string,
@@ -682,6 +683,10 @@ export class LogGraphIndex {
 
 	delete(hash: string): boolean {
 		return this.native.delete(hash);
+	}
+
+	deleteMany(hashes: Iterable<string>): number {
+		return this.native.delete_many([...hashes]);
 	}
 
 	heads(gid?: string): string[] {

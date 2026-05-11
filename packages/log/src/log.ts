@@ -331,6 +331,35 @@ export class Log<T> {
 					}
 					return shouldResolve ? resolved : deleted;
 				},
+				deleteNodes: this._entryIndex.canDeleteMany()
+					? async (
+							nodes: ShallowEntry[],
+							options?: { resolveDeletedEntry?: boolean },
+						) => {
+							if (nodes.length === 0) {
+								return [];
+							}
+							const shouldResolve = options?.resolveDeletedEntry !== false;
+							const resolvedByHash = new Map<string, Entry<T>>();
+							if (shouldResolve) {
+								const resolved = await this._entryIndex.getMany(
+									nodes.map((node) => node.hash),
+									{ type: "full", ignoreMissing: true },
+								);
+								for (const entry of resolved) {
+									if (entry) {
+										resolvedByHash.set(entry.hash, entry);
+									}
+								}
+							}
+							const deleted = await this._entryIndex.deleteMany(nodes);
+							return shouldResolve
+								? deleted
+										.map((node) => resolvedByHash.get(node.hash))
+										.filter((entry): entry is Entry<T> => !!entry)
+								: deleted;
+						}
+					: undefined,
 				sortFn: this._sortFn,
 				getLength: () => this.length,
 			},

@@ -231,6 +231,16 @@ impl LogGraphIndex {
         Some(entry)
     }
 
+    pub fn delete_many(&mut self, hashes: &[String]) -> usize {
+        let mut deleted = 0;
+        for hash in hashes {
+            if self.delete(hash).is_some() {
+                deleted += 1;
+            }
+        }
+        deleted
+    }
+
     pub fn heads(&self, gid: Option<&str>) -> Vec<String> {
         self.head_entries(gid)
             .into_iter()
@@ -1069,6 +1079,11 @@ impl NativeLogIndex {
 
     pub fn delete(&mut self, hash: &str) -> bool {
         self.inner.delete(hash).is_some()
+    }
+
+    pub fn delete_many(&mut self, hashes: Array) -> Result<usize, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        Ok(self.inner.delete_many(&hashes))
     }
 
     pub fn heads(&self, gid: Option<String>) -> Array {
@@ -2223,6 +2238,20 @@ mod tests {
         assert_eq!(index.count_has_next("a", None), 1);
 
         assert!(index.delete("c").is_some());
+        assert_eq!(index.heads(None), vec!["a"]);
+        assert_eq!(index.count_has_next("a", None), 0);
+    }
+
+    #[test]
+    fn deletes_many_entries() {
+        let mut index = LogGraphIndex::new();
+        index.put(entry("a", "g", &[], 1));
+        index.put(entry("b", "g", &["a"], 2));
+        index.put(entry("c", "g", &["b"], 3));
+
+        assert_eq!(index.delete_many(&["b".to_string(), "c".to_string()]), 2);
+        assert!(!index.has("b"));
+        assert!(!index.has("c"));
         assert_eq!(index.heads(None), vec!["a"]);
         assert_eq!(index.count_has_next("a", None), 0);
     }

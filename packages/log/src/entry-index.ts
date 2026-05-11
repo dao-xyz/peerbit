@@ -54,6 +54,13 @@ type BlocksWithGetMany = Blocks & {
 	) => Promise<Array<Uint8Array | undefined>> | Array<Uint8Array | undefined>;
 };
 
+type BlocksWithRmMany = Blocks & {
+	rmMany?: (cids: string[]) => Promise<number | void> | number | void;
+};
+
+const hasRmMany = (store: Blocks): store is BlocksWithRmMany =>
+	typeof (store as BlocksWithRmMany).rmMany === "function";
+
 type NativeLogEntry = PreparedNativeLogEntry;
 
 type NativeJoinCutCheck = {
@@ -197,6 +204,7 @@ export type NativeLogGraph = {
 		| undefined
 	>;
 	delete: (hash: string) => boolean;
+	deleteMany?: (hashes: Iterable<string>) => number;
 	clear: () => void;
 	heads: (gid?: string) => string[];
 	hasHead: (gid?: string) => boolean;
@@ -875,6 +883,21 @@ export class EntryIndex<T> {
 		return results[0] as R;
 	}
 
+	async getOldestMany<
+		T extends boolean,
+		R = T extends true ? Entry<any> : ShallowEntry,
+	>(limit: number, resolve?: T): Promise<R[]> {
+		if (limit <= 0) {
+			return [];
+		}
+		const iterator = this.iterate([], this.properties.sort.sort, resolve);
+		try {
+			return (await iterator.next(limit)) as R[];
+		} finally {
+			await iterator.close();
+		}
+	}
+
 	async getNewest<
 		T extends boolean,
 		R = T extends true ? Entry<any> : ShallowEntry,
@@ -1373,6 +1396,90 @@ export class EntryIndex<T> {
 		}
 	}
 
+	canDeleteMany(): boolean {
+		return (
+			!!this.properties.nativeGraph?.graph.deleteMany ||
+			hasRmMany(this.properties.store)
+		);
+	}
+
+	async deleteMany(from: ShallowEntry[]): Promise<ShallowEntry[]> {
+		if (from.length === 0) {
+			return [];
+		}
+		const nodes: ShallowEntry[] = [];
+		const seen = new Set<string>();
+		for (const node of from) {
+			if (seen.has(node.hash)) {
+				continue;
+			}
+			seen.add(node.hash);
+			nodes.push(node);
+		}
+
+		const indexedByHash = new Map(nodes.map((node) => [node.hash, node]));
+		const deletedByHash = new Map<string, ShallowEntry>();
+		const indexedHashes: string[] = [];
+		const storeHashes: string[] = [];
+
+		for (const node of nodes) {
+			this.cache.del(node.hash);
+			const pending = this.pendingIndexWrites.get(node.hash);
+			if (pending) {
+				this.pendingIndexWrites.delete(node.hash);
+				deletedByHash.set(node.hash, pending);
+				storeHashes.push(node.hash);
+			} else {
+				indexedHashes.push(node.hash);
+			}
+		}
+
+		const batchSize = 64;
+		for (let i = 0; i < indexedHashes.length; i += batchSize) {
+			const hashes = indexedHashes.slice(i, i + batchSize);
+			const deleted = await this.properties.index.del({
+				query: createHashMatchQuery(hashes),
+			});
+			for (const id of deleted) {
+				const hash = String(id.primitive);
+				const node = indexedByHash.get(hash);
+				if (!node || deletedByHash.has(hash)) {
+					continue;
+				}
+				deletedByHash.set(hash, node);
+				storeHashes.push(hash);
+			}
+		}
+
+		const deleted = nodes
+			.map((node) => deletedByHash.get(node.hash))
+			.filter((node): node is ShallowEntry => !!node);
+		if (deleted.length === 0) {
+			return [];
+		}
+
+		const store = this.properties.store;
+		if (hasRmMany(store) && store.rmMany) {
+			await store.rmMany(storeHashes);
+		} else {
+			await Promise.all(storeHashes.map((hash) => store.rm(hash)));
+		}
+
+		this._length -= deleted.length;
+		const graph = this.properties.nativeGraph?.graph;
+		if (graph?.deleteMany) {
+			graph.deleteMany(storeHashes);
+		} else {
+			for (const hash of storeHashes) {
+				graph?.delete(hash);
+			}
+		}
+		for (const node of deleted) {
+			await this.privateUpdateNextHeadProperty(node, true);
+		}
+		return deleted;
+	}
+
 	async getMemoryUsage() {
 		if (this.properties.nativeGraph) {
 			return this.properties.nativeGraph.graph.payloadSizeSum();
@@ -1693,6 +1800,26 @@ export class EntryIndex<T> {
 		return null;
 	}
 }
+
+const createHashMatchQuery = (hashes: string[]): Query =>
+	hashes.length === 1
+		? new StringMatch({
+				key: "hash",
+				value: hashes[0]!,
+				caseInsensitive: false,
+				method: StringMatchMethod.exact,
+			})
+		: new Or(
+				hashes.map(
+					(hash) =>
+						new StringMatch({
+							key: "hash",
+							value: hash,
+							caseInsensitive: false,
+							method: StringMatchMethod.exact,
+						}),
+				),
+			);
 
 const toNativeLogEntry = (entry: ShallowEntry): NativeLogEntry => ({
 	hash: entry.hash,
