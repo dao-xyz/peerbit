@@ -647,7 +647,6 @@ describe("native EntryV0 encoding", () => {
 				publicKey,
 				wallTimes: [11n, 12n, 13n],
 				gids: ["gid-a", "gid-b", "gid-c"],
-				nexts: [[], [], []],
 				payloadDatas: [
 					new Uint8Array([1]),
 					new Uint8Array([2]),

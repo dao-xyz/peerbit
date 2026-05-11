@@ -184,6 +184,16 @@ type NativeLogIndexHandle = {
 		metaDatas: Array<Uint8Array | undefined>,
 		payloadDatas: Uint8Array[],
 	) => EntryV0CommittedPlainEntryRow[];
+	prepare_entry_v0_plain_entries_no_next_commit_blocks_and_put_with_builder?: (
+		builder: NativeEntryV0PlainBuilderHandle,
+		blockStore: NativeLogBlockStoreHandle,
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gids: string[],
+		type: number,
+		metaDatas: Array<Uint8Array | undefined>,
+		payloadDatas: Uint8Array[],
+	) => EntryV0CommittedPlainEntryRow[];
 	delete: (hash: string) => boolean;
 	heads: (gid?: string) => string[];
 	has_head: (gid?: string) => boolean;
@@ -699,6 +709,26 @@ export class LogGraphIndex {
 			return [];
 		}
 		const builder = this.getPlainEntryBuilder(input);
+		if (!input.nexts) {
+			const noNextCommit =
+				this.native
+					.prepare_entry_v0_plain_entries_no_next_commit_blocks_and_put_with_builder;
+			if (noNextCommit) {
+				return committedPlainEntryRows(
+					noNextCommit.call(
+						this.native,
+						builder,
+						nativeBlockStore,
+						columns.wallTimes,
+						columns.logicals,
+						input.gids,
+						input.type ?? 0,
+						columns.metaDatas,
+						input.payloadDatas,
+					),
+				);
+			}
+		}
 		return committedPlainEntryRows(
 			this.native.prepare_entry_v0_plain_entries_commit_blocks_and_put_with_builder(
 				builder,
@@ -706,7 +736,7 @@ export class LogGraphIndex {
 				columns.wallTimes,
 				columns.logicals,
 				input.gids,
-				input.nexts,
+				input.nexts ?? input.payloadDatas.map(() => []),
 				input.type ?? 0,
 				columns.metaDatas,
 				input.payloadDatas,
@@ -1066,7 +1096,7 @@ export type EntryV0PlainEntriesInput = {
 	wallTimes: Array<bigint | number | string>;
 	logicals?: number[];
 	gids: string[];
-	nexts: string[][];
+	nexts?: string[][];
 	type?: number;
 	metaDatas?: Array<Uint8Array | undefined>;
 	payloadDatas: Uint8Array[];
@@ -1138,7 +1168,7 @@ const plainEntriesInputColumns = (input: EntryV0PlainEntriesInput) => {
 	if (
 		input.wallTimes.length !== input.payloadDatas.length ||
 		input.gids.length !== input.payloadDatas.length ||
-		input.nexts.length !== input.payloadDatas.length
+		(input.nexts && input.nexts.length !== input.payloadDatas.length)
 	) {
 		throw new Error("Expected equal column lengths");
 	}

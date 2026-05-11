@@ -71,7 +71,7 @@ type NativePlainEntriesInput = {
 	wallTimes: Array<bigint | number | string>;
 	logicals?: number[];
 	gids: string[];
-	nexts: string[][];
+	nexts?: string[][];
 	type?: number;
 	metaDatas?: Array<Uint8Array | undefined>;
 	payloadDatas: Uint8Array[];
@@ -629,7 +629,7 @@ export class EntryV0<T>
 		meta: {
 			clocks: () => Clock[];
 			gids: string[];
-			nexts: SortableEntry[][];
+			nexts?: SortableEntry[][];
 			type?: EntryType;
 			datas?: Array<Uint8Array | undefined>;
 		};
@@ -652,7 +652,8 @@ export class EntryV0<T>
 		}
 		if (
 			properties.meta.gids.length !== properties.data.length ||
-			properties.meta.nexts.length !== properties.data.length ||
+			(properties.meta.nexts &&
+				properties.meta.nexts.length !== properties.data.length) ||
 			(properties.payloadDatas &&
 				properties.payloadDatas.length !== properties.data.length)
 		) {
@@ -664,7 +665,7 @@ export class EntryV0<T>
 			throw new Error("Expected one clock per entry");
 		}
 		for (let i = 0; i < clocks.length; i++) {
-			for (const next of properties.meta.nexts[i]!) {
+			for (const next of properties.meta.nexts?.[i] ?? []) {
 				if (
 					Timestamp.compare(next.meta.clock.timestamp, clocks[i]!.timestamp) >=
 					0
@@ -689,7 +690,7 @@ export class EntryV0<T>
 			wallTimes: clocks.map((clock) => clock.timestamp.wallTime),
 			logicals: clocks.map((clock) => clock.timestamp.logical),
 			gids: properties.meta.gids,
-			nexts: properties.meta.nexts.map((nexts) =>
+			nexts: properties.meta.nexts?.map((nexts) =>
 				nexts.map((next) => next.hash),
 			),
 			type: properties.meta.type,
