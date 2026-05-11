@@ -714,6 +714,8 @@ export class EntryV0<T>
 
 		const entries: PreparedAppendChain<T>["entries"] = [];
 		const shallowEntries: PreparedAppendChain<T>["shallowEntries"] = [];
+		const appendFacts: NonNullable<PreparedAppendChain<T>["appendFacts"]> =
+			[];
 		const nativeEntries: NonNullable<PreparedAppendChain<T>["nativeEntries"]> =
 			[];
 		const entryType = properties.meta.type ?? EntryType.APPEND;
@@ -816,6 +818,19 @@ export class EntryV0<T>
 			}
 			entries.push(entry);
 			shallowEntries.push(shallowEntry);
+			appendFacts.push({
+				hash: entry.hash,
+				gid: entryGid,
+				next: preparedEntry.next,
+				wallTime: clock.timestamp.wallTime,
+				logical: clock.timestamp.logical,
+				clockId: clock.id,
+				type: entryType,
+				metaData,
+				payloadSize,
+				metaBytes: preparedEntry.metaBytes,
+				hashDigestBytes: preparedEntry.hashDigestBytes,
+			});
 			if (nativeEntry) {
 				nativeEntries.push(nativeEntry);
 			}
@@ -824,6 +839,7 @@ export class EntryV0<T>
 		return {
 			entries,
 			shallowEntries,
+			appendFacts,
 			nativeEntries,
 			nativeGraphUpdated: true,
 			nativeBlocksCommitted: true,
@@ -1046,6 +1062,8 @@ export class EntryV0<T>
 		const entries: PreparedAppendChain<T>["entries"] = [];
 		const blocks: NonNullable<PreparedAppendChain<T>["blocks"]> = [];
 		const shallowEntries: PreparedAppendChain<T>["shallowEntries"] = [];
+		const appendFacts: NonNullable<PreparedAppendChain<T>["appendFacts"]> =
+			[];
 		const nativeEntries: NonNullable<PreparedAppendChain<T>["nativeEntries"]> =
 			[];
 		if (!payloadDatas) {
@@ -1158,6 +1176,19 @@ export class EntryV0<T>
 				blocks.push(preparedBlock);
 			}
 			shallowEntries.push(shallowEntry);
+			appendFacts.push({
+				hash: entry.hash,
+				gid: gid!,
+				next: preparedEntry.next,
+				wallTime: clock.timestamp.wallTime,
+				logical: clock.timestamp.logical,
+				clockId: clock.id,
+				type: entryType,
+				metaData: properties.meta?.data,
+				payloadSize,
+				metaBytes: preparedEntry.metaBytes,
+				hashDigestBytes: preparedEntry.hashDigestBytes,
+			});
 			if (nativeEntry) {
 				nativeEntries.push(nativeEntry);
 			}
@@ -1166,6 +1197,7 @@ export class EntryV0<T>
 			entries,
 			blocks: blocks.length > 0 ? blocks : undefined,
 			shallowEntries,
+			appendFacts,
 			nativeEntries,
 			nativeGraphUpdated,
 			nativeBlocksCommitted,
