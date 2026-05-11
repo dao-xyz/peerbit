@@ -728,6 +728,15 @@ type ContextHeadIndex<I> = {
 	getByContextHead?: (
 		head: string,
 	) => indexerTypes.IndexedResult<WithContext<I>> | undefined;
+	getByContextHeadBatch?: (
+		heads: string[],
+	) => Array<indexerTypes.IndexedResult<WithContext<I>> | undefined>;
+};
+
+type ExactDeleteIndex = {
+	delIds?: (
+		deleteIds: Array<indexerTypes.IdKey | indexerTypes.Ideable>,
+	) => Promise<indexerTypes.IdKey[]> | indexerTypes.IdKey[];
 };
 
 export const coerceWithContext = <T>(
@@ -1718,6 +1727,21 @@ export class DocumentIndex<
 		return (this.index as ContextHeadIndex<I>).getByContextHead?.(head);
 	}
 
+	public async getIdentityIndexedByHeads(
+		heads: string[],
+	): Promise<
+		Array<indexerTypes.IndexedResult<WithContext<I>> | undefined> | undefined
+	> {
+		if (!this.canGetIdentityIndexedByHead()) {
+			return;
+		}
+		const batch = (this.index as ContextHeadIndex<I>).getByContextHeadBatch;
+		if (batch) {
+			return batch.call(this.index, heads);
+		}
+		return Promise.all(heads.map((head) => this.getIdentityIndexedByHead(head)));
+	}
+
 	public canGetIdentityIndexedByHead(): boolean {
 		return (
 			this.transformerIsIdentity &&
@@ -1990,6 +2014,26 @@ export class DocumentIndex<
 		return this.index.del({
 			query: [indexerTypes.getMatcher(this.indexBy, key.key)],
 		});
+	}
+
+	public async delMany(keys: indexerTypes.IdKey[]): Promise<void> {
+		if (keys.length === 0) {
+			return;
+		}
+		for (const key of keys) {
+			if (this.isProgramValued) {
+				this._resolverProgramCache!.delete(key.primitive);
+				indexCacheLogger("cache:del:program", { id: key.primitive });
+			} else if (this._resolverCache?.del(key.primitive)) {
+				indexCacheLogger("cache:del:value", { id: key.primitive });
+			}
+		}
+		const delIds = (this.index as ExactDeleteIndex).delIds;
+		if (delIds) {
+			await delIds.call(this.index, keys);
+			return;
+		}
+		await Promise.all(keys.map((key) => this.del(key)));
 	}
 
 	public async getDetailed<

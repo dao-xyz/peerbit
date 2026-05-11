@@ -1230,7 +1230,16 @@ export class Documents<
 			);
 		}
 
+		const handledRemovedHeads =
+			await this.collectRemovedDocumentChangesFromIndexedHeads(
+				properties.removed,
+				modified,
+				documentsChanged,
+			);
 		for (const removed of properties.removed) {
+			if (handledRemovedHeads.has(removed.hash)) {
+				continue;
+			}
 			if (
 				!(removed instanceof Entry) &&
 				(await this.collectRemovedDocumentChangeFromIndexedHead(
@@ -1291,6 +1300,48 @@ export class Documents<
 		await this._index.del(key);
 		modified.add(key.primitive);
 		return true;
+	}
+
+	private async collectRemovedDocumentChangesFromIndexedHeads(
+		removed: ShallowOrFullEntry<Operation>[],
+		modified: Set<string | number | bigint>,
+		documentsChanged: DocumentsChange<T, I>,
+	): Promise<Set<string>> {
+		const shallowRemoved = removed.filter(
+			(entry): entry is ShallowEntry => !(entry instanceof Entry),
+		);
+		if (shallowRemoved.length === 0) {
+			return new Set();
+		}
+		const indexedByHead = await this._index.getIdentityIndexedByHeads(
+			shallowRemoved.map((entry) => entry.hash),
+		);
+		if (!indexedByHead) {
+			return new Set();
+		}
+
+		const handled = new Set<string>();
+		const deleteKeys: indexerTypes.IdKey[] = [];
+		for (let i = 0; i < shallowRemoved.length; i++) {
+			const indexed = indexedByHead[i];
+			if (!indexed) {
+				continue;
+			}
+			const key = indexed.id;
+			handled.add(shallowRemoved[i]!.hash);
+			if (modified.has(key.primitive)) {
+				continue;
+			}
+			const value = coerceWithIndexed(
+				indexed.value as unknown as WithIndexedContext<T, I>,
+				indexed.value as unknown as I,
+			);
+			documentsChanged.removed.push(value);
+			deleteKeys.push(key);
+			modified.add(key.primitive);
+		}
+		await this._index.delMany(deleteKeys);
+		return handled;
 	}
 
 	private async collectRemovedDocumentChange(
