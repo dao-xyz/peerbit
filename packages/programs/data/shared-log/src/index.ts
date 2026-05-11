@@ -291,8 +291,25 @@ type EntryLeaderPlan<R extends "u32" | "u64"> = {
 	assignedToRangeBoundary?: boolean;
 };
 
+type SharedLogCoordinateNativeFields<R extends "u32" | "u64"> = {
+	hash: string;
+	hashNumber: NumberFromType<R>;
+	gid: string;
+	coordinates: NumberFromType<R>[];
+	wallTime: bigint;
+	assignedToRangeBoundary: boolean;
+	metaBytes: Uint8Array;
+};
+
+type PreparedCoordinatePersistence<R extends "u32" | "u64"> = {
+	coordinateEntry: EntryReplicated<R>;
+	assignedToRangeBoundary: boolean;
+	fields: SharedLogCoordinateNativeFields<R>;
+};
+
 type NativeAppendEntryPlan<R extends "u32" | "u64"> = EntryLeaderPlan<R> & {
 	hashNumber: NumberFromType<R>;
+	preparedCoordinate: PreparedCoordinatePersistence<R>;
 	delivery?: AppendDeliveryPlan;
 };
 
@@ -496,30 +513,14 @@ type PutAndDeleteIndex<T extends Record<string, any>> = Index<T> & {
 	delIds?: (deleteIds: Array<IdKey | Ideable>) => Promise<unknown> | unknown;
 	putSharedLogCoordinateAndDeleteIds?: (
 		value: T,
-		fields: {
-			hash: string;
-			hashNumber: NumberFromType<any>;
-			gid: string;
-			coordinates: NumberFromType<any>[];
-			wallTime: bigint;
-			assignedToRangeBoundary: boolean;
-			metaBytes: Uint8Array;
-		},
+		fields: SharedLogCoordinateNativeFields<any>,
 		deleteIds?: Array<IdKey | Ideable>,
 		id?: IdKey,
 	) => Promise<unknown> | unknown;
 	putSharedLogCoordinatesAndDeleteIdsBatch?: (
 		values: Array<{
 			value: T;
-			fields: {
-				hash: string;
-				hashNumber: NumberFromType<any>;
-				gid: string;
-				coordinates: NumberFromType<any>[];
-				wallTime: bigint;
-				assignedToRangeBoundary: boolean;
-				metaBytes: Uint8Array;
-			};
+			fields: SharedLogCoordinateNativeFields<any>;
 			deleteIds?: Array<IdKey | Ideable>;
 			id?: IdKey;
 		}>,
@@ -4627,6 +4628,7 @@ export class SharedLog<
 					assignedToRangeBoundary: plan.assignedToRangeBoundary,
 					commitNative: false,
 					hashNumber: plan.hashNumber,
+					prepared: plan.preparedCoordinate,
 				};
 			}),
 		);
@@ -4721,12 +4723,25 @@ export class SharedLog<
 			},
 			this.createNativeLeaderOptions(context),
 		);
+		const coordinates = plan.coordinates as NumberFromType<R>[];
+		const preparedCoordinate = this.createCoordinatePersistenceEntry({
+			leaders: plan.leaders,
+			coordinates,
+			replicas: coordinates.length,
+			entry,
+			assignedToRangeBoundary: plan.assignedToRangeBoundary,
+			hashNumber,
+		});
+		if (!preparedCoordinate) {
+			return undefined;
+		}
 		return {
-			coordinates: plan.coordinates as NumberFromType<R>[],
+			coordinates,
 			leaders: plan.leaders,
 			isLeader: plan.isLeader,
 			assignedToRangeBoundary: plan.assignedToRangeBoundary,
 			hashNumber,
+			preparedCoordinate,
 			delivery: plan.delivery,
 		};
 	}
@@ -4752,12 +4767,25 @@ export class SharedLog<
 			},
 			this.createNativeLeaderOptions(context),
 		);
+		const coordinates = plan.coordinates as NumberFromType<R>[];
+		const preparedCoordinate = this.createCoordinatePersistenceEntry({
+			leaders: plan.leaders,
+			coordinates,
+			replicas: coordinates.length,
+			entry,
+			assignedToRangeBoundary: plan.assignedToRangeBoundary,
+			hashNumber,
+		});
+		if (!preparedCoordinate) {
+			return undefined;
+		}
 		return {
-			coordinates: plan.coordinates as NumberFromType<R>[],
+			coordinates,
 			leaders: plan.leaders,
 			isLeader: plan.isLeader,
 			assignedToRangeBoundary: plan.assignedToRangeBoundary,
 			hashNumber,
+			preparedCoordinate,
 		};
 	}
 
@@ -4795,13 +4823,32 @@ export class SharedLog<
 			},
 			this.createNativeLeaderOptions(context),
 		);
-		return plans.map((plan, index) => ({
-			coordinates: plan.coordinates as NumberFromType<R>[],
-			leaders: plan.leaders,
-			isLeader: plan.isLeader,
-			assignedToRangeBoundary: plan.assignedToRangeBoundary,
-			hashNumber: entriesWithHashNumbers[index]!.hashNumber,
-		}));
+		const out: NativeAppendEntryPlan<R>[] = [];
+		for (let index = 0; index < plans.length; index++) {
+			const plan = plans[index]!;
+			const { entry, hashNumber } = entriesWithHashNumbers[index]!;
+			const coordinates = plan.coordinates as NumberFromType<R>[];
+			const preparedCoordinate = this.createCoordinatePersistenceEntry({
+				leaders: plan.leaders,
+				coordinates,
+				replicas: coordinates.length,
+				entry,
+				assignedToRangeBoundary: plan.assignedToRangeBoundary,
+				hashNumber,
+			});
+			if (!preparedCoordinate) {
+				return undefined;
+			}
+			out.push({
+				coordinates,
+				leaders: plan.leaders,
+				isLeader: plan.isLeader,
+				assignedToRangeBoundary: plan.assignedToRangeBoundary,
+				hashNumber,
+				preparedCoordinate,
+			});
+		}
+		return out;
 	}
 
 	private async planNativeAppendEntries(
@@ -4850,14 +4897,33 @@ export class SharedLog<
 			},
 			this.createNativeLeaderOptions(context),
 		);
-		return plans.map((plan, index) => ({
-			coordinates: plan.coordinates as NumberFromType<R>[],
-			leaders: plan.leaders,
-			isLeader: plan.isLeader,
-			assignedToRangeBoundary: plan.assignedToRangeBoundary,
-			hashNumber: entriesWithHashNumbers[index]!.hashNumber,
-			delivery: plan.delivery,
-		}));
+		const out: NativeAppendEntryPlan<R>[] = [];
+		for (let index = 0; index < plans.length; index++) {
+			const plan = plans[index]!;
+			const { entry, hashNumber } = entriesWithHashNumbers[index]!;
+			const coordinates = plan.coordinates as NumberFromType<R>[];
+			const preparedCoordinate = this.createCoordinatePersistenceEntry({
+				leaders: plan.leaders,
+				coordinates,
+				replicas: coordinates.length,
+				entry,
+				assignedToRangeBoundary: plan.assignedToRangeBoundary,
+				hashNumber,
+			});
+			if (!preparedCoordinate) {
+				return undefined;
+			}
+			out.push({
+				coordinates,
+				leaders: plan.leaders,
+				isLeader: plan.isLeader,
+				assignedToRangeBoundary: plan.assignedToRangeBoundary,
+				hashNumber,
+				preparedCoordinate,
+				delivery: plan.delivery,
+			});
+		}
+		return out;
 	}
 
 	private async processLocalAppend(
@@ -4923,6 +4989,7 @@ export class SharedLog<
 				commitNative: false,
 				deleteHashes: properties.extraCoordinateDeleteHashes,
 				hashNumber: nativeAppendPlan.hashNumber,
+				prepared: nativeAppendPlan.preparedCoordinate,
 			});
 		} else {
 			({ coordinates, leaders, isLeader } = await this.planEntryLeaders(
@@ -7917,7 +7984,7 @@ export class SharedLog<
 		prev?: EntryReplicated<R>;
 		assignedToRangeBoundary?: boolean;
 		hashNumber?: NumberFromType<R>;
-	}): { coordinateEntry: EntryReplicated<R>; assignedToRangeBoundary: boolean } | false {
+	}): PreparedCoordinatePersistence<R> | false {
 		const assignedToRangeBoundary =
 			properties.assignedToRangeBoundary ??
 			shouldAssignToRangeBoundary(properties.leaders, properties.replicas);
@@ -7938,7 +8005,19 @@ export class SharedLog<
 			hash: properties.entry.hash,
 			hashNumber: properties.hashNumber ?? this.getEntryHashNumber(properties.entry),
 		});
-		return { coordinateEntry, assignedToRangeBoundary };
+		return {
+			coordinateEntry,
+			assignedToRangeBoundary,
+			fields: {
+				hash: coordinateEntry.hash,
+				hashNumber: coordinateEntry.hashNumber,
+				gid: coordinateEntry.gid,
+				coordinates: coordinateEntry.coordinates,
+				wallTime: coordinateEntry.wallTime,
+				assignedToRangeBoundary: coordinateEntry.assignedToRangeBoundary,
+				metaBytes: coordinateEntry.getMetaBytes(),
+			},
+		};
 	}
 
 	private async persistCoordinate(properties: {
@@ -7958,12 +8037,14 @@ export class SharedLog<
 		commitNative?: boolean;
 		deleteHashes?: string[];
 		hashNumber?: NumberFromType<R>;
+		prepared?: PreparedCoordinatePersistence<R>;
 	}) {
-		const prepared = this.createCoordinatePersistenceEntry(properties);
+		const prepared =
+			properties.prepared ?? this.createCoordinatePersistenceEntry(properties);
 		if (!prepared) {
 			return false;
 		}
-		const { coordinateEntry, assignedToRangeBoundary } = prepared;
+		const { coordinateEntry, assignedToRangeBoundary, fields } = prepared;
 		const nextHashes = properties.entry.meta.next;
 		const deleteHashes =
 			properties.deleteHashes && properties.deleteHashes.length > 0
@@ -7976,15 +8057,7 @@ export class SharedLog<
 		if (coordinateIndex.putSharedLogCoordinateAndDeleteIds) {
 			await coordinateIndex.putSharedLogCoordinateAndDeleteIds(
 				coordinateEntry,
-				{
-					hash: coordinateEntry.hash,
-					hashNumber: coordinateEntry.hashNumber,
-					gid: coordinateEntry.gid,
-					coordinates: coordinateEntry.coordinates,
-					wallTime: coordinateEntry.wallTime,
-					assignedToRangeBoundary: coordinateEntry.assignedToRangeBoundary,
-					metaBytes: coordinateEntry.getMetaBytes(),
-				},
+				fields,
 				deleteHashes,
 			);
 		} else if (deleteHashes.length > 0 && coordinateIndex.putAndDeleteIds) {
@@ -8058,6 +8131,7 @@ export class SharedLog<
 			assignedToRangeBoundary?: boolean;
 			commitNative?: boolean;
 			hashNumber?: NumberFromType<R>;
+			prepared?: PreparedCoordinatePersistence<R>;
 		}>,
 	): Promise<boolean[]> {
 		if (items.length === 0) {
@@ -8066,17 +8140,14 @@ export class SharedLog<
 
 		const prepared = items.map((item) => ({
 			item,
-			prepared: this.createCoordinatePersistenceEntry(item),
+			prepared: item.prepared ?? this.createCoordinatePersistenceEntry(item),
 		}));
 		const changed = prepared.filter(
 			(
 				entry,
 			): entry is {
 				item: (typeof items)[number];
-				prepared: {
-					coordinateEntry: EntryReplicated<R>;
-					assignedToRangeBoundary: boolean;
-				};
+				prepared: PreparedCoordinatePersistence<R>;
 			} => entry.prepared !== false,
 		);
 		if (changed.length === 0) {
@@ -8094,16 +8165,7 @@ export class SharedLog<
 			await coordinateIndex.putSharedLogCoordinatesAndDeleteIdsBatch(
 				changed.map(({ item, prepared }) => ({
 					value: prepared.coordinateEntry,
-					fields: {
-						hash: prepared.coordinateEntry.hash,
-						hashNumber: prepared.coordinateEntry.hashNumber,
-						gid: prepared.coordinateEntry.gid,
-						coordinates: prepared.coordinateEntry.coordinates,
-						wallTime: prepared.coordinateEntry.wallTime,
-						assignedToRangeBoundary:
-							prepared.coordinateEntry.assignedToRangeBoundary,
-						metaBytes: prepared.coordinateEntry.getMetaBytes(),
-					},
+					fields: prepared.fields,
 					deleteIds: item.entry.meta.next,
 				})),
 			);
