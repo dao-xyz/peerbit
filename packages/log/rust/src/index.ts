@@ -68,6 +68,7 @@ type NativeLogIndexHandle = {
 	has_many: (hashes: string[]) => string[];
 	oldest_hash: () => string | undefined;
 	newest_hash: () => string | undefined;
+	oldest_entries: (limit: number) => unknown[];
 	delete_many: (hashes: string[]) => number;
 	put: (
 		hash: string,
@@ -471,6 +472,38 @@ export class LogGraphIndex {
 
 	newestHash(): string | undefined {
 		return this.native.newest_hash();
+	}
+
+	oldestEntries(limit: number): NativeLogEntry[] {
+		return this.native.oldest_entries(limit).map((row) => {
+			const [hash, gid, wallTime, logical, type, next, payloadSize, head, data] =
+				row as [
+					string,
+					string,
+					string,
+					number,
+					number,
+					string[],
+					number,
+					boolean,
+					Uint8Array | undefined,
+				];
+			return {
+				hash,
+				gid,
+				next,
+				type,
+				head,
+				payloadSize,
+				data,
+				clock: {
+					timestamp: {
+						wallTime: BigInt(wallTime),
+						logical,
+					},
+				},
+			};
+		});
 	}
 
 	hasMany(hashes: Iterable<string>): Set<string> {

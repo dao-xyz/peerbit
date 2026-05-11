@@ -135,6 +135,16 @@ impl LogGraphIndex {
             .map(|entry| entry.hash.clone())
     }
 
+    pub fn oldest_entries(&self, limit: usize) -> Vec<LogIndexEntry> {
+        if limit == 0 {
+            return Vec::new();
+        }
+        let mut entries: Vec<LogIndexEntry> = self.entries.values().cloned().collect();
+        entries.sort_by(compare_entry_order);
+        entries.truncate(limit);
+        entries
+    }
+
     pub fn get(&self, hash: &str) -> Option<&LogIndexEntry> {
         self.entries.get(hash)
     }
@@ -736,6 +746,10 @@ impl NativeLogIndex {
             .newest_hash()
             .map(|hash| JsValue::from_str(&hash))
             .unwrap_or(JsValue::UNDEFINED)
+    }
+
+    pub fn oldest_entries(&self, limit: usize) -> Array {
+        log_trim_entries_to_rows(self.inner.oldest_entries(limit))
     }
 
     pub fn has_many(&self, hashes: Array) -> Result<Array, JsValue> {
@@ -2168,6 +2182,27 @@ fn log_join_entries_to_rows(values: Vec<LogIndexEntry>) -> Array {
     out
 }
 
+fn log_trim_entries_to_rows(values: Vec<LogIndexEntry>) -> Array {
+    let out = Array::new();
+    for entry in values {
+        let row = Array::new();
+        row.push(&JsValue::from_str(&entry.hash));
+        row.push(&JsValue::from_str(&entry.gid));
+        row.push(&JsValue::from_str(&entry.wall_time.to_string()));
+        row.push(&JsValue::from_f64(entry.logical as f64));
+        row.push(&JsValue::from_f64(entry.entry_type as f64));
+        row.push(&strings_to_array(entry.next));
+        row.push(&JsValue::from_f64(entry.payload_size as f64));
+        row.push(&JsValue::from_bool(entry.head));
+        match entry.data {
+            Some(data) => row.push(&Uint8Array::from(data.as_slice())),
+            None => row.push(&JsValue::UNDEFINED),
+        };
+        out.push(&row);
+    }
+    out
+}
+
 fn log_optional_entry_metadata_to_rows(
     values: Vec<Option<(String, String, Option<Vec<u8>>)>>,
 ) -> Array {
@@ -2313,6 +2348,23 @@ mod tests {
 
         index.delete("c");
         assert_eq!(index.oldest_hash(), Some("a".to_string()));
+    }
+
+    #[test]
+    fn returns_oldest_entries_by_clock_order() {
+        let mut index = LogGraphIndex::new();
+        index.put(LogIndexEntry::new("b", "g", vec![], APPEND, 2, 0, 1, true));
+        index.put(LogIndexEntry::new("a", "g", vec![], APPEND, 1, 1, 1, true));
+        index.put(LogIndexEntry::new("c", "g", vec![], APPEND, 1, 0, 1, true));
+
+        assert_eq!(
+            index
+                .oldest_entries(2)
+                .into_iter()
+                .map(|entry| entry.hash)
+                .collect::<Vec<_>>(),
+            vec!["c", "a"]
+        );
     }
 
     #[test]

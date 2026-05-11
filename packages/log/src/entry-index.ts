@@ -16,7 +16,8 @@ import {
 	StringMatchMethod,
 	toId,
 } from "@peerbit/indexer-interface";
-import type { ShallowEntry } from "./entry-shallow.js";
+import { LamportClock as Clock, Timestamp } from "./clock.js";
+import { ShallowEntry, ShallowMeta } from "./entry-shallow.js";
 import { EntryType } from "./entry-type.js";
 import {
 	Entry,
@@ -205,6 +206,7 @@ export type NativeLogGraph = {
 	>;
 	delete: (hash: string) => boolean;
 	deleteMany?: (hashes: Iterable<string>) => number;
+	oldestEntries?: (limit: number) => NativeLogEntry[];
 	clear: () => void;
 	heads: (gid?: string) => string[];
 	hasHead: (gid?: string) => boolean;
@@ -890,12 +892,36 @@ export class EntryIndex<T> {
 		if (limit <= 0) {
 			return [];
 		}
+		const nativeEntries = this.getNativeOldestEntries(limit, resolve);
+		if (nativeEntries) {
+			return nativeEntries as R[];
+		}
 		const iterator = this.iterate([], this.properties.sort.sort, resolve);
 		try {
 			return (await iterator.next(limit)) as R[];
 		} finally {
 			await iterator.close();
 		}
+	}
+
+	private getNativeOldestEntries<T extends boolean>(
+		limit: number,
+		resolve?: T,
+	): ShallowEntry[] | undefined {
+		if (resolve || limit <= 0) {
+			return;
+		}
+		const graph = this.properties.nativeGraph?.graph;
+		if (!graph?.oldestEntries) {
+			return;
+		}
+		const direction = timestampSortDirection(this.properties.sort.sort);
+		if (direction !== SortDirection.ASC) {
+			return;
+		}
+		return graph
+			.oldestEntries(limit)
+			.map((entry) => this.nativeLogEntryToShallowEntry(entry));
 	}
 
 	async getNewest<
@@ -1478,6 +1504,27 @@ export class EntryIndex<T> {
 			await this.privateUpdateNextHeadProperty(node, true);
 		}
 		return deleted;
+	}
+
+	private nativeLogEntryToShallowEntry(entry: NativeLogEntry): ShallowEntry {
+		return new ShallowEntry({
+			hash: entry.hash,
+			head: entry.head ?? false,
+			payloadSize: entry.payloadSize ?? 0,
+			meta: new ShallowMeta({
+				gid: entry.gid,
+				next: entry.next,
+				type: entry.type,
+				data: entry.data,
+				clock: new Clock({
+					id: this.properties.publicKey.bytes,
+					timestamp: new Timestamp({
+						wallTime: BigInt(entry.clock.timestamp.wallTime),
+						logical: entry.clock.timestamp.logical ?? 0,
+					}),
+				}),
+			}),
+		});
 	}
 
 	async getMemoryUsage() {

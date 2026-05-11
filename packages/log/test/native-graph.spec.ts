@@ -412,7 +412,7 @@ describe("native graph", () => {
 			trim: { type: "length", to: 2 },
 		});
 		const nativeGraph = log.entryIndex.properties.nativeGraph!.graph;
-		const oldestHashSpy = sinon.spy(nativeGraph, "oldestHash");
+		const oldestEntriesSpy = sinon.spy(nativeGraph, "oldestEntries");
 		const iterateSpy = sinon.spy(log.entryIndex.properties.index, "iterate");
 		try {
 			const first = (await log.append(new Uint8Array([1]), { meta: { next: [] } }))
@@ -420,13 +420,13 @@ describe("native graph", () => {
 			await log.append(new Uint8Array([2]));
 			await log.append(new Uint8Array([3]));
 
-			expect(oldestHashSpy.callCount).greaterThan(0);
+			expect(oldestEntriesSpy.callCount).greaterThan(0);
 			expect(iterateSpy.callCount).equal(0);
 			expect(await log.has(first.hash)).equal(false);
 			expect(await log.entryIndex.getOldest()).to.exist;
 		} finally {
 			iterateSpy.restore();
-			oldestHashSpy.restore();
+			oldestEntriesSpy.restore();
 			await log.close();
 		}
 	});
