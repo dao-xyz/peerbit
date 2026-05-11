@@ -69,9 +69,19 @@ export type AppendDeliveryPlan = {
 	authoritativeRecipients: string[];
 };
 
+export type NativeAppendCoordinatePlan = {
+	hash: string;
+	hashNumber: number | bigint;
+	gid: string;
+	coordinates: Array<number | bigint>;
+	assignedToRangeBoundary: boolean;
+	requestedReplicas: number;
+};
+
 export type AppendEntryPlan = EntryAssignmentPlan & {
 	isLeader: boolean;
 	delivery: AppendDeliveryPlan;
+	coordinate: NativeAppendCoordinatePlan;
 };
 
 export type AppendEntryBatchInput = {
@@ -349,7 +359,7 @@ type NativeSharedLogStateHandle = {
 		includeSelf: boolean,
 		fullReplicaFallback: boolean,
 		includeStrictFullReplica: boolean,
-	) => [unknown[], unknown[], boolean, boolean];
+	) => [unknown[], unknown[], boolean, boolean, unknown[]];
 	plan_append_leaders_for_delivery: (
 		leaders: unknown[],
 		fullReplicaCandidates: string[],
@@ -393,6 +403,7 @@ type NativeSharedLogStateHandle = {
 		boolean,
 		boolean,
 		[boolean, boolean, boolean, string[], string[], string[], string[], string[]],
+		unknown[],
 	];
 	plan_append_for_gids_batch: (
 		entryHashes: string[],
@@ -421,6 +432,7 @@ type NativeSharedLogStateHandle = {
 		boolean,
 		boolean,
 		[boolean, boolean, boolean, string[], string[], string[], string[], string[]],
+		unknown[],
 	][];
 	plan_repair_dispatch_for_entries: (
 		entryHashes: string[],
@@ -527,6 +539,28 @@ const rowsToNumbers = (
 		const value = row as string;
 		return resolution === "u64" ? BigInt(value) : Number(value);
 	});
+
+const appendCoordinatePlanFromRow = (
+	resolution: RangeResolution,
+	row: unknown[],
+): NativeAppendCoordinatePlan => {
+	const [
+		hash,
+		hashNumber,
+		gid,
+		coordinateRows,
+		assignedToRangeBoundary,
+		requestedReplicas,
+	] = row as [string, unknown, string, unknown[], boolean, number];
+	return {
+		hash,
+		hashNumber: rowsToNumbers(resolution, [hashNumber])[0]!,
+		gid,
+		coordinates: rowsToNumbers(resolution, coordinateRows),
+		assignedToRangeBoundary,
+		requestedReplicas,
+	};
+};
 
 const findLeaderArguments = (options?: FindLeaderOptions): [
 	number,
@@ -1093,24 +1127,36 @@ export class SharedLogNativeState {
 			selfHash: string;
 		},
 		options?: FindLeaderOptions,
-	): EntryAssignmentPlan & { isLeader: boolean } {
-		const [coordinateRows, leaderRows, isLeader, assignedToRangeBoundary] =
-			this.native.plan_local_append_for_gid(
-				input.entryHash,
-				input.gid,
-				asIntegerString(input.hashNumber ?? 0),
-				input.nextHashes ? [...input.nextHashes] : [],
-				input.replicas,
-				...findLeaderArguments({
-					...options,
-					selfHash: input.selfHash,
-				}),
-			);
+	): EntryAssignmentPlan & {
+		isLeader: boolean;
+		coordinate: NativeAppendCoordinatePlan;
+	} {
+		const [
+			coordinateRows,
+			leaderRows,
+			isLeader,
+			assignedToRangeBoundary,
+			coordinatePlanRow,
+		] = this.native.plan_local_append_for_gid(
+			input.entryHash,
+			input.gid,
+			asIntegerString(input.hashNumber ?? 0),
+			input.nextHashes ? [...input.nextHashes] : [],
+			input.replicas,
+			...findLeaderArguments({
+				...options,
+				selfHash: input.selfHash,
+			}),
+		);
 		return {
 			coordinates: rowsToNumbers(this.resolution, coordinateRows),
 			leaders: rowsToSamples(leaderRows),
 			isLeader,
 			assignedToRangeBoundary,
+			coordinate: appendCoordinatePlanFromRow(
+				this.resolution,
+				coordinatePlanRow,
+			),
 		};
 	}
 
@@ -1171,31 +1217,41 @@ export class SharedLogNativeState {
 		},
 		options?: FindLeaderOptions,
 	): AppendEntryPlan {
-		const [coordinateRows, leaderRows, isLeader, assignedToRangeBoundary, delivery] =
-			this.native.plan_append_for_gid(
-				input.entryHash,
-				input.gid,
-				asIntegerString(input.hashNumber ?? 0),
-				input.nextHashes ? [...input.nextHashes] : [],
-				input.replicas,
-				input.fullReplicaCandidates ? [...input.fullReplicaCandidates] : [],
-				input.fallbackRecipients ? [...input.fallbackRecipients] : [],
-				input.selfHash,
-				input.deliveryEnabled,
-				input.reliabilityAck,
-				input.minAcks,
-				input.requireRecipients,
-				...findLeaderArguments({
-					...options,
-					selfHash: input.selfHash,
-				}),
-			);
+		const [
+			coordinateRows,
+			leaderRows,
+			isLeader,
+			assignedToRangeBoundary,
+			delivery,
+			coordinatePlanRow,
+		] = this.native.plan_append_for_gid(
+			input.entryHash,
+			input.gid,
+			asIntegerString(input.hashNumber ?? 0),
+			input.nextHashes ? [...input.nextHashes] : [],
+			input.replicas,
+			input.fullReplicaCandidates ? [...input.fullReplicaCandidates] : [],
+			input.fallbackRecipients ? [...input.fallbackRecipients] : [],
+			input.selfHash,
+			input.deliveryEnabled,
+			input.reliabilityAck,
+			input.minAcks,
+			input.requireRecipients,
+			...findLeaderArguments({
+				...options,
+				selfHash: input.selfHash,
+			}),
+		);
 		return {
 			coordinates: rowsToNumbers(this.resolution, coordinateRows),
 			leaders: rowsToSamples(leaderRows),
 			isLeader,
 			assignedToRangeBoundary,
 			delivery: appendDeliveryPlanFromRow(delivery),
+			coordinate: appendCoordinatePlanFromRow(
+				this.resolution,
+				coordinatePlanRow,
+			),
 		};
 	}
 
@@ -1238,12 +1294,17 @@ export class SharedLogNativeState {
 				isLeader,
 				assignedToRangeBoundary,
 				delivery,
+				coordinatePlanRow,
 			]) => ({
 				coordinates: rowsToNumbers(this.resolution, coordinateRows),
 				leaders: rowsToSamples(leaderRows),
 				isLeader,
 				assignedToRangeBoundary,
 				delivery: appendDeliveryPlanFromRow(delivery),
+				coordinate: appendCoordinatePlanFromRow(
+					this.resolution,
+					coordinatePlanRow,
+				),
 			}),
 		);
 	}

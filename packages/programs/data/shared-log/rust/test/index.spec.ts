@@ -592,6 +592,14 @@ describe("native shared-log range planner", () => {
 			isLeader: assignment.leaders.has("peer-self"),
 			assignedToRangeBoundary: assignment.assignedToRangeBoundary,
 			delivery,
+			coordinate: {
+				hash: "new-head",
+				hashNumber: 0,
+				gid: "entry-gid",
+				coordinates: assignment.coordinates,
+				assignedToRangeBoundary: assignment.assignedToRangeBoundary,
+				requestedReplicas: 2,
+			},
 		});
 		expect(state.getEntryCoordinates("new-head")).to.deep.equal(
 			assignment.coordinates,
