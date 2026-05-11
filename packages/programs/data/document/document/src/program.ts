@@ -192,21 +192,45 @@ type DocumentAppendCommitFacts<T, I extends Record<string, any>> = {
 		| undefined;
 };
 
-type NativeDocumentAppendCommitInput<T, I extends Record<string, any>> = {
+type NativeDocumentAppendCommitFactsInput<
+	T,
+	I extends Record<string, any>,
+> = {
 	document: T;
 	key: indexerTypes.IdKey;
 	operation: PutOperation;
 	documentBytes: Uint8Array;
 	operationPayloadBytes: Uint8Array;
-	next: Entry<Operation>[] | ShallowEntry[];
-	skipMissingNextJoin: boolean;
-	resolveTrimmedEntries: boolean;
-	options?: DocumentPutOptions;
 	unique?: boolean;
 	existing?:
 		| indexerTypes.IndexedResult<IndexedContextOnly<I>>
 		| null
 		| undefined;
+};
+
+type NativeDocumentAppendCommitInput<
+	T,
+	I extends Record<string, any>,
+> = NativeDocumentAppendCommitFactsInput<T, I> & {
+	next: Entry<Operation>[] | ShallowEntry[];
+	skipMissingNextJoin: boolean;
+	resolveTrimmedEntries: boolean;
+	options?: DocumentPutOptions;
+};
+
+type NativeDocumentAppendManyCommitInput<
+	T,
+	I extends Record<string, any>,
+> = {
+	puts: NativeDocumentAppendCommitFactsInput<T, I>[];
+	resolveTrimmedEntries: boolean;
+	options?: DocumentPutOptions;
+};
+
+type DocumentAppendManyCommitFacts<T, I extends Record<string, any>> = {
+	entries: Entry<Operation>[];
+	removed: ShallowOrFullEntry<Operation>[];
+	commits: DocumentAppendCommitFacts<T, I>[];
 };
 
 type InferR<D> = D extends ReplicationDomain<any, any, infer I> ? I : "u32";
@@ -822,38 +846,33 @@ export class Documents<
 			return this.putManySequential(docs, options);
 		}
 
-		const appended = await this.log.appendLocallyPreparedManyIndependent(
-			prepared.map((item) => item.operation as PutOperation),
-			{
-				...options,
-				replicate: options?.replicate,
-			},
-			{
-				resolveTrimmedEntries: !this._index.canGetIdentityIndexedByHead(),
-				payloadDatas: prepared.map((item) =>
+		const documentAppendCommit = await this.commitNativeDocumentAppendMany({
+			puts: prepared.map((item) => ({
+				document: item.document,
+				key: item.key,
+				operation: item.operation as PutOperation,
+				documentBytes: item.encodedDocument,
+				operationPayloadBytes:
 					item.encodedOperation ??
 					encodePutOperationPayload((item.operation as PutOperation).data),
-				),
-			},
-		);
-		if (!appended) {
+				unique: options?.unique,
+				existing: null,
+			})),
+			resolveTrimmedEntries: !this._index.canGetIdentityIndexedByHead(),
+			options,
+		});
+		if (!documentAppendCommit) {
 			return this.putManySequential(docs, options);
 		}
 
-		await this.handlePreparedPlainPutManyCommit({
-			puts: prepared.map((item, index) => ({
-				document: item.document,
-				encodedDocument: item.encodedDocument,
-				key: item.key,
-				entry: appended.entries[index]!,
-				append: appended.appendCommits[index]!,
-			})),
-			removed: appended.removed,
-		});
-		for (const entry of appended.entries) {
+		await this.handlePreparedPlainPutManyCommit(documentAppendCommit);
+		for (const entry of documentAppendCommit.entries) {
 			this.keepCache?.add(entry.hash);
 		}
-		return appended;
+		return {
+			entries: documentAppendCommit.entries,
+			removed: documentAppendCommit.removed,
+		};
 	}
 
 	private async putManySequential(
@@ -1023,8 +1042,38 @@ export class Documents<
 		return this.createDocumentAppendCommitFacts(input, appended);
 	}
 
+	private async commitNativeDocumentAppendMany(
+		input: NativeDocumentAppendManyCommitInput<T, I>,
+	): Promise<DocumentAppendManyCommitFacts<T, I> | undefined> {
+		const appended = await this.log.appendLocallyPreparedManyIndependent(
+			input.puts.map((put) => put.operation),
+			{
+				...input.options,
+				replicate: input.options?.replicate,
+			},
+			{
+				resolveTrimmedEntries: input.resolveTrimmedEntries,
+				payloadDatas: input.puts.map((put) => put.operationPayloadBytes),
+			},
+		);
+		if (!appended) {
+			return undefined;
+		}
+		return {
+			entries: appended.entries,
+			removed: appended.removed,
+			commits: input.puts.map((put, index) =>
+				this.createDocumentAppendCommitFacts(put, {
+					entry: appended.entries[index]!,
+					removed: [],
+					appendCommit: appended.appendCommits[index]!,
+				}),
+			),
+		};
+	}
+
 	private createDocumentAppendCommitFacts(
-		input: NativeDocumentAppendCommitInput<T, I>,
+		input: NativeDocumentAppendCommitFactsInput<T, I>,
 		appended: {
 			entry: Entry<Operation>;
 			removed: ShallowOrFullEntry<Operation>[];
@@ -1170,16 +1219,9 @@ export class Documents<
 		);
 	}
 
-	private async handlePreparedPlainPutManyCommit(properties: {
-		puts: {
-			document: T;
-			encodedDocument?: Uint8Array;
-			key: indexerTypes.IdKey;
-			entry: Entry<Operation>;
-			append: LocalAppendCommitFacts;
-		}[];
-		removed: ShallowOrFullEntry<Operation>[];
-	}): Promise<void> {
+	private async handlePreparedPlainPutManyCommit(
+		commit: DocumentAppendManyCommitFacts<T, I>,
+	): Promise<void> {
 		const documentsChanged: DocumentsChange<T, I> = {
 			added: [],
 			removed: [],
@@ -1193,29 +1235,16 @@ export class Documents<
 			context: Context;
 			contextualEncodedValueParts?: ContextualEncodedValueParts;
 		}> = [];
-		for (const put of properties.puts) {
+		for (const put of commit.commits) {
 			if (modified.has(put.key.primitive)) {
 				continue;
 			}
-			const context = new Context({
-				created: put.append.wallTime,
-				modified: put.append.wallTime,
-				head: put.append.hash,
-				gid: put.append.gid,
-				size: put.append.payloadSize,
-			});
-			const contextBytes = encodeContextSuffix(context);
 			putsToIndex.push({
 				document: put.document,
 				encodedDocument: put.encodedDocument,
 				key: put.key,
-				context,
-				contextualEncodedValueParts: put.encodedDocument
-					? {
-							prefix: put.encodedDocument,
-							suffix: contextBytes,
-						}
-					: undefined,
+				context: put.context,
+				contextualEncodedValueParts: put.contextualEncodedValueParts,
 			});
 			modified.add(put.key.primitive);
 		}
@@ -1240,11 +1269,11 @@ export class Documents<
 
 		const handledRemovedHeads =
 			await this.collectRemovedDocumentChangesFromIndexedHeads(
-				properties.removed,
+				commit.removed,
 				modified,
 				documentsChanged,
 			);
-		for (const removed of properties.removed) {
+		for (const removed of commit.removed) {
 			if (handledRemovedHeads.has(removed.hash)) {
 				continue;
 			}
