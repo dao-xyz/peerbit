@@ -336,6 +336,65 @@ describe("index", () => {
 				}
 			});
 
+			it("batches rust index and coordinate writes for unique putMany", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: false,
+						nativeGraph: true,
+					},
+				});
+				const changes: DocumentsChange<Document, Document>[] = [];
+				store.docs.events.addEventListener("change", (evt) => {
+					changes.push(evt.detail);
+				});
+				const backendIndex = store.docs.index.index as any;
+				const documentBackendBatchSpy = sinon.spy(
+					backendIndex,
+					"putWithContextBatch",
+				);
+				const coordinateIndex = store.docs.log.entryCoordinatesIndex as any;
+				const coordinateBatchSpy = sinon.spy(
+					coordinateIndex,
+					"putSharedLogCoordinatesAndDeleteIdsBatch",
+				);
+				const coordinatePutSpy = sinon.spy(coordinateIndex, "put");
+
+				try {
+					const docs = [
+						new Document({ id: uuid(), name: "rust-batch-1" }),
+						new Document({ id: uuid(), name: "rust-batch-2" }),
+						new Document({ id: uuid(), name: "rust-batch-3" }),
+					];
+					const appended = await store.docs.putMany(docs, {
+						unique: true,
+						target: "none",
+					});
+
+					expect(appended.entries).to.have.length(3);
+					expect(documentBackendBatchSpy.callCount).equal(1);
+					expect(coordinateBatchSpy.callCount).equal(1);
+					expect(coordinatePutSpy.callCount).equal(0);
+					expect(changes).to.have.length(1);
+					expect(changes[0].added.map((doc) => doc.id)).to.deep.equal(
+						docs.map((doc) => doc.id),
+					);
+				} finally {
+					coordinatePutSpy.restore();
+					coordinateBatchSpy.restore();
+					documentBackendBatchSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
 			it("uses native shared-log planning for replicated target-none puts", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>(),
