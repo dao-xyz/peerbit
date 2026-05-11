@@ -62,6 +62,15 @@ type BlocksWithRmMany = Blocks & {
 const hasRmMany = (store: Blocks): store is BlocksWithRmMany =>
 	typeof (store as BlocksWithRmMany).rmMany === "function";
 
+type IndexWithExactDelete = Index<any> & {
+	delIds: (
+		deleteIds: string[],
+	) => Promise<ReturnType<typeof toId>[]> | ReturnType<typeof toId>[];
+};
+
+const hasExactDelete = (index: Index<any>): index is IndexWithExactDelete =>
+	typeof (index as IndexWithExactDelete).delIds === "function";
+
 type NativeLogEntry = PreparedNativeLogEntry;
 
 type NativeJoinCutCheck = {
@@ -1460,12 +1469,13 @@ export class EntryIndex<T> {
 			}
 		}
 
-		const batchSize = 64;
-		for (let i = 0; i < indexedHashes.length; i += batchSize) {
-			const hashes = indexedHashes.slice(i, i + batchSize);
-			const deleted = await this.properties.index.del({
-				query: createHashMatchQuery(hashes),
-			});
+		const exactDeleteIndex: IndexWithExactDelete | undefined = hasExactDelete(
+			this.properties.index,
+		)
+			? (this.properties.index as IndexWithExactDelete)
+			: undefined;
+		if (indexedHashes.length > 0 && exactDeleteIndex) {
+			const deleted = await exactDeleteIndex.delIds(indexedHashes);
 			for (const id of deleted) {
 				const hash = String(id.primitive);
 				const node = indexedByHash.get(hash);
@@ -1474,6 +1484,23 @@ export class EntryIndex<T> {
 				}
 				deletedByHash.set(hash, node);
 				storeHashes.push(hash);
+			}
+		} else {
+			const batchSize = 64;
+			for (let i = 0; i < indexedHashes.length; i += batchSize) {
+				const hashes = indexedHashes.slice(i, i + batchSize);
+				const deleted = await this.properties.index.del({
+					query: createHashMatchQuery(hashes),
+				});
+				for (const id of deleted) {
+					const hash = String(id.primitive);
+					const node = indexedByHash.get(hash);
+					if (!node || deletedByHash.has(hash)) {
+						continue;
+					}
+					deletedByHash.set(hash, node);
+					storeHashes.push(hash);
+				}
 			}
 		}
 

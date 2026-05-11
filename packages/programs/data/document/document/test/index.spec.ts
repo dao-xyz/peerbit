@@ -585,6 +585,10 @@ describe("index", () => {
 
 				const lowerLogGetSpy = sinon.spy(store.docs.log.log, "get");
 				const entryIndexGetSpy = sinon.spy(store.docs.log.log.entryIndex, "get");
+				const entryIndexBackend = store.docs.log.log.entryIndex.properties
+					.index as any;
+				const entryIndexDelIdsSpy = sinon.spy(entryIndexBackend, "delIds");
+				const entryIndexDelSpy = sinon.spy(entryIndexBackend, "del");
 
 				try {
 					await store.docs.put(
@@ -600,12 +604,16 @@ describe("index", () => {
 					expect(entryIndexGetSpy.withArgs(first.entry.hash).callCount).equal(
 						0,
 					);
+					expect(entryIndexDelIdsSpy.callCount).greaterThan(0);
+					expect(entryIndexDelSpy.callCount).equal(0);
 					expect(await store.docs.get(firstId)).to.be.undefined;
 					expect(changes).to.have.length(2);
 					expect(changes[1].removed.map((doc) => doc.id)).to.deep.equal([
 						firstId,
 					]);
 				} finally {
+					entryIndexDelSpy.restore();
+					entryIndexDelIdsSpy.restore();
 					entryIndexGetSpy.restore();
 					lowerLogGetSpy.restore();
 					await store.close();
