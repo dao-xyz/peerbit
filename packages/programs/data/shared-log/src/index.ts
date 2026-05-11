@@ -4150,6 +4150,21 @@ export class SharedLog<
 		};
 	}
 
+	async appendLocallyPreparedPayload(
+		payloadData: Uint8Array,
+		options?: SharedAppendOptions<T> | undefined,
+		properties?: {
+			skipMissingNextJoin?: boolean;
+			resolveTrimmedEntries?: boolean;
+		},
+	) {
+		return this.appendLocallyPrepared(undefined as T, options, {
+			skipMissingNextJoin: properties?.skipMissingNextJoin,
+			resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+			payloadData,
+		});
+	}
+
 	private canCoalescePreparedAppendCoordinateDeletes(
 		result: { removed: ShallowOrFullEntry<T>[] },
 		options?: SharedAppendOptions<T>,
