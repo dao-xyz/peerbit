@@ -144,6 +144,14 @@ type PreparedPut<T> = {
 	operation: PutOperation | PutWithKeyOperation;
 };
 
+type PreparedPlainPut<T> = {
+	document: T;
+	encodedDocument: Uint8Array;
+	operationPayloadBytes: Uint8Array;
+	keyValue: indexerTypes.IdPrimitive;
+	key: indexerTypes.IdKey;
+};
+
 type PlainPutCommitPlan<T, I extends Record<string, any>> = {
 	document: T;
 	encodedDocument: Uint8Array;
@@ -176,7 +184,7 @@ type ContextualEncodedValueParts = {
 type DocumentAppendCommitFacts<T, I extends Record<string, any>> = {
 	document: T;
 	key: indexerTypes.IdKey;
-	operation: PutOperation;
+	operation?: PutOperation;
 	encodedDocument: Uint8Array;
 	operationPayloadBytes: Uint8Array;
 	entry: Entry<Operation>;
@@ -198,9 +206,9 @@ type NativeDocumentAppendCommitFactsInput<
 > = {
 	document: T;
 	key: indexerTypes.IdKey;
-	operation: PutOperation;
 	documentBytes: Uint8Array;
 	operationPayloadBytes: Uint8Array;
+	operation?: PutOperation;
 	unique?: boolean;
 	existing?:
 		| indexerTypes.IndexedResult<IndexedContextOnly<I>>
@@ -212,6 +220,7 @@ type NativeDocumentAppendCommitInput<
 	T,
 	I extends Record<string, any>,
 > = NativeDocumentAppendCommitFactsInput<T, I> & {
+	operation: PutOperation;
 	next: Entry<Operation>[] | ShallowEntry[];
 	skipMissingNextJoin: boolean;
 	resolveTrimmedEntries: boolean;
@@ -764,6 +773,32 @@ export class Documents<
 		};
 	}
 
+	private preparePlainPut(doc: T): PreparedPlainPut<T> {
+		if (this.compatibility === 6) {
+			throw new Error("Plain put preparation is not supported in v6 mode");
+		}
+		const keyValue = this.idResolver(doc);
+		indexerTypes.checkId(keyValue);
+		const documentBytes = serialize(doc);
+		if (documentBytes.length > MAX_BATCH_SIZE) {
+			throw new Error(
+				`Document is too large (${
+					documentBytes.length * 1e-6
+				}) mb). Needs to be less than ${MAX_BATCH_SIZE * 1e-6} mb`,
+			);
+		}
+		const operationPayloadBytes = encodePutOperationPayload(documentBytes);
+		return {
+			document: doc,
+			encodedDocument: operationPayloadBytes.subarray(
+				PUT_OPERATION_PREFIX_LENGTH,
+			),
+			operationPayloadBytes,
+			keyValue,
+			key: indexerTypes.toId(keyValue),
+		};
+	}
+
 	public async put(doc: T, options?: DocumentPutOptions) {
 		const prepared = this.preparePut(doc);
 		let existingLocalContext:
@@ -838,11 +873,8 @@ export class Documents<
 			return this.putManySequential(docs, options);
 		}
 
-		const prepared = docs.map((doc) => this.preparePut(doc));
-		if (
-			prepared.some((item) => !(item.operation instanceof PutOperation)) ||
-			this.hasDuplicatePreparedPutKeys(prepared)
-		) {
+		const prepared = docs.map((doc) => this.preparePlainPut(doc));
+		if (this.hasDuplicatePreparedPutKeys(prepared)) {
 			return this.putManySequential(docs, options);
 		}
 
@@ -850,11 +882,8 @@ export class Documents<
 			puts: prepared.map((item) => ({
 				document: item.document,
 				key: item.key,
-				operation: item.operation as PutOperation,
 				documentBytes: item.encodedDocument,
-				operationPayloadBytes:
-					item.encodedOperation ??
-					encodePutOperationPayload((item.operation as PutOperation).data),
+				operationPayloadBytes: item.operationPayloadBytes,
 				unique: options?.unique,
 				existing: null,
 			})),
@@ -892,7 +921,9 @@ export class Documents<
 		return { entries, removed };
 	}
 
-	private hasDuplicatePreparedPutKeys(prepared: PreparedPut<T>[]): boolean {
+	private hasDuplicatePreparedPutKeys(
+		prepared: Array<{ key: indexerTypes.IdKey }>,
+	): boolean {
 		const keys = new Set<string | number | bigint>();
 		for (const item of prepared) {
 			if (keys.has(item.key.primitive)) {
@@ -1045,15 +1076,14 @@ export class Documents<
 	private async commitNativeDocumentAppendMany(
 		input: NativeDocumentAppendManyCommitInput<T, I>,
 	): Promise<DocumentAppendManyCommitFacts<T, I> | undefined> {
-		const appended = await this.log.appendLocallyPreparedManyIndependent(
-			input.puts.map((put) => put.operation),
+		const appended = await this.log.appendLocallyPreparedPayloadsManyIndependent(
+			input.puts.map((put) => put.operationPayloadBytes),
 			{
 				...input.options,
 				replicate: input.options?.replicate,
 			},
 			{
 				resolveTrimmedEntries: input.resolveTrimmedEntries,
-				payloadDatas: input.puts.map((put) => put.operationPayloadBytes),
 			},
 		);
 		if (!appended) {

@@ -348,6 +348,10 @@ describe("index", () => {
 					store.docs.log,
 					"appendLocallyPreparedManyIndependent",
 				);
+				const sharedPayloadBatchAppendSpy = sinon.spy(
+					store.docs.log,
+					"appendLocallyPreparedPayloadsManyIndependent",
+				);
 				const lowerBatchAppendSpy = sinon.spy(
 					store.docs.log.log,
 					"appendLocallyPreparedManyIndependent",
@@ -391,6 +395,7 @@ describe("index", () => {
 					});
 
 					expect(sharedBatchAppendSpy.callCount).equal(1);
+					expect(sharedPayloadBatchAppendSpy.callCount).equal(1);
 					expect(lowerBatchAppendSpy.callCount).equal(1);
 					expect(preparedAppendSpy.callCount).equal(0);
 					expect(appendSpy.callCount).equal(0);
@@ -458,6 +463,7 @@ describe("index", () => {
 					appendSpy.restore();
 					preparedAppendSpy.restore();
 					lowerBatchAppendSpy.restore();
+					sharedPayloadBatchAppendSpy.restore();
 					sharedBatchAppendSpy.restore();
 					await store.close();
 					store = undefined;
