@@ -16,6 +16,19 @@ import type { Payload } from "./payload.js";
 export type CanAppend<T> = (canAppend: Entry<T>) => Promise<boolean> | boolean;
 export type ShallowOrFullEntry<T> = ShallowEntry | Entry<T>;
 export type PreparedEntryBlock = Awaited<ReturnType<typeof calculateRawCid>>;
+export type PreparedAppendFacts = {
+	hash: string;
+	gid: string;
+	next: string[];
+	wallTime: bigint;
+	logical: number;
+	clockId?: Uint8Array;
+	type?: EntryType;
+	metaData?: Uint8Array;
+	payloadSize: number;
+	metaBytes?: Uint8Array;
+	hashDigestBytes?: Uint8Array;
+};
 export type PreparedNativeLogEntry = {
 	hash: string;
 	gid: string;
@@ -35,6 +48,7 @@ export type PreparedAppendChain<T> = {
 	entries: Entry<T>[];
 	blocks?: PreparedEntryBlock[];
 	shallowEntries: ShallowEntry[];
+	appendFacts?: PreparedAppendFacts[];
 	nativeEntries?: PreparedNativeLogEntry[];
 	nativeGraphUpdated?: boolean;
 	nativeBlocksCommitted?: boolean;
