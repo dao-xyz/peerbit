@@ -125,6 +125,15 @@ of publishing, so this check distinguishes
 settle time. The active snapshot includes data, repair, and quiet guard skips,
 plus active probes, shadow starts, shadow promotions, and proactive reparents.
 
+The shared-network multi-writer evaluator extends that default-readiness check
+across several independent writer-root trees in one in-memory network. Writers
+publish on distinct topics, subscribers overlap across writer trees, and the
+same peers, trackers, and timers carry all trees concurrently. This matters
+because per-tree behavior can look safe while aggregate writer/topic pressure
+still multiplies probes, root fanout, and control traffic. The multi-writer
+evidence keeps the same runtime default-off posture and evaluates the same
+default-candidate policy only as an opt-in treatment.
+
 The most important retune from the wider run is the quiet window:
 `parentUpgradeQuietMs` now defaults to `5000`. A 2s or 3s live-delivery window was
 too permissive under `ci-loss`: the policy could send probes or promote while
@@ -210,6 +219,18 @@ Default-candidate suite:
 pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-eval --scenario all --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
 ```
 
+Shared-network multi-writer live safety run:
+
+```bash
+pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-live --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
+```
+
+Shared-network multi-writer settled-topology run:
+
+```bash
+pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-idle --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
+```
+
 The settled-topology run fails strict mode if p95 second-batch latency
 materially regresses. The default evaluator tolerates the greater of `3ms` or
 `15%` second-batch p95 timing jitter with
@@ -244,6 +265,17 @@ root upload percentage delta, max per-peer reparent count, and failure count.
 `--compareModes 1` also includes second-batch, promoted-branch, and root-upload
 columns in its per-seed mode table, so direct, probe, and shadow can be compared
 by actual changed-branch value and sender pressure.
+
+The multi-writer evaluator prints `parent-upgrade-multi-summary`. Its strict
+gates separate active-flow safety from settled-topology usefulness:
+`ci-multi-live` fails if any writer tree sends active or total proactive probes,
+starts a shadow observation, or performs a proactive upgrade. `ci-multi-idle`
+fails unless each seed has at least one useful promoted tree, aggregate probes
+stay bounded by successful upgrades, max proactive reparent per peer/channel is
+`1`, and every root stays within the same per-root child and upload-pressure
+limits. Global p95 latency is still printed, but the utility gate is the
+changed-branch p95 or global p95 improvement because concurrent writer timers
+can move unrelated p95 samples while the promoted branches improve.
 
 The evaluator separates `promoted` runs from `guarded` runs. A guarded run sent
 probes but made no parent move, so it is useful as a safety/cost check, not as
@@ -338,6 +370,25 @@ Local smoke runs on this branch showed:
   material-jitter gate. The aggregate shape remains `3/3 no-op`: any total
   maintenance reparents are from churn/disconnect handling, not proactive
   upgrades.
+- Shared-network `ci-multi-live`, seeds `1,2,3`,
+  `--parentUpgradePreset default-candidate --strict 1`: passed. Each run used
+  `4` concurrent writer roots, `40` peers, and `112` joined subscriber slots.
+  The treatment made `0` proactive upgrades, sent `0` parent probes, started
+  `0` shadow observations, and active-publish counters were also `0` for
+  upgrades/probes/shadow starts. Active guard skips appeared on every writer
+  tree; the aggregate run reported `480` active guard skips, max root-child delta
+  `0`, max root upload delta `0.00` percentage points, and average control bpp
+  delta about `-1.1%`.
+- Shared-network `ci-multi-idle`, seeds `1,2,3`,
+  `--parentUpgradePreset default-candidate --strict 1`: passed. Each run used
+  the same `4` writer roots and overlapping subscriber set, but with a narrow
+  initial root fanout and a bounded late-root capacity window. The aggregate
+  shape was `3/3` viable, `10` useful promoted trees across `12` writer trees,
+  `17` proactive upgrades, `20` probes, `0` active-publish probes/upgrades,
+  `93` active guard skips, average promoted-branch p95 gain about `79.5ms`,
+  average control bpp delta about `+3.8%`, per-root child delta max `2`, largest
+  per-seed root-child delta sum `8`, max root upload delta about `0.03`
+  percentage points, and max `1` proactive reparent per peer/channel.
 - The simulator now reports root upload pressure separately from max relay/root
   upload pressure. This matters for streamer-like workloads: root-child fanout
   count is a useful structural signal, but root upload percentage is the direct
@@ -411,8 +462,13 @@ An upgrade mode is only a candidate if it improves or preserves:
 - `deliveredWithinDeadlinePct`
 - for live-stream scenarios, zero active-publish proactive
   probes/shadow starts/reparents while the data guard is active
+- for shared-network multi-writer live scenarios, zero active and total
+  proactive probes/shadow starts/reparents across all writer trees
 - for idle-upgrade scenarios, promoted-branch or global second-batch p95 latency,
   while keeping global second-batch p95 inside the material-regression tolerance
+- for shared-network multi-writer idle scenarios, at least one useful promoted
+  writer tree per seed, bounded probes per upgrade, max one proactive reparent
+  per peer/channel, and the same per-root fanout/upload-pressure limits
 
 It should be rejected or retuned if it materially worsens:
 
