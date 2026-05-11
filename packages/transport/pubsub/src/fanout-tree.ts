@@ -435,7 +435,7 @@ export type FanoutTreeJoinOptions = {
 	 * Deterministic per-peer sampling probability for stale-root verification.
 	 *
 	 * This applies only when `parentUpgradeVerifyStaleRootCapacity` is enabled and
-	 * tracker capacity says the root is full. Defaults to `0.25` to avoid every
+	 * tracker capacity says the root is full. Defaults to `0.125` to avoid every
 	 * eligible peer probing the same advertised-full root at once.
 	 */
 	parentUpgradeStaleRootProbeProbability?: number;
@@ -5897,7 +5897,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			level: Number.isFinite(ch.level) ? ch.level : 0xffff,
 			maxChildren,
 			freeSlots,
-			children: ch.children.size,
+			// For roots, expose reserved slots as child pressure so concurrent
+			// upgrade probes cannot all pass the load-ratio check from stale state.
+			children: ch.isRoot ? ch.children.size + reserved : ch.children.size,
 			haveToExclusive: ch.maxSeqSeen >= 0 ? ch.maxSeqSeen + 1 : 0,
 			missingSeqs: ch.missingSeqs.size,
 			dataWriteDrops: ch.metrics.dataWriteDrops,
@@ -6117,13 +6119,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			? Math.max(0, parentUpgradeRootMaxChildLoadRatioRaw)
 			: Math.min(parentUpgradeMaxChildLoadRatio, 0.4);
 		const parentUpgradeStaleRootProbeProbabilityRaw = Number(
-			joinOpts.parentUpgradeStaleRootProbeProbability ?? 0.25,
+			joinOpts.parentUpgradeStaleRootProbeProbability ?? 0.125,
 		);
 		const parentUpgradeStaleRootProbeProbability = Number.isFinite(
 			parentUpgradeStaleRootProbeProbabilityRaw,
 		)
 			? Math.max(0, Math.min(1, parentUpgradeStaleRootProbeProbabilityRaw))
-			: 0.25;
+			: 0.125;
 		const parentUpgradeCooldownMs = Math.max(
 			0,
 			Math.floor(joinOpts.parentUpgradeCooldownMs ?? 5_000),
@@ -7112,13 +7114,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			const requiredMinFreeSlots = minFreeSlotsFor(c.hash);
 			if (canVerifyRootCapacityLive && c.freeSlots < requiredMinFreeSlots) {
 				const staleRootProbeProbabilityRaw = Number(
-					options.staleRootProbeProbability ?? 0.25,
+					options.staleRootProbeProbability ?? 0.125,
 				);
 				const staleRootProbeProbability = Number.isFinite(
 					staleRootProbeProbabilityRaw,
 				)
 					? Math.max(0, Math.min(1, staleRootProbeProbabilityRaw))
-					: 0.25;
+					: 0.125;
 				const staleRootProbeScore = stableUnitInterval(
 					`${ch.id.suffixKey}:${this.publicKeyHash}:${c.hash}:stale-root-probe`,
 				);

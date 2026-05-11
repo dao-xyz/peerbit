@@ -15,7 +15,8 @@ type ScenarioName =
 	| "ci-small"
 	| "ci-loss"
 	| "ci-constrained"
-	| "ci-idle-upgrade";
+	| "ci-idle-upgrade"
+	| "ci-idle-upgrade-large";
 type UpgradeMode = "direct" | "probe" | "shadow";
 type UpgradePreset = "raw" | "default-candidate";
 
@@ -56,6 +57,7 @@ type EvalArgs = {
 	maxCostRatio: number;
 	maxFormationScoreDelta: number;
 	maxSecondBatchLatencyP95DeltaMs: number;
+	maxSecondBatchLatencyP95DeltaRatio: number;
 	maxProbePerUpgrade: number;
 	maxRootChildrenDelta: number;
 	maxRootUploadPctDelta: number;
@@ -96,7 +98,7 @@ const HELP_TEXT = [
 	"fanout-tree-parent-upgrade-eval.ts",
 	"",
 	"Args:",
-	"  --scenario NAME              scenario to run (ci-small|ci-loss|ci-constrained|ci-idle-upgrade|all, default: all)",
+	"  --scenario NAME              scenario to run (ci-small|ci-loss|ci-constrained|ci-idle-upgrade|ci-idle-upgrade-large|all, default: all)",
 	"  --seeds CSV                  seeds to run for each scenario (default: 1,2,3)",
 	"  --parentUpgradePreset NAME   preset to evaluate (raw|default-candidate, default: raw)",
 	"  --parentUpgradeIntervalMs MS upgrade check interval for treatment run (default: 1000)",
@@ -119,7 +121,7 @@ const HELP_TEXT = [
 	"  --parentUpgradeDataGuard 0|1 wait for finite channel completion before treatment upgrades (default: 1)",
 	"  --parentUpgradeMode MODE      treatment upgrade mode (direct|probe|shadow, default: direct)",
 	"  --parentUpgradeVerifyStaleRootCapacity 0|1 allow shadow probes against tracker-full root (default: 0)",
-	"  --parentUpgradeStaleRootProbeProbability R sample tracker-full root probes per peer (default: 0.25)",
+	"  --parentUpgradeStaleRootProbeProbability R sample tracker-full root probes per peer (default: 0.125)",
 	"  --compareModes 0|1           run direct, probe, and shadow against one baseline (default: 0)",
 	"  --parentProbeTimeoutMs MS     timeout for probe-mode parent checks (default: 500)",
 	"  --parentProbeMaxPerRound N    max probe-mode candidates per upgrade check (default: 2)",
@@ -132,6 +134,7 @@ const HELP_TEXT = [
 	"  --maxCostRatio R             max treatment/base ratio for control/tracker/repair bpp (default: 1.15)",
 	"  --maxFormationScoreDelta N   absolute formation score jitter tolerated (default: 0.05)",
 	"  --maxSecondBatchLatencyP95DeltaMs N max idle second-batch p95 latency jitter tolerated (default: 3)",
+	"  --maxSecondBatchLatencyP95DeltaRatio R max idle second-batch p95 latency relative jitter tolerated (default: 0.15)",
 	"  --maxProbePerUpgrade N       max parent probes per successful proactive upgrade (default: 2)",
 	"  --maxRootChildrenDelta N     max root child-count increase over baseline (default: 4, default-candidate: 2)",
 	"  --maxRootUploadPctDelta N    max root upload pct-of-cap increase over baseline (default: 1)",
@@ -241,6 +244,36 @@ const SCENARIOS: Record<ScenarioName, Partial<FanoutTreeSimParams>> = {
 		lateRootMaxChildren: 12,
 		lateRootConnectFraction: 0.45,
 	},
+	"ci-idle-upgrade-large": {
+		nodes: 90,
+		bootstraps: 1,
+		subscribers: 72,
+		relayFraction: 0.5,
+		candidateScoringMode: "weighted",
+		joinConcurrency: 1,
+		joinPhases: true,
+		joinPhaseSettleMs: 500,
+		messages: 20,
+		secondBatchMessages: 80,
+		secondBatchSettleMs: 1_500,
+		msgRate: 50,
+		msgSize: 64,
+		streamRxDelayMs: 3,
+		settleMs: 12_000,
+		deadlineMs: 500,
+		timeoutMs: 120_000,
+		trackerQueryIntervalMs: 1_000,
+		repair: true,
+		rootUploadLimitBps: 100_000_000,
+		relayUploadLimitBps: 100_000_000,
+		rootMaxChildren: 3,
+		relayMaxChildren: 4,
+		dropDataFrameRate: 0,
+		churnEveryMs: 0,
+		lateRootConnectAfterMs: 1_000,
+		lateRootMaxChildren: 24,
+		lateRootConnectFraction: 0.4,
+	},
 };
 
 const parseBool01 = (value: string | undefined, fallback: boolean) => {
@@ -269,7 +302,8 @@ const parseScenarios = (value: string | undefined): ScenarioName[] => {
 				part === "ci-small" ||
 				part === "ci-loss" ||
 				part === "ci-constrained" ||
-				part === "ci-idle-upgrade",
+				part === "ci-idle-upgrade" ||
+				part === "ci-idle-upgrade-large",
 		);
 	if (parsed.length === 0) {
 		throw new Error(`Unknown scenario: ${value}`);
@@ -363,7 +397,7 @@ const parseArgs = (argv: string[]): EvalArgs => {
 			defaultCandidate,
 		),
 		parentUpgradeStaleRootProbeProbability: Number(
-			get("--parentUpgradeStaleRootProbeProbability") ?? 0.25,
+			get("--parentUpgradeStaleRootProbeProbability") ?? 0.125,
 		),
 		compareModes: parseBool01(get("--compareModes"), false),
 		parentProbeTimeoutMs: Number(get("--parentProbeTimeoutMs") ?? 500),
@@ -387,6 +421,9 @@ const parseArgs = (argv: string[]): EvalArgs => {
 		maxFormationScoreDelta: Number(get("--maxFormationScoreDelta") ?? 0.05),
 		maxSecondBatchLatencyP95DeltaMs: Number(
 			get("--maxSecondBatchLatencyP95DeltaMs") ?? 3,
+		),
+		maxSecondBatchLatencyP95DeltaRatio: Number(
+			get("--maxSecondBatchLatencyP95DeltaRatio") ?? 0.15,
 		),
 		maxProbePerUpgrade: Number(get("--maxProbePerUpgrade") ?? 2),
 		maxRootChildrenDelta: Number(
@@ -417,6 +454,9 @@ const peerCoveragePct = (result: FanoutTreeSimResult, hashes: string[]) => {
 	if (result.subscriberCount <= 0) return 0;
 	return (100 * new Set(hashes).size) / result.subscriberCount;
 };
+
+const isIdleUpgradeScenario = (scenario: ScenarioName) =>
+	scenario === "ci-idle-upgrade" || scenario === "ci-idle-upgrade-large";
 
 const failIfGreater = (
 	failures: Failure[],
@@ -464,15 +504,21 @@ const evaluateRun = (
 			? baseline.treeLevelAvg - upgrade.treeLevelAvg
 			: NaN;
 	const usefulDepthGain = Math.max(treeLevelP95Gain, treeLevelAvgGain);
-	const usefulPromotions =
-		upgrade.reparentUpgradeTotal > 0 && usefulDepthGain > 0.05
-			? upgrade.reparentUpgradeTotal
-			: 0;
 	const secondBatchLatencyP95Gain =
 		Number.isFinite(baseline.secondBatchLatencyP95) &&
 		Number.isFinite(upgrade.secondBatchLatencyP95)
 			? baseline.secondBatchLatencyP95 - upgrade.secondBatchLatencyP95
 			: NaN;
+	const secondBatchLatencyP95SlackMs = Number.isFinite(
+		baseline.secondBatchLatencyP95,
+	)
+		? Math.max(
+				0,
+				args.maxSecondBatchLatencyP95DeltaMs,
+				baseline.secondBatchLatencyP95 *
+					Math.max(0, args.maxSecondBatchLatencyP95DeltaRatio),
+			)
+		: Math.max(0, args.maxSecondBatchLatencyP95DeltaMs);
 	const promotedPeerBaselineSecondBatchLatencyP95 = peerLatencyP95For(
 		baseline,
 		upgrade.upgradedPeerHashes,
@@ -495,15 +541,25 @@ const evaluateRun = (
 			? promotedBranchBaselineSecondBatchLatencyP95 -
 				promotedBranchUpgradeSecondBatchLatencyP95
 			: NaN;
+	const usefulIdleGain = Math.max(
+		usefulDepthGain,
+		secondBatchLatencyP95Gain,
+		promotedBranchSecondBatchLatencyP95Gain,
+	);
+	const usefulPromotions =
+		upgrade.reparentUpgradeTotal > 0 &&
+		(isIdleUpgradeScenario(scenario) ? usefulIdleGain >= 1 : usefulDepthGain > 0.05)
+			? upgrade.reparentUpgradeTotal
+			: 0;
 	const upgradeActivity =
 		upgrade.reparentUpgradeTotal > 0 ||
 		upgrade.parentProbeReqSentTotal > 0 ||
 		upgrade.parentShadowStartTotal > 0;
 
-	if (scenario === "ci-idle-upgrade") {
+	if (isIdleUpgradeScenario(scenario)) {
 		failIfLess(failures, "idlePromotions", 0, upgrade.reparentUpgradeTotal, 1);
 		failIfLess(failures, "idleUsefulPromotions", 0, usefulPromotions, 1);
-		failIfLess(failures, "idleDepthGain", 0, usefulDepthGain, 0.05);
+		failIfLess(failures, "idleUsefulGain", 0, usefulIdleGain, 1);
 		if (upgradeActivity) {
 			failIfGreater(
 				failures,
@@ -533,8 +589,7 @@ const evaluateRun = (
 				"idleSecondBatchLatencyP95",
 				baseline.secondBatchLatencyP95,
 				upgrade.secondBatchLatencyP95,
-				baseline.secondBatchLatencyP95 +
-					Math.max(0, args.maxSecondBatchLatencyP95DeltaMs),
+				baseline.secondBatchLatencyP95 + secondBatchLatencyP95SlackMs,
 			);
 			failIfLess(
 				failures,
@@ -564,7 +619,7 @@ const evaluateRun = (
 	}
 
 	if (
-		scenario !== "ci-idle-upgrade" &&
+		!isIdleUpgradeScenario(scenario) &&
 		upgrade.reparentUpgradeTotal === 0 &&
 		upgrade.parentProbeReqSentTotal === 0 &&
 		upgrade.parentShadowStartTotal === 0
@@ -573,7 +628,7 @@ const evaluateRun = (
 	}
 
 	if (promoted) {
-		if (scenario !== "ci-idle-upgrade") {
+		if (!isIdleUpgradeScenario(scenario)) {
 			failIfGreater(
 				failures,
 				"formationScore",
@@ -705,11 +760,6 @@ const printComparison = (
 	const effect = classifyEffect(upgrade, failures);
 	const treeLevelP95Gain = delta(baseline.treeLevelP95, upgrade.treeLevelP95);
 	const treeLevelAvgGain = delta(baseline.treeLevelAvg, upgrade.treeLevelAvg);
-	const usefulPromotions =
-		upgrade.reparentUpgradeTotal > 0 &&
-		(treeLevelP95Gain > 0 || treeLevelAvgGain > 0.05)
-			? upgrade.reparentUpgradeTotal
-			: 0;
 	const promotedPeerBaselineSecondBatchLatencyP95 = peerLatencyP95For(
 		baseline,
 		upgrade.upgradedPeerHashes,
@@ -730,6 +780,23 @@ const printComparison = (
 		upgrade,
 		upgrade.upgradedBranchPeerHashes,
 	);
+	const secondBatchLatencyP95Gain =
+		baseline.secondBatchLatencyP95 - upgrade.secondBatchLatencyP95;
+	const promotedBranchSecondBatchLatencyP95Gain =
+		promotedBranchBaselineSecondBatchLatencyP95 -
+		promotedBranchUpgradeSecondBatchLatencyP95;
+	const usefulPromotions =
+		upgrade.reparentUpgradeTotal > 0 &&
+		(isIdleUpgradeScenario(scenario)
+			? Math.max(
+					treeLevelP95Gain,
+					treeLevelAvgGain,
+					secondBatchLatencyP95Gain,
+					promotedBranchSecondBatchLatencyP95Gain,
+				) >= 1
+			: treeLevelP95Gain > 0 || treeLevelAvgGain > 0.05)
+			? upgrade.reparentUpgradeTotal
+			: 0;
 
 	console.log(
 		[

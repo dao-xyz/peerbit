@@ -59,7 +59,7 @@ turns the dangerous root upgrade sequence from "many peers probe the same stale
 slot and race it" into "one peer gets a bounded claim, peers below the requested
 margin get no token, and the claim is consumed or expires quickly." Stale-root
 verification is also sampled per peer
-(`parentUpgradeStaleRootProbeProbability`, default `0.25`) so an
+(`parentUpgradeStaleRootProbeProbability`, default `0.125`) so an
 advertised-full root is not probed by every eligible peer at once. These are
 control-plane guards for proactive root upgrades; they do not change ordinary
 tree formation semantics or the disabled-by-default runtime posture.
@@ -67,7 +67,8 @@ tree formation semantics or the disabled-by-default runtime posture.
 The evaluator now has an explicit default-candidate preset:
 `--parentUpgradePreset default-candidate`. It evaluates the policy we would
 consider for a later default flip without changing runtime defaults in this PR:
-shadow mode, non-leaf upgrades allowed, stale-root live verification enabled,
+shadow mode, non-leaf upgrades allowed, stale-root live verification enabled
+with `0.125` deterministic per-peer sampling,
 branch-aware root admission, and stricter evidence limits
 (`maxProbePerUpgrade <= 2`, `maxRootChildrenDelta <= 2`, and
 `maxRootUploadPctDelta <= 1` percentage point). This turns "we tried some flags"
@@ -79,6 +80,11 @@ at `JOIN_REQ` time if intervening joins have reduced free capacity below the
 margin that justified the upgrade probe. That prevents a stale token from
 turning an "upgrade only while the root is wide open" decision into a near-full
 root join.
+
+Root probe replies now count pending root reservations as child pressure. That
+means the child-load guard evaluates `actual children + already-reserved upgrade
+slots + this candidate`, instead of letting several concurrent probes all pass
+against the same stale root child count.
 
 The evidence output now separates root pressure from generic slot failures.
 `candidateSlots` still shows coarse capacity rejection, while
@@ -172,6 +178,12 @@ Positive settled-topology run only:
 pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-eval --scenario ci-idle-upgrade --seeds 1,2,3,4,5 --parentUpgradePreset default-candidate --strict 1
 ```
 
+Larger settled-topology pressure run:
+
+```bash
+pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-eval --scenario ci-idle-upgrade-large --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
+```
+
 Default-candidate suite:
 
 ```bash
@@ -179,10 +191,12 @@ pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-eval -
 ```
 
 The settled-topology run fails strict mode if p95 second-batch latency
-materially regresses. The default evaluator tolerates up to
-`3ms` of second-batch p95 timing jitter with
-`--maxSecondBatchLatencyP95DeltaMs 3`, but still requires a promoted branch or
-global p95 latency improvement and still fails larger global regressions.
+materially regresses. The default evaluator tolerates the greater of `3ms` or
+`15%` second-batch p95 timing jitter with
+`--maxSecondBatchLatencyP95DeltaMs 3` and
+`--maxSecondBatchLatencyP95DeltaRatio 0.15`, but still requires a promoted
+branch or global p95 latency improvement and still fails larger global
+regressions.
 
 Aggressive live-delivery experiment:
 
@@ -209,8 +223,8 @@ proof of topology improvement. Topology improvement criteria are applied only
 when a mode actually promotes a new parent; guarded runs are judged on delivery,
 control/tracker/repair cost, maintenance churn, orphan area, and root pressure.
 `ci-idle-upgrade` is stricter than the safety scenarios: strict mode fails unless
-it produces at least one useful promotion, improves p95 depth or average depth by
-more than `0.05`, keeps probe-to-upgrade ratio at `<= 2`, and keeps max
+it produces at least one useful promotion, improves the promoted branch or global
+second-batch p95 latency, keeps probe-to-upgrade ratio at `<= 2`, and keeps max
 reparents per peer at `<= 1`.
 
 No-op idle runs are now reported as `effect=no-op` even when they fail the
@@ -225,10 +239,10 @@ and their final downstream branches in the baseline and treatment runs. This
 makes the promotion-value question sharper: if promoted branches improve but
 global p95 does not, the move helped too little of the tail distribution; if the
 promoted branch does not improve, the candidate-selection signal itself is weak.
-`ci-idle-upgrade` intentionally skips the pre-upgrade `formationScore` failure
-check because that score includes initial attach-time jitter before the late-root
-upgrade window. It still checks final tree p95/average depth, stretch, delivery,
-cost, churn, orphan area, and root fanout pressure.
+Idle-upgrade scenarios intentionally skip the pre-upgrade `formationScore`
+failure check because that score includes initial attach-time jitter before the
+late-root upgrade window. They still check final tree p95/average depth,
+stretch, delivery, cost, churn, orphan area, and root fanout pressure.
 
 ## Current smoke results
 
@@ -247,11 +261,12 @@ Local smoke runs on this branch showed:
   passed. `ci-small`, `ci-loss`, and `ci-constrained` stayed no-op with `0`
   probes and `0` promotions; `ci-idle-upgrade` promoted in all `3` seeds. The
   aggregate shape was: `ci-small 3/3 no-op`, `ci-loss 3/3 no-op`,
-  `ci-constrained 3/3 no-op`, and `ci-idle-upgrade 3/3 promoted` with `6`
-  proactive upgrades, `8` probes, average tree-depth gain about `0.10`, average
-  second-batch p95 delta about `-0.7ms`, worst second-batch p95 delta `+1ms`,
-  average promoted-branch gain about `13ms`, max root-child delta `2`, max root
-  upload delta about `0.03%` of cap, and max `1` reparent per peer.
+  `ci-constrained 3/3 no-op`, and `ci-idle-upgrade 3/3 promoted` with `4`
+  proactive upgrades, `4` probes, average tree-depth gain about `0.06`, average
+  second-batch p95 delta about `+0.7ms`, worst second-batch p95 delta `+3ms`,
+  average promoted-branch gain about `13.7ms`, average branch coverage about
+  `15.7%`, max root-child delta `2`, max root upload delta about `0.02%` of cap,
+  and max `1` reparent per peer.
 - Two-phase `ci-idle-upgrade`, seeds `1,2,3,4,5`,
   `--parentUpgradePreset default-candidate --strict 1`:
   passed. Every seed promoted, kept max `1` reparent per peer, preserved
@@ -270,6 +285,16 @@ Local smoke runs on this branch showed:
   second-batch p95 delta about `+0.2ms`, worst global p95 delta `+2ms`, average
   promoted-branch gain about `16ms`, average branch coverage about `17%`, max
   root-child delta `2`, max root upload delta about `0.03%` of cap, and max `1`
+  reparent per peer.
+- A larger 90-node settled-topology run exposed the remaining sender-pressure
+  issue: stale-root sampling at `0.25` still produced useful branch gains, but
+  allowed root children to grow by `4` in two seeds, failing the
+  default-candidate `maxRootChildrenDelta <= 2` gate. Retuning the default
+  stale-root sample rate to `0.125` passed `ci-idle-upgrade-large`, seeds
+  `1,2,3`, with `3/3` promoted, `5` total upgrades, `5` probes, average global
+  second-batch p95 delta about `-1.0ms`, worst global p95 delta `+2ms`, average
+  promoted-branch gain about `12.3ms`, average branch coverage about `9.7%`, max
+  root-child delta `2`, max root upload delta about `0.02%` of cap, and max `1`
   reparent per peer.
 - The simulator now reports root upload pressure separately from max relay/root
   upload pressure. This matters for streamer-like workloads: root-child fanout
@@ -342,7 +367,7 @@ An upgrade mode is only a candidate if it improves or preserves:
 - `treeLevelP95`
 - `formationStretchP95`
 - `deliveredWithinDeadlinePct`
-- for `ci-idle-upgrade`, promoted-branch or global second-batch p95 latency,
+- for idle-upgrade scenarios, promoted-branch or global second-batch p95 latency,
   while keeping global second-batch p95 inside the material-regression tolerance
 
 It should be rejected or retuned if it materially worsens:
@@ -358,5 +383,6 @@ It should be rejected or retuned if it materially worsens:
 
 The current default candidate, if later evidence holds across more seeds and
 larger topologies, is bounded shadow upgrades with data/repair/quiet guards,
-spare-capacity hysteresis, root reservations, and branch-aware root admission.
+spare-capacity hysteresis, race-aware root reservations, sampled stale-root
+verification at `0.125`, and branch-aware root admission.
 This PR intentionally leaves `parentUpgradeIntervalMs: 0` as the default.

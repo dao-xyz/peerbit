@@ -91,7 +91,7 @@ const HELP_TEXT = [
 	"  --parentUpgradeDataGuard 0|1 wait for finite channel completion before upgrades (default: 1)",
 	"  --parentUpgradeMode MODE      proactive upgrade mode (direct|probe|shadow, default: direct)",
 	"  --parentUpgradeVerifyStaleRootCapacity 0|1 allow shadow probes against tracker-full root (default: 0)",
-	"  --parentUpgradeStaleRootProbeProbability R sample tracker-full root probes per peer (default: 0.25)",
+	"  --parentUpgradeStaleRootProbeProbability R sample tracker-full root probes per peer (default: 0.125)",
 	"  --parentProbeTimeoutMs MS     timeout for probe-mode parent checks (default: 500)",
 	"  --parentProbeMaxPerRound N    max probe-mode candidates per upgrade check (default: 2)",
 	"  --parentProbeMaxLagMessages N max sequence lag for probe-mode candidates (default: 0)",

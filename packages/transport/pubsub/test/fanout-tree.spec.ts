@@ -1035,6 +1035,48 @@ describe("fanout-tree", () => {
 		expect(metrics.parentUpgradeRootReservationBlocked).to.equal(1);
 	});
 
+	it("reports pending root reservations as probe child pressure", async () => {
+		const ch = {
+			id: { key: new Uint8Array(32), root: "root" },
+			isRoot: true,
+			level: 0,
+			children: new Map([
+				["child-a", {}],
+				["child-b", {}],
+			]),
+			effectiveMaxChildren: 12,
+			parentUpgradeReservationsByHash: new Map(),
+			metrics: {
+				dataWriteDrops: 0,
+				parentUpgradeRootReservationCreated: 0,
+				parentUpgradeRootReservationConsumed: 0,
+				parentUpgradeRootReservationRejected: 0,
+				parentUpgradeRootReservationMarginRejected: 0,
+				parentUpgradeRootReservationBlocked: 0,
+				parentUpgradeRootReservationExpired: 0,
+			},
+			missingSeqs: new Set(),
+			overloadStreak: 0,
+			maxSeqSeen: -1,
+			droppedForwards: 0,
+		};
+		let randomValue = 0.25;
+		const ctx = {
+			...parentUpgradeReservationHelpers,
+			random: () => randomValue,
+			pruneDisconnectedChildren: () => {},
+		};
+
+		const first = encodeParentProbeReplyForChannel.call(ctx, ch, 1, "leaf-a");
+		expect(readTestU16BE(first, 44)).to.equal(2);
+		expect(readTestU32BE(first, 60)).to.not.equal(0);
+
+		randomValue = 0.5;
+		const second = encodeParentProbeReplyForChannel.call(ctx, ch, 2, "leaf-b");
+		expect(readTestU16BE(second, 44)).to.equal(3);
+		expect(readTestU32BE(second, 60)).to.not.equal(0);
+	});
+
 	it("rejects root reservation tokens after the spare-slot margin evaporates", async () => {
 		const ch = {
 			id: { key: new Uint8Array(32), root: "root" },
