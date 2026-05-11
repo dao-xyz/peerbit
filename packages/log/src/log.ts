@@ -36,6 +36,7 @@ import { type EntryWithRefs } from "./entry-with-refs.js";
 import {
 	type CanAppend,
 	Entry,
+	type PreparedAppendFacts,
 	type PreparedAppendChain,
 	type PreparedEntryBlock,
 	type ShallowOrFullEntry,
@@ -154,19 +155,7 @@ export type AppendOptions<T> = {
 	canAppend?: CanAppend<T>;
 };
 
-export type PreparedAppendFacts = {
-	hash: string;
-	gid: string;
-	next: string[];
-	wallTime: bigint;
-	logical: number;
-	clockId?: Uint8Array;
-	type?: EntryType;
-	metaData?: Uint8Array;
-	payloadSize: number;
-	metaBytes?: Uint8Array;
-	hashDigestBytes?: Uint8Array;
-};
+export type { PreparedAppendFacts } from "./entry.js";
 
 type OnChange<T> = (
 	change: Change<T>,
@@ -890,6 +879,9 @@ export class Log<T> {
 		entries: Entry<T>[],
 		prepared?: PreparedAppendChain<T>,
 	): PreparedAppendFacts[] {
+		if (prepared?.appendFacts?.length === entries.length) {
+			return prepared.appendFacts;
+		}
 		return entries.map((entry, index) => {
 			const shallowEntry = prepared?.shallowEntries[index];
 			if (shallowEntry) {
