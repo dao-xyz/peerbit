@@ -101,6 +101,11 @@ const getSharedLogFanoutService = (
 	services: unknown,
 ): FanoutTree | undefined =>
 	(services as SharedLogServicesWithFanout).fanout;
+
+type MaybePromise<T> = T | Promise<T>;
+
+const isPromiseLike = <T>(value: MaybePromise<T>): value is Promise<T> =>
+	!!value && typeof (value as Promise<T>).then === "function";
 import {
 	EXCHANGE_HEADS_REPAIR_HINT,
 	EntryWithRefs,
@@ -4115,10 +4120,11 @@ export class SharedLog<
 		let nativeAppendPlan: NativeAppendEntryPlan<R> | undefined;
 		let deferredCoordinateDeleteHashes: string[] | undefined;
 		if (this.canCoalescePreparedAppendCoordinateDeletes(result, options)) {
+			const changeResult = this.applyChange(result.change, {
+				deferCoordinateIndexDeletes: true,
+			});
 			deferredCoordinateDeleteHashes =
-				(await this.applyChange(result.change, {
-					deferCoordinateIndexDeletes: true,
-				})) ?? [];
+				(isPromiseLike(changeResult) ? await changeResult : changeResult) ?? [];
 			nativeAppendPlan = await this.planNativeLocalAppendFacts(
 				result.appendFacts,
 				minReplicasValue,
@@ -4128,7 +4134,10 @@ export class SharedLog<
 				deferredCoordinateDeleteHashes = undefined;
 			}
 		} else {
-			await this.onChange(result.change);
+			const changeResult = this.applyChange(result.change);
+			if (isPromiseLike(changeResult)) {
+				await changeResult;
+			}
 		}
 		try {
 			nativeAppendPlan =
@@ -4224,7 +4233,10 @@ export class SharedLog<
 			return undefined;
 		}
 
-		await this.onChange(result.change);
+		const changeResult = this.applyChange(result.change);
+		if (isPromiseLike(changeResult)) {
+			await changeResult;
+		}
 		const deferHeadCoordinatePersistence =
 			this.shouldDeferHeadCoordinatePersistence(options);
 
@@ -6273,18 +6285,38 @@ export class SharedLog<
 	}
 
 	async onChange(change: Change<T>): Promise<void> {
-		await this.applyChange(change);
+		const result = this.applyChange(change);
+		if (isPromiseLike(result)) {
+			await result;
+		}
 	}
 
-	private async applyChange(
+	private applyChange(
 		change: Change<T>,
 		options?: { deferCoordinateIndexDeletes?: boolean },
-	): Promise<string[] | undefined> {
+	): MaybePromise<string[] | undefined> {
 		const deferredCoordinateDeleteHashes: string[] = [];
 		for (const added of change.added) {
 			this.onEntryAdded(added.entry);
 		}
-		for (const removed of change.removed) {
+		if (change.removed.length === 0) {
+			return options?.deferCoordinateIndexDeletes
+				? deferredCoordinateDeleteHashes
+				: undefined;
+		}
+		return this.applyRemovedChange(
+			change.removed,
+			deferredCoordinateDeleteHashes,
+			options,
+		);
+	}
+
+	private async applyRemovedChange(
+		removedEntries: ShallowOrFullEntry<T>[],
+		deferredCoordinateDeleteHashes: string[],
+		options?: { deferCoordinateIndexDeletes?: boolean },
+	): Promise<string[] | undefined> {
+		for (const removed of removedEntries) {
 			if (options?.deferCoordinateIndexDeletes) {
 				deferredCoordinateDeleteHashes.push(removed.hash);
 			} else {
@@ -10313,7 +10345,7 @@ export class SharedLog<
 		return range;
 	}
 
-	private async onEntryAdded(entry: Entry<any>) {
+	private onEntryAdded(entry: Entry<any>) {
 		const ih = this._pendingIHave.get(entry.hash);
 
 		if (ih) {
