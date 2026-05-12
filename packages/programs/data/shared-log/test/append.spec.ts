@@ -339,4 +339,33 @@ describe("append", () => {
 			putDeleteSpy.restore();
 		}
 	});
+
+	it("uses cached self replicator state for native prepared append planning", async () => {
+		session = await TestSession.disconnected(1, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		const countReplicationSegmentsSpy = sinon.spy(
+			store.log as any,
+			"countReplicationSegments",
+		);
+		try {
+			await store.log.appendLocallyPrepared(
+				{ op: "ADD", value: "a" },
+				{
+					replicate: false,
+					target: "none",
+				},
+			);
+
+			expect(countReplicationSegmentsSpy.callCount).equal(0);
+		} finally {
+			countReplicationSegmentsSpy.restore();
+		}
+	});
 });
