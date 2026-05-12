@@ -310,7 +310,9 @@ describe("native log graph index", () => {
 			"root-gid",
 			"side-gid",
 		]);
-		expect(index.uniqueReferenceGidRowsBatch(["head", "missing"])).to.deep.equal([
+		expect(
+			index.uniqueReferenceGidRowsBatch(["head", "missing"]),
+		).to.deep.equal([
 			[
 				["branch", "branch-gid"],
 				["same-gid-parent", "root-gid"],
@@ -615,10 +617,9 @@ describe("native EntryV0 encoding", () => {
 		expect(chain).to.have.length(3);
 		expect(index.heads()).to.deep.equal([chain![2]!.cid]);
 		expect(index.children("root")).to.deep.equal([chain![0]!.cid]);
-		expect(await blockStore.hasMany([chain![1]!.cid, "missing"])).to.deep.equal([
-			true,
-			false,
-		]);
+		expect(await blockStore.hasMany([chain![1]!.cid, "missing"])).to.deep.equal(
+			[true, false],
+		);
 		for (const prepared of chain!) {
 			expect(prepared.bytes).equal(undefined);
 			const stored = await blockStore.get(prepared.cid);
@@ -666,6 +667,47 @@ describe("native EntryV0 encoding", () => {
 		expect(await blockStore.has(prepared!.cid)).equal(true);
 		expect(await calculateRawCidV1(prepared!.bytes!)).equal(prepared!.cid);
 		expect(await blockStore.size()).to.equal(prepared!.byteLength);
+	});
+
+	it("commits facts-only prepared plain entries natively", async () => {
+		const privateKey = fromHex(
+			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+		);
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const index = await createLogGraphIndex();
+		const blockStore = await createNativeLogBlockStore();
+		index.put(entry("root", "chain-gid", [], 10n));
+
+		const prepared = await index.prepareEntryV0PlainEntryCommit(
+			{
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+				wallTime: 11n,
+				gid: "chain-gid",
+				next: ["root"],
+				metaData: new Uint8Array([9]),
+				payloadData: new Uint8Array([1]),
+				includeMaterializationBytes: false,
+				includeAppendFactsBytes: true,
+			},
+			blockStore,
+		);
+
+		expect(prepared).to.exist;
+		expect(prepared!.bytes).equal(undefined);
+		expect(prepared!.metaBytes).to.be.instanceOf(Uint8Array);
+		expect(prepared!.payloadBytes).equal(undefined);
+		expect(prepared!.signatureBytes).equal(undefined);
+		expect(prepared!.hashDigestBytes).to.be.instanceOf(Uint8Array);
+		expect(index.heads()).to.deep.equal([prepared!.cid]);
+		expect(index.children("root")).to.deep.equal([prepared!.cid]);
+		const stored = blockStore.get(prepared!.cid);
+		expect(stored?.byteLength).equal(prepared!.byteLength);
+		expect(await calculateRawCidV1(stored!)).equal(prepared!.cid);
+		expect(blockStore.size()).to.equal(prepared!.byteLength);
 	});
 
 	it("stores native log blocks by known cid", async () => {

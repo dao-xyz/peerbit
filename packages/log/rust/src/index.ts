@@ -194,6 +194,17 @@ type NativeLogIndexHandle = {
 		metaData: Uint8Array | undefined,
 		payloadData: Uint8Array,
 	) => EntryV0PreparedPlainEntryStorageRow;
+	prepare_entry_v0_plain_entry_commit_facts_and_put_with_builder?: (
+		builder: NativeEntryV0PlainBuilderHandle,
+		blockStore: NativeLogBlockStoreHandle,
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+	) => EntryV0CommittedPlainEntryFactsRow;
 	prepare_entry_v0_plain_entries_commit_blocks_and_put_with_builder: (
 		builder: NativeEntryV0PlainBuilderHandle,
 		blockStore: NativeLogBlockStoreHandle,
@@ -435,8 +446,9 @@ type NativeLogBlockStoreCarrier = {
 const nativeLogBlockStoreHandle = (
 	store: unknown,
 ): NativeLogBlockStoreHandle | undefined =>
-	(store as NativeLogBlockStoreCarrier | undefined)
-		?.getNativeLogBlockStoreHandle?.();
+	(
+		store as NativeLogBlockStoreCarrier | undefined
+	)?.getNativeLogBlockStoreHandle?.();
 
 export class LogGraphIndex {
 	private plainEntryBuilder:
@@ -509,18 +521,27 @@ export class LogGraphIndex {
 
 	oldestEntries(limit: number): NativeLogEntry[] {
 		return this.native.oldest_entries(limit).map((row) => {
-			const [hash, gid, wallTime, logical, type, next, payloadSize, head, data] =
-				row as [
-					string,
-					string,
-					string,
-					number,
-					number,
-					string[],
-					number,
-					boolean,
-					Uint8Array | undefined,
-				];
+			const [
+				hash,
+				gid,
+				wallTime,
+				logical,
+				type,
+				next,
+				payloadSize,
+				head,
+				data,
+			] = row as [
+				string,
+				string,
+				string,
+				number,
+				number,
+				string[],
+				number,
+				boolean,
+				Uint8Array | undefined,
+			];
 			return {
 				hash,
 				gid,
@@ -723,6 +744,28 @@ export class LogGraphIndex {
 			return undefined;
 		}
 		const builder = this.getPlainEntryBuilder(input);
+		const factsOnly =
+			input.includeMaterializationBytes === false &&
+			input.includeAppendFactsBytes
+				? this.native
+						.prepare_entry_v0_plain_entry_commit_facts_and_put_with_builder
+				: undefined;
+		if (factsOnly) {
+			return committedPlainEntryFactsRow(
+				factsOnly.call(
+					this.native,
+					builder,
+					nativeBlockStore,
+					BigInt(input.wallTime),
+					input.logical ?? 0,
+					input.gid,
+					input.next ?? [],
+					input.type ?? 0,
+					input.metaData,
+					input.payloadData,
+				),
+			);
+		}
 		const storageOnly =
 			input.includeMaterializationBytes === false
 				? this.native
@@ -937,11 +980,7 @@ export class LogGraphIndex {
 			if (!row) {
 				return undefined;
 			}
-			const [hash, gid, data] = row as [
-				string,
-				string,
-				Uint8Array | undefined,
-			];
+			const [hash, gid, data] = row as [string, string, Uint8Array | undefined];
 			return {
 				hash,
 				gid,
@@ -957,12 +996,14 @@ export class LogGraphIndex {
 	uniqueReferenceGidRowsBatch(
 		hashes: Iterable<string>,
 	): Array<Array<[string, string]> | undefined> {
-		return this.native.unique_reference_gid_rows_batch([...hashes]).map((rows) =>
-			rows?.map((row) => {
-				const [hash, gid] = row;
-				return [hash, gid] as [string, string];
-			}),
-		);
+		return this.native
+			.unique_reference_gid_rows_batch([...hashes])
+			.map((rows) =>
+				rows?.map((row) => {
+					const [hash, gid] = row;
+					return [hash, gid] as [string, string];
+				}),
+			);
 	}
 
 	planDeleteRecursively(hashes: Iterable<string>, skipFirst = false): string[] {
@@ -1045,7 +1086,9 @@ export class NativeLogBlockStore {
 		await Promise.all(
 			blocks.map(async (block, index) => {
 				cids[index] =
-					block instanceof Uint8Array ? await calculateRawCidV1(block) : block.cid;
+					block instanceof Uint8Array
+						? await calculateRawCidV1(block)
+						: block.cid;
 				values[index] = copyBytes(
 					block instanceof Uint8Array ? block : block.block.bytes,
 				);
@@ -1177,6 +1220,7 @@ export type EntryV0PlainEntryInput = {
 	metaData?: Uint8Array;
 	payloadData: Uint8Array;
 	includeMaterializationBytes?: boolean;
+	includeAppendFactsBytes?: boolean;
 };
 
 export type EntryV0PlainEntriesInput = {
@@ -1233,6 +1277,14 @@ type EntryV0CommittedPlainEntryRow = [
 	string[],
 	Uint8Array,
 	Uint8Array,
+	Uint8Array,
+	number,
+	Uint8Array?,
+];
+
+type EntryV0CommittedPlainEntryFactsRow = [
+	string,
+	string[],
 	Uint8Array,
 	number,
 	Uint8Array?,
@@ -1336,6 +1388,20 @@ const committedPlainEntryRow = ([
 	metaBytes,
 	payloadBytes,
 	signatureBytes,
+	hashDigestBytes,
+});
+
+const committedPlainEntryFactsRow = ([
+	cid,
+	next,
+	metaBytes,
+	byteLength,
+	hashDigestBytes,
+]: EntryV0CommittedPlainEntryFactsRow): EntryV0CommittedPlainEntry => ({
+	cid,
+	byteLength,
+	next,
+	metaBytes,
 	hashDigestBytes,
 });
 

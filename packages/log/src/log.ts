@@ -739,6 +739,7 @@ export class Log<T> {
 			resolveTrimmedEntries?: boolean;
 			payloadData?: Uint8Array;
 			includeMaterializationBytes?: boolean;
+			includeAppendFactsBytes?: boolean;
 		},
 	): Promise<{
 		entry: Entry<T>;
@@ -840,6 +841,7 @@ export class Log<T> {
 			resolveTrimmedEntries?: boolean;
 			payloadData?: Uint8Array;
 			includeMaterializationBytes?: boolean;
+			includeAppendFactsBytes?: boolean;
 		},
 	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
 		if (
@@ -876,6 +878,7 @@ export class Log<T> {
 			resolveTrimmedEntries?: boolean;
 			payloadData?: Uint8Array;
 			includeMaterializationBytes?: boolean;
+			includeAppendFactsBytes?: boolean;
 		},
 	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
 		const deferBlockStore = hasPutMany(this._storage);
@@ -886,6 +889,7 @@ export class Log<T> {
 			deferBlockStore,
 			properties?.payloadData ? [properties.payloadData] : undefined,
 			properties?.includeMaterializationBytes,
+			properties?.includeAppendFactsBytes,
 		);
 		return mapMaybePromise(nativeAppendChainResult, (nativeAppendChain) =>
 			this.finishLocallyPreparedCommitOnlyAppend(
@@ -948,7 +952,9 @@ export class Log<T> {
 			});
 			return mapMaybePromise(putFactsResult, finishTrim);
 		};
-		const finishBlocks = (): MaybePromise<PreparedCommitOnlyAppendResult<T>> => {
+		const finishBlocks = (): MaybePromise<
+			PreparedCommitOnlyAppendResult<T>
+		> => {
 			if (deferBlockStore && !nativeAppendChain.nativeBlocksCommitted) {
 				return mapMaybePromise(
 					this.putPreparedAppendBlocks(nativeAppendChain.blocks),
@@ -1268,6 +1274,7 @@ export class Log<T> {
 		deferBlockStore: boolean,
 		payloadDatas?: Uint8Array[],
 		includeMaterializationBytes?: boolean,
+		includeAppendFactsBytes?: boolean,
 	): MaybePromise<PreparedAppendCommitOnlyChain<T> | undefined> {
 		const canAppendAlreadyValidated =
 			options.__peerbitCanAppendAlreadyValidated === true;
@@ -1316,6 +1323,7 @@ export class Log<T> {
 			nativeGraph,
 			nativeBlockStore: this._storage,
 			includeMaterializationBytes,
+			includeAppendFactsBytes,
 		});
 	}
 

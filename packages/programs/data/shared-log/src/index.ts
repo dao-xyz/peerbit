@@ -2044,7 +2044,9 @@ export class SharedLog<
 		);
 	}
 
-	private async deleteCoordinatesForHashes(hashes: Iterable<string>) {
+	private deleteCoordinatesForHashes(
+		hashes: Iterable<string>,
+	): MaybePromise<void> {
 		const values = [...new Set([...hashes].filter(Boolean))];
 		if (values.length === 0) {
 			return;
@@ -2054,17 +2056,21 @@ export class SharedLog<
 			EntryReplicated<R>
 		>;
 		if (coordinateIndex.delIds) {
-			await coordinateIndex.delIds(values);
-			return;
+			return mapMaybePromise(coordinateIndex.delIds(values), () => undefined);
 		}
-		await this.entryCoordinatesIndex.del({
-			query:
-				values.length === 1
-					? { hash: values[0] }
-					: new Or(
-							values.map((hash) => new StringMatch({ key: "hash", value: hash })),
-						),
-		});
+		return mapMaybePromise(
+			this.entryCoordinatesIndex.del({
+				query:
+					values.length === 1
+						? { hash: values[0] }
+						: new Or(
+								values.map(
+									(hash) => new StringMatch({ key: "hash", value: hash }),
+								),
+							),
+			}),
+			() => undefined,
+		);
 	}
 
 	private forgetCoordinateStateForHashes(hashes: Iterable<string>) {
@@ -4661,6 +4667,8 @@ export class SharedLog<
 		const { appendOptions, minReplicasValue } =
 			this.createLogAppendOptions(options);
 		appendOptions.__peerbitCanAppendAlreadyValidated = true;
+		const deferHeadCoordinatePersistence =
+			this.shouldDeferHeadCoordinatePersistence(options);
 		const resultMaybe = this.log.appendLocallyPreparedCommitOnly(
 			undefined as T,
 			appendOptions,
@@ -4668,8 +4676,8 @@ export class SharedLog<
 				skipMissingNextJoin: properties?.skipMissingNextJoin,
 				resolveTrimmedEntries: properties?.resolveTrimmedEntries,
 				payloadData,
-				includeMaterializationBytes:
-					!this.shouldDeferHeadCoordinatePersistence(options),
+				includeMaterializationBytes: false,
+				includeAppendFactsBytes: !deferHeadCoordinatePersistence,
 			},
 		);
 		return mapMaybePromise(resultMaybe, (result) =>
@@ -8897,7 +8905,7 @@ export class SharedLog<
 			: this.createCoordinateEntryFromNativeFields(entry);
 	}
 
-	private async persistPreparedCoordinate(properties: {
+	private persistPreparedCoordinate(properties: {
 		prepared: PreparedCoordinatePersistence<R>;
 		hash: string;
 		nextHashes: string[];
@@ -8905,7 +8913,7 @@ export class SharedLog<
 		replicas: number;
 		commitNative?: boolean;
 		deleteHashes?: string[];
-	}) {
+	}): MaybePromise<boolean> {
 		const { assignedToRangeBoundary, fields } = properties.prepared;
 		const deleteHashes =
 			properties.deleteHashes && properties.deleteHashes.length > 0
@@ -8915,8 +8923,9 @@ export class SharedLog<
 			EntryReplicated<R>
 		>;
 		let deleteNextOptions: DeleteOptions | undefined;
+		let putResult: MaybePromise<unknown>;
 		if (coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIds) {
-			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIds(
+			putResult = coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIds(
 				fields,
 				deleteHashes,
 				toId(fields.hash),
@@ -8925,7 +8934,7 @@ export class SharedLog<
 			const coordinateEntry = this.materializePreparedCoordinateEntry(
 				properties.prepared,
 			);
-			await coordinateIndex.putSharedLogCoordinateAndDeleteIds(
+			putResult = coordinateIndex.putSharedLogCoordinateAndDeleteIds(
 				coordinateEntry,
 				fields,
 				deleteHashes,
@@ -8935,7 +8944,7 @@ export class SharedLog<
 			const coordinateEntry = this.materializePreparedCoordinateEntry(
 				properties.prepared,
 			);
-			await coordinateIndex.putAndDeleteIds(coordinateEntry, deleteHashes);
+			putResult = coordinateIndex.putAndDeleteIds(coordinateEntry, deleteHashes);
 		} else {
 			const coordinateEntry = this.materializePreparedCoordinateEntry(
 				properties.prepared,
@@ -8953,42 +8962,50 @@ export class SharedLog<
 								),
 							};
 			if (deleteNextOptions && coordinateIndex.putAndDelete) {
-				await coordinateIndex.putAndDelete(coordinateEntry, deleteNextOptions);
+				putResult = coordinateIndex.putAndDelete(
+					coordinateEntry,
+					deleteNextOptions,
+				);
 			} else {
-				await this.entryCoordinatesIndex.put(coordinateEntry);
-			}
-		}
-		if (properties.commitNative !== false) {
-			this._nativeSharedLogState?.commitEntryCoordinates(
-				properties.hash,
-				fields.gid,
-				properties.coordinates,
-				properties.nextHashes,
-				assignedToRangeBoundary,
-				properties.replicas,
-				fields.hashNumber,
-			);
-		}
-		if (this._residentEntryCoordinatesByHash) {
-			this._residentEntryCoordinatesByHash.set(
-				properties.hash,
-				properties.prepared.coordinateEntry ?? fields,
-			);
-			for (const nextHash of properties.nextHashes) {
-				this._residentEntryCoordinatesByHash.delete(nextHash);
+				putResult = this.entryCoordinatesIndex.put(coordinateEntry);
 			}
 		}
 
-		for (const coordinate of properties.coordinates) {
-			this.coordinateToHash.add(coordinate, properties.hash);
-		}
+		const finish = (): MaybePromise<boolean> => {
+			if (properties.commitNative !== false) {
+				this._nativeSharedLogState?.commitEntryCoordinates(
+					properties.hash,
+					fields.gid,
+					properties.coordinates,
+					properties.nextHashes,
+					assignedToRangeBoundary,
+					properties.replicas,
+					fields.hashNumber,
+				);
+			}
+			if (this._residentEntryCoordinatesByHash) {
+				this._residentEntryCoordinatesByHash.set(
+					properties.hash,
+					properties.prepared.coordinateEntry ?? fields,
+				);
+				for (const nextHash of properties.nextHashes) {
+					this._residentEntryCoordinatesByHash.delete(nextHash);
+				}
+			}
 
-		if (deleteNextOptions && !coordinateIndex.putAndDelete) {
-			await this.entryCoordinatesIndex.del(
-				deleteNextOptions,
-			);
-		}
-		return true;
+			for (const coordinate of properties.coordinates) {
+				this.coordinateToHash.add(coordinate, properties.hash);
+			}
+
+			if (deleteNextOptions && !coordinateIndex.putAndDelete) {
+				return mapMaybePromise(
+					this.entryCoordinatesIndex.del(deleteNextOptions),
+					() => true,
+				);
+			}
+			return true;
+		};
+		return mapMaybePromise(putResult, finish);
 	}
 
 	private async persistCoordinate(properties: {

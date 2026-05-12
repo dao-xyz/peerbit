@@ -69,6 +69,7 @@ type NativePlainEntryInput = {
 	metaData?: Uint8Array;
 	payloadData: Uint8Array;
 	includeMaterializationBytes?: boolean;
+	includeAppendFactsBytes?: boolean;
 };
 
 type NativePlainEntriesInput = {
@@ -115,6 +116,7 @@ type PlainAppendChainCommitOnlyProperties<T> = {
 	nativeGraph?: NativeEntryV0Graph;
 	nativeBlockStore?: unknown;
 	includeMaterializationBytes?: boolean;
+	includeAppendFactsBytes?: boolean;
 };
 
 type NativeEntryV0Graph = {
@@ -192,6 +194,16 @@ let nativeEntryV0Encoder: NativeEntryV0Encoder | undefined;
 
 const isPromiseLike = <T>(value: MaybePromise<T>): value is Promise<T> =>
 	!!value && typeof (value as Promise<T>).then === "function";
+
+const getSynchronousBlockBytes = (
+	store: unknown,
+	cid: string,
+): Uint8Array | undefined => {
+	const value = (
+		store as { get?: (cid: string) => unknown } | undefined
+	)?.get?.(cid);
+	return value instanceof Uint8Array ? value : undefined;
+};
 
 const nativeEntryV0EncoderFromModule = (mod: {
 	encodeEntryV0Signable?: NativeEntryV0Encoder["encodeEntryV0Signable"];
@@ -990,6 +1002,7 @@ export class EntryV0<T>
 			metaData: properties.meta?.data,
 			payloadData,
 			includeMaterializationBytes: properties.includeMaterializationBytes,
+			includeAppendFactsBytes: properties.includeAppendFactsBytes,
 		};
 		let nativeBlocksCommitted = false;
 		let nativeGraphUpdated = false;
@@ -1000,13 +1013,6 @@ export class EntryV0<T>
 				return undefined;
 			}
 
-			const meta = new Meta({
-				clock,
-				gid: gid!,
-				type: entryType,
-				data: properties.meta?.data,
-				next: preparedEntry.next,
-			});
 			const payloadSize = payloadData.byteLength;
 			const shallowEntry = new ShallowEntry({
 				hash: preparedEntry.cid,
@@ -1052,10 +1058,16 @@ export class EntryV0<T>
 					!preparedEntry.signature ||
 					!preparedEntry.signatureBytes
 				) {
-					if (!preparedEntry.bytes) {
+					const bytes =
+						preparedEntry.bytes ??
+						getSynchronousBlockBytes(
+							properties.nativeBlockStore,
+							preparedEntry.cid,
+						);
+					if (!bytes) {
 						throw new Error("Missing prepared entry bytes");
 					}
-					const entry = deserialize(preparedEntry.bytes, Entry) as EntryV0<T>;
+					const entry = deserialize(bytes, Entry) as EntryV0<T>;
 					entry.hash = preparedEntry.cid;
 					entry.size = preparedEntry.byteLength;
 					entry.createdLocally = true;
@@ -1069,6 +1081,13 @@ export class EntryV0<T>
 					signature: preparedEntry.signature,
 					publicKey: properties.identity.publicKey,
 					prehash: 0,
+				});
+				const meta = new Meta({
+					clock,
+					gid: gid!,
+					type: entryType,
+					data: properties.meta?.data,
+					next: preparedEntry.next,
 				});
 				const entry = new EntryV0<T>({
 					meta: new DecryptedThing({
@@ -1118,7 +1137,12 @@ export class EntryV0<T>
 			| Promise<PreparedAppendCommitOnlyChain<T> | undefined> => {
 			const nativePrepareAndPut = nativeGraph.prepareEntryV0PlainEntryAndPut;
 			const preparedEntryValue = nativePrepareAndPut
-				? nativePrepareAndPut.call(nativeGraph, singleInput)
+				? nativePrepareAndPut.call(nativeGraph, {
+						...singleInput,
+						includeMaterializationBytes: properties.includeAppendFactsBytes
+							? true
+							: singleInput.includeMaterializationBytes,
+					})
 				: undefined;
 			if (isPromiseLike(preparedEntryValue)) {
 				return preparedEntryValue.then((preparedEntry) => {

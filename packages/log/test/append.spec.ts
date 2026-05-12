@@ -616,6 +616,47 @@ describe("append", function () {
 		}
 	});
 
+	it("uses facts-only native block-store commits before entry materialization", async () => {
+		const { createNativeLogBlockStore } = await import("@peerbit/log-rust");
+		const nativeStore = await createNativeLogBlockStore();
+		await nativeStore.start();
+		const log = new Log<Uint8Array>();
+		await log.open(nativeStore, signKey, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+
+		const initSpy = sinon.spy(EntryV0.prototype, "init");
+
+		try {
+			const result = await (log as any).appendLocallyPreparedCommitOnly(
+				new Uint8Array([1]),
+				{ meta: { data: new Uint8Array([9]), next: [] } },
+				{
+					skipMissingNextJoin: true,
+					includeMaterializationBytes: false,
+					includeAppendFactsBytes: true,
+				},
+			);
+
+			expect(result).to.exist;
+			expect(result.appendFacts.metaBytes).to.be.instanceOf(Uint8Array);
+			expect(result.appendFacts.hashDigestBytes).to.be.instanceOf(Uint8Array);
+			expect(initSpy.callCount).equal(0);
+			expect(await nativeStore.has(result.appendFacts.hash)).equal(true);
+
+			const entry = result.entry;
+			expect(initSpy.callCount).greaterThan(0);
+			expect(entry.hash).equal(result.appendFacts.hash);
+			expect(await entry.getPayloadValue()).to.deep.equal(new Uint8Array([1]));
+		} finally {
+			initSpy.restore();
+			await log.close();
+			await nativeStore.stop();
+		}
+	});
+
 	it("rolls back native graph when prepared appendMany block write fails", async () => {
 		const log = new Log<Uint8Array>();
 		await log.open(store, signKey, {
