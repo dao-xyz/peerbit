@@ -14,8 +14,9 @@ import { Documents, type SetupOptions } from "../src/program.js";
 // - DOC_WARMUP=100
 // - DOC_ITERATIONS=1000
 // - DOC_BYTES=1200
-// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-transient-index
+// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index
 //   Add "-nonunique" to any scenario name to use default update-safe put semantics.
+//   Add "-local" to a rust-peerbit scenario to disable replication and default trim.
 //   Add "-putmany" to any unique scenario name to use one putMany call per measured batch.
 // - DOC_PROFILE_DEEP=1 reports lower shared-log/log phase timings.
 // - BENCH_JSON=1
@@ -42,9 +43,11 @@ const scenarioNames = (
 	.filter(Boolean);
 
 const scenarioBaseName = (name: string) =>
-	name.replace(/-putmany$/, "").replace(/-nonunique$/, "");
+	name.replace(/(?:-(?:putmany|nonunique|local))*$/, "");
 const scenarioUsesUniquePuts = (name: string) => !name.includes("-nonunique");
 const scenarioUsesPutMany = (name: string) => name.endsWith("-putmany");
+const scenarioUsesLocalStore = (name: string) =>
+	scenarioBaseName(name).startsWith("rust-peerbit") && name.includes("-local");
 const profileDeep = process.env.DOC_PROFILE_DEEP === "1";
 
 @variant("document")
@@ -257,16 +260,18 @@ const openScenario = async (name: string) => {
 	const client: ProgramClient = session.peers[0];
 	await client.open(store, {
 		args: {
-			replicate: {
-				factor: 1,
-			},
+			replicate: scenarioUsesLocalStore(name) ? false : { factor: 1 },
 			nativeGraph:
 				baseName === "native-graph" ||
 				baseName === "rust-peerbit" ||
 				baseName === "rust-peerbit-transient-index",
-			log: {
-				trim: { type: "length" as const, to: 100 },
-			},
+			...(scenarioUsesLocalStore(name)
+				? {}
+				: {
+						log: {
+							trim: { type: "length" as const, to: 100 },
+						},
+					}),
 		},
 	});
 	return { session, store };
