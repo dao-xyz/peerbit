@@ -114,6 +114,11 @@ type MaybePromise<T> = T | Promise<T>;
 
 const isPromiseLike = <T>(value: MaybePromise<T>): value is Promise<T> =>
 	!!value && typeof (value as Promise<T>).then === "function";
+
+const mapMaybePromise = <T, R>(
+	value: MaybePromise<T>,
+	fn: (value: T) => MaybePromise<R>,
+): MaybePromise<R> => (isPromiseLike(value) ? value.then(fn) : fn(value));
 import {
 	EXCHANGE_HEADS_REPAIR_HINT,
 	EntryWithRefs,
@@ -330,6 +335,12 @@ type PreparedLocalAppendCommit<R extends "u32" | "u64"> = {
 	metaBytes?: Uint8Array;
 	hashNumber?: NumberFromType<R>;
 	coordinateFields?: SharedLogCoordinateNativeFields<R>;
+};
+
+type PreparedPayloadCommitOnlyResult<T, R extends "u32" | "u64"> = {
+	entry: Entry<T>;
+	removed: ShallowOrFullEntry<T>[];
+	appendCommit: PreparedLocalAppendCommit<R>;
 };
 
 type NativeAppendEntryPlan<R extends "u32" | "u64"> = {
@@ -4571,21 +4582,14 @@ export class SharedLog<
 	}
 
 	/** Trusted local payload append path that keeps the public Entry lazy. */
-	async appendLocallyPreparedPayloadCommitOnly(
+	appendLocallyPreparedPayloadCommitOnly(
 		payloadData: Uint8Array,
 		options?: SharedAppendOptions<T> | undefined,
 		properties?: {
 			skipMissingNextJoin?: boolean;
 			resolveTrimmedEntries?: boolean;
 		},
-	): Promise<
-		| {
-				entry: Entry<T>;
-				removed: ShallowOrFullEntry<T>[];
-				appendCommit: PreparedLocalAppendCommit<R>;
-		  }
-		| undefined
-	> {
+	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
 		if (options?.canAppend || options?.onChange) {
 			throw new Error(
 				"appendLocallyPreparedPayloadCommitOnly does not accept canAppend or onChange hooks",
@@ -4606,7 +4610,7 @@ export class SharedLog<
 		const { appendOptions, minReplicasValue } =
 			this.createLogAppendOptions(options);
 		appendOptions.__peerbitCanAppendAlreadyValidated = true;
-		const result = await this.log.appendLocallyPreparedCommitOnly(
+		const resultMaybe = this.log.appendLocallyPreparedCommitOnly(
 			undefined as T,
 			appendOptions,
 			{
@@ -4617,6 +4621,27 @@ export class SharedLog<
 					!this.shouldDeferHeadCoordinatePersistence(options),
 			},
 		);
+		return mapMaybePromise(resultMaybe, (result) =>
+			this.finishPreparedPayloadCommitOnlyAppend(
+				result,
+				options,
+				minReplicasValue,
+			),
+		);
+	}
+
+	private finishPreparedPayloadCommitOnlyAppend(
+		result:
+			| {
+					entry: Entry<T>;
+					materializeEntry: () => Entry<T>;
+					removed: ShallowOrFullEntry<T>[];
+					appendFacts: PreparedAppendFacts;
+			  }
+			| undefined,
+		options: SharedAppendOptions<T> | undefined,
+		minReplicasValue: number,
+	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
 		if (!result) {
 			return undefined;
 		}
@@ -4639,7 +4664,18 @@ export class SharedLog<
 						]
 					: result.appendFacts.next;
 			if (deleteHashes.length > 0) {
-				await this.deleteCoordinatesForHashes(deleteHashes);
+				return mapMaybePromise(
+					this.deleteCoordinatesForHashes(deleteHashes),
+					() => ({
+						get entry() {
+							return result.entry;
+						},
+						removed: result.removed,
+						appendCommit: this.createPreparedLocalAppendCommitFromFacts(
+							result.appendFacts,
+						),
+					}),
+				);
 			}
 			return {
 				get entry() {
@@ -4652,6 +4688,23 @@ export class SharedLog<
 			};
 		}
 
+		return this.finishPreparedPayloadCommitOnlyAppendAsync(
+			result,
+			options,
+			minReplicasValue,
+		);
+	}
+
+	private async finishPreparedPayloadCommitOnlyAppendAsync(
+		result: {
+			entry: Entry<T>;
+			materializeEntry: () => Entry<T>;
+			removed: ShallowOrFullEntry<T>[];
+			appendFacts: PreparedAppendFacts;
+		},
+		options: SharedAppendOptions<T> | undefined,
+		minReplicasValue: number,
+	): Promise<PreparedPayloadCommitOnlyResult<T, R>> {
 		const nativePreparedCommit =
 			await this.processNativePreparedTargetNoneAppend(result, options, {
 				minReplicasValue,

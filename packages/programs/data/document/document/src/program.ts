@@ -80,6 +80,14 @@ export class OperationError extends Error {
 
 type MaybePromise<T> = Promise<T> | T;
 
+const isPromiseLike = <T>(value: MaybePromise<T>): value is Promise<T> =>
+	!!value && typeof (value as Promise<T>).then === "function";
+
+const mapMaybePromise = <T, R>(
+	value: MaybePromise<T>,
+	fn: (value: T) => MaybePromise<R>,
+): MaybePromise<R> => (isPromiseLike(value) ? value.then(fn) : fn(value));
+
 export type CountEstimate = {
 	estimate: number;
 	/**
@@ -1070,9 +1078,9 @@ export class Documents<
 		};
 	}
 
-	private async commitNativeDocumentAppend(
+	private commitNativeDocumentAppend(
 		input: NativeDocumentAppendCommitInput<T, I>,
-	): Promise<DocumentAppendCommitFacts<T, I>> {
+	): MaybePromise<DocumentAppendCommitFacts<T, I>> {
 		const appendOptions = {
 			...input.options,
 			meta: {
@@ -1086,42 +1094,64 @@ export class Documents<
 			resolveTrimmedEntries: input.resolveTrimmedEntries,
 			payloadData: input.operationPayloadBytes,
 		};
-		let appended: Awaited<ReturnType<typeof this.log.appendLocallyPrepared>>;
 		if (input.operation) {
-			appended = await this.log.appendLocallyPrepared(
-				input.operation,
+			return mapMaybePromise(
+				this.log.appendLocallyPrepared(
+					input.operation,
+					appendOptions,
+					appendProperties,
+				),
+				(appended) => this.createDocumentAppendCommitFacts(input, appended),
+			);
+		}
+		return mapMaybePromise(
+			this.log.appendLocallyPreparedPayloadCommitOnly(
+				input.operationPayloadBytes,
 				appendOptions,
 				appendProperties,
-			);
-		} else {
-			const commitOnly = await this.log.appendLocallyPreparedPayloadCommitOnly(
+			),
+			(commitOnly) => {
+				if (commitOnly) {
+					return this.createDocumentAppendCommitFacts(input, commitOnly);
+				}
+				return this.commitNativeDocumentAppendPayloadFallback(
+					input,
+					appendOptions,
+					appendProperties,
+				);
+			},
+		);
+	}
+
+	private async commitNativeDocumentAppendPayloadFallback(
+		input: NativeDocumentAppendCommitInput<T, I>,
+		appendOptions: SharedAppendOptions<Operation>,
+		appendProperties: {
+			skipMissingNextJoin: boolean;
+			resolveTrimmedEntries: boolean;
+			payloadData: Uint8Array;
+		},
+	): Promise<DocumentAppendCommitFacts<T, I>> {
+		let appended: Awaited<ReturnType<typeof this.log.appendLocallyPrepared>>;
+		try {
+			appended = await this.log.appendLocallyPreparedPayload(
 				input.operationPayloadBytes,
 				appendOptions,
 				appendProperties,
 			);
-			if (commitOnly) {
-				return this.createDocumentAppendCommitFacts(input, commitOnly);
+		} catch (error) {
+			if (
+				!(error instanceof Error) ||
+				error.message !==
+					"appendLocallyPrepared payload-only path requires native append support"
+			) {
+				throw error;
 			}
-			try {
-				appended = await this.log.appendLocallyPreparedPayload(
-					input.operationPayloadBytes,
-					appendOptions,
-					appendProperties,
-				);
-			} catch (error) {
-				if (
-					!(error instanceof Error) ||
-					error.message !==
-						"appendLocallyPrepared payload-only path requires native append support"
-				) {
-					throw error;
-				}
-				appended = await this.log.appendLocallyPrepared(
-					new PutOperation({ data: input.documentBytes }),
-					appendOptions,
-					appendProperties,
-				);
-			}
+			appended = await this.log.appendLocallyPrepared(
+				new PutOperation({ data: input.documentBytes }),
+				appendOptions,
+				appendProperties,
+			);
 		}
 		return this.createDocumentAppendCommitFacts(input, appended);
 	}
@@ -1157,14 +1187,14 @@ export class Documents<
 		};
 	}
 
-	private async createDocumentAppendCommitFacts(
+	private createDocumentAppendCommitFacts(
 		input: NativeDocumentAppendCommitFactsInput<T, I>,
 		appended: {
 			entry: Entry<Operation>;
 			removed: ShallowOrFullEntry<Operation>[];
 			appendCommit: LocalAppendCommitFacts;
 		},
-	): Promise<DocumentAppendCommitFacts<T, I>> {
+	): MaybePromise<DocumentAppendCommitFacts<T, I>> {
 		const append = appended.appendCommit;
 		const existing =
 			input.unique || input.existing === null ? null : input.existing;
@@ -1175,13 +1205,20 @@ export class Documents<
 			gid: append.gid,
 			size: append.payloadSize,
 		};
-		const contextPlan =
-			tryPlanDocumentContext(contextInput) ??
-			(await planDocumentContext(contextInput));
-		return this.createDocumentAppendCommitFactsWithContext(
-			input,
-			appended,
-			contextPlan,
+		const contextPlan = tryPlanDocumentContext(contextInput);
+		if (contextPlan) {
+			return this.createDocumentAppendCommitFactsWithContext(
+				input,
+				appended,
+				contextPlan,
+			);
+		}
+		return planDocumentContext(contextInput).then((plannedContext) =>
+			this.createDocumentAppendCommitFactsWithContext(
+				input,
+				appended,
+				plannedContext,
+			),
 		);
 	}
 

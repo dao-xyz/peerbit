@@ -498,11 +498,13 @@ describe("append", function () {
 		);
 
 		try {
-			const result = await (log as any).appendLocallyPreparedCommitOnly(
+			const resultMaybe = (log as any).appendLocallyPreparedCommitOnly(
 				new Uint8Array([1]),
 				{ meta: { next: [] } },
 				{ skipMissingNextJoin: true, includeMaterializationBytes: false },
 			);
+			expect((resultMaybe as { then?: unknown }).then).equal(undefined);
+			const result = await resultMaybe;
 
 			expect(result).to.exist;
 			expect(result.appendFacts.metaBytes).equal(undefined);

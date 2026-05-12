@@ -76,8 +76,21 @@ const hasPutKnownMany = (storage: Blocks): storage is BlocksWithPutKnownMany =>
 
 type MaybePromise<T> = T | Promise<T>;
 
+type PreparedCommitOnlyAppendResult<T> = {
+	entry: Entry<T>;
+	materializeEntry: () => Entry<T>;
+	removed: ShallowOrFullEntry<T>[];
+	appendFacts: PreparedAppendFacts;
+	shallowEntry: ShallowEntry;
+};
+
 const isPromiseLike = <T>(value: Promise<T> | T): value is Promise<T> =>
 	typeof (value as { then?: unknown })?.then === "function";
+
+const mapMaybePromise = <T, R>(
+	value: MaybePromise<T>,
+	fn: (value: T) => MaybePromise<R>,
+): MaybePromise<R> => (isPromiseLike(value) ? value.then(fn) : fn(value));
 
 const getErrorName = (error: unknown) =>
 	typeof (error as { name?: unknown })?.name === "string"
@@ -819,7 +832,7 @@ export class Log<T> {
 	 * Internal trusted local append path for callers that can consume compact
 	 * append facts before a public Entry object is needed.
 	 */
-	async appendLocallyPreparedCommitOnly(
+	appendLocallyPreparedCommitOnly(
 		data: T,
 		options: AppendOptions<T> = {},
 		properties?: {
@@ -828,16 +841,7 @@ export class Log<T> {
 			payloadData?: Uint8Array;
 			includeMaterializationBytes?: boolean;
 		},
-	): Promise<
-		| {
-				entry: Entry<T>;
-				materializeEntry: () => Entry<T>;
-				removed: ShallowOrFullEntry<T>[];
-				appendFacts: PreparedAppendFacts;
-				shallowEntry: ShallowEntry;
-		  }
-		| undefined
-	> {
+	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
 		if (
 			options.canAppend ||
 			options.onChange ||
@@ -853,7 +857,27 @@ export class Log<T> {
 			__peerbitCanAppendAlreadyValidated: true,
 		};
 		const nextsResult = this.getNextsForAppend(appendOptions);
-		const nexts = isPromiseLike(nextsResult) ? await nextsResult : nextsResult;
+		return mapMaybePromise(nextsResult, (nexts) =>
+			this.appendLocallyPreparedCommitOnlyWithNexts(
+				data,
+				appendOptions,
+				nexts,
+				properties,
+			),
+		);
+	}
+
+	private appendLocallyPreparedCommitOnlyWithNexts(
+		data: T,
+		appendOptions: AppendOptions<T>,
+		nexts: Sorting.SortableEntry[],
+		properties?: {
+			skipMissingNextJoin?: boolean;
+			resolveTrimmedEntries?: boolean;
+			payloadData?: Uint8Array;
+			includeMaterializationBytes?: boolean;
+		},
+	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
 		const deferBlockStore = hasPutMany(this._storage);
 		const nativeAppendChainResult = this.createNativePlainAppendCommitOnly(
 			[data],
@@ -863,9 +887,27 @@ export class Log<T> {
 			properties?.payloadData ? [properties.payloadData] : undefined,
 			properties?.includeMaterializationBytes,
 		);
-		const nativeAppendChain = isPromiseLike(nativeAppendChainResult)
-			? await nativeAppendChainResult
-			: nativeAppendChainResult;
+		return mapMaybePromise(nativeAppendChainResult, (nativeAppendChain) =>
+			this.finishLocallyPreparedCommitOnlyAppend(
+				nativeAppendChain,
+				appendOptions,
+				nexts,
+				deferBlockStore,
+				properties,
+			),
+		);
+	}
+
+	private finishLocallyPreparedCommitOnlyAppend(
+		nativeAppendChain: PreparedAppendCommitOnlyChain<T> | undefined,
+		appendOptions: AppendOptions<T>,
+		nexts: Sorting.SortableEntry[],
+		deferBlockStore: boolean,
+		properties?: {
+			skipMissingNextJoin?: boolean;
+			resolveTrimmedEntries?: boolean;
+		},
+	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
 		if (!nativeAppendChain) {
 			return undefined;
 		}
@@ -879,18 +921,24 @@ export class Log<T> {
 			materializedEntry = entry;
 			return entry;
 		};
-		try {
-			if (!properties?.skipMissingNextJoin && nexts.length > 0) {
-				await this.joinMissingNexts(materializeEntry(), nexts);
-			}
-			if (deferBlockStore && !nativeAppendChain.nativeBlocksCommitted) {
-				const putBlocksResult = this.putPreparedAppendBlocks(
-					nativeAppendChain.blocks,
-				);
-				if (isPromiseLike(putBlocksResult)) {
-					await putBlocksResult;
-				}
-			}
+		const finishTrim = (): MaybePromise<PreparedCommitOnlyAppendResult<T>> => {
+			const trimmedResult = this.trimIfConfigured(appendOptions.trim, {
+				resolveDeletedEntries: properties?.resolveTrimmedEntries,
+			});
+			return mapMaybePromise(trimmedResult, (trimmed) => {
+				const removed = trimmed ?? [];
+				return {
+					get entry() {
+						return materializeEntry();
+					},
+					materializeEntry,
+					removed,
+					appendFacts,
+					shallowEntry,
+				};
+			});
+		};
+		const finishFacts = (): MaybePromise<PreparedCommitOnlyAppendResult<T>> => {
 			const putFactsResult = this.entryIndex.putNativeCommittedAppendFacts({
 				hash: appendFacts.hash,
 				unique: true,
@@ -898,36 +946,44 @@ export class Log<T> {
 				shallowEntry,
 				isHead: true,
 			});
-			if (isPromiseLike(putFactsResult)) {
-				await putFactsResult;
+			return mapMaybePromise(putFactsResult, finishTrim);
+		};
+		const finishBlocks = (): MaybePromise<PreparedCommitOnlyAppendResult<T>> => {
+			if (deferBlockStore && !nativeAppendChain.nativeBlocksCommitted) {
+				return mapMaybePromise(
+					this.putPreparedAppendBlocks(nativeAppendChain.blocks),
+					finishFacts,
+				);
 			}
-		} catch (error) {
+			return finishFacts();
+		};
+		const rollback = (error: unknown): never | Promise<never> => {
 			if (nativeAppendChain.nativeGraphUpdated) {
 				this.rollbackNativeAppendGraphHashes([appendFacts.hash]);
 			}
 			if (nativeAppendChain.nativeBlocksCommitted) {
-				await this.rollbackNativeAppendBlocksHashes([appendFacts.hash]);
+				return this.rollbackNativeAppendBlocksHashes([appendFacts.hash]).then(
+					() => {
+						throw error;
+					},
+				);
 			}
 			throw error;
-		}
-
-		const trimmedResult = this.trimIfConfigured(appendOptions.trim, {
-			resolveDeletedEntries: properties?.resolveTrimmedEntries,
-		});
-		const trimmed = isPromiseLike(trimmedResult)
-			? await trimmedResult
-			: trimmedResult;
-		const removed = trimmed ?? [];
-		const result = {
-			get entry() {
-				return materializeEntry();
-			},
-			materializeEntry,
-			removed,
-			appendFacts,
-			shallowEntry,
 		};
-		return result;
+		try {
+			let result: MaybePromise<PreparedCommitOnlyAppendResult<T>>;
+			if (!properties?.skipMissingNextJoin && nexts.length > 0) {
+				result = mapMaybePromise(
+					this.joinMissingNexts(materializeEntry(), nexts),
+					finishBlocks,
+				);
+			} else {
+				result = finishBlocks();
+			}
+			return isPromiseLike(result) ? result.catch(rollback) : result;
+		} catch (error) {
+			return rollback(error);
+		}
 	}
 
 	async appendLocallyPreparedManyIndependent(
