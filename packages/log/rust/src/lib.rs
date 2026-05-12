@@ -1106,6 +1106,36 @@ impl NativeLogIndex {
         Ok(row)
     }
 
+    pub fn prepare_entry_v0_plain_entry_storage_commit_block_and_put_with_builder(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+    ) -> Result<Array, JsValue> {
+        let (row, entry, initial_nexts, block) =
+            prepare_entry_v0_plain_entry_storage_row_with_signer(
+                &builder.clock_id,
+                &builder.public_key,
+                &builder.signing_key,
+                wall_time,
+                logical,
+                gid,
+                next,
+                entry_type,
+                meta_data,
+                payload_data,
+            )?;
+        block_store.put_entries(vec![block]);
+        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        Ok(row)
+    }
+
     pub fn prepare_entry_v0_plain_entries_commit_blocks_and_put_with_builder(
         &mut self,
         builder: &NativeEntryV0PlainBuilder,

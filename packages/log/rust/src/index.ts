@@ -183,6 +183,17 @@ type NativeLogIndexHandle = {
 		metaData: Uint8Array | undefined,
 		payloadData: Uint8Array,
 	) => EntryV0CommittedPlainEntryRow;
+	prepare_entry_v0_plain_entry_storage_commit_block_and_put_with_builder?: (
+		builder: NativeEntryV0PlainBuilderHandle,
+		blockStore: NativeLogBlockStoreHandle,
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+	) => EntryV0PreparedPlainEntryStorageRow;
 	prepare_entry_v0_plain_entries_commit_blocks_and_put_with_builder: (
 		builder: NativeEntryV0PlainBuilderHandle,
 		blockStore: NativeLogBlockStoreHandle,
@@ -712,6 +723,27 @@ export class LogGraphIndex {
 			return undefined;
 		}
 		const builder = this.getPlainEntryBuilder(input);
+		const storageOnly =
+			input.includeMaterializationBytes === false
+				? this.native
+						.prepare_entry_v0_plain_entry_storage_commit_block_and_put_with_builder
+				: undefined;
+		if (storageOnly) {
+			return preparedPlainEntryStorageRow(
+				storageOnly.call(
+					this.native,
+					builder,
+					nativeBlockStore,
+					BigInt(input.wallTime),
+					input.logical ?? 0,
+					input.gid,
+					input.next ?? [],
+					input.type ?? 0,
+					input.metaData,
+					input.payloadData,
+				),
+			);
+		}
 		return committedPlainEntryRow(
 			this.native.prepare_entry_v0_plain_entry_commit_block_and_put_with_builder(
 				builder,
@@ -1165,7 +1197,7 @@ export type EntryV0CommittedPlainEntry = Omit<
 	EntryV0PreparedPlainEntry,
 	"bytes"
 > & {
-	bytes?: undefined;
+	bytes?: Uint8Array;
 };
 
 type EntryV0PreparedPlainEntryRow = [

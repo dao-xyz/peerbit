@@ -262,6 +262,45 @@ rows.push(
 	),
 );
 
+rows.push(
+	await measureAppend(
+		"commit-only append loop known block",
+		true,
+		async (log) => {
+			for (let i = 0; i < appendEntries; i++) {
+				const result = await (log as any).appendLocallyPreparedCommitOnly(
+					new Uint8Array([i & 0xff]),
+					{},
+					{ skipMissingNextJoin: true, includeMaterializationBytes: false },
+				);
+				if (!result) {
+					throw new Error("Expected native commit-only append path");
+				}
+			}
+		},
+	),
+);
+
+rows.push(
+	await measureAppend(
+		"commit-only append loop native block commit",
+		true,
+		async (log) => {
+			for (let i = 0; i < appendEntries; i++) {
+				const result = await (log as any).appendLocallyPreparedCommitOnly(
+					new Uint8Array([i & 0xff]),
+					{},
+					{ skipMissingNextJoin: true, includeMaterializationBytes: false },
+				);
+				if (!result) {
+					throw new Error("Expected native commit-only append path");
+				}
+			}
+		},
+		createNativeLogBlockStore,
+	),
+);
+
 for (const nativeGraph of [false, true]) {
 	rows.push(
 		await measureAppend("appendMany auto-next", nativeGraph, async (log) => {

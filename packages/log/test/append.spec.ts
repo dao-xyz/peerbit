@@ -516,6 +516,82 @@ describe("append", function () {
 		}
 	});
 
+	it("uses storage-only native block-store commits for commit-only prepared append", async () => {
+		const { createNativeLogBlockStore } = await import("@peerbit/log-rust");
+		const nativeStore = await createNativeLogBlockStore();
+		await nativeStore.start();
+		const log = new Log<Uint8Array>();
+		await log.open(nativeStore, signKey, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+
+		const commitOnlySpy = sinon.spy(
+			log.entryIndex as any,
+			"putNativeCommittedAppendFacts",
+		);
+		const fullEntryAppendSpy = sinon.spy(
+			log.entryIndex as any,
+			"putNativeCommittedAppend",
+		);
+		const appendBatchSpy = sinon.spy(log.entryIndex, "putAppendBatch");
+		const blockPutSpy = sinon.spy(nativeStore, "put");
+		const blockPutManySpy = sinon.spy(nativeStore, "putMany");
+		const blockPutKnownManySpy = sinon.spy(nativeStore, "putKnownMany");
+		const initSpy = sinon.spy(EntryV0.prototype, "init");
+		const nativeCommitSpy = sinon.spy(
+			log.entryIndex.properties.nativeGraph!.graph,
+			"prepareEntryV0PlainEntryCommit",
+		);
+		const nativePrepareAndPutSpy = sinon.spy(
+			log.entryIndex.properties.nativeGraph!.graph,
+			"prepareEntryV0PlainEntryAndPut",
+		);
+
+		try {
+			const result = await (log as any).appendLocallyPreparedCommitOnly(
+				new Uint8Array([1]),
+				{ meta: { next: [] } },
+				{ skipMissingNextJoin: true, includeMaterializationBytes: false },
+			);
+
+			expect(result).to.exist;
+			expect(result.appendFacts.metaBytes).equal(undefined);
+			expect(result.appendFacts.hashDigestBytes).equal(undefined);
+			expect(nativeCommitSpy.callCount).equal(1);
+			expect(nativePrepareAndPutSpy.callCount).equal(0);
+			expect(blockPutSpy.callCount).equal(0);
+			expect(blockPutManySpy.callCount).equal(0);
+			expect(blockPutKnownManySpy.callCount).equal(0);
+			expect(commitOnlySpy.callCount).equal(1);
+			expect(fullEntryAppendSpy.callCount).equal(0);
+			expect(appendBatchSpy.callCount).equal(0);
+			expect(initSpy.callCount).equal(0);
+			expect(await nativeStore.has(result.appendFacts.hash)).equal(true);
+			expect((await log.getHeads().all()).map((head) => head.hash)).to.deep.equal([
+				result.appendFacts.hash,
+			]);
+
+			const entry = result.entry;
+			expect(initSpy.callCount).greaterThan(0);
+			expect(entry.hash).equal(result.appendFacts.hash);
+			expect(await entry.getPayloadValue()).to.deep.equal(new Uint8Array([1]));
+		} finally {
+			nativePrepareAndPutSpy.restore();
+			nativeCommitSpy.restore();
+			initSpy.restore();
+			blockPutKnownManySpy.restore();
+			blockPutManySpy.restore();
+			blockPutSpy.restore();
+			appendBatchSpy.restore();
+			fullEntryAppendSpy.restore();
+			commitOnlySpy.restore();
+			await log.close();
+			await nativeStore.stop();
+		}
+	});
+
 	it("rolls back native graph when prepared appendMany block write fails", async () => {
 		const log = new Log<Uint8Array>();
 		await log.open(store, signKey, {
