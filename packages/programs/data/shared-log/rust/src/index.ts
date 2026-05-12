@@ -362,6 +362,21 @@ type NativeSharedLogStateHandle = {
 		fullReplicaFallback: boolean,
 		includeStrictFullReplica: boolean,
 	) => [unknown[], unknown[], boolean, boolean, unknown[]];
+	plan_local_append_for_gid_compact?: (
+		entryHash: string,
+		gid: string,
+		hashNumber: string,
+		nextHashes: string[],
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => [unknown[] | undefined, boolean, boolean, unknown[]];
 	plan_append_leaders_for_delivery: (
 		leaders: unknown[],
 		fullReplicaCandidates: string[],
@@ -1160,6 +1175,53 @@ export class SharedLogNativeState {
 				this.resolution,
 				coordinatePlanRow,
 			),
+		};
+	}
+
+	planLocalAppendForGidCompact(
+		input: {
+			entryHash: string;
+			gid: string;
+			hashNumber?: bigint | number | string;
+			nextHashes?: Iterable<string>;
+			replicas: number;
+			selfHash: string;
+		},
+		options?: FindLeaderOptions,
+	): {
+		coordinates: Array<number | bigint>;
+		leaders?: Map<string, LeaderSample>;
+		isLeader: boolean;
+		assignedToRangeBoundary: boolean;
+		coordinate: NativeAppendCoordinatePlan;
+	} {
+		const compact = this.native.plan_local_append_for_gid_compact;
+		if (!compact) {
+			return this.planLocalAppendForGid(input, options);
+		}
+		const [leaderRows, isLeader, assignedToRangeBoundary, coordinatePlanRow] =
+			compact.call(
+				this.native,
+				input.entryHash,
+				input.gid,
+				asIntegerString(input.hashNumber ?? 0),
+				input.nextHashes ? [...input.nextHashes] : [],
+				input.replicas,
+				...findLeaderArguments({
+					...options,
+					selfHash: input.selfHash,
+				}),
+			);
+		const coordinate = appendCoordinatePlanFromRow(
+			this.resolution,
+			coordinatePlanRow,
+		);
+		return {
+			coordinates: coordinate.coordinates,
+			leaders: leaderRows ? rowsToSamples(leaderRows) : undefined,
+			isLeader,
+			assignedToRangeBoundary,
+			coordinate,
 		};
 	}
 

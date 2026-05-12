@@ -604,7 +604,10 @@ describe("index", () => {
 				});
 				const nativeState = (store.docs.log as any)._nativeSharedLogState;
 				expect(nativeState).to.exist;
-				const nativePlanSpy = sinon.spy(nativeState, "planLocalAppendForGid");
+				const nativePlanSpy = sinon.spy(
+					nativeState,
+					"planLocalAppendForGidCompact",
+				);
 				const planEntryLeadersSpy = sinon.spy(
 					store.docs.log as any,
 					"planEntryLeaders",
