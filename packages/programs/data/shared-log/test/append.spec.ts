@@ -222,6 +222,11 @@ describe("append", () => {
 			store.log as any,
 			"planNativeLocalAppendFacts",
 		);
+		const nativeKernelSpy = sinon.spy(
+			store.log as any,
+			"processNativePreparedTargetNoneAppend",
+		);
+		const genericProcessSpy = sinon.spy(store.log as any, "processLocalAppend");
 		const persistCoordinateSpy = sinon.spy(
 			store.log as any,
 			"persistCoordinate",
@@ -243,6 +248,8 @@ describe("append", () => {
 			expect(createFactsSpy.callCount).equal(1);
 			expect(planEntrySpy.callCount).equal(0);
 			expect(planFactsSpy.callCount).equal(1);
+			expect(nativeKernelSpy.callCount).equal(1);
+			expect(genericProcessSpy.callCount).equal(0);
 			expect(persistCoordinateSpy.callCount).equal(0);
 			expect(persistPreparedSpy.callCount).equal(1);
 			expect(putDeleteSpy.callCount).equal(1);
@@ -272,6 +279,8 @@ describe("append", () => {
 		} finally {
 			persistPreparedSpy.restore();
 			persistCoordinateSpy.restore();
+			genericProcessSpy.restore();
+			nativeKernelSpy.restore();
 			planFactsSpy.restore();
 			planEntrySpy.restore();
 			createFactsSpy.restore();
