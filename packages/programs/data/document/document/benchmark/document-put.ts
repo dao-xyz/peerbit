@@ -337,6 +337,12 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 			),
 			patchAsyncMethod(
 				store.docs.log as any,
+				"appendLocallyPreparedPayloadCommitOnly",
+				profile,
+				"sharedAppendMs",
+			),
+			patchAsyncMethod(
+				store.docs.log as any,
 				"appendLocallyPreparedManyIndependent",
 				profile,
 				"sharedAppendMs",
@@ -345,6 +351,12 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 			patchAsyncMethod(
 				store.docs.log.log as any,
 				"appendLocallyPrepared",
+				profile,
+				"logAppendMs",
+			),
+			patchAsyncMethod(
+				store.docs.log.log as any,
+				"appendLocallyPreparedCommitOnly",
 				profile,
 				"logAppendMs",
 			),
@@ -488,15 +500,21 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 					"logGetNextsForAppendMs",
 				),
 				patchAsyncMethod(
-					store.docs.log.log as any,
-					"createNativePlainAppendChain",
-					profile,
-					"logCreateNativeAppendChainMs",
-				),
-				patchAsyncMethod(
-					store.docs.log.log as any,
-					"createNativePlainAppendEntriesBatch",
-					profile,
+				store.docs.log.log as any,
+				"createNativePlainAppendChain",
+				profile,
+				"logCreateNativeAppendChainMs",
+			),
+			patchAsyncMethod(
+				store.docs.log.log as any,
+				"createNativePlainAppendCommitOnly",
+				profile,
+				"logCreateNativeAppendChainMs",
+			),
+			patchAsyncMethod(
+				store.docs.log.log as any,
+				"createNativePlainAppendEntriesBatch",
+				profile,
 					"logCreateNativeAppendChainMs",
 				),
 				patchAsyncMethod(
