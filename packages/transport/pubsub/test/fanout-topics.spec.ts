@@ -591,8 +591,15 @@ describe("pubsub (fanout topics)", function () {
 		topic: string;
 		parentUpgradeIntervalMs?: number;
 		parentUpgradeDataGuard?: boolean;
+		parentUpgradeRepairGuard?: boolean;
 		parentUpgradeMode?: "direct" | "probe" | "shadow";
 		parentUpgradeRootMinLevelGain?: number;
+		parentUpgradeMinFreeSlots?: number;
+		parentUpgradeRootMinFreeSlots?: number;
+		parentUpgradeFailedBackoffMinMs?: number;
+		parentUpgradeFailedBackoffMaxMs?: number;
+		parentProbeRejectCooldownMs?: number;
+		parentProbeRejectCooldownMaxMs?: number;
 		parentShadowObserveMs?: number;
 		parentShadowMinObservations?: number;
 		expectedParentAfterDirect: "relay" | "root";
@@ -608,6 +615,12 @@ describe("pubsub (fanout topics)", function () {
 								...(options.parentUpgradeDataGuard === undefined
 									? {}
 									: { parentUpgradeDataGuard: options.parentUpgradeDataGuard }),
+								...(options.parentUpgradeRepairGuard === undefined
+									? {}
+									: {
+											parentUpgradeRepairGuard:
+												options.parentUpgradeRepairGuard,
+										}),
 								...(options.parentUpgradeMode === undefined
 									? {}
 									: { parentUpgradeMode: options.parentUpgradeMode }),
@@ -616,6 +629,42 @@ describe("pubsub (fanout topics)", function () {
 									: {
 											parentUpgradeRootMinLevelGain:
 												options.parentUpgradeRootMinLevelGain,
+										}),
+								...(options.parentUpgradeMinFreeSlots === undefined
+									? {}
+									: {
+											parentUpgradeMinFreeSlots:
+												options.parentUpgradeMinFreeSlots,
+										}),
+								...(options.parentUpgradeRootMinFreeSlots === undefined
+									? {}
+									: {
+											parentUpgradeRootMinFreeSlots:
+												options.parentUpgradeRootMinFreeSlots,
+										}),
+								...(options.parentUpgradeFailedBackoffMinMs === undefined
+									? {}
+									: {
+											parentUpgradeFailedBackoffMinMs:
+												options.parentUpgradeFailedBackoffMinMs,
+										}),
+								...(options.parentUpgradeFailedBackoffMaxMs === undefined
+									? {}
+									: {
+											parentUpgradeFailedBackoffMaxMs:
+												options.parentUpgradeFailedBackoffMaxMs,
+										}),
+								...(options.parentProbeRejectCooldownMs === undefined
+									? {}
+									: {
+											parentProbeRejectCooldownMs:
+												options.parentProbeRejectCooldownMs,
+										}),
+								...(options.parentProbeRejectCooldownMaxMs === undefined
+									? {}
+									: {
+											parentProbeRejectCooldownMaxMs:
+												options.parentProbeRejectCooldownMaxMs,
 										}),
 								...(options.parentShadowObserveMs === undefined
 									? {}
@@ -717,7 +766,33 @@ describe("pubsub (fanout topics)", function () {
 						shardTopic,
 						rootHash,
 					);
-					expect(statsAfterDirect?.parent).to.equal(rootHash);
+					const metrics = publisher.fanout.getChannelMetrics(
+						shardTopic,
+						rootHash,
+					);
+					expect(
+						statsAfterDirect?.parent,
+						JSON.stringify({
+							parent: statsAfterDirect?.parent,
+							root: rootHash,
+							reparentUpgrade: metrics.reparentUpgrade,
+							skipData: metrics.reparentUpgradeSkipData,
+							skipRepair: metrics.reparentUpgradeSkipRepair,
+							skipQuiet: metrics.reparentUpgradeSkipQuiet,
+							skipCooldown: metrics.reparentUpgradeSkipCooldown,
+							skipBudget: metrics.reparentUpgradeSkipBudget,
+							skipSlots: metrics.reparentUpgradeSkipCandidateSlots,
+							skipPressure: metrics.reparentUpgradeSkipCandidatePressure,
+							skipRootPressure: metrics.reparentUpgradeSkipRootPressure,
+							probeNoReply: metrics.reparentUpgradeSkipProbeNoReply,
+							probeCooldown: metrics.reparentUpgradeSkipProbeCooldown,
+							shadowStart: metrics.parentShadowStart,
+							shadowObserve: metrics.parentShadowObserve,
+							shadowPromote: metrics.parentShadowPromote,
+							shadowRejectCapacity: metrics.parentShadowRejectCapacity,
+							shadowRejectNoReply: metrics.parentShadowRejectNoReply,
+						}),
+					).to.equal(rootHash);
 				});
 				expect(
 					publisher.fanout.getChannelMetrics(shardTopic, rootHash)
@@ -754,7 +829,14 @@ describe("pubsub (fanout topics)", function () {
 			topic: "fanout-direct-reparent-to-root",
 			parentUpgradeIntervalMs: 200,
 			parentUpgradeDataGuard: false,
+			parentUpgradeRepairGuard: false,
 			parentUpgradeRootMinLevelGain: 1,
+			parentUpgradeMinFreeSlots: 1,
+			parentUpgradeRootMinFreeSlots: 1,
+			parentUpgradeFailedBackoffMinMs: 100,
+			parentUpgradeFailedBackoffMaxMs: 100,
+			parentProbeRejectCooldownMs: 100,
+			parentProbeRejectCooldownMaxMs: 100,
 			expectedParentAfterDirect: "root",
 		});
 	});
@@ -764,8 +846,15 @@ describe("pubsub (fanout topics)", function () {
 			topic: "fanout-probe-reparent-to-root",
 			parentUpgradeIntervalMs: 200,
 			parentUpgradeDataGuard: false,
+			parentUpgradeRepairGuard: false,
 			parentUpgradeMode: "probe",
 			parentUpgradeRootMinLevelGain: 1,
+			parentUpgradeMinFreeSlots: 1,
+			parentUpgradeRootMinFreeSlots: 1,
+			parentUpgradeFailedBackoffMinMs: 100,
+			parentUpgradeFailedBackoffMaxMs: 100,
+			parentProbeRejectCooldownMs: 100,
+			parentProbeRejectCooldownMaxMs: 100,
 			expectedParentAfterDirect: "root",
 		});
 	});
@@ -775,8 +864,15 @@ describe("pubsub (fanout topics)", function () {
 			topic: "fanout-shadow-reparent-to-root",
 			parentUpgradeIntervalMs: 200,
 			parentUpgradeDataGuard: false,
+			parentUpgradeRepairGuard: false,
 			parentUpgradeMode: "shadow",
 			parentUpgradeRootMinLevelGain: 1,
+			parentUpgradeMinFreeSlots: 1,
+			parentUpgradeRootMinFreeSlots: 1,
+			parentUpgradeFailedBackoffMinMs: 100,
+			parentUpgradeFailedBackoffMaxMs: 100,
+			parentProbeRejectCooldownMs: 100,
+			parentProbeRejectCooldownMaxMs: 100,
 			parentShadowObserveMs: 0,
 			parentShadowMinObservations: 2,
 			expectedParentAfterDirect: "root",
