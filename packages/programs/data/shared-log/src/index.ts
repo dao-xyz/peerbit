@@ -4147,29 +4147,24 @@ export class SharedLog<
 			resolveTrimmedEntries: properties?.resolveTrimmedEntries,
 			payloadData: properties?.payloadData,
 		});
-		const nativePreparedPlan = await this.processNativePreparedTargetNoneAppend(
-			result,
-			options,
-			{ minReplicasValue },
-		);
-		if (nativePreparedPlan) {
+		const nativePreparedCommit =
+			await this.processNativePreparedTargetNoneAppend(
+				result,
+				options,
+				{ minReplicasValue },
+			);
+		if (nativePreparedCommit) {
 			return {
 				entry: result.entry,
 				removed: result.removed,
-				appendCommit: this.createPreparedLocalAppendCommitFromFacts(
-					result.appendFacts,
-					nativePreparedPlan,
-				),
+				appendCommit: nativePreparedCommit,
 			};
 		}
 		let nativeAppendPlan: NativeAppendEntryPlan<R> | undefined;
 		let deferredCoordinateDeleteHashes: string[] | undefined;
 		if (this.canCoalescePreparedAppendCoordinateDeletes(result, options)) {
-			const changeResult = this.applyChange(result.change, {
-				deferCoordinateIndexDeletes: true,
-			});
 			deferredCoordinateDeleteHashes =
-				(isPromiseLike(changeResult) ? await changeResult : changeResult) ?? [];
+				this.applyChangeWithDeferredCoordinateDeletes(result.change);
 			nativeAppendPlan = await this.planNativeLocalAppendFacts(
 				result.appendFacts,
 				minReplicasValue,
@@ -4217,7 +4212,7 @@ export class SharedLog<
 		},
 		options: SharedAppendOptions<T> | undefined,
 		properties: { minReplicasValue: number },
-	): Promise<NativeAppendEntryPlan<R> | undefined> {
+	): Promise<PreparedLocalAppendCommit<R> | undefined> {
 		if (
 			options?.target !== "none" ||
 			options?.replicate === true ||
@@ -4238,11 +4233,8 @@ export class SharedLog<
 
 		let deferredCoordinateDeleteHashes: string[] | undefined;
 		try {
-			const changeResult = this.applyChange(result.change, {
-				deferCoordinateIndexDeletes: true,
-			});
 			deferredCoordinateDeleteHashes =
-				(isPromiseLike(changeResult) ? await changeResult : changeResult) ?? [];
+				this.applyChangeWithDeferredCoordinateDeletes(result.change);
 			await this.persistPreparedCoordinate({
 				prepared: nativeAppendPlan.preparedCoordinate,
 				hash: result.appendFacts.hash,
@@ -4277,7 +4269,10 @@ export class SharedLog<
 		if (!delayAdaptiveRebalance) {
 			this.rebalanceParticipationDebounced?.call();
 		}
-		return nativeAppendPlan;
+		return this.createPreparedLocalAppendCommitFromFacts(
+			result.appendFacts,
+			nativeAppendPlan,
+		);
 	}
 
 	async appendLocallyPreparedPayload(
@@ -6414,39 +6409,36 @@ export class SharedLog<
 		change: Change<T>,
 		options?: { deferCoordinateIndexDeletes?: boolean },
 	): MaybePromise<string[] | undefined> {
-		const deferredCoordinateDeleteHashes: string[] = [];
+		if (options?.deferCoordinateIndexDeletes) {
+			return this.applyChangeWithDeferredCoordinateDeletes(change);
+		}
 		for (const added of change.added) {
 			this.onEntryAdded(added.entry);
 		}
 		if (change.removed.length === 0) {
-			return options?.deferCoordinateIndexDeletes
-				? deferredCoordinateDeleteHashes
-				: undefined;
+			return undefined;
 		}
-		return this.applyRemovedChange(
-			change.removed,
-			deferredCoordinateDeleteHashes,
-			options,
-		);
+		return this.applyRemovedChange(change.removed);
 	}
 
-	private applyRemovedChange(
-		removedEntries: ShallowOrFullEntry<T>[],
-		deferredCoordinateDeleteHashes: string[],
-		options?: { deferCoordinateIndexDeletes?: boolean },
-	): MaybePromise<string[] | undefined> {
-		if (options?.deferCoordinateIndexDeletes) {
-			for (const removed of removedEntries) {
-				deferredCoordinateDeleteHashes.push(removed.hash);
-				this.onEntryRemoved(removed.hash);
-			}
+	private applyChangeWithDeferredCoordinateDeletes(
+		change: Change<T>,
+	): string[] {
+		const deferredCoordinateDeleteHashes: string[] = [];
+		for (const added of change.added) {
+			this.onEntryAdded(added.entry);
+		}
+		for (const removed of change.removed) {
+			deferredCoordinateDeleteHashes.push(removed.hash);
+			this.onEntryRemoved(removed.hash);
+		}
+		if (deferredCoordinateDeleteHashes.length > 0) {
 			this.forgetCoordinateStateForHashes(deferredCoordinateDeleteHashes);
-			return deferredCoordinateDeleteHashes;
 		}
-		return this.applyRemovedChangeWithCoordinateDeletes(removedEntries);
+		return deferredCoordinateDeleteHashes;
 	}
 
-	private async applyRemovedChangeWithCoordinateDeletes(
+	private async applyRemovedChange(
 		removedEntries: ShallowOrFullEntry<T>[],
 	): Promise<undefined> {
 		for (const removed of removedEntries) {
