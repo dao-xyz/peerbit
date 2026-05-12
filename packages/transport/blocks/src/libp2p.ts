@@ -141,6 +141,10 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		return this.remoteBlocks.putMany(blocks);
 	}
 
+	async putKnown(cid: string, bytes: Uint8Array): Promise<string> {
+		return this.remoteBlocks.putKnown(cid, bytes);
+	}
+
 	async putKnownMany(
 		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
 	): Promise<string[]> {

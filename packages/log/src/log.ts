@@ -61,8 +61,15 @@ type BlocksWithPutKnownMany = Blocks & {
 	) => Promise<string[]> | string[];
 };
 
+type BlocksWithPutKnown = Blocks & {
+	putKnown: (cid: string, bytes: Uint8Array) => Promise<string> | string;
+};
+
 const hasPutMany = (storage: Blocks): storage is BlocksWithPutMany =>
 	typeof (storage as BlocksWithPutMany).putMany === "function";
+
+const hasPutKnown = (storage: Blocks): storage is BlocksWithPutKnown =>
+	typeof (storage as BlocksWithPutKnown).putKnown === "function";
 
 const hasPutKnownMany = (storage: Blocks): storage is BlocksWithPutKnownMany =>
 	typeof (storage as BlocksWithPutKnownMany).putKnownMany === "function";
@@ -1548,6 +1555,14 @@ export class Log<T> {
 						return prepared;
 				});
 
+		if (blocks.length === 1 && hasPutKnown(this._storage)) {
+			const block = blocks[0]!;
+			const cid = await this._storage.putKnown(block.cid, block.block.bytes);
+			if (cid !== block.cid) {
+				throw new Error("Unexpected block cid");
+			}
+			return;
+		}
 		if (hasPutKnownMany(this._storage)) {
 			const cids = await this._storage.putKnownMany(
 				blocks.map((block) => [block.cid, block.block.bytes] as const),
@@ -1576,6 +1591,14 @@ export class Log<T> {
 	private async putPreparedAppendBlocks(preparedBlocks?: PreparedEntryBlock[]) {
 		if (!preparedBlocks || preparedBlocks.length === 0) {
 			throw new Error("Missing prepared entry block");
+		}
+		if (preparedBlocks.length === 1 && hasPutKnown(this._storage)) {
+			const block = preparedBlocks[0]!;
+			const cid = await this._storage.putKnown(block.cid, block.block.bytes);
+			if (cid !== block.cid) {
+				throw new Error("Unexpected block cid");
+			}
+			return;
 		}
 		if (hasPutKnownMany(this._storage)) {
 			const cids = await this._storage.putKnownMany(

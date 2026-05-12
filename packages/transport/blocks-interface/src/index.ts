@@ -29,6 +29,7 @@ export interface Blocks extends WaitForPeer {
 	 * Store raw block bytes when the caller has already computed and verified
 	 * the matching CID. Implementations must not recalculate the CID on this path.
 	 */
+	putKnown?(cid: string, bytes: Uint8Array): MaybePromise<string>;
 	putKnownMany?(
 		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
 	): MaybePromise<string[]>;

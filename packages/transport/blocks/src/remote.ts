@@ -316,11 +316,7 @@ export class RemoteBlocks implements IBlocks {
 			throw new Error("Local store not set");
 		}
 		const cid = await this.localStore!.put(bytes);
-		try {
-			await this.options.onPut?.(cid);
-		} catch {
-			// ignore best-effort hooks
-		}
+		await this.notifyPut(cid);
 		return cid;
 	}
 
@@ -335,6 +331,15 @@ export class RemoteBlocks implements IBlocks {
 		return cids;
 	}
 
+	async putKnown(cid: string, bytes: Uint8Array): Promise<string> {
+		if (!this.localStore) {
+			throw new Error("Local store not set");
+		}
+		const storedCid = await this.localStore.putKnown(cid, bytes);
+		await this.notifyPut(storedCid);
+		return storedCid;
+	}
+
 	async putKnownMany(
 		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
 	): Promise<string[]> {
@@ -346,18 +351,25 @@ export class RemoteBlocks implements IBlocks {
 		return cids;
 	}
 
+	private async notifyPut(cid: string) {
+		const onPut = this.options.onPut;
+		if (!onPut) {
+			return;
+		}
+		try {
+			await onPut(cid);
+		} catch {
+			// ignore best-effort hooks
+		}
+	}
+
 	private async notifyPuts(cids: string[]) {
 		const onPut = this.options.onPut;
 		if (!onPut || cids.length === 0) {
 			return;
 		}
 		if (cids.length === 1) {
-			try {
-				await onPut(cids[0]!);
-			} catch {
-				// ignore best-effort hooks
-			}
-			return;
+			return this.notifyPut(cids[0]!);
 		}
 		await Promise.all(
 			cids.map(async (cid) => {

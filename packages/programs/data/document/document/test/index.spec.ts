@@ -238,13 +238,17 @@ describe("index", () => {
 						),
 					);
 				backendIndex.putWithContext = backendContextPutSpy;
-				const blockPutManySpy = sinon.spy(
-					store.docs.log.log.blocks as any,
-					"putMany",
-				);
-				const blockPutKnownManySpy = sinon.spy(
-					store.docs.log.log.blocks as any,
-					"putKnownMany",
+					const blockPutManySpy = sinon.spy(
+						store.docs.log.log.blocks as any,
+						"putMany",
+					);
+					const blockPutKnownSpy = sinon.spy(
+						store.docs.log.log.blocks as any,
+						"putKnown",
+					);
+					const blockPutKnownManySpy = sinon.spy(
+						store.docs.log.log.blocks as any,
+						"putKnownMany",
 				);
 
 				try {
@@ -265,10 +269,11 @@ describe("index", () => {
 					expect(nativeCommitSpy.callCount).equal(1);
 					expect(documentCommitSpy.callCount).equal(1);
 					expect(documentIdentityPutSpy.callCount).equal(1);
-					expect(documentPutSpy.callCount).equal(0);
-					expect(backendContextPutSpy.callCount).equal(1);
-					expect(blockPutManySpy.callCount).equal(0);
-					expect(blockPutKnownManySpy.callCount).equal(1);
+						expect(documentPutSpy.callCount).equal(0);
+						expect(backendContextPutSpy.callCount).equal(1);
+						expect(blockPutManySpy.callCount).equal(0);
+						expect(blockPutKnownSpy.callCount).equal(1);
+						expect(blockPutKnownManySpy.callCount).equal(0);
 					const encodedDocument = serialize(doc);
 					const expectedPayloadData = new Uint8Array(
 						6 + encodedDocument.byteLength,
@@ -357,11 +362,12 @@ describe("index", () => {
 					documentCommitSpy.restore();
 					documentPutSpy.restore();
 					documentIdentityPutSpy.restore();
-					preparedPayloadCommitOnlySpy.restore();
-					preparedPayloadAppendSpy.restore();
-					preparedAppendSpy.restore();
-					blockPutKnownManySpy.restore();
-					blockPutManySpy.restore();
+						preparedPayloadCommitOnlySpy.restore();
+						preparedPayloadAppendSpy.restore();
+						preparedAppendSpy.restore();
+						blockPutKnownManySpy.restore();
+						blockPutKnownSpy.restore();
+						blockPutManySpy.restore();
 					validatedAppendSpy.restore();
 					appendSpy.restore();
 				}
@@ -813,13 +819,17 @@ describe("index", () => {
 					"getLocalIndexedContext",
 				);
 				const lowerLogGetSpy = sinon.spy(store.docs.log.log, "get");
-				const blockPutManySpy = sinon.spy(
-					store.docs.log.log.blocks as any,
-					"putMany",
-				);
-				const blockPutKnownManySpy = sinon.spy(
-					store.docs.log.log.blocks as any,
-					"putKnownMany",
+					const blockPutManySpy = sinon.spy(
+						store.docs.log.log.blocks as any,
+						"putMany",
+					);
+					const blockPutKnownSpy = sinon.spy(
+						store.docs.log.log.blocks as any,
+						"putKnown",
+					);
+					const blockPutKnownManySpy = sinon.spy(
+						store.docs.log.log.blocks as any,
+						"putKnownMany",
 				);
 
 				try {
@@ -843,17 +853,19 @@ describe("index", () => {
 					expect(preparedPayloadCommitOnlySpy.callCount).equal(2);
 					expect(validatedAppendSpy.callCount).equal(0);
 					expect(appendSpy.callCount).equal(0);
-					expect(localLookupSpy.callCount).equal(2);
-					expect(lowerLogGetSpy.callCount).equal(0);
-					expect(blockPutManySpy.callCount).equal(0);
-					expect(blockPutKnownManySpy.callCount).equal(2);
+						expect(localLookupSpy.callCount).equal(2);
+						expect(lowerLogGetSpy.callCount).equal(0);
+						expect(blockPutManySpy.callCount).equal(0);
+						expect(blockPutKnownSpy.callCount).equal(2);
+						expect(blockPutKnownManySpy.callCount).equal(0);
 					expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
 					expect((await store.docs.get(id))?.name).equal("second");
 				} finally {
-					localLookupSpy.restore();
-					lowerLogGetSpy.restore();
-					blockPutKnownManySpy.restore();
-					blockPutManySpy.restore();
+						localLookupSpy.restore();
+						lowerLogGetSpy.restore();
+						blockPutKnownManySpy.restore();
+						blockPutKnownSpy.restore();
+						blockPutManySpy.restore();
 					preparedPayloadCommitOnlySpy.restore();
 					preparedAppendSpy.restore();
 					validatedAppendSpy.restore();

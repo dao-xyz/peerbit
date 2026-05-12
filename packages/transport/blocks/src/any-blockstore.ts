@@ -140,7 +140,7 @@ export class AnyBlockStore implements Blocks {
 		try {
 			if (puts.length === 1) {
 				const put = puts[0]!;
-				await this._store.put(put.cid, put.block.bytes);
+				await this.putKnown(put.cid, put.block.bytes);
 			} else if (typeof store.putMany === "function") {
 				await store.putMany(puts.map((put) => [put.cid, put.block.bytes] as const));
 			} else {
@@ -157,6 +157,18 @@ export class AnyBlockStore implements Blocks {
 		return puts.map((put) => put.cid);
 	}
 
+	async putKnown(cid: string, bytes: Uint8Array): Promise<string> {
+		try {
+			await this._store.put(cid, bytes);
+		} catch (error: any) {
+			if (await this.isClosingStorePutError(error)) {
+				return cid;
+			}
+			throw error;
+		}
+		return cid;
+	}
+
 	async putKnownMany(
 		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
 	): Promise<string[]> {
@@ -166,7 +178,7 @@ export class AnyBlockStore implements Blocks {
 		try {
 			if (blocks.length === 1) {
 				const [cid, bytes] = blocks[0]!;
-				await this._store.put(cid, bytes);
+				await this.putKnown(cid, bytes);
 			} else if (typeof store.putMany === "function") {
 				await store.putMany(blocks);
 			} else {

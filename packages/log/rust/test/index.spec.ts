@@ -673,9 +673,9 @@ describe("native EntryV0 encoding", () => {
 		const bytes = new Uint8Array([5, 4, 3]);
 		const cid = await calculateRawCidV1(bytes);
 
-		const cids = await blockStore.putKnownMany([[cid, bytes]]);
+		const storedCid = await blockStore.putKnown(cid, bytes);
 
-		expect(cids).to.deep.equal([cid]);
+		expect(storedCid).equal(cid);
 		expect(await blockStore.has(cid)).equal(true);
 		expect(await blockStore.get(cid)).to.deep.equal(bytes);
 		expect(await blockStore.size()).equal(bytes.byteLength);

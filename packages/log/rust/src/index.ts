@@ -1055,11 +1055,20 @@ export class NativeLogBlockStore {
 		return cids;
 	}
 
+	async putKnown(cid: string, bytes: Uint8Array): Promise<string> {
+		this.native.put(cid, copyBytes(bytes));
+		return cid;
+	}
+
 	async putKnownMany(
 		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
 	): Promise<string[]> {
 		if (blocks.length === 0) {
 			return [];
+		}
+		if (blocks.length === 1) {
+			const [cid, bytes] = blocks[0]!;
+			return [await this.putKnown(cid, bytes)];
 		}
 		const cids = new Array<string>(blocks.length);
 		const values = new Array<Uint8Array>(blocks.length);

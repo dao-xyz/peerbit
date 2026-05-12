@@ -73,6 +73,24 @@ describe(`level`, function () {
 		putManySpy.restore();
 	});
 
+	it("puts a known cid block through store put", async () => {
+		const backingStore = createRustStore();
+		const putSpy = sinon.spy(backingStore, "put");
+		const putManySpy = sinon.spy(backingStore, "putMany");
+		store = new AnyBlockStore(backingStore);
+		await store.start();
+		const data = new Uint8Array([1, 2, 3]);
+		const cid = "zb2rhWtC5SY6zV1y2SVN119ofpxsbEtpwiqSoK77bWVzHqeWU";
+		const storedCid = await store.putKnown(cid, data);
+
+		expect(storedCid).equal(cid);
+		expect(await store.get(cid)).to.deep.equal(data);
+		expect(putSpy.callCount).equal(1);
+		expect(putManySpy.callCount).equal(0);
+		putSpy.restore();
+		putManySpy.restore();
+	});
+
 	it("puts multiple known cid blocks through store batch helpers", async () => {
 		const backingStore = createRustStore();
 		const putSpy = sinon.spy(backingStore, "put");

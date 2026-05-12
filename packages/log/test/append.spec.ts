@@ -433,6 +433,7 @@ describe("append", function () {
 		);
 		const appendBatchSpy = sinon.spy(log.entryIndex, "putAppendBatch");
 		const blockPutManySpy = sinon.spy(store, "putMany");
+		const blockPutKnownSpy = sinon.spy(store as any, "putKnown");
 		const blockPutKnownManySpy = sinon.spy(store as any, "putKnownMany");
 		const nativePrepareAndPutSpy = sinon.spy(
 			log.entryIndex.properties.nativeGraph!.graph,
@@ -450,7 +451,8 @@ describe("append", function () {
 			expect(removed).to.be.empty;
 			expect(nativePrepareAndPutSpy.callCount).equal(1);
 			expect(blockPutManySpy.callCount).equal(0);
-			expect(blockPutKnownManySpy.callCount).equal(1);
+			expect(blockPutKnownSpy.callCount).equal(1);
+			expect(blockPutKnownManySpy.callCount).equal(0);
 			expect(singleNativeAppendSpy.callCount).equal(1);
 			expect(appendBatchSpy.callCount).equal(0);
 			expect(await blockExists(entry.hash)).to.be.true;
@@ -461,6 +463,7 @@ describe("append", function () {
 		} finally {
 			nativePrepareAndPutSpy.restore();
 			blockPutKnownManySpy.restore();
+			blockPutKnownSpy.restore();
 			blockPutManySpy.restore();
 			appendBatchSpy.restore();
 			singleNativeAppendSpy.restore();
@@ -538,6 +541,7 @@ describe("append", function () {
 		const appendBatchSpy = sinon.spy(log.entryIndex, "putAppendBatch");
 		const blockPutSpy = sinon.spy(nativeStore, "put");
 		const blockPutManySpy = sinon.spy(nativeStore, "putMany");
+		const blockPutKnownSpy = sinon.spy(nativeStore, "putKnown");
 		const blockPutKnownManySpy = sinon.spy(nativeStore, "putKnownMany");
 		const initSpy = sinon.spy(EntryV0.prototype, "init");
 		const nativeCommitSpy = sinon.spy(
@@ -563,6 +567,7 @@ describe("append", function () {
 			expect(nativePrepareAndPutSpy.callCount).equal(0);
 			expect(blockPutSpy.callCount).equal(0);
 			expect(blockPutManySpy.callCount).equal(0);
+			expect(blockPutKnownSpy.callCount).equal(0);
 			expect(blockPutKnownManySpy.callCount).equal(0);
 			expect(commitOnlySpy.callCount).equal(1);
 			expect(fullEntryAppendSpy.callCount).equal(0);
@@ -582,6 +587,7 @@ describe("append", function () {
 			nativeCommitSpy.restore();
 			initSpy.restore();
 			blockPutKnownManySpy.restore();
+			blockPutKnownSpy.restore();
 			blockPutManySpy.restore();
 			blockPutSpy.restore();
 			appendBatchSpy.restore();
