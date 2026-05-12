@@ -1014,6 +1014,9 @@ importers:
         specifier: ^10.0.0
         version: 10.0.0
     devDependencies:
+      '@peerbit/any-store-rust':
+        specifier: workspace:*
+        version: link:../utils/any-store/rust
       '@peerbit/test-utils':
         specifier: workspace:*
         version: link:../clients/test-utils

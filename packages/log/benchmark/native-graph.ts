@@ -1,7 +1,11 @@
 import { AnyBlockStore } from "@peerbit/blocks";
 import { Ed25519Keypair } from "@peerbit/crypto";
+import { createStore as createRustStore } from "@peerbit/any-store-rust";
 import { HashmapIndices } from "@peerbit/indexer-simple";
 import { createNativeLogBlockStore } from "@peerbit/log-rust";
+import { mkdtemp, rm } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
 import { EntryType } from "../src/entry-type.js";
 import { type Entry } from "../src/entry.js";
 import { Log } from "../src/log.js";
@@ -30,6 +34,9 @@ const key = await Ed25519Keypair.create();
 type AppendStore =
 	| AnyBlockStore
 	| Awaited<ReturnType<typeof createNativeLogBlockStore>>;
+type AppendStoreFixture =
+	| AppendStore
+	| { store: AppendStore; cleanup?: () => Promise<void> };
 
 const absoluteReplicaData = (value: number) =>
 	new Uint8Array([
@@ -213,29 +220,60 @@ const measureAppend = async (
 	name: string,
 	nativeGraph: boolean,
 	fn: (log: Log<Uint8Array>) => Promise<void>,
-	createStore: () => Promise<AppendStore> = async () => new AnyBlockStore(),
+	createStore: () => Promise<AppendStoreFixture> = async () =>
+		new AnyBlockStore(),
 ): Promise<BenchRow> => {
-	const store = await createStore();
+	const fixture = await createStore();
+	const store = "store" in fixture ? fixture.store : fixture;
+	const cleanup = "store" in fixture ? fixture.cleanup : undefined;
 	await store.start();
 	const log = new Log<Uint8Array>();
-	await log.open(store, key, {
-		appendDurability: "strict",
-		indexer: new HashmapIndices(),
-		nativeGraph,
-	});
-	await log.append(new Uint8Array([0]), { meta: { next: [] } });
-	const started = performance.now();
-	await fn(log);
-	const elapsed = performance.now() - started;
-	await log.close();
-	await store.stop();
+	try {
+		await log.open(store, key, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+			nativeGraph,
+		});
+		await log.append(new Uint8Array([0]), { meta: { next: [] } });
+		const started = performance.now();
+		await fn(log);
+		const elapsed = performance.now() - started;
+		return {
+			name,
+			nativeGraph,
+			entries: appendEntries,
+			iterations: appendEntries,
+			elapsedMs: Math.round(elapsed),
+			opsPerSecond: Math.round((appendEntries / elapsed) * 1000),
+		};
+	} finally {
+		await log.close();
+		await store.stop();
+		await cleanup?.();
+	}
+};
+
+const createRustAnyBlockStore = async (properties?: {
+	immutable?: boolean;
+	persistent?: boolean;
+}): Promise<AppendStoreFixture> => {
+	const directory = properties?.persistent
+		? await mkdtemp(join(tmpdir(), "peerbit-log-rust-any-store-"))
+		: undefined;
+	const backingStore = createRustStore(directory);
+	if (properties?.immutable === false) {
+		const mutableStore = backingStore as unknown as {
+			putImmutable?: unknown;
+			putManyImmutable?: unknown;
+		};
+		mutableStore.putImmutable = undefined;
+		mutableStore.putManyImmutable = undefined;
+	}
 	return {
-		name,
-		nativeGraph,
-		entries: appendEntries,
-		iterations: appendEntries,
-		elapsedMs: Math.round(elapsed),
-		opsPerSecond: Math.round((appendEntries / elapsed) * 1000),
+		store: new AnyBlockStore(backingStore),
+		cleanup: directory
+			? () => rm(directory, { recursive: true, force: true })
+			: undefined,
 	};
 };
 
@@ -278,6 +316,46 @@ rows.push(
 				}
 			}
 		},
+	),
+);
+
+rows.push(
+	await measureAppend(
+		"commit-only append loop rust persistent known block fallback",
+		true,
+		async (log) => {
+			for (let i = 0; i < appendEntries; i++) {
+				const result = await (log as any).appendLocallyPreparedCommitOnly(
+					new Uint8Array([i & 0xff]),
+					{},
+					{ skipMissingNextJoin: true, includeMaterializationBytes: false },
+				);
+				if (!result) {
+					throw new Error("Expected native commit-only append path");
+				}
+			}
+		},
+		() => createRustAnyBlockStore({ immutable: false, persistent: true }),
+	),
+);
+
+rows.push(
+	await measureAppend(
+		"commit-only append loop rust persistent known block",
+		true,
+		async (log) => {
+			for (let i = 0; i < appendEntries; i++) {
+				const result = await (log as any).appendLocallyPreparedCommitOnly(
+					new Uint8Array([i & 0xff]),
+					{},
+					{ skipMissingNextJoin: true, includeMaterializationBytes: false },
+				);
+				if (!result) {
+					throw new Error("Expected native commit-only append path");
+				}
+			}
+		},
+		() => createRustAnyBlockStore({ persistent: true }),
 	),
 );
 
