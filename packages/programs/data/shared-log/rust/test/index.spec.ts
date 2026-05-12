@@ -607,6 +607,36 @@ describe("native shared-log range planner", () => {
 		expect(state.getEntryCoordinates("old-head")).to.equal(undefined);
 	});
 
+	it("commits compact local append assignments with extra coordinate deletes", async () => {
+		const state = await createSharedLogState("u32");
+		state.put(range({ id: "a", hash: "peer-self", start1: 0, end1: 10 }));
+		state.putEntryCoordinates("old-head", "old-gid", [1, 2]);
+		state.putEntryCoordinates("trimmed-head", "trimmed-gid", [3, 4]);
+
+		const plan = state.commitLocalAppendForGidCompact(
+			{
+				entryHash: "new-head",
+				gid: "entry-gid",
+				nextHashes: ["old-head"],
+				deleteHashes: ["trimmed-head"],
+				replicas: 1,
+				selfHash: "peer-self",
+			},
+			{
+				now: 1_000,
+				selfHash: "peer-self",
+				selfReplicating: true,
+				fullReplicaFallback: true,
+			},
+		);
+
+		expect(state.getEntryCoordinates("new-head")).to.deep.equal(
+			plan.coordinates,
+		);
+		expect(state.getEntryCoordinates("old-head")).to.equal(undefined);
+		expect(state.getEntryCoordinates("trimmed-head")).to.equal(undefined);
+	});
+
 	it("plans append assignments and delivery in one native state batch", async () => {
 		const singleState = await createSharedLogState("u32");
 		const batchState = await createSharedLogState("u32");

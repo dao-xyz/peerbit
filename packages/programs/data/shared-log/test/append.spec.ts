@@ -313,11 +313,16 @@ describe("append", () => {
 			},
 		});
 		const coordinateIndex = store.log.entryCoordinatesIndex as any;
+		const nativeState = (store.log as any)._nativeSharedLogState;
 		const putDeleteSpy = sinon.spy(
 			coordinateIndex,
 			"putSharedLogCoordinateFieldsAndDeleteIds",
 		);
 		const delIdsSpy = sinon.spy(coordinateIndex, "delIds");
+		const nativeDeleteSpy = sinon.spy(
+			nativeState,
+			"deleteEntryCoordinatesBatch",
+		);
 		try {
 			const first = await store.log.appendLocallyPrepared(
 				{ op: "ADD", value: "a" },
@@ -328,6 +333,7 @@ describe("append", () => {
 			);
 			putDeleteSpy.resetHistory();
 			delIdsSpy.resetHistory();
+			nativeDeleteSpy.resetHistory();
 
 			await store.log.appendLocallyPrepared(
 				{ op: "ADD", value: "b" },
@@ -340,7 +346,10 @@ describe("append", () => {
 			expect(delIdsSpy.callCount).equal(0);
 			expect(putDeleteSpy.callCount).equal(1);
 			expect(putDeleteSpy.firstCall.args[1]).to.deep.equal([first.entry.hash]);
+			expect(nativeDeleteSpy.callCount).equal(0);
+			expect(nativeState.getEntryCoordinates(first.entry.hash)).equal(undefined);
 		} finally {
+			nativeDeleteSpy.restore();
 			delIdsSpy.restore();
 			putDeleteSpy.restore();
 		}

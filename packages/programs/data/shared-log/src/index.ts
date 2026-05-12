@@ -351,6 +351,7 @@ type NativeAppendEntryPlan<R extends "u32" | "u64"> = {
 	hashNumber: NumberFromType<R>;
 	preparedCoordinate: PreparedCoordinatePersistence<R>;
 	delivery?: AppendDeliveryPlan;
+	committedNativeCoordinateDeletes?: boolean;
 };
 
 type EntryLeaderBatchItem<R extends "u32" | "u64"> = {
@@ -2072,6 +2073,14 @@ export class SharedLog<
 			return;
 		}
 		this._nativeSharedLogState?.deleteEntryCoordinatesBatch(values);
+		this.forgetResidentCoordinateStateForHashes(values);
+	}
+
+	private forgetResidentCoordinateStateForHashes(hashes: Iterable<string>) {
+		const values = [...new Set([...hashes].filter(Boolean))];
+		if (values.length === 0) {
+			return;
+		}
 		if (this._residentEntryCoordinatesByHash) {
 			for (const hash of values) {
 				this._residentEntryCoordinatesByHash.delete(hash);
@@ -4528,9 +4537,18 @@ export class SharedLog<
 			return undefined;
 		}
 
+		const plannedCoordinateDeleteHashes =
+			result.change?.removed.map((entry) => entry.hash) ??
+			result.removed.map((entry) => entry.hash);
 		const nativeAppendPlan = await this.planNativeLocalAppendFacts(
 			result.appendFacts,
 			properties.minReplicasValue,
+			{
+				deleteHashes:
+					plannedCoordinateDeleteHashes.length > 0
+						? plannedCoordinateDeleteHashes
+						: undefined,
+			},
 		);
 		if (!nativeAppendPlan) {
 			return undefined;
@@ -4539,11 +4557,18 @@ export class SharedLog<
 		let deferredCoordinateDeleteHashes: string[] | undefined;
 		try {
 			deferredCoordinateDeleteHashes = result.change
-				? this.applyChangeWithDeferredCoordinateDeletes(result.change)
+				? this.applyChangeWithDeferredCoordinateDeletes(result.change, {
+						forgetNativeCoordinates:
+							!nativeAppendPlan.committedNativeCoordinateDeletes,
+					})
 				: this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
 						result.appendFacts,
 						result.removed,
 						() => this.materializePreparedAppendResultEntry(result),
+						{
+							forgetNativeCoordinates:
+								!nativeAppendPlan.committedNativeCoordinateDeletes,
+						},
 					);
 			await this.persistPreparedCoordinate({
 				prepared: nativeAppendPlan.preparedCoordinate,
@@ -5266,6 +5291,7 @@ export class SharedLog<
 	private async planNativeLocalAppendFacts(
 		appendFacts: PreparedAppendFacts,
 		replicas: number,
+		options?: { deleteHashes?: string[] },
 	): Promise<NativeAppendEntryPlan<R> | undefined> {
 		if (
 			!this._nativeSharedLogState ||
@@ -5276,17 +5302,31 @@ export class SharedLog<
 
 		const context = await this.createLeaderSelectionContext();
 		const hashNumber = this.getAppendFactsHashNumber(appendFacts);
-		const plan = this._nativeSharedLogState.planLocalAppendForGidCompact(
-			{
-				entryHash: appendFacts.hash,
-				gid: appendFacts.gid,
-				hashNumber,
-				nextHashes: appendFacts.next,
-				replicas,
-				selfHash: context.selfHash,
-			},
-			this.createNativeLeaderOptions(context),
-		);
+		const plan =
+			options?.deleteHashes && options.deleteHashes.length > 0
+				? this._nativeSharedLogState.commitLocalAppendForGidCompact(
+						{
+							entryHash: appendFacts.hash,
+							gid: appendFacts.gid,
+							hashNumber,
+							nextHashes: appendFacts.next,
+							deleteHashes: options.deleteHashes,
+							replicas,
+							selfHash: context.selfHash,
+						},
+						this.createNativeLeaderOptions(context),
+					)
+				: this._nativeSharedLogState.planLocalAppendForGidCompact(
+						{
+							entryHash: appendFacts.hash,
+							gid: appendFacts.gid,
+							hashNumber,
+							nextHashes: appendFacts.next,
+							replicas,
+							selfHash: context.selfHash,
+						},
+						this.createNativeLeaderOptions(context),
+					);
 		const coordinates = plan.coordinate.coordinates as NumberFromType<R>[];
 		const hashNumberFromPlan = plan.coordinate.hashNumber as NumberFromType<R>;
 		const preparedCoordinate =
@@ -5304,6 +5344,8 @@ export class SharedLog<
 			assignedToRangeBoundary: plan.assignedToRangeBoundary,
 			hashNumber: hashNumberFromPlan,
 			preparedCoordinate,
+			committedNativeCoordinateDeletes:
+				!!options?.deleteHashes && options.deleteHashes.length > 0,
 		};
 	}
 
@@ -6944,6 +6986,7 @@ export class SharedLog<
 
 	private applyChangeWithDeferredCoordinateDeletes(
 		change: Change<T>,
+		options?: { forgetNativeCoordinates?: boolean },
 	): string[] | undefined {
 		for (const added of change.added) {
 			this.onEntryAdded(added.entry);
@@ -6956,7 +6999,11 @@ export class SharedLog<
 			deferredCoordinateDeleteHashes.push(removed.hash);
 			this.onEntryRemoved(removed.hash);
 		}
-		this.forgetCoordinateStateForHashes(deferredCoordinateDeleteHashes);
+		if (options?.forgetNativeCoordinates === false) {
+			this.forgetResidentCoordinateStateForHashes(deferredCoordinateDeleteHashes);
+		} else {
+			this.forgetCoordinateStateForHashes(deferredCoordinateDeleteHashes);
+		}
 		return deferredCoordinateDeleteHashes;
 	}
 
@@ -6975,6 +7022,7 @@ export class SharedLog<
 		appendFacts: PreparedAppendFacts,
 		removed: ShallowOrFullEntry<T>[],
 		materializeEntry: () => Entry<T>,
+		options?: { forgetNativeCoordinates?: boolean },
 	): string[] | undefined {
 		this.onEntryAddedHash(appendFacts.hash, materializeEntry);
 		if (removed.length === 0) {
@@ -6985,7 +7033,11 @@ export class SharedLog<
 			deferredCoordinateDeleteHashes.push(entry.hash);
 			this.onEntryRemoved(entry.hash);
 		}
-		this.forgetCoordinateStateForHashes(deferredCoordinateDeleteHashes);
+		if (options?.forgetNativeCoordinates === false) {
+			this.forgetResidentCoordinateStateForHashes(deferredCoordinateDeleteHashes);
+		} else {
+			this.forgetCoordinateStateForHashes(deferredCoordinateDeleteHashes);
+		}
 		return deferredCoordinateDeleteHashes;
 	}
 

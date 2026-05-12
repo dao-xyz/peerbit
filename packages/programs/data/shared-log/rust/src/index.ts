@@ -377,6 +377,22 @@ type NativeSharedLogStateHandle = {
 		fullReplicaFallback: boolean,
 		includeStrictFullReplica: boolean,
 	) => [unknown[] | undefined, boolean, boolean, unknown[]];
+	commit_local_append_for_gid_compact?: (
+		entryHash: string,
+		gid: string,
+		hashNumber: string,
+		nextHashes: string[],
+		deleteHashes: string[],
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => [unknown[] | undefined, boolean, boolean, unknown[]];
 	plan_append_leaders_for_delivery: (
 		leaders: unknown[],
 		fullReplicaCandidates: string[],
@@ -1206,6 +1222,59 @@ export class SharedLogNativeState {
 				input.gid,
 				asIntegerString(input.hashNumber ?? 0),
 				input.nextHashes ? [...input.nextHashes] : [],
+				input.replicas,
+				...findLeaderArguments({
+					...options,
+					selfHash: input.selfHash,
+				}),
+			);
+		const coordinate = appendCoordinatePlanFromRow(
+			this.resolution,
+			coordinatePlanRow,
+		);
+		return {
+			coordinates: coordinate.coordinates,
+			leaders: leaderRows ? rowsToSamples(leaderRows) : undefined,
+			isLeader,
+			assignedToRangeBoundary,
+			coordinate,
+		};
+	}
+
+	commitLocalAppendForGidCompact(
+		input: {
+			entryHash: string;
+			gid: string;
+			hashNumber?: bigint | number | string;
+			nextHashes?: Iterable<string>;
+			deleteHashes?: Iterable<string>;
+			replicas: number;
+			selfHash: string;
+		},
+		options?: FindLeaderOptions,
+	): {
+		coordinates: Array<number | bigint>;
+		leaders?: Map<string, LeaderSample>;
+		isLeader: boolean;
+		assignedToRangeBoundary: boolean;
+		coordinate: NativeAppendCoordinatePlan;
+	} {
+		const commit = this.native.commit_local_append_for_gid_compact;
+		if (!commit) {
+			const plan = this.planLocalAppendForGidCompact(input, options);
+			if (input.deleteHashes) {
+				this.deleteEntryCoordinatesBatch(input.deleteHashes);
+			}
+			return plan;
+		}
+		const [leaderRows, isLeader, assignedToRangeBoundary, coordinatePlanRow] =
+			commit.call(
+				this.native,
+				input.entryHash,
+				input.gid,
+				asIntegerString(input.hashNumber ?? 0),
+				input.nextHashes ? [...input.nextHashes] : [],
+				input.deleteHashes ? [...input.deleteHashes] : [],
 				input.replicas,
 				...findLeaderArguments({
 					...options,
