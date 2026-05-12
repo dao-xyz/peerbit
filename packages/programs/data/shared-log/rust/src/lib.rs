@@ -2105,6 +2105,76 @@ impl NativeSharedLogState {
         Ok(out)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_local_append_for_gid_compact(
+        &mut self,
+        entry_hash: String,
+        gid: String,
+        entry_hash_number: String,
+        next_hashes: Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let entry_hash_number = parse_u64(&entry_hash_number)?;
+        let next_hashes = strings_from_array(next_hashes)?;
+        let coordinates = self.inner.range_planner.get_gid_coordinates(&gid, replicas);
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
+        let leaders = self.inner.range_planner.find_leaders(
+            &coordinates,
+            replicas,
+            &options,
+            expand_peer_filter,
+            &self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        );
+        let is_leader = leaders.iter().any(|leader| leader.hash == self_hash);
+        let assigned_to_range_boundary = should_assign_to_range_boundary(&leaders, replicas);
+        let coordinate_plan_row = append_coordinate_plan_to_row(
+            &entry_hash,
+            entry_hash_number,
+            &gid,
+            coordinates.clone(),
+            assigned_to_range_boundary,
+            replicas,
+            self.inner.range_planner.resolution,
+        );
+
+        self.inner.put_entry_coordinate_state(
+            entry_hash,
+            EntryCoordinateState {
+                gid,
+                hash_number: entry_hash_number,
+                coordinates,
+                assigned_to_range_boundary,
+                requested_replicas: replicas,
+            },
+        );
+        for next_hash in next_hashes {
+            self.inner.delete_entry_coordinate_state(&next_hash);
+        }
+
+        let leader_rows: JsValue = if is_leader {
+            JsValue::UNDEFINED
+        } else {
+            samples_to_rows(leaders).into()
+        };
+        let out = Array::new();
+        out.push(&leader_rows);
+        out.push(&JsValue::from_bool(is_leader));
+        out.push(&JsValue::from_bool(assigned_to_range_boundary));
+        out.push(&coordinate_plan_row);
+        Ok(out)
+    }
+
     pub fn plan_append_leaders_for_delivery(
         &self,
         leaders: Array,
