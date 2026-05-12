@@ -1545,7 +1545,8 @@ fn prepare_entry_v0_plain_chain_rows(
             prehash: 0,
         };
         let signature_with_key = encode_signature_with_key(&signature_input);
-        let storage = encode_entry_v0_parts(&meta, &payload, Some(signature_input));
+        let storage =
+            encode_entry_v0_parts_with_signature_bytes(&meta, &payload, Some(&signature_with_key));
         let storage_len = storage.len();
         let (cid, hash_digest) = calculate_raw_cid_v1_parts(&storage);
 
@@ -1686,7 +1687,8 @@ fn prepare_entry_v0_plain_entry_row_with_signer_parts(
         prehash: 0,
     };
     let signature_with_key = encode_signature_with_key(&signature_input);
-    let storage = encode_entry_v0_parts(&meta, &payload, Some(signature_input));
+    let storage =
+        encode_entry_v0_parts_with_signature_bytes(&meta, &payload, Some(&signature_with_key));
     let storage_len = storage.len();
     let (cid, hash_digest) = calculate_raw_cid_v1_parts(&storage);
 
@@ -1975,15 +1977,26 @@ fn encode_entry_v0_parts(
     payload: &[u8],
     signature: Option<SignatureInput>,
 ) -> Vec<u8> {
+    let signature_with_key = signature
+        .as_ref()
+        .map(|signature| encode_signature_with_key(signature));
+    encode_entry_v0_parts_with_signature_bytes(meta, payload, signature_with_key.as_deref())
+}
+
+fn encode_entry_v0_parts_with_signature_bytes(
+    meta: &[u8],
+    payload: &[u8],
+    signature_with_key: Option<&[u8]>,
+) -> Vec<u8> {
     let mut out = Vec::new();
     write_u8(&mut out, 0); // EntryV0 variant
     write_decrypted_thing(&mut out, meta);
     write_decrypted_thing(&mut out, payload);
     out.extend_from_slice(&[0, 0, 0, 0]); // reserved
-    match signature {
-        Some(signature) => {
+    match signature_with_key {
+        Some(signature_with_key) => {
             write_u8(&mut out, 1);
-            write_signatures(&mut out, signature);
+            write_signatures_encoded(&mut out, signature_with_key);
         }
         None => write_u8(&mut out, 0),
     }
@@ -2026,11 +2039,10 @@ fn encode_payload(data: &[u8]) -> Vec<u8> {
     out
 }
 
-fn write_signatures(out: &mut Vec<u8>, signature: SignatureInput) {
+fn write_signatures_encoded(out: &mut Vec<u8>, signature_with_key: &[u8]) {
     write_u8(out, 0); // Signatures variant
     write_u32(out, 1);
-    let signature_with_key = encode_signature_with_key(&signature);
-    write_decrypted_thing(out, &signature_with_key);
+    write_decrypted_thing(out, signature_with_key);
 }
 
 fn encode_signature_with_key(signature: &SignatureInput) -> Vec<u8> {
