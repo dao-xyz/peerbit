@@ -2121,15 +2121,16 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		const prepared = values.map((entry) => {
 			const id =
 				entry.id ?? types.toId(types.extractFieldValue(entry.value, this.indexByArr));
+			const encodedValue = this.snapshotFile
+				? this.encodeSharedLogCoordinatePersistenceValue(entry.fields)
+				: undefined;
 			return {
 				value: entry.value,
 				id,
 				storeKey: keyToStoreKey(id),
 				fields: this.encodeSharedLogCoordinateFields(entry.fields),
 				deleteKeys: (entry.deleteIds ?? []).map(keyToStoreKey),
-				encodedValue: this.encodeSharedLogCoordinatePersistenceValue(
-					entry.fields,
-				),
+				encodedValue,
 			};
 		});
 
@@ -2621,7 +2622,6 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}
 
 		const storeKey = keyToStoreKey(id);
-		const encodedValue = this.encodeSharedLogCoordinatePersistenceValue(fields);
 		const putNative = () =>
 			nativePutCoordinate
 				.call(
@@ -2674,6 +2674,8 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}
 
 		return this.enqueueMutation(async () => {
+			const encodedValue =
+				this.encodeSharedLogCoordinatePersistenceValue(fields);
 			if (deleteKeys.length === 0) {
 				await this.appendPut(storeKey, value, encodedValue);
 				putNativeNoDeletes();
