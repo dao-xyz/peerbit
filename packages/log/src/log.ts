@@ -673,7 +673,7 @@ export class Log<T> {
 
 		entry.init({ encoding: this._encoding, keychain: this._keychain });
 
-		const trimmed = await this.trim(options?.trim);
+		const trimmed = await this.trimIfConfigured(options?.trim);
 
 		if (trimmed) {
 			for (const entry of trimmed) {
@@ -774,7 +774,7 @@ export class Log<T> {
 
 		entry.init({ encoding: this._encoding, keychain: this._keychain });
 
-		const trimmed = await this.trim(appendOptions.trim, {
+		const trimmed = await this.trimIfConfigured(appendOptions.trim, {
 			resolveDeletedEntries: properties?.resolveTrimmedEntries,
 		});
 		const removed = trimmed ?? [];
@@ -873,7 +873,7 @@ export class Log<T> {
 			throw error;
 		}
 
-		const trimmed = await this.trim(appendOptions.trim, {
+		const trimmed = await this.trimIfConfigured(appendOptions.trim, {
 			resolveDeletedEntries: properties?.resolveTrimmedEntries,
 		});
 		const removed = trimmed ?? [];
@@ -964,7 +964,7 @@ export class Log<T> {
 			entry.init({ encoding: this._encoding, keychain: this._keychain });
 		}
 
-		const trimmed = await this.trim(appendOptions.trim, {
+		const trimmed = await this.trimIfConfigured(appendOptions.trim, {
 			resolveDeletedEntries: properties?.resolveTrimmedEntries,
 		});
 		const removed = trimmed ?? [];
@@ -1084,7 +1084,7 @@ export class Log<T> {
 			entry.init({ encoding: this._encoding, keychain: this._keychain });
 		}
 
-		const trimmed = await this.trim(options?.trim);
+		const trimmed = await this.trimIfConfigured(options?.trim);
 		if (trimmed) {
 			for (const entry of trimmed) {
 				pendingDeletes.push({ entry, fn: undefined });
@@ -1614,6 +1614,14 @@ export class Log<T> {
 		return this._trim.trim(option, properties);
 	}
 
+	private async trimIfConfigured(
+		option?: TrimOptions,
+		properties?: { resolveDeletedEntries?: boolean },
+	) {
+		const resolved = option ?? this._trim.options;
+		return resolved ? this.trim(resolved, properties) : undefined;
+	}
+
 	async join(
 		entriesOrLog:
 			| (string | Entry<T> | ShallowEntry | EntryWithRefs<T>)[]
@@ -1945,7 +1953,7 @@ export class Log<T> {
 			| PendingDelete<T>
 			| { entry: ShallowOrFullEntry<T>; fn: undefined }
 		)[] = await this.processEntry(entry);
-		const trimmed = await this.trim(options.trim);
+		const trimmed = await this.trimIfConfigured(options.trim);
 
 		if (trimmed) {
 			for (const removedEntry of trimmed) {
