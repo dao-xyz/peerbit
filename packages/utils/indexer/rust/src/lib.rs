@@ -334,6 +334,89 @@ impl NativeRustIndex {
         Ok(self.store.delete_keys(&keys))
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn put_shared_log_coordinate_and_delete_keys(
+        &mut self,
+        key: String,
+        id: JsValue,
+        value: JsValue,
+        hash_field: u32,
+        hash_number_field: u32,
+        gid_field: u32,
+        coordinates_field: u32,
+        coordinates_array_field: u32,
+        wall_time_field: u32,
+        assigned_to_range_boundary_field: u32,
+        meta_field: u32,
+        hash: String,
+        hash_number: String,
+        gid: String,
+        coordinates: Array,
+        wall_time: String,
+        assigned_to_range_boundary: bool,
+        meta_bytes: Vec<u8>,
+        byte_element_index_limit: usize,
+        keys: Array,
+    ) -> Result<Array, JsValue> {
+        let mut fields =
+            DocumentFields::with_scalar_capacity(8 + coordinates.length() as usize * 2);
+        let mut next_scope = 1u32;
+        insert_scalar(&mut fields, 0, hash_field, FieldValue::String(hash));
+        insert_scalar(
+            &mut fields,
+            0,
+            hash_number_field,
+            FieldValue::U64(parse_u64_string(&hash_number, "hashNumber")?),
+        );
+        insert_scalar(&mut fields, 0, gid_field, FieldValue::String(gid));
+        for coordinate in coordinates.iter() {
+            let coordinate = coordinate
+                .as_string()
+                .ok_or_else(|| js_error("Invalid shared-log coordinate"))?;
+            let scope = next_scope;
+            next_scope = next_scope
+                .checked_add(1)
+                .ok_or_else(|| js_error("Shared-log coordinate scope overflow"))?;
+            insert_scalar(
+                &mut fields,
+                scope,
+                coordinates_array_field,
+                FieldValue::Bool(true),
+            );
+            insert_scalar(
+                &mut fields,
+                scope,
+                coordinates_field,
+                FieldValue::U64(parse_u64_string(&coordinate, "coordinate")?),
+            );
+        }
+        insert_scalar(
+            &mut fields,
+            0,
+            wall_time_field,
+            FieldValue::U64(parse_u64_string(&wall_time, "wallTime")?),
+        );
+        insert_scalar(
+            &mut fields,
+            0,
+            assigned_to_range_boundary_field,
+            FieldValue::Bool(assigned_to_range_boundary),
+        );
+        let mut state = NativeExtractState {
+            next_scope,
+            byte_element_index_limit,
+        };
+        insert_bytes_facts(&mut fields, &mut state, 0, meta_field, meta_bytes)?;
+
+        let keys: Vec<_> = keys.iter().filter_map(|key| key.as_string()).collect();
+        self.store.put(key.clone(), id, value);
+        self.planner.index.put(key, fields);
+        for key in &keys {
+            self.planner.index.delete(key);
+        }
+        Ok(self.store.delete_keys(&keys))
+    }
+
     pub fn delete_keys(&mut self, keys: Array) -> Array {
         let keys: Vec<_> = keys.iter().filter_map(|key| key.as_string()).collect();
         for key in &keys {
@@ -1128,6 +1211,12 @@ fn read_le_i64_with_width(reader: &mut BridgeReader, width: usize) -> Result<i64
     };
     out[..width].copy_from_slice(bytes);
     Ok(i64::from_le_bytes(out))
+}
+
+fn parse_u64_string(value: &str, field: &str) -> Result<u64, JsValue> {
+    value
+        .parse::<u64>()
+        .map_err(|_| js_error(format!("Invalid shared-log {field}")))
 }
 
 fn decode_document_fields(fields_bytes: &[u8]) -> Result<DocumentFields, JsValue> {

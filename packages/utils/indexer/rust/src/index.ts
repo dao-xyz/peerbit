@@ -73,6 +73,28 @@ type NativeRustIndex<T extends Record<string, any>> = {
 		fields: Uint8Array,
 		keys: string[],
 	) => Array<[types.IdKey, T]>;
+	put_shared_log_coordinate_and_delete_keys?: (
+		key: string,
+		id: types.IdKey,
+		value: T,
+		hashField: number,
+		hashNumberField: number,
+		gidField: number,
+		coordinatesField: number,
+		coordinatesArrayField: number,
+		wallTimeField: number,
+		assignedToRangeBoundaryField: number,
+		metaField: number,
+		hash: string,
+		hashNumber: string,
+		gid: string,
+		coordinates: string[],
+		wallTime: string,
+		assignedToRangeBoundary: boolean,
+		metaBytes: Uint8Array,
+		byteElementIndexLimit: number,
+		keys: string[],
+	) => Array<[types.IdKey, T]>;
 	get: (key: string) => [types.IdKey, T] | undefined;
 	clear: () => void;
 	len: () => number;
@@ -2043,12 +2065,11 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		deleteIds: Array<types.IdKey | types.Ideable> = [],
 		id = types.toId(types.extractFieldValue(value, this.indexByArr)),
 	): Promise<types.IdKey[]> {
-		return this.putWithEncodedFieldsAndDeleteKeys(
+		return this.putSharedLogCoordinateValueAndDeleteKeys(
 			value,
 			id,
-			this.encodeSharedLogCoordinateFields(fields),
 			deleteIds.map(keyToStoreKey),
-			this.encodeSharedLogCoordinatePersistenceValue(fields),
+			fields,
 		);
 	}
 
@@ -2057,12 +2078,11 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		deleteIds: Array<types.IdKey | types.Ideable> = [],
 		id = types.toId(fields.hash),
 	): Promise<types.IdKey[]> {
-		return this.putWithEncodedFieldsAndDeleteKeys(
+		return this.putSharedLogCoordinateValueAndDeleteKeys(
 			this.createSharedLogCoordinateValue(fields),
 			id,
-			this.encodeSharedLogCoordinateFields(fields),
 			deleteIds.map(keyToStoreKey),
-			this.encodeSharedLogCoordinatePersistenceValue(fields),
+			fields,
 		);
 	}
 
@@ -2561,6 +2581,58 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		});
 	}
 
+	private async putSharedLogCoordinateValueAndDeleteKeys(
+		value: T,
+		id: types.IdKey,
+		deleteKeys: string[],
+		fields: SharedLogCoordinateNativeFields,
+	): Promise<types.IdKey[]> {
+		const nativePutCoordinate =
+			this.getNative().put_shared_log_coordinate_and_delete_keys;
+		if (!nativePutCoordinate) {
+			return this.putWithEncodedFieldsAndDeleteKeys(
+				value,
+				id,
+				this.encodeSharedLogCoordinateFields(fields),
+				deleteKeys,
+				this.encodeSharedLogCoordinatePersistenceValue(fields),
+			);
+		}
+
+		const storeKey = keyToStoreKey(id);
+		const encodedValue = this.encodeSharedLogCoordinatePersistenceValue(fields);
+		const putNative = () =>
+			nativePutCoordinate
+				.call(
+					this.getNative(),
+					storeKey,
+					id,
+					value,
+					...this.getSharedLogCoordinateNativeFieldIdArgs(),
+					fields.hash,
+					fields.hashNumber.toString(),
+					fields.gid,
+					fields.coordinates.map((coordinate) => coordinate.toString()),
+					fields.wallTime.toString(),
+					fields.assignedToRangeBoundary,
+					fields.metaBytes,
+					this.byteElementIndexLimit,
+					deleteKeys,
+				)
+				.map((entry) => entry[0]);
+
+		if (!this.snapshotFile) {
+			return putNative();
+		}
+
+		return this.enqueueMutation(async () => {
+			await this.appendPutAndDeletes(storeKey, value, deleteKeys, encodedValue);
+			const deletedEntries = putNative();
+			await this.compactIfNeeded();
+			return deletedEntries;
+		});
+	}
+
 	private getSharedLogCoordinateFieldIds(): NonNullable<
 		RustIndex<T, NestedType>["sharedLogCoordinateFieldIds"]
 	> {
@@ -2578,6 +2650,29 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			]),
 			meta: nativeFieldId(this.fieldDictionary, ["_meta"]),
 		});
+	}
+
+	private getSharedLogCoordinateNativeFieldIdArgs(): [
+		number,
+		number,
+		number,
+		number,
+		number,
+		number,
+		number,
+		number,
+	] {
+		const ids = this.getSharedLogCoordinateFieldIds();
+		return [
+			ids.hash,
+			ids.hashNumber,
+			ids.gid,
+			ids.coordinates,
+			ids.coordinatesArray,
+			ids.wallTime,
+			ids.assignedToRangeBoundary,
+			ids.meta,
+		];
 	}
 
 	private createSharedLogCoordinateValue(
