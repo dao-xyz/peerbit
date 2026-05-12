@@ -4213,6 +4213,8 @@ export class DocumentIndex<
 				return [];
 			}
 
+			await pendingUpdateProcessing;
+
 			const bufferedBeforeFetch = peerBuffers().length;
 			const localHash = this.node.identity.publicKey.hashcode();
 			const hasBufferedRemoteResults = [...peerBufferMap.entries()].some(
@@ -4494,6 +4496,7 @@ export class DocumentIndex<
 			| Extract<UpdateReason, "join" | "change" | "push">
 			| undefined;
 		let hasDeliveredResults = false;
+		let pendingUpdateProcessing: Promise<void> = Promise.resolve();
 
 		const emitOnBatch = async (
 			batch: ValueTypeFromRequest<Resolve, T, I>[],
@@ -4788,7 +4791,7 @@ export class DocumentIndex<
 				return value as WithContext<I>;
 			};
 
-			const onChange = async (evt: CustomEvent<DocumentsChange<T, I>>) => {
+			const processChange = async (evt: CustomEvent<DocumentsChange<T, I>>) => {
 				// Optional filter to mutate/suppress change events
 				indexIteratorLogger.trace(
 					"processing live update change event",
@@ -4929,6 +4932,13 @@ export class DocumentIndex<
 					}
 				}
 				signalUpdate();
+			};
+			const onChange = (evt: CustomEvent<DocumentsChange<T, I>>) => {
+				const task = pendingUpdateProcessing.then(() => processChange(evt));
+				pendingUpdateProcessing = task.catch((error) => {
+					warn("Failed to process iterator update", error);
+				});
+				return task;
 			};
 
 			this.documentEvents.addEventListener("change", onChange);

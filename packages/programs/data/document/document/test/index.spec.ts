@@ -680,7 +680,9 @@ describe("index", () => {
 					expect(entryIndexGetSpy.withArgs(first.entry.hash).callCount).equal(
 						0,
 					);
-					expect(entryIndexDelIdsSpy.callCount).greaterThan(0);
+					expect(entryIndexDelIdsSpy.callCount + entryIndexDelSpy.callCount).equal(
+						0,
+					);
 					expect(entryIndexDelSpy.callCount).equal(0);
 					expect(await store.docs.get(firstId)).to.be.undefined;
 					expect(changes).to.have.length(2);
