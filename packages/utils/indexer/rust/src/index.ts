@@ -73,6 +73,27 @@ type NativeRustIndex<T extends Record<string, any>> = {
 		fields: Uint8Array,
 		keys: string[],
 	) => Array<[types.IdKey, T]>;
+	put_shared_log_coordinate?: (
+		key: string,
+		id: types.IdKey,
+		value: T,
+		hashField: number,
+		hashNumberField: number,
+		gidField: number,
+		coordinatesField: number,
+		coordinatesArrayField: number,
+		wallTimeField: number,
+		assignedToRangeBoundaryField: number,
+		metaField: number,
+		hash: string,
+		hashNumber: string,
+		gid: string,
+		coordinates: string[],
+		wallTime: string,
+		assignedToRangeBoundary: boolean,
+		metaBytes: Uint8Array,
+		byteElementIndexLimit: number,
+	) => void;
 	put_shared_log_coordinate_and_delete_keys?: (
 		key: string,
 		id: types.IdKey,
@@ -2620,14 +2641,44 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 					deleteKeys,
 				)
 				.map((entry) => entry[0]);
+		const putNativeNoDeletes = () => {
+			const native = this.getNative();
+			const nativePutCoordinateNoDeletes = native.put_shared_log_coordinate;
+			if (!nativePutCoordinateNoDeletes) {
+				putNative();
+				return;
+			}
+			nativePutCoordinateNoDeletes.call(
+				native,
+				storeKey,
+				id,
+				value,
+				...this.getSharedLogCoordinateNativeFieldIdArgs(),
+				fields.hash,
+				fields.hashNumber.toString(),
+				fields.gid,
+				fields.coordinates.map((coordinate) => coordinate.toString()),
+				fields.wallTime.toString(),
+				fields.assignedToRangeBoundary,
+				fields.metaBytes,
+				this.byteElementIndexLimit,
+			);
+		};
 
 		if (!this.snapshotFile) {
+			if (deleteKeys.length === 0) {
+				putNativeNoDeletes();
+				return [];
+			}
 			return putNative();
 		}
 
 		return this.enqueueMutation(async () => {
 			if (deleteKeys.length === 0) {
 				await this.appendPut(storeKey, value, encodedValue);
+				putNativeNoDeletes();
+				await this.compactIfNeeded();
+				return [];
 			} else {
 				await this.appendPutAndDeletes(storeKey, value, deleteKeys, encodedValue);
 			}

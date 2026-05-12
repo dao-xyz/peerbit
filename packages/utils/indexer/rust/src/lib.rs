@@ -335,6 +335,52 @@ impl NativeRustIndex {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn put_shared_log_coordinate(
+        &mut self,
+        key: String,
+        id: JsValue,
+        value: JsValue,
+        hash_field: u32,
+        hash_number_field: u32,
+        gid_field: u32,
+        coordinates_field: u32,
+        coordinates_array_field: u32,
+        wall_time_field: u32,
+        assigned_to_range_boundary_field: u32,
+        meta_field: u32,
+        hash: String,
+        hash_number: String,
+        gid: String,
+        coordinates: Array,
+        wall_time: String,
+        assigned_to_range_boundary: bool,
+        meta_bytes: Vec<u8>,
+        byte_element_index_limit: usize,
+    ) -> Result<(), JsValue> {
+        let fields = shared_log_coordinate_fields(SharedLogCoordinateFieldsInput {
+            hash_field,
+            hash_number_field,
+            gid_field,
+            coordinates_field,
+            coordinates_array_field,
+            wall_time_field,
+            assigned_to_range_boundary_field,
+            meta_field,
+            hash,
+            hash_number,
+            gid,
+            coordinates,
+            wall_time,
+            assigned_to_range_boundary,
+            meta_bytes,
+            byte_element_index_limit,
+        })?;
+        self.store.put(key.clone(), id, value);
+        self.planner.index.put(key, fields);
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn put_shared_log_coordinate_and_delete_keys(
         &mut self,
         key: String,
@@ -358,56 +404,24 @@ impl NativeRustIndex {
         byte_element_index_limit: usize,
         keys: Array,
     ) -> Result<Array, JsValue> {
-        let mut fields =
-            DocumentFields::with_scalar_capacity(8 + coordinates.length() as usize * 2);
-        let mut next_scope = 1u32;
-        insert_scalar(&mut fields, 0, hash_field, FieldValue::String(hash));
-        insert_scalar(
-            &mut fields,
-            0,
+        let fields = shared_log_coordinate_fields(SharedLogCoordinateFieldsInput {
+            hash_field,
             hash_number_field,
-            FieldValue::U64(parse_u64_string(&hash_number, "hashNumber")?),
-        );
-        insert_scalar(&mut fields, 0, gid_field, FieldValue::String(gid));
-        for coordinate in coordinates.iter() {
-            let coordinate = coordinate
-                .as_string()
-                .ok_or_else(|| js_error("Invalid shared-log coordinate"))?;
-            let scope = next_scope;
-            next_scope = next_scope
-                .checked_add(1)
-                .ok_or_else(|| js_error("Shared-log coordinate scope overflow"))?;
-            insert_scalar(
-                &mut fields,
-                scope,
-                coordinates_array_field,
-                FieldValue::Bool(true),
-            );
-            insert_scalar(
-                &mut fields,
-                scope,
-                coordinates_field,
-                FieldValue::U64(parse_u64_string(&coordinate, "coordinate")?),
-            );
-        }
-        insert_scalar(
-            &mut fields,
-            0,
+            gid_field,
+            coordinates_field,
+            coordinates_array_field,
             wall_time_field,
-            FieldValue::U64(parse_u64_string(&wall_time, "wallTime")?),
-        );
-        insert_scalar(
-            &mut fields,
-            0,
             assigned_to_range_boundary_field,
-            FieldValue::Bool(assigned_to_range_boundary),
-        );
-        let mut state = NativeExtractState {
-            next_scope,
+            meta_field,
+            hash,
+            hash_number,
+            gid,
+            coordinates,
+            wall_time,
+            assigned_to_range_boundary,
+            meta_bytes,
             byte_element_index_limit,
-        };
-        insert_bytes_facts(&mut fields, &mut state, 0, meta_field, meta_bytes)?;
-
+        })?;
         let keys: Vec<_> = keys.iter().filter_map(|key| key.as_string()).collect();
         self.store.put(key.clone(), id, value);
         self.planner.index.put(key, fields);
@@ -1189,6 +1203,96 @@ fn insert_bytes_facts(
     }
     fields.insert_scoped_scalar(scope, FieldPath::Id(field), FieldValue::Bytes(bytes));
     Ok(())
+}
+
+struct SharedLogCoordinateFieldsInput {
+    hash_field: u32,
+    hash_number_field: u32,
+    gid_field: u32,
+    coordinates_field: u32,
+    coordinates_array_field: u32,
+    wall_time_field: u32,
+    assigned_to_range_boundary_field: u32,
+    meta_field: u32,
+    hash: String,
+    hash_number: String,
+    gid: String,
+    coordinates: Array,
+    wall_time: String,
+    assigned_to_range_boundary: bool,
+    meta_bytes: Vec<u8>,
+    byte_element_index_limit: usize,
+}
+
+fn shared_log_coordinate_fields(
+    input: SharedLogCoordinateFieldsInput,
+) -> Result<DocumentFields, JsValue> {
+    let mut fields =
+        DocumentFields::with_scalar_capacity(8 + input.coordinates.length() as usize * 2);
+    let mut next_scope = 1u32;
+    insert_scalar(
+        &mut fields,
+        0,
+        input.hash_field,
+        FieldValue::String(input.hash),
+    );
+    insert_scalar(
+        &mut fields,
+        0,
+        input.hash_number_field,
+        FieldValue::U64(parse_u64_string(&input.hash_number, "hashNumber")?),
+    );
+    insert_scalar(
+        &mut fields,
+        0,
+        input.gid_field,
+        FieldValue::String(input.gid),
+    );
+    for coordinate in input.coordinates.iter() {
+        let coordinate = coordinate
+            .as_string()
+            .ok_or_else(|| js_error("Invalid shared-log coordinate"))?;
+        let scope = next_scope;
+        next_scope = next_scope
+            .checked_add(1)
+            .ok_or_else(|| js_error("Shared-log coordinate scope overflow"))?;
+        insert_scalar(
+            &mut fields,
+            scope,
+            input.coordinates_array_field,
+            FieldValue::Bool(true),
+        );
+        insert_scalar(
+            &mut fields,
+            scope,
+            input.coordinates_field,
+            FieldValue::U64(parse_u64_string(&coordinate, "coordinate")?),
+        );
+    }
+    insert_scalar(
+        &mut fields,
+        0,
+        input.wall_time_field,
+        FieldValue::U64(parse_u64_string(&input.wall_time, "wallTime")?),
+    );
+    insert_scalar(
+        &mut fields,
+        0,
+        input.assigned_to_range_boundary_field,
+        FieldValue::Bool(input.assigned_to_range_boundary),
+    );
+    let mut state = NativeExtractState {
+        next_scope,
+        byte_element_index_limit: input.byte_element_index_limit,
+    };
+    insert_bytes_facts(
+        &mut fields,
+        &mut state,
+        0,
+        input.meta_field,
+        input.meta_bytes,
+    )?;
+    Ok(fields)
 }
 
 fn read_le_u64_with_width(reader: &mut BridgeReader, width: usize) -> Result<Option<u64>, JsValue> {
