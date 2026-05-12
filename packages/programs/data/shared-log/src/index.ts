@@ -4272,18 +4272,23 @@ export class SharedLog<
 		const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
 		if (!nativeAppendPlan.isLeader && !delayAdaptiveRebalance) {
 			let leaders = nativeAppendPlan.leaders;
+			let pruneEntry: EntryReplicated<R> | undefined;
 			if (!leaders) {
-				const entry = this.materializePreparedAppendResultEntry(result);
+				pruneEntry = this.materializePreparedCoordinateEntry(
+					nativeAppendPlan.preparedCoordinate,
+				);
 				leaders = (
-					await this.planEntryLeaders(entry, properties.minReplicasValue, {
+					await this.planEntryLeaders(pruneEntry, properties.minReplicasValue, {
 						persist: false,
 					})
 				).leaders;
 			}
-			const entry = this.materializePreparedAppendResultEntry(result);
+			pruneEntry ??= this.materializePreparedCoordinateEntry(
+				nativeAppendPlan.preparedCoordinate,
+			);
 			this.pruneDebouncedFnAddIfNotKeeping({
-				key: entry.hash,
-				value: { entry, leaders },
+				key: pruneEntry.hash,
+				value: { entry: pruneEntry, leaders },
 			});
 		}
 		if (!delayAdaptiveRebalance) {

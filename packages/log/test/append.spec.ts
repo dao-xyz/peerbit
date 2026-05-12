@@ -478,6 +478,7 @@ describe("append", function () {
 			"putNativeCommittedAppendFacts",
 		);
 		const appendBatchSpy = sinon.spy(log.entryIndex, "putAppendBatch");
+		const trimSpy = sinon.spy(log, "trim");
 		const initSpy = sinon.spy(EntryV0.prototype, "init");
 
 		try {
@@ -490,6 +491,7 @@ describe("append", function () {
 			expect(result).to.exist;
 			expect(commitOnlySpy.callCount).equal(1);
 			expect(appendBatchSpy.callCount).equal(0);
+			expect(trimSpy.callCount).equal(0);
 			expect(initSpy.callCount).equal(0);
 			expect((await log.getHeads().all()).map((head) => head.hash)).to.deep.equal([
 				result.appendFacts.hash,
@@ -502,6 +504,7 @@ describe("append", function () {
 			expect(entry.meta.gid).equal(result.appendFacts.gid);
 		} finally {
 			initSpy.restore();
+			trimSpy.restore();
 			appendBatchSpy.restore();
 			commitOnlySpy.restore();
 			await log.close();
