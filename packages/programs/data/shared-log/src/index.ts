@@ -8448,6 +8448,7 @@ export class SharedLog<
 				coordinateEntry,
 				fields,
 				deleteHashes,
+				toId(fields.hash),
 			);
 		} else if (deleteHashes.length > 0 && coordinateIndex.putAndDeleteIds) {
 			await coordinateIndex.putAndDeleteIds(coordinateEntry, deleteHashes);
@@ -8592,6 +8593,7 @@ export class SharedLog<
 					value: prepared.coordinateEntry,
 					fields: prepared.fields,
 					deleteIds: item.entry.meta.next,
+					id: toId(prepared.fields.hash),
 				})),
 			);
 		} else if (canUseGenericPutBatch) {
