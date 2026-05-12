@@ -184,6 +184,9 @@ const time = async <T>(
 	}
 };
 
+const isPromiseLike = <T>(value: T | Promise<T>): value is Promise<T> =>
+	!!value && typeof (value as { then?: unknown }).then === "function";
+
 const patchAsyncMethod = (
 	target: any,
 	key: string,
@@ -194,8 +197,21 @@ const patchAsyncMethod = (
 	if (typeof original !== "function") {
 		return () => {};
 	}
-	target[key] = async function patched(this: unknown, ...args: unknown[]) {
-		return time(profile, profileKey, () => original.apply(this, args));
+	target[key] = function patched(this: unknown, ...args: unknown[]) {
+		const started = performance.now();
+		try {
+			const result = original.apply(this, args);
+			if (isPromiseLike(result)) {
+				return result.finally(() => {
+					profile[profileKey] += performance.now() - started;
+				});
+			}
+			profile[profileKey] += performance.now() - started;
+			return result;
+		} catch (error) {
+			profile[profileKey] += performance.now() - started;
+			throw error;
+		}
 	};
 	return () => {
 		target[key] = original;

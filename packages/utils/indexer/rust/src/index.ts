@@ -1673,6 +1673,8 @@ const cloneResults = <T>(
 	});
 };
 
+type MaybePromise<T> = Promise<T> | T;
+
 export class RustIndex<T extends Record<string, any>, NestedType = any>
 	implements types.Index<T, NestedType>
 {
@@ -2076,12 +2078,12 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
-	async putSharedLogCoordinateAndDeleteIds(
+	putSharedLogCoordinateAndDeleteIds(
 		value: T,
 		fields: SharedLogCoordinateNativeFields,
 		deleteIds: Array<types.IdKey | types.Ideable> = [],
 		id = types.toId(types.extractFieldValue(value, this.indexByArr)),
-	): Promise<types.IdKey[]> {
+	): MaybePromise<types.IdKey[]> {
 		return this.putSharedLogCoordinateValueAndDeleteKeys(
 			value,
 			id,
@@ -2090,11 +2092,11 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
-	async putSharedLogCoordinateFieldsAndDeleteIds(
+	putSharedLogCoordinateFieldsAndDeleteIds(
 		fields: SharedLogCoordinateNativeFields,
 		deleteIds: Array<types.IdKey | types.Ideable> = [],
 		id = types.toId(fields.hash),
-	): Promise<types.IdKey[]> {
+	): MaybePromise<types.IdKey[]> {
 		return this.putSharedLogCoordinateValueAndDeleteKeys(
 			this.createSharedLogCoordinateValue(fields),
 			id,
@@ -2103,14 +2105,14 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
-	async putSharedLogCoordinatesAndDeleteIdsBatch(
+	putSharedLogCoordinatesAndDeleteIdsBatch(
 		values: Array<{
 			value: T;
 			fields: SharedLogCoordinateNativeFields;
 			deleteIds?: Array<types.IdKey | types.Ideable>;
 			id?: types.IdKey;
 		}>,
-	): Promise<types.IdKey[]> {
+	): MaybePromise<types.IdKey[]> {
 		if (values.length === 0) {
 			return [];
 		}
@@ -2160,13 +2162,13 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		});
 	}
 
-	async putSharedLogCoordinateFieldsAndDeleteIdsBatch(
+	putSharedLogCoordinateFieldsAndDeleteIdsBatch(
 		values: Array<{
 			fields: SharedLogCoordinateNativeFields;
 			deleteIds?: Array<types.IdKey | types.Ideable>;
 			id?: types.IdKey;
 		}>,
-	): Promise<types.IdKey[]> {
+	): MaybePromise<types.IdKey[]> {
 		return this.putSharedLogCoordinatesAndDeleteIdsBatch(
 			values.map((entry) => ({
 				value: this.createSharedLogCoordinateValue(entry.fields),
@@ -2177,7 +2179,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
-	async delIds(deleteIds: Array<types.IdKey | types.Ideable>): Promise<types.IdKey[]> {
+	delIds(
+		deleteIds: Array<types.IdKey | types.Ideable>,
+	): MaybePromise<types.IdKey[]> {
 		const deleteKeys = deleteIds.map(keyToStoreKey);
 		if (deleteKeys.length === 0) {
 			return [];
@@ -2599,12 +2603,12 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		});
 	}
 
-	private async putSharedLogCoordinateValueAndDeleteKeys(
+	private putSharedLogCoordinateValueAndDeleteKeys(
 		value: T,
 		id: types.IdKey,
 		deleteKeys: string[],
 		fields: SharedLogCoordinateNativeFields,
-	): Promise<types.IdKey[]> {
+	): MaybePromise<types.IdKey[]> {
 		const nativePutCoordinate =
 			this.getNative().put_shared_log_coordinate_and_delete_keys;
 		if (!nativePutCoordinate) {
