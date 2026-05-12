@@ -55,9 +55,10 @@ describe(`level`, function () {
 		expect(await store.get(cids[1])).to.deep.equal(datas[1]);
 	});
 
-	it("puts a single known cid block through store put", async () => {
+	it("puts a single known cid block through immutable store put", async () => {
 		const backingStore = createRustStore();
 		const putSpy = sinon.spy(backingStore, "put");
+		const putImmutableSpy = sinon.spy(backingStore, "putImmutable");
 		const putManySpy = sinon.spy(backingStore, "putMany");
 		store = new AnyBlockStore(backingStore);
 		await store.start();
@@ -67,15 +68,18 @@ describe(`level`, function () {
 
 		expect(cids).to.deep.equal([cid]);
 		expect(await store.get(cid)).to.deep.equal(data);
-		expect(putSpy.callCount).equal(1);
+		expect(putSpy.callCount).equal(0);
+		expect(putImmutableSpy.callCount).equal(1);
 		expect(putManySpy.callCount).equal(0);
 		putSpy.restore();
+		putImmutableSpy.restore();
 		putManySpy.restore();
 	});
 
-	it("puts a known cid block through store put", async () => {
+	it("puts a known cid block through immutable store put", async () => {
 		const backingStore = createRustStore();
 		const putSpy = sinon.spy(backingStore, "put");
+		const putImmutableSpy = sinon.spy(backingStore, "putImmutable");
 		const putManySpy = sinon.spy(backingStore, "putMany");
 		store = new AnyBlockStore(backingStore);
 		await store.start();
@@ -85,9 +89,11 @@ describe(`level`, function () {
 
 		expect(storedCid).equal(cid);
 		expect(await store.get(cid)).to.deep.equal(data);
-		expect(putSpy.callCount).equal(1);
+		expect(putSpy.callCount).equal(0);
+		expect(putImmutableSpy.callCount).equal(1);
 		expect(putManySpy.callCount).equal(0);
 		putSpy.restore();
+		putImmutableSpy.restore();
 		putManySpy.restore();
 	});
 
@@ -95,6 +101,7 @@ describe(`level`, function () {
 		const backingStore = createRustStore();
 		const putSpy = sinon.spy(backingStore, "put");
 		const putManySpy = sinon.spy(backingStore, "putMany");
+		const putManyImmutableSpy = sinon.spy(backingStore, "putManyImmutable");
 		store = new AnyBlockStore(backingStore);
 		await store.start();
 		const blocks: Array<readonly [string, Uint8Array]> = [
@@ -113,9 +120,11 @@ describe(`level`, function () {
 		expect(await store.get(blocks[0][0])).to.deep.equal(blocks[0][1]);
 		expect(await store.get(blocks[1][0])).to.deep.equal(blocks[1][1]);
 		expect(putSpy.callCount).equal(0);
-		expect(putManySpy.callCount).equal(1);
+		expect(putManySpy.callCount).equal(0);
+		expect(putManyImmutableSpy.callCount).equal(1);
 		putSpy.restore();
 		putManySpy.restore();
+		putManyImmutableSpy.restore();
 	});
 
 	it("gets and removes many blocks through store batch helpers", async () => {

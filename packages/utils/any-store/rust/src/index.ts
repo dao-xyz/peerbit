@@ -172,6 +172,27 @@ export class RustAnyStore implements AnyStore {
 		});
 	}
 
+	/**
+	 * Fast path for content-addressed immutable bytes; callers must not mutate
+	 * value after calling.
+	 */
+	putImmutable(key: string, value: Uint8Array): Promise<void> | void {
+		const native = this.openTransientNative();
+		if (native) {
+			native.put(key, value);
+			return;
+		}
+
+		return this.enqueueMutation(async (native) => {
+			if (this.directory) {
+				await this.recordJournal(
+					this.journaledNative(native).encode_put_record(key, value),
+				);
+			}
+			native.put(key, value);
+		});
+	}
+
 	putMany(entries: Iterable<readonly [string, Uint8Array]>): Promise<void> | void {
 		const inputPairs = Array.from(entries);
 		if (inputPairs.length === 0) {
@@ -192,6 +213,35 @@ export class RustAnyStore implements AnyStore {
 		}
 		const keys = pairs.map(([key]) => key);
 		const values = pairs.map(([, value]) => value);
+		return this.enqueueMutation(async (native) => {
+			if (this.directory) {
+				await this.recordJournal(
+					this.journaledNative(native).encode_put_records(keys, values),
+				);
+			}
+			native.put_many(keys, values);
+		});
+	}
+
+	/**
+	 * Fast path for content-addressed immutable bytes; callers must not mutate
+	 * values after calling.
+	 */
+	putManyImmutable(
+		entries: Iterable<readonly [string, Uint8Array]>,
+	): Promise<void> | void {
+		const inputPairs = Array.from(entries);
+		if (inputPairs.length === 0) {
+			return;
+		}
+		const keys = inputPairs.map(([key]) => key);
+		const values = inputPairs.map(([, value]) => value);
+		const native = this.openTransientNative();
+		if (native) {
+			native.put_many(keys, values);
+			return;
+		}
+
 		return this.enqueueMutation(async (native) => {
 			if (this.directory) {
 				await this.recordJournal(

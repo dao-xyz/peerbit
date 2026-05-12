@@ -20,6 +20,13 @@ import * as raw from "multiformats/codecs/raw";
 const isPromiseLike = <T>(value: Promise<T> | T): value is Promise<T> =>
 	typeof (value as { then?: unknown })?.then === "function";
 
+type ImmutableBlockStore = AnyStore & {
+	putImmutable?: (key: string, value: Uint8Array) => Promise<void> | void;
+	putManyImmutable?: (
+		entries: Iterable<readonly [string, Uint8Array]>,
+	) => Promise<void> | void;
+};
+
 export class AnyBlockStore implements Blocks {
 	private _store: AnyStore;
 	private _opening: Promise<any>;
@@ -167,7 +174,10 @@ export class AnyBlockStore implements Blocks {
 
 	putKnown(cid: string, bytes: Uint8Array): Promise<string> | string {
 		try {
-			const result = this._store.put(cid, bytes);
+			const immutableStore = this._store as ImmutableBlockStore;
+			const result = immutableStore.putImmutable
+				? immutableStore.putImmutable(cid, bytes)
+				: this._store.put(cid, bytes);
 			if (isPromiseLike(result)) {
 				return result
 					.then(() => cid)
@@ -186,6 +196,9 @@ export class AnyBlockStore implements Blocks {
 			putMany?: (
 				entries: Iterable<readonly [string, Uint8Array]>,
 			) => Promise<void> | void;
+			putManyImmutable?: (
+				entries: Iterable<readonly [string, Uint8Array]>,
+			) => Promise<void> | void;
 		};
 		if (blocks.length === 1) {
 			const [cid, bytes] = blocks[0]!;
@@ -201,10 +214,15 @@ export class AnyBlockStore implements Blocks {
 			putMany?: (
 				entries: Iterable<readonly [string, Uint8Array]>,
 			) => Promise<void> | void;
+			putManyImmutable?: (
+				entries: Iterable<readonly [string, Uint8Array]>,
+			) => Promise<void> | void;
 		},
 	): Promise<string[]> {
 		try {
-			if (typeof store.putMany === "function") {
+			if (typeof store.putManyImmutable === "function") {
+				await store.putManyImmutable(blocks);
+			} else if (typeof store.putMany === "function") {
 				await store.putMany(blocks);
 			} else {
 				for (const [cid, bytes] of blocks) {

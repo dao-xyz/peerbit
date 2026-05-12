@@ -78,6 +78,27 @@ describe("@peerbit/any-store-rust", () => {
 		await store.close();
 	});
 
+	it("stores immutable transient values without forcing an async boundary", async () => {
+		const store = createStore();
+		await store.open();
+		expect(store.putImmutable("a", new Uint8Array([1, 2, 3]))).to.equal(
+			undefined,
+		);
+		expect(
+			store.putManyImmutable([
+				["b", new Uint8Array([4])],
+				["c", new Uint8Array([5, 6])],
+			]),
+		).to.equal(undefined);
+
+		expect(await store.getMany(["a", "b", "c"])).to.deep.equal([
+			new Uint8Array([1, 2, 3]),
+			new Uint8Array([4]),
+			new Uint8Array([5, 6]),
+		]);
+		await store.close();
+	});
+
 	it("rejects persistent redb stores until a byte-range backend lands", async () => {
 		const directory = await tempDirectory();
 		cleanup.push(directory);
@@ -100,6 +121,29 @@ describe("@peerbit/any-store-rust", () => {
 		expect(await store.persisted()).to.equal(true);
 		expect(await store.get("a")).to.deep.equal(new Uint8Array([1, 2, 3]));
 		expect(await store.size()).to.equal(3);
+		await store.close();
+	});
+
+	it("persists immutable values across reopen", async () => {
+		const directory = await tempDirectory();
+		cleanup.push(directory);
+
+		let store = createStore(directory);
+		await store.open();
+		await store.putImmutable("a", new Uint8Array([1, 2, 3]));
+		await store.putManyImmutable([
+			["b", new Uint8Array([4])],
+			["c", new Uint8Array([5, 6])],
+		]);
+		await store.close();
+
+		store = createStore(directory);
+		await store.open();
+		expect(await store.getMany(["a", "b", "c"])).to.deep.equal([
+			new Uint8Array([1, 2, 3]),
+			new Uint8Array([4]),
+			new Uint8Array([5, 6]),
+		]);
 		await store.close();
 	});
 
