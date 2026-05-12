@@ -1934,6 +1934,16 @@ export class SharedLog<
 		return (await this.countReplicationSegments()) > 0;
 	}
 
+	private knownSelfReplicating(selfHash: string): boolean | undefined {
+		if (!this._isReplicating) {
+			return false;
+		}
+		if (this.uniqueReplicators.has(selfHash)) {
+			return true;
+		}
+		return undefined;
+	}
+
 	private setupRebalanceDebounceFunction(
 		interval = RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL,
 	) {
@@ -8804,8 +8814,8 @@ export class SharedLog<
 		selfReplicating: boolean;
 		peerFilter: Set<string> | undefined;
 	}> {
-		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge()); // TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
 		const selfHash = this.node.identity.publicKey.hashcode();
+		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge()); // TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
 
 		// Prefer `uniqueReplicators` (replicator cache) as soon as it has any data.
 		// If it is still warming up (for example, only contains self), supplement with
@@ -8815,7 +8825,8 @@ export class SharedLog<
 		if (options?.candidates) {
 			peerFilter = new Set(options.candidates);
 		} else {
-			selfReplicating = await this.isReplicating();
+			selfReplicating =
+				this.knownSelfReplicating(selfHash) ?? (await this.isReplicating());
 			if (this.uniqueReplicators.size > 0) {
 				peerFilter = new Set(this.uniqueReplicators);
 				if (selfReplicating) {
