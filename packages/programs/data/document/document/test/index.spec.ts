@@ -42,7 +42,7 @@ import {
 	id,
 	toId,
 } from "@peerbit/indexer-interface";
-import { Entry, Log, createEntry } from "@peerbit/log";
+import { Entry, EntryV0, Log, createEntry } from "@peerbit/log";
 import { ClosedError, Program } from "@peerbit/program";
 import type { FanoutTree, TopicControlPlane } from "@peerbit/pubsub";
 import { MissingResponsesError, RPCMessage, ResponseV0 } from "@peerbit/rpc";
@@ -625,6 +625,70 @@ describe("index", () => {
 				} finally {
 					planEntryLeadersSpy.restore();
 					nativePlanSpy.restore();
+				}
+			});
+
+			it("uses commit-only local puts when coordinate persistence is deferred", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: false,
+						nativeGraph: true,
+					},
+				});
+				const sharedCommitOnlySpy = sinon.spy(
+					store.docs.log,
+					"appendLocallyPreparedPayloadCommitOnly",
+				);
+				const lowerCommitOnlySpy = sinon.spy(
+					store.docs.log.log as any,
+					"appendLocallyPreparedCommitOnly",
+				);
+				const lowerPreparedSpy = sinon.spy(
+					store.docs.log.log,
+					"appendLocallyPrepared",
+				);
+				const lowerTrimSpy = sinon.spy(store.docs.log.log, "trim");
+				const deleteCoordinatesSpy = sinon.spy(
+					store.docs.log as any,
+					"deleteCoordinatesForHashes",
+				);
+				const initSpy = sinon.spy(EntryV0.prototype, "init");
+
+				try {
+					const doc = new Document({ id: uuid(), name: "local" });
+					const put = await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(sharedCommitOnlySpy.callCount).equal(1);
+					expect(lowerCommitOnlySpy.callCount).equal(1);
+					expect(lowerPreparedSpy.callCount).equal(0);
+					expect(lowerTrimSpy.callCount).equal(0);
+					expect(deleteCoordinatesSpy.callCount).equal(0);
+					expect(initSpy.callCount).equal(0);
+
+					expect(put.entry.hash).to.be.a("string");
+					expect(initSpy.callCount).greaterThan(0);
+					expect((await store.docs.get(doc.id))?.name).equal("local");
+				} finally {
+					initSpy.restore();
+					deleteCoordinatesSpy.restore();
+					lowerTrimSpy.restore();
+					lowerPreparedSpy.restore();
+					lowerCommitOnlySpy.restore();
+					sharedCommitOnlySpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
 				}
 			});
 

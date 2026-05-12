@@ -2941,7 +2941,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		value: Record<string, any>,
 		context: Record<string, any>,
 	): T {
-		if (value.__context === context) {
+		if (
+			value.__context === context &&
+			Object.getPrototypeOf(value) === (this.properties.schema as any).prototype
+		) {
 			return value as T;
 		}
 		return this.createContextualValue(value, context);

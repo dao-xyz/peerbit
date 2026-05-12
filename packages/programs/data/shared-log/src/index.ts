@@ -4339,8 +4339,8 @@ export class SharedLog<
 		if (
 			options?.target !== "none" ||
 			options?.replicate === true ||
-			this.shouldDeferHeadCoordinatePersistence(options) ||
-			!this._nativeSharedLogState
+			(!this.shouldDeferHeadCoordinatePersistence(options) &&
+				!this._nativeSharedLogState)
 		) {
 			return undefined;
 		}
@@ -4362,6 +4362,37 @@ export class SharedLog<
 		);
 		if (!result) {
 			return undefined;
+		}
+
+		if (this.shouldDeferHeadCoordinatePersistence(options)) {
+			const deferredCoordinateDeleteHashes =
+				this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
+					result.appendFacts,
+					result.removed,
+					result.materializeEntry,
+				);
+			const deleteHashes =
+				deferredCoordinateDeleteHashes &&
+				deferredCoordinateDeleteHashes.length > 0
+					? [
+							...new Set([
+								...result.appendFacts.next,
+								...deferredCoordinateDeleteHashes,
+							]),
+						]
+					: result.appendFacts.next;
+			if (deleteHashes.length > 0) {
+				await this.deleteCoordinatesForHashes(deleteHashes);
+			}
+			return {
+				get entry() {
+					return result.entry;
+				},
+				removed: result.removed,
+				appendCommit: this.createPreparedLocalAppendCommitFromFacts(
+					result.appendFacts,
+				),
+			};
 		}
 
 		const nativePreparedCommit =
