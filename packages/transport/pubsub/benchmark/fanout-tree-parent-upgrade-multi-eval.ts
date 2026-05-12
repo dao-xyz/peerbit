@@ -43,7 +43,7 @@ class SimFanoutTree extends FanoutTree {
 	}
 }
 
-type ScenarioName = "ci-multi-live" | "ci-multi-idle";
+type ScenarioName = "ci-multi-live" | "ci-multi-live-churn" | "ci-multi-idle";
 type UpgradeMode = "direct" | "probe" | "shadow";
 type UpgradePreset = "raw" | "default-candidate";
 
@@ -86,6 +86,7 @@ type EvalArgs = {
 	timeoutMs?: number;
 	maxCostRatio: number;
 	maxLiveDeadlinePctDelta: number;
+	maxLiveChurnGuardSkipsPerSlot: number;
 	maxSecondBatchLatencyP95DeltaMs: number;
 	maxSecondBatchLatencyP95DeltaRatio: number;
 	maxProbePerUpgrade: number;
@@ -319,6 +320,46 @@ const SCENARIOS: Record<ScenarioName, Partial<MultiWriterParams>> = {
 		churnDownMs: 0,
 		churnFraction: 0,
 	},
+	"ci-multi-live-churn": {
+		scenario: "ci-multi-live-churn",
+		nodes: 60,
+		writers: 6,
+		bootstraps: 1,
+		subscribersPerTree: 42,
+		relayFraction: 0.5,
+		joinConcurrency: 12,
+		joinPhaseSettleMs: 500,
+		messages: 120,
+		secondBatchMessages: 0,
+		secondBatchSettleMs: 0,
+		msgRate: 60,
+		msgSize: 192,
+		settleMs: 1_000,
+		deadlineMs: 750,
+		timeoutMs: 150_000,
+		rootUploadLimitBps: 100_000_000,
+		rootMaxChildren: 2,
+		relayUploadLimitBps: 100_000_000,
+		relayMaxChildren: 4,
+		repair: true,
+		repairWindowMessages: 512,
+		repairIntervalMs: 200,
+		repairMaxPerReq: 64,
+		neighborRepair: true,
+		neighborRepairPeers: 3,
+		streamRxDelayMs: 2,
+		streamHighWaterMarkBytes: 256 * 1024,
+		dialDelayMs: 0,
+		candidateScoringMode: "weighted",
+		trackerQueryIntervalMs: 1_000,
+		lateRootConnectAfterMs: 700,
+		lateRootDuringPublish: true,
+		lateRootMaxChildren: 16,
+		lateRootConnectFraction: 0.5,
+		churnEveryMs: 500,
+		churnDownMs: 150,
+		churnFraction: 0.03,
+	},
 	"ci-multi-idle": {
 		scenario: "ci-multi-idle",
 		nodes: 40,
@@ -367,11 +408,12 @@ const usage = () => {
 			"fanout-tree-parent-upgrade-multi-eval.ts",
 			"",
 			"Options:",
-			"  --scenario NAME              ci-multi-live|ci-multi-idle|all (default: all)",
+			"  --scenario NAME              ci-multi-live|ci-multi-live-churn|ci-multi-idle|all (default: all)",
 			"  --seeds CSV                  seeds to run for each scenario (default: 1,2,3)",
 			"  --parentUpgradePreset NAME   raw|default-candidate (default: raw)",
 			"  --parentUpgradeIntervalMs MS treatment upgrade interval (default: 1000)",
 			"  --parentUpgradeMode MODE     direct|probe|shadow (default: preset-dependent)",
+			"  --maxLiveChurnGuardSkipsPerSlot N max active guard skips per subscriber slot for ci-multi-live-churn (default: 1)",
 			"  --nodes N                    override scenario node count",
 			"  --writers N                  override scenario writer/root count",
 			"  --subscribersPerTree N       override scenario subscriber slots per writer",
@@ -380,6 +422,7 @@ const usage = () => {
 			"",
 			"Examples:",
 			"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-live --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1",
+			"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-live-churn --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1",
 			"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-idle --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1",
 		].join("\n"),
 	);
@@ -399,15 +442,26 @@ const parseCsvNumbers = (value: string | undefined, fallback: number[]) => {
 };
 
 const parseScenarios = (value: string | undefined): ScenarioName[] => {
-	if (!value || value === "all") return ["ci-multi-live", "ci-multi-idle"];
+	if (!value || value === "all") {
+		return ["ci-multi-live", "ci-multi-live-churn", "ci-multi-idle"];
+	}
 	const scenarios = value.split(",").map((part) => part.trim());
 	for (const scenario of scenarios) {
-		if (scenario !== "ci-multi-live" && scenario !== "ci-multi-idle") {
+		if (
+			scenario !== "ci-multi-live" &&
+			scenario !== "ci-multi-live-churn" &&
+			scenario !== "ci-multi-idle"
+		) {
 			throw new Error(`Unknown scenario: ${scenario}`);
 		}
 	}
 	return scenarios as ScenarioName[];
 };
+
+const isLiveScenario = (scenario: ScenarioName) =>
+	scenario === "ci-multi-live" || scenario === "ci-multi-live-churn";
+const isLiveChurnScenario = (scenario: ScenarioName) =>
+	scenario === "ci-multi-live-churn";
 
 const parseArgs = (argv: string[]): EvalArgs => {
 	const get = (name: string) => {
@@ -522,6 +576,9 @@ const parseArgs = (argv: string[]): EvalArgs => {
 			get("--timeoutMs") == null ? undefined : Number(get("--timeoutMs")),
 		maxCostRatio: Number(get("--maxCostRatio") ?? 1.15),
 		maxLiveDeadlinePctDelta: Number(get("--maxLiveDeadlinePctDelta") ?? 2),
+		maxLiveChurnGuardSkipsPerSlot: Number(
+			get("--maxLiveChurnGuardSkipsPerSlot") ?? 1,
+		),
 		maxSecondBatchLatencyP95DeltaMs: Number(
 			get("--maxSecondBatchLatencyP95DeltaMs") ?? 3,
 		),
@@ -680,10 +737,7 @@ const failIfLess = (
 	}
 };
 
-const peerLatencyP95For = (
-	result: TreeResult,
-	hashes: string[],
-): number => {
+const peerLatencyP95For = (result: TreeResult, hashes: string[]): number => {
 	const values: number[] = [];
 	for (const hash of hashes) {
 		const value = result.secondBatchLatencyP95ByHash[hash];
@@ -724,9 +778,10 @@ const runMultiWriterSim = async (
 		(_, i) => params.writers + i,
 	).filter((i) => i < params.nodes);
 	const reserved = new Set([...rootIndices, ...bootstrapIndices]);
-	const subscriberPool = Array.from({ length: params.nodes }, (_, i) => i).filter(
-		(i) => !reserved.has(i),
-	);
+	const subscriberPool = Array.from(
+		{ length: params.nodes },
+		(_, i) => i,
+	).filter((i) => !reserved.has(i));
 	const subscriberIndices = pickDistinct(
 		rng,
 		subscriberPool,
@@ -850,21 +905,22 @@ const runMultiWriterSim = async (
 						neighborRepairPeers: params.neighborRepairPeers,
 					},
 					{
-						timeoutMs: Math.max(10_000, Math.min(120_000, timeoutMs || 120_000)),
+						timeoutMs: Math.max(
+							10_000,
+							Math.min(120_000, timeoutMs || 120_000),
+						),
 						candidateScoringMode: params.candidateScoringMode,
 						trackerQueryIntervalMs: params.trackerQueryIntervalMs,
 						parentUpgradeIntervalMs: params.parentUpgradeIntervalMs,
 						parentUpgradeLeafOnly: params.parentUpgradeLeafOnly,
 						parentUpgradeMinLevelGain: params.parentUpgradeMinLevelGain,
-						parentUpgradeRootMinLevelGain:
-							params.parentUpgradeRootMinLevelGain,
+						parentUpgradeRootMinLevelGain: params.parentUpgradeRootMinLevelGain,
 						parentUpgradeRootMinSubtreeGain:
 							params.parentUpgradeRootMinSubtreeGain,
 						parentUpgradeNonRootMinLevelGain:
 							params.parentUpgradeNonRootMinLevelGain,
 						parentUpgradeMinFreeSlots: params.parentUpgradeMinFreeSlots,
-						parentUpgradeRootMinFreeSlots:
-							params.parentUpgradeRootMinFreeSlots,
+						parentUpgradeRootMinFreeSlots: params.parentUpgradeRootMinFreeSlots,
 						parentUpgradeMaxChildLoadRatio:
 							params.parentUpgradeMaxChildLoadRatio,
 						parentUpgradeRootMaxChildLoadRatio:
@@ -984,7 +1040,8 @@ const runMultiWriterSim = async (
 		});
 
 		const treeByKey = new Map<string, number>();
-		for (const tree of trees) treeByKey.set(`${tree.topic}:${tree.rootHash}`, tree.tree);
+		for (const tree of trees)
+			treeByKey.set(`${tree.topic}:${tree.rootHash}`, tree.tree);
 		const makeOnData = (localHash: string) => (ev: any) => {
 			const d = ev?.detail;
 			if (!d) return;
@@ -1043,7 +1100,10 @@ const runMultiWriterSim = async (
 				parentShadowPromote: 0,
 			};
 			for (const p of session.peers) {
-				const m = p.services.fanout.getChannelMetrics(tree.topic, tree.rootHash);
+				const m = p.services.fanout.getChannelMetrics(
+					tree.topic,
+					tree.rootHash,
+				);
 				out.reparentUpgrade += m.reparentUpgrade;
 				out.reparentUpgradeSkipData += m.reparentUpgradeSkipData;
 				out.reparentUpgradeSkipRepair += m.reparentUpgradeSkipRepair;
@@ -1058,7 +1118,10 @@ const runMultiWriterSim = async (
 			after: ParentUpgradeActivity,
 			before: ParentUpgradeActivity,
 		): ParentUpgradeActivity => ({
-			reparentUpgrade: Math.max(0, after.reparentUpgrade - before.reparentUpgrade),
+			reparentUpgrade: Math.max(
+				0,
+				after.reparentUpgrade - before.reparentUpgrade,
+			),
 			reparentUpgradeSkipData: Math.max(
 				0,
 				after.reparentUpgradeSkipData - before.reparentUpgradeSkipData,
@@ -1089,7 +1152,9 @@ const runMultiWriterSim = async (
 			if (params.lateRootMaxChildren > 0) {
 				for (const tree of trees) {
 					const id = tree.root.getChannelId(tree.topic, tree.rootHash);
-					const ch = (tree.root as any).channelsBySuffixKey?.get?.(id.suffixKey);
+					const ch = (tree.root as any).channelsBySuffixKey?.get?.(
+						id.suffixKey,
+					);
 					if (ch) {
 						ch.maxChildren = Math.max(
 							ch.maxChildren ?? 0,
@@ -1114,7 +1179,8 @@ const runMultiWriterSim = async (
 			);
 			for (const tree of trees) {
 				for (let i = 0; i < target; i++) {
-					const idx = subscriberIndices[(i + tree.tree * 3) % subscriberIndices.length]!;
+					const idx =
+						subscriberIndices[(i + tree.tree * 3) % subscriberIndices.length]!;
 					try {
 						await session.peers[idx]!.dial(
 							session.peers[tree.rootIndex]!.getMultiaddrs(),
@@ -1308,7 +1374,10 @@ const runMultiWriterSim = async (
 
 			for (const p of session.peers) {
 				const nodeHash = p.services.fanout.publicKeyHash;
-				const m = p.services.fanout.getChannelMetrics(tree.topic, tree.rootHash);
+				const m = p.services.fanout.getChannelMetrics(
+					tree.topic,
+					tree.rootHash,
+				);
 				controlBytesSent += m.controlBytesSent;
 				controlBytesSentRepair += m.controlBytesSentRepair;
 				controlBytesSentTracker += m.controlBytesSentTracker;
@@ -1400,7 +1469,10 @@ const runMultiWriterSim = async (
 		}
 
 		const expected = treeResults.reduce((sum, tree) => sum + tree.expected, 0);
-		const delivered = treeResults.reduce((sum, tree) => sum + tree.delivered, 0);
+		const delivered = treeResults.reduce(
+			(sum, tree) => sum + tree.delivered,
+			0,
+		);
 		const secondBatchExpected = treeResults.reduce(
 			(sum, tree) => sum + tree.secondBatchExpected,
 			0,
@@ -1520,7 +1592,9 @@ const runMultiWriterSim = async (
 				...treeResults.map((tree) => tree.maxReparentUpgradePerPeer),
 			),
 			controlBpp:
-				deliveredPayloadBytes <= 0 ? 0 : controlBytesSent / deliveredPayloadBytes,
+				deliveredPayloadBytes <= 0
+					? 0
+					: controlBytesSent / deliveredPayloadBytes,
 			trackerBpp:
 				deliveredPayloadBytes <= 0
 					? 0
@@ -1577,8 +1651,14 @@ const analyzeUsefulPromotions = (
 		const treeLevelAvgGain = baseTree.treeLevelAvg - tree.treeLevelAvg;
 		const secondBatchP95Gain =
 			baseTree.secondBatchLatencyP95 - tree.secondBatchLatencyP95;
-		const branchBase = peerLatencyP95For(baseTree, tree.upgradedBranchPeerHashes);
-		const branchUpgrade = peerLatencyP95For(tree, tree.upgradedBranchPeerHashes);
+		const branchBase = peerLatencyP95For(
+			baseTree,
+			tree.upgradedBranchPeerHashes,
+		);
+		const branchUpgrade = peerLatencyP95For(
+			tree,
+			tree.upgradedBranchPeerHashes,
+		);
 		const branchGain = branchBase - branchUpgrade;
 		if (Number.isFinite(branchGain)) branchGains.push(branchGain);
 		if (
@@ -1602,40 +1682,45 @@ const evaluateRun = (
 ) => {
 	const failures: Failure[] = [];
 	const useful = analyzeUsefulPromotions(baseline, upgrade);
+	// Live churn is a no-work safety gate; ordinary reconnect timing can move
+	// delivery/root shape even when parent-upgrade sends zero traffic.
+	const compareDeliveryAndCost = !isLiveChurnScenario(scenario);
 
-	failIfLess(
-		failures,
-		"deliveredWithinDeadlinePct",
-		baseline.deliveredWithinDeadlinePct,
-		upgrade.deliveredWithinDeadlinePct,
-		scenario === "ci-multi-live"
-			? baseline.deliveredWithinDeadlinePct -
-				Math.max(0, args.maxLiveDeadlinePctDelta)
-			: baseline.deliveredWithinDeadlinePct,
-	);
-	failIfGreater(
-		failures,
-		"controlBpp",
-		baseline.controlBpp,
-		upgrade.controlBpp,
-		ratioLimit(baseline.controlBpp, args.maxCostRatio, 0.001),
-	);
-	failIfGreater(
-		failures,
-		"trackerBpp",
-		baseline.trackerBpp,
-		upgrade.trackerBpp,
-		ratioLimit(baseline.trackerBpp, args.maxCostRatio, 0.001),
-	);
-	failIfGreater(
-		failures,
-		"repairBpp",
-		baseline.repairBpp,
-		upgrade.repairBpp,
-		ratioLimit(baseline.repairBpp, args.maxCostRatio, 0.001),
-	);
+	if (compareDeliveryAndCost) {
+		failIfLess(
+			failures,
+			"deliveredWithinDeadlinePct",
+			baseline.deliveredWithinDeadlinePct,
+			upgrade.deliveredWithinDeadlinePct,
+			isLiveScenario(scenario)
+				? baseline.deliveredWithinDeadlinePct -
+						Math.max(0, args.maxLiveDeadlinePctDelta)
+				: baseline.deliveredWithinDeadlinePct,
+		);
+		failIfGreater(
+			failures,
+			"controlBpp",
+			baseline.controlBpp,
+			upgrade.controlBpp,
+			ratioLimit(baseline.controlBpp, args.maxCostRatio, 0.001),
+		);
+		failIfGreater(
+			failures,
+			"trackerBpp",
+			baseline.trackerBpp,
+			upgrade.trackerBpp,
+			ratioLimit(baseline.trackerBpp, args.maxCostRatio, 0.001),
+		);
+		failIfGreater(
+			failures,
+			"repairBpp",
+			baseline.repairBpp,
+			upgrade.repairBpp,
+			ratioLimit(baseline.repairBpp, args.maxCostRatio, 0.001),
+		);
+	}
 
-	if (scenario === "ci-multi-live") {
+	if (isLiveScenario(scenario)) {
 		failIfGreater(
 			failures,
 			"activeProbes",
@@ -1676,8 +1761,18 @@ const evaluateRun = (
 			"activeGuardedTrees",
 			0,
 			upgrade.activeGuardedTrees,
-			upgrade.params.writers,
+			1,
 		);
+		if (isLiveChurnScenario(scenario)) {
+			failIfGreater(
+				failures,
+				"activeGuardSkipsPerSlot",
+				0,
+				upgrade.publishActiveGuardSkipsTotal /
+					Math.max(1, upgrade.subscriberSlots),
+				Math.max(0, args.maxLiveChurnGuardSkipsPerSlot),
+			);
+		}
 	}
 
 	if (scenario === "ci-multi-idle") {
@@ -1730,23 +1825,26 @@ const evaluateRun = (
 		);
 	}
 
-	for (const tree of upgrade.trees) {
-		const baselineTree = baseline.trees[tree.tree];
-		if (!baselineTree) continue;
-		failIfGreater(
-			failures,
-			`tree${tree.tree}RootChildrenDelta`,
-			baselineTree.treeRootChildren,
-			tree.treeRootChildren,
-			baselineTree.treeRootChildren + Math.max(0, args.maxRootChildrenDelta),
-		);
-		failIfGreater(
-			failures,
-			`tree${tree.tree}RootUploadPctDelta`,
-			baselineTree.rootUploadFracPct,
-			tree.rootUploadFracPct,
-			baselineTree.rootUploadFracPct + Math.max(0, args.maxRootUploadPctDelta),
-		);
+	if (!isLiveChurnScenario(scenario)) {
+		for (const tree of upgrade.trees) {
+			const baselineTree = baseline.trees[tree.tree];
+			if (!baselineTree) continue;
+			failIfGreater(
+				failures,
+				`tree${tree.tree}RootChildrenDelta`,
+				baselineTree.treeRootChildren,
+				tree.treeRootChildren,
+				baselineTree.treeRootChildren + Math.max(0, args.maxRootChildrenDelta),
+			);
+			failIfGreater(
+				failures,
+				`tree${tree.tree}RootUploadPctDelta`,
+				baselineTree.rootUploadFracPct,
+				tree.rootUploadFracPct,
+				baselineTree.rootUploadFracPct +
+					Math.max(0, args.maxRootUploadPctDelta),
+			);
+		}
 	}
 
 	return { failures, ...useful };
@@ -1808,8 +1906,7 @@ const printSummary = (samples: SummarySample[]) => {
 			...[...groups.entries()].map(([scenario, group]) => {
 				const controlDeltas = group.map((sample) =>
 					sample.baseline.controlBpp > 0
-						? (100 *
-								(sample.upgrade.controlBpp - sample.baseline.controlBpp)) /
+						? (100 * (sample.upgrade.controlBpp - sample.baseline.controlBpp)) /
 							sample.baseline.controlBpp
 						: NaN,
 				);
@@ -1846,10 +1943,7 @@ const printSummary = (samples: SummarySample[]) => {
 					scenario,
 					group.length,
 					`${group.filter((sample) => sample.failures.length === 0).length}/${group.length}`,
-					group.reduce(
-						(sum, sample) => sum + sample.usefulPromotedTrees,
-						0,
-					),
+					group.reduce((sum, sample) => sum + sample.usefulPromotedTrees, 0),
 					group.reduce(
 						(sum, sample) => sum + sample.upgrade.reparentUpgradeTotal,
 						0,
@@ -1872,7 +1966,10 @@ const printSummary = (samples: SummarySample[]) => {
 						(sum, sample) => sum + sample.upgrade.publishActiveGuardSkipsTotal,
 						0,
 					),
-					fmt(avgFinite(group.map((sample) => sample.promotedBranchGainAvg)), 1),
+					fmt(
+						avgFinite(group.map((sample) => sample.promotedBranchGainAvg)),
+						1,
+					),
 					fmt(avgFinite(controlDeltas), 1),
 					rootChildrenDeltaMax,
 					rootChildrenDeltaSumMax,

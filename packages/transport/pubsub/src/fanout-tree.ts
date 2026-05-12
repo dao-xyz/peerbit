@@ -5872,11 +5872,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 		const reservationToken =
 			ch.isRoot && rooted && requesterHasEnoughSlots && reserveRootCapacity
-				? this.createParentUpgradeReservation(
-						ch,
-						toHash,
-						requestedMinFreeSlots,
-					)
+				? this.createParentUpgradeReservation(ch, toHash, requestedMinFreeSlots)
 				: 0;
 		const repairing = ch.missingSeqs.size > 0;
 		const overloaded = ch.overloadStreak > 0;
@@ -6216,7 +6212,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const signal = combinedSignal as AbortSignal & { clear?: () => void };
 		let nextParentUpgradeCheckAt = 0;
 		let parentUpgradeCheckSeq = 0;
-		const scheduleNextParentUpgradeCheck = (now: number, first = false) => {
+		let parentUpgradeActiveGuardBackoffMs = 0;
+		const scheduleNextParentUpgradeCheck = (
+			now: number,
+			first = false,
+			minDelayMs = parentUpgradeIntervalMs,
+		) => {
 			if (parentUpgradeIntervalMs <= 0) {
 				nextParentUpgradeCheckAt = 0;
 				return;
@@ -6231,7 +6232,56 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					) *
 						0.5;
 			nextParentUpgradeCheckAt =
-				now + Math.max(1, Math.floor(parentUpgradeIntervalMs * factor));
+				now +
+				Math.max(
+					1,
+					Math.floor(parentUpgradeIntervalMs * factor),
+					Math.floor(minDelayMs),
+				);
+		};
+		const resetParentUpgradeActiveGuardBackoff = () => {
+			parentUpgradeActiveGuardBackoffMs = 0;
+		};
+		const parentUpgradeGuardDelayMs = (
+			reason: ParentUpgradeSkipReason,
+			now: number,
+		) => {
+			const baseDelayMs = (() => {
+				switch (reason) {
+					case "data":
+						return Math.max(parentUpgradeQuietMs, parentUpgradeRepairQuietMs);
+					case "repair":
+						return parentUpgradeRepairQuietMs;
+					case "quiet":
+						return ch.lastParentDataAt > 0
+							? Math.max(0, parentUpgradeQuietMs - (now - ch.lastParentDataAt))
+							: parentUpgradeQuietMs;
+					case "cooldown":
+						return Math.max(
+							0,
+							ch.parentUpgradeBackoffUntil - now,
+							ch.parentUpgradeLastAt > 0
+								? parentUpgradeCooldownMs - (now - ch.parentUpgradeLastAt)
+								: 0,
+						);
+					default:
+						return parentUpgradeIntervalMs;
+				}
+			})();
+
+			if (reason !== "data" && reason !== "repair") {
+				resetParentUpgradeActiveGuardBackoff();
+				return baseDelayMs;
+			}
+
+			parentUpgradeActiveGuardBackoffMs =
+				parentUpgradeActiveGuardBackoffMs > 0
+					? Math.min(
+							Math.max(parentUpgradeFailedBackoffMaxMs, baseDelayMs),
+							Math.max(baseDelayMs, parentUpgradeActiveGuardBackoffMs * 2),
+						)
+					: baseDelayMs;
+			return parentUpgradeActiveGuardBackoffMs;
 		};
 
 		try {
@@ -6262,6 +6312,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						const hadChildren = ch.children.size > 0;
 						this.detachFromParent(ch);
 						nextParentUpgradeCheckAt = 0;
+						resetParentUpgradeActiveGuardBackoff();
 						// If we lose our parent, we are no longer on the rooted tree; detach children so
 						// they can rejoin as well (prevents stable disconnected components).
 						void this.kickChildren(ch).catch(() => {});
@@ -6329,6 +6380,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						ch.parentProbeRejectUntilByHash.clear();
 						ch.parentProbeRejectBackoffMsByHash.clear();
 						nextParentUpgradeCheckAt = 0;
+						resetParentUpgradeActiveGuardBackoff();
 						ch.pendingRouteQuery.clear();
 						for (const pending of ch.pendingRouteProxy.values()) {
 							clearTimeout(pending.timer);
@@ -6342,11 +6394,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					if (parentUpgradeIntervalMs > 0 && ch.level > 1) {
 						const now = Date.now();
 						if (nextParentUpgradeCheckAt === 0) {
-							scheduleNextParentUpgradeCheck(now, true);
+							scheduleNextParentUpgradeCheck(
+								now,
+								true,
+								parentUpgradeDataGuard || parentUpgradeRepairGuard
+									? Math.max(parentUpgradeQuietMs, parentUpgradeRepairQuietMs)
+									: parentUpgradeIntervalMs,
+							);
 						}
 						const due = now >= nextParentUpgradeCheckAt;
 						if (due) {
-							scheduleNextParentUpgradeCheck(now);
 							const gate = this.evaluateParentUpgradeGate(ch, {
 								leafOnly: parentUpgradeLeafOnly,
 								repairGuard: parentUpgradeRepairGuard,
@@ -6360,7 +6417,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							});
 							if ("reason" in gate) {
 								this.recordParentUpgradeSkip(ch, gate.reason);
+								scheduleNextParentUpgradeCheck(
+									now,
+									false,
+									parentUpgradeGuardDelayMs(gate.reason, now),
+								);
 							} else {
+								resetParentUpgradeActiveGuardBackoff();
 								const improved = await this.maybeImproveParent(ch, {
 									signal,
 									candidateShuffleTopK,
@@ -6375,8 +6438,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									minFreeSlots: parentUpgradeMinFreeSlots,
 									rootMinFreeSlots: parentUpgradeRootMinFreeSlots,
 									maxChildLoadRatio: parentUpgradeMaxChildLoadRatio,
-									rootMaxChildLoadRatio:
-										parentUpgradeRootMaxChildLoadRatio,
+									rootMaxChildLoadRatio: parentUpgradeRootMaxChildLoadRatio,
 									mode: parentUpgradeMode,
 									trackerPeers: ch.cachedBootstrapPeers.filter((h) =>
 										Boolean(this.peers.get(h)),
@@ -6394,6 +6456,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									failedBackoffMinMs: parentUpgradeFailedBackoffMinMs,
 									failedBackoffMaxMs: parentUpgradeFailedBackoffMaxMs,
 								});
+								scheduleNextParentUpgradeCheck(Date.now());
 								if (improved) {
 									ch.metrics.reparentUpgrade += 1;
 									ch.parentUpgradeCount += 1;

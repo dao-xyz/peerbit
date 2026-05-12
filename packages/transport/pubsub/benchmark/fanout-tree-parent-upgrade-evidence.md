@@ -134,6 +134,16 @@ still multiplies probes, root fanout, and control traffic. The multi-writer
 evidence keeps the same runtime default-off posture and evaluates the same
 default-candidate policy only as an opt-in treatment.
 
+`ci-multi-live-churn` adds the missing shared-network stress case: several
+writer-root trees publish concurrently while ordinary churn and late root
+connectivity happen in the same process. Its strict gate treats the run as a
+no-work safety check. It requires zero parent probes, zero shadow observations,
+zero proactive reparents, at least one active guard skip, and bounded active
+guard wakeups (`<= 1` per subscriber slot by default). Delivery and root-shape
+deltas are still printed, but they are not strict failures for this scenario
+when the upgrade policy did no proactive work because reconnect timing alone can
+move those numbers under churn.
+
 The most important retune from the wider run is the quiet window:
 `parentUpgradeQuietMs` now defaults to `5000`. A 2s or 3s live-delivery window was
 too permissive under `ci-loss`: the policy could send probes or promote while
@@ -147,6 +157,11 @@ upgrade path uses deterministic local jitter so evidence runs do not perturb the
 main join RNG. This is the key load-safety guard for constrained fanout: a peer
 that repeatedly finds saturated candidates becomes quiet quickly instead of
 adding periodic probe churn.
+
+Active data/repair guards now also defer the next parent-upgrade scan by the
+quiet/repair window and back off repeated active-flow guard deferrals. This keeps
+long live streams from waking every peer/channel at a fixed interval just to
+rediscover that data is still flowing.
 
 Upgrade checks are also phase-jittered per peer. The first opt-in upgrade check
 is no longer synchronized across all joined peers, and later checks use a bounded
@@ -225,6 +240,12 @@ Shared-network multi-writer live safety run:
 pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-live --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
 ```
 
+Shared-network multi-writer live churn safety run:
+
+```bash
+pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-live-churn --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
+```
+
 Shared-network multi-writer settled-topology run:
 
 ```bash
@@ -275,17 +296,34 @@ by actual changed-branch value and sender pressure.
 
 The multi-writer evaluator prints `parent-upgrade-multi-summary`. Its strict
 gates separate active-flow safety from settled-topology usefulness:
-`ci-multi-live` fails if any writer tree sends active or total proactive probes,
-starts a shadow observation, or performs a proactive upgrade. `ci-multi-idle`
-fails unless each seed has at least one useful promoted tree, aggregate probes
-stay bounded by successful upgrades, max proactive reparent per peer/channel is
-`1`, and every root stays within the same per-root child and upload-pressure
-limits. Global p95 latency is still printed, but the utility gate is the
-changed-branch p95 or global p95 improvement because concurrent writer timers
-can move unrelated p95 samples while the promoted branches improve.
-The PR Fanout Gate runs one-seed `ci-multi-live` and `ci-multi-idle` smoke
-checks; the documented three-seed commands are the stronger review/evidence
-suite.
+`ci-multi-live` and `ci-multi-live-churn` fail if any writer tree sends active
+or total proactive probes, starts a shadow observation, or performs a proactive
+upgrade. The churn variant additionally caps active guard wakeups per subscriber
+slot so the policy cannot pass by spinning local timers under load.
+`ci-multi-idle` fails unless each seed has at least one useful promoted tree,
+aggregate probes stay bounded by successful upgrades, max proactive reparent per
+peer/channel is `1`, and every root stays within the same per-root child and
+upload-pressure limits. Global p95 latency is still printed, but the utility
+gate is the changed-branch p95 or global p95 improvement because concurrent
+writer timers can move unrelated p95 samples while the promoted branches
+improve.
+The PR Fanout Gate runs one-seed `ci-multi-live`, `ci-multi-live-churn`, and
+`ci-multi-idle` smoke checks; the documented three-seed commands are the
+stronger review/evidence suite.
+
+Latest local strict evidence after adding live-churn and active guard backoff:
+
+- Single-writer default-candidate suite, seeds `1,2,3`: `ci-small`, `ci-loss`,
+  `ci-constrained`, and `ci-idle-upgrade` were all `3/3` viable. `ci-idle-upgrade`
+  promoted in every seed with `4` upgrades from `4` probes total.
+- Multi-writer clean live, seeds `1,2,3`: `3/3` viable, `0` upgrades, `0`
+  probes, `0` active probes, `0` active upgrades, `60` active guard skips.
+- Multi-writer live churn, seeds `1,2,3`: `3/3` viable, `0` upgrades, `0`
+  probes, `0` active probes, `0` active upgrades, `138` active guard skips
+  across `756` subscriber slots.
+- Multi-writer idle, seeds `1,2,3`: `3/3` viable, `15` upgrades from `19`
+  probes, `9` useful promoted trees, `0` active probes/upgrades, max proactive
+  reparent per peer/channel `1`.
 
 The evaluator separates `promoted` runs from `guarded` runs. A guarded run sent
 probes but made no parent move, so it is useful as a safety/cost check, not as
