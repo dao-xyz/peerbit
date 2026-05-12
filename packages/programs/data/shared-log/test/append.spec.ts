@@ -204,6 +204,10 @@ describe("append", () => {
 		const coordinateIndex = store.log.entryCoordinatesIndex as any;
 		const putDeleteSpy = sinon.spy(
 			coordinateIndex,
+			"putSharedLogCoordinateFieldsAndDeleteIds",
+		);
+		const legacyPutDeleteSpy = sinon.spy(
+			coordinateIndex,
 			"putSharedLogCoordinateAndDeleteIds",
 		);
 		const createSpy = sinon.spy(
@@ -253,7 +257,8 @@ describe("append", () => {
 			expect(persistCoordinateSpy.callCount).equal(0);
 			expect(persistPreparedSpy.callCount).equal(1);
 			expect(putDeleteSpy.callCount).equal(1);
-			const fields = putDeleteSpy.firstCall.args[1];
+			expect(legacyPutDeleteSpy.callCount).equal(0);
+			const fields = putDeleteSpy.firstCall.args[0];
 			expect(fields.hash).equal(result.entry.hash);
 			expect(fields.gid).equal(result.entry.meta.gid);
 			expect(fields.hashNumber).equal(
@@ -285,6 +290,7 @@ describe("append", () => {
 			planEntrySpy.restore();
 			createFactsSpy.restore();
 			createSpy.restore();
+			legacyPutDeleteSpy.restore();
 			putDeleteSpy.restore();
 		}
 	});
@@ -303,7 +309,7 @@ describe("append", () => {
 		const coordinateIndex = store.log.entryCoordinatesIndex as any;
 		const putDeleteSpy = sinon.spy(
 			coordinateIndex,
-			"putSharedLogCoordinateAndDeleteIds",
+			"putSharedLogCoordinateFieldsAndDeleteIds",
 		);
 		const delIdsSpy = sinon.spy(coordinateIndex, "delIds");
 		try {
@@ -327,7 +333,7 @@ describe("append", () => {
 
 			expect(delIdsSpy.callCount).equal(0);
 			expect(putDeleteSpy.callCount).equal(1);
-			expect(putDeleteSpy.firstCall.args[2]).to.deep.equal([first.entry.hash]);
+			expect(putDeleteSpy.firstCall.args[1]).to.deep.equal([first.entry.hash]);
 		} finally {
 			delIdsSpy.restore();
 			putDeleteSpy.restore();

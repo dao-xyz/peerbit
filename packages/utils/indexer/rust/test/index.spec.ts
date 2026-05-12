@@ -512,6 +512,18 @@ describe("native planner bridge", () => {
 				},
 				deleteIds?: string[],
 			) => Promise<ReturnType<typeof toId>[]>;
+			putSharedLogCoordinateFieldsAndDeleteIds: (
+				fields: {
+					hash: string;
+					hashNumber: bigint;
+					gid: string;
+					coordinates: bigint[];
+					wallTime: bigint;
+					assignedToRangeBoundary: boolean;
+					metaBytes: Uint8Array;
+				},
+				deleteIds?: string[],
+			) => Promise<ReturnType<typeof toId>[]>;
 		};
 		const meta = new Uint8Array([1, 2, 3]);
 		const first = new BridgeCoordinateDocument(
@@ -523,7 +535,7 @@ describe("native planner bridge", () => {
 			true,
 			meta,
 		);
-		await coordinateIndex.putSharedLogCoordinateAndDeleteIds(first, {
+		await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIds({
 			hash: first.hash,
 			hashNumber: first.hashNumber,
 			gid: first.gid,
@@ -561,8 +573,7 @@ describe("native planner bridge", () => {
 			false,
 			new Uint8Array([4]),
 		);
-		const deleted = await coordinateIndex.putSharedLogCoordinateAndDeleteIds(
-			second,
+		const deleted = await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIds(
 			{
 				hash: second.hash,
 				hashNumber: second.hashNumber,
@@ -1332,8 +1343,7 @@ describe("native planner bridge", () => {
 			await writer.start();
 			const writerIndex = await writer.init({ schema: BridgeCoordinateDocument });
 			const coordinateIndex = writerIndex as typeof writerIndex & {
-				putSharedLogCoordinateAndDeleteIds: (
-					value: BridgeCoordinateDocument,
+				putSharedLogCoordinateFieldsAndDeleteIds: (
 					fields: {
 						hash: string;
 						hashNumber: bigint;
@@ -1355,7 +1365,7 @@ describe("native planner bridge", () => {
 				true,
 				new Uint8Array([1, 2, 3]),
 			);
-			await coordinateIndex.putSharedLogCoordinateAndDeleteIds(value, {
+			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIds({
 				hash: value.hash,
 				hashNumber: value.hashNumber,
 				gid: value.gid,
