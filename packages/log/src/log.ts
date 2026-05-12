@@ -36,9 +36,9 @@ import { type EntryWithRefs } from "./entry-with-refs.js";
 import {
 	type CanAppend,
 	Entry,
-	type PreparedAppendFacts,
 	type PreparedAppendChain,
 	type PreparedAppendCommitOnlyChain,
+	type PreparedAppendFacts,
 	type PreparedEntryBlock,
 	type ShallowOrFullEntry,
 } from "./entry.js";
@@ -73,6 +73,8 @@ const hasPutKnown = (storage: Blocks): storage is BlocksWithPutKnown =>
 
 const hasPutKnownMany = (storage: Blocks): storage is BlocksWithPutKnownMany =>
 	typeof (storage as BlocksWithPutKnownMany).putKnownMany === "function";
+
+type MaybePromise<T> = T | Promise<T>;
 
 const isPromiseLike = <T>(value: Promise<T> | T): value is Promise<T> =>
 	typeof (value as { then?: unknown })?.then === "function";
@@ -351,7 +353,9 @@ export class Log<T> {
 					options?: { resolveDeletedEntry?: boolean },
 				) => {
 					const shouldResolve = options?.resolveDeletedEntry !== false;
-					const resolved = shouldResolve ? await this.get(node.hash) : undefined;
+					const resolved = shouldResolve
+						? await this.get(node.hash)
+						: undefined;
 					const deleted = await this._entryIndex.delete(node.hash, node);
 					await this._storage.rm(node.hash);
 					if (!deleted) {
@@ -743,7 +747,8 @@ export class Log<T> {
 			...options,
 			__peerbitCanAppendAlreadyValidated: true,
 		};
-		const nexts = await this.getNextsForAppend(appendOptions);
+		const nextsResult = this.getNextsForAppend(appendOptions);
+		const nexts = isPromiseLike(nextsResult) ? await nextsResult : nextsResult;
 		const deferBlockStore = hasPutMany(this._storage);
 		const nativeAppendChain = this.entryIndex.properties.nativeGraph
 			? await this.createNativePlainAppendChain(
@@ -847,9 +852,10 @@ export class Log<T> {
 			...options,
 			__peerbitCanAppendAlreadyValidated: true,
 		};
-		const nexts = await this.getNextsForAppend(appendOptions);
+		const nextsResult = this.getNextsForAppend(appendOptions);
+		const nexts = isPromiseLike(nextsResult) ? await nextsResult : nextsResult;
 		const deferBlockStore = hasPutMany(this._storage);
-		const nativeAppendChain = await this.createNativePlainAppendCommitOnly(
+		const nativeAppendChainResult = this.createNativePlainAppendCommitOnly(
 			[data],
 			appendOptions,
 			nexts,
@@ -857,6 +863,9 @@ export class Log<T> {
 			properties?.payloadData ? [properties.payloadData] : undefined,
 			properties?.includeMaterializationBytes,
 		);
+		const nativeAppendChain = isPromiseLike(nativeAppendChainResult)
+			? await nativeAppendChainResult
+			: nativeAppendChainResult;
 		if (!nativeAppendChain) {
 			return undefined;
 		}
@@ -865,8 +874,7 @@ export class Log<T> {
 		const shallowEntry = nativeAppendChain.shallowEntries[0]!;
 		let materializedEntry: Entry<T> | undefined;
 		const materializeEntry = () => {
-			const entry =
-				materializedEntry ?? nativeAppendChain.materializeEntry(0);
+			const entry = materializedEntry ?? nativeAppendChain.materializeEntry(0);
 			entry.init({ encoding: this._encoding, keychain: this._keychain });
 			materializedEntry = entry;
 			return entry;
@@ -876,7 +884,12 @@ export class Log<T> {
 				await this.joinMissingNexts(materializeEntry(), nexts);
 			}
 			if (deferBlockStore && !nativeAppendChain.nativeBlocksCommitted) {
-				await this.putPreparedAppendBlocks(nativeAppendChain.blocks);
+				const putBlocksResult = this.putPreparedAppendBlocks(
+					nativeAppendChain.blocks,
+				);
+				if (isPromiseLike(putBlocksResult)) {
+					await putBlocksResult;
+				}
 			}
 			const putFactsResult = this.entryIndex.putNativeCommittedAppendFacts({
 				hash: appendFacts.hash,
@@ -898,9 +911,12 @@ export class Log<T> {
 			throw error;
 		}
 
-		const trimmed = await this.trimIfConfigured(appendOptions.trim, {
+		const trimmedResult = this.trimIfConfigured(appendOptions.trim, {
 			resolveDeletedEntries: properties?.resolveTrimmedEntries,
 		});
+		const trimmed = isPromiseLike(trimmedResult)
+			? await trimmedResult
+			: trimmedResult;
 		const removed = trimmed ?? [];
 		const result = {
 			get entry() {
@@ -1196,7 +1212,7 @@ export class Log<T> {
 		deferBlockStore: boolean,
 		payloadDatas?: Uint8Array[],
 		includeMaterializationBytes?: boolean,
-	): Promise<PreparedAppendCommitOnlyChain<T> | undefined> {
+	): MaybePromise<PreparedAppendCommitOnlyChain<T> | undefined> {
 		const canAppendAlreadyValidated =
 			options.__peerbitCanAppendAlreadyValidated === true;
 		if (
@@ -1209,7 +1225,7 @@ export class Log<T> {
 			options.meta?.timestamp ||
 			options.meta?.type === EntryType.CUT
 		) {
-			return Promise.resolve(undefined);
+			return undefined;
 		}
 
 		const nativeGraph =
@@ -1221,7 +1237,7 @@ export class Log<T> {
 				? this.entryIndex.properties.nativeGraph.graph
 				: undefined;
 		if (!nativeGraph) {
-			return Promise.resolve(undefined);
+			return undefined;
 		}
 		return EntryV0.createPlainAppendChainCommitOnly<T>({
 			data,
@@ -1377,7 +1393,9 @@ export class Log<T> {
 	}
 
 	private async rollbackNativeAppendBlocks(entries: Entry<T>[]) {
-		await this.rollbackNativeAppendBlocksHashes(entries.map((entry) => entry.hash));
+		await this.rollbackNativeAppendBlocksHashes(
+			entries.map((entry) => entry.hash),
+		);
 	}
 
 	private async rollbackNativeAppendBlocksHashes(hashes: string[]) {
@@ -1402,16 +1420,16 @@ export class Log<T> {
 		}
 	}
 
-	private async getNextsForAppend(
+	private getNextsForAppend(
 		options: AppendOptions<T>,
-	): Promise<Sorting.SortableEntry[]> {
+	): MaybePromise<Sorting.SortableEntry[]> {
 		this.validateExplicitNexts(options);
 		return (
 			options.meta?.next ||
 			this.entryIndex.getHeadsForAppend() ||
-			(await this.entryIndex
+			this.entryIndex
 				.getHeads(undefined, { type: "shape", shape: Sorting.ENTRY_SORT_SHAPE })
-				.all())
+				.all()
 		);
 	}
 
@@ -1511,7 +1529,8 @@ export class Log<T> {
 		heads?: boolean[],
 	) {
 		const prepared =
-			preparedAppendChain && entries.length === preparedAppendChain.entries.length
+			preparedAppendChain &&
+			entries.length === preparedAppendChain.entries.length
 				? {
 						shallowEntries: preparedAppendChain.shallowEntries,
 						nativeEntries: preparedAppendChain.nativeEntries,
@@ -1559,7 +1578,7 @@ export class Log<T> {
 							throw new Error("Missing prepared entry block");
 						}
 						return prepared;
-				});
+					});
 
 		if (blocks.length === 1 && hasPutKnown(this._storage)) {
 			const block = blocks[0]!;
@@ -1596,24 +1615,27 @@ export class Log<T> {
 		}
 	}
 
-	private async putPreparedAppendBlocks(preparedBlocks?: PreparedEntryBlock[]) {
+	private putPreparedAppendBlocks(
+		preparedBlocks?: PreparedEntryBlock[],
+	): MaybePromise<void> {
 		if (!preparedBlocks || preparedBlocks.length === 0) {
 			throw new Error("Missing prepared entry block");
 		}
 		if (preparedBlocks.length === 1 && hasPutKnown(this._storage)) {
 			const block = preparedBlocks[0]!;
 			const cidResult = this._storage.putKnown(block.cid, block.block.bytes);
-			const cid = isPromiseLike(cidResult) ? await cidResult : cidResult;
-			if (cid !== block.cid) {
-				throw new Error("Unexpected block cid");
+			const checkCid = (cid: string) => {
+				if (cid !== block.cid) {
+					throw new Error("Unexpected block cid");
+				}
+			};
+			if (isPromiseLike(cidResult)) {
+				return cidResult.then(checkCid);
 			}
+			checkCid(cidResult);
 			return;
 		}
-		if (hasPutKnownMany(this._storage)) {
-			const cidsResult = this._storage.putKnownMany(
-				preparedBlocks.map((block) => [block.cid, block.block.bytes] as const),
-			);
-			const cids = isPromiseLike(cidsResult) ? await cidsResult : cidsResult;
+		const checkCids = (cids: string[]) => {
 			if (cids.length !== preparedBlocks.length) {
 				throw new Error("Unexpected block batch result length");
 			}
@@ -1622,19 +1644,24 @@ export class Log<T> {
 					throw new Error("Unexpected block batch cid");
 				}
 			}
+		};
+		if (hasPutKnownMany(this._storage)) {
+			const cidsResult = this._storage.putKnownMany(
+				preparedBlocks.map((block) => [block.cid, block.block.bytes] as const),
+			);
+			if (isPromiseLike(cidsResult)) {
+				return cidsResult.then(checkCids);
+			}
+			checkCids(cidsResult);
 			return;
 		}
-		const cids = await (this._storage as BlocksWithPutMany).putMany!(
+		const cidsResult = (this._storage as BlocksWithPutMany).putMany!(
 			preparedBlocks,
 		);
-		if (cids.length !== preparedBlocks.length) {
-			throw new Error("Unexpected block batch result length");
+		if (isPromiseLike(cidsResult)) {
+			return cidsResult.then(checkCids);
 		}
-		for (let i = 0; i < cids.length; i++) {
-			if (cids[i] !== preparedBlocks[i]!.cid) {
-				throw new Error("Unexpected block batch cid");
-			}
-		}
+		checkCids(cidsResult);
 	}
 
 	async remove(
@@ -1689,10 +1716,10 @@ export class Log<T> {
 		return this._trim.trim(option, properties);
 	}
 
-	private async trimIfConfigured(
+	private trimIfConfigured(
 		option?: TrimOptions,
 		properties?: { resolveDeletedEntries?: boolean },
-	) {
+	): MaybePromise<ShallowOrFullEntry<T>[] | undefined> {
 		const resolved = option ?? this._trim.options;
 		return resolved ? this.trim(resolved, properties) : undefined;
 	}

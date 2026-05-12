@@ -98,6 +98,25 @@ type NativePreparedPlainEntry = {
 
 type MaybePromise<T> = T | Promise<T>;
 
+type PlainAppendChainCommitOnlyProperties<T> = {
+	data: T[];
+	payloadDatas?: Uint8Array[];
+	meta?: {
+		clocks: () => Clock[];
+		gid?: string;
+		type?: EntryType;
+		gidSeed?: Uint8Array;
+		data?: Uint8Array;
+		next?: SortableEntry[];
+	};
+	encoding: Encoding<T>;
+	identity: Identity;
+	deferStore: boolean;
+	nativeGraph?: NativeEntryV0Graph;
+	nativeBlockStore?: unknown;
+	includeMaterializationBytes?: boolean;
+};
+
 type NativeEntryV0Graph = {
 	prepareEntryV0PlainChainAndPut?(
 		input: NativePlainChainInput,
@@ -659,7 +678,8 @@ export class EntryV0<T>
 		if (!(properties.identity instanceof Ed25519Keypair)) {
 			return undefined;
 		}
-		const nativeCommit = properties.nativeGraph?.prepareEntryV0PlainEntriesCommit;
+		const nativeCommit =
+			properties.nativeGraph?.prepareEntryV0PlainEntriesCommit;
 		if (!nativeCommit) {
 			return undefined;
 		}
@@ -727,8 +747,7 @@ export class EntryV0<T>
 
 		const entries: PreparedAppendChain<T>["entries"] = [];
 		const shallowEntries: PreparedAppendChain<T>["shallowEntries"] = [];
-		const appendFacts: NonNullable<PreparedAppendChain<T>["appendFacts"]> =
-			[];
+		const appendFacts: NonNullable<PreparedAppendChain<T>["appendFacts"]> = [];
 		const nativeEntries: NonNullable<PreparedAppendChain<T>["nativeEntries"]> =
 			[];
 		const entryType = properties.meta.type ?? EntryType.APPEND;
@@ -859,24 +878,9 @@ export class EntryV0<T>
 		};
 	}
 
-	static async createPlainAppendChainCommitOnly<T>(properties: {
-		data: T[];
-		payloadDatas?: Uint8Array[];
-		meta?: {
-			clocks: () => Clock[];
-			gid?: string;
-			type?: EntryType;
-			gidSeed?: Uint8Array;
-			data?: Uint8Array;
-			next?: SortableEntry[];
-		};
-		encoding: Encoding<T>;
-		identity: Identity;
-		deferStore: boolean;
-		nativeGraph?: NativeEntryV0Graph;
-		nativeBlockStore?: unknown;
-		includeMaterializationBytes?: boolean;
-	}): Promise<PreparedAppendCommitOnlyChain<T> | undefined> {
+	static createPlainAppendChainCommitOnly<T>(
+		properties: PlainAppendChainCommitOnlyProperties<T>,
+	): MaybePromise<PreparedAppendCommitOnlyChain<T> | undefined> {
 		if (!properties.deferStore || properties.data.length !== 1) {
 			return undefined;
 		}
@@ -915,9 +919,45 @@ export class EntryV0<T>
 			gid = properties.meta.gid;
 		} else {
 			const createdGid = EntryV0.createGid(properties.meta?.gidSeed);
-			gid = isPromiseLike(createdGid) ? await createdGid : createdGid;
+			return isPromiseLike(createdGid)
+				? createdGid.then((resolvedGid) =>
+						EntryV0.finishPlainAppendChainCommitOnly(
+							properties,
+							nexts,
+							nextHashes,
+							resolvedGid,
+						),
+					)
+				: EntryV0.finishPlainAppendChainCommitOnly(
+						properties,
+						nexts,
+						nextHashes,
+						createdGid,
+					);
 		}
 
+		return EntryV0.finishPlainAppendChainCommitOnly(
+			properties,
+			nexts,
+			nextHashes,
+			gid!,
+		);
+	}
+
+	private static finishPlainAppendChainCommitOnly<T>(
+		properties: PlainAppendChainCommitOnlyProperties<T>,
+		nexts: SortableEntry[],
+		nextHashes: string[],
+		gid: string,
+	): MaybePromise<PreparedAppendCommitOnlyChain<T> | undefined> {
+		if (
+			!properties.nativeGraph ||
+			!(properties.identity instanceof Ed25519Keypair)
+		) {
+			return undefined;
+		}
+		const nativeGraph = properties.nativeGraph;
+		const identity = properties.identity;
 		const clocks = properties.meta?.clocks();
 		if (!clocks || clocks.length !== 1) {
 			throw new Error("Expected one clock per entry");
@@ -939,9 +979,9 @@ export class EntryV0<T>
 			properties.encoding.encoder(properties.data[0]!);
 		const entryType = properties.meta?.type ?? EntryType.APPEND;
 		const singleInput: NativePlainEntryInput = {
-			clockId: properties.identity.publicKey.bytes,
-			privateKey: properties.identity.privateKey.privateKey,
-			publicKey: properties.identity.publicKey.publicKey,
+			clockId: identity.publicKey.bytes,
+			privateKey: identity.privateKey.privateKey,
+			publicKey: identity.publicKey.publicKey,
 			wallTime: clock.timestamp.wallTime,
 			logical: clock.timestamp.logical,
 			gid: gid!,
@@ -953,148 +993,166 @@ export class EntryV0<T>
 		};
 		let nativeBlocksCommitted = false;
 		let nativeGraphUpdated = false;
-		let preparedEntry: NativePreparedPlainEntry | undefined;
-		const nativeCommit = properties.nativeGraph.prepareEntryV0PlainEntryCommit;
-		if (nativeCommit) {
-			const preparedEntryValue = nativeCommit.call(
-				properties.nativeGraph,
-				singleInput,
-				properties.nativeBlockStore,
-			);
-			preparedEntry = isPromiseLike(preparedEntryValue)
-				? await preparedEntryValue
-				: preparedEntryValue;
-			if (preparedEntry) {
-				nativeBlocksCommitted = true;
-				nativeGraphUpdated = true;
+		const finishWithPreparedEntry = (
+			preparedEntry: NativePreparedPlainEntry | undefined,
+		): PreparedAppendCommitOnlyChain<T> | undefined => {
+			if (!preparedEntry) {
+				return undefined;
 			}
-		}
-		if (!preparedEntry) {
-			const nativePrepareAndPut =
-				properties.nativeGraph.prepareEntryV0PlainEntryAndPut;
-			const preparedEntryValue = nativePrepareAndPut
-				? nativePrepareAndPut.call(properties.nativeGraph, singleInput)
-				: undefined;
-			preparedEntry = isPromiseLike(preparedEntryValue)
-				? await preparedEntryValue
-				: preparedEntryValue;
-			nativeGraphUpdated = !!preparedEntry && !!nativePrepareAndPut;
-		}
-		if (!preparedEntry) {
-			return undefined;
-		}
 
-		const meta = new Meta({
-			clock,
-			gid: gid!,
-			type: entryType,
-			data: properties.meta?.data,
-			next: preparedEntry.next,
-		});
-		const payloadSize = payloadData.byteLength;
-		const shallowEntry = new ShallowEntry({
-			hash: preparedEntry.cid,
-			payloadSize,
-			head: true,
-			meta: new ShallowMeta({
-				gid: gid!,
-				data: properties.meta?.data,
+			const meta = new Meta({
 				clock,
-				next: preparedEntry.next,
+				gid: gid!,
 				type: entryType,
-			}),
-		});
-		const appendFacts = {
-			hash: preparedEntry.cid,
-			gid: gid!,
-			next: preparedEntry.next,
-			wallTime: clock.timestamp.wallTime,
-			logical: clock.timestamp.logical,
-			clockId: clock.id,
-			type: entryType,
-			metaData: properties.meta?.data,
-			payloadSize,
-			metaBytes: preparedEntry.metaBytes,
-			hashDigestBytes: preparedEntry.hashDigestBytes,
-		};
-		let materialized: Entry<T> | undefined;
-		const materializeEntry = (index = 0): Entry<T> => {
-			if (index !== 0) {
-				throw new Error("Prepared commit-only append only has one entry");
-			}
-			if (materialized) {
-				return materialized;
-			}
-			const payload = new Payload<T>({
-				data: payloadData,
-				value: properties.data[0],
-				encoding: properties.encoding,
+				data: properties.meta?.data,
+				next: preparedEntry.next,
 			});
-			if (
-				!preparedEntry.metaBytes ||
-				!preparedEntry.payloadBytes ||
-				!preparedEntry.signature ||
-				!preparedEntry.signatureBytes
-			) {
-				if (!preparedEntry.bytes) {
-					throw new Error("Missing prepared entry bytes");
+			const payloadSize = payloadData.byteLength;
+			const shallowEntry = new ShallowEntry({
+				hash: preparedEntry.cid,
+				payloadSize,
+				head: true,
+				meta: new ShallowMeta({
+					gid: gid!,
+					data: properties.meta?.data,
+					clock,
+					next: preparedEntry.next,
+					type: entryType,
+				}),
+			});
+			const appendFacts = {
+				hash: preparedEntry.cid,
+				gid: gid!,
+				next: preparedEntry.next,
+				wallTime: clock.timestamp.wallTime,
+				logical: clock.timestamp.logical,
+				clockId: clock.id,
+				type: entryType,
+				metaData: properties.meta?.data,
+				payloadSize,
+				metaBytes: preparedEntry.metaBytes,
+				hashDigestBytes: preparedEntry.hashDigestBytes,
+			};
+			let materialized: Entry<T> | undefined;
+			const materializeEntry = (index = 0): Entry<T> => {
+				if (index !== 0) {
+					throw new Error("Prepared commit-only append only has one entry");
 				}
-				const entry = deserialize(preparedEntry.bytes, Entry) as EntryV0<T>;
+				if (materialized) {
+					return materialized;
+				}
+				const payload = new Payload<T>({
+					data: payloadData,
+					value: properties.data[0],
+					encoding: properties.encoding,
+				});
+				if (
+					!preparedEntry.metaBytes ||
+					!preparedEntry.payloadBytes ||
+					!preparedEntry.signature ||
+					!preparedEntry.signatureBytes
+				) {
+					if (!preparedEntry.bytes) {
+						throw new Error("Missing prepared entry bytes");
+					}
+					const entry = deserialize(preparedEntry.bytes, Entry) as EntryV0<T>;
+					entry.hash = preparedEntry.cid;
+					entry.size = preparedEntry.byteLength;
+					entry.createdLocally = true;
+					entry._hashDigestBytes = preparedEntry.hashDigestBytes;
+					Entry.prepareShallowEntry(entry, shallowEntry);
+					entry.init({ encoding: properties.encoding });
+					materialized = entry;
+					return entry;
+				}
+				const signature = new SignatureWithKey({
+					signature: preparedEntry.signature,
+					publicKey: properties.identity.publicKey,
+					prehash: 0,
+				});
+				const entry = new EntryV0<T>({
+					meta: new DecryptedThing({
+						data: preparedEntry.metaBytes,
+						value: meta,
+					}),
+					payload: new DecryptedThing({
+						data: preparedEntry.payloadBytes,
+						value: payload,
+					}),
+					signatures: new Signatures({
+						signatures: [
+							new DecryptedThing({
+								data: preparedEntry.signatureBytes,
+								value: signature,
+							}),
+						],
+					}),
+					createdLocally: true,
+				});
 				entry.hash = preparedEntry.cid;
 				entry.size = preparedEntry.byteLength;
-				entry.createdLocally = true;
 				entry._hashDigestBytes = preparedEntry.hashDigestBytes;
 				Entry.prepareShallowEntry(entry, shallowEntry);
 				entry.init({ encoding: properties.encoding });
 				materialized = entry;
 				return entry;
-			}
-			const signature = new SignatureWithKey({
-				signature: preparedEntry.signature,
-				publicKey: properties.identity.publicKey,
-				prehash: 0,
-			});
-			const entry = new EntryV0<T>({
-				meta: new DecryptedThing({
-					data: preparedEntry.metaBytes,
-					value: meta,
-				}),
-				payload: new DecryptedThing({
-					data: preparedEntry.payloadBytes,
-					value: payload,
-				}),
-				signatures: new Signatures({
-					signatures: [
-						new DecryptedThing({
-							data: preparedEntry.signatureBytes,
-							value: signature,
-						}),
-					],
-				}),
-				createdLocally: true,
-			});
-			entry.hash = preparedEntry.cid;
-			entry.size = preparedEntry.byteLength;
-			entry._hashDigestBytes = preparedEntry.hashDigestBytes;
-			Entry.prepareShallowEntry(entry, shallowEntry);
-			entry.init({ encoding: properties.encoding });
-			materialized = entry;
-			return entry;
-		};
-		const preparedBlock =
-			preparedEntry.bytes && !nativeBlocksCommitted
-				? Entry.preparedBlockFromBytes(preparedEntry.bytes, preparedEntry.cid)
-				: undefined;
+			};
+			const preparedBlock =
+				preparedEntry.bytes && !nativeBlocksCommitted
+					? Entry.preparedBlockFromBytes(preparedEntry.bytes, preparedEntry.cid)
+					: undefined;
 
-		return {
-			materializeEntry,
-			materializeEntries: () => [materializeEntry(0)],
-			blocks: preparedBlock ? [preparedBlock] : undefined,
-			shallowEntries: [shallowEntry],
-			appendFacts: [appendFacts],
-			nativeGraphUpdated,
-			nativeBlocksCommitted,
+			return {
+				materializeEntry,
+				materializeEntries: () => [materializeEntry(0)],
+				blocks: preparedBlock ? [preparedBlock] : undefined,
+				shallowEntries: [shallowEntry],
+				appendFacts: [appendFacts],
+				nativeGraphUpdated,
+				nativeBlocksCommitted,
+			};
 		};
+		const prepareAndPutFallback = ():
+			| PreparedAppendCommitOnlyChain<T>
+			| undefined
+			| Promise<PreparedAppendCommitOnlyChain<T> | undefined> => {
+			const nativePrepareAndPut = nativeGraph.prepareEntryV0PlainEntryAndPut;
+			const preparedEntryValue = nativePrepareAndPut
+				? nativePrepareAndPut.call(nativeGraph, singleInput)
+				: undefined;
+			if (isPromiseLike(preparedEntryValue)) {
+				return preparedEntryValue.then((preparedEntry) => {
+					nativeGraphUpdated = !!preparedEntry && !!nativePrepareAndPut;
+					return finishWithPreparedEntry(preparedEntry);
+				});
+			}
+			nativeGraphUpdated = !!preparedEntryValue && !!nativePrepareAndPut;
+			return finishWithPreparedEntry(preparedEntryValue);
+		};
+		const nativeCommit = nativeGraph.prepareEntryV0PlainEntryCommit;
+		if (nativeCommit) {
+			const preparedEntryValue = nativeCommit.call(
+				nativeGraph,
+				singleInput,
+				properties.nativeBlockStore,
+			);
+			if (isPromiseLike(preparedEntryValue)) {
+				return preparedEntryValue.then((preparedEntry) => {
+					if (preparedEntry) {
+						nativeBlocksCommitted = true;
+						nativeGraphUpdated = true;
+						return finishWithPreparedEntry(preparedEntry);
+					}
+					return prepareAndPutFallback();
+				});
+			}
+			if (preparedEntryValue) {
+				nativeBlocksCommitted = true;
+				nativeGraphUpdated = true;
+				return finishWithPreparedEntry(preparedEntryValue);
+			}
+		}
+		return prepareAndPutFallback();
 	}
 
 	static async createPlainAppendChainBatch<T>(properties: {
@@ -1280,7 +1338,8 @@ export class EntryV0<T>
 				metaDatas,
 				payloadDatas,
 			};
-			const nativeCommit = properties.nativeGraph?.prepareEntryV0PlainChainCommit;
+			const nativeCommit =
+				properties.nativeGraph?.prepareEntryV0PlainChainCommit;
 			const preparedValue = nativeCommit
 				? nativeCommit.call(
 						properties.nativeGraph,
@@ -1313,8 +1372,7 @@ export class EntryV0<T>
 		const entries: PreparedAppendChain<T>["entries"] = [];
 		const blocks: NonNullable<PreparedAppendChain<T>["blocks"]> = [];
 		const shallowEntries: PreparedAppendChain<T>["shallowEntries"] = [];
-		const appendFacts: NonNullable<PreparedAppendChain<T>["appendFacts"]> =
-			[];
+		const appendFacts: NonNullable<PreparedAppendChain<T>["appendFacts"]> = [];
 		const nativeEntries: NonNullable<PreparedAppendChain<T>["nativeEntries"]> =
 			[];
 		if (!payloadDatas) {

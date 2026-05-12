@@ -3,9 +3,9 @@ import { Ed25519Keypair } from "@peerbit/crypto";
 import { HashmapIndices } from "@peerbit/indexer-simple";
 import { expect } from "chai";
 import sinon from "sinon";
-import { Entry } from "../src/entry.js";
-import { EntryV0 } from "../src/entry-v0.js";
 import { EntryType } from "../src/entry-type.js";
+import { EntryV0 } from "../src/entry-v0.js";
+import { Entry } from "../src/entry.js";
 import { Log } from "../src/log.js";
 
 describe("append", function () {
@@ -115,9 +115,9 @@ describe("append", function () {
 
 		expect((await log.get(entry.hash))?.hash).equal(entry.hash);
 		expect(putSpy.callCount).equal(0);
-		expect((await log.getHeads().all()).map((head) => head.hash)).to.have.members([
-			entry.hash,
-		]);
+		expect(
+			(await log.getHeads().all()).map((head) => head.hash),
+		).to.have.members([entry.hash]);
 		expect(putSpy.callCount).equal(1);
 		await log.close();
 		expect(putSpy.callCount).equal(1);
@@ -136,9 +136,9 @@ describe("append", function () {
 		});
 
 		expect((await log.get(entry.hash))?.hash).equal(entry.hash);
-		expect((await log.getHeads().all()).map((head) => head.hash)).to.have.members([
-			entry.hash,
-		]);
+		expect(
+			(await log.getHeads().all()).map((head) => head.hash),
+		).to.have.members([entry.hash]);
 		expect(putSpy.callCount).equal(1);
 		await log.close();
 		expect(putSpy.callCount).equal(1);
@@ -156,9 +156,8 @@ describe("append", function () {
 				changes.push(change);
 			},
 		});
-		const root = (
-			await log.append(new Uint8Array([0]), { meta: { next: [] } })
-		).entry;
+		const root = (await log.append(new Uint8Array([0]), { meta: { next: [] } }))
+			.entry;
 		changes.length = 0;
 
 		const iterateSpy = sinon.spy(log.entryIndex.properties.index, "iterate");
@@ -209,7 +208,9 @@ describe("append", function () {
 			expect(iterateSpy.callCount).equal(0);
 			expect(putSpy.callCount).equal(0);
 			expect(putBatchSpy.callCount).equal(1);
-			expect(putBatchSpy.firstCall.args[0]).to.have.length(result.entries.length);
+			expect(putBatchSpy.firstCall.args[0]).to.have.length(
+				result.entries.length,
+			);
 			expect(blockPutSpy.callCount).equal(0);
 			expect(blockPutManySpy.callCount).equal(1);
 			expect(blockPutManySpy.firstCall.args[0]).to.have.length(
@@ -217,9 +218,9 @@ describe("append", function () {
 			);
 			expect(shallowSpy.callCount).equal(0);
 			expect(nativePrepareAndPutSpy.callCount).equal(1);
-			expect(nativePrepareAndPutSpy.firstCall.args[0].payloadDatas).to.have.length(
-				result.entries.length,
-			);
+			expect(
+				nativePrepareAndPutSpy.firstCall.args[0].payloadDatas,
+			).to.have.length(result.entries.length);
 			expect(nativeAppendChainSpy.callCount).equal(0);
 			expect(preparedBlockSpy.callCount).equal(0);
 			expect(preparedShallowSpy.callCount).equal(0);
@@ -250,9 +251,8 @@ describe("append", function () {
 			indexer: new HashmapIndices(),
 			nativeGraph: true,
 		});
-		const root = (
-			await log.append(new Uint8Array([0]), { meta: { next: [] } })
-		).entry;
+		const root = (await log.append(new Uint8Array([0]), { meta: { next: [] } }))
+			.entry;
 
 		const blockPutManySpy = sinon.spy(nativeStore, "putMany");
 		const indexPutSpy = sinon.spy(log.entryIndex.properties.index, "put");
@@ -260,7 +260,10 @@ describe("append", function () {
 			log.entryIndex.properties.index,
 			"putBatch",
 		);
-		const preparedBlockFromBytesSpy = sinon.spy(Entry, "preparedBlockFromBytes");
+		const preparedBlockFromBytesSpy = sinon.spy(
+			Entry,
+			"preparedBlockFromBytes",
+		);
 		const nativeCommitSpy = sinon.spy(
 			log.entryIndex.properties.nativeGraph!.graph,
 			"prepareEntryV0PlainChainCommit",
@@ -332,7 +335,10 @@ describe("append", function () {
 
 		const blockPutSpy = sinon.spy(nativeStore, "put");
 		const blockPutManySpy = sinon.spy(nativeStore, "putMany");
-		const preparedBlockFromBytesSpy = sinon.spy(Entry, "preparedBlockFromBytes");
+		const preparedBlockFromBytesSpy = sinon.spy(
+			Entry,
+			"preparedBlockFromBytes",
+		);
 		const nativeCommitSpy = sinon.spy(
 			log.entryIndex.properties.nativeGraph!.graph,
 			"prepareEntryV0PlainChainCommit",
@@ -362,9 +368,9 @@ describe("append", function () {
 			expect(preparedBlockFromBytesSpy.callCount).equal(0);
 			expect(await entry.getPayloadValue()).to.deep.equal(new Uint8Array([1]));
 			expect(await nativeStore.has(entry.hash)).to.equal(true);
-			expect((await log.getHeads().all()).map((head) => head.hash)).to.deep.equal([
-				entry.hash,
-			]);
+			expect(
+				(await log.getHeads().all()).map((head) => head.hash),
+			).to.deep.equal([entry.hash]);
 			expect((await log.get(entry.hash))?.hash).equal(entry.hash);
 		} finally {
 			blockPutSpy.restore();
@@ -407,9 +413,9 @@ describe("append", function () {
 			expect(singleNativeAppendSpy.callCount).equal(1);
 			expect(appendBatchSpy.callCount).equal(0);
 			expect(await nativeStore.has(entry.hash)).to.equal(true);
-			expect((await log.getHeads().all()).map((head) => head.hash)).to.deep.equal([
-				entry.hash,
-			]);
+			expect(
+				(await log.getHeads().all()).map((head) => head.hash),
+			).to.deep.equal([entry.hash]);
 			expect((await log.get(entry.hash))?.hash).equal(entry.hash);
 		} finally {
 			appendBatchSpy.restore();
@@ -456,9 +462,9 @@ describe("append", function () {
 			expect(singleNativeAppendSpy.callCount).equal(1);
 			expect(appendBatchSpy.callCount).equal(0);
 			expect(await blockExists(entry.hash)).to.be.true;
-			expect((await log.getHeads().all()).map((head) => head.hash)).to.deep.equal([
-				entry.hash,
-			]);
+			expect(
+				(await log.getHeads().all()).map((head) => head.hash),
+			).to.deep.equal([entry.hash]);
 			expect((await log.get(entry.hash))?.hash).equal(entry.hash);
 		} finally {
 			nativePrepareAndPutSpy.restore();
@@ -486,6 +492,10 @@ describe("append", function () {
 		const appendBatchSpy = sinon.spy(log.entryIndex, "putAppendBatch");
 		const trimSpy = sinon.spy(log, "trim");
 		const initSpy = sinon.spy(EntryV0.prototype, "init");
+		const createCommitOnlySpy = sinon.spy(
+			EntryV0,
+			"createPlainAppendChainCommitOnly",
+		);
 
 		try {
 			const result = await (log as any).appendLocallyPreparedCommitOnly(
@@ -497,14 +507,18 @@ describe("append", function () {
 			expect(result).to.exist;
 			expect(result.appendFacts.metaBytes).equal(undefined);
 			expect(result.appendFacts.hashDigestBytes).equal(undefined);
+			expect(
+				(createCommitOnlySpy.returnValues[0] as { then?: unknown } | undefined)
+					?.then,
+			).equal(undefined);
 			expect(commitOnlySpy.callCount).equal(1);
 			expect(commitOnlySpy.returnValues[0]).equal(undefined);
 			expect(appendBatchSpy.callCount).equal(0);
 			expect(trimSpy.callCount).equal(0);
 			expect(initSpy.callCount).equal(0);
-			expect((await log.getHeads().all()).map((head) => head.hash)).to.deep.equal([
-				result.appendFacts.hash,
-			]);
+			expect(
+				(await log.getHeads().all()).map((head) => head.hash),
+			).to.deep.equal([result.appendFacts.hash]);
 			expect(await blockExists(result.appendFacts.hash)).to.be.true;
 
 			const entry = result.entry;
@@ -516,6 +530,7 @@ describe("append", function () {
 			trimSpy.restore();
 			appendBatchSpy.restore();
 			commitOnlySpy.restore();
+			createCommitOnlySpy.restore();
 			await log.close();
 		}
 	});
@@ -575,9 +590,9 @@ describe("append", function () {
 			expect(appendBatchSpy.callCount).equal(0);
 			expect(initSpy.callCount).equal(0);
 			expect(await nativeStore.has(result.appendFacts.hash)).equal(true);
-			expect((await log.getHeads().all()).map((head) => head.hash)).to.deep.equal([
-				result.appendFacts.hash,
-			]);
+			expect(
+				(await log.getHeads().all()).map((head) => head.hash),
+			).to.deep.equal([result.appendFacts.hash]);
 
 			const entry = result.entry;
 			expect(initSpy.callCount).greaterThan(0);
@@ -606,9 +621,8 @@ describe("append", function () {
 			indexer: new HashmapIndices(),
 			nativeGraph: true,
 		});
-		const root = (
-			await log.append(new Uint8Array([0]), { meta: { next: [] } })
-		).entry;
+		const root = (await log.append(new Uint8Array([0]), { meta: { next: [] } }))
+			.entry;
 		const graph = log.entryIndex.properties.nativeGraph!.graph;
 		const blockPutManyStub = sinon
 			.stub(store, "putMany")
@@ -619,9 +633,9 @@ describe("append", function () {
 				log.appendMany([new Uint8Array([1]), new Uint8Array([2])]),
 			).rejectedWith("boom");
 			expect(blockPutManyStub.callCount).equal(1);
-			expect((await log.getHeads().all()).map((head) => head.hash)).to.deep.equal(
-				[root.hash],
-			);
+			expect(
+				(await log.getHeads().all()).map((head) => head.hash),
+			).to.deep.equal([root.hash]);
 			expect(graph.length).equal(1);
 		} finally {
 			blockPutManyStub.restore();
