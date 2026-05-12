@@ -1061,9 +1061,11 @@ export class Documents<
 		} else {
 			await this.handlePreparedPlainPutCommit(documentAppendCommit);
 		}
-		this.keepCache?.add(documentAppendCommit.entry.hash);
+		this.keepCache?.add(documentAppendCommit.append.hash);
 		return {
-			entry: documentAppendCommit.entry,
+			get entry() {
+				return documentAppendCommit.entry;
+			},
 			removed: documentAppendCommit.removed,
 		};
 	}
@@ -1092,6 +1094,14 @@ export class Documents<
 				appendProperties,
 			);
 		} else {
+			const commitOnly = await this.log.appendLocallyPreparedPayloadCommitOnly(
+				input.operationPayloadBytes,
+				appendOptions,
+				appendProperties,
+			);
+			if (commitOnly) {
+				return this.createDocumentAppendCommitFacts(input, commitOnly);
+			}
 			try {
 				appended = await this.log.appendLocallyPreparedPayload(
 					input.operationPayloadBytes,
@@ -1233,7 +1243,9 @@ export class Documents<
 			operation: input.operation,
 			encodedDocument: input.documentBytes,
 			operationPayloadBytes: input.operationPayloadBytes,
-			entry: appended.entry,
+			get entry() {
+				return appended.entry;
+			},
 			removed: appended.removed,
 			append,
 			context,

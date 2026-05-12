@@ -1656,6 +1656,11 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		return this.simple.onEntryAdded(entry);
 	}
 
+	onEntryAddedHash(hash: string): void {
+		this.invalidateLocalRangeEncoderCache();
+		return this.simple.onEntryAddedHash(hash);
+	}
+
 	onEntryRemoved(hash: string) {
 		this.invalidateLocalRangeEncoderCache();
 		return this.simple.onEntryRemoved(hash);

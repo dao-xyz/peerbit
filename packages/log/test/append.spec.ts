@@ -465,6 +465,49 @@ describe("append", function () {
 		}
 	});
 
+	it("uses commit-only prepared append facts before entry materialization", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+
+		const commitOnlySpy = sinon.spy(
+			log.entryIndex as any,
+			"putNativeCommittedAppendFacts",
+		);
+		const appendBatchSpy = sinon.spy(log.entryIndex, "putAppendBatch");
+		const initSpy = sinon.spy(EntryV0.prototype, "init");
+
+		try {
+			const result = await (log as any).appendLocallyPreparedCommitOnly(
+				new Uint8Array([1]),
+				{ meta: { next: [] } },
+				{ skipMissingNextJoin: true },
+			);
+
+			expect(result).to.exist;
+			expect(commitOnlySpy.callCount).equal(1);
+			expect(appendBatchSpy.callCount).equal(0);
+			expect(initSpy.callCount).equal(0);
+			expect((await log.getHeads().all()).map((head) => head.hash)).to.deep.equal([
+				result.appendFacts.hash,
+			]);
+			expect(await blockExists(result.appendFacts.hash)).to.be.true;
+
+			const entry = result.entry;
+			expect(initSpy.callCount).greaterThan(0);
+			expect(entry.hash).equal(result.appendFacts.hash);
+			expect(entry.meta.gid).equal(result.appendFacts.gid);
+		} finally {
+			initSpy.restore();
+			appendBatchSpy.restore();
+			commitOnlySpy.restore();
+			await log.close();
+		}
+	});
+
 	it("rolls back native graph when prepared appendMany block write fails", async () => {
 		const log = new Log<Uint8Array>();
 		await log.open(store, signKey, {
