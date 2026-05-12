@@ -4180,7 +4180,9 @@ export class SharedLog<
 				minReplicasValue,
 			);
 			if (!nativeAppendPlan) {
-				await this.deleteCoordinatesForHashes(deferredCoordinateDeleteHashes);
+				if (deferredCoordinateDeleteHashes) {
+					await this.deleteCoordinatesForHashes(deferredCoordinateDeleteHashes);
+				}
 				deferredCoordinateDeleteHashes = undefined;
 			}
 		} else {
@@ -6433,18 +6435,19 @@ export class SharedLog<
 
 	private applyChangeWithDeferredCoordinateDeletes(
 		change: Change<T>,
-	): string[] {
-		const deferredCoordinateDeleteHashes: string[] = [];
+	): string[] | undefined {
 		for (const added of change.added) {
 			this.onEntryAdded(added.entry);
 		}
+		if (change.removed.length === 0) {
+			return undefined;
+		}
+		const deferredCoordinateDeleteHashes: string[] = [];
 		for (const removed of change.removed) {
 			deferredCoordinateDeleteHashes.push(removed.hash);
 			this.onEntryRemoved(removed.hash);
 		}
-		if (deferredCoordinateDeleteHashes.length > 0) {
-			this.forgetCoordinateStateForHashes(deferredCoordinateDeleteHashes);
-		}
+		this.forgetCoordinateStateForHashes(deferredCoordinateDeleteHashes);
 		return deferredCoordinateDeleteHashes;
 	}
 
