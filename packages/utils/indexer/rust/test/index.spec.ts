@@ -593,6 +593,81 @@ describe("native planner bridge", () => {
 		await indices.drop();
 	});
 
+	it("skips durable coordinate encoding for transient shared-log coordinate puts", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeCoordinateDocument });
+		const coordinateIndex = index as typeof index & {
+			putSharedLogCoordinateFieldsAndDeleteIds: (
+				fields: {
+					hash: string;
+					hashNumber: bigint;
+					gid: string;
+					coordinates: bigint[];
+					wallTime: bigint;
+					assignedToRangeBoundary: boolean;
+					metaBytes: Uint8Array;
+				},
+				deleteIds?: string[],
+			) => Promise<ReturnType<typeof toId>[]>;
+			putSharedLogCoordinateFieldsAndDeleteIdsBatch: (
+				values: Array<{
+					fields: {
+						hash: string;
+						hashNumber: bigint;
+						gid: string;
+						coordinates: bigint[];
+						wallTime: bigint;
+						assignedToRangeBoundary: boolean;
+						metaBytes: Uint8Array;
+					};
+					deleteIds?: string[];
+				}>,
+			) => Promise<ReturnType<typeof toId>[]>;
+		};
+		const indexInternal = index as any;
+		const originalEncode =
+			indexInternal.encodeSharedLogCoordinatePersistenceValue.bind(index);
+		let encodeCalls = 0;
+		indexInternal.encodeSharedLogCoordinatePersistenceValue = (...args: any[]) => {
+			encodeCalls++;
+			return originalEncode(...args);
+		};
+		try {
+			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIds({
+				hash: "a",
+				hashNumber: 10n,
+				gid: "gid-a",
+				coordinates: [4n, 8n],
+				wallTime: 12n,
+				assignedToRangeBoundary: true,
+				metaBytes: new Uint8Array([1, 2, 3]),
+			});
+
+			const deleted =
+				await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIdsBatch([
+					{
+						fields: {
+							hash: "b",
+							hashNumber: 11n,
+							gid: "gid-b",
+							coordinates: [16n],
+							wallTime: 13n,
+							assignedToRangeBoundary: false,
+							metaBytes: new Uint8Array([4]),
+						},
+						deleteIds: ["a"],
+					},
+				]);
+
+			expect(deleted.map((id) => id.primitive)).to.deep.equal(["a"]);
+			expect(encodeCalls).to.equal(0);
+		} finally {
+			indexInternal.encodeSharedLogCoordinatePersistenceValue = originalEncode;
+			await indices.drop();
+		}
+	});
+
 	it("accepts contextual document puts through the native index hook", async () => {
 		const indices = create();
 		await indices.start();
