@@ -2052,6 +2052,20 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
+	async putSharedLogCoordinateFieldsAndDeleteIds(
+		fields: SharedLogCoordinateNativeFields,
+		deleteIds: Array<types.IdKey | types.Ideable> = [],
+		id = types.toId(fields.hash),
+	): Promise<types.IdKey[]> {
+		return this.putWithEncodedFieldsAndDeleteKeys(
+			this.createSharedLogCoordinateValue(fields),
+			id,
+			this.encodeSharedLogCoordinateFields(fields),
+			deleteIds.map(keyToStoreKey),
+			this.encodeSharedLogCoordinatePersistenceValue(fields),
+		);
+	}
+
 	async putSharedLogCoordinatesAndDeleteIdsBatch(
 		values: Array<{
 			value: T;
@@ -2106,6 +2120,23 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			await this.compactIfNeeded();
 			return deletedEntries.map((entry) => entry[0]);
 		});
+	}
+
+	async putSharedLogCoordinateFieldsAndDeleteIdsBatch(
+		values: Array<{
+			fields: SharedLogCoordinateNativeFields;
+			deleteIds?: Array<types.IdKey | types.Ideable>;
+			id?: types.IdKey;
+		}>,
+	): Promise<types.IdKey[]> {
+		return this.putSharedLogCoordinatesAndDeleteIdsBatch(
+			values.map((entry) => ({
+				value: this.createSharedLogCoordinateValue(entry.fields),
+				fields: entry.fields,
+				deleteIds: entry.deleteIds,
+				id: entry.id ?? types.toId(entry.fields.hash),
+			})),
+		);
 	}
 
 	async delIds(deleteIds: Array<types.IdKey | types.Ideable>): Promise<types.IdKey[]> {
@@ -2547,6 +2578,23 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			]),
 			meta: nativeFieldId(this.fieldDictionary, ["_meta"]),
 		});
+	}
+
+	private createSharedLogCoordinateValue(
+		fields: SharedLogCoordinateNativeFields,
+	): T {
+		const value = Object.create(
+			(this.properties.schema as { prototype?: object }).prototype ??
+				Object.prototype,
+		) as Record<string, any>;
+		value.hash = fields.hash;
+		value.hashNumber = fields.hashNumber;
+		value.gid = fields.gid;
+		value.coordinates = fields.coordinates;
+		value.wallTime = fields.wallTime;
+		value.assignedToRangeBoundary = fields.assignedToRangeBoundary;
+		value._meta = fields.metaBytes;
+		return value as T;
 	}
 
 	private encodeSharedLogCoordinatePersistenceValue(

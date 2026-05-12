@@ -304,7 +304,7 @@ type SharedLogCoordinateNativeFields<R extends "u32" | "u64"> = {
 };
 
 type PreparedCoordinatePersistence<R extends "u32" | "u64"> = {
-	coordinateEntry: EntryReplicated<R>;
+	coordinateEntry?: EntryReplicated<R>;
 	assignedToRangeBoundary: boolean;
 	fields: SharedLogCoordinateNativeFields<R>;
 };
@@ -537,9 +537,21 @@ type PutAndDeleteIndex<T extends Record<string, any>> = Index<T> & {
 		deleteIds?: Array<IdKey | Ideable>,
 		id?: IdKey,
 	) => Promise<unknown> | unknown;
+	putSharedLogCoordinateFieldsAndDeleteIds?: (
+		fields: SharedLogCoordinateNativeFields<any>,
+		deleteIds?: Array<IdKey | Ideable>,
+		id?: IdKey,
+	) => Promise<unknown> | unknown;
 	putSharedLogCoordinatesAndDeleteIdsBatch?: (
 		values: Array<{
 			value: T;
+			fields: SharedLogCoordinateNativeFields<any>;
+			deleteIds?: Array<IdKey | Ideable>;
+			id?: IdKey;
+		}>,
+	) => Promise<unknown> | unknown;
+	putSharedLogCoordinateFieldsAndDeleteIdsBatch?: (
+		values: Array<{
 			fields: SharedLogCoordinateNativeFields<any>;
 			deleteIds?: Array<IdKey | Ideable>;
 			id?: IdKey;
@@ -4664,19 +4676,11 @@ export class SharedLog<
 		const coordinates = properties.plan.coordinates as NumberFromType<R>[];
 		const hashNumber = properties.plan.hashNumber as NumberFromType<R>;
 		const wallTime = properties.appendFacts.wallTime;
-		const coordinateEntry = new this.indexableDomain.constructorEntry({
-			assignedToRangeBoundary,
-			coordinates,
-			metaBytes: properties.appendFacts.metaBytes,
-			gid: properties.appendFacts.gid,
-			wallTime,
-			hash: properties.plan.hash,
-			hashNumber,
-		});
-		const metaBytes =
-			properties.appendFacts.metaBytes ?? coordinateEntry.getMetaBytes();
+		const metaBytes = properties.appendFacts.metaBytes;
+		if (!metaBytes) {
+			return false;
+		}
 		return {
-			coordinateEntry,
 			assignedToRangeBoundary,
 			fields: {
 				hash: properties.plan.hash,
@@ -8231,6 +8235,28 @@ export class SharedLog<
 		};
 	}
 
+	private createCoordinateEntryFromNativeFields(
+		fields: SharedLogCoordinateNativeFields<R>,
+	): EntryReplicated<R> {
+		return new this.indexableDomain.constructorEntry({
+			assignedToRangeBoundary: fields.assignedToRangeBoundary,
+			coordinates: fields.coordinates,
+			metaBytes: fields.metaBytes,
+			gid: fields.gid,
+			wallTime: fields.wallTime,
+			hash: fields.hash,
+			hashNumber: fields.hashNumber,
+		});
+	}
+
+	private materializePreparedCoordinateEntry(
+		prepared: PreparedCoordinatePersistence<R>,
+	): EntryReplicated<R> {
+		return (prepared.coordinateEntry ??= this.createCoordinateEntryFromNativeFields(
+			prepared.fields,
+		));
+	}
+
 	private async persistPreparedCoordinate(properties: {
 		prepared: PreparedCoordinatePersistence<R>;
 		hash: string;
@@ -8240,8 +8266,7 @@ export class SharedLog<
 		commitNative?: boolean;
 		deleteHashes?: string[];
 	}) {
-		const { coordinateEntry, assignedToRangeBoundary, fields } =
-			properties.prepared;
+		const { assignedToRangeBoundary, fields } = properties.prepared;
 		const deleteHashes =
 			properties.deleteHashes && properties.deleteHashes.length > 0
 				? [...new Set([...properties.nextHashes, ...properties.deleteHashes])]
@@ -8250,7 +8275,16 @@ export class SharedLog<
 			EntryReplicated<R>
 		>;
 		let deleteNextOptions: DeleteOptions | undefined;
-		if (coordinateIndex.putSharedLogCoordinateAndDeleteIds) {
+		if (coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIds) {
+			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIds(
+				fields,
+				deleteHashes,
+				toId(fields.hash),
+			);
+		} else if (coordinateIndex.putSharedLogCoordinateAndDeleteIds) {
+			const coordinateEntry = this.materializePreparedCoordinateEntry(
+				properties.prepared,
+			);
 			await coordinateIndex.putSharedLogCoordinateAndDeleteIds(
 				coordinateEntry,
 				fields,
@@ -8258,8 +8292,14 @@ export class SharedLog<
 				toId(fields.hash),
 			);
 		} else if (deleteHashes.length > 0 && coordinateIndex.putAndDeleteIds) {
+			const coordinateEntry = this.materializePreparedCoordinateEntry(
+				properties.prepared,
+			);
 			await coordinateIndex.putAndDeleteIds(coordinateEntry, deleteHashes);
 		} else {
+			const coordinateEntry = this.materializePreparedCoordinateEntry(
+				properties.prepared,
+			);
 			deleteNextOptions =
 				deleteHashes.length === 0
 					? undefined
@@ -8281,18 +8321,18 @@ export class SharedLog<
 		if (properties.commitNative !== false) {
 			this._nativeSharedLogState?.commitEntryCoordinates(
 				properties.hash,
-				coordinateEntry.gid,
+				fields.gid,
 				properties.coordinates,
 				properties.nextHashes,
 				assignedToRangeBoundary,
 				properties.replicas,
-				coordinateEntry.hashNumber,
+				fields.hashNumber,
 			);
 		}
 		if (this._residentEntryCoordinatesByHash) {
 			this._residentEntryCoordinatesByHash.set(
 				properties.hash,
-				coordinateEntry,
+				this.materializePreparedCoordinateEntry(properties.prepared),
 			);
 			for (const nextHash of properties.nextHashes) {
 				this._residentEntryCoordinatesByHash.delete(nextHash);
@@ -8394,10 +8434,18 @@ export class SharedLog<
 			typeof coordinateIndex.putBatch === "function" &&
 			changed.every(({ item }) => item.entry.meta.next.length === 0);
 
-		if (coordinateIndex.putSharedLogCoordinatesAndDeleteIdsBatch) {
+		if (coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIdsBatch) {
+			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIdsBatch(
+				changed.map(({ item, prepared }) => ({
+					fields: prepared.fields,
+					deleteIds: item.entry.meta.next,
+					id: toId(prepared.fields.hash),
+				})),
+			);
+		} else if (coordinateIndex.putSharedLogCoordinatesAndDeleteIdsBatch) {
 			await coordinateIndex.putSharedLogCoordinatesAndDeleteIdsBatch(
 				changed.map(({ item, prepared }) => ({
-					value: prepared.coordinateEntry,
+					value: this.materializePreparedCoordinateEntry(prepared),
 					fields: prepared.fields,
 					deleteIds: item.entry.meta.next,
 					id: toId(prepared.fields.hash),
@@ -8405,7 +8453,9 @@ export class SharedLog<
 			);
 		} else if (canUseGenericPutBatch) {
 			await coordinateIndex.putBatch!(
-				changed.map(({ prepared }) => prepared.coordinateEntry),
+				changed.map(({ prepared }) =>
+					this.materializePreparedCoordinateEntry(prepared),
+				),
 			);
 		} else {
 			const results: boolean[] = [];
@@ -8419,18 +8469,18 @@ export class SharedLog<
 			if (item.commitNative !== false) {
 				this._nativeSharedLogState?.commitEntryCoordinates(
 					item.entry.hash,
-					prepared.coordinateEntry.gid,
+					prepared.fields.gid,
 					item.coordinates,
 					item.entry.meta.next,
 					prepared.assignedToRangeBoundary,
 					item.replicas,
-					prepared.coordinateEntry.hashNumber,
+					prepared.fields.hashNumber,
 				);
 			}
 			if (this._residentEntryCoordinatesByHash) {
 				this._residentEntryCoordinatesByHash.set(
 					item.entry.hash,
-					prepared.coordinateEntry,
+					this.materializePreparedCoordinateEntry(prepared),
 				);
 				for (const nextHash of item.entry.meta.next) {
 					this._residentEntryCoordinatesByHash.delete(nextHash);
@@ -8442,7 +8492,7 @@ export class SharedLog<
 		}
 
 		const changedHashes = new Set(
-			changed.map(({ prepared }) => prepared.coordinateEntry.hash),
+			changed.map(({ prepared }) => prepared.fields.hash),
 		);
 		return items.map((item) => changedHashes.has(item.entry.hash));
 	}
