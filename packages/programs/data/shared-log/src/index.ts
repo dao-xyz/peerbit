@@ -4125,6 +4125,21 @@ export class SharedLog<
 			resolveTrimmedEntries: properties?.resolveTrimmedEntries,
 			payloadData: properties?.payloadData,
 		});
+		const nativePreparedPlan = await this.processNativePreparedTargetNoneAppend(
+			result,
+			options,
+			{ minReplicasValue },
+		);
+		if (nativePreparedPlan) {
+			return {
+				entry: result.entry,
+				removed: result.removed,
+				appendCommit: this.createPreparedLocalAppendCommitFromFacts(
+					result.appendFacts,
+					nativePreparedPlan,
+				),
+			};
+		}
 		let nativeAppendPlan: NativeAppendEntryPlan<R> | undefined;
 		let deferredCoordinateDeleteHashes: string[] | undefined;
 		if (this.canCoalescePreparedAppendCoordinateDeletes(result, options)) {
@@ -4169,6 +4184,78 @@ export class SharedLog<
 				nativeAppendPlan,
 			),
 		};
+	}
+
+	private async processNativePreparedTargetNoneAppend(
+		result: {
+			entry: Entry<T>;
+			removed: ShallowOrFullEntry<T>[];
+			change: Change<T>;
+			appendFacts: PreparedAppendFacts;
+		},
+		options: SharedAppendOptions<T> | undefined,
+		properties: { minReplicasValue: number },
+	): Promise<NativeAppendEntryPlan<R> | undefined> {
+		if (
+			options?.target !== "none" ||
+			options?.replicate === true ||
+			this.shouldDeferHeadCoordinatePersistence(options) ||
+			!this._nativeSharedLogState ||
+			!this.canPlanNativeAppendFacts(result.appendFacts)
+		) {
+			return undefined;
+		}
+
+		const nativeAppendPlan = await this.planNativeLocalAppendFacts(
+			result.appendFacts,
+			properties.minReplicasValue,
+		);
+		if (!nativeAppendPlan) {
+			return undefined;
+		}
+
+		let deferredCoordinateDeleteHashes: string[] | undefined;
+		try {
+			const changeResult = this.applyChange(result.change, {
+				deferCoordinateIndexDeletes: true,
+			});
+			deferredCoordinateDeleteHashes =
+				(isPromiseLike(changeResult) ? await changeResult : changeResult) ?? [];
+			await this.persistPreparedCoordinate({
+				prepared: nativeAppendPlan.preparedCoordinate,
+				hash: result.appendFacts.hash,
+				nextHashes: result.appendFacts.next,
+				deleteHashes: deferredCoordinateDeleteHashes,
+				coordinates: nativeAppendPlan.coordinates,
+				replicas: nativeAppendPlan.coordinates.length,
+				commitNative: false,
+			});
+		} catch (error) {
+			if (deferredCoordinateDeleteHashes) {
+				await this.deleteCoordinatesForHashes(deferredCoordinateDeleteHashes);
+			}
+			throw error;
+		}
+
+		const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
+		if (!nativeAppendPlan.isLeader && !delayAdaptiveRebalance) {
+			let leaders = nativeAppendPlan.leaders;
+			if (!leaders) {
+				leaders = (
+					await this.planEntryLeaders(result.entry, properties.minReplicasValue, {
+						persist: false,
+					})
+				).leaders;
+			}
+			this.pruneDebouncedFnAddIfNotKeeping({
+				key: result.entry.hash,
+				value: { entry: result.entry, leaders },
+			});
+		}
+		if (!delayAdaptiveRebalance) {
+			this.rebalanceParticipationDebounced?.call();
+		}
+		return nativeAppendPlan;
 	}
 
 	async appendLocallyPreparedPayload(
