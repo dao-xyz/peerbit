@@ -17,6 +17,9 @@ import { waitFor } from "@peerbit/time";
 import { type Block, decode } from "multiformats/block";
 import * as raw from "multiformats/codecs/raw";
 
+const isPromiseLike = <T>(value: Promise<T> | T): value is Promise<T> =>
+	typeof (value as { then?: unknown })?.then === "function";
+
 export class AnyBlockStore implements Blocks {
 	private _store: AnyStore;
 	private _opening: Promise<any>;
@@ -135,12 +138,17 @@ export class AnyBlockStore implements Blocks {
 			),
 		);
 		const store = this._store as AnyStore & {
-			putMany?: (entries: Iterable<readonly [string, Uint8Array]>) => Promise<void>;
+			putMany?: (
+				entries: Iterable<readonly [string, Uint8Array]>,
+			) => Promise<void> | void;
 		};
 		try {
 			if (puts.length === 1) {
 				const put = puts[0]!;
-				await this.putKnown(put.cid, put.block.bytes);
+				const result = this.putKnown(put.cid, put.block.bytes);
+				if (isPromiseLike(result)) {
+					await result;
+				}
 			} else if (typeof store.putMany === "function") {
 				await store.putMany(puts.map((put) => [put.cid, put.block.bytes] as const));
 			} else {
@@ -157,29 +165,46 @@ export class AnyBlockStore implements Blocks {
 		return puts.map((put) => put.cid);
 	}
 
-	async putKnown(cid: string, bytes: Uint8Array): Promise<string> {
+	putKnown(cid: string, bytes: Uint8Array): Promise<string> | string {
 		try {
-			await this._store.put(cid, bytes);
-		} catch (error: any) {
-			if (await this.isClosingStorePutError(error)) {
-				return cid;
+			const result = this._store.put(cid, bytes);
+			if (isPromiseLike(result)) {
+				return result
+					.then(() => cid)
+					.catch((error) => this.handleStorePutError(error, cid));
 			}
-			throw error;
+		} catch (error: any) {
+			return this.handleStorePutError(error, cid);
 		}
 		return cid;
 	}
 
-	async putKnownMany(
+	putKnownMany(
 		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
-	): Promise<string[]> {
+	): Promise<string[]> | string[] {
 		const store = this._store as AnyStore & {
-			putMany?: (entries: Iterable<readonly [string, Uint8Array]>) => Promise<void>;
+			putMany?: (
+				entries: Iterable<readonly [string, Uint8Array]>,
+			) => Promise<void> | void;
 		};
+		if (blocks.length === 1) {
+			const [cid, bytes] = blocks[0]!;
+			const result = this.putKnown(cid, bytes);
+			return isPromiseLike(result) ? result.then(() => [cid]) : [cid];
+		}
+		return this.putKnownManySlow(blocks, store);
+	}
+
+	private async putKnownManySlow(
+		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
+		store: AnyStore & {
+			putMany?: (
+				entries: Iterable<readonly [string, Uint8Array]>,
+			) => Promise<void> | void;
+		},
+	): Promise<string[]> {
 		try {
-			if (blocks.length === 1) {
-				const [cid, bytes] = blocks[0]!;
-				await this.putKnown(cid, bytes);
-			} else if (typeof store.putMany === "function") {
+			if (typeof store.putMany === "function") {
 				await store.putMany(blocks);
 			} else {
 				for (const [cid, bytes] of blocks) {
@@ -193,6 +218,13 @@ export class AnyBlockStore implements Blocks {
 			throw error;
 		}
 		return blocks.map(([cid]) => cid);
+	}
+
+	private async handleStorePutError<T>(error: any, value: T): Promise<T> {
+		if (await this.isClosingStorePutError(error)) {
+			return value;
+		}
+		throw error;
 	}
 
 	private async isClosingStorePutError(error: any): Promise<boolean> {

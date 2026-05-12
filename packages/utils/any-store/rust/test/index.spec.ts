@@ -25,7 +25,7 @@ describe("@peerbit/any-store-rust", () => {
 	it("stores transient values", async () => {
 		const store = createStore();
 		await store.open();
-		await store.put("a", new Uint8Array([1, 2, 3]));
+		expect(store.put("a", new Uint8Array([1, 2, 3]))).to.equal(undefined);
 		await store.put("b", new Uint8Array([4]));
 
 		expect(await store.get("a")).to.deep.equal(new Uint8Array([1, 2, 3]));
@@ -57,10 +57,10 @@ describe("@peerbit/any-store-rust", () => {
 	it("applies batched mutations", async () => {
 		const store = createStore();
 		await store.open();
-		await store.putMany([
+		expect(store.putMany([
 			["a", new Uint8Array([1])],
 			["b", new Uint8Array([2, 3])],
-		]);
+		])).to.equal(undefined);
 
 		expect(await store.getMany(["a", "b", "c"])).to.deep.equal([
 			new Uint8Array([1]),

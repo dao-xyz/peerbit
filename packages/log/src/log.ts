@@ -74,6 +74,9 @@ const hasPutKnown = (storage: Blocks): storage is BlocksWithPutKnown =>
 const hasPutKnownMany = (storage: Blocks): storage is BlocksWithPutKnownMany =>
 	typeof (storage as BlocksWithPutKnownMany).putKnownMany === "function";
 
+const isPromiseLike = <T>(value: Promise<T> | T): value is Promise<T> =>
+	typeof (value as { then?: unknown })?.then === "function";
+
 const getErrorName = (error: unknown) =>
 	typeof (error as { name?: unknown })?.name === "string"
 		? (error as { name: string }).name
@@ -1557,16 +1560,18 @@ export class Log<T> {
 
 		if (blocks.length === 1 && hasPutKnown(this._storage)) {
 			const block = blocks[0]!;
-			const cid = await this._storage.putKnown(block.cid, block.block.bytes);
+			const cidResult = this._storage.putKnown(block.cid, block.block.bytes);
+			const cid = isPromiseLike(cidResult) ? await cidResult : cidResult;
 			if (cid !== block.cid) {
 				throw new Error("Unexpected block cid");
 			}
 			return;
 		}
 		if (hasPutKnownMany(this._storage)) {
-			const cids = await this._storage.putKnownMany(
+			const cidsResult = this._storage.putKnownMany(
 				blocks.map((block) => [block.cid, block.block.bytes] as const),
 			);
+			const cids = isPromiseLike(cidsResult) ? await cidsResult : cidsResult;
 			if (cids.length !== blocks.length) {
 				throw new Error("Unexpected block batch result length");
 			}
@@ -1594,16 +1599,18 @@ export class Log<T> {
 		}
 		if (preparedBlocks.length === 1 && hasPutKnown(this._storage)) {
 			const block = preparedBlocks[0]!;
-			const cid = await this._storage.putKnown(block.cid, block.block.bytes);
+			const cidResult = this._storage.putKnown(block.cid, block.block.bytes);
+			const cid = isPromiseLike(cidResult) ? await cidResult : cidResult;
 			if (cid !== block.cid) {
 				throw new Error("Unexpected block cid");
 			}
 			return;
 		}
 		if (hasPutKnownMany(this._storage)) {
-			const cids = await this._storage.putKnownMany(
+			const cidsResult = this._storage.putKnownMany(
 				preparedBlocks.map((block) => [block.cid, block.block.bytes] as const),
 			);
+			const cids = isPromiseLike(cidsResult) ? await cidsResult : cidsResult;
 			if (cids.length !== preparedBlocks.length) {
 				throw new Error("Unexpected block batch result length");
 			}

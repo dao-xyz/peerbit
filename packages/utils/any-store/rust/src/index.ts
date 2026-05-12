@@ -89,6 +89,7 @@ export class RustAnyStore implements AnyStore {
 	private persistence?: RustAnyStorePersistenceBackend;
 	private openPromise?: Promise<void>;
 	private mutationQueue: Promise<unknown> = Promise.resolve();
+	private queuedMutations = 0;
 	private journalQueue: Promise<unknown> = Promise.resolve();
 	private journalError?: unknown;
 	private children = new Map<string, RustAnyStore>();
@@ -153,9 +154,15 @@ export class RustAnyStore implements AnyStore {
 		return value == null ? undefined : copyBytes(value);
 	}
 
-	async put(key: string, value: Uint8Array): Promise<void> {
+	put(key: string, value: Uint8Array): Promise<void> | void {
+		const native = this.openTransientNative();
+		if (native) {
+			native.put(key, value);
+			return;
+		}
+
 		const bytes = copyBytes(value);
-		await this.enqueueMutation(async (native) => {
+		return this.enqueueMutation(async (native) => {
 			if (this.directory) {
 				await this.recordJournal(
 					this.journaledNative(native).encode_put_record(key, bytes),
@@ -165,14 +172,27 @@ export class RustAnyStore implements AnyStore {
 		});
 	}
 
-	async putMany(entries: Iterable<readonly [string, Uint8Array]>): Promise<void> {
-		const pairs = Array.from(entries, ([key, value]) => [key, copyBytes(value)] as const);
+	putMany(entries: Iterable<readonly [string, Uint8Array]>): Promise<void> | void {
+		const inputPairs = Array.from(entries);
+		if (inputPairs.length === 0) {
+			return;
+		}
+		const native = this.openTransientNative();
+		if (native) {
+			native.put_many(
+				inputPairs.map(([key]) => key),
+				inputPairs.map(([, value]) => value),
+			);
+			return;
+		}
+
+		const pairs = inputPairs.map(([key, value]) => [key, copyBytes(value)] as const);
 		if (pairs.length === 0) {
 			return;
 		}
 		const keys = pairs.map(([key]) => key);
 		const values = pairs.map(([, value]) => value);
-		await this.enqueueMutation(async (native) => {
+		return this.enqueueMutation(async (native) => {
 			if (this.directory) {
 				await this.recordJournal(
 					this.journaledNative(native).encode_put_records(keys, values),
@@ -182,8 +202,14 @@ export class RustAnyStore implements AnyStore {
 		});
 	}
 
-	async del(key: string): Promise<void> {
-		await this.enqueueMutation(async (native) => {
+	del(key: string): Promise<void> | void {
+		const native = this.openTransientNative();
+		if (native) {
+			native.delete(key);
+			return;
+		}
+
+		return this.enqueueMutation(async (native) => {
 			if (this.directory) {
 				await this.recordJournal(
 					this.journaledNative(native).encode_delete_record(key),
@@ -193,11 +219,16 @@ export class RustAnyStore implements AnyStore {
 		});
 	}
 
-	async delMany(keys: Iterable<string>): Promise<number> {
+	delMany(keys: Iterable<string>): Promise<number> | number {
 		const keyList = Array.from(keys);
 		if (keyList.length === 0) {
 			return 0;
 		}
+		const native = this.openTransientNative();
+		if (native) {
+			return native.delete_many(keyList);
+		}
+
 		return this.enqueueMutation(async (native) => {
 			if (this.directory) {
 				await this.recordJournal(
@@ -317,13 +348,27 @@ export class RustAnyStore implements AnyStore {
 		return this.native;
 	}
 
+	private openTransientNative(): NativeAnyStore | undefined {
+		if (
+			this.directory == null &&
+			this._status === "open" &&
+			this.native &&
+			this.queuedMutations === 0
+		) {
+			return this.native;
+		}
+	}
+
 	private enqueueMutation<T>(fn: (native: NativeAnyStore) => Promise<T>): Promise<T> {
+		this.queuedMutations++;
 		const next = this.mutationQueue.then(async () => fn(await this.ensureOpen()));
 		this.mutationQueue = next.then(
 			() => undefined,
 			() => undefined,
 		);
-		return next;
+		return next.finally(() => {
+			this.queuedMutations--;
+		});
 	}
 
 	private journaledNative(native: NativeAnyStore): JournaledNativeAnyStore {
