@@ -53,6 +53,16 @@ export type PreparedAppendChain<T> = {
 	nativeGraphUpdated?: boolean;
 	nativeBlocksCommitted?: boolean;
 };
+export type PreparedAppendCommitOnlyChain<T> = {
+	materializeEntry: (index?: number) => Entry<T>;
+	materializeEntries: () => Entry<T>[];
+	blocks?: PreparedEntryBlock[];
+	shallowEntries: ShallowEntry[];
+	appendFacts: PreparedAppendFacts[];
+	nativeEntries?: PreparedNativeLogEntry[];
+	nativeGraphUpdated?: boolean;
+	nativeBlocksCommitted?: boolean;
+};
 
 const preparedEntryBlocks = new WeakMap<object, PreparedEntryBlock>();
 const preparedShallowEntries = new WeakMap<object, ShallowEntry>();

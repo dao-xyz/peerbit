@@ -29,7 +29,12 @@ import { LamportClock as Clock, HLC, Timestamp } from "./clock.js";
 import { type Encoding, NO_ENCODING } from "./encoding.js";
 import { ShallowEntry, ShallowMeta } from "./entry-shallow.js";
 import { EntryType } from "./entry-type.js";
-import { type CanAppend, Entry, type PreparedAppendChain } from "./entry.js";
+import {
+	type CanAppend,
+	Entry,
+	type PreparedAppendChain,
+	type PreparedAppendCommitOnlyChain,
+} from "./entry.js";
 import type { SortableEntry } from "./log-sorting.js";
 import { logger as baseLogger } from "./logger.js";
 import { Payload } from "./payload.js";
@@ -849,6 +854,223 @@ export class EntryV0<T>
 			nativeEntries,
 			nativeGraphUpdated: true,
 			nativeBlocksCommitted: true,
+		};
+	}
+
+	static async createPlainAppendChainCommitOnly<T>(properties: {
+		data: T[];
+		payloadDatas?: Uint8Array[];
+		meta?: {
+			clocks: () => Clock[];
+			gid?: string;
+			type?: EntryType;
+			gidSeed?: Uint8Array;
+			data?: Uint8Array;
+			next?: SortableEntry[];
+		};
+		encoding: Encoding<T>;
+		identity: Identity;
+		deferStore: boolean;
+		nativeGraph?: NativeEntryV0Graph;
+		nativeBlockStore?: unknown;
+	}): Promise<PreparedAppendCommitOnlyChain<T> | undefined> {
+		if (!properties.deferStore || properties.data.length !== 1) {
+			return undefined;
+		}
+		if (!(properties.identity instanceof Ed25519Keypair)) {
+			return undefined;
+		}
+		if (
+			!properties.nativeGraph?.prepareEntryV0PlainEntryCommit &&
+			!properties.nativeGraph?.prepareEntryV0PlainEntryAndPut
+		) {
+			return undefined;
+		}
+
+		const nexts = properties.meta?.next ?? [];
+		const nextHashes: string[] = [];
+		let gid: string | null = null;
+		if (nexts.length > 0) {
+			if (properties.meta?.gid) {
+				throw new Error(
+					"Expecting '.meta.gid' property to be undefined if '.meta.next' is provided",
+				);
+			}
+			for (const next of nexts) {
+				if (!next.hash) {
+					throw new Error("Expecting hash to be defined to next entries");
+				}
+				nextHashes.push(next.hash);
+				gid =
+					gid == null
+						? next.meta.gid
+						: next.meta.gid < (gid as string)
+							? next.meta.gid
+							: gid;
+			}
+		} else if (properties.meta?.gid) {
+			gid = properties.meta.gid;
+		} else {
+			const createdGid = EntryV0.createGid(properties.meta?.gidSeed);
+			gid = isPromiseLike(createdGid) ? await createdGid : createdGid;
+		}
+
+		const clocks = properties.meta?.clocks();
+		if (!clocks || clocks.length !== 1) {
+			throw new Error("Expected one clock per entry");
+		}
+		const clock = clocks[0]!;
+		for (const next of nexts) {
+			if (Timestamp.compare(next.meta.clock.timestamp, clock.timestamp) >= 0) {
+				throw new Error(
+					"Expecting next(s) to happen before entry, got: " +
+						next.meta.clock.timestamp +
+						" > " +
+						clock.timestamp,
+				);
+			}
+		}
+
+		const payloadData =
+			properties.payloadDatas?.[0] ??
+			properties.encoding.encoder(properties.data[0]!);
+		const entryType = properties.meta?.type ?? EntryType.APPEND;
+		const singleInput: NativePlainEntryInput = {
+			clockId: properties.identity.publicKey.bytes,
+			privateKey: properties.identity.privateKey.privateKey,
+			publicKey: properties.identity.publicKey.publicKey,
+			wallTime: clock.timestamp.wallTime,
+			logical: clock.timestamp.logical,
+			gid: gid!,
+			next: nextHashes,
+			type: entryType,
+			metaData: properties.meta?.data,
+			payloadData,
+		};
+		let nativeBlocksCommitted = false;
+		let nativeGraphUpdated = false;
+		let preparedEntry: NativePreparedPlainEntry | undefined;
+		const nativeCommit = properties.nativeGraph.prepareEntryV0PlainEntryCommit;
+		if (nativeCommit) {
+			const preparedEntryValue = nativeCommit.call(
+				properties.nativeGraph,
+				singleInput,
+				properties.nativeBlockStore,
+			);
+			preparedEntry = isPromiseLike(preparedEntryValue)
+				? await preparedEntryValue
+				: preparedEntryValue;
+			if (preparedEntry) {
+				nativeBlocksCommitted = true;
+				nativeGraphUpdated = true;
+			}
+		}
+		if (!preparedEntry) {
+			const nativePrepareAndPut =
+				properties.nativeGraph.prepareEntryV0PlainEntryAndPut;
+			const preparedEntryValue = nativePrepareAndPut
+				? nativePrepareAndPut.call(properties.nativeGraph, singleInput)
+				: undefined;
+			preparedEntry = isPromiseLike(preparedEntryValue)
+				? await preparedEntryValue
+				: preparedEntryValue;
+			nativeGraphUpdated = !!preparedEntry && !!nativePrepareAndPut;
+		}
+		if (!preparedEntry) {
+			return undefined;
+		}
+
+		const meta = new Meta({
+			clock,
+			gid: gid!,
+			type: entryType,
+			data: properties.meta?.data,
+			next: preparedEntry.next,
+		});
+		const payloadSize = payloadData.byteLength;
+		const shallowEntry = new ShallowEntry({
+			hash: preparedEntry.cid,
+			payloadSize,
+			head: true,
+			meta: new ShallowMeta({
+				gid: gid!,
+				data: properties.meta?.data,
+				clock,
+				next: preparedEntry.next,
+				type: entryType,
+			}),
+		});
+		const appendFacts = {
+			hash: preparedEntry.cid,
+			gid: gid!,
+			next: preparedEntry.next,
+			wallTime: clock.timestamp.wallTime,
+			logical: clock.timestamp.logical,
+			clockId: clock.id,
+			type: entryType,
+			metaData: properties.meta?.data,
+			payloadSize,
+			metaBytes: preparedEntry.metaBytes,
+			hashDigestBytes: preparedEntry.hashDigestBytes,
+		};
+		let materialized: Entry<T> | undefined;
+		const materializeEntry = (index = 0): Entry<T> => {
+			if (index !== 0) {
+				throw new Error("Prepared commit-only append only has one entry");
+			}
+			if (materialized) {
+				return materialized;
+			}
+			const payload = new Payload<T>({
+				data: payloadData,
+				value: properties.data[0],
+				encoding: properties.encoding,
+			});
+			const signature = new SignatureWithKey({
+				signature: preparedEntry.signature,
+				publicKey: properties.identity.publicKey,
+				prehash: 0,
+			});
+			const entry = new EntryV0<T>({
+				meta: new DecryptedThing({
+					data: preparedEntry.metaBytes,
+					value: meta,
+				}),
+				payload: new DecryptedThing({
+					data: preparedEntry.payloadBytes,
+					value: payload,
+				}),
+				signatures: new Signatures({
+					signatures: [
+						new DecryptedThing({
+							data: preparedEntry.signatureBytes,
+							value: signature,
+						}),
+					],
+				}),
+				createdLocally: true,
+			});
+			entry.hash = preparedEntry.cid;
+			entry.size = preparedEntry.byteLength;
+			entry._hashDigestBytes = preparedEntry.hashDigestBytes;
+			Entry.prepareShallowEntry(entry, shallowEntry);
+			entry.init({ encoding: properties.encoding });
+			materialized = entry;
+			return entry;
+		};
+		const preparedBlock =
+			preparedEntry.bytes && !nativeBlocksCommitted
+				? Entry.preparedBlockFromBytes(preparedEntry.bytes, preparedEntry.cid)
+				: undefined;
+
+		return {
+			materializeEntry,
+			materializeEntries: () => [materializeEntry(0)],
+			blocks: preparedBlock ? [preparedBlock] : undefined,
+			shallowEntries: [shallowEntry],
+			appendFacts: [appendFacts],
+			nativeGraphUpdated,
+			nativeBlocksCommitted,
 		};
 	}
 

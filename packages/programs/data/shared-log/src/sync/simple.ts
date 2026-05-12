@@ -981,8 +981,12 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		clearTimeout(this.syncMoreInterval);
 	}
 	onEntryAdded(entry: Entry<any>): void {
-		this.clearSyncProcess(entry.hash);
-		this.markRepairSessionResolvedHashes([entry.hash]);
+		this.onEntryAddedHash(entry.hash);
+	}
+
+	onEntryAddedHash(hash: string): void {
+		this.clearSyncProcess(hash);
+		this.markRepairSessionResolvedHashes([hash]);
 	}
 
 	onEntryRemoved(hash: string): void {

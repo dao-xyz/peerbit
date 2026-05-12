@@ -38,6 +38,7 @@ import {
 	Entry,
 	type PreparedAppendFacts,
 	type PreparedAppendChain,
+	type PreparedAppendCommitOnlyChain,
 	type PreparedEntryBlock,
 	type ShallowOrFullEntry,
 } from "./entry.js";
@@ -789,6 +790,105 @@ export class Log<T> {
 		return { entry, removed, change, appendFacts };
 	}
 
+	/**
+	 * Internal trusted local append path for callers that can consume compact
+	 * append facts before a public Entry object is needed.
+	 */
+	async appendLocallyPreparedCommitOnly(
+		data: T,
+		options: AppendOptions<T> = {},
+		properties?: {
+			skipMissingNextJoin?: boolean;
+			resolveTrimmedEntries?: boolean;
+			payloadData?: Uint8Array;
+		},
+	): Promise<
+		| {
+				entry: Entry<T>;
+				materializeEntry: () => Entry<T>;
+				removed: ShallowOrFullEntry<T>[];
+				appendFacts: PreparedAppendFacts;
+				shallowEntry: ShallowEntry;
+		  }
+		| undefined
+	> {
+		if (
+			options.canAppend ||
+			options.onChange ||
+			options.meta?.type === EntryType.CUT
+		) {
+			throw new Error(
+				"appendLocallyPreparedCommitOnly only supports trusted plain local appends",
+			);
+		}
+
+		const appendOptions: AppendOptions<T> = {
+			...options,
+			__peerbitCanAppendAlreadyValidated: true,
+		};
+		const nexts = await this.getNextsForAppend(appendOptions);
+		const deferBlockStore = hasPutMany(this._storage);
+		const nativeAppendChain = await this.createNativePlainAppendCommitOnly(
+			[data],
+			appendOptions,
+			nexts,
+			deferBlockStore,
+			properties?.payloadData ? [properties.payloadData] : undefined,
+		);
+		if (!nativeAppendChain) {
+			return undefined;
+		}
+
+		const appendFacts = nativeAppendChain.appendFacts[0]!;
+		const shallowEntry = nativeAppendChain.shallowEntries[0]!;
+		let materializedEntry: Entry<T> | undefined;
+		const materializeEntry = () => {
+			const entry =
+				materializedEntry ?? nativeAppendChain.materializeEntry(0);
+			entry.init({ encoding: this._encoding, keychain: this._keychain });
+			materializedEntry = entry;
+			return entry;
+		};
+		try {
+			if (!properties?.skipMissingNextJoin && nexts.length > 0) {
+				await this.joinMissingNexts(materializeEntry(), nexts);
+			}
+			if (deferBlockStore && !nativeAppendChain.nativeBlocksCommitted) {
+				await this.putPreparedAppendBlocks(nativeAppendChain.blocks);
+			}
+			await this.entryIndex.putNativeCommittedAppendFacts({
+				hash: appendFacts.hash,
+				unique: true,
+				externalNextHashes: nexts.map((next) => next.hash),
+				shallowEntry,
+				isHead: true,
+			});
+		} catch (error) {
+			if (nativeAppendChain.nativeGraphUpdated) {
+				this.rollbackNativeAppendGraphHashes([appendFacts.hash]);
+			}
+			if (nativeAppendChain.nativeBlocksCommitted) {
+				await this.rollbackNativeAppendBlocksHashes([appendFacts.hash]);
+			}
+			throw error;
+		}
+
+		const trimmed = await this.trim(appendOptions.trim, {
+			resolveDeletedEntries: properties?.resolveTrimmedEntries,
+		});
+		const removed = trimmed ?? [];
+		const result = {
+			get entry() {
+				return materializeEntry();
+			},
+			materializeEntry,
+			removed,
+			appendFacts,
+			shallowEntry,
+		};
+		return result;
+	}
+
 	async appendLocallyPreparedManyIndependent(
 		data: T[],
 		options: AppendOptions<T> = {},
@@ -1064,6 +1164,62 @@ export class Log<T> {
 		});
 	}
 
+	private createNativePlainAppendCommitOnly(
+		data: T[],
+		options: AppendOptions<T>,
+		nexts: Sorting.SortableEntry[],
+		deferBlockStore: boolean,
+		payloadDatas?: Uint8Array[],
+	): Promise<PreparedAppendCommitOnlyChain<T> | undefined> {
+		const canAppendAlreadyValidated =
+			options.__peerbitCanAppendAlreadyValidated === true;
+		if (
+			data.length !== 1 ||
+			!deferBlockStore ||
+			options.encryption ||
+			options.signers ||
+			options.canAppend ||
+			(this._hasCustomCanAppend && !canAppendAlreadyValidated) ||
+			options.meta?.timestamp ||
+			options.meta?.type === EntryType.CUT
+		) {
+			return Promise.resolve(undefined);
+		}
+
+		const nativeGraph =
+			!this.entryIndex.properties.onGidRemoved &&
+			(this.entryIndex.properties.nativeGraph?.graph
+				.prepareEntryV0PlainEntryCommit ||
+				this.entryIndex.properties.nativeGraph?.graph
+					.prepareEntryV0PlainEntryAndPut)
+				? this.entryIndex.properties.nativeGraph.graph
+				: undefined;
+		if (!nativeGraph) {
+			return Promise.resolve(undefined);
+		}
+		return EntryV0.createPlainAppendChainCommitOnly<T>({
+			data,
+			meta: {
+				clocks: () => [
+					new Clock({
+						id: this._identity.publicKey.bytes,
+						timestamp: this._hlc.now(),
+					}),
+				],
+				type: options.meta?.type,
+				gidSeed: options.meta?.gidSeed,
+				data: options.meta?.data,
+				next: nexts,
+			},
+			encoding: this._encoding,
+			payloadDatas,
+			identity: options.identity || this._identity,
+			deferStore: deferBlockStore,
+			nativeGraph,
+			nativeBlockStore: this._storage,
+		});
+	}
+
 	private async createNativePlainAppendEntriesBatch(
 		data: T[],
 		options: AppendOptions<T>,
@@ -1180,17 +1336,24 @@ export class Log<T> {
 	}
 
 	private rollbackNativeAppendGraph(entries: Entry<T>[]) {
+		this.rollbackNativeAppendGraphHashes(entries.map((entry) => entry.hash));
+	}
+
+	private rollbackNativeAppendGraphHashes(hashes: string[]) {
 		const graph = this.entryIndex.properties.nativeGraph?.graph;
 		if (!graph) {
 			return;
 		}
-		for (let i = entries.length - 1; i >= 0; i--) {
-			graph.delete(entries[i]!.hash);
+		for (let i = hashes.length - 1; i >= 0; i--) {
+			graph.delete(hashes[i]!);
 		}
 	}
 
 	private async rollbackNativeAppendBlocks(entries: Entry<T>[]) {
-		const hashes = entries.map((entry) => entry.hash);
+		await this.rollbackNativeAppendBlocksHashes(entries.map((entry) => entry.hash));
+	}
+
+	private async rollbackNativeAppendBlocksHashes(hashes: string[]) {
 		const storage = this._storage as BlocksWithPutMany;
 		if (typeof storage.rmMany === "function") {
 			await storage.rmMany(hashes);
@@ -1377,6 +1540,23 @@ export class Log<T> {
 		}
 		for (let i = 0; i < cids.length; i++) {
 			if (cids[i] !== blocks[i].cid) {
+				throw new Error("Unexpected block batch cid");
+			}
+		}
+	}
+
+	private async putPreparedAppendBlocks(preparedBlocks?: PreparedEntryBlock[]) {
+		if (!preparedBlocks || preparedBlocks.length === 0) {
+			throw new Error("Missing prepared entry block");
+		}
+		const cids = await (this._storage as BlocksWithPutMany).putMany!(
+			preparedBlocks,
+		);
+		if (cids.length !== preparedBlocks.length) {
+			throw new Error("Unexpected block batch result length");
+		}
+		for (let i = 0; i < cids.length; i++) {
+			if (cids[i] !== preparedBlocks[i]!.cid) {
 				throw new Error("Unexpected block batch cid");
 			}
 		}
