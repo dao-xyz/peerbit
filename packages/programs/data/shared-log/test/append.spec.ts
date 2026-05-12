@@ -218,6 +218,10 @@ describe("append", () => {
 			store.log as any,
 			"createCoordinatePersistenceEntryFromNativePlanFacts",
 		);
+		const materializeCoordinateSpy = sinon.spy(
+			store.log as any,
+			"createCoordinateEntryFromNativeFields",
+		);
 		const planEntrySpy = sinon.spy(
 			store.log as any,
 			"planNativeLocalAppendEntry",
@@ -250,6 +254,7 @@ describe("append", () => {
 
 			expect(createSpy.callCount).equal(0);
 			expect(createFactsSpy.callCount).equal(1);
+			expect(materializeCoordinateSpy.callCount).equal(0);
 			expect(planEntrySpy.callCount).equal(0);
 			expect(planFactsSpy.callCount).equal(1);
 			expect(nativeKernelSpy.callCount).equal(1);
@@ -288,6 +293,7 @@ describe("append", () => {
 			nativeKernelSpy.restore();
 			planFactsSpy.restore();
 			planEntrySpy.restore();
+			materializeCoordinateSpy.restore();
 			createFactsSpy.restore();
 			createSpy.restore();
 			legacyPutDeleteSpy.restore();

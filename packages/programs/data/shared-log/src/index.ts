@@ -145,6 +145,7 @@ import {
 	getAllMergeCandiates,
 	getCoverSet,
 	getSamples,
+	isEntryReplicated,
 	isMatured,
 	isReplicationRangeMessage,
 	mergeRanges,
@@ -308,6 +309,10 @@ type PreparedCoordinatePersistence<R extends "u32" | "u64"> = {
 	assignedToRangeBoundary: boolean;
 	fields: SharedLogCoordinateNativeFields<R>;
 };
+
+type ResidentCoordinateEntry<R extends "u32" | "u64"> =
+	| EntryReplicated<R>
+	| SharedLogCoordinateNativeFields<R>;
 
 type PreparedLocalAppendCommit<R extends "u32" | "u64"> = {
 	hash: string;
@@ -912,7 +917,7 @@ export class SharedLog<
 	private _entryCoordinatesIndex!: Index<EntryReplicated<R>>;
 	private _nativeRangePlanner?: SharedLogRangePlanner;
 	private _nativeSharedLogState?: SharedLogNativeState;
-	private _residentEntryCoordinatesByHash?: Map<string, EntryReplicated<R>>;
+	private _residentEntryCoordinatesByHash?: Map<string, ResidentCoordinateEntry<R>>;
 	private coordinateToHash!: Cache<string>;
 	private recentlyRebalanced!: Cache<string>;
 
@@ -3717,8 +3722,13 @@ export class SharedLog<
 					for (const [mode, targets] of repairDispatchPlan) {
 						for (const [target, hashes] of targets) {
 							for (const hash of hashes) {
-								const entry = residentEntriesByHash.get(hash);
-								if (entry) {
+								const residentEntry = residentEntriesByHash.get(hash);
+								if (residentEntry) {
+									const entry =
+										this.materializeResidentCoordinateEntry(residentEntry);
+									if (entry !== residentEntry) {
+										residentEntriesByHash.set(hash, entry);
+									}
 									queueEntryForTarget(mode, target, entry);
 								}
 							}
@@ -8264,6 +8274,14 @@ export class SharedLog<
 		));
 	}
 
+	private materializeResidentCoordinateEntry(
+		entry: ResidentCoordinateEntry<R>,
+	): EntryReplicated<R> {
+		return isEntryReplicated(entry)
+			? entry
+			: this.createCoordinateEntryFromNativeFields(entry);
+	}
+
 	private async persistPreparedCoordinate(properties: {
 		prepared: PreparedCoordinatePersistence<R>;
 		hash: string;
@@ -8339,7 +8357,7 @@ export class SharedLog<
 		if (this._residentEntryCoordinatesByHash) {
 			this._residentEntryCoordinatesByHash.set(
 				properties.hash,
-				this.materializePreparedCoordinateEntry(properties.prepared),
+				properties.prepared.coordinateEntry ?? fields,
 			);
 			for (const nextHash of properties.nextHashes) {
 				this._residentEntryCoordinatesByHash.delete(nextHash);
@@ -8487,7 +8505,7 @@ export class SharedLog<
 			if (this._residentEntryCoordinatesByHash) {
 				this._residentEntryCoordinatesByHash.set(
 					item.entry.hash,
-					this.materializePreparedCoordinateEntry(prepared),
+					prepared.coordinateEntry ?? prepared.fields,
 				);
 				for (const nextHash of item.entry.meta.next) {
 					this._residentEntryCoordinatesByHash.delete(nextHash);
