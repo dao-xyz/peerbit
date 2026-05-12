@@ -878,13 +878,16 @@ export class Log<T> {
 			if (deferBlockStore && !nativeAppendChain.nativeBlocksCommitted) {
 				await this.putPreparedAppendBlocks(nativeAppendChain.blocks);
 			}
-			await this.entryIndex.putNativeCommittedAppendFacts({
+			const putFactsResult = this.entryIndex.putNativeCommittedAppendFacts({
 				hash: appendFacts.hash,
 				unique: true,
 				externalNextHashes: nexts.map((next) => next.hash),
 				shallowEntry,
 				isHead: true,
 			});
+			if (isPromiseLike(putFactsResult)) {
+				await putFactsResult;
+			}
 		} catch (error) {
 			if (nativeAppendChain.nativeGraphUpdated) {
 				this.rollbackNativeAppendGraphHashes([appendFacts.hash]);

@@ -498,6 +498,7 @@ describe("append", function () {
 			expect(result.appendFacts.metaBytes).equal(undefined);
 			expect(result.appendFacts.hashDigestBytes).equal(undefined);
 			expect(commitOnlySpy.callCount).equal(1);
+			expect(commitOnlySpy.returnValues[0]).equal(undefined);
 			expect(appendBatchSpy.callCount).equal(0);
 			expect(trimSpy.callCount).equal(0);
 			expect(initSpy.callCount).equal(0);

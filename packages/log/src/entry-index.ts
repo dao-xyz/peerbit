@@ -1446,21 +1446,46 @@ export class EntryIndex<T> {
 	}
 
 	/** @internal */
-	async putNativeCommittedAppendFacts(properties: {
+	putNativeCommittedAppendFacts(properties: {
 		hash: string;
 		unique: boolean;
 		externalNextHashes: string[];
 		shallowEntry: ShallowEntry;
 		isHead?: boolean;
-	}) {
+	}): Promise<void> | void {
 		if (!properties.hash) {
 			throw new Error("Missing hash");
 		}
 		const existingPromise = this.insertionPromises.get(properties.hash);
+		if (
+			!existingPromise &&
+			properties.unique === true &&
+			properties.externalNextHashes.length === 0
+		) {
+			const isHead = properties.isHead ?? true;
+			this._length++;
+			properties.shallowEntry.head = isHead;
+			this.pendingIndexWrites.set(properties.hash, properties.shallowEntry);
+			this.schedulePendingIndexWriteFlush();
+			return;
+		}
+
+		return this.putNativeCommittedAppendFactsAsync(properties, existingPromise);
+	}
+
+	private async putNativeCommittedAppendFactsAsync(
+		properties: {
+			hash: string;
+			unique: boolean;
+			externalNextHashes: string[];
+			shallowEntry: ShallowEntry;
+			isHead?: boolean;
+		},
+		existingPromise?: Promise<void>,
+	) {
 		if (existingPromise) {
 			await existingPromise;
 		}
-
 		const promise = (async () => {
 			const isHead = properties.isHead ?? true;
 			if (properties.unique === true || !(await this.has(properties.hash))) {
