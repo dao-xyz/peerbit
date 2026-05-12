@@ -207,7 +207,7 @@ describe("append", function () {
 				true,
 			]);
 			expect(iterateSpy.callCount).equal(0);
-			expect(putSpy.callCount).equal(1);
+			expect(putSpy.callCount).equal(0);
 			expect(putBatchSpy.callCount).equal(1);
 			expect(putBatchSpy.firstCall.args[0]).to.have.length(result.entries.length);
 			expect(blockPutSpy.callCount).equal(0);
