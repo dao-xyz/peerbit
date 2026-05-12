@@ -130,11 +130,15 @@ describe("@peerbit/any-store-rust", () => {
 
 		let store = createStore(directory);
 		await store.open();
-		await store.putImmutable("a", new Uint8Array([1, 2, 3]));
-		await store.putManyImmutable([
-			["b", new Uint8Array([4])],
-			["c", new Uint8Array([5, 6])],
-		]);
+		expect(store.putImmutable("a", new Uint8Array([1, 2, 3]))).to.equal(
+			undefined,
+		);
+		expect(
+			store.putManyImmutable([
+				["b", new Uint8Array([4])],
+				["c", new Uint8Array([5, 6])],
+			]),
+		).to.equal(undefined);
 		await store.close();
 
 		store = createStore(directory);
@@ -144,6 +148,21 @@ describe("@peerbit/any-store-rust", () => {
 			new Uint8Array([4]),
 			new Uint8Array([5, 6]),
 		]);
+		await store.close();
+	});
+
+	it("keeps strict immutable persistence on an async durability boundary", async () => {
+		const directory = await tempDirectory();
+		cleanup.push(directory);
+
+		const store = createStore(directory, { durability: "strict" });
+		await store.open();
+		expect(store.putImmutable("a", new Uint8Array([1]))).to.be.instanceOf(
+			Promise,
+		);
+		expect(store.putManyImmutable([["b", new Uint8Array([2])]])).to.be.instanceOf(
+			Promise,
+		);
 		await store.close();
 	});
 

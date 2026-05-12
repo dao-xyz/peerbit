@@ -182,6 +182,14 @@ export class RustAnyStore implements AnyStore {
 			native.put(key, value);
 			return;
 		}
+		const normalNative = this.openNormalDurabilityNative();
+		if (normalNative && this.directory) {
+			this.recordJournal(
+				this.journaledNative(normalNative).encode_put_record(key, value),
+			);
+			normalNative.put(key, value);
+			return;
+		}
 
 		return this.enqueueMutation(async (native) => {
 			if (this.directory) {
@@ -239,6 +247,14 @@ export class RustAnyStore implements AnyStore {
 		const native = this.openTransientNative();
 		if (native) {
 			native.put_many(keys, values);
+			return;
+		}
+		const normalNative = this.openNormalDurabilityNative();
+		if (normalNative && this.directory) {
+			this.recordJournal(
+				this.journaledNative(normalNative).encode_put_records(keys, values),
+			);
+			normalNative.put_many(keys, values);
 			return;
 		}
 
@@ -401,6 +417,17 @@ export class RustAnyStore implements AnyStore {
 	private openTransientNative(): NativeAnyStore | undefined {
 		if (
 			this.directory == null &&
+			this._status === "open" &&
+			this.native &&
+			this.queuedMutations === 0
+		) {
+			return this.native;
+		}
+	}
+
+	private openNormalDurabilityNative(): NativeAnyStore | undefined {
+		if (
+			this.options.durability !== "strict" &&
 			this._status === "open" &&
 			this.native &&
 			this.queuedMutations === 0
