@@ -32,7 +32,7 @@ type ImproveChannel = {
 	closed: boolean;
 	isRoot: boolean;
 	level: number;
-	id: { root: string; key: Uint8Array };
+	id: { root: string; key: Uint8Array; suffixKey?: string };
 	metrics: {
 		reparentUpgradeSkipCandidateLevel: number;
 		reparentUpgradeSkipCandidateSlots: number;
@@ -115,6 +115,7 @@ type ImproveOptions = {
 
 type ImproveContext = {
 	publicKeyHash: string;
+	channelsBySuffixKey?: Map<string, ImproveChannel>;
 	peers: Map<
 		string,
 		{ peerId: string; isReadable: boolean; isWritable: boolean }
@@ -377,6 +378,7 @@ const runMaybeImproveParent = async (args: {
 	channelOverrides?: Partial<ImproveChannel>;
 	getConnections?: (peerId: string) => unknown[];
 	random?: () => number;
+	channelsBySuffixKey?: Map<string, ImproveChannel>;
 	options?: Partial<ImproveOptions>;
 	tryJoinOnce?: ImproveContext["tryJoinOnce"];
 	probeParentCandidate?: ImproveContext["probeParentCandidate"];
@@ -396,6 +398,7 @@ const runMaybeImproveParent = async (args: {
 	}
 	const ctx: ImproveContext = {
 		publicKeyHash: "self",
+		channelsBySuffixKey: args.channelsBySuffixKey,
 		peers: new Map(
 			args.peerHashes.map((hash) => [
 				hash,
@@ -1829,6 +1832,110 @@ describe("fanout-tree", () => {
 		expect(probes).to.equal(0);
 		expect(attempts).to.deep.equal([]);
 		expect(ch.metrics.reparentUpgradeSkipCandidateSlots).to.equal(1);
+	});
+
+	it("keeps leaf stale-root sampling below the branch boost", async () => {
+		let probes = 0;
+		const { attempts, result, ch } = await runMaybeImproveParent({
+			peerHashes: ["relay", "b"],
+			channelOverrides: {
+				id: { root: "b", key: new Uint8Array([1, 2, 3]), suffixKey: "topic" },
+			},
+			cachedTrackerCandidates: [
+				{ hash: "b", addrs: [], level: 0, freeSlots: 0, bidPerByte: 0 },
+			],
+			options: {
+				mode: "shadow",
+				minFreeSlots: 2,
+				verifyStaleRootCapacity: true,
+				staleRootProbeProbability: 0.0625,
+				shadowObserveMs: 0,
+				shadowMinObservations: 2,
+			},
+			probeParentCandidate: async (_channel, parentHash) => {
+				probes += 1;
+				return createProbeReply(parentHash, { freeSlots: 2 });
+			},
+		});
+
+		expect(result).to.equal(false);
+		expect(probes).to.equal(0);
+		expect(attempts).to.deep.equal([]);
+		expect(ch.metrics.reparentUpgradeSkipCandidateSlots).to.equal(1);
+	});
+
+	it("boosts stale-root sampling for branch peers with downstream benefit", async () => {
+		let probes = 0;
+		const { attempts, result, ch } = await runMaybeImproveParent({
+			peerHashes: ["relay", "b"],
+			channelOverrides: {
+				children: new Map([["child", { bidPerByte: 0 }]]),
+				id: { root: "b", key: new Uint8Array([1, 2, 3]), suffixKey: "topic" },
+			},
+			cachedTrackerCandidates: [
+				{ hash: "b", addrs: [], level: 0, freeSlots: 0, bidPerByte: 0 },
+			],
+			options: {
+				mode: "shadow",
+				minFreeSlots: 2,
+				verifyStaleRootCapacity: true,
+				staleRootProbeProbability: 0.0625,
+				shadowObserveMs: 0,
+				shadowMinObservations: 2,
+			},
+			probeParentCandidate: async (_channel, parentHash) => {
+				probes += 1;
+				return createProbeReply(parentHash, { freeSlots: 2 });
+			},
+		});
+
+		expect(result).to.equal(false);
+		expect(probes).to.equal(1);
+		expect(attempts).to.deep.equal([]);
+		expect(ch.parentShadow?.hash).to.equal("b");
+	});
+
+	it("does not boost stale-root sampling when multiple local channels compete", async () => {
+		let probes = 0;
+		const ch = createImproveChannel({
+			children: new Map([["child", { bidPerByte: 0 }]]),
+			id: { root: "b", key: new Uint8Array([1, 2, 3]), suffixKey: "topic" },
+		});
+		const other = createImproveChannel({
+			id: {
+				root: "other-root",
+				key: new Uint8Array([4, 5, 6]),
+				suffixKey: "other-topic",
+			},
+		});
+		const { attempts, result } = await runMaybeImproveParent({
+			peerHashes: ["relay", "b"],
+			channel: ch,
+			channelsBySuffixKey: new Map([
+				["topic", ch],
+				["other-topic", other],
+			]),
+			cachedTrackerCandidates: [
+				{ hash: "b", addrs: [], level: 0, freeSlots: 0, bidPerByte: 0 },
+			],
+			options: {
+				mode: "shadow",
+				minFreeSlots: 2,
+				verifyStaleRootCapacity: true,
+				staleRootProbeProbability: 0.0625,
+				shadowObserveMs: 0,
+				shadowMinObservations: 2,
+			},
+			probeParentCandidate: async (_channel, parentHash) => {
+				probes += 1;
+				return createProbeReply(parentHash, { freeSlots: 2 });
+			},
+		});
+
+		expect(result).to.equal(false);
+		expect(probes).to.equal(0);
+		expect(attempts).to.deep.equal([]);
+		expect(ch.parentShadow).to.equal(undefined);
 	});
 
 	it("keeps stale non-root shadow candidates bounded by tracker capacity", async () => {

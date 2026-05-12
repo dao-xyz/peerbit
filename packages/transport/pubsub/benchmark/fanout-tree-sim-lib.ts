@@ -401,7 +401,7 @@ export const resolveFanoutTreeSimParams = (
 	);
 	const parentUpgradeRootMaxChildLoadRatio = Number(
 		input.parentUpgradeRootMaxChildLoadRatio ??
-			Math.min(parentUpgradeMaxChildLoadRatio, 0.4),
+			Math.min(parentUpgradeMaxChildLoadRatio, 0.3),
 	);
 
 	return {
@@ -510,7 +510,7 @@ export const resolveFanoutTreeSimParams = (
 			input.parentUpgradeVerifyStaleRootCapacity ?? false,
 		),
 		parentUpgradeStaleRootProbeProbability: Number(
-			input.parentUpgradeStaleRootProbeProbability ?? 0.25,
+			input.parentUpgradeStaleRootProbeProbability ?? 0.0625,
 		),
 		parentProbeTimeoutMs: Number(input.parentProbeTimeoutMs ?? 500),
 		parentProbeMaxPerRound: Number(input.parentProbeMaxPerRound ?? 2),

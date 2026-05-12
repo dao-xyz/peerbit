@@ -298,7 +298,7 @@ jobs:
     if: github.event_name == 'pull_request'
     name: Fanout Gate (PR)
     runs-on: ubuntu-22.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       PEERBIT_TEST_SESSION: mock
       NODE_OPTIONS: --no-warnings
@@ -392,6 +392,16 @@ jobs:
             --strict 1
           pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval \
             --scenario ci-multi-idle \
+            --seeds 1 \
+            --parentUpgradePreset default-candidate \
+            --strict 1
+          pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval \
+            --scenario ci-multi-sparse-idle \
+            --seeds 1 \
+            --parentUpgradePreset default-candidate \
+            --strict 1
+          pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval \
+            --scenario ci-multi-hotspot-idle \
             --seeds 1 \
             --parentUpgradePreset default-candidate \
             --strict 1

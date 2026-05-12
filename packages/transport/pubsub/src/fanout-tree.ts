@@ -354,7 +354,7 @@ export type FanoutTreeJoinOptions = {
 	 * Maximum child-load ratio allowed for a live-probed direct-root upgrade target
 	 * after accepting this peer.
 	 *
-	 * Defaults to `min(parentUpgradeMaxChildLoadRatio, 0.4)`. Root fanout is the
+	 * Defaults to `min(parentUpgradeMaxChildLoadRatio, 0.3)`. Root fanout is the
 	 * scarce sender-side resource, so root pressure stays more conservative than
 	 * relay parent pressure unless explicitly tuned.
 	 */
@@ -435,8 +435,11 @@ export type FanoutTreeJoinOptions = {
 	 * Deterministic per-peer sampling probability for stale-root verification.
 	 *
 	 * This applies only when `parentUpgradeVerifyStaleRootCapacity` is enabled and
-	 * tracker capacity says the root is full. Defaults to `0.125` to avoid every
-	 * eligible peer probing the same advertised-full root at once.
+	 * tracker capacity says the root is full. Defaults to `0.0625` to avoid every
+	 * eligible peer probing the same advertised-full root at once. Branch peers
+	 * may use a bounded 2x sample boost, capped at `0.1`, when this peer is only
+	 * maintaining one channel. That lets a single branch improve a downstream
+	 * subtree while multi-writer peers stay on the lower base budget.
 	 */
 	parentUpgradeStaleRootProbeProbability?: number;
 
@@ -6107,21 +6110,21 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			: 0.5;
 		const parentUpgradeRootMaxChildLoadRatioRaw = Number(
 			joinOpts.parentUpgradeRootMaxChildLoadRatio ??
-				Math.min(parentUpgradeMaxChildLoadRatio, 0.4),
+				Math.min(parentUpgradeMaxChildLoadRatio, 0.3),
 		);
 		const parentUpgradeRootMaxChildLoadRatio = Number.isFinite(
 			parentUpgradeRootMaxChildLoadRatioRaw,
 		)
 			? Math.max(0, parentUpgradeRootMaxChildLoadRatioRaw)
-			: Math.min(parentUpgradeMaxChildLoadRatio, 0.4);
+			: Math.min(parentUpgradeMaxChildLoadRatio, 0.3);
 		const parentUpgradeStaleRootProbeProbabilityRaw = Number(
-			joinOpts.parentUpgradeStaleRootProbeProbability ?? 0.125,
+			joinOpts.parentUpgradeStaleRootProbeProbability ?? 0.0625,
 		);
 		const parentUpgradeStaleRootProbeProbability = Number.isFinite(
 			parentUpgradeStaleRootProbeProbabilityRaw,
 		)
 			? Math.max(0, Math.min(1, parentUpgradeStaleRootProbeProbabilityRaw))
-			: 0.125;
+			: 0.0625;
 		const parentUpgradeCooldownMs = Math.max(
 			0,
 			Math.floor(joinOpts.parentUpgradeCooldownMs ?? 5_000),
@@ -7177,13 +7180,31 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			const requiredMinFreeSlots = minFreeSlotsFor(c.hash);
 			if (canVerifyRootCapacityLive && c.freeSlots < requiredMinFreeSlots) {
 				const staleRootProbeProbabilityRaw = Number(
-					options.staleRootProbeProbability ?? 0.125,
+					options.staleRootProbeProbability ?? 0.0625,
 				);
-				const staleRootProbeProbability = Number.isFinite(
+				const staleRootProbeBaseProbability = Number.isFinite(
 					staleRootProbeProbabilityRaw,
 				)
 					? Math.max(0, Math.min(1, staleRootProbeProbabilityRaw))
-					: 0.125;
+					: 0.0625;
+				let localChannelCount = 1;
+				if (this.channelsBySuffixKey instanceof Map) {
+					localChannelCount = 0;
+					for (const localCh of this.channelsBySuffixKey.values()) {
+						if (localCh.closed) continue;
+						localChannelCount += 1;
+						if (localChannelCount > 1) break;
+					}
+				}
+				const staleRootProbeProbability =
+					ch.children.size > 0 &&
+					localChannelCount <= 1 &&
+					staleRootProbeBaseProbability > 0
+						? Math.max(
+								staleRootProbeBaseProbability,
+								Math.min(0.1, staleRootProbeBaseProbability * 2),
+							)
+						: staleRootProbeBaseProbability;
 				const staleRootProbeScore = stableUnitInterval(
 					`${ch.id.suffixKey}:${this.publicKeyHash}:${c.hash}:stale-root-probe`,
 				);

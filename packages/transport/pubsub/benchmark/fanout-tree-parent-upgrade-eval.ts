@@ -112,7 +112,7 @@ const HELP_TEXT = [
 	"  --parentUpgradeMinFreeSlots N min free slots for treatment upgrade targets (default: 8)",
 	"  --parentUpgradeRootMinFreeSlots N min free slots for root treatment targets (default: parentUpgradeMinFreeSlots)",
 	"  --parentUpgradeMaxChildLoadRatio R max child load ratio after accepting treatment child (default: 0.5)",
-	"  --parentUpgradeRootMaxChildLoadRatio R max root child load ratio after accepting treatment child (default: min(parentUpgradeMaxChildLoadRatio, 0.4))",
+	"  --parentUpgradeRootMaxChildLoadRatio R max root child load ratio after accepting treatment child (default: min(parentUpgradeMaxChildLoadRatio, 0.3))",
 	"  --parentUpgradeCooldownMs MS  cooldown after successful treatment upgrades (default: 5000)",
 	"  --parentUpgradeFailedBackoffMinMs MS initial backoff after failed probe/shadow rounds (default: 5000)",
 	"  --parentUpgradeFailedBackoffMaxMs MS max backoff after failed probe/shadow rounds (default: 60000)",
@@ -123,7 +123,7 @@ const HELP_TEXT = [
 	"  --parentUpgradeDataGuard 0|1 wait for finite channel completion before treatment upgrades (default: 1)",
 	"  --parentUpgradeMode MODE      treatment upgrade mode (direct|probe|shadow, default: direct)",
 	"  --parentUpgradeVerifyStaleRootCapacity 0|1 allow shadow probes against tracker-full root (default: 0)",
-	"  --parentUpgradeStaleRootProbeProbability R sample tracker-full root probes per peer (default: 0.125)",
+	"  --parentUpgradeStaleRootProbeProbability R base sample for tracker-full root probes per peer (default: 0.0625)",
 	"  --compareModes 0|1           run direct, probe, and shadow against one baseline (default: 0)",
 	"  --parentProbeTimeoutMs MS     timeout for probe-mode parent checks (default: 500)",
 	"  --parentProbeMaxPerRound N    max probe-mode candidates per upgrade check (default: 2)",
@@ -371,7 +371,7 @@ const parseArgs = (argv: string[]): EvalArgs => {
 	);
 	const parentUpgradeRootMaxChildLoadRatio = Number(
 		get("--parentUpgradeRootMaxChildLoadRatio") ??
-			Math.min(parentUpgradeMaxChildLoadRatio, 0.4),
+			Math.min(parentUpgradeMaxChildLoadRatio, 0.3),
 	);
 	const parentUpgradeModeRaw = get("--parentUpgradeMode");
 	const parentUpgradeMode =
@@ -434,7 +434,7 @@ const parseArgs = (argv: string[]): EvalArgs => {
 			defaultCandidate,
 		),
 		parentUpgradeStaleRootProbeProbability: Number(
-			get("--parentUpgradeStaleRootProbeProbability") ?? 0.125,
+			get("--parentUpgradeStaleRootProbeProbability") ?? 0.0625,
 		),
 		compareModes: parseBool01(get("--compareModes"), false),
 		parentProbeTimeoutMs: Number(get("--parentProbeTimeoutMs") ?? 500),

@@ -43,7 +43,12 @@ class SimFanoutTree extends FanoutTree {
 	}
 }
 
-type ScenarioName = "ci-multi-live" | "ci-multi-live-churn" | "ci-multi-idle";
+type ScenarioName =
+	| "ci-multi-live"
+	| "ci-multi-live-churn"
+	| "ci-multi-idle"
+	| "ci-multi-sparse-idle"
+	| "ci-multi-hotspot-idle";
 type UpgradeMode = "direct" | "probe" | "shadow";
 type UpgradePreset = "raw" | "default-candidate";
 
@@ -81,6 +86,7 @@ type EvalArgs = {
 	parentShadowMinObservations: number;
 	nodes?: number;
 	writers?: number;
+	activeWriters?: number;
 	subscribersPerTree?: number;
 	streamRxDelayMs?: number;
 	timeoutMs?: number;
@@ -100,6 +106,7 @@ type MultiWriterParams = {
 	seed: number;
 	nodes: number;
 	writers: number;
+	activeWriters: number;
 	bootstraps: number;
 	subscribersPerTree: number;
 	relayFraction: number;
@@ -188,6 +195,7 @@ type TreeShape = {
 
 type TreeResult = {
 	tree: number;
+	active: boolean;
 	topic: string;
 	rootHash: string;
 	subscriberCount: number;
@@ -364,6 +372,7 @@ const SCENARIOS: Record<ScenarioName, Partial<MultiWriterParams>> = {
 		scenario: "ci-multi-idle",
 		nodes: 40,
 		writers: 4,
+		activeWriters: 4,
 		bootstraps: 1,
 		subscribersPerTree: 28,
 		relayFraction: 0.5,
@@ -400,6 +409,88 @@ const SCENARIOS: Record<ScenarioName, Partial<MultiWriterParams>> = {
 		churnDownMs: 0,
 		churnFraction: 0,
 	},
+	"ci-multi-sparse-idle": {
+		scenario: "ci-multi-sparse-idle",
+		nodes: 72,
+		writers: 12,
+		activeWriters: 4,
+		bootstraps: 1,
+		subscribersPerTree: 36,
+		relayFraction: 0.5,
+		joinConcurrency: 12,
+		joinPhaseSettleMs: 500,
+		messages: 12,
+		secondBatchMessages: 48,
+		secondBatchSettleMs: 1_000,
+		msgRate: 50,
+		msgSize: 96,
+		settleMs: 9_000,
+		deadlineMs: 750,
+		timeoutMs: 180_000,
+		rootUploadLimitBps: 100_000_000,
+		rootMaxChildren: 1,
+		relayUploadLimitBps: 100_000_000,
+		relayMaxChildren: 4,
+		repair: true,
+		repairWindowMessages: 512,
+		repairIntervalMs: 200,
+		repairMaxPerReq: 64,
+		neighborRepair: true,
+		neighborRepairPeers: 3,
+		streamRxDelayMs: 3,
+		streamHighWaterMarkBytes: 256 * 1024,
+		dialDelayMs: 0,
+		candidateScoringMode: "weighted",
+		trackerQueryIntervalMs: 1_000,
+		lateRootConnectAfterMs: 1_000,
+		lateRootDuringPublish: false,
+		lateRootMaxChildren: 10,
+		lateRootConnectFraction: 0.75,
+		churnEveryMs: 0,
+		churnDownMs: 0,
+		churnFraction: 0,
+	},
+	"ci-multi-hotspot-idle": {
+		scenario: "ci-multi-hotspot-idle",
+		nodes: 64,
+		writers: 4,
+		activeWriters: 4,
+		bootstraps: 1,
+		subscribersPerTree: 48,
+		relayFraction: 0.5,
+		joinConcurrency: 12,
+		joinPhaseSettleMs: 500,
+		messages: 12,
+		secondBatchMessages: 48,
+		secondBatchSettleMs: 1_000,
+		msgRate: 50,
+		msgSize: 96,
+		settleMs: 9_000,
+		deadlineMs: 750,
+		timeoutMs: 180_000,
+		rootUploadLimitBps: 100_000_000,
+		rootMaxChildren: 1,
+		relayUploadLimitBps: 100_000_000,
+		relayMaxChildren: 4,
+		repair: true,
+		repairWindowMessages: 512,
+		repairIntervalMs: 200,
+		repairMaxPerReq: 64,
+		neighborRepair: true,
+		neighborRepairPeers: 3,
+		streamRxDelayMs: 3,
+		streamHighWaterMarkBytes: 256 * 1024,
+		dialDelayMs: 0,
+		candidateScoringMode: "weighted",
+		trackerQueryIntervalMs: 1_000,
+		lateRootConnectAfterMs: 1_000,
+		lateRootDuringPublish: false,
+		lateRootMaxChildren: 12,
+		lateRootConnectFraction: 1,
+		churnEveryMs: 0,
+		churnDownMs: 0,
+		churnFraction: 0,
+	},
 };
 
 const usage = () => {
@@ -408,7 +499,7 @@ const usage = () => {
 			"fanout-tree-parent-upgrade-multi-eval.ts",
 			"",
 			"Options:",
-			"  --scenario NAME              ci-multi-live|ci-multi-live-churn|ci-multi-idle|all (default: all)",
+			"  --scenario NAME              ci-multi-live|ci-multi-live-churn|ci-multi-idle|ci-multi-sparse-idle|ci-multi-hotspot-idle|all (default: all)",
 			"  --seeds CSV                  seeds to run for each scenario (default: 1,2,3)",
 			"  --parentUpgradePreset NAME   raw|default-candidate (default: raw)",
 			"  --parentUpgradeIntervalMs MS treatment upgrade interval (default: 1000)",
@@ -416,6 +507,7 @@ const usage = () => {
 			"  --maxLiveChurnGuardSkipsPerSlot N max active guard skips per subscriber slot for ci-multi-live-churn (default: 1)",
 			"  --nodes N                    override scenario node count",
 			"  --writers N                  override scenario writer/root count",
+			"  --activeWriters N            override active publisher count; remaining joined writer trees stay idle",
 			"  --subscribersPerTree N       override scenario subscriber slots per writer",
 			"  --timeoutMs MS               override scenario timeout",
 			"  --strict 0|1                 exit non-zero on evidence failure (default: 0)",
@@ -424,6 +516,8 @@ const usage = () => {
 			"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-live --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1",
 			"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-live-churn --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1",
 			"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-idle --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1",
+			"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-sparse-idle --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1",
+			"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-hotspot-idle --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1",
 		].join("\n"),
 	);
 };
@@ -443,14 +537,22 @@ const parseCsvNumbers = (value: string | undefined, fallback: number[]) => {
 
 const parseScenarios = (value: string | undefined): ScenarioName[] => {
 	if (!value || value === "all") {
-		return ["ci-multi-live", "ci-multi-live-churn", "ci-multi-idle"];
+		return [
+			"ci-multi-live",
+			"ci-multi-live-churn",
+			"ci-multi-idle",
+			"ci-multi-sparse-idle",
+			"ci-multi-hotspot-idle",
+		];
 	}
 	const scenarios = value.split(",").map((part) => part.trim());
 	for (const scenario of scenarios) {
 		if (
 			scenario !== "ci-multi-live" &&
 			scenario !== "ci-multi-live-churn" &&
-			scenario !== "ci-multi-idle"
+			scenario !== "ci-multi-idle" &&
+			scenario !== "ci-multi-sparse-idle" &&
+			scenario !== "ci-multi-hotspot-idle"
 		) {
 			throw new Error(`Unknown scenario: ${scenario}`);
 		}
@@ -462,6 +564,10 @@ const isLiveScenario = (scenario: ScenarioName) =>
 	scenario === "ci-multi-live" || scenario === "ci-multi-live-churn";
 const isLiveChurnScenario = (scenario: ScenarioName) =>
 	scenario === "ci-multi-live-churn";
+const isPositiveIdleScenario = (scenario: ScenarioName) =>
+	scenario === "ci-multi-idle" || scenario === "ci-multi-hotspot-idle";
+const isSparseIdleScenario = (scenario: ScenarioName) =>
+	scenario === "ci-multi-sparse-idle";
 
 const parseArgs = (argv: string[]): EvalArgs => {
 	const get = (name: string) => {
@@ -484,7 +590,7 @@ const parseArgs = (argv: string[]): EvalArgs => {
 	);
 	const parentUpgradeRootMaxChildLoadRatio = Number(
 		get("--parentUpgradeRootMaxChildLoadRatio") ??
-			Math.min(parentUpgradeMaxChildLoadRatio, 0.4),
+			Math.min(parentUpgradeMaxChildLoadRatio, 0.3),
 	);
 	const parentUpgradeModeRaw = get("--parentUpgradeMode");
 	const parentUpgradeMode =
@@ -547,7 +653,7 @@ const parseArgs = (argv: string[]): EvalArgs => {
 			defaultCandidate,
 		),
 		parentUpgradeStaleRootProbeProbability: Number(
-			get("--parentUpgradeStaleRootProbeProbability") ?? 0.125,
+			get("--parentUpgradeStaleRootProbeProbability") ?? 0.0625,
 		),
 		parentProbeTimeoutMs: Number(get("--parentProbeTimeoutMs") ?? 500),
 		parentProbeMaxPerRound: Number(get("--parentProbeMaxPerRound") ?? 2),
@@ -564,6 +670,10 @@ const parseArgs = (argv: string[]): EvalArgs => {
 		),
 		nodes: get("--nodes") == null ? undefined : Number(get("--nodes")),
 		writers: get("--writers") == null ? undefined : Number(get("--writers")),
+		activeWriters:
+			get("--activeWriters") == null
+				? undefined
+				: Number(get("--activeWriters")),
 		subscribersPerTree:
 			get("--subscribersPerTree") == null
 				? undefined
@@ -602,11 +712,20 @@ const resolveParams = (
 ): MultiWriterParams => {
 	const base = SCENARIOS[scenario];
 	const msgRate = Number(base.msgRate ?? 30);
+	const writers = Number(args.writers ?? base.writers ?? 4);
+	const activeWriters = Math.max(
+		0,
+		Math.min(
+			writers,
+			Math.floor(Number(args.activeWriters ?? base.activeWriters ?? writers)),
+		),
+	);
 	return {
 		scenario,
 		seed,
 		nodes: Number(args.nodes ?? base.nodes ?? 40),
-		writers: Number(args.writers ?? base.writers ?? 4),
+		writers,
+		activeWriters,
 		bootstraps: Number(base.bootstraps ?? 1),
 		subscribersPerTree: Number(
 			args.subscribersPerTree ?? base.subscribersPerTree ?? 28,
@@ -874,6 +993,7 @@ const runMultiWriterSim = async (
 			});
 			return {
 				tree,
+				active: tree < params.activeWriters,
 				rootIndex,
 				root,
 				rootHash,
@@ -881,6 +1001,7 @@ const runMultiWriterSim = async (
 				joinedIndices: new Set<number>(),
 			};
 		});
+		const activeTrees = trees.filter((tree) => tree.active);
 
 		const joinOne = async (
 			tree: (typeof trees)[number],
@@ -1252,7 +1373,7 @@ const runMultiWriterSim = async (
 
 		const publishRange = async (from: number, to: number) => {
 			await Promise.all(
-				trees.map(async (tree) => {
+				activeTrees.map(async (tree) => {
 					const delivery = deliveryByTree[tree.tree]!;
 					for (let seq = from; seq < to; seq++) {
 						if (timeoutSignal.aborted) {
@@ -1282,7 +1403,7 @@ const runMultiWriterSim = async (
 
 		if (params.repair && params.messages > 0) {
 			await Promise.all(
-				trees.map((tree) =>
+				activeTrees.map((tree) =>
 					tree.root.publishEnd(tree.topic, tree.rootHash, params.messages),
 				),
 			);
@@ -1315,7 +1436,7 @@ const runMultiWriterSim = async (
 			);
 			if (params.repair) {
 				await Promise.all(
-					trees.map((tree) =>
+					activeTrees.map((tree) =>
 						tree.root.publishEnd(
 							tree.topic,
 							tree.rootHash,
@@ -1339,14 +1460,18 @@ const runMultiWriterSim = async (
 			const shape = finalShapeByTree[tree.tree]!;
 			const delivery = deliveryByTree[tree.tree]!;
 			const joinedCount = delivery.joinedHashes.length;
+			const treeMessageCount = tree.active ? totalMessages : 0;
+			const treeSecondBatchMessages = tree.active
+				? params.secondBatchMessages
+				: 0;
 			let delivered = 0;
 			for (const c of delivery.receivedCounts) delivered += c;
 			let secondBatchDelivered = 0;
 			for (const c of delivery.secondBatchReceivedCounts) {
 				secondBatchDelivered += c;
 			}
-			const expected = joinedCount * totalMessages;
-			const secondBatchExpected = joinedCount * params.secondBatchMessages;
+			const expected = joinedCount * treeMessageCount;
+			const secondBatchExpected = joinedCount * treeSecondBatchMessages;
 			const secondBatchLatencySamples = delivery.secondBatchLatencySamples.sort(
 				(a, b) => a - b,
 			);
@@ -1411,6 +1536,7 @@ const runMultiWriterSim = async (
 					?.maxBytesPerSecond ?? 0;
 			treeResults.push({
 				tree: tree.tree,
+				active: tree.active,
 				topic: tree.topic,
 				rootHash: tree.rootHash,
 				subscriberCount: subscriberIndices.length,
@@ -1619,7 +1745,7 @@ const formatResult = (result: MultiWriterResult) => {
 	const p = result.params;
 	return [
 		"fanout-tree-parent-upgrade-multi-eval",
-		`scenario=${p.scenario} seed=${p.seed} writers=${p.writers} nodes=${p.nodes} subscribersPerTree=${p.subscribersPerTree}`,
+		`scenario=${p.scenario} seed=${p.seed} writers=${p.writers} activeWriters=${p.activeWriters} nodes=${p.nodes} subscribersPerTree=${p.subscribersPerTree}`,
 		`joinedSlots=${result.joinedCount}/${result.subscriberSlots} delivered=${result.delivered}/${result.expected} (${fmt(result.deliveredPct)}%) deadline=${fmt(result.deliveredWithinDeadlinePct)}%`,
 		...(result.secondBatchExpected > 0
 			? [
@@ -1633,7 +1759,7 @@ const formatResult = (result: MultiWriterResult) => {
 		`network dials=${result.network.dials} connsOpened=${result.network.connectionsOpened} streamsOpened=${result.network.streamsOpened} bytesSent=${result.network.bytesSent}`,
 		...result.trees.map(
 			(tree) =>
-				`tree[${tree.tree}] joined=${tree.joinedCount}/${tree.subscriberCount} upgrades=${tree.reparentUpgradeTotal} probes=${tree.parentProbeReqSentTotal} active(probes/upgrades/guards)=${tree.publishActiveParentProbeReqSentTotal}/${tree.publishActiveReparentUpgradeTotal}/${tree.publishActiveReparentUpgradeSkipDataTotal + tree.publishActiveReparentUpgradeSkipRepairTotal + tree.publishActiveReparentUpgradeSkipQuietTotal} rootChildren=${tree.treeRootChildren} rootUploadPct=${fmt(tree.rootUploadFracPct)} secondP95=${fmt(tree.secondBatchLatencyP95, 1)}`,
+				`tree[${tree.tree}${tree.active ? "" : ":idle"}] joined=${tree.joinedCount}/${tree.subscriberCount} upgrades=${tree.reparentUpgradeTotal} probes=${tree.parentProbeReqSentTotal} active(probes/upgrades/guards)=${tree.publishActiveParentProbeReqSentTotal}/${tree.publishActiveReparentUpgradeTotal}/${tree.publishActiveReparentUpgradeSkipDataTotal + tree.publishActiveReparentUpgradeSkipRepairTotal + tree.publishActiveReparentUpgradeSkipQuietTotal} rootChildren=${tree.treeRootChildren} rootUploadPct=${fmt(tree.rootUploadFracPct)} secondP95=${fmt(tree.secondBatchLatencyP95, 1)}`,
 		),
 	].join("\n");
 };
@@ -1775,7 +1901,7 @@ const evaluateRun = (
 		}
 	}
 
-	if (scenario === "ci-multi-idle") {
+	if (isPositiveIdleScenario(scenario)) {
 		failIfLess(
 			failures,
 			"usefulPromotedTrees",
@@ -1822,6 +1948,31 @@ const evaluateRun = (
 				useful.promotedBranchGainAvg,
 			),
 			1,
+		);
+	}
+
+	if (isSparseIdleScenario(scenario)) {
+		const inactiveTrees = upgrade.trees.filter((tree) => !tree.active);
+		const inactiveUpgrades = inactiveTrees.reduce(
+			(sum, tree) => sum + tree.reparentUpgradeTotal,
+			0,
+		);
+		const inactiveProbes = inactiveTrees.reduce(
+			(sum, tree) => sum + tree.parentProbeReqSentTotal,
+			0,
+		);
+		const inactiveShadowStarts = inactiveTrees.reduce(
+			(sum, tree) => sum + tree.parentShadowStartTotal,
+			0,
+		);
+		failIfGreater(failures, "inactiveTreeUpgrades", 0, inactiveUpgrades, 0);
+		failIfGreater(failures, "inactiveTreeProbes", 0, inactiveProbes, 0);
+		failIfGreater(
+			failures,
+			"inactiveTreeShadowStarts",
+			0,
+			inactiveShadowStarts,
+			0,
 		);
 	}
 
