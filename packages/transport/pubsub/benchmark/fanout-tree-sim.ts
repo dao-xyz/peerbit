@@ -81,7 +81,7 @@ const HELP_TEXT = [
 	"  --parentUpgradeMinFreeSlots N min advertised free slots for upgrade targets (default: 8)",
 	"  --parentUpgradeRootMinFreeSlots N min advertised free slots for root upgrade targets (default: parentUpgradeMinFreeSlots)",
 	"  --parentUpgradeMaxChildLoadRatio R max child load ratio after accepting upgrade child (default: 0.5)",
-	"  --parentUpgradeRootMaxChildLoadRatio R max root child load ratio after accepting upgrade child (default: min(parentUpgradeMaxChildLoadRatio, 0.3))",
+	"  --parentUpgradeRootMaxChildLoadRatio R max root child load ratio after accepting upgrade child (default: min(parentUpgradeMaxChildLoadRatio, 0.4))",
 	"  --parentUpgradeCooldownMs MS  cooldown after a successful proactive upgrade (default: 5000)",
 	"  --parentUpgradeFailedBackoffMinMs MS initial backoff after failed probe/shadow rounds (default: 5000)",
 	"  --parentUpgradeFailedBackoffMaxMs MS max backoff after failed probe/shadow rounds (default: 60000)",

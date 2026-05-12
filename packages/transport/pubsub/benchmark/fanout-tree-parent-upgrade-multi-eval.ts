@@ -590,7 +590,7 @@ const parseArgs = (argv: string[]): EvalArgs => {
 	);
 	const parentUpgradeRootMaxChildLoadRatio = Number(
 		get("--parentUpgradeRootMaxChildLoadRatio") ??
-			Math.min(parentUpgradeMaxChildLoadRatio, 0.3),
+			Math.min(parentUpgradeMaxChildLoadRatio, 0.4),
 	);
 	const parentUpgradeModeRaw = get("--parentUpgradeMode");
 	const parentUpgradeMode =

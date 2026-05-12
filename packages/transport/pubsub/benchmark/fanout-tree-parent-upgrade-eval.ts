@@ -112,7 +112,7 @@ const HELP_TEXT = [
 	"  --parentUpgradeMinFreeSlots N min free slots for treatment upgrade targets (default: 8)",
 	"  --parentUpgradeRootMinFreeSlots N min free slots for root treatment targets (default: parentUpgradeMinFreeSlots)",
 	"  --parentUpgradeMaxChildLoadRatio R max child load ratio after accepting treatment child (default: 0.5)",
-	"  --parentUpgradeRootMaxChildLoadRatio R max root child load ratio after accepting treatment child (default: min(parentUpgradeMaxChildLoadRatio, 0.3))",
+	"  --parentUpgradeRootMaxChildLoadRatio R max root child load ratio after accepting treatment child (default: min(parentUpgradeMaxChildLoadRatio, 0.4))",
 	"  --parentUpgradeCooldownMs MS  cooldown after successful treatment upgrades (default: 5000)",
 	"  --parentUpgradeFailedBackoffMinMs MS initial backoff after failed probe/shadow rounds (default: 5000)",
 	"  --parentUpgradeFailedBackoffMaxMs MS max backoff after failed probe/shadow rounds (default: 60000)",
@@ -371,7 +371,7 @@ const parseArgs = (argv: string[]): EvalArgs => {
 	);
 	const parentUpgradeRootMaxChildLoadRatio = Number(
 		get("--parentUpgradeRootMaxChildLoadRatio") ??
-			Math.min(parentUpgradeMaxChildLoadRatio, 0.3),
+			Math.min(parentUpgradeMaxChildLoadRatio, 0.4),
 	);
 	const parentUpgradeModeRaw = get("--parentUpgradeMode");
 	const parentUpgradeMode =

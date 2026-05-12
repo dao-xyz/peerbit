@@ -1382,6 +1382,78 @@ describe("fanout-tree", () => {
 		expect(relay.ch.parent).to.equal("busy-relay");
 	});
 
+	it("tightens direct-root child pressure for multi-channel peers", async () => {
+		const single = await runMaybeImproveParent({
+			peerHashes: ["relay", "root"],
+			channelOverrides: {
+				level: 4,
+				id: { root: "root", key: new Uint8Array([1, 2, 3]), suffixKey: "a" },
+			},
+			options: {
+				mode: "probe",
+				minFreeSlots: 1,
+				maxChildLoadRatio: 0.5,
+				rootMaxChildLoadRatio: 0.4,
+			},
+			probeParentCandidate: async (_channel, parentHash) =>
+				createProbeReply(parentHash, {
+					level: 0,
+					maxChildren: 10,
+					freeSlots: 6,
+					children: 3,
+				}),
+			tryJoinOnce: async (channel, parentHash) => {
+				channel.parent = parentHash;
+				return { ok: true };
+			},
+		});
+
+		expect(single.result).to.equal(true);
+		expect(single.attempts).to.deep.equal(["root"]);
+
+		const ch = createImproveChannel({
+			level: 4,
+			id: { root: "root", key: new Uint8Array([1, 2, 3]), suffixKey: "a" },
+		});
+		const other = createImproveChannel({
+			id: {
+				root: "other-root",
+				key: new Uint8Array([4, 5, 6]),
+				suffixKey: "b",
+			},
+		});
+		const multi = await runMaybeImproveParent({
+			peerHashes: ["relay", "root"],
+			channel: ch,
+			channelsBySuffixKey: new Map([
+				["a", ch],
+				["b", other],
+			]),
+			options: {
+				mode: "probe",
+				minFreeSlots: 1,
+				maxChildLoadRatio: 0.5,
+				rootMaxChildLoadRatio: 0.4,
+			},
+			probeParentCandidate: async (_channel, parentHash) =>
+				createProbeReply(parentHash, {
+					level: 0,
+					maxChildren: 10,
+					freeSlots: 6,
+					children: 3,
+				}),
+			tryJoinOnce: async (channel, parentHash) => {
+				channel.parent = parentHash;
+				return { ok: true };
+			},
+		});
+
+		expect(multi.result).to.equal(false);
+		expect(multi.attempts).to.deep.equal([]);
+		expect(multi.ch.metrics.reparentUpgradeSkipCandidatePressure).to.equal(1);
+		expect(multi.ch.metrics.reparentUpgradeSkipRootPressure).to.equal(1);
+	});
+
 	it("keeps single-probe mode bounded by stale tracker capacity", async () => {
 		let probes = 0;
 		const { attempts, result, ch } = await runMaybeImproveParent({
@@ -1893,6 +1965,37 @@ describe("fanout-tree", () => {
 		expect(probes).to.equal(1);
 		expect(attempts).to.deep.equal([]);
 		expect(ch.parentShadow?.hash).to.equal("b");
+	});
+
+	it("lets single-channel branches spend the wider stale-root sample budget", async () => {
+		let probes = 0;
+		const { attempts, result, ch } = await runMaybeImproveParent({
+			peerHashes: ["relay", "h2"],
+			channelOverrides: {
+				children: new Map([["child", { bidPerByte: 0 }]]),
+				id: { root: "h2", key: new Uint8Array([1, 2, 3]), suffixKey: "topic" },
+			},
+			cachedTrackerCandidates: [
+				{ hash: "h2", addrs: [], level: 0, freeSlots: 0, bidPerByte: 0 },
+			],
+			options: {
+				mode: "shadow",
+				minFreeSlots: 2,
+				verifyStaleRootCapacity: true,
+				staleRootProbeProbability: 0.0625,
+				shadowObserveMs: 0,
+				shadowMinObservations: 2,
+			},
+			probeParentCandidate: async (_channel, parentHash) => {
+				probes += 1;
+				return createProbeReply(parentHash, { freeSlots: 2 });
+			},
+		});
+
+		expect(result).to.equal(false);
+		expect(probes).to.equal(1);
+		expect(attempts).to.deep.equal([]);
+		expect(ch.parentShadow?.hash).to.equal("h2");
 	});
 
 	it("does not boost stale-root sampling when multiple local channels compete", async () => {

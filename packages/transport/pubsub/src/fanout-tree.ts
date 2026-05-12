@@ -354,9 +354,11 @@ export type FanoutTreeJoinOptions = {
 	 * Maximum child-load ratio allowed for a live-probed direct-root upgrade target
 	 * after accepting this peer.
 	 *
-	 * Defaults to `min(parentUpgradeMaxChildLoadRatio, 0.3)`. Root fanout is the
+	 * Defaults to `min(parentUpgradeMaxChildLoadRatio, 0.4)`. Root fanout is the
 	 * scarce sender-side resource, so root pressure stays more conservative than
-	 * relay parent pressure unless explicitly tuned.
+	 * relay parent pressure. Peers maintaining multiple local channels apply an
+	 * additional effective cap of `0.3` for direct-root upgrades so concurrent
+	 * writer trees do not concentrate on the same root at once.
 	 */
 	parentUpgradeRootMaxChildLoadRatio?: number;
 
@@ -437,9 +439,10 @@ export type FanoutTreeJoinOptions = {
 	 * This applies only when `parentUpgradeVerifyStaleRootCapacity` is enabled and
 	 * tracker capacity says the root is full. Defaults to `0.0625` to avoid every
 	 * eligible peer probing the same advertised-full root at once. Branch peers
-	 * may use a bounded 2x sample boost, capped at `0.1`, when this peer is only
-	 * maintaining one channel. That lets a single branch improve a downstream
-	 * subtree while multi-writer peers stay on the lower base budget.
+	 * may use a bounded sample boost, capped at `0.25`, when this peer is only
+	 * maintaining one channel. Peers maintaining multiple local channels do not
+	 * receive the branch boost, so concurrent writer trees do not multiply the
+	 * same stale-root pressure.
 	 */
 	parentUpgradeStaleRootProbeProbability?: number;
 
@@ -6110,13 +6113,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			: 0.5;
 		const parentUpgradeRootMaxChildLoadRatioRaw = Number(
 			joinOpts.parentUpgradeRootMaxChildLoadRatio ??
-				Math.min(parentUpgradeMaxChildLoadRatio, 0.3),
+				Math.min(parentUpgradeMaxChildLoadRatio, 0.4),
 		);
 		const parentUpgradeRootMaxChildLoadRatio = Number.isFinite(
 			parentUpgradeRootMaxChildLoadRatioRaw,
 		)
 			? Math.max(0, parentUpgradeRootMaxChildLoadRatioRaw)
-			: Math.min(parentUpgradeMaxChildLoadRatio, 0.3);
+			: Math.min(parentUpgradeMaxChildLoadRatio, 0.4);
 		const parentUpgradeStaleRootProbeProbabilityRaw = Number(
 			joinOpts.parentUpgradeStaleRootProbeProbability ?? 0.0625,
 		);
@@ -7075,13 +7078,26 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			Math.floor(options.rootMinSubtreeGain ?? rootMinLevelGain),
 		);
 		const levelGainFor = (parentLevel: number) => ch.level - (parentLevel + 1);
+		const impactedPeersForRoot = () => Math.max(1, 1 + ch.children.size);
+		const rootSubtreeGainFor = (parentLevel: number) =>
+			levelGainFor(parentLevel) * impactedPeersForRoot();
 		const isEnoughLevelGain = (hash: string, parentLevel: number) => {
 			const levelGain = levelGainFor(parentLevel);
 			if (hash !== ch.id.root) return levelGain >= nonRootMinLevelGain;
 			if (levelGain >= rootMinLevelGain) return true;
-			const impactedPeers = Math.max(1, 1 + ch.children.size);
-			return levelGain * impactedPeers >= rootMinSubtreeGain;
+			return rootSubtreeGainFor(parentLevel) >= rootMinSubtreeGain;
 		};
+		let localChannelCount = 1;
+		if (this.channelsBySuffixKey instanceof Map) {
+			localChannelCount = 0;
+			for (const localCh of this.channelsBySuffixKey.values()) {
+				if (localCh.closed) continue;
+				localChannelCount += 1;
+				if (localChannelCount > 1) break;
+			}
+		}
+		const singleChannelBranch =
+			ch.children.size > 0 && localChannelCount <= 1;
 		const minFreeSlotsFor = (hash: string) =>
 			hash === ch.id.root
 				? Math.max(
@@ -7187,23 +7203,22 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				)
 					? Math.max(0, Math.min(1, staleRootProbeProbabilityRaw))
 					: 0.0625;
-				let localChannelCount = 1;
-				if (this.channelsBySuffixKey instanceof Map) {
-					localChannelCount = 0;
-					for (const localCh of this.channelsBySuffixKey.values()) {
-						if (localCh.closed) continue;
-						localChannelCount += 1;
-						if (localChannelCount > 1) break;
-					}
-				}
 				const staleRootProbeProbability =
-					ch.children.size > 0 &&
-					localChannelCount <= 1 &&
-					staleRootProbeBaseProbability > 0
-						? Math.max(
-								staleRootProbeBaseProbability,
-								Math.min(0.1, staleRootProbeBaseProbability * 2),
-							)
+					singleChannelBranch && staleRootProbeBaseProbability > 0
+						? (() => {
+								const highValueBranch =
+									rootSubtreeGainFor(c.level) >=
+									Math.max(rootMinSubtreeGain + 1, 4);
+								const branchCap = highValueBranch ? 0.25 : 0.1;
+								const multiplier = highValueBranch ? 8 : 4;
+								return Math.max(
+									staleRootProbeBaseProbability,
+									Math.min(
+										branchCap,
+										staleRootProbeBaseProbability * multiplier,
+									),
+								);
+							})()
 						: staleRootProbeBaseProbability;
 				const staleRootProbeScore = stableUnitInterval(
 					`${ch.id.suffixKey}:${this.publicKeyHash}:${c.hash}:stale-root-probe`,
@@ -7568,12 +7583,18 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					rejectProbeCandidate(candidate.hash);
 					continue;
 				}
-				const configuredMaxChildLoadRatio =
+				const configuredMaxChildLoadRatioRaw =
 					candidate.hash === ch.id.root
 						? (options.rootMaxChildLoadRatio ??
 							options.maxChildLoadRatio ??
 							0.5)
 						: (options.maxChildLoadRatio ?? 0.5);
+				const configuredMaxChildLoadRatio =
+					candidate.hash === ch.id.root &&
+					localChannelCount > 1 &&
+					Number(configuredMaxChildLoadRatioRaw) > 0
+						? Math.min(0.3, Number(configuredMaxChildLoadRatioRaw))
+						: configuredMaxChildLoadRatioRaw;
 				const maxChildLoadRatio = Math.max(
 					0,
 					Number(configuredMaxChildLoadRatio),
@@ -7587,6 +7608,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					ch.metrics.reparentUpgradeSkipCandidatePressure += 1;
 					if (candidate.hash === ch.id.root) {
 						ch.metrics.reparentUpgradeSkipRootPressure += 1;
+						refreshCachedTrackerCandidate(candidate.hash, liveLevel, 0);
+						sendProbeTrackerFeedback(
+							candidate.hash,
+							JOIN_REJECT_NO_CAPACITY,
+						);
 					}
 					rejectShadowCandidate(candidate.hash, "capacity");
 					rejectProbeCandidate(candidate.hash);

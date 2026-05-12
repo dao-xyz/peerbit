@@ -401,7 +401,7 @@ export const resolveFanoutTreeSimParams = (
 	);
 	const parentUpgradeRootMaxChildLoadRatio = Number(
 		input.parentUpgradeRootMaxChildLoadRatio ??
-			Math.min(parentUpgradeMaxChildLoadRatio, 0.3),
+			Math.min(parentUpgradeMaxChildLoadRatio, 0.4),
 	);
 
 	return {
