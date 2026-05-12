@@ -673,12 +673,13 @@ describe("native EntryV0 encoding", () => {
 		const bytes = new Uint8Array([5, 4, 3]);
 		const cid = await calculateRawCidV1(bytes);
 
-		const storedCid = await blockStore.putKnown(cid, bytes);
+		const storedCid = blockStore.putKnown(cid, bytes);
 
 		expect(storedCid).equal(cid);
-		expect(await blockStore.has(cid)).equal(true);
-		expect(await blockStore.get(cid)).to.deep.equal(bytes);
-		expect(await blockStore.size()).equal(bytes.byteLength);
+		expect((storedCid as { then?: unknown }).then).equal(undefined);
+		expect(blockStore.has(cid)).equal(true);
+		expect(blockStore.get(cid)).to.deep.equal(bytes);
+		expect(blockStore.size()).equal(bytes.byteLength);
 	});
 
 	it("commits independent prepared plain entry batches natively", async () => {

@@ -1055,20 +1055,20 @@ export class NativeLogBlockStore {
 		return cids;
 	}
 
-	async putKnown(cid: string, bytes: Uint8Array): Promise<string> {
+	putKnown(cid: string, bytes: Uint8Array): string {
 		this.native.put(cid, copyBytes(bytes));
 		return cid;
 	}
 
-	async putKnownMany(
+	putKnownMany(
 		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
-	): Promise<string[]> {
+	): string[] {
 		if (blocks.length === 0) {
 			return [];
 		}
 		if (blocks.length === 1) {
 			const [cid, bytes] = blocks[0]!;
-			return [await this.putKnown(cid, bytes)];
+			return [this.putKnown(cid, bytes)];
 		}
 		const cids = new Array<string>(blocks.length);
 		const values = new Array<Uint8Array>(blocks.length);
@@ -1081,30 +1081,30 @@ export class NativeLogBlockStore {
 		return cids;
 	}
 
-	async get(cid: string): Promise<Uint8Array | undefined> {
+	get(cid: string): Uint8Array | undefined {
 		const value = this.native.get(cid);
 		return value == null ? undefined : copyBytes(value);
 	}
 
-	async getMany(cids: string[]): Promise<Array<Uint8Array | undefined>> {
+	getMany(cids: string[]): Array<Uint8Array | undefined> {
 		return this.native
 			.get_many(cids)
 			.map((value) => (value == null ? undefined : copyBytes(value)));
 	}
 
-	async has(cid: string): Promise<boolean> {
+	has(cid: string): boolean {
 		return this.native.has(cid);
 	}
 
-	async hasMany(cids: string[]): Promise<boolean[]> {
+	hasMany(cids: string[]): boolean[] {
 		return this.native.has_many(cids);
 	}
 
-	async rm(cid: string): Promise<void> {
+	rm(cid: string): void {
 		this.native.delete(cid);
 	}
 
-	async rmMany(cids: string[]): Promise<number> {
+	rmMany(cids: string[]): number {
 		return this.native.delete_many(cids);
 	}
 
@@ -1114,7 +1114,7 @@ export class NativeLogBlockStore {
 		}
 	}
 
-	async size(): Promise<number> {
+	size(): number {
 		return this.native.size();
 	}
 
