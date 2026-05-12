@@ -4613,6 +4613,8 @@ export class SharedLog<
 				skipMissingNextJoin: properties?.skipMissingNextJoin,
 				resolveTrimmedEntries: properties?.resolveTrimmedEntries,
 				payloadData,
+				includeMaterializationBytes:
+					!this.shouldDeferHeadCoordinatePersistence(options),
 			},
 		);
 		if (!result) {

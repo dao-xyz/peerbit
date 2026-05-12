@@ -54,6 +54,17 @@ describe(`level`, function () {
 		expect(await store.get(cids[1])).to.deep.equal(datas[1]);
 	});
 
+	it("puts known cid blocks through store batch helpers", async () => {
+		store = new AnyBlockStore(createRustStore());
+		await store.start();
+		const data = new Uint8Array([1, 2, 3]);
+		const cid = "zb2rhWtC5SY6zV1y2SVN119ofpxsbEtpwiqSoK77bWVzHqeWU";
+		const cids = await store.putKnownMany([[cid, data]]);
+
+		expect(cids).to.deep.equal([cid]);
+		expect(await store.get(cid)).to.deep.equal(data);
+	});
+
 	it("gets and removes many blocks through store batch helpers", async () => {
 		store = new AnyBlockStore(createRustStore());
 		await store.start();

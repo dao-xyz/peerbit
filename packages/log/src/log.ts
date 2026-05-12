@@ -55,8 +55,17 @@ type BlocksWithPutMany = Blocks & {
 	rmMany?: (cids: string[]) => Promise<number | void> | number | void;
 };
 
+type BlocksWithPutKnownMany = Blocks & {
+	putKnownMany: (
+		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
+	) => Promise<string[]> | string[];
+};
+
 const hasPutMany = (storage: Blocks): storage is BlocksWithPutMany =>
 	typeof (storage as BlocksWithPutMany).putMany === "function";
+
+const hasPutKnownMany = (storage: Blocks): storage is BlocksWithPutKnownMany =>
+	typeof (storage as BlocksWithPutKnownMany).putKnownMany === "function";
 
 const getErrorName = (error: unknown) =>
 	typeof (error as { name?: unknown })?.name === "string"
@@ -702,6 +711,7 @@ export class Log<T> {
 			skipMissingNextJoin?: boolean;
 			resolveTrimmedEntries?: boolean;
 			payloadData?: Uint8Array;
+			includeMaterializationBytes?: boolean;
 		},
 	): Promise<{
 		entry: Entry<T>;
@@ -801,6 +811,7 @@ export class Log<T> {
 			skipMissingNextJoin?: boolean;
 			resolveTrimmedEntries?: boolean;
 			payloadData?: Uint8Array;
+			includeMaterializationBytes?: boolean;
 		},
 	): Promise<
 		| {
@@ -834,6 +845,7 @@ export class Log<T> {
 			nexts,
 			deferBlockStore,
 			properties?.payloadData ? [properties.payloadData] : undefined,
+			properties?.includeMaterializationBytes,
 		);
 		if (!nativeAppendChain) {
 			return undefined;
@@ -1170,6 +1182,7 @@ export class Log<T> {
 		nexts: Sorting.SortableEntry[],
 		deferBlockStore: boolean,
 		payloadDatas?: Uint8Array[],
+		includeMaterializationBytes?: boolean,
 	): Promise<PreparedAppendCommitOnlyChain<T> | undefined> {
 		const canAppendAlreadyValidated =
 			options.__peerbitCanAppendAlreadyValidated === true;
@@ -1217,6 +1230,7 @@ export class Log<T> {
 			deferStore: deferBlockStore,
 			nativeGraph,
 			nativeBlockStore: this._storage,
+			includeMaterializationBytes,
 		});
 	}
 
@@ -1532,8 +1546,22 @@ export class Log<T> {
 							throw new Error("Missing prepared entry block");
 						}
 						return prepared;
-					});
+				});
 
+		if (hasPutKnownMany(this._storage)) {
+			const cids = await this._storage.putKnownMany(
+				blocks.map((block) => [block.cid, block.block.bytes] as const),
+			);
+			if (cids.length !== blocks.length) {
+				throw new Error("Unexpected block batch result length");
+			}
+			for (let i = 0; i < cids.length; i++) {
+				if (cids[i] !== blocks[i]!.cid) {
+					throw new Error("Unexpected block batch cid");
+				}
+			}
+			return;
+		}
 		const cids = await (this._storage as BlocksWithPutMany).putMany!(blocks);
 		if (cids.length !== blocks.length) {
 			throw new Error("Unexpected block batch result length");
@@ -1548,6 +1576,20 @@ export class Log<T> {
 	private async putPreparedAppendBlocks(preparedBlocks?: PreparedEntryBlock[]) {
 		if (!preparedBlocks || preparedBlocks.length === 0) {
 			throw new Error("Missing prepared entry block");
+		}
+		if (hasPutKnownMany(this._storage)) {
+			const cids = await this._storage.putKnownMany(
+				preparedBlocks.map((block) => [block.cid, block.block.bytes] as const),
+			);
+			if (cids.length !== preparedBlocks.length) {
+				throw new Error("Unexpected block batch result length");
+			}
+			for (let i = 0; i < cids.length; i++) {
+				if (cids[i] !== preparedBlocks[i]!.cid) {
+					throw new Error("Unexpected block batch cid");
+				}
+			}
+			return;
 		}
 		const cids = await (this._storage as BlocksWithPutMany).putMany!(
 			preparedBlocks,

@@ -433,6 +433,7 @@ describe("append", function () {
 		);
 		const appendBatchSpy = sinon.spy(log.entryIndex, "putAppendBatch");
 		const blockPutManySpy = sinon.spy(store, "putMany");
+		const blockPutKnownManySpy = sinon.spy(store as any, "putKnownMany");
 		const nativePrepareAndPutSpy = sinon.spy(
 			log.entryIndex.properties.nativeGraph!.graph,
 			"prepareEntryV0PlainEntryAndPut",
@@ -448,7 +449,8 @@ describe("append", function () {
 
 			expect(removed).to.be.empty;
 			expect(nativePrepareAndPutSpy.callCount).equal(1);
-			expect(blockPutManySpy.callCount).equal(1);
+			expect(blockPutManySpy.callCount).equal(0);
+			expect(blockPutKnownManySpy.callCount).equal(1);
 			expect(singleNativeAppendSpy.callCount).equal(1);
 			expect(appendBatchSpy.callCount).equal(0);
 			expect(await blockExists(entry.hash)).to.be.true;
@@ -458,6 +460,7 @@ describe("append", function () {
 			expect((await log.get(entry.hash))?.hash).equal(entry.hash);
 		} finally {
 			nativePrepareAndPutSpy.restore();
+			blockPutKnownManySpy.restore();
 			blockPutManySpy.restore();
 			appendBatchSpy.restore();
 			singleNativeAppendSpy.restore();
@@ -485,10 +488,12 @@ describe("append", function () {
 			const result = await (log as any).appendLocallyPreparedCommitOnly(
 				new Uint8Array([1]),
 				{ meta: { next: [] } },
-				{ skipMissingNextJoin: true },
+				{ skipMissingNextJoin: true, includeMaterializationBytes: false },
 			);
 
 			expect(result).to.exist;
+			expect(result.appendFacts.metaBytes).equal(undefined);
+			expect(result.appendFacts.hashDigestBytes).equal(undefined);
 			expect(commitOnlySpy.callCount).equal(1);
 			expect(appendBatchSpy.callCount).equal(0);
 			expect(trimSpy.callCount).equal(0);

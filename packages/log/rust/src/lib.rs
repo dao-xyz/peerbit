@@ -7,6 +7,11 @@ use wasm_bindgen::prelude::*;
 
 const ENTRY_TYPE_CUT: u8 = 1;
 
+enum PreparedPlainEntryRowMode {
+    Full { include_storage_bytes: bool },
+    StorageOnly,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LogIndexEntry {
     pub hash: String,
@@ -979,6 +984,34 @@ impl NativeLogIndex {
         Ok(row)
     }
 
+    pub fn prepare_entry_v0_plain_entry_storage_and_put_with_builder(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+    ) -> Result<Array, JsValue> {
+        let (row, entry, initial_nexts, _block) =
+            prepare_entry_v0_plain_entry_storage_row_with_signer(
+                &builder.clock_id,
+                &builder.public_key,
+                &builder.signing_key,
+                wall_time,
+                logical,
+                gid,
+                next,
+                entry_type,
+                meta_data,
+                payload_data,
+            )?;
+        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        Ok(row)
+    }
+
     pub fn prepare_entry_v0_plain_chain_commit_blocks_and_put(
         &mut self,
         block_store: &mut NativeLogBlockStore,
@@ -1648,7 +1681,39 @@ fn prepare_entry_v0_plain_entry_row_with_signer(
         entry_type,
         meta_data,
         payload_data,
-        include_storage_bytes,
+        PreparedPlainEntryRowMode::Full {
+            include_storage_bytes,
+        },
+    )
+}
+
+fn prepare_entry_v0_plain_entry_storage_row_with_signer(
+    clock_id: &[u8],
+    public_key: &[u8],
+    signing_key: &SigningKey,
+    wall_time: u64,
+    logical: u32,
+    gid: String,
+    next: Array,
+    entry_type: u8,
+    meta_data: JsValue,
+    payload_data: Uint8Array,
+) -> Result<(Array, LogIndexEntry, Vec<String>, (String, Vec<u8>)), JsValue> {
+    let next = strings_from_array(next)?;
+    let payload_data = payload_data.to_vec();
+    let meta_data = optional_bytes_from_js(meta_data);
+    prepare_entry_v0_plain_entry_row_with_signer_parts(
+        clock_id,
+        public_key,
+        signing_key,
+        wall_time,
+        logical,
+        gid,
+        next,
+        entry_type,
+        meta_data,
+        payload_data,
+        PreparedPlainEntryRowMode::StorageOnly,
     )
 }
 
@@ -1663,7 +1728,7 @@ fn prepare_entry_v0_plain_entry_row_with_signer_parts(
     entry_type: u8,
     meta_data: Option<Vec<u8>>,
     payload_data: Vec<u8>,
-    include_storage_bytes: bool,
+    row_mode: PreparedPlainEntryRowMode,
 ) -> Result<(Array, LogIndexEntry, Vec<String>, (String, Vec<u8>)), JsValue> {
     let payload_size = payload_data.len() as u32;
 
@@ -1693,24 +1758,36 @@ fn prepare_entry_v0_plain_entry_row_with_signer_parts(
     let (cid, hash_digest) = calculate_raw_cid_v1_parts(&storage);
 
     let row = Array::new();
-    if include_storage_bytes {
-        row.push(&Uint8Array::from(storage.as_slice()));
-        row.push(&JsValue::from_str(&cid));
-        row.push(&Uint8Array::from(signature.as_slice()));
-        row.push(&strings_to_array(next.clone()));
-        row.push(&Uint8Array::from(meta.as_slice()));
-        row.push(&Uint8Array::from(payload.as_slice()));
-        row.push(&Uint8Array::from(signature_with_key.as_slice()));
-        row.push(&Uint8Array::from(hash_digest.as_slice()));
-    } else {
-        row.push(&JsValue::from_str(&cid));
-        row.push(&Uint8Array::from(signature.as_slice()));
-        row.push(&strings_to_array(next.clone()));
-        row.push(&Uint8Array::from(meta.as_slice()));
-        row.push(&Uint8Array::from(payload.as_slice()));
-        row.push(&Uint8Array::from(signature_with_key.as_slice()));
-        row.push(&JsValue::from_f64(storage_len as f64));
-        row.push(&Uint8Array::from(hash_digest.as_slice()));
+    match row_mode {
+        PreparedPlainEntryRowMode::Full {
+            include_storage_bytes,
+        } => {
+            if include_storage_bytes {
+                row.push(&Uint8Array::from(storage.as_slice()));
+                row.push(&JsValue::from_str(&cid));
+                row.push(&Uint8Array::from(signature.as_slice()));
+                row.push(&strings_to_array(next.clone()));
+                row.push(&Uint8Array::from(meta.as_slice()));
+                row.push(&Uint8Array::from(payload.as_slice()));
+                row.push(&Uint8Array::from(signature_with_key.as_slice()));
+                row.push(&Uint8Array::from(hash_digest.as_slice()));
+            } else {
+                row.push(&JsValue::from_str(&cid));
+                row.push(&Uint8Array::from(signature.as_slice()));
+                row.push(&strings_to_array(next.clone()));
+                row.push(&Uint8Array::from(meta.as_slice()));
+                row.push(&Uint8Array::from(payload.as_slice()));
+                row.push(&Uint8Array::from(signature_with_key.as_slice()));
+                row.push(&JsValue::from_f64(storage_len as f64));
+                row.push(&Uint8Array::from(hash_digest.as_slice()));
+            }
+        }
+        PreparedPlainEntryRowMode::StorageOnly => {
+            row.push(&Uint8Array::from(storage.as_slice()));
+            row.push(&JsValue::from_str(&cid));
+            row.push(&strings_to_array(next.clone()));
+            row.push(&JsValue::from_f64(storage_len as f64));
+        }
     }
 
     let entry = LogIndexEntry::new_with_data(
@@ -1804,7 +1881,9 @@ fn prepare_entry_v0_plain_entries_rows_with_signer_inner(
                 entry_type,
                 optional_bytes_from_js(meta_datas.get(i)),
                 payload_data,
-                include_storage_bytes,
+                PreparedPlainEntryRowMode::Full {
+                    include_storage_bytes,
+                },
             )?;
         out.push(&row);
         entries.push(entry);

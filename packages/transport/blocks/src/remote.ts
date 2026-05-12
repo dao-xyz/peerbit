@@ -331,16 +331,43 @@ export class RemoteBlocks implements IBlocks {
 			throw new Error("Local store not set");
 		}
 		const cids = await this.localStore.putMany(blocks);
+		await this.notifyPuts(cids);
+		return cids;
+	}
+
+	async putKnownMany(
+		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
+	): Promise<string[]> {
+		if (!this.localStore) {
+			throw new Error("Local store not set");
+		}
+		const cids = await this.localStore.putKnownMany(blocks);
+		await this.notifyPuts(cids);
+		return cids;
+	}
+
+	private async notifyPuts(cids: string[]) {
+		const onPut = this.options.onPut;
+		if (!onPut || cids.length === 0) {
+			return;
+		}
+		if (cids.length === 1) {
+			try {
+				await onPut(cids[0]!);
+			} catch {
+				// ignore best-effort hooks
+			}
+			return;
+		}
 		await Promise.all(
 			cids.map(async (cid) => {
 				try {
-					await this.options.onPut?.(cid);
+					await onPut(cid);
 				} catch {
 					// ignore best-effort hooks
 				}
 			}),
 		);
-		return cids;
 	}
 
 	async has(cid: string) {

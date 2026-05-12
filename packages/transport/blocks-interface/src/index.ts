@@ -25,6 +25,13 @@ export interface Blocks extends WaitForPeer {
 	putMany?(
 		data: Array<Uint8Array | { block: Block<any, any, any, any>; cid: string }>,
 	): MaybePromise<string[]>;
+	/**
+	 * Store raw block bytes when the caller has already computed and verified
+	 * the matching CID. Implementations must not recalculate the CID on this path.
+	 */
+	putKnownMany?(
+		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
+	): MaybePromise<string[]>;
 	has(cid: string): MaybePromise<boolean>;
 	/**
 	 * Return local-storage presence flags aligned with the input CIDs.

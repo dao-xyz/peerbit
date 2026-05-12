@@ -578,9 +578,9 @@ describe("native EntryV0 encoding", () => {
 		for (const prepared of chain) {
 			expect(prepared.cid).to.equal(await calculateRawCidV1(prepared.bytes));
 			expect(prepared.signature).to.have.length(64);
-			expect(prepared.metaBytes.byteLength).greaterThan(0);
-			expect(prepared.payloadBytes.byteLength).greaterThan(0);
-			expect(prepared.signatureBytes.byteLength).greaterThan(0);
+			expect(prepared.metaBytes!.byteLength).greaterThan(0);
+			expect(prepared.payloadBytes!.byteLength).greaterThan(0);
+			expect(prepared.signatureBytes!.byteLength).greaterThan(0);
 		}
 	});
 
@@ -628,6 +628,19 @@ describe("native EntryV0 encoding", () => {
 		expect(await blockStore.size()).to.equal(
 			chain!.reduce((sum, prepared) => sum + prepared.byteLength, 0),
 		);
+	});
+
+	it("stores native log blocks by known cid", async () => {
+		const blockStore = await createNativeLogBlockStore();
+		const bytes = new Uint8Array([5, 4, 3]);
+		const cid = await calculateRawCidV1(bytes);
+
+		const cids = await blockStore.putKnownMany([[cid, bytes]]);
+
+		expect(cids).to.deep.equal([cid]);
+		expect(await blockStore.has(cid)).equal(true);
+		expect(await blockStore.get(cid)).to.deep.equal(bytes);
+		expect(await blockStore.size()).equal(bytes.byteLength);
 	});
 
 	it("commits independent prepared plain entry batches natively", async () => {

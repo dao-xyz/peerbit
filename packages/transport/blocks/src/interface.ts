@@ -9,6 +9,9 @@ export interface BlockStore extends IBlockStore {
 	putMany(
 		blocks: Array<Uint8Array | { block: Block<any, any, any, any>; cid: string }>,
 	): Promise<string[]>;
+	putKnownMany(
+		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
+	): Promise<string[]>;
 	getMany(
 		cids: string[],
 		options?: GetOptions,

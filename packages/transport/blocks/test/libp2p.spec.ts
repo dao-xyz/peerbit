@@ -106,6 +106,23 @@ describe("transport", function () {
 		expect(new Uint8Array(readData!)).to.deep.equal(data);
 	});
 
+	it("puts known cid blocks through direct block storage", async () => {
+		const onPut = sinon.spy();
+		session = await TestSession.connected(1, {
+			services: { blocks: (c) => new DirectBlock(c, { onPut }) },
+		});
+		await store(session, 0).start();
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = "zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J";
+		const cids = await store(session, 0).putKnownMany([[cid, data]]);
+
+		expect(cids).to.deep.equal([cid]);
+		expect(onPut.callCount).equal(1);
+		expect(onPut.getCall(0).args[0]).equal(cid);
+		expect(await store(session, 0).get(cid)).to.deep.equal(data);
+	});
+
 	it("learns provider from response and reuses it", async () => {
 		session = await TestSession.disconnected(3, {
 			services: { blocks: (c) => new DirectBlock(c) },

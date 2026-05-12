@@ -154,6 +154,29 @@ export class AnyBlockStore implements Blocks {
 		return puts.map((put) => put.cid);
 	}
 
+	async putKnownMany(
+		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
+	): Promise<string[]> {
+		const store = this._store as AnyStore & {
+			putMany?: (entries: Iterable<readonly [string, Uint8Array]>) => Promise<void>;
+		};
+		try {
+			if (typeof store.putMany === "function") {
+				await store.putMany(blocks);
+			} else {
+				for (const [cid, bytes] of blocks) {
+					await this._store.put(cid, bytes);
+				}
+			}
+		} catch (error: any) {
+			if (await this.isClosingStorePutError(error)) {
+				return blocks.map(([cid]) => cid);
+			}
+			throw error;
+		}
+		return blocks.map(([cid]) => cid);
+	}
+
 	private async isClosingStorePutError(error: any): Promise<boolean> {
 		const status = await this._store.status();
 		return (

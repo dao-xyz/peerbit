@@ -193,6 +193,10 @@ describe("index", () => {
 					store.docs.log,
 					"appendLocallyPreparedPayload",
 				);
+				const preparedPayloadCommitOnlySpy = sinon.spy(
+					store.docs.log,
+					"appendLocallyPreparedPayloadCommitOnly",
+				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
 				const localLookupSpy = sinon.spy(
 					store.docs as any,
@@ -232,8 +236,16 @@ describe("index", () => {
 							id,
 							options,
 						),
-				);
+					);
 				backendIndex.putWithContext = backendContextPutSpy;
+				const blockPutManySpy = sinon.spy(
+					store.docs.log.log.blocks as any,
+					"putMany",
+				);
+				const blockPutKnownManySpy = sinon.spy(
+					store.docs.log.log.blocks as any,
+					"putKnownMany",
+				);
 
 				try {
 					const doc = new Document({ id: uuid(), name: "fast" });
@@ -243,17 +255,20 @@ describe("index", () => {
 						target: "none",
 					});
 
-					expect(preparedAppendSpy.callCount).equal(1);
-					expect(preparedPayloadAppendSpy.callCount).equal(1);
+					expect(preparedAppendSpy.callCount).equal(0);
+					expect(preparedPayloadAppendSpy.callCount).equal(0);
+					expect(preparedPayloadCommitOnlySpy.callCount).equal(1);
 					expect(validatedAppendSpy.callCount).equal(0);
 					expect(appendSpy.callCount).equal(0);
 					expect(localLookupSpy.callCount).equal(0);
-				expect(commitPlanSpy.callCount).equal(1);
-				expect(nativeCommitSpy.callCount).equal(1);
-				expect(documentCommitSpy.callCount).equal(1);
-				expect(documentIdentityPutSpy.callCount).equal(1);
-				expect(documentPutSpy.callCount).equal(0);
-				expect(backendContextPutSpy.callCount).equal(1);
+					expect(commitPlanSpy.callCount).equal(1);
+					expect(nativeCommitSpy.callCount).equal(1);
+					expect(documentCommitSpy.callCount).equal(1);
+					expect(documentIdentityPutSpy.callCount).equal(1);
+					expect(documentPutSpy.callCount).equal(0);
+					expect(backendContextPutSpy.callCount).equal(1);
+					expect(blockPutManySpy.callCount).equal(0);
+					expect(blockPutKnownManySpy.callCount).equal(1);
 					const encodedDocument = serialize(doc);
 					const expectedPayloadData = new Uint8Array(
 						6 + encodedDocument.byteLength,
@@ -266,12 +281,9 @@ describe("index", () => {
 						expectedPayloadData.byteLength,
 					).setUint32(2, encodedDocument.byteLength, true);
 					expectedPayloadData.set(encodedDocument, 6);
-					expect(preparedAppendSpy.getCall(0).args[2]?.payloadData).to.deep.equal(
-						expectedPayloadData,
-					);
-					expect(preparedPayloadAppendSpy.getCall(0).args[0]).to.deep.equal(
-						expectedPayloadData,
-					);
+					expect(
+						preparedPayloadCommitOnlySpy.getCall(0).args[0],
+					).to.deep.equal(expectedPayloadData);
 					const commitPlan = await commitPlanSpy.getCall(0).returnValue;
 					expect(commitPlan.payloadData).to.deep.equal(expectedPayloadData);
 					expect(commitPlan.operation).equal(undefined);
@@ -295,7 +307,11 @@ describe("index", () => {
 						| undefined;
 					const backendContext = backendContextPutSpy.getCall(0)
 						.args[2] as Context;
-					const appendResult = await preparedAppendSpy.getCall(0).returnValue;
+					const appendResult =
+						await preparedPayloadCommitOnlySpy.getCall(0).returnValue;
+					if (!appendResult) {
+						throw new Error("Expected commit-only append result");
+					}
 					const appendCommit = appendResult.appendCommit;
 					expect(appendCommit.hash).equal(put.entry.hash);
 					expect(appendCommit.gid).equal(put.entry.meta.gid);
@@ -336,13 +352,16 @@ describe("index", () => {
 						delete backendIndex.putWithContext;
 					}
 					localLookupSpy.restore();
-				commitPlanSpy.restore();
-				nativeCommitSpy.restore();
-				documentCommitSpy.restore();
-				documentPutSpy.restore();
-				documentIdentityPutSpy.restore();
-				preparedPayloadAppendSpy.restore();
-				preparedAppendSpy.restore();
+					commitPlanSpy.restore();
+					nativeCommitSpy.restore();
+					documentCommitSpy.restore();
+					documentPutSpy.restore();
+					documentIdentityPutSpy.restore();
+					preparedPayloadCommitOnlySpy.restore();
+					preparedPayloadAppendSpy.restore();
+					preparedAppendSpy.restore();
+					blockPutKnownManySpy.restore();
+					blockPutManySpy.restore();
 					validatedAppendSpy.restore();
 					appendSpy.restore();
 				}
@@ -784,12 +803,24 @@ describe("index", () => {
 					store.docs.log,
 					"appendLocallyPrepared",
 				);
+				const preparedPayloadCommitOnlySpy = sinon.spy(
+					store.docs.log,
+					"appendLocallyPreparedPayloadCommitOnly",
+				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
 				const localLookupSpy = sinon.spy(
 					store.docs as any,
 					"getLocalIndexedContext",
 				);
 				const lowerLogGetSpy = sinon.spy(store.docs.log.log, "get");
+				const blockPutManySpy = sinon.spy(
+					store.docs.log.log.blocks as any,
+					"putMany",
+				);
+				const blockPutKnownManySpy = sinon.spy(
+					store.docs.log.log.blocks as any,
+					"putKnownMany",
+				);
 
 				try {
 					const id = uuid();
@@ -808,16 +839,22 @@ describe("index", () => {
 						},
 					);
 
-					expect(preparedAppendSpy.callCount).equal(2);
+					expect(preparedAppendSpy.callCount).equal(0);
+					expect(preparedPayloadCommitOnlySpy.callCount).equal(2);
 					expect(validatedAppendSpy.callCount).equal(0);
 					expect(appendSpy.callCount).equal(0);
 					expect(localLookupSpy.callCount).equal(2);
 					expect(lowerLogGetSpy.callCount).equal(0);
+					expect(blockPutManySpy.callCount).equal(0);
+					expect(blockPutKnownManySpy.callCount).equal(2);
 					expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
 					expect((await store.docs.get(id))?.name).equal("second");
 				} finally {
 					localLookupSpy.restore();
 					lowerLogGetSpy.restore();
+					blockPutKnownManySpy.restore();
+					blockPutManySpy.restore();
+					preparedPayloadCommitOnlySpy.restore();
 					preparedAppendSpy.restore();
 					validatedAppendSpy.restore();
 					appendSpy.restore();
