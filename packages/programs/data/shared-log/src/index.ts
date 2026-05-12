@@ -327,7 +327,11 @@ type PreparedLocalAppendCommit<R extends "u32" | "u64"> = {
 	coordinateFields?: SharedLogCoordinateNativeFields<R>;
 };
 
-type NativeAppendEntryPlan<R extends "u32" | "u64"> = EntryLeaderPlan<R> & {
+type NativeAppendEntryPlan<R extends "u32" | "u64"> = {
+	coordinates: NumberFromType<R>[];
+	leaders?: LeaderMap;
+	isLeader: boolean;
+	assignedToRangeBoundary?: boolean;
 	hashNumber: NumberFromType<R>;
 	preparedCoordinate: PreparedCoordinatePersistence<R>;
 	delivery?: AppendDeliveryPlan;
@@ -4724,7 +4728,7 @@ export class SharedLog<
 			entries.map((entry, index) => {
 				const plan = properties.nativeAppendPlans[index]!;
 				return {
-					leaders: plan.leaders,
+					leaders: plan.leaders!,
 					coordinates: plan.coordinates,
 					replicas: plan.coordinates.length,
 					entry,
@@ -4742,7 +4746,7 @@ export class SharedLog<
 				if (!plan.isLeader) {
 					this.pruneDebouncedFnAddIfNotKeeping({
 						key: entries[i]!.hash,
-						value: { entry: entries[i]!, leaders: plan.leaders },
+						value: { entry: entries[i]!, leaders: plan.leaders! },
 					});
 				}
 			}
@@ -4924,7 +4928,7 @@ export class SharedLog<
 
 		const context = await this.createLeaderSelectionContext();
 		const hashNumber = this.getAppendFactsHashNumber(appendFacts);
-		const plan = this._nativeSharedLogState.planLocalAppendForGid(
+		const plan = this._nativeSharedLogState.planLocalAppendForGidCompact(
 			{
 				entryHash: appendFacts.hash,
 				gid: appendFacts.gid,
@@ -5018,7 +5022,7 @@ export class SharedLog<
 
 		const context = await this.createLeaderSelectionContext();
 		const hashNumber = this.getEntryHashNumber(entry);
-		const plan = this._nativeSharedLogState.planLocalAppendForGid(
+		const plan = this._nativeSharedLogState.planLocalAppendForGidCompact(
 			{
 				entryHash: entry.hash,
 				gid: entry.meta.gid,
@@ -5239,7 +5243,7 @@ export class SharedLog<
 							);
 		}
 		let coordinates: NumberFromType<R>[];
-		let leaders: LeaderMap;
+		let leaders: LeaderMap | undefined;
 		let isLeader: boolean;
 		let nativeDeliveryPlan: AppendDeliveryPlan | undefined;
 		if (nativeAppendPlan) {
@@ -5247,6 +5251,13 @@ export class SharedLog<
 			leaders = nativeAppendPlan.leaders;
 			isLeader = nativeAppendPlan.isLeader;
 			nativeDeliveryPlan = nativeAppendPlan.delivery;
+			if (!isLeader && !leaders) {
+				leaders = (
+					await this.planEntryLeaders(entry, properties.minReplicasValue, {
+						persist: false,
+					})
+				).leaders;
+			}
 			if (properties.appendFacts) {
 				await this.persistPreparedCoordinate({
 					prepared: nativeAppendPlan.preparedCoordinate,
@@ -5259,7 +5270,7 @@ export class SharedLog<
 				});
 			} else {
 				await this.persistCoordinate({
-					leaders,
+					leaders: leaders ?? false,
 					coordinates,
 					replicas: coordinates.length,
 					entry,
@@ -5301,7 +5312,7 @@ export class SharedLog<
 					entry,
 					coordinates,
 					properties.minReplicasValue,
-					leaders,
+					leaders!,
 					selfHash,
 					isLeader,
 					deliveryArg,
@@ -5314,7 +5325,7 @@ export class SharedLog<
 		if (!isLeader && !delayAdaptiveRebalance) {
 			this.pruneDebouncedFnAddIfNotKeeping({
 				key: entry.hash,
-				value: { entry, leaders },
+				value: { entry, leaders: leaders! },
 			});
 		}
 		// Keep the debounced rebalance loop alive even when the current write

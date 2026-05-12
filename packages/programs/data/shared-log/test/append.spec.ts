@@ -160,7 +160,7 @@ describe("append", () => {
 		}
 	});
 
-	it("reuses native append plan hash number for coordinate persistence", async () => {
+	it("uses append facts hash number for coordinate persistence", async () => {
 		session = await TestSession.disconnected(1);
 		const store = await session.peers[0].open(new EventStore<string, any>(), {
 			args: {
@@ -169,7 +169,11 @@ describe("append", () => {
 			},
 		});
 		expect((store.log as any)._nativeSharedLogState).to.exist;
-		const hashNumberSpy = sinon.spy(store.log as any, "getEntryHashNumber");
+		const entryHashNumberSpy = sinon.spy(store.log as any, "getEntryHashNumber");
+		const factsHashNumberSpy = sinon.spy(
+			store.log as any,
+			"getAppendFactsHashNumber",
+		);
 		try {
 			await store.log.appendLocallyPrepared(
 				{ op: "ADD", value: "a" },
@@ -179,9 +183,11 @@ describe("append", () => {
 				},
 			);
 
-			expect(hashNumberSpy.callCount).equal(1);
+			expect(entryHashNumberSpy.callCount).equal(0);
+			expect(factsHashNumberSpy.callCount).equal(1);
 		} finally {
-			hashNumberSpy.restore();
+			factsHashNumberSpy.restore();
+			entryHashNumberSpy.restore();
 		}
 	});
 
