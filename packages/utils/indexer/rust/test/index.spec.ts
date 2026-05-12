@@ -718,6 +718,49 @@ describe("native planner bridge", () => {
 		await indices.drop();
 	});
 
+	it("wraps already context-mutated document puts in the index schema", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocumentWithContext });
+		const contextualIndex = index as typeof index & {
+			putWithContext: (
+				value: BridgeDocument & { __context?: BridgeContext },
+				id: ReturnType<typeof toId>,
+				context: BridgeContext,
+				options?: {
+					replace?: boolean;
+					encodedValueParts?: { prefix: Uint8Array; suffix: Uint8Array };
+				},
+			) => Promise<void>;
+		};
+		const document = new BridgeDocument("a", "peerbit", "native index") as
+			BridgeDocument & { __context?: BridgeContext };
+		const context = new BridgeContext("head-a");
+		document.__context = context;
+
+		await contextualIndex.putWithContext(document, toId("a"), context, {
+			replace: false,
+			encodedValueParts: {
+				prefix: serialize(document),
+				suffix: serialize(context),
+			},
+		});
+
+		const indexed = await index
+			.iterate({
+				query: new StringMatch({ key: "tag", value: "peerbit" }),
+			})
+			.all();
+		expect(indexed.map((entry) => entry.value.__context.head)).to.deep.equal([
+			"head-a",
+		]);
+		expect(indexed.map((entry) => entry.value.title)).to.deep.equal([
+			"native index",
+		]);
+
+		await indices.drop();
+	});
+
 	it("batch resolves contextual documents by head through the native index hook", async () => {
 		const indices = create();
 		await indices.start();
