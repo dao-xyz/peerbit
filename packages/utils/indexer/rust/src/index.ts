@@ -2626,7 +2626,11 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}
 
 		return this.enqueueMutation(async () => {
-			await this.appendPutAndDeletes(storeKey, value, deleteKeys, encodedValue);
+			if (deleteKeys.length === 0) {
+				await this.appendPut(storeKey, value, encodedValue);
+			} else {
+				await this.appendPutAndDeletes(storeKey, value, deleteKeys, encodedValue);
+			}
 			const deletedEntries = putNative();
 			await this.compactIfNeeded();
 			return deletedEntries;
