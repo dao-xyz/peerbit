@@ -138,7 +138,10 @@ export class AnyBlockStore implements Blocks {
 			putMany?: (entries: Iterable<readonly [string, Uint8Array]>) => Promise<void>;
 		};
 		try {
-			if (typeof store.putMany === "function") {
+			if (puts.length === 1) {
+				const put = puts[0]!;
+				await this._store.put(put.cid, put.block.bytes);
+			} else if (typeof store.putMany === "function") {
 				await store.putMany(puts.map((put) => [put.cid, put.block.bytes] as const));
 			} else {
 				for (const put of puts) {
@@ -161,7 +164,10 @@ export class AnyBlockStore implements Blocks {
 			putMany?: (entries: Iterable<readonly [string, Uint8Array]>) => Promise<void>;
 		};
 		try {
-			if (typeof store.putMany === "function") {
+			if (blocks.length === 1) {
+				const [cid, bytes] = blocks[0]!;
+				await this._store.put(cid, bytes);
+			} else if (typeof store.putMany === "function") {
 				await store.putMany(blocks);
 			} else {
 				for (const [cid, bytes] of blocks) {

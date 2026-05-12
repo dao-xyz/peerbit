@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { createStore as createRustStore } from "@peerbit/any-store-rust";
 import { equals } from "uint8arrays";
+import sinon from "sinon";
 import { AnyBlockStore } from "../src/any-blockstore.js";
 
 describe(`level`, function () {
@@ -54,8 +55,11 @@ describe(`level`, function () {
 		expect(await store.get(cids[1])).to.deep.equal(datas[1]);
 	});
 
-	it("puts known cid blocks through store batch helpers", async () => {
-		store = new AnyBlockStore(createRustStore());
+	it("puts a single known cid block through store put", async () => {
+		const backingStore = createRustStore();
+		const putSpy = sinon.spy(backingStore, "put");
+		const putManySpy = sinon.spy(backingStore, "putMany");
+		store = new AnyBlockStore(backingStore);
 		await store.start();
 		const data = new Uint8Array([1, 2, 3]);
 		const cid = "zb2rhWtC5SY6zV1y2SVN119ofpxsbEtpwiqSoK77bWVzHqeWU";
@@ -63,6 +67,37 @@ describe(`level`, function () {
 
 		expect(cids).to.deep.equal([cid]);
 		expect(await store.get(cid)).to.deep.equal(data);
+		expect(putSpy.callCount).equal(1);
+		expect(putManySpy.callCount).equal(0);
+		putSpy.restore();
+		putManySpy.restore();
+	});
+
+	it("puts multiple known cid blocks through store batch helpers", async () => {
+		const backingStore = createRustStore();
+		const putSpy = sinon.spy(backingStore, "put");
+		const putManySpy = sinon.spy(backingStore, "putMany");
+		store = new AnyBlockStore(backingStore);
+		await store.start();
+		const blocks: Array<readonly [string, Uint8Array]> = [
+			[
+				"zb2rhWtC5SY6zV1y2SVN119ofpxsbEtpwiqSoK77bWVzHqeWU",
+				new Uint8Array([1, 2, 3]),
+			],
+			[
+				"zb2rhekcCjeckfdqkhqVvqRBRCaZDM48NZwFSUbm8yzo5GQad",
+				new Uint8Array([4, 5, 6]),
+			],
+		];
+		const cids = await store.putKnownMany(blocks);
+
+		expect(cids).to.deep.equal(blocks.map(([cid]) => cid));
+		expect(await store.get(blocks[0][0])).to.deep.equal(blocks[0][1]);
+		expect(await store.get(blocks[1][0])).to.deep.equal(blocks[1][1]);
+		expect(putSpy.callCount).equal(0);
+		expect(putManySpy.callCount).equal(1);
+		putSpy.restore();
+		putManySpy.restore();
 	});
 
 	it("gets and removes many blocks through store batch helpers", async () => {
