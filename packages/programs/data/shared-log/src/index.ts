@@ -1537,6 +1537,32 @@ export class SharedLog<
 				delivery?.timeout != null || delivery?.signal != null
 					? { timeoutMs: delivery.timeout, signal: delivery.signal }
 					: undefined;
+			if (
+				nativeDeliveryPlan &&
+				!nativeDeliveryPlan.hasRemoteRecipients &&
+				!delivery &&
+				!requireRecipients &&
+				(leaders.size === 0 ||
+					(leaders.size === 1 && leaders.has(selfHash)))
+			) {
+				const allowSubscriberFallback =
+					this.syncronizer instanceof SimpleSyncronizer ||
+					(this.compatibility ?? Number.MAX_VALUE) < 10;
+				if (!allowSubscriberFallback) {
+					return;
+				}
+				try {
+					const subscribers = await this._getTopicSubscribers(this.topic);
+					const hasRemoteSubscriber = subscribers?.some(
+						(subscriber) => subscriber.hashcode() !== selfHash,
+					);
+					if (!hasRemoteSubscriber) {
+						return;
+					}
+				} catch {
+					return;
+				}
+			}
 
 			if (!nativeDeliveryPlan) {
 				const fullReplicaDeliveryCandidates =

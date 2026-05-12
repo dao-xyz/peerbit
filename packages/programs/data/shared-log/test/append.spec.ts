@@ -374,4 +374,40 @@ describe("append", () => {
 			countReplicationSegmentsSpy.restore();
 		}
 	});
+
+	it("skips append delivery materialization when native delivery has no remote recipients", async () => {
+		session = await TestSession.disconnected(1, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		const nativeState = (store.log as any)._nativeSharedLogState;
+		expect(nativeState).to.exist;
+		const nativePlanSpy = sinon.spy(nativeState, "planAppendForGid");
+		const createRepairEntrySpy = sinon.spy(
+			store.log as any,
+			"createEntryReplicatedForRepair",
+		);
+		const subscribersStub = sinon
+			.stub(store.log as any, "_getTopicSubscribers")
+			.resolves([]);
+		try {
+			await store.log.appendLocallyPrepared(
+				{ op: "ADD", value: "a" },
+				{ replicate: false },
+			);
+
+			expect(nativePlanSpy.callCount).equal(1);
+			expect(subscribersStub.callCount).equal(1);
+			expect(createRepairEntrySpy.callCount).equal(0);
+		} finally {
+			subscribersStub.restore();
+			createRepairEntrySpy.restore();
+			nativePlanSpy.restore();
+		}
+	});
 });
