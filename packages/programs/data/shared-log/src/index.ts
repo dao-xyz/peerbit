@@ -6420,25 +6420,30 @@ export class SharedLog<
 		);
 	}
 
-	private async applyRemovedChange(
+	private applyRemovedChange(
 		removedEntries: ShallowOrFullEntry<T>[],
 		deferredCoordinateDeleteHashes: string[],
 		options?: { deferCoordinateIndexDeletes?: boolean },
-	): Promise<string[] | undefined> {
-		for (const removed of removedEntries) {
-			if (options?.deferCoordinateIndexDeletes) {
+	): MaybePromise<string[] | undefined> {
+		if (options?.deferCoordinateIndexDeletes) {
+			for (const removed of removedEntries) {
 				deferredCoordinateDeleteHashes.push(removed.hash);
-			} else {
-				await this.deleteCoordinates({ hash: removed.hash });
+				this.onEntryRemoved(removed.hash);
 			}
+			this.forgetCoordinateStateForHashes(deferredCoordinateDeleteHashes);
+			return deferredCoordinateDeleteHashes;
+		}
+		return this.applyRemovedChangeWithCoordinateDeletes(removedEntries);
+	}
+
+	private async applyRemovedChangeWithCoordinateDeletes(
+		removedEntries: ShallowOrFullEntry<T>[],
+	): Promise<undefined> {
+		for (const removed of removedEntries) {
+			await this.deleteCoordinates({ hash: removed.hash });
 			this.onEntryRemoved(removed.hash);
 		}
-		if (options?.deferCoordinateIndexDeletes) {
-			this.forgetCoordinateStateForHashes(deferredCoordinateDeleteHashes);
-		}
-		return options?.deferCoordinateIndexDeletes
-			? deferredCoordinateDeleteHashes
-			: undefined;
+		return undefined;
 	}
 
 	async canAppend(entry: Entry<T>) {
