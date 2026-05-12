@@ -52,7 +52,7 @@
 	},
 	"scripts": {
 		"clean": "aegir clean && shx rm -rf ./wasm && cargo clean",
-		"build": "aegir build --no-bundle && wasm-pack build --target web --out-dir dist/wasm --out-name document_rust && shx rm -rf ./dist/wasm/.gitignore ./dist/wasm/package.json && shx rm -rf ./wasm && shx cp -r ./dist/wasm ./wasm",
+		"build": "wasm-pack build --target web --out-dir wasm --out-name document_rust && shx rm -rf ./wasm/.gitignore ./wasm/package.json && aegir build --no-bundle && shx rm -rf ./dist/wasm && shx cp -r ./wasm ./dist/wasm",
 		"test": "cargo test && npm run build",
 		"lint": "cargo fmt --check && pnpm exec eslint --config ../../../../../eslint.config.js \"src/**/*.ts\" \"test/**/*.ts\""
 	},

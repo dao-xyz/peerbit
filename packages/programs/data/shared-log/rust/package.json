@@ -53,7 +53,7 @@
 	"scripts": {
 		"benchmark:get-samples": "npm run build && pnpm --filter @peerbit/shared-log run build && node ./dist/benchmark/get-samples.js",
 		"clean": "aegir clean && shx rm -rf ./wasm && cargo clean",
-		"build": "aegir build --no-bundle && wasm-pack build --target web --out-dir dist/wasm --out-name shared_log_rust && shx rm -rf ./dist/wasm/.gitignore ./dist/wasm/package.json && shx rm -rf ./wasm && shx cp -r ./dist/wasm ./wasm",
+		"build": "wasm-pack build --target web --out-dir wasm --out-name shared_log_rust && shx rm -rf ./wasm/.gitignore ./wasm/package.json && aegir build --no-bundle && shx rm -rf ./dist/wasm && shx cp -r ./wasm ./dist/wasm",
 		"test": "cargo test && npm run build && pnpm --filter @peerbit/shared-log run build && aegir test",
 		"lint": "cargo fmt --check && pnpm exec eslint --config ../../../../../eslint.config.js \"src/**/*.ts\" \"test/**/*.ts\" \"benchmark/**/*.ts\""
 	},
