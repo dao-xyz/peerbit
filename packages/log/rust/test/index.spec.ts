@@ -573,16 +573,16 @@ describe("native EntryV0 encoding", () => {
 
 		expect(chain).to.have.length(3);
 		expect(chain[0]!.next).to.deep.equal(["root"]);
-		expect(chain[1]!.next).to.deep.equal([chain[0]!.cid]);
-		expect(chain[2]!.next).to.deep.equal([chain[1]!.cid]);
-		for (const prepared of chain) {
-			expect(prepared.cid).to.equal(await calculateRawCidV1(prepared.bytes));
-			expect(prepared.signature).to.have.length(64);
-			expect(prepared.metaBytes.byteLength).greaterThan(0);
-			expect(prepared.payloadBytes.byteLength).greaterThan(0);
-			expect(prepared.signatureBytes.byteLength).greaterThan(0);
-		}
-	});
+			expect(chain[1]!.next).to.deep.equal([chain[0]!.cid]);
+			expect(chain[2]!.next).to.deep.equal([chain[1]!.cid]);
+			for (const prepared of chain) {
+				expect(prepared.cid).to.equal(await calculateRawCidV1(prepared.bytes));
+				expect(prepared.signature).to.have.length(64);
+				expect(prepared.metaBytes!.byteLength).greaterThan(0);
+				expect(prepared.payloadBytes!.byteLength).greaterThan(0);
+				expect(prepared.signatureBytes!.byteLength).greaterThan(0);
+			}
+		});
 
 	it("commits prepared plain entry blocks and graph rows natively", async () => {
 		const privateKey = fromHex(

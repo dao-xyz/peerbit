@@ -1,4 +1,5 @@
 import {
+	deserialize,
 	field,
 	fixedArray,
 	option,
@@ -67,6 +68,7 @@ type NativePlainEntryInput = {
 	type?: number;
 	metaData?: Uint8Array;
 	payloadData: Uint8Array;
+	includeMaterializationBytes?: boolean;
 };
 
 type NativePlainEntriesInput = {
@@ -86,11 +88,11 @@ type NativePreparedPlainEntry = {
 	bytes?: Uint8Array;
 	cid: string;
 	byteLength: number;
-	signature: Uint8Array;
+	signature?: Uint8Array;
 	next: string[];
-	metaBytes: Uint8Array;
-	payloadBytes: Uint8Array;
-	signatureBytes: Uint8Array;
+	metaBytes?: Uint8Array;
+	payloadBytes?: Uint8Array;
+	signatureBytes?: Uint8Array;
 	hashDigestBytes?: Uint8Array;
 };
 
@@ -755,7 +757,7 @@ export class EntryV0<T>
 				properties.cachePreparedEntries === false
 					? undefined
 					: new SignatureWithKey({
-							signature: preparedEntry.signature,
+							signature: preparedEntry.signature!,
 							publicKey: properties.identity.publicKey,
 							prehash: 0,
 						});
@@ -873,6 +875,7 @@ export class EntryV0<T>
 		deferStore: boolean;
 		nativeGraph?: NativeEntryV0Graph;
 		nativeBlockStore?: unknown;
+		includeMaterializationBytes?: boolean;
 	}): Promise<PreparedAppendCommitOnlyChain<T> | undefined> {
 		if (!properties.deferStore || properties.data.length !== 1) {
 			return undefined;
@@ -946,6 +949,7 @@ export class EntryV0<T>
 			type: entryType,
 			metaData: properties.meta?.data,
 			payloadData,
+			includeMaterializationBytes: properties.includeMaterializationBytes,
 		};
 		let nativeBlocksCommitted = false;
 		let nativeGraphUpdated = false;
@@ -1026,6 +1030,25 @@ export class EntryV0<T>
 				value: properties.data[0],
 				encoding: properties.encoding,
 			});
+			if (
+				!preparedEntry.metaBytes ||
+				!preparedEntry.payloadBytes ||
+				!preparedEntry.signature ||
+				!preparedEntry.signatureBytes
+			) {
+				if (!preparedEntry.bytes) {
+					throw new Error("Missing prepared entry bytes");
+				}
+				const entry = deserialize(preparedEntry.bytes, Entry) as EntryV0<T>;
+				entry.hash = preparedEntry.cid;
+				entry.size = preparedEntry.byteLength;
+				entry.createdLocally = true;
+				entry._hashDigestBytes = preparedEntry.hashDigestBytes;
+				Entry.prepareShallowEntry(entry, shallowEntry);
+				entry.init({ encoding: properties.encoding });
+				materialized = entry;
+				return entry;
+			}
 			const signature = new SignatureWithKey({
 				signature: preparedEntry.signature,
 				publicKey: properties.identity.publicKey,
@@ -1321,7 +1344,7 @@ export class EntryV0<T>
 				properties.cachePreparedEntries === false
 					? undefined
 					: new SignatureWithKey({
-							signature: preparedEntry.signature,
+							signature: preparedEntry.signature!,
 							publicKey: properties.identity.publicKey,
 							prehash: 0,
 						});

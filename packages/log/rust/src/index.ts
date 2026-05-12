@@ -136,6 +136,16 @@ type NativeLogIndexHandle = {
 		metaData: Uint8Array | undefined,
 		payloadData: Uint8Array,
 	) => EntryV0PreparedPlainEntryRow;
+	prepare_entry_v0_plain_entry_storage_and_put_with_builder?: (
+		builder: NativeEntryV0PlainBuilderHandle,
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+	) => EntryV0PreparedPlainEntryStorageRow;
 	prepare_entry_v0_plain_chain_commit_blocks_and_put: (
 		blockStore: NativeLogBlockStoreHandle,
 		clockId: Uint8Array,
@@ -631,6 +641,25 @@ export class LogGraphIndex {
 		input: EntryV0PlainEntryInput,
 	): EntryV0PreparedPlainEntry {
 		const builder = this.getPlainEntryBuilder(input);
+		const storageOnly =
+			input.includeMaterializationBytes === false
+				? this.native.prepare_entry_v0_plain_entry_storage_and_put_with_builder
+				: undefined;
+		if (storageOnly) {
+			return preparedPlainEntryStorageRow(
+				storageOnly.call(
+					this.native,
+					builder,
+					BigInt(input.wallTime),
+					input.logical ?? 0,
+					input.gid,
+					input.next ?? [],
+					input.type ?? 0,
+					input.metaData,
+					input.payloadData,
+				),
+			);
+		}
 		return preparedPlainEntryRow(
 			this.native.prepare_entry_v0_plain_entry_and_put_with_builder(
 				builder,
@@ -1089,6 +1118,7 @@ export type EntryV0PlainEntryInput = {
 	type?: number;
 	metaData?: Uint8Array;
 	payloadData: Uint8Array;
+	includeMaterializationBytes?: boolean;
 };
 
 export type EntryV0PlainEntriesInput = {
@@ -1106,11 +1136,11 @@ export type EntryV0PlainEntriesInput = {
 
 export type EntryV0PreparedPlainEntry = EntryV0EncodedStorage & {
 	byteLength: number;
-	signature: Uint8Array;
+	signature?: Uint8Array;
 	next: string[];
-	metaBytes: Uint8Array;
-	payloadBytes: Uint8Array;
-	signatureBytes: Uint8Array;
+	metaBytes?: Uint8Array;
+	payloadBytes?: Uint8Array;
+	signatureBytes?: Uint8Array;
 	hashDigestBytes?: Uint8Array;
 };
 
@@ -1130,6 +1160,13 @@ type EntryV0PreparedPlainEntryRow = [
 	Uint8Array,
 	Uint8Array,
 	Uint8Array?,
+];
+
+type EntryV0PreparedPlainEntryStorageRow = [
+	Uint8Array,
+	string,
+	string[],
+	number,
 ];
 
 type EntryV0CommittedPlainEntryRow = [
@@ -1206,6 +1243,18 @@ const preparedPlainEntryRow = ([
 	payloadBytes,
 	signatureBytes,
 	hashDigestBytes,
+});
+
+const preparedPlainEntryStorageRow = ([
+	bytes,
+	cid,
+	next,
+	byteLength,
+]: EntryV0PreparedPlainEntryStorageRow): EntryV0PreparedPlainEntry => ({
+	bytes,
+	cid,
+	byteLength,
+	next,
 });
 
 const preparedPlainEntryRows = (
