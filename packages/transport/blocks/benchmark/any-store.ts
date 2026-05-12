@@ -1,6 +1,7 @@
 import { createStore as createDefaultStore } from "@peerbit/any-store";
 import { type AnyStore } from "@peerbit/any-store-interface";
 import { createStore as createRustStore } from "@peerbit/any-store-rust";
+import { calculateRawCid } from "@peerbit/blocks-interface";
 import crypto from "crypto";
 import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
@@ -8,7 +9,14 @@ import { join } from "path";
 import { performance } from "perf_hooks";
 import { AnyBlockStore } from "../src/any-blockstore.js";
 
-type BenchMode = "level" | "rust" | "rust-batch";
+type BenchMode =
+	| "level"
+	| "rust"
+	| "rust-batch"
+	| "rust-known"
+	| "rust-known-fallback"
+	| "rust-known-batch"
+	| "rust-known-batch-fallback";
 
 const parsePositiveInteger = (value: string | undefined, fallback: number) => {
 	if (!value) {
@@ -49,6 +57,17 @@ const measure = async (fn: () => Promise<void>) => {
 const runMode = async (mode: BenchMode) => {
 	const { store, cleanup } = await createModeStore(mode);
 	const blocks = Array.from({ length: entries }, () => crypto.randomBytes(valueBytes));
+	const knownBlocks = mode.includes("known")
+		? await Promise.all(blocks.map((block) => calculateRawCid(block)))
+		: [];
+	if (mode.includes("fallback")) {
+		const mutableStore = store as AnyStore & {
+			putImmutable?: undefined;
+			putManyImmutable?: undefined;
+		};
+		mutableStore.putImmutable = undefined;
+		mutableStore.putManyImmutable = undefined;
+	}
 	const blockstore = new AnyBlockStore(store);
 	await blockstore.start();
 	try {
@@ -56,6 +75,17 @@ const runMode = async (mode: BenchMode) => {
 		const put = await measure(async () => {
 			if (mode === "rust-batch") {
 				cids = await blockstore.putMany(blocks);
+			} else if (mode === "rust-known" || mode === "rust-known-fallback") {
+				for (const known of knownBlocks) {
+					cids.push(await blockstore.putKnown(known.cid, known.block.bytes));
+				}
+			} else if (
+				mode === "rust-known-batch" ||
+				mode === "rust-known-batch-fallback"
+			) {
+				cids = await blockstore.putKnownMany(
+					knownBlocks.map((known) => [known.cid, known.block.bytes] as const),
+				);
 			} else {
 				for (const block of blocks) {
 					cids.push(await blockstore.put(block));
@@ -87,7 +117,15 @@ const runMode = async (mode: BenchMode) => {
 };
 
 const rows = [];
-for (const mode of ["level", "rust", "rust-batch"] as const) {
+for (const mode of [
+	"level",
+	"rust",
+	"rust-batch",
+	"rust-known-fallback",
+	"rust-known",
+	"rust-known-batch-fallback",
+	"rust-known-batch",
+] as const) {
 	rows.push(await runMode(mode));
 }
 console.table(rows);
