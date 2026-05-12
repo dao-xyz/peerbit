@@ -1342,6 +1342,20 @@ describe("native planner bridge", () => {
 		try {
 			await writer.start();
 			const writerIndex = await writer.init({ schema: BridgeCoordinateDocument });
+			const writerIndexInternal = writerIndex as any;
+			const originalAppendPut = writerIndexInternal.appendPut.bind(writerIndex);
+			const originalAppendPutAndDeletes =
+				writerIndexInternal.appendPutAndDeletes.bind(writerIndex);
+			let appendPutCalls = 0;
+			let appendPutAndDeletesCalls = 0;
+			writerIndexInternal.appendPut = (...args: any[]) => {
+				appendPutCalls++;
+				return originalAppendPut(...args);
+			};
+			writerIndexInternal.appendPutAndDeletes = (...args: any[]) => {
+				appendPutAndDeletesCalls++;
+				return originalAppendPutAndDeletes(...args);
+			};
 			const coordinateIndex = writerIndex as typeof writerIndex & {
 				putSharedLogCoordinateFieldsAndDeleteIds: (
 					fields: {
@@ -1374,6 +1388,8 @@ describe("native planner bridge", () => {
 				assignedToRangeBoundary: value.assignedToRangeBoundary,
 				metaBytes: value._meta,
 			});
+			expect(appendPutCalls).to.equal(1);
+			expect(appendPutAndDeletesCalls).to.equal(0);
 
 			await reader.start();
 			const readerIndex = await reader.init({ schema: BridgeCoordinateDocument });
