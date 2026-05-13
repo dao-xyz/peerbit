@@ -46,6 +46,7 @@ class SimFanoutTree extends FanoutTree {
 type ScenarioName =
 	| "ci-multi-live"
 	| "ci-multi-live-churn"
+	| "ci-multi-video-live"
 	| "ci-multi-idle"
 	| "ci-multi-sparse-idle"
 	| "ci-multi-hotspot-idle";
@@ -172,6 +173,28 @@ type MultiWriterParams = {
 	churnEveryMs: number;
 	churnDownMs: number;
 	churnFraction: number;
+};
+
+const effectiveMaxChildrenForUpload = (
+	params: { msgRate: number; msgSize: number },
+	ch: { uploadLimitBps?: number; uploadOverheadBytes?: number },
+	maxChildren: number,
+) => {
+	const requested = Math.max(0, Math.floor(maxChildren));
+	const uploadLimitBps = Math.max(0, Math.floor(ch.uploadLimitBps ?? 0));
+	if (uploadLimitBps <= 0) return 0;
+	const msgRate = Math.max(1, Math.floor(params.msgRate));
+	const msgSize = Math.max(1, Math.floor(params.msgSize));
+	const uploadOverheadBytes = Math.max(
+		0,
+		Math.floor(ch.uploadOverheadBytes ?? 128),
+	);
+	const perChildBytes = Math.max(1, 1 + msgSize + uploadOverheadBytes);
+	const perChildBps = Math.max(1, Math.floor(msgRate * perChildBytes));
+	return Math.max(
+		0,
+		Math.min(requested, Math.floor(uploadLimitBps / perChildBps)),
+	);
 };
 
 type ParentUpgradeActivity = {
@@ -368,6 +391,46 @@ const SCENARIOS: Record<ScenarioName, Partial<MultiWriterParams>> = {
 		churnDownMs: 150,
 		churnFraction: 0.03,
 	},
+	"ci-multi-video-live": {
+		scenario: "ci-multi-video-live",
+		nodes: 48,
+		writers: 4,
+		bootstraps: 1,
+		subscribersPerTree: 32,
+		relayFraction: 0.5,
+		joinConcurrency: 12,
+		joinPhaseSettleMs: 500,
+		messages: 80,
+		secondBatchMessages: 0,
+		secondBatchSettleMs: 0,
+		msgRate: 24,
+		msgSize: 1200,
+		settleMs: 1_000,
+		deadlineMs: 1_500,
+		timeoutMs: 150_000,
+		rootUploadLimitBps: 150_000,
+		rootMaxChildren: 2,
+		relayUploadLimitBps: 150_000,
+		relayMaxChildren: 3,
+		repair: true,
+		repairWindowMessages: 512,
+		repairIntervalMs: 200,
+		repairMaxPerReq: 64,
+		neighborRepair: true,
+		neighborRepairPeers: 3,
+		streamRxDelayMs: 4,
+		streamHighWaterMarkBytes: 512 * 1024,
+		dialDelayMs: 0,
+		candidateScoringMode: "weighted",
+		trackerQueryIntervalMs: 1_000,
+		lateRootConnectAfterMs: 700,
+		lateRootDuringPublish: true,
+		lateRootMaxChildren: 6,
+		lateRootConnectFraction: 0.5,
+		churnEveryMs: 0,
+		churnDownMs: 0,
+		churnFraction: 0,
+	},
 	"ci-multi-idle": {
 		scenario: "ci-multi-idle",
 		nodes: 40,
@@ -499,7 +562,7 @@ const usage = () => {
 			"fanout-tree-parent-upgrade-multi-eval.ts",
 			"",
 			"Options:",
-			"  --scenario NAME              ci-multi-live|ci-multi-live-churn|ci-multi-idle|ci-multi-sparse-idle|ci-multi-hotspot-idle|all (default: all)",
+			"  --scenario NAME              ci-multi-live|ci-multi-live-churn|ci-multi-video-live|ci-multi-idle|ci-multi-sparse-idle|ci-multi-hotspot-idle|all (default: all)",
 			"  --seeds CSV                  seeds to run for each scenario (default: 1,2,3)",
 			"  --parentUpgradePreset NAME   raw|default-candidate (default: raw)",
 			"  --parentUpgradeIntervalMs MS treatment upgrade interval (default: 1000)",
@@ -515,6 +578,7 @@ const usage = () => {
 			"Examples:",
 			"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-live --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1",
 			"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-live-churn --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1",
+			"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-video-live --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1",
 			"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-idle --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1",
 			"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-sparse-idle --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1",
 			"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-hotspot-idle --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1",
@@ -540,6 +604,7 @@ const parseScenarios = (value: string | undefined): ScenarioName[] => {
 		return [
 			"ci-multi-live",
 			"ci-multi-live-churn",
+			"ci-multi-video-live",
 			"ci-multi-idle",
 			"ci-multi-sparse-idle",
 			"ci-multi-hotspot-idle",
@@ -550,6 +615,7 @@ const parseScenarios = (value: string | undefined): ScenarioName[] => {
 		if (
 			scenario !== "ci-multi-live" &&
 			scenario !== "ci-multi-live-churn" &&
+			scenario !== "ci-multi-video-live" &&
 			scenario !== "ci-multi-idle" &&
 			scenario !== "ci-multi-sparse-idle" &&
 			scenario !== "ci-multi-hotspot-idle"
@@ -561,7 +627,9 @@ const parseScenarios = (value: string | undefined): ScenarioName[] => {
 };
 
 const isLiveScenario = (scenario: ScenarioName) =>
-	scenario === "ci-multi-live" || scenario === "ci-multi-live-churn";
+	scenario === "ci-multi-live" ||
+	scenario === "ci-multi-live-churn" ||
+	scenario === "ci-multi-video-live";
 const isLiveChurnScenario = (scenario: ScenarioName) =>
 	scenario === "ci-multi-live-churn";
 const isPositiveIdleScenario = (scenario: ScenarioName) =>
@@ -1281,9 +1349,14 @@ const runMultiWriterSim = async (
 							ch.maxChildren ?? 0,
 							params.lateRootMaxChildren,
 						);
+						const uploadBoundedMaxChildren = effectiveMaxChildrenForUpload(
+							params,
+							ch,
+							params.lateRootMaxChildren,
+						);
 						ch.effectiveMaxChildren = Math.max(
 							ch.effectiveMaxChildren ?? 0,
-							params.lateRootMaxChildren,
+							uploadBoundedMaxChildren,
 						);
 						void (tree.root as any)
 							.announceToTrackers?.(ch, timeoutSignal)

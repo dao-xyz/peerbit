@@ -151,6 +151,13 @@ deltas are still printed, but they are not strict failures for this scenario
 when the upgrade policy did no proactive work because reconnect timing alone can
 move those numbers under churn.
 
+`ci-multi-video-live` adds the high-payload live-stream safety case. It uses
+larger messages and a constrained root upload budget, then exposes late root
+connectivity while writers are actively publishing. The expected default
+candidate behavior is still no proactive work: `0` probes, `0` shadows, `0`
+proactive reparents, active guard skips on every seed, unchanged root children,
+and bounded root-upload percentage delta.
+
 The most important retune from the wider run is the quiet window:
 `parentUpgradeQuietMs` now defaults to `5000`. A 2s or 3s live-delivery window was
 too permissive under `ci-loss`: the policy could send probes or promote while
@@ -253,6 +260,12 @@ Shared-network multi-writer live churn safety run:
 pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-live-churn --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
 ```
 
+Shared-network high-payload live-stream safety run:
+
+```bash
+pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-video-live --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
+```
+
 Shared-network multi-writer settled-topology run:
 
 ```bash
@@ -317,10 +330,11 @@ by actual changed-branch value and sender pressure.
 
 The multi-writer evaluator prints `parent-upgrade-multi-summary`. Its strict
 gates separate active-flow safety from settled-topology usefulness:
-`ci-multi-live` and `ci-multi-live-churn` fail if any writer tree sends active
-or total proactive probes, starts a shadow observation, or performs a proactive
-upgrade. The churn variant additionally caps active guard wakeups per subscriber
-slot so the policy cannot pass by spinning local timers under load.
+`ci-multi-live`, `ci-multi-live-churn`, and `ci-multi-video-live` fail if any
+writer tree sends active or total proactive probes, starts a shadow observation,
+or performs a proactive upgrade. The churn variant additionally caps active
+guard wakeups per subscriber slot so the policy cannot pass by spinning local
+timers under load.
 `ci-multi-idle` and `ci-multi-hotspot-idle` fail unless each seed has at least
 one useful promoted tree, aggregate probes stay bounded by successful upgrades,
 max proactive reparent per peer/channel is `1`, and every root stays within the
@@ -332,9 +346,9 @@ multi-writer idle scenarios, but the utility gate is the changed-branch p95 or
 global p95 improvement because concurrent writer timers can move unrelated p95
 samples while promoted branches improve.
 The PR Fanout Gate runs one-seed `ci-multi-live`, `ci-multi-live-churn`,
-`ci-multi-idle`, `ci-multi-sparse-idle`, and `ci-multi-hotspot-idle` smoke
-checks; the documented three-seed commands are the stronger review/evidence
-suite.
+`ci-multi-video-live`, `ci-multi-idle`, `ci-multi-sparse-idle`, and
+`ci-multi-hotspot-idle` smoke checks; the documented three-seed commands are the
+stronger review/evidence suite.
 
 Latest local strict evidence after adding multi-writer pressure scenarios:
 
@@ -477,6 +491,16 @@ Local smoke runs on this branch showed:
   upgrades/probes/shadow starts. Active guard skips appeared on every seed; the
   aggregate run reported `59` active guard skips, max root-child delta `0`, max
   root upload delta `0.00` percentage points, and no active proactive work.
+- Shared-network high-payload `ci-multi-video-live`, seeds `1,2,3`,
+  `--parentUpgradePreset default-candidate --strict 1`: passed. Each run used
+  `4` concurrent writer roots, `48` peers, `128` joined subscriber slots,
+  `1200` byte messages, and a constrained `150000` B/s root upload budget. The
+  treatment made `0` proactive upgrades, sent `0` parent probes, started `0`
+  shadow observations, and active-publish counters were also `0` for
+  upgrades/probes/shadow starts. Active guard skips appeared on every seed; the
+  aggregate run reported `157` active guard skips, max root-child delta `0`, max
+  root upload delta `0.16` percentage points, average control bpp delta about
+  `-3.2%`, and no active proactive work.
 - Shared-network `ci-multi-idle`, seeds `1,2,3`,
   `--parentUpgradePreset default-candidate --strict 1`: passed. Each run used
   the same `4` writer roots and overlapping subscriber set, but with a narrow
@@ -519,6 +543,11 @@ Local smoke runs on this branch showed:
   upload pressure. This matters for streamer-like workloads: root-child fanout
   count is a useful structural signal, but root upload percentage is the direct
   pressure signal for deciding whether proactive root moves are safe.
+- Late-root benchmark topology now preserves upload-derived effective child
+  capacity. Earlier evidence could raise `effectiveMaxChildren` directly to the
+  late root fanout value; the simulator now bounds late root effective capacity
+  by the same upload budget formula used by `openChannel()`. That makes the
+  positive idle cases and video live-stream safety case more realistic.
 - Request-aware root reservations fixed an over-reservation issue found while
   testing stricter spare-slot margins: roots no longer mint tokens for replies
   that fall below the requester's `parentUpgradeMinFreeSlots` threshold. In the

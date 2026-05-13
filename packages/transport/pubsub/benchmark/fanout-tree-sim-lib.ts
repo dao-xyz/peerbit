@@ -37,6 +37,28 @@ class SimFanoutTree extends FanoutTree {
 	}
 }
 
+const effectiveMaxChildrenForUpload = (
+	params: { msgRate: number; msgSize: number },
+	ch: { uploadLimitBps?: number; uploadOverheadBytes?: number },
+	maxChildren: number,
+) => {
+	const requested = Math.max(0, Math.floor(maxChildren));
+	const uploadLimitBps = Math.max(0, Math.floor(ch.uploadLimitBps ?? 0));
+	if (uploadLimitBps <= 0) return 0;
+	const msgRate = Math.max(1, Math.floor(params.msgRate));
+	const msgSize = Math.max(1, Math.floor(params.msgSize));
+	const uploadOverheadBytes = Math.max(
+		0,
+		Math.floor(ch.uploadOverheadBytes ?? 128),
+	);
+	const perChildBytes = Math.max(1, 1 + msgSize + uploadOverheadBytes);
+	const perChildBps = Math.max(1, Math.floor(msgRate * perChildBytes));
+	return Math.max(
+		0,
+		Math.min(requested, Math.floor(uploadLimitBps / perChildBps)),
+	);
+};
+
 export type FanoutTreeSimParams = {
 	nodes: number;
 	rootIndex: number;
@@ -1637,9 +1659,14 @@ export const runFanoutTreeSim = async (
 					const ch = (root as any).channelsBySuffixKey?.get?.(id.suffixKey);
 					if (ch) {
 						ch.maxChildren = Math.max(ch.maxChildren ?? 0, lateMaxChildren);
+						const uploadBoundedMaxChildren = effectiveMaxChildrenForUpload(
+							params,
+							ch,
+							lateMaxChildren,
+						);
 						ch.effectiveMaxChildren = Math.max(
 							ch.effectiveMaxChildren ?? 0,
-							lateMaxChildren,
+							uploadBoundedMaxChildren,
 						);
 						void (root as any)
 							.announceToTrackers?.(ch, timeoutSignal)
