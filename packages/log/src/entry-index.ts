@@ -1587,6 +1587,9 @@ export class EntryIndex<T> {
 		if (from.length === 0) {
 			return [];
 		}
+		if (from.length === 1) {
+			return this.deleteSingleMaybe(from[0]!, options);
+		}
 		const nodes: ShallowEntry[] = [];
 		const seen = new Set<string>();
 		for (const node of from) {
@@ -1644,6 +1647,56 @@ export class EntryIndex<T> {
 			);
 		}
 		return this.finishDeleteMany(deletedByHash, nodes, storeHashes, options);
+	}
+
+	private deleteSingleMaybe(
+		node: ShallowEntry,
+		options?: { skipNextHeadUpdates?: boolean },
+	): MaybePromise<ShallowEntry[]> {
+		this.cache.del(node.hash);
+		const pending = this.pendingIndexWrites.get(node.hash);
+		if (pending) {
+			this.pendingIndexWrites.delete(node.hash);
+			return this.finishDeleteSingle(pending, options);
+		}
+
+		const exactDeleteIndex: IndexWithExactDelete | undefined = hasExactDelete(
+			this.properties.index,
+		)
+			? (this.properties.index as IndexWithExactDelete)
+			: undefined;
+		if (exactDeleteIndex) {
+			return mapMaybePromise(exactDeleteIndex.delIds([node.hash]), (deleted) =>
+				deleted.some((id) => String(id.primitive) === node.hash)
+					? this.finishDeleteSingle(node, options)
+					: [],
+			);
+		}
+		return mapMaybePromise(
+			this.properties.index.del({ query: createHashMatchQuery([node.hash]) }),
+			(deleted) =>
+				deleted.some((id) => String(id.primitive) === node.hash)
+					? this.finishDeleteSingle(node, options)
+					: [],
+		);
+	}
+
+	private finishDeleteSingle(
+		node: ShallowEntry,
+		options?: { skipNextHeadUpdates?: boolean },
+	): MaybePromise<ShallowEntry[]> {
+		const afterStoreDelete = (): MaybePromise<ShallowEntry[]> => {
+			this._length--;
+			this.properties.nativeGraph?.graph.delete(node.hash);
+			if (!options?.skipNextHeadUpdates && node.meta.type !== EntryType.CUT) {
+				return mapMaybePromise(
+					this.privateUpdateNextHeadHashes(node.meta.next, true),
+					() => [node],
+				);
+			}
+			return [node];
+		};
+		return mapMaybePromise(this.properties.store.rm(node.hash), afterStoreDelete);
 	}
 
 	private async deleteManyByQuery(
