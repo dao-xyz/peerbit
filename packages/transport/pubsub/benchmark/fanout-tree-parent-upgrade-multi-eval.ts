@@ -721,7 +721,7 @@ const parseArgs = (argv: string[]): EvalArgs => {
 			defaultCandidate,
 		),
 		parentUpgradeStaleRootProbeProbability: Number(
-			get("--parentUpgradeStaleRootProbeProbability") ?? 0.0625,
+			get("--parentUpgradeStaleRootProbeProbability") ?? 0.03125,
 		),
 		parentProbeTimeoutMs: Number(get("--parentProbeTimeoutMs") ?? 500),
 		parentProbeMaxPerRound: Number(get("--parentProbeMaxPerRound") ?? 2),

@@ -75,6 +75,7 @@ type ImproveChannel = {
 	parentUpgradeLastAt: number;
 	parentUpgradeBackoffMs: number;
 	parentUpgradeBackoffUntil: number;
+	parentUpgradeStaleRootProbeRound: number;
 };
 
 type ImproveOptions = {
@@ -333,6 +334,7 @@ const createImproveChannel = (
 	parentUpgradeLastAt: 0,
 	parentUpgradeBackoffMs: 0,
 	parentUpgradeBackoffUntil: 0,
+	parentUpgradeStaleRootProbeRound: 0,
 	...overrides,
 });
 
@@ -1939,13 +1941,13 @@ describe("fanout-tree", () => {
 	it("boosts stale-root sampling for branch peers with downstream benefit", async () => {
 		let probes = 0;
 		const { attempts, result, ch } = await runMaybeImproveParent({
-			peerHashes: ["relay", "b"],
+			peerHashes: ["relay", "x5"],
 			channelOverrides: {
 				children: new Map([["child", { bidPerByte: 0 }]]),
-				id: { root: "b", key: new Uint8Array([1, 2, 3]), suffixKey: "topic" },
+				id: { root: "x5", key: new Uint8Array([1, 2, 3]), suffixKey: "topic" },
 			},
 			cachedTrackerCandidates: [
-				{ hash: "b", addrs: [], level: 0, freeSlots: 0, bidPerByte: 0 },
+				{ hash: "x5", addrs: [], level: 0, freeSlots: 0, bidPerByte: 0 },
 			],
 			options: {
 				mode: "shadow",
@@ -1964,19 +1966,19 @@ describe("fanout-tree", () => {
 		expect(result).to.equal(false);
 		expect(probes).to.equal(1);
 		expect(attempts).to.deep.equal([]);
-		expect(ch.parentShadow?.hash).to.equal("b");
+		expect(ch.parentShadow?.hash).to.equal("x5");
 	});
 
 	it("lets single-channel branches spend the wider stale-root sample budget", async () => {
 		let probes = 0;
 		const { attempts, result, ch } = await runMaybeImproveParent({
-			peerHashes: ["relay", "h2"],
+			peerHashes: ["relay", "x5"],
 			channelOverrides: {
 				children: new Map([["child", { bidPerByte: 0 }]]),
-				id: { root: "h2", key: new Uint8Array([1, 2, 3]), suffixKey: "topic" },
+				id: { root: "x5", key: new Uint8Array([1, 2, 3]), suffixKey: "topic" },
 			},
 			cachedTrackerCandidates: [
-				{ hash: "h2", addrs: [], level: 0, freeSlots: 0, bidPerByte: 0 },
+				{ hash: "x5", addrs: [], level: 0, freeSlots: 0, bidPerByte: 0 },
 			],
 			options: {
 				mode: "shadow",
@@ -1995,7 +1997,7 @@ describe("fanout-tree", () => {
 		expect(result).to.equal(false);
 		expect(probes).to.equal(1);
 		expect(attempts).to.deep.equal([]);
-		expect(ch.parentShadow?.hash).to.equal("h2");
+		expect(ch.parentShadow?.hash).to.equal("x5");
 	});
 
 	it("does not boost stale-root sampling when multiple local channels compete", async () => {
@@ -2039,6 +2041,56 @@ describe("fanout-tree", () => {
 		expect(probes).to.equal(0);
 		expect(attempts).to.deep.equal([]);
 		expect(ch.parentShadow).to.equal(undefined);
+	});
+
+	it("rotates stale-root sampling for multi-channel peers over settled rounds", async () => {
+		let probes = 0;
+		const ch = createImproveChannel({
+			children: new Map([["child", { bidPerByte: 0 }]]),
+			id: { root: "x24", key: new Uint8Array([1, 2, 3]), suffixKey: "topic" },
+		});
+		const other = createImproveChannel({
+			id: {
+				root: "other-root",
+				key: new Uint8Array([4, 5, 6]),
+				suffixKey: "other-topic",
+			},
+		});
+		const run = () =>
+			runMaybeImproveParent({
+				peerHashes: ["relay", "x24"],
+				channel: ch,
+				channelsBySuffixKey: new Map([
+					["topic", ch],
+					["other-topic", other],
+				]),
+				cachedTrackerCandidates: [
+					{ hash: "x24", addrs: [], level: 0, freeSlots: 0, bidPerByte: 0 },
+				],
+				options: {
+					mode: "shadow",
+					minFreeSlots: 2,
+					verifyStaleRootCapacity: true,
+					staleRootProbeProbability: 0.03125,
+					shadowObserveMs: 0,
+					shadowMinObservations: 2,
+				},
+				probeParentCandidate: async (_channel, parentHash) => {
+					probes += 1;
+					return createProbeReply(parentHash, { freeSlots: 2 });
+				},
+			});
+
+		await run();
+		await run();
+		await run();
+		const { attempts, result } = await run();
+
+		expect(result).to.equal(false);
+		expect(probes).to.equal(1);
+		expect(attempts).to.deep.equal([]);
+		expect(ch.parentShadow?.hash).to.equal("x24");
+		expect(ch.parentUpgradeStaleRootProbeRound).to.equal(4);
 	});
 
 	it("keeps stale non-root shadow candidates bounded by tracker capacity", async () => {

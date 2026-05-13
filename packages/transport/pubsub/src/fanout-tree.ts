@@ -357,7 +357,7 @@ export type FanoutTreeJoinOptions = {
 	 * Defaults to `min(parentUpgradeMaxChildLoadRatio, 0.4)`. Root fanout is the
 	 * scarce sender-side resource, so root pressure stays more conservative than
 	 * relay parent pressure. Peers maintaining multiple local channels apply an
-	 * additional effective cap of `0.3` for direct-root upgrades so concurrent
+	 * additional effective cap of `0.2` for direct-root upgrades so concurrent
 	 * writer trees do not concentrate on the same root at once.
 	 */
 	parentUpgradeRootMaxChildLoadRatio?: number;
@@ -434,15 +434,16 @@ export type FanoutTreeJoinOptions = {
 	parentUpgradeVerifyStaleRootCapacity?: boolean;
 
 	/**
-	 * Deterministic per-peer sampling probability for stale-root verification.
+	 * Deterministic per-peer base sampling probability for stale-root verification.
 	 *
 	 * This applies only when `parentUpgradeVerifyStaleRootCapacity` is enabled and
-	 * tracker capacity says the root is full. Defaults to `0.0625` to avoid every
+	 * tracker capacity says the root is full. Defaults to `0.03125` to avoid every
 	 * eligible peer probing the same advertised-full root at once. Branch peers
 	 * may use a bounded sample boost, capped at `0.25`, when this peer is only
 	 * maintaining one channel. Peers maintaining multiple local channels do not
-	 * receive the branch boost, so concurrent writer trees do not multiply the
-	 * same stale-root pressure.
+	 * receive the branch boost; instead, quiet settled rounds rotate the sample
+	 * key and ramp only up to `4x` the base probability so concurrent writer trees
+	 * can eventually improve without multiplying the same stale-root pressure.
 	 */
 	parentUpgradeStaleRootProbeProbability?: number;
 
@@ -1740,6 +1741,7 @@ type ChannelState = {
 	parentUpgradeLastAt: number;
 	parentUpgradeBackoffMs: number;
 	parentUpgradeBackoffUntil: number;
+	parentUpgradeStaleRootProbeRound: number;
 	parentProbeRejectBackoffMsByHash: Map<string, number>;
 	/**
 	 * True once this node has successfully joined the channel at least once.
@@ -2947,6 +2949,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			parentUpgradeLastAt: 0,
 			parentUpgradeBackoffMs: 0,
 			parentUpgradeBackoffUntil: 0,
+			parentUpgradeStaleRootProbeRound: 0,
 			parentProbeRejectBackoffMsByHash: new Map(),
 			joinedAtLeastOnce: opts.role === "root",
 			routeFromRoot: opts.role === "root" ? [this.publicKeyHash] : undefined,
@@ -3092,6 +3095,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		ch.parentShadow = undefined;
 		ch.parentUpgradeBackoffMs = 0;
 		ch.parentUpgradeBackoffUntil = 0;
+		ch.parentUpgradeStaleRootProbeRound = 0;
 		ch.parentProbeRejectUntilByHash.clear();
 		ch.parentProbeRejectBackoffMsByHash.clear();
 		ch.pendingRouteQuery.clear();
@@ -6121,13 +6125,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			? Math.max(0, parentUpgradeRootMaxChildLoadRatioRaw)
 			: Math.min(parentUpgradeMaxChildLoadRatio, 0.4);
 		const parentUpgradeStaleRootProbeProbabilityRaw = Number(
-			joinOpts.parentUpgradeStaleRootProbeProbability ?? 0.0625,
+			joinOpts.parentUpgradeStaleRootProbeProbability ?? 0.03125,
 		);
 		const parentUpgradeStaleRootProbeProbability = Number.isFinite(
 			parentUpgradeStaleRootProbeProbabilityRaw,
 		)
 			? Math.max(0, Math.min(1, parentUpgradeStaleRootProbeProbabilityRaw))
-			: 0.0625;
+			: 0.03125;
 		const parentUpgradeCooldownMs = Math.max(
 			0,
 			Math.floor(joinOpts.parentUpgradeCooldownMs ?? 5_000),
@@ -6469,6 +6473,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									ch.parentUpgradeLastAt = Date.now();
 									ch.parentUpgradeBackoffMs = 0;
 									ch.parentUpgradeBackoffUntil = 0;
+									ch.parentUpgradeStaleRootProbeRound = 0;
 								}
 							}
 						}
@@ -6993,6 +6998,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	): Promise<boolean> {
 		const currentParent = ch.parent;
 		if (!currentParent || ch.closed || ch.isRoot || ch.level <= 1) return false;
+		const staleRootProbeRound = Math.max(
+			0,
+			Math.floor(ch.parentUpgradeStaleRootProbeRound || 0),
+		);
+		ch.parentUpgradeStaleRootProbeRound = Math.min(
+			0x7fffffff,
+			staleRootProbeRound + 1,
+		);
 		const upgradeRandom = (scope: string) =>
 			stableUnitInterval(
 				`${ch.id.suffixKey}:${this.publicKeyHash}:${currentParent}:${scope}`,
@@ -7196,13 +7209,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			const requiredMinFreeSlots = minFreeSlotsFor(c.hash);
 			if (canVerifyRootCapacityLive && c.freeSlots < requiredMinFreeSlots) {
 				const staleRootProbeProbabilityRaw = Number(
-					options.staleRootProbeProbability ?? 0.0625,
+					options.staleRootProbeProbability ?? 0.03125,
 				);
 				const staleRootProbeBaseProbability = Number.isFinite(
 					staleRootProbeProbabilityRaw,
 				)
 					? Math.max(0, Math.min(1, staleRootProbeProbabilityRaw))
-					: 0.0625;
+					: 0.03125;
 				const staleRootProbeProbability =
 					singleChannelBranch && staleRootProbeBaseProbability > 0
 						? (() => {
@@ -7219,9 +7232,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									),
 								);
 							})()
-						: staleRootProbeBaseProbability;
+						: Math.min(
+								1,
+								staleRootProbeBaseProbability *
+									Math.max(1, Math.min(4, staleRootProbeRound + 1)),
+							);
 				const staleRootProbeScore = stableUnitInterval(
-					`${ch.id.suffixKey}:${this.publicKeyHash}:${c.hash}:stale-root-probe`,
+					`${ch.id.suffixKey}:${this.publicKeyHash}:${c.hash}:stale-root-probe:${staleRootProbeRound}`,
 				);
 				if (staleRootProbeScore >= staleRootProbeProbability) {
 					ch.metrics.reparentUpgradeSkipCandidateSlots += 1;
@@ -7593,7 +7610,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					candidate.hash === ch.id.root &&
 					localChannelCount > 1 &&
 					Number(configuredMaxChildLoadRatioRaw) > 0
-						? Math.min(0.3, Number(configuredMaxChildLoadRatioRaw))
+						? Math.min(0.2, Number(configuredMaxChildLoadRatioRaw))
 						: configuredMaxChildLoadRatioRaw;
 				const maxChildLoadRatio = Math.max(
 					0,

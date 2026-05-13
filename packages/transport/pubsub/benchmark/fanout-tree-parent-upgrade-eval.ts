@@ -123,7 +123,7 @@ const HELP_TEXT = [
 	"  --parentUpgradeDataGuard 0|1 wait for finite channel completion before treatment upgrades (default: 1)",
 	"  --parentUpgradeMode MODE      treatment upgrade mode (direct|probe|shadow, default: direct)",
 	"  --parentUpgradeVerifyStaleRootCapacity 0|1 allow shadow probes against tracker-full root (default: 0)",
-	"  --parentUpgradeStaleRootProbeProbability R base sample for tracker-full root probes per peer (default: 0.0625)",
+	"  --parentUpgradeStaleRootProbeProbability R base sample for tracker-full root probes per peer (default: 0.03125)",
 	"  --compareModes 0|1           run direct, probe, and shadow against one baseline (default: 0)",
 	"  --parentProbeTimeoutMs MS     timeout for probe-mode parent checks (default: 500)",
 	"  --parentProbeMaxPerRound N    max probe-mode candidates per upgrade check (default: 2)",
@@ -434,7 +434,7 @@ const parseArgs = (argv: string[]): EvalArgs => {
 			defaultCandidate,
 		),
 		parentUpgradeStaleRootProbeProbability: Number(
-			get("--parentUpgradeStaleRootProbeProbability") ?? 0.0625,
+			get("--parentUpgradeStaleRootProbeProbability") ?? 0.03125,
 		),
 		compareModes: parseBool01(get("--compareModes"), false),
 		parentProbeTimeoutMs: Number(get("--parentProbeTimeoutMs") ?? 500),

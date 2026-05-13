@@ -39,7 +39,7 @@ topic sender and extra direct children can increase source fanout pressure. Root
 candidate spare-slot margin and child-pressure can also be tuned separately with
 `parentUpgradeRootMinFreeSlots` and `parentUpgradeRootMaxChildLoadRatio`. The
 root child-pressure default is now `min(parentUpgradeMaxChildLoadRatio, 0.4)`,
-with an additional effective `0.3` cap when a peer is maintaining multiple local
+with an additional effective `0.2` cap when a peer is maintaining multiple local
 channels. Relay candidates keep the general `parentUpgradeMinFreeSlots` and
 `parentUpgradeMaxChildLoadRatio` policy. That makes the work safer and more
 meaningful, but the evidence still argues against flipping the runtime upgrade
@@ -51,7 +51,8 @@ Root admission now also has a branch-value signal:
 membership knowledge, but it distinguishes a one-leaf shortcut from a relay move
 that improves several downstream peers.
 
-The newest guards are request-aware root reservations and stale-root sampling.
+The newest guards are request-aware root reservations and rotating stale-root
+sampling.
 When a root answers a parent probe and has spare capacity that satisfies the
 requester's spare-slot margin, it can return a short-lived reservation token. The
 probing peer includes that token in the proactive `JOIN_REQ`; the root counts
@@ -59,23 +60,24 @@ active reservations against free capacity and rejects invalid-token joins. This
 turns the dangerous root upgrade sequence from "many peers probe the same stale
 slot and race it" into "one peer gets a bounded claim, peers below the requested
 margin get no token, and the claim is consumed or expires quickly." Stale-root
-verification is also sampled per peer
-(`parentUpgradeStaleRootProbeProbability`, default `0.0625`) so an
+verification is also sampled with a small per-peer base probability
+(`parentUpgradeStaleRootProbeProbability`, default `0.03125`) so an
 advertised-full root is not probed by every eligible peer at once. A branch peer
 gets a bounded sample boost only when this local peer is maintaining one
 channel: ordinary branch-gain candidates cap at `0.1`, while stronger subtree
 gain candidates cap at `0.25`. Peers participating in multiple writer trees do
-not receive that branch boost, and their direct-root promotions also face the
-stricter multi-channel root child-pressure cap. These are control-plane guards
-for proactive root upgrades; they do not change ordinary tree formation
-semantics or the
+not receive that branch boost; instead, quiet settled rounds rotate the sample
+key and ramp only up to `4x` the base probability. Their direct-root promotions
+also face the stricter multi-channel root child-pressure cap. These are
+control-plane guards for proactive root upgrades; they do not change ordinary
+tree formation semantics or the
 disabled-by-default runtime posture.
 
 The evaluator now has an explicit default-candidate preset:
 `--parentUpgradePreset default-candidate`. It evaluates the policy we would
 consider for a later default flip without changing runtime defaults in this PR:
 shadow mode, non-leaf upgrades allowed, stale-root live verification enabled
-with `0.0625` deterministic per-peer base sampling,
+with `0.03125` deterministic rotating base sampling,
 branch-aware root admission, and stricter evidence limits
 (`maxProbePerUpgrade <= 2`, `maxRootChildrenDelta <= 2`, and
 `maxRootUploadPctDelta <= 1` percentage point). This turns "we tried some flags"
@@ -462,13 +464,14 @@ Local smoke runs on this branch showed:
   stale-root sampling at `0.25` still produced useful branch gains, but allowed
   root children to grow by `4` in two seeds, failing the default-candidate
   `maxRootChildrenDelta <= 2` gate. The current candidate keeps the base
-  stale-root sample rate at `0.0625`, allows the `0.25` branch boost only for
+  stale-root sample rate at `0.03125`, rotates multi-channel samples across
+  quiet settled rounds up to `0.125`, allows the `0.25` branch boost only for
   stronger single-channel branch gains, caps single-channel root child pressure
-  at `0.4`, tightens multi-channel root child pressure to `0.3`, and
-  feeds root-pressure rejects back to trackers as short-lived no-capacity
-  signals. That lets single-tree branches use up to the root-child delta
-  evidence gate while preventing the boosted budget from multiplying across
-  concurrent writer trees.
+  at `0.4`, tightens multi-channel root child pressure to `0.2`, and feeds
+  root-pressure rejects back to trackers as short-lived no-capacity signals.
+  That lets single-tree branches use up to the root-child delta evidence gate
+  while preventing the boosted budget from multiplying across concurrent writer
+  trees.
 - `ci-live-stream`, seeds `1,2,3`,
   `--parentUpgradePreset default-candidate --strict 1`: passed. This scenario
   exposes late root connectivity during the active 300-message stream while
@@ -491,6 +494,15 @@ Local smoke runs on this branch showed:
   upgrades/probes/shadow starts. Active guard skips appeared on every seed; the
   aggregate run reported `59` active guard skips, max root-child delta `0`, max
   root upload delta `0.00` percentage points, and no active proactive work.
+- Shared-network churned live stream, `ci-multi-live-churn`, seeds `1,2,3`,
+  `--parentUpgradePreset default-candidate --strict 1`: passed. The treatment
+  again made `0` proactive upgrades, sent `0` parent probes, and started `0`
+  shadow observations, including during the active-publish snapshot. The
+  aggregate run reported `123` active guard skips and average control bpp delta
+  about `-10.7%`. Root-child deltas moved under churn (`max 3`, per-seed sum
+  `6`), but this run is intentionally a no-proactive-work safety gate because
+  reconnect timing alone can move root shape while no upgrade probe or proactive
+  reparent happened.
 - Shared-network high-payload `ci-multi-video-live`, seeds `1,2,3`,
   `--parentUpgradePreset default-candidate --strict 1`: passed. Each run used
   `4` concurrent writer roots, `48` peers, `128` joined subscriber slots,
@@ -498,18 +510,18 @@ Local smoke runs on this branch showed:
   treatment made `0` proactive upgrades, sent `0` parent probes, started `0`
   shadow observations, and active-publish counters were also `0` for
   upgrades/probes/shadow starts. Active guard skips appeared on every seed; the
-  aggregate run reported `157` active guard skips, max root-child delta `0`, max
-  root upload delta `0.16` percentage points, average control bpp delta about
+  aggregate run reported `115` active guard skips, max root-child delta `0`, max
+  root upload delta `0.00` percentage points, average control bpp delta about
   `-3.2%`, and no active proactive work.
 - Shared-network `ci-multi-idle`, seeds `1,2,3`,
   `--parentUpgradePreset default-candidate --strict 1`: passed. Each run used
   the same `4` writer roots and overlapping subscriber set, but with a narrow
   initial root fanout and a bounded late-root capacity window. The aggregate
-  shape was `3/3` viable, `6` useful promoted trees across `12` writer trees,
-  `8` proactive upgrades, `8` probes, `0` active-publish probes/upgrades, `22`
-  active guard skips, average promoted-branch p95 gain about `49.5ms`, average
-  control bpp delta about `-1.4%`, per-root child delta max `2`, largest per-seed
-  root-child delta sum `5`, max root upload delta about `0.02` percentage
+  shape was `3/3` viable, `4` useful promoted trees across `12` writer trees,
+  `4` proactive upgrades, `5` probes, `0` active-publish probes/upgrades, `33`
+  active guard skips, average promoted-branch p95 gain about `158ms`, average
+  control bpp delta about `-0.5%`, per-root child delta max `1`, largest per-seed
+  root-child delta sum `2`, max root upload delta about `0.02` percentage
   points, and max `1` proactive reparent per peer/channel.
 - Larger shared-network scale checks, seed `1`, `--nodes 80 --writers 8
   --subscribersPerTree 56 --parentUpgradePreset default-candidate --strict 1`:
@@ -525,19 +537,21 @@ Local smoke runs on this branch showed:
 - High writer-cardinality idle, `ci-multi-sparse-idle`, seeds `1,2,3`,
   `--parentUpgradePreset default-candidate --strict 1`: passed. This run joins
   `12` writer trees but only publishes on `4`; inactive writer trees must stay
-  silent. The aggregate result was `3/3` viable, `7` useful promoted trees, `8`
-  upgrades from `8` probes, `0` inactive-tree upgrades/probes/shadows, max
-  root-child delta `2`, max root-child delta sum `4`, max root upload delta
-  about `0.02` percentage points, average control bpp delta about `-0.0%`, and
+  silent. After rotating stale-root sampling and the stricter multi-channel
+  root-pressure cap, the aggregate result was `3/3` viable, `6` useful promoted
+  trees, `6` upgrades from `6` probes, `0` inactive-tree upgrades/probes/shadows,
+  max root-child delta `1`, max root-child delta sum `3`, max root upload delta
+  about `0.02` percentage points, average control bpp delta about `+2.9%`, and
   max `1` proactive reparent per peer/channel. Global p95 is printed here but
   intentionally not used as the utility gate because the scenario is a
   high-cardinality pressure/no-idle-work check.
 - Hotspot-root idle, `ci-multi-hotspot-idle`, seeds `1,2,3`,
   `--parentUpgradePreset default-candidate --strict 1`: passed after adding the
-  multi-channel root-pressure dampener. The aggregate result was `3/3`
-  viable, `11` useful promoted trees, `19` upgrades from `29` probes, `0` active
-  probes/upgrades, max root-child delta `2`, largest per-seed root-child delta
-  sum `7`, max root upload delta about `0.02` percentage points, and max `1`
+  rotating stale-root sampler and multi-channel root-pressure dampener. The
+  aggregate result was `3/3` viable, `9` useful promoted trees, `9` upgrades
+  from `15` probes, `0` active probes/upgrades, max root-child delta `1`,
+  largest per-seed root-child delta sum `3`, max root upload delta about `0.01`
+  percentage points, average control bpp delta about `-0.6%`, and max `1`
   proactive reparent per peer/channel.
 - The simulator now reports root upload pressure separately from max relay/root
   upload pressure. This matters for streamer-like workloads: root-child fanout
@@ -559,11 +573,16 @@ Local smoke runs on this branch showed:
   upgrade after the root no longer satisfies the original margin.
 - Root child-pressure is now independently tunable via
   `parentUpgradeRootMaxChildLoadRatio`. Its default is capped at `0.4` for root
-  candidates, with an additional effective cap of `0.3` when the local peer is
+  candidates, with an additional effective cap of `0.2` when the local peer is
   maintaining multiple channels. Contested seeds now show explicit
   `rootPressure` and shadow capacity rejects once the root crosses that
   conservative load cap, and those rejects now feed short-lived no-capacity
   tracker updates so other peers stop chasing the same stale-full root.
+- Stale-root sampling now rotates over settled parent-upgrade rounds. A fixed
+  low sample rate reduced probe pressure but could leave a useful settled tree
+  with no sampled peer in a seed. Rotating the deterministic sample key preserves
+  bounded per-round pressure while giving quiet channels repeated chances to
+  find a better root parent.
 - Root spare-slot margin is independently tunable via
   `parentUpgradeRootMinFreeSlots`. This lets evidence runs require roots to be
   wider open than relays before consuming sender-side fanout capacity.
@@ -643,7 +662,7 @@ It should be rejected or retuned if it materially worsens:
 
 The current default candidate, if later evidence holds across more seeds and
 larger topologies, is bounded shadow upgrades with data/repair/quiet guards,
-spare-capacity hysteresis, race-aware root reservations, sampled stale-root
-verification at base `0.0625`, channel-cardinality-aware branch sampling, and
+spare-capacity hysteresis, race-aware root reservations, rotating stale-root
+verification at base `0.03125`, channel-cardinality-aware branch sampling, and
 branch-aware root admission.
 This PR intentionally leaves `parentUpgradeIntervalMs: 0` as the default.

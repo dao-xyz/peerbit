@@ -391,6 +391,11 @@ jobs:
             --parentUpgradePreset default-candidate \
             --strict 1
           pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval \
+            --scenario ci-multi-video-live \
+            --seeds 1 \
+            --parentUpgradePreset default-candidate \
+            --strict 1
+          pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval \
             --scenario ci-multi-idle \
             --seeds 1 \
             --parentUpgradePreset default-candidate \
