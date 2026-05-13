@@ -667,6 +667,7 @@ const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_CPU_LIMIT = 0.005;
 const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_MEMORY_LIMIT = 0.001;
 const RECALCULATE_PARTICIPATION_RELATIVE_DENOMINATOR_FLOOR = 1e-3;
 const TOPIC_SUBSCRIBERS_CACHE_TTL_MS = 250;
+const LEADER_SELECTION_CONTEXT_CACHE_TTL_MS = 50;
 const ADAPTIVE_REBALANCE_IDLE_INTERVAL_MULTIPLIER = 5;
 const ADAPTIVE_REBALANCE_MIN_IDLE_AFTER_LOCAL_APPEND_MS = 10_000;
 
@@ -913,6 +914,13 @@ export type ReplicatorLeaveEvent = { publicKey: PublicSignKey };
 export type ReplicationChangeEvent = { publicKey: PublicSignKey };
 export type ReplicatorMatureEvent = { publicKey: PublicSignKey };
 
+type LeaderSelectionContext = {
+	roleAge: number;
+	selfHash: string;
+	selfReplicating: boolean;
+	peerFilter: Set<string> | undefined;
+};
+
 export interface SharedLogEvents extends ProgramEvents {
 	"replicator:join": CustomEvent<ReplicatorJoinEvent>;
 	"replicator:leave": CustomEvent<ReplicatorLeaveEvent>;
@@ -1090,6 +1098,10 @@ export class SharedLog<
 		string,
 		{ expiresAt: number; keys: PublicSignKey[] }
 	>;
+	private _leaderSelectionContextCache?: {
+		expiresAt: number;
+		context: LeaderSelectionContext;
+	};
 
 	// regular distribution checks
 	private distributeQueue?: PQueue;
@@ -1959,10 +1971,63 @@ export class SharedLog<
 			if (!topic) continue;
 			this._topicSubscribersCache.delete(topic);
 		}
+		this.invalidateLeaderSelectionContextCache();
 	}
 
 	private invalidateSharedLogTopicSubscribersCache() {
 		this.invalidateTopicSubscribersCache(this.topic, this.rpc.topic);
+	}
+
+	private invalidateLeaderSelectionContextCache() {
+		this._leaderSelectionContextCache = undefined;
+	}
+
+	private canCacheLeaderSelectionContext(options?: {
+		roleAge?: number;
+		candidates?: Iterable<string>;
+	}) {
+		return options?.roleAge == null && options?.candidates == null;
+	}
+
+	private cloneLeaderSelectionContext(
+		context: LeaderSelectionContext,
+	): LeaderSelectionContext {
+		return {
+			...context,
+			peerFilter: context.peerFilter ? new Set(context.peerFilter) : undefined,
+		};
+	}
+
+	private getCachedLeaderSelectionContext(options?: {
+		roleAge?: number;
+		candidates?: Iterable<string>;
+	}): LeaderSelectionContext | undefined {
+		if (!this.canCacheLeaderSelectionContext(options)) {
+			return;
+		}
+		const cached = this._leaderSelectionContextCache;
+		if (!cached || cached.expiresAt <= Date.now()) {
+			return;
+		}
+		return this.cloneLeaderSelectionContext(cached.context);
+	}
+
+	private setCachedLeaderSelectionContext(
+		options:
+			| {
+					roleAge?: number;
+					candidates?: Iterable<string>;
+			  }
+			| undefined,
+		context: LeaderSelectionContext,
+	) {
+		if (!this.canCacheLeaderSelectionContext(options)) {
+			return;
+		}
+		this._leaderSelectionContextCache = {
+			expiresAt: Date.now() + LEADER_SELECTION_CONTEXT_CACHE_TTL_MS,
+			context: this.cloneLeaderSelectionContext(context),
+		};
 	}
 
 	// @deprecated
@@ -5847,6 +5912,7 @@ export class SharedLog<
 		this._appendBackfillPendingByTarget = new Map();
 		this._repairMetrics = createRepairMetrics();
 		this._topicSubscribersCache = new Map();
+		this._leaderSelectionContextCache = undefined;
 		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
 		this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
 
@@ -5924,6 +5990,27 @@ export class SharedLog<
 				if (state.timer) clearTimeout(state.timer);
 			}
 			this._replicationInfoRequestByPeer.clear();
+		});
+		const invalidateLeaderSelectionContext = () =>
+			this.invalidateLeaderSelectionContextCache();
+		this.events.addEventListener(
+			"replication:change",
+			invalidateLeaderSelectionContext,
+		);
+		this.events.addEventListener(
+			"replicator:mature",
+			invalidateLeaderSelectionContext,
+		);
+		this._closeController.signal.addEventListener("abort", () => {
+			this.events.removeEventListener(
+				"replication:change",
+				invalidateLeaderSelectionContext,
+			);
+			this.events.removeEventListener(
+				"replicator:mature",
+				invalidateLeaderSelectionContext,
+			);
+			this.invalidateLeaderSelectionContextCache();
 		});
 
 		this._isTrustedReplicator = options?.canReplicate;
@@ -9450,12 +9537,11 @@ export class SharedLog<
 	private async createLeaderSelectionContext(options?: {
 		roleAge?: number;
 		candidates?: Iterable<string>;
-	}): Promise<{
-		roleAge: number;
-		selfHash: string;
-		selfReplicating: boolean;
-		peerFilter: Set<string> | undefined;
-	}> {
+	}): Promise<LeaderSelectionContext> {
+		const cached = this.getCachedLeaderSelectionContext(options);
+		if (cached) {
+			return cached;
+		}
 		const selfHash = this.node.identity.publicKey.hashcode();
 		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge()); // TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
 
@@ -9510,12 +9596,14 @@ export class SharedLog<
 			}
 		}
 
-		return {
+		const context = {
 			roleAge,
 			selfHash,
 			selfReplicating,
 			peerFilter,
 		};
+		this.setCachedLeaderSelectionContext(options, context);
+		return context;
 	}
 
 	private createNativeLeaderOptions(
