@@ -438,12 +438,13 @@ export type FanoutTreeJoinOptions = {
 	 *
 	 * This applies only when `parentUpgradeVerifyStaleRootCapacity` is enabled and
 	 * tracker capacity says the root is full. Defaults to `0.03125` to avoid every
-	 * eligible peer probing the same advertised-full root at once. Branch peers
-	 * may use a bounded sample boost, capped at `0.25`, when this peer is only
-	 * maintaining one channel. Peers maintaining multiple local channels do not
-	 * receive the branch boost; instead, quiet settled rounds rotate the sample
-	 * key and ramp only up to `4x` the base probability so concurrent writer trees
-	 * can eventually improve without multiplying the same stale-root pressure.
+	 * eligible peer probing the same advertised-full root at once. Single-channel
+	 * branch peers may use a bounded sample boost, capped at `0.25`; quiet,
+	 * completed single-channel leaves may use a `0.5` sample. Peers maintaining
+	 * multiple local channels do not receive these boosts; instead, quiet settled
+	 * rounds rotate the sample key and ramp only up to `4x` the base probability
+	 * so concurrent writer trees can eventually improve without multiplying the
+	 * same stale-root pressure.
 	 */
 	parentUpgradeStaleRootProbeProbability?: number;
 
@@ -7126,6 +7127,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 		}
 		const singleChannelBranch = ch.children.size > 0 && localChannelCount <= 1;
+		const endedAndComplete =
+			ch.endSeqExclusive > 0 &&
+			ch.missingSeqs.size === 0 &&
+			ch.nextExpectedSeq >= ch.endSeqExclusive;
+		const singleChannelSettledLeaf =
+			ch.children.size === 0 && localChannelCount <= 1 && endedAndComplete;
 		const minFreeSlotsFor = (hash: string) =>
 			hash === ch.id.root
 				? Math.max(
@@ -7237,16 +7244,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 								const highValueBranch =
 									rootSubtreeGainFor(c.level) >=
 									Math.max(rootMinSubtreeGain + 1, 4);
-								const branchCap = highValueBranch ? 0.25 : 0.1;
-								const multiplier = highValueBranch ? 8 : 4;
+								const branchCap = highValueBranch ? 0.25 : 0.2;
 								return Math.max(
 									staleRootProbeBaseProbability,
-									Math.min(
-										branchCap,
-										staleRootProbeBaseProbability * multiplier,
-									),
+									Math.min(branchCap, staleRootProbeBaseProbability * 8),
 								);
 							})()
+							: singleChannelSettledLeaf && staleRootProbeBaseProbability > 0
+								? 0.5
 						: Math.min(
 								1,
 								staleRootProbeBaseProbability *
@@ -7404,10 +7409,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				Math.floor(options.probeTimeoutMs ?? 500),
 			);
 			const maxLag = Math.max(0, Math.floor(options.probeMaxLagMessages ?? 0));
-			const rejectCooldownMs = Math.max(
+			const configuredRejectCooldownMs = Math.max(
 				0,
 				Math.floor(options.probeRejectCooldownMs ?? 10_000),
 			);
+			const rejectCooldownMs =
+				localChannelCount > 1
+					? Math.max(configuredRejectCooldownMs, 20_000)
+					: configuredRejectCooldownMs;
 			const rejectCooldownMaxMs = Math.max(
 				rejectCooldownMs,
 				Math.floor(options.probeRejectCooldownMaxMs ?? 60_000),
@@ -7453,10 +7462,6 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				return false;
 			}
 
-			const endedAndComplete =
-				ch.endSeqExclusive > 0 &&
-				ch.missingSeqs.size === 0 &&
-				ch.nextExpectedSeq >= ch.endSeqExclusive;
 			const shouldReserveRootCapacityForProbe = (
 				candidate: (typeof ordered)[number],
 			) => {

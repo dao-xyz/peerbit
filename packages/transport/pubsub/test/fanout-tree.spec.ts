@@ -2002,6 +2002,43 @@ describe("fanout-tree", () => {
 		expect(ch.parentShadow?.hash).to.equal("x5");
 	});
 
+	it("raises stale root sampling for quiet single-channel leaves", async () => {
+		let probes = 0;
+		const { attempts, result, ch } = await runMaybeImproveParent({
+			peerHashes: ["relay", "x3"],
+			channelOverrides: {
+				parent: "relay",
+				id: { root: "x3", key: new Uint8Array([1, 2, 3]), suffixKey: "topic" },
+				endSeqExclusive: 10,
+				nextExpectedSeq: 10,
+				maxSeqSeen: 9,
+			},
+			cachedTrackerCandidates: [
+				{ hash: "x3", addrs: [], level: 0, freeSlots: 0, bidPerByte: 0 },
+			],
+			options: {
+				mode: "shadow",
+				minFreeSlots: 2,
+				verifyStaleRootCapacity: true,
+				staleRootProbeProbability: 0.03125,
+				shadowObserveMs: 0,
+				shadowMinObservations: 2,
+			},
+			probeParentCandidate: async (_channel, parentHash) => {
+				probes += 1;
+				return createProbeReply(parentHash, {
+					freeSlots: 2,
+					haveToExclusive: 10,
+				});
+			},
+		});
+
+		expect(result).to.equal(false);
+		expect(probes).to.equal(1);
+		expect(attempts).to.deep.equal(["x3"]);
+		expect(ch.parentShadow?.hash).to.equal("x3");
+	});
+
 	it("does not boost stale-root sampling when multiple local channels compete", async () => {
 		let probes = 0;
 		const ch = createImproveChannel({
