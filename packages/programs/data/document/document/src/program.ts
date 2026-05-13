@@ -1029,53 +1029,59 @@ export class Documents<
 		};
 	}
 
-	private async commitPlainPutPlan(
+	private commitPlainPutPlan(
 		plan: PlainPutCommitPlan<T, I>,
 		options:
 			| DocumentPutOptions
 			| undefined,
-	) {
-		const documentAppendCommit = await this.commitNativeDocumentAppend({
-			document: plan.document,
-			key: plan.key,
-			operation: plan.operation,
-			documentBytes: plan.encodedDocument,
-			operationPayloadBytes: plan.payloadData,
-			next: plan.next,
-			skipMissingNextJoin: plan.skipMissingNextJoin,
-			resolveTrimmedEntries: plan.resolveTrimmedEntries,
-			options,
-			unique: plan.unique,
-			existing: plan.existing,
-		});
-		if (plan.useGenericChangeHandler) {
-			const operation =
-				documentAppendCommit.operation ??
-				plan.operation ??
-				new PutOperation({ data: plan.encodedDocument });
-			await this.handleChanges(
-				{
-					added: [{ head: true, entry: documentAppendCommit.entry }],
-					removed: documentAppendCommit.removed,
-				},
-				{
-					document: plan.document,
-					operation,
-					key: plan.key,
-					unique: plan.unique,
-					existing: plan.existing,
-				},
-			);
-		} else {
-			await this.handlePreparedPlainPutCommit(documentAppendCommit);
-		}
-		this.keepCache?.add(documentAppendCommit.append.hash);
-		return {
-			get entry() {
-				return documentAppendCommit.entry;
+	): MaybePromise<{
+		readonly entry: Entry<Operation>;
+		removed: ShallowOrFullEntry<Operation>[];
+	}> {
+		return mapMaybePromise(
+			this.commitNativeDocumentAppend({
+				document: plan.document,
+				key: plan.key,
+				operation: plan.operation,
+				documentBytes: plan.encodedDocument,
+				operationPayloadBytes: plan.payloadData,
+				next: plan.next,
+				skipMissingNextJoin: plan.skipMissingNextJoin,
+				resolveTrimmedEntries: plan.resolveTrimmedEntries,
+				options,
+				unique: plan.unique,
+				existing: plan.existing,
+			}),
+			(documentAppendCommit) => {
+				const handled = plan.useGenericChangeHandler
+					? this.handleChanges(
+							{
+								added: [{ head: true, entry: documentAppendCommit.entry }],
+								removed: documentAppendCommit.removed,
+							},
+							{
+								document: plan.document,
+								operation:
+									documentAppendCommit.operation ??
+									plan.operation ??
+									new PutOperation({ data: plan.encodedDocument }),
+								key: plan.key,
+								unique: plan.unique,
+								existing: plan.existing,
+							},
+						)
+					: this.handlePreparedPlainPutCommit(documentAppendCommit);
+				return mapMaybePromise(handled, () => {
+					this.keepCache?.add(documentAppendCommit.append.hash);
+					return {
+						get entry() {
+							return documentAppendCommit.entry;
+						},
+						removed: documentAppendCommit.removed,
+					};
+				});
 			},
-			removed: documentAppendCommit.removed,
-		};
+		);
 	}
 
 	private commitNativeDocumentAppend(
@@ -1326,9 +1332,9 @@ export class Documents<
 		});
 	}
 
-	private async handlePreparedPlainPutCommit(
+	private handlePreparedPlainPutCommit(
 		commit: DocumentAppendCommitFacts<T, I>,
-	): Promise<void> {
+	): MaybePromise<void> {
 		const documentsChanged: DocumentsChange<T, I> = {
 			added: [],
 			removed: [],
@@ -1348,20 +1354,30 @@ export class Documents<
 			}
 		}
 
-		if (!modified.has(commit.key.primitive)) {
-			const indexedDocument = await this._index._putIdentityWithContext(
-				commit.document,
-				commit.key,
-				commit.context,
-				{
-					replace: existing != null,
-					encodedValueParts: commit.contextualEncodedValueParts,
-				},
+		const finishRemoved = (): MaybePromise<void> => {
+			if (commit.removed.length === 0) {
+				this.events.dispatchEvent(
+					new CustomEvent("change", { detail: documentsChanged }),
+				);
+				return;
+			}
+			return this.handlePreparedPlainPutCommitRemoved(
+				commit.removed,
+				modified,
+				documentsChanged,
 			);
+		};
+
+		const finishIndexed = (
+			indexedDocument: WithIndexedContext<T, I> | undefined,
+		): MaybePromise<void> => {
 			if (indexedDocument) {
 				documentsChanged.added.push(indexedDocument);
-			} else {
-				const { indexable } = await this._index.putWithContext(
+				modified.add(commit.key.primitive);
+				return finishRemoved();
+			}
+			return mapMaybePromise(
+				this._index.putWithContext(
 					commit.document,
 					commit.key,
 					commit.context,
@@ -1369,18 +1385,44 @@ export class Documents<
 						replace: existing != null,
 						encodedValueParts: commit.contextualEncodedValueParts,
 					},
-				);
-				documentsChanged.added.push(
-					coerceWithIndexed(
-						coerceWithContext(commit.document, commit.context),
-						indexable,
-					),
-				);
-			}
-			modified.add(commit.key.primitive);
+				),
+				({ indexable }) => {
+					documentsChanged.added.push(
+						coerceWithIndexed(
+							coerceWithContext(commit.document, commit.context),
+							indexable,
+						),
+					);
+					modified.add(commit.key.primitive);
+					return finishRemoved();
+				},
+			);
+		};
+
+		if (!modified.has(commit.key.primitive)) {
+			return mapMaybePromise(
+				this._index._putIdentityWithContext(
+					commit.document,
+					commit.key,
+					commit.context,
+					{
+						replace: existing != null,
+						encodedValueParts: commit.contextualEncodedValueParts,
+					},
+				),
+				finishIndexed,
+			);
 		}
 
-		for (const removed of commit.removed) {
+		return finishRemoved();
+	}
+
+	private async handlePreparedPlainPutCommitRemoved(
+		removedEntries: ShallowOrFullEntry<Operation>[],
+		modified: Set<string | number | bigint>,
+		documentsChanged: DocumentsChange<T, I>,
+	): Promise<void> {
+		for (const removed of removedEntries) {
 			if (
 				!(removed instanceof Entry) &&
 				(await this.collectRemovedDocumentChangeFromIndexedHead(

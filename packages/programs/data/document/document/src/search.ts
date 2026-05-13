@@ -70,6 +70,9 @@ const indexCacheLogger = documentIndexLogger.newScope("cache");
 const indexPrefetchLogger = documentIndexLogger.newScope("prefetch");
 const indexIteratorLogger = documentIndexLogger.newScope("iterate");
 
+const isPromiseLike = <T>(value: MaybePromise<T>): value is Promise<T> =>
+	!!value && typeof (value as Promise<T>).then === "function";
+
 type BufferedResult<T, I extends Record<string, any>> = {
 	value: T;
 	indexed: WithContext<I>;
@@ -1759,12 +1762,12 @@ export class DocumentIndex<
 		);
 	}
 
-	public async _putIdentityWithContext(
+	public _putIdentityWithContext(
 		value: T,
 		id: indexerTypes.IdKey,
 		context: types.Context,
 		options?: ContextualPutOptions,
-	): Promise<WithIndexedContext<T, I> | undefined> {
+	): MaybePromise<WithIndexedContext<T, I> | undefined> {
 		const contextualPut = this.transformerIsIdentity
 			? (this.index as ContextualIndexPut<I>).putWithContext
 			: undefined;
@@ -1777,21 +1780,26 @@ export class DocumentIndex<
 			indexable,
 		);
 		this.cacheResolvedValue(id.primitive, value);
+		const handleError = (error: unknown) => {
+			if (error instanceof indexerTypes.NotStartedError && this.closed) {
+				return indexedValue;
+			}
+			throw error;
+		};
 		try {
-			await contextualPut.call(
+			const putResult = contextualPut.call(
 				this.index,
 				indexable,
 				id,
 				context,
 				this.withContextualEncodedValue(options, context),
 			);
+			return isPromiseLike(putResult)
+				? putResult.then(() => indexedValue, handleError)
+				: indexedValue;
 		} catch (error) {
-			if (error instanceof indexerTypes.NotStartedError && this.closed) {
-				return indexedValue;
-			}
-			throw error;
+			return handleError(error);
 		}
-		return indexedValue;
 	}
 
 	public async _putManyIdentityWithContext(

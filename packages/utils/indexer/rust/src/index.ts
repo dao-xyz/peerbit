@@ -1849,11 +1849,11 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
-	async put(
+	put(
 		value: T,
 		id?: types.IdKey,
 		_options?: { replace?: boolean },
-	): Promise<void> {
+	): MaybePromise<void> {
 		if (this.isClosing()) {
 			return;
 		}
@@ -1861,32 +1861,33 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		id = id ?? types.toId(types.extractFieldValue(value, this.indexByArr));
 		const encodedValue = this.tryNativeEncodedValue(value);
 		if (encodedValue) {
-			await this.putWithEncodedValue(value, id, encodedValue);
+			return this.putWithEncodedValue(value, id, encodedValue);
+		}
+		if (!this.snapshotFile) {
+			this.putNativeDocument(keyToStoreKey(id), id, value);
 			return;
 		}
-		await this.putWithEncodedFields(value, id, this.fieldEncoder(value));
+		return this.putWithEncodedFields(value, id, this.fieldEncoder(value));
 	}
 
-	async putWithContext(
+	putWithContext(
 		value: Record<string, any>,
 		id: types.IdKey,
 		context: Record<string, any>,
 		options?: NativeEncodedPutOptions,
-	): Promise<void> {
+	): MaybePromise<void> {
 		const contextualValue = this.asContextualValue(value, context);
 		if (options?.encodedValueParts) {
-			await this.putWithEncodedValueParts(
+			return this.putWithEncodedValueParts(
 				contextualValue,
 				id,
 				options.encodedValueParts,
 			);
-			return;
 		}
 		if (options?.encodedValue) {
-			await this.putWithEncodedValue(contextualValue, id, options.encodedValue);
-			return;
+			return this.putWithEncodedValue(contextualValue, id, options.encodedValue);
 		}
-		await this.put(contextualValue, id, options);
+		return this.put(contextualValue, id, options);
 	}
 
 	async putWithContextBatch(
@@ -2477,29 +2478,29 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		return results.map((value) => ({ id: value[0], value: value[1] }));
 	}
 
-	private async putWithEncodedFields(
+	private putWithEncodedFields(
 		value: T,
 		id: types.IdKey,
 		fields: Uint8Array,
 		encodedValue?: EncodedValue,
-	): Promise<void> {
+	): MaybePromise<void> {
 		const storeKey = keyToStoreKey(id);
 		if (!this.snapshotFile) {
 			this.getNative().put(storeKey, id, value, fields);
 			return;
 		}
-		await this.enqueueMutation(async () => {
+		return this.enqueueMutation(async () => {
 			await this.appendPut(storeKey, value, encodedValue);
 			this.getNative().put(storeKey, id, value, fields);
 			await this.compactIfNeeded();
 		});
 	}
 
-	private async putWithEncodedValue(
+	private putWithEncodedValue(
 		value: T,
 		id: types.IdKey,
 		encodedValue: Uint8Array,
-	): Promise<void> {
+	): MaybePromise<void> {
 		const storeKey = keyToStoreKey(id);
 		if (!this.snapshotFile) {
 			if (
@@ -2515,7 +2516,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			this.getNative().put(storeKey, id, value, this.fieldEncoder(value));
 			return;
 		}
-		await this.enqueueMutation(async () => {
+		return this.enqueueMutation(async () => {
 			await this.appendPut(storeKey, value, encodedValue);
 			if (
 				!this.putNativeDocumentWithPreparedFields(
@@ -2531,11 +2532,11 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		});
 	}
 
-	private async putWithEncodedValueParts(
+	private putWithEncodedValueParts(
 		value: T,
 		id: types.IdKey,
 		encodedValueParts: NativeEncodedValueParts,
-	): Promise<void> {
+	): MaybePromise<void> {
 		const storeKey = keyToStoreKey(id);
 		if (!this.snapshotFile) {
 			if (
@@ -2553,7 +2554,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			this.getNative().put(storeKey, id, value, this.fieldEncoder(value));
 			return;
 		}
-		await this.enqueueMutation(async () => {
+		return this.enqueueMutation(async () => {
 			await this.appendPut(storeKey, value, encodedValueParts);
 			if (
 				!this.putNativeDocumentWithPreparedFields(
