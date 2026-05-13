@@ -774,9 +774,12 @@ type NativeSchemaIrStats = {
 type SharedLogCoordinateNativeFields = {
 	hash: string;
 	hashNumber: number | bigint;
+	hashNumberString?: string;
 	gid: string;
 	coordinates: Array<number | bigint>;
+	coordinateStrings?: string[];
 	wallTime: number | bigint;
+	wallTimeString?: string;
 	assignedToRangeBoundary: boolean;
 	metaBytes: Uint8Array;
 };
@@ -2632,10 +2635,11 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 					value,
 					...this.getSharedLogCoordinateNativeFieldIdArgs(),
 					fields.hash,
-					fields.hashNumber.toString(),
+					fields.hashNumberString ?? fields.hashNumber.toString(),
 					fields.gid,
-					fields.coordinates.map((coordinate) => coordinate.toString()),
-					fields.wallTime.toString(),
+					fields.coordinateStrings ??
+						fields.coordinates.map((coordinate) => coordinate.toString()),
+					fields.wallTimeString ?? fields.wallTime.toString(),
 					fields.assignedToRangeBoundary,
 					fields.metaBytes,
 					this.byteElementIndexLimit,
@@ -2656,10 +2660,11 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				value,
 				...this.getSharedLogCoordinateNativeFieldIdArgs(),
 				fields.hash,
-				fields.hashNumber.toString(),
+				fields.hashNumberString ?? fields.hashNumber.toString(),
 				fields.gid,
-				fields.coordinates.map((coordinate) => coordinate.toString()),
-				fields.wallTime.toString(),
+				fields.coordinateStrings ??
+					fields.coordinates.map((coordinate) => coordinate.toString()),
+				fields.wallTimeString ?? fields.wallTime.toString(),
 				fields.assignedToRangeBoundary,
 				fields.metaBytes,
 				this.byteElementIndexLimit,

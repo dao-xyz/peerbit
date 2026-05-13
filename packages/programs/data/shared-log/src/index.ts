@@ -308,9 +308,12 @@ type EntryLeaderPlan<R extends "u32" | "u64"> = {
 type SharedLogCoordinateNativeFields<R extends "u32" | "u64"> = {
 	hash: string;
 	hashNumber: NumberFromType<R>;
+	hashNumberString?: string;
 	gid: string;
 	coordinates: NumberFromType<R>[];
+	coordinateStrings?: string[];
 	wallTime: bigint;
+	wallTimeString?: string;
 	assignedToRangeBoundary: boolean;
 	metaBytes: Uint8Array;
 };
@@ -919,6 +922,7 @@ type LeaderSelectionContext = {
 	selfHash: string;
 	selfReplicating: boolean;
 	peerFilter: Set<string> | undefined;
+	peerFilterArray: string[] | undefined;
 };
 
 export interface SharedLogEvents extends ProgramEvents {
@@ -1995,6 +1999,9 @@ export class SharedLog<
 		return {
 			...context,
 			peerFilter: context.peerFilter ? new Set(context.peerFilter) : undefined,
+			peerFilterArray: context.peerFilterArray
+				? [...context.peerFilterArray]
+				: undefined,
 		};
 	}
 
@@ -5295,9 +5302,12 @@ export class SharedLog<
 			fields: {
 				hash: properties.plan.hash,
 				hashNumber,
+				hashNumberString: properties.plan.hashNumberString,
 				gid: properties.plan.gid,
 				coordinates,
+				coordinateStrings: properties.plan.coordinateStrings,
 				wallTime,
+				wallTimeString: wallTime.toString(),
 				assignedToRangeBoundary,
 				metaBytes,
 			},
@@ -5375,6 +5385,7 @@ export class SharedLog<
 
 		const context = await this.createLeaderSelectionContext();
 		const hashNumber = this.getAppendFactsHashNumber(appendFacts);
+		const nativeLeaderOptions = this.createNativeLeaderOptions(context);
 		const plan =
 			options?.deleteHashes && options.deleteHashes.length > 0
 				? this._nativeSharedLogState.commitLocalAppendForGidCompact(
@@ -5387,7 +5398,7 @@ export class SharedLog<
 							replicas,
 							selfHash: context.selfHash,
 						},
-						this.createNativeLeaderOptions(context),
+						nativeLeaderOptions,
 					)
 				: this._nativeSharedLogState.planLocalAppendForGidCompact(
 						{
@@ -5398,7 +5409,7 @@ export class SharedLog<
 							replicas,
 							selfHash: context.selfHash,
 						},
-						this.createNativeLeaderOptions(context),
+						nativeLeaderOptions,
 					);
 		const coordinates = plan.coordinate.coordinates as NumberFromType<R>[];
 		const hashNumberFromPlan = plan.coordinate.hashNumber as NumberFromType<R>;
@@ -8953,9 +8964,12 @@ export class SharedLog<
 			fields: {
 				hash: properties.plan.hash,
 				hashNumber,
+				hashNumberString: properties.plan.hashNumberString,
 				gid: properties.plan.gid,
 				coordinates,
+				coordinateStrings: properties.plan.coordinateStrings,
 				wallTime: coordinateEntry.wallTime,
+				wallTimeString: coordinateEntry.wallTime.toString(),
 				assignedToRangeBoundary,
 				metaBytes: coordinateEntry.getMetaBytes(),
 			},
@@ -9601,6 +9615,7 @@ export class SharedLog<
 			selfHash,
 			selfReplicating,
 			peerFilter,
+			peerFilterArray: peerFilter ? [...peerFilter] : undefined,
 		};
 		this.setCachedLeaderSelectionContext(options, context);
 		return context;
@@ -9612,6 +9627,7 @@ export class SharedLog<
 			selfHash: string;
 			selfReplicating: boolean;
 			peerFilter: Set<string> | undefined;
+			peerFilterArray?: string[] | undefined;
 		},
 		options?: {
 			candidates?: Iterable<string>;
@@ -9620,7 +9636,7 @@ export class SharedLog<
 		return {
 			roleAge: context.roleAge,
 			now: Date.now(),
-			peerFilter: context.peerFilter,
+			peerFilter: context.peerFilterArray ?? context.peerFilter,
 			expandPeerFilter: !options?.candidates,
 			selfHash: context.selfHash,
 			selfReplicating: context.selfReplicating,

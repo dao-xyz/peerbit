@@ -74,8 +74,10 @@ export type AppendDeliveryPlan = {
 export type NativeAppendCoordinatePlan = {
 	hash: string;
 	hashNumber: number | bigint;
+	hashNumberString?: string;
 	gid: string;
 	coordinates: Array<number | bigint>;
+	coordinateStrings?: string[];
 	assignedToRangeBoundary: boolean;
 	requestedReplicas: number;
 };
@@ -556,6 +558,20 @@ const asIntegerString = (value: bigint | number | string) =>
 			? Math.trunc(value).toString()
 			: value;
 
+const iterableToArray = <T>(values?: Iterable<T>): T[] => {
+	if (!values) {
+		return [];
+	}
+	return Array.isArray(values) ? values : [...values];
+};
+
+const optionalIterableToArray = <T>(values?: Iterable<T>): T[] | undefined => {
+	if (!values) {
+		return undefined;
+	}
+	return Array.isArray(values) ? values : [...values];
+};
+
 const rowsToSamples = (rows: unknown[]): Map<string, LeaderSample> => {
 	const out = new Map<string, LeaderSample>();
 	for (const row of rows) {
@@ -586,11 +602,15 @@ const appendCoordinatePlanFromRow = (
 		assignedToRangeBoundary,
 		requestedReplicas,
 	] = row as [string, unknown, string, unknown[], boolean, number];
+	const coordinateStrings = coordinateRows as string[];
 	return {
 		hash,
 		hashNumber: rowsToNumbers(resolution, [hashNumber])[0]!,
+		hashNumberString:
+			typeof hashNumber === "string" ? hashNumber : String(hashNumber),
 		gid,
-		coordinates: rowsToNumbers(resolution, coordinateRows),
+		coordinates: rowsToNumbers(resolution, coordinateStrings),
+		coordinateStrings,
 		assignedToRangeBoundary,
 		requestedReplicas,
 	};
@@ -608,7 +628,7 @@ const findLeaderArguments = (options?: FindLeaderOptions): [
 ] => [
 	options?.roleAge ?? 0,
 	asIntegerString(options?.now ?? Date.now()),
-	options?.peerFilter ? [...options.peerFilter] : undefined,
+	optionalIterableToArray(options?.peerFilter),
 	options?.expandPeerFilter === true,
 	options?.selfHash ?? "",
 	options?.selfReplicating === true,
@@ -706,8 +726,8 @@ export class SharedLogRangePlanner {
 			options?.roleAge ?? 0,
 			asIntegerString(options?.now ?? Date.now()),
 			options?.onlyIntersecting === true,
-			options?.uniqueReplicators ? [...options.uniqueReplicators] : undefined,
-			options?.peerFilter ? [...options.peerFilter] : undefined,
+			optionalIterableToArray(options?.uniqueReplicators),
+			optionalIterableToArray(options?.peerFilter),
 		);
 		return rowsToSamples(rows);
 	}
@@ -881,7 +901,7 @@ export class SharedLogRangePlanner {
 			options?.roleAge ?? 0,
 			asIntegerString(options?.now ?? Date.now()),
 			options?.includeStrict !== false,
-			options?.peerFilter ? [...options.peerFilter] : undefined,
+			optionalIterableToArray(options?.peerFilter),
 		);
 		return rows ? rowsToSamples(rows) : undefined;
 	}
@@ -1175,7 +1195,7 @@ export class SharedLogNativeState {
 			input.entryHash,
 			input.gid,
 			asIntegerString(input.hashNumber ?? 0),
-			input.nextHashes ? [...input.nextHashes] : [],
+			iterableToArray(input.nextHashes),
 			input.replicas,
 			...findLeaderArguments({
 				...options,
@@ -1221,7 +1241,7 @@ export class SharedLogNativeState {
 				input.entryHash,
 				input.gid,
 				asIntegerString(input.hashNumber ?? 0),
-				input.nextHashes ? [...input.nextHashes] : [],
+				iterableToArray(input.nextHashes),
 				input.replicas,
 				...findLeaderArguments({
 					...options,
@@ -1273,8 +1293,8 @@ export class SharedLogNativeState {
 				input.entryHash,
 				input.gid,
 				asIntegerString(input.hashNumber ?? 0),
-				input.nextHashes ? [...input.nextHashes] : [],
-				input.deleteHashes ? [...input.deleteHashes] : [],
+				iterableToArray(input.nextHashes),
+				iterableToArray(input.deleteHashes),
 				input.replicas,
 				...findLeaderArguments({
 					...options,
@@ -1322,7 +1342,7 @@ export class SharedLogNativeState {
 		return appendDeliveryPlanFromRow(
 			this.native.plan_append_delivery(
 				samplesToRows(input.leaders),
-				input.fallbackRecipients ? [...input.fallbackRecipients] : [],
+				iterableToArray(input.fallbackRecipients),
 				input.minReplicas,
 				input.selfHash,
 				input.isLeader,
@@ -1362,10 +1382,10 @@ export class SharedLogNativeState {
 			input.entryHash,
 			input.gid,
 			asIntegerString(input.hashNumber ?? 0),
-			input.nextHashes ? [...input.nextHashes] : [],
+			iterableToArray(input.nextHashes),
 			input.replicas,
-			input.fullReplicaCandidates ? [...input.fullReplicaCandidates] : [],
-			input.fallbackRecipients ? [...input.fallbackRecipients] : [],
+			iterableToArray(input.fullReplicaCandidates),
+			iterableToArray(input.fallbackRecipients),
 			input.selfHash,
 			input.deliveryEnabled,
 			input.reliabilityAck,
@@ -1407,10 +1427,10 @@ export class SharedLogNativeState {
 			entries.map((entry) => entry.entryHash),
 			entries.map((entry) => entry.gid),
 			entries.map((entry) => asIntegerString(entry.hashNumber ?? 0)),
-			entries.map((entry) => (entry.nextHashes ? [...entry.nextHashes] : [])),
+			entries.map((entry) => iterableToArray(entry.nextHashes)),
 			entries.map((entry) => entry.replicas),
-			input.fullReplicaCandidates ? [...input.fullReplicaCandidates] : [],
-			input.fallbackRecipients ? [...input.fallbackRecipients] : [],
+			iterableToArray(input.fullReplicaCandidates),
+			iterableToArray(input.fallbackRecipients),
 			input.selfHash,
 			input.deliveryEnabled,
 			input.reliabilityAck,
