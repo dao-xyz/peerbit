@@ -82,6 +82,14 @@ type NativeJoinCutCheck = {
 
 type MaybePromise<T> = T | Promise<T>;
 
+const isPromiseLike = <T>(value: MaybePromise<T>): value is Promise<T> =>
+	!!value && typeof (value as { then?: unknown }).then === "function";
+
+const mapMaybePromise = <T, R>(
+	value: MaybePromise<T>,
+	fn: (value: T) => MaybePromise<R>,
+): MaybePromise<R> => (isPromiseLike(value) ? value.then(fn) : fn(value));
+
 export type NativeLogGraph = {
 	readonly length: number;
 	has: (hash: string) => boolean;
@@ -899,6 +907,13 @@ export class EntryIndex<T> {
 		T extends boolean,
 		R = T extends true ? Entry<any> : ShallowEntry,
 	>(limit: number, resolve?: T): Promise<R[]> {
+		return this.getOldestManyMaybe(limit, resolve);
+	}
+
+	getOldestManyMaybe<
+		T extends boolean,
+		R = T extends true ? Entry<any> : ShallowEntry,
+	>(limit: number, resolve?: T): MaybePromise<R[]> {
 		if (limit <= 0) {
 			return [];
 		}
@@ -906,6 +921,13 @@ export class EntryIndex<T> {
 		if (nativeEntries) {
 			return nativeEntries as R[];
 		}
+		return this.getOldestManyFromIterator(limit, resolve);
+	}
+
+	private async getOldestManyFromIterator<
+		T extends boolean,
+		R = T extends true ? Entry<any> : ShallowEntry,
+	>(limit: number, resolve?: T): Promise<R[]> {
 		const iterator = this.iterate([], this.properties.sort.sort, resolve);
 		try {
 			return (await iterator.next(limit)) as R[];
@@ -1555,6 +1577,13 @@ export class EntryIndex<T> {
 		from: ShallowEntry[],
 		options?: { skipNextHeadUpdates?: boolean },
 	): Promise<ShallowEntry[]> {
+		return this.deleteManyMaybe(from, options);
+	}
+
+	deleteManyMaybe(
+		from: ShallowEntry[],
+		options?: { skipNextHeadUpdates?: boolean },
+	): MaybePromise<ShallowEntry[]> {
 		if (from.length === 0) {
 			return [];
 		}
@@ -1591,23 +1620,7 @@ export class EntryIndex<T> {
 			? (this.properties.index as IndexWithExactDelete)
 			: undefined;
 		if (indexedHashes.length > 0 && exactDeleteIndex) {
-			const deleted = await exactDeleteIndex.delIds(indexedHashes);
-			for (const id of deleted) {
-				const hash = String(id.primitive);
-				const node = indexedByHash.get(hash);
-				if (!node || deletedByHash.has(hash)) {
-					continue;
-				}
-				deletedByHash.set(hash, node);
-				storeHashes.push(hash);
-			}
-		} else {
-			const batchSize = 64;
-			for (let i = 0; i < indexedHashes.length; i += batchSize) {
-				const hashes = indexedHashes.slice(i, i + batchSize);
-				const deleted = await this.properties.index.del({
-					query: createHashMatchQuery(hashes),
-				});
+			return mapMaybePromise(exactDeleteIndex.delIds(indexedHashes), (deleted) => {
 				for (const id of deleted) {
 					const hash = String(id.primitive);
 					const node = indexedByHash.get(hash);
@@ -1617,9 +1630,55 @@ export class EntryIndex<T> {
 					deletedByHash.set(hash, node);
 					storeHashes.push(hash);
 				}
+				return this.finishDeleteMany(deletedByHash, nodes, storeHashes, options);
+			});
+		}
+		if (indexedHashes.length > 0) {
+			return this.deleteManyByQuery(
+				indexedHashes,
+				indexedByHash,
+				deletedByHash,
+				nodes,
+				storeHashes,
+				options,
+			);
+		}
+		return this.finishDeleteMany(deletedByHash, nodes, storeHashes, options);
+	}
+
+	private async deleteManyByQuery(
+		indexedHashes: string[],
+		indexedByHash: Map<string, ShallowEntry>,
+		deletedByHash: Map<string, ShallowEntry>,
+		nodes: ShallowEntry[],
+		storeHashes: string[],
+		options?: { skipNextHeadUpdates?: boolean },
+	): Promise<ShallowEntry[]> {
+		const batchSize = 64;
+		for (let i = 0; i < indexedHashes.length; i += batchSize) {
+			const hashes = indexedHashes.slice(i, i + batchSize);
+			const deleted = await this.properties.index.del({
+				query: createHashMatchQuery(hashes),
+			});
+			for (const id of deleted) {
+				const hash = String(id.primitive);
+				const node = indexedByHash.get(hash);
+				if (!node || deletedByHash.has(hash)) {
+					continue;
+				}
+				deletedByHash.set(hash, node);
+				storeHashes.push(hash);
 			}
 		}
+		return this.finishDeleteMany(deletedByHash, nodes, storeHashes, options);
+	}
 
+	private finishDeleteMany(
+		deletedByHash: Map<string, ShallowEntry>,
+		nodes: ShallowEntry[],
+		storeHashes: string[],
+		options?: { skipNextHeadUpdates?: boolean },
+	): MaybePromise<ShallowEntry[]> {
 		const deleted = nodes
 			.map((node) => deletedByHash.get(node.hash))
 			.filter((node): node is ShallowEntry => !!node);
@@ -1628,31 +1687,36 @@ export class EntryIndex<T> {
 		}
 
 		const store = this.properties.store;
-		if (hasRmMany(store) && store.rmMany) {
-			await store.rmMany(storeHashes);
-		} else {
-			await Promise.all(storeHashes.map((hash) => store.rm(hash)));
-		}
-
-		this._length -= deleted.length;
-		const graph = this.properties.nativeGraph?.graph;
-		if (graph?.deleteMany) {
-			graph.deleteMany(storeHashes);
-		} else {
-			for (const hash of storeHashes) {
-				graph?.delete(hash);
-			}
-		}
-		if (!options?.skipNextHeadUpdates) {
-			const deletedNexts: string[] = [];
-			for (const node of deleted) {
-				if (node.meta.type !== EntryType.CUT) {
-					deletedNexts.push(...node.meta.next);
+		const afterStoreDelete = () => {
+			this._length -= deleted.length;
+			const graph = this.properties.nativeGraph?.graph;
+			if (graph?.deleteMany) {
+				graph.deleteMany(storeHashes);
+			} else {
+				for (const hash of storeHashes) {
+					graph?.delete(hash);
 				}
 			}
-			await this.privateUpdateNextHeadHashes(deletedNexts, true);
+			if (!options?.skipNextHeadUpdates) {
+				const deletedNexts: string[] = [];
+				for (const node of deleted) {
+					if (node.meta.type !== EntryType.CUT) {
+						deletedNexts.push(...node.meta.next);
+					}
+				}
+				return mapMaybePromise(
+					this.privateUpdateNextHeadHashes(deletedNexts, true),
+					() => deleted,
+				);
+			}
+			return deleted;
+		};
+		if (hasRmMany(store) && store.rmMany) {
+			return mapMaybePromise(store.rmMany(storeHashes), afterStoreDelete);
 		}
-		return deleted;
+		return Promise.all(storeHashes.map((hash) => store.rm(hash))).then(
+			afterStoreDelete,
+		);
 	}
 
 	private nativeLogEntryToShallowEntry(entry: NativeLogEntry): ShallowEntry {

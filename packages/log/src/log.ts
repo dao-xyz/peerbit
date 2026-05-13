@@ -377,19 +377,24 @@ export class Log<T> {
 					return shouldResolve ? resolved : deleted;
 				},
 				deleteNodes: this._entryIndex.canDeleteMany()
-					? async (
+					? (
 							nodes: ShallowEntry[],
 							options?: {
 								resolveDeletedEntry?: boolean;
 								skipNextHeadUpdates?: boolean;
 							},
-						) => {
+						): MaybePromise<(Entry<T> | ShallowEntry)[]> => {
 							if (nodes.length === 0) {
 								return [];
 							}
 							const shouldResolve = options?.resolveDeletedEntry !== false;
-							const resolvedByHash = new Map<string, Entry<T>>();
-							if (shouldResolve) {
+							if (!shouldResolve) {
+								return this._entryIndex.deleteManyMaybe(nodes, {
+									skipNextHeadUpdates: options?.skipNextHeadUpdates,
+								});
+							}
+							return (async () => {
+								const resolvedByHash = new Map<string, Entry<T>>();
 								const resolved = await this._entryIndex.getMany(
 									nodes.map((node) => node.hash),
 									{ type: "full", ignoreMissing: true },
@@ -399,15 +404,13 @@ export class Log<T> {
 										resolvedByHash.set(entry.hash, entry);
 									}
 								}
-							}
-							const deleted = await this._entryIndex.deleteMany(nodes, {
-								skipNextHeadUpdates: options?.skipNextHeadUpdates,
-							});
-							return shouldResolve
-								? deleted
-										.map((node) => resolvedByHash.get(node.hash))
-										.filter((entry): entry is Entry<T> => !!entry)
-								: deleted;
+								const deleted = await this._entryIndex.deleteMany(nodes, {
+									skipNextHeadUpdates: options?.skipNextHeadUpdates,
+								});
+								return deleted
+									.map((node) => resolvedByHash.get(node.hash))
+									.filter((entry): entry is Entry<T> => !!entry);
+							})();
 						}
 					: undefined,
 				sortFn: this._sortFn,

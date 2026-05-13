@@ -5,6 +5,16 @@ import type { ShallowEntry } from "./entry-shallow.js";
 import type { Entry } from "./entry.js";
 import type { SortFn } from "./log-sorting.js";
 
+type MaybePromise<T> = T | Promise<T>;
+
+const isPromiseLike = <T>(value: MaybePromise<T>): value is Promise<T> =>
+	!!value && typeof (value as { then?: unknown }).then === "function";
+
+const mapMaybePromise = <T, R>(
+	value: MaybePromise<T>,
+	fn: (value: T) => MaybePromise<R>,
+): MaybePromise<R> => (isPromiseLike(value) ? value.then(fn) : fn(value));
+
 const trimOptionsEqual = (a: TrimOptions, b: TrimOptions) => {
 	if (a.type === b.type) {
 		if (a.type === "length" && b.type === "length") {
@@ -85,11 +95,11 @@ interface Log<T> {
 	deleteNode: (
 		node: ShallowEntry,
 		options?: { resolveDeletedEntry?: boolean },
-	) => Promise<Entry<T> | ShallowEntry | undefined>;
+	) => MaybePromise<Entry<T> | ShallowEntry | undefined>;
 	deleteNodes?: (
 		nodes: ShallowEntry[],
 		options?: { resolveDeletedEntry?: boolean; skipNextHeadUpdates?: boolean },
-	) => Promise<(Entry<T> | ShallowEntry)[]>;
+	) => MaybePromise<(Entry<T> | ShallowEntry)[]>;
 	getLength(): number;
 }
 export class Trim<T> {
@@ -125,16 +135,23 @@ export class Trim<T> {
 		return this._trim;
 	}
 
-	private async trimTask(
+	private trimTask(
 		option: TrimOptions | undefined = this._trim,
 		options?: { resolveDeletedEntries?: boolean },
-	): Promise<(Entry<T> | ShallowEntry)[]> {
+	): MaybePromise<(Entry<T> | ShallowEntry)[]> {
 		if (!option) {
 			return [];
 		}
 		if (option.type === "length" && !option.filter?.canTrim) {
 			return this.trimUnfilteredLength(option, options);
 		}
+		return this.trimTaskWithFilter(option, options);
+	}
+
+	private async trimTaskWithFilter(
+		option: TrimOptions,
+		options?: { resolveDeletedEntries?: boolean },
+	): Promise<(Entry<T> | ShallowEntry)[]> {
 		///  TODO Make this method less ugly
 		const deleted: (Entry<T> | ShallowEntry)[] = [];
 
@@ -300,10 +317,10 @@ export class Trim<T> {
 		return deleted;
 	}
 
-	private async trimUnfilteredLength(
+	private trimUnfilteredLength(
 		option: TrimToLengthOption,
 		options?: { resolveDeletedEntries?: boolean },
-	): Promise<(Entry<T> | ShallowEntry)[]> {
+	): MaybePromise<(Entry<T> | ShallowEntry)[]> {
 		const to = option.to;
 		const from = option.from ?? to;
 		if (this._log.getLength() < from) {
@@ -319,51 +336,74 @@ export class Trim<T> {
 
 		if (this._log.deleteNodes) {
 			const overage = this._log.getLength() - to;
-			if (overage > 0) {
-				const nodes = await this._log.index.getOldestMany(overage, false);
-				if (nodes.length > 0) {
-					deleted.push(
-						...(await this._log.deleteNodes(nodes, {
-							resolveDeletedEntry: options?.resolveDeletedEntries,
-							// Oldest-first trim only removes entries whose next links point
-							// further back into the same deleted prefix.
-							skipNextHeadUpdates: true,
-						})),
-					);
-				}
-			}
-			while (this._log.getLength() > to) {
-				const nodes = await this._log.index.getOldestMany(
-					Math.min(this._log.getLength() - to, 512),
-					false,
-				);
-				if (nodes.length === 0) {
-					break;
-				}
-				deleted.push(
-					...(await this._log.deleteNodes(nodes, {
+			const finish = () => {
+				this._trimLastLength = this._log.getLength();
+				this._trimLastOptions = option;
+				return deleted;
+			};
+			const deleteBatch = (
+				limit: number,
+			): MaybePromise<(Entry<T> | ShallowEntry)[] | undefined> => {
+				const nodesResult = this._log.index.getOldestManyMaybe(limit, false);
+				return mapMaybePromise(nodesResult, (nodes) => {
+					if (nodes.length === 0) {
+						return undefined;
+					}
+					return this._log.deleteNodes!(nodes, {
 						resolveDeletedEntry: options?.resolveDeletedEntries,
 						// Oldest-first trim only removes entries whose next links point
 						// further back into the same deleted prefix.
 						skipNextHeadUpdates: true,
-					})),
-				);
-			}
-		} else {
-			while (this._log.getLength() > to) {
-				const node = await this._log.index.getOldest(false);
-				if (!node) {
-					break;
-				}
-				const entry = await this._log.deleteNode(node, {
-					resolveDeletedEntry: options?.resolveDeletedEntries,
+					});
 				});
-				if (entry) {
-					deleted.push(entry);
+			};
+			const pushDeleted = (items: (Entry<T> | ShallowEntry)[] | undefined) => {
+				if (items) {
+					deleted.push(...items);
 				}
+			};
+			const deleteRemaining = async () => {
+				while (this._log.getLength() > to) {
+					const items = await deleteBatch(
+						Math.min(this._log.getLength() - to, 512),
+					);
+					if (!items || items.length === 0) {
+						break;
+					}
+					deleted.push(...items);
+				}
+				return finish();
+			};
+			if (overage > 0) {
+				return mapMaybePromise(deleteBatch(overage), (items) => {
+					pushDeleted(items);
+					return this._log.getLength() > to ? deleteRemaining() : finish();
+				});
+			}
+			return finish();
+		} else {
+			return this.trimUnfilteredLengthOneByOne(option, options, deleted);
+		}
+	}
+
+	private async trimUnfilteredLengthOneByOne(
+		option: TrimToLengthOption,
+		options: { resolveDeletedEntries?: boolean } | undefined,
+		deleted: (Entry<T> | ShallowEntry)[],
+	): Promise<(Entry<T> | ShallowEntry)[]> {
+		const to = option.to;
+		while (this._log.getLength() > to) {
+			const node = await this._log.index.getOldest(false);
+			if (!node) {
+				break;
+			}
+			const entry = await this._log.deleteNode(node, {
+				resolveDeletedEntry: options?.resolveDeletedEntries,
+			});
+			if (entry) {
+				deleted.push(entry);
 			}
 		}
-
 		this._trimLastLength = this._log.getLength();
 		this._trimLastOptions = option;
 		return deleted;
