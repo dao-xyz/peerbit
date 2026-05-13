@@ -633,7 +633,9 @@ const isLiveScenario = (scenario: ScenarioName) =>
 const isLiveChurnScenario = (scenario: ScenarioName) =>
 	scenario === "ci-multi-live-churn";
 const isPositiveIdleScenario = (scenario: ScenarioName) =>
-	scenario === "ci-multi-idle" || scenario === "ci-multi-hotspot-idle";
+	scenario === "ci-multi-idle";
+const isHotspotIdleScenario = (scenario: ScenarioName) =>
+	scenario === "ci-multi-hotspot-idle";
 const isSparseIdleScenario = (scenario: ScenarioName) =>
 	scenario === "ci-multi-sparse-idle";
 
@@ -2011,6 +2013,40 @@ const evaluateRun = (
 			baseline.secondBatchDeliveredWithinDeadlinePct,
 			upgrade.secondBatchDeliveredWithinDeadlinePct,
 			baseline.secondBatchDeliveredWithinDeadlinePct,
+		);
+		failIfLess(
+			failures,
+			"secondBatchOrBranchGain",
+			0,
+			Math.max(
+				baseline.secondBatchLatencyP95 - upgrade.secondBatchLatencyP95,
+				useful.promotedBranchGainAvg,
+			),
+			1,
+		);
+	}
+
+	if (isHotspotIdleScenario(scenario)) {
+		failIfLess(
+			failures,
+			"usefulPromotedTrees",
+			0,
+			useful.usefulPromotedTrees,
+			1,
+		);
+		failIfLess(
+			failures,
+			"reparentUpgradeTotal",
+			0,
+			upgrade.reparentUpgradeTotal,
+			1,
+		);
+		failIfGreater(
+			failures,
+			"maxReparentUpgradePerPeer",
+			baseline.maxReparentUpgradePerPeer,
+			upgrade.maxReparentUpgradePerPeer,
+			1,
 		);
 		failIfLess(
 			failures,

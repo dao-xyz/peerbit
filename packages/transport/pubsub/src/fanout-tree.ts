@@ -1742,6 +1742,7 @@ type ChannelState = {
 	parentUpgradeBackoffMs: number;
 	parentUpgradeBackoffUntil: number;
 	parentUpgradeStaleRootProbeRound: number;
+	parentUpgradeTrackerNoCapacityUntil: number;
 	parentProbeRejectBackoffMsByHash: Map<string, number>;
 	/**
 	 * True once this node has successfully joined the channel at least once.
@@ -2950,6 +2951,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			parentUpgradeBackoffMs: 0,
 			parentUpgradeBackoffUntil: 0,
 			parentUpgradeStaleRootProbeRound: 0,
+			parentUpgradeTrackerNoCapacityUntil: 0,
 			parentProbeRejectBackoffMsByHash: new Map(),
 			joinedAtLeastOnce: opts.role === "root",
 			routeFromRoot: opts.role === "root" ? [this.publicKeyHash] : undefined,
@@ -3096,6 +3098,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		ch.parentUpgradeBackoffMs = 0;
 		ch.parentUpgradeBackoffUntil = 0;
 		ch.parentUpgradeStaleRootProbeRound = 0;
+		ch.parentUpgradeTrackerNoCapacityUntil = 0;
 		ch.parentProbeRejectUntilByHash.clear();
 		ch.parentProbeRejectBackoffMsByHash.clear();
 		ch.pendingRouteQuery.clear();
@@ -5221,11 +5224,24 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (peers.length === 0) return;
 
 		this.pruneDisconnectedChildren(ch);
-		const freeSlots = Math.max(0, ch.effectiveMaxChildren - ch.children.size);
+		const parentUpgradeNoCapacity =
+			ch.isRoot && ch.parentUpgradeTrackerNoCapacityUntil > now;
+		const freeSlots = parentUpgradeNoCapacity
+			? 0
+			: Math.max(0, ch.effectiveMaxChildren - ch.children.size);
+		const announceTtlMs = parentUpgradeNoCapacity
+			? Math.max(
+					1_000,
+					Math.min(
+						ch.announceTtlMs,
+						ch.parentUpgradeTrackerNoCapacityUntil - now,
+					),
+				)
+			: ch.announceTtlMs;
 		const addrs = this.getSelfAnnounceAddrs();
 		const bytes = encodeTrackerAnnounce(
 			ch.id.key,
-			ch.announceTtlMs,
+			announceTtlMs,
 			Number.isFinite(ch.level) ? ch.level : 0xffff,
 			ch.effectiveMaxChildren,
 			freeSlots,
@@ -7109,8 +7125,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				if (localChannelCount > 1) break;
 			}
 		}
-		const singleChannelBranch =
-			ch.children.size > 0 && localChannelCount <= 1;
+		const singleChannelBranch = ch.children.size > 0 && localChannelCount <= 1;
 		const minFreeSlotsFor = (hash: string) =>
 			hash === ch.id.root
 				? Math.max(
@@ -7626,10 +7641,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					if (candidate.hash === ch.id.root) {
 						ch.metrics.reparentUpgradeSkipRootPressure += 1;
 						refreshCachedTrackerCandidate(candidate.hash, liveLevel, 0);
-						sendProbeTrackerFeedback(
-							candidate.hash,
-							JOIN_REJECT_NO_CAPACITY,
-						);
+						sendProbeTrackerFeedback(candidate.hash, JOIN_REJECT_NO_CAPACITY);
 					}
 					rejectShadowCandidate(candidate.hash, "capacity");
 					rejectProbeCandidate(candidate.hash);
@@ -8765,6 +8777,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				}
 
 				ch.children.set(fromHash, { bidPerByte });
+				if (ch.isRoot && consumedParentUpgradeReservation) {
+					ch.parentUpgradeTrackerNoCapacityUntil = Math.max(
+						ch.parentUpgradeTrackerNoCapacityUntil,
+						Date.now() + 2_000,
+					);
+				}
 				this.touchPeerHint(ch, fromHash);
 				const joinAccept = encodeJoinAccept(
 					ch.id.key,

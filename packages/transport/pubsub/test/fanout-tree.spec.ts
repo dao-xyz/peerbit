@@ -76,6 +76,7 @@ type ImproveChannel = {
 	parentUpgradeBackoffMs: number;
 	parentUpgradeBackoffUntil: number;
 	parentUpgradeStaleRootProbeRound: number;
+	parentUpgradeTrackerNoCapacityUntil: number;
 };
 
 type ImproveOptions = {
@@ -335,6 +336,7 @@ const createImproveChannel = (
 	parentUpgradeBackoffMs: 0,
 	parentUpgradeBackoffUntil: 0,
 	parentUpgradeStaleRootProbeRound: 0,
+	parentUpgradeTrackerNoCapacityUntil: 0,
 	...overrides,
 });
 
