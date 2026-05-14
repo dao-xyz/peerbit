@@ -21,6 +21,7 @@ import { Documents, policy, type SetupOptions } from "../src/index.js";
 //   Add "-policy-allow-all" to open with canPerform: policy.allowAll().
 //   Add "-policy-signed-public-key" to open with canPerform: policy.signedByPublicKey(local public key).
 //   Add "-policy-put-signed-public-key" to open with canPerform: policy.put(policy.signedByPublicKey(local public key)).
+//   Add "-policy-put-signed-field" to open with canPerform: policy.put(policy.signedByField("signer")).
 //   Add "-canperform-allow-all" to open with canPerform: () => true.
 // - DOC_PROFILE_DEEP=1 reports lower shared-log/log phase timings.
 // - BENCH_JSON=1
@@ -48,7 +49,7 @@ const scenarioNames = (
 
 const scenarioBaseName = (name: string) =>
 	name.replace(
-		/(?:-(?:putmany|nonunique|local|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|canperform-allow-all))*$/,
+		/(?:-(?:putmany|nonunique|local|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|canperform-allow-all))*$/,
 		"",
 	);
 const scenarioUsesUniquePuts = (name: string) => !name.includes("-nonunique");
@@ -61,9 +62,13 @@ const scenarioUsesPolicySignedPublicKey = (name: string) =>
 	name.includes("-policy-signed-public-key");
 const scenarioUsesPolicyPutSignedPublicKey = (name: string) =>
 	name.includes("-policy-put-signed-public-key");
+const scenarioUsesPolicyPutSignedField = (name: string) =>
+	name.includes("-policy-put-signed-field");
 const scenarioUsesCanPerformAllowAll = (name: string) =>
 	name.includes("-canperform-allow-all");
 const profileDeep = process.env.DOC_PROFILE_DEEP === "1";
+
+let currentSignerFieldBytes: Uint8Array | undefined;
 
 @variant("document")
 class Document {
@@ -79,12 +84,16 @@ class Document {
 	@field({ type: Uint8Array })
 	bytes: Uint8Array;
 
+	@field({ type: option(Uint8Array) })
+	signer?: Uint8Array;
+
 	constructor(opts: Document) {
 		if (opts) {
 			this.id = opts.id;
 			this.name = opts.name;
 			this.number = opts.number;
 			this.bytes = opts.bytes;
+			this.signer = opts.signer;
 		}
 	}
 }
@@ -184,6 +193,7 @@ const createDocument = () =>
 		name: "hello",
 		number: 1n,
 		bytes: payload,
+		signer: currentSignerFieldBytes,
 	});
 
 const time = async <T>(
@@ -289,6 +299,9 @@ const openScenario = async (name: string) => {
 		docs: new Documents<Document>(),
 	});
 	const client: ProgramClient = session.peers[0];
+	currentSignerFieldBytes = scenarioUsesPolicyPutSignedField(name)
+		? session.peers[0].identity.publicKey.bytes
+		: undefined;
 	await client.open(store, {
 		args: {
 			replicate: scenarioUsesLocalStore(name) ? false : { factor: 1 },
@@ -308,6 +321,12 @@ const openScenario = async (name: string) => {
 									),
 								),
 							}
+						: scenarioUsesPolicyPutSignedField(name)
+							? {
+									canPerform: policy.put(
+										policy.signedByField<Document>("signer"),
+									),
+								}
 				: scenarioUsesCanPerformAllowAll(name)
 					? { canPerform: () => true }
 					: {}),

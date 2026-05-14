@@ -820,7 +820,7 @@ export class Documents<
 	}
 
 	public async put(doc: T, options?: DocumentPutOptions) {
-		const prepared = this.canUsePlainPutFastPath(options)
+		const prepared = this.canUsePlainPutFastPath(doc, options)
 			? this.preparePlainPut(doc)
 			: this.preparePut(doc);
 		let existingLocalContext:
@@ -895,7 +895,7 @@ export class Documents<
 		if (docs.length === 0) {
 			return { entries: [], removed: [] };
 		}
-		if (!this.canUsePlainPutManyFastPath(options)) {
+		if (!this.canUsePlainPutManyFastPath(docs, options)) {
 			return this.putManySequential(docs, options);
 		}
 
@@ -961,13 +961,15 @@ export class Documents<
 	}
 
 	private canUsePlainPutFastPath(
+		doc: T,
 		options?: DocumentPutOptions,
 	): boolean {
 		const canPerformAllowsNativeFastPath =
 			!this._optionCanPerform ||
 			isNativeFastPathCanPerformPolicy(
 				this._optionCanPerformNativePolicy,
-				this.log.log.identity.publicKey.bytes,
+				this.log.log.identity.publicKey,
+				doc,
 			);
 		return (
 			canPerformAllowsNativeFastPath &&
@@ -987,13 +989,16 @@ export class Documents<
 		);
 	}
 
-	private canUsePlainPutManyFastPath(options?: DocumentPutOptions): boolean {
+	private canUsePlainPutManyFastPath(
+		docs: T[],
+		options?: DocumentPutOptions,
+	): boolean {
 		return (
 			options?.unique === true &&
 			options?.replicate !== true &&
 			options?.target === "none" &&
 			(options?.delivery === undefined || options.delivery === false) &&
-			this.canUsePlainPutFastPath(options)
+			docs.every((doc) => this.canUsePlainPutFastPath(doc, options))
 		);
 	}
 
@@ -1011,7 +1016,7 @@ export class Documents<
 		if (
 			("operation" in prepared &&
 				!(prepared.operation instanceof PutOperation)) ||
-			!this.canUsePlainPutFastPath(options)
+			!this.canUsePlainPutFastPath(prepared.document, options)
 		) {
 			return;
 		}

@@ -1054,6 +1054,53 @@ describe("index", () => {
 				}
 			});
 
+			it("uses the plain put fast path for matching policy.signedByField canPerform", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				const canPerform = policy.put(policy.signedByField<Document>("data"));
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform,
+					},
+				});
+				const descriptor = getNativeCanPerformPolicyDescriptor(canPerform);
+				expect(descriptor?.kind).equal("put");
+
+				const preparedPayloadCommitOnlySpy = sinon.spy(
+					store.docs.log,
+					"appendLocallyPreparedPayloadCommitOnly",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+				const nativeCommitSpy = sinon.spy(
+					store.docs as any,
+					"commitNativeDocumentAppend",
+				);
+
+				try {
+					const doc = new Document({
+						id: uuid(),
+						name: "field-signed",
+						data: session.peers[0].identity.publicKey.bytes,
+					});
+					await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(preparedPayloadCommitOnlySpy.callCount).equal(1);
+					expect(appendSpy.callCount).equal(0);
+					expect(nativeCommitSpy.callCount).equal(1);
+					expect((await store.docs.get(doc.id))?.name).equal("field-signed");
+				} finally {
+					nativeCommitSpy.restore();
+					appendSpy.restore();
+					preparedPayloadCommitOnlySpy.restore();
+				}
+			});
+
 			it("evaluates policy.allowAll during canAppend validation", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>(),
@@ -1134,6 +1181,49 @@ describe("index", () => {
 				}
 			});
 
+			it("evaluates policy.signedByField during canAppend validation", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform: policy.put(policy.signedByField<Document>("data")),
+					},
+				});
+				const canPerform = (store.docs as any)._optionCanPerform;
+				const canPerformSpy = sinon.spy(canPerform);
+				(store.docs as any)._optionCanPerform = canPerformSpy;
+
+				try {
+					const doc = new Document({
+						id: uuid(),
+						name: "field-replay",
+						data: session.peers[0].identity.publicKey.bytes,
+					});
+					const put = await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+					const allowed = await (store.docs as any).canAppend(
+						put.entry,
+						{
+							document: doc,
+							operation: new PutOperation({ data: serialize(doc) }),
+						},
+					);
+
+					expect(allowed).equal(true);
+					expect(canPerformSpy.callCount).equal(1);
+					const canPerformInput = canPerformSpy.getCall(0).args[0] as any;
+					expect(canPerformInput.type).equal("put");
+					expect(canPerformInput.value.id).equal(doc.id);
+				} finally {
+					(store.docs as any)._optionCanPerform = canPerform;
+				}
+			});
+
 			it("rejects non-matching policy.signedByPublicKey canPerform on the compatibility path", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>(),
@@ -1159,6 +1249,46 @@ describe("index", () => {
 							replicate: false,
 							target: "none",
 						}),
+					).to.be.rejectedWith("Not allowed to append");
+
+					expect(preparedPayloadCommitOnlySpy.callCount).equal(0);
+					expect(appendSpy.callCount).equal(1);
+				} finally {
+					appendSpy.restore();
+					preparedPayloadCommitOnlySpy.restore();
+				}
+			});
+
+			it("rejects non-matching policy.signedByField canPerform on the compatibility path", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform: policy.put(policy.signedByField<Document>("data")),
+					},
+				});
+				const preparedPayloadCommitOnlySpy = sinon.spy(
+					store.docs.log,
+					"appendLocallyPreparedPayloadCommitOnly",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+
+				try {
+					await expect(
+						store.docs.put(
+							new Document({
+								id: uuid(),
+								name: "wrong-field",
+								data: session.peers[1].identity.publicKey.bytes,
+							}),
+							{
+								unique: true,
+								replicate: false,
+								target: "none",
+							},
+						),
 					).to.be.rejectedWith("Not allowed to append");
 
 					expect(preparedPayloadCommitOnlySpy.callCount).equal(0);
