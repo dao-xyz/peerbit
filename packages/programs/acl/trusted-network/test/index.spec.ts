@@ -158,6 +158,48 @@ describe("index", () => {
 			expect(trustingB).to.be.empty;
 		});
 
+		it("uses a native-describable policy for default relation puts", async () => {
+			const store = new IdentityGraph({
+				relationGraph: createIdentityGraphStore(),
+			});
+			await session.peers[0].open(store);
+			const docs = store.relationGraph as Documents<IdentityRelation, FromTo>;
+
+			expect((docs as any)._optionCanPerformNativePolicy?.kind).to.equal("or");
+
+			const allowed = new IdentityRelation({
+				to: await Secp256k1PublicKey.recover(await Wallet.createRandom()),
+				from: session.peers[0].identity.publicKey,
+			});
+			await docs.put(allowed);
+
+			await expect(
+				docs.put(
+					new IdentityRelation({
+						to: await Secp256k1PublicKey.recover(await Wallet.createRandom()),
+						from: (await Ed25519Keypair.create()).publicKey,
+					}),
+				),
+			).eventually.rejectedWith(AccessError);
+		});
+
+		it("keeps custom identity-graph canPerform overrides on compatibility path", async () => {
+			const store = new AnyCanAppendIdentityGraph({
+				relationGraph: createIdentityGraphStore(),
+			});
+			await session.peers[0].open(store);
+			const docs = store.relationGraph as Documents<IdentityRelation, FromTo>;
+
+			expect((docs as any)._optionCanPerformNativePolicy).to.equal(undefined);
+
+			await docs.put(
+				new IdentityRelation({
+					to: await Secp256k1PublicKey.recover(await Wallet.createRandom()),
+					from: (await Ed25519Keypair.create()).publicKey,
+				}),
+			);
+		});
+
 		it("can get path as observer", async () => {
 			const replicator = new AnyCanAppendIdentityGraph({
 				relationGraph: createIdentityGraphStore(),

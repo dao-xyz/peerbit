@@ -12,6 +12,7 @@ import {
 	type DocumentsLike,
 	type Operation,
 	SearchRequest,
+	policy,
 } from "@peerbit/document";
 import { type AppendOptions } from "@peerbit/log";
 import { Program } from "@peerbit/program";
@@ -20,7 +21,6 @@ import {
 	FromTo,
 	IdentityRelation,
 	createIdentityGraphStore,
-	getFromByTo,
 	getFromByToLocalOnly,
 	getPathGenerator,
 	getToByFrom,
@@ -88,6 +88,11 @@ const canPerformByRelation = async (
 	return false;
 };
 
+const defaultIdentityGraphCanPerform = policy.or<IdentityRelation>(
+	policy.put(policy.signedByField<IdentityRelation>("_from")),
+	policy.delete(policy.allowAll<IdentityRelation>()),
+);
+
 type IdentityGraphArgs = {
 	canRead?: CanRead<FromTo>;
 	replicate?: ReplicationOptions;
@@ -116,9 +121,13 @@ export class IdentityGraph extends Program<IdentityGraphArgs> {
 	}
 
 	async open(options?: IdentityGraphArgs) {
+		const canPerform =
+			this.canPerform === IdentityGraph.prototype.canPerform
+				? defaultIdentityGraphCanPerform
+				: this.canPerform.bind(this);
 		this.relationGraph = await openDocumentsLike(this, this.relationGraph, {
 			type: IdentityRelation,
-			canPerform: this.canPerform.bind(this),
+			canPerform,
 			replicate: options?.replicate,
 			index: {
 				canRead: options?.canRead,
