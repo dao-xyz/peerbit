@@ -132,41 +132,78 @@ export const getNativeCanPerformPolicyDescriptor = <T>(
 		NATIVE_CAN_PERFORM_POLICY
 	];
 
+export type NativeFastPathCanPerformPolicyEvaluator = (
+	document: unknown,
+) => boolean;
+
+const allowFastPath = (): boolean => true;
+const denyFastPath = (): boolean => false;
+
+export const createNativeFastPathCanPerformPolicyEvaluator = (
+	descriptor: NativeCanPerformPolicyDescriptor,
+	localPublicKey: PublicSignKey | undefined,
+): NativeFastPathCanPerformPolicyEvaluator => {
+	switch (descriptor.kind) {
+		case "allowAll":
+			return allowFastPath;
+		case "signedByPublicKey":
+			return localPublicKey &&
+				bytesEqual(descriptor.publicKey, localPublicKey.bytes)
+				? allowFastPath
+				: denyFastPath;
+		case "put":
+			return createNativeFastPathCanPerformPolicyEvaluator(
+				descriptor.policy,
+				localPublicKey,
+			);
+		case "delete":
+			return denyFastPath;
+		case "and":
+			return descriptor.policies
+				.map((policy) =>
+					createNativeFastPathCanPerformPolicyEvaluator(
+						policy,
+						localPublicKey,
+					),
+				)
+				.reduce<NativeFastPathCanPerformPolicyEvaluator>(
+					(previous, next) => (document) =>
+						previous(document) && next(document),
+					allowFastPath,
+				);
+		case "or":
+			return descriptor.policies
+				.map((policy) =>
+					createNativeFastPathCanPerformPolicyEvaluator(
+						policy,
+						localPublicKey,
+					),
+				)
+				.reduce<NativeFastPathCanPerformPolicyEvaluator>(
+					(previous, next) => (document) =>
+						previous(document) || next(document),
+					denyFastPath,
+				);
+		case "signedByField":
+			return localPublicKey
+				? (document) =>
+						valueMatchesPublicKey(
+							valueAtPath(document, descriptor.path),
+							localPublicKey,
+						)
+				: denyFastPath;
+	}
+};
+
 const nativeFastPathPutPolicyAllows = (
 	descriptor: NativeCanPerformPolicyDescriptor,
 	localPublicKey: PublicSignKey | undefined,
 	document: unknown,
-): boolean => {
-	switch (descriptor.kind) {
-		case "allowAll":
-			return true;
-		case "signedByPublicKey":
-			return (
-				!!localPublicKey && bytesEqual(descriptor.publicKey, localPublicKey.bytes)
-			);
-		case "put":
-			return nativeFastPathPutPolicyAllows(
-				descriptor.policy,
-				localPublicKey,
-				document,
-			);
-		case "delete":
-			return false;
-		case "and":
-			return descriptor.policies.every((policy) =>
-				nativeFastPathPutPolicyAllows(policy, localPublicKey, document),
-			);
-		case "or":
-			return descriptor.policies.some((policy) =>
-				nativeFastPathPutPolicyAllows(policy, localPublicKey, document),
-			);
-		case "signedByField":
-			return (
-				!!localPublicKey &&
-				valueMatchesPublicKey(valueAtPath(document, descriptor.path), localPublicKey)
-			);
-	}
-};
+): boolean =>
+	createNativeFastPathCanPerformPolicyEvaluator(
+		descriptor,
+		localPublicKey,
+	)(document);
 
 export const isNativeFastPathCanPerformPolicy = (
 	descriptor: NativeCanPerformPolicyDescriptor | undefined,
@@ -175,6 +212,37 @@ export const isNativeFastPathCanPerformPolicy = (
 ): boolean =>
 	!!descriptor &&
 	nativeFastPathPutPolicyAllows(descriptor, localPublicKey, document);
+
+const getEntryPublicKeys = async <T>(
+	properties: CanPerformOperations<T>,
+): Promise<PublicSignKey[]> => {
+	try {
+		if (properties.entry.publicKeys.length > 0) {
+			return properties.entry.publicKeys;
+		}
+	} catch {
+		return properties.entry.getPublicKeys();
+	}
+	return properties.entry.getPublicKeys();
+};
+
+const entryPublicKeysInclude = async <T>(
+	properties: CanPerformOperations<T>,
+	publicKey: PublicSignKey,
+): Promise<boolean> => {
+	const publicKeys = await getEntryPublicKeys(properties);
+	return publicKeys.some((key) => key.equals(publicKey));
+};
+
+const entryPublicKeysMatchValue = async <T>(
+	properties: CanPerformOperations<T>,
+	value: unknown,
+): Promise<boolean> => {
+	const publicKeys = await getEntryPublicKeys(properties);
+	return publicKeys.some((publicKey) =>
+		valueMatchesPublicKey(value, publicKey),
+	);
+};
 
 const andEvaluate = async <T>(
 	policies: readonly CanPerform<T>[],
@@ -210,10 +278,7 @@ export const policy = {
 		attachNativeCanPerformPolicy<T>(() => true, { kind: "allowAll" }),
 	signedByPublicKey: <T = unknown>(publicKey: PublicSignKey): CanPerform<T> =>
 		attachNativeCanPerformPolicy<T>(
-			async ({ entry }) => {
-				const publicKeys = await entry.getPublicKeys();
-				return publicKeys.some((key) => key.equals(publicKey));
-			},
+			(properties) => entryPublicKeysInclude(properties, publicKey),
 			{
 				kind: "signedByPublicKey",
 				publicKey: copyBytes(publicKey.bytes),
@@ -228,10 +293,7 @@ export const policy = {
 					return false;
 				}
 				const fieldValue = valueAtPath(properties.value, path);
-				const publicKeys = await properties.entry.getPublicKeys();
-				return publicKeys.some((publicKey) =>
-					valueMatchesPublicKey(fieldValue, publicKey),
-				);
+				return entryPublicKeysMatchValue(properties, fieldValue);
 			},
 			{
 				kind: "signedByField",

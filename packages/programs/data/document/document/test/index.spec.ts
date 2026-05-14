@@ -1084,6 +1084,19 @@ describe("index", () => {
 						name: "field-signed",
 						data: session.peers[0].identity.publicKey.bytes,
 					});
+					const nativeFastPath = (store.docs as any)
+						._optionCanPerformNativeFastPath as (document: Document) => boolean;
+					expect(nativeFastPath).to.be.a("function");
+					expect(nativeFastPath(doc)).equal(true);
+					expect(
+						nativeFastPath(
+							new Document({
+								id: uuid(),
+								data: session.peers[1].identity.publicKey.bytes,
+							}),
+						),
+					).equal(false);
+					(store.docs as any)._optionCanPerformNativePolicy = undefined;
 					await store.docs.put(doc, {
 						unique: true,
 						replicate: false,

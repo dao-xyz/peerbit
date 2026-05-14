@@ -53,9 +53,10 @@ import {
 	isPutOperation,
 } from "./operation.js";
 import {
+	createNativeFastPathCanPerformPolicyEvaluator,
 	getNativeCanPerformPolicyDescriptor,
-	isNativeFastPathCanPerformPolicy,
 	type NativeCanPerformPolicyDescriptor,
+	type NativeFastPathCanPerformPolicyEvaluator,
 } from "./policy.js";
 import { isResultIndexedValue } from "./result-shape.js";
 import {
@@ -319,6 +320,7 @@ export class Documents<
 
 	private _optionCanPerform?: CanPerform<T>;
 	private _optionCanPerformNativePolicy?: NativeCanPerformPolicyDescriptor;
+	private _optionCanPerformNativeFastPath?: NativeFastPathCanPerformPolicyEvaluator;
 	private idResolver!: (any: any) => indexerTypes.IdPrimitive;
 	private domain?: CustomDocumentDomain<InferR<D>>;
 	private strictHistory: boolean;
@@ -517,6 +519,13 @@ export class Documents<
 			fanout: options?.fanout,
 			keep: keepFunction,
 		});
+
+		this._optionCanPerformNativeFastPath = this._optionCanPerformNativePolicy
+			? createNativeFastPathCanPerformPolicyEvaluator(
+					this._optionCanPerformNativePolicy,
+					this.log.log.identity.publicKey,
+				)
+			: undefined;
 	}
 
 	async recover() {
@@ -966,11 +975,7 @@ export class Documents<
 	): boolean {
 		const canPerformAllowsNativeFastPath =
 			!this._optionCanPerform ||
-			isNativeFastPathCanPerformPolicy(
-				this._optionCanPerformNativePolicy,
-				this.log.log.identity.publicKey,
-				doc,
-			);
+			!!this._optionCanPerformNativeFastPath?.(doc);
 		return (
 			canPerformAllowsNativeFastPath &&
 			!this.immutable &&
