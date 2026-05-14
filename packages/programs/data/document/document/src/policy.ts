@@ -1,5 +1,5 @@
 import type { PublicSignKey } from "@peerbit/crypto";
-import type { CanPerform } from "./program.js";
+import type { CanPerform, CanPerformOperations } from "./program.js";
 
 export type NativeCanPerformPolicyDescriptor =
 	| {
@@ -48,6 +48,20 @@ const bytesEqual = (left: Uint8Array, right: Uint8Array): boolean => {
 	return true;
 };
 
+const allDescriptors = <T>(
+	policies: readonly CanPerform<T>[],
+): NativeCanPerformPolicyDescriptor[] | undefined => {
+	const descriptors: NativeCanPerformPolicyDescriptor[] = [];
+	for (const policy of policies) {
+		const descriptor = getNativeCanPerformPolicyDescriptor(policy);
+		if (!descriptor) {
+			return;
+		}
+		descriptors.push(descriptor);
+	}
+	return descriptors;
+};
+
 type NativeCanPerformPolicyFunction<T> = CanPerform<T> & {
 	readonly [NATIVE_CAN_PERFORM_POLICY]?: NativeCanPerformPolicyDescriptor;
 };
@@ -72,21 +86,66 @@ export const getNativeCanPerformPolicyDescriptor = <T>(
 		NATIVE_CAN_PERFORM_POLICY
 	];
 
+const nativeFastPathPutPolicyAllows = (
+	descriptor: NativeCanPerformPolicyDescriptor,
+	localPublicKey: Uint8Array | undefined,
+): boolean => {
+	switch (descriptor.kind) {
+		case "allowAll":
+			return true;
+		case "signedByPublicKey":
+			return !!localPublicKey && bytesEqual(descriptor.publicKey, localPublicKey);
+		case "put":
+			return nativeFastPathPutPolicyAllows(descriptor.policy, localPublicKey);
+		case "delete":
+			return false;
+		case "and":
+			return descriptor.policies.every((policy) =>
+				nativeFastPathPutPolicyAllows(policy, localPublicKey),
+			);
+		case "or":
+			return descriptor.policies.some((policy) =>
+				nativeFastPathPutPolicyAllows(policy, localPublicKey),
+			);
+		case "signedByField":
+			return false;
+	}
+};
+
 export const isNativeFastPathCanPerformPolicy = (
 	descriptor: NativeCanPerformPolicyDescriptor | undefined,
 	localPublicKey?: Uint8Array,
-): boolean => {
-	if (!descriptor) {
-		return false;
+): boolean =>
+	!!descriptor && nativeFastPathPutPolicyAllows(descriptor, localPublicKey);
+
+const andEvaluate = async <T>(
+	policies: readonly CanPerform<T>[],
+	properties: CanPerformOperations<T>,
+): Promise<boolean> => {
+	for (const policy of policies) {
+		if (!(await policy(properties))) {
+			return false;
+		}
 	}
-	if (descriptor.kind === "allowAll") {
-		return true;
-	}
-	if (descriptor.kind === "signedByPublicKey" && localPublicKey) {
-		return bytesEqual(descriptor.publicKey, localPublicKey);
+	return true;
+};
+
+const orEvaluate = async <T>(
+	policies: readonly CanPerform<T>[],
+	properties: CanPerformOperations<T>,
+): Promise<boolean> => {
+	for (const policy of policies) {
+		if (await policy(properties)) {
+			return true;
+		}
 	}
 	return false;
 };
+
+const attachIfDescribed = <T>(
+	fn: CanPerform<T>,
+	descriptor: NativeCanPerformPolicyDescriptor | undefined,
+): CanPerform<T> => (descriptor ? attachNativeCanPerformPolicy(fn, descriptor) : fn);
 
 export const policy = {
 	allowAll: <T = unknown>(): CanPerform<T> =>
@@ -101,5 +160,41 @@ export const policy = {
 				kind: "signedByPublicKey",
 				publicKey: copyBytes(publicKey.bytes),
 			},
+		),
+	put: <T = unknown>(inner: CanPerform<T>): CanPerform<T> =>
+		attachIfDescribed<T>(
+			(properties) => properties.type === "put" && inner(properties),
+			(() => {
+				const descriptor = getNativeCanPerformPolicyDescriptor(inner);
+				return descriptor ? { kind: "put", policy: descriptor } : undefined;
+			})(),
+		),
+	delete: <T = unknown>(inner: CanPerform<T>): CanPerform<T> =>
+		attachIfDescribed<T>(
+			(properties) => properties.type === "delete" && inner(properties),
+			(() => {
+				const descriptor = getNativeCanPerformPolicyDescriptor(inner);
+				return descriptor ? { kind: "delete", policy: descriptor } : undefined;
+			})(),
+		),
+	and: <T = unknown>(...policies: readonly CanPerform<T>[]): CanPerform<T> =>
+		attachIfDescribed<T>(
+			(properties) => andEvaluate(policies, properties),
+			(() => {
+				const descriptors = allDescriptors(policies);
+				return descriptors
+					? { kind: "and", policies: Object.freeze(descriptors.slice()) }
+					: undefined;
+			})(),
+		),
+	or: <T = unknown>(...policies: readonly CanPerform<T>[]): CanPerform<T> =>
+		attachIfDescribed<T>(
+			(properties) => orEvaluate(policies, properties),
+			(() => {
+				const descriptors = allDescriptors(policies);
+				return descriptors
+					? { kind: "or", policies: Object.freeze(descriptors.slice()) }
+					: undefined;
+			})(),
 		),
 } as const;
