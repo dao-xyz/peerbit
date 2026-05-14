@@ -71,12 +71,14 @@ const getDocumentTestFanout = (peer: TestSession["peers"][number]) =>
 	).fanout;
 import { createDocumentDomain } from "../src/domain.js";
 import type { DocumentsChange } from "../src/events.js";
+import { policy } from "../src/index.js";
 import MostCommonQueryPredictor from "../src/most-common-query-predictor.js";
 import {
 	Operation,
 	PutOperation,
 	PutWithKeyOperation,
 } from "../src/operation.js";
+import { getNativeCanPerformPolicyDescriptor } from "../src/policy.js";
 import {
 	type CountEstimate,
 	Documents,
@@ -873,6 +875,114 @@ describe("index", () => {
 				}
 			});
 
+			it("uses the plain put fast path for policy.allowAll canPerform", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				const canPerform = policy.allowAll<Document>();
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform,
+					},
+				});
+				const descriptor = getNativeCanPerformPolicyDescriptor(canPerform);
+				expect(descriptor).to.deep.equal({ kind: "allowAll" });
+				const descriptorSymbol = Object.getOwnPropertySymbols(canPerform).find(
+					(symbol) =>
+						(canPerform as unknown as Record<symbol, unknown>)[symbol] ===
+						descriptor,
+				);
+				expect(descriptorSymbol).to.exist;
+				expect(
+					Object.getOwnPropertyDescriptor(canPerform, descriptorSymbol!)
+						?.enumerable,
+				).equal(false);
+
+				const changes: DocumentsChange<Document, Document>[] = [];
+				store.docs.events.addEventListener("change", (evt) => {
+					changes.push(evt.detail);
+				});
+				const preparedPayloadCommitOnlySpy = sinon.spy(
+					store.docs.log,
+					"appendLocallyPreparedPayloadCommitOnly",
+				);
+				const preparedAppendSpy = sinon.spy(
+					store.docs.log,
+					"appendLocallyPrepared",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+				const nativeCommitSpy = sinon.spy(
+					store.docs as any,
+					"commitNativeDocumentAppend",
+				);
+
+				try {
+					const doc = new Document({ id: uuid(), name: "policy" });
+					const put = await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(preparedPayloadCommitOnlySpy.callCount).equal(1);
+					expect(preparedAppendSpy.callCount).equal(0);
+					expect(appendSpy.callCount).equal(0);
+					expect(nativeCommitSpy.callCount).equal(1);
+					expect((await store.docs.get(doc.id))?.name).equal("policy");
+					expect(changes).to.have.length(1);
+					expect(changes[0].added).to.have.length(1);
+					expect(changes[0].added[0]).equal(doc);
+					expect(changes[0].added[0].__context.head).equal(put.entry.hash);
+					expect(changes[0].added[0].__indexed).to.exist;
+					expect(changes[0].removed).to.be.empty;
+				} finally {
+					nativeCommitSpy.restore();
+					appendSpy.restore();
+					preparedAppendSpy.restore();
+					preparedPayloadCommitOnlySpy.restore();
+				}
+			});
+
+			it("evaluates policy.allowAll during canAppend validation", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform: policy.allowAll<Document>(),
+					},
+				});
+				const canPerform = (store.docs as any)._optionCanPerform;
+				const canPerformSpy = sinon.spy(canPerform);
+				(store.docs as any)._optionCanPerform = canPerformSpy;
+
+				try {
+					const doc = new Document({ id: uuid(), name: "replay" });
+					const put = await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+					const allowed = await (store.docs as any).canAppend(
+						put.entry,
+						{
+							document: doc,
+							operation: new PutOperation({ data: serialize(doc) }),
+						},
+					);
+
+					expect(allowed).equal(true);
+					expect(canPerformSpy.callCount).equal(1);
+					const canPerformInput = canPerformSpy.getCall(0).args[0] as any;
+					expect(canPerformInput.type).equal("put");
+					expect(canPerformInput.value.id).equal(doc.id);
+				} finally {
+					(store.docs as any)._optionCanPerform = canPerform;
+				}
+			});
+
 			it("keeps custom canPerform puts on the compatibility path", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>(),
@@ -909,6 +1019,41 @@ describe("index", () => {
 					preparedAppendSpy.restore();
 					validatedAppendSpy.restore();
 					appendSpy.restore();
+				}
+			});
+
+			it("keeps arbitrary canPerform vetoes on the compatibility path", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				const canPerform = sinon.stub().returns(false);
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform,
+					},
+				});
+				const preparedAppendSpy = sinon.spy(
+					store.docs.log,
+					"appendLocallyPrepared",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+
+				try {
+					await expect(
+						store.docs.put(new Document({ id: uuid(), name: "deny" }), {
+							unique: true,
+							replicate: false,
+							target: "none",
+						}),
+					).to.be.rejectedWith("Not allowed to append");
+
+					expect(preparedAppendSpy.callCount).equal(0);
+					expect(appendSpy.callCount).equal(1);
+					expect(canPerform.callCount).equal(1);
+				} finally {
+					appendSpy.restore();
+					preparedAppendSpy.restore();
 				}
 			});
 

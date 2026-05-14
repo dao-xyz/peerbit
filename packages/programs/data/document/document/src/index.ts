@@ -33,6 +33,7 @@ export type {
 } from "./search.js";
 export { coerceWithContext, coerceWithIndexed } from "./search.js";
 export * from "./operation.js";
+export { policy } from "./policy.js";
 export { MAX_BATCH_SIZE as MAX_DOCUMENT_SIZE } from "./constants.js";
 export { ClosedError } from "@peerbit/program";
 export {

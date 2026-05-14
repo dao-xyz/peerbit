@@ -4,7 +4,7 @@ import { create as createSqliteIndexer } from "@peerbit/indexer-sqlite3";
 import { Program, type ProgramClient } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import { createRustPeerbitOptions } from "peerbit/rust";
-import { Documents, type SetupOptions } from "../src/program.js";
+import { Documents, policy, type SetupOptions } from "../src/index.js";
 
 // Run with:
 //   cd packages/programs/data/document/document
@@ -18,6 +18,8 @@ import { Documents, type SetupOptions } from "../src/program.js";
 //   Add "-nonunique" to any scenario name to use default update-safe put semantics.
 //   Add "-local" to a rust-peerbit scenario to disable replication and default trim.
 //   Add "-putmany" to any unique scenario name to use one putMany call per measured batch.
+//   Add "-policy-allow-all" to open with canPerform: policy.allowAll().
+//   Add "-canperform-allow-all" to open with canPerform: () => true.
 // - DOC_PROFILE_DEEP=1 reports lower shared-log/log phase timings.
 // - BENCH_JSON=1
 
@@ -43,11 +45,18 @@ const scenarioNames = (
 	.filter(Boolean);
 
 const scenarioBaseName = (name: string) =>
-	name.replace(/(?:-(?:putmany|nonunique|local))*$/, "");
+	name.replace(
+		/(?:-(?:putmany|nonunique|local|policy-allow-all|canperform-allow-all))*$/,
+		"",
+	);
 const scenarioUsesUniquePuts = (name: string) => !name.includes("-nonunique");
 const scenarioUsesPutMany = (name: string) => name.endsWith("-putmany");
 const scenarioUsesLocalStore = (name: string) =>
 	scenarioBaseName(name).startsWith("rust-peerbit") && name.includes("-local");
+const scenarioUsesPolicyAllowAll = (name: string) =>
+	name.includes("-policy-allow-all");
+const scenarioUsesCanPerformAllowAll = (name: string) =>
+	name.includes("-canperform-allow-all");
 const profileDeep = process.env.DOC_PROFILE_DEEP === "1";
 
 @variant("document")
@@ -277,6 +286,11 @@ const openScenario = async (name: string) => {
 	await client.open(store, {
 		args: {
 			replicate: scenarioUsesLocalStore(name) ? false : { factor: 1 },
+			...(scenarioUsesPolicyAllowAll(name)
+				? { canPerform: policy.allowAll<Document>() }
+				: scenarioUsesCanPerformAllowAll(name)
+					? { canPerform: () => true }
+					: {}),
 			nativeGraph:
 				baseName === "native-graph" ||
 				baseName === "rust-peerbit" ||

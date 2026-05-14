@@ -52,6 +52,11 @@ import {
 	isDeleteOperation,
 	isPutOperation,
 } from "./operation.js";
+import {
+	getNativeCanPerformPolicyDescriptor,
+	isNativeFastPathCanPerformPolicy,
+	type NativeCanPerformPolicyDescriptor,
+} from "./policy.js";
 import { isResultIndexedValue } from "./result-shape.js";
 import {
 	type CanRead,
@@ -313,6 +318,7 @@ export class Documents<
 	private _clazz!: AbstractType<T>;
 
 	private _optionCanPerform?: CanPerform<T>;
+	private _optionCanPerformNativePolicy?: NativeCanPerformPolicyDescriptor;
 	private idResolver!: (any: any) => indexerTypes.IdPrimitive;
 	private domain?: CustomDocumentDomain<InferR<D>>;
 	private strictHistory: boolean;
@@ -393,6 +399,8 @@ export class Documents<
 		}
 
 		this._optionCanPerform = options.canPerform;
+		this._optionCanPerformNativePolicy =
+			getNativeCanPerformPolicyDescriptor(options.canPerform);
 		const idProperty =
 			options.index?.idProperty ||
 			indexerTypes.getIdProperty(this._clazz) ||
@@ -955,8 +963,11 @@ export class Documents<
 	private canUsePlainPutFastPath(
 		options?: DocumentPutOptions,
 	): boolean {
+		const canPerformAllowsNativeFastPath =
+			!this._optionCanPerform ||
+			isNativeFastPathCanPerformPolicy(this._optionCanPerformNativePolicy);
 		return (
-			!this._optionCanPerform &&
+			canPerformAllowsNativeFastPath &&
 			!this.immutable &&
 			!this.strictHistory &&
 			this.compatibility !== 6 &&
