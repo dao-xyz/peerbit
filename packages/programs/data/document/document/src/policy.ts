@@ -1,3 +1,4 @@
+import type { PublicSignKey } from "@peerbit/crypto";
 import type { CanPerform } from "./program.js";
 
 export type NativeCanPerformPolicyDescriptor =
@@ -33,6 +34,20 @@ const NATIVE_CAN_PERFORM_POLICY = Symbol.for(
 	"@peerbit/document/native-can-perform-policy",
 );
 
+const copyBytes = (bytes: Uint8Array): Uint8Array => new Uint8Array(bytes);
+
+const bytesEqual = (left: Uint8Array, right: Uint8Array): boolean => {
+	if (left.byteLength !== right.byteLength) {
+		return false;
+	}
+	for (let i = 0; i < left.byteLength; i++) {
+		if (left[i] !== right[i]) {
+			return false;
+		}
+	}
+	return true;
+};
+
 type NativeCanPerformPolicyFunction<T> = CanPerform<T> & {
 	readonly [NATIVE_CAN_PERFORM_POLICY]?: NativeCanPerformPolicyDescriptor;
 };
@@ -59,9 +74,32 @@ export const getNativeCanPerformPolicyDescriptor = <T>(
 
 export const isNativeFastPathCanPerformPolicy = (
 	descriptor: NativeCanPerformPolicyDescriptor | undefined,
-): boolean => descriptor?.kind === "allowAll";
+	localPublicKey?: Uint8Array,
+): boolean => {
+	if (!descriptor) {
+		return false;
+	}
+	if (descriptor.kind === "allowAll") {
+		return true;
+	}
+	if (descriptor.kind === "signedByPublicKey" && localPublicKey) {
+		return bytesEqual(descriptor.publicKey, localPublicKey);
+	}
+	return false;
+};
 
 export const policy = {
 	allowAll: <T = unknown>(): CanPerform<T> =>
 		attachNativeCanPerformPolicy<T>(() => true, { kind: "allowAll" }),
+	signedByPublicKey: <T = unknown>(publicKey: PublicSignKey): CanPerform<T> =>
+		attachNativeCanPerformPolicy<T>(
+			async ({ entry }) => {
+				const publicKeys = await entry.getPublicKeys();
+				return publicKeys.some((key) => key.equals(publicKey));
+			},
+			{
+				kind: "signedByPublicKey",
+				publicKey: copyBytes(publicKey.bytes),
+			},
+		),
 } as const;

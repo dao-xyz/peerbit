@@ -965,7 +965,10 @@ export class Documents<
 	): boolean {
 		const canPerformAllowsNativeFastPath =
 			!this._optionCanPerform ||
-			isNativeFastPathCanPerformPolicy(this._optionCanPerformNativePolicy);
+			isNativeFastPathCanPerformPolicy(
+				this._optionCanPerformNativePolicy,
+				this.log.log.identity.publicKey.bytes,
+			);
 		return (
 			canPerformAllowsNativeFastPath &&
 			!this.immutable &&
