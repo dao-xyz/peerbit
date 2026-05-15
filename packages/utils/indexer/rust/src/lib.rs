@@ -431,6 +431,58 @@ impl NativeRustIndex {
         Ok(self.store.delete_keys(&keys))
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn put_shared_log_coordinate_and_delete_keys_void(
+        &mut self,
+        key: String,
+        id: JsValue,
+        value: JsValue,
+        hash_field: u32,
+        hash_number_field: u32,
+        gid_field: u32,
+        coordinates_field: u32,
+        coordinates_array_field: u32,
+        wall_time_field: u32,
+        assigned_to_range_boundary_field: u32,
+        meta_field: u32,
+        hash: String,
+        hash_number: String,
+        gid: String,
+        coordinates: Array,
+        wall_time: String,
+        assigned_to_range_boundary: bool,
+        meta_bytes: Vec<u8>,
+        byte_element_index_limit: usize,
+        keys: Array,
+    ) -> Result<(), JsValue> {
+        let fields = shared_log_coordinate_fields(SharedLogCoordinateFieldsInput {
+            hash_field,
+            hash_number_field,
+            gid_field,
+            coordinates_field,
+            coordinates_array_field,
+            wall_time_field,
+            assigned_to_range_boundary_field,
+            meta_field,
+            hash,
+            hash_number,
+            gid,
+            coordinates,
+            wall_time,
+            assigned_to_range_boundary,
+            meta_bytes,
+            byte_element_index_limit,
+        })?;
+        let keys: Vec<_> = keys.iter().filter_map(|key| key.as_string()).collect();
+        self.store.put(key.clone(), id, value);
+        self.planner.index.put(key, fields);
+        for key in &keys {
+            self.planner.index.delete(key);
+            self.store.delete(key);
+        }
+        Ok(())
+    }
+
     pub fn delete_keys(&mut self, keys: Array) -> Array {
         let keys: Vec<_> = keys.iter().filter_map(|key| key.as_string()).collect();
         for key in &keys {

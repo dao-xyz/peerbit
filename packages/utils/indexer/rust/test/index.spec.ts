@@ -642,6 +642,112 @@ describe("native planner bridge", () => {
 		await indices.drop();
 	});
 
+	it("indexes shared-log coordinate fields through the no-return hash-delete native path", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeCoordinateDocument });
+		const coordinateIndex = index as typeof index & {
+			putSharedLogCoordinateFieldsAndDeleteHashesNoReturn: (
+				fields: {
+					hash: string;
+					hashNumber: bigint;
+					gid: string;
+					coordinates: bigint[];
+					wallTime: bigint;
+					assignedToRangeBoundary: boolean;
+					metaBytes: Uint8Array;
+				},
+				deleteHashes?: string[],
+			) => Promise<void> | void;
+		};
+
+		await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn({
+			hash: "a",
+			hashNumber: 10n,
+			gid: "gid-a",
+			coordinates: [4n],
+			wallTime: 12n,
+			assignedToRangeBoundary: true,
+			metaBytes: new Uint8Array([1, 2, 3]),
+		});
+		const result =
+			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn(
+				{
+					hash: "b",
+					hashNumber: 11n,
+					gid: "gid-b",
+					coordinates: [8n],
+					wallTime: 13n,
+					assignedToRangeBoundary: false,
+					metaBytes: new Uint8Array([4]),
+				},
+				["a"],
+			);
+
+		expect(result).equal(undefined);
+		const remaining = await index.iterate().all();
+		expect(remaining.map((entry) => entry.value.hash)).to.deep.equal(["b"]);
+
+		await indices.drop();
+	});
+
+	it("indexes shared-log coordinate fields through the no-return hash-delete native batch path", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeCoordinateDocument });
+		const coordinateIndex = index as typeof index & {
+			putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn: (
+				values: Array<{
+					fields: {
+						hash: string;
+						hashNumber: bigint;
+						gid: string;
+						coordinates: bigint[];
+						wallTime: bigint;
+						assignedToRangeBoundary: boolean;
+						metaBytes: Uint8Array;
+					};
+					deleteHashes?: string[];
+				}>,
+			) => Promise<void> | void;
+		};
+
+		const result =
+			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn(
+				[
+					{
+						fields: {
+							hash: "a",
+							hashNumber: 10n,
+							gid: "gid-a",
+							coordinates: [4n],
+							wallTime: 12n,
+							assignedToRangeBoundary: true,
+							metaBytes: new Uint8Array([1, 2, 3]),
+						},
+					},
+					{
+						fields: {
+							hash: "b",
+							hashNumber: 11n,
+							gid: "gid-b",
+							coordinates: [8n],
+							wallTime: 13n,
+							assignedToRangeBoundary: false,
+							metaBytes: new Uint8Array([4]),
+						},
+						deleteHashes: ["a"],
+					},
+				],
+			);
+
+		expect(result).equal(undefined);
+		const remaining = await index.iterate().all();
+		expect(remaining.map((entry) => entry.value.hash)).to.deep.equal(["b"]);
+
+		await indices.drop();
+	});
+
 	it("skips durable coordinate encoding for transient shared-log coordinate puts", async () => {
 		const indices = create();
 		await indices.start();

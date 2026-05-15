@@ -573,6 +573,11 @@ type PutAndDeleteIndex<T extends Record<string, any>> = Index<T> & {
 		deleteHashes?: string[],
 		id?: IdKey,
 	) => Promise<unknown> | unknown;
+	putSharedLogCoordinateFieldsAndDeleteHashesNoReturn?: (
+		fields: SharedLogCoordinateNativeFields<any>,
+		deleteHashes?: string[],
+		id?: IdKey,
+	) => Promise<unknown> | unknown;
 	putSharedLogCoordinatesAndDeleteIdsBatch?: (
 		values: Array<{
 			value: T;
@@ -589,6 +594,13 @@ type PutAndDeleteIndex<T extends Record<string, any>> = Index<T> & {
 		}>,
 	) => Promise<unknown> | unknown;
 	putSharedLogCoordinateFieldsAndDeleteHashesBatch?: (
+		values: Array<{
+			fields: SharedLogCoordinateNativeFields<any>;
+			deleteHashes?: string[];
+			id?: IdKey;
+		}>,
+	) => Promise<unknown> | unknown;
+	putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn?: (
 		values: Array<{
 			fields: SharedLogCoordinateNativeFields<any>;
 			deleteHashes?: string[];
@@ -9061,7 +9073,12 @@ export class SharedLog<
 		>;
 		let deleteNextOptions: DeleteOptions | undefined;
 		let putResult: MaybePromise<unknown>;
-		if (coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashes) {
+		if (coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn) {
+			putResult = coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn(
+				fields,
+				deleteHashes,
+			);
+		} else if (coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashes) {
 			putResult = coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashes(
 				fields,
 				deleteHashes,
@@ -9233,7 +9250,14 @@ export class SharedLog<
 			typeof coordinateIndex.putBatch === "function" &&
 			changed.every(({ item }) => item.entry.meta.next.length === 0);
 
-		if (coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatch) {
+		if (coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn) {
+			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn(
+				changed.map(({ item, prepared }) => ({
+					fields: prepared.fields,
+					deleteHashes: item.entry.meta.next,
+				})),
+			);
+		} else if (coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatch) {
 			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatch(
 				changed.map(({ item, prepared }) => ({
 					fields: prepared.fields,
