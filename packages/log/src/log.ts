@@ -142,6 +142,7 @@ export type MemoryProperties = {
 export type NativeGraphOptions = {
 	heads?: boolean;
 	optional?: boolean;
+	graph?: NativeLogGraph;
 };
 
 export type LogProperties<T> = {
@@ -316,6 +317,13 @@ export class Log<T> {
 			(await (async () => {
 				const nativeGraphOptions =
 					typeof nativeGraphOption === "object" ? nativeGraphOption : undefined;
+				if (nativeGraphOptions?.graph) {
+					const headsRequested = nativeGraphOptions.heads !== false;
+					return {
+						graph: nativeGraphOptions.graph,
+						useHeads: headsRequested && this._sortFn === LastWriteWins,
+					};
+				}
 				let createLogGraphIndex: () => Promise<NativeLogGraph>;
 				try {
 					({ createLogGraphIndex } = (await import(

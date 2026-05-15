@@ -16,7 +16,7 @@ import { Documents, policy, type SetupOptions } from "../src/index.js";
 // - DOC_WARMUP=100
 // - DOC_ITERATIONS=1000
 // - DOC_BYTES=1200
-// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,native-ceiling,native-backbone-ceiling
+// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,native-ceiling,native-backbone-ceiling
 //   Add "-nonunique" to any scenario name to use default update-safe put semantics.
 //   Add "-local" to a rust-peerbit scenario to disable replication and default trim.
 //   Add "-putmany" to any unique scenario name to use one putMany call per measured batch.
@@ -293,7 +293,8 @@ const openScenario = async (name: string) => {
 	const rustOptions =
 		baseName === "native-block-store" ||
 		baseName === "rust-peerbit" ||
-		baseName === "rust-peerbit-transient-index"
+		baseName === "rust-peerbit-transient-index" ||
+		baseName === "rust-peerbit-backbone"
 			? createRustPeerbitOptions()
 			: undefined;
 	const session = await TestSession.connected(1, {
@@ -307,6 +308,8 @@ const openScenario = async (name: string) => {
 						? rustOptions?.indexer
 						: baseName === "rust-peerbit-transient-index"
 							? () => rustOptions!.indexer(undefined)
+							: baseName === "rust-peerbit-backbone"
+								? () => rustOptions!.indexer(undefined)
 						: undefined,
 	});
 	const store = new TestStore({
@@ -347,7 +350,11 @@ const openScenario = async (name: string) => {
 			nativeGraph:
 				baseName === "native-graph" ||
 				baseName === "rust-peerbit" ||
-				baseName === "rust-peerbit-transient-index",
+				baseName === "rust-peerbit-transient-index" ||
+				baseName === "rust-peerbit-backbone",
+			...(baseName === "rust-peerbit-backbone"
+				? { nativeBackbone: { optional: false } }
+				: {}),
 			...(scenarioUsesLocalStore(name)
 				? {}
 				: {

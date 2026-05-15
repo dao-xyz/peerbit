@@ -4,6 +4,7 @@ import { cidifyString } from "@peerbit/blocks-interface";
 import { Cache } from "@peerbit/cache";
 import {
 	AccessError,
+	Ed25519Keypair,
 	Ed25519PublicKey,
 	PublicSignKey,
 	Secp256k1PublicKey,
@@ -48,6 +49,7 @@ import {
 	type ShallowOrFullEntry,
 } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
+import type { NativePeerbitBackbone } from "@peerbit/native-backbone";
 import { ClosedError, Program, type ProgramEvents } from "@peerbit/program";
 import {
 	FanoutChannel,
@@ -672,6 +674,7 @@ export type SharedLogOptions<
 > = {
 	appendDurability?: LogProperties<T>["appendDurability"];
 	nativeGraph?: LogProperties<T>["nativeGraph"];
+	nativeBackbone?: false | { optional?: boolean; heads?: boolean };
 	nativeRangePlanner?: false | { optional?: boolean };
 	replicate?: ReplicationOptions<R>;
 	replicas?: ReplicationLimitsOptions;
@@ -1002,6 +1005,7 @@ export class SharedLog<
 	private _entryCoordinatesIndex!: Index<EntryReplicated<R>>;
 	private _nativeRangePlanner?: SharedLogRangePlanner;
 	private _nativeSharedLogState?: SharedLogNativeState;
+	private _nativeBackbone?: NativePeerbitBackbone;
 	private _residentEntryCoordinatesByHash?: Map<string, ResidentCoordinateEntry<R>>;
 	private coordinateToHash!: Cache<string>;
 	private recentlyRebalanced!: Cache<string>;
@@ -6337,6 +6341,7 @@ export class SharedLog<
 		await this.openNativeRangePlanner(options?.nativeRangePlanner);
 
 		await remoteBlocksStartPromise;
+		this._nativeBackbone = await this.openNativeBackbone(options?.nativeBackbone);
 		const hasIndexedReplicationInfo =
 			(await this.replicationIndex.count({
 				query: [
@@ -6468,7 +6473,8 @@ export class SharedLog<
 			PRUNE_DEBOUNCE_INTERVAL, // TODO make this dynamic on the number of replicators
 		);
 
-		await this.log.open(this.remoteBlocks, this.node.identity, {
+		const nativeBackboneLogStore = this._nativeBackbone?.blocks;
+		await this.log.open(nativeBackboneLogStore ?? this.remoteBlocks, this.node.identity, {
 			keychain: this.node.services.keychain,
 			resolveRemotePeers: (hash, options) =>
 				this.resolveCandidatePeersForHash(hash, {
@@ -6476,7 +6482,14 @@ export class SharedLog<
 					maxPeers: 8,
 				}),
 			...this._logProperties,
-			nativeGraph: this._logProperties?.nativeGraph ?? { optional: true },
+			nativeGraph: this._nativeBackbone
+				? {
+						graph: this._nativeBackbone.graph,
+						heads: this._logProperties?.nativeBackbone
+							? this._logProperties.nativeBackbone.heads
+							: undefined,
+					}
+				: (this._logProperties?.nativeGraph ?? { optional: true }),
 			onChange: async (change) => {
 				await this.onChange(change);
 				return this._logProperties?.onChange?.(change);
@@ -6701,6 +6714,7 @@ export class SharedLog<
 	): Promise<void> {
 		this._nativeRangePlanner = undefined;
 		this._nativeSharedLogState = undefined;
+		this._nativeBackbone = undefined;
 		this._residentEntryCoordinatesByHash = undefined;
 		if (options === false) {
 			return;
@@ -6728,6 +6742,55 @@ export class SharedLog<
 					error instanceof Error ? error.message : String(error)
 				}`,
 			);
+		}
+	}
+
+	private async openNativeBackbone(
+		options: SharedLogOptions<T, D, R>["nativeBackbone"],
+	): Promise<NativePeerbitBackbone | undefined> {
+		if (!options) {
+			return undefined;
+		}
+		if (this._logProperties?.replicate !== false) {
+			const error = new Error(
+				"nativeBackbone is currently only supported for replicate: false logs",
+			);
+			if (options.optional === false) {
+				throw error;
+			}
+			warn(error.message);
+			return undefined;
+		}
+		if (!(this.node.identity instanceof Ed25519Keypair)) {
+			const error = new Error(
+				"nativeBackbone requires an Ed25519 node identity",
+			);
+			if (options.optional === false) {
+				throw error;
+			}
+			warn(error.message);
+			return undefined;
+		}
+		try {
+			const { createNativePeerbitBackbone } = await import(
+				"@peerbit/native-backbone"
+			);
+			return await createNativePeerbitBackbone({
+				resolution: this.domain.resolution,
+				clockId: this.node.identity.publicKey.bytes,
+				privateKey: this.node.identity.privateKey.privateKey,
+				publicKey: this.node.identity.publicKey.bytes,
+			});
+		} catch (error) {
+			if (options.optional === false) {
+				throw error;
+			}
+			warn(
+				`Native backbone unavailable, falling back to regular log storage: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+			return undefined;
 		}
 	}
 

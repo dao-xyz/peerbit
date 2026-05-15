@@ -76,6 +76,7 @@
 		"@peerbit/indexer-sqlite3": "workspace:*",
 		"@peerbit/log": "workspace:*",
 		"@peerbit/logger": "workspace:*",
+		"@peerbit/native-backbone": "workspace:*",
 		"@peerbit/program": "workspace:*",
 		"@peerbit/pubsub": "workspace:*",
 		"@peerbit/pubsub-interface": "workspace:*",

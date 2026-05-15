@@ -187,11 +187,12 @@ export type NativeLogGraph = {
 				bytes?: Uint8Array;
 				cid: string;
 				byteLength: number;
-				signature: Uint8Array;
+				signature?: Uint8Array;
 				next: string[];
-				metaBytes: Uint8Array;
-				payloadBytes: Uint8Array;
-				signatureBytes: Uint8Array;
+				metaBytes?: Uint8Array;
+				payloadBytes?: Uint8Array;
+				signatureBytes?: Uint8Array;
+				hashDigestBytes?: Uint8Array;
 		  }
 		| undefined
 	>;
@@ -214,11 +215,12 @@ export type NativeLogGraph = {
 				bytes?: Uint8Array;
 				cid: string;
 				byteLength: number;
-				signature: Uint8Array;
+				signature?: Uint8Array;
 				next: string[];
-				metaBytes: Uint8Array;
-				payloadBytes: Uint8Array;
-				signatureBytes: Uint8Array;
+				metaBytes?: Uint8Array;
+				payloadBytes?: Uint8Array;
+				signatureBytes?: Uint8Array;
+				hashDigestBytes?: Uint8Array;
 		  }>
 		| undefined
 	>;

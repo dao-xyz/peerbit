@@ -1666,6 +1666,9 @@ importers:
       '@peerbit/logger':
         specifier: workspace:*
         version: link:../../../utils/logger
+      '@peerbit/native-backbone':
+        specifier: workspace:*
+        version: link:../../../utils/native-backbone
       '@peerbit/program':
         specifier: workspace:*
         version: link:../../program/program
@@ -2769,7 +2772,11 @@ importers:
         specifier: ^6.2.3
         version: 6.2.3
 
-  packages/utils/native-backbone: {}
+  packages/utils/native-backbone:
+    dependencies:
+      '@peerbit/blocks-interface':
+        specifier: workspace:*
+        version: link:../../transport/blocks-interface
 
   packages/utils/rateless-iblt: {}
 

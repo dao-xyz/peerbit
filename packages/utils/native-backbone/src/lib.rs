@@ -54,6 +54,183 @@ impl NativePeerbitBackbone {
         self.shared_log.entry_coordinate_hashes()
     }
 
+    pub fn graph_has_many(&self, hashes: Array) -> Result<Array, JsValue> {
+        self.log.has_many(hashes)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn graph_put(
+        &mut self,
+        hash: String,
+        gid: String,
+        next: Array,
+        entry_type: u8,
+        wall_time: u64,
+        logical: u32,
+        payload_size: u32,
+        head: bool,
+        data: JsValue,
+    ) -> Result<(), JsValue> {
+        self.log.put(
+            hash,
+            gid,
+            next,
+            entry_type,
+            wall_time,
+            logical,
+            payload_size,
+            head,
+            data,
+        )
+    }
+
+    pub fn graph_delete(&mut self, hash: &str) -> bool {
+        self.log.delete(hash)
+    }
+
+    pub fn graph_delete_many(&mut self, hashes: Array) -> Result<usize, JsValue> {
+        self.log.delete_many(hashes)
+    }
+
+    pub fn graph_oldest_entries(&self, limit: usize) -> Array {
+        self.log.oldest_entries(limit)
+    }
+
+    pub fn graph_heads(&self, gid: Option<String>) -> Array {
+        self.log.heads(gid)
+    }
+
+    pub fn graph_has_head(&self, gid: Option<String>) -> bool {
+        self.log.has_head(gid)
+    }
+
+    pub fn graph_has_any_head(&self, gids: Array) -> Result<bool, JsValue> {
+        self.log.has_any_head(gids)
+    }
+
+    pub fn graph_has_any_head_batch(&self, gid_sets: Array) -> Result<Array, JsValue> {
+        self.log.has_any_head_batch(gid_sets)
+    }
+
+    pub fn graph_head_entries(&self, gid: Option<String>) -> Array {
+        self.log.head_entries(gid)
+    }
+
+    pub fn graph_head_data_entries(&self, gid: Option<String>) -> Array {
+        self.log.head_data_entries(gid)
+    }
+
+    pub fn graph_max_head_data_u32(&self, gid: Option<String>) -> JsValue {
+        self.log.max_head_data_u32(gid)
+    }
+
+    pub fn graph_max_head_data_u32_batch(&self, gids: Array) -> Result<Array, JsValue> {
+        self.log.max_head_data_u32_batch(gids)
+    }
+
+    pub fn graph_join_head_entries(&self, gid: Option<String>) -> Array {
+        self.log.head_join_entries(gid)
+    }
+
+    pub fn graph_child_join_entries(&self, hash: &str) -> Array {
+        self.log.child_join_entries(hash)
+    }
+
+    pub fn graph_entry_metadata_batch(&self, hashes: Array) -> Result<Array, JsValue> {
+        self.log.entry_metadata_batch(hashes)
+    }
+
+    pub fn graph_unique_reference_gids(&self, hash: &str) -> JsValue {
+        self.log.unique_reference_gids(hash)
+    }
+
+    pub fn graph_unique_reference_gid_rows_batch(&self, hashes: Array) -> Result<Array, JsValue> {
+        self.log.unique_reference_gid_rows_batch(hashes)
+    }
+
+    pub fn graph_plan_delete_recursively(
+        &self,
+        hashes: Array,
+        skip_first: bool,
+    ) -> Result<Array, JsValue> {
+        self.log.plan_delete_recursively(hashes, skip_first)
+    }
+
+    pub fn graph_payload_size_sum(&self) -> f64 {
+        self.log.payload_size_sum()
+    }
+
+    pub fn graph_oldest_hash(&self) -> JsValue {
+        self.log.oldest_hash()
+    }
+
+    pub fn graph_newest_hash(&self) -> JsValue {
+        self.log.newest_hash()
+    }
+
+    pub fn graph_count_has_next(&self, next: &str, exclude_hash: Option<String>) -> usize {
+        self.log.count_has_next(next, exclude_hash)
+    }
+
+    pub fn graph_shadowed_gids(
+        &self,
+        gid: String,
+        next: Array,
+        exclude_hash: Option<String>,
+    ) -> Result<Array, JsValue> {
+        self.log.shadowed_gids(&gid, next, exclude_hash)
+    }
+
+    pub fn graph_plan_join(
+        &self,
+        hash: String,
+        next: Array,
+        entry_type: u8,
+        reset: bool,
+        gid: Option<String>,
+        wall_time: Option<u64>,
+        logical: Option<u32>,
+    ) -> Result<Array, JsValue> {
+        self.log
+            .plan_join(&hash, next, entry_type, reset, gid, wall_time, logical)
+    }
+
+    pub fn block_get(&self, key: &str) -> Option<Vec<u8>> {
+        self.blocks.get(key)
+    }
+
+    pub fn block_get_many(&self, keys: Array) -> Result<Array, JsValue> {
+        self.blocks.get_many(keys)
+    }
+
+    pub fn block_has_many(&self, keys: Array) -> Result<Array, JsValue> {
+        self.blocks.has_many(keys)
+    }
+
+    pub fn block_put(&mut self, key: String, value: Vec<u8>) {
+        self.blocks.put(key, value);
+    }
+
+    pub fn block_put_many(&mut self, keys: Array, values: Array) -> Result<(), JsValue> {
+        self.blocks.put_many(keys, values)
+    }
+
+    pub fn block_delete(&mut self, key: &str) -> bool {
+        self.blocks.delete(key)
+    }
+
+    pub fn block_delete_many(&mut self, keys: Array) -> Result<usize, JsValue> {
+        self.blocks.delete_many(keys)
+    }
+
+    pub fn block_entries(&self) -> Array {
+        self.blocks.entries()
+    }
+
+    pub fn block_size(&self) -> f64 {
+        self.blocks.size()
+    }
+
     pub fn clear(&mut self) {
         self.log.clear();
         self.blocks.clear();
@@ -138,6 +315,89 @@ impl NativePeerbitBackbone {
             self_replicating,
             Some(trim_length_to),
         )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_entry_commit_facts(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        trim_length_to: JsValue,
+    ) -> Result<Array, JsValue> {
+        let trim_length_to = if trim_length_to.is_undefined() || trim_length_to.is_null() {
+            None
+        } else {
+            Some(
+                trim_length_to
+                    .as_f64()
+                    .ok_or_else(|| JsValue::from_str("trimLengthTo must be a number"))?
+                    as usize,
+            )
+        };
+        let has_no_next = next.length() == 0;
+        match (has_no_next, trim_length_to) {
+            (true, Some(trim_length_to)) => {
+                self.log
+                    .prepare_entry_v0_plain_entry_commit_no_next_facts_trim_and_put_with_builder(
+                        &self.builder,
+                        &mut self.blocks,
+                        wall_time,
+                        logical,
+                        gid,
+                        entry_type,
+                        meta_data,
+                        payload_data,
+                        trim_length_to,
+                    )
+            }
+            (true, None) => {
+                self.log
+                    .prepare_entry_v0_plain_entry_commit_no_next_facts_and_put_with_builder(
+                        &self.builder,
+                        &mut self.blocks,
+                        wall_time,
+                        logical,
+                        gid,
+                        entry_type,
+                        meta_data,
+                        payload_data,
+                    )
+            }
+            (false, Some(trim_length_to)) => {
+                self.log
+                    .prepare_entry_v0_plain_entry_commit_facts_trim_and_put_with_builder(
+                        &self.builder,
+                        &mut self.blocks,
+                        wall_time,
+                        logical,
+                        gid,
+                        next,
+                        entry_type,
+                        meta_data,
+                        payload_data,
+                        trim_length_to,
+                    )
+            }
+            (false, None) => {
+                self.log
+                    .prepare_entry_v0_plain_entry_commit_facts_and_put_with_builder(
+                        &self.builder,
+                        &mut self.blocks,
+                        wall_time,
+                        logical,
+                        gid,
+                        next,
+                        entry_type,
+                        meta_data,
+                        payload_data,
+                    )
+            }
+        }
     }
 }
 

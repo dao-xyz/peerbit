@@ -1,3 +1,5 @@
+import { calculateRawCid } from "@peerbit/blocks-interface";
+
 export type RangeResolution = "u32" | "u64";
 
 type NativePeerbitBackboneHandle = {
@@ -6,6 +8,65 @@ type NativePeerbitBackboneHandle = {
 	has_log_entry: (hash: string) => boolean;
 	has_block: (hash: string) => boolean;
 	entry_coordinate_hashes: () => string[];
+	graph_has_many: (hashes: string[]) => string[];
+	graph_put: (
+		hash: string,
+		gid: string,
+		next: string[],
+		type: number,
+		wallTime: bigint,
+		logical: number,
+		payloadSize: number,
+		head: boolean,
+		data?: Uint8Array,
+	) => void;
+	graph_delete: (hash: string) => boolean;
+	graph_delete_many: (hashes: string[]) => number;
+	graph_oldest_entries: (limit: number) => unknown[];
+	graph_heads: (gid?: string) => string[];
+	graph_has_head: (gid?: string) => boolean;
+	graph_has_any_head: (gids: string[]) => boolean;
+	graph_has_any_head_batch: (gidSets: string[][]) => boolean[];
+	graph_head_entries: (gid?: string) => unknown[];
+	graph_head_data_entries: (gid?: string) => unknown[];
+	graph_max_head_data_u32: (gid?: string) => number | undefined;
+	graph_max_head_data_u32_batch: (gids: string[]) => Array<number | undefined>;
+	graph_join_head_entries: (gid?: string) => unknown[];
+	graph_child_join_entries: (hash: string) => unknown[];
+	graph_entry_metadata_batch: (hashes: string[]) => unknown[];
+	graph_unique_reference_gids: (hash: string) => string[] | undefined;
+	graph_unique_reference_gid_rows_batch: (hashes: string[]) => unknown[];
+	graph_plan_delete_recursively: (
+		hashes: string[],
+		skipFirst: boolean,
+	) => string[];
+	graph_payload_size_sum: () => number;
+	graph_oldest_hash: () => string | undefined;
+	graph_newest_hash: () => string | undefined;
+	graph_count_has_next: (next: string, excludeHash?: string) => number;
+	graph_shadowed_gids: (
+		gid: string,
+		next: string[],
+		excludeHash?: string,
+	) => string[];
+	graph_plan_join: (
+		hash: string,
+		next: string[],
+		type: number,
+		reset: boolean,
+		gid?: string,
+		wallTime?: bigint,
+		logical?: number,
+	) => [boolean, string[], boolean, boolean];
+	block_get: (key: string) => Uint8Array | undefined;
+	block_get_many: (keys: string[]) => Array<Uint8Array | undefined>;
+	block_has_many: (keys: string[]) => boolean[];
+	block_put: (key: string, value: Uint8Array) => void;
+	block_put_many: (keys: string[], values: Uint8Array[]) => void;
+	block_delete: (key: string) => boolean;
+	block_delete_many: (keys: string[]) => number;
+	block_entries: () => Array<[string, Uint8Array]>;
+	block_size: () => number;
 	clear: () => void;
 	put_range: (
 		id: string,
@@ -44,6 +105,16 @@ type NativePeerbitBackboneHandle = {
 		selfHash: string,
 		selfReplicating: boolean,
 		trimLengthTo: number,
+	) => unknown[];
+	prepare_plain_entry_commit_facts: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		trimLengthTo: number | undefined,
 	) => unknown[];
 };
 
@@ -113,11 +184,31 @@ export type NativeBackboneCoordinatePlan = {
 };
 
 export type NativeBackboneCommittedEntry = {
+	cid: string;
 	hash: string;
 	next: string[];
 	metaBytes?: Uint8Array;
 	byteLength: number;
+	signature?: Uint8Array;
+	payloadBytes?: Uint8Array;
+	signatureBytes?: Uint8Array;
 	hashDigestBytes?: Uint8Array;
+};
+
+export type NativeBackboneLogEntry = {
+	hash: string;
+	gid: string;
+	next: string[];
+	type: number;
+	head?: boolean;
+	payloadSize?: number;
+	data?: Uint8Array;
+	clock: {
+		timestamp: {
+			wallTime: bigint | number | string;
+			logical?: number;
+		};
+	};
 };
 
 export type NativeBackboneTrimmedEntry = {
@@ -235,6 +326,7 @@ const committedEntryFromRow = (row: unknown[]): NativeBackboneCommittedEntry => 
 		Uint8Array | undefined,
 	];
 	return {
+		cid: hash,
 		hash,
 		next: [],
 		metaBytes,
@@ -270,6 +362,68 @@ const trimmedEntryFromRow = (row: unknown): NativeBackboneTrimmedEntry => {
 	};
 };
 
+const nativeLogEntryFromTrimRow = (row: unknown): NativeBackboneLogEntry => {
+	const entry = trimmedEntryFromRow(row);
+	return {
+		...entry,
+		clock: {
+			timestamp: {
+				wallTime: entry.clock.timestamp.wallTime,
+				logical: entry.clock.timestamp.logical,
+			},
+		},
+	};
+};
+
+const headEntryFromRow = (row: unknown) => {
+	const [hash, gid, wallTime, logical] = row as [
+		string,
+		string,
+		string,
+		number,
+	];
+	return {
+		hash,
+		meta: {
+			gid,
+			clock: { timestamp: { wallTime: BigInt(wallTime), logical } },
+		},
+	};
+};
+
+const joinHeadEntryFromRow = (row: unknown) => {
+	const [hash, gid, wallTime, logical, type, next] = row as [
+		string,
+		string,
+		string,
+		number,
+		number,
+		string[],
+	];
+	return {
+		hash,
+		meta: {
+			gid,
+			type,
+			next,
+			clock: { timestamp: { wallTime: BigInt(wallTime), logical } },
+		},
+	};
+};
+
+const headDataEntryFromRow = (row: unknown) => {
+	const [hash, data] = row as [string, Uint8Array | undefined];
+	return { hash, meta: { data } };
+};
+
+const metadataEntryFromRow = (row: unknown) => {
+	if (row == null) {
+		return undefined;
+	}
+	const [hash, gid, data] = row as [string, string, Uint8Array | undefined];
+	return { hash, gid, data };
+};
+
 const appendResultFromRow = (
 	resolution: RangeResolution,
 	row: unknown[],
@@ -292,14 +446,354 @@ const appendResultFromRow = (
 	};
 };
 
+const preparedCommitFactsFromRow = (
+	row: unknown[],
+): NativeBackboneCommittedEntry & {
+	trimmedEntries?: NativeBackboneLogEntry[];
+} => {
+	const isTrimRow =
+		Array.isArray(row) &&
+		row.length === 2 &&
+		Array.isArray(row[0]) &&
+		Array.isArray(row[1]);
+	const entryRow = (isTrimRow ? row[0] : row) as unknown[];
+	const prepared = committedEntryFromRow(entryRow);
+	if (isTrimRow) {
+		return {
+			...prepared,
+			trimmedEntries: (row[1] as unknown[]).map(nativeLogEntryFromTrimRow),
+		};
+	}
+	return prepared;
+};
+
+export class NativeBackboneLogGraph {
+	constructor(private readonly native: NativePeerbitBackboneHandle) {}
+
+	get length(): number {
+		return this.native.log_len();
+	}
+
+	has(hash: string): boolean {
+		return this.native.has_log_entry(hash);
+	}
+
+	hasMany(hashes: Iterable<string>): Set<string> {
+		return new Set(this.native.graph_has_many([...hashes]));
+	}
+
+	put(entry: NativeBackboneLogEntry): void {
+		this.native.graph_put(
+			entry.hash,
+			entry.gid,
+			entry.next,
+			entry.type,
+			BigInt(entry.clock.timestamp.wallTime),
+			entry.clock.timestamp.logical ?? 0,
+			entry.payloadSize ?? 0,
+			entry.head ?? true,
+			entry.data,
+		);
+	}
+
+	putBatch(entries: NativeBackboneLogEntry[]): void {
+		for (const entry of entries) {
+			this.put(entry);
+		}
+	}
+
+	putAppendChain(entries: NativeBackboneLogEntry[]): void {
+		for (const entry of entries) {
+			this.put(entry);
+		}
+	}
+
+	prepareEntryV0PlainEntryCommit(
+		input: {
+			clockId: Uint8Array;
+			privateKey: Uint8Array;
+			publicKey: Uint8Array;
+			wallTime: bigint | number | string;
+			logical?: number;
+			gid: string;
+			next?: string[];
+			type?: number;
+			metaData?: Uint8Array;
+			payloadData: Uint8Array;
+			includeMaterializationBytes?: boolean;
+			includeAppendFactsBytes?: boolean;
+			trimLengthTo?: number;
+		},
+		_blockStore: unknown,
+	):
+		| (NativeBackboneCommittedEntry & {
+				trimmedEntries?: NativeBackboneLogEntry[];
+		  })
+		| undefined {
+		if (
+			input.includeMaterializationBytes !== false ||
+			input.includeAppendFactsBytes !== true
+		) {
+			return undefined;
+		}
+		return preparedCommitFactsFromRow(
+			this.native.prepare_plain_entry_commit_facts(
+				BigInt(input.wallTime),
+				input.logical ?? 0,
+				input.gid,
+				input.next ?? [],
+				input.type ?? 0,
+				input.metaData,
+				input.payloadData,
+				input.trimLengthTo,
+			),
+		);
+	}
+
+	delete(hash: string): boolean {
+		return this.native.graph_delete(hash);
+	}
+
+	deleteMany(hashes: Iterable<string>): number {
+		return this.native.graph_delete_many([...hashes]);
+	}
+
+	oldestEntries(limit: number): NativeBackboneLogEntry[] {
+		return this.native.graph_oldest_entries(limit).map(nativeLogEntryFromTrimRow);
+	}
+
+	clear(): void {
+		this.native.clear();
+	}
+
+	heads(gid?: string): string[] {
+		return this.native.graph_heads(gid);
+	}
+
+	hasHead(gid?: string): boolean {
+		return this.native.graph_has_head(gid);
+	}
+
+	hasAnyHead(gids: Iterable<string>): boolean {
+		return this.native.graph_has_any_head([...gids]);
+	}
+
+	hasAnyHeadBatch(gidSets: Iterable<Iterable<string>>): boolean[] {
+		return this.native.graph_has_any_head_batch(
+			[...gidSets].map((gids) => [...gids]),
+		);
+	}
+
+	headDataEntries(gid?: string): any[] {
+		return this.native.graph_head_data_entries(gid).map(headDataEntryFromRow);
+	}
+
+	maxHeadDataU32(gid?: string): number | undefined {
+		return this.native.graph_max_head_data_u32(gid);
+	}
+
+	maxHeadDataU32Batch(gids: Iterable<string>): Array<number | undefined> {
+		return this.native.graph_max_head_data_u32_batch([...gids]);
+	}
+
+	headEntries(gid?: string): any[] {
+		return this.native.graph_head_entries(gid).map(headEntryFromRow);
+	}
+
+	joinHeadEntries(gid?: string): any[] {
+		return this.native.graph_join_head_entries(gid).map(joinHeadEntryFromRow);
+	}
+
+	childJoinEntries(hash: string): any[] {
+		return this.native.graph_child_join_entries(hash).map(joinHeadEntryFromRow);
+	}
+
+	entryMetadataBatch(hashes: Iterable<string>): Array<any | undefined> {
+		return this.native
+			.graph_entry_metadata_batch([...hashes])
+			.map(metadataEntryFromRow);
+	}
+
+	uniqueReferenceGids(hash: string): string[] | undefined {
+		return this.native.graph_unique_reference_gids(hash);
+	}
+
+	uniqueReferenceGidRowsBatch(hashes: Iterable<string>): any[] {
+		return this.native.graph_unique_reference_gid_rows_batch([...hashes]);
+	}
+
+	planDeleteRecursively(hashes: Iterable<string>, skipFirst = false): string[] {
+		return this.native.graph_plan_delete_recursively([...hashes], skipFirst);
+	}
+
+	payloadSizeSum(): number {
+		return this.native.graph_payload_size_sum();
+	}
+
+	oldestHash(): string | undefined {
+		return this.native.graph_oldest_hash();
+	}
+
+	newestHash(): string | undefined {
+		return this.native.graph_newest_hash();
+	}
+
+	countHasNext(next: string, excludeHash?: string): number {
+		return this.native.graph_count_has_next(next, excludeHash);
+	}
+
+	shadowedGids(
+		gid: string,
+		next: string[],
+		excludeHash?: string,
+	): string[] {
+		return this.native.graph_shadowed_gids(gid, next, excludeHash);
+	}
+
+	planJoin(
+		hash: string,
+		next: string[],
+		type: number,
+		reset = false,
+		cutCheck?: {
+			gid: string;
+			wallTime: bigint | number | string;
+			logical?: number;
+		},
+	): any {
+		const [skip, missingParents, cutChecked, coveredByCut] =
+			this.native.graph_plan_join(
+				hash,
+				next,
+				type,
+				reset,
+				cutCheck?.gid,
+				cutCheck?.wallTime == null ? undefined : BigInt(cutCheck.wallTime),
+				cutCheck?.logical,
+			);
+		return { skip, missingParents, cutChecked, coveredByCut };
+	}
+}
+
+export class NativeBackboneBlockStore {
+	constructor(private readonly native: NativePeerbitBackboneHandle) {}
+
+	status(): "open" {
+		return "open";
+	}
+
+	open(): void {}
+
+	close(): void {}
+
+	async put(
+		data: Uint8Array | { block: { bytes: Uint8Array }; cid: string },
+	): Promise<string> {
+		const prepared = data instanceof Uint8Array ? await calculateRawCid(data) : data;
+		this.native.block_put(prepared.cid, prepared.block.bytes);
+		return prepared.cid;
+	}
+
+	async putMany(
+		blocks: Array<Uint8Array | { block: { bytes: Uint8Array }; cid: string }>,
+	): Promise<string[]> {
+		const prepared = await Promise.all(
+			blocks.map((block) =>
+				block instanceof Uint8Array ? calculateRawCid(block) : block,
+			),
+		);
+		this.native.block_put_many(
+			prepared.map((block) => block.cid),
+			prepared.map((block) => block.block.bytes),
+		);
+		return prepared.map((block) => block.cid);
+	}
+
+	putKnown(cid: string, bytes: Uint8Array): string {
+		this.native.block_put(cid, bytes);
+		return cid;
+	}
+
+	putKnownMany(blocks: Array<readonly [cid: string, bytes: Uint8Array]>): string[] {
+		if (blocks.length === 0) {
+			return [];
+		}
+		this.native.block_put_many(
+			blocks.map(([cid]) => cid),
+			blocks.map(([, bytes]) => bytes),
+		);
+		return blocks.map(([cid]) => cid);
+	}
+
+	putImmutable(cid: string, bytes: Uint8Array): void {
+		this.native.block_put(cid, bytes);
+	}
+
+	putManyImmutable(blocks: Array<readonly [cid: string, bytes: Uint8Array]>): void {
+		this.putKnownMany(blocks);
+	}
+
+	get(cid: string): Uint8Array | undefined {
+		return this.native.block_get(cid);
+	}
+
+	getMany(cids: string[]): Array<Uint8Array | undefined> {
+		return this.native.block_get_many(cids);
+	}
+
+	has(cid: string): boolean {
+		return this.native.has_block(cid);
+	}
+
+	hasMany(cids: string[]): boolean[] {
+		return this.native.block_has_many(cids);
+	}
+
+	rm(cid: string): void {
+		this.native.block_delete(cid);
+	}
+
+	del(cid: string): void {
+		this.rm(cid);
+	}
+
+	rmMany(cids: string[]): number {
+		return this.native.block_delete_many(cids);
+	}
+
+	async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {
+		for (const [key, value] of this.native.block_entries()) {
+			yield [key, value];
+		}
+	}
+
+	size(): number {
+		return this.native.block_size();
+	}
+
+	persisted(): boolean {
+		return false;
+	}
+
+	waitFor(): Promise<string[]> {
+		return Promise.resolve([]);
+	}
+}
+
 const integerString = (value: bigint | number | string): string =>
 	typeof value === "string" ? value : value.toString();
 
 export class NativePeerbitBackbone {
+	readonly graph: NativeBackboneLogGraph;
+	readonly blocks: NativeBackboneBlockStore;
+
 	private constructor(
 		private readonly native: NativePeerbitBackboneHandle,
 		private readonly resolution: RangeResolution,
-	) {}
+	) {
+		this.graph = new NativeBackboneLogGraph(native);
+		this.blocks = new NativeBackboneBlockStore(native);
+	}
 
 	static async create(
 		options: NativeBackboneOptions,

@@ -56,6 +56,9 @@
 		"test": "cargo test && npm run build && aegir test -t node",
 		"lint": "cargo fmt --check && pnpm exec eslint --config ../../../eslint.config.js \"src/**/*.ts\" \"test/**/*.ts\""
 	},
+	"dependencies": {
+		"@peerbit/blocks-interface": "workspace:*"
+	},
 	"author": "dao.xyz",
 	"license": "MIT"
 }
