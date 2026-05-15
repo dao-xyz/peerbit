@@ -568,6 +568,11 @@ type PutAndDeleteIndex<T extends Record<string, any>> = Index<T> & {
 		deleteIds?: Array<IdKey | Ideable>,
 		id?: IdKey,
 	) => Promise<unknown> | unknown;
+	putSharedLogCoordinateFieldsAndDeleteHashes?: (
+		fields: SharedLogCoordinateNativeFields<any>,
+		deleteHashes?: string[],
+		id?: IdKey,
+	) => Promise<unknown> | unknown;
 	putSharedLogCoordinatesAndDeleteIdsBatch?: (
 		values: Array<{
 			value: T;
@@ -583,11 +588,42 @@ type PutAndDeleteIndex<T extends Record<string, any>> = Index<T> & {
 			id?: IdKey;
 		}>,
 	) => Promise<unknown> | unknown;
+	putSharedLogCoordinateFieldsAndDeleteHashesBatch?: (
+		values: Array<{
+			fields: SharedLogCoordinateNativeFields<any>;
+			deleteHashes?: string[];
+			id?: IdKey;
+		}>,
+	) => Promise<unknown> | unknown;
 };
 
 type EntryWithMetaBytes = {
 	getMetaBytes?: () => Uint8Array | undefined;
 	getHashDigestBytes?: () => Uint8Array | undefined;
+};
+
+const combineCoordinateDeleteHashes = (
+	nextHashes: string[],
+	deleteHashes?: string[],
+): string[] => {
+	if (!deleteHashes || deleteHashes.length === 0) {
+		return nextHashes;
+	}
+	const combined: string[] = [];
+	const seen = new Set<string>();
+	for (const hash of nextHashes) {
+		if (!seen.has(hash)) {
+			seen.add(hash);
+			combined.push(hash);
+		}
+	}
+	for (const hash of deleteHashes) {
+		if (!seen.has(hash)) {
+			seen.add(hash);
+			combined.push(hash);
+		}
+	}
+	return combined;
 };
 
 const createIndexableDomainFromResolution = <R extends "u32" | "u64">(
@@ -9016,16 +9052,21 @@ export class SharedLog<
 		deleteHashes?: string[];
 	}): MaybePromise<boolean> {
 		const { assignedToRangeBoundary, fields } = properties.prepared;
-		const deleteHashes =
-			properties.deleteHashes && properties.deleteHashes.length > 0
-				? [...new Set([...properties.nextHashes, ...properties.deleteHashes])]
-				: properties.nextHashes;
+		const deleteHashes = combineCoordinateDeleteHashes(
+			properties.nextHashes,
+			properties.deleteHashes,
+		);
 		const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
 			EntryReplicated<R>
 		>;
 		let deleteNextOptions: DeleteOptions | undefined;
 		let putResult: MaybePromise<unknown>;
-		if (coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIds) {
+		if (coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashes) {
+			putResult = coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashes(
+				fields,
+				deleteHashes,
+			);
+		} else if (coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIds) {
 			putResult = coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIds(
 				fields,
 				deleteHashes,
@@ -9192,7 +9233,14 @@ export class SharedLog<
 			typeof coordinateIndex.putBatch === "function" &&
 			changed.every(({ item }) => item.entry.meta.next.length === 0);
 
-		if (coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIdsBatch) {
+		if (coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatch) {
+			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatch(
+				changed.map(({ item, prepared }) => ({
+					fields: prepared.fields,
+					deleteHashes: item.entry.meta.next,
+				})),
+			);
+		} else if (coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIdsBatch) {
 			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIdsBatch(
 				changed.map(({ item, prepared }) => ({
 					fields: prepared.fields,

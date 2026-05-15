@@ -593,6 +593,55 @@ describe("native planner bridge", () => {
 		await indices.drop();
 	});
 
+	it("indexes shared-log coordinate fields through the hash-delete native path", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeCoordinateDocument });
+		const coordinateIndex = index as typeof index & {
+			putSharedLogCoordinateFieldsAndDeleteHashes: (
+				fields: {
+					hash: string;
+					hashNumber: bigint;
+					gid: string;
+					coordinates: bigint[];
+					wallTime: bigint;
+					assignedToRangeBoundary: boolean;
+					metaBytes: Uint8Array;
+				},
+				deleteHashes?: string[],
+			) => Promise<ReturnType<typeof toId>[]>;
+		};
+
+		await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashes({
+			hash: "a",
+			hashNumber: 10n,
+			gid: "gid-a",
+			coordinates: [4n],
+			wallTime: 12n,
+			assignedToRangeBoundary: true,
+			metaBytes: new Uint8Array([1, 2, 3]),
+		});
+		const deleted =
+			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashes(
+				{
+					hash: "b",
+					hashNumber: 11n,
+					gid: "gid-b",
+					coordinates: [8n],
+					wallTime: 13n,
+					assignedToRangeBoundary: false,
+					metaBytes: new Uint8Array([4]),
+				},
+				["a"],
+			);
+
+		expect(deleted.map((id) => id.primitive)).to.deep.equal(["a"]);
+		const remaining = await index.iterate().all();
+		expect(remaining.map((entry) => entry.value.hash)).to.deep.equal(["b"]);
+
+		await indices.drop();
+	});
+
 	it("skips durable coordinate encoding for transient shared-log coordinate puts", async () => {
 		const indices = create();
 		await indices.start();
@@ -622,6 +671,20 @@ describe("native planner bridge", () => {
 						metaBytes: Uint8Array;
 					};
 					deleteIds?: string[];
+				}>,
+			) => Promise<ReturnType<typeof toId>[]>;
+			putSharedLogCoordinateFieldsAndDeleteHashesBatch: (
+				values: Array<{
+					fields: {
+						hash: string;
+						hashNumber: bigint;
+						gid: string;
+						coordinates: bigint[];
+						wallTime: bigint;
+						assignedToRangeBoundary: boolean;
+						metaBytes: Uint8Array;
+					};
+					deleteHashes?: string[];
 				}>,
 			) => Promise<ReturnType<typeof toId>[]>;
 		};
@@ -661,6 +724,22 @@ describe("native planner bridge", () => {
 				]);
 
 			expect(deleted.map((id) => id.primitive)).to.deep.equal(["a"]);
+			const hashBatchDeleted =
+				await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatch([
+					{
+						fields: {
+							hash: "c",
+							hashNumber: 12n,
+							gid: "gid-c",
+							coordinates: [32n],
+							wallTime: 14n,
+							assignedToRangeBoundary: false,
+							metaBytes: new Uint8Array([5]),
+						},
+						deleteHashes: ["b"],
+					},
+				]);
+			expect(hashBatchDeleted.map((id) => id.primitive)).to.deep.equal(["b"]);
 			expect(encodeCalls).to.equal(0);
 		} finally {
 			indexInternal.encodeSharedLogCoordinatePersistenceValue = originalEncode;

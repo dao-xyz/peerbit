@@ -561,6 +561,10 @@ describe("index", () => {
 				const coordinateIndex = store.docs.log.entryCoordinatesIndex as any;
 				const coordinateBatchSpy = sinon.spy(
 					coordinateIndex,
+					"putSharedLogCoordinateFieldsAndDeleteHashesBatch",
+				);
+				const legacyCoordinateBatchSpy = sinon.spy(
+					coordinateIndex,
 					"putSharedLogCoordinatesAndDeleteIdsBatch",
 				);
 				const coordinatePutSpy = sinon.spy(coordinateIndex, "put");
@@ -605,6 +609,7 @@ describe("index", () => {
 					expect(encodeContextualPartsSpy.callCount).equal(0);
 					expect(nativeEncodedPartsBatchSpy.callCount).equal(1);
 					expect(coordinateBatchSpy.callCount).equal(1);
+					expect(legacyCoordinateBatchSpy.callCount).equal(0);
 					expect(coordinatePutSpy.callCount).equal(0);
 					expect(changes).to.have.length(1);
 					expect(changes[0].added.map((doc) => doc.id)).to.deep.equal(
@@ -612,6 +617,7 @@ describe("index", () => {
 					);
 				} finally {
 					coordinatePutSpy.restore();
+					legacyCoordinateBatchSpy.restore();
 					coordinateBatchSpy.restore();
 					encodeContextualPartsSpy.restore();
 					nativeEncodedPartsBatchSpy.restore();

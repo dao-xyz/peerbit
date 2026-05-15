@@ -204,6 +204,10 @@ describe("append", () => {
 		const coordinateIndex = store.log.entryCoordinatesIndex as any;
 		const putDeleteSpy = sinon.spy(
 			coordinateIndex,
+			"putSharedLogCoordinateFieldsAndDeleteHashes",
+		);
+		const genericPutDeleteSpy = sinon.spy(
+			coordinateIndex,
 			"putSharedLogCoordinateFieldsAndDeleteIds",
 		);
 		const legacyPutDeleteSpy = sinon.spy(
@@ -262,6 +266,7 @@ describe("append", () => {
 			expect(persistCoordinateSpy.callCount).equal(0);
 			expect(persistPreparedSpy.callCount).equal(1);
 			expect(putDeleteSpy.callCount).equal(1);
+			expect(genericPutDeleteSpy.callCount).equal(0);
 			expect(legacyPutDeleteSpy.callCount).equal(0);
 			const fields = putDeleteSpy.firstCall.args[0];
 			expect(fields.hash).equal(result.entry.hash);
@@ -297,6 +302,7 @@ describe("append", () => {
 			createFactsSpy.restore();
 			createSpy.restore();
 			legacyPutDeleteSpy.restore();
+			genericPutDeleteSpy.restore();
 			putDeleteSpy.restore();
 		}
 	});
@@ -315,6 +321,10 @@ describe("append", () => {
 		const coordinateIndex = store.log.entryCoordinatesIndex as any;
 		const nativeState = (store.log as any)._nativeSharedLogState;
 		const putDeleteSpy = sinon.spy(
+			coordinateIndex,
+			"putSharedLogCoordinateFieldsAndDeleteHashes",
+		);
+		const genericPutDeleteSpy = sinon.spy(
 			coordinateIndex,
 			"putSharedLogCoordinateFieldsAndDeleteIds",
 		);
@@ -346,11 +356,13 @@ describe("append", () => {
 			expect(delIdsSpy.callCount).equal(0);
 			expect(putDeleteSpy.callCount).equal(1);
 			expect(putDeleteSpy.firstCall.args[1]).to.deep.equal([first.entry.hash]);
+			expect(genericPutDeleteSpy.callCount).equal(0);
 			expect(nativeDeleteSpy.callCount).equal(0);
 			expect(nativeState.getEntryCoordinates(first.entry.hash)).equal(undefined);
 		} finally {
 			nativeDeleteSpy.restore();
 			delIdsSpy.restore();
+			genericPutDeleteSpy.restore();
 			putDeleteSpy.restore();
 		}
 	});
