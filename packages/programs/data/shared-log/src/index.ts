@@ -6596,7 +6596,16 @@ export class SharedLog<
 			PRUNE_DEBOUNCE_INTERVAL, // TODO make this dynamic on the number of replicators
 		);
 
-		const nativeBackboneLogStore = this._nativeBackbone?.blocks;
+		const useNativeBackboneBlocks =
+			this._nativeBackbone && this._logProperties?.replicate === false;
+		const nativeBackboneGraph = this._nativeBackbone
+			? useNativeBackboneBlocks
+				? this._nativeBackbone.graph
+				: this._nativeBackbone.storageBackedGraph
+			: undefined;
+		const nativeBackboneLogStore = useNativeBackboneBlocks
+			? this._nativeBackbone?.blocks
+			: undefined;
 		await this.log.open(nativeBackboneLogStore ?? this.remoteBlocks, this.node.identity, {
 			keychain: this.node.services.keychain,
 			resolveRemotePeers: (hash, options) =>
@@ -6605,9 +6614,9 @@ export class SharedLog<
 					maxPeers: 8,
 				}),
 			...this._logProperties,
-			nativeGraph: this._nativeBackbone
+			nativeGraph: nativeBackboneGraph
 				? {
-						graph: this._nativeBackbone.graph,
+						graph: nativeBackboneGraph,
 						heads: this._logProperties?.nativeBackbone
 							? this._logProperties.nativeBackbone.heads
 							: undefined,
@@ -6872,16 +6881,6 @@ export class SharedLog<
 		options: SharedLogOptions<T, D, R>["nativeBackbone"],
 	): Promise<NativePeerbitBackbone | undefined> {
 		if (!options) {
-			return undefined;
-		}
-		if (this._logProperties?.replicate !== false) {
-			const error = new Error(
-				"nativeBackbone is currently only supported for replicate: false logs",
-			);
-			if (options.optional === false) {
-				throw error;
-			}
-			warn(error.message);
 			return undefined;
 		}
 		if (!(this.node.identity instanceof Ed25519Keypair)) {

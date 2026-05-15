@@ -116,6 +116,25 @@ type NativePeerbitBackboneHandle = {
 		payloadData: Uint8Array,
 		trimLengthTo: number | undefined,
 	) => unknown[];
+	prepare_plain_entry_storage_facts_and_put: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+	) => unknown[];
+	prepare_plain_entry_storage_facts_trim_and_put: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		trimLengthTo: number,
+	) => unknown[];
 };
 
 type WasmModule = {
@@ -187,12 +206,17 @@ export type NativeBackboneCommittedEntry = {
 	cid: string;
 	hash: string;
 	next: string[];
+	bytes?: Uint8Array;
 	metaBytes?: Uint8Array;
 	byteLength: number;
 	signature?: Uint8Array;
 	payloadBytes?: Uint8Array;
 	signatureBytes?: Uint8Array;
 	hashDigestBytes?: Uint8Array;
+};
+
+type NativeBackboneStorageBackedEntry = NativeBackboneCommittedEntry & {
+	bytes: Uint8Array;
 };
 
 export type NativeBackboneLogEntry = {
@@ -335,6 +359,28 @@ const committedEntryFromRow = (row: unknown[]): NativeBackboneCommittedEntry => 
 	};
 };
 
+const storageFactsEntryFromRow = (
+	row: unknown[],
+): NativeBackboneStorageBackedEntry => {
+	const [bytes, cid, next, byteLength, metaBytes, hashDigestBytes] = row as [
+		Uint8Array,
+		string,
+		string[],
+		number,
+		Uint8Array | undefined,
+		Uint8Array | undefined,
+	];
+	return {
+		cid,
+		hash: cid,
+		next,
+		bytes,
+		byteLength,
+		metaBytes,
+		hashDigestBytes,
+	};
+};
+
 const trimmedEntryFromRow = (row: unknown): NativeBackboneTrimmedEntry => {
 	const [hash, gid, next, type, wallTime, logical, payloadSize, data] = row as [
 		string,
@@ -468,7 +514,10 @@ const preparedCommitFactsFromRow = (
 };
 
 export class NativeBackboneLogGraph {
-	constructor(private readonly native: NativePeerbitBackboneHandle) {}
+	constructor(
+		private readonly native: NativePeerbitBackboneHandle,
+		private readonly options?: { commitBlocks?: boolean },
+	) {}
 
 	get length(): number {
 		return this.native.log_len();
@@ -530,6 +579,9 @@ export class NativeBackboneLogGraph {
 				trimmedEntries?: NativeBackboneLogEntry[];
 		  })
 		| undefined {
+		if (this.options?.commitBlocks === false) {
+			return undefined;
+		}
 		if (
 			input.includeMaterializationBytes !== false ||
 			input.includeAppendFactsBytes !== true
@@ -548,6 +600,63 @@ export class NativeBackboneLogGraph {
 				input.trimLengthTo,
 			),
 		);
+	}
+
+	prepareEntryV0PlainEntryAndPut(
+		input: {
+			clockId: Uint8Array;
+			privateKey: Uint8Array;
+			publicKey: Uint8Array;
+			wallTime: bigint | number | string;
+			logical?: number;
+			gid: string;
+			next?: string[];
+			type?: number;
+			metaData?: Uint8Array;
+			payloadData: Uint8Array;
+			includeMaterializationBytes?: boolean;
+			includeAppendFactsBytes?: boolean;
+			trimLengthTo?: number;
+		},
+		): NativeBackboneStorageBackedEntry & {
+			trimmedEntries?: NativeBackboneLogEntry[];
+		} {
+		const row =
+			input.trimLengthTo == null
+				? this.native.prepare_plain_entry_storage_facts_and_put(
+						BigInt(input.wallTime),
+						input.logical ?? 0,
+						input.gid,
+						input.next ?? [],
+						input.type ?? 0,
+						input.metaData,
+						input.payloadData,
+					)
+				: this.native.prepare_plain_entry_storage_facts_trim_and_put(
+						BigInt(input.wallTime),
+						input.logical ?? 0,
+						input.gid,
+						input.next ?? [],
+						input.type ?? 0,
+						input.metaData,
+						input.payloadData,
+						input.trimLengthTo,
+					);
+		const isTrimRow =
+			Array.isArray(row) &&
+			row.length === 2 &&
+			Array.isArray(row[0]) &&
+			Array.isArray(row[1]);
+		const entry = storageFactsEntryFromRow(
+			(isTrimRow ? row[0] : row) as unknown[],
+		);
+		if (!isTrimRow) {
+			return entry;
+		}
+		return {
+			...entry,
+			trimmedEntries: (row[1] as unknown[]).map(nativeLogEntryFromTrimRow),
+		};
 	}
 
 	delete(hash: string): boolean {
@@ -785,6 +894,7 @@ const integerString = (value: bigint | number | string): string =>
 
 export class NativePeerbitBackbone {
 	readonly graph: NativeBackboneLogGraph;
+	readonly storageBackedGraph: NativeBackboneLogGraph;
 	readonly blocks: NativeBackboneBlockStore;
 
 	private constructor(
@@ -792,6 +902,9 @@ export class NativePeerbitBackbone {
 		private readonly resolution: RangeResolution,
 	) {
 		this.graph = new NativeBackboneLogGraph(native);
+		this.storageBackedGraph = new NativeBackboneLogGraph(native, {
+			commitBlocks: false,
+		});
 		this.blocks = new NativeBackboneBlockStore(native);
 	}
 

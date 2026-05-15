@@ -131,15 +131,20 @@ export type NativeLogGraph = {
 		type?: number;
 		metaData?: Uint8Array;
 		payloadData: Uint8Array;
+		includeMaterializationBytes?: boolean;
+		includeAppendFactsBytes?: boolean;
+		trimLengthTo?: number;
 	}) => MaybePromise<{
 		bytes: Uint8Array;
 		cid: string;
 		byteLength: number;
-		signature: Uint8Array;
+		signature?: Uint8Array;
 		next: string[];
-		metaBytes: Uint8Array;
-		payloadBytes: Uint8Array;
-		signatureBytes: Uint8Array;
+		metaBytes?: Uint8Array;
+		payloadBytes?: Uint8Array;
+		signatureBytes?: Uint8Array;
+		hashDigestBytes?: Uint8Array;
+		trimmedEntries?: PreparedNativeLogEntry[];
 	}>;
 	prepareEntryV0PlainChainCommit?: (
 		input: {

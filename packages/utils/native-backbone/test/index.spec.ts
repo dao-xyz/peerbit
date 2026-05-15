@@ -80,4 +80,31 @@ describe("native peerbit backbone", () => {
 			second.entry.hash,
 		]);
 	});
+
+	it("can update graph while returning block bytes for external storage", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+
+		const prepared = backbone.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			wallTime: 1n,
+			gid: "gid-external",
+			payloadData: new Uint8Array([7, 8, 9]),
+			includeMaterializationBytes: false,
+			includeAppendFactsBytes: true,
+		});
+
+		expect(prepared?.hash).to.be.a("string").and.not.empty;
+		expect(prepared?.bytes).to.be.instanceOf(Uint8Array);
+		expect(prepared?.bytes?.byteLength).to.be.greaterThan(0);
+		expect(prepared?.hashDigestBytes).to.have.length.greaterThan(0);
+		expect(backbone.hasLogEntry(prepared!.hash)).equal(true);
+		expect(backbone.hasBlock(prepared!.hash)).equal(false);
+		expect(backbone.blockLength).equal(0);
+	});
 });

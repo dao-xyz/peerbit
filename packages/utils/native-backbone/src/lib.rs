@@ -341,63 +341,109 @@ impl NativePeerbitBackbone {
         };
         let has_no_next = next.length() == 0;
         match (has_no_next, trim_length_to) {
-            (true, Some(trim_length_to)) => {
-                self.log
-                    .prepare_entry_v0_plain_entry_commit_no_next_facts_trim_and_put_with_builder(
-                        &self.builder,
-                        &mut self.blocks,
-                        wall_time,
-                        logical,
-                        gid,
-                        entry_type,
-                        meta_data,
-                        payload_data,
-                        trim_length_to,
-                    )
-            }
-            (true, None) => {
-                self.log
-                    .prepare_entry_v0_plain_entry_commit_no_next_facts_and_put_with_builder(
-                        &self.builder,
-                        &mut self.blocks,
-                        wall_time,
-                        logical,
-                        gid,
-                        entry_type,
-                        meta_data,
-                        payload_data,
-                    )
-            }
-            (false, Some(trim_length_to)) => {
-                self.log
-                    .prepare_entry_v0_plain_entry_commit_facts_trim_and_put_with_builder(
-                        &self.builder,
-                        &mut self.blocks,
-                        wall_time,
-                        logical,
-                        gid,
-                        next,
-                        entry_type,
-                        meta_data,
-                        payload_data,
-                        trim_length_to,
-                    )
-            }
-            (false, None) => {
-                self.log
-                    .prepare_entry_v0_plain_entry_commit_facts_and_put_with_builder(
-                        &self.builder,
-                        &mut self.blocks,
-                        wall_time,
-                        logical,
-                        gid,
-                        next,
-                        entry_type,
-                        meta_data,
-                        payload_data,
-                    )
-            }
+            (true, Some(trim_length_to)) => self
+                .log
+                .prepare_entry_v0_plain_entry_commit_no_next_facts_trim_and_put_with_builder(
+                    &self.builder,
+                    &mut self.blocks,
+                    wall_time,
+                    logical,
+                    gid,
+                    entry_type,
+                    meta_data,
+                    payload_data,
+                    trim_length_to,
+                ),
+            (true, None) => self
+                .log
+                .prepare_entry_v0_plain_entry_commit_no_next_facts_and_put_with_builder(
+                    &self.builder,
+                    &mut self.blocks,
+                    wall_time,
+                    logical,
+                    gid,
+                    entry_type,
+                    meta_data,
+                    payload_data,
+                ),
+            (false, Some(trim_length_to)) => self
+                .log
+                .prepare_entry_v0_plain_entry_commit_facts_trim_and_put_with_builder(
+                    &self.builder,
+                    &mut self.blocks,
+                    wall_time,
+                    logical,
+                    gid,
+                    next,
+                    entry_type,
+                    meta_data,
+                    payload_data,
+                    trim_length_to,
+                ),
+            (false, None) => self
+                .log
+                .prepare_entry_v0_plain_entry_commit_facts_and_put_with_builder(
+                    &self.builder,
+                    &mut self.blocks,
+                    wall_time,
+                    logical,
+                    gid,
+                    next,
+                    entry_type,
+                    meta_data,
+                    payload_data,
+                ),
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_entry_storage_facts_and_put(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+    ) -> Result<Array, JsValue> {
+        self.log
+            .prepare_entry_v0_plain_entry_storage_facts_and_put_with_builder(
+                &self.builder,
+                wall_time,
+                logical,
+                gid,
+                next,
+                entry_type,
+                meta_data,
+                payload_data,
+            )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_entry_storage_facts_trim_and_put(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        trim_length_to: usize,
+    ) -> Result<Array, JsValue> {
+        self.log
+            .prepare_entry_v0_plain_entry_storage_facts_trim_and_put_with_builder(
+                &self.builder,
+                wall_time,
+                logical,
+                gid,
+                next,
+                entry_type,
+                meta_data,
+                payload_data,
+                trim_length_to,
+            )
     }
 }
 

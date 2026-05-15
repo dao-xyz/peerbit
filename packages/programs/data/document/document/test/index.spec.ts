@@ -835,6 +835,45 @@ describe("index", () => {
 				}
 			});
 
+			it("uses native backbone graph with remote blocks for replicated puts", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: { optional: false },
+					},
+				});
+				const sharedLog = store.docs.log as any;
+				const remotePutKnownSpy = sinon.spy(sharedLog.remoteBlocks, "putKnown");
+				const backbone = sharedLog._nativeBackbone;
+
+				try {
+					const doc = new Document({ id: uuid(), name: "backbone-remote" });
+					const put = await store.docs.put(doc, { unique: true });
+
+					expect(remotePutKnownSpy.callCount).equal(1);
+					expect(backbone.hasLogEntry(put.entry.hash)).equal(true);
+					expect(backbone.hasBlock(put.entry.hash)).equal(false);
+					const storedBlock = await sharedLog.remoteBlocks.get(put.entry.hash);
+					expect(storedBlock).instanceOf(Uint8Array);
+					expect((await store.docs.get(doc.id))?.name).equal(
+						"backbone-remote",
+					);
+				} finally {
+					remotePutKnownSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
 			it("removes trimmed prepared puts from the document index by head", async () => {
 				const rustSession = await TestSession.connected(
 					1,
