@@ -187,4 +187,35 @@ describe("native peerbit backbone", () => {
 			second.entry.hash,
 		]);
 	});
+
+	it("coalesces storage-backed append with next into shared-log coordinate state", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+
+		const first = backbone.preparePlainStorageAppendTransaction({
+			wallTime: 1n,
+			gid: "gid-storage-next",
+			payloadData: new Uint8Array([1]),
+			replicas: 1,
+			selfHash: "peer-a",
+		});
+		const second = backbone.preparePlainStorageAppendTransaction({
+			wallTime: 2n,
+			gid: "gid-storage-next",
+			next: [first.entry.hash],
+			payloadData: new Uint8Array([2]),
+			replicas: 1,
+			selfHash: "peer-a",
+		});
+
+		expect(second.entry.next).to.deep.equal([first.entry.hash]);
+		expect(backbone.hasLogEntry(first.entry.hash)).equal(true);
+		expect(backbone.hasLogEntry(second.entry.hash)).equal(true);
+		expect(backbone.getEntryCoordinateHashes()).to.deep.equal([
+			second.entry.hash,
+		]);
+	});
 });

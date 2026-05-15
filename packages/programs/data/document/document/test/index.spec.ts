@@ -902,7 +902,7 @@ describe("index", () => {
 				const backbone = sharedLog._nativeBackbone;
 				const backboneStorageTransactionSpy = sinon.spy(
 					backbone,
-					"preparePlainNoNextStorageAppendTransaction",
+					"preparePlainStorageAppendTransaction",
 				);
 
 				try {
@@ -926,8 +926,69 @@ describe("index", () => {
 					});
 
 					expect(backboneStorageTransactionSpy.callCount).equal(2);
+					expect(backboneStorageTransactionSpy.firstCall.args[0].next).to.deep.equal(
+						[],
+					);
 					expect(await store.docs.get(first.id)).equal(undefined);
 					expect((await store.docs.get(second.id))?.name).equal(
+						"backbone-storage-2",
+					);
+				} finally {
+					backboneStorageTransactionSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("uses the native backbone storage transaction for update puts with next", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: { optional: false },
+					},
+				});
+				const sharedLog = store.docs.log as any;
+				const backbone = sharedLog._nativeBackbone;
+				const backboneStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainStorageAppendTransaction",
+				);
+
+				try {
+					const id = uuid();
+					const first = await store.docs.put(
+						new Document({ id, name: "backbone-storage-1" }),
+						{
+							replicate: false,
+							target: "none",
+						},
+					);
+					const second = await store.docs.put(
+						new Document({ id, name: "backbone-storage-2" }),
+						{
+							replicate: false,
+							target: "none",
+						},
+					);
+
+					expect(backboneStorageTransactionSpy.callCount).equal(2);
+					expect(backboneStorageTransactionSpy.firstCall.args[0].next).to.deep.equal(
+						[],
+					);
+					expect(backboneStorageTransactionSpy.secondCall.args[0].next).to.deep.equal(
+						[first.entry.hash],
+					);
+					expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
+					expect((await store.docs.get(id))?.name).equal(
 						"backbone-storage-2",
 					);
 				} finally {

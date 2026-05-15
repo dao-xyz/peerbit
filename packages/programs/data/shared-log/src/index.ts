@@ -4972,21 +4972,23 @@ export class SharedLog<
 			const nativeLeaderOptions = this.createNativeLeaderOptions(context);
 			let backboneAppend:
 				| ReturnType<
-						NativePeerbitBackbone["preparePlainNoNextStorageAppendTransaction"]
+						NativePeerbitBackbone["preparePlainStorageAppendTransaction"]
 				  >
 				| undefined;
-			const result = this.log.appendLocallyPreparedNativeNoNextCommitOnly(
+			const result = this.log.appendLocallyPreparedNativeCommitOnly(
 				undefined as T,
 				appendOptions,
 				{
 					payloadData,
 					resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+					skipMissingNextJoin: properties?.skipMissingNextJoin,
 				},
 				(input) => {
-					backboneAppend = backbone.preparePlainNoNextStorageAppendTransaction({
+					backboneAppend = backbone.preparePlainStorageAppendTransaction({
 						wallTime: input.wallTime,
 						logical: input.logical,
 						gid: input.gid,
+						next: input.next,
 						type: input.type,
 						metaData: input.metaData,
 						payloadData: input.payloadData,

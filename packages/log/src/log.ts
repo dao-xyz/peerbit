@@ -109,6 +109,10 @@ type NativeNoNextCommitInput = {
 	trimLengthTo?: number;
 };
 
+type NativeCommitInput = NativeNoNextCommitInput & {
+	next: string[];
+};
+
 const isPromiseLike = <T>(value: Promise<T> | T): value is Promise<T> =>
 	typeof (value as { then?: unknown })?.then === "function";
 
@@ -920,6 +924,38 @@ export class Log<T> {
 			input: NativeNoNextCommitInput,
 		) => MaybePromise<NativePreparedNoNextCommit | undefined>,
 	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
+		return this.appendLocallyPreparedNativeCommitOnly(
+			data,
+			options,
+			properties,
+			(input) =>
+				prepare({
+					clockId: input.clockId,
+					privateKey: input.privateKey,
+					publicKey: input.publicKey,
+					wallTime: input.wallTime,
+					logical: input.logical,
+					gid: input.gid,
+					type: input.type,
+					metaData: input.metaData,
+					payloadData: input.payloadData,
+					trimLengthTo: input.trimLengthTo,
+				}),
+		);
+	}
+
+	appendLocallyPreparedNativeCommitOnly(
+		data: T,
+		options: AppendOptions<T> = {},
+		properties: {
+			payloadData?: Uint8Array;
+			resolveTrimmedEntries?: boolean;
+			skipMissingNextJoin?: boolean;
+		},
+		prepare: (
+			input: NativeCommitInput,
+		) => MaybePromise<NativePreparedNoNextCommit | undefined>,
+	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
 		const resolvedTrim = options.trim ?? this._trim.options;
 		const supportsNativeTrim =
 			!resolvedTrim ||
@@ -959,10 +995,29 @@ export class Log<T> {
 			__peerbitCanAppendAlreadyValidated: true,
 		};
 		return mapMaybePromise(this.getNextsForAppend(appendOptions), (nexts) => {
-			if (nexts.length > 0) {
+			if (nexts.length > 0 && properties.skipMissingNextJoin !== true) {
 				return undefined;
 			}
-			const gid = EntryV0.createGid(appendOptions.meta?.gidSeed);
+
+			const nextHashes: string[] = [];
+			let nextGid: string | undefined;
+			if (nexts.length > 0) {
+				if ((appendOptions.meta as { gid?: string } | undefined)?.gid) {
+					return undefined;
+				}
+				for (const next of nexts) {
+					if (!next.hash) {
+						return undefined;
+					}
+					nextHashes.push(next.hash);
+					nextGid =
+						nextGid == null || next.meta.gid < nextGid
+							? next.meta.gid
+							: nextGid;
+				}
+			}
+
+			const gid = nextGid ?? EntryV0.createGid(appendOptions.meta?.gidSeed);
 			return mapMaybePromise(gid, (resolvedGid) => {
 				const clock = new Clock({
 					id: identity.publicKey.bytes,
@@ -976,6 +1031,7 @@ export class Log<T> {
 					wallTime: clock.timestamp.wallTime,
 					logical: clock.timestamp.logical,
 					gid: resolvedGid,
+					next: nextHashes,
 					type: entryType,
 					metaData: appendOptions.meta?.data,
 					payloadData,
@@ -997,14 +1053,14 @@ export class Log<T> {
 							gid: resolvedGid,
 							data: appendOptions.meta?.data,
 							clock,
-							next: [],
+							next: nextHashes,
 							type: entryType,
 						}),
 					});
 					const appendFacts: PreparedAppendFacts = {
 						hash,
 						gid: resolvedGid,
-						next: [],
+						next: nextHashes,
 						wallTime: clock.timestamp.wallTime,
 						logical: clock.timestamp.logical,
 						clockId: clock.id,
@@ -1093,7 +1149,7 @@ export class Log<T> {
 						const putResult = this.entryIndex.putNativeCommittedAppendFacts({
 							hash,
 							unique: true,
-							externalNextHashes: [],
+							externalNextHashes: nextHashes,
 							shallowEntry,
 							isHead: true,
 						});

@@ -244,6 +244,35 @@ type NativePeerbitBackboneHandle = {
 		selfReplicating: boolean,
 		trimLengthTo: number,
 	) => unknown[];
+	prepare_plain_storage_append_transaction: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+	) => unknown[];
+	prepare_plain_storage_append_transaction_trim: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		trimLengthTo: number,
+	) => unknown[];
 };
 
 type WasmModule = {
@@ -396,7 +425,9 @@ export type NativeBackboneAppendInput = {
 	trimLengthTo?: number;
 };
 
-export type NativeBackboneStorageAppendInput = NativeBackboneAppendInput;
+export type NativeBackboneStorageAppendInput = NativeBackboneAppendInput & {
+	next?: Iterable<string>;
+};
 
 export type NativeBackboneAppendResult = {
 	entry: NativeBackboneCommittedEntry;
@@ -1413,10 +1444,20 @@ export class NativePeerbitBackbone {
 	preparePlainNoNextStorageAppendTransaction(
 		input: NativeBackboneStorageAppendInput,
 	): NativeBackboneStorageAppendResult {
+		return this.preparePlainStorageAppendTransaction({
+			...input,
+			next: [],
+		});
+	}
+
+	preparePlainStorageAppendTransaction(
+		input: NativeBackboneStorageAppendInput,
+	): NativeBackboneStorageAppendResult {
 		const baseArgs = [
 			BigInt(input.wallTime),
 			input.logical ?? 0,
 			input.gid,
+			iterableToArray(input.next),
 			input.type ?? 0,
 			input.metaData,
 			input.payloadData,
@@ -1428,10 +1469,8 @@ export class NativePeerbitBackbone {
 		] as const;
 		const row =
 			input.trimLengthTo == null
-				? this.native.prepare_plain_no_next_storage_append_transaction(
-						...baseArgs,
-					)
-				: this.native.prepare_plain_no_next_storage_append_transaction_trim(
+				? this.native.prepare_plain_storage_append_transaction(...baseArgs)
+				: this.native.prepare_plain_storage_append_transaction_trim(
 						...baseArgs,
 						input.trimLengthTo,
 					);

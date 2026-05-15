@@ -639,10 +639,11 @@ impl NativePeerbitBackbone {
         self_hash: String,
         self_replicating: bool,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_no_next_storage_append_transaction_inner(
+        self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
+            Array::new(),
             entry_type,
             meta_data,
             payload_data,
@@ -671,10 +672,78 @@ impl NativePeerbitBackbone {
         self_replicating: bool,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_no_next_storage_append_transaction_inner(
+        self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
+            Array::new(),
+            entry_type,
+            meta_data,
+            payload_data,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            Some(trim_length_to),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_storage_append_transaction(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next_hashes: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+    ) -> Result<Array, JsValue> {
+        self.prepare_plain_storage_append_transaction_inner(
+            wall_time,
+            logical,
+            gid,
+            next_hashes,
+            entry_type,
+            meta_data,
+            payload_data,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_storage_append_transaction_trim(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next_hashes: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        trim_length_to: usize,
+    ) -> Result<Array, JsValue> {
+        self.prepare_plain_storage_append_transaction_inner(
+            wall_time,
+            logical,
+            gid,
+            next_hashes,
             entry_type,
             meta_data,
             payload_data,
@@ -772,11 +841,12 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn prepare_plain_no_next_storage_append_transaction_inner(
+    fn prepare_plain_storage_append_transaction_inner(
         &mut self,
         wall_time: u64,
         logical: u32,
         gid: String,
+        next_hashes: Array,
         entry_type: u8,
         meta_data: JsValue,
         payload_data: Uint8Array,
@@ -787,7 +857,6 @@ impl NativePeerbitBackbone {
         self_replicating: bool,
         trim_length_to: Option<usize>,
     ) -> Result<Array, JsValue> {
-        let next_hashes = Array::new();
         let (entry_row, trim_rows) = if let Some(trim_length_to) = trim_length_to {
             let row = self
                 .log
