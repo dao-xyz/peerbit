@@ -778,6 +778,63 @@ describe("index", () => {
 				}
 			});
 
+			it("uses the native backbone no-next put path with length trim", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: false,
+						nativeGraph: true,
+						nativeBackbone: { optional: false },
+						log: {
+							trim: { type: "length", to: 1 },
+						},
+					},
+				});
+				const backboneCommitSpy = sinon.spy(
+					store.docs.log.log as any,
+					"appendLocallyPreparedNativeNoNextCommitOnly",
+				);
+				const nativeCreateSpy = sinon.spy(
+					store.docs.log.log as any,
+					"createNativePlainAppendCommitOnly",
+				);
+
+				try {
+					const docs = [
+						new Document({ id: uuid(), name: "backbone-trim-1" }),
+						new Document({ id: uuid(), name: "backbone-trim-2" }),
+						new Document({ id: uuid(), name: "backbone-trim-3" }),
+					];
+					for (const doc of docs) {
+						await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+					}
+
+					expect(backboneCommitSpy.callCount).equal(3);
+					expect(nativeCreateSpy.callCount).equal(0);
+					expect(store.docs.log.log.length).equal(1);
+					expect(await store.docs.get(docs[0]!.id)).equal(undefined);
+					expect((await store.docs.get(docs[2]!.id))?.name).equal(
+						"backbone-trim-3",
+					);
+				} finally {
+					nativeCreateSpy.restore();
+					backboneCommitSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
 			it("removes trimmed prepared puts from the document index by head", async () => {
 				const rustSession = await TestSession.connected(
 					1,

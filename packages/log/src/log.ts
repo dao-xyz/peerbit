@@ -106,6 +106,7 @@ type NativeNoNextCommitInput = {
 	type: EntryType;
 	metaData?: Uint8Array;
 	payloadData: Uint8Array;
+	trimLengthTo?: number;
 };
 
 const isPromiseLike = <T>(value: Promise<T> | T): value is Promise<T> =>
@@ -913,11 +914,22 @@ export class Log<T> {
 		options: AppendOptions<T> = {},
 		properties: {
 			payloadData?: Uint8Array;
+			resolveTrimmedEntries?: boolean;
 		},
 		prepare: (
 			input: NativeNoNextCommitInput,
 		) => MaybePromise<NativePreparedNoNextCommit | undefined>,
 	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
+		const resolvedTrim = options.trim ?? this._trim.options;
+		const supportsNativeTrim =
+			!resolvedTrim ||
+			(resolvedTrim.type === "length" &&
+				!resolvedTrim.filter?.canTrim &&
+				properties.resolveTrimmedEntries === false);
+		const nativeTrimLengthTo = this.getNativeCommitOnlyTrimLengthTo(
+			options.trim,
+			properties.resolveTrimmedEntries,
+		);
 		if (
 			options.canAppend ||
 			options.onChange ||
@@ -926,7 +938,7 @@ export class Log<T> {
 			options.identity ||
 			options.meta?.timestamp ||
 			options.meta?.type === EntryType.CUT ||
-			options.trim ||
+			!supportsNativeTrim ||
 			(this._hasCustomCanAppend &&
 				options.__peerbitCanAppendAlreadyValidated !== true)
 		) {
@@ -967,9 +979,10 @@ export class Log<T> {
 					type: entryType,
 					metaData: appendOptions.meta?.data,
 					payloadData,
+					trimLengthTo: nativeTrimLengthTo,
 				});
 				return mapMaybePromise(preparedValue, (prepared) => {
-					if (!prepared || prepared.trimmedEntries) {
+					if (!prepared) {
 						return undefined;
 					}
 					const hash = prepared.cid ?? prepared.hash;
@@ -1029,6 +1042,34 @@ export class Log<T> {
 						appendFacts,
 						shallowEntry,
 					});
+					const finishTrim = ():
+						| PreparedCommitOnlyAppendResult<T>
+						| Promise<PreparedCommitOnlyAppendResult<T>> => {
+						if (!prepared.trimmedEntries) {
+							return finish();
+						}
+						const trimmedEntries =
+							this.entryIndex.nativeLogEntriesToShallowEntries(
+								prepared.trimmedEntries,
+							);
+						const consumedResult =
+							this.entryIndex.consumeNativeTrimmedEntriesMaybe(
+								trimmedEntries,
+								{
+									skipNextHeadUpdates: true,
+									deleteBlocks: false,
+								},
+							);
+						return mapMaybePromise(consumedResult, (removed) => ({
+							get entry() {
+								return materializeEntry();
+							},
+							materializeEntry,
+							removed,
+							appendFacts,
+							shallowEntry,
+						}));
+					};
 					const rollback = (error: unknown): never | Promise<never> => {
 						this.rollbackNativeAppendGraphHashes([hash]);
 						return this.rollbackNativeAppendBlocksHashes([hash]).then(() => {
@@ -1043,7 +1084,7 @@ export class Log<T> {
 							shallowEntry,
 							isHead: true,
 						});
-						const result = mapMaybePromise(putResult, finish);
+						const result = mapMaybePromise(putResult, finishTrim);
 						return isPromiseLike(result) ? result.catch(rollback) : result;
 					} catch (error) {
 						return rollback(error);

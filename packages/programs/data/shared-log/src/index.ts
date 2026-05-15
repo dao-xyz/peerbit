@@ -4798,6 +4798,7 @@ export class SharedLog<
 				payloadData,
 				appendOptions,
 				options,
+				properties,
 				deferHeadCoordinatePersistence,
 			);
 		if (nativeBackboneResult) {
@@ -4862,12 +4863,17 @@ export class SharedLog<
 		payloadData: Uint8Array,
 		appendOptions: AppendOptions<T>,
 		options: SharedAppendOptions<T> | undefined,
+		properties:
+			| {
+					skipMissingNextJoin?: boolean;
+					resolveTrimmedEntries?: boolean;
+			  }
+			| undefined,
 		deferHeadCoordinatePersistence: boolean,
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> | undefined {
 		if (
 			!this._nativeBackbone ||
 			!deferHeadCoordinatePersistence ||
-			appendOptions.trim ||
 			options?.target !== "none" ||
 			options?.replicate !== false
 		) {
@@ -4877,7 +4883,10 @@ export class SharedLog<
 		const result = this.log.appendLocallyPreparedNativeNoNextCommitOnly(
 			undefined as T,
 			appendOptions,
-			{ payloadData },
+			{
+				payloadData,
+				resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+			},
 			(input) =>
 				backbone.graph.prepareEntryV0PlainEntryCommit(
 					{
@@ -4885,6 +4894,7 @@ export class SharedLog<
 						next: [],
 						includeMaterializationBytes: false,
 						includeAppendFactsBytes: true,
+						trimLengthTo: input.trimLengthTo,
 					},
 					backbone.blocks,
 				),

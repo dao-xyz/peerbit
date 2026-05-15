@@ -19,6 +19,7 @@ import { Documents, policy, type SetupOptions } from "../src/index.js";
 // - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,native-ceiling,native-backbone-ceiling
 //   Add "-nonunique" to any scenario name to use default update-safe put semantics.
 //   Add "-local" to a rust-peerbit scenario to disable replication and default trim.
+//   Add "-trim" to a local rust-peerbit scenario to keep length trim enabled.
 //   Add "-putmany" to any unique scenario name to use one putMany call per measured batch.
 //   Add "-policy-allow-all" to open with canPerform: policy.allowAll().
 //   Add "-policy-signed-public-key" to open with canPerform: policy.signedByPublicKey(local public key).
@@ -51,13 +52,14 @@ const scenarioNames = (
 
 const scenarioBaseName = (name: string) =>
 	name.replace(
-		/(?:-(?:putmany|nonunique|local|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|canperform-allow-all))*$/,
+		/(?:-(?:putmany|nonunique|local|trim|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|canperform-allow-all))*$/,
 		"",
 	);
 const scenarioUsesUniquePuts = (name: string) => !name.includes("-nonunique");
 const scenarioUsesPutMany = (name: string) => name.endsWith("-putmany");
 const scenarioUsesLocalStore = (name: string) =>
 	scenarioBaseName(name).startsWith("rust-peerbit") && name.includes("-local");
+const scenarioUsesTrim = (name: string) => name.includes("-trim");
 const scenarioUsesPolicyAllowAll = (name: string) =>
 	name.includes("-policy-allow-all");
 const scenarioUsesPolicySignedPublicKey = (name: string) =>
@@ -355,7 +357,7 @@ const openScenario = async (name: string) => {
 			...(baseName === "rust-peerbit-backbone"
 				? { nativeBackbone: { optional: false } }
 				: {}),
-			...(scenarioUsesLocalStore(name)
+			...(scenarioUsesLocalStore(name) && !scenarioUsesTrim(name)
 				? {}
 				: {
 						log: {
