@@ -44,6 +44,23 @@ import { equals } from "./utils.js";
 
 const log = baseLogger.newScope("entry-v0");
 const traceLogger = log.trace as typeof log & { enabled?: boolean };
+const RANDOM_GID_BYTES = 32;
+const RANDOM_GID_POOL_SIZE = 64;
+let randomGidPool: string[] = [];
+
+const createRandomGid = (): string => {
+	if (randomGidPool.length === 0) {
+		const bytes = randomBytes(RANDOM_GID_BYTES * RANDOM_GID_POOL_SIZE);
+		randomGidPool = new Array<string>(RANDOM_GID_POOL_SIZE);
+		for (let i = 0; i < RANDOM_GID_POOL_SIZE; i++) {
+			const offset = i * RANDOM_GID_BYTES;
+			randomGidPool[i] = toBase64(
+				bytes.subarray(offset, offset + RANDOM_GID_BYTES),
+			);
+		}
+	}
+	return randomGidPool.pop()!;
+};
 
 type NativePlainChainInput = {
 	clockId: Uint8Array;
@@ -634,18 +651,20 @@ export class EntryV0<T>
 	}
 
 	static createGid(seed?: Uint8Array): Promise<string> | string {
-		return seed ? sha256Base64(seed) : toBase64(randomBytes(32));
+		return seed ? sha256Base64(seed) : createRandomGid();
 	}
 
 	static createGids(count: number): string[] {
 		if (count === 0) {
 			return [];
 		}
-		const bytes = randomBytes(count * 32);
+		const bytes = randomBytes(count * RANDOM_GID_BYTES);
 		const gids = new Array<string>(count);
 		for (let i = 0; i < count; i++) {
-			const offset = i * 32;
-			gids[i] = toBase64(bytes.subarray(offset, offset + 32));
+			const offset = i * RANDOM_GID_BYTES;
+			gids[i] = toBase64(
+				bytes.subarray(offset, offset + RANDOM_GID_BYTES),
+			);
 		}
 		return gids;
 	}
