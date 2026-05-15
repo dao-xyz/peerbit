@@ -27,6 +27,10 @@ type ImmutableBlockStore = AnyStore & {
 	) => Promise<void> | void;
 };
 
+type NativeLogBlockStoreCarrier = {
+	getNativeLogBlockStoreHandle?: () => unknown;
+};
+
 export class AnyBlockStore implements Blocks {
 	private _store: AnyStore;
 	private _opening: Promise<any>;
@@ -34,6 +38,11 @@ export class AnyBlockStore implements Blocks {
 	private _closeController?: AbortController;
 	constructor(store: AnyStore = createStore()) {
 		this._store = store;
+	}
+
+	getNativeLogBlockStoreHandle(): unknown {
+		return (this._store as NativeLogBlockStoreCarrier)
+			.getNativeLogBlockStoreHandle?.();
 	}
 
 	private async decodeStoredBytes(

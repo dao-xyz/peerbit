@@ -35,6 +35,7 @@ import {
 	Entry,
 	type PreparedAppendChain,
 	type PreparedAppendCommitOnlyChain,
+	type PreparedNativeLogEntry,
 } from "./entry.js";
 import type { SortableEntry } from "./log-sorting.js";
 import { logger as baseLogger } from "./logger.js";
@@ -70,6 +71,7 @@ type NativePlainEntryInput = {
 	payloadData: Uint8Array;
 	includeMaterializationBytes?: boolean;
 	includeAppendFactsBytes?: boolean;
+	trimLengthTo?: number;
 };
 
 type NativePlainEntriesInput = {
@@ -95,6 +97,7 @@ type NativePreparedPlainEntry = {
 	payloadBytes?: Uint8Array;
 	signatureBytes?: Uint8Array;
 	hashDigestBytes?: Uint8Array;
+	trimmedEntries?: PreparedNativeLogEntry[];
 };
 
 type MaybePromise<T> = T | Promise<T>;
@@ -117,6 +120,7 @@ type PlainAppendChainCommitOnlyProperties<T> = {
 	nativeBlockStore?: unknown;
 	includeMaterializationBytes?: boolean;
 	includeAppendFactsBytes?: boolean;
+	nativeTrimLengthTo?: number;
 };
 
 type NativeEntryV0Graph = {
@@ -1003,6 +1007,7 @@ export class EntryV0<T>
 			payloadData,
 			includeMaterializationBytes: properties.includeMaterializationBytes,
 			includeAppendFactsBytes: properties.includeAppendFactsBytes,
+			trimLengthTo: properties.nativeTrimLengthTo,
 		};
 		let nativeBlocksCommitted = false;
 		let nativeGraphUpdated = false;
@@ -1127,6 +1132,8 @@ export class EntryV0<T>
 				blocks: preparedBlock ? [preparedBlock] : undefined,
 				shallowEntries: [shallowEntry],
 				appendFacts: [appendFacts],
+				trimmedNativeEntries: preparedEntry.trimmedEntries,
+				trimmedNativeBlocksDeleted: nativeBlocksCommitted,
 				nativeGraphUpdated,
 				nativeBlocksCommitted,
 			};
@@ -1139,9 +1146,6 @@ export class EntryV0<T>
 			const preparedEntryValue = nativePrepareAndPut
 				? nativePrepareAndPut.call(nativeGraph, {
 						...singleInput,
-						includeMaterializationBytes: properties.includeAppendFactsBytes
-							? true
-							: singleInput.includeMaterializationBytes,
 					})
 				: undefined;
 			if (isPromiseLike(preparedEntryValue)) {

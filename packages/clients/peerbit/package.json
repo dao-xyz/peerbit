@@ -91,6 +91,7 @@
 		"@peerbit/indexer-simple": "workspace:*",
 		"@peerbit/indexer-sqlite3": "workspace:*",
 		"@peerbit/keychain": "workspace:*",
+		"@peerbit/log-rust": "workspace:*",
 		"@peerbit/logger": "workspace:*",
 		"@peerbit/program": "workspace:*",
 		"@peerbit/pubsub": "workspace:*",

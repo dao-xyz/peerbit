@@ -710,6 +710,165 @@ describe("native EntryV0 encoding", () => {
 		expect(blockStore.size()).to.equal(prepared!.byteLength);
 	});
 
+	it("commits facts-only prepared plain entries and trim facts natively", async () => {
+		const privateKey = fromHex(
+			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+		);
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const index = await createLogGraphIndex();
+		const blockStore = await createNativeLogBlockStore();
+		const common = {
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			includeMaterializationBytes: false,
+			includeAppendFactsBytes: true,
+		};
+
+		const first = await index.prepareEntryV0PlainEntryCommit(
+			{
+				...common,
+				wallTime: 11n,
+				gid: "gid-a",
+				payloadData: new Uint8Array([1]),
+			},
+			blockStore,
+		);
+		await index.prepareEntryV0PlainEntryCommit(
+			{
+				...common,
+				wallTime: 12n,
+				gid: "gid-b",
+				payloadData: new Uint8Array([2]),
+			},
+			blockStore,
+		);
+
+		const third = await index.prepareEntryV0PlainEntryCommit(
+			{
+				...common,
+				wallTime: 13n,
+				gid: "gid-c",
+				payloadData: new Uint8Array([3]),
+				trimLengthTo: 2,
+			},
+			blockStore,
+		);
+
+		expect(third?.trimmedEntries?.map((entry) => entry.hash)).to.deep.equal([
+			first!.cid,
+		]);
+		expect(index.has(first!.cid)).equal(false);
+		expect(blockStore.has(first!.cid)).equal(false);
+		expect(index.length).equal(2);
+		expect(blockStore.has(third!.cid)).equal(true);
+	});
+
+	it("commits storage-only prepared plain entries and trim facts natively", async () => {
+		const privateKey = fromHex(
+			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+		);
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const index = await createLogGraphIndex();
+		const blockStore = await createNativeLogBlockStore();
+		const common = {
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			includeMaterializationBytes: false,
+		};
+
+		const first = await index.prepareEntryV0PlainEntryCommit(
+			{
+				...common,
+				wallTime: 11n,
+				gid: "gid-a",
+				payloadData: new Uint8Array([1]),
+			},
+			blockStore,
+		);
+		await index.prepareEntryV0PlainEntryCommit(
+			{
+				...common,
+				wallTime: 12n,
+				gid: "gid-b",
+				payloadData: new Uint8Array([2]),
+			},
+			blockStore,
+		);
+
+		const third = await index.prepareEntryV0PlainEntryCommit(
+			{
+				...common,
+				wallTime: 13n,
+				gid: "gid-c",
+				payloadData: new Uint8Array([3]),
+				trimLengthTo: 2,
+			},
+			blockStore,
+		);
+
+		expect(third?.trimmedEntries?.map((entry) => entry.hash)).to.deep.equal([
+			first!.cid,
+		]);
+		expect(index.has(first!.cid)).equal(false);
+		expect(blockStore.has(first!.cid)).equal(false);
+		expect(index.length).equal(2);
+		expect(third!.metaBytes).equal(undefined);
+		expect(third!.bytes).to.be.instanceOf(Uint8Array);
+	});
+
+	it("commits storage facts prepared plain entries and trim facts natively without native block store", async () => {
+		const privateKey = fromHex(
+			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+		);
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const index = await createLogGraphIndex();
+		const common = {
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			includeMaterializationBytes: false,
+			includeAppendFactsBytes: true,
+		};
+
+		const first = index.prepareEntryV0PlainEntryAndPut({
+			...common,
+			wallTime: 11n,
+			gid: "gid-a",
+			payloadData: new Uint8Array([1]),
+		});
+		index.prepareEntryV0PlainEntryAndPut({
+			...common,
+			wallTime: 12n,
+			gid: "gid-b",
+			payloadData: new Uint8Array([2]),
+		});
+
+		const third = index.prepareEntryV0PlainEntryAndPut({
+			...common,
+			wallTime: 13n,
+			gid: "gid-c",
+			payloadData: new Uint8Array([3]),
+			trimLengthTo: 2,
+		});
+
+		expect(third.trimmedEntries?.map((entry) => entry.hash)).to.deep.equal([
+			first.cid,
+		]);
+		expect(index.has(first.cid)).equal(false);
+		expect(index.length).equal(2);
+		expect(third.bytes).to.be.instanceOf(Uint8Array);
+		expect(third.metaBytes).to.be.instanceOf(Uint8Array);
+		expect(third.hashDigestBytes).to.be.instanceOf(Uint8Array);
+	});
+
 	it("stores native log blocks by known cid", async () => {
 		const blockStore = await createNativeLogBlockStore();
 		const bytes = new Uint8Array([5, 4, 3]);

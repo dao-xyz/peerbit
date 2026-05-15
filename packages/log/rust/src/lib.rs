@@ -10,6 +10,7 @@ const ENTRY_TYPE_CUT: u8 = 1;
 enum PreparedPlainEntryRowMode {
     Full { include_storage_bytes: bool },
     StorageOnly,
+    StorageWithFacts,
     CommitFactsOnly,
 }
 
@@ -708,6 +709,41 @@ impl NativeLogBlockStore {
     }
 }
 
+fn trim_oldest_log_entries(
+    index: &mut LogGraphIndex,
+    block_store: &mut NativeLogBlockStore,
+    trim_length_to: usize,
+) -> Array {
+    let overage = index.len().saturating_sub(trim_length_to);
+    if overage == 0 {
+        return Array::new();
+    }
+    let entries = index.oldest_entries(overage);
+    for entry in &entries {
+        block_store.delete(&entry.hash);
+    }
+    let hashes = entries
+        .iter()
+        .map(|entry| entry.hash.clone())
+        .collect::<Vec<_>>();
+    index.delete_many(&hashes);
+    log_trim_entries_to_rows(entries)
+}
+
+fn trim_oldest_log_index_entries(index: &mut LogGraphIndex, trim_length_to: usize) -> Array {
+    let overage = index.len().saturating_sub(trim_length_to);
+    if overage == 0 {
+        return Array::new();
+    }
+    let entries = index.oldest_entries(overage);
+    let hashes = entries
+        .iter()
+        .map(|entry| entry.hash.clone())
+        .collect::<Vec<_>>();
+    index.delete_many(&hashes);
+    log_trim_entries_to_rows(entries)
+}
+
 #[wasm_bindgen]
 impl NativeEntryV0PlainBuilder {
     #[wasm_bindgen(constructor)]
@@ -1013,6 +1049,110 @@ impl NativeLogIndex {
         Ok(row)
     }
 
+    pub fn prepare_entry_v0_plain_entry_storage_facts_and_put_with_builder(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+    ) -> Result<Array, JsValue> {
+        let (row, entry, initial_nexts, _block) =
+            prepare_entry_v0_plain_entry_row_with_signer_parts(
+                &builder.clock_id,
+                &builder.public_key,
+                &builder.signing_key,
+                wall_time,
+                logical,
+                gid,
+                strings_from_array(next)?,
+                entry_type,
+                optional_bytes_from_js(meta_data),
+                payload_data.to_vec(),
+                PreparedPlainEntryRowMode::StorageWithFacts,
+            )?;
+        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        Ok(row)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_entry_v0_plain_entry_storage_trim_and_put_with_builder(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        trim_length_to: usize,
+    ) -> Result<Array, JsValue> {
+        let (row, entry, initial_nexts, _block) =
+            prepare_entry_v0_plain_entry_storage_row_with_signer(
+                &builder.clock_id,
+                &builder.public_key,
+                &builder.signing_key,
+                wall_time,
+                logical,
+                gid,
+                next,
+                entry_type,
+                meta_data,
+                payload_data,
+            )?;
+        self.inner.put_append_chain(vec![entry], &initial_nexts);
+
+        let out = Array::new();
+        out.push(&row);
+        out.push(&trim_oldest_log_index_entries(
+            &mut self.inner,
+            trim_length_to,
+        ));
+        Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_entry_v0_plain_entry_storage_facts_trim_and_put_with_builder(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        trim_length_to: usize,
+    ) -> Result<Array, JsValue> {
+        let (row, entry, initial_nexts, _block) =
+            prepare_entry_v0_plain_entry_row_with_signer_parts(
+                &builder.clock_id,
+                &builder.public_key,
+                &builder.signing_key,
+                wall_time,
+                logical,
+                gid,
+                strings_from_array(next)?,
+                entry_type,
+                optional_bytes_from_js(meta_data),
+                payload_data.to_vec(),
+                PreparedPlainEntryRowMode::StorageWithFacts,
+            )?;
+        self.inner.put_append_chain(vec![entry], &initial_nexts);
+
+        let out = Array::new();
+        out.push(&row);
+        out.push(&trim_oldest_log_index_entries(
+            &mut self.inner,
+            trim_length_to,
+        ));
+        Ok(out)
+    }
+
     pub fn prepare_entry_v0_plain_chain_commit_blocks_and_put(
         &mut self,
         block_store: &mut NativeLogBlockStore,
@@ -1137,6 +1277,46 @@ impl NativeLogIndex {
         Ok(row)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_entry_v0_plain_entry_storage_commit_block_trim_and_put_with_builder(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        trim_length_to: usize,
+    ) -> Result<Array, JsValue> {
+        let (row, entry, initial_nexts, block) =
+            prepare_entry_v0_plain_entry_storage_row_with_signer(
+                &builder.clock_id,
+                &builder.public_key,
+                &builder.signing_key,
+                wall_time,
+                logical,
+                gid,
+                next,
+                entry_type,
+                meta_data,
+                payload_data,
+            )?;
+        block_store.put_entries(vec![block]);
+        self.inner.put_append_chain(vec![entry], &initial_nexts);
+
+        let out = Array::new();
+        out.push(&row);
+        out.push(&trim_oldest_log_entries(
+            &mut self.inner,
+            block_store,
+            trim_length_to,
+        ));
+        Ok(out)
+    }
+
     pub fn prepare_entry_v0_plain_entry_commit_facts_and_put_with_builder(
         &mut self,
         builder: &NativeEntryV0PlainBuilder,
@@ -1166,6 +1346,47 @@ impl NativeLogIndex {
         block_store.put_entries(vec![block]);
         self.inner.put_append_chain(vec![entry], &initial_nexts);
         Ok(row)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_entry_v0_plain_entry_commit_facts_trim_and_put_with_builder(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        trim_length_to: usize,
+    ) -> Result<Array, JsValue> {
+        let (row, entry, initial_nexts, block) =
+            prepare_entry_v0_plain_entry_row_with_signer_parts(
+                &builder.clock_id,
+                &builder.public_key,
+                &builder.signing_key,
+                wall_time,
+                logical,
+                gid,
+                strings_from_array(next)?,
+                entry_type,
+                optional_bytes_from_js(meta_data),
+                payload_data.to_vec(),
+                PreparedPlainEntryRowMode::CommitFactsOnly,
+            )?;
+        block_store.put_entries(vec![block]);
+        self.inner.put_append_chain(vec![entry], &initial_nexts);
+
+        let out = Array::new();
+        out.push(&row);
+        out.push(&trim_oldest_log_entries(
+            &mut self.inner,
+            block_store,
+            trim_length_to,
+        ));
+        Ok(out)
     }
 
     pub fn prepare_entry_v0_plain_entries_commit_blocks_and_put_with_builder(
@@ -1849,6 +2070,14 @@ fn prepare_entry_v0_plain_entry_row_with_signer_parts(
             row.push(&JsValue::from_str(&cid));
             row.push(&strings_to_array(next.clone()));
             row.push(&JsValue::from_f64(storage_len as f64));
+        }
+        PreparedPlainEntryRowMode::StorageWithFacts => {
+            row.push(&Uint8Array::from(storage.as_slice()));
+            row.push(&JsValue::from_str(&cid));
+            row.push(&strings_to_array(next.clone()));
+            row.push(&JsValue::from_f64(storage_len as f64));
+            row.push(&Uint8Array::from(meta.as_slice()));
+            row.push(&Uint8Array::from(hash_digest.as_slice()));
         }
         PreparedPlainEntryRowMode::CommitFactsOnly => {
             row.push(&JsValue::from_str(&cid));

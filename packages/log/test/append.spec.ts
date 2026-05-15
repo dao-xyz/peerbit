@@ -537,6 +537,63 @@ describe("append", function () {
 		}
 	});
 
+	it("uses native graph trim facts for commit-only prepared append without native block store", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+			trim: { type: "length", to: 1 },
+		});
+
+		const nativePrepareAndPutSpy = sinon.spy(
+			log.entryIndex.properties.nativeGraph!.graph,
+			"prepareEntryV0PlainEntryAndPut",
+		);
+		const trimSpy = sinon.spy(log, "trim");
+		const blockRmManySpy = sinon.spy(store, "rmMany");
+
+		try {
+			const first = await (log as any).appendLocallyPreparedCommitOnly(
+				new Uint8Array([1]),
+				{ meta: { next: [] } },
+				{
+					skipMissingNextJoin: true,
+					resolveTrimmedEntries: false,
+					includeMaterializationBytes: false,
+					includeAppendFactsBytes: true,
+				},
+			);
+			const second = await (log as any).appendLocallyPreparedCommitOnly(
+				new Uint8Array([2]),
+				{},
+				{
+					skipMissingNextJoin: true,
+					resolveTrimmedEntries: false,
+					includeMaterializationBytes: false,
+					includeAppendFactsBytes: true,
+				},
+			);
+
+			expect(first.removed).to.be.empty;
+			expect(second.removed.map((entry: any) => entry.hash)).to.deep.equal([
+				first.appendFacts.hash,
+			]);
+			expect(nativePrepareAndPutSpy.callCount).equal(2);
+			expect(nativePrepareAndPutSpy.secondCall.args[0].trimLengthTo).equal(1);
+			expect(trimSpy.callCount).equal(0);
+			expect(blockRmManySpy.callCount).equal(1);
+			expect(await blockExists(first.appendFacts.hash)).to.be.false;
+			expect(await blockExists(second.appendFacts.hash)).to.be.true;
+			expect(log.length).equal(1);
+		} finally {
+			blockRmManySpy.restore();
+			trimSpy.restore();
+			nativePrepareAndPutSpy.restore();
+			await log.close();
+		}
+	});
+
 	it("uses storage-only native block-store commits for commit-only prepared append", async () => {
 		const { createNativeLogBlockStore } = await import("@peerbit/log-rust");
 		const nativeStore = await createNativeLogBlockStore();

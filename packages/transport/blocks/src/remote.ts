@@ -234,6 +234,14 @@ export class RemoteBlocks implements IBlocks {
 		};
 	}
 
+	getNativeLogBlockStoreHandle(): unknown {
+		return (
+			this.localStore as BlockStore & {
+				getNativeLogBlockStoreHandle?: () => unknown;
+			}
+		).getNativeLogBlockStoreHandle?.();
+	}
+
 	private normalizeProviderHints(
 		providers: string[] | undefined,
 		limit = this.maxProviderHintsPerCid || 8,

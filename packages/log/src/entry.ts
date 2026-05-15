@@ -60,6 +60,8 @@ export type PreparedAppendCommitOnlyChain<T> = {
 	shallowEntries: ShallowEntry[];
 	appendFacts: PreparedAppendFacts[];
 	nativeEntries?: PreparedNativeLogEntry[];
+	trimmedNativeEntries?: PreparedNativeLogEntry[];
+	trimmedNativeBlocksDeleted?: boolean;
 	nativeGraphUpdated?: boolean;
 	nativeBlocksCommitted?: boolean;
 };

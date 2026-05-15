@@ -868,6 +868,10 @@ export class Log<T> {
 				appendOptions,
 				nexts,
 				properties,
+				this.getNativeCommitOnlyTrimLengthTo(
+					appendOptions.trim,
+					properties?.resolveTrimmedEntries,
+				),
 			),
 		);
 	}
@@ -883,6 +887,7 @@ export class Log<T> {
 			includeMaterializationBytes?: boolean;
 			includeAppendFactsBytes?: boolean;
 		},
+		nativeTrimLengthTo?: number,
 	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
 		const deferBlockStore = hasPutMany(this._storage);
 		const nativeAppendChainResult = this.createNativePlainAppendCommitOnly(
@@ -893,6 +898,7 @@ export class Log<T> {
 			properties?.payloadData ? [properties.payloadData] : undefined,
 			properties?.includeMaterializationBytes,
 			properties?.includeAppendFactsBytes,
+			nativeTrimLengthTo,
 		);
 		return mapMaybePromise(nativeAppendChainResult, (nativeAppendChain) =>
 			this.finishLocallyPreparedCommitOnlyAppend(
@@ -929,6 +935,27 @@ export class Log<T> {
 			return entry;
 		};
 		const finishTrim = (): MaybePromise<PreparedCommitOnlyAppendResult<T>> => {
+			if (nativeAppendChain.trimmedNativeEntries) {
+				const trimmedEntries =
+					this.entryIndex.nativeLogEntriesToShallowEntries(
+						nativeAppendChain.trimmedNativeEntries,
+					);
+				const consumedResult =
+					this.entryIndex.consumeNativeTrimmedEntriesMaybe(trimmedEntries, {
+						skipNextHeadUpdates: true,
+						deleteBlocks:
+							nativeAppendChain.trimmedNativeBlocksDeleted !== true,
+					});
+				return mapMaybePromise(consumedResult, (removed) => ({
+					get entry() {
+						return materializeEntry();
+					},
+					materializeEntry,
+					removed,
+					appendFacts,
+					shallowEntry,
+				}));
+			}
 			const trimmedResult = this.trimIfConfigured(appendOptions.trim, {
 				resolveDeletedEntries: properties?.resolveTrimmedEntries,
 			});
@@ -1278,6 +1305,7 @@ export class Log<T> {
 		payloadDatas?: Uint8Array[],
 		includeMaterializationBytes?: boolean,
 		includeAppendFactsBytes?: boolean,
+		nativeTrimLengthTo?: number,
 	): MaybePromise<PreparedAppendCommitOnlyChain<T> | undefined> {
 		const canAppendAlreadyValidated =
 			options.__peerbitCanAppendAlreadyValidated === true;
@@ -1327,6 +1355,7 @@ export class Log<T> {
 			nativeBlockStore: this._storage,
 			includeMaterializationBytes,
 			includeAppendFactsBytes,
+			nativeTrimLengthTo,
 		});
 	}
 
@@ -1789,6 +1818,27 @@ export class Log<T> {
 	): MaybePromise<ShallowOrFullEntry<T>[] | undefined> {
 		const resolved = option ?? this._trim.options;
 		return resolved ? this.trim(resolved, properties) : undefined;
+	}
+
+	private getNativeCommitOnlyTrimLengthTo(
+		option: TrimOptions | undefined,
+		resolveDeletedEntries: boolean | undefined,
+	): number | undefined {
+		const resolved = option ?? this._trim.options;
+		if (
+			!resolved ||
+			resolved.type !== "length" ||
+			resolved.filter?.canTrim ||
+			resolveDeletedEntries !== false
+		) {
+			return;
+		}
+
+		const from = resolved.from ?? resolved.to;
+		if (this.length + 1 < from) {
+			return;
+		}
+		return resolved.to;
 	}
 
 	async join(

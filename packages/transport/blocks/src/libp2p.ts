@@ -127,6 +127,10 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			this.remoteBlocks.onReachable(evt.detail);
 	}
 
+	getNativeLogBlockStoreHandle(): unknown {
+		return this.remoteBlocks.getNativeLogBlockStoreHandle();
+	}
+
 	async put(
 		bytes: Uint8Array | { block: Block<any, any, any, any>; cid: string },
 	): Promise<string> {

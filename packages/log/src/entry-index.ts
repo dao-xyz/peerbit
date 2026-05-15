@@ -1649,6 +1649,71 @@ export class EntryIndex<T> {
 		return this.finishDeleteMany(deletedByHash, nodes, storeHashes, options);
 	}
 
+	consumeNativeTrimmedEntriesMaybe(
+		from: ShallowEntry[],
+		options?: { skipNextHeadUpdates?: boolean; deleteBlocks?: boolean },
+	): MaybePromise<ShallowEntry[]> {
+		if (from.length === 0) {
+			return [];
+		}
+
+		const nodes: ShallowEntry[] = [];
+		const seen = new Set<string>();
+		for (const node of from) {
+			if (seen.has(node.hash)) {
+				continue;
+			}
+			seen.add(node.hash);
+			nodes.push(node);
+		}
+
+		const indexedByHash = new Map(nodes.map((node) => [node.hash, node]));
+		const deletedByHash = new Map<string, ShallowEntry>();
+		const indexedHashes: string[] = [];
+		for (const node of nodes) {
+			this.cache.del(node.hash);
+			const pending = this.pendingIndexWrites.get(node.hash);
+			if (pending) {
+				this.pendingIndexWrites.delete(node.hash);
+				deletedByHash.set(node.hash, pending);
+			} else {
+				indexedHashes.push(node.hash);
+			}
+		}
+
+		const finish = (): MaybePromise<ShallowEntry[]> =>
+			this.finishConsumeNativeTrimmedEntries(deletedByHash, nodes, options);
+
+		const exactDeleteIndex: IndexWithExactDelete | undefined = hasExactDelete(
+			this.properties.index,
+		)
+			? (this.properties.index as IndexWithExactDelete)
+			: undefined;
+		if (indexedHashes.length > 0 && exactDeleteIndex) {
+			return mapMaybePromise(exactDeleteIndex.delIds(indexedHashes), (deleted) => {
+				for (const id of deleted) {
+					const hash = String(id.primitive);
+					const node = indexedByHash.get(hash);
+					if (!node || deletedByHash.has(hash)) {
+						continue;
+					}
+					deletedByHash.set(hash, node);
+				}
+				return finish();
+			});
+		}
+		if (indexedHashes.length > 0) {
+			return this.consumeNativeTrimmedEntriesByQuery(
+				indexedHashes,
+				indexedByHash,
+				deletedByHash,
+				nodes,
+				options,
+			);
+		}
+		return finish();
+	}
+
 	private deleteSingleMaybe(
 		node: ShallowEntry,
 		options?: { skipNextHeadUpdates?: boolean },
@@ -1726,6 +1791,72 @@ export class EntryIndex<T> {
 		return this.finishDeleteMany(deletedByHash, nodes, storeHashes, options);
 	}
 
+	private async consumeNativeTrimmedEntriesByQuery(
+		indexedHashes: string[],
+		indexedByHash: Map<string, ShallowEntry>,
+		deletedByHash: Map<string, ShallowEntry>,
+		nodes: ShallowEntry[],
+		options?: { skipNextHeadUpdates?: boolean; deleteBlocks?: boolean },
+	): Promise<ShallowEntry[]> {
+		const batchSize = 64;
+		for (let i = 0; i < indexedHashes.length; i += batchSize) {
+			const hashes = indexedHashes.slice(i, i + batchSize);
+			const deleted = await this.properties.index.del({
+				query: createHashMatchQuery(hashes),
+			});
+			for (const id of deleted) {
+				const hash = String(id.primitive);
+				const node = indexedByHash.get(hash);
+				if (!node || deletedByHash.has(hash)) {
+					continue;
+				}
+				deletedByHash.set(hash, node);
+			}
+		}
+		return this.finishConsumeNativeTrimmedEntries(deletedByHash, nodes, options);
+	}
+
+	private finishConsumeNativeTrimmedEntries(
+		deletedByHash: Map<string, ShallowEntry>,
+		nodes: ShallowEntry[],
+		options?: { skipNextHeadUpdates?: boolean; deleteBlocks?: boolean },
+	): MaybePromise<ShallowEntry[]> {
+		const deleted = nodes
+			.map((node) => deletedByHash.get(node.hash))
+			.filter((node): node is ShallowEntry => !!node);
+		if (deleted.length === 0) {
+			return [];
+		}
+
+		const afterStoreDelete = () => {
+			this._length -= deleted.length;
+			if (!options?.skipNextHeadUpdates) {
+				const deletedNexts: string[] = [];
+				for (const node of deleted) {
+					if (node.meta.type !== EntryType.CUT) {
+						deletedNexts.push(...node.meta.next);
+					}
+				}
+				return mapMaybePromise(
+					this.privateUpdateNextHeadHashes(deletedNexts, true),
+					() => deleted,
+				);
+			}
+			return deleted;
+		};
+
+		if (options?.deleteBlocks) {
+			const store = this.properties.store;
+			const hashes = deleted.map((node) => node.hash);
+			const deleteResult =
+				hasRmMany(store) && store.rmMany
+					? store.rmMany(hashes)
+					: Promise.all(hashes.map((hash) => store.rm(hash))).then(() => {});
+			return mapMaybePromise(deleteResult, afterStoreDelete);
+		}
+		return afterStoreDelete();
+	}
+
 	private finishDeleteMany(
 		deletedByHash: Map<string, ShallowEntry>,
 		nodes: ShallowEntry[],
@@ -1791,6 +1922,10 @@ export class EntryIndex<T> {
 				}),
 			}),
 		});
+	}
+
+	nativeLogEntriesToShallowEntries(entries: NativeLogEntry[]): ShallowEntry[] {
+		return entries.map((entry) => this.nativeLogEntryToShallowEntry(entry));
 	}
 
 	async getMemoryUsage() {
