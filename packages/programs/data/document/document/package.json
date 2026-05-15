@@ -85,6 +85,7 @@
 	"devDependencies": {
 		"@chainsafe/libp2p-noise": "^17.0.0",
 		"@libp2p/websockets": "^10.1.7",
+		"@peerbit/native-backbone": "workspace:*",
 		"@peerbit/test-utils": "workspace:*",
 		"@peerbit/time": "workspace:*",
 		"@types/pidusage": "^2.0.5",

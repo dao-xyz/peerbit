@@ -44,6 +44,7 @@ packages:
   - packages/utils/crypto
   - packages/utils/any-store/*
   - packages/utils/any-store/proxy/e2e
+  - packages/utils/native-backbone
   - packages/utils/build-assets
   - packages/utils/time
   - packages/utils/cache

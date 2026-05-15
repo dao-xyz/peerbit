@@ -2,6 +2,7 @@ import { field, option, serialize, variant } from "@dao-xyz/borsh";
 import { create as createSimpleIndexer } from "@peerbit/indexer-simple";
 import { create as createSqliteIndexer } from "@peerbit/indexer-sqlite3";
 import { Log } from "@peerbit/log";
+import { createNativePeerbitBackbone } from "@peerbit/native-backbone";
 import { Program, type ProgramClient } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import { createRustPeerbitOptions } from "peerbit/rust";
@@ -15,7 +16,7 @@ import { Documents, policy, type SetupOptions } from "../src/index.js";
 // - DOC_WARMUP=100
 // - DOC_ITERATIONS=1000
 // - DOC_BYTES=1200
-// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,native-ceiling
+// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,native-ceiling,native-backbone-ceiling
 //   Add "-nonunique" to any scenario name to use default update-safe put semantics.
 //   Add "-local" to a rust-peerbit scenario to disable replication and default trim.
 //   Add "-putmany" to any unique scenario name to use one putMany call per measured batch.
@@ -186,6 +187,18 @@ const payload = new Uint8Array(payloadBytes);
 for (let i = 0; i < payload.length; i++) {
 	payload[i] = i % 256;
 }
+
+const fromHex = (hex: string) =>
+	Uint8Array.from(
+		hex.match(/.{2}/g)?.map((byte) => Number.parseInt(byte, 16)) ?? [],
+	);
+
+const nativeBackbonePrivateKey = fromHex(
+	"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+);
+const nativeBackbonePublicKey = fromHex(
+	"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+);
 
 let idCounter = 0;
 const createDocument = () =>
@@ -770,12 +783,64 @@ const runNativeCeilingScenario = async (name: string): Promise<BenchRow> => {
 	}
 };
 
+const runNativeBackboneCeilingScenario = async (
+	name: string,
+): Promise<BenchRow> => {
+	const backbone = await createNativePeerbitBackbone({
+		clockId: nativeBackbonePublicKey,
+		privateKey: nativeBackbonePrivateKey,
+		publicKey: nativeBackbonePublicKey,
+	});
+
+	const append = (count: number, profile?: Profile) => {
+		for (let i = 0; i < count; i++) {
+			const runAppend = () =>
+				backbone.appendPlainNoNextTransaction({
+					wallTime: BigInt(Date.now()),
+					logical: i,
+					gid: `gid-${i}`,
+					payloadData: payload,
+					replicas: 1,
+					selfHash: "native-backbone-ceiling-peer",
+					trimLengthTo: 100,
+				});
+			if (profile) {
+				timeSync(profile, "totalPutMs", runAppend);
+			} else {
+				runAppend();
+			}
+		}
+	};
+
+	append(warmupIterations);
+	const profile = emptyProfile();
+	append(iterations, profile);
+
+	return {
+		name,
+		iterations,
+		payloadBytes,
+		opsPerSecond: Math.round((iterations / profile.totalPutMs) * 1000),
+		...Object.fromEntries(
+			Object.entries(profile)
+				.filter(
+					([key]) =>
+						profileDeep || !deepProfileKeys.has(key as keyof Profile),
+				)
+				.map(([key, value]) => [key, Math.round(value * 100) / 100]),
+		),
+	} as BenchRow;
+};
+
 const rows: BenchRow[] = [];
 for (const name of scenarioNames) {
+	const baseName = scenarioBaseName(name);
 	rows.push(
-		scenarioBaseName(name) === "native-ceiling"
+		baseName === "native-ceiling"
 			? await runNativeCeilingScenario(name)
-			: await runScenario(name),
+			: baseName === "native-backbone-ceiling"
+				? await runNativeBackboneCeilingScenario(name)
+				: await runScenario(name),
 	);
 }
 

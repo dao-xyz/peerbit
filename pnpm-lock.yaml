@@ -1228,6 +1228,9 @@ importers:
       '@libp2p/websockets':
         specifier: ^10.1.7
         version: 10.1.7
+      '@peerbit/native-backbone':
+        specifier: workspace:*
+        version: link:../../../../utils/native-backbone
       '@peerbit/test-utils':
         specifier: workspace:*
         version: link:../../../../clients/test-utils
@@ -2765,6 +2768,8 @@ importers:
       '@libp2p/logger':
         specifier: ^6.2.3
         version: 6.2.3
+
+  packages/utils/native-backbone: {}
 
   packages/utils/rateless-iblt: {}
 
