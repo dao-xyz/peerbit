@@ -356,6 +356,8 @@ type NativeAppendEntryPlan<R extends "u32" | "u64"> = {
 	hashNumber: NumberFromType<R>;
 	preparedCoordinate: PreparedCoordinatePersistence<R>;
 	delivery?: AppendDeliveryPlan;
+	committedNativeCoordinateState?: boolean;
+	committedNativeBackboneCoordinateState?: boolean;
 	committedNativeCoordinateDeletes?: boolean;
 };
 
@@ -2203,6 +2205,7 @@ export class SharedLog<
 			return;
 		}
 		this._nativeSharedLogState?.deleteEntryCoordinatesBatch(values);
+		this._nativeBackbone?.deleteEntryCoordinatesBatch(values);
 		this.forgetResidentCoordinateStateForHashes(values);
 	}
 
@@ -4661,7 +4664,7 @@ export class SharedLog<
 			options?.target !== "none" ||
 			options?.replicate === true ||
 			this.shouldDeferHeadCoordinatePersistence(options) ||
-			!this._nativeSharedLogState ||
+			(!this._nativeSharedLogState && !this._nativeBackbone) ||
 			!this.canPlanNativeAppendFacts(result.appendFacts)
 		) {
 			return undefined;
@@ -4707,7 +4710,9 @@ export class SharedLog<
 				deleteHashes: deferredCoordinateDeleteHashes,
 				coordinates: nativeAppendPlan.coordinates,
 				replicas: nativeAppendPlan.coordinates.length,
-				commitNative: false,
+				commitNative: nativeAppendPlan.committedNativeCoordinateState !== true,
+				commitNativeBackbone:
+					nativeAppendPlan.committedNativeBackboneCoordinateState !== true,
 			});
 		} catch (error) {
 			if (deferredCoordinateDeleteHashes) {
@@ -5142,6 +5147,9 @@ export class SharedLog<
 				nextHashes: result.appendFacts.next,
 				deleteHashes: deferredCoordinateDeleteHashes,
 				coordinates: nativeAppendPlan.coordinates,
+				commitNative: nativeAppendPlan.committedNativeCoordinateState !== true,
+				commitNativeBackbone:
+					nativeAppendPlan.committedNativeBackboneCoordinateState !== true,
 			});
 		} catch (error) {
 			if (deferredCoordinateDeleteHashes) {
@@ -5266,7 +5274,7 @@ export class SharedLog<
 			options?.target === "none" &&
 			options?.replicate !== true &&
 			!this.shouldDeferHeadCoordinatePersistence(options) &&
-			!!this._nativeSharedLogState
+			(!!this._nativeSharedLogState || !!this._nativeBackbone)
 		);
 	}
 
@@ -5549,7 +5557,9 @@ export class SharedLog<
 					replicas: plan.coordinates.length,
 					entry,
 					assignedToRangeBoundary: plan.assignedToRangeBoundary,
-					commitNative: false,
+					commitNative: plan.committedNativeCoordinateState !== true,
+					commitNativeBackbone:
+						plan.committedNativeBackboneCoordinateState !== true,
 					hashNumber: plan.hashNumber,
 					prepared: plan.preparedCoordinate,
 				};
@@ -5674,8 +5684,9 @@ export class SharedLog<
 		replicas: number,
 		deliveryArg: false | true | DeliveryOptions | undefined,
 	): Promise<NativeAppendEntryPlan<R> | undefined> {
+		const nativePlanner = this._nativeBackbone ?? this._nativeSharedLogState;
 		if (
-			!this._nativeSharedLogState ||
+			!nativePlanner ||
 			!this.canPlanNativeAppendFacts(appendFacts)
 		) {
 			return undefined;
@@ -5689,7 +5700,7 @@ export class SharedLog<
 		const { delivery, reliability, requireRecipients, minAcks } =
 			this._parseDeliveryOptions(deliveryArg);
 		const hashNumber = this.getAppendFactsHashNumber(appendFacts);
-		const plan = this._nativeSharedLogState.planAppendForGid(
+		const plan = nativePlanner.planAppendForGid(
 			{
 				entryHash: appendFacts.hash,
 				gid: appendFacts.gid,
@@ -5723,6 +5734,10 @@ export class SharedLog<
 			hashNumber: hashNumberFromPlan,
 			preparedCoordinate,
 			delivery: plan.delivery,
+			committedNativeCoordinateState:
+				nativePlanner === this._nativeSharedLogState,
+			committedNativeBackboneCoordinateState:
+				nativePlanner === this._nativeBackbone,
 		};
 	}
 
@@ -5731,8 +5746,9 @@ export class SharedLog<
 		replicas: number,
 		options?: { deleteHashes?: string[] },
 	): Promise<NativeAppendEntryPlan<R> | undefined> {
+		const nativePlanner = this._nativeBackbone ?? this._nativeSharedLogState;
 		if (
-			!this._nativeSharedLogState ||
+			!nativePlanner ||
 			!this.canPlanNativeAppendFacts(appendFacts)
 		) {
 			return undefined;
@@ -5743,7 +5759,7 @@ export class SharedLog<
 		const nativeLeaderOptions = this.createNativeLeaderOptions(context);
 		const plan =
 			options?.deleteHashes && options.deleteHashes.length > 0
-				? this._nativeSharedLogState.commitLocalAppendForGidCompact(
+				? nativePlanner.commitLocalAppendForGidCompact(
 						{
 							entryHash: appendFacts.hash,
 							gid: appendFacts.gid,
@@ -5755,7 +5771,7 @@ export class SharedLog<
 						},
 						nativeLeaderOptions,
 					)
-				: this._nativeSharedLogState.planLocalAppendForGidCompact(
+				: nativePlanner.planLocalAppendForGidCompact(
 						{
 							entryHash: appendFacts.hash,
 							gid: appendFacts.gid,
@@ -5783,6 +5799,10 @@ export class SharedLog<
 			assignedToRangeBoundary: plan.assignedToRangeBoundary,
 			hashNumber: hashNumberFromPlan,
 			preparedCoordinate,
+			committedNativeCoordinateState:
+				nativePlanner === this._nativeSharedLogState,
+			committedNativeBackboneCoordinateState:
+				nativePlanner === this._nativeBackbone,
 			committedNativeCoordinateDeletes:
 				!!options?.deleteHashes && options.deleteHashes.length > 0,
 		};
@@ -5793,7 +5813,8 @@ export class SharedLog<
 		replicas: number,
 		deliveryArg: false | true | DeliveryOptions | undefined,
 	): Promise<NativeAppendEntryPlan<R> | undefined> {
-		if (!this._nativeSharedLogState || !this.canPlanNativeHashGid(entry)) {
+		const nativePlanner = this._nativeBackbone ?? this._nativeSharedLogState;
+		if (!nativePlanner || !this.canPlanNativeHashGid(entry)) {
 			return undefined;
 		}
 
@@ -5805,7 +5826,7 @@ export class SharedLog<
 		const { delivery, reliability, requireRecipients, minAcks } =
 			this._parseDeliveryOptions(deliveryArg);
 		const hashNumber = this.getEntryHashNumber(entry);
-		const plan = this._nativeSharedLogState.planAppendForGid(
+		const plan = nativePlanner.planAppendForGid(
 			{
 				entryHash: entry.hash,
 				gid: entry.meta.gid,
@@ -5838,6 +5859,10 @@ export class SharedLog<
 			hashNumber: hashNumberFromPlan,
 			preparedCoordinate,
 			delivery: plan.delivery,
+			committedNativeCoordinateState:
+				nativePlanner === this._nativeSharedLogState,
+			committedNativeBackboneCoordinateState:
+				nativePlanner === this._nativeBackbone,
 		};
 	}
 
@@ -5845,13 +5870,14 @@ export class SharedLog<
 		entry: Entry<T>,
 		replicas: number,
 	): Promise<NativeAppendEntryPlan<R> | undefined> {
-		if (!this._nativeSharedLogState || !this.canPlanNativeHashGid(entry)) {
+		const nativePlanner = this._nativeBackbone ?? this._nativeSharedLogState;
+		if (!nativePlanner || !this.canPlanNativeHashGid(entry)) {
 			return undefined;
 		}
 
 		const context = await this.createLeaderSelectionContext();
 		const hashNumber = this.getEntryHashNumber(entry);
-		const plan = this._nativeSharedLogState.planLocalAppendForGidCompact(
+		const plan = nativePlanner.planLocalAppendForGidCompact(
 			{
 				entryHash: entry.hash,
 				gid: entry.meta.gid,
@@ -5878,6 +5904,10 @@ export class SharedLog<
 			assignedToRangeBoundary: plan.assignedToRangeBoundary,
 			hashNumber: hashNumberFromPlan,
 			preparedCoordinate,
+			committedNativeCoordinateState:
+				nativePlanner === this._nativeSharedLogState,
+			committedNativeBackboneCoordinateState:
+				nativePlanner === this._nativeBackbone,
 		};
 	}
 
@@ -6095,7 +6125,9 @@ export class SharedLog<
 					deleteHashes: properties.extraCoordinateDeleteHashes,
 					coordinates,
 					replicas: coordinates.length,
-					commitNative: false,
+					commitNative: nativeAppendPlan.committedNativeCoordinateState !== true,
+					commitNativeBackbone:
+						nativeAppendPlan.committedNativeBackboneCoordinateState !== true,
 				});
 			} else {
 				await this.persistCoordinate({
@@ -6104,7 +6136,9 @@ export class SharedLog<
 					replicas: coordinates.length,
 					entry,
 					assignedToRangeBoundary: nativeAppendPlan.assignedToRangeBoundary,
-					commitNative: false,
+					commitNative: nativeAppendPlan.committedNativeCoordinateState !== true,
+					commitNativeBackbone:
+						nativeAppendPlan.committedNativeBackboneCoordinateState !== true,
 					deleteHashes: properties.extraCoordinateDeleteHashes,
 					hashNumber: nativeAppendPlan.hashNumber,
 					prepared: nativeAppendPlan.preparedCoordinate,
@@ -6465,6 +6499,9 @@ export class SharedLog<
 
 		await remoteBlocksStartPromise;
 		this._nativeBackbone = await this.openNativeBackbone(options?.nativeBackbone);
+		if (this._nativeBackbone) {
+			await this.hydrateNativeBackboneSharedLog(this._nativeBackbone);
+		}
 		const hasIndexedReplicationInfo =
 			(await this.replicationIndex.count({
 				query: [
@@ -6781,11 +6818,13 @@ export class SharedLog<
 		const nativeRange = this.toNativeReplicationRange(range);
 		this._nativeRangePlanner?.put(nativeRange);
 		this._nativeSharedLogState?.put(nativeRange);
+		this._nativeBackbone?.putRange(nativeRange);
 	}
 
 	private deleteNativeReplicationRange(range: ReplicationRangeIndexable<R>): void {
 		this._nativeRangePlanner?.delete(range.idString);
 		this._nativeSharedLogState?.delete(range.idString);
+		this._nativeBackbone?.deleteRange(range.idString);
 	}
 
 	private async hydrateNativeRangePlanner(
@@ -6833,6 +6872,48 @@ export class SharedLog<
 					this._residentEntryCoordinatesByHash.set(
 						result.value.hash,
 						result.value,
+					);
+				}
+			}
+		} finally {
+			await iterator.close();
+		}
+	}
+
+	private async hydrateNativeBackboneSharedLog(
+		backbone: NativePeerbitBackbone,
+	): Promise<void> {
+		backbone.clearSharedLog();
+		const rangeIterator = this.replicationIndex.iterate();
+		try {
+			for (;;) {
+				const batch = await rangeIterator.next(256);
+				if (batch.length === 0) {
+					break;
+				}
+				for (const result of batch) {
+					backbone.putRange(this.toNativeReplicationRange(result.value));
+				}
+			}
+		} finally {
+			await rangeIterator.close();
+		}
+		const iterator = this.entryCoordinatesIndex.iterate({});
+		try {
+			for (;;) {
+				const batch = await iterator.next(256);
+				if (batch.length === 0) {
+					break;
+				}
+				for (const result of batch) {
+					const requestedReplicas = decodeReplicas(result.value).getValue(this);
+					backbone.putEntryCoordinates(
+						result.value.hash,
+						result.value.gid,
+						result.value.coordinates,
+						result.value.assignedToRangeBoundary,
+						requestedReplicas,
+						result.value.hashNumber,
 					);
 				}
 			}
@@ -9426,6 +9507,7 @@ export class SharedLog<
 		coordinates: NumberFromType<R>[];
 		replicas: number;
 		commitNative?: boolean;
+		commitNativeBackbone?: boolean;
 		deleteHashes?: string[];
 	}): MaybePromise<boolean> {
 		const { assignedToRangeBoundary, fields } = properties.prepared;
@@ -9496,12 +9578,27 @@ export class SharedLog<
 		}
 
 		const finish = (): MaybePromise<boolean> => {
+			const nativeDeleteHashes = combineCoordinateDeleteHashes(
+				properties.nextHashes,
+				properties.deleteHashes,
+			);
 			if (properties.commitNative !== false) {
 				this._nativeSharedLogState?.commitEntryCoordinates(
 					properties.hash,
 					fields.gid,
 					properties.coordinates,
-					properties.nextHashes,
+					nativeDeleteHashes,
+					assignedToRangeBoundary,
+					properties.replicas,
+					fields.hashNumber,
+				);
+			}
+			if (properties.commitNativeBackbone !== false) {
+				this._nativeBackbone?.commitEntryCoordinates(
+					properties.hash,
+					fields.gid,
+					properties.coordinates,
+					nativeDeleteHashes,
 					assignedToRangeBoundary,
 					properties.replicas,
 					fields.hashNumber,
@@ -9512,7 +9609,7 @@ export class SharedLog<
 					properties.hash,
 					properties.prepared.coordinateEntry ?? fields,
 				);
-				for (const nextHash of properties.nextHashes) {
+				for (const nextHash of nativeDeleteHashes) {
 					this._residentEntryCoordinatesByHash.delete(nextHash);
 				}
 			}
@@ -9539,6 +9636,8 @@ export class SharedLog<
 		nextHashes: string[];
 		coordinates: NumberFromType<R>[];
 		deleteHashes?: string[];
+		commitNative?: boolean;
+		commitNativeBackbone?: boolean;
 	}): MaybePromise<boolean> {
 		const { fields } = properties.prepared;
 		const putNative =
@@ -9556,12 +9655,38 @@ export class SharedLog<
 			),
 		);
 		const finish = () => {
+			const nativeDeleteHashes = combineCoordinateDeleteHashes(
+				properties.nextHashes,
+				properties.deleteHashes,
+			);
+			if (properties.commitNative !== false) {
+				this._nativeSharedLogState?.commitEntryCoordinates(
+					properties.hash,
+					fields.gid,
+					properties.coordinates,
+					nativeDeleteHashes,
+					properties.prepared.assignedToRangeBoundary,
+					properties.coordinates.length,
+					fields.hashNumber,
+				);
+			}
+			if (properties.commitNativeBackbone !== false) {
+				this._nativeBackbone?.commitEntryCoordinates(
+					properties.hash,
+					fields.gid,
+					properties.coordinates,
+					nativeDeleteHashes,
+					properties.prepared.assignedToRangeBoundary,
+					properties.coordinates.length,
+					fields.hashNumber,
+				);
+			}
 			if (this._residentEntryCoordinatesByHash) {
 				this._residentEntryCoordinatesByHash.set(
 					properties.hash,
 					properties.prepared.coordinateEntry ?? fields,
 				);
-				for (const nextHash of properties.nextHashes) {
+				for (const nextHash of nativeDeleteHashes) {
 					this._residentEntryCoordinatesByHash.delete(nextHash);
 				}
 			}
@@ -9588,6 +9713,7 @@ export class SharedLog<
 		prev?: EntryReplicated<R>;
 		assignedToRangeBoundary?: boolean;
 		commitNative?: boolean;
+		commitNativeBackbone?: boolean;
 		deleteHashes?: string[];
 		hashNumber?: NumberFromType<R>;
 		nextHashes?: string[];
@@ -9605,6 +9731,7 @@ export class SharedLog<
 			coordinates: properties.coordinates,
 			replicas: properties.replicas,
 			commitNative: properties.commitNative,
+			commitNativeBackbone: properties.commitNativeBackbone,
 			deleteHashes: properties.deleteHashes,
 		});
 	}
@@ -9625,6 +9752,7 @@ export class SharedLog<
 			prev?: EntryReplicated<R>;
 			assignedToRangeBoundary?: boolean;
 			commitNative?: boolean;
+			commitNativeBackbone?: boolean;
 			hashNumber?: NumberFromType<R>;
 			prepared?: PreparedCoordinatePersistence<R>;
 		}>,
@@ -9713,6 +9841,17 @@ export class SharedLog<
 					prepared.fields.hashNumber,
 				);
 			}
+			if (item.commitNativeBackbone !== false) {
+				this._nativeBackbone?.commitEntryCoordinates(
+					item.entry.hash,
+					prepared.fields.gid,
+					item.coordinates,
+					item.entry.meta.next,
+					prepared.assignedToRangeBoundary,
+					item.replicas,
+					prepared.fields.hashNumber,
+				);
+			}
 			if (this._residentEntryCoordinatesByHash) {
 				this._residentEntryCoordinatesByHash.set(
 					item.entry.hash,
@@ -9735,6 +9874,7 @@ export class SharedLog<
 
 	private async deleteCoordinates(properties: { hash: string }) {
 		this._nativeSharedLogState?.deleteEntryCoordinates(properties.hash);
+		this._nativeBackbone?.deleteEntryCoordinates(properties.hash);
 		this._residentEntryCoordinatesByHash?.delete(properties.hash);
 		const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
 			EntryReplicated<R>

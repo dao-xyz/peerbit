@@ -107,4 +107,45 @@ describe("native peerbit backbone", () => {
 		expect(backbone.hasBlock(prepared!.hash)).equal(false);
 		expect(backbone.blockLength).equal(0);
 	});
+
+	it("exposes shared-log coordinate planning for storage-backed paths", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+
+		backbone.putEntryCoordinates("hash-a", "gid-a", [1n], false, 1, 1n);
+		expect(backbone.getEntryCoordinateHashes()).to.deep.equal(["hash-a"]);
+		expect(backbone.deleteEntryCoordinates("hash-a")).equal(true);
+		expect(backbone.getEntryCoordinateHashes()).to.deep.equal([]);
+
+		const plan = backbone.planAppendForGid({
+			entryHash: "hash-b",
+			gid: "gid-b",
+			hashNumber: 2n,
+			replicas: 1,
+			selfHash: "peer-a",
+			deliveryEnabled: false,
+			reliabilityAck: false,
+			requireRecipients: false,
+		});
+
+		expect(plan.coordinate.hash).equal("hash-b");
+		expect(plan.coordinate.gid).equal("gid-b");
+		expect(plan.coordinate.requestedReplicas).equal(1);
+		expect(plan.delivery?.hasRemoteRecipients).equal(false);
+		expect(backbone.getEntryCoordinateHashes()).to.deep.equal(["hash-b"]);
+
+		backbone.commitEntryCoordinates(
+			"hash-c",
+			"gid-c",
+			[3n],
+			["hash-b"],
+			false,
+			1,
+			3n,
+		);
+		expect(backbone.getEntryCoordinateHashes()).to.deep.equal(["hash-c"]);
+	});
 });

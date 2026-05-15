@@ -853,20 +853,26 @@ describe("index", () => {
 				const sharedLog = store.docs.log as any;
 				const remotePutKnownSpy = sinon.spy(sharedLog.remoteBlocks, "putKnown");
 				const backbone = sharedLog._nativeBackbone;
+				const backbonePlanSpy = sinon.spy(backbone, "planAppendForGid");
 
 				try {
 					const doc = new Document({ id: uuid(), name: "backbone-remote" });
 					const put = await store.docs.put(doc, { unique: true });
 
 					expect(remotePutKnownSpy.callCount).equal(1);
+					expect(backbonePlanSpy.callCount).equal(1);
 					expect(backbone.hasLogEntry(put.entry.hash)).equal(true);
 					expect(backbone.hasBlock(put.entry.hash)).equal(false);
+					expect(backbone.getEntryCoordinateHashes()).to.include(
+						put.entry.hash,
+					);
 					const storedBlock = await sharedLog.remoteBlocks.get(put.entry.hash);
 					expect(storedBlock).instanceOf(Uint8Array);
 					expect((await store.docs.get(doc.id))?.name).equal(
 						"backbone-remote",
 					);
 				} finally {
+					backbonePlanSpy.restore();
 					remotePutKnownSpy.restore();
 					await store.close();
 					store = undefined;

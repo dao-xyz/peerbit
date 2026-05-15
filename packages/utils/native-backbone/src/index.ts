@@ -68,6 +68,8 @@ type NativePeerbitBackboneHandle = {
 	block_entries: () => Array<[string, Uint8Array]>;
 	block_size: () => number;
 	clear: () => void;
+	clear_shared_log: () => void;
+	clear_entry_coordinates: () => void;
 	put_range: (
 		id: string,
 		hash: string,
@@ -79,6 +81,86 @@ type NativePeerbitBackboneHandle = {
 		width: string,
 		mode: number,
 	) => void;
+	delete_range: (id: string) => boolean;
+	put_entry_coordinates: (
+		hash: string,
+		gid: string,
+		hashNumber: string,
+		coordinates: string[],
+		assignedToRangeBoundary: boolean,
+		requestedReplicas: number,
+	) => void;
+	delete_entry_coordinates: (hash: string) => boolean;
+	delete_entry_coordinates_batch: (hashes: string[]) => void;
+	commit_entry_coordinates: (
+		hash: string,
+		gid: string,
+		hashNumber: string,
+		coordinates: string[],
+		nextHashes: string[],
+		assignedToRangeBoundary: boolean,
+		requestedReplicas: number,
+	) => void;
+	plan_local_append_for_gid_compact: (
+		entryHash: string,
+		gid: string,
+		hashNumber: string,
+		nextHashes: string[],
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => [unknown[] | undefined, boolean, boolean, unknown[]];
+	commit_local_append_for_gid_compact: (
+		entryHash: string,
+		gid: string,
+		hashNumber: string,
+		nextHashes: string[],
+		deleteHashes: string[],
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => [unknown[] | undefined, boolean, boolean, unknown[]];
+	plan_append_for_gid: (
+		entryHash: string,
+		gid: string,
+		hashNumber: string,
+		nextHashes: string[],
+		replicas: number,
+		fullReplicaCandidates: string[],
+		fallbackRecipients: string[],
+		deliverySelfHash: string,
+		deliveryEnabled: boolean,
+		reliabilityAck: boolean,
+		minAcks: number | undefined,
+		requireRecipients: boolean,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => [
+		unknown[],
+		unknown[],
+		boolean,
+		boolean,
+		[boolean, boolean, boolean, string[], string[], string[], string[], string[]],
+		unknown[],
+	];
 	append_plain_no_next_transaction: (
 		wallTime: bigint,
 		logical: number,
@@ -191,6 +273,28 @@ export type NativeBackboneLeaderSample = {
 	intersecting: boolean;
 };
 
+export type NativeBackboneFindLeaderOptions = {
+	roleAge?: number;
+	now?: bigint | number | string;
+	peerFilter?: Iterable<string>;
+	expandPeerFilter?: boolean;
+	selfHash?: string;
+	selfReplicating?: boolean;
+	fullReplicaFallback?: boolean;
+	includeStrictFullReplica?: boolean;
+};
+
+export type NativeBackboneAppendDeliveryPlan = {
+	hasRemoteRecipients: boolean;
+	noPeerError: boolean;
+	defaultSendSilent: boolean;
+	sendTo: string[];
+	ackTo: string[];
+	silentTo: string[];
+	repairTargets: string[];
+	authoritativeRecipients: string[];
+};
+
 export type NativeBackboneCoordinatePlan = {
 	hash: string;
 	hashNumber: number | bigint;
@@ -274,6 +378,15 @@ export type NativeBackboneAppendResult = {
 	trimmed: NativeBackboneTrimmedEntry[];
 };
 
+export type NativeBackboneAppendPlan = {
+	coordinates: Array<number | bigint>;
+	leaders?: Map<string, NativeBackboneLeaderSample>;
+	isLeader: boolean;
+	assignedToRangeBoundary: boolean;
+	delivery?: NativeBackboneAppendDeliveryPlan;
+	coordinate: NativeBackboneCoordinatePlan;
+};
+
 export type NativeBackboneRangeInput = {
 	id: string;
 	hash: string;
@@ -341,6 +454,28 @@ const appendCoordinatePlanFromRow = (
 		requestedReplicas,
 	};
 };
+
+const appendDeliveryPlanFromRow = (
+	row: [
+		boolean,
+		boolean,
+		boolean,
+		string[],
+		string[],
+		string[],
+		string[],
+		string[],
+	],
+): NativeBackboneAppendDeliveryPlan => ({
+	hasRemoteRecipients: row[0],
+	noPeerError: row[1],
+	defaultSendSilent: row[2],
+	sendTo: row[3],
+	ackTo: row[4],
+	silentTo: row[5],
+	repairTargets: row[6],
+	authoritativeRecipients: row[7],
+});
 
 const committedEntryFromRow = (row: unknown[]): NativeBackboneCommittedEntry => {
 	const [hash, metaBytes, byteLength, hashDigestBytes] = row as [
@@ -890,7 +1025,47 @@ export class NativeBackboneBlockStore {
 }
 
 const integerString = (value: bigint | number | string): string =>
-	typeof value === "string" ? value : value.toString();
+	typeof value === "string"
+		? value
+		: typeof value === "number"
+			? Math.trunc(value).toString()
+			: value.toString();
+
+const iterableToArray = <T>(values?: Iterable<T>): T[] => {
+	if (!values) {
+		return [];
+	}
+	return Array.isArray(values) ? values : [...values];
+};
+
+const optionalIterableToArray = <T>(values?: Iterable<T>): T[] | undefined => {
+	if (!values) {
+		return undefined;
+	}
+	return Array.isArray(values) ? values : [...values];
+};
+
+const findLeaderArguments = (
+	options?: NativeBackboneFindLeaderOptions,
+): [
+	number,
+	string,
+	string[] | undefined,
+	boolean,
+	string,
+	boolean,
+	boolean,
+	boolean,
+] => [
+	options?.roleAge ?? 0,
+	integerString(options?.now ?? Date.now()),
+	optionalIterableToArray(options?.peerFilter),
+	options?.expandPeerFilter === true,
+	options?.selfHash ?? "",
+	options?.selfReplicating === true,
+	options?.fullReplicaFallback === true,
+	options?.includeStrictFullReplica !== false,
+];
 
 export class NativePeerbitBackbone {
 	readonly graph: NativeBackboneLogGraph;
@@ -948,6 +1123,14 @@ export class NativePeerbitBackbone {
 		this.native.clear();
 	}
 
+	clearSharedLog(): void {
+		this.native.clear_shared_log();
+	}
+
+	clearEntryCoordinates(): void {
+		this.native.clear_entry_coordinates();
+	}
+
 	putRange(range: NativeBackboneRangeInput): void {
 		this.native.put_range(
 			range.id,
@@ -960,6 +1143,185 @@ export class NativePeerbitBackbone {
 			integerString(range.width),
 			range.mode,
 		);
+	}
+
+	deleteRange(id: string): boolean {
+		return this.native.delete_range(id);
+	}
+
+	putEntryCoordinates(
+		hash: string,
+		gid: string,
+		coordinates: Iterable<bigint | number | string>,
+		assignedToRangeBoundary: boolean,
+		requestedReplicas: number,
+		hashNumber: bigint | number | string,
+	): void {
+		this.native.put_entry_coordinates(
+			hash,
+			gid,
+			integerString(hashNumber),
+			[...coordinates].map(integerString),
+			assignedToRangeBoundary,
+			requestedReplicas,
+		);
+	}
+
+	deleteEntryCoordinates(hash: string): boolean {
+		return this.native.delete_entry_coordinates(hash);
+	}
+
+	deleteEntryCoordinatesBatch(hashes: Iterable<string>): void {
+		this.native.delete_entry_coordinates_batch(iterableToArray(hashes));
+	}
+
+	commitEntryCoordinates(
+		hash: string,
+		gid: string,
+		coordinates: Iterable<bigint | number | string>,
+		nextHashes: Iterable<string>,
+		assignedToRangeBoundary: boolean,
+		requestedReplicas: number,
+		hashNumber: bigint | number | string,
+	): void {
+		this.native.commit_entry_coordinates(
+			hash,
+			gid,
+			integerString(hashNumber),
+			[...coordinates].map(integerString),
+			iterableToArray(nextHashes),
+			assignedToRangeBoundary,
+			requestedReplicas,
+		);
+	}
+
+	planLocalAppendForGidCompact(
+		input: {
+			entryHash: string;
+			gid: string;
+			hashNumber?: bigint | number | string;
+			nextHashes?: Iterable<string>;
+			replicas: number;
+			selfHash: string;
+		},
+		options?: NativeBackboneFindLeaderOptions,
+	): NativeBackboneAppendPlan {
+		const [leaderRows, isLeader, assignedToRangeBoundary, coordinatePlanRow] =
+			this.native.plan_local_append_for_gid_compact(
+				input.entryHash,
+				input.gid,
+				integerString(input.hashNumber ?? 0),
+				iterableToArray(input.nextHashes),
+				input.replicas,
+				...findLeaderArguments({
+					...options,
+					selfHash: input.selfHash,
+				}),
+			);
+		const coordinate = appendCoordinatePlanFromRow(
+			this.resolution,
+			coordinatePlanRow,
+		);
+		return {
+			coordinates: coordinate.coordinates,
+			leaders: rowsToSamples(leaderRows),
+			isLeader,
+			assignedToRangeBoundary,
+			coordinate,
+		};
+	}
+
+	commitLocalAppendForGidCompact(
+		input: {
+			entryHash: string;
+			gid: string;
+			hashNumber?: bigint | number | string;
+			nextHashes?: Iterable<string>;
+			deleteHashes?: Iterable<string>;
+			replicas: number;
+			selfHash: string;
+		},
+		options?: NativeBackboneFindLeaderOptions,
+	): NativeBackboneAppendPlan {
+		const [leaderRows, isLeader, assignedToRangeBoundary, coordinatePlanRow] =
+			this.native.commit_local_append_for_gid_compact(
+				input.entryHash,
+				input.gid,
+				integerString(input.hashNumber ?? 0),
+				iterableToArray(input.nextHashes),
+				iterableToArray(input.deleteHashes),
+				input.replicas,
+				...findLeaderArguments({
+					...options,
+					selfHash: input.selfHash,
+				}),
+			);
+		const coordinate = appendCoordinatePlanFromRow(
+			this.resolution,
+			coordinatePlanRow,
+		);
+		return {
+			coordinates: coordinate.coordinates,
+			leaders: rowsToSamples(leaderRows),
+			isLeader,
+			assignedToRangeBoundary,
+			coordinate,
+		};
+	}
+
+	planAppendForGid(
+		input: {
+			entryHash: string;
+			gid: string;
+			hashNumber?: bigint | number | string;
+			nextHashes?: Iterable<string>;
+			replicas: number;
+			fullReplicaCandidates?: Iterable<string>;
+			fallbackRecipients?: Iterable<string>;
+			selfHash: string;
+			deliveryEnabled: boolean;
+			reliabilityAck: boolean;
+			minAcks?: number;
+			requireRecipients: boolean;
+		},
+		options?: NativeBackboneFindLeaderOptions,
+	): NativeBackboneAppendPlan {
+		const [
+			coordinateRows,
+			leaderRows,
+			isLeader,
+			assignedToRangeBoundary,
+			delivery,
+			coordinatePlanRow,
+		] = this.native.plan_append_for_gid(
+			input.entryHash,
+			input.gid,
+			integerString(input.hashNumber ?? 0),
+			iterableToArray(input.nextHashes),
+			input.replicas,
+			iterableToArray(input.fullReplicaCandidates),
+			iterableToArray(input.fallbackRecipients),
+			input.selfHash,
+			input.deliveryEnabled,
+			input.reliabilityAck,
+			input.minAcks,
+			input.requireRecipients,
+			...findLeaderArguments({
+				...options,
+				selfHash: input.selfHash,
+			}),
+		);
+		return {
+			coordinates: rowsToNumbers(this.resolution, coordinateRows),
+			leaders: rowsToSamples(leaderRows),
+			isLeader,
+			assignedToRangeBoundary,
+			delivery: appendDeliveryPlanFromRow(delivery),
+			coordinate: appendCoordinatePlanFromRow(
+				this.resolution,
+				coordinatePlanRow,
+			),
+		};
 	}
 
 	appendPlainNoNextTransaction(

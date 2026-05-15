@@ -237,6 +237,14 @@ impl NativePeerbitBackbone {
         self.shared_log.clear();
     }
 
+    pub fn clear_shared_log(&mut self) {
+        self.shared_log.clear();
+    }
+
+    pub fn clear_entry_coordinates(&mut self) {
+        self.shared_log.clear_entry_coordinates();
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn put_range(
         &mut self,
@@ -252,6 +260,176 @@ impl NativePeerbitBackbone {
     ) -> Result<(), JsValue> {
         self.shared_log
             .put(id, hash, timestamp, start1, end1, start2, end2, width, mode)
+    }
+
+    pub fn delete_range(&mut self, id: &str) -> bool {
+        self.shared_log.delete(id)
+    }
+
+    pub fn put_entry_coordinates(
+        &mut self,
+        hash: String,
+        gid: String,
+        hash_number: String,
+        coordinates: Array,
+        assigned_to_range_boundary: bool,
+        requested_replicas: usize,
+    ) -> Result<(), JsValue> {
+        self.shared_log.put_entry_coordinates(
+            hash,
+            gid,
+            hash_number,
+            coordinates,
+            assigned_to_range_boundary,
+            requested_replicas,
+        )
+    }
+
+    pub fn delete_entry_coordinates(&mut self, hash: &str) -> bool {
+        self.shared_log.delete_entry_coordinates(hash)
+    }
+
+    pub fn delete_entry_coordinates_batch(&mut self, hashes: Array) -> Result<(), JsValue> {
+        self.shared_log.delete_entry_coordinates_batch(hashes)
+    }
+
+    pub fn commit_entry_coordinates(
+        &mut self,
+        hash: String,
+        gid: String,
+        hash_number: String,
+        coordinates: Array,
+        next_hashes: Array,
+        assigned_to_range_boundary: bool,
+        requested_replicas: usize,
+    ) -> Result<(), JsValue> {
+        self.shared_log.commit_entry_coordinates(
+            hash,
+            gid,
+            hash_number,
+            coordinates,
+            next_hashes,
+            assigned_to_range_boundary,
+            requested_replicas,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_local_append_for_gid_compact(
+        &mut self,
+        entry_hash: String,
+        gid: String,
+        entry_hash_number: String,
+        next_hashes: Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        self.shared_log.plan_local_append_for_gid_compact(
+            entry_hash,
+            gid,
+            entry_hash_number,
+            next_hashes,
+            replicas,
+            role_age_ms,
+            now,
+            peer_filter,
+            expand_peer_filter,
+            self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_local_append_for_gid_compact(
+        &mut self,
+        entry_hash: String,
+        gid: String,
+        entry_hash_number: String,
+        next_hashes: Array,
+        delete_hashes: Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        self.shared_log.commit_local_append_for_gid_compact(
+            entry_hash,
+            gid,
+            entry_hash_number,
+            next_hashes,
+            delete_hashes,
+            replicas,
+            role_age_ms,
+            now,
+            peer_filter,
+            expand_peer_filter,
+            self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_append_for_gid(
+        &mut self,
+        entry_hash: String,
+        gid: String,
+        entry_hash_number: String,
+        next_hashes: Array,
+        replicas: usize,
+        full_replica_candidates: Array,
+        fallback_recipients: Array,
+        delivery_self_hash: String,
+        delivery_enabled: bool,
+        reliability_ack: bool,
+        min_acks: JsValue,
+        require_recipients: bool,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        self.shared_log.plan_append_for_gid(
+            entry_hash,
+            gid,
+            entry_hash_number,
+            next_hashes,
+            replicas,
+            full_replica_candidates,
+            fallback_recipients,
+            delivery_self_hash,
+            delivery_enabled,
+            reliability_ack,
+            min_acks,
+            require_recipients,
+            role_age_ms,
+            now,
+            peer_filter,
+            expand_peer_filter,
+            self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
