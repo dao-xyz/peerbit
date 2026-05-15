@@ -51,31 +51,45 @@ const bytesEqual = (left: Uint8Array, right: Uint8Array): boolean => {
 const asPath = (path: string | readonly string[]): readonly string[] =>
 	typeof path === "string" ? [path] : path;
 
-const valueAtPath = (value: unknown, path: string | readonly string[]): unknown => {
-	let current = value as Record<string, unknown> | undefined;
-	for (const segment of asPath(path)) {
-		if (current == null) {
-			return undefined;
-		}
-		current = current[segment] as Record<string, unknown> | undefined;
+type FieldValueAccessor = (value: unknown) => unknown;
+
+const createFieldValueAccessor = (
+	path: string | readonly string[],
+): FieldValueAccessor => {
+	const segments = asPath(path);
+	if (segments.length === 1) {
+		const segment = segments[0]!;
+		return (value: unknown) =>
+			(value as Record<string, unknown> | undefined)?.[segment];
 	}
-	return current;
+	return (value: unknown) => {
+		let current = value as Record<string, unknown> | undefined;
+		for (const segment of segments) {
+			if (current == null) {
+				return undefined;
+			}
+			current = current[segment] as Record<string, unknown> | undefined;
+		}
+		return current;
+	};
 };
 
 const keyRawBytes = (publicKey: PublicSignKey): Uint8Array | undefined =>
 	(publicKey as PublicSignKey & { publicKey?: Uint8Array }).publicKey;
 
-const valueMatchesPublicKey = (
+const valueMatchesPublicKeyBytes = (
 	value: unknown,
 	publicKey: PublicSignKey,
+	publicKeyBytes: Uint8Array,
+	rawPublicKeyBytes?: Uint8Array,
 ): boolean => {
 	if (!value) {
 		return false;
 	}
 	if (value instanceof Uint8Array) {
 		return (
-			bytesEqual(value, publicKey.bytes) ||
-			(keyRawBytes(publicKey) ? bytesEqual(value, keyRawBytes(publicKey)!) : false)
+			bytesEqual(value, publicKeyBytes) ||
+			(rawPublicKeyBytes ? bytesEqual(value, rawPublicKeyBytes) : false)
 		);
 	}
 	const maybePublicKey = value as Partial<PublicSignKey> & {
@@ -85,11 +99,50 @@ const valueMatchesPublicKey = (
 		return maybePublicKey.equals(publicKey);
 	}
 	if (maybePublicKey.bytes instanceof Uint8Array) {
-		return bytesEqual(maybePublicKey.bytes, publicKey.bytes);
+		return bytesEqual(maybePublicKey.bytes, publicKeyBytes);
 	}
 	if (maybePublicKey.publicKey instanceof Uint8Array) {
-		const raw = keyRawBytes(publicKey);
-		return !!raw && bytesEqual(maybePublicKey.publicKey, raw);
+		return (
+			!!rawPublicKeyBytes &&
+			bytesEqual(maybePublicKey.publicKey, rawPublicKeyBytes)
+		);
+	}
+	return false;
+};
+
+const valueMatchesPublicKey = (value: unknown, publicKey: PublicSignKey): boolean =>
+	valueMatchesPublicKeyBytes(
+		value,
+		publicKey,
+		publicKey.bytes,
+		keyRawBytes(publicKey),
+	);
+
+const createPublicKeyValueMatcher = (
+	publicKey: PublicSignKey,
+): ((value: unknown) => boolean) => {
+	const publicKeyBytes = publicKey.bytes;
+	const rawPublicKeyBytes = keyRawBytes(publicKey);
+	return (value) =>
+		valueMatchesPublicKeyBytes(
+			value,
+			publicKey,
+			publicKeyBytes,
+			rawPublicKeyBytes,
+		);
+};
+
+const valueMatchesAnyPublicKey = (
+	value: unknown,
+	publicKeys: readonly PublicSignKey[],
+): boolean => {
+	if (!value) {
+		return false;
+	}
+	for (const publicKey of publicKeys) {
+		if (valueMatchesPublicKey(value, publicKey)) {
+			return true;
+		}
 	}
 	return false;
 };
@@ -184,14 +237,15 @@ export const createNativeFastPathCanPerformPolicyEvaluator = (
 						previous(document) || next(document),
 					denyFastPath,
 				);
-		case "signedByField":
-			return localPublicKey
-				? (document) =>
-						valueMatchesPublicKey(
-							valueAtPath(document, descriptor.path),
-							localPublicKey,
-						)
-				: denyFastPath;
+		case "signedByField": {
+			if (!localPublicKey) {
+				return denyFastPath;
+			}
+			const getFieldValue = createFieldValueAccessor(descriptor.path);
+			const matchesLocalPublicKey =
+				createPublicKeyValueMatcher(localPublicKey);
+			return (document) => matchesLocalPublicKey(getFieldValue(document));
+		}
 	}
 };
 
@@ -239,9 +293,7 @@ const entryPublicKeysMatchValue = async <T>(
 	value: unknown,
 ): Promise<boolean> => {
 	const publicKeys = await getEntryPublicKeys(properties);
-	return publicKeys.some((publicKey) =>
-		valueMatchesPublicKey(value, publicKey),
-	);
+	return valueMatchesAnyPublicKey(value, publicKeys);
 };
 
 const andEvaluate = async <T>(
@@ -286,20 +338,22 @@ export const policy = {
 		),
 	signedByField: <T = unknown>(
 		path: string | readonly string[],
-	): CanPerform<T> =>
-		attachNativeCanPerformPolicy<T>(
+	): CanPerform<T> => {
+		const getFieldValue = createFieldValueAccessor(path);
+		return attachNativeCanPerformPolicy<T>(
 			async (properties) => {
 				if (properties.type !== "put") {
 					return false;
 				}
-				const fieldValue = valueAtPath(properties.value, path);
+				const fieldValue = getFieldValue(properties.value);
 				return entryPublicKeysMatchValue(properties, fieldValue);
 			},
 			{
 				kind: "signedByField",
 				path: typeof path === "string" ? path : Object.freeze([...path]),
 			},
-		),
+		);
+	},
 	put: <T = unknown>(inner: CanPerform<T>): CanPerform<T> =>
 		attachIfDescribed<T>(
 			(properties) => properties.type === "put" && inner(properties),
