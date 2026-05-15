@@ -138,6 +138,28 @@ type NativeRustIndex<T extends Record<string, any>> = {
 		byteElementIndexLimit: number,
 		keys: string[],
 	) => void;
+	put_shared_log_coordinate_encoded_and_delete_keys_void?: (
+		key: string,
+		id: types.IdKey,
+		valueBytes: Uint8Array,
+		hashField: number,
+		hashNumberField: number,
+		gidField: number,
+		coordinatesField: number,
+		coordinatesArrayField: number,
+		wallTimeField: number,
+		assignedToRangeBoundaryField: number,
+		metaField: number,
+		hash: string,
+		hashNumber: string,
+		gid: string,
+		coordinates: string[],
+		wallTime: string,
+		assignedToRangeBoundary: boolean,
+		metaBytes: Uint8Array,
+		byteElementIndexLimit: number,
+		keys: string[],
+	) => void;
 	get: (key: string) => [types.IdKey, T] | undefined;
 	clear: () => void;
 	len: () => number;
@@ -1841,7 +1863,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}
 		return {
 			id,
-			value: value[1],
+			value: this.decodeNativeStoredValue(value[1]),
 		};
 	}
 
@@ -1856,7 +1878,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			0,
 			1,
 		)[0];
-		return result ? { id: result[0], value: result[1] } : undefined;
+		return result
+			? { id: result[0], value: this.decodeNativeStoredValue(result[1]) }
+			: undefined;
 	}
 
 	getByContextHeadBatch(
@@ -1876,7 +1900,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			heads,
 		);
 		return rows.map((result) =>
-			result ? { id: result[0], value: result[1] } : undefined,
+			result
+				? { id: result[0], value: this.decodeNativeStoredValue(result[1]) }
+				: undefined,
 		);
 	}
 
@@ -2167,6 +2193,57 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				? stringToStoreKey(fields.hash)
 				: keyToStoreKey(id),
 		);
+	}
+
+	putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn(
+		fields: SharedLogCoordinateNativeFields,
+		deleteHashes: string[] = [],
+		id = types.toId(fields.hash),
+	): MaybePromise<void> {
+		const encodedValue = this.encodeSharedLogCoordinatePersistenceValue(fields);
+		if (
+			!encodedValue ||
+			!this.getNative().put_shared_log_coordinate_encoded_and_delete_keys_void
+		) {
+			return this.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn(
+				fields,
+				deleteHashes,
+				id,
+			);
+		}
+		const storeKey =
+			id.primitive === fields.hash ? stringToStoreKey(fields.hash) : keyToStoreKey(id);
+		const deleteKeys = deleteHashes.map(stringToStoreKey);
+		if (!this.snapshotFile) {
+			this.putSharedLogCoordinateNativeEncodedValueAndDeleteKeysNoReturn(
+				encodedValue,
+				id,
+				deleteKeys,
+				fields,
+				storeKey,
+			);
+			return;
+		}
+		return this.enqueueMutation(async () => {
+			if (deleteKeys.length === 0) {
+				await this.appendPut(storeKey, undefined, encodedValue);
+			} else {
+				await this.appendPutAndDeletes(
+					storeKey,
+					undefined,
+					deleteKeys,
+					encodedValue,
+				);
+			}
+			this.putSharedLogCoordinateNativeEncodedValueAndDeleteKeysNoReturn(
+				encodedValue,
+				id,
+				deleteKeys,
+				fields,
+				storeKey,
+			);
+			await this.compactIfNeeded();
+		});
 	}
 
 	putSharedLogCoordinatesAndDeleteIdsBatch(
@@ -2682,7 +2759,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 						page.offset,
 						page.limit,
 					);
-		return results.map((value) => ({ id: value[0], value: value[1] }));
+			return results.map((value) => ({
+				id: value[0],
+				value: this.decodeNativeStoredValue(value[1]),
+			}));
 	}
 
 	private putWithEncodedFields(
@@ -3002,6 +3082,28 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
+	private putSharedLogCoordinateNativeEncodedValueAndDeleteKeysNoReturn(
+		encodedValue: Uint8Array,
+		id: types.IdKey,
+		deleteKeys: string[],
+		fields: SharedLogCoordinateNativeFields,
+		storeKey: string,
+	): void {
+		const nativePutCoordinate =
+			this.getNative().put_shared_log_coordinate_encoded_and_delete_keys_void;
+		if (!nativePutCoordinate) {
+			throw new Error("Native encoded shared-log coordinate put is unavailable");
+		}
+		nativePutCoordinate.call(
+			this.getNative(),
+			storeKey,
+			id,
+			encodedValue,
+			...this.getSharedLogCoordinateNativePutArgs(fields),
+			deleteKeys,
+		);
+	}
+
 	private getSharedLogCoordinateFieldIds(): NonNullable<
 		RustIndex<T, NestedType>["sharedLogCoordinateFieldIds"]
 	> {
@@ -3300,8 +3402,14 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		return this.getNative()
 			.entries()
 			.map((entry) => {
-				return { id: entry[0], value: entry[1] };
+				return { id: entry[0], value: this.decodeNativeStoredValue(entry[1]) };
 			});
+	}
+
+	private decodeNativeStoredValue(value: T | Uint8Array): T {
+		return value instanceof Uint8Array
+			? (deserialize(value, this.properties.schema) as T)
+			: value;
 	}
 
 	private getNative(): NativeRustIndex<T> {
@@ -3334,7 +3442,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 
 	private appendPut(
 		storeKey: string,
-		value: T,
+		value: T | undefined,
 		encodedValue?: EncodedValue,
 	): Promise<void> {
 		return this.enqueuePersistence(() =>
@@ -3349,7 +3457,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 
 	private appendPutAndDeletes(
 		storeKey: string,
-		value: T,
+		value: T | undefined,
 		deleteKeys: string[],
 		encodedValue?: EncodedValue,
 	): Promise<void> {
@@ -3361,7 +3469,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	private appendPutAndDeletesBatch(
 		entries: Array<{
 			storeKey: string;
-			value: T;
+			value?: T;
 			deleteKeys: string[];
 			encodedValue?: EncodedValue;
 		}>,

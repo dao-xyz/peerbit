@@ -401,14 +401,19 @@ describe("append", () => {
 			store.log as any,
 			"processNativePreparedTargetNoneAppend",
 		);
-		const nativePersistSpy = sinon.spy(
-			store.log as any,
-			"persistPreparedCoordinateNativeTransaction",
-		);
-		const genericPersistSpy = sinon.spy(
-			store.log as any,
-			"persistPreparedCoordinate",
-		);
+			const nativePersistSpy = sinon.spy(
+				store.log as any,
+				"persistPreparedCoordinateNativeTransaction",
+			);
+			const coordinateIndex = store.log.entryCoordinatesIndex as any;
+			const encodedCoordinatePersistSpy = sinon.spy(
+				coordinateIndex,
+				"putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn",
+			);
+			const genericPersistSpy = sinon.spy(
+				store.log as any,
+				"persistPreparedCoordinate",
+			);
 		const materializeSpy = sinon.spy(
 			store.log as any,
 			"materializePreparedAppendResultEntry",
@@ -429,6 +434,7 @@ describe("append", () => {
 			expect(processTransactionSpy.callCount).equal(1);
 			expect(genericProcessSpy.callCount).equal(0);
 			expect(nativePersistSpy.callCount).equal(1);
+			expect(encodedCoordinatePersistSpy.callCount).equal(1);
 			expect(genericPersistSpy.callCount).equal(0);
 			expect(materializeSpy.callCount).equal(0);
 			expect(result.appendCommit.hash).to.be.a("string");
@@ -438,6 +444,7 @@ describe("append", () => {
 		} finally {
 			materializeSpy.restore();
 			genericPersistSpy.restore();
+			encodedCoordinatePersistSpy.restore();
 			nativePersistSpy.restore();
 			genericProcessSpy.restore();
 			processTransactionSpy.restore();

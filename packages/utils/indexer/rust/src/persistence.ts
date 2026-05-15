@@ -19,14 +19,14 @@ export type SnapshotFile = {
 	read<T extends Record<string, any>>(schema: AbstractType<T>): Promise<T[]>;
 	appendPut<T extends Record<string, any>>(
 		key: string,
-		value: T,
+		value: T | undefined,
 		schema: AbstractType<T>,
 		encodedValue?: EncodedValue,
 	): Promise<void>;
 	appendPutBatch<T extends Record<string, any>>(
 		values: Array<{
 			key: string;
-			value: T;
+			value?: T;
 			encodedValue?: EncodedValue;
 		}>,
 		schema: AbstractType<T>,
@@ -34,7 +34,7 @@ export type SnapshotFile = {
 	appendPutAndDeleteBatch<T extends Record<string, any>>(
 		values: Array<{
 			key: string;
-			value: T;
+			value?: T;
 			encodedValue?: EncodedValue;
 			deleteKeys?: string[];
 		}>,
@@ -311,7 +311,7 @@ const encodeJournalPayload = <T extends Record<string, any>>(
 const encodePutAndDeleteRecords = <T extends Record<string, any>>(
 	values: Array<{
 		key: string;
-		value: T;
+		value?: T;
 		encodedValue?: EncodedValue;
 		deleteKeys?: string[];
 	}>,
@@ -468,7 +468,7 @@ class NativeSnapshotFile implements SnapshotFile {
 
 	async appendPut<T extends Record<string, any>>(
 		key: string,
-		value: T,
+		value: T | undefined,
 		schema: AbstractType<T>,
 		encodedValue?: EncodedValue,
 	): Promise<void> {
@@ -486,7 +486,7 @@ class NativeSnapshotFile implements SnapshotFile {
 	async appendPutBatch<T extends Record<string, any>>(
 		values: Array<{
 			key: string;
-			value: T;
+			value?: T;
 			encodedValue?: EncodedValue;
 		}>,
 		schema: AbstractType<T>,
@@ -507,7 +507,7 @@ class NativeSnapshotFile implements SnapshotFile {
 	async appendPutAndDeleteBatch<T extends Record<string, any>>(
 		values: Array<{
 			key: string;
-			value: T;
+			value?: T;
 			encodedValue?: EncodedValue;
 			deleteKeys?: string[];
 		}>,
@@ -730,7 +730,7 @@ class OpfsSnapshotFile implements SnapshotFile {
 
 	async appendPut<T extends Record<string, any>>(
 		key: string,
-		value: T,
+		value: T | undefined,
 		schema: AbstractType<T>,
 		encodedValue?: EncodedValue,
 	): Promise<void> {
@@ -748,7 +748,7 @@ class OpfsSnapshotFile implements SnapshotFile {
 	async appendPutBatch<T extends Record<string, any>>(
 		values: Array<{
 			key: string;
-			value: T;
+			value?: T;
 			encodedValue?: EncodedValue;
 		}>,
 		schema: AbstractType<T>,
@@ -769,7 +769,7 @@ class OpfsSnapshotFile implements SnapshotFile {
 	async appendPutAndDeleteBatch<T extends Record<string, any>>(
 		values: Array<{
 			key: string;
-			value: T;
+			value?: T;
 			encodedValue?: EncodedValue;
 			deleteKeys?: string[];
 		}>,

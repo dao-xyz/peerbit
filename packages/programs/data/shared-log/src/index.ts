@@ -582,6 +582,11 @@ type PutAndDeleteIndex<T extends Record<string, any>> = Index<T> & {
 		deleteHashes?: string[],
 		id?: IdKey,
 	) => Promise<unknown> | unknown;
+	putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn?: (
+		fields: SharedLogCoordinateNativeFields<any>,
+		deleteHashes?: string[],
+		id?: IdKey,
+	) => Promise<unknown> | unknown;
 	putSharedLogCoordinatesAndDeleteIdsBatch?: (
 		values: Array<{
 			value: T;
@@ -9875,6 +9880,8 @@ export class SharedLog<
 	}): MaybePromise<boolean> {
 		const { fields } = properties.prepared;
 		const putNative =
+			properties.coordinateIndex
+				.putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn ??
 			properties.coordinateIndex
 				.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn;
 		if (!putNative) {

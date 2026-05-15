@@ -1030,7 +1030,7 @@ describe("index", () => {
 					const persistStub = sinon
 						.stub(
 							coordinateIndex,
-							"putSharedLogCoordinateFieldsAndDeleteHashesNoReturn",
+							"putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn",
 						)
 						.callsFake(() => {
 							throw new Error("coordinate persistence failed");
