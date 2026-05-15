@@ -7,6 +7,7 @@ import {
 } from "@peerbit/blocks-interface";
 import {
 	type Identity,
+	Ed25519Keypair,
 	SignatureWithKey,
 	X25519Keypair,
 	randomBytes,
@@ -29,7 +30,7 @@ import {
 	type ResultsIterator,
 	type ReturnTypeFromResolveOptions,
 } from "./entry-index.js";
-import { ShallowEntry } from "./entry-shallow.js";
+import { ShallowEntry, ShallowMeta } from "./entry-shallow.js";
 import { EntryType } from "./entry-type.js";
 import { type EncryptionTemplateMaybeEncrypted, EntryV0 } from "./entry-v0.js";
 import { type EntryWithRefs } from "./entry-with-refs.js";
@@ -40,6 +41,7 @@ import {
 	type PreparedAppendCommitOnlyChain,
 	type PreparedAppendFacts,
 	type PreparedEntryBlock,
+	type PreparedNativeLogEntry,
 	type ShallowOrFullEntry,
 } from "./entry.js";
 import { findUniques } from "./find-uniques.js";
@@ -82,6 +84,28 @@ type PreparedCommitOnlyAppendResult<T> = {
 	removed: ShallowOrFullEntry<T>[];
 	appendFacts: PreparedAppendFacts;
 	shallowEntry: ShallowEntry;
+};
+
+type NativePreparedNoNextCommit = {
+	bytes?: Uint8Array;
+	cid?: string;
+	hash?: string;
+	byteLength: number;
+	metaBytes?: Uint8Array;
+	hashDigestBytes?: Uint8Array;
+	trimmedEntries?: PreparedNativeLogEntry[];
+};
+
+type NativeNoNextCommitInput = {
+	clockId: Uint8Array;
+	privateKey: Uint8Array;
+	publicKey: Uint8Array;
+	wallTime: bigint;
+	logical: number;
+	gid: string;
+	type: EntryType;
+	metaData?: Uint8Array;
+	payloadData: Uint8Array;
 };
 
 const isPromiseLike = <T>(value: Promise<T> | T): value is Promise<T> =>
@@ -882,6 +906,151 @@ export class Log<T> {
 				),
 			),
 		);
+	}
+
+	appendLocallyPreparedNativeNoNextCommitOnly(
+		data: T,
+		options: AppendOptions<T> = {},
+		properties: {
+			payloadData?: Uint8Array;
+		},
+		prepare: (
+			input: NativeNoNextCommitInput,
+		) => MaybePromise<NativePreparedNoNextCommit | undefined>,
+	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
+		if (
+			options.canAppend ||
+			options.onChange ||
+			options.encryption ||
+			options.signers ||
+			options.identity ||
+			options.meta?.timestamp ||
+			options.meta?.type === EntryType.CUT ||
+			options.trim ||
+			(this._hasCustomCanAppend &&
+				options.__peerbitCanAppendAlreadyValidated !== true)
+		) {
+			return undefined;
+		}
+		const identity = this._identity;
+		if (!(identity instanceof Ed25519Keypair)) {
+			return undefined;
+		}
+		const payloadData =
+			properties.payloadData ?? (data == null ? undefined : this._encoding.encoder(data));
+		if (!payloadData || !hasPutMany(this._storage)) {
+			return undefined;
+		}
+
+		const appendOptions: AppendOptions<T> = {
+			...options,
+			__peerbitCanAppendAlreadyValidated: true,
+		};
+		return mapMaybePromise(this.getNextsForAppend(appendOptions), (nexts) => {
+			if (nexts.length > 0) {
+				return undefined;
+			}
+			const gid = EntryV0.createGid(appendOptions.meta?.gidSeed);
+			return mapMaybePromise(gid, (resolvedGid) => {
+				const clock = new Clock({
+					id: identity.publicKey.bytes,
+					timestamp: this._hlc.now(),
+				});
+				const entryType = appendOptions.meta?.type ?? EntryType.APPEND;
+				const preparedValue = prepare({
+					clockId: identity.publicKey.bytes,
+					privateKey: identity.privateKey.privateKey,
+					publicKey: identity.publicKey.publicKey,
+					wallTime: clock.timestamp.wallTime,
+					logical: clock.timestamp.logical,
+					gid: resolvedGid,
+					type: entryType,
+					metaData: appendOptions.meta?.data,
+					payloadData,
+				});
+				return mapMaybePromise(preparedValue, (prepared) => {
+					if (!prepared || prepared.trimmedEntries) {
+						return undefined;
+					}
+					const hash = prepared.cid ?? prepared.hash;
+					if (!hash) {
+						return undefined;
+					}
+					const shallowEntry = new ShallowEntry({
+						hash,
+						payloadSize: payloadData.byteLength,
+						head: true,
+						meta: new ShallowMeta({
+							gid: resolvedGid,
+							data: appendOptions.meta?.data,
+							clock,
+							next: [],
+							type: entryType,
+						}),
+					});
+					const appendFacts: PreparedAppendFacts = {
+						hash,
+						gid: resolvedGid,
+						next: [],
+						wallTime: clock.timestamp.wallTime,
+						logical: clock.timestamp.logical,
+						clockId: clock.id,
+						type: entryType,
+						metaData: appendOptions.meta?.data,
+						payloadSize: payloadData.byteLength,
+						metaBytes: prepared.metaBytes,
+						hashDigestBytes: prepared.hashDigestBytes,
+					};
+					let materializedEntry: Entry<T> | undefined;
+					const materializeEntry = () => {
+						if (materializedEntry) {
+							return materializedEntry;
+						}
+						const bytes =
+							prepared.bytes ?? (this._storage.get(hash) as Uint8Array | undefined);
+						if (!bytes || typeof (bytes as { then?: unknown }).then === "function") {
+							throw new Error("Missing synchronous native append block bytes");
+						}
+						const entry = deserialize(bytes, Entry) as Entry<T>;
+						entry.hash = hash;
+						entry.size = prepared.byteLength;
+						entry.createdLocally = true;
+						Entry.prepareShallowEntry(entry, shallowEntry);
+						entry.init({ encoding: this._encoding, keychain: this._keychain });
+						materializedEntry = entry;
+						return entry;
+					};
+					const finish = (): PreparedCommitOnlyAppendResult<T> => ({
+						get entry() {
+							return materializeEntry();
+						},
+						materializeEntry,
+						removed: [],
+						appendFacts,
+						shallowEntry,
+					});
+					const rollback = (error: unknown): never | Promise<never> => {
+						this.rollbackNativeAppendGraphHashes([hash]);
+						return this.rollbackNativeAppendBlocksHashes([hash]).then(() => {
+							throw error;
+						});
+					};
+					try {
+						const putResult = this.entryIndex.putNativeCommittedAppendFacts({
+							hash,
+							unique: true,
+							externalNextHashes: [],
+							shallowEntry,
+							isHead: true,
+						});
+						const result = mapMaybePromise(putResult, finish);
+						return isPromiseLike(result) ? result.catch(rollback) : result;
+					} catch (error) {
+						return rollback(error);
+					}
+				});
+			});
+		});
 	}
 
 	private appendLocallyPreparedCommitOnlyWithNexts(

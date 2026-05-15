@@ -4793,6 +4793,51 @@ export class SharedLog<
 		appendOptions.__peerbitCanAppendAlreadyValidated = true;
 		const deferHeadCoordinatePersistence =
 			this.shouldDeferHeadCoordinatePersistence(options);
+		const nativeBackboneResult =
+			this.appendLocallyPreparedPayloadNativeBackboneCommitOnly(
+				payloadData,
+				appendOptions,
+				options,
+				deferHeadCoordinatePersistence,
+			);
+		if (nativeBackboneResult) {
+			return mapMaybePromise(nativeBackboneResult, (result) => {
+				if (result) {
+					return result;
+				}
+				return this.appendLocallyPreparedPayloadCommitOnlyFallback(
+					payloadData,
+					appendOptions,
+					options,
+					properties,
+					minReplicasValue,
+					deferHeadCoordinatePersistence,
+				);
+			});
+		}
+		return this.appendLocallyPreparedPayloadCommitOnlyFallback(
+			payloadData,
+			appendOptions,
+			options,
+			properties,
+			minReplicasValue,
+			deferHeadCoordinatePersistence,
+		);
+	}
+
+	private appendLocallyPreparedPayloadCommitOnlyFallback(
+		payloadData: Uint8Array,
+		appendOptions: AppendOptions<T>,
+		options: SharedAppendOptions<T> | undefined,
+		properties:
+			| {
+					skipMissingNextJoin?: boolean;
+					resolveTrimmedEntries?: boolean;
+			  }
+			| undefined,
+		minReplicasValue: number,
+		deferHeadCoordinatePersistence: boolean,
+	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
 		const resultMaybe = this.log.appendLocallyPreparedCommitOnly(
 			undefined as T,
 			appendOptions,
@@ -4811,6 +4856,74 @@ export class SharedLog<
 				minReplicasValue,
 			),
 		);
+	}
+
+	private appendLocallyPreparedPayloadNativeBackboneCommitOnly(
+		payloadData: Uint8Array,
+		appendOptions: AppendOptions<T>,
+		options: SharedAppendOptions<T> | undefined,
+		deferHeadCoordinatePersistence: boolean,
+	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> | undefined {
+		if (
+			!this._nativeBackbone ||
+			!deferHeadCoordinatePersistence ||
+			appendOptions.trim ||
+			options?.target !== "none" ||
+			options?.replicate !== false
+		) {
+			return undefined;
+		}
+		const backbone = this._nativeBackbone;
+		const result = this.log.appendLocallyPreparedNativeNoNextCommitOnly(
+			undefined as T,
+			appendOptions,
+			{ payloadData },
+			(input) =>
+				backbone.graph.prepareEntryV0PlainEntryCommit(
+					{
+						...input,
+						next: [],
+						includeMaterializationBytes: false,
+						includeAppendFactsBytes: true,
+					},
+					backbone.blocks,
+				),
+		);
+		if (!result) {
+			return undefined;
+		}
+		return mapMaybePromise(result, (prepared) => {
+			if (!prepared) {
+				return undefined;
+			}
+			const deferredCoordinateDeleteHashes =
+				this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
+					prepared.appendFacts,
+					prepared.removed,
+					prepared.materializeEntry,
+				);
+			const deleteHashes =
+				deferredCoordinateDeleteHashes &&
+				deferredCoordinateDeleteHashes.length > 0
+					? deferredCoordinateDeleteHashes
+					: [];
+			const finish = (): PreparedPayloadCommitOnlyResult<T, R> => ({
+				get entry() {
+					return prepared.entry;
+				},
+				removed: prepared.removed,
+				appendCommit: this.createPreparedLocalAppendCommitFromFacts(
+					prepared.appendFacts,
+				),
+			});
+			if (deleteHashes.length === 0) {
+				return finish();
+			}
+			return mapMaybePromise(
+				this.deleteCoordinatesForHashes(deleteHashes),
+				finish,
+			);
+		});
 	}
 
 	private finishPreparedPayloadCommitOnlyAppend(
@@ -6779,7 +6892,7 @@ export class SharedLog<
 				resolution: this.domain.resolution,
 				clockId: this.node.identity.publicKey.bytes,
 				privateKey: this.node.identity.privateKey.privateKey,
-				publicKey: this.node.identity.publicKey.bytes,
+				publicKey: this.node.identity.publicKey.publicKey,
 			});
 		} catch (error) {
 			if (options.optional === false) {

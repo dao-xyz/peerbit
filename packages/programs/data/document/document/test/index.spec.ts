@@ -728,6 +728,56 @@ describe("index", () => {
 				}
 			});
 
+			it("uses the native backbone no-next put path when enabled", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: false,
+						nativeGraph: true,
+						nativeBackbone: { optional: false },
+					},
+				});
+				const backboneCommitSpy = sinon.spy(
+					store.docs.log.log as any,
+					"appendLocallyPreparedNativeNoNextCommitOnly",
+				);
+				const lowerCommitOnlySpy = sinon.spy(
+					store.docs.log.log as any,
+					"appendLocallyPreparedCommitOnly",
+				);
+				const nativeCreateSpy = sinon.spy(
+					store.docs.log.log as any,
+					"createNativePlainAppendCommitOnly",
+				);
+
+				try {
+					const doc = new Document({ id: uuid(), name: "backbone" });
+					await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(backboneCommitSpy.callCount).equal(1);
+					expect(lowerCommitOnlySpy.callCount).equal(0);
+					expect(nativeCreateSpy.callCount).equal(0);
+					expect((await store.docs.get(doc.id))?.name).equal("backbone");
+				} finally {
+					nativeCreateSpy.restore();
+					lowerCommitOnlySpy.restore();
+					backboneCommitSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
 			it("removes trimmed prepared puts from the document index by head", async () => {
 				const rustSession = await TestSession.connected(
 					1,

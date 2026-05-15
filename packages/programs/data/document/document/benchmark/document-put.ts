@@ -457,6 +457,12 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 			),
 			patchAsyncMethod(
 				store.docs.log.log as any,
+				"appendLocallyPreparedNativeNoNextCommitOnly",
+				profile,
+				"logAppendMs",
+			),
+			patchAsyncMethod(
+				store.docs.log.log as any,
 				"appendLocallyPreparedManyIndependent",
 				profile,
 				"logAppendMs",
