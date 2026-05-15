@@ -999,6 +999,66 @@ describe("index", () => {
 				}
 			});
 
+			it("restores native backbone coordinates if storage transaction coordinate persistence fails", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: { optional: false },
+					},
+				});
+				const sharedLog = store.docs.log as any;
+				const backbone = sharedLog._nativeBackbone;
+				const coordinateIndex = sharedLog.entryCoordinatesIndex as any;
+
+				try {
+					const id = uuid();
+					const first = await store.docs.put(
+						new Document({ id, name: "backbone-storage-1" }),
+						{
+							replicate: false,
+							target: "none",
+						},
+					);
+					const persistStub = sinon
+						.stub(
+							coordinateIndex,
+							"putSharedLogCoordinateFieldsAndDeleteHashesNoReturn",
+						)
+						.callsFake(() => {
+							throw new Error("coordinate persistence failed");
+						});
+
+					try {
+						await expect(
+							store.docs.put(new Document({ id, name: "backbone-storage-2" }), {
+								replicate: false,
+								target: "none",
+							}),
+						).to.be.rejectedWith("coordinate persistence failed");
+						expect(backbone.getEntryCoordinateHashes()).to.deep.equal([
+							first.entry.hash,
+						]);
+						expect((await store.docs.get(id))?.name).equal(
+							"backbone-storage-1",
+						);
+					} finally {
+						persistStub.restore();
+					}
+				} finally {
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
 			it("removes trimmed prepared puts from the document index by head", async () => {
 				const rustSession = await TestSession.connected(
 					1,

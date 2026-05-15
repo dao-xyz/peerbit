@@ -5019,6 +5019,12 @@ export class SharedLog<
 						"Native backbone append transaction returned mismatched coordinate facts",
 					);
 				}
+				const plannedCoordinateDeleteHashes = combineCoordinateDeleteHashes(
+					prepared.appendFacts.next,
+					prepared.removed.map((entry) => entry.hash),
+				);
+				const rollbackCoordinateEntries =
+					this.snapshotResidentCoordinateEntries(plannedCoordinateDeleteHashes);
 				const deferredCoordinateDeleteHashes =
 					this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
 						prepared.appendFacts,
@@ -5052,38 +5058,68 @@ export class SharedLog<
 						appendCommit,
 					};
 				};
-				const persisted = this.persistPreparedCoordinate({
-					prepared: preparedCoordinate,
-					hash: prepared.appendFacts.hash,
-					nextHashes: prepared.appendFacts.next,
-					deleteHashes: deferredCoordinateDeleteHashes,
-					coordinates:
-						backboneAppend.coordinate.coordinates as NumberFromType<R>[],
-					replicas: backboneAppend.coordinate.coordinates.length,
-					commitNative: true,
-					commitNativeBackbone: false,
-				});
-				return mapMaybePromise(persisted, () => {
-					const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
-					if (!backboneAppend!.isLeader && !delayAdaptiveRebalance) {
-						const leaders = backboneAppend!.leaders;
-						if (leaders) {
-							const pruneEntry =
-								this.materializePreparedCoordinateEntry(preparedCoordinate);
-							this.pruneDebouncedFnAddIfNotKeeping({
-								key: pruneEntry.hash,
-								value: { entry: pruneEntry, leaders },
-							});
+				const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
+					EntryReplicated<R>
+				>;
+				const rollback = (error: unknown): never => {
+					this.rollbackNativeBackboneCoordinateAppend(
+						prepared.appendFacts.hash,
+						rollbackCoordinateEntries,
+					);
+					throw error;
+				};
+				try {
+					const persisted =
+						coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn
+							? this.persistPreparedCoordinateNativeTransaction({
+									coordinateIndex,
+									prepared: preparedCoordinate,
+									hash: prepared.appendFacts.hash,
+									nextHashes: prepared.appendFacts.next,
+									deleteHashes: deferredCoordinateDeleteHashes,
+									coordinates:
+										backboneAppend.coordinate.coordinates as NumberFromType<R>[],
+									commitNative: true,
+									commitNativeBackbone: false,
+								})
+							: this.persistPreparedCoordinate({
+									prepared: preparedCoordinate,
+									hash: prepared.appendFacts.hash,
+									nextHashes: prepared.appendFacts.next,
+									deleteHashes: deferredCoordinateDeleteHashes,
+									coordinates:
+										backboneAppend.coordinate.coordinates as NumberFromType<R>[],
+									replicas: backboneAppend.coordinate.coordinates.length,
+									commitNative: true,
+									commitNativeBackbone: false,
+								});
+					const completed = mapMaybePromise(persisted, () => {
+						const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
+						if (!backboneAppend!.isLeader && !delayAdaptiveRebalance) {
+							const leaders = backboneAppend!.leaders;
+							if (leaders) {
+								const pruneEntry =
+									this.materializePreparedCoordinateEntry(preparedCoordinate);
+								this.pruneDebouncedFnAddIfNotKeeping({
+									key: pruneEntry.hash,
+									value: { entry: pruneEntry, leaders },
+								});
+							}
 						}
-					}
-					if (!delayAdaptiveRebalance) {
-						this.rebalanceParticipationDebounced?.call();
-					}
-					return finish();
-				});
+						if (!delayAdaptiveRebalance) {
+							this.rebalanceParticipationDebounced?.call();
+						}
+						return finish();
+					});
+					return isPromiseLike(completed)
+						? completed.catch((error) => rollback(error))
+						: completed;
+				} catch (error) {
+					return rollback(error);
+				}
 			});
-		});
-	}
+			});
+		}
 
 	private finishPreparedPayloadCommitOnlyAppend(
 		result:
@@ -9642,6 +9678,60 @@ export class SharedLog<
 		return isEntryReplicated(entry)
 			? entry
 			: this.createCoordinateEntryFromNativeFields(entry);
+	}
+
+	private snapshotResidentCoordinateEntries(
+		hashes: Iterable<string>,
+	): Map<string, ResidentCoordinateEntry<R>> | undefined {
+		if (!this._residentEntryCoordinatesByHash) {
+			return undefined;
+		}
+		const snapshot = new Map<string, ResidentCoordinateEntry<R>>();
+		for (const hash of new Set([...hashes].filter(Boolean))) {
+			const entry = this._residentEntryCoordinatesByHash.get(hash);
+			if (entry) {
+				snapshot.set(hash, entry);
+			}
+		}
+		return snapshot.size === 0 ? undefined : snapshot;
+	}
+
+	private rollbackNativeBackboneCoordinateAppend(
+		appendHash: string,
+		previousEntries?: Map<string, ResidentCoordinateEntry<R>>,
+	): void {
+		const backbone = this._nativeBackbone;
+		if (!backbone) {
+			return;
+		}
+		backbone.deleteEntryCoordinates(appendHash);
+		this._residentEntryCoordinatesByHash?.delete(appendHash);
+		if (!previousEntries) {
+			return;
+		}
+		for (const [hash, entry] of previousEntries) {
+			const fields = isEntryReplicated(entry)
+				? {
+						hash: entry.hash,
+						gid: entry.gid,
+						coordinates: entry.coordinates,
+						assignedToRangeBoundary: entry.assignedToRangeBoundary,
+						hashNumber: entry.hashNumber,
+					}
+				: entry;
+			const requestedReplicas = isEntryReplicated(entry)
+				? decodeReplicas(entry).getValue(this)
+				: fields.coordinates.length;
+			backbone.putEntryCoordinates(
+				fields.hash,
+				fields.gid,
+				fields.coordinates,
+				fields.assignedToRangeBoundary,
+				requestedReplicas,
+				fields.hashNumber,
+			);
+			this._residentEntryCoordinatesByHash?.set(hash, entry);
+		}
 	}
 
 	private persistPreparedCoordinate(properties: {
