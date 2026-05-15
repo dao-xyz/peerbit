@@ -1,6 +1,7 @@
 import { field, option, serialize, variant } from "@dao-xyz/borsh";
 import { create as createSimpleIndexer } from "@peerbit/indexer-simple";
 import { create as createSqliteIndexer } from "@peerbit/indexer-sqlite3";
+import { Log } from "@peerbit/log";
 import { Program, type ProgramClient } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import { createRustPeerbitOptions } from "peerbit/rust";
@@ -14,7 +15,7 @@ import { Documents, policy, type SetupOptions } from "../src/index.js";
 // - DOC_WARMUP=100
 // - DOC_ITERATIONS=1000
 // - DOC_BYTES=1200
-// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index
+// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,native-ceiling
 //   Add "-nonunique" to any scenario name to use default update-safe put semantics.
 //   Add "-local" to a rust-peerbit scenario to disable replication and default trim.
 //   Add "-putmany" to any unique scenario name to use one putMany call per measured batch.
@@ -497,6 +498,12 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				),
 				patchAsyncMethod(
 					store.docs.log as any,
+					"processNativePreparedTargetNoneAppendTransaction",
+					profile,
+					"sharedProcessLocalAppendMs",
+				),
+				patchAsyncMethod(
+					store.docs.log as any,
 					"processLocalAppendManyNativePlanned",
 					profile,
 					"sharedProcessLocalAppendBatchMs",
@@ -558,6 +565,12 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				patchAsyncMethod(
 					store.docs.log as any,
 					"persistPreparedCoordinate",
+					profile,
+					"sharedPersistCoordinateMs",
+				),
+				patchAsyncMethod(
+					store.docs.log as any,
+					"persistPreparedCoordinateNativeTransaction",
 					profile,
 					"sharedPersistCoordinateMs",
 				),
@@ -647,9 +660,123 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 	}
 };
 
+const runNativeCeilingScenario = async (name: string): Promise<BenchRow> => {
+	const session = await TestSession.disconnected(1);
+	const rustOptions = createRustPeerbitOptions({
+		storage: { nativeLogBlocks: true },
+	});
+	const blockStore = rustOptions.storage.blocksStoreFactory!() as any;
+	blockStore.rm ??= (key: string) => blockStore.del(key);
+	blockStore.rmMany ??= async (keys: string[]) => {
+		await Promise.all(keys.map((key) => blockStore.rm(key)));
+		return keys.length;
+	};
+	await blockStore.open?.();
+	const log = new Log<Uint8Array>();
+	await log.open(blockStore as any, session.peers[0].identity, {
+		nativeGraph: true,
+		encoding: {
+			encoder: (value) => value,
+			decoder: (bytes) => bytes,
+		},
+		trim: { type: "length", to: 100 },
+	});
+
+	const append = async (count: number, profile?: Profile) => {
+		for (let i = 0; i < count; i++) {
+			const runAppend = () =>
+				log.appendLocallyPreparedCommitOnly(
+					undefined as any,
+					{ meta: { next: [] } as any },
+					{
+						payloadData: payload,
+						includeMaterializationBytes: false,
+						includeAppendFactsBytes: true,
+						resolveTrimmedEntries: false,
+						skipMissingNextJoin: true,
+					},
+				);
+			if (profile) {
+				await time(profile, "totalPutMs", async () => {
+					await runAppend();
+				});
+			} else {
+				await runAppend();
+			}
+		}
+	};
+
+	try {
+		await append(warmupIterations);
+		const profile = emptyProfile();
+		const restores = [
+			patchAsyncMethod(
+				log as any,
+				"appendLocallyPreparedCommitOnly",
+				profile,
+				"logAppendMs",
+			),
+			patchAsyncMethod(
+				log as any,
+				"getNextsForAppend",
+				profile,
+				"logGetNextsForAppendMs",
+			),
+			patchAsyncMethod(
+				log as any,
+				"createNativePlainAppendCommitOnly",
+				profile,
+				"logCreateNativeAppendChainMs",
+			),
+			patchAsyncMethod(
+				log.entryIndex as any,
+				"putNativeCommittedAppendFacts",
+				profile,
+				"logPutNativeCommittedAppendMs",
+			),
+			patchAsyncMethod(log, "trim", profile, "logTrimMs"),
+			patchAsyncMethod(
+				(log as any)._trim,
+				"trimUnfilteredLength",
+				profile,
+				"logTrimUnfilteredLengthMs",
+			),
+		];
+		try {
+			await append(iterations, profile);
+		} finally {
+			for (const restore of restores.reverse()) {
+				restore();
+			}
+		}
+		return {
+			name,
+			iterations,
+			payloadBytes,
+			opsPerSecond: Math.round((iterations / profile.totalPutMs) * 1000),
+			...Object.fromEntries(
+				Object.entries(profile)
+					.filter(
+						([key]) =>
+							profileDeep || !deepProfileKeys.has(key as keyof Profile),
+					)
+					.map(([key, value]) => [key, Math.round(value * 100) / 100]),
+			),
+		} as BenchRow;
+	} finally {
+		await log.close();
+		await blockStore.close?.();
+		await session.stop();
+	}
+};
+
 const rows: BenchRow[] = [];
 for (const name of scenarioNames) {
-	rows.push(await runScenario(name));
+	rows.push(
+		scenarioBaseName(name) === "native-ceiling"
+			? await runNativeCeilingScenario(name)
+			: await runScenario(name),
+	);
 }
 
 if (process.env.BENCH_JSON === "1") {

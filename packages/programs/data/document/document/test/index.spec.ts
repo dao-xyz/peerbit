@@ -1375,6 +1375,10 @@ describe("index", () => {
 					"appendLocallyPrepared",
 				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
+				const nativeTransactionSpy = sinon.spy(
+					store.docs.log as any,
+					"finishPreparedPayloadNativeAppendTransaction",
+				);
 
 				try {
 					await store.docs.put(new Document({ id: uuid(), name: "compat" }), {
@@ -1386,8 +1390,10 @@ describe("index", () => {
 					expect(validatedAppendSpy.callCount).equal(0);
 					expect(preparedAppendSpy.callCount).equal(0);
 					expect(appendSpy.callCount).equal(1);
+					expect(nativeTransactionSpy.callCount).equal(0);
 					expect(canPerform.callCount).equal(1);
 				} finally {
+					nativeTransactionSpy.restore();
 					preparedAppendSpy.restore();
 					validatedAppendSpy.restore();
 					appendSpy.restore();

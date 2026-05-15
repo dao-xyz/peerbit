@@ -4867,10 +4867,190 @@ export class SharedLog<
 			};
 		}
 
+		const nativeTransaction =
+			this.finishPreparedPayloadNativeAppendTransaction(
+				result,
+				options,
+				minReplicasValue,
+			);
+		if (nativeTransaction) {
+			return nativeTransaction;
+		}
+
 		return this.finishPreparedPayloadCommitOnlyAppendAsync(
 			result,
 			options,
 			minReplicasValue,
+		);
+	}
+
+	private finishPreparedPayloadNativeAppendTransaction(
+		result: {
+			entry: Entry<T>;
+			materializeEntry: () => Entry<T>;
+			removed: ShallowOrFullEntry<T>[];
+			appendFacts: PreparedAppendFacts;
+		},
+		options: SharedAppendOptions<T> | undefined,
+		minReplicasValue: number,
+	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
+		const coordinateIndex = this.getNativeTransactionCoordinateIndex(
+			result,
+			options,
+		);
+		if (!coordinateIndex) {
+			return undefined;
+		}
+		return this.finishPreparedPayloadNativeAppendTransactionAsync(
+			result,
+			minReplicasValue,
+			coordinateIndex,
+		);
+	}
+
+	private getNativeTransactionCoordinateIndex(
+		result: { appendFacts: PreparedAppendFacts },
+		options: SharedAppendOptions<T> | undefined,
+	):
+		| PutAndDeleteIndex<EntryReplicated<R>>
+		| undefined {
+		if (
+			options?.target !== "none" ||
+			options?.replicate === true ||
+			this.shouldDeferHeadCoordinatePersistence(options) ||
+			!this._nativeSharedLogState ||
+			!this.canPlanNativeAppendFacts(result.appendFacts)
+		) {
+			return undefined;
+		}
+		const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
+			EntryReplicated<R>
+		>;
+		return coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn
+			? coordinateIndex
+			: undefined;
+	}
+
+	private async finishPreparedPayloadNativeAppendTransactionAsync(
+		result: {
+			entry: Entry<T>;
+			materializeEntry: () => Entry<T>;
+			removed: ShallowOrFullEntry<T>[];
+			appendFacts: PreparedAppendFacts;
+		},
+		minReplicasValue: number,
+		coordinateIndex: PutAndDeleteIndex<EntryReplicated<R>>,
+	): Promise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
+		const nativePreparedCommit =
+			await this.processNativePreparedTargetNoneAppendTransaction(
+				result,
+				{
+					minReplicasValue,
+					coordinateIndex,
+				},
+			);
+		if (!nativePreparedCommit) {
+			return undefined;
+		}
+		const sharedLog = this;
+		return {
+			get entry() {
+				return sharedLog.materializePreparedAppendResultEntry(result);
+			},
+			removed: result.removed,
+			appendCommit: nativePreparedCommit,
+		};
+	}
+
+	private async processNativePreparedTargetNoneAppendTransaction(
+		result: {
+			entry?: Entry<T>;
+			materializeEntry?: () => Entry<T>;
+			removed: ShallowOrFullEntry<T>[];
+			change?: Change<T>;
+			appendFacts: PreparedAppendFacts;
+		},
+		properties: {
+			minReplicasValue: number;
+			coordinateIndex: PutAndDeleteIndex<EntryReplicated<R>>;
+		},
+	): Promise<PreparedLocalAppendCommit<R> | undefined> {
+		const plannedCoordinateDeleteHashes =
+			result.change?.removed.map((entry) => entry.hash) ??
+			result.removed.map((entry) => entry.hash);
+		const nativeAppendPlan = await this.planNativeLocalAppendFacts(
+			result.appendFacts,
+			properties.minReplicasValue,
+			{
+				deleteHashes:
+					plannedCoordinateDeleteHashes.length > 0
+						? plannedCoordinateDeleteHashes
+						: undefined,
+			},
+		);
+		if (!nativeAppendPlan) {
+			return undefined;
+		}
+
+		let deferredCoordinateDeleteHashes: string[] | undefined;
+		try {
+			deferredCoordinateDeleteHashes = result.change
+				? this.applyChangeWithDeferredCoordinateDeletes(result.change, {
+						forgetNativeCoordinates:
+							!nativeAppendPlan.committedNativeCoordinateDeletes,
+					})
+				: this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
+						result.appendFacts,
+						result.removed,
+						() => this.materializePreparedAppendResultEntry(result),
+						{
+							forgetNativeCoordinates:
+								!nativeAppendPlan.committedNativeCoordinateDeletes,
+						},
+					);
+			await this.persistPreparedCoordinateNativeTransaction({
+				coordinateIndex: properties.coordinateIndex,
+				prepared: nativeAppendPlan.preparedCoordinate,
+				hash: result.appendFacts.hash,
+				nextHashes: result.appendFacts.next,
+				deleteHashes: deferredCoordinateDeleteHashes,
+				coordinates: nativeAppendPlan.coordinates,
+			});
+		} catch (error) {
+			if (deferredCoordinateDeleteHashes) {
+				await this.deleteCoordinatesForHashes(deferredCoordinateDeleteHashes);
+			}
+			throw error;
+		}
+
+		const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
+		if (!nativeAppendPlan.isLeader && !delayAdaptiveRebalance) {
+			let leaders = nativeAppendPlan.leaders;
+			let pruneEntry: EntryReplicated<R> | undefined;
+			if (!leaders) {
+				pruneEntry = this.materializePreparedCoordinateEntry(
+					nativeAppendPlan.preparedCoordinate,
+				);
+				leaders = (
+					await this.planEntryLeaders(pruneEntry, properties.minReplicasValue, {
+						persist: false,
+					})
+				).leaders;
+			}
+			pruneEntry ??= this.materializePreparedCoordinateEntry(
+				nativeAppendPlan.preparedCoordinate,
+			);
+			this.pruneDebouncedFnAddIfNotKeeping({
+				key: pruneEntry.hash,
+				value: { entry: pruneEntry, leaders },
+			});
+		}
+		if (!delayAdaptiveRebalance) {
+			this.rebalanceParticipationDebounced?.call();
+		}
+		return this.createPreparedLocalAppendCommitFromFacts(
+			result.appendFacts,
+			nativeAppendPlan,
 		);
 	}
 
@@ -9161,6 +9341,47 @@ export class SharedLog<
 					this.entryCoordinatesIndex.del(deleteNextOptions),
 					() => true,
 				);
+			}
+			return true;
+		};
+		return mapMaybePromise(putResult, finish);
+	}
+
+	private persistPreparedCoordinateNativeTransaction(properties: {
+		coordinateIndex: PutAndDeleteIndex<EntryReplicated<R>>;
+		prepared: PreparedCoordinatePersistence<R>;
+		hash: string;
+		nextHashes: string[];
+		coordinates: NumberFromType<R>[];
+		deleteHashes?: string[];
+	}): MaybePromise<boolean> {
+		const { fields } = properties.prepared;
+		const putNative =
+			properties.coordinateIndex
+				.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn;
+		if (!putNative) {
+			return false;
+		}
+		const putResult = putNative.call(
+			properties.coordinateIndex,
+			fields,
+			combineCoordinateDeleteHashes(
+				properties.nextHashes,
+				properties.deleteHashes,
+			),
+		);
+		const finish = () => {
+			if (this._residentEntryCoordinatesByHash) {
+				this._residentEntryCoordinatesByHash.set(
+					properties.hash,
+					properties.prepared.coordinateEntry ?? fields,
+				);
+				for (const nextHash of properties.nextHashes) {
+					this._residentEntryCoordinatesByHash.delete(nextHash);
+				}
+			}
+			for (const coordinate of properties.coordinates) {
+				this.coordinateToHash.add(coordinate, properties.hash);
 			}
 			return true;
 		};

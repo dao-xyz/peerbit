@@ -379,6 +379,72 @@ describe("append", () => {
 		}
 	});
 
+	it("uses the prepared payload native transaction without eager entry materialization", async () => {
+		session = await TestSession.disconnected(1, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		const transactionSpy = sinon.spy(
+			store.log as any,
+			"finishPreparedPayloadNativeAppendTransaction",
+		);
+		const processTransactionSpy = sinon.spy(
+			store.log as any,
+			"processNativePreparedTargetNoneAppendTransaction",
+		);
+		const genericProcessSpy = sinon.spy(
+			store.log as any,
+			"processNativePreparedTargetNoneAppend",
+		);
+		const nativePersistSpy = sinon.spy(
+			store.log as any,
+			"persistPreparedCoordinateNativeTransaction",
+		);
+		const genericPersistSpy = sinon.spy(
+			store.log as any,
+			"persistPreparedCoordinate",
+		);
+		const materializeSpy = sinon.spy(
+			store.log as any,
+			"materializePreparedAppendResultEntry",
+		);
+		try {
+			const result = await store.log.appendLocallyPreparedPayloadCommitOnly(
+				new Uint8Array([1, 2, 3]),
+				{
+					replicate: false,
+					target: "none",
+				},
+			);
+
+			if (!result) {
+				throw new Error("Expected native transaction result");
+			}
+			expect(transactionSpy.callCount).equal(1);
+			expect(processTransactionSpy.callCount).equal(1);
+			expect(genericProcessSpy.callCount).equal(0);
+			expect(nativePersistSpy.callCount).equal(1);
+			expect(genericPersistSpy.callCount).equal(0);
+			expect(materializeSpy.callCount).equal(0);
+			expect(result.appendCommit.hash).to.be.a("string");
+			expect(materializeSpy.callCount).equal(0);
+			expect(result.entry.hash).equal(result.appendCommit.hash);
+			expect(materializeSpy.callCount).equal(1);
+		} finally {
+			materializeSpy.restore();
+			genericPersistSpy.restore();
+			nativePersistSpy.restore();
+			genericProcessSpy.restore();
+			processTransactionSpy.restore();
+			transactionSpy.restore();
+		}
+	});
+
 	it("uses cached self replicator state for native prepared append planning", async () => {
 		session = await TestSession.disconnected(1, {
 			indexer: (directory) => createRustIndexer(directory),
