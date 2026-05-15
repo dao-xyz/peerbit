@@ -962,6 +962,14 @@ describe("index", () => {
 					backbone,
 					"preparePlainStorageAppendTransaction",
 				);
+				const backboneCoordinatePersistSpy = sinon.spy(
+					sharedLog,
+					"persistPreparedBackboneCoordinateNativeTransaction",
+				);
+				const genericCoordinatePersistSpy = sinon.spy(
+					sharedLog,
+					"persistPreparedCoordinateNativeTransaction",
+				);
 
 				try {
 					const id = uuid();
@@ -987,11 +995,15 @@ describe("index", () => {
 					expect(backboneStorageTransactionSpy.secondCall.args[0].next).to.deep.equal(
 						[first.entry.hash],
 					);
+					expect(backboneCoordinatePersistSpy.callCount).equal(2);
+					expect(genericCoordinatePersistSpy.callCount).equal(0);
 					expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
 					expect((await store.docs.get(id))?.name).equal(
 						"backbone-storage-2",
 					);
 				} finally {
+					genericCoordinatePersistSpy.restore();
+					backboneCoordinatePersistSpy.restore();
 					backboneStorageTransactionSpy.restore();
 					await store.close();
 					store = undefined;

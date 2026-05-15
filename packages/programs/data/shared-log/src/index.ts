@@ -5074,30 +5074,30 @@ export class SharedLog<
 					throw error;
 				};
 				try {
-					const persisted =
-						coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn
-							? this.persistPreparedCoordinateNativeTransaction({
-									coordinateIndex,
-									prepared: preparedCoordinate,
-									hash: prepared.appendFacts.hash,
-									nextHashes: prepared.appendFacts.next,
-									deleteHashes: deferredCoordinateDeleteHashes,
-									coordinates:
-										backboneAppend.coordinate.coordinates as NumberFromType<R>[],
-									commitNative: true,
-									commitNativeBackbone: false,
-								})
-							: this.persistPreparedCoordinate({
-									prepared: preparedCoordinate,
-									hash: prepared.appendFacts.hash,
-									nextHashes: prepared.appendFacts.next,
-									deleteHashes: deferredCoordinateDeleteHashes,
-									coordinates:
-										backboneAppend.coordinate.coordinates as NumberFromType<R>[],
-									replicas: backboneAppend.coordinate.coordinates.length,
-									commitNative: true,
-									commitNativeBackbone: false,
-								});
+					const hasNativeCoordinatePut =
+						coordinateIndex
+							.putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn ||
+						coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn;
+					const persisted = hasNativeCoordinatePut
+						? this.persistPreparedBackboneCoordinateNativeTransaction({
+								coordinateIndex,
+								prepared: preparedCoordinate,
+								hash: prepared.appendFacts.hash,
+								deleteHashes: plannedCoordinateDeleteHashes,
+								coordinates:
+									backboneAppend.coordinate.coordinates as NumberFromType<R>[],
+							})
+						: this.persistPreparedCoordinate({
+								prepared: preparedCoordinate,
+								hash: prepared.appendFacts.hash,
+								nextHashes: prepared.appendFacts.next,
+								deleteHashes: deferredCoordinateDeleteHashes,
+								coordinates:
+									backboneAppend.coordinate.coordinates as NumberFromType<R>[],
+								replicas: backboneAppend.coordinate.coordinates.length,
+								commitNative: true,
+								commitNativeBackbone: false,
+							});
 					const completed = mapMaybePromise(persisted, () => {
 						const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
 						if (!backboneAppend!.isLeader && !delayAdaptiveRebalance) {
@@ -5123,8 +5123,8 @@ export class SharedLog<
 					return rollback(error);
 				}
 			});
-			});
-		}
+		});
+	}
 
 	private finishPreparedPayloadCommitOnlyAppend(
 		result:
@@ -9929,6 +9929,54 @@ export class SharedLog<
 				);
 				for (const nextHash of nativeDeleteHashes) {
 					this._residentEntryCoordinatesByHash.delete(nextHash);
+				}
+			}
+			for (const coordinate of properties.coordinates) {
+				this.coordinateToHash.add(coordinate, properties.hash);
+			}
+			return true;
+		};
+		return mapMaybePromise(putResult, finish);
+	}
+
+	private persistPreparedBackboneCoordinateNativeTransaction(properties: {
+		coordinateIndex: PutAndDeleteIndex<EntryReplicated<R>>;
+		prepared: PreparedCoordinatePersistence<R>;
+		hash: string;
+		coordinates: NumberFromType<R>[];
+		deleteHashes: string[];
+	}): MaybePromise<boolean> {
+		const { fields } = properties.prepared;
+		const putNative =
+			properties.coordinateIndex
+				.putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn ??
+			properties.coordinateIndex
+				.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn;
+		if (!putNative) {
+			return false;
+		}
+		const putResult = putNative.call(
+			properties.coordinateIndex,
+			fields,
+			properties.deleteHashes,
+		);
+		const finish = () => {
+			this._nativeSharedLogState?.commitEntryCoordinates(
+				properties.hash,
+				fields.gid,
+				properties.coordinates,
+				properties.deleteHashes,
+				properties.prepared.assignedToRangeBoundary,
+				properties.coordinates.length,
+				fields.hashNumber,
+			);
+			if (this._residentEntryCoordinatesByHash) {
+				this._residentEntryCoordinatesByHash.set(
+					properties.hash,
+					properties.prepared.coordinateEntry ?? fields,
+				);
+				for (const deletedHash of properties.deleteHashes) {
+					this._residentEntryCoordinatesByHash.delete(deletedHash);
 				}
 			}
 			for (const coordinate of properties.coordinates) {
