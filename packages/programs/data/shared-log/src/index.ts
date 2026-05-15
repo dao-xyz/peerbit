@@ -4804,6 +4804,7 @@ export class SharedLog<
 				appendOptions,
 				options,
 				properties,
+				minReplicasValue,
 				deferHeadCoordinatePersistence,
 			);
 		if (nativeBackboneResult) {
@@ -4874,14 +4875,25 @@ export class SharedLog<
 					resolveTrimmedEntries?: boolean;
 			  }
 			| undefined,
+		minReplicasValue: number,
 		deferHeadCoordinatePersistence: boolean,
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> | undefined {
 		if (
 			!this._nativeBackbone ||
-			!deferHeadCoordinatePersistence ||
 			options?.target !== "none" ||
-			options?.replicate !== false
+			options?.replicate === true
 		) {
+			return undefined;
+		}
+		if (!deferHeadCoordinatePersistence) {
+			return this.appendLocallyPreparedPayloadNativeBackboneStorageTransaction(
+				payloadData,
+				appendOptions,
+				properties,
+				minReplicasValue,
+			);
+		}
+		if (options?.replicate !== false) {
 			return undefined;
 		}
 		const backbone = this._nativeBackbone;
@@ -4938,6 +4950,136 @@ export class SharedLog<
 				this.deleteCoordinatesForHashes(deleteHashes),
 				finish,
 			);
+		});
+	}
+
+	private appendLocallyPreparedPayloadNativeBackboneStorageTransaction(
+		payloadData: Uint8Array,
+		appendOptions: AppendOptions<T>,
+		properties:
+			| {
+					skipMissingNextJoin?: boolean;
+					resolveTrimmedEntries?: boolean;
+			  }
+			| undefined,
+		minReplicasValue: number,
+	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
+		const backbone = this._nativeBackbone;
+		if (!backbone || !this._nativeSharedLogState) {
+			return undefined;
+		}
+		return mapMaybePromise(this.createLeaderSelectionContext(), (context) => {
+			const nativeLeaderOptions = this.createNativeLeaderOptions(context);
+			let backboneAppend:
+				| ReturnType<
+						NativePeerbitBackbone["preparePlainNoNextStorageAppendTransaction"]
+				  >
+				| undefined;
+			const result = this.log.appendLocallyPreparedNativeNoNextCommitOnly(
+				undefined as T,
+				appendOptions,
+				{
+					payloadData,
+					resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+				},
+				(input) => {
+					backboneAppend = backbone.preparePlainNoNextStorageAppendTransaction({
+						wallTime: input.wallTime,
+						logical: input.logical,
+						gid: input.gid,
+						type: input.type,
+						metaData: input.metaData,
+						payloadData: input.payloadData,
+						replicas: minReplicasValue,
+						roleAgeMs: nativeLeaderOptions.roleAge,
+						now: nativeLeaderOptions.now,
+						selfHash: nativeLeaderOptions.selfHash,
+						selfReplicating: nativeLeaderOptions.selfReplicating,
+						trimLengthTo: input.trimLengthTo,
+					});
+					return {
+						...backboneAppend.entry,
+						trimmedEntries: backboneAppend.trimmed,
+					};
+				},
+			);
+			return mapMaybePromise(result, (prepared) => {
+				if (!prepared || !backboneAppend) {
+					return undefined;
+				}
+				const preparedCoordinate =
+					this.createCoordinatePersistenceEntryFromNativePlanFacts({
+						appendFacts: prepared.appendFacts,
+						plan: backboneAppend.coordinate,
+					});
+				if (!preparedCoordinate) {
+					throw new Error(
+						"Native backbone append transaction returned mismatched coordinate facts",
+					);
+				}
+				const deferredCoordinateDeleteHashes =
+					this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
+						prepared.appendFacts,
+						prepared.removed,
+						prepared.materializeEntry,
+						{
+							forgetNativeCoordinates: false,
+						},
+					);
+				const finish = (): PreparedPayloadCommitOnlyResult<T, R> => {
+					const appendCommit = this.createPreparedLocalAppendCommitFromFacts(
+						prepared.appendFacts,
+						{
+							coordinates:
+								backboneAppend!.coordinate.coordinates as NumberFromType<R>[],
+							leaders: backboneAppend!.leaders,
+							isLeader: backboneAppend!.isLeader,
+							assignedToRangeBoundary:
+								backboneAppend!.assignedToRangeBoundary,
+							hashNumber: backboneAppend!.coordinate
+								.hashNumber as NumberFromType<R>,
+							preparedCoordinate,
+							committedNativeBackboneCoordinateState: true,
+						},
+					);
+					return {
+						get entry() {
+							return prepared.entry;
+						},
+						removed: prepared.removed,
+						appendCommit,
+					};
+				};
+				const persisted = this.persistPreparedCoordinate({
+					prepared: preparedCoordinate,
+					hash: prepared.appendFacts.hash,
+					nextHashes: prepared.appendFacts.next,
+					deleteHashes: deferredCoordinateDeleteHashes,
+					coordinates:
+						backboneAppend.coordinate.coordinates as NumberFromType<R>[],
+					replicas: backboneAppend.coordinate.coordinates.length,
+					commitNative: true,
+					commitNativeBackbone: false,
+				});
+				return mapMaybePromise(persisted, () => {
+					const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
+					if (!backboneAppend!.isLeader && !delayAdaptiveRebalance) {
+						const leaders = backboneAppend!.leaders;
+						if (leaders) {
+							const pruneEntry =
+								this.materializePreparedCoordinateEntry(preparedCoordinate);
+							this.pruneDebouncedFnAddIfNotKeeping({
+								key: pruneEntry.hash,
+								value: { entry: pruneEntry, leaders },
+							});
+						}
+					}
+					if (!delayAdaptiveRebalance) {
+						this.rebalanceParticipationDebounced?.call();
+					}
+					return finish();
+				});
+			});
 		});
 	}
 

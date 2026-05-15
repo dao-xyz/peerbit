@@ -1042,6 +1042,19 @@ export class Log<T> {
 						appendFacts,
 						shallowEntry,
 					});
+					const finishBlocks = ():
+						| PreparedCommitOnlyAppendResult<T>
+						| Promise<PreparedCommitOnlyAppendResult<T>> => {
+						if (!prepared.bytes) {
+							return finishTrim();
+						}
+						return mapMaybePromise(
+							this.putPreparedAppendBlocks([
+								Entry.preparedBlockFromBytes(prepared.bytes, hash),
+							]),
+							finishTrim,
+						);
+					};
 					const finishTrim = ():
 						| PreparedCommitOnlyAppendResult<T>
 						| Promise<PreparedCommitOnlyAppendResult<T>> => {
@@ -1084,7 +1097,7 @@ export class Log<T> {
 							shallowEntry,
 							isHead: true,
 						});
-						const result = mapMaybePromise(putResult, finishTrim);
+						const result = mapMaybePromise(putResult, finishBlocks);
 						return isPromiseLike(result) ? result.catch(rollback) : result;
 					} catch (error) {
 						return rollback(error);

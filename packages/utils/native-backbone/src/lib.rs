@@ -623,6 +623,69 @@ impl NativePeerbitBackbone {
                 trim_length_to,
             )
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_no_next_storage_append_transaction(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+    ) -> Result<Array, JsValue> {
+        self.prepare_plain_no_next_storage_append_transaction_inner(
+            wall_time,
+            logical,
+            gid,
+            entry_type,
+            meta_data,
+            payload_data,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_no_next_storage_append_transaction_trim(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        trim_length_to: usize,
+    ) -> Result<Array, JsValue> {
+        self.prepare_plain_no_next_storage_append_transaction_inner(
+            wall_time,
+            logical,
+            gid,
+            entry_type,
+            meta_data,
+            payload_data,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            Some(trim_length_to),
+        )
+    }
 }
 
 impl NativePeerbitBackbone {
@@ -681,6 +744,88 @@ impl NativePeerbitBackbone {
         let hash_number = hash_number_string(&self.resolution, &digest)?;
         let delete_hashes = trim_hashes(&trim_rows)?;
         let next_hashes = Array::new();
+        let coordinate_row = self.shared_log.commit_local_append_for_gid_compact(
+            hash,
+            gid,
+            hash_number,
+            next_hashes,
+            delete_hashes,
+            replicas,
+            role_age_ms,
+            now,
+            JsValue::UNDEFINED,
+            true,
+            self_hash,
+            self_replicating,
+            true,
+            true,
+        )?;
+
+        let out = Array::new();
+        out.push(&entry_row);
+        out.push(&coordinate_row.get(0));
+        out.push(&coordinate_row.get(1));
+        out.push(&coordinate_row.get(2));
+        out.push(&coordinate_row.get(3));
+        out.push(&trim_rows);
+        Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_plain_no_next_storage_append_transaction_inner(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        trim_length_to: Option<usize>,
+    ) -> Result<Array, JsValue> {
+        let next_hashes = Array::new();
+        let (entry_row, trim_rows) = if let Some(trim_length_to) = trim_length_to {
+            let row = self
+                .log
+                .prepare_entry_v0_plain_entry_storage_facts_trim_and_put_with_builder(
+                    &self.builder,
+                    wall_time,
+                    logical,
+                    gid.clone(),
+                    next_hashes.clone(),
+                    entry_type,
+                    meta_data,
+                    payload_data,
+                    trim_length_to,
+                )?;
+            let row = array_from_value(row.into(), "native storage trim append row")?;
+            let entry_row = array_from_value(row.get(0), "native storage trim append entry row")?;
+            let trim_rows = array_from_value(row.get(1), "native storage trim append trim rows")?;
+            (entry_row, trim_rows)
+        } else {
+            let row = self
+                .log
+                .prepare_entry_v0_plain_entry_storage_facts_and_put_with_builder(
+                    &self.builder,
+                    wall_time,
+                    logical,
+                    gid.clone(),
+                    next_hashes.clone(),
+                    entry_type,
+                    meta_data,
+                    payload_data,
+                )?;
+            (row, Array::new())
+        };
+
+        let hash = string_field(&entry_row, 1, "storage entry hash")?;
+        let digest = bytes_field(&entry_row, 5, "storage entry hash digest")?;
+        let hash_number = hash_number_string(&self.resolution, &digest)?;
+        let delete_hashes = trim_hashes(&trim_rows)?;
         let coordinate_row = self.shared_log.commit_local_append_for_gid_compact(
             hash,
             gid,

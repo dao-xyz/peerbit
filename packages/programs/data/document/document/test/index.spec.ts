@@ -880,6 +880,64 @@ describe("index", () => {
 				}
 			});
 
+			it("uses the native backbone storage transaction for local replicated no-next puts", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: { optional: false },
+						log: {
+							trim: { type: "length", to: 1 },
+						},
+					},
+				});
+				const sharedLog = store.docs.log as any;
+				const backbone = sharedLog._nativeBackbone;
+				const backboneStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainNoNextStorageAppendTransaction",
+				);
+
+				try {
+					const first = new Document({
+						id: uuid(),
+						name: "backbone-storage-1",
+					});
+					const second = new Document({
+						id: uuid(),
+						name: "backbone-storage-2",
+					});
+					await store.docs.put(first, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+					await store.docs.put(second, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(backboneStorageTransactionSpy.callCount).equal(2);
+					expect(await store.docs.get(first.id)).equal(undefined);
+					expect((await store.docs.get(second.id))?.name).equal(
+						"backbone-storage-2",
+					);
+				} finally {
+					backboneStorageTransactionSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
 			it("removes trimmed prepared puts from the document index by head", async () => {
 				const rustSession = await TestSession.connected(
 					1,
