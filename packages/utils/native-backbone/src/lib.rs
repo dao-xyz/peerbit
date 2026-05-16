@@ -4,6 +4,9 @@ use peerbit_indexer_core::persistence::{
     encode_journal_records, encode_key_value_snapshot, JournalRecord, JOURNAL_MAGIC,
 };
 use peerbit_indexer_core::planner::{DocumentFields, FieldPath, FieldValue, NativeQueryIndex};
+use peerbit_indexer_core::schema::{
+    decode_native_schema_ir, extract_encoded_document_fields_from_parts, NativeSchemaIr,
+};
 use peerbit_indexer_core::storage::{ByteStorage, MemoryByteStorage};
 use peerbit_log_rust::{NativeEntryV0PlainBuilder, NativeLogBlockStore, NativeLogIndex};
 use peerbit_shared_log_rust::NativeSharedLogState;
@@ -28,6 +31,9 @@ pub struct NativePeerbitBackbone {
     coordinate_journal: Vec<JournalRecord>,
     coordinate_journal_byte_len: usize,
     coordinate_journal_enabled: bool,
+    document_index: NativeQueryIndex,
+    document_values: MemoryByteStorage,
+    document_schema_ir: Option<NativeSchemaIr>,
     builder: NativeEntryV0PlainBuilder,
 }
 
@@ -53,6 +59,9 @@ impl NativePeerbitBackbone {
             coordinate_journal: Vec::new(),
             coordinate_journal_byte_len: 0,
             coordinate_journal_enabled: false,
+            document_index: NativeQueryIndex::new(),
+            document_values: MemoryByteStorage::new(),
+            document_schema_ir: None,
             builder: NativeEntryV0PlainBuilder::new(clock_id, private_key, public_key)?,
         })
     }
@@ -101,6 +110,81 @@ impl NativePeerbitBackbone {
                 &FieldValue::String(hash.to_string()),
             )
             .is_some_and(|id| id == hash)
+    }
+
+    pub fn configure_document_schema_ir(
+        &mut self,
+        schema_ir_bytes: Vec<u8>,
+    ) -> Result<Array, JsValue> {
+        let schema_ir = decode_native_schema_ir(&schema_ir_bytes).map_err(js_error)?;
+        let stats = schema_ir.stats();
+        self.document_schema_ir = Some(schema_ir);
+        let out = Array::new();
+        out.push(&JsValue::from_f64(stats.root_fields as f64));
+        out.push(&JsValue::from_f64(stats.node_count as f64));
+        out.push(&JsValue::from_f64(stats.generic_nodes as f64));
+        Ok(out)
+    }
+
+    pub fn document_index_len(&self) -> usize {
+        self.document_index.len()
+    }
+
+    pub fn document_value_len(&self) -> usize {
+        self.document_values.len()
+    }
+
+    pub fn document_exact_string_first_key(&self, field: u32, value: String) -> JsValue {
+        self.document_index
+            .exact_first(&FieldPath::Id(field), &FieldValue::String(value))
+            .map(|key| JsValue::from_str(&key))
+            .unwrap_or(JsValue::UNDEFINED)
+    }
+
+    pub fn document_index_has_exact_string(&self, field: u32, value: String, key: &str) -> bool {
+        self.document_index
+            .exact_first(&FieldPath::Id(field), &FieldValue::String(value))
+            .is_some_and(|id| id == key)
+    }
+
+    pub fn document_value_bytes(&self, key: &str) -> JsValue {
+        self.document_values
+            .get(key)
+            .map(|value| Uint8Array::from(value).into())
+            .unwrap_or(JsValue::UNDEFINED)
+    }
+
+    pub fn put_document_encoded_parts_stored(
+        &mut self,
+        key: String,
+        value_prefix_bytes: Vec<u8>,
+        value_suffix_bytes: Vec<u8>,
+        byte_element_index_limit: usize,
+    ) -> Result<(), JsValue> {
+        let schema_ir = self.document_schema_ir.as_ref().ok_or_else(|| {
+            js_error("Native backbone document schema IR has not been configured")
+        })?;
+        let fields = extract_encoded_document_fields_from_parts(
+            schema_ir,
+            &value_prefix_bytes,
+            &value_suffix_bytes,
+            byte_element_index_limit,
+        )
+        .map_err(js_error)?;
+        let value = concat_bytes(&value_prefix_bytes, &value_suffix_bytes);
+        self.document_index.put(key.clone(), fields);
+        self.document_values.put(key, value);
+        Ok(())
+    }
+
+    pub fn delete_document(&mut self, key: &str) -> bool {
+        self.document_index.delete(key.to_string());
+        self.document_values.delete(key)
+    }
+
+    pub fn clear_document_index(&mut self) {
+        self.document_index.clear();
+        self.document_values.clear();
     }
 
     pub fn coordinate_journal_header(&self) -> Vec<u8> {
@@ -374,6 +458,7 @@ impl NativePeerbitBackbone {
         self.blocks.clear();
         self.shared_log.clear();
         self.clear_coordinate_core();
+        self.clear_document_core();
     }
 
     pub fn clear_shared_log(&mut self) {
@@ -1108,6 +1193,11 @@ impl NativePeerbitBackbone {
         self.coordinate_journal_byte_len = 0;
     }
 
+    fn clear_document_core(&mut self) {
+        self.document_index.clear();
+        self.document_values.clear();
+    }
+
     fn put_coordinate_core_from_parts(
         &mut self,
         hash: String,
@@ -1730,6 +1820,17 @@ fn read_bytes(bytes: &[u8], offset: &mut usize, label: &str) -> Result<Vec<u8>, 
     let value = bytes[*offset..end].to_vec();
     *offset = end;
     Ok(value)
+}
+
+fn concat_bytes(prefix: &[u8], suffix: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(prefix.len() + suffix.len());
+    out.extend_from_slice(prefix);
+    out.extend_from_slice(suffix);
+    out
+}
+
+fn js_error(error: impl std::fmt::Display) -> JsValue {
+    JsValue::from_str(&error.to_string())
 }
 
 fn decode_error(error: impl std::fmt::Display) -> JsValue {

@@ -34,6 +34,49 @@ const concatBytes = (chunks: Uint8Array[]) => {
 	return out;
 };
 
+const writeU32 = (out: number[], value: number) => {
+	out.push(
+		value & 0xff,
+		(value >> 8) & 0xff,
+		(value >> 16) & 0xff,
+		value >>> 24,
+	);
+};
+
+const writeString = (out: number[], value: string) => {
+	const bytes = new TextEncoder().encode(value);
+	writeU32(out, bytes.byteLength);
+	out.push(...bytes);
+};
+
+const schemaWithIdScoreAndBytes = () => {
+	const out: number[] = [1, 14];
+	writeU32(out, 0);
+	writeU32(out, 3);
+	writeString(out, "id");
+	writeU32(out, 1);
+	writeU32(out, 101);
+	out.push(12);
+	writeString(out, "score");
+	writeU32(out, 2);
+	writeU32(out, 102);
+	out.push(3);
+	writeString(out, "bytes");
+	writeU32(out, 3);
+	writeU32(out, 103);
+	out.push(13);
+	return Uint8Array.from(out);
+};
+
+const encodedDocumentWithIdScoreAndBytes = () => {
+	const out: number[] = [];
+	writeString(out, "abc");
+	writeU32(out, 7);
+	writeU32(out, 2);
+	out.push(9, 10);
+	return Uint8Array.from(out);
+};
+
 class FakeOPFSWritable {
 	private position = 0;
 
@@ -285,6 +328,41 @@ describe("native peerbit backbone", () => {
 		expect(backbone.coordinateIndexLength).to.equal(1);
 		expect(backbone.coordinateValueLength).to.equal(1);
 		expect(backbone.hasCoordinateIndexHash(result.entry.hash)).to.equal(true);
+	});
+
+	it("can hold a resident document index from encoded Borsh parts", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const schemaStats = backbone.configureDocumentSchemaIr(
+			schemaWithIdScoreAndBytes(),
+		);
+		const encoded = encodedDocumentWithIdScoreAndBytes();
+
+		backbone.putDocumentEncodedPartsStored(
+			"doc-1",
+			encoded.slice(0, 6),
+			encoded.slice(6),
+			8,
+		);
+
+		expect(schemaStats).to.deep.equal({
+			rootFields: 3,
+			nodeCount: 4,
+			genericNodes: 0,
+		});
+		expect(backbone.documentIndexLength).to.equal(1);
+		expect(backbone.documentValueLength).to.equal(1);
+		expect(backbone.documentExactStringFirstKey(1, "abc")).to.equal("doc-1");
+		expect(backbone.hasDocumentExactString(1, "abc", "doc-1")).to.equal(true);
+		expect(Array.from(backbone.documentValueBytes("doc-1") ?? [])).to.deep.equal(
+			Array.from(encoded),
+		);
+		expect(backbone.deleteDocument("doc-1")).to.equal(true);
+		expect(backbone.documentIndexLength).to.equal(0);
+		expect(backbone.documentValueLength).to.equal(0);
 	});
 
 	it("coalesces trim deletes with shared-log coordinate state", async () => {

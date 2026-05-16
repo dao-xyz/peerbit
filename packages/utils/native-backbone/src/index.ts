@@ -12,6 +12,27 @@ type NativePeerbitBackboneHandle = {
 	coordinate_index_len: () => number;
 	coordinate_value_len: () => number;
 	coordinate_index_has_hash: (hash: string) => boolean;
+	configure_document_schema_ir: (schemaIr: Uint8Array) => [number, number, number];
+	document_index_len: () => number;
+	document_value_len: () => number;
+	document_exact_string_first_key: (
+		field: number,
+		value: string,
+	) => string | undefined;
+	document_index_has_exact_string: (
+		field: number,
+		value: string,
+		key: string,
+	) => boolean;
+	document_value_bytes: (key: string) => Uint8Array | undefined;
+	put_document_encoded_parts_stored: (
+		key: string,
+		valuePrefixBytes: Uint8Array,
+		valueSuffixBytes: Uint8Array,
+		byteElementIndexLimit: number,
+	) => void;
+	delete_document: (key: string) => boolean;
+	clear_document_index: () => void;
 	coordinate_journal_header: () => Uint8Array;
 	coordinate_pending_journal_len: () => number;
 	coordinate_pending_journal_byte_len: () => number;
@@ -554,6 +575,12 @@ export type NativeBackboneRangeInput = {
 	end2: bigint | number | string;
 	width: bigint | number | string;
 	mode: number;
+};
+
+export type NativeBackboneDocumentSchemaStats = {
+	rootFields: number;
+	nodeCount: number;
+	genericNodes: number;
 };
 
 export type NativeBackboneOptions = {
@@ -1560,6 +1587,59 @@ export class NativePeerbitBackbone {
 
 	hasCoordinateIndexHash(hash: string): boolean {
 		return this.native.coordinate_index_has_hash(hash);
+	}
+
+	configureDocumentSchemaIr(
+		schemaIr: Uint8Array,
+	): NativeBackboneDocumentSchemaStats {
+		const [rootFields, nodeCount, genericNodes] =
+			this.native.configure_document_schema_ir(schemaIr);
+		return { rootFields, nodeCount, genericNodes };
+	}
+
+	get documentIndexLength(): number {
+		return this.native.document_index_len();
+	}
+
+	get documentValueLength(): number {
+		return this.native.document_value_len();
+	}
+
+	documentExactStringFirstKey(
+		field: number,
+		value: string,
+	): string | undefined {
+		return this.native.document_exact_string_first_key(field, value);
+	}
+
+	hasDocumentExactString(field: number, value: string, key: string): boolean {
+		return this.native.document_index_has_exact_string(field, value, key);
+	}
+
+	documentValueBytes(key: string): Uint8Array | undefined {
+		return this.native.document_value_bytes(key);
+	}
+
+	putDocumentEncodedPartsStored(
+		key: string,
+		valuePrefixBytes: Uint8Array,
+		valueSuffixBytes: Uint8Array,
+		byteElementIndexLimit = 0,
+	): void {
+		this.native.put_document_encoded_parts_stored(
+			key,
+			valuePrefixBytes,
+			valueSuffixBytes,
+			byteElementIndexLimit,
+		);
+	}
+
+	deleteDocument(key: string): boolean {
+		return this.native.delete_document(key);
+	}
+
+	clearDocumentIndex(): void {
+		this.native.clear_document_index();
 	}
 
 	get coordinatePendingJournalLength(): number {
