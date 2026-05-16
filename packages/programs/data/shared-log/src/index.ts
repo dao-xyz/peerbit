@@ -5108,10 +5108,9 @@ export class SharedLog<
 						selfReplicating: nativeLeaderOptions.selfReplicating,
 						trimLengthTo: input.trimLengthTo,
 					};
-					const nativeBackboneDocumentIndex =
-						input.next.length === 0 && commitBlocksInBackbone
-							? properties?.nativeBackboneDocumentIndex
-							: undefined;
+					const nativeBackboneDocumentIndex = commitBlocksInBackbone
+						? properties?.nativeBackboneDocumentIndex
+						: undefined;
 					backboneAppend =
 						input.next.length === 0
 							? commitBlocksInBackbone
@@ -5129,7 +5128,13 @@ export class SharedLog<
 									)
 							: commitBlocksInBackbone
 								? backbone.preparePlainCommittedStorageAppendTransaction(
-										appendInput,
+										nativeBackboneDocumentIndex
+											? {
+													...appendInput,
+													documentIndex:
+														nativeBackboneDocumentIndex,
+												}
+											: appendInput,
 									)
 								: backbone.preparePlainStorageAppendTransaction(appendInput);
 					if (nativeBackboneDocumentIndex) {

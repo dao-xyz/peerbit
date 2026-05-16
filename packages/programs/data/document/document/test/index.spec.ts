@@ -1124,7 +1124,7 @@ describe("index", () => {
 					args: {
 						replicate: { factor: 1 },
 						nativeGraph: true,
-						nativeBackbone: { optional: false },
+						nativeBackbone: { optional: false, documentIndex: true },
 					},
 				});
 				const sharedLog = store.docs.log as any;
@@ -1144,6 +1144,19 @@ describe("index", () => {
 				const genericCoordinatePersistSpy = sinon.spy(
 					sharedLog,
 					"persistPreparedCoordinateNativeTransaction",
+				);
+				const backendIndex = store.docs.index.index as any;
+				const backboneDocumentPutSpy = sinon.spy(
+					backbone,
+					"putDocumentEncodedPartsStored",
+				);
+				const backendStoredContextPutSpy = sinon.spy(
+					backendIndex,
+					"putStoredContextualEncodedValue",
+				);
+				const documentStoredIdentityPutSpy = sinon.spy(
+					store.docs.index,
+					"_putStoredIdentityWithContext",
 				);
 
 				try {
@@ -1165,6 +1178,18 @@ describe("index", () => {
 
 					expect(backboneNoNextStorageTransactionSpy.callCount).equal(1);
 					expect(backboneStorageTransactionSpy.callCount).equal(1);
+					expect(documentStoredIdentityPutSpy.callCount).equal(0);
+					expect(backendStoredContextPutSpy.callCount).equal(0);
+					expect(backboneDocumentPutSpy.callCount).equal(0);
+					expect(backendIndex.native.len()).equal(0);
+					expect(backendIndex.getSize()).equal(1);
+					expect(
+						backboneNoNextStorageTransactionSpy.firstCall.args[0]
+							.documentIndex,
+					).to.exist;
+					expect(
+						backboneStorageTransactionSpy.firstCall.args[0].documentIndex,
+					).to.exist;
 					expect(
 						backboneNoNextStorageTransactionSpy.firstCall.args[0].next,
 					).to.deep.equal([]);
@@ -1176,6 +1201,9 @@ describe("index", () => {
 					expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
 					expect((await store.docs.get(id))?.name).equal("backbone-storage-2");
 				} finally {
+					documentStoredIdentityPutSpy.restore();
+					backendStoredContextPutSpy.restore();
+					backboneDocumentPutSpy.restore();
 					genericCoordinatePersistSpy.restore();
 					backboneCoordinatePersistSpy.restore();
 					backboneNoNextStorageTransactionSpy.restore();

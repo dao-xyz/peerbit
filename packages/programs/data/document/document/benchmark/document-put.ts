@@ -23,7 +23,8 @@ import { Documents, type SetupOptions, policy } from "../src/index.js";
 // - DOC_COORDINATE_WAL_FLUSH_BYTES=1048576
 // - DOC_COORDINATE_WAL_FLUSH_INTERVAL_MS unset by default
 // - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,rust-peerbit-backbone-local-document-index,rust-peerbit-backbone-coordinate-wal,rust-peerbit-backbone-coordinate-wal-buffered,native-ceiling,native-backbone-ceiling
-//   Add "-nonunique" to any scenario name to use default update-safe put semantics.
+//   Add "-nonunique" to any scenario name to use default update-safe put semantics with new ids.
+//   Add "-update" to any scenario name to repeatedly update one document id.
 //   Add "-local" to a rust-peerbit scenario to disable replication and default trim.
 //   Add "-trim" to a local rust-peerbit scenario to keep length trim enabled.
 //   Add "-putmany" to any unique scenario name to use one putMany call per measured batch.
@@ -75,10 +76,12 @@ const scenarioNames = (
 
 const scenarioBaseName = (name: string) =>
 	name.replace(
-		/(?:-(?:putmany|nonunique|local|trim|buffered|coordinate-wal|document-index|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|canperform-allow-all))*$/,
+		/(?:-(?:putmany|nonunique|update|local|trim|buffered|coordinate-wal|document-index|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|canperform-allow-all))*$/,
 		"",
 	);
-const scenarioUsesUniquePuts = (name: string) => !name.includes("-nonunique");
+const scenarioUsesUpdatePuts = (name: string) => name.includes("-update");
+const scenarioUsesUniquePuts = (name: string) =>
+	!name.includes("-nonunique") && !scenarioUsesUpdatePuts(name);
 const scenarioUsesPutMany = (name: string) => name.endsWith("-putmany");
 const scenarioUsesLocalStore = (name: string) =>
 	scenarioBaseName(name).startsWith("rust-peerbit") && name.includes("-local");
@@ -479,6 +482,26 @@ const runPuts = async (
 			);
 		} else {
 			await store.docs.putMany(docs, appendOptions);
+		}
+		return;
+	}
+	if (scenarioUsesUpdatePuts(scenario)) {
+		const id = String(idCounter++);
+		for (let i = 0; i < count; i++) {
+			const doc = new Document({
+				id,
+				name: `hello-${i}`,
+				number: BigInt(i),
+				bytes: payload,
+				signer: currentSignerFieldBytes,
+			});
+			if (profile) {
+				await time(profile, "totalPutMs", () =>
+					store.docs.put(doc, appendOptions),
+				);
+			} else {
+				await store.docs.put(doc, appendOptions);
+			}
 		}
 		return;
 	}
