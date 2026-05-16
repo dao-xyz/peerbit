@@ -37,6 +37,10 @@ type NativePeerbitBackboneHandle = {
 		limit: number,
 	) => Array<[string, Uint8Array]>;
 	document_count: (queryBytes: Uint8Array) => number;
+	document_sum: (
+		queryBytes: Uint8Array,
+		field: number,
+	) => ["none" | "i64" | "u64", string];
 	put_document_encoded_parts_stored: (
 		key: string,
 		valuePrefixBytes: Uint8Array,
@@ -1661,6 +1665,13 @@ export class NativePeerbitBackbone {
 
 	documentCount(queryBytes: Uint8Array): number {
 		return this.native.document_count(queryBytes);
+	}
+
+	documentSum(
+		queryBytes: Uint8Array,
+		field: number,
+	): ["none" | "i64" | "u64", string] {
+		return this.native.document_sum(queryBytes, field);
 	}
 
 	putDocumentEncodedPartsStored(

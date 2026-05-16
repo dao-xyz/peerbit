@@ -4,7 +4,9 @@ use peerbit_indexer_core::persistence::{
     decode_journal, decode_key_value_snapshot, encode_journal_payload, encode_journal_record,
     encode_journal_records, encode_key_value_snapshot, JournalRecord, JOURNAL_MAGIC,
 };
-use peerbit_indexer_core::planner::{DocumentFields, FieldPath, FieldValue, NativeQueryIndex};
+use peerbit_indexer_core::planner::{
+    DocumentFields, FieldPath, FieldValue, NativeQueryIndex, SumResult,
+};
 use peerbit_indexer_core::schema::{
     decode_native_schema_ir, extract_encoded_document_fields_from_parts, NativeSchemaIr,
 };
@@ -191,6 +193,15 @@ impl NativePeerbitBackbone {
     pub fn document_count(&self, query_bytes: Vec<u8>) -> Result<usize, JsValue> {
         let query = decode_query(&query_bytes).map_err(js_error)?;
         Ok(self.document_index.count(&query) as usize)
+    }
+
+    pub fn document_sum(&self, query_bytes: Vec<u8>, field: u32) -> Result<Array, JsValue> {
+        let query = decode_query(&query_bytes).map_err(js_error)?;
+        let sum = self
+            .document_index
+            .sum(&query, FieldPath::Id(field))
+            .map_err(js_error)?;
+        Ok(sum_to_js(sum))
     }
 
     pub fn put_document_encoded_parts_stored(
@@ -1771,6 +1782,25 @@ fn document_entry_to_row(key: &str, value: &[u8]) -> Array {
     row.push(&JsValue::from_str(key));
     row.push(&Uint8Array::from(value));
     row
+}
+
+fn sum_to_js(sum: SumResult) -> Array {
+    let out = Array::new();
+    match sum {
+        SumResult::None => {
+            out.push(&JsValue::from_str("none"));
+            out.push(&JsValue::from_str("0"));
+        }
+        SumResult::I64(value) => {
+            out.push(&JsValue::from_str("i64"));
+            out.push(&JsValue::from_str(&value.to_string()));
+        }
+        SumResult::U64(value) => {
+            out.push(&JsValue::from_str("u64"));
+            out.push(&JsValue::from_str(&value.to_string()));
+        }
+    }
+    out
 }
 
 fn decode_coordinate_value(bytes: &[u8]) -> Result<CoordinateCoreValue, JsValue> {

@@ -952,6 +952,8 @@ describe("index", () => {
 					expect(backendStoredContextPutSpy.callCount).equal(1);
 					expect(backboneDocumentPutSpy.callCount).equal(1);
 					expect(backbone.documentValueLength).equal(1);
+					expect(backendIndex.native.len()).equal(0);
+					expect(backendIndex.getSize()).equal(1);
 					expect(
 						backbone.documentExactStringFirstKey(
 							nativeFieldPathHash(["id"]),
@@ -1011,6 +1013,7 @@ describe("index", () => {
 					backbone,
 					"documentQueryPage",
 				);
+				const backendIndex = store.docs.index.index as any;
 
 				try {
 					const first = new Document({
@@ -1033,6 +1036,8 @@ describe("index", () => {
 					});
 
 					expect(backboneStorageTransactionSpy.callCount).equal(2);
+					expect(backendIndex.native.len()).equal(0);
+					expect(backendIndex.getSize()).equal(1);
 					expect(
 						backboneStorageTransactionSpy.firstCall.args[0].next,
 					).to.deep.equal([]);
