@@ -175,7 +175,16 @@ type NativePeerbitBackboneHandle = {
 		unknown[],
 		boolean,
 		boolean,
-		[boolean, boolean, boolean, string[], string[], string[], string[], string[]],
+		[
+			boolean,
+			boolean,
+			boolean,
+			string[],
+			string[],
+			string[],
+			string[],
+			string[],
+		],
 		unknown[],
 	];
 	append_plain_no_next_transaction: (
@@ -248,6 +257,33 @@ type NativePeerbitBackboneHandle = {
 		selfReplicating: boolean,
 	) => unknown[];
 	prepare_plain_no_next_storage_append_transaction_trim: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		trimLengthTo: number,
+	) => unknown[];
+	prepare_plain_committed_no_next_storage_append_transaction: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+	) => unknown[];
+	prepare_plain_committed_no_next_storage_append_transaction_trim: (
 		wallTime: bigint,
 		logical: number,
 		gid: string,
@@ -554,7 +590,9 @@ export type NativeBackboneCoordinatePersistenceAdapter = {
 	flushIntervalMs?: number;
 	hydrate(backbone: NativePeerbitBackbone): Promise<number>;
 	flushJournal(backbone: NativePeerbitBackbone): Promise<number>;
-	flushJournalOnAppend?(backbone: NativePeerbitBackbone): number | Promise<number>;
+	flushJournalOnAppend?(
+		backbone: NativePeerbitBackbone,
+	): number | Promise<number>;
 	compact?(backbone: NativePeerbitBackbone): Promise<void>;
 	close?(): Promise<void>;
 };
@@ -570,8 +608,7 @@ export const nativeBackboneCoordinatePersistenceFiles = {
 	journal: "coordinates.wal",
 } as const;
 
-export const defaultNativeBackboneCoordinateFlushMaxPendingBytes =
-	1024 * 1024;
+export const defaultNativeBackboneCoordinateFlushMaxPendingBytes = 1024 * 1024;
 
 type NativeBackboneNodeFs = {
 	mkdir(path: string, options?: { recursive?: boolean }): Promise<unknown>;
@@ -641,7 +678,9 @@ const validateCoordinatePersistenceName = (name: string): string => {
 		name.includes("/") ||
 		name.includes("\\")
 	) {
-		throw new Error(`Invalid native backbone coordinate persistence file: ${name}`);
+		throw new Error(
+			`Invalid native backbone coordinate persistence file: ${name}`,
+		);
 	}
 	return name;
 };
@@ -771,7 +810,9 @@ const appendDeliveryPlanFromRow = (
 	authoritativeRecipients: row[7],
 });
 
-const committedEntryFromRow = (row: unknown[]): NativeBackboneCommittedEntry => {
+const committedEntryFromRow = (
+	row: unknown[],
+): NativeBackboneCommittedEntry => {
 	const [hash, metaBytes, byteLength, hashDigestBytes] = row as [
 		string,
 		Uint8Array | undefined,
@@ -930,7 +971,14 @@ const appendResultFromRow = (
 		assignedToRangeBoundary,
 		coordinateRow,
 		trimRows,
-	] = row as [unknown[], unknown[] | undefined, boolean, boolean, unknown[], unknown[]];
+	] = row as [
+		unknown[],
+		unknown[] | undefined,
+		boolean,
+		boolean,
+		unknown[],
+		unknown[],
+	];
 	return {
 		entry: committedEntryFromRow(entryRow),
 		leaders: rowsToSamples(leaderRows),
@@ -952,7 +1000,14 @@ const storageAppendResultFromRow = (
 		assignedToRangeBoundary,
 		coordinateRow,
 		trimRows,
-	] = row as [unknown[], unknown[] | undefined, boolean, boolean, unknown[], unknown[]];
+	] = row as [
+		unknown[],
+		unknown[] | undefined,
+		boolean,
+		boolean,
+		unknown[],
+		unknown[],
+	];
 	return {
 		entry: storageFactsEntryFromRow(entryRow),
 		leaders: rowsToSamples(leaderRows),
@@ -974,7 +1029,14 @@ const committedStorageAppendResultFromRow = (
 		assignedToRangeBoundary,
 		coordinateRow,
 		trimRows,
-	] = row as [unknown[], unknown[] | undefined, boolean, boolean, unknown[], unknown[]];
+	] = row as [
+		unknown[],
+		unknown[] | undefined,
+		boolean,
+		boolean,
+		unknown[],
+		unknown[],
+	];
 	return {
 		entry: committedStorageFactsEntryFromRow(entryRow),
 		leaders: rowsToSamples(leaderRows),
@@ -1095,25 +1157,23 @@ export class NativeBackboneLogGraph {
 		);
 	}
 
-	prepareEntryV0PlainEntryAndPut(
-		input: {
-			clockId: Uint8Array;
-			privateKey: Uint8Array;
-			publicKey: Uint8Array;
-			wallTime: bigint | number | string;
-			logical?: number;
-			gid: string;
-			next?: string[];
-			type?: number;
-			metaData?: Uint8Array;
-			payloadData: Uint8Array;
-			includeMaterializationBytes?: boolean;
-			includeAppendFactsBytes?: boolean;
-			trimLengthTo?: number;
-		},
-		): NativeBackboneStorageBackedEntry & {
-			trimmedEntries?: NativeBackboneLogEntry[];
-		} {
+	prepareEntryV0PlainEntryAndPut(input: {
+		clockId: Uint8Array;
+		privateKey: Uint8Array;
+		publicKey: Uint8Array;
+		wallTime: bigint | number | string;
+		logical?: number;
+		gid: string;
+		next?: string[];
+		type?: number;
+		metaData?: Uint8Array;
+		payloadData: Uint8Array;
+		includeMaterializationBytes?: boolean;
+		includeAppendFactsBytes?: boolean;
+		trimLengthTo?: number;
+	}): NativeBackboneStorageBackedEntry & {
+		trimmedEntries?: NativeBackboneLogEntry[];
+	} {
 		const row =
 			input.trimLengthTo == null
 				? this.native.prepare_plain_entry_storage_facts_and_put(
@@ -1161,7 +1221,9 @@ export class NativeBackboneLogGraph {
 	}
 
 	oldestEntries(limit: number): NativeBackboneLogEntry[] {
-		return this.native.graph_oldest_entries(limit).map(nativeLogEntryFromTrimRow);
+		return this.native
+			.graph_oldest_entries(limit)
+			.map(nativeLogEntryFromTrimRow);
 	}
 
 	clear(): void {
@@ -1244,11 +1306,7 @@ export class NativeBackboneLogGraph {
 		return this.native.graph_count_has_next(next, excludeHash);
 	}
 
-	shadowedGids(
-		gid: string,
-		next: string[],
-		excludeHash?: string,
-	): string[] {
+	shadowedGids(gid: string, next: string[], excludeHash?: string): string[] {
 		return this.native.graph_shadowed_gids(gid, next, excludeHash);
 	}
 
@@ -1295,7 +1353,8 @@ export class NativeBackboneBlockStore {
 	async put(
 		data: Uint8Array | { block: { bytes: Uint8Array }; cid: string },
 	): Promise<string> {
-		const prepared = data instanceof Uint8Array ? await calculateRawCid(data) : data;
+		const prepared =
+			data instanceof Uint8Array ? await calculateRawCid(data) : data;
 		this.native.block_put(prepared.cid, prepared.block.bytes);
 		return prepared.cid;
 	}
@@ -1320,7 +1379,9 @@ export class NativeBackboneBlockStore {
 		return cid;
 	}
 
-	putKnownMany(blocks: Array<readonly [cid: string, bytes: Uint8Array]>): string[] {
+	putKnownMany(
+		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
+	): string[] {
 		if (blocks.length === 0) {
 			return [];
 		}
@@ -1335,7 +1396,9 @@ export class NativeBackboneBlockStore {
 		this.native.block_put(cid, bytes);
 	}
 
-	putManyImmutable(blocks: Array<readonly [cid: string, bytes: Uint8Array]>): void {
+	putManyImmutable(
+		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
+	): void {
 		this.putKnownMany(blocks);
 	}
 
@@ -1779,10 +1842,29 @@ export class NativePeerbitBackbone {
 	preparePlainNoNextStorageAppendTransaction(
 		input: NativeBackboneStorageAppendInput,
 	): NativeBackboneStorageAppendResult {
-		return this.preparePlainStorageAppendTransaction({
-			...input,
-			next: [],
-		});
+		const baseArgs = [
+			BigInt(input.wallTime),
+			input.logical ?? 0,
+			input.gid,
+			input.type ?? 0,
+			input.metaData,
+			input.payloadData,
+			input.replicas,
+			input.roleAgeMs ?? 0,
+			integerString(input.now ?? Date.now()),
+			input.selfHash ?? "",
+			input.selfReplicating ?? true,
+		] as const;
+		const row =
+			input.trimLengthTo == null
+				? this.native.prepare_plain_no_next_storage_append_transaction(
+						...baseArgs,
+					)
+				: this.native.prepare_plain_no_next_storage_append_transaction_trim(
+						...baseArgs,
+						input.trimLengthTo,
+					);
+		return storageAppendResultFromRow(this.resolution, row);
 	}
 
 	preparePlainStorageAppendTransaction(
@@ -1808,7 +1890,7 @@ export class NativePeerbitBackbone {
 				: this.native.prepare_plain_storage_append_transaction_trim(
 						...baseArgs,
 						input.trimLengthTo,
-				);
+					);
 		return storageAppendResultFromRow(this.resolution, row);
 	}
 
@@ -1835,6 +1917,34 @@ export class NativePeerbitBackbone {
 						...baseArgs,
 					)
 				: this.native.prepare_plain_committed_storage_append_transaction_trim(
+						...baseArgs,
+						input.trimLengthTo,
+					);
+		return committedStorageAppendResultFromRow(this.resolution, row);
+	}
+
+	preparePlainCommittedNoNextStorageAppendTransaction(
+		input: NativeBackboneStorageAppendInput,
+	): NativeBackboneAppendResult {
+		const baseArgs = [
+			BigInt(input.wallTime),
+			input.logical ?? 0,
+			input.gid,
+			input.type ?? 0,
+			input.metaData,
+			input.payloadData,
+			input.replicas,
+			input.roleAgeMs ?? 0,
+			integerString(input.now ?? Date.now()),
+			input.selfHash ?? "",
+			input.selfReplicating ?? true,
+		] as const;
+		const row =
+			input.trimLengthTo == null
+				? this.native.prepare_plain_committed_no_next_storage_append_transaction(
+						...baseArgs,
+					)
+				: this.native.prepare_plain_committed_no_next_storage_append_transaction_trim(
 						...baseArgs,
 						input.trimLengthTo,
 					);
@@ -2166,7 +2276,9 @@ export class NativeBackboneNodeCoordinatePersistence
 		);
 	}
 
-	flushJournalOnAppend(backbone: NativePeerbitBackbone): number | Promise<number> {
+	flushJournalOnAppend(
+		backbone: NativePeerbitBackbone,
+	): number | Promise<number> {
 		if (!this.shouldFlushJournalOnAppend(backbone)) {
 			return 0;
 		}
@@ -2464,7 +2576,9 @@ export class NativeBackboneCoordinatePersistence {
 		);
 	}
 
-	flushJournalOnAppend(backbone: NativePeerbitBackbone): number | Promise<number> {
+	flushJournalOnAppend(
+		backbone: NativePeerbitBackbone,
+	): number | Promise<number> {
 		if (!this.shouldFlushJournalOnAppend(backbone)) {
 			return 0;
 		}

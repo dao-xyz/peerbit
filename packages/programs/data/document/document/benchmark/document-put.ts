@@ -10,7 +10,7 @@ import {
 import { Program, type ProgramClient } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import { createRustPeerbitOptions } from "peerbit/rust";
-import { Documents, policy, type SetupOptions } from "../src/index.js";
+import { Documents, type SetupOptions, policy } from "../src/index.js";
 
 // Run with:
 //   cd packages/programs/data/document/document
@@ -60,10 +60,8 @@ const coordinateWalFlushIntervalMs =
 		? undefined
 		: Math.max(
 				0,
-				Number.parseInt(
-					process.env.DOC_COORDINATE_WAL_FLUSH_INTERVAL_MS,
-					10,
-				) || 0,
+				Number.parseInt(process.env.DOC_COORDINATE_WAL_FLUSH_INTERVAL_MS, 10) ||
+					0,
 			);
 
 const scenarioNames = (
@@ -303,11 +301,7 @@ const patchAsyncMethod = (
 	};
 };
 
-const timeSync = <T>(
-	profile: Profile,
-	key: keyof Profile,
-	fn: () => T,
-): T => {
+const timeSync = <T>(profile: Profile, key: keyof Profile, fn: () => T): T => {
 	const started = performance.now();
 	try {
 		return fn();
@@ -382,7 +376,7 @@ const openScenario = async (name: string) => {
 							? () => rustOptions!.indexer(undefined)
 							: baseName === "rust-peerbit-backbone"
 								? () => rustOptions!.indexer(undefined)
-						: undefined,
+								: undefined,
 	});
 	const coordinateWal =
 		baseName === "rust-peerbit-backbone" && scenarioUsesCoordinateWal(name)
@@ -423,9 +417,9 @@ const openScenario = async (name: string) => {
 											policy.signedByField<Document>("signer"),
 										),
 									}
-					: scenarioUsesCanPerformAllowAll(name)
-						? { canPerform: () => true }
-						: {}),
+								: scenarioUsesCanPerformAllowAll(name)
+									? { canPerform: () => true }
+									: {}),
 				nativeGraph:
 					baseName === "native-graph" ||
 					baseName === "rust-peerbit" ||
@@ -718,7 +712,19 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				),
 				patchSyncMethod(
 					(store.docs.log as any)._nativeBackbone ?? {},
+					"preparePlainNoNextStorageAppendTransaction",
+					profile,
+					"nativeBackbonePrepareStorageAppendMs",
+				),
+				patchSyncMethod(
+					(store.docs.log as any)._nativeBackbone ?? {},
 					"preparePlainCommittedStorageAppendTransaction",
+					profile,
+					"nativeBackbonePrepareStorageAppendMs",
+				),
+				patchSyncMethod(
+					(store.docs.log as any)._nativeBackbone ?? {},
+					"preparePlainCommittedNoNextStorageAppendTransaction",
 					profile,
 					"nativeBackbonePrepareStorageAppendMs",
 				),
@@ -999,8 +1005,7 @@ const runNativeBackboneCeilingScenario = async (
 		...Object.fromEntries(
 			Object.entries(profile)
 				.filter(
-					([key]) =>
-						profileDeep || !deepProfileKeys.has(key as keyof Profile),
+					([key]) => profileDeep || !deepProfileKeys.has(key as keyof Profile),
 				)
 				.map(([key, value]) => [key, Math.round(value * 100) / 100]),
 		),

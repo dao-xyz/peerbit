@@ -3,12 +3,12 @@ import {
 	NativeBackboneBufferedCoordinatePersistenceStore,
 	NativeBackboneCoordinatePersistence,
 	NativeBackboneMemoryCoordinatePersistenceStore,
-	NativeBackboneNodeCoordinatePersistenceStore,
 	NativeBackboneNodeCoordinatePersistence,
+	NativeBackboneNodeCoordinatePersistenceStore,
 	NativeBackboneOPFSCoordinatePersistenceStore,
+	type NativeBackboneOPFSDirectoryHandle,
 	createNativePeerbitBackbone,
 	defaultNativeBackboneCoordinateFlushMaxPendingBytes,
-	type NativeBackboneOPFSDirectoryHandle,
 } from "../src/index.js";
 
 const fromHex = (hex: string) =>
@@ -65,7 +65,10 @@ class FakeOPFSFileHandle {
 		private readonly syncAccess: boolean,
 	) {}
 
-	async getFile(): Promise<{ arrayBuffer(): Promise<ArrayBuffer>; size: number }> {
+	async getFile(): Promise<{
+		arrayBuffer(): Promise<ArrayBuffer>;
+		size: number;
+	}> {
 		const bytes = this.directory.fileBytes(this.name);
 		return {
 			size: bytes.byteLength,
@@ -125,7 +128,10 @@ class FakeOPFSFileHandle {
 
 	writeAt(position: number, bytes: Uint8Array): void {
 		const existing = this.directory.fileBytes(this.name);
-		const nextLength = Math.max(existing.byteLength, position + bytes.byteLength);
+		const nextLength = Math.max(
+			existing.byteLength,
+			position + bytes.byteLength,
+		);
 		const next = new Uint8Array(nextLength);
 		next.set(existing);
 		next.set(bytes, position);
@@ -199,23 +205,24 @@ describe("native peerbit backbone", () => {
 			delayedStore,
 			{
 				flushOnAppend: false,
-				flushMaxPendingBytes: defaultNativeBackboneCoordinateFlushMaxPendingBytes,
+				flushMaxPendingBytes:
+					defaultNativeBackboneCoordinateFlushMaxPendingBytes,
 			},
 		);
 
 		await delayedPersistence.hydrate(delayedBackbone);
 		delayedBackbone.putEntryCoordinates("hash-a", "gid-a", [1n], false, 1, 1n);
-		expect(delayedPersistence.shouldFlushJournalOnAppend(delayedBackbone)).equal(
-			false,
-		);
-		expect(await delayedPersistence.flushJournalOnAppend(delayedBackbone)).equal(
-			0,
-		);
+		expect(
+			delayedPersistence.shouldFlushJournalOnAppend(delayedBackbone),
+		).equal(false);
+		expect(
+			await delayedPersistence.flushJournalOnAppend(delayedBackbone),
+		).equal(0);
 		expect(delayedStore.files.has("coordinates.wal")).equal(false);
 		expect(delayedBackbone.coordinatePendingJournalLength).to.be.greaterThan(0);
-		expect(await delayedPersistence.flushJournal(delayedBackbone)).to.be.greaterThan(
-			0,
-		);
+		expect(
+			await delayedPersistence.flushJournal(delayedBackbone),
+		).to.be.greaterThan(0);
 
 		const thresholdBackbone = await createNativePeerbitBackbone({
 			clockId: publicKey,
@@ -237,9 +244,9 @@ describe("native peerbit backbone", () => {
 			1,
 			2n,
 		);
-		expect(thresholdPersistence.shouldFlushJournalOnAppend(thresholdBackbone)).equal(
-			true,
-		);
+		expect(
+			thresholdPersistence.shouldFlushJournalOnAppend(thresholdBackbone),
+		).equal(true);
 		expect(
 			await thresholdPersistence.flushJournalOnAppend(thresholdBackbone),
 		).to.be.greaterThan(0);
@@ -328,16 +335,18 @@ describe("native peerbit backbone", () => {
 			publicKey,
 		});
 
-		const prepared = backbone.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
-			clockId: publicKey,
-			privateKey,
-			publicKey,
-			wallTime: 1n,
-			gid: "gid-external",
-			payloadData: new Uint8Array([7, 8, 9]),
-			includeMaterializationBytes: false,
-			includeAppendFactsBytes: true,
-		});
+		const prepared = backbone.storageBackedGraph.prepareEntryV0PlainEntryAndPut(
+			{
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+				wallTime: 1n,
+				gid: "gid-external",
+				payloadData: new Uint8Array([7, 8, 9]),
+				includeMaterializationBytes: false,
+				includeAppendFactsBytes: true,
+			},
+		);
 
 		expect(prepared?.hash).to.be.a("string").and.not.empty;
 		expect(prepared?.bytes).to.be.instanceOf(Uint8Array);
@@ -484,6 +493,48 @@ describe("native peerbit backbone", () => {
 		]);
 	});
 
+	it("coalesces committed storage-backed no-next appends without returning block bytes", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+
+		const first = backbone.preparePlainCommittedNoNextStorageAppendTransaction({
+			wallTime: 1n,
+			gid: "gid-storage-committed-no-next",
+			payloadData: new Uint8Array([1]),
+			replicas: 1,
+			selfHash: "peer-a",
+		});
+		const second = backbone.preparePlainCommittedNoNextStorageAppendTransaction(
+			{
+				wallTime: 2n,
+				gid: "gid-storage-committed-no-next",
+				payloadData: new Uint8Array([2]),
+				replicas: 1,
+				selfHash: "peer-a",
+				trimLengthTo: 1,
+			},
+		);
+
+		expect(first.entry.bytes).equal(undefined);
+		expect(first.entry.hashDigestBytes).to.have.length.greaterThan(0);
+		expect(first.entry.next).to.deep.equal([]);
+		expect(second.entry.bytes).equal(undefined);
+		expect(second.entry.next).to.deep.equal([]);
+		expect(second.trimmed.map((entry) => entry.hash)).to.deep.equal([
+			first.entry.hash,
+		]);
+		expect(backbone.hasLogEntry(first.entry.hash)).equal(false);
+		expect(backbone.hasBlock(first.entry.hash)).equal(false);
+		expect(backbone.hasLogEntry(second.entry.hash)).equal(true);
+		expect(backbone.hasBlock(second.entry.hash)).equal(true);
+		expect(backbone.getEntryCoordinateHashes()).to.deep.equal([
+			second.entry.hash,
+		]);
+	});
+
 	it("coalesces storage-backed append with next into shared-log coordinate state", async () => {
 		const backbone = await createNativePeerbitBackbone({
 			clockId: publicKey,
@@ -550,7 +601,9 @@ describe("native peerbit backbone", () => {
 
 		expect(source.coordinatePendingJournalLength).to.equal(0);
 		expect(source.coordinatePendingJournalByteLength).to.equal(0);
-		expect(target.loadCoordinateSnapshotAndJournal(undefined, journal)).to.equal(3);
+		expect(
+			target.loadCoordinateSnapshotAndJournal(undefined, journal),
+		).to.equal(3);
 		expect(target.getEntryCoordinateHashes()).to.deep.equal(["hash-b"]);
 		expect(target.coordinateIndexLength).to.equal(1);
 		expect(target.coordinateValueLength).to.equal(1);
@@ -591,7 +644,9 @@ describe("native peerbit backbone", () => {
 			source.drainCoordinateJournal(),
 		]);
 
-		expect(target.loadCoordinateSnapshotAndJournal(undefined, journal)).to.equal(3);
+		expect(
+			target.loadCoordinateSnapshotAndJournal(undefined, journal),
+		).to.equal(3);
 		const [coordinate] = target.getEntryCoordinateFields();
 		expect(coordinate?.hash).equal(second.entry.hash);
 		expect(coordinate?.gid).equal("gid-storage-wal");
@@ -619,7 +674,10 @@ describe("native peerbit backbone", () => {
 		const snapshot = source.coordinateSnapshot();
 
 		expect(target.loadCoordinateSnapshotAndJournal(snapshot)).to.equal(0);
-		expect(target.getEntryCoordinateHashes()).to.deep.equal(["hash-a", "hash-b"]);
+		expect(target.getEntryCoordinateHashes()).to.deep.equal([
+			"hash-a",
+			"hash-b",
+		]);
 		expect(target.coordinateIndexLength).to.equal(2);
 		expect(target.coordinateValueLength).to.equal(2);
 		expect(target.hasCoordinateIndexHash("hash-a")).equal(true);
@@ -752,8 +810,10 @@ describe("native peerbit backbone", () => {
 			});
 			const buffered = new NativeBackboneNodeCoordinatePersistence(directory, {
 				flushOnAppend: false,
-				flushMaxPendingBytes: defaultNativeBackboneCoordinateFlushMaxPendingBytes,
-				writeBufferMaxBytes: defaultNativeBackboneCoordinateFlushMaxPendingBytes,
+				flushMaxPendingBytes:
+					defaultNativeBackboneCoordinateFlushMaxPendingBytes,
+				writeBufferMaxBytes:
+					defaultNativeBackboneCoordinateFlushMaxPendingBytes,
 			});
 
 			await buffered.hydrate(source);
@@ -763,7 +823,9 @@ describe("native peerbit backbone", () => {
 			await buffered.flushJournal(source);
 			await buffered.close();
 
-			const writeThrough = new NativeBackboneNodeCoordinatePersistence(directory);
+			const writeThrough = new NativeBackboneNodeCoordinatePersistence(
+				directory,
+			);
 			expect(await writeThrough.hydrate(afterClose)).to.equal(1);
 			expect(afterClose.getEntryCoordinateHashes()).to.deep.equal(["hash-a"]);
 
@@ -781,9 +843,9 @@ describe("native peerbit backbone", () => {
 				1,
 				2n,
 			);
-			expect(await threshold.flushJournalOnAppend(thresholdSource)).to.be.greaterThan(
-				0,
-			);
+			expect(
+				await threshold.flushJournalOnAppend(thresholdSource),
+			).to.be.greaterThan(0);
 			await writeThrough.hydrate(thresholdRestored);
 			expect(thresholdRestored.getEntryCoordinateHashes()).to.deep.equal([
 				"hash-a",
