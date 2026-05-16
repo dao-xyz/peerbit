@@ -5007,6 +5007,10 @@ export class SharedLog<
 			return undefined;
 		}
 		const backbone = this._nativeBackbone;
+		let nativeBackboneDocumentIndexCommitted = false;
+		let committedNativeBackboneDocumentIndex:
+			| NativeBackboneDocumentIndexCommitInput
+			| undefined;
 		const result = this.log.appendLocallyPreparedNativeNoNextCommitOnly(
 			undefined as T,
 			appendOptions,
@@ -5014,17 +5018,32 @@ export class SharedLog<
 				payloadData,
 				resolveTrimmedEntries: properties?.resolveTrimmedEntries,
 			},
-			(input) =>
-				backbone.graph.prepareEntryV0PlainEntryCommit(
+			(input) => {
+				const nativeBackboneDocumentIndex =
+					properties?.nativeBackboneDocumentIndex ??
+					properties?.prepareNativeBackboneDocumentIndex?.({
+						wallTime: input.wallTime,
+						gid: input.gid,
+						payloadSize: input.payloadData.byteLength,
+					});
+				if (nativeBackboneDocumentIndex) {
+					nativeBackboneDocumentIndexCommitted = true;
+					committedNativeBackboneDocumentIndex = nativeBackboneDocumentIndex;
+				}
+				return backbone.graph.prepareEntryV0PlainEntryCommit(
 					{
 						...input,
 						next: [],
 						includeMaterializationBytes: false,
 						includeAppendFactsBytes: true,
 						trimLengthTo: input.trimLengthTo,
+						...(nativeBackboneDocumentIndex
+							? { documentIndex: nativeBackboneDocumentIndex }
+							: {}),
 					},
 					backbone.blocks,
-				),
+				);
+			},
 		);
 		if (!result) {
 			return undefined;
@@ -5033,33 +5052,52 @@ export class SharedLog<
 			if (!prepared) {
 				return undefined;
 			}
-			const deferredCoordinateDeleteHashes =
-				this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
-					prepared.appendFacts,
-					prepared.removed,
-					prepared.materializeEntry,
-				);
-			const deleteHashes =
-				deferredCoordinateDeleteHashes &&
-				deferredCoordinateDeleteHashes.length > 0
-					? deferredCoordinateDeleteHashes
-					: [];
-			const finish = (): PreparedPayloadCommitOnlyResult<T, R> => ({
-				get entry() {
-					return prepared.entry;
-				},
-				removed: prepared.removed,
-				appendCommit: this.createPreparedLocalAppendCommitFromFacts(
-					prepared.appendFacts,
-				),
-			});
-			if (deleteHashes.length === 0) {
-				return finish();
+			const rollback = (error: unknown): never => {
+				if (committedNativeBackboneDocumentIndex) {
+					backbone.deleteDocument(committedNativeBackboneDocumentIndex.key);
+				}
+				throw error;
+			};
+			try {
+				const deferredCoordinateDeleteHashes =
+					this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
+						prepared.appendFacts,
+						prepared.removed,
+						prepared.materializeEntry,
+					);
+				const deleteHashes =
+					deferredCoordinateDeleteHashes &&
+					deferredCoordinateDeleteHashes.length > 0
+						? deferredCoordinateDeleteHashes
+						: [];
+				const finish = (): PreparedPayloadCommitOnlyResult<T, R> => {
+					const appendCommit = this.createPreparedLocalAppendCommitFromFacts(
+						prepared.appendFacts,
+					);
+					if (nativeBackboneDocumentIndexCommitted) {
+						appendCommit.nativeBackboneDocumentIndexCommitted = true;
+					}
+					return {
+						get entry() {
+							return prepared.entry;
+						},
+						removed: prepared.removed,
+						appendCommit,
+					};
+				};
+				const completed =
+					deleteHashes.length === 0
+						? finish()
+						: mapMaybePromise(
+								this.deleteCoordinatesForHashes(deleteHashes),
+								finish,
+							);
+				return isPromiseLike(completed)
+					? completed.catch((error) => rollback(error))
+					: completed;
+			} catch (error) {
+				return rollback(error);
 			}
-			return mapMaybePromise(
-				this.deleteCoordinatesForHashes(deleteHashes),
-				finish,
-			);
 		});
 	}
 
@@ -5124,44 +5162,38 @@ export class SharedLog<
 						selfReplicating: nativeLeaderOptions.selfReplicating,
 						trimLengthTo: input.trimLengthTo,
 					};
-					const nativeBackboneDocumentIndex = commitBlocksInBackbone
-						? (properties?.nativeBackboneDocumentIndex ??
-							properties?.prepareNativeBackboneDocumentIndex?.({
-								wallTime: input.wallTime,
-								gid: input.gid,
-								payloadSize: input.payloadData.byteLength,
-							}))
-						: undefined;
+					const nativeBackboneDocumentIndex =
+						properties?.nativeBackboneDocumentIndex ??
+						properties?.prepareNativeBackboneDocumentIndex?.({
+							wallTime: input.wallTime,
+							gid: input.gid,
+							payloadSize: input.payloadData.byteLength,
+						});
+					const appendInputWithDocumentIndex = nativeBackboneDocumentIndex
+						? {
+								...appendInput,
+								documentIndex: nativeBackboneDocumentIndex,
+							}
+						: appendInput;
 					backboneAppend =
 						input.next.length === 0
 							? commitBlocksInBackbone
 								? backbone.preparePlainCommittedNoNextStorageAppendTransaction(
-										nativeBackboneDocumentIndex
-											? {
-													...appendInput,
-													documentIndex:
-														nativeBackboneDocumentIndex,
-												}
-											: appendInput,
+										appendInputWithDocumentIndex,
 									)
 								: backbone.preparePlainNoNextStorageAppendTransaction(
-										appendInput,
+										appendInputWithDocumentIndex,
 									)
 							: commitBlocksInBackbone
 								? backbone.preparePlainCommittedStorageAppendTransaction(
-										nativeBackboneDocumentIndex
-											? {
-													...appendInput,
-													documentIndex:
-														nativeBackboneDocumentIndex,
-												}
-											: appendInput,
+										appendInputWithDocumentIndex,
 									)
-								: backbone.preparePlainStorageAppendTransaction(appendInput);
+								: backbone.preparePlainStorageAppendTransaction(
+										appendInputWithDocumentIndex,
+									);
 					if (nativeBackboneDocumentIndex) {
 						nativeBackboneDocumentIndexCommitted = true;
-						committedNativeBackboneDocumentIndex =
-							nativeBackboneDocumentIndex;
+						committedNativeBackboneDocumentIndex = nativeBackboneDocumentIndex;
 					}
 					return {
 						...backboneAppend.entry,

@@ -12,7 +12,9 @@ type NativePeerbitBackboneHandle = {
 	coordinate_index_len: () => number;
 	coordinate_value_len: () => number;
 	coordinate_index_has_hash: (hash: string) => boolean;
-	configure_document_schema_ir: (schemaIr: Uint8Array) => [number, number, number];
+	configure_document_schema_ir: (
+		schemaIr: Uint8Array,
+	) => [number, number, number];
 	document_index_len: () => number;
 	document_value_len: () => number;
 	document_exact_string_first_key: (
@@ -261,6 +263,20 @@ type NativePeerbitBackboneHandle = {
 		payloadData: Uint8Array,
 		trimLengthTo: number | undefined,
 	) => unknown[];
+	prepare_plain_entry_commit_facts_document_index: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		trimLengthTo: number | undefined,
+		documentKey: string,
+		documentValuePrefixBytes: Uint8Array,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+	) => unknown[];
 	prepare_plain_entry_storage_facts_and_put: (
 		wallTime: bigint,
 		logical: number,
@@ -305,6 +321,41 @@ type NativePeerbitBackboneHandle = {
 		now: string,
 		selfHash: string,
 		selfReplicating: boolean,
+		trimLengthTo: number,
+	) => unknown[];
+	prepare_plain_no_next_storage_append_document_index_transaction: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKey: string,
+		documentValuePrefixBytes: Uint8Array,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+	) => unknown[];
+	prepare_plain_no_next_storage_append_document_index_transaction_trim: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKey: string,
+		documentValuePrefixBytes: Uint8Array,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
 		trimLengthTo: number,
 	) => unknown[];
 	prepare_plain_committed_no_next_storage_append_transaction: (
@@ -396,6 +447,43 @@ type NativePeerbitBackboneHandle = {
 		now: string,
 		selfHash: string,
 		selfReplicating: boolean,
+		trimLengthTo: number,
+	) => unknown[];
+	prepare_plain_storage_append_document_index_transaction: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKey: string,
+		documentValuePrefixBytes: Uint8Array,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+	) => unknown[];
+	prepare_plain_storage_append_document_index_transaction_trim: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKey: string,
+		documentValuePrefixBytes: Uint8Array,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
 		trimLengthTo: number,
 	) => unknown[];
 	prepare_plain_committed_storage_append_transaction: (
@@ -1250,6 +1338,12 @@ export class NativeBackboneLogGraph {
 			includeMaterializationBytes?: boolean;
 			includeAppendFactsBytes?: boolean;
 			trimLengthTo?: number;
+			documentIndex?: {
+				key: string;
+				valuePrefixBytes: Uint8Array;
+				existingCreated?: bigint | number | string;
+				byteElementIndexLimit?: number;
+			};
 		},
 		_blockStore: unknown,
 	):
@@ -1266,17 +1360,33 @@ export class NativeBackboneLogGraph {
 		) {
 			return undefined;
 		}
+		const baseArgs = [
+			BigInt(input.wallTime),
+			input.logical ?? 0,
+			input.gid,
+			input.next ?? [],
+			input.type ?? 0,
+			input.metaData,
+			input.payloadData,
+			input.trimLengthTo,
+		] as const;
+		const documentIndexArgs = input.documentIndex
+			? ([
+					input.documentIndex.key,
+					input.documentIndex.valuePrefixBytes,
+					input.documentIndex.existingCreated == null
+						? ""
+						: integerString(input.documentIndex.existingCreated),
+					input.documentIndex.byteElementIndexLimit ?? 0,
+				] as const)
+			: undefined;
 		return preparedCommitFactsFromRow(
-			this.native.prepare_plain_entry_commit_facts(
-				BigInt(input.wallTime),
-				input.logical ?? 0,
-				input.gid,
-				input.next ?? [],
-				input.type ?? 0,
-				input.metaData,
-				input.payloadData,
-				input.trimLengthTo,
-			),
+			documentIndexArgs
+				? this.native.prepare_plain_entry_commit_facts_document_index(
+						...baseArgs,
+						...documentIndexArgs,
+					)
+				: this.native.prepare_plain_entry_commit_facts(...baseArgs),
 		);
 	}
 
@@ -2067,15 +2177,36 @@ export class NativePeerbitBackbone {
 			input.selfHash ?? "",
 			input.selfReplicating ?? true,
 		] as const;
+		const documentIndexArgs = input.documentIndex
+			? ([
+					input.documentIndex.key,
+					input.documentIndex.valuePrefixBytes,
+					input.documentIndex.existingCreated == null
+						? ""
+						: integerString(input.documentIndex.existingCreated),
+					input.documentIndex.byteElementIndexLimit ?? 0,
+				] as const)
+			: undefined;
 		const row =
 			input.trimLengthTo == null
-				? this.native.prepare_plain_no_next_storage_append_transaction(
-						...baseArgs,
-					)
-				: this.native.prepare_plain_no_next_storage_append_transaction_trim(
-						...baseArgs,
-						input.trimLengthTo,
-					);
+				? documentIndexArgs
+					? this.native.prepare_plain_no_next_storage_append_document_index_transaction(
+							...baseArgs,
+							...documentIndexArgs,
+						)
+					: this.native.prepare_plain_no_next_storage_append_transaction(
+							...baseArgs,
+						)
+				: documentIndexArgs
+					? this.native.prepare_plain_no_next_storage_append_document_index_transaction_trim(
+							...baseArgs,
+							...documentIndexArgs,
+							input.trimLengthTo,
+						)
+					: this.native.prepare_plain_no_next_storage_append_transaction_trim(
+							...baseArgs,
+							input.trimLengthTo,
+						);
 		return storageAppendResultFromRow(this.resolution, row);
 	}
 
@@ -2096,13 +2227,34 @@ export class NativePeerbitBackbone {
 			input.selfHash ?? "",
 			input.selfReplicating ?? true,
 		] as const;
+		const documentIndexArgs = input.documentIndex
+			? ([
+					input.documentIndex.key,
+					input.documentIndex.valuePrefixBytes,
+					input.documentIndex.existingCreated == null
+						? ""
+						: integerString(input.documentIndex.existingCreated),
+					input.documentIndex.byteElementIndexLimit ?? 0,
+				] as const)
+			: undefined;
 		const row =
 			input.trimLengthTo == null
-				? this.native.prepare_plain_storage_append_transaction(...baseArgs)
-				: this.native.prepare_plain_storage_append_transaction_trim(
-						...baseArgs,
-						input.trimLengthTo,
-					);
+				? documentIndexArgs
+					? this.native.prepare_plain_storage_append_document_index_transaction(
+							...baseArgs,
+							...documentIndexArgs,
+						)
+					: this.native.prepare_plain_storage_append_transaction(...baseArgs)
+				: documentIndexArgs
+					? this.native.prepare_plain_storage_append_document_index_transaction_trim(
+							...baseArgs,
+							...documentIndexArgs,
+							input.trimLengthTo,
+						)
+					: this.native.prepare_plain_storage_append_transaction_trim(
+							...baseArgs,
+							input.trimLengthTo,
+						);
 		return storageAppendResultFromRow(this.resolution, row);
 	}
 

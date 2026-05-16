@@ -78,7 +78,6 @@ import {
 	PutWithKeyOperation,
 } from "../src/operation.js";
 import { getNativeCanPerformPolicyDescriptor } from "../src/policy.js";
-import { getNativeDocumentTransformDescriptor } from "../src/transform.js";
 import {
 	type CountEstimate,
 	Documents,
@@ -90,6 +89,7 @@ import {
 	type LateResultsEvent,
 	type UpdateReason,
 } from "../src/search.js";
+import { getNativeDocumentTransformDescriptor } from "../src/transform.js";
 import { Document, TestStore } from "./data.js";
 
 const nativeFieldHash = (field: string): number => {
@@ -1054,12 +1054,10 @@ describe("index", () => {
 					expect(backboneDocumentPutSpy.callCount).equal(0);
 					expect(backendIndex.native.len()).equal(0);
 					expect(backendIndex.getSize()).equal(1);
-					expect(
-						backboneStorageTransactionSpy.firstCall.args[0].documentIndex,
-					).to.exist;
-					expect(
-						backboneStorageTransactionSpy.secondCall.args[0].documentIndex,
-					).to.exist;
+					expect(backboneStorageTransactionSpy.firstCall.args[0].documentIndex)
+						.to.exist;
+					expect(backboneStorageTransactionSpy.secondCall.args[0].documentIndex)
+						.to.exist;
 					expect(
 						backboneStorageTransactionSpy.firstCall.args[0].next,
 					).to.deep.equal([]);
@@ -1185,12 +1183,10 @@ describe("index", () => {
 					expect(backendIndex.native.len()).equal(0);
 					expect(backendIndex.getSize()).equal(1);
 					expect(
-						backboneNoNextStorageTransactionSpy.firstCall.args[0]
-							.documentIndex,
+						backboneNoNextStorageTransactionSpy.firstCall.args[0].documentIndex,
 					).to.exist;
-					expect(
-						backboneStorageTransactionSpy.firstCall.args[0].documentIndex,
-					).to.exist;
+					expect(backboneStorageTransactionSpy.firstCall.args[0].documentIndex)
+						.to.exist;
 					expect(
 						backboneNoNextStorageTransactionSpy.firstCall.args[0].next,
 					).to.deep.equal([]);
@@ -1276,9 +1272,8 @@ describe("index", () => {
 					});
 
 					expect(backboneStorageTransactionSpy.callCount).equal(1);
-					expect(
-						backboneStorageTransactionSpy.firstCall.args[0].documentIndex,
-					).to.exist;
+					expect(backboneStorageTransactionSpy.firstCall.args[0].documentIndex)
+						.to.exist;
 					expect(documentIndexPutSpy.callCount).equal(0);
 					expect(backendStoredContextPutSpy.callCount).equal(0);
 					expect(backendIndex.native.len()).equal(0);
@@ -1322,9 +1317,7 @@ describe("index", () => {
 					@field({ type: option(Uint8Array) })
 					signer?: Uint8Array;
 
-					constructor(
-						properties?: Partial<BackboneProjectContextIndexable>,
-					) {
+					constructor(properties?: Partial<BackboneProjectContextIndexable>) {
 						this.id = properties?.id || "";
 						this.created = properties?.created || 0n;
 						this.signer = properties?.signer;
@@ -1393,9 +1386,8 @@ describe("index", () => {
 						target: "none",
 					});
 					expect(backboneStorageTransactionSpy.callCount).equal(1);
-					expect(
-						backboneStorageTransactionSpy.firstCall.args[0].documentIndex,
-					).to.exist;
+					expect(backboneStorageTransactionSpy.firstCall.args[0].documentIndex)
+						.to.exist;
 					expect(documentIndexPutSpy.callCount).equal(0);
 					expect(documentIndexTransformSpy.callCount).equal(0);
 					expect(backendPutSpy.callCount).equal(0);
@@ -1477,6 +1469,10 @@ describe("index", () => {
 				});
 				const sharedLog = localStore.docs.log as any;
 				const backbone = sharedLog._nativeBackbone;
+				const backboneGraphCommitSpy = sinon.spy(
+					backbone.graph,
+					"prepareEntryV0PlainEntryCommit",
+				);
 				const backboneDocumentPutSpy = sinon.spy(
 					backbone,
 					"putDocumentEncodedPartsStored",
@@ -1511,11 +1507,14 @@ describe("index", () => {
 						target: "none",
 					});
 
-					expect(documentPreparedNativePutSpy.callCount).equal(1);
+					expect(backboneGraphCommitSpy.callCount).equal(1);
+					expect(backboneGraphCommitSpy.firstCall.args[0].documentIndex).to
+						.exist;
+					expect(documentPreparedNativePutSpy.callCount).equal(0);
 					expect(documentIndexPutSpy.callCount).equal(0);
 					expect(documentIndexTransformSpy.callCount).equal(0);
-					expect(backendStoredContextPutSpy.callCount).equal(1);
-					expect(backboneDocumentPutSpy.callCount).equal(1);
+					expect(backendStoredContextPutSpy.callCount).equal(0);
+					expect(backboneDocumentPutSpy.callCount).equal(0);
 					expect(backendIndex.native.len()).equal(0);
 					expect(backbone.documentValueLength).equal(1);
 					const indexed = await localStore.docs.index.get(doc.id, {
@@ -1529,6 +1528,7 @@ describe("index", () => {
 					documentIndexPutSpy.restore();
 					backendStoredContextPutSpy.restore();
 					backboneDocumentPutSpy.restore();
+					backboneGraphCommitSpy.restore();
 					await localStore.close();
 					store = undefined;
 					await rustSession.stop();
@@ -1996,9 +1996,10 @@ describe("index", () => {
 				}
 
 				it("brands transform descriptors as non-enumerable metadata", () => {
-					const transformer = transform.pick<Document, NativeTransformPickIndexable>(
-						["id", "name"],
-					);
+					const transformer = transform.pick<
+						Document,
+						NativeTransformPickIndexable
+					>(["id", "name"]);
 					const descriptor = getNativeDocumentTransformDescriptor(transformer);
 					expect(descriptor).to.deep.equal({
 						kind: "pick",

@@ -920,6 +920,59 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_entry_commit_facts_document_index(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        trim_length_to: JsValue,
+        document_key: String,
+        document_value_prefix_bytes: Vec<u8>,
+        document_existing_created: String,
+        document_byte_element_index_limit: usize,
+    ) -> Result<Array, JsValue> {
+        let document_gid = gid.clone();
+        let payload_size = payload_data.length();
+        let document_index_commit = DocumentIndexAppendCommit {
+            key: document_key,
+            value_prefix_bytes: document_value_prefix_bytes,
+            existing_created: parse_optional_u64_string(
+                &document_existing_created,
+                "document existing created",
+            )?,
+            byte_element_index_limit: document_byte_element_index_limit,
+        };
+        let row = self.prepare_plain_entry_commit_facts(
+            wall_time,
+            logical,
+            gid,
+            next,
+            entry_type,
+            meta_data,
+            payload_data,
+            trim_length_to,
+        )?;
+        let entry_row = if row.length() == 2 && Array::is_array(&row.get(0)) {
+            array_from_value(row.get(0), "native trim document index entry row")?
+        } else {
+            row.clone()
+        };
+        let document_hash = string_field(&entry_row, 0, "document index entry hash")?;
+        self.put_document_index_for_append(
+            Some(document_index_commit),
+            wall_time,
+            &document_hash,
+            &document_gid,
+            payload_size,
+        )?;
+        Ok(row)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare_plain_entry_storage_facts_and_put(
         &mut self,
         wall_time: u64,
@@ -1035,6 +1088,99 @@ impl NativePeerbitBackbone {
             Some(trim_length_to),
             false,
             None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_no_next_storage_append_document_index_transaction(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        document_key: String,
+        document_value_prefix_bytes: Vec<u8>,
+        document_existing_created: String,
+        document_byte_element_index_limit: usize,
+    ) -> Result<Array, JsValue> {
+        self.prepare_plain_storage_append_transaction_inner(
+            wall_time,
+            logical,
+            gid,
+            Array::new(),
+            entry_type,
+            meta_data,
+            payload_data,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            None,
+            false,
+            Some(DocumentIndexAppendCommit {
+                key: document_key,
+                value_prefix_bytes: document_value_prefix_bytes,
+                existing_created: parse_optional_u64_string(
+                    &document_existing_created,
+                    "document existing created",
+                )?,
+                byte_element_index_limit: document_byte_element_index_limit,
+            }),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_no_next_storage_append_document_index_transaction_trim(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        document_key: String,
+        document_value_prefix_bytes: Vec<u8>,
+        document_existing_created: String,
+        document_byte_element_index_limit: usize,
+        trim_length_to: usize,
+    ) -> Result<Array, JsValue> {
+        self.prepare_plain_storage_append_transaction_inner(
+            wall_time,
+            logical,
+            gid,
+            Array::new(),
+            entry_type,
+            meta_data,
+            payload_data,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            Some(trim_length_to),
+            false,
+            Some(DocumentIndexAppendCommit {
+                key: document_key,
+                value_prefix_bytes: document_value_prefix_bytes,
+                existing_created: parse_optional_u64_string(
+                    &document_existing_created,
+                    "document existing created",
+                )?,
+                byte_element_index_limit: document_byte_element_index_limit,
+            }),
         )
     }
 
@@ -1268,6 +1414,101 @@ impl NativePeerbitBackbone {
             Some(trim_length_to),
             false,
             None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_storage_append_document_index_transaction(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next_hashes: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        document_key: String,
+        document_value_prefix_bytes: Vec<u8>,
+        document_existing_created: String,
+        document_byte_element_index_limit: usize,
+    ) -> Result<Array, JsValue> {
+        self.prepare_plain_storage_append_transaction_inner(
+            wall_time,
+            logical,
+            gid,
+            next_hashes,
+            entry_type,
+            meta_data,
+            payload_data,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            None,
+            false,
+            Some(DocumentIndexAppendCommit {
+                key: document_key,
+                value_prefix_bytes: document_value_prefix_bytes,
+                existing_created: parse_optional_u64_string(
+                    &document_existing_created,
+                    "document existing created",
+                )?,
+                byte_element_index_limit: document_byte_element_index_limit,
+            }),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_storage_append_document_index_transaction_trim(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next_hashes: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        document_key: String,
+        document_value_prefix_bytes: Vec<u8>,
+        document_existing_created: String,
+        document_byte_element_index_limit: usize,
+        trim_length_to: usize,
+    ) -> Result<Array, JsValue> {
+        self.prepare_plain_storage_append_transaction_inner(
+            wall_time,
+            logical,
+            gid,
+            next_hashes,
+            entry_type,
+            meta_data,
+            payload_data,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            Some(trim_length_to),
+            false,
+            Some(DocumentIndexAppendCommit {
+                key: document_key,
+                value_prefix_bytes: document_value_prefix_bytes,
+                existing_created: parse_optional_u64_string(
+                    &document_existing_created,
+                    "document existing created",
+                )?,
+                byte_element_index_limit: document_byte_element_index_limit,
+            }),
         )
     }
 
