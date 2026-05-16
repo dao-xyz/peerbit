@@ -567,7 +567,7 @@ describe("index", () => {
 				}
 			});
 
-			it("batches rust index and coordinate writes for unique putMany", async () => {
+			it("batches rust index writes for unique putMany", async () => {
 				const rustSession = await TestSession.connected(
 					1,
 					createRustPeerbitOptions(),
@@ -593,6 +593,10 @@ describe("index", () => {
 				const nativeEncodedPartsBatchSpy = sinon.spy(
 					backendIndex.native,
 					"put_encoded_parts_batch",
+				);
+				const nativeStoredEncodedPartsBatchSpy = sinon.spy(
+					backendIndex.native,
+					"put_encoded_parts_stored_batch",
 				);
 				const encodeContextualPartsSpy = sinon.spy(
 					store.docs.index as any,
@@ -647,8 +651,9 @@ describe("index", () => {
 						).greaterThan(0);
 					}
 					expect(encodeContextualPartsSpy.callCount).equal(0);
-					expect(nativeEncodedPartsBatchSpy.callCount).equal(1);
-					expect(coordinateBatchSpy.callCount).equal(1);
+					expect(nativeEncodedPartsBatchSpy.callCount).equal(0);
+					expect(nativeStoredEncodedPartsBatchSpy.callCount).equal(1);
+					expect(coordinateBatchSpy.callCount).equal(0);
 					expect(legacyCoordinateBatchSpy.callCount).equal(0);
 					expect(coordinatePutSpy.callCount).equal(0);
 					expect(changes).to.have.length(1);
@@ -660,6 +665,7 @@ describe("index", () => {
 					legacyCoordinateBatchSpy.restore();
 					coordinateBatchSpy.restore();
 					encodeContextualPartsSpy.restore();
+					nativeStoredEncodedPartsBatchSpy.restore();
 					nativeEncodedPartsBatchSpy.restore();
 					documentBackendBatchSpy.restore();
 					await store.close();

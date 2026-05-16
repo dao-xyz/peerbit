@@ -102,6 +102,13 @@ fn entry_to_js(entry: &StoredEntry) -> JsValue {
     pair.into()
 }
 
+fn encoded_parts_to_js_value(prefix: JsValue, suffix: JsValue) -> JsValue {
+    let pair = Array::new();
+    pair.push(&prefix);
+    pair.push(&suffix);
+    pair.into()
+}
+
 #[wasm_bindgen]
 pub struct NativeQueryPlanner {
     index: NativeQueryIndex,
@@ -259,6 +266,39 @@ impl NativeRustIndex {
         Ok(())
     }
 
+    pub fn validate_encoded_parts(
+        &self,
+        value_prefix_bytes: Vec<u8>,
+        value_suffix_bytes: Vec<u8>,
+        byte_element_index_limit: usize,
+    ) -> Result<(), JsValue> {
+        self.extract_encoded_document_fields_from_reader(
+            BridgeReader::from_parts(&value_prefix_bytes, &value_suffix_bytes),
+            byte_element_index_limit,
+        )?;
+        Ok(())
+    }
+
+    pub fn put_encoded_parts_stored(
+        &mut self,
+        key: String,
+        id: JsValue,
+        value_prefix_bytes: JsValue,
+        value_suffix_bytes: JsValue,
+        byte_element_index_limit: usize,
+    ) -> Result<(), JsValue> {
+        let prefix = Uint8Array::new(&value_prefix_bytes).to_vec();
+        let suffix = Uint8Array::new(&value_suffix_bytes).to_vec();
+        let fields = self.extract_encoded_document_fields_from_reader(
+            BridgeReader::from_parts(&prefix, &suffix),
+            byte_element_index_limit,
+        )?;
+        let stored_value = encoded_parts_to_js_value(value_prefix_bytes, value_suffix_bytes);
+        self.store.put(key.clone(), id, stored_value);
+        self.planner.index.put(key, fields);
+        Ok(())
+    }
+
     pub fn put_encoded_parts_batch(
         &mut self,
         keys: Array,
@@ -294,6 +334,71 @@ impl NativeRustIndex {
 
         for (key, id, value, fields) in prepared {
             self.store.put(key.clone(), id, value);
+            self.planner.index.put(key, fields);
+        }
+        Ok(())
+    }
+
+    pub fn validate_encoded_parts_batch(
+        &self,
+        value_prefix_bytes: Array,
+        value_suffix_bytes: Array,
+        byte_element_index_limit: usize,
+    ) -> Result<(), JsValue> {
+        let len = value_prefix_bytes.length();
+        if value_suffix_bytes.length() != len {
+            return Err(js_error("Mismatched encoded parts batch lengths"));
+        }
+        for index in 0..len {
+            let prefix = Uint8Array::new(&value_prefix_bytes.get(index)).to_vec();
+            let suffix = Uint8Array::new(&value_suffix_bytes.get(index)).to_vec();
+            self.extract_encoded_document_fields_from_reader(
+                BridgeReader::from_parts(&prefix, &suffix),
+                byte_element_index_limit,
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn put_encoded_parts_stored_batch(
+        &mut self,
+        keys: Array,
+        ids: Array,
+        value_prefix_bytes: Array,
+        value_suffix_bytes: Array,
+        byte_element_index_limit: usize,
+    ) -> Result<(), JsValue> {
+        let len = keys.length();
+        if ids.length() != len
+            || value_prefix_bytes.length() != len
+            || value_suffix_bytes.length() != len
+        {
+            return Err(js_error("Mismatched encoded parts stored batch lengths"));
+        }
+
+        let mut prepared = Vec::with_capacity(len as usize);
+        for index in 0..len {
+            let key = keys
+                .get(index)
+                .as_string()
+                .ok_or_else(|| js_error("Invalid encoded parts stored batch key"))?;
+            let prefix_value = value_prefix_bytes.get(index);
+            let suffix_value = value_suffix_bytes.get(index);
+            let prefix = Uint8Array::new(&prefix_value).to_vec();
+            let suffix = Uint8Array::new(&suffix_value).to_vec();
+            let fields = self.extract_encoded_document_fields_from_reader(
+                BridgeReader::from_parts(&prefix, &suffix),
+                byte_element_index_limit,
+            )?;
+            prepared.push((key, ids.get(index), prefix_value, suffix_value, fields));
+        }
+
+        for (key, id, prefix_value, suffix_value, fields) in prepared {
+            self.store.put(
+                key.clone(),
+                id,
+                encoded_parts_to_js_value(prefix_value, suffix_value),
+            );
             self.planner.index.put(key, fields);
         }
         Ok(())

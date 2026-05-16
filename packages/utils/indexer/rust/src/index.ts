@@ -51,10 +51,34 @@ type NativeRustIndex<T extends Record<string, any>> = {
 		valueSuffixBytes: Uint8Array,
 		byteElementIndexLimit: number,
 	) => void;
+	validate_encoded_parts?: (
+		valuePrefixBytes: Uint8Array,
+		valueSuffixBytes: Uint8Array,
+		byteElementIndexLimit: number,
+	) => void;
+	put_encoded_parts_stored?: (
+		key: string,
+		id: types.IdKey,
+		valuePrefixBytes: Uint8Array,
+		valueSuffixBytes: Uint8Array,
+		byteElementIndexLimit: number,
+	) => void;
 	put_encoded_parts_batch?: (
 		keys: string[],
 		ids: types.IdKey[],
 		values: T[],
+		valuePrefixBytes: Uint8Array[],
+		valueSuffixBytes: Uint8Array[],
+		byteElementIndexLimit: number,
+	) => void;
+	validate_encoded_parts_batch?: (
+		valuePrefixBytes: Uint8Array[],
+		valueSuffixBytes: Uint8Array[],
+		byteElementIndexLimit: number,
+	) => void;
+	put_encoded_parts_stored_batch?: (
+		keys: string[],
+		ids: types.IdKey[],
 		valuePrefixBytes: Uint8Array[],
 		valueSuffixBytes: Uint8Array[],
 		byteElementIndexLimit: number,
@@ -1722,6 +1746,16 @@ const cloneResults = <T>(
 	});
 };
 
+const concatEncodedParts = (
+	prefix: Uint8Array,
+	suffix: Uint8Array,
+): Uint8Array => {
+	const encoded = new Uint8Array(prefix.byteLength + suffix.byteLength);
+	encoded.set(prefix, 0);
+	encoded.set(suffix, prefix.byteLength);
+	return encoded;
+};
+
 type MaybePromise<T> = Promise<T> | T;
 
 const isPromiseLike = <T>(value: MaybePromise<T>): value is Promise<T> => {
@@ -1933,14 +1967,16 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		context: Record<string, any>,
 		options?: NativeEncodedPutOptions,
 	): MaybePromise<void> {
-		const contextualValue = this.asContextualValue(value, context);
 		if (options?.encodedValueParts) {
-			return this.putWithEncodedValueParts(
-				contextualValue,
+			const storedPut = this.putWithEncodedValuePartsStored(
 				id,
 				options.encodedValueParts,
 			);
+			if (storedPut !== false) {
+				return storedPut;
+			}
 		}
+		const contextualValue = this.asContextualValue(value, context);
 		if (options?.encodedValue) {
 			return this.putWithEncodedValue(contextualValue, id, options.encodedValue);
 		}
@@ -1956,6 +1992,20 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}>,
 	): Promise<void> {
 		if (values.length === 0) {
+			return;
+		}
+		if (
+			values.every(
+				(entry) =>
+					entry.options?.encodedValueParts && entry.options.replace !== true,
+			) &&
+			(await this.putWithEncodedValuePartsStoredBatch(
+				values.map((entry) => ({
+					id: entry.id,
+					encodedValueParts: entry.options!.encodedValueParts!,
+				})),
+			))
+		) {
 			return;
 		}
 		if (values.some((entry) => entry.options?.replace === true)) {
@@ -3313,6 +3363,180 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}
 	}
 
+	private putNativeDocumentEncodedPartsStored(
+		storeKey: string,
+		id: types.IdKey,
+		encodedValueParts: NativeEncodedValueParts,
+	): boolean {
+		const native = this.getNative();
+		const putEncodedPartsStored = native.put_encoded_parts_stored;
+		if (!putEncodedPartsStored) {
+			return false;
+		}
+		try {
+			putEncodedPartsStored.call(
+				native,
+				storeKey,
+				id,
+				encodedValueParts.prefix,
+				encodedValueParts.suffix,
+				this.nativeByteElementIndexLimit,
+			);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	private putNativeDocumentEncodedPartsStoredBatch(
+		values: Array<{
+			id: types.IdKey;
+			storeKey?: string;
+			encodedValueParts: NativeEncodedValueParts;
+		}>,
+	): boolean {
+		if (values.length === 0) {
+			return false;
+		}
+		const native = this.getNative();
+		const putEncodedPartsStoredBatch = native.put_encoded_parts_stored_batch;
+		if (!putEncodedPartsStoredBatch) {
+			return false;
+		}
+		const keys = new Array<string>(values.length);
+		const ids = new Array<types.IdKey>(values.length);
+		const prefixes = new Array<Uint8Array>(values.length);
+		const suffixes = new Array<Uint8Array>(values.length);
+		for (let i = 0; i < values.length; i++) {
+			const entry = values[i]!;
+			keys[i] = entry.storeKey ?? keyToStoreKey(entry.id);
+			ids[i] = entry.id;
+			prefixes[i] = entry.encodedValueParts.prefix;
+			suffixes[i] = entry.encodedValueParts.suffix;
+		}
+		try {
+			putEncodedPartsStoredBatch.call(
+				native,
+				keys,
+				ids,
+				prefixes,
+				suffixes,
+				this.nativeByteElementIndexLimit,
+			);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	private validateNativeDocumentEncodedParts(
+		encodedValueParts: NativeEncodedValueParts,
+	): boolean {
+		const native = this.getNative();
+		const validate = native.validate_encoded_parts;
+		if (!validate) {
+			return false;
+		}
+		try {
+			validate.call(
+				native,
+				encodedValueParts.prefix,
+				encodedValueParts.suffix,
+				this.nativeByteElementIndexLimit,
+			);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	private validateNativeDocumentEncodedPartsBatch(
+		values: Array<{ encodedValueParts: NativeEncodedValueParts }>,
+	): boolean {
+		if (values.length === 0) {
+			return false;
+		}
+		const native = this.getNative();
+		const validateBatch = native.validate_encoded_parts_batch;
+		if (!validateBatch) {
+			return false;
+		}
+		try {
+			validateBatch.call(
+				native,
+				values.map((entry) => entry.encodedValueParts.prefix),
+				values.map((entry) => entry.encodedValueParts.suffix),
+				this.nativeByteElementIndexLimit,
+			);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	private putWithEncodedValuePartsStored(
+		id: types.IdKey,
+		encodedValueParts: NativeEncodedValueParts,
+	): MaybePromise<void> | false {
+		const storeKey = keyToStoreKey(id);
+		if (!this.snapshotFile) {
+			return this.putNativeDocumentEncodedPartsStored(
+				storeKey,
+				id,
+				encodedValueParts,
+			)
+				? undefined
+				: false;
+		}
+		if (!this.validateNativeDocumentEncodedParts(encodedValueParts)) {
+			return false;
+		}
+		return this.enqueueMutation(async () => {
+			await this.appendPut(storeKey, undefined, encodedValueParts);
+			if (
+				!this.putNativeDocumentEncodedPartsStored(
+					storeKey,
+					id,
+					encodedValueParts,
+				)
+			) {
+				throw new Error("Native encoded contextual document put failed");
+			}
+			await this.compactIfNeeded();
+		});
+	}
+
+	private async putWithEncodedValuePartsStoredBatch(
+		values: Array<{
+			id: types.IdKey;
+			encodedValueParts: NativeEncodedValueParts;
+		}>,
+	): Promise<boolean> {
+		if (values.length === 0) {
+			return false;
+		}
+		if (!this.snapshotFile) {
+			return this.putNativeDocumentEncodedPartsStoredBatch(values);
+		}
+		if (!this.validateNativeDocumentEncodedPartsBatch(values)) {
+			return false;
+		}
+		await this.enqueueMutation(async () => {
+			await this.snapshotFile!.appendPutBatch(
+				values.map((entry) => ({
+					key: keyToStoreKey(entry.id),
+					encodedValue: entry.encodedValueParts,
+				})),
+				this.properties.schema,
+			);
+			if (!this.putNativeDocumentEncodedPartsStoredBatch(values)) {
+				throw new Error("Native encoded contextual document batch put failed");
+			}
+			await this.compactIfNeeded();
+		});
+		return true;
+	}
+
 	private putNativeDocumentWithPreparedFields(
 		storeKey: string,
 		id: types.IdKey,
@@ -3406,10 +3630,24 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			});
 	}
 
-	private decodeNativeStoredValue(value: T | Uint8Array): T {
-		return value instanceof Uint8Array
-			? (deserialize(value, this.properties.schema) as T)
-			: value;
+	private decodeNativeStoredValue(
+		value: T | Uint8Array | [Uint8Array, Uint8Array],
+	): T {
+		if (value instanceof Uint8Array) {
+			return deserialize(value, this.properties.schema) as T;
+		}
+		if (
+			Array.isArray(value) &&
+			value.length === 2 &&
+			value[0] instanceof Uint8Array &&
+			value[1] instanceof Uint8Array
+		) {
+			return deserialize(
+				concatEncodedParts(value[0], value[1]),
+				this.properties.schema,
+			) as T;
+		}
+		return value as T;
 	}
 
 	private getNative(): NativeRustIndex<T> {

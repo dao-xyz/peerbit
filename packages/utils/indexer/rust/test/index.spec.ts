@@ -998,6 +998,70 @@ describe("native planner bridge", () => {
 		await indices.drop();
 	});
 
+	it("stores contextual encoded document puts without reading JS document fields", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocumentWithContext });
+		const contextualIndex = index as typeof index & {
+			putWithContext: (
+				value: BridgeDocument,
+				id: ReturnType<typeof toId>,
+				context: BridgeContext,
+				options?: {
+					replace?: boolean;
+					encodedValueParts?: { prefix: Uint8Array; suffix: Uint8Array };
+				},
+			) => Promise<void>;
+		};
+		const encodedDocument = new BridgeDocument("a", "peerbit", "stored bytes");
+		const context = new BridgeContext("head-a");
+		const unreadableDocument = Object.create(
+			BridgeDocument.prototype,
+		) as BridgeDocument;
+		Object.defineProperties(unreadableDocument, {
+			id: { value: "a", enumerable: true },
+			tag: {
+				get() {
+					throw new Error("encoded contextual put should not read tag");
+				},
+				enumerable: true,
+			},
+			title: {
+				get() {
+					throw new Error("encoded contextual put should not read title");
+				},
+				enumerable: true,
+			},
+		});
+
+		await contextualIndex.putWithContext(
+			unreadableDocument,
+			toId("a"),
+			context,
+			{
+				encodedValueParts: {
+					prefix: serialize(encodedDocument),
+					suffix: serialize(context),
+				},
+			},
+		);
+
+		const result = await index.get(toId("a"));
+		expect(result?.value.__context.head).equal("head-a");
+		expect(result?.value.title).equal("stored bytes");
+
+		const indexed = await index
+			.iterate({
+				query: new StringMatch({ key: "tag", value: "peerbit" }),
+			})
+			.all();
+		expect(indexed.map((entry) => entry.value.title)).to.deep.equal([
+			"stored bytes",
+		]);
+
+		await indices.drop();
+	});
+
 	it("batch resolves contextual documents by head through the native index hook", async () => {
 		const indices = create();
 		await indices.start();
