@@ -243,6 +243,10 @@ describe("native peerbit backbone", () => {
 		expect(backbone.coordinateIndexLength).to.equal(1);
 		expect(backbone.hasCoordinateIndexHash(first.entry.hash)).equal(false);
 		expect(backbone.hasCoordinateIndexHash(second.entry.hash)).equal(true);
+		const [coordinate] = backbone.getEntryCoordinateFields();
+		expect(coordinate?.hash).equal(second.entry.hash);
+		expect(coordinate?.wallTime).equal(2n);
+		expect(coordinate?.metaBytes.byteLength).to.be.greaterThan(0);
 	});
 
 	it("coalesces storage-backed append with next into shared-log coordinate state", async () => {
@@ -315,6 +319,49 @@ describe("native peerbit backbone", () => {
 		expect(target.coordinateValueLength).to.equal(1);
 		expect(target.hasCoordinateIndexHash("hash-a")).equal(false);
 		expect(target.hasCoordinateIndexHash("hash-b")).equal(true);
+	});
+
+	it("replays native WAL coordinate metadata for storage-backed appends", async () => {
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const target = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+
+		source.setCoordinateJournalEnabled(true);
+		const first = source.preparePlainStorageAppendTransaction({
+			wallTime: 11n,
+			gid: "gid-storage-wal",
+			payloadData: new Uint8Array([1]),
+			replicas: 1,
+			selfHash: "peer-a",
+		});
+		const second = source.preparePlainStorageAppendTransaction({
+			wallTime: 12n,
+			gid: "gid-storage-wal",
+			next: [first.entry.hash],
+			payloadData: new Uint8Array([2]),
+			replicas: 1,
+			selfHash: "peer-a",
+		});
+		const journal = concatBytes([
+			source.coordinateJournalHeader(),
+			source.drainCoordinateJournal(),
+		]);
+
+		expect(target.loadCoordinateSnapshotAndJournal(undefined, journal)).to.equal(3);
+		const [coordinate] = target.getEntryCoordinateFields();
+		expect(coordinate?.hash).equal(second.entry.hash);
+		expect(coordinate?.gid).equal("gid-storage-wal");
+		expect(coordinate?.wallTime).equal(12n);
+		expect(coordinate?.metaBytes.byteLength).to.be.greaterThan(0);
+		expect(target.hasCoordinateIndexHash(first.entry.hash)).equal(false);
+		expect(target.hasCoordinateIndexHash(second.entry.hash)).equal(true);
 	});
 
 	it("restores shared-log coordinate state from a native snapshot", async () => {

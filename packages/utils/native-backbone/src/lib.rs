@@ -75,6 +75,15 @@ impl NativePeerbitBackbone {
         self.shared_log.entry_coordinate_hashes()
     }
 
+    pub fn entry_coordinate_fields(&self) -> Result<Array, JsValue> {
+        let out = Array::new();
+        for (_, value) in self.coordinate_values.entries() {
+            let coordinate = decode_coordinate_value(&value)?;
+            out.push(&coordinate_core_value_to_row(&coordinate));
+        }
+        Ok(out)
+    }
+
     pub fn coordinate_index_len(&self) -> usize {
         self.coordinate_index.len()
     }
@@ -416,6 +425,8 @@ impl NativePeerbitBackbone {
             coordinates_for_core,
             assigned_to_range_boundary,
             requested_replicas,
+            0,
+            Vec::new(),
         )
     }
 
@@ -462,6 +473,8 @@ impl NativePeerbitBackbone {
             coordinates_for_core,
             assigned_to_range_boundary,
             requested_replicas,
+            0,
+            Vec::new(),
         )?;
         self.delete_coordinate_core_batch(next_hashes_for_core)
     }
@@ -503,6 +516,8 @@ impl NativePeerbitBackbone {
             row.get(3),
             next_hashes_for_core,
             Array::new(),
+            0,
+            Vec::new(),
         )?;
         Ok(row)
     }
@@ -547,6 +562,8 @@ impl NativePeerbitBackbone {
             row.get(3),
             next_hashes_for_core,
             delete_hashes_for_core,
+            0,
+            Vec::new(),
         )?;
         Ok(row)
     }
@@ -602,6 +619,8 @@ impl NativePeerbitBackbone {
             row.get(5),
             next_hashes_for_core,
             Array::new(),
+            0,
+            Vec::new(),
         )?;
         Ok(row)
     }
@@ -946,6 +965,8 @@ impl NativePeerbitBackbone {
         coordinates: Array,
         assigned_to_range_boundary: bool,
         requested_replicas: usize,
+        wall_time: u64,
+        meta_bytes: Vec<u8>,
     ) -> Result<(), JsValue> {
         let hash_number = parse_u64_string(hash_number, "coordinate hash number")?;
         let coordinates = coordinate_numbers_from_array(coordinates)?;
@@ -956,6 +977,8 @@ impl NativePeerbitBackbone {
             coordinates,
             assigned_to_range_boundary,
             requested_replicas,
+            wall_time,
+            meta_bytes,
             true,
         );
         Ok(())
@@ -966,6 +989,8 @@ impl NativePeerbitBackbone {
         coordinate_row: JsValue,
         next_hashes: Array,
         delete_hashes: Array,
+        wall_time: u64,
+        meta_bytes: Vec<u8>,
     ) -> Result<(), JsValue> {
         let row = array_from_value(coordinate_row, "coordinate plan row")?;
         let hash = string_field(&row, 0, "coordinate hash")?;
@@ -981,6 +1006,8 @@ impl NativePeerbitBackbone {
             coordinates,
             assigned_to_range_boundary,
             requested_replicas,
+            wall_time,
+            meta_bytes,
         )?;
         self.delete_coordinate_core_batch(next_hashes)?;
         self.delete_coordinate_core_batch(delete_hashes)
@@ -1006,6 +1033,8 @@ impl NativePeerbitBackbone {
             coordinate.coordinates,
             coordinate.assigned_to_range_boundary,
             coordinate.requested_replicas,
+            coordinate.wall_time,
+            coordinate.meta_bytes,
             record_journal,
         );
         Ok(())
@@ -1019,6 +1048,8 @@ impl NativePeerbitBackbone {
         coordinates: Vec<u64>,
         assigned_to_range_boundary: bool,
         requested_replicas: usize,
+        wall_time: u64,
+        meta_bytes: Vec<u8>,
         record_journal: bool,
     ) {
         let mut fields = DocumentFields::with_scalar_capacity(6 + coordinates.len());
@@ -1044,6 +1075,8 @@ impl NativePeerbitBackbone {
             &coordinates,
             assigned_to_range_boundary,
             requested_replicas,
+            wall_time,
+            &meta_bytes,
         );
         let journal_record = if record_journal {
             Some(JournalRecord::put(hash.clone(), value.clone()))
@@ -1131,6 +1164,7 @@ impl NativePeerbitBackbone {
         let delete_hashes_for_core = delete_hashes.clone();
         let next_hashes = Array::new();
         let next_hashes_for_core = next_hashes.clone();
+        let meta_bytes = bytes_field(&entry_row, 1, "entry meta bytes")?;
         let coordinate_row = self.shared_log.commit_local_append_for_gid_compact(
             hash,
             gid,
@@ -1151,6 +1185,8 @@ impl NativePeerbitBackbone {
             coordinate_row.get(3),
             next_hashes_for_core,
             delete_hashes_for_core,
+            wall_time,
+            meta_bytes,
         )?;
 
         let out = Array::new();
@@ -1220,6 +1256,7 @@ impl NativePeerbitBackbone {
         let delete_hashes = trim_hashes(&trim_rows)?;
         let delete_hashes_for_core = delete_hashes.clone();
         let next_hashes_for_core = next_hashes.clone();
+        let meta_bytes = bytes_field(&entry_row, 4, "storage entry meta bytes")?;
         let coordinate_row = self.shared_log.commit_local_append_for_gid_compact(
             hash,
             gid,
@@ -1240,6 +1277,8 @@ impl NativePeerbitBackbone {
             coordinate_row.get(3),
             next_hashes_for_core,
             delete_hashes_for_core,
+            wall_time,
+            meta_bytes,
         )?;
 
         let out = Array::new();
@@ -1355,6 +1394,8 @@ struct CoordinateCoreValue {
     coordinates: Vec<u64>,
     assigned_to_range_boundary: bool,
     requested_replicas: usize,
+    wall_time: u64,
+    meta_bytes: Vec<u8>,
 }
 
 fn encode_coordinate_value(
@@ -1364,8 +1405,11 @@ fn encode_coordinate_value(
     coordinates: &[u64],
     assigned_to_range_boundary: bool,
     requested_replicas: usize,
+    wall_time: u64,
+    meta_bytes: &[u8],
 ) -> Vec<u8> {
-    let mut out = Vec::with_capacity(64 + hash.len() + gid.len() + coordinates.len() * 8);
+    let mut out =
+        Vec::with_capacity(76 + hash.len() + gid.len() + coordinates.len() * 8 + meta_bytes.len());
     write_string(&mut out, hash);
     write_string(&mut out, gid);
     out.extend_from_slice(&hash_number.to_le_bytes());
@@ -1375,7 +1419,22 @@ fn encode_coordinate_value(
     for coordinate in coordinates {
         out.extend_from_slice(&coordinate.to_le_bytes());
     }
+    out.extend_from_slice(&wall_time.to_le_bytes());
+    write_bytes(&mut out, meta_bytes);
     out
+}
+
+fn coordinate_core_value_to_row(value: &CoordinateCoreValue) -> Array {
+    let row = Array::new();
+    row.push(&JsValue::from_str(&value.hash));
+    row.push(&JsValue::from_str(&value.hash_number.to_string()));
+    row.push(&JsValue::from_str(&value.gid));
+    row.push(&number_strings_to_array(&value.coordinates));
+    row.push(&JsValue::from_bool(value.assigned_to_range_boundary));
+    row.push(&JsValue::from_f64(value.requested_replicas as f64));
+    row.push(&JsValue::from_str(&value.wall_time.to_string()));
+    row.push(&Uint8Array::from(value.meta_bytes.as_slice()));
+    row
 }
 
 fn decode_coordinate_value(bytes: &[u8]) -> Result<CoordinateCoreValue, JsValue> {
@@ -1390,6 +1449,13 @@ fn decode_coordinate_value(bytes: &[u8]) -> Result<CoordinateCoreValue, JsValue>
     for _ in 0..coordinate_count {
         coordinates.push(read_u64(bytes, &mut offset, "coordinate value")?);
     }
+    let (wall_time, meta_bytes) = if offset == bytes.len() {
+        (0, Vec::new())
+    } else {
+        let wall_time = read_u64(bytes, &mut offset, "coordinate wall time")?;
+        let meta_bytes = read_bytes(bytes, &mut offset, "coordinate meta bytes")?;
+        (wall_time, meta_bytes)
+    };
     if offset != bytes.len() {
         return Err(JsValue::from_str("Trailing coordinate value bytes"));
     }
@@ -1400,12 +1466,19 @@ fn decode_coordinate_value(bytes: &[u8]) -> Result<CoordinateCoreValue, JsValue>
         coordinates,
         assigned_to_range_boundary,
         requested_replicas,
+        wall_time,
+        meta_bytes,
     })
 }
 
 fn write_string(out: &mut Vec<u8>, value: &str) {
     out.extend_from_slice(&(value.len() as u32).to_le_bytes());
     out.extend_from_slice(value.as_bytes());
+}
+
+fn write_bytes(out: &mut Vec<u8>, value: &[u8]) {
+    out.extend_from_slice(&(value.len() as u32).to_le_bytes());
+    out.extend_from_slice(value);
 }
 
 fn read_u32(bytes: &[u8], offset: &mut usize, label: &str) -> Result<u32, JsValue> {
@@ -1452,6 +1525,19 @@ fn read_encoded_string(bytes: &[u8], offset: &mut usize, label: &str) -> Result<
     let value = std::str::from_utf8(&bytes[*offset..end])
         .map_err(|_| JsValue::from_str(&format!("Invalid utf-8 {label}")))?
         .to_string();
+    *offset = end;
+    Ok(value)
+}
+
+fn read_bytes(bytes: &[u8], offset: &mut usize, label: &str) -> Result<Vec<u8>, JsValue> {
+    let length = read_u32(bytes, offset, label)? as usize;
+    let end = offset
+        .checked_add(length)
+        .ok_or_else(|| JsValue::from_str(&format!("Truncated {label}")))?;
+    if end > bytes.len() {
+        return Err(JsValue::from_str(&format!("Truncated {label}")));
+    }
+    let value = bytes[*offset..end].to_vec();
     *offset = end;
     Ok(value)
 }

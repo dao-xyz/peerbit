@@ -49,7 +49,11 @@ import {
 	type ShallowOrFullEntry,
 } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
-import type { NativePeerbitBackbone } from "@peerbit/native-backbone";
+import type {
+	NativeBackboneCoordinateFields,
+	NativeBackboneCoordinatePersistenceAdapter,
+	NativePeerbitBackbone,
+} from "@peerbit/native-backbone";
 import { ClosedError, Program, type ProgramEvents } from "@peerbit/program";
 import {
 	FanoutChannel,
@@ -681,7 +685,13 @@ export type SharedLogOptions<
 > = {
 	appendDurability?: LogProperties<T>["appendDurability"];
 	nativeGraph?: LogProperties<T>["nativeGraph"];
-	nativeBackbone?: false | { optional?: boolean; heads?: boolean };
+	nativeBackbone?:
+		| false
+		| {
+				optional?: boolean;
+				heads?: boolean;
+				coordinatePersistence?: NativeBackboneCoordinatePersistenceAdapter;
+		  };
 	nativeRangePlanner?: false | { optional?: boolean };
 	replicate?: ReplicationOptions<R>;
 	replicas?: ReplicationLimitsOptions;
@@ -1013,6 +1023,7 @@ export class SharedLog<
 	private _nativeRangePlanner?: SharedLogRangePlanner;
 	private _nativeSharedLogState?: SharedLogNativeState;
 	private _nativeBackbone?: NativePeerbitBackbone;
+	private _nativeBackboneCoordinatePersistence?: NativeBackboneCoordinatePersistenceAdapter;
 	private _residentEntryCoordinatesByHash?: Map<string, ResidentCoordinateEntry<R>>;
 	private coordinateToHash!: Cache<string>;
 	private recentlyRebalanced!: Cache<string>;
@@ -5077,6 +5088,7 @@ export class SharedLog<
 				};
 				try {
 					const hasNativeCoordinatePut =
+						this.canUseBackboneOnlyCoordinatePersistence() ||
 						coordinateIndex
 							.putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn ||
 						coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn;
@@ -7087,6 +7099,11 @@ export class SharedLog<
 		} finally {
 			await rangeIterator.close();
 		}
+		if (this._nativeBackboneCoordinatePersistence) {
+			await this._nativeBackboneCoordinatePersistence.hydrate(backbone);
+			this.hydrateNativeCoordinateStateFromBackbone(backbone);
+			return;
+		}
 		const iterator = this.entryCoordinatesIndex.iterate({});
 		try {
 			for (;;) {
@@ -7111,12 +7128,62 @@ export class SharedLog<
 		}
 	}
 
+	private hydrateNativeCoordinateStateFromBackbone(
+		backbone: NativePeerbitBackbone,
+	): void {
+		const fields = backbone.getEntryCoordinateFields();
+		this._nativeSharedLogState?.clearEntryCoordinates();
+		this._residentEntryCoordinatesByHash = new Map();
+		for (const coordinate of fields) {
+			const sharedFields =
+				this.nativeBackboneCoordinateFieldsToSharedLogFields(coordinate);
+			this._nativeSharedLogState?.putEntryCoordinates(
+				sharedFields.hash,
+				sharedFields.gid,
+				sharedFields.coordinates,
+				sharedFields.assignedToRangeBoundary,
+				coordinate.requestedReplicas,
+				sharedFields.hashNumber,
+			);
+			this._residentEntryCoordinatesByHash.set(sharedFields.hash, sharedFields);
+			for (const value of sharedFields.coordinates) {
+				this.coordinateToHash.add(value, sharedFields.hash);
+			}
+		}
+	}
+
+	private nativeBackboneCoordinateFieldsToSharedLogFields(
+		coordinate: NativeBackboneCoordinateFields,
+	): SharedLogCoordinateNativeFields<R> {
+		const hashNumber =
+			this.domain.resolution === "u32"
+				? Number(coordinate.hashNumberString)
+				: BigInt(coordinate.hashNumberString);
+		const coordinates =
+			this.domain.resolution === "u32"
+				? coordinate.coordinateStrings.map((value) => Number(value))
+				: coordinate.coordinateStrings.map((value) => BigInt(value));
+		return {
+			hash: coordinate.hash,
+			hashNumber: hashNumber as NumberFromType<R>,
+			hashNumberString: coordinate.hashNumberString,
+			gid: coordinate.gid,
+			coordinates: coordinates as NumberFromType<R>[],
+			coordinateStrings: coordinate.coordinateStrings,
+			wallTime: coordinate.wallTime,
+			wallTimeString: coordinate.wallTimeString,
+			assignedToRangeBoundary: coordinate.assignedToRangeBoundary,
+			metaBytes: coordinate.metaBytes,
+		};
+	}
+
 	private async openNativeRangePlanner(
 		options: SharedLogOptions<T, D, R>["nativeRangePlanner"],
 	): Promise<void> {
 		this._nativeRangePlanner = undefined;
 		this._nativeSharedLogState = undefined;
 		this._nativeBackbone = undefined;
+		this._nativeBackboneCoordinatePersistence = undefined;
 		this._residentEntryCoordinatesByHash = undefined;
 		if (options === false) {
 			return;
@@ -7150,6 +7217,7 @@ export class SharedLog<
 	private async openNativeBackbone(
 		options: SharedLogOptions<T, D, R>["nativeBackbone"],
 	): Promise<NativePeerbitBackbone | undefined> {
+		this._nativeBackboneCoordinatePersistence = undefined;
 		if (!options) {
 			return undefined;
 		}
@@ -7167,12 +7235,14 @@ export class SharedLog<
 			const { createNativePeerbitBackbone } = await import(
 				"@peerbit/native-backbone"
 			);
-			return await createNativePeerbitBackbone({
+			const backbone = await createNativePeerbitBackbone({
 				resolution: this.domain.resolution,
 				clockId: this.node.identity.publicKey.bytes,
 				privateKey: this.node.identity.privateKey.privateKey,
 				publicKey: this.node.identity.publicKey.publicKey,
 			});
+			this._nativeBackboneCoordinatePersistence = options.coordinatePersistence;
+			return backbone;
 		} catch (error) {
 			if (options.optional === false) {
 				throw error;
@@ -9952,7 +10022,9 @@ export class SharedLog<
 		skipGenericTransientCoordinateIndex?: boolean;
 	}): MaybePromise<boolean> {
 		const { fields } = properties.prepared;
-		const finish = () => {
+		const useBackboneOnlyCoordinatePersistence =
+			this.canUseBackboneOnlyCoordinatePersistence();
+		const finish = (): MaybePromise<boolean> => {
 			this._nativeSharedLogState?.commitEntryCoordinates(
 				properties.hash,
 				fields.gid,
@@ -9974,11 +10046,20 @@ export class SharedLog<
 			for (const coordinate of properties.coordinates) {
 				this.coordinateToHash.add(coordinate, properties.hash);
 			}
+			if (useBackboneOnlyCoordinatePersistence) {
+				return mapMaybePromise(
+					this.flushNativeBackboneCoordinateJournal(),
+					() => true,
+				);
+			}
 			return true;
 		};
 		if (
-			properties.skipGenericTransientCoordinateIndex &&
-			this.canUseRuntimeOnlyNativeBackboneCoordinates(properties.coordinateIndex)
+			(properties.skipGenericTransientCoordinateIndex &&
+				this.canUseRuntimeOnlyNativeBackboneCoordinates(
+					properties.coordinateIndex,
+				)) ||
+			useBackboneOnlyCoordinatePersistence
 		) {
 			return finish();
 		}
@@ -9999,14 +10080,36 @@ export class SharedLog<
 		return mapMaybePromise(putResult, finish);
 	}
 
+	private flushNativeBackboneCoordinateJournal(): MaybePromise<void> {
+		const backbone = this._nativeBackbone;
+		const persistence = this._nativeBackboneCoordinatePersistence;
+		if (!backbone || !persistence) {
+			return undefined;
+		}
+		return mapMaybePromise(persistence.flushJournal(backbone), () => undefined);
+	}
+
+	private canUseBackboneOnlyCoordinatePersistence(): boolean {
+		return (
+			!!this._nativeBackboneCoordinatePersistence &&
+			this.canUseNativeBackboneResidentCoordinateState()
+		);
+	}
+
+	private canUseNativeBackboneResidentCoordinateState(): boolean {
+		return (
+			!!this._nativeBackbone &&
+			!!this._nativeSharedLogState &&
+			!!this._residentEntryCoordinatesByHash &&
+			!this.hasCustomFindLeaders()
+		);
+	}
+
 	private canUseRuntimeOnlyNativeBackboneCoordinates(
 		coordinateIndex: PutAndDeleteIndex<EntryReplicated<R>>,
 	): boolean {
 		if (
-			!this._nativeBackbone ||
-			!this._nativeSharedLogState ||
-			!this._residentEntryCoordinatesByHash ||
-			this.hasCustomFindLeaders() ||
+			!this.canUseNativeBackboneResidentCoordinateState() ||
 			Object.prototype.hasOwnProperty.call(
 				coordinateIndex,
 				"putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn",

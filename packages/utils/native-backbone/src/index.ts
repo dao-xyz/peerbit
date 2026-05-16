@@ -8,6 +8,7 @@ type NativePeerbitBackboneHandle = {
 	has_log_entry: (hash: string) => boolean;
 	has_block: (hash: string) => boolean;
 	entry_coordinate_hashes: () => string[];
+	entry_coordinate_fields: () => unknown[];
 	coordinate_index_len: () => number;
 	coordinate_value_len: () => number;
 	coordinate_index_has_hash: (hash: string) => boolean;
@@ -377,6 +378,12 @@ export type NativeBackboneCoordinatePlan = {
 	requestedReplicas: number;
 };
 
+export type NativeBackboneCoordinateFields = NativeBackboneCoordinatePlan & {
+	wallTime: bigint;
+	wallTimeString: string;
+	metaBytes: Uint8Array;
+};
+
 export type NativeBackboneCommittedEntry = {
 	cid: string;
 	hash: string;
@@ -502,6 +509,12 @@ export type NativeBackboneCoordinatePersistenceStore = {
 	remove?(name: string): Promise<void>;
 };
 
+export type NativeBackboneCoordinatePersistenceAdapter = {
+	hydrate(backbone: NativePeerbitBackbone): Promise<number>;
+	flushJournal(backbone: NativePeerbitBackbone): Promise<number>;
+	compact?(backbone: NativePeerbitBackbone): Promise<void>;
+};
+
 export const nativeBackboneCoordinatePersistenceFiles = {
 	snapshot: "coordinates.bin",
 	journal: "coordinates.wal",
@@ -553,6 +566,47 @@ const appendCoordinatePlanFromRow = (
 		coordinateStrings,
 		assignedToRangeBoundary,
 		requestedReplicas,
+	};
+};
+
+const coordinateFieldsFromRow = (
+	resolution: RangeResolution,
+	row: unknown[],
+): NativeBackboneCoordinateFields => {
+	const [
+		hash,
+		hashNumber,
+		gid,
+		coordinateRows,
+		assignedToRangeBoundary,
+		requestedReplicas,
+		wallTime,
+		metaBytes,
+	] = row as [
+		string,
+		unknown,
+		string,
+		unknown[],
+		boolean,
+		number,
+		string,
+		Uint8Array,
+	];
+	const coordinate = appendCoordinatePlanFromRow(resolution, [
+		hash,
+		hashNumber,
+		gid,
+		coordinateRows,
+		assignedToRangeBoundary,
+		requestedReplicas,
+	]);
+	const wallTimeString =
+		typeof wallTime === "string" ? wallTime : String(wallTime);
+	return {
+		...coordinate,
+		wallTime: BigInt(wallTimeString),
+		wallTimeString,
+		metaBytes,
 	};
 };
 
@@ -1240,6 +1294,12 @@ export class NativePeerbitBackbone {
 
 	getEntryCoordinateHashes(): string[] {
 		return this.native.entry_coordinate_hashes();
+	}
+
+	getEntryCoordinateFields(): NativeBackboneCoordinateFields[] {
+		return this.native
+			.entry_coordinate_fields()
+			.map((row) => coordinateFieldsFromRow(this.resolution, row as unknown[]));
 	}
 
 	get coordinateIndexLength(): number {

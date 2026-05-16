@@ -43,6 +43,10 @@ import {
 	toId,
 } from "@peerbit/indexer-interface";
 import { Entry, EntryV0, Log, createEntry } from "@peerbit/log";
+import {
+	NativeBackboneCoordinatePersistence,
+	type NativeBackboneCoordinatePersistenceStore,
+} from "@peerbit/native-backbone";
 import { ClosedError, Program } from "@peerbit/program";
 import type { FanoutTree, TopicControlPlane } from "@peerbit/pubsub";
 import { MissingResponsesError, RPCMessage, ResponseV0 } from "@peerbit/rpc";
@@ -69,6 +73,40 @@ const getDocumentTestFanout = (peer: TestSession["peers"][number]) =>
 			fanout: Pick<FanoutTree, "publicKeyHash">;
 		}
 	).fanout;
+
+const concatBytes = (chunks: Uint8Array[]) => {
+	const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+	const out = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		out.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return out;
+};
+
+class MemoryCoordinatePersistenceStore
+	implements NativeBackboneCoordinatePersistenceStore
+{
+	readonly files = new Map<string, Uint8Array>();
+
+	async read(name: string): Promise<Uint8Array | undefined> {
+		return this.files.get(name);
+	}
+
+	async write(name: string, bytes: Uint8Array): Promise<void> {
+		this.files.set(name, bytes.slice());
+	}
+
+	async append(name: string, bytes: Uint8Array): Promise<void> {
+		const existing = this.files.get(name);
+		this.files.set(name, existing ? concatBytes([existing, bytes]) : bytes.slice());
+	}
+
+	async remove(name: string): Promise<void> {
+		this.files.delete(name);
+	}
+}
 import { createDocumentDomain } from "../src/domain.js";
 import type { DocumentsChange } from "../src/events.js";
 import { policy } from "../src/index.js";
@@ -1004,6 +1042,74 @@ describe("index", () => {
 				} finally {
 					genericCoordinatePersistSpy.restore();
 					backboneCoordinatePersistSpy.restore();
+					backboneStorageTransactionSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("flushes native backbone coordinate WAL without generic coordinate index writes", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				const coordinateStore = new MemoryCoordinatePersistenceStore();
+				const coordinatePersistence =
+					new NativeBackboneCoordinatePersistence(coordinateStore);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: {
+							optional: false,
+							coordinatePersistence,
+						},
+					},
+				});
+				const sharedLog = store.docs.log as any;
+				const backbone = sharedLog._nativeBackbone;
+				const coordinateIndex = sharedLog.entryCoordinatesIndex as any;
+				const backboneStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainStorageAppendTransaction",
+				);
+				const coordinateIndexPutSpy = sinon.spy(
+					coordinateIndex,
+					"putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn",
+				);
+				const flushSpy = sinon.spy(coordinatePersistence, "flushJournal");
+
+				try {
+					const doc = new Document({
+						id: uuid(),
+						name: "backbone-coordinate-wal",
+					});
+					await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(backboneStorageTransactionSpy.callCount).equal(1);
+					expect(coordinateIndexPutSpy.callCount).equal(0);
+					expect(flushSpy.callCount).equal(1);
+					expect(
+						coordinateStore.files.get("coordinates.wal")?.byteLength,
+					).to.be.greaterThan(backbone.coordinateJournalHeader().byteLength);
+					expect(backbone.coordinatePendingJournalLength).to.equal(0);
+					expect(
+						backbone.getEntryCoordinateFields()[0]?.metaBytes.byteLength,
+					).to.be.greaterThan(0);
+					expect((await store.docs.get(doc.id))?.name).equal(
+						"backbone-coordinate-wal",
+					);
+				} finally {
+					flushSpy.restore();
+					coordinateIndexPutSpy.restore();
 					backboneStorageTransactionSpy.restore();
 					await store.close();
 					store = undefined;
