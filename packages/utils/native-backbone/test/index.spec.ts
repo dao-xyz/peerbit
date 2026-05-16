@@ -187,6 +187,65 @@ describe("native peerbit backbone", () => {
 		);
 	});
 
+	it("owns coordinate WAL append flush decisions", async () => {
+		const delayedBackbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const delayedStore = new NativeBackboneMemoryCoordinatePersistenceStore();
+		const delayedPersistence = new NativeBackboneCoordinatePersistence(
+			delayedStore,
+			{
+				flushOnAppend: false,
+				flushMaxPendingBytes: defaultNativeBackboneCoordinateFlushMaxPendingBytes,
+			},
+		);
+
+		await delayedPersistence.hydrate(delayedBackbone);
+		delayedBackbone.putEntryCoordinates("hash-a", "gid-a", [1n], false, 1, 1n);
+		expect(delayedPersistence.shouldFlushJournalOnAppend(delayedBackbone)).equal(
+			false,
+		);
+		expect(await delayedPersistence.flushJournalOnAppend(delayedBackbone)).equal(
+			0,
+		);
+		expect(delayedStore.files.has("coordinates.wal")).equal(false);
+		expect(delayedBackbone.coordinatePendingJournalLength).to.be.greaterThan(0);
+		expect(await delayedPersistence.flushJournal(delayedBackbone)).to.be.greaterThan(
+			0,
+		);
+
+		const thresholdBackbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const thresholdStore = new NativeBackboneMemoryCoordinatePersistenceStore();
+		const thresholdPersistence = new NativeBackboneCoordinatePersistence(
+			thresholdStore,
+			{ flushOnAppend: false, flushMaxPendingBytes: 1 },
+		);
+
+		await thresholdPersistence.hydrate(thresholdBackbone);
+		thresholdBackbone.putEntryCoordinates(
+			"hash-b",
+			"gid-b",
+			[2n],
+			false,
+			1,
+			2n,
+		);
+		expect(thresholdPersistence.shouldFlushJournalOnAppend(thresholdBackbone)).equal(
+			true,
+		);
+		expect(
+			await thresholdPersistence.flushJournalOnAppend(thresholdBackbone),
+		).to.be.greaterThan(0);
+		expect(thresholdBackbone.coordinatePendingJournalLength).to.equal(0);
+		expect(thresholdStore.files.has("coordinates.wal")).equal(true);
+	});
+
 	it("commits lower-log blocks and shared-log coordinates in one native call", async () => {
 		const backbone = await createNativePeerbitBackbone({
 			clockId: publicKey,

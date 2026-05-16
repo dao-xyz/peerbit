@@ -554,6 +554,7 @@ export type NativeBackboneCoordinatePersistenceAdapter = {
 	flushIntervalMs?: number;
 	hydrate(backbone: NativePeerbitBackbone): Promise<number>;
 	flushJournal(backbone: NativePeerbitBackbone): Promise<number>;
+	flushJournalOnAppend?(backbone: NativePeerbitBackbone): Promise<number>;
 	compact?(backbone: NativePeerbitBackbone): Promise<void>;
 	close?(): Promise<void>;
 };
@@ -2159,6 +2160,7 @@ export class NativeBackboneCoordinatePersistence {
 	private readonly snapshotFile: string;
 	private readonly journalFile: string;
 	private journalInitialized: boolean | undefined;
+	private lastFlushMs = Date.now();
 
 	constructor(
 		private readonly store: NativeBackboneCoordinatePersistenceStore,
@@ -2191,12 +2193,45 @@ export class NativeBackboneCoordinatePersistence {
 		);
 		this.journalInitialized = !!journal && journal.byteLength > 0;
 		backbone.setCoordinateJournalEnabled(true);
+		this.lastFlushMs = Date.now();
 		return operations;
+	}
+
+	shouldFlushJournalOnAppend(
+		backbone: NativePeerbitBackbone,
+		now = Date.now(),
+	): boolean {
+		if (this.flushOnAppend !== false) {
+			return true;
+		}
+		if (backbone.coordinatePendingJournalLength === 0) {
+			return false;
+		}
+		if (
+			this.flushMaxPendingBytes != null &&
+			backbone.coordinatePendingJournalByteLength >= this.flushMaxPendingBytes
+		) {
+			return true;
+		}
+		return (
+			this.flushIntervalMs != null &&
+			now - this.lastFlushMs >= this.flushIntervalMs
+		);
+	}
+
+	async flushJournalOnAppend(
+		backbone: NativePeerbitBackbone,
+	): Promise<number> {
+		if (!this.shouldFlushJournalOnAppend(backbone)) {
+			return 0;
+		}
+		return this.flushJournal(backbone);
 	}
 
 	async flushJournal(backbone: NativePeerbitBackbone): Promise<number> {
 		const records = backbone.coordinateJournal();
 		if (records.byteLength === 0) {
+			this.lastFlushMs = Date.now();
 			return 0;
 		}
 		if (this.journalInitialized === undefined) {
@@ -2212,6 +2247,7 @@ export class NativeBackboneCoordinatePersistence {
 		}
 		await this.store.append(this.journalFile, records);
 		backbone.clearCoordinateJournal();
+		this.lastFlushMs = Date.now();
 		return records.byteLength;
 	}
 

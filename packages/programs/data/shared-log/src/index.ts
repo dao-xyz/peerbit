@@ -10071,12 +10071,10 @@ export class SharedLog<
 				this.coordinateToHash.add(coordinate, properties.hash);
 			}
 			if (this._nativeBackboneCoordinatePersistence) {
-				if (this.shouldFlushNativeBackboneCoordinateJournalOnAppend()) {
-					return mapMaybePromise(
-						this.flushNativeBackboneCoordinateJournal(),
-						() => true,
-					);
-				}
+				return mapMaybePromise(
+					this.flushNativeBackboneCoordinateJournalOnAppend(),
+					() => true,
+				);
 			}
 			return true;
 		};
@@ -10116,6 +10114,23 @@ export class SharedLog<
 			this._nativeBackboneCoordinateJournalLastFlushMs = Date.now();
 			return undefined;
 		});
+	}
+
+	private flushNativeBackboneCoordinateJournalOnAppend(): MaybePromise<void> {
+		const backbone = this._nativeBackbone;
+		const persistence = this._nativeBackboneCoordinatePersistence;
+		if (!backbone || !persistence) {
+			return undefined;
+		}
+		if (persistence.flushJournalOnAppend) {
+			return mapMaybePromise(persistence.flushJournalOnAppend(backbone), () => {
+				return undefined;
+			});
+		}
+		if (!this.shouldFlushNativeBackboneCoordinateJournalOnAppend()) {
+			return undefined;
+		}
+		return this.flushNativeBackboneCoordinateJournal();
 	}
 
 	private shouldFlushNativeBackboneCoordinateJournalOnAppend(): boolean {
