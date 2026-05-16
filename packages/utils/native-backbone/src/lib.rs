@@ -40,6 +40,13 @@ pub struct NativePeerbitBackbone {
     builder: NativeEntryV0PlainBuilder,
 }
 
+struct DocumentIndexAppendCommit {
+    key: String,
+    value_prefix_bytes: Vec<u8>,
+    existing_created: Option<u64>,
+    byte_element_index_limit: usize,
+}
+
 #[wasm_bindgen]
 impl NativePeerbitBackbone {
     #[wasm_bindgen(constructor)]
@@ -992,6 +999,7 @@ impl NativePeerbitBackbone {
             self_replicating,
             None,
             false,
+            None,
         )
     }
 
@@ -1026,6 +1034,7 @@ impl NativePeerbitBackbone {
             self_replicating,
             Some(trim_length_to),
             false,
+            None,
         )
     }
 
@@ -1059,6 +1068,7 @@ impl NativePeerbitBackbone {
             self_replicating,
             None,
             true,
+            None,
         )
     }
 
@@ -1093,6 +1103,100 @@ impl NativePeerbitBackbone {
             self_replicating,
             Some(trim_length_to),
             true,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_committed_no_next_storage_append_document_index_transaction(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        document_key: String,
+        document_value_prefix_bytes: Vec<u8>,
+        document_existing_created: String,
+        document_byte_element_index_limit: usize,
+    ) -> Result<Array, JsValue> {
+        self.prepare_plain_storage_append_transaction_inner(
+            wall_time,
+            logical,
+            gid,
+            Array::new(),
+            entry_type,
+            meta_data,
+            payload_data,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            None,
+            true,
+            Some(DocumentIndexAppendCommit {
+                key: document_key,
+                value_prefix_bytes: document_value_prefix_bytes,
+                existing_created: parse_optional_u64_string(
+                    &document_existing_created,
+                    "document existing created",
+                )?,
+                byte_element_index_limit: document_byte_element_index_limit,
+            }),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_committed_no_next_storage_append_document_index_transaction_trim(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        document_key: String,
+        document_value_prefix_bytes: Vec<u8>,
+        document_existing_created: String,
+        document_byte_element_index_limit: usize,
+        trim_length_to: usize,
+    ) -> Result<Array, JsValue> {
+        self.prepare_plain_storage_append_transaction_inner(
+            wall_time,
+            logical,
+            gid,
+            Array::new(),
+            entry_type,
+            meta_data,
+            payload_data,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            Some(trim_length_to),
+            true,
+            Some(DocumentIndexAppendCommit {
+                key: document_key,
+                value_prefix_bytes: document_value_prefix_bytes,
+                existing_created: parse_optional_u64_string(
+                    &document_existing_created,
+                    "document existing created",
+                )?,
+                byte_element_index_limit: document_byte_element_index_limit,
+            }),
         )
     }
 
@@ -1127,6 +1231,7 @@ impl NativePeerbitBackbone {
             self_replicating,
             None,
             false,
+            None,
         )
     }
 
@@ -1162,6 +1267,7 @@ impl NativePeerbitBackbone {
             self_replicating,
             Some(trim_length_to),
             false,
+            None,
         )
     }
 
@@ -1196,6 +1302,7 @@ impl NativePeerbitBackbone {
             self_replicating,
             None,
             true,
+            None,
         )
     }
 
@@ -1231,6 +1338,7 @@ impl NativePeerbitBackbone {
             self_replicating,
             Some(trim_length_to),
             true,
+            None,
         )
     }
 }
@@ -1523,7 +1631,9 @@ impl NativePeerbitBackbone {
         self_replicating: bool,
         trim_length_to: Option<usize>,
         commit_blocks: bool,
+        document_index_commit: Option<DocumentIndexAppendCommit>,
     ) -> Result<Array, JsValue> {
+        let payload_size = payload_data.length();
         let (entry_row, trim_rows) = if let Some(trim_length_to) = trim_length_to {
             let row = if commit_blocks {
                 self.log
@@ -1597,6 +1707,8 @@ impl NativePeerbitBackbone {
         let delete_hashes_for_core = delete_hashes.clone();
         let next_hashes_for_core = next_hashes.clone();
         let meta_bytes = bytes_field(&entry_row, meta_index, "storage entry meta bytes")?;
+        let document_hash = hash.clone();
+        let document_gid = gid.clone();
         let coordinate_row = self.shared_log.commit_local_append_for_gid_compact(
             hash,
             gid,
@@ -1620,6 +1732,13 @@ impl NativePeerbitBackbone {
             wall_time,
             meta_bytes,
         )?;
+        self.put_document_index_for_append(
+            document_index_commit,
+            wall_time,
+            &document_hash,
+            &document_gid,
+            payload_size,
+        )?;
 
         let out = Array::new();
         out.push(&entry_row);
@@ -1629,6 +1748,32 @@ impl NativePeerbitBackbone {
         out.push(&coordinate_row.get(3));
         out.push(&trim_rows);
         Ok(out)
+    }
+
+    fn put_document_index_for_append(
+        &mut self,
+        document_index_commit: Option<DocumentIndexAppendCommit>,
+        wall_time: u64,
+        hash: &str,
+        gid: &str,
+        payload_size: u32,
+    ) -> Result<(), JsValue> {
+        let Some(document_index_commit) = document_index_commit else {
+            return Ok(());
+        };
+        let context_suffix = encode_document_context_suffix(
+            document_index_commit.existing_created.unwrap_or(wall_time),
+            wall_time,
+            hash,
+            gid,
+            payload_size,
+        )?;
+        self.put_document_encoded_parts_stored(
+            document_index_commit.key,
+            document_index_commit.value_prefix_bytes,
+            context_suffix,
+            document_index_commit.byte_element_index_limit,
+        )
     }
 }
 
@@ -1725,6 +1870,14 @@ fn parse_u64_string(value: &str, label: &str) -> Result<u64, JsValue> {
     value
         .parse::<u64>()
         .map_err(|_| JsValue::from_str(&format!("Expected {label} u64 string")))
+}
+
+fn parse_optional_u64_string(value: &str, label: &str) -> Result<Option<u64>, JsValue> {
+    if value.is_empty() {
+        Ok(None)
+    } else {
+        parse_u64_string(value, label).map(Some)
+    }
 }
 
 struct CoordinateCoreValue {
@@ -1842,9 +1995,44 @@ fn write_string(out: &mut Vec<u8>, value: &str) {
     out.extend_from_slice(value.as_bytes());
 }
 
+fn write_u64(out: &mut Vec<u8>, value: u64) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn write_u32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
 fn write_bytes(out: &mut Vec<u8>, value: &[u8]) {
     out.extend_from_slice(&(value.len() as u32).to_le_bytes());
     out.extend_from_slice(value);
+}
+
+fn encode_document_context_suffix(
+    created: u64,
+    modified: u64,
+    head: &str,
+    gid: &str,
+    size: u32,
+) -> Result<Vec<u8>, JsValue> {
+    let capacity = 1usize
+        .checked_add(8)
+        .and_then(|value| value.checked_add(8))
+        .and_then(|value| value.checked_add(4))
+        .and_then(|value| value.checked_add(head.len()))
+        .and_then(|value| value.checked_add(4))
+        .and_then(|value| value.checked_add(gid.len()))
+        .and_then(|value| value.checked_add(4))
+        .ok_or_else(|| JsValue::from_str("Document context suffix capacity overflow"))?;
+    let mut out = Vec::with_capacity(capacity);
+    // Context is @variant(0); keep this byte-for-byte aligned with Borsh.
+    out.push(0);
+    write_u64(&mut out, created);
+    write_u64(&mut out, modified);
+    write_string(&mut out, head);
+    write_string(&mut out, gid);
+    write_u32(&mut out, size);
+    Ok(out)
 }
 
 fn read_u32(bytes: &[u8], offset: &mut usize, label: &str) -> Result<u32, JsValue> {

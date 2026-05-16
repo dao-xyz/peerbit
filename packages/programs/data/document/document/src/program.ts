@@ -197,11 +197,20 @@ type LocalAppendCommitFacts = {
 	gid: string;
 	wallTime: bigint;
 	payloadSize: number;
+	nativeBackboneDocumentIndexCommitted?: boolean;
 };
 
 type ContextualEncodedValueParts = {
 	prefix: Uint8Array;
 	suffix: Uint8Array;
+};
+
+const documentIndexStoreKey = (id: indexerTypes.IdKey): string => {
+	const key = indexerTypes.toIdeable(id);
+	if (key instanceof Uint8Array || ArrayBuffer.isView(key)) {
+		return `bytes:${id.primitive.toString()}`;
+	}
+	return `${typeof key}:${key.toString()}`;
 };
 
 type DocumentAppendCommitFacts<T, I extends Record<string, any>> = {
@@ -216,6 +225,7 @@ type DocumentAppendCommitFacts<T, I extends Record<string, any>> = {
 	context: Context;
 	contextBytes: Uint8Array;
 	contextualEncodedValueParts: ContextualEncodedValueParts;
+	nativeBackboneDocumentIndexCommitted?: boolean;
 	unique?: boolean;
 	existing?:
 		| indexerTypes.IndexedResult<IndexedContextOnly<I>>
@@ -319,6 +329,7 @@ export class Documents<
 	private _optionCanPerform?: CanPerform<T>;
 	private _optionCanPerformNativePolicy?: NativeCanPerformPolicyDescriptor;
 	private _optionCanPerformNativeFastPath?: NativeFastPathCanPerformPolicyEvaluator;
+	private _nativeBackboneDocumentIndexEnabled = false;
 	private idResolver!: (any: any) => indexerTypes.IdPrimitive;
 	private domain?: CustomDocumentDomain<InferR<D>>;
 	private strictHistory: boolean;
@@ -522,14 +533,16 @@ export class Documents<
 			fanout: options?.fanout,
 			keep: keepFunction,
 		});
+		this._nativeBackboneDocumentIndexEnabled = false;
 		if (
 			options?.nativeBackbone &&
 			typeof options.nativeBackbone !== "boolean" &&
 			options.nativeBackbone.documentIndex === true
 		) {
-			this._index.attachNativeBackboneDocumentIndex(
-				(this.log as { nativeBackbone?: unknown }).nativeBackbone,
-			);
+			this._nativeBackboneDocumentIndexEnabled =
+				this._index.attachNativeBackboneDocumentIndex(
+					(this.log as { nativeBackbone?: unknown }).nativeBackbone,
+				) === true;
 		}
 
 		this._optionCanPerformNativeFastPath = this._optionCanPerformNativePolicy
@@ -1130,6 +1143,18 @@ export class Documents<
 			skipMissingNextJoin: input.skipMissingNextJoin,
 			resolveTrimmedEntries: input.resolveTrimmedEntries,
 			payloadData: input.operationPayloadBytes,
+			...(this._nativeBackboneDocumentIndexEnabled
+				? {
+						nativeBackboneDocumentIndex: {
+							key: documentIndexStoreKey(input.key),
+							valuePrefixBytes: input.documentBytes,
+							existingCreated:
+								input.unique || input.existing === null
+									? undefined
+									: input.existing?.value.__context.created,
+						},
+					}
+				: {}),
 		};
 		if (input.operation) {
 			return mapMaybePromise(
@@ -1329,6 +1354,8 @@ export class Documents<
 				prefix: input.documentBytes,
 				suffix: contextPlan.contextBytes,
 			},
+			nativeBackboneDocumentIndexCommitted:
+				appended.appendCommit.nativeBackboneDocumentIndexCommitted,
 			unique: input.unique,
 			existing: input.existing,
 		};
@@ -1430,6 +1457,18 @@ export class Documents<
 		};
 
 		if (!modified.has(commit.key.primitive)) {
+			if (commit.nativeBackboneDocumentIndexCommitted) {
+				this._index._cacheResolvedIdentityValue(
+					commit.key.primitive,
+					commit.document,
+				);
+				return finishIndexed(
+					coerceWithIndexed(
+						coerceWithContext(commit.document, commit.context),
+						commit.document as any as I,
+					),
+				);
+			}
 			const storedIdentityPut = this._index._putStoredIdentityWithContext(
 				commit.document,
 				commit.key,

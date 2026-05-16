@@ -320,6 +320,23 @@ type NativePeerbitBackboneHandle = {
 		selfHash: string,
 		selfReplicating: boolean,
 	) => unknown[];
+	prepare_plain_committed_no_next_storage_append_document_index_transaction: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKey: string,
+		documentValuePrefixBytes: Uint8Array,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+	) => unknown[];
 	prepare_plain_committed_no_next_storage_append_transaction_trim: (
 		wallTime: bigint,
 		logical: number,
@@ -332,6 +349,24 @@ type NativePeerbitBackboneHandle = {
 		now: string,
 		selfHash: string,
 		selfReplicating: boolean,
+		trimLengthTo: number,
+	) => unknown[];
+	prepare_plain_committed_no_next_storage_append_document_index_transaction_trim: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKey: string,
+		documentValuePrefixBytes: Uint8Array,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
 		trimLengthTo: number,
 	) => unknown[];
 	prepare_plain_storage_append_transaction: (
@@ -548,6 +583,12 @@ export type NativeBackboneAppendInput = {
 	selfHash?: string;
 	selfReplicating?: boolean;
 	trimLengthTo?: number;
+	documentIndex?: {
+		key: string;
+		valuePrefixBytes: Uint8Array;
+		existingCreated?: bigint | number | string;
+		byteElementIndexLimit?: number;
+	};
 };
 
 export type NativeBackboneStorageAppendInput = NativeBackboneAppendInput & {
@@ -2073,15 +2114,36 @@ export class NativePeerbitBackbone {
 			input.selfHash ?? "",
 			input.selfReplicating ?? true,
 		] as const;
+		const documentIndexArgs = input.documentIndex
+			? ([
+					input.documentIndex.key,
+					input.documentIndex.valuePrefixBytes,
+					input.documentIndex.existingCreated == null
+						? ""
+						: integerString(input.documentIndex.existingCreated),
+					input.documentIndex.byteElementIndexLimit ?? 0,
+				] as const)
+			: undefined;
 		const row =
 			input.trimLengthTo == null
-				? this.native.prepare_plain_committed_no_next_storage_append_transaction(
-						...baseArgs,
-					)
-				: this.native.prepare_plain_committed_no_next_storage_append_transaction_trim(
-						...baseArgs,
-						input.trimLengthTo,
-					);
+				? documentIndexArgs
+					? this.native.prepare_plain_committed_no_next_storage_append_document_index_transaction(
+							...baseArgs,
+							...documentIndexArgs,
+						)
+					: this.native.prepare_plain_committed_no_next_storage_append_transaction(
+							...baseArgs,
+						)
+				: documentIndexArgs
+					? this.native.prepare_plain_committed_no_next_storage_append_document_index_transaction_trim(
+							...baseArgs,
+							...documentIndexArgs,
+							input.trimLengthTo,
+						)
+					: this.native.prepare_plain_committed_no_next_storage_append_transaction_trim(
+							...baseArgs,
+							input.trimLengthTo,
+						);
 		return committedStorageAppendResultFromRow(this.resolution, row);
 	}
 }

@@ -1014,6 +1014,18 @@ describe("index", () => {
 					"documentQueryPage",
 				);
 				const backendIndex = store.docs.index.index as any;
+				const backboneDocumentPutSpy = sinon.spy(
+					backbone,
+					"putDocumentEncodedPartsStored",
+				);
+				const backendStoredContextPutSpy = sinon.spy(
+					backendIndex,
+					"putStoredContextualEncodedValue",
+				);
+				const documentStoredIdentityPutSpy = sinon.spy(
+					store.docs.index,
+					"_putStoredIdentityWithContext",
+				);
 
 				try {
 					const first = new Document({
@@ -1036,8 +1048,17 @@ describe("index", () => {
 					});
 
 					expect(backboneStorageTransactionSpy.callCount).equal(2);
+					expect(documentStoredIdentityPutSpy.callCount).equal(0);
+					expect(backendStoredContextPutSpy.callCount).equal(0);
+					expect(backboneDocumentPutSpy.callCount).equal(0);
 					expect(backendIndex.native.len()).equal(0);
 					expect(backendIndex.getSize()).equal(1);
+					expect(
+						backboneStorageTransactionSpy.firstCall.args[0].documentIndex,
+					).to.exist;
+					expect(
+						backboneStorageTransactionSpy.secondCall.args[0].documentIndex,
+					).to.exist;
 					expect(
 						backboneStorageTransactionSpy.firstCall.args[0].next,
 					).to.deep.equal([]);
@@ -1079,6 +1100,9 @@ describe("index", () => {
 						"backbone-storage-2",
 					);
 				} finally {
+					documentStoredIdentityPutSpy.restore();
+					backendStoredContextPutSpy.restore();
+					backboneDocumentPutSpy.restore();
 					backboneDocumentQueryPageSpy.restore();
 					backboneDocumentHeadLookupSpy.restore();
 					backboneStorageTransactionSpy.restore();

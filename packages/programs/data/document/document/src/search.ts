@@ -2135,6 +2135,13 @@ export class DocumentIndex<
 		}));
 	}
 
+	public _cacheResolvedIdentityValue(
+		id: string | number | bigint,
+		value: T,
+	): void {
+		this.cacheResolvedValue(id, value);
+	}
+
 	private cacheResolvedValue(id: string | number | bigint, value: T): void {
 		if (
 			this.isProgramValued /*
