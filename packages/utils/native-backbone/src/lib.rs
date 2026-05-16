@@ -1,4 +1,8 @@
 use js_sys::{Array, Uint8Array};
+use peerbit_indexer_core::persistence::{
+    decode_journal, decode_key_value_snapshot, encode_journal_records, encode_key_value_snapshot,
+    JournalRecord, JOURNAL_MAGIC,
+};
 use peerbit_indexer_core::planner::{DocumentFields, FieldPath, FieldValue, NativeQueryIndex};
 use peerbit_indexer_core::storage::{ByteStorage, MemoryByteStorage};
 use peerbit_log_rust::{NativeEntryV0PlainBuilder, NativeLogBlockStore, NativeLogIndex};
@@ -21,6 +25,8 @@ pub struct NativePeerbitBackbone {
     shared_log: NativeSharedLogState,
     coordinate_index: NativeQueryIndex,
     coordinate_values: MemoryByteStorage,
+    coordinate_journal: Vec<JournalRecord>,
+    coordinate_journal_enabled: bool,
     builder: NativeEntryV0PlainBuilder,
 }
 
@@ -43,6 +49,8 @@ impl NativePeerbitBackbone {
             shared_log: NativeSharedLogState::new(resolution),
             coordinate_index: NativeQueryIndex::new(),
             coordinate_values: MemoryByteStorage::new(),
+            coordinate_journal: Vec::new(),
+            coordinate_journal_enabled: false,
             builder: NativeEntryV0PlainBuilder::new(clock_id, private_key, public_key)?,
         })
     }
@@ -82,6 +90,87 @@ impl NativePeerbitBackbone {
                 &FieldValue::String(hash.to_string()),
             )
             .is_some_and(|id| id == hash)
+    }
+
+    pub fn coordinate_journal_header(&self) -> Vec<u8> {
+        JOURNAL_MAGIC.to_vec()
+    }
+
+    pub fn coordinate_pending_journal_len(&self) -> usize {
+        self.coordinate_journal.len()
+    }
+
+    pub fn coordinate_journal_enabled(&self) -> bool {
+        self.coordinate_journal_enabled
+    }
+
+    pub fn set_coordinate_journal_enabled(&mut self, enabled: bool) {
+        self.coordinate_journal_enabled = enabled;
+        if !enabled {
+            self.coordinate_journal.clear();
+        }
+    }
+
+    pub fn coordinate_journal(&self) -> Vec<u8> {
+        encode_journal_records(self.coordinate_journal.clone())
+    }
+
+    pub fn clear_coordinate_journal(&mut self) {
+        self.coordinate_journal.clear();
+    }
+
+    pub fn drain_coordinate_journal(&mut self) -> Vec<u8> {
+        encode_journal_records(std::mem::take(&mut self.coordinate_journal))
+    }
+
+    pub fn coordinate_snapshot(&self) -> Vec<u8> {
+        encode_key_value_snapshot(
+            self.coordinate_values
+                .entries()
+                .into_iter()
+                .map(|(key, value)| (key, value)),
+        )
+    }
+
+    pub fn load_coordinate_snapshot_and_journal(
+        &mut self,
+        snapshot: Uint8Array,
+        journal: Uint8Array,
+    ) -> Result<usize, JsValue> {
+        let mut entries = if snapshot.length() == 0 {
+            Default::default()
+        } else {
+            decode_key_value_snapshot(&snapshot.to_vec()).map_err(decode_error)?
+        };
+        let journal_records = if journal.length() == 0 {
+            Vec::new()
+        } else {
+            decode_journal(&journal.to_vec()).map_err(decode_error)?
+        };
+        let operations = journal_records.len();
+        for record in journal_records {
+            match record {
+                JournalRecord {
+                    key,
+                    value: Some(value),
+                    ..
+                } => {
+                    entries.insert(key, value);
+                }
+                JournalRecord { key, .. } => {
+                    entries.shift_remove(&key);
+                }
+            }
+        }
+
+        self.shared_log.clear_entry_coordinates();
+        self.clear_coordinate_core();
+        for (_, value) in entries {
+            let coordinate = decode_coordinate_value(&value)?;
+            self.put_decoded_coordinate_core(coordinate, false)?;
+        }
+        self.coordinate_journal.clear();
+        Ok(operations)
     }
 
     pub fn graph_has_many(&self, hashes: Array) -> Result<Array, JsValue> {
@@ -846,6 +935,7 @@ impl NativePeerbitBackbone {
     fn clear_coordinate_core(&mut self) {
         self.coordinate_index.clear();
         self.coordinate_values.clear();
+        self.coordinate_journal.clear();
     }
 
     fn put_coordinate_core_from_parts(
@@ -866,6 +956,7 @@ impl NativePeerbitBackbone {
             coordinates,
             assigned_to_range_boundary,
             requested_replicas,
+            true,
         );
         Ok(())
     }
@@ -895,6 +986,31 @@ impl NativePeerbitBackbone {
         self.delete_coordinate_core_batch(delete_hashes)
     }
 
+    fn put_decoded_coordinate_core(
+        &mut self,
+        coordinate: CoordinateCoreValue,
+        record_journal: bool,
+    ) -> Result<(), JsValue> {
+        self.shared_log.put_entry_coordinates(
+            coordinate.hash.clone(),
+            coordinate.gid.clone(),
+            coordinate.hash_number.to_string(),
+            number_strings_to_array(&coordinate.coordinates),
+            coordinate.assigned_to_range_boundary,
+            coordinate.requested_replicas,
+        )?;
+        self.put_coordinate_core(
+            coordinate.hash,
+            coordinate.gid,
+            coordinate.hash_number,
+            coordinate.coordinates,
+            coordinate.assigned_to_range_boundary,
+            coordinate.requested_replicas,
+            record_journal,
+        );
+        Ok(())
+    }
+
     fn put_coordinate_core(
         &mut self,
         hash: String,
@@ -903,6 +1019,7 @@ impl NativePeerbitBackbone {
         coordinates: Vec<u64>,
         assigned_to_range_boundary: bool,
         requested_replicas: usize,
+        record_journal: bool,
     ) {
         let mut fields = DocumentFields::with_scalar_capacity(6 + coordinates.len());
         fields.insert_scalar(FieldPath::Id(COORD_HASH_FIELD), hash.clone());
@@ -928,12 +1045,25 @@ impl NativePeerbitBackbone {
             assigned_to_range_boundary,
             requested_replicas,
         );
+        let journal_record = if record_journal {
+            Some(JournalRecord::put(hash.clone(), value.clone()))
+        } else {
+            None
+        };
         self.coordinate_index.put(hash.clone(), fields);
         self.coordinate_values.put(hash, value);
+        if self.coordinate_journal_enabled {
+            if let Some(record) = journal_record {
+                self.coordinate_journal.push(record);
+            }
+        }
     }
 
     fn delete_coordinate_core(&mut self, hash: &str) -> bool {
         self.coordinate_index.delete(hash.to_string());
+        if self.coordinate_journal_enabled {
+            self.coordinate_journal.push(JournalRecord::delete(hash));
+        }
         self.coordinate_values.delete(hash)
     }
 
@@ -1204,10 +1334,27 @@ fn coordinate_numbers_from_array(values: Array) -> Result<Vec<u64>, JsValue> {
     Ok(out)
 }
 
+fn number_strings_to_array(values: &[u64]) -> Array {
+    let out = Array::new();
+    for value in values {
+        out.push(&JsValue::from_str(&value.to_string()));
+    }
+    out
+}
+
 fn parse_u64_string(value: &str, label: &str) -> Result<u64, JsValue> {
     value
         .parse::<u64>()
         .map_err(|_| JsValue::from_str(&format!("Expected {label} u64 string")))
+}
+
+struct CoordinateCoreValue {
+    hash: String,
+    gid: String,
+    hash_number: u64,
+    coordinates: Vec<u64>,
+    assigned_to_range_boundary: bool,
+    requested_replicas: usize,
 }
 
 fn encode_coordinate_value(
@@ -1231,9 +1378,86 @@ fn encode_coordinate_value(
     out
 }
 
+fn decode_coordinate_value(bytes: &[u8]) -> Result<CoordinateCoreValue, JsValue> {
+    let mut offset = 0usize;
+    let hash = read_encoded_string(bytes, &mut offset, "coordinate hash")?;
+    let gid = read_encoded_string(bytes, &mut offset, "coordinate gid")?;
+    let hash_number = read_u64(bytes, &mut offset, "coordinate hash number")?;
+    let assigned_to_range_boundary = read_bool(bytes, &mut offset, "assigned to range boundary")?;
+    let requested_replicas = read_u64(bytes, &mut offset, "requested replicas")? as usize;
+    let coordinate_count = read_u32(bytes, &mut offset, "coordinate count")? as usize;
+    let mut coordinates = Vec::with_capacity(coordinate_count);
+    for _ in 0..coordinate_count {
+        coordinates.push(read_u64(bytes, &mut offset, "coordinate value")?);
+    }
+    if offset != bytes.len() {
+        return Err(JsValue::from_str("Trailing coordinate value bytes"));
+    }
+    Ok(CoordinateCoreValue {
+        hash,
+        gid,
+        hash_number,
+        coordinates,
+        assigned_to_range_boundary,
+        requested_replicas,
+    })
+}
+
 fn write_string(out: &mut Vec<u8>, value: &str) {
     out.extend_from_slice(&(value.len() as u32).to_le_bytes());
     out.extend_from_slice(value.as_bytes());
+}
+
+fn read_u32(bytes: &[u8], offset: &mut usize, label: &str) -> Result<u32, JsValue> {
+    let end = offset
+        .checked_add(4)
+        .ok_or_else(|| JsValue::from_str(&format!("Truncated {label}")))?;
+    if end > bytes.len() {
+        return Err(JsValue::from_str(&format!("Truncated {label}")));
+    }
+    let value = u32::from_le_bytes(bytes[*offset..end].try_into().unwrap());
+    *offset = end;
+    Ok(value)
+}
+
+fn read_u64(bytes: &[u8], offset: &mut usize, label: &str) -> Result<u64, JsValue> {
+    let end = offset
+        .checked_add(8)
+        .ok_or_else(|| JsValue::from_str(&format!("Truncated {label}")))?;
+    if end > bytes.len() {
+        return Err(JsValue::from_str(&format!("Truncated {label}")));
+    }
+    let value = u64::from_le_bytes(bytes[*offset..end].try_into().unwrap());
+    *offset = end;
+    Ok(value)
+}
+
+fn read_bool(bytes: &[u8], offset: &mut usize, label: &str) -> Result<bool, JsValue> {
+    if *offset >= bytes.len() {
+        return Err(JsValue::from_str(&format!("Truncated {label}")));
+    }
+    let value = bytes[*offset] != 0;
+    *offset += 1;
+    Ok(value)
+}
+
+fn read_encoded_string(bytes: &[u8], offset: &mut usize, label: &str) -> Result<String, JsValue> {
+    let length = read_u32(bytes, offset, label)? as usize;
+    let end = offset
+        .checked_add(length)
+        .ok_or_else(|| JsValue::from_str(&format!("Truncated {label}")))?;
+    if end > bytes.len() {
+        return Err(JsValue::from_str(&format!("Truncated {label}")));
+    }
+    let value = std::str::from_utf8(&bytes[*offset..end])
+        .map_err(|_| JsValue::from_str(&format!("Invalid utf-8 {label}")))?
+        .to_string();
+    *offset = end;
+    Ok(value)
+}
+
+fn decode_error(error: impl std::fmt::Display) -> JsValue {
+    JsValue::from_str(&error.to_string())
 }
 
 fn hash_number_string(resolution: &str, digest: &[u8]) -> Result<String, JsValue> {

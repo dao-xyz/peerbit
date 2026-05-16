@@ -113,7 +113,7 @@ impl DurableIndexState {
         encode_key_value_snapshot(
             self.entries
                 .iter()
-                .map(|(key, value)| (key.as_str(), value)),
+                .map(|(key, value)| (key.as_str(), value.as_slice())),
         )
     }
 }
@@ -168,15 +168,20 @@ pub fn decode_value_snapshot(bytes: &[u8]) -> Result<Vec<Vec<u8>>, DecodeError> 
     Ok(values)
 }
 
-pub fn encode_key_value_snapshot<'a>(
-    entries: impl IntoIterator<Item = (&'a str, &'a Vec<u8>)>,
-) -> Vec<u8> {
-    let entries: Vec<_> = entries.into_iter().collect();
+pub fn encode_key_value_snapshot<K, V>(entries: impl IntoIterator<Item = (K, V)>) -> Vec<u8>
+where
+    K: AsRef<str>,
+    V: AsRef<[u8]>,
+{
+    let entries: Vec<(String, Vec<u8>)> = entries
+        .into_iter()
+        .map(|(key, value)| (key.as_ref().to_string(), value.as_ref().to_vec()))
+        .collect();
     let mut payload = Vec::new();
     write_u32(&mut payload, entries.len() as u32);
     for (key, value) in entries {
-        write_string(&mut payload, key);
-        write_bytes(&mut payload, value);
+        write_string(&mut payload, &key);
+        write_bytes(&mut payload, &value);
     }
     encode_envelope(KEY_VALUE_SNAPSHOT_MAGIC, &payload)
 }
@@ -237,6 +242,12 @@ pub fn encode_journal_record(payload: &[u8]) -> Vec<u8> {
 pub fn encode_journal(records: impl IntoIterator<Item = JournalRecord>) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(JOURNAL_MAGIC);
+    out.extend_from_slice(&encode_journal_records(records));
+    out
+}
+
+pub fn encode_journal_records(records: impl IntoIterator<Item = JournalRecord>) -> Vec<u8> {
+    let mut out = Vec::new();
     for record in records {
         out.extend_from_slice(&encode_journal_record(&encode_journal_payload(&record)));
     }

@@ -11,6 +11,18 @@ type NativePeerbitBackboneHandle = {
 	coordinate_index_len: () => number;
 	coordinate_value_len: () => number;
 	coordinate_index_has_hash: (hash: string) => boolean;
+	coordinate_journal_header: () => Uint8Array;
+	coordinate_pending_journal_len: () => number;
+	coordinate_journal_enabled: () => boolean;
+	set_coordinate_journal_enabled: (enabled: boolean) => void;
+	coordinate_journal: () => Uint8Array;
+	clear_coordinate_journal: () => void;
+	drain_coordinate_journal: () => Uint8Array;
+	coordinate_snapshot: () => Uint8Array;
+	load_coordinate_snapshot_and_journal: (
+		snapshot: Uint8Array,
+		journal: Uint8Array,
+	) => number;
 	graph_has_many: (hashes: string[]) => string[];
 	graph_put: (
 		hash: string,
@@ -477,6 +489,23 @@ export type NativeBackboneOptions = {
 	privateKey: Uint8Array;
 	publicKey: Uint8Array;
 };
+
+export type NativeBackboneCoordinatePersistenceFiles = {
+	snapshot?: string;
+	journal?: string;
+};
+
+export type NativeBackboneCoordinatePersistenceStore = {
+	read(name: string): Promise<Uint8Array | undefined>;
+	write(name: string, bytes: Uint8Array): Promise<void>;
+	append(name: string, bytes: Uint8Array): Promise<void>;
+	remove?(name: string): Promise<void>;
+};
+
+export const nativeBackboneCoordinatePersistenceFiles = {
+	snapshot: "coordinates.bin",
+	journal: "coordinates.wal",
+} as const;
 
 const rowsToNumbers = (
 	resolution: RangeResolution,
@@ -1225,6 +1254,48 @@ export class NativePeerbitBackbone {
 		return this.native.coordinate_index_has_hash(hash);
 	}
 
+	get coordinatePendingJournalLength(): number {
+		return this.native.coordinate_pending_journal_len();
+	}
+
+	get coordinateJournalEnabled(): boolean {
+		return this.native.coordinate_journal_enabled();
+	}
+
+	setCoordinateJournalEnabled(enabled: boolean): void {
+		this.native.set_coordinate_journal_enabled(enabled);
+	}
+
+	coordinateJournalHeader(): Uint8Array {
+		return this.native.coordinate_journal_header();
+	}
+
+	coordinateJournal(): Uint8Array {
+		return this.native.coordinate_journal();
+	}
+
+	clearCoordinateJournal(): void {
+		this.native.clear_coordinate_journal();
+	}
+
+	drainCoordinateJournal(): Uint8Array {
+		return this.native.drain_coordinate_journal();
+	}
+
+	coordinateSnapshot(): Uint8Array {
+		return this.native.coordinate_snapshot();
+	}
+
+	loadCoordinateSnapshotAndJournal(
+		snapshot?: Uint8Array,
+		journal?: Uint8Array,
+	): number {
+		return this.native.load_coordinate_snapshot_and_journal(
+			snapshot ?? new Uint8Array(),
+			journal ?? new Uint8Array(),
+		);
+	}
+
 	clear(): void {
 		this.native.clear();
 	}
@@ -1490,6 +1561,57 @@ export class NativePeerbitBackbone {
 						input.trimLengthTo,
 					);
 		return storageAppendResultFromRow(this.resolution, row);
+	}
+}
+
+export class NativeBackboneCoordinatePersistence {
+	private readonly snapshotFile: string;
+	private readonly journalFile: string;
+
+	constructor(
+		private readonly store: NativeBackboneCoordinatePersistenceStore,
+		files: NativeBackboneCoordinatePersistenceFiles = {},
+	) {
+		this.snapshotFile =
+			files.snapshot ?? nativeBackboneCoordinatePersistenceFiles.snapshot;
+		this.journalFile =
+			files.journal ?? nativeBackboneCoordinatePersistenceFiles.journal;
+	}
+
+	async hydrate(backbone: NativePeerbitBackbone): Promise<number> {
+		const [snapshot, journal] = await Promise.all([
+			this.store.read(this.snapshotFile),
+			this.store.read(this.journalFile),
+		]);
+		const operations = backbone.loadCoordinateSnapshotAndJournal(
+			snapshot,
+			journal,
+		);
+		backbone.setCoordinateJournalEnabled(true);
+		return operations;
+	}
+
+	async flushJournal(backbone: NativePeerbitBackbone): Promise<number> {
+		const records = backbone.coordinateJournal();
+		if (records.byteLength === 0) {
+			return 0;
+		}
+		const existing = await this.store.read(this.journalFile);
+		if (!existing || existing.byteLength === 0) {
+			await this.store.append(
+				this.journalFile,
+				backbone.coordinateJournalHeader(),
+			);
+		}
+		await this.store.append(this.journalFile, records);
+		backbone.clearCoordinateJournal();
+		return records.byteLength;
+	}
+
+	async compact(backbone: NativePeerbitBackbone): Promise<void> {
+		await this.store.write(this.snapshotFile, backbone.coordinateSnapshot());
+		await this.store.remove?.(this.journalFile);
+		backbone.clearCoordinateJournal();
 	}
 }
 

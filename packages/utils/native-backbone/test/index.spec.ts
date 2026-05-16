@@ -1,5 +1,9 @@
 import { expect } from "chai";
-import { createNativePeerbitBackbone } from "../src/index.js";
+import {
+	NativeBackboneCoordinatePersistence,
+	createNativePeerbitBackbone,
+	type NativeBackboneCoordinatePersistenceStore,
+} from "../src/index.js";
 
 const fromHex = (hex: string) =>
 	Uint8Array.from(
@@ -12,6 +16,40 @@ const privateKey = fromHex(
 const publicKey = fromHex(
 	"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
 );
+
+const concatBytes = (chunks: Uint8Array[]) => {
+	const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+	const out = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		out.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return out;
+};
+
+class MemoryCoordinatePersistenceStore
+	implements NativeBackboneCoordinatePersistenceStore
+{
+	readonly files = new Map<string, Uint8Array>();
+
+	async read(name: string): Promise<Uint8Array | undefined> {
+		return this.files.get(name);
+	}
+
+	async write(name: string, bytes: Uint8Array): Promise<void> {
+		this.files.set(name, bytes.slice());
+	}
+
+	async append(name: string, bytes: Uint8Array): Promise<void> {
+		const existing = this.files.get(name);
+		this.files.set(name, existing ? concatBytes([existing, bytes]) : bytes.slice());
+	}
+
+	async remove(name: string): Promise<void> {
+		this.files.delete(name);
+	}
+}
 
 describe("native peerbit backbone", () => {
 	it("commits lower-log blocks and shared-log coordinates in one native call", async () => {
@@ -239,5 +277,109 @@ describe("native peerbit backbone", () => {
 		expect(backbone.coordinateIndexLength).to.equal(1);
 		expect(backbone.hasCoordinateIndexHash(first.entry.hash)).equal(false);
 		expect(backbone.hasCoordinateIndexHash(second.entry.hash)).equal(true);
+	});
+
+	it("replays shared-log coordinate state from native WAL bytes", async () => {
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const target = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+
+		source.setCoordinateJournalEnabled(true);
+		source.putEntryCoordinates("hash-a", "gid-a", [1n], false, 1, 1n);
+		source.commitEntryCoordinates(
+			"hash-b",
+			"gid-b",
+			[2n],
+			["hash-a"],
+			true,
+			1,
+			2n,
+		);
+		expect(source.coordinatePendingJournalLength).to.equal(3);
+		const journal = concatBytes([
+			source.coordinateJournalHeader(),
+			source.drainCoordinateJournal(),
+		]);
+
+		expect(source.coordinatePendingJournalLength).to.equal(0);
+		expect(target.loadCoordinateSnapshotAndJournal(undefined, journal)).to.equal(3);
+		expect(target.getEntryCoordinateHashes()).to.deep.equal(["hash-b"]);
+		expect(target.coordinateIndexLength).to.equal(1);
+		expect(target.coordinateValueLength).to.equal(1);
+		expect(target.hasCoordinateIndexHash("hash-a")).equal(false);
+		expect(target.hasCoordinateIndexHash("hash-b")).equal(true);
+	});
+
+	it("restores shared-log coordinate state from a native snapshot", async () => {
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const target = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+
+		source.putEntryCoordinates("hash-a", "gid-a", [1n], false, 1, 1n);
+		source.putEntryCoordinates("hash-b", "gid-b", [2n, 3n], true, 2, 2n);
+		source.drainCoordinateJournal();
+		const snapshot = source.coordinateSnapshot();
+
+		expect(target.loadCoordinateSnapshotAndJournal(snapshot)).to.equal(0);
+		expect(target.getEntryCoordinateHashes()).to.deep.equal(["hash-a", "hash-b"]);
+		expect(target.coordinateIndexLength).to.equal(2);
+		expect(target.coordinateValueLength).to.equal(2);
+		expect(target.hasCoordinateIndexHash("hash-a")).equal(true);
+		expect(target.hasCoordinateIndexHash("hash-b")).equal(true);
+		expect(target.coordinatePendingJournalLength).to.equal(0);
+	});
+
+	it("flushes and compacts native coordinate state through the persistence adapter", async () => {
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const restored = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const compacted = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const store = new MemoryCoordinatePersistenceStore();
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+
+		expect(source.coordinateJournalEnabled).equal(false);
+		await persistence.hydrate(source);
+		expect(source.coordinateJournalEnabled).equal(true);
+		source.putEntryCoordinates("hash-a", "gid-a", [1n], false, 1, 1n);
+		const journalBytes = await persistence.flushJournal(source);
+		expect(journalBytes).to.be.greaterThan(0);
+		expect(source.coordinatePendingJournalLength).to.equal(0);
+		expect(await persistence.hydrate(restored)).to.equal(1);
+		expect(restored.getEntryCoordinateHashes()).to.deep.equal(["hash-a"]);
+
+		source.putEntryCoordinates("hash-b", "gid-b", [2n], false, 1, 2n);
+		await persistence.compact(source);
+		expect(store.files.has("coordinates.wal")).equal(false);
+		expect(await persistence.hydrate(compacted)).to.equal(0);
+		expect(compacted.getEntryCoordinateHashes()).to.deep.equal([
+			"hash-a",
+			"hash-b",
+		]);
+		expect(compacted.coordinateIndexLength).to.equal(2);
 	});
 });
