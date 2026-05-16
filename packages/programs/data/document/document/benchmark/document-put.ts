@@ -10,7 +10,12 @@ import {
 import { Program, type ProgramClient } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import { createRustPeerbitOptions } from "peerbit/rust";
-import { Documents, type SetupOptions, policy, transform } from "../src/index.js";
+import {
+	Documents,
+	type SetupOptions,
+	policy,
+	transform,
+} from "../src/index.js";
 
 // Run with:
 //   cd packages/programs/data/document/document
@@ -278,6 +283,49 @@ const payload = new Uint8Array(payloadBytes);
 for (let i = 0; i < payload.length; i++) {
 	payload[i] = i % 256;
 }
+
+const writeU32 = (out: number[], value: number) => {
+	out.push(
+		value & 0xff,
+		(value >> 8) & 0xff,
+		(value >> 16) & 0xff,
+		value >>> 24,
+	);
+};
+
+const writeString = (out: number[], value: string) => {
+	const bytes = new TextEncoder().encode(value);
+	writeU32(out, bytes.byteLength);
+	out.push(...bytes);
+};
+
+const nativeCeilingContextSchemaIr = () => {
+	const out: number[] = [1, 14];
+	writeU32(out, 1);
+	out.push(0);
+	writeU32(out, 5);
+	writeString(out, "created");
+	writeU32(out, 1);
+	writeU32(out, 101);
+	out.push(4);
+	writeString(out, "modified");
+	writeU32(out, 2);
+	writeU32(out, 102);
+	out.push(4);
+	writeString(out, "head");
+	writeU32(out, 3);
+	writeU32(out, 103);
+	out.push(12);
+	writeString(out, "gid");
+	writeU32(out, 4);
+	writeU32(out, 104);
+	out.push(12);
+	writeString(out, "size");
+	writeU32(out, 5);
+	writeU32(out, 105);
+	out.push(3);
+	return Uint8Array.from(out);
+};
 
 const fromHex = (hex: string) =>
 	Uint8Array.from(
@@ -678,30 +726,30 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				profile,
 				"documentBackendIndexPutMs",
 			),
-				patchAsyncMethod(
-					store.docs.index,
-					"putWithContext",
-					profile,
-					"documentIndexPutMs",
-				),
-				patchAsyncMethod(
-					store.docs.index,
-					"_putStoredIdentityWithContext",
-					profile,
-					"documentIndexPutMs",
-				),
-				patchAsyncMethod(
-					store.docs.index,
-					"_putPreparedNativeBackboneDocumentIndexWithContext",
-					profile,
-					"documentIndexPutMs",
-				),
-				patchAsyncMethod(
-					store.docs.index,
-					"_putIdentityWithContext",
-					profile,
-					"documentIndexPutMs",
-				),
+			patchAsyncMethod(
+				store.docs.index,
+				"putWithContext",
+				profile,
+				"documentIndexPutMs",
+			),
+			patchAsyncMethod(
+				store.docs.index,
+				"_putStoredIdentityWithContext",
+				profile,
+				"documentIndexPutMs",
+			),
+			patchAsyncMethod(
+				store.docs.index,
+				"_putPreparedNativeBackboneDocumentIndexWithContext",
+				profile,
+				"documentIndexPutMs",
+			),
+			patchAsyncMethod(
+				store.docs.index,
+				"_putIdentityWithContext",
+				profile,
+				"documentIndexPutMs",
+			),
 			patchAsyncMethod(
 				store.docs.index,
 				"putManyWithContext",
@@ -1086,9 +1134,21 @@ const runNativeBackboneCeilingScenario = async (
 		privateKey: nativeBackbonePrivateKey,
 		publicKey: nativeBackbonePublicKey,
 	});
+	const useDocumentIndex = scenarioUsesNativeBackboneDocumentIndex(name);
+	if (useDocumentIndex) {
+		backbone.configureDocumentSchemaIr(nativeCeilingContextSchemaIr());
+	}
+	const documentValuePrefix = new Uint8Array(0);
 
 	const append = (count: number, profile?: Profile) => {
 		for (let i = 0; i < count; i++) {
+			const documentIndex = useDocumentIndex
+				? {
+						key: `native-backbone-ceiling-doc-${i}`,
+						valuePrefixBytes: documentValuePrefix,
+						byteElementIndexLimit: 0,
+					}
+				: undefined;
 			const runAppend = () =>
 				backbone.appendPlainNoNextTransaction({
 					wallTime: BigInt(Date.now()),
@@ -1098,6 +1158,7 @@ const runNativeBackboneCeilingScenario = async (
 					replicas: 1,
 					selfHash: "native-backbone-ceiling-peer",
 					trimLengthTo: 100,
+					documentIndex,
 				});
 			if (profile) {
 				timeSync(profile, "totalPutMs", runAppend);

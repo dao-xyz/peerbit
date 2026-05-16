@@ -77,6 +77,34 @@ const encodedDocumentWithIdScoreAndBytes = () => {
 	return Uint8Array.from(out);
 };
 
+const contextOnlySchema = () => {
+	const out: number[] = [1, 14];
+	writeU32(out, 1);
+	out.push(0);
+	writeU32(out, 5);
+	writeString(out, "created");
+	writeU32(out, 1);
+	writeU32(out, 101);
+	out.push(4);
+	writeString(out, "modified");
+	writeU32(out, 2);
+	writeU32(out, 102);
+	out.push(4);
+	writeString(out, "head");
+	writeU32(out, 3);
+	writeU32(out, 103);
+	out.push(12);
+	writeString(out, "gid");
+	writeU32(out, 4);
+	writeU32(out, 104);
+	out.push(12);
+	writeString(out, "size");
+	writeU32(out, 5);
+	writeU32(out, 105);
+	out.push(3);
+	return Uint8Array.from(out);
+};
+
 class FakeOPFSWritable {
 	private position = 0;
 
@@ -357,12 +385,43 @@ describe("native peerbit backbone", () => {
 		expect(backbone.documentValueLength).to.equal(1);
 		expect(backbone.documentExactStringFirstKey(1, "abc")).to.equal("doc-1");
 		expect(backbone.hasDocumentExactString(1, "abc", "doc-1")).to.equal(true);
-		expect(Array.from(backbone.documentValueBytes("doc-1") ?? [])).to.deep.equal(
-			Array.from(encoded),
-		);
+		expect(
+			Array.from(backbone.documentValueBytes("doc-1") ?? []),
+		).to.deep.equal(Array.from(encoded));
 		expect(backbone.deleteDocument("doc-1")).to.equal(true);
 		expect(backbone.documentIndexLength).to.equal(0);
 		expect(backbone.documentValueLength).to.equal(0);
+	});
+
+	it("coalesces no-next appends with document index commits", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		backbone.configureDocumentSchemaIr(contextOnlySchema());
+
+		const result = backbone.appendPlainNoNextTransaction({
+			wallTime: 10n,
+			logical: 1,
+			gid: "gid-doc-index",
+			payloadData: new Uint8Array([1, 2, 3]),
+			replicas: 1,
+			selfHash: "peer",
+			documentIndex: {
+				key: "doc-1",
+				valuePrefixBytes: new Uint8Array(0),
+			},
+		});
+
+		expect(backbone.documentValueLength).to.equal(1);
+		expect(backbone.documentExactStringFirstKey(3, result.entry.hash)).to.equal(
+			"doc-1",
+		);
+		expect(backbone.documentExactStringFirstKey(4, "gid-doc-index")).to.equal(
+			"doc-1",
+		);
+		expect(backbone.documentValueBytes("doc-1")).to.exist;
 	});
 
 	it("coalesces trim deletes with shared-log coordinate state", async () => {

@@ -253,6 +253,41 @@ type NativePeerbitBackboneHandle = {
 		selfReplicating: boolean,
 		trimLengthTo: number,
 	) => unknown[];
+	append_plain_no_next_document_index_transaction: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKey: string,
+		documentValuePrefixBytes: Uint8Array,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+	) => unknown[];
+	append_plain_no_next_document_index_transaction_trim: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKey: string,
+		documentValuePrefixBytes: Uint8Array,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+		trimLengthTo: number,
+	) => unknown[];
 	prepare_plain_entry_commit_facts: (
 		wallTime: bigint,
 		logical: number,
@@ -2151,13 +2186,34 @@ export class NativePeerbitBackbone {
 			input.selfHash ?? "",
 			input.selfReplicating ?? true,
 		] as const;
+		const documentIndexArgs = input.documentIndex
+			? ([
+					input.documentIndex.key,
+					input.documentIndex.valuePrefixBytes,
+					input.documentIndex.existingCreated == null
+						? ""
+						: integerString(input.documentIndex.existingCreated),
+					input.documentIndex.byteElementIndexLimit ?? 0,
+				] as const)
+			: undefined;
 		const row =
 			input.trimLengthTo == null
-				? this.native.append_plain_no_next_transaction(...baseArgs)
-				: this.native.append_plain_no_next_transaction_trim(
-						...baseArgs,
-						input.trimLengthTo,
-					);
+				? documentIndexArgs
+					? this.native.append_plain_no_next_document_index_transaction(
+							...baseArgs,
+							...documentIndexArgs,
+						)
+					: this.native.append_plain_no_next_transaction(...baseArgs)
+				: documentIndexArgs
+					? this.native.append_plain_no_next_document_index_transaction_trim(
+							...baseArgs,
+							...documentIndexArgs,
+							input.trimLengthTo,
+						)
+					: this.native.append_plain_no_next_transaction_trim(
+							...baseArgs,
+							input.trimLengthTo,
+						);
 		return appendResultFromRow(this.resolution, row);
 	}
 
