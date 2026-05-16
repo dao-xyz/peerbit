@@ -502,6 +502,11 @@ export type NativeBackboneCoordinatePersistenceFiles = {
 	journal?: string;
 };
 
+export type NativeBackboneCoordinatePersistenceOptions =
+	NativeBackboneCoordinatePersistenceFiles & {
+		flushOnAppend?: boolean;
+	};
+
 export type NativeBackboneCoordinatePersistenceStore = {
 	read(name: string): Promise<Uint8Array | undefined>;
 	write(name: string, bytes: Uint8Array): Promise<void>;
@@ -512,6 +517,7 @@ export type NativeBackboneCoordinatePersistenceStore = {
 };
 
 export type NativeBackboneCoordinatePersistenceAdapter = {
+	flushOnAppend?: boolean;
 	hydrate(backbone: NativePeerbitBackbone): Promise<number>;
 	flushJournal(backbone: NativePeerbitBackbone): Promise<number>;
 	compact?(backbone: NativePeerbitBackbone): Promise<void>;
@@ -2031,18 +2037,20 @@ export class NativeBackboneBufferedCoordinatePersistenceStore
 }
 
 export class NativeBackboneCoordinatePersistence {
+	readonly flushOnAppend: boolean;
 	private readonly snapshotFile: string;
 	private readonly journalFile: string;
 	private journalInitialized: boolean | undefined;
 
 	constructor(
 		private readonly store: NativeBackboneCoordinatePersistenceStore,
-		files: NativeBackboneCoordinatePersistenceFiles = {},
+		options: NativeBackboneCoordinatePersistenceOptions = {},
 	) {
 		this.snapshotFile =
-			files.snapshot ?? nativeBackboneCoordinatePersistenceFiles.snapshot;
+			options.snapshot ?? nativeBackboneCoordinatePersistenceFiles.snapshot;
 		this.journalFile =
-			files.journal ?? nativeBackboneCoordinatePersistenceFiles.journal;
+			options.journal ?? nativeBackboneCoordinatePersistenceFiles.journal;
+		this.flushOnAppend = options.flushOnAppend ?? true;
 	}
 
 	async hydrate(backbone: NativePeerbitBackbone): Promise<number> {

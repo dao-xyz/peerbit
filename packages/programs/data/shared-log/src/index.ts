@@ -10048,10 +10048,12 @@ export class SharedLog<
 				this.coordinateToHash.add(coordinate, properties.hash);
 			}
 			if (useBackboneOnlyCoordinatePersistence) {
-				return mapMaybePromise(
-					this.flushNativeBackboneCoordinateJournal(),
-					() => true,
-				);
+				if (this.shouldFlushNativeBackboneCoordinateJournalOnAppend()) {
+					return mapMaybePromise(
+						this.flushNativeBackboneCoordinateJournal(),
+						() => true,
+					);
+				}
 			}
 			return true;
 		};
@@ -10088,6 +10090,10 @@ export class SharedLog<
 			return undefined;
 		}
 		return mapMaybePromise(persistence.flushJournal(backbone), () => undefined);
+	}
+
+	private shouldFlushNativeBackboneCoordinateJournalOnAppend(): boolean {
+		return this._nativeBackboneCoordinatePersistence?.flushOnAppend !== false;
 	}
 
 	private async closeNativeBackboneCoordinatePersistence(): Promise<void> {

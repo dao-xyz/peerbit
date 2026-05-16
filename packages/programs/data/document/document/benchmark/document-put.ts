@@ -154,6 +154,7 @@ type BenchRow = Profile & {
 	iterations: number;
 	payloadBytes: number;
 	opsPerSecond: number;
+	cleanupMs: number;
 };
 
 const deepProfileKeys = new Set<keyof Profile>([
@@ -314,7 +315,9 @@ const createNodeCoordinatePersistence = async (buffered: boolean) => {
 				maxBufferedBytes: 64 * 1024,
 			})
 		: nodeStore;
-	const persistence = new NativeBackboneCoordinatePersistence(store);
+	const persistence = new NativeBackboneCoordinatePersistence(store, {
+		flushOnAppend: !buffered,
+	});
 	return {
 		persistence,
 		cleanup: async () => {
@@ -460,6 +463,7 @@ const runPuts = async (
 
 const runScenario = async (name: string): Promise<BenchRow> => {
 	const { session, store, cleanup } = await openScenario(name);
+	let row: BenchRow | undefined;
 	try {
 		await runPuts(store, warmupIterations, name);
 
@@ -727,11 +731,12 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 			}
 		}
 
-		return {
+		row = {
 			name,
 			iterations,
 			payloadBytes,
 			opsPerSecond: Math.round((iterations / profile.totalPutMs) * 1000),
+			cleanupMs: 0,
 			...Object.fromEntries(
 				Object.entries(profile)
 					.filter(
@@ -742,16 +747,28 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 			),
 		} as BenchRow;
 	} finally {
+		const cleanupStarted = performance.now();
 		try {
-			await store.drop();
-		} finally {
 			try {
-				await session.stop();
+				await store.drop();
 			} finally {
-				await cleanup?.();
+				try {
+					await session.stop();
+				} finally {
+					await cleanup?.();
+				}
+			}
+		} finally {
+			if (row) {
+				row.cleanupMs =
+					Math.round((performance.now() - cleanupStarted) * 100) / 100;
 			}
 		}
 	}
+	if (!row) {
+		throw new Error(`Benchmark scenario ${name} did not produce a row`);
+	}
+	return row;
 };
 
 const runNativeCeilingScenario = async (name: string): Promise<BenchRow> => {
@@ -848,6 +865,7 @@ const runNativeCeilingScenario = async (name: string): Promise<BenchRow> => {
 			iterations,
 			payloadBytes,
 			opsPerSecond: Math.round((iterations / profile.totalPutMs) * 1000),
+			cleanupMs: 0,
 			...Object.fromEntries(
 				Object.entries(profile)
 					.filter(
@@ -902,6 +920,7 @@ const runNativeBackboneCeilingScenario = async (
 		iterations,
 		payloadBytes,
 		opsPerSecond: Math.round((iterations / profile.totalPutMs) * 1000),
+		cleanupMs: 0,
 		...Object.fromEntries(
 			Object.entries(profile)
 				.filter(

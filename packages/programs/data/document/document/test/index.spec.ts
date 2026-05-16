@@ -1129,6 +1129,7 @@ describe("index", () => {
 					new NativeBackboneBufferedCoordinatePersistenceStore(coordinateStore);
 				const coordinatePersistence = new NativeBackboneCoordinatePersistence(
 					bufferedCoordinateStore,
+					{ flushOnAppend: false },
 				);
 				store = new TestStore({
 					docs: new Documents<Document>(),
@@ -1148,6 +1149,7 @@ describe("index", () => {
 						id: uuid(),
 						name: "buffered-backbone-coordinate-wal",
 					});
+					const flushSpy = sinon.spy(coordinatePersistence, "flushJournal");
 					await store.docs.put(doc, {
 						unique: true,
 						replicate: false,
@@ -1156,13 +1158,17 @@ describe("index", () => {
 					const backbone = (store.docs.log as any)._nativeBackbone;
 					const coordinateHashes = backbone.getEntryCoordinateHashes();
 
+					expect(flushSpy.callCount).equal(0);
+					expect(backbone.coordinatePendingJournalLength).to.be.greaterThan(0);
 					expect(coordinateStore.files.has("coordinates.wal")).equal(false);
 					await store.close();
 					store = undefined;
 
+					expect(flushSpy.callCount).equal(1);
 					expect(
 						coordinateStore.files.get("coordinates.wal")?.byteLength,
 					).to.be.greaterThan(backbone.coordinateJournalHeader().byteLength);
+					expect(backbone.coordinatePendingJournalLength).to.equal(0);
 					const identity = rustSession.peers[0].identity as Ed25519Keypair;
 					const restoredBackbone = await createNativePeerbitBackbone({
 						clockId: identity.publicKey.bytes,
