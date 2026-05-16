@@ -372,6 +372,46 @@ describe("native peerbit backbone", () => {
 		expect(coordinate?.metaBytes.byteLength).to.be.greaterThan(0);
 	});
 
+	it("coalesces committed storage-backed appends without returning block bytes", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+
+		const first = backbone.preparePlainCommittedStorageAppendTransaction({
+			wallTime: 1n,
+			gid: "gid-storage-committed",
+			payloadData: new Uint8Array([1]),
+			replicas: 1,
+			selfHash: "peer-a",
+		});
+		const second = backbone.preparePlainCommittedStorageAppendTransaction({
+			wallTime: 2n,
+			gid: "gid-storage-committed",
+			next: [first.entry.hash],
+			payloadData: new Uint8Array([2]),
+			replicas: 1,
+			selfHash: "peer-a",
+			trimLengthTo: 1,
+		});
+
+		expect(first.entry.bytes).equal(undefined);
+		expect(first.entry.hashDigestBytes).to.have.length.greaterThan(0);
+		expect(backbone.hasLogEntry(first.entry.hash)).equal(false);
+		expect(backbone.hasBlock(first.entry.hash)).equal(false);
+		expect(second.entry.bytes).equal(undefined);
+		expect(second.entry.next).to.deep.equal([first.entry.hash]);
+		expect(second.trimmed.map((entry) => entry.hash)).to.deep.equal([
+			first.entry.hash,
+		]);
+		expect(backbone.hasLogEntry(second.entry.hash)).equal(true);
+		expect(backbone.hasBlock(second.entry.hash)).equal(true);
+		expect(backbone.getEntryCoordinateHashes()).to.deep.equal([
+			second.entry.hash,
+		]);
+	});
+
 	it("coalesces storage-backed append with next into shared-log coordinate state", async () => {
 		const backbone = await createNativePeerbitBackbone({
 			clockId: publicKey,

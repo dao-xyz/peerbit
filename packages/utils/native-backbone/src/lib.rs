@@ -856,6 +856,7 @@ impl NativePeerbitBackbone {
             self_hash,
             self_replicating,
             None,
+            false,
         )
     }
 
@@ -889,6 +890,7 @@ impl NativePeerbitBackbone {
             self_hash,
             self_replicating,
             Some(trim_length_to),
+            false,
         )
     }
 
@@ -922,6 +924,7 @@ impl NativePeerbitBackbone {
             self_hash,
             self_replicating,
             None,
+            false,
         )
     }
 
@@ -956,6 +959,76 @@ impl NativePeerbitBackbone {
             self_hash,
             self_replicating,
             Some(trim_length_to),
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_committed_storage_append_transaction(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next_hashes: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+    ) -> Result<Array, JsValue> {
+        self.prepare_plain_storage_append_transaction_inner(
+            wall_time,
+            logical,
+            gid,
+            next_hashes,
+            entry_type,
+            meta_data,
+            payload_data,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            None,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_committed_storage_append_transaction_trim(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next_hashes: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        trim_length_to: usize,
+    ) -> Result<Array, JsValue> {
+        self.prepare_plain_storage_append_transaction_inner(
+            wall_time,
+            logical,
+            gid,
+            next_hashes,
+            entry_type,
+            meta_data,
+            payload_data,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            Some(trim_length_to),
+            true,
         )
     }
 }
@@ -1232,48 +1305,81 @@ impl NativePeerbitBackbone {
         self_hash: String,
         self_replicating: bool,
         trim_length_to: Option<usize>,
+        commit_blocks: bool,
     ) -> Result<Array, JsValue> {
         let (entry_row, trim_rows) = if let Some(trim_length_to) = trim_length_to {
-            let row = self
-                .log
-                .prepare_entry_v0_plain_entry_storage_facts_trim_and_put_with_builder(
-                    &self.builder,
-                    wall_time,
-                    logical,
-                    gid.clone(),
-                    next_hashes.clone(),
-                    entry_type,
-                    meta_data,
-                    payload_data,
-                    trim_length_to,
-                )?;
+            let row = if commit_blocks {
+                self.log
+                    .prepare_entry_v0_plain_entry_commit_facts_trim_and_put_with_builder(
+                        &self.builder,
+                        &mut self.blocks,
+                        wall_time,
+                        logical,
+                        gid.clone(),
+                        next_hashes.clone(),
+                        entry_type,
+                        meta_data,
+                        payload_data,
+                        trim_length_to,
+                    )?
+            } else {
+                self.log
+                    .prepare_entry_v0_plain_entry_storage_facts_trim_and_put_with_builder(
+                        &self.builder,
+                        wall_time,
+                        logical,
+                        gid.clone(),
+                        next_hashes.clone(),
+                        entry_type,
+                        meta_data,
+                        payload_data,
+                        trim_length_to,
+                    )?
+            };
             let row = array_from_value(row.into(), "native storage trim append row")?;
             let entry_row = array_from_value(row.get(0), "native storage trim append entry row")?;
             let trim_rows = array_from_value(row.get(1), "native storage trim append trim rows")?;
             (entry_row, trim_rows)
         } else {
-            let row = self
-                .log
-                .prepare_entry_v0_plain_entry_storage_facts_and_put_with_builder(
-                    &self.builder,
-                    wall_time,
-                    logical,
-                    gid.clone(),
-                    next_hashes.clone(),
-                    entry_type,
-                    meta_data,
-                    payload_data,
-                )?;
+            let row = if commit_blocks {
+                self.log
+                    .prepare_entry_v0_plain_entry_commit_facts_and_put_with_builder(
+                        &self.builder,
+                        &mut self.blocks,
+                        wall_time,
+                        logical,
+                        gid.clone(),
+                        next_hashes.clone(),
+                        entry_type,
+                        meta_data,
+                        payload_data,
+                    )?
+            } else {
+                self.log
+                    .prepare_entry_v0_plain_entry_storage_facts_and_put_with_builder(
+                        &self.builder,
+                        wall_time,
+                        logical,
+                        gid.clone(),
+                        next_hashes.clone(),
+                        entry_type,
+                        meta_data,
+                        payload_data,
+                    )?
+            };
             (row, Array::new())
         };
 
-        let hash = string_field(&entry_row, 1, "storage entry hash")?;
-        let digest = bytes_field(&entry_row, 5, "storage entry hash digest")?;
+        let hash_index = if commit_blocks { 0 } else { 1 };
+        let digest_index = if commit_blocks { 4 } else { 5 };
+        let meta_index = if commit_blocks { 2 } else { 4 };
+        let hash = string_field(&entry_row, hash_index, "storage entry hash")?;
+        let digest = bytes_field(&entry_row, digest_index, "storage entry hash digest")?;
         let hash_number = hash_number_string(&self.resolution, &digest)?;
         let delete_hashes = trim_hashes(&trim_rows)?;
         let delete_hashes_for_core = delete_hashes.clone();
         let next_hashes_for_core = next_hashes.clone();
-        let meta_bytes = bytes_field(&entry_row, 4, "storage entry meta bytes")?;
+        let meta_bytes = bytes_field(&entry_row, meta_index, "storage entry meta bytes")?;
         let coordinate_row = self.shared_log.commit_local_append_for_gid_compact(
             hash,
             gid,

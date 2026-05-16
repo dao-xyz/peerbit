@@ -24,7 +24,6 @@ import { AbortError } from "@peerbit/time";
 import { CID } from "multiformats";
 import { type Block } from "multiformats/block";
 import PQueue from "p-queue";
-import { AnyBlockStore } from "./any-blockstore.js";
 import type { BlockStore } from "./interface.js";
 
 export const logger = loggerFn("peerbit:transport:blocks");
@@ -97,7 +96,7 @@ export class RemoteBlocks implements IBlocks {
 
 	constructor(
 		readonly options: {
-			local: AnyBlockStore;
+			local: BlockStore;
 			localTimeout?: number;
 			messageProcessingConcurrency?: number;
 			publicKey: PublicSignKey;
@@ -357,6 +356,14 @@ export class RemoteBlocks implements IBlocks {
 		const cids = await this.localStore.putKnownMany(blocks);
 		await this.notifyPuts(cids);
 		return cids;
+	}
+
+	async notifyStored(cid: string): Promise<void> {
+		await this.notifyPut(cid);
+	}
+
+	async notifyStoredMany(cids: string[]): Promise<void> {
+		await this.notifyPuts(cids);
 	}
 
 	private async notifyPut(cid: string) {

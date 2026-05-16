@@ -905,10 +905,11 @@ describe("index", () => {
 					const doc = new Document({ id: uuid(), name: "backbone-remote" });
 					const put = await store.docs.put(doc, { unique: true });
 
+					expect(sharedLog.remoteBlocks.localStore).equal(backbone.blocks);
 					expect(remotePutKnownSpy.callCount).equal(1);
 					expect(backbonePlanSpy.callCount).equal(1);
 					expect(backbone.hasLogEntry(put.entry.hash)).equal(true);
-					expect(backbone.hasBlock(put.entry.hash)).equal(false);
+					expect(backbone.hasBlock(put.entry.hash)).equal(true);
 					expect(backbone.getEntryCoordinateHashes()).to.include(
 						put.entry.hash,
 					);
@@ -926,7 +927,7 @@ describe("index", () => {
 				}
 			});
 
-			it("uses the native backbone storage transaction for local replicated no-next puts", async () => {
+			it("uses the native backbone committed storage transaction for local replicated no-next puts", async () => {
 				const rustSession = await TestSession.connected(
 					1,
 					createRustPeerbitOptions(),
@@ -948,7 +949,7 @@ describe("index", () => {
 				const backbone = sharedLog._nativeBackbone;
 				const backboneStorageTransactionSpy = sinon.spy(
 					backbone,
-					"preparePlainStorageAppendTransaction",
+					"preparePlainCommittedStorageAppendTransaction",
 				);
 
 				try {
@@ -987,7 +988,7 @@ describe("index", () => {
 				}
 			});
 
-			it("uses the native backbone storage transaction for update puts with next", async () => {
+			it("uses the native backbone committed storage transaction for update puts with next", async () => {
 				const rustSession = await TestSession.connected(
 					1,
 					createRustPeerbitOptions(),
@@ -1006,7 +1007,7 @@ describe("index", () => {
 				const backbone = sharedLog._nativeBackbone;
 				const backboneStorageTransactionSpy = sinon.spy(
 					backbone,
-					"preparePlainStorageAppendTransaction",
+					"preparePlainCommittedStorageAppendTransaction",
 				);
 				const backboneCoordinatePersistSpy = sinon.spy(
 					sharedLog,

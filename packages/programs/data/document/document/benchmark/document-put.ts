@@ -153,13 +153,18 @@ type Profile = {
 	sharedLeaderContextMs: number;
 	sharedCoordinatePrepareMs: number;
 	sharedPersistCoordinateMs: number;
+	sharedNativeBackboneStorageTransactionMs: number;
+	nativeBackbonePrepareStorageAppendMs: number;
 	logAppendMs: number;
+	logAppendNativeCommitOnlyMs: number;
 	logGetNextsForAppendMs: number;
 	logCreateNativeAppendChainMs: number;
 	logPutNativeCommittedAppendMs: number;
 	logPutAppendEntriesMs: number;
 	logTrimMs: number;
 	logTrimUnfilteredLengthMs: number;
+	logConsumeNativeTrimmedEntriesMs: number;
+	remoteBlockPutKnownMs: number;
 	documentIndexPutMs: number;
 	documentIndexTransformMs: number;
 	documentBackendIndexPutMs: number;
@@ -181,12 +186,17 @@ const deepProfileKeys = new Set<keyof Profile>([
 	"sharedLeaderContextMs",
 	"sharedCoordinatePrepareMs",
 	"sharedPersistCoordinateMs",
+	"sharedNativeBackboneStorageTransactionMs",
+	"nativeBackbonePrepareStorageAppendMs",
+	"logAppendNativeCommitOnlyMs",
 	"logGetNextsForAppendMs",
 	"logCreateNativeAppendChainMs",
 	"logPutNativeCommittedAppendMs",
 	"logPutAppendEntriesMs",
 	"logTrimMs",
 	"logTrimUnfilteredLengthMs",
+	"logConsumeNativeTrimmedEntriesMs",
+	"remoteBlockPutKnownMs",
 ]);
 
 const emptyProfile = (): Profile => ({
@@ -199,13 +209,18 @@ const emptyProfile = (): Profile => ({
 	sharedLeaderContextMs: 0,
 	sharedCoordinatePrepareMs: 0,
 	sharedPersistCoordinateMs: 0,
+	sharedNativeBackboneStorageTransactionMs: 0,
+	nativeBackbonePrepareStorageAppendMs: 0,
 	logAppendMs: 0,
+	logAppendNativeCommitOnlyMs: 0,
 	logGetNextsForAppendMs: 0,
 	logCreateNativeAppendChainMs: 0,
 	logPutNativeCommittedAppendMs: 0,
 	logPutAppendEntriesMs: 0,
 	logTrimMs: 0,
 	logTrimUnfilteredLengthMs: 0,
+	logConsumeNativeTrimmedEntriesMs: 0,
+	remoteBlockPutKnownMs: 0,
 	documentIndexPutMs: 0,
 	documentIndexTransformMs: 0,
 	documentBackendIndexPutMs: 0,
@@ -693,27 +708,57 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 					"sharedPersistCoordinateMs",
 				),
 				patchAsyncMethod(
+					store.docs.log as any,
+					"appendLocallyPreparedPayloadNativeBackboneStorageTransaction",
+					profile,
+					"sharedNativeBackboneStorageTransactionMs",
+				),
+				patchSyncMethod(
+					(store.docs.log as any)._nativeBackbone ?? {},
+					"preparePlainStorageAppendTransaction",
+					profile,
+					"nativeBackbonePrepareStorageAppendMs",
+				),
+				patchSyncMethod(
+					(store.docs.log as any)._nativeBackbone ?? {},
+					"preparePlainCommittedStorageAppendTransaction",
+					profile,
+					"nativeBackbonePrepareStorageAppendMs",
+				),
+				patchAsyncMethod(
+					(store.docs.log as any).remoteBlocks ?? {},
+					"putKnown",
+					profile,
+					"remoteBlockPutKnownMs",
+				),
+				patchAsyncMethod(
 					store.docs.log.log as any,
 					"getNextsForAppend",
 					profile,
 					"logGetNextsForAppendMs",
 				),
 				patchAsyncMethod(
-				store.docs.log.log as any,
-				"createNativePlainAppendChain",
-				profile,
-				"logCreateNativeAppendChainMs",
-			),
-			patchAsyncMethod(
-				store.docs.log.log as any,
-				"createNativePlainAppendCommitOnly",
-				profile,
-				"logCreateNativeAppendChainMs",
-			),
-			patchAsyncMethod(
-				store.docs.log.log as any,
-				"createNativePlainAppendEntriesBatch",
-				profile,
+					store.docs.log.log as any,
+					"appendLocallyPreparedNativeCommitOnly",
+					profile,
+					"logAppendNativeCommitOnlyMs",
+				),
+				patchAsyncMethod(
+					store.docs.log.log as any,
+					"createNativePlainAppendChain",
+					profile,
+					"logCreateNativeAppendChainMs",
+				),
+				patchAsyncMethod(
+					store.docs.log.log as any,
+					"createNativePlainAppendCommitOnly",
+					profile,
+					"logCreateNativeAppendChainMs",
+				),
+				patchAsyncMethod(
+					store.docs.log.log as any,
+					"createNativePlainAppendEntriesBatch",
+					profile,
 					"logCreateNativeAppendChainMs",
 				),
 				patchAsyncMethod(
@@ -721,6 +766,18 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 					"putNativeCommittedAppend",
 					profile,
 					"logPutNativeCommittedAppendMs",
+				),
+				patchAsyncMethod(
+					store.docs.log.log.entryIndex as any,
+					"putNativeCommittedAppendFacts",
+					profile,
+					"logPutNativeCommittedAppendMs",
+				),
+				patchAsyncMethod(
+					store.docs.log.log.entryIndex as any,
+					"consumeNativeTrimmedEntriesMaybe",
+					profile,
+					"logConsumeNativeTrimmedEntriesMs",
 				),
 				patchAsyncMethod(
 					store.docs.log.log as any,

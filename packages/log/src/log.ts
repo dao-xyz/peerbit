@@ -88,6 +88,7 @@ type PreparedCommitOnlyAppendResult<T> = {
 
 type NativePreparedNoNextCommit = {
 	bytes?: Uint8Array;
+	getBytes?: (hash: string) => Uint8Array | undefined;
 	cid?: string;
 	hash?: string;
 	byteLength: number;
@@ -1076,7 +1077,9 @@ export class Log<T> {
 							return materializedEntry;
 						}
 						const bytes =
-							prepared.bytes ?? (this._storage.get(hash) as Uint8Array | undefined);
+							prepared.bytes ??
+							prepared.getBytes?.(hash) ??
+							(this._storage.get(hash) as Uint8Array | undefined);
 						if (!bytes || typeof (bytes as { then?: unknown }).then === "function") {
 							throw new Error("Missing synchronous native append block bytes");
 						}

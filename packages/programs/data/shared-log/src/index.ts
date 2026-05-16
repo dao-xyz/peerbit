@@ -4993,7 +4993,12 @@ export class SharedLog<
 				| ReturnType<
 						NativePeerbitBackbone["preparePlainStorageAppendTransaction"]
 				  >
+				| ReturnType<
+						NativePeerbitBackbone["preparePlainCommittedStorageAppendTransaction"]
+				  >
 				| undefined;
+			const commitBlocksInBackbone =
+				this.remoteBlocks?.localStore === backbone.blocks;
 			const result = this.log.appendLocallyPreparedNativeCommitOnly(
 				undefined as T,
 				appendOptions,
@@ -5003,7 +5008,11 @@ export class SharedLog<
 					skipMissingNextJoin: properties?.skipMissingNextJoin,
 				},
 				(input) => {
-					backboneAppend = backbone.preparePlainStorageAppendTransaction({
+					backboneAppend = (
+						commitBlocksInBackbone
+							? backbone.preparePlainCommittedStorageAppendTransaction
+							: backbone.preparePlainStorageAppendTransaction
+					).call(backbone, {
 						wallTime: input.wallTime,
 						logical: input.logical,
 						gid: input.gid,
@@ -5020,6 +5029,9 @@ export class SharedLog<
 					});
 					return {
 						...backboneAppend.entry,
+						getBytes: commitBlocksInBackbone
+							? (hash: string) => backbone.blocks.get(hash)
+							: undefined,
 						trimmedEntries: backboneAppend.trimmed,
 					};
 				},
@@ -5116,22 +5128,27 @@ export class SharedLog<
 								commitNativeBackbone: false,
 							});
 					const completed = mapMaybePromise(persisted, () => {
-						const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
-						if (!backboneAppend!.isLeader && !delayAdaptiveRebalance) {
-							const leaders = backboneAppend!.leaders;
-							if (leaders) {
-								const pruneEntry =
-									this.materializePreparedCoordinateEntry(preparedCoordinate);
-								this.pruneDebouncedFnAddIfNotKeeping({
-									key: pruneEntry.hash,
-									value: { entry: pruneEntry, leaders },
-								});
+						const announced = commitBlocksInBackbone
+							? this.remoteBlocks.notifyStored(prepared.appendFacts.hash)
+							: undefined;
+						return mapMaybePromise(announced, () => {
+							const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
+							if (!backboneAppend!.isLeader && !delayAdaptiveRebalance) {
+								const leaders = backboneAppend!.leaders;
+								if (leaders) {
+									const pruneEntry =
+										this.materializePreparedCoordinateEntry(preparedCoordinate);
+									this.pruneDebouncedFnAddIfNotKeeping({
+										key: pruneEntry.hash,
+										value: { entry: pruneEntry, leaders },
+									});
+								}
 							}
-						}
-						if (!delayAdaptiveRebalance) {
-							this.rebalanceParticipationDebounced?.call();
-						}
-						return finish();
+							if (!delayAdaptiveRebalance) {
+								this.rebalanceParticipationDebounced?.call();
+							}
+							return finish();
+						});
 					});
 					return isPromiseLike(completed)
 						? completed.catch((error) => rollback(error))
@@ -6625,9 +6642,27 @@ export class SharedLog<
 			this.node.indexer.scope(id),
 		]);
 
-		const localBlocks = await new AnyBlockStore(await storage.sublevel("blocks"));
 		const fanoutService = getSharedLogFanoutService(this.node.services);
 		const blockProviderNamespace = (cid: string) => `cid:${cid}`;
+		const [replicationIndex, logIndex] = await Promise.all([
+			logScope.scope("replication"),
+			logScope.scope("log"),
+		]);
+		this._replicationRangeIndex = await replicationIndex.init({
+			schema: this.indexableDomain.constructorRange,
+		});
+		this._entryCoordinatesIndex = await replicationIndex.init({
+			schema: this.indexableDomain.constructorEntry,
+		});
+		await this.openNativeRangePlanner(options?.nativeRangePlanner);
+
+		this._nativeBackbone = await this.openNativeBackbone(options?.nativeBackbone);
+		if (this._nativeBackbone) {
+			await this.hydrateNativeBackboneSharedLog(this._nativeBackbone);
+		}
+		const localBlocks = this._nativeBackbone
+			? this._nativeBackbone.blocks
+			: new AnyBlockStore(await storage.sublevel("blocks"));
 		this.remoteBlocks = new RemoteBlocks({
 			local: localBlocks,
 			publish: (message, options) => this.rpc.send(new BlocksMessage(message), options),
@@ -6687,23 +6722,6 @@ export class SharedLog<
 		});
 
 		const remoteBlocksStartPromise = this.remoteBlocks.start();
-		const [replicationIndex, logIndex] = await Promise.all([
-			logScope.scope("replication"),
-			logScope.scope("log"),
-		]);
-		this._replicationRangeIndex = await replicationIndex.init({
-			schema: this.indexableDomain.constructorRange,
-		});
-		this._entryCoordinatesIndex = await replicationIndex.init({
-			schema: this.indexableDomain.constructorEntry,
-		});
-		await this.openNativeRangePlanner(options?.nativeRangePlanner);
-
-		await remoteBlocksStartPromise;
-		this._nativeBackbone = await this.openNativeBackbone(options?.nativeBackbone);
-		if (this._nativeBackbone) {
-			await this.hydrateNativeBackboneSharedLog(this._nativeBackbone);
-		}
 		const hasIndexedReplicationInfo =
 			(await this.replicationIndex.count({
 				query: [
@@ -6835,6 +6853,7 @@ export class SharedLog<
 			PRUNE_DEBOUNCE_INTERVAL, // TODO make this dynamic on the number of replicators
 		);
 
+		await remoteBlocksStartPromise;
 		const useNativeBackboneBlocks =
 			this._nativeBackbone && this._logProperties?.replicate === false;
 		const nativeBackboneGraph = this._nativeBackbone

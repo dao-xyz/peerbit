@@ -290,6 +290,35 @@ type NativePeerbitBackboneHandle = {
 		selfReplicating: boolean,
 		trimLengthTo: number,
 	) => unknown[];
+	prepare_plain_committed_storage_append_transaction: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+	) => unknown[];
+	prepare_plain_committed_storage_append_transaction_trim: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		trimLengthTo: number,
+	) => unknown[];
 };
 
 type WasmModule = {
@@ -749,6 +778,26 @@ const committedEntryFromRow = (row: unknown[]): NativeBackboneCommittedEntry => 
 	};
 };
 
+const committedStorageFactsEntryFromRow = (
+	row: unknown[],
+): NativeBackboneCommittedEntry => {
+	const [hash, next, metaBytes, byteLength, hashDigestBytes] = row as [
+		string,
+		string[],
+		Uint8Array | undefined,
+		number,
+		Uint8Array | undefined,
+	];
+	return {
+		cid: hash,
+		hash,
+		next,
+		metaBytes,
+		byteLength,
+		hashDigestBytes,
+	};
+};
+
 const storageFactsEntryFromRow = (
 	row: unknown[],
 ): NativeBackboneStorageBackedEntry => {
@@ -896,6 +945,28 @@ const storageAppendResultFromRow = (
 	] = row as [unknown[], unknown[] | undefined, boolean, boolean, unknown[], unknown[]];
 	return {
 		entry: storageFactsEntryFromRow(entryRow),
+		leaders: rowsToSamples(leaderRows),
+		isLeader,
+		assignedToRangeBoundary,
+		coordinate: appendCoordinatePlanFromRow(resolution, coordinateRow),
+		trimmed: trimRows.map(trimmedEntryFromRow),
+	};
+};
+
+const committedStorageAppendResultFromRow = (
+	resolution: RangeResolution,
+	row: unknown[],
+): NativeBackboneAppendResult => {
+	const [
+		entryRow,
+		leaderRows,
+		isLeader,
+		assignedToRangeBoundary,
+		coordinateRow,
+		trimRows,
+	] = row as [unknown[], unknown[] | undefined, boolean, boolean, unknown[], unknown[]];
+	return {
+		entry: committedStorageFactsEntryFromRow(entryRow),
 		leaders: rowsToSamples(leaderRows),
 		isLeader,
 		assignedToRangeBoundary,
@@ -1207,6 +1278,10 @@ export class NativeBackboneBlockStore {
 
 	close(): void {}
 
+	async start(): Promise<void> {}
+
+	async stop(): Promise<void> {}
+
 	async put(
 		data: Uint8Array | { block: { bytes: Uint8Array }; cid: string },
 	): Promise<string> {
@@ -1258,7 +1333,7 @@ export class NativeBackboneBlockStore {
 		return this.native.block_get(cid);
 	}
 
-	getMany(cids: string[]): Array<Uint8Array | undefined> {
+	async getMany(cids: string[]): Promise<Array<Uint8Array | undefined>> {
 		return this.native.block_get_many(cids);
 	}
 
@@ -1266,7 +1341,7 @@ export class NativeBackboneBlockStore {
 		return this.native.has_block(cid);
 	}
 
-	hasMany(cids: string[]): boolean[] {
+	async hasMany(cids: string[]): Promise<boolean[]> {
 		return this.native.block_has_many(cids);
 	}
 
@@ -1278,7 +1353,7 @@ export class NativeBackboneBlockStore {
 		this.rm(cid);
 	}
 
-	rmMany(cids: string[]): number {
+	async rmMany(cids: string[]): Promise<number> {
 		return this.native.block_delete_many(cids);
 	}
 
@@ -1723,8 +1798,37 @@ export class NativePeerbitBackbone {
 				: this.native.prepare_plain_storage_append_transaction_trim(
 						...baseArgs,
 						input.trimLengthTo,
-					);
+				);
 		return storageAppendResultFromRow(this.resolution, row);
+	}
+
+	preparePlainCommittedStorageAppendTransaction(
+		input: NativeBackboneStorageAppendInput,
+	): NativeBackboneAppendResult {
+		const baseArgs = [
+			BigInt(input.wallTime),
+			input.logical ?? 0,
+			input.gid,
+			iterableToArray(input.next),
+			input.type ?? 0,
+			input.metaData,
+			input.payloadData,
+			input.replicas,
+			input.roleAgeMs ?? 0,
+			integerString(input.now ?? Date.now()),
+			input.selfHash ?? "",
+			input.selfReplicating ?? true,
+		] as const;
+		const row =
+			input.trimLengthTo == null
+				? this.native.prepare_plain_committed_storage_append_transaction(
+						...baseArgs,
+					)
+				: this.native.prepare_plain_committed_storage_append_transaction_trim(
+						...baseArgs,
+						input.trimLengthTo,
+					);
+		return committedStorageAppendResultFromRow(this.resolution, row);
 	}
 }
 
