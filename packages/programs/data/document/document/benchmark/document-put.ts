@@ -22,11 +22,12 @@ import { Documents, type SetupOptions, policy } from "../src/index.js";
 // - DOC_BYTES=1200
 // - DOC_COORDINATE_WAL_FLUSH_BYTES=1048576
 // - DOC_COORDINATE_WAL_FLUSH_INTERVAL_MS unset by default
-// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,rust-peerbit-backbone-coordinate-wal,rust-peerbit-backbone-coordinate-wal-buffered,native-ceiling,native-backbone-ceiling
+// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,rust-peerbit-backbone-local-document-index,rust-peerbit-backbone-coordinate-wal,rust-peerbit-backbone-coordinate-wal-buffered,native-ceiling,native-backbone-ceiling
 //   Add "-nonunique" to any scenario name to use default update-safe put semantics.
 //   Add "-local" to a rust-peerbit scenario to disable replication and default trim.
 //   Add "-trim" to a local rust-peerbit scenario to keep length trim enabled.
 //   Add "-putmany" to any unique scenario name to use one putMany call per measured batch.
+//   Add "-document-index" to a rust-peerbit-backbone scenario to enable nativeBackbone.documentIndex.
 //   Add "-policy-allow-all" to open with canPerform: policy.allowAll().
 //   Add "-policy-signed-public-key" to open with canPerform: policy.signedByPublicKey(local public key).
 //   Add "-policy-put-signed-public-key" to open with canPerform: policy.put(policy.signedByPublicKey(local public key)).
@@ -74,7 +75,7 @@ const scenarioNames = (
 
 const scenarioBaseName = (name: string) =>
 	name.replace(
-		/(?:-(?:putmany|nonunique|local|trim|buffered|coordinate-wal|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|canperform-allow-all))*$/,
+		/(?:-(?:putmany|nonunique|local|trim|buffered|coordinate-wal|document-index|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|canperform-allow-all))*$/,
 		"",
 	);
 const scenarioUsesUniquePuts = (name: string) => !name.includes("-nonunique");
@@ -86,6 +87,8 @@ const scenarioUsesCoordinateWal = (name: string) =>
 	name.includes("-coordinate-wal");
 const scenarioUsesBufferedCoordinateWal = (name: string) =>
 	name.includes("-coordinate-wal-buffered");
+const scenarioUsesNativeBackboneDocumentIndex = (name: string) =>
+	name.includes("-document-index");
 const scenarioUsesPolicyAllowAll = (name: string) =>
 	name.includes("-policy-allow-all");
 const scenarioUsesPolicySignedPublicKey = (name: string) =>
@@ -429,6 +432,9 @@ const openScenario = async (name: string) => {
 					? {
 							nativeBackbone: {
 								optional: false,
+								...(scenarioUsesNativeBackboneDocumentIndex(name)
+									? { documentIndex: true }
+									: {}),
 								...(coordinateWal
 									? { coordinatePersistence: coordinateWal.persistence }
 									: {}),
