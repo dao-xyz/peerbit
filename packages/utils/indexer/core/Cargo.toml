@@ -1,0 +1,13 @@
+[package]
+name = "peerbit_indexer_core"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+description = "Pure Rust index core for Peerbit"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+indexmap = "2.7.1"
+roaring = "0.11.4"

@@ -8,6 +8,9 @@ type NativePeerbitBackboneHandle = {
 	has_log_entry: (hash: string) => boolean;
 	has_block: (hash: string) => boolean;
 	entry_coordinate_hashes: () => string[];
+	coordinate_index_len: () => number;
+	coordinate_value_len: () => number;
+	coordinate_index_has_hash: (hash: string) => boolean;
 	graph_has_many: (hashes: string[]) => string[];
 	graph_put: (
 		hash: string,
@@ -1208,6 +1211,18 @@ export class NativePeerbitBackbone {
 
 	getEntryCoordinateHashes(): string[] {
 		return this.native.entry_coordinate_hashes();
+	}
+
+	get coordinateIndexLength(): number {
+		return this.native.coordinate_index_len();
+	}
+
+	get coordinateValueLength(): number {
+		return this.native.coordinate_value_len();
+	}
+
+	hasCoordinateIndexHash(hash: string): boolean {
+		return this.native.coordinate_index_has_hash(hash);
 	}
 
 	clear(): void {

@@ -1,14 +1,13 @@
 use borsh::BorshDeserialize;
 use indexmap::IndexMap;
 use js_sys::{Array, Uint8Array};
-use planner::{
+use peerbit_indexer_core::planner::{
     Compare, DocumentFields, FieldPath, FieldValue, NativeQueryIndex, Query, SortDirection,
     SortField, StringMatchMethod, SumResult,
 };
 use wasm_bindgen::prelude::*;
 
-pub mod planner;
-pub mod storage;
+pub use peerbit_indexer_core::{planner, storage};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native_fs;

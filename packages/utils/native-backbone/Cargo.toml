@@ -10,6 +10,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 js-sys = "0.3.80"
+peerbit_indexer_core = { path = "../indexer/core" }
 peerbit_log_rust = { path = "../../log/rust" }
 peerbit_shared_log_rust = { path = "../../programs/data/shared-log/rust" }
 wasm-bindgen = "0.2.103"

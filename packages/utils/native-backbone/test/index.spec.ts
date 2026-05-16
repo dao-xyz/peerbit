@@ -42,6 +42,9 @@ describe("native peerbit backbone", () => {
 		expect(backbone.getEntryCoordinateHashes()).to.deep.equal([
 			result.entry.hash,
 		]);
+		expect(backbone.coordinateIndexLength).to.equal(1);
+		expect(backbone.coordinateValueLength).to.equal(1);
+		expect(backbone.hasCoordinateIndexHash(result.entry.hash)).to.equal(true);
 	});
 
 	it("coalesces trim deletes with shared-log coordinate state", async () => {
@@ -79,6 +82,10 @@ describe("native peerbit backbone", () => {
 		expect(backbone.getEntryCoordinateHashes()).to.deep.equal([
 			second.entry.hash,
 		]);
+		expect(backbone.coordinateIndexLength).to.equal(1);
+		expect(backbone.coordinateValueLength).to.equal(1);
+		expect(backbone.hasCoordinateIndexHash(first.entry.hash)).to.equal(false);
+		expect(backbone.hasCoordinateIndexHash(second.entry.hash)).to.equal(true);
 	});
 
 	it("can update graph while returning block bytes for external storage", async () => {
@@ -117,8 +124,12 @@ describe("native peerbit backbone", () => {
 
 		backbone.putEntryCoordinates("hash-a", "gid-a", [1n], false, 1, 1n);
 		expect(backbone.getEntryCoordinateHashes()).to.deep.equal(["hash-a"]);
+		expect(backbone.coordinateIndexLength).to.equal(1);
+		expect(backbone.hasCoordinateIndexHash("hash-a")).equal(true);
 		expect(backbone.deleteEntryCoordinates("hash-a")).equal(true);
 		expect(backbone.getEntryCoordinateHashes()).to.deep.equal([]);
+		expect(backbone.coordinateIndexLength).to.equal(0);
+		expect(backbone.coordinateValueLength).to.equal(0);
 
 		const plan = backbone.planAppendForGid({
 			entryHash: "hash-b",
@@ -136,6 +147,8 @@ describe("native peerbit backbone", () => {
 		expect(plan.coordinate.requestedReplicas).equal(1);
 		expect(plan.delivery?.hasRemoteRecipients).equal(false);
 		expect(backbone.getEntryCoordinateHashes()).to.deep.equal(["hash-b"]);
+		expect(backbone.coordinateIndexLength).to.equal(1);
+		expect(backbone.hasCoordinateIndexHash("hash-b")).equal(true);
 
 		backbone.commitEntryCoordinates(
 			"hash-c",
@@ -147,6 +160,9 @@ describe("native peerbit backbone", () => {
 			3n,
 		);
 		expect(backbone.getEntryCoordinateHashes()).to.deep.equal(["hash-c"]);
+		expect(backbone.coordinateIndexLength).to.equal(1);
+		expect(backbone.hasCoordinateIndexHash("hash-b")).equal(false);
+		expect(backbone.hasCoordinateIndexHash("hash-c")).equal(true);
 	});
 
 	it("coalesces storage-backed no-next append with shared-log coordinate state", async () => {
@@ -186,6 +202,9 @@ describe("native peerbit backbone", () => {
 		expect(backbone.getEntryCoordinateHashes()).to.deep.equal([
 			second.entry.hash,
 		]);
+		expect(backbone.coordinateIndexLength).to.equal(1);
+		expect(backbone.hasCoordinateIndexHash(first.entry.hash)).equal(false);
+		expect(backbone.hasCoordinateIndexHash(second.entry.hash)).equal(true);
 	});
 
 	it("coalesces storage-backed append with next into shared-log coordinate state", async () => {
@@ -217,5 +236,8 @@ describe("native peerbit backbone", () => {
 		expect(backbone.getEntryCoordinateHashes()).to.deep.equal([
 			second.entry.hash,
 		]);
+		expect(backbone.coordinateIndexLength).to.equal(1);
+		expect(backbone.hasCoordinateIndexHash(first.entry.hash)).equal(false);
+		expect(backbone.hasCoordinateIndexHash(second.entry.hash)).equal(true);
 	});
 });

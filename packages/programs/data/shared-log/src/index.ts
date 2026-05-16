@@ -4896,6 +4896,7 @@ export class SharedLog<
 				appendOptions,
 				properties,
 				minReplicasValue,
+				options?.replicate === false,
 			);
 		}
 		if (options?.replicate !== false) {
@@ -4968,6 +4969,7 @@ export class SharedLog<
 			  }
 			| undefined,
 		minReplicasValue: number,
+		runtimeOnlyCoordinates: boolean,
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
 		const backbone = this._nativeBackbone;
 		if (!backbone || !this._nativeSharedLogState) {
@@ -5079,14 +5081,16 @@ export class SharedLog<
 							.putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn ||
 						coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn;
 					const persisted = hasNativeCoordinatePut
-						? this.persistPreparedBackboneCoordinateNativeTransaction({
-								coordinateIndex,
-								prepared: preparedCoordinate,
-								hash: prepared.appendFacts.hash,
-								deleteHashes: plannedCoordinateDeleteHashes,
-								coordinates:
-									backboneAppend.coordinate.coordinates as NumberFromType<R>[],
-							})
+							? this.persistPreparedBackboneCoordinateNativeTransaction({
+									coordinateIndex,
+									prepared: preparedCoordinate,
+									hash: prepared.appendFacts.hash,
+									deleteHashes: plannedCoordinateDeleteHashes,
+									coordinates:
+										backboneAppend.coordinate.coordinates as NumberFromType<R>[],
+									skipGenericTransientCoordinateIndex:
+										runtimeOnlyCoordinates,
+								})
 						: this.persistPreparedCoordinate({
 								prepared: preparedCoordinate,
 								hash: prepared.appendFacts.hash,
@@ -9945,21 +9949,9 @@ export class SharedLog<
 		hash: string;
 		coordinates: NumberFromType<R>[];
 		deleteHashes: string[];
+		skipGenericTransientCoordinateIndex?: boolean;
 	}): MaybePromise<boolean> {
 		const { fields } = properties.prepared;
-		const putNative =
-			properties.coordinateIndex
-				.putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn ??
-			properties.coordinateIndex
-				.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn;
-		if (!putNative) {
-			return false;
-		}
-		const putResult = putNative.call(
-			properties.coordinateIndex,
-			fields,
-			properties.deleteHashes,
-		);
 		const finish = () => {
 			this._nativeSharedLogState?.commitEntryCoordinates(
 				properties.hash,
@@ -9984,7 +9976,54 @@ export class SharedLog<
 			}
 			return true;
 		};
+		if (
+			properties.skipGenericTransientCoordinateIndex &&
+			this.canUseRuntimeOnlyNativeBackboneCoordinates(properties.coordinateIndex)
+		) {
+			return finish();
+		}
+
+		const putNative =
+			properties.coordinateIndex
+				.putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn ??
+			properties.coordinateIndex
+				.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn;
+		if (!putNative) {
+			return false;
+		}
+		const putResult = putNative.call(
+			properties.coordinateIndex,
+			fields,
+			properties.deleteHashes,
+		);
 		return mapMaybePromise(putResult, finish);
+	}
+
+	private canUseRuntimeOnlyNativeBackboneCoordinates(
+		coordinateIndex: PutAndDeleteIndex<EntryReplicated<R>>,
+	): boolean {
+		if (
+			!this._nativeBackbone ||
+			!this._nativeSharedLogState ||
+			!this._residentEntryCoordinatesByHash ||
+			this.hasCustomFindLeaders() ||
+			Object.prototype.hasOwnProperty.call(
+				coordinateIndex,
+				"putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn",
+			) ||
+			Object.prototype.hasOwnProperty.call(
+				coordinateIndex,
+				"putSharedLogCoordinateFieldsAndDeleteHashesNoReturn",
+			)
+		) {
+			return false;
+		}
+		const persisted = (
+			coordinateIndex as PutAndDeleteIndex<EntryReplicated<R>> & {
+				persisted?: () => MaybePromise<boolean>;
+			}
+		).persisted?.();
+		return persisted === false;
 	}
 
 	private async persistCoordinate(properties: {
