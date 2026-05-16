@@ -53,10 +53,10 @@ import {
 	isPutOperation,
 } from "./operation.js";
 import {
-	createNativeFastPathCanPerformPolicyEvaluator,
-	getNativeCanPerformPolicyDescriptor,
 	type NativeCanPerformPolicyDescriptor,
 	type NativeFastPathCanPerformPolicyEvaluator,
+	createNativeFastPathCanPerformPolicyEvaluator,
+	getNativeCanPerformPolicyDescriptor,
 } from "./policy.js";
 import { isResultIndexedValue } from "./result-shape.js";
 import {
@@ -131,7 +131,11 @@ const encodePutOperationPayload = (data: Uint8Array): Uint8Array => {
 	const encoded = new Uint8Array(PUT_OPERATION_PREFIX_LENGTH + data.byteLength);
 	encoded[0] = 0;
 	encoded[1] = 3;
-	const view = new DataView(encoded.buffer, encoded.byteOffset, encoded.byteLength);
+	const view = new DataView(
+		encoded.buffer,
+		encoded.byteOffset,
+		encoded.byteLength,
+	);
 	view.setUint32(2, data.byteLength, true);
 	encoded.set(data, PUT_OPERATION_PREFIX_LENGTH);
 	return encoded;
@@ -219,10 +223,7 @@ type DocumentAppendCommitFacts<T, I extends Record<string, any>> = {
 		| undefined;
 };
 
-type NativeDocumentAppendCommitFactsInput<
-	T,
-	I extends Record<string, any>,
-> = {
+type NativeDocumentAppendCommitFactsInput<T, I extends Record<string, any>> = {
 	document: T;
 	key: indexerTypes.IdKey;
 	documentBytes: Uint8Array;
@@ -245,10 +246,7 @@ type NativeDocumentAppendCommitInput<
 	options?: DocumentPutOptions;
 };
 
-type NativeDocumentAppendManyCommitInput<
-	T,
-	I extends Record<string, any>,
-> = {
+type NativeDocumentAppendManyCommitInput<T, I extends Record<string, any>> = {
 	puts: NativeDocumentAppendCommitFactsInput<T, I>[];
 	resolveTrimmedEntries: boolean;
 	options?: DocumentPutOptions;
@@ -401,8 +399,9 @@ export class Documents<
 		}
 
 		this._optionCanPerform = options.canPerform;
-		this._optionCanPerformNativePolicy =
-			getNativeCanPerformPolicyDescriptor(options.canPerform);
+		this._optionCanPerformNativePolicy = getNativeCanPerformPolicyDescriptor(
+			options.canPerform,
+		);
 		const idProperty =
 			options.index?.idProperty ||
 			indexerTypes.getIdProperty(this._clazz) ||
@@ -978,8 +977,7 @@ export class Documents<
 		options?: DocumentPutOptions,
 	): boolean {
 		const canPerformAllowsNativeFastPath =
-			!this._optionCanPerform ||
-			!!this._optionCanPerformNativeFastPath?.(doc);
+			!this._optionCanPerform || !!this._optionCanPerformNativeFastPath?.(doc);
 		return (
 			canPerformAllowsNativeFastPath &&
 			!this.immutable &&
@@ -1018,9 +1016,7 @@ export class Documents<
 			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
 			| null
 			| undefined,
-		options:
-			| DocumentPutOptions
-			| undefined,
+		options: DocumentPutOptions | undefined,
 	): Promise<PlainPutCommitPlan<T, I> | undefined> {
 		if (
 			("operation" in prepared &&
@@ -1059,9 +1055,7 @@ export class Documents<
 
 	private commitPlainPutPlan(
 		plan: PlainPutCommitPlan<T, I>,
-		options:
-			| DocumentPutOptions
-			| undefined,
+		options: DocumentPutOptions | undefined,
 	): MaybePromise<{
 		readonly entry: Entry<Operation>;
 		removed: ShallowOrFullEntry<Operation>[];
@@ -1193,16 +1187,17 @@ export class Documents<
 	private async commitNativeDocumentAppendMany(
 		input: NativeDocumentAppendManyCommitInput<T, I>,
 	): Promise<DocumentAppendManyCommitFacts<T, I> | undefined> {
-		const appended = await this.log.appendLocallyPreparedPayloadsManyIndependent(
-			input.puts.map((put) => put.operationPayloadBytes),
-			{
-				...input.options,
-				replicate: input.options?.replicate,
-			},
-			{
-				resolveTrimmedEntries: input.resolveTrimmedEntries,
-			},
-		);
+		const appended =
+			await this.log.appendLocallyPreparedPayloadsManyIndependent(
+				input.puts.map((put) => put.operationPayloadBytes),
+				{
+					...input.options,
+					replicate: input.options?.replicate,
+				},
+				{
+					resolveTrimmedEntries: input.resolveTrimmedEntries,
+				},
+			);
 		if (!appended) {
 			return undefined;
 		}
@@ -1373,10 +1368,8 @@ export class Documents<
 
 		if (!this.strictHistory && existing) {
 			const shouldIgnoreChange = this.immutable
-				? existing.value.__context.modified <
-					commit.append.wallTime
-				: existing.value.__context.modified >
-					commit.append.wallTime;
+				? existing.value.__context.modified < commit.append.wallTime
+				: existing.value.__context.modified > commit.append.wallTime;
 			if (shouldIgnoreChange) {
 				modified.add(commit.key.primitive);
 			}
@@ -1428,6 +1421,18 @@ export class Documents<
 		};
 
 		if (!modified.has(commit.key.primitive)) {
+			const storedIdentityPut = this._index._putStoredIdentityWithContext(
+				commit.document,
+				commit.key,
+				commit.context,
+				commit.contextualEncodedValueParts,
+				{
+					replace: existing != null,
+				},
+			);
+			if (storedIdentityPut !== undefined) {
+				return mapMaybePromise(storedIdentityPut, finishIndexed);
+			}
 			return mapMaybePromise(
 				this._index._putIdentityWithContext(
 					commit.document,
@@ -1676,7 +1681,9 @@ export class Documents<
 		let key: indexerTypes.IdKey;
 
 		if (isPutOperation(payload)) {
-			const valueWithoutContext = this.index.valueEncoding.decoder(payload.data);
+			const valueWithoutContext = this.index.valueEncoding.decoder(
+				payload.data,
+			);
 			key = indexerTypes.toId(this.idResolver(valueWithoutContext));
 			if (modified.has(key.primitive)) {
 				return;

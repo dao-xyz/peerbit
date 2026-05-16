@@ -263,6 +263,10 @@ describe("index", () => {
 					store.docs.index,
 					"_putIdentityWithContext",
 				);
+				const documentStoredIdentityPutSpy = sinon.spy(
+					store.docs.index,
+					"_putStoredIdentityWithContext",
+				);
 				const documentPutSpy = sinon.spy(store.docs.index, "putWithContext");
 				const backendIndex = store.docs.index.index as any;
 				const originalBackendPutWithContext = backendIndex.putWithContext;
@@ -313,6 +317,7 @@ describe("index", () => {
 					expect(commitPlanSpy.callCount).equal(1);
 					expect(nativeCommitSpy.callCount).equal(1);
 					expect(documentCommitSpy.callCount).equal(1);
+					expect(documentStoredIdentityPutSpy.callCount).equal(1);
 					expect(documentIdentityPutSpy.callCount).equal(1);
 					expect(documentPutSpy.callCount).equal(0);
 					expect(backendContextPutSpy.callCount).equal(1);
@@ -406,6 +411,7 @@ describe("index", () => {
 					nativeCommitSpy.restore();
 					documentCommitSpy.restore();
 					documentPutSpy.restore();
+					documentStoredIdentityPutSpy.restore();
 					documentIdentityPutSpy.restore();
 					preparedPayloadCommitOnlySpy.restore();
 					preparedPayloadAppendSpy.restore();
@@ -905,6 +911,19 @@ describe("index", () => {
 				const remotePutKnownSpy = sinon.spy(sharedLog.remoteBlocks, "putKnown");
 				const backbone = sharedLog._nativeBackbone;
 				const backbonePlanSpy = sinon.spy(backbone, "planAppendForGid");
+				const backendIndex = store.docs.index.index as any;
+				const backendStoredContextPutSpy = sinon.spy(
+					backendIndex,
+					"putStoredContextualEncodedValue",
+				);
+				const documentStoredIdentityPutSpy = sinon.spy(
+					store.docs.index,
+					"_putStoredIdentityWithContext",
+				);
+				const documentIdentityPutSpy = sinon.spy(
+					store.docs.index,
+					"_putIdentityWithContext",
+				);
 
 				try {
 					const doc = new Document({ id: uuid(), name: "backbone-remote" });
@@ -913,6 +932,9 @@ describe("index", () => {
 					expect(sharedLog.remoteBlocks.localStore).equal(backbone.blocks);
 					expect(remotePutKnownSpy.callCount).equal(1);
 					expect(backbonePlanSpy.callCount).equal(1);
+					expect(documentStoredIdentityPutSpy.callCount).equal(1);
+					expect(documentIdentityPutSpy.callCount).equal(0);
+					expect(backendStoredContextPutSpy.callCount).equal(1);
 					expect(backbone.hasLogEntry(put.entry.hash)).equal(true);
 					expect(backbone.hasBlock(put.entry.hash)).equal(true);
 					expect(backbone.getEntryCoordinateHashes()).to.include(
@@ -922,6 +944,9 @@ describe("index", () => {
 					expect(storedBlock).instanceOf(Uint8Array);
 					expect((await store.docs.get(doc.id))?.name).equal("backbone-remote");
 				} finally {
+					documentIdentityPutSpy.restore();
+					documentStoredIdentityPutSpy.restore();
+					backendStoredContextPutSpy.restore();
 					backbonePlanSpy.restore();
 					remotePutKnownSpy.restore();
 					await store.close();

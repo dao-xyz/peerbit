@@ -1,5 +1,6 @@
 import {
 	BinaryWriter,
+	type FieldType,
 	FixedArrayKind,
 	OptionKind,
 	StringType,
@@ -7,14 +8,13 @@ import {
 	deserialize,
 	getSchemasBottomUp,
 	serialize,
-	type FieldType,
 } from "@dao-xyz/borsh";
 import * as types from "@peerbit/indexer-interface";
 import {
-	createSnapshotFile,
 	type EncodedValue,
 	type PersistenceOptions,
 	type SnapshotFile,
+	createSnapshotFile,
 } from "./persistence.js";
 
 export type RustIndexerOptions = {
@@ -30,12 +30,7 @@ export type RustIndexerOptions = {
 
 type NativeRustIndex<T extends Record<string, any>> = {
 	configure_schema_ir: (schemaIr: Uint8Array) => [number, number, number];
-	put: (
-		key: string,
-		id: types.IdKey,
-		value: T,
-		fields: Uint8Array,
-	) => void;
+	put: (key: string, id: types.IdKey, value: T, fields: Uint8Array) => void;
 	put_encoded: (
 		key: string,
 		id: types.IdKey,
@@ -188,10 +183,7 @@ type NativeRustIndex<T extends Record<string, any>> = {
 	clear: () => void;
 	len: () => number;
 	entries: () => Array<[types.IdKey, T]>;
-	query: (
-		query: Uint8Array,
-		sort: Uint8Array,
-	) => Array<[types.IdKey, T]>;
+	query: (query: Uint8Array, sort: Uint8Array) => Array<[types.IdKey, T]>;
 	query_page: (
 		query: Uint8Array,
 		sort: Uint8Array,
@@ -352,8 +344,9 @@ const loadWasm = async (): Promise<WasmModule> => {
 
 	const wasm = await wasmModulePromise;
 	if (!wasmInitialized) {
-		const processLike = (globalThis as { process?: { versions?: { node?: string } } })
-			.process;
+		const processLike = (
+			globalThis as { process?: { versions?: { node?: string } } }
+		).process;
 		if (processLike?.versions?.node) {
 			const fsPromises = "fs/promises";
 			const { readFile } = (await import(
@@ -365,7 +358,10 @@ const loadWasm = async (): Promise<WasmModule> => {
 			wasm.initSync({ module: bytes });
 		} else {
 			await wasm.default({
-				module_or_path: new URL("../wasm/indexer_rust_bg.wasm", import.meta.url),
+				module_or_path: new URL(
+					"../wasm/indexer_rust_bg.wasm",
+					import.meta.url,
+				),
 			});
 		}
 		wasmInitialized = true;
@@ -466,9 +462,7 @@ const nativeIntegerValue = (
 	if (!Number.isSafeInteger(value)) {
 		return undefined;
 	}
-	return value >= 0
-		? { type: "u64", value }
-		: { type: "i64", value };
+	return value >= 0 ? { type: "u64", value } : { type: "i64", value };
 };
 
 type NativeFactCollectorState = {
@@ -646,8 +640,7 @@ const nativeSortFields = (
 ): NativeSortField[] =>
 	types.toSort(sort).map((field) => ({
 		field: nativeFieldId(dictionary, field.key),
-		direction:
-			field.direction === types.SortDirection.ASC ? "asc" : "desc",
+		direction: field.direction === types.SortDirection.ASC ? "asc" : "desc",
 	}));
 
 const encodeNativeSort = (sort: NativeSortField[] = []): Uint8Array => {
@@ -661,11 +654,7 @@ const encodeNativeSort = (sort: NativeSortField[] = []): Uint8Array => {
 	return writer.finalize();
 };
 
-const writeUint32 = (
-	view: DataView,
-	offset: number,
-	value: number,
-): number => {
+const writeUint32 = (view: DataView, offset: number, value: number): number => {
 	view.setUint32(offset, value, true);
 	return offset + 4;
 };
@@ -739,7 +728,11 @@ class NativeFieldWriter {
 		this.offset = writeBytes(this.output, this.view, this.offset, valueBytes);
 	}
 
-	writeBytesValue(scope: number, fieldId: number, valueBytes: Uint8Array): void {
+	writeBytesValue(
+		scope: number,
+		fieldId: number,
+		valueBytes: Uint8Array,
+	): void {
 		this.writeHeader(
 			scope,
 			fieldId,
@@ -835,7 +828,9 @@ class NativeSchemaIrWriter {
 	}
 }
 
-type NativeFieldEncoder<T extends Record<string, any>> = (value: T) => Uint8Array;
+type NativeFieldEncoder<T extends Record<string, any>> = (
+	value: T,
+) => Uint8Array;
 type NativeSchemaIrStats = {
 	rootFields: number;
 	nodeCount: number;
@@ -914,7 +909,11 @@ const encodeSharedLogCoordinateValue = (
 			4 +
 			fields.metaBytes.byteLength,
 	);
-	const view = new DataView(output.buffer, output.byteOffset, output.byteLength);
+	const view = new DataView(
+		output.buffer,
+		output.byteOffset,
+		output.byteLength,
+	);
 	let offset = 0;
 	offset = sharedLogCoordinateWriteBytes(output, view, offset, variantBytes);
 	offset = sharedLogCoordinateWriteBytes(output, view, offset, hashBytes);
@@ -924,11 +923,7 @@ const encodeSharedLogCoordinateValue = (
 		offset = sharedLogCoordinateSetU32(view, offset, Number(fields.hashNumber));
 	}
 	offset = sharedLogCoordinateWriteBytes(output, view, offset, gidBytes);
-	offset = sharedLogCoordinateSetU32(
-		view,
-		offset,
-		fields.coordinates.length,
-	);
+	offset = sharedLogCoordinateSetU32(view, offset, fields.coordinates.length);
 	for (const coordinate of fields.coordinates) {
 		if (useU64) {
 			offset = sharedLogCoordinateSetU64(view, offset, coordinate);
@@ -1210,7 +1205,10 @@ const normalizeNativeByteElementIndexLimit = (limit: number): number => {
 	if (!Number.isFinite(limit)) {
 		return MAX_NATIVE_BYTE_ELEMENT_INDEX_LIMIT;
 	}
-	return Math.max(0, Math.min(MAX_NATIVE_BYTE_ELEMENT_INDEX_LIMIT, Math.floor(limit)));
+	return Math.max(
+		0,
+		Math.min(MAX_NATIVE_BYTE_ELEMENT_INDEX_LIMIT, Math.floor(limit)),
+	);
 };
 
 const writeNativeSchemaObjectNode = (
@@ -1248,13 +1246,7 @@ const writeNativeSchemaObjectNode = (
 		writer.string(field.key);
 		writer.u32(fieldCursor.fieldId);
 		writer.u32(fieldCursor.arrayFieldId);
-		writeNativeSchemaNode(
-			writer,
-			field.type,
-			dictionary,
-			fieldCursor,
-			active,
-		);
+		writeNativeSchemaNode(writer, field.type, dictionary, fieldCursor, active);
 	}
 	active.delete(ctor);
 };
@@ -1387,17 +1379,20 @@ const compileNativeFieldEncoder = <T extends Record<string, any>>(
 		}
 		const needsSeen = fields.some((field) => field.write.needsSeen);
 
-		const objectWriter = nativeFieldValueWriter((value, writer, state, scope) => {
-			if (!value || typeof value !== "object") {
-				return;
-			}
-			if (needsSeen && !markNativeFieldSeen(state, value)) {
-				return;
-			}
-			for (const field of fields) {
-				field.write(value[field.key], writer, state, scope);
-			}
-		}, needsSeen);
+		const objectWriter = nativeFieldValueWriter(
+			(value, writer, state, scope) => {
+				if (!value || typeof value !== "object") {
+					return;
+				}
+				if (needsSeen && !markNativeFieldSeen(state, value)) {
+					return;
+				}
+				for (const field of fields) {
+					field.write(value[field.key], writer, state, scope);
+				}
+			},
+			needsSeen,
+		);
 		byPrefix.set(prefix, objectWriter);
 		return objectWriter;
 	};
@@ -1566,7 +1561,9 @@ const compileFieldValueWriter = (
 	);
 };
 
-const decodeNativeSum = ([kind, value]: [NativeSumKind, string]): number | bigint => {
+const decodeNativeSum = ([kind, value]: [NativeSumKind, string]):
+	| number
+	| bigint => {
 	if (kind === "none") {
 		return 0;
 	}
@@ -1860,9 +1857,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			this.fieldDictionary,
 			this.options,
 		);
-		const [rootFields, nodeCount, genericNodes] = this.native.configure_schema_ir(
-			encodeNativeSchemaIr(properties.schema, this.fieldDictionary),
-		);
+		const [rootFields, nodeCount, genericNodes] =
+			this.native.configure_schema_ir(
+				encodeNativeSchemaIr(properties.schema, this.fieldDictionary),
+			);
 		this.nativeSchemaIrStats = { rootFields, nodeCount, genericNodes };
 		if (genericNodes === 0) {
 			this.nativeEncodedValueEncoder = (value) => serialize(value);
@@ -1874,7 +1872,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			this.options.persistence,
 		);
 		if (this.snapshotFile) {
-			for (const value of (await this.snapshotFile.read(properties.schema)) as T[]) {
+			for (const value of (await this.snapshotFile.read(
+				properties.schema,
+			)) as T[]) {
 				const id = types.toId(types.extractFieldValue(value, this.indexByArr));
 				const storeKey = keyToStoreKey(id);
 				this.putNativeDocument(storeKey, id, value);
@@ -1978,7 +1978,11 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}
 		const contextualValue = this.asContextualValue(value, context);
 		if (options?.encodedValue) {
-			return this.putWithEncodedValue(contextualValue, id, options.encodedValue);
+			return this.putWithEncodedValue(
+				contextualValue,
+				id,
+				options.encodedValue,
+			);
 		}
 		return this.put(contextualValue, id, options);
 	}
@@ -2142,9 +2146,12 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		deleteOptions: types.DeleteOptions,
 		id = types.toId(types.extractFieldValue(value, this.indexByArr)),
 	): Promise<types.IdKey[]> {
-		const compiled = this.requireNativePlan(types.toQuery(deleteOptions.query), {
-			allowAll: true,
-		});
+		const compiled = this.requireNativePlan(
+			types.toQuery(deleteOptions.query),
+			{
+				allowAll: true,
+			},
+		);
 		const storeKey = keyToStoreKey(id);
 		const fields = this.fieldEncoder(value);
 		const queryBytes = encodeNativeQuerySpec(compiled.spec);
@@ -2262,7 +2269,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			);
 		}
 		const storeKey =
-			id.primitive === fields.hash ? stringToStoreKey(fields.hash) : keyToStoreKey(id);
+			id.primitive === fields.hash
+				? stringToStoreKey(fields.hash)
+				: keyToStoreKey(id);
 		const deleteKeys = deleteHashes.map(stringToStoreKey);
 		if (!this.snapshotFile) {
 			this.putSharedLogCoordinateNativeEncodedValueAndDeleteKeysNoReturn(
@@ -2309,7 +2318,8 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}
 		const prepared = values.map((entry) => {
 			const id =
-				entry.id ?? types.toId(types.extractFieldValue(entry.value, this.indexByArr));
+				entry.id ??
+				types.toId(types.extractFieldValue(entry.value, this.indexByArr));
 			const encodedValue = this.snapshotFile
 				? this.encodeSharedLogCoordinatePersistenceValue(entry.fields)
 				: undefined;
@@ -2809,10 +2819,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 						page.offset,
 						page.limit,
 					);
-			return results.map((value) => ({
-				id: value[0],
-				value: this.decodeNativeStoredValue(value[1]),
-			}));
+		return results.map((value) => ({
+			id: value[0],
+			value: this.decodeNativeStoredValue(value[1]),
+		}));
 	}
 
 	private putWithEncodedFields(
@@ -2985,7 +2995,12 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				await this.compactIfNeeded();
 				return [];
 			} else {
-				await this.appendPutAndDeletes(storeKey, value, deleteKeys, encodedValue);
+				await this.appendPutAndDeletes(
+					storeKey,
+					value,
+					deleteKeys,
+					encodedValue,
+				);
 			}
 			const deletedEntries =
 				this.putSharedLogCoordinateNativeValueAndDeleteKeys(
@@ -3039,7 +3054,12 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			if (deleteKeys.length === 0) {
 				await this.appendPut(storeKey, value, encodedValue);
 			} else {
-				await this.appendPutAndDeletes(storeKey, value, deleteKeys, encodedValue);
+				await this.appendPutAndDeletes(
+					storeKey,
+					value,
+					deleteKeys,
+					encodedValue,
+				);
 			}
 			this.putSharedLogCoordinateNativeValueAndDeleteKeysNoReturn(
 				value,
@@ -3060,7 +3080,8 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		storeKey: string,
 	): types.IdKey[] {
 		const native = this.getNative();
-		const nativePutCoordinate = native.put_shared_log_coordinate_and_delete_keys;
+		const nativePutCoordinate =
+			native.put_shared_log_coordinate_and_delete_keys;
 		if (!nativePutCoordinate) {
 			throw new Error("Native shared-log coordinate put is unavailable");
 		}
@@ -3142,7 +3163,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		const nativePutCoordinate =
 			this.getNative().put_shared_log_coordinate_encoded_and_delete_keys_void;
 		if (!nativePutCoordinate) {
-			throw new Error("Native encoded shared-log coordinate put is unavailable");
+			throw new Error(
+				"Native encoded shared-log coordinate put is unavailable",
+			);
 		}
 		nativePutCoordinate.call(
 			this.getNative(),
@@ -3504,6 +3527,18 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			}
 			await this.compactIfNeeded();
 		});
+	}
+
+	putStoredContextualEncodedValue(
+		id: types.IdKey,
+		encodedValueParts: NativeEncodedValueParts,
+		_options?: { replace?: boolean },
+	): MaybePromise<void> | false {
+		if (this.isClosing()) {
+			return;
+		}
+		this.assertOpen();
+		return this.putWithEncodedValuePartsStored(id, encodedValueParts);
 	}
 
 	private async putWithEncodedValuePartsStoredBatch(

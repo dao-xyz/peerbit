@@ -576,8 +576,20 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				"documentBackendIndexPutMs",
 			),
 			patchAsyncMethod(
+				backendIndex,
+				"putStoredContextualEncodedValue",
+				profile,
+				"documentBackendIndexPutMs",
+			),
+			patchAsyncMethod(
 				store.docs.index,
 				"putWithContext",
+				profile,
+				"documentIndexPutMs",
+			),
+			patchAsyncMethod(
+				store.docs.index,
+				"_putStoredIdentityWithContext",
 				profile,
 				"documentIndexPutMs",
 			),

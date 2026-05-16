@@ -725,6 +725,14 @@ type ContextualIndexPut<I> = {
 		context: types.Context,
 		options?: ContextualPutOptions,
 	) => Promise<void> | void;
+	putStoredContextualEncodedValue?: (
+		id: indexerTypes.IdKey,
+		encodedValueParts: {
+			prefix: Uint8Array;
+			suffix: Uint8Array;
+		},
+		options?: { replace?: boolean },
+	) => Promise<void> | void | false;
 	putWithContextBatch?: (
 		values: Array<{
 			value: I;
@@ -1750,7 +1758,9 @@ export class DocumentIndex<
 		if (batch) {
 			return batch.call(this.index, heads);
 		}
-		return Promise.all(heads.map((head) => this.getIdentityIndexedByHead(head)));
+		return Promise.all(
+			heads.map((head) => this.getIdentityIndexedByHead(head)),
+		);
 	}
 
 	public canGetIdentityIndexedByHead(): boolean {
@@ -1794,6 +1804,53 @@ export class DocumentIndex<
 				context,
 				this.withContextualEncodedValue(options, context),
 			);
+			return isPromiseLike(putResult)
+				? putResult.then(() => indexedValue, handleError)
+				: indexedValue;
+		} catch (error) {
+			return handleError(error);
+		}
+	}
+
+	public _putStoredIdentityWithContext(
+		value: T,
+		id: indexerTypes.IdKey,
+		context: types.Context,
+		encodedValueParts: NonNullable<ContextualPutOptions["encodedValueParts"]>,
+		options?: { replace?: boolean },
+	): MaybePromise<WithIndexedContext<T, I> | undefined> {
+		const contextualStoredPut = this.transformerIsIdentity
+			? (this.index as ContextualIndexPut<I>).putStoredContextualEncodedValue
+			: undefined;
+		if (
+			!contextualStoredPut ||
+			this.isProgramValued ||
+			!this.indexedTypeIsDocumentType
+		) {
+			return;
+		}
+		const indexable = value as any as I;
+		const indexedValue = coerceWithIndexed(
+			coerceWithContext(value, context),
+			indexable,
+		);
+		this.cacheResolvedValue(id.primitive, value);
+		const handleError = (error: unknown) => {
+			if (error instanceof indexerTypes.NotStartedError && this.closed) {
+				return indexedValue;
+			}
+			throw error;
+		};
+		try {
+			const putResult = contextualStoredPut.call(
+				this.index,
+				id,
+				encodedValueParts,
+				options,
+			);
+			if (putResult === false) {
+				return;
+			}
 			return isPromiseLike(putResult)
 				? putResult.then(() => indexedValue, handleError)
 				: indexedValue;
@@ -2017,8 +2074,7 @@ export class DocumentIndex<
 			) {
 				await this.index.putBatch(
 					transformed.map(
-						(item) =>
-							new this.wrappedIndexedType(item.indexable, item.context),
+						(item) => new this.wrappedIndexedType(item.indexable, item.context),
 					),
 				);
 			} else {
@@ -2059,10 +2115,7 @@ export class DocumentIndex<
 		}));
 	}
 
-	private cacheResolvedValue(
-		id: string | number | bigint,
-		value: T,
-	): void {
+	private cacheResolvedValue(id: string | number | bigint, value: T): void {
 		if (
 			this.isProgramValued /*
 			TODO should we skip caching program value if they are not openend through this db?
