@@ -4,7 +4,9 @@ import {
 	NativeBackboneCoordinatePersistence,
 	NativeBackboneMemoryCoordinatePersistenceStore,
 	NativeBackboneNodeCoordinatePersistenceStore,
+	NativeBackboneOPFSCoordinatePersistenceStore,
 	createNativePeerbitBackbone,
+	type NativeBackboneOPFSDirectoryHandle,
 } from "../src/index.js";
 
 const fromHex = (hex: string) =>
@@ -29,6 +31,148 @@ const concatBytes = (chunks: Uint8Array[]) => {
 	}
 	return out;
 };
+
+class FakeOPFSWritable {
+	private position = 0;
+
+	constructor(
+		private readonly handle: FakeOPFSFileHandle,
+		keepExistingData: boolean,
+	) {
+		if (!keepExistingData) {
+			this.handle.replace(new Uint8Array());
+		}
+	}
+
+	async seek(position: number): Promise<void> {
+		this.position = position;
+	}
+
+	async write(data: Uint8Array): Promise<void> {
+		this.handle.writeAt(this.position, data);
+		this.position += data.byteLength;
+	}
+
+	async close(): Promise<void> {}
+}
+
+class FakeOPFSFileHandle {
+	constructor(
+		private readonly directory: FakeOPFSDirectoryHandle,
+		private readonly name: string,
+		private readonly syncAccess: boolean,
+	) {}
+
+	async getFile(): Promise<{ arrayBuffer(): Promise<ArrayBuffer>; size: number }> {
+		const bytes = this.directory.fileBytes(this.name);
+		return {
+			size: bytes.byteLength,
+			arrayBuffer: async () => {
+				const copy = bytes.slice();
+				return copy.buffer.slice(
+					copy.byteOffset,
+					copy.byteOffset + copy.byteLength,
+				);
+			},
+		};
+	}
+
+	async createWritable(options?: {
+		keepExistingData?: boolean;
+	}): Promise<FakeOPFSWritable> {
+		this.directory.asyncWritableCount++;
+		this.directory.keepExistingDataOptions.push(
+			options?.keepExistingData === true,
+		);
+		return new FakeOPFSWritable(this, options?.keepExistingData === true);
+	}
+
+	async createSyncAccessHandle(): Promise<{
+		getSize(): number;
+		write(buffer: Uint8Array, options?: { at?: number }): number;
+		flush(): void;
+		close(): void;
+	}> {
+		if (!this.syncAccess) {
+			const error = new Error("sync handles unavailable") as Error & {
+				name: string;
+			};
+			error.name = "InvalidStateError";
+			throw error;
+		}
+		this.directory.syncAccessCount++;
+		return {
+			getSize: () => this.directory.fileBytes(this.name).byteLength,
+			write: (buffer, options) => {
+				this.writeAt(options?.at ?? 0, buffer);
+				this.directory.syncWriteCount++;
+				return buffer.byteLength;
+			},
+			flush: () => {
+				this.directory.syncFlushCount++;
+			},
+			close: () => {
+				this.directory.syncCloseCount++;
+			},
+		};
+	}
+
+	replace(bytes: Uint8Array): void {
+		this.directory.files.set(this.name, bytes.slice());
+	}
+
+	writeAt(position: number, bytes: Uint8Array): void {
+		const existing = this.directory.fileBytes(this.name);
+		const nextLength = Math.max(existing.byteLength, position + bytes.byteLength);
+		const next = new Uint8Array(nextLength);
+		next.set(existing);
+		next.set(bytes, position);
+		this.directory.files.set(this.name, next);
+	}
+}
+
+class FakeOPFSDirectoryHandle implements NativeBackboneOPFSDirectoryHandle {
+	readonly files = new Map<string, Uint8Array>();
+	readonly keepExistingDataOptions: boolean[] = [];
+	asyncWritableCount = 0;
+	syncAccessCount = 0;
+	syncWriteCount = 0;
+	syncFlushCount = 0;
+	syncCloseCount = 0;
+
+	constructor(private readonly syncAccess = false) {}
+
+	fileBytes(name: string): Uint8Array {
+		return this.files.get(name)?.slice() ?? new Uint8Array();
+	}
+
+	async getDirectoryHandle(): Promise<NativeBackboneOPFSDirectoryHandle> {
+		return this;
+	}
+
+	async getFileHandle(
+		name: string,
+		options?: { create?: boolean },
+	): Promise<FakeOPFSFileHandle> {
+		if (!this.files.has(name)) {
+			if (!options?.create) {
+				const error = new Error("not found") as Error & { name: string };
+				error.name = "NotFoundError";
+				throw error;
+			}
+			this.files.set(name, new Uint8Array());
+		}
+		return new FakeOPFSFileHandle(this, name, this.syncAccess);
+	}
+
+	async removeEntry(name: string): Promise<void> {
+		if (!this.files.delete(name)) {
+			const error = new Error("not found") as Error & { name: string };
+			error.name = "NotFoundError";
+			throw error;
+		}
+	}
+}
 
 describe("native peerbit backbone", () => {
 	it("commits lower-log blocks and shared-log coordinates in one native call", async () => {
@@ -505,5 +649,42 @@ describe("native peerbit backbone", () => {
 		} finally {
 			await rm(directory, { recursive: true, force: true });
 		}
+	});
+
+	it("appends coordinate WAL bytes through OPFS sync access handles", async () => {
+		const directory = new FakeOPFSDirectoryHandle(true);
+		const store = new NativeBackboneOPFSCoordinatePersistenceStore(directory);
+
+		expect(await store.read("coordinates.wal")).to.equal(undefined);
+		await store.append("coordinates.wal", new Uint8Array([1, 2]));
+		await store.append("coordinates.wal", new Uint8Array([3]));
+
+		expect([...(await store.read("coordinates.wal"))!]).to.deep.equal([
+			1, 2, 3,
+		]);
+		expect(directory.syncAccessCount).to.equal(2);
+		expect(directory.syncWriteCount).to.equal(2);
+		expect(directory.syncFlushCount).to.equal(2);
+		expect(directory.syncCloseCount).to.equal(2);
+		expect(directory.asyncWritableCount).to.equal(0);
+	});
+
+	it("appends coordinate WAL bytes through OPFS writable fallback", async () => {
+		const directory = new FakeOPFSDirectoryHandle(false);
+		const store = new NativeBackboneOPFSCoordinatePersistenceStore(directory);
+
+		await store.append("coordinates.wal", new Uint8Array([4, 5]));
+		await store.append("coordinates.wal", new Uint8Array([6]));
+
+		expect([...(await store.read("coordinates.wal"))!]).to.deep.equal([
+			4, 5, 6,
+		]);
+		expect(directory.syncWriteCount).to.equal(0);
+		expect(directory.asyncWritableCount).to.equal(2);
+		expect(directory.keepExistingDataOptions).to.deep.equal([true, true]);
+
+		await store.remove("coordinates.wal");
+		expect(await store.read("coordinates.wal")).to.equal(undefined);
+		await store.remove("coordinates.wal");
 	});
 });
