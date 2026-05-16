@@ -7,6 +7,7 @@ import {
 	NativeBackboneCoordinatePersistence,
 	NativeBackboneNodeCoordinatePersistenceStore,
 	createNativePeerbitBackbone,
+	defaultNativeBackboneCoordinateFlushMaxPendingBytes,
 } from "@peerbit/native-backbone";
 import { Program, type ProgramClient } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
@@ -21,7 +22,7 @@ import { Documents, policy, type SetupOptions } from "../src/index.js";
 // - DOC_WARMUP=100
 // - DOC_ITERATIONS=1000
 // - DOC_BYTES=1200
-// - DOC_COORDINATE_WAL_FLUSH_BYTES=65536
+// - DOC_COORDINATE_WAL_FLUSH_BYTES=1048576
 // - DOC_COORDINATE_WAL_FLUSH_INTERVAL_MS unset by default
 // - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,rust-peerbit-backbone-coordinate-wal,rust-peerbit-backbone-coordinate-wal-buffered,native-ceiling,native-backbone-ceiling
 //   Add "-nonunique" to any scenario name to use default update-safe put semantics.
@@ -50,8 +51,11 @@ const iterations = Math.max(
 );
 const coordinateWalFlushBytes = Math.max(
 	0,
-	Number.parseInt(process.env.DOC_COORDINATE_WAL_FLUSH_BYTES || "65536", 10) ||
-		65536,
+	Number.parseInt(
+		process.env.DOC_COORDINATE_WAL_FLUSH_BYTES ||
+			String(defaultNativeBackboneCoordinateFlushMaxPendingBytes),
+		10,
+	) || defaultNativeBackboneCoordinateFlushMaxPendingBytes,
 );
 const coordinateWalFlushIntervalMs =
 	process.env.DOC_COORDINATE_WAL_FLUSH_INTERVAL_MS == null
@@ -344,7 +348,7 @@ const createNodeCoordinatePersistence = async (buffered: boolean) => {
 	const nodeStore = new NativeBackboneNodeCoordinatePersistenceStore(directory);
 	const store = buffered
 		? new NativeBackboneBufferedCoordinatePersistenceStore(nodeStore, {
-				maxBufferedBytes: 64 * 1024,
+				maxBufferedBytes: coordinateWalFlushBytes,
 			})
 		: nodeStore;
 	const persistence = new NativeBackboneCoordinatePersistence(store, {

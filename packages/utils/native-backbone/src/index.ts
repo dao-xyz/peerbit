@@ -563,6 +563,9 @@ export const nativeBackboneCoordinatePersistenceFiles = {
 	journal: "coordinates.wal",
 } as const;
 
+export const defaultNativeBackboneCoordinateFlushMaxPendingBytes =
+	1024 * 1024;
+
 type NativeBackboneNodeFs = {
 	mkdir(path: string, options?: { recursive?: boolean }): Promise<unknown>;
 	readFile(path: string): Promise<Uint8Array>;
@@ -2168,6 +2171,9 @@ export class NativeBackboneCoordinatePersistence {
 		this.flushOnAppend = options.flushOnAppend ?? true;
 		if (options.flushMaxPendingBytes != null) {
 			this.flushMaxPendingBytes = Math.max(0, options.flushMaxPendingBytes);
+		} else if (this.flushOnAppend === false) {
+			this.flushMaxPendingBytes =
+				defaultNativeBackboneCoordinateFlushMaxPendingBytes;
 		}
 		if (options.flushIntervalMs != null) {
 			this.flushIntervalMs = Math.max(0, options.flushIntervalMs);

@@ -6,6 +6,7 @@ import {
 	NativeBackboneNodeCoordinatePersistenceStore,
 	NativeBackboneOPFSCoordinatePersistenceStore,
 	createNativePeerbitBackbone,
+	defaultNativeBackboneCoordinateFlushMaxPendingBytes,
 	type NativeBackboneOPFSDirectoryHandle,
 } from "../src/index.js";
 
@@ -175,6 +176,17 @@ class FakeOPFSDirectoryHandle implements NativeBackboneOPFSDirectoryHandle {
 }
 
 describe("native peerbit backbone", () => {
+	it("defaults buffered coordinate WAL to bounded pending bytes", () => {
+		const persistence = new NativeBackboneCoordinatePersistence(
+			new NativeBackboneMemoryCoordinatePersistenceStore(),
+			{ flushOnAppend: false },
+		);
+
+		expect(persistence.flushMaxPendingBytes).equal(
+			defaultNativeBackboneCoordinateFlushMaxPendingBytes,
+		);
+	});
+
 	it("commits lower-log blocks and shared-log coordinates in one native call", async () => {
 		const backbone = await createNativePeerbitBackbone({
 			clockId: publicKey,

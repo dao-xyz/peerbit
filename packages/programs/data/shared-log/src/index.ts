@@ -10070,7 +10070,7 @@ export class SharedLog<
 			for (const coordinate of properties.coordinates) {
 				this.coordinateToHash.add(coordinate, properties.hash);
 			}
-			if (useBackboneOnlyCoordinatePersistence) {
+			if (this._nativeBackboneCoordinatePersistence) {
 				if (this.shouldFlushNativeBackboneCoordinateJournalOnAppend()) {
 					return mapMaybePromise(
 						this.flushNativeBackboneCoordinateJournal(),

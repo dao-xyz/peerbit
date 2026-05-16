@@ -1084,7 +1084,7 @@ describe("index", () => {
 				const coordinateIndex = sharedLog.entryCoordinatesIndex as any;
 				const backboneStorageTransactionSpy = sinon.spy(
 					backbone,
-					"preparePlainStorageAppendTransaction",
+					"preparePlainCommittedStorageAppendTransaction",
 				);
 				const coordinateIndexPutSpy = sinon.spy(
 					coordinateIndex,
