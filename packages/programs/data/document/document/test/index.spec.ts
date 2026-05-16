@@ -1311,6 +1311,131 @@ describe("index", () => {
 				}
 			});
 
+			it("commits transform.project context indexes through the native backbone document index", async () => {
+				@variant("native_backbone_project_context_indexable")
+				class BackboneProjectContextIndexable {
+					@field({ type: "string" })
+					id: string;
+
+					@field({ type: "u64" })
+					created: bigint;
+
+					@field({ type: option(Uint8Array) })
+					signer?: Uint8Array;
+
+					constructor(
+						properties?: Partial<BackboneProjectContextIndexable>,
+					) {
+						this.id = properties?.id || "";
+						this.created = properties?.created || 0n;
+						this.signer = properties?.signer;
+					}
+				}
+
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				const localStore = new TestStore<BackboneProjectContextIndexable>({
+					docs: new Documents<Document, BackboneProjectContextIndexable>(),
+				});
+				store = localStore as any;
+				await rustSession.peers[0].open(localStore, {
+					args: {
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: { optional: false, documentIndex: true },
+						index: {
+							type: BackboneProjectContextIndexable,
+							transform: transform.project<
+								Document,
+								BackboneProjectContextIndexable
+							>({
+								id: transform.field("id"),
+								created: transform.context("created"),
+								signer: transform.entryFirstSignerPublicKey(),
+							}),
+						},
+					},
+				});
+				const sharedLog = localStore.docs.log as any;
+				const backbone = sharedLog._nativeBackbone;
+				const backboneStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendTransaction",
+				);
+				const backboneDocumentPutSpy = sinon.spy(
+					backbone,
+					"putDocumentEncodedPartsStored",
+				);
+				const backendIndex = localStore.docs.index.index as any;
+				const backendPutSpy = sinon.spy(backendIndex, "put");
+				const backendStoredContextPutSpy = sinon.spy(
+					backendIndex,
+					"putStoredContextualEncodedValue",
+				);
+				const documentIndexPutSpy = sinon.spy(
+					localStore.docs.index,
+					"putWithContext",
+				);
+
+				try {
+					const doc = new Document({
+						id: uuid(),
+						name: "backbone-project-context",
+					});
+					const put = await localStore.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(backboneStorageTransactionSpy.callCount).equal(1);
+					expect(
+						backboneStorageTransactionSpy.firstCall.args[0].documentIndex,
+					).equal(undefined);
+					expect(documentIndexPutSpy.callCount).equal(1);
+					expect(backendPutSpy.callCount).equal(1);
+					expect(backendStoredContextPutSpy.callCount).equal(0);
+					expect(backboneDocumentPutSpy.callCount).equal(1);
+					expect(backendIndex.native.len()).equal(0);
+					expect(backbone.documentValueLength).equal(1);
+					const indexed = await localStore.docs.index.get(doc.id, {
+						resolve: false,
+					});
+					expect(indexed?.id).equal(doc.id);
+					expect(indexed?.created).equal(
+						put.entry.meta.clock.timestamp.wallTime,
+					);
+					expect(
+						equals(
+							indexed?.signer,
+							rustSession.peers[0].identity.publicKey.bytes,
+						),
+					).equal(true);
+					const iterator = localStore.docs.index.iterate({
+						query: [
+							new StringMatch({
+								key: "id",
+								value: doc.id,
+							}),
+						],
+					});
+					const queried = await iterator.next(1);
+					await iterator.close();
+					expect(queried[0]?.id).equal(doc.id);
+				} finally {
+					documentIndexPutSpy.restore();
+					backendStoredContextPutSpy.restore();
+					backendPutSpy.restore();
+					backboneDocumentPutSpy.restore();
+					backboneStorageTransactionSpy.restore();
+					await localStore.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
 			it("flushes native backbone coordinate WAL without generic coordinate index writes", async () => {
 				const rustSession = await TestSession.connected(
 					1,

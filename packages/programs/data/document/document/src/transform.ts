@@ -155,6 +155,10 @@ export const canPrepareNativeDocumentTransformBeforeAppend = (
 	}
 };
 
+export const canUseNativeBackboneDocumentTransform = (
+	descriptor: NativeDocumentTransformDescriptor | undefined,
+): boolean => descriptor != null;
+
 export const transform = {
 	identity: <T = unknown>(): NativeDocumentTransformer<T, T> =>
 		attachNativeDocumentTransform((obj) => obj, { kind: "identity" }),

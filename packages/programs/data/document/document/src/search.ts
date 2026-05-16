@@ -63,6 +63,7 @@ import {
 	type NativeDocumentTransformDescriptor,
 	type NativeDocumentTransformer,
 	canPrepareNativeDocumentTransformBeforeAppend,
+	canUseNativeBackboneDocumentTransform,
 	getNativeDocumentTransformDescriptor,
 } from "./transform.js";
 
@@ -1350,7 +1351,7 @@ export class DocumentIndex<
 		if (
 			!backbone ||
 			this.isProgramValued ||
-			!this.canPrepareNativeBackboneDocumentIndexCommit()
+			!this.canUseNativeBackboneDocumentIndex()
 		) {
 			return false;
 		}
@@ -1358,6 +1359,13 @@ export class DocumentIndex<
 			.attachNativeBackboneDocumentIndex;
 		return (
 			typeof attach === "function" && attach.call(this.index, backbone) === true
+		);
+	}
+
+	public canUseNativeBackboneDocumentIndex(): boolean {
+		return (
+			(this.transformerIsIdentity && this.indexedTypeIsDocumentType) ||
+			canUseNativeBackboneDocumentTransform(this.nativeTransformDescriptor)
 		);
 	}
 
