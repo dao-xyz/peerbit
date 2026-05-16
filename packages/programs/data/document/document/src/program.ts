@@ -57,6 +57,8 @@ import {
 	type NativeFastPathCanPerformPolicyEvaluator,
 	createNativeFastPathCanPerformPolicyEvaluator,
 	getNativeCanPerformPolicyDescriptor,
+	nativeCanPerformPolicyNeedsDeleteValue,
+	nativeCanPerformPolicyNeedsPreviousEntries,
 } from "./policy.js";
 import { isResultIndexedValue } from "./result-shape.js";
 import {
@@ -113,15 +115,17 @@ type CanPerformPut<T> = {
 	value: T;
 	operation: PutOperation;
 	entry: Entry<PutOperation>;
+	previousEntries?: Entry<Operation>[];
 };
 
-type CanPerformDelete = {
+type CanPerformDelete<T> = {
 	type: "delete";
+	value?: T;
 	operation: DeleteOperation;
 	entry: Entry<DeleteOperation>;
 };
 
-export type CanPerformOperations<T> = CanPerformPut<T> | CanPerformDelete;
+export type CanPerformOperations<T> = CanPerformPut<T> | CanPerformDelete<T>;
 export type CanPerform<T> = (
 	properties: CanPerformOperations<T>,
 ) => MaybePromise<boolean>;
@@ -606,6 +610,22 @@ export class Documents<
 			}
 
 			if (this._optionCanPerform) {
+				const previousEntries =
+					this._optionCanPerformNativePolicy &&
+					isPutOperation(operation) &&
+					nativeCanPerformPolicyNeedsPreviousEntries(
+						this._optionCanPerformNativePolicy,
+					)
+						? await this.resolveCanPerformPreviousEntries(entry)
+						: undefined;
+				const deleteValue =
+					this._optionCanPerformNativePolicy &&
+					isDeleteOperation(operation) &&
+					nativeCanPerformPolicyNeedsDeleteValue(
+						this._optionCanPerformNativePolicy,
+					)
+						? await this.resolveCanPerformDeleteValue(operation)
+						: undefined;
 				if (
 					!(await this._optionCanPerform(
 						isPutOperation(operation)
@@ -614,9 +634,11 @@ export class Documents<
 									value: document!,
 									operation,
 									entry: entry as any as Entry<PutOperation>,
+									previousEntries,
 								}
 							: {
 									type: "delete",
+									value: deleteValue,
 									operation,
 									entry: entry as any as Entry<DeleteOperation>,
 								},
@@ -634,6 +656,41 @@ export class Documents<
 		}
 
 		return true;
+	}
+
+	private async resolveCanPerformPreviousEntries(
+		entry: Entry<Operation>,
+	): Promise<Entry<Operation>[]> {
+		const entries: Entry<Operation>[] = [];
+		for (const hash of entry.meta.next) {
+			const previous = await this._resolveEntry(hash);
+			if (previous) {
+				entries.push(previous);
+			}
+		}
+		return entries;
+	}
+
+	private async resolveCanPerformDeleteValue(
+		operation: DeleteOperation,
+	): Promise<T | undefined> {
+		const key =
+			operation.key instanceof indexerTypes.IdKey
+				? operation.key
+				: indexerTypes.toId(operation.key);
+		const existing = await this.getLocalIndexedContext(key);
+		const existingHead = this.getExistingContext(existing)?.head;
+		if (!existingHead) {
+			return;
+		}
+		const existingEntry = await this._resolveEntry(existingHead, {
+			remote: true,
+		});
+		const existingOperation = await existingEntry.getPayloadValue();
+		if (!isPutOperation(existingOperation)) {
+			return;
+		}
+		return this._index.valueEncoding.decoder(existingOperation.data);
 	}
 
 	protected async _canAppend(
@@ -1441,6 +1498,7 @@ export class Documents<
 					{
 						replace: existing != null,
 						encodedValueParts: commit.contextualEncodedValueParts,
+						transformFacts: { entryPublicKeys: commit.entry.publicKeys },
 					},
 				),
 				({ indexable }) => {
@@ -1489,6 +1547,7 @@ export class Documents<
 					{
 						replace: existing != null,
 						encodedValueParts: commit.contextualEncodedValueParts,
+						transformFacts: { entryPublicKeys: commit.entry.publicKeys },
 					},
 				),
 				finishIndexed,

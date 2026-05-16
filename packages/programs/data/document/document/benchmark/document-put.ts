@@ -10,7 +10,7 @@ import {
 import { Program, type ProgramClient } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import { createRustPeerbitOptions } from "peerbit/rust";
-import { Documents, type SetupOptions, policy } from "../src/index.js";
+import { Documents, type SetupOptions, policy, transform } from "../src/index.js";
 
 // Run with:
 //   cd packages/programs/data/document/document
@@ -34,6 +34,7 @@ import { Documents, type SetupOptions, policy } from "../src/index.js";
 //   Add "-policy-put-signed-public-key" to open with canPerform: policy.put(policy.signedByPublicKey(local public key)).
 //   Add "-policy-put-signed-field" to open with canPerform: policy.put(policy.signedByField("signer")).
 //   Add "-canperform-allow-all" to open with canPerform: () => true.
+//   Add "-transform-identity", "-transform-pick", "-transform-project-context", or "-transform-arbitrary" to compare index transform paths.
 // - DOC_PROFILE_DEEP=1 reports lower shared-log/log phase timings.
 // - BENCH_JSON=1
 
@@ -76,7 +77,7 @@ const scenarioNames = (
 
 const scenarioBaseName = (name: string) =>
 	name.replace(
-		/(?:-(?:putmany|nonunique|update|local|trim|buffered|coordinate-wal|document-index|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|canperform-allow-all))*$/,
+		/(?:-(?:putmany|nonunique|update|local|trim|buffered|coordinate-wal|document-index|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|canperform-allow-all|transform-identity|transform-pick|transform-project-context|transform-arbitrary))*$/,
 		"",
 	);
 const scenarioUsesUpdatePuts = (name: string) => name.includes("-update");
@@ -102,6 +103,14 @@ const scenarioUsesPolicyPutSignedField = (name: string) =>
 	name.includes("-policy-put-signed-field");
 const scenarioUsesCanPerformAllowAll = (name: string) =>
 	name.includes("-canperform-allow-all");
+const scenarioUsesTransformIdentity = (name: string) =>
+	name.includes("-transform-identity");
+const scenarioUsesTransformPick = (name: string) =>
+	name.includes("-transform-pick");
+const scenarioUsesTransformProjectContext = (name: string) =>
+	name.includes("-transform-project-context");
+const scenarioUsesTransformArbitrary = (name: string) =>
+	name.includes("-transform-arbitrary");
 const profileDeep = process.env.DOC_PROFILE_DEEP === "1";
 
 let currentSignerFieldBytes: Uint8Array | undefined;
@@ -135,17 +144,49 @@ class Document {
 }
 
 @variant("test_documents")
-class TestStore extends Program<Partial<SetupOptions<Document>>> {
+class TestStore extends Program<Partial<SetupOptions<Document, any>>> {
 	@field({ type: Documents })
-	docs: Documents<Document>;
+	docs: Documents<Document, any>;
 
-	constructor(properties?: { docs: Documents<Document> }) {
+	constructor(properties?: { docs: Documents<Document, any> }) {
 		super();
-		this.docs = properties?.docs ?? new Documents<Document>();
+		this.docs = properties?.docs ?? new Documents<Document, any>();
 	}
 
-	async open(options?: Partial<SetupOptions<Document>>): Promise<void> {
+	async open(options?: Partial<SetupOptions<Document, any>>): Promise<void> {
 		await this.docs.open({ ...options, type: Document });
+	}
+}
+
+@variant("document_put_bench_pick_indexable")
+class PickIndexable {
+	@field({ type: "string" })
+	id: string;
+
+	@field({ type: option("string") })
+	name?: string;
+
+	constructor(properties?: Partial<PickIndexable>) {
+		this.id = properties?.id || "";
+		this.name = properties?.name;
+	}
+}
+
+@variant("document_put_bench_project_indexable")
+class ProjectIndexable {
+	@field({ type: "string" })
+	id: string;
+
+	@field({ type: "u64" })
+	created: bigint;
+
+	@field({ type: option(Uint8Array) })
+	signer?: Uint8Array;
+
+	constructor(properties?: Partial<ProjectIndexable>) {
+		this.id = properties?.id || "";
+		this.created = properties?.created || 0n;
+		this.signer = properties?.signer;
 	}
 }
 
@@ -397,10 +438,37 @@ const openScenario = async (name: string) => {
 	currentSignerFieldBytes = scenarioUsesPolicyPutSignedField(name)
 		? session.peers[0].identity.publicKey.bytes
 		: undefined;
+	const indexOptions = scenarioUsesTransformIdentity(name)
+		? { transform: transform.identity<Document>() }
+		: scenarioUsesTransformPick(name)
+			? {
+					type: PickIndexable,
+					transform: transform.pick<Document, PickIndexable>(["id", "name"]),
+				}
+			: scenarioUsesTransformProjectContext(name)
+				? {
+						type: ProjectIndexable,
+						transform: transform.project<Document, ProjectIndexable>({
+							id: transform.field("id"),
+							created: transform.context("created"),
+							signer: transform.field("signer"),
+						}),
+					}
+				: scenarioUsesTransformArbitrary(name)
+					? {
+							type: PickIndexable,
+							transform: (document: Document) =>
+								new PickIndexable({
+									id: document.id,
+									name: document.name,
+								}),
+						}
+					: undefined;
 	try {
 		await client.open(store, {
 			args: {
 				replicate: scenarioUsesLocalStore(name) ? false : { factor: 1 },
+				...(indexOptions ? { index: indexOptions } : {}),
 				...(scenarioUsesPolicyAllowAll(name)
 					? { canPerform: policy.allowAll<Document>() }
 					: scenarioUsesPolicySignedPublicKey(name)

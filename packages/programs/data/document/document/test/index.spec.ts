@@ -70,7 +70,7 @@ import sinon from "sinon";
 import { v4 as uuid } from "uuid";
 import { createDocumentDomain } from "../src/domain.js";
 import type { DocumentsChange } from "../src/events.js";
-import { policy } from "../src/index.js";
+import { policy, transform } from "../src/index.js";
 import MostCommonQueryPredictor from "../src/most-common-query-predictor.js";
 import {
 	Operation,
@@ -78,6 +78,7 @@ import {
 	PutWithKeyOperation,
 } from "../src/operation.js";
 import { getNativeCanPerformPolicyDescriptor } from "../src/policy.js";
+import { getNativeDocumentTransformDescriptor } from "../src/transform.js";
 import {
 	type CountEstimate,
 	Documents,
@@ -1641,6 +1642,134 @@ describe("index", () => {
 				}
 			});
 
+			describe("native-describable transforms", () => {
+				@variant("native_transform_pick_indexable")
+				class NativeTransformPickIndexable {
+					@field({ type: "string" })
+					id: string;
+
+					@field({ type: option("string") })
+					name?: string;
+
+					constructor(properties?: Partial<NativeTransformPickIndexable>) {
+						this.id = properties?.id || "";
+						this.name = properties?.name;
+					}
+				}
+
+				@variant("native_transform_project_indexable")
+				class NativeTransformProjectIndexable {
+					@field({ type: "string" })
+					id: string;
+
+					@field({ type: "u64" })
+					created: bigint;
+
+					@field({ type: option(Uint8Array) })
+					signer?: Uint8Array;
+
+					constructor(properties?: Partial<NativeTransformProjectIndexable>) {
+						this.id = properties?.id || "";
+						this.created = properties?.created || 0n;
+						this.signer = properties?.signer;
+					}
+				}
+
+				it("brands transform descriptors as non-enumerable metadata", () => {
+					const transformer = transform.pick<Document, NativeTransformPickIndexable>(
+						["id", "name"],
+					);
+					const descriptor = getNativeDocumentTransformDescriptor(transformer);
+					expect(descriptor).to.deep.equal({
+						kind: "pick",
+						fields: ["id", "name"],
+					});
+					const descriptorSymbol = Object.getOwnPropertySymbols(
+						transformer,
+					).find(
+						(symbol) =>
+							(transformer as unknown as Record<symbol, unknown>)[symbol] ===
+							descriptor,
+					);
+					expect(descriptorSymbol).to.exist;
+					expect(
+						Object.getOwnPropertyDescriptor(transformer, descriptorSymbol!)
+							?.enumerable,
+					).equal(false);
+				});
+
+				it("indexes transform.pick the same as an equivalent JS transformer", async () => {
+					const localStore = new TestStore<NativeTransformPickIndexable>({
+						docs: new Documents<Document, NativeTransformPickIndexable>(),
+					});
+					store = localStore as any;
+					await session.peers[0].open(localStore, {
+						args: {
+							replicate: false,
+							index: {
+								type: NativeTransformPickIndexable,
+								transform: transform.pick<
+									Document,
+									NativeTransformPickIndexable
+								>(["id", "name"]),
+							},
+						},
+					});
+
+					const doc = new Document({ id: uuid(), name: "picked" });
+					await localStore.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					const indexed = await localStore.docs.index.get(doc.id, {
+						resolve: false,
+					});
+					expect(indexed?.id).equal(doc.id);
+					expect(indexed?.name).equal("picked");
+				});
+
+				it("projects context and entry signer facts", async () => {
+					const localStore = new TestStore<NativeTransformProjectIndexable>({
+						docs: new Documents<Document, NativeTransformProjectIndexable>(),
+					});
+					store = localStore as any;
+					await session.peers[0].open(localStore, {
+						args: {
+							replicate: false,
+							index: {
+								type: NativeTransformProjectIndexable,
+								transform: transform.project<
+									Document,
+									NativeTransformProjectIndexable
+								>({
+									id: transform.field("id"),
+									created: transform.context("created"),
+									signer: transform.entryFirstSignerPublicKey(),
+								}),
+							},
+						},
+					});
+
+					const doc = new Document({ id: uuid(), name: "projected" });
+					await localStore.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					const indexed = await localStore.docs.index.get(doc.id, {
+						resolve: false,
+					});
+					expect(indexed?.id).equal(doc.id);
+					expect(indexed?.created).to.be.a("bigint");
+					expect(
+						equals(indexed?.signer, session.peers[0].identity.publicKey.bytes),
+					).equal(true);
+				});
+			});
+
 			it("uses the plain put fast path for policy.allowAll canPerform", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>(),
@@ -1991,6 +2120,113 @@ describe("index", () => {
 					expect(canPerformInput.value.id).equal(doc.id);
 				} finally {
 					(store.docs as any)._optionCanPerform = canPerform;
+				}
+			});
+
+			it("allows delete ownership through policy.deleteSignedByExistingField", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform: policy.or(
+							policy.put(policy.allowAll<Document>()),
+							policy.deleteSignedByExistingField<Document>("data"),
+						),
+					},
+				});
+
+				const doc = new Document({
+					id: uuid(),
+					name: "owned-delete",
+					data: session.peers[0].identity.publicKey.bytes,
+				});
+				await store.docs.put(doc, {
+					unique: true,
+					replicate: false,
+					target: "none",
+				});
+
+				await store.docs.del(doc.id, {
+					replicate: false,
+					target: "none",
+				});
+
+				expect(await store.docs.get(doc.id)).equal(undefined);
+			});
+
+			it("rejects delete ownership when policy.deleteSignedByExistingField does not match", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform: policy.or(
+							policy.put(policy.allowAll<Document>()),
+							policy.deleteSignedByExistingField<Document>("data"),
+						),
+					},
+				});
+
+				const doc = new Document({
+					id: uuid(),
+					name: "foreign-delete",
+					data: session.peers[1].identity.publicKey.bytes,
+				});
+				await store.docs.put(doc, {
+					unique: true,
+					replicate: false,
+					target: "none",
+				});
+
+				await expect(
+					store.docs.del(doc.id, {
+						replicate: false,
+						target: "none",
+					}),
+				).to.be.rejectedWith("Not allowed to append");
+			});
+
+			it("allows same-signer update policies through compatibility validation", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				const canPerform = policy.put(policy.sameSignersAsPrevious<Document>());
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform,
+					},
+				});
+				const descriptor = getNativeCanPerformPolicyDescriptor(canPerform);
+				expect(descriptor?.kind).equal("put");
+
+				const preparedPayloadCommitOnlySpy = sinon.spy(
+					store.docs.log,
+					"appendLocallyPreparedPayloadCommitOnly",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+
+				try {
+					const id = uuid();
+					await store.docs.put(new Document({ id, name: "first" }), {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+					await store.docs.put(new Document({ id, name: "second" }), {
+						replicate: false,
+						target: "none",
+					});
+
+					expect(preparedPayloadCommitOnlySpy.callCount).equal(0);
+					expect(appendSpy.callCount).equal(2);
+					expect((await store.docs.get(id))?.name).equal("second");
+				} finally {
+					appendSpy.restore();
+					preparedPayloadCommitOnlySpy.restore();
 				}
 			});
 

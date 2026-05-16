@@ -58,6 +58,12 @@ import {
 	isResults,
 } from "./result-shape.js";
 import { ResumableIterators } from "./resumable-iterator.js";
+import {
+	type DocumentTransformFacts,
+	type NativeDocumentTransformDescriptor,
+	type NativeDocumentTransformer,
+	getNativeDocumentTransformDescriptor,
+} from "./transform.js";
 
 const WARNING_WHEN_ITERATING_FOR_MORE_THAN = 1e5;
 
@@ -285,7 +291,11 @@ export type SearchOptions<
 	Resolve extends boolean | undefined,
 > = QueryOptions<T, I, D, Resolve>;
 
-type Transformer<T, I> = (obj: T, context: types.Context) => MaybePromise<I>;
+type Transformer<T, I> = (
+	obj: T,
+	context: types.Context,
+	facts?: DocumentTransformFacts,
+) => MaybePromise<I>;
 
 export type ResultsIterator<T> = {
 	close: () => Promise<void>;
@@ -596,7 +606,7 @@ export type TransformerAsConstructor<T, I> = {
 
 export type TransformerAsFunction<T, I> = {
 	type: AbstractType<I>;
-	transform: (arg: T, context: types.Context) => I | Promise<I>;
+	transform: NativeDocumentTransformer<T, I>;
 };
 export type TransformOptions<T, I> =
 	| TransformerAsConstructor<T, I>
@@ -671,12 +681,13 @@ type ContextualPutOptions = {
 		prefix: Uint8Array;
 		suffix: Uint8Array;
 	};
+	transformFacts?: DocumentTransformFacts;
 };
 
 const stripEncodedValue = (
 	options: ContextualPutOptions | undefined,
 ): { replace?: boolean } | undefined =>
-	options?.encodedValue || options?.encodedValueParts
+	options?.encodedValue || options?.encodedValueParts || options?.transformFacts
 		? { replace: options.replace }
 		: options;
 
@@ -795,6 +806,7 @@ export class DocumentIndex<
 	// transform options
 	transformer: Transformer<T, I>;
 	private transformerIsIdentity = false;
+	private nativeTransformDescriptor?: NativeDocumentTransformDescriptor;
 
 	// The indexed document wrapped in a context
 	wrappedIndexedType: IndexableClass<I>;
@@ -1197,12 +1209,18 @@ export class DocumentIndex<
 		const transformOptions = properties.transform;
 		const hasTransformFunction =
 			transformOptions != null && isTransformerWithFunction(transformOptions);
+		this.nativeTransformDescriptor = hasTransformFunction
+			? getNativeDocumentTransformDescriptor(transformOptions.transform)
+			: undefined;
 		this.transformerIsIdentity =
 			transformOptions == null ||
-			(!hasTransformFunction && transformOptions.type == null);
+			(!hasTransformFunction && transformOptions.type == null) ||
+			(this.nativeTransformDescriptor?.kind === "identity" &&
+				this.indexedTypeIsDocumentType);
 		this.transformer = transformOptions
 			? hasTransformFunction
-				? (obj, context) => transformOptions.transform(obj, context)
+				? (obj, context, facts) =>
+						transformOptions.transform(obj, context, facts)
 				: transformOptions.type
 					? (obj, context) => new transformOptions.type!(obj, context)
 					: (obj) => obj as any as I
@@ -1974,6 +1992,7 @@ export class DocumentIndex<
 		});
 		return this.putWithContext(value, id, context, {
 			replace: existingDefined != null,
+			transformFacts: { entryPublicKeys: entry.publicKeys },
 		});
 	}
 
@@ -1987,7 +2006,7 @@ export class DocumentIndex<
 		this.cacheResolvedValue(idString, value);
 		const valueToIndex = this.transformerIsIdentity
 			? (value as any as I)
-			: await this.transformer(value, context);
+			: await this.transformer(value, context, options?.transformFacts);
 
 		coerceWithIndexed(value, valueToIndex);
 

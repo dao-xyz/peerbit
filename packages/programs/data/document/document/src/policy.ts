@@ -28,6 +28,13 @@ export type NativeCanPerformPolicyDescriptor =
 	| {
 			readonly kind: "signedByField";
 			readonly path: string | readonly string[];
+	  }
+	| {
+			readonly kind: "deleteSignedByExistingField";
+			readonly path: string | readonly string[];
+	  }
+	| {
+			readonly kind: "sameSignersAsPrevious";
 	  };
 
 const NATIVE_CAN_PERFORM_POLICY = Symbol.for(
@@ -211,6 +218,9 @@ export const createNativeFastPathCanPerformPolicyEvaluator = (
 			);
 		case "delete":
 			return denyFastPath;
+		case "deleteSignedByExistingField":
+		case "sameSignersAsPrevious":
+			return denyFastPath;
 		case "and":
 			return descriptor.policies
 				.map((policy) =>
@@ -267,6 +277,42 @@ export const isNativeFastPathCanPerformPolicy = (
 	!!descriptor &&
 	nativeFastPathPutPolicyAllows(descriptor, localPublicKey, document);
 
+export const nativeCanPerformPolicyNeedsDeleteValue = (
+	descriptor: NativeCanPerformPolicyDescriptor,
+): boolean => {
+	switch (descriptor.kind) {
+		case "deleteSignedByExistingField":
+			return true;
+		case "and":
+		case "or":
+			return descriptor.policies.some(nativeCanPerformPolicyNeedsDeleteValue);
+		case "put":
+		case "delete":
+			return nativeCanPerformPolicyNeedsDeleteValue(descriptor.policy);
+		default:
+			return false;
+	}
+};
+
+export const nativeCanPerformPolicyNeedsPreviousEntries = (
+	descriptor: NativeCanPerformPolicyDescriptor,
+): boolean => {
+	switch (descriptor.kind) {
+		case "sameSignersAsPrevious":
+			return true;
+		case "and":
+		case "or":
+			return descriptor.policies.some(
+				nativeCanPerformPolicyNeedsPreviousEntries,
+			);
+		case "put":
+		case "delete":
+			return nativeCanPerformPolicyNeedsPreviousEntries(descriptor.policy);
+		default:
+			return false;
+	}
+};
+
 const getEntryPublicKeys = async <T>(
 	properties: CanPerformOperations<T>,
 ): Promise<PublicSignKey[]> => {
@@ -294,6 +340,37 @@ const entryPublicKeysMatchValue = async <T>(
 ): Promise<boolean> => {
 	const publicKeys = await getEntryPublicKeys(properties);
 	return valueMatchesAnyPublicKey(value, publicKeys);
+};
+
+const publicKeySetsEqual = (
+	left: readonly PublicSignKey[],
+	right: readonly PublicSignKey[],
+): boolean =>
+	left.length === right.length &&
+	left.every((leftKey) => right.some((rightKey) => leftKey.equals(rightKey)));
+
+const sameSignersAsPrevious = async <T>(
+	properties: CanPerformOperations<T>,
+): Promise<boolean> => {
+	if (properties.type !== "put") {
+		return false;
+	}
+	if (!properties.previousEntries?.length) {
+		return true;
+	}
+	const currentPublicKeys = await getEntryPublicKeys(properties);
+	for (const previousEntry of properties.previousEntries) {
+		const previousPublicKeys = await getEntryPublicKeys({
+			type: "put",
+			value: properties.value,
+			operation: properties.operation,
+			entry: previousEntry as any,
+		});
+		if (!publicKeySetsEqual(currentPublicKeys, previousPublicKeys)) {
+			return false;
+		}
+	}
+	return true;
 };
 
 const andEvaluate = async <T>(
@@ -354,6 +431,28 @@ export const policy = {
 			},
 		);
 	},
+	deleteSignedByExistingField: <T = unknown>(
+		path: string | readonly string[],
+	): CanPerform<T> => {
+		const getFieldValue = createFieldValueAccessor(path);
+		return attachNativeCanPerformPolicy<T>(
+			async (properties) => {
+				if (properties.type !== "delete" || !properties.value) {
+					return false;
+				}
+				const fieldValue = getFieldValue(properties.value);
+				return entryPublicKeysMatchValue(properties, fieldValue);
+			},
+			{
+				kind: "deleteSignedByExistingField",
+				path: typeof path === "string" ? path : Object.freeze([...path]),
+			},
+		);
+	},
+	sameSignersAsPrevious: <T = unknown>(): CanPerform<T> =>
+		attachNativeCanPerformPolicy<T>(sameSignersAsPrevious, {
+			kind: "sameSignersAsPrevious",
+		}),
 	put: <T = unknown>(inner: CanPerform<T>): CanPerform<T> =>
 		attachIfDescribed<T>(
 			(properties) => properties.type === "put" && inner(properties),
