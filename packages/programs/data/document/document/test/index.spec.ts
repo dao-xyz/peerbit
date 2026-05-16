@@ -1190,6 +1190,80 @@ describe("index", () => {
 				}
 			});
 
+			it("flushes buffered native backbone coordinate WAL by threshold policy", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				const cases = [
+					{
+						name: "byte-threshold",
+						options: { flushMaxPendingBytes: 1 },
+					},
+					{
+						name: "interval-threshold",
+						options: { flushIntervalMs: 0 },
+					},
+				];
+				try {
+					for (const testCase of cases) {
+						const coordinateStore = new MemoryCoordinatePersistenceStore();
+						const bufferedCoordinateStore =
+							new NativeBackboneBufferedCoordinatePersistenceStore(
+								coordinateStore,
+								{ maxBufferedBytes: 1 },
+							);
+						const coordinatePersistence =
+							new NativeBackboneCoordinatePersistence(
+								bufferedCoordinateStore,
+								{
+									flushOnAppend: false,
+									...testCase.options,
+								},
+							);
+						store = new TestStore({
+							docs: new Documents<Document>(),
+						});
+						await rustSession.peers[0].open(store, {
+							args: {
+								replicate: { factor: 1 },
+								nativeGraph: true,
+								nativeBackbone: {
+									optional: false,
+									coordinatePersistence,
+								},
+							},
+						});
+						const flushSpy = sinon.spy(coordinatePersistence, "flushJournal");
+						const doc = new Document({
+							id: uuid(),
+							name: `buffered-backbone-coordinate-wal-${testCase.name}`,
+						});
+						await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						const backbone = (store.docs.log as any)._nativeBackbone;
+
+						expect(flushSpy.callCount).equal(1);
+						expect(backbone.coordinatePendingJournalLength).to.equal(0);
+						expect(
+							coordinateStore.files.get("coordinates.wal")?.byteLength,
+						).to.be.greaterThan(backbone.coordinateJournalHeader().byteLength);
+
+						await store.close();
+						store = undefined;
+					}
+				} finally {
+					if (store) {
+						await store.close();
+						store = undefined;
+					}
+					await rustSession.stop();
+				}
+			});
+
 			it("restores native backbone coordinates if storage transaction coordinate persistence fails", async () => {
 				const rustSession = await TestSession.connected(
 					1,

@@ -1024,6 +1024,7 @@ export class SharedLog<
 	private _nativeSharedLogState?: SharedLogNativeState;
 	private _nativeBackbone?: NativePeerbitBackbone;
 	private _nativeBackboneCoordinatePersistence?: NativeBackboneCoordinatePersistenceAdapter;
+	private _nativeBackboneCoordinateJournalLastFlushMs = 0;
 	private _residentEntryCoordinatesByHash?: Map<string, ResidentCoordinateEntry<R>>;
 	private coordinateToHash!: Cache<string>;
 	private recentlyRebalanced!: Cache<string>;
@@ -7101,6 +7102,7 @@ export class SharedLog<
 		}
 		if (this._nativeBackboneCoordinatePersistence) {
 			await this._nativeBackboneCoordinatePersistence.hydrate(backbone);
+			this._nativeBackboneCoordinateJournalLastFlushMs = Date.now();
 			this.hydrateNativeCoordinateStateFromBackbone(backbone);
 			return;
 		}
@@ -7184,6 +7186,7 @@ export class SharedLog<
 		this._nativeSharedLogState = undefined;
 		this._nativeBackbone = undefined;
 		this._nativeBackboneCoordinatePersistence = undefined;
+		this._nativeBackboneCoordinateJournalLastFlushMs = 0;
 		this._residentEntryCoordinatesByHash = undefined;
 		if (options === false) {
 			return;
@@ -7218,6 +7221,7 @@ export class SharedLog<
 		options: SharedLogOptions<T, D, R>["nativeBackbone"],
 	): Promise<NativePeerbitBackbone | undefined> {
 		this._nativeBackboneCoordinatePersistence = undefined;
+		this._nativeBackboneCoordinateJournalLastFlushMs = 0;
 		if (!options) {
 			return undefined;
 		}
@@ -10089,11 +10093,33 @@ export class SharedLog<
 		if (!backbone || !persistence) {
 			return undefined;
 		}
-		return mapMaybePromise(persistence.flushJournal(backbone), () => undefined);
+		return mapMaybePromise(persistence.flushJournal(backbone), () => {
+			this._nativeBackboneCoordinateJournalLastFlushMs = Date.now();
+			return undefined;
+		});
 	}
 
 	private shouldFlushNativeBackboneCoordinateJournalOnAppend(): boolean {
-		return this._nativeBackboneCoordinatePersistence?.flushOnAppend !== false;
+		const persistence = this._nativeBackboneCoordinatePersistence;
+		if (!persistence || persistence.flushOnAppend !== false) {
+			return true;
+		}
+		const backbone = this._nativeBackbone;
+		if (!backbone || backbone.coordinatePendingJournalLength === 0) {
+			return false;
+		}
+		if (
+			persistence.flushMaxPendingBytes != null &&
+			backbone.coordinatePendingJournalByteLength >=
+				persistence.flushMaxPendingBytes
+		) {
+			return true;
+		}
+		return (
+			persistence.flushIntervalMs != null &&
+			Date.now() - this._nativeBackboneCoordinateJournalLastFlushMs >=
+				persistence.flushIntervalMs
+		);
 	}
 
 	private async closeNativeBackboneCoordinatePersistence(): Promise<void> {

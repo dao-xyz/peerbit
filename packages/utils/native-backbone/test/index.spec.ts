@@ -430,12 +430,14 @@ describe("native peerbit backbone", () => {
 			2n,
 		);
 		expect(source.coordinatePendingJournalLength).to.equal(3);
+		expect(source.coordinatePendingJournalByteLength).to.be.greaterThan(0);
 		const journal = concatBytes([
 			source.coordinateJournalHeader(),
 			source.drainCoordinateJournal(),
 		]);
 
 		expect(source.coordinatePendingJournalLength).to.equal(0);
+		expect(source.coordinatePendingJournalByteLength).to.equal(0);
 		expect(target.loadCoordinateSnapshotAndJournal(undefined, journal)).to.equal(3);
 		expect(target.getEntryCoordinateHashes()).to.deep.equal(["hash-b"]);
 		expect(target.coordinateIndexLength).to.equal(1);

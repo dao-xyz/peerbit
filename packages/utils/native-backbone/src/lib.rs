@@ -1,7 +1,7 @@
 use js_sys::{Array, Uint8Array};
 use peerbit_indexer_core::persistence::{
-    decode_journal, decode_key_value_snapshot, encode_journal_records, encode_key_value_snapshot,
-    JournalRecord, JOURNAL_MAGIC,
+    decode_journal, decode_key_value_snapshot, encode_journal_payload, encode_journal_record,
+    encode_journal_records, encode_key_value_snapshot, JournalRecord, JOURNAL_MAGIC,
 };
 use peerbit_indexer_core::planner::{DocumentFields, FieldPath, FieldValue, NativeQueryIndex};
 use peerbit_indexer_core::storage::{ByteStorage, MemoryByteStorage};
@@ -26,6 +26,7 @@ pub struct NativePeerbitBackbone {
     coordinate_index: NativeQueryIndex,
     coordinate_values: MemoryByteStorage,
     coordinate_journal: Vec<JournalRecord>,
+    coordinate_journal_byte_len: usize,
     coordinate_journal_enabled: bool,
     builder: NativeEntryV0PlainBuilder,
 }
@@ -50,6 +51,7 @@ impl NativePeerbitBackbone {
             coordinate_index: NativeQueryIndex::new(),
             coordinate_values: MemoryByteStorage::new(),
             coordinate_journal: Vec::new(),
+            coordinate_journal_byte_len: 0,
             coordinate_journal_enabled: false,
             builder: NativeEntryV0PlainBuilder::new(clock_id, private_key, public_key)?,
         })
@@ -109,6 +111,10 @@ impl NativePeerbitBackbone {
         self.coordinate_journal.len()
     }
 
+    pub fn coordinate_pending_journal_byte_len(&self) -> usize {
+        self.coordinate_journal_byte_len
+    }
+
     pub fn coordinate_journal_enabled(&self) -> bool {
         self.coordinate_journal_enabled
     }
@@ -117,6 +123,7 @@ impl NativePeerbitBackbone {
         self.coordinate_journal_enabled = enabled;
         if !enabled {
             self.coordinate_journal.clear();
+            self.coordinate_journal_byte_len = 0;
         }
     }
 
@@ -126,9 +133,11 @@ impl NativePeerbitBackbone {
 
     pub fn clear_coordinate_journal(&mut self) {
         self.coordinate_journal.clear();
+        self.coordinate_journal_byte_len = 0;
     }
 
     pub fn drain_coordinate_journal(&mut self) -> Vec<u8> {
+        self.coordinate_journal_byte_len = 0;
         encode_journal_records(std::mem::take(&mut self.coordinate_journal))
     }
 
@@ -179,6 +188,7 @@ impl NativePeerbitBackbone {
             self.put_decoded_coordinate_core(coordinate, false)?;
         }
         self.coordinate_journal.clear();
+        self.coordinate_journal_byte_len = 0;
         Ok(operations)
     }
 
@@ -955,6 +965,7 @@ impl NativePeerbitBackbone {
         self.coordinate_index.clear();
         self.coordinate_values.clear();
         self.coordinate_journal.clear();
+        self.coordinate_journal_byte_len = 0;
     }
 
     fn put_coordinate_core_from_parts(
@@ -1087,7 +1098,7 @@ impl NativePeerbitBackbone {
         self.coordinate_values.put(hash, value);
         if self.coordinate_journal_enabled {
             if let Some(record) = journal_record {
-                self.coordinate_journal.push(record);
+                self.push_coordinate_journal_record(record);
             }
         }
     }
@@ -1095,9 +1106,15 @@ impl NativePeerbitBackbone {
     fn delete_coordinate_core(&mut self, hash: &str) -> bool {
         self.coordinate_index.delete(hash.to_string());
         if self.coordinate_journal_enabled {
-            self.coordinate_journal.push(JournalRecord::delete(hash));
+            self.push_coordinate_journal_record(JournalRecord::delete(hash));
         }
         self.coordinate_values.delete(hash)
+    }
+
+    fn push_coordinate_journal_record(&mut self, record: JournalRecord) {
+        self.coordinate_journal_byte_len +=
+            encode_journal_record(&encode_journal_payload(&record)).len();
+        self.coordinate_journal.push(record);
     }
 
     fn delete_coordinate_core_batch(&mut self, hashes: Array) -> Result<(), JsValue> {

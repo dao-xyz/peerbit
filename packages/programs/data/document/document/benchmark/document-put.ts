@@ -21,6 +21,8 @@ import { Documents, policy, type SetupOptions } from "../src/index.js";
 // - DOC_WARMUP=100
 // - DOC_ITERATIONS=1000
 // - DOC_BYTES=1200
+// - DOC_COORDINATE_WAL_FLUSH_BYTES=65536
+// - DOC_COORDINATE_WAL_FLUSH_INTERVAL_MS unset by default
 // - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,rust-peerbit-backbone-coordinate-wal,rust-peerbit-backbone-coordinate-wal-buffered,native-ceiling,native-backbone-ceiling
 //   Add "-nonunique" to any scenario name to use default update-safe put semantics.
 //   Add "-local" to a rust-peerbit scenario to disable replication and default trim.
@@ -46,6 +48,21 @@ const iterations = Math.max(
 	1,
 	Number.parseInt(process.env.DOC_ITERATIONS || "1000", 10) || 1000,
 );
+const coordinateWalFlushBytes = Math.max(
+	0,
+	Number.parseInt(process.env.DOC_COORDINATE_WAL_FLUSH_BYTES || "65536", 10) ||
+		65536,
+);
+const coordinateWalFlushIntervalMs =
+	process.env.DOC_COORDINATE_WAL_FLUSH_INTERVAL_MS == null
+		? undefined
+		: Math.max(
+				0,
+				Number.parseInt(
+					process.env.DOC_COORDINATE_WAL_FLUSH_INTERVAL_MS,
+					10,
+				) || 0,
+			);
 
 const scenarioNames = (
 	process.env.DOC_SCENARIOS ||
@@ -317,6 +334,10 @@ const createNodeCoordinatePersistence = async (buffered: boolean) => {
 		: nodeStore;
 	const persistence = new NativeBackboneCoordinatePersistence(store, {
 		flushOnAppend: !buffered,
+		...(buffered ? { flushMaxPendingBytes: coordinateWalFlushBytes } : {}),
+		...(buffered && coordinateWalFlushIntervalMs != null
+			? { flushIntervalMs: coordinateWalFlushIntervalMs }
+			: {}),
 	});
 	return {
 		persistence,
@@ -955,6 +976,8 @@ if (process.env.BENCH_JSON === "1") {
 					warmupIterations,
 					iterations,
 					profileDeep,
+					coordinateWalFlushBytes,
+					coordinateWalFlushIntervalMs,
 				},
 			},
 			null,

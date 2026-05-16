@@ -14,6 +14,7 @@ type NativePeerbitBackboneHandle = {
 	coordinate_index_has_hash: (hash: string) => boolean;
 	coordinate_journal_header: () => Uint8Array;
 	coordinate_pending_journal_len: () => number;
+	coordinate_pending_journal_byte_len: () => number;
 	coordinate_journal_enabled: () => boolean;
 	set_coordinate_journal_enabled: (enabled: boolean) => void;
 	coordinate_journal: () => Uint8Array;
@@ -505,6 +506,8 @@ export type NativeBackboneCoordinatePersistenceFiles = {
 export type NativeBackboneCoordinatePersistenceOptions =
 	NativeBackboneCoordinatePersistenceFiles & {
 		flushOnAppend?: boolean;
+		flushMaxPendingBytes?: number;
+		flushIntervalMs?: number;
 	};
 
 export type NativeBackboneCoordinatePersistenceStore = {
@@ -518,6 +521,8 @@ export type NativeBackboneCoordinatePersistenceStore = {
 
 export type NativeBackboneCoordinatePersistenceAdapter = {
 	flushOnAppend?: boolean;
+	flushMaxPendingBytes?: number;
+	flushIntervalMs?: number;
 	hydrate(backbone: NativePeerbitBackbone): Promise<number>;
 	flushJournal(backbone: NativePeerbitBackbone): Promise<number>;
 	compact?(backbone: NativePeerbitBackbone): Promise<void>;
@@ -1413,6 +1418,10 @@ export class NativePeerbitBackbone {
 		return this.native.coordinate_pending_journal_len();
 	}
 
+	get coordinatePendingJournalByteLength(): number {
+		return this.native.coordinate_pending_journal_byte_len();
+	}
+
 	get coordinateJournalEnabled(): boolean {
 		return this.native.coordinate_journal_enabled();
 	}
@@ -2038,6 +2047,8 @@ export class NativeBackboneBufferedCoordinatePersistenceStore
 
 export class NativeBackboneCoordinatePersistence {
 	readonly flushOnAppend: boolean;
+	readonly flushMaxPendingBytes?: number;
+	readonly flushIntervalMs?: number;
 	private readonly snapshotFile: string;
 	private readonly journalFile: string;
 	private journalInitialized: boolean | undefined;
@@ -2051,6 +2062,12 @@ export class NativeBackboneCoordinatePersistence {
 		this.journalFile =
 			options.journal ?? nativeBackboneCoordinatePersistenceFiles.journal;
 		this.flushOnAppend = options.flushOnAppend ?? true;
+		if (options.flushMaxPendingBytes != null) {
+			this.flushMaxPendingBytes = Math.max(0, options.flushMaxPendingBytes);
+		}
+		if (options.flushIntervalMs != null) {
+			this.flushIntervalMs = Math.max(0, options.flushIntervalMs);
+		}
 	}
 
 	async hydrate(backbone: NativePeerbitBackbone): Promise<number> {
