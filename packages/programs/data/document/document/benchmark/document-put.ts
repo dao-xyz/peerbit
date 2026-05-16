@@ -2,7 +2,12 @@ import { field, option, serialize, variant } from "@dao-xyz/borsh";
 import { create as createSimpleIndexer } from "@peerbit/indexer-simple";
 import { create as createSqliteIndexer } from "@peerbit/indexer-sqlite3";
 import { Log } from "@peerbit/log";
-import { createNativePeerbitBackbone } from "@peerbit/native-backbone";
+import {
+	NativeBackboneBufferedCoordinatePersistenceStore,
+	NativeBackboneCoordinatePersistence,
+	NativeBackboneNodeCoordinatePersistenceStore,
+	createNativePeerbitBackbone,
+} from "@peerbit/native-backbone";
 import { Program, type ProgramClient } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import { createRustPeerbitOptions } from "peerbit/rust";
@@ -16,7 +21,7 @@ import { Documents, policy, type SetupOptions } from "../src/index.js";
 // - DOC_WARMUP=100
 // - DOC_ITERATIONS=1000
 // - DOC_BYTES=1200
-// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,native-ceiling,native-backbone-ceiling
+// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,rust-peerbit-backbone-coordinate-wal,rust-peerbit-backbone-coordinate-wal-buffered,native-ceiling,native-backbone-ceiling
 //   Add "-nonunique" to any scenario name to use default update-safe put semantics.
 //   Add "-local" to a rust-peerbit scenario to disable replication and default trim.
 //   Add "-trim" to a local rust-peerbit scenario to keep length trim enabled.
@@ -52,7 +57,7 @@ const scenarioNames = (
 
 const scenarioBaseName = (name: string) =>
 	name.replace(
-		/(?:-(?:putmany|nonunique|local|trim|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|canperform-allow-all))*$/,
+		/(?:-(?:putmany|nonunique|local|trim|buffered|coordinate-wal|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|canperform-allow-all))*$/,
 		"",
 	);
 const scenarioUsesUniquePuts = (name: string) => !name.includes("-nonunique");
@@ -60,6 +65,10 @@ const scenarioUsesPutMany = (name: string) => name.endsWith("-putmany");
 const scenarioUsesLocalStore = (name: string) =>
 	scenarioBaseName(name).startsWith("rust-peerbit") && name.includes("-local");
 const scenarioUsesTrim = (name: string) => name.includes("-trim");
+const scenarioUsesCoordinateWal = (name: string) =>
+	name.includes("-coordinate-wal");
+const scenarioUsesBufferedCoordinateWal = (name: string) =>
+	name.includes("-coordinate-wal-buffered");
 const scenarioUsesPolicyAllowAll = (name: string) =>
 	name.includes("-policy-allow-all");
 const scenarioUsesPolicySignedPublicKey = (name: string) =>
@@ -290,6 +299,31 @@ const patchSyncMethod = (
 	};
 };
 
+const createNodeCoordinatePersistence = async (buffered: boolean) => {
+	const [{ mkdtemp, rm }, { tmpdir }, { join }] = await Promise.all([
+		import("node:fs/promises"),
+		import("node:os"),
+		import("node:path"),
+	]);
+	const directory = await mkdtemp(
+		join(tmpdir(), "peerbit-doc-coordinate-wal-"),
+	);
+	const nodeStore = new NativeBackboneNodeCoordinatePersistenceStore(directory);
+	const store = buffered
+		? new NativeBackboneBufferedCoordinatePersistenceStore(nodeStore, {
+				maxBufferedBytes: 64 * 1024,
+			})
+		: nodeStore;
+	const persistence = new NativeBackboneCoordinatePersistence(store);
+	return {
+		persistence,
+		cleanup: async () => {
+			await persistence.close();
+			await rm(directory, { recursive: true, force: true });
+		},
+	};
+};
+
 const openScenario = async (name: string) => {
 	const baseName = scenarioBaseName(name);
 	const rustOptions =
@@ -314,6 +348,12 @@ const openScenario = async (name: string) => {
 								? () => rustOptions!.indexer(undefined)
 						: undefined,
 	});
+	const coordinateWal =
+		baseName === "rust-peerbit-backbone" && scenarioUsesCoordinateWal(name)
+			? await createNodeCoordinatePersistence(
+					scenarioUsesBufferedCoordinateWal(name),
+				)
+			: undefined;
 	const store = new TestStore({
 		docs: new Documents<Document>(),
 	});
@@ -321,52 +361,65 @@ const openScenario = async (name: string) => {
 	currentSignerFieldBytes = scenarioUsesPolicyPutSignedField(name)
 		? session.peers[0].identity.publicKey.bytes
 		: undefined;
-	await client.open(store, {
-		args: {
-			replicate: scenarioUsesLocalStore(name) ? false : { factor: 1 },
-			...(scenarioUsesPolicyAllowAll(name)
-				? { canPerform: policy.allowAll<Document>() }
-				: scenarioUsesPolicySignedPublicKey(name)
-					? {
-							canPerform: policy.signedByPublicKey<Document>(
-								session.peers[0].identity.publicKey,
-							),
-						}
-					: scenarioUsesPolicyPutSignedPublicKey(name)
+	try {
+		await client.open(store, {
+			args: {
+				replicate: scenarioUsesLocalStore(name) ? false : { factor: 1 },
+				...(scenarioUsesPolicyAllowAll(name)
+					? { canPerform: policy.allowAll<Document>() }
+					: scenarioUsesPolicySignedPublicKey(name)
 						? {
-								canPerform: policy.put(
-									policy.signedByPublicKey<Document>(
-										session.peers[0].identity.publicKey,
-									),
+								canPerform: policy.signedByPublicKey<Document>(
+									session.peers[0].identity.publicKey,
 								),
 							}
-						: scenarioUsesPolicyPutSignedField(name)
+						: scenarioUsesPolicyPutSignedPublicKey(name)
 							? {
 									canPerform: policy.put(
-										policy.signedByField<Document>("signer"),
+										policy.signedByPublicKey<Document>(
+											session.peers[0].identity.publicKey,
+										),
 									),
 								}
-				: scenarioUsesCanPerformAllowAll(name)
-					? { canPerform: () => true }
+							: scenarioUsesPolicyPutSignedField(name)
+								? {
+										canPerform: policy.put(
+											policy.signedByField<Document>("signer"),
+										),
+									}
+					: scenarioUsesCanPerformAllowAll(name)
+						? { canPerform: () => true }
+						: {}),
+				nativeGraph:
+					baseName === "native-graph" ||
+					baseName === "rust-peerbit" ||
+					baseName === "rust-peerbit-transient-index" ||
+					baseName === "rust-peerbit-backbone",
+				...(baseName === "rust-peerbit-backbone"
+					? {
+							nativeBackbone: {
+								optional: false,
+								...(coordinateWal
+									? { coordinatePersistence: coordinateWal.persistence }
+									: {}),
+							},
+						}
 					: {}),
-			nativeGraph:
-				baseName === "native-graph" ||
-				baseName === "rust-peerbit" ||
-				baseName === "rust-peerbit-transient-index" ||
-				baseName === "rust-peerbit-backbone",
-			...(baseName === "rust-peerbit-backbone"
-				? { nativeBackbone: { optional: false } }
-				: {}),
-			...(scenarioUsesLocalStore(name) && !scenarioUsesTrim(name)
-				? {}
-				: {
-						log: {
-							trim: { type: "length" as const, to: 100 },
-						},
-					}),
-		},
-	});
-	return { session, store };
+				...(scenarioUsesLocalStore(name) && !scenarioUsesTrim(name)
+					? {}
+					: {
+							log: {
+								trim: { type: "length" as const, to: 100 },
+							},
+						}),
+			},
+		});
+		return { session, store, cleanup: coordinateWal?.cleanup };
+	} catch (error) {
+		await coordinateWal?.cleanup();
+		await session.stop();
+		throw error;
+	}
 };
 
 const runPuts = async (
@@ -406,7 +459,7 @@ const runPuts = async (
 };
 
 const runScenario = async (name: string): Promise<BenchRow> => {
-	const { session, store } = await openScenario(name);
+	const { session, store, cleanup } = await openScenario(name);
 	try {
 		await runPuts(store, warmupIterations, name);
 
@@ -689,8 +742,15 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 			),
 		} as BenchRow;
 	} finally {
-		await store.drop();
-		await session.stop();
+		try {
+			await store.drop();
+		} finally {
+			try {
+				await session.stop();
+			} finally {
+				await cleanup?.();
+			}
+		}
 	}
 };
 

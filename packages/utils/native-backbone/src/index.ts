@@ -507,6 +507,8 @@ export type NativeBackboneCoordinatePersistenceStore = {
 	write(name: string, bytes: Uint8Array): Promise<void>;
 	append(name: string, bytes: Uint8Array): Promise<void>;
 	remove?(name: string): Promise<void>;
+	flush?(): Promise<void>;
+	close?(): Promise<void>;
 };
 
 export type NativeBackboneCoordinatePersistenceAdapter = {
@@ -519,6 +521,92 @@ export const nativeBackboneCoordinatePersistenceFiles = {
 	snapshot: "coordinates.bin",
 	journal: "coordinates.wal",
 } as const;
+
+type NativeBackboneNodeFs = {
+	mkdir(path: string, options?: { recursive?: boolean }): Promise<unknown>;
+	readFile(path: string): Promise<Uint8Array>;
+	writeFile(path: string, data: Uint8Array): Promise<unknown>;
+	appendFile(path: string, data: Uint8Array): Promise<unknown>;
+	open?(
+		path: string,
+		flags: string,
+	): Promise<NativeBackboneNodeAppendFileHandle>;
+	rm(path: string, options?: { force?: boolean }): Promise<unknown>;
+};
+
+type NativeBackboneNodeAppendFileHandle = {
+	write(data: Uint8Array): Promise<unknown>;
+	close(): Promise<unknown>;
+};
+
+type NativeBackboneOPFSFile = {
+	arrayBuffer(): Promise<ArrayBuffer>;
+	size: number;
+};
+
+type NativeBackboneOPFSSyncAccessHandle = {
+	getSize(): number;
+	write(buffer: Uint8Array, options?: { at?: number }): number;
+	flush?(): void;
+	close(): void;
+};
+
+type NativeBackboneOPFSWritable = {
+	seek(position: number): Promise<void>;
+	write(data: Uint8Array): Promise<void>;
+	close(): Promise<void>;
+};
+
+export type NativeBackboneOPFSFileHandle = {
+	getFile(): Promise<NativeBackboneOPFSFile>;
+	createWritable(options?: {
+		keepExistingData?: boolean;
+	}): Promise<NativeBackboneOPFSWritable>;
+	createSyncAccessHandle?: () => Promise<NativeBackboneOPFSSyncAccessHandle>;
+};
+
+export type NativeBackboneOPFSDirectoryHandle = {
+	getDirectoryHandle(
+		name: string,
+		options?: { create?: boolean },
+	): Promise<NativeBackboneOPFSDirectoryHandle>;
+	getFileHandle(
+		name: string,
+		options?: { create?: boolean },
+	): Promise<NativeBackboneOPFSFileHandle>;
+	removeEntry(name: string): Promise<void>;
+};
+
+const isNotFoundError = (error: unknown): boolean => {
+	const maybeError = error as { code?: string; name?: string } | undefined;
+	return maybeError?.code === "ENOENT" || maybeError?.name === "NotFoundError";
+};
+
+const validateCoordinatePersistenceName = (name: string): string => {
+	if (
+		name.length === 0 ||
+		name === "." ||
+		name === ".." ||
+		name.includes("/") ||
+		name.includes("\\")
+	) {
+		throw new Error(`Invalid native backbone coordinate persistence file: ${name}`);
+	}
+	return name;
+};
+
+const concatBytes = (chunks: Uint8Array[]): Uint8Array => {
+	const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+	const out = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		out.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return out;
+};
+
+const copyBytes = (bytes: Uint8Array): Uint8Array => bytes.slice();
 
 const rowsToNumbers = (
 	resolution: RangeResolution,
@@ -1624,9 +1712,327 @@ export class NativePeerbitBackbone {
 	}
 }
 
+export class NativeBackboneMemoryCoordinatePersistenceStore
+	implements NativeBackboneCoordinatePersistenceStore
+{
+	readonly files = new Map<string, Uint8Array>();
+
+	async read(name: string): Promise<Uint8Array | undefined> {
+		const file = this.files.get(validateCoordinatePersistenceName(name));
+		return file ? copyBytes(file) : undefined;
+	}
+
+	async write(name: string, bytes: Uint8Array): Promise<void> {
+		this.files.set(validateCoordinatePersistenceName(name), copyBytes(bytes));
+	}
+
+	async append(name: string, bytes: Uint8Array): Promise<void> {
+		const validName = validateCoordinatePersistenceName(name);
+		const existing = this.files.get(validName);
+		this.files.set(
+			validName,
+			existing ? concatBytes([existing, bytes]) : copyBytes(bytes),
+		);
+	}
+
+	async remove(name: string): Promise<void> {
+		this.files.delete(validateCoordinatePersistenceName(name));
+	}
+}
+
+export class NativeBackboneNodeCoordinatePersistenceStore
+	implements NativeBackboneCoordinatePersistenceStore
+{
+	private readonly appendHandles = new Map<
+		string,
+		Promise<NativeBackboneNodeAppendFileHandle>
+	>();
+
+	constructor(
+		private readonly directory: string,
+		private readonly fs?: NativeBackboneNodeFs,
+	) {}
+
+	private async nodeFs(): Promise<NativeBackboneNodeFs> {
+		return this.fs ?? (await import("node:fs/promises"));
+	}
+
+	private async filePath(name: string): Promise<string> {
+		const { join } = await import("node:path");
+		return join(this.directory, validateCoordinatePersistenceName(name));
+	}
+
+	private async ensureDirectory(): Promise<NativeBackboneNodeFs> {
+		const fs = await this.nodeFs();
+		await fs.mkdir(this.directory, { recursive: true });
+		return fs;
+	}
+
+	private async closeAppendHandle(path: string): Promise<void> {
+		const handle = this.appendHandles.get(path);
+		if (!handle) {
+			return;
+		}
+		this.appendHandles.delete(path);
+		await (await handle).close();
+	}
+
+	private async appendHandle(
+		fs: NativeBackboneNodeFs,
+		path: string,
+	): Promise<NativeBackboneNodeAppendFileHandle | undefined> {
+		if (!fs.open) {
+			return undefined;
+		}
+		let handle = this.appendHandles.get(path);
+		if (!handle) {
+			handle = fs.open(path, "a");
+			this.appendHandles.set(path, handle);
+		}
+		return handle;
+	}
+
+	async read(name: string): Promise<Uint8Array | undefined> {
+		const fs = await this.nodeFs();
+		try {
+			return await fs.readFile(await this.filePath(name));
+		} catch (error) {
+			if (isNotFoundError(error)) {
+				return undefined;
+			}
+			throw error;
+		}
+	}
+
+	async write(name: string, bytes: Uint8Array): Promise<void> {
+		const fs = await this.ensureDirectory();
+		const path = await this.filePath(name);
+		await this.closeAppendHandle(path);
+		await fs.writeFile(path, bytes);
+	}
+
+	async append(name: string, bytes: Uint8Array): Promise<void> {
+		const fs = await this.ensureDirectory();
+		const path = await this.filePath(name);
+		const handle = await this.appendHandle(fs, path);
+		if (handle) {
+			await handle.write(bytes);
+			return;
+		}
+		await fs.appendFile(path, bytes);
+	}
+
+	async remove(name: string): Promise<void> {
+		const fs = await this.nodeFs();
+		const path = await this.filePath(name);
+		await this.closeAppendHandle(path);
+		try {
+			await fs.rm(path, { force: true });
+		} catch (error) {
+			if (!isNotFoundError(error)) {
+				throw error;
+			}
+		}
+	}
+
+	async close(): Promise<void> {
+		const handles = [...this.appendHandles.values()];
+		this.appendHandles.clear();
+		await Promise.all(handles.map(async (handle) => (await handle).close()));
+	}
+}
+
+export class NativeBackboneOPFSCoordinatePersistenceStore
+	implements NativeBackboneCoordinatePersistenceStore
+{
+	constructor(private readonly directory: NativeBackboneOPFSDirectoryHandle) {}
+
+	static async create(options?: {
+		root?: NativeBackboneOPFSDirectoryHandle;
+		directory?: string | string[];
+	}): Promise<NativeBackboneOPFSCoordinatePersistenceStore> {
+		const root = options?.root ?? (await this.defaultRoot());
+		let directory = root;
+		for (const part of this.directoryParts(options?.directory)) {
+			directory = await directory.getDirectoryHandle(part, { create: true });
+		}
+		return new NativeBackboneOPFSCoordinatePersistenceStore(directory);
+	}
+
+	private static async defaultRoot(): Promise<NativeBackboneOPFSDirectoryHandle> {
+		const storage = (
+			globalThis as {
+				navigator?: {
+					storage?: {
+						getDirectory?: () => Promise<NativeBackboneOPFSDirectoryHandle>;
+					};
+				};
+			}
+		).navigator?.storage;
+		const root = await storage?.getDirectory?.();
+		if (!root) {
+			throw new Error("OPFS getDirectory is not available in this runtime");
+		}
+		return root;
+	}
+
+	private static directoryParts(directory?: string | string[]): string[] {
+		if (!directory) {
+			return [];
+		}
+		const parts = Array.isArray(directory)
+			? directory
+			: directory.split("/").filter(Boolean);
+		return parts.map(validateCoordinatePersistenceName);
+	}
+
+	async read(name: string): Promise<Uint8Array | undefined> {
+		try {
+			const handle = await this.directory.getFileHandle(
+				validateCoordinatePersistenceName(name),
+				{ create: false },
+			);
+			const file = await handle.getFile();
+			return new Uint8Array(await file.arrayBuffer());
+		} catch (error) {
+			if (isNotFoundError(error)) {
+				return undefined;
+			}
+			throw error;
+		}
+	}
+
+	async write(name: string, bytes: Uint8Array): Promise<void> {
+		const handle = await this.directory.getFileHandle(
+			validateCoordinatePersistenceName(name),
+			{ create: true },
+		);
+		const writable = await handle.createWritable();
+		try {
+			await writable.write(bytes);
+		} finally {
+			await writable.close();
+		}
+	}
+
+	async append(name: string, bytes: Uint8Array): Promise<void> {
+		const handle = await this.directory.getFileHandle(
+			validateCoordinatePersistenceName(name),
+			{ create: true },
+		);
+		if (handle.createSyncAccessHandle) {
+			let access: NativeBackboneOPFSSyncAccessHandle | undefined;
+			try {
+				access = await handle.createSyncAccessHandle();
+			} catch {
+				// Main-thread OPFS and some browser contexts do not expose sync handles.
+			}
+			if (access) {
+				try {
+					access.write(bytes, { at: access.getSize() });
+					access.flush?.();
+					return;
+				} finally {
+					access.close();
+				}
+			}
+		}
+		const file = await handle.getFile();
+		const writable = await handle.createWritable({ keepExistingData: true });
+		try {
+			await writable.seek(file.size);
+			await writable.write(bytes);
+		} finally {
+			await writable.close();
+		}
+	}
+
+	async remove(name: string): Promise<void> {
+		try {
+			await this.directory.removeEntry(validateCoordinatePersistenceName(name));
+		} catch (error) {
+			if (!isNotFoundError(error)) {
+				throw error;
+			}
+		}
+	}
+}
+
+export class NativeBackboneBufferedCoordinatePersistenceStore
+	implements NativeBackboneCoordinatePersistenceStore
+{
+	private readonly buffers = new Map<string, Uint8Array[]>();
+	private bufferedBytes = 0;
+
+	constructor(
+		private readonly inner: NativeBackboneCoordinatePersistenceStore,
+		private readonly options: { maxBufferedBytes?: number } = {},
+	) {}
+
+	private buffer(name: string): Uint8Array[] {
+		const validName = validateCoordinatePersistenceName(name);
+		let buffer = this.buffers.get(validName);
+		if (!buffer) {
+			buffer = [];
+			this.buffers.set(validName, buffer);
+		}
+		return buffer;
+	}
+
+	async read(name: string): Promise<Uint8Array | undefined> {
+		await this.flush(name);
+		return this.inner.read(name);
+	}
+
+	async write(name: string, bytes: Uint8Array): Promise<void> {
+		await this.flush(name);
+		await this.inner.write(name, bytes);
+	}
+
+	async append(name: string, bytes: Uint8Array): Promise<void> {
+		const chunk = copyBytes(bytes);
+		this.buffer(name).push(chunk);
+		this.bufferedBytes += chunk.byteLength;
+		if (
+			this.options.maxBufferedBytes != null &&
+			this.bufferedBytes >= this.options.maxBufferedBytes
+		) {
+			await this.flush();
+		}
+	}
+
+	async remove(name: string): Promise<void> {
+		await this.flush(name);
+		await this.inner.remove?.(name);
+	}
+
+	async flush(name?: string): Promise<void> {
+		const names = name
+			? [validateCoordinatePersistenceName(name)]
+			: [...this.buffers.keys()];
+		for (const fileName of names) {
+			const chunks = this.buffers.get(fileName);
+			if (!chunks || chunks.length === 0) {
+				continue;
+			}
+			this.buffers.delete(fileName);
+			const bytes = concatBytes(chunks);
+			this.bufferedBytes -= bytes.byteLength;
+			await this.inner.append(fileName, bytes);
+		}
+		await this.inner.flush?.();
+	}
+
+	async close(): Promise<void> {
+		await this.flush();
+		await this.inner.close?.();
+	}
+}
+
 export class NativeBackboneCoordinatePersistence {
 	private readonly snapshotFile: string;
 	private readonly journalFile: string;
+	private journalInitialized: boolean | undefined;
 
 	constructor(
 		private readonly store: NativeBackboneCoordinatePersistenceStore,
@@ -1647,6 +2053,7 @@ export class NativeBackboneCoordinatePersistence {
 			snapshot,
 			journal,
 		);
+		this.journalInitialized = !!journal && journal.byteLength > 0;
 		backbone.setCoordinateJournalEnabled(true);
 		return operations;
 	}
@@ -1656,12 +2063,16 @@ export class NativeBackboneCoordinatePersistence {
 		if (records.byteLength === 0) {
 			return 0;
 		}
-		const existing = await this.store.read(this.journalFile);
-		if (!existing || existing.byteLength === 0) {
+		if (this.journalInitialized === undefined) {
+			const existing = await this.store.read(this.journalFile);
+			this.journalInitialized = !!existing && existing.byteLength > 0;
+		}
+		if (!this.journalInitialized) {
 			await this.store.append(
 				this.journalFile,
 				backbone.coordinateJournalHeader(),
 			);
+			this.journalInitialized = true;
 		}
 		await this.store.append(this.journalFile, records);
 		backbone.clearCoordinateJournal();
@@ -1671,7 +2082,13 @@ export class NativeBackboneCoordinatePersistence {
 	async compact(backbone: NativePeerbitBackbone): Promise<void> {
 		await this.store.write(this.snapshotFile, backbone.coordinateSnapshot());
 		await this.store.remove?.(this.journalFile);
+		this.journalInitialized = false;
 		backbone.clearCoordinateJournal();
+	}
+
+	async close(): Promise<void> {
+		await this.store.flush?.();
+		await this.store.close?.();
 	}
 }
 

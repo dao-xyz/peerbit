@@ -1,8 +1,10 @@
 import { expect } from "chai";
 import {
+	NativeBackboneBufferedCoordinatePersistenceStore,
 	NativeBackboneCoordinatePersistence,
+	NativeBackboneMemoryCoordinatePersistenceStore,
+	NativeBackboneNodeCoordinatePersistenceStore,
 	createNativePeerbitBackbone,
-	type NativeBackboneCoordinatePersistenceStore,
 } from "../src/index.js";
 
 const fromHex = (hex: string) =>
@@ -27,29 +29,6 @@ const concatBytes = (chunks: Uint8Array[]) => {
 	}
 	return out;
 };
-
-class MemoryCoordinatePersistenceStore
-	implements NativeBackboneCoordinatePersistenceStore
-{
-	readonly files = new Map<string, Uint8Array>();
-
-	async read(name: string): Promise<Uint8Array | undefined> {
-		return this.files.get(name);
-	}
-
-	async write(name: string, bytes: Uint8Array): Promise<void> {
-		this.files.set(name, bytes.slice());
-	}
-
-	async append(name: string, bytes: Uint8Array): Promise<void> {
-		const existing = this.files.get(name);
-		this.files.set(name, existing ? concatBytes([existing, bytes]) : bytes.slice());
-	}
-
-	async remove(name: string): Promise<void> {
-		this.files.delete(name);
-	}
-}
 
 describe("native peerbit backbone", () => {
 	it("commits lower-log blocks and shared-log coordinates in one native call", async () => {
@@ -406,7 +385,7 @@ describe("native peerbit backbone", () => {
 			privateKey,
 			publicKey,
 		});
-		const store = new MemoryCoordinatePersistenceStore();
+		const store = new NativeBackboneMemoryCoordinatePersistenceStore();
 		const persistence = new NativeBackboneCoordinatePersistence(store);
 
 		expect(source.coordinateJournalEnabled).equal(false);
@@ -428,5 +407,103 @@ describe("native peerbit backbone", () => {
 			"hash-b",
 		]);
 		expect(compacted.coordinateIndexLength).to.equal(2);
+	});
+
+	it("persists native coordinate WAL through the node filesystem store", async () => {
+		const [{ mkdtemp, rm }, { tmpdir }, { join }] = await Promise.all([
+			import("node:fs/promises"),
+			import("node:os"),
+			import("node:path"),
+		]);
+		const directory = await mkdtemp(
+			join(tmpdir(), "peerbit-native-backbone-coordinates-"),
+		);
+		try {
+			const source = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const restored = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const compacted = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const persistence = new NativeBackboneCoordinatePersistence(
+				new NativeBackboneNodeCoordinatePersistenceStore(directory),
+			);
+
+			await persistence.hydrate(source);
+			source.putEntryCoordinates("hash-a", "gid-a", [1n], false, 1, 1n);
+			expect(await persistence.flushJournal(source)).to.be.greaterThan(0);
+			expect(await persistence.hydrate(restored)).to.equal(1);
+			expect(restored.getEntryCoordinateHashes()).to.deep.equal(["hash-a"]);
+
+			source.putEntryCoordinates("hash-b", "gid-b", [2n], false, 1, 2n);
+			await persistence.compact(source);
+			expect(await persistence.hydrate(compacted)).to.equal(0);
+			expect(compacted.getEntryCoordinateHashes()).to.deep.equal([
+				"hash-a",
+				"hash-b",
+			]);
+			expect(compacted.coordinateIndexLength).to.equal(2);
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("can batch node coordinate WAL appends before flushing", async () => {
+		const [{ mkdtemp, rm }, { tmpdir }, { join }] = await Promise.all([
+			import("node:fs/promises"),
+			import("node:os"),
+			import("node:path"),
+		]);
+		const directory = await mkdtemp(
+			join(tmpdir(), "peerbit-native-backbone-buffered-coordinates-"),
+		);
+		try {
+			const source = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const beforeFlush = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const afterFlush = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const nodeStore = new NativeBackboneNodeCoordinatePersistenceStore(
+				directory,
+			);
+			const buffered = new NativeBackboneBufferedCoordinatePersistenceStore(
+				nodeStore,
+			);
+			const persistence = new NativeBackboneCoordinatePersistence(buffered);
+
+			await persistence.hydrate(source);
+			source.putEntryCoordinates("hash-a", "gid-a", [1n], false, 1, 1n);
+			expect(await persistence.flushJournal(source)).to.be.greaterThan(0);
+
+			const writeThroughPersistence = new NativeBackboneCoordinatePersistence(
+				new NativeBackboneNodeCoordinatePersistenceStore(directory),
+			);
+			expect(await writeThroughPersistence.hydrate(beforeFlush)).to.equal(0);
+			await buffered.flush();
+			expect(await writeThroughPersistence.hydrate(afterFlush)).to.equal(1);
+			expect(afterFlush.getEntryCoordinateHashes()).to.deep.equal(["hash-a"]);
+			await persistence.close();
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
 	});
 });
