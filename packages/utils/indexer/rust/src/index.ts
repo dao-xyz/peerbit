@@ -200,6 +200,20 @@ type NativeRustIndex<T extends Record<string, any>> = {
 	delete_keys: (keys: string[]) => Array<[types.IdKey, T]>;
 };
 
+type NativeBackboneDocumentIndexTarget = {
+	configureDocumentSchemaIr?: (
+		schemaIr: Uint8Array,
+	) => { rootFields: number; nodeCount: number; genericNodes: number };
+	putDocumentEncodedPartsStored?: (
+		key: string,
+		valuePrefixBytes: Uint8Array,
+		valueSuffixBytes: Uint8Array,
+		byteElementIndexLimit?: number,
+	) => void;
+	deleteDocument?: (key: string) => boolean;
+	clearDocumentIndex?: () => void;
+};
+
 type WasmModule = {
 	default: (input?: unknown) => Promise<unknown>;
 	initSync: (input?: unknown) => unknown;
@@ -1770,6 +1784,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	private fieldEncoder!: NativeFieldEncoder<T>;
 	private nativeEncodedValueEncoder?: NativeFieldEncoder<T>;
 	private nativeSchemaIrStats?: NativeSchemaIrStats;
+	private nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexTarget;
 	private byteElementIndexLimit!: number;
 	private nativeByteElementIndexLimit!: number;
 	private sharedLogCoordinateFieldIds?: {
@@ -1881,6 +1896,31 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			}
 		}
 		return this;
+	}
+
+	attachNativeBackboneDocumentIndex(
+		backbone: NativeBackboneDocumentIndexTarget | undefined,
+	): boolean {
+		if (
+			!backbone ||
+			!this.nativeEncodedValueEncoder ||
+			typeof backbone.configureDocumentSchemaIr !== "function" ||
+			typeof backbone.putDocumentEncodedPartsStored !== "function"
+		) {
+			this.nativeBackboneDocumentIndex = undefined;
+			return false;
+		}
+		try {
+			backbone.configureDocumentSchemaIr(
+				encodeNativeSchemaIr(this.properties.schema, this.fieldDictionary),
+			);
+			backbone.clearDocumentIndex?.();
+			this.nativeBackboneDocumentIndex = backbone;
+			return true;
+		} catch {
+			this.nativeBackboneDocumentIndex = undefined;
+			return false;
+		}
 	}
 
 	get(
@@ -2532,13 +2572,14 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			return [];
 		}
 		if (!this.snapshotFile) {
-			return this.getNative()
-				.delete_keys(deleteKeys)
-				.map((entry) => entry[0]);
+			const deletedEntries = this.getNative().delete_keys(deleteKeys);
+			this.deleteNativeBackboneDocumentKeys(deleteKeys);
+			return deletedEntries.map((entry) => entry[0]);
 		}
 		return this.enqueueMutation(async () => {
 			await this.appendDeletes(deleteKeys);
 			const deletedEntries = this.getNative().delete_keys(deleteKeys);
+			this.deleteNativeBackboneDocumentKeys(deleteKeys);
 			await this.compactIfNeeded();
 			return deletedEntries.map((entry) => entry[0]);
 		});
@@ -2560,6 +2601,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			});
 			if (deletedEntries.length > 0) {
 				this.getNative().delete_matching(encodeNativeQuerySpec(compiled.spec));
+				this.deleteNativeBackboneDocumentKeys(
+					deletedEntries.map((entry) => keyToStoreKey(entry.id)),
+				);
 			}
 			return deletedEntries.map((entry) => entry.id);
 		}
@@ -2573,10 +2617,12 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				offset: 0,
 			});
 			if (deletedEntries.length > 0) {
-				await this.appendDeletes(
-					deletedEntries.map((entry) => keyToStoreKey(entry.id)),
+				const deleteKeys = deletedEntries.map((entry) =>
+					keyToStoreKey(entry.id),
 				);
+				await this.appendDeletes(deleteKeys);
 				this.getNative().delete_matching(encodeNativeQuerySpec(compiled.spec));
+				this.deleteNativeBackboneDocumentKeys(deleteKeys);
 				await this.compactIfNeeded();
 			}
 			return deletedEntries.map((entry) => entry.id);
@@ -2627,6 +2673,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			await this.mutationQueue.catch(() => undefined);
 			await this.compactPersistence();
 		} finally {
+			this.nativeBackboneDocumentIndex = undefined;
 			this.setClosed();
 		}
 	}
@@ -2636,6 +2683,8 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		try {
 			await this.mutationQueue.catch(() => undefined);
 			this.native?.clear();
+			this.nativeBackboneDocumentIndex?.clearDocumentIndex?.();
+			this.nativeBackboneDocumentIndex = undefined;
 			await this.snapshotFile?.remove();
 		} finally {
 			this.setClosed();
@@ -3411,6 +3460,27 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}
 	}
 
+	private putNativeBackboneDocumentEncodedPartsStored(
+		storeKey: string,
+		encodedValueParts: NativeEncodedValueParts,
+	): boolean {
+		const backbone = this.nativeBackboneDocumentIndex;
+		if (!backbone?.putDocumentEncodedPartsStored) {
+			return false;
+		}
+		try {
+			backbone.putDocumentEncodedPartsStored(
+				storeKey,
+				encodedValueParts.prefix,
+				encodedValueParts.suffix,
+				this.nativeByteElementIndexLimit,
+			);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
 	private putNativeDocumentEncodedPartsStoredBatch(
 		values: Array<{
 			id: types.IdKey;
@@ -3449,6 +3519,31 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			return true;
 		} catch {
 			return false;
+		}
+	}
+
+	private putNativeBackboneDocumentEncodedPartsStoredBatch(
+		values: Array<{
+			id: types.IdKey;
+			storeKey?: string;
+			encodedValueParts: NativeEncodedValueParts;
+		}>,
+	): void {
+		for (const entry of values) {
+			this.putNativeBackboneDocumentEncodedPartsStored(
+				entry.storeKey ?? keyToStoreKey(entry.id),
+				entry.encodedValueParts,
+			);
+		}
+	}
+
+	private deleteNativeBackboneDocumentKeys(storeKeys: string[]): void {
+		const deleteDocument = this.nativeBackboneDocumentIndex?.deleteDocument;
+		if (!deleteDocument || storeKeys.length === 0) {
+			return;
+		}
+		for (const key of storeKeys) {
+			deleteDocument.call(this.nativeBackboneDocumentIndex, key);
 		}
 	}
 
@@ -3503,13 +3598,19 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	): MaybePromise<void> | false {
 		const storeKey = keyToStoreKey(id);
 		if (!this.snapshotFile) {
-			return this.putNativeDocumentEncodedPartsStored(
+			const stored = this.putNativeDocumentEncodedPartsStored(
 				storeKey,
 				id,
 				encodedValueParts,
-			)
-				? undefined
-				: false;
+			);
+			if (!stored) {
+				return false;
+			}
+			this.putNativeBackboneDocumentEncodedPartsStored(
+				storeKey,
+				encodedValueParts,
+			);
+			return;
 		}
 		if (!this.validateNativeDocumentEncodedParts(encodedValueParts)) {
 			return false;
@@ -3525,6 +3626,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			) {
 				throw new Error("Native encoded contextual document put failed");
 			}
+			this.putNativeBackboneDocumentEncodedPartsStored(
+				storeKey,
+				encodedValueParts,
+			);
 			await this.compactIfNeeded();
 		});
 	}
@@ -3551,7 +3656,11 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			return false;
 		}
 		if (!this.snapshotFile) {
-			return this.putNativeDocumentEncodedPartsStoredBatch(values);
+			const stored = this.putNativeDocumentEncodedPartsStoredBatch(values);
+			if (stored) {
+				this.putNativeBackboneDocumentEncodedPartsStoredBatch(values);
+			}
+			return stored;
 		}
 		if (!this.validateNativeDocumentEncodedPartsBatch(values)) {
 			return false;
@@ -3567,6 +3676,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			if (!this.putNativeDocumentEncodedPartsStoredBatch(values)) {
 				throw new Error("Native encoded contextual document batch put failed");
 			}
+			this.putNativeBackboneDocumentEncodedPartsStoredBatch(values);
 			await this.compactIfNeeded();
 		});
 		return true;

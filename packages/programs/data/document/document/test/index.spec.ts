@@ -91,6 +91,17 @@ import {
 } from "../src/search.js";
 import { Document, TestStore } from "./data.js";
 
+const nativeFieldHash = (field: string): number => {
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < field.length; i++) {
+		hash = Math.imul(hash ^ field.charCodeAt(i), 0x01000193);
+	}
+	return hash >>> 0;
+};
+
+const nativeFieldPathHash = (path: string[]): number =>
+	nativeFieldHash(JSON.stringify(path));
+
 const getDocumentTestFanout = (peer: TestSession["peers"][number]) =>
 	(
 		peer.services as TestSession["peers"][number]["services"] & {
@@ -904,13 +915,17 @@ describe("index", () => {
 					args: {
 						replicate: { factor: 1 },
 						nativeGraph: true,
-						nativeBackbone: { optional: false },
+						nativeBackbone: { optional: false, documentIndex: true },
 					},
 				});
 				const sharedLog = store.docs.log as any;
 				const remotePutKnownSpy = sinon.spy(sharedLog.remoteBlocks, "putKnown");
 				const backbone = sharedLog._nativeBackbone;
 				const backbonePlanSpy = sinon.spy(backbone, "planAppendForGid");
+				const backboneDocumentPutSpy = sinon.spy(
+					backbone,
+					"putDocumentEncodedPartsStored",
+				);
 				const backendIndex = store.docs.index.index as any;
 				const backendStoredContextPutSpy = sinon.spy(
 					backendIndex,
@@ -935,6 +950,14 @@ describe("index", () => {
 					expect(documentStoredIdentityPutSpy.callCount).equal(1);
 					expect(documentIdentityPutSpy.callCount).equal(0);
 					expect(backendStoredContextPutSpy.callCount).equal(1);
+					expect(backboneDocumentPutSpy.callCount).equal(1);
+					expect(backbone.documentValueLength).equal(1);
+					expect(
+						backbone.documentExactStringFirstKey(
+							nativeFieldPathHash(["id"]),
+							doc.id,
+						),
+					).equal(`string:${doc.id}`);
 					expect(backbone.hasLogEntry(put.entry.hash)).equal(true);
 					expect(backbone.hasBlock(put.entry.hash)).equal(true);
 					expect(backbone.getEntryCoordinateHashes()).to.include(
@@ -947,6 +970,7 @@ describe("index", () => {
 					documentIdentityPutSpy.restore();
 					documentStoredIdentityPutSpy.restore();
 					backendStoredContextPutSpy.restore();
+					backboneDocumentPutSpy.restore();
 					backbonePlanSpy.restore();
 					remotePutKnownSpy.restore();
 					await store.close();
@@ -967,7 +991,7 @@ describe("index", () => {
 					args: {
 						replicate: { factor: 1 },
 						nativeGraph: true,
-						nativeBackbone: { optional: false },
+						nativeBackbone: { optional: false, documentIndex: true },
 						log: {
 							trim: { type: "length", to: 1 },
 						},
@@ -1004,6 +1028,19 @@ describe("index", () => {
 					expect(
 						backboneStorageTransactionSpy.firstCall.args[0].next,
 					).to.deep.equal([]);
+					expect(backbone.documentValueLength).equal(1);
+					expect(
+						backbone.documentExactStringFirstKey(
+							nativeFieldPathHash(["id"]),
+							first.id,
+						),
+					).equal(undefined);
+					expect(
+						backbone.documentExactStringFirstKey(
+							nativeFieldPathHash(["id"]),
+							second.id,
+						),
+					).equal(`string:${second.id}`);
 					expect(await store.docs.get(first.id)).equal(undefined);
 					expect((await store.docs.get(second.id))?.name).equal(
 						"backbone-storage-2",

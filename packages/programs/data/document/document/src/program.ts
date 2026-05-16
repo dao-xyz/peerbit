@@ -522,6 +522,15 @@ export class Documents<
 			fanout: options?.fanout,
 			keep: keepFunction,
 		});
+		if (
+			options?.nativeBackbone &&
+			typeof options.nativeBackbone !== "boolean" &&
+			options.nativeBackbone.documentIndex === true
+		) {
+			this._index.attachNativeBackboneDocumentIndex(
+				(this.log as { nativeBackbone?: unknown }).nativeBackbone,
+			);
+		}
 
 		this._optionCanPerformNativeFastPath = this._optionCanPerformNativePolicy
 			? createNativeFastPathCanPerformPolicyEvaluator(

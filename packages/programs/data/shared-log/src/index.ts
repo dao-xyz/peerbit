@@ -698,6 +698,7 @@ export type SharedLogOptions<
 		| {
 				optional?: boolean;
 				heads?: boolean;
+				documentIndex?: boolean;
 				coordinatePersistence?: NativeBackboneCoordinatePersistenceAdapter;
 		  };
 	nativeRangePlanner?: false | { optional?: boolean };
@@ -1023,6 +1024,10 @@ export class SharedLog<
 	private _nativeBackbone?: NativePeerbitBackbone;
 	private _nativeBackboneCoordinatePersistence?: NativeBackboneCoordinatePersistenceAdapter;
 	private _nativeBackboneCoordinateJournalLastFlushMs = 0;
+
+	get nativeBackbone(): NativePeerbitBackbone | undefined {
+		return this._nativeBackbone;
+	}
 	private _residentEntryCoordinatesByHash?: Map<
 		string,
 		ResidentCoordinateEntry<R>

@@ -758,6 +758,10 @@ type ExactDeleteIndex = {
 	) => Promise<indexerTypes.IdKey[]> | indexerTypes.IdKey[];
 };
 
+type NativeBackboneDocumentIndex = {
+	attachNativeBackboneDocumentIndex?: (backbone: unknown) => boolean | void;
+};
+
 export const coerceWithContext = <T>(
 	value: T | WithContext<T>,
 	context: types.Context,
@@ -1316,6 +1320,22 @@ export class DocumentIndex<
 		if (this.handleDocumentChange) {
 			this.documentEvents.addEventListener("change", this.handleDocumentChange);
 		}
+	}
+
+	public attachNativeBackboneDocumentIndex(backbone: unknown): boolean {
+		if (
+			!backbone ||
+			!this.transformerIsIdentity ||
+			!this.indexedTypeIsDocumentType ||
+			this.isProgramValued
+		) {
+			return false;
+		}
+		const attach = (this.index as NativeBackboneDocumentIndex)
+			.attachNativeBackboneDocumentIndex;
+		return (
+			typeof attach === "function" && attach.call(this.index, backbone) === true
+		);
 	}
 
 	get prefetch() {
