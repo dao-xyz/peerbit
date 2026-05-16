@@ -25,6 +25,26 @@ export type DocumentCommitContextPlan = {
 	contextBytes: Uint8Array;
 };
 
+export type SimpleDocumentProjectionPlan = {
+	documentVariantType?: "u8" | "string";
+	documentVariantValue?: string;
+	documentFieldNames: string[];
+	documentFieldTypes: string[];
+	outputVariantType?: "u8" | "string";
+	outputVariantValue?: string;
+	outputFieldTypes: string[];
+	sourceKinds: string[];
+	sourceValues: string[];
+};
+
+export type SimpleDocumentProjectionContext = {
+	created: bigint | number | string;
+	modified: bigint | number | string;
+	gid: string;
+	size: number;
+	signer?: Uint8Array;
+};
+
 type WasmModule = {
 	default: (input?: unknown) => Promise<unknown>;
 	initSync: (input?: unknown) => unknown;
@@ -56,6 +76,15 @@ type WasmModule = {
 		gids: string[],
 		sizes: Uint32Array,
 	) => Array<[string, Uint8Array]>;
+	project_document_index_simple: (
+		encodedDocument: Uint8Array,
+		plan: SimpleDocumentProjectionPlan,
+		created: string,
+		modified: string,
+		gid: string,
+		size: number,
+		signer?: Uint8Array,
+	) => Uint8Array;
 };
 
 let wasmModulePromise: Promise<WasmModule> | undefined;
@@ -219,4 +248,59 @@ export const planDocumentContextBatch = async (
 	}
 	const wasm = await loadWasm();
 	return planDocumentContextBatchWithWasm(wasm, inputs);
+};
+
+export const initializeDocumentRust = async (): Promise<void> => {
+	await loadWasm();
+};
+
+const projectDocumentIndexSimpleWithWasm = (
+	wasm: WasmModule,
+	encodedDocument: Uint8Array,
+	plan: SimpleDocumentProjectionPlan,
+	context: SimpleDocumentProjectionContext,
+): Uint8Array | undefined => {
+	try {
+		return copyBytes(
+			wasm.project_document_index_simple(
+				encodedDocument,
+				plan,
+				asU64String(context.created),
+				asU64String(context.modified),
+				context.gid,
+				context.size,
+				context.signer,
+			),
+		);
+	} catch {
+		return;
+	}
+};
+
+export const tryProjectDocumentIndexSimple = (
+	encodedDocument: Uint8Array,
+	plan: SimpleDocumentProjectionPlan,
+	context: SimpleDocumentProjectionContext,
+): Uint8Array | undefined =>
+	wasmInitialized && wasmModule
+		? projectDocumentIndexSimpleWithWasm(
+				wasmModule,
+				encodedDocument,
+				plan,
+				context,
+			)
+		: undefined;
+
+export const projectDocumentIndexSimple = async (
+	encodedDocument: Uint8Array,
+	plan: SimpleDocumentProjectionPlan,
+	context: SimpleDocumentProjectionContext,
+): Promise<Uint8Array | undefined> => {
+	const wasm = await loadWasm();
+	return projectDocumentIndexSimpleWithWasm(
+		wasm,
+		encodedDocument,
+		plan,
+		context,
+	);
 };

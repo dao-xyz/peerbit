@@ -14,6 +14,11 @@ import {
 	sha256Base64Sync,
 } from "@peerbit/crypto";
 import * as types from "@peerbit/document-interface";
+import {
+	type SimpleDocumentProjectionContext,
+	type SimpleDocumentProjectionPlan,
+	tryProjectDocumentIndexSimple,
+} from "@peerbit/document-rust";
 import { CachedIndex, type QueryCacheOptions } from "@peerbit/indexer-cache";
 import * as indexerTypes from "@peerbit/indexer-interface";
 import { HashmapIndex } from "@peerbit/indexer-simple";
@@ -81,6 +86,160 @@ const indexIteratorLogger = documentIndexLogger.newScope("iterate");
 
 const isPromiseLike = <T>(value: MaybePromise<T>): value is Promise<T> =>
 	!!value && typeof (value as Promise<T>).then === "function";
+
+const schemaVariant = (
+	schema: ReturnType<typeof getSchema>,
+): { type?: "u8" | "string"; value?: string } | undefined => {
+	const variant = schema?.variant;
+	if (variant == null) {
+		return {};
+	}
+	if (typeof variant === "number") {
+		return { type: "u8", value: String(variant) };
+	}
+	if (typeof variant === "string") {
+		return { type: "string", value: variant };
+	}
+	return;
+};
+
+const schemaTypeName = (type: unknown): string | undefined => {
+	if (typeof type === "string") {
+		switch (type) {
+			case "string":
+			case "u8":
+			case "u32":
+			case "u64":
+			case "bool":
+				return type;
+			default:
+				return;
+		}
+	}
+	if (type === Uint8Array) {
+		return "bytes";
+	}
+	const kind = type as {
+		constructor?: { name?: string };
+		elementType?: unknown;
+		sizeEncoding?: string;
+	};
+	if (kind.constructor?.name === "OptionKind") {
+		const element = schemaTypeName(kind.elementType);
+		return element ? `option:${element}` : undefined;
+	}
+	if (kind.constructor?.name === "VecKind") {
+		const element = schemaTypeName(kind.elementType);
+		return kind.sizeEncoding === "u32" && element
+			? `vec:${element}`
+			: undefined;
+	}
+	return;
+};
+
+const schemaFieldPlan = (
+	schema: ReturnType<typeof getSchema>,
+): { names: string[]; types: string[] } | undefined => {
+	if (!schema?.fields) {
+		return;
+	}
+	const names: string[] = [];
+	const types: string[] = [];
+	for (const field of schema.fields) {
+		const type = schemaTypeName(field.type);
+		if (!type) {
+			return;
+		}
+		names.push(field.key);
+		types.push(type);
+	}
+	return { names, types };
+};
+
+const asSingleFieldPath = (
+	path: string | readonly string[],
+): string | undefined =>
+	typeof path === "string" ? path : path.length === 1 ? path[0] : undefined;
+
+const createSimpleProjectionPlan = (
+	documentSchema: ReturnType<typeof getSchema>,
+	indexedSchema: ReturnType<typeof getSchema>,
+	descriptor: NativeDocumentTransformDescriptor | undefined,
+): SimpleDocumentProjectionPlan | undefined => {
+	if (!descriptor || descriptor.kind === "identity") {
+		return;
+	}
+	const documentVariant = schemaVariant(documentSchema);
+	const outputVariant = schemaVariant(indexedSchema);
+	const documentFields = schemaFieldPlan(documentSchema);
+	const outputFields = schemaFieldPlan(indexedSchema);
+	if (!documentVariant || !outputVariant || !documentFields || !outputFields) {
+		return;
+	}
+	const sources = new Map<string, { kind: string; value: string }>();
+	if (descriptor.kind === "pick") {
+		for (const field of descriptor.fields) {
+			const name = asSingleFieldPath(field);
+			if (!name) {
+				return;
+			}
+			sources.set(name, { kind: "field", value: name });
+		}
+	} else {
+		for (const field of descriptor.fields) {
+			const target = asSingleFieldPath(field.target);
+			if (!target) {
+				return;
+			}
+			switch (field.source.kind) {
+				case "field": {
+					const source = asSingleFieldPath(field.source.path);
+					if (!source) {
+						return;
+					}
+					sources.set(target, { kind: "field", value: source });
+					break;
+				}
+				case "context":
+					if (field.source.field === "head") {
+						return;
+					}
+					sources.set(target, {
+						kind: "context",
+						value: field.source.field,
+					});
+					break;
+				case "entryFirstSignerPublicKey":
+					sources.set(target, {
+						kind: "entryFirstSignerPublicKey",
+						value: "",
+					});
+					break;
+			}
+		}
+	}
+	const sourceKinds: string[] = [];
+	const sourceValues: string[] = [];
+	for (const field of outputFields.names) {
+		const source = sources.get(field);
+		if (!source) {
+			return;
+		}
+		sourceKinds.push(source.kind);
+		sourceValues.push(source.value);
+	}
+	return {
+		documentVariantType: documentVariant.type,
+		documentVariantValue: documentVariant.value,
+		documentFieldNames: documentFields.names,
+		documentFieldTypes: documentFields.types,
+		outputVariantType: outputVariant.type,
+		outputVariantValue: outputVariant.value,
+		outputFieldTypes: outputFields.types,
+		sourceKinds,
+		sourceValues,
+	};
+};
 
 type BufferedResult<T, I extends Record<string, any>> = {
 	value: T;
@@ -815,6 +974,7 @@ export class DocumentIndex<
 	transformer: Transformer<T, I>;
 	private transformerIsIdentity = false;
 	private nativeTransformDescriptor?: NativeDocumentTransformDescriptor;
+	private nativeTransformProjectionPlan?: SimpleDocumentProjectionPlan;
 
 	// The indexed document wrapped in a context
 	wrappedIndexedType: IndexableClass<I>;
@@ -1220,6 +1380,11 @@ export class DocumentIndex<
 		this.nativeTransformDescriptor = hasTransformFunction
 			? getNativeDocumentTransformDescriptor(transformOptions.transform)
 			: undefined;
+		this.nativeTransformProjectionPlan = createSimpleProjectionPlan(
+			getSchema(this.documentType),
+			indexedSchema,
+			this.nativeTransformDescriptor,
+		);
 		this.transformerIsIdentity =
 			transformOptions == null ||
 			(!hasTransformFunction && transformOptions.type == null) ||
@@ -1422,6 +1587,7 @@ export class DocumentIndex<
 
 	public prepareNativeBackboneDocumentIndexCommitWithAppendFacts(
 		value: T,
+		encodedDocument: Uint8Array,
 		context: types.Context,
 		transformFacts?: DocumentTransformFacts,
 	): NativeBackboneDocumentIndexCommit<I> | undefined {
@@ -1431,6 +1597,25 @@ export class DocumentIndex<
 			)
 		) {
 			return;
+		}
+		if (this.nativeTransformProjectionPlan) {
+			const valuePrefixBytes = tryProjectDocumentIndexSimple(
+				encodedDocument,
+				this.nativeTransformProjectionPlan,
+				{
+					created: context.created,
+					modified: context.modified,
+					gid: context.gid,
+					size: context.size,
+					signer: transformFacts?.entryPublicKeys?.[0]?.bytes,
+				},
+			);
+			if (valuePrefixBytes) {
+				const transformed = this.transformer(value, context, transformFacts);
+				return isPromiseLike(transformed)
+					? undefined
+					: { valuePrefixBytes, indexable: transformed };
+			}
 		}
 		const transformed = this.transformer(value, context, transformFacts);
 		if (isPromiseLike(transformed)) {

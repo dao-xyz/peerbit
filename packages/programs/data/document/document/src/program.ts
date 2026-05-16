@@ -12,6 +12,7 @@ import {
 	type ResultIndexedValue,
 } from "@peerbit/document-interface";
 import {
+	initializeDocumentRust,
 	planDocumentContext,
 	planDocumentContextBatch,
 	tryPlanDocumentContext,
@@ -566,6 +567,9 @@ export class Documents<
 				this._index.attachNativeBackboneDocumentIndex(
 					(this.log as { nativeBackbone?: unknown }).nativeBackbone,
 				) === true;
+			if (this._nativeBackboneDocumentIndexEnabled) {
+				await initializeDocumentRust();
+			}
 		}
 
 		this._optionCanPerformNativeFastPath = this._optionCanPerformNativePolicy
@@ -1358,6 +1362,7 @@ export class Documents<
 			});
 			return this._index.prepareNativeBackboneDocumentIndexCommitWithAppendFacts(
 				input.document,
+				input.documentBytes,
 				context,
 				{ entryPublicKeys: [this.log.log.identity.publicKey] },
 			);
