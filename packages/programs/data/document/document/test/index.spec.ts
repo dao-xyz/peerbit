@@ -948,7 +948,7 @@ describe("index", () => {
 					expect(sharedLog.remoteBlocks.localStore).equal(backbone.blocks);
 					expect(remotePutKnownSpy.callCount).equal(1);
 					expect(backbonePlanSpy.callCount).equal(1);
-					expect(documentStoredIdentityPutSpy.callCount).equal(1);
+					expect(documentStoredIdentityPutSpy.callCount).equal(0);
 					expect(documentIdentityPutSpy.callCount).equal(0);
 					expect(backendStoredContextPutSpy.callCount).equal(1);
 					expect(backboneDocumentPutSpy.callCount).equal(1);
@@ -1267,7 +1267,6 @@ describe("index", () => {
 					localStore.docs.index,
 					"putWithContext",
 				);
-
 				try {
 					const doc = new Document({ id: uuid(), name: "backbone-pick" });
 					await localStore.docs.put(doc, {
@@ -1378,6 +1377,10 @@ describe("index", () => {
 					localStore.docs.index,
 					"putWithContext",
 				);
+				const documentIndexTransformSpy = sinon.spy(
+					localStore.docs.index,
+					"transformer",
+				);
 
 				try {
 					const doc = new Document({
@@ -1394,6 +1397,7 @@ describe("index", () => {
 						backboneStorageTransactionSpy.firstCall.args[0].documentIndex,
 					).to.exist;
 					expect(documentIndexPutSpy.callCount).equal(0);
+					expect(documentIndexTransformSpy.callCount).equal(0);
 					expect(backendPutSpy.callCount).equal(0);
 					expect(backendStoredContextPutSpy.callCount).equal(0);
 					expect(backboneDocumentPutSpy.callCount).equal(0);
@@ -1413,11 +1417,118 @@ describe("index", () => {
 						),
 					).equal(true);
 				} finally {
+					documentIndexTransformSpy.restore();
 					documentIndexPutSpy.restore();
 					backendStoredContextPutSpy.restore();
 					backendPutSpy.restore();
 					backboneDocumentPutSpy.restore();
 					backboneStorageTransactionSpy.restore();
+					await localStore.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("commits local transform.project field/context indexes without JS transform", async () => {
+				@variant("native_backbone_project_field_context_indexable")
+				class BackboneProjectFieldContextIndexable {
+					@field({ type: "string" })
+					id: string;
+
+					@field({ type: "u64" })
+					created: bigint;
+
+					@field({ type: option(Uint8Array) })
+					data?: Uint8Array;
+
+					constructor(
+						properties?: Partial<BackboneProjectFieldContextIndexable>,
+					) {
+						this.id = properties?.id || "";
+						this.created = properties?.created || 0n;
+						this.data = properties?.data;
+					}
+				}
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				const localStore = new TestStore<BackboneProjectFieldContextIndexable>({
+					docs: new Documents<Document, BackboneProjectFieldContextIndexable>(),
+				});
+				store = localStore as any;
+				await rustSession.peers[0].open(localStore, {
+					args: {
+						replicate: false,
+						nativeGraph: true,
+						nativeBackbone: { optional: false, documentIndex: true },
+						index: {
+							type: BackboneProjectFieldContextIndexable,
+							transform: transform.project<
+								Document,
+								BackboneProjectFieldContextIndexable
+							>({
+								id: transform.field("id"),
+								created: transform.context("created"),
+								data: transform.field("data"),
+							}),
+						},
+					},
+				});
+				const sharedLog = localStore.docs.log as any;
+				const backbone = sharedLog._nativeBackbone;
+				const backboneDocumentPutSpy = sinon.spy(
+					backbone,
+					"putDocumentEncodedPartsStored",
+				);
+				const backendIndex = localStore.docs.index.index as any;
+				const backendStoredContextPutSpy = sinon.spy(
+					backendIndex,
+					"putStoredContextualEncodedValue",
+				);
+				const documentIndexPutSpy = sinon.spy(
+					localStore.docs.index,
+					"putWithContext",
+				);
+				const documentPreparedNativePutSpy = sinon.spy(
+					localStore.docs.index,
+					"_putPreparedNativeBackboneDocumentIndexWithContext",
+				);
+				const documentIndexTransformSpy = sinon.spy(
+					localStore.docs.index,
+					"transformer",
+				);
+
+				try {
+					const doc = new Document({
+						id: uuid(),
+						name: "backbone-project-field-context",
+						data: new Uint8Array([1, 2, 3]),
+					});
+					await localStore.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(documentPreparedNativePutSpy.callCount).equal(1);
+					expect(documentIndexPutSpy.callCount).equal(0);
+					expect(documentIndexTransformSpy.callCount).equal(0);
+					expect(backendStoredContextPutSpy.callCount).equal(1);
+					expect(backboneDocumentPutSpy.callCount).equal(1);
+					expect(backendIndex.native.len()).equal(0);
+					expect(backbone.documentValueLength).equal(1);
+					const indexed = await localStore.docs.index.get(doc.id, {
+						resolve: false,
+					});
+					expect(indexed?.id).equal(doc.id);
+					expect(equals(indexed?.data, doc.data)).equal(true);
+				} finally {
+					documentIndexTransformSpy.restore();
+					documentPreparedNativePutSpy.restore();
+					documentIndexPutSpy.restore();
+					backendStoredContextPutSpy.restore();
+					backboneDocumentPutSpy.restore();
 					await localStore.close();
 					store = undefined;
 					await rustSession.stop();

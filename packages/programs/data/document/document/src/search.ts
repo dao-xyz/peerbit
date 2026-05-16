@@ -937,7 +937,8 @@ type NativeBackboneDocumentIndex = {
 
 type NativeBackboneDocumentIndexCommit<I> = {
 	valuePrefixBytes: Uint8Array;
-	indexable: I;
+	indexable?: I;
+	getIndexable?: () => I;
 };
 
 export const coerceWithContext = <T>(
@@ -956,6 +957,36 @@ export const coerceWithIndexed = <T, I>(
 	let valueWithContext: WithIndexed<T, I> = value as any;
 	valueWithContext.__indexed = indexed;
 	return valueWithContext;
+};
+
+export const coerceWithLazyIndexed = <T, I>(
+	value: T | WithIndexedContext<T, I>,
+	getIndexable: () => I,
+): WithIndexedContext<T, I> => {
+	let cached: I | undefined;
+	let hasCached = false;
+	Object.defineProperty(value, "__indexed", {
+		configurable: true,
+		enumerable: true,
+		get() {
+			if (!hasCached) {
+				cached = getIndexable();
+				hasCached = true;
+				Object.defineProperty(value, "__indexed", {
+					configurable: true,
+					enumerable: true,
+					writable: true,
+					value: cached,
+				});
+			}
+			return cached;
+		},
+		set(indexed: I) {
+			cached = indexed;
+			hasCached = true;
+		},
+	});
+	return value as WithIndexedContext<T, I>;
 };
 
 @variant("documents_index")
@@ -1611,10 +1642,28 @@ export class DocumentIndex<
 				},
 			);
 			if (valuePrefixBytes) {
-				const transformed = this.transformer(value, context, transformFacts);
-				return isPromiseLike(transformed)
-					? undefined
-					: { valuePrefixBytes, indexable: transformed };
+				let cached: I | undefined;
+				let hasCached = false;
+				return {
+					valuePrefixBytes,
+					getIndexable: () => {
+						if (!hasCached) {
+							const transformed = this.transformer(
+								value,
+								context,
+								transformFacts,
+							);
+							if (isPromiseLike(transformed)) {
+								throw new Error(
+									"Native descriptor transform unexpectedly returned a promise",
+								);
+							}
+							cached = transformed;
+							hasCached = true;
+						}
+						return cached!;
+					},
+				};
 			}
 		}
 		const transformed = this.transformer(value, context, transformFacts);
@@ -2159,6 +2208,59 @@ export class DocumentIndex<
 			indexable,
 		);
 		this.cacheResolvedValue(id.primitive, value);
+		const handleError = (error: unknown) => {
+			if (error instanceof indexerTypes.NotStartedError && this.closed) {
+				return indexedValue;
+			}
+			throw error;
+		};
+		try {
+			const putResult = contextualStoredPut.call(
+				this.index,
+				id,
+				encodedValueParts,
+				options,
+			);
+			if (putResult === false) {
+				return;
+			}
+			return isPromiseLike(putResult)
+				? putResult.then(() => indexedValue, handleError)
+				: indexedValue;
+		} catch (error) {
+			return handleError(error);
+		}
+	}
+
+	public _putPreparedNativeBackboneDocumentIndexWithContext(
+		value: T,
+		id: indexerTypes.IdKey,
+		context: types.Context,
+		nativeDocumentIndex: NativeBackboneDocumentIndexCommit<I>,
+		options?: { replace?: boolean },
+	): MaybePromise<WithIndexedContext<T, I> | undefined> {
+		const contextualStoredPut = (this.index as ContextualIndexPut<I>)
+			.putStoredContextualEncodedValue;
+		if (!contextualStoredPut || this.isProgramValued) {
+			return;
+		}
+		const valueWithContext = coerceWithContext(value, context);
+		const indexedValue = nativeDocumentIndex.indexable
+			? coerceWithIndexed(valueWithContext, nativeDocumentIndex.indexable)
+			: nativeDocumentIndex.getIndexable
+				? coerceWithLazyIndexed(
+						valueWithContext,
+						nativeDocumentIndex.getIndexable,
+					)
+				: undefined;
+		if (!indexedValue) {
+			return;
+		}
+		this.cacheResolvedValue(id.primitive, value);
+		const encodedValueParts = {
+			prefix: nativeDocumentIndex.valuePrefixBytes,
+			suffix: encodeContextSuffix(context),
+		};
 		const handleError = (error: unknown) => {
 			if (error instanceof indexerTypes.NotStartedError && this.closed) {
 				return indexedValue;

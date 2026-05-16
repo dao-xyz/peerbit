@@ -678,24 +678,30 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				profile,
 				"documentBackendIndexPutMs",
 			),
-			patchAsyncMethod(
-				store.docs.index,
-				"putWithContext",
-				profile,
-				"documentIndexPutMs",
-			),
-			patchAsyncMethod(
-				store.docs.index,
-				"_putStoredIdentityWithContext",
-				profile,
-				"documentIndexPutMs",
-			),
-			patchAsyncMethod(
-				store.docs.index,
-				"_putIdentityWithContext",
-				profile,
-				"documentIndexPutMs",
-			),
+				patchAsyncMethod(
+					store.docs.index,
+					"putWithContext",
+					profile,
+					"documentIndexPutMs",
+				),
+				patchAsyncMethod(
+					store.docs.index,
+					"_putStoredIdentityWithContext",
+					profile,
+					"documentIndexPutMs",
+				),
+				patchAsyncMethod(
+					store.docs.index,
+					"_putPreparedNativeBackboneDocumentIndexWithContext",
+					profile,
+					"documentIndexPutMs",
+				),
+				patchAsyncMethod(
+					store.docs.index,
+					"_putIdentityWithContext",
+					profile,
+					"documentIndexPutMs",
+				),
 			patchAsyncMethod(
 				store.docs.index,
 				"putManyWithContext",

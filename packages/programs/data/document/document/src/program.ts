@@ -76,6 +76,7 @@ import {
 	type WithIndexedContext,
 	coerceWithContext,
 	coerceWithIndexed,
+	coerceWithLazyIndexed,
 } from "./search.js";
 
 const logger = loggerFn("peerbit:program:document");
@@ -244,7 +245,9 @@ type DocumentAppendCommitFacts<T, I extends Record<string, any>> = {
 	contextualEncodedValueParts: ContextualEncodedValueParts;
 	nativeBackboneDocumentIndexCommitted?: boolean;
 	nativeBackboneDocumentIndex?: {
-		indexable: I;
+		valuePrefixBytes: Uint8Array;
+		indexable?: I;
+		getIndexable?: () => I;
 	};
 	unique?: boolean;
 	existing?:
@@ -266,7 +269,8 @@ type NativeDocumentAppendCommitFactsInput<T, I extends Record<string, any>> = {
 		| undefined;
 	nativeBackboneDocumentIndex?: {
 		valuePrefixBytes: Uint8Array;
-		indexable: I;
+		indexable?: I;
+		getIndexable?: () => I;
 	};
 };
 
@@ -1318,7 +1322,8 @@ export class Documents<
 	): MaybePromise<
 		| {
 				valuePrefixBytes: Uint8Array;
-				indexable: I;
+				indexable?: I;
+				getIndexable?: () => I;
 		  }
 		| undefined
 	> {
@@ -1337,7 +1342,13 @@ export class Documents<
 	):
 		| ((
 				facts: NativeBackboneDocumentIndexAppendFactsInput,
-		  ) => { valuePrefixBytes: Uint8Array; indexable: I } | undefined)
+		  ) =>
+				| {
+						valuePrefixBytes: Uint8Array;
+						indexable?: I;
+						getIndexable?: () => I;
+				  }
+				| undefined)
 		| undefined {
 		if (
 			!this._nativeBackboneDocumentIndexEnabled ||
@@ -1530,6 +1541,18 @@ export class Documents<
 	): DocumentAppendCommitFacts<T, I> {
 		const append = appended.appendCommit;
 		const context = new Context(contextPlan);
+		const nativeBackboneDocumentIndex =
+			input.nativeBackboneDocumentIndex ??
+			(append.nativeBackboneDocumentIndexCommitted
+				? undefined
+				: this._nativeBackboneDocumentIndexEnabled
+					? this._index.prepareNativeBackboneDocumentIndexCommitWithAppendFacts(
+							input.document,
+							input.documentBytes,
+							context,
+							{ entryPublicKeys: [this.log.log.identity.publicKey] },
+						)
+					: undefined);
 		return {
 			document: input.document,
 			key: input.key,
@@ -1549,8 +1572,12 @@ export class Documents<
 			},
 			nativeBackboneDocumentIndexCommitted:
 				appended.appendCommit.nativeBackboneDocumentIndexCommitted,
-			nativeBackboneDocumentIndex: input.nativeBackboneDocumentIndex
-				? { indexable: input.nativeBackboneDocumentIndex.indexable }
+			nativeBackboneDocumentIndex: nativeBackboneDocumentIndex
+				? {
+						valuePrefixBytes: nativeBackboneDocumentIndex.valuePrefixBytes,
+						indexable: nativeBackboneDocumentIndex.indexable,
+						getIndexable: nativeBackboneDocumentIndex.getIndexable,
+					}
 				: undefined,
 			unique: input.unique,
 			existing: input.existing,
@@ -1659,15 +1686,41 @@ export class Documents<
 					commit.key.primitive,
 					commit.document,
 				);
-				const indexable =
-					commit.nativeBackboneDocumentIndex?.indexable ??
-					(commit.document as any as I);
+				const withContext = coerceWithContext(commit.document, commit.context);
+				if (commit.nativeBackboneDocumentIndex?.indexable) {
+					return finishIndexed(
+						coerceWithIndexed(
+							withContext,
+							commit.nativeBackboneDocumentIndex.indexable,
+						),
+					);
+				}
+					if (commit.nativeBackboneDocumentIndex?.getIndexable) {
+						return finishIndexed(
+							coerceWithLazyIndexed(
+								withContext,
+								commit.nativeBackboneDocumentIndex.getIndexable,
+							),
+						);
+					}
 				return finishIndexed(
-					coerceWithIndexed(
-						coerceWithContext(commit.document, commit.context),
-						indexable,
-					),
+					coerceWithIndexed(withContext, commit.document as any as I),
 				);
+			}
+			if (commit.nativeBackboneDocumentIndex) {
+				const nativePreparedIndexPut =
+					this._index._putPreparedNativeBackboneDocumentIndexWithContext(
+						commit.document,
+						commit.key,
+						commit.context,
+						commit.nativeBackboneDocumentIndex,
+						{
+							replace: existing != null,
+						},
+					);
+				if (nativePreparedIndexPut !== undefined) {
+					return mapMaybePromise(nativePreparedIndexPut, finishIndexed);
+				}
 			}
 			const storedIdentityPut = this._index._putStoredIdentityWithContext(
 				commit.document,
