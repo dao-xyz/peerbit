@@ -204,6 +204,11 @@ type NativeBackboneDocumentIndexTarget = {
 	configureDocumentSchemaIr?: (
 		schemaIr: Uint8Array,
 	) => { rootFields: number; nodeCount: number; genericNodes: number };
+	documentExactStringFirstKey?: (
+		field: number,
+		value: string,
+	) => string | undefined;
+	documentValueBytes?: (key: string) => Uint8Array | undefined;
 	putDocumentEncodedPartsStored?: (
 		key: string,
 		valuePrefixBytes: Uint8Array,
@@ -391,6 +396,30 @@ const keyToStoreKey = (id: types.IdKey | types.Ideable): string => {
 		return `bytes:${idKey.primitive.toString()}`;
 	}
 	return `${typeof key}:${key.toString()}`;
+};
+
+const storeKeyToIdKey = (key: string): types.IdKey | undefined => {
+	const separator = key.indexOf(":");
+	if (separator <= 0) {
+		return;
+	}
+	const type = key.slice(0, separator);
+	const value = key.slice(separator + 1);
+	if (type === "string") {
+		return types.toId(value);
+	}
+	if (type === "number") {
+		const number = Number(value);
+		return Number.isSafeInteger(number) ? types.toId(number) : undefined;
+	}
+	if (type === "bigint") {
+		try {
+			return types.toId(BigInt(value));
+		} catch {
+			return;
+		}
+	}
+	return;
 };
 
 const stringToStoreKey = (key: string): string => `string:${key}`;
@@ -1942,19 +1971,15 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	getByContextHead(head: string): types.IndexedResult<T> | undefined {
-		const result = this.getNative().query_page(
-			encodeNativeQuerySpec({
-				op: "exact",
-				field: nativeFieldId(this.fieldDictionary, ["__context", "head"]),
-				value: { type: "string", value: head },
-			}),
-			encodeNativeSort(),
-			0,
-			1,
-		)[0];
-		return result
-			? { id: result[0], value: this.decodeNativeStoredValue(result[1]) }
-			: undefined;
+		const field = nativeFieldId(this.fieldDictionary, ["__context", "head"]);
+		const nativeBackboneResult = this.getNativeBackboneExactStringFirst(
+			field,
+			head,
+		);
+		if (nativeBackboneResult) {
+			return nativeBackboneResult;
+		}
+		return this.getNativeExactStringFirst(field, head);
 	}
 
 	getByContextHeadBatch(
@@ -1963,6 +1988,17 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		if (heads.length === 0) {
 			return [];
 		}
+		const field = nativeFieldId(this.fieldDictionary, ["__context", "head"]);
+		const nativeBackbone = this.nativeBackboneDocumentIndex;
+		if (
+			nativeBackbone?.documentExactStringFirstKey &&
+			nativeBackbone.documentValueBytes
+		) {
+			return heads.map((head) =>
+				this.getNativeBackboneExactStringFirst(field, head) ??
+				this.getNativeExactStringFirst(field, head),
+			);
+		}
 		const native = this.getNative();
 		const nativeBatch = native.query_exact_string_first_batch;
 		if (!nativeBatch) {
@@ -1970,7 +2006,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}
 		const rows = nativeBatch.call(
 			native,
-			nativeFieldId(this.fieldDictionary, ["__context", "head"]),
+			field,
 			heads,
 		);
 		return rows.map((result) =>
@@ -3545,6 +3581,51 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		for (const key of storeKeys) {
 			deleteDocument.call(this.nativeBackboneDocumentIndex, key);
 		}
+	}
+
+	private getNativeBackboneExactStringFirst(
+		field: number,
+		value: string,
+	): types.IndexedResult<T> | undefined {
+		const backbone = this.nativeBackboneDocumentIndex;
+		if (!backbone?.documentExactStringFirstKey || !backbone.documentValueBytes) {
+			return;
+		}
+		const key = backbone.documentExactStringFirstKey(field, value);
+		if (!key) {
+			return;
+		}
+		const id = storeKeyToIdKey(key);
+		if (!id) {
+			return;
+		}
+		const bytes = backbone.documentValueBytes(key);
+		if (!bytes) {
+			return;
+		}
+		return {
+			id,
+			value: this.decodeNativeStoredValue(bytes),
+		};
+	}
+
+	private getNativeExactStringFirst(
+		field: number,
+		value: string,
+	): types.IndexedResult<T> | undefined {
+		const result = this.getNative().query_page(
+			encodeNativeQuerySpec({
+				op: "exact",
+				field,
+				value: { type: "string", value },
+			}),
+			encodeNativeSort(),
+			0,
+			1,
+		)[0];
+		return result
+			? { id: result[0], value: this.decodeNativeStoredValue(result[1]) }
+			: undefined;
 	}
 
 	private validateNativeDocumentEncodedParts(

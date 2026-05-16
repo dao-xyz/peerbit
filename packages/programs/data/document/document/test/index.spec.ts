@@ -1003,6 +1003,10 @@ describe("index", () => {
 					backbone,
 					"preparePlainCommittedNoNextStorageAppendTransaction",
 				);
+				const backboneDocumentHeadLookupSpy = sinon.spy(
+					backbone,
+					"documentExactStringFirstKey",
+				);
 
 				try {
 					const first = new Document({
@@ -1028,6 +1032,14 @@ describe("index", () => {
 					expect(
 						backboneStorageTransactionSpy.firstCall.args[0].next,
 					).to.deep.equal([]);
+					const firstEntryHash =
+						backboneStorageTransactionSpy.firstCall.returnValue.entry.hash;
+					expect(
+						backboneDocumentHeadLookupSpy.calledWith(
+							nativeFieldPathHash(["__context", "head"]),
+							firstEntryHash,
+						),
+					).equal(true);
 					expect(backbone.documentValueLength).equal(1);
 					expect(
 						backbone.documentExactStringFirstKey(
@@ -1046,6 +1058,7 @@ describe("index", () => {
 						"backbone-storage-2",
 					);
 				} finally {
+					backboneDocumentHeadLookupSpy.restore();
 					backboneStorageTransactionSpy.restore();
 					await store.close();
 					store = undefined;
