@@ -62,6 +62,7 @@ import {
 	type DocumentTransformFacts,
 	type NativeDocumentTransformDescriptor,
 	type NativeDocumentTransformer,
+	canPrepareNativeDocumentTransformBeforeAppend,
 	getNativeDocumentTransformDescriptor,
 } from "./transform.js";
 
@@ -773,6 +774,11 @@ type NativeBackboneDocumentIndex = {
 	attachNativeBackboneDocumentIndex?: (backbone: unknown) => boolean | void;
 };
 
+type NativeBackboneDocumentIndexCommit<I> = {
+	valuePrefixBytes: Uint8Array;
+	indexable: I;
+};
+
 export const coerceWithContext = <T>(
 	value: T | WithContext<T>,
 	context: types.Context,
@@ -1343,9 +1349,8 @@ export class DocumentIndex<
 	public attachNativeBackboneDocumentIndex(backbone: unknown): boolean {
 		if (
 			!backbone ||
-			!this.transformerIsIdentity ||
-			!this.indexedTypeIsDocumentType ||
-			this.isProgramValued
+			this.isProgramValued ||
+			!this.canPrepareNativeBackboneDocumentIndexCommit()
 		) {
 			return false;
 		}
@@ -1353,6 +1358,61 @@ export class DocumentIndex<
 			.attachNativeBackboneDocumentIndex;
 		return (
 			typeof attach === "function" && attach.call(this.index, backbone) === true
+		);
+	}
+
+	public canPrepareNativeBackboneDocumentIndexCommit(): boolean {
+		return (
+			(this.transformerIsIdentity && this.indexedTypeIsDocumentType) ||
+			canPrepareNativeDocumentTransformBeforeAppend(
+				this.nativeTransformDescriptor,
+			)
+		);
+	}
+
+	public prepareNativeBackboneDocumentIndexCommit(
+		value: T,
+		encodedDocument: Uint8Array,
+		transformFacts?: DocumentTransformFacts,
+	): MaybePromise<NativeBackboneDocumentIndexCommit<I> | undefined> {
+		if (this.transformerIsIdentity && this.indexedTypeIsDocumentType) {
+			return {
+				valuePrefixBytes: encodedDocument,
+				indexable: value as any as I,
+			};
+		}
+		if (
+			!canPrepareNativeDocumentTransformBeforeAppend(
+				this.nativeTransformDescriptor,
+			)
+		) {
+			return;
+		}
+		const transformed = this.transformer(
+			value,
+			undefined as unknown as types.Context,
+			transformFacts,
+		);
+		const finish = (indexable: I): NativeBackboneDocumentIndexCommit<I> => ({
+			valuePrefixBytes: serialize(this.asIndexedTypeValue(indexable)),
+			indexable,
+		});
+		return isPromiseLike(transformed)
+			? transformed.then(finish)
+			: finish(transformed);
+	}
+
+	private asIndexedTypeValue(value: I): I {
+		if (
+			value &&
+			Object.getPrototypeOf(value) ===
+				(this.indexedType as { prototype: object }).prototype
+		) {
+			return value;
+		}
+		return Object.assign(
+			Object.create((this.indexedType as { prototype: object }).prototype),
+			value,
 		);
 	}
 

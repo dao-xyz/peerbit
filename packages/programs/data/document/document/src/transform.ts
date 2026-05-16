@@ -138,6 +138,23 @@ export const getNativeDocumentTransformDescriptor = <T, I>(
 		NATIVE_DOCUMENT_TRANSFORM
 	];
 
+export const canPrepareNativeDocumentTransformBeforeAppend = (
+	descriptor: NativeDocumentTransformDescriptor | undefined,
+): boolean => {
+	if (!descriptor) {
+		return false;
+	}
+	switch (descriptor.kind) {
+		case "identity":
+		case "pick":
+			return true;
+		case "project":
+			return descriptor.fields.every(
+				(field) => field.source.kind !== "context",
+			);
+	}
+};
+
 export const transform = {
 	identity: <T = unknown>(): NativeDocumentTransformer<T, T> =>
 		attachNativeDocumentTransform((obj) => obj, { kind: "identity" }),

@@ -230,6 +230,9 @@ type DocumentAppendCommitFacts<T, I extends Record<string, any>> = {
 	contextBytes: Uint8Array;
 	contextualEncodedValueParts: ContextualEncodedValueParts;
 	nativeBackboneDocumentIndexCommitted?: boolean;
+	nativeBackboneDocumentIndex?: {
+		indexable: I;
+	};
 	unique?: boolean;
 	existing?:
 		| indexerTypes.IndexedResult<IndexedContextOnly<I>>
@@ -248,6 +251,10 @@ type NativeDocumentAppendCommitFactsInput<T, I extends Record<string, any>> = {
 		| indexerTypes.IndexedResult<IndexedContextOnly<I>>
 		| null
 		| undefined;
+	nativeBackboneDocumentIndex?: {
+		valuePrefixBytes: Uint8Array;
+		indexable: I;
+	};
 };
 
 type NativeDocumentAppendCommitInput<
@@ -1196,49 +1203,87 @@ export class Documents<
 			},
 			replicate: input.options?.replicate,
 		};
-		const appendProperties = {
-			skipMissingNextJoin: input.skipMissingNextJoin,
-			resolveTrimmedEntries: input.resolveTrimmedEntries,
-			payloadData: input.operationPayloadBytes,
-			...(this._nativeBackboneDocumentIndexEnabled
-				? {
-						nativeBackboneDocumentIndex: {
-							key: documentIndexStoreKey(input.key),
-							valuePrefixBytes: input.documentBytes,
-							existingCreated:
-								input.unique || input.existing === null
-									? undefined
-									: input.existing?.value.__context.created,
-						},
-					}
-				: {}),
-		};
-		if (input.operation) {
-			return mapMaybePromise(
-				this.log.appendLocallyPrepared(
-					input.operation,
-					appendOptions,
-					appendProperties,
-				),
-				(appended) => this.createDocumentAppendCommitFacts(input, appended),
-			);
-		}
 		return mapMaybePromise(
-			this.log.appendLocallyPreparedPayloadCommitOnly(
-				input.operationPayloadBytes,
-				appendOptions,
-				appendProperties,
-			),
-			(commitOnly) => {
-				if (commitOnly) {
-					return this.createDocumentAppendCommitFacts(input, commitOnly);
+			this.prepareNativeBackboneDocumentIndexCommit(input),
+			(nativeDocumentIndexCommit) => {
+				const appendProperties = {
+					skipMissingNextJoin: input.skipMissingNextJoin,
+					resolveTrimmedEntries: input.resolveTrimmedEntries,
+					payloadData: input.operationPayloadBytes,
+					...(nativeDocumentIndexCommit
+						? {
+								nativeBackboneDocumentIndex: {
+									key: documentIndexStoreKey(input.key),
+									valuePrefixBytes:
+										nativeDocumentIndexCommit.valuePrefixBytes,
+									existingCreated:
+										input.unique || input.existing === null
+											? undefined
+											: input.existing?.value.__context.created,
+								},
+							}
+						: {}),
+				};
+				const inputWithNativeIndex = nativeDocumentIndexCommit
+					? {
+							...input,
+							nativeBackboneDocumentIndex: nativeDocumentIndexCommit,
+						}
+					: input;
+				if (input.operation) {
+					return mapMaybePromise(
+						this.log.appendLocallyPrepared(
+							input.operation,
+							appendOptions,
+							appendProperties,
+						),
+						(appended) =>
+							this.createDocumentAppendCommitFacts(
+								inputWithNativeIndex,
+								appended,
+							),
+					);
 				}
-				return this.commitNativeDocumentAppendPayloadFallback(
-					input,
-					appendOptions,
-					appendProperties,
+				return mapMaybePromise(
+					this.log.appendLocallyPreparedPayloadCommitOnly(
+						input.operationPayloadBytes,
+						appendOptions,
+						appendProperties,
+					),
+					(commitOnly) => {
+						if (commitOnly) {
+							return this.createDocumentAppendCommitFacts(
+								inputWithNativeIndex,
+								commitOnly,
+							);
+						}
+						return this.commitNativeDocumentAppendPayloadFallback(
+							inputWithNativeIndex,
+							appendOptions,
+							appendProperties,
+						);
+					},
 				);
 			},
+		);
+	}
+
+	private prepareNativeBackboneDocumentIndexCommit(
+		input: NativeDocumentAppendCommitFactsInput<T, I>,
+	): MaybePromise<
+		| {
+				valuePrefixBytes: Uint8Array;
+				indexable: I;
+		  }
+		| undefined
+	> {
+		if (!this._nativeBackboneDocumentIndexEnabled) {
+			return;
+		}
+		return this._index.prepareNativeBackboneDocumentIndexCommit(
+			input.document,
+			input.documentBytes,
+			{ entryPublicKeys: [this.log.log.identity.publicKey] },
 		);
 	}
 
@@ -1413,6 +1458,9 @@ export class Documents<
 			},
 			nativeBackboneDocumentIndexCommitted:
 				appended.appendCommit.nativeBackboneDocumentIndexCommitted,
+			nativeBackboneDocumentIndex: input.nativeBackboneDocumentIndex
+				? { indexable: input.nativeBackboneDocumentIndex.indexable }
+				: undefined,
 			unique: input.unique,
 			existing: input.existing,
 		};
@@ -1520,10 +1568,13 @@ export class Documents<
 					commit.key.primitive,
 					commit.document,
 				);
+				const indexable =
+					commit.nativeBackboneDocumentIndex?.indexable ??
+					(commit.document as any as I);
 				return finishIndexed(
 					coerceWithIndexed(
 						coerceWithContext(commit.document, commit.context),
-						commit.document as any as I,
+						indexable,
 					),
 				);
 			}

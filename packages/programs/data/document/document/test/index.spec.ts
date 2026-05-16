@@ -1215,6 +1215,102 @@ describe("index", () => {
 				}
 			});
 
+			it("commits transform.pick document indexes in the native backbone transaction", async () => {
+				@variant("native_backbone_pick_indexable")
+				class BackbonePickIndexable {
+					@field({ type: "string" })
+					id: string;
+
+					@field({ type: option("string") })
+					name?: string;
+
+					constructor(properties?: Partial<BackbonePickIndexable>) {
+						this.id = properties?.id || "";
+						this.name = properties?.name;
+					}
+				}
+
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				const localStore = new TestStore<BackbonePickIndexable>({
+					docs: new Documents<Document, BackbonePickIndexable>(),
+				});
+				store = localStore as any;
+				await rustSession.peers[0].open(localStore, {
+					args: {
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: { optional: false, documentIndex: true },
+						index: {
+							type: BackbonePickIndexable,
+							transform: transform.pick<Document, BackbonePickIndexable>([
+								"id",
+								"name",
+							]),
+						},
+					},
+				});
+				const sharedLog = localStore.docs.log as any;
+				const backbone = sharedLog._nativeBackbone;
+				const backboneStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendTransaction",
+				);
+				const backendIndex = localStore.docs.index.index as any;
+				const backendStoredContextPutSpy = sinon.spy(
+					backendIndex,
+					"putStoredContextualEncodedValue",
+				);
+				const documentIndexPutSpy = sinon.spy(
+					localStore.docs.index,
+					"putWithContext",
+				);
+
+				try {
+					const doc = new Document({ id: uuid(), name: "backbone-pick" });
+					await localStore.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(backboneStorageTransactionSpy.callCount).equal(1);
+					expect(
+						backboneStorageTransactionSpy.firstCall.args[0].documentIndex,
+					).to.exist;
+					expect(documentIndexPutSpy.callCount).equal(0);
+					expect(backendStoredContextPutSpy.callCount).equal(0);
+					expect(backendIndex.native.len()).equal(0);
+					expect(backbone.documentValueLength).equal(1);
+					const indexed = await localStore.docs.index.get(doc.id, {
+						resolve: false,
+					});
+					expect(indexed?.id).equal(doc.id);
+					expect(indexed?.name).equal("backbone-pick");
+					expect((indexed as any)?.tags).equal(undefined);
+					const iterator = localStore.docs.index.iterate({
+						query: [
+							new StringMatch({
+								key: "name",
+								value: "backbone-pick",
+							}),
+						],
+					});
+					const queried = await iterator.next(1);
+					await iterator.close();
+					expect(queried[0]?.id).equal(doc.id);
+				} finally {
+					documentIndexPutSpy.restore();
+					backendStoredContextPutSpy.restore();
+					backboneStorageTransactionSpy.restore();
+					await localStore.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
 			it("flushes native backbone coordinate WAL without generic coordinate index writes", async () => {
 				const rustSession = await TestSession.connected(
 					1,

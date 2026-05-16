@@ -40,6 +40,7 @@ export {
 	type NativeDocumentTransformSource,
 	type NativeDocumentTransformSourceDescriptor,
 	type NativeDocumentTransformer,
+	canPrepareNativeDocumentTransformBeforeAppend,
 	getNativeDocumentTransformDescriptor,
 	transform,
 } from "./transform.js";
