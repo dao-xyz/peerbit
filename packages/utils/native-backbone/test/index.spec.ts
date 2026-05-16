@@ -4,6 +4,7 @@ import {
 	NativeBackboneCoordinatePersistence,
 	NativeBackboneMemoryCoordinatePersistenceStore,
 	NativeBackboneNodeCoordinatePersistenceStore,
+	NativeBackboneNodeCoordinatePersistence,
 	NativeBackboneOPFSCoordinatePersistenceStore,
 	createNativePeerbitBackbone,
 	defaultNativeBackboneCoordinateFlushMaxPendingBytes,
@@ -709,6 +710,87 @@ describe("native peerbit backbone", () => {
 				"hash-b",
 			]);
 			expect(compacted.coordinateIndexLength).to.equal(2);
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("persists native coordinate WAL through the direct node adapter", async () => {
+		const [{ mkdtemp, rm }, { tmpdir }, { join }] = await Promise.all([
+			import("node:fs/promises"),
+			import("node:os"),
+			import("node:path"),
+		]);
+		const directory = await mkdtemp(
+			join(tmpdir(), "peerbit-native-backbone-direct-coordinates-"),
+		);
+		try {
+			const source = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const beforeClose = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const afterClose = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const thresholdSource = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const thresholdRestored = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const buffered = new NativeBackboneNodeCoordinatePersistence(directory, {
+				flushOnAppend: false,
+				flushMaxPendingBytes: defaultNativeBackboneCoordinateFlushMaxPendingBytes,
+				writeBufferMaxBytes: defaultNativeBackboneCoordinateFlushMaxPendingBytes,
+			});
+
+			await buffered.hydrate(source);
+			source.putEntryCoordinates("hash-a", "gid-a", [1n], false, 1, 1n);
+			expect(await buffered.flushJournalOnAppend(source)).equal(0);
+			expect(await buffered.hydrate(beforeClose)).to.equal(0);
+			await buffered.flushJournal(source);
+			await buffered.close();
+
+			const writeThrough = new NativeBackboneNodeCoordinatePersistence(directory);
+			expect(await writeThrough.hydrate(afterClose)).to.equal(1);
+			expect(afterClose.getEntryCoordinateHashes()).to.deep.equal(["hash-a"]);
+
+			const threshold = new NativeBackboneNodeCoordinatePersistence(directory, {
+				flushOnAppend: false,
+				flushMaxPendingBytes: 1,
+				writeBufferMaxBytes: 1,
+			});
+			await threshold.hydrate(thresholdSource);
+			thresholdSource.putEntryCoordinates(
+				"hash-b",
+				"gid-b",
+				[2n],
+				false,
+				1,
+				2n,
+			);
+			expect(await threshold.flushJournalOnAppend(thresholdSource)).to.be.greaterThan(
+				0,
+			);
+			await writeThrough.hydrate(thresholdRestored);
+			expect(thresholdRestored.getEntryCoordinateHashes()).to.deep.equal([
+				"hash-a",
+				"hash-b",
+			]);
+			await writeThrough.close();
+			await threshold.close();
 		} finally {
 			await rm(directory, { recursive: true, force: true });
 		}

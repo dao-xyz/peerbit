@@ -3,9 +3,7 @@ import { create as createSimpleIndexer } from "@peerbit/indexer-simple";
 import { create as createSqliteIndexer } from "@peerbit/indexer-sqlite3";
 import { Log } from "@peerbit/log";
 import {
-	NativeBackboneBufferedCoordinatePersistenceStore,
-	NativeBackboneCoordinatePersistence,
-	NativeBackboneNodeCoordinatePersistenceStore,
+	NativeBackboneNodeCoordinatePersistence,
 	createNativePeerbitBackbone,
 	defaultNativeBackboneCoordinateFlushMaxPendingBytes,
 } from "@peerbit/native-backbone";
@@ -345,15 +343,10 @@ const createNodeCoordinatePersistence = async (buffered: boolean) => {
 	const directory = await mkdtemp(
 		join(tmpdir(), "peerbit-doc-coordinate-wal-"),
 	);
-	const nodeStore = new NativeBackboneNodeCoordinatePersistenceStore(directory);
-	const store = buffered
-		? new NativeBackboneBufferedCoordinatePersistenceStore(nodeStore, {
-				maxBufferedBytes: coordinateWalFlushBytes,
-			})
-		: nodeStore;
-	const persistence = new NativeBackboneCoordinatePersistence(store, {
+	const persistence = new NativeBackboneNodeCoordinatePersistence(directory, {
 		flushOnAppend: !buffered,
 		...(buffered ? { flushMaxPendingBytes: coordinateWalFlushBytes } : {}),
+		...(buffered ? { writeBufferMaxBytes: coordinateWalFlushBytes } : {}),
 		...(buffered && coordinateWalFlushIntervalMs != null
 			? { flushIntervalMs: coordinateWalFlushIntervalMs }
 			: {}),

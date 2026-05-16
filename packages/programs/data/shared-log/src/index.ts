@@ -10071,10 +10071,10 @@ export class SharedLog<
 				this.coordinateToHash.add(coordinate, properties.hash);
 			}
 			if (this._nativeBackboneCoordinatePersistence) {
-				return mapMaybePromise(
-					this.flushNativeBackboneCoordinateJournalOnAppend(),
-					() => true,
-				);
+				const flushed = this.flushNativeBackboneCoordinateJournalOnAppend();
+				if (isPromiseLike(flushed)) {
+					return mapMaybePromise(flushed, () => true);
+				}
 			}
 			return true;
 		};
@@ -10123,7 +10123,11 @@ export class SharedLog<
 			return undefined;
 		}
 		if (persistence.flushJournalOnAppend) {
-			return mapMaybePromise(persistence.flushJournalOnAppend(backbone), () => {
+			const flushed = persistence.flushJournalOnAppend(backbone);
+			if (!isPromiseLike(flushed)) {
+				return undefined;
+			}
+			return mapMaybePromise(flushed, () => {
 				return undefined;
 			});
 		}

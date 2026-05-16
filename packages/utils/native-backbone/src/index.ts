@@ -554,10 +554,16 @@ export type NativeBackboneCoordinatePersistenceAdapter = {
 	flushIntervalMs?: number;
 	hydrate(backbone: NativePeerbitBackbone): Promise<number>;
 	flushJournal(backbone: NativePeerbitBackbone): Promise<number>;
-	flushJournalOnAppend?(backbone: NativePeerbitBackbone): Promise<number>;
+	flushJournalOnAppend?(backbone: NativePeerbitBackbone): number | Promise<number>;
 	compact?(backbone: NativePeerbitBackbone): Promise<void>;
 	close?(): Promise<void>;
 };
+
+export type NativeBackboneNodeCoordinatePersistenceOptions =
+	NativeBackboneCoordinatePersistenceOptions & {
+		fs?: NativeBackboneNodeFs;
+		writeBufferMaxBytes?: number;
+	};
 
 export const nativeBackboneCoordinatePersistenceFiles = {
 	snapshot: "coordinates.bin",
@@ -1966,6 +1972,245 @@ export class NativeBackboneNodeCoordinatePersistenceStore
 	}
 }
 
+export class NativeBackboneNodeCoordinatePersistence
+	implements NativeBackboneCoordinatePersistenceAdapter
+{
+	readonly flushOnAppend: boolean;
+	readonly flushMaxPendingBytes?: number;
+	readonly flushIntervalMs?: number;
+	private readonly snapshotFile: string;
+	private readonly journalFile: string;
+	private readonly fs?: NativeBackboneNodeFs;
+	private readonly writeBufferMaxBytes?: number;
+	private readonly appendHandles = new Map<
+		string,
+		Promise<NativeBackboneNodeAppendFileHandle>
+	>();
+	private readonly journalWriteBuffer: Uint8Array[] = [];
+	private journalWriteBufferBytes = 0;
+	private journalInitialized: boolean | undefined;
+	private lastFlushMs = Date.now();
+
+	constructor(
+		private readonly directory: string,
+		options: NativeBackboneNodeCoordinatePersistenceOptions = {},
+	) {
+		this.snapshotFile =
+			options.snapshot ?? nativeBackboneCoordinatePersistenceFiles.snapshot;
+		this.journalFile =
+			options.journal ?? nativeBackboneCoordinatePersistenceFiles.journal;
+		this.flushOnAppend = options.flushOnAppend ?? true;
+		if (options.flushMaxPendingBytes != null) {
+			this.flushMaxPendingBytes = Math.max(0, options.flushMaxPendingBytes);
+		} else if (this.flushOnAppend === false) {
+			this.flushMaxPendingBytes =
+				defaultNativeBackboneCoordinateFlushMaxPendingBytes;
+		}
+		if (options.flushIntervalMs != null) {
+			this.flushIntervalMs = Math.max(0, options.flushIntervalMs);
+		}
+		this.fs = options.fs;
+		if (options.writeBufferMaxBytes != null) {
+			this.writeBufferMaxBytes = Math.max(0, options.writeBufferMaxBytes);
+		} else if (this.flushOnAppend === false) {
+			this.writeBufferMaxBytes = this.flushMaxPendingBytes;
+		}
+	}
+
+	private async nodeFs(): Promise<NativeBackboneNodeFs> {
+		return this.fs ?? (await import("node:fs/promises"));
+	}
+
+	private async filePath(name: string): Promise<string> {
+		const { join } = await import("node:path");
+		return join(this.directory, validateCoordinatePersistenceName(name));
+	}
+
+	private async ensureDirectory(): Promise<NativeBackboneNodeFs> {
+		const fs = await this.nodeFs();
+		await fs.mkdir(this.directory, { recursive: true });
+		return fs;
+	}
+
+	private async closeAppendHandle(path: string): Promise<void> {
+		const handle = this.appendHandles.get(path);
+		if (!handle) {
+			return;
+		}
+		this.appendHandles.delete(path);
+		await (await handle).close();
+	}
+
+	private async appendHandle(
+		fs: NativeBackboneNodeFs,
+		path: string,
+	): Promise<NativeBackboneNodeAppendFileHandle | undefined> {
+		if (!fs.open) {
+			return undefined;
+		}
+		let handle = this.appendHandles.get(path);
+		if (!handle) {
+			handle = fs.open(path, "a");
+			this.appendHandles.set(path, handle);
+		}
+		return handle;
+	}
+
+	private async readFile(name: string): Promise<Uint8Array | undefined> {
+		const fs = await this.nodeFs();
+		try {
+			return await fs.readFile(await this.filePath(name));
+		} catch (error) {
+			if (isNotFoundError(error)) {
+				return undefined;
+			}
+			throw error;
+		}
+	}
+
+	private async writeFile(name: string, bytes: Uint8Array): Promise<void> {
+		const fs = await this.ensureDirectory();
+		const path = await this.filePath(name);
+		await this.closeAppendHandle(path);
+		await fs.writeFile(path, bytes);
+	}
+
+	private async appendFile(name: string, bytes: Uint8Array): Promise<void> {
+		if (bytes.byteLength === 0) {
+			return;
+		}
+		const fs = await this.ensureDirectory();
+		const path = await this.filePath(name);
+		const handle = await this.appendHandle(fs, path);
+		if (handle) {
+			await handle.write(bytes);
+			return;
+		}
+		await fs.appendFile(path, bytes);
+	}
+
+	private async removeFile(name: string): Promise<void> {
+		const fs = await this.nodeFs();
+		const path = await this.filePath(name);
+		await this.closeAppendHandle(path);
+		try {
+			await fs.rm(path, { force: true });
+		} catch (error) {
+			if (!isNotFoundError(error)) {
+				throw error;
+			}
+		}
+	}
+
+	private async appendJournalBytes(bytes: Uint8Array): Promise<void> {
+		if (this.writeBufferMaxBytes == null) {
+			await this.appendFile(this.journalFile, bytes);
+			return;
+		}
+		const chunk = copyBytes(bytes);
+		this.journalWriteBuffer.push(chunk);
+		this.journalWriteBufferBytes += chunk.byteLength;
+		if (this.journalWriteBufferBytes >= this.writeBufferMaxBytes) {
+			await this.flushJournalWriteBuffer();
+		}
+	}
+
+	async flushJournalWriteBuffer(): Promise<void> {
+		if (this.journalWriteBuffer.length === 0) {
+			return;
+		}
+		const bytes =
+			this.journalWriteBuffer.length === 1
+				? this.journalWriteBuffer[0]!
+				: concatBytes(this.journalWriteBuffer);
+		await this.appendFile(this.journalFile, bytes);
+		this.journalWriteBuffer.length = 0;
+		this.journalWriteBufferBytes = 0;
+	}
+
+	async hydrate(backbone: NativePeerbitBackbone): Promise<number> {
+		await this.flushJournalWriteBuffer();
+		const [snapshot, journal] = await Promise.all([
+			this.readFile(this.snapshotFile),
+			this.readFile(this.journalFile),
+		]);
+		const operations = backbone.loadCoordinateSnapshotAndJournal(
+			snapshot,
+			journal,
+		);
+		this.journalInitialized = !!journal && journal.byteLength > 0;
+		backbone.setCoordinateJournalEnabled(true);
+		this.lastFlushMs = Date.now();
+		return operations;
+	}
+
+	shouldFlushJournalOnAppend(
+		backbone: NativePeerbitBackbone,
+		now = Date.now(),
+	): boolean {
+		if (this.flushOnAppend !== false) {
+			return true;
+		}
+		if (backbone.coordinatePendingJournalLength === 0) {
+			return false;
+		}
+		if (
+			this.flushMaxPendingBytes != null &&
+			backbone.coordinatePendingJournalByteLength >= this.flushMaxPendingBytes
+		) {
+			return true;
+		}
+		return (
+			this.flushIntervalMs != null &&
+			now - this.lastFlushMs >= this.flushIntervalMs
+		);
+	}
+
+	flushJournalOnAppend(backbone: NativePeerbitBackbone): number | Promise<number> {
+		if (!this.shouldFlushJournalOnAppend(backbone)) {
+			return 0;
+		}
+		return this.flushJournal(backbone);
+	}
+
+	async flushJournal(backbone: NativePeerbitBackbone): Promise<number> {
+		const records = backbone.coordinateJournal();
+		if (records.byteLength === 0) {
+			this.lastFlushMs = Date.now();
+			return 0;
+		}
+		if (this.journalInitialized === undefined) {
+			const existing = await this.readFile(this.journalFile);
+			this.journalInitialized = !!existing && existing.byteLength > 0;
+		}
+		const bytes = this.journalInitialized
+			? records
+			: concatBytes([backbone.coordinateJournalHeader(), records]);
+		await this.appendJournalBytes(bytes);
+		this.journalInitialized = true;
+		backbone.clearCoordinateJournal();
+		this.lastFlushMs = Date.now();
+		return records.byteLength;
+	}
+
+	async compact(backbone: NativePeerbitBackbone): Promise<void> {
+		this.journalWriteBuffer.length = 0;
+		this.journalWriteBufferBytes = 0;
+		await this.writeFile(this.snapshotFile, backbone.coordinateSnapshot());
+		await this.removeFile(this.journalFile);
+		this.journalInitialized = false;
+		backbone.clearCoordinateJournal();
+		this.lastFlushMs = Date.now();
+	}
+
+	async close(): Promise<void> {
+		await this.flushJournalWriteBuffer();
+		const handles = [...this.appendHandles.values()];
+		this.appendHandles.clear();
+		await Promise.all(handles.map(async (handle) => (await handle).close()));
+	}
+}
+
 export class NativeBackboneOPFSCoordinatePersistenceStore
 	implements NativeBackboneCoordinatePersistenceStore
 {
@@ -2219,9 +2464,7 @@ export class NativeBackboneCoordinatePersistence {
 		);
 	}
 
-	async flushJournalOnAppend(
-		backbone: NativePeerbitBackbone,
-	): Promise<number> {
+	flushJournalOnAppend(backbone: NativePeerbitBackbone): number | Promise<number> {
 		if (!this.shouldFlushJournalOnAppend(backbone)) {
 			return 0;
 		}
