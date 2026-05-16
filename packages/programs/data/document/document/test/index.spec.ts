@@ -44,7 +44,9 @@ import {
 } from "@peerbit/indexer-interface";
 import { Entry, EntryV0, Log, createEntry } from "@peerbit/log";
 import {
+	NativeBackboneBufferedCoordinatePersistenceStore,
 	NativeBackboneCoordinatePersistence,
+	createNativePeerbitBackbone,
 	type NativeBackboneCoordinatePersistenceStore,
 } from "@peerbit/native-backbone";
 import { ClosedError, Program } from "@peerbit/program";
@@ -1113,6 +1115,71 @@ describe("index", () => {
 					backboneStorageTransactionSpy.restore();
 					await store.close();
 					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("flushes buffered native backbone coordinate WAL on close", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				const coordinateStore = new MemoryCoordinatePersistenceStore();
+				const bufferedCoordinateStore =
+					new NativeBackboneBufferedCoordinatePersistenceStore(coordinateStore);
+				const coordinatePersistence = new NativeBackboneCoordinatePersistence(
+					bufferedCoordinateStore,
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				try {
+					await rustSession.peers[0].open(store, {
+						args: {
+							replicate: { factor: 1 },
+							nativeGraph: true,
+							nativeBackbone: {
+								optional: false,
+								coordinatePersistence,
+							},
+						},
+					});
+					const doc = new Document({
+						id: uuid(),
+						name: "buffered-backbone-coordinate-wal",
+					});
+					await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+					const backbone = (store.docs.log as any)._nativeBackbone;
+					const coordinateHashes = backbone.getEntryCoordinateHashes();
+
+					expect(coordinateStore.files.has("coordinates.wal")).equal(false);
+					await store.close();
+					store = undefined;
+
+					expect(
+						coordinateStore.files.get("coordinates.wal")?.byteLength,
+					).to.be.greaterThan(backbone.coordinateJournalHeader().byteLength);
+					const identity = rustSession.peers[0].identity as Ed25519Keypair;
+					const restoredBackbone = await createNativePeerbitBackbone({
+						clockId: identity.publicKey.bytes,
+						privateKey: identity.privateKey.privateKey,
+						publicKey: identity.publicKey.publicKey,
+					});
+					await new NativeBackboneCoordinatePersistence(
+						coordinateStore,
+					).hydrate(restoredBackbone);
+					expect(restoredBackbone.getEntryCoordinateHashes()).to.deep.equal(
+						coordinateHashes,
+					);
+				} finally {
+					if (store) {
+						await store.close();
+						store = undefined;
+					}
 					await rustSession.stop();
 				}
 			});

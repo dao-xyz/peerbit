@@ -515,6 +515,7 @@ export type NativeBackboneCoordinatePersistenceAdapter = {
 	hydrate(backbone: NativePeerbitBackbone): Promise<number>;
 	flushJournal(backbone: NativePeerbitBackbone): Promise<number>;
 	compact?(backbone: NativePeerbitBackbone): Promise<void>;
+	close?(): Promise<void>;
 };
 
 export const nativeBackboneCoordinatePersistenceFiles = {

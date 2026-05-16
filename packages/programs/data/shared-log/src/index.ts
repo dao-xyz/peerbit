@@ -8061,6 +8061,7 @@ export class SharedLog<
 	}
 
 	private async _close() {
+		await this.closeNativeBackboneCoordinatePersistence();
 		await this.syncronizer.close();
 
 		for (const [_key, peerMap] of this.pendingMaturity) {
@@ -10087,6 +10088,15 @@ export class SharedLog<
 			return undefined;
 		}
 		return mapMaybePromise(persistence.flushJournal(backbone), () => undefined);
+	}
+
+	private async closeNativeBackboneCoordinatePersistence(): Promise<void> {
+		const persistence = this._nativeBackboneCoordinatePersistence;
+		if (!persistence) {
+			return;
+		}
+		await this.flushNativeBackboneCoordinateJournal();
+		await persistence.close?.();
 	}
 
 	private canUseBackboneOnlyCoordinatePersistence(): boolean {
