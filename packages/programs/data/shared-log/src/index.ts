@@ -358,6 +358,16 @@ type NativeBackboneDocumentIndexCommitInput = {
 	byteElementIndexLimit?: number;
 };
 
+type NativeBackboneDocumentIndexAppendFacts = {
+	wallTime: bigint | number | string;
+	gid: string;
+	payloadSize: number;
+};
+
+type NativeBackboneDocumentIndexPreparer = (
+	facts: NativeBackboneDocumentIndexAppendFacts,
+) => NativeBackboneDocumentIndexCommitInput | undefined;
+
 type PreparedPayloadCommitOnlyResult<T, R extends "u32" | "u64"> = {
 	entry: Entry<T>;
 	removed: ShallowOrFullEntry<T>[];
@@ -4848,6 +4858,7 @@ export class SharedLog<
 			skipMissingNextJoin?: boolean;
 			resolveTrimmedEntries?: boolean;
 			nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
+			prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
 		},
 	) {
 		return this.appendLocallyPrepared(undefined as T, options, {
@@ -4864,6 +4875,8 @@ export class SharedLog<
 		properties?: {
 			skipMissingNextJoin?: boolean;
 			resolveTrimmedEntries?: boolean;
+			nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
+			prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
 		},
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
 		if (options?.canAppend || options?.onChange) {
@@ -4931,6 +4944,7 @@ export class SharedLog<
 					skipMissingNextJoin?: boolean;
 					resolveTrimmedEntries?: boolean;
 					nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
+					prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
 			  }
 			| undefined,
 		minReplicasValue: number,
@@ -4965,6 +4979,7 @@ export class SharedLog<
 					skipMissingNextJoin?: boolean;
 					resolveTrimmedEntries?: boolean;
 					nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
+					prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
 			  }
 			| undefined,
 		minReplicasValue: number,
@@ -5056,6 +5071,7 @@ export class SharedLog<
 					skipMissingNextJoin?: boolean;
 					resolveTrimmedEntries?: boolean;
 					nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
+					prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
 			  }
 			| undefined,
 		minReplicasValue: number,
@@ -5109,7 +5125,12 @@ export class SharedLog<
 						trimLengthTo: input.trimLengthTo,
 					};
 					const nativeBackboneDocumentIndex = commitBlocksInBackbone
-						? properties?.nativeBackboneDocumentIndex
+						? (properties?.nativeBackboneDocumentIndex ??
+							properties?.prepareNativeBackboneDocumentIndex?.({
+								wallTime: input.wallTime,
+								gid: input.gid,
+								payloadSize: input.payloadData.byteLength,
+							}))
 						: undefined;
 					backboneAppend =
 						input.next.length === 0

@@ -155,6 +155,24 @@ export const canPrepareNativeDocumentTransformBeforeAppend = (
 	}
 };
 
+export const canPrepareNativeDocumentTransformWithAppendFacts = (
+	descriptor: NativeDocumentTransformDescriptor | undefined,
+): boolean => {
+	if (!descriptor) {
+		return false;
+	}
+	switch (descriptor.kind) {
+		case "identity":
+		case "pick":
+			return true;
+		case "project":
+			return descriptor.fields.every(
+				(field) =>
+					field.source.kind !== "context" || field.source.field !== "head",
+			);
+	}
+};
+
 export const canUseNativeBackboneDocumentTransform = (
 	descriptor: NativeDocumentTransformDescriptor | undefined,
 ): boolean => descriptor != null;

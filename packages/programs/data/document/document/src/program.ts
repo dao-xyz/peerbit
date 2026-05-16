@@ -209,6 +209,18 @@ type ContextualEncodedValueParts = {
 	suffix: Uint8Array;
 };
 
+type NativeBackboneDocumentIndexAppendFacts = {
+	wallTime: bigint;
+	gid: string;
+	payloadSize: number;
+};
+
+type NativeBackboneDocumentIndexAppendFactsInput = {
+	wallTime: bigint | number | string;
+	gid: string;
+	payloadSize: number;
+};
+
 const documentIndexStoreKey = (id: indexerTypes.IdKey): string => {
 	const key = indexerTypes.toIdeable(id);
 	if (key instanceof Uint8Array || ArrayBuffer.isView(key)) {
@@ -1206,6 +1218,13 @@ export class Documents<
 		return mapMaybePromise(
 			this.prepareNativeBackboneDocumentIndexCommit(input),
 			(nativeDocumentIndexCommit) => {
+				let committedNativeDocumentIndex = nativeDocumentIndexCommit;
+				const prepareNativeDocumentIndexWithAppendFacts =
+					nativeDocumentIndexCommit
+						? undefined
+						: this.createNativeBackboneDocumentIndexAppendFactsPreparer(
+								input,
+							);
 				const appendProperties = {
 					skipMissingNextJoin: input.skipMissingNextJoin,
 					resolveTrimmedEntries: input.resolveTrimmedEntries,
@@ -1223,13 +1242,35 @@ export class Documents<
 								},
 							}
 						: {}),
+					...(prepareNativeDocumentIndexWithAppendFacts
+						? {
+								prepareNativeBackboneDocumentIndex: (
+									facts: NativeBackboneDocumentIndexAppendFactsInput,
+								) => {
+									committedNativeDocumentIndex =
+										prepareNativeDocumentIndexWithAppendFacts(facts);
+									return committedNativeDocumentIndex
+										? {
+												key: documentIndexStoreKey(input.key),
+												valuePrefixBytes:
+													committedNativeDocumentIndex.valuePrefixBytes,
+												existingCreated:
+													input.unique || input.existing === null
+														? undefined
+														: input.existing?.value.__context.created,
+											}
+										: undefined;
+								},
+							}
+						: {}),
 				};
-				const inputWithNativeIndex = nativeDocumentIndexCommit
-					? {
-							...input,
-							nativeBackboneDocumentIndex: nativeDocumentIndexCommit,
-						}
-					: input;
+				const inputWithNativeIndex = () =>
+					committedNativeDocumentIndex
+						? {
+								...input,
+								nativeBackboneDocumentIndex: committedNativeDocumentIndex,
+							}
+						: input;
 				if (input.operation) {
 					return mapMaybePromise(
 						this.log.appendLocallyPrepared(
@@ -1239,7 +1280,7 @@ export class Documents<
 						),
 						(appended) =>
 							this.createDocumentAppendCommitFacts(
-								inputWithNativeIndex,
+								inputWithNativeIndex(),
 								appended,
 							),
 					);
@@ -1253,12 +1294,12 @@ export class Documents<
 					(commitOnly) => {
 						if (commitOnly) {
 							return this.createDocumentAppendCommitFacts(
-								inputWithNativeIndex,
+								inputWithNativeIndex(),
 								commitOnly,
 							);
 						}
 						return this.commitNativeDocumentAppendPayloadFallback(
-							inputWithNativeIndex,
+							inputWithNativeIndex(),
 							appendOptions,
 							appendProperties,
 						);
@@ -1287,6 +1328,42 @@ export class Documents<
 		);
 	}
 
+	private createNativeBackboneDocumentIndexAppendFactsPreparer(
+		input: NativeDocumentAppendCommitFactsInput<T, I>,
+	):
+		| ((
+				facts: NativeBackboneDocumentIndexAppendFactsInput,
+		  ) => { valuePrefixBytes: Uint8Array; indexable: I } | undefined)
+		| undefined {
+		if (
+			!this._nativeBackboneDocumentIndexEnabled ||
+			!this._index.canPrepareNativeBackboneDocumentIndexCommitWithAppendFacts()
+		) {
+			return;
+		}
+		const existing =
+			input.unique || input.existing === null ? null : input.existing;
+		return (facts) => {
+			const appendFacts: NativeBackboneDocumentIndexAppendFacts = {
+				wallTime: BigInt(facts.wallTime),
+				gid: facts.gid,
+				payloadSize: facts.payloadSize,
+			};
+			const context = new Context({
+				created: existing?.value.__context.created || appendFacts.wallTime,
+				modified: appendFacts.wallTime,
+				head: "",
+				gid: appendFacts.gid,
+				size: appendFacts.payloadSize,
+			});
+			return this._index.prepareNativeBackboneDocumentIndexCommitWithAppendFacts(
+				input.document,
+				context,
+				{ entryPublicKeys: [this.log.log.identity.publicKey] },
+			);
+		};
+	}
+
 	private async commitNativeDocumentAppendPayloadFallback(
 		input: NativeDocumentAppendCommitInput<T, I>,
 		appendOptions: SharedAppendOptions<Operation>,
@@ -1294,6 +1371,15 @@ export class Documents<
 			skipMissingNextJoin: boolean;
 			resolveTrimmedEntries: boolean;
 			payloadData: Uint8Array;
+			prepareNativeBackboneDocumentIndex?: (
+				facts: NativeBackboneDocumentIndexAppendFactsInput,
+			) =>
+				| {
+						key: string;
+						valuePrefixBytes: Uint8Array;
+						existingCreated?: bigint;
+				  }
+				| undefined;
 		},
 	): Promise<DocumentAppendCommitFacts<T, I>> {
 		let appended: Awaited<ReturnType<typeof this.log.appendLocallyPrepared>>;

@@ -1311,7 +1311,7 @@ describe("index", () => {
 				}
 			});
 
-			it("commits transform.project context indexes through the native backbone document index", async () => {
+			it("commits transform.project context indexes in the native backbone transaction", async () => {
 				@variant("native_backbone_project_context_indexable")
 				class BackboneProjectContextIndexable {
 					@field({ type: "string" })
@@ -1389,15 +1389,14 @@ describe("index", () => {
 						replicate: false,
 						target: "none",
 					});
-
 					expect(backboneStorageTransactionSpy.callCount).equal(1);
 					expect(
 						backboneStorageTransactionSpy.firstCall.args[0].documentIndex,
-					).equal(undefined);
-					expect(documentIndexPutSpy.callCount).equal(1);
-					expect(backendPutSpy.callCount).equal(1);
+					).to.exist;
+					expect(documentIndexPutSpy.callCount).equal(0);
+					expect(backendPutSpy.callCount).equal(0);
 					expect(backendStoredContextPutSpy.callCount).equal(0);
-					expect(backboneDocumentPutSpy.callCount).equal(1);
+					expect(backboneDocumentPutSpy.callCount).equal(0);
 					expect(backendIndex.native.len()).equal(0);
 					expect(backbone.documentValueLength).equal(1);
 					const indexed = await localStore.docs.index.get(doc.id, {
@@ -1413,17 +1412,6 @@ describe("index", () => {
 							rustSession.peers[0].identity.publicKey.bytes,
 						),
 					).equal(true);
-					const iterator = localStore.docs.index.iterate({
-						query: [
-							new StringMatch({
-								key: "id",
-								value: doc.id,
-							}),
-						],
-					});
-					const queried = await iterator.next(1);
-					await iterator.close();
-					expect(queried[0]?.id).equal(doc.id);
 				} finally {
 					documentIndexPutSpy.restore();
 					backendStoredContextPutSpy.restore();

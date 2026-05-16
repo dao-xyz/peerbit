@@ -63,6 +63,7 @@ import {
 	type NativeDocumentTransformDescriptor,
 	type NativeDocumentTransformer,
 	canPrepareNativeDocumentTransformBeforeAppend,
+	canPrepareNativeDocumentTransformWithAppendFacts,
 	canUseNativeBackboneDocumentTransform,
 	getNativeDocumentTransformDescriptor,
 } from "./transform.js";
@@ -1378,6 +1379,15 @@ export class DocumentIndex<
 		);
 	}
 
+	public canPrepareNativeBackboneDocumentIndexCommitWithAppendFacts(): boolean {
+		return (
+			this.canPrepareNativeBackboneDocumentIndexCommit() ||
+			canPrepareNativeDocumentTransformWithAppendFacts(
+				this.nativeTransformDescriptor,
+			)
+		);
+	}
+
 	public prepareNativeBackboneDocumentIndexCommit(
 		value: T,
 		encodedDocument: Uint8Array,
@@ -1408,6 +1418,29 @@ export class DocumentIndex<
 		return isPromiseLike(transformed)
 			? transformed.then(finish)
 			: finish(transformed);
+	}
+
+	public prepareNativeBackboneDocumentIndexCommitWithAppendFacts(
+		value: T,
+		context: types.Context,
+		transformFacts?: DocumentTransformFacts,
+	): NativeBackboneDocumentIndexCommit<I> | undefined {
+		if (
+			!canPrepareNativeDocumentTransformWithAppendFacts(
+				this.nativeTransformDescriptor,
+			)
+		) {
+			return;
+		}
+		const transformed = this.transformer(value, context, transformFacts);
+		if (isPromiseLike(transformed)) {
+			return;
+		}
+		const indexable = transformed;
+		return {
+			valuePrefixBytes: serialize(this.asIndexedTypeValue(indexable)),
+			indexable,
+		};
 	}
 
 	private asIndexedTypeValue(value: I): I {
