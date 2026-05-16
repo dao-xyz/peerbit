@@ -201,6 +201,7 @@ type NativeRustIndex<T extends Record<string, any>> = {
 };
 
 type NativeBackboneDocumentIndexTarget = {
+	readonly documentIndexLength?: number;
 	configureDocumentSchemaIr?: (
 		schemaIr: Uint8Array,
 	) => { rootFields: number; nodeCount: number; genericNodes: number };
@@ -209,6 +210,17 @@ type NativeBackboneDocumentIndexTarget = {
 		value: string,
 	) => string | undefined;
 	documentValueBytes?: (key: string) => Uint8Array | undefined;
+	documentQuery?: (
+		queryBytes: Uint8Array,
+		sortBytes: Uint8Array,
+	) => Array<[string, Uint8Array]>;
+	documentQueryPage?: (
+		queryBytes: Uint8Array,
+		sortBytes: Uint8Array,
+		offset: number,
+		limit: number,
+	) => Array<[string, Uint8Array]>;
+	documentCount?: (queryBytes: Uint8Array) => number;
 	putDocumentEncodedPartsStored?: (
 		key: string,
 		valuePrefixBytes: Uint8Array,
@@ -2887,7 +2899,20 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	private countNativePlan(compiled: NativeQueryCompileResult): number {
-		return this.getNative().count(encodeNativeQuerySpec(compiled.spec));
+		const queryBytes = encodeNativeQuerySpec(compiled.spec);
+		const nativeBackbone = this.nativeBackboneDocumentIndex;
+		if (
+			this.canQueryNativeBackboneDocumentIndex() &&
+			typeof nativeBackbone?.documentCount === "function"
+		) {
+			try {
+				return nativeBackbone.documentCount(queryBytes);
+			} catch {
+				// Fall back to the primary Rust index if the experimental native
+				// backbone query bridge cannot decode this query yet.
+			}
+		}
+		return this.getNative().count(queryBytes);
 	}
 
 	private getNativeCandidatesForPlan(
@@ -2895,6 +2920,14 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	): types.IndexedValue<T>[] {
 		const queryBytes = encodeNativeQuerySpec(page.compiled.spec);
 		const sortBytes = encodeNativeSort(page.sort);
+		const nativeBackboneResults = this.getNativeBackboneCandidatesForPlan(
+			page,
+			queryBytes,
+			sortBytes,
+		);
+		if (nativeBackboneResults) {
+			return nativeBackboneResults;
+		}
 		const results =
 			page.limit == null
 				? this.getNative().query(queryBytes, sortBytes)
@@ -2908,6 +2941,36 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			id: value[0],
 			value: this.decodeNativeStoredValue(value[1]),
 		}));
+	}
+
+	private getNativeBackboneCandidatesForPlan(
+		page: NativeCandidatePage,
+		queryBytes: Uint8Array,
+		sortBytes: Uint8Array,
+	): types.IndexedValue<T>[] | undefined {
+		const nativeBackbone = this.nativeBackboneDocumentIndex;
+		if (!this.canQueryNativeBackboneDocumentIndex()) {
+			return;
+		}
+		try {
+			const rows =
+				page.limit == null
+					? nativeBackbone?.documentQuery?.(queryBytes, sortBytes)
+					: nativeBackbone?.documentQueryPage?.(
+							queryBytes,
+							sortBytes,
+							page.offset,
+							page.limit,
+						);
+			if (!rows) {
+				return;
+			}
+			return rows
+				.map((row) => this.decodeNativeBackboneDocumentEntry(row))
+				.filter((row): row is types.IndexedValue<T> => row != null);
+		} catch {
+			return;
+		}
 	}
 
 	private putWithEncodedFields(
@@ -3606,6 +3669,28 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		return {
 			id,
 			value: this.decodeNativeStoredValue(bytes),
+		};
+	}
+
+	private canQueryNativeBackboneDocumentIndex(): boolean {
+		const nativeBackbone = this.nativeBackboneDocumentIndex;
+		return (
+			nativeBackbone != null &&
+			typeof nativeBackbone.documentIndexLength === "number" &&
+			nativeBackbone.documentIndexLength === this.getNative().len()
+		);
+	}
+
+	private decodeNativeBackboneDocumentEntry(
+		entry: [string, Uint8Array],
+	): types.IndexedValue<T> | undefined {
+		const id = storeKeyToIdKey(entry[0]);
+		if (!id) {
+			return;
+		}
+		return {
+			id,
+			value: this.decodeNativeStoredValue(entry[1]),
 		};
 	}
 

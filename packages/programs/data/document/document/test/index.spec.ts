@@ -1007,6 +1007,10 @@ describe("index", () => {
 					backbone,
 					"documentExactStringFirstKey",
 				);
+				const backboneDocumentQueryPageSpy = sinon.spy(
+					backbone,
+					"documentQueryPage",
+				);
 
 				try {
 					const first = new Document({
@@ -1053,11 +1057,24 @@ describe("index", () => {
 							second.id,
 						),
 					).equal(`string:${second.id}`);
+					const iterator = store.docs.index.iterate({
+						query: [
+							new StringMatch({
+								key: "name",
+								value: "backbone-storage-2",
+							}),
+						],
+					});
+					const queried = await iterator.next(1);
+					await iterator.close();
+					expect(queried[0]?.id).equal(second.id);
+					expect(backboneDocumentQueryPageSpy.callCount).greaterThan(0);
 					expect(await store.docs.get(first.id)).equal(undefined);
 					expect((await store.docs.get(second.id))?.name).equal(
 						"backbone-storage-2",
 					);
 				} finally {
+					backboneDocumentQueryPageSpy.restore();
 					backboneDocumentHeadLookupSpy.restore();
 					backboneStorageTransactionSpy.restore();
 					await store.close();

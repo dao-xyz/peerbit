@@ -25,6 +25,18 @@ type NativePeerbitBackboneHandle = {
 		key: string,
 	) => boolean;
 	document_value_bytes: (key: string) => Uint8Array | undefined;
+	document_entry: (key: string) => [string, Uint8Array] | undefined;
+	document_query: (
+		queryBytes: Uint8Array,
+		sortBytes: Uint8Array,
+	) => Array<[string, Uint8Array]>;
+	document_query_page: (
+		queryBytes: Uint8Array,
+		sortBytes: Uint8Array,
+		offset: number,
+		limit: number,
+	) => Array<[string, Uint8Array]>;
+	document_count: (queryBytes: Uint8Array) => number;
 	put_document_encoded_parts_stored: (
 		key: string,
 		valuePrefixBytes: Uint8Array,
@@ -582,6 +594,8 @@ export type NativeBackboneDocumentSchemaStats = {
 	nodeCount: number;
 	genericNodes: number;
 };
+
+export type NativeBackboneDocumentEntry = [key: string, value: Uint8Array];
 
 export type NativeBackboneOptions = {
 	resolution?: RangeResolution;
@@ -1618,6 +1632,35 @@ export class NativePeerbitBackbone {
 
 	documentValueBytes(key: string): Uint8Array | undefined {
 		return this.native.document_value_bytes(key);
+	}
+
+	documentEntry(key: string): NativeBackboneDocumentEntry | undefined {
+		return this.native.document_entry(key);
+	}
+
+	documentQuery(
+		queryBytes: Uint8Array,
+		sortBytes: Uint8Array,
+	): NativeBackboneDocumentEntry[] {
+		return this.native.document_query(queryBytes, sortBytes);
+	}
+
+	documentQueryPage(
+		queryBytes: Uint8Array,
+		sortBytes: Uint8Array,
+		offset: number,
+		limit: number,
+	): NativeBackboneDocumentEntry[] {
+		return this.native.document_query_page(
+			queryBytes,
+			sortBytes,
+			offset,
+			limit,
+		);
+	}
+
+	documentCount(queryBytes: Uint8Array): number {
+		return this.native.document_count(queryBytes);
 	}
 
 	putDocumentEncodedPartsStored(

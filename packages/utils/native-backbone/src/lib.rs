@@ -1,4 +1,5 @@
 use js_sys::{Array, Uint8Array};
+use peerbit_indexer_core::codec::{decode_query, decode_sort};
 use peerbit_indexer_core::persistence::{
     decode_journal, decode_key_value_snapshot, encode_journal_payload, encode_journal_record,
     encode_journal_records, encode_key_value_snapshot, JournalRecord, JOURNAL_MAGIC,
@@ -152,6 +153,44 @@ impl NativePeerbitBackbone {
             .get(key)
             .map(|value| Uint8Array::from(value).into())
             .unwrap_or(JsValue::UNDEFINED)
+    }
+
+    pub fn document_entry(&self, key: &str) -> JsValue {
+        self.document_values
+            .get(key)
+            .map(|value| document_entry_to_row(key, value).into())
+            .unwrap_or(JsValue::UNDEFINED)
+    }
+
+    pub fn document_query(
+        &self,
+        query_bytes: Vec<u8>,
+        sort_bytes: Vec<u8>,
+    ) -> Result<Array, JsValue> {
+        let query = decode_query(&query_bytes).map_err(js_error)?;
+        let sort = decode_sort(&sort_bytes).map_err(js_error)?;
+        let keys = self.document_index.search(&query, &sort, None);
+        Ok(self.document_entries_for_keys(&keys))
+    }
+
+    pub fn document_query_page(
+        &self,
+        query_bytes: Vec<u8>,
+        sort_bytes: Vec<u8>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Array, JsValue> {
+        let query = decode_query(&query_bytes).map_err(js_error)?;
+        let sort = decode_sort(&sort_bytes).map_err(js_error)?;
+        let keys = self
+            .document_index
+            .search_page(&query, &sort, offset, Some(limit));
+        Ok(self.document_entries_for_keys(&keys))
+    }
+
+    pub fn document_count(&self, query_bytes: Vec<u8>) -> Result<usize, JsValue> {
+        let query = decode_query(&query_bytes).map_err(js_error)?;
+        Ok(self.document_index.count(&query) as usize)
     }
 
     pub fn put_document_encoded_parts_stored(
@@ -1198,6 +1237,16 @@ impl NativePeerbitBackbone {
         self.document_values.clear();
     }
 
+    fn document_entries_for_keys(&self, keys: &[String]) -> Array {
+        let out = Array::new();
+        for key in keys {
+            if let Some(value) = self.document_values.get(key) {
+                out.push(&document_entry_to_row(key, value));
+            }
+        }
+        out
+    }
+
     fn put_coordinate_core_from_parts(
         &mut self,
         hash: String,
@@ -1714,6 +1763,13 @@ fn coordinate_core_value_to_row(value: &CoordinateCoreValue) -> Array {
     row.push(&JsValue::from_f64(value.requested_replicas as f64));
     row.push(&JsValue::from_str(&value.wall_time.to_string()));
     row.push(&Uint8Array::from(value.meta_bytes.as_slice()));
+    row
+}
+
+fn document_entry_to_row(key: &str, value: &[u8]) -> Array {
+    let row = Array::new();
+    row.push(&JsValue::from_str(key));
+    row.push(&Uint8Array::from(value));
     row
 }
 
