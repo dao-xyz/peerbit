@@ -1771,7 +1771,10 @@ export class Documents<
 			const entry =
 				removed instanceof Entry
 					? removed
-					: await this.log.log.entryIndex.get(removed.hash);
+					: await this.log.log.entryIndex.get(removed.hash, {
+							type: "full",
+							ignoreMissing: true,
+						});
 			if (!entry) {
 				continue;
 			}
@@ -1883,7 +1886,10 @@ export class Documents<
 			const entry =
 				removed instanceof Entry
 					? removed
-					: await this.log.log.entryIndex.get(removed.hash);
+					: await this.log.log.entryIndex.get(removed.hash, {
+							type: "full",
+							ignoreMissing: true,
+						});
 			if (!entry) {
 				continue;
 			}

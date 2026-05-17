@@ -925,10 +925,57 @@ export class Log<T> {
 			input: NativeNoNextCommitInput,
 		) => MaybePromise<NativePreparedNoNextCommit | undefined>,
 	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
+		const directResult = this.appendLocallyPreparedNativeKnownNoNextCommitOnly(
+			data,
+			options,
+			properties,
+			prepare,
+		);
+		if (directResult !== undefined) {
+			return directResult;
+		}
 		return this.appendLocallyPreparedNativeCommitOnly(
 			data,
 			options,
 			properties,
+			(input) =>
+				prepare({
+					clockId: input.clockId,
+					privateKey: input.privateKey,
+					publicKey: input.publicKey,
+					wallTime: input.wallTime,
+					logical: input.logical,
+					gid: input.gid,
+					type: input.type,
+					metaData: input.metaData,
+					payloadData: input.payloadData,
+					trimLengthTo: input.trimLengthTo,
+				}),
+		);
+	}
+
+	appendLocallyPreparedNativeKnownNoNextCommitOnly(
+		data: T,
+		options: AppendOptions<T> = {},
+		properties: {
+			payloadData?: Uint8Array;
+			resolveTrimmedEntries?: boolean;
+		},
+		prepare: (
+			input: NativeNoNextCommitInput,
+		) => MaybePromise<NativePreparedNoNextCommit | undefined>,
+	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
+		if (options.meta?.next == null || options.meta.next.length !== 0) {
+			return undefined;
+		}
+		const resolvedTrim = options.trim ?? this._trim.options;
+		if (resolvedTrim) {
+			return undefined;
+		}
+		return this.appendLocallyPreparedNativeCommitOnly(
+			data,
+			options,
+			{ ...properties, knownNoNext: true },
 			(input) =>
 				prepare({
 					clockId: input.clockId,
@@ -952,6 +999,7 @@ export class Log<T> {
 			payloadData?: Uint8Array;
 			resolveTrimmedEntries?: boolean;
 			skipMissingNextJoin?: boolean;
+			knownNoNext?: boolean;
 		},
 		prepare: (
 			input: NativeCommitInput,
@@ -995,7 +1043,10 @@ export class Log<T> {
 			...options,
 			__peerbitCanAppendAlreadyValidated: true,
 		};
-		return mapMaybePromise(this.getNextsForAppend(appendOptions), (nexts) => {
+		const nextsResult = properties.knownNoNext
+			? []
+			: this.getNextsForAppend(appendOptions);
+		return mapMaybePromise(nextsResult, (nexts) => {
 			if (nexts.length > 0 && properties.skipMissingNextJoin !== true) {
 				return undefined;
 			}

@@ -1120,6 +1120,7 @@ describe("index", () => {
 					docs: new Documents<Document>(),
 				});
 				let notifyStoredStub: sinon.SinonStub | undefined;
+				let knownNoNextCommitSpy: sinon.SinonSpy | undefined;
 				try {
 					await rustSession.peers[0].open(store, {
 						args: {
@@ -1130,6 +1131,10 @@ describe("index", () => {
 					});
 					const notifyDeferred = pDefer<void>();
 					const sharedLog = store.docs.log as any;
+					knownNoNextCommitSpy = sinon.spy(
+						store.docs.log.log as any,
+						"appendLocallyPreparedNativeKnownNoNextCommitOnly",
+					);
 					notifyStoredStub = sinon
 						.stub(sharedLog.remoteBlocks, "notifyStored")
 						.returns(notifyDeferred.promise);
@@ -1154,11 +1159,13 @@ describe("index", () => {
 					await putPromise;
 
 					expect(completedBeforeNotify).equal(true);
+					expect(knownNoNextCommitSpy.callCount).equal(1);
 					expect(notifyStoredStub.callCount).equal(1);
 					expect((await store.docs.get(id))?.name).equal(
 						"backbone-notify-deferred",
 					);
 				} finally {
+					knownNoNextCommitSpy?.restore();
 					notifyStoredStub?.restore();
 					if (store) {
 						await store.close();
@@ -1262,6 +1269,47 @@ describe("index", () => {
 					backboneCoordinatePersistSpy.restore();
 					backboneNoNextStorageTransactionSpy.restore();
 					backboneStorageTransactionSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("handles native backbone update trims without resolving deleted blocks", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: { optional: false, documentIndex: true },
+						log: {
+							trim: { type: "length", to: 1 },
+						},
+					},
+				});
+				try {
+					const id = uuid();
+					await store.docs.put(new Document({ id, name: "trimmed-1" }), {
+						replicate: false,
+						target: "none",
+					});
+					await store.docs.put(new Document({ id, name: "trimmed-2" }), {
+						replicate: false,
+						target: "none",
+					});
+					await store.docs.put(new Document({ id, name: "trimmed-3" }), {
+						replicate: false,
+						target: "none",
+					});
+
+					expect((await store.docs.get(id))?.name).equal("trimmed-3");
+				} finally {
 					await store.close();
 					store = undefined;
 					await rustSession.stop();

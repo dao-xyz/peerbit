@@ -5139,72 +5139,101 @@ export class SharedLog<
 			let committedNativeBackboneDocumentIndex:
 				| NativeBackboneDocumentIndexCommitInput
 				| undefined;
-			const result = this.log.appendLocallyPreparedNativeCommitOnly(
-				undefined as T,
-				appendOptions,
-				{
-					payloadData,
-					resolveTrimmedEntries: properties?.resolveTrimmedEntries,
-					skipMissingNextJoin: properties?.skipMissingNextJoin,
-				},
-				(input) => {
-					const appendInput = {
+			const prepareBackboneAppend = (input: {
+				wallTime: bigint;
+				logical: number;
+				gid: string;
+				next?: string[];
+				type: number;
+				metaData?: Uint8Array;
+				payloadData: Uint8Array;
+				trimLengthTo?: number;
+			}) => {
+				const next = input.next ?? [];
+				const appendInput = {
+					wallTime: input.wallTime,
+					logical: input.logical,
+					gid: input.gid,
+					next,
+					type: input.type,
+					metaData: input.metaData,
+					payloadData: input.payloadData,
+					replicas: minReplicasValue,
+					roleAgeMs: nativeLeaderOptions.roleAge,
+					now: nativeLeaderOptions.now,
+					selfHash: nativeLeaderOptions.selfHash,
+					selfReplicating: nativeLeaderOptions.selfReplicating,
+					trimLengthTo: input.trimLengthTo,
+				};
+				const nativeBackboneDocumentIndex =
+					properties?.nativeBackboneDocumentIndex ??
+					properties?.prepareNativeBackboneDocumentIndex?.({
 						wallTime: input.wallTime,
-						logical: input.logical,
 						gid: input.gid,
-						next: input.next,
-						type: input.type,
-						metaData: input.metaData,
-						payloadData: input.payloadData,
-						replicas: minReplicasValue,
-						roleAgeMs: nativeLeaderOptions.roleAge,
-						now: nativeLeaderOptions.now,
-						selfHash: nativeLeaderOptions.selfHash,
-						selfReplicating: nativeLeaderOptions.selfReplicating,
-						trimLengthTo: input.trimLengthTo,
-					};
-					const nativeBackboneDocumentIndex =
-						properties?.nativeBackboneDocumentIndex ??
-						properties?.prepareNativeBackboneDocumentIndex?.({
-							wallTime: input.wallTime,
-							gid: input.gid,
-							payloadSize: input.payloadData.byteLength,
-						});
-					const appendInputWithDocumentIndex = nativeBackboneDocumentIndex
-						? {
-								...appendInput,
-								documentIndex: nativeBackboneDocumentIndex,
-							}
-						: appendInput;
-					backboneAppend =
-						input.next.length === 0
-							? commitBlocksInBackbone
-								? backbone.preparePlainCommittedNoNextStorageAppendTransaction(
-										appendInputWithDocumentIndex,
-									)
-								: backbone.preparePlainNoNextStorageAppendTransaction(
-										appendInputWithDocumentIndex,
-									)
-							: commitBlocksInBackbone
-								? backbone.preparePlainCommittedStorageAppendTransaction(
-										appendInputWithDocumentIndex,
-									)
-								: backbone.preparePlainStorageAppendTransaction(
-										appendInputWithDocumentIndex,
-									);
-					if (nativeBackboneDocumentIndex) {
-						nativeBackboneDocumentIndexCommitted = true;
-						committedNativeBackboneDocumentIndex = nativeBackboneDocumentIndex;
-					}
-					return {
-						...backboneAppend.entry,
-						getBytes: commitBlocksInBackbone
-							? (hash: string) => backbone.blocks.get(hash)
-							: undefined,
-						trimmedEntries: backboneAppend.trimmed,
-					};
-				},
-			);
+						payloadSize: input.payloadData.byteLength,
+					});
+				const appendInputWithDocumentIndex = nativeBackboneDocumentIndex
+					? {
+							...appendInput,
+							documentIndex: nativeBackboneDocumentIndex,
+						}
+					: appendInput;
+				backboneAppend =
+					next.length === 0
+						? commitBlocksInBackbone
+							? backbone.preparePlainCommittedNoNextStorageAppendTransaction(
+									appendInputWithDocumentIndex,
+								)
+							: backbone.preparePlainNoNextStorageAppendTransaction(
+									appendInputWithDocumentIndex,
+								)
+						: commitBlocksInBackbone
+							? backbone.preparePlainCommittedStorageAppendTransaction(
+									appendInputWithDocumentIndex,
+								)
+							: backbone.preparePlainStorageAppendTransaction(
+									appendInputWithDocumentIndex,
+								);
+				if (nativeBackboneDocumentIndex) {
+					nativeBackboneDocumentIndexCommitted = true;
+					committedNativeBackboneDocumentIndex = nativeBackboneDocumentIndex;
+				}
+				return {
+					...backboneAppend.entry,
+					getBytes: commitBlocksInBackbone
+						? (hash: string) => backbone.blocks.get(hash)
+						: undefined,
+					trimmedEntries: backboneAppend.trimmed,
+				};
+			};
+			const hasKnownNoNext =
+				appendOptions.meta?.next != null && appendOptions.meta.next.length === 0;
+			const appendGenericNativeCommit = () =>
+				this.log.appendLocallyPreparedNativeCommitOnly(
+					undefined as T,
+					appendOptions,
+					{
+						payloadData,
+						resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+						skipMissingNextJoin: properties?.skipMissingNextJoin,
+					},
+					prepareBackboneAppend,
+				);
+			const directNoNextResult = hasKnownNoNext
+				? this.log.appendLocallyPreparedNativeKnownNoNextCommitOnly(
+						undefined as T,
+						appendOptions,
+						{
+							payloadData,
+							resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+						},
+						prepareBackboneAppend,
+					)
+				: undefined;
+			const result =
+				directNoNextResult === undefined
+					? appendGenericNativeCommit()
+					: directNoNextResult;
 			return mapMaybePromise(result, (prepared) => {
 				if (!prepared || !backboneAppend) {
 					return undefined;
