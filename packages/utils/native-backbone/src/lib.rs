@@ -15,7 +15,9 @@ use peerbit_log_rust::{
     LogIndexEntry, NativeCommittedEntryFacts, NativeEntryV0PlainBuilder, NativeLogBlockStore,
     NativeLogIndex,
 };
-use peerbit_shared_log_rust::NativeSharedLogState;
+use peerbit_shared_log_rust::{
+    commit_local_append_for_gid_compact_core, NativeLocalAppendCompactFacts, NativeSharedLogState,
+};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
@@ -1135,7 +1137,7 @@ impl NativePeerbitBackbone {
             wall_time,
             logical,
             gid,
-            Array::new(),
+            Vec::new(),
             entry_type,
             meta_data,
             payload_data,
@@ -1170,7 +1172,7 @@ impl NativePeerbitBackbone {
             wall_time,
             logical,
             gid,
-            Array::new(),
+            Vec::new(),
             entry_type,
             meta_data,
             payload_data,
@@ -1208,7 +1210,7 @@ impl NativePeerbitBackbone {
             wall_time,
             logical,
             gid,
-            Array::new(),
+            Vec::new(),
             entry_type,
             meta_data,
             payload_data,
@@ -1255,7 +1257,7 @@ impl NativePeerbitBackbone {
             wall_time,
             logical,
             gid,
-            Array::new(),
+            Vec::new(),
             entry_type,
             meta_data,
             payload_data,
@@ -1297,7 +1299,7 @@ impl NativePeerbitBackbone {
             wall_time,
             logical,
             gid,
-            Array::new(),
+            Vec::new(),
             entry_type,
             meta_data,
             payload_data,
@@ -1332,7 +1334,7 @@ impl NativePeerbitBackbone {
             wall_time,
             logical,
             gid,
-            Array::new(),
+            Vec::new(),
             entry_type,
             meta_data,
             payload_data,
@@ -1370,7 +1372,7 @@ impl NativePeerbitBackbone {
             wall_time,
             logical,
             gid,
-            Array::new(),
+            Vec::new(),
             entry_type,
             meta_data,
             payload_data,
@@ -1417,7 +1419,7 @@ impl NativePeerbitBackbone {
             wall_time,
             logical,
             gid,
-            Array::new(),
+            Vec::new(),
             entry_type,
             meta_data,
             payload_data,
@@ -1460,7 +1462,7 @@ impl NativePeerbitBackbone {
             wall_time,
             logical,
             gid,
-            next_hashes,
+            strings_from_array(next_hashes)?,
             entry_type,
             meta_data,
             payload_data,
@@ -1496,7 +1498,7 @@ impl NativePeerbitBackbone {
             wall_time,
             logical,
             gid,
-            next_hashes,
+            strings_from_array(next_hashes)?,
             entry_type,
             meta_data,
             payload_data,
@@ -1535,7 +1537,7 @@ impl NativePeerbitBackbone {
             wall_time,
             logical,
             gid,
-            next_hashes,
+            strings_from_array(next_hashes)?,
             entry_type,
             meta_data,
             payload_data,
@@ -1583,7 +1585,7 @@ impl NativePeerbitBackbone {
             wall_time,
             logical,
             gid,
-            next_hashes,
+            strings_from_array(next_hashes)?,
             entry_type,
             meta_data,
             payload_data,
@@ -1626,7 +1628,7 @@ impl NativePeerbitBackbone {
             wall_time,
             logical,
             gid,
-            next_hashes,
+            strings_from_array(next_hashes)?,
             entry_type,
             meta_data,
             payload_data,
@@ -1665,7 +1667,7 @@ impl NativePeerbitBackbone {
             wall_time,
             logical,
             gid,
-            next_hashes,
+            strings_from_array(next_hashes)?,
             entry_type,
             meta_data,
             payload_data,
@@ -1709,7 +1711,7 @@ impl NativePeerbitBackbone {
             wall_time,
             logical,
             gid,
-            next_hashes,
+            strings_from_array(next_hashes)?,
             entry_type,
             meta_data,
             payload_data,
@@ -1749,7 +1751,7 @@ impl NativePeerbitBackbone {
             wall_time,
             logical,
             gid,
-            next_hashes,
+            strings_from_array(next_hashes)?,
             entry_type,
             meta_data,
             payload_data,
@@ -1852,6 +1854,30 @@ impl NativePeerbitBackbone {
         self.delete_coordinate_core_batch(delete_hashes)
     }
 
+    fn commit_coordinate_core_from_compact_facts(
+        &mut self,
+        facts: &NativeLocalAppendCompactFacts,
+        next_hashes: Vec<String>,
+        delete_hashes: Vec<String>,
+        wall_time: u64,
+        meta_bytes: Vec<u8>,
+    ) {
+        let coordinate = &facts.coordinate;
+        self.put_coordinate_core(
+            coordinate.hash.clone(),
+            coordinate.gid.clone(),
+            coordinate.hash_number,
+            coordinate.coordinates.clone(),
+            coordinate.assigned_to_range_boundary,
+            coordinate.requested_replicas,
+            wall_time,
+            meta_bytes,
+            true,
+        );
+        self.delete_coordinate_core_strings(next_hashes);
+        self.delete_coordinate_core_strings(delete_hashes);
+    }
+
     fn put_decoded_coordinate_core(
         &mut self,
         coordinate: CoordinateCoreValue,
@@ -1950,6 +1976,12 @@ impl NativePeerbitBackbone {
             self.delete_coordinate_core(&hash);
         }
         Ok(())
+    }
+
+    fn delete_coordinate_core_strings(&mut self, hashes: Vec<String>) {
+        for hash in hashes {
+            self.delete_coordinate_core(&hash);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2061,7 +2093,7 @@ impl NativePeerbitBackbone {
         wall_time: u64,
         logical: u32,
         gid: String,
-        next_hashes: Array,
+        next_hashes: Vec<String>,
         entry_type: u8,
         meta_data: JsValue,
         payload_data: Uint8Array,
@@ -2075,7 +2107,7 @@ impl NativePeerbitBackbone {
         document_index_commit: Option<DocumentIndexAppendCommit>,
     ) -> Result<Array, JsValue> {
         let payload_size = payload_data.length();
-        let (entry_row, trim_rows, hash, digest, meta_bytes) = if commit_blocks {
+        let (entry_row, trim_rows, trim_hashes, hash, digest, meta_bytes) = if commit_blocks {
             let (entry_facts, trimmed_entries) = self
                 .log
                 .prepare_entry_v0_plain_entry_commit_facts_core_and_put_with_builder(
@@ -2084,22 +2116,28 @@ impl NativePeerbitBackbone {
                     wall_time,
                     logical,
                     gid.clone(),
-                    strings_from_array(next_hashes.clone())?,
+                    next_hashes.clone(),
                     entry_type,
                     optional_bytes_from_js(meta_data),
                     payload_data.to_vec(),
                     trim_length_to,
                 )?;
+            let trim_hashes = trimmed_entries
+                .iter()
+                .map(|entry| entry.hash.clone())
+                .collect::<Vec<_>>();
             let entry_row = committed_entry_facts_to_row(&entry_facts);
             let trim_rows = native_backbone_trim_entries_to_rows(trimmed_entries);
             (
                 entry_row,
                 trim_rows,
+                trim_hashes,
                 entry_facts.hash,
                 entry_facts.hash_digest_bytes,
                 entry_facts.meta_bytes,
             )
         } else if let Some(trim_length_to) = trim_length_to {
+            let next_hashes_array = strings_to_array(next_hashes.clone());
             let row = self
                 .log
                 .prepare_entry_v0_plain_entry_storage_facts_trim_and_put_with_builder(
@@ -2107,7 +2145,7 @@ impl NativePeerbitBackbone {
                     wall_time,
                     logical,
                     gid.clone(),
-                    next_hashes.clone(),
+                    next_hashes_array,
                     entry_type,
                     meta_data,
                     payload_data,
@@ -2116,11 +2154,13 @@ impl NativePeerbitBackbone {
             let row = array_from_value(row.into(), "native storage trim append row")?;
             let entry_row = array_from_value(row.get(0), "native storage trim append entry row")?;
             let trim_rows = array_from_value(row.get(1), "native storage trim append trim rows")?;
+            let trim_hashes = trim_hashes_vec(&trim_rows)?;
             let hash = string_field(&entry_row, 1, "storage entry hash")?;
             let digest = bytes_field(&entry_row, 5, "storage entry hash digest")?;
             let meta_bytes = bytes_field(&entry_row, 4, "storage entry meta bytes")?;
-            (entry_row, trim_rows, hash, digest, meta_bytes)
+            (entry_row, trim_rows, trim_hashes, hash, digest, meta_bytes)
         } else {
+            let next_hashes_array = strings_to_array(next_hashes.clone());
             let row = self
                 .log
                 .prepare_entry_v0_plain_entry_storage_facts_and_put_with_builder(
@@ -2128,7 +2168,7 @@ impl NativePeerbitBackbone {
                     wall_time,
                     logical,
                     gid.clone(),
-                    next_hashes.clone(),
+                    next_hashes_array,
                     entry_type,
                     meta_data,
                     payload_data,
@@ -2136,38 +2176,36 @@ impl NativePeerbitBackbone {
             let hash = string_field(&row, 1, "storage entry hash")?;
             let digest = bytes_field(&row, 5, "storage entry hash digest")?;
             let meta_bytes = bytes_field(&row, 4, "storage entry meta bytes")?;
-            (row, Array::new(), hash, digest, meta_bytes)
+            (row, Array::new(), Vec::new(), hash, digest, meta_bytes)
         };
 
-        let hash_number = hash_number_string(&self.resolution, &digest)?;
-        let delete_hashes = trim_hashes(&trim_rows)?;
-        let delete_hashes_for_core = delete_hashes.clone();
+        let hash_number = hash_number_u64(&self.resolution, &digest)?;
         let next_hashes_for_core = next_hashes.clone();
+        let trim_hashes_for_core = trim_hashes.clone();
         let document_hash = hash.clone();
         let document_gid = gid.clone();
-        let coordinate_row = self.shared_log.commit_local_append_for_gid_compact(
+        let coordinate_facts = commit_local_append_for_gid_compact_core(
+            &mut self.shared_log,
             hash,
             gid,
             hash_number,
             next_hashes,
-            delete_hashes,
+            trim_hashes,
             replicas,
             role_age_ms,
-            now,
-            JsValue::UNDEFINED,
-            true,
-            self_hash,
+            &now,
+            &self_hash,
             self_replicating,
             true,
             true,
         )?;
-        self.commit_coordinate_core_from_compact_row(
-            coordinate_row.get(3),
+        self.commit_coordinate_core_from_compact_facts(
+            &coordinate_facts,
             next_hashes_for_core,
-            delete_hashes_for_core,
+            trim_hashes_for_core,
             wall_time,
             meta_bytes,
-        )?;
+        );
         self.put_document_index_for_append(
             document_index_commit,
             wall_time,
@@ -2178,10 +2216,12 @@ impl NativePeerbitBackbone {
 
         let out = Array::new();
         out.push(&entry_row);
-        out.push(&coordinate_row.get(0));
-        out.push(&coordinate_row.get(1));
-        out.push(&coordinate_row.get(2));
-        out.push(&coordinate_row.get(3));
+        out.push(&leader_samples_to_optional_rows(&coordinate_facts.leaders));
+        out.push(&JsValue::from_bool(coordinate_facts.is_leader));
+        out.push(&JsValue::from_bool(
+            coordinate_facts.assigned_to_range_boundary,
+        ));
+        out.push(&coordinate_plan_to_row(&self.resolution, &coordinate_facts));
         out.push(&trim_rows);
         Ok(out)
     }
@@ -2294,6 +2334,58 @@ fn trim_hashes(trim_rows: &Array) -> Result<Array, JsValue> {
         hashes.push(&JsValue::from_str(&string_field(&row, 0, "trim hash")?));
     }
     Ok(hashes)
+}
+
+fn trim_hashes_vec(trim_rows: &Array) -> Result<Vec<String>, JsValue> {
+    let mut hashes = Vec::with_capacity(trim_rows.length() as usize);
+    for index in 0..trim_rows.length() {
+        let row = array_from_value(trim_rows.get(index), "trim row")?;
+        hashes.push(string_field(&row, 0, "trim hash")?);
+    }
+    Ok(hashes)
+}
+
+fn leader_samples_to_optional_rows(
+    values: &Option<Vec<peerbit_shared_log_rust::LeaderSample>>,
+) -> JsValue {
+    let Some(values) = values else {
+        return JsValue::UNDEFINED;
+    };
+    let out = Array::new();
+    for value in values {
+        let row = Array::new();
+        row.push(&JsValue::from_str(&value.hash));
+        row.push(&JsValue::from_bool(value.intersecting));
+        out.push(&row);
+    }
+    out.into()
+}
+
+fn coordinate_plan_to_row(resolution: &str, facts: &NativeLocalAppendCompactFacts) -> Array {
+    let coordinate = &facts.coordinate;
+    let out = Array::new();
+    out.push(&JsValue::from_str(&coordinate.hash));
+    out.push(&number_to_row(resolution, coordinate.hash_number));
+    out.push(&JsValue::from_str(&coordinate.gid));
+    out.push(&numbers_to_rows(resolution, &coordinate.coordinates));
+    out.push(&JsValue::from_bool(coordinate.assigned_to_range_boundary));
+    out.push(&JsValue::from_f64(coordinate.requested_replicas as f64));
+    out
+}
+
+fn numbers_to_rows(resolution: &str, values: &[u64]) -> Array {
+    let out = Array::new();
+    for value in values {
+        out.push(&number_to_row(resolution, *value));
+    }
+    out
+}
+
+fn number_to_row(resolution: &str, value: u64) -> JsValue {
+    match resolution {
+        "u64" => JsValue::from_str(&value.to_string()),
+        _ => JsValue::from_f64(value as f64),
+    }
 }
 
 fn strings_to_array(values: Vec<String>) -> Array {
@@ -2593,18 +2685,22 @@ fn decode_error(error: impl std::fmt::Display) -> JsValue {
 }
 
 fn hash_number_string(resolution: &str, digest: &[u8]) -> Result<String, JsValue> {
+    Ok(hash_number_u64(resolution, digest)?.to_string())
+}
+
+fn hash_number_u64(resolution: &str, digest: &[u8]) -> Result<u64, JsValue> {
     match resolution {
         "u32" => {
             if digest.len() < 4 {
                 return Err(JsValue::from_str("hash digest must have at least 4 bytes"));
             }
-            Ok(u32::from_le_bytes(digest[0..4].try_into().unwrap()).to_string())
+            Ok(u32::from_le_bytes(digest[0..4].try_into().unwrap()) as u64)
         }
         "u64" => {
             if digest.len() < 8 {
                 return Err(JsValue::from_str("hash digest must have at least 8 bytes"));
             }
-            Ok(u64::from_le_bytes(digest[0..8].try_into().unwrap()).to_string())
+            Ok(u64::from_le_bytes(digest[0..8].try_into().unwrap()))
         }
         _ => Err(JsValue::from_str("resolution must be u32 or u64")),
     }

@@ -101,6 +101,22 @@ pub struct LeaderSample {
     pub intersecting: bool,
 }
 
+pub struct NativeAppendCoordinatePlan {
+    pub hash: String,
+    pub hash_number: u64,
+    pub gid: String,
+    pub coordinates: Vec<u64>,
+    pub assigned_to_range_boundary: bool,
+    pub requested_replicas: usize,
+}
+
+pub struct NativeLocalAppendCompactFacts {
+    pub leaders: Option<Vec<LeaderSample>>,
+    pub is_leader: bool,
+    pub assigned_to_range_boundary: bool,
+    pub coordinate: NativeAppendCoordinatePlan,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct SampleOptions {
     pub role_age_ms: u64,
@@ -1639,6 +1655,80 @@ impl NativeRangePlanner {
 
         Ok(strings_to_array(peers).into())
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn commit_local_append_for_gid_compact_core(
+    state: &mut NativeSharedLogState,
+    entry_hash: String,
+    gid: String,
+    entry_hash_number: u64,
+    next_hashes: Vec<String>,
+    delete_hashes: Vec<String>,
+    replicas: usize,
+    role_age_ms: f64,
+    now: &str,
+    self_hash: &str,
+    include_self: bool,
+    full_replica_fallback: bool,
+    include_strict_full_replica: bool,
+) -> Result<NativeLocalAppendCompactFacts, JsValue> {
+    let coordinates = state
+        .inner
+        .range_planner
+        .get_gid_coordinates(&gid, replicas);
+    let options = SampleOptions {
+        role_age_ms: role_age_ms_from_f64(role_age_ms),
+        now: parse_u64(now)?,
+        ..Default::default()
+    };
+    let leaders = state.inner.range_planner.find_leaders(
+        &coordinates,
+        replicas,
+        &options,
+        true,
+        self_hash,
+        include_self,
+        full_replica_fallback,
+        include_strict_full_replica,
+    );
+    let is_leader = leaders.iter().any(|leader| leader.hash == self_hash);
+    let assigned_to_range_boundary = should_assign_to_range_boundary(&leaders, replicas);
+
+    state.inner.put_entry_coordinate_state(
+        entry_hash.clone(),
+        EntryCoordinateState {
+            gid: gid.clone(),
+            hash_number: entry_hash_number,
+            coordinates: coordinates.clone(),
+            assigned_to_range_boundary,
+            requested_replicas: replicas,
+        },
+    );
+    let mut deleted = IndexSet::new();
+    for hash in next_hashes {
+        deleted.insert(hash);
+    }
+    for hash in delete_hashes {
+        deleted.insert(hash);
+    }
+    for hash in deleted {
+        state.inner.delete_entry_coordinate_state(&hash);
+    }
+
+    Ok(NativeLocalAppendCompactFacts {
+        leaders: if is_leader { None } else { Some(leaders) },
+        is_leader,
+        assigned_to_range_boundary,
+        coordinate: NativeAppendCoordinatePlan {
+            hash: entry_hash,
+            hash_number: entry_hash_number,
+            gid,
+            coordinates,
+            assigned_to_range_boundary,
+            requested_replicas: replicas,
+        },
+    })
 }
 
 #[wasm_bindgen]

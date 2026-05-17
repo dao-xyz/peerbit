@@ -1692,13 +1692,36 @@ export class Documents<
 		commit: DocumentAppendCommitFacts<T, I>,
 	): MaybePromise<void> {
 		const shouldPrepareChange = this.hasDocumentChangeConsumers();
-		const documentsChanged: DocumentsChange<T, I> = {
-			added: [],
-			removed: [],
-		};
-		const modified: Set<string | number | bigint> = new Set();
 		const existing =
 			commit.unique || commit.existing === null ? null : commit.existing;
+		if (
+			!shouldPrepareChange &&
+			commit.removed.length === 0 &&
+			commit.nativeBackboneDocumentIndexCommitted
+		) {
+			if (!this.strictHistory && existing) {
+				const shouldIgnoreChange = this.immutable
+					? existing.value.__context.modified < commit.append.wallTime
+					: existing.value.__context.modified > commit.append.wallTime;
+				if (shouldIgnoreChange) {
+					return;
+				}
+			}
+			this._index._cacheResolvedIdentityValue(
+				commit.key.primitive,
+				commit.document,
+			);
+			return;
+		}
+
+		const documentsChanged: DocumentsChange<T, I> | undefined =
+			shouldPrepareChange
+				? {
+						added: [],
+						removed: [],
+					}
+				: undefined;
+		const modified: Set<string | number | bigint> = new Set();
 
 		if (!this.strictHistory && existing) {
 			const shouldIgnoreChange = this.immutable
@@ -1716,13 +1739,13 @@ export class Documents<
 					: this.handlePreparedPlainPutCommitRemoved(commit.removed, modified);
 			}
 			if (commit.removed.length === 0) {
-				this.dispatchDocumentChangeIfObserved(documentsChanged);
+				this.dispatchDocumentChangeIfObserved(documentsChanged!);
 				return;
 			}
 			return this.handlePreparedPlainPutCommitRemoved(
 				commit.removed,
 				modified,
-				documentsChanged,
+				documentsChanged!,
 			);
 		};
 
@@ -1730,7 +1753,7 @@ export class Documents<
 			indexedDocument: WithIndexedContext<T, I> | undefined,
 		): MaybePromise<void> => {
 			if (indexedDocument) {
-				if (shouldPrepareChange) {
+				if (documentsChanged) {
 					documentsChanged.added.push(indexedDocument);
 				}
 				modified.add(commit.key.primitive);
@@ -1748,7 +1771,7 @@ export class Documents<
 					},
 				),
 				({ indexable }) => {
-					if (shouldPrepareChange) {
+					if (documentsChanged) {
 						documentsChanged.added.push(
 							coerceWithIndexed(
 								coerceWithContext(commit.document, commit.context),

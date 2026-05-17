@@ -2754,13 +2754,12 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			return [];
 		}
 		if (this.nativeBackboneDocumentIndexPrimary) {
+			if (!this.snapshotFile) {
+				return this.deleteNativeBackboneDocumentKeys(deleteKeys);
+			}
 			const deletedIds = this.getNativeBackboneExistingIds(deleteKeys);
 			if (deletedIds.length === 0) {
 				return [];
-			}
-			if (!this.snapshotFile) {
-				this.deleteNativeBackboneDocumentKeys(deleteKeys);
-				return deletedIds;
 			}
 			return this.enqueueMutation(async () => {
 				await this.appendDeletes(deleteKeys);
@@ -3991,14 +3990,21 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		);
 	}
 
-	private deleteNativeBackboneDocumentKeys(storeKeys: string[]): void {
+	private deleteNativeBackboneDocumentKeys(storeKeys: string[]): types.IdKey[] {
 		const deleteDocument = this.nativeBackboneDocumentIndex?.deleteDocument;
 		if (!deleteDocument || storeKeys.length === 0) {
-			return;
+			return [];
 		}
+		const deletedIds: types.IdKey[] = [];
 		for (const key of storeKeys) {
-			deleteDocument.call(this.nativeBackboneDocumentIndex, key);
+			if (deleteDocument.call(this.nativeBackboneDocumentIndex, key)) {
+				const id = storeKeyToIdKey(key);
+				if (id) {
+					deletedIds.push(id);
+				}
+			}
 		}
+		return deletedIds;
 	}
 
 	private getNativeBackboneExistingIds(storeKeys: string[]): types.IdKey[] {
