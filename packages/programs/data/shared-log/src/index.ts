@@ -5300,28 +5300,31 @@ export class SharedLog<
 								commitNativeBackbone: false,
 							});
 					const completed = mapMaybePromise(persisted, () => {
-						const announced = commitBlocksInBackbone
-							? this.remoteBlocks.notifyStored(prepared.appendFacts.hash)
-							: undefined;
-						return mapMaybePromise(announced, () => {
-							const delayAdaptiveRebalance =
-								this.shouldDelayAdaptiveRebalance();
-							if (!backboneAppend!.isLeader && !delayAdaptiveRebalance) {
-								const leaders = backboneAppend!.leaders;
-								if (leaders) {
-									const pruneEntry =
-										this.materializePreparedCoordinateEntry(preparedCoordinate);
-									this.pruneDebouncedFnAddIfNotKeeping({
-										key: pruneEntry.hash,
-										value: { entry: pruneEntry, leaders },
-									});
-								}
+						if (commitBlocksInBackbone) {
+							const announced = this.remoteBlocks.notifyStored(
+								prepared.appendFacts.hash,
+							);
+							if (isPromiseLike(announced)) {
+								announced.catch(() => undefined);
 							}
-							if (!delayAdaptiveRebalance) {
-								this.rebalanceParticipationDebounced?.call();
+						}
+						const delayAdaptiveRebalance =
+							this.shouldDelayAdaptiveRebalance();
+						if (!backboneAppend!.isLeader && !delayAdaptiveRebalance) {
+							const leaders = backboneAppend!.leaders;
+							if (leaders) {
+								const pruneEntry =
+									this.materializePreparedCoordinateEntry(preparedCoordinate);
+								this.pruneDebouncedFnAddIfNotKeeping({
+									key: pruneEntry.hash,
+									value: { entry: pruneEntry, leaders },
+								});
 							}
-							return finish();
-						});
+						}
+						if (!delayAdaptiveRebalance) {
+							this.rebalanceParticipationDebounced?.call();
+						}
+						return finish();
 					});
 					return isPromiseLike(completed)
 						? completed.catch((error) => rollback(error))

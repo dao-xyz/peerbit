@@ -1111,6 +1111,63 @@ describe("index", () => {
 				}
 			});
 
+			it("does not wait for best-effort block notification on native committed puts", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				let notifyStoredStub: sinon.SinonStub | undefined;
+				try {
+					await rustSession.peers[0].open(store, {
+						args: {
+							replicate: { factor: 1 },
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+						},
+					});
+					const notifyDeferred = pDefer<void>();
+					const sharedLog = store.docs.log as any;
+					notifyStoredStub = sinon
+						.stub(sharedLog.remoteBlocks, "notifyStored")
+						.returns(notifyDeferred.promise);
+
+					const id = uuid();
+					const putPromise = store.docs.put(
+						new Document({
+							id,
+							name: "backbone-notify-deferred",
+						}),
+						{
+							unique: true,
+							replicate: false,
+							target: "none",
+						},
+					);
+					const completedBeforeNotify = await Promise.race([
+						putPromise.then(() => true),
+						delay(50).then(() => false),
+					]);
+					notifyDeferred.resolve();
+					await putPromise;
+
+					expect(completedBeforeNotify).equal(true);
+					expect(notifyStoredStub.callCount).equal(1);
+					expect((await store.docs.get(id))?.name).equal(
+						"backbone-notify-deferred",
+					);
+				} finally {
+					notifyStoredStub?.restore();
+					if (store) {
+						await store.close();
+						store = undefined;
+					}
+					await rustSession.stop();
+				}
+			});
+
 			it("uses the native backbone committed storage transaction for update puts with next", async () => {
 				const rustSession = await TestSession.connected(
 					1,
