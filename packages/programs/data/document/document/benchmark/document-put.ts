@@ -27,7 +27,7 @@ import {
 // - DOC_BYTES=1200
 // - DOC_COORDINATE_WAL_FLUSH_BYTES=1048576
 // - DOC_COORDINATE_WAL_FLUSH_INTERVAL_MS unset by default
-// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,rust-peerbit-backbone-local-document-index,rust-peerbit-backbone-coordinate-wal,rust-peerbit-backbone-coordinate-wal-buffered,native-ceiling,native-backbone-ceiling
+// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,rust-peerbit-backbone-local-document-index,rust-peerbit-backbone-coordinate-wal,rust-peerbit-backbone-coordinate-wal-buffered,native-ceiling,native-backbone-ceiling,native-backbone-storage-ceiling
 //   Add "-nonunique" to any scenario name to use default update-safe put semantics with new ids.
 //   Add "-update" to any scenario name to repeatedly update one document id.
 //   Add "-local" to a rust-peerbit scenario to disable replication and default trim.
@@ -1265,6 +1265,11 @@ const runNativeBackboneCeilingScenario = async (
 	if (useDocumentIndex) {
 		backbone.configureDocumentSchemaIr(nativeCeilingContextSchemaIr());
 	}
+	const useCommittedStorageTransaction =
+		scenarioBaseName(name) === "native-backbone-storage-ceiling";
+	if (scenarioUsesCoordinateWal(name)) {
+		backbone.setCoordinateJournalEnabled(true);
+	}
 	const documentValuePrefix = new Uint8Array(0);
 
 	const append = (count: number, profile?: Profile) => {
@@ -1276,8 +1281,7 @@ const runNativeBackboneCeilingScenario = async (
 						byteElementIndexLimit: 0,
 					}
 				: undefined;
-			const runAppend = () =>
-				backbone.appendPlainNoNextTransaction({
+			const appendInput = {
 					wallTime: BigInt(Date.now()),
 					logical: i,
 					gid: `gid-${i}`,
@@ -1286,7 +1290,13 @@ const runNativeBackboneCeilingScenario = async (
 					selfHash: "native-backbone-ceiling-peer",
 					trimLengthTo: 100,
 					documentIndex,
-				});
+			};
+			const runAppend = () =>
+				useCommittedStorageTransaction
+					? backbone.preparePlainCommittedNoNextStorageAppendTransaction(
+							appendInput,
+						)
+					: backbone.appendPlainNoNextTransaction(appendInput);
 			if (profile) {
 				timeSync(profile, "totalPutMs", runAppend);
 			} else {
@@ -1321,7 +1331,8 @@ for (const name of scenarioNames) {
 	rows.push(
 		baseName === "native-ceiling"
 			? await runNativeCeilingScenario(name)
-			: baseName === "native-backbone-ceiling"
+			: baseName === "native-backbone-ceiling" ||
+				  baseName === "native-backbone-storage-ceiling"
 				? await runNativeBackboneCeilingScenario(name)
 				: await runScenario(name),
 	);
