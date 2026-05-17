@@ -15,7 +15,6 @@ import {
 } from "@peerbit/crypto";
 import * as types from "@peerbit/document-interface";
 import {
-	type SimpleDocumentProjectionContext,
 	type SimpleDocumentProjectionPlan,
 	tryProjectDocumentIndexSimple,
 } from "@peerbit/document-rust";
@@ -923,6 +922,7 @@ type ContextHeadIndex<I> = {
 	getByContextHeadBatch?: (
 		heads: string[],
 	) => Array<indexerTypes.IndexedResult<WithContext<I>> | undefined>;
+	getIdByContextHead?: (head: string) => indexerTypes.IdKey | undefined;
 };
 
 type ExactDeleteIndex = {
@@ -1069,6 +1069,15 @@ export class DocumentIndex<
 		}
 	>;
 	private iteratorKeepAliveTimers?: Map<string, ReturnType<typeof setTimeout>>;
+
+	private deleteResolvedCacheForKey(key: indexerTypes.IdKey): void {
+		if (this.isProgramValued) {
+			this._resolverProgramCache!.delete(key.primitive);
+			indexCacheLogger("cache:del:program", { id: key.primitive });
+		} else if (this._resolverCache?.del(key.primitive)) {
+			indexCacheLogger("cache:del:value", { id: key.primitive });
+		}
+	}
 
 	constructor(properties?: {
 		query?: RPC<types.AbstractSearchRequest, types.AbstractSearchResult>;
@@ -2119,6 +2128,17 @@ export class DocumentIndex<
 		return (this.index as ContextHeadIndex<I>).getByContextHead?.(head);
 	}
 
+	public async getIdentityIndexedKeyByHead(
+		head: string,
+	): Promise<indexerTypes.IdKey | undefined> {
+		const getIdByHead = (this.index as ContextHeadIndex<I>).getIdByContextHead;
+		if (typeof getIdByHead === "function") {
+			return getIdByHead.call(this.index, head);
+		}
+		const indexed = await this.getIdentityIndexedByHead(head);
+		return indexed?.id;
+	}
+
 	public async getIdentityIndexedByHeads(
 		heads: string[],
 	): Promise<
@@ -2599,14 +2619,7 @@ export class DocumentIndex<
 	}
 
 	public del(key: indexerTypes.IdKey) {
-		if (this.isProgramValued) {
-			this._resolverProgramCache!.delete(key.primitive);
-			indexCacheLogger("cache:del:program", { id: key.primitive });
-		} else {
-			if (this._resolverCache?.del(key.primitive)) {
-				indexCacheLogger("cache:del:value", { id: key.primitive });
-			}
-		}
+		this.deleteResolvedCacheForKey(key);
 		return this.index.del({
 			query: [indexerTypes.getMatcher(this.indexBy, key.key)],
 		});
@@ -2617,12 +2630,7 @@ export class DocumentIndex<
 			return;
 		}
 		for (const key of keys) {
-			if (this.isProgramValued) {
-				this._resolverProgramCache!.delete(key.primitive);
-				indexCacheLogger("cache:del:program", { id: key.primitive });
-			} else if (this._resolverCache?.del(key.primitive)) {
-				indexCacheLogger("cache:del:value", { id: key.primitive });
-			}
+			this.deleteResolvedCacheForKey(key);
 		}
 		const delIds = (this.index as ExactDeleteIndex).delIds;
 		if (delIds) {

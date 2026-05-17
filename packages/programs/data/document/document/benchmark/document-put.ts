@@ -198,6 +198,10 @@ class ProjectIndexable {
 type Profile = {
 	serializeMs: number;
 	existingHeadLookupMs: number;
+	documentCommitPlainPutPlanMs: number;
+	documentCommitNativeAppendMs: number;
+	documentCreateAppendCommitFactsMs: number;
+	documentHandlePreparedCommitMs: number;
 	sharedAppendMs: number;
 	sharedProcessLocalAppendMs: number;
 	sharedProcessLocalAppendBatchMs: number;
@@ -244,6 +248,10 @@ type BenchRow = Profile & {
 };
 
 const deepProfileKeys = new Set<keyof Profile>([
+	"documentCommitPlainPutPlanMs",
+	"documentCommitNativeAppendMs",
+	"documentCreateAppendCommitFactsMs",
+	"documentHandlePreparedCommitMs",
 	"sharedProcessLocalAppendMs",
 	"sharedProcessLocalAppendBatchMs",
 	"sharedPlanEntryLeadersMs",
@@ -278,6 +286,10 @@ const deepProfileKeys = new Set<keyof Profile>([
 const emptyProfile = (): Profile => ({
 	serializeMs: 0,
 	existingHeadLookupMs: 0,
+	documentCommitPlainPutPlanMs: 0,
+	documentCommitNativeAppendMs: 0,
+	documentCreateAppendCommitFactsMs: 0,
+	documentHandlePreparedCommitMs: 0,
 	sharedAppendMs: 0,
 	sharedProcessLocalAppendMs: 0,
 	sharedProcessLocalAppendBatchMs: 0,
@@ -701,6 +713,30 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				"getLocalIndexedContext",
 				profile,
 				"existingHeadLookupMs",
+			),
+			patchAsyncMethod(
+				store.docs as any,
+				"commitPlainPutPlan",
+				profile,
+				"documentCommitPlainPutPlanMs",
+			),
+			patchAsyncMethod(
+				store.docs as any,
+				"commitNativeDocumentAppend",
+				profile,
+				"documentCommitNativeAppendMs",
+			),
+			patchAsyncMethod(
+				store.docs as any,
+				"createDocumentAppendCommitFacts",
+				profile,
+				"documentCreateAppendCommitFactsMs",
+			),
+			patchAsyncMethod(
+				store.docs as any,
+				"handlePreparedPlainPutCommit",
+				profile,
+				"documentHandlePreparedCommitMs",
 			),
 			patchAsyncMethod(store.docs.log, "append", profile, "sharedAppendMs"),
 			patchAsyncMethod(
@@ -1294,14 +1330,14 @@ const runNativeBackboneCeilingScenario = async (
 					}
 				: undefined;
 			const appendInput = {
-					wallTime: BigInt(Date.now()),
-					logical: i,
-					gid: `gid-${i}`,
-					payloadData: payload,
-					replicas: 1,
-					selfHash: "native-backbone-ceiling-peer",
-					trimLengthTo: 100,
-					documentIndex,
+				wallTime: BigInt(Date.now()),
+				logical: i,
+				gid: `gid-${i}`,
+				payloadData: payload,
+				replicas: 1,
+				selfHash: "native-backbone-ceiling-peer",
+				trimLengthTo: 100,
+				documentIndex,
 			};
 			const runAppend = () =>
 				useCommittedStorageTransaction

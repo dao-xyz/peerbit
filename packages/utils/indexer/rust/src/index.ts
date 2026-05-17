@@ -202,9 +202,11 @@ type NativeRustIndex<T extends Record<string, any>> = {
 
 type NativeBackboneDocumentIndexTarget = {
 	readonly documentIndexLength?: number;
-	configureDocumentSchemaIr?: (
-		schemaIr: Uint8Array,
-	) => { rootFields: number; nodeCount: number; genericNodes: number };
+	configureDocumentSchemaIr?: (schemaIr: Uint8Array) => {
+		rootFields: number;
+		nodeCount: number;
+		genericNodes: number;
+	};
 	documentExactStringFirstKey?: (
 		field: number,
 		value: string,
@@ -2032,11 +2034,12 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			nativeBackbone?.documentExactStringFirstKey &&
 			nativeBackbone.documentValueBytes
 		) {
-			return heads.map((head) =>
-				this.getNativeBackboneExactStringFirst(field, head) ??
-				(this.nativeBackboneDocumentIndexPrimary
-					? undefined
-					: this.getNativeExactStringFirst(field, head)),
+			return heads.map(
+				(head) =>
+					this.getNativeBackboneExactStringFirst(field, head) ??
+					(this.nativeBackboneDocumentIndexPrimary
+						? undefined
+						: this.getNativeExactStringFirst(field, head)),
 			);
 		}
 		const native = this.getNative();
@@ -2044,16 +2047,24 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		if (!nativeBatch) {
 			return heads.map((head) => this.getByContextHead(head));
 		}
-		const rows = nativeBatch.call(
-			native,
-			field,
-			heads,
-		);
+		const rows = nativeBatch.call(native, field, heads);
 		return rows.map((result) =>
 			result
 				? { id: result[0], value: this.decodeNativeStoredValue(result[1]) }
 				: undefined,
 		);
+	}
+
+	getIdByContextHead(head: string): types.IdKey | undefined {
+		const field = nativeFieldId(this.fieldDictionary, ["__context", "head"]);
+		const backbone = this.nativeBackboneDocumentIndex;
+		if (
+			backbone?.documentExactStringFirstKey &&
+			(backbone.documentValueBytes || this.nativeBackboneDocumentIndexPrimary)
+		) {
+			const key = backbone.documentExactStringFirstKey(field, head);
+			return key ? storeKeyToIdKey(key) : undefined;
+		}
 	}
 
 	put(
@@ -2181,9 +2192,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				value: entry.value,
 			}));
 			if (
-				prepared.some(
-					(item) => !item.encodedValue && !item.encodedValueParts,
-				)
+				prepared.some((item) => !item.encodedValue && !item.encodedValueParts)
 			) {
 				throw new Error("Native backbone document batch value encoding failed");
 			}
@@ -2833,8 +2842,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		this.assertOpen();
 		if (
 			this.nativeBackboneDocumentIndexPrimary &&
-			typeof this.nativeBackboneDocumentIndex?.documentIndexLength ===
-				"number"
+			typeof this.nativeBackboneDocumentIndex?.documentIndexLength === "number"
 		) {
 			return this.nativeBackboneDocumentIndex.documentIndexLength;
 		}
@@ -2923,9 +2931,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				}
 			}
 		}
-		return decodeNativeSum(
-			this.getNative().sum(queryBytes, field),
-		);
+		return decodeNativeSum(this.getNative().sum(queryBytes, field));
 	}
 
 	async count(query?: types.CountOptions): Promise<number> {
@@ -4024,7 +4030,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		value: string,
 	): types.IndexedResult<T> | undefined {
 		const backbone = this.nativeBackboneDocumentIndex;
-		if (!backbone?.documentExactStringFirstKey || !backbone.documentValueBytes) {
+		if (
+			!backbone?.documentExactStringFirstKey ||
+			!backbone.documentValueBytes
+		) {
 			return;
 		}
 		const key = backbone.documentExactStringFirstKey(field, value);

@@ -358,6 +358,12 @@ export class Documents<
 	private _optionCanPerformNativePolicy?: NativeCanPerformPolicyDescriptor;
 	private _optionCanPerformNativeFastPath?: NativeFastPathCanPerformPolicyEvaluator;
 	private _nativeBackboneDocumentIndexEnabled = false;
+	private _documentChangeListeners: Array<{
+		listener: unknown;
+		capture: boolean;
+	}> = [];
+	private _documentChangeListenerCount = 0;
+	private _documentInternalChangeListenerCount = 0;
 	private idResolver!: (any: any) => indexerTypes.IdPrimitive;
 	private domain?: CustomDocumentDomain<InferR<D>>;
 	private strictHistory: boolean;
@@ -375,10 +381,59 @@ export class Documents<
 		this.log = new SharedLog(properties);
 		this.immutable = properties?.immutable ?? false;
 		this._index = properties?.index || new DocumentIndex();
+		this.trackDocumentChangeListeners();
 	}
 
 	get index(): DocumentIndex<T, I, D> {
 		return this._index;
+	}
+
+	private trackDocumentChangeListeners(): void {
+		const events = this.events;
+		const addEventListener = events.addEventListener.bind(events);
+		const removeEventListener = events.removeEventListener.bind(events);
+		const captureFromOptions = (options: unknown): boolean =>
+			typeof options === "boolean"
+				? options
+				: !!(options as { capture?: boolean } | undefined)?.capture;
+		events.addEventListener = ((type: string, ...args: unknown[]) => {
+			if (type === "change") {
+				const listener = args[0];
+				const capture = captureFromOptions(args[1]);
+				if (
+					listener &&
+					!this._documentChangeListeners.some(
+						(entry) => entry.listener === listener && entry.capture === capture,
+					)
+				) {
+					this._documentChangeListeners.push({ listener, capture });
+					this._documentChangeListenerCount =
+						this._documentChangeListeners.length;
+				}
+			}
+			return (addEventListener as (...innerArgs: unknown[]) => unknown)(
+				type,
+				...args,
+			);
+		}) as typeof events.addEventListener;
+		events.removeEventListener = ((type: string, ...args: unknown[]) => {
+			if (type === "change") {
+				const listener = args[0];
+				const capture = captureFromOptions(args[1]);
+				const index = this._documentChangeListeners.findIndex(
+					(entry) => entry.listener === listener && entry.capture === capture,
+				);
+				if (index >= 0) {
+					this._documentChangeListeners.splice(index, 1);
+					this._documentChangeListenerCount =
+						this._documentChangeListeners.length;
+				}
+			}
+			return (removeEventListener as (...innerArgs: unknown[]) => unknown)(
+				type,
+				...args,
+			);
+		}) as typeof events.removeEventListener;
 	}
 
 	private getLocalIndexedContext(
@@ -456,6 +511,7 @@ export class Documents<
 		this.compatibility = options.compatibility;
 		this.strictHistory = options.strictHistory ?? false;
 
+		const changeListenersBeforeIndexOpen = this._documentChangeListenerCount;
 		await this._index.open({
 			documentEvents: this.events,
 			log: this.log,
@@ -486,6 +542,10 @@ export class Documents<
 			prefetch: options.index?.prefetch,
 			includeIndexed: options.index?.includeIndexed,
 		});
+		this._documentInternalChangeListenerCount = Math.max(
+			0,
+			this._documentChangeListenerCount - changeListenersBeforeIndexOpen,
+		);
 
 		// document v6 and below need log compatibility of v8 or below
 		// document v7 needs log compatibility of v9
@@ -1230,9 +1290,7 @@ export class Documents<
 				const prepareNativeDocumentIndexWithAppendFacts =
 					nativeDocumentIndexCommit
 						? undefined
-						: this.createNativeBackboneDocumentIndexAppendFactsPreparer(
-								input,
-							);
+						: this.createNativeBackboneDocumentIndexAppendFactsPreparer(input);
 				const appendProperties = {
 					skipMissingNextJoin: input.skipMissingNextJoin,
 					resolveTrimmedEntries: input.resolveTrimmedEntries,
@@ -1241,8 +1299,7 @@ export class Documents<
 						? {
 								nativeBackboneDocumentIndex: {
 									key: documentIndexStoreKey(input.key),
-									valuePrefixBytes:
-										nativeDocumentIndexCommit.valuePrefixBytes,
+									valuePrefixBytes: nativeDocumentIndexCommit.valuePrefixBytes,
 									existingCreated:
 										input.unique || input.existing === null
 											? undefined
@@ -1340,9 +1397,7 @@ export class Documents<
 	private createNativeBackboneDocumentIndexAppendFactsPreparer(
 		input: NativeDocumentAppendCommitFactsInput<T, I>,
 	):
-		| ((
-				facts: NativeBackboneDocumentIndexAppendFactsInput,
-		  ) =>
+		| ((facts: NativeBackboneDocumentIndexAppendFactsInput) =>
 				| {
 						valuePrefixBytes: Uint8Array;
 						indexable?: I;
@@ -1584,6 +1639,25 @@ export class Documents<
 		};
 	}
 
+	private hasDocumentChangeConsumers(): boolean {
+		return (
+			this._documentChangeListenerCount >
+				this._documentInternalChangeListenerCount ||
+			this._index.hasPending === true
+		);
+	}
+
+	private dispatchDocumentChangeIfObserved(
+		documentsChanged: DocumentsChange<T, I>,
+	): void {
+		if (!this.hasDocumentChangeConsumers()) {
+			return;
+		}
+		this.events.dispatchEvent(
+			new CustomEvent("change", { detail: documentsChanged }),
+		);
+	}
+
 	private nextFromIndexedContext(
 		existingHead: string,
 		existing:
@@ -1617,6 +1691,7 @@ export class Documents<
 	private handlePreparedPlainPutCommit(
 		commit: DocumentAppendCommitFacts<T, I>,
 	): MaybePromise<void> {
+		const shouldPrepareChange = this.hasDocumentChangeConsumers();
 		const documentsChanged: DocumentsChange<T, I> = {
 			added: [],
 			removed: [],
@@ -1635,10 +1710,13 @@ export class Documents<
 		}
 
 		const finishRemoved = (): MaybePromise<void> => {
+			if (!shouldPrepareChange) {
+				return commit.removed.length === 0
+					? undefined
+					: this.handlePreparedPlainPutCommitRemoved(commit.removed, modified);
+			}
 			if (commit.removed.length === 0) {
-				this.events.dispatchEvent(
-					new CustomEvent("change", { detail: documentsChanged }),
-				);
+				this.dispatchDocumentChangeIfObserved(documentsChanged);
 				return;
 			}
 			return this.handlePreparedPlainPutCommitRemoved(
@@ -1652,7 +1730,9 @@ export class Documents<
 			indexedDocument: WithIndexedContext<T, I> | undefined,
 		): MaybePromise<void> => {
 			if (indexedDocument) {
-				documentsChanged.added.push(indexedDocument);
+				if (shouldPrepareChange) {
+					documentsChanged.added.push(indexedDocument);
+				}
 				modified.add(commit.key.primitive);
 				return finishRemoved();
 			}
@@ -1668,12 +1748,14 @@ export class Documents<
 					},
 				),
 				({ indexable }) => {
-					documentsChanged.added.push(
-						coerceWithIndexed(
-							coerceWithContext(commit.document, commit.context),
-							indexable,
-						),
-					);
+					if (shouldPrepareChange) {
+						documentsChanged.added.push(
+							coerceWithIndexed(
+								coerceWithContext(commit.document, commit.context),
+								indexable,
+							),
+						);
+					}
 					modified.add(commit.key.primitive);
 					return finishRemoved();
 				},
@@ -1686,6 +1768,10 @@ export class Documents<
 					commit.key.primitive,
 					commit.document,
 				);
+				if (!shouldPrepareChange) {
+					modified.add(commit.key.primitive);
+					return finishRemoved();
+				}
 				const withContext = coerceWithContext(commit.document, commit.context);
 				if (commit.nativeBackboneDocumentIndex?.indexable) {
 					return finishIndexed(
@@ -1695,14 +1781,14 @@ export class Documents<
 						),
 					);
 				}
-					if (commit.nativeBackboneDocumentIndex?.getIndexable) {
-						return finishIndexed(
-							coerceWithLazyIndexed(
-								withContext,
-								commit.nativeBackboneDocumentIndex.getIndexable,
-							),
-						);
-					}
+				if (commit.nativeBackboneDocumentIndex?.getIndexable) {
+					return finishIndexed(
+						coerceWithLazyIndexed(
+							withContext,
+							commit.nativeBackboneDocumentIndex.getIndexable,
+						),
+					);
+				}
 				return finishIndexed(
 					coerceWithIndexed(withContext, commit.document as any as I),
 				);
@@ -1755,7 +1841,7 @@ export class Documents<
 	private async handlePreparedPlainPutCommitRemoved(
 		removedEntries: ShallowOrFullEntry<Operation>[],
 		modified: Set<string | number | bigint>,
-		documentsChanged: DocumentsChange<T, I>,
+		documentsChanged?: DocumentsChange<T, I>,
 	): Promise<void> {
 		for (const removed of removedEntries) {
 			if (
@@ -1792,9 +1878,9 @@ export class Documents<
 			}
 		}
 
-		this.events.dispatchEvent(
-			new CustomEvent("change", { detail: documentsChanged }),
-		);
+		if (documentsChanged) {
+			this.dispatchDocumentChangeIfObserved(documentsChanged);
+		}
 	}
 
 	private async handlePreparedPlainPutManyCommit(
@@ -1915,8 +2001,20 @@ export class Documents<
 	private async collectRemovedDocumentChangeFromIndexedHead(
 		head: string,
 		modified: Set<string | number | bigint>,
-		documentsChanged: DocumentsChange<T, I>,
+		documentsChanged?: DocumentsChange<T, I>,
 	): Promise<boolean> {
+		if (!documentsChanged) {
+			const key = await this._index.getIdentityIndexedKeyByHead(head);
+			if (!key) {
+				return false;
+			}
+			if (modified.has(key.primitive)) {
+				return true;
+			}
+			await this._index.delMany([key]);
+			modified.add(key.primitive);
+			return true;
+		}
 		const indexed = await this._index.getIdentityIndexedByHead(head);
 		if (!indexed) {
 			return false;
@@ -1927,11 +2025,13 @@ export class Documents<
 			return true;
 		}
 
-		const value = coerceWithIndexed(
-			indexed.value as unknown as WithIndexedContext<T, I>,
-			indexed.value as unknown as I,
-		);
-		documentsChanged.removed.push(value);
+		if (documentsChanged) {
+			const value = coerceWithIndexed(
+				indexed.value as unknown as WithIndexedContext<T, I>,
+				indexed.value as unknown as I,
+			);
+			documentsChanged.removed.push(value);
+		}
 
 		await this._index.del(key);
 		modified.add(key.primitive);
@@ -1941,13 +2041,31 @@ export class Documents<
 	private async collectRemovedDocumentChangesFromIndexedHeads(
 		removed: ShallowOrFullEntry<Operation>[],
 		modified: Set<string | number | bigint>,
-		documentsChanged: DocumentsChange<T, I>,
+		documentsChanged?: DocumentsChange<T, I>,
 	): Promise<Set<string>> {
 		const shallowRemoved = removed.filter(
 			(entry): entry is ShallowEntry => !(entry instanceof Entry),
 		);
 		if (shallowRemoved.length === 0) {
 			return new Set();
+		}
+		if (!documentsChanged) {
+			const handled = new Set<string>();
+			const deleteKeys: indexerTypes.IdKey[] = [];
+			for (const entry of shallowRemoved) {
+				const key = await this._index.getIdentityIndexedKeyByHead(entry.hash);
+				if (!key) {
+					continue;
+				}
+				handled.add(entry.hash);
+				if (modified.has(key.primitive)) {
+					continue;
+				}
+				deleteKeys.push(key);
+				modified.add(key.primitive);
+			}
+			await this._index.delMany(deleteKeys);
+			return handled;
 		}
 		const indexedByHead = await this._index.getIdentityIndexedByHeads(
 			shallowRemoved.map((entry) => entry.hash),
@@ -1968,11 +2086,13 @@ export class Documents<
 			if (modified.has(key.primitive)) {
 				continue;
 			}
-			const value = coerceWithIndexed(
-				indexed.value as unknown as WithIndexedContext<T, I>,
-				indexed.value as unknown as I,
-			);
-			documentsChanged.removed.push(value);
+			if (documentsChanged) {
+				const value = coerceWithIndexed(
+					indexed.value as unknown as WithIndexedContext<T, I>,
+					indexed.value as unknown as I,
+				);
+				documentsChanged.removed.push(value);
+			}
 			deleteKeys.push(key);
 			modified.add(key.primitive);
 		}
@@ -1983,9 +2103,9 @@ export class Documents<
 	private async collectRemovedDocumentChange(
 		payload: Operation,
 		modified: Set<string | number | bigint>,
-		documentsChanged: DocumentsChange<T, I>,
+		documentsChanged?: DocumentsChange<T, I>,
 	) {
-		let value: WithIndexedContext<T, I>;
+		let value: WithIndexedContext<T, I> | undefined;
 		let key: indexerTypes.IdKey;
 
 		if (isPutOperation(payload)) {
@@ -1997,32 +2117,38 @@ export class Documents<
 				return;
 			}
 
-			const document = await this._index.get(key, {
-				local: true,
-				remote: false,
-			});
-			if (!document) {
-				return;
+			if (documentsChanged) {
+				const document = await this._index.get(key, {
+					local: true,
+					remote: false,
+				});
+				if (!document) {
+					return;
+				}
+				value = document;
 			}
-			value = document;
 		} else if (isDeleteOperation(payload)) {
 			key = coerceDeleteOperation(payload).key;
 			if (modified.has(key.primitive)) {
 				return;
 			}
-			const document = await this._index.get(key, {
-				local: true,
-				remote: false,
-			});
-			if (!document) {
-				return;
+			if (documentsChanged) {
+				const document = await this._index.get(key, {
+					local: true,
+					remote: false,
+				});
+				if (!document) {
+					return;
+				}
+				value = document;
 			}
-			value = document;
 		} else {
 			throw new Error("Unexpected");
 		}
 
-		documentsChanged.removed.push(value);
+		if (documentsChanged && value) {
+			documentsChanged.removed.push(value);
+		}
 
 		if (
 			value instanceof Program &&
