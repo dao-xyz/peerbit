@@ -205,8 +205,19 @@ type Profile = {
 	sharedLeaderContextMs: number;
 	sharedCoordinatePrepareMs: number;
 	sharedPersistCoordinateMs: number;
+	sharedApplyPreparedFactsMs: number;
+	sharedCreateAppendCommitMs: number;
+	sharedMaterializeEntryMs: number;
+	sharedCoordinateIndexPutMs: number;
 	sharedNativeBackboneStorageTransactionMs: number;
 	nativeBackbonePrepareStorageAppendMs: number;
+	nativeBackbonePrepareNoNextStorageAppendMs: number;
+	nativeBackbonePrepareStorageAppendWithNextMs: number;
+	nativeBackbonePrepareCommittedNoNextStorageAppendMs: number;
+	nativeBackbonePrepareCommittedStorageAppendMs: number;
+	nativeGraphPrepareEntryCommitMs: number;
+	nativeSharedLogCommitCoordinatesMs: number;
+	nativeBackboneCommitCoordinatesMs: number;
 	logAppendMs: number;
 	logAppendNativeCommitOnlyMs: number;
 	logGetNextsForAppendMs: number;
@@ -217,6 +228,7 @@ type Profile = {
 	logTrimUnfilteredLengthMs: number;
 	logConsumeNativeTrimmedEntriesMs: number;
 	remoteBlockPutKnownMs: number;
+	remoteBlockNotifyStoredMs: number;
 	documentIndexPutMs: number;
 	documentIndexTransformMs: number;
 	documentBackendIndexPutMs: number;
@@ -238,8 +250,19 @@ const deepProfileKeys = new Set<keyof Profile>([
 	"sharedLeaderContextMs",
 	"sharedCoordinatePrepareMs",
 	"sharedPersistCoordinateMs",
+	"sharedApplyPreparedFactsMs",
+	"sharedCreateAppendCommitMs",
+	"sharedMaterializeEntryMs",
+	"sharedCoordinateIndexPutMs",
 	"sharedNativeBackboneStorageTransactionMs",
 	"nativeBackbonePrepareStorageAppendMs",
+	"nativeBackbonePrepareNoNextStorageAppendMs",
+	"nativeBackbonePrepareStorageAppendWithNextMs",
+	"nativeBackbonePrepareCommittedNoNextStorageAppendMs",
+	"nativeBackbonePrepareCommittedStorageAppendMs",
+	"nativeGraphPrepareEntryCommitMs",
+	"nativeSharedLogCommitCoordinatesMs",
+	"nativeBackboneCommitCoordinatesMs",
 	"logAppendNativeCommitOnlyMs",
 	"logGetNextsForAppendMs",
 	"logCreateNativeAppendChainMs",
@@ -249,6 +272,7 @@ const deepProfileKeys = new Set<keyof Profile>([
 	"logTrimUnfilteredLengthMs",
 	"logConsumeNativeTrimmedEntriesMs",
 	"remoteBlockPutKnownMs",
+	"remoteBlockNotifyStoredMs",
 ]);
 
 const emptyProfile = (): Profile => ({
@@ -261,8 +285,19 @@ const emptyProfile = (): Profile => ({
 	sharedLeaderContextMs: 0,
 	sharedCoordinatePrepareMs: 0,
 	sharedPersistCoordinateMs: 0,
+	sharedApplyPreparedFactsMs: 0,
+	sharedCreateAppendCommitMs: 0,
+	sharedMaterializeEntryMs: 0,
+	sharedCoordinateIndexPutMs: 0,
 	sharedNativeBackboneStorageTransactionMs: 0,
 	nativeBackbonePrepareStorageAppendMs: 0,
+	nativeBackbonePrepareNoNextStorageAppendMs: 0,
+	nativeBackbonePrepareStorageAppendWithNextMs: 0,
+	nativeBackbonePrepareCommittedNoNextStorageAppendMs: 0,
+	nativeBackbonePrepareCommittedStorageAppendMs: 0,
+	nativeGraphPrepareEntryCommitMs: 0,
+	nativeSharedLogCommitCoordinatesMs: 0,
+	nativeBackboneCommitCoordinatesMs: 0,
 	logAppendMs: 0,
 	logAppendNativeCommitOnlyMs: 0,
 	logGetNextsForAppendMs: 0,
@@ -273,6 +308,7 @@ const emptyProfile = (): Profile => ({
 	logTrimUnfilteredLengthMs: 0,
 	logConsumeNativeTrimmedEntriesMs: 0,
 	remoteBlockPutKnownMs: 0,
+	remoteBlockNotifyStoredMs: 0,
 	documentIndexPutMs: 0,
 	documentIndexTransformMs: 0,
 	documentBackendIndexPutMs: 0,
@@ -365,11 +401,25 @@ const time = async <T>(
 const isPromiseLike = <T>(value: T | Promise<T>): value is Promise<T> =>
 	!!value && typeof (value as { then?: unknown }).then === "function";
 
+type ProfileKey = keyof Profile | readonly (keyof Profile)[];
+
+const addProfileTime = (
+	profile: Profile,
+	profileKey: ProfileKey,
+	durationMs: number,
+) => {
+	const keys: readonly (keyof Profile)[] =
+		typeof profileKey === "string" ? [profileKey] : profileKey;
+	for (const key of keys) {
+		profile[key] += durationMs;
+	}
+};
+
 const patchAsyncMethod = (
 	target: any,
 	key: string,
 	profile: Profile,
-	profileKey: keyof Profile,
+	profileKey: ProfileKey,
 ) => {
 	const original = target[key];
 	if (typeof original !== "function") {
@@ -381,13 +431,13 @@ const patchAsyncMethod = (
 			const result = original.apply(this, args);
 			if (isPromiseLike(result)) {
 				return result.finally(() => {
-					profile[profileKey] += performance.now() - started;
+					addProfileTime(profile, profileKey, performance.now() - started);
 				});
 			}
-			profile[profileKey] += performance.now() - started;
+			addProfileTime(profile, profileKey, performance.now() - started);
 			return result;
 		} catch (error) {
-			profile[profileKey] += performance.now() - started;
+			addProfileTime(profile, profileKey, performance.now() - started);
 			throw error;
 		}
 	};
@@ -396,12 +446,12 @@ const patchAsyncMethod = (
 	};
 };
 
-const timeSync = <T>(profile: Profile, key: keyof Profile, fn: () => T): T => {
+const timeSync = <T>(profile: Profile, key: ProfileKey, fn: () => T): T => {
 	const started = performance.now();
 	try {
 		return fn();
 	} finally {
-		profile[key] += performance.now() - started;
+		addProfileTime(profile, key, performance.now() - started);
 	}
 };
 
@@ -409,7 +459,7 @@ const patchSyncMethod = (
 	target: any,
 	key: string,
 	profile: Profile,
-	profileKey: keyof Profile,
+	profileKey: ProfileKey,
 ) => {
 	const original = target[key];
 	if (typeof original !== "function") {
@@ -861,6 +911,36 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 					profile,
 					"sharedPersistCoordinateMs",
 				),
+				patchSyncMethod(
+					store.docs.log as any,
+					"applyPreparedAppendFactsWithDeferredCoordinateDeletes",
+					profile,
+					"sharedApplyPreparedFactsMs",
+				),
+				patchSyncMethod(
+					store.docs.log as any,
+					"createPreparedLocalAppendCommitFromFacts",
+					profile,
+					"sharedCreateAppendCommitMs",
+				),
+				patchSyncMethod(
+					store.docs.log as any,
+					"materializePreparedAppendResultEntry",
+					profile,
+					"sharedMaterializeEntryMs",
+				),
+				patchAsyncMethod(
+					(store.docs.log as any).entryCoordinatesIndex ?? {},
+					"putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn",
+					profile,
+					"sharedCoordinateIndexPutMs",
+				),
+				patchAsyncMethod(
+					(store.docs.log as any).entryCoordinatesIndex ?? {},
+					"putSharedLogCoordinateFieldsAndDeleteHashesNoReturn",
+					profile,
+					"sharedCoordinateIndexPutMs",
+				),
 				patchAsyncMethod(
 					store.docs.log as any,
 					"appendLocallyPreparedPayloadNativeBackboneStorageTransaction",
@@ -871,31 +951,74 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 					(store.docs.log as any)._nativeBackbone ?? {},
 					"preparePlainStorageAppendTransaction",
 					profile,
-					"nativeBackbonePrepareStorageAppendMs",
+					[
+						"nativeBackbonePrepareStorageAppendMs",
+						"nativeBackbonePrepareStorageAppendWithNextMs",
+					],
 				),
 				patchSyncMethod(
 					(store.docs.log as any)._nativeBackbone ?? {},
 					"preparePlainNoNextStorageAppendTransaction",
 					profile,
-					"nativeBackbonePrepareStorageAppendMs",
+					[
+						"nativeBackbonePrepareStorageAppendMs",
+						"nativeBackbonePrepareNoNextStorageAppendMs",
+					],
 				),
 				patchSyncMethod(
 					(store.docs.log as any)._nativeBackbone ?? {},
 					"preparePlainCommittedStorageAppendTransaction",
 					profile,
-					"nativeBackbonePrepareStorageAppendMs",
+					[
+						"nativeBackbonePrepareStorageAppendMs",
+						"nativeBackbonePrepareCommittedStorageAppendMs",
+					],
 				),
 				patchSyncMethod(
 					(store.docs.log as any)._nativeBackbone ?? {},
 					"preparePlainCommittedNoNextStorageAppendTransaction",
 					profile,
-					"nativeBackbonePrepareStorageAppendMs",
+					[
+						"nativeBackbonePrepareStorageAppendMs",
+						"nativeBackbonePrepareCommittedNoNextStorageAppendMs",
+					],
+				),
+				patchSyncMethod(
+					(store.docs.log as any)._nativeBackbone?.graph ?? {},
+					"prepareEntryV0PlainEntryCommit",
+					profile,
+					"nativeGraphPrepareEntryCommitMs",
+				),
+				patchSyncMethod(
+					(store.docs.log.log.entryIndex as any).properties?.nativeGraph
+						?.graph ?? {},
+					"prepareEntryV0PlainEntryCommit",
+					profile,
+					"nativeGraphPrepareEntryCommitMs",
+				),
+				patchSyncMethod(
+					(store.docs.log as any)._nativeSharedLogState ?? {},
+					"commitEntryCoordinates",
+					profile,
+					"nativeSharedLogCommitCoordinatesMs",
+				),
+				patchSyncMethod(
+					(store.docs.log as any)._nativeBackbone ?? {},
+					"commitEntryCoordinates",
+					profile,
+					"nativeBackboneCommitCoordinatesMs",
 				),
 				patchAsyncMethod(
 					(store.docs.log as any).remoteBlocks ?? {},
 					"putKnown",
 					profile,
 					"remoteBlockPutKnownMs",
+				),
+				patchAsyncMethod(
+					(store.docs.log as any).remoteBlocks ?? {},
+					"notifyStored",
+					profile,
+					"remoteBlockNotifyStoredMs",
 				),
 				patchAsyncMethod(
 					store.docs.log.log as any,
