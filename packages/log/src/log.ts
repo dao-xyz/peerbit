@@ -95,6 +95,7 @@ type NativePreparedNoNextCommit = {
 	metaBytes?: Uint8Array;
 	hashDigestBytes?: Uint8Array;
 	trimmedEntries?: PreparedNativeLogEntry[];
+	trimmedEntryHashes?: string[];
 };
 
 type NativeNoNextCommitInput = {
@@ -1168,6 +1169,25 @@ export class Log<T> {
 					const finishTrim = ():
 						| PreparedCommitOnlyAppendResult<T>
 						| Promise<PreparedCommitOnlyAppendResult<T>> => {
+						if (prepared.trimmedEntryHashes) {
+							const consumedResult =
+								this.entryIndex.consumeNativeTrimmedEntryHashesMaybe(
+									prepared.trimmedEntryHashes,
+									{
+										skipNextHeadUpdates: true,
+										deleteBlocks: false,
+									},
+								);
+							return mapMaybePromise(consumedResult, (removed) => ({
+								get entry() {
+									return materializeEntry();
+								},
+								materializeEntry,
+								removed,
+								appendFacts,
+								shallowEntry,
+							}));
+						}
 						if (!prepared.trimmedEntries) {
 							return finish();
 						}

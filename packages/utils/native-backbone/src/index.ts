@@ -762,6 +762,7 @@ export type NativeBackboneAppendResult = {
 	isLeader: boolean;
 	assignedToRangeBoundary: boolean;
 	trimmed: NativeBackboneTrimmedEntry[];
+	trimmedHashes?: string[];
 };
 
 export type NativeBackboneStorageAppendResult = {
@@ -771,6 +772,7 @@ export type NativeBackboneStorageAppendResult = {
 	isLeader: boolean;
 	assignedToRangeBoundary: boolean;
 	trimmed: NativeBackboneTrimmedEntry[];
+	trimmedHashes?: string[];
 };
 
 export type NativeBackboneAppendPlan = {
@@ -1151,6 +1153,22 @@ const trimmedEntryFromRow = (row: unknown): NativeBackboneTrimmedEntry => {
 	};
 };
 
+const trimmedHashFromRow = (row: unknown): string => (row as [string])[0];
+
+const trimmedRowsResult = (rows: unknown[]): {
+	readonly trimmed: NativeBackboneTrimmedEntry[];
+	readonly trimmedHashes: string[];
+} => {
+	let trimmed: NativeBackboneTrimmedEntry[] | undefined;
+	const trimmedHashes = rows.map(trimmedHashFromRow);
+	return {
+		get trimmed() {
+			return (trimmed ??= rows.map(trimmedEntryFromRow));
+		},
+		trimmedHashes,
+	};
+};
+
 const nativeLogEntryFromTrimRow = (row: unknown): NativeBackboneLogEntry => {
 	const entry = trimmedEntryFromRow(row);
 	return {
@@ -1238,7 +1256,7 @@ const appendResultFromRow = (
 		isLeader,
 		assignedToRangeBoundary,
 		coordinate: appendCoordinatePlanFromRow(resolution, coordinateRow),
-		trimmed: trimRows.map(trimmedEntryFromRow),
+		...trimmedRowsResult(trimRows),
 	};
 };
 
@@ -1267,7 +1285,7 @@ const storageAppendResultFromRow = (
 		isLeader,
 		assignedToRangeBoundary,
 		coordinate: appendCoordinatePlanFromRow(resolution, coordinateRow),
-		trimmed: trimRows.map(trimmedEntryFromRow),
+		...trimmedRowsResult(trimRows),
 	};
 };
 
@@ -1296,7 +1314,7 @@ const committedStorageAppendResultFromRow = (
 		isLeader,
 		assignedToRangeBoundary,
 		coordinate: appendCoordinatePlanFromRow(resolution, coordinateRow),
-		trimmed: trimRows.map(trimmedEntryFromRow),
+		...trimmedRowsResult(trimRows),
 	};
 };
 

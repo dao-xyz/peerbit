@@ -5198,12 +5198,19 @@ export class SharedLog<
 					nativeBackboneDocumentIndexCommitted = true;
 					committedNativeBackboneDocumentIndex = nativeBackboneDocumentIndex;
 				}
+				const useTrimmedHashesOnly =
+					properties?.resolveTrimmedEntries === false;
 				return {
 					...backboneAppend.entry,
 					getBytes: commitBlocksInBackbone
 						? (hash: string) => backbone.blocks.get(hash)
 						: undefined,
-					trimmedEntries: backboneAppend.trimmed,
+					trimmedEntries: useTrimmedHashesOnly
+						? undefined
+						: backboneAppend.trimmed,
+					trimmedEntryHashes: useTrimmedHashesOnly
+						? backboneAppend.trimmedHashes
+						: undefined,
 				};
 			};
 			const hasKnownNoNext =

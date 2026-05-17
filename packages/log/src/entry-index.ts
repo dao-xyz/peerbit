@@ -1674,6 +1674,34 @@ export class EntryIndex<T> {
 			nodes.push(node);
 		}
 
+		return this.consumeNativeTrimmedEntryNodesMaybe(nodes, options);
+	}
+
+	consumeNativeTrimmedEntryHashesMaybe(
+		hashes: string[],
+		options?: { skipNextHeadUpdates?: boolean; deleteBlocks?: boolean },
+	): MaybePromise<ShallowEntry[]> {
+		if (hashes.length === 0) {
+			return [];
+		}
+
+		const nodes: ShallowEntry[] = [];
+		const seen = new Set<string>();
+		for (const hash of hashes) {
+			if (seen.has(hash)) {
+				continue;
+			}
+			seen.add(hash);
+			nodes.push(this.nativeTrimmedHashToShallowEntry(hash));
+		}
+
+		return this.consumeNativeTrimmedEntryNodesMaybe(nodes, options);
+	}
+
+	private consumeNativeTrimmedEntryNodesMaybe(
+		nodes: ShallowEntry[],
+		options?: { skipNextHeadUpdates?: boolean; deleteBlocks?: boolean },
+	): MaybePromise<ShallowEntry[]> {
 		const indexedByHash = new Map(nodes.map((node) => [node.hash, node]));
 		const deletedByHash = new Map<string, ShallowEntry>();
 		const indexedHashes: string[] = [];
@@ -1925,6 +1953,26 @@ export class EntryIndex<T> {
 					timestamp: new Timestamp({
 						wallTime: BigInt(entry.clock.timestamp.wallTime),
 						logical: entry.clock.timestamp.logical ?? 0,
+					}),
+				}),
+			}),
+		});
+	}
+
+	private nativeTrimmedHashToShallowEntry(hash: string): ShallowEntry {
+		return new ShallowEntry({
+			hash,
+			head: false,
+			payloadSize: 0,
+			meta: new ShallowMeta({
+				gid: "",
+				next: [],
+				type: EntryType.APPEND,
+				clock: new Clock({
+					id: this.properties.publicKey.bytes,
+					timestamp: new Timestamp({
+						wallTime: 0n,
+						logical: 0,
 					}),
 				}),
 			}),
