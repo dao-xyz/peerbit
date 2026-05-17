@@ -1202,7 +1202,7 @@ describe("index", () => {
 				);
 				const backboneCoordinatePersistSpy = sinon.spy(
 					sharedLog,
-					"persistPreparedBackboneCoordinateNativeTransaction",
+					"persistBackboneCoordinateFieldsNativeTransaction",
 				);
 				const genericCoordinatePersistSpy = sinon.spy(
 					sharedLog,

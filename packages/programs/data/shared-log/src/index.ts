@@ -5238,16 +5238,21 @@ export class SharedLog<
 				if (!prepared || !backboneAppend) {
 					return undefined;
 				}
-				const preparedCoordinate =
-					this.createCoordinatePersistenceEntryFromNativePlanFacts({
+				const coordinateFields = this.createCoordinateFieldsFromNativePlanFacts({
 						appendFacts: prepared.appendFacts,
 						plan: backboneAppend.coordinate,
 					});
-				if (!preparedCoordinate) {
+				if (!coordinateFields) {
 					throw new Error(
 						"Native backbone append transaction returned mismatched coordinate facts",
 					);
 				}
+				let preparedCoordinate: PreparedCoordinatePersistence<R> | undefined;
+				const getPreparedCoordinate = (): PreparedCoordinatePersistence<R> =>
+					(preparedCoordinate ??= {
+						assignedToRangeBoundary: coordinateFields.assignedToRangeBoundary,
+						fields: coordinateFields,
+					});
 				const plannedCoordinateDeleteHashes = combineCoordinateDeleteHashes(
 					prepared.appendFacts.next,
 					prepared.removed.map((entry) => entry.hash),
@@ -5267,15 +5272,9 @@ export class SharedLog<
 					const appendCommit = this.createPreparedLocalAppendCommitFromFacts(
 						prepared.appendFacts,
 						{
-							coordinates: backboneAppend!.coordinate
-								.coordinates as NumberFromType<R>[],
-							leaders: backboneAppend!.leaders,
-							isLeader: backboneAppend!.isLeader,
-							assignedToRangeBoundary: backboneAppend!.assignedToRangeBoundary,
 							hashNumber: backboneAppend!.coordinate
 								.hashNumber as NumberFromType<R>,
-							preparedCoordinate,
-							committedNativeBackboneCoordinateState: true,
+							coordinateFields,
 						},
 					);
 					if (nativeBackboneDocumentIndexCommitted) {
@@ -5308,9 +5307,9 @@ export class SharedLog<
 						coordinateIndex.putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn ||
 						coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn;
 					const persisted = hasNativeCoordinatePut
-						? this.persistPreparedBackboneCoordinateNativeTransaction({
+						? this.persistBackboneCoordinateFieldsNativeTransaction({
 								coordinateIndex,
-								prepared: preparedCoordinate,
+								fields: coordinateFields,
 								hash: prepared.appendFacts.hash,
 								deleteHashes: plannedCoordinateDeleteHashes,
 								coordinates: backboneAppend.coordinate
@@ -5318,7 +5317,7 @@ export class SharedLog<
 								skipGenericTransientCoordinateIndex: runtimeOnlyCoordinates,
 							})
 						: this.persistPreparedCoordinate({
-								prepared: preparedCoordinate,
+								prepared: getPreparedCoordinate(),
 								hash: prepared.appendFacts.hash,
 								nextHashes: prepared.appendFacts.next,
 								deleteHashes: deferredCoordinateDeleteHashes,
@@ -5343,7 +5342,9 @@ export class SharedLog<
 							const leaders = backboneAppend!.leaders;
 							if (leaders) {
 								const pruneEntry =
-									this.materializePreparedCoordinateEntry(preparedCoordinate);
+									this.materializePreparedCoordinateEntry(
+										getPreparedCoordinate(),
+									);
 								this.pruneDebouncedFnAddIfNotKeeping({
 									key: pruneEntry.hash,
 									value: { entry: pruneEntry, leaders },
@@ -6050,11 +6051,11 @@ export class SharedLog<
 		);
 	}
 
-	private createCoordinatePersistenceEntryFromNativePlanFacts(properties: {
+	private createCoordinateFieldsFromNativePlanFacts(properties: {
 		appendFacts: PreparedAppendFacts;
 		plan: NativeAppendCoordinatePlan;
 		prev?: EntryReplicated<R>;
-	}): PreparedCoordinatePersistence<R> | false {
+	}): SharedLogCoordinateNativeFields<R> | false {
 		if (
 			properties.plan.hash !== properties.appendFacts.hash ||
 			properties.plan.gid !== properties.appendFacts.gid
@@ -6078,19 +6079,31 @@ export class SharedLog<
 			return false;
 		}
 		return {
+			hash: properties.plan.hash,
+			hashNumber,
+			hashNumberString: properties.plan.hashNumberString,
+			gid: properties.plan.gid,
+			coordinates,
+			coordinateStrings: properties.plan.coordinateStrings,
+			wallTime,
+			wallTimeString: wallTime.toString(),
 			assignedToRangeBoundary,
-			fields: {
-				hash: properties.plan.hash,
-				hashNumber,
-				hashNumberString: properties.plan.hashNumberString,
-				gid: properties.plan.gid,
-				coordinates,
-				coordinateStrings: properties.plan.coordinateStrings,
-				wallTime,
-				wallTimeString: wallTime.toString(),
-				assignedToRangeBoundary,
-				metaBytes,
-			},
+			metaBytes,
+		};
+	}
+
+	private createCoordinatePersistenceEntryFromNativePlanFacts(properties: {
+		appendFacts: PreparedAppendFacts;
+		plan: NativeAppendCoordinatePlan;
+		prev?: EntryReplicated<R>;
+	}): PreparedCoordinatePersistence<R> | false {
+		const fields = this.createCoordinateFieldsFromNativePlanFacts(properties);
+		if (!fields) {
+			return false;
+		}
+		return {
+			assignedToRangeBoundary: fields.assignedToRangeBoundary,
+			fields,
 		};
 	}
 
@@ -6633,7 +6646,11 @@ export class SharedLog<
 
 	private createPreparedLocalAppendCommitFromFacts(
 		appendFacts: PreparedAppendFacts,
-		nativeAppendPlan?: NativeAppendEntryPlan<R>,
+		nativeAppendPlan?: {
+			hashNumber?: NumberFromType<R>;
+			preparedCoordinate?: PreparedCoordinatePersistence<R>;
+			coordinateFields?: SharedLogCoordinateNativeFields<R>;
+		},
 	): PreparedLocalAppendCommit<R> {
 		return {
 			hash: appendFacts.hash,
@@ -6644,7 +6661,9 @@ export class SharedLog<
 			payloadSize: appendFacts.payloadSize,
 			metaBytes: appendFacts.metaBytes,
 			hashNumber: nativeAppendPlan?.hashNumber,
-			coordinateFields: nativeAppendPlan?.preparedCoordinate.fields,
+			coordinateFields:
+				nativeAppendPlan?.coordinateFields ??
+				nativeAppendPlan?.preparedCoordinate?.fields,
 		};
 	}
 
@@ -10313,6 +10332,70 @@ export class SharedLog<
 					properties.hash,
 					properties.prepared.coordinateEntry ?? fields,
 				);
+				for (const deletedHash of properties.deleteHashes) {
+					this._residentEntryCoordinatesByHash.delete(deletedHash);
+				}
+			}
+			for (const coordinate of properties.coordinates) {
+				this.coordinateToHash.add(coordinate, properties.hash);
+			}
+			if (this._nativeBackboneCoordinatePersistence) {
+				const flushed = this.flushNativeBackboneCoordinateJournalOnAppend();
+				if (isPromiseLike(flushed)) {
+					return mapMaybePromise(flushed, () => true);
+				}
+			}
+			return true;
+		};
+		if (
+			(properties.skipGenericTransientCoordinateIndex &&
+				this.canUseRuntimeOnlyNativeBackboneCoordinates(
+					properties.coordinateIndex,
+				)) ||
+			useBackboneOnlyCoordinatePersistence
+		) {
+			return finish();
+		}
+
+		const putNative =
+			properties.coordinateIndex
+				.putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn ??
+			properties.coordinateIndex
+				.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn;
+		if (!putNative) {
+			return false;
+		}
+		const putResult = putNative.call(
+			properties.coordinateIndex,
+			fields,
+			properties.deleteHashes,
+		);
+		return mapMaybePromise(putResult, finish);
+	}
+
+	private persistBackboneCoordinateFieldsNativeTransaction(properties: {
+		coordinateIndex: PutAndDeleteIndex<EntryReplicated<R>>;
+		fields: SharedLogCoordinateNativeFields<R>;
+		hash: string;
+		coordinates: NumberFromType<R>[];
+		deleteHashes: string[];
+		skipGenericTransientCoordinateIndex?: boolean;
+	}): MaybePromise<boolean> {
+		const { fields } = properties;
+		const useBackboneOnlyCoordinatePersistence =
+			this.canUseBackboneOnlyCoordinatePersistence();
+		const finish = (): MaybePromise<boolean> => {
+			this._nativeSharedLogState?.commitEntryCoordinates(
+				properties.hash,
+				fields.gid,
+				properties.coordinates,
+				properties.deleteHashes,
+				fields.assignedToRangeBoundary,
+				properties.coordinates.length,
+				fields.hashNumber,
+			);
+			if (this._residentEntryCoordinatesByHash) {
+				this._residentEntryCoordinatesByHash.set(properties.hash, fields);
 				for (const deletedHash of properties.deleteHashes) {
 					this._residentEntryCoordinatesByHash.delete(deletedHash);
 				}
