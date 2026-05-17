@@ -11,7 +11,10 @@ use peerbit_indexer_core::schema::{
     decode_native_schema_ir, extract_encoded_document_fields_from_parts, NativeSchemaIr,
 };
 use peerbit_indexer_core::storage::{ByteStorage, MemoryByteStorage};
-use peerbit_log_rust::{NativeEntryV0PlainBuilder, NativeLogBlockStore, NativeLogIndex};
+use peerbit_log_rust::{
+    LogIndexEntry, NativeCommittedEntryFacts, NativeEntryV0PlainBuilder, NativeLogBlockStore,
+    NativeLogIndex,
+};
 use peerbit_shared_log_rust::NativeSharedLogState;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -2072,79 +2075,74 @@ impl NativePeerbitBackbone {
         document_index_commit: Option<DocumentIndexAppendCommit>,
     ) -> Result<Array, JsValue> {
         let payload_size = payload_data.length();
-        let (entry_row, trim_rows) = if let Some(trim_length_to) = trim_length_to {
-            let row = if commit_blocks {
-                self.log
-                    .prepare_entry_v0_plain_entry_commit_facts_trim_and_put_with_builder(
-                        &self.builder,
-                        &mut self.blocks,
-                        wall_time,
-                        logical,
-                        gid.clone(),
-                        next_hashes.clone(),
-                        entry_type,
-                        meta_data,
-                        payload_data,
-                        trim_length_to,
-                    )?
-            } else {
-                self.log
-                    .prepare_entry_v0_plain_entry_storage_facts_trim_and_put_with_builder(
-                        &self.builder,
-                        wall_time,
-                        logical,
-                        gid.clone(),
-                        next_hashes.clone(),
-                        entry_type,
-                        meta_data,
-                        payload_data,
-                        trim_length_to,
-                    )?
-            };
+        let (entry_row, trim_rows, hash, digest, meta_bytes) = if commit_blocks {
+            let (entry_facts, trimmed_entries) = self
+                .log
+                .prepare_entry_v0_plain_entry_commit_facts_core_and_put_with_builder(
+                    &self.builder,
+                    &mut self.blocks,
+                    wall_time,
+                    logical,
+                    gid.clone(),
+                    strings_from_array(next_hashes.clone())?,
+                    entry_type,
+                    optional_bytes_from_js(meta_data),
+                    payload_data.to_vec(),
+                    trim_length_to,
+                )?;
+            let entry_row = committed_entry_facts_to_row(&entry_facts);
+            let trim_rows = native_backbone_trim_entries_to_rows(trimmed_entries);
+            (
+                entry_row,
+                trim_rows,
+                entry_facts.hash,
+                entry_facts.hash_digest_bytes,
+                entry_facts.meta_bytes,
+            )
+        } else if let Some(trim_length_to) = trim_length_to {
+            let row = self
+                .log
+                .prepare_entry_v0_plain_entry_storage_facts_trim_and_put_with_builder(
+                    &self.builder,
+                    wall_time,
+                    logical,
+                    gid.clone(),
+                    next_hashes.clone(),
+                    entry_type,
+                    meta_data,
+                    payload_data,
+                    trim_length_to,
+                )?;
             let row = array_from_value(row.into(), "native storage trim append row")?;
             let entry_row = array_from_value(row.get(0), "native storage trim append entry row")?;
             let trim_rows = array_from_value(row.get(1), "native storage trim append trim rows")?;
-            (entry_row, trim_rows)
+            let hash = string_field(&entry_row, 1, "storage entry hash")?;
+            let digest = bytes_field(&entry_row, 5, "storage entry hash digest")?;
+            let meta_bytes = bytes_field(&entry_row, 4, "storage entry meta bytes")?;
+            (entry_row, trim_rows, hash, digest, meta_bytes)
         } else {
-            let row = if commit_blocks {
-                self.log
-                    .prepare_entry_v0_plain_entry_commit_facts_and_put_with_builder(
-                        &self.builder,
-                        &mut self.blocks,
-                        wall_time,
-                        logical,
-                        gid.clone(),
-                        next_hashes.clone(),
-                        entry_type,
-                        meta_data,
-                        payload_data,
-                    )?
-            } else {
-                self.log
-                    .prepare_entry_v0_plain_entry_storage_facts_and_put_with_builder(
-                        &self.builder,
-                        wall_time,
-                        logical,
-                        gid.clone(),
-                        next_hashes.clone(),
-                        entry_type,
-                        meta_data,
-                        payload_data,
-                    )?
-            };
-            (row, Array::new())
+            let row = self
+                .log
+                .prepare_entry_v0_plain_entry_storage_facts_and_put_with_builder(
+                    &self.builder,
+                    wall_time,
+                    logical,
+                    gid.clone(),
+                    next_hashes.clone(),
+                    entry_type,
+                    meta_data,
+                    payload_data,
+                )?;
+            let hash = string_field(&row, 1, "storage entry hash")?;
+            let digest = bytes_field(&row, 5, "storage entry hash digest")?;
+            let meta_bytes = bytes_field(&row, 4, "storage entry meta bytes")?;
+            (row, Array::new(), hash, digest, meta_bytes)
         };
 
-        let hash_index = if commit_blocks { 0 } else { 1 };
-        let digest_index = if commit_blocks { 4 } else { 5 };
-        let meta_index = if commit_blocks { 2 } else { 4 };
-        let hash = string_field(&entry_row, hash_index, "storage entry hash")?;
-        let digest = bytes_field(&entry_row, digest_index, "storage entry hash digest")?;
         let hash_number = hash_number_string(&self.resolution, &digest)?;
         let delete_hashes = trim_hashes(&trim_rows)?;
         let delete_hashes_for_core = delete_hashes.clone();
         let next_hashes_for_core = next_hashes.clone();
-        let meta_bytes = bytes_field(&entry_row, meta_index, "storage entry meta bytes")?;
         let document_hash = hash.clone();
         let document_gid = gid.clone();
         let coordinate_row = self.shared_log.commit_local_append_for_gid_compact(
@@ -2221,6 +2219,36 @@ fn array_from_value(value: JsValue, label: &str) -> Result<Array, JsValue> {
         .map_err(|_| JsValue::from_str(&format!("Expected {label} array")))
 }
 
+fn committed_entry_facts_to_row(entry: &NativeCommittedEntryFacts) -> Array {
+    let row = Array::new();
+    row.push(&JsValue::from_str(&entry.hash));
+    row.push(&strings_to_array(entry.next.clone()));
+    row.push(&Uint8Array::from(entry.meta_bytes.as_slice()));
+    row.push(&JsValue::from_f64(entry.byte_length as f64));
+    row.push(&Uint8Array::from(entry.hash_digest_bytes.as_slice()));
+    row
+}
+
+fn native_backbone_trim_entries_to_rows(values: Vec<LogIndexEntry>) -> Array {
+    let out = Array::new();
+    for entry in values {
+        let row = Array::new();
+        row.push(&JsValue::from_str(&entry.hash));
+        row.push(&JsValue::from_str(&entry.gid));
+        row.push(&strings_to_array(entry.next));
+        row.push(&JsValue::from_f64(entry.entry_type as f64));
+        row.push(&JsValue::from_str(&entry.wall_time.to_string()));
+        row.push(&JsValue::from_f64(entry.logical as f64));
+        row.push(&JsValue::from_f64(entry.payload_size as f64));
+        match entry.data {
+            Some(data) => row.push(&Uint8Array::from(data.as_slice())),
+            None => row.push(&JsValue::UNDEFINED),
+        };
+        out.push(&row);
+    }
+    out
+}
+
 fn string_field(row: &Array, index: u32, label: &str) -> Result<String, JsValue> {
     row.get(index)
         .as_string()
@@ -2268,6 +2296,14 @@ fn trim_hashes(trim_rows: &Array) -> Result<Array, JsValue> {
     Ok(hashes)
 }
 
+fn strings_to_array(values: Vec<String>) -> Array {
+    let out = Array::new();
+    for value in values {
+        out.push(&JsValue::from_str(&value));
+    }
+    out
+}
+
 fn strings_from_array(values: Array) -> Result<Vec<String>, JsValue> {
     let mut out = Vec::with_capacity(values.length() as usize);
     for index in 0..values.length() {
@@ -2279,6 +2315,13 @@ fn strings_from_array(values: Array) -> Result<Vec<String>, JsValue> {
         );
     }
     Ok(out)
+}
+
+fn optional_bytes_from_js(value: JsValue) -> Option<Vec<u8>> {
+    if value.is_undefined() || value.is_null() {
+        return None;
+    }
+    Some(Uint8Array::new(&value).to_vec())
 }
 
 fn coordinate_numbers_from_array(values: Array) -> Result<Vec<u64>, JsValue> {

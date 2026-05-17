@@ -656,6 +656,12 @@ describe("native peerbit backbone", () => {
 		expect(second.trimmed.map((entry) => entry.hash)).to.deep.equal([
 			first.entry.hash,
 		]);
+		expect(second.trimmed[0]?.gid).equal("gid-storage-committed");
+		expect(second.trimmed[0]?.next).to.deep.equal([]);
+		expect(second.trimmed[0]?.type).equal(0);
+		expect(second.trimmed[0]?.payloadSize).equal(1);
+		expect(second.trimmed[0]?.clock.timestamp.wallTime).equal(1n);
+		expect(second.trimmed[0]?.clock.timestamp.logical).equal(0);
 		expect(backbone.hasLogEntry(second.entry.hash)).equal(true);
 		expect(backbone.hasBlock(second.entry.hash)).equal(true);
 		expect(backbone.getEntryCoordinateHashes()).to.deep.equal([
@@ -696,6 +702,12 @@ describe("native peerbit backbone", () => {
 		expect(second.trimmed.map((entry) => entry.hash)).to.deep.equal([
 			first.entry.hash,
 		]);
+		expect(second.trimmed[0]?.gid).equal("gid-storage-committed-no-next");
+		expect(second.trimmed[0]?.next).to.deep.equal([]);
+		expect(second.trimmed[0]?.type).equal(0);
+		expect(second.trimmed[0]?.payloadSize).equal(1);
+		expect(second.trimmed[0]?.clock.timestamp.wallTime).equal(1n);
+		expect(second.trimmed[0]?.clock.timestamp.logical).equal(0);
 		expect(backbone.hasLogEntry(first.entry.hash)).equal(false);
 		expect(backbone.hasBlock(first.entry.hash)).equal(false);
 		expect(backbone.hasLogEntry(second.entry.hash)).equal(true);
