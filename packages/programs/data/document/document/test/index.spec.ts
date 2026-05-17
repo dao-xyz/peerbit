@@ -1610,12 +1610,6 @@ describe("index", () => {
 					createRustPeerbitOptions(),
 				);
 				const coordinateStore = new MemoryCoordinatePersistenceStore();
-				const bufferedCoordinateStore =
-					new NativeBackboneBufferedCoordinatePersistenceStore(coordinateStore);
-				const coordinatePersistence = new NativeBackboneCoordinatePersistence(
-					bufferedCoordinateStore,
-					{ flushOnAppend: false },
-				);
 				store = new TestStore({
 					docs: new Documents<Document>(),
 				});
@@ -1626,7 +1620,11 @@ describe("index", () => {
 							nativeGraph: true,
 							nativeBackbone: {
 								optional: false,
-								coordinatePersistence,
+								coordinatePersistence: {
+									store: coordinateStore,
+									buffered: true,
+									flushOnAppend: false,
+								},
 							},
 						},
 					});
@@ -1634,6 +1632,8 @@ describe("index", () => {
 						id: uuid(),
 						name: "buffered-backbone-coordinate-wal",
 					});
+					const coordinatePersistence = (store.docs.log as any)
+						._nativeBackboneCoordinatePersistence;
 					const flushSpy = sinon.spy(coordinatePersistence, "flushJournal");
 					await store.docs.put(doc, {
 						unique: true,

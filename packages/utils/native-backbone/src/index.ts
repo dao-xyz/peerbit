@@ -843,6 +843,13 @@ export type NativeBackboneCoordinatePersistenceAdapter = {
 	close?(): Promise<void>;
 };
 
+export type NativeBackboneCoordinatePersistenceConfig =
+	| NativeBackboneCoordinatePersistenceAdapter
+	| (NativeBackboneCoordinatePersistenceOptions & {
+			store: NativeBackboneCoordinatePersistenceStore;
+			buffered?: boolean | { maxBufferedBytes?: number };
+	  });
+
 export type NativeBackboneNodeCoordinatePersistenceOptions =
 	NativeBackboneCoordinatePersistenceOptions & {
 		fs?: NativeBackboneNodeFs;
@@ -3082,5 +3089,29 @@ export class NativeBackboneCoordinatePersistence {
 		await this.store.close?.();
 	}
 }
+
+const isNativeBackboneCoordinatePersistenceAdapter = (
+	value: NativeBackboneCoordinatePersistenceConfig,
+): value is NativeBackboneCoordinatePersistenceAdapter =>
+	typeof (value as NativeBackboneCoordinatePersistenceAdapter).hydrate ===
+		"function" &&
+	typeof (value as NativeBackboneCoordinatePersistenceAdapter).flushJournal ===
+		"function";
+
+export const createNativeBackboneCoordinatePersistence = (
+	config: NativeBackboneCoordinatePersistenceConfig,
+): NativeBackboneCoordinatePersistenceAdapter => {
+	if (isNativeBackboneCoordinatePersistenceAdapter(config)) {
+		return config;
+	}
+	const { store, buffered, ...options } = config;
+	const resolvedStore =
+		buffered === true
+			? new NativeBackboneBufferedCoordinatePersistenceStore(store)
+			: buffered
+				? new NativeBackboneBufferedCoordinatePersistenceStore(store, buffered)
+				: store;
+	return new NativeBackboneCoordinatePersistence(resolvedStore, options);
+};
 
 export const createNativePeerbitBackbone = NativePeerbitBackbone.create;

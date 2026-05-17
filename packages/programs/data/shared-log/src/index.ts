@@ -49,6 +49,7 @@ import { logger as loggerFn } from "@peerbit/logger";
 import type {
 	NativeBackboneCoordinateFields,
 	NativeBackboneCoordinatePersistenceAdapter,
+	NativeBackboneCoordinatePersistenceConfig,
 	NativePeerbitBackbone,
 } from "@peerbit/native-backbone";
 import { ClosedError, Program, type ProgramEvents } from "@peerbit/program";
@@ -717,7 +718,7 @@ export type SharedLogOptions<
 				optional?: boolean;
 				heads?: boolean;
 				documentIndex?: boolean;
-				coordinatePersistence?: NativeBackboneCoordinatePersistenceAdapter;
+				coordinatePersistence?: NativeBackboneCoordinatePersistenceConfig;
 		  };
 	nativeRangePlanner?: false | { optional?: boolean };
 	replicate?: ReplicationOptions<R>;
@@ -7427,16 +7428,21 @@ export class SharedLog<
 			return undefined;
 		}
 		try {
-			const { createNativePeerbitBackbone } = await import(
-				"@peerbit/native-backbone"
-			);
+			const {
+				createNativeBackboneCoordinatePersistence,
+				createNativePeerbitBackbone,
+			} = await import("@peerbit/native-backbone");
 			const backbone = await createNativePeerbitBackbone({
 				resolution: this.domain.resolution,
 				clockId: this.node.identity.publicKey.bytes,
 				privateKey: this.node.identity.privateKey.privateKey,
 				publicKey: this.node.identity.publicKey.publicKey,
 			});
-			this._nativeBackboneCoordinatePersistence = options.coordinatePersistence;
+			this._nativeBackboneCoordinatePersistence = options.coordinatePersistence
+				? createNativeBackboneCoordinatePersistence(
+						options.coordinatePersistence,
+					)
+				: undefined;
 			return backbone;
 		} catch (error) {
 			if (options.optional === false) {

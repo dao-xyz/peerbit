@@ -7,6 +7,7 @@ import {
 	NativeBackboneNodeCoordinatePersistenceStore,
 	NativeBackboneOPFSCoordinatePersistenceStore,
 	type NativeBackboneOPFSDirectoryHandle,
+	createNativeBackboneCoordinatePersistence,
 	createNativePeerbitBackbone,
 	defaultNativeBackboneCoordinateFlushMaxPendingBytes,
 } from "../src/index.js";
@@ -262,6 +263,38 @@ describe("native peerbit backbone", () => {
 
 		expect(persistence.flushMaxPendingBytes).equal(
 			defaultNativeBackboneCoordinateFlushMaxPendingBytes,
+		);
+	});
+
+	it("creates buffered coordinate persistence from a store config", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const store = new NativeBackboneMemoryCoordinatePersistenceStore();
+		const persistence = createNativeBackboneCoordinatePersistence({
+			store,
+			buffered: true,
+			flushOnAppend: false,
+		});
+
+		await persistence.hydrate(backbone);
+		backbone.putEntryCoordinates(
+			"hash-config",
+			"gid-config",
+			[1n],
+			false,
+			1,
+			1n,
+		);
+		expect(await persistence.flushJournalOnAppend?.(backbone)).equal(0);
+		expect(store.files.has("coordinates.wal")).equal(false);
+		expect(await persistence.flushJournal(backbone)).to.be.greaterThan(0);
+		expect(store.files.has("coordinates.wal")).equal(false);
+		await persistence.close?.();
+		expect(store.files.get("coordinates.wal")?.byteLength).to.be.greaterThan(
+			backbone.coordinateJournalHeader().byteLength,
 		);
 	});
 
