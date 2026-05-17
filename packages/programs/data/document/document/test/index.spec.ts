@@ -1613,6 +1613,11 @@ describe("index", () => {
 				store = new TestStore({
 					docs: new Documents<Document>(),
 				});
+				let flushSpy: sinon.SinonSpy | undefined;
+				let coordinateIndexPutSpy: sinon.SinonSpy | undefined;
+				let backendStoredContextPutSpy: sinon.SinonSpy | undefined;
+				let documentStoredIdentityPutSpy: sinon.SinonSpy | undefined;
+				let backboneStorageTransactionSpy: sinon.SinonSpy | undefined;
 				try {
 					await rustSession.peers[0].open(store, {
 						args: {
@@ -1620,6 +1625,7 @@ describe("index", () => {
 							nativeGraph: true,
 							nativeBackbone: {
 								optional: false,
+								documentIndex: true,
 								coordinatePersistence: {
 									store: coordinateStore,
 									buffered: true,
@@ -1634,15 +1640,42 @@ describe("index", () => {
 					});
 					const coordinatePersistence = (store.docs.log as any)
 						._nativeBackboneCoordinatePersistence;
-					const flushSpy = sinon.spy(coordinatePersistence, "flushJournal");
+					flushSpy = sinon.spy(coordinatePersistence, "flushJournal");
+					const sharedLog = store.docs.log as any;
+					const backbone = sharedLog._nativeBackbone;
+					const coordinateIndex = sharedLog.entryCoordinatesIndex as any;
+					coordinateIndexPutSpy = sinon.spy(
+						coordinateIndex,
+						"putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn",
+					);
+					const backendIndex = store.docs.index.index as any;
+					backendStoredContextPutSpy = sinon.spy(
+						backendIndex,
+						"putStoredContextualEncodedValue",
+					);
+					documentStoredIdentityPutSpy = sinon.spy(
+						store.docs.index,
+						"_putStoredIdentityWithContext",
+					);
+					backboneStorageTransactionSpy = sinon.spy(
+						backbone,
+						"preparePlainCommittedNoNextStorageAppendTransaction",
+					);
 					await store.docs.put(doc, {
 						unique: true,
 						replicate: false,
 						target: "none",
 					});
-					const backbone = (store.docs.log as any)._nativeBackbone;
 					const coordinateHashes = backbone.getEntryCoordinateHashes();
 
+					expect(backboneStorageTransactionSpy.callCount).equal(1);
+					expect(
+						backboneStorageTransactionSpy.firstCall.args[0].documentIndex,
+					).to.exist;
+					expect(coordinateIndexPutSpy.callCount).equal(0);
+					expect(documentStoredIdentityPutSpy.callCount).equal(0);
+					expect(backendStoredContextPutSpy.callCount).equal(0);
+					expect(backbone.documentValueLength).equal(1);
 					expect(flushSpy.callCount).equal(0);
 					expect(backbone.coordinatePendingJournalLength).to.be.greaterThan(0);
 					expect(coordinateStore.files.has("coordinates.wal")).equal(false);
@@ -1667,6 +1700,11 @@ describe("index", () => {
 						coordinateHashes,
 					);
 				} finally {
+					documentStoredIdentityPutSpy?.restore();
+					backendStoredContextPutSpy?.restore();
+					coordinateIndexPutSpy?.restore();
+					backboneStorageTransactionSpy?.restore();
+					flushSpy?.restore();
 					if (store) {
 						await store.close();
 						store = undefined;
