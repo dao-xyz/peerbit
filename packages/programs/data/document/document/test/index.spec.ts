@@ -1147,7 +1147,6 @@ describe("index", () => {
 						}),
 						{
 							unique: true,
-							replicate: false,
 							target: "none",
 						},
 					);
@@ -1167,6 +1166,53 @@ describe("index", () => {
 				} finally {
 					knownNoNextCommitSpy?.restore();
 					notifyStoredStub?.restore();
+					if (store) {
+						await store.close();
+						store = undefined;
+					}
+					await rustSession.stop();
+				}
+			});
+
+			it("skips block provider notification for local-only native committed puts", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				let notifyStoredSpy: sinon.SinonSpy | undefined;
+				try {
+					await rustSession.peers[0].open(store, {
+						args: {
+							replicate: { factor: 1 },
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+						},
+					});
+					const sharedLog = store.docs.log as any;
+					notifyStoredSpy = sinon.spy(sharedLog.remoteBlocks, "notifyStored");
+
+					const id = uuid();
+					await store.docs.put(
+						new Document({
+							id,
+							name: "backbone-local-only-no-provider-announce",
+						}),
+						{
+							unique: true,
+							replicate: false,
+							target: "none",
+						},
+					);
+
+					expect(notifyStoredSpy.callCount).equal(0);
+					expect((await store.docs.get(id))?.name).equal(
+						"backbone-local-only-no-provider-announce",
+					);
+				} finally {
+					notifyStoredSpy?.restore();
 					if (store) {
 						await store.close();
 						store = undefined;

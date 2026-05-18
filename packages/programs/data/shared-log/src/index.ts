@@ -5338,6 +5338,7 @@ export class SharedLog<
 					const completed = mapMaybePromise(persisted, () => {
 						if (
 							commitBlocksInBackbone &&
+							!runtimeOnlyCoordinates &&
 							this.remoteBlocks.hasNotifyStoredHook()
 						) {
 							const announced = this.remoteBlocks.notifyStored(
