@@ -1091,6 +1091,70 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn plan_append_for_gids_batch(
+        &mut self,
+        entry_hashes: Array,
+        gids: Array,
+        entry_hash_numbers: Array,
+        next_hash_batches: Array,
+        replica_counts: Array,
+        full_replica_candidates: Array,
+        fallback_recipients: Array,
+        delivery_self_hash: String,
+        delivery_enabled: bool,
+        reliability_ack: bool,
+        min_acks: JsValue,
+        require_recipients: bool,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let next_hash_batches_for_core = next_hash_batches.clone();
+        let rows = self.shared_log.plan_append_for_gids_batch(
+            entry_hashes,
+            gids,
+            entry_hash_numbers,
+            next_hash_batches,
+            replica_counts,
+            full_replica_candidates,
+            fallback_recipients,
+            delivery_self_hash,
+            delivery_enabled,
+            reliability_ack,
+            min_acks,
+            require_recipients,
+            role_age_ms,
+            now,
+            peer_filter,
+            expand_peer_filter,
+            self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )?;
+        for index in 0..rows.length() {
+            let row = array_from_value(rows.get(index), "append batch plan row")?;
+            let next_hashes = array_from_value(
+                next_hash_batches_for_core.get(index),
+                "append batch next hashes",
+            )?;
+            self.commit_coordinate_core_from_compact_row(
+                row.get(5),
+                next_hashes,
+                Array::new(),
+                0,
+                Vec::new(),
+            )?;
+        }
+        Ok(rows)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn append_plain_no_next_transaction(
         &mut self,
         wall_time: u64,

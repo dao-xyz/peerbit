@@ -311,6 +311,46 @@ type NativePeerbitBackboneHandle = {
 		],
 		unknown[],
 	];
+	plan_append_for_gids_batch: (
+		entryHashes: string[],
+		gids: string[],
+		hashNumbers: string[],
+		nextHashBatches: string[][],
+		replicaCounts: number[],
+		fullReplicaCandidates: string[],
+		fallbackRecipients: string[],
+		deliverySelfHash: string,
+		deliveryEnabled: boolean,
+		reliabilityAck: boolean,
+		minAcks: number | undefined,
+		requireRecipients: boolean,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => Array<
+		[
+			unknown[],
+			unknown[],
+			boolean,
+			boolean,
+			[
+				boolean,
+				boolean,
+				boolean,
+				string[],
+				string[],
+				string[],
+				string[],
+				string[],
+			],
+			unknown[],
+		]
+	>;
 	append_plain_no_next_transaction: (
 		wallTime: bigint,
 		logical: number,
@@ -923,6 +963,14 @@ export type NativeBackboneAppendPlan = {
 	assignedToRangeBoundary: boolean;
 	delivery?: NativeBackboneAppendDeliveryPlan;
 	coordinate: NativeBackboneCoordinatePlan;
+};
+
+export type NativeBackboneAppendEntryBatchInput = {
+	entryHash: string;
+	gid: string;
+	hashNumber?: bigint | number | string;
+	nextHashes?: Iterable<string>;
+	replicas: number;
 };
 
 export type NativeBackboneRangeInput = {
@@ -2657,6 +2705,60 @@ export class NativePeerbitBackbone {
 				coordinatePlanRow,
 			),
 		};
+	}
+
+	planAppendForGidsBatch(
+		input: {
+			entries: Iterable<NativeBackboneAppendEntryBatchInput>;
+			fullReplicaCandidates?: Iterable<string>;
+			fallbackRecipients?: Iterable<string>;
+			selfHash: string;
+			deliveryEnabled: boolean;
+			reliabilityAck: boolean;
+			minAcks?: number;
+			requireRecipients: boolean;
+		},
+		options?: NativeBackboneFindLeaderOptions,
+	): NativeBackboneAppendPlan[] {
+		const entries = [...input.entries];
+		const rows = this.native.plan_append_for_gids_batch(
+			entries.map((entry) => entry.entryHash),
+			entries.map((entry) => entry.gid),
+			entries.map((entry) => integerString(entry.hashNumber ?? 0)),
+			entries.map((entry) => iterableToArray(entry.nextHashes)),
+			entries.map((entry) => entry.replicas),
+			iterableToArray(input.fullReplicaCandidates),
+			iterableToArray(input.fallbackRecipients),
+			input.selfHash,
+			input.deliveryEnabled,
+			input.reliabilityAck,
+			input.minAcks,
+			input.requireRecipients,
+			...findLeaderArguments({
+				...options,
+				selfHash: input.selfHash,
+			}),
+		);
+		return rows.map(
+			([
+				coordinateRows,
+				leaderRows,
+				isLeader,
+				assignedToRangeBoundary,
+				delivery,
+				coordinatePlanRow,
+			]) => ({
+				coordinates: rowsToNumbers(this.resolution, coordinateRows),
+				leaders: rowsToSamples(leaderRows),
+				isLeader,
+				assignedToRangeBoundary,
+				delivery: appendDeliveryPlanFromRow(delivery),
+				coordinate: appendCoordinatePlanFromRow(
+					this.resolution,
+					coordinatePlanRow,
+				),
+			}),
+		);
 	}
 
 	appendPlainNoNextTransaction(

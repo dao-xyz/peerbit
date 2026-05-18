@@ -6359,8 +6359,9 @@ export class SharedLog<
 		entries: Entry<T>[],
 		replicas: number,
 	): Promise<NativeAppendEntryPlan<R>[] | undefined> {
+		const nativePlanner = this._nativeBackbone ?? this._nativeSharedLogState;
 		if (
-			!this._nativeSharedLogState ||
+			!nativePlanner ||
 			entries.length === 0 ||
 			!entries.every((entry) => this.canPlanNativeHashGid(entry))
 		) {
@@ -6372,7 +6373,7 @@ export class SharedLog<
 			entry,
 			hashNumber: this.getEntryHashNumber(entry),
 		}));
-		const plans = this._nativeSharedLogState.planAppendForGidsBatch(
+		const plans = nativePlanner.planAppendForGidsBatch(
 			{
 				entries: entriesWithHashNumbers.map(({ entry, hashNumber }) => ({
 					entryHash: entry.hash,
@@ -6411,6 +6412,10 @@ export class SharedLog<
 				assignedToRangeBoundary: plan.assignedToRangeBoundary,
 				hashNumber: hashNumberFromPlan,
 				preparedCoordinate,
+				committedNativeCoordinateState:
+					nativePlanner === this._nativeSharedLogState,
+				committedNativeBackboneCoordinateState:
+					nativePlanner === this._nativeBackbone,
 			});
 		}
 		return out;
@@ -6423,10 +6428,11 @@ export class SharedLog<
 		options: SharedAppendOptions<T> | undefined,
 	): Promise<NativeAppendEntryPlan<R>[] | undefined> {
 		const target = options?.target;
+		const nativePlanner = this._nativeBackbone ?? this._nativeSharedLogState;
 		if (
 			target === "all" ||
 			target === "none" ||
-			!this._nativeSharedLogState ||
+			!nativePlanner ||
 			entries.length === 0 ||
 			!entries.every((entry) => this.canPlanNativeHashGid(entry))
 		) {
@@ -6444,7 +6450,7 @@ export class SharedLog<
 			entry,
 			hashNumber: this.getEntryHashNumber(entry),
 		}));
-		const plans = this._nativeSharedLogState.planAppendForGidsBatch(
+		const plans = nativePlanner.planAppendForGidsBatch(
 			{
 				entries: entriesWithHashNumbers.map(({ entry, hashNumber }) => ({
 					entryHash: entry.hash,
@@ -6485,6 +6491,10 @@ export class SharedLog<
 				hashNumber: hashNumberFromPlan,
 				preparedCoordinate,
 				delivery: plan.delivery,
+				committedNativeCoordinateState:
+					nativePlanner === this._nativeSharedLogState,
+				committedNativeBackboneCoordinateState:
+					nativePlanner === this._nativeBackbone,
 			});
 		}
 		return out;

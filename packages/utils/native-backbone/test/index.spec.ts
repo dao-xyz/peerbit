@@ -597,6 +597,40 @@ describe("native peerbit backbone", () => {
 		expect(backbone.coordinateIndexLength).to.equal(1);
 		expect(backbone.hasCoordinateIndexHash("hash-b")).equal(false);
 		expect(backbone.hasCoordinateIndexHash("hash-c")).equal(true);
+
+		const batchPlans = backbone.planAppendForGidsBatch({
+			entries: [
+				{
+					entryHash: "hash-d",
+					gid: "gid-d",
+					hashNumber: 4n,
+					replicas: 1,
+				},
+				{
+					entryHash: "hash-e",
+					gid: "gid-e",
+					hashNumber: 5n,
+					nextHashes: ["hash-c"],
+					replicas: 1,
+				},
+			],
+			selfHash: "peer-a",
+			deliveryEnabled: false,
+			reliabilityAck: false,
+			requireRecipients: false,
+		});
+		expect(batchPlans.map((plan) => plan.coordinate.hash)).to.deep.equal([
+			"hash-d",
+			"hash-e",
+		]);
+		expect(backbone.getEntryCoordinateHashes()).to.deep.equal([
+			"hash-d",
+			"hash-e",
+		]);
+		expect(backbone.coordinateIndexLength).to.equal(2);
+		expect(backbone.hasCoordinateIndexHash("hash-c")).equal(false);
+		expect(backbone.hasCoordinateIndexHash("hash-d")).equal(true);
+		expect(backbone.hasCoordinateIndexHash("hash-e")).equal(true);
 	});
 
 	it("coalesces storage-backed no-next append with shared-log coordinate state", async () => {
