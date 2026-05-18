@@ -9985,10 +9985,18 @@ export class SharedLog<
 		}
 		const backboneMetadata =
 			this._nativeBackbone?.graph.entryMetadataBatch(normalized);
-		if (backboneMetadata?.some((entry) => entry != null)) {
+		if (backboneMetadata?.every((entry) => entry != null)) {
 			return backboneMetadata;
 		}
-		return this.log.entryIndex.getNativeEntryMetadataBatch(normalized);
+		const indexMetadata =
+			this.log.entryIndex.getNativeEntryMetadataBatch(normalized);
+		if (!backboneMetadata) {
+			return indexMetadata;
+		}
+		if (!indexMetadata) {
+			return backboneMetadata;
+		}
+		return backboneMetadata.map((entry, index) => entry ?? indexMetadata[index]);
 	}
 
 	private createCoordinatePersistenceEntry(properties: {
