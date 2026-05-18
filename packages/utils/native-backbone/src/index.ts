@@ -1161,6 +1161,9 @@ const committedEntryFromRow = (
 const committedStorageFactsEntryFromRow = (
 	row: unknown[],
 ): NativeBackboneCommittedEntry => {
+	if (row.length === 4) {
+		return committedEntryFromRow(row);
+	}
 	const [hash, next, metaBytes, byteLength, hashDigestBytes] = row as [
 		string,
 		string[],

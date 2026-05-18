@@ -2267,7 +2267,8 @@ impl NativePeerbitBackbone {
                 .map(|entry| entry.hash.clone())
                 .collect::<Vec<_>>();
             let entry_row_started = profile_enabled.then(js_sys::Date::now);
-            let entry_row = committed_entry_facts_to_row(&entry_facts);
+            let entry_row =
+                committed_entry_facts_to_row(&entry_facts, !entry_facts.next.is_empty());
             if let Some(started) = entry_row_started {
                 self.append_profile.entry_row_ms += js_sys::Date::now() - started;
             }
@@ -2436,10 +2437,12 @@ fn array_from_value(value: JsValue, label: &str) -> Result<Array, JsValue> {
         .map_err(|_| JsValue::from_str(&format!("Expected {label} array")))
 }
 
-fn committed_entry_facts_to_row(entry: &NativeCommittedEntryFacts) -> Array {
+fn committed_entry_facts_to_row(entry: &NativeCommittedEntryFacts, include_next: bool) -> Array {
     let row = Array::new();
     row.push(&JsValue::from_str(&entry.hash));
-    row.push(&strings_to_array(entry.next.clone()));
+    if include_next {
+        row.push(&strings_to_array(entry.next.clone()));
+    }
     row.push(&Uint8Array::from(entry.meta_bytes.as_slice()));
     row.push(&JsValue::from_f64(entry.byte_length as f64));
     row.push(&Uint8Array::from(entry.hash_digest_bytes.as_slice()));
