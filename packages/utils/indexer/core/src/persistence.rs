@@ -239,6 +239,21 @@ pub fn encode_journal_record(payload: &[u8]) -> Vec<u8> {
     out
 }
 
+pub fn encode_journal_put_record(key: &str, value: &[u8]) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(1 + 4 + key.len() + 4 + value.len());
+    payload.push(JournalOperation::Put.as_byte());
+    write_string(&mut payload, key);
+    write_bytes(&mut payload, value);
+    encode_journal_record(&payload)
+}
+
+pub fn encode_journal_delete_record(key: &str) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(1 + 4 + key.len());
+    payload.push(JournalOperation::Delete.as_byte());
+    write_string(&mut payload, key);
+    encode_journal_record(&payload)
+}
+
 pub fn encode_journal(records: impl IntoIterator<Item = JournalRecord>) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(JOURNAL_MAGIC);
