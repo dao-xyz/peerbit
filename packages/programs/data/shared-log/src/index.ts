@@ -8863,9 +8863,9 @@ export class SharedLog<
 			} else if (msg instanceof RequestIPrune) {
 				const hasAndIsLeader: string[] = [];
 				const from = context.from.hashcode();
-				const nativeEntryMetadata = this._nativeRangePlanner
-					? this.log.entryIndex.getNativeEntryMetadataBatch(msg.hashes)
-					: undefined;
+				const nativeEntryMetadata = this.getNativeLogEntryMetadataBatch(
+					msg.hashes,
+				);
 				const presentBlocks = await this.log.blocks.hasMany?.(msg.hashes);
 
 				for (let i = 0; i < msg.hashes.length; i++) {
@@ -9976,6 +9976,19 @@ export class SharedLog<
 			.iterate({ query: { hash: entry.hash } })
 			.all();
 		return result[0].value.coordinates;
+	}
+
+	private getNativeLogEntryMetadataBatch(hashes: Iterable<string>) {
+		const normalized = [...hashes];
+		if (normalized.length === 0) {
+			return [];
+		}
+		const backboneMetadata =
+			this._nativeBackbone?.graph.entryMetadataBatch(normalized);
+		if (backboneMetadata?.some((entry) => entry != null)) {
+			return backboneMetadata;
+		}
+		return this.log.entryIndex.getNativeEntryMetadataBatch(normalized);
 	}
 
 	private createCoordinatePersistenceEntry(properties: {
