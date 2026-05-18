@@ -1749,6 +1749,94 @@ impl NativeSharedLogState {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn find_leaders(
+        &self,
+        cursors: Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let cursors = strings_from_array(cursors)?
+            .into_iter()
+            .map(|value| parse_u64(&value))
+            .collect::<Result<Vec<_>, _>>()?;
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
+
+        Ok(samples_to_rows(self.inner.range_planner.find_leaders(
+            &cursors,
+            replicas,
+            &options,
+            expand_peer_filter,
+            &self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn find_leaders_batch(
+        &self,
+        cursor_batches: Array,
+        replica_counts: Array,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let cursor_batches = cursor_batches_from_array(cursor_batches)?;
+        let replica_counts = usize_from_array(replica_counts)?;
+        ensure_same_len(cursor_batches.len(), replica_counts.len(), "leader batch")?;
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
+        let mut prepared_options_by_replicas = HashMap::new();
+        let mut full_replica_leaders_by_replicas = HashMap::new();
+        let out = Array::new();
+
+        for (cursors, replicas) in cursor_batches.into_iter().zip(replica_counts) {
+            let leaders = find_leaders_with_batch_caches(
+                &self.inner.range_planner,
+                &cursors,
+                replicas,
+                &options,
+                &mut prepared_options_by_replicas,
+                &mut full_replica_leaders_by_replicas,
+                expand_peer_filter,
+                &self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            );
+            out.push(&samples_to_rows(leaders));
+        }
+
+        Ok(out)
+    }
+
+    pub fn get_grid(&self, from: String, count: usize) -> Result<Array, JsValue> {
+        Ok(numbers_to_rows(
+            self.inner.range_planner.get_grid(parse_u64(&from)?, count),
+            self.inner.range_planner.resolution,
+        ))
+    }
+
+    pub fn get_gid_coordinates(&self, gid: String, count: usize) -> Array {
+        numbers_to_rows(
+            self.inner.range_planner.get_gid_coordinates(&gid, count),
+            self.inner.range_planner.resolution,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn put(
         &mut self,
         id: String,

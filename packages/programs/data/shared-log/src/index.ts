@@ -9788,7 +9788,12 @@ export class SharedLog<
 			timeout: this.waitForReplicatorTimeout,
 		},
 	): Promise<LeaderMap | false> {
-		if (this.canPlanNativeHashGid(entry) && this._nativeRangePlanner) {
+		if (
+			this.canPlanNativeHashGid(entry) &&
+			(this._nativeBackbone ??
+				this._nativeSharedLogState ??
+				this._nativeRangePlanner)
+		) {
 			return this.waitForLeaderSelection(
 				waitFor,
 				options,
@@ -9819,7 +9824,11 @@ export class SharedLog<
 			timeout: this.waitForReplicatorTimeout,
 		},
 	): Promise<LeaderMap | false> {
-		if (!this._nativeRangePlanner) {
+		if (
+			!this._nativeBackbone &&
+			!this._nativeSharedLogState &&
+			!this._nativeRangePlanner
+		) {
 			return false;
 		}
 		return this.waitForLeaderSelection(
@@ -9932,7 +9941,9 @@ export class SharedLog<
 			typeof entry !== "bigint" &&
 			this.canPlanNativeHashGid(entry)
 		) {
-			const nativeCoordinates = this._nativeRangePlanner?.getGidCoordinates(
+			const nativeCoordinates = (
+				this._nativeBackbone ?? this._nativeRangePlanner
+			)?.getGidCoordinates(
 				entry.meta.gid,
 				minReplicas,
 			) as NumberFromType<R>[] | undefined;
@@ -9945,7 +9956,7 @@ export class SharedLog<
 			typeof entry === "number" || typeof entry === "bigint"
 				? entry
 				: await this.domain.fromEntry(entry);
-		const nativeGrid = this._nativeRangePlanner?.getGrid(
+		const nativeGrid = (this._nativeBackbone ?? this._nativeRangePlanner)?.getGrid(
 			cursor,
 			minReplicas,
 		) as NumberFromType<R>[] | undefined;
@@ -11175,8 +11186,9 @@ export class SharedLog<
 		const context = await this.createLeaderSelectionContext(options);
 		let peerFilter = context.peerFilter;
 
-		if (this._nativeRangePlanner) {
-			return this._nativeRangePlanner.findLeaders(cursors, cursors.length, {
+		const nativePlanner = this._nativeBackbone ?? this._nativeRangePlanner;
+		if (nativePlanner) {
+			return nativePlanner.findLeaders(cursors, cursors.length, {
 				...this.createNativeLeaderOptions(context, options),
 			});
 		}
@@ -11311,9 +11323,10 @@ export class SharedLog<
 			return [];
 		}
 
-		if (this._nativeRangePlanner && !this.hasCustomFindLeaders()) {
+		const nativePlanner = this._nativeBackbone ?? this._nativeRangePlanner;
+		if (nativePlanner && !this.hasCustomFindLeaders()) {
 			const context = await this.createLeaderSelectionContext(options);
-			return this._nativeRangePlanner.findLeadersBatch(
+			return nativePlanner.findLeadersBatch(
 				entries.map((entry) => ({
 					cursors: entry.coordinates,
 					replicas: entry.coordinates.length,

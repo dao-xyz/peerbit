@@ -197,6 +197,70 @@ impl NativePeerbitBackbone {
         self.shared_log.get_entry_coordinates(hash)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn find_leaders(
+        &self,
+        cursors: Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        self.shared_log.find_leaders(
+            cursors,
+            replicas,
+            role_age_ms,
+            now,
+            peer_filter,
+            expand_peer_filter,
+            self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn find_leaders_batch(
+        &self,
+        cursor_batches: Array,
+        replica_counts: Array,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        self.shared_log.find_leaders_batch(
+            cursor_batches,
+            replica_counts,
+            role_age_ms,
+            now,
+            peer_filter,
+            expand_peer_filter,
+            self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )
+    }
+
+    pub fn get_grid(&self, from: String, count: usize) -> Result<Array, JsValue> {
+        self.shared_log.get_grid(from, count)
+    }
+
+    pub fn get_gid_coordinates(&self, gid: String, count: usize) -> Array {
+        self.shared_log.get_gid_coordinates(gid, count)
+    }
+
     pub fn entry_hashes_for_hash_numbers(&self, hash_numbers: Array) -> Result<Array, JsValue> {
         self.shared_log.entry_hashes_for_hash_numbers(hash_numbers)
     }

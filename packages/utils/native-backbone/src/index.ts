@@ -9,6 +9,32 @@ type NativePeerbitBackboneHandle = {
 	has_block: (hash: string) => boolean;
 	entry_coordinate_hashes: () => string[];
 	get_entry_coordinates: (hash: string) => unknown[] | undefined;
+	find_leaders: (
+		cursors: string[],
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => unknown[];
+	find_leaders_batch: (
+		cursorBatches: string[][],
+		replicaCounts: number[],
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => unknown[][];
+	get_grid: (from: string, count: number) => unknown[];
+	get_gid_coordinates: (gid: string, count: number) => unknown[];
 	entry_hashes_for_hash_numbers: (hashNumbers: string[]) => unknown[];
 	entry_hash_numbers_in_range: (
 		start1: string,
@@ -842,6 +868,11 @@ export type NativeBackboneLeaderPlan = {
 
 export type NativeBackboneLeaderGidBatchInput = {
 	gid: string;
+	replicas: number;
+};
+
+export type NativeBackboneLeaderCursorBatchInput = {
+	cursors: Iterable<bigint | number | string>;
 	replicas: number;
 };
 
@@ -2485,6 +2516,49 @@ export class NativePeerbitBackbone {
 
 	clearEntryKnownPeers(): void {
 		this.native.clear_entry_known_peers();
+	}
+
+	getGrid(
+		from: bigint | number | string,
+		count: number,
+	): Array<number | bigint> {
+		return rowsToNumbers(
+			this.resolution,
+			this.native.get_grid(integerString(from), count),
+		);
+	}
+
+	getGidCoordinates(gid: string, count: number): Array<number | bigint> {
+		return rowsToNumbers(
+			this.resolution,
+			this.native.get_gid_coordinates(gid, count),
+		);
+	}
+
+	findLeaders(
+		cursors: Iterable<bigint | number | string>,
+		replicas: number,
+		options?: NativeBackboneFindLeaderOptions,
+	): Map<string, NativeBackboneLeaderSample> {
+		const rows = this.native.find_leaders(
+			[...cursors].map(integerString),
+			replicas,
+			...findLeaderArguments(options),
+		);
+		return rowsToSamples(rows) ?? new Map();
+	}
+
+	findLeadersBatch(
+		items: Iterable<NativeBackboneLeaderCursorBatchInput>,
+		options?: NativeBackboneFindLeaderOptions,
+	): Array<Map<string, NativeBackboneLeaderSample>> {
+		const entries = [...items];
+		const rows = this.native.find_leaders_batch(
+			entries.map((entry) => [...entry.cursors].map(integerString)),
+			entries.map((entry) => entry.replicas),
+			...findLeaderArguments(options),
+		);
+		return rows.map((row) => rowsToSamples(row) ?? new Map());
 	}
 
 	planLeadersForGid(
