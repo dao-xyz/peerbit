@@ -157,7 +157,7 @@ impl From<FieldValueDto> for FieldValue {
             FieldValueDto::Bool(value) => FieldValue::Bool(value),
             FieldValueDto::I64(value) => FieldValue::I64(value),
             FieldValueDto::U64(value) => FieldValue::U64(value),
-            FieldValueDto::String(value) => FieldValue::String(value),
+            FieldValueDto::String(value) => FieldValue::from(value),
             FieldValueDto::Bytes(value) => FieldValue::from(value),
         }
     }

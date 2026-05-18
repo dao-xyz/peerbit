@@ -42,7 +42,7 @@ pub enum FieldValue {
     Bool(bool),
     I64(i64),
     U64(u64),
-    String(String),
+    String(Arc<str>),
     Bytes(Arc<[u8]>),
 }
 
@@ -82,13 +82,19 @@ impl From<u64> for FieldValue {
 
 impl From<String> for FieldValue {
     fn from(value: String) -> Self {
-        Self::String(value)
+        Self::String(value.into())
     }
 }
 
 impl From<&str> for FieldValue {
     fn from(value: &str) -> Self {
-        Self::String(value.to_string())
+        Self::String(value.into())
+    }
+}
+
+impl From<Arc<str>> for FieldValue {
+    fn from(value: Arc<str>) -> Self {
+        Self::String(value)
     }
 }
 
@@ -302,7 +308,7 @@ pub struct NativeQueryIndex {
     sort_bool: HashMap<FieldPath, BTreeMap<bool, RoaringBitmap>>,
     sort_i64: HashMap<FieldPath, BTreeMap<i64, RoaringBitmap>>,
     sort_u64: HashMap<FieldPath, BTreeMap<u64, RoaringBitmap>>,
-    sort_string: HashMap<FieldPath, BTreeMap<String, RoaringBitmap>>,
+    sort_string: HashMap<FieldPath, BTreeMap<Arc<str>, RoaringBitmap>>,
     sort_bytes: HashMap<FieldPath, BTreeMap<Arc<[u8]>, RoaringBitmap>>,
     large_exact_bytes: HashMap<FieldPath, RoaringBitmap>,
     vectors: HashMap<FieldPath, HashMap<DocId, Vec<f32>>>,
@@ -403,7 +409,7 @@ impl NativeQueryIndex {
             } => self
                 .exact
                 .get(field)
-                .and_then(|values| values.get(&FieldValue::String(value.clone())))
+                .and_then(|values| values.get(&FieldValue::from(value.clone())))
                 .cloned()
                 .unwrap_or_default(),
             Query::StringMatch { .. } | Query::IsNull { .. } => self.all_docs.clone(),
@@ -807,7 +813,7 @@ impl NativeQueryIndex {
             } => self
                 .exact
                 .get(field)
-                .and_then(|values| values.get(&FieldValue::String(value.clone())))
+                .and_then(|values| values.get(&FieldValue::from(value.clone())))
                 .map(RoaringBitmap::len)
                 .unwrap_or(0),
             Query::And(queries) => queries
@@ -1188,7 +1194,7 @@ impl NativeQueryIndex {
                 insert_into_ordered_index(&mut self.sort_u64, path, *value, doc_id)
             }
             FieldValue::String(value) => {
-                insert_into_ordered_index(&mut self.sort_string, path, value.clone(), doc_id)
+                insert_into_ordered_index(&mut self.sort_string, path, Arc::clone(value), doc_id)
             }
             FieldValue::Bytes(value) if value.len() <= MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH => {
                 insert_into_ordered_index(&mut self.sort_bytes, path, value.clone(), doc_id)
@@ -1793,7 +1799,7 @@ mod tests {
         let results = index.search(
             &Query::Exact {
                 field: "group".into(),
-                value: FieldValue::String("left".to_string()),
+                value: FieldValue::from("left"),
             },
             &[SortField {
                 field: "timestamp".into(),
@@ -1941,7 +1947,7 @@ mod tests {
 
         let query = Query::Exact {
             field: "group".into(),
-            value: FieldValue::String("left".to_string()),
+            value: FieldValue::from("left"),
         };
 
         assert_eq!(index.sum(&query, "value").unwrap(), SumResult::U64(4));
@@ -2014,7 +2020,7 @@ mod tests {
             index.search(
                 &Query::Exact {
                     field: "status".into(),
-                    value: FieldValue::String("draft".to_string()),
+                    value: FieldValue::from("draft"),
                 },
                 &[],
                 None,
@@ -2025,7 +2031,7 @@ mod tests {
             index.search(
                 &Query::Exact {
                     field: "status".into(),
-                    value: FieldValue::String("published".to_string()),
+                    value: FieldValue::from("published"),
                 },
                 &[],
                 None,

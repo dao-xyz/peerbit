@@ -352,14 +352,14 @@ impl NativePeerbitBackbone {
 
     pub fn document_exact_string_first_key(&self, field: u32, value: String) -> JsValue {
         self.document_index
-            .exact_first(&FieldPath::Id(field), &FieldValue::String(value))
+            .exact_first(&FieldPath::Id(field), &FieldValue::from(value))
             .map(|key| JsValue::from_str(&key))
             .unwrap_or(JsValue::UNDEFINED)
     }
 
     pub fn document_index_has_exact_string(&self, field: u32, value: String, key: &str) -> bool {
         self.document_index
-            .exact_first(&FieldPath::Id(field), &FieldValue::String(value))
+            .exact_first(&FieldPath::Id(field), &FieldValue::from(value))
             .is_some_and(|id| id == key)
     }
 

@@ -341,7 +341,7 @@ impl<'a> BridgeReader<'a> {
             },
             1 => FieldValue::I64(self.read_i64()?),
             2 => FieldValue::U64(self.read_u64()?),
-            3 => FieldValue::String(self.read_string()?),
+            3 => FieldValue::from(self.read_string()?),
             4 => {
                 let len = self.read_u32()? as usize;
                 FieldValue::from(self.read_exact(len)?.to_vec())
@@ -589,7 +589,7 @@ fn extract_schema_node(
                 fields,
                 scope,
                 required_field(field)?,
-                FieldValue::String(value),
+                FieldValue::from(value),
             );
         }
         NativeSchemaNode::Uint8Array => {
@@ -786,7 +786,7 @@ mod tests {
 
         assert_eq!(
             fields.scalar_values(&FieldPath::Id(1)),
-            Some([FieldValue::String("abc".to_string())].as_slice())
+            Some([FieldValue::from("abc")].as_slice())
         );
         assert_eq!(
             fields.scalar_values(&FieldPath::Id(2)),

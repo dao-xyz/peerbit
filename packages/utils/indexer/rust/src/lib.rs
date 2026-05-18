@@ -702,7 +702,7 @@ impl NativeRustIndex {
                 .and_then(|value| {
                     self.planner
                         .index
-                        .exact_first(&field, &FieldValue::String(value))
+                        .exact_first(&field, &FieldValue::from(value))
                 })
                 .map(|key| self.store.get(&key))
                 .unwrap_or(JsValue::UNDEFINED);
@@ -858,7 +858,7 @@ fn shared_log_coordinate_fields(
         &mut fields,
         0,
         input.hash_field,
-        FieldValue::String(input.hash),
+        FieldValue::from(input.hash),
     );
     insert_scalar(
         &mut fields,
@@ -866,12 +866,7 @@ fn shared_log_coordinate_fields(
         input.hash_number_field,
         FieldValue::U64(parse_u64_string(&input.hash_number, "hashNumber")?),
     );
-    insert_scalar(
-        &mut fields,
-        0,
-        input.gid_field,
-        FieldValue::String(input.gid),
-    );
+    insert_scalar(&mut fields, 0, input.gid_field, FieldValue::from(input.gid));
     for coordinate in input.coordinates.iter() {
         let coordinate = coordinate
             .as_string()
