@@ -5493,7 +5493,8 @@ export class SharedLog<
 			options?.target !== "none" ||
 			options?.replicate === true ||
 			this.shouldDeferHeadCoordinatePersistence(options) ||
-			!this._nativeSharedLogState ||
+			(!this._nativeSharedLogState &&
+				!this.canUseNativeBackboneResidentCoordinateState()) ||
 			!this.canPlanNativeAppendFacts(result.appendFacts)
 		) {
 			return undefined;
