@@ -636,8 +636,17 @@ struct PreparedPlainEntryCore {
     next: Vec<String>,
     meta_bytes: Vec<u8>,
     payload_bytes: Vec<u8>,
-    signature_bytes: Vec<u8>,
+    signature_bytes: [u8; 64],
     signature_with_key_bytes: Vec<u8>,
+    storage_bytes: Vec<u8>,
+    hash_digest_bytes: Vec<u8>,
+    entry: LogIndexEntry,
+}
+
+struct PreparedPlainEntryCommitCore {
+    hash: String,
+    next: Vec<String>,
+    meta_bytes: Vec<u8>,
     storage_bytes: Vec<u8>,
     hash_digest_bytes: Vec<u8>,
     entry: LogIndexEntry,
@@ -802,7 +811,7 @@ impl NativeLogIndex {
             }
         }
         let core_started = profile.as_ref().map(|_| js_sys::Date::now());
-        let core = prepare_entry_v0_plain_entry_core_with_signer_parts_profiled(
+        let core = prepare_entry_v0_plain_entry_commit_core_with_signer_parts_profiled(
             &builder.clock_id,
             &builder.public_key,
             &builder.signing_key,
@@ -2400,6 +2409,100 @@ fn prepare_entry_v0_plain_entry_core_with_signer_parts_profiled(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn prepare_entry_v0_plain_entry_commit_core_with_signer_parts_profiled(
+    clock_id: &[u8],
+    public_key: &[u8],
+    signing_key: &SigningKey,
+    wall_time: u64,
+    logical: u32,
+    gid: String,
+    next: Vec<String>,
+    entry_type: u8,
+    meta_data: Option<Vec<u8>>,
+    payload_data: Vec<u8>,
+    mut profile: Option<&mut NativeLogAppendProfile>,
+) -> Result<PreparedPlainEntryCommitCore, JsValue> {
+    let payload_size = payload_data.len() as u32;
+
+    let encode_meta_started = profile.as_ref().map(|_| js_sys::Date::now());
+    let meta = encode_meta_parts(
+        clock_id,
+        wall_time,
+        logical,
+        &gid,
+        &next,
+        entry_type,
+        meta_data.as_deref(),
+    );
+    if let Some(started) = encode_meta_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.encode_meta_ms += js_sys::Date::now() - started;
+        }
+    }
+    let encode_signable_started = profile.as_ref().map(|_| js_sys::Date::now());
+    let signable = encode_entry_v0_payload_data_unsigned_for_signing(&meta, &payload_data);
+    if let Some(started) = encode_signable_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.encode_signable_ms += js_sys::Date::now() - started;
+        }
+    }
+    let sign_started = profile.as_ref().map(|_| js_sys::Date::now());
+    let signature = sign_ed25519_with_key(signing_key, &signable);
+    if let Some(started) = sign_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.sign_ms += js_sys::Date::now() - started;
+        }
+    }
+    let encode_signature_started = profile.as_ref().map(|_| js_sys::Date::now());
+    let signature_with_key = encode_signature_with_key_parts(&signature, public_key, 0);
+    if let Some(started) = encode_signature_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.encode_signature_ms += js_sys::Date::now() - started;
+        }
+    }
+    let encode_storage_started = profile.as_ref().map(|_| js_sys::Date::now());
+    let storage = signable_entry_to_signed_storage(signable, &signature_with_key);
+    if let Some(started) = encode_storage_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.encode_storage_ms += js_sys::Date::now() - started;
+        }
+    }
+    let cid_started = profile.as_ref().map(|_| js_sys::Date::now());
+    let (cid, hash_digest) = calculate_raw_cid_v1_parts(&storage);
+    if let Some(started) = cid_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.cid_ms += js_sys::Date::now() - started;
+        }
+    }
+
+    let index_entry_started = profile.as_ref().map(|_| js_sys::Date::now());
+    let entry = LogIndexEntry::new_with_data(
+        cid.clone(),
+        gid,
+        next.clone(),
+        entry_type,
+        wall_time,
+        logical,
+        payload_size,
+        true,
+        meta_data,
+    );
+    if let Some(started) = index_entry_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.index_entry_ms += js_sys::Date::now() - started;
+        }
+    }
+    Ok(PreparedPlainEntryCommitCore {
+        hash: cid,
+        next,
+        meta_bytes: meta,
+        storage_bytes: storage,
+        hash_digest_bytes: hash_digest.to_vec(),
+        entry,
+    })
+}
+
 fn prepared_plain_entry_core_to_row(
     core: &PreparedPlainEntryCore,
     row_mode: PreparedPlainEntryRowMode,
@@ -2727,6 +2830,29 @@ fn encode_entry_v0_parts_unsigned_for_signing(meta: &[u8], payload: &[u8]) -> Ve
     )
 }
 
+fn encode_entry_v0_payload_data_unsigned_for_signing(meta: &[u8], payload_data: &[u8]) -> Vec<u8> {
+    let payload_len = 1 + 4 + payload_data.len();
+    let mut out = Vec::with_capacity(
+        1 + decrypted_thing_encoded_len(meta.len())
+            + decrypted_thing_encoded_len(payload_len)
+            + 4
+            + 1
+            + 1
+            + SIGNED_ENTRY_EXTRA_CAPACITY,
+    );
+    write_u8(&mut out, 0); // EntryV0 variant
+    write_decrypted_thing(&mut out, meta);
+    write_u8(&mut out, 0); // MaybeEncrypted variant
+    write_u8(&mut out, 0); // DecryptedThing variant
+    write_u32(&mut out, payload_len as u32);
+    write_u8(&mut out, 0); // Payload variant
+    write_bytes(&mut out, payload_data);
+    out.extend_from_slice(&[0, 0, 0, 0]); // reserved
+    write_u8(&mut out, 0); // signatures option
+    write_u8(&mut out, 0); // hash option
+    out
+}
+
 fn encode_entry_v0_parts_with_signature_bytes(
     meta: &[u8],
     payload: &[u8],
@@ -2891,11 +3017,11 @@ fn sign_ed25519_raw(
     data: &[u8],
 ) -> Result<Vec<u8>, JsValue> {
     let signing_key = validate_ed25519_keypair(private_key, public_key)?;
-    Ok(sign_ed25519_with_key(&signing_key, data))
+    Ok(sign_ed25519_with_key(&signing_key, data).to_vec())
 }
 
-fn sign_ed25519_with_key(signing_key: &SigningKey, data: &[u8]) -> Vec<u8> {
-    signing_key.sign(data).to_bytes().to_vec()
+fn sign_ed25519_with_key(signing_key: &SigningKey, data: &[u8]) -> [u8; 64] {
+    signing_key.sign(data).to_bytes()
 }
 
 fn validate_ed25519_keypair(private_key: &[u8], public_key: &[u8]) -> Result<SigningKey, JsValue> {
@@ -3185,8 +3311,9 @@ fn join_plan_to_row(plan: JoinPlan) -> Array {
 #[cfg(test)]
 mod tests {
     use super::{
-        encode_entry_v0_parts_with_signature_bytes, signable_entry_to_signed_storage, JoinPlan,
-        LogGraphIndex, LogIndexEntry,
+        encode_entry_v0_parts_unsigned_for_signing, encode_entry_v0_parts_with_signature_bytes,
+        encode_entry_v0_payload_data_unsigned_for_signing, encode_payload,
+        signable_entry_to_signed_storage, JoinPlan, LogGraphIndex, LogIndexEntry,
     };
 
     const APPEND: u8 = 0;
@@ -3204,6 +3331,18 @@ mod tests {
             encode_entry_v0_parts_with_signature_bytes(&meta, &payload, Some(&signature_with_key));
 
         assert_eq!(optimized, expected);
+    }
+
+    #[test]
+    fn direct_payload_signable_encoding_matches_payload_parts_encoder() {
+        let meta = b"encoded-meta".to_vec();
+        let payload_data = b"document-payload".to_vec();
+        let payload = encode_payload(&payload_data);
+
+        assert_eq!(
+            encode_entry_v0_payload_data_unsigned_for_signing(&meta, &payload_data),
+            encode_entry_v0_parts_unsigned_for_signing(&meta, &payload)
+        );
     }
 
     fn entry(hash: &str, gid: &str, next: &[&str], wall_time: u64) -> LogIndexEntry {

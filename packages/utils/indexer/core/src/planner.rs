@@ -350,6 +350,19 @@ impl NativeQueryIndex {
         self.generation += 1;
     }
 
+    pub fn put_new_unchecked(&mut self, id: impl Into<String>, fields: DocumentFields) {
+        let external_id = id.into();
+        debug_assert!(
+            !self.external_to_internal.contains_key(&external_id),
+            "put_new_unchecked called with an existing document id"
+        );
+        let doc_id = self.allocate_doc_id(external_id);
+        self.index_document(doc_id, &fields);
+        self.documents.insert(doc_id, fields);
+        self.all_docs.insert(doc_id);
+        self.generation += 1;
+    }
+
     pub fn delete(&mut self, id: impl Into<String>) {
         let external_id = id.into();
         self.delete_id(&external_id);
@@ -1978,6 +1991,33 @@ mod tests {
         assert_eq!(
             index.search_page(&query, &[], 5, Some(2)),
             Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn put_new_unchecked_indexes_new_documents() {
+        let mut index = NativeQueryIndex::new();
+        index.put_new_unchecked(
+            "a",
+            DocumentFields::new()
+                .with_scalar("status", "published")
+                .with_scalar("score", 10_u64),
+        );
+
+        assert_eq!(index.generation(), 1);
+        assert_eq!(
+            index.search(
+                &Query::Exact {
+                    field: "status".into(),
+                    value: FieldValue::from("published"),
+                },
+                &[SortField {
+                    field: "score".into(),
+                    direction: SortDirection::Desc,
+                }],
+                None,
+            ),
+            vec!["a"]
         );
     }
 

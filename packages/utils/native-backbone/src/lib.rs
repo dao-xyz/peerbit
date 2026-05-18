@@ -447,8 +447,13 @@ impl NativePeerbitBackbone {
         if let Some(started) = value_build_started {
             self.append_profile.document_index_value_build_ms += js_sys::Date::now() - started;
         }
+        let is_new_document = self.document_values.get(&key).is_none();
         let index_put_started = profile_enabled.then(js_sys::Date::now);
-        self.document_index.put(key.clone(), fields);
+        if is_new_document {
+            self.document_index.put_new_unchecked(key.clone(), fields);
+        } else {
+            self.document_index.put(key.clone(), fields);
+        }
         if let Some(started) = index_put_started {
             self.append_profile.document_index_put_ms += js_sys::Date::now() - started;
         }
