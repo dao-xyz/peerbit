@@ -6901,13 +6901,19 @@ export class SharedLog<
 		this._entryCoordinatesIndex = await replicationIndex.init({
 			schema: this.indexableDomain.constructorEntry,
 		});
-		await this.openNativeRangePlanner(options?.nativeRangePlanner);
+		const deferStandaloneNativeRangePlanner =
+			!!options?.nativeBackbone && options.nativeRangePlanner == null;
+		await this.openNativeRangePlanner(
+			deferStandaloneNativeRangePlanner ? false : options?.nativeRangePlanner,
+		);
 
 		this._nativeBackbone = await this.openNativeBackbone(
 			options?.nativeBackbone,
 		);
 		if (this._nativeBackbone) {
 			await this.hydrateNativeBackboneSharedLog(this._nativeBackbone);
+		} else if (deferStandaloneNativeRangePlanner) {
+			await this.openNativeRangePlanner(options?.nativeRangePlanner);
 		}
 		const localBlocks = this._nativeBackbone
 			? this._nativeBackbone.blocks

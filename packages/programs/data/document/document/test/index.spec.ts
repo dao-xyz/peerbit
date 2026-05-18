@@ -812,6 +812,10 @@ describe("index", () => {
 						nativeBackbone: { optional: false },
 					},
 				});
+				const sharedLog = store.docs.log as any;
+				expect(sharedLog._nativeBackbone).to.exist;
+				expect(sharedLog._nativeSharedLogState).equal(undefined);
+				expect(sharedLog._nativeRangePlanner).equal(undefined);
 				const backboneCommitSpy = sinon.spy(
 					store.docs.log.log as any,
 					"appendLocallyPreparedNativeNoNextCommitOnly",
