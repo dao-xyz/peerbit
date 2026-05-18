@@ -5336,7 +5336,10 @@ export class SharedLog<
 								commitNativeBackbone: false,
 							});
 					const completed = mapMaybePromise(persisted, () => {
-						if (commitBlocksInBackbone) {
+						if (
+							commitBlocksInBackbone &&
+							this.remoteBlocks.hasNotifyStoredHook()
+						) {
 							const announced = this.remoteBlocks.notifyStored(
 								prepared.appendFacts.hash,
 							);
@@ -6934,17 +6937,19 @@ export class SharedLog<
 								opts.onProviders(providers.map((provider) => provider.hash)),
 						})
 				: undefined,
-			onPut: async (cid) => {
-				// Best-effort directory announce for "get without remote.from" workflows.
-				try {
-					await fanoutService?.announceProvider(blockProviderNamespace(cid), {
-						ttlMs: 120_000,
-						bootstrapMaxPeers: 2,
-					});
-				} catch {
-					// ignore announce failures
-				}
-			},
+			onPut: fanoutService
+				? async (cid) => {
+						// Best-effort directory announce for "get without remote.from" workflows.
+						try {
+							await fanoutService.announceProvider(blockProviderNamespace(cid), {
+								ttlMs: 120_000,
+								bootstrapMaxPeers: 2,
+							});
+						} catch {
+							// ignore announce failures
+						}
+					}
+				: undefined,
 		});
 
 		const remoteBlocksStartPromise = this.remoteBlocks.start();

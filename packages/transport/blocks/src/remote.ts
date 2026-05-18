@@ -358,27 +358,34 @@ export class RemoteBlocks implements IBlocks {
 		return cids;
 	}
 
-	async notifyStored(cid: string): Promise<void> {
-		await this.notifyPut(cid);
+	hasNotifyStoredHook(): boolean {
+		return !!this.options.onPut;
 	}
 
-	async notifyStoredMany(cids: string[]): Promise<void> {
-		await this.notifyPuts(cids);
+	notifyStored(cid: string): Promise<void> | void {
+		return this.notifyPut(cid);
 	}
 
-	private async notifyPut(cid: string) {
+	notifyStoredMany(cids: string[]): Promise<void> | void {
+		return this.notifyPuts(cids);
+	}
+
+	private notifyPut(cid: string): Promise<void> | void {
 		const onPut = this.options.onPut;
 		if (!onPut) {
 			return;
 		}
 		try {
-			await onPut(cid);
+			const result = onPut(cid);
+			if (result && typeof result.then === "function") {
+				return result.catch((): void => undefined);
+			}
 		} catch {
 			// ignore best-effort hooks
 		}
 	}
 
-	private async notifyPuts(cids: string[]) {
+	private notifyPuts(cids: string[]): Promise<void> | void {
 		const onPut = this.options.onPut;
 		if (!onPut || cids.length === 0) {
 			return;
@@ -386,7 +393,7 @@ export class RemoteBlocks implements IBlocks {
 		if (cids.length === 1) {
 			return this.notifyPut(cids[0]!);
 		}
-		await Promise.all(
+		return Promise.all(
 			cids.map(async (cid) => {
 				try {
 					await onPut(cid);
@@ -394,7 +401,7 @@ export class RemoteBlocks implements IBlocks {
 					// ignore best-effort hooks
 				}
 			}),
-		);
+		).then((): void => undefined);
 	}
 
 	async has(cid: string) {
