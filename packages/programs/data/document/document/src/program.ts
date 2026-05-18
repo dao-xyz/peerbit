@@ -1951,7 +1951,16 @@ export class Documents<
 		modified: Set<string | number | bigint>,
 		documentsChanged?: DocumentsChange<T, I>,
 	): Promise<void> {
+		const handledRemovedHeads =
+			await this.collectRemovedDocumentChangesFromIndexedHeads(
+				removedEntries,
+				modified,
+				documentsChanged,
+			);
 		for (const removed of removedEntries) {
+			if (handledRemovedHeads.has(removed.hash)) {
+				continue;
+			}
 			if (
 				!(removed instanceof Entry) &&
 				(await this.collectRemovedDocumentChangeFromIndexedHead(
