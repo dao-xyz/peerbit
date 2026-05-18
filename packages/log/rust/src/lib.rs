@@ -6,6 +6,7 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use wasm_bindgen::prelude::*;
 
 const ENTRY_TYPE_CUT: u8 = 1;
+const SIGNED_ENTRY_EXTRA_CAPACITY: usize = 128;
 
 enum PreparedPlainEntryRowMode {
     Full { include_storage_bytes: bool },
@@ -2095,11 +2096,10 @@ fn prepare_entry_v0_plain_chain_rows(
         };
         let meta = encode_meta(&input);
         let payload = encode_payload(&input.payload_data);
-        let signable = encode_entry_v0_parts(&meta, &payload, None);
+        let signable = encode_entry_v0_parts_unsigned_for_signing(&meta, &payload);
         let signature = sign_ed25519_with_key(&signing_key, &signable);
         let signature_with_key = encode_signature_with_key_parts(&signature, &public_key, 0);
-        let storage =
-            encode_entry_v0_parts_with_signature_bytes(&meta, &payload, Some(&signature_with_key));
+        let storage = signable_entry_to_signed_storage(signable, &signature_with_key);
         let storage_len = storage.len();
         let (cid, hash_digest) = calculate_raw_cid_v1_parts(&storage);
 
@@ -2335,7 +2335,7 @@ fn prepare_entry_v0_plain_entry_core_with_signer_parts_profiled(
         }
     }
     let encode_signable_started = profile.as_ref().map(|_| js_sys::Date::now());
-    let signable = encode_entry_v0_parts(&meta, &payload, None);
+    let signable = encode_entry_v0_parts_unsigned_for_signing(&meta, &payload);
     if let Some(started) = encode_signable_started {
         if let Some(profile) = profile.as_deref_mut() {
             profile.encode_signable_ms += js_sys::Date::now() - started;
@@ -2356,8 +2356,7 @@ fn prepare_entry_v0_plain_entry_core_with_signer_parts_profiled(
         }
     }
     let encode_storage_started = profile.as_ref().map(|_| js_sys::Date::now());
-    let storage =
-        encode_entry_v0_parts_with_signature_bytes(&meta, &payload, Some(&signature_with_key));
+    let storage = signable_entry_to_signed_storage(signable, &signature_with_key);
     if let Some(started) = encode_storage_started {
         if let Some(profile) = profile.as_deref_mut() {
             profile.encode_storage_ms += js_sys::Date::now() - started;
@@ -2719,10 +2718,33 @@ fn encode_entry_v0_parts(
     encode_entry_v0_parts_with_signature_bytes(meta, payload, signature_with_key.as_deref())
 }
 
+fn encode_entry_v0_parts_unsigned_for_signing(meta: &[u8], payload: &[u8]) -> Vec<u8> {
+    encode_entry_v0_parts_with_signature_bytes_and_extra_capacity(
+        meta,
+        payload,
+        None,
+        SIGNED_ENTRY_EXTRA_CAPACITY,
+    )
+}
+
 fn encode_entry_v0_parts_with_signature_bytes(
     meta: &[u8],
     payload: &[u8],
     signature_with_key: Option<&[u8]>,
+) -> Vec<u8> {
+    encode_entry_v0_parts_with_signature_bytes_and_extra_capacity(
+        meta,
+        payload,
+        signature_with_key,
+        0,
+    )
+}
+
+fn encode_entry_v0_parts_with_signature_bytes_and_extra_capacity(
+    meta: &[u8],
+    payload: &[u8],
+    signature_with_key: Option<&[u8]>,
+    extra_capacity: usize,
 ) -> Vec<u8> {
     let signature_len = signature_with_key
         .map(|signature_with_key| 1 + 4 + decrypted_thing_encoded_len(signature_with_key.len()))
@@ -2733,7 +2755,8 @@ fn encode_entry_v0_parts_with_signature_bytes(
             + 4
             + 1
             + signature_len
-            + 1,
+            + 1
+            + extra_capacity,
     );
     write_u8(&mut out, 0); // EntryV0 variant
     write_decrypted_thing(&mut out, meta);
@@ -2748,6 +2771,19 @@ fn encode_entry_v0_parts_with_signature_bytes(
     }
     write_u8(&mut out, 0); // hash option
     out
+}
+
+fn signable_entry_to_signed_storage(
+    mut signable_entry: Vec<u8>,
+    signature_with_key: &[u8],
+) -> Vec<u8> {
+    debug_assert!(signable_entry.len() >= 2);
+    signable_entry.truncate(signable_entry.len().saturating_sub(2));
+    signable_entry.reserve(1 + 1 + 4 + decrypted_thing_encoded_len(signature_with_key.len()) + 1);
+    write_u8(&mut signable_entry, 1);
+    write_signatures_encoded(&mut signable_entry, signature_with_key);
+    write_u8(&mut signable_entry, 0); // hash option
+    signable_entry
 }
 
 fn encode_meta(input: &EntryV0EncodeInput) -> Vec<u8> {
@@ -3148,10 +3184,27 @@ fn join_plan_to_row(plan: JoinPlan) -> Array {
 
 #[cfg(test)]
 mod tests {
-    use super::{JoinPlan, LogGraphIndex, LogIndexEntry};
+    use super::{
+        encode_entry_v0_parts_with_signature_bytes, signable_entry_to_signed_storage, JoinPlan,
+        LogGraphIndex, LogIndexEntry,
+    };
 
     const APPEND: u8 = 0;
     const CUT: u8 = 1;
+
+    #[test]
+    fn signed_storage_reused_from_signable_entry_matches_full_encoder() {
+        let meta = b"encoded-meta".to_vec();
+        let payload = b"encoded-payload".to_vec();
+        let signature_with_key = (0..96).map(|value| value as u8).collect::<Vec<_>>();
+
+        let signable = encode_entry_v0_parts_with_signature_bytes(&meta, &payload, None);
+        let optimized = signable_entry_to_signed_storage(signable, &signature_with_key);
+        let expected =
+            encode_entry_v0_parts_with_signature_bytes(&meta, &payload, Some(&signature_with_key));
+
+        assert_eq!(optimized, expected);
+    }
 
     fn entry(hash: &str, gid: &str, next: &[&str], wall_time: u64) -> LogIndexEntry {
         LogIndexEntry::new(
