@@ -242,7 +242,18 @@ type Profile = {
 	nativeBackboneHashNumberMs: number;
 	nativeBackboneCoordinatePlanMs: number;
 	nativeBackboneCoordinateCoreMs: number;
+	nativeBackboneCoordinateFieldsBuildMs: number;
+	nativeBackboneCoordinateValueEncodeMs: number;
+	nativeBackboneCoordinateJournalPutMs: number;
+	nativeBackboneCoordinateIndexPutMs: number;
+	nativeBackboneCoordinateValuePutMs: number;
+	nativeBackboneCoordinateDeleteMs: number;
 	nativeBackboneDocumentIndexCommitMs: number;
+	nativeBackboneDocumentIndexContextEncodeMs: number;
+	nativeBackboneDocumentIndexExtractMs: number;
+	nativeBackboneDocumentIndexValueBuildMs: number;
+	nativeBackboneDocumentIndexPutMs: number;
+	nativeBackboneDocumentValuePutMs: number;
 	nativeBackboneResultRowMs: number;
 	nativeGraphPrepareEntryCommitMs: number;
 	nativeSharedLogCommitCoordinatesMs: number;
@@ -315,7 +326,18 @@ const deepProfileKeys = new Set<keyof Profile>([
 	"nativeBackboneHashNumberMs",
 	"nativeBackboneCoordinatePlanMs",
 	"nativeBackboneCoordinateCoreMs",
+	"nativeBackboneCoordinateFieldsBuildMs",
+	"nativeBackboneCoordinateValueEncodeMs",
+	"nativeBackboneCoordinateJournalPutMs",
+	"nativeBackboneCoordinateIndexPutMs",
+	"nativeBackboneCoordinateValuePutMs",
+	"nativeBackboneCoordinateDeleteMs",
 	"nativeBackboneDocumentIndexCommitMs",
+	"nativeBackboneDocumentIndexContextEncodeMs",
+	"nativeBackboneDocumentIndexExtractMs",
+	"nativeBackboneDocumentIndexValueBuildMs",
+	"nativeBackboneDocumentIndexPutMs",
+	"nativeBackboneDocumentValuePutMs",
 	"nativeBackboneResultRowMs",
 	"nativeGraphPrepareEntryCommitMs",
 	"nativeSharedLogCommitCoordinatesMs",
@@ -355,7 +377,18 @@ const nativeBackboneProfileKeys = new Set<keyof Profile>([
 	"nativeBackboneHashNumberMs",
 	"nativeBackboneCoordinatePlanMs",
 	"nativeBackboneCoordinateCoreMs",
+	"nativeBackboneCoordinateFieldsBuildMs",
+	"nativeBackboneCoordinateValueEncodeMs",
+	"nativeBackboneCoordinateJournalPutMs",
+	"nativeBackboneCoordinateIndexPutMs",
+	"nativeBackboneCoordinateValuePutMs",
+	"nativeBackboneCoordinateDeleteMs",
 	"nativeBackboneDocumentIndexCommitMs",
+	"nativeBackboneDocumentIndexContextEncodeMs",
+	"nativeBackboneDocumentIndexExtractMs",
+	"nativeBackboneDocumentIndexValueBuildMs",
+	"nativeBackboneDocumentIndexPutMs",
+	"nativeBackboneDocumentValuePutMs",
 	"nativeBackboneResultRowMs",
 ]);
 
@@ -413,7 +446,18 @@ const emptyProfile = (): Profile => ({
 	nativeBackboneHashNumberMs: 0,
 	nativeBackboneCoordinatePlanMs: 0,
 	nativeBackboneCoordinateCoreMs: 0,
+	nativeBackboneCoordinateFieldsBuildMs: 0,
+	nativeBackboneCoordinateValueEncodeMs: 0,
+	nativeBackboneCoordinateJournalPutMs: 0,
+	nativeBackboneCoordinateIndexPutMs: 0,
+	nativeBackboneCoordinateValuePutMs: 0,
+	nativeBackboneCoordinateDeleteMs: 0,
 	nativeBackboneDocumentIndexCommitMs: 0,
+	nativeBackboneDocumentIndexContextEncodeMs: 0,
+	nativeBackboneDocumentIndexExtractMs: 0,
+	nativeBackboneDocumentIndexValueBuildMs: 0,
+	nativeBackboneDocumentIndexPutMs: 0,
+	nativeBackboneDocumentValuePutMs: 0,
 	nativeBackboneResultRowMs: 0,
 	nativeGraphPrepareEntryCommitMs: 0,
 	nativeSharedLogCommitCoordinatesMs: 0,

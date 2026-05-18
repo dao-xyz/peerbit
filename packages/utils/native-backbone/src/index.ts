@@ -1062,7 +1062,18 @@ export type NativeBackboneAppendProfile = {
 	nativeBackboneHashNumberMs: number;
 	nativeBackboneCoordinatePlanMs: number;
 	nativeBackboneCoordinateCoreMs: number;
+	nativeBackboneCoordinateFieldsBuildMs: number;
+	nativeBackboneCoordinateValueEncodeMs: number;
+	nativeBackboneCoordinateJournalPutMs: number;
+	nativeBackboneCoordinateIndexPutMs: number;
+	nativeBackboneCoordinateValuePutMs: number;
+	nativeBackboneCoordinateDeleteMs: number;
 	nativeBackboneDocumentIndexCommitMs: number;
+	nativeBackboneDocumentIndexContextEncodeMs: number;
+	nativeBackboneDocumentIndexExtractMs: number;
+	nativeBackboneDocumentIndexValueBuildMs: number;
+	nativeBackboneDocumentIndexPutMs: number;
+	nativeBackboneDocumentValuePutMs: number;
 	nativeBackboneResultRowMs: number;
 };
 
@@ -1089,7 +1100,18 @@ const nativeBackboneAppendProfileKeys = [
 	"nativeBackboneHashNumberMs",
 	"nativeBackboneCoordinatePlanMs",
 	"nativeBackboneCoordinateCoreMs",
+	"nativeBackboneCoordinateFieldsBuildMs",
+	"nativeBackboneCoordinateValueEncodeMs",
+	"nativeBackboneCoordinateJournalPutMs",
+	"nativeBackboneCoordinateIndexPutMs",
+	"nativeBackboneCoordinateValuePutMs",
+	"nativeBackboneCoordinateDeleteMs",
 	"nativeBackboneDocumentIndexCommitMs",
+	"nativeBackboneDocumentIndexContextEncodeMs",
+	"nativeBackboneDocumentIndexExtractMs",
+	"nativeBackboneDocumentIndexValueBuildMs",
+	"nativeBackboneDocumentIndexPutMs",
+	"nativeBackboneDocumentValuePutMs",
 	"nativeBackboneResultRowMs",
 ] as const satisfies readonly (keyof NativeBackboneAppendProfile)[];
 

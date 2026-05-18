@@ -78,7 +78,18 @@ struct NativeBackboneAppendProfile {
     hash_number_ms: f64,
     coordinate_plan_ms: f64,
     coordinate_core_ms: f64,
+    coordinate_fields_build_ms: f64,
+    coordinate_value_encode_ms: f64,
+    coordinate_journal_put_ms: f64,
+    coordinate_index_put_ms: f64,
+    coordinate_value_put_ms: f64,
+    coordinate_delete_ms: f64,
     document_index_commit_ms: f64,
+    document_index_context_encode_ms: f64,
+    document_index_extract_ms: f64,
+    document_index_value_build_ms: f64,
+    document_index_put_ms: f64,
+    document_value_put_ms: f64,
     result_row_ms: f64,
 }
 
@@ -124,7 +135,18 @@ impl NativeBackboneAppendProfile {
         row.push(&JsValue::from_f64(self.hash_number_ms));
         row.push(&JsValue::from_f64(self.coordinate_plan_ms));
         row.push(&JsValue::from_f64(self.coordinate_core_ms));
+        row.push(&JsValue::from_f64(self.coordinate_fields_build_ms));
+        row.push(&JsValue::from_f64(self.coordinate_value_encode_ms));
+        row.push(&JsValue::from_f64(self.coordinate_journal_put_ms));
+        row.push(&JsValue::from_f64(self.coordinate_index_put_ms));
+        row.push(&JsValue::from_f64(self.coordinate_value_put_ms));
+        row.push(&JsValue::from_f64(self.coordinate_delete_ms));
         row.push(&JsValue::from_f64(self.document_index_commit_ms));
+        row.push(&JsValue::from_f64(self.document_index_context_encode_ms));
+        row.push(&JsValue::from_f64(self.document_index_extract_ms));
+        row.push(&JsValue::from_f64(self.document_index_value_build_ms));
+        row.push(&JsValue::from_f64(self.document_index_put_ms));
+        row.push(&JsValue::from_f64(self.document_value_put_ms));
         row.push(&JsValue::from_f64(self.result_row_ms));
         row
     }
@@ -415,20 +437,39 @@ impl NativePeerbitBackbone {
         value_suffix_bytes: Vec<u8>,
         byte_element_index_limit: usize,
     ) -> Result<(), JsValue> {
-        let schema_ir = self.document_schema_ir.as_ref().ok_or_else(|| {
-            js_error("Native backbone document schema IR has not been configured")
-        })?;
-        let fields = extract_encoded_document_fields_from_parts(
-            schema_ir,
-            &value_prefix_bytes,
-            &value_suffix_bytes,
-            byte_element_index_limit,
-        )
-        .map_err(js_error)?;
+        let profile_enabled = self.append_profile_enabled;
+        let extract_started = profile_enabled.then(js_sys::Date::now);
+        let fields = {
+            let schema_ir = self.document_schema_ir.as_ref().ok_or_else(|| {
+                js_error("Native backbone document schema IR has not been configured")
+            })?;
+            extract_encoded_document_fields_from_parts(
+                schema_ir,
+                &value_prefix_bytes,
+                &value_suffix_bytes,
+                byte_element_index_limit,
+            )
+            .map_err(js_error)?
+        };
+        if let Some(started) = extract_started {
+            self.append_profile.document_index_extract_ms += js_sys::Date::now() - started;
+        }
+        let value_build_started = profile_enabled.then(js_sys::Date::now);
         value_prefix_bytes.reserve(value_suffix_bytes.len());
         value_prefix_bytes.extend_from_slice(&value_suffix_bytes);
+        if let Some(started) = value_build_started {
+            self.append_profile.document_index_value_build_ms += js_sys::Date::now() - started;
+        }
+        let index_put_started = profile_enabled.then(js_sys::Date::now);
         self.document_index.put(key.clone(), fields);
+        if let Some(started) = index_put_started {
+            self.append_profile.document_index_put_ms += js_sys::Date::now() - started;
+        }
+        let value_put_started = profile_enabled.then(js_sys::Date::now);
         self.document_values.put(key, value_prefix_bytes);
+        if let Some(started) = value_put_started {
+            self.append_profile.document_value_put_ms += js_sys::Date::now() - started;
+        }
         Ok(())
     }
 
@@ -2370,8 +2411,13 @@ impl NativePeerbitBackbone {
             meta_bytes,
             true,
         );
+        let profile_enabled = self.append_profile_enabled;
+        let coordinate_delete_started = profile_enabled.then(js_sys::Date::now);
         self.delete_coordinate_core_strings(next_hashes);
         self.delete_coordinate_core_strings(delete_hashes);
+        if let Some(started) = coordinate_delete_started {
+            self.append_profile.coordinate_delete_ms += js_sys::Date::now() - started;
+        }
     }
 
     fn put_decoded_coordinate_core(
@@ -2413,6 +2459,8 @@ impl NativePeerbitBackbone {
         meta_bytes: Vec<u8>,
         record_journal: bool,
     ) {
+        let profile_enabled = self.append_profile_enabled;
+        let fields_started = profile_enabled.then(js_sys::Date::now);
         let mut fields = DocumentFields::with_scalar_capacity(6 + coordinates.len());
         fields.insert_scalar(FieldPath::Id(COORD_HASH_FIELD), hash.clone());
         fields.insert_scalar(FieldPath::Id(COORD_GID_FIELD), gid.clone());
@@ -2428,7 +2476,11 @@ impl NativePeerbitBackbone {
             FieldPath::Id(COORD_REQUESTED_REPLICAS_FIELD),
             requested_replicas as u64,
         );
+        if let Some(started) = fields_started {
+            self.append_profile.coordinate_fields_build_ms += js_sys::Date::now() - started;
+        }
 
+        let value_encode_started = profile_enabled.then(js_sys::Date::now);
         let value = encode_coordinate_value(
             &hash,
             &gid,
@@ -2439,11 +2491,26 @@ impl NativePeerbitBackbone {
             wall_time,
             &meta_bytes,
         );
-        if record_journal && self.coordinate_journal_enabled {
-            self.push_coordinate_journal_put(&hash, &value);
+        if let Some(started) = value_encode_started {
+            self.append_profile.coordinate_value_encode_ms += js_sys::Date::now() - started;
         }
+        if record_journal && self.coordinate_journal_enabled {
+            let journal_started = profile_enabled.then(js_sys::Date::now);
+            self.push_coordinate_journal_put(&hash, &value);
+            if let Some(started) = journal_started {
+                self.append_profile.coordinate_journal_put_ms += js_sys::Date::now() - started;
+            }
+        }
+        let index_put_started = profile_enabled.then(js_sys::Date::now);
         self.coordinate_index.put(hash.clone(), fields);
+        if let Some(started) = index_put_started {
+            self.append_profile.coordinate_index_put_ms += js_sys::Date::now() - started;
+        }
+        let value_put_started = profile_enabled.then(js_sys::Date::now);
         self.coordinate_values.put(hash, value);
+        if let Some(started) = value_put_started {
+            self.append_profile.coordinate_value_put_ms += js_sys::Date::now() - started;
+        }
     }
 
     fn delete_coordinate_core(&mut self, hash: &str) -> bool {
@@ -2786,6 +2853,8 @@ impl NativePeerbitBackbone {
         let Some(document_index_commit) = document_index_commit else {
             return Ok(());
         };
+        let profile_enabled = self.append_profile_enabled;
+        let context_started = profile_enabled.then(js_sys::Date::now);
         let context_suffix = encode_document_context_suffix(
             document_index_commit.existing_created.unwrap_or(wall_time),
             wall_time,
@@ -2793,6 +2862,9 @@ impl NativePeerbitBackbone {
             gid,
             payload_size,
         )?;
+        if let Some(started) = context_started {
+            self.append_profile.document_index_context_encode_ms += js_sys::Date::now() - started;
+        }
         self.put_document_encoded_parts_stored(
             document_index_commit.key,
             document_index_commit.value_prefix_bytes,
