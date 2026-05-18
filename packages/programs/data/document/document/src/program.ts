@@ -77,6 +77,7 @@ import {
 	coerceWithContext,
 	coerceWithIndexed,
 	coerceWithLazyIndexed,
+	encodeContextSuffix as encodeDocumentContextSuffix,
 } from "./search.js";
 
 const logger = loggerFn("peerbit:program:document");
@@ -146,6 +147,9 @@ const encodePutOperationPayload = (data: Uint8Array): Uint8Array => {
 	encoded.set(data, PUT_OPERATION_PREFIX_LENGTH);
 	return encoded;
 };
+
+const toContextBigInt = (value: bigint | number | string): bigint =>
+	typeof value === "bigint" ? value : BigInt(value);
 
 type PutChangeReference<T, I extends Record<string, any>> = {
 	document: T;
@@ -1527,6 +1531,13 @@ export class Documents<
 			gid: append.gid,
 			size: append.payloadSize,
 		};
+		if (append.nativeBackboneDocumentIndexCommitted) {
+			return this.createDocumentAppendCommitFactsWithLazyContext(
+				input,
+				appended,
+				contextInput,
+			);
+		}
 		const contextPlan = tryPlanDocumentContext(contextInput);
 		if (contextPlan) {
 			return this.createDocumentAppendCommitFactsWithContext(
@@ -1542,6 +1553,80 @@ export class Documents<
 				plannedContext,
 			),
 		);
+	}
+
+	private createDocumentAppendCommitFactsWithLazyContext(
+		input: NativeDocumentAppendCommitFactsInput<T, I>,
+		appended: {
+			entry: Entry<Operation>;
+			removed: ShallowOrFullEntry<Operation>[];
+			appendCommit: LocalAppendCommitFacts;
+		},
+		contextInput: {
+			existingCreated?: bigint | number | string | null;
+			modified: bigint | number | string;
+			head: string;
+			gid: string;
+			size: number;
+		},
+	): DocumentAppendCommitFacts<T, I> {
+		const append = appended.appendCommit;
+		const modified = toContextBigInt(contextInput.modified);
+		const existingCreated =
+			contextInput.existingCreated == null
+				? undefined
+				: toContextBigInt(contextInput.existingCreated);
+		const contextValues = {
+			created:
+				existingCreated == null || existingCreated === 0n
+					? modified
+					: existingCreated,
+			modified,
+			head: contextInput.head,
+			gid: contextInput.gid,
+			size: contextInput.size,
+		};
+		let context: Context | undefined;
+		let contextBytes: Uint8Array | undefined;
+		let contextualEncodedValueParts: ContextualEncodedValueParts | undefined;
+		const getContext = () => (context ??= new Context(contextValues));
+		const getContextBytes = () =>
+			(contextBytes ??= encodeDocumentContextSuffix(getContext()));
+		return {
+			document: input.document,
+			key: input.key,
+			operation: input.operation,
+			encodedDocument: input.documentBytes,
+			operationPayloadBytes: input.operationPayloadBytes,
+			get entry() {
+				return appended.entry;
+			},
+			removed: appended.removed,
+			append,
+			get context() {
+				return getContext();
+			},
+			get contextBytes() {
+				return getContextBytes();
+			},
+			get contextualEncodedValueParts() {
+				return (contextualEncodedValueParts ??= {
+					prefix: input.documentBytes,
+					suffix: getContextBytes(),
+				});
+			},
+			nativeBackboneDocumentIndexCommitted:
+				appended.appendCommit.nativeBackboneDocumentIndexCommitted,
+			nativeBackboneDocumentIndex: input.nativeBackboneDocumentIndex
+				? {
+						valuePrefixBytes: input.nativeBackboneDocumentIndex.valuePrefixBytes,
+						indexable: input.nativeBackboneDocumentIndex.indexable,
+						getIndexable: input.nativeBackboneDocumentIndex.getIndexable,
+					}
+				: undefined,
+			unique: input.unique,
+			existing: input.existing,
+		};
 	}
 
 	private async createDocumentAppendCommitFactsBatch(
