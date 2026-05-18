@@ -612,6 +612,24 @@ pub struct NativeCommittedEntryFacts {
     pub hash_digest_bytes: Vec<u8>,
 }
 
+#[derive(Clone, Default)]
+pub struct NativeLogAppendProfile {
+    pub next_clone_ms: f64,
+    pub entry_core_ms: f64,
+    pub encode_meta_ms: f64,
+    pub encode_payload_ms: f64,
+    pub encode_signable_ms: f64,
+    pub sign_ms: f64,
+    pub encode_signature_ms: f64,
+    pub encode_storage_ms: f64,
+    pub cid_ms: f64,
+    pub index_entry_ms: f64,
+    pub facts_ms: f64,
+    pub block_put_ms: f64,
+    pub graph_put_ms: f64,
+    pub trim_ms: f64,
+}
+
 struct PreparedPlainEntryCore {
     hash: String,
     next: Vec<String>,
@@ -745,8 +763,45 @@ impl NativeLogIndex {
         payload_data: Vec<u8>,
         trim_length_to: Option<usize>,
     ) -> Result<(NativeCommittedEntryFacts, Vec<LogIndexEntry>), JsValue> {
+        self.prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder(
+            builder,
+            block_store,
+            wall_time,
+            logical,
+            gid,
+            next,
+            entry_type,
+            meta_data,
+            payload_data,
+            trim_length_to,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Vec<String>,
+        entry_type: u8,
+        meta_data: Option<Vec<u8>>,
+        payload_data: Vec<u8>,
+        trim_length_to: Option<usize>,
+        mut profile: Option<&mut NativeLogAppendProfile>,
+    ) -> Result<(NativeCommittedEntryFacts, Vec<LogIndexEntry>), JsValue> {
+        let next_clone_started = profile.as_ref().map(|_| js_sys::Date::now());
         let initial_nexts = next.clone();
-        let core = prepare_entry_v0_plain_entry_core_with_signer_parts(
+        if let Some(started) = next_clone_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.next_clone_ms += js_sys::Date::now() - started;
+            }
+        }
+        let core_started = profile.as_ref().map(|_| js_sys::Date::now());
+        let core = prepare_entry_v0_plain_entry_core_with_signer_parts_profiled(
             &builder.clock_id,
             &builder.public_key,
             &builder.signing_key,
@@ -757,7 +812,14 @@ impl NativeLogIndex {
             entry_type,
             meta_data,
             payload_data,
+            profile.as_deref_mut(),
         )?;
+        if let Some(started) = core_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.entry_core_ms += js_sys::Date::now() - started;
+            }
+        }
+        let facts_started = profile.as_ref().map(|_| js_sys::Date::now());
         let entry = core.entry.clone();
         let facts = NativeCommittedEntryFacts {
             hash: core.hash.clone(),
@@ -766,13 +828,36 @@ impl NativeLogIndex {
             byte_length: core.storage_bytes.len(),
             hash_digest_bytes: core.hash_digest_bytes,
         };
+        if let Some(started) = facts_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.facts_ms += js_sys::Date::now() - started;
+            }
+        }
+        let block_put_started = profile.as_ref().map(|_| js_sys::Date::now());
         block_store.put_entry(core.hash, core.storage_bytes);
+        if let Some(started) = block_put_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.block_put_ms += js_sys::Date::now() - started;
+            }
+        }
+        let graph_put_started = profile.as_ref().map(|_| js_sys::Date::now());
         self.inner.put_append_chain(vec![entry], &initial_nexts);
+        if let Some(started) = graph_put_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.graph_put_ms += js_sys::Date::now() - started;
+            }
+        }
+        let trim_started = profile.as_ref().map(|_| js_sys::Date::now());
         let trimmed = trim_length_to
             .map(|trim_length_to| {
                 trim_oldest_log_entries_core(&mut self.inner, block_store, trim_length_to)
             })
             .unwrap_or_default();
+        if let Some(started) = trim_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.trim_ms += js_sys::Date::now() - started;
+            }
+        }
         Ok((facts, trimmed))
     }
 }
@@ -2201,6 +2286,35 @@ fn prepare_entry_v0_plain_entry_core_with_signer_parts(
     meta_data: Option<Vec<u8>>,
     payload_data: Vec<u8>,
 ) -> Result<PreparedPlainEntryCore, JsValue> {
+    prepare_entry_v0_plain_entry_core_with_signer_parts_profiled(
+        clock_id,
+        public_key,
+        signing_key,
+        wall_time,
+        logical,
+        gid,
+        next,
+        entry_type,
+        meta_data,
+        payload_data,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_entry_v0_plain_entry_core_with_signer_parts_profiled(
+    clock_id: &[u8],
+    public_key: &[u8],
+    signing_key: &SigningKey,
+    wall_time: u64,
+    logical: u32,
+    gid: String,
+    next: Vec<String>,
+    entry_type: u8,
+    meta_data: Option<Vec<u8>>,
+    payload_data: Vec<u8>,
+    mut profile: Option<&mut NativeLogAppendProfile>,
+) -> Result<PreparedPlainEntryCore, JsValue> {
     let payload_size = payload_data.len() as u32;
 
     let input = EntryV0EncodeInput {
@@ -2213,20 +2327,63 @@ fn prepare_entry_v0_plain_entry_core_with_signer_parts(
         meta_data,
         payload_data,
     };
+    let encode_meta_started = profile.as_ref().map(|_| js_sys::Date::now());
     let meta = encode_meta(&input);
+    if let Some(started) = encode_meta_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.encode_meta_ms += js_sys::Date::now() - started;
+        }
+    }
+    let encode_payload_started = profile.as_ref().map(|_| js_sys::Date::now());
     let payload = encode_payload(&input.payload_data);
+    if let Some(started) = encode_payload_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.encode_payload_ms += js_sys::Date::now() - started;
+        }
+    }
+    let encode_signable_started = profile.as_ref().map(|_| js_sys::Date::now());
     let signable = encode_entry_v0_parts(&meta, &payload, None);
+    if let Some(started) = encode_signable_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.encode_signable_ms += js_sys::Date::now() - started;
+        }
+    }
+    let sign_started = profile.as_ref().map(|_| js_sys::Date::now());
     let signature = sign_ed25519_with_key(&signing_key, &signable);
+    if let Some(started) = sign_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.sign_ms += js_sys::Date::now() - started;
+        }
+    }
     let signature_input = SignatureInput {
         signature: signature.clone(),
         public_key: public_key.to_vec(),
         prehash: 0,
     };
+    let encode_signature_started = profile.as_ref().map(|_| js_sys::Date::now());
     let signature_with_key = encode_signature_with_key(&signature_input);
+    if let Some(started) = encode_signature_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.encode_signature_ms += js_sys::Date::now() - started;
+        }
+    }
+    let encode_storage_started = profile.as_ref().map(|_| js_sys::Date::now());
     let storage =
         encode_entry_v0_parts_with_signature_bytes(&meta, &payload, Some(&signature_with_key));
+    if let Some(started) = encode_storage_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.encode_storage_ms += js_sys::Date::now() - started;
+        }
+    }
+    let cid_started = profile.as_ref().map(|_| js_sys::Date::now());
     let (cid, hash_digest) = calculate_raw_cid_v1_parts(&storage);
+    if let Some(started) = cid_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.cid_ms += js_sys::Date::now() - started;
+        }
+    }
 
+    let index_entry_started = profile.as_ref().map(|_| js_sys::Date::now());
     let entry = LogIndexEntry::new_with_data(
         cid.clone(),
         gid,
@@ -2238,6 +2395,11 @@ fn prepare_entry_v0_plain_entry_core_with_signer_parts(
         true,
         input.meta_data.clone(),
     );
+    if let Some(started) = index_entry_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.index_entry_ms += js_sys::Date::now() - started;
+        }
+    }
     Ok(PreparedPlainEntryCore {
         hash: cid,
         next,
@@ -2574,7 +2736,17 @@ fn encode_entry_v0_parts_with_signature_bytes(
     payload: &[u8],
     signature_with_key: Option<&[u8]>,
 ) -> Vec<u8> {
-    let mut out = Vec::new();
+    let signature_len = signature_with_key
+        .map(|signature_with_key| 1 + 4 + decrypted_thing_encoded_len(signature_with_key.len()))
+        .unwrap_or(0);
+    let mut out = Vec::with_capacity(
+        1 + decrypted_thing_encoded_len(meta.len())
+            + decrypted_thing_encoded_len(payload.len())
+            + 4
+            + 1
+            + signature_len
+            + 1,
+    );
     write_u8(&mut out, 0); // EntryV0 variant
     write_decrypted_thing(&mut out, meta);
     write_decrypted_thing(&mut out, payload);
@@ -2591,7 +2763,27 @@ fn encode_entry_v0_parts_with_signature_bytes(
 }
 
 fn encode_meta(input: &EntryV0EncodeInput) -> Vec<u8> {
-    let mut out = Vec::new();
+    let next_bytes = input.next.iter().map(|next| 4 + next.len()).sum::<usize>();
+    let meta_data_bytes = input
+        .meta_data
+        .as_ref()
+        .map(|data| 4 + data.len())
+        .unwrap_or(0);
+    let mut out = Vec::with_capacity(
+        1 + 1
+            + 4
+            + input.clock_id.len()
+            + 1
+            + 8
+            + 4
+            + 4
+            + input.gid.len()
+            + 4
+            + next_bytes
+            + 1
+            + 1
+            + meta_data_bytes,
+    );
     write_u8(&mut out, 0); // Meta variant
     write_clock(&mut out, &input.clock_id, input.wall_time, input.logical);
     write_string(&mut out, &input.gid);
@@ -2619,7 +2811,7 @@ fn write_clock(out: &mut Vec<u8>, clock_id: &[u8], wall_time: u64, logical: u32)
 }
 
 fn encode_payload(data: &[u8]) -> Vec<u8> {
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(1 + 4 + data.len());
     write_u8(&mut out, 0); // Payload variant
     write_bytes(&mut out, data);
     out
@@ -2632,13 +2824,17 @@ fn write_signatures_encoded(out: &mut Vec<u8>, signature_with_key: &[u8]) {
 }
 
 fn encode_signature_with_key(signature: &SignatureInput) -> Vec<u8> {
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(1 + 4 + signature.signature.len() + 1 + 32 + 1);
     write_u8(&mut out, 0); // SignatureWithKey variant
     write_bytes(&mut out, &signature.signature);
     write_u8(&mut out, 0); // Ed25519PublicKey variant
     out.extend_from_slice(&signature.public_key);
     write_u8(&mut out, signature.prehash);
     out
+}
+
+fn decrypted_thing_encoded_len(data_len: usize) -> usize {
+    2 + 4 + data_len
 }
 
 fn sign_ed25519_raw(

@@ -776,6 +776,9 @@ describe("native peerbit backbone", () => {
 		);
 		expect(source.coordinatePendingJournalLength).to.equal(3);
 		expect(source.coordinatePendingJournalByteLength).to.be.greaterThan(0);
+		expect(source.coordinatePendingJournalByteLength).to.equal(
+			source.coordinateJournal().byteLength,
+		);
 		const journal = concatBytes([
 			source.coordinateJournalHeader(),
 			source.drainCoordinateJournal(),

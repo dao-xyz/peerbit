@@ -117,6 +117,7 @@ const scenarioUsesTransformProjectContext = (name: string) =>
 const scenarioUsesTransformArbitrary = (name: string) =>
 	name.includes("-transform-arbitrary");
 const profileDeep = process.env.DOC_PROFILE_DEEP === "1";
+const profileNativeBackbone = process.env.DOC_NATIVE_PROFILE === "1";
 
 let currentSignerFieldBytes: Uint8Array | undefined;
 
@@ -219,6 +220,30 @@ type Profile = {
 	nativeBackbonePrepareStorageAppendWithNextMs: number;
 	nativeBackbonePrepareCommittedNoNextStorageAppendMs: number;
 	nativeBackbonePrepareCommittedStorageAppendMs: number;
+	nativeBackboneStorageAppendInnerMs: number;
+	nativeBackboneInputCopyMs: number;
+	nativeBackboneLogTotalMs: number;
+	nativeBackboneLogNextCloneMs: number;
+	nativeBackboneLogEntryCoreMs: number;
+	nativeBackboneLogEncodeMetaMs: number;
+	nativeBackboneLogEncodePayloadMs: number;
+	nativeBackboneLogEncodeSignableMs: number;
+	nativeBackboneLogSignMs: number;
+	nativeBackboneLogEncodeSignatureMs: number;
+	nativeBackboneLogEncodeStorageMs: number;
+	nativeBackboneLogCidMs: number;
+	nativeBackboneLogIndexEntryMs: number;
+	nativeBackboneLogFactsMs: number;
+	nativeBackboneLogBlockPutMs: number;
+	nativeBackboneLogGraphPutMs: number;
+	nativeBackboneLogTrimMs: number;
+	nativeBackboneEntryRowMs: number;
+	nativeBackboneTrimRowsMs: number;
+	nativeBackboneHashNumberMs: number;
+	nativeBackboneCoordinatePlanMs: number;
+	nativeBackboneCoordinateCoreMs: number;
+	nativeBackboneDocumentIndexCommitMs: number;
+	nativeBackboneResultRowMs: number;
 	nativeGraphPrepareEntryCommitMs: number;
 	nativeSharedLogCommitCoordinatesMs: number;
 	nativeBackboneCommitCoordinatesMs: number;
@@ -268,6 +293,30 @@ const deepProfileKeys = new Set<keyof Profile>([
 	"nativeBackbonePrepareStorageAppendWithNextMs",
 	"nativeBackbonePrepareCommittedNoNextStorageAppendMs",
 	"nativeBackbonePrepareCommittedStorageAppendMs",
+	"nativeBackboneStorageAppendInnerMs",
+	"nativeBackboneInputCopyMs",
+	"nativeBackboneLogTotalMs",
+	"nativeBackboneLogNextCloneMs",
+	"nativeBackboneLogEntryCoreMs",
+	"nativeBackboneLogEncodeMetaMs",
+	"nativeBackboneLogEncodePayloadMs",
+	"nativeBackboneLogEncodeSignableMs",
+	"nativeBackboneLogSignMs",
+	"nativeBackboneLogEncodeSignatureMs",
+	"nativeBackboneLogEncodeStorageMs",
+	"nativeBackboneLogCidMs",
+	"nativeBackboneLogIndexEntryMs",
+	"nativeBackboneLogFactsMs",
+	"nativeBackboneLogBlockPutMs",
+	"nativeBackboneLogGraphPutMs",
+	"nativeBackboneLogTrimMs",
+	"nativeBackboneEntryRowMs",
+	"nativeBackboneTrimRowsMs",
+	"nativeBackboneHashNumberMs",
+	"nativeBackboneCoordinatePlanMs",
+	"nativeBackboneCoordinateCoreMs",
+	"nativeBackboneDocumentIndexCommitMs",
+	"nativeBackboneResultRowMs",
 	"nativeGraphPrepareEntryCommitMs",
 	"nativeSharedLogCommitCoordinatesMs",
 	"nativeBackboneCommitCoordinatesMs",
@@ -282,6 +331,41 @@ const deepProfileKeys = new Set<keyof Profile>([
 	"remoteBlockPutKnownMs",
 	"remoteBlockNotifyStoredMs",
 ]);
+
+const nativeBackboneProfileKeys = new Set<keyof Profile>([
+	"nativeBackboneStorageAppendInnerMs",
+	"nativeBackboneInputCopyMs",
+	"nativeBackboneLogTotalMs",
+	"nativeBackboneLogNextCloneMs",
+	"nativeBackboneLogEntryCoreMs",
+	"nativeBackboneLogEncodeMetaMs",
+	"nativeBackboneLogEncodePayloadMs",
+	"nativeBackboneLogEncodeSignableMs",
+	"nativeBackboneLogSignMs",
+	"nativeBackboneLogEncodeSignatureMs",
+	"nativeBackboneLogEncodeStorageMs",
+	"nativeBackboneLogCidMs",
+	"nativeBackboneLogIndexEntryMs",
+	"nativeBackboneLogFactsMs",
+	"nativeBackboneLogBlockPutMs",
+	"nativeBackboneLogGraphPutMs",
+	"nativeBackboneLogTrimMs",
+	"nativeBackboneEntryRowMs",
+	"nativeBackboneTrimRowsMs",
+	"nativeBackboneHashNumberMs",
+	"nativeBackboneCoordinatePlanMs",
+	"nativeBackboneCoordinateCoreMs",
+	"nativeBackboneDocumentIndexCommitMs",
+	"nativeBackboneResultRowMs",
+]);
+
+const shouldIncludeProfileKey = (key: string): boolean => {
+	const profileKey = key as keyof Profile;
+	return (
+		(profileDeep || !deepProfileKeys.has(profileKey)) &&
+		(profileNativeBackbone || !nativeBackboneProfileKeys.has(profileKey))
+	);
+};
 
 const emptyProfile = (): Profile => ({
 	serializeMs: 0,
@@ -307,6 +391,30 @@ const emptyProfile = (): Profile => ({
 	nativeBackbonePrepareStorageAppendWithNextMs: 0,
 	nativeBackbonePrepareCommittedNoNextStorageAppendMs: 0,
 	nativeBackbonePrepareCommittedStorageAppendMs: 0,
+	nativeBackboneStorageAppendInnerMs: 0,
+	nativeBackboneInputCopyMs: 0,
+	nativeBackboneLogTotalMs: 0,
+	nativeBackboneLogNextCloneMs: 0,
+	nativeBackboneLogEntryCoreMs: 0,
+	nativeBackboneLogEncodeMetaMs: 0,
+	nativeBackboneLogEncodePayloadMs: 0,
+	nativeBackboneLogEncodeSignableMs: 0,
+	nativeBackboneLogSignMs: 0,
+	nativeBackboneLogEncodeSignatureMs: 0,
+	nativeBackboneLogEncodeStorageMs: 0,
+	nativeBackboneLogCidMs: 0,
+	nativeBackboneLogIndexEntryMs: 0,
+	nativeBackboneLogFactsMs: 0,
+	nativeBackboneLogBlockPutMs: 0,
+	nativeBackboneLogGraphPutMs: 0,
+	nativeBackboneLogTrimMs: 0,
+	nativeBackboneEntryRowMs: 0,
+	nativeBackboneTrimRowsMs: 0,
+	nativeBackboneHashNumberMs: 0,
+	nativeBackboneCoordinatePlanMs: 0,
+	nativeBackboneCoordinateCoreMs: 0,
+	nativeBackboneDocumentIndexCommitMs: 0,
+	nativeBackboneResultRowMs: 0,
 	nativeGraphPrepareEntryCommitMs: 0,
 	nativeSharedLogCommitCoordinatesMs: 0,
 	nativeBackboneCommitCoordinatesMs: 0,
@@ -1136,6 +1244,12 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 			);
 		}
 
+		const nativeBackbone = (store.docs.log as any)._nativeBackbone;
+		if (profileNativeBackbone && nativeBackbone?.setAppendProfileEnabled) {
+			nativeBackbone.resetAppendProfile?.();
+			nativeBackbone.setAppendProfileEnabled(true);
+		}
+
 		const serializeStarted = performance.now();
 		for (let i = 0; i < iterations; i++) {
 			serialize(createDocument());
@@ -1144,7 +1258,11 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 
 		try {
 			await runPuts(store, iterations, name, profile);
+			if (profileNativeBackbone && nativeBackbone?.appendProfile) {
+				Object.assign(profile, nativeBackbone.appendProfile());
+			}
 		} finally {
+			nativeBackbone?.setAppendProfileEnabled?.(false);
 			for (const restore of restores.reverse()) {
 				restore();
 			}
@@ -1158,10 +1276,7 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 			cleanupMs: 0,
 			...Object.fromEntries(
 				Object.entries(profile)
-					.filter(
-						([key]) =>
-							profileDeep || !deepProfileKeys.has(key as keyof Profile),
-					)
+					.filter(([key]) => shouldIncludeProfileKey(key))
 					.map(([key, value]) => [key, Math.round(value * 100) / 100]),
 			),
 		} as BenchRow;
@@ -1287,10 +1402,7 @@ const runNativeCeilingScenario = async (name: string): Promise<BenchRow> => {
 			cleanupMs: 0,
 			...Object.fromEntries(
 				Object.entries(profile)
-					.filter(
-						([key]) =>
-							profileDeep || !deepProfileKeys.has(key as keyof Profile),
-					)
+					.filter(([key]) => shouldIncludeProfileKey(key))
 					.map(([key, value]) => [key, Math.round(value * 100) / 100]),
 			),
 		} as BenchRow;
@@ -1365,9 +1477,7 @@ const runNativeBackboneCeilingScenario = async (
 		cleanupMs: 0,
 		...Object.fromEntries(
 			Object.entries(profile)
-				.filter(
-					([key]) => profileDeep || !deepProfileKeys.has(key as keyof Profile),
-				)
+				.filter(([key]) => shouldIncludeProfileKey(key))
 				.map(([key, value]) => [key, Math.round(value * 100) / 100]),
 		),
 	} as BenchRow;
@@ -1397,6 +1507,7 @@ if (process.env.BENCH_JSON === "1") {
 					warmupIterations,
 					iterations,
 					profileDeep,
+					profileNativeBackbone,
 					coordinateWalFlushBytes,
 					coordinateWalFlushIntervalMs,
 				},

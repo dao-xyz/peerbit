@@ -1,8 +1,8 @@
 use js_sys::{Array, Uint8Array};
 use peerbit_indexer_core::codec::{decode_query, decode_sort};
 use peerbit_indexer_core::persistence::{
-    decode_journal, decode_key_value_snapshot, encode_journal_payload, encode_journal_record,
-    encode_journal_records, encode_key_value_snapshot, JournalRecord, JOURNAL_MAGIC,
+    decode_journal, decode_key_value_snapshot, encode_journal_records, encode_key_value_snapshot,
+    JournalOperation, JournalRecord, JOURNAL_MAGIC,
 };
 use peerbit_indexer_core::planner::{
     DocumentFields, FieldPath, FieldValue, NativeQueryIndex, SumResult,
@@ -12,8 +12,8 @@ use peerbit_indexer_core::schema::{
 };
 use peerbit_indexer_core::storage::{ByteStorage, MemoryByteStorage};
 use peerbit_log_rust::{
-    LogIndexEntry, NativeCommittedEntryFacts, NativeEntryV0PlainBuilder, NativeLogBlockStore,
-    NativeLogIndex,
+    LogIndexEntry, NativeCommittedEntryFacts, NativeEntryV0PlainBuilder, NativeLogAppendProfile,
+    NativeLogBlockStore, NativeLogIndex,
 };
 use peerbit_shared_log_rust::{
     commit_local_append_for_gid_compact_core, NativeLocalAppendCompactFacts, NativeSharedLogState,
@@ -43,6 +43,8 @@ pub struct NativePeerbitBackbone {
     document_values: MemoryByteStorage,
     document_schema_ir: Option<NativeSchemaIr>,
     builder: NativeEntryV0PlainBuilder,
+    append_profile_enabled: bool,
+    append_profile: NativeBackboneAppendProfile,
 }
 
 struct DocumentIndexAppendCommit {
@@ -50,6 +52,82 @@ struct DocumentIndexAppendCommit {
     value_prefix_bytes: Vec<u8>,
     existing_created: Option<u64>,
     byte_element_index_limit: usize,
+}
+
+#[derive(Clone, Default)]
+struct NativeBackboneAppendProfile {
+    storage_append_inner_ms: f64,
+    input_copy_ms: f64,
+    log_total_ms: f64,
+    log_next_clone_ms: f64,
+    log_entry_core_ms: f64,
+    log_encode_meta_ms: f64,
+    log_encode_payload_ms: f64,
+    log_encode_signable_ms: f64,
+    log_sign_ms: f64,
+    log_encode_signature_ms: f64,
+    log_encode_storage_ms: f64,
+    log_cid_ms: f64,
+    log_index_entry_ms: f64,
+    log_facts_ms: f64,
+    log_block_put_ms: f64,
+    log_graph_put_ms: f64,
+    log_trim_ms: f64,
+    entry_row_ms: f64,
+    trim_rows_ms: f64,
+    hash_number_ms: f64,
+    coordinate_plan_ms: f64,
+    coordinate_core_ms: f64,
+    document_index_commit_ms: f64,
+    result_row_ms: f64,
+}
+
+impl NativeBackboneAppendProfile {
+    fn add_log_profile(&mut self, profile: &NativeLogAppendProfile) {
+        self.log_next_clone_ms += profile.next_clone_ms;
+        self.log_entry_core_ms += profile.entry_core_ms;
+        self.log_encode_meta_ms += profile.encode_meta_ms;
+        self.log_encode_payload_ms += profile.encode_payload_ms;
+        self.log_encode_signable_ms += profile.encode_signable_ms;
+        self.log_sign_ms += profile.sign_ms;
+        self.log_encode_signature_ms += profile.encode_signature_ms;
+        self.log_encode_storage_ms += profile.encode_storage_ms;
+        self.log_cid_ms += profile.cid_ms;
+        self.log_index_entry_ms += profile.index_entry_ms;
+        self.log_facts_ms += profile.facts_ms;
+        self.log_block_put_ms += profile.block_put_ms;
+        self.log_graph_put_ms += profile.graph_put_ms;
+        self.log_trim_ms += profile.trim_ms;
+    }
+
+    fn to_row(&self) -> Array {
+        let row = Array::new();
+        row.push(&JsValue::from_f64(self.storage_append_inner_ms));
+        row.push(&JsValue::from_f64(self.input_copy_ms));
+        row.push(&JsValue::from_f64(self.log_total_ms));
+        row.push(&JsValue::from_f64(self.log_next_clone_ms));
+        row.push(&JsValue::from_f64(self.log_entry_core_ms));
+        row.push(&JsValue::from_f64(self.log_encode_meta_ms));
+        row.push(&JsValue::from_f64(self.log_encode_payload_ms));
+        row.push(&JsValue::from_f64(self.log_encode_signable_ms));
+        row.push(&JsValue::from_f64(self.log_sign_ms));
+        row.push(&JsValue::from_f64(self.log_encode_signature_ms));
+        row.push(&JsValue::from_f64(self.log_encode_storage_ms));
+        row.push(&JsValue::from_f64(self.log_cid_ms));
+        row.push(&JsValue::from_f64(self.log_index_entry_ms));
+        row.push(&JsValue::from_f64(self.log_facts_ms));
+        row.push(&JsValue::from_f64(self.log_block_put_ms));
+        row.push(&JsValue::from_f64(self.log_graph_put_ms));
+        row.push(&JsValue::from_f64(self.log_trim_ms));
+        row.push(&JsValue::from_f64(self.entry_row_ms));
+        row.push(&JsValue::from_f64(self.trim_rows_ms));
+        row.push(&JsValue::from_f64(self.hash_number_ms));
+        row.push(&JsValue::from_f64(self.coordinate_plan_ms));
+        row.push(&JsValue::from_f64(self.coordinate_core_ms));
+        row.push(&JsValue::from_f64(self.document_index_commit_ms));
+        row.push(&JsValue::from_f64(self.result_row_ms));
+        row
+    }
 }
 
 #[wasm_bindgen]
@@ -78,7 +156,21 @@ impl NativePeerbitBackbone {
             document_values: MemoryByteStorage::new(),
             document_schema_ir: None,
             builder: NativeEntryV0PlainBuilder::new(clock_id, private_key, public_key)?,
+            append_profile_enabled: false,
+            append_profile: NativeBackboneAppendProfile::default(),
         })
+    }
+
+    pub fn set_append_profile_enabled(&mut self, enabled: bool) {
+        self.append_profile_enabled = enabled;
+    }
+
+    pub fn reset_append_profile(&mut self) {
+        self.append_profile = NativeBackboneAppendProfile::default();
+    }
+
+    pub fn append_profile(&self) -> Array {
+        self.append_profile.to_row()
     }
 
     pub fn log_len(&self) -> usize {
@@ -1943,7 +2035,7 @@ impl NativePeerbitBackbone {
             wall_time,
             &meta_bytes,
         );
-        let journal_record = if record_journal {
+        let journal_record = if record_journal && self.coordinate_journal_enabled {
             Some(JournalRecord::put(hash.clone(), value.clone()))
         } else {
             None
@@ -1966,8 +2058,7 @@ impl NativePeerbitBackbone {
     }
 
     fn push_coordinate_journal_record(&mut self, record: JournalRecord) {
-        self.coordinate_journal_byte_len +=
-            encode_journal_record(&encode_journal_payload(&record)).len();
+        self.coordinate_journal_byte_len += encoded_journal_record_len(&record);
         self.coordinate_journal.push(record);
     }
 
@@ -2106,11 +2197,21 @@ impl NativePeerbitBackbone {
         commit_blocks: bool,
         document_index_commit: Option<DocumentIndexAppendCommit>,
     ) -> Result<Array, JsValue> {
+        let profile_enabled = self.append_profile_enabled;
+        let storage_append_started = profile_enabled.then(js_sys::Date::now);
         let payload_size = payload_data.length();
         let (entry_row, trim_rows, trim_hashes, hash, digest, meta_bytes) = if commit_blocks {
+            let input_copy_started = profile_enabled.then(js_sys::Date::now);
+            let meta_data = optional_bytes_from_js(meta_data);
+            let payload_data = payload_data.to_vec();
+            if let Some(started) = input_copy_started {
+                self.append_profile.input_copy_ms += js_sys::Date::now() - started;
+            }
+            let log_started = profile_enabled.then(js_sys::Date::now);
+            let mut log_profile = NativeLogAppendProfile::default();
             let (entry_facts, trimmed_entries) = self
                 .log
-                .prepare_entry_v0_plain_entry_commit_facts_core_and_put_with_builder(
+                .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder(
                     &self.builder,
                     &mut self.blocks,
                     wall_time,
@@ -2118,16 +2219,29 @@ impl NativePeerbitBackbone {
                     gid.clone(),
                     next_hashes.clone(),
                     entry_type,
-                    optional_bytes_from_js(meta_data),
-                    payload_data.to_vec(),
+                    meta_data,
+                    payload_data,
                     trim_length_to,
+                    profile_enabled.then_some(&mut log_profile),
                 )?;
+            if let Some(started) = log_started {
+                self.append_profile.log_total_ms += js_sys::Date::now() - started;
+                self.append_profile.add_log_profile(&log_profile);
+            }
             let trim_hashes = trimmed_entries
                 .iter()
                 .map(|entry| entry.hash.clone())
                 .collect::<Vec<_>>();
+            let entry_row_started = profile_enabled.then(js_sys::Date::now);
             let entry_row = committed_entry_facts_to_row(&entry_facts);
+            if let Some(started) = entry_row_started {
+                self.append_profile.entry_row_ms += js_sys::Date::now() - started;
+            }
+            let trim_rows_started = profile_enabled.then(js_sys::Date::now);
             let trim_rows = native_backbone_trim_entries_to_rows(trimmed_entries);
+            if let Some(started) = trim_rows_started {
+                self.append_profile.trim_rows_ms += js_sys::Date::now() - started;
+            }
             (
                 entry_row,
                 trim_rows,
@@ -2179,11 +2293,16 @@ impl NativePeerbitBackbone {
             (row, Array::new(), Vec::new(), hash, digest, meta_bytes)
         };
 
+        let hash_number_started = profile_enabled.then(js_sys::Date::now);
         let hash_number = hash_number_u64(&self.resolution, &digest)?;
+        if let Some(started) = hash_number_started {
+            self.append_profile.hash_number_ms += js_sys::Date::now() - started;
+        }
         let next_hashes_for_core = next_hashes.clone();
         let trim_hashes_for_core = trim_hashes.clone();
         let document_hash = hash.clone();
         let document_gid = gid.clone();
+        let coordinate_plan_started = profile_enabled.then(js_sys::Date::now);
         let coordinate_facts = commit_local_append_for_gid_compact_core(
             &mut self.shared_log,
             hash,
@@ -2199,6 +2318,10 @@ impl NativePeerbitBackbone {
             true,
             true,
         )?;
+        if let Some(started) = coordinate_plan_started {
+            self.append_profile.coordinate_plan_ms += js_sys::Date::now() - started;
+        }
+        let coordinate_core_started = profile_enabled.then(js_sys::Date::now);
         self.commit_coordinate_core_from_compact_facts(
             &coordinate_facts,
             next_hashes_for_core,
@@ -2206,6 +2329,10 @@ impl NativePeerbitBackbone {
             wall_time,
             meta_bytes,
         );
+        if let Some(started) = coordinate_core_started {
+            self.append_profile.coordinate_core_ms += js_sys::Date::now() - started;
+        }
+        let document_index_started = profile_enabled.then(js_sys::Date::now);
         self.put_document_index_for_append(
             document_index_commit,
             wall_time,
@@ -2213,7 +2340,11 @@ impl NativePeerbitBackbone {
             &document_gid,
             payload_size,
         )?;
+        if let Some(started) = document_index_started {
+            self.append_profile.document_index_commit_ms += js_sys::Date::now() - started;
+        }
 
+        let result_row_started = profile_enabled.then(js_sys::Date::now);
         let out = Array::new();
         out.push(&entry_row);
         out.push(&leader_samples_to_optional_rows(&coordinate_facts.leaders));
@@ -2223,6 +2354,12 @@ impl NativePeerbitBackbone {
         ));
         out.push(&coordinate_plan_to_row(&self.resolution, &coordinate_facts));
         out.push(&trim_rows);
+        if let Some(started) = result_row_started {
+            self.append_profile.result_row_ms += js_sys::Date::now() - started;
+        }
+        if let Some(started) = storage_append_started {
+            self.append_profile.storage_append_inner_ms += js_sys::Date::now() - started;
+        }
         Ok(out)
     }
 
@@ -2343,6 +2480,17 @@ fn trim_hashes_vec(trim_rows: &Array) -> Result<Vec<String>, JsValue> {
         hashes.push(string_field(&row, 0, "trim hash")?);
     }
     Ok(hashes)
+}
+
+fn encoded_journal_record_len(record: &JournalRecord) -> usize {
+    let payload_len = 1
+        + 4
+        + record.key.len()
+        + match record.operation {
+            JournalOperation::Put => 4 + record.value.as_ref().map(Vec::len).unwrap_or(0),
+            JournalOperation::Delete => 0,
+        };
+    8 + payload_len
 }
 
 fn leader_samples_to_optional_rows(

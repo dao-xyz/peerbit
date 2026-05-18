@@ -15,6 +15,9 @@ type NativePeerbitBackboneHandle = {
 	configure_document_schema_ir: (
 		schemaIr: Uint8Array,
 	) => [number, number, number];
+	set_append_profile_enabled: (enabled: boolean) => void;
+	reset_append_profile: () => void;
+	append_profile: () => number[];
 	document_index_len: () => number;
 	document_value_len: () => number;
 	document_exact_string_first_key: (
@@ -801,6 +804,60 @@ export type NativeBackboneDocumentSchemaStats = {
 	nodeCount: number;
 	genericNodes: number;
 };
+
+export type NativeBackboneAppendProfile = {
+	nativeBackboneStorageAppendInnerMs: number;
+	nativeBackboneInputCopyMs: number;
+	nativeBackboneLogTotalMs: number;
+	nativeBackboneLogNextCloneMs: number;
+	nativeBackboneLogEntryCoreMs: number;
+	nativeBackboneLogEncodeMetaMs: number;
+	nativeBackboneLogEncodePayloadMs: number;
+	nativeBackboneLogEncodeSignableMs: number;
+	nativeBackboneLogSignMs: number;
+	nativeBackboneLogEncodeSignatureMs: number;
+	nativeBackboneLogEncodeStorageMs: number;
+	nativeBackboneLogCidMs: number;
+	nativeBackboneLogIndexEntryMs: number;
+	nativeBackboneLogFactsMs: number;
+	nativeBackboneLogBlockPutMs: number;
+	nativeBackboneLogGraphPutMs: number;
+	nativeBackboneLogTrimMs: number;
+	nativeBackboneEntryRowMs: number;
+	nativeBackboneTrimRowsMs: number;
+	nativeBackboneHashNumberMs: number;
+	nativeBackboneCoordinatePlanMs: number;
+	nativeBackboneCoordinateCoreMs: number;
+	nativeBackboneDocumentIndexCommitMs: number;
+	nativeBackboneResultRowMs: number;
+};
+
+const nativeBackboneAppendProfileKeys = [
+	"nativeBackboneStorageAppendInnerMs",
+	"nativeBackboneInputCopyMs",
+	"nativeBackboneLogTotalMs",
+	"nativeBackboneLogNextCloneMs",
+	"nativeBackboneLogEntryCoreMs",
+	"nativeBackboneLogEncodeMetaMs",
+	"nativeBackboneLogEncodePayloadMs",
+	"nativeBackboneLogEncodeSignableMs",
+	"nativeBackboneLogSignMs",
+	"nativeBackboneLogEncodeSignatureMs",
+	"nativeBackboneLogEncodeStorageMs",
+	"nativeBackboneLogCidMs",
+	"nativeBackboneLogIndexEntryMs",
+	"nativeBackboneLogFactsMs",
+	"nativeBackboneLogBlockPutMs",
+	"nativeBackboneLogGraphPutMs",
+	"nativeBackboneLogTrimMs",
+	"nativeBackboneEntryRowMs",
+	"nativeBackboneTrimRowsMs",
+	"nativeBackboneHashNumberMs",
+	"nativeBackboneCoordinatePlanMs",
+	"nativeBackboneCoordinateCoreMs",
+	"nativeBackboneDocumentIndexCommitMs",
+	"nativeBackboneResultRowMs",
+] as const satisfies readonly (keyof NativeBackboneAppendProfile)[];
 
 export type NativeBackboneDocumentEntry = [key: string, value: Uint8Array];
 
@@ -1861,6 +1918,24 @@ export class NativePeerbitBackbone {
 		const [rootFields, nodeCount, genericNodes] =
 			this.native.configure_document_schema_ir(schemaIr);
 		return { rootFields, nodeCount, genericNodes };
+	}
+
+	setAppendProfileEnabled(enabled: boolean): void {
+		this.native.set_append_profile_enabled(enabled);
+	}
+
+	resetAppendProfile(): void {
+		this.native.reset_append_profile();
+	}
+
+	appendProfile(): NativeBackboneAppendProfile {
+		const row = this.native.append_profile();
+		return Object.fromEntries(
+			nativeBackboneAppendProfileKeys.map((key, index) => [
+				key,
+				Number(row[index] ?? 0),
+			]),
+		) as NativeBackboneAppendProfile;
 	}
 
 	get documentIndexLength(): number {
