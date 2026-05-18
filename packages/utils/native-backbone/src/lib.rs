@@ -4,9 +4,7 @@ use peerbit_indexer_core::persistence::{
     decode_journal, decode_key_value_snapshot, encode_journal_delete_record,
     encode_journal_put_record, encode_key_value_snapshot, JournalRecord, JOURNAL_MAGIC,
 };
-use peerbit_indexer_core::planner::{
-    DocumentFields, FieldPath, FieldValue, NativeQueryIndex, SumResult,
-};
+use peerbit_indexer_core::planner::{FieldPath, FieldValue, NativeQueryIndex, SumResult};
 use peerbit_indexer_core::schema::{
     decode_native_schema_ir, extract_encoded_document_fields_from_parts, NativeSchemaIr,
 };
@@ -18,15 +16,9 @@ use peerbit_log_rust::{
 use peerbit_shared_log_rust::{
     commit_local_append_for_gid_compact_core, NativeLocalAppendCompactFacts, NativeSharedLogState,
 };
+use std::collections::HashSet;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-
-const COORD_HASH_FIELD: u32 = 1;
-const COORD_GID_FIELD: u32 = 2;
-const COORD_HASH_NUMBER_FIELD: u32 = 3;
-const COORD_COORDINATE_FIELD: u32 = 4;
-const COORD_ASSIGNED_TO_RANGE_BOUNDARY_FIELD: u32 = 5;
-const COORD_REQUESTED_REPLICAS_FIELD: u32 = 6;
 
 #[wasm_bindgen]
 pub struct NativePeerbitBackbone {
@@ -34,7 +26,7 @@ pub struct NativePeerbitBackbone {
     log: NativeLogIndex,
     blocks: NativeLogBlockStore,
     shared_log: NativeSharedLogState,
-    coordinate_index: NativeQueryIndex,
+    coordinate_index: HashSet<String>,
     coordinate_values: MemoryByteStorage,
     coordinate_journal: Vec<u8>,
     coordinate_journal_record_count: usize,
@@ -169,7 +161,7 @@ impl NativePeerbitBackbone {
             log: NativeLogIndex::new(),
             blocks: NativeLogBlockStore::new(),
             shared_log: NativeSharedLogState::new(resolution),
-            coordinate_index: NativeQueryIndex::new(),
+            coordinate_index: HashSet::new(),
             coordinate_values: MemoryByteStorage::new(),
             coordinate_journal: Vec::new(),
             coordinate_journal_record_count: 0,
@@ -333,12 +325,7 @@ impl NativePeerbitBackbone {
     }
 
     pub fn coordinate_index_has_hash(&self, hash: &str) -> bool {
-        self.coordinate_index
-            .exact_first(
-                &FieldPath::Id(COORD_HASH_FIELD),
-                &FieldValue::String(hash.to_string()),
-            )
-            .is_some_and(|id| id == hash)
+        self.coordinate_index.contains(hash)
     }
 
     pub fn configure_document_schema_ir(
@@ -2427,26 +2414,6 @@ impl NativePeerbitBackbone {
         record_journal: bool,
     ) {
         let profile_enabled = self.append_profile_enabled;
-        let fields_started = profile_enabled.then(js_sys::Date::now);
-        let mut fields = DocumentFields::with_scalar_capacity(6 + coordinates.len());
-        fields.insert_scalar(FieldPath::Id(COORD_HASH_FIELD), hash.clone());
-        fields.insert_scalar(FieldPath::Id(COORD_GID_FIELD), gid.clone());
-        fields.insert_scalar(FieldPath::Id(COORD_HASH_NUMBER_FIELD), hash_number);
-        for coordinate in &coordinates {
-            fields.insert_scalar(FieldPath::Id(COORD_COORDINATE_FIELD), *coordinate);
-        }
-        fields.insert_scalar(
-            FieldPath::Id(COORD_ASSIGNED_TO_RANGE_BOUNDARY_FIELD),
-            assigned_to_range_boundary,
-        );
-        fields.insert_scalar(
-            FieldPath::Id(COORD_REQUESTED_REPLICAS_FIELD),
-            requested_replicas as u64,
-        );
-        if let Some(started) = fields_started {
-            self.append_profile.coordinate_fields_build_ms += js_sys::Date::now() - started;
-        }
-
         let value_encode_started = profile_enabled.then(js_sys::Date::now);
         let value = encode_coordinate_value(
             &hash,
@@ -2469,7 +2436,7 @@ impl NativePeerbitBackbone {
             }
         }
         let index_put_started = profile_enabled.then(js_sys::Date::now);
-        self.coordinate_index.put(hash.clone(), fields);
+        self.coordinate_index.insert(hash.clone());
         if let Some(started) = index_put_started {
             self.append_profile.coordinate_index_put_ms += js_sys::Date::now() - started;
         }
@@ -2481,7 +2448,7 @@ impl NativePeerbitBackbone {
     }
 
     fn delete_coordinate_core(&mut self, hash: &str) -> bool {
-        self.coordinate_index.delete_id(hash);
+        self.coordinate_index.remove(hash);
         if self.coordinate_journal_enabled {
             self.push_coordinate_journal_delete(hash);
         }
