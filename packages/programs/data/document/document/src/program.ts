@@ -1203,6 +1203,10 @@ export class Documents<
 				? [indexedContextNext]
 				: [await this._resolveEntry(existingHead)]
 			: [];
+		const canCleanupTrimmedHeads =
+			this.hasDocumentChangeConsumers()
+				? this._index.canGetIdentityIndexedByHead()
+				: this._index.canGetIndexedKeyByHead();
 		return {
 			document: prepared.document,
 			encodedDocument: prepared.encodedDocument,
@@ -1215,7 +1219,7 @@ export class Documents<
 			operation: "operation" in prepared ? prepared.operation : undefined,
 			next,
 			skipMissingNextJoin: !options?.checkRemote,
-			resolveTrimmedEntries: !this._index.canGetIdentityIndexedByHead(),
+			resolveTrimmedEntries: !canCleanupTrimmedHeads,
 			useGenericChangeHandler:
 				!options?.unique && existingLocalContext === undefined,
 			unique: options?.unique,

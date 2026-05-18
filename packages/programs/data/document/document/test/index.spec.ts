@@ -1551,6 +1551,7 @@ describe("index", () => {
 						replicate: { factor: 1 },
 						nativeGraph: true,
 						nativeBackbone: { optional: false, documentIndex: true },
+						log: { trim: { type: "length", to: 100 } },
 						index: {
 							type: BackboneProjectContextIndexable,
 							transform: transform.project<

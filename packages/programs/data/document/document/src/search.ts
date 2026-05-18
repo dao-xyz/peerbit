@@ -2181,6 +2181,14 @@ export class DocumentIndex<
 		);
 	}
 
+	public canGetIndexedKeyByHead(): boolean {
+		return (
+			!this.isProgramValued &&
+			typeof (this.index as ContextHeadIndex<I>).getIdByContextHead ===
+				"function"
+		);
+	}
+
 	public _putIdentityWithContext(
 		value: T,
 		id: indexerTypes.IdKey,
