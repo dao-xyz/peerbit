@@ -474,7 +474,7 @@ impl NativePeerbitBackbone {
     }
 
     pub fn delete_document(&mut self, key: &str) -> bool {
-        self.document_index.delete(key.to_string());
+        self.document_index.delete_id(key);
         self.document_values.delete(key)
     }
 
@@ -2481,7 +2481,7 @@ impl NativePeerbitBackbone {
     }
 
     fn delete_coordinate_core(&mut self, hash: &str) -> bool {
-        self.coordinate_index.delete(hash.to_string());
+        self.coordinate_index.delete_id(hash);
         if self.coordinate_journal_enabled {
             self.push_coordinate_journal_delete(hash);
         }

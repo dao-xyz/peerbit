@@ -338,7 +338,12 @@ impl NativeQueryIndex {
     }
 
     pub fn delete(&mut self, id: impl Into<String>) {
-        if self.remove_external(&id.into()) {
+        let external_id = id.into();
+        self.delete_id(&external_id);
+    }
+
+    pub fn delete_id(&mut self, external_id: &str) {
+        if self.remove_external(external_id) {
             self.generation += 1;
         }
     }
