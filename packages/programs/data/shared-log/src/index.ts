@@ -10860,7 +10860,8 @@ export class SharedLog<
 	private canPlanNativeEntryLeaderBatch(
 		items: EntryLeaderBatchItem<R>[],
 	): boolean {
-		if (!this._nativeRangePlanner || items.length === 0) {
+		const nativePlanner = this._nativeBackbone ?? this._nativeRangePlanner;
+		if (!nativePlanner || items.length === 0) {
 			return false;
 		}
 
@@ -11004,10 +11005,11 @@ export class SharedLog<
 		}
 
 		if (this.canPlanNativeEntryLeaderBatch(itemArray)) {
+			const nativePlanner = this._nativeBackbone ?? this._nativeRangePlanner;
 			const context = await this.createLeaderSelectionContext(
 				firstItem.options,
 			);
-			const nativePlans = this._nativeRangePlanner!.planLeadersForGidsBatch(
+			const nativePlans = nativePlanner!.planLeadersForGidsBatch(
 				itemArray.map((item) => ({
 					gid: item.entry.meta.gid as string,
 					replicas: item.replicas,

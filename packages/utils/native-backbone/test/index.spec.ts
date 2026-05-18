@@ -782,6 +782,23 @@ describe("native peerbit backbone", () => {
 			},
 		);
 		expect(leaderPlan.coordinates).to.have.length(1);
+		const [batchLeaderPlan] = backbone.planLeadersForGidsBatch(
+			[
+				{
+					gid: "gid-storage-committed-no-next",
+					replicas: 1,
+				},
+			],
+			{
+				selfHash: "peer-a",
+				selfReplicating: true,
+				fullReplicaFallback: true,
+			},
+		);
+		expect(batchLeaderPlan?.coordinates).to.deep.equal(
+			leaderPlan.coordinates,
+		);
+		expect(batchLeaderPlan?.leaders).to.deep.equal(leaderPlan.leaders);
 		const assignmentPlan = backbone.planEntryAssignmentForGid(
 			"gid-storage-committed-no-next",
 			1,

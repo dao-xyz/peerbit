@@ -195,6 +195,18 @@ type NativePeerbitBackboneHandle = {
 		fullReplicaFallback: boolean,
 		includeStrictFullReplica: boolean,
 	) => [unknown[], unknown[]];
+	plan_leaders_for_gids_batch: (
+		gids: string[],
+		replicaCounts: number[],
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => Array<[unknown[], unknown[]]>;
 	plan_entry_assignment_for_gid: (
 		gid: string,
 		replicas: number,
@@ -826,6 +838,11 @@ export type NativeBackboneCoordinateFields = NativeBackboneCoordinatePlan & {
 export type NativeBackboneLeaderPlan = {
 	coordinates: Array<number | bigint>;
 	leaders: Map<string, NativeBackboneLeaderSample>;
+};
+
+export type NativeBackboneLeaderGidBatchInput = {
+	gid: string;
+	replicas: number;
 };
 
 export type NativeBackboneEntryAssignmentPlan = NativeBackboneLeaderPlan & {
@@ -2485,6 +2502,22 @@ export class NativePeerbitBackbone {
 			coordinates: rowsToNumbers(this.resolution, coordinateRows),
 			leaders: rowsToSamples(leaderRows) ?? new Map(),
 		};
+	}
+
+	planLeadersForGidsBatch(
+		items: Iterable<NativeBackboneLeaderGidBatchInput>,
+		options?: NativeBackboneFindLeaderOptions,
+	): NativeBackboneLeaderPlan[] {
+		const entries = [...items];
+		const rows = this.native.plan_leaders_for_gids_batch(
+			entries.map((entry) => entry.gid),
+			entries.map((entry) => entry.replicas),
+			...findLeaderArguments(options),
+		);
+		return rows.map(([coordinateRows, leaderRows]) => ({
+			coordinates: rowsToNumbers(this.resolution, coordinateRows),
+			leaders: rowsToSamples(leaderRows) ?? new Map(),
+		}));
 	}
 
 	planEntryAssignmentForGid(
