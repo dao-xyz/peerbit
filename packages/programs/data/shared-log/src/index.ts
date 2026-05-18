@@ -4897,7 +4897,8 @@ export class SharedLog<
 			options?.target !== "none" ||
 			options?.replicate === true ||
 			(!this.shouldDeferHeadCoordinatePersistence(options) &&
-				!this._nativeSharedLogState)
+				!this._nativeSharedLogState &&
+				!this.canUseNativeBackboneResidentCoordinateState())
 		) {
 			return undefined;
 		}
@@ -5125,7 +5126,7 @@ export class SharedLog<
 		runtimeOnlyCoordinates: boolean,
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
 		const backbone = this._nativeBackbone;
-		if (!backbone || !this._nativeSharedLogState) {
+		if (!backbone || !this.canUseNativeBackboneResidentCoordinateState()) {
 			return undefined;
 		}
 		return mapMaybePromise(this.createLeaderSelectionContext(), (context) => {
@@ -10551,7 +10552,6 @@ export class SharedLog<
 	private canUseNativeBackboneResidentCoordinateState(): boolean {
 		return (
 			!!this._nativeBackbone &&
-			!!this._nativeSharedLogState &&
 			!!this._residentEntryCoordinatesByHash &&
 			!this.hasCustomFindLeaders()
 		);
