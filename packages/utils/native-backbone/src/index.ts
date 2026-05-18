@@ -2114,6 +2114,103 @@ const iterableToArray = <T>(values?: Iterable<T>): T[] => {
 	return Array.isArray(values) ? values : [...values];
 };
 
+type NativeBackboneDocumentIndexArgs = readonly [
+	string,
+	Uint8Array,
+	string,
+	number,
+];
+
+type NativeBackboneNoNextAppendArgs = readonly [
+	bigint,
+	number,
+	string,
+	number,
+	Uint8Array | undefined,
+	Uint8Array,
+	number,
+	number,
+	string,
+	string,
+	boolean,
+];
+
+type NativeBackboneNoNextStorageAppendArgs = readonly [
+	...NativeBackboneNoNextAppendArgs,
+	boolean,
+];
+
+type NativeBackboneStorageAppendArgs = readonly [
+	bigint,
+	number,
+	string,
+	string[],
+	number,
+	Uint8Array | undefined,
+	Uint8Array,
+	number,
+	number,
+	string,
+	string,
+	boolean,
+	boolean,
+];
+
+const nativeDocumentIndexArgs = (
+	documentIndex?: NativeBackboneAppendInput["documentIndex"],
+): NativeBackboneDocumentIndexArgs | undefined =>
+	documentIndex
+		? [
+				documentIndex.key,
+				documentIndex.valuePrefixBytes,
+				documentIndex.existingCreated == null
+					? ""
+					: integerString(documentIndex.existingCreated),
+				documentIndex.byteElementIndexLimit ?? 0,
+			]
+		: undefined;
+
+const nativeNoNextAppendArgs = (
+	input: NativeBackboneAppendInput,
+): NativeBackboneNoNextAppendArgs => [
+	BigInt(input.wallTime),
+	input.logical ?? 0,
+	input.gid,
+	input.type ?? 0,
+	input.metaData,
+	input.payloadData,
+	input.replicas,
+	input.roleAgeMs ?? 0,
+	integerString(input.now ?? Date.now()),
+	input.selfHash ?? "",
+	input.selfReplicating ?? true,
+];
+
+const nativeNoNextStorageAppendArgs = (
+	input: NativeBackboneStorageAppendInput,
+): NativeBackboneNoNextStorageAppendArgs => [
+	...nativeNoNextAppendArgs(input),
+	input.resolveTrimmedEntries !== false,
+];
+
+const nativeStorageAppendArgs = (
+	input: NativeBackboneStorageAppendInput,
+): NativeBackboneStorageAppendArgs => [
+	BigInt(input.wallTime),
+	input.logical ?? 0,
+	input.gid,
+	iterableToArray(input.next),
+	input.type ?? 0,
+	input.metaData,
+	input.payloadData,
+	input.replicas,
+	input.roleAgeMs ?? 0,
+	integerString(input.now ?? Date.now()),
+	input.selfHash ?? "",
+	input.selfReplicating ?? true,
+	input.resolveTrimmedEntries !== false,
+];
+
 const optionalIterableToArray = <T>(values?: Iterable<T>): T[] | undefined => {
 	if (!values) {
 		return undefined;
@@ -2893,29 +2990,8 @@ export class NativePeerbitBackbone {
 	appendPlainNoNextTransaction(
 		input: NativeBackboneAppendInput,
 	): NativeBackboneAppendResult {
-		const baseArgs = [
-			BigInt(input.wallTime),
-			input.logical ?? 0,
-			input.gid,
-			input.type ?? 0,
-			input.metaData,
-			input.payloadData,
-			input.replicas,
-			input.roleAgeMs ?? 0,
-			integerString(input.now ?? Date.now()),
-			input.selfHash ?? "",
-			input.selfReplicating ?? true,
-		] as const;
-		const documentIndexArgs = input.documentIndex
-			? ([
-					input.documentIndex.key,
-					input.documentIndex.valuePrefixBytes,
-					input.documentIndex.existingCreated == null
-						? ""
-						: integerString(input.documentIndex.existingCreated),
-					input.documentIndex.byteElementIndexLimit ?? 0,
-				] as const)
-			: undefined;
+		const baseArgs = nativeNoNextAppendArgs(input);
+		const documentIndexArgs = nativeDocumentIndexArgs(input.documentIndex);
 		const row =
 			input.trimLengthTo == null
 				? documentIndexArgs
@@ -2940,30 +3016,8 @@ export class NativePeerbitBackbone {
 	preparePlainNoNextStorageAppendTransaction(
 		input: NativeBackboneStorageAppendInput,
 	): NativeBackboneStorageAppendResult {
-		const baseArgs = [
-			BigInt(input.wallTime),
-			input.logical ?? 0,
-			input.gid,
-			input.type ?? 0,
-			input.metaData,
-			input.payloadData,
-			input.replicas,
-			input.roleAgeMs ?? 0,
-			integerString(input.now ?? Date.now()),
-			input.selfHash ?? "",
-			input.selfReplicating ?? true,
-			input.resolveTrimmedEntries !== false,
-		] as const;
-		const documentIndexArgs = input.documentIndex
-			? ([
-					input.documentIndex.key,
-					input.documentIndex.valuePrefixBytes,
-					input.documentIndex.existingCreated == null
-						? ""
-						: integerString(input.documentIndex.existingCreated),
-					input.documentIndex.byteElementIndexLimit ?? 0,
-				] as const)
-			: undefined;
+		const baseArgs = nativeNoNextStorageAppendArgs(input);
+		const documentIndexArgs = nativeDocumentIndexArgs(input.documentIndex);
 		const row =
 			input.trimLengthTo == null
 				? documentIndexArgs
@@ -2990,31 +3044,8 @@ export class NativePeerbitBackbone {
 	preparePlainStorageAppendTransaction(
 		input: NativeBackboneStorageAppendInput,
 	): NativeBackboneStorageAppendResult {
-		const baseArgs = [
-			BigInt(input.wallTime),
-			input.logical ?? 0,
-			input.gid,
-			iterableToArray(input.next),
-			input.type ?? 0,
-			input.metaData,
-			input.payloadData,
-			input.replicas,
-			input.roleAgeMs ?? 0,
-			integerString(input.now ?? Date.now()),
-			input.selfHash ?? "",
-			input.selfReplicating ?? true,
-			input.resolveTrimmedEntries !== false,
-		] as const;
-		const documentIndexArgs = input.documentIndex
-			? ([
-					input.documentIndex.key,
-					input.documentIndex.valuePrefixBytes,
-					input.documentIndex.existingCreated == null
-						? ""
-						: integerString(input.documentIndex.existingCreated),
-					input.documentIndex.byteElementIndexLimit ?? 0,
-				] as const)
-			: undefined;
+		const baseArgs = nativeStorageAppendArgs(input);
+		const documentIndexArgs = nativeDocumentIndexArgs(input.documentIndex);
 		const row =
 			input.trimLengthTo == null
 				? documentIndexArgs
@@ -3039,31 +3070,8 @@ export class NativePeerbitBackbone {
 	preparePlainCommittedStorageAppendTransaction(
 		input: NativeBackboneStorageAppendInput,
 	): NativeBackboneAppendResult {
-		const baseArgs = [
-			BigInt(input.wallTime),
-			input.logical ?? 0,
-			input.gid,
-			iterableToArray(input.next),
-			input.type ?? 0,
-			input.metaData,
-			input.payloadData,
-			input.replicas,
-			input.roleAgeMs ?? 0,
-			integerString(input.now ?? Date.now()),
-			input.selfHash ?? "",
-			input.selfReplicating ?? true,
-			input.resolveTrimmedEntries !== false,
-		] as const;
-		const documentIndexArgs = input.documentIndex
-			? ([
-					input.documentIndex.key,
-					input.documentIndex.valuePrefixBytes,
-					input.documentIndex.existingCreated == null
-						? ""
-						: integerString(input.documentIndex.existingCreated),
-					input.documentIndex.byteElementIndexLimit ?? 0,
-				] as const)
-			: undefined;
+		const baseArgs = nativeStorageAppendArgs(input);
+		const documentIndexArgs = nativeDocumentIndexArgs(input.documentIndex);
 		const row =
 			input.trimLengthTo == null
 				? documentIndexArgs
@@ -3090,30 +3098,8 @@ export class NativePeerbitBackbone {
 	preparePlainCommittedNoNextStorageAppendTransaction(
 		input: NativeBackboneStorageAppendInput,
 	): NativeBackboneAppendResult {
-		const baseArgs = [
-			BigInt(input.wallTime),
-			input.logical ?? 0,
-			input.gid,
-			input.type ?? 0,
-			input.metaData,
-			input.payloadData,
-			input.replicas,
-			input.roleAgeMs ?? 0,
-			integerString(input.now ?? Date.now()),
-			input.selfHash ?? "",
-			input.selfReplicating ?? true,
-			input.resolveTrimmedEntries !== false,
-		] as const;
-		const documentIndexArgs = input.documentIndex
-			? ([
-					input.documentIndex.key,
-					input.documentIndex.valuePrefixBytes,
-					input.documentIndex.existingCreated == null
-						? ""
-						: integerString(input.documentIndex.existingCreated),
-					input.documentIndex.byteElementIndexLimit ?? 0,
-				] as const)
-			: undefined;
+		const baseArgs = nativeNoNextStorageAppendArgs(input);
+		const documentIndexArgs = nativeDocumentIndexArgs(input.documentIndex);
 		const row =
 			input.trimLengthTo == null
 				? documentIndexArgs
