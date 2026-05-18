@@ -3226,6 +3226,7 @@ export class SharedLog<
 
 	private removePeerFromGidPeerHistory(publicKeyHash: string, gid?: string) {
 		this._nativeSharedLogState?.removeGidPeer(publicKeyHash, gid);
+		this._nativeBackbone?.removeGidPeer(publicKeyHash, gid);
 		if (gid) {
 			const gidMap = this._gidPeersHistory.get(gid);
 			if (gidMap) {
@@ -3245,6 +3246,7 @@ export class SharedLog<
 
 	private deleteGidPeerHistory(gid: string) {
 		this._nativeSharedLogState?.deleteGidPeers(gid);
+		this._nativeBackbone?.deleteGidPeers(gid);
 		this._gidPeersHistory.delete(gid);
 	}
 
@@ -3259,6 +3261,7 @@ export class SharedLog<
 			publicKeyArray,
 			reset === true,
 		);
+		this._nativeBackbone?.addGidPeers(gid, publicKeyArray, reset === true);
 		let set = this._gidPeersHistory.get(gid);
 		if (!set) {
 			set = new Set();
@@ -3278,6 +3281,7 @@ export class SharedLog<
 	private markEntriesKnownByPeer(hashes: Iterable<string>, peer: string) {
 		const hashArray = [...hashes];
 		this._nativeSharedLogState?.markEntriesKnownByPeer(hashArray, peer);
+		this._nativeBackbone?.markEntriesKnownByPeer(hashArray, peer);
 		const now = Date.now();
 		for (const hash of hashArray) {
 			let peers = this._entryKnownPeers.get(hash);
@@ -3299,6 +3303,7 @@ export class SharedLog<
 	private removeEntriesKnownByPeer(hashes: Iterable<string>, peer: string) {
 		const hashArray = [...hashes];
 		this._nativeSharedLogState?.removeEntriesKnownByPeer(hashArray, peer);
+		this._nativeBackbone?.removeEntriesKnownByPeer(hashArray, peer);
 		for (const hash of hashArray) {
 			const peers = this._entryKnownPeers.get(hash);
 			if (!peers) {
@@ -3320,6 +3325,7 @@ export class SharedLog<
 
 	private removePeerFromEntryKnownPeers(peer: string) {
 		this._nativeSharedLogState?.removePeerFromEntryKnownPeers(peer);
+		this._nativeBackbone?.removePeerFromEntryKnownPeers(peer);
 		for (const [hash, peers] of this._entryKnownPeers) {
 			peers.delete(peer);
 			if (peers.size === 0) {
@@ -4110,7 +4116,7 @@ export class SharedLog<
 
 				const residentEntriesByHash = this._residentEntryCoordinatesByHash;
 				if (
-					this._nativeSharedLogState &&
+					(this._nativeBackbone ?? this._nativeSharedLogState) &&
 					residentEntriesByHash &&
 					!this.hasCustomFindLeaders()
 				) {
@@ -8393,6 +8399,7 @@ export class SharedLog<
 		this._entryKnownPeers.clear();
 		this._entryKnownPeerObservedAt.clear();
 		this._nativeSharedLogState?.clearEntryKnownPeers();
+		this._nativeBackbone?.clearEntryKnownPeers();
 		for (const timer of this._joinAuthoritativeRepairTimersByDelay.values()) {
 			clearTimeout(timer);
 		}
@@ -8423,6 +8430,7 @@ export class SharedLog<
 		this.latestReplicationInfoMessage.clear();
 		this._gidPeersHistory.clear();
 		this._nativeSharedLogState?.clearGidPeers();
+		this._nativeBackbone?.clearGidPeers();
 		// Cancel any pending debounced timers so they can't fire after we've torn down
 		// indexes/RPC state.
 		this.rebalanceParticipationDebounced?.close();
@@ -11305,6 +11313,8 @@ export class SharedLog<
 		fullReplicaRepairCandidateCount: number;
 		selfHash: string;
 	}): Promise<Map<RepairDispatchMode, Map<string, string[]>>> {
+		const nativeRepairPlanner =
+			this._nativeBackbone ?? this._nativeSharedLogState;
 		const pendingPeersByMode = new Map<string, Iterable<string>>();
 		const optimisticPeersByMode = new Map<
 			string,
@@ -11326,19 +11336,18 @@ export class SharedLog<
 		}
 
 		const context = await this.createLeaderSelectionContext({ roleAge: 0 });
-		const nativePlan =
-			this._nativeSharedLogState!.planRepairDispatchForResidentEntries(
-				{
-					pendingModes: properties.pendingModes,
-					pendingPeersByMode,
-					optimisticPeersByMode,
-					fullReplicaRepairCandidates: properties.fullReplicaRepairCandidates,
-					fullReplicaRepairCandidateCount:
-						properties.fullReplicaRepairCandidateCount,
-					selfHash: properties.selfHash,
-				},
-				this.createNativeLeaderOptions(context),
-			);
+		const nativePlan = nativeRepairPlanner!.planRepairDispatchForResidentEntries(
+			{
+				pendingModes: properties.pendingModes,
+				pendingPeersByMode,
+				optimisticPeersByMode,
+				fullReplicaRepairCandidates: properties.fullReplicaRepairCandidates,
+				fullReplicaRepairCandidateCount:
+					properties.fullReplicaRepairCandidateCount,
+				selfHash: properties.selfHash,
+			},
+			this.createNativeLeaderOptions(context),
+		);
 
 		const plan = new Map<RepairDispatchMode, Map<string, string[]>>();
 		for (const [mode, targets] of nativePlan) {
@@ -11378,7 +11387,9 @@ export class SharedLog<
 			}
 		};
 
-		if (this._nativeSharedLogState && !this.hasCustomFindLeaders()) {
+		const nativeRepairPlanner =
+			this._nativeBackbone ?? this._nativeSharedLogState;
+		if (nativeRepairPlanner && !this.hasCustomFindLeaders()) {
 			const pendingPeersByMode = new Map<string, Iterable<string>>();
 			const optimisticPeersByMode = new Map<
 				string,
@@ -11400,25 +11411,24 @@ export class SharedLog<
 			}
 
 			const context = await this.createLeaderSelectionContext({ roleAge: 0 });
-			const nativePlan =
-				this._nativeSharedLogState.planRepairDispatchForEntries(
-					{
-						entries: properties.entries.map((entry, i) => ({
-							hash: entry.hash,
-							gid: entry.gid,
-							requestedReplicas: properties.requestedReplicasBatch[i]!,
-							coordinates: entry.coordinates,
-						})),
-						pendingModes: properties.pendingModes,
-						pendingPeersByMode,
-						optimisticPeersByMode,
-						fullReplicaRepairCandidates: properties.fullReplicaRepairCandidates,
-						fullReplicaRepairCandidateCount:
-							properties.fullReplicaRepairCandidateCount,
-						selfHash: properties.selfHash,
-					},
-					this.createNativeLeaderOptions(context),
-				);
+			const nativePlan = nativeRepairPlanner.planRepairDispatchForEntries(
+				{
+					entries: properties.entries.map((entry, i) => ({
+						hash: entry.hash,
+						gid: entry.gid,
+						requestedReplicas: properties.requestedReplicasBatch[i]!,
+						coordinates: entry.coordinates,
+					})),
+					pendingModes: properties.pendingModes,
+					pendingPeersByMode,
+					optimisticPeersByMode,
+					fullReplicaRepairCandidates: properties.fullReplicaRepairCandidates,
+					fullReplicaRepairCandidateCount:
+						properties.fullReplicaRepairCandidateCount,
+					selfHash: properties.selfHash,
+				},
+				this.createNativeLeaderOptions(context),
+			);
 
 			const plan = new Map<RepairDispatchMode, Map<string, string[]>>();
 			for (const [mode, targets] of nativePlan) {
@@ -12163,6 +12173,7 @@ export class SharedLog<
 		if (options?.clearCache) {
 			this._gidPeersHistory.clear();
 			this._nativeSharedLogState?.clearGidPeers();
+			this._nativeBackbone?.clearGidPeers();
 		}
 
 		const timestamp = BigInt(+new Date());

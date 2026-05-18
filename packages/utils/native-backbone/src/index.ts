@@ -160,6 +160,14 @@ type NativePeerbitBackboneHandle = {
 		assignedToRangeBoundary: boolean,
 		requestedReplicas: number,
 	) => void;
+	add_gid_peers: (gid: string, peers: string[], reset: boolean) => number;
+	remove_gid_peer: (peer: string, gid?: string) => void;
+	delete_gid_peers: (gid: string) => boolean;
+	clear_gid_peers: () => void;
+	mark_entries_known_by_peer: (hashes: string[], peer: string) => void;
+	remove_entries_known_by_peer: (hashes: string[], peer: string) => void;
+	remove_peer_from_entry_known_peers: (peer: string) => void;
+	clear_entry_known_peers: () => void;
 	plan_entry_leaders_for_gid: (
 		gid: string,
 		replicas: number,
@@ -184,6 +192,41 @@ type NativePeerbitBackboneHandle = {
 		fullReplicaFallback: boolean,
 		includeStrictFullReplica: boolean,
 	) => [unknown[], unknown[], boolean];
+	plan_repair_dispatch_for_entries: (
+		entryHashes: string[],
+		entryGids: string[],
+		entryRequestedReplicas: number[],
+		entryCoordinateBatches: string[][],
+		pendingModes: string[],
+		pendingPeersByMode: string[][],
+		optimisticPeersByMode: string[][][],
+		fullReplicaRepairCandidates: string[],
+		fullReplicaRepairCandidateCount: number,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => unknown[];
+	plan_repair_dispatch_for_resident_entries: (
+		pendingModes: string[],
+		pendingPeersByMode: string[][],
+		optimisticGidsByMode: string[][],
+		optimisticPeersByGidByMode: string[][][],
+		fullReplicaRepairCandidates: string[],
+		fullReplicaRepairCandidateCount: number,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => unknown[];
 	plan_local_append_for_gid_compact: (
 		entryHash: string,
 		gid: string,
@@ -734,6 +777,36 @@ export type NativeBackboneEntryAssignmentPlan = NativeBackboneLeaderPlan & {
 	assignedToRangeBoundary: boolean;
 };
 
+export type NativeBackboneRepairDispatchEntry = {
+	hash: string;
+	gid: string;
+	requestedReplicas: number;
+	coordinates: Iterable<bigint | number | string>;
+};
+
+export type NativeBackboneRepairDispatchInput = {
+	entries: Iterable<NativeBackboneRepairDispatchEntry>;
+	pendingModes: Iterable<string>;
+	pendingPeersByMode: ReadonlyMap<string, Iterable<string>>;
+	optimisticPeersByMode?: ReadonlyMap<
+		string,
+		ReadonlyMap<string, Iterable<string>>
+	>;
+	fullReplicaRepairCandidates?: Iterable<string>;
+	fullReplicaRepairCandidateCount: number;
+	selfHash: string;
+};
+
+export type NativeBackboneResidentRepairDispatchInput = Omit<
+	NativeBackboneRepairDispatchInput,
+	"entries"
+>;
+
+export type NativeBackboneRepairDispatchPlan = Map<
+	string,
+	Map<string, string[]>
+>;
+
 export type NativeBackboneCommittedEntry = {
 	cid: string;
 	hash: string;
@@ -1081,6 +1154,22 @@ const rowsToSamples = (
 		out.set(hash, { intersecting });
 	}
 	return out;
+};
+
+const rowsToRepairDispatchPlan = (
+	rows: unknown[],
+): NativeBackboneRepairDispatchPlan => {
+	const plan: NativeBackboneRepairDispatchPlan = new Map();
+	for (const row of rows) {
+		const [mode, target, hashes] = row as [string, string, string[]];
+		let targets = plan.get(mode);
+		if (!targets) {
+			targets = new Map();
+			plan.set(mode, targets);
+		}
+		targets.set(target, hashes);
+	}
+	return plan;
 };
 
 const appendCoordinatePlanFromRow = (
@@ -2220,6 +2309,38 @@ export class NativePeerbitBackbone {
 		);
 	}
 
+	addGidPeers(gid: string, peers: Iterable<string>, reset = false): number {
+		return this.native.add_gid_peers(gid, iterableToArray(peers), reset);
+	}
+
+	removeGidPeer(peer: string, gid?: string): void {
+		this.native.remove_gid_peer(peer, gid);
+	}
+
+	deleteGidPeers(gid: string): boolean {
+		return this.native.delete_gid_peers(gid);
+	}
+
+	clearGidPeers(): void {
+		this.native.clear_gid_peers();
+	}
+
+	markEntriesKnownByPeer(hashes: Iterable<string>, peer: string): void {
+		this.native.mark_entries_known_by_peer(iterableToArray(hashes), peer);
+	}
+
+	removeEntriesKnownByPeer(hashes: Iterable<string>, peer: string): void {
+		this.native.remove_entries_known_by_peer(iterableToArray(hashes), peer);
+	}
+
+	removePeerFromEntryKnownPeers(peer: string): void {
+		this.native.remove_peer_from_entry_known_peers(peer);
+	}
+
+	clearEntryKnownPeers(): void {
+		this.native.clear_entry_known_peers();
+	}
+
 	planLeadersForGid(
 		gid: string,
 		replicas: number,
@@ -2253,6 +2374,79 @@ export class NativePeerbitBackbone {
 			leaders: rowsToSamples(leaderRows) ?? new Map(),
 			assignedToRangeBoundary,
 		};
+	}
+
+	planRepairDispatchForEntries(
+		input: NativeBackboneRepairDispatchInput,
+		options?: NativeBackboneFindLeaderOptions,
+	): NativeBackboneRepairDispatchPlan {
+		const entries = [...input.entries];
+		const pendingModes = [...input.pendingModes];
+		const rows = this.native.plan_repair_dispatch_for_entries(
+			entries.map((entry) => entry.hash),
+			entries.map((entry) => entry.gid),
+			entries.map((entry) => entry.requestedReplicas),
+			entries.map((entry) => [...entry.coordinates].map(integerString)),
+			pendingModes,
+			pendingModes.map((mode) => [
+				...(input.pendingPeersByMode.get(mode) ?? []),
+			]),
+			pendingModes.map((mode) => {
+				const optimisticByGid = input.optimisticPeersByMode?.get(mode);
+				return entries.map((entry) => [
+					...(optimisticByGid?.get(entry.gid) ?? []),
+				]);
+			}),
+			input.fullReplicaRepairCandidates
+				? [...input.fullReplicaRepairCandidates]
+				: [],
+			input.fullReplicaRepairCandidateCount,
+			...findLeaderArguments({
+				...options,
+				selfHash: input.selfHash,
+			}),
+		);
+		return rowsToRepairDispatchPlan(rows);
+	}
+
+	planRepairDispatchForResidentEntries(
+		input: NativeBackboneResidentRepairDispatchInput,
+		options?: NativeBackboneFindLeaderOptions,
+	): NativeBackboneRepairDispatchPlan {
+		const pendingModes = [...input.pendingModes];
+		const optimisticGidsByMode: string[][] = [];
+		const optimisticPeersByGidByMode: string[][][] = [];
+		for (const mode of pendingModes) {
+			const optimisticByGid = input.optimisticPeersByMode?.get(mode);
+			const gids: string[] = [];
+			const peersByGid: string[][] = [];
+			if (optimisticByGid) {
+				for (const [gid, peers] of optimisticByGid) {
+					gids.push(gid);
+					peersByGid.push([...peers]);
+				}
+			}
+			optimisticGidsByMode.push(gids);
+			optimisticPeersByGidByMode.push(peersByGid);
+		}
+
+		const rows = this.native.plan_repair_dispatch_for_resident_entries(
+			pendingModes,
+			pendingModes.map((mode) => [
+				...(input.pendingPeersByMode.get(mode) ?? []),
+			]),
+			optimisticGidsByMode,
+			optimisticPeersByGidByMode,
+			input.fullReplicaRepairCandidates
+				? [...input.fullReplicaRepairCandidates]
+				: [],
+			input.fullReplicaRepairCandidateCount,
+			...findLeaderArguments({
+				...options,
+				selfHash: input.selfHash,
+			}),
+		);
+		return rowsToRepairDispatchPlan(rows);
 	}
 
 	planLocalAppendForGidCompact(

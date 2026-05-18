@@ -737,6 +737,37 @@ describe("native peerbit backbone", () => {
 		);
 		expect(assignmentPlan.coordinates).to.deep.equal(leaderPlan.coordinates);
 		expect(assignmentPlan.assignedToRangeBoundary).to.be.a("boolean");
+
+		backbone.addGidPeers("gid-storage-committed-no-next", ["peer-a"], true);
+		backbone.markEntriesKnownByPeer([second.entry.hash], "peer-a");
+		const repairPlan = backbone.planRepairDispatchForResidentEntries(
+			{
+				pendingModes: ["join-authoritative"],
+				pendingPeersByMode: new Map([
+					["join-authoritative", ["peer-a", "peer-b"]],
+				]),
+				optimisticPeersByMode: new Map([
+					[
+						"join-authoritative",
+						new Map([["gid-storage-committed-no-next", ["peer-b"]]]),
+					],
+				]),
+				fullReplicaRepairCandidates: ["peer-b"],
+				fullReplicaRepairCandidateCount: 1,
+				selfHash: "peer-a",
+			},
+			{
+				selfHash: "peer-a",
+				selfReplicating: true,
+				fullReplicaFallback: true,
+			},
+		);
+		expect(repairPlan.get("join-authoritative")?.get("peer-a")).equal(
+			undefined,
+		);
+		expect(repairPlan.get("join-authoritative")?.get("peer-b")).to.deep.equal(
+			[second.entry.hash],
+		);
 	});
 
 	it("returns trim hashes without materializing trim rows for unresolved storage appends", async () => {

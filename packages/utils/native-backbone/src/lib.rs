@@ -729,6 +729,51 @@ impl NativePeerbitBackbone {
         self.delete_coordinate_core_batch(next_hashes_for_core)
     }
 
+    pub fn add_gid_peers(
+        &mut self,
+        gid: String,
+        peers: Array,
+        reset: bool,
+    ) -> Result<usize, JsValue> {
+        self.shared_log.add_gid_peers(gid, peers, reset)
+    }
+
+    pub fn remove_gid_peer(&mut self, peer: &str, gid: JsValue) -> Result<(), JsValue> {
+        self.shared_log.remove_gid_peer(peer, gid)
+    }
+
+    pub fn delete_gid_peers(&mut self, gid: &str) -> bool {
+        self.shared_log.delete_gid_peers(gid)
+    }
+
+    pub fn clear_gid_peers(&mut self) {
+        self.shared_log.clear_gid_peers();
+    }
+
+    pub fn mark_entries_known_by_peer(
+        &mut self,
+        hashes: Array,
+        peer: String,
+    ) -> Result<(), JsValue> {
+        self.shared_log.mark_entries_known_by_peer(hashes, peer)
+    }
+
+    pub fn remove_entries_known_by_peer(
+        &mut self,
+        hashes: Array,
+        peer: &str,
+    ) -> Result<(), JsValue> {
+        self.shared_log.remove_entries_known_by_peer(hashes, peer)
+    }
+
+    pub fn remove_peer_from_entry_known_peers(&mut self, peer: &str) {
+        self.shared_log.remove_peer_from_entry_known_peers(peer);
+    }
+
+    pub fn clear_entry_known_peers(&mut self) {
+        self.shared_log.clear_entry_known_peers();
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn plan_entry_leaders_for_gid(
         &self,
@@ -774,6 +819,84 @@ impl NativePeerbitBackbone {
         self.shared_log.plan_entry_assignment_for_gid(
             gid,
             replicas,
+            role_age_ms,
+            now,
+            peer_filter,
+            expand_peer_filter,
+            self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_repair_dispatch_for_entries(
+        &self,
+        entry_hashes: Array,
+        entry_gids: Array,
+        entry_requested_replicas: Array,
+        entry_coordinate_batches: Array,
+        pending_modes: Array,
+        pending_peers_by_mode: Array,
+        optimistic_peers_by_mode: Array,
+        full_replica_repair_candidates: Array,
+        full_replica_repair_candidate_count: usize,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        self.shared_log.plan_repair_dispatch_for_entries(
+            entry_hashes,
+            entry_gids,
+            entry_requested_replicas,
+            entry_coordinate_batches,
+            pending_modes,
+            pending_peers_by_mode,
+            optimistic_peers_by_mode,
+            full_replica_repair_candidates,
+            full_replica_repair_candidate_count,
+            role_age_ms,
+            now,
+            peer_filter,
+            expand_peer_filter,
+            self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_repair_dispatch_for_resident_entries(
+        &self,
+        pending_modes: Array,
+        pending_peers_by_mode: Array,
+        optimistic_gids_by_mode: Array,
+        optimistic_peers_by_gid_by_mode: Array,
+        full_replica_repair_candidates: Array,
+        full_replica_repair_candidate_count: usize,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        self.shared_log.plan_repair_dispatch_for_resident_entries(
+            pending_modes,
+            pending_peers_by_mode,
+            optimistic_gids_by_mode,
+            optimistic_peers_by_gid_by_mode,
+            full_replica_repair_candidates,
+            full_replica_repair_candidate_count,
             role_age_ms,
             now,
             peer_filter,
