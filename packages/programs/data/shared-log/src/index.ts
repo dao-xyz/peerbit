@@ -7386,6 +7386,7 @@ export class SharedLog<
 			this.hydrateNativeCoordinateStateFromBackbone(backbone);
 			return;
 		}
+		this._residentEntryCoordinatesByHash ??= new Map();
 		const iterator = this.entryCoordinatesIndex.iterate({});
 		try {
 			for (;;) {
@@ -7403,6 +7404,13 @@ export class SharedLog<
 						requestedReplicas,
 						result.value.hashNumber,
 					);
+					this._residentEntryCoordinatesByHash.set(
+						result.value.hash,
+						result.value,
+					);
+					for (const value of result.value.coordinates) {
+						this.coordinateToHash.add(value, result.value.hash);
+					}
 				}
 			}
 		} finally {

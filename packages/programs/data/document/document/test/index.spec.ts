@@ -1321,6 +1321,65 @@ describe("index", () => {
 				}
 			});
 
+			it("uses native backbone storage transactions without shared-log native state", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeRangePlanner: false,
+						nativeBackbone: { optional: false, documentIndex: true },
+					},
+				});
+				const sharedLog = store.docs.log as any;
+				const backbone = sharedLog._nativeBackbone;
+				const backboneStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendTransaction",
+				);
+				const genericCoordinatePersistSpy = sinon.spy(
+					sharedLog,
+					"persistPreparedCoordinateNativeTransaction",
+				);
+				const backboneCoordinatePersistSpy = sinon.spy(
+					sharedLog,
+					"persistBackboneCoordinateFieldsNativeTransaction",
+				);
+
+				try {
+					expect(sharedLog._nativeSharedLogState).equal(undefined);
+					expect(sharedLog._residentEntryCoordinatesByHash).to.be.instanceOf(
+						Map,
+					);
+
+					const id = uuid();
+					await store.docs.put(new Document({ id, name: "backbone-only" }), {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(backboneStorageTransactionSpy.callCount).equal(1);
+					expect(genericCoordinatePersistSpy.callCount).equal(0);
+					expect(backboneCoordinatePersistSpy.callCount).equal(1);
+					expect(sharedLog._residentEntryCoordinatesByHash.size).equal(1);
+					expect((await store.docs.get(id))?.name).equal("backbone-only");
+				} finally {
+					backboneCoordinatePersistSpy.restore();
+					genericCoordinatePersistSpy.restore();
+					backboneStorageTransactionSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
 			it("handles native backbone update trims without resolving deleted blocks", async () => {
 				const rustSession = await TestSession.connected(
 					1,
