@@ -1384,15 +1384,12 @@ impl NativePeerbitBackbone {
             self_hash,
             self_replicating,
             None,
-            Some(DocumentIndexAppendCommit {
-                key: document_key,
-                value_prefix_bytes: document_value_prefix_bytes,
-                existing_created: parse_optional_u64_string(
-                    &document_existing_created,
-                    "document existing created",
-                )?,
-                byte_element_index_limit: document_byte_element_index_limit,
-            }),
+            Some(document_index_append_commit(
+                document_key,
+                document_value_prefix_bytes,
+                document_existing_created,
+                document_byte_element_index_limit,
+            )?),
         )
     }
 
@@ -1429,15 +1426,12 @@ impl NativePeerbitBackbone {
             self_hash,
             self_replicating,
             Some(trim_length_to),
-            Some(DocumentIndexAppendCommit {
-                key: document_key,
-                value_prefix_bytes: document_value_prefix_bytes,
-                existing_created: parse_optional_u64_string(
-                    &document_existing_created,
-                    "document existing created",
-                )?,
-                byte_element_index_limit: document_byte_element_index_limit,
-            }),
+            Some(document_index_append_commit(
+                document_key,
+                document_value_prefix_bytes,
+                document_existing_created,
+                document_byte_element_index_limit,
+            )?),
         )
     }
 
@@ -1538,15 +1532,12 @@ impl NativePeerbitBackbone {
     ) -> Result<Array, JsValue> {
         let document_gid = gid.clone();
         let payload_size = payload_data.length();
-        let document_index_commit = DocumentIndexAppendCommit {
-            key: document_key,
-            value_prefix_bytes: document_value_prefix_bytes,
-            existing_created: parse_optional_u64_string(
-                &document_existing_created,
-                "document existing created",
-            )?,
-            byte_element_index_limit: document_byte_element_index_limit,
-        };
+        let document_index_commit = document_index_append_commit(
+            document_key,
+            document_value_prefix_bytes,
+            document_existing_created,
+            document_byte_element_index_limit,
+        )?;
         let row = self.prepare_plain_entry_commit_facts(
             wall_time,
             logical,
@@ -1732,15 +1723,12 @@ impl NativePeerbitBackbone {
             resolve_trimmed_entries,
             None,
             false,
-            Some(DocumentIndexAppendCommit {
-                key: document_key,
-                value_prefix_bytes: document_value_prefix_bytes,
-                existing_created: parse_optional_u64_string(
-                    &document_existing_created,
-                    "document existing created",
-                )?,
-                byte_element_index_limit: document_byte_element_index_limit,
-            }),
+            Some(document_index_append_commit(
+                document_key,
+                document_value_prefix_bytes,
+                document_existing_created,
+                document_byte_element_index_limit,
+            )?),
         )
     }
 
@@ -1781,15 +1769,12 @@ impl NativePeerbitBackbone {
             resolve_trimmed_entries,
             Some(trim_length_to),
             false,
-            Some(DocumentIndexAppendCommit {
-                key: document_key,
-                value_prefix_bytes: document_value_prefix_bytes,
-                existing_created: parse_optional_u64_string(
-                    &document_existing_created,
-                    "document existing created",
-                )?,
-                byte_element_index_limit: document_byte_element_index_limit,
-            }),
+            Some(document_index_append_commit(
+                document_key,
+                document_value_prefix_bytes,
+                document_existing_created,
+                document_byte_element_index_limit,
+            )?),
         )
     }
 
@@ -1902,15 +1887,12 @@ impl NativePeerbitBackbone {
             resolve_trimmed_entries,
             None,
             true,
-            Some(DocumentIndexAppendCommit {
-                key: document_key,
-                value_prefix_bytes: document_value_prefix_bytes,
-                existing_created: parse_optional_u64_string(
-                    &document_existing_created,
-                    "document existing created",
-                )?,
-                byte_element_index_limit: document_byte_element_index_limit,
-            }),
+            Some(document_index_append_commit(
+                document_key,
+                document_value_prefix_bytes,
+                document_existing_created,
+                document_byte_element_index_limit,
+            )?),
         )
     }
 
@@ -1951,15 +1933,12 @@ impl NativePeerbitBackbone {
             resolve_trimmed_entries,
             Some(trim_length_to),
             true,
-            Some(DocumentIndexAppendCommit {
-                key: document_key,
-                value_prefix_bytes: document_value_prefix_bytes,
-                existing_created: parse_optional_u64_string(
-                    &document_existing_created,
-                    "document existing created",
-                )?,
-                byte_element_index_limit: document_byte_element_index_limit,
-            }),
+            Some(document_index_append_commit(
+                document_key,
+                document_value_prefix_bytes,
+                document_existing_created,
+                document_byte_element_index_limit,
+            )?),
         )
     }
 
@@ -2075,15 +2054,12 @@ impl NativePeerbitBackbone {
             resolve_trimmed_entries,
             None,
             false,
-            Some(DocumentIndexAppendCommit {
-                key: document_key,
-                value_prefix_bytes: document_value_prefix_bytes,
-                existing_created: parse_optional_u64_string(
-                    &document_existing_created,
-                    "document existing created",
-                )?,
-                byte_element_index_limit: document_byte_element_index_limit,
-            }),
+            Some(document_index_append_commit(
+                document_key,
+                document_value_prefix_bytes,
+                document_existing_created,
+                document_byte_element_index_limit,
+            )?),
         )
     }
 
@@ -2125,15 +2101,12 @@ impl NativePeerbitBackbone {
             resolve_trimmed_entries,
             Some(trim_length_to),
             false,
-            Some(DocumentIndexAppendCommit {
-                key: document_key,
-                value_prefix_bytes: document_value_prefix_bytes,
-                existing_created: parse_optional_u64_string(
-                    &document_existing_created,
-                    "document existing created",
-                )?,
-                byte_element_index_limit: document_byte_element_index_limit,
-            }),
+            Some(document_index_append_commit(
+                document_key,
+                document_value_prefix_bytes,
+                document_existing_created,
+                document_byte_element_index_limit,
+            )?),
         )
     }
 
@@ -2211,15 +2184,12 @@ impl NativePeerbitBackbone {
             resolve_trimmed_entries,
             None,
             true,
-            Some(DocumentIndexAppendCommit {
-                key: document_key,
-                value_prefix_bytes: document_value_prefix_bytes,
-                existing_created: parse_optional_u64_string(
-                    &document_existing_created,
-                    "document existing created",
-                )?,
-                byte_element_index_limit: document_byte_element_index_limit,
-            }),
+            Some(document_index_append_commit(
+                document_key,
+                document_value_prefix_bytes,
+                document_existing_created,
+                document_byte_element_index_limit,
+            )?),
         )
     }
 
@@ -2299,15 +2269,12 @@ impl NativePeerbitBackbone {
             resolve_trimmed_entries,
             Some(trim_length_to),
             true,
-            Some(DocumentIndexAppendCommit {
-                key: document_key,
-                value_prefix_bytes: document_value_prefix_bytes,
-                existing_created: parse_optional_u64_string(
-                    &document_existing_created,
-                    "document existing created",
-                )?,
-                byte_element_index_limit: document_byte_element_index_limit,
-            }),
+            Some(document_index_append_commit(
+                document_key,
+                document_value_prefix_bytes,
+                document_existing_created,
+                document_byte_element_index_limit,
+            )?),
         )
     }
 }
@@ -3074,6 +3041,23 @@ fn parse_optional_u64_string(value: &str, label: &str) -> Result<Option<u64>, Js
     } else {
         parse_u64_string(value, label).map(Some)
     }
+}
+
+fn document_index_append_commit(
+    key: String,
+    value_prefix_bytes: Vec<u8>,
+    existing_created: String,
+    byte_element_index_limit: usize,
+) -> Result<DocumentIndexAppendCommit, JsValue> {
+    Ok(DocumentIndexAppendCommit {
+        key,
+        value_prefix_bytes,
+        existing_created: parse_optional_u64_string(
+            &existing_created,
+            "document existing created",
+        )?,
+        byte_element_index_limit,
+    })
 }
 
 struct CoordinateCoreValue {
