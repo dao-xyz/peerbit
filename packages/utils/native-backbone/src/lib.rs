@@ -916,32 +916,18 @@ impl NativePeerbitBackbone {
         full_replica_fallback: bool,
         include_strict_full_replica: bool,
     ) -> Result<Array, JsValue> {
-        let gids = strings_from_array(gids)?;
-        if gids.len() != replica_counts.length() as usize {
-            return Err(JsValue::from_str("gid leader batch length mismatch"));
-        }
-        let out = Array::new();
-        for (index, gid) in gids.into_iter().enumerate() {
-            let replicas = replica_counts
-                .get(index as u32)
-                .as_f64()
-                .map(|value| value as usize)
-                .ok_or_else(|| JsValue::from_str("Expected replica count number"))?;
-            let row = self.shared_log.plan_entry_leaders_for_gid(
-                gid,
-                replicas,
-                role_age_ms,
-                now.clone(),
-                peer_filter.clone(),
-                expand_peer_filter,
-                self_hash.clone(),
-                include_self,
-                full_replica_fallback,
-                include_strict_full_replica,
-            )?;
-            out.push(&row);
-        }
-        Ok(out)
+        self.shared_log.plan_leaders_for_gids_batch(
+            gids,
+            replica_counts,
+            role_age_ms,
+            now,
+            peer_filter,
+            expand_peer_filter,
+            self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
