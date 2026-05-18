@@ -2097,12 +2097,7 @@ fn prepare_entry_v0_plain_chain_rows(
         let payload = encode_payload(&input.payload_data);
         let signable = encode_entry_v0_parts(&meta, &payload, None);
         let signature = sign_ed25519_with_key(&signing_key, &signable);
-        let signature_input = SignatureInput {
-            signature: signature.clone(),
-            public_key: public_key.clone(),
-            prehash: 0,
-        };
-        let signature_with_key = encode_signature_with_key(&signature_input);
+        let signature_with_key = encode_signature_with_key_parts(&signature, &public_key, 0);
         let storage =
             encode_entry_v0_parts_with_signature_bytes(&meta, &payload, Some(&signature_with_key));
         let storage_len = storage.len();
@@ -2317,25 +2312,23 @@ fn prepare_entry_v0_plain_entry_core_with_signer_parts_profiled(
 ) -> Result<PreparedPlainEntryCore, JsValue> {
     let payload_size = payload_data.len() as u32;
 
-    let input = EntryV0EncodeInput {
-        clock_id: clock_id.to_vec(),
+    let encode_meta_started = profile.as_ref().map(|_| js_sys::Date::now());
+    let meta = encode_meta_parts(
+        clock_id,
         wall_time,
         logical,
-        gid: gid.clone(),
-        next: next.clone(),
+        &gid,
+        &next,
         entry_type,
-        meta_data,
-        payload_data,
-    };
-    let encode_meta_started = profile.as_ref().map(|_| js_sys::Date::now());
-    let meta = encode_meta(&input);
+        meta_data.as_deref(),
+    );
     if let Some(started) = encode_meta_started {
         if let Some(profile) = profile.as_deref_mut() {
             profile.encode_meta_ms += js_sys::Date::now() - started;
         }
     }
     let encode_payload_started = profile.as_ref().map(|_| js_sys::Date::now());
-    let payload = encode_payload(&input.payload_data);
+    let payload = encode_payload(&payload_data);
     if let Some(started) = encode_payload_started {
         if let Some(profile) = profile.as_deref_mut() {
             profile.encode_payload_ms += js_sys::Date::now() - started;
@@ -2355,13 +2348,8 @@ fn prepare_entry_v0_plain_entry_core_with_signer_parts_profiled(
             profile.sign_ms += js_sys::Date::now() - started;
         }
     }
-    let signature_input = SignatureInput {
-        signature: signature.clone(),
-        public_key: public_key.to_vec(),
-        prehash: 0,
-    };
     let encode_signature_started = profile.as_ref().map(|_| js_sys::Date::now());
-    let signature_with_key = encode_signature_with_key(&signature_input);
+    let signature_with_key = encode_signature_with_key_parts(&signature, public_key, 0);
     if let Some(started) = encode_signature_started {
         if let Some(profile) = profile.as_deref_mut() {
             profile.encode_signature_ms += js_sys::Date::now() - started;
@@ -2389,11 +2377,11 @@ fn prepare_entry_v0_plain_entry_core_with_signer_parts_profiled(
         gid,
         next.clone(),
         entry_type,
-        input.wall_time,
-        input.logical,
+        wall_time,
+        logical,
         payload_size,
         true,
-        input.meta_data.clone(),
+        meta_data,
     );
     if let Some(started) = index_entry_started {
         if let Some(profile) = profile.as_deref_mut() {
@@ -2763,21 +2751,37 @@ fn encode_entry_v0_parts_with_signature_bytes(
 }
 
 fn encode_meta(input: &EntryV0EncodeInput) -> Vec<u8> {
-    let next_bytes = input.next.iter().map(|next| 4 + next.len()).sum::<usize>();
-    let meta_data_bytes = input
-        .meta_data
-        .as_ref()
-        .map(|data| 4 + data.len())
-        .unwrap_or(0);
+    encode_meta_parts(
+        &input.clock_id,
+        input.wall_time,
+        input.logical,
+        &input.gid,
+        &input.next,
+        input.entry_type,
+        input.meta_data.as_deref(),
+    )
+}
+
+fn encode_meta_parts(
+    clock_id: &[u8],
+    wall_time: u64,
+    logical: u32,
+    gid: &str,
+    next: &[String],
+    entry_type: u8,
+    meta_data: Option<&[u8]>,
+) -> Vec<u8> {
+    let next_bytes = next.iter().map(|next| 4 + next.len()).sum::<usize>();
+    let meta_data_bytes = meta_data.map(|data| 4 + data.len()).unwrap_or(0);
     let mut out = Vec::with_capacity(
         1 + 1
             + 4
-            + input.clock_id.len()
+            + clock_id.len()
             + 1
             + 8
             + 4
             + 4
-            + input.gid.len()
+            + gid.len()
             + 4
             + next_bytes
             + 1
@@ -2785,14 +2789,14 @@ fn encode_meta(input: &EntryV0EncodeInput) -> Vec<u8> {
             + meta_data_bytes,
     );
     write_u8(&mut out, 0); // Meta variant
-    write_clock(&mut out, &input.clock_id, input.wall_time, input.logical);
-    write_string(&mut out, &input.gid);
-    write_u32(&mut out, input.next.len() as u32);
-    for next in &input.next {
-        write_string(&mut out, next);
+    write_clock(&mut out, clock_id, wall_time, logical);
+    write_string(&mut out, gid);
+    write_u32(&mut out, next.len() as u32);
+    for next_hash in next {
+        write_string(&mut out, next_hash);
     }
-    write_u8(&mut out, input.entry_type);
-    match input.meta_data.as_ref() {
+    write_u8(&mut out, entry_type);
+    match meta_data {
         Some(data) => {
             write_u8(&mut out, 1);
             write_bytes(&mut out, data);
@@ -2824,12 +2828,20 @@ fn write_signatures_encoded(out: &mut Vec<u8>, signature_with_key: &[u8]) {
 }
 
 fn encode_signature_with_key(signature: &SignatureInput) -> Vec<u8> {
-    let mut out = Vec::with_capacity(1 + 4 + signature.signature.len() + 1 + 32 + 1);
+    encode_signature_with_key_parts(
+        &signature.signature,
+        &signature.public_key,
+        signature.prehash,
+    )
+}
+
+fn encode_signature_with_key_parts(signature: &[u8], public_key: &[u8], prehash: u8) -> Vec<u8> {
+    let mut out = Vec::with_capacity(1 + 4 + signature.len() + 1 + public_key.len() + 1);
     write_u8(&mut out, 0); // SignatureWithKey variant
-    write_bytes(&mut out, &signature.signature);
+    write_bytes(&mut out, signature);
     write_u8(&mut out, 0); // Ed25519PublicKey variant
-    out.extend_from_slice(&signature.public_key);
-    write_u8(&mut out, signature.prehash);
+    out.extend_from_slice(public_key);
+    write_u8(&mut out, prehash);
     out
 }
 
