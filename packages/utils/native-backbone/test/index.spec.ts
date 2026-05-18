@@ -717,6 +717,41 @@ describe("native peerbit backbone", () => {
 		]);
 	});
 
+	it("returns trim hashes without materializing trim rows for unresolved storage appends", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+
+		const first = backbone.preparePlainCommittedNoNextStorageAppendTransaction({
+			wallTime: 1n,
+			gid: "gid-storage-compact-trim",
+			payloadData: new Uint8Array([1]),
+			replicas: 1,
+			selfHash: "peer-a",
+		});
+		const second = backbone.preparePlainCommittedNoNextStorageAppendTransaction(
+			{
+				wallTime: 2n,
+				gid: "gid-storage-compact-trim",
+				payloadData: new Uint8Array([2]),
+				replicas: 1,
+				selfHash: "peer-a",
+				trimLengthTo: 1,
+				resolveTrimmedEntries: false,
+			},
+		);
+
+		expect(second.trimmedHashes).to.deep.equal([first.entry.hash]);
+		expect(second.trimmed).to.deep.equal([]);
+		expect(backbone.hasLogEntry(first.entry.hash)).equal(false);
+		expect(backbone.hasBlock(first.entry.hash)).equal(false);
+		expect(backbone.getEntryCoordinateHashes()).to.deep.equal([
+			second.entry.hash,
+		]);
+	});
+
 	it("coalesces storage-backed append with next into shared-log coordinate state", async () => {
 		const backbone = await createNativePeerbitBackbone({
 			clockId: publicKey,

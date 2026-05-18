@@ -346,6 +346,7 @@ type NativePeerbitBackboneHandle = {
 		now: string,
 		selfHash: string,
 		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
 	) => unknown[];
 	prepare_plain_no_next_storage_append_transaction_trim: (
 		wallTime: bigint,
@@ -359,6 +360,7 @@ type NativePeerbitBackboneHandle = {
 		now: string,
 		selfHash: string,
 		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
 		trimLengthTo: number,
 	) => unknown[];
 	prepare_plain_no_next_storage_append_document_index_transaction: (
@@ -373,6 +375,7 @@ type NativePeerbitBackboneHandle = {
 		now: string,
 		selfHash: string,
 		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
 		documentKey: string,
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
@@ -390,6 +393,7 @@ type NativePeerbitBackboneHandle = {
 		now: string,
 		selfHash: string,
 		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
 		documentKey: string,
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
@@ -408,6 +412,7 @@ type NativePeerbitBackboneHandle = {
 		now: string,
 		selfHash: string,
 		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
 	) => unknown[];
 	prepare_plain_committed_no_next_storage_append_document_index_transaction: (
 		wallTime: bigint,
@@ -421,6 +426,7 @@ type NativePeerbitBackboneHandle = {
 		now: string,
 		selfHash: string,
 		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
 		documentKey: string,
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
@@ -438,6 +444,7 @@ type NativePeerbitBackboneHandle = {
 		now: string,
 		selfHash: string,
 		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
 		trimLengthTo: number,
 	) => unknown[];
 	prepare_plain_committed_no_next_storage_append_document_index_transaction_trim: (
@@ -452,6 +459,7 @@ type NativePeerbitBackboneHandle = {
 		now: string,
 		selfHash: string,
 		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
 		documentKey: string,
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
@@ -471,6 +479,7 @@ type NativePeerbitBackboneHandle = {
 		now: string,
 		selfHash: string,
 		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
 	) => unknown[];
 	prepare_plain_storage_append_transaction_trim: (
 		wallTime: bigint,
@@ -485,6 +494,7 @@ type NativePeerbitBackboneHandle = {
 		now: string,
 		selfHash: string,
 		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
 		trimLengthTo: number,
 	) => unknown[];
 	prepare_plain_storage_append_document_index_transaction: (
@@ -500,6 +510,7 @@ type NativePeerbitBackboneHandle = {
 		now: string,
 		selfHash: string,
 		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
 		documentKey: string,
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
@@ -518,6 +529,7 @@ type NativePeerbitBackboneHandle = {
 		now: string,
 		selfHash: string,
 		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
 		documentKey: string,
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
@@ -537,6 +549,7 @@ type NativePeerbitBackboneHandle = {
 		now: string,
 		selfHash: string,
 		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
 	) => unknown[];
 	prepare_plain_committed_storage_append_document_index_transaction: (
 		wallTime: bigint,
@@ -551,6 +564,7 @@ type NativePeerbitBackboneHandle = {
 		now: string,
 		selfHash: string,
 		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
 		documentKey: string,
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
@@ -569,6 +583,7 @@ type NativePeerbitBackboneHandle = {
 		now: string,
 		selfHash: string,
 		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
 		trimLengthTo: number,
 	) => unknown[];
 	prepare_plain_committed_storage_append_document_index_transaction_trim: (
@@ -584,6 +599,7 @@ type NativePeerbitBackboneHandle = {
 		now: string,
 		selfHash: string,
 		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
 		documentKey: string,
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
@@ -746,6 +762,7 @@ export type NativeBackboneAppendInput = {
 	selfHash?: string;
 	selfReplicating?: boolean;
 	trimLengthTo?: number;
+	resolveTrimmedEntries?: boolean;
 	documentIndex?: {
 		key: string;
 		valuePrefixBytes: Uint8Array;
@@ -1226,6 +1243,26 @@ const trimmedRowsResult = (rows: unknown[]): {
 	};
 };
 
+const trimmedRowsAndHashesResult = (
+	rows: unknown[],
+	hashRows?: unknown[],
+): {
+	readonly trimmed: NativeBackboneTrimmedEntry[];
+	readonly trimmedHashes: string[];
+} => {
+	if (!hashRows) {
+		return trimmedRowsResult(rows);
+	}
+	let trimmed: NativeBackboneTrimmedEntry[] | undefined;
+	const trimmedHashes = hashRows as string[];
+	return {
+		get trimmed() {
+			return (trimmed ??= rows.map(trimmedEntryFromRow));
+		},
+		trimmedHashes,
+	};
+};
+
 const nativeLogEntryFromTrimRow = (row: unknown): NativeBackboneLogEntry => {
 	const entry = trimmedEntryFromRow(row);
 	return {
@@ -1299,6 +1336,7 @@ const appendResultFromRow = (
 		assignedToRangeBoundary,
 		coordinateRow,
 		trimRows,
+		trimHashRows,
 	] = row as [
 		unknown[],
 		unknown[] | undefined,
@@ -1306,6 +1344,7 @@ const appendResultFromRow = (
 		boolean,
 		unknown[],
 		unknown[],
+		unknown[] | undefined,
 	];
 	return {
 		entry: committedEntryFromRow(entryRow),
@@ -1313,7 +1352,7 @@ const appendResultFromRow = (
 		isLeader,
 		assignedToRangeBoundary,
 		coordinate: appendCoordinatePlanFromRow(resolution, coordinateRow),
-		...trimmedRowsResult(trimRows),
+		...trimmedRowsAndHashesResult(trimRows, trimHashRows),
 	};
 };
 
@@ -1328,6 +1367,7 @@ const storageAppendResultFromRow = (
 		assignedToRangeBoundary,
 		coordinateRow,
 		trimRows,
+		trimHashRows,
 	] = row as [
 		unknown[],
 		unknown[] | undefined,
@@ -1335,6 +1375,7 @@ const storageAppendResultFromRow = (
 		boolean,
 		unknown[],
 		unknown[],
+		unknown[] | undefined,
 	];
 	return {
 		entry: storageFactsEntryFromRow(entryRow),
@@ -1342,7 +1383,7 @@ const storageAppendResultFromRow = (
 		isLeader,
 		assignedToRangeBoundary,
 		coordinate: appendCoordinatePlanFromRow(resolution, coordinateRow),
-		...trimmedRowsResult(trimRows),
+		...trimmedRowsAndHashesResult(trimRows, trimHashRows),
 	};
 };
 
@@ -1357,6 +1398,7 @@ const committedStorageAppendResultFromRow = (
 		assignedToRangeBoundary,
 		coordinateRow,
 		trimRows,
+		trimHashRows,
 	] = row as [
 		unknown[],
 		unknown[] | undefined,
@@ -1364,6 +1406,7 @@ const committedStorageAppendResultFromRow = (
 		boolean,
 		unknown[],
 		unknown[],
+		unknown[] | undefined,
 	];
 	return {
 		entry: committedStorageFactsEntryFromRow(entryRow),
@@ -1371,7 +1414,7 @@ const committedStorageAppendResultFromRow = (
 		isLeader,
 		assignedToRangeBoundary,
 		coordinate: appendCoordinatePlanFromRow(resolution, coordinateRow),
-		...trimmedRowsResult(trimRows),
+		...trimmedRowsAndHashesResult(trimRows, trimHashRows),
 	};
 };
 
@@ -2332,6 +2375,7 @@ export class NativePeerbitBackbone {
 			integerString(input.now ?? Date.now()),
 			input.selfHash ?? "",
 			input.selfReplicating ?? true,
+			input.resolveTrimmedEntries !== false,
 		] as const;
 		const documentIndexArgs = input.documentIndex
 			? ([
@@ -2382,6 +2426,7 @@ export class NativePeerbitBackbone {
 			integerString(input.now ?? Date.now()),
 			input.selfHash ?? "",
 			input.selfReplicating ?? true,
+			input.resolveTrimmedEntries !== false,
 		] as const;
 		const documentIndexArgs = input.documentIndex
 			? ([
@@ -2430,6 +2475,7 @@ export class NativePeerbitBackbone {
 			integerString(input.now ?? Date.now()),
 			input.selfHash ?? "",
 			input.selfReplicating ?? true,
+			input.resolveTrimmedEntries !== false,
 		] as const;
 		const documentIndexArgs = input.documentIndex
 			? ([
@@ -2479,6 +2525,7 @@ export class NativePeerbitBackbone {
 			integerString(input.now ?? Date.now()),
 			input.selfHash ?? "",
 			input.selfReplicating ?? true,
+			input.resolveTrimmedEntries !== false,
 		] as const;
 		const documentIndexArgs = input.documentIndex
 			? ([

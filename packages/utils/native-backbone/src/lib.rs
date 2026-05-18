@@ -1225,6 +1225,7 @@ impl NativePeerbitBackbone {
         now: String,
         self_hash: String,
         self_replicating: bool,
+        resolve_trimmed_entries: bool,
     ) -> Result<Array, JsValue> {
         self.prepare_plain_storage_append_transaction_inner(
             wall_time,
@@ -1239,6 +1240,7 @@ impl NativePeerbitBackbone {
             now,
             self_hash,
             self_replicating,
+            resolve_trimmed_entries,
             None,
             false,
             None,
@@ -1259,6 +1261,7 @@ impl NativePeerbitBackbone {
         now: String,
         self_hash: String,
         self_replicating: bool,
+        resolve_trimmed_entries: bool,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
         self.prepare_plain_storage_append_transaction_inner(
@@ -1274,6 +1277,7 @@ impl NativePeerbitBackbone {
             now,
             self_hash,
             self_replicating,
+            resolve_trimmed_entries,
             Some(trim_length_to),
             false,
             None,
@@ -1294,6 +1298,7 @@ impl NativePeerbitBackbone {
         now: String,
         self_hash: String,
         self_replicating: bool,
+        resolve_trimmed_entries: bool,
         document_key: String,
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
@@ -1312,6 +1317,7 @@ impl NativePeerbitBackbone {
             now,
             self_hash,
             self_replicating,
+            resolve_trimmed_entries,
             None,
             false,
             Some(DocumentIndexAppendCommit {
@@ -1340,6 +1346,7 @@ impl NativePeerbitBackbone {
         now: String,
         self_hash: String,
         self_replicating: bool,
+        resolve_trimmed_entries: bool,
         document_key: String,
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
@@ -1359,6 +1366,7 @@ impl NativePeerbitBackbone {
             now,
             self_hash,
             self_replicating,
+            resolve_trimmed_entries,
             Some(trim_length_to),
             false,
             Some(DocumentIndexAppendCommit {
@@ -1387,6 +1395,7 @@ impl NativePeerbitBackbone {
         now: String,
         self_hash: String,
         self_replicating: bool,
+        resolve_trimmed_entries: bool,
     ) -> Result<Array, JsValue> {
         self.prepare_plain_storage_append_transaction_inner(
             wall_time,
@@ -1401,6 +1410,7 @@ impl NativePeerbitBackbone {
             now,
             self_hash,
             self_replicating,
+            resolve_trimmed_entries,
             None,
             true,
             None,
@@ -1421,6 +1431,7 @@ impl NativePeerbitBackbone {
         now: String,
         self_hash: String,
         self_replicating: bool,
+        resolve_trimmed_entries: bool,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
         self.prepare_plain_storage_append_transaction_inner(
@@ -1436,6 +1447,7 @@ impl NativePeerbitBackbone {
             now,
             self_hash,
             self_replicating,
+            resolve_trimmed_entries,
             Some(trim_length_to),
             true,
             None,
@@ -1456,6 +1468,7 @@ impl NativePeerbitBackbone {
         now: String,
         self_hash: String,
         self_replicating: bool,
+        resolve_trimmed_entries: bool,
         document_key: String,
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
@@ -1474,6 +1487,7 @@ impl NativePeerbitBackbone {
             now,
             self_hash,
             self_replicating,
+            resolve_trimmed_entries,
             None,
             true,
             Some(DocumentIndexAppendCommit {
@@ -1502,6 +1516,7 @@ impl NativePeerbitBackbone {
         now: String,
         self_hash: String,
         self_replicating: bool,
+        resolve_trimmed_entries: bool,
         document_key: String,
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
@@ -1521,6 +1536,7 @@ impl NativePeerbitBackbone {
             now,
             self_hash,
             self_replicating,
+            resolve_trimmed_entries,
             Some(trim_length_to),
             true,
             Some(DocumentIndexAppendCommit {
@@ -1550,6 +1566,7 @@ impl NativePeerbitBackbone {
         now: String,
         self_hash: String,
         self_replicating: bool,
+        resolve_trimmed_entries: bool,
     ) -> Result<Array, JsValue> {
         self.prepare_plain_storage_append_transaction_inner(
             wall_time,
@@ -1564,6 +1581,7 @@ impl NativePeerbitBackbone {
             now,
             self_hash,
             self_replicating,
+            resolve_trimmed_entries,
             None,
             false,
             None,
@@ -1585,6 +1603,7 @@ impl NativePeerbitBackbone {
         now: String,
         self_hash: String,
         self_replicating: bool,
+        resolve_trimmed_entries: bool,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
         self.prepare_plain_storage_append_transaction_inner(
@@ -1600,6 +1619,7 @@ impl NativePeerbitBackbone {
             now,
             self_hash,
             self_replicating,
+            resolve_trimmed_entries,
             Some(trim_length_to),
             false,
             None,
@@ -1621,6 +1641,7 @@ impl NativePeerbitBackbone {
         now: String,
         self_hash: String,
         self_replicating: bool,
+        resolve_trimmed_entries: bool,
         document_key: String,
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
@@ -1639,6 +1660,7 @@ impl NativePeerbitBackbone {
             now,
             self_hash,
             self_replicating,
+            resolve_trimmed_entries,
             None,
             false,
             Some(DocumentIndexAppendCommit {
@@ -1668,6 +1690,7 @@ impl NativePeerbitBackbone {
         now: String,
         self_hash: String,
         self_replicating: bool,
+        resolve_trimmed_entries: bool,
         document_key: String,
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
@@ -1687,6 +1710,7 @@ impl NativePeerbitBackbone {
             now,
             self_hash,
             self_replicating,
+            resolve_trimmed_entries,
             Some(trim_length_to),
             false,
             Some(DocumentIndexAppendCommit {
@@ -1716,6 +1740,7 @@ impl NativePeerbitBackbone {
         now: String,
         self_hash: String,
         self_replicating: bool,
+        resolve_trimmed_entries: bool,
     ) -> Result<Array, JsValue> {
         self.prepare_plain_storage_append_transaction_inner(
             wall_time,
@@ -1730,6 +1755,7 @@ impl NativePeerbitBackbone {
             now,
             self_hash,
             self_replicating,
+            resolve_trimmed_entries,
             None,
             true,
             None,
@@ -1751,6 +1777,7 @@ impl NativePeerbitBackbone {
         now: String,
         self_hash: String,
         self_replicating: bool,
+        resolve_trimmed_entries: bool,
         document_key: String,
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
@@ -1769,6 +1796,7 @@ impl NativePeerbitBackbone {
             now,
             self_hash,
             self_replicating,
+            resolve_trimmed_entries,
             None,
             true,
             Some(DocumentIndexAppendCommit {
@@ -1798,6 +1826,7 @@ impl NativePeerbitBackbone {
         now: String,
         self_hash: String,
         self_replicating: bool,
+        resolve_trimmed_entries: bool,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
         self.prepare_plain_storage_append_transaction_inner(
@@ -1813,6 +1842,7 @@ impl NativePeerbitBackbone {
             now,
             self_hash,
             self_replicating,
+            resolve_trimmed_entries,
             Some(trim_length_to),
             true,
             None,
@@ -1834,6 +1864,7 @@ impl NativePeerbitBackbone {
         now: String,
         self_hash: String,
         self_replicating: bool,
+        resolve_trimmed_entries: bool,
         document_key: String,
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
@@ -1853,6 +1884,7 @@ impl NativePeerbitBackbone {
             now,
             self_hash,
             self_replicating,
+            resolve_trimmed_entries,
             Some(trim_length_to),
             true,
             Some(DocumentIndexAppendCommit {
@@ -2194,6 +2226,7 @@ impl NativePeerbitBackbone {
         now: String,
         self_hash: String,
         self_replicating: bool,
+        resolve_trimmed_entries: bool,
         trim_length_to: Option<usize>,
         commit_blocks: bool,
         document_index_commit: Option<DocumentIndexAppendCommit>,
@@ -2239,7 +2272,11 @@ impl NativePeerbitBackbone {
                 self.append_profile.entry_row_ms += js_sys::Date::now() - started;
             }
             let trim_rows_started = profile_enabled.then(js_sys::Date::now);
-            let trim_rows = native_backbone_trim_entries_to_rows(trimmed_entries);
+            let trim_rows = if resolve_trimmed_entries {
+                native_backbone_trim_entries_to_rows(trimmed_entries)
+            } else {
+                Array::new()
+            };
             if let Some(started) = trim_rows_started {
                 self.append_profile.trim_rows_ms += js_sys::Date::now() - started;
             }
@@ -2301,6 +2338,7 @@ impl NativePeerbitBackbone {
         }
         let next_hashes_for_core = next_hashes.clone();
         let trim_hashes_for_core = trim_hashes.clone();
+        let trim_hashes_for_result = trim_hashes.clone();
         let document_hash = hash.clone();
         let document_gid = gid.clone();
         let coordinate_plan_started = profile_enabled.then(js_sys::Date::now);
@@ -2355,6 +2393,7 @@ impl NativePeerbitBackbone {
         ));
         out.push(&coordinate_plan_to_row(&self.resolution, &coordinate_facts));
         out.push(&trim_rows);
+        out.push(&strings_to_array(trim_hashes_for_result));
         if let Some(started) = result_row_started {
             self.append_profile.result_row_ms += js_sys::Date::now() - started;
         }

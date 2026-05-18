@@ -5164,6 +5164,7 @@ export class SharedLog<
 					selfHash: nativeLeaderOptions.selfHash,
 					selfReplicating: nativeLeaderOptions.selfReplicating,
 					trimLengthTo: input.trimLengthTo,
+					resolveTrimmedEntries: properties?.resolveTrimmedEntries,
 				};
 				const nativeBackboneDocumentIndex =
 					properties?.nativeBackboneDocumentIndex ??
