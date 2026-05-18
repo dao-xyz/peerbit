@@ -157,6 +157,17 @@ impl LogGraphIndex {
             .collect()
     }
 
+    pub fn oldest_hashes(&self, limit: usize) -> Vec<String> {
+        if limit == 0 {
+            return Vec::new();
+        }
+        self.ordered_entries
+            .iter()
+            .take(limit)
+            .map(|(_, _, hash)| hash.clone())
+            .collect()
+    }
+
     pub fn get(&self, hash: &str) -> Option<&LogIndexEntry> {
         self.entries.get(hash)
     }
@@ -773,19 +784,22 @@ impl NativeLogIndex {
         payload_data: Vec<u8>,
         trim_length_to: Option<usize>,
     ) -> Result<(NativeCommittedEntryFacts, Vec<LogIndexEntry>), JsValue> {
-        self.prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder(
-            builder,
-            block_store,
-            wall_time,
-            logical,
-            gid,
-            next,
-            entry_type,
-            meta_data,
-            payload_data,
-            trim_length_to,
-            None,
-        )
+        let (facts, trimmed) = self
+            .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_inner(
+                builder,
+                block_store,
+                wall_time,
+                logical,
+                gid,
+                next,
+                entry_type,
+                meta_data,
+                payload_data,
+                trim_length_to,
+                NativeTrimMode::Entries,
+                None,
+            )?;
+        Ok((facts, trimmed.into_entries()))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -803,6 +817,73 @@ impl NativeLogIndex {
         trim_length_to: Option<usize>,
         mut profile: Option<&mut NativeLogAppendProfile>,
     ) -> Result<(NativeCommittedEntryFacts, Vec<LogIndexEntry>), JsValue> {
+        let (facts, trimmed) = self
+            .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_inner(
+                builder,
+                block_store,
+                wall_time,
+                logical,
+                gid,
+                next,
+                entry_type,
+                meta_data,
+                payload_data,
+                trim_length_to,
+                NativeTrimMode::Entries,
+                profile.as_deref_mut(),
+            )?;
+        Ok((facts, trimmed.into_entries()))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_trim_hashes(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Vec<String>,
+        entry_type: u8,
+        meta_data: Option<Vec<u8>>,
+        payload_data: Vec<u8>,
+        trim_length_to: Option<usize>,
+        mut profile: Option<&mut NativeLogAppendProfile>,
+    ) -> Result<(NativeCommittedEntryFacts, Vec<String>), JsValue> {
+        let (facts, trimmed) = self
+            .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_inner(
+                builder,
+                block_store,
+                wall_time,
+                logical,
+                gid,
+                next,
+                entry_type,
+                meta_data,
+                payload_data,
+                trim_length_to,
+                NativeTrimMode::Hashes,
+                profile.as_deref_mut(),
+            )?;
+        Ok((facts, trimmed.into_hashes()))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_inner(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Vec<String>,
+        entry_type: u8,
+        meta_data: Option<Vec<u8>>,
+        payload_data: Vec<u8>,
+        trim_length_to: Option<usize>,
+        trim_mode: NativeTrimMode,
+        mut profile: Option<&mut NativeLogAppendProfile>,
+    ) -> Result<(NativeCommittedEntryFacts, NativeTrimResult), JsValue> {
         let next_clone_started = profile.as_ref().map(|_| js_sys::Date::now());
         let initial_nexts = next.clone();
         if let Some(started) = next_clone_started {
@@ -859,16 +940,63 @@ impl NativeLogIndex {
         }
         let trim_started = profile.as_ref().map(|_| js_sys::Date::now());
         let trimmed = trim_length_to
-            .map(|trim_length_to| {
-                trim_oldest_log_entries_core(&mut self.inner, block_store, trim_length_to)
+            .map(|trim_length_to| match trim_mode {
+                NativeTrimMode::Entries => NativeTrimResult::Entries(trim_oldest_log_entries_core(
+                    &mut self.inner,
+                    block_store,
+                    trim_length_to,
+                )),
+                NativeTrimMode::Hashes => NativeTrimResult::Hashes(
+                    trim_oldest_log_entry_hashes_core(&mut self.inner, block_store, trim_length_to),
+                ),
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| trim_mode.empty_result());
         if let Some(started) = trim_started {
             if let Some(profile) = profile.as_deref_mut() {
                 profile.trim_ms += js_sys::Date::now() - started;
             }
         }
         Ok((facts, trimmed))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum NativeTrimMode {
+    Entries,
+    Hashes,
+}
+
+impl NativeTrimMode {
+    fn empty_result(self) -> NativeTrimResult {
+        match self {
+            NativeTrimMode::Entries => NativeTrimResult::Entries(Vec::new()),
+            NativeTrimMode::Hashes => NativeTrimResult::Hashes(Vec::new()),
+        }
+    }
+}
+
+enum NativeTrimResult {
+    Entries(Vec<LogIndexEntry>),
+    Hashes(Vec<String>),
+}
+
+impl NativeTrimResult {
+    fn into_entries(self) -> Vec<LogIndexEntry> {
+        match self {
+            NativeTrimResult::Entries(entries) => entries,
+            NativeTrimResult::Hashes(_) => {
+                unreachable!("hash-only trim result cannot be converted to entries")
+            }
+        }
+    }
+
+    fn into_hashes(self) -> Vec<String> {
+        match self {
+            NativeTrimResult::Entries(entries) => {
+                entries.into_iter().map(|entry| entry.hash).collect()
+            }
+            NativeTrimResult::Hashes(hashes) => hashes,
+        }
     }
 }
 
@@ -903,6 +1031,23 @@ fn trim_oldest_log_entries_core(
         .collect::<Vec<_>>();
     index.delete_many(&hashes);
     entries
+}
+
+fn trim_oldest_log_entry_hashes_core(
+    index: &mut LogGraphIndex,
+    block_store: &mut NativeLogBlockStore,
+    trim_length_to: usize,
+) -> Vec<String> {
+    let overage = index.len().saturating_sub(trim_length_to);
+    if overage == 0 {
+        return Vec::new();
+    }
+    let hashes = index.oldest_hashes(overage);
+    for hash in &hashes {
+        block_store.delete(hash);
+    }
+    index.delete_many(&hashes);
+    hashes
 }
 
 fn trim_oldest_log_index_entries(index: &mut LogGraphIndex, trim_length_to: usize) -> Array {
@@ -3313,7 +3458,8 @@ mod tests {
     use super::{
         encode_entry_v0_parts_unsigned_for_signing, encode_entry_v0_parts_with_signature_bytes,
         encode_entry_v0_payload_data_unsigned_for_signing, encode_payload,
-        signable_entry_to_signed_storage, JoinPlan, LogGraphIndex, LogIndexEntry,
+        signable_entry_to_signed_storage, trim_oldest_log_entry_hashes_core, JoinPlan,
+        LogGraphIndex, LogIndexEntry, NativeLogBlockStore,
     };
 
     const APPEND: u8 = 0;
@@ -3470,6 +3616,35 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["c", "a"]
         );
+    }
+
+    #[test]
+    fn trims_oldest_hashes_without_materializing_entries() {
+        let mut index = LogGraphIndex::new();
+        let mut blocks = NativeLogBlockStore::new();
+        for (hash, wall_time, logical) in [("b", 2, 0), ("a", 1, 1), ("c", 1, 0)] {
+            index.put(LogIndexEntry::new(
+                hash,
+                "g",
+                vec![],
+                APPEND,
+                wall_time,
+                logical,
+                1,
+                true,
+            ));
+            blocks.put(hash.to_string(), vec![wall_time as u8, logical as u8]);
+        }
+
+        let trimmed = trim_oldest_log_entry_hashes_core(&mut index, &mut blocks, 1);
+
+        assert_eq!(trimmed, vec!["c", "a"]);
+        assert!(!index.has("c"));
+        assert!(!index.has("a"));
+        assert!(index.has("b"));
+        assert!(!blocks.has("c"));
+        assert!(!blocks.has("a"));
+        assert!(blocks.has("b"));
     }
 
     #[test]

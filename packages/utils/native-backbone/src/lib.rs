@@ -2620,29 +2620,49 @@ impl NativePeerbitBackbone {
             }
             let log_started = profile_enabled.then(js_sys::Date::now);
             let mut log_profile = NativeLogAppendProfile::default();
-            let (entry_facts, trimmed_entries) = self
-                .log
-                .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder(
-                    &self.builder,
-                    &mut self.blocks,
-                    wall_time,
-                    logical,
-                    gid.clone(),
-                    next_hashes.clone(),
-                    entry_type,
-                    meta_data,
-                    payload_data,
-                    trim_length_to,
-                    profile_enabled.then_some(&mut log_profile),
-                )?;
+            let (entry_facts, trimmed_entries, trim_hashes) = if resolve_trimmed_entries {
+                let (entry_facts, trimmed_entries) = self
+                    .log
+                    .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder(
+                        &self.builder,
+                        &mut self.blocks,
+                        wall_time,
+                        logical,
+                        gid.clone(),
+                        next_hashes.clone(),
+                        entry_type,
+                        meta_data,
+                        payload_data,
+                        trim_length_to,
+                        profile_enabled.then_some(&mut log_profile),
+                    )?;
+                let trim_hashes = trimmed_entries
+                    .iter()
+                    .map(|entry| entry.hash.clone())
+                    .collect::<Vec<_>>();
+                (entry_facts, trimmed_entries, trim_hashes)
+            } else {
+                let (entry_facts, trim_hashes) = self
+                    .log
+                    .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_trim_hashes(
+                        &self.builder,
+                        &mut self.blocks,
+                        wall_time,
+                        logical,
+                        gid.clone(),
+                        next_hashes.clone(),
+                        entry_type,
+                        meta_data,
+                        payload_data,
+                        trim_length_to,
+                        profile_enabled.then_some(&mut log_profile),
+                    )?;
+                (entry_facts, Vec::new(), trim_hashes)
+            };
             if let Some(started) = log_started {
                 self.append_profile.log_total_ms += js_sys::Date::now() - started;
                 self.append_profile.add_log_profile(&log_profile);
             }
-            let trim_hashes = trimmed_entries
-                .iter()
-                .map(|entry| entry.hash.clone())
-                .collect::<Vec<_>>();
             let entry_row_started = profile_enabled.then(js_sys::Date::now);
             let entry_row =
                 committed_entry_facts_to_row(&entry_facts, !entry_facts.next.is_empty());
