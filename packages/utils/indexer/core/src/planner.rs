@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::ops::Bound::{Excluded, Unbounded};
 
 pub type DocId = u32;
+const MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH: usize = 128;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FieldPath {
@@ -296,6 +297,7 @@ pub struct NativeQueryIndex {
     sort_u64: HashMap<FieldPath, BTreeMap<u64, RoaringBitmap>>,
     sort_string: HashMap<FieldPath, BTreeMap<String, RoaringBitmap>>,
     sort_bytes: HashMap<FieldPath, BTreeMap<Vec<u8>, RoaringBitmap>>,
+    large_exact_bytes: HashMap<FieldPath, RoaringBitmap>,
     vectors: HashMap<FieldPath, HashMap<DocId, Vec<f32>>>,
 }
 
@@ -375,12 +377,7 @@ impl NativeQueryIndex {
     pub fn candidates(&self, query: &Query) -> RoaringBitmap {
         match query {
             Query::All => self.all_docs.clone(),
-            Query::Exact { field, value } => self
-                .exact
-                .get(field)
-                .and_then(|values| values.get(value))
-                .cloned()
-                .unwrap_or_default(),
+            Query::Exact { field, value } => self.exact_candidates(field, value),
             Query::Range {
                 field,
                 compare,
@@ -684,7 +681,11 @@ impl NativeQueryIndex {
                 self.remove_sort_value(&path, value, doc_id);
             }
             for value in values {
-                remove_from_exact(&mut self.exact, &path, &value, doc_id);
+                if is_large_byte_value(&value) {
+                    remove_from_bitmap_map(&mut self.large_exact_bytes, &path, doc_id);
+                } else {
+                    remove_from_exact(&mut self.exact, &path, &value, doc_id);
+                }
                 if let Some(value) = value.as_i64() {
                     remove_from_range_i64(&mut self.range_i64, &path, value, doc_id);
                 } else if let Some(value) = value.as_u64() {
@@ -705,12 +706,19 @@ impl NativeQueryIndex {
                 self.insert_sort_value(path, value, doc_id);
             }
             for value in values {
-                self.exact
-                    .entry(path.clone())
-                    .or_default()
-                    .entry(value.clone())
-                    .or_default()
-                    .insert(doc_id);
+                if is_large_byte_value(value) {
+                    self.large_exact_bytes
+                        .entry(path.clone())
+                        .or_default()
+                        .insert(doc_id);
+                } else {
+                    self.exact
+                        .entry(path.clone())
+                        .or_default()
+                        .entry(value.clone())
+                        .or_default()
+                        .insert(doc_id);
+                }
                 if let Some(value) = value.as_i64() {
                     self.range_i64
                         .entry(path.clone())
@@ -773,12 +781,7 @@ impl NativeQueryIndex {
     fn estimated_candidate_len(&self, query: &Query) -> u64 {
         match query {
             Query::All => self.all_docs.len(),
-            Query::Exact { field, value } => self
-                .exact
-                .get(field)
-                .and_then(|values| values.get(value))
-                .map(RoaringBitmap::len)
-                .unwrap_or(0),
+            Query::Exact { field, value } => self.estimated_exact_candidate_len(field, value),
             Query::Range {
                 field,
                 compare,
@@ -828,6 +831,39 @@ impl NativeQueryIndex {
         0
     }
 
+    fn exact_candidates(&self, field: &FieldPath, value: &FieldValue) -> RoaringBitmap {
+        let mut matches = self
+            .exact
+            .get(field)
+            .and_then(|values| values.get(value))
+            .cloned()
+            .unwrap_or_default();
+        if is_large_byte_value(value) {
+            if let Some(large_byte_docs) = self.large_exact_bytes.get(field) {
+                matches |= large_byte_docs;
+            }
+        }
+        matches
+    }
+
+    fn estimated_exact_candidate_len(&self, field: &FieldPath, value: &FieldValue) -> u64 {
+        let mut len = self
+            .exact
+            .get(field)
+            .and_then(|values| values.get(value))
+            .map(RoaringBitmap::len)
+            .unwrap_or(0);
+        if is_large_byte_value(value) {
+            len = len.saturating_add(
+                self.large_exact_bytes
+                    .get(field)
+                    .map(RoaringBitmap::len)
+                    .unwrap_or(0),
+            );
+        }
+        len.min(self.all_docs.len())
+    }
+
     fn compare_docs(&self, left: DocId, right: DocId, sort: &[SortField]) -> Ordering {
         for field in sort {
             let left_value = self.first_scalar(left, &field.field);
@@ -866,6 +902,13 @@ impl NativeQueryIndex {
         let limit = limit.unwrap_or(usize::MAX);
         if limit == 0 {
             return Some(Vec::new());
+        }
+        if self
+            .large_exact_bytes
+            .get(&sort.field)
+            .is_some_and(|docs| !docs.is_empty())
+        {
+            return None;
         }
 
         let mut result = Vec::new();
@@ -1135,9 +1178,10 @@ impl NativeQueryIndex {
             FieldValue::String(value) => {
                 insert_into_ordered_index(&mut self.sort_string, path, value.clone(), doc_id)
             }
-            FieldValue::Bytes(value) => {
+            FieldValue::Bytes(value) if value.len() <= MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH => {
                 insert_into_ordered_index(&mut self.sort_bytes, path, value.clone(), doc_id)
             }
+            FieldValue::Bytes(_) => {}
         }
     }
 
@@ -1155,9 +1199,10 @@ impl NativeQueryIndex {
             FieldValue::String(value) => {
                 remove_from_ordered_index(&mut self.sort_string, path, value, doc_id)
             }
-            FieldValue::Bytes(value) => {
+            FieldValue::Bytes(value) if value.len() <= MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH => {
                 remove_from_ordered_index(&mut self.sort_bytes, path, value, doc_id)
             }
+            FieldValue::Bytes(_) => {}
         }
     }
 }
@@ -1453,6 +1498,13 @@ fn union_bitmaps<'a>(bitmaps: impl Iterator<Item = &'a RoaringBitmap>) -> Roarin
     result
 }
 
+fn is_large_byte_value(value: &FieldValue) -> bool {
+    matches!(
+        value,
+        FieldValue::Bytes(bytes) if bytes.len() > MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH
+    )
+}
+
 fn remove_from_exact(
     index: &mut HashMap<FieldPath, HashMap<FieldValue, RoaringBitmap>>,
     path: &FieldPath,
@@ -1463,6 +1515,16 @@ fn remove_from_exact(
         if let Some(bitmap) = values.get_mut(value) {
             bitmap.remove(doc_id);
         }
+    }
+}
+
+fn remove_from_bitmap_map(
+    index: &mut HashMap<FieldPath, RoaringBitmap>,
+    path: &FieldPath,
+    doc_id: DocId,
+) {
+    if let Some(bitmap) = index.get_mut(path) {
+        bitmap.remove(doc_id);
     }
 }
 
@@ -1585,7 +1647,7 @@ fn vector_distance(left: &[f32], right: &[f32], metric: VectorMetric) -> f32 {
 mod tests {
     use super::{
         Compare, DocumentFields, FieldValue, IndexBatch, NativeQueryIndex, Query, SortDirection,
-        SortField, SumResult, VectorMetric, VectorSort,
+        SortField, SumResult, VectorMetric, VectorSort, MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH,
     };
 
     #[test]
@@ -1797,6 +1859,49 @@ mod tests {
                 Some(3),
             ),
             vec!["bytes", "string", "u64"]
+        );
+    }
+
+    #[test]
+    fn large_byte_fields_scan_exact_and_use_generic_sort() {
+        let mut index = NativeQueryIndex::new();
+        let large_low = vec![0_u8; MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH + 1];
+        let small = vec![1_u8];
+        let large_high = vec![2_u8; MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH + 1];
+        index.put(
+            "large-low",
+            DocumentFields::new().with_scalar("bytes", large_low.clone()),
+        );
+        index.put(
+            "small",
+            DocumentFields::new().with_scalar("bytes", small.clone()),
+        );
+        index.put(
+            "large-high",
+            DocumentFields::new().with_scalar("bytes", large_high.clone()),
+        );
+
+        assert_eq!(
+            index.search(
+                &Query::Exact {
+                    field: "bytes".into(),
+                    value: FieldValue::Bytes(large_low),
+                },
+                &[],
+                None,
+            ),
+            vec!["large-low"]
+        );
+        assert_eq!(
+            index.search(
+                &Query::All,
+                &[SortField {
+                    field: "bytes".into(),
+                    direction: SortDirection::Asc,
+                }],
+                None,
+            ),
+            vec!["large-low", "small", "large-high"]
         );
     }
 
