@@ -1819,9 +1819,27 @@ export class Documents<
 
 		const finishRemoved = (): MaybePromise<void> => {
 			if (!shouldPrepareChange) {
-				return commit.removed.length === 0
-					? undefined
-					: this.handlePreparedPlainPutCommitRemoved(commit.removed, modified);
+				if (commit.removed.length === 0) {
+					return undefined;
+				}
+				const handled = this.tryHandlePreparedPlainPutCommitRemovedFromHeads(
+					commit.removed,
+					modified,
+				);
+				if (handled !== undefined) {
+					return mapMaybePromise(handled, (handledHeads) => {
+						if (handledHeads.size === commit.removed.length) {
+							return undefined;
+						}
+						const remaining = commit.removed.filter(
+							(entry) => !handledHeads.has(entry.hash),
+						);
+						return remaining.length === 0
+							? undefined
+							: this.handlePreparedPlainPutCommitRemoved(remaining, modified);
+					});
+				}
+				return this.handlePreparedPlainPutCommitRemoved(commit.removed, modified);
 			}
 			if (commit.removed.length === 0) {
 				this.dispatchDocumentChangeIfObserved(documentsChanged!);
@@ -1944,6 +1962,33 @@ export class Documents<
 		}
 
 		return finishRemoved();
+	}
+
+	private tryHandlePreparedPlainPutCommitRemovedFromHeads(
+		removedEntries: ShallowOrFullEntry<Operation>[],
+		modified: Set<string | number | bigint>,
+	): MaybePromise<Set<string>> | undefined {
+		const handled = new Set<string>();
+		const deleteKeys: indexerTypes.IdKey[] = [];
+		for (const removed of removedEntries) {
+			if (removed instanceof Entry) {
+				continue;
+			}
+			const resolved = this._index.tryGetIdentityIndexedKeyByHead(removed.hash);
+			if (!resolved.supported) {
+				return;
+			}
+			if (!resolved.key) {
+				continue;
+			}
+			handled.add(removed.hash);
+			if (modified.has(resolved.key.primitive)) {
+				continue;
+			}
+			deleteKeys.push(resolved.key);
+			modified.add(resolved.key.primitive);
+		}
+		return mapMaybePromise(this._index.delManyMaybe(deleteKeys), () => handled);
 	}
 
 	private async handlePreparedPlainPutCommitRemoved(

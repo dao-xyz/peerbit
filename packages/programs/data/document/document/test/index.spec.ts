@@ -2133,6 +2133,72 @@ describe("index", () => {
 				}
 			});
 
+			it("removes unobserved trimmed native puts through synchronous head cleanup", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: false,
+						log: {
+							trim: { type: "length", to: 1 },
+						},
+					},
+				});
+
+				const firstId = uuid();
+				const first = await store.docs.put(
+					new Document({ id: firstId, name: "trimmed" }),
+					{
+						unique: true,
+						replicate: false,
+						target: "none",
+					},
+				);
+
+				const lowerLogGetSpy = sinon.spy(store.docs.log.log, "get");
+				const entryIndexGetSpy = sinon.spy(
+					store.docs.log.log.entryIndex,
+					"get",
+				);
+				const headKeySpy = sinon.spy(
+					store.docs.index,
+					"tryGetIdentityIndexedKeyByHead",
+				);
+				const delManyMaybeSpy = sinon.spy(store.docs.index, "delManyMaybe");
+
+				try {
+					await store.docs.put(
+						new Document({ id: uuid(), name: "remaining" }),
+						{
+							unique: true,
+							replicate: false,
+							target: "none",
+						},
+					);
+
+					expect(headKeySpy.withArgs(first.entry.hash).callCount).equal(1);
+					expect(delManyMaybeSpy.callCount).equal(1);
+					expect(lowerLogGetSpy.withArgs(first.entry.hash).callCount).equal(0);
+					expect(entryIndexGetSpy.withArgs(first.entry.hash).callCount).equal(
+						0,
+					);
+					expect(await store.docs.get(firstId)).to.be.undefined;
+				} finally {
+					delManyMaybeSpy.restore();
+					headKeySpy.restore();
+					entryIndexGetSpy.restore();
+					lowerLogGetSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
 			it("uses the validated local append path for document updates", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>(),
@@ -6644,10 +6710,10 @@ describe("index", () => {
 						await observer.docs.index.waitFor(writer.node.identity.publicKey);
 						expect(iterator.done()).to.be.false;
 						// Under full-suite load, the join and first remote query can take longer to converge.
-						const second = await waitForResolved(
-							async () => {
-								const next = await iterator.next(1);
-								expect(next).to.have.length(1);
+							await waitForResolved(
+								async () => {
+									const next = await iterator.next(1);
+									expect(next).to.have.length(1);
 								return next;
 							},
 							{ timeout: 30_000, delayInterval: 250 },

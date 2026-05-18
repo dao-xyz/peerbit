@@ -2142,6 +2142,19 @@ export class DocumentIndex<
 		return indexed?.id;
 	}
 
+	public tryGetIdentityIndexedKeyByHead(
+		head: string,
+	): { supported: boolean; key?: indexerTypes.IdKey } {
+		const getIdByHead = (this.index as ContextHeadIndex<I>).getIdByContextHead;
+		if (typeof getIdByHead !== "function") {
+			return { supported: false };
+		}
+		return {
+			supported: true,
+			key: getIdByHead.call(this.index, head),
+		};
+	}
+
 	public async getIdentityIndexedByHeads(
 		heads: string[],
 	): Promise<
@@ -2641,6 +2654,21 @@ export class DocumentIndex<
 			return;
 		}
 		await Promise.all(keys.map((key) => this.del(key)));
+	}
+
+	public delManyMaybe(keys: indexerTypes.IdKey[]): MaybePromise<void> {
+		if (keys.length === 0) {
+			return;
+		}
+		for (const key of keys) {
+			this.deleteResolvedCacheForKey(key);
+		}
+		const delIds = (this.index as ExactDeleteIndex).delIds;
+		if (delIds) {
+			const result = delIds.call(this.index, keys);
+			return isPromiseLike(result) ? result.then(() => undefined) : undefined;
+		}
+		return Promise.all(keys.map((key) => this.del(key))).then(() => undefined);
 	}
 
 	public async getDetailed<
