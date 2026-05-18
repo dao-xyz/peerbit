@@ -160,6 +160,30 @@ type NativePeerbitBackboneHandle = {
 		assignedToRangeBoundary: boolean,
 		requestedReplicas: number,
 	) => void;
+	plan_entry_leaders_for_gid: (
+		gid: string,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => [unknown[], unknown[]];
+	plan_entry_assignment_for_gid: (
+		gid: string,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => [unknown[], unknown[], boolean];
 	plan_local_append_for_gid_compact: (
 		entryHash: string,
 		gid: string,
@@ -699,6 +723,15 @@ export type NativeBackboneCoordinateFields = NativeBackboneCoordinatePlan & {
 	wallTime: bigint;
 	wallTimeString: string;
 	metaBytes: Uint8Array;
+};
+
+export type NativeBackboneLeaderPlan = {
+	coordinates: Array<number | bigint>;
+	leaders: Map<string, NativeBackboneLeaderSample>;
+};
+
+export type NativeBackboneEntryAssignmentPlan = NativeBackboneLeaderPlan & {
+	assignedToRangeBoundary: boolean;
 };
 
 export type NativeBackboneCommittedEntry = {
@@ -2185,6 +2218,41 @@ export class NativePeerbitBackbone {
 			assignedToRangeBoundary,
 			requestedReplicas,
 		);
+	}
+
+	planLeadersForGid(
+		gid: string,
+		replicas: number,
+		options?: NativeBackboneFindLeaderOptions,
+	): NativeBackboneLeaderPlan {
+		const [coordinateRows, leaderRows] =
+			this.native.plan_entry_leaders_for_gid(
+				gid,
+				replicas,
+				...findLeaderArguments(options),
+			);
+		return {
+			coordinates: rowsToNumbers(this.resolution, coordinateRows),
+			leaders: rowsToSamples(leaderRows) ?? new Map(),
+		};
+	}
+
+	planEntryAssignmentForGid(
+		gid: string,
+		replicas: number,
+		options?: NativeBackboneFindLeaderOptions,
+	): NativeBackboneEntryAssignmentPlan {
+		const [coordinateRows, leaderRows, assignedToRangeBoundary] =
+			this.native.plan_entry_assignment_for_gid(
+				gid,
+				replicas,
+				...findLeaderArguments(options),
+			);
+		return {
+			coordinates: rowsToNumbers(this.resolution, coordinateRows),
+			leaders: rowsToSamples(leaderRows) ?? new Map(),
+			assignedToRangeBoundary,
+		};
 	}
 
 	planLocalAppendForGidCompact(

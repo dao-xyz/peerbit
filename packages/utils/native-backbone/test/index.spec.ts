@@ -715,6 +715,28 @@ describe("native peerbit backbone", () => {
 		expect(backbone.getEntryCoordinateHashes()).to.deep.equal([
 			second.entry.hash,
 		]);
+
+		const leaderPlan = backbone.planLeadersForGid(
+			"gid-storage-committed-no-next",
+			1,
+			{
+				selfHash: "peer-a",
+				selfReplicating: true,
+				fullReplicaFallback: true,
+			},
+		);
+		expect(leaderPlan.coordinates).to.have.length(1);
+		const assignmentPlan = backbone.planEntryAssignmentForGid(
+			"gid-storage-committed-no-next",
+			1,
+			{
+				selfHash: "peer-a",
+				selfReplicating: true,
+				fullReplicaFallback: true,
+			},
+		);
+		expect(assignmentPlan.coordinates).to.deep.equal(leaderPlan.coordinates);
+		expect(assignmentPlan.assignedToRangeBoundary).to.be.a("boolean");
 	});
 
 	it("returns trim hashes without materializing trim rows for unresolved storage appends", async () => {

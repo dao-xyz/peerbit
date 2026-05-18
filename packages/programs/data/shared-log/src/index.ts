@@ -11490,11 +11490,22 @@ export class SharedLog<
 			candidates?: Iterable<string>;
 		},
 	): Promise<Map<string, { intersecting: boolean }> | undefined> {
-		if (!this._nativeSharedLogState && !this._nativeRangePlanner) {
+		if (
+			!this._nativeBackbone &&
+			!this._nativeSharedLogState &&
+			!this._nativeRangePlanner
+		) {
 			return undefined;
 		}
 
 		const context = await this.createLeaderSelectionContext(options);
+		if (this._nativeBackbone) {
+			return this._nativeBackbone.planLeadersForGid(
+				gid,
+				replicas,
+				this.createNativeLeaderOptions(context, options),
+			).leaders;
+		}
 		if (this._nativeSharedLogState) {
 			return this._nativeSharedLogState.planLeadersForGid(
 				gid,
@@ -11528,7 +11539,8 @@ export class SharedLog<
 		  }
 		| undefined
 	> {
-		const planner = this._nativeSharedLogState ?? this._nativeRangePlanner;
+		const planner =
+			this._nativeBackbone ?? this._nativeSharedLogState ?? this._nativeRangePlanner;
 		if (!planner) {
 			return undefined;
 		}
@@ -11555,11 +11567,12 @@ export class SharedLog<
 		  }
 		| undefined
 	> {
-		if (!this._nativeSharedLogState) {
+		const planner = this._nativeBackbone ?? this._nativeSharedLogState;
+		if (!planner) {
 			return undefined;
 		}
 		const context = await this.createLeaderSelectionContext(options);
-		return this._nativeSharedLogState.planEntryAssignmentForGid(
+		return planner.planEntryAssignmentForGid(
 			gid,
 			replicas,
 			this.createNativeLeaderOptions(context, options),
