@@ -117,6 +117,10 @@ impl NativeSchemaIr {
             generic_nodes: self.root.generic_count(),
         }
     }
+
+    fn scalar_capacity(&self, byte_element_index_limit: usize) -> usize {
+        self.root.scalar_capacity(byte_element_index_limit)
+    }
 }
 
 impl NativeSchemaNode {
@@ -177,6 +181,45 @@ impl NativeSchemaNode {
             | NativeSchemaNode::I64
             | NativeSchemaNode::String
             | NativeSchemaNode::Uint8Array => 0,
+        }
+    }
+
+    fn scalar_capacity(&self, byte_element_index_limit: usize) -> usize {
+        match self {
+            NativeSchemaNode::Object { fields, .. } => fields
+                .iter()
+                .map(|field| field.node.scalar_capacity(byte_element_index_limit))
+                .sum(),
+            NativeSchemaNode::Option(node) => node.scalar_capacity(byte_element_index_limit),
+            NativeSchemaNode::Vec(node) => match node.as_ref() {
+                NativeSchemaNode::U8 => 1,
+                node => 1 + node.scalar_capacity(byte_element_index_limit),
+            },
+            NativeSchemaNode::FixedArray { length, element } => match element.as_ref() {
+                NativeSchemaNode::U8 => {
+                    1 + if (*length as usize) <= byte_element_index_limit {
+                        *length as usize
+                    } else {
+                        0
+                    }
+                }
+                node => (*length as usize) * (1 + node.scalar_capacity(byte_element_index_limit)),
+            },
+            NativeSchemaNode::Bool
+            | NativeSchemaNode::U8
+            | NativeSchemaNode::U16
+            | NativeSchemaNode::U32
+            | NativeSchemaNode::U64
+            | NativeSchemaNode::U128
+            | NativeSchemaNode::U256
+            | NativeSchemaNode::U512
+            | NativeSchemaNode::I8
+            | NativeSchemaNode::I16
+            | NativeSchemaNode::I32
+            | NativeSchemaNode::I64
+            | NativeSchemaNode::String
+            | NativeSchemaNode::Uint8Array => 1,
+            NativeSchemaNode::Generic => 0,
         }
     }
 }
@@ -301,7 +344,7 @@ impl<'a> BridgeReader<'a> {
             3 => FieldValue::String(self.read_string()?),
             4 => {
                 let len = self.read_u32()? as usize;
-                FieldValue::Bytes(self.read_exact(len)?.to_vec())
+                FieldValue::from(self.read_exact(len)?.to_vec())
             }
             tag => return Err(SchemaError::InvalidFieldValueTag(tag)),
         })
@@ -390,7 +433,8 @@ fn extract_encoded_document_fields_from_reader(
     mut reader: BridgeReader,
     byte_element_index_limit: usize,
 ) -> Result<DocumentFields, SchemaError> {
-    let mut fields = DocumentFields::new();
+    let mut fields =
+        DocumentFields::with_scalar_capacity(schema_ir.scalar_capacity(byte_element_index_limit));
     let mut state = NativeExtractState {
         next_scope: 1,
         byte_element_index_limit,
@@ -653,7 +697,7 @@ fn insert_bytes_facts(
             );
         }
     }
-    fields.insert_scoped_scalar(scope, FieldPath::Id(field), FieldValue::Bytes(bytes));
+    fields.insert_scoped_scalar(scope, FieldPath::Id(field), FieldValue::from(bytes));
     Ok(())
 }
 
@@ -753,7 +797,7 @@ mod tests {
             &[
                 FieldValue::U64(9),
                 FieldValue::U64(10),
-                FieldValue::Bytes(vec![9, 10])
+                FieldValue::from(vec![9, 10])
             ]
         );
         assert_eq!(schema.stats().root_fields, 3);
@@ -769,7 +813,7 @@ mod tests {
 
         assert_eq!(
             fields.scalar_values(&FieldPath::Id(3)),
-            Some([FieldValue::Bytes(vec![9, 10])].as_slice())
+            Some([FieldValue::from(vec![9, 10])].as_slice())
         );
     }
 }

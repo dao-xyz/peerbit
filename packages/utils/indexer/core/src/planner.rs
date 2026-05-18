@@ -2,6 +2,7 @@ use roaring::RoaringBitmap;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Bound::{Excluded, Unbounded};
+use std::sync::Arc;
 
 pub type DocId = u32;
 const MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH: usize = 128;
@@ -42,7 +43,7 @@ pub enum FieldValue {
     I64(i64),
     U64(u64),
     String(String),
-    Bytes(Vec<u8>),
+    Bytes(Arc<[u8]>),
 }
 
 impl FieldValue {
@@ -93,6 +94,12 @@ impl From<&str> for FieldValue {
 
 impl From<Vec<u8>> for FieldValue {
     fn from(value: Vec<u8>) -> Self {
+        Self::Bytes(value.into())
+    }
+}
+
+impl From<Arc<[u8]>> for FieldValue {
+    fn from(value: Arc<[u8]>) -> Self {
         Self::Bytes(value)
     }
 }
@@ -296,7 +303,7 @@ pub struct NativeQueryIndex {
     sort_i64: HashMap<FieldPath, BTreeMap<i64, RoaringBitmap>>,
     sort_u64: HashMap<FieldPath, BTreeMap<u64, RoaringBitmap>>,
     sort_string: HashMap<FieldPath, BTreeMap<String, RoaringBitmap>>,
-    sort_bytes: HashMap<FieldPath, BTreeMap<Vec<u8>, RoaringBitmap>>,
+    sort_bytes: HashMap<FieldPath, BTreeMap<Arc<[u8]>, RoaringBitmap>>,
     large_exact_bytes: HashMap<FieldPath, RoaringBitmap>,
     vectors: HashMap<FieldPath, HashMap<DocId, Vec<f32>>>,
 }
@@ -1890,7 +1897,7 @@ mod tests {
             index.search(
                 &Query::Exact {
                     field: "bytes".into(),
-                    value: FieldValue::Bytes(large_low),
+                    value: FieldValue::from(large_low),
                 },
                 &[],
                 None,

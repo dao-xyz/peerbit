@@ -825,7 +825,7 @@ fn insert_bytes_facts(
             );
         }
     }
-    fields.insert_scoped_scalar(scope, FieldPath::Id(field), FieldValue::Bytes(bytes));
+    fields.insert_scoped_scalar(scope, FieldPath::Id(field), FieldValue::from(bytes));
     Ok(())
 }
 
