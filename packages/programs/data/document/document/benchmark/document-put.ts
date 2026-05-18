@@ -32,6 +32,7 @@ import {
 //   Add "-update" to any scenario name to repeatedly update one document id.
 //   Add "-local" to a rust-peerbit scenario to disable replication and default trim.
 //   Add "-trim" to a local rust-peerbit scenario to keep length trim enabled.
+//   Add "-no-trim" to any rust-peerbit scenario to disable length trim.
 //   Add "-putmany" to any unique scenario name to use one putMany call per measured batch.
 //   Add "-document-index" to a rust-peerbit-backbone scenario to enable nativeBackbone.documentIndex.
 //   Add "-policy-allow-all" to open with canPerform: policy.allowAll().
@@ -82,7 +83,7 @@ const scenarioNames = (
 
 const scenarioBaseName = (name: string) =>
 	name.replace(
-		/(?:-(?:putmany|nonunique|update|local|trim|buffered|coordinate-wal|document-index|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|canperform-allow-all|transform-identity|transform-pick|transform-project-context|transform-arbitrary))*$/,
+		/(?:-(?:putmany|nonunique|update|local|no-trim|trim|buffered|coordinate-wal|document-index|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|canperform-allow-all|transform-identity|transform-pick|transform-project-context|transform-arbitrary))*$/,
 		"",
 	);
 const scenarioUsesUpdatePuts = (name: string) => name.includes("-update");
@@ -91,7 +92,9 @@ const scenarioUsesUniquePuts = (name: string) =>
 const scenarioUsesPutMany = (name: string) => name.endsWith("-putmany");
 const scenarioUsesLocalStore = (name: string) =>
 	scenarioBaseName(name).startsWith("rust-peerbit") && name.includes("-local");
-const scenarioUsesTrim = (name: string) => name.includes("-trim");
+const scenarioDisablesTrim = (name: string) => name.includes("-no-trim");
+const scenarioUsesTrim = (name: string) =>
+	name.includes("-trim") && !scenarioDisablesTrim(name);
 const scenarioUsesCoordinateWal = (name: string) =>
 	name.includes("-coordinate-wal");
 const scenarioUsesBufferedCoordinateWal = (name: string) =>
@@ -778,7 +781,8 @@ const openScenario = async (name: string) => {
 							},
 						}
 					: {}),
-				...(scenarioUsesLocalStore(name) && !scenarioUsesTrim(name)
+				...(scenarioDisablesTrim(name) ||
+				(scenarioUsesLocalStore(name) && !scenarioUsesTrim(name))
 					? {}
 					: {
 							log: {
