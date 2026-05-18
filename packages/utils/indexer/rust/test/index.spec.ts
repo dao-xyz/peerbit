@@ -1049,6 +1049,12 @@ describe("native planner bridge", () => {
 		const result = await index.get(toId("a"));
 		expect(result?.value.__context.head).equal("head-a");
 		expect(result?.value.title).equal("stored bytes");
+		const byHeadId = (
+			index as typeof index & {
+				getIdByContextHead: (head: string) => ReturnType<typeof toId> | undefined;
+			}
+		).getIdByContextHead("head-a");
+		expect(byHeadId?.primitive).equal("a");
 
 		const indexed = await index
 			.iterate({

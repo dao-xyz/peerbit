@@ -2133,7 +2133,10 @@ export class DocumentIndex<
 	): Promise<indexerTypes.IdKey | undefined> {
 		const getIdByHead = (this.index as ContextHeadIndex<I>).getIdByContextHead;
 		if (typeof getIdByHead === "function") {
-			return getIdByHead.call(this.index, head);
+			const key = getIdByHead.call(this.index, head);
+			if (key) {
+				return key;
+			}
 		}
 		const indexed = await this.getIdentityIndexedByHead(head);
 		return indexed?.id;

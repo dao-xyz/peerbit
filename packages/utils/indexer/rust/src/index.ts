@@ -2065,6 +2065,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			const key = backbone.documentExactStringFirstKey(field, head);
 			return key ? storeKeyToIdKey(key) : undefined;
 		}
+		if (this.nativeBackboneDocumentIndexPrimary) {
+			return;
+		}
+		return this.getNativeExactStringFirst(field, head)?.id;
 	}
 
 	put(
