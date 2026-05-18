@@ -572,6 +572,28 @@ describe("native peerbit backbone", () => {
 			3n,
 		);
 		expect(backbone.getEntryCoordinateHashes()).to.deep.equal(["hash-c"]);
+		expect(backbone.getEntryCoordinates("hash-c")).to.deep.equal([3n]);
+		expect(backbone.getEntryHashesForHashNumbers([3n]).get(3n)).to.deep.equal(
+			["hash-c"],
+		);
+		expect(
+			backbone.getEntryHashNumbersInRange({
+				start1: 0n,
+				end1: 10n,
+				start2: 0n,
+				end2: 0n,
+			}),
+		).to.deep.equal([3n]);
+		expect(
+			backbone.countEntryCoordinatesInRanges([
+				{
+					start1: 0n,
+					end1: 10n,
+					start2: 0n,
+					end2: 0n,
+				},
+			]),
+		).to.equal(1);
 		expect(backbone.coordinateIndexLength).to.equal(1);
 		expect(backbone.hasCoordinateIndexHash("hash-b")).equal(false);
 		expect(backbone.hasCoordinateIndexHash("hash-c")).equal(true);

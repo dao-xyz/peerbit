@@ -8,6 +8,21 @@ type NativePeerbitBackboneHandle = {
 	has_log_entry: (hash: string) => boolean;
 	has_block: (hash: string) => boolean;
 	entry_coordinate_hashes: () => string[];
+	get_entry_coordinates: (hash: string) => unknown[] | undefined;
+	entry_hashes_for_hash_numbers: (hashNumbers: string[]) => unknown[];
+	entry_hash_numbers_in_range: (
+		start1: string,
+		end1: string,
+		start2: string,
+		end2: string,
+	) => unknown[];
+	count_entry_coordinates_in_ranges: (
+		start1: string[],
+		end1: string[],
+		start2: string[],
+		end2: string[],
+		includeAssignedToRangeBoundary: boolean,
+	) => number;
 	entry_coordinate_fields: () => unknown[];
 	coordinate_index_len: () => number;
 	coordinate_value_len: () => number;
@@ -2060,6 +2075,72 @@ export class NativePeerbitBackbone {
 
 	getEntryCoordinateHashes(): string[] {
 		return this.native.entry_coordinate_hashes();
+	}
+
+	getEntryCoordinates(hash: string): Array<number | bigint> | undefined {
+		const coordinates = this.native.get_entry_coordinates(hash);
+		return coordinates
+			? rowsToNumbers(this.resolution, coordinates)
+			: undefined;
+	}
+
+	getEntryHashesForHashNumbers(
+		hashNumbers: Iterable<bigint | number | string>,
+	): Map<bigint, string[]> {
+		const out = new Map<bigint, string[]>();
+		const rows = this.native.entry_hashes_for_hash_numbers(
+			[...hashNumbers].map(integerString),
+		);
+		for (const row of rows) {
+			const [hashNumber, hashes] = row as [string, string[]];
+			out.set(BigInt(hashNumber), hashes);
+		}
+		return out;
+	}
+
+	getEntryHashNumbersInRange(range: {
+		start1: bigint | number | string;
+		end1: bigint | number | string;
+		start2: bigint | number | string;
+		end2: bigint | number | string;
+	}): bigint[] {
+		return rowsToNumbers(
+			"u64",
+			this.native.entry_hash_numbers_in_range(
+				integerString(range.start1),
+				integerString(range.end1),
+				integerString(range.start2),
+				integerString(range.end2),
+			),
+		) as bigint[];
+	}
+
+	countEntryCoordinatesInRanges(
+		ranges: Iterable<{
+			start1: bigint | number | string;
+			end1: bigint | number | string;
+			start2: bigint | number | string;
+			end2: bigint | number | string;
+		}>,
+		options?: { includeAssignedToRangeBoundary?: boolean },
+	): number {
+		const start1: string[] = [];
+		const end1: string[] = [];
+		const start2: string[] = [];
+		const end2: string[] = [];
+		for (const range of ranges) {
+			start1.push(integerString(range.start1));
+			end1.push(integerString(range.end1));
+			start2.push(integerString(range.start2));
+			end2.push(integerString(range.end2));
+		}
+		return this.native.count_entry_coordinates_in_ranges(
+			start1,
+			end1,
+			start2,
+			end2,
+			options?.includeAssignedToRangeBoundary === true,
+		);
 	}
 
 	getEntryCoordinateFields(): NativeBackboneCoordinateFields[] {

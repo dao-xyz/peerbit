@@ -2285,7 +2285,9 @@ export class SharedLog<
 	private async ensureCurrentHeadCoordinatesIndexed() {
 		const heads = await this.log.getHeads(true).all();
 		const headsByHash = new Map(heads.map((head) => [head.hash, head]));
-		const nativeHashes = this._nativeSharedLogState?.getEntryCoordinateHashes();
+		const nativeCoordinateState =
+			this._nativeBackbone ?? this._nativeSharedLogState;
+		const nativeHashes = nativeCoordinateState?.getEntryCoordinateHashes();
 		const indexedHashes = nativeHashes
 			? new Set(nativeHashes)
 			: new Set(
@@ -7138,13 +7140,16 @@ export class SharedLog<
 			},
 		);
 		const resolveHashesForSymbols = (symbols: bigint[]) =>
-			this._nativeSharedLogState?.getEntryHashesForHashNumbers(symbols);
+			(this._nativeBackbone ?? this._nativeSharedLogState)
+				?.getEntryHashesForHashNumbers(symbols);
 		const resolveHashNumbersInRange = (range: {
 			start1: bigint | number;
 			end1: bigint | number;
 			start2: bigint | number;
 			end2: bigint | number;
-		}) => this._nativeSharedLogState?.getEntryHashNumbersInRange(range);
+		}) =>
+			(this._nativeBackbone ?? this._nativeSharedLogState)
+				?.getEntryHashNumbersInRange(range);
 
 		if (options?.syncronizer) {
 			this.syncronizer = new options.syncronizer({
@@ -9259,12 +9264,14 @@ export class SharedLog<
 
 	async countAssignedHeads(options?: { strict: boolean }): Promise<number> {
 		const myRanges = await this.getMyReplicationSegments();
-		if (this._nativeSharedLogState && !this.hasCustomFindLeaders()) {
+		const nativeCoordinateState =
+			this._nativeBackbone ?? this._nativeSharedLogState;
+		if (nativeCoordinateState && !this.hasCustomFindLeaders()) {
 			const includeAssignedToRangeBoundary =
 				options?.strict !== true &&
 				(myRanges.length === 0 ||
 					myRanges.some((range) => range.mode === ReplicationIntent.NonStrict));
-			return this._nativeSharedLogState.countEntryCoordinatesInRanges(
+			return nativeCoordinateState.countEntryCoordinatesInRanges(
 				myRanges,
 				{
 					includeAssignedToRangeBoundary,
@@ -9928,9 +9935,9 @@ export class SharedLog<
 	}
 
 	private async getCoordinates(entry: { hash: string }) {
-		const nativeCoordinates = this._nativeSharedLogState?.getEntryCoordinates(
-			entry.hash,
-		);
+		const nativeCoordinates = (
+			this._nativeBackbone ?? this._nativeSharedLogState
+		)?.getEntryCoordinates(entry.hash);
 		if (nativeCoordinates) {
 			return nativeCoordinates as NumberFromType<R>[];
 		}

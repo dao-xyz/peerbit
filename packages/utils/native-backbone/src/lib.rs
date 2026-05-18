@@ -193,6 +193,42 @@ impl NativePeerbitBackbone {
         self.shared_log.entry_coordinate_hashes()
     }
 
+    pub fn get_entry_coordinates(&self, hash: &str) -> JsValue {
+        self.shared_log.get_entry_coordinates(hash)
+    }
+
+    pub fn entry_hashes_for_hash_numbers(&self, hash_numbers: Array) -> Result<Array, JsValue> {
+        self.shared_log.entry_hashes_for_hash_numbers(hash_numbers)
+    }
+
+    pub fn entry_hash_numbers_in_range(
+        &self,
+        start1: String,
+        end1: String,
+        start2: String,
+        end2: String,
+    ) -> Result<Array, JsValue> {
+        self.shared_log
+            .entry_hash_numbers_in_range(start1, end1, start2, end2)
+    }
+
+    pub fn count_entry_coordinates_in_ranges(
+        &self,
+        start1: Array,
+        end1: Array,
+        start2: Array,
+        end2: Array,
+        include_assigned_to_range_boundary: bool,
+    ) -> Result<usize, JsValue> {
+        self.shared_log.count_entry_coordinates_in_ranges(
+            start1,
+            end1,
+            start2,
+            end2,
+            include_assigned_to_range_boundary,
+        )
+    }
+
     pub fn entry_coordinate_fields(&self) -> Result<Array, JsValue> {
         let out = Array::new();
         for (_, value) in self.coordinate_values.entries() {
