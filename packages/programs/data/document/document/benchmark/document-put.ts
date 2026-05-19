@@ -27,7 +27,7 @@ import {
 // - DOC_BYTES=1200
 // - DOC_COORDINATE_WAL_FLUSH_BYTES=1048576
 // - DOC_COORDINATE_WAL_FLUSH_INTERVAL_MS unset by default
-// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,rust-peerbit-backbone-local-document-index,rust-peerbit-backbone-coordinate-wal,rust-peerbit-backbone-coordinate-wal-buffered,native-ceiling,native-backbone-ceiling,native-backbone-storage-ceiling
+// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,rust-peerbit-backbone-local-document-index,rust-peerbit-backbone-coordinate-wal,rust-peerbit-backbone-coordinate-wal-buffered,native-ceiling,native-log-ceiling,native-backbone-ceiling,native-backbone-storage-ceiling
 //   Add "-nonunique" to any scenario name to use default update-safe put semantics with new ids.
 //   Add "-update" to any scenario name to repeatedly update one document id.
 //   Add "-local" to a rust-peerbit scenario to disable replication and default trim.
@@ -1461,6 +1461,62 @@ const runNativeCeilingScenario = async (name: string): Promise<BenchRow> => {
 	}
 };
 
+const runNativeLogCeilingScenario = async (name: string): Promise<BenchRow> => {
+	const backbone = await createNativePeerbitBackbone({
+		clockId: nativeBackbonePublicKey,
+		privateKey: nativeBackbonePrivateKey,
+		publicKey: nativeBackbonePublicKey,
+	});
+	const trimLengthTo = scenarioDisablesTrim(name) ? undefined : 100;
+
+	const append = (count: number, profile?: Profile) => {
+		for (let i = 0; i < count; i++) {
+			const runAppend = () => {
+				const prepared = backbone.graph.prepareEntryV0PlainEntryCommit(
+					{
+						clockId: nativeBackbonePublicKey,
+						privateKey: nativeBackbonePrivateKey,
+						publicKey: nativeBackbonePublicKey,
+						wallTime: BigInt(Date.now()),
+						logical: i,
+						gid: `gid-${i}`,
+						payloadData: payload,
+						includeMaterializationBytes: false,
+						includeAppendFactsBytes: true,
+						trimLengthTo,
+					},
+					backbone.blocks,
+				);
+				if (!prepared) {
+					throw new Error("Native log ceiling append was not prepared");
+				}
+			};
+			if (profile) {
+				timeSync(profile, "totalPutMs", runAppend);
+			} else {
+				runAppend();
+			}
+		}
+	};
+
+	append(warmupIterations);
+	const profile = emptyProfile();
+	append(iterations, profile);
+
+	return {
+		name,
+		iterations,
+		payloadBytes,
+		opsPerSecond: Math.round((iterations / profile.totalPutMs) * 1000),
+		cleanupMs: 0,
+		...Object.fromEntries(
+			Object.entries(profile)
+				.filter(([key]) => shouldIncludeProfileKey(key))
+				.map(([key, value]) => [key, Math.round(value * 100) / 100]),
+		),
+	} as BenchRow;
+};
+
 const runNativeBackboneCeilingScenario = async (
 	name: string,
 ): Promise<BenchRow> => {
@@ -1548,6 +1604,8 @@ for (const name of scenarioNames) {
 	rows.push(
 		baseName === "native-ceiling"
 			? await runNativeCeilingScenario(name)
+			: baseName === "native-log-ceiling"
+				? await runNativeLogCeilingScenario(name)
 			: baseName === "native-backbone-ceiling" ||
 				  baseName === "native-backbone-storage-ceiling"
 				? await runNativeBackboneCeilingScenario(name)
