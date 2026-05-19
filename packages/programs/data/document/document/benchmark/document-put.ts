@@ -263,6 +263,7 @@ type Profile = {
 	nativeBackboneCommitCoordinatesMs: number;
 	logAppendMs: number;
 	logAppendNativeCommitOnlyMs: number;
+	logAppendNativeKnownNoNextCommitOnlyMs: number;
 	logGetNextsForAppendMs: number;
 	logCreateNativeAppendChainMs: number;
 	logPutNativeCommittedAppendMs: number;
@@ -346,6 +347,7 @@ const deepProfileKeys = new Set<keyof Profile>([
 	"nativeSharedLogCommitCoordinatesMs",
 	"nativeBackboneCommitCoordinatesMs",
 	"logAppendNativeCommitOnlyMs",
+	"logAppendNativeKnownNoNextCommitOnlyMs",
 	"logGetNextsForAppendMs",
 	"logCreateNativeAppendChainMs",
 	"logPutNativeCommittedAppendMs",
@@ -467,6 +469,7 @@ const emptyProfile = (): Profile => ({
 	nativeBackboneCommitCoordinatesMs: 0,
 	logAppendMs: 0,
 	logAppendNativeCommitOnlyMs: 0,
+	logAppendNativeKnownNoNextCommitOnlyMs: 0,
 	logGetNextsForAppendMs: 0,
 	logCreateNativeAppendChainMs: 0,
 	logPutNativeCommittedAppendMs: 0,
@@ -1238,7 +1241,7 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 					store.docs.log.log as any,
 					"appendLocallyPreparedNativeKnownNoNextCommitOnly",
 					profile,
-					"logAppendNativeCommitOnlyMs",
+					"logAppendNativeKnownNoNextCommitOnlyMs",
 				),
 				patchAsyncMethod(
 					store.docs.log.log as any,
