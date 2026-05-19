@@ -970,7 +970,12 @@ export class Log<T> {
 			return undefined;
 		}
 		const resolvedTrim = options.trim ?? this._trim.options;
-		if (resolvedTrim) {
+		const supportsNativeTrim =
+			!resolvedTrim ||
+			(resolvedTrim.type === "length" &&
+				!resolvedTrim.filter?.canTrim &&
+				properties.resolveTrimmedEntries === false);
+		if (!supportsNativeTrim) {
 			return undefined;
 		}
 		return this.appendLocallyPreparedNativeCommitOnly(

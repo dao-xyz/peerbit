@@ -594,6 +594,63 @@ describe("append", function () {
 		}
 	});
 
+	it("keeps known no-next native append on the direct path with length trim", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+			trim: { type: "length", to: 1 },
+		});
+
+		const getNextsForAppendSpy = sinon.spy(log as any, "getNextsForAppend");
+		const trimSpy = sinon.spy(log, "trim");
+		const nativeGraph = log.entryIndex.properties.nativeGraph!.graph;
+		const nativePrepareAndPutSpy = sinon.spy(
+			nativeGraph,
+			"prepareEntryV0PlainEntryAndPut",
+		);
+		const prepare = (input: any) =>
+			nativeGraph.prepareEntryV0PlainEntryAndPut!({
+				...input,
+				next: [],
+				includeMaterializationBytes: false,
+			});
+
+		try {
+			const first = await (log as any).appendLocallyPreparedNativeNoNextCommitOnly(
+				new Uint8Array([1]),
+				{ meta: { next: [] } },
+				{ resolveTrimmedEntries: false },
+				prepare,
+			);
+			const second = await (
+				log as any
+			).appendLocallyPreparedNativeNoNextCommitOnly(
+				new Uint8Array([2]),
+				{ meta: { next: [] } },
+				{ resolveTrimmedEntries: false },
+				prepare,
+			);
+
+			expect(first.removed).to.be.empty;
+			expect(second.removed.map((entry: any) => entry.hash)).to.deep.equal([
+				first.appendFacts.hash,
+			]);
+			expect(getNextsForAppendSpy.callCount).equal(0);
+			expect(nativePrepareAndPutSpy.callCount).equal(2);
+			expect(nativePrepareAndPutSpy.secondCall.args[0].trimLengthTo).equal(1);
+			expect(trimSpy.callCount).equal(0);
+			expect(await blockExists(second.appendFacts.hash)).to.be.true;
+			expect(log.length).equal(1);
+		} finally {
+			nativePrepareAndPutSpy.restore();
+			trimSpy.restore();
+			getNextsForAppendSpy.restore();
+			await log.close();
+		}
+	});
+
 	it("uses storage-only native block-store commits for commit-only prepared append", async () => {
 		const { createNativeLogBlockStore } = await import("@peerbit/log-rust");
 		const nativeStore = await createNativeLogBlockStore();
