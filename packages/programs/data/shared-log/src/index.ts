@@ -7178,9 +7178,25 @@ export class SharedLog<
 				indexer: logIndex,
 			},
 		);
-		const resolveHashesForSymbols = (symbols: bigint[]) =>
-			(this._nativeBackbone ?? this._nativeSharedLogState)
-				?.getEntryHashesForHashNumbers(symbols);
+		const resolveHashesForSymbols = (
+			symbols: readonly bigint[] | BigUint64Array,
+		) => {
+			const nativeState = this._nativeBackbone ?? this._nativeSharedLogState;
+			if (!nativeState) {
+				return undefined;
+			}
+			if (
+				typeof BigUint64Array !== "undefined" &&
+				typeof nativeState.getEntryHashesForHashNumbersU64 === "function"
+			) {
+				return nativeState.getEntryHashesForHashNumbersU64(
+					symbols instanceof BigUint64Array
+						? symbols
+						: BigUint64Array.from(symbols),
+				);
+			}
+			return nativeState.getEntryHashesForHashNumbers(symbols);
+		};
 		const resolveHashNumbersInRange = (range: {
 			start1: bigint | number;
 			end1: bigint | number;

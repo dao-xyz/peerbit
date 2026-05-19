@@ -1911,6 +1911,17 @@ impl NativeSharedLogState {
 
     pub fn entry_hashes_for_hash_numbers(&self, hash_numbers: Array) -> Result<Array, JsValue> {
         let hash_numbers = cursor_values_from_array(hash_numbers)?;
+        Ok(self.entry_hashes_for_hash_number_values(hash_numbers))
+    }
+
+    pub fn entry_hashes_for_hash_numbers_u64(
+        &self,
+        hash_numbers: BigUint64Array,
+    ) -> Result<Array, JsValue> {
+        Ok(self.entry_hashes_for_hash_number_values(hash_numbers.to_vec()))
+    }
+
+    fn entry_hashes_for_hash_number_values(&self, hash_numbers: Vec<u64>) -> Array {
         let out = Array::new();
         for hash_number in hash_numbers {
             if let Some(hashes) = self.inner.entry_hashes_by_hash_number.get(&hash_number) {
@@ -1920,7 +1931,7 @@ impl NativeSharedLogState {
                 out.push(&row);
             }
         }
-        Ok(out)
+        out
     }
 
     pub fn entry_hash_numbers_in_range(

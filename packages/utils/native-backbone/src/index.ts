@@ -36,6 +36,9 @@ type NativePeerbitBackboneHandle = {
 	get_grid: (from: string, count: number) => unknown[];
 	get_gid_coordinates: (gid: string, count: number) => unknown[];
 	entry_hashes_for_hash_numbers: (hashNumbers: string[]) => unknown[];
+	entry_hashes_for_hash_numbers_u64?: (
+		hashNumbers: BigUint64Array,
+	) => unknown[];
 	entry_hash_numbers_in_range: (
 		start1: string,
 		end1: string,
@@ -1419,6 +1422,15 @@ const rowsToNumbers = (
 		return resolution === "u64" ? BigInt(value) : Number(value);
 	});
 
+const rowsToHashNumberMap = (rows: unknown[]): Map<bigint, string[]> => {
+	const out = new Map<bigint, string[]>();
+	for (const row of rows) {
+		const [hashNumber, hashes] = row as [string, string[]];
+		out.set(BigInt(hashNumber), hashes);
+	}
+	return out;
+};
+
 const rowsToSamples = (
 	rows: unknown[] | undefined,
 ): Map<string, NativeBackboneLeaderSample> | undefined => {
@@ -2478,15 +2490,24 @@ export class NativePeerbitBackbone {
 	getEntryHashesForHashNumbers(
 		hashNumbers: Iterable<bigint | number | string>,
 	): Map<bigint, string[]> {
-		const out = new Map<bigint, string[]>();
 		const rows = this.native.entry_hashes_for_hash_numbers(
 			[...hashNumbers].map(integerString),
 		);
-		for (const row of rows) {
-			const [hashNumber, hashes] = row as [string, string[]];
-			out.set(BigInt(hashNumber), hashes);
+		return rowsToHashNumberMap(rows);
+	}
+
+	getEntryHashesForHashNumbersU64(
+		hashNumbers: BigUint64Array,
+	): Map<bigint, string[]> | undefined {
+		if (
+			typeof BigUint64Array === "undefined" ||
+			typeof this.native.entry_hashes_for_hash_numbers_u64 !== "function"
+		) {
+			return undefined;
 		}
-		return out;
+		return rowsToHashNumberMap(
+			this.native.entry_hashes_for_hash_numbers_u64(hashNumbers),
+		);
 	}
 
 	getEntryHashNumbersInRange(range: {

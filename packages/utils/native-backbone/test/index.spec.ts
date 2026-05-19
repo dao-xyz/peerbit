@@ -639,6 +639,11 @@ describe("native peerbit backbone", () => {
 		expect(backbone.getEntryHashesForHashNumbers([3n]).get(3n)).to.deep.equal([
 			"hash-c",
 		]);
+		const typedHashes = backbone.getEntryHashesForHashNumbersU64(
+			new BigUint64Array([3n]),
+		);
+		expect(typedHashes).to.exist;
+		expect(typedHashes!.get(3n)).to.deep.equal(["hash-c"]);
 		expect(
 			backbone.getEntryHashNumbersInRange({
 				start1: 0n,

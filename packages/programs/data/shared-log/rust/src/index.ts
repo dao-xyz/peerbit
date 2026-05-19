@@ -304,6 +304,9 @@ type NativeSharedLogStateHandle = {
 	get_entry_coordinates: (hash: string) => unknown[] | undefined;
 	entry_coordinate_hashes: () => string[];
 	entry_hashes_for_hash_numbers: (hashNumbers: string[]) => unknown[];
+	entry_hashes_for_hash_numbers_u64?: (
+		hashNumbers: BigUint64Array,
+	) => unknown[];
 	entry_hash_numbers_in_range: (
 		start1: string,
 		end1: string,
@@ -595,6 +598,15 @@ const rowsToNumbers = (
 		const value = row as string;
 		return resolution === "u64" ? BigInt(value) : Number(value);
 	});
+
+const rowsToHashNumberMap = (rows: unknown[]): Map<bigint, string[]> => {
+	const out = new Map<bigint, string[]>();
+	for (const row of rows) {
+		const [hashNumber, hashes] = row as [string, string[]];
+		out.set(BigInt(hashNumber), hashes);
+	}
+	return out;
+};
 
 const appendCoordinatePlanFromRow = (
 	resolution: RangeResolution,
@@ -1021,15 +1033,24 @@ export class SharedLogNativeState {
 	getEntryHashesForHashNumbers(
 		hashNumbers: Iterable<bigint | number | string>,
 	): Map<bigint, string[]> {
-		const out = new Map<bigint, string[]>();
 		const rows = this.native.entry_hashes_for_hash_numbers(
 			[...hashNumbers].map(asIntegerString),
 		);
-		for (const row of rows) {
-			const [hashNumber, hashes] = row as [string, string[]];
-			out.set(BigInt(hashNumber), hashes);
+		return rowsToHashNumberMap(rows);
+	}
+
+	getEntryHashesForHashNumbersU64(
+		hashNumbers: BigUint64Array,
+	): Map<bigint, string[]> | undefined {
+		if (
+			typeof BigUint64Array === "undefined" ||
+			typeof this.native.entry_hashes_for_hash_numbers_u64 !== "function"
+		) {
+			return undefined;
 		}
-		return out;
+		return rowsToHashNumberMap(
+			this.native.entry_hashes_for_hash_numbers_u64(hashNumbers),
+		);
 	}
 
 	getEntryHashNumbersInRange(range: {

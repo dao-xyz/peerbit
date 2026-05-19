@@ -65,8 +65,10 @@ export type SyncOptions<R extends "u32" | "u64"> = {
 	profile?: SyncProfileFn;
 };
 
+export type HashSymbolInput = readonly bigint[] | BigUint64Array;
+
 export type HashSymbolResolver = (
-	symbols: bigint[],
+	symbols: HashSymbolInput,
 ) =>
 	| ReadonlyMap<bigint, Iterable<string>>
 	| undefined

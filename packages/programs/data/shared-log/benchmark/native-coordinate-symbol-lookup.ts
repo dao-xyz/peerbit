@@ -71,6 +71,10 @@ const symbols = Array.from(
 	(_, i) => BigInt(((i * 17) % entryCount) + 1),
 );
 const preflightSymbols = symbols.slice(0, preflightSymbolCount);
+const symbolsTyped =
+	typeof BigUint64Array === "undefined"
+		? undefined
+		: BigUint64Array.from(symbols);
 const rangeEnd = BigInt(rangeHitCount + 1);
 const symbolRange = {
 	start1: 1n,
@@ -111,6 +115,21 @@ const lookupViaNativeState = () => {
 	}
 	if (found !== symbols.length) {
 		throw new Error(`Expected ${symbols.length} native hits, got ${found}`);
+	}
+};
+
+const lookupViaNativeStateTyped = () => {
+	const result =
+		symbolsTyped && nativeState.getEntryHashesForHashNumbersU64(symbolsTyped);
+	if (!result) {
+		throw new Error("Expected typed native hash lookup support");
+	}
+	let found = 0;
+	for (const hashes of result.values()) {
+		found += hashes.length;
+	}
+	if (found !== symbols.length) {
+		throw new Error(`Expected ${symbols.length} native typed hits, got ${found}`);
 	}
 };
 
@@ -199,6 +218,7 @@ const suite = new Bench({
 
 suite.add("generic index hashNumber lookup", lookupViaIndex);
 suite.add("native resident hashNumber lookup", lookupViaNativeState);
+suite.add("native resident hashNumber lookup typed", lookupViaNativeStateTyped);
 suite.add("generic index hashNumber range lookup", lookupRangeViaIndex);
 suite.add("native resident hashNumber range lookup", lookupRangeViaNativeState);
 suite.add(
