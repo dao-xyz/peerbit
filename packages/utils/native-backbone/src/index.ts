@@ -56,6 +56,9 @@ type NativePeerbitBackboneHandle = {
 	configure_document_schema_ir: (
 		schemaIr: Uint8Array,
 	) => [number, number, number];
+	register_document_projection_plan: (
+		plan: NativeBackboneSimpleDocumentProjectionPlan,
+	) => number;
 	project_document_index_simple: (
 		encodedDocument: Uint8Array,
 		plan: NativeBackboneSimpleDocumentProjectionPlan,
@@ -421,7 +424,9 @@ type NativePeerbitBackboneHandle = {
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
-		documentProjectionPlan: NativeBackboneSimpleDocumentProjectionPlan | undefined,
+		documentProjectionPlan:
+			| NativeBackboneSimpleDocumentProjectionPlan
+			| undefined,
 		documentProjectionEncodedDocument: Uint8Array | undefined,
 		documentProjectionSigner: Uint8Array | undefined,
 	) => unknown[];
@@ -490,7 +495,9 @@ type NativePeerbitBackboneHandle = {
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
-		documentProjectionPlan: NativeBackboneSimpleDocumentProjectionPlan | undefined,
+		documentProjectionPlan:
+			| NativeBackboneSimpleDocumentProjectionPlan
+			| undefined,
 		documentProjectionEncodedDocument: Uint8Array | undefined,
 		documentProjectionSigner: Uint8Array | undefined,
 	) => unknown[];
@@ -511,7 +518,9 @@ type NativePeerbitBackboneHandle = {
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
-		documentProjectionPlan: NativeBackboneSimpleDocumentProjectionPlan | undefined,
+		documentProjectionPlan:
+			| NativeBackboneSimpleDocumentProjectionPlan
+			| undefined,
 		documentProjectionEncodedDocument: Uint8Array | undefined,
 		documentProjectionSigner: Uint8Array | undefined,
 		trimLengthTo: number,
@@ -547,8 +556,30 @@ type NativePeerbitBackboneHandle = {
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
-		documentProjectionPlan: NativeBackboneSimpleDocumentProjectionPlan | undefined,
+		documentProjectionPlan:
+			| NativeBackboneSimpleDocumentProjectionPlan
+			| undefined,
 		documentProjectionEncodedDocument: Uint8Array | undefined,
+		documentProjectionSigner: Uint8Array | undefined,
+	) => unknown[];
+	prepare_plain_committed_no_next_storage_append_document_index_cached_plan_transaction: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
+		documentKey: string,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+		documentProjectionPlanId: number,
+		documentProjectionEncodedDocument: Uint8Array,
 		documentProjectionSigner: Uint8Array | undefined,
 	) => unknown[];
 	prepare_plain_committed_no_next_storage_append_transaction_trim: (
@@ -583,8 +614,31 @@ type NativePeerbitBackboneHandle = {
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
-		documentProjectionPlan: NativeBackboneSimpleDocumentProjectionPlan | undefined,
+		documentProjectionPlan:
+			| NativeBackboneSimpleDocumentProjectionPlan
+			| undefined,
 		documentProjectionEncodedDocument: Uint8Array | undefined,
+		documentProjectionSigner: Uint8Array | undefined,
+		trimLengthTo: number,
+	) => unknown[];
+	prepare_plain_committed_no_next_storage_append_document_index_cached_plan_transaction_trim: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
+		documentKey: string,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+		documentProjectionPlanId: number,
+		documentProjectionEncodedDocument: Uint8Array,
 		documentProjectionSigner: Uint8Array | undefined,
 		trimLengthTo: number,
 	) => unknown[];
@@ -637,7 +691,9 @@ type NativePeerbitBackboneHandle = {
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
-		documentProjectionPlan: NativeBackboneSimpleDocumentProjectionPlan | undefined,
+		documentProjectionPlan:
+			| NativeBackboneSimpleDocumentProjectionPlan
+			| undefined,
 		documentProjectionEncodedDocument: Uint8Array | undefined,
 		documentProjectionSigner: Uint8Array | undefined,
 	) => unknown[];
@@ -659,7 +715,9 @@ type NativePeerbitBackboneHandle = {
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
-		documentProjectionPlan: NativeBackboneSimpleDocumentProjectionPlan | undefined,
+		documentProjectionPlan:
+			| NativeBackboneSimpleDocumentProjectionPlan
+			| undefined,
 		documentProjectionEncodedDocument: Uint8Array | undefined,
 		documentProjectionSigner: Uint8Array | undefined,
 		trimLengthTo: number,
@@ -697,7 +755,9 @@ type NativePeerbitBackboneHandle = {
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
-		documentProjectionPlan: NativeBackboneSimpleDocumentProjectionPlan | undefined,
+		documentProjectionPlan:
+			| NativeBackboneSimpleDocumentProjectionPlan
+			| undefined,
 		documentProjectionEncodedDocument: Uint8Array | undefined,
 		documentProjectionSigner: Uint8Array | undefined,
 	) => unknown[];
@@ -735,7 +795,9 @@ type NativePeerbitBackboneHandle = {
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
-		documentProjectionPlan: NativeBackboneSimpleDocumentProjectionPlan | undefined,
+		documentProjectionPlan:
+			| NativeBackboneSimpleDocumentProjectionPlan
+			| undefined,
 		documentProjectionEncodedDocument: Uint8Array | undefined,
 		documentProjectionSigner: Uint8Array | undefined,
 		trimLengthTo: number,
@@ -1486,7 +1548,9 @@ const trimmedEntryFromRow = (row: unknown): NativeBackboneTrimmedEntry => {
 
 const trimmedHashFromRow = (row: unknown): string => (row as [string])[0];
 
-const trimmedRowsResult = (rows: unknown[]): {
+const trimmedRowsResult = (
+	rows: unknown[],
+): {
 	readonly trimmed: NativeBackboneTrimmedEntry[];
 	readonly trimmedHashes: string[];
 } => {
@@ -1761,7 +1825,7 @@ export class NativeBackboneLogGraph {
 			input.payloadData,
 			input.trimLengthTo,
 		] as const;
-			const documentIndexArgs = nativeDocumentIndexArgs(input.documentIndex);
+		const documentIndexArgs = nativeDocumentIndexArgs(input.documentIndex);
 		return preparedCommitFactsFromRow(
 			documentIndexArgs
 				? this.native.prepare_plain_entry_commit_facts_document_index(
@@ -2216,6 +2280,10 @@ export class NativePeerbitBackbone {
 	readonly graph: NativeBackboneLogGraph;
 	readonly storageBackedGraph: NativeBackboneLogGraph;
 	readonly blocks: NativeBackboneBlockStore;
+	private readonly documentProjectionPlanIds = new WeakMap<
+		NativeBackboneSimpleDocumentProjectionPlan,
+		number
+	>();
 
 	private constructor(
 		private readonly native: NativePeerbitBackboneHandle,
@@ -2440,6 +2508,18 @@ export class NativePeerbitBackbone {
 			offset,
 			limit,
 		);
+	}
+
+	private documentProjectionPlanId(
+		plan: NativeBackboneSimpleDocumentProjectionPlan,
+	): number {
+		const cached = this.documentProjectionPlanIds.get(plan);
+		if (cached !== undefined) {
+			return cached;
+		}
+		const id = this.native.register_document_projection_plan(plan);
+		this.documentProjectionPlanIds.set(plan, id);
+		return id;
 	}
 
 	documentCount(queryBytes: Uint8Array): number {
@@ -2677,12 +2757,11 @@ export class NativePeerbitBackbone {
 		replicas: number,
 		options?: NativeBackboneFindLeaderOptions,
 	): NativeBackboneLeaderPlan {
-		const [coordinateRows, leaderRows] =
-			this.native.plan_entry_leaders_for_gid(
-				gid,
-				replicas,
-				...findLeaderArguments(options),
-			);
+		const [coordinateRows, leaderRows] = this.native.plan_entry_leaders_for_gid(
+			gid,
+			replicas,
+			...findLeaderArguments(options),
+		);
 		return {
 			coordinates: rowsToNumbers(this.resolution, coordinateRows),
 			leaders: rowsToSamples(leaderRows) ?? new Map(),
@@ -3071,6 +3150,31 @@ export class NativePeerbitBackbone {
 		input: NativeBackboneStorageAppendInput,
 	): NativeBackboneAppendResult {
 		const baseArgs = nativeNoNextStorageAppendArgs(input);
+		const projection = input.documentIndex?.projection;
+		if (input.documentIndex && projection) {
+			const documentIndexArgs = [
+				input.documentIndex.key,
+				input.documentIndex.existingCreated == null
+					? ""
+					: integerString(input.documentIndex.existingCreated),
+				input.documentIndex.byteElementIndexLimit ?? 0,
+				this.documentProjectionPlanId(projection.plan),
+				projection.encodedDocument,
+				projection.signer,
+			] as const;
+			const row =
+				input.trimLengthTo == null
+					? this.native.prepare_plain_committed_no_next_storage_append_document_index_cached_plan_transaction(
+							...baseArgs,
+							...documentIndexArgs,
+						)
+					: this.native.prepare_plain_committed_no_next_storage_append_document_index_cached_plan_transaction_trim(
+							...baseArgs,
+							...documentIndexArgs,
+							input.trimLengthTo,
+						);
+			return committedStorageAppendResultFromRow(this.resolution, row);
+		}
 		const documentIndexArgs = nativeDocumentIndexArgs(input.documentIndex);
 		const row =
 			input.trimLengthTo == null

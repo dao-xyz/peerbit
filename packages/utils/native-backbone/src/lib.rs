@@ -40,6 +40,7 @@ pub struct NativePeerbitBackbone {
     document_index: NativeQueryIndex,
     document_values: MemoryByteStorage,
     document_schema_ir: Option<NativeSchemaIr>,
+    document_projection_plans: Vec<ParsedProjectionPlan>,
     builder: NativeEntryV0PlainBuilder,
     append_profile_enabled: bool,
     append_profile: NativeBackboneAppendProfile,
@@ -68,9 +69,14 @@ enum DocumentIndexValuePrefix {
     Bytes(Vec<u8>),
     Projection {
         encoded_document: Vec<u8>,
-        plan: ParsedProjectionPlan,
+        plan: DocumentIndexProjectionPlan,
         signer: Option<Vec<u8>>,
     },
+}
+
+enum DocumentIndexProjectionPlan {
+    Inline(ParsedProjectionPlan),
+    Cached(usize),
 }
 
 #[derive(Clone, Default)]
@@ -196,6 +202,7 @@ impl NativePeerbitBackbone {
             document_index: NativeQueryIndex::new(),
             document_values: MemoryByteStorage::new(),
             document_schema_ir: None,
+            document_projection_plans: Vec::new(),
             builder: NativeEntryV0PlainBuilder::new(clock_id, private_key, public_key)?,
             append_profile_enabled: false,
             append_profile: NativeBackboneAppendProfile::default(),
@@ -367,6 +374,16 @@ impl NativePeerbitBackbone {
         out.push(&JsValue::from_f64(stats.node_count as f64));
         out.push(&JsValue::from_f64(stats.generic_nodes as f64));
         Ok(out)
+    }
+
+    pub fn register_document_projection_plan(&mut self, plan: JsValue) -> Result<u32, JsValue> {
+        let id = self.document_projection_plans.len();
+        if id > u32::MAX as usize {
+            return Err(JsValue::from_str("Too many document projection plans"));
+        }
+        self.document_projection_plans
+            .push(parse_projection_plan(&plan)?);
+        Ok(id as u32)
     }
 
     pub fn project_document_index_simple(
@@ -1868,6 +1885,105 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_committed_no_next_storage_append_document_index_cached_plan_transaction(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        resolve_trimmed_entries: bool,
+        document_key: String,
+        document_existing_created: String,
+        document_byte_element_index_limit: usize,
+        document_projection_plan_id: u32,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
+    ) -> Result<Array, JsValue> {
+        self.prepare_plain_storage_append_transaction_inner(
+            wall_time,
+            logical,
+            gid,
+            Vec::new(),
+            entry_type,
+            meta_data,
+            payload_data,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            resolve_trimmed_entries,
+            None,
+            true,
+            Some(document_index_cached_projection_append_commit(
+                document_key,
+                document_existing_created,
+                document_byte_element_index_limit,
+                document_projection_plan_id,
+                document_projection_encoded_document,
+                document_projection_signer,
+            )?),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_committed_no_next_storage_append_document_index_cached_plan_transaction_trim(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        resolve_trimmed_entries: bool,
+        document_key: String,
+        document_existing_created: String,
+        document_byte_element_index_limit: usize,
+        document_projection_plan_id: u32,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
+        trim_length_to: usize,
+    ) -> Result<Array, JsValue> {
+        self.prepare_plain_storage_append_transaction_inner(
+            wall_time,
+            logical,
+            gid,
+            Vec::new(),
+            entry_type,
+            meta_data,
+            payload_data,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            resolve_trimmed_entries,
+            Some(trim_length_to),
+            true,
+            Some(document_index_cached_projection_append_commit(
+                document_key,
+                document_existing_created,
+                document_byte_element_index_limit,
+                document_projection_plan_id,
+                document_projection_encoded_document,
+                document_projection_signer,
+            )?),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare_plain_storage_append_transaction(
         &mut self,
         wall_time: u64,
@@ -2684,15 +2800,33 @@ impl NativePeerbitBackbone {
                 encoded_document,
                 plan,
                 signer,
-            } => project_document_index_simple_bytes_with_plan(
-                &encoded_document,
-                &plan,
-                document_index_commit.existing_created.unwrap_or(wall_time),
-                wall_time,
-                gid,
-                payload_size,
-                signer.as_deref(),
-            )?,
+            } => match plan {
+                DocumentIndexProjectionPlan::Inline(plan) => {
+                    project_document_index_simple_bytes_with_plan(
+                        &encoded_document,
+                        &plan,
+                        document_index_commit.existing_created.unwrap_or(wall_time),
+                        wall_time,
+                        gid,
+                        payload_size,
+                        signer.as_deref(),
+                    )?
+                }
+                DocumentIndexProjectionPlan::Cached(index) => {
+                    let plan = self.document_projection_plans.get(index).ok_or_else(|| {
+                        JsValue::from_str("Missing cached document projection plan")
+                    })?;
+                    project_document_index_simple_bytes_with_plan(
+                        &encoded_document,
+                        plan,
+                        document_index_commit.existing_created.unwrap_or(wall_time),
+                        wall_time,
+                        gid,
+                        payload_size,
+                        signer.as_deref(),
+                    )?
+                }
+            },
         };
         self.put_document_encoded_parts_stored(
             document_index_commit.key,
@@ -2910,7 +3044,7 @@ fn document_index_append_commit(
     } else {
         DocumentIndexValuePrefix::Projection {
             encoded_document: Uint8Array::new(&projection_encoded_document).to_vec(),
-            plan: parse_projection_plan(&projection_plan)?,
+            plan: DocumentIndexProjectionPlan::Inline(parse_projection_plan(&projection_plan)?),
             signer: if projection_signer.is_null() || projection_signer.is_undefined() {
                 None
             } else {
@@ -2921,6 +3055,33 @@ fn document_index_append_commit(
     Ok(DocumentIndexAppendCommit {
         key,
         value_prefix,
+        existing_created: parse_optional_u64_string(
+            &existing_created,
+            "document existing created",
+        )?,
+        byte_element_index_limit,
+    })
+}
+
+fn document_index_cached_projection_append_commit(
+    key: String,
+    existing_created: String,
+    byte_element_index_limit: usize,
+    projection_plan_id: u32,
+    projection_encoded_document: JsValue,
+    projection_signer: JsValue,
+) -> Result<DocumentIndexAppendCommit, JsValue> {
+    Ok(DocumentIndexAppendCommit {
+        key,
+        value_prefix: DocumentIndexValuePrefix::Projection {
+            encoded_document: Uint8Array::new(&projection_encoded_document).to_vec(),
+            plan: DocumentIndexProjectionPlan::Cached(projection_plan_id as usize),
+            signer: if projection_signer.is_null() || projection_signer.is_undefined() {
+                None
+            } else {
+                Some(Uint8Array::new(&projection_signer).to_vec())
+            },
+        },
         existing_created: parse_optional_u64_string(
             &existing_created,
             "document existing created",
