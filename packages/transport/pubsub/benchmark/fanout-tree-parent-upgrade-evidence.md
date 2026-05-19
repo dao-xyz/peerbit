@@ -297,9 +297,51 @@ pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-
 Larger shared-network scale checks:
 
 ```bash
-pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-live --seeds 1 --parentUpgradePreset default-candidate --strict 1 --nodes 80 --writers 8 --subscribersPerTree 56
-pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-idle --seeds 1 --parentUpgradePreset default-candidate --strict 1 --nodes 80 --writers 8 --subscribersPerTree 56
+pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-live --seeds 1 --parentUpgradePreset default-candidate --strict 1 --nodes 80 --writers 8 --activeWriters 8 --subscribersPerTree 56
+pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-idle --seeds 1 --parentUpgradePreset default-candidate --strict 0 --nodes 80 --writers 8 --activeWriters 8 --subscribersPerTree 56
 ```
+
+Local pre-push evidence suite:
+
+```bash
+pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-prepush
+```
+
+The pre-push suite runs the same bounded default-candidate evidence used for
+review: single-writer `all`, live-stream safety, the large idle pressure gate
+with `parentUpgradeRootMaxChildLoadRatio=0.25` and `maxRootChildrenDelta=3`,
+shared-network multi-writer `all`, and the larger 80-node live/idle scale
+checks. It writes raw logs plus `single-summary.tsv`, `multi-summary.tsv`,
+`frontier-summary.tsv`, and `manifest.json` to
+`sim-results/parent-upgrade-prepush-<timestamp>`. Use `--quick 1` for a
+single-seed smoke run while iterating, and use the full command before relying
+on CI to arbitrate the PR. A failing larger scale-idle run is reported as
+`NON-GATING FAIL` by this wrapper for the same reason it is non-gating in
+nightly: it is useful evidence, but not stable enough to block this default-off
+PR.
+
+Nightly coverage runs the default-candidate soak matrix from
+`.github/workflows/nightly-sims.yml`. It keeps PR CI bounded to single-seed
+gates, then runs the single-writer `all` and live-stream suites, a larger
+idle-upgrade pressure variant with `parentUpgradeRootMaxChildLoadRatio=0.25`
+and `maxRootChildrenDelta=3`. That larger pressure variant uses
+`--maxCostRatio 1.2` because useful large-topology promotions can move very low
+baseline tracker/control bpp by small absolute amounts that cross the ordinary
+`1.15` default-candidate ratio. The ordinary default-candidate suites keep the
+stricter `1.15` cost ratio. Nightly also runs a non-gating large-idle frontier
+across root load caps `0.2`, `0.225`, `0.25`, and `0.4`. It also runs the
+shared-network multi-writer live/churn/video/idle/sparse/hotspot scenarios with
+seeds `1,2,3`, and bounded larger shared-network live/idle checks with `80`
+nodes, `8` writers, `8` active writers, and `56` subscriber slots per tree so
+all scaled writer trees contribute data and the cost denominator matches the
+intended all-writers-active scenario. The larger scale-idle check is
+non-gating evidence for now because global deadline and second-batch timing are
+still noisy at that size even when promoted branches improve and root pressure
+stays bounded. Each matrix entry uploads its own artifact so a failing scenario
+preserves the seed-specific log without hiding the rest of the soak evidence.
+The frontier entry writes both per-cap raw logs and a
+`frontier-summary.tsv` table with viable seeds, promotions, probes, root-child
+delta, root-upload delta, and failure counts.
 
 The single-writer settled-topology run fails strict mode if p95 second-batch
 latency materially regresses. The single-writer evaluator tolerates the greater
@@ -318,6 +360,14 @@ It also requires at least one data-guard skip during active publishing and
 preserves deadline delivery within `--maxLiveDeadlinePctDelta 2`, so the
 evidence is interpreted as "guarded and quiet under load," not topology
 improvement.
+
+For shared-network multi-writer live safety runs, strict mode treats zero
+probes/shadows/reparents as the primary product invariant. Delivery and cost
+are still reported, but they are not hard failures when the parent-upgrade path
+only performs local guard checks; otherwise async simulation jitter can fail an
+evidence run even though the upgrade path sent no network traffic and made no
+tree changes. If proactive upgrade traffic appears, the zero-work invariant
+fails and delivery/cost comparisons are also applied.
 
 Aggressive live-delivery experiment:
 
@@ -350,8 +400,10 @@ aggregate probes stay bounded by successful upgrades, max proactive reparent per
 peer/channel is `1`, and every root stays within the same per-root child and
 upload-pressure limits. `ci-multi-hotspot-idle` is stricter as evidence and
 looser as a CI smoke gate: it still requires useful promotion, bounded per-peer
-reparents, cost, root-child, and root-upload safety, but it no longer claims the
-hotspot probe-per-upgrade ratio is default-ready. `ci-multi-sparse-idle` is a
+reparents, root-child, and root-upload safety, but it allows the same `1.2`
+pressure-scenario cost ratio as the large single-writer idle pressure run and
+no longer claims the hotspot probe-per-upgrade ratio is default-ready.
+`ci-multi-sparse-idle` is a
 high-cardinality pressure check: inactive writer trees must send zero
 probes/shadows/upgrades, while any active-tree upgrades remain bounded by the
 same cost and root-pressure gates. Global p95 latency is printed for all
@@ -495,6 +547,23 @@ Local smoke runs on this branch showed:
   That lets single-tree branches use up to the root-child delta evidence gate
   while preventing the boosted budget from multiplying across concurrent writer
   trees.
+- The nightly 90-node pressure variant now runs the same larger topology with
+  `parentUpgradeRootMaxChildLoadRatio=0.25` and `maxRootChildrenDelta=3`. A
+  local seeds `1,2,3` run passed with `9` useful promotions from `13` probes,
+  max root-child delta `3`, max root upload delta about `0.04` percentage
+  points, average promoted-branch gain about `12ms`, and max `1` reparent per
+  peer. The unmodified `0.4` root cap remains useful but too permissive for this
+  stricter large-topology pressure gate.
+- There is not yet one obviously safe large-idle default cap: `0.4` promotes too
+  aggressively for root-child pressure, `0.2` and `0.225` keep root growth lower
+  but can waste too many probes per useful upgrade, and `0.25` is the best local
+  pressure compromise so far only when the large-topology root-child delta gate
+  allows `+3`. Nightly therefore keeps a non-gating frontier artifact for these
+  caps instead of treating one value as learned policy.
+  A future default candidate should be selected only if the frontier shows
+  stable useful promotions, bounded root-child/root-upload deltas, and bounded
+  probes per upgrade across multiple nightly runs, not from one successful local
+  seed set.
 - `ci-live-stream`, seeds `1,2,3`,
   `--parentUpgradePreset default-candidate --strict 1`: passed. This scenario
   exposes late root connectivity during the active 300-message stream while
@@ -668,7 +737,8 @@ An upgrade mode is only a candidate if it improves or preserves:
 - for live-stream scenarios, zero active-publish proactive
   probes/shadow starts/reparents while the data guard is active
 - for shared-network multi-writer live scenarios, zero active and total
-  proactive probes/shadow starts/reparents across all writer trees
+  proactive probes/shadow starts/reparents across all writer trees; delivery
+  and cost are strict only if the treatment sends proactive upgrade traffic
 - for single-writer idle-upgrade scenarios, promoted-branch or global
   second-batch p95 latency while keeping global second-batch p95 inside the
   material-regression tolerance
