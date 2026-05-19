@@ -452,6 +452,54 @@ describe("append", () => {
 		}
 	});
 
+	it("dispatches resident native repair coordinates without eager materialization", async () => {
+		session = await TestSession.disconnected(1, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+		const store = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		const result = await store.log.appendLocallyPrepared(
+			{ op: "ADD", value: "a" },
+			{
+				replicate: false,
+				target: "none",
+			},
+		);
+		const residentEntries = (store.log as any)
+			._residentEntryCoordinatesByHash as Map<string, any>;
+		const residentEntry = residentEntries.get(result.entry.hash);
+		expect(residentEntry).to.exist;
+		expect(residentEntry.getMetaBytes).equal(undefined);
+
+		const materializeSpy = sinon.spy(
+			store.log as any,
+			"materializeResidentCoordinateEntry",
+		);
+		const syncStub = sinon
+			.stub(store.log.syncronizer, "onMaybeMissingEntries")
+			.resolves();
+		try {
+			await (store.log as any).sendRepairEntriesWithTransport(
+				"target-peer",
+				new Map([[result.entry.hash, residentEntry]]),
+				"rateless",
+				{ bypassKnownPeers: true },
+			);
+
+			expect(materializeSpy.callCount).equal(0);
+			expect(syncStub.callCount).equal(1);
+			const entries = syncStub.firstCall.args[0].entries as Map<string, any>;
+			expect(entries.get(result.entry.hash)).equal(residentEntry);
+		} finally {
+			syncStub.restore();
+			materializeSpy.restore();
+		}
+	});
+
 	it("uses cached self replicator state for native prepared append planning", async () => {
 		session = await TestSession.disconnected(1, {
 			indexer: (directory) => createRustIndexer(directory),

@@ -192,6 +192,7 @@ import {
 } from "./replication.js";
 import { Observer, Replicator } from "./role.js";
 import type {
+	SyncEntryCoordinates,
 	SyncOptions,
 	SynchronizerConstructor,
 	Syncronizer,
@@ -339,6 +340,8 @@ type PreparedCoordinatePersistence<R extends "u32" | "u64"> = {
 type ResidentCoordinateEntry<R extends "u32" | "u64"> =
 	| EntryReplicated<R>
 	| SharedLogCoordinateNativeFields<R>;
+
+type RepairDispatchEntry<R extends "u32" | "u64"> = ResidentCoordinateEntry<R>;
 
 type PreparedLocalAppendCommit<R extends "u32" | "u64"> = {
 	hash: string;
@@ -865,9 +868,10 @@ const cloneRepairPendingPeersByMode = (
 	);
 
 const createRepairFrontierByMode = () =>
-	new Map<RepairDispatchMode, Map<string, Map<string, EntryReplicated<any>>>>(
-		REPAIR_DISPATCH_MODES.map((mode) => [mode, new Map()]),
-	);
+	new Map<
+		RepairDispatchMode,
+		Map<string, Map<string, RepairDispatchEntry<any>>>
+	>(REPAIR_DISPATCH_MODES.map((mode) => [mode, new Map()]));
 
 const createRepairActiveTargetsByMode = () =>
 	new Map<RepairDispatchMode, Set<string>>(
@@ -1183,7 +1187,7 @@ export class SharedLog<
 	private _repairSweepPendingPeersByMode!: Map<RepairDispatchMode, Set<string>>;
 	private _repairFrontierByMode!: Map<
 		RepairDispatchMode,
-		Map<string, Map<string, EntryReplicated<R>>>
+		Map<string, Map<string, RepairDispatchEntry<R>>>
 	>;
 	private _repairFrontierActiveTargetsByMode!: Map<RepairDispatchMode, Set<string>>;
 	private _repairFrontierBypassKnownPeersByMode!: Map<
@@ -3437,7 +3441,7 @@ export class SharedLog<
 	private queueRepairFrontierEntries(
 		mode: RepairDispatchMode,
 		target: string,
-		entries: Map<string, EntryReplicated<R>>,
+		entries: ReadonlyMap<string, RepairDispatchEntry<R>>,
 		options?: { bypassKnownPeerHints?: boolean },
 	) {
 		let targets = this._repairFrontierByMode.get(mode);
@@ -3542,7 +3546,7 @@ export class SharedLog<
 
 	private async pushRepairEntries(
 		target: string,
-		entries: Map<string, EntryReplicated<R>>,
+		entries: ReadonlyMap<string, RepairDispatchEntry<R>>,
 	) {
 		const hashes = [...entries.keys()];
 		for await (const message of createExchangeHeadsMessages(
@@ -3559,11 +3563,11 @@ export class SharedLog<
 
 	private async sendRepairEntriesWithTransport(
 		target: string,
-		entries: Map<string, EntryReplicated<R>>,
+		entries: ReadonlyMap<string, RepairDispatchEntry<R>>,
 		transport: RepairTransportMode,
 		options?: { bypassKnownPeers?: boolean; bypassRecentKnownPeers?: boolean },
 	) {
-		const unknownEntries = new Map<string, EntryReplicated<R>>();
+		const unknownEntries = new Map<string, RepairDispatchEntry<R>>();
 		const knownHashes: string[] = [];
 		for (const [hash, entry] of entries) {
 			if (
@@ -3591,15 +3595,18 @@ export class SharedLog<
 			return;
 		}
 
+		const syncEntries = this._logProperties?.sync?.priority
+			? this.materializeRepairDispatchEntries(unknownEntries)
+			: (unknownEntries as Map<string, SyncEntryCoordinates<R>>);
 		await this.syncronizer.onMaybeMissingEntries({
-			entries: unknownEntries,
+			entries: syncEntries,
 			targets: [target],
 		});
 	}
 
 	private async sendMaybeMissingEntriesNow(
 		target: string,
-		entries: Map<string, EntryReplicated<R>>,
+		entries: ReadonlyMap<string, RepairDispatchEntry<R>>,
 		options: {
 			mode: RepairDispatchMode;
 			transport: RepairTransportMode;
@@ -3626,7 +3633,7 @@ export class SharedLog<
 		const filteredEntries =
 			options.bypassRecentDedupe === true
 				? new Map(entries)
-				: new Map<string, EntryReplicated<any>>();
+				: new Map<string, RepairDispatchEntry<any>>();
 		if (options.bypassRecentDedupe !== true) {
 			for (const [hash, entry] of entries) {
 				const prev = recentlyDispatchedByHash.get(hash);
@@ -3807,7 +3814,7 @@ export class SharedLog<
 
 	private dispatchMaybeMissingEntries(
 		target: string,
-		entries: Map<string, EntryReplicated<R>>,
+		entries: ReadonlyMap<string, RepairDispatchEntry<R>>,
 		options: {
 			mode: RepairDispatchMode;
 			bypassRecentDedupe?: boolean;
@@ -3849,7 +3856,7 @@ export class SharedLog<
 		const filteredEntries =
 			options.bypassRecentDedupe === true
 				? new Map(entries)
-				: new Map<string, EntryReplicated<any>>();
+				: new Map<string, RepairDispatchEntry<any>>();
 		if (options.bypassRecentDedupe !== true) {
 			for (const [hash, entry] of entries) {
 				const prev = recentlyDispatchedByHash.get(hash);
@@ -4055,7 +4062,7 @@ export class SharedLog<
 
 				const pendingByMode = new Map<
 					RepairDispatchMode,
-					Map<string, Map<string, EntryReplicated<any>>>
+					Map<string, Map<string, RepairDispatchEntry<any>>>
 				>(REPAIR_DISPATCH_MODES.map((mode) => [mode, new Map()]));
 				const pendingRepairPeers = new Set<string>();
 				for (const peers of pendingPeersByMode.values()) {
@@ -4073,7 +4080,7 @@ export class SharedLog<
 				);
 				const nextFrontierByMode = new Map<
 					RepairDispatchMode,
-					Map<string, Map<string, EntryReplicated<any>>>
+					Map<string, Map<string, RepairDispatchEntry<any>>>
 				>([
 					["join-authoritative", new Map()],
 					["churn", new Map()],
@@ -4098,7 +4105,7 @@ export class SharedLog<
 				const queueEntryForTarget = (
 					mode: RepairDispatchMode,
 					target: string,
-					entry: EntryReplicated<any>,
+					entry: RepairDispatchEntry<any>,
 				) => {
 					const sweepTargets = nextFrontierByMode.get(mode);
 					if (sweepTargets) {
@@ -4145,12 +4152,7 @@ export class SharedLog<
 							for (const hash of hashes) {
 								const residentEntry = residentEntriesByHash.get(hash);
 								if (residentEntry) {
-									const entry =
-										this.materializeResidentCoordinateEntry(residentEntry);
-									if (entry !== residentEntry) {
-										residentEntriesByHash.set(hash, entry);
-									}
-									queueEntryForTarget(mode, target, entry);
+									queueEntryForTarget(mode, target, residentEntry);
 								}
 							}
 						}
@@ -6782,7 +6784,7 @@ export class SharedLog<
 		this._repairSweepPendingPeersByMode = createRepairPendingPeersByMode();
 		this._repairFrontierByMode = createRepairFrontierByMode() as Map<
 			RepairDispatchMode,
-			Map<string, Map<string, EntryReplicated<R>>>
+			Map<string, Map<string, RepairDispatchEntry<R>>>
 		>;
 		this._repairFrontierActiveTargetsByMode = createRepairActiveTargetsByMode();
 		this._repairFrontierBypassKnownPeersByMode =
@@ -10152,6 +10154,16 @@ export class SharedLog<
 		return isEntryReplicated(entry)
 			? entry
 			: this.createCoordinateEntryFromNativeFields(entry);
+	}
+
+	private materializeRepairDispatchEntries(
+		entries: ReadonlyMap<string, RepairDispatchEntry<R>>,
+	): Map<string, EntryReplicated<R>> {
+		const materialized = new Map<string, EntryReplicated<R>>();
+		for (const [hash, entry] of entries) {
+			materialized.set(hash, this.materializeResidentCoordinateEntry(entry));
+		}
+		return materialized;
 	}
 
 	private snapshotResidentCoordinateEntries(

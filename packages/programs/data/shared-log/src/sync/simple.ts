@@ -20,10 +20,11 @@ import {
 import { TransportMessage } from "../message.js";
 import type { EntryReplicated } from "../ranges.js";
 import type {
+	HashSymbolResolver,
 	RepairSession,
 	RepairSessionMode,
 	RepairSessionResult,
-	HashSymbolResolver,
+	SyncEntryCoordinates,
 	SyncOptions,
 	SyncableKey,
 	Syncronizer,
@@ -263,7 +264,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	}
 
 	private getPrioritizedHashes(
-		entries: Map<string, EntryReplicated<R>>,
+		entries: Map<string, SyncEntryCoordinates<R>>,
 	): string[] {
 		const priorityFn = this.syncOptions?.priority;
 		if (!priorityFn) {
@@ -273,7 +274,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		let index = 0;
 		const scored: { hash: string; index: number; priority: number }[] = [];
 		for (const [hash, entry] of entries) {
-			const priorityValue = priorityFn(entry);
+			const priorityValue = priorityFn(entry as EntryReplicated<R>);
 			scored.push({
 				hash,
 				index,
@@ -567,7 +568,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	}
 
 	startRepairSession(properties: {
-		entries: Map<string, EntryReplicated<R>>;
+		entries: Map<string, SyncEntryCoordinates<R>>;
 		targets: string[];
 		mode?: RepairSessionMode;
 		timeoutMs?: number;
@@ -663,7 +664,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	}
 
 	async onMaybeMissingEntries(properties: {
-		entries: Map<string, EntryReplicated<R>>;
+		entries: Map<string, SyncEntryCoordinates<R>>;
 		targets: string[];
 	}): Promise<void> {
 		const profile = this.syncOptions?.profile;

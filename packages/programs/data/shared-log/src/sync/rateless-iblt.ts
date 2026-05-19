@@ -26,10 +26,11 @@ import { type EntryWithRefs } from "../exchange-heads.js";
 import { TransportMessage } from "../message.js";
 import { type EntryReplicated } from "../ranges.js";
 import type {
+	HashSymbolRangeResolver,
 	RepairSession,
 	RepairSessionMode,
 	RepairSessionResult,
-	HashSymbolRangeResolver,
+	SyncEntryCoordinates,
 	SyncableKey,
 	SynchronizerComponents,
 	Syncronizer,
@@ -713,7 +714,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	outgoingSyncProcesses: Map<
 		string,
 		{
-			outgoing: Map<string, EntryReplicated<D>>;
+			outgoing: Map<string, SyncEntryCoordinates<D>>;
 			encoder: EncoderWrapper;
 			timeout: ReturnType<typeof setTimeout>;
 			refresh: () => void;
@@ -748,7 +749,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			.sort((a, b) => a - b);
 	}
 
-	private getPrioritizedEntries(entries: Map<string, EntryReplicated<D>>) {
+	private getPrioritizedEntries(entries: Map<string, SyncEntryCoordinates<D>>) {
 		const priorityFn = this.properties.sync?.priority;
 		if (!priorityFn) {
 			return [...entries.values()];
@@ -756,12 +757,12 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 
 		let index = 0;
 		const scored: {
-			entry: EntryReplicated<D>;
+			entry: SyncEntryCoordinates<D>;
 			index: number;
 			priority: number;
 		}[] = [];
 		for (const entry of entries.values()) {
-			const priorityValue = priorityFn(entry);
+			const priorityValue = priorityFn(entry as EntryReplicated<D>);
 			scored.push({
 				entry,
 				index,
@@ -774,7 +775,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	}
 
 	startRepairSession(properties: {
-		entries: Map<string, EntryReplicated<D>>;
+		entries: Map<string, SyncEntryCoordinates<D>>;
 		targets: string[];
 		mode?: RepairSessionMode;
 		timeoutMs?: number;
@@ -807,7 +808,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			const id = `rateless-repair-${++this.repairSessionCounter}`;
 			const startedAt = Date.now();
 			const prioritized = this.getPrioritizedEntries(properties.entries);
-			const trackedEntries = new Map<string, EntryReplicated<D>>();
+			const trackedEntries = new Map<string, SyncEntryCoordinates<D>>();
 			for (const entry of prioritized.slice(0, trackedLimit)) {
 				trackedEntries.set(entry.hash, entry);
 			}
@@ -1018,7 +1019,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	}
 
 	async onMaybeMissingEntries(properties: {
-		entries: Map<string, EntryReplicated<D>>;
+		entries: Map<string, SyncEntryCoordinates<D>>;
 		targets: string[];
 	}): Promise<void> {
 		const profile = this.properties.sync?.profile;
@@ -1031,7 +1032,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		// - For large sets, use IBLT, but still allow simple sync for special-case entries
 		//   such as those assigned to range boundaries.
 
-		let entriesToSyncNaively: Map<string, EntryReplicated<D>> = new Map();
+		let entriesToSyncNaively: Map<string, SyncEntryCoordinates<D>> = new Map();
 		let minSyncIbltSize = 333; // TODO: make configurable
 		let maxSyncWithSimpleMethod = 1e3;
 
@@ -1064,7 +1065,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		}
 
 		const selectStartedAt = syncProfileStart(profile);
-		const nonBoundaryEntries: EntryReplicated<D>[] = [];
+		const nonBoundaryEntries: SyncEntryCoordinates<D>[] = [];
 		for (const entry of properties.entries.values()) {
 			if (entry.assignedToRangeBoundary) {
 				entriesToSyncNaively.set(entry.hash, entry);
@@ -1092,12 +1093,12 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		if (priorityFn && maxAdditionalNaive > 0 && nonBoundaryEntries.length > 0) {
 			let index = 0;
 			const scored: {
-				entry: EntryReplicated<D>;
+				entry: SyncEntryCoordinates<D>;
 				index: number;
 				priority: number;
 			}[] = [];
 			for (const entry of nonBoundaryEntries) {
-				const priorityValue = priorityFn(entry);
+				const priorityValue = priorityFn(entry as EntryReplicated<D>);
 				scored.push({
 					entry,
 					index,

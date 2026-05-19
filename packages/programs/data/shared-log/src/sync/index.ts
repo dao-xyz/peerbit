@@ -15,6 +15,11 @@ export type SyncPriorityFn<R extends "u32" | "u64"> = (
 	entry: EntryReplicated<R>,
 ) => number;
 
+export type SyncEntryCoordinates<R extends "u32" | "u64"> = Pick<
+	EntryReplicated<R>,
+	"assignedToRangeBoundary" | "hash" | "hashNumber"
+>;
+
 export type SyncOptions<R extends "u32" | "u64"> = {
 	/**
 	 * Orders entries inside a sync batch; higher numbers are selected first.
@@ -121,7 +126,7 @@ export type RepairSession = {
 
 export interface Syncronizer<R extends "u32" | "u64"> {
 	startRepairSession(properties: {
-		entries: Map<string, EntryReplicated<R>>;
+		entries: Map<string, SyncEntryCoordinates<R>>;
 		targets: string[];
 		mode?: RepairSessionMode;
 		timeoutMs?: number;
@@ -129,7 +134,7 @@ export interface Syncronizer<R extends "u32" | "u64"> {
 	}): RepairSession;
 
 	onMaybeMissingEntries(properties: {
-		entries: Map<string, EntryReplicated<R>>;
+		entries: Map<string, SyncEntryCoordinates<R>>;
 		targets: string[];
 	}): Promise<void> | void;
 
