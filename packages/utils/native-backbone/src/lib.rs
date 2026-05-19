@@ -6,7 +6,8 @@ use peerbit_indexer_core::persistence::{
 };
 use peerbit_indexer_core::planner::{FieldPath, FieldValue, NativeQueryIndex, SumResult};
 use peerbit_indexer_core::schema::{
-    decode_native_schema_ir, extract_encoded_document_fields_from_parts, NativeSchemaIr,
+    decode_native_schema_ir, extract_encoded_document_fields_from_parts_with_byte_limits,
+    NativeSchemaIr,
 };
 use peerbit_indexer_core::storage::{ByteStorage, MemoryByteStorage};
 use peerbit_log_rust::{
@@ -19,6 +20,11 @@ use peerbit_shared_log_rust::{
 use std::collections::{HashMap, HashSet};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+
+// Native-backbone is optimized for document-store hot paths where large byte
+// fields are payloads, not query keys. Standalone indexer-rust keeps exact large
+// byte matching through the compatibility extractor.
+const NATIVE_BACKBONE_BYTE_EXACT_INDEX_LIMIT: usize = 128;
 
 #[wasm_bindgen]
 pub struct NativePeerbitBackbone {
@@ -473,11 +479,12 @@ impl NativePeerbitBackbone {
             let schema_ir = self.document_schema_ir.as_ref().ok_or_else(|| {
                 js_error("Native backbone document schema IR has not been configured")
             })?;
-            extract_encoded_document_fields_from_parts(
+            extract_encoded_document_fields_from_parts_with_byte_limits(
                 schema_ir,
                 &value_prefix_bytes,
                 &value_suffix_bytes,
                 byte_element_index_limit,
+                NATIVE_BACKBONE_BYTE_EXACT_INDEX_LIMIT,
             )
             .map_err(js_error)?
         };

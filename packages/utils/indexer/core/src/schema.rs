@@ -241,6 +241,7 @@ pub fn extract_encoded_document_fields(
         schema_ir,
         BridgeReader::new(value_bytes),
         byte_element_index_limit,
+        usize::MAX,
     )
 }
 
@@ -250,10 +251,27 @@ pub fn extract_encoded_document_fields_from_parts(
     suffix: &[u8],
     byte_element_index_limit: usize,
 ) -> Result<DocumentFields, SchemaError> {
+    extract_encoded_document_fields_from_parts_with_byte_limits(
+        schema_ir,
+        prefix,
+        suffix,
+        byte_element_index_limit,
+        usize::MAX,
+    )
+}
+
+pub fn extract_encoded_document_fields_from_parts_with_byte_limits(
+    schema_ir: &NativeSchemaIr,
+    prefix: &[u8],
+    suffix: &[u8],
+    byte_element_index_limit: usize,
+    byte_exact_index_limit: usize,
+) -> Result<DocumentFields, SchemaError> {
     extract_encoded_document_fields_from_reader(
         schema_ir,
         BridgeReader::from_parts(prefix, suffix),
         byte_element_index_limit,
+        byte_exact_index_limit,
     )
 }
 
@@ -432,12 +450,14 @@ fn extract_encoded_document_fields_from_reader(
     schema_ir: &NativeSchemaIr,
     mut reader: BridgeReader,
     byte_element_index_limit: usize,
+    byte_exact_index_limit: usize,
 ) -> Result<DocumentFields, SchemaError> {
     let mut fields =
         DocumentFields::with_scalar_capacity(schema_ir.scalar_capacity(byte_element_index_limit));
     let mut state = NativeExtractState {
         next_scope: 1,
         byte_element_index_limit,
+        byte_exact_index_limit,
     };
     extract_schema_node(
         &schema_ir.root,
@@ -454,6 +474,7 @@ fn extract_encoded_document_fields_from_reader(
 struct NativeExtractState {
     next_scope: u32,
     byte_element_index_limit: usize,
+    byte_exact_index_limit: usize,
 }
 
 impl NativeExtractState {
@@ -594,7 +615,7 @@ fn extract_schema_node(
         }
         NativeSchemaNode::Uint8Array => {
             let len = reader.read_u32()? as usize;
-            let bytes = reader.read_exact(len)?.to_vec();
+            let bytes = reader.read_exact(len)?;
             insert_bytes_facts(fields, state, scope, required_field(field)?, bytes)?;
         }
         NativeSchemaNode::Object {
@@ -625,7 +646,7 @@ fn extract_schema_node(
         },
         NativeSchemaNode::Vec(child) if matches!(child.as_ref(), NativeSchemaNode::U8) => {
             let len = reader.read_u32()? as usize;
-            let bytes = reader.read_exact(len)?.to_vec();
+            let bytes = reader.read_exact(len)?;
             insert_bytes_facts(fields, state, scope, required_field(field)?, bytes)?;
         }
         NativeSchemaNode::Vec(child) => {
@@ -645,7 +666,7 @@ fn extract_schema_node(
         NativeSchemaNode::FixedArray { length, element }
             if matches!(element.as_ref(), NativeSchemaNode::U8) =>
         {
-            let bytes = reader.read_exact(*length as usize)?.to_vec();
+            let bytes = reader.read_exact(*length as usize)?;
             insert_bytes_facts(fields, state, scope, required_field(field)?, bytes)?;
         }
         NativeSchemaNode::FixedArray { length, element } => {
@@ -685,7 +706,7 @@ fn insert_bytes_facts(
     state: &mut NativeExtractState,
     scope: u32,
     field: u32,
-    bytes: Vec<u8>,
+    bytes: &[u8],
 ) -> Result<(), SchemaError> {
     if bytes.len() <= state.byte_element_index_limit {
         for byte in bytes.iter().copied() {
@@ -697,7 +718,13 @@ fn insert_bytes_facts(
             );
         }
     }
-    fields.insert_scoped_scalar(scope, FieldPath::Id(field), FieldValue::from(bytes));
+    if bytes.len() <= state.byte_exact_index_limit {
+        fields.insert_scoped_scalar(
+            scope,
+            FieldPath::Id(field),
+            FieldValue::from(bytes.to_vec()),
+        );
+    }
     Ok(())
 }
 
@@ -739,6 +766,7 @@ mod tests {
     use super::{
         decode_native_schema_ir, extract_encoded_document_fields,
         extract_encoded_document_fields_from_parts,
+        extract_encoded_document_fields_from_parts_with_byte_limits,
     };
     use crate::planner::{FieldPath, FieldValue};
 
@@ -815,5 +843,21 @@ mod tests {
             fields.scalar_values(&FieldPath::Id(3)),
             Some([FieldValue::from(vec![9, 10])].as_slice())
         );
+    }
+
+    #[test]
+    fn can_skip_large_exact_byte_facts() {
+        let schema = decode_native_schema_ir(&schema_with_id_score_and_bytes()).unwrap();
+        let encoded = encoded_document();
+        let fields = extract_encoded_document_fields_from_parts_with_byte_limits(
+            &schema,
+            &encoded[..6],
+            &encoded[6..],
+            0,
+            1,
+        )
+        .unwrap();
+
+        assert_eq!(fields.scalar_values(&FieldPath::Id(3)), None);
     }
 }
