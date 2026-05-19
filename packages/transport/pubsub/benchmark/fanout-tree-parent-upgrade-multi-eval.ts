@@ -85,6 +85,8 @@ type EvalArgs = {
 	parentProbeRejectCooldownMaxMs: number;
 	parentShadowObserveMs: number;
 	parentShadowMinObservations: number;
+	parentShadowDualPathMs: number;
+	parentShadowDualPathMinMessages: number;
 	nodes?: number;
 	writers?: number;
 	activeWriters?: number;
@@ -166,6 +168,8 @@ type MultiWriterParams = {
 	parentProbeRejectCooldownMaxMs: number;
 	parentShadowObserveMs: number;
 	parentShadowMinObservations: number;
+	parentShadowDualPathMs: number;
+	parentShadowDualPathMinMessages: number;
 	lateRootConnectAfterMs: number;
 	lateRootDuringPublish: boolean;
 	lateRootMaxChildren: number;
@@ -567,6 +571,8 @@ const usage = () => {
 			"  --parentUpgradePreset NAME   raw|default-candidate (default: raw)",
 			"  --parentUpgradeIntervalMs MS treatment upgrade interval (default: 1000)",
 			"  --parentUpgradeMode MODE     direct|probe|shadow (default: preset-dependent)",
+			"  --parentShadowDualPathMs MS keep old parent during active-flow shadow cutover until candidate data is observed (default: 0)",
+			"  --parentShadowDualPathMinMessages N min candidate data messages before active-flow cutover (default: 1)",
 			"  --maxLiveChurnGuardSkipsPerSlot N max active guard skips per subscriber slot for ci-multi-live-churn (default: 1)",
 			"  --nodes N                    override scenario node count",
 			"  --writers N                  override scenario writer/root count",
@@ -738,6 +744,10 @@ const parseArgs = (argv: string[]): EvalArgs => {
 		parentShadowMinObservations: Number(
 			get("--parentShadowMinObservations") ?? 2,
 		),
+		parentShadowDualPathMs: Number(get("--parentShadowDualPathMs") ?? 0),
+		parentShadowDualPathMinMessages: Number(
+			get("--parentShadowDualPathMinMessages") ?? 1,
+		),
 		nodes: get("--nodes") == null ? undefined : Number(get("--nodes")),
 		writers: get("--writers") == null ? undefined : Number(get("--writers")),
 		activeWriters:
@@ -865,6 +875,8 @@ const resolveParams = (
 		parentProbeRejectCooldownMaxMs: args.parentProbeRejectCooldownMaxMs,
 		parentShadowObserveMs: args.parentShadowObserveMs,
 		parentShadowMinObservations: args.parentShadowMinObservations,
+		parentShadowDualPathMs: args.parentShadowDualPathMs,
+		parentShadowDualPathMinMessages: args.parentShadowDualPathMinMessages,
 		lateRootConnectAfterMs: Number(base.lateRootConnectAfterMs ?? -1),
 		lateRootDuringPublish: Boolean(base.lateRootDuringPublish ?? false),
 		lateRootMaxChildren: Number(base.lateRootMaxChildren ?? 0),
@@ -1139,6 +1151,9 @@ const runMultiWriterSim = async (
 							params.parentProbeRejectCooldownMaxMs,
 						parentShadowObserveMs: params.parentShadowObserveMs,
 						parentShadowMinObservations: params.parentShadowMinObservations,
+						parentShadowDualPathMs: params.parentShadowDualPathMs,
+						parentShadowDualPathMinMessages:
+							params.parentShadowDualPathMinMessages,
 						signal: timeoutSignal,
 					},
 				);

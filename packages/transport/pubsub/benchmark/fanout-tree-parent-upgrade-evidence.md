@@ -15,8 +15,11 @@ upgrades:
 - `probe`: require a live candidate reply before attempting the reparent.
 - `shadow`: repeatedly observe one probed candidate before promotion.
 
-`shadow` here is probe-observation shadowing. It does not duplicate the data
-plane through a second parent.
+By default, `shadow` is probe-observation shadowing and does not duplicate the
+data plane through a second parent. This branch also adds an explicit
+experimental dual-path cutover option for active data flows; it is disabled
+unless `parentShadowDualPathMs > 0` and the caller has intentionally disabled
+the active data guard.
 
 ## Current conclusion
 
@@ -139,6 +142,29 @@ of publishing, so this check distinguishes
 "nothing happened while data was live" from work that might happen later during
 settle time. The active snapshot includes data, repair, and quiet guard skips,
 plus active probes, shadow starts, shadow promotions, and proactive reparents.
+
+There is now a separate opt-in active-flow shadow cutover path. In shadow mode,
+when `parentUpgradeDataGuard` is disabled and `parentShadowDualPathMs > 0`, a
+peer can attach the candidate as a temporary second parent without leaving the
+old parent. Promotion is allowed only after data from the candidate actually
+arrives during the dual-path window (`parentShadowDualPathMinMessages`, default
+`1`). If no fresh candidate data arrives before the deadline, the peer sends
+`LEAVE` to the candidate and keeps the old parent. This is the make-before-break
+direction for future active upgrades, but it is deliberately not part of the
+default-candidate policy yet because the broader live-stream evidence still
+needs root-pressure, duplicate, and multi-writer soak thresholds.
+
+Focused local runner evidence for the active dual-path case:
+
+```bash
+node packages/transport/pubsub/dist/test/fanout-tree-sim.runner.js '{"nodes":42,"bootstraps":1,"subscribers":32,"relayFraction":0.5,"candidateScoringMode":"weighted","joinConcurrency":1,"joinPhases":true,"joinPhaseSettleMs":300,"messages":180,"msgRate":60,"msgSize":128,"streamRxDelayMs":1,"settleMs":2000,"deadlineMs":1000,"timeoutMs":60000,"trackerQueryIntervalMs":500,"repair":true,"rootUploadLimitBps":100000000,"relayUploadLimitBps":100000000,"rootMaxChildren":2,"relayMaxChildren":4,"dropDataFrameRate":0,"churnEveryMs":0,"lateRootConnectAfterMs":750,"lateRootDuringPublish":true,"lateRootMaxChildren":12,"lateRootConnectFraction":0.6,"parentUpgradeIntervalMs":250,"parentUpgradeLeafOnly":false,"parentUpgradeMinLevelGain":1,"parentUpgradeRootMinLevelGain":1,"parentUpgradeRootMinSubtreeGain":1,"parentUpgradeNonRootMinLevelGain":1,"parentUpgradeMinFreeSlots":0,"parentUpgradeRootMinFreeSlots":0,"parentUpgradeMaxChildLoadRatio":1,"parentUpgradeRootMaxChildLoadRatio":1,"parentUpgradeCooldownMs":500,"parentUpgradeQuietMs":0,"parentUpgradeRepairQuietMs":0,"parentUpgradeMaxPerPeer":1,"parentUpgradeRepairGuard":false,"parentUpgradeDataGuard":false,"parentUpgradeMode":"shadow","parentUpgradeVerifyStaleRootCapacity":true,"parentUpgradeStaleRootProbeProbability":1,"parentProbeTimeoutMs":300,"parentProbeMaxPerRound":1,"parentProbeMaxLagMessages":100,"parentShadowObserveMs":0,"parentShadowMinObservations":1,"parentShadowDualPathMs":1000,"parentShadowDualPathMinMessages":1}'
+```
+
+The latest local run produced `10` active shadow promotions, `100%` delivery,
+`100%` deadline delivery, `29` duplicates, and `1.005x` data overhead. That is a
+positive mechanism test, not default-readiness proof. The ordinary
+`ci-live-stream` default-candidate strict run still requires zero active probes,
+zero shadow starts, zero active promotions, and zero proactive reparents.
 
 The shared-network multi-writer evaluator extends that default-readiness check
 across several independent writer-root trees in one in-memory network. Writers

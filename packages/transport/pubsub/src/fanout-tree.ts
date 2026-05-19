@@ -488,6 +488,21 @@ export type FanoutTreeJoinOptions = {
 	parentShadowMinObservations?: number;
 
 	/**
+	 * In shadow mode, keep the old parent attached for this long after a
+	 * candidate accepts JOIN before promoting during active data flow.
+	 *
+	 * This is an opt-in make-before-break cutover. Set to `0` to preserve the
+	 * existing immediate post-probe promotion behavior.
+	 */
+	parentShadowDualPathMs?: number;
+
+	/**
+	 * Minimum live messages that must arrive from a shadow-attached candidate
+	 * before active-flow promotion is allowed.
+	 */
+	parentShadowDualPathMinMessages?: number;
+
+	/**
 	 * Max number of join candidates to try per retry "round".
 	 *
 	 * This prevents a long tail of sequential JOIN_REQ timeouts from blocking
@@ -1282,6 +1297,9 @@ type ParentShadowState = {
 	level: number;
 	freeSlots: number;
 	haveToExclusive: number;
+	liveDataMessages: number;
+	liveMaxSeqSeen: number;
+	liveLastDataAt: number;
 };
 
 type TrackerEntry = {
@@ -1708,6 +1726,8 @@ type ChildInfo = { bidPerByte: number };
 
 type JoinAttemptResult = {
 	ok: boolean;
+	parentLevel?: number;
+	parentRouteFromRoot?: string[];
 	rejectReason?: number;
 	timedOut?: boolean;
 	redirects?: Array<{ hash: string; addrs: Multiaddr[] }>;
@@ -1840,7 +1860,10 @@ type ChannelState = {
 	cachedAnnounceTrackerPeers?: string[];
 	lastIHaveSentMaxSeq: number;
 
-	pendingJoin: Map<number, { resolve(res: JoinAttemptResult): void }>;
+	pendingJoin: Map<
+		number,
+		{ resolve(res: JoinAttemptResult): void; shadowAttach?: boolean }
+	>;
 	pendingTrackerQuery: Map<
 		number,
 		{ resolve(entries: TrackerCandidate[]): void }
@@ -6213,6 +6236,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			1,
 			Math.floor(joinOpts.parentShadowMinObservations ?? 2),
 		);
+		const parentShadowDualPathMs = Math.max(
+			0,
+			Math.floor(joinOpts.parentShadowDualPathMs ?? 0),
+		);
+		const parentShadowDualPathMinMessages = Math.max(
+			1,
+			Math.floor(joinOpts.parentShadowDualPathMinMessages ?? 1),
+		);
 		const candidateScoringModeRaw =
 			joinOpts.candidateScoringMode ?? "ranked-shuffle";
 		const candidateScoringMode:
@@ -6480,6 +6511,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									probeRejectCooldownMaxMs: parentProbeRejectCooldownMaxMs,
 									shadowObserveMs: parentShadowObserveMs,
 									shadowMinObservations: parentShadowMinObservations,
+									shadowDualPathMs: parentShadowDualPathMs,
+									shadowDualPathMinMessages:
+										parentShadowDualPathMinMessages,
 									failedBackoffMinMs: parentUpgradeFailedBackoffMinMs,
 									failedBackoffMaxMs: parentUpgradeFailedBackoffMaxMs,
 								});
@@ -7009,6 +7043,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			probeRejectCooldownMaxMs?: number;
 			shadowObserveMs?: number;
 			shadowMinObservations?: number;
+			shadowDualPathMs?: number;
+			shadowDualPathMinMessages?: number;
 			failedBackoffMinMs?: number;
 			failedBackoffMaxMs?: number;
 		},
@@ -7736,6 +7772,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 								typeof selected.haveToExclusive === "number"
 									? selected.haveToExclusive
 									: 0,
+							liveDataMessages: 0,
+							liveMaxSeqSeen: -1,
+							liveLastDataAt: 0,
 						};
 						ch.metrics.parentShadowStart += 1;
 					} else {
@@ -7763,6 +7802,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 								typeof selected.haveToExclusive === "number"
 									? selected.haveToExclusive
 									: 0,
+							liveDataMessages: 0,
+							liveMaxSeqSeen: -1,
+							liveLastDataAt: 0,
 						};
 						ch.metrics.parentShadowStart += 1;
 						return false;
@@ -7799,6 +7841,27 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			if (!isDirectNeighbor(candidate.hash)) continue;
 
 			const previousParent = ch.parent;
+			const previousLevel = ch.level;
+			const previousRouteFromRoot = ch.routeFromRoot
+				? [...ch.routeFromRoot]
+				: undefined;
+			const previousLastParentDataAt = ch.lastParentDataAt;
+			const previousReceivedAnyParentData = ch.receivedAnyParentData;
+			const shadowDualPathMs = Math.max(
+				0,
+				Math.floor(options.shadowDualPathMs ?? 0),
+			);
+			const shadowDualPathMinMessages = Math.max(
+				1,
+				Math.floor(options.shadowDualPathMinMessages ?? 1),
+			);
+			const useShadowDualPath =
+				options.mode === "shadow" &&
+				shadowDualPathMs > 0 &&
+				!endedAndComplete &&
+				previousParent != null &&
+				previousParent !== candidate.hash;
+			const seqAtShadowAttach = ch.maxSeqSeen;
 			const reqId = (this.random() * 0xffffffff) >>> 0;
 			const res = await this.tryJoinOnce(
 				ch,
@@ -7814,10 +7877,81 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						typeof candidate.reservationToken === "number"
 							? candidate.reservationToken
 							: 0,
+					shadowAttach: useShadowDualPath,
 				},
 			);
 
 			if (res.ok) {
+				if (useShadowDualPath) {
+					const shadow = ch.parentShadow;
+					if (shadow?.hash === candidate.hash) {
+						shadow.liveDataMessages = 0;
+						shadow.liveMaxSeqSeen = seqAtShadowAttach;
+						shadow.liveLastDataAt = 0;
+					}
+
+					const deadline = Date.now() + shadowDualPathMs;
+					for (;;) {
+						if (options.signal.aborted) break;
+						const currentShadow = ch.parentShadow;
+						const observedFreshCandidateData =
+							currentShadow?.hash === candidate.hash &&
+							currentShadow.liveDataMessages >= shadowDualPathMinMessages &&
+							currentShadow.liveMaxSeqSeen > seqAtShadowAttach;
+						if (observedFreshCandidateData) {
+							const parentRoute = res.parentRouteFromRoot;
+							if (!parentRoute || parentRoute.length === 0) break;
+							ch.parent = candidate.hash;
+							ch.level = Math.max(
+								1,
+								Math.floor(res.parentLevel ?? candidate.level) + 1,
+							);
+							ch.routeFromRoot = [...parentRoute, this.publicKeyHash];
+							ch.joinedAtLeastOnce = true;
+							ch.lastParentDataAt =
+								currentShadow.liveLastDataAt > 0
+									? currentShadow.liveLastDataAt
+									: Date.now();
+							ch.receivedAnyParentData = true;
+							this.touchPeerHint(ch, candidate.hash);
+							if (previousParent) {
+								void this
+									._sendControl(previousParent, encodeLeave(ch.id.key))
+									.catch(() => {});
+							}
+							ch.metrics.parentShadowPromote += 1;
+							ch.parentShadow = undefined;
+							clearFailedBackoff();
+							void this
+								.announceToTrackers(ch, this.closeController.signal)
+								.catch(() => {});
+							return true;
+						}
+
+						const remainingMs = deadline - Date.now();
+						if (remainingMs <= 0) break;
+						await delay(Math.min(50, remainingMs), {
+							signal: options.signal,
+						});
+					}
+
+					if (ch.parent === previousParent) {
+						ch.level = previousLevel;
+						ch.routeFromRoot = previousRouteFromRoot;
+						ch.lastParentDataAt = previousLastParentDataAt;
+						ch.receivedAnyParentData = previousReceivedAnyParentData;
+					}
+					void this._sendControl(candidate.hash, encodeLeave(ch.id.key)).catch(
+						() => {},
+					);
+					if (ch.parentShadow) {
+						ch.parentShadow = undefined;
+						ch.metrics.parentShadowReset += 1;
+					}
+					applyFailedBackoff();
+					return false;
+				}
+
 				const newParent = ch.parent;
 				if (previousParent && newParent && newParent !== previousParent) {
 					void this._sendControl(previousParent, encodeLeave(ch.id.key)).catch(
@@ -7846,12 +7980,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		options?: {
 			allowReplace?: boolean;
 			parentUpgradeReservationToken?: number;
+			shadowAttach?: boolean;
 		},
 	): Promise<JoinAttemptResult> {
 		if (ch.parent && options?.allowReplace !== true) return { ok: true };
 		if (!this.peers.get(parentHash)) return { ok: false, timedOut: true };
 		const p = new Promise<JoinAttemptResult>((resolve) => {
-			ch.pendingJoin.set(reqId, { resolve });
+			ch.pendingJoin.set(reqId, {
+				resolve,
+				shadowAttach: options?.shadowAttach === true,
+			});
 		});
 		await this._sendControl(
 			parentHash,
@@ -8851,6 +8989,23 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						return true;
 					}
 
+					const acceptedParentRoute =
+						hasValidParentRoute || fromHash === ch.id.root
+							? fromHash === ch.id.root && !hasValidParentRoute
+								? [ch.id.root]
+								: parentRouteFromRoot
+							: undefined;
+
+					if (pending.shadowAttach) {
+						this.touchPeerHint(ch, fromHash);
+						pending.resolve({
+							ok: true,
+							parentLevel,
+							parentRouteFromRoot: acceptedParentRoute,
+						});
+						return true;
+					}
+
 					ch.parent = fromHash;
 					ch.level = parentLevel + 1;
 					ch.joinedAtLeastOnce = true;
@@ -8887,7 +9042,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						}
 					}
 					this.touchPeerHint(ch, fromHash);
-					pending.resolve({ ok: true });
+					pending.resolve({
+						ok: true,
+						parentLevel,
+						parentRouteFromRoot: acceptedParentRoute,
+					});
 					this.dispatchEvent(
 						new CustomEvent("fanout:joined", {
 							detail: {
@@ -9369,6 +9528,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				ch.parentRepairUnansweredStreak = 0;
 			}
 			ch.maxSeqSeen = Math.max(ch.maxSeqSeen, seq);
+			const parentShadow = ch.parentShadow;
+			if (parentShadow != null && parentShadow.hash === fromHash) {
+				const now = Date.now();
+				if (seq > parentShadow.liveMaxSeqSeen) {
+					parentShadow.liveMaxSeqSeen = seq;
+					parentShadow.liveDataMessages += 1;
+				}
+				parentShadow.liveLastDataAt = now;
+			}
 			this.noteReceivedSeq(ch, fromHash, seq);
 
 			const payload = (data as Uint8Array).subarray(1);

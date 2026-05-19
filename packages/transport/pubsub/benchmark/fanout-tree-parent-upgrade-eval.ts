@@ -54,6 +54,8 @@ type EvalArgs = {
 	parentProbeRejectCooldownMaxMs: number;
 	parentShadowObserveMs: number;
 	parentShadowMinObservations: number;
+	parentShadowDualPathMs: number;
+	parentShadowDualPathMinMessages: number;
 	streamRxDelayMs: number | undefined;
 	maxCostRatio: number;
 	maxFormationScoreDelta: number;
@@ -132,6 +134,8 @@ const HELP_TEXT = [
 	"  --parentProbeRejectCooldownMaxMs MS max adaptive cooldown after rejected parent probes (default: 60000)",
 	"  --parentShadowObserveMs MS    min healthy shadow observation window before promotion (default: 2000)",
 	"  --parentShadowMinObservations N min successful shadow observations before promotion (default: 2)",
+	"  --parentShadowDualPathMs MS keep old parent during active-flow shadow cutover until candidate data is observed (default: 0)",
+	"  --parentShadowDualPathMinMessages N min candidate data messages before active-flow cutover (default: 1)",
 	"  --streamRxDelayMs MS          override scenario per-chunk inbound delay in shim",
 	"  --maxCostRatio R             max treatment/base ratio for control/tracker/repair bpp (default: 1.15)",
 	"  --maxFormationScoreDelta N   absolute formation score jitter tolerated (default: 0.05)",
@@ -449,6 +453,10 @@ const parseArgs = (argv: string[]): EvalArgs => {
 		parentShadowObserveMs: Number(get("--parentShadowObserveMs") ?? 2_000),
 		parentShadowMinObservations: Number(
 			get("--parentShadowMinObservations") ?? 2,
+		),
+		parentShadowDualPathMs: Number(get("--parentShadowDualPathMs") ?? 0),
+		parentShadowDualPathMinMessages: Number(
+			get("--parentShadowDualPathMinMessages") ?? 1,
 		),
 		streamRxDelayMs:
 			get("--streamRxDelayMs") == null
@@ -1204,6 +1212,9 @@ const main = async () => {
 				parentProbeRejectCooldownMaxMs: args.parentProbeRejectCooldownMaxMs,
 				parentShadowObserveMs: args.parentShadowObserveMs,
 				parentShadowMinObservations: args.parentShadowMinObservations,
+				parentShadowDualPathMs: args.parentShadowDualPathMs,
+				parentShadowDualPathMinMessages:
+					args.parentShadowDualPathMinMessages,
 			};
 
 			console.log(`\n[baseline] scenario=${scenario} seed=${seed}`);

@@ -205,4 +205,86 @@ describe("fanout-tree-sim (ci)", () => {
 			expect(result.repairBpp).to.be.lessThan(5);
 			expect(result.reparentUpgradeTotal).to.equal(0);
 		});
+
+	it("can shadow-cut over during active data with a dual path", async function () {
+		this.timeout(90_000);
+		this.retries(1);
+
+		const result = await runFanoutTreeSimIsolated({
+			nodes: 42,
+			bootstraps: 1,
+			subscribers: 32,
+			relayFraction: 0.5,
+			candidateScoringMode: "weighted",
+			joinConcurrency: 1,
+			joinPhases: true,
+			joinPhaseSettleMs: 300,
+			messages: 180,
+			msgRate: 60,
+			msgSize: 128,
+			streamRxDelayMs: 1,
+			settleMs: 2_000,
+			deadlineMs: 1_000,
+			timeoutMs: 60_000,
+			trackerQueryIntervalMs: 500,
+			repair: true,
+			rootUploadLimitBps: 100_000_000,
+			relayUploadLimitBps: 100_000_000,
+			rootMaxChildren: 2,
+			relayMaxChildren: 4,
+			dropDataFrameRate: 0,
+			churnEveryMs: 0,
+			lateRootConnectAfterMs: 750,
+			lateRootDuringPublish: true,
+			lateRootMaxChildren: 12,
+			lateRootConnectFraction: 0.6,
+			parentUpgradeIntervalMs: 250,
+			parentUpgradeLeafOnly: false,
+			parentUpgradeMinLevelGain: 1,
+			parentUpgradeRootMinLevelGain: 1,
+			parentUpgradeRootMinSubtreeGain: 1,
+			parentUpgradeNonRootMinLevelGain: 1,
+			parentUpgradeMinFreeSlots: 0,
+			parentUpgradeRootMinFreeSlots: 0,
+			parentUpgradeMaxChildLoadRatio: 1,
+			parentUpgradeRootMaxChildLoadRatio: 1,
+			parentUpgradeCooldownMs: 500,
+			parentUpgradeQuietMs: 0,
+			parentUpgradeRepairQuietMs: 0,
+			parentUpgradeMaxPerPeer: 1,
+			parentUpgradeRepairGuard: false,
+			parentUpgradeDataGuard: false,
+			parentUpgradeMode: "shadow",
+			parentUpgradeVerifyStaleRootCapacity: true,
+			parentUpgradeStaleRootProbeProbability: 1,
+			parentProbeTimeoutMs: 300,
+			parentProbeMaxPerRound: 1,
+			parentProbeMaxLagMessages: 100,
+			parentShadowObserveMs: 0,
+			parentShadowMinObservations: 1,
+			parentShadowDualPathMs: 1_000,
+			parentShadowDualPathMinMessages: 1,
+		});
+
+		if (
+			result.joinedPct < 99 ||
+			result.deliveredPct < 99 ||
+			result.deliveredWithinDeadlinePct < 95 ||
+			result.publishActiveParentShadowPromoteTotal < 1 ||
+			result.reparentUpgradeTotal < 1 ||
+			result.overheadFactorData > 1.5 ||
+			result.formationTreeOrphans > 0
+		) {
+			console.log(formatFanoutTreeSimResult(result));
+		}
+
+		expect(result.joinedPct).to.be.greaterThan(99);
+		expect(result.deliveredPct).to.be.greaterThan(99);
+		expect(result.deliveredWithinDeadlinePct).to.be.greaterThan(95);
+		expect(result.reparentUpgradeTotal).to.be.greaterThan(0);
+		expect(result.publishActiveParentShadowPromoteTotal).to.be.greaterThan(0);
+		expect(result.publishActiveReparentUpgradeTotal).to.be.greaterThan(0);
+		expect(result.overheadFactorData).to.be.lessThan(1.5);
+		expect(result.formationTreeOrphans).to.equal(0);
+	});
 	});

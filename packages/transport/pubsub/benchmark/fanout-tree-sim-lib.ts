@@ -139,6 +139,8 @@ export type FanoutTreeSimParams = {
 	parentProbeRejectCooldownMaxMs: number;
 	parentShadowObserveMs: number;
 	parentShadowMinObservations: number;
+	parentShadowDualPathMs: number;
+	parentShadowDualPathMinMessages: number;
 	bootstrapEnsureIntervalMs: number;
 	trackerQueryIntervalMs: number;
 	joinAttemptsPerRound: number;
@@ -545,6 +547,10 @@ export const resolveFanoutTreeSimParams = (
 		),
 		parentShadowObserveMs: Number(input.parentShadowObserveMs ?? 2_000),
 		parentShadowMinObservations: Number(input.parentShadowMinObservations ?? 2),
+		parentShadowDualPathMs: Number(input.parentShadowDualPathMs ?? 0),
+		parentShadowDualPathMinMessages: Number(
+			input.parentShadowDualPathMinMessages ?? 1,
+		),
 		bootstrapEnsureIntervalMs: Number(input.bootstrapEnsureIntervalMs ?? -1),
 		trackerQueryIntervalMs: Number(input.trackerQueryIntervalMs ?? -1),
 		joinAttemptsPerRound: Number(input.joinAttemptsPerRound ?? -1),
@@ -985,6 +991,9 @@ export const runFanoutTreeSim = async (
 								params.parentProbeRejectCooldownMaxMs,
 							parentShadowObserveMs: params.parentShadowObserveMs,
 							parentShadowMinObservations: params.parentShadowMinObservations,
+							parentShadowDualPathMs: params.parentShadowDualPathMs,
+							parentShadowDualPathMinMessages:
+								params.parentShadowDualPathMinMessages,
 							...(params.bootstrapEnsureIntervalMs >= 0
 								? {
 										bootstrapEnsureIntervalMs: params.bootstrapEnsureIntervalMs,
