@@ -401,6 +401,7 @@ export class EntryIndex<T> {
 	private insertionPromises: Map<string, Promise<void>>;
 	private pendingIndexWrites: Map<string, ShallowEntry>;
 	private pendingIndexFlushTimer?: ReturnType<typeof setTimeout>;
+	private pendingIndexFlushLastWriteMs = 0;
 	constructor(
 		readonly properties: {
 			store: Blocks;
@@ -437,14 +438,31 @@ export class EntryIndex<T> {
 	}
 
 	private schedulePendingIndexWriteFlush() {
+		this.pendingIndexFlushLastWriteMs = Date.now();
 		if (this.pendingIndexFlushTimer) {
-			clearTimeout(this.pendingIndexFlushTimer);
+			return;
 		}
-		this.pendingIndexFlushTimer = setTimeout(() => {
+		const flushAfterIdle = () => {
+			const remainingMs =
+				DEFERRED_INDEX_FLUSH_IDLE_MS -
+				(Date.now() - this.pendingIndexFlushLastWriteMs);
+			if (remainingMs > 0) {
+				this.pendingIndexFlushTimer = setTimeout(
+					flushAfterIdle,
+					remainingMs,
+				);
+				this.pendingIndexFlushTimer.unref?.();
+				return;
+			}
+			this.pendingIndexFlushTimer = undefined;
 			void this.flushPendingWrites().catch((error) => {
 				log.error("Failed to flush deferred entry-index writes", error);
 			});
-		}, DEFERRED_INDEX_FLUSH_IDLE_MS);
+		};
+		this.pendingIndexFlushTimer = setTimeout(
+			flushAfterIdle,
+			DEFERRED_INDEX_FLUSH_IDLE_MS,
+		);
 		this.pendingIndexFlushTimer.unref?.();
 	}
 
