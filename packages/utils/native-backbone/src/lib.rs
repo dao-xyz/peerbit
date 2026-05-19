@@ -2342,7 +2342,6 @@ impl NativePeerbitBackbone {
         out.push(&JsValue::from_str(&entry_facts.hash));
         out.push(&JsValue::from_f64(entry_facts.byte_length as f64));
         out.push(&Uint8Array::from(entry_facts.meta_bytes.as_slice()));
-        out.push(&Uint8Array::from(entry_facts.hash_digest_bytes.as_slice()));
         out.push(&coordinate_plan_to_row(&self.resolution, &coordinate_facts));
         out.push(&leader_samples_to_optional_rows(&coordinate_facts.leaders));
         out.push(&JsValue::from_bool(coordinate_facts.is_leader));

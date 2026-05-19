@@ -1795,21 +1795,21 @@ const compactCommittedNoNextStorageAppendResultFromRow = (
 	resolution: RangeResolution,
 	row: unknown[],
 ): NativeBackboneAppendResult => {
+	const [hash, byteLength, metaBytes, fourth] = row as [
+		string,
+		number,
+		Uint8Array | undefined,
+		Uint8Array | unknown[],
+	];
+	const hasDigestRow = fourth instanceof Uint8Array;
+	const hashDigestBytes = hasDigestRow ? fourth : undefined;
 	const [
-		hash,
-		byteLength,
-		metaBytes,
-		hashDigestBytes,
 		coordinateRow,
 		leaderRows,
 		isLeader,
 		trimHashRows,
 		documentTrimmedHeadsProcessed,
-	] = row as [
-		string,
-		number,
-		Uint8Array | undefined,
-		Uint8Array | undefined,
+	] = row.slice(hasDigestRow ? 4 : 3) as [
 		unknown[],
 		unknown[] | undefined,
 		boolean,

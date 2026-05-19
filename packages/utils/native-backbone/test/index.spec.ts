@@ -501,7 +501,7 @@ describe("native peerbit backbone", () => {
 
 		expect(first.entry.bytes).equal(undefined);
 		expect(first.entry.next).to.deep.equal([]);
-		expect(first.entry.hashDigestBytes).to.have.length.greaterThan(0);
+		expect(first.entry.hashDigestBytes).equal(undefined);
 		expect(second.entry.bytes).equal(undefined);
 		expect(second.entry.next).to.deep.equal([]);
 		expect(second.trimmed).to.deep.equal([]);
