@@ -429,6 +429,13 @@ type WasmModule = {
 		signaturePublicKeys: Uint8Array[],
 		prehashes: Uint8Array,
 	) => Array<[Uint8Array, string]>;
+	benchmark_plain_entry_v0_core: (
+		clockId: Uint8Array,
+		privateKey: Uint8Array,
+		publicKey: Uint8Array,
+		iterations: number,
+		payloadData: Uint8Array,
+	) => number[];
 	prepare_entry_v0_plain_chain: (
 		clockId: Uint8Array,
 		privateKey: Uint8Array,
@@ -1945,6 +1952,54 @@ export const encodeEntryV0StorageBatchWithCids = async (
 			prehashes,
 		)
 		.map(([bytes, cid]) => ({ bytes, cid }));
+};
+
+export type PlainEntryV0CoreBenchmark = {
+	totalMs: number;
+	inputCopyMs: number;
+	entryCoreMs: number;
+	encodeMetaMs: number;
+	encodePayloadMs: number;
+	encodeSignableMs: number;
+	signMs: number;
+	encodeSignatureMs: number;
+	encodeStorageMs: number;
+	cidMs: number;
+	indexEntryMs: number;
+	storageBytesTotal: number;
+	hashBytesTotal: number;
+};
+
+export const benchmarkPlainEntryV0Core = async (input: {
+	clockId: Uint8Array;
+	privateKey: Uint8Array;
+	publicKey: Uint8Array;
+	iterations: number;
+	payloadData: Uint8Array;
+}): Promise<PlainEntryV0CoreBenchmark> => {
+	const wasm = await loadWasm();
+	const row = wasm.benchmark_plain_entry_v0_core(
+		input.clockId,
+		input.privateKey,
+		input.publicKey,
+		input.iterations,
+		input.payloadData,
+	);
+	return {
+		totalMs: row[0] ?? 0,
+		inputCopyMs: row[1] ?? 0,
+		entryCoreMs: row[2] ?? 0,
+		encodeMetaMs: row[3] ?? 0,
+		encodePayloadMs: row[4] ?? 0,
+		encodeSignableMs: row[5] ?? 0,
+		signMs: row[6] ?? 0,
+		encodeSignatureMs: row[7] ?? 0,
+		encodeStorageMs: row[8] ?? 0,
+		cidMs: row[9] ?? 0,
+		indexEntryMs: row[10] ?? 0,
+		storageBytesTotal: row[11] ?? 0,
+		hashBytesTotal: row[12] ?? 0,
+	};
 };
 
 export const prepareEntryV0PlainChain = async (

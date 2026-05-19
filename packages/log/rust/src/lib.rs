@@ -2860,6 +2860,68 @@ pub fn calculate_raw_cid_v1(bytes: Uint8Array) -> String {
     calculate_raw_cid_v1_from_bytes(&bytes.to_vec())
 }
 
+#[wasm_bindgen]
+pub fn benchmark_plain_entry_v0_core(
+    clock_id: Uint8Array,
+    private_key: Uint8Array,
+    public_key: Uint8Array,
+    iterations: u32,
+    payload_data: Uint8Array,
+) -> Result<Array, JsValue> {
+    let clock_id = clock_id.to_vec();
+    let private_key = private_key.to_vec();
+    let public_key = public_key.to_vec();
+    let signing_key = validate_ed25519_keypair(&private_key, &public_key)?;
+    let payload_data = payload_data.to_vec();
+    let gid = String::from("native-log-core-ceiling");
+    let mut profile = NativeLogAppendProfile::default();
+    let mut input_copy_ms = 0.0;
+    let mut storage_bytes_total = 0usize;
+    let mut hash_bytes_total = 0usize;
+    let started = js_sys::Date::now();
+
+    for i in 0..iterations {
+        let copy_started = js_sys::Date::now();
+        let payload_data = payload_data.clone();
+        input_copy_ms += js_sys::Date::now() - copy_started;
+
+        let core_started = js_sys::Date::now();
+        let core = prepare_entry_v0_plain_entry_commit_core_with_signer_parts_profiled(
+            &clock_id,
+            &public_key,
+            &signing_key,
+            1_700_000_000_000 + i as u64,
+            i,
+            gid.clone(),
+            Vec::new(),
+            0,
+            None,
+            payload_data,
+            Some(&mut profile),
+        )?;
+        profile.entry_core_ms += js_sys::Date::now() - core_started;
+        storage_bytes_total += core.storage_bytes.len();
+        hash_bytes_total += core.hash.len();
+    }
+
+    let total_ms = js_sys::Date::now() - started;
+    let row = Array::new();
+    row.push(&JsValue::from_f64(total_ms));
+    row.push(&JsValue::from_f64(input_copy_ms));
+    row.push(&JsValue::from_f64(profile.entry_core_ms));
+    row.push(&JsValue::from_f64(profile.encode_meta_ms));
+    row.push(&JsValue::from_f64(profile.encode_payload_ms));
+    row.push(&JsValue::from_f64(profile.encode_signable_ms));
+    row.push(&JsValue::from_f64(profile.sign_ms));
+    row.push(&JsValue::from_f64(profile.encode_signature_ms));
+    row.push(&JsValue::from_f64(profile.encode_storage_ms));
+    row.push(&JsValue::from_f64(profile.cid_ms));
+    row.push(&JsValue::from_f64(profile.index_entry_ms));
+    row.push(&JsValue::from_f64(storage_bytes_total as f64));
+    row.push(&JsValue::from_f64(hash_bytes_total as f64));
+    Ok(row)
+}
+
 fn calculate_raw_cid_v1_from_bytes(bytes: &[u8]) -> String {
     calculate_raw_cid_v1_parts(bytes).0
 }

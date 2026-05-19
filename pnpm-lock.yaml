@@ -1228,6 +1228,9 @@ importers:
       '@libp2p/websockets':
         specifier: ^10.1.7
         version: 10.1.7
+      '@peerbit/log-rust':
+        specifier: workspace:*
+        version: link:../../../../log/rust
       '@peerbit/native-backbone':
         specifier: workspace:*
         version: link:../../../../utils/native-backbone

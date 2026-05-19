@@ -2,6 +2,7 @@ import { field, option, serialize, variant } from "@dao-xyz/borsh";
 import { create as createSimpleIndexer } from "@peerbit/indexer-simple";
 import { create as createSqliteIndexer } from "@peerbit/indexer-sqlite3";
 import { Log } from "@peerbit/log";
+import { benchmarkPlainEntryV0Core } from "@peerbit/log-rust";
 import {
 	NativeBackboneNodeCoordinatePersistenceStore,
 	createNativePeerbitBackbone,
@@ -27,7 +28,7 @@ import {
 // - DOC_BYTES=1200
 // - DOC_COORDINATE_WAL_FLUSH_BYTES=1048576
 // - DOC_COORDINATE_WAL_FLUSH_INTERVAL_MS unset by default
-// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,rust-peerbit-backbone-local-document-index,rust-peerbit-backbone-coordinate-wal,rust-peerbit-backbone-coordinate-wal-buffered,native-ceiling,native-log-ceiling,native-backbone-ceiling,native-backbone-storage-ceiling
+// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,rust-peerbit-backbone-local-document-index,rust-peerbit-backbone-coordinate-wal,rust-peerbit-backbone-coordinate-wal-buffered,native-ceiling,native-log-core-ceiling,native-log-ceiling,native-backbone-ceiling,native-backbone-storage-ceiling
 //   Add "-nonunique" to any scenario name to use default update-safe put semantics with new ids.
 //   Add "-update" to any scenario name to repeatedly update one document id.
 //   Add "-local" to a rust-peerbit scenario to disable replication and default trim.
@@ -1464,6 +1465,52 @@ const runNativeCeilingScenario = async (name: string): Promise<BenchRow> => {
 	}
 };
 
+const runNativeLogCoreCeilingScenario = async (
+	name: string,
+): Promise<BenchRow> => {
+	await benchmarkPlainEntryV0Core({
+		clockId: nativeBackbonePublicKey,
+		privateKey: nativeBackbonePrivateKey,
+		publicKey: nativeBackbonePublicKey,
+		iterations: warmupIterations,
+		payloadData: payload,
+	});
+
+	const profile = emptyProfile();
+	const result = await benchmarkPlainEntryV0Core({
+		clockId: nativeBackbonePublicKey,
+		privateKey: nativeBackbonePrivateKey,
+		publicKey: nativeBackbonePublicKey,
+		iterations,
+		payloadData: payload,
+	});
+	profile.totalPutMs = result.totalMs;
+	profile.nativeBackboneInputCopyMs = result.inputCopyMs;
+	profile.nativeBackboneLogTotalMs = result.entryCoreMs;
+	profile.nativeBackboneLogEntryCoreMs = result.entryCoreMs;
+	profile.nativeBackboneLogEncodeMetaMs = result.encodeMetaMs;
+	profile.nativeBackboneLogEncodePayloadMs = result.encodePayloadMs;
+	profile.nativeBackboneLogEncodeSignableMs = result.encodeSignableMs;
+	profile.nativeBackboneLogSignMs = result.signMs;
+	profile.nativeBackboneLogEncodeSignatureMs = result.encodeSignatureMs;
+	profile.nativeBackboneLogEncodeStorageMs = result.encodeStorageMs;
+	profile.nativeBackboneLogCidMs = result.cidMs;
+	profile.nativeBackboneLogIndexEntryMs = result.indexEntryMs;
+
+	return {
+		name,
+		iterations,
+		payloadBytes,
+		opsPerSecond: Math.round((iterations / profile.totalPutMs) * 1000),
+		cleanupMs: 0,
+		...Object.fromEntries(
+			Object.entries(profile)
+				.filter(([key]) => shouldIncludeProfileKey(key))
+				.map(([key, value]) => [key, Math.round(value * 100) / 100]),
+		),
+	} as BenchRow;
+};
+
 const runNativeLogCeilingScenario = async (name: string): Promise<BenchRow> => {
 	const backbone = await createNativePeerbitBackbone({
 		clockId: nativeBackbonePublicKey,
@@ -1607,12 +1654,14 @@ for (const name of scenarioNames) {
 	rows.push(
 		baseName === "native-ceiling"
 			? await runNativeCeilingScenario(name)
-			: baseName === "native-log-ceiling"
-				? await runNativeLogCeilingScenario(name)
-			: baseName === "native-backbone-ceiling" ||
-				  baseName === "native-backbone-storage-ceiling"
-				? await runNativeBackboneCeilingScenario(name)
-				: await runScenario(name),
+			: baseName === "native-log-core-ceiling"
+				? await runNativeLogCoreCeilingScenario(name)
+				: baseName === "native-log-ceiling"
+					? await runNativeLogCeilingScenario(name)
+					: baseName === "native-backbone-ceiling" ||
+						  baseName === "native-backbone-storage-ceiling"
+						? await runNativeBackboneCeilingScenario(name)
+						: await runScenario(name),
 	);
 }
 
