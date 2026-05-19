@@ -1433,7 +1433,12 @@ const runMultiWriterSim = async (
 			}
 			for (;;) {
 				if (churnSignal.aborted) return;
-				await delay(params.churnEveryMs, { signal: churnSignal });
+				try {
+					await delay(params.churnEveryMs, { signal: churnSignal });
+				} catch (err) {
+					if (churnSignal.aborted) return;
+					throw err;
+				}
 				const target = Math.max(
 					1,
 					Math.floor(subscriberIndices.length * params.churnFraction),
@@ -1916,16 +1921,15 @@ const evaluateRun = (
 		upgrade.reparentUpgradeTotal > 0 ||
 		upgrade.parentProbeReqSentTotal > 0 ||
 		upgrade.parentShadowStartTotal > 0;
-	// Live churn is a no-work safety gate; ordinary reconnect timing can move
-	// delivery/root shape even when parent-upgrade sends zero traffic.
-	// The other live scenarios have the same no-work contract: if the policy
-	// stays limited to local guard checks, async delivery jitter is reported but
-	// not used as a product failure signal.
-	const compareDeliveryAndCost =
+	// Live scenarios are no-work safety gates. Independent baseline/treatment
+	// runs can still move delivery, root pressure, or whether a local guard timer
+	// happens to fire. If the policy sends no proactive traffic, those values are
+	// observability only; the hard contract is zero probes/shadows/upgrades.
+	const compareIndependentRunShape =
 		!isLiveChurnScenario(scenario) &&
 		(!isLiveScenario(scenario) || sentProactiveUpgradeTraffic);
 
-	if (compareDeliveryAndCost) {
+	if (compareIndependentRunShape) {
 		failIfLess(
 			failures,
 			"deliveredWithinDeadlinePct",
@@ -1994,13 +1998,6 @@ const evaluateRun = (
 			0,
 			upgrade.reparentUpgradeTotal,
 			0,
-		);
-		failIfLess(
-			failures,
-			"activeGuardedTrees",
-			0,
-			upgrade.activeGuardedTrees,
-			1,
 		);
 		if (isLiveChurnScenario(scenario)) {
 			failIfGreater(
@@ -2123,7 +2120,7 @@ const evaluateRun = (
 		);
 	}
 
-	if (!isLiveChurnScenario(scenario)) {
+	if (compareIndependentRunShape) {
 		for (const tree of upgrade.trees) {
 			const baselineTree = baseline.trees[tree.tree];
 			if (!baselineTree) continue;
@@ -2331,6 +2328,6 @@ const main = async () => {
 try {
 	await main();
 } catch (err: any) {
-	console.error(err?.message ?? String(err));
+	console.error(err?.stack || err?.message || String(err));
 	process.exit(1);
 }

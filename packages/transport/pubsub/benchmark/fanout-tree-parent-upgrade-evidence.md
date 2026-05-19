@@ -441,9 +441,12 @@ The multi-writer evaluator prints `parent-upgrade-multi-summary`. Its strict
 gates separate active-flow safety from settled-topology usefulness:
 `ci-multi-live`, `ci-multi-live-churn`, and `ci-multi-video-live` fail if any
 writer tree sends active or total proactive probes, starts a shadow observation,
-or performs a proactive upgrade. The churn variant additionally caps active
-guard wakeups per subscriber slot so the policy cannot pass by spinning local
-timers under load.
+or performs a proactive upgrade. In those no-proactive live runs, root-shape
+deltas and guard-skip counts are still printed as observability, but they are
+not hard failures because the baseline and treatment are independent async
+simulations and local guard timers can legitimately fire in one run but not the
+other. The churn variant additionally caps active guard wakeups per subscriber
+slot so the policy cannot pass by spinning local timers under load.
 `ci-multi-idle` fails unless each seed has at least one useful promoted tree,
 aggregate probes stay bounded by successful upgrades, max proactive reparent per
 peer/channel is `1`, and every root stays within the same per-root child and
