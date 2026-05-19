@@ -101,6 +101,8 @@ type EvalArgs = {
 	maxProbePerUpgrade: number;
 	maxRootChildrenDelta: number;
 	maxRootUploadPctDelta: number;
+	minPromotedBranchGainMs: number;
+	minPromotedTreeLevelAvgGain: number;
 	strict: boolean;
 };
 
@@ -579,6 +581,8 @@ const usage = () => {
 			"  --activeWriters N            override active publisher count; remaining joined writer trees stay idle",
 			"  --subscribersPerTree N       override scenario subscriber slots per writer",
 			"  --timeoutMs MS               override scenario timeout",
+			"  --minPromotedBranchGainMs MS min branch/second-batch p95 gain for promoted trees (default: 10)",
+			"  --minPromotedTreeLevelAvgGain N min avg tree-level gain for promoted trees (default: 0.1)",
 			"  --strict 0|1                 exit non-zero on evidence failure (default: 0)",
 			"",
 			"Examples:",
@@ -780,6 +784,10 @@ const parseArgs = (argv: string[]): EvalArgs => {
 			get("--maxRootChildrenDelta") ?? (defaultCandidate ? 2 : 4),
 		),
 		maxRootUploadPctDelta: Number(get("--maxRootUploadPctDelta") ?? 1),
+		minPromotedBranchGainMs: Number(get("--minPromotedBranchGainMs") ?? 10),
+		minPromotedTreeLevelAvgGain: Number(
+			get("--minPromotedTreeLevelAvgGain") ?? 0.1,
+		),
 		strict: parseBool01(get("--strict"), false),
 	};
 };
@@ -1857,9 +1865,12 @@ const formatResult = (result: MultiWriterResult) => {
 const analyzeUsefulPromotions = (
 	baseline: MultiWriterResult,
 	upgrade: MultiWriterResult,
+	args: EvalArgs,
 ) => {
 	let usefulPromotedTrees = 0;
 	const branchGains: number[] = [];
+	const minBranchGainMs = Math.max(1, args.minPromotedBranchGainMs);
+	const minTreeLevelAvgGain = Math.max(0, args.minPromotedTreeLevelAvgGain);
 	for (const tree of upgrade.trees) {
 		if (tree.reparentUpgradeTotal <= 0) continue;
 		const baseTree = baseline.trees[tree.tree];
@@ -1878,8 +1889,8 @@ const analyzeUsefulPromotions = (
 		const branchGain = branchBase - branchUpgrade;
 		if (Number.isFinite(branchGain)) branchGains.push(branchGain);
 		if (
-			Math.max(treeLevelAvgGain, secondBatchP95Gain, branchGain) >= 1 ||
-			treeLevelAvgGain > 0.05
+			Math.max(secondBatchP95Gain, branchGain) >= minBranchGainMs ||
+			treeLevelAvgGain >= minTreeLevelAvgGain
 		) {
 			usefulPromotedTrees += 1;
 		}
@@ -1897,7 +1908,7 @@ const evaluateRun = (
 	args: EvalArgs,
 ) => {
 	const failures: Failure[] = [];
-	const useful = analyzeUsefulPromotions(baseline, upgrade);
+	const useful = analyzeUsefulPromotions(baseline, upgrade, args);
 	const costRatio = isHotspotIdleScenario(scenario)
 		? Math.max(args.maxCostRatio, 1.2)
 		: args.maxCostRatio;
@@ -2049,7 +2060,7 @@ const evaluateRun = (
 				baseline.secondBatchLatencyP95 - upgrade.secondBatchLatencyP95,
 				useful.promotedBranchGainAvg,
 			),
-			1,
+			Math.max(1, args.minPromotedBranchGainMs),
 		);
 	}
 
@@ -2083,7 +2094,7 @@ const evaluateRun = (
 				baseline.secondBatchLatencyP95 - upgrade.secondBatchLatencyP95,
 				useful.promotedBranchGainAvg,
 			),
-			1,
+			Math.max(1, args.minPromotedBranchGainMs),
 		);
 	}
 

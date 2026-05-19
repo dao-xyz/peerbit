@@ -166,6 +166,12 @@ positive mechanism test, not default-readiness proof. The ordinary
 `ci-live-stream` default-candidate strict run still requires zero active probes,
 zero shadow starts, zero active promotions, and zero proactive reparents.
 
+The PR fanout gate now includes this active dual-path scenario as a bounded
+mechanism check. It requires at least one proactive reparent and at least one
+active shadow promotion, while still bounding delivery and data overhead. This
+keeps the default-candidate safety gate separate from the opt-in
+make-before-break mechanism gate.
+
 The shared-network multi-writer evaluator extends that default-readiness check
 across several independent writer-root trees in one in-memory network. Writers
 publish on distinct topics, subscribers overlap across writer trees, and the
@@ -174,6 +180,11 @@ because per-tree behavior can look safe while aggregate writer/topic pressure
 still multiplies probes, root fanout, and control traffic. The multi-writer
 evidence keeps the same runtime default-off posture and evaluates the same
 default-candidate policy only as an opt-in treatment.
+
+The multi-writer evaluator now treats a promoted tree as useful only when it
+shows a meaningful paired signal: at least `10ms` of promoted-branch or
+second-batch p95 latency gain, or at least `0.1` average tree-level gain. This
+avoids counting near-zero movements as evidence for default enablement.
 
 `ci-multi-live-churn` adds the missing shared-network stress case: several
 writer-root trees publish concurrently while ordinary churn and late root

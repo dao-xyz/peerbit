@@ -100,6 +100,8 @@ const HELP_TEXT = [
 	"  --parentProbeRejectCooldownMaxMs MS max adaptive cooldown after rejected parent probes (default: 60000)",
 	"  --parentShadowObserveMs MS    min healthy shadow observation window before promotion (default: 2000)",
 	"  --parentShadowMinObservations N min successful shadow observations before promotion (default: 2)",
+	"  --parentShadowDualPathMs MS keep old parent during active-flow shadow cutover until candidate data is observed (default: 0)",
+	"  --parentShadowDualPathMinMessages N min candidate data messages before active-flow cutover (default: 1)",
 	"  --bootstrapEnsureIntervalMs MS  min interval between bootstrap re-dials (-1 = FanoutTree default)",
 	"  --trackerQueryIntervalMs MS     min interval between tracker queries (-1 = FanoutTree default)",
 	"  --joinAttemptsPerRound N        max join candidates tried per retry round (-1 = FanoutTree default)",
@@ -124,6 +126,8 @@ const HELP_TEXT = [
 	"  --assertAttachP95Ms MS        max p95 time-to-attach since join start (default: 0, off)",
 	"  --assertMaxTreeLevelP95 N     max p95 tree depth/level (default: 0, off)",
 	"  --assertMaxFormationScore X   max formationScore (default: 0, off)",
+	"  --assertMinReparentUpgradeTotal N min proactive parent upgrades (default: 0, off)",
+	"  --assertMinActiveShadowPromoteTotal N min active shadow promotions (default: 0, off)",
 	"  --assertMaxOrphans N          max online orphans during publish+settle (default: 0, off)",
 	"  --assertMaxOrphanArea S       max orphan-area (orphan-seconds) during publish+settle (default: 0, off)",
 	"  --assertRecoveryP95Ms MS      max p95 recovery time after churn (default: 0, off)",
@@ -563,6 +567,16 @@ const ARG_SPECS: ArgSpec[] = [
 		parse: parseNumber,
 	},
 	{
+		flag: "--parentShadowDualPathMs",
+		key: "parentShadowDualPathMs",
+		parse: parseNumber,
+	},
+	{
+		flag: "--parentShadowDualPathMinMessages",
+		key: "parentShadowDualPathMinMessages",
+		parse: parseNumber,
+	},
+	{
 		flag: "--bootstrapEnsureIntervalMs",
 		key: "bootstrapEnsureIntervalMs",
 		parse: parseNumber,
@@ -646,6 +660,16 @@ const ARG_SPECS: ArgSpec[] = [
 		key: "assertMaxFormationScore",
 		parse: parseNumber,
 	},
+	{
+		flag: "--assertMinReparentUpgradeTotal",
+		key: "assertMinReparentUpgradeTotal",
+		parse: parseNumber,
+	},
+	{
+		flag: "--assertMinActiveShadowPromoteTotal",
+		key: "assertMinActiveShadowPromoteTotal",
+		parse: parseNumber,
+	},
 	{ flag: "--assertMaxOrphans", key: "assertMaxOrphans", parse: parseNumber },
 	{
 		flag: "--assertMaxOrphanArea",
@@ -716,6 +740,8 @@ type AssertionParam =
 	| "assertAttachP95Ms"
 	| "assertMaxTreeLevelP95"
 	| "assertMaxFormationScore"
+	| "assertMinReparentUpgradeTotal"
+	| "assertMinActiveShadowPromoteTotal"
 	| "assertMaxOrphans"
 	| "assertMaxOrphanArea"
 	| "assertRecoveryP95Ms"
@@ -814,6 +840,18 @@ const ASSERTION_SPECS: AssertionSpec[] = [
 		mode: "max",
 		value: (result) => result.formationScore,
 		formatActual: (value) => value.toFixed(2),
+	},
+	{
+		param: "assertMinReparentUpgradeTotal",
+		label: "reparentUpgradeTotal",
+		mode: "min",
+		value: (result) => result.reparentUpgradeTotal,
+	},
+	{
+		param: "assertMinActiveShadowPromoteTotal",
+		label: "publishActiveParentShadowPromoteTotal",
+		mode: "min",
+		value: (result) => result.publishActiveParentShadowPromoteTotal,
 	},
 	{
 		param: "assertMaxOrphans",

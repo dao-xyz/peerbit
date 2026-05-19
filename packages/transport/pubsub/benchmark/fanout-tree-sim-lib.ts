@@ -175,6 +175,8 @@ export type FanoutTreeSimParams = {
 	assertAttachP95Ms: number;
 	assertMaxTreeLevelP95: number;
 	assertMaxFormationScore: number;
+	assertMinReparentUpgradeTotal: number;
+	assertMinActiveShadowPromoteTotal: number;
 	assertMaxOrphans: number;
 	assertRecoveryP95Ms: number;
 	assertMaxReparentsPerMin: number;
@@ -587,6 +589,12 @@ export const resolveFanoutTreeSimParams = (
 		assertAttachP95Ms: Number(input.assertAttachP95Ms ?? 0),
 		assertMaxTreeLevelP95: Number(input.assertMaxTreeLevelP95 ?? 0),
 		assertMaxFormationScore: Number(input.assertMaxFormationScore ?? 0),
+		assertMinReparentUpgradeTotal: Number(
+			input.assertMinReparentUpgradeTotal ?? 0,
+		),
+		assertMinActiveShadowPromoteTotal: Number(
+			input.assertMinActiveShadowPromoteTotal ?? 0,
+		),
 		assertMaxOrphans: Number(input.assertMaxOrphans ?? 0),
 		assertRecoveryP95Ms: Number(input.assertRecoveryP95Ms ?? 0),
 		assertMaxReparentsPerMin: Number(input.assertMaxReparentsPerMin ?? 0),
