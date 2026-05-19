@@ -42,6 +42,12 @@ type NativePeerbitBackboneHandle = {
 		start2: string,
 		end2: string,
 	) => unknown[];
+	entry_hash_numbers_in_range_u64?: (
+		start1: string,
+		end1: string,
+		start2: string,
+		end2: string,
+	) => BigUint64Array;
 	count_entry_coordinates_in_ranges: (
 		start1: string[],
 		end1: string[],
@@ -2498,6 +2504,26 @@ export class NativePeerbitBackbone {
 				integerString(range.end2),
 			),
 		) as bigint[];
+	}
+
+	getEntryHashNumbersInRangeU64(range: {
+		start1: bigint | number | string;
+		end1: bigint | number | string;
+		start2: bigint | number | string;
+		end2: bigint | number | string;
+	}): BigUint64Array | undefined {
+		if (
+			typeof BigUint64Array === "undefined" ||
+			typeof this.native.entry_hash_numbers_in_range_u64 !== "function"
+		) {
+			return undefined;
+		}
+		return this.native.entry_hash_numbers_in_range_u64(
+			integerString(range.start1),
+			integerString(range.end1),
+			integerString(range.start2),
+			integerString(range.end2),
+		);
 	}
 
 	countEntryCoordinatesInRanges(

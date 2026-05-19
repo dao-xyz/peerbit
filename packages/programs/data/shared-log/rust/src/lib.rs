@@ -1,5 +1,5 @@
 use indexmap::{IndexMap, IndexSet};
-use js_sys::Array;
+use js_sys::{Array, BigUint64Array};
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -1942,6 +1942,25 @@ impl NativeSharedLogState {
         Ok(out)
     }
 
+    pub fn entry_hash_numbers_in_range_u64(
+        &self,
+        start1: String,
+        end1: String,
+        start2: String,
+        end2: String,
+    ) -> Result<BigUint64Array, JsValue> {
+        let start1 = parse_u64(&start1)?;
+        let end1 = parse_u64(&end1)?;
+        let start2 = parse_u64(&start2)?;
+        let end2 = parse_u64(&end2)?;
+        let mut out = Vec::new();
+        self.collect_entry_hash_numbers_in_segment(&mut out, start1, end1);
+        if start2 != end2 {
+            self.collect_entry_hash_numbers_in_segment(&mut out, start2, end2);
+        }
+        Ok(BigUint64Array::from(out.as_slice()))
+    }
+
     fn push_entry_hash_numbers_in_segment(&self, out: &Array, start: u64, end: u64) {
         if start >= end {
             return;
@@ -1951,6 +1970,15 @@ impl NativeSharedLogState {
             for _ in hashes {
                 out.push(&value);
             }
+        }
+    }
+
+    fn collect_entry_hash_numbers_in_segment(&self, out: &mut Vec<u64>, start: u64, end: u64) {
+        if start >= end {
+            return;
+        }
+        for (hash_number, hashes) in self.inner.entry_hashes_by_hash_number.range(start..end) {
+            out.resize(out.len() + hashes.len(), *hash_number);
         }
     }
 

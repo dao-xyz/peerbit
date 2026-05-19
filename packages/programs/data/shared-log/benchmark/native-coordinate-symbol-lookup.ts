@@ -150,6 +150,17 @@ const lookupRangeViaNativeState = () => {
 	}
 };
 
+const lookupRangeViaNativeStateTyped = () => {
+	const result =
+		nativeState.getEntryHashNumbersInRangeU64(symbolRange) ??
+		nativeState.getEntryHashNumbersInRange(symbolRange);
+	if (result.length !== rangeHitCount) {
+		throw new Error(
+			`Expected ${rangeHitCount} native typed range hits, got ${result.length}`,
+		);
+	}
+};
+
 const preflightViaIndexCount = async () => {
 	let found = 0;
 	for (const symbol of preflightSymbols) {
@@ -190,6 +201,10 @@ suite.add("generic index hashNumber lookup", lookupViaIndex);
 suite.add("native resident hashNumber lookup", lookupViaNativeState);
 suite.add("generic index hashNumber range lookup", lookupRangeViaIndex);
 suite.add("native resident hashNumber range lookup", lookupRangeViaNativeState);
+suite.add(
+	"native resident hashNumber range lookup typed",
+	lookupRangeViaNativeStateTyped,
+);
 suite.add("generic index hashNumber preflight count", preflightViaIndexCount);
 suite.add("native resident hashNumber preflight batch", preflightViaNativeBatch);
 

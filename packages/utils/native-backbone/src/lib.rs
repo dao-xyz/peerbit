@@ -1,4 +1,4 @@
-use js_sys::{Array, Reflect, Uint8Array};
+use js_sys::{Array, BigUint64Array, Reflect, Uint8Array};
 use peerbit_indexer_core::codec::{decode_query, decode_sort};
 use peerbit_indexer_core::persistence::{
     decode_journal, decode_key_value_snapshot, encode_journal_delete_record,
@@ -331,6 +331,17 @@ impl NativePeerbitBackbone {
     ) -> Result<Array, JsValue> {
         self.shared_log
             .entry_hash_numbers_in_range(start1, end1, start2, end2)
+    }
+
+    pub fn entry_hash_numbers_in_range_u64(
+        &self,
+        start1: String,
+        end1: String,
+        start2: String,
+        end2: String,
+    ) -> Result<BigUint64Array, JsValue> {
+        self.shared_log
+            .entry_hash_numbers_in_range_u64(start1, end1, start2, end2)
     }
 
     pub fn count_entry_coordinates_in_ranges(

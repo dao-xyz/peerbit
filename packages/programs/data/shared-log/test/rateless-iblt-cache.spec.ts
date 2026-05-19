@@ -43,7 +43,8 @@ describe("rateless-iblt-syncronizer cache", () => {
 
 	it("builds local range encoder from native hash-number resolver", async () => {
 		const iterate = sinon.stub().throws(new Error("entry index should not be used"));
-		const resolveHashNumbersInRange = sinon.stub().returns([1n, 2n]);
+		const resolvedHashNumbers = new BigUint64Array([1n, 2n]);
+		const resolveHashNumbersInRange = sinon.stub().returns(resolvedHashNumbers);
 		const send = sinon.stub().resolves();
 		const sync = new RatelessIBLTSynchronizer<"u64">({
 			rpc: { send } as any,

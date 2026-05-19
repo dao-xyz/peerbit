@@ -647,6 +647,14 @@ describe("native peerbit backbone", () => {
 				end2: 0n,
 			}),
 		).to.deep.equal([3n]);
+		const typedHashNumbers = backbone.getEntryHashNumbersInRangeU64({
+			start1: 0n,
+			end1: 10n,
+			start2: 0n,
+			end2: 0n,
+		});
+		expect(typedHashNumbers).to.be.instanceOf(BigUint64Array);
+		expect(Array.from(typedHashNumbers!)).to.deep.equal([3n]);
 		expect(
 			backbone.countEntryCoordinatesInRanges([
 				{

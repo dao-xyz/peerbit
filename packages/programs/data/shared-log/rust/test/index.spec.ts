@@ -384,6 +384,19 @@ describe("native shared-log range planner", () => {
 				.map((value) => value.toString())
 				.sort(),
 		).to.deep.equal(["5", "8", "90", "90"]);
+		const typed = state.getEntryHashNumbersInRangeU64({
+			start1: 0n,
+			end1: 10n,
+			start2: 80n,
+			end2: 100n,
+		});
+		expect(typed).to.be.instanceOf(BigUint64Array);
+		expect(Array.from(typed!, (value) => value.toString()).sort()).to.deep.equal([
+			"5",
+			"8",
+			"90",
+			"90",
+		]);
 
 		state.deleteEntryCoordinates("head-c");
 		expect(

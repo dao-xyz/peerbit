@@ -7186,9 +7186,13 @@ export class SharedLog<
 			end1: bigint | number;
 			start2: bigint | number;
 			end2: bigint | number;
-		}) =>
-			(this._nativeBackbone ?? this._nativeSharedLogState)
-				?.getEntryHashNumbersInRange(range);
+		}) => {
+			const nativeState = this._nativeBackbone ?? this._nativeSharedLogState;
+			return (
+				nativeState?.getEntryHashNumbersInRangeU64?.(range) ??
+				nativeState?.getEntryHashNumbersInRange(range)
+			);
+		};
 
 		if (options?.syncronizer) {
 			this.syncronizer = new options.syncronizer({
