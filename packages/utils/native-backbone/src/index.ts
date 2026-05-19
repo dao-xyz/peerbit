@@ -603,6 +603,16 @@ type NativePeerbitBackboneHandle = {
 		resolveTrimmedEntries: boolean,
 		trimLengthTo: number,
 	) => unknown[];
+	benchmark_plain_committed_no_next_storage_append_transaction_loop: (
+		iterations: number,
+		wallTimeStart: bigint,
+		payloadData: Uint8Array,
+		replicas: number,
+		selfHash: string,
+		useDocumentIndex: boolean,
+		documentByteElementIndexLimit: number,
+		trimLengthTo: number | undefined,
+	) => number[];
 	prepare_plain_committed_no_next_storage_append_document_index_transaction_trim: (
 		wallTime: bigint,
 		logical: number,
@@ -1058,6 +1068,14 @@ export type NativeBackboneStorageAppendResult = {
 	trimmed: NativeBackboneTrimmedEntry[];
 	trimmedHashes?: string[];
 	documentTrimmedHeadsProcessed?: boolean;
+};
+
+export type NativeBackboneLoopBenchmark = {
+	totalMs: number;
+	logLength: number;
+	blockLength: number;
+	coordinateLength: number;
+	documentLength: number;
 };
 
 export type NativeBackboneAppendPlan = {
@@ -3229,6 +3247,36 @@ export class NativePeerbitBackbone {
 							input.trimLengthTo,
 						);
 		return committedStorageAppendResultFromRow(this.resolution, row);
+	}
+
+	benchmarkPlainCommittedNoNextStorageAppendTransactionLoop(input: {
+		iterations: number;
+		wallTimeStart: bigint | number | string;
+		payloadData: Uint8Array;
+		replicas: number;
+		selfHash: string;
+		useDocumentIndex?: boolean;
+		documentByteElementIndexLimit?: number;
+		trimLengthTo?: number;
+	}): NativeBackboneLoopBenchmark {
+		const row =
+			this.native.benchmark_plain_committed_no_next_storage_append_transaction_loop(
+				input.iterations,
+				BigInt(input.wallTimeStart),
+				input.payloadData,
+				input.replicas,
+				input.selfHash,
+				input.useDocumentIndex === true,
+				input.documentByteElementIndexLimit ?? 0,
+				input.trimLengthTo,
+			);
+		return {
+			totalMs: Number(row[0] ?? 0),
+			logLength: Number(row[1] ?? 0),
+			blockLength: Number(row[2] ?? 0),
+			coordinateLength: Number(row[3] ?? 0),
+			documentLength: Number(row[4] ?? 0),
+		};
 	}
 }
 

@@ -32,7 +32,7 @@ import {
 // - DOC_BYTES=1200
 // - DOC_COORDINATE_WAL_FLUSH_BYTES=1048576
 // - DOC_COORDINATE_WAL_FLUSH_INTERVAL_MS unset by default
-// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,rust-peerbit-backbone-local-document-index,rust-peerbit-backbone-coordinate-wal,rust-peerbit-backbone-coordinate-wal-buffered,native-ceiling,native-log-core-ceiling,native-log-digest-key-core-ceiling,native-log-crypto-ceiling,native-log-ceiling,native-backbone-ceiling,native-backbone-storage-ceiling
+// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,rust-peerbit-backbone-local-document-index,rust-peerbit-backbone-coordinate-wal,rust-peerbit-backbone-coordinate-wal-buffered,native-ceiling,native-log-core-ceiling,native-log-digest-key-core-ceiling,native-log-crypto-ceiling,native-log-ceiling,native-backbone-ceiling,native-backbone-storage-ceiling,native-backbone-loop-ceiling
 //   Add "-nonunique" to any scenario name to use default update-safe put semantics with new ids.
 //   Add "-update" to any scenario name to repeatedly update one document id.
 //   Add "-local" to a rust-peerbit scenario to disable replication and default trim.
@@ -1728,6 +1728,64 @@ const runNativeBackboneCeilingScenario = async (
 	} as BenchRow;
 };
 
+const runNativeBackboneLoopCeilingScenario = async (
+	name: string,
+): Promise<BenchRow> => {
+	const backbone = await createNativePeerbitBackbone({
+		clockId: nativeBackbonePublicKey,
+		privateKey: nativeBackbonePrivateKey,
+		publicKey: nativeBackbonePublicKey,
+	});
+	const useDocumentIndex = scenarioUsesNativeBackboneDocumentIndex(name);
+	if (useDocumentIndex) {
+		backbone.configureDocumentSchemaIr(nativeCeilingContextSchemaIr());
+	}
+	if (scenarioUsesCoordinateWal(name)) {
+		backbone.setCoordinateJournalEnabled(true);
+	}
+	const trimLengthTo = scenarioDisablesTrim(name) ? undefined : 100;
+	const runLoop = (count: number, wallTimeStart: number) =>
+		backbone.benchmarkPlainCommittedNoNextStorageAppendTransactionLoop({
+			iterations: count,
+			wallTimeStart,
+			payloadData: payload,
+			replicas: 1,
+			selfHash: "native-backbone-loop-ceiling-peer",
+			useDocumentIndex,
+			documentByteElementIndexLimit: 0,
+			trimLengthTo,
+		});
+
+	runLoop(warmupIterations, Date.now());
+	const profile = emptyProfile();
+	if (profileNativeBackbone) {
+		backbone.resetAppendProfile();
+		backbone.setAppendProfileEnabled(true);
+	}
+	try {
+		const result = runLoop(iterations, Date.now() + warmupIterations + 1);
+		profile.totalPutMs = result.totalMs;
+		if (profileNativeBackbone) {
+			Object.assign(profile, backbone.appendProfile());
+		}
+	} finally {
+		backbone.setAppendProfileEnabled(false);
+	}
+
+	return {
+		name,
+		iterations,
+		payloadBytes,
+		opsPerSecond: Math.round((iterations / profile.totalPutMs) * 1000),
+		cleanupMs: 0,
+		...Object.fromEntries(
+			Object.entries(profile)
+				.filter(([key]) => shouldIncludeProfileKey(key))
+				.map(([key, value]) => [key, Math.round(value * 100) / 100]),
+		),
+	} as BenchRow;
+};
+
 const rows: BenchRow[] = [];
 for (const name of scenarioNames) {
 	const baseName = scenarioBaseName(name);
@@ -1744,7 +1802,9 @@ for (const name of scenarioNames) {
 						: baseName === "native-backbone-ceiling" ||
 							  baseName === "native-backbone-storage-ceiling"
 							? await runNativeBackboneCeilingScenario(name)
-							: await runScenario(name),
+							: baseName === "native-backbone-loop-ceiling"
+								? await runNativeBackboneLoopCeilingScenario(name)
+								: await runScenario(name),
 	);
 }
 

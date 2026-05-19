@@ -1801,6 +1801,131 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn benchmark_plain_committed_no_next_storage_append_transaction_loop(
+        &mut self,
+        iterations: u32,
+        wall_time_start: u64,
+        payload_data: Uint8Array,
+        replicas: usize,
+        self_hash: String,
+        use_document_index: bool,
+        document_byte_element_index_limit: usize,
+        trim_length_to: JsValue,
+    ) -> Result<Array, JsValue> {
+        let trim_length_to = optional_usize_from_js(trim_length_to, "trimLengthTo")?;
+        let profile_enabled = self.append_profile_enabled;
+        let input_copy_started = profile_enabled.then(js_sys::Date::now);
+        let payload_template = payload_data.to_vec();
+        if let Some(started) = input_copy_started {
+            self.append_profile.input_copy_ms += js_sys::Date::now() - started;
+        }
+        let payload_size = payload_template.len() as u32;
+        let now = wall_time_start.to_string();
+        let started = js_sys::Date::now();
+        for i in 0..iterations {
+            let wall_time = wall_time_start + i as u64;
+            let logical = i;
+            let gid = format!("native-backbone-loop-{wall_time_start}-{i}");
+            let storage_append_started = profile_enabled.then(js_sys::Date::now);
+            let payload_copy_started = profile_enabled.then(js_sys::Date::now);
+            let payload_data = payload_template.clone();
+            if let Some(started) = payload_copy_started {
+                self.append_profile.input_copy_ms += js_sys::Date::now() - started;
+            }
+
+            let log_started = profile_enabled.then(js_sys::Date::now);
+            let mut log_profile = NativeLogAppendProfile::default();
+            let (entry_facts, trim_hashes) = self
+                .log
+                .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_trim_hashes(
+                    &self.builder,
+                    &mut self.blocks,
+                    wall_time,
+                    logical,
+                    gid.clone(),
+                    Vec::new(),
+                    0,
+                    None,
+                    payload_data,
+                    trim_length_to,
+                    profile_enabled.then_some(&mut log_profile),
+                )?;
+            if let Some(started) = log_started {
+                self.append_profile.log_total_ms += js_sys::Date::now() - started;
+                self.append_profile.add_log_profile(&log_profile);
+            }
+
+            let hash_number_started = profile_enabled.then(js_sys::Date::now);
+            let hash_number = hash_number_u64(&self.resolution, &entry_facts.hash_digest_bytes)?;
+            if let Some(started) = hash_number_started {
+                self.append_profile.hash_number_ms += js_sys::Date::now() - started;
+            }
+
+            let coordinate_plan_started = profile_enabled.then(js_sys::Date::now);
+            let coordinate_facts = commit_local_append_for_gid_compact_core(
+                &mut self.shared_log,
+                entry_facts.hash.clone(),
+                gid.clone(),
+                hash_number,
+                Vec::new(),
+                trim_hashes.clone(),
+                replicas,
+                0.0,
+                &now,
+                &self_hash,
+                true,
+                true,
+                true,
+            )?;
+            if let Some(started) = coordinate_plan_started {
+                self.append_profile.coordinate_plan_ms += js_sys::Date::now() - started;
+            }
+
+            let coordinate_core_started = profile_enabled.then(js_sys::Date::now);
+            self.commit_coordinate_core_from_compact_facts(
+                &coordinate_facts,
+                Vec::new(),
+                trim_hashes,
+                wall_time,
+                entry_facts.meta_bytes.clone(),
+            );
+            if let Some(started) = coordinate_core_started {
+                self.append_profile.coordinate_core_ms += js_sys::Date::now() - started;
+            }
+
+            let document_index_started = profile_enabled.then(js_sys::Date::now);
+            let document_index_commit = use_document_index.then(|| DocumentIndexAppendCommit {
+                key: format!("native-backbone-loop-doc-{wall_time_start}-{i}"),
+                value_prefix: DocumentIndexValuePrefix::Bytes(Vec::new()),
+                existing_created: None,
+                byte_element_index_limit: document_byte_element_index_limit,
+                delete_trimmed_heads: false,
+            });
+            self.put_document_index_for_append(
+                document_index_commit,
+                wall_time,
+                &entry_facts.hash,
+                &gid,
+                payload_size,
+            )?;
+            if let Some(started) = document_index_started {
+                self.append_profile.document_index_commit_ms += js_sys::Date::now() - started;
+            }
+
+            if let Some(started) = storage_append_started {
+                self.append_profile.storage_append_inner_ms += js_sys::Date::now() - started;
+            }
+        }
+        let row = Array::new();
+        row.push(&JsValue::from_f64(js_sys::Date::now() - started));
+        row.push(&JsValue::from_f64(self.log.len() as f64));
+        row.push(&JsValue::from_f64(self.blocks.len() as f64));
+        row.push(&JsValue::from_f64(self.coordinate_index.len() as f64));
+        row.push(&JsValue::from_f64(self.document_index.len() as f64));
+        Ok(row)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare_plain_committed_no_next_storage_append_document_index_transaction(
         &mut self,
         wall_time: u64,
@@ -3051,6 +3176,16 @@ fn optional_bytes_from_js(value: JsValue) -> Option<Vec<u8>> {
         return None;
     }
     Some(Uint8Array::new(&value).to_vec())
+}
+
+fn optional_usize_from_js(value: JsValue, label: &str) -> Result<Option<usize>, JsValue> {
+    if value.is_undefined() || value.is_null() {
+        return Ok(None);
+    }
+    value
+        .as_f64()
+        .map(|value| Some(value as usize))
+        .ok_or_else(|| JsValue::from_str(&format!("{label} must be a number")))
 }
 
 fn coordinate_numbers_from_array(values: Array) -> Result<Vec<u64>, JsValue> {

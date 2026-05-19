@@ -573,9 +573,9 @@ describe("native peerbit backbone", () => {
 		);
 		expect(backbone.getEntryCoordinateHashes()).to.deep.equal(["hash-c"]);
 		expect(backbone.getEntryCoordinates("hash-c")).to.deep.equal([3n]);
-		expect(backbone.getEntryHashesForHashNumbers([3n]).get(3n)).to.deep.equal(
-			["hash-c"],
-		);
+		expect(backbone.getEntryHashesForHashNumbers([3n]).get(3n)).to.deep.equal([
+			"hash-c",
+		]);
 		expect(
 			backbone.getEntryHashNumbersInRange({
 				start1: 0n,
@@ -795,9 +795,7 @@ describe("native peerbit backbone", () => {
 				fullReplicaFallback: true,
 			},
 		);
-		expect(batchLeaderPlan?.coordinates).to.deep.equal(
-			leaderPlan.coordinates,
-		);
+		expect(batchLeaderPlan?.coordinates).to.deep.equal(leaderPlan.coordinates);
 		expect(batchLeaderPlan?.leaders).to.deep.equal(leaderPlan.leaders);
 		expect(
 			backbone.getGidCoordinates("gid-storage-committed-no-next", 1),
@@ -865,9 +863,42 @@ describe("native peerbit backbone", () => {
 		expect(repairPlan.get("join-authoritative")?.get("peer-a")).equal(
 			undefined,
 		);
-		expect(repairPlan.get("join-authoritative")?.get("peer-b")).to.deep.equal(
-			[second.entry.hash],
-		);
+		expect(repairPlan.get("join-authoritative")?.get("peer-b")).to.deep.equal([
+			second.entry.hash,
+		]);
+	});
+
+	it("benchmarks committed no-next storage appends inside one native loop", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+
+		backbone.configureDocumentSchemaIr(contextOnlySchema());
+		backbone.setCoordinateJournalEnabled(true);
+		backbone.resetAppendProfile();
+		backbone.setAppendProfileEnabled(true);
+		const result =
+			backbone.benchmarkPlainCommittedNoNextStorageAppendTransactionLoop({
+				iterations: 3,
+				wallTimeStart: 100n,
+				payloadData: new Uint8Array([1, 2, 3]),
+				replicas: 1,
+				selfHash: "peer-a",
+				useDocumentIndex: true,
+			});
+		backbone.setAppendProfileEnabled(false);
+
+		const profile = backbone.appendProfile();
+		expect(result.totalMs).to.be.greaterThanOrEqual(0);
+		expect(result.logLength).to.equal(3);
+		expect(result.blockLength).to.equal(3);
+		expect(result.coordinateLength).to.equal(3);
+		expect(result.documentLength).to.equal(3);
+		expect(backbone.coordinatePendingJournalLength).to.equal(3);
+		expect(profile.nativeBackboneResultRowMs).to.equal(0);
+		expect(profile.nativeBackboneLogSignMs).to.be.greaterThanOrEqual(0);
 	});
 
 	it("returns trim hashes without materializing trim rows for unresolved storage appends", async () => {
