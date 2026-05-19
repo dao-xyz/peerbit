@@ -266,6 +266,8 @@ type Profile = {
 	nativeBackboneDocumentValuePutMs: number;
 	nativeBackboneResultRowMs: number;
 	nativeLogCryptoVerifyMs: number;
+	nativeLogCryptoCompactSignMs: number;
+	nativeLogCryptoCompactVerifyMs: number;
 	nativeLogCryptoSignableBytes: number;
 	nativeLogCryptoStorageBytes: number;
 	nativeLogCryptoChecksum: number;
@@ -357,6 +359,8 @@ const deepProfileKeys = new Set<keyof Profile>([
 	"nativeBackboneDocumentValuePutMs",
 	"nativeBackboneResultRowMs",
 	"nativeLogCryptoVerifyMs",
+	"nativeLogCryptoCompactSignMs",
+	"nativeLogCryptoCompactVerifyMs",
 	"nativeLogCryptoSignableBytes",
 	"nativeLogCryptoStorageBytes",
 	"nativeLogCryptoChecksum",
@@ -486,6 +490,8 @@ const emptyProfile = (): Profile => ({
 	nativeBackboneDocumentValuePutMs: 0,
 	nativeBackboneResultRowMs: 0,
 	nativeLogCryptoVerifyMs: 0,
+	nativeLogCryptoCompactSignMs: 0,
+	nativeLogCryptoCompactVerifyMs: 0,
 	nativeLogCryptoSignableBytes: 0,
 	nativeLogCryptoStorageBytes: 0,
 	nativeLogCryptoChecksum: 0,
@@ -1562,6 +1568,8 @@ const runNativeLogCryptoCeilingScenario = async (
 	profile.totalPutMs = result.signMs + result.sha256Ms + result.cidStringMs;
 	profile.nativeBackboneLogSignMs = result.signMs;
 	profile.nativeLogCryptoVerifyMs = result.verifyMs;
+	profile.nativeLogCryptoCompactSignMs = result.compactSignMs;
+	profile.nativeLogCryptoCompactVerifyMs = result.compactVerifyMs;
 	profile.nativeBackboneLogCidHashMs = result.sha256Ms;
 	profile.nativeBackboneLogCidStringMs = result.cidStringMs;
 	profile.nativeBackboneLogCidMs = result.sha256Ms + result.cidStringMs;

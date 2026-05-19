@@ -450,6 +450,8 @@ describe("native EntryV0 encoding", () => {
 		expect(result.signableBytes).to.be.greaterThan(0);
 		expect(result.storageBytes).to.be.greaterThan(result.signableBytes);
 		expect(result.cidLenTotal).to.be.greaterThan(0);
+		expect(result.compactSignMs).to.be.greaterThanOrEqual(0);
+		expect(result.compactVerifyMs).to.be.greaterThanOrEqual(0);
 		expect(Number.isFinite(result.checksum)).to.equal(true);
 	});
 

@@ -1992,6 +1992,8 @@ export type PlainEntryV0CryptoBenchmark = {
 	cidStringMs: number;
 	checksum: number;
 	cidLenTotal: number;
+	compactSignMs: number;
+	compactVerifyMs: number;
 };
 
 const plainEntryV0CoreBenchmarkFromRow = (
@@ -2075,6 +2077,8 @@ export const benchmarkPlainEntryV0Crypto = async (input: {
 		cidStringMs: row[6] ?? 0,
 		checksum: row[7] ?? 0,
 		cidLenTotal: row[8] ?? 0,
+		compactSignMs: row[9] ?? 0,
+		compactVerifyMs: row[10] ?? 0,
 	};
 };
 

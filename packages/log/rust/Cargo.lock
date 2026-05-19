@@ -97,6 +97,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ed25519-compact"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5c0284a5d4b1a2fae017a9fe55fd7d01699711f1b572493f16593e173ea2801"
+
+[[package]]
 name = "ed25519-dalek"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -199,6 +205,7 @@ name = "peerbit_log_rust"
 version = "0.0.0"
 dependencies = [
  "bs58",
+ "ed25519-compact",
  "ed25519-dalek",
  "indexmap",
  "js-sys",

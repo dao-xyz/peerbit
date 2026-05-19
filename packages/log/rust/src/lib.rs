@@ -1,3 +1,7 @@
+#[cfg(feature = "crypto-bench-candidates")]
+use ed25519_compact::{
+    PublicKey as CompactPublicKey, SecretKey as CompactSecretKey, Signature as CompactSignature,
+};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier};
 use indexmap::{IndexMap, IndexSet};
 use js_sys::{Array, BigUint64Array, Uint32Array, Uint8Array};
@@ -3078,6 +3082,21 @@ pub fn benchmark_plain_entry_v0_crypto(
     }
     let verify_ms = js_sys::Date::now() - verify_started;
 
+    #[cfg(feature = "crypto-bench-candidates")]
+    let (compact_sign_ms, compact_verify_ms) = {
+        let compact_profile = benchmark_compact_ed25519_candidate(
+            &private_key,
+            &public_key,
+            &signable,
+            &signature_bytes,
+            iterations,
+            &mut checksum,
+        )?;
+        compact_profile
+    };
+    #[cfg(not(feature = "crypto-bench-candidates"))]
+    let (compact_sign_ms, compact_verify_ms) = (0.0, 0.0);
+
     let signature_with_key = encode_signature_with_key_parts(&signature_bytes, &public_key, 0);
     let storage = signable_entry_to_signed_storage(signable.clone(), &signature_with_key);
     let mut digest_bytes = [0u8; 32];
@@ -3109,7 +3128,47 @@ pub fn benchmark_plain_entry_v0_crypto(
     row.push(&JsValue::from_f64(cid_string_ms));
     row.push(&JsValue::from_f64(checksum as f64));
     row.push(&JsValue::from_f64(cid_len_total as f64));
+    row.push(&JsValue::from_f64(compact_sign_ms));
+    row.push(&JsValue::from_f64(compact_verify_ms));
     Ok(row)
+}
+
+#[cfg(feature = "crypto-bench-candidates")]
+fn benchmark_compact_ed25519_candidate(
+    private_key: &[u8],
+    public_key: &[u8],
+    signable: &[u8],
+    expected_signature_bytes: &[u8; 64],
+    iterations: u32,
+    checksum: &mut u32,
+) -> Result<(f64, f64), JsValue> {
+    let (compact_secret_key, compact_public_key) =
+        validate_compact_ed25519_keypair(private_key, public_key)?;
+    let mut compact_signature_bytes = [0u8; 64];
+    let compact_sign_started = js_sys::Date::now();
+    for i in 0..iterations {
+        let signature = compact_secret_key.sign(signable, None);
+        compact_signature_bytes.copy_from_slice(signature.as_ref());
+        *checksum ^= compact_signature_bytes[((i as usize) + 3) & 63] as u32;
+    }
+    let compact_sign_ms = js_sys::Date::now() - compact_sign_started;
+    if &compact_signature_bytes != expected_signature_bytes {
+        return Err(JsValue::from_str(
+            "ed25519-compact signature does not match ed25519-dalek",
+        ));
+    }
+
+    let compact_signature = CompactSignature::from_slice(&compact_signature_bytes)
+        .map_err(|_| JsValue::from_str("Invalid ed25519-compact signature"))?;
+    let compact_verify_started = js_sys::Date::now();
+    for i in 0..iterations {
+        compact_public_key
+            .verify(signable, &compact_signature)
+            .map_err(|_| JsValue::from_str("ed25519-compact signature verification failed"))?;
+        *checksum ^= compact_signature_bytes[((i as usize) + 31) & 63] as u32;
+    }
+    let compact_verify_ms = js_sys::Date::now() - compact_verify_started;
+    Ok((compact_sign_ms, compact_verify_ms))
 }
 
 fn calculate_raw_cid_v1_from_bytes(bytes: &[u8]) -> String {
@@ -3476,6 +3535,29 @@ fn validate_ed25519_keypair(private_key: &[u8], public_key: &[u8]) -> Result<Sig
         ));
     }
     Ok(signing_key)
+}
+
+#[cfg(feature = "crypto-bench-candidates")]
+fn validate_compact_ed25519_keypair(
+    private_key: &[u8],
+    public_key: &[u8],
+) -> Result<(CompactSecretKey, CompactPublicKey), JsValue> {
+    if private_key.len() != 32 {
+        return Err(JsValue::from_str("Expected Ed25519 private key length 32"));
+    }
+    if public_key.len() != 32 {
+        return Err(JsValue::from_str("Expected Ed25519 public key length 32"));
+    }
+    let mut secret_key_bytes = [0u8; CompactSecretKey::BYTES];
+    secret_key_bytes[..32].copy_from_slice(private_key);
+    secret_key_bytes[32..].copy_from_slice(public_key);
+    let secret_key = CompactSecretKey::new(secret_key_bytes);
+    let public_key = CompactPublicKey::from_slice(public_key)
+        .map_err(|_| JsValue::from_str("Invalid ed25519-compact public key"))?;
+    secret_key
+        .validate_public_key(&public_key)
+        .map_err(|_| JsValue::from_str("Ed25519 public key does not match private key"))?;
+    Ok((secret_key, public_key))
 }
 
 fn write_decrypted_thing(out: &mut Vec<u8>, data: &[u8]) {
