@@ -1033,9 +1033,10 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		// - For large sets, use IBLT, but still allow simple sync for special-case entries
 		//   such as those assigned to range boundaries.
 
-		let entriesToSyncNaively: Map<string, SyncEntryCoordinates<D>> = new Map();
 		let minSyncIbltSize = 333; // TODO: make configurable
 		let maxSyncWithSimpleMethod = 1e3;
+		const priorityFn = this.properties.sync?.priority;
+		const maxSimpleEntries = this.properties.sync?.maxSimpleEntries;
 
 		// Small batch => use simple synchronizer entirely
 		if (properties.entries.size <= minSyncIbltSize) {
@@ -1066,17 +1067,11 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		}
 
 		const selectStartedAt = syncProfileStart(profile);
-		const nonBoundaryEntries: SyncEntryCoordinates<D>[] = [];
-		for (const entry of properties.entries.values()) {
-			if (entry.assignedToRangeBoundary) {
-				entriesToSyncNaively.set(entry.hash, entry);
-			} else {
-				nonBoundaryEntries.push(entry);
-			}
-		}
-
-		const priorityFn = this.properties.sync?.priority;
-		const maxSimpleEntries = this.properties.sync?.maxSimpleEntries;
+		const naiveHashes: string[] = [];
+		const naiveHashSet = new Set<string>();
+		let naiveEntriesForPriority:
+			| Map<string, SyncEntryCoordinates<D>>
+			| undefined;
 		const maxAdditionalNaive =
 			priorityFn &&
 			typeof maxSimpleEntries === "number" &&
@@ -1084,14 +1079,36 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			maxSimpleEntries > 0
 				? Math.max(
 						0,
-						Math.min(
-							Math.floor(maxSimpleEntries),
-							maxSyncWithSimpleMethod - entriesToSyncNaively.size,
-						),
+						Math.min(Math.floor(maxSimpleEntries), maxSyncWithSimpleMethod),
 					)
 				: 0;
+		const collectPriorityEntries = priorityFn != null && maxAdditionalNaive > 0;
+		const nonBoundaryEntries: SyncEntryCoordinates<D>[] = [];
+		let allCoordinatesToSyncWithIblt: bigint[] = [];
+		const addNaiveEntry = (entry: SyncEntryCoordinates<D>) => {
+			if (naiveHashSet.has(entry.hash)) {
+				return;
+			}
+			naiveHashSet.add(entry.hash);
+			naiveHashes.push(entry.hash);
+			if (priorityFn) {
+				naiveEntriesForPriority ??= new Map();
+				naiveEntriesForPriority.set(entry.hash, entry);
+			}
+		};
 
-		if (priorityFn && maxAdditionalNaive > 0 && nonBoundaryEntries.length > 0) {
+		for (const entry of properties.entries.values()) {
+			const coordinate = coerceBigInt(entry.hashNumber);
+			if (entry.assignedToRangeBoundary) {
+				addNaiveEntry(entry);
+			} else if (collectPriorityEntries) {
+				nonBoundaryEntries.push(entry);
+			} else {
+				allCoordinatesToSyncWithIblt.push(coordinate);
+			}
+		}
+
+		if (collectPriorityEntries && nonBoundaryEntries.length > 0) {
 			let index = 0;
 			const scored: {
 				entry: SyncEntryCoordinates<D>;
@@ -1108,30 +1125,42 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				index += 1;
 			}
 			scored.sort((a, b) => b.priority - a.priority || a.index - b.index);
-			for (const { entry } of scored.slice(0, maxAdditionalNaive)) {
-				entriesToSyncNaively.set(entry.hash, entry);
+			const additionalLimit = Math.max(
+				0,
+				Math.min(
+					maxAdditionalNaive,
+					maxSyncWithSimpleMethod - naiveHashes.length,
+				),
+			);
+			for (const { entry } of scored.slice(0, additionalLimit)) {
+				addNaiveEntry(entry);
+			}
+			allCoordinatesToSyncWithIblt = [];
+			for (const entry of properties.entries.values()) {
+				if (!naiveHashSet.has(entry.hash)) {
+					allCoordinatesToSyncWithIblt.push(coerceBigInt(entry.hashNumber));
+				}
 			}
 		}
 
-		let allCoordinatesToSyncWithIblt: bigint[] = [];
-		for (const entry of nonBoundaryEntries) {
-			if (entriesToSyncNaively.has(entry.hash)) {
-				continue;
-			}
-			allCoordinatesToSyncWithIblt.push(coerceBigInt(entry.hashNumber));
-		}
-
-		if (entriesToSyncNaively.size > 0) {
+		if (naiveHashes.length > 0) {
 			// If there are special-case entries, sync them simply in parallel
-			await this.simple.onMaybeMissingEntries({
-				entries: entriesToSyncNaively,
-				targets: properties.targets,
-			});
+			if (priorityFn && naiveEntriesForPriority) {
+				await this.simple.onMaybeMissingEntries({
+					entries: naiveEntriesForPriority,
+					targets: properties.targets,
+				});
+			} else {
+				await this.simple.onMaybeMissingHashes({
+					hashes: naiveHashes,
+					targets: properties.targets,
+				});
+			}
 		}
 
 		if (
 			allCoordinatesToSyncWithIblt.length === 0 ||
-			entriesToSyncNaively.size > maxSyncWithSimpleMethod
+			naiveHashes.length > maxSyncWithSimpleMethod
 		) {
 			// Fallback: if nothing left for IBLT (or simple set is too large), include all in IBLT
 			allCoordinatesToSyncWithIblt = [];
@@ -1147,7 +1176,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				symbols: allCoordinatesToSyncWithIblt.length,
 				targets: properties.targets.length,
 				details: {
-					naiveEntries: entriesToSyncNaively.size,
+					naiveEntries: naiveHashes.length,
 					priority: priorityFn != null,
 				},
 			});
@@ -1322,7 +1351,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				details: {
 					mode: "rateless",
 					ibltEntries: allCoordinatesToSyncWithIblt.length,
-					naiveEntries: entriesToSyncNaively.size,
+					naiveEntries: naiveHashes.length,
 				},
 			});
 		}
