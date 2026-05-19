@@ -436,6 +436,13 @@ type WasmModule = {
 		iterations: number,
 		payloadData: Uint8Array,
 	) => number[];
+	benchmark_plain_entry_v0_digest_key_core: (
+		clockId: Uint8Array,
+		privateKey: Uint8Array,
+		publicKey: Uint8Array,
+		iterations: number,
+		payloadData: Uint8Array,
+	) => number[];
 	prepare_entry_v0_plain_chain: (
 		clockId: Uint8Array,
 		privateKey: Uint8Array,
@@ -721,7 +728,8 @@ export class LogGraphIndex {
 	): EntryV0PreparedPlainEntry {
 		const builder = this.getPlainEntryBuilder(input);
 		const storageFacts =
-			input.includeMaterializationBytes === false && input.includeAppendFactsBytes
+			input.includeMaterializationBytes === false &&
+			input.includeAppendFactsBytes
 				? this.native
 						.prepare_entry_v0_plain_entry_storage_facts_and_put_with_builder
 				: undefined;
@@ -1304,7 +1312,9 @@ export class NativeLogBlockStore {
 			return [];
 		}
 		if (Array.isArray(blocksOrEntries[0])) {
-			this.putKnownMany(blocksOrEntries as Array<readonly [string, Uint8Array]>);
+			this.putKnownMany(
+				blocksOrEntries as Array<readonly [string, Uint8Array]>,
+			);
 			return;
 		}
 		const blocks = blocksOrEntries as BlockInput[];
@@ -1329,7 +1339,9 @@ export class NativeLogBlockStore {
 		this.native.put(cid, bytes);
 	}
 
-	putManyImmutable(blocks: Array<readonly [cid: string, bytes: Uint8Array]>): void {
+	putManyImmutable(
+		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
+	): void {
 		if (blocks.length === 0) {
 			return;
 		}
@@ -1743,27 +1755,18 @@ const committedPlainEntryNoNextFactsRow = ([
 });
 
 const nativeLogEntryFromTrimRow = (row: unknown): NativeLogEntry => {
-	const [
-		hash,
-		gid,
-		wallTime,
-		logical,
-		type,
-		next,
-		payloadSize,
-		head,
-		data,
-	] = row as [
-		string,
-		string,
-		string,
-		number,
-		number,
-		string[],
-		number,
-		boolean,
-		Uint8Array | undefined,
-	];
+	const [hash, gid, wallTime, logical, type, next, payloadSize, head, data] =
+		row as [
+			string,
+			string,
+			string,
+			number,
+			number,
+			string[],
+			number,
+			boolean,
+			Uint8Array | undefined,
+		];
 	return {
 		hash,
 		gid,
@@ -1965,10 +1968,32 @@ export type PlainEntryV0CoreBenchmark = {
 	encodeSignatureMs: number;
 	encodeStorageMs: number;
 	cidMs: number;
+	cidHashMs: number;
+	cidStringMs: number;
 	indexEntryMs: number;
 	storageBytesTotal: number;
 	hashBytesTotal: number;
 };
+
+const plainEntryV0CoreBenchmarkFromRow = (
+	row: number[],
+): PlainEntryV0CoreBenchmark => ({
+	totalMs: row[0] ?? 0,
+	inputCopyMs: row[1] ?? 0,
+	entryCoreMs: row[2] ?? 0,
+	encodeMetaMs: row[3] ?? 0,
+	encodePayloadMs: row[4] ?? 0,
+	encodeSignableMs: row[5] ?? 0,
+	signMs: row[6] ?? 0,
+	encodeSignatureMs: row[7] ?? 0,
+	encodeStorageMs: row[8] ?? 0,
+	cidMs: row[9] ?? 0,
+	cidHashMs: row[10] ?? 0,
+	cidStringMs: row[11] ?? 0,
+	indexEntryMs: row[12] ?? 0,
+	storageBytesTotal: row[13] ?? 0,
+	hashBytesTotal: row[14] ?? 0,
+});
 
 export const benchmarkPlainEntryV0Core = async (input: {
 	clockId: Uint8Array;
@@ -1985,21 +2010,25 @@ export const benchmarkPlainEntryV0Core = async (input: {
 		input.iterations,
 		input.payloadData,
 	);
-	return {
-		totalMs: row[0] ?? 0,
-		inputCopyMs: row[1] ?? 0,
-		entryCoreMs: row[2] ?? 0,
-		encodeMetaMs: row[3] ?? 0,
-		encodePayloadMs: row[4] ?? 0,
-		encodeSignableMs: row[5] ?? 0,
-		signMs: row[6] ?? 0,
-		encodeSignatureMs: row[7] ?? 0,
-		encodeStorageMs: row[8] ?? 0,
-		cidMs: row[9] ?? 0,
-		indexEntryMs: row[10] ?? 0,
-		storageBytesTotal: row[11] ?? 0,
-		hashBytesTotal: row[12] ?? 0,
-	};
+	return plainEntryV0CoreBenchmarkFromRow(row);
+};
+
+export const benchmarkPlainEntryV0DigestKeyCore = async (input: {
+	clockId: Uint8Array;
+	privateKey: Uint8Array;
+	publicKey: Uint8Array;
+	iterations: number;
+	payloadData: Uint8Array;
+}): Promise<PlainEntryV0CoreBenchmark> => {
+	const wasm = await loadWasm();
+	const row = wasm.benchmark_plain_entry_v0_digest_key_core(
+		input.clockId,
+		input.privateKey,
+		input.publicKey,
+		input.iterations,
+		input.payloadData,
+	);
+	return plainEntryV0CoreBenchmarkFromRow(row);
 };
 
 export const prepareEntryV0PlainChain = async (

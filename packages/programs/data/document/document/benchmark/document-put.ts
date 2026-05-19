@@ -2,7 +2,10 @@ import { field, option, serialize, variant } from "@dao-xyz/borsh";
 import { create as createSimpleIndexer } from "@peerbit/indexer-simple";
 import { create as createSqliteIndexer } from "@peerbit/indexer-sqlite3";
 import { Log } from "@peerbit/log";
-import { benchmarkPlainEntryV0Core } from "@peerbit/log-rust";
+import {
+	benchmarkPlainEntryV0Core,
+	benchmarkPlainEntryV0DigestKeyCore,
+} from "@peerbit/log-rust";
 import {
 	NativeBackboneNodeCoordinatePersistenceStore,
 	createNativePeerbitBackbone,
@@ -28,7 +31,7 @@ import {
 // - DOC_BYTES=1200
 // - DOC_COORDINATE_WAL_FLUSH_BYTES=1048576
 // - DOC_COORDINATE_WAL_FLUSH_INTERVAL_MS unset by default
-// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,rust-peerbit-backbone-local-document-index,rust-peerbit-backbone-coordinate-wal,rust-peerbit-backbone-coordinate-wal-buffered,native-ceiling,native-log-core-ceiling,native-log-ceiling,native-backbone-ceiling,native-backbone-storage-ceiling
+// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,rust-peerbit-backbone-local-document-index,rust-peerbit-backbone-coordinate-wal,rust-peerbit-backbone-coordinate-wal-buffered,native-ceiling,native-log-core-ceiling,native-log-digest-key-core-ceiling,native-log-ceiling,native-backbone-ceiling,native-backbone-storage-ceiling
 //   Add "-nonunique" to any scenario name to use default update-safe put semantics with new ids.
 //   Add "-update" to any scenario name to repeatedly update one document id.
 //   Add "-local" to a rust-peerbit scenario to disable replication and default trim.
@@ -236,6 +239,8 @@ type Profile = {
 	nativeBackboneLogEncodeSignatureMs: number;
 	nativeBackboneLogEncodeStorageMs: number;
 	nativeBackboneLogCidMs: number;
+	nativeBackboneLogCidHashMs: number;
+	nativeBackboneLogCidStringMs: number;
 	nativeBackboneLogIndexEntryMs: number;
 	nativeBackboneLogFactsMs: number;
 	nativeBackboneLogBlockPutMs: number;
@@ -321,6 +326,8 @@ const deepProfileKeys = new Set<keyof Profile>([
 	"nativeBackboneLogEncodeSignatureMs",
 	"nativeBackboneLogEncodeStorageMs",
 	"nativeBackboneLogCidMs",
+	"nativeBackboneLogCidHashMs",
+	"nativeBackboneLogCidStringMs",
 	"nativeBackboneLogIndexEntryMs",
 	"nativeBackboneLogFactsMs",
 	"nativeBackboneLogBlockPutMs",
@@ -373,6 +380,8 @@ const nativeBackboneProfileKeys = new Set<keyof Profile>([
 	"nativeBackboneLogEncodeSignatureMs",
 	"nativeBackboneLogEncodeStorageMs",
 	"nativeBackboneLogCidMs",
+	"nativeBackboneLogCidHashMs",
+	"nativeBackboneLogCidStringMs",
 	"nativeBackboneLogIndexEntryMs",
 	"nativeBackboneLogFactsMs",
 	"nativeBackboneLogBlockPutMs",
@@ -442,6 +451,8 @@ const emptyProfile = (): Profile => ({
 	nativeBackboneLogEncodeSignatureMs: 0,
 	nativeBackboneLogEncodeStorageMs: 0,
 	nativeBackboneLogCidMs: 0,
+	nativeBackboneLogCidHashMs: 0,
+	nativeBackboneLogCidStringMs: 0,
 	nativeBackboneLogIndexEntryMs: 0,
 	nativeBackboneLogFactsMs: 0,
 	nativeBackboneLogBlockPutMs: 0,
@@ -1468,7 +1479,10 @@ const runNativeCeilingScenario = async (name: string): Promise<BenchRow> => {
 const runNativeLogCoreCeilingScenario = async (
 	name: string,
 ): Promise<BenchRow> => {
-	await benchmarkPlainEntryV0Core({
+	const benchmark = name.includes("digest-key")
+		? benchmarkPlainEntryV0DigestKeyCore
+		: benchmarkPlainEntryV0Core;
+	await benchmark({
 		clockId: nativeBackbonePublicKey,
 		privateKey: nativeBackbonePrivateKey,
 		publicKey: nativeBackbonePublicKey,
@@ -1477,7 +1491,7 @@ const runNativeLogCoreCeilingScenario = async (
 	});
 
 	const profile = emptyProfile();
-	const result = await benchmarkPlainEntryV0Core({
+	const result = await benchmark({
 		clockId: nativeBackbonePublicKey,
 		privateKey: nativeBackbonePrivateKey,
 		publicKey: nativeBackbonePublicKey,
@@ -1495,6 +1509,8 @@ const runNativeLogCoreCeilingScenario = async (
 	profile.nativeBackboneLogEncodeSignatureMs = result.encodeSignatureMs;
 	profile.nativeBackboneLogEncodeStorageMs = result.encodeStorageMs;
 	profile.nativeBackboneLogCidMs = result.cidMs;
+	profile.nativeBackboneLogCidHashMs = result.cidHashMs;
+	profile.nativeBackboneLogCidStringMs = result.cidStringMs;
 	profile.nativeBackboneLogIndexEntryMs = result.indexEntryMs;
 
 	return {
@@ -1654,7 +1670,8 @@ for (const name of scenarioNames) {
 	rows.push(
 		baseName === "native-ceiling"
 			? await runNativeCeilingScenario(name)
-			: baseName === "native-log-core-ceiling"
+			: baseName === "native-log-core-ceiling" ||
+				  baseName === "native-log-digest-key-core-ceiling"
 				? await runNativeLogCoreCeilingScenario(name)
 				: baseName === "native-log-ceiling"
 					? await runNativeLogCeilingScenario(name)

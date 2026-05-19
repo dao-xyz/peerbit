@@ -1128,6 +1128,8 @@ export type NativeBackboneAppendProfile = {
 	nativeBackboneLogEncodeSignatureMs: number;
 	nativeBackboneLogEncodeStorageMs: number;
 	nativeBackboneLogCidMs: number;
+	nativeBackboneLogCidHashMs: number;
+	nativeBackboneLogCidStringMs: number;
 	nativeBackboneLogIndexEntryMs: number;
 	nativeBackboneLogFactsMs: number;
 	nativeBackboneLogBlockPutMs: number;
@@ -1166,6 +1168,8 @@ const nativeBackboneAppendProfileKeys = [
 	"nativeBackboneLogEncodeSignatureMs",
 	"nativeBackboneLogEncodeStorageMs",
 	"nativeBackboneLogCidMs",
+	"nativeBackboneLogCidHashMs",
+	"nativeBackboneLogCidStringMs",
 	"nativeBackboneLogIndexEntryMs",
 	"nativeBackboneLogFactsMs",
 	"nativeBackboneLogBlockPutMs",

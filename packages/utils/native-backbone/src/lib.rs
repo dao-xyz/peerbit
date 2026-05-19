@@ -95,6 +95,8 @@ struct NativeBackboneAppendProfile {
     log_encode_signature_ms: f64,
     log_encode_storage_ms: f64,
     log_cid_ms: f64,
+    log_cid_hash_ms: f64,
+    log_cid_string_ms: f64,
     log_index_entry_ms: f64,
     log_facts_ms: f64,
     log_block_put_ms: f64,
@@ -131,6 +133,8 @@ impl NativeBackboneAppendProfile {
         self.log_encode_signature_ms += profile.encode_signature_ms;
         self.log_encode_storage_ms += profile.encode_storage_ms;
         self.log_cid_ms += profile.cid_ms;
+        self.log_cid_hash_ms += profile.cid_hash_ms;
+        self.log_cid_string_ms += profile.cid_string_ms;
         self.log_index_entry_ms += profile.index_entry_ms;
         self.log_facts_ms += profile.facts_ms;
         self.log_block_put_ms += profile.block_put_ms;
@@ -152,6 +156,8 @@ impl NativeBackboneAppendProfile {
         row.push(&JsValue::from_f64(self.log_encode_signature_ms));
         row.push(&JsValue::from_f64(self.log_encode_storage_ms));
         row.push(&JsValue::from_f64(self.log_cid_ms));
+        row.push(&JsValue::from_f64(self.log_cid_hash_ms));
+        row.push(&JsValue::from_f64(self.log_cid_string_ms));
         row.push(&JsValue::from_f64(self.log_index_entry_ms));
         row.push(&JsValue::from_f64(self.log_facts_ms));
         row.push(&JsValue::from_f64(self.log_block_put_ms));

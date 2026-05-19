@@ -635,6 +635,8 @@ pub struct NativeLogAppendProfile {
     pub encode_signature_ms: f64,
     pub encode_storage_ms: f64,
     pub cid_ms: f64,
+    pub cid_hash_ms: f64,
+    pub cid_string_ms: f64,
     pub index_entry_ms: f64,
     pub facts_ms: f64,
     pub block_put_ms: f64,
@@ -2517,7 +2519,7 @@ fn prepare_entry_v0_plain_entry_core_with_signer_parts_profiled(
         }
     }
     let cid_started = profile.as_ref().map(|_| js_sys::Date::now());
-    let (cid, hash_digest) = calculate_raw_cid_v1_parts(&storage);
+    let (cid, hash_digest) = calculate_raw_cid_v1_parts_profiled(&storage, profile.as_deref_mut());
     if let Some(started) = cid_started {
         if let Some(profile) = profile.as_deref_mut() {
             profile.cid_ms += js_sys::Date::now() - started;
@@ -2614,7 +2616,7 @@ fn prepare_entry_v0_plain_entry_commit_core_with_signer_parts_profiled(
         }
     }
     let cid_started = profile.as_ref().map(|_| js_sys::Date::now());
-    let (cid, hash_digest) = calculate_raw_cid_v1_parts(&storage);
+    let (cid, hash_digest) = calculate_raw_cid_v1_parts_profiled(&storage, profile.as_deref_mut());
     if let Some(started) = cid_started {
         if let Some(profile) = profile.as_deref_mut() {
             profile.cid_ms += js_sys::Date::now() - started;
@@ -2646,6 +2648,57 @@ fn prepare_entry_v0_plain_entry_commit_core_with_signer_parts_profiled(
         hash_digest_bytes: hash_digest.to_vec(),
         entry,
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_entry_v0_plain_entry_commit_digest_key_core_profiled(
+    clock_id: &[u8],
+    public_key: &[u8],
+    signing_key: &SigningKey,
+    wall_time: u64,
+    logical: u32,
+    gid: &str,
+    entry_type: u8,
+    payload_data: Vec<u8>,
+    mut profile: Option<&mut NativeLogAppendProfile>,
+) -> (usize, usize) {
+    let encode_meta_started = profile.as_ref().map(|_| js_sys::Date::now());
+    let meta = encode_meta_parts(clock_id, wall_time, logical, gid, &[], entry_type, None);
+    if let Some(started) = encode_meta_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.encode_meta_ms += js_sys::Date::now() - started;
+        }
+    }
+    let encode_signable_started = profile.as_ref().map(|_| js_sys::Date::now());
+    let signable = encode_entry_v0_payload_data_unsigned_for_signing(&meta, &payload_data);
+    if let Some(started) = encode_signable_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.encode_signable_ms += js_sys::Date::now() - started;
+        }
+    }
+    let sign_started = profile.as_ref().map(|_| js_sys::Date::now());
+    let signature = sign_ed25519_with_key(signing_key, &signable);
+    if let Some(started) = sign_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.sign_ms += js_sys::Date::now() - started;
+        }
+    }
+    let encode_signature_started = profile.as_ref().map(|_| js_sys::Date::now());
+    let signature_with_key = encode_signature_with_key_parts(&signature, public_key, 0);
+    if let Some(started) = encode_signature_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.encode_signature_ms += js_sys::Date::now() - started;
+        }
+    }
+    let encode_storage_started = profile.as_ref().map(|_| js_sys::Date::now());
+    let storage = signable_entry_to_signed_storage(signable, &signature_with_key);
+    if let Some(started) = encode_storage_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.encode_storage_ms += js_sys::Date::now() - started;
+        }
+    }
+    let digest = calculate_raw_digest_profiled(&storage, profile.as_deref_mut());
+    (storage.len(), digest.len())
 }
 
 fn prepared_plain_entry_core_to_row(
@@ -2916,6 +2969,71 @@ pub fn benchmark_plain_entry_v0_core(
     row.push(&JsValue::from_f64(profile.encode_signature_ms));
     row.push(&JsValue::from_f64(profile.encode_storage_ms));
     row.push(&JsValue::from_f64(profile.cid_ms));
+    row.push(&JsValue::from_f64(profile.cid_hash_ms));
+    row.push(&JsValue::from_f64(profile.cid_string_ms));
+    row.push(&JsValue::from_f64(profile.index_entry_ms));
+    row.push(&JsValue::from_f64(storage_bytes_total as f64));
+    row.push(&JsValue::from_f64(hash_bytes_total as f64));
+    Ok(row)
+}
+
+#[wasm_bindgen]
+pub fn benchmark_plain_entry_v0_digest_key_core(
+    clock_id: Uint8Array,
+    private_key: Uint8Array,
+    public_key: Uint8Array,
+    iterations: u32,
+    payload_data: Uint8Array,
+) -> Result<Array, JsValue> {
+    let clock_id = clock_id.to_vec();
+    let private_key = private_key.to_vec();
+    let public_key = public_key.to_vec();
+    let signing_key = validate_ed25519_keypair(&private_key, &public_key)?;
+    let payload_data = payload_data.to_vec();
+    let gid = String::from("native-log-digest-key-core-ceiling");
+    let mut profile = NativeLogAppendProfile::default();
+    let mut input_copy_ms = 0.0;
+    let mut storage_bytes_total = 0usize;
+    let mut hash_bytes_total = 0usize;
+    let started = js_sys::Date::now();
+
+    for i in 0..iterations {
+        let copy_started = js_sys::Date::now();
+        let payload_data = payload_data.clone();
+        input_copy_ms += js_sys::Date::now() - copy_started;
+
+        let core_started = js_sys::Date::now();
+        let (storage_len, digest_len) =
+            prepare_entry_v0_plain_entry_commit_digest_key_core_profiled(
+                &clock_id,
+                &public_key,
+                &signing_key,
+                1_700_000_000_000 + i as u64,
+                i,
+                &gid,
+                0,
+                payload_data,
+                Some(&mut profile),
+            );
+        profile.entry_core_ms += js_sys::Date::now() - core_started;
+        storage_bytes_total += storage_len;
+        hash_bytes_total += digest_len;
+    }
+
+    let total_ms = js_sys::Date::now() - started;
+    let row = Array::new();
+    row.push(&JsValue::from_f64(total_ms));
+    row.push(&JsValue::from_f64(input_copy_ms));
+    row.push(&JsValue::from_f64(profile.entry_core_ms));
+    row.push(&JsValue::from_f64(profile.encode_meta_ms));
+    row.push(&JsValue::from_f64(profile.encode_payload_ms));
+    row.push(&JsValue::from_f64(profile.encode_signable_ms));
+    row.push(&JsValue::from_f64(profile.sign_ms));
+    row.push(&JsValue::from_f64(profile.encode_signature_ms));
+    row.push(&JsValue::from_f64(profile.encode_storage_ms));
+    row.push(&JsValue::from_f64(profile.cid_ms));
+    row.push(&JsValue::from_f64(profile.cid_hash_ms));
+    row.push(&JsValue::from_f64(profile.cid_string_ms));
     row.push(&JsValue::from_f64(profile.index_entry_ms));
     row.push(&JsValue::from_f64(storage_bytes_total as f64));
     row.push(&JsValue::from_f64(hash_bytes_total as f64));
@@ -2927,18 +3045,55 @@ fn calculate_raw_cid_v1_from_bytes(bytes: &[u8]) -> String {
 }
 
 fn calculate_raw_cid_v1_parts(bytes: &[u8]) -> (String, [u8; 32]) {
+    calculate_raw_cid_v1_parts_profiled(bytes, None)
+}
+
+fn calculate_raw_cid_v1_parts_profiled(
+    bytes: &[u8],
+    mut profile: Option<&mut NativeLogAppendProfile>,
+) -> (String, [u8; 32]) {
+    let hash_started = profile.as_ref().map(|_| js_sys::Date::now());
     let digest = Sha256::digest(bytes);
     let digest_bytes: [u8; 32] = digest.into();
+    if let Some(started) = hash_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.cid_hash_ms += js_sys::Date::now() - started;
+        }
+    }
+    let string_started = profile.as_ref().map(|_| js_sys::Date::now());
+    let cid = raw_cid_v1_string_from_digest(&digest_bytes);
+    if let Some(started) = string_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.cid_string_ms += js_sys::Date::now() - started;
+        }
+    }
+    (cid, digest_bytes)
+}
+
+fn calculate_raw_digest_profiled(
+    bytes: &[u8],
+    mut profile: Option<&mut NativeLogAppendProfile>,
+) -> [u8; 32] {
+    let hash_started = profile.as_ref().map(|_| js_sys::Date::now());
+    let digest = Sha256::digest(bytes);
+    let digest_bytes: [u8; 32] = digest.into();
+    if let Some(started) = hash_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.cid_hash_ms += js_sys::Date::now() - started;
+            profile.cid_ms += js_sys::Date::now() - started;
+        }
+    }
+    digest_bytes
+}
+
+fn raw_cid_v1_string_from_digest(digest_bytes: &[u8; 32]) -> String {
     let mut cid = Vec::with_capacity(36);
     cid.push(0x01); // CIDv1
     cid.push(0x55); // raw codec
     cid.push(0x12); // sha2-256 multihash code
     cid.push(0x20); // 32 byte digest
-    cid.extend_from_slice(&digest_bytes);
-    (
-        format!("z{}", bs58::encode(cid).into_string()),
-        digest_bytes,
-    )
+    cid.extend_from_slice(digest_bytes.as_slice());
+    format!("z{}", bs58::encode(cid).into_string())
 }
 
 fn encode_entry_v0_storage_vec(
