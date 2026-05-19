@@ -15,6 +15,7 @@ import {
 } from "@peerbit/crypto";
 import * as types from "@peerbit/document-interface";
 import {
+	type SimpleDocumentProjectionContext,
 	type SimpleDocumentProjectionPlan,
 	tryProjectDocumentIndexSimple,
 } from "@peerbit/document-rust";
@@ -935,8 +936,21 @@ type NativeBackboneDocumentIndex = {
 	attachNativeBackboneDocumentIndex?: (backbone: unknown) => boolean | void;
 };
 
+type NativeBackboneDocumentProjection = {
+	projectDocumentIndexSimple?: (
+		encodedDocument: Uint8Array,
+		plan: SimpleDocumentProjectionPlan,
+		context: SimpleDocumentProjectionContext,
+	) => Uint8Array | undefined;
+};
+
 type NativeBackboneDocumentIndexCommit<I> = {
-	valuePrefixBytes: Uint8Array;
+	valuePrefixBytes?: Uint8Array;
+	projection?: {
+		encodedDocument: Uint8Array;
+		plan: SimpleDocumentProjectionPlan;
+		signer?: Uint8Array;
+	};
 	indexable?: I;
 	getIndexable?: () => I;
 };
@@ -1006,6 +1020,7 @@ export class DocumentIndex<
 	private transformerIsIdentity = false;
 	private nativeTransformDescriptor?: NativeDocumentTransformDescriptor;
 	private nativeTransformProjectionPlan?: SimpleDocumentProjectionPlan;
+	private nativeBackboneDocumentProjection?: NativeBackboneDocumentProjection;
 
 	// The indexed document wrapped in a context
 	wrappedIndexedType: IndexableClass<I>;
@@ -1554,6 +1569,7 @@ export class DocumentIndex<
 	}
 
 	public attachNativeBackboneDocumentIndex(backbone: unknown): boolean {
+		this.nativeBackboneDocumentProjection = undefined;
 		if (
 			!backbone ||
 			this.isProgramValued ||
@@ -1563,9 +1579,15 @@ export class DocumentIndex<
 		}
 		const attach = (this.index as NativeBackboneDocumentIndex)
 			.attachNativeBackboneDocumentIndex;
-		return (
-			typeof attach === "function" && attach.call(this.index, backbone) === true
-		);
+		const attached =
+			typeof attach === "function" && attach.call(this.index, backbone) === true;
+		if (attached) {
+			const projection = backbone as NativeBackboneDocumentProjection;
+			if (typeof projection.projectDocumentIndexSimple === "function") {
+				this.nativeBackboneDocumentProjection = projection;
+			}
+		}
+		return attached;
 	}
 
 	public canUseNativeBackboneDocumentIndex(): boolean {
@@ -1639,41 +1661,39 @@ export class DocumentIndex<
 			return;
 		}
 		if (this.nativeTransformProjectionPlan) {
-			const valuePrefixBytes = tryProjectDocumentIndexSimple(
-				encodedDocument,
-				this.nativeTransformProjectionPlan,
-				{
-					created: context.created,
-					modified: context.modified,
-					gid: context.gid,
-					size: context.size,
-					signer: transformFacts?.entryPublicKeys?.[0]?.bytes,
+			const projectionContext = {
+				created: context.created,
+				modified: context.modified,
+				gid: context.gid,
+				size: context.size,
+				signer: transformFacts?.entryPublicKeys?.[0]?.bytes,
+			};
+			let cached: I | undefined;
+			let hasCached = false;
+			return {
+				projection: {
+					encodedDocument,
+					plan: this.nativeTransformProjectionPlan,
+					signer: projectionContext.signer,
 				},
-			);
-			if (valuePrefixBytes) {
-				let cached: I | undefined;
-				let hasCached = false;
-				return {
-					valuePrefixBytes,
-					getIndexable: () => {
-						if (!hasCached) {
-							const transformed = this.transformer(
-								value,
-								context,
-								transformFacts,
+				getIndexable: () => {
+					if (!hasCached) {
+						const transformed = this.transformer(
+							value,
+							context,
+							transformFacts,
+						);
+						if (isPromiseLike(transformed)) {
+							throw new Error(
+								"Native descriptor transform unexpectedly returned a promise",
 							);
-							if (isPromiseLike(transformed)) {
-								throw new Error(
-									"Native descriptor transform unexpectedly returned a promise",
-								);
-							}
-							cached = transformed;
-							hasCached = true;
 						}
-						return cached!;
-					},
-				};
-			}
+						cached = transformed;
+						hasCached = true;
+					}
+					return cached!;
+				},
+			};
 		}
 		const transformed = this.transformer(value, context, transformFacts);
 		if (isPromiseLike(transformed)) {
@@ -2301,8 +2321,37 @@ export class DocumentIndex<
 			return;
 		}
 		this.cacheResolvedValue(id.primitive, value);
+		const valuePrefixBytes =
+			nativeDocumentIndex.valuePrefixBytes ??
+			(nativeDocumentIndex.projection
+				? (this.nativeBackboneDocumentProjection?.projectDocumentIndexSimple?.(
+						nativeDocumentIndex.projection.encodedDocument,
+						nativeDocumentIndex.projection.plan,
+						{
+							created: context.created,
+							modified: context.modified,
+							gid: context.gid,
+							size: context.size,
+							signer: nativeDocumentIndex.projection.signer,
+						},
+					) ??
+					tryProjectDocumentIndexSimple(
+						nativeDocumentIndex.projection.encodedDocument,
+						nativeDocumentIndex.projection.plan,
+						{
+							created: context.created,
+							modified: context.modified,
+							gid: context.gid,
+							size: context.size,
+							signer: nativeDocumentIndex.projection.signer,
+						},
+					))
+				: undefined);
+		if (!valuePrefixBytes) {
+			return;
+		}
 		const encodedValueParts = {
-			prefix: nativeDocumentIndex.valuePrefixBytes,
+			prefix: valuePrefixBytes,
 			suffix: encodeContextSuffix(context),
 		};
 		const handleError = (error: unknown) => {

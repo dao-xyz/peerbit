@@ -15,6 +15,7 @@ import {
 	initializeDocumentRust,
 	planDocumentContext,
 	planDocumentContextBatch,
+	type SimpleDocumentProjectionPlan,
 	tryPlanDocumentContext,
 	tryPlanDocumentContextBatch,
 } from "@peerbit/document-rust";
@@ -249,7 +250,12 @@ type DocumentAppendCommitFacts<T, I extends Record<string, any>> = {
 	contextualEncodedValueParts: ContextualEncodedValueParts;
 	nativeBackboneDocumentIndexCommitted?: boolean;
 	nativeBackboneDocumentIndex?: {
-		valuePrefixBytes: Uint8Array;
+		valuePrefixBytes?: Uint8Array;
+		projection?: {
+			encodedDocument: Uint8Array;
+			plan: SimpleDocumentProjectionPlan;
+			signer?: Uint8Array;
+		};
 		indexable?: I;
 		getIndexable?: () => I;
 	};
@@ -272,10 +278,37 @@ type NativeDocumentAppendCommitFactsInput<T, I extends Record<string, any>> = {
 		| null
 		| undefined;
 	nativeBackboneDocumentIndex?: {
-		valuePrefixBytes: Uint8Array;
+		valuePrefixBytes?: Uint8Array;
+		projection?: {
+			encodedDocument: Uint8Array;
+			plan: SimpleDocumentProjectionPlan;
+			signer?: Uint8Array;
+		};
 		indexable?: I;
 		getIndexable?: () => I;
 	};
+};
+
+type NativeBackboneDocumentIndexCommitInput = {
+	key: string;
+	valuePrefixBytes?: Uint8Array;
+	projection?: {
+		encodedDocument: Uint8Array;
+		plan: SimpleDocumentProjectionPlan;
+		signer?: Uint8Array;
+	};
+	existingCreated?: bigint;
+};
+
+type PreparedNativeBackboneDocumentIndexCommit<I> = {
+	valuePrefixBytes?: Uint8Array;
+	projection?: {
+		encodedDocument: Uint8Array;
+		plan: SimpleDocumentProjectionPlan;
+		signer?: Uint8Array;
+	};
+	indexable?: I;
+	getIndexable?: () => I;
 };
 
 type NativeDocumentAppendCommitInput<
@@ -1305,14 +1338,11 @@ export class Documents<
 					payloadData: input.operationPayloadBytes,
 					...(nativeDocumentIndexCommit
 						? {
-								nativeBackboneDocumentIndex: {
-									key: documentIndexStoreKey(input.key),
-									valuePrefixBytes: nativeDocumentIndexCommit.valuePrefixBytes,
-									existingCreated:
-										input.unique || input.existing === null
-											? undefined
-											: input.existing?.value.__context.created,
-								},
+								nativeBackboneDocumentIndex:
+									this.toNativeBackboneDocumentIndexCommitInput(
+										input,
+										nativeDocumentIndexCommit,
+									),
 							}
 						: {}),
 					...(prepareNativeDocumentIndexWithAppendFacts
@@ -1323,15 +1353,10 @@ export class Documents<
 									committedNativeDocumentIndex =
 										prepareNativeDocumentIndexWithAppendFacts(facts);
 									return committedNativeDocumentIndex
-										? {
-												key: documentIndexStoreKey(input.key),
-												valuePrefixBytes:
-													committedNativeDocumentIndex.valuePrefixBytes,
-												existingCreated:
-													input.unique || input.existing === null
-														? undefined
-														: input.existing?.value.__context.created,
-											}
+										? this.toNativeBackboneDocumentIndexCommitInput(
+												input,
+												committedNativeDocumentIndex,
+											)
 										: undefined;
 								},
 							}
@@ -1382,16 +1407,24 @@ export class Documents<
 		);
 	}
 
+	private toNativeBackboneDocumentIndexCommitInput(
+		input: NativeDocumentAppendCommitFactsInput<T, I>,
+		commit: PreparedNativeBackboneDocumentIndexCommit<I>,
+	): NativeBackboneDocumentIndexCommitInput {
+		return {
+			key: documentIndexStoreKey(input.key),
+			valuePrefixBytes: commit.valuePrefixBytes,
+			projection: commit.projection,
+			existingCreated:
+				input.unique || input.existing === null
+					? undefined
+					: input.existing?.value.__context.created,
+		};
+	}
+
 	private prepareNativeBackboneDocumentIndexCommit(
 		input: NativeDocumentAppendCommitFactsInput<T, I>,
-	): MaybePromise<
-		| {
-				valuePrefixBytes: Uint8Array;
-				indexable?: I;
-				getIndexable?: () => I;
-		  }
-		| undefined
-	> {
+	): MaybePromise<PreparedNativeBackboneDocumentIndexCommit<I> | undefined> {
 		if (!this._nativeBackboneDocumentIndexEnabled) {
 			return;
 		}
@@ -1406,12 +1439,7 @@ export class Documents<
 		input: NativeDocumentAppendCommitFactsInput<T, I>,
 	):
 		| ((facts: NativeBackboneDocumentIndexAppendFactsInput) =>
-				| {
-						valuePrefixBytes: Uint8Array;
-						indexable?: I;
-						getIndexable?: () => I;
-				  }
-				| undefined)
+				PreparedNativeBackboneDocumentIndexCommit<I> | undefined)
 		| undefined {
 		if (
 			!this._nativeBackboneDocumentIndexEnabled ||
@@ -1453,12 +1481,7 @@ export class Documents<
 			prepareNativeBackboneDocumentIndex?: (
 				facts: NativeBackboneDocumentIndexAppendFactsInput,
 			) =>
-				| {
-						key: string;
-						valuePrefixBytes: Uint8Array;
-						existingCreated?: bigint;
-				  }
-				| undefined;
+				NativeBackboneDocumentIndexCommitInput | undefined;
 		},
 	): Promise<DocumentAppendCommitFacts<T, I>> {
 		let appended: Awaited<ReturnType<typeof this.log.appendLocallyPrepared>>;
@@ -1622,11 +1645,12 @@ export class Documents<
 			nativeBackboneDocumentIndexCommitted:
 				appended.appendCommit.nativeBackboneDocumentIndexCommitted,
 			nativeBackboneDocumentIndex: input.nativeBackboneDocumentIndex
-				? {
-						valuePrefixBytes: input.nativeBackboneDocumentIndex.valuePrefixBytes,
-						indexable: input.nativeBackboneDocumentIndex.indexable,
-						getIndexable: input.nativeBackboneDocumentIndex.getIndexable,
-					}
+					? {
+							valuePrefixBytes: input.nativeBackboneDocumentIndex.valuePrefixBytes,
+							projection: input.nativeBackboneDocumentIndex.projection,
+							indexable: input.nativeBackboneDocumentIndex.indexable,
+							getIndexable: input.nativeBackboneDocumentIndex.getIndexable,
+						}
 				: undefined,
 			unique: input.unique,
 			existing: input.existing,
@@ -1717,11 +1741,12 @@ export class Documents<
 			nativeBackboneDocumentIndexCommitted:
 				appended.appendCommit.nativeBackboneDocumentIndexCommitted,
 			nativeBackboneDocumentIndex: nativeBackboneDocumentIndex
-				? {
-						valuePrefixBytes: nativeBackboneDocumentIndex.valuePrefixBytes,
-						indexable: nativeBackboneDocumentIndex.indexable,
-						getIndexable: nativeBackboneDocumentIndex.getIndexable,
-					}
+					? {
+							valuePrefixBytes: nativeBackboneDocumentIndex.valuePrefixBytes,
+							projection: nativeBackboneDocumentIndex.projection,
+							indexable: nativeBackboneDocumentIndex.indexable,
+							getIndexable: nativeBackboneDocumentIndex.getIndexable,
+						}
 				: undefined,
 			unique: input.unique,
 			existing: input.existing,

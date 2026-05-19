@@ -1,4 +1,4 @@
-use js_sys::{Array, Uint8Array};
+use js_sys::{Array, Reflect, Uint8Array};
 use peerbit_indexer_core::codec::{decode_query, decode_sort};
 use peerbit_indexer_core::persistence::{
     decode_journal, decode_key_value_snapshot, encode_journal_delete_record,
@@ -16,7 +16,7 @@ use peerbit_log_rust::{
 use peerbit_shared_log_rust::{
     commit_local_append_for_gid_compact_core, NativeLocalAppendCompactFacts, NativeSharedLogState,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
@@ -41,9 +41,30 @@ pub struct NativePeerbitBackbone {
 
 struct DocumentIndexAppendCommit {
     key: String,
-    value_prefix_bytes: Vec<u8>,
+    value_prefix: DocumentIndexValuePrefix,
     existing_created: Option<u64>,
     byte_element_index_limit: usize,
+}
+
+struct ParsedProjectionPlan {
+    document_variant_type: Option<String>,
+    document_variant_value: Option<String>,
+    output_variant_type: Option<String>,
+    output_variant_value: Option<String>,
+    document_field_names: Vec<String>,
+    document_field_types: Vec<String>,
+    output_field_types: Vec<String>,
+    source_kinds: Vec<String>,
+    source_values: Vec<String>,
+}
+
+enum DocumentIndexValuePrefix {
+    Bytes(Vec<u8>),
+    Projection {
+        encoded_document: Vec<u8>,
+        plan: ParsedProjectionPlan,
+        signer: Option<Vec<u8>>,
+    },
 }
 
 #[derive(Clone, Default)]
@@ -340,6 +361,28 @@ impl NativePeerbitBackbone {
         out.push(&JsValue::from_f64(stats.node_count as f64));
         out.push(&JsValue::from_f64(stats.generic_nodes as f64));
         Ok(out)
+    }
+
+    pub fn project_document_index_simple(
+        &self,
+        encoded_document: Uint8Array,
+        plan: JsValue,
+        created: &str,
+        modified: &str,
+        gid: &str,
+        size: u32,
+        signer: JsValue,
+    ) -> Result<Uint8Array, JsValue> {
+        let bytes = project_document_index_simple_bytes(
+            &encoded_document.to_vec(),
+            &plan,
+            created,
+            modified,
+            gid,
+            size,
+            signer,
+        )?;
+        Ok(Uint8Array::from(bytes.as_slice()))
     }
 
     pub fn document_index_len(&self) -> usize {
@@ -1362,6 +1405,9 @@ impl NativePeerbitBackbone {
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_projection_plan: JsValue,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
     ) -> Result<Array, JsValue> {
         self.append_plain_no_next_transaction_inner(
             wall_time,
@@ -1381,6 +1427,9 @@ impl NativePeerbitBackbone {
                 document_value_prefix_bytes,
                 document_existing_created,
                 document_byte_element_index_limit,
+                document_projection_plan,
+                document_projection_encoded_document,
+                document_projection_signer,
             )?),
         )
     }
@@ -1403,6 +1452,9 @@ impl NativePeerbitBackbone {
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_projection_plan: JsValue,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
         self.append_plain_no_next_transaction_inner(
@@ -1423,6 +1475,9 @@ impl NativePeerbitBackbone {
                 document_value_prefix_bytes,
                 document_existing_created,
                 document_byte_element_index_limit,
+                document_projection_plan,
+                document_projection_encoded_document,
+                document_projection_signer,
             )?),
         )
     }
@@ -1521,6 +1576,9 @@ impl NativePeerbitBackbone {
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_projection_plan: JsValue,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
     ) -> Result<Array, JsValue> {
         let document_gid = gid.clone();
         let payload_size = payload_data.length();
@@ -1529,6 +1587,9 @@ impl NativePeerbitBackbone {
             document_value_prefix_bytes,
             document_existing_created,
             document_byte_element_index_limit,
+            document_projection_plan,
+            document_projection_encoded_document,
+            document_projection_signer,
         )?;
         let row = self.prepare_plain_entry_commit_facts(
             wall_time,
@@ -1698,6 +1759,9 @@ impl NativePeerbitBackbone {
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_projection_plan: JsValue,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
     ) -> Result<Array, JsValue> {
         self.prepare_plain_storage_append_transaction_inner(
             wall_time,
@@ -1720,6 +1784,9 @@ impl NativePeerbitBackbone {
                 document_value_prefix_bytes,
                 document_existing_created,
                 document_byte_element_index_limit,
+                document_projection_plan,
+                document_projection_encoded_document,
+                document_projection_signer,
             )?),
         )
     }
@@ -1743,6 +1810,9 @@ impl NativePeerbitBackbone {
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_projection_plan: JsValue,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
         self.prepare_plain_storage_append_transaction_inner(
@@ -1766,6 +1836,9 @@ impl NativePeerbitBackbone {
                 document_value_prefix_bytes,
                 document_existing_created,
                 document_byte_element_index_limit,
+                document_projection_plan,
+                document_projection_encoded_document,
+                document_projection_signer,
             )?),
         )
     }
@@ -1862,6 +1935,9 @@ impl NativePeerbitBackbone {
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_projection_plan: JsValue,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
     ) -> Result<Array, JsValue> {
         self.prepare_plain_storage_append_transaction_inner(
             wall_time,
@@ -1884,6 +1960,9 @@ impl NativePeerbitBackbone {
                 document_value_prefix_bytes,
                 document_existing_created,
                 document_byte_element_index_limit,
+                document_projection_plan,
+                document_projection_encoded_document,
+                document_projection_signer,
             )?),
         )
     }
@@ -1907,6 +1986,9 @@ impl NativePeerbitBackbone {
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_projection_plan: JsValue,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
         self.prepare_plain_storage_append_transaction_inner(
@@ -1930,6 +2012,9 @@ impl NativePeerbitBackbone {
                 document_value_prefix_bytes,
                 document_existing_created,
                 document_byte_element_index_limit,
+                document_projection_plan,
+                document_projection_encoded_document,
+                document_projection_signer,
             )?),
         )
     }
@@ -2029,6 +2114,9 @@ impl NativePeerbitBackbone {
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_projection_plan: JsValue,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
     ) -> Result<Array, JsValue> {
         self.prepare_plain_storage_append_transaction_inner(
             wall_time,
@@ -2051,6 +2139,9 @@ impl NativePeerbitBackbone {
                 document_value_prefix_bytes,
                 document_existing_created,
                 document_byte_element_index_limit,
+                document_projection_plan,
+                document_projection_encoded_document,
+                document_projection_signer,
             )?),
         )
     }
@@ -2075,6 +2166,9 @@ impl NativePeerbitBackbone {
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_projection_plan: JsValue,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
         self.prepare_plain_storage_append_transaction_inner(
@@ -2098,6 +2192,9 @@ impl NativePeerbitBackbone {
                 document_value_prefix_bytes,
                 document_existing_created,
                 document_byte_element_index_limit,
+                document_projection_plan,
+                document_projection_encoded_document,
+                document_projection_signer,
             )?),
         )
     }
@@ -2159,6 +2256,9 @@ impl NativePeerbitBackbone {
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_projection_plan: JsValue,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
     ) -> Result<Array, JsValue> {
         self.prepare_plain_storage_append_transaction_inner(
             wall_time,
@@ -2181,6 +2281,9 @@ impl NativePeerbitBackbone {
                 document_value_prefix_bytes,
                 document_existing_created,
                 document_byte_element_index_limit,
+                document_projection_plan,
+                document_projection_encoded_document,
+                document_projection_signer,
             )?),
         )
     }
@@ -2243,6 +2346,9 @@ impl NativePeerbitBackbone {
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_projection_plan: JsValue,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
         self.prepare_plain_storage_append_transaction_inner(
@@ -2266,6 +2372,9 @@ impl NativePeerbitBackbone {
                 document_value_prefix_bytes,
                 document_existing_created,
                 document_byte_element_index_limit,
+                document_projection_plan,
+                document_projection_encoded_document,
+                document_projection_signer,
             )?),
         )
     }
@@ -2824,9 +2933,25 @@ impl NativePeerbitBackbone {
         if let Some(started) = context_started {
             self.append_profile.document_index_context_encode_ms += js_sys::Date::now() - started;
         }
+        let value_prefix_bytes = match document_index_commit.value_prefix {
+            DocumentIndexValuePrefix::Bytes(bytes) => bytes,
+            DocumentIndexValuePrefix::Projection {
+                encoded_document,
+                plan,
+                signer,
+            } => project_document_index_simple_bytes_with_plan(
+                &encoded_document,
+                &plan,
+                document_index_commit.existing_created.unwrap_or(wall_time),
+                wall_time,
+                gid,
+                payload_size,
+                signer.as_deref(),
+            )?,
+        };
         self.put_document_encoded_parts_stored(
             document_index_commit.key,
-            document_index_commit.value_prefix_bytes,
+            value_prefix_bytes,
             context_suffix,
             document_index_commit.byte_element_index_limit,
         )
@@ -3040,10 +3165,26 @@ fn document_index_append_commit(
     value_prefix_bytes: Vec<u8>,
     existing_created: String,
     byte_element_index_limit: usize,
+    projection_plan: JsValue,
+    projection_encoded_document: JsValue,
+    projection_signer: JsValue,
 ) -> Result<DocumentIndexAppendCommit, JsValue> {
+    let value_prefix = if projection_plan.is_null() || projection_plan.is_undefined() {
+        DocumentIndexValuePrefix::Bytes(value_prefix_bytes)
+    } else {
+        DocumentIndexValuePrefix::Projection {
+            encoded_document: Uint8Array::new(&projection_encoded_document).to_vec(),
+            plan: parse_projection_plan(&projection_plan)?,
+            signer: if projection_signer.is_null() || projection_signer.is_undefined() {
+                None
+            } else {
+                Some(Uint8Array::new(&projection_signer).to_vec())
+            },
+        }
+    };
     Ok(DocumentIndexAppendCommit {
         key,
-        value_prefix_bytes,
+        value_prefix,
         existing_created: parse_optional_u64_string(
             &existing_created,
             "document existing created",
@@ -3266,6 +3407,462 @@ fn read_bytes(bytes: &[u8], offset: &mut usize, label: &str) -> Result<Vec<u8>, 
     let value = bytes[*offset..end].to_vec();
     *offset = end;
     Ok(value)
+}
+
+fn js_get(value: &JsValue, key: &str) -> JsValue {
+    Reflect::get(value, &JsValue::from_str(key)).unwrap_or(JsValue::UNDEFINED)
+}
+
+fn js_string(value: JsValue, field: &str) -> Result<String, JsValue> {
+    value
+        .as_string()
+        .ok_or_else(|| JsValue::from_str(&format!("Missing or invalid {field}")))
+}
+
+fn array_strings(value: JsValue, field: &str) -> Result<Vec<String>, JsValue> {
+    if !Array::is_array(&value) {
+        return Err(JsValue::from_str(&format!("{field} must be an array")));
+    }
+    let array = Array::from(&value);
+    let mut out = Vec::with_capacity(array.length() as usize);
+    for index in 0..array.length() {
+        out.push(js_string(array.get(index), field)?);
+    }
+    Ok(out)
+}
+
+fn optional_string(value: JsValue) -> Option<String> {
+    if value.is_null() || value.is_undefined() {
+        None
+    } else {
+        value.as_string()
+    }
+}
+
+#[derive(Clone, Debug)]
+enum ProjectionValue {
+    String(String),
+    U64(u64),
+    Bool(bool),
+    Bytes(Vec<u8>),
+    None,
+}
+
+fn read_u8_projection(bytes: &[u8], offset: &mut usize, label: &str) -> Result<u8, JsValue> {
+    if *offset >= bytes.len() {
+        return Err(JsValue::from_str(&format!("Truncated {label}")));
+    }
+    let value = bytes[*offset];
+    *offset += 1;
+    Ok(value)
+}
+
+fn read_bool_projection(bytes: &[u8], offset: &mut usize, label: &str) -> Result<bool, JsValue> {
+    match read_u8_projection(bytes, offset, label)? {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(JsValue::from_str(&format!("Invalid bool {label}"))),
+    }
+}
+
+fn write_u8(out: &mut Vec<u8>, value: u8) {
+    out.push(value);
+}
+
+fn write_bool(out: &mut Vec<u8>, value: bool) {
+    out.push(if value { 1 } else { 0 });
+}
+
+fn skip_projection_value(bytes: &[u8], offset: &mut usize, kind: &str) -> Result<(), JsValue> {
+    match kind {
+        "string" => {
+            read_encoded_string(bytes, offset, "projected string")?;
+        }
+        "u8" => {
+            read_u8_projection(bytes, offset, "projected u8")?;
+        }
+        "u32" => {
+            read_u32(bytes, offset, "projected u32")?;
+        }
+        "u64" => {
+            read_u64(bytes, offset, "projected u64")?;
+        }
+        "bool" => {
+            read_bool_projection(bytes, offset, "projected bool")?;
+        }
+        "bytes" => {
+            read_bytes(bytes, offset, "projected bytes")?;
+        }
+        "option:string" | "option:u8" | "option:u32" | "option:u64" | "option:bool"
+        | "option:bytes" => {
+            let has_value = read_u8_projection(bytes, offset, "projected option")?;
+            if has_value == 1 {
+                skip_projection_value(bytes, offset, &kind["option:".len()..])?;
+            } else if has_value != 0 {
+                return Err(JsValue::from_str("Invalid projection option marker"));
+            }
+        }
+        "vec:string" => {
+            let len = read_u32(bytes, offset, "projected string vec length")?;
+            for _ in 0..len {
+                read_encoded_string(bytes, offset, "projected string vec item")?;
+            }
+        }
+        "vec:bytes" => {
+            let len = read_u32(bytes, offset, "projected bytes vec length")?;
+            for _ in 0..len {
+                read_bytes(bytes, offset, "projected bytes vec item")?;
+            }
+        }
+        _ => {
+            return Err(JsValue::from_str(
+                "Unsupported document projection field type",
+            ))
+        }
+    }
+    Ok(())
+}
+
+fn read_projection_value(
+    bytes: &[u8],
+    offset: &mut usize,
+    kind: &str,
+) -> Result<ProjectionValue, JsValue> {
+    match kind {
+        "string" => Ok(ProjectionValue::String(read_encoded_string(
+            bytes,
+            offset,
+            "projection string",
+        )?)),
+        "u8" => Ok(ProjectionValue::U64(
+            read_u8_projection(bytes, offset, "projection u8")? as u64,
+        )),
+        "u32" => Ok(ProjectionValue::U64(
+            read_u32(bytes, offset, "projection u32")? as u64,
+        )),
+        "u64" => Ok(ProjectionValue::U64(read_u64(
+            bytes,
+            offset,
+            "projection u64",
+        )?)),
+        "bool" => Ok(ProjectionValue::Bool(read_bool_projection(
+            bytes,
+            offset,
+            "projection bool",
+        )?)),
+        "bytes" => Ok(ProjectionValue::Bytes(read_bytes(
+            bytes,
+            offset,
+            "projection bytes",
+        )?)),
+        "option:string" => {
+            let has_value = read_u8_projection(bytes, offset, "projection option string")?;
+            if has_value == 0 {
+                Ok(ProjectionValue::None)
+            } else if has_value == 1 {
+                Ok(ProjectionValue::String(read_encoded_string(
+                    bytes,
+                    offset,
+                    "projection option string",
+                )?))
+            } else {
+                Err(JsValue::from_str("Invalid projection option marker"))
+            }
+        }
+        "option:u8" => {
+            let has_value = read_u8_projection(bytes, offset, "projection option u8")?;
+            if has_value == 0 {
+                Ok(ProjectionValue::None)
+            } else if has_value == 1 {
+                Ok(ProjectionValue::U64(
+                    read_u8_projection(bytes, offset, "projection option u8")? as u64,
+                ))
+            } else {
+                Err(JsValue::from_str("Invalid projection option marker"))
+            }
+        }
+        "option:u32" => {
+            let has_value = read_u8_projection(bytes, offset, "projection option u32")?;
+            if has_value == 0 {
+                Ok(ProjectionValue::None)
+            } else if has_value == 1 {
+                Ok(ProjectionValue::U64(
+                    read_u32(bytes, offset, "projection option u32")? as u64,
+                ))
+            } else {
+                Err(JsValue::from_str("Invalid projection option marker"))
+            }
+        }
+        "option:u64" => {
+            let has_value = read_u8_projection(bytes, offset, "projection option u64")?;
+            if has_value == 0 {
+                Ok(ProjectionValue::None)
+            } else if has_value == 1 {
+                Ok(ProjectionValue::U64(read_u64(
+                    bytes,
+                    offset,
+                    "projection option u64",
+                )?))
+            } else {
+                Err(JsValue::from_str("Invalid projection option marker"))
+            }
+        }
+        "option:bool" => {
+            let has_value = read_u8_projection(bytes, offset, "projection option bool")?;
+            if has_value == 0 {
+                Ok(ProjectionValue::None)
+            } else if has_value == 1 {
+                Ok(ProjectionValue::Bool(read_bool_projection(
+                    bytes,
+                    offset,
+                    "projection option bool",
+                )?))
+            } else {
+                Err(JsValue::from_str("Invalid projection option marker"))
+            }
+        }
+        "option:bytes" => {
+            let has_value = read_u8_projection(bytes, offset, "projection option bytes")?;
+            if has_value == 0 {
+                Ok(ProjectionValue::None)
+            } else if has_value == 1 {
+                Ok(ProjectionValue::Bytes(read_bytes(
+                    bytes,
+                    offset,
+                    "projection option bytes",
+                )?))
+            } else {
+                Err(JsValue::from_str("Invalid projection option marker"))
+            }
+        }
+        _ => Err(JsValue::from_str(
+            "Unsupported projected document field type",
+        )),
+    }
+}
+
+fn write_projection_value(
+    out: &mut Vec<u8>,
+    kind: &str,
+    value: &ProjectionValue,
+) -> Result<(), JsValue> {
+    match (kind, value) {
+        ("string", ProjectionValue::String(value)) => write_string(out, value),
+        ("u8", ProjectionValue::U64(value)) => write_u8(out, *value as u8),
+        ("u32", ProjectionValue::U64(value)) => write_u32(out, *value as u32),
+        ("u64", ProjectionValue::U64(value)) => write_u64(out, *value),
+        ("bool", ProjectionValue::Bool(value)) => write_bool(out, *value),
+        ("bytes", ProjectionValue::Bytes(value)) => write_bytes(out, value),
+        ("option:string", ProjectionValue::None)
+        | ("option:u8", ProjectionValue::None)
+        | ("option:u32", ProjectionValue::None)
+        | ("option:u64", ProjectionValue::None)
+        | ("option:bool", ProjectionValue::None)
+        | ("option:bytes", ProjectionValue::None) => write_u8(out, 0),
+        ("option:string", ProjectionValue::String(value)) => {
+            write_u8(out, 1);
+            write_string(out, value);
+        }
+        ("option:u8", ProjectionValue::U64(value)) => {
+            write_u8(out, 1);
+            write_u8(out, *value as u8);
+        }
+        ("option:u32", ProjectionValue::U64(value)) => {
+            write_u8(out, 1);
+            write_u32(out, *value as u32);
+        }
+        ("option:u64", ProjectionValue::U64(value)) => {
+            write_u8(out, 1);
+            write_u64(out, *value);
+        }
+        ("option:bool", ProjectionValue::Bool(value)) => {
+            write_u8(out, 1);
+            write_bool(out, *value);
+        }
+        ("option:bytes", ProjectionValue::Bytes(value)) => {
+            write_u8(out, 1);
+            write_bytes(out, value);
+        }
+        _ => {
+            return Err(JsValue::from_str(
+                "Projection value does not match output type",
+            ))
+        }
+    }
+    Ok(())
+}
+
+fn read_projected_document_fields(
+    encoded_document: &[u8],
+    variant_type: Option<&str>,
+    variant_value: Option<&str>,
+    names: &[String],
+    types: &[String],
+) -> Result<HashMap<String, ProjectionValue>, JsValue> {
+    if names.len() != types.len() {
+        return Err(JsValue::from_str(
+            "Document projection plan length mismatch",
+        ));
+    }
+    let mut offset = 0usize;
+    match variant_type {
+        Some("u8") => {
+            let expected = variant_value
+                .ok_or_else(|| JsValue::from_str("Missing document variant"))?
+                .parse::<u8>()
+                .map_err(|_| JsValue::from_str("Invalid document variant"))?;
+            if read_u8_projection(encoded_document, &mut offset, "document variant")? != expected {
+                return Err(JsValue::from_str("Document variant mismatch"));
+            }
+        }
+        Some("string") => {
+            let expected =
+                variant_value.ok_or_else(|| JsValue::from_str("Missing document variant"))?;
+            if read_encoded_string(encoded_document, &mut offset, "document variant")? != expected {
+                return Err(JsValue::from_str("Document variant mismatch"));
+            }
+        }
+        Some("") | None => {}
+        _ => return Err(JsValue::from_str("Unsupported document variant type")),
+    }
+    let mut out = HashMap::with_capacity(names.len());
+    for (name, kind) in names.iter().zip(types.iter()) {
+        let before = offset;
+        let value = read_projection_value(encoded_document, &mut offset, kind);
+        match value {
+            Ok(value) => {
+                out.insert(name.clone(), value);
+            }
+            Err(_) => {
+                offset = before;
+                skip_projection_value(encoded_document, &mut offset, kind)?;
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn write_projection_variant(
+    out: &mut Vec<u8>,
+    variant_type: Option<&str>,
+    variant_value: Option<&str>,
+) -> Result<(), JsValue> {
+    match variant_type {
+        Some("u8") => {
+            let value = variant_value
+                .ok_or_else(|| JsValue::from_str("Missing output variant"))?
+                .parse::<u8>()
+                .map_err(|_| JsValue::from_str("Invalid output variant"))?;
+            write_u8(out, value);
+        }
+        Some("string") => {
+            let value = variant_value.ok_or_else(|| JsValue::from_str("Missing output variant"))?;
+            write_string(out, value);
+        }
+        Some("") | None => {}
+        _ => return Err(JsValue::from_str("Unsupported output variant type")),
+    }
+    Ok(())
+}
+
+fn parse_projection_plan(plan: &JsValue) -> Result<ParsedProjectionPlan, JsValue> {
+    let document_field_names =
+        array_strings(js_get(plan, "documentFieldNames"), "documentFieldNames")?;
+    let document_field_types =
+        array_strings(js_get(plan, "documentFieldTypes"), "documentFieldTypes")?;
+    let output_field_types = array_strings(js_get(plan, "outputFieldTypes"), "outputFieldTypes")?;
+    let source_kinds = array_strings(js_get(plan, "sourceKinds"), "sourceKinds")?;
+    let source_values = array_strings(js_get(plan, "sourceValues"), "sourceValues")?;
+    if output_field_types.len() != source_kinds.len() || source_kinds.len() != source_values.len() {
+        return Err(JsValue::from_str("Projection plan length mismatch"));
+    }
+    Ok(ParsedProjectionPlan {
+        document_variant_type: optional_string(js_get(plan, "documentVariantType")),
+        document_variant_value: optional_string(js_get(plan, "documentVariantValue")),
+        output_variant_type: optional_string(js_get(plan, "outputVariantType")),
+        output_variant_value: optional_string(js_get(plan, "outputVariantValue")),
+        document_field_names,
+        document_field_types,
+        output_field_types,
+        source_kinds,
+        source_values,
+    })
+}
+
+fn project_document_index_simple_bytes_with_plan(
+    encoded_document: &[u8],
+    plan: &ParsedProjectionPlan,
+    created: u64,
+    modified: u64,
+    gid: &str,
+    size: u32,
+    signer: Option<&[u8]>,
+) -> Result<Vec<u8>, JsValue> {
+    let document_values = read_projected_document_fields(
+        encoded_document,
+        plan.document_variant_type.as_deref(),
+        plan.document_variant_value.as_deref(),
+        &plan.document_field_names,
+        &plan.document_field_types,
+    )?;
+
+    let mut out = Vec::new();
+    write_projection_variant(
+        &mut out,
+        plan.output_variant_type.as_deref(),
+        plan.output_variant_value.as_deref(),
+    )?;
+
+    for index in 0..plan.output_field_types.len() {
+        let value = match plan.source_kinds[index].as_str() {
+            "field" => document_values
+                .get(&plan.source_values[index])
+                .cloned()
+                .unwrap_or(ProjectionValue::None),
+            "context" => match plan.source_values[index].as_str() {
+                "created" => ProjectionValue::U64(created),
+                "modified" => ProjectionValue::U64(modified),
+                "gid" => ProjectionValue::String(gid.to_string()),
+                "size" => ProjectionValue::U64(size as u64),
+                _ => return Err(JsValue::from_str("Unsupported context projection source")),
+            },
+            "entryFirstSignerPublicKey" => signer
+                .map(|bytes| ProjectionValue::Bytes(bytes.to_vec()))
+                .unwrap_or(ProjectionValue::None),
+            _ => return Err(JsValue::from_str("Unsupported projection source kind")),
+        };
+        write_projection_value(&mut out, &plan.output_field_types[index], &value)?;
+    }
+
+    Ok(out)
+}
+
+fn project_document_index_simple_bytes(
+    encoded_document: &[u8],
+    plan: &JsValue,
+    created: &str,
+    modified: &str,
+    gid: &str,
+    size: u32,
+    signer: JsValue,
+) -> Result<Vec<u8>, JsValue> {
+    let plan = parse_projection_plan(plan)?;
+    let created = parse_u64_string(created, "created")?;
+    let modified = parse_u64_string(modified, "modified")?;
+    let signer = if signer.is_null() || signer.is_undefined() {
+        None
+    } else {
+        Some(Uint8Array::new(&signer).to_vec())
+    };
+    project_document_index_simple_bytes_with_plan(
+        encoded_document,
+        &plan,
+        created,
+        modified,
+        gid,
+        size,
+        signer.as_deref(),
+    )
 }
 
 fn js_error(error: impl std::fmt::Display) -> JsValue {

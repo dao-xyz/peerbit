@@ -50,6 +50,7 @@ import type {
 	NativeBackboneCoordinateFields,
 	NativeBackboneCoordinatePersistenceAdapter,
 	NativeBackboneCoordinatePersistenceConfig,
+	NativeBackboneSimpleDocumentProjectionPlan,
 	NativePeerbitBackbone,
 } from "@peerbit/native-backbone";
 import { ClosedError, Program, type ProgramEvents } from "@peerbit/program";
@@ -354,7 +355,12 @@ type PreparedLocalAppendCommit<R extends "u32" | "u64"> = {
 
 type NativeBackboneDocumentIndexCommitInput = {
 	key: string;
-	valuePrefixBytes: Uint8Array;
+	valuePrefixBytes?: Uint8Array;
+	projection?: {
+		encodedDocument: Uint8Array;
+		plan: NativeBackboneSimpleDocumentProjectionPlan;
+		signer?: Uint8Array;
+	};
 	existingCreated?: bigint;
 	byteElementIndexLimit?: number;
 };
