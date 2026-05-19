@@ -1068,11 +1068,19 @@ describe("index", () => {
 					const firstEntryHash =
 						backboneStorageTransactionSpy.firstCall.returnValue.entry.hash;
 					expect(
+						backboneStorageTransactionSpy.secondCall.args[0].documentIndex
+							.deleteTrimmedHeads,
+					).equal(true);
+					expect(
+						backboneStorageTransactionSpy.secondCall.returnValue
+							.documentTrimmedHeadsProcessed,
+					).equal(true);
+					expect(
 						backboneDocumentHeadLookupSpy.calledWith(
 							nativeFieldPathHash(["__context", "head"]),
 							firstEntryHash,
 						),
-					).equal(true);
+					).equal(false);
 					expect(backbone.documentValueLength).equal(1);
 					expect(
 						backbone.documentExactStringFirstKey(
@@ -1884,9 +1892,8 @@ describe("index", () => {
 					const coordinateHashes = backbone.getEntryCoordinateHashes();
 
 					expect(backboneStorageTransactionSpy.callCount).equal(1);
-					expect(
-						backboneStorageTransactionSpy.firstCall.args[0].documentIndex,
-					).to.exist;
+					expect(backboneStorageTransactionSpy.firstCall.args[0].documentIndex)
+						.to.exist;
 					expect(coordinateIndexPutSpy.callCount).equal(0);
 					expect(documentStoredIdentityPutSpy.callCount).equal(0);
 					expect(backendStoredContextPutSpy.callCount).equal(0);
@@ -2182,8 +2189,11 @@ describe("index", () => {
 						},
 					);
 
-					expect(headKeySpy.withArgs(first.entry.hash).callCount).equal(1);
-					expect(delManyMaybeSpy.callCount).equal(1);
+					expect(
+						headKeySpy.withArgs(first.entry.hash).callCount,
+						"head key cleanup lookup",
+					).equal(1);
+					expect(delManyMaybeSpy.callCount, "document index delete").equal(1);
 					expect(lowerLogGetSpy.withArgs(first.entry.hash).callCount).equal(0);
 					expect(entryIndexGetSpy.withArgs(first.entry.hash).callCount).equal(
 						0,
@@ -6711,10 +6721,10 @@ describe("index", () => {
 						await observer.docs.index.waitFor(writer.node.identity.publicKey);
 						expect(iterator.done()).to.be.false;
 						// Under full-suite load, the join and first remote query can take longer to converge.
-							await waitForResolved(
-								async () => {
-									const next = await iterator.next(1);
-									expect(next).to.have.length(1);
+						await waitForResolved(
+							async () => {
+								const next = await iterator.next(1);
+								expect(next).to.have.length(1);
 								return next;
 							},
 							{ timeout: 30_000, delayInterval: 250 },

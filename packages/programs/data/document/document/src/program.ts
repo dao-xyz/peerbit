@@ -12,10 +12,10 @@ import {
 	type ResultIndexedValue,
 } from "@peerbit/document-interface";
 import {
+	type SimpleDocumentProjectionPlan,
 	initializeDocumentRust,
 	planDocumentContext,
 	planDocumentContextBatch,
-	type SimpleDocumentProjectionPlan,
 	tryPlanDocumentContext,
 	tryPlanDocumentContextBatch,
 } from "@peerbit/document-rust";
@@ -209,6 +209,7 @@ type LocalAppendCommitFacts = {
 	wallTime: bigint;
 	payloadSize: number;
 	nativeBackboneDocumentIndexCommitted?: boolean;
+	nativeBackboneDocumentIndexTrimmedHeadsProcessed?: boolean;
 };
 
 type ContextualEncodedValueParts = {
@@ -249,6 +250,7 @@ type DocumentAppendCommitFacts<T, I extends Record<string, any>> = {
 	contextBytes: Uint8Array;
 	contextualEncodedValueParts: ContextualEncodedValueParts;
 	nativeBackboneDocumentIndexCommitted?: boolean;
+	nativeBackboneDocumentIndexTrimmedHeadsProcessed?: boolean;
 	nativeBackboneDocumentIndex?: {
 		valuePrefixBytes?: Uint8Array;
 		projection?: {
@@ -298,6 +300,7 @@ type NativeBackboneDocumentIndexCommitInput = {
 		signer?: Uint8Array;
 	};
 	existingCreated?: bigint;
+	deleteTrimmedHeads?: boolean;
 };
 
 type PreparedNativeBackboneDocumentIndexCommit<I> = {
@@ -1236,10 +1239,9 @@ export class Documents<
 				? [indexedContextNext]
 				: [await this._resolveEntry(existingHead)]
 			: [];
-		const canCleanupTrimmedHeads =
-			this.hasDocumentChangeConsumers()
-				? this._index.canGetIdentityIndexedByHead()
-				: this._index.canGetIndexedKeyByHead();
+		const canCleanupTrimmedHeads = this.hasDocumentChangeConsumers()
+			? this._index.canGetIdentityIndexedByHead()
+			: this._index.canGetIndexedKeyByHead();
 		return {
 			document: prepared.document,
 			encodedDocument: prepared.encodedDocument,
@@ -1419,6 +1421,9 @@ export class Documents<
 				input.unique || input.existing === null
 					? undefined
 					: input.existing?.value.__context.created,
+			deleteTrimmedHeads:
+				!this.hasDocumentChangeConsumers() &&
+				this._index.canGetIndexedKeyByHead(),
 		};
 	}
 
@@ -1438,8 +1443,9 @@ export class Documents<
 	private createNativeBackboneDocumentIndexAppendFactsPreparer(
 		input: NativeDocumentAppendCommitFactsInput<T, I>,
 	):
-		| ((facts: NativeBackboneDocumentIndexAppendFactsInput) =>
-				PreparedNativeBackboneDocumentIndexCommit<I> | undefined)
+		| ((
+				facts: NativeBackboneDocumentIndexAppendFactsInput,
+		  ) => PreparedNativeBackboneDocumentIndexCommit<I> | undefined)
 		| undefined {
 		if (
 			!this._nativeBackboneDocumentIndexEnabled ||
@@ -1480,8 +1486,7 @@ export class Documents<
 			payloadData: Uint8Array;
 			prepareNativeBackboneDocumentIndex?: (
 				facts: NativeBackboneDocumentIndexAppendFactsInput,
-			) =>
-				NativeBackboneDocumentIndexCommitInput | undefined;
+			) => NativeBackboneDocumentIndexCommitInput | undefined;
 		},
 	): Promise<DocumentAppendCommitFacts<T, I>> {
 		let appended: Awaited<ReturnType<typeof this.log.appendLocallyPrepared>>;
@@ -1658,13 +1663,16 @@ export class Documents<
 			},
 			nativeBackboneDocumentIndexCommitted:
 				appended.appendCommit.nativeBackboneDocumentIndexCommitted,
+			nativeBackboneDocumentIndexTrimmedHeadsProcessed:
+				appended.appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed,
 			nativeBackboneDocumentIndex: input.nativeBackboneDocumentIndex
-					? {
-							valuePrefixBytes: input.nativeBackboneDocumentIndex.valuePrefixBytes,
-							projection: input.nativeBackboneDocumentIndex.projection,
-							indexable: input.nativeBackboneDocumentIndex.indexable,
-							getIndexable: input.nativeBackboneDocumentIndex.getIndexable,
-						}
+				? {
+						valuePrefixBytes:
+							input.nativeBackboneDocumentIndex.valuePrefixBytes,
+						projection: input.nativeBackboneDocumentIndex.projection,
+						indexable: input.nativeBackboneDocumentIndex.indexable,
+						getIndexable: input.nativeBackboneDocumentIndex.getIndexable,
+					}
 				: undefined,
 			unique: input.unique,
 			existing: input.existing,
@@ -1754,13 +1762,15 @@ export class Documents<
 			},
 			nativeBackboneDocumentIndexCommitted:
 				appended.appendCommit.nativeBackboneDocumentIndexCommitted,
+			nativeBackboneDocumentIndexTrimmedHeadsProcessed:
+				appended.appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed,
 			nativeBackboneDocumentIndex: nativeBackboneDocumentIndex
-					? {
-							valuePrefixBytes: nativeBackboneDocumentIndex.valuePrefixBytes,
-							projection: nativeBackboneDocumentIndex.projection,
-							indexable: nativeBackboneDocumentIndex.indexable,
-							getIndexable: nativeBackboneDocumentIndex.getIndexable,
-						}
+				? {
+						valuePrefixBytes: nativeBackboneDocumentIndex.valuePrefixBytes,
+						projection: nativeBackboneDocumentIndex.projection,
+						indexable: nativeBackboneDocumentIndex.indexable,
+						getIndexable: nativeBackboneDocumentIndex.getIndexable,
+					}
 				: undefined,
 			unique: input.unique,
 			existing: input.existing,
@@ -1820,11 +1830,13 @@ export class Documents<
 		commit: DocumentAppendCommitFacts<T, I>,
 	): MaybePromise<void> {
 		const shouldPrepareChange = this.hasDocumentChangeConsumers();
+		const removedAlreadyHandled =
+			commit.nativeBackboneDocumentIndexTrimmedHeadsProcessed === true;
 		const existing =
 			commit.unique || commit.existing === null ? null : commit.existing;
 		if (
 			!shouldPrepareChange &&
-			commit.removed.length === 0 &&
+			(commit.removed.length === 0 || removedAlreadyHandled) &&
 			commit.nativeBackboneDocumentIndexCommitted
 		) {
 			if (!this.strictHistory && existing) {
@@ -1862,7 +1874,7 @@ export class Documents<
 
 		const finishRemoved = (): MaybePromise<void> => {
 			if (!shouldPrepareChange) {
-				if (commit.removed.length === 0) {
+				if (commit.removed.length === 0 || removedAlreadyHandled) {
 					return undefined;
 				}
 				const handled = this.tryHandlePreparedPlainPutCommitRemovedFromHeads(
@@ -1882,7 +1894,10 @@ export class Documents<
 							: this.handlePreparedPlainPutCommitRemoved(remaining, modified);
 					});
 				}
-				return this.handlePreparedPlainPutCommitRemoved(commit.removed, modified);
+				return this.handlePreparedPlainPutCommitRemoved(
+					commit.removed,
+					modified,
+				);
 			}
 			if (commit.removed.length === 0) {
 				this.dispatchDocumentChangeIfObserved(documentsChanged!);

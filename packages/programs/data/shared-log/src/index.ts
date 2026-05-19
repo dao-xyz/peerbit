@@ -351,6 +351,7 @@ type PreparedLocalAppendCommit<R extends "u32" | "u64"> = {
 	hashNumber?: NumberFromType<R>;
 	coordinateFields?: SharedLogCoordinateNativeFields<R>;
 	nativeBackboneDocumentIndexCommitted?: boolean;
+	nativeBackboneDocumentIndexTrimmedHeadsProcessed?: boolean;
 };
 
 type NativeBackboneDocumentIndexCommitInput = {
@@ -363,6 +364,7 @@ type NativeBackboneDocumentIndexCommitInput = {
 	};
 	existingCreated?: bigint;
 	byteElementIndexLimit?: number;
+	deleteTrimmedHeads?: boolean;
 };
 
 type NativeBackboneDocumentIndexAppendFacts = {
@@ -5262,9 +5264,9 @@ export class SharedLog<
 					return undefined;
 				}
 				const coordinateFields = this.createCoordinateFieldsFromNativePlanFacts({
-						appendFacts: prepared.appendFacts,
-						plan: backboneAppend.coordinate,
-					});
+					appendFacts: prepared.appendFacts,
+					plan: backboneAppend.coordinate,
+				});
 				if (!coordinateFields) {
 					throw new Error(
 						"Native backbone append transaction returned mismatched coordinate facts",
@@ -5302,6 +5304,8 @@ export class SharedLog<
 					);
 					if (nativeBackboneDocumentIndexCommitted) {
 						appendCommit.nativeBackboneDocumentIndexCommitted = true;
+						appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed =
+							backboneAppend!.documentTrimmedHeadsProcessed;
 					}
 					return {
 						get entry() {

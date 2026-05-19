@@ -207,6 +207,7 @@ type NativeBackboneDocumentIndexTarget = {
 		nodeCount: number;
 		genericNodes: number;
 	};
+	setDocumentContextHeadField?: (field: number) => void;
 	documentExactStringFirstKey?: (
 		field: number,
 		value: string,
@@ -1965,6 +1966,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		try {
 			backbone.configureDocumentSchemaIr(
 				encodeNativeSchemaIr(this.properties.schema, this.fieldDictionary),
+			);
+			backbone.setDocumentContextHeadField?.(
+				nativeFieldId(this.fieldDictionary, ["__context", "head"]),
 			);
 			backbone.clearDocumentIndex?.();
 			this.populateNativeBackboneDocumentIndex(backbone);

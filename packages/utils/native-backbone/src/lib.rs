@@ -40,6 +40,7 @@ pub struct NativePeerbitBackbone {
     document_index: NativeQueryIndex,
     document_values: MemoryByteStorage,
     document_schema_ir: Option<NativeSchemaIr>,
+    document_context_head_field: Option<u32>,
     document_projection_plans: Vec<ParsedProjectionPlan>,
     builder: NativeEntryV0PlainBuilder,
     append_profile_enabled: bool,
@@ -51,6 +52,7 @@ struct DocumentIndexAppendCommit {
     value_prefix: DocumentIndexValuePrefix,
     existing_created: Option<u64>,
     byte_element_index_limit: usize,
+    delete_trimmed_heads: bool,
 }
 
 struct ParsedProjectionPlan {
@@ -202,6 +204,7 @@ impl NativePeerbitBackbone {
             document_index: NativeQueryIndex::new(),
             document_values: MemoryByteStorage::new(),
             document_schema_ir: None,
+            document_context_head_field: None,
             document_projection_plans: Vec::new(),
             builder: NativeEntryV0PlainBuilder::new(clock_id, private_key, public_key)?,
             append_profile_enabled: false,
@@ -374,6 +377,10 @@ impl NativePeerbitBackbone {
         out.push(&JsValue::from_f64(stats.node_count as f64));
         out.push(&JsValue::from_f64(stats.generic_nodes as f64));
         Ok(out)
+    }
+
+    pub fn set_document_context_head_field(&mut self, field: u32) {
+        self.document_context_head_field = Some(field);
     }
 
     pub fn register_document_projection_plan(&mut self, plan: JsValue) -> Result<u32, JsValue> {
@@ -1441,6 +1448,7 @@ impl NativePeerbitBackbone {
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
         document_projection_plan: JsValue,
         document_projection_encoded_document: JsValue,
         document_projection_signer: JsValue,
@@ -1452,6 +1460,7 @@ impl NativePeerbitBackbone {
             document_value_prefix_bytes,
             document_existing_created,
             document_byte_element_index_limit,
+            document_delete_trimmed_heads,
             document_projection_plan,
             document_projection_encoded_document,
             document_projection_signer,
@@ -1624,6 +1633,7 @@ impl NativePeerbitBackbone {
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
         document_projection_plan: JsValue,
         document_projection_encoded_document: JsValue,
         document_projection_signer: JsValue,
@@ -1649,6 +1659,7 @@ impl NativePeerbitBackbone {
                 document_value_prefix_bytes,
                 document_existing_created,
                 document_byte_element_index_limit,
+                document_delete_trimmed_heads,
                 document_projection_plan,
                 document_projection_encoded_document,
                 document_projection_signer,
@@ -1675,6 +1686,7 @@ impl NativePeerbitBackbone {
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
         document_projection_plan: JsValue,
         document_projection_encoded_document: JsValue,
         document_projection_signer: JsValue,
@@ -1701,6 +1713,7 @@ impl NativePeerbitBackbone {
                 document_value_prefix_bytes,
                 document_existing_created,
                 document_byte_element_index_limit,
+                document_delete_trimmed_heads,
                 document_projection_plan,
                 document_projection_encoded_document,
                 document_projection_signer,
@@ -1800,6 +1813,7 @@ impl NativePeerbitBackbone {
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
         document_projection_plan: JsValue,
         document_projection_encoded_document: JsValue,
         document_projection_signer: JsValue,
@@ -1825,6 +1839,7 @@ impl NativePeerbitBackbone {
                 document_value_prefix_bytes,
                 document_existing_created,
                 document_byte_element_index_limit,
+                document_delete_trimmed_heads,
                 document_projection_plan,
                 document_projection_encoded_document,
                 document_projection_signer,
@@ -1851,6 +1866,7 @@ impl NativePeerbitBackbone {
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
         document_projection_plan: JsValue,
         document_projection_encoded_document: JsValue,
         document_projection_signer: JsValue,
@@ -1877,6 +1893,7 @@ impl NativePeerbitBackbone {
                 document_value_prefix_bytes,
                 document_existing_created,
                 document_byte_element_index_limit,
+                document_delete_trimmed_heads,
                 document_projection_plan,
                 document_projection_encoded_document,
                 document_projection_signer,
@@ -1902,6 +1919,7 @@ impl NativePeerbitBackbone {
         document_key: String,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
         document_projection_plan_id: u32,
         document_projection_encoded_document: JsValue,
         document_projection_signer: JsValue,
@@ -1926,6 +1944,7 @@ impl NativePeerbitBackbone {
                 document_key,
                 document_existing_created,
                 document_byte_element_index_limit,
+                document_delete_trimmed_heads,
                 document_projection_plan_id,
                 document_projection_encoded_document,
                 document_projection_signer,
@@ -1951,6 +1970,7 @@ impl NativePeerbitBackbone {
         document_key: String,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
         document_projection_plan_id: u32,
         document_projection_encoded_document: JsValue,
         document_projection_signer: JsValue,
@@ -1976,6 +1996,7 @@ impl NativePeerbitBackbone {
                 document_key,
                 document_existing_created,
                 document_byte_element_index_limit,
+                document_delete_trimmed_heads,
                 document_projection_plan_id,
                 document_projection_encoded_document,
                 document_projection_signer,
@@ -2078,6 +2099,7 @@ impl NativePeerbitBackbone {
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
         document_projection_plan: JsValue,
         document_projection_encoded_document: JsValue,
         document_projection_signer: JsValue,
@@ -2103,6 +2125,7 @@ impl NativePeerbitBackbone {
                 document_value_prefix_bytes,
                 document_existing_created,
                 document_byte_element_index_limit,
+                document_delete_trimmed_heads,
                 document_projection_plan,
                 document_projection_encoded_document,
                 document_projection_signer,
@@ -2130,6 +2153,7 @@ impl NativePeerbitBackbone {
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
         document_projection_plan: JsValue,
         document_projection_encoded_document: JsValue,
         document_projection_signer: JsValue,
@@ -2156,6 +2180,7 @@ impl NativePeerbitBackbone {
                 document_value_prefix_bytes,
                 document_existing_created,
                 document_byte_element_index_limit,
+                document_delete_trimmed_heads,
                 document_projection_plan,
                 document_projection_encoded_document,
                 document_projection_signer,
@@ -2220,6 +2245,7 @@ impl NativePeerbitBackbone {
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
         document_projection_plan: JsValue,
         document_projection_encoded_document: JsValue,
         document_projection_signer: JsValue,
@@ -2245,6 +2271,7 @@ impl NativePeerbitBackbone {
                 document_value_prefix_bytes,
                 document_existing_created,
                 document_byte_element_index_limit,
+                document_delete_trimmed_heads,
                 document_projection_plan,
                 document_projection_encoded_document,
                 document_projection_signer,
@@ -2310,6 +2337,7 @@ impl NativePeerbitBackbone {
         document_value_prefix_bytes: Vec<u8>,
         document_existing_created: String,
         document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
         document_projection_plan: JsValue,
         document_projection_encoded_document: JsValue,
         document_projection_signer: JsValue,
@@ -2336,6 +2364,7 @@ impl NativePeerbitBackbone {
                 document_value_prefix_bytes,
                 document_existing_created,
                 document_byte_element_index_limit,
+                document_delete_trimmed_heads,
                 document_projection_plan,
                 document_projection_encoded_document,
                 document_projection_signer,
@@ -2581,6 +2610,9 @@ impl NativePeerbitBackbone {
         let profile_enabled = self.append_profile_enabled;
         let storage_append_started = profile_enabled.then(js_sys::Date::now);
         let payload_size = payload_data.length();
+        let delete_trimmed_document_heads = document_index_commit
+            .as_ref()
+            .is_some_and(|commit| commit.delete_trimmed_heads);
         let (entry_row, trim_rows, trim_hashes, hash, digest, meta_bytes) = if commit_blocks {
             let input_copy_started = profile_enabled.then(js_sys::Date::now);
             let meta_data = optional_bytes_from_js(meta_data);
@@ -2747,6 +2779,8 @@ impl NativePeerbitBackbone {
             &document_gid,
             payload_size,
         )?;
+        let document_trimmed_heads_processed = delete_trimmed_document_heads
+            && self.delete_documents_by_context_heads(&trim_hashes_for_result);
         if let Some(started) = document_index_started {
             self.append_profile.document_index_commit_ms += js_sys::Date::now() - started;
         }
@@ -2762,6 +2796,7 @@ impl NativePeerbitBackbone {
         out.push(&coordinate_plan_to_row(&self.resolution, &coordinate_facts));
         out.push(&trim_rows);
         out.push(&strings_to_array(trim_hashes_for_result));
+        out.push(&JsValue::from_bool(document_trimmed_heads_processed));
         if let Some(started) = result_row_started {
             self.append_profile.result_row_ms += js_sys::Date::now() - started;
         }
@@ -2834,6 +2869,25 @@ impl NativePeerbitBackbone {
             context_suffix,
             document_index_commit.byte_element_index_limit,
         )
+    }
+
+    fn delete_documents_by_context_heads(&mut self, heads: &[String]) -> bool {
+        if heads.is_empty() {
+            return false;
+        }
+        let Some(field) = self.document_context_head_field else {
+            return false;
+        };
+        for head in heads {
+            if let Some(key) = self
+                .document_index
+                .exact_first(&FieldPath::Id(field), &FieldValue::from(head.clone()))
+            {
+                self.document_index.delete_id(&key);
+                self.document_values.delete(&key);
+            }
+        }
+        true
     }
 }
 
@@ -3035,6 +3089,7 @@ fn document_index_append_commit(
     value_prefix_bytes: Vec<u8>,
     existing_created: String,
     byte_element_index_limit: usize,
+    delete_trimmed_heads: bool,
     projection_plan: JsValue,
     projection_encoded_document: JsValue,
     projection_signer: JsValue,
@@ -3060,6 +3115,7 @@ fn document_index_append_commit(
             "document existing created",
         )?,
         byte_element_index_limit,
+        delete_trimmed_heads,
     })
 }
 
@@ -3067,6 +3123,7 @@ fn document_index_cached_projection_append_commit(
     key: String,
     existing_created: String,
     byte_element_index_limit: usize,
+    delete_trimmed_heads: bool,
     projection_plan_id: u32,
     projection_encoded_document: JsValue,
     projection_signer: JsValue,
@@ -3087,6 +3144,7 @@ fn document_index_cached_projection_append_commit(
             "document existing created",
         )?,
         byte_element_index_limit,
+        delete_trimmed_heads,
     })
 }
 

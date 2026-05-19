@@ -56,6 +56,7 @@ type NativePeerbitBackboneHandle = {
 	configure_document_schema_ir: (
 		schemaIr: Uint8Array,
 	) => [number, number, number];
+	set_document_context_head_field: (field: number) => void;
 	register_document_projection_plan: (
 		plan: NativeBackboneSimpleDocumentProjectionPlan,
 	) => number;
@@ -424,6 +425,7 @@ type NativePeerbitBackboneHandle = {
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
 		documentProjectionPlan:
 			| NativeBackboneSimpleDocumentProjectionPlan
 			| undefined,
@@ -495,6 +497,7 @@ type NativePeerbitBackboneHandle = {
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
 		documentProjectionPlan:
 			| NativeBackboneSimpleDocumentProjectionPlan
 			| undefined,
@@ -518,6 +521,7 @@ type NativePeerbitBackboneHandle = {
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
 		documentProjectionPlan:
 			| NativeBackboneSimpleDocumentProjectionPlan
 			| undefined,
@@ -556,6 +560,7 @@ type NativePeerbitBackboneHandle = {
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
 		documentProjectionPlan:
 			| NativeBackboneSimpleDocumentProjectionPlan
 			| undefined,
@@ -578,6 +583,7 @@ type NativePeerbitBackboneHandle = {
 		documentKey: string,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
 		documentProjectionPlanId: number,
 		documentProjectionEncodedDocument: Uint8Array,
 		documentProjectionSigner: Uint8Array | undefined,
@@ -614,6 +620,7 @@ type NativePeerbitBackboneHandle = {
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
 		documentProjectionPlan:
 			| NativeBackboneSimpleDocumentProjectionPlan
 			| undefined,
@@ -637,6 +644,7 @@ type NativePeerbitBackboneHandle = {
 		documentKey: string,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
 		documentProjectionPlanId: number,
 		documentProjectionEncodedDocument: Uint8Array,
 		documentProjectionSigner: Uint8Array | undefined,
@@ -691,6 +699,7 @@ type NativePeerbitBackboneHandle = {
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
 		documentProjectionPlan:
 			| NativeBackboneSimpleDocumentProjectionPlan
 			| undefined,
@@ -715,6 +724,7 @@ type NativePeerbitBackboneHandle = {
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
 		documentProjectionPlan:
 			| NativeBackboneSimpleDocumentProjectionPlan
 			| undefined,
@@ -755,6 +765,7 @@ type NativePeerbitBackboneHandle = {
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
 		documentProjectionPlan:
 			| NativeBackboneSimpleDocumentProjectionPlan
 			| undefined,
@@ -795,6 +806,7 @@ type NativePeerbitBackboneHandle = {
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
 		documentProjectionPlan:
 			| NativeBackboneSimpleDocumentProjectionPlan
 			| undefined,
@@ -1018,6 +1030,7 @@ export type NativeBackboneAppendInput = {
 		};
 		existingCreated?: bigint | number | string;
 		byteElementIndexLimit?: number;
+		deleteTrimmedHeads?: boolean;
 	};
 };
 
@@ -1033,6 +1046,7 @@ export type NativeBackboneAppendResult = {
 	assignedToRangeBoundary: boolean;
 	trimmed: NativeBackboneTrimmedEntry[];
 	trimmedHashes?: string[];
+	documentTrimmedHeadsProcessed?: boolean;
 };
 
 export type NativeBackboneStorageAppendResult = {
@@ -1043,6 +1057,7 @@ export type NativeBackboneStorageAppendResult = {
 	assignedToRangeBoundary: boolean;
 	trimmed: NativeBackboneTrimmedEntry[];
 	trimmedHashes?: string[];
+	documentTrimmedHeadsProcessed?: boolean;
 };
 
 export type NativeBackboneAppendPlan = {
@@ -1658,6 +1673,7 @@ const storageAppendResultFromRow = (
 		coordinateRow,
 		trimRows,
 		trimHashRows,
+		documentTrimmedHeadsProcessed,
 	] = row as [
 		unknown[],
 		unknown[] | undefined,
@@ -1666,6 +1682,7 @@ const storageAppendResultFromRow = (
 		unknown[],
 		unknown[],
 		unknown[] | undefined,
+		boolean | undefined,
 	];
 	return {
 		entry: storageFactsEntryFromRow(entryRow),
@@ -1674,6 +1691,7 @@ const storageAppendResultFromRow = (
 		assignedToRangeBoundary,
 		coordinate: appendCoordinatePlanFromRow(resolution, coordinateRow),
 		...trimmedRowsAndHashesResult(trimRows, trimHashRows),
+		documentTrimmedHeadsProcessed,
 	};
 };
 
@@ -1689,6 +1707,7 @@ const committedStorageAppendResultFromRow = (
 		coordinateRow,
 		trimRows,
 		trimHashRows,
+		documentTrimmedHeadsProcessed,
 	] = row as [
 		unknown[],
 		unknown[] | undefined,
@@ -1697,6 +1716,7 @@ const committedStorageAppendResultFromRow = (
 		unknown[],
 		unknown[],
 		unknown[] | undefined,
+		boolean | undefined,
 	];
 	return {
 		entry: committedStorageFactsEntryFromRow(entryRow),
@@ -1705,6 +1725,7 @@ const committedStorageAppendResultFromRow = (
 		assignedToRangeBoundary,
 		coordinate: appendCoordinatePlanFromRow(resolution, coordinateRow),
 		...trimmedRowsAndHashesResult(trimRows, trimHashRows),
+		documentTrimmedHeadsProcessed,
 	};
 };
 
@@ -2149,6 +2170,7 @@ type NativeBackboneDocumentIndexArgs = readonly [
 	Uint8Array,
 	string,
 	number,
+	boolean,
 	NativeBackboneSimpleDocumentProjectionPlan | undefined,
 	Uint8Array | undefined,
 	Uint8Array | undefined,
@@ -2200,6 +2222,7 @@ const nativeDocumentIndexArgs = (
 					? ""
 					: integerString(documentIndex.existingCreated),
 				documentIndex.byteElementIndexLimit ?? 0,
+				documentIndex.deleteTrimmedHeads === true,
 				documentIndex.projection?.plan,
 				documentIndex.projection?.encodedDocument,
 				documentIndex.projection?.signer,
@@ -2422,6 +2445,10 @@ export class NativePeerbitBackbone {
 		const [rootFields, nodeCount, genericNodes] =
 			this.native.configure_document_schema_ir(schemaIr);
 		return { rootFields, nodeCount, genericNodes };
+	}
+
+	setDocumentContextHeadField(field: number): void {
+		this.native.set_document_context_head_field(field);
 	}
 
 	projectDocumentIndexSimple(
@@ -3158,6 +3185,7 @@ export class NativePeerbitBackbone {
 					? ""
 					: integerString(input.documentIndex.existingCreated),
 				input.documentIndex.byteElementIndexLimit ?? 0,
+				input.documentIndex.deleteTrimmedHeads === true,
 				this.documentProjectionPlanId(projection.plan),
 				projection.encodedDocument,
 				projection.signer,
