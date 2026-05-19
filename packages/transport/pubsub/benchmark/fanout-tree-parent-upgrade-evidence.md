@@ -186,6 +186,18 @@ shows a meaningful paired signal: at least `10ms` of promoted-branch or
 second-batch p95 latency gain, or at least `0.1` average tree-level gain. This
 avoids counting near-zero movements as evidence for default enablement.
 
+For local default-readiness validation before pushing, run:
+
+```bash
+pnpm run test:fanout:parent-upgrade
+```
+
+For a heavier multi-seed soak, run:
+
+```bash
+pnpm run test:fanout:parent-upgrade:soak
+```
+
 `ci-multi-live-churn` adds the missing shared-network stress case: several
 writer-root trees publish concurrently while ordinary churn and late root
 connectivity happen in the same process. Its strict gate treats the run as a
