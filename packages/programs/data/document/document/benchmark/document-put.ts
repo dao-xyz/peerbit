@@ -1513,9 +1513,20 @@ const runNativeBackboneCeilingScenario = async (
 		}
 	};
 
-	append(warmupIterations);
 	const profile = emptyProfile();
-	append(iterations, profile);
+	append(warmupIterations);
+	if (profileNativeBackbone) {
+		backbone.resetAppendProfile();
+		backbone.setAppendProfileEnabled(true);
+	}
+	try {
+		append(iterations, profile);
+		if (profileNativeBackbone) {
+			Object.assign(profile, backbone.appendProfile());
+		}
+	} finally {
+		backbone.setAppendProfileEnabled(false);
+	}
 
 	return {
 		name,
