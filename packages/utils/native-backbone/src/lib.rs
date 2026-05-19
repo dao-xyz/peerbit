@@ -1331,166 +1331,6 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn append_plain_no_next_transaction(
-        &mut self,
-        wall_time: u64,
-        logical: u32,
-        gid: String,
-        entry_type: u8,
-        meta_data: JsValue,
-        payload_data: Uint8Array,
-        replicas: usize,
-        role_age_ms: f64,
-        now: String,
-        self_hash: String,
-        self_replicating: bool,
-    ) -> Result<Array, JsValue> {
-        self.append_plain_no_next_transaction_inner(
-            wall_time,
-            logical,
-            gid,
-            entry_type,
-            meta_data,
-            payload_data,
-            replicas,
-            role_age_ms,
-            now,
-            self_hash,
-            self_replicating,
-            None,
-            None,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn append_plain_no_next_transaction_trim(
-        &mut self,
-        wall_time: u64,
-        logical: u32,
-        gid: String,
-        entry_type: u8,
-        meta_data: JsValue,
-        payload_data: Uint8Array,
-        replicas: usize,
-        role_age_ms: f64,
-        now: String,
-        self_hash: String,
-        self_replicating: bool,
-        trim_length_to: usize,
-    ) -> Result<Array, JsValue> {
-        self.append_plain_no_next_transaction_inner(
-            wall_time,
-            logical,
-            gid,
-            entry_type,
-            meta_data,
-            payload_data,
-            replicas,
-            role_age_ms,
-            now,
-            self_hash,
-            self_replicating,
-            Some(trim_length_to),
-            None,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn append_plain_no_next_document_index_transaction(
-        &mut self,
-        wall_time: u64,
-        logical: u32,
-        gid: String,
-        entry_type: u8,
-        meta_data: JsValue,
-        payload_data: Uint8Array,
-        replicas: usize,
-        role_age_ms: f64,
-        now: String,
-        self_hash: String,
-        self_replicating: bool,
-        document_key: String,
-        document_value_prefix_bytes: Vec<u8>,
-        document_existing_created: String,
-        document_byte_element_index_limit: usize,
-        document_projection_plan: JsValue,
-        document_projection_encoded_document: JsValue,
-        document_projection_signer: JsValue,
-    ) -> Result<Array, JsValue> {
-        self.append_plain_no_next_transaction_inner(
-            wall_time,
-            logical,
-            gid,
-            entry_type,
-            meta_data,
-            payload_data,
-            replicas,
-            role_age_ms,
-            now,
-            self_hash,
-            self_replicating,
-            None,
-            Some(document_index_append_commit(
-                document_key,
-                document_value_prefix_bytes,
-                document_existing_created,
-                document_byte_element_index_limit,
-                document_projection_plan,
-                document_projection_encoded_document,
-                document_projection_signer,
-            )?),
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn append_plain_no_next_document_index_transaction_trim(
-        &mut self,
-        wall_time: u64,
-        logical: u32,
-        gid: String,
-        entry_type: u8,
-        meta_data: JsValue,
-        payload_data: Uint8Array,
-        replicas: usize,
-        role_age_ms: f64,
-        now: String,
-        self_hash: String,
-        self_replicating: bool,
-        document_key: String,
-        document_value_prefix_bytes: Vec<u8>,
-        document_existing_created: String,
-        document_byte_element_index_limit: usize,
-        document_projection_plan: JsValue,
-        document_projection_encoded_document: JsValue,
-        document_projection_signer: JsValue,
-        trim_length_to: usize,
-    ) -> Result<Array, JsValue> {
-        self.append_plain_no_next_transaction_inner(
-            wall_time,
-            logical,
-            gid,
-            entry_type,
-            meta_data,
-            payload_data,
-            replicas,
-            role_age_ms,
-            now,
-            self_hash,
-            self_replicating,
-            Some(trim_length_to),
-            Some(document_index_append_commit(
-                document_key,
-                document_value_prefix_bytes,
-                document_existing_created,
-                document_byte_element_index_limit,
-                document_projection_plan,
-                document_projection_encoded_document,
-                document_projection_signer,
-            )?),
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
     pub fn prepare_plain_entry_commit_facts(
         &mut self,
         wall_time: u64,
@@ -2603,109 +2443,6 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn append_plain_no_next_transaction_inner(
-        &mut self,
-        wall_time: u64,
-        logical: u32,
-        gid: String,
-        entry_type: u8,
-        meta_data: JsValue,
-        payload_data: Uint8Array,
-        replicas: usize,
-        role_age_ms: f64,
-        now: String,
-        self_hash: String,
-        self_replicating: bool,
-        trim_length_to: Option<usize>,
-        document_index_commit: Option<DocumentIndexAppendCommit>,
-    ) -> Result<Array, JsValue> {
-        let payload_size = payload_data.length();
-        let (entry_row, trim_rows) = if let Some(trim_length_to) = trim_length_to {
-            let row = self
-                .log
-                .prepare_entry_v0_plain_entry_commit_no_next_facts_trim_and_put_with_builder(
-                    &self.builder,
-                    &mut self.blocks,
-                    wall_time,
-                    logical,
-                    gid.clone(),
-                    entry_type,
-                    meta_data,
-                    payload_data,
-                    trim_length_to,
-                )?;
-            let row = array_from_value(row.into(), "native trim append row")?;
-            let entry_row = array_from_value(row.get(0), "native trim append entry row")?;
-            let trim_rows = array_from_value(row.get(1), "native trim append trim rows")?;
-            (entry_row, trim_rows)
-        } else {
-            let row = self
-                .log
-                .prepare_entry_v0_plain_entry_commit_no_next_facts_and_put_with_builder(
-                    &self.builder,
-                    &mut self.blocks,
-                    wall_time,
-                    logical,
-                    gid.clone(),
-                    entry_type,
-                    meta_data,
-                    payload_data,
-                )?;
-            (row, Array::new())
-        };
-
-        let hash = string_field(&entry_row, 0, "entry hash")?;
-        let digest = bytes_field(&entry_row, 3, "entry hash digest")?;
-        let hash_number = hash_number_string(&self.resolution, &digest)?;
-        let delete_hashes = trim_hashes(&trim_rows)?;
-        let delete_hashes_for_core = delete_hashes.clone();
-        let next_hashes = Array::new();
-        let next_hashes_for_core = next_hashes.clone();
-        let meta_bytes = bytes_field(&entry_row, 1, "entry meta bytes")?;
-        let document_hash = hash.clone();
-        let document_gid = gid.clone();
-        let coordinate_row = self.shared_log.commit_local_append_for_gid_compact(
-            hash,
-            gid,
-            hash_number,
-            next_hashes,
-            delete_hashes,
-            replicas,
-            role_age_ms,
-            now,
-            JsValue::UNDEFINED,
-            true,
-            self_hash,
-            self_replicating,
-            true,
-            true,
-        )?;
-        self.commit_coordinate_core_from_compact_row(
-            coordinate_row.get(3),
-            next_hashes_for_core,
-            delete_hashes_for_core,
-            wall_time,
-            meta_bytes,
-        )?;
-        self.put_document_index_for_append(
-            document_index_commit,
-            wall_time,
-            &document_hash,
-            &document_gid,
-            payload_size,
-        )?;
-
-        let out = Array::new();
-        out.push(&entry_row);
-        out.push(&coordinate_row.get(0));
-        out.push(&coordinate_row.get(1));
-        out.push(&coordinate_row.get(2));
-        out.push(&coordinate_row.get(3));
-        out.push(&trim_rows);
-        Ok(out)
-    }
-
-    #[allow(clippy::too_many_arguments)]
     fn prepare_plain_storage_append_transaction_inner(
         &mut self,
         wall_time: u64,
@@ -3040,15 +2777,6 @@ fn bytes_field(row: &Array, index: u32, label: &str) -> Result<Vec<u8>, JsValue>
         return Err(JsValue::from_str(&format!("Expected {label} bytes")));
     }
     Ok(Uint8Array::new(&value).to_vec())
-}
-
-fn trim_hashes(trim_rows: &Array) -> Result<Array, JsValue> {
-    let hashes = Array::new();
-    for index in 0..trim_rows.length() {
-        let row = array_from_value(trim_rows.get(index), "trim row")?;
-        hashes.push(&JsValue::from_str(&string_field(&row, 0, "trim hash")?));
-    }
-    Ok(hashes)
 }
 
 fn trim_hashes_vec(trim_rows: &Array) -> Result<Vec<String>, JsValue> {
@@ -3881,10 +3609,6 @@ fn decode_error(error: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&error.to_string())
 }
 
-fn hash_number_string(resolution: &str, digest: &[u8]) -> Result<String, JsValue> {
-    Ok(hash_number_u64(resolution, digest)?.to_string())
-}
-
 fn hash_number_u64(resolution: &str, digest: &[u8]) -> Result<u64, JsValue> {
     match resolution {
         "u32" => {
@@ -3905,12 +3629,12 @@ fn hash_number_u64(resolution: &str, digest: &[u8]) -> Result<u64, JsValue> {
 
 #[cfg(test)]
 mod tests {
-    use super::hash_number_string;
+    use super::hash_number_u64;
 
     #[test]
     fn decodes_hash_numbers_like_shared_log_integer_helpers() {
         let bytes = [1, 0, 0, 0, 2, 0, 0, 0];
-        assert_eq!(hash_number_string("u32", &bytes).unwrap(), "1");
-        assert_eq!(hash_number_string("u64", &bytes).unwrap(), "8589934593");
+        assert_eq!(hash_number_u64("u32", &bytes).unwrap(), 1);
+        assert_eq!(hash_number_u64("u64", &bytes).unwrap(), 8_589_934_593);
     }
 }

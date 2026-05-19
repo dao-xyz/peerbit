@@ -398,74 +398,6 @@ type NativePeerbitBackboneHandle = {
 			unknown[],
 		]
 	>;
-	append_plain_no_next_transaction: (
-		wallTime: bigint,
-		logical: number,
-		gid: string,
-		type: number,
-		metaData: Uint8Array | undefined,
-		payloadData: Uint8Array,
-		replicas: number,
-		roleAgeMs: number,
-		now: string,
-		selfHash: string,
-		selfReplicating: boolean,
-	) => unknown[];
-	append_plain_no_next_transaction_trim: (
-		wallTime: bigint,
-		logical: number,
-		gid: string,
-		type: number,
-		metaData: Uint8Array | undefined,
-		payloadData: Uint8Array,
-		replicas: number,
-		roleAgeMs: number,
-		now: string,
-		selfHash: string,
-		selfReplicating: boolean,
-		trimLengthTo: number,
-	) => unknown[];
-	append_plain_no_next_document_index_transaction: (
-		wallTime: bigint,
-		logical: number,
-		gid: string,
-		type: number,
-		metaData: Uint8Array | undefined,
-		payloadData: Uint8Array,
-		replicas: number,
-		roleAgeMs: number,
-		now: string,
-		selfHash: string,
-		selfReplicating: boolean,
-		documentKey: string,
-		documentValuePrefixBytes: Uint8Array,
-		documentExistingCreated: string,
-		documentByteElementIndexLimit: number,
-		documentProjectionPlan: NativeBackboneSimpleDocumentProjectionPlan | undefined,
-		documentProjectionEncodedDocument: Uint8Array | undefined,
-		documentProjectionSigner: Uint8Array | undefined,
-	) => unknown[];
-	append_plain_no_next_document_index_transaction_trim: (
-		wallTime: bigint,
-		logical: number,
-		gid: string,
-		type: number,
-		metaData: Uint8Array | undefined,
-		payloadData: Uint8Array,
-		replicas: number,
-		roleAgeMs: number,
-		now: string,
-		selfHash: string,
-		selfReplicating: boolean,
-		documentKey: string,
-		documentValuePrefixBytes: Uint8Array,
-		documentExistingCreated: string,
-		documentByteElementIndexLimit: number,
-		documentProjectionPlan: NativeBackboneSimpleDocumentProjectionPlan | undefined,
-		documentProjectionEncodedDocument: Uint8Array | undefined,
-		documentProjectionSigner: Uint8Array | undefined,
-		trimLengthTo: number,
-	) => unknown[];
 	prepare_plain_entry_commit_facts: (
 		wallTime: bigint,
 		logical: number,
@@ -1648,37 +1580,6 @@ const metadataEntryFromRow = (row: unknown) => {
 	}
 	const [hash, gid, data] = row as [string, string, Uint8Array | undefined];
 	return { hash, gid, data };
-};
-
-const appendResultFromRow = (
-	resolution: RangeResolution,
-	row: unknown[],
-): NativeBackboneAppendResult => {
-	const [
-		entryRow,
-		leaderRows,
-		isLeader,
-		assignedToRangeBoundary,
-		coordinateRow,
-		trimRows,
-		trimHashRows,
-	] = row as [
-		unknown[],
-		unknown[] | undefined,
-		boolean,
-		boolean,
-		unknown[],
-		unknown[],
-		unknown[] | undefined,
-	];
-	return {
-		entry: committedEntryFromRow(entryRow),
-		leaders: rowsToSamples(leaderRows),
-		isLeader,
-		assignedToRangeBoundary,
-		coordinate: appendCoordinatePlanFromRow(resolution, coordinateRow),
-		...trimmedRowsAndHashesResult(trimRows, trimHashRows),
-	};
 };
 
 const storageAppendResultFromRow = (
@@ -3081,27 +2982,7 @@ export class NativePeerbitBackbone {
 	appendPlainNoNextTransaction(
 		input: NativeBackboneAppendInput,
 	): NativeBackboneAppendResult {
-		const baseArgs = nativeNoNextAppendArgs(input);
-		const documentIndexArgs = nativeDocumentIndexArgs(input.documentIndex);
-		const row =
-			input.trimLengthTo == null
-				? documentIndexArgs
-					? this.native.append_plain_no_next_document_index_transaction(
-							...baseArgs,
-							...documentIndexArgs,
-						)
-					: this.native.append_plain_no_next_transaction(...baseArgs)
-				: documentIndexArgs
-					? this.native.append_plain_no_next_document_index_transaction_trim(
-							...baseArgs,
-							...documentIndexArgs,
-							input.trimLengthTo,
-						)
-					: this.native.append_plain_no_next_transaction_trim(
-							...baseArgs,
-							input.trimLengthTo,
-						);
-		return appendResultFromRow(this.resolution, row);
+		return this.preparePlainCommittedNoNextStorageAppendTransaction(input);
 	}
 
 	preparePlainNoNextStorageAppendTransaction(
