@@ -457,6 +457,69 @@ describe("native peerbit backbone", () => {
 		expect(backbone.documentValueBytes("doc-1")).to.exist;
 	});
 
+	it("returns compact committed no-next document index facts", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		backbone.configureDocumentSchemaIr(contextOnlySchema());
+		backbone.setDocumentContextHeadField(3);
+
+		const first =
+			backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
+				{
+					wallTime: 10n,
+					logical: 1,
+					gid: "gid-doc-index-compact",
+					payloadData: new Uint8Array([1, 2, 3]),
+					replicas: 1,
+					selfHash: "peer",
+					documentIndex: {
+						key: "doc-compact-1",
+						valuePrefixBytes: new Uint8Array(0),
+					},
+				},
+			);
+		const second =
+			backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
+				{
+					wallTime: 11n,
+					logical: 2,
+					gid: "gid-doc-index-compact",
+					payloadData: new Uint8Array([4, 5, 6]),
+					replicas: 1,
+					selfHash: "peer",
+					trimLengthTo: 1,
+					documentIndex: {
+						key: "doc-compact-2",
+						valuePrefixBytes: new Uint8Array(0),
+						deleteTrimmedHeads: true,
+					},
+				},
+			);
+
+		expect(first.entry.bytes).equal(undefined);
+		expect(first.entry.next).to.deep.equal([]);
+		expect(first.entry.hashDigestBytes).to.have.length.greaterThan(0);
+		expect(second.entry.bytes).equal(undefined);
+		expect(second.entry.next).to.deep.equal([]);
+		expect(second.trimmed).to.deep.equal([]);
+		expect(second.trimmedHashes).to.deep.equal([first.entry.hash]);
+		expect(second.documentTrimmedHeadsProcessed).equal(true);
+		expect(backbone.hasLogEntry(first.entry.hash)).equal(false);
+		expect(backbone.hasBlock(first.entry.hash)).equal(false);
+		expect(backbone.hasLogEntry(second.entry.hash)).equal(true);
+		expect(backbone.hasBlock(second.entry.hash)).equal(true);
+		expect(backbone.documentValueLength).to.equal(1);
+		expect(backbone.documentExactStringFirstKey(3, second.entry.hash)).to.equal(
+			"doc-compact-2",
+		);
+		expect(
+			backbone.documentExactStringFirstKey(4, "gid-doc-index-compact"),
+		).to.equal("doc-compact-2");
+	});
+
 	it("coalesces trim deletes with shared-log coordinate state", async () => {
 		const backbone = await createNativePeerbitBackbone({
 			clockId: publicKey,

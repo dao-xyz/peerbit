@@ -1010,6 +1010,10 @@ describe("index", () => {
 					backbone,
 					"preparePlainCommittedNoNextStorageAppendTransaction",
 				);
+				const backboneCompactStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction",
+				);
 				const backboneDocumentHeadLookupSpy = sinon.spy(
 					backbone,
 					"documentExactStringFirstKey",
@@ -1052,27 +1056,33 @@ describe("index", () => {
 						target: "none",
 					});
 
-					expect(backboneStorageTransactionSpy.callCount).equal(2);
+					expect(backboneStorageTransactionSpy.callCount).equal(0);
+					expect(backboneCompactStorageTransactionSpy.callCount).equal(2);
 					expect(documentStoredIdentityPutSpy.callCount).equal(0);
 					expect(backendStoredContextPutSpy.callCount).equal(0);
 					expect(backboneDocumentPutSpy.callCount).equal(0);
 					expect(backendIndex.native.len()).equal(0);
 					expect(backendIndex.getSize()).equal(1);
-					expect(backboneStorageTransactionSpy.firstCall.args[0].documentIndex)
-						.to.exist;
-					expect(backboneStorageTransactionSpy.secondCall.args[0].documentIndex)
-						.to.exist;
 					expect(
-						backboneStorageTransactionSpy.firstCall.args[0].next,
+						backboneCompactStorageTransactionSpy.firstCall.args[0]
+							.documentIndex,
+					).to.exist;
+					expect(
+						backboneCompactStorageTransactionSpy.secondCall.args[0]
+							.documentIndex,
+					).to.exist;
+					expect(
+						backboneCompactStorageTransactionSpy.firstCall.args[0].next,
 					).to.deep.equal([]);
 					const firstEntryHash =
-						backboneStorageTransactionSpy.firstCall.returnValue.entry.hash;
+						backboneCompactStorageTransactionSpy.firstCall.returnValue.entry
+							.hash;
 					expect(
-						backboneStorageTransactionSpy.secondCall.args[0].documentIndex
-							.deleteTrimmedHeads,
+						backboneCompactStorageTransactionSpy.secondCall.args[0]
+							.documentIndex.deleteTrimmedHeads,
 					).equal(true);
 					expect(
-						backboneStorageTransactionSpy.secondCall.returnValue
+						backboneCompactStorageTransactionSpy.secondCall.returnValue
 							.documentTrimmedHeadsProcessed,
 					).equal(true);
 					expect(
@@ -1258,6 +1268,10 @@ describe("index", () => {
 					backbone,
 					"preparePlainCommittedNoNextStorageAppendTransaction",
 				);
+				const backboneCompactStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction",
+				);
 				const backboneCoordinatePersistSpy = sinon.spy(
 					sharedLog,
 					"persistBackboneCoordinateFieldsNativeTransaction",
@@ -1297,7 +1311,8 @@ describe("index", () => {
 						},
 					);
 
-					expect(backboneNoNextStorageTransactionSpy.callCount).equal(1);
+					expect(backboneNoNextStorageTransactionSpy.callCount).equal(0);
+					expect(backboneCompactStorageTransactionSpy.callCount).equal(1);
 					expect(backboneStorageTransactionSpy.callCount).equal(1);
 					expect(documentStoredIdentityPutSpy.callCount).equal(0);
 					expect(backendStoredContextPutSpy.callCount).equal(0);
@@ -1305,12 +1320,13 @@ describe("index", () => {
 					expect(backendIndex.native.len()).equal(0);
 					expect(backendIndex.getSize()).equal(1);
 					expect(
-						backboneNoNextStorageTransactionSpy.firstCall.args[0].documentIndex,
+						backboneCompactStorageTransactionSpy.firstCall.args[0]
+							.documentIndex,
 					).to.exist;
 					expect(backboneStorageTransactionSpy.firstCall.args[0].documentIndex)
 						.to.exist;
 					expect(
-						backboneNoNextStorageTransactionSpy.firstCall.args[0].next,
+						backboneCompactStorageTransactionSpy.firstCall.args[0].next,
 					).to.deep.equal([]);
 					expect(
 						backboneStorageTransactionSpy.firstCall.args[0].next,
@@ -1325,6 +1341,7 @@ describe("index", () => {
 					backboneDocumentPutSpy.restore();
 					genericCoordinatePersistSpy.restore();
 					backboneCoordinatePersistSpy.restore();
+					backboneCompactStorageTransactionSpy.restore();
 					backboneNoNextStorageTransactionSpy.restore();
 					backboneStorageTransactionSpy.restore();
 					await store.close();

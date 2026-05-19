@@ -1220,6 +1220,15 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 					],
 				),
 				patchSyncMethod(
+					(store.docs.log as any)._nativeBackbone ?? {},
+					"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction",
+					profile,
+					[
+						"nativeBackbonePrepareStorageAppendMs",
+						"nativeBackbonePrepareCommittedNoNextStorageAppendMs",
+					],
+				),
+				patchSyncMethod(
 					(store.docs.log as any)._nativeBackbone?.graph ?? {},
 					"prepareEntryV0PlainEntryCommit",
 					profile,

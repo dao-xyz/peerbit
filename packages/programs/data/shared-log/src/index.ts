@@ -5199,9 +5199,18 @@ export class SharedLog<
 				backboneAppend =
 					next.length === 0
 						? commitBlocksInBackbone
-							? backbone.preparePlainCommittedNoNextStorageAppendTransaction(
-									appendInputWithDocumentIndex,
-								)
+							? nativeBackboneDocumentIndex &&
+								!nativeBackboneDocumentIndex.projection &&
+								properties?.resolveTrimmedEntries === false
+								? backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
+										{
+											...appendInput,
+											documentIndex: nativeBackboneDocumentIndex,
+										},
+									)
+								: backbone.preparePlainCommittedNoNextStorageAppendTransaction(
+										appendInputWithDocumentIndex,
+									)
 							: backbone.preparePlainNoNextStorageAppendTransaction(
 									appendInputWithDocumentIndex,
 								)
@@ -5232,7 +5241,8 @@ export class SharedLog<
 				};
 			};
 			const hasKnownNoNext =
-				appendOptions.meta?.next != null && appendOptions.meta.next.length === 0;
+				appendOptions.meta?.next != null &&
+				appendOptions.meta.next.length === 0;
 			const appendGenericNativeCommit = () =>
 				this.log.appendLocallyPreparedNativeCommitOnly(
 					undefined as T,
@@ -5263,10 +5273,12 @@ export class SharedLog<
 				if (!prepared || !backboneAppend) {
 					return undefined;
 				}
-				const coordinateFields = this.createCoordinateFieldsFromNativePlanFacts({
-					appendFacts: prepared.appendFacts,
-					plan: backboneAppend.coordinate,
-				});
+				const coordinateFields = this.createCoordinateFieldsFromNativePlanFacts(
+					{
+						appendFacts: prepared.appendFacts,
+						plan: backboneAppend.coordinate,
+					},
+				);
 				if (!coordinateFields) {
 					throw new Error(
 						"Native backbone append transaction returned mismatched coordinate facts",
@@ -5367,15 +5379,13 @@ export class SharedLog<
 								announced.catch(() => undefined);
 							}
 						}
-						const delayAdaptiveRebalance =
-							this.shouldDelayAdaptiveRebalance();
+						const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
 						if (!backboneAppend!.isLeader && !delayAdaptiveRebalance) {
 							const leaders = backboneAppend!.leaders;
 							if (leaders) {
-								const pruneEntry =
-									this.materializePreparedCoordinateEntry(
-										getPreparedCoordinate(),
-									);
+								const pruneEntry = this.materializePreparedCoordinateEntry(
+									getPreparedCoordinate(),
+								);
 								this.pruneDebouncedFnAddIfNotKeeping({
 									key: pruneEntry.hash,
 									value: { entry: pruneEntry, leaders },

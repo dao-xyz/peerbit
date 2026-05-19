@@ -588,6 +588,25 @@ type NativePeerbitBackboneHandle = {
 		documentProjectionEncodedDocument: Uint8Array,
 		documentProjectionSigner: Uint8Array | undefined,
 	) => unknown[];
+	prepare_plain_committed_no_next_storage_append_document_index_compact_transaction: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKey: string,
+		documentValuePrefixBytes: Uint8Array,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		trimLengthTo: number | undefined,
+	) => unknown[];
 	prepare_plain_committed_no_next_storage_append_transaction_trim: (
 		wallTime: bigint,
 		logical: number,
@@ -1747,6 +1766,51 @@ const committedStorageAppendResultFromRow = (
 		assignedToRangeBoundary,
 		coordinate: appendCoordinatePlanFromRow(resolution, coordinateRow),
 		...trimmedRowsAndHashesResult(trimRows, trimHashRows),
+		documentTrimmedHeadsProcessed,
+	};
+};
+
+const compactCommittedNoNextStorageAppendResultFromRow = (
+	resolution: RangeResolution,
+	row: unknown[],
+): NativeBackboneAppendResult => {
+	const [
+		hash,
+		byteLength,
+		metaBytes,
+		hashDigestBytes,
+		coordinateRow,
+		leaderRows,
+		isLeader,
+		trimHashRows,
+		documentTrimmedHeadsProcessed,
+	] = row as [
+		string,
+		number,
+		Uint8Array | undefined,
+		Uint8Array | undefined,
+		unknown[],
+		unknown[] | undefined,
+		boolean,
+		string[] | undefined,
+		boolean | undefined,
+	];
+	const coordinate = appendCoordinatePlanFromRow(resolution, coordinateRow);
+	return {
+		entry: {
+			cid: hash,
+			hash,
+			next: [],
+			metaBytes,
+			byteLength,
+			hashDigestBytes,
+		},
+		leaders: rowsToSamples(leaderRows),
+		isLeader,
+		assignedToRangeBoundary: coordinate.assignedToRangeBoundary,
+		coordinate,
+		trimmed: [],
+		trimmedHashes: trimHashRows ?? [],
 		documentTrimmedHeadsProcessed,
 	};
 };
@@ -3247,6 +3311,31 @@ export class NativePeerbitBackbone {
 							input.trimLengthTo,
 						);
 		return committedStorageAppendResultFromRow(this.resolution, row);
+	}
+
+	preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
+		input: NativeBackboneStorageAppendInput,
+	): NativeBackboneAppendResult {
+		const documentIndex = input.documentIndex;
+		if (!documentIndex || documentIndex.projection) {
+			return this.preparePlainCommittedNoNextStorageAppendTransaction(input);
+		}
+		const row =
+			this.native.prepare_plain_committed_no_next_storage_append_document_index_compact_transaction(
+				...nativeNoNextAppendArgs(input),
+				documentIndex.key,
+				documentIndex.valuePrefixBytes ?? EMPTY_UINT8_ARRAY,
+				documentIndex.existingCreated == null
+					? ""
+					: integerString(documentIndex.existingCreated),
+				documentIndex.byteElementIndexLimit ?? 0,
+				documentIndex.deleteTrimmedHeads === true,
+				input.trimLengthTo,
+			);
+		return compactCommittedNoNextStorageAppendResultFromRow(
+			this.resolution,
+			row,
+		);
 	}
 
 	benchmarkPlainCommittedNoNextStorageAppendTransactionLoop(input: {

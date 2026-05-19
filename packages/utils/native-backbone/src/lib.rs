@@ -2136,6 +2136,143 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_committed_no_next_storage_append_document_index_compact_transaction(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        document_key: String,
+        document_value_prefix_bytes: Vec<u8>,
+        document_existing_created: String,
+        document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
+        trim_length_to: JsValue,
+    ) -> Result<Array, JsValue> {
+        let trim_length_to = optional_usize_from_js(trim_length_to, "trimLengthTo")?;
+        let profile_enabled = self.append_profile_enabled;
+        let storage_append_started = profile_enabled.then(js_sys::Date::now);
+        let payload_size = payload_data.length();
+        let document_index_commit = document_index_append_commit(
+            document_key,
+            document_value_prefix_bytes,
+            document_existing_created,
+            document_byte_element_index_limit,
+            document_delete_trimmed_heads,
+            JsValue::UNDEFINED,
+            JsValue::UNDEFINED,
+            JsValue::UNDEFINED,
+        )?;
+
+        let input_copy_started = profile_enabled.then(js_sys::Date::now);
+        let meta_data = optional_bytes_from_js(meta_data);
+        let payload_data = payload_data.to_vec();
+        if let Some(started) = input_copy_started {
+            self.append_profile.input_copy_ms += js_sys::Date::now() - started;
+        }
+
+        let log_started = profile_enabled.then(js_sys::Date::now);
+        let mut log_profile = NativeLogAppendProfile::default();
+        let (entry_facts, trim_hashes) = self
+            .log
+            .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_trim_hashes(
+                &self.builder,
+                &mut self.blocks,
+                wall_time,
+                logical,
+                gid.clone(),
+                Vec::new(),
+                entry_type,
+                meta_data,
+                payload_data,
+                trim_length_to,
+                profile_enabled.then_some(&mut log_profile),
+            )?;
+        if let Some(started) = log_started {
+            self.append_profile.log_total_ms += js_sys::Date::now() - started;
+            self.append_profile.add_log_profile(&log_profile);
+        }
+
+        let hash_number_started = profile_enabled.then(js_sys::Date::now);
+        let hash_number = hash_number_u64(&self.resolution, &entry_facts.hash_digest_bytes)?;
+        if let Some(started) = hash_number_started {
+            self.append_profile.hash_number_ms += js_sys::Date::now() - started;
+        }
+
+        let coordinate_plan_started = profile_enabled.then(js_sys::Date::now);
+        let coordinate_facts = commit_local_append_for_gid_compact_core(
+            &mut self.shared_log,
+            entry_facts.hash.clone(),
+            gid.clone(),
+            hash_number,
+            Vec::new(),
+            trim_hashes.clone(),
+            replicas,
+            role_age_ms,
+            &now,
+            &self_hash,
+            self_replicating,
+            true,
+            true,
+        )?;
+        if let Some(started) = coordinate_plan_started {
+            self.append_profile.coordinate_plan_ms += js_sys::Date::now() - started;
+        }
+
+        let coordinate_core_started = profile_enabled.then(js_sys::Date::now);
+        self.commit_coordinate_core_from_compact_facts(
+            &coordinate_facts,
+            Vec::new(),
+            trim_hashes.clone(),
+            wall_time,
+            entry_facts.meta_bytes.clone(),
+        );
+        if let Some(started) = coordinate_core_started {
+            self.append_profile.coordinate_core_ms += js_sys::Date::now() - started;
+        }
+
+        let document_index_started = profile_enabled.then(js_sys::Date::now);
+        self.put_document_index_for_append(
+            Some(document_index_commit),
+            wall_time,
+            &entry_facts.hash,
+            &gid,
+            payload_size,
+        )?;
+        let document_trimmed_heads_processed =
+            document_delete_trimmed_heads && self.delete_documents_by_context_heads(&trim_hashes);
+        if let Some(started) = document_index_started {
+            self.append_profile.document_index_commit_ms += js_sys::Date::now() - started;
+        }
+
+        let result_row_started = profile_enabled.then(js_sys::Date::now);
+        let out = Array::new();
+        out.push(&JsValue::from_str(&entry_facts.hash));
+        out.push(&JsValue::from_f64(entry_facts.byte_length as f64));
+        out.push(&Uint8Array::from(entry_facts.meta_bytes.as_slice()));
+        out.push(&Uint8Array::from(entry_facts.hash_digest_bytes.as_slice()));
+        out.push(&coordinate_plan_to_row(&self.resolution, &coordinate_facts));
+        out.push(&leader_samples_to_optional_rows(&coordinate_facts.leaders));
+        out.push(&JsValue::from_bool(coordinate_facts.is_leader));
+        out.push(&strings_to_array(trim_hashes));
+        out.push(&JsValue::from_bool(document_trimmed_heads_processed));
+        if let Some(started) = result_row_started {
+            self.append_profile.result_row_ms += js_sys::Date::now() - started;
+        }
+        if let Some(started) = storage_append_started {
+            self.append_profile.storage_append_inner_ms += js_sys::Date::now() - started;
+        }
+        Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare_plain_storage_append_transaction(
         &mut self,
         wall_time: u64,
