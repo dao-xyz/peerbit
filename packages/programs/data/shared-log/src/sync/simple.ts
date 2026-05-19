@@ -667,9 +667,19 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		entries: Map<string, SyncEntryCoordinates<R>>;
 		targets: string[];
 	}): Promise<void> {
+		await this.onMaybeMissingHashes({
+			hashes: this.getPrioritizedHashes(properties.entries),
+			targets: properties.targets,
+		});
+	}
+
+	async onMaybeMissingHashes(properties: {
+		hashes: Iterable<string>;
+		targets: string[];
+	}): Promise<void> {
 		const profile = this.syncOptions?.profile;
 		const startedAt = syncProfileStart(profile);
-		const hashes = this.getPrioritizedHashes(properties.entries);
+		const hashes = [...properties.hashes];
 		const chunks = this.chunk(hashes, this.maxHashesPerMessage);
 		try {
 			await chunks.reduce(

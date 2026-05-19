@@ -620,7 +620,8 @@ const buildEncoderOrDecoderFromRange = async <
 	if (resolved) {
 		source = "native";
 		hashNumbers =
-			typeof BigUint64Array !== "undefined" && resolved instanceof BigUint64Array
+			typeof BigUint64Array !== "undefined" &&
+			resolved instanceof BigUint64Array
 				? resolved
 				: [...resolved];
 	} else {
@@ -714,7 +715,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	outgoingSyncProcesses: Map<
 		string,
 		{
-			outgoing: Map<string, SyncEntryCoordinates<D>>;
+			outgoingHashes: string[];
 			encoder: EncoderWrapper;
 			timeout: ReturnType<typeof setTimeout>;
 			refresh: () => void;
@@ -1170,6 +1171,12 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			return;
 		}
 
+		const outgoingHashes =
+			priorityFn == null
+				? [...properties.entries.keys()]
+				: this.getPrioritizedEntries(properties.entries).map(
+						(entry) => entry.hash,
+					);
 		await ribltReady;
 
 		// For smaller sets, the original `sqrt(n)` heuristic can occasionally under-provision
@@ -1265,7 +1272,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				return symbols;
 			},
 			free: clear,
-			outgoing: properties.entries,
+			outgoingHashes,
 		};
 
 		this.outgoingSyncProcesses.set(syncId, obj);
@@ -1639,8 +1646,8 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			if (!p) {
 				return true;
 			}
-			await this.simple.onMaybeMissingEntries({
-				entries: p.outgoing,
+			await this.simple.onMaybeMissingHashes({
+				hashes: p.outgoingHashes,
 				targets: [context.from!.hashcode()],
 			});
 			return true;
