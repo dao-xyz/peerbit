@@ -1598,25 +1598,39 @@ export class Documents<
 		},
 	): DocumentAppendCommitFacts<T, I> {
 		const append = appended.appendCommit;
-		const modified = toContextBigInt(contextInput.modified);
-		const existingCreated =
-			contextInput.existingCreated == null
-				? undefined
-				: toContextBigInt(contextInput.existingCreated);
-		const contextValues = {
-			created:
-				existingCreated == null || existingCreated === 0n
-					? modified
-					: existingCreated,
-			modified,
-			head: contextInput.head,
-			gid: contextInput.gid,
-			size: contextInput.size,
-		};
+		let contextValues:
+			| {
+					created: bigint;
+					modified: bigint;
+					head: string;
+					gid: string;
+					size: number;
+			  }
+			| undefined;
 		let context: Context | undefined;
 		let contextBytes: Uint8Array | undefined;
 		let contextualEncodedValueParts: ContextualEncodedValueParts | undefined;
-		const getContext = () => (context ??= new Context(contextValues));
+		const getContextValues = () => {
+			if (contextValues) {
+				return contextValues;
+			}
+			const modified = toContextBigInt(contextInput.modified);
+			const existingCreated =
+				contextInput.existingCreated == null
+					? undefined
+					: toContextBigInt(contextInput.existingCreated);
+			return (contextValues = {
+				created:
+					existingCreated == null || existingCreated === 0n
+						? modified
+						: existingCreated,
+				modified,
+				head: contextInput.head,
+				gid: contextInput.gid,
+				size: contextInput.size,
+			});
+		};
+		const getContext = () => (context ??= new Context(getContextValues()));
 		const getContextBytes = () =>
 			(contextBytes ??= encodeDocumentContextSuffix(getContext()));
 		return {
