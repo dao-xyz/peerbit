@@ -443,6 +443,13 @@ type WasmModule = {
 		iterations: number,
 		payloadData: Uint8Array,
 	) => number[];
+	benchmark_plain_entry_v0_crypto: (
+		clockId: Uint8Array,
+		privateKey: Uint8Array,
+		publicKey: Uint8Array,
+		iterations: number,
+		payloadData: Uint8Array,
+	) => number[];
 	prepare_entry_v0_plain_chain: (
 		clockId: Uint8Array,
 		privateKey: Uint8Array,
@@ -1975,6 +1982,18 @@ export type PlainEntryV0CoreBenchmark = {
 	hashBytesTotal: number;
 };
 
+export type PlainEntryV0CryptoBenchmark = {
+	totalMs: number;
+	signableBytes: number;
+	storageBytes: number;
+	signMs: number;
+	verifyMs: number;
+	sha256Ms: number;
+	cidStringMs: number;
+	checksum: number;
+	cidLenTotal: number;
+};
+
 const plainEntryV0CoreBenchmarkFromRow = (
 	row: number[],
 ): PlainEntryV0CoreBenchmark => ({
@@ -2029,6 +2048,34 @@ export const benchmarkPlainEntryV0DigestKeyCore = async (input: {
 		input.payloadData,
 	);
 	return plainEntryV0CoreBenchmarkFromRow(row);
+};
+
+export const benchmarkPlainEntryV0Crypto = async (input: {
+	clockId: Uint8Array;
+	privateKey: Uint8Array;
+	publicKey: Uint8Array;
+	iterations: number;
+	payloadData: Uint8Array;
+}): Promise<PlainEntryV0CryptoBenchmark> => {
+	const wasm = await loadWasm();
+	const row = wasm.benchmark_plain_entry_v0_crypto(
+		input.clockId,
+		input.privateKey,
+		input.publicKey,
+		input.iterations,
+		input.payloadData,
+	);
+	return {
+		totalMs: row[0] ?? 0,
+		signableBytes: row[1] ?? 0,
+		storageBytes: row[2] ?? 0,
+		signMs: row[3] ?? 0,
+		verifyMs: row[4] ?? 0,
+		sha256Ms: row[5] ?? 0,
+		cidStringMs: row[6] ?? 0,
+		checksum: row[7] ?? 0,
+		cidLenTotal: row[8] ?? 0,
+	};
 };
 
 export const prepareEntryV0PlainChain = async (

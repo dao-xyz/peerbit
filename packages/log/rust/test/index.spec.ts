@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import {
 	type NativeLogEntry,
+	benchmarkPlainEntryV0Crypto,
 	calculateRawCidV1,
 	createLogGraphIndex,
 	createNativeLogBlockStore,
@@ -429,6 +430,27 @@ describe("native EntryV0 encoding", () => {
 				"e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
 			),
 		]);
+	});
+
+	it("benchmarks Ed25519 and CID primitives over EntryV0 signable bytes", async () => {
+		const result = await benchmarkPlainEntryV0Crypto({
+			clockId: fromHex(
+				"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+			),
+			privateKey: fromHex(
+				"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+			),
+			publicKey: fromHex(
+				"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+			),
+			iterations: 3,
+			payloadData: bytes(32, 7),
+		});
+
+		expect(result.signableBytes).to.be.greaterThan(0);
+		expect(result.storageBytes).to.be.greaterThan(result.signableBytes);
+		expect(result.cidLenTotal).to.be.greaterThan(0);
+		expect(Number.isFinite(result.checksum)).to.equal(true);
 	});
 
 	it("matches TS/Borsh signable, storage, and raw CID bytes", async () => {

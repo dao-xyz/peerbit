@@ -1,4 +1,4 @@
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier};
 use indexmap::{IndexMap, IndexSet};
 use js_sys::{Array, BigUint64Array, Uint32Array, Uint8Array};
 use sha2::{Digest, Sha256};
@@ -3037,6 +3037,78 @@ pub fn benchmark_plain_entry_v0_digest_key_core(
     row.push(&JsValue::from_f64(profile.index_entry_ms));
     row.push(&JsValue::from_f64(storage_bytes_total as f64));
     row.push(&JsValue::from_f64(hash_bytes_total as f64));
+    Ok(row)
+}
+
+#[wasm_bindgen]
+pub fn benchmark_plain_entry_v0_crypto(
+    clock_id: Uint8Array,
+    private_key: Uint8Array,
+    public_key: Uint8Array,
+    iterations: u32,
+    payload_data: Uint8Array,
+) -> Result<Array, JsValue> {
+    let clock_id = clock_id.to_vec();
+    let private_key = private_key.to_vec();
+    let public_key = public_key.to_vec();
+    let signing_key = validate_ed25519_keypair(&private_key, &public_key)?;
+    let verifying_key = signing_key.verifying_key();
+    let payload_data = payload_data.to_vec();
+    let gid = String::from("native-log-crypto-ceiling");
+    let meta = encode_meta_parts(&clock_id, 1_700_000_000_000, 0, &gid, &[], 0, None);
+    let signable = encode_entry_v0_payload_data_unsigned_for_signing(&meta, &payload_data);
+    let mut checksum = 0u32;
+    let mut signature_bytes = [0u8; 64];
+    let started = js_sys::Date::now();
+
+    let sign_started = js_sys::Date::now();
+    for i in 0..iterations {
+        signature_bytes = sign_ed25519_with_key(&signing_key, &signable);
+        checksum ^= signature_bytes[(i as usize) & 63] as u32;
+    }
+    let sign_ms = js_sys::Date::now() - sign_started;
+
+    let signature = Signature::from_bytes(&signature_bytes);
+    let verify_started = js_sys::Date::now();
+    for i in 0..iterations {
+        verifying_key
+            .verify(&signable, &signature)
+            .map_err(|_| JsValue::from_str("Ed25519 signature verification failed"))?;
+        checksum ^= signature_bytes[((i as usize) + 17) & 63] as u32;
+    }
+    let verify_ms = js_sys::Date::now() - verify_started;
+
+    let signature_with_key = encode_signature_with_key_parts(&signature_bytes, &public_key, 0);
+    let storage = signable_entry_to_signed_storage(signable.clone(), &signature_with_key);
+    let mut digest_bytes = [0u8; 32];
+    let sha_started = js_sys::Date::now();
+    for i in 0..iterations {
+        let digest = Sha256::digest(&storage);
+        digest_bytes = digest.into();
+        checksum ^= digest_bytes[(i as usize) & 31] as u32;
+    }
+    let sha256_ms = js_sys::Date::now() - sha_started;
+
+    let mut cid_len_total = 0usize;
+    let cid_string_started = js_sys::Date::now();
+    for i in 0..iterations {
+        let cid = raw_cid_v1_string_from_digest(&digest_bytes);
+        cid_len_total += cid.len();
+        checksum ^= cid.as_bytes()[(i as usize) % cid.len()] as u32;
+    }
+    let cid_string_ms = js_sys::Date::now() - cid_string_started;
+
+    let total_ms = js_sys::Date::now() - started;
+    let row = Array::new();
+    row.push(&JsValue::from_f64(total_ms));
+    row.push(&JsValue::from_f64(signable.len() as f64));
+    row.push(&JsValue::from_f64(storage.len() as f64));
+    row.push(&JsValue::from_f64(sign_ms));
+    row.push(&JsValue::from_f64(verify_ms));
+    row.push(&JsValue::from_f64(sha256_ms));
+    row.push(&JsValue::from_f64(cid_string_ms));
+    row.push(&JsValue::from_f64(checksum as f64));
+    row.push(&JsValue::from_f64(cid_len_total as f64));
     Ok(row)
 }
 

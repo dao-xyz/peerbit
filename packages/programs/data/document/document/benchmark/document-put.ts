@@ -4,6 +4,7 @@ import { create as createSqliteIndexer } from "@peerbit/indexer-sqlite3";
 import { Log } from "@peerbit/log";
 import {
 	benchmarkPlainEntryV0Core,
+	benchmarkPlainEntryV0Crypto,
 	benchmarkPlainEntryV0DigestKeyCore,
 } from "@peerbit/log-rust";
 import {
@@ -31,7 +32,7 @@ import {
 // - DOC_BYTES=1200
 // - DOC_COORDINATE_WAL_FLUSH_BYTES=1048576
 // - DOC_COORDINATE_WAL_FLUSH_INTERVAL_MS unset by default
-// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,rust-peerbit-backbone-local-document-index,rust-peerbit-backbone-coordinate-wal,rust-peerbit-backbone-coordinate-wal-buffered,native-ceiling,native-log-core-ceiling,native-log-digest-key-core-ceiling,native-log-ceiling,native-backbone-ceiling,native-backbone-storage-ceiling
+// - DOC_SCENARIOS=compat-path,hybrid-anystore,simple-index,sqlite-index,native-graph,native-block-store,rust-peerbit,rust-peerbit-local,rust-peerbit-transient-index,rust-peerbit-backbone-local,rust-peerbit-backbone-local-document-index,rust-peerbit-backbone-coordinate-wal,rust-peerbit-backbone-coordinate-wal-buffered,native-ceiling,native-log-core-ceiling,native-log-digest-key-core-ceiling,native-log-crypto-ceiling,native-log-ceiling,native-backbone-ceiling,native-backbone-storage-ceiling
 //   Add "-nonunique" to any scenario name to use default update-safe put semantics with new ids.
 //   Add "-update" to any scenario name to repeatedly update one document id.
 //   Add "-local" to a rust-peerbit scenario to disable replication and default trim.
@@ -264,6 +265,10 @@ type Profile = {
 	nativeBackboneDocumentIndexPutMs: number;
 	nativeBackboneDocumentValuePutMs: number;
 	nativeBackboneResultRowMs: number;
+	nativeLogCryptoVerifyMs: number;
+	nativeLogCryptoSignableBytes: number;
+	nativeLogCryptoStorageBytes: number;
+	nativeLogCryptoChecksum: number;
 	nativeGraphPrepareEntryCommitMs: number;
 	nativeSharedLogCommitCoordinatesMs: number;
 	nativeBackboneCommitCoordinatesMs: number;
@@ -351,6 +356,10 @@ const deepProfileKeys = new Set<keyof Profile>([
 	"nativeBackboneDocumentIndexPutMs",
 	"nativeBackboneDocumentValuePutMs",
 	"nativeBackboneResultRowMs",
+	"nativeLogCryptoVerifyMs",
+	"nativeLogCryptoSignableBytes",
+	"nativeLogCryptoStorageBytes",
+	"nativeLogCryptoChecksum",
 	"nativeGraphPrepareEntryCommitMs",
 	"nativeSharedLogCommitCoordinatesMs",
 	"nativeBackboneCommitCoordinatesMs",
@@ -476,6 +485,10 @@ const emptyProfile = (): Profile => ({
 	nativeBackboneDocumentIndexPutMs: 0,
 	nativeBackboneDocumentValuePutMs: 0,
 	nativeBackboneResultRowMs: 0,
+	nativeLogCryptoVerifyMs: 0,
+	nativeLogCryptoSignableBytes: 0,
+	nativeLogCryptoStorageBytes: 0,
+	nativeLogCryptoChecksum: 0,
 	nativeGraphPrepareEntryCommitMs: 0,
 	nativeSharedLogCommitCoordinatesMs: 0,
 	nativeBackboneCommitCoordinatesMs: 0,
@@ -1527,6 +1540,49 @@ const runNativeLogCoreCeilingScenario = async (
 	} as BenchRow;
 };
 
+const runNativeLogCryptoCeilingScenario = async (
+	name: string,
+): Promise<BenchRow> => {
+	await benchmarkPlainEntryV0Crypto({
+		clockId: nativeBackbonePublicKey,
+		privateKey: nativeBackbonePrivateKey,
+		publicKey: nativeBackbonePublicKey,
+		iterations: warmupIterations,
+		payloadData: payload,
+	});
+
+	const profile = emptyProfile();
+	const result = await benchmarkPlainEntryV0Crypto({
+		clockId: nativeBackbonePublicKey,
+		privateKey: nativeBackbonePrivateKey,
+		publicKey: nativeBackbonePublicKey,
+		iterations,
+		payloadData: payload,
+	});
+	profile.totalPutMs = result.signMs + result.sha256Ms + result.cidStringMs;
+	profile.nativeBackboneLogSignMs = result.signMs;
+	profile.nativeLogCryptoVerifyMs = result.verifyMs;
+	profile.nativeBackboneLogCidHashMs = result.sha256Ms;
+	profile.nativeBackboneLogCidStringMs = result.cidStringMs;
+	profile.nativeBackboneLogCidMs = result.sha256Ms + result.cidStringMs;
+	profile.nativeLogCryptoSignableBytes = result.signableBytes;
+	profile.nativeLogCryptoStorageBytes = result.storageBytes;
+	profile.nativeLogCryptoChecksum = result.checksum;
+
+	return {
+		name,
+		iterations,
+		payloadBytes,
+		opsPerSecond: Math.round((iterations / profile.totalPutMs) * 1000),
+		cleanupMs: 0,
+		...Object.fromEntries(
+			Object.entries(profile)
+				.filter(([key]) => shouldIncludeProfileKey(key))
+				.map(([key, value]) => [key, Math.round(value * 100) / 100]),
+		),
+	} as BenchRow;
+};
+
 const runNativeLogCeilingScenario = async (name: string): Promise<BenchRow> => {
 	const backbone = await createNativePeerbitBackbone({
 		clockId: nativeBackbonePublicKey,
@@ -1673,12 +1729,14 @@ for (const name of scenarioNames) {
 			: baseName === "native-log-core-ceiling" ||
 				  baseName === "native-log-digest-key-core-ceiling"
 				? await runNativeLogCoreCeilingScenario(name)
-				: baseName === "native-log-ceiling"
-					? await runNativeLogCeilingScenario(name)
-					: baseName === "native-backbone-ceiling" ||
-						  baseName === "native-backbone-storage-ceiling"
-						? await runNativeBackboneCeilingScenario(name)
-						: await runScenario(name),
+				: baseName === "native-log-crypto-ceiling"
+					? await runNativeLogCryptoCeilingScenario(name)
+					: baseName === "native-log-ceiling"
+						? await runNativeLogCeilingScenario(name)
+						: baseName === "native-backbone-ceiling" ||
+							  baseName === "native-backbone-storage-ceiling"
+							? await runNativeBackboneCeilingScenario(name)
+							: await runScenario(name),
 	);
 }
 
