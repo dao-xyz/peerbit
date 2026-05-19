@@ -2157,9 +2157,6 @@ impl NativePeerbitBackbone {
         trim_length_to: JsValue,
     ) -> Result<Array, JsValue> {
         let trim_length_to = optional_usize_from_js(trim_length_to, "trimLengthTo")?;
-        let profile_enabled = self.append_profile_enabled;
-        let storage_append_started = profile_enabled.then(js_sys::Date::now);
-        let payload_size = payload_data.length();
         let document_index_commit = document_index_append_commit(
             document_key,
             document_value_prefix_bytes,
@@ -2170,6 +2167,94 @@ impl NativePeerbitBackbone {
             JsValue::UNDEFINED,
             JsValue::UNDEFINED,
         )?;
+        self.prepare_plain_committed_no_next_storage_append_document_index_compact_transaction_inner(
+            wall_time,
+            logical,
+            gid,
+            entry_type,
+            meta_data,
+            payload_data,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            document_index_commit,
+            trim_length_to,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_transaction(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        document_key: String,
+        document_existing_created: String,
+        document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
+        document_projection_plan_id: u32,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
+        trim_length_to: JsValue,
+    ) -> Result<Array, JsValue> {
+        let trim_length_to = optional_usize_from_js(trim_length_to, "trimLengthTo")?;
+        let document_index_commit = document_index_cached_projection_append_commit(
+            document_key,
+            document_existing_created,
+            document_byte_element_index_limit,
+            document_delete_trimmed_heads,
+            document_projection_plan_id,
+            document_projection_encoded_document,
+            document_projection_signer,
+        )?;
+        self.prepare_plain_committed_no_next_storage_append_document_index_compact_transaction_inner(
+            wall_time,
+            logical,
+            gid,
+            entry_type,
+            meta_data,
+            payload_data,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            document_index_commit,
+            trim_length_to,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_plain_committed_no_next_storage_append_document_index_compact_transaction_inner(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        document_index_commit: DocumentIndexAppendCommit,
+        trim_length_to: Option<usize>,
+    ) -> Result<Array, JsValue> {
+        let profile_enabled = self.append_profile_enabled;
+        let storage_append_started = profile_enabled.then(js_sys::Date::now);
+        let payload_size = payload_data.length();
+        let delete_trimmed_document_heads = document_index_commit.delete_trimmed_heads;
 
         let input_copy_started = profile_enabled.then(js_sys::Date::now);
         let meta_data = optional_bytes_from_js(meta_data);
@@ -2247,7 +2332,7 @@ impl NativePeerbitBackbone {
             payload_size,
         )?;
         let document_trimmed_heads_processed =
-            document_delete_trimmed_heads && self.delete_documents_by_context_heads(&trim_hashes);
+            delete_trimmed_document_heads && self.delete_documents_by_context_heads(&trim_hashes);
         if let Some(started) = document_index_started {
             self.append_profile.document_index_commit_ms += js_sys::Date::now() - started;
         }

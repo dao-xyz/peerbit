@@ -607,6 +607,27 @@ type NativePeerbitBackboneHandle = {
 		documentDeleteTrimmedHeads: boolean,
 		trimLengthTo: number | undefined,
 	) => unknown[];
+	prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_transaction: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKey: string,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlanId: number,
+		documentProjectionEncodedDocument: Uint8Array,
+		documentProjectionSigner: Uint8Array | undefined,
+		trimLengthTo: number | undefined,
+	) => unknown[];
 	prepare_plain_committed_no_next_storage_append_transaction_trim: (
 		wallTime: bigint,
 		logical: number,
@@ -3317,8 +3338,29 @@ export class NativePeerbitBackbone {
 		input: NativeBackboneStorageAppendInput,
 	): NativeBackboneAppendResult {
 		const documentIndex = input.documentIndex;
-		if (!documentIndex || documentIndex.projection) {
+		if (!documentIndex) {
 			return this.preparePlainCommittedNoNextStorageAppendTransaction(input);
+		}
+		const projection = documentIndex.projection;
+		if (projection) {
+			const row =
+				this.native.prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_transaction(
+					...nativeNoNextAppendArgs(input),
+					documentIndex.key,
+					documentIndex.existingCreated == null
+						? ""
+						: integerString(documentIndex.existingCreated),
+					documentIndex.byteElementIndexLimit ?? 0,
+					documentIndex.deleteTrimmedHeads === true,
+					this.documentProjectionPlanId(projection.plan),
+					projection.encodedDocument,
+					projection.signer,
+					input.trimLengthTo,
+				);
+			return compactCommittedNoNextStorageAppendResultFromRow(
+				this.resolution,
+				row,
+			);
 		}
 		const row =
 			this.native.prepare_plain_committed_no_next_storage_append_document_index_compact_transaction(

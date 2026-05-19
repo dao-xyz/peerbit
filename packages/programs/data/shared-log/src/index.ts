@@ -5200,7 +5200,6 @@ export class SharedLog<
 					next.length === 0
 						? commitBlocksInBackbone
 							? nativeBackboneDocumentIndex &&
-								!nativeBackboneDocumentIndex.projection &&
 								properties?.resolveTrimmedEntries === false
 								? backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
 										{

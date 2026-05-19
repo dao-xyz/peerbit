@@ -1126,6 +1126,7 @@ describe("index", () => {
 					backboneDocumentPutSpy.restore();
 					backboneDocumentQueryPageSpy.restore();
 					backboneDocumentHeadLookupSpy.restore();
+					backboneCompactStorageTransactionSpy.restore();
 					backboneStorageTransactionSpy.restore();
 					await store.close();
 					store = undefined;
@@ -1372,6 +1373,10 @@ describe("index", () => {
 					backbone,
 					"preparePlainCommittedNoNextStorageAppendTransaction",
 				);
+				const backboneCompactStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction",
+				);
 				const genericCoordinatePersistSpy = sinon.spy(
 					sharedLog,
 					"persistPreparedCoordinateNativeTransaction",
@@ -1394,7 +1399,8 @@ describe("index", () => {
 						target: "none",
 					});
 
-					expect(backboneStorageTransactionSpy.callCount).equal(1);
+					expect(backboneStorageTransactionSpy.callCount).equal(0);
+					expect(backboneCompactStorageTransactionSpy.callCount).equal(1);
 					expect(genericCoordinatePersistSpy.callCount).equal(0);
 					expect(backboneCoordinatePersistSpy.callCount).equal(1);
 					expect(sharedLog._residentEntryCoordinatesByHash.size).equal(1);
@@ -1402,6 +1408,7 @@ describe("index", () => {
 				} finally {
 					backboneCoordinatePersistSpy.restore();
 					genericCoordinatePersistSpy.restore();
+					backboneCompactStorageTransactionSpy.restore();
 					backboneStorageTransactionSpy.restore();
 					await store.close();
 					store = undefined;
@@ -1493,6 +1500,10 @@ describe("index", () => {
 					backbone,
 					"preparePlainCommittedNoNextStorageAppendTransaction",
 				);
+				const backboneCompactStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction",
+				);
 				const backendIndex = localStore.docs.index.index as any;
 				const backendStoredContextPutSpy = sinon.spy(
 					backendIndex,
@@ -1510,9 +1521,12 @@ describe("index", () => {
 						target: "none",
 					});
 
-					expect(backboneStorageTransactionSpy.callCount).equal(1);
-					expect(backboneStorageTransactionSpy.firstCall.args[0].documentIndex)
-						.to.exist;
+					expect(backboneStorageTransactionSpy.callCount).equal(0);
+					expect(backboneCompactStorageTransactionSpy.callCount).equal(1);
+					expect(
+						backboneCompactStorageTransactionSpy.firstCall.args[0]
+							.documentIndex,
+					).to.exist;
 					expect(documentIndexPutSpy.callCount).equal(0);
 					expect(backendStoredContextPutSpy.callCount).equal(0);
 					expect(backendIndex.native.len()).equal(0);
@@ -1537,6 +1551,7 @@ describe("index", () => {
 				} finally {
 					documentIndexPutSpy.restore();
 					backendStoredContextPutSpy.restore();
+					backboneCompactStorageTransactionSpy.restore();
 					backboneStorageTransactionSpy.restore();
 					await localStore.close();
 					store = undefined;
@@ -1596,6 +1611,10 @@ describe("index", () => {
 					backbone,
 					"preparePlainCommittedNoNextStorageAppendTransaction",
 				);
+				const backboneCompactStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction",
+				);
 				const backboneDocumentPutSpy = sinon.spy(
 					backbone,
 					"putDocumentEncodedPartsStored",
@@ -1625,9 +1644,12 @@ describe("index", () => {
 						replicate: false,
 						target: "none",
 					});
-					expect(backboneStorageTransactionSpy.callCount).equal(1);
-					expect(backboneStorageTransactionSpy.firstCall.args[0].documentIndex)
-						.to.exist;
+					expect(backboneStorageTransactionSpy.callCount).equal(0);
+					expect(backboneCompactStorageTransactionSpy.callCount).equal(1);
+					expect(
+						backboneCompactStorageTransactionSpy.firstCall.args[0]
+							.documentIndex,
+					).to.exist;
 					expect(documentIndexPutSpy.callCount).equal(0);
 					expect(documentIndexTransformSpy.callCount).equal(0);
 					expect(backendPutSpy.callCount).equal(0);
@@ -1654,6 +1676,7 @@ describe("index", () => {
 					backendStoredContextPutSpy.restore();
 					backendPutSpy.restore();
 					backboneDocumentPutSpy.restore();
+					backboneCompactStorageTransactionSpy.restore();
 					backboneStorageTransactionSpy.restore();
 					await localStore.close();
 					store = undefined;
@@ -1858,6 +1881,7 @@ describe("index", () => {
 				let backendStoredContextPutSpy: sinon.SinonSpy | undefined;
 				let documentStoredIdentityPutSpy: sinon.SinonSpy | undefined;
 				let backboneStorageTransactionSpy: sinon.SinonSpy | undefined;
+				let backboneCompactStorageTransactionSpy: sinon.SinonSpy | undefined;
 				try {
 					await rustSession.peers[0].open(store, {
 						args: {
@@ -1901,6 +1925,10 @@ describe("index", () => {
 						backbone,
 						"preparePlainCommittedNoNextStorageAppendTransaction",
 					);
+					backboneCompactStorageTransactionSpy = sinon.spy(
+						backbone,
+						"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction",
+					);
 					await store.docs.put(doc, {
 						unique: true,
 						replicate: false,
@@ -1908,9 +1936,12 @@ describe("index", () => {
 					});
 					const coordinateHashes = backbone.getEntryCoordinateHashes();
 
-					expect(backboneStorageTransactionSpy.callCount).equal(1);
-					expect(backboneStorageTransactionSpy.firstCall.args[0].documentIndex)
-						.to.exist;
+					expect(backboneStorageTransactionSpy.callCount).equal(0);
+					expect(backboneCompactStorageTransactionSpy.callCount).equal(1);
+					expect(
+						backboneCompactStorageTransactionSpy.firstCall.args[0]
+							.documentIndex,
+					).to.exist;
 					expect(coordinateIndexPutSpy.callCount).equal(0);
 					expect(documentStoredIdentityPutSpy.callCount).equal(0);
 					expect(backendStoredContextPutSpy.callCount).equal(0);
@@ -1942,6 +1973,7 @@ describe("index", () => {
 					documentStoredIdentityPutSpy?.restore();
 					backendStoredContextPutSpy?.restore();
 					coordinateIndexPutSpy?.restore();
+					backboneCompactStorageTransactionSpy?.restore();
 					backboneStorageTransactionSpy?.restore();
 					flushSpy?.restore();
 					if (store) {
