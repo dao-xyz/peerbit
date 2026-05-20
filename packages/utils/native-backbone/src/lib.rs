@@ -1,4 +1,4 @@
-use js_sys::{Array, BigUint64Array, Reflect, Uint8Array};
+use js_sys::{Array, BigUint64Array, Reflect, Uint32Array, Uint8Array};
 use peerbit_indexer_core::codec::{decode_query, decode_sort};
 use peerbit_indexer_core::persistence::{
     decode_journal, decode_key_value_snapshot, encode_journal_delete_record,
@@ -815,6 +815,29 @@ impl NativePeerbitBackbone {
     ) -> Result<Array, JsValue> {
         self.log
             .plan_join(&hash, next, entry_type, reset, gid, wall_time, logical)
+    }
+
+    pub fn graph_plan_join_batch(
+        &self,
+        hashes: Array,
+        nexts: Array,
+        entry_types: Uint8Array,
+        reset: bool,
+        gids: Array,
+        wall_times: BigUint64Array,
+        logicals: Uint32Array,
+        cut_check: bool,
+    ) -> Result<Array, JsValue> {
+        self.log.plan_join_batch(
+            hashes,
+            nexts,
+            entry_types,
+            reset,
+            gids,
+            wall_times,
+            logicals,
+            cut_check,
+        )
     }
 
     pub fn block_get(&self, key: &str) -> Option<Vec<u8>> {

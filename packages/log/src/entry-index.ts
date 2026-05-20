@@ -95,6 +95,13 @@ type NativeJoinCutCheck = {
 	logical?: number;
 };
 
+type NativeJoinPlanInput = {
+	hash: string;
+	next: string[];
+	type: number;
+	cutCheck?: NativeJoinCutCheck;
+};
+
 type MaybePromise<T> = T | Promise<T>;
 
 const isPromiseLike = <T>(value: MaybePromise<T>): value is Promise<T> =>
@@ -284,6 +291,7 @@ export type NativeLogGraph = {
 		reset?: boolean,
 		cutCheck?: NativeJoinCutCheck,
 	) => JoinPlan;
+	planJoinBatch?: (entries: NativeJoinPlanInput[], reset?: boolean) => JoinPlan[];
 };
 
 export type JoinPlan = {
@@ -1136,6 +1144,38 @@ export class EntryIndex<T> {
 			cutChecked: false,
 			coveredByCut: false,
 		};
+	}
+
+	async planJoinBatch(
+		entries: Array<Pick<Entry<T>, "hash" | "meta">>,
+		reset?: boolean,
+	): Promise<JoinPlan[]> {
+		if (entries.length === 0) {
+			return [];
+		}
+		if (this.properties.nativeGraph?.graph.planJoinBatch) {
+			return this.properties.nativeGraph.graph.planJoinBatch(
+				entries.map((entry) => ({
+					hash: entry.hash,
+					next: entry.meta.next,
+					type: entry.meta.type,
+					cutCheck: this.properties.nativeGraph!.useHeads
+						? {
+								gid: entry.meta.gid,
+								wallTime: entry.meta.clock.timestamp.wallTime,
+								logical: entry.meta.clock.timestamp.logical,
+							}
+						: undefined,
+				})),
+				reset === true,
+			);
+		}
+
+		const plans: JoinPlan[] = [];
+		for (const entry of entries) {
+			plans.push(await this.planJoin(entry, reset));
+		}
+		return plans;
 	}
 
 	async getShallow(k: string) {

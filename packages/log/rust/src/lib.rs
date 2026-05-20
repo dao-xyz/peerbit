@@ -2017,6 +2017,53 @@ impl NativeLogIndex {
             logical,
         )))
     }
+
+    pub fn plan_join_batch(
+        &self,
+        hashes: Array,
+        nexts: Array,
+        entry_types: Uint8Array,
+        reset: bool,
+        gids: Array,
+        wall_times: BigUint64Array,
+        logicals: Uint32Array,
+        cut_check: bool,
+    ) -> Result<Array, JsValue> {
+        let len = hashes.length();
+        if nexts.length() != len || entry_types.length() != len {
+            return Err(JsValue::from_str("Expected equal column lengths"));
+        }
+        if cut_check
+            && (gids.length() != len || wall_times.length() != len || logicals.length() != len)
+        {
+            return Err(JsValue::from_str("Expected equal cut-check column lengths"));
+        }
+
+        let out = Array::new();
+        for i in 0..len {
+            let hash = required_string_from_array(&hashes, i)?;
+            let next = strings_from_array(required_array_from_array(&nexts, i)?)?;
+            let (gid, wall_time, logical) = if cut_check {
+                (
+                    Some(required_string_from_array(&gids, i)?),
+                    Some(wall_times.get_index(i)),
+                    Some(logicals.get_index(i)),
+                )
+            } else {
+                (None, None, None)
+            };
+            out.push(&join_plan_to_row(self.inner.plan_join(
+                &hash,
+                &next,
+                entry_types.get_index(i),
+                reset,
+                gid.as_deref(),
+                wall_time,
+                logical,
+            )));
+        }
+        Ok(out)
+    }
 }
 
 impl Default for NativeLogIndex {

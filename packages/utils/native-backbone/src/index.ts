@@ -186,6 +186,16 @@ type NativePeerbitBackboneHandle = {
 		wallTime?: bigint,
 		logical?: number,
 	) => [boolean, string[], boolean, boolean];
+	graph_plan_join_batch: (
+		hashes: string[],
+		nexts: string[][],
+		types: Uint8Array,
+		reset: boolean,
+		gids: string[],
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		cutCheck: boolean,
+	) => Array<[boolean, string[], boolean, boolean]>;
 	block_get: (key: string) => Uint8Array | undefined;
 	block_get_many: (keys: string[]) => Array<Uint8Array | undefined>;
 	block_has_many: (keys: string[]) => boolean[];
@@ -2174,8 +2184,63 @@ export class NativeBackboneLogGraph {
 				cutCheck?.gid,
 				cutCheck?.wallTime == null ? undefined : BigInt(cutCheck.wallTime),
 				cutCheck?.logical,
-			);
+		);
 		return { skip, missingParents, cutChecked, coveredByCut };
+	}
+
+	planJoinBatch(
+		entries: Array<{
+			hash: string;
+			next: string[];
+			type: number;
+			cutCheck?: {
+				gid: string;
+				wallTime: bigint | number | string;
+				logical?: number;
+			};
+		}>,
+		reset = false,
+	): any[] {
+		const hashes: string[] = [];
+		const nexts: string[][] = [];
+		const gids: string[] = [];
+		const types = new Uint8Array(entries.length);
+		const wallTimes = new BigUint64Array(entries.length);
+		const logicals = new Uint32Array(entries.length);
+		let cutCheck = false;
+		for (let i = 0; i < entries.length; i++) {
+			const entry = entries[i]!;
+			hashes.push(entry.hash);
+			nexts.push(entry.next);
+			types[i] = entry.type;
+			if (entry.cutCheck) {
+				cutCheck = true;
+				gids[i] = entry.cutCheck.gid;
+				wallTimes[i] = BigInt(entry.cutCheck.wallTime);
+				logicals[i] = entry.cutCheck.logical ?? 0;
+			} else {
+				gids[i] = "";
+				wallTimes[i] = 0n;
+				logicals[i] = 0;
+			}
+		}
+		return this.native
+			.graph_plan_join_batch(
+				hashes,
+				nexts,
+				types,
+				reset,
+				gids,
+				wallTimes,
+				logicals,
+				cutCheck,
+			)
+			.map(([skip, missingParents, cutChecked, coveredByCut]) => ({
+				skip,
+				missingParents,
+				cutChecked,
+				coveredByCut,
+			}));
 	}
 }
 

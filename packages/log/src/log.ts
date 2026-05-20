@@ -2424,7 +2424,12 @@ export class Log<T> {
 			if (entry.meta.type !== EntryType.APPEND) {
 				return false;
 			}
-			const joinPlan = await this.entryIndex.planJoin(entry, false);
+		}
+
+		const joinPlans = await this.entryIndex.planJoinBatch(entries, false);
+		for (let i = 0; i < entries.length; i++) {
+			const entry = entries[i]!;
+			const joinPlan = joinPlans[i]!;
 			if (
 				joinPlan.skip ||
 				joinPlan.coveredByCut ||

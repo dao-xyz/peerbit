@@ -339,6 +339,16 @@ type NativeLogIndexHandle = {
 		wallTime?: bigint,
 		logical?: number,
 	) => [boolean, string[], boolean, boolean];
+	plan_join_batch: (
+		hashes: string[],
+		nexts: string[][],
+		types: Uint8Array,
+		reset: boolean,
+		gids: string[],
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		cutCheck: boolean,
+	) => Array<[boolean, string[], boolean, boolean]>;
 };
 
 type NativeLogBlockStoreHandle = {
@@ -1264,6 +1274,57 @@ export class LogGraphIndex {
 				cutCheck ? (cutCheck.logical ?? 0) : undefined,
 			);
 		return { skip, missingParents, cutChecked, coveredByCut };
+	}
+
+	planJoinBatch(
+		entries: Array<{
+			hash: string;
+			next: string[];
+			type: number;
+			cutCheck?: NativeJoinCutCheck;
+		}>,
+		reset = false,
+	): NativeJoinPlan[] {
+		const hashes: string[] = [];
+		const nexts: string[][] = [];
+		const gids: string[] = [];
+		const types = new Uint8Array(entries.length);
+		const wallTimes = new BigUint64Array(entries.length);
+		const logicals = new Uint32Array(entries.length);
+		let cutCheck = false;
+		for (let i = 0; i < entries.length; i++) {
+			const entry = entries[i]!;
+			hashes.push(entry.hash);
+			nexts.push(entry.next);
+			types[i] = entry.type;
+			if (entry.cutCheck) {
+				cutCheck = true;
+				gids[i] = entry.cutCheck.gid;
+				wallTimes[i] = BigInt(entry.cutCheck.wallTime);
+				logicals[i] = entry.cutCheck.logical ?? 0;
+			} else {
+				gids[i] = "";
+				wallTimes[i] = 0n;
+				logicals[i] = 0;
+			}
+		}
+		return this.native
+			.plan_join_batch(
+				hashes,
+				nexts,
+				types,
+				reset,
+				gids,
+				wallTimes,
+				logicals,
+				cutCheck,
+			)
+			.map(([skip, missingParents, cutChecked, coveredByCut]) => ({
+				skip,
+				missingParents,
+				cutChecked,
+				coveredByCut,
+			}));
 	}
 }
 
