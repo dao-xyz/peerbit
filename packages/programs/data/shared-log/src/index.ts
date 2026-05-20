@@ -1376,11 +1376,12 @@ export class SharedLog<
 			throw error;
 		}
 
-		if (message instanceof RawExchangeHeadsMessage) {
-			message = materializeRawExchangeHeadsMessage(message, this.log);
-		}
-
-		if (!(message instanceof ExchangeHeadsMessage)) {
+		if (
+			!(
+				message instanceof ExchangeHeadsMessage ||
+				message instanceof RawExchangeHeadsMessage
+			)
+		) {
 			return;
 		}
 
@@ -8677,7 +8678,36 @@ export class SharedLog<
 			}
 
 			if (msg instanceof RawExchangeHeadsMessage) {
-				msg = materializeRawExchangeHeadsMessage(msg, this.log);
+				const fromIsSelf = context.from.equals(this.node.identity.publicKey);
+				const rawExistingHashes = await this.log.hasMany(
+					msg.heads.map((head) => head.hash),
+				);
+				const rawMissingHeads = [];
+				const rawConfirmedHashes = new Set<string>();
+				for (const head of msg.heads) {
+					if (rawExistingHashes.has(head.hash)) {
+						rawConfirmedHashes.add(head.hash);
+					} else {
+						rawMissingHeads.push(head);
+					}
+				}
+				if (rawConfirmedHashes.size > 0 && !fromIsSelf) {
+					this.markEntriesKnownByPeer(
+						rawConfirmedHashes,
+						context.from.hashcode(),
+					);
+					await this.sendRepairConfirmation(context.from, rawConfirmedHashes);
+				}
+				if (rawMissingHeads.length === 0) {
+					return;
+				}
+				msg = materializeRawExchangeHeadsMessage(
+					new RawExchangeHeadsMessage({
+						heads: rawMissingHeads,
+						reserved: msg.reserved,
+					}),
+					this.log,
+				);
 			}
 
 			if (msg instanceof ExchangeHeadsMessage) {
