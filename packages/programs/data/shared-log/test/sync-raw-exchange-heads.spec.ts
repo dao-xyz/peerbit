@@ -190,6 +190,11 @@ describe("raw exchange-head sync", () => {
 			expect(nativePlanner).to.exist;
 			const batchSpy = sinon.spy(nativePlanner, "planLeadersForGidsBatch");
 			const singleSpy = sinon.spy(nativePlanner, "planLeadersForGid");
+			const hasAnyHeadBatchSpy = sinon.spy(
+				db2.log.log.entryIndex,
+				"hasAnyHeadBatch",
+			);
+			const hasAnyHeadSpy = sinon.spy(db2.log.log.entryIndex, "hasAnyHead");
 			try {
 				await db2.log.onMessage(message!, {
 					from: db1.node.identity.publicKey,
@@ -199,7 +204,12 @@ describe("raw exchange-head sync", () => {
 				expect(batchSpy.callCount).to.be.greaterThan(0);
 				expect(batchSpy.firstCall.args[0]).to.have.length(entryCount);
 				expect(singleSpy.callCount).to.equal(0);
+				expect(hasAnyHeadBatchSpy.callCount).to.equal(1);
+				expect(hasAnyHeadBatchSpy.firstCall.args[0]).to.have.length(entryCount);
+				expect(hasAnyHeadSpy.callCount).to.equal(0);
 			} finally {
+				hasAnyHeadSpy.restore();
+				hasAnyHeadBatchSpy.restore();
 				singleSpy.restore();
 				batchSpy.restore();
 			}

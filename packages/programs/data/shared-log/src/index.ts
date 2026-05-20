@@ -8786,6 +8786,10 @@ export class SharedLog<
 						maxReplicasFromNewEntries: number;
 						maxMaxReplicas: number;
 						leaderPlan?: EntryLeaderPlan<R>;
+						isLeader?: boolean;
+						fromIsLeader?: boolean;
+						leaders?: LeaderMap | false;
+						gidReferenceHeads?: boolean[];
 					};
 					const isReplicating = this._isReplicating;
 					const receiveGroups: ReceivedGidInput[] = [];
@@ -8811,6 +8815,7 @@ export class SharedLog<
 						});
 					}
 					if (!isReplicating) {
+						const fromHash = context.from.hashcode();
 						const leaderPlans = await this.planEntryLeaderBatch(
 							receiveGroups.map((group) => ({
 								entry: group.latestEntry,
@@ -8818,7 +8823,43 @@ export class SharedLog<
 							})),
 						);
 						for (let i = 0; i < receiveGroups.length; i++) {
-							receiveGroups[i]!.leaderPlan = leaderPlans[i];
+							const group = receiveGroups[i]!;
+							const leaderPlan = leaderPlans[i];
+							group.leaderPlan = leaderPlan;
+							if (!leaderPlan) {
+								continue;
+							}
+							group.leaders = leaderPlan.leaders;
+							group.isLeader = leaderPlan.isLeader;
+							group.fromIsLeader = leaderPlan.leaders.has(fromHash);
+						}
+						const gidReferenceInputs: string[][] = [];
+						const gidReferenceTargets: Array<{
+							group: ReceivedGidInput;
+							offset: number;
+						}> = [];
+						for (const group of receiveGroups) {
+							const keepAsLeader =
+								group.isLeader ||
+								(isRepairHint && group.fromIsLeader === true);
+							if (keepAsLeader) {
+								continue;
+							}
+							const offset = gidReferenceInputs.length;
+							for (const entry of group.entries) {
+								gidReferenceInputs.push(entry.gidRefrences);
+							}
+							gidReferenceTargets.push({ group, offset });
+						}
+						if (gidReferenceInputs.length > 0) {
+							const gidReferenceHeads =
+								await this.hasAnyHeadForGidSets(gidReferenceInputs);
+							for (const { group, offset } of gidReferenceTargets) {
+								group.gidReferenceHeads = gidReferenceHeads.slice(
+									offset,
+									offset + group.entries.length,
+								);
+							}
 						}
 					}
 					const promises: Promise<ReceivedGidJoinPlan | undefined>[] = [];
@@ -8831,6 +8872,10 @@ export class SharedLog<
 						maxReplicasFromNewEntries,
 						maxMaxReplicas,
 						leaderPlan,
+						isLeader: plannedIsLeader,
+						fromIsLeader: plannedFromIsLeader,
+						leaders: plannedLeaders,
+						gidReferenceHeads: precomputedGidReferenceHeads,
 					} of receiveGroups) {
 						const fn = async () => {
 							/// we clear sync in flight here because we want to join before that, so that entries are totally accounted for
@@ -8867,12 +8912,18 @@ export class SharedLog<
 									},
 								);
 							} else {
-								const plan =
-									leaderPlan ??
-									(await this.planEntryLeaders(latestEntry, maxMaxReplicas));
-								leaders = plan.leaders;
-								isLeader = plan.isLeader;
-								fromIsLeader = leaders.has(context.from!.hashcode());
+								if (plannedLeaders) {
+									leaders = plannedLeaders;
+									isLeader = plannedIsLeader ?? false;
+									fromIsLeader = plannedFromIsLeader ?? false;
+								} else {
+									const plan =
+										leaderPlan ??
+										(await this.planEntryLeaders(latestEntry, maxMaxReplicas));
+									leaders = plan.leaders;
+									isLeader = plan.isLeader;
+									fromIsLeader = leaders.has(context.from!.hashcode());
+								}
 							}
 
 							if (this.closed) {
@@ -8891,9 +8942,10 @@ export class SharedLog<
 							const keepAsLeader = isLeader || acceptsTargetedRepair;
 							const gidReferenceHeads = keepAsLeader
 								? undefined
-								: await this.hasAnyHeadForGidSets(
+								: (precomputedGidReferenceHeads ??
+									(await this.hasAnyHeadForGidSets(
 										entries.map((entry) => entry.gidRefrences),
-									);
+									)));
 							if (keepAsLeader) {
 								for (const entry of entries) {
 									this.pruneDebouncedFn.delete(entry.entry.hash);
