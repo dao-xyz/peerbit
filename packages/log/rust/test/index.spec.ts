@@ -321,10 +321,21 @@ describe("native log graph index", () => {
 			],
 			undefined,
 		]);
+		expect(index.uniqueReferenceGidRowsFlatBatch(["head", "root"])).to.deep.equal(
+			[
+				[0, "branch", "branch-gid"],
+				[0, "same-gid-parent", "root-gid"],
+				[0, "side", "side-gid"],
+			],
+		);
+		expect(index.uniqueReferenceGidRowsFlatBatch(["head", "missing"])).to.equal(
+			undefined,
+		);
 		expect(index.uniqueReferenceGids("missing")).to.equal(undefined);
 
 		index.put(entry("cut", "cut-gid", ["head"], 6n, CUT));
 		expect(index.uniqueReferenceGids("cut")).to.deep.equal([]);
+		expect(index.uniqueReferenceGidRowsFlatBatch(["cut"])).to.deep.equal([]);
 
 		index.put(entry("incomplete", "incomplete-gid", ["not-indexed"], 7n));
 		expect(index.uniqueReferenceGids("incomplete")).to.equal(undefined);

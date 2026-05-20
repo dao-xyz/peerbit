@@ -182,9 +182,9 @@ describe("exchange heads", () => {
 			nativeGraph.uniqueReferenceGids(rightHead.hash) ?? [];
 		expect(expectedLeftReferences).to.not.be.empty;
 		expect(expectedRightReferences).to.not.be.empty;
-		const uniqueReferenceGidRowsBatchSpy = sinon.spy(
+		const uniqueReferenceGidRowsFlatBatchSpy = sinon.spy(
 			nativeGraph,
-			"uniqueReferenceGidRowsBatch",
+			"uniqueReferenceGidRowsFlatBatch",
 		);
 		const getShallowSpy = sinon.spy(log.entryIndex, "getShallow");
 		try {
@@ -209,7 +209,7 @@ describe("exchange heads", () => {
 				expectedRightReferences,
 			);
 			expect(
-				uniqueReferenceGidRowsBatchSpy.calledOnceWithExactly([
+				uniqueReferenceGidRowsFlatBatchSpy.calledOnceWithExactly([
 					leftHead.hash,
 					rightHead.hash,
 				]),
@@ -217,7 +217,7 @@ describe("exchange heads", () => {
 			expect(getShallowSpy.callCount).equal(0);
 		} finally {
 			getShallowSpy.restore();
-			uniqueReferenceGidRowsBatchSpy.restore();
+			uniqueReferenceGidRowsFlatBatchSpy.restore();
 			await log.close();
 		}
 	});

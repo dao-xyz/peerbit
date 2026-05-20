@@ -250,6 +250,9 @@ export type NativeLogGraph = {
 	uniqueReferenceGidRowsBatch?: (
 		hashes: Iterable<string>,
 	) => Array<Array<[string, string]> | undefined>;
+	uniqueReferenceGidRowsFlatBatch?: (
+		hashes: Iterable<string>,
+	) => Array<[number, string, string]> | undefined;
 	planDeleteRecursively: (
 		hashes: Iterable<string>,
 		skipFirst?: boolean,
@@ -658,6 +661,21 @@ export class EntryIndex<T> {
 			return [];
 		}
 		return this.properties.nativeGraph.graph.uniqueReferenceGidRowsBatch?.(
+			normalized,
+		);
+	}
+
+	getUniqueReferenceGidRowsFlatBatch(
+		hashes: Iterable<string>,
+	): Array<[number, string, string]> | undefined {
+		if (!this.properties.nativeGraph) {
+			return undefined;
+		}
+		const normalized = [...hashes];
+		if (normalized.length === 0) {
+			return [];
+		}
+		return this.properties.nativeGraph.graph.uniqueReferenceGidRowsFlatBatch?.(
 			normalized,
 		);
 	}

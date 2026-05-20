@@ -763,6 +763,13 @@ impl NativePeerbitBackbone {
         self.log.unique_reference_gid_rows_batch(hashes)
     }
 
+    pub fn graph_unique_reference_gid_rows_flat_batch(
+        &self,
+        hashes: Array,
+    ) -> Result<JsValue, JsValue> {
+        self.log.unique_reference_gid_rows_flat_batch(hashes)
+    }
+
     pub fn graph_plan_delete_recursively(
         &self,
         hashes: Array,

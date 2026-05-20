@@ -128,7 +128,7 @@ export const createExchangeHeadsMessages = async function* (
 				continue;
 			}
 
-			const nativeReferenceRows = nativeReferenceRowsByPosition?.get(i);
+			const nativeReferenceRows = nativeReferenceRowsByPosition?.[i];
 			if (nativeReferenceRows) {
 				const gidRefrences: string[] = [];
 				for (const [hash, gid] of nativeReferenceRows) {
@@ -210,13 +210,32 @@ const getNativeReferenceRowsByPosition = (
 		positions.push(i);
 		hashes.push(entry.hash);
 	}
+	const flatRows = log.entryIndex.getUniqueReferenceGidRowsFlatBatch(hashes);
+	if (flatRows) {
+		const byPosition: Array<Array<[string, string]> | undefined> = new Array(
+			resolvedHeads.length,
+		);
+		for (const position of positions) {
+			byPosition[position] = [];
+		}
+		for (const [hashPosition, hash, gid] of flatRows) {
+			const position = positions[hashPosition];
+			if (position === undefined) {
+				continue;
+			}
+			byPosition[position]!.push([hash, gid]);
+		}
+		return byPosition;
+	}
 	const rows = log.entryIndex.getUniqueReferenceGidRowsBatch(hashes);
 	if (!rows) {
 		return undefined;
 	}
-	const byPosition = new Map<number, Array<[string, string]> | undefined>();
+	const byPosition: Array<Array<[string, string]> | undefined> = new Array(
+		resolvedHeads.length,
+	);
 	for (let i = 0; i < rows.length; i++) {
-		byPosition.set(positions[i]!, rows[i]);
+		byPosition[positions[i]!] = rows[i];
 	}
 	return byPosition;
 };

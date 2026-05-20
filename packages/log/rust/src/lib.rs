@@ -449,6 +449,20 @@ impl LogGraphIndex {
             .collect()
     }
 
+    pub fn unique_reference_gid_rows_flat_batch(
+        &self,
+        hashes: &[String],
+    ) -> Option<Vec<(u32, String, String)>> {
+        let mut out = Vec::new();
+        for (position, hash) in hashes.iter().enumerate() {
+            let rows = self.unique_reference_gid_rows(hash)?;
+            for (reference_hash, gid) in rows {
+                out.push((position as u32, reference_hash, gid));
+            }
+        }
+        Some(out)
+    }
+
     pub fn plan_delete_recursively(&self, from: &[String], skip_first: bool) -> Vec<String> {
         let mut stack = from.to_vec();
         let mut visited = IndexSet::new();
@@ -1943,6 +1957,14 @@ impl NativeLogIndex {
             );
         }
         Ok(out)
+    }
+
+    pub fn unique_reference_gid_rows_flat_batch(&self, hashes: Array) -> Result<JsValue, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        let Some(rows) = self.inner.unique_reference_gid_rows_flat_batch(&hashes) else {
+            return Ok(JsValue::UNDEFINED);
+        };
+        Ok(reference_gid_flat_rows_to_array(rows).into())
     }
 
     pub fn plan_delete_recursively(&self, from: Array, skip_first: bool) -> Result<Array, JsValue> {
@@ -3686,6 +3708,18 @@ fn reference_gid_rows_to_array(values: Vec<(String, String)>) -> Array {
     let out = Array::new();
     for (hash, gid) in values {
         let row = Array::new();
+        row.push(&JsValue::from_str(&hash));
+        row.push(&JsValue::from_str(&gid));
+        out.push(&row);
+    }
+    out
+}
+
+fn reference_gid_flat_rows_to_array(values: Vec<(u32, String, String)>) -> Array {
+    let out = Array::new();
+    for (position, hash, gid) in values {
+        let row = Array::new();
+        row.push(&JsValue::from_f64(position as f64));
         row.push(&JsValue::from_str(&hash));
         row.push(&JsValue::from_str(&gid));
         out.push(&row);

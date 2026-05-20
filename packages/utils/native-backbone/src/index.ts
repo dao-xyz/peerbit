@@ -161,6 +161,9 @@ type NativePeerbitBackboneHandle = {
 	graph_entry_metadata_batch: (hashes: string[]) => unknown[];
 	graph_unique_reference_gids: (hash: string) => string[] | undefined;
 	graph_unique_reference_gid_rows_batch: (hashes: string[]) => unknown[];
+	graph_unique_reference_gid_rows_flat_batch?: (
+		hashes: string[],
+	) => Array<[number, string, string]> | undefined;
 	graph_plan_delete_recursively: (
 		hashes: string[],
 		skipFirst: boolean,
@@ -2112,6 +2115,17 @@ export class NativeBackboneLogGraph {
 
 	uniqueReferenceGidRowsBatch(hashes: Iterable<string>): any[] {
 		return this.native.graph_unique_reference_gid_rows_batch([...hashes]);
+	}
+
+	uniqueReferenceGidRowsFlatBatch(
+		hashes: Iterable<string>,
+	): Array<[number, string, string]> | undefined {
+		return this.native
+			.graph_unique_reference_gid_rows_flat_batch?.([...hashes])
+			?.map((row) => {
+				const [position, hash, gid] = row;
+				return [position, hash, gid] as [number, string, string];
+			});
 	}
 
 	planDeleteRecursively(hashes: Iterable<string>, skipFirst = false): string[] {

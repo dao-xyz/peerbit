@@ -590,6 +590,56 @@ describe("native peerbit backbone", () => {
 		expect(backbone.blockLength).equal(0);
 	});
 
+	it("returns flat unique reference rows for native exchange-head planning", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+
+		const root = backbone.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			wallTime: 1n,
+			gid: "root-gid",
+			payloadData: new Uint8Array([1]),
+		});
+		const side = backbone.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			wallTime: 2n,
+			gid: "side-gid",
+			payloadData: new Uint8Array([2]),
+		});
+		const head = backbone.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			wallTime: 3n,
+			gid: "head-gid",
+			next: [root.hash, side.hash],
+			payloadData: new Uint8Array([3]),
+		});
+
+		expect(backbone.graph.uniqueReferenceGidRowsFlatBatch([head.hash])).to.deep.equal(
+			[
+				[0, root.hash, "root-gid"],
+				[0, side.hash, "side-gid"],
+			],
+		);
+		expect(
+			backbone.graph.uniqueReferenceGidRowsFlatBatch([head.hash, root.hash]),
+		).to.deep.equal([
+			[0, root.hash, "root-gid"],
+			[0, side.hash, "side-gid"],
+		]);
+		expect(
+			backbone.graph.uniqueReferenceGidRowsFlatBatch([head.hash, "missing"]),
+		).to.equal(undefined);
+	});
+
 	it("exposes shared-log coordinate planning for storage-backed paths", async () => {
 		const backbone = await createNativePeerbitBackbone({
 			clockId: publicKey,
