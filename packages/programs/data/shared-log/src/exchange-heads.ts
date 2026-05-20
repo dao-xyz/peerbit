@@ -1,6 +1,12 @@
 import { deserialize, field, fixedArray, variant, vec } from "@dao-xyz/borsh";
 import { calculateRawCid } from "@peerbit/blocks-interface";
-import { Entry, EntryType, type ShallowEntry } from "@peerbit/log";
+import {
+	Entry,
+	EntryType,
+	type PreparedNativeLogEntry,
+	ShallowEntry,
+	ShallowMeta,
+} from "@peerbit/log";
 import { Log } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import { TransportMessage } from "./message.js";
@@ -346,6 +352,42 @@ export const materializeRawExchangeHeadsMessage = (
 	return materialized;
 };
 
+const prepareRawExchangeHeadEntryFacts = (
+	entry: Entry<any>,
+	head: RawEntryWithRefs,
+) => {
+	const payloadSize = entry.payload.byteLength;
+	const shallowEntry = new ShallowEntry({
+		hash: head.hash,
+		payloadSize,
+		head: true,
+		meta: new ShallowMeta({
+			gid: entry.meta.gid,
+			data: entry.meta.data,
+			clock: entry.meta.clock,
+			next: entry.meta.next,
+			type: entry.meta.type,
+		}),
+	});
+	const nativeEntry: PreparedNativeLogEntry = {
+		hash: head.hash,
+		gid: entry.meta.gid,
+		next: entry.meta.next,
+		type: entry.meta.type,
+		head: true,
+		payloadSize,
+		data: entry.meta.data,
+		clock: {
+			timestamp: {
+				wallTime: entry.meta.clock.timestamp.wallTime,
+				logical: entry.meta.clock.timestamp.logical,
+			},
+		},
+	};
+	Entry.prepareShallowEntry(entry, shallowEntry);
+	Entry.prepareNativeLogEntry(entry, nativeEntry);
+};
+
 export const materializeVerifiedRawExchangeHeadsMessage = async (
 	message: RawExchangeHeadsMessage,
 	log: Log<any>,
@@ -366,6 +408,7 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 					keychain: log.keychain,
 					encoding: log.encoding,
 				});
+				prepareRawExchangeHeadEntryFacts(entry, head);
 				return new EntryWithRefs({
 					entry,
 					gidRefrences: head.gidRefrences,
