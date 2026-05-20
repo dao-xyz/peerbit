@@ -107,6 +107,8 @@ const emitInternalProfileDuration = (
 		durationMs: internalProfileNow() - startedAt,
 	});
 };
+const EMPTY_NEXT_HASHES: string[] = [];
+const EMPTY_NEXT_ENTRIES: Sorting.SortableEntry[] = [];
 
 type PreparedCommitOnlyAppendResult<T> = {
 	entry: Entry<T>;
@@ -1056,19 +1058,25 @@ export class Log<T> {
 			return undefined;
 		}
 
-		const appendOptions: AppendOptions<T> = {
-			...options,
-			__peerbitCanAppendAlreadyValidated: true,
-		};
-		const nextsResult = knownNoNext || properties.knownNoNext
-			? []
+		const appendOptions: AppendOptions<T> =
+			options.__peerbitCanAppendAlreadyValidated === true
+				? options
+				: {
+						...options,
+						__peerbitCanAppendAlreadyValidated: true,
+					};
+		const knownNoNextAppend = knownNoNext || properties.knownNoNext === true;
+		const nextsResult = knownNoNextAppend
+			? EMPTY_NEXT_ENTRIES
 			: this.getNextsForAppend(appendOptions);
 		return mapMaybePromise(nextsResult, (nexts) => {
 			if (nexts.length > 0 && properties.skipMissingNextJoin !== true) {
 				return undefined;
 			}
 
-			const nextHashes: string[] = [];
+			const nextHashes: string[] = knownNoNextAppend
+				? EMPTY_NEXT_HASHES
+				: [];
 			let nextGid: string | undefined;
 			if (nexts.length > 0) {
 				if ((appendOptions.meta as { gid?: string } | undefined)?.gid) {
