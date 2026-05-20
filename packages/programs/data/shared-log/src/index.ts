@@ -72,6 +72,12 @@ import pDefer, { type DeferredPromise } from "p-defer";
 import PQueue from "p-queue";
 import { concat, fromString } from "uint8arrays";
 import { BlocksMessage } from "./blocks.js";
+import {
+	CheckedPruneCoordinator,
+	type CheckedPruneEntry,
+	type CheckedPruneLeaderMap,
+	type CheckedPruneRetryState,
+} from "./checked-prune.js";
 import { type CPUUsage, CPUUsageIntervalLag } from "./cpu.js";
 import {
 	type DebouncedAccumulatorMap,
@@ -240,18 +246,6 @@ export {
 export { MAX_U32, MAX_U64, type NumberFromType };
 export const logger = loggerFn("peerbit:shared-log");
 const warn = logger.newScope("warn");
-
-type CheckedPruneLeaderMap = Map<string, { intersecting: boolean }>;
-type CheckedPruneEntry<T, R extends "u32" | "u64"> =
-	| Entry<T>
-	| ShallowEntry
-	| EntryReplicated<R>;
-type CheckedPruneRetryState<T, R extends "u32" | "u64"> = {
-	attempts: number;
-	timer?: ReturnType<typeof setTimeout>;
-	entry: CheckedPruneEntry<T, R>;
-	leaders: CheckedPruneLeaderMap | Set<string>;
-};
 
 const getLatestEntry = (
 	entries: (ShallowOrFullEntry<any> | EntryWithRefs<any>)[],
@@ -806,15 +800,11 @@ export class SharedLog<
 		SharedLogOptions<T, D, R>;
 	private _closeController!: AbortController;
 	private _respondToIHaveTimeout!: any;
-	private _pendingDeletes!: Map<
-		string,
-		{
-			promise: DeferredPromise<void>;
-			clear: () => void;
-			resolve: (publicKeyHash: string) => Promise<void> | void;
-			reject(reason: any): Promise<void> | void;
-		}
-	>;
+	private _checkedPrune!: CheckedPruneCoordinator<T, R>;
+
+	private get _pendingDeletes() {
+		return this._checkedPrune.pendingDeletes;
+	}
 
 	private _pendingIHave!: Map<
 		string,
@@ -886,12 +876,15 @@ export class SharedLog<
 		>
 	>;
 
-	private _requestIPruneSent!: Map<string, Set<string>>; // tracks entry hash to peer hash for requesting I prune messages
-	private _requestIPruneResponseReplicatorSet!: Map<string, Set<string>>; // tracks entry hash to peer hash
-	private _checkedPruneRetries!: Map<
-		string,
-		CheckedPruneRetryState<T, R>
-	>;
+	private get _requestIPruneSent() {
+		return this._checkedPrune.requestIPruneSent;
+	}
+	private get _requestIPruneResponseReplicatorSet() {
+		return this._checkedPrune.responseReplicatorSet;
+	}
+	private get _checkedPruneRetries() {
+		return this._checkedPrune.retries;
+	}
 
 	private replicationChangeDebounceFn!: ReturnType<
 		typeof debounceAggregationChanges<ReplicationRangeIndexable<R>>
@@ -3576,6 +3569,11 @@ export class SharedLog<
 		if (this.keep && (await this.keep(args.value.entry))) {
 			return false;
 		}
+		this._checkedPrune.trackCandidate(
+			args.key,
+			args.value.entry,
+			args.value.leaders,
+		);
 		void this.pruneDebouncedFn.add(args);
 		return true;
 	}
@@ -3585,26 +3583,18 @@ export class SharedLog<
 		options?: { preserveRetry?: boolean },
 	) {
 		this.pruneDebouncedFn.delete(hash);
-		if (!options?.preserveRetry) {
-			this.clearCheckedPruneRetry(hash);
-		}
-		this.removePruneRequestSent(hash);
-		this._requestIPruneResponseReplicatorSet.delete(hash);
-		await this._pendingDeletes
-			.get(hash)
-			?.reject(new Error("Failed to delete, is leader again"));
+		const pendingDelete = this._checkedPrune.getPendingDelete(hash);
+		this._checkedPrune.markCancelled(hash, {
+			preserveRetry: options?.preserveRetry,
+		});
+		await pendingDelete?.reject(new Error("Failed to delete, is leader again"));
 	}
 
 	private hasActiveCheckedPruneWork(hash: string) {
-		return (
-			this._pendingDeletes.has(hash) ||
-			this._requestIPruneSent.has(hash) ||
-			this._requestIPruneResponseReplicatorSet.has(hash) ||
-			this._checkedPruneRetries.has(hash)
-		);
+		return this._checkedPrune.hasActiveWork(hash);
 	}
 
-	private async resolveCheckedPruneLeaders(args: {
+	private async revalidateCheckedPruneOwnership(args: {
 		hash: string;
 		entry: CheckedPruneEntry<T, R>;
 		leaders: CheckedPruneLeaderMap;
@@ -3672,7 +3662,7 @@ export class SharedLog<
 				continue;
 			}
 
-			if (this._pendingDeletes.has(entry.hash)) {
+			if (this._checkedPrune.hasPendingDelete(entry.hash)) {
 				continue;
 			}
 
@@ -3714,7 +3704,7 @@ export class SharedLog<
 						continue;
 					}
 
-					if (this._pendingDeletes.has(entryReplicated.hash)) {
+					if (this._checkedPrune.hasPendingDelete(entryReplicated.hash)) {
 						continue;
 					}
 
@@ -3761,7 +3751,7 @@ export class SharedLog<
 				continue;
 			}
 
-			if (this._pendingDeletes.has(head.hash)) {
+			if (this._checkedPrune.hasPendingDelete(head.hash)) {
 				continue;
 			}
 
@@ -3796,11 +3786,7 @@ export class SharedLog<
 	}
 
 	private clearCheckedPruneRetry(hash: string) {
-		const state = this._checkedPruneRetries.get(hash);
-		if (state?.timer) {
-			clearTimeout(state.timer);
-		}
-		this._checkedPruneRetries.delete(hash);
+		this._checkedPrune.clearRetry(hash);
 	}
 
 	private scheduleCheckedPruneRetry(args: {
@@ -3808,11 +3794,11 @@ export class SharedLog<
 		leaders: CheckedPruneLeaderMap | Set<string>;
 	}) {
 		if (this.closed) return;
-		if (this._pendingDeletes.has(args.entry.hash)) return;
+		if (this._checkedPrune.hasPendingDelete(args.entry.hash)) return;
 
 		const hash = args.entry.hash;
 		const state =
-			this._checkedPruneRetries.get(hash) ??
+			this._checkedPrune.getRetry(hash) ??
 			({
 				attempts: 0,
 				entry: args.entry,
@@ -3837,10 +3823,10 @@ export class SharedLog<
 
 		state.attempts = attempt;
 		state.timer = setTimeout(async () => {
-			const st = this._checkedPruneRetries.get(hash);
+			const st = this._checkedPrune.getRetry(hash);
 			if (st) st.timer = undefined;
 			if (this.closed) return;
-			if (this._pendingDeletes.has(hash)) return;
+			if (this._checkedPrune.hasPendingDelete(hash)) return;
 			const retryEntry = st?.entry ?? args.entry;
 			const retryLeaders = st?.leaders ?? args.leaders;
 
@@ -3870,7 +3856,7 @@ export class SharedLog<
 			}
 		}, delayMs);
 		state.timer.unref?.();
-		this._checkedPruneRetries.set(hash, state);
+		this._checkedPrune.setRetry(hash, state);
 	}
 
 	private async recoverCheckedPruneFromLateResponses(
@@ -3892,16 +3878,12 @@ export class SharedLog<
 			if (this.closed) {
 				break;
 			}
-			if (this._pendingDeletes.has(hash)) {
+			if (this._checkedPrune.hasPendingDelete(hash)) {
 				continue;
 			}
-			const retry = this._checkedPruneRetries.get(hash);
+			const retry = this._checkedPrune.clearRetryTimer(hash);
 			if (!retry) {
 				continue;
-			}
-			if (retry.timer) {
-				clearTimeout(retry.timer);
-				retry.timer = undefined;
 			}
 
 			const entry = retry.entry;
@@ -3940,7 +3922,7 @@ export class SharedLog<
 
 		void Promise.allSettled(this.prune(toPrune));
 		for (const hash of responseStillApplies) {
-			void this._pendingDeletes.get(hash)?.resolve(publicKeyHash);
+			void this._checkedPrune.getPendingDelete(hash)?.resolve(publicKeyHash);
 		}
 	}
 
@@ -4091,7 +4073,7 @@ export class SharedLog<
 			this.domain.resolution,
 		);
 		this._respondToIHaveTimeout = options?.respondToIHaveTimeout ?? 2e4;
-		this._pendingDeletes = new Map();
+		this._checkedPrune = new CheckedPruneCoordinator<T, R>();
 		this._pendingIHave = new Map();
 		this.latestReplicationInfoMessage = new Map();
 		this._replicationInfoBlockedPeers = new Set();
@@ -4283,10 +4265,6 @@ export class SharedLog<
 			})) > 0;
 
 		this._gidPeersHistory = new Map();
-		this._requestIPruneSent = new Map();
-		this._requestIPruneResponseReplicatorSet = new Map();
-		this._checkedPruneRetries = new Map();
-
 		this.replicationChangeDebounceFn = debounceAggregationChanges<
 			ReplicationRangeIndexable<R>
 		>(
@@ -4308,14 +4286,15 @@ export class SharedLog<
 				>();
 				const selfReplicating = await this.isReplicating();
 				for (const [hash, value] of map) {
-					const checkedPruneLeaders = await this.resolveCheckedPruneLeaders({
-						hash,
-						entry: value.entry,
-						leaders: value.leaders,
-						selfReplicating,
-					});
+						const checkedPruneLeaders =
+							await this.revalidateCheckedPruneOwnership({
+								hash,
+								entry: value.entry,
+								leaders: value.leaders,
+								selfReplicating,
+							});
 					if (checkedPruneLeaders.localLeader) {
-						const preserveRetry = this._checkedPruneRetries.has(hash);
+						const preserveRetry = this._checkedPrune.hasRetry(hash);
 						await this.cancelCheckedPruneForLocalLeader(hash, {
 							preserveRetry,
 						});
@@ -4734,20 +4713,7 @@ export class SharedLog<
 		this.cancelReplicationInfoRequests(peerHash);
 		this._replicatorLivenessFailures.delete(peerHash);
 		this._replicatorLastActivityAt.delete(peerHash);
-
-		for (const [hash, peers] of this._requestIPruneSent) {
-			peers.delete(peerHash);
-			if (peers.size === 0) {
-				this._requestIPruneSent.delete(hash);
-			}
-		}
-
-		for (const [hash, peers] of this._requestIPruneResponseReplicatorSet) {
-			peers.delete(peerHash);
-			if (peers.size === 0) {
-				this._requestIPruneResponseReplicatorSet.delete(hash);
-			}
-		}
+		this._checkedPrune.cleanupPeer(peerHash);
 	}
 
 	private markReplicatorActivity(peerHash: string, now = Date.now()) {
@@ -4811,7 +4777,7 @@ export class SharedLog<
 		const self = this.node.identity.publicKey.hashcode();
 		const seed = hashToSeed32(hash);
 
-		const hinted = this._requestIPruneResponseReplicatorSet.get(hash);
+		const hinted = this._checkedPrune.getConfirmedReplicators(hash);
 		if (hinted && hinted.size > 0) {
 			const peers = [...hinted].filter((p) => p !== self);
 			return peers.length > 0
@@ -4819,7 +4785,7 @@ export class SharedLog<
 				: undefined;
 		}
 
-		const contacted = this._requestIPruneSent.get(hash);
+		const contacted = this._checkedPrune.getContactedReplicators(hash);
 		if (contacted && contacted.size > 0) {
 			const peers = [...contacted].filter((p) => p !== self);
 			return peers.length > 0
@@ -5237,25 +5203,15 @@ export class SharedLog<
 		}
 		this._appendBackfillPendingByTarget.clear();
 
-		for (const [_k, v] of this._pendingDeletes) {
-			v.clear();
-			v.promise.resolve(); // TODO or reject?
-		}
 		for (const [_k, v] of this._pendingIHave) {
 			v.clear();
 		}
-		for (const [_k, v] of this._checkedPruneRetries) {
-			if (v.timer) clearTimeout(v.timer);
-		}
+		this._checkedPrune.close();
 
 		await this.remoteBlocks.stop();
-		this._pendingDeletes.clear();
 		this._pendingIHave.clear();
-		this._checkedPruneRetries.clear();
 		this.latestReplicationInfoMessage.clear();
 		this._gidPeersHistory.clear();
-		this._requestIPruneSent.clear();
-		this._requestIPruneResponseReplicatorSet.clear();
 		// Cancel any pending debounced timers so they can't fire after we've torn down
 		// indexes/RPC state.
 		this.rebalanceParticipationDebounced?.close();
@@ -5543,7 +5499,7 @@ export class SharedLog<
 								for (const entry of entries) {
 									this.pruneDebouncedFn.delete(entry.entry.hash);
 									this.removePruneRequestSent(entry.entry.hash);
-									this._requestIPruneResponseReplicatorSet.delete(
+									this._checkedPrune.clearConfirmedReplicators(
 										entry.entry.hash,
 									);
 
@@ -5666,44 +5622,51 @@ export class SharedLog<
 
 					// if we expect the remote to be owner of this entry because we are to prune ourselves, then we need to remove the remote
 					// this is due to that the remote has previously indicated to be a replicator to help us prune but now has changed their mind
-					const outGoingPrunes =
-						this._requestIPruneResponseReplicatorSet.get(hash);
-					if (outGoingPrunes) {
-						outGoingPrunes.delete(from);
-					}
+					this._checkedPrune.removeConfirmedReplicator(hash, from);
 
 					const indexedEntry = await this.log.entryIndex.getShallow(hash);
 					let isLeader = false;
 
-					if (
-						indexedEntry &&
-						!this._pendingDeletes.has(hash) &&
-						(await this.log.blocks.has(hash))
-					) {
-						this.removePeerFromGidPeerHistory(
-							context.from!.hashcode(),
-							indexedEntry!.value.meta.gid,
-						);
+					if (indexedEntry && (await this.log.blocks.has(hash))) {
+						const pendingDelete = this._checkedPrune.getPendingDelete(hash);
+						if (pendingDelete) {
+							const ownership =
+								await this.revalidateCheckedPruneOwnership({
+									hash,
+									entry: indexedEntry.value,
+									leaders: new Map(),
+								});
+							if (ownership.localLeader) {
+								await this.cancelCheckedPruneForLocalLeader(hash);
+								isLeader = true;
+							}
+						} else {
+							this.removePeerFromGidPeerHistory(
+								context.from!.hashcode(),
+								indexedEntry!.value.meta.gid,
+							);
 
-						await this._waitForReplicators(
-							await this.createCoordinates(
+							await this._waitForReplicators(
+								await this.createCoordinates(
+									indexedEntry.value,
+									decodeReplicas(indexedEntry.value).getValue(this),
+								),
 								indexedEntry.value,
-								decodeReplicas(indexedEntry.value).getValue(this),
-							),
-							indexedEntry.value,
-							[
+								[
+									{
+										key: this.node.identity.publicKey.hashcode(),
+										replicator: true,
+									},
+								],
 								{
-									key: this.node.identity.publicKey.hashcode(),
-									replicator: true,
+									onLeader: (key) => {
+										isLeader =
+											isLeader ||
+											key === this.node.identity.publicKey.hashcode();
+									},
 								},
-							],
-							{
-								onLeader: (key) => {
-									isLeader =
-										isLeader || key === this.node.identity.publicKey.hashcode();
-								},
-							},
-						);
+							);
+						}
 					}
 
 					if (isLeader) {
@@ -5780,7 +5743,7 @@ export class SharedLog<
 			} else if (msg instanceof ResponseIPrune) {
 				const lateResponses: string[] = [];
 				for (const hash of msg.hashes) {
-					const pendingDelete = this._pendingDeletes.get(hash);
+					const pendingDelete = this._checkedPrune.getPendingDelete(hash);
 					if (pendingDelete) {
 						void pendingDelete.resolve(context.from.hashcode());
 					} else {
@@ -7188,17 +7151,7 @@ export class SharedLog<
 	}
 
 	private removePruneRequestSent(hash: string, to?: string) {
-		if (!to) {
-			this._requestIPruneSent.delete(hash);
-		} else {
-			let set = this._requestIPruneSent.get(hash);
-			if (set) {
-				set.delete(to);
-				if (set.size === 0) {
-					this._requestIPruneSent.delete(hash);
-				}
-			}
-		}
+		this._checkedPrune.removeRequestSent(hash, to);
 	}
 
 	prune(
@@ -7215,7 +7168,7 @@ export class SharedLog<
 			return [...entries.values()].map((x) => {
 				this._gidPeersHistory.delete(x.entry.meta.gid);
 				this.removePruneRequestSent(x.entry.hash);
-				this._requestIPruneResponseReplicatorSet.delete(x.entry.hash);
+				this._checkedPrune.clearConfirmedReplicators(x.entry.hash);
 				return this.log.remove(x.entry, {
 					recursively: true,
 				});
@@ -7252,7 +7205,7 @@ export class SharedLog<
 					set.push(entry.hash);
 				}
 
-				const pendingPrev = this._pendingDeletes.get(entry.hash);
+				const pendingPrev = this._checkedPrune.getPendingDelete(entry.hash);
 				if (pendingPrev) {
 					// If a background prune is already in-flight, an explicit prune request should
 					// still respect the caller's timeout. Otherwise, tests (and user calls) can
@@ -7288,9 +7241,9 @@ export class SharedLog<
 				const deferredPromise: DeferredPromise<void> = pDefer();
 
 			const clear = () => {
-				const pending = this._pendingDeletes.get(entry.hash);
+				const pending = this._checkedPrune.getPendingDelete(entry.hash);
 				if (pending?.promise === deferredPromise) {
-					this._pendingDeletes.delete(entry.hash);
+					this._checkedPrune.deletePendingDelete(entry.hash, pending);
 				}
 				clearTimeout(timeout);
 			};
@@ -7302,14 +7255,16 @@ export class SharedLog<
 							setTimeout(async () => {
 								this._gidPeersHistory.delete(entry.meta.gid);
 								this.removePruneRequestSent(entry.hash);
-								this._requestIPruneResponseReplicatorSet.delete(entry.hash);
+								this._checkedPrune.clearConfirmedReplicators(entry.hash);
 
-								if (
-									await this.isLeader({
+								const ownership =
+									await this.revalidateCheckedPruneOwnership({
+										hash: entry.hash,
 										entry,
-										replicas: minReplicas.getValue(this),
-									})
-								) {
+										leaders: this.checkedPruneLeadersToMap(leaders),
+										selfReplicating: true,
+									});
+								if (ownership.localLeader) {
 									clear();
 									if (!explicitTimeout) {
 										this.scheduleCheckedPruneRetry({ entry, leaders });
@@ -7320,30 +7275,37 @@ export class SharedLog<
 									return;
 								}
 
+								this._checkedPrune.markRemoving(entry.hash);
 								return this.log
 									.remove(entry, {
 										recursively: true,
 									})
 									.then(() => {
 										clear();
+										this._checkedPrune.markDone(entry.hash);
 										deferredPromise.resolve();
 									})
 									.catch((e) => {
 										clear();
+										this._checkedPrune.markCancelled(entry.hash, {
+											preserveRetry: false,
+										});
 										deferredPromise.reject(e);
 									})
 									.finally(async () => {
 										this._gidPeersHistory.delete(entry.meta.gid);
 										this.removePruneRequestSent(entry.hash);
-										this._requestIPruneResponseReplicatorSet.delete(entry.hash);
+										this._checkedPrune.clearConfirmedReplicators(entry.hash);
 										// TODO in the case we become leader again here we need to re-add the entry
 
-										if (
-											await this.isLeader({
+										const ownership =
+											await this.revalidateCheckedPruneOwnership({
+												hash: entry.hash,
 												entry,
-												replicas: minReplicas.getValue(this),
-											})
-										) {
+												leaders: this.checkedPruneLeadersToMap(leaders),
+												selfReplicating: true,
+											});
+										if (ownership.localLeader) {
 											logger.error("Unexpected: Is leader after delete");
 										}
 									});
@@ -7357,11 +7319,9 @@ export class SharedLog<
 						e instanceof Error &&
 						typeof e.message === "string" &&
 						e.message.startsWith("Timeout for checked pruning");
-					if (explicitTimeout || !isCheckedPruneTimeout) {
-						this.clearCheckedPruneRetry(entry.hash);
-					}
-					this.removePruneRequestSent(entry.hash);
-					this._requestIPruneResponseReplicatorSet.delete(entry.hash);
+					this._checkedPrune.markCancelled(entry.hash, {
+						preserveRetry: !explicitTimeout && isCheckedPruneTimeout,
+					});
 					deferredPromise.reject(e);
 				};
 
@@ -7381,64 +7341,59 @@ export class SharedLog<
 						PRUNE_DEBOUNCE_INTERVAL * 2,
 				);
 
-				const timeout = setTimeout(() => {
-					// For internal/background prune flows (no explicit timeout), retry a few times
-					// to avoid "permanently prunable" entries when `_pendingIHave` expires under
-					// heavy load.
-					if (!explicitTimeout) {
-						this.scheduleCheckedPruneRetry({ entry, leaders });
-					}
-					reject(
-						new Error(
-							`Timeout for checked pruning after ${checkedPruneTimeoutMs}ms (closed=${this.closed})`,
-						),
-					);
-				}, checkedPruneTimeoutMs);
-				timeout.unref?.();
+			const timeout = setTimeout(() => {
+				// For internal/background prune flows (no explicit timeout), retry a few times
+				// to avoid "permanently prunable" entries when `_pendingIHave` expires under
+				// heavy load.
+				if (!explicitTimeout) {
+					this.scheduleCheckedPruneRetry({ entry, leaders });
+				}
+				reject(
+					new Error(
+						`Timeout for checked pruning after ${checkedPruneTimeoutMs}ms (closed=${this.closed})`,
+					),
+				);
+			}, checkedPruneTimeoutMs);
+			timeout.unref?.();
 
-			this._pendingDeletes.set(entry.hash, {
-				promise: deferredPromise,
-				clear,
-				reject,
-				resolve: async (publicKeyHash: string) => {
-					const minReplicasObj = this.getClampedReplicas(minReplicas);
-					const minReplicasValue = minReplicasObj.getValue(this);
+			this._checkedPrune.setPendingDelete(
+				entry.hash,
+				{
+					promise: deferredPromise,
+					clear,
+					reject,
+					resolve: async (publicKeyHash: string) => {
+						const minReplicasObj = this.getClampedReplicas(minReplicas);
+						const minReplicasValue = minReplicasObj.getValue(this);
 
-					// TODO is this check necessary
-					if (
-						!(await this._waitForReplicators(
-							cursor ??
-								(cursor = await this.createCoordinates(
-									entry,
-									minReplicasValue,
-								)),
-							entry,
-							[
-								{ key: publicKeyHash, replicator: true },
+						// TODO is this check necessary
+						if (
+							!(await this._waitForReplicators(
+								cursor ??
+									(cursor = await this.createCoordinates(
+										entry,
+										minReplicasValue,
+									)),
+								entry,
+								[
+									{ key: publicKeyHash, replicator: true },
+									{
+										key: this.node.identity.publicKey.hashcode(),
+										replicator: false,
+									},
+								],
 								{
-									key: this.node.identity.publicKey.hashcode(),
-									replicator: false,
+									persist: false,
 								},
-							],
-							{
-								persist: false,
-							},
-						))
-					) {
-						return;
-					}
-
-					let existCounter = this._requestIPruneResponseReplicatorSet.get(
-						entry.hash,
-					);
-						if (!existCounter) {
-							existCounter = new Set();
-							this._requestIPruneResponseReplicatorSet.set(
-								entry.hash,
-								existCounter,
-							);
+							))
+						) {
+							return;
 						}
-						existCounter.add(publicKeyHash);
+
+						const existCounter = this._checkedPrune.addConfirmedReplicator(
+							entry.hash,
+							publicKeyHash,
+						);
 						// Seed provider hints so future remote reads can avoid extra round-trips.
 						this.remoteBlocks.hintProviders(entry.hash, [publicKeyHash]);
 
@@ -7446,7 +7401,10 @@ export class SharedLog<
 							resolve();
 						}
 					},
-				});
+				},
+				entry,
+				leaders,
+			);
 
 			promises.push(deferredPromise.promise);
 		}
@@ -7454,16 +7412,11 @@ export class SharedLog<
 		const emitMessages = async (entries: string[], to: string) => {
 			const filteredSet: string[] = [];
 			for (const entry of entries) {
-				let set = this._requestIPruneSent.get(entry);
-				if (!set) {
-					set = new Set();
-					this._requestIPruneSent.set(entry, set);
-				}
 				/* TODO why can we not have this statement? 
 				if (set.has(to)) {
 					continue;
 				} */
-				set.add(to);
+				this._checkedPrune.addRequestSent(entry, to);
 				filteredSet.push(entry);
 			}
 			if (filteredSet.length > 0) {
@@ -7505,7 +7458,9 @@ export class SharedLog<
 
 					const pendingByPeer: [string, string[]][] = [];
 					for (const [peer, hashes] of peerToEntries) {
-						const pending = hashes.filter((h) => this._pendingDeletes.has(h));
+						const pending = hashes.filter((h) =>
+							this._checkedPrune.hasPendingDelete(h),
+						);
 						if (pending.length > 0) {
 							pendingByPeer.push([peer, pending]);
 						}
