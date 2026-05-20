@@ -78,6 +78,7 @@ export type Args<
 	setup?: TestSetupConfig<R>;
 	sync?: SyncOptions<R>;
 	domain?: ReplicationDomainConstructor<D>;
+	nativeGraph?: boolean;
 };
 @variant("event_store")
 export class EventStore<
@@ -146,6 +147,7 @@ export class EventStore<
 			domain: (properties?.domain ?? (properties?.setup as any)?.domain) as any,
 			syncronizer: properties?.setup?.syncronizer as SynchronizerConstructor<R>,
 			sync: properties?.sync,
+			nativeGraph: properties?.nativeGraph,
 
 			// staticArgs was unused; keep open args explicit in tests
 		});

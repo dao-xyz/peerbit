@@ -3,6 +3,7 @@
 // Run with:
 //   cd packages/programs/data/shared-log
 //   CATCHUP_COUNT=5000 CATCHUP_TIMEOUT=60000 node --loader ts-node/esm ./benchmark/sync-catchup.ts
+//   CATCHUP_SETUPS=u32-simple-native-graph,u32-simple-raw CATCHUP_COUNT=1000 node --loader ts-node/esm ./benchmark/sync-catchup.ts
 //
 // Notes:
 // - This is an integration benchmark (network + sync + indexing). It is more variable than pure
@@ -14,6 +15,10 @@ import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { performance } from "node:perf_hooks";
 import { v4 as uuid } from "uuid";
+import {
+	ExchangeHeadsMessage,
+	RawExchangeHeadsMessage,
+} from "../src/exchange-heads.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
 import { RatelessIBLTSynchronizer } from "../src/sync/rateless-iblt.js";
 import { SimpleSyncronizer } from "../src/sync/simple.js";
@@ -24,12 +29,32 @@ const entryCount = Number.parseInt(process.env.CATCHUP_COUNT || "5000", 10);
 const timeoutMs = Number.parseInt(process.env.CATCHUP_TIMEOUT || "60000", 10);
 const runs = Number.parseInt(process.env.CATCHUP_RUNS || "1", 10);
 
-export const testSetups: TestSetupConfig<any>[] = [
+type CatchupSetup = TestSetupConfig<any> & {
+	nativeGraph?: boolean;
+	rawExchangeHeads?: boolean;
+};
+
+const allSetups: CatchupSetup[] = [
 	{
 		domain: createReplicationDomainHash("u32"),
 		type: "u32",
 		syncronizer: SimpleSyncronizer,
 		name: "u32-simple",
+	},
+	{
+		domain: createReplicationDomainHash("u32"),
+		type: "u32",
+		syncronizer: SimpleSyncronizer,
+		name: "u32-simple-native-graph",
+		nativeGraph: true,
+	},
+	{
+		domain: createReplicationDomainHash("u32"),
+		type: "u32",
+		syncronizer: SimpleSyncronizer,
+		name: "u32-simple-raw",
+		nativeGraph: true,
+		rawExchangeHeads: true,
 	},
 	{
 		domain: createReplicationDomainHash("u64"),
@@ -38,6 +63,21 @@ export const testSetups: TestSetupConfig<any>[] = [
 		name: "u64-iblt",
 	},
 ];
+
+const selectedSetupNames = process.env.CATCHUP_SETUPS?.split(",")
+	.map((x) => x.trim())
+	.filter(Boolean);
+const defaultSetupNames = ["u32-simple", "u64-iblt"];
+const testSetups =
+	selectedSetupNames && selectedSetupNames.length > 0
+		? selectedSetupNames.map((name) => {
+				const setup = allSetups.find((candidate) => candidate.name === name);
+				if (!setup) {
+					throw new Error(`Unknown catchup setup '${name}'`);
+				}
+				return setup;
+			})
+		: allSetups.filter((setup) => defaultSetupNames.includes(setup.name));
 
 const fixedKeys = [
 	{
@@ -68,16 +108,45 @@ const fixedKeys = [
 	},
 ];
 
-const runOnce = async (setup: TestSetupConfig<any>) => {
+const wrapSendCounters = (db: EventStore<string, any>) => {
+	const counters = {
+		exchangeHeads: 0,
+		rawExchangeHeads: 0,
+	};
+	const send = db.log.rpc.send.bind(db.log.rpc);
+	db.log.rpc.send = async (message, options) => {
+		if (message instanceof RawExchangeHeadsMessage) {
+			counters.rawExchangeHeads += 1;
+		} else if (message instanceof ExchangeHeadsMessage) {
+			counters.exchangeHeads += 1;
+		}
+		return send(message, options);
+	};
+	return counters;
+};
+
+const runOnce = async (setup: CatchupSetup) => {
 	const session = await TestSession.disconnected(2, fixedKeys);
 	const store = new EventStore<string, any>();
 
 	const db1 = await session.peers[0].open(store.clone(), {
-		args: { replicate: { factor: 1 }, setup },
+		args: {
+			replicate: { factor: 1 },
+			setup,
+			nativeGraph: setup.nativeGraph,
+			sync: setup.rawExchangeHeads ? { rawExchangeHeads: true } : undefined,
+		},
 	});
 	const db2 = await session.peers[1].open(store.clone(), {
-		args: { replicate: { factor: 1 }, setup },
+		args: {
+			replicate: { factor: 1 },
+			setup,
+			nativeGraph: setup.nativeGraph,
+			sync: setup.rawExchangeHeads ? { rawExchangeHeads: true } : undefined,
+		},
 	});
+	const db1Counters = wrapSendCounters(db1);
+	const db2Counters = wrapSendCounters(db2);
 
 	for (let i = 0; i < entryCount; i++) {
 		await db1.add(uuid(), { meta: { next: [] } });
@@ -100,7 +169,12 @@ const runOnce = async (setup: TestSetupConfig<any>) => {
 
 	await session.stop();
 
-	return dt;
+	return {
+		dt,
+		exchangeHeads: db1Counters.exchangeHeads + db2Counters.exchangeHeads,
+		rawExchangeHeads:
+			db1Counters.rawExchangeHeads + db2Counters.rawExchangeHeads,
+	};
 };
 
 const tasks: Array<{
@@ -109,12 +183,19 @@ const tasks: Array<{
 	hz: number;
 	rme: null;
 	samples: number;
+	exchangeHeads: number;
+	rawExchangeHeads: number;
 }> = [];
 
 for (const setup of testSetups) {
 	const samples: number[] = [];
+	let exchangeHeads = 0;
+	let rawExchangeHeads = 0;
 	for (let i = 0; i < runs; i++) {
-		samples.push(await runOnce(setup));
+		const result = await runOnce(setup);
+		samples.push(result.dt);
+		exchangeHeads += result.exchangeHeads;
+		rawExchangeHeads += result.rawExchangeHeads;
 	}
 	const mean_ms = samples.reduce((acc, x) => acc + x, 0) / samples.length;
 	tasks.push({
@@ -123,6 +204,8 @@ for (const setup of testSetups) {
 		hz: mean_ms > 0 ? 1000 / mean_ms : 0,
 		rme: null,
 		samples: samples.length,
+		exchangeHeads,
+		rawExchangeHeads,
 	});
 }
 
@@ -132,7 +215,12 @@ if (process.env.BENCH_JSON === "1") {
 			{
 				name: "shared-log-sync-catchup",
 				tasks,
-				meta: { entryCount, timeoutMs, runs },
+				meta: {
+					entryCount,
+					timeoutMs,
+					runs,
+					setups: testSetups.map((setup) => setup.name),
+				},
 			},
 			null,
 			2,
