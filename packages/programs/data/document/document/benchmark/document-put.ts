@@ -846,9 +846,9 @@ const runPuts = async (
 	profile?: Profile,
 ) => {
 	const canAppend = () => true;
+	const useNativeMode = scenarioUsesNativeMode(scenario);
 	const appendOptions = {
-		replicate: false,
-		target: "none" as const,
+		...(useNativeMode ? {} : { replicate: false, target: "none" as const }),
 		...(scenarioUsesUniquePuts(scenario) ? { unique: true } : {}),
 		...(scenarioBaseName(scenario) === "compat-path" ? { canAppend } : {}),
 	};

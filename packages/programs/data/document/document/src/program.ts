@@ -642,6 +642,9 @@ export class Documents<
 		if (!this.isNativeMode()) {
 			return options;
 		}
+		if (options?.replicate === false && options.target === "none") {
+			return options;
+		}
 		return {
 			...options,
 			replicate: false,

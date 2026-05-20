@@ -2622,6 +2622,29 @@ describe("index", () => {
 					}
 				});
 
+				it("keeps already-local strict native put options by reference", () => {
+					const docs = new Documents<Document>();
+					const nativeDocs = docs as any;
+					nativeDocs._mode = "native";
+					const localOptions = {
+						unique: true,
+						replicate: false,
+						target: "none" as const,
+					};
+					expect(nativeDocs.normalizeNativeModePutOptions(localOptions)).equal(
+						localOptions,
+					);
+					const defaultOptions = { unique: true };
+					const normalized =
+						nativeDocs.normalizeNativeModePutOptions(defaultOptions);
+					expect(normalized).not.equal(defaultOptions);
+					expect(normalized).to.include({
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+				});
+
 				it("does not repeat native policy eligibility checks for strict native puts", async () => {
 					const rustSession = await TestSession.connected(
 						1,
