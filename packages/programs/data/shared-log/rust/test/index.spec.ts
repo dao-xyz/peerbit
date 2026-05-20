@@ -369,6 +369,11 @@ describe("native shared-log range planner", () => {
 				new BigUint64Array([42n, 7n, 9n]),
 			),
 		).to.deep.equal(["head-a", "head-b", "head-c"]);
+		expect(
+			state.getEntryHashListForHashNumbersU64(
+				new BigUint64Array([42n, 42n, 7n]),
+			),
+		).to.deep.equal(["head-a", "head-b", "head-c"]);
 
 		state.deleteEntryCoordinates("head-a");
 		state.commitEntryCoordinates("head-d", "gid-d", [4], ["head-c"], false, 1, 7);

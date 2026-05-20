@@ -82,7 +82,7 @@ const getHashesFromSymbols = async (
 	coordinateToHash: Cache<string>,
 	resolveHashesForSymbols?: HashSymbolResolver,
 	resolveHashListForSymbols?: HashSymbolHashListResolver,
-) => {
+): Promise<Set<string> | string[]> => {
 	let queries: IntegerCompare[] = [];
 	let batchSize = 128; // TODO arg
 	let results = new Set<string>();
@@ -115,16 +115,18 @@ const getHashesFromSymbols = async (
 	if (resolveHashListForSymbols) {
 		const resolvedHashes = await resolveHashListForSymbols(symbols);
 		if (resolvedHashes) {
-			for (const hash of resolvedHashes) {
-				results.add(hash);
-			}
+			const resolvedHashList = Array.isArray(resolvedHashes)
+				? resolvedHashes
+				: [...resolvedHashes];
+			let mergedHashes: Set<string> | undefined;
 			for (const symbol of symbols) {
 				const fromCache = coordinateToHash.get(symbol);
 				if (fromCache) {
-					results.add(fromCache);
+					mergedHashes ??= new Set(resolvedHashList);
+					mergedHashes.add(fromCache);
 				}
 			}
-			return results;
+			return mergedHashes ?? resolvedHashList;
 		}
 	}
 
@@ -175,6 +177,9 @@ const getHashesFromSymbols = async (
 
 	return results;
 };
+
+const hashLookupResultSize = (hashes: Set<string> | string[]) =>
+	Array.isArray(hashes) ? hashes.length : hashes.size;
 
 const DEFAULT_CONVERGENT_REPAIR_TIMEOUT_MS = 30_000;
 const DEFAULT_CONVERGENT_RETRY_INTERVALS_MS = [0, 1_000, 3_000, 7_000];
@@ -779,7 +784,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			if (profile) {
 				emitSyncProfileDuration(profile, lookupStartedAt, {
 					name: "simple.coordinateLookup",
-					entries: hashes.size,
+					entries: hashLookupResultSize(hashes),
 					symbols: msg.hashNumbers.length,
 				});
 			}

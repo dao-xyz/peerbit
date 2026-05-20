@@ -1940,10 +1940,13 @@ impl NativeSharedLogState {
 
     fn entry_hashes_for_hash_number_values_flat(&self, hash_numbers: Vec<u64>) -> Array {
         let out = Array::new();
+        let mut seen = IndexSet::new();
         for hash_number in hash_numbers {
             if let Some(hashes) = self.inner.entry_hashes_by_hash_number.get(&hash_number) {
                 for hash in hashes {
-                    out.push(&JsValue::from_str(hash));
+                    if seen.insert(hash.clone()) {
+                        out.push(&JsValue::from_str(hash));
+                    }
                 }
             }
         }
