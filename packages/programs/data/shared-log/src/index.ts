@@ -11202,19 +11202,35 @@ export class SharedLog<
 				})),
 				this.createNativeLeaderOptions(context, firstItem.options),
 			);
+			const selfHash = this.node.identity.publicKey.hashcode();
 			const plans: EntryLeaderPlan<R>[] = [];
+			const persistItems: Parameters<typeof this.persistCoordinatesBatch>[0] = [];
 			for (let i = 0; i < itemArray.length; i++) {
 				const item = itemArray[i]!;
 				const nativePlan = nativePlans[i]!;
-				const coordinates = nativePlan.coordinates as NumberFromType<R>[];
-				const leaders = nativePlan.leaders;
-				const isLeader = await this.applyLeaderSelection(
-					coordinates,
-					item.entry,
-					leaders,
-					item.options,
+				const coordinates = Array.from(
+					nativePlan.coordinates as Iterable<NumberFromType<R>>,
 				);
-				plans.push({ coordinates, leaders, isLeader });
+				const leaders = nativePlan.leaders;
+				const assignedToRangeBoundary =
+					"assignedToRangeBoundary" in nativePlan
+						? (nativePlan.assignedToRangeBoundary as boolean)
+						: undefined;
+				const isLeader = leaders.has(selfHash);
+				plans.push({ coordinates, leaders, isLeader, assignedToRangeBoundary });
+				if (!this.closed && item.options?.persist) {
+					persistItems.push({
+						coordinates,
+						entry: item.entry,
+						leaders,
+						replicas: coordinates.length,
+						prev: item.options.persist.prev,
+						assignedToRangeBoundary,
+					});
+				}
+			}
+			if (!this.closed && persistItems.length > 0) {
+				await this.persistCoordinatesBatch(persistItems);
 			}
 			return plans;
 		}

@@ -1,4 +1,5 @@
 import { keys } from "@libp2p/crypto";
+import { create as createRustIndexer } from "@peerbit/indexer-rust";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -29,6 +30,7 @@ describe("raw exchange-head sync", () => {
 						]),
 					),
 				},
+				indexer: (directory) => createRustIndexer(directory),
 			},
 			{
 				libp2p: {
@@ -43,6 +45,7 @@ describe("raw exchange-head sync", () => {
 						]),
 					),
 				},
+				indexer: (directory) => createRustIndexer(directory),
 			},
 		]);
 
@@ -70,6 +73,15 @@ describe("raw exchange-head sync", () => {
 			const putKnownManySpy = sinon.spy(
 				db2.log.log.blocks as any,
 				"putKnownMany",
+			);
+			const coordinateIndex = db2.log.entryCoordinatesIndex as any;
+			const coordinateBatchSpy = sinon.spy(
+				coordinateIndex,
+				"putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn",
+			);
+			const persistBatchSpy = sinon.spy(
+				db2.log as any,
+				"persistCoordinatesBatch",
 			);
 
 			let exchangeHeads = 0;
@@ -115,6 +127,10 @@ describe("raw exchange-head sync", () => {
 				0,
 			);
 			expect(putKnownManySpy.callCount).to.be.greaterThan(0);
+			expect(persistBatchSpy.callCount).to.be.greaterThan(0);
+			expect(coordinateBatchSpy.callCount).to.be.greaterThan(0);
+			persistBatchSpy.restore();
+			coordinateBatchSpy.restore();
 			putKnownSpy.restore();
 			putKnownManySpy.restore();
 		} finally {

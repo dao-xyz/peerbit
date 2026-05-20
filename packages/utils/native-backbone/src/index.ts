@@ -1479,7 +1479,9 @@ const appendCoordinatePlanFromRow = (
 		assignedToRangeBoundary,
 		requestedReplicas,
 	] = row as [string, unknown, string, unknown[], boolean, number];
-	const coordinateStrings = coordinateRows as string[];
+	const coordinateStrings = coordinateRows.map((coordinate) =>
+		String(coordinate),
+	);
 	return {
 		hash,
 		hashNumber: rowsToNumbers(resolution, [hashNumber])[0]!,
