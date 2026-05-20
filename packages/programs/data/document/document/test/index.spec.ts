@@ -2597,6 +2597,22 @@ describe("index", () => {
 					);
 				});
 
+				it("rejects replicated setup in strict native mode", async () => {
+					const docs = new Documents<Document>();
+					await expect(
+						docs.open({
+							type: Document,
+							mode: "native",
+							replicate: { factor: 1 },
+							nativeBackbone: {
+								optional: false,
+								documentIndex: true,
+							},
+							canPerform: policy.allowAll<Document>(),
+						}),
+					).to.be.rejectedWith(NativeDocumentModeError, "replication");
+				});
+
 				it("rejects unsupported per-put options in strict native mode", async () => {
 					const rustSession = await TestSession.connected(
 						1,
@@ -2627,6 +2643,57 @@ describe("index", () => {
 							"per-call canAppend",
 						);
 					} finally {
+						await rustSession.stop();
+					}
+				});
+
+				it("rejects putMany before compatibility fallback in strict native mode", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const sequentialSpy = sinon.spy(
+						store.docs as any,
+						"putManySequential",
+					);
+					const nativeBatchSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppendMany",
+					);
+					try {
+						await expect(
+							store.docs.putMany(
+								[
+									new Document({ id: uuid(), name: "batch-1" }),
+									new Document({ id: uuid(), name: "batch-2" }),
+								],
+								{
+									unique: true,
+									target: "none",
+								},
+							),
+						).to.be.rejectedWith(NativeDocumentModeError, "putMany");
+						expect(sequentialSpy.callCount).equal(0);
+						expect(nativeBatchSpy.callCount).equal(0);
+					} finally {
+						nativeBatchSpy.restore();
+						sequentialSpy.restore();
 						await rustSession.stop();
 					}
 				});

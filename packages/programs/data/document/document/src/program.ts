@@ -483,6 +483,9 @@ export class Documents<
 		if (options.compatibility != null) {
 			unsupported.push("legacy compatibility");
 		}
+		if (options.replicate !== undefined && options.replicate !== false) {
+			unsupported.push("replication");
+		}
 		if (Program.isPrototypeOf(options.type)) {
 			unsupported.push("program-valued document type");
 		}
@@ -612,6 +615,15 @@ export class Documents<
 		if (!this.canUsePlainPutFastPath(doc, options)) {
 			throw this.nativeModeError("requires the plain put fast path");
 		}
+	}
+
+	private assertNativeModePutManySupported(): void {
+		if (!this.isNativeMode()) {
+			return;
+		}
+		throw this.nativeModeError(
+			"does not support putMany until native batch document-index commit is available",
+		);
 	}
 
 	private trackDocumentChangeListeners(): void {
@@ -1304,6 +1316,7 @@ export class Documents<
 		if (docs.length === 0) {
 			return { entries: [], removed: [] };
 		}
+		this.assertNativeModePutManySupported();
 		if (!this.canUsePlainPutManyFastPath(docs, options)) {
 			return this.putManySequential(docs, options);
 		}
