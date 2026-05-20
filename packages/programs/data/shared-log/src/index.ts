@@ -8906,10 +8906,11 @@ export class SharedLog<
 						}
 					}
 					const fromIsSelf = context.from.equals(this.node.identity.publicKey);
+					const contextFromHash = context.from.hashcode();
 					if (!fromIsSelf) {
 						this.markEntriesKnownByPeer(
 							heads.map((head) => head.entry.hash),
-							context.from.hashcode(),
+							contextFromHash,
 						);
 					}
 
@@ -8967,7 +8968,6 @@ export class SharedLog<
 						});
 					}
 					if (!isReplicating) {
-						const fromHash = context.from.hashcode();
 						const leaderPlans = await this.planEntryLeaderBatch(
 							receiveGroups.map((group) => ({
 								entry: group.latestEntry,
@@ -8983,7 +8983,7 @@ export class SharedLog<
 							}
 							group.leaders = leaderPlan.leaders;
 							group.isLeader = leaderPlan.isLeader;
-							group.fromIsLeader = leaderPlan.leaders.has(fromHash);
+							group.fromIsLeader = leaderPlan.leaders.has(contextFromHash);
 						}
 						const gidReferenceInputs: string[][] = [];
 						const gidReferenceTargets: Array<{
@@ -9076,8 +9076,7 @@ export class SharedLog<
 											isLeader =
 												isLeader ||
 												this.node.identity.publicKey.hashcode() === key;
-											fromIsLeader =
-												fromIsLeader || context.from!.hashcode() === key;
+											fromIsLeader = fromIsLeader || contextFromHash === key;
 										},
 									},
 								);
@@ -9092,7 +9091,7 @@ export class SharedLog<
 										(await this.planEntryLeaders(latestEntry, maxMaxReplicas));
 									leaders = plan.leaders;
 									isLeader = plan.isLeader;
-									fromIsLeader = leaders.has(context.from!.hashcode());
+									fromIsLeader = leaders.has(contextFromHash);
 								}
 							}
 
@@ -9125,9 +9124,7 @@ export class SharedLog<
 									);
 
 									if (fromIsLeader) {
-										this.addPeersToGidPeerHistory(gid, [
-											context.from!.hashcode(),
-										]);
+										this.addPeersToGidPeerHistory(gid, [contextFromHash]);
 									}
 								}
 
@@ -9138,7 +9135,10 @@ export class SharedLog<
 
 							outer: for (let i = 0; i < entries.length; i++) {
 								const entry = entries[i]!;
-								if (keepAsLeader || (await this.keep?.(entry.entry))) {
+								const shouldKeep =
+									keepAsLeader ||
+									(this.keep ? await this.keep(entry.entry) : false);
+								if (shouldKeep) {
 									toMerge.push(entry.entry);
 									toPersist.push(entry.entry);
 								} else {
