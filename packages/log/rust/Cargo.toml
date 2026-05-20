@@ -12,7 +12,7 @@ crate-type = ["cdylib", "rlib"]
 crypto-bench-candidates = ["dep:ed25519-compact"]
 
 [dependencies]
-ed25519-dalek = { version = "2.1.1", default-features = false, features = ["fast"] }
+ed25519-dalek = { version = "2.1.1", default-features = false, features = ["batch", "fast"] }
 ed25519-compact = { version = "2.3.0", default-features = false, features = ["std"], optional = true }
 indexmap = "2.7.1"
 js-sys = "0.3.80"

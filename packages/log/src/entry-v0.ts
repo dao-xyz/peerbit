@@ -207,6 +207,9 @@ type NativeEntryV0Encoder = {
 	): Promise<NativePreparedPlainEntry>;
 	calculateRawCidV1(bytes: Uint8Array): Promise<string>;
 	calculateRawCidV1Batch?(blocks: Uint8Array[]): Promise<string[]>;
+	verifyEd25519Batch?(
+		inputs: Ed25519VerifyBatchInput[],
+	): Promise<boolean[]>;
 };
 
 let nativeEntryV0EncoderPromise:
@@ -236,6 +239,7 @@ const nativeEntryV0EncoderFromModule = (mod: {
 	prepareEntryV0PlainEntry?: NativeEntryV0Encoder["prepareEntryV0PlainEntry"];
 	calculateRawCidV1?: NativeEntryV0Encoder["calculateRawCidV1"];
 	calculateRawCidV1Batch?: NativeEntryV0Encoder["calculateRawCidV1Batch"];
+	verifyEd25519Batch?: NativeEntryV0Encoder["verifyEd25519Batch"];
 }): NativeEntryV0Encoder | undefined => {
 	if (
 		!mod.encodeEntryV0Signable ||
@@ -252,6 +256,7 @@ const nativeEntryV0EncoderFromModule = (mod: {
 		prepareEntryV0PlainEntry: mod.prepareEntryV0PlainEntry,
 		calculateRawCidV1: mod.calculateRawCidV1,
 		calculateRawCidV1Batch: mod.calculateRawCidV1Batch,
+		verifyEd25519Batch: mod.verifyEd25519Batch,
 	};
 };
 
@@ -308,6 +313,25 @@ export const calculateRawCidV1Batch = async (
 	return Promise.all(
 		blocks.map(async (bytes) => (await calculateRawCid(bytes)).cid),
 	);
+};
+
+export type Ed25519VerifyBatchInput = {
+	signature: Uint8Array;
+	publicKey: Uint8Array;
+	message: Uint8Array;
+};
+
+export const verifyEd25519Batch = async (
+	inputs: Ed25519VerifyBatchInput[],
+): Promise<boolean[] | undefined> => {
+	if (inputs.length === 0) {
+		return [];
+	}
+	const nativeEncoder = loadNativeEntryV0Encoder();
+	const resolvedNativeEncoder = isPromiseLike(nativeEncoder)
+		? await nativeEncoder
+		: nativeEncoder;
+	return resolvedNativeEncoder?.verifyEd25519Batch?.(inputs);
 };
 
 export type MaybeEncryptionPublicKey =

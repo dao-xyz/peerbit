@@ -34,6 +34,7 @@ import {
 import {
 	type AppendOptions,
 	type Change,
+	type Ed25519VerifyBatchInput,
 	Entry,
 	EntryType,
 	Log,
@@ -44,6 +45,7 @@ import {
 	ShallowEntry,
 	ShallowMeta,
 	type ShallowOrFullEntry,
+	verifyEd25519Batch,
 } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import type {
@@ -196,6 +198,7 @@ import { Observer, Replicator } from "./role.js";
 import type {
 	SyncEntryCoordinates,
 	SyncOptions,
+	SyncProfileFn,
 	SynchronizerConstructor,
 	Syncronizer,
 } from "./sync/index.js";
@@ -791,6 +794,7 @@ const DEFAULT_DISTRIBUTION_DEBOUNCE_TIME = 500;
 const RECENT_REPAIR_DISPATCH_TTL_MS = 5_000;
 const REPAIR_SWEEP_ENTRY_BATCH_SIZE = 1_000;
 const REPAIR_SWEEP_TARGET_BUFFER_SIZE = 1024;
+const NATIVE_ED25519_VERIFY_BATCH_MIN_ENTRIES = 16;
 // In sparse topologies (browser/relay), peers can learn about replicators via broadcast
 // replication announcements without having a direct connection that emits unsubscribe
 // on abrupt churn. Probe conservatively so a single missed ACK does not evict a
@@ -8326,9 +8330,44 @@ export class SharedLog<
 		}
 	}
 
-	private async canAppendBatch(entries: Entry<T>[]) {
+	private prepareNativeEd25519VerificationBatch(
+		entries: Entry<T>[],
+	): Ed25519VerifyBatchInput[] | undefined {
+		const inputs: Ed25519VerifyBatchInput[] = [];
+		for (const entry of entries) {
+			let signatures;
+			try {
+				signatures = entry.signatures;
+			} catch {
+				return undefined;
+			}
+			if (signatures.length !== 1) {
+				return undefined;
+			}
+			const signature = signatures[0]!;
+			if (
+				!(signature.publicKey instanceof Ed25519PublicKey) ||
+				signature.prehash !== 0
+			) {
+				return undefined;
+			}
+			try {
+				inputs.push({
+					signature: signature.signature,
+					publicKey: signature.publicKey.publicKey,
+					message: entry.getSignableBytes(),
+				});
+			} catch {
+				return undefined;
+			}
+		}
+		return inputs;
+	}
+
+	private async canAppendBatch(entries: Entry<T>[], profile?: SyncProfileFn) {
 		try {
 			const signaturesToVerify: Entry<T>[] = [];
+			const checkStartedAt = syncProfileStart(profile);
 			for (const entry of entries) {
 				if (!entry.meta.data) {
 					warn("Received entry without meta data, skipping");
@@ -8345,12 +8384,45 @@ export class SharedLog<
 					signaturesToVerify.push(entry);
 				}
 			}
+			if (profile) {
+				emitSyncProfileDuration(profile, checkStartedAt, {
+					name: "sharedLog.canAppendBatch.metadata",
+					component: "shared-log",
+					entries: entries.length,
+					count: signaturesToVerify.length,
+					messages: 1,
+				});
+			}
 			if (signaturesToVerify.length === 0) {
 				return true;
 			}
-			const verified = await Promise.all(
+			const verifyStartedAt = syncProfileStart(profile);
+			let native = false;
+			let verified: boolean[] | undefined;
+			const nativeInputs =
+				signaturesToVerify.length >= NATIVE_ED25519_VERIFY_BATCH_MIN_ENTRIES
+					? this.prepareNativeEd25519VerificationBatch(signaturesToVerify)
+					: undefined;
+			if (nativeInputs) {
+				try {
+					verified = await verifyEd25519Batch(nativeInputs);
+					native = !!verified;
+				} catch {
+					verified = undefined;
+				}
+			}
+			verified ??= await Promise.all(
 				signaturesToVerify.map((entry) => entry.verifySignatures()),
 			);
+			if (profile) {
+				emitSyncProfileDuration(profile, verifyStartedAt, {
+					name: "sharedLog.canAppendBatch.verifySignatures",
+					component: "shared-log",
+					entries: signaturesToVerify.length,
+					messages: 1,
+					details: { native },
+				});
+			}
 			return verified.every(Boolean);
 		} catch (error) {
 			if (error instanceof BorshError || error instanceof ReplicationError) {
@@ -8363,11 +8435,12 @@ export class SharedLog<
 
 	private async canSkipLowerLogCanAppendForNetworkJoin(
 		entries: Entry<T>[],
+		profile?: SyncProfileFn,
 	): Promise<boolean> {
 		if (entries.length === 0 || this._logProperties?.canAppend) {
 			return false;
 		}
-		return this.canAppendBatch(entries);
+		return this.canAppendBatch(entries, profile);
 	}
 
 	async getCover(
@@ -9112,7 +9185,10 @@ export class SharedLog<
 						);
 						const validateStartedAt = syncProfileStart(syncProfile);
 						const canAppendAlreadyValidated =
-							await this.canSkipLowerLogCanAppendForNetworkJoin(allToMerge);
+							await this.canSkipLowerLogCanAppendForNetworkJoin(
+								allToMerge,
+								syncProfile,
+							);
 						if (syncProfile) {
 							emitSyncProfileDuration(syncProfile, validateStartedAt, {
 								name: "sharedLog.receive.validateCanAppend",

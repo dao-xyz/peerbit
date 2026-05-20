@@ -2,7 +2,7 @@
 use ed25519_compact::{
     PublicKey as CompactPublicKey, SecretKey as CompactSecretKey, Signature as CompactSignature,
 };
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier};
+use ed25519_dalek::{verify_batch, Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use indexmap::{IndexMap, IndexSet};
 use js_sys::{Array, BigUint64Array, Uint32Array, Uint8Array};
 use sha2::{Digest, Sha256};
@@ -2108,6 +2108,69 @@ pub fn sign_ed25519(
 ) -> Result<Uint8Array, JsValue> {
     let signature = sign_ed25519_raw(&private_key.to_vec(), &public_key.to_vec(), &data.to_vec())?;
     Ok(Uint8Array::from(signature.as_slice()))
+}
+
+#[wasm_bindgen]
+pub fn verify_ed25519_batch(
+    signatures: Array,
+    public_keys: Array,
+    messages: Array,
+) -> Result<Uint8Array, JsValue> {
+    let len = signatures.length();
+    if public_keys.length() != len || messages.length() != len {
+        return Err(JsValue::from_str(
+            "Expected equal Ed25519 verification batch lengths",
+        ));
+    }
+
+    let mut parsed_signatures = Vec::with_capacity(len as usize);
+    let mut parsed_public_keys = Vec::with_capacity(len as usize);
+    let mut parsed_messages = Vec::with_capacity(len as usize);
+    for i in 0..len {
+        let signature = required_bytes_from_array(&signatures, i, "signature")?;
+        let public_key = required_bytes_from_array(&public_keys, i, "public key")?;
+        let message = required_bytes_from_array(&messages, i, "message")?;
+        validate_signature_lengths(&signature, &public_key)?;
+
+        let signature_bytes: [u8; 64] = signature
+            .as_slice()
+            .try_into()
+            .map_err(|_| JsValue::from_str("Expected Ed25519 signature length 64"))?;
+        let public_key_bytes: [u8; 32] = public_key
+            .as_slice()
+            .try_into()
+            .map_err(|_| JsValue::from_str("Expected Ed25519 public key length 32"))?;
+        let verifying_key = VerifyingKey::from_bytes(&public_key_bytes)
+            .map_err(|_| JsValue::from_str("Invalid Ed25519 public key"))?;
+        let signature = Signature::from_bytes(&signature_bytes);
+        parsed_signatures.push(signature);
+        parsed_public_keys.push(verifying_key);
+        parsed_messages.push(message);
+    }
+
+    let message_refs = parsed_messages
+        .iter()
+        .map(|message| message.as_slice())
+        .collect::<Vec<_>>();
+    if verify_batch(&message_refs, &parsed_signatures, &parsed_public_keys).is_ok() {
+        return Ok(Uint8Array::from(vec![1u8; len as usize].as_slice()));
+    }
+
+    let mut out = Vec::with_capacity(len as usize);
+    for i in 0..parsed_signatures.len() {
+        out.push(
+            if parsed_public_keys[i]
+                .verify(&parsed_messages[i], &parsed_signatures[i])
+                .is_ok()
+            {
+                1
+            } else {
+                0
+            },
+        );
+    }
+
+    Ok(Uint8Array::from(out.as_slice()))
 }
 
 #[wasm_bindgen]

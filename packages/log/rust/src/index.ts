@@ -383,6 +383,11 @@ type WasmModule = {
 		publicKey: Uint8Array,
 		data: Uint8Array,
 	) => Uint8Array;
+	verify_ed25519_batch: (
+		signatures: Uint8Array[],
+		publicKeys: Uint8Array[],
+		messages: Uint8Array[],
+	) => Uint8Array;
 	encode_entry_v0_signable: (
 		clockId: Uint8Array,
 		wallTime: bigint,
@@ -1929,6 +1934,27 @@ export const signEd25519 = async (input: {
 }): Promise<Uint8Array> => {
 	const wasm = await loadWasm();
 	return wasm.sign_ed25519(input.privateKey, input.publicKey, input.data);
+};
+
+export type Ed25519VerifyBatchInput = {
+	signature: Uint8Array;
+	publicKey: Uint8Array;
+	message: Uint8Array;
+};
+
+export const verifyEd25519Batch = async (
+	inputs: Ed25519VerifyBatchInput[],
+): Promise<boolean[]> => {
+	if (inputs.length === 0) {
+		return [];
+	}
+	const wasm = await loadWasm();
+	const result = wasm.verify_ed25519_batch(
+		inputs.map((input) => input.signature),
+		inputs.map((input) => input.publicKey),
+		inputs.map((input) => input.message),
+	);
+	return Array.from(result, (value) => value === 1);
 };
 
 export const encodeEntryV0Signable = async (
