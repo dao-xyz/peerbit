@@ -246,6 +246,12 @@ type CheckedPruneEntry<T, R extends "u32" | "u64"> =
 	| Entry<T>
 	| ShallowEntry
 	| EntryReplicated<R>;
+type CheckedPruneRetryState<T, R extends "u32" | "u64"> = {
+	attempts: number;
+	timer?: ReturnType<typeof setTimeout>;
+	entry: CheckedPruneEntry<T, R>;
+	leaders: CheckedPruneLeaderMap | Set<string>;
+};
 
 const getLatestEntry = (
 	entries: (ShallowOrFullEntry<any> | EntryWithRefs<any>)[],
@@ -494,6 +500,7 @@ export const WAIT_FOR_PRUNE_DELAY = 0;
 const PRUNE_DEBOUNCE_INTERVAL = 500;
 const CHECKED_PRUNE_RESEND_INTERVAL_MIN_MS = 250;
 const CHECKED_PRUNE_RESEND_INTERVAL_MAX_MS = 5_000;
+const CHECKED_PRUNE_BACKGROUND_TIMEOUT_MIN_MS = 120_000;
 const CHECKED_PRUNE_RETRY_MAX_ATTEMPTS = 3;
 const CHECKED_PRUNE_RETRY_MAX_DELAY_MS = 30_000;
 
@@ -883,7 +890,7 @@ export class SharedLog<
 	private _requestIPruneResponseReplicatorSet!: Map<string, Set<string>>; // tracks entry hash to peer hash
 	private _checkedPruneRetries!: Map<
 		string,
-		{ attempts: number; timer?: ReturnType<typeof setTimeout> }
+		CheckedPruneRetryState<T, R>
 	>;
 
 	private replicationChangeDebounceFn!: ReturnType<
@@ -3573,9 +3580,14 @@ export class SharedLog<
 		return true;
 	}
 
-	private async cancelCheckedPruneForLocalLeader(hash: string) {
+	private async cancelCheckedPruneForLocalLeader(
+		hash: string,
+		options?: { preserveRetry?: boolean },
+	) {
 		this.pruneDebouncedFn.delete(hash);
-		this.clearCheckedPruneRetry(hash);
+		if (!options?.preserveRetry) {
+			this.clearCheckedPruneRetry(hash);
+		}
 		this.removePruneRequestSent(hash);
 		this._requestIPruneResponseReplicatorSet.delete(hash);
 		await this._pendingDeletes
@@ -3676,7 +3688,9 @@ export class SharedLog<
 		}
 	}
 
-	private async pruneIndexedEntriesNoLongerLed() {
+	private async pruneIndexedEntriesNoLongerLed(options?: {
+		useDefaultRoleAge?: boolean;
+	}) {
 		const selfHash = this.node.identity.publicKey.hashcode();
 		const iterator = this.entryCoordinatesIndex.iterate({});
 		let enqueuedPrune = false;
@@ -3692,7 +3706,7 @@ export class SharedLog<
 					const leaders = await this.findLeaders(
 						entryReplicated.coordinates,
 						entryReplicated,
-						{ roleAge: 0 },
+						options?.useDefaultRoleAge ? undefined : { roleAge: 0 },
 					);
 
 					if (leaders.has(selfHash)) {
@@ -3724,6 +3738,63 @@ export class SharedLog<
 		}
 	}
 
+	private async pruneCurrentHeadsNoLongerLed(options?: {
+		useDefaultRoleAge?: boolean;
+	}) {
+		const selfHash = this.node.identity.publicKey.hashcode();
+		const heads = await this.log.getHeads(true).all();
+		let enqueuedPrune = false;
+
+		for (const head of heads) {
+			if (this.closed) {
+				break;
+			}
+
+			const leaders = await this.findLeadersFromEntry(
+				head,
+				maxReplicas(this, [head]),
+				options?.useDefaultRoleAge ? undefined : { roleAge: 0 },
+			);
+
+			if (leaders.has(selfHash)) {
+				await this.cancelCheckedPruneForLocalLeader(head.hash);
+				continue;
+			}
+
+			if (this._pendingDeletes.has(head.hash)) {
+				continue;
+			}
+
+			if (leaders.size === 0) {
+				continue;
+			}
+
+			enqueuedPrune =
+				(await this.pruneDebouncedFnAddIfNotKeeping({
+					key: head.hash,
+					value: { entry: head, leaders },
+				})) || enqueuedPrune;
+			this.responseToPruneDebouncedFn.delete(head.hash);
+		}
+
+		if (enqueuedPrune && !this.closed) {
+			await this.pruneDebouncedFn.flush();
+		}
+	}
+
+	private checkedPruneLeadersToMap(
+		leaders: CheckedPruneLeaderMap | Set<string>,
+	): CheckedPruneLeaderMap {
+		if (leaders instanceof Map) {
+			return new Map(leaders);
+		}
+		const leadersMap: CheckedPruneLeaderMap = new Map();
+		for (const leader of leaders) {
+			leadersMap.set(leader, { intersecting: true });
+		}
+		return leadersMap;
+	}
+
 	private clearCheckedPruneRetry(hash: string) {
 		const state = this._checkedPruneRetries.get(hash);
 		if (state?.timer) {
@@ -3741,7 +3812,14 @@ export class SharedLog<
 
 		const hash = args.entry.hash;
 		const state =
-			this._checkedPruneRetries.get(hash) ?? { attempts: 0 };
+			this._checkedPruneRetries.get(hash) ??
+			({
+				attempts: 0,
+				entry: args.entry,
+				leaders: args.leaders,
+			} satisfies CheckedPruneRetryState<T, R>);
+		state.entry = args.entry;
+		state.leaders = args.leaders;
 
 		if (state.timer) return;
 		if (state.attempts >= CHECKED_PRUNE_RETRY_MAX_ATTEMPTS) {
@@ -3763,11 +3841,13 @@ export class SharedLog<
 			if (st) st.timer = undefined;
 			if (this.closed) return;
 			if (this._pendingDeletes.has(hash)) return;
+			const retryEntry = st?.entry ?? args.entry;
+			const retryLeaders = st?.leaders ?? args.leaders;
 
 			let leadersMap: CheckedPruneLeaderMap | undefined;
 			try {
-				const replicas = decodeReplicas(args.entry).getValue(this);
-				leadersMap = await this.findLeadersFromEntry(args.entry, replicas, {
+				const replicas = decodeReplicas(retryEntry).getValue(this);
+				leadersMap = await this.findLeadersFromEntry(retryEntry, replicas, {
 					roleAge: 0,
 				});
 			} catch {
@@ -3775,14 +3855,7 @@ export class SharedLog<
 			}
 
 			if (!leadersMap || leadersMap.size === 0) {
-				if (args.leaders instanceof Map) {
-					leadersMap = args.leaders;
-				} else {
-					leadersMap = new Map<string, { intersecting: boolean }>();
-					for (const k of args.leaders) {
-						leadersMap.set(k, { intersecting: true });
-					}
-				}
+				leadersMap = this.checkedPruneLeadersToMap(retryLeaders);
 			}
 
 			try {
@@ -3790,7 +3863,7 @@ export class SharedLog<
 					leadersMap ?? new Map<string, { intersecting: boolean }>();
 				await this.pruneDebouncedFnAddIfNotKeeping({
 					key: hash,
-					value: { entry: args.entry, leaders: leadersForRetry },
+					value: { entry: retryEntry, leaders: leadersForRetry },
 				});
 			} catch {
 				// Best-effort only; pruning will be re-attempted on future changes.
@@ -3798,6 +3871,77 @@ export class SharedLog<
 		}, delayMs);
 		state.timer.unref?.();
 		this._checkedPruneRetries.set(hash, state);
+	}
+
+	private async recoverCheckedPruneFromLateResponses(
+		hashes: string[],
+		publicKeyHash: string,
+	) {
+		if (this.closed) return;
+		const selfHash = this.node.identity.publicKey.hashcode();
+		const toPrune = new Map<
+			string,
+			{
+				entry: CheckedPruneEntry<T, R>;
+				leaders: CheckedPruneLeaderMap;
+			}
+		>();
+		const responseStillApplies: string[] = [];
+
+		for (const hash of hashes) {
+			if (this.closed) {
+				break;
+			}
+			if (this._pendingDeletes.has(hash)) {
+				continue;
+			}
+			const retry = this._checkedPruneRetries.get(hash);
+			if (!retry) {
+				continue;
+			}
+			if (retry.timer) {
+				clearTimeout(retry.timer);
+				retry.timer = undefined;
+			}
+
+			const entry = retry.entry;
+			let leaders = this.checkedPruneLeadersToMap(retry.leaders);
+			try {
+				const currentLeaders = await this.findLeadersFromEntry(
+					entry,
+					decodeReplicas(entry).getValue(this),
+					{ roleAge: 0 },
+				);
+				if (currentLeaders.size > 0) {
+					leaders = currentLeaders;
+				}
+			} catch {
+				// Best-effort only; the stored retry leaders came from a previous
+				// checked-prune decision for this exact entry.
+			}
+
+			if (leaders.has(selfHash)) {
+				await this.cancelCheckedPruneForLocalLeader(hash);
+				continue;
+			}
+			if (leaders.size === 0) {
+				continue;
+			}
+
+			toPrune.set(hash, { entry, leaders });
+			if (leaders.has(publicKeyHash)) {
+				responseStillApplies.push(hash);
+			}
+		}
+
+		if (toPrune.size === 0) {
+			return;
+		}
+
+		void Promise.allSettled(this.prune(toPrune));
+		for (const hash of responseStillApplies) {
+			void this._pendingDeletes.get(hash)?.resolve(publicKeyHash);
+		}
 	}
 
 	async append(
@@ -4171,7 +4315,16 @@ export class SharedLog<
 						selfReplicating,
 					});
 					if (checkedPruneLeaders.localLeader) {
-						await this.cancelCheckedPruneForLocalLeader(hash);
+						const preserveRetry = this._checkedPruneRetries.has(hash);
+						await this.cancelCheckedPruneForLocalLeader(hash, {
+							preserveRetry,
+						});
+						if (preserveRetry) {
+							this.scheduleCheckedPruneRetry({
+								entry: value.entry,
+								leaders: checkedPruneLeaders.leaders,
+							});
+						}
 						continue;
 					}
 					current.set(hash, {
@@ -5625,8 +5778,20 @@ export class SharedLog<
 					}
 				}
 			} else if (msg instanceof ResponseIPrune) {
+				const lateResponses: string[] = [];
 				for (const hash of msg.hashes) {
-					this._pendingDeletes.get(hash)?.resolve(context.from.hashcode());
+					const pendingDelete = this._pendingDeletes.get(hash);
+					if (pendingDelete) {
+						void pendingDelete.resolve(context.from.hashcode());
+					} else {
+						lateResponses.push(hash);
+					}
+				}
+				if (lateResponses.length > 0) {
+					void this.recoverCheckedPruneFromLateResponses(
+						lateResponses,
+						context.from.hashcode(),
+					).catch((error) => logger.error(error.toString()));
 				}
 			} else if (msg instanceof ConfirmEntriesMessage) {
 				this.markEntriesKnownByPeer(msg.hashes, context.from.hashcode());
@@ -7130,42 +7295,14 @@ export class SharedLog<
 				clearTimeout(timeout);
 			};
 
-				const resolve = () => {
-					clear();
-					this.clearCheckedPruneRetry(entry.hash);
-					cleanupTimer.push(
-						setTimeout(async () => {
-							this._gidPeersHistory.delete(entry.meta.gid);
-							this.removePruneRequestSent(entry.hash);
-						this._requestIPruneResponseReplicatorSet.delete(entry.hash);
-
-						if (
-							await this.isLeader({
-								entry,
-								replicas: minReplicas.getValue(this),
-							})
-						) {
-							deferredPromise.reject(
-								new Error("Failed to delete, is leader again"),
-							);
-							return;
-						}
-
-						return this.log
-							.remove(entry, {
-								recursively: true,
-							})
-							.then(() => {
-								deferredPromise.resolve();
-							})
-							.catch((e) => {
-								deferredPromise.reject(e);
-							})
-							.finally(async () => {
+					const resolve = () => {
+						clearTimeout(timeout);
+						this.clearCheckedPruneRetry(entry.hash);
+						cleanupTimer.push(
+							setTimeout(async () => {
 								this._gidPeersHistory.delete(entry.meta.gid);
 								this.removePruneRequestSent(entry.hash);
 								this._requestIPruneResponseReplicatorSet.delete(entry.hash);
-								// TODO in the case we become leader again here we need to re-add the entry
 
 								if (
 									await this.isLeader({
@@ -7173,12 +7310,46 @@ export class SharedLog<
 										replicas: minReplicas.getValue(this),
 									})
 								) {
-									logger.error("Unexpected: Is leader after delete");
+									clear();
+									if (!explicitTimeout) {
+										this.scheduleCheckedPruneRetry({ entry, leaders });
+									}
+									deferredPromise.reject(
+										new Error("Failed to delete, is leader again"),
+									);
+									return;
 								}
-							});
-					}, this.waitForPruneDelay),
-				);
-			};
+
+								return this.log
+									.remove(entry, {
+										recursively: true,
+									})
+									.then(() => {
+										clear();
+										deferredPromise.resolve();
+									})
+									.catch((e) => {
+										clear();
+										deferredPromise.reject(e);
+									})
+									.finally(async () => {
+										this._gidPeersHistory.delete(entry.meta.gid);
+										this.removePruneRequestSent(entry.hash);
+										this._requestIPruneResponseReplicatorSet.delete(entry.hash);
+										// TODO in the case we become leader again here we need to re-add the entry
+
+										if (
+											await this.isLeader({
+												entry,
+												replicas: minReplicas.getValue(this),
+											})
+										) {
+											logger.error("Unexpected: Is leader after delete");
+										}
+									});
+							}, this.waitForPruneDelay),
+						);
+					};
 
 				const reject = (e: any) => {
 					clear();
@@ -7204,7 +7375,7 @@ export class SharedLog<
 			const checkedPruneTimeoutMs =
 				options?.timeout ??
 				Math.max(
-					10_000,
+					CHECKED_PRUNE_BACKGROUND_TIMEOUT_MIN_MS,
 					Number(this._respondToIHaveTimeout ?? 0) +
 						this.waitForReplicatorTimeout +
 						PRUNE_DEBOUNCE_INTERVAL * 2,
@@ -7765,12 +7936,26 @@ export class SharedLog<
 				flushUncheckedDeliverTarget(target);
 			}
 
-			if (this._isAdaptiveReplicating && hasSelfRangeRemoval) {
-				// Adaptive shrink/replacement can make already-indexed local heads
-				// prunable even when the incremental rebalance scan missed them under
-				// churn or timing pressure. Re-scan after repair dispatches are flushed
-				// so checked prune work is enqueued before callers wait for idle.
-				await this.pruneIndexedEntriesNoLongerLed();
+			if (
+				this._isAdaptiveReplicating &&
+				(hasSelfRangeRemoval ||
+					changes.some(
+						(change) =>
+							change.type === "added" ||
+							change.type === "removed" ||
+							change.type === "replaced",
+					))
+			) {
+				// Adaptive range changes can make already-indexed local heads prunable
+				// even when the incremental rebalance scan misses them under churn or
+				// timing pressure. Re-scan after repair dispatches are flushed using the
+				// mature-role view, which matches the bounded pruning contract.
+				await this.pruneIndexedEntriesNoLongerLed({
+					useDefaultRoleAge: true,
+				});
+				await this.pruneCurrentHeadsNoLongerLed({
+					useDefaultRoleAge: true,
+				});
 			}
 
 			return changed;
