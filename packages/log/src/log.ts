@@ -2451,8 +2451,7 @@ export class Log<T> {
 
 		const batchPromise = (async () => {
 			for (const entry of entries) {
-				const clock = await entry.getClock();
-				this._hlc.update(clock.timestamp);
+				this._hlc.update(entry.meta.clock.timestamp);
 			}
 
 			await this.putAppendEntryBlocks(entries);
