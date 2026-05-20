@@ -599,11 +599,23 @@ export class Documents<
 	private assertNativeModePlainPutSupported(
 		doc: T,
 		options?: DocumentPutOptions,
-	): void {
+	): boolean {
 		if (!this.isNativeMode()) {
-			return;
+			return false;
 		}
 		const unsupported = this.unsupportedNativePutOptions(options);
+		if (this.immutable) {
+			unsupported.push("immutable documents");
+		}
+		if (this.strictHistory) {
+			unsupported.push("strict history");
+		}
+		if (this.compatibility === 6) {
+			unsupported.push("legacy compatibility");
+		}
+		if (Program.isPrototypeOf(this._clazz)) {
+			unsupported.push("program-valued document type");
+		}
 		if (unsupported.length > 0) {
 			throw this.nativeModeError(
 				`does not support ${unsupported.join(", ")}`,
@@ -612,9 +624,7 @@ export class Documents<
 		if (!this.canPerformAllowsPlainPutFastPath(doc)) {
 			throw this.nativeModeError("canPerform policy rejected this document");
 		}
-		if (!this.canUsePlainPutFastPath(doc, options)) {
-			throw this.nativeModeError("requires the plain put fast path");
-		}
+		return true;
 	}
 
 	private assertNativeModePutManySupported(): void {
@@ -1240,8 +1250,8 @@ export class Documents<
 	}
 
 	public async put(doc: T, options?: DocumentPutOptions) {
-		this.assertNativeModePlainPutSupported(doc, options);
-		const prepared = this.canUsePlainPutFastPath(doc, options)
+		const nativePlainPut = this.assertNativeModePlainPutSupported(doc, options);
+		const prepared = (nativePlainPut || this.canUsePlainPutFastPath(doc, options))
 			? this.preparePlainPut(doc)
 			: this.preparePut(doc);
 		let existingLocalContext:
@@ -1270,6 +1280,7 @@ export class Documents<
 			existingHead,
 			existingLocalContext,
 			options,
+			nativePlainPut,
 		);
 		if (plainPutPlan) {
 			return this.commitPlainPutPlan(plainPutPlan, options);
@@ -1426,11 +1437,13 @@ export class Documents<
 			| null
 			| undefined,
 		options: DocumentPutOptions | undefined,
+		assumePlainPutFastPath = false,
 	): Promise<PlainPutCommitPlan<T, I> | undefined> {
 		if (
 			("operation" in prepared &&
 				!(prepared.operation instanceof PutOperation)) ||
-			!this.canUsePlainPutFastPath(prepared.document, options)
+			(!assumePlainPutFastPath &&
+				!this.canUsePlainPutFastPath(prepared.document, options))
 		) {
 			return;
 		}

@@ -2578,6 +2578,49 @@ describe("index", () => {
 					}
 				});
 
+				it("does not repeat native policy eligibility checks for strict native puts", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const originalEvaluator = (store.docs as any)
+						._optionCanPerformNativeFastPath;
+					const nativePolicySpy = sinon.spy(() => true);
+					(store.docs as any)._optionCanPerformNativeFastPath =
+						nativePolicySpy;
+					try {
+						await store.docs.put(
+							new Document({ id: uuid(), name: "native-policy-once" }),
+							{
+								unique: true,
+								replicate: false,
+								target: "none",
+							},
+						);
+						expect(nativePolicySpy.callCount).equal(1);
+					} finally {
+						(store.docs as any)._optionCanPerformNativeFastPath =
+							originalEvaluator;
+						await rustSession.stop();
+					}
+				});
+
 				it("rejects arbitrary canPerform in strict native mode", async () => {
 					const docs = new Documents<Document>();
 					await expect(
