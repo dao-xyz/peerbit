@@ -21,6 +21,7 @@ import { TransportMessage } from "../message.js";
 import type { EntryReplicated } from "../ranges.js";
 import type {
 	HashSymbolResolver,
+	HashSymbolHashListResolver,
 	RepairSession,
 	RepairSessionMode,
 	RepairSessionResult,
@@ -80,6 +81,7 @@ const getHashesFromSymbols = async (
 	entryIndex: Index<EntryReplicated<any>, any>,
 	coordinateToHash: Cache<string>,
 	resolveHashesForSymbols?: HashSymbolResolver,
+	resolveHashListForSymbols?: HashSymbolHashListResolver,
 ) => {
 	let queries: IntegerCompare[] = [];
 	let batchSize = 128; // TODO arg
@@ -109,6 +111,22 @@ const getHashesFromSymbols = async (
 			}
 		}
 	};
+
+	if (resolveHashListForSymbols) {
+		const resolvedHashes = await resolveHashListForSymbols(symbols);
+		if (resolvedHashes) {
+			for (const hash of resolvedHashes) {
+				results.add(hash);
+			}
+			for (const symbol of symbols) {
+				const fromCache = coordinateToHash.get(symbol);
+				if (fromCache) {
+					results.add(fromCache);
+				}
+			}
+			return results;
+		}
+	}
 
 	if (resolveHashesForSymbols) {
 		const resolved = await resolveHashesForSymbols(symbols);
@@ -220,6 +238,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	entryIndex: Index<EntryReplicated<R>, any>;
 	coordinateToHash: Cache<string>;
 	private resolveHashesForSymbols?: HashSymbolResolver;
+	private resolveHashListForSymbols?: HashSymbolHashListResolver;
 	private syncOptions?: SyncOptions<R>;
 	private isEntryRecentlyKnownByPeer?: (
 		hash: string,
@@ -241,6 +260,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		log: Log<any>;
 		coordinateToHash: Cache<string>;
 		resolveHashesForSymbols?: HashSymbolResolver;
+		resolveHashListForSymbols?: HashSymbolHashListResolver;
 		sync?: SyncOptions<R>;
 		isEntryRecentlyKnownByPeer?: (
 			hash: string,
@@ -256,6 +276,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		this.entryIndex = properties.entryIndex;
 		this.coordinateToHash = properties.coordinateToHash;
 		this.resolveHashesForSymbols = properties.resolveHashesForSymbols;
+		this.resolveHashListForSymbols = properties.resolveHashListForSymbols;
 		this.syncOptions = properties.sync;
 		this.isEntryRecentlyKnownByPeer = properties.isEntryRecentlyKnownByPeer;
 		this.recentlySentExchangeHeads = new Map();
@@ -753,6 +774,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				this.entryIndex,
 				this.coordinateToHash,
 				this.resolveHashesForSymbols,
+				this.resolveHashListForSymbols,
 			);
 			if (profile) {
 				emitSyncProfileDuration(profile, lookupStartedAt, {

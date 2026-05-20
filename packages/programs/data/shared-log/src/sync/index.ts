@@ -74,6 +74,13 @@ export type HashSymbolResolver = (
 	| undefined
 	| Promise<ReadonlyMap<bigint, Iterable<string>> | undefined>;
 
+export type HashSymbolHashListResolver = (
+	symbols: HashSymbolInput,
+) =>
+	| Iterable<string>
+	| undefined
+	| Promise<Iterable<string> | undefined>;
+
 export type HashSymbolRangeResolver = (range: {
 	start1: bigint | number;
 	end1: bigint | number;
@@ -92,6 +99,7 @@ export type SynchronizerComponents<R extends "u32" | "u64"> = {
 	coordinateToHash: Cache<string>;
 	numbers: Numbers<R>;
 	resolveHashesForSymbols?: HashSymbolResolver;
+	resolveHashListForSymbols?: HashSymbolHashListResolver;
 	resolveHashNumbersInRange?: HashSymbolRangeResolver;
 	sync?: SyncOptions<R>;
 	isEntryRecentlyKnownByPeer?: (

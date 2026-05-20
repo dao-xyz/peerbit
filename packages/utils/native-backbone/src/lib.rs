@@ -330,6 +330,11 @@ impl NativePeerbitBackbone {
             .entry_hashes_for_hash_numbers_u64(hash_numbers)
     }
 
+    pub fn entry_hashes_for_hash_numbers_flat_u64(&self, hash_numbers: BigUint64Array) -> Array {
+        self.shared_log
+            .entry_hashes_for_hash_numbers_flat_u64(hash_numbers)
+    }
+
     pub fn entry_hash_numbers_in_range(
         &self,
         start1: String,

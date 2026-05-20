@@ -39,6 +39,9 @@ type NativePeerbitBackboneHandle = {
 	entry_hashes_for_hash_numbers_u64?: (
 		hashNumbers: BigUint64Array,
 	) => unknown[];
+	entry_hashes_for_hash_numbers_flat_u64?: (
+		hashNumbers: BigUint64Array,
+	) => string[];
 	entry_hash_numbers_in_range: (
 		start1: string,
 		end1: string,
@@ -2508,6 +2511,18 @@ export class NativePeerbitBackbone {
 		return rowsToHashNumberMap(
 			this.native.entry_hashes_for_hash_numbers_u64(hashNumbers),
 		);
+	}
+
+	getEntryHashListForHashNumbersU64(
+		hashNumbers: BigUint64Array,
+	): string[] | undefined {
+		if (
+			typeof BigUint64Array === "undefined" ||
+			typeof this.native.entry_hashes_for_hash_numbers_flat_u64 !== "function"
+		) {
+			return undefined;
+		}
+		return this.native.entry_hashes_for_hash_numbers_flat_u64(hashNumbers);
 	}
 
 	getEntryHashNumbersInRange(range: {

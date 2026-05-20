@@ -7197,6 +7197,23 @@ export class SharedLog<
 			}
 			return nativeState.getEntryHashesForHashNumbers(symbols);
 		};
+		const resolveHashListForSymbols = (
+			symbols: readonly bigint[] | BigUint64Array,
+		) => {
+			const nativeState = this._nativeBackbone ?? this._nativeSharedLogState;
+			if (
+				!nativeState ||
+				typeof BigUint64Array === "undefined" ||
+				typeof nativeState.getEntryHashListForHashNumbersU64 !== "function"
+			) {
+				return undefined;
+			}
+			return nativeState.getEntryHashListForHashNumbersU64(
+				symbols instanceof BigUint64Array
+					? symbols
+					: BigUint64Array.from(symbols),
+			);
+		};
 		const resolveHashNumbersInRange = (range: {
 			start1: bigint | number;
 			end1: bigint | number;
@@ -7219,6 +7236,7 @@ export class SharedLog<
 				rpc: this.rpc,
 				coordinateToHash: this.coordinateToHash,
 				resolveHashesForSymbols,
+				resolveHashListForSymbols,
 				resolveHashNumbersInRange,
 				sync: options?.sync,
 				isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
@@ -7235,6 +7253,7 @@ export class SharedLog<
 					entryIndex: this.entryCoordinatesIndex,
 					coordinateToHash: this.coordinateToHash,
 					resolveHashesForSymbols,
+					resolveHashListForSymbols,
 					sync: options?.sync,
 					isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
 						this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
@@ -7254,6 +7273,7 @@ export class SharedLog<
 					rpc: this.rpc,
 					coordinateToHash: this.coordinateToHash,
 					resolveHashesForSymbols,
+					resolveHashListForSymbols,
 					resolveHashNumbersInRange,
 					sync: options?.sync,
 					isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>

@@ -145,6 +145,44 @@ describe("sync-chunking", () => {
 		]);
 	});
 
+	it("uses native flat coordinate symbol resolver for response lookup", async () => {
+		const send = sinon.stub().resolves();
+		const iterate = sinon.stub().throws(new Error("entry index should not be used"));
+		const resolveHashesForSymbols = sinon
+			.stub()
+			.throws(new Error("map resolver should not be used"));
+		const resolveHashListForSymbols = sinon.stub().returns(["head-a"]);
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc: { send } as any,
+			entryIndex: { iterate } as any,
+			log: {
+				get: async (hash: string) => ({
+					hash,
+					size: 1,
+					meta: { gid: `gid-${hash}` },
+				}),
+				entryIndex: { getUniqueReferenceGids: () => [] },
+			} as any,
+			coordinateToHash: new Cache<string>({ max: 10 }),
+			resolveHashesForSymbols,
+			resolveHashListForSymbols,
+		});
+
+		await sync.onMessage(
+			new RequestMaybeSyncCoordinate({ hashNumbers: [42n] }),
+			{ from: "peer-a" } as any,
+		);
+
+		expect(iterate.called).to.equal(false);
+		expect(resolveHashListForSymbols.calledOnce).to.equal(true);
+		expect(resolveHashListForSymbols.firstCall.args[0]).to.deep.equal([42n]);
+		expect(resolveHashesForSymbols.called).to.equal(false);
+		expect(send.callCount).to.equal(1);
+		expect(send.firstCall.args[0].heads.map((x: any) => x.entry.hash)).to.deep.equal([
+			"head-a",
+		]);
+	});
+
 	it("splits mixed hash and coordinate maybe-sync batches by type", async () => {
 		const send = sinon.stub().resolves();
 		const rpc = { send } as any;

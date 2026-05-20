@@ -1921,6 +1921,10 @@ impl NativeSharedLogState {
         Ok(self.entry_hashes_for_hash_number_values(hash_numbers.to_vec()))
     }
 
+    pub fn entry_hashes_for_hash_numbers_flat_u64(&self, hash_numbers: BigUint64Array) -> Array {
+        self.entry_hashes_for_hash_number_values_flat(hash_numbers.to_vec())
+    }
+
     fn entry_hashes_for_hash_number_values(&self, hash_numbers: Vec<u64>) -> Array {
         let out = Array::new();
         for hash_number in hash_numbers {
@@ -1929,6 +1933,18 @@ impl NativeSharedLogState {
                 row.push(&JsValue::from_str(&hash_number.to_string()));
                 row.push(&strings_to_array(hashes.iter().cloned().collect()));
                 out.push(&row);
+            }
+        }
+        out
+    }
+
+    fn entry_hashes_for_hash_number_values_flat(&self, hash_numbers: Vec<u64>) -> Array {
+        let out = Array::new();
+        for hash_number in hash_numbers {
+            if let Some(hashes) = self.inner.entry_hashes_by_hash_number.get(&hash_number) {
+                for hash in hashes {
+                    out.push(&JsValue::from_str(hash));
+                }
             }
         }
         out

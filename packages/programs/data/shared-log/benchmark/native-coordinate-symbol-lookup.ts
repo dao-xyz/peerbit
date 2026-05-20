@@ -133,6 +133,20 @@ const lookupViaNativeStateTyped = () => {
 	}
 };
 
+const lookupViaNativeStateFlatTyped = () => {
+	const result =
+		symbolsTyped &&
+		nativeState.getEntryHashListForHashNumbersU64(symbolsTyped);
+	if (!result) {
+		throw new Error("Expected flat typed native hash lookup support");
+	}
+	if (result.length !== symbols.length) {
+		throw new Error(
+			`Expected ${symbols.length} native flat typed hits, got ${result.length}`,
+		);
+	}
+};
+
 const lookupRangeViaIndex = async () => {
 	const entries = await entryIndex
 		.iterate(
@@ -219,6 +233,10 @@ const suite = new Bench({
 suite.add("generic index hashNumber lookup", lookupViaIndex);
 suite.add("native resident hashNumber lookup", lookupViaNativeState);
 suite.add("native resident hashNumber lookup typed", lookupViaNativeStateTyped);
+suite.add(
+	"native resident hashNumber lookup flat typed",
+	lookupViaNativeStateFlatTyped,
+);
 suite.add("generic index hashNumber range lookup", lookupRangeViaIndex);
 suite.add("native resident hashNumber range lookup", lookupRangeViaNativeState);
 suite.add(
