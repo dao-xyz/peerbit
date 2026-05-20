@@ -122,7 +122,7 @@ import {
 	RequestIPrune,
 	ResponseIPrune,
 	createExchangeHeadsMessages,
-	materializeRawExchangeHeadsMessage,
+	materializeVerifiedRawExchangeHeadsMessage,
 } from "./exchange-heads.js";
 import { FanoutEnvelope } from "./fanout-envelope.js";
 import {
@@ -8701,7 +8701,7 @@ export class SharedLog<
 				if (rawMissingHeads.length === 0) {
 					return;
 				}
-				msg = materializeRawExchangeHeadsMessage(
+				msg = await materializeVerifiedRawExchangeHeadsMessage(
 					new RawExchangeHeadsMessage({
 						heads: rawMissingHeads,
 						reserved: msg.reserved,

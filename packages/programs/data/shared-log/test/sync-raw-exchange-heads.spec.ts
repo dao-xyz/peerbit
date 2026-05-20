@@ -2,6 +2,7 @@ import { keys } from "@libp2p/crypto";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import sinon from "sinon";
 import { v4 as uuid } from "uuid";
 import {
 	ExchangeHeadsMessage,
@@ -65,6 +66,7 @@ describe("raw exchange-head sync", () => {
 			const db2 = await session.peers[1].open(store.clone(), {
 				args: openArgs,
 			});
+			const putKnownSpy = sinon.spy(db2.log.log.blocks as any, "putKnown");
 
 			let exchangeHeads = 0;
 			let rawExchangeHeads = 0;
@@ -105,6 +107,8 @@ describe("raw exchange-head sync", () => {
 
 			expect(rawExchangeHeads).to.be.greaterThan(0);
 			expect(exchangeHeads).to.equal(0);
+			expect(putKnownSpy.callCount).to.be.greaterThan(0);
+			putKnownSpy.restore();
 		} finally {
 			await session.stop();
 		}

@@ -22,6 +22,7 @@ import { ShallowEntry, ShallowMeta } from "./entry-shallow.js";
 import { EntryType } from "./entry-type.js";
 import {
 	Entry,
+	type PreparedEntryBlock,
 	type PreparedNativeLogEntry,
 	type ShallowOrFullEntry,
 } from "./entry.js";
@@ -60,6 +61,10 @@ type BlocksWithRmMany = Blocks & {
 	rmMany?: (cids: string[]) => Promise<number | void> | number | void;
 };
 
+type BlocksWithPutKnown = Blocks & {
+	putKnown?: (cid: string, bytes: Uint8Array) => Promise<string> | string;
+};
+
 const hasRmMany = (store: Blocks): store is BlocksWithRmMany =>
 	typeof (store as BlocksWithRmMany).rmMany === "function";
 
@@ -71,6 +76,16 @@ type IndexWithExactDelete = Index<any> & {
 
 const hasExactDelete = (index: Index<any>): index is IndexWithExactDelete =>
 	typeof (index as IndexWithExactDelete).delIds === "function";
+
+const putPreparedEntryBlock = async (
+	store: Blocks,
+	prepared: PreparedEntryBlock,
+) => {
+	const storeWithKnown = store as BlocksWithPutKnown;
+	return typeof storeWithKnown.putKnown === "function"
+		? await storeWithKnown.putKnown(prepared.cid, prepared.block.bytes)
+		: await store.put(prepared);
+};
 
 type NativeLogEntry = PreparedNativeLogEntry;
 
@@ -1226,9 +1241,19 @@ export class EntryIndex<T> {
 	) {
 		if (properties.toMultiHash) {
 			const existingHash = entry.hash;
-			entry.hash = undefined as any;
+			const preparedBlock = Entry.takePreparedBlock(entry);
 			try {
-				const hash = await Entry.toMultihash(this.properties.store, entry);
+				let hash: string;
+				if (preparedBlock) {
+					hash = await putPreparedEntryBlock(
+						this.properties.store,
+						preparedBlock,
+					);
+					entry.size = preparedBlock.block.bytes.length;
+				} else {
+					entry.hash = undefined as any;
+					hash = await Entry.toMultihash(this.properties.store, entry);
+				}
 				entry.hash = existingHash;
 				if (entry.hash === undefined) {
 					entry.hash = hash; // can happen if you sync entries that you load directly from ipfs

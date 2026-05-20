@@ -1,4 +1,5 @@
 import { deserialize, field, fixedArray, variant, vec } from "@dao-xyz/borsh";
+import { calculateRawCid } from "@peerbit/blocks-interface";
 import { Entry, EntryType, type ShallowEntry } from "@peerbit/log";
 import { Log } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
@@ -340,6 +341,37 @@ export const materializeRawExchangeHeadsMessage = (
 				gidRefrences: head.gidRefrences,
 			});
 		}),
+	});
+	materialized.reserved = message.reserved;
+	return materialized;
+};
+
+export const materializeVerifiedRawExchangeHeadsMessage = async (
+	message: RawExchangeHeadsMessage,
+	log: Log<any>,
+): Promise<ExchangeHeadsMessage<any>> => {
+	const materialized = new ExchangeHeadsMessage({
+		heads: await Promise.all(
+			message.heads.map(async (head) => {
+				const prepared = await calculateRawCid(head.bytes);
+				if (prepared.cid !== head.hash) {
+					throw new Error("Raw exchange head hash did not match bytes");
+				}
+				const entry = deserialize(head.bytes, Entry) as Entry<any>;
+				entry.hash = undefined as any;
+				Entry.prepareMultihashBytes(entry, head.bytes, head.hash);
+				entry.hash = head.hash;
+				entry.size = head.bytes.byteLength;
+				entry.init({
+					keychain: log.keychain,
+					encoding: log.encoding,
+				});
+				return new EntryWithRefs({
+					entry,
+					gidRefrences: head.gidRefrences,
+				});
+			}),
+		),
 	});
 	materialized.reserved = message.reserved;
 	return materialized;
