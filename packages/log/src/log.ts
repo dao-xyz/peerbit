@@ -970,20 +970,7 @@ export class Log<T> {
 			data,
 			options,
 			properties,
-			(input) =>
-				prepare({
-					clockId: input.clockId,
-					privateKey: input.privateKey,
-					publicKey: input.publicKey,
-					wallTime: input.wallTime,
-					logical: input.logical,
-					gid: input.gid,
-					type: input.type,
-					metaData: input.metaData,
-					payloadData: input.payloadData,
-					resolveTrimmedEntries: properties.resolveTrimmedEntries,
-					trimLengthTo: input.trimLengthTo,
-				}),
+			prepare,
 		);
 	}
 
@@ -1013,21 +1000,9 @@ export class Log<T> {
 		return this.appendLocallyPreparedNativeCommitOnly(
 			data,
 			options,
-			{ ...properties, knownNoNext: true },
-			(input) =>
-				prepare({
-					clockId: input.clockId,
-					privateKey: input.privateKey,
-					publicKey: input.publicKey,
-					wallTime: input.wallTime,
-					logical: input.logical,
-					gid: input.gid,
-					type: input.type,
-					metaData: input.metaData,
-					payloadData: input.payloadData,
-					resolveTrimmedEntries: properties.resolveTrimmedEntries,
-					trimLengthTo: input.trimLengthTo,
-				}),
+			properties,
+			prepare,
+			true,
 		);
 	}
 
@@ -1043,6 +1018,7 @@ export class Log<T> {
 		prepare: (
 			input: NativeCommitInput,
 		) => MaybePromise<NativePreparedNoNextCommit | undefined>,
+		knownNoNext = false,
 	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
 		const resolvedTrim = options.trim ?? this._trim.options;
 		const supportsNativeTrim =
@@ -1082,7 +1058,7 @@ export class Log<T> {
 			...options,
 			__peerbitCanAppendAlreadyValidated: true,
 		};
-		const nextsResult = properties.knownNoNext
+		const nextsResult = knownNoNext || properties.knownNoNext
 			? []
 			: this.getNextsForAppend(appendOptions);
 		return mapMaybePromise(nextsResult, (nexts) => {
@@ -1126,6 +1102,7 @@ export class Log<T> {
 					type: entryType,
 					metaData: appendOptions.meta?.data,
 					payloadData,
+					resolveTrimmedEntries: properties.resolveTrimmedEntries,
 					trimLengthTo: nativeTrimLengthTo,
 				});
 				return mapMaybePromise(preparedValue, (prepared) => {
