@@ -212,6 +212,10 @@ export abstract class Entry<T> {
 		return prepared;
 	}
 
+	static hasPreparedBlock<T>(entry: Entry<T>): boolean {
+		return preparedEntryBlocks.has(entry);
+	}
+
 	static prepareShallowEntry<T>(entry: Entry<T>, shallow: ShallowEntry): void {
 		preparedShallowEntries.set(entry, shallow);
 	}

@@ -8761,7 +8761,14 @@ export class SharedLog<
 					const groupedByGid = await groupByGid(filteredHeads);
 					const maxReplicasFromHeadsByGid =
 						await this.getMaxReplicasFromHeadsBatch(groupedByGid.keys());
-					const promises: Promise<void>[] = [];
+					type ReceivedGidJoinPlan = {
+						toMerge: Entry<any>[];
+						toPersist: Entry<any>[];
+						toDelete?: Entry<any>[];
+						maybeDelete?: EntryWithRefs<any>[][];
+						leaders: LeaderMap | false;
+					};
+					const promises: Promise<ReceivedGidJoinPlan | undefined>[] = [];
 
 					for (const [gid, entries] of groupedByGid) {
 						const fn = async () => {
@@ -8896,66 +8903,83 @@ export class SharedLog<
 								return;
 							}
 
-							if (toMerge.length > 0) {
-								this.markEntriesKnownByPeer(
-									toMerge.map((entry) => entry.hash),
-									context.from!.hashcode(),
-								);
-								await this.log.join(toMerge);
-								// Network joins bypass SharedLog.join(), but churn repair scans
-								// the coordinate index to redistribute entries after membership changes.
-								for (const entry of toPersist) {
-									const replicas = decodeReplicas(entry).getValue(this);
-									await this.planEntryLeaders(entry, replicas, {
-										roleAge: 0,
-										persist: {},
-									});
-								}
-								for (const merged of toMerge) {
-									confirmedHashes.add(merged.hash);
-								}
-								await this.pruneJoinedEntriesNoLongerLed(toMerge);
-
-								toDelete?.map((x) =>
-									// TODO types
-									this.pruneDebouncedFnAddIfNotKeeping({
-										key: x.hash,
-										value: { entry: x, leaders: leaders as Map<string, any> },
-									}),
-								);
-								this.rebalanceParticipationDebounced?.call();
-							}
-
-							if (maybeDelete) {
-								for (const entries of maybeDelete as EntryWithRefs<any>[][]) {
-									const minReplicas = await this.getMaxReplicasFromHeads(
-										entries[0].entry.meta.gid,
-									);
-									if (minReplicas != null) {
-										const isLeader = await this.isLeader({
-											entry: entries[0].entry,
-											replicas: minReplicas,
-										});
-
-										if (!isLeader) {
-											for (const x of entries) {
-												this.pruneDebouncedFnAddIfNotKeeping({
-													key: x.entry.hash,
-													// TODO types
-													value: {
-														entry: x.entry,
-														leaders: leaders as Map<string, any>,
-													},
-												});
-											}
-										}
-									}
-								}
-							}
+							return { toMerge, toPersist, toDelete, maybeDelete, leaders };
 						};
 						promises.push(fn()); // we do this concurrently since waitForIsLeader might be a blocking operation for some entries
 					}
-					await Promise.all(promises);
+					const joinPlans = (await Promise.all(promises)).filter(
+						(plan): plan is ReceivedGidJoinPlan => !!plan,
+					);
+					const allToMerge = joinPlans.flatMap((plan) => plan.toMerge);
+					if (allToMerge.length > 0) {
+						this.markEntriesKnownByPeer(
+							allToMerge.map((entry) => entry.hash),
+							context.from!.hashcode(),
+						);
+						await this.log.join(allToMerge, {
+							__peerbitBatchIndependent: true,
+						});
+						// Network joins bypass SharedLog.join(), but churn repair scans
+						// the coordinate index to redistribute entries after membership changes.
+						const entriesToPersist = joinPlans.flatMap(
+							(plan) => plan.toPersist,
+						);
+						await this.planEntryLeaderBatch(
+							entriesToPersist.map((entry) => ({
+								entry,
+								replicas: decodeReplicas(entry).getValue(this),
+								options: { roleAge: 0, persist: {} },
+							})),
+						);
+						for (const merged of allToMerge) {
+							confirmedHashes.add(merged.hash);
+						}
+						await this.pruneJoinedEntriesNoLongerLed(allToMerge);
+
+						for (const plan of joinPlans) {
+							plan.toDelete?.map((x) =>
+								// TODO types
+								this.pruneDebouncedFnAddIfNotKeeping({
+									key: x.hash,
+									value: {
+										entry: x,
+										leaders: plan.leaders as Map<string, any>,
+									},
+								}),
+							);
+						}
+						this.rebalanceParticipationDebounced?.call();
+					}
+
+					for (const plan of joinPlans) {
+						if (!plan.maybeDelete) {
+							continue;
+						}
+						for (const entries of plan.maybeDelete) {
+							const minReplicas = await this.getMaxReplicasFromHeads(
+								entries[0].entry.meta.gid,
+							);
+							if (minReplicas != null) {
+								const isLeader = await this.isLeader({
+									entry: entries[0].entry,
+									replicas: minReplicas,
+								});
+
+								if (!isLeader) {
+									for (const x of entries) {
+										this.pruneDebouncedFnAddIfNotKeeping({
+											key: x.entry.hash,
+											// TODO types
+											value: {
+												entry: x.entry,
+												leaders: plan.leaders as Map<string, any>,
+											},
+										});
+									}
+								}
+							}
+						}
+					}
 					if (
 						confirmedHashes.size > 0 &&
 						!context.from.equals(this.node.identity.publicKey)

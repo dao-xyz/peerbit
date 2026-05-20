@@ -2218,6 +2218,8 @@ export class Log<T> {
 			timeout?: number;
 			onChange?: OnChange<T>;
 			reset?: boolean;
+			/** Internal: batch independent network joins after SharedLog owns validation semantics. */
+			__peerbitBatchIndependent?: boolean;
 		},
 	): Promise<void> {
 		let entries: Entry<T>[];
@@ -2354,6 +2356,13 @@ export class Log<T> {
 			for (const next of await entry.getNext()) heads.set(next, false);
 		}
 
+		if (
+			options?.__peerbitBatchIndependent === true &&
+			(await this.tryJoinIndependentAppendBatch(entries, heads, options))
+		) {
+			return;
+		}
+
 		for (const entry of entries) {
 			const isHead = heads.get(entry.hash)!;
 			const prev = this._joining.get(entry.hash);
@@ -2378,6 +2387,89 @@ export class Log<T> {
 			});
 			await p;
 		}
+	}
+
+	private async tryJoinIndependentAppendBatch(
+		entries: Entry<T>[],
+		heads: Map<string, boolean>,
+		options: {
+			verifySignatures?: boolean;
+			trim?: TrimOptions;
+			timeout?: number;
+			onChange?: OnChange<T>;
+			reset?: boolean;
+			__peerbitBatchIndependent?: boolean;
+		},
+	): Promise<boolean> {
+		if (
+			entries.length < 2 ||
+			options.reset ||
+			options.trim ||
+			options.verifySignatures ||
+			entries.some((entry) => this._joining.has(entry.hash))
+		) {
+			return false;
+		}
+
+		const batchHashes = new Set(entries.map((entry) => entry.hash));
+		const headFlags: boolean[] = [];
+		for (const entry of entries) {
+			if (!entry.hash || !Entry.hasPreparedBlock(entry)) {
+				return false;
+			}
+			entry.init(this);
+			if (entry.meta.type !== EntryType.APPEND) {
+				return false;
+			}
+			const joinPlan = await this.entryIndex.planJoin(entry, false);
+			if (
+				joinPlan.skip ||
+				joinPlan.coveredByCut ||
+				!joinPlan.cutChecked ||
+				joinPlan.missingParents.some((hash) => !batchHashes.has(hash))
+			) {
+				return false;
+			}
+			headFlags.push(heads.get(entry.hash) ?? true);
+		}
+
+		for (const entry of entries) {
+			if (this._canAppend && !(await this._canAppend(entry))) {
+				return false;
+			}
+		}
+
+		const batchPromise = (async () => {
+			for (const entry of entries) {
+				const clock = await entry.getClock();
+				this._hlc.update(clock.timestamp);
+			}
+
+			await this.putAppendEntryBlocks(entries);
+			await this.entryIndex.putAppendBatch(entries, {
+				unique: false,
+				heads: headFlags,
+			});
+
+			for (let i = 0; i < entries.length; i++) {
+				const change = {
+					added: [{ head: headFlags[i]!, entry: entries[i]! }],
+					removed: [],
+				};
+				await options.onChange?.(change);
+				await this._onChange?.(change);
+			}
+		})().finally(() => {
+			for (const entry of entries) {
+				this._joining.delete(entry.hash);
+			}
+		});
+
+		for (const entry of entries) {
+			this._joining.set(entry.hash, batchPromise);
+		}
+		await batchPromise;
+		return true;
 	}
 
 	/**

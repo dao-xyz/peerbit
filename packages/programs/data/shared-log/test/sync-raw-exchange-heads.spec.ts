@@ -67,6 +67,10 @@ describe("raw exchange-head sync", () => {
 				args: openArgs,
 			});
 			const putKnownSpy = sinon.spy(db2.log.log.blocks as any, "putKnown");
+			const putKnownManySpy = sinon.spy(
+				db2.log.log.blocks as any,
+				"putKnownMany",
+			);
 
 			let exchangeHeads = 0;
 			let rawExchangeHeads = 0;
@@ -107,8 +111,12 @@ describe("raw exchange-head sync", () => {
 
 			expect(rawExchangeHeads).to.be.greaterThan(0);
 			expect(exchangeHeads).to.equal(0);
-			expect(putKnownSpy.callCount).to.be.greaterThan(0);
+			expect(putKnownSpy.callCount + putKnownManySpy.callCount).to.be.greaterThan(
+				0,
+			);
+			expect(putKnownManySpy.callCount).to.be.greaterThan(0);
 			putKnownSpy.restore();
+			putKnownManySpy.restore();
 		} finally {
 			await session.stop();
 		}
