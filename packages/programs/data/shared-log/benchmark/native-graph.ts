@@ -5,7 +5,10 @@ import { Program, type ProgramClient } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import crypto from "crypto";
 import { performance } from "node:perf_hooks";
-import { createExchangeHeadsMessages } from "../src/exchange-heads.js";
+import {
+	createExchangeHeadsMessages,
+	createRawExchangeHeadsMessages,
+} from "../src/exchange-heads.js";
 import { type Args, SharedLog } from "../src/index.js";
 
 type Scenario =
@@ -13,7 +16,8 @@ type Scenario =
 	| "append-many"
 	| "explicit-root-next"
 	| "exchange-head-refs"
-	| "exchange-head-hash-response";
+	| "exchange-head-hash-response"
+	| "exchange-head-raw-hash-response";
 type IndexerMode = "default" | "rust";
 
 type BenchRow = {
@@ -57,7 +61,8 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 			scenario !== "append-many" &&
 			scenario !== "explicit-root-next" &&
 			scenario !== "exchange-head-refs" &&
-			scenario !== "exchange-head-hash-response"
+			scenario !== "exchange-head-hash-response" &&
+			scenario !== "exchange-head-raw-hash-response"
 		) {
 			throw new Error(`Unknown scenario '${scenario}'`);
 		}
@@ -244,6 +249,42 @@ const runScenario = async (
 			if (emittedHeads !== hashes.length) {
 				throw new Error(
 					`Expected ${hashes.length} exchange heads, got ${emittedHeads}`,
+				);
+			}
+			const elapsed = performance.now() - started;
+			return {
+				scenario,
+				indexer,
+				nativeGraph,
+				entries,
+				run,
+				elapsedMs: Math.round(elapsed),
+				opsPerSecond: Math.round((entries / elapsed) * 1000),
+			};
+		}
+
+		if (scenario === "exchange-head-raw-hash-response") {
+			const hashes: string[] = [];
+			for (let i = 0; i < entries; i++) {
+				const { entry } = await store.logs.append(createDocument(i, bytes), {
+					meta: { next: [], gidSeed: new Uint8Array([i % 256, i >>> 8]) },
+					replicate: false,
+					target: "none",
+				});
+				hashes.push(entry.hash);
+			}
+
+			let emittedHeads = 0;
+			const started = performance.now();
+			for await (const message of createRawExchangeHeadsMessages(
+				store.logs.log,
+				hashes,
+			)) {
+				emittedHeads += message.heads.length;
+			}
+			if (emittedHeads !== hashes.length) {
+				throw new Error(
+					`Expected ${hashes.length} raw exchange heads, got ${emittedHeads}`,
 				);
 			}
 			const elapsed = performance.now() - started;

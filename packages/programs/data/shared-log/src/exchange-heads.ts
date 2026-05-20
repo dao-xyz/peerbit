@@ -1,4 +1,4 @@
-import { field, fixedArray, variant, vec } from "@dao-xyz/borsh";
+import { deserialize, field, fixedArray, variant, vec } from "@dao-xyz/borsh";
 import { Entry, EntryType, type ShallowEntry } from "@peerbit/log";
 import { Log } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
@@ -29,6 +29,28 @@ export class EntryWithRefs<T> {
 	}
 }
 
+@variant(1)
+export class RawEntryWithRefs {
+	@field({ type: "string" })
+	hash: string;
+
+	@field({ type: Uint8Array })
+	bytes: Uint8Array;
+
+	@field({ type: vec("string") })
+	gidRefrences: string[];
+
+	constructor(properties: {
+		hash: string;
+		bytes: Uint8Array;
+		gidRefrences: string[];
+	}) {
+		this.hash = properties.hash;
+		this.bytes = properties.bytes;
+		this.gidRefrences = properties.gidRefrences;
+	}
+}
+
 @variant([0, 0])
 export class ExchangeHeadsMessage<T> extends TransportMessage {
 	@field({ type: vec(EntryWithRefs) })
@@ -40,6 +62,23 @@ export class ExchangeHeadsMessage<T> extends TransportMessage {
 	constructor(props: { heads: EntryWithRefs<T>[] }) {
 		super();
 		this.heads = props.heads;
+	}
+}
+
+@variant([0, 7])
+export class RawExchangeHeadsMessage extends TransportMessage {
+	@field({ type: vec(RawEntryWithRefs) })
+	heads: RawEntryWithRefs[];
+
+	@field({ type: fixedArray("u8", 4) })
+	reserved: Uint8Array = new Uint8Array(4);
+
+	constructor(props: { heads: RawEntryWithRefs[]; reserved?: Uint8Array }) {
+		super();
+		this.heads = props.heads;
+		if (props.reserved) {
+			this.reserved = props.reserved;
+		}
 	}
 }
 
@@ -201,6 +240,111 @@ export const createExchangeHeadsMessages = async function* (
 	}
 };
 
+export const createRawExchangeHeadsMessages = async function* (
+	log: Log<any>,
+	heads: string[] | Set<string>,
+): AsyncGenerator<RawExchangeHeadsMessage | ExchangeHeadsMessage<any>, void, void> {
+	let size = 0;
+	let current: RawEntryWithRefs[] = [];
+	const visitedHeads = new Set<string>();
+	const headArray = Array.isArray(heads) ? heads : [...heads];
+
+	for (let offset = 0; offset < headArray.length; offset += EXCHANGE_HEADS_RESOLVE_BATCH_SIZE) {
+		const headBatch = headArray.slice(
+			offset,
+			offset + EXCHANGE_HEADS_RESOLVE_BATCH_SIZE,
+		);
+		const nativeReferenceRowsByPosition = getNativeReferenceRowsByHeadInput(
+			log,
+			headBatch,
+			visitedHeads,
+		);
+		if (!nativeReferenceRowsByPosition) {
+			for await (const message of createExchangeHeadsMessages(log, headBatch)) {
+				yield message;
+			}
+			continue;
+		}
+		const blockRows = await resolveExchangeHeadBlocks(
+			log,
+			headBatch,
+			visitedHeads,
+		);
+		if (!blockRows) {
+			for await (const message of createExchangeHeadsMessages(log, headBatch)) {
+				yield message;
+			}
+			continue;
+		}
+
+		for (let i = 0; i < blockRows.length; i++) {
+			const block = blockRows[i];
+			if (!block) {
+				continue;
+			}
+			if (visitedHeads.has(block.hash)) {
+				continue;
+			}
+			visitedHeads.add(block.hash);
+
+			const nativeReferenceRows = nativeReferenceRowsByPosition[i];
+			if (!nativeReferenceRows) {
+				continue;
+			}
+			const gidRefrences: string[] = [];
+			for (const [hash, gid] of nativeReferenceRows) {
+				if (visitedHeads.has(hash)) {
+					continue;
+				}
+				visitedHeads.add(hash);
+				gidRefrences.push(gid);
+			}
+			if (gidRefrences.length > 1000) {
+				warn("Large refs count: ", gidRefrences.length);
+			}
+			current.push(
+				new RawEntryWithRefs({
+					hash: block.hash,
+					bytes: block.bytes,
+					gidRefrences,
+				}),
+			);
+			size += block.bytes.byteLength;
+			if (size > MAX_EXCHANGE_MESSAGE_SIZE) {
+				size = 0;
+				yield new RawExchangeHeadsMessage({ heads: current });
+				current = [];
+			}
+		}
+	}
+	if (current.length > 0) {
+		yield new RawExchangeHeadsMessage({ heads: current });
+	}
+};
+
+export const materializeRawExchangeHeadsMessage = (
+	message: RawExchangeHeadsMessage,
+	log: Log<any>,
+): ExchangeHeadsMessage<any> => {
+	const materialized = new ExchangeHeadsMessage({
+		heads: message.heads.map((head) => {
+			const entry = deserialize(head.bytes, Entry) as Entry<any>;
+			entry.hash = head.hash;
+			entry.size = head.bytes.byteLength;
+			entry.init({
+				keychain: log.keychain,
+				encoding: log.encoding,
+			});
+			return new EntryWithRefs({
+				entry,
+				gidRefrences: head.gidRefrences,
+			});
+		}),
+	});
+	materialized.reserved = message.reserved;
+	return materialized;
+};
+
 const getNativeReferenceRowsByHeadInput = (
 	log: Log<any>,
 	heads: Array<Entry<any> | string>,
@@ -248,6 +392,59 @@ const getNativeReferenceRowsByHeadInput = (
 		byPosition[positions[i]!] = rows[i];
 	}
 	return byPosition;
+};
+
+type BlocksWithGetMany = {
+	getMany?: (
+		cids: string[],
+	) =>
+		| Promise<Array<Uint8Array | undefined>>
+		| Array<Uint8Array | undefined>;
+	get: (cid: string) => Promise<Uint8Array | undefined> | Uint8Array | undefined;
+};
+
+const resolveExchangeHeadBlocks = async (
+	log: Log<any>,
+	headArray: string[],
+	visitedHeads?: Set<string>,
+): Promise<Array<{ hash: string; bytes: Uint8Array } | undefined> | undefined> => {
+	const resolved: Array<{ hash: string; bytes: Uint8Array } | undefined> =
+		new Array(headArray.length);
+	const hashes: string[] = [];
+	const positionsByHash = new Map<string, number[]>();
+	for (let i = 0; i < headArray.length; i++) {
+		const hash = headArray[i]!;
+		if (visitedHeads?.has(hash)) {
+			continue;
+		}
+		const positions = positionsByHash.get(hash);
+		if (positions) {
+			positions.push(i);
+			continue;
+		}
+		hashes.push(hash);
+		positionsByHash.set(hash, [i]);
+	}
+	if (hashes.length === 0) {
+		return resolved;
+	}
+
+	const blocks = log.blocks as BlocksWithGetMany;
+	const values =
+		hashes.length > 1 && typeof blocks.getMany === "function"
+			? await blocks.getMany(hashes)
+			: await Promise.all(hashes.map((hash) => blocks.get(hash)));
+	for (let i = 0; i < values.length; i++) {
+		const hash = hashes[i]!;
+		const bytes = values[i];
+		if (!bytes) {
+			return undefined;
+		}
+		for (const position of positionsByHash.get(hash)!) {
+			resolved[position] = { hash, bytes };
+		}
+	}
+	return resolved;
 };
 
 const resolveExchangeHeadEntries = async (

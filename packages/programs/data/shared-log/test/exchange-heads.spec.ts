@@ -1,12 +1,17 @@
 import { AnyBlockStore } from "@peerbit/blocks";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { Log } from "@peerbit/log";
+import { deserialize, serialize } from "@dao-xyz/borsh";
 import { expect } from "chai";
 import sinon from "sinon";
 import {
 	EXCHANGE_HEADS_RESOLVE_BATCH_SIZE,
+	RawExchangeHeadsMessage,
 	createExchangeHeadsMessages,
+	createRawExchangeHeadsMessages,
+	materializeRawExchangeHeadsMessage,
 } from "../src/exchange-heads.js";
+import { TransportMessage } from "../src/message.js";
 
 describe("exchange heads", () => {
 	let store: AnyBlockStore;
@@ -149,6 +154,62 @@ describe("exchange heads", () => {
 				right.hash,
 			]);
 		} finally {
+			getManySpy.restore();
+			await log.close();
+		}
+	});
+
+	it("creates raw hash heads without full entry resolution", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			nativeGraph: true,
+		});
+
+		const { entry: left } = await log.append(new Uint8Array([1]), {
+			meta: { next: [], gidSeed: new Uint8Array([1]) },
+		});
+		const { entry: right } = await log.append(new Uint8Array([2]), {
+			meta: { next: [], gidSeed: new Uint8Array([2]) },
+		});
+
+		const getManySpy = sinon.spy(log.entryIndex, "getMany");
+		const getSpy = sinon.spy(log, "get");
+		try {
+			const messages = [];
+			for await (const message of createRawExchangeHeadsMessages(log, [
+				left.hash,
+				right.hash,
+			])) {
+				messages.push(message);
+			}
+
+			expect(messages).to.have.length(1);
+			expect(messages[0]).to.be.instanceOf(RawExchangeHeadsMessage);
+			const raw = messages[0] as RawExchangeHeadsMessage;
+			expect(raw.heads.map((head) => head.hash)).to.deep.equal([
+				left.hash,
+				right.hash,
+			]);
+			expect(raw.heads.every((head) => head.bytes.byteLength > 0)).to.equal(
+				true,
+			);
+			expect(getManySpy.callCount).to.equal(0);
+			expect(getSpy.callCount).to.equal(0);
+
+			const roundTrip = deserialize(serialize(raw), TransportMessage);
+			expect(roundTrip).to.be.instanceOf(RawExchangeHeadsMessage);
+
+			const materialized = materializeRawExchangeHeadsMessage(
+				roundTrip as RawExchangeHeadsMessage,
+				log,
+			);
+			expect(materialized.heads.map((head) => head.entry.hash)).to.deep.equal([
+				left.hash,
+				right.hash,
+			]);
+		} finally {
+			getSpy.restore();
 			getManySpy.restore();
 			await log.close();
 		}

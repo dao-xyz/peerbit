@@ -118,9 +118,11 @@ import {
 	EXCHANGE_HEADS_REPAIR_HINT,
 	EntryWithRefs,
 	ExchangeHeadsMessage,
+	RawExchangeHeadsMessage,
 	RequestIPrune,
 	ResponseIPrune,
 	createExchangeHeadsMessages,
+	materializeRawExchangeHeadsMessage,
 } from "./exchange-heads.js";
 import { FanoutEnvelope } from "./fanout-envelope.js";
 import {
@@ -1372,6 +1374,10 @@ export class SharedLog<
 				return;
 			}
 			throw error;
+		}
+
+		if (message instanceof RawExchangeHeadsMessage) {
+			message = materializeRawExchangeHeadsMessage(message, this.log);
 		}
 
 		if (!(message instanceof ExchangeHeadsMessage)) {
@@ -8668,6 +8674,10 @@ export class SharedLog<
 
 			if (msg instanceof ResponseRoleMessage) {
 				msg = msg.toReplicationInfoMessage(); // migration
+			}
+
+			if (msg instanceof RawExchangeHeadsMessage) {
+				msg = materializeRawExchangeHeadsMessage(msg, this.log);
 			}
 
 			if (msg instanceof ExchangeHeadsMessage) {
