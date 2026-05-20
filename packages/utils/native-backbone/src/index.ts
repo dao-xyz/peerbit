@@ -472,6 +472,23 @@ type NativePeerbitBackboneHandle = {
 		documentProjectionEncodedDocument: Uint8Array | undefined,
 		documentProjectionSigner: Uint8Array | undefined,
 	) => unknown[];
+	prepare_plain_entry_commit_facts_document_index_cached_plan: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		trimLengthTo: number | undefined,
+		documentKey: string,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlanId: number,
+		documentProjectionEncodedDocument: Uint8Array,
+		documentProjectionSigner: Uint8Array | undefined,
+	) => unknown[];
 	prepare_plain_entry_commit_no_next_facts_document_index_trim_hashes: (
 		wallTime: bigint,
 		logical: number,
@@ -489,6 +506,22 @@ type NativePeerbitBackboneHandle = {
 			| NativeBackboneSimpleDocumentProjectionPlan
 			| undefined,
 		documentProjectionEncodedDocument: Uint8Array | undefined,
+		documentProjectionSigner: Uint8Array | undefined,
+	) => unknown[];
+	prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_trim_hashes: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		trimLengthTo: number,
+		documentKey: string,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlanId: number,
+		documentProjectionEncodedDocument: Uint8Array,
 		documentProjectionSigner: Uint8Array | undefined,
 	) => unknown[];
 	prepare_plain_entry_storage_facts_and_put: (
@@ -1167,6 +1200,13 @@ export type NativeBackboneStorageAppendResult = {
 	trimmed: NativeBackboneTrimmedEntry[];
 	trimmedHashes?: string[];
 	documentTrimmedHeadsProcessed?: boolean;
+};
+
+type NativeBackboneLogGraphOptions = {
+	commitBlocks?: boolean;
+	documentProjectionPlanId?: (
+		plan: NativeBackboneSimpleDocumentProjectionPlan,
+	) => number;
 };
 
 export type NativeBackboneLoopBenchmark = {
@@ -1961,7 +2001,7 @@ const preparedCommitFactsWithTrimHashesFromRow = (
 export class NativeBackboneLogGraph {
 	constructor(
 		private readonly native: NativePeerbitBackboneHandle,
-		private readonly options?: { commitBlocks?: boolean },
+		private readonly options?: NativeBackboneLogGraphOptions,
 	) {}
 
 	get length(): number {
@@ -2028,6 +2068,7 @@ export class NativeBackboneLogGraph {
 				};
 				existingCreated?: bigint | number | string;
 				byteElementIndexLimit?: number;
+				deleteTrimmedHeads?: boolean;
 			};
 		},
 		_blockStore: unknown,
@@ -2057,7 +2098,58 @@ export class NativeBackboneLogGraph {
 			input.payloadData,
 			input.trimLengthTo,
 		] as const;
-		const documentIndexArgs = nativeDocumentIndexArgs(input.documentIndex);
+		const documentIndex = input.documentIndex;
+		const documentIndexArgs = nativeDocumentIndexArgs(documentIndex);
+		const projection = documentIndex?.projection;
+		if (
+			documentIndexArgs &&
+			projection &&
+			this.options?.documentProjectionPlanId &&
+			input.resolveTrimmedEntries === false &&
+			input.trimLengthTo != null &&
+			(input.next == null || input.next.length === 0)
+		) {
+			return preparedCommitFactsWithTrimHashesFromRow(
+				this.native.prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_trim_hashes(
+					BigInt(input.wallTime),
+					input.logical ?? 0,
+					input.gid,
+					input.type ?? 0,
+					input.metaData,
+					input.payloadData,
+					input.trimLengthTo,
+					documentIndex.key,
+					documentIndex.existingCreated == null
+						? ""
+						: integerString(documentIndex.existingCreated),
+					documentIndex.byteElementIndexLimit ?? 0,
+					documentIndex.deleteTrimmedHeads === true,
+					this.options.documentProjectionPlanId(projection.plan),
+					projection.encodedDocument,
+					projection.signer,
+				),
+			);
+		}
+		if (
+			documentIndexArgs &&
+			projection &&
+			this.options?.documentProjectionPlanId
+		) {
+			return preparedCommitFactsFromRow(
+				this.native.prepare_plain_entry_commit_facts_document_index_cached_plan(
+					...baseArgs,
+					documentIndex.key,
+					documentIndex.existingCreated == null
+						? ""
+						: integerString(documentIndex.existingCreated),
+					documentIndex.byteElementIndexLimit ?? 0,
+					documentIndex.deleteTrimmedHeads === true,
+					this.options.documentProjectionPlanId(projection.plan),
+					projection.encodedDocument,
+					projection.signer,
+				),
+			);
+		}
 		if (
 			documentIndexArgs &&
 			input.resolveTrimmedEntries === false &&
@@ -2603,14 +2695,21 @@ export class NativePeerbitBackbone {
 		NativeBackboneSimpleDocumentProjectionPlan,
 		number
 	>();
+	private readonly documentProjectionPlanStructuralIds = new Map<
+		string,
+		number
+	>();
 
 	private constructor(
 		private readonly native: NativePeerbitBackboneHandle,
 		private readonly resolution: RangeResolution,
 	) {
-		this.graph = new NativeBackboneLogGraph(native);
+		this.graph = new NativeBackboneLogGraph(native, {
+			documentProjectionPlanId: this.documentProjectionPlanId.bind(this),
+		});
 		this.storageBackedGraph = new NativeBackboneLogGraph(native, {
 			commitBlocks: false,
+			documentProjectionPlanId: this.documentProjectionPlanId.bind(this),
 		});
 		this.blocks = new NativeBackboneBlockStore(native);
 	}
@@ -2881,8 +2980,16 @@ export class NativePeerbitBackbone {
 		if (cached !== undefined) {
 			return cached;
 		}
+		const structuralKey = JSON.stringify(plan);
+		const structuralCached =
+			this.documentProjectionPlanStructuralIds.get(structuralKey);
+		if (structuralCached !== undefined) {
+			this.documentProjectionPlanIds.set(plan, structuralCached);
+			return structuralCached;
+		}
 		const id = this.native.register_document_projection_plan(plan);
 		this.documentProjectionPlanIds.set(plan, id);
+		this.documentProjectionPlanStructuralIds.set(structuralKey, id);
 		return id;
 	}
 

@@ -1737,6 +1737,10 @@ describe("index", () => {
 					backbone.graph,
 					"prepareEntryV0PlainEntryCommit",
 				);
+				const registerProjectionPlanSpy = sinon.spy(
+					(backbone as any).native,
+					"register_document_projection_plan",
+				);
 				const backboneDocumentPutSpy = sinon.spy(
 					backbone,
 					"putDocumentEncodedPartsStored",
@@ -1765,33 +1769,50 @@ describe("index", () => {
 						name: "backbone-project-field-context",
 						data: new Uint8Array([1, 2, 3]),
 					});
+					const second = new Document({
+						id: uuid(),
+						name: "backbone-project-field-context-2",
+						data: new Uint8Array([4, 5, 6]),
+					});
 					await localStore.docs.put(doc, {
 						unique: true,
 						replicate: false,
 						target: "none",
 					});
+					await localStore.docs.put(second, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
 
-					expect(backboneGraphCommitSpy.callCount).equal(1);
+					expect(backboneGraphCommitSpy.callCount).equal(2);
 					expect(backboneGraphCommitSpy.firstCall.args[0].documentIndex).to
 						.exist;
+					expect(registerProjectionPlanSpy.callCount).equal(1);
 					expect(documentPreparedNativePutSpy.callCount).equal(0);
 					expect(documentIndexPutSpy.callCount).equal(0);
 					expect(documentIndexTransformSpy.callCount).equal(0);
 					expect(backendStoredContextPutSpy.callCount).equal(0);
 					expect(backboneDocumentPutSpy.callCount).equal(0);
 					expect(backendIndex.native.len()).equal(0);
-					expect(backbone.documentValueLength).equal(1);
+					expect(backbone.documentValueLength).equal(2);
 					const indexed = await localStore.docs.index.get(doc.id, {
 						resolve: false,
 					});
 					expect(indexed?.id).equal(doc.id);
 					expect(equals(indexed?.data, doc.data)).equal(true);
+					const indexedSecond = await localStore.docs.index.get(second.id, {
+						resolve: false,
+					});
+					expect(indexedSecond?.id).equal(second.id);
+					expect(equals(indexedSecond?.data, second.data)).equal(true);
 				} finally {
 					documentIndexTransformSpy.restore();
 					documentPreparedNativePutSpy.restore();
 					documentIndexPutSpy.restore();
 					backendStoredContextPutSpy.restore();
 					backboneDocumentPutSpy.restore();
+					registerProjectionPlanSpy.restore();
 					backboneGraphCommitSpy.restore();
 					await localStore.close();
 					store = undefined;

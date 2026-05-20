@@ -1602,6 +1602,62 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_entry_commit_facts_document_index_cached_plan(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Array,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        trim_length_to: JsValue,
+        document_key: String,
+        document_existing_created: String,
+        document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
+        document_projection_plan_id: u32,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
+    ) -> Result<Array, JsValue> {
+        let document_gid = gid.clone();
+        let payload_size = payload_data.length();
+        let document_index_commit = document_index_cached_projection_append_commit(
+            document_key,
+            document_existing_created,
+            document_byte_element_index_limit,
+            document_delete_trimmed_heads,
+            document_projection_plan_id,
+            document_projection_encoded_document,
+            document_projection_signer,
+        )?;
+        let row = self.prepare_plain_entry_commit_facts(
+            wall_time,
+            logical,
+            gid,
+            next,
+            entry_type,
+            meta_data,
+            payload_data,
+            trim_length_to,
+        )?;
+        let entry_row = if row.length() == 2 && Array::is_array(&row.get(0)) {
+            array_from_value(row.get(0), "native trim document index entry row")?
+        } else {
+            row.clone()
+        };
+        let document_hash = string_field(&entry_row, 0, "document index entry hash")?;
+        self.put_document_index_for_append(
+            Some(document_index_commit),
+            wall_time,
+            &document_hash,
+            &document_gid,
+            payload_size,
+        )?;
+        Ok(row)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare_plain_entry_commit_no_next_facts_document_index_trim_hashes(
         &mut self,
         wall_time: u64,
@@ -1629,6 +1685,66 @@ impl NativePeerbitBackbone {
             document_byte_element_index_limit,
             document_delete_trimmed_heads,
             document_projection_plan,
+            document_projection_encoded_document,
+            document_projection_signer,
+        )?;
+        let (entry_facts, trim_hashes) = self
+            .log
+            .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_trim_hashes(
+                &self.builder,
+                &mut self.blocks,
+                wall_time,
+                logical,
+                gid,
+                Vec::new(),
+                entry_type,
+                optional_bytes_from_js(meta_data),
+                payload_data.to_vec(),
+                Some(trim_length_to),
+                None,
+            )?;
+        self.put_document_index_for_append(
+            Some(document_index_commit),
+            wall_time,
+            &entry_facts.hash,
+            &document_gid,
+            payload_size,
+        )?;
+        let document_trimmed_heads_processed =
+            document_delete_trimmed_heads && self.delete_documents_by_context_heads(&trim_hashes);
+        let out = Array::new();
+        out.push(&committed_entry_facts_to_row(&entry_facts, false));
+        out.push(&strings_to_array(trim_hashes));
+        out.push(&JsValue::from_bool(document_trimmed_heads_processed));
+        Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_trim_hashes(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        trim_length_to: usize,
+        document_key: String,
+        document_existing_created: String,
+        document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
+        document_projection_plan_id: u32,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
+    ) -> Result<Array, JsValue> {
+        let document_gid = gid.clone();
+        let payload_size = payload_data.length();
+        let document_index_commit = document_index_cached_projection_append_commit(
+            document_key,
+            document_existing_created,
+            document_byte_element_index_limit,
+            document_delete_trimmed_heads,
+            document_projection_plan_id,
             document_projection_encoded_document,
             document_projection_signer,
         )?;
