@@ -260,6 +260,7 @@ export abstract class Entry<T> {
 			throw new Error("Failed to resolve block: " + hash);
 		}
 		const entry = deserialize(bytes, Entry);
+		Entry.prepareMultihashBytes(entry, bytes, hash);
 		entry.hash = hash;
 		entry.size = bytes.length;
 		return entry as Entry<T>;
