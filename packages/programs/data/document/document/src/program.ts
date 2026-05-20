@@ -80,6 +80,7 @@ import {
 	coerceWithLazyIndexed,
 	encodeContextSuffix as encodeDocumentContextSuffix,
 } from "./search.js";
+import { getNativeDocumentTransformDescriptor } from "./transform.js";
 
 const logger = loggerFn("peerbit:program:document");
 const warn = logger.newScope("warn");
@@ -87,6 +88,15 @@ const warn = logger.newScope("warn");
 export class OperationError extends Error {
 	constructor(message?: string) {
 		super(message);
+	}
+}
+
+export type DocumentMode = "auto" | "compat" | "native";
+
+export class NativeDocumentModeError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "NativeDocumentModeError";
 	}
 }
 
@@ -344,6 +354,7 @@ export type SetupOptions<
 	D extends ReplicationDomain<any, Operation, any> = any,
 > = {
 	type: AbstractType<T>;
+	mode?: DocumentMode;
 	canOpen?: (program: T) => MaybePromise<boolean>;
 	canPerform?: CanPerform<T>;
 	strictHistory?: boolean;
@@ -398,6 +409,7 @@ export class Documents<
 	private _optionCanPerformNativePolicy?: NativeCanPerformPolicyDescriptor;
 	private _optionCanPerformNativeFastPath?: NativeFastPathCanPerformPolicyEvaluator;
 	private _nativeBackboneDocumentIndexEnabled = false;
+	private _mode: DocumentMode = "auto";
 	private _documentChangeListeners: Array<{
 		listener: unknown;
 		capture: boolean;
@@ -426,6 +438,174 @@ export class Documents<
 
 	get index(): DocumentIndex<T, I, D> {
 		return this._index;
+	}
+
+	private isNativeMode(): boolean {
+		return this._mode === "native";
+	}
+
+	private nativeModeError(message: string): NativeDocumentModeError {
+		return new NativeDocumentModeError(`Documents native mode ${message}`);
+	}
+
+	private assertNativeModeOpenOptions(options: SetupOptions<T, I, D>): void {
+		if (!this.isNativeMode()) {
+			return;
+		}
+		const unsupported: string[] = [];
+		const nativeBackbone = options.nativeBackbone as
+			| { documentIndex?: boolean }
+			| boolean
+			| undefined;
+		const indexTransform = options.index as
+			| {
+					type?: unknown;
+					transform?: unknown;
+			  }
+			| undefined;
+
+		if (
+			!nativeBackbone ||
+			typeof nativeBackbone !== "object" ||
+			nativeBackbone.documentIndex !== true
+		) {
+			unsupported.push("missing nativeBackbone.documentIndex");
+		}
+		if (options.domain) {
+			unsupported.push("custom domain");
+		}
+		if (options.compatibility != null) {
+			unsupported.push("legacy compatibility");
+		}
+		if (Program.isPrototypeOf(options.type)) {
+			unsupported.push("program-valued document type");
+		}
+		if (
+			options.canPerform &&
+			!getNativeCanPerformPolicyDescriptor(options.canPerform)
+		) {
+			unsupported.push("arbitrary canPerform");
+		}
+		if (options.index?.canRead) {
+			unsupported.push("custom canRead");
+		}
+		if (options.index?.canSearch) {
+			unsupported.push("custom canSearch");
+		}
+		if (
+			indexTransform?.transform &&
+			!getNativeDocumentTransformDescriptor(indexTransform.transform as any)
+		) {
+			unsupported.push("arbitrary index transform");
+		}
+		if (
+			indexTransform?.type &&
+			!indexTransform.transform &&
+			indexTransform.type !== options.type
+		) {
+			unsupported.push("constructor index transform");
+		}
+
+		if (unsupported.length > 0) {
+			throw this.nativeModeError(
+				`does not support ${unsupported.join(", ")}`,
+			);
+		}
+	}
+
+	private assertNativeModeReady(): void {
+		if (!this.isNativeMode()) {
+			return;
+		}
+		if (!this._nativeBackboneDocumentIndexEnabled) {
+			throw this.nativeModeError(
+				"requires an attached native backbone document index",
+			);
+		}
+		if (!this._index.canPrepareNativeBackboneDocumentIndexCommitWithAppendFacts()) {
+			throw this.nativeModeError(
+				"requires a native-compatible document index transform",
+			);
+		}
+	}
+
+	private canPerformAllowsPlainPutFastPath(doc: T): boolean {
+		return (
+			!this._optionCanPerform || !!this._optionCanPerformNativeFastPath?.(doc)
+		);
+	}
+
+	private unsupportedNativePutOptions(
+		options: DocumentPutOptions | undefined,
+	): string[] {
+		const unsupported: string[] = [];
+		if (options?.canAppend) {
+			unsupported.push("per-call canAppend");
+		}
+		if (options?.onChange) {
+			unsupported.push("per-call onChange");
+		}
+		if (options?.signers) {
+			unsupported.push("custom signers");
+		}
+		if (options?.identity) {
+			unsupported.push("custom identity");
+		}
+		if (options?.encryption) {
+			unsupported.push("encryption");
+		}
+		if (options?.trim) {
+			unsupported.push("per-call trim");
+		}
+		if (options?.meta?.type) {
+			unsupported.push("custom entry type");
+		}
+		if (options?.meta?.next) {
+			unsupported.push("custom next");
+		}
+		if (options?.meta?.timestamp) {
+			unsupported.push("custom timestamp");
+		}
+		if (options?.meta?.gidSeed) {
+			unsupported.push("custom gid seed");
+		}
+		if (options?.replicate === true) {
+			unsupported.push("replicated put");
+		}
+		if (options?.target && options.target !== "none") {
+			unsupported.push("non-local target");
+		}
+		if (options?.delivery !== undefined && options.delivery !== false) {
+			unsupported.push("delivery");
+		}
+		if (options?.checkRemote) {
+			unsupported.push("remote existing-head check");
+		}
+		if (options?.replicas) {
+			unsupported.push("per-call replicas");
+		}
+		return unsupported;
+	}
+
+	private assertNativeModePlainPutSupported(
+		doc: T,
+		options?: DocumentPutOptions,
+	): void {
+		if (!this.isNativeMode()) {
+			return;
+		}
+		const unsupported = this.unsupportedNativePutOptions(options);
+		if (unsupported.length > 0) {
+			throw this.nativeModeError(
+				`does not support ${unsupported.join(", ")}`,
+			);
+		}
+		if (!this.canPerformAllowsPlainPutFastPath(doc)) {
+			throw this.nativeModeError("canPerform policy rejected this document");
+		}
+		if (!this.canUsePlainPutFastPath(doc, options)) {
+			throw this.nativeModeError("requires the plain put fast path");
+		}
 	}
 
 	private trackDocumentChangeListeners(): void {
@@ -522,6 +702,8 @@ export class Documents<
 	async open(options: SetupOptions<T, I, D>) {
 		this._clazz = options.type;
 		this.canOpen = options.canOpen;
+		this._mode = options.mode ?? "auto";
+		this.assertNativeModeOpenOptions(options);
 
 		/* eslint-disable */
 		if (Program.isPrototypeOf(this._clazz)) {
@@ -663,6 +845,7 @@ export class Documents<
 		});
 		this._nativeBackboneDocumentIndexEnabled = false;
 		if (
+			this._mode !== "compat" &&
 			options?.nativeBackbone &&
 			typeof options.nativeBackbone !== "boolean" &&
 			options.nativeBackbone.documentIndex === true
@@ -682,6 +865,7 @@ export class Documents<
 					this.log.log.identity.publicKey,
 				)
 			: undefined;
+		this.assertNativeModeReady();
 	}
 
 	async recover() {
@@ -1038,6 +1222,7 @@ export class Documents<
 	}
 
 	public async put(doc: T, options?: DocumentPutOptions) {
+		this.assertNativeModePlainPutSupported(doc, options);
 		const prepared = this.canUsePlainPutFastPath(doc, options)
 			? this.preparePlainPut(doc)
 			: this.preparePut(doc);
@@ -1182,10 +1367,9 @@ export class Documents<
 		doc: T,
 		options?: DocumentPutOptions,
 	): boolean {
-		const canPerformAllowsNativeFastPath =
-			!this._optionCanPerform || !!this._optionCanPerformNativeFastPath?.(doc);
 		return (
-			canPerformAllowsNativeFastPath &&
+			this._mode !== "compat" &&
+			this.canPerformAllowsPlainPutFastPath(doc) &&
 			!this.immutable &&
 			!this.strictHistory &&
 			this.compatibility !== 6 &&
@@ -2397,6 +2581,9 @@ export class Documents<
 		id: indexerTypes.Ideable | indexerTypes.IdKey,
 		options?: SharedAppendOptions<Operation>,
 	) {
+		if (this.isNativeMode()) {
+			throw this.nativeModeError("does not support deletes");
+		}
 		const key = id instanceof indexerTypes.IdKey ? id : indexerTypes.toId(id);
 		const existing = (
 			await this._index.getDetailed(key, {

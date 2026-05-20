@@ -81,6 +81,7 @@ import { getNativeCanPerformPolicyDescriptor } from "../src/policy.js";
 import {
 	type CountEstimate,
 	Documents,
+	NativeDocumentModeError,
 	type SetupOptions,
 } from "../src/program.js";
 import {
@@ -2466,6 +2467,168 @@ describe("index", () => {
 					expect(
 						equals(indexed?.signer, session.peers[0].identity.publicKey.bytes),
 					).equal(true);
+				});
+			});
+
+			describe("document backend mode", () => {
+				it("keeps auto mode on compatibility fallback for arbitrary canPerform", async () => {
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await session.peers[0].open(store, {
+						args: {
+							mode: "auto",
+							replicate: false,
+							canPerform: () => true,
+						},
+					});
+					const nativeCommitSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppend",
+					);
+					try {
+						const doc = new Document({ id: uuid(), name: "auto" });
+						await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						expect(nativeCommitSpy.callCount).equal(0);
+						expect((await store.docs.get(doc.id))?.name).equal("auto");
+					} finally {
+						nativeCommitSpy.restore();
+					}
+				});
+
+				it("forces compatibility mode even when native backbone is configured", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "compat",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+						},
+					});
+					const nativeCommitSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppend",
+					);
+					try {
+						const doc = new Document({ id: uuid(), name: "compat" });
+						await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						expect((store.docs as any)._nativeBackboneDocumentIndexEnabled).equal(
+							false,
+						);
+						expect(nativeCommitSpy.callCount).equal(0);
+						expect((await store.docs.get(doc.id))?.name).equal("compat");
+					} finally {
+						nativeCommitSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("supports strict native mode for descriptor-backed plain local puts", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const nativeCommitSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppend",
+					);
+					try {
+						const doc = new Document({ id: uuid(), name: "native" });
+						await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						expect(nativeCommitSpy.callCount).equal(1);
+						expect((await store.docs.get(doc.id))?.name).equal("native");
+					} finally {
+						nativeCommitSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("rejects arbitrary canPerform in strict native mode", async () => {
+					const docs = new Documents<Document>();
+					await expect(
+						docs.open({
+							type: Document,
+							mode: "native",
+							replicate: false,
+							nativeBackbone: {
+								optional: false,
+								documentIndex: true,
+							},
+							canPerform: () => true,
+						}),
+					).to.be.rejectedWith(
+						NativeDocumentModeError,
+						"arbitrary canPerform",
+					);
+				});
+
+				it("rejects unsupported per-put options in strict native mode", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+							canPerform: policy.allowAll<Document>(),
+						},
+					});
+					try {
+						await expect(
+							store.docs.put(new Document({ id: uuid(), name: "bad" }), {
+								unique: true,
+								replicate: false,
+								target: "none",
+								canAppend: () => true,
+							}),
+						).to.be.rejectedWith(
+							NativeDocumentModeError,
+							"per-call canAppend",
+						);
+					} finally {
+						await rustSession.stop();
+					}
 				});
 			});
 
