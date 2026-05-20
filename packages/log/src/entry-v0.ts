@@ -210,6 +210,9 @@ type NativeEntryV0Encoder = {
 	verifyEd25519Batch?(
 		inputs: Ed25519VerifyBatchInput[],
 	): Promise<boolean[]>;
+	verifyEntryV0Ed25519Batch?(
+		inputs: EntryV0Ed25519VerifyInput[],
+	): Promise<boolean[]>;
 };
 
 let nativeEntryV0EncoderPromise:
@@ -240,6 +243,7 @@ const nativeEntryV0EncoderFromModule = (mod: {
 	calculateRawCidV1?: NativeEntryV0Encoder["calculateRawCidV1"];
 	calculateRawCidV1Batch?: NativeEntryV0Encoder["calculateRawCidV1Batch"];
 	verifyEd25519Batch?: NativeEntryV0Encoder["verifyEd25519Batch"];
+	verifyEntryV0Ed25519Batch?: NativeEntryV0Encoder["verifyEntryV0Ed25519Batch"];
 }): NativeEntryV0Encoder | undefined => {
 	if (
 		!mod.encodeEntryV0Signable ||
@@ -257,6 +261,7 @@ const nativeEntryV0EncoderFromModule = (mod: {
 		calculateRawCidV1: mod.calculateRawCidV1,
 		calculateRawCidV1Batch: mod.calculateRawCidV1Batch,
 		verifyEd25519Batch: mod.verifyEd25519Batch,
+		verifyEntryV0Ed25519Batch: mod.verifyEntryV0Ed25519Batch,
 	};
 };
 
@@ -321,6 +326,19 @@ export type Ed25519VerifyBatchInput = {
 	message: Uint8Array;
 };
 
+export type EntryV0Ed25519VerifyInput = {
+	clockId: Uint8Array;
+	wallTime: bigint;
+	logical?: number;
+	gid: string;
+	next?: string[];
+	type?: number;
+	metaData?: Uint8Array;
+	payloadData: Uint8Array;
+	signature: Uint8Array;
+	publicKey: Uint8Array;
+};
+
 export const verifyEd25519Batch = async (
 	inputs: Ed25519VerifyBatchInput[],
 ): Promise<boolean[] | undefined> => {
@@ -332,6 +350,76 @@ export const verifyEd25519Batch = async (
 		? await nativeEncoder
 		: nativeEncoder;
 	return resolvedNativeEncoder?.verifyEd25519Batch?.(inputs);
+};
+
+export const verifyEntryV0Ed25519Batch = async (
+	inputs: EntryV0Ed25519VerifyInput[],
+): Promise<boolean[] | undefined> => {
+	if (inputs.length === 0) {
+		return [];
+	}
+	const nativeEncoder = loadNativeEntryV0Encoder();
+	const resolvedNativeEncoder = isPromiseLike(nativeEncoder)
+		? await nativeEncoder
+		: nativeEncoder;
+	return resolvedNativeEncoder?.verifyEntryV0Ed25519Batch?.(inputs);
+};
+
+export const verifyEntryV0Ed25519BatchFromEntries = async (
+	entries: Entry<any>[],
+): Promise<boolean[] | undefined> => {
+	if (entries.length === 0) {
+		return [];
+	}
+	const inputs: EntryV0Ed25519VerifyInput[] = [];
+	for (const entry of entries) {
+		if (!(entry instanceof EntryV0)) {
+			return undefined;
+		}
+		const rawEntry = entry as EntryV0<any> & {
+			_meta: unknown;
+			_payload: unknown;
+		};
+		if (
+			!(rawEntry._meta instanceof DecryptedThing) ||
+			!(rawEntry._payload instanceof DecryptedThing)
+		) {
+			return undefined;
+		}
+		let signatures: SignatureWithKey[];
+		let meta: Meta;
+		let payload: Payload<any>;
+		try {
+			signatures = entry.signatures;
+			meta = entry.meta;
+			payload = entry.payload;
+		} catch {
+			return undefined;
+		}
+		if (signatures.length !== 1) {
+			return undefined;
+		}
+		const signature = signatures[0]!;
+		if (
+			!(signature.publicKey instanceof Ed25519PublicKey) ||
+			signature.prehash !== 0
+		) {
+			return undefined;
+		}
+		inputs.push({
+			clockId: meta.clock.id,
+			wallTime: meta.clock.timestamp.wallTime,
+			logical: meta.clock.timestamp.logical,
+			gid: meta.gid,
+			next: meta.next,
+			type: meta.type,
+			metaData: meta.data,
+			payloadData: payload.data,
+			signature: signature.signature,
+			publicKey: signature.publicKey.publicKey,
+		});
+	}
+	return verifyEntryV0Ed25519Batch(inputs);
 };
 
 export type MaybeEncryptionPublicKey =

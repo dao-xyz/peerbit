@@ -46,6 +46,7 @@ import {
 	ShallowMeta,
 	type ShallowOrFullEntry,
 	verifyEd25519Batch,
+	verifyEntryV0Ed25519BatchFromEntries,
 } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import type {
@@ -8398,17 +8399,29 @@ export class SharedLog<
 			}
 			const verifyStartedAt = syncProfileStart(profile);
 			let native = false;
+			let nativeMode: "entry-v0" | "signable" | undefined;
 			let verified: boolean[] | undefined;
-			const nativeInputs =
-				signaturesToVerify.length >= NATIVE_ED25519_VERIFY_BATCH_MIN_ENTRIES
-					? this.prepareNativeEd25519VerificationBatch(signaturesToVerify)
-					: undefined;
-			if (nativeInputs) {
+			if (signaturesToVerify.length >= NATIVE_ED25519_VERIFY_BATCH_MIN_ENTRIES) {
 				try {
-					verified = await verifyEd25519Batch(nativeInputs);
+					verified =
+						await verifyEntryV0Ed25519BatchFromEntries(signaturesToVerify);
 					native = !!verified;
+					nativeMode = verified ? "entry-v0" : undefined;
 				} catch {
 					verified = undefined;
+				}
+				if (!verified) {
+					const nativeInputs =
+						this.prepareNativeEd25519VerificationBatch(signaturesToVerify);
+					if (nativeInputs) {
+						try {
+							verified = await verifyEd25519Batch(nativeInputs);
+							native = !!verified;
+							nativeMode = verified ? "signable" : undefined;
+						} catch {
+							verified = undefined;
+						}
+					}
 				}
 			}
 			verified ??= await Promise.all(
@@ -8420,7 +8433,7 @@ export class SharedLog<
 					component: "shared-log",
 					entries: signaturesToVerify.length,
 					messages: 1,
-					details: { native },
+					details: { native, mode: nativeMode },
 				});
 			}
 			return verified.every(Boolean);

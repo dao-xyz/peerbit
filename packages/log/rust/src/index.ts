@@ -388,6 +388,18 @@ type WasmModule = {
 		publicKeys: Uint8Array[],
 		messages: Uint8Array[],
 	) => Uint8Array;
+	verify_entry_v0_ed25519_batch: (
+		clockIds: Uint8Array[],
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gids: string[],
+		nexts: string[][],
+		types: Uint8Array,
+		metaDatas: Array<Uint8Array | undefined>,
+		payloadDatas: Uint8Array[],
+		signatures: Uint8Array[],
+		publicKeys: Uint8Array[],
+	) => Uint8Array;
 	encode_entry_v0_signable: (
 		clockId: Uint8Array,
 		wallTime: bigint,
@@ -1942,6 +1954,11 @@ export type Ed25519VerifyBatchInput = {
 	message: Uint8Array;
 };
 
+export type EntryV0Ed25519VerifyInput = EntryV0EncodeInput & {
+	signature: Uint8Array;
+	publicKey: Uint8Array;
+};
+
 export const verifyEd25519Batch = async (
 	inputs: Ed25519VerifyBatchInput[],
 ): Promise<boolean[]> => {
@@ -1953,6 +1970,36 @@ export const verifyEd25519Batch = async (
 		inputs.map((input) => input.signature),
 		inputs.map((input) => input.publicKey),
 		inputs.map((input) => input.message),
+	);
+	return Array.from(result, (value) => value === 1);
+};
+
+export const verifyEntryV0Ed25519Batch = async (
+	inputs: EntryV0Ed25519VerifyInput[],
+): Promise<boolean[]> => {
+	if (inputs.length === 0) {
+		return [];
+	}
+	const wasm = await loadWasm();
+	const columns = entryColumns(inputs);
+	const signatures = new Array<Uint8Array>(inputs.length);
+	const publicKeys = new Array<Uint8Array>(inputs.length);
+	for (let i = 0; i < inputs.length; i++) {
+		const input = inputs[i]!;
+		signatures[i] = input.signature;
+		publicKeys[i] = input.publicKey;
+	}
+	const result = wasm.verify_entry_v0_ed25519_batch(
+		columns.clockIds,
+		columns.wallTimes,
+		columns.logicals,
+		columns.gids,
+		columns.nexts,
+		columns.types,
+		columns.metaDatas,
+		columns.payloadDatas,
+		signatures,
+		publicKeys,
 	);
 	return Array.from(result, (value) => value === 1);
 };

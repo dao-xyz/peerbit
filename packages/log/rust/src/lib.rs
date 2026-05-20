@@ -2174,6 +2174,97 @@ pub fn verify_ed25519_batch(
 }
 
 #[wasm_bindgen]
+pub fn verify_entry_v0_ed25519_batch(
+    clock_ids: Array,
+    wall_times: BigUint64Array,
+    logicals: Uint32Array,
+    gids: Array,
+    nexts: Array,
+    entry_types: Uint8Array,
+    meta_datas: Array,
+    payload_datas: Array,
+    signatures: Array,
+    public_keys: Array,
+) -> Result<Uint8Array, JsValue> {
+    let len = clock_ids.length();
+    validate_entry_batch_lengths(
+        len,
+        &gids,
+        &nexts,
+        &meta_datas,
+        &payload_datas,
+        &wall_times,
+        &logicals,
+        &entry_types,
+    )?;
+    for values in [&signatures, &public_keys] {
+        if values.length() != len {
+            return Err(JsValue::from_str(
+                "Expected equal Ed25519 entry verification batch lengths",
+            ));
+        }
+    }
+
+    let mut parsed_signatures = Vec::with_capacity(len as usize);
+    let mut parsed_public_keys = Vec::with_capacity(len as usize);
+    let mut parsed_messages = Vec::with_capacity(len as usize);
+    for i in 0..len {
+        let input = entry_input_from_batch(
+            i,
+            &clock_ids,
+            &wall_times,
+            &logicals,
+            &gids,
+            &nexts,
+            &entry_types,
+            &meta_datas,
+            &payload_datas,
+        )?;
+        let signature = required_bytes_from_array(&signatures, i, "signature")?;
+        let public_key = required_bytes_from_array(&public_keys, i, "public key")?;
+        validate_signature_lengths(&signature, &public_key)?;
+
+        let signature_bytes: [u8; 64] = signature
+            .as_slice()
+            .try_into()
+            .map_err(|_| JsValue::from_str("Expected Ed25519 signature length 64"))?;
+        let public_key_bytes: [u8; 32] = public_key
+            .as_slice()
+            .try_into()
+            .map_err(|_| JsValue::from_str("Expected Ed25519 public key length 32"))?;
+        let verifying_key = VerifyingKey::from_bytes(&public_key_bytes)
+            .map_err(|_| JsValue::from_str("Invalid Ed25519 public key"))?;
+        parsed_signatures.push(Signature::from_bytes(&signature_bytes));
+        parsed_public_keys.push(verifying_key);
+        parsed_messages.push(encode_entry_v0(input, None));
+    }
+
+    let message_refs = parsed_messages
+        .iter()
+        .map(|message| message.as_slice())
+        .collect::<Vec<_>>();
+    if verify_batch(&message_refs, &parsed_signatures, &parsed_public_keys).is_ok() {
+        return Ok(Uint8Array::from(vec![1u8; len as usize].as_slice()));
+    }
+
+    let mut out = Vec::with_capacity(len as usize);
+    for i in 0..parsed_signatures.len() {
+        out.push(
+            if parsed_public_keys[i]
+                .verify(&parsed_messages[i], &parsed_signatures[i])
+                .is_ok()
+            {
+                1
+            } else {
+                0
+            },
+        );
+    }
+
+    Ok(Uint8Array::from(out.as_slice()))
+}
+
+#[wasm_bindgen]
 pub fn encode_entry_v0_storage(
     clock_id: Uint8Array,
     wall_time: u64,

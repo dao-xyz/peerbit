@@ -356,31 +356,33 @@ const prepareRawExchangeHeadEntryFacts = (
 	entry: Entry<any>,
 	head: RawEntryWithRefs,
 ) => {
-	const payloadSize = entry.payload.byteLength;
+	const meta = entry.meta;
+	const payload = entry.payload;
+	const payloadSize = payload.byteLength;
 	const shallowEntry = new ShallowEntry({
 		hash: head.hash,
 		payloadSize,
 		head: true,
 		meta: new ShallowMeta({
-			gid: entry.meta.gid,
-			data: entry.meta.data,
-			clock: entry.meta.clock,
-			next: entry.meta.next,
-			type: entry.meta.type,
+			gid: meta.gid,
+			data: meta.data,
+			clock: meta.clock,
+			next: meta.next,
+			type: meta.type,
 		}),
 	});
 	const nativeEntry: PreparedNativeLogEntry = {
 		hash: head.hash,
-		gid: entry.meta.gid,
-		next: entry.meta.next,
-		type: entry.meta.type,
+		gid: meta.gid,
+		next: meta.next,
+		type: meta.type,
 		head: true,
 		payloadSize,
-		data: entry.meta.data,
+		data: meta.data,
 		clock: {
 			timestamp: {
-				wallTime: entry.meta.clock.timestamp.wallTime,
-				logical: entry.meta.clock.timestamp.logical,
+				wallTime: meta.clock.timestamp.wallTime,
+				logical: meta.clock.timestamp.logical,
 			},
 		},
 	};
