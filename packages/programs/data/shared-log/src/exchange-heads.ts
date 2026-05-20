@@ -85,15 +85,19 @@ export const createExchangeHeadsMessages = async function* (
 		offset < headArray.length;
 		offset += EXCHANGE_HEADS_RESOLVE_BATCH_SIZE
 	) {
-		const resolvedHeads = await resolveExchangeHeadEntries(
-			log,
-			headArray.slice(offset, offset + EXCHANGE_HEADS_RESOLVE_BATCH_SIZE),
-			visitedHeads,
+		const headBatch = headArray.slice(
+			offset,
+			offset + EXCHANGE_HEADS_RESOLVE_BATCH_SIZE,
 		);
 		const nativeReferenceRowsByPosition =
 			canUseNativeReferenceGids === false
-				? getNativeReferenceRowsByPosition(log, resolvedHeads)
+				? getNativeReferenceRowsByHeadInput(log, headBatch, visitedHeads)
 				: undefined;
+		const resolvedHeads = await resolveExchangeHeadEntries(
+			log,
+			headBatch,
+			visitedHeads,
+		);
 		for (let i = 0; i < resolvedHeads.length; i++) {
 			const entry = resolvedHeads[i];
 			if (!entry) {
@@ -197,24 +201,29 @@ export const createExchangeHeadsMessages = async function* (
 	}
 };
 
-const getNativeReferenceRowsByPosition = (
+const getNativeReferenceRowsByHeadInput = (
 	log: Log<any>,
-	resolvedHeads: Array<Entry<any> | undefined>,
+	heads: Array<Entry<any> | string>,
+	visitedHeads: Set<string>,
 ) => {
 	const positions: number[] = [];
 	const hashes: string[] = [];
-	for (let i = 0; i < resolvedHeads.length; i++) {
-		const entry = resolvedHeads[i];
-		if (!entry) {
+	for (let i = 0; i < heads.length; i++) {
+		const head = heads[i]!;
+		const hash = head instanceof Entry ? head.hash : head;
+		if (visitedHeads.has(hash)) {
 			continue;
 		}
 		positions.push(i);
-		hashes.push(entry.hash);
+		hashes.push(hash);
+	}
+	if (hashes.length === 0) {
+		return [];
 	}
 	const flatRows = log.entryIndex.getUniqueReferenceGidRowsFlatBatch(hashes);
 	if (flatRows) {
 		const byPosition: Array<Array<[string, string]> | undefined> = new Array(
-			resolvedHeads.length,
+			heads.length,
 		);
 		for (const position of positions) {
 			byPosition[position] = [];
@@ -233,7 +242,7 @@ const getNativeReferenceRowsByPosition = (
 		return undefined;
 	}
 	const byPosition: Array<Array<[string, string]> | undefined> = new Array(
-		resolvedHeads.length,
+		heads.length,
 	);
 	for (let i = 0; i < rows.length; i++) {
 		byPosition[positions[i]!] = rows[i];
