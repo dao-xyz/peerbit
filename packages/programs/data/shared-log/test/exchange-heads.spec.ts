@@ -3,7 +3,10 @@ import { Ed25519Keypair } from "@peerbit/crypto";
 import { Log } from "@peerbit/log";
 import { expect } from "chai";
 import sinon from "sinon";
-import { createExchangeHeadsMessages } from "../src/exchange-heads.js";
+import {
+	EXCHANGE_HEADS_RESOLVE_BATCH_SIZE,
+	createExchangeHeadsMessages,
+} from "../src/exchange-heads.js";
 
 describe("exchange heads", () => {
 	let store: AnyBlockStore;
@@ -105,6 +108,42 @@ describe("exchange heads", () => {
 			expect(getSpy.callCount).to.equal(0);
 		} finally {
 			getSpy.restore();
+			getManySpy.restore();
+			await log.close();
+		}
+	});
+
+	it("resolves large hash head responses in bounded entry-index batches", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			nativeGraph: true,
+		});
+
+		const heads = [];
+		for (let i = 0; i < EXCHANGE_HEADS_RESOLVE_BATCH_SIZE + 2; i++) {
+			const { entry } = await log.append(new Uint8Array([i % 256]), {
+				meta: { next: [], gidSeed: new Uint8Array([i % 256, i >>> 8]) },
+			});
+			heads.push(entry.hash);
+		}
+
+		const getManySpy = sinon.spy(log.entryIndex, "getMany");
+		try {
+			const messages = [];
+			for await (const message of createExchangeHeadsMessages(log, heads)) {
+				messages.push(message);
+			}
+
+			expect(messages.flatMap((message) => message.heads)).to.have.length(
+				heads.length,
+			);
+			expect(getManySpy.callCount).to.equal(2);
+			expect(getManySpy.firstCall.args[0]).to.have.length(
+				EXCHANGE_HEADS_RESOLVE_BATCH_SIZE,
+			);
+			expect(getManySpy.secondCall.args[0]).to.have.length(2);
+		} finally {
 			getManySpy.restore();
 			await log.close();
 		}

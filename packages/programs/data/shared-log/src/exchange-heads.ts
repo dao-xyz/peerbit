@@ -68,6 +68,7 @@ export class ResponseIPrune extends TransportMessage {
 }
 
 const MAX_EXCHANGE_MESSAGE_SIZE = 1e5; // 100kb. Too large size might not be faster (even if we can do 5mb)
+export const EXCHANGE_HEADS_RESOLVE_BATCH_SIZE = 256;
 
 export const createExchangeHeadsMessages = async function* (
 	log: Log<any>,
@@ -77,105 +78,115 @@ export const createExchangeHeadsMessages = async function* (
 	let current: EntryWithRefs<any>[] = [];
 	const visitedHeads = new Set<string>();
 	const headArray = Array.isArray(heads) ? heads : [...heads];
-	const resolvedHeads = await resolveExchangeHeadEntries(log, headArray);
 	const canUseNativeReferenceGids = headArray.length === 1;
-	const nativeReferenceRowsByPosition =
-		canUseNativeReferenceGids === false
-			? getNativeReferenceRowsByPosition(log, resolvedHeads)
-			: undefined;
-	for (let i = 0; i < resolvedHeads.length; i++) {
-		const entry = resolvedHeads[i];
-		if (!entry) {
-			continue; // missing this entry, could be deleted while iterating
-		}
 
-		if (visitedHeads.has(entry.hash)) {
-			continue;
-		}
-		visitedHeads.add(entry.hash);
-
-		const nativeGidReferences = canUseNativeReferenceGids
-			? log.entryIndex.getUniqueReferenceGids(entry.hash)
-			: undefined;
-		if (nativeGidReferences) {
-			if (nativeGidReferences.length > 1000) {
-				warn("Large refs count: ", nativeGidReferences.length);
-			}
-			current.push(
-				new EntryWithRefs({
-					entry,
-					gidRefrences: nativeGidReferences,
-				}),
-			);
-			size += entry.size;
-			if (size > MAX_EXCHANGE_MESSAGE_SIZE) {
-				size = 0;
-				yield new ExchangeHeadsMessage({
-					heads: current,
-				});
-				current = [];
-			}
-			continue;
-		}
-
-		const nativeReferenceRows = nativeReferenceRowsByPosition?.get(i);
-		if (nativeReferenceRows) {
-			const gidRefrences: string[] = [];
-			for (const [hash, gid] of nativeReferenceRows) {
-				if (visitedHeads.has(hash)) {
-					continue;
-				}
-				visitedHeads.add(hash);
-				gidRefrences.push(gid);
-			}
-			if (gidRefrences.length > 1000) {
-				warn("Large refs count: ", gidRefrences.length);
-			}
-			current.push(
-				new EntryWithRefs({
-					entry,
-					gidRefrences,
-				}),
-			);
-			size += entry.size;
-			if (size > MAX_EXCHANGE_MESSAGE_SIZE) {
-				size = 0;
-				yield new ExchangeHeadsMessage({
-					heads: current,
-				});
-				current = [];
-			}
-			continue;
-		}
-
-		// TODO eventually we don't want to load all refs
-		// since majority of the old leader would not be interested in these anymore
-		const refs = (await allEntriesWithUniqueGids(log, entry)).filter((x) => {
-			if (visitedHeads.has(x.hash)) {
-				return false;
-			}
-			visitedHeads.add(x.hash);
-			return true;
-		});
-
-		if (refs.length > 1000) {
-			warn("Large refs count: ", refs.length);
-		}
-		current.push(
-			new EntryWithRefs({
-				entry,
-				gidRefrences: refs.map((x) => x.meta.gid),
-			}),
+	for (
+		let offset = 0;
+		offset < headArray.length;
+		offset += EXCHANGE_HEADS_RESOLVE_BATCH_SIZE
+	) {
+		const resolvedHeads = await resolveExchangeHeadEntries(
+			log,
+			headArray.slice(offset, offset + EXCHANGE_HEADS_RESOLVE_BATCH_SIZE),
 		);
+		const nativeReferenceRowsByPosition =
+			canUseNativeReferenceGids === false
+				? getNativeReferenceRowsByPosition(log, resolvedHeads)
+				: undefined;
+		for (let i = 0; i < resolvedHeads.length; i++) {
+			const entry = resolvedHeads[i];
+			if (!entry) {
+				continue; // missing this entry, could be deleted while iterating
+			}
 
-		size += entry.size;
-		if (size > MAX_EXCHANGE_MESSAGE_SIZE) {
-			size = 0;
-			yield new ExchangeHeadsMessage({
-				heads: current,
+			if (visitedHeads.has(entry.hash)) {
+				continue;
+			}
+			visitedHeads.add(entry.hash);
+
+			const nativeGidReferences = canUseNativeReferenceGids
+				? log.entryIndex.getUniqueReferenceGids(entry.hash)
+				: undefined;
+			if (nativeGidReferences) {
+				if (nativeGidReferences.length > 1000) {
+					warn("Large refs count: ", nativeGidReferences.length);
+				}
+				current.push(
+					new EntryWithRefs({
+						entry,
+						gidRefrences: nativeGidReferences,
+					}),
+				);
+				size += entry.size;
+				if (size > MAX_EXCHANGE_MESSAGE_SIZE) {
+					size = 0;
+					yield new ExchangeHeadsMessage({
+						heads: current,
+					});
+					current = [];
+				}
+				continue;
+			}
+
+			const nativeReferenceRows = nativeReferenceRowsByPosition?.get(i);
+			if (nativeReferenceRows) {
+				const gidRefrences: string[] = [];
+				for (const [hash, gid] of nativeReferenceRows) {
+					if (visitedHeads.has(hash)) {
+						continue;
+					}
+					visitedHeads.add(hash);
+					gidRefrences.push(gid);
+				}
+				if (gidRefrences.length > 1000) {
+					warn("Large refs count: ", gidRefrences.length);
+				}
+				current.push(
+					new EntryWithRefs({
+						entry,
+						gidRefrences,
+					}),
+				);
+				size += entry.size;
+				if (size > MAX_EXCHANGE_MESSAGE_SIZE) {
+					size = 0;
+					yield new ExchangeHeadsMessage({
+						heads: current,
+					});
+					current = [];
+				}
+				continue;
+			}
+
+			// TODO eventually we don't want to load all refs
+			// since majority of the old leader would not be interested in these anymore
+			const refs = (await allEntriesWithUniqueGids(log, entry)).filter((x) => {
+				if (visitedHeads.has(x.hash)) {
+					return false;
+				}
+				visitedHeads.add(x.hash);
+				return true;
 			});
-			current = [];
-			continue;
+
+			if (refs.length > 1000) {
+				warn("Large refs count: ", refs.length);
+			}
+			current.push(
+				new EntryWithRefs({
+					entry,
+					gidRefrences: refs.map((x) => x.meta.gid),
+				}),
+			);
+
+			size += entry.size;
+			if (size > MAX_EXCHANGE_MESSAGE_SIZE) {
+				size = 0;
+				yield new ExchangeHeadsMessage({
+					heads: current,
+				});
+				current = [];
+				continue;
+			}
 		}
 	}
 	if (current.length > 0) {

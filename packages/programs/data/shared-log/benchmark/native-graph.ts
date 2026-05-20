@@ -12,7 +12,8 @@ type Scenario =
 	| "auto-next"
 	| "append-many"
 	| "explicit-root-next"
-	| "exchange-head-refs";
+	| "exchange-head-refs"
+	| "exchange-head-hash-response";
 type IndexerMode = "default" | "rust";
 
 type BenchRow = {
@@ -43,6 +44,7 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 			"append-many",
 			"explicit-root-next",
 			"exchange-head-refs",
+			"exchange-head-hash-response",
 		];
 	}
 	const scenarios = value
@@ -54,7 +56,8 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 			scenario !== "auto-next" &&
 			scenario !== "append-many" &&
 			scenario !== "explicit-root-next" &&
-			scenario !== "exchange-head-refs"
+			scenario !== "exchange-head-refs" &&
+			scenario !== "exchange-head-hash-response"
 		) {
 			throw new Error(`Unknown scenario '${scenario}'`);
 		}
@@ -206,6 +209,42 @@ const runScenario = async (
 			}
 			if (emittedHeads === 0) {
 				throw new Error("Expected at least one exchange head message");
+			}
+			const elapsed = performance.now() - started;
+			return {
+				scenario,
+				indexer,
+				nativeGraph,
+				entries,
+				run,
+				elapsedMs: Math.round(elapsed),
+				opsPerSecond: Math.round((entries / elapsed) * 1000),
+			};
+		}
+
+		if (scenario === "exchange-head-hash-response") {
+			const hashes: string[] = [];
+			for (let i = 0; i < entries; i++) {
+				const { entry } = await store.logs.append(createDocument(i, bytes), {
+					meta: { next: [], gidSeed: new Uint8Array([i % 256, i >>> 8]) },
+					replicate: false,
+					target: "none",
+				});
+				hashes.push(entry.hash);
+			}
+
+			let emittedHeads = 0;
+			const started = performance.now();
+			for await (const message of createExchangeHeadsMessages(
+				store.logs.log,
+				hashes,
+			)) {
+				emittedHeads += message.heads.length;
+			}
+			if (emittedHeads !== hashes.length) {
+				throw new Error(
+					`Expected ${hashes.length} exchange heads, got ${emittedHeads}`,
+				);
 			}
 			const elapsed = performance.now() - started;
 			return {
