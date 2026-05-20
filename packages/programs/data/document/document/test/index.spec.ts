@@ -2630,6 +2630,110 @@ describe("index", () => {
 						await rustSession.stop();
 					}
 				});
+
+				it("rejects payload append fallback in strict native mode", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const commitOnlyStub = sinon
+						.stub(store.docs.log, "appendLocallyPreparedPayloadCommitOnly")
+						.returns(undefined as any);
+					const fallbackSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppendPayloadFallback",
+					);
+					try {
+						await expect(
+							store.docs.put(new Document({ id: uuid(), name: "no-native" }), {
+								unique: true,
+								replicate: false,
+								target: "none",
+							}),
+						).to.be.rejectedWith(
+							NativeDocumentModeError,
+							"native payload commit-only append",
+						);
+						expect(fallbackSpy.callCount).equal(0);
+					} finally {
+						fallbackSpy.restore();
+						commitOnlyStub.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("rejects missing native document-index commit support before append", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const prepareImmediateStub = sinon
+						.stub(store.docs as any, "prepareNativeBackboneDocumentIndexCommit")
+						.returns(undefined);
+					const prepareWithAppendFactsStub = sinon
+						.stub(
+							store.docs as any,
+							"createNativeBackboneDocumentIndexAppendFactsPreparer",
+						)
+						.returns(undefined);
+					const commitOnlySpy = sinon.spy(
+						store.docs.log,
+						"appendLocallyPreparedPayloadCommitOnly",
+					);
+					try {
+						await expect(
+							store.docs.put(
+								new Document({ id: uuid(), name: "no-index-commit" }),
+								{
+									unique: true,
+									replicate: false,
+									target: "none",
+								},
+							),
+						).to.be.rejectedWith(
+							NativeDocumentModeError,
+							"native document-index commit",
+						);
+						expect(commitOnlySpy.callCount).equal(0);
+					} finally {
+						commitOnlySpy.restore();
+						prepareWithAppendFactsStub.restore();
+						prepareImmediateStub.restore();
+						await rustSession.stop();
+					}
+				});
 			});
 
 			it("uses the plain put fast path for policy.allowAll canPerform", async () => {

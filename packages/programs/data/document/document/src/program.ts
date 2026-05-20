@@ -222,6 +222,12 @@ type LocalAppendCommitFacts = {
 	nativeBackboneDocumentIndexTrimmedHeadsProcessed?: boolean;
 };
 
+type NativeDocumentAppendResult = {
+	entry: Entry<Operation>;
+	removed: ShallowOrFullEntry<Operation>[];
+	appendCommit: LocalAppendCommitFacts;
+};
+
 type ContextualEncodedValueParts = {
 	prefix: Uint8Array;
 	suffix: Uint8Array;
@@ -1518,6 +1524,13 @@ export class Documents<
 					nativeDocumentIndexCommit
 						? undefined
 						: this.createNativeBackboneDocumentIndexAppendFactsPreparer(input);
+				if (
+					this.isNativeMode() &&
+					!nativeDocumentIndexCommit &&
+					!prepareNativeDocumentIndexWithAppendFacts
+				) {
+					throw this.nativeModeError("requires native document-index commit");
+				}
 				const appendProperties = {
 					skipMissingNextJoin: input.skipMissingNextJoin,
 					resolveTrimmedEntries: input.resolveTrimmedEntries,
@@ -1556,6 +1569,9 @@ export class Documents<
 							}
 						: input;
 				if (input.operation) {
+					if (this.isNativeMode()) {
+						throw this.nativeModeError("requires payload-backed put operations");
+					}
 					return mapMaybePromise(
 						this.log.appendLocallyPrepared(
 							input.operation,
@@ -1563,7 +1579,7 @@ export class Documents<
 							appendProperties,
 						),
 						(appended) =>
-							this.createDocumentAppendCommitFacts(
+							this.createNativeCheckedDocumentAppendCommitFacts(
 								inputWithNativeIndex(),
 								appended,
 							),
@@ -1577,9 +1593,14 @@ export class Documents<
 					),
 					(commitOnly) => {
 						if (commitOnly) {
-							return this.createDocumentAppendCommitFacts(
+							return this.createNativeCheckedDocumentAppendCommitFacts(
 								inputWithNativeIndex(),
 								commitOnly,
+							);
+						}
+						if (this.isNativeMode()) {
+							throw this.nativeModeError(
+								"requires native payload commit-only append",
 							);
 						}
 						return this.commitNativeDocumentAppendPayloadFallback(
@@ -1591,6 +1612,30 @@ export class Documents<
 				);
 			},
 		);
+	}
+
+	private createNativeCheckedDocumentAppendCommitFacts(
+		input: NativeDocumentAppendCommitFactsInput<T, I>,
+		appended: NativeDocumentAppendResult,
+	): MaybePromise<DocumentAppendCommitFacts<T, I>> {
+		return mapMaybePromise(
+			this.createDocumentAppendCommitFacts(input, appended),
+			(commit) => {
+				this.assertNativeModeDocumentAppendCommit(commit);
+				return commit;
+			},
+		);
+	}
+
+	private assertNativeModeDocumentAppendCommit(
+		commit: DocumentAppendCommitFacts<T, I>,
+	): void {
+		if (!this.isNativeMode()) {
+			return;
+		}
+		if (!commit.nativeBackboneDocumentIndexCommitted) {
+			throw this.nativeModeError("requires native document-index commit");
+		}
 	}
 
 	private toNativeBackboneDocumentIndexCommitInput(
@@ -1673,6 +1718,9 @@ export class Documents<
 			) => NativeBackboneDocumentIndexCommitInput | undefined;
 		},
 	): Promise<DocumentAppendCommitFacts<T, I>> {
+		if (this.isNativeMode()) {
+			throw this.nativeModeError("requires native payload append support");
+		}
 		let appended: Awaited<ReturnType<typeof this.log.appendLocallyPrepared>>;
 		try {
 			appended = await this.log.appendLocallyPreparedPayload(
@@ -1710,8 +1758,13 @@ export class Documents<
 				{
 					resolveTrimmedEntries: input.resolveTrimmedEntries,
 				},
-			);
+		);
 		if (!appended) {
+			if (this.isNativeMode()) {
+				throw this.nativeModeError(
+					"requires native batched payload append support",
+				);
+			}
 			return undefined;
 		}
 		const appendInputs = input.puts.map((put, index) => ({
@@ -1722,20 +1775,22 @@ export class Documents<
 				appendCommit: appended.appendCommits[index]!,
 			},
 		}));
+		const commits = await this.createDocumentAppendCommitFactsBatch(appendInputs);
+		if (this.isNativeMode()) {
+			for (const commit of commits) {
+				this.assertNativeModeDocumentAppendCommit(commit);
+			}
+		}
 		return {
 			entries: appended.entries,
 			removed: appended.removed,
-			commits: await this.createDocumentAppendCommitFactsBatch(appendInputs),
+			commits,
 		};
 	}
 
 	private createDocumentAppendCommitFacts(
 		input: NativeDocumentAppendCommitFactsInput<T, I>,
-		appended: {
-			entry: Entry<Operation>;
-			removed: ShallowOrFullEntry<Operation>[];
-			appendCommit: LocalAppendCommitFacts;
-		},
+		appended: NativeDocumentAppendResult,
 	): MaybePromise<DocumentAppendCommitFacts<T, I>> {
 		const append = appended.appendCommit;
 		const existing =
@@ -1773,11 +1828,7 @@ export class Documents<
 
 	private createDocumentAppendCommitFactsWithLazyContext(
 		input: NativeDocumentAppendCommitFactsInput<T, I>,
-		appended: {
-			entry: Entry<Operation>;
-			removed: ShallowOrFullEntry<Operation>[];
-			appendCommit: LocalAppendCommitFacts;
-		},
+		appended: NativeDocumentAppendResult,
 		contextInput: {
 			existingCreated?: bigint | number | string | null;
 			modified: bigint | number | string;
@@ -1866,11 +1917,7 @@ export class Documents<
 	private async createDocumentAppendCommitFactsBatch(
 		rows: Array<{
 			input: NativeDocumentAppendCommitFactsInput<T, I>;
-			appended: {
-				entry: Entry<Operation>;
-				removed: ShallowOrFullEntry<Operation>[];
-				appendCommit: LocalAppendCommitFacts;
-			};
+			appended: NativeDocumentAppendResult;
 		}>,
 	): Promise<DocumentAppendCommitFacts<T, I>[]> {
 		const contextInputs = rows.map(({ input, appended }) => {
@@ -1899,11 +1946,7 @@ export class Documents<
 
 	private createDocumentAppendCommitFactsWithContext(
 		input: NativeDocumentAppendCommitFactsInput<T, I>,
-		appended: {
-			entry: Entry<Operation>;
-			removed: ShallowOrFullEntry<Operation>[];
-			appendCommit: LocalAppendCommitFacts;
-		},
+		appended: NativeDocumentAppendResult,
 		contextPlan: {
 			created: bigint;
 			modified: bigint;
