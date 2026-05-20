@@ -114,6 +114,7 @@ type PreparedCommitOnlyAppendResult<T> = {
 	entry: Entry<T>;
 	materializeEntry: () => Entry<T>;
 	removed: ShallowOrFullEntry<T>[];
+	removedHashes?: string[];
 	appendFacts: PreparedAppendFacts;
 	shallowEntry: ShallowEntry;
 	documentTrimmedHeadsProcessed?: boolean;
@@ -1197,6 +1198,36 @@ export class Log<T> {
 						| PreparedCommitOnlyAppendResult<T>
 						| Promise<PreparedCommitOnlyAppendResult<T>> => {
 						if (prepared.trimmedEntryHashes) {
+							if (prepared.trimmedEntryHashes.length === 0) {
+								return finish();
+							}
+							if (prepared.documentTrimmedHeadsProcessed === true) {
+								const trimmedEntryHashes = [
+									...new Set(prepared.trimmedEntryHashes),
+								];
+								const consumedNoReturn =
+									this.entryIndex.consumeNativeTrimmedEntryHashesNoReturnMaybe(
+										trimmedEntryHashes,
+										{
+											skipNextHeadUpdates: true,
+											deleteBlocks: false,
+										},
+									);
+								if (consumedNoReturn !== undefined) {
+									return mapMaybePromise(consumedNoReturn, () => ({
+										get entry() {
+											return materializeEntry();
+										},
+										materializeEntry,
+										removed: [],
+										removedHashes: trimmedEntryHashes,
+										appendFacts,
+										shallowEntry,
+										documentTrimmedHeadsProcessed:
+											prepared.documentTrimmedHeadsProcessed,
+									}));
+								}
+							}
 							const consumedResult =
 								this.entryIndex.consumeNativeTrimmedEntryHashesMaybe(
 									prepared.trimmedEntryHashes,

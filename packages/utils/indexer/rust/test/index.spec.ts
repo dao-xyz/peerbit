@@ -1787,6 +1787,33 @@ describe("native planner bridge", () => {
 		}
 	});
 
+	it("counts durable exact id deletes without returning deleted entries", async () => {
+		const directory = createPersistenceDirectory();
+		const writer = create(directory);
+		const reader = create(directory);
+		try {
+			await writer.start();
+			const writerIndex = await writer.init({ schema: BridgeDocument });
+			const exactDeleteIndex = writerIndex as typeof writerIndex & {
+				delIdsCount: (deleteIds: string[]) => Promise<number> | number;
+			};
+			await writerIndex.put(new BridgeDocument("a", "stale", "delete me"));
+			await writerIndex.put(new BridgeDocument("b", "other", "keep me"));
+			const deleted = await exactDeleteIndex.delIdsCount(["a", "missing"]);
+			expect(deleted).equal(1);
+
+			await reader.start();
+			const readerIndex = await reader.init({ schema: BridgeDocument });
+			const result = await readerIndex.iterate().all();
+
+			expect(result.map((entry) => entry.value.id)).to.deep.equal(["b"]);
+		} finally {
+			await writer.drop();
+			await reader.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
 	it("replays durable shared-log coordinate fields from the typed native path", async () => {
 		const directory = createPersistenceDirectory();
 		const writer = create(directory);

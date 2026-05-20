@@ -393,6 +393,7 @@ type NativeBackboneDocumentIndexPreparer = (
 type PreparedPayloadCommitOnlyResult<T, R extends "u32" | "u64"> = {
 	entry: Entry<T>;
 	removed: ShallowOrFullEntry<T>[];
+	removedHashes?: string[];
 	appendCommit: PreparedLocalAppendCommit<R>;
 };
 
@@ -5109,6 +5110,7 @@ export class SharedLog<
 						prepared.appendFacts,
 						prepared.removed,
 						prepared.materializeEntry,
+						{ removedHashes: prepared.removedHashes },
 					);
 				const deleteHashes =
 					deferredCoordinateDeleteHashes &&
@@ -5129,6 +5131,7 @@ export class SharedLog<
 							return prepared.entry;
 						},
 						removed: prepared.removed,
+						removedHashes: prepared.removedHashes,
 						appendCommit,
 					};
 				};
@@ -5320,7 +5323,7 @@ export class SharedLog<
 					});
 				const plannedCoordinateDeleteHashes = combineCoordinateDeleteHashes(
 					prepared.appendFacts.next,
-					prepared.removed.map((entry) => entry.hash),
+					prepared.removedHashes ?? prepared.removed.map((entry) => entry.hash),
 				);
 				const rollbackCoordinateEntries =
 					this.snapshotResidentCoordinateEntries(plannedCoordinateDeleteHashes);
@@ -5331,6 +5334,7 @@ export class SharedLog<
 						prepared.materializeEntry,
 						{
 							forgetNativeCoordinates: false,
+							removedHashes: prepared.removedHashes,
 						},
 					);
 				const finish = (): PreparedPayloadCommitOnlyResult<T, R> => {
@@ -5352,6 +5356,7 @@ export class SharedLog<
 							return prepared.entry;
 						},
 						removed: prepared.removed,
+						removedHashes: prepared.removedHashes,
 						appendCommit,
 					};
 				};
@@ -5441,6 +5446,7 @@ export class SharedLog<
 					entry: Entry<T>;
 					materializeEntry: () => Entry<T>;
 					removed: ShallowOrFullEntry<T>[];
+					removedHashes?: string[];
 					appendFacts: PreparedAppendFacts;
 			  }
 			| undefined,
@@ -5457,6 +5463,7 @@ export class SharedLog<
 					result.appendFacts,
 					result.removed,
 					result.materializeEntry,
+					{ removedHashes: result.removedHashes },
 				);
 			const deleteHashes =
 				deferredCoordinateDeleteHashes &&
@@ -5476,6 +5483,7 @@ export class SharedLog<
 							return result.entry;
 						},
 						removed: result.removed,
+						removedHashes: result.removedHashes,
 						appendCommit: this.createPreparedLocalAppendCommitFromFacts(
 							result.appendFacts,
 						),
@@ -5487,6 +5495,7 @@ export class SharedLog<
 					return result.entry;
 				},
 				removed: result.removed,
+				removedHashes: result.removedHashes,
 				appendCommit: this.createPreparedLocalAppendCommitFromFacts(
 					result.appendFacts,
 				),
@@ -5514,6 +5523,7 @@ export class SharedLog<
 			entry: Entry<T>;
 			materializeEntry: () => Entry<T>;
 			removed: ShallowOrFullEntry<T>[];
+			removedHashes?: string[];
 			appendFacts: PreparedAppendFacts;
 		},
 		options: SharedAppendOptions<T> | undefined,
@@ -5560,6 +5570,7 @@ export class SharedLog<
 			entry: Entry<T>;
 			materializeEntry: () => Entry<T>;
 			removed: ShallowOrFullEntry<T>[];
+			removedHashes?: string[];
 			appendFacts: PreparedAppendFacts;
 		},
 		minReplicasValue: number,
@@ -5579,6 +5590,7 @@ export class SharedLog<
 				return sharedLog.materializePreparedAppendResultEntry(result);
 			},
 			removed: result.removed,
+			removedHashes: result.removedHashes,
 			appendCommit: nativePreparedCommit,
 		};
 	}
@@ -5588,6 +5600,7 @@ export class SharedLog<
 			entry?: Entry<T>;
 			materializeEntry?: () => Entry<T>;
 			removed: ShallowOrFullEntry<T>[];
+			removedHashes?: string[];
 			change?: Change<T>;
 			appendFacts: PreparedAppendFacts;
 		},
@@ -5627,6 +5640,7 @@ export class SharedLog<
 						{
 							forgetNativeCoordinates:
 								!nativeAppendPlan.committedNativeCoordinateDeletes,
+							removedHashes: result.removedHashes,
 						},
 					);
 			await this.persistPreparedCoordinateNativeTransaction({
@@ -5683,6 +5697,7 @@ export class SharedLog<
 			entry: Entry<T>;
 			materializeEntry: () => Entry<T>;
 			removed: ShallowOrFullEntry<T>[];
+			removedHashes?: string[];
 			appendFacts: PreparedAppendFacts;
 		},
 		options: SharedAppendOptions<T> | undefined,
@@ -5710,6 +5725,7 @@ export class SharedLog<
 					result.appendFacts,
 					result.removed,
 					result.materializeEntry,
+					{ removedHashes: result.removedHashes },
 				);
 			nativeAppendPlan = await this.planNativeLocalAppendFacts(
 				result.appendFacts,
@@ -5747,6 +5763,7 @@ export class SharedLog<
 				return result.entry;
 			},
 			removed: result.removed,
+			removedHashes: result.removedHashes,
 			appendCommit: this.createPreparedLocalAppendCommitFromFacts(
 				result.appendFacts,
 				nativeAppendPlan,
@@ -8284,16 +8301,24 @@ export class SharedLog<
 		appendFacts: PreparedAppendFacts,
 		removed: ShallowOrFullEntry<T>[],
 		materializeEntry: () => Entry<T>,
-		options?: { forgetNativeCoordinates?: boolean },
+		options?: { forgetNativeCoordinates?: boolean; removedHashes?: string[] },
 	): string[] | undefined {
 		this.onEntryAddedHash(appendFacts.hash, materializeEntry);
-		if (removed.length === 0) {
+		const removedHashes = options?.removedHashes;
+		if (removed.length === 0 && (!removedHashes || removedHashes.length === 0)) {
 			return undefined;
 		}
 		const deferredCoordinateDeleteHashes: string[] = [];
-		for (const entry of removed) {
-			deferredCoordinateDeleteHashes.push(entry.hash);
-			this.onEntryRemoved(entry.hash);
+		if (removedHashes) {
+			for (const hash of removedHashes) {
+				deferredCoordinateDeleteHashes.push(hash);
+				this.onEntryRemoved(hash);
+			}
+		} else {
+			for (const entry of removed) {
+				deferredCoordinateDeleteHashes.push(entry.hash);
+				this.onEntryRemoved(entry.hash);
+			}
 		}
 		if (options?.forgetNativeCoordinates === false) {
 			this.forgetResidentCoordinateStateForHashes(

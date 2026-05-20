@@ -77,6 +77,15 @@ type IndexWithExactDelete = Index<any> & {
 const hasExactDelete = (index: Index<any>): index is IndexWithExactDelete =>
 	typeof (index as IndexWithExactDelete).delIds === "function";
 
+type IndexWithExactDeleteCount = Index<any> & {
+	delIdsCount: (deleteIds: string[]) => Promise<number> | number;
+};
+
+const hasExactDeleteCount = (
+	index: Index<any>,
+): index is IndexWithExactDeleteCount =>
+	typeof (index as IndexWithExactDeleteCount).delIdsCount === "function";
+
 const putPreparedEntryBlock = async (
 	store: Blocks,
 	prepared: PreparedEntryBlock,
@@ -1800,6 +1809,80 @@ export class EntryIndex<T> {
 		}
 
 		return this.consumeNativeTrimmedEntryNodesMaybe(nodes, options);
+	}
+
+	consumeNativeTrimmedEntryHashesNoReturnMaybe(
+		hashes: string[],
+		options?: { skipNextHeadUpdates?: boolean; deleteBlocks?: boolean },
+	): MaybePromise<boolean> | undefined {
+		if (
+			!options?.skipNextHeadUpdates ||
+			options.deleteBlocks !== false ||
+			hashes.length === 0
+		) {
+			return undefined;
+		}
+
+		const indexedHashes: string[] = [];
+		let pendingDeleted = 0;
+		const seen = new Set<string>();
+		for (const hash of hashes) {
+			if (seen.has(hash)) {
+				continue;
+			}
+			seen.add(hash);
+			this.cache.del(hash);
+			if (this.pendingIndexWrites.delete(hash)) {
+				pendingDeleted++;
+			} else {
+				indexedHashes.push(hash);
+			}
+		}
+
+		const finish = (indexedDeleted: number) => {
+			this._length -= pendingDeleted + indexedDeleted;
+			return true;
+		};
+		if (indexedHashes.length === 0) {
+			return finish(0);
+		}
+		const exactDeleteCountIndex = hasExactDeleteCount(this.properties.index)
+			? this.properties.index
+			: undefined;
+		if (exactDeleteCountIndex) {
+			return mapMaybePromise(
+				exactDeleteCountIndex.delIdsCount(indexedHashes),
+				finish,
+			);
+		}
+		const exactDeleteIndex = hasExactDelete(this.properties.index)
+			? this.properties.index
+			: undefined;
+		if (exactDeleteIndex) {
+			return mapMaybePromise(exactDeleteIndex.delIds(indexedHashes), (deleted) =>
+				finish(deleted.length),
+			);
+		}
+		return this.consumeNativeTrimmedEntryHashesNoReturnByQuery(
+			indexedHashes,
+			finish,
+		);
+	}
+
+	private async consumeNativeTrimmedEntryHashesNoReturnByQuery(
+		indexedHashes: string[],
+		finish: (indexedDeleted: number) => boolean,
+	): Promise<boolean> {
+		const batchSize = 64;
+		let deletedCount = 0;
+		for (let i = 0; i < indexedHashes.length; i += batchSize) {
+			const hashes = indexedHashes.slice(i, i + batchSize);
+			const deleted = await this.properties.index.del({
+				query: createHashMatchQuery(hashes),
+			});
+			deletedCount += deleted.length;
+		}
+		return finish(deletedCount);
 	}
 
 	private consumeNativeTrimmedEntryNodesMaybe(

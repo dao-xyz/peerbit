@@ -2737,6 +2737,10 @@ describe("index", () => {
 						store.docs.log.log.entryIndex as any,
 						"consumeNativeTrimmedEntryHashesMaybe",
 					);
+					const hashTrimNoReturnSpy = sinon.spy(
+						store.docs.log.log.entryIndex as any,
+						"consumeNativeTrimmedEntryHashesNoReturnMaybe",
+					);
 					const entryTrimSpy = sinon.spy(
 						store.docs.log.log.entryIndex as any,
 						"consumeNativeTrimmedEntriesMaybe",
@@ -2750,7 +2754,8 @@ describe("index", () => {
 						const second = new Document({ id: uuid(), name: "kept" });
 						await store.docs.put(first, { unique: true });
 						await store.docs.put(second, { unique: true });
-						expect(hashTrimSpy.callCount).greaterThan(0);
+						expect(hashTrimNoReturnSpy.callCount).greaterThan(0);
+						expect(hashTrimSpy.callCount).equal(0);
 						expect(entryTrimSpy.callCount).equal(0);
 						expect(removedHeadsSpy.callCount).equal(0);
 						expect(await store.docs.get(first.id)).equal(undefined);
@@ -2758,6 +2763,7 @@ describe("index", () => {
 					} finally {
 						removedHeadsSpy.restore();
 						entryTrimSpy.restore();
+						hashTrimNoReturnSpy.restore();
 						hashTrimSpy.restore();
 						await rustSession.stop();
 					}
