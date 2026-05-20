@@ -288,13 +288,14 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 
 	_value?: T;
 	getValue(clazz: AbstractType<T>): T {
-		if (this._value) {
+		if (this._value !== undefined) {
 			return this._value;
 		}
 		if (!this._data) {
 			throw new Error("Missing data");
 		}
-		return deserialize(this._data, clazz);
+		this._value = deserialize(this._data, clazz);
+		return this._value;
 	}
 
 	async encrypt<Parameters extends KeyExchangeOptions>(
