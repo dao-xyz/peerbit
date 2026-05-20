@@ -3,6 +3,7 @@ import {
 	type NativeLogEntry,
 	benchmarkPlainEntryV0Crypto,
 	calculateRawCidV1,
+	calculateRawCidV1Batch,
 	createLogGraphIndex,
 	createNativeLogBlockStore,
 	encodeEntryV0Signable,
@@ -512,6 +513,12 @@ describe("native EntryV0 encoding", () => {
 		expect(await calculateRawCidV1(nativeStorage)).to.equal(
 			TS_BORSH_ENTRY_V0_FIXTURE.withMeta.cid,
 		);
+		expect(
+			await calculateRawCidV1Batch([nativeStorage, bytes(16, 2)]),
+		).to.deep.equal([
+			TS_BORSH_ENTRY_V0_FIXTURE.withMeta.cid,
+			await calculateRawCidV1(bytes(16, 2)),
+		]);
 		expect(
 			await encodeEntryV0StorageWithCid({
 				clockId,

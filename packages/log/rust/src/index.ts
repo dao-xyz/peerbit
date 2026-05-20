@@ -488,6 +488,7 @@ type WasmModule = {
 		payloadData: Uint8Array,
 	) => EntryV0PreparedPlainEntryRow;
 	calculate_raw_cid_v1: (bytes: Uint8Array) => string;
+	calculate_raw_cid_v1_batch: (blocks: Uint8Array[]) => string[];
 };
 
 let wasmModulePromise: Promise<WasmModule> | undefined;
@@ -2204,6 +2205,16 @@ export const prepareEntryV0PlainEntry = async (
 export const calculateRawCidV1 = async (bytes: Uint8Array): Promise<string> => {
 	const wasm = await loadWasm();
 	return wasm.calculate_raw_cid_v1(bytes);
+};
+
+export const calculateRawCidV1Batch = async (
+	blocks: Uint8Array[],
+): Promise<string[]> => {
+	if (blocks.length === 0) {
+		return [];
+	}
+	const wasm = await loadWasm();
+	return wasm.calculate_raw_cid_v1_batch(blocks);
 };
 
 export const createLogGraphIndex = () => LogGraphIndex.create();

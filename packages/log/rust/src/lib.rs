@@ -2987,6 +2987,20 @@ pub fn calculate_raw_cid_v1(bytes: Uint8Array) -> String {
 }
 
 #[wasm_bindgen]
+pub fn calculate_raw_cid_v1_batch(blocks: Array) -> Result<Array, JsValue> {
+    let out = Array::new();
+    for i in 0..blocks.length() {
+        let value = blocks.get(i);
+        if value.is_undefined() || value.is_null() {
+            return Err(JsValue::from_str("Expected block bytes"));
+        }
+        let bytes = Uint8Array::new(&value).to_vec();
+        out.push(&JsValue::from_str(&calculate_raw_cid_v1_from_bytes(&bytes)));
+    }
+    Ok(out)
+}
+
+#[wasm_bindgen]
 pub fn benchmark_plain_entry_v0_core(
     clock_id: Uint8Array,
     private_key: Uint8Array,

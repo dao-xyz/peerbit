@@ -7,7 +7,7 @@ import {
 	variant,
 	vec,
 } from "@dao-xyz/borsh";
-import { type Blocks } from "@peerbit/blocks-interface";
+import { type Blocks, calculateRawCid } from "@peerbit/blocks-interface";
 import {
 	AccessError,
 	DecryptedThing,
@@ -46,6 +46,7 @@ const log = baseLogger.newScope("entry-v0");
 const traceLogger = log.trace as typeof log & { enabled?: boolean };
 const RANDOM_GID_BYTES = 32;
 const RANDOM_GID_POOL_SIZE = 64;
+const NATIVE_RAW_CID_BATCH_MIN_BYTES = 1 << 20;
 let randomGidPool: string[] = [];
 
 const createRandomGid = (): string => {
@@ -205,6 +206,7 @@ type NativeEntryV0Encoder = {
 		input: NativePlainEntryInput,
 	): Promise<NativePreparedPlainEntry>;
 	calculateRawCidV1(bytes: Uint8Array): Promise<string>;
+	calculateRawCidV1Batch?(blocks: Uint8Array[]): Promise<string[]>;
 };
 
 let nativeEntryV0EncoderPromise:
@@ -233,6 +235,7 @@ const nativeEntryV0EncoderFromModule = (mod: {
 	prepareEntryV0PlainChain?: NativeEntryV0Encoder["prepareEntryV0PlainChain"];
 	prepareEntryV0PlainEntry?: NativeEntryV0Encoder["prepareEntryV0PlainEntry"];
 	calculateRawCidV1?: NativeEntryV0Encoder["calculateRawCidV1"];
+	calculateRawCidV1Batch?: NativeEntryV0Encoder["calculateRawCidV1Batch"];
 }): NativeEntryV0Encoder | undefined => {
 	if (
 		!mod.encodeEntryV0Signable ||
@@ -248,6 +251,7 @@ const nativeEntryV0EncoderFromModule = (mod: {
 		prepareEntryV0PlainChain: mod.prepareEntryV0PlainChain,
 		prepareEntryV0PlainEntry: mod.prepareEntryV0PlainEntry,
 		calculateRawCidV1: mod.calculateRawCidV1,
+		calculateRawCidV1Batch: mod.calculateRawCidV1Batch,
 	};
 };
 
@@ -278,6 +282,32 @@ const loadNativeEntryV0Encoder = ():
 		}
 	}
 	return nativeEntryV0EncoderPromise;
+};
+
+export const calculateRawCidV1Batch = async (
+	blocks: Uint8Array[],
+): Promise<string[]> => {
+	if (blocks.length === 0) {
+		return [];
+	}
+	const totalBytes = blocks.reduce((sum, block) => sum + block.byteLength, 0);
+	if (totalBytes < NATIVE_RAW_CID_BATCH_MIN_BYTES) {
+		// Small raw-head messages are faster through the JS hasher because they
+		// avoid copying every block into wasm.
+		return Promise.all(
+			blocks.map(async (bytes) => (await calculateRawCid(bytes)).cid),
+		);
+	}
+	const nativeEncoder = loadNativeEntryV0Encoder();
+	const resolvedNativeEncoder = isPromiseLike(nativeEncoder)
+		? await nativeEncoder
+		: nativeEncoder;
+	if (resolvedNativeEncoder?.calculateRawCidV1Batch) {
+		return resolvedNativeEncoder.calculateRawCidV1Batch(blocks);
+	}
+	return Promise.all(
+		blocks.map(async (bytes) => (await calculateRawCid(bytes)).cid),
+	);
 };
 
 export type MaybeEncryptionPublicKey =
