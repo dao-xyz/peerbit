@@ -101,6 +101,12 @@ impl NativeIndexStore {
         }
         entries
     }
+
+    fn delete_keys_void(&mut self, keys: &[String]) {
+        for key in keys {
+            self.entries.shift_remove(key);
+        }
+    }
 }
 
 fn entry_to_js(entry: &StoredEntry) -> JsValue {
@@ -660,6 +666,14 @@ impl NativeRustIndex {
             self.planner.index.delete(key);
         }
         self.store.delete_keys(&keys)
+    }
+
+    pub fn delete_keys_void(&mut self, keys: Array) {
+        let keys: Vec<_> = keys.iter().filter_map(|key| key.as_string()).collect();
+        for key in &keys {
+            self.planner.index.delete(key);
+        }
+        self.store.delete_keys_void(&keys);
     }
 
     pub fn get(&self, key: &str) -> JsValue {

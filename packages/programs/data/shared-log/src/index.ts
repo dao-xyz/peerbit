@@ -613,6 +613,9 @@ type PutAndDeleteIndex<T extends Record<string, any>> = Index<T> & {
 		id?: IdKey,
 	) => Promise<unknown> | unknown;
 	delIds?: (deleteIds: Array<IdKey | Ideable>) => Promise<unknown> | unknown;
+	delIdsNoReturn?: (
+		deleteIds: Array<IdKey | Ideable>,
+	) => Promise<unknown> | unknown;
 	putSharedLogCoordinateAndDeleteIds?: (
 		value: T,
 		fields: SharedLogCoordinateNativeFields<any>,
@@ -2270,6 +2273,12 @@ export class SharedLog<
 		const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
 			EntryReplicated<R>
 		>;
+		if (coordinateIndex.delIdsNoReturn) {
+			return mapMaybePromise(
+				coordinateIndex.delIdsNoReturn(values),
+				() => undefined,
+			);
+		}
 		if (coordinateIndex.delIds) {
 			return mapMaybePromise(coordinateIndex.delIds(values), () => undefined);
 		}

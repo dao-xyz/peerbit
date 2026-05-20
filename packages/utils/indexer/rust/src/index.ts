@@ -198,6 +198,7 @@ type NativeRustIndex<T extends Record<string, any>> = {
 	sum: (query: Uint8Array, field: number) => [NativeSumKind, string];
 	delete_matching: (query: Uint8Array) => Array<[types.IdKey, T]>;
 	delete_keys: (keys: string[]) => Array<[types.IdKey, T]>;
+	delete_keys_void?: (keys: string[]) => void;
 };
 
 type NativeBackboneDocumentIndexTarget = {
@@ -2787,6 +2788,38 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			this.deleteNativeBackboneDocumentKeys(deleteKeys);
 			await this.compactIfNeeded();
 			return deletedEntries.map((entry) => entry[0]);
+		});
+	}
+
+	delIdsNoReturn(deleteIds: Array<types.IdKey | types.Ideable>): MaybePromise<void> {
+		const deleteKeys = deleteIds.map(keyToStoreKey);
+		if (deleteKeys.length === 0) {
+			return;
+		}
+		if (this.nativeBackboneDocumentIndexPrimary) {
+			const result = this.delIds(deleteIds);
+			return isPromiseLike(result) ? result.then(() => undefined) : undefined;
+		}
+		const native = this.getNative();
+		if (!this.snapshotFile && native.delete_keys_void) {
+			native.delete_keys_void(deleteKeys);
+			this.deleteNativeBackboneDocumentKeys(deleteKeys);
+			return;
+		}
+		if (!this.snapshotFile) {
+			native.delete_keys(deleteKeys);
+			this.deleteNativeBackboneDocumentKeys(deleteKeys);
+			return;
+		}
+		return this.enqueueMutation(async () => {
+			await this.appendDeletes(deleteKeys);
+			if (native.delete_keys_void) {
+				native.delete_keys_void(deleteKeys);
+			} else {
+				native.delete_keys(deleteKeys);
+			}
+			this.deleteNativeBackboneDocumentKeys(deleteKeys);
+			await this.compactIfNeeded();
 		});
 	}
 
