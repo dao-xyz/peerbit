@@ -40,6 +40,7 @@ import {
 //   Add "-no-trim" to any rust-peerbit scenario to disable length trim.
 //   Add "-putmany" to any unique scenario name to use one putMany call per measured batch.
 //   Add "-document-index" to a rust-peerbit-backbone scenario to enable nativeBackbone.documentIndex.
+//   Add "-mode-native" to a rust-peerbit-backbone scenario to open Documents in strict native mode.
 //   Add "-policy-allow-all" to open with canPerform: policy.allowAll().
 //   Add "-policy-signed-public-key" to open with canPerform: policy.signedByPublicKey(local public key).
 //   Add "-policy-put-signed-public-key" to open with canPerform: policy.put(policy.signedByPublicKey(local public key)).
@@ -88,7 +89,7 @@ const scenarioNames = (
 
 const scenarioBaseName = (name: string) =>
 	name.replace(
-		/(?:-(?:putmany|nonunique|update|local|no-trim|trim|buffered|coordinate-wal|document-index|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|canperform-allow-all|transform-identity|transform-pick|transform-project-context|transform-arbitrary))*$/,
+		/(?:-(?:putmany|nonunique|update|local|no-trim|trim|buffered|coordinate-wal|document-index|mode-native|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|canperform-allow-all|transform-identity|transform-pick|transform-project-context|transform-arbitrary))*$/,
 		"",
 	);
 const scenarioUsesUpdatePuts = (name: string) => name.includes("-update");
@@ -106,6 +107,7 @@ const scenarioUsesBufferedCoordinateWal = (name: string) =>
 	name.includes("-coordinate-wal-buffered");
 const scenarioUsesNativeBackboneDocumentIndex = (name: string) =>
 	name.includes("-document-index");
+const scenarioUsesNativeMode = (name: string) => name.includes("-mode-native");
 const scenarioUsesPolicyAllowAll = (name: string) =>
 	name.includes("-policy-allow-all");
 const scenarioUsesPolicySignedPublicKey = (name: string) =>
@@ -706,6 +708,7 @@ const createNodeCoordinatePersistence = async (buffered: boolean) => {
 
 const openScenario = async (name: string) => {
 	const baseName = scenarioBaseName(name);
+	const useNativeMode = scenarioUsesNativeMode(name);
 	const rustOptions =
 		baseName === "native-block-store" ||
 		baseName === "rust-peerbit" ||
@@ -770,7 +773,9 @@ const openScenario = async (name: string) => {
 	try {
 		await client.open(store, {
 			args: {
-				replicate: scenarioUsesLocalStore(name) ? false : { factor: 1 },
+				...(useNativeMode ? { mode: "native" as const } : {}),
+				replicate:
+					useNativeMode || scenarioUsesLocalStore(name) ? false : { factor: 1 },
 				...(indexOptions ? { index: indexOptions } : {}),
 				...(scenarioUsesPolicyAllowAll(name)
 					? { canPerform: policy.allowAll<Document>() }
@@ -806,7 +811,8 @@ const openScenario = async (name: string) => {
 					? {
 							nativeBackbone: {
 								optional: false,
-								...(scenarioUsesNativeBackboneDocumentIndex(name)
+								...(scenarioUsesNativeBackboneDocumentIndex(name) ||
+								useNativeMode
 									? { documentIndex: true }
 									: {}),
 								...(coordinateWal
