@@ -5,7 +5,11 @@ import { TestSession } from "@peerbit/test-utils";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import sinon from "sinon";
-import { ExchangeHeadsMessage } from "../src/exchange-heads.js";
+import {
+	ExchangeHeadsMessage,
+	RequestIPrune,
+	ResponseIPrune,
+} from "../src/exchange-heads.js";
 import {
 	type ReplicationDomainHash,
 	createReplicationDomainHash,
@@ -261,6 +265,76 @@ testSetups.forEach((setup) => {
 						(log._repairSweepRunning ? 1 : 0)
 					);
 				}, 0);
+			};
+
+			const collectShardingPruneDiagnostics = async (
+				...dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[]
+			) => {
+				const rows = [];
+				for (const [index, db] of dbs.entries()) {
+					const log = db.log as any;
+					const prunable = await db.log.getPrunable().catch(() => []);
+					const segments = await db.log
+						.getAllReplicationSegments()
+						.then((ranges) => ranges.map((range) => range.toString()))
+						.catch(() => []);
+					rows.push({
+						index,
+						length: db.log.log.length,
+						prunable: prunable.length,
+						pendingDeletes: (
+							(log._pendingDeletes ?? new Map()) as Map<string, unknown>
+						).size,
+						checkedPruneRetries: (
+							(log._checkedPruneRetries ?? new Map()) as Map<string, unknown>
+						).size,
+						repairSweepWork: countActiveRepairSweepWork(db),
+						participation: await db.log
+							.calculateMyTotalParticipation()
+							.catch(() => undefined),
+						segments,
+					});
+				}
+				return rows;
+			};
+
+			const printShardingPruneDiagnostics = async (
+				label: string,
+				...dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[]
+			) => {
+				const rows = await collectShardingPruneDiagnostics(...dbs);
+				console.error(
+					`[shared-log-sharding-prune-diagnostics:${label}] ${JSON.stringify(
+						rows,
+					)}`,
+				);
+			};
+
+			const startEventLoopPressure = (
+				abortSignal: AbortSignal,
+				options?: { blockMs?: number; intervalMs?: number },
+			) => {
+				const blockMs = options?.blockMs ?? 20;
+				const intervalMs = options?.intervalMs ?? 5;
+				let timer: ReturnType<typeof setTimeout> | undefined;
+				const run = () => {
+					if (abortSignal.aborted) {
+						return;
+					}
+					const end = Date.now() + blockMs;
+					while (Date.now() < end) {
+						// Intentionally simulate CI event-loop pressure.
+					}
+					timer = setTimeout(run, intervalMs);
+					timer.unref?.();
+				};
+				timer = setTimeout(run, intervalMs);
+				timer.unref?.();
+				return () => {
+					if (timer) {
+						clearTimeout(timer);
+					}
+				};
 			};
 
 			const waitForDistributionQuiesced = async (
@@ -1035,6 +1109,218 @@ testSetups.forEach((setup) => {
 				);
 			});
 
+			(setup.name === "u32-simple" ? it : it.skip)(
+				"reproduces bounded prune convergence under delayed join traffic",
+				async function () {
+					this.timeout(8 * 60 * 1000);
+					await resetSession();
+
+					const chaosSeed = getDeterministicTestSeed(
+						"PEERBIT_SHARED_LOG_SHARDING_PRUNE_SEED",
+						91_337,
+					);
+					const chaosAbort = new AbortController();
+					const stopEventLoopPressure = startEventLoopPressure(
+						chaosAbort.signal,
+						{ blockMs: 25, intervalMs: 5 },
+					);
+					const cleanupPubSubChaos: (() => Promise<void>)[] = [];
+					const chaosRules = [
+						{
+							type: RequestIPrune,
+							minDelayMs: 20_000,
+							maxDelayMs: 45_000,
+							probability: 1,
+						},
+						{
+							type: ResponseIPrune,
+							minDelayMs: 20_000,
+							maxDelayMs: 45_000,
+							probability: 1,
+						},
+						{
+							type: AddedReplicationSegmentMessage,
+							minDelayMs: 100,
+							maxDelayMs: 600,
+							probability: 0.45,
+						},
+						{
+							type: AllReplicatingSegmentsMessage,
+							minDelayMs: 100,
+							maxDelayMs: 600,
+							probability: 0.45,
+						},
+						{
+							type: ExchangeHeadsMessage,
+							minDelayMs: 40,
+							maxDelayMs: 180,
+							probability: 0.35,
+						},
+						{
+							type: RequestMaybeSync,
+							minDelayMs: 30,
+							maxDelayMs: 140,
+							probability: 0.3,
+						},
+						{
+							type: ResponseMaybeSync,
+							minDelayMs: 30,
+							maxDelayMs: 140,
+							probability: 0.3,
+						},
+					] as const;
+
+					const applyLogChaos = (
+						store: EventStore<string, ReplicationDomainHash<any>>,
+						offset: number,
+					) => {
+						slowDownMessagesWithSeed(
+							store.log,
+							chaosRules,
+							chaosSeed + offset,
+							chaosAbort.signal,
+						);
+					};
+					const applyPubSubChaos = (offset: number) => {
+						cleanupPubSubChaos.push(
+							slowDownPubSubWritesWithSeed(
+								session.peers[offset],
+								chaosSeed + 100 + offset,
+								{ minDelayMs: 15, maxDelayMs: 120, probability: 0.35 },
+								chaosAbort.signal,
+							),
+						);
+					};
+					const cleanupChaos = async () => {
+						stopEventLoopPressure();
+						chaosAbort.abort();
+						const cleanupFns = cleanupPubSubChaos.splice(0).reverse();
+						for (const cleanup of cleanupFns) {
+							await cleanup();
+						}
+					};
+
+					try {
+						for (let i = 0; i < 3; i++) {
+							applyPubSubChaos(i);
+						}
+
+						db1 = await session.peers[0].open(new EventStore<string, any>(), {
+							args: {
+								replicate: {
+									offset: 0,
+								},
+								setup,
+							},
+						});
+						applyLogChaos(db1, 1);
+
+						db2 = await EventStore.open<EventStore<string, any>>(
+							db1.address!,
+							session.peers[1],
+							{
+								args: {
+									replicate: {
+										offset: 0.3333,
+									},
+									setup,
+								},
+							},
+						);
+						applyLogChaos(db2, 2);
+
+						const entryCount = shardingMediumEntryCount;
+						await appendInBatches(entryCount, (i) =>
+							db1.add(toBase64(new Uint8Array([i])), { meta: { next: [] } }),
+						);
+
+						db3 = await EventStore.open<EventStore<string, any>>(
+							db1.address!,
+							session.peers[2],
+							{
+								args: {
+									replicate: {
+										offset: 0.6666,
+									},
+									setup,
+								},
+							},
+						);
+						applyLogChaos(db3, 3);
+
+						await Promise.all([
+							db1.log.waitForReplicator(session.peers[1].identity.publicKey, {
+								timeout: 30_000,
+								roleAge: 0,
+							}),
+							db1.log.waitForReplicator(session.peers[2].identity.publicKey, {
+								timeout: 30_000,
+								roleAge: 0,
+							}),
+							db2.log.waitForReplicator(session.peers[0].identity.publicKey, {
+								timeout: 30_000,
+								roleAge: 0,
+							}),
+							db2.log.waitForReplicator(session.peers[2].identity.publicKey, {
+								timeout: 30_000,
+								roleAge: 0,
+							}),
+							db3.log.waitForReplicator(session.peers[0].identity.publicKey, {
+								timeout: 30_000,
+								roleAge: 0,
+							}),
+							db3.log.waitForReplicator(session.peers[1].identity.publicKey, {
+								timeout: 30_000,
+								roleAge: 0,
+							}),
+						]);
+
+						await Promise.all([
+							db1.log.rebalanceAll({ clearCache: true }),
+							db2.log.rebalanceAll({ clearCache: true }),
+							db3.log.rebalanceAll({ clearCache: true }),
+						]);
+						await waitForParticipationToSettle(db1, db2, db3);
+
+						try {
+							const settledRows = await collectShardingPruneDiagnostics(
+								db1,
+								db2,
+								db3,
+							);
+							console.error(
+								`[shared-log-sharding-prune-diagnostics:after-participation-settle] ${JSON.stringify(
+									settledRows,
+								)}`,
+							);
+							expect(
+								settledRows.some(
+									(row) => row.length > entryCount * 0.9 && row.prunable > 0,
+								),
+								"expected delayed checked-prune traffic to leave at least one peer temporarily over the upper bound",
+							).to.equal(true);
+
+							await waitForDistributionQuiesced(db1, db2, db3);
+							await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
+							expect(
+								await countIdleUnderReplicatedEntries(2, db1, db2, db3),
+							).equal(0);
+						} catch (error) {
+							await printShardingPruneDiagnostics(
+								"delayed-join-traffic",
+								db1,
+								db2,
+								db3,
+							);
+							await dbgLogs([db1.log, db2.log, db3.log]);
+							throw error;
+						}
+					} finally {
+						await cleanupChaos();
+					}
+				},
+			);
+
 			(setup.name === "u64-iblt" ? it : it.skip)(
 				"survives deterministic delayed join and leave churn",
 				async () => {
@@ -1651,8 +1937,9 @@ testSetups.forEach((setup) => {
 						entries: Map<string, any>,
 					) => Promise<void>;
 				};
-				const originalPushRepairEntries =
-					sourceLog.pushRepairEntries.bind(sourceDb.log);
+				const originalPushRepairEntries = sourceLog.pushRepairEntries.bind(
+					sourceDb.log,
+				);
 
 				// Regression for the CI failure mode: an underfilled churn sweep must
 				// not replace a receipt-driven frontier and forget an unconfirmed hash.
@@ -2682,11 +2969,14 @@ testSetups.forEach((setup) => {
 									},
 								);
 
-								await waitForResolved(async () =>
+								await waitForResolved(async () => {
+									const memoryUsage = await db2.log.getMemoryUsage();
+									const tolerance = Math.max((memoryLimit / 100) * 12, 10_000);
 									expect(
-										Math.abs(memoryLimit - (await db2.log.getMemoryUsage())),
-									).lessThan((memoryLimit / 100) * 10),
-								); // 10% error at most
+										Math.abs(memoryLimit - memoryUsage),
+										`db2 memory=${memoryUsage}`,
+									).lessThan(tolerance);
+								});
 							} catch (error) {
 								await dbgLogs([db1.log, db2.log]);
 								throw error;

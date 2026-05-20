@@ -102,6 +102,7 @@
 		"test:ci:part-7:cov": "aegir run test:cov --roots ./packages/programs/data/shared-log -- --no-build --grep \"^(u32-simple|u64-iblt)\"",
 		"test:shared-log:chaos": "aegir run test --roots ./packages/programs/data/shared-log -- -t node --no-build --grep \"(control per commmit put before join converges under deterministic (delayed repair traffic|pubsub chaos)|survives deterministic delayed join and leave churn)\"",
 		"test:shared-log:chaos:all": "aegir run test --roots ./packages/programs/data/shared-log -- -t node --no-build --grep \"deterministic\"",
+		"test:shared-log:sharding-regression": "aegir run test --roots ./packages/programs/data/shared-log -- -t node --no-build --grep \"reproduces bounded prune convergence under delayed join traffic\"",
 		"coverage": "aegir run coverage",
 		"build": "aegir run build",
 		"clean": "aegir run clean",

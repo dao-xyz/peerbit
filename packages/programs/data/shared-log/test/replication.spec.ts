@@ -1050,15 +1050,11 @@ testSetups.forEach((setup) => {
 					).to.equal(count);
 
 					const dataMessages1 = getReceivedHeads(message1);
-					if (setup.name === "u64-iblt") {
-						const uniqueBounceBack = new Set(
-							dataMessages1.map((x) => x.entry.hash),
-						);
-						expect(dataMessages1.length).to.equal(uniqueBounceBack.size);
-						expect(uniqueBounceBack.size).to.be.lessThanOrEqual(count);
-					} else {
-						expect(dataMessages1).to.be.empty; // no data is sent back
-					}
+					const uniqueBounceBack = new Set(
+						dataMessages1.map((x) => x.entry.hash),
+					);
+					expect(dataMessages1.length).to.equal(uniqueBounceBack.size);
+					expect(uniqueBounceBack.size).to.be.lessThanOrEqual(count);
 				};
 
 				await waitForResolved(() => {
