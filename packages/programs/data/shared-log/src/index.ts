@@ -9127,6 +9127,7 @@ export class SharedLog<
 							__peerbitBatchIndependent: true,
 							__peerbitEntriesAlreadyMissing: true,
 							__peerbitCanAppendAlreadyValidated: canAppendAlreadyValidated,
+							__peerbitProfile: syncProfile,
 						});
 						if (syncProfile) {
 							emitSyncProfileDuration(syncProfile, lowerLogJoinStartedAt, {

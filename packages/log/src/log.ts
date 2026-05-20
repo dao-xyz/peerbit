@@ -78,6 +78,36 @@ const hasPutKnownMany = (storage: Blocks): storage is BlocksWithPutKnownMany =>
 
 type MaybePromise<T> = T | Promise<T>;
 
+type InternalProfileValue = string | number | boolean | undefined;
+type InternalProfileEvent = {
+	name: string;
+	component?: string;
+	durationMs?: number;
+	entries?: number;
+	bytes?: number;
+	messages?: number;
+	count?: number;
+	details?: Record<string, InternalProfileValue>;
+};
+type InternalProfileSink = (event: InternalProfileEvent) => void;
+
+const internalProfileNow = () => globalThis.performance?.now?.() ?? Date.now();
+const internalProfileStart = (sink: InternalProfileSink | undefined) =>
+	sink ? internalProfileNow() : 0;
+const emitInternalProfileDuration = (
+	sink: InternalProfileSink | undefined,
+	startedAt: number,
+	event: Omit<InternalProfileEvent, "durationMs">,
+) => {
+	if (!sink) {
+		return;
+	}
+	sink({
+		...event,
+		durationMs: internalProfileNow() - startedAt,
+	});
+};
+
 type PreparedCommitOnlyAppendResult<T> = {
 	entry: Entry<T>;
 	materializeEntry: () => Entry<T>;
@@ -2224,6 +2254,8 @@ export class Log<T> {
 			__peerbitEntriesAlreadyMissing?: boolean;
 			/** Internal: set only by trusted Peerbit join paths after validation. */
 			__peerbitCanAppendAlreadyValidated?: boolean;
+			/** Internal: optional diagnostic sink for trusted batched join paths. */
+			__peerbitProfile?: InternalProfileSink;
 		},
 	): Promise<void> {
 		let entries: Entry<T>[];
@@ -2354,12 +2386,26 @@ export class Log<T> {
 			entries = all;
 		}
 
+		const profile = options?.__peerbitProfile;
+		const headsStartedAt = internalProfileStart(profile);
 		const heads: Map<string, boolean> = new Map();
 		for (const entry of entries) {
 			if (heads.has(entry.hash)) continue;
 			heads.set(entry.hash, true);
-			for (const next of await entry.getNext()) heads.set(next, false);
+			const nexts =
+				options?.__peerbitBatchIndependent === true
+					? entry.meta.next
+					: await entry.getNext();
+			for (const next of nexts) heads.set(next, false);
 		}
+		emitInternalProfileDuration(profile, headsStartedAt, {
+			name: "log.join.prepareHeads",
+			component: "log",
+			entries: entries.length,
+			count: heads.size,
+			messages: 1,
+			details: { batchIndependent: options?.__peerbitBatchIndependent === true },
+		});
 
 		if (
 			options?.__peerbitBatchIndependent === true &&
@@ -2406,6 +2452,7 @@ export class Log<T> {
 			__peerbitBatchIndependent?: boolean;
 			__peerbitEntriesAlreadyMissing?: boolean;
 			__peerbitCanAppendAlreadyValidated?: boolean;
+			__peerbitProfile?: InternalProfileSink;
 		},
 	): Promise<boolean> {
 		if (
@@ -2418,6 +2465,8 @@ export class Log<T> {
 			return false;
 		}
 
+		const profile = options.__peerbitProfile;
+		const prepareStartedAt = internalProfileStart(profile);
 		const batchHashes = new Set(entries.map((entry) => entry.hash));
 		const headFlags: boolean[] = [];
 		for (const entry of entries) {
@@ -2429,8 +2478,22 @@ export class Log<T> {
 				return false;
 			}
 		}
+		emitInternalProfileDuration(profile, prepareStartedAt, {
+			name: "log.joinIndependent.prepare",
+			component: "log",
+			entries: entries.length,
+			messages: 1,
+		});
 
+		const planStartedAt = internalProfileStart(profile);
 		const joinPlans = await this.entryIndex.planJoinBatch(entries, false);
+		emitInternalProfileDuration(profile, planStartedAt, {
+			name: "log.joinIndependent.plan",
+			component: "log",
+			entries: entries.length,
+			messages: 1,
+		});
+		const validatePlanStartedAt = internalProfileStart(profile);
 		for (let i = 0; i < entries.length; i++) {
 			const entry = entries[i]!;
 			const joinPlan = joinPlans[i]!;
@@ -2444,24 +2507,59 @@ export class Log<T> {
 			}
 			headFlags.push(heads.get(entry.hash) ?? true);
 		}
+		emitInternalProfileDuration(profile, validatePlanStartedAt, {
+			name: "log.joinIndependent.validatePlan",
+			component: "log",
+			entries: entries.length,
+			messages: 1,
+		});
 
 		if (options.__peerbitCanAppendAlreadyValidated !== true) {
+			const canAppendStartedAt = internalProfileStart(profile);
 			for (const entry of entries) {
 				if (this._canAppend && !(await this._canAppend(entry))) {
 					return false;
 				}
 			}
+			emitInternalProfileDuration(profile, canAppendStartedAt, {
+				name: "log.joinIndependent.canAppend",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+			});
 		}
 
 		const batchPromise = (async () => {
+			const clockStartedAt = internalProfileStart(profile);
 			for (const entry of entries) {
 				this._hlc.update(entry.meta.clock.timestamp);
 			}
+			emitInternalProfileDuration(profile, clockStartedAt, {
+				name: "log.joinIndependent.clock",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+			});
 
+			const blocksStartedAt = internalProfileStart(profile);
 			await this.putAppendEntryBlocks(entries);
+			emitInternalProfileDuration(profile, blocksStartedAt, {
+				name: "log.joinIndependent.blocks",
+				component: "log",
+				entries: entries.length,
+				bytes: entries.reduce((sum, entry) => sum + (entry.size ?? 0), 0),
+				messages: 1,
+			});
+			const indexStartedAt = internalProfileStart(profile);
 			await this.entryIndex.putAppendBatch(entries, {
 				unique: false,
 				heads: headFlags,
+			});
+			emitInternalProfileDuration(profile, indexStartedAt, {
+				name: "log.joinIndependent.entryIndex",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
 			});
 
 			const change: Change<T> = {
@@ -2471,8 +2569,15 @@ export class Log<T> {
 				})),
 				removed: [],
 			};
+			const changeStartedAt = internalProfileStart(profile);
 			await options.onChange?.(change);
 			await this._onChange?.(change);
+			emitInternalProfileDuration(profile, changeStartedAt, {
+				name: "log.joinIndependent.change",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+			});
 		})().finally(() => {
 			for (const entry of entries) {
 				this._joining.delete(entry.hash);
