@@ -216,6 +216,14 @@ export abstract class Entry<T> {
 		return preparedEntryBlocks.has(entry);
 	}
 
+	static getPreparedStorageBytes<T>(entry: Entry<T>): Uint8Array | undefined {
+		const prepared = preparedEntryBlocks.get(entry);
+		const block = prepared?.block as
+			| { bytes?: Uint8Array; value?: Uint8Array }
+			| undefined;
+		return block?.bytes ?? block?.value;
+	}
+
 	static prepareShallowEntry<T>(entry: Entry<T>, shallow: ShallowEntry): void {
 		preparedShallowEntries.set(entry, shallow);
 	}

@@ -15,6 +15,7 @@ import {
 	signEd25519,
 	verifyEd25519Batch,
 	verifyEntryV0Ed25519Batch,
+	verifyEntryV0Ed25519StorageBatch,
 } from "../src/index.js";
 
 const APPEND = 0;
@@ -510,6 +511,45 @@ describe("native EntryV0 encoding", () => {
 					publicKey,
 				},
 			]),
+		).to.deep.equal([true, false]);
+	});
+
+	it("batch-verifies EntryV0 Ed25519 signatures from storage bytes", async () => {
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const privateKey = fromHex(
+			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+		);
+		const input = {
+			clockId: bytes(33, 1),
+			wallTime: 123456789n,
+			logical: 7,
+			gid: "gid-a",
+			next: ["next-a", "next-b"],
+			type: APPEND,
+			metaData: new Uint8Array([9, 8, 7]),
+			payloadData: new Uint8Array([1, 2, 3, 4]),
+		};
+		const signature = await signEd25519({
+			privateKey,
+			publicKey,
+			data: await encodeEntryV0Signable(input),
+		});
+		const storage = await encodeEntryV0Storage({
+			...input,
+			signature,
+			signaturePublicKey: publicKey,
+		});
+		const tampered = await encodeEntryV0Storage({
+			...input,
+			payloadData: new Uint8Array([4, 3, 2, 1]),
+			signature,
+			signaturePublicKey: publicKey,
+		});
+
+		expect(
+			await verifyEntryV0Ed25519StorageBatch([storage, tampered]),
 		).to.deep.equal([true, false]);
 	});
 

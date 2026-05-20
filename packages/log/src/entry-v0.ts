@@ -213,6 +213,9 @@ type NativeEntryV0Encoder = {
 	verifyEntryV0Ed25519Batch?(
 		inputs: EntryV0Ed25519VerifyInput[],
 	): Promise<boolean[]>;
+	verifyEntryV0Ed25519StorageBatch?(
+		blocks: Uint8Array[],
+	): Promise<boolean[]>;
 };
 
 let nativeEntryV0EncoderPromise:
@@ -244,6 +247,7 @@ const nativeEntryV0EncoderFromModule = (mod: {
 	calculateRawCidV1Batch?: NativeEntryV0Encoder["calculateRawCidV1Batch"];
 	verifyEd25519Batch?: NativeEntryV0Encoder["verifyEd25519Batch"];
 	verifyEntryV0Ed25519Batch?: NativeEntryV0Encoder["verifyEntryV0Ed25519Batch"];
+	verifyEntryV0Ed25519StorageBatch?: NativeEntryV0Encoder["verifyEntryV0Ed25519StorageBatch"];
 }): NativeEntryV0Encoder | undefined => {
 	if (
 		!mod.encodeEntryV0Signable ||
@@ -262,6 +266,7 @@ const nativeEntryV0EncoderFromModule = (mod: {
 		calculateRawCidV1Batch: mod.calculateRawCidV1Batch,
 		verifyEd25519Batch: mod.verifyEd25519Batch,
 		verifyEntryV0Ed25519Batch: mod.verifyEntryV0Ed25519Batch,
+		verifyEntryV0Ed25519StorageBatch: mod.verifyEntryV0Ed25519StorageBatch,
 	};
 };
 
@@ -365,11 +370,45 @@ export const verifyEntryV0Ed25519Batch = async (
 	return resolvedNativeEncoder?.verifyEntryV0Ed25519Batch?.(inputs);
 };
 
+export const verifyEntryV0Ed25519StorageBatch = async (
+	blocks: Uint8Array[],
+): Promise<boolean[] | undefined> => {
+	if (blocks.length === 0) {
+		return [];
+	}
+	const nativeEncoder = loadNativeEntryV0Encoder();
+	const resolvedNativeEncoder = isPromiseLike(nativeEncoder)
+		? await nativeEncoder
+		: nativeEncoder;
+	return resolvedNativeEncoder?.verifyEntryV0Ed25519StorageBatch?.(blocks);
+};
+
 export const verifyEntryV0Ed25519BatchFromEntries = async (
 	entries: Entry<any>[],
 ): Promise<boolean[] | undefined> => {
 	if (entries.length === 0) {
 		return [];
+	}
+	const preparedStorageBytes: Uint8Array[] = [];
+	let allHavePreparedStorageBytes = true;
+	for (const entry of entries) {
+		const bytes = Entry.getPreparedStorageBytes(entry);
+		if (!bytes) {
+			allHavePreparedStorageBytes = false;
+			break;
+		}
+		preparedStorageBytes.push(bytes);
+	}
+	if (allHavePreparedStorageBytes) {
+		try {
+			const verified =
+				await verifyEntryV0Ed25519StorageBatch(preparedStorageBytes);
+			if (verified) {
+				return verified;
+			}
+		} catch {
+			// Fall through to field extraction for encrypted or non-Ed25519 entries.
+		}
 	}
 	const inputs: EntryV0Ed25519VerifyInput[] = [];
 	for (const entry of entries) {

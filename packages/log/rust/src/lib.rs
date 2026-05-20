@@ -2174,6 +2174,59 @@ pub fn verify_ed25519_batch(
 }
 
 #[wasm_bindgen]
+pub fn verify_entry_v0_ed25519_storage_batch(blocks: Array) -> Result<Uint8Array, JsValue> {
+    let len = blocks.length();
+    let mut parsed_signatures = Vec::with_capacity(len as usize);
+    let mut parsed_public_keys = Vec::with_capacity(len as usize);
+    let mut parsed_messages = Vec::with_capacity(len as usize);
+    for i in 0..len {
+        let bytes = required_bytes_from_array(&blocks, i, "entry storage")?;
+        let parsed = parse_plain_entry_v0_storage_signature(&bytes)?;
+        validate_signature_lengths(&parsed.signature, &parsed.public_key)?;
+
+        let signature_bytes: [u8; 64] = parsed
+            .signature
+            .as_slice()
+            .try_into()
+            .map_err(|_| JsValue::from_str("Expected Ed25519 signature length 64"))?;
+        let public_key_bytes: [u8; 32] = parsed
+            .public_key
+            .as_slice()
+            .try_into()
+            .map_err(|_| JsValue::from_str("Expected Ed25519 public key length 32"))?;
+        let verifying_key = VerifyingKey::from_bytes(&public_key_bytes)
+            .map_err(|_| JsValue::from_str("Invalid Ed25519 public key"))?;
+        parsed_signatures.push(Signature::from_bytes(&signature_bytes));
+        parsed_public_keys.push(verifying_key);
+        parsed_messages.push(parsed.signable);
+    }
+
+    let message_refs = parsed_messages
+        .iter()
+        .map(|message| message.as_slice())
+        .collect::<Vec<_>>();
+    if verify_batch(&message_refs, &parsed_signatures, &parsed_public_keys).is_ok() {
+        return Ok(Uint8Array::from(vec![1u8; len as usize].as_slice()));
+    }
+
+    let mut out = Vec::with_capacity(len as usize);
+    for i in 0..parsed_signatures.len() {
+        out.push(
+            if parsed_public_keys[i]
+                .verify(&parsed_messages[i], &parsed_signatures[i])
+                .is_ok()
+            {
+                1
+            } else {
+                0
+            },
+        );
+    }
+
+    Ok(Uint8Array::from(out.as_slice()))
+}
+
+#[wasm_bindgen]
 pub fn verify_entry_v0_ed25519_batch(
     clock_ids: Array,
     wall_times: BigUint64Array,
@@ -3532,6 +3585,142 @@ struct SignatureInput {
     signature: Vec<u8>,
     public_key: Vec<u8>,
     prehash: u8,
+}
+
+struct ParsedEntryV0StorageSignature {
+    signable: Vec<u8>,
+    signature: Vec<u8>,
+    public_key: Vec<u8>,
+}
+
+struct BorshReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> BorshReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn is_done(&self) -> bool {
+        self.offset == self.bytes.len()
+    }
+
+    fn read_exact(&mut self, len: usize, label: &str) -> Result<&'a [u8], JsValue> {
+        let end = self
+            .offset
+            .checked_add(len)
+            .ok_or_else(|| JsValue::from_str("EntryV0 storage offset overflow"))?;
+        if end > self.bytes.len() {
+            return Err(JsValue::from_str(&format!(
+                "Unexpected end of EntryV0 storage while reading {label}"
+            )));
+        }
+        let out = &self.bytes[self.offset..end];
+        self.offset = end;
+        Ok(out)
+    }
+
+    fn read_u8(&mut self, label: &str) -> Result<u8, JsValue> {
+        Ok(self.read_exact(1, label)?[0])
+    }
+
+    fn read_u32(&mut self, label: &str) -> Result<u32, JsValue> {
+        let bytes = self.read_exact(4, label)?;
+        Ok(u32::from_le_bytes(
+            bytes
+                .try_into()
+                .map_err(|_| JsValue::from_str("Expected u32 bytes"))?,
+        ))
+    }
+
+    fn read_bytes(&mut self, label: &str) -> Result<&'a [u8], JsValue> {
+        let len = self.read_u32(label)? as usize;
+        self.read_exact(len, label)
+    }
+}
+
+fn read_plain_decrypted_thing_bytes<'a>(
+    reader: &mut BorshReader<'a>,
+    label: &str,
+) -> Result<&'a [u8], JsValue> {
+    if reader.read_u8(label)? != 0 {
+        return Err(JsValue::from_str(
+            "Only plaintext EntryV0 storage can be verified natively",
+        ));
+    }
+    if reader.read_u8(label)? != 0 {
+        return Err(JsValue::from_str(
+            "Only decrypted EntryV0 storage can be verified natively",
+        ));
+    }
+    reader.read_bytes(label)
+}
+
+fn parse_plain_entry_v0_storage_signature(
+    bytes: &[u8],
+) -> Result<ParsedEntryV0StorageSignature, JsValue> {
+    let mut reader = BorshReader::new(bytes);
+    if reader.read_u8("entry variant")? != 0 {
+        return Err(JsValue::from_str("Expected EntryV0 variant"));
+    }
+    let meta = read_plain_decrypted_thing_bytes(&mut reader, "entry meta")?;
+    let payload = read_plain_decrypted_thing_bytes(&mut reader, "entry payload")?;
+    reader.read_exact(4, "entry reserved bytes")?;
+    if reader.read_u8("entry signatures option")? != 1 {
+        return Err(JsValue::from_str("Expected EntryV0 signatures"));
+    }
+    if reader.read_u8("signatures variant")? != 0 {
+        return Err(JsValue::from_str("Expected Signatures variant"));
+    }
+    if reader.read_u32("signatures length")? != 1 {
+        return Err(JsValue::from_str(
+            "Expected exactly one EntryV0 signature for native verification",
+        ));
+    }
+    let signature_with_key =
+        read_plain_decrypted_thing_bytes(&mut reader, "entry signature with key")?;
+    if reader.read_u8("entry hash option")? != 0 {
+        return Err(JsValue::from_str(
+            "Expected EntryV0 hash option to be empty",
+        ));
+    }
+    if !reader.is_done() {
+        return Err(JsValue::from_str(
+            "Unexpected trailing EntryV0 storage bytes",
+        ));
+    }
+
+    let mut signature_reader = BorshReader::new(signature_with_key);
+    if signature_reader.read_u8("signature variant")? != 0 {
+        return Err(JsValue::from_str("Expected SignatureWithKey variant"));
+    }
+    let signature = signature_reader.read_bytes("signature bytes")?.to_vec();
+    if signature_reader.read_u8("signature public key variant")? != 0 {
+        return Err(JsValue::from_str(
+            "Only Ed25519 EntryV0 signatures can be verified natively",
+        ));
+    }
+    let public_key = signature_reader
+        .read_exact(32, "signature public key")?
+        .to_vec();
+    if signature_reader.read_u8("signature prehash")? != 0 {
+        return Err(JsValue::from_str(
+            "Only non-prehashed EntryV0 signatures can be verified natively",
+        ));
+    }
+    if !signature_reader.is_done() {
+        return Err(JsValue::from_str(
+            "Unexpected trailing SignatureWithKey bytes",
+        ));
+    }
+
+    Ok(ParsedEntryV0StorageSignature {
+        signable: encode_entry_v0_parts_unsigned_for_signing(meta, payload),
+        signature,
+        public_key,
+    })
 }
 
 fn encode_entry_v0(input: EntryV0EncodeInput, signature: Option<SignatureInput>) -> Vec<u8> {

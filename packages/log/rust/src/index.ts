@@ -400,6 +400,9 @@ type WasmModule = {
 		signatures: Uint8Array[],
 		publicKeys: Uint8Array[],
 	) => Uint8Array;
+	verify_entry_v0_ed25519_storage_batch: (
+		blocks: Uint8Array[],
+	) => Uint8Array;
 	encode_entry_v0_signable: (
 		clockId: Uint8Array,
 		wallTime: bigint,
@@ -2001,6 +2004,17 @@ export const verifyEntryV0Ed25519Batch = async (
 		signatures,
 		publicKeys,
 	);
+	return Array.from(result, (value) => value === 1);
+};
+
+export const verifyEntryV0Ed25519StorageBatch = async (
+	blocks: Uint8Array[],
+): Promise<boolean[]> => {
+	if (blocks.length === 0) {
+		return [];
+	}
+	const wasm = await loadWasm();
+	const result = wasm.verify_entry_v0_ed25519_storage_batch(blocks);
 	return Array.from(result, (value) => value === 1);
 };
 
