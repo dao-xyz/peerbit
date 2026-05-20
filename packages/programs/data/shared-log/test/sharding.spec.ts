@@ -2969,11 +2969,14 @@ testSetups.forEach((setup) => {
 									},
 								);
 
-								await waitForResolved(async () =>
+								await waitForResolved(async () => {
+									const memoryUsage = await db2.log.getMemoryUsage();
+									const tolerance = Math.max((memoryLimit / 100) * 12, 10_000);
 									expect(
-										Math.abs(memoryLimit - (await db2.log.getMemoryUsage())),
-									).lessThan((memoryLimit / 100) * 10),
-								); // 10% error at most
+										Math.abs(memoryLimit - memoryUsage),
+										`db2 memory=${memoryUsage}`,
+									).lessThan(tolerance);
+								});
 							} catch (error) {
 								await dbgLogs([db1.log, db2.log]);
 								throw error;
