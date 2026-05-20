@@ -427,6 +427,21 @@ type NativePeerbitBackboneHandle = {
 			unknown[],
 		]
 	>;
+	plan_receive_coordinates_for_gids_batch: (
+		entryHashes: string[],
+		gids: string[],
+		hashNumbers: string[],
+		nextHashBatches: string[][],
+		replicaCounts: number[],
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => Array<[unknown[], unknown[], boolean, boolean, unknown[]]>;
 	prepare_plain_entry_commit_facts: (
 		wallTime: bigint,
 		logical: number,
@@ -1149,6 +1164,14 @@ export type NativeBackboneAppendPlan = {
 	isLeader: boolean;
 	assignedToRangeBoundary: boolean;
 	delivery?: NativeBackboneAppendDeliveryPlan;
+	coordinate: NativeBackboneCoordinatePlan;
+};
+
+export type NativeBackboneReceiveCoordinatePlan = {
+	coordinates: Array<number | bigint>;
+	leaders?: Map<string, NativeBackboneLeaderSample>;
+	isLeader: boolean;
+	assignedToRangeBoundary: boolean;
 	coordinate: NativeBackboneCoordinatePlan;
 };
 
@@ -3327,6 +3350,45 @@ export class NativePeerbitBackbone {
 				isLeader,
 				assignedToRangeBoundary,
 				delivery: appendDeliveryPlanFromRow(delivery),
+				coordinate: appendCoordinatePlanFromRow(
+					this.resolution,
+					coordinatePlanRow,
+				),
+			}),
+		);
+	}
+
+	planReceiveCoordinatesForGidsBatch(
+		input: {
+			entries: Iterable<NativeBackboneAppendEntryBatchInput>;
+			selfHash: string;
+		},
+		options?: NativeBackboneFindLeaderOptions,
+	): NativeBackboneReceiveCoordinatePlan[] {
+		const entries = [...input.entries];
+		const rows = this.native.plan_receive_coordinates_for_gids_batch(
+			entries.map((entry) => entry.entryHash),
+			entries.map((entry) => entry.gid),
+			entries.map((entry) => integerString(entry.hashNumber ?? 0)),
+			entries.map((entry) => iterableToArray(entry.nextHashes)),
+			entries.map((entry) => entry.replicas),
+			...findLeaderArguments({
+				...options,
+				selfHash: input.selfHash,
+			}),
+		);
+		return rows.map(
+			([
+				coordinateRows,
+				leaderRows,
+				isLeader,
+				assignedToRangeBoundary,
+				coordinatePlanRow,
+			]) => ({
+				coordinates: rowsToNumbers(this.resolution, coordinateRows),
+				leaders: rowsToSamples(leaderRows),
+				isLeader,
+				assignedToRangeBoundary,
 				coordinate: appendCoordinatePlanFromRow(
 					this.resolution,
 					coordinatePlanRow,

@@ -1044,6 +1044,34 @@ fn append_entry_plan_to_row(plan: AppendEntryPlan, resolution: Resolution) -> Ar
     out
 }
 
+fn receive_coordinate_plan_to_row(
+    hash: &str,
+    hash_number: u64,
+    gid: &str,
+    coordinates: Vec<u64>,
+    leaders: Vec<LeaderSample>,
+    is_leader: bool,
+    assigned_to_range_boundary: bool,
+    requested_replicas: usize,
+    resolution: Resolution,
+) -> Array {
+    let out = Array::new();
+    out.push(&numbers_to_rows(coordinates.clone(), resolution));
+    out.push(&samples_to_rows(leaders));
+    out.push(&JsValue::from_bool(is_leader));
+    out.push(&JsValue::from_bool(assigned_to_range_boundary));
+    out.push(&append_coordinate_plan_to_row(
+        hash,
+        hash_number,
+        gid,
+        coordinates,
+        assigned_to_range_boundary,
+        requested_replicas,
+        resolution,
+    ));
+    out
+}
+
 fn plan_repair_dispatch_rows(batch: RepairDispatchBatch) -> Result<Array, JsValue> {
     let entry_count = batch.entry_hashes.len();
 
@@ -2778,6 +2806,101 @@ impl NativeSharedLogState {
                     requested_replicas: replicas,
                     delivery,
                 },
+                self.inner.range_planner.resolution,
+            ));
+        }
+
+        Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_receive_coordinates_for_gids_batch(
+        &mut self,
+        entry_hashes: Array,
+        gids: Array,
+        entry_hash_numbers: Array,
+        next_hash_batches: Array,
+        replica_counts: Array,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let entry_hashes = strings_from_array(entry_hashes)?;
+        let gids = strings_from_array(gids)?;
+        let entry_hash_numbers = cursor_values_from_array(entry_hash_numbers)?;
+        let next_hash_batches =
+            string_batches_from_array(next_hash_batches, "receive next hash batch array")?;
+        let replica_counts = usize_from_array(replica_counts)?;
+        ensure_same_len(entry_hashes.len(), gids.len(), "receive entry gid")?;
+        ensure_same_len(
+            entry_hashes.len(),
+            entry_hash_numbers.len(),
+            "receive entry hash number",
+        )?;
+        ensure_same_len(
+            entry_hashes.len(),
+            next_hash_batches.len(),
+            "receive next hash",
+        )?;
+        ensure_same_len(entry_hashes.len(), replica_counts.len(), "receive replica")?;
+
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
+        let mut prepared_options_by_replicas = HashMap::new();
+        let mut full_replica_leaders_by_replicas = HashMap::new();
+        let out = Array::new();
+
+        for ((((entry_hash, gid), entry_hash_number), next_hashes), replicas) in entry_hashes
+            .into_iter()
+            .zip(gids)
+            .zip(entry_hash_numbers)
+            .zip(next_hash_batches)
+            .zip(replica_counts)
+        {
+            let coordinates = self.inner.range_planner.get_gid_coordinates(&gid, replicas);
+            let leaders = find_leaders_with_batch_caches(
+                &self.inner.range_planner,
+                &coordinates,
+                replicas,
+                &options,
+                &mut prepared_options_by_replicas,
+                &mut full_replica_leaders_by_replicas,
+                expand_peer_filter,
+                &self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            );
+            let is_leader = leaders.iter().any(|leader| leader.hash == self_hash);
+            let assigned_to_range_boundary = should_assign_to_range_boundary(&leaders, replicas);
+
+            self.inner.put_entry_coordinate_state(
+                entry_hash.clone(),
+                EntryCoordinateState {
+                    gid: gid.clone(),
+                    hash_number: entry_hash_number,
+                    coordinates: coordinates.clone(),
+                    assigned_to_range_boundary,
+                    requested_replicas: replicas,
+                },
+            );
+            for next_hash in next_hashes {
+                self.inner.delete_entry_coordinate_state(&next_hash);
+            }
+
+            out.push(&receive_coordinate_plan_to_row(
+                &entry_hash,
+                entry_hash_number,
+                &gid,
+                coordinates,
+                leaders,
+                is_leader,
+                assigned_to_range_boundary,
+                replicas,
                 self.inner.range_planner.resolution,
             ));
         }

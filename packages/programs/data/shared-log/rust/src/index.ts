@@ -88,6 +88,11 @@ export type AppendEntryPlan = EntryAssignmentPlan & {
 	coordinate: NativeAppendCoordinatePlan;
 };
 
+export type ReceiveCoordinatePlan = EntryAssignmentPlan & {
+	isLeader: boolean;
+	coordinate: NativeAppendCoordinatePlan;
+};
+
 export type AppendEntryBatchInput = {
 	entryHash: string;
 	gid: string;
@@ -481,6 +486,21 @@ type NativeSharedLogStateHandle = {
 		[boolean, boolean, boolean, string[], string[], string[], string[], string[]],
 		unknown[],
 	][];
+	plan_receive_coordinates_for_gids_batch: (
+		entryHashes: string[],
+		gids: string[],
+		hashNumbers: string[],
+		nextHashBatches: string[][],
+		replicaCounts: number[],
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => [unknown[], unknown[], boolean, boolean, unknown[]][];
 	plan_repair_dispatch_for_entries: (
 		entryHashes: string[],
 		entryGids: string[],
@@ -1519,6 +1539,45 @@ export class SharedLogNativeState {
 				isLeader,
 				assignedToRangeBoundary,
 				delivery: appendDeliveryPlanFromRow(delivery),
+				coordinate: appendCoordinatePlanFromRow(
+					this.resolution,
+					coordinatePlanRow,
+				),
+			}),
+		);
+	}
+
+	planReceiveCoordinatesForGidsBatch(
+		input: {
+			entries: Iterable<AppendEntryBatchInput>;
+			selfHash: string;
+		},
+		options?: FindLeaderOptions,
+	): ReceiveCoordinatePlan[] {
+		const entries = [...input.entries];
+		const rows = this.native.plan_receive_coordinates_for_gids_batch(
+			entries.map((entry) => entry.entryHash),
+			entries.map((entry) => entry.gid),
+			entries.map((entry) => asIntegerString(entry.hashNumber ?? 0)),
+			entries.map((entry) => iterableToArray(entry.nextHashes)),
+			entries.map((entry) => entry.replicas),
+			...findLeaderArguments({
+				...options,
+				selfHash: input.selfHash,
+			}),
+		);
+		return rows.map(
+			([
+				coordinateRows,
+				leaderRows,
+				isLeader,
+				assignedToRangeBoundary,
+				coordinatePlanRow,
+			]) => ({
+				coordinates: rowsToNumbers(this.resolution, coordinateRows),
+				leaders: rowsToSamples(leaderRows),
+				isLeader,
+				assignedToRangeBoundary,
 				coordinate: appendCoordinatePlanFromRow(
 					this.resolution,
 					coordinatePlanRow,

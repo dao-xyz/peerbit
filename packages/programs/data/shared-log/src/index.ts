@@ -11499,10 +11499,79 @@ export class SharedLog<
 		}
 
 		if (this.canPlanNativeEntryLeaderBatch(itemArray)) {
-			const nativePlanner = this._nativeBackbone ?? this._nativeRangePlanner;
 			const context = await this.createLeaderSelectionContext(
 				firstItem.options,
 			);
+			const nativeReceivePlanner =
+				this._nativeBackbone ?? this._nativeSharedLogState;
+			const canUseNativeReceiveCoordinateBatch =
+				!!nativeReceivePlanner &&
+				itemArray.every((item) => {
+					const persist = item.options?.persist;
+					return !!persist && !persist.prev;
+				});
+			if (canUseNativeReceiveCoordinateBatch) {
+				const nativePlans = nativeReceivePlanner.planReceiveCoordinatesForGidsBatch(
+					{
+						entries: itemArray.map((item) => ({
+							entryHash: item.entry.hash,
+							gid: item.entry.meta.gid as string,
+							hashNumber: this.getEntryHashNumber(item.entry),
+							nextHashes: item.entry.meta.next,
+							replicas: item.replicas,
+						})),
+						selfHash: context.selfHash,
+					},
+					this.createNativeLeaderOptions(context, firstItem.options),
+				);
+				const plans: EntryLeaderPlan<R>[] = [];
+				const persistItems: Parameters<typeof this.persistCoordinatesBatch>[0] = [];
+				for (let i = 0; i < itemArray.length; i++) {
+					const item = itemArray[i]!;
+					const nativePlan = nativePlans[i]!;
+					const coordinates = Array.from(
+						nativePlan.coordinate.coordinates as Iterable<NumberFromType<R>>,
+					);
+					const leaders = nativePlan.leaders ?? new Map();
+					const assignedToRangeBoundary =
+						nativePlan.coordinate.assignedToRangeBoundary;
+					plans.push({
+						coordinates,
+						leaders,
+						isLeader: nativePlan.isLeader,
+						assignedToRangeBoundary,
+					});
+					if (!this.closed) {
+						const prepared =
+							this.createCoordinatePersistenceEntryFromNativePlan({
+								entry: item.entry,
+								plan: nativePlan.coordinate,
+							});
+						persistItems.push({
+							coordinates,
+							entry: item.entry,
+							leaders,
+							replicas: coordinates.length,
+							assignedToRangeBoundary,
+							prepared: prepared || undefined,
+							commitNative:
+								nativeReceivePlanner === this._nativeSharedLogState
+									? false
+									: undefined,
+							commitNativeBackbone:
+								nativeReceivePlanner === this._nativeBackbone
+									? false
+									: undefined,
+						});
+					}
+				}
+				if (!this.closed && persistItems.length > 0) {
+					await this.persistCoordinatesBatch(persistItems);
+				}
+				return plans;
+			}
+
+			const nativePlanner = this._nativeBackbone ?? this._nativeRangePlanner;
 			const nativePlans = nativePlanner!.planLeadersForGidsBatch(
 				itemArray.map((item) => ({
 					gid: item.entry.meta.gid as string,
