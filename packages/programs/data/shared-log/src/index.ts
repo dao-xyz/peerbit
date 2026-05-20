@@ -8778,33 +8778,66 @@ export class SharedLog<
 						maybeDelete?: EntryWithRefs<any>[][];
 						leaders: LeaderMap | false;
 					};
+					type ReceivedGidInput = {
+						gid: string;
+						entries: EntryWithRefs<any>[];
+						latestEntry: ShallowOrFullEntry<any>;
+						maxReplicasFromHead: number;
+						maxReplicasFromNewEntries: number;
+						maxMaxReplicas: number;
+						leaderPlan?: EntryLeaderPlan<R>;
+					};
+					const isReplicating = this._isReplicating;
+					const receiveGroups: ReceivedGidInput[] = [];
+					for (const [gid, entries] of groupedByGid) {
+						const latestEntry = getLatestEntry(entries)!;
+						const maxReplicasFromHead =
+							maxReplicasFromHeadsByGid.get(gid) ??
+							this.replicas.min.getValue(this);
+						const maxReplicasFromNewEntries = maxReplicas(
+							this,
+							entries.map((x) => x.entry),
+						);
+						receiveGroups.push({
+							gid,
+							entries,
+							latestEntry,
+							maxReplicasFromHead,
+							maxReplicasFromNewEntries,
+							maxMaxReplicas: Math.max(
+								maxReplicasFromHead,
+								maxReplicasFromNewEntries,
+							),
+						});
+					}
+					if (!isReplicating) {
+						const leaderPlans = await this.planEntryLeaderBatch(
+							receiveGroups.map((group) => ({
+								entry: group.latestEntry,
+								replicas: group.maxMaxReplicas,
+							})),
+						);
+						for (let i = 0; i < receiveGroups.length; i++) {
+							receiveGroups[i]!.leaderPlan = leaderPlans[i];
+						}
+					}
 					const promises: Promise<ReceivedGidJoinPlan | undefined>[] = [];
 
-					for (const [gid, entries] of groupedByGid) {
+					for (const {
+						gid,
+						entries,
+						latestEntry,
+						maxReplicasFromHead,
+						maxReplicasFromNewEntries,
+						maxMaxReplicas,
+						leaderPlan,
+					} of receiveGroups) {
 						const fn = async () => {
 							/// we clear sync in flight here because we want to join before that, so that entries are totally accounted for
 							await this.syncronizer.onReceivedEntries({
 								entries,
 								from: context.from!,
 							});
-
-							const latestEntry = getLatestEntry(entries)!;
-
-							const maxReplicasFromHead =
-								maxReplicasFromHeadsByGid.get(gid) ??
-								this.replicas.min.getValue(this);
-
-							const maxReplicasFromNewEntries = maxReplicas(
-								this,
-								entries.map((x) => x.entry),
-							);
-
-							const maxMaxReplicas = Math.max(
-								maxReplicasFromHead,
-								maxReplicasFromNewEntries,
-							);
-
-							const isReplicating = this._isReplicating;
 
 							let isLeader = false;
 							let fromIsLeader = false;
@@ -8834,20 +8867,12 @@ export class SharedLog<
 									},
 								);
 							} else {
-								const plan = await this.planEntryLeaders(
-									latestEntry,
-									maxMaxReplicas,
-									{
-										onLeader: (key) => {
-											fromIsLeader =
-												fromIsLeader || context.from!.hashcode() === key;
-											isLeader =
-												isLeader ||
-												this.node.identity.publicKey.hashcode() === key;
-										},
-									},
-								);
+								const plan =
+									leaderPlan ??
+									(await this.planEntryLeaders(latestEntry, maxMaxReplicas));
 								leaders = plan.leaders;
+								isLeader = plan.isLeader;
+								fromIsLeader = leaders.has(context.from!.hashcode());
 							}
 
 							if (this.closed) {

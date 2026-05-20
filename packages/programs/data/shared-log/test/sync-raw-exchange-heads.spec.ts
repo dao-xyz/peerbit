@@ -9,6 +9,7 @@ import {
 	ExchangeHeadsMessage,
 	RawEntryWithRefs,
 	RawExchangeHeadsMessage,
+	createRawExchangeHeadsMessages,
 } from "../src/exchange-heads.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
 import { SimpleSyncronizer } from "../src/sync/simple.js";
@@ -133,6 +134,75 @@ describe("raw exchange-head sync", () => {
 			coordinateBatchSpy.restore();
 			putKnownSpy.restore();
 			putKnownManySpy.restore();
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("batch plans independent raw heads before joining when not replicating", async () => {
+		const session = await TestSession.disconnected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+
+		try {
+			const setup = {
+				domain: createReplicationDomainHash("u32"),
+				type: "u32" as const,
+				syncronizer: SimpleSyncronizer,
+				name: "u32-simple-raw",
+			};
+			const store = new EventStore<string, any>();
+			const openArgs = {
+				replicate: false,
+				setup,
+				nativeGraph: true,
+				sync: { rawExchangeHeads: true },
+				keep: () => true,
+				timeUntilRoleMaturity: 0,
+			};
+			const db1 = await session.peers[0].open(store.clone(), {
+				args: openArgs,
+			});
+			const db2 = await session.peers[1].open(store.clone(), {
+				args: openArgs,
+			});
+
+			const entryCount = 6;
+			const hashes: string[] = [];
+			for (let i = 0; i < entryCount; i++) {
+				const { entry } = await db1.add(uuid(), { meta: { next: [] } });
+				hashes.push(entry.hash);
+			}
+
+			let message:
+				| RawExchangeHeadsMessage
+				| ExchangeHeadsMessage<any>
+				| undefined;
+			for await (const generated of createRawExchangeHeadsMessages(
+				db1.log.log,
+				hashes,
+			)) {
+				message = generated;
+				break;
+			}
+			expect(message).to.be.instanceOf(RawExchangeHeadsMessage);
+			const nativePlanner = (db2.log as any)._nativeRangePlanner;
+			expect(nativePlanner).to.exist;
+			const batchSpy = sinon.spy(nativePlanner, "planLeadersForGidsBatch");
+			const singleSpy = sinon.spy(nativePlanner, "planLeadersForGid");
+			try {
+				await db2.log.onMessage(message!, {
+					from: db1.node.identity.publicKey,
+				} as any);
+
+				expect(db2.log.log.length).to.equal(entryCount);
+				expect(batchSpy.callCount).to.be.greaterThan(0);
+				expect(batchSpy.firstCall.args[0]).to.have.length(entryCount);
+				expect(singleSpy.callCount).to.equal(0);
+			} finally {
+				singleSpy.restore();
+				batchSpy.restore();
+			}
 		} finally {
 			await session.stop();
 		}
