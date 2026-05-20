@@ -11,7 +11,6 @@ import type {
 import { Program } from "@peerbit/program";
 import type { RequestContext } from "@peerbit/rpc";
 import {
-	AbsoluteReplicas,
 	type ReplicationLimitsOptions,
 	type ReplicationOptions,
 	type SharedAppendOptions,
@@ -118,16 +117,21 @@ export class EventStore<
 			throw new Error("Cannot have both domain and setup.domain");
 		}
 
+		const canAppend =
+			this._canAppend || properties?.canAppend
+				? (entry: Entry<Operation<T>>) => {
+						const a = this._canAppend ? this._canAppend(entry) : true;
+						if (!a) {
+							return false;
+						}
+						return properties?.canAppend ? properties.canAppend(entry) : true;
+					}
+				: undefined;
+
 		await this.log.open({
 			compatibility: properties?.compatibility,
 			onChange: properties?.onChange,
-			canAppend: (entry) => {
-				const a = this._canAppend ? this._canAppend(entry) : true;
-				if (!a) {
-					return false;
-				}
-				return properties?.canAppend ? properties.canAppend(entry) : true;
-			},
+			canAppend,
 			canReplicate: properties?.canReplicate,
 			replicate: properties?.replicate,
 			trim: properties?.trim,

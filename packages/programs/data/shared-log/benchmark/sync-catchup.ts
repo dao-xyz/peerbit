@@ -4,7 +4,7 @@
 //   cd packages/programs/data/shared-log
 //   CATCHUP_COUNT=5000 CATCHUP_TIMEOUT=60000 node --loader ts-node/esm ./benchmark/sync-catchup.ts
 //   CATCHUP_SETUPS=u32-simple-native-graph,u32-simple-raw CATCHUP_COUNT=1000 node --loader ts-node/esm ./benchmark/sync-catchup.ts
-//   CATCHUP_PROFILE=1 CATCHUP_SETUPS=u32-simple-raw CATCHUP_COUNT=1000 BENCH_JSON=1 node --loader ts-node/esm ./benchmark/sync-catchup.ts
+//   CATCHUP_PROFILE=1 CATCHUP_POLL_INTERVAL=10 CATCHUP_SETUPS=u32-simple-raw CATCHUP_COUNT=1000 BENCH_JSON=1 node --loader ts-node/esm ./benchmark/sync-catchup.ts
 //
 // Notes:
 // - This is an integration benchmark (network + sync + indexing). It is more variable than pure
@@ -30,6 +30,10 @@ import { EventStore } from "../test/utils/stores/event-store.js";
 const entryCount = Number.parseInt(process.env.CATCHUP_COUNT || "5000", 10);
 const timeoutMs = Number.parseInt(process.env.CATCHUP_TIMEOUT || "60000", 10);
 const runs = Number.parseInt(process.env.CATCHUP_RUNS || "1", 10);
+const pollIntervalMs = Number.parseInt(
+	process.env.CATCHUP_POLL_INTERVAL || "250",
+	10,
+);
 const captureProfile = process.env.CATCHUP_PROFILE === "1";
 
 type CatchupSetup = TestSetupConfig<any> & {
@@ -242,7 +246,7 @@ const runOnce = async (setup: CatchupSetup) => {
 		() => {
 			expect(db2.log.log.length).to.equal(entryCount);
 		},
-		{ timeout: timeoutMs, delayInterval: 250 },
+		{ timeout: timeoutMs, delayInterval: pollIntervalMs },
 	);
 	const dt = performance.now() - t0;
 
@@ -304,6 +308,7 @@ if (process.env.BENCH_JSON === "1") {
 				meta: {
 					entryCount,
 					timeoutMs,
+					pollIntervalMs,
 					runs,
 					setups: testSetups.map((setup) => setup.name),
 				},
