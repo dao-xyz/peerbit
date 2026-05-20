@@ -58,11 +58,15 @@ describe("raw exchange-head sync", () => {
 				name: "u32-simple-raw",
 			};
 			const store = new EventStore<string, any>();
+			const profileEvents: any[] = [];
 			const openArgs = {
 				replicate: { factor: 1 },
 				setup,
 				nativeGraph: true,
-				sync: { rawExchangeHeads: true },
+				sync: {
+					rawExchangeHeads: true,
+					profile: (event: any) => profileEvents.push(event),
+				},
 			};
 			const db1 = await session.peers[0].open(store.clone(), {
 				args: openArgs,
@@ -149,6 +153,15 @@ describe("raw exchange-head sync", () => {
 			expect(sharedOnChangeSpy.firstCall.args[0].added).to.have.length(
 				entryCount,
 			);
+			const profileNames = profileEvents.map((event) => event.name);
+			expect(profileNames).to.include("sharedLog.rawReceive.materialize");
+			expect(profileNames).to.include("sharedLog.receive.lowerLogJoin");
+			expect(profileNames).to.include("sharedLog.receive.coordinatePersist");
+			const materializeProfile = profileEvents.find(
+				(event) => event.name === "sharedLog.rawReceive.materialize",
+			);
+			expect(materializeProfile.entries).to.equal(entryCount);
+			expect(materializeProfile.bytes).to.be.greaterThan(0);
 			receivedEntriesSpy.restore();
 			sharedOnChangeSpy.restore();
 			persistBatchSpy.restore();

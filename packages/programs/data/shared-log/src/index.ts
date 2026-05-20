@@ -199,6 +199,10 @@ import type {
 	SynchronizerConstructor,
 	Syncronizer,
 } from "./sync/index.js";
+import {
+	emitSyncProfileDuration,
+	syncProfileStart,
+} from "./sync/profile.js";
 import { RatelessIBLTSynchronizer } from "./sync/rateless-iblt.js";
 import {
 	ConfirmEntriesMessage,
@@ -8721,30 +8725,52 @@ export class SharedLog<
 				msg = msg.toReplicationInfoMessage(); // migration
 			}
 
+			const syncProfile = this._logProperties?.sync?.profile;
 			if (msg instanceof RawExchangeHeadsMessage) {
 				const fromIsSelf = context.from.equals(this.node.identity.publicKey);
+				const rawExistingStartedAt = syncProfileStart(syncProfile);
 				const rawExistingHashes = await this.log.hasMany(
 					msg.heads.map((head) => head.hash),
 				);
+				if (syncProfile) {
+					emitSyncProfileDuration(syncProfile, rawExistingStartedAt, {
+						name: "sharedLog.rawReceive.existingHeads",
+						component: "shared-log",
+						entries: msg.heads.length,
+						messages: 1,
+					});
+				}
 				const rawMissingHeads = [];
 				const rawConfirmedHashes = new Set<string>();
+				let rawMissingBytes = 0;
 				for (const head of msg.heads) {
 					if (rawExistingHashes.has(head.hash)) {
 						rawConfirmedHashes.add(head.hash);
 					} else {
 						rawMissingHeads.push(head);
+						rawMissingBytes += head.bytes.byteLength;
 					}
 				}
 				if (rawConfirmedHashes.size > 0 && !fromIsSelf) {
+					const rawConfirmStartedAt = syncProfileStart(syncProfile);
 					this.markEntriesKnownByPeer(
 						rawConfirmedHashes,
 						context.from.hashcode(),
 					);
 					await this.sendRepairConfirmation(context.from, rawConfirmedHashes);
+					if (syncProfile) {
+						emitSyncProfileDuration(syncProfile, rawConfirmStartedAt, {
+							name: "sharedLog.rawReceive.confirmExisting",
+							component: "shared-log",
+							entries: rawConfirmedHashes.size,
+							messages: 1,
+						});
+					}
 				}
 				if (rawMissingHeads.length === 0) {
 					return;
 				}
+				const rawMaterializeStartedAt = syncProfileStart(syncProfile);
 				msg = await materializeVerifiedRawExchangeHeadsMessage(
 					new RawExchangeHeadsMessage({
 						heads: rawMissingHeads,
@@ -8752,6 +8778,15 @@ export class SharedLog<
 					}),
 					this.log,
 				);
+				if (syncProfile) {
+					emitSyncProfileDuration(syncProfile, rawMaterializeStartedAt, {
+						name: "sharedLog.rawReceive.materialize",
+						component: "shared-log",
+						entries: rawMissingHeads.length,
+						bytes: rawMissingBytes,
+						messages: 1,
+					});
+				}
 			}
 
 			if (msg instanceof ExchangeHeadsMessage) {
@@ -8773,9 +8808,18 @@ export class SharedLog<
 				if (heads) {
 					const filteredHeads: EntryWithRefs<any>[] = [];
 					const confirmedHashes = new Set<string>();
+					const existingStartedAt = syncProfileStart(syncProfile);
 					const existingHashes = await this.log.hasMany(
 						heads.map((head) => head.entry.hash),
 					);
+					if (syncProfile) {
+						emitSyncProfileDuration(syncProfile, existingStartedAt, {
+							name: "sharedLog.receive.existingHeads",
+							component: "shared-log",
+							entries: heads.length,
+							messages: 1,
+						});
+					}
 					for (const head of heads) {
 						if (!existingHashes.has(head.entry.hash)) {
 							head.entry.init({
@@ -8802,6 +8846,7 @@ export class SharedLog<
 						}
 						return;
 					}
+					const receivePlanStartedAt = syncProfileStart(syncProfile);
 					const groupedByGid = await groupByGid(filteredHeads);
 					const maxReplicasFromHeadsByGid =
 						await this.getMaxReplicasFromHeadsBatch(groupedByGid.keys());
@@ -8896,11 +8941,30 @@ export class SharedLog<
 							}
 						}
 					}
+					if (syncProfile) {
+						emitSyncProfileDuration(syncProfile, receivePlanStartedAt, {
+							name: "sharedLog.receive.plan",
+							component: "shared-log",
+							entries: filteredHeads.length,
+							count: receiveGroups.length,
+							messages: 1,
+							details: { replicating: isReplicating },
+						});
+					}
 
+					const notifyStartedAt = syncProfileStart(syncProfile);
 					await this.syncronizer.onReceivedEntries({
 						entries: filteredHeads,
 						from: context.from!,
 					});
+					if (syncProfile) {
+						emitSyncProfileDuration(syncProfile, notifyStartedAt, {
+							name: "sharedLog.receive.notifySynchronizer",
+							component: "shared-log",
+							entries: filteredHeads.length,
+							messages: 1,
+						});
+					}
 					const promises: Promise<ReceivedGidJoinPlan | undefined>[] = [];
 
 					for (const {
@@ -9027,26 +9091,56 @@ export class SharedLog<
 						};
 						promises.push(fn()); // we do this concurrently since waitForIsLeader might be a blocking operation for some entries
 					}
+					const joinPlanStartedAt = syncProfileStart(syncProfile);
 					const joinPlans = (await Promise.all(promises)).filter(
 						(plan): plan is ReceivedGidJoinPlan => !!plan,
 					);
+					if (syncProfile) {
+						emitSyncProfileDuration(syncProfile, joinPlanStartedAt, {
+							name: "sharedLog.receive.joinPlan",
+							component: "shared-log",
+							entries: filteredHeads.length,
+							count: joinPlans.length,
+							messages: 1,
+						});
+					}
 					const allToMerge = joinPlans.flatMap((plan) => plan.toMerge);
 					if (allToMerge.length > 0) {
 						this.markEntriesKnownByPeer(
 							allToMerge.map((entry) => entry.hash),
 							context.from!.hashcode(),
 						);
+						const validateStartedAt = syncProfileStart(syncProfile);
 						const canAppendAlreadyValidated =
 							await this.canSkipLowerLogCanAppendForNetworkJoin(allToMerge);
+						if (syncProfile) {
+							emitSyncProfileDuration(syncProfile, validateStartedAt, {
+								name: "sharedLog.receive.validateCanAppend",
+								component: "shared-log",
+								entries: allToMerge.length,
+								messages: 1,
+								cacheHit: canAppendAlreadyValidated,
+							});
+						}
+						const lowerLogJoinStartedAt = syncProfileStart(syncProfile);
 						await this.log.join(allToMerge, {
 							__peerbitBatchIndependent: true,
 							__peerbitCanAppendAlreadyValidated: canAppendAlreadyValidated,
 						});
+						if (syncProfile) {
+							emitSyncProfileDuration(syncProfile, lowerLogJoinStartedAt, {
+								name: "sharedLog.receive.lowerLogJoin",
+								component: "shared-log",
+								entries: allToMerge.length,
+								messages: 1,
+							});
+						}
 						// Network joins bypass SharedLog.join(), but churn repair scans
 						// the coordinate index to redistribute entries after membership changes.
 						const entriesToPersist = joinPlans.flatMap(
 							(plan) => plan.toPersist,
 						);
+						const coordinatePersistStartedAt = syncProfileStart(syncProfile);
 						await this.planEntryLeaderBatch(
 							entriesToPersist.map((entry) => ({
 								entry,
@@ -9054,10 +9148,27 @@ export class SharedLog<
 								options: { roleAge: 0, persist: {} },
 							})),
 						);
+						if (syncProfile) {
+							emitSyncProfileDuration(syncProfile, coordinatePersistStartedAt, {
+								name: "sharedLog.receive.coordinatePersist",
+								component: "shared-log",
+								entries: entriesToPersist.length,
+								messages: 1,
+							});
+						}
 						for (const merged of allToMerge) {
 							confirmedHashes.add(merged.hash);
 						}
+						const checkedPruneStartedAt = syncProfileStart(syncProfile);
 						await this.pruneJoinedEntriesNoLongerLed(allToMerge);
+						if (syncProfile) {
+							emitSyncProfileDuration(syncProfile, checkedPruneStartedAt, {
+								name: "sharedLog.receive.checkedPrune",
+								component: "shared-log",
+								entries: allToMerge.length,
+								messages: 1,
+							});
+						}
 
 						for (const plan of joinPlans) {
 							plan.toDelete?.map((x) =>
@@ -9107,11 +9218,20 @@ export class SharedLog<
 						confirmedHashes.size > 0 &&
 						!context.from.equals(this.node.identity.publicKey)
 					) {
+						const confirmStartedAt = syncProfileStart(syncProfile);
 						this.markEntriesKnownByPeer(
 							confirmedHashes,
 							context.from.hashcode(),
 						);
 						await this.sendRepairConfirmation(context.from!, confirmedHashes);
+						if (syncProfile) {
+							emitSyncProfileDuration(syncProfile, confirmStartedAt, {
+								name: "sharedLog.receive.confirmJoined",
+								component: "shared-log",
+								entries: confirmedHashes.size,
+								messages: 1,
+							});
+						}
 					}
 				}
 			} else if (msg instanceof RequestIPrune) {
