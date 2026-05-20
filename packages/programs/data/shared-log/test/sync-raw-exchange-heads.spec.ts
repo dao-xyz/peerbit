@@ -88,6 +88,11 @@ describe("raw exchange-head sync", () => {
 				db2.log as any,
 				"persistCoordinatesBatch",
 			);
+			const sharedOnChangeSpy = sinon.spy(db2.log as any, "onChange");
+			const receivedEntriesSpy = sinon.spy(
+				db2.log.syncronizer as any,
+				"onReceivedEntries",
+			);
 
 			let exchangeHeads = 0;
 			let rawExchangeHeads = 0;
@@ -136,6 +141,16 @@ describe("raw exchange-head sync", () => {
 			expect(planJoinSpy.callCount).to.equal(0);
 			expect(persistBatchSpy.callCount).to.be.greaterThan(0);
 			expect(coordinateBatchSpy.callCount).to.be.greaterThan(0);
+			expect(receivedEntriesSpy.callCount).to.equal(1);
+			expect(receivedEntriesSpy.firstCall.args[0].entries).to.have.length(
+				entryCount,
+			);
+			expect(sharedOnChangeSpy.callCount).to.equal(1);
+			expect(sharedOnChangeSpy.firstCall.args[0].added).to.have.length(
+				entryCount,
+			);
+			receivedEntriesSpy.restore();
+			sharedOnChangeSpy.restore();
 			persistBatchSpy.restore();
 			coordinateBatchSpy.restore();
 			planJoinSpy.restore();

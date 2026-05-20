@@ -2461,14 +2461,15 @@ export class Log<T> {
 				heads: headFlags,
 			});
 
-			for (let i = 0; i < entries.length; i++) {
-				const change = {
-					added: [{ head: headFlags[i]!, entry: entries[i]! }],
-					removed: [],
-				};
-				await options.onChange?.(change);
-				await this._onChange?.(change);
-			}
+			const change: Change<T> = {
+				added: entries.map((entry, index) => ({
+					head: headFlags[index]!,
+					entry,
+				})),
+				removed: [],
+			};
+			await options.onChange?.(change);
+			await this._onChange?.(change);
 		})().finally(() => {
 			for (const entry of entries) {
 				this._joining.delete(entry.hash);

@@ -8862,6 +8862,11 @@ export class SharedLog<
 							}
 						}
 					}
+
+					await this.syncronizer.onReceivedEntries({
+						entries: filteredHeads,
+						from: context.from!,
+					});
 					const promises: Promise<ReceivedGidJoinPlan | undefined>[] = [];
 
 					for (const {
@@ -8878,12 +8883,6 @@ export class SharedLog<
 						gidReferenceHeads: precomputedGidReferenceHeads,
 					} of receiveGroups) {
 						const fn = async () => {
-							/// we clear sync in flight here because we want to join before that, so that entries are totally accounted for
-							await this.syncronizer.onReceivedEntries({
-								entries,
-								from: context.from!,
-							});
-
 							let isLeader = false;
 							let fromIsLeader = false;
 							let leaders: LeaderMap | false;
