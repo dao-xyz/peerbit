@@ -2220,6 +2220,8 @@ export class Log<T> {
 			reset?: boolean;
 			/** Internal: batch independent network joins after SharedLog owns validation semantics. */
 			__peerbitBatchIndependent?: boolean;
+			/** Internal: set only by trusted Peerbit join paths after validation. */
+			__peerbitCanAppendAlreadyValidated?: boolean;
 		},
 	): Promise<void> {
 		let entries: Entry<T>[];
@@ -2399,6 +2401,7 @@ export class Log<T> {
 			onChange?: OnChange<T>;
 			reset?: boolean;
 			__peerbitBatchIndependent?: boolean;
+			__peerbitCanAppendAlreadyValidated?: boolean;
 		},
 	): Promise<boolean> {
 		if (
@@ -2433,9 +2436,11 @@ export class Log<T> {
 			headFlags.push(heads.get(entry.hash) ?? true);
 		}
 
-		for (const entry of entries) {
-			if (this._canAppend && !(await this._canAppend(entry))) {
-				return false;
+		if (options.__peerbitCanAppendAlreadyValidated !== true) {
+			for (const entry of entries) {
+				if (this._canAppend && !(await this._canAppend(entry))) {
+					return false;
+				}
 			}
 		}
 

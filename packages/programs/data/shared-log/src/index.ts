@@ -8322,6 +8322,16 @@ export class SharedLog<
 		}
 	}
 
+	private async canSkipLowerLogCanAppendForNetworkJoin(
+		entries: Entry<T>[],
+	): Promise<boolean> {
+		if (entries.length === 0 || this._logProperties?.canAppend) {
+			return false;
+		}
+		const results = await Promise.all(entries.map((entry) => this.canAppend(entry)));
+		return results.every(Boolean);
+	}
+
 	async getCover(
 		properties:
 			| { args?: ExtractDomainArgs<D> }
@@ -8916,8 +8926,11 @@ export class SharedLog<
 							allToMerge.map((entry) => entry.hash),
 							context.from!.hashcode(),
 						);
+						const canAppendAlreadyValidated =
+							await this.canSkipLowerLogCanAppendForNetworkJoin(allToMerge);
 						await this.log.join(allToMerge, {
 							__peerbitBatchIndependent: true,
+							__peerbitCanAppendAlreadyValidated: canAppendAlreadyValidated,
 						});
 						// Network joins bypass SharedLog.join(), but churn repair scans
 						// the coordinate index to redistribute entries after membership changes.
