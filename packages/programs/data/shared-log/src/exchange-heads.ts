@@ -88,6 +88,7 @@ export const createExchangeHeadsMessages = async function* (
 		const resolvedHeads = await resolveExchangeHeadEntries(
 			log,
 			headArray.slice(offset, offset + EXCHANGE_HEADS_RESOLVE_BATCH_SIZE),
+			visitedHeads,
 		);
 		const nativeReferenceRowsByPosition =
 			canUseNativeReferenceGids === false
@@ -243,18 +244,30 @@ const getNativeReferenceRowsByPosition = (
 const resolveExchangeHeadEntries = async (
 	log: Log<any>,
 	headArray: Array<Entry<any> | string>,
+	visitedHeads?: Set<string>,
 ): Promise<Array<Entry<any> | undefined>> => {
 	const resolved: Array<Entry<any> | undefined> = new Array(headArray.length);
 	const hashes: string[] = [];
-	const positions: number[] = [];
+	const positionsByHash = new Map<string, number[]>();
 	for (let i = 0; i < headArray.length; i++) {
 		const head = headArray[i]!;
 		if (head instanceof Entry) {
+			if (visitedHeads?.has(head.hash)) {
+				continue;
+			}
 			resolved[i] = head;
 			continue;
 		}
+		if (visitedHeads?.has(head)) {
+			continue;
+		}
+		const positions = positionsByHash.get(head);
+		if (positions) {
+			positions.push(i);
+			continue;
+		}
 		hashes.push(head);
-		positions.push(i);
+		positionsByHash.set(head, [i]);
 	}
 	if (hashes.length === 0) {
 		return resolved;
@@ -267,7 +280,9 @@ const resolveExchangeHeadEntries = async (
 					ignoreMissing: true,
 				});
 	for (let i = 0; i < entries.length; i++) {
-		resolved[positions[i]!] = entries[i];
+		for (const position of positionsByHash.get(hashes[i]!)!) {
+			resolved[position] = entries[i];
+		}
 	}
 	return resolved;
 };
