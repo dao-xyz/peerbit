@@ -9125,6 +9125,7 @@ export class SharedLog<
 						const lowerLogJoinStartedAt = syncProfileStart(syncProfile);
 						await this.log.join(allToMerge, {
 							__peerbitBatchIndependent: true,
+							__peerbitEntriesAlreadyMissing: true,
 							__peerbitCanAppendAlreadyValidated: canAppendAlreadyValidated,
 						});
 						if (syncProfile) {

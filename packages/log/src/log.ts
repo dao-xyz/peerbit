@@ -2220,6 +2220,8 @@ export class Log<T> {
 			reset?: boolean;
 			/** Internal: batch independent network joins after SharedLog owns validation semantics. */
 			__peerbitBatchIndependent?: boolean;
+			/** Internal: trusted caller already filtered existing hashes for this join. */
+			__peerbitEntriesAlreadyMissing?: boolean;
 			/** Internal: set only by trusted Peerbit join paths after validation. */
 			__peerbitCanAppendAlreadyValidated?: boolean;
 		},
@@ -2256,19 +2258,20 @@ export class Log<T> {
 			for (const element of entries) references.set(element.hash, element);
 		} else if (Array.isArray(entriesOrLog)) {
 			if (entriesOrLog.length === 0) return;
-			const existingHashes = options?.reset
-				? new Set<string>()
-				: await this.entryIndex.hasMany(
-						entriesOrLog.map((element) =>
-							typeof element === "string"
-								? element
-								: element instanceof Entry
-									? element.hash
-									: element instanceof ShallowEntry
+			const existingHashes =
+				options?.reset || options?.__peerbitEntriesAlreadyMissing === true
+					? new Set<string>()
+					: await this.entryIndex.hasMany(
+							entriesOrLog.map((element) =>
+								typeof element === "string"
+									? element
+									: element instanceof Entry
 										? element.hash
-										: element.entry.hash,
-						),
-					);
+										: element instanceof ShallowEntry
+											? element.hash
+											: element.entry.hash,
+							),
+						);
 
 			entries = [];
 			for (const element of entriesOrLog) {
@@ -2401,6 +2404,7 @@ export class Log<T> {
 			onChange?: OnChange<T>;
 			reset?: boolean;
 			__peerbitBatchIndependent?: boolean;
+			__peerbitEntriesAlreadyMissing?: boolean;
 			__peerbitCanAppendAlreadyValidated?: boolean;
 		},
 	): Promise<boolean> {
