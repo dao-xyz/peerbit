@@ -472,6 +472,25 @@ type NativePeerbitBackboneHandle = {
 		documentProjectionEncodedDocument: Uint8Array | undefined,
 		documentProjectionSigner: Uint8Array | undefined,
 	) => unknown[];
+	prepare_plain_entry_commit_no_next_facts_document_index_trim_hashes: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		trimLengthTo: number,
+		documentKey: string,
+		documentValuePrefixBytes: Uint8Array,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlan:
+			| NativeBackboneSimpleDocumentProjectionPlan
+			| undefined,
+		documentProjectionEncodedDocument: Uint8Array | undefined,
+		documentProjectionSigner: Uint8Array | undefined,
+	) => unknown[];
 	prepare_plain_entry_storage_facts_and_put: (
 		wallTime: bigint,
 		logical: number,
@@ -1916,6 +1935,26 @@ const preparedCommitFactsFromRow = (
 	return prepared;
 };
 
+const preparedCommitFactsWithTrimHashesFromRow = (
+	row: unknown[],
+): NativeBackboneCommittedEntry & {
+	trimmedEntryHashes?: string[];
+} => {
+	const isTrimRow =
+		Array.isArray(row) &&
+		row.length === 2 &&
+		Array.isArray(row[0]) &&
+		Array.isArray(row[1]);
+	const prepared = committedEntryFromRow((isTrimRow ? row[0] : row) as unknown[]);
+	if (!isTrimRow) {
+		return prepared;
+	}
+	return {
+		...prepared,
+		trimmedEntryHashes: row[1] as string[],
+	};
+};
+
 export class NativeBackboneLogGraph {
 	constructor(
 		private readonly native: NativePeerbitBackboneHandle,
@@ -1972,6 +2011,7 @@ export class NativeBackboneLogGraph {
 			type?: number;
 			metaData?: Uint8Array;
 			payloadData: Uint8Array;
+			resolveTrimmedEntries?: boolean;
 			includeMaterializationBytes?: boolean;
 			includeAppendFactsBytes?: boolean;
 			trimLengthTo?: number;
@@ -1991,6 +2031,7 @@ export class NativeBackboneLogGraph {
 	):
 		| (NativeBackboneCommittedEntry & {
 				trimmedEntries?: NativeBackboneLogEntry[];
+				trimmedEntryHashes?: string[];
 		  })
 		| undefined {
 		if (this.options?.commitBlocks === false) {
@@ -2013,6 +2054,25 @@ export class NativeBackboneLogGraph {
 			input.trimLengthTo,
 		] as const;
 		const documentIndexArgs = nativeDocumentIndexArgs(input.documentIndex);
+		if (
+			documentIndexArgs &&
+			input.resolveTrimmedEntries === false &&
+			input.trimLengthTo != null &&
+			(input.next == null || input.next.length === 0)
+		) {
+			return preparedCommitFactsWithTrimHashesFromRow(
+				this.native.prepare_plain_entry_commit_no_next_facts_document_index_trim_hashes(
+					BigInt(input.wallTime),
+					input.logical ?? 0,
+					input.gid,
+					input.type ?? 0,
+					input.metaData,
+					input.payloadData,
+					input.trimLengthTo,
+					...documentIndexArgs,
+				),
+			);
+		}
 		return preparedCommitFactsFromRow(
 			documentIndexArgs
 				? this.native.prepare_plain_entry_commit_facts_document_index(

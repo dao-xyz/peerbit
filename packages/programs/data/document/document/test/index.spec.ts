@@ -2688,6 +2688,54 @@ describe("index", () => {
 					}
 				});
 
+				it("uses hash-only native trim facts for strict native puts", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+							log: {
+								trim: { type: "length", to: 1 },
+							},
+						},
+					});
+					const hashTrimSpy = sinon.spy(
+						store.docs.log.log.entryIndex as any,
+						"consumeNativeTrimmedEntryHashesMaybe",
+					);
+					const entryTrimSpy = sinon.spy(
+						store.docs.log.log.entryIndex as any,
+						"consumeNativeTrimmedEntriesMaybe",
+					);
+					try {
+						const first = new Document({ id: uuid(), name: "trimmed" });
+						const second = new Document({ id: uuid(), name: "kept" });
+						await store.docs.put(first, { unique: true });
+						await store.docs.put(second, { unique: true });
+						expect(hashTrimSpy.callCount).greaterThan(0);
+						expect(entryTrimSpy.callCount).equal(0);
+						expect(await store.docs.get(first.id)).equal(undefined);
+						expect((await store.docs.get(second.id))?.name).equal("kept");
+					} finally {
+						entryTrimSpy.restore();
+						hashTrimSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
 				it("rejects arbitrary canPerform in strict native mode", async () => {
 					const docs = new Documents<Document>();
 					await expect(

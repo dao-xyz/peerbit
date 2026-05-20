@@ -138,6 +138,7 @@ type NativeNoNextCommitInput = {
 	type: EntryType;
 	metaData?: Uint8Array;
 	payloadData: Uint8Array;
+	resolveTrimmedEntries?: boolean;
 	trimLengthTo?: number;
 };
 
@@ -980,6 +981,7 @@ export class Log<T> {
 					type: input.type,
 					metaData: input.metaData,
 					payloadData: input.payloadData,
+					resolveTrimmedEntries: properties.resolveTrimmedEntries,
 					trimLengthTo: input.trimLengthTo,
 				}),
 		);
@@ -1023,6 +1025,7 @@ export class Log<T> {
 					type: input.type,
 					metaData: input.metaData,
 					payloadData: input.payloadData,
+					resolveTrimmedEntries: properties.resolveTrimmedEntries,
 					trimLengthTo: input.trimLengthTo,
 				}),
 		);

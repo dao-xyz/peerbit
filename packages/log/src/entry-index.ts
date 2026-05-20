@@ -207,6 +207,7 @@ export type NativeLogGraph = {
 			type?: number;
 			metaData?: Uint8Array;
 			payloadData: Uint8Array;
+			resolveTrimmedEntries?: boolean;
 		},
 		blockStore: unknown,
 	) => MaybePromise<
@@ -220,6 +221,8 @@ export type NativeLogGraph = {
 				payloadBytes?: Uint8Array;
 				signatureBytes?: Uint8Array;
 				hashDigestBytes?: Uint8Array;
+				trimmedEntries?: PreparedNativeLogEntry[];
+				trimmedEntryHashes?: string[];
 		  }
 		| undefined
 	>;

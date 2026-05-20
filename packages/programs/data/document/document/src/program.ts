@@ -1606,13 +1606,6 @@ export class Documents<
 							}
 						: {}),
 				};
-				const inputWithNativeIndex = () =>
-					committedNativeDocumentIndex
-						? {
-								...input,
-								nativeBackboneDocumentIndex: committedNativeDocumentIndex,
-							}
-						: input;
 				if (input.operation) {
 					if (this.isNativeMode()) {
 						throw this.nativeModeError("requires payload-backed put operations");
@@ -1625,8 +1618,9 @@ export class Documents<
 						),
 						(appended) =>
 							this.createNativeCheckedDocumentAppendCommitFacts(
-								inputWithNativeIndex(),
+								input,
 								appended,
+								committedNativeDocumentIndex,
 							),
 					);
 				}
@@ -1639,8 +1633,9 @@ export class Documents<
 					(commitOnly) => {
 						if (commitOnly) {
 							return this.createNativeCheckedDocumentAppendCommitFacts(
-								inputWithNativeIndex(),
+								input,
 								commitOnly,
+								committedNativeDocumentIndex,
 							);
 						}
 						if (this.isNativeMode()) {
@@ -1649,9 +1644,10 @@ export class Documents<
 							);
 						}
 						return this.commitNativeDocumentAppendPayloadFallback(
-							inputWithNativeIndex(),
+							input,
 							appendOptions,
 							appendProperties,
+							committedNativeDocumentIndex,
 						);
 					},
 				);
@@ -1662,9 +1658,14 @@ export class Documents<
 	private createNativeCheckedDocumentAppendCommitFacts(
 		input: NativeDocumentAppendCommitFactsInput<T, I>,
 		appended: NativeDocumentAppendResult,
+		nativeBackboneDocumentIndex?: PreparedNativeBackboneDocumentIndexCommit<I>,
 	): MaybePromise<DocumentAppendCommitFacts<T, I>> {
 		return mapMaybePromise(
-			this.createDocumentAppendCommitFacts(input, appended),
+			this.createDocumentAppendCommitFacts(
+				input,
+				appended,
+				nativeBackboneDocumentIndex,
+			),
 			(commit) => {
 				this.assertNativeModeDocumentAppendCommit(commit);
 				return commit;
@@ -1762,6 +1763,7 @@ export class Documents<
 				facts: NativeBackboneDocumentIndexAppendFactsInput,
 			) => NativeBackboneDocumentIndexCommitInput | undefined;
 		},
+		nativeBackboneDocumentIndex?: PreparedNativeBackboneDocumentIndexCommit<I>,
 	): Promise<DocumentAppendCommitFacts<T, I>> {
 		if (this.isNativeMode()) {
 			throw this.nativeModeError("requires native payload append support");
@@ -1787,7 +1789,11 @@ export class Documents<
 				appendProperties,
 			);
 		}
-		return this.createDocumentAppendCommitFacts(input, appended);
+		return this.createDocumentAppendCommitFacts(
+			input,
+			appended,
+			nativeBackboneDocumentIndex,
+		);
 	}
 
 	private async commitNativeDocumentAppendMany(
@@ -1836,6 +1842,7 @@ export class Documents<
 	private createDocumentAppendCommitFacts(
 		input: NativeDocumentAppendCommitFactsInput<T, I>,
 		appended: NativeDocumentAppendResult,
+		nativeBackboneDocumentIndex?: PreparedNativeBackboneDocumentIndexCommit<I>,
 	): MaybePromise<DocumentAppendCommitFacts<T, I>> {
 		const append = appended.appendCommit;
 		const existing =
@@ -1852,6 +1859,7 @@ export class Documents<
 				input,
 				appended,
 				contextInput,
+				nativeBackboneDocumentIndex,
 			);
 		}
 		const contextPlan = tryPlanDocumentContext(contextInput);
@@ -1860,6 +1868,7 @@ export class Documents<
 				input,
 				appended,
 				contextPlan,
+				nativeBackboneDocumentIndex,
 			);
 		}
 		return planDocumentContext(contextInput).then((plannedContext) =>
@@ -1867,6 +1876,7 @@ export class Documents<
 				input,
 				appended,
 				plannedContext,
+				nativeBackboneDocumentIndex,
 			),
 		);
 	}
@@ -1881,6 +1891,7 @@ export class Documents<
 			gid: string;
 			size: number;
 		},
+		nativeBackboneDocumentIndex = input.nativeBackboneDocumentIndex,
 	): DocumentAppendCommitFacts<T, I> {
 		const append = appended.appendCommit;
 		let contextValues:
@@ -1945,13 +1956,13 @@ export class Documents<
 				appended.appendCommit.nativeBackboneDocumentIndexCommitted,
 			nativeBackboneDocumentIndexTrimmedHeadsProcessed:
 				appended.appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed,
-			nativeBackboneDocumentIndex: input.nativeBackboneDocumentIndex
+			nativeBackboneDocumentIndex: nativeBackboneDocumentIndex
 				? {
 						valuePrefixBytes:
-							input.nativeBackboneDocumentIndex.valuePrefixBytes,
-						projection: input.nativeBackboneDocumentIndex.projection,
-						indexable: input.nativeBackboneDocumentIndex.indexable,
-						getIndexable: input.nativeBackboneDocumentIndex.getIndexable,
+							nativeBackboneDocumentIndex.valuePrefixBytes,
+						projection: nativeBackboneDocumentIndex.projection,
+						indexable: nativeBackboneDocumentIndex.indexable,
+						getIndexable: nativeBackboneDocumentIndex.getIndexable,
 					}
 				: undefined,
 			unique: input.unique,
@@ -2000,11 +2011,12 @@ export class Documents<
 			size: number;
 			contextBytes: Uint8Array;
 		},
+		preparedNativeBackboneDocumentIndex = input.nativeBackboneDocumentIndex,
 	): DocumentAppendCommitFacts<T, I> {
 		const append = appended.appendCommit;
 		const context = new Context(contextPlan);
 		const nativeBackboneDocumentIndex =
-			input.nativeBackboneDocumentIndex ??
+			preparedNativeBackboneDocumentIndex ??
 			(append.nativeBackboneDocumentIndexCommitted
 				? undefined
 				: this._nativeBackboneDocumentIndexEnabled
