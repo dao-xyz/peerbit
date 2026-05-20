@@ -5112,6 +5112,8 @@ export class SharedLog<
 					);
 					if (nativeBackboneDocumentIndexCommitted) {
 						appendCommit.nativeBackboneDocumentIndexCommitted = true;
+						appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed =
+							prepared.documentTrimmedHeadsProcessed;
 					}
 					return {
 						get entry() {

@@ -114,6 +114,7 @@ type PreparedCommitOnlyAppendResult<T> = {
 	removed: ShallowOrFullEntry<T>[];
 	appendFacts: PreparedAppendFacts;
 	shallowEntry: ShallowEntry;
+	documentTrimmedHeadsProcessed?: boolean;
 };
 
 type NativePreparedNoNextCommit = {
@@ -126,6 +127,7 @@ type NativePreparedNoNextCommit = {
 	hashDigestBytes?: Uint8Array;
 	trimmedEntries?: PreparedNativeLogEntry[];
 	trimmedEntryHashes?: string[];
+	documentTrimmedHeadsProcessed?: boolean;
 };
 
 type NativeNoNextCommitInput = {
@@ -1167,6 +1169,8 @@ export class Log<T> {
 						removed: [],
 						appendFacts,
 						shallowEntry,
+						documentTrimmedHeadsProcessed:
+							prepared.documentTrimmedHeadsProcessed,
 					});
 					const finishBlocks = ():
 						| PreparedCommitOnlyAppendResult<T>
@@ -1201,6 +1205,8 @@ export class Log<T> {
 								removed,
 								appendFacts,
 								shallowEntry,
+								documentTrimmedHeadsProcessed:
+									prepared.documentTrimmedHeadsProcessed,
 							}));
 						}
 						if (!prepared.trimmedEntries) {
@@ -1226,6 +1232,8 @@ export class Log<T> {
 							removed,
 							appendFacts,
 							shallowEntry,
+							documentTrimmedHeadsProcessed:
+								prepared.documentTrimmedHeadsProcessed,
 						}));
 					};
 					const rollback = (error: unknown): never | Promise<never> => {

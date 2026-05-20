@@ -1939,10 +1939,11 @@ const preparedCommitFactsWithTrimHashesFromRow = (
 	row: unknown[],
 ): NativeBackboneCommittedEntry & {
 	trimmedEntryHashes?: string[];
+	documentTrimmedHeadsProcessed?: boolean;
 } => {
 	const isTrimRow =
 		Array.isArray(row) &&
-		row.length === 2 &&
+		row.length >= 2 &&
 		Array.isArray(row[0]) &&
 		Array.isArray(row[1]);
 	const prepared = committedEntryFromRow((isTrimRow ? row[0] : row) as unknown[]);
@@ -1952,6 +1953,8 @@ const preparedCommitFactsWithTrimHashesFromRow = (
 	return {
 		...prepared,
 		trimmedEntryHashes: row[1] as string[],
+		documentTrimmedHeadsProcessed:
+			typeof row[2] === "boolean" ? row[2] : undefined,
 	};
 };
 
@@ -2032,6 +2035,7 @@ export class NativeBackboneLogGraph {
 		| (NativeBackboneCommittedEntry & {
 				trimmedEntries?: NativeBackboneLogEntry[];
 				trimmedEntryHashes?: string[];
+				documentTrimmedHeadsProcessed?: boolean;
 		  })
 		| undefined {
 		if (this.options?.commitBlocks === false) {

@@ -1654,9 +1654,12 @@ impl NativePeerbitBackbone {
             &document_gid,
             payload_size,
         )?;
+        let document_trimmed_heads_processed =
+            document_delete_trimmed_heads && self.delete_documents_by_context_heads(&trim_hashes);
         let out = Array::new();
         out.push(&committed_entry_facts_to_row(&entry_facts, false));
         out.push(&strings_to_array(trim_hashes));
+        out.push(&JsValue::from_bool(document_trimmed_heads_processed));
         Ok(out)
     }
 
