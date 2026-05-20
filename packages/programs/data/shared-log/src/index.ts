@@ -8322,14 +8322,48 @@ export class SharedLog<
 		}
 	}
 
+	private async canAppendBatch(entries: Entry<T>[]) {
+		try {
+			const signaturesToVerify: Entry<T>[] = [];
+			for (const entry of entries) {
+				if (!entry.meta.data) {
+					warn("Received entry without meta data, skipping");
+					return false;
+				}
+				const replicas = decodeReplicas(entry).getValue(this);
+				if (Number.isFinite(replicas) === false) {
+					return false;
+				}
+
+				checkMinReplicasLimit(replicas);
+
+				if (!entry.createdLocally) {
+					signaturesToVerify.push(entry);
+				}
+			}
+			if (signaturesToVerify.length === 0) {
+				return true;
+			}
+			const verified = await Promise.all(
+				signaturesToVerify.map((entry) => entry.verifySignatures()),
+			);
+			return verified.every(Boolean);
+		} catch (error) {
+			if (error instanceof BorshError || error instanceof ReplicationError) {
+				warn("Received payload that could not be decoded, skipping");
+				return false;
+			}
+			throw error;
+		}
+	}
+
 	private async canSkipLowerLogCanAppendForNetworkJoin(
 		entries: Entry<T>[],
 	): Promise<boolean> {
 		if (entries.length === 0 || this._logProperties?.canAppend) {
 			return false;
 		}
-		const results = await Promise.all(entries.map((entry) => this.canAppend(entry)));
-		return results.every(Boolean);
+		return this.canAppendBatch(entries);
 	}
 
 	async getCover(
