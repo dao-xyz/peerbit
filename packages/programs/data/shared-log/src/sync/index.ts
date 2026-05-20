@@ -45,6 +45,13 @@ export type SyncOptions<R extends "u32" | "u64"> = {
 	maxSimpleCoordinatesPerMessage?: number;
 
 	/**
+	 * Experimental sync path for peers known to support raw exchange-head
+	 * responses. When enabled, simple sync requests advertise raw-head support
+	 * and capable responders can avoid full Entry materialization before sending.
+	 */
+	rawExchangeHeads?: boolean;
+
+	/**
 	 * Maximum number of hashes tracked per convergent repair session target.
 	 * Large sessions still dispatch all entries, but only this many are tracked
 	 * for deterministic completion metadata.

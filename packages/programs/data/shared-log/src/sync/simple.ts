@@ -16,6 +16,7 @@ import {
 import {
 	EntryWithRefs,
 	createExchangeHeadsMessages,
+	createRawExchangeHeadsMessages,
 } from "../exchange-heads.js";
 import { TransportMessage } from "../message.js";
 import type { EntryReplicated } from "../ranges.js";
@@ -75,6 +76,51 @@ export class ConfirmEntriesMessage extends TransportMessage {
 		this.hashes = props.hashes;
 	}
 }
+
+export const SIMPLE_SYNC_RAW_EXCHANGE_HEADS_CAPABILITY = 1;
+
+@variant([0, 8])
+export class ResponseMaybeSyncCapabilities extends TransportMessage {
+	@field({ type: vec("string") })
+	hashes: string[];
+
+	@field({ type: "u32" })
+	capabilities: number;
+
+	constructor(props: { hashes: string[]; capabilities?: number }) {
+		super();
+		this.hashes = props.hashes;
+		this.capabilities =
+			props.capabilities ?? SIMPLE_SYNC_RAW_EXCHANGE_HEADS_CAPABILITY;
+	}
+}
+
+@variant([0, 9])
+export class RequestMaybeSyncCoordinateCapabilities extends TransportMessage {
+	@field({ type: vec("u64") })
+	hashNumbers: bigint[];
+
+	@field({ type: "u32" })
+	capabilities: number;
+
+	constructor(props: { hashNumbers: bigint[]; capabilities?: number }) {
+		super();
+		this.hashNumbers = props.hashNumbers;
+		this.capabilities =
+			props.capabilities ?? SIMPLE_SYNC_RAW_EXCHANGE_HEADS_CAPABILITY;
+	}
+}
+
+const canReceiveRawExchangeHeads = (
+	message:
+		| ResponseMaybeSync
+		| ResponseMaybeSyncCapabilities
+		| RequestMaybeSyncCoordinate
+		| RequestMaybeSyncCoordinateCapabilities,
+) =>
+	(message instanceof ResponseMaybeSyncCapabilities ||
+		message instanceof RequestMaybeSyncCoordinateCapabilities) &&
+	(message.capabilities & SIMPLE_SYNC_RAW_EXCHANGE_HEADS_CAPABILITY) !== 0;
 
 const getHashesFromSymbols = async (
 	symbols: bigint[],
@@ -741,7 +787,10 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		if (msg instanceof RequestMaybeSync) {
 			await this.queueSync(msg.hashes, from);
 			return true;
-		} else if (msg instanceof ResponseMaybeSync) {
+		} else if (
+			msg instanceof ResponseMaybeSync ||
+			msg instanceof ResponseMaybeSyncCapabilities
+		) {
 			// TODO perhaps send less messages to more receivers for performance reasons?
 			// TODO wait for previous send to target before trying to send more?
 
@@ -749,11 +798,11 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			const startedAt = syncProfileStart(profile);
 			const hashes = this.filterRecentlySentExchangeHeads(msg.hashes, from);
 			let messages = 0;
+			const createMessages = canReceiveRawExchangeHeads(msg)
+				? createRawExchangeHeadsMessages
+				: createExchangeHeadsMessages;
 			try {
-				for await (const message of createExchangeHeadsMessages(
-					this.log,
-					hashes,
-				)) {
+				for await (const message of createMessages(this.log, hashes)) {
 					messages += 1;
 					await this.rpc.send(message, {
 						mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
@@ -771,7 +820,10 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				}
 			}
 			return true;
-		} else if (msg instanceof RequestMaybeSyncCoordinate) {
+		} else if (
+			msg instanceof RequestMaybeSyncCoordinate ||
+			msg instanceof RequestMaybeSyncCoordinateCapabilities
+		) {
 			const profile = this.syncOptions?.profile;
 			const lookupStartedAt = syncProfileStart(profile);
 			const hashes = await getHashesFromSymbols(
@@ -792,11 +844,11 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			const exchangeStartedAt = syncProfileStart(profile);
 			const hashesToSend = this.filterRecentlySentExchangeHeads(hashes, from);
 			let messages = 0;
+			const createMessages = canReceiveRawExchangeHeads(msg)
+				? createRawExchangeHeadsMessages
+				: createExchangeHeadsMessages;
 			try {
-				for await (const message of createExchangeHeadsMessages(
-					this.log,
-					hashesToSend,
-				)) {
+				for await (const message of createMessages(this.log, hashesToSend)) {
 					messages += 1;
 					await this.rpc.send(message, {
 						mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
@@ -943,24 +995,33 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				coordinateMessages = chunks.length;
 				for (const chunk of chunks) {
 					await this.rpc.send(
-						new RequestMaybeSyncCoordinate({ hashNumbers: chunk }),
+						this.syncOptions?.rawExchangeHeads
+							? new RequestMaybeSyncCoordinateCapabilities({
+									hashNumbers: chunk,
+								})
+							: new RequestMaybeSyncCoordinate({ hashNumbers: chunk }),
 						{
 							mode: new SilentDelivery({ to, redundancy: 1 }),
 							priority: SYNC_MESSAGE_PRIORITY,
 						},
 					);
 				}
-			}
-			if (stringHashes.length > 0) {
-				const chunks = this.chunk(stringHashes, this.maxHashesPerMessage);
-				stringMessages = chunks.length;
-				for (const chunk of chunks) {
-					await this.rpc.send(new ResponseMaybeSync({ hashes: chunk }), {
-						mode: new SilentDelivery({ to, redundancy: 1 }),
-						priority: SYNC_MESSAGE_PRIORITY,
-					});
 				}
-			}
+				if (stringHashes.length > 0) {
+					const chunks = this.chunk(stringHashes, this.maxHashesPerMessage);
+					stringMessages = chunks.length;
+					for (const chunk of chunks) {
+						await this.rpc.send(
+							this.syncOptions?.rawExchangeHeads
+								? new ResponseMaybeSyncCapabilities({ hashes: chunk })
+								: new ResponseMaybeSync({ hashes: chunk }),
+							{
+								mode: new SilentDelivery({ to, redundancy: 1 }),
+								priority: SYNC_MESSAGE_PRIORITY,
+							},
+						);
+					}
+				}
 		} finally {
 			if (profile) {
 				emitSyncProfileDuration(profile, startedAt, {

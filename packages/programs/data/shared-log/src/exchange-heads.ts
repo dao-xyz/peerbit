@@ -431,7 +431,7 @@ const resolveExchangeHeadBlocks = async (
 
 	const blocks = log.blocks as BlocksWithGetMany;
 	const values =
-		hashes.length > 1 && typeof blocks.getMany === "function"
+		typeof blocks.getMany === "function"
 			? await blocks.getMany(hashes)
 			: await Promise.all(hashes.map((hash) => blocks.get(hash)));
 	for (let i = 0; i < values.length; i++) {

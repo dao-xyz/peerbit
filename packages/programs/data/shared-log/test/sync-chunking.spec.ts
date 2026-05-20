@@ -2,11 +2,14 @@ import { Cache } from "@peerbit/cache";
 import { CONVERGENCE_MESSAGE_PRIORITY } from "@peerbit/stream-interface";
 import { expect } from "chai";
 import sinon from "sinon";
+import { RawExchangeHeadsMessage } from "../src/exchange-heads.js";
 import {
 	RequestMaybeSync,
+	RequestMaybeSyncCoordinateCapabilities,
 	RequestMaybeSyncCoordinate,
 	ResponseMaybeSync,
 	SYNC_MESSAGE_PRIORITY,
+	ResponseMaybeSyncCapabilities,
 	SimpleSyncronizer,
 } from "../src/sync/simple.js";
 
@@ -223,5 +226,63 @@ describe("sync-chunking", () => {
 		expect(
 			(sentCoordinateMessages[0] as RequestMaybeSyncCoordinate).hashNumbers,
 		).to.deep.equal([2n, 4n]);
+	});
+
+	it("advertises raw exchange-head support when enabled", async () => {
+		const send = sinon.stub().resolves();
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc: { send } as any,
+			entryIndex: { count: async () => 0 } as any,
+			log: { has: async () => false } as any,
+			coordinateToHash: new Cache<string>({ max: 10 }),
+			sync: {
+				rawExchangeHeads: true,
+				maxSimpleHashesPerMessage: 8,
+				maxSimpleCoordinatesPerMessage: 8,
+			},
+		});
+
+		await (sync as any).requestSync(["h1", 2n], ["peer-a"]);
+
+		const messages = send.getCalls().map((call) => call.args[0]);
+		const hashMessage = messages.find(
+			(message) => message instanceof ResponseMaybeSyncCapabilities,
+		) as ResponseMaybeSyncCapabilities | undefined;
+		const coordinateMessage = messages.find(
+			(message) => message instanceof RequestMaybeSyncCoordinateCapabilities,
+		) as RequestMaybeSyncCoordinateCapabilities | undefined;
+		expect(hashMessage?.hashes).to.deep.equal(["h1"]);
+		expect(coordinateMessage?.hashNumbers).to.deep.equal([2n]);
+	});
+
+	it("responds with raw exchange heads only to capable requests", async () => {
+		const send = sinon.stub().resolves();
+		const get = sinon.stub().throws(new Error("full entry get should not be used"));
+		const getMany = sinon.stub().resolves([new Uint8Array([1, 2, 3])]);
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc: { send } as any,
+			entryIndex: {} as any,
+			log: {
+				get,
+				blocks: { getMany },
+				entryIndex: {
+					getUniqueReferenceGidRowsFlatBatch: sinon.stub().returns([]),
+				},
+			} as any,
+			coordinateToHash: new Cache<string>({ max: 10 }),
+		});
+
+		await sync.onMessage(
+			new ResponseMaybeSyncCapabilities({ hashes: ["head-a"] }),
+			{ from: "peer-a" } as any,
+		);
+
+		expect(send.callCount).to.equal(1);
+		expect(send.firstCall.args[0]).to.be.instanceOf(RawExchangeHeadsMessage);
+		expect(send.firstCall.args[0].heads.map((head: any) => head.hash)).to.deep.equal(
+			["head-a"],
+		);
+		expect(get.called).to.equal(false);
+		expect(getMany.calledOnceWithExactly(["head-a"])).to.equal(true);
 	});
 });
