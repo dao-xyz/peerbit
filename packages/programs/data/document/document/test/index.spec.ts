@@ -2578,6 +2578,50 @@ describe("index", () => {
 					}
 				});
 
+				it("defaults strict native puts to local native append options", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const payloadCommitOnlySpy = sinon.spy(
+						store.docs.log,
+						"appendLocallyPreparedPayloadCommitOnly",
+					);
+					try {
+						const doc = new Document({ id: uuid(), name: "native-defaults" });
+						await store.docs.put(doc, {
+							unique: true,
+						});
+						expect(payloadCommitOnlySpy.callCount).equal(1);
+						expect(payloadCommitOnlySpy.firstCall.args[1]).to.include({
+							replicate: false,
+							target: "none",
+						});
+						expect((await store.docs.get(doc.id))?.name).equal(
+							"native-defaults",
+						);
+					} finally {
+						payloadCommitOnlySpy.restore();
+						await rustSession.stop();
+					}
+				});
+
 				it("does not repeat native policy eligibility checks for strict native puts", async () => {
 					const rustSession = await TestSession.connected(
 						1,

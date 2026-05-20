@@ -636,6 +636,19 @@ export class Documents<
 		);
 	}
 
+	private normalizeNativeModePutOptions(
+		options: DocumentPutOptions | undefined,
+	): DocumentPutOptions | undefined {
+		if (!this.isNativeMode()) {
+			return options;
+		}
+		return {
+			...options,
+			replicate: false,
+			target: "none",
+		};
+	}
+
 	private trackDocumentChangeListeners(): void {
 		const events = this.events;
 		const addEventListener = events.addEventListener.bind(events);
@@ -1251,7 +1264,10 @@ export class Documents<
 
 	public async put(doc: T, options?: DocumentPutOptions) {
 		const nativePlainPut = this.assertNativeModePlainPutSupported(doc, options);
-		const prepared = (nativePlainPut || this.canUsePlainPutFastPath(doc, options))
+		const putOptions = this.normalizeNativeModePutOptions(options);
+		const prepared = (
+			nativePlainPut || this.canUsePlainPutFastPath(doc, putOptions)
+		)
 			? this.preparePlainPut(doc)
 			: this.preparePut(doc);
 		let existingLocalContext:
@@ -1259,13 +1275,13 @@ export class Documents<
 			| null
 			| undefined;
 		let existingHead: string | undefined;
-		if (!options?.unique) {
-			if (options?.checkRemote) {
+		if (!putOptions?.unique) {
+			if (putOptions?.checkRemote) {
 				existingHead = (
 					await this._index.getDetailed(prepared.keyValue, {
 						resolve: false,
 						local: true,
-						remote: { replicate: options?.replicate },
+						remote: { replicate: putOptions?.replicate },
 					})
 				)?.[0]?.results[0]?.context.head;
 			} else {
@@ -1279,11 +1295,11 @@ export class Documents<
 			prepared,
 			existingHead,
 			existingLocalContext,
-			options,
+			putOptions,
 			nativePlainPut,
 		);
 		if (plainPutPlan) {
-			return this.commitPlainPutPlan(plainPutPlan, options);
+			return this.commitPlainPutPlan(plainPutPlan, putOptions);
 		}
 
 		const operation =
@@ -1291,10 +1307,10 @@ export class Documents<
 				? prepared.operation
 				: new PutOperation({ data: prepared.encodedDocument });
 		const appended = await this.log.append(operation, {
-			...options,
+			...putOptions,
 			meta: {
 				next: existingHead ? [await this._resolveEntry(existingHead)] : [],
-				...options?.meta,
+				...putOptions?.meta,
 			},
 			canAppend: (entry) => {
 				return this.canAppend(entry, {
@@ -1307,11 +1323,11 @@ export class Documents<
 					document: prepared.document,
 					operation,
 					key: prepared.key,
-					unique: options?.unique,
+					unique: putOptions?.unique,
 					existing: existingLocalContext,
 				});
 			},
-			replicate: options?.replicate,
+			replicate: putOptions?.replicate,
 		});
 		this.keepCache?.add(appended.entry.hash);
 		return appended;
