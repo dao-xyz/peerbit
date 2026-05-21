@@ -143,6 +143,12 @@ type PreparedIndependentAppendBatch = {
 	};
 };
 
+type PreparedJoinNativeCommitInput = {
+	entries: PreparedAppendJoinFacts[];
+	headFlags: boolean[];
+	trustedMissing: boolean;
+};
+
 export type PreparedAppendJoinFacts = PreparedAppendIndexFacts & {
 	bytes: Uint8Array;
 	byteLength: number;
@@ -2610,6 +2616,9 @@ export class Log<T> {
 			__peerbitOnAppendHashes?: InternalAppendHashesSink;
 			__peerbitDeferIndexWrite?: boolean;
 			__peerbitProfile?: InternalProfileSink;
+			__peerbitNativePreparedJoinCommit?: (
+				input: PreparedJoinNativeCommitInput,
+			) => MaybePromise<boolean>;
 		},
 	): Promise<boolean> {
 		if (
@@ -2692,24 +2701,33 @@ export class Log<T> {
 			});
 
 			const blocksStartedAt = internalProfileStart(profile);
-			await this.putKnownEntryBytesBatch(
-				entries.map((entry) => ({
-					cid: entry.hash,
-					bytes: entry.bytes,
-				})),
-			);
+			const trustedMissing =
+				resolvedOptions.__peerbitEntriesAlreadyMissing === true &&
+				batchHashes.size === entries.length;
+			const nativePreparedCommitted =
+				(await resolvedOptions.__peerbitNativePreparedJoinCommit?.({
+					entries,
+					headFlags,
+					trustedMissing,
+				})) === true;
+			if (!nativePreparedCommitted) {
+				await this.putKnownEntryBytesBatch(
+					entries.map((entry) => ({
+						cid: entry.hash,
+						bytes: entry.bytes,
+					})),
+				);
+			}
 			emitInternalProfileDuration(profile, blocksStartedAt, {
 				name: "log.joinPreparedFacts.blocks",
 				component: "log",
 				entries: entries.length,
 				bytes: entries.reduce((sum, entry) => sum + entry.byteLength, 0),
 				messages: 1,
+				details: { nativePreparedCommitted },
 			});
 
 			const indexStartedAt = internalProfileStart(profile);
-			const trustedMissing =
-				resolvedOptions.__peerbitEntriesAlreadyMissing === true &&
-				batchHashes.size === entries.length;
 			const externalNextHashes =
 				entries.length === 1 ? entries[0]!.meta.next : undefined;
 			await this.entryIndex.putAppendFactsBatch(entries, {
@@ -2717,6 +2735,7 @@ export class Log<T> {
 				externalNextHashes,
 				heads: headFlags,
 				deferIndexWrite: resolvedOptions.__peerbitDeferIndexWrite,
+				nativeGraphUpdated: nativePreparedCommitted,
 				profile,
 			});
 			emitInternalProfileDuration(profile, indexStartedAt, {

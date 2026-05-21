@@ -1700,6 +1700,7 @@ export class EntryIndex<T> {
 			externalNextHashes?: string[];
 			heads?: boolean[];
 			deferIndexWrite?: boolean;
+			nativeGraphUpdated?: boolean;
 			profile?: EntryIndexProfileSink;
 		},
 	) {
@@ -1733,18 +1734,21 @@ export class EntryIndex<T> {
 			const putBatch = this.properties.index.putBatch;
 			const shallowEntries: ShallowEntry[] = [];
 			const nativeEntries: NativeLogEntry[] = [];
+			const nativeGraphUpdated = properties.nativeGraphUpdated === true;
 			const nativeGraphPutAppendChain =
+				!nativeGraphUpdated &&
 				properties.externalNextHashes &&
 				this.properties.nativeGraph?.graph.putAppendChain
 					? this.properties.nativeGraph.graph.putAppendChain.bind(
 							this.properties.nativeGraph.graph,
 						)
 					: undefined;
-			const nativeGraphPutBatch = this.properties.nativeGraph?.graph.putBatch
-				? this.properties.nativeGraph.graph.putBatch.bind(
-						this.properties.nativeGraph.graph,
-					)
-				: undefined;
+			const nativeGraphPutBatch =
+				!nativeGraphUpdated && this.properties.nativeGraph?.graph.putBatch
+					? this.properties.nativeGraph.graph.putBatch.bind(
+							this.properties.nativeGraph.graph,
+						)
+					: undefined;
 			const deferBatchIndexWrite =
 				properties.deferIndexWrite === true &&
 				!!putBatch &&
@@ -1761,6 +1765,7 @@ export class EntryIndex<T> {
 				const shallowEntry = entry.shallowEntry;
 				shallowEntry.head = isHead;
 				const nativeEntry =
+					!nativeGraphUpdated &&
 					this.properties.nativeGraph &&
 					(entry.nativeEntry ?? toNativeLogEntry(shallowEntry));
 				if (nativeEntry) {
@@ -1791,6 +1796,7 @@ export class EntryIndex<T> {
 					unique: properties.unique,
 					nativeEntries: nativeEntries.length,
 					discoverExternalNexts: shouldDiscoverExternalNexts,
+					nativeGraphUpdated,
 				},
 			});
 

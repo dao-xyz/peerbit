@@ -478,6 +478,104 @@ describe("raw exchange-head sync", () => {
 		}
 	});
 
+	it("commits raw receive blocks and graph through native backbone", async () => {
+		const session = await TestSession.disconnected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+
+		try {
+			const setup = {
+				domain: createReplicationDomainHash("u32"),
+				type: "u32" as const,
+				syncronizer: SimpleSyncronizer,
+				name: "u32-simple-raw",
+			};
+			const store = new EventStore<string, any>();
+			const openArgs: any = {
+				replicate: false,
+				setup,
+				nativeGraph: true,
+				nativeBackbone: { optional: false },
+				sync: { rawExchangeHeads: true },
+				keep: () => true,
+				timeUntilRoleMaturity: 0,
+			};
+			const source = await session.peers[0].open(store.clone(), {
+				args: openArgs,
+			});
+			const target = await session.peers[1].open(store.clone(), {
+				args: openArgs,
+			});
+
+			const hashes: string[] = [];
+			for (let i = 0; i < 3; i++) {
+				const { entry } = await source.add(uuid(), { meta: { next: [] } });
+				hashes.push(entry.hash);
+			}
+
+			let message:
+				| RawExchangeHeadsMessage
+				| ExchangeHeadsMessage<any>
+				| undefined;
+			for await (const generated of createRawExchangeHeadsMessages(
+				source.log.log,
+				hashes,
+			)) {
+				message = generated;
+				break;
+			}
+			expect(message).to.be.instanceOf(RawExchangeHeadsMessage);
+
+			const sharedLog = target.log as any;
+			const backbone = sharedLog._nativeBackbone;
+			const nativeCommitSpy = sinon.spy(
+				backbone.graph,
+				"commitBlocksAndGraphBatch",
+			);
+			const blockPutColumnsSpy = sinon.spy(
+				target.log.log.blocks as any,
+				"putKnownManyColumns",
+			);
+			const lowerNativeGraph = target.log.log.entryIndex.properties.nativeGraph!
+				.graph as any;
+			const graphPutBatchSpy = sinon.spy(lowerNativeGraph, "putBatch");
+			const graphPutAppendChainSpy = sinon.spy(
+				lowerNativeGraph,
+				"putAppendChain",
+			);
+			const lowerPutAppendFactsBatchSpy = sinon.spy(
+				target.log.log.entryIndex,
+				"putAppendFactsBatch",
+			);
+			try {
+				await target.log.onMessage(message!, {
+					from: source.node.identity.publicKey,
+				} as any);
+
+				expect(target.log.log.length).to.equal(hashes.length);
+				expect(nativeCommitSpy.callCount).to.equal(1);
+				expect(nativeCommitSpy.firstCall.args[0]).to.have.length(
+					hashes.length,
+				);
+				expect(blockPutColumnsSpy.callCount).to.equal(0);
+				expect(graphPutBatchSpy.callCount).to.equal(0);
+				expect(graphPutAppendChainSpy.callCount).to.equal(0);
+				expect(lowerPutAppendFactsBatchSpy.callCount).to.equal(1);
+				expect(
+					lowerPutAppendFactsBatchSpy.firstCall.args[1].nativeGraphUpdated,
+				).to.equal(true);
+			} finally {
+				lowerPutAppendFactsBatchSpy.restore();
+				graphPutAppendChainSpy.restore();
+				graphPutBatchSpy.restore();
+				blockPutColumnsSpy.restore();
+				nativeCommitSpy.restore();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("persists receive coordinate items through native backbone WAL without generic coordinate index writes", async () => {
 		const session = await TestSession.disconnected(2, {
 			indexer: (directory) => createRustIndexer(directory),

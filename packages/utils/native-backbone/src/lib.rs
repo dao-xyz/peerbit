@@ -747,6 +747,33 @@ impl NativePeerbitBackbone {
         )
     }
 
+    pub fn commit_log_blocks_and_graph_batch(
+        &mut self,
+        hashes: Array,
+        block_bytes: Array,
+        gids: Array,
+        nexts: Array,
+        entry_types: Uint8Array,
+        wall_times: BigUint64Array,
+        logicals: Uint32Array,
+        payload_sizes: Uint32Array,
+        heads: Uint8Array,
+        datas: Array,
+    ) -> Result<(), JsValue> {
+        self.blocks.put_many(hashes.clone(), block_bytes)?;
+        self.log.put_many(
+            hashes,
+            gids,
+            nexts,
+            entry_types,
+            wall_times,
+            logicals,
+            payload_sizes,
+            heads,
+            datas,
+        )
+    }
+
     pub fn graph_delete(&mut self, hash: &str) -> bool {
         self.log.delete(hash)
     }

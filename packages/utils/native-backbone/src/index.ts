@@ -166,6 +166,18 @@ type NativePeerbitBackboneHandle = {
 		payloadSizes: Uint32Array,
 		datas: Array<Uint8Array | undefined>,
 	) => void;
+	commit_log_blocks_and_graph_batch: (
+		hashes: string[],
+		blockBytes: Uint8Array[],
+		gids: string[],
+		nexts: string[][],
+		entryTypes: Uint8Array,
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		payloadSizes: Uint32Array,
+		heads: Uint8Array,
+		datas: Array<Uint8Array | undefined>,
+	) => void;
 	graph_delete: (hash: string) => boolean;
 	graph_delete_many: (hashes: string[]) => number;
 	graph_oldest_entries: (limit: number) => unknown[];
@@ -1232,6 +1244,10 @@ export type NativeBackboneLogEntry = {
 	};
 };
 
+export type NativeBackboneLogCommitEntry = NativeBackboneLogEntry & {
+	bytes: Uint8Array;
+};
+
 export type NativeBackboneTrimmedEntry = {
 	hash: string;
 	gid: string;
@@ -2201,6 +2217,47 @@ export class NativeBackboneLogGraph {
 			wallTimes,
 			logicals,
 			payloadSizes,
+			datas,
+		);
+	}
+
+	commitBlocksAndGraphBatch(entries: NativeBackboneLogCommitEntry[]): void {
+		if (entries.length === 0) {
+			return;
+		}
+		const hashes = new Array<string>(entries.length);
+		const blockBytes = new Array<Uint8Array>(entries.length);
+		const gids = new Array<string>(entries.length);
+		const nexts = new Array<string[]>(entries.length);
+		const entryTypes = new Uint8Array(entries.length);
+		const wallTimes = new BigUint64Array(entries.length);
+		const logicals = new Uint32Array(entries.length);
+		const payloadSizes = new Uint32Array(entries.length);
+		const heads = new Uint8Array(entries.length);
+		const datas = new Array<Uint8Array | undefined>(entries.length);
+		for (let i = 0; i < entries.length; i++) {
+			const entry = entries[i]!;
+			hashes[i] = entry.hash;
+			blockBytes[i] = entry.bytes;
+			gids[i] = entry.gid;
+			nexts[i] = entry.next;
+			entryTypes[i] = entry.type;
+			wallTimes[i] = BigInt(entry.clock.timestamp.wallTime);
+			logicals[i] = entry.clock.timestamp.logical ?? 0;
+			payloadSizes[i] = entry.payloadSize ?? 0;
+			heads[i] = (entry.head ?? true) ? 1 : 0;
+			datas[i] = entry.data;
+		}
+		this.native.commit_log_blocks_and_graph_batch(
+			hashes,
+			blockBytes,
+			gids,
+			nexts,
+			entryTypes,
+			wallTimes,
+			logicals,
+			payloadSizes,
+			heads,
 			datas,
 		);
 	}

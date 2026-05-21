@@ -54,6 +54,7 @@ import type {
 	NativeBackboneCoordinateFields,
 	NativeBackboneCoordinatePersistenceAdapter,
 	NativeBackboneCoordinatePersistenceConfig,
+	NativeBackboneLogCommitEntry,
 	NativeBackboneSimpleDocumentProjectionPlan,
 	NativePeerbitBackbone,
 } from "@peerbit/native-backbone";
@@ -9379,6 +9380,9 @@ export class SharedLog<
 								preparedAppendFacts.push(prepared);
 							}
 						}
+						const nativePreparedJoinCommit = canUsePreparedAppendFacts
+							? this.createNativeBackbonePreparedJoinCommit()
+							: undefined;
 						const joinedPreparedFacts =
 							canUsePreparedAppendFacts &&
 							(await this.log.joinPreparedAppendFactsBatch(
@@ -9390,6 +9394,8 @@ export class SharedLog<
 									__peerbitDeferIndexWrite: true,
 									__peerbitOnAppendHashes: onAppendHashes,
 									__peerbitProfile: syncProfile,
+									__peerbitNativePreparedJoinCommit:
+										nativePreparedJoinCommit,
 								},
 							));
 						if (!joinedPreparedFacts) {
@@ -11042,6 +11048,48 @@ export class SharedLog<
 			}
 			throw error;
 		}
+	}
+
+	private createNativeBackbonePreparedJoinCommit():
+		| ((input: {
+				entries: PreparedAppendJoinFacts[];
+				headFlags: boolean[];
+				trustedMissing: boolean;
+		  }) => boolean)
+		| undefined {
+		const backbone = this._nativeBackbone;
+		if (
+			!backbone ||
+			this.remoteBlocks?.localStore !== backbone.blocks ||
+			this._logProperties?.replicate !== false
+		) {
+			return undefined;
+		}
+		return ({ entries, headFlags, trustedMissing }) => {
+			if (!trustedMissing || entries.length === 0) {
+				return false;
+			}
+			const commitEntries = new Array<NativeBackboneLogCommitEntry>(
+				entries.length,
+			);
+			for (let i = 0; i < entries.length; i++) {
+				const entry = entries[i]!;
+				if (
+					!entry.bytes ||
+					!entry.nativeEntry ||
+					entry.meta.type !== EntryType.APPEND
+				) {
+					return false;
+				}
+				commitEntries[i] = {
+					...entry.nativeEntry,
+					head: headFlags[i] ?? true,
+					bytes: entry.bytes,
+				};
+			}
+			backbone.graph.commitBlocksAndGraphBatch(commitEntries);
+			return true;
+		};
 	}
 
 	private createCoordinatePersistenceEntryFromLeaderPlan(properties: {
