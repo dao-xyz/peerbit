@@ -616,6 +616,14 @@ export type FanoutTreeUnicastEvent = {
 	message: DataMessage; // transport-level message carrying the unicast control frame
 };
 
+/**
+ * Diagnostic counters used by tests and simulation harnesses.
+ *
+ * These fields are intentionally detailed so failures can explain which guard
+ * fired, but they are not a stable product API.
+ *
+ * @internal
+ */
 export type FanoutTreeChannelMetrics = {
 	controlSends: number;
 	controlBytesSent: number;

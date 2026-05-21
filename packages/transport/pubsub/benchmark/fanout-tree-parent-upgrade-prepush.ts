@@ -8,7 +8,7 @@ type RunSpec = {
 	log: string;
 	args: string[];
 	strict: boolean;
-	kind: "single" | "multi" | "frontier";
+	kind: RunKind;
 };
 
 type RunResult = {
@@ -16,6 +16,9 @@ type RunResult = {
 	log: string;
 	exitCode: number;
 };
+
+type RunKind = "single" | "multi" | "frontier";
+type RunFilter = "all" | RunKind;
 
 const usage = () => {
 	console.log(
@@ -27,6 +30,7 @@ const usage = () => {
 			"Options:",
 			"  --outDir DIR      output directory for logs/summaries (default: sim-results/parent-upgrade-prepush-<timestamp>)",
 			"  --frontier 0|1    include non-gating large-idle cap frontier (default: 1)",
+			"  --only KIND       run only one evidence group: single, multi, frontier, or all (default: all)",
 			"  --quick 0|1       run seed 1 only and skip frontier (default: 0)",
 			"  --help            show this message",
 			"",
@@ -45,6 +49,19 @@ const boolArg = (name: string, fallback: boolean) => {
 	const value = getArg(name);
 	if (value == null) return fallback;
 	return value !== "0" && value !== "false";
+};
+
+const runFilterArg = (): RunFilter => {
+	const value = getArg("--only") ?? "all";
+	if (
+		value === "all" ||
+		value === "single" ||
+		value === "multi" ||
+		value === "frontier"
+	) {
+		return value;
+	}
+	throw new Error(`Invalid --only value: ${value}`);
 };
 
 const timestamp = () =>
@@ -73,7 +90,11 @@ const multiEval = (...args: string[]) => [
 
 const scenarioSeeds = (quick: boolean) => (quick ? "1" : "1,2,3");
 
-const makeRuns = (quick: boolean, includeFrontier: boolean): RunSpec[] => {
+const makeRuns = (
+	quick: boolean,
+	includeFrontier: boolean,
+	only: RunFilter,
+): RunSpec[] => {
 	const seeds = scenarioSeeds(quick);
 	const runs: RunSpec[] = [
 		{
@@ -157,7 +178,7 @@ const makeRuns = (quick: boolean, includeFrontier: boolean): RunSpec[] => {
 		},
 	];
 
-	if (!quick && includeFrontier) {
+	if (includeFrontier) {
 		for (const cap of ["0.2", "0.225", "0.25", "0.4"]) {
 			runs.push({
 				name: `single-idle-large-frontier-${cap}`,
@@ -167,7 +188,7 @@ const makeRuns = (quick: boolean, includeFrontier: boolean): RunSpec[] => {
 					"--scenario",
 					"ci-idle-upgrade-large",
 					"--seeds",
-					"1,2,3",
+					seeds,
 					"--parentUpgradePreset",
 					"default-candidate",
 					"--parentUpgradeRootMaxChildLoadRatio",
@@ -181,7 +202,7 @@ const makeRuns = (quick: boolean, includeFrontier: boolean): RunSpec[] => {
 		}
 	}
 
-	return runs;
+	return only === "all" ? runs : runs.filter((run) => run.kind === only);
 };
 
 const runOne = async (spec: RunSpec, outDir: string): Promise<RunResult> => {
@@ -351,14 +372,16 @@ const main = async () => {
 		return;
 	}
 
+	const only = runFilterArg();
 	const quick = boolArg("--quick", false);
-	const includeFrontier = quick ? false : boolArg("--frontier", true);
+	const includeFrontier =
+		only === "frontier" ? true : quick ? false : boolArg("--frontier", true);
 	const outDir = resolve(
 		getArg("--outDir") ?? `sim-results/parent-upgrade-prepush-${timestamp()}`,
 	);
 	await mkdir(outDir, { recursive: true });
 
-	const runs = makeRuns(quick, includeFrontier);
+	const runs = makeRuns(quick, includeFrontier, only);
 	const results: RunResult[] = [];
 	let failed = false;
 

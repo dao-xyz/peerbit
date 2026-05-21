@@ -101,23 +101,9 @@ jobs:
               --parentUpgradeRootMaxChildLoadRatio 0.25 --maxRootChildrenDelta 3 --maxCostRatio 1.2 --strict 1
           - name: single-idle-large-frontier
             artifact: fanout-parent-upgrade-single-idle-large-frontier
-            command: |
-              printf "cap\tscenario\tmode\tseeds\tviable\teffects\tupgrades\tprobes\trootChildrenDeltaMax\trootUploadPctDeltaMax\tfailures\n" > sim-results/frontier-summary.tsv
-              for cap in 0.2 0.225 0.25 0.4; do
-                echo "=== ci-idle-upgrade-large frontier root cap ${cap} ==="
-                log="sim-results/frontier-root-cap-${cap}.txt"
-                pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-eval \
-                  --scenario ci-idle-upgrade-large --seeds 1,2,3 \
-                  --parentUpgradePreset default-candidate \
-                  --parentUpgradeRootMaxChildLoadRatio "${cap}" \
-                  --strict 0 2>&1 | tee "${log}"
-                awk -v cap="${cap}" '
-                  /^ci-idle-upgrade-large / {
-                    print cap "\t" $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7 "\t" $16 "\t" $17 "\t" $19
-                  }
-                ' "${log}" >> sim-results/frontier-summary.tsv
-              done
-              cat sim-results/frontier-summary.tsv
+            command: >-
+              pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-prepush
+              --only frontier --outDir sim-results
           - name: multi-live
             artifact: fanout-parent-upgrade-multi-live
             command: >-
