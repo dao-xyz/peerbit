@@ -17,6 +17,11 @@ import {
 import { Log } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import { TransportMessage } from "./message.js";
+import type { SyncProfileFn } from "./sync/index.js";
+import {
+	emitSyncProfileDuration,
+	syncProfileStart,
+} from "./sync/profile.js";
 
 const logger = loggerFn("peerbit:shared-log:exchange-heads");
 const warn = logger.newScope("warn");
@@ -586,52 +591,25 @@ const prepareRawExchangeHeadEntryFacts = (
 	Entry.prepareNativeLogEntry(entry, nativeEntry);
 };
 
-const preparePreparedRawExchangeHeadEntryFacts = (
-	entry: Entry<any>,
-	head: Pick<RawEntryWithRefs, "hash" | "bytes">,
-	facts: PreparedRawEntryV0Facts,
-) => {
-	const meta = entry.meta;
-	const payloadSize = facts.payloadByteLength;
-	const shallowEntry = new ShallowEntry({
-		hash: head.hash,
-		payloadSize,
-		head: true,
-		meta: new ShallowMeta({
-			gid: meta.gid,
-			data: meta.data,
-			clock: meta.clock,
-			next: meta.next,
-			type: meta.type,
-		}),
-	});
-	const nativeEntry: PreparedNativeLogEntry = {
-		hash: head.hash,
-		gid: facts.gid,
-		next: facts.next,
-		type: facts.type,
-		head: true,
-		payloadSize,
-		data: facts.metaData,
-		clock: {
-			timestamp: {
-				wallTime: facts.wallTime,
-				logical: facts.logical,
-			},
-		},
-	};
-	Entry.prepareShallowEntry(entry, shallowEntry);
-	Entry.prepareNativeLogEntry(entry, nativeEntry);
-};
-
 export const materializeVerifiedRawExchangeHeadsMessage = async (
 	message: RawExchangeHeadsMessage,
 	log: Log<any>,
+	profile?: SyncProfileFn,
 ): Promise<ExchangeHeadsMessage<any>> => {
+	const nativePrepareStartedAt = syncProfileStart(profile);
 	const preparedFacts = await prepareRawEntryV0Batch(
 		message.heads.map((head) => head.bytes),
 	).catch(() => undefined);
 	if (preparedFacts) {
+		emitSyncProfileDuration(profile, nativePrepareStartedAt, {
+			name: "sharedLog.rawReceive.prepareFacts",
+			component: "shared-log",
+			entries: message.heads.length,
+			bytes: message.heads.reduce((sum, head) => sum + head.bytes.byteLength, 0),
+			messages: 1,
+			details: { native: true },
+		});
+		const wrapStartedAt = syncProfileStart(profile);
 		const materialized = new ExchangeHeadsMessage({
 			heads: message.heads.map((head, index) => {
 				const facts = preparedFacts[index]!;
@@ -646,7 +624,6 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 					keychain: log.keychain,
 					encoding: log.encoding,
 				});
-				preparePreparedRawExchangeHeadEntryFacts(entry, head, facts);
 				return new EntryWithRefs({
 					entry,
 					gidRefrences: head.gidRefrences,
@@ -654,11 +631,33 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			}),
 		});
 		materialized.reserved = message.reserved;
+		emitSyncProfileDuration(profile, wrapStartedAt, {
+			name: "sharedLog.rawReceive.wrapPrepared",
+			component: "shared-log",
+			entries: message.heads.length,
+			messages: 1,
+		});
 		return materialized;
 	}
+	emitSyncProfileDuration(profile, nativePrepareStartedAt, {
+		name: "sharedLog.rawReceive.prepareFacts",
+		component: "shared-log",
+		entries: message.heads.length,
+		bytes: message.heads.reduce((sum, head) => sum + head.bytes.byteLength, 0),
+		messages: 1,
+		details: { native: false },
+	});
+	const hashStartedAt = syncProfileStart(profile);
 	const calculatedHashes = await calculateRawCidV1Batch(
 		message.heads.map((head) => head.bytes),
 	);
+	emitSyncProfileDuration(profile, hashStartedAt, {
+		name: "sharedLog.rawReceive.calculateHashes",
+		component: "shared-log",
+		entries: message.heads.length,
+		messages: 1,
+	});
+	const deserializeStartedAt = syncProfileStart(profile);
 	const materialized = new ExchangeHeadsMessage({
 		heads: message.heads.map((head, index) => {
 			if (calculatedHashes[index] !== head.hash) {
@@ -681,6 +680,12 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 		}),
 	});
 	materialized.reserved = message.reserved;
+	emitSyncProfileDuration(profile, deserializeStartedAt, {
+		name: "sharedLog.rawReceive.deserializeFallback",
+		component: "shared-log",
+		entries: message.heads.length,
+		messages: 1,
+	});
 	return materialized;
 };
 

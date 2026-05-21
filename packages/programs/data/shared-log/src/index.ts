@@ -8980,6 +8980,7 @@ export class SharedLog<
 						reserved: msg.reserved,
 					}),
 					this.log,
+					syncProfile,
 				);
 				rawMaterializedKnownMissing = true;
 				if (syncProfile) {
