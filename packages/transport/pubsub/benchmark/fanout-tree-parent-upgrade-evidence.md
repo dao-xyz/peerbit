@@ -7,6 +7,16 @@ remains default-off: `parentUpgradeIntervalMs` defaults to `0`. If callers opt
 in to upgrades without specifying a mode, the runtime mode resolves to `shadow`,
 not direct reparenting.
 
+Default-off is a hard contract for this PR: with `parentUpgradeIntervalMs`
+unset or `0`, the node must not schedule proactive upgrade checks, send parent
+probes, start shadow candidates, or replace a healthy parent just because a
+better edge appears. Existing disconnect, stale-parent, and kick-driven repair
+paths remain the only automatic parent changes.
+
+The new runtime options are additive opt-in knobs. The `default-candidate`
+preset is intentionally benchmark/CI-only in this PR; it is not a production
+default and is not imported by runtime code.
+
 The goal of this evidence is narrower than "enable by default now":
 
 - Prove the mechanism can improve a settled, locally suboptimal tree.
@@ -40,6 +50,12 @@ uses:
 This is intentionally conservative. A no-op run under active load is valid
 safety evidence. A run that sends upgrade traffic must also satisfy utility and
 pressure limits.
+
+The preset defaults live in
+`benchmark/fanout-tree-parent-upgrade-preset.ts` so single evaluator, multi
+evaluator, prepush, default-ready, and nightly harnesses do not drift. If future
+work wants a production default policy, that should be a separate runtime
+policy helper and should come with default-on evidence.
 
 ## Current Verdict
 
@@ -153,3 +169,8 @@ to reject or revise the PR would be:
 - Missing deterministic coverage for promotion and non-promotion.
 - Evidence that shadow promotion increases root pressure or delivery misses
   beyond the configured gates.
+
+Also treat unrelated changes as suspect. The fanout portion of this PR should
+stand on opt-in behavior, deterministic regression coverage, and bounded
+evidence. Any CI-stability fix outside fanout should be small and explicitly
+justified, not hidden as part of the parent-upgrade mechanism.

@@ -2,6 +2,13 @@ export type UpgradeMode = "direct" | "probe" | "shadow";
 export type UpgradePreset = "raw" | "default-candidate";
 export type EvidenceHarness = "single" | "multi";
 
+/**
+ * Benchmark/CI-only preset wiring for fanout parent-upgrade evidence.
+ *
+ * Do not import this module from runtime code. The production default remains
+ * `parentUpgradeIntervalMs: 0`; this helper only keeps evaluator, prepush, and
+ * default-readiness runner defaults reproducible.
+ */
 export type ParentUpgradePresetConfig = {
 	parentUpgradePreset: UpgradePreset;
 	parentUpgradeIntervalMs: number;

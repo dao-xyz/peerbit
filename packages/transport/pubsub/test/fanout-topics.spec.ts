@@ -924,10 +924,12 @@ describe("pubsub (fanout topics)", function () {
 					rootHash,
 				);
 				expect(statsAfterDirect?.parent).to.equal(relayHash);
-				expect(
-					publisher.fanout.getChannelMetrics(shardTopic, rootHash)
-						.reparentUpgrade,
-				).to.equal(0);
+				const metrics = publisher.fanout.getChannelMetrics(shardTopic, rootHash);
+				expect(metrics.reparentUpgrade).to.equal(0);
+				if (options.parentUpgradeIntervalMs === undefined) {
+					expect(metrics.parentProbeReqSent).to.equal(0);
+					expect(metrics.parentShadowStart).to.equal(0);
+				}
 			}
 		} finally {
 			publisherFanout._sendControl = originalSendControl;
