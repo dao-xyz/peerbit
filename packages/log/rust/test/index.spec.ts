@@ -659,6 +659,7 @@ describe("native EntryV0 encoding", () => {
 		});
 		expect([...rawFacts!.clockId]).to.deep.equal([...clockId]);
 		expect(rawFacts!.next).to.deep.equal(next);
+		expect(rawFacts!.metaBytes.byteLength).to.be.greaterThan(0);
 		expect([...rawFacts!.metaData!]).to.deep.equal([...metaData]);
 		expect(rawFacts!.payloadByteLength).to.equal(payloadData.byteLength);
 		expect(rawFacts!.hashDigestBytes.byteLength).to.equal(32);

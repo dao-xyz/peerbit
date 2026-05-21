@@ -3435,6 +3435,7 @@ pub fn prepare_raw_entry_v0_batch(blocks: Array) -> Result<Array, JsValue> {
         }
         row.push(&next);
         row.push(&JsValue::from_f64(meta.entry_type as f64));
+        row.push(&Uint8Array::from(storage.meta));
         match meta.meta_data {
             Some(data) => row.push(&Uint8Array::from(data.as_slice())),
             None => row.push(&JsValue::UNDEFINED),

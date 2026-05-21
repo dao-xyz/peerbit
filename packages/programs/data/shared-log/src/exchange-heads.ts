@@ -161,11 +161,7 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 	}
 
 	getMetaBytes(): Uint8Array | undefined {
-		return (
-			this.materialize() as Entry<T> & {
-				getMetaBytes?: () => Uint8Array | undefined;
-			}
-		).getMetaBytes?.();
+		return this.facts.metaBytes;
 	}
 
 	getHashDigestBytes(): Uint8Array {

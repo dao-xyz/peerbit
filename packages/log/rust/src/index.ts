@@ -1637,6 +1637,7 @@ export type RawEntryV0PreparedFacts = {
 	gid: string;
 	next: string[];
 	type: number;
+	metaBytes: Uint8Array;
 	metaData?: Uint8Array;
 	payloadByteLength: number;
 	signatureVerified: boolean;
@@ -1663,6 +1664,7 @@ type RawEntryV0PreparedFactsRow = [
 	string,
 	string[],
 	number,
+	Uint8Array,
 	Uint8Array | undefined,
 	number,
 	boolean,
@@ -1853,6 +1855,7 @@ const rawEntryV0PreparedFactsFromRow = ([
 	gid,
 	next,
 	type,
+	metaBytes,
 	metaData,
 	payloadByteLength,
 	signatureVerified,
@@ -1866,6 +1869,7 @@ const rawEntryV0PreparedFactsFromRow = ([
 	gid,
 	next,
 	type,
+	metaBytes,
 	metaData,
 	payloadByteLength,
 	signatureVerified,
