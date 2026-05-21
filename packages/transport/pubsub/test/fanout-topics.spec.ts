@@ -1344,7 +1344,9 @@ describe("pubsub (fanout topics)", function () {
 			parentProbeRejectCooldownMaxMs: 100,
 			parentShadowObserveMs: 0,
 			parentShadowMinObservations: 2,
+			parentShadowDualPathMs: 0,
 			expectedParentAfterDirect: "root",
+			expectedShadowPromotion: true,
 		});
 	});
 });

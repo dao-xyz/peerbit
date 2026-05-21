@@ -2086,7 +2086,7 @@ describe("fanout-tree", () => {
 		let probes = 0;
 		const ch = createImproveChannel({
 			children: new Map([["child", { bidPerByte: 0 }]]),
-			id: { root: "x24", key: new Uint8Array([1, 2, 3]), suffixKey: "topic" },
+			id: { root: "x444", key: new Uint8Array([1, 2, 3]), suffixKey: "topic" },
 		});
 		const other = createImproveChannel({
 			id: {
@@ -2097,14 +2097,14 @@ describe("fanout-tree", () => {
 		});
 		const run = () =>
 			runMaybeImproveParent({
-				peerHashes: ["relay", "x24"],
+				peerHashes: ["relay", "x444"],
 				channel: ch,
 				channelsBySuffixKey: new Map([
 					["topic", ch],
 					["other-topic", other],
 				]),
 				cachedTrackerCandidates: [
-					{ hash: "x24", addrs: [], level: 0, freeSlots: 0, bidPerByte: 0 },
+					{ hash: "x444", addrs: [], level: 0, freeSlots: 0, bidPerByte: 0 },
 				],
 				options: {
 					mode: "shadow",
@@ -2128,7 +2128,7 @@ describe("fanout-tree", () => {
 		expect(result).to.equal(false);
 		expect(probes).to.equal(1);
 		expect(attempts).to.deep.equal([]);
-		expect(ch.parentShadow?.hash).to.equal("x24");
+		expect(ch.parentShadow?.hash).to.equal("x444");
 		expect(ch.parentUpgradeStaleRootProbeRound).to.equal(4);
 	});
 
