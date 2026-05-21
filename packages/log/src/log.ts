@@ -27,6 +27,7 @@ import {
 	EntryIndex,
 	type MaybeResolveOptions,
 	type NativeLogGraph,
+	type PreparedAppendIndexFacts,
 	type ResultsIterator,
 	type ReturnTypeFromResolveOptions,
 } from "./entry-index.js";
@@ -127,6 +128,12 @@ type PreparedIndependentAppendBatch = {
 		shallowEntries: ShallowEntry[];
 		nativeEntries?: PreparedNativeLogEntry[];
 	};
+};
+
+export type PreparedAppendJoinFacts = PreparedAppendIndexFacts & {
+	bytes: Uint8Array;
+	byteLength: number;
+	materializeEntry?: () => Entry<any>;
 };
 
 type NativePreparedNoNextCommit = {
@@ -2143,6 +2150,52 @@ export class Log<T> {
 		}
 	}
 
+	private async putKnownEntryBytesBatch(
+		blocks: Array<{ cid: string; bytes: Uint8Array }>,
+	) {
+		if (blocks.length === 0) {
+			return;
+		}
+		if (blocks.length === 1 && hasPutKnown(this._storage)) {
+			const block = blocks[0]!;
+			const cidResult = this._storage.putKnown(block.cid, block.bytes);
+			const cid = isPromiseLike(cidResult) ? await cidResult : cidResult;
+			if (cid !== block.cid) {
+				throw new Error("Unexpected block cid");
+			}
+			return;
+		}
+		if (hasPutKnownMany(this._storage)) {
+			const cidsResult = this._storage.putKnownMany(
+				blocks.map((block) => [block.cid, block.bytes] as const),
+			);
+			const cids = isPromiseLike(cidsResult) ? await cidsResult : cidsResult;
+			if (cids.length !== blocks.length) {
+				throw new Error("Unexpected block batch result length");
+			}
+			for (let i = 0; i < cids.length; i++) {
+				if (cids[i] !== blocks[i]!.cid) {
+					throw new Error("Unexpected block batch cid");
+				}
+			}
+			return;
+		}
+		const preparedBlocks = blocks.map((block) =>
+			Entry.preparedBlockFromBytes(block.bytes, block.cid),
+		);
+		const cids = await (this._storage as BlocksWithPutMany).putMany!(
+			preparedBlocks,
+		);
+		if (cids.length !== blocks.length) {
+			throw new Error("Unexpected block batch result length");
+		}
+		for (let i = 0; i < cids.length; i++) {
+			if (cids[i] !== blocks[i]!.cid) {
+				throw new Error("Unexpected block batch cid");
+			}
+		}
+	}
+
 	private putPreparedAppendBlocks(
 		preparedBlocks?: PreparedEntryBlock[],
 	): MaybePromise<void> {
@@ -2478,6 +2531,170 @@ export class Log<T> {
 			});
 			await p;
 		}
+	}
+
+	// Internal trusted receive path for callers that can supply prepared append facts.
+	async joinPreparedAppendFactsBatch(
+		entries: PreparedAppendJoinFacts[],
+		options?: {
+			__peerbitEntriesAlreadyMissing?: boolean;
+			__peerbitCanAppendAlreadyValidated?: boolean;
+			__peerbitOnAppendHashes?: InternalAppendHashesSink;
+			__peerbitDeferIndexWrite?: boolean;
+			__peerbitProfile?: InternalProfileSink;
+		},
+	): Promise<boolean> {
+		if (
+			entries.length < 2 ||
+			options?.__peerbitCanAppendAlreadyValidated !== true ||
+			entries.some((entry) => this._joining.has(entry.hash))
+		) {
+			return false;
+		}
+
+		const resolvedOptions = options!;
+		const profile = resolvedOptions.__peerbitProfile;
+		const prepareStartedAt = internalProfileStart(profile);
+		const batchHashes = new Set(entries.map((entry) => entry.hash));
+		const heads: Map<string, boolean> = new Map();
+		for (const entry of entries) {
+			if (!entry.hash || !entry.bytes || entry.meta.type !== EntryType.APPEND) {
+				return false;
+			}
+			if (heads.has(entry.hash)) {
+				continue;
+			}
+			heads.set(entry.hash, true);
+			for (const next of entry.meta.next) {
+				heads.set(next, false);
+			}
+		}
+		emitInternalProfileDuration(profile, prepareStartedAt, {
+			name: "log.joinPreparedFacts.prepare",
+			component: "log",
+			entries: entries.length,
+			count: heads.size,
+			messages: 1,
+		});
+
+		const planStartedAt = internalProfileStart(profile);
+		const joinPlans = await this.entryIndex.planJoinBatch(
+			entries,
+			false,
+			profile,
+		);
+		emitInternalProfileDuration(profile, planStartedAt, {
+			name: "log.joinPreparedFacts.plan",
+			component: "log",
+			entries: entries.length,
+			messages: 1,
+		});
+		const validatePlanStartedAt = internalProfileStart(profile);
+		const headFlags: boolean[] = [];
+		for (let i = 0; i < entries.length; i++) {
+			const entry = entries[i]!;
+			const joinPlan = joinPlans[i]!;
+			if (
+				joinPlan.skip ||
+				joinPlan.coveredByCut ||
+				!joinPlan.cutChecked ||
+				joinPlan.missingParents.some((hash) => !batchHashes.has(hash))
+			) {
+				return false;
+			}
+			headFlags.push(heads.get(entry.hash) ?? true);
+		}
+		emitInternalProfileDuration(profile, validatePlanStartedAt, {
+			name: "log.joinPreparedFacts.validatePlan",
+			component: "log",
+			entries: entries.length,
+			messages: 1,
+		});
+
+		const batchPromise = (async () => {
+			const clockStartedAt = internalProfileStart(profile);
+			for (const entry of entries) {
+				this._hlc.update(entry.meta.clock.timestamp);
+			}
+			emitInternalProfileDuration(profile, clockStartedAt, {
+				name: "log.joinPreparedFacts.clock",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+			});
+
+			const blocksStartedAt = internalProfileStart(profile);
+			await this.putKnownEntryBytesBatch(
+				entries.map((entry) => ({
+					cid: entry.hash,
+					bytes: entry.bytes,
+				})),
+			);
+			emitInternalProfileDuration(profile, blocksStartedAt, {
+				name: "log.joinPreparedFacts.blocks",
+				component: "log",
+				entries: entries.length,
+				bytes: entries.reduce((sum, entry) => sum + entry.byteLength, 0),
+				messages: 1,
+			});
+
+			const indexStartedAt = internalProfileStart(profile);
+			const trustedMissing =
+				resolvedOptions.__peerbitEntriesAlreadyMissing === true &&
+				batchHashes.size === entries.length;
+			await this.entryIndex.putAppendFactsBatch(entries, {
+				unique: trustedMissing,
+				heads: headFlags,
+				deferIndexWrite: resolvedOptions.__peerbitDeferIndexWrite,
+				profile,
+			});
+			emitInternalProfileDuration(profile, indexStartedAt, {
+				name: "log.joinPreparedFacts.entryIndex",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+				details: { trustedMissing },
+			});
+
+			const changeStartedAt = internalProfileStart(profile);
+			if (resolvedOptions.__peerbitOnAppendHashes) {
+				await resolvedOptions.__peerbitOnAppendHashes(
+					entries.map((entry) => entry.hash),
+				);
+			} else {
+				const change: Change<T> = {
+					added: entries.map((entry, index) => {
+						const materializeEntry = entry.materializeEntry;
+						if (!materializeEntry) {
+							throw new Error("Missing prepared append materializer");
+						}
+						return {
+							head: headFlags[index]!,
+							entry: materializeEntry() as Entry<T>,
+						};
+					}),
+					removed: [],
+				};
+				await this._onChange?.(change);
+			}
+			emitInternalProfileDuration(profile, changeStartedAt, {
+				name: "log.joinPreparedFacts.change",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+				details: { hashOnly: !!resolvedOptions.__peerbitOnAppendHashes },
+			});
+		})().finally(() => {
+			for (const entry of entries) {
+				this._joining.delete(entry.hash);
+			}
+		});
+
+		for (const entry of entries) {
+			this._joining.set(entry.hash, batchPromise);
+		}
+		await batchPromise;
+		return true;
 	}
 
 	private async tryJoinIndependentAppendBatch(

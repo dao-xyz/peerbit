@@ -42,6 +42,7 @@ import {
 	type LogProperties,
 	Meta,
 	type PreparedAppendFacts,
+	type PreparedAppendJoinFacts,
 	ShallowEntry,
 	ShallowMeta,
 	type ShallowOrFullEntry,
@@ -125,6 +126,7 @@ import {
 	RequestIPrune,
 	ResponseIPrune,
 	createExchangeHeadsMessages,
+	getPreparedRawExchangeAppendFacts,
 	materializeVerifiedRawExchangeHeadsMessage,
 } from "./exchange-heads.js";
 import { FanoutEnvelope } from "./fanout-envelope.js";
@@ -9379,31 +9381,62 @@ export class SharedLog<
 							}
 							return entry;
 						};
-						await this.log.join(allToMerge, {
-							__peerbitBatchIndependent: true,
-							__peerbitEntriesAlreadyMissing: true,
-							__peerbitCanAppendAlreadyValidated: canAppendAlreadyValidated,
-							__peerbitDeferIndexWrite: true,
-							__peerbitOnAppendHashes: (hashes: string[]) => {
-								for (const hash of hashes) {
-									if (hashOnlyEntryAdded && !this._pendingIHave.has(hash)) {
-										this.onEntryAddedHash(hash);
-										continue;
-									}
-									this.onEntryAddedHash(hash, () =>
-										materializeMergedEntry(hash),
-									);
+						const onAppendHashes = (hashes: string[]) => {
+							for (const hash of hashes) {
+								if (hashOnlyEntryAdded && !this._pendingIHave.has(hash)) {
+									this.onEntryAddedHash(hash);
+									continue;
 								}
-							},
-							__peerbitProfile: syncProfile,
-						});
+								this.onEntryAddedHash(hash, () =>
+									materializeMergedEntry(hash),
+								);
+							}
+						};
+						const preparedAppendFacts: PreparedAppendJoinFacts[] = [];
+						let canUsePreparedAppendFacts = canAppendAlreadyValidated;
+						if (canUsePreparedAppendFacts) {
+							for (const entry of allToMerge) {
+								const prepared =
+									getPreparedRawExchangeAppendFacts(entry);
+								if (!prepared) {
+									canUsePreparedAppendFacts = false;
+									preparedAppendFacts.length = 0;
+									break;
+								}
+								preparedAppendFacts.push(prepared);
+							}
+						}
+						const joinedPreparedFacts =
+							canUsePreparedAppendFacts &&
+							(await this.log.joinPreparedAppendFactsBatch(
+								preparedAppendFacts,
+								{
+									__peerbitEntriesAlreadyMissing: true,
+									__peerbitCanAppendAlreadyValidated:
+										canAppendAlreadyValidated,
+									__peerbitDeferIndexWrite: true,
+									__peerbitOnAppendHashes: onAppendHashes,
+									__peerbitProfile: syncProfile,
+								},
+							));
+						if (!joinedPreparedFacts) {
+							await this.log.join(allToMerge, {
+								__peerbitBatchIndependent: true,
+								__peerbitEntriesAlreadyMissing: true,
+								__peerbitCanAppendAlreadyValidated:
+									canAppendAlreadyValidated,
+								__peerbitDeferIndexWrite: true,
+								__peerbitOnAppendHashes: onAppendHashes,
+								__peerbitProfile: syncProfile,
+							});
+						}
 						if (syncProfile) {
 							emitSyncProfileDuration(syncProfile, lowerLogJoinStartedAt, {
 								name: "sharedLog.receive.lowerLogJoin",
 								component: "shared-log",
 								entries: allToMerge.length,
 								messages: 1,
-								details: { hashOnlyEntryAdded },
+								details: { hashOnlyEntryAdded, joinedPreparedFacts },
 							});
 						}
 						// Network joins bypass SharedLog.join(), but churn repair scans

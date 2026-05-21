@@ -4,6 +4,7 @@ import {
 	EntryType,
 	LamportClock as Clock,
 	Meta,
+	type PreparedAppendJoinFacts,
 	type PreparedNativeLogEntry,
 	ShallowEntry,
 	ShallowMeta,
@@ -226,6 +227,34 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 		});
 	}
 
+	toPreparedAppendJoinFacts(): PreparedAppendJoinFacts {
+		const shallowEntry = this.toShallow(true);
+		const nativeEntry: PreparedNativeLogEntry = {
+			hash: this.hash,
+			gid: this.facts.gid,
+			next: this.facts.next,
+			type: this.facts.type,
+			head: true,
+			payloadSize: this.facts.payloadByteLength,
+			data: this.facts.metaData,
+			clock: {
+				timestamp: {
+					wallTime: this.facts.wallTime,
+					logical: this.facts.logical,
+				},
+			},
+		};
+		return {
+			hash: this.hash,
+			bytes: this.bytes,
+			byteLength: this.size,
+			meta: this.meta,
+			shallowEntry,
+			nativeEntry,
+			materializeEntry: () => this,
+		};
+	}
+
 	private materialize(): Entry<T> {
 		if (this.materialized) {
 			return this.materialized;
@@ -248,6 +277,13 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 		return entry;
 	}
 }
+
+export const getPreparedRawExchangeAppendFacts = (
+	entry: Entry<any>,
+): PreparedAppendJoinFacts | undefined =>
+	entry instanceof PreparedRawExchangeEntry
+		? entry.toPreparedAppendJoinFacts()
+		: undefined;
 
 @variant([0, 3])
 export class RequestIPrune extends TransportMessage {

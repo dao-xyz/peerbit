@@ -127,6 +127,20 @@ const putPreparedEntryBlock = async (
 
 type NativeLogEntry = PreparedNativeLogEntry;
 
+export type PreparedAppendIndexFacts = {
+	hash: string;
+	meta: {
+		clock: Clock;
+		gid: string;
+		next: string[];
+		type: EntryType;
+		data?: Uint8Array;
+	};
+	size?: number;
+	shallowEntry: ShallowEntry;
+	nativeEntry?: NativeLogEntry;
+};
+
 type NativeJoinCutCheck = {
 	gid: string;
 	wallTime: bigint | number | string;
@@ -1660,6 +1674,198 @@ export class EntryIndex<T> {
 				await this.privateUpdateNextHeadHashes([...externalNexts], false);
 				emitEntryIndexProfileDuration(profile, externalNextStartedAt, {
 					name: "log.entryIndex.putAppendBatch.externalNexts",
+					component: "log",
+					entries: externalNexts.size,
+					messages: 1,
+				});
+			}
+		})().finally(() => {
+			for (const entry of entries) {
+				this.insertionPromises.delete(entry.hash);
+			}
+		});
+
+		for (const entry of entries) {
+			this.insertionPromises.set(entry.hash, promise);
+		}
+
+		return promise;
+	}
+
+	// Internal trusted receive path for callers that can supply prepared append facts.
+	async putAppendFactsBatch(
+		entries: PreparedAppendIndexFacts[],
+		properties: {
+			unique: boolean;
+			externalNextHashes?: string[];
+			heads?: boolean[];
+			deferIndexWrite?: boolean;
+			profile?: EntryIndexProfileSink;
+		},
+	) {
+		if (entries.length === 0) {
+			return;
+		}
+		if (this.properties.onGidRemoved) {
+			throw new Error("Prepared append facts batch requires no onGidRemoved hook");
+		}
+
+		for (const entry of entries) {
+			if (!entry.hash) {
+				throw new Error("Missing hash");
+			}
+			const existingPromise = this.insertionPromises.get(entry.hash);
+			if (existingPromise) {
+				await existingPromise;
+			}
+		}
+
+		const promise = (async () => {
+			const profile = properties.profile;
+			const prepareStartedAt = entryIndexProfileStart(profile);
+			const externalNexts = new Set<string>(
+				properties.externalNextHashes ?? [],
+			);
+			const shouldDiscoverExternalNexts = !properties.externalNextHashes;
+			const batchHashes = shouldDiscoverExternalNexts
+				? new Set(entries.map((entry) => entry.hash))
+				: undefined;
+			const putBatch = this.properties.index.putBatch;
+			const shallowEntries: ShallowEntry[] = [];
+			const nativeEntries: NativeLogEntry[] = [];
+			const nativeGraphPutAppendChain =
+				properties.externalNextHashes &&
+				this.properties.nativeGraph?.graph.putAppendChain
+					? this.properties.nativeGraph.graph.putAppendChain.bind(
+							this.properties.nativeGraph.graph,
+						)
+					: undefined;
+			const nativeGraphPutBatch = this.properties.nativeGraph?.graph.putBatch
+				? this.properties.nativeGraph.graph.putBatch.bind(
+						this.properties.nativeGraph.graph,
+					)
+				: undefined;
+			const deferBatchIndexWrite =
+				properties.deferIndexWrite === true &&
+				!!putBatch &&
+				!!this.properties.nativeGraph &&
+				entries.every((entry) => entry.meta.type !== EntryType.CUT);
+
+			for (let i = 0; i < entries.length; i++) {
+				const entry = entries[i]!;
+				const isHead = properties.heads?.[i] ?? i === entries.length - 1;
+				if (properties.unique === true || !(await this.has(entry.hash))) {
+					this._length++;
+				}
+
+				const shallowEntry = entry.shallowEntry;
+				shallowEntry.head = isHead;
+				const nativeEntry =
+					this.properties.nativeGraph &&
+					(entry.nativeEntry ?? toNativeLogEntry(shallowEntry));
+				if (nativeEntry) {
+					nativeEntry.head = isHead;
+				}
+				if (putBatch) {
+					shallowEntries.push(shallowEntry);
+					nativeEntry && nativeEntries.push(nativeEntry);
+				} else {
+					await this.properties.index.put(shallowEntry);
+					nativeEntry && nativeEntries.push(nativeEntry);
+				}
+
+				if (batchHashes) {
+					for (const next of entry.meta.next) {
+						if (!batchHashes.has(next)) {
+							externalNexts.add(next);
+						}
+					}
+				}
+			}
+			emitEntryIndexProfileDuration(profile, prepareStartedAt, {
+				name: "log.entryIndex.putAppendFactsBatch.prepare",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+				details: {
+					unique: properties.unique,
+					nativeEntries: nativeEntries.length,
+					discoverExternalNexts: shouldDiscoverExternalNexts,
+				},
+			});
+
+			const putNativeEntries = (allowLoopFallback: boolean) => {
+				if (nativeEntries.length === 0) {
+					return;
+				}
+				if (nativeGraphPutAppendChain) {
+					const nativePutStartedAt = entryIndexProfileStart(profile);
+					nativeGraphPutAppendChain(nativeEntries);
+					emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
+						name: "log.entryIndex.putAppendFactsBatch.nativeGraphPut",
+						component: "log",
+						entries: nativeEntries.length,
+						messages: 1,
+						details: { method: "putAppendChain" },
+					});
+				} else if (nativeGraphPutBatch) {
+					const nativePutStartedAt = entryIndexProfileStart(profile);
+					nativeGraphPutBatch(nativeEntries);
+					emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
+						name: "log.entryIndex.putAppendFactsBatch.nativeGraphPut",
+						component: "log",
+						entries: nativeEntries.length,
+						messages: 1,
+						details: { method: "putBatch" },
+					});
+				} else if (allowLoopFallback) {
+					const nativePutStartedAt = entryIndexProfileStart(profile);
+					for (const nativeEntry of nativeEntries) {
+						this.properties.nativeGraph?.graph.put(nativeEntry);
+					}
+					emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
+						name: "log.entryIndex.putAppendFactsBatch.nativeGraphPut",
+						component: "log",
+						entries: nativeEntries.length,
+						messages: 1,
+						details: { method: "putLoop" },
+					});
+				}
+			};
+
+			if (deferBatchIndexWrite) {
+				const indexPutStartedAt = entryIndexProfileStart(profile);
+				for (const shallowEntry of shallowEntries) {
+					this.pendingIndexWrites.set(shallowEntry.hash, shallowEntry);
+				}
+				this.schedulePendingIndexWriteFlush();
+				emitEntryIndexProfileDuration(profile, indexPutStartedAt, {
+					name: "log.entryIndex.putAppendFactsBatch.indexPut",
+					component: "log",
+					entries: shallowEntries.length,
+					messages: 1,
+					details: { deferred: true },
+				});
+				putNativeEntries(true);
+			} else if (putBatch) {
+				const indexPutStartedAt = entryIndexProfileStart(profile);
+				await putBatch.call(this.properties.index, shallowEntries);
+				emitEntryIndexProfileDuration(profile, indexPutStartedAt, {
+					name: "log.entryIndex.putAppendFactsBatch.indexPut",
+					component: "log",
+					entries: shallowEntries.length,
+					messages: 1,
+				});
+				putNativeEntries(true);
+			} else if (nativeEntries.length > 0) {
+				putNativeEntries(true);
+			}
+
+			if (externalNexts.size > 0) {
+				const externalNextStartedAt = entryIndexProfileStart(profile);
+				await this.privateUpdateNextHeadHashes([...externalNexts], false);
+				emitEntryIndexProfileDuration(profile, externalNextStartedAt, {
+					name: "log.entryIndex.putAppendFactsBatch.externalNexts",
 					component: "log",
 					entries: externalNexts.size,
 					messages: 1,

@@ -136,6 +136,10 @@ describe("raw exchange-head sync", () => {
 				db2.log.log.entryIndex,
 				"putAppendBatch",
 			);
+			const lowerPutAppendFactsBatchSpy = sinon.spy(
+				db2.log.log.entryIndex,
+				"putAppendFactsBatch",
+			);
 			const coordinateIndex = db2.log.entryCoordinatesIndex as any;
 			const coordinateBatchSpy = sinon.spy(
 				coordinateIndex,
@@ -218,14 +222,25 @@ describe("raw exchange-head sync", () => {
 						nativeEntries?: unknown[];
 				  }
 				| undefined;
-			expect(preparedLowerJoin).to.exist;
-			expect(preparedLowerJoin!.nativeEntries).to.have.length(entryCount);
+			if (preparedLowerJoin) {
+				expect(preparedLowerJoin.nativeEntries).to.have.length(entryCount);
+			} else {
+				const preparedFactsJoinCall = lowerPutAppendFactsBatchSpy
+					.getCalls()
+					.find((call) => call.args[0]?.length === entryCount);
+				expect(preparedFactsJoinCall).to.exist;
+				expect(
+					preparedFactsJoinCall!.args[0].every(
+						(row: { nativeEntry?: unknown }) => !!row.nativeEntry,
+					),
+				).to.equal(true);
+			}
 			expect(persistBatchSpy.callCount).to.be.greaterThan(0);
 			expect(coordinateBatchSpy.callCount).to.be.greaterThan(0);
 			expect(coordinatePrepareSpy.callCount).to.be.greaterThan(0);
 			expect(
 				coordinatePrepareSpy.returnValues.some(
-					(prepared) =>
+					(prepared: any) =>
 						prepared &&
 						prepared !== false &&
 						!prepared.coordinateEntry &&
