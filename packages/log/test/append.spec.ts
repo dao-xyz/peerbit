@@ -165,6 +165,16 @@ describe("append", function () {
 		const putBatchSpy = sinon.spy(log.entryIndex.properties.index, "putBatch");
 		const blockPutSpy = sinon.spy(store, "put");
 		const blockPutManySpy = sinon.spy(store, "putMany");
+		const blockPutKnownManySpy =
+			"putKnownMany" in store &&
+			typeof (store as { putKnownMany?: unknown }).putKnownMany === "function"
+				? sinon.spy(
+						store as unknown as {
+							putKnownMany: (blocks: [string, Uint8Array][]) => any;
+						},
+						"putKnownMany",
+					)
+				: undefined;
 		const shallowSpy = sinon.spy(EntryV0.prototype, "toShallow");
 		const nativeAppendChainSpy = sinon.spy(
 			log.entryIndex.properties.nativeGraph!.graph,
@@ -173,6 +183,10 @@ describe("append", function () {
 		const nativePrepareAndPutSpy = sinon.spy(
 			log.entryIndex.properties.nativeGraph!.graph,
 			"prepareEntryV0PlainChainAndPut",
+		);
+		const nativeCommitSpy = sinon.spy(
+			log.entryIndex.properties.nativeGraph!.graph,
+			"prepareEntryV0PlainChainCommit",
 		);
 		const preparedBlockSpy = sinon.spy(Entry, "takePreparedBlock");
 		const preparedShallowSpy = sinon.spy(Entry, "takePreparedShallowEntry");
@@ -212,15 +226,17 @@ describe("append", function () {
 				result.entries.length,
 			);
 			expect(blockPutSpy.callCount).equal(0);
-			expect(blockPutManySpy.callCount).equal(1);
-			expect(blockPutManySpy.firstCall.args[0]).to.have.length(
+			expect(blockPutManySpy.callCount).equal(0);
+			expect(blockPutKnownManySpy?.callCount).equal(1);
+			expect(blockPutKnownManySpy?.firstCall.args[0]).to.have.length(
+				result.entries.length,
+			);
+			expect(nativeCommitSpy.callCount).equal(1);
+			expect(nativeCommitSpy.firstCall.args[0].payloadDatas).to.have.length(
 				result.entries.length,
 			);
 			expect(shallowSpy.callCount).equal(0);
 			expect(nativePrepareAndPutSpy.callCount).equal(1);
-			expect(
-				nativePrepareAndPutSpy.firstCall.args[0].payloadDatas,
-			).to.have.length(result.entries.length);
 			expect(nativeAppendChainSpy.callCount).equal(0);
 			expect(preparedBlockSpy.callCount).equal(0);
 			expect(preparedShallowSpy.callCount).equal(0);
@@ -231,9 +247,11 @@ describe("append", function () {
 			putBatchSpy.restore();
 			blockPutSpy.restore();
 			blockPutManySpy.restore();
+			blockPutKnownManySpy?.restore();
 			shallowSpy.restore();
 			nativeAppendChainSpy.restore();
 			nativePrepareAndPutSpy.restore();
+			nativeCommitSpy.restore();
 			preparedBlockSpy.restore();
 			preparedShallowSpy.restore();
 			preparedNativeSpy.restore();

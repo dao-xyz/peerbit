@@ -422,6 +422,7 @@ export class Documents<
 	}> = [];
 	private _documentChangeListenerCount = 0;
 	private _documentInternalChangeListenerCount = 0;
+	private _documentChangeListenerTrackingInitialized = false;
 	private idResolver!: (any: any) => indexerTypes.IdPrimitive;
 	private domain?: CustomDocumentDomain<InferR<D>>;
 	private strictHistory: boolean;
@@ -653,6 +654,13 @@ export class Documents<
 	}
 
 	private trackDocumentChangeListeners(): void {
+		if (this._documentChangeListenerTrackingInitialized) {
+			return;
+		}
+		this._documentChangeListenerTrackingInitialized = true;
+		this._documentChangeListeners ??= [];
+		this._documentChangeListenerCount ??= 0;
+		this._documentInternalChangeListenerCount ??= 0;
 		const events = this.events;
 		const addEventListener = events.addEventListener.bind(events);
 		const removeEventListener = events.removeEventListener.bind(events);
@@ -744,6 +752,7 @@ export class Documents<
 	}
 	private keepCache: Set<string> | undefined = undefined;
 	async open(options: SetupOptions<T, I, D>) {
+		this.trackDocumentChangeListeners();
 		this._clazz = options.type;
 		this.canOpen = options.canOpen;
 		this._mode = options.mode ?? "auto";
@@ -2062,9 +2071,11 @@ export class Documents<
 	}
 
 	private hasDocumentChangeConsumers(): boolean {
+		const changeListenerCount = this._documentChangeListenerCount ?? 0;
+		const internalChangeListenerCount =
+			this._documentInternalChangeListenerCount ?? 0;
 		return (
-			this._documentChangeListenerCount >
-				this._documentInternalChangeListenerCount ||
+			changeListenerCount > internalChangeListenerCount ||
 			this._index.hasPending === true
 		);
 	}
