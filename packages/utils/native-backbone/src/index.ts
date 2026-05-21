@@ -489,6 +489,39 @@ type NativePeerbitBackboneHandle = {
 		documentProjectionEncodedDocument: Uint8Array,
 		documentProjectionSigner: Uint8Array | undefined,
 	) => unknown[];
+	prepare_plain_entry_commit_no_next_facts_document_index_compact: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		documentKey: string,
+		documentValuePrefixBytes: Uint8Array,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlan:
+			| NativeBackboneSimpleDocumentProjectionPlan
+			| undefined,
+		documentProjectionEncodedDocument: Uint8Array | undefined,
+		documentProjectionSigner: Uint8Array | undefined,
+	) => unknown[];
+	prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		documentKey: string,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlanId: number,
+		documentProjectionEncodedDocument: Uint8Array,
+		documentProjectionSigner: Uint8Array | undefined,
+	) => unknown[];
 	prepare_plain_entry_commit_no_next_facts_document_index_trim_hashes: (
 		wallTime: bigint,
 		logical: number,
@@ -2176,6 +2209,33 @@ export class NativeBackboneLogGraph {
 		if (
 			documentIndexArgs &&
 			projection &&
+			this.options?.documentProjectionPlanId &&
+			input.trimLengthTo == null &&
+			(input.next == null || input.next.length === 0)
+		) {
+			return preparedCommitFactsFromRow(
+				this.native.prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact(
+					BigInt(input.wallTime),
+					input.logical ?? 0,
+					input.gid,
+					input.type ?? 0,
+					input.metaData,
+					input.payloadData,
+					documentIndex.key,
+					documentIndex.existingCreated == null
+						? ""
+						: integerString(documentIndex.existingCreated),
+					documentIndex.byteElementIndexLimit ?? 0,
+					documentIndex.deleteTrimmedHeads === true,
+					this.options.documentProjectionPlanId(projection.plan),
+					projection.encodedDocument,
+					projection.signer,
+				),
+			);
+		}
+		if (
+			documentIndexArgs &&
+			projection &&
 			this.options?.documentProjectionPlanId
 		) {
 			return preparedCommitFactsFromRow(
@@ -2190,6 +2250,23 @@ export class NativeBackboneLogGraph {
 					this.options.documentProjectionPlanId(projection.plan),
 					projection.encodedDocument,
 					projection.signer,
+				),
+			);
+		}
+		if (
+			documentIndexArgs &&
+			input.trimLengthTo == null &&
+			(input.next == null || input.next.length === 0)
+		) {
+			return preparedCommitFactsFromRow(
+				this.native.prepare_plain_entry_commit_no_next_facts_document_index_compact(
+					BigInt(input.wallTime),
+					input.logical ?? 0,
+					input.gid,
+					input.type ?? 0,
+					input.metaData,
+					input.payloadData,
+					...documentIndexArgs,
 				),
 			);
 		}

@@ -1658,6 +1658,128 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_entry_commit_no_next_facts_document_index_compact(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        document_key: String,
+        document_value_prefix_bytes: Vec<u8>,
+        document_existing_created: String,
+        document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
+        document_projection_plan: JsValue,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
+    ) -> Result<Array, JsValue> {
+        let document_gid = gid.clone();
+        let payload_size = payload_data.length();
+        let document_index_commit = document_index_append_commit(
+            document_key,
+            document_value_prefix_bytes,
+            document_existing_created,
+            document_byte_element_index_limit,
+            document_delete_trimmed_heads,
+            document_projection_plan,
+            document_projection_encoded_document,
+            document_projection_signer,
+        )?;
+        self.prepare_plain_entry_commit_no_next_document_index_compact(
+            wall_time,
+            logical,
+            gid,
+            entry_type,
+            meta_data,
+            payload_data,
+            document_gid,
+            payload_size,
+            document_index_commit,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        document_key: String,
+        document_existing_created: String,
+        document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
+        document_projection_plan_id: u32,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
+    ) -> Result<Array, JsValue> {
+        let document_gid = gid.clone();
+        let payload_size = payload_data.length();
+        let document_index_commit = document_index_cached_projection_append_commit(
+            document_key,
+            document_existing_created,
+            document_byte_element_index_limit,
+            document_delete_trimmed_heads,
+            document_projection_plan_id,
+            document_projection_encoded_document,
+            document_projection_signer,
+        )?;
+        self.prepare_plain_entry_commit_no_next_document_index_compact(
+            wall_time,
+            logical,
+            gid,
+            entry_type,
+            meta_data,
+            payload_data,
+            document_gid,
+            payload_size,
+            document_index_commit,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_plain_entry_commit_no_next_document_index_compact(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        document_gid: String,
+        payload_size: u32,
+        document_index_commit: DocumentIndexAppendCommit,
+    ) -> Result<Array, JsValue> {
+        let (entry_facts, _) = self
+            .log
+            .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder(
+                &self.builder,
+                &mut self.blocks,
+                wall_time,
+                logical,
+                gid,
+                Vec::new(),
+                entry_type,
+                optional_bytes_from_js(meta_data),
+                payload_data.to_vec(),
+                None,
+                None,
+            )?;
+        self.put_document_index_for_append(
+            Some(document_index_commit),
+            wall_time,
+            &entry_facts.hash,
+            &document_gid,
+            payload_size,
+        )?;
+        Ok(committed_entry_facts_to_row(&entry_facts, false))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare_plain_entry_commit_no_next_facts_document_index_trim_hashes(
         &mut self,
         wall_time: u64,
