@@ -120,6 +120,14 @@ type PreparedCommitOnlyAppendResult<T> = {
 	documentTrimmedHeadsProcessed?: boolean;
 };
 
+type PreparedIndependentAppendBatch = {
+	blocks: PreparedEntryBlock[];
+	prepared?: {
+		shallowEntries: ShallowEntry[];
+		nativeEntries?: PreparedNativeLogEntry[];
+	};
+};
+
 type NativePreparedNoNextCommit = {
 	bytes?: Uint8Array;
 	getBytes?: (hash: string) => Uint8Array | undefined;
@@ -2556,6 +2564,14 @@ export class Log<T> {
 			});
 		}
 
+		const preparedBatch = this.takePreparedIndependentAppendBatch(
+			entries,
+			headFlags,
+		);
+		if (!preparedBatch) {
+			return false;
+		}
+
 		const batchPromise = (async () => {
 			const clockStartedAt = internalProfileStart(profile);
 			for (const entry of entries) {
@@ -2569,7 +2585,7 @@ export class Log<T> {
 			});
 
 			const blocksStartedAt = internalProfileStart(profile);
-			await this.putAppendEntryBlocks(entries);
+			await this.putAppendEntryBlocks(entries, preparedBatch.blocks);
 			emitInternalProfileDuration(profile, blocksStartedAt, {
 				name: "log.joinIndependent.blocks",
 				component: "log",
@@ -2581,6 +2597,7 @@ export class Log<T> {
 			await this.entryIndex.putAppendBatch(entries, {
 				unique: false,
 				heads: headFlags,
+				prepared: preparedBatch.prepared,
 			});
 			emitInternalProfileDuration(profile, indexStartedAt, {
 				name: "log.joinIndependent.entryIndex",
@@ -2616,6 +2633,63 @@ export class Log<T> {
 		}
 		await batchPromise;
 		return true;
+	}
+
+	private takePreparedIndependentAppendBatch(
+		entries: Entry<T>[],
+		headFlags: boolean[],
+	): PreparedIndependentAppendBatch | undefined {
+		if (!entries.every((entry) => Entry.hasPreparedBlock(entry))) {
+			return;
+		}
+		const hasPreparedShallowEntries = entries.every((entry) =>
+			Entry.hasPreparedShallowEntry(entry),
+		);
+		const hasPreparedNativeEntries =
+			hasPreparedShallowEntries &&
+			entries.every((entry) => Entry.hasPreparedNativeLogEntry(entry));
+
+		const blocks = entries.map((entry) => {
+			const prepared = Entry.takePreparedBlock(entry);
+			if (!prepared) {
+				throw new Error("Missing prepared entry block");
+			}
+			return prepared;
+		});
+		if (!hasPreparedShallowEntries) {
+			return { blocks };
+		}
+
+		const shallowEntries = entries.map((entry, index) => {
+			const shallowEntry = Entry.takePreparedShallowEntry(
+				entry,
+				headFlags[index] ?? true,
+			);
+			if (!shallowEntry) {
+				throw new Error("Missing prepared shallow entry");
+			}
+			return shallowEntry;
+		});
+		const nativeEntries = hasPreparedNativeEntries
+			? entries.map((entry, index) => {
+					const nativeEntry = Entry.takePreparedNativeLogEntry(
+						entry,
+						headFlags[index] ?? true,
+					);
+					if (!nativeEntry) {
+						throw new Error("Missing prepared native log entry");
+					}
+					return nativeEntry;
+				})
+			: undefined;
+
+		return {
+			blocks,
+			prepared: {
+				shallowEntries,
+				nativeEntries,
+			},
+		};
 	}
 
 	/**

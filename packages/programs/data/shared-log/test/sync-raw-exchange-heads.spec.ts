@@ -128,6 +128,10 @@ describe("raw exchange-head sync", () => {
 				.graph as any;
 			const planJoinBatchSpy = sinon.spy(lowerNativeGraph, "planJoinBatch");
 			const planJoinSpy = sinon.spy(lowerNativeGraph, "planJoin");
+			const lowerPutAppendBatchSpy = sinon.spy(
+				db2.log.log.entryIndex,
+				"putAppendBatch",
+			);
 			const coordinateIndex = db2.log.entryCoordinatesIndex as any;
 			const coordinateBatchSpy = sinon.spy(
 				coordinateIndex,
@@ -192,6 +196,20 @@ describe("raw exchange-head sync", () => {
 			expect(putKnownManySpy.callCount).to.be.greaterThan(0);
 			expect(planJoinBatchSpy.callCount).to.be.greaterThan(0);
 			expect(planJoinSpy.callCount).to.equal(0);
+			const preparedLowerJoinCall = lowerPutAppendBatchSpy
+				.getCalls()
+				.find(
+					(call) =>
+						call.args[0]?.length === entryCount &&
+						call.args[1]?.prepared?.shallowEntries?.length === entryCount,
+				);
+			const preparedLowerJoin = preparedLowerJoinCall?.args[1]?.prepared as
+				| {
+						nativeEntries?: unknown[];
+				  }
+				| undefined;
+			expect(preparedLowerJoin).to.exist;
+			expect(preparedLowerJoin!.nativeEntries).to.have.length(entryCount);
 			expect(persistBatchSpy.callCount).to.be.greaterThan(0);
 			expect(coordinateBatchSpy.callCount).to.be.greaterThan(0);
 			expect(coordinatePrepareSpy.callCount).to.be.greaterThan(0);
@@ -226,6 +244,7 @@ describe("raw exchange-head sync", () => {
 			coordinatePrepareSpy.restore();
 			persistBatchSpy.restore();
 			coordinateBatchSpy.restore();
+			lowerPutAppendBatchSpy.restore();
 			planJoinSpy.restore();
 			planJoinBatchSpy.restore();
 			putKnownSpy.restore();

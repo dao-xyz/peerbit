@@ -228,6 +228,10 @@ export abstract class Entry<T> {
 		preparedShallowEntries.set(entry, shallow);
 	}
 
+	static hasPreparedShallowEntry<T>(entry: Entry<T>): boolean {
+		return preparedShallowEntries.has(entry);
+	}
+
 	static takePreparedShallowEntry<T>(
 		entry: Entry<T>,
 		isHead: boolean,
@@ -245,6 +249,10 @@ export abstract class Entry<T> {
 		nativeEntry: PreparedNativeLogEntry,
 	): void {
 		preparedNativeLogEntries.set(entry, nativeEntry);
+	}
+
+	static hasPreparedNativeLogEntry<T>(entry: Entry<T>): boolean {
+		return preparedNativeLogEntries.has(entry);
 	}
 
 	static takePreparedNativeLogEntry<T>(
