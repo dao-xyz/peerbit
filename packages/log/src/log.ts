@@ -64,6 +64,13 @@ type BlocksWithPutKnownMany = Blocks & {
 	) => Promise<string[]> | string[];
 };
 
+type BlocksWithPutKnownManyColumns = Blocks & {
+	putKnownManyColumns: (
+		cids: string[],
+		bytes: Uint8Array[],
+	) => Promise<string[]> | string[];
+};
+
 type BlocksWithPutKnown = Blocks & {
 	putKnown: (cid: string, bytes: Uint8Array) => Promise<string> | string;
 };
@@ -76,6 +83,12 @@ const hasPutKnown = (storage: Blocks): storage is BlocksWithPutKnown =>
 
 const hasPutKnownMany = (storage: Blocks): storage is BlocksWithPutKnownMany =>
 	typeof (storage as BlocksWithPutKnownMany).putKnownMany === "function";
+
+const hasPutKnownManyColumns = (
+	storage: Blocks,
+): storage is BlocksWithPutKnownManyColumns =>
+	typeof (storage as BlocksWithPutKnownManyColumns).putKnownManyColumns ===
+	"function";
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -2124,6 +2137,26 @@ export class Log<T> {
 			}
 			return;
 		}
+		if (hasPutKnownManyColumns(this._storage)) {
+			const cids = new Array<string>(blocks.length);
+			const bytes = new Array<Uint8Array>(blocks.length);
+			for (let i = 0; i < blocks.length; i++) {
+				const block = blocks[i]!;
+				cids[i] = block.cid;
+				bytes[i] = block.block.bytes;
+			}
+			const cidsResult = this._storage.putKnownManyColumns(cids, bytes);
+			const result = isPromiseLike(cidsResult) ? await cidsResult : cidsResult;
+			if (result.length !== blocks.length) {
+				throw new Error("Unexpected block batch result length");
+			}
+			for (let i = 0; i < result.length; i++) {
+				if (result[i] !== cids[i]) {
+					throw new Error("Unexpected block batch cid");
+				}
+			}
+			return;
+		}
 		if (hasPutKnownMany(this._storage)) {
 			const cidsResult = this._storage.putKnownMany(
 				blocks.map((block) => [block.cid, block.block.bytes] as const),
@@ -2162,6 +2195,26 @@ export class Log<T> {
 			const cid = isPromiseLike(cidResult) ? await cidResult : cidResult;
 			if (cid !== block.cid) {
 				throw new Error("Unexpected block cid");
+			}
+			return;
+		}
+		if (hasPutKnownManyColumns(this._storage)) {
+			const cids = new Array<string>(blocks.length);
+			const bytes = new Array<Uint8Array>(blocks.length);
+			for (let i = 0; i < blocks.length; i++) {
+				const block = blocks[i]!;
+				cids[i] = block.cid;
+				bytes[i] = block.bytes;
+			}
+			const cidsResult = this._storage.putKnownManyColumns(cids, bytes);
+			const result = isPromiseLike(cidsResult) ? await cidsResult : cidsResult;
+			if (result.length !== blocks.length) {
+				throw new Error("Unexpected block batch result length");
+			}
+			for (let i = 0; i < result.length; i++) {
+				if (result[i] !== cids[i]) {
+					throw new Error("Unexpected block batch cid");
+				}
 			}
 			return;
 		}
@@ -2226,6 +2279,21 @@ export class Log<T> {
 				}
 			}
 		};
+		if (hasPutKnownManyColumns(this._storage)) {
+			const cids = new Array<string>(preparedBlocks.length);
+			const bytes = new Array<Uint8Array>(preparedBlocks.length);
+			for (let i = 0; i < preparedBlocks.length; i++) {
+				const block = preparedBlocks[i]!;
+				cids[i] = block.cid;
+				bytes[i] = block.block.bytes;
+			}
+			const cidsResult = this._storage.putKnownManyColumns(cids, bytes);
+			if (isPromiseLike(cidsResult)) {
+				return cidsResult.then(checkCids);
+			}
+			checkCids(cidsResult);
+			return;
+		}
 		if (hasPutKnownMany(this._storage)) {
 			const cidsResult = this._storage.putKnownMany(
 				preparedBlocks.map((block) => [block.cid, block.block.bytes] as const),

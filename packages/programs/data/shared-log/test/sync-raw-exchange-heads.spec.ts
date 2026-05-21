@@ -132,6 +132,11 @@ describe("raw exchange-head sync", () => {
 				db2.log.log.blocks as any,
 				"putKnownMany",
 			);
+			const putKnownManyColumnsSpy =
+				"putKnownManyColumns" in db2.log.log.blocks &&
+				typeof (db2.log.log.blocks as any).putKnownManyColumns === "function"
+					? sinon.spy(db2.log.log.blocks as any, "putKnownManyColumns")
+					: undefined;
 			const lowerNativeGraph = db2.log.log.entryIndex.properties.nativeGraph!
 				.graph as any;
 			const planJoinBatchSpy = sinon.spy(lowerNativeGraph, "planJoinBatch");
@@ -208,10 +213,15 @@ describe("raw exchange-head sync", () => {
 
 			expect(rawExchangeHeads).to.be.greaterThan(0);
 			expect(exchangeHeads).to.equal(0);
-			expect(putKnownSpy.callCount + putKnownManySpy.callCount).to.be.greaterThan(
-				0,
-			);
-			expect(putKnownManySpy.callCount).to.be.greaterThan(0);
+			expect(
+				putKnownSpy.callCount +
+					putKnownManySpy.callCount +
+					(putKnownManyColumnsSpy?.callCount ?? 0),
+			).to.be.greaterThan(0);
+			expect(
+				putKnownManySpy.callCount +
+					(putKnownManyColumnsSpy?.callCount ?? 0),
+			).to.be.greaterThan(0);
 			expect(planJoinBatchSpy.callCount).to.be.greaterThan(0);
 			expect(planJoinSpy.callCount).to.equal(0);
 			const preparedLowerJoinCall = lowerPutAppendBatchSpy
@@ -295,6 +305,7 @@ describe("raw exchange-head sync", () => {
 			planJoinBatchSpy.restore();
 			putKnownSpy.restore();
 			putKnownManySpy.restore();
+			putKnownManyColumnsSpy?.restore();
 		} finally {
 			await session.stop();
 		}

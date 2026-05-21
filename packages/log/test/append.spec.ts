@@ -175,6 +175,20 @@ describe("append", function () {
 						"putKnownMany",
 					)
 				: undefined;
+		const blockPutKnownManyColumnsSpy =
+			"putKnownManyColumns" in store &&
+			typeof (store as { putKnownManyColumns?: unknown })
+				.putKnownManyColumns === "function"
+				? sinon.spy(
+						store as unknown as {
+							putKnownManyColumns: (
+								cids: string[],
+								bytes: Uint8Array[],
+							) => any;
+						},
+						"putKnownManyColumns",
+					)
+				: undefined;
 		const shallowSpy = sinon.spy(EntryV0.prototype, "toShallow");
 		const nativeAppendChainSpy = sinon.spy(
 			log.entryIndex.properties.nativeGraph!.graph,
@@ -227,10 +241,22 @@ describe("append", function () {
 			);
 			expect(blockPutSpy.callCount).equal(0);
 			expect(blockPutManySpy.callCount).equal(0);
-			expect(blockPutKnownManySpy?.callCount).equal(1);
-			expect(blockPutKnownManySpy?.firstCall.args[0]).to.have.length(
-				result.entries.length,
-			);
+			expect(
+				(blockPutKnownManySpy?.callCount ?? 0) +
+					(blockPutKnownManyColumnsSpy?.callCount ?? 0),
+			).equal(1);
+			if (blockPutKnownManyColumnsSpy?.called) {
+				expect(blockPutKnownManyColumnsSpy.firstCall.args[0]).to.have.length(
+					result.entries.length,
+				);
+				expect(blockPutKnownManyColumnsSpy.firstCall.args[1]).to.have.length(
+					result.entries.length,
+				);
+			} else {
+				expect(blockPutKnownManySpy?.firstCall.args[0]).to.have.length(
+					result.entries.length,
+				);
+			}
 			expect(nativeCommitSpy.callCount).equal(1);
 			expect(nativeCommitSpy.firstCall.args[0].payloadDatas).to.have.length(
 				result.entries.length,
@@ -248,6 +274,7 @@ describe("append", function () {
 			blockPutSpy.restore();
 			blockPutManySpy.restore();
 			blockPutKnownManySpy?.restore();
+			blockPutKnownManyColumnsSpy?.restore();
 			shallowSpy.restore();
 			nativeAppendChainSpy.restore();
 			nativePrepareAndPutSpy.restore();

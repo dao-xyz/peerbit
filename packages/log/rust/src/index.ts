@@ -1479,6 +1479,22 @@ export class NativeLogBlockStore {
 			cids[i] = cid;
 			values[i] = copyBytes(bytes);
 		}
+		return this.putKnownManyColumns(cids, values, { copied: true });
+	}
+
+	putKnownManyColumns(
+		cids: string[],
+		bytes: Uint8Array[],
+		options?: { copied?: boolean },
+	): string[] {
+		if (cids.length !== bytes.length) {
+			throw new Error("Expected equal block column lengths");
+		}
+		if (cids.length === 0) {
+			return [];
+		}
+		const values =
+			options?.copied === true ? bytes : bytes.map((value) => copyBytes(value));
 		this.native.put_many(cids, values);
 		return cids;
 	}

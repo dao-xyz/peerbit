@@ -2603,11 +2603,25 @@ export class NativeBackboneBlockStore {
 		if (blocks.length === 0) {
 			return [];
 		}
-		this.native.block_put_many(
-			blocks.map(([cid]) => cid),
-			blocks.map(([, bytes]) => bytes),
-		);
-		return blocks.map(([cid]) => cid);
+		const cids = new Array<string>(blocks.length);
+		const bytes = new Array<Uint8Array>(blocks.length);
+		for (let i = 0; i < blocks.length; i++) {
+			const block = blocks[i]!;
+			cids[i] = block[0];
+			bytes[i] = block[1];
+		}
+		return this.putKnownManyColumns(cids, bytes);
+	}
+
+	putKnownManyColumns(cids: string[], bytes: Uint8Array[]): string[] {
+		if (cids.length !== bytes.length) {
+			throw new Error("Expected equal block column lengths");
+		}
+		if (cids.length === 0) {
+			return [];
+		}
+		this.native.block_put_many(cids, bytes);
+		return cids;
 	}
 
 	putImmutable(cid: string, bytes: Uint8Array): void {
