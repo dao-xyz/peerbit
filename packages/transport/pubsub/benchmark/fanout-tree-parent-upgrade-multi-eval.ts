@@ -12,6 +12,15 @@ import {
 	quantile,
 	runWithConcurrency,
 } from "./sim/bench-utils.js";
+import {
+	DEFAULT_PARENT_UPGRADE_SEEDS,
+	type ParentUpgradePresetConfig,
+	type UpgradeMode,
+	defaultEvidenceLimitsForPreset,
+	parseBool01,
+	parseCsvNumbers,
+	parseParentUpgradePresetConfig,
+} from "./fanout-tree-parent-upgrade-preset.js";
 
 /**
  * Shared-network A/B evidence for proactive parent upgrades.
@@ -50,43 +59,9 @@ type ScenarioName =
 	| "ci-multi-idle"
 	| "ci-multi-sparse-idle"
 	| "ci-multi-hotspot-idle";
-type UpgradeMode = "direct" | "probe" | "shadow";
-type UpgradePreset = "raw" | "default-candidate";
-
-type EvalArgs = {
+type EvalArgs = ParentUpgradePresetConfig & {
 	scenarios: ScenarioName[];
 	seeds: number[];
-	parentUpgradePreset: UpgradePreset;
-	parentUpgradeIntervalMs: number;
-	parentUpgradeLeafOnly: boolean;
-	parentUpgradeMinLevelGain: number;
-	parentUpgradeRootMinLevelGain: number;
-	parentUpgradeRootMinSubtreeGain: number;
-	parentUpgradeNonRootMinLevelGain: number;
-	parentUpgradeMinFreeSlots: number;
-	parentUpgradeRootMinFreeSlots: number;
-	parentUpgradeMaxChildLoadRatio: number;
-	parentUpgradeRootMaxChildLoadRatio: number;
-	parentUpgradeCooldownMs: number;
-	parentUpgradeFailedBackoffMinMs: number;
-	parentUpgradeFailedBackoffMaxMs: number;
-	parentUpgradeQuietMs: number;
-	parentUpgradeRepairQuietMs: number;
-	parentUpgradeMaxPerPeer: number;
-	parentUpgradeRepairGuard: boolean;
-	parentUpgradeDataGuard: boolean;
-	parentUpgradeMode: UpgradeMode;
-	parentUpgradeVerifyStaleRootCapacity: boolean;
-	parentUpgradeStaleRootProbeProbability: number;
-	parentProbeTimeoutMs: number;
-	parentProbeMaxPerRound: number;
-	parentProbeMaxLagMessages: number;
-	parentProbeRejectCooldownMs: number;
-	parentProbeRejectCooldownMaxMs: number;
-	parentShadowObserveMs: number;
-	parentShadowMinObservations: number;
-	parentShadowDualPathMs: number;
-	parentShadowDualPathMinMessages: number;
 	nodes?: number;
 	writers?: number;
 	activeWriters?: number;
@@ -617,19 +592,6 @@ const usage = () => {
 	);
 };
 
-const parseBool01 = (value: string | undefined, fallback: boolean) => {
-	if (value === undefined) return fallback;
-	return value === "1";
-};
-
-const parseCsvNumbers = (value: string | undefined, fallback: number[]) => {
-	if (!value) return fallback;
-	return value
-		.split(",")
-		.map((part) => Number(part.trim()))
-		.filter((n) => Number.isFinite(n));
-};
-
 const parseScenarios = (value: string | undefined): ScenarioName[] => {
 	if (!value || value === "all") {
 		return [
@@ -683,99 +645,17 @@ const parseArgs = (argv: string[]): EvalArgs => {
 		usage();
 		process.exit(0);
 	}
-	const presetRaw = get("--parentUpgradePreset") ?? "raw";
-	if (presetRaw !== "raw" && presetRaw !== "default-candidate") {
-		throw new Error(`Unknown parent upgrade preset: ${presetRaw}`);
-	}
-	const parentUpgradePreset = presetRaw as UpgradePreset;
-	const defaultCandidate = parentUpgradePreset === "default-candidate";
-	const parentUpgradeQuietMs = Number(get("--parentUpgradeQuietMs") ?? 5_000);
-	const parentUpgradeMaxChildLoadRatio = Number(
-		get("--parentUpgradeMaxChildLoadRatio") ?? 0.5,
+	const parentUpgradeConfig = parseParentUpgradePresetConfig(get);
+	const defaultCandidate =
+		parentUpgradeConfig.parentUpgradePreset === "default-candidate";
+	const evidenceDefaults = defaultEvidenceLimitsForPreset(
+		parentUpgradeConfig.parentUpgradePreset,
+		"multi",
 	);
-	const parentUpgradeRootMaxChildLoadRatio = Number(
-		get("--parentUpgradeRootMaxChildLoadRatio") ??
-			Math.min(parentUpgradeMaxChildLoadRatio, 0.4),
-	);
-	const parentUpgradeModeRaw = get("--parentUpgradeMode");
-	const parentUpgradeMode =
-		parentUpgradeModeRaw === "probe" || parentUpgradeModeRaw === "shadow"
-			? parentUpgradeModeRaw
-			: parentUpgradeModeRaw === "direct"
-				? "direct"
-				: defaultCandidate
-					? "shadow"
-					: "direct";
 	return {
 		scenarios: parseScenarios(get("--scenario")),
-		seeds: parseCsvNumbers(get("--seeds"), [1, 2, 3]),
-		parentUpgradePreset,
-		parentUpgradeIntervalMs: Number(get("--parentUpgradeIntervalMs") ?? 1_000),
-		parentUpgradeLeafOnly: parseBool01(get("--parentUpgradeLeafOnly"), true),
-		parentUpgradeMinLevelGain: Number(get("--parentUpgradeMinLevelGain") ?? 2),
-		parentUpgradeRootMinLevelGain: Number(
-			get("--parentUpgradeRootMinLevelGain") ?? 3,
-		),
-		parentUpgradeRootMinSubtreeGain: Number(
-			get("--parentUpgradeRootMinSubtreeGain") ??
-				get("--parentUpgradeRootMinLevelGain") ??
-				3,
-		),
-		parentUpgradeNonRootMinLevelGain: Number(
-			get("--parentUpgradeNonRootMinLevelGain") ?? 2,
-		),
-		parentUpgradeMinFreeSlots: Number(get("--parentUpgradeMinFreeSlots") ?? 8),
-		parentUpgradeRootMinFreeSlots: Number(
-			get("--parentUpgradeRootMinFreeSlots") ??
-				get("--parentUpgradeMinFreeSlots") ??
-				8,
-		),
-		parentUpgradeMaxChildLoadRatio,
-		parentUpgradeRootMaxChildLoadRatio,
-		parentUpgradeCooldownMs: Number(get("--parentUpgradeCooldownMs") ?? 5_000),
-		parentUpgradeFailedBackoffMinMs: Number(
-			get("--parentUpgradeFailedBackoffMinMs") ?? 5_000,
-		),
-		parentUpgradeFailedBackoffMaxMs: Number(
-			get("--parentUpgradeFailedBackoffMaxMs") ?? 60_000,
-		),
-		parentUpgradeQuietMs,
-		parentUpgradeRepairQuietMs: Number(
-			get("--parentUpgradeRepairQuietMs") ?? parentUpgradeQuietMs,
-		),
-		parentUpgradeMaxPerPeer: Number(get("--parentUpgradeMaxPerPeer") ?? 2),
-		parentUpgradeRepairGuard: parseBool01(
-			get("--parentUpgradeRepairGuard"),
-			true,
-		),
-		parentUpgradeDataGuard: parseBool01(get("--parentUpgradeDataGuard"), true),
-		parentUpgradeMode,
-		parentUpgradeVerifyStaleRootCapacity: parseBool01(
-			get("--parentUpgradeVerifyStaleRootCapacity"),
-			defaultCandidate,
-		),
-		parentUpgradeStaleRootProbeProbability: Number(
-			get("--parentUpgradeStaleRootProbeProbability") ?? 0.015625,
-		),
-		parentProbeTimeoutMs: Number(get("--parentProbeTimeoutMs") ?? 500),
-		parentProbeMaxPerRound: Number(get("--parentProbeMaxPerRound") ?? 2),
-		parentProbeMaxLagMessages: Number(get("--parentProbeMaxLagMessages") ?? 0),
-		parentProbeRejectCooldownMs: Number(
-			get("--parentProbeRejectCooldownMs") ?? 10_000,
-		),
-		parentProbeRejectCooldownMaxMs: Number(
-			get("--parentProbeRejectCooldownMaxMs") ?? 60_000,
-		),
-		parentShadowObserveMs: Number(get("--parentShadowObserveMs") ?? 2_000),
-		parentShadowMinObservations: Number(
-			get("--parentShadowMinObservations") ?? 2,
-		),
-		parentShadowDualPathMs: Number(
-			get("--parentShadowDualPathMs") ?? (defaultCandidate ? 5_000 : 0),
-		),
-		parentShadowDualPathMinMessages: Number(
-			get("--parentShadowDualPathMinMessages") ?? (defaultCandidate ? 32 : 1),
-		),
+		seeds: parseCsvNumbers(get("--seeds"), DEFAULT_PARENT_UPGRADE_SEEDS),
+		...parentUpgradeConfig,
 		nodes: get("--nodes") == null ? undefined : Number(get("--nodes")),
 		writers: get("--writers") == null ? undefined : Number(get("--writers")),
 		activeWriters:
@@ -825,12 +705,14 @@ const parseArgs = (argv: string[]): EvalArgs => {
 			get("--maxSecondBatchLatencyP95DeltaRatio") ?? 0.15,
 		),
 		maxProbePerUpgrade: Number(
-			get("--maxProbePerUpgrade") ?? (defaultCandidate ? 8 : 2),
+			get("--maxProbePerUpgrade") ?? evidenceDefaults.maxProbePerUpgrade,
 		),
 		maxRootChildrenDelta: Number(
-			get("--maxRootChildrenDelta") ?? (defaultCandidate ? 2 : 4),
+			get("--maxRootChildrenDelta") ?? evidenceDefaults.maxRootChildrenDelta,
 		),
-		maxRootUploadPctDelta: Number(get("--maxRootUploadPctDelta") ?? 1),
+		maxRootUploadPctDelta: Number(
+			get("--maxRootUploadPctDelta") ?? evidenceDefaults.maxRootUploadPctDelta,
+		),
 		minPromotedBranchGainMs: Number(get("--minPromotedBranchGainMs") ?? 10),
 		minPromotedTreeLevelAvgGain: Number(
 			get("--minPromotedTreeLevelAvgGain") ?? 0.1,

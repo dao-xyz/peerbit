@@ -2,6 +2,12 @@ import { createWriteStream } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { spawn } from "node:child_process";
+import {
+	DEFAULT_PARENT_UPGRADE_FAST_SEED_CSV,
+	DEFAULT_PARENT_UPGRADE_SEED_CSV,
+	PARENT_UPGRADE_FRONTIER_ROOT_CAPS,
+	defaultCandidateArgs,
+} from "./fanout-tree-parent-upgrade-preset.js";
 
 type RunSpec = {
 	name: string;
@@ -69,12 +75,7 @@ const timestamp = () =>
 
 const safeName = (value: string) => value.replace(/[^a-zA-Z0-9_.-]/g, "-");
 
-const baseArgs = [
-	"--parentUpgradePreset",
-	"default-candidate",
-	"--strict",
-	"1",
-];
+const baseArgs = defaultCandidateArgs("--strict", "1");
 
 const singleEval = (...args: string[]) => [
 	"fanout-tree-parent-upgrade-eval",
@@ -88,7 +89,8 @@ const multiEval = (...args: string[]) => [
 	...baseArgs,
 ];
 
-const scenarioSeeds = (quick: boolean) => (quick ? "1" : "1,2,3");
+const scenarioSeeds = (quick: boolean) =>
+	quick ? DEFAULT_PARENT_UPGRADE_FAST_SEED_CSV : DEFAULT_PARENT_UPGRADE_SEED_CSV;
 
 const makeRuns = (
 	quick: boolean,
@@ -179,7 +181,7 @@ const makeRuns = (
 	];
 
 	if (includeFrontier) {
-		for (const cap of ["0.2", "0.225", "0.25", "0.4"]) {
+		for (const cap of PARENT_UPGRADE_FRONTIER_ROOT_CAPS) {
 			runs.push({
 				name: `single-idle-large-frontier-${cap}`,
 				log: `single-idle-large-frontier-${safeName(cap)}.txt`,
@@ -189,8 +191,7 @@ const makeRuns = (
 					"ci-idle-upgrade-large",
 					"--seeds",
 					seeds,
-					"--parentUpgradePreset",
-					"default-candidate",
+					...defaultCandidateArgs(),
 					"--parentUpgradeRootMaxChildLoadRatio",
 					cap,
 					"--strict",

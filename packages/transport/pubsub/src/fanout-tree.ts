@@ -3451,6 +3451,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		};
 	}
 
+	/**
+	 * Returns diagnostic counters for tests and simulation harnesses.
+	 *
+	 * @internal
+	 */
 	public getChannelMetrics(
 		topic: string,
 		root: string,

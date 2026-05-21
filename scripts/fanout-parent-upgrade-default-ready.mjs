@@ -11,18 +11,6 @@ const getArg = (name, fallback) => {
 const hasFlag = (name) => args.includes(name);
 
 const pnpm = process.env.PNPM ?? "pnpm";
-const explicitSeeds =
-	args.includes("--seeds") || process.env.FANOUT_PARENT_UPGRADE_SEEDS != null;
-const seeds = getArg("--seeds", process.env.FANOUT_PARENT_UPGRADE_SEEDS ?? "1");
-const idleSafetySeeds = getArg(
-	"--idle-safety-seeds",
-	getArg(
-		"--benefit-seeds",
-		process.env.FANOUT_PARENT_UPGRADE_IDLE_SAFETY_SEEDS ??
-			process.env.FANOUT_PARENT_UPGRADE_BENEFIT_SEEDS ??
-			(explicitSeeds ? seeds : "1,2,3"),
-	),
-);
 const skipBuild = hasFlag("--no-build") || process.env.FANOUT_SKIP_BUILD === "1";
 
 const run = (label, commandArgs) => {
@@ -44,6 +32,31 @@ const run = (label, commandArgs) => {
 if (!skipBuild) {
 	run("build pubsub", ["--filter", "@peerbit/pubsub", "build"]);
 }
+
+const {
+	DEFAULT_PARENT_UPGRADE_FAST_SEED_CSV,
+	DEFAULT_PARENT_UPGRADE_SEED_CSV,
+	defaultCandidateArgs,
+} = await import(
+	"../packages/transport/pubsub/dist/benchmark/fanout-tree-parent-upgrade-preset.js"
+);
+
+const explicitSeeds =
+	args.includes("--seeds") || process.env.FANOUT_PARENT_UPGRADE_SEEDS != null;
+const seeds = getArg(
+	"--seeds",
+	process.env.FANOUT_PARENT_UPGRADE_SEEDS ??
+		DEFAULT_PARENT_UPGRADE_FAST_SEED_CSV,
+);
+const idleSafetySeeds = getArg(
+	"--idle-safety-seeds",
+	getArg(
+		"--benefit-seeds",
+		process.env.FANOUT_PARENT_UPGRADE_IDLE_SAFETY_SEEDS ??
+			process.env.FANOUT_PARENT_UPGRADE_BENEFIT_SEEDS ??
+			(explicitSeeds ? seeds : DEFAULT_PARENT_UPGRADE_SEED_CSV),
+	),
+);
 
 run("active shadow dual-path mechanism gate", [
 	"-C",
@@ -179,8 +192,7 @@ run("single-writer live default-candidate safety", [
 	"ci-live-stream",
 	"--seeds",
 	seeds,
-	"--parentUpgradePreset",
-	"default-candidate",
+	...defaultCandidateArgs(),
 	"--strict",
 	"1",
 ]);
@@ -196,8 +208,7 @@ run("multi-writer live default-candidate safety", [
 	"ci-multi-live,ci-multi-live-churn,ci-multi-video-live",
 	"--seeds",
 	seeds,
-	"--parentUpgradePreset",
-	"default-candidate",
+	...defaultCandidateArgs(),
 	"--strict",
 	"1",
 ]);
@@ -213,8 +224,7 @@ run("multi-writer idle default-candidate safety", [
 	"ci-multi-idle,ci-multi-sparse-idle,ci-multi-hotspot-idle",
 	"--seeds",
 	idleSafetySeeds,
-	"--parentUpgradePreset",
-	"default-candidate",
+	...defaultCandidateArgs(),
 	"--strict",
 	"1",
 ]);

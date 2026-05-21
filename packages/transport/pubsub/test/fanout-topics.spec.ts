@@ -194,6 +194,57 @@ describe("pubsub (fanout topics)", function () {
 		throw new Error("unable to find sampled fanout topic");
 	};
 
+	const parentUpgradeMetricsSnapshot = (metrics: any) => ({
+		reparentUpgrade: metrics.reparentUpgrade,
+		skipData: metrics.reparentUpgradeSkipData,
+		skipRepair: metrics.reparentUpgradeSkipRepair,
+		skipQuiet: metrics.reparentUpgradeSkipQuiet,
+		skipCooldown: metrics.reparentUpgradeSkipCooldown,
+		skipBudget: metrics.reparentUpgradeSkipBudget,
+		skipSlots: metrics.reparentUpgradeSkipCandidateSlots,
+		skipLevel: metrics.reparentUpgradeSkipCandidateLevel,
+		skipPressure: metrics.reparentUpgradeSkipCandidatePressure,
+		skipRootPressure: metrics.reparentUpgradeSkipRootPressure,
+		probeNoReply: metrics.reparentUpgradeSkipProbeNoReply,
+		probeNotRooted: metrics.reparentUpgradeSkipProbeNotRooted,
+		probeOverloaded: metrics.reparentUpgradeSkipProbeOverloaded,
+		probeCooldown: metrics.reparentUpgradeSkipProbeCooldown,
+		parentProbeReqSent: metrics.parentProbeReqSent,
+		parentProbeReplyReceived: metrics.parentProbeReplyReceived,
+		shadowStart: metrics.parentShadowStart,
+		shadowObserve: metrics.parentShadowObserve,
+		shadowPromote: metrics.parentShadowPromote,
+		shadowReset: metrics.parentShadowReset,
+		shadowRejectCapacity: metrics.parentShadowRejectCapacity,
+		shadowRejectNoReply: metrics.parentShadowRejectNoReply,
+	});
+
+	const parentShadowSnapshot = (shadow: any) =>
+		shadow == null
+			? undefined
+			: {
+					hash: shadow.hash,
+					liveDataMessages: shadow.liveDataMessages,
+					liveFirstDataMessages: shadow.liveFirstDataMessages,
+					liveParentFirstDataMessages: shadow.liveParentFirstDataMessages,
+					liveCandidateLeadSamples: shadow.liveCandidateLeadSamples,
+					liveCandidateLeadMsTotal: shadow.liveCandidateLeadMsTotal,
+					liveMaxSeqSeen: shadow.liveMaxSeqSeen,
+					liveLastDataAt: shadow.liveLastDataAt,
+				};
+
+	const parentUpgradeDiagnosticMessage = (
+		values: Record<string, unknown> & { metrics?: any; shadow?: any },
+	) => {
+		const { metrics, shadow, ...rest } = values;
+		return JSON.stringify({
+			...rest,
+			metrics:
+				metrics == null ? undefined : parentUpgradeMetricsSnapshot(metrics),
+			shadow: parentShadowSnapshot(shadow),
+		});
+	};
+
 	it("delivers over sharded fanout (no direct subscription gossip)", async () => {
 		const { session, configureBootstraps, configureShards } =
 			await createSession(4);
@@ -838,25 +889,10 @@ describe("pubsub (fanout topics)", function () {
 					);
 					expect(
 						statsAfterDirect?.parent,
-						JSON.stringify({
+						parentUpgradeDiagnosticMessage({
 							parent: statsAfterDirect?.parent,
 							root: rootHash,
-							reparentUpgrade: metrics.reparentUpgrade,
-							skipData: metrics.reparentUpgradeSkipData,
-							skipRepair: metrics.reparentUpgradeSkipRepair,
-							skipQuiet: metrics.reparentUpgradeSkipQuiet,
-							skipCooldown: metrics.reparentUpgradeSkipCooldown,
-							skipBudget: metrics.reparentUpgradeSkipBudget,
-							skipSlots: metrics.reparentUpgradeSkipCandidateSlots,
-							skipPressure: metrics.reparentUpgradeSkipCandidatePressure,
-							skipRootPressure: metrics.reparentUpgradeSkipRootPressure,
-							probeNoReply: metrics.reparentUpgradeSkipProbeNoReply,
-							probeCooldown: metrics.reparentUpgradeSkipProbeCooldown,
-							shadowStart: metrics.parentShadowStart,
-							shadowObserve: metrics.parentShadowObserve,
-							shadowPromote: metrics.parentShadowPromote,
-							shadowRejectCapacity: metrics.parentShadowRejectCapacity,
-							shadowRejectNoReply: metrics.parentShadowRejectNoReply,
+							metrics,
 						}),
 					).to.equal(rootHash);
 				});
@@ -1104,7 +1140,7 @@ describe("pubsub (fanout topics)", function () {
 				);
 				expect(
 					metrics.parentShadowStart,
-					JSON.stringify({
+					parentUpgradeDiagnosticMessage({
 						parent: ch?.parent,
 						level: ch?.level,
 						children: ch?.children?.size,
@@ -1127,22 +1163,7 @@ describe("pubsub (fanout topics)", function () {
 								: stableUnitInterval(
 										`${ch.id.suffixKey}:${publisherHash}:${rootHash}:multi-channel-leaf-root-signal:${ch.maxSeqSeen}`,
 									),
-						reparentUpgradeSkipCandidateSlots:
-							metrics.reparentUpgradeSkipCandidateSlots,
-						reparentUpgradeSkipCandidateLevel:
-							metrics.reparentUpgradeSkipCandidateLevel,
-						reparentUpgradeSkipProbeNoReply:
-							metrics.reparentUpgradeSkipProbeNoReply,
-						parentProbeReqSent: metrics.parentProbeReqSent,
-						parentProbeReplyReceived: metrics.parentProbeReplyReceived,
-						parentShadowRejectCapacity: metrics.parentShadowRejectCapacity,
-						parentShadowRejectNoReply: metrics.parentShadowRejectNoReply,
-						reparentUpgradeSkipProbeNotRooted:
-							metrics.reparentUpgradeSkipProbeNotRooted,
-						reparentUpgradeSkipProbeOverloaded:
-							metrics.reparentUpgradeSkipProbeOverloaded,
-						reparentUpgradeSkipRootPressure:
-							metrics.reparentUpgradeSkipRootPressure,
+						metrics,
 					}),
 				).to.be.greaterThan(0);
 			});
@@ -1167,31 +1188,11 @@ describe("pubsub (fanout topics)", function () {
 					);
 					const ch = publisherTargetChannel();
 					const shadow = ch?.parentShadow;
-					const message = JSON.stringify({
+					const message = parentUpgradeDiagnosticMessage({
 						parent: stats?.parent,
 						root: rootHash,
-						parentShadowStart: metrics.parentShadowStart,
-						parentShadowPromote: metrics.parentShadowPromote,
-						parentShadowReset: metrics.parentShadowReset,
-						parentShadowRejectCapacity: metrics.parentShadowRejectCapacity,
-						parentShadowRejectNoReply: metrics.parentShadowRejectNoReply,
-						reparentUpgrade: metrics.reparentUpgrade,
-						shadow:
-							shadow == null
-								? undefined
-								: {
-										hash: shadow.hash,
-										liveDataMessages: shadow.liveDataMessages,
-										liveFirstDataMessages: shadow.liveFirstDataMessages,
-										liveParentFirstDataMessages:
-											shadow.liveParentFirstDataMessages,
-										liveCandidateLeadSamples:
-											shadow.liveCandidateLeadSamples,
-										liveCandidateLeadMsTotal:
-											shadow.liveCandidateLeadMsTotal,
-										liveMaxSeqSeen: shadow.liveMaxSeqSeen,
-										liveLastDataAt: shadow.liveLastDataAt,
-									},
+						metrics,
+						shadow,
 					});
 					expect(stats?.parent, message).to.equal(rootHash);
 					expect(metrics.parentShadowPromote, message).to.be.greaterThan(0);
