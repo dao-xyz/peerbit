@@ -6387,7 +6387,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					: "shadow";
 		const parentUpgradeVerifyStaleRootCapacity =
 			joinOpts.parentUpgradeVerifyStaleRootCapacity ??
-			parentUpgradeMode === "shadow";
+			(parentUpgradeMode === "shadow");
 		const parentProbeTimeoutMs = Math.max(
 			1,
 			Math.floor(joinOpts.parentProbeTimeoutMs ?? 500),
