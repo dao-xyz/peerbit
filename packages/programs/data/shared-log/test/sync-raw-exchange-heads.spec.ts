@@ -403,6 +403,10 @@ describe("raw exchange-head sync", () => {
 				db.log as any,
 				"removeEntriesKnownByPeer",
 			);
+			const removeGidBatchSpy = sinon.spy(
+				db.log as any,
+				"removePeerFromGidPeerHistoryBatch",
+			);
 			const responseAddStub = sinon
 				.stub((db.log as any).responseToPruneDebouncedFn, "add")
 				.resolves();
@@ -458,6 +462,13 @@ describe("raw exchange-head sync", () => {
 				expect(nativeBatchPlanStub.callCount).to.equal(1);
 				const plannedItems = [...nativeBatchPlanStub.firstCall.args[0]];
 				expect(plannedItems.length).to.be.greaterThan(0);
+				expect(removeGidBatchSpy.callCount).to.equal(1);
+				expect(removeGidBatchSpy.firstCall.args[0]).to.equal(
+					session.peers[0].identity.publicKey.hashcode(),
+				);
+				expect([...removeGidBatchSpy.firstCall.args[1]]).to.have.length(
+					plannedItems.length,
+				);
 				expect(waitForGidStub.callCount).to.equal(0);
 				expect(responseAddStub.callCount).to.equal(plannedItems.length);
 				for (const call of responseAddStub.getCalls()) {
@@ -477,6 +488,7 @@ describe("raw exchange-head sync", () => {
 				nativeMetadataStub.restore();
 				hasManyStub.restore();
 				responseAddStub.restore();
+				removeGidBatchSpy.restore();
 				removeKnownSpy.restore();
 			}
 		} finally {

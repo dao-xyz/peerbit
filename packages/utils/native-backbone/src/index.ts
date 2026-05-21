@@ -241,6 +241,7 @@ type NativePeerbitBackboneHandle = {
 	) => void;
 	add_gid_peers: (gid: string, peers: string[], reset: boolean) => number;
 	remove_gid_peer: (peer: string, gid?: string) => void;
+	remove_gid_peers?: (peer: string, gids: string[]) => void;
 	delete_gid_peers: (gid: string) => boolean;
 	clear_gid_peers: () => void;
 	mark_entries_known_by_peer: (hashes: string[], peer: string) => void;
@@ -3274,6 +3275,17 @@ export class NativePeerbitBackbone {
 
 	removeGidPeer(peer: string, gid?: string): void {
 		this.native.remove_gid_peer(peer, gid);
+	}
+
+	removeGidPeers(peer: string, gids: Iterable<string>): void {
+		const gidArray = iterableToArray(gids);
+		if (this.native.remove_gid_peers) {
+			this.native.remove_gid_peers(peer, gidArray);
+			return;
+		}
+		for (const gid of gidArray) {
+			this.native.remove_gid_peer(peer, gid);
+		}
 	}
 
 	deleteGidPeers(gid: string): boolean {

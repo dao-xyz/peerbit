@@ -1010,6 +1010,10 @@ impl NativePeerbitBackbone {
         self.shared_log.remove_gid_peer(peer, gid)
     }
 
+    pub fn remove_gid_peers(&mut self, peer: &str, gids: Array) -> Result<(), JsValue> {
+        self.shared_log.remove_gid_peers(peer, gids)
+    }
+
     pub fn delete_gid_peers(&mut self, gid: &str) -> bool {
         self.shared_log.delete_gid_peers(gid)
     }

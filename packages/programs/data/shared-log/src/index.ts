@@ -338,6 +338,8 @@ type DecodedReplicaCountMap = ReadonlyMap<string, number>;
 type NativeRequestPruneLeaderHints = {
 	localLeaderHashes: Set<string>;
 	replicaCounts: Map<string, number>;
+	peerHistoryGids: string[];
+	peerHistoryRemovedHashes: Set<string>;
 };
 
 type SharedLogCoordinateNativeFields<R extends "u32" | "u64"> = {
@@ -3293,6 +3295,50 @@ export class SharedLog<
 				this.removePeerFromGidPeerHistory(publicKeyHash, key);
 			}
 			this.removePeerFromEntryKnownPeers(publicKeyHash);
+		}
+	}
+
+	private removePeerFromGidPeerHistoryBatch(
+		publicKeyHash: string,
+		gids: Iterable<string>,
+	) {
+		const gidArray = [...new Set(gids)];
+		if (gidArray.length === 0) {
+			return;
+		}
+		const nativeSharedLogState = this._nativeSharedLogState as
+			| (typeof this._nativeSharedLogState & {
+					removeGidPeers?: (peer: string, gids: Iterable<string>) => void;
+			  })
+			| undefined;
+		const nativeBackbone = this._nativeBackbone as
+			| (typeof this._nativeBackbone & {
+					removeGidPeers?: (peer: string, gids: Iterable<string>) => void;
+			  })
+			| undefined;
+		if (nativeSharedLogState?.removeGidPeers) {
+			nativeSharedLogState.removeGidPeers(publicKeyHash, gidArray);
+		} else {
+			for (const gid of gidArray) {
+				this._nativeSharedLogState?.removeGidPeer(publicKeyHash, gid);
+			}
+		}
+		if (nativeBackbone?.removeGidPeers) {
+			nativeBackbone.removeGidPeers(publicKeyHash, gidArray);
+		} else {
+			for (const gid of gidArray) {
+				this._nativeBackbone?.removeGidPeer(publicKeyHash, gid);
+			}
+		}
+		for (const gid of gidArray) {
+			const gidMap = this._gidPeersHistory.get(gid);
+			if (!gidMap) {
+				continue;
+			}
+			gidMap.delete(publicKeyHash);
+			if (gidMap.size === 0) {
+				this._gidPeersHistory.delete(gid);
+			}
 		}
 	}
 
@@ -9492,6 +9538,10 @@ export class SharedLog<
 						nativeEntryMetadata,
 						presentBlocks,
 					});
+				this.removePeerFromGidPeerHistoryBatch(
+					from,
+					nativeLeaderHints.peerHistoryGids,
+				);
 
 				for (let i = 0; i < msg.hashes.length; i++) {
 					const hash = msg.hashes[i]!;
@@ -9540,10 +9590,9 @@ export class SharedLog<
 									},
 								}).getValue(this);
 
-							this.removePeerFromGidPeerHistory(
-								context.from!.hashcode(),
-								gid,
-							);
+							if (!nativeLeaderHints.peerHistoryRemovedHashes.has(hash)) {
+								this.removePeerFromGidPeerHistory(from, gid);
+							}
 
 							const waitFor: WaitForReplicator[] = [
 								{
@@ -9586,10 +9635,10 @@ export class SharedLog<
 					} else {
 						const prevPendingIHave = this._pendingIHave.get(hash);
 						if (prevPendingIHave) {
-							prevPendingIHave.requesting.add(context.from.hashcode());
+							prevPendingIHave.requesting.add(from);
 							prevPendingIHave.resetTimeout();
 						} else {
-							const requesting = new Set([context.from.hashcode()]);
+							const requesting = new Set([from]);
 
 							let timeout = setTimeout(() => {
 								this._pendingIHave.delete(hash);
@@ -9607,10 +9656,7 @@ export class SharedLog<
 									clearTimeout(timeout);
 								},
 								callback: async (entry: Entry<T>) => {
-									this.removePeerFromGidPeerHistory(
-										context.from!.hashcode(),
-										entry.meta.gid,
-									);
+									this.removePeerFromGidPeerHistory(from, entry.meta.gid);
 									this.removePruneRequestSent(entry.hash, from);
 									let isLeader = false;
 									await this._waitForEntryReplicators(
@@ -10635,6 +10681,8 @@ export class SharedLog<
 		const empty = (): NativeRequestPruneLeaderHints => ({
 			localLeaderHashes: new Set(),
 			replicaCounts: new Map(),
+			peerHistoryGids: [],
+			peerHistoryRemovedHashes: new Set(),
 		});
 		const planner = this._nativeBackbone ?? this._nativeRangePlanner;
 		if (
@@ -10648,6 +10696,8 @@ export class SharedLog<
 		const hashes: string[] = [];
 		const entries: Array<{ gid: string; replicas: number }> = [];
 		const replicaCounts = new Map<string, number>();
+		const peerHistoryGids: string[] = [];
+		const peerHistoryRemovedHashes = new Set<string>();
 		for (let i = 0; i < properties.hashes.length; i++) {
 			const hash = properties.hashes[i]!;
 			const nativeEntry = properties.nativeEntryMetadata[i];
@@ -10665,6 +10715,8 @@ export class SharedLog<
 			}).getValue(this);
 			hashes.push(hash);
 			replicaCounts.set(hash, replicas);
+			peerHistoryGids.push(nativeEntry.gid);
+			peerHistoryRemovedHashes.add(hash);
 			entries.push({
 				gid: nativeEntry.gid,
 				replicas,
@@ -10674,6 +10726,8 @@ export class SharedLog<
 			return {
 				localLeaderHashes: new Set(),
 				replicaCounts,
+				peerHistoryGids,
+				peerHistoryRemovedHashes,
 			};
 		}
 
@@ -10691,6 +10745,8 @@ export class SharedLog<
 		return {
 			localLeaderHashes,
 			replicaCounts,
+			peerHistoryGids,
+			peerHistoryRemovedHashes,
 		};
 	}
 
