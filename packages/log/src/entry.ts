@@ -73,14 +73,20 @@ const preparedNativeLogEntries = new WeakMap<object, PreparedNativeLogEntry>();
 const preparedEntryBlockFromBytes = (
 	bytes: Uint8Array,
 	cid: string,
-): PreparedEntryBlock => ({
-	block: {
-		bytes,
-		cid: cidifyString(cid),
-		value: bytes,
-	} as PreparedEntryBlock["block"],
-	cid,
-});
+): PreparedEntryBlock => {
+	let cidObject: ReturnType<typeof cidifyString> | undefined;
+	return {
+		block: {
+			bytes,
+			get cid() {
+				cidObject ??= cidifyString(cid);
+				return cidObject;
+			},
+			value: bytes,
+		} as PreparedEntryBlock["block"],
+		cid,
+	};
+};
 
 interface Meta {
 	clock: Clock;
