@@ -213,6 +213,12 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 		}
 	}
 
+	removeRequestsSent(hashes: Iterable<string>, peer?: string) {
+		for (const hash of hashes) {
+			this.removeRequestSent(hash, peer);
+		}
+	}
+
 	addConfirmedReplicator(hash: string, peer: string) {
 		let set = this.responseReplicatorSet.get(hash);
 		if (!set) {
@@ -237,6 +243,12 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 		if (set.size === 0) {
 			this.responseReplicatorSet.delete(hash);
 			this.deleteSessionIfIdle(hash);
+		}
+	}
+
+	removeConfirmedReplicators(hashes: Iterable<string>, peer: string) {
+		for (const hash of hashes) {
+			this.removeConfirmedReplicator(hash, peer);
 		}
 	}
 

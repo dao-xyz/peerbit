@@ -403,6 +403,14 @@ describe("raw exchange-head sync", () => {
 				db.log as any,
 				"removeEntriesKnownByPeer",
 			);
+			const removePruneRequestsSentSpy = sinon.spy(
+				db.log as any,
+				"removePruneRequestsSent",
+			);
+			const removeConfirmedReplicatorsSpy = sinon.spy(
+				(db.log as any)._checkedPrune,
+				"removeConfirmedReplicators",
+			);
 			const removeGidBatchSpy = sinon.spy(
 				db.log as any,
 				"removePeerFromGidPeerHistoryBatch",
@@ -458,6 +466,14 @@ describe("raw exchange-head sync", () => {
 				expect(removeKnownSpy.firstCall.args[1]).to.equal(
 					session.peers[0].identity.publicKey.hashcode(),
 				);
+				expect(removePruneRequestsSentSpy.callCount).to.equal(1);
+				expect([...removePruneRequestsSentSpy.firstCall.args[0]]).to.deep.equal(
+					hashes,
+				);
+				expect(removeConfirmedReplicatorsSpy.callCount).to.equal(1);
+				expect(
+					[...removeConfirmedReplicatorsSpy.firstCall.args[0]],
+				).to.deep.equal(hashes);
 				const queuedHashes: string[] = [];
 				expect(nativeBatchPlanStub.callCount).to.equal(1);
 				const plannedItems = [...nativeBatchPlanStub.firstCall.args[0]];
@@ -489,6 +505,8 @@ describe("raw exchange-head sync", () => {
 				hasManyStub.restore();
 				responseAddStub.restore();
 				removeGidBatchSpy.restore();
+				removeConfirmedReplicatorsSpy.restore();
+				removePruneRequestsSentSpy.restore();
 				removeKnownSpy.restore();
 			}
 		} finally {

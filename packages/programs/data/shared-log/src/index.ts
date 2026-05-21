@@ -9528,6 +9528,8 @@ export class SharedLog<
 			} else if (msg instanceof RequestIPrune) {
 				const from = context.from.hashcode();
 				this.removeEntriesKnownByPeer(msg.hashes, from);
+				this.removePruneRequestsSent(msg.hashes, from);
+				this._checkedPrune.removeConfirmedReplicators(msg.hashes, from);
 				const nativeEntryMetadata = this.getNativeLogEntryMetadataBatch(
 					msg.hashes,
 				);
@@ -9545,11 +9547,6 @@ export class SharedLog<
 
 				for (let i = 0; i < msg.hashes.length; i++) {
 					const hash = msg.hashes[i]!;
-					this.removePruneRequestSent(hash, from);
-
-					// if we expect the remote to be owner of this entry because we are to prune ourselves, then we need to remove the remote
-					// this is due to that the remote has previously indicated to be a replicator to help us prune but now has changed their mind
-					this._checkedPrune.removeConfirmedReplicator(hash, from);
 
 					const nativeEntry = nativeEntryMetadata?.[i];
 					const indexedEntry = nativeEntry
@@ -12809,6 +12806,10 @@ export class SharedLog<
 
 	private removePruneRequestSent(hash: string, to?: string) {
 		this._checkedPrune.removeRequestSent(hash, to);
+	}
+
+	private removePruneRequestsSent(hashes: Iterable<string>, to?: string) {
+		this._checkedPrune.removeRequestsSent(hashes, to);
 	}
 
 	prune(
