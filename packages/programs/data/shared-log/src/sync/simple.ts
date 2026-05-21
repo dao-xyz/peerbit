@@ -428,6 +428,25 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		}
 	}
 
+	private getQueuedSyncKey(key: SyncableKey): SyncableKey | undefined {
+		if (this.syncInFlightQueue.has(key)) {
+			return key;
+		}
+		if (typeof key === "string") {
+			for (const queuedKey of this.syncInFlightQueue.keys()) {
+				if (
+					typeof queuedKey === "bigint" &&
+					this.coordinateToHash.get(queuedKey) === key
+				) {
+					return queuedKey;
+				}
+			}
+			return undefined;
+		}
+		const hash = this.coordinateToHash.get(key);
+		return hash && this.syncInFlightQueue.has(hash) ? hash : undefined;
+	}
+
 	startRepairSession(properties: {
 		entries: Map<string, EntryReplicated<R>>;
 		targets: string[];
@@ -649,13 +668,10 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		const resolvedHashes: string[] = [];
 		for (const entry of properties.entries) {
 			resolvedHashes.push(entry.entry.hash);
-			const set = this.syncInFlight.get(properties.from.hashcode());
-			if (set) {
-				set.delete(entry.entry.hash);
-				if (set?.size === 0) {
-					this.syncInFlight.delete(properties.from.hashcode());
-				}
-			}
+			this.clearSyncInFlightForPeer(
+				properties.from.hashcode(),
+				entry.entry.hash,
+			);
 		}
 		this.markRepairSessionResolvedHashes(resolvedHashes);
 	}
@@ -670,7 +686,8 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		const startedAt = syncProfileStart(profile);
 
 		try {
-			for (const coordinateOrHash of keys) {
+			for (const key of keys) {
+				const coordinateOrHash = this.getQueuedSyncKey(key) ?? key;
 				const inFlight = this.syncInFlightQueue.get(coordinateOrHash);
 				if (inFlight) {
 					if (!inFlight.find((x) => x.hashcode() === from.hashcode())) {
@@ -905,10 +922,49 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 
 			this.syncInFlightQueue.delete(key);
 		}
+
+		this.clearSyncInFlightKey(key);
+	}
+
+	private clearSyncInFlightKey(key: SyncableKey) {
+		for (const [peer, map] of this.syncInFlight) {
+			map.delete(key);
+			if (map.size === 0) {
+				this.syncInFlight.delete(peer);
+			}
+		}
+	}
+
+	private getKnownAliases(hash: string): SyncableKey[] {
+		const aliases = new Set<SyncableKey>([hash]);
+		for (const key of [
+			...this.syncInFlightQueue.keys(),
+			...[...this.syncInFlight.values()].flatMap((map) => [...map.keys()]),
+		]) {
+			if (typeof key === "bigint" && this.coordinateToHash.get(key) === hash) {
+				aliases.add(key);
+			}
+		}
+		return [...aliases];
+	}
+
+	private clearSyncInFlightForPeer(publicKeyHash: string, hash: string) {
+		const map = this.syncInFlight.get(publicKeyHash);
+		if (!map) {
+			return;
+		}
+		for (const key of this.getKnownAliases(hash)) {
+			map.delete(key);
+		}
+		if (map.size === 0) {
+			this.syncInFlight.delete(publicKeyHash);
+		}
 	}
 
 	private clearSyncProcess(hash: string) {
-		this.clearSyncProcessKey(hash);
+		for (const key of this.getKnownAliases(hash)) {
+			this.clearSyncProcessKey(key);
+		}
 	}
 
 	onPeerDisconnected(key: PublicSignKey | string): Promise<void> | void {

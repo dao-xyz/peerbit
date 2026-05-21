@@ -4,6 +4,133 @@ import sinon from "sinon";
 import { SimpleSyncronizer } from "../src/sync/simple.js";
 
 describe("sync-repair-session", () => {
+	it("deduplicates known hash aliases without changing coordinate requests", async () => {
+		const send = sinon.stub().resolves();
+		const coordinateToHash = new Cache<string>({ max: 10 });
+		coordinateToHash.add(42n, "entry-hash");
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc: { send } as any,
+			entryIndex: {
+				count: async () => 0,
+			} as any,
+			log: {
+				has: async () => false,
+			} as any,
+			coordinateToHash,
+		});
+		const from = {
+			hashcode: () => "p1",
+			equals: () => false,
+		} as any;
+
+		await sync.queueSync([42n, "entry-hash"], from);
+
+		expect(sync.syncInFlightQueue.has(42n)).to.equal(true);
+		expect(sync.syncInFlightQueue.has("entry-hash")).to.equal(false);
+		expect(sync.syncInFlightQueueInverted.get("p1")).to.deep.equal(
+			new Set([42n]),
+		);
+		expect(send.calledOnce).to.equal(true);
+	});
+
+	it("deduplicates hash sync requests with already queued coordinate aliases", async () => {
+		const send = sinon.stub().resolves();
+		const coordinateToHash = new Cache<string>({ max: 10 });
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc: { send } as any,
+			entryIndex: {
+				count: async () => 0,
+			} as any,
+			log: {
+				has: async () => false,
+			} as any,
+			coordinateToHash,
+		});
+		const p1 = {
+			hashcode: () => "p1",
+			equals: () => false,
+		} as any;
+		const p2 = {
+			hashcode: () => "p2",
+			equals: () => false,
+		} as any;
+
+		await sync.queueSync([42n], p1);
+		coordinateToHash.add(42n, "entry-hash");
+		await sync.queueSync(["entry-hash"], p2);
+
+		expect(sync.syncInFlightQueue.has(42n)).to.equal(true);
+		expect(sync.syncInFlightQueue.has("entry-hash")).to.equal(false);
+		expect(
+			sync.syncInFlightQueue.get(42n)?.map((x) => x.hashcode()),
+		).to.deep.equal(["p1", "p2"]);
+		expect(sync.syncInFlightQueueInverted.get("p2")).to.deep.equal(
+			new Set([42n]),
+		);
+		expect(send.calledOnce).to.equal(true);
+	});
+
+	it("clears in-flight coordinate aliases when an entry is received by hash", () => {
+		const coordinateToHash = new Cache<string>({ max: 10 });
+		coordinateToHash.add(42n, "entry-hash");
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc: { send: sinon.stub().resolves() } as any,
+			entryIndex: {
+				count: async () => 0,
+			} as any,
+			log: {
+				has: async () => false,
+			} as any,
+			coordinateToHash,
+		});
+		const from = {
+			hashcode: () => "p1",
+			equals: () => false,
+		} as any;
+
+		sync.syncInFlightQueue.set(42n, [from]);
+		sync.syncInFlightQueueInverted.set("p1", new Set([42n]));
+		sync.syncInFlight.set("p1", new Map([[42n, { timestamp: Date.now() }]]));
+
+		sync.onReceivedEntries({
+			entries: [{ entry: { hash: "entry-hash" } }] as any,
+			from,
+		});
+
+		expect(sync.syncInFlightQueue.has(42n)).to.equal(true);
+		expect(sync.syncInFlightQueueInverted.has("p1")).to.equal(true);
+		expect(sync.syncInFlight.has("p1")).to.equal(false);
+	});
+
+	it("clears pending coordinate aliases when an entry is added by hash", () => {
+		const coordinateToHash = new Cache<string>({ max: 10 });
+		coordinateToHash.add(42n, "entry-hash");
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc: { send: sinon.stub().resolves() } as any,
+			entryIndex: {
+				count: async () => 0,
+			} as any,
+			log: {
+				has: async () => false,
+			} as any,
+			coordinateToHash,
+		});
+		const from = {
+			hashcode: () => "p1",
+			equals: () => false,
+		} as any;
+
+		sync.syncInFlightQueue.set(42n, [from]);
+		sync.syncInFlightQueueInverted.set("p1", new Set([42n]));
+		sync.syncInFlight.set("p1", new Map([[42n, { timestamp: Date.now() }]]));
+
+		sync.onEntryAdded({ hash: "entry-hash" } as any);
+
+		expect(sync.syncInFlightQueue.has(42n)).to.equal(false);
+		expect(sync.syncInFlightQueueInverted.has("p1")).to.equal(false);
+		expect(sync.syncInFlight.has("p1")).to.equal(false);
+	});
+
 	it("resolves convergent session when missing entries are received", async () => {
 		const send = sinon.stub().resolves();
 		const rpc = { send } as any;
