@@ -10,6 +10,7 @@ import {
 	ExchangeHeadsMessage,
 	RawEntryWithRefs,
 	RawExchangeHeadsMessage,
+	RequestIPrune,
 	createRawExchangeHeadsMessages,
 } from "../src/exchange-heads.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
@@ -363,6 +364,102 @@ describe("raw exchange-head sync", () => {
 				singleSpy.restore();
 				batchSpy.restore();
 				sharedPlanEntryLeaderBatchSpy.restore();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("batches request-prune bookkeeping while queuing only newly confirmed hashes", async () => {
+		const session = await TestSession.disconnected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+
+		try {
+			const setup = {
+				domain: createReplicationDomainHash("u32"),
+				type: "u32" as const,
+				syncronizer: SimpleSyncronizer,
+				name: "u32-simple-raw",
+			};
+			const store = new EventStore<string, any>();
+			const db = await session.peers[1].open(store.clone(), {
+				args: {
+					replicate: false,
+					setup,
+					nativeGraph: true,
+					timeUntilRoleMaturity: 0,
+				},
+			});
+			const hashes: string[] = [];
+			const entries: any[] = [];
+			for (let i = 0; i < 4; i++) {
+				const { entry } = await db.add(uuid(), { meta: { next: [] } });
+				hashes.push(entry.hash);
+				entries.push(entry);
+			}
+
+			const removeKnownSpy = sinon.spy(
+				db.log as any,
+				"removeEntriesKnownByPeer",
+			);
+			const responseAddStub = sinon
+				.stub((db.log as any).responseToPruneDebouncedFn, "add")
+				.resolves();
+			const hasManyStub = sinon
+				.stub(db.log.log.blocks as any, "hasMany")
+				.resolves(hashes.map(() => true));
+			const nativeMetadataStub = sinon
+				.stub(db.log as any, "getNativeLogEntryMetadataBatch")
+				.returns(
+					entries.map((entry) => ({
+						hash: entry.hash,
+						gid: entry.meta.gid,
+						data: entry.meta.data,
+					})),
+				);
+			const selfHash = db.node.identity.publicKey.hashcode();
+			const waitForGidStub = sinon
+				.stub(db.log as any, "_waitForGidReplicators")
+				.callsFake(async (_gid, _replicas, _waitFor, options: any) => {
+					options?.onLeader?.(selfHash);
+					return new Map([[selfHash, { intersecting: true }]]);
+				});
+			const waitForEntryStub = sinon
+				.stub(db.log as any, "_waitForEntryReplicators")
+				.callsFake(async (_entry, _replicas, _waitFor, options: any) => {
+					options?.onLeader?.(selfHash);
+					return new Map([[selfHash, { intersecting: true }]]);
+				});
+			try {
+				await db.log.onMessage(new RequestIPrune({ hashes }), {
+					from: session.peers[0].identity.publicKey,
+				} as any);
+
+				expect(removeKnownSpy.callCount).to.equal(1);
+				expect([...removeKnownSpy.firstCall.args[0]]).to.deep.equal(hashes);
+				expect(removeKnownSpy.firstCall.args[1]).to.equal(
+					session.peers[0].identity.publicKey.hashcode(),
+				);
+				const queuedHashes: string[] = [];
+				expect(responseAddStub.callCount).to.be.greaterThan(0);
+				for (const call of responseAddStub.getCalls()) {
+					expect(call.args[0].hashes).to.have.length(1);
+					expect(call.args[0].peers).to.deep.equal([
+						session.peers[0].identity.publicKey.hashcode(),
+					]);
+					const [queuedHash] = call.args[0].hashes;
+					expect(hashes).to.include(queuedHash);
+					queuedHashes.push(queuedHash);
+				}
+				expect(new Set(queuedHashes).size).to.equal(queuedHashes.length);
+			} finally {
+				waitForEntryStub.restore();
+				waitForGidStub.restore();
+				nativeMetadataStub.restore();
+				hasManyStub.restore();
+				responseAddStub.restore();
+				removeKnownSpy.restore();
 			}
 		} finally {
 			await session.stop();

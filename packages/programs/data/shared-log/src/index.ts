@@ -9476,8 +9476,8 @@ export class SharedLog<
 					}
 				}
 			} else if (msg instanceof RequestIPrune) {
-				const hasAndIsLeader: string[] = [];
 				const from = context.from.hashcode();
+				this.removeEntriesKnownByPeer(msg.hashes, from);
 				const nativeEntryMetadata = this.getNativeLogEntryMetadataBatch(
 					msg.hashes,
 				);
@@ -9486,7 +9486,6 @@ export class SharedLog<
 				for (let i = 0; i < msg.hashes.length; i++) {
 					const hash = msg.hashes[i]!;
 					this.removePruneRequestSent(hash, from);
-					this.removeEntriesKnownByPeer([hash], from);
 
 					// if we expect the remote to be owner of this entry because we are to prune ourselves, then we need to remove the remote
 					// this is due to that the remote has previously indicated to be a replicator to help us prune but now has changed their mind
@@ -9566,12 +9565,10 @@ export class SharedLog<
 					}
 
 					if (isLeader) {
-						hasAndIsLeader.push(hash);
-						hasAndIsLeader.length > 0 &&
-							this.responseToPruneDebouncedFn.add({
-								hashes: hasAndIsLeader,
-								peers: [context.from!.hashcode()],
-							});
+						this.responseToPruneDebouncedFn.add({
+							hashes: [hash],
+							peers: [from],
+						});
 					} else {
 						const prevPendingIHave = this._pendingIHave.get(hash);
 						if (prevPendingIHave) {
