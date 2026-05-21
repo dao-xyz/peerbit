@@ -150,6 +150,7 @@ describe("raw exchange-head sync", () => {
 			);
 			const sharedOnChangeSpy = sinon.spy(db2.log as any, "onChange");
 			const entryAddedHashSpy = sinon.spy(db2.log as any, "onEntryAddedHash");
+			const markKnownSpy = sinon.spy(db2.log as any, "markEntriesKnownByPeer");
 			const receivedEntriesSpy = sinon.spy(
 				db2.log.syncronizer as any,
 				"onReceivedEntries",
@@ -235,6 +236,8 @@ describe("raw exchange-head sync", () => {
 			expect(receivedEntryHashesSpy.firstCall.args[0].hashes).to.have.length(
 				entryCount,
 			);
+			expect(markKnownSpy.callCount).to.equal(1);
+			expect([...markKnownSpy.firstCall.args[0]]).to.have.length(entryCount);
 			expect(sharedOnChangeSpy.callCount).to.equal(0);
 			expect(entryAddedHashSpy.callCount).to.equal(entryCount);
 			const profileNames = profileEvents.map((event) => event.name);
@@ -248,6 +251,7 @@ describe("raw exchange-head sync", () => {
 			expect(materializeProfile.bytes).to.be.greaterThan(0);
 			receivedEntryHashesSpy.restore();
 			receivedEntriesSpy.restore();
+			markKnownSpy.restore();
 			entryAddedHashSpy.restore();
 			sharedOnChangeSpy.restore();
 			coordinatePrepareSpy.restore();

@@ -9251,10 +9251,6 @@ export class SharedLog<
 					}
 					const allToMerge = joinPlans.flatMap((plan) => plan.toMerge);
 					if (allToMerge.length > 0) {
-						this.markEntriesKnownByPeer(
-							allToMerge.map((entry) => entry.hash),
-							context.from!.hashcode(),
-						);
 						const validateStartedAt = syncProfileStart(syncProfile);
 						const canAppendAlreadyValidated =
 							await this.canSkipLowerLogCanAppendForNetworkJoin(
@@ -9411,10 +9407,6 @@ export class SharedLog<
 						!context.from.equals(this.node.identity.publicKey)
 					) {
 						const confirmStartedAt = syncProfileStart(syncProfile);
-						this.markEntriesKnownByPeer(
-							confirmedHashes,
-							context.from.hashcode(),
-						);
 						await this.sendRepairConfirmation(context.from!, confirmedHashes);
 						if (syncProfile) {
 							emitSyncProfileDuration(syncProfile, confirmStartedAt, {
